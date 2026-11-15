@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import type { UserFromRequest, WriteRequestMetadata } from '../../../app.js'
 import { parsePythonInteger, writeRequestMetadata } from '../../../http/request.js'
-import { MindCanvasNoteMutationError } from '../application/mind-canvas-note-mutations.js'
+import { MindCanvasNoteMutationError } from '@gugu/core/mind'
 import type { MindCanvasItemResponse } from '../mind-canvas-read.js'
 import type { MindNoteReadResponse } from '../mind-notes-read.js'
 

@@ -25,10 +25,19 @@ description: gugu-webui Node.js/Fastify 后端开发、Python API 迁移与实�
 | 路径包含判断、owner ID 规范化、提交后 best-effort | `apps/web-host/src/adapters/path-safety.ts`：`isPathWithin`；`apps/web-host/src/adapters/owner-context.ts`：`normalizeOwnerId`；`apps/web-host/src/adapters/best-effort.ts`：`runBestEffort` |
 | Cookie 解析、请求元数据 | `apps/web-host/src/http/cookies.ts`：`parseCookieHeader`；`apps/web-host/src/http/request.ts`：`writeRequestMetadata`（`limitHeaders` 用于 trim 并限制文件写入头长） |
 | 日期键与 UTC 时间格式化 | `apps/web-host/src/shared/date-time.ts`：`dateKeyInTimeZone`、`addUtcDaysToDateKey`、`startOfDateKeyInTimeZone`、`toUtcIsoWithOffset` |
-| Admin HTTP 错误、通用密钥遮蔽 | `apps/web-host/src/domains/admin/errors.ts`；`apps/web-host/src/shared/secret-mask.ts`：`maskSecret` |
-| Agent 媒体载荷清理 | `apps/web-host/src/domains/agent-sessions/media-payload.ts`：`sanitizeMediaPayload` |
+| Admin HTTP 错误、通用密钥遮蔽 | `apps/web-host/src/domains/admin/errors.ts`；`@gugu/core/shared/secret-mask`：`maskSecret` |
+| Agent 媒体载荷清理 | `packages/core/src/agent/context/messages/`：`sanitizeMediaPayload` |
 | 文件 owner 校验、正向 Undo 写入、项目查询与时间戳格式化 | `apps/web-host/src/domains/files/file-owner.ts`；`apps/web-host/src/domains/undo/persistence/forward-operation.ts`；`apps/web-host/src/domains/projects/persistence/projects.ts`：`readProjectFileCount`、`projectExistsForOwner`、`projectTimestamp` |
-| 日历事件投影与持有查询 | `apps/web-host/src/domains/calendar/event-projection.ts`：数据库行、DTO 与 Undo 快照投影；`apps/web-host/src/domains/calendar/persistence/events.ts`：`findOwnedActiveEvent` |
+| 日历事件投影与持有查询 | `packages/core/src/calendar/event-projection.ts`：数据库行、DTO 与 Undo 快照投影；`apps/web-host/src/domains/calendar/persistence/events.ts`：`findOwnedActiveEvent` |
+| 项目公开 DTO 与时间投影 | `packages/core/src/projects/project-projection.ts`：`projectResponse`，读写与恢复事件共同复用；`packages/core/src/shared/timestamps.ts`：严格 UTC 微秒解析，`data/codec.ts`保留兼容出口，公开 ISO 与数据库/Undo 编码分开 |
+| 日历管理列表与详情 | `packages/core/src/calendar/application/event-read.ts`：`createCalendarEventReader`；`packages/core/src/calendar/read-store.ts`：实际 PG/SQLite 读取，不以管理查询代替 Agent 提醒聚合 |
+| 站内全局搜索 | `packages/core/src/search/`：查询解析、来源能力、分组及实际 PG/SQLite 读端口；Host 仅注入后端，未接来源明确不可用，不能把 Web 查询公共化算作 Agent 工具或 RAG 完成 |
+| 实时消息 envelope 与安全字段裁剪 | `@gugu/core/live-message`：共享业务消息校验及敏感字段裁剪；Web Host 保留认证、Redis 订阅、SSE 与账户状态复核 |
+| 普通笔记生命周期 | `packages/core/src/mind/note-lifecycle.ts`：精确软删/恢复与最近gugu目标解析；`note-mutations-sql.ts`：共享CAS/Undo和借用事务，快照保留非零微秒；回执复用note-read的detail投影 |
+| 画布放置与几何 | `packages/core/src/mind/canvas-layout.ts`：Python世界坐标/端点纯规则；`canvas-placement.ts`：借用事务创建canvas_note、引用和视图，复用原SQL服务，不在工具里复制数据库业务 |
+| Agent画布批量编辑 | `packages/core/src/mind/canvas-edits.ts`：布局、视图移除、画布便签字段更新复用原SQL服务和外层事务；工具组持久收据与Undo共同提交，事件在提交后发布 |
+| Agent画布候选和技能元数据目录 | `packages/core/src/mind/canvas-read.ts`：owner限定候选检索及旧分页探测；`packages/core/src/agent/skills/user-read.ts`：Markdown head定义和含停用项的用户Skill元数据，不使用可加载catalog替代管理目录 |
+| Python 数字分类与转换 | `packages/core/src/shared/unicode-decimal.ts`：固定生产 Python 的 Unicode 16，区分 Nd 十进制和 isdigit；工具整数/日期/行号与项目编号共用，不使用 Node 较新 Unicode 属性扩大可接受输入；维护生成器为 `packages/core/scripts/generate-tool-unicode.py` |
 
 新增稳定复用入口时，在本节补充契约与路径；删除或迁移入口时同步更新，避免清单过期。
 

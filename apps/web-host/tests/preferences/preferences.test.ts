@@ -90,11 +90,49 @@ test('GET requires authentication and returns Python defaults with unsupported p
   }
 })
 
-test('GET normalizes persisted snake_case preferences and Python legacy values to camelCase response', async () => {
+test('非当前配色名称返回 Ink', async () => {
+  for (const palette of ['constructor', '__proto__', 'toString', 'mist', 'sky']) {
+    const app = makeApp({ async read() { return { palette } }, async write() {} })
+    try {
+      const response = await app.inject({ method: 'GET', url: '/api/v1/preferences', headers: { authorization: 'Bearer valid' } })
+      assert.equal(response.statusCode, 200)
+      assert.equal(response.json().palette, 'neutral')
+    } finally { await app.close() }
+  }
+})
+
+test('当前五种用户配色按现有接口值读取', async () => {
+  for (const palette of ['neutral', 'cafe', 'red', 'blue', 'green']) {
+    const app = makeApp({ async read() { return { palette } }, async write() {} })
+    try {
+      const response = await app.inject({ method: 'GET', url: '/api/v1/preferences', headers: { authorization: 'Bearer valid' } })
+      assert.equal(response.statusCode, 200)
+      assert.equal(response.json().palette, palette)
+    } finally { await app.close() }
+  }
+})
+
+test('当前五种用户配色可保存并重新读取，无效配色不会覆盖已保存值', async () => {
+  let stored: Record<string, unknown> = {}
+  const app = makeApp({ async read() { return stored }, async write(_owner, data) { stored = data } })
+  try {
+    for (const palette of ['neutral', 'cafe', 'red', 'blue', 'green']) {
+      const updated = await app.inject({ method: 'PATCH', url: '/api/v1/preferences', headers: { authorization: 'Bearer valid' }, payload: { palette } })
+      assert.equal(updated.statusCode, 200)
+      const read = await app.inject({ method: 'GET', url: '/api/v1/preferences', headers: { authorization: 'Bearer valid' } })
+      assert.equal(read.json().palette, palette)
+    }
+    const invalid = await app.inject({ method: 'PATCH', url: '/api/v1/preferences', headers: { authorization: 'Bearer valid' }, payload: { palette: 'sky' } })
+    assert.equal(invalid.statusCode, 422)
+    assert.equal(stored.palette, 'green')
+  } finally { await app.close() }
+})
+
+test('GET normalizes persisted snake_case preferences and current palette to camelCase response', async () => {
   const app = makeApp({
     async read() {
       return {
-        locale: 'ja-JP', theme: 'dark', theme_family: 'mono', palette: 'mist',
+        locale: 'ja-JP', theme: 'dark', theme_family: 'mono', palette: 'blue',
         last_stages: ['进行中'], stage_templates: [{ name: '默认阶段' }],
         pm_stages_expanded: [], calendar_week_start: 'sunday', default_view: 'files',
         shell_enabled: {}, shell_system_enabled: true, shell_dangerous_enabled: true,
@@ -484,6 +522,11 @@ test('SMTP style preview is available without saved SMTP settings and validates 
       headers: { authorization: 'Bearer valid' }, payload: { theme: 'system' },
     })
     assert.equal(invalid.statusCode, 422)
+    const invalidPalette = await app.inject({
+      method: 'POST', url: '/api/v1/preferences/smtp/preview',
+      headers: { authorization: 'Bearer valid' }, payload: { palette: 'constructor' },
+    })
+    assert.equal(invalidPalette.statusCode, 422)
   } finally { await app.close() }
 })
 

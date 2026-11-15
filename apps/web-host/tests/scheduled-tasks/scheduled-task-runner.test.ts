@@ -50,7 +50,7 @@ class MemoryLease implements ScheduledTaskLease {
   readonly held = new Set<string>()
 
   async acquire(taskId: string, owner: string) {
-    if (this.owners.has(taskId)) return false
+    if (this.owners.has(taskId) || this.held.has(taskId)) return false
     this.owners.set(taskId, owner)
     this.held.add(taskId)
     return true

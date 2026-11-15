@@ -1,5 +1,5 @@
 import type { ProviderConfig } from '../contracts.js'
-import { failedProviderSearch, officialSearchHost, requestProviderSearch, type ProviderSearchAdapter, type SearchTarget } from '../search/shared.js'
+import { failedProviderSearch, officialSearchHost, requestProviderSearch, type ProviderSearchAdapter, type SearchTarget } from '../search/http.js'
 import { mimoSearchSchema } from './search-schema.js'
 
 const supportedModels = new Set(['mimo-v2.6-flash', 'mimo-v2.6-pro', 'mimo-v2.6-pro-ultraspeed', 'mimo-v2.5-pro', 'mimo-v2.5'])

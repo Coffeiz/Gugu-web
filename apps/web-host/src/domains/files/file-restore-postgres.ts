@@ -1,5 +1,5 @@
 import { CoreError } from '@gugu/core'
-import { lstat, mkdir, realpath, rename } from 'node:fs/promises'
+import { link, lstat, mkdir, realpath, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
 import { isPathWithin } from '../../adapters/path-safety.js'
@@ -73,6 +73,19 @@ function withConflictName(baseKey: string, displayName: string, ext: string, suf
   const name = `${displayName}(${suffix})`
   const filename = `${safeName(name)}${ext ? `.${ext.toLowerCase()}` : ''}`
   return { key: `${baseKey.slice(0, baseKey.lastIndexOf('/') + 1)}${filename}`, name }
+}
+
+async function removeMatchingLink(keep: string, remove: string): Promise<void> {
+  try {
+    const [kept, removed] = await Promise.all([lstat(keep), lstat(remove)])
+    if (kept.isFile() && removed.isFile() && kept.dev === removed.dev && kept.ino === removed.ino) {
+      await unlink(remove)
+      return
+    }
+    console.error('文件恢复清理遇到路径变化，可能存在残留')
+  } catch {
+    console.error('文件恢复清理失败，可能存在残留')
+  }
 }
 
 async function originalStorageKey(client: PoolClient, ownerId: string, file: FileRow): Promise<string> {
@@ -156,6 +169,7 @@ async function restoreLocalFile(
   ownerId: string,
   file: FileRow,
   baseKey: string,
+  createLink: typeof link = link,
 ): Promise<{ storageKey: string; displayName: string; movedFrom: string | null; movedTo: string | null }> {
   const root = await realpath(rootPath).catch((error: NodeJS.ErrnoException) => {
     if (error.code === 'ENOENT') return null
@@ -179,15 +193,30 @@ async function restoreLocalFile(
   }
 
   const source = await checkedPath(root, ownerId, file.storage_key)
-  const destination = await checkedPath(root, ownerId, available.key)
   try {
-    await mkdir(path.dirname(destination), { recursive: true, mode: 0o700 })
-    await rename(source, destination)
-    const resolved = await realpath(destination)
-    if (!isPathWithin(root, resolved)) throw new RestoreStoragePathError('恢复后的文件超出存储根目录')
-    return { storageKey: available.key, displayName: available.name, movedFrom: source, movedTo: destination }
+    for (let suffix = 1; ; suffix += 1) {
+      const destination = await checkedPath(root, ownerId, available.key)
+      await mkdir(path.dirname(destination), { recursive: true, mode: 0o700 })
+      try { await createLink(source, destination) } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+        available = withConflictName(baseKey, file.display_name, file.ext, suffix)
+        continue
+      }
+      try {
+        if (!(await lstat(destination)).isFile()) throw new RestoreStoragePathError('恢复文件类型无效')
+        const resolved = await realpath(destination)
+        if (!isPathWithin(root, resolved)) throw new RestoreStoragePathError('恢复后的文件超出存储根目录')
+      } catch (error) {
+        await unlink(destination).catch(() => undefined)
+        if (error instanceof RestoreStoragePathError) throw error
+        throw new CoreError('storage_error', '文件恢复未完成')
+      }
+      return { storageKey: available.key, displayName: available.name, movedFrom: source, movedTo: destination }
+    }
   } catch (error) {
-    if (error instanceof RestoreStoragePathError) throw error
+    if (error instanceof RestoreStoragePathError || error instanceof CoreError) throw error
+    if (['EXDEV', 'EPERM', 'EOPNOTSUPP', 'ENOTSUP', 'EMLINK'].includes((error as NodeJS.ErrnoException).code ?? ''))
+      throw new CoreError('storage_error', '文件存储不支持安全恢复')
     // Python 回收站恢复会在物理文件缺失或搬移失败时仍恢复数据库墓碑。
     return { storageKey: available.key, displayName: available.name, movedFrom: null, movedTo: null }
   }
@@ -197,6 +226,7 @@ export function createPostgresFileRestoreOperations(
   pool: Pool,
   options: {
     storageRoot: string
+    createRestoreLink?: typeof link
     publishChanged(event: { ownerId: string; entityId: number; origin?: string | null; entityType?: 'file' | 'folder' }): Promise<void>
   },
 ): FileRestoreOperations {
@@ -206,6 +236,7 @@ export function createPostgresFileRestoreOperations(
       if (!Number.isSafeInteger(fileId) || fileId < 1) throw new CoreError('invalid_request', '文件 ID 无效')
       const client = await pool.connect()
       let committed = false
+      let commitAttempted = false
       let movedFrom: string | null = null
       let movedTo: string | null = null
       try {
@@ -223,7 +254,7 @@ export function createPostgresFileRestoreOperations(
             throw new CoreError('conflict', '所属文件夹仍在回收站，请先恢复文件夹')
         }
         const baseKey = await originalStorageKey(client, ownerId, file)
-        const restored = await restoreLocalFile(options.storageRoot, ownerId, file, baseKey)
+        const restored = await restoreLocalFile(options.storageRoot, ownerId, file, baseKey, options.createRestoreLink)
         movedFrom = restored.movedFrom
         movedTo = restored.movedTo
         const updated = await client.query(
@@ -232,12 +263,15 @@ export function createPostgresFileRestoreOperations(
           [fileId, ownerId, restored.storageKey, restored.displayName],
         )
         if (!updated.rows[0]) throw new CoreError('not_found', '文件不存在')
+        commitAttempted = true
         await client.query('COMMIT')
         committed = true
+        if (movedFrom && movedTo) await removeMatchingLink(movedTo, movedFrom)
       } catch (error) {
         if (!committed) {
           await client.query('ROLLBACK').catch(() => undefined)
-          if (movedFrom && movedTo) await rename(movedTo, movedFrom).catch(() => undefined)
+          if (!commitAttempted && movedFrom && movedTo) await removeMatchingLink(movedFrom, movedTo)
+          if (commitAttempted) console.error('文件恢复提交结果未知，保留两处文件供核查')
         }
         throw error
       } finally {
@@ -254,6 +288,7 @@ export function createPostgresFileRestoreOperations(
       const client = await pool.connect()
       const moved: Array<{ from: string; to: string }> = []
       let committed = false
+      let commitAttempted = false
       const restoredFiles: number[] = []
       try {
         await client.query('BEGIN')
@@ -272,7 +307,7 @@ export function createPostgresFileRestoreOperations(
         }
         for (const file of files) {
           const baseKey = await originalStorageKey(client, ownerId, file)
-          const restored = await restoreLocalFile(options.storageRoot, ownerId, file, baseKey)
+          const restored = await restoreLocalFile(options.storageRoot, ownerId, file, baseKey, options.createRestoreLink)
           if (restored.movedFrom && restored.movedTo)
             moved.push({ from: restored.movedFrom, to: restored.movedTo })
           const updated = await client.query(
@@ -283,12 +318,15 @@ export function createPostgresFileRestoreOperations(
           if (!updated.rows[0]) throw new CoreError('not_found', '文件不存在')
           restoredFiles.push(Number(file.id))
         }
+        commitAttempted = true
         await client.query('COMMIT')
         committed = true
+        for (const move of moved) await removeMatchingLink(move.to, move.from)
       } catch (error) {
         if (!committed) {
           await client.query('ROLLBACK').catch(() => undefined)
-          for (const move of moved.reverse()) await rename(move.to, move.from).catch(() => undefined)
+          if (!commitAttempted) for (const move of moved.reverse()) await removeMatchingLink(move.from, move.to)
+          if (commitAttempted) console.error('文件批量恢复提交结果未知，保留两处文件供核查')
         }
         throw error
       } finally {
@@ -304,6 +342,7 @@ export function createPostgresFileRestoreOperations(
       const client = await pool.connect()
       const moved: Array<{ from: string; to: string }> = []
       let committed = false
+      let commitAttempted = false
       let root: FolderRow | undefined
       let restoredFiles: number[] = []
       try {
@@ -365,7 +404,7 @@ export function createPostgresFileRestoreOperations(
         )
         for (const file of files.rows) {
           const baseKey = await originalStorageKey(client, ownerId, file)
-          const restored = await restoreLocalFile(options.storageRoot, ownerId, file, baseKey)
+          const restored = await restoreLocalFile(options.storageRoot, ownerId, file, baseKey, options.createRestoreLink)
           if (restored.movedFrom && restored.movedTo) moved.push({ from: restored.movedFrom, to: restored.movedTo })
           const updated = await client.query(
             `UPDATE files SET storage_key=$3,display_name=$4,deleted_at=NULL,updated_at=CURRENT_TIMESTAMP
@@ -375,12 +414,15 @@ export function createPostgresFileRestoreOperations(
           if (!updated.rows[0]) throw new CoreError('not_found', '文件不存在')
           restoredFiles.push(Number(file.id))
         }
+        commitAttempted = true
         await client.query('COMMIT')
         committed = true
+        for (const move of moved) await removeMatchingLink(move.to, move.from)
       } catch (error) {
         if (!committed) {
           await client.query('ROLLBACK').catch(() => undefined)
-          for (const move of moved.reverse()) await rename(move.to, move.from).catch(() => undefined)
+          if (!commitAttempted) for (const move of moved.reverse()) await removeMatchingLink(move.from, move.to)
+          if (commitAttempted) console.error('文件夹恢复提交结果未知，保留两处文件供核查')
         }
         throw error
       } finally {

@@ -11,7 +11,7 @@
 | Harness 接线与独立分支 | `providers/runtime.ts` | 实际 Canonical→HTTP→工具轮→final；反思追加、原生 wire 摘要三阶段恢复、截断摘要拒收 |
 | 缓存、池、清洗与观测 | `cache.ts`、`client-pool.ts`、`sanitize.ts`、`cache-probe.ts` | 确定前缀、同进程协调、scope 生命周期、固定安全错误；不代替 Redis/Collector |
 | Node 网络边界 | `providers/transport/` | 真实合成 TCP/TLS/CONNECT、DNS 固定、环境代理/CA、网络快照池键、背压与超时；独立包入口 |
-| 搜索 | `providers/search.ts` 分派，`search/shared.ts` 放共用 HTTP/边界工具，各 `providers/<provider>/search.ts` 与 `search-schema.ts` 实现厂商协议 | 各家请求格式、能力与 Schema 独立；共享层不改写厂商语义 |
+| 搜索 | `providers/search.ts` 分派，`search/http.ts` 和 `search/limits.ts` 分别提供 HTTP 与结果边界工具，各 `providers/<provider>/search.ts` 与 `search-schema.ts` 实现厂商协议 | 各家请求格式、能力与 Schema 独立；共享层不改写厂商语义 |
 | ASR | `providers/asr.ts` 兼容分派，`asr/shared.ts` 放音频类型与编码；OpenAI-compatible、Qwen/DashScope、MiniMax 分别位于各自目录 | 协议和响应解析归 Provider；授权文件、探测与转码仍由 Host/Media 提供 |
 | 媒体 | `providers/media.ts` 放通用限制类型、基线与 multipart；MiniMax、MiMo 规格分别在各自目录，`media/capabilities.ts` 汇总能力 | Provider 限制不塞进共享默认值；文件授权、读取和转码仍由 Host/Media 提供 |
 

@@ -132,15 +132,22 @@ export class ScheduledTaskRunner {
     const candidates = await this.options.repository.findStartedOnceBefore(cutoff)
     const recovered: string[] = []
     for (const task of candidates) {
+      const owner = this.options.createOwner()
       try {
-        if (await this.options.lease.isHeld(task.id)) continue
+        if (!await this.options.lease.acquire(task.id, owner, this.lockTimeoutMs)) continue
       } catch {
-        // Redis 状态不可读时保守保留，避免把仍在执行的任务误判为崩溃。
+        // Redis 不可用时保守保留任务。
         continue
       }
-      await this.options.repository.markFailed(task.id)
-      await this.notifyTasksChanged(task.userId)
-      recovered.push(task.id)
+      try {
+        const current = await this.options.repository.getOnce(task.id)
+        if (!current || current.lastRunAt === null || current.lastRunAt >= cutoff || current.lastRunFailed) continue
+        await this.options.repository.markFailed(task.id)
+        await this.notifyTasksChanged(current.userId)
+        recovered.push(task.id)
+      } finally {
+        await this.options.lease.release(task.id, owner)
+      }
     }
     return recovered
   }

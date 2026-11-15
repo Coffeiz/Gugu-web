@@ -2,11 +2,30 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
 import { createUserToken, type PublicUserRecord } from '../../src/domains/auth/auth.js'
-import type { OnboardingStore } from '../../src/domains/onboarding/onboarding.js'
+import { onboardingResponse, type OnboardingStore } from '@gugu/core/onboarding'
 
 const ownerId = '00000000-0000-4000-8000-000000000061'
 const otherOwnerId = '00000000-0000-4000-8000-000000000062'
 const secret = 'synthetic-test-secret-for-onboarding'
+
+test('历史引导状态按 Python 规则处理重复步骤和空容器', () => {
+  const response = onboardingResponse({
+    seed: { seeded: true },
+    guide: { enabled: ['legacy'], dismissed: {}, completed_at: [], version: 1,
+      completed_steps: ['locale', 'locale', 'invalid'] },
+  }) as { should_show: boolean; guide: { enabled: boolean; dismissed: boolean; completed_steps: string[] } }
+  assert.equal(response.should_show, true)
+  assert.equal(response.guide.enabled, true)
+  assert.equal(response.guide.dismissed, false)
+  assert.deepEqual(response.guide.completed_steps, ['locale', 'locale'])
+  const legacy = onboardingResponse({ seeded: true, guide_enabled: true, current_step: 'model' })
+  assert.equal('guide_enabled' in legacy, false)
+  assert.equal('current_step' in legacy, false)
+  for (const [version, expected] of [['2.5', 1], ['0x2', 1], [[2], 1], [2.5, 2], ['  +2  ', 2]] as const) {
+    const result = onboardingResponse({ guide: { version } }) as { guide: { version: number } }
+    assert.equal(result.guide.version, expected)
+  }
+})
 const makeUser = (id: string): PublicUserRecord => ({
   id,
   username: `onboarding-${id.slice(-2)}`,

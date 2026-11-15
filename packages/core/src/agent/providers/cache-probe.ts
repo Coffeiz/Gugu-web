@@ -1,8 +1,8 @@
-import type { Usage } from '../harness/contracts.js'
+import type { Usage } from '../models.js'
 import type { HistorySanitization, JsonObject } from './contracts.js'
 import { ProviderError } from './errors.js'
 import { clone, observe, record } from './values.js'
-import { stableJson } from '../harness/history/canonical-history.js'
+import { stableJson } from '../context/history/canonical-history.js'
 
 export interface ProviderCacheDiagnostics {
   readonly cache_supported: boolean

@@ -3,27 +3,24 @@ import { BlockList, isIP } from 'node:net'
 import { lookup } from 'node:dns/promises'
 import { ProviderError } from '../errors.js'
 
-const blocked = new BlockList()
+// Node BlockList 会把原生IPv4也匹配到IPv6 mapped子网，必须分开地址族。
+const blockedV4 = new BlockList()
+const blockedV6 = new BlockList()
 for (const [network, prefix] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.0.2.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['198.51.100.0', 24], ['203.0.113.0', 24], ['224.0.0.0', 3]] as const)
-  blocked.addSubnet(network, prefix, 'ipv4')
+  blockedV4.addSubnet(network, prefix, 'ipv4')
 for (const [network, prefix] of [['::', 96], ['::ffff:0:0', 96], ['64:ff9b:1::', 48], ['100::', 64], ['2001::', 23], ['2001:db8::', 32], ['2002::', 16], ['3fff::', 20], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8]] as const)
-  blocked.addSubnet(network, prefix, 'ipv6')
+  blockedV6.addSubnet(network, prefix, 'ipv6')
 const globalV6 = new BlockList()
 globalV6.addSubnet('2000::', 3, 'ipv6')
 
 export function isPublicAddress(address: string): boolean {
   const family = isIP(address)
-  if (family === 4) return ['192.0.0.9', '192.0.0.10'].includes(address) || !blocked.check(address, 'ipv4')
+  if (family === 4) return ['192.0.0.9', '192.0.0.10'].includes(address) || !blockedV4.check(address, 'ipv4')
   if (family !== 6 || address.includes('%')) return false
-  // mapped IPv4 先还原再校验，不能把私有v4隐藏进v6。
+  // 保留mapped IPv6的拒绝边界；修复原生IPv4误拒不扩大IPv6可访问集合。
   const normalized = new URL(`http://[${address}]/`).hostname.slice(1, -1)
-  if (normalized.startsWith('::ffff:')) {
-    const parts = normalized.slice(7).split(':')
-    if (parts.length !== 2) return false
-    const bits = parts.map(value => Number.parseInt(value, 16))
-    return isPublicAddress(`${bits[0]! >> 8}.${bits[0]! & 255}.${bits[1]! >> 8}.${bits[1]! & 255}`)
-  }
-  return globalV6.check(address, 'ipv6') && !blocked.check(address, 'ipv6')
+  if (normalized.startsWith('::ffff:')) return false
+  return globalV6.check(address, 'ipv6') && !blockedV6.check(address, 'ipv6')
 }
 
 export interface ResolvedAddress { readonly address: string; readonly family: 4 | 6 }

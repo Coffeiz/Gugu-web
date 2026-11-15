@@ -1,5 +1,5 @@
-import type { CanonicalMessage, Json, OpaqueProviderProjection, ProviderEvent, RunIdentity, Usage } from '../harness/contracts.js'
-export type { Json } from '../harness/contracts.js'
+import type { CanonicalMessage, Json, OpaqueProviderProjection, ProviderEvent, RunIdentity, Usage } from '../models.js'
+export type { Json } from '../models.js'
 
 export type JsonObject = { [key: string]: Json }
 export type ProviderProtocol = 'openai' | 'responses' | 'anthropic' | 'ollama'

@@ -7,6 +7,8 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { ProjectRecord } from '../../../src/contracts/index.js'
 import { LocalRuntime } from '../../../dist/runtime/local.js'
+import SQLite from 'better-sqlite3'
+import { desktopFrame } from '../../../src/runtime/commands.js'
 
 const folders: string[] = []
 const entry = fileURLToPath(
@@ -56,6 +58,81 @@ afterEach(() => {
     })
 })
 describe('独立 Node Host 与 SQLite Worker', () => {
+  it('Undo Worker 使用本地身份、事务收据和可恢复的提交后结果', async () => {
+    const path = file(), initial = await LocalRuntime.initialize(path), owner = initial.ownerId
+    await initial.close()
+    const db = new SQLite(path), key = owner.replaceAll('-', ''), stamp = '2026-01-01 00:00:00.000000'
+    try {
+      db.prepare("INSERT INTO mind_nodes (id,user_id,kind,title,content_md,content_plain,origin,version,captured_at,created_at,updated_at) VALUES (1,?,'note','本地','','','user',1,?,?,?)").run(key, stamp, stamp, stamp)
+      const snapshot = { kind: 'note', title: '本地', content_md: '', content_plain: '', color: null, captured_at: stamp, deleted_at: null }
+      const insert = db.prepare("INSERT INTO undo_operations (id,user_id,undo_context_id,group_id,resource,action,target_refs,before_state,after_state,base_versions,artifact_refs,actor_type,status,created_at) VALUES (?,?,'tab','group','mind','create','[1]','{}',?,'{}','{}','web','active',?)")
+      insert.run('undo-one', key, JSON.stringify({ items: { 'note:1': snapshot } }), stamp)
+      insert.run('undo-conflict', key, JSON.stringify({ items: { 'note:1': snapshot } }), stamp)
+      insert.run('undo-failure', key, JSON.stringify({ items: { 'note:1': snapshot } }), stamp)
+      insert.run('undo-v2', key, JSON.stringify({ items: { 'note:1': snapshot } }), stamp)
+    } finally { db.close() }
+    const token = randomUUID(), conflictToken = randomUUID()
+    const runtime = await LocalRuntime.open(path)
+    try {
+      expect((await runtime.call<any>('undo.preview', { context_id: 'tab' })).available).toBe(true)
+      await expect(runtime.call('undo.apply', { context_id: 'tab', undo_id: 'undo-one', owner_id: randomUUID() }, { operationId: token })).rejects.toMatchObject({ code: 'invalid_request' })
+      await expect(runtime.call('undo.apply', { context_id: 'other', undo_id: 'undo-one' }, { operationId: token })).rejects.toMatchObject({ code: 'not_found' })
+      const first = await runtime.call<any>('undo.apply', { context_id: 'tab', undo_id: 'undo-one' }, { operationId: token })
+      expect(first.events).toHaveLength(1)
+      expect((await runtime.call<any>('undo.apply', { context_id: 'tab', undo_id: 'undo-one' }, { operationId: token })).events).toEqual([])
+      await expect(runtime.call('undo.apply', { context_id: 'tab', undo_id: 'undo-conflict' }, { operationId: token })).rejects.toMatchObject({ code: 'conflict' })
+      await expect(runtime.call('undo.apply', { context_id: 'tab', undo_id: 'undo-conflict' }, { operationId: conflictToken })).rejects.toMatchObject({ code: 'conflict' })
+      expect(await runtime.call('operations.get', { operation_id: conflictToken })).toMatchObject({ method: 'undo.apply', result: { error: { code: 'undo.conflict' } } })
+      const cancelled = new AbortController(); cancelled.abort()
+      await expect(runtime.call('undo.redo', { context_id: 'tab', undo_id: 'undo-one' }, { operationId: randomUUID(), signal: cancelled.signal })).rejects.toMatchObject({ code: 'cancelled' })
+    } finally { await runtime.close() }
+    const reopened = await LocalRuntime.open(path)
+    try {
+      expect(await reopened.call('operations.get', { operation_id: token })).toMatchObject({ method: 'undo.apply', result: { result: { events: expect.any(Array) } } })
+      expect((await reopened.call<any>('undo.apply', { context_id: 'tab', undo_id: 'undo-one' }, { operationId: token })).events).toEqual([])
+      expect((await reopened.call<any>('undo.redo', { context_id: 'tab', undo_id: 'undo-one' }, { operationId: randomUUID() })).events).toHaveLength(1)
+      const observer = new SQLite(path), failureToken = randomUUID()
+      try {
+        observer.exec("CREATE TRIGGER fail_undo_worker BEFORE UPDATE ON undo_operations WHEN NEW.id='undo-failure' BEGIN SELECT RAISE(ABORT, '合成失败'); END")
+        await expect(reopened.call('undo.apply', { context_id: 'tab', undo_id: 'undo-failure' }, { operationId: failureToken })).rejects.toMatchObject({ code: 'storage_error' })
+        expect(observer.prepare('SELECT deleted_at FROM mind_nodes WHERE id=1').get()).toEqual({ deleted_at: null })
+        expect(observer.prepare("SELECT status FROM undo_operations WHERE id='undo-failure'").get()).toEqual({ status: 'active' })
+        expect(await reopened.call('operations.get', { operation_id: failureToken })).toBeNull()
+      } finally { observer.close() }
+
+    } finally { await reopened.close() }
+    const ndjsonToken = randomUUID()
+    const frames = exchange(path, [
+      request(1, 'undo.preview', { context_id: 'tab' }),
+      request(2, 'undo.apply', { context_id: 'other', undo_id: 'undo-one' }, randomUUID()),
+      request(3, 'undo.apply', { context_id: 'tab', undo_id: 'undo-one' }),
+      request(4, 'undo.preview', { context_id: 'tab', owner_id: randomUUID() }),
+      request(5, 'undo.apply', { context_id: 'tab', undo_id: 'undo-v2' }, ndjsonToken),
+      request(6, 'undo.apply', { context_id: 'tab', undo_id: 'undo-v2' }, ndjsonToken),
+    ])
+    expect(frames.code).toBe(0)
+    expect(frames.frames[0]).toMatchObject({ v: 2, event: 'ready', capabilities: ['operation_receipts', 'undo_mind_v1'] })
+    expect(frames.frames[1]).toMatchObject({ id: 1, result: { available: true } })
+    expect(frames.frames[2]).toMatchObject({ id: 2, error: { code: 'not_found' } })
+    expect(frames.frames[3]).toMatchObject({ id: 3, error: { code: 'invalid_request' } })
+    expect(frames.frames[4]).toMatchObject({ id: 4, error: { code: 'invalid_request' } })
+    expect(frames.frames[5].result.events).toHaveLength(1)
+    expect(frames.frames[6].result.events).toEqual([])
+  })
+  it('旧 v1 进程握手与读取格式保持不变', () => {
+    const result = spawnSync(process.execPath, [entry, '--database', file(), '--protocol', '1'], {
+      input: JSON.stringify({ v: 1, id: 1, method: 'projects.list', params: {} }) + '\n', encoding: 'utf8', timeout: 20_000,
+    })
+    expect(result.status).toBe(0)
+    const frames = result.stdout.trim().split('\n').map(line => JSON.parse(line))
+    expect(frames[0]).toEqual({ v: 1, event: 'ready' })
+    expect(frames[1]).toEqual({ v: 1, id: 1, result: [] })
+  })
+  it('旧 v1 帧拒绝 Undo 写命令', async () => {
+    const runtime = { schemaVersion: '13', async call() { throw new Error('不得调用') } }
+    expect(await desktopFrame({ v: 1, id: 1, method: 'undo.apply', params: { context_id: 'tab', undo_id: 'op' } }, runtime, 1)).toMatchObject({ error: { code: 'invalid_request' } })
+  })
+
   it('直接 Worker 调用同样拒绝非法收据参数、身份覆盖和未知控制能力', async () => {
     const runtime = await LocalRuntime.initialize(file())
     try {

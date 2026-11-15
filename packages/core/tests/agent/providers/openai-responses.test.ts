@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { CanonicalHarnessContext, CanonicalMessage } from '../../../src/agent/harness/contracts.js'
-import type { CanonicalContextPorts, HarnessPorts } from '../../../src/agent/harness/ports.js'
-import { createCanonicalHarness } from '../../../src/agent/harness/index.js'
-import { createReflectionFinalizer, ReflectionSnapshots } from '../../../src/agent/harness/context/reflection.js'
+import type { CanonicalRunContext, CanonicalMessage } from '../../../src/agent/models.js'
+import type { CanonicalContextPorts, AgentRunnerPorts } from '../../../src/agent/ports.js'
+import { createCanonicalRunner } from '../../../src/agent/index.js'
+import { createReflectionFinalizer, ReflectionSnapshots } from '../../../src/agent/memory/reflection.js'
 import { connectProviderHarness } from '../../../src/agent/providers/runtime.js'
 import type { JsonObject, ProviderConfig, ProviderHttpRequest, ProviderWire } from '../../../src/agent/providers/contracts.js'
 import { ProviderError } from '../../../src/agent/providers/errors.js'
@@ -11,7 +11,7 @@ import { providerSelection } from '../../../src/agent/providers/registry.js'
 import { insertResponsesReasoning, responsesContent, responsesDriver, responsesInput, responsesInstructions, responsesOutputText, responsesTools } from '../../../src/agent/providers/openai/responses.js'
 import { openaiPolicy } from '../../../src/agent/providers/openai/driver.js'
 import { customPolicy, digest, events, invocation, sse, tool, transport } from './openai-fixtures.js'
-import { collect, fixture, identity } from '../harness/run/fixtures.js'
+import { collect, fixture, identity } from '../run/fixtures.js'
 
 /** 只替换存储及HTTP边界；上下文准备、工具轮、Provider和收尾均走生产组合。 */
 function responsesHarness(scripts: readonly string[], continuation: boolean) {
@@ -40,8 +40,8 @@ function responsesHarness(scripts: readonly string[], continuation: boolean) {
     resolve: async () => ({ modelIdentity: 'model-a', accessScopeHash: digest(identity), config, systemPrompt: '基础人格' }),
     clock: { now: () => 0, sleep: async () => undefined },
   })
-  const external = fixture([]), runtime = external.ports as unknown as HarnessPorts<CanonicalHarnessContext>
-  const harness = createCanonicalHarness({ context: connected.context, executor: { authorize: async () => { throw new Error('不得进入系统执行器') }, executor: { execute: async () => { throw new Error('不得执行进程') } } }, runtime: { ...runtime, provider: connected.provider } })
+  const external = fixture([]), runtime = external.ports as unknown as AgentRunnerPorts<CanonicalRunContext>
+  const harness = createCanonicalRunner({ context: connected.context, executor: { authorize: async () => { throw new Error('不得进入系统执行器') }, executor: { execute: async () => { throw new Error('不得执行进程') } } }, runtime: { ...runtime, provider: connected.provider } })
   return { ...connected, harness, sent, complete, external, config }
 }
 
@@ -362,7 +362,7 @@ describe('Responses真实请求与流终态', () => {
       const failure = transport(sse(...(afterOutput ? [{ type: 'response.output_text.delta', delta: '已有正文' },
         { type: 'response.output_item.done', item: { type: 'function_call', id: 'fc-failed', call_id: 'call-failed', name: 'lookup', arguments: '{"q":"合成"}' } }] : []),
         kind === 'response.failed' ? { type: kind, response: { status: 'failed', error } } : { type: kind, ...error }), { raw: true })
-      const emitted: import('../../../src/agent/harness/contracts.js').ProviderEvent[] = []
+      const emitted: import('../../../src/agent/models.js').ProviderEvent[] = []
       await expect((async () => { for await (const event of responsesDriver.stream(invocation(), failure.deps)) emitted.push(event) })()).rejects.toMatchObject({ code: 'upstream' })
       expect(emitted.filter(event => event.type === 'complete')).toEqual([])
       expect(emitted.filter(event => event.type === 'token').map(event => event.type === 'token' ? event.text : '')).toEqual(afterOutput ? ['已有正文'] : [])
@@ -391,7 +391,7 @@ describe('Responses真实请求与流终态', () => {
     const error = { code: 'context_length_exceeded', message: 'maximum context length exceeded；合成私有超限正文' }
     const f = transport(sse(...(afterOutput ? [{ type: 'response.output_text.delta', delta: '已输出合成正文' }] : []),
       kind === 'response.failed' ? { type: kind, response: { status: 'failed', error } } : { type: kind, ...error }), { raw: true, chunkSize: 3 })
-    const emitted: import('../../../src/agent/harness/contracts.js').ProviderEvent[] = []
+    const emitted: import('../../../src/agent/models.js').ProviderEvent[] = []
     let caught: unknown
     try { for await (const event of responsesDriver.stream(invocation(), f.deps)) emitted.push(event) }
     catch (error) { caught = error }

@@ -2220,11 +2220,11 @@
       "name": "缓存probe接实际发送请求与当前usage，sink异常不阻塞成功且不输出凭据"
     },
     "branchInvalid": {
-      "file": "gugu-core/tests/agent/harness/history/checkpoint-branch.test.ts",
+      "file": "gugu-core/tests/agent/context/history/checkpoint-branch.test.ts",
       "name": "非法JSON响应%j归类为%s"
     },
     "branchNoMutation": {
-      "file": "gugu-core/tests/agent/harness/history/checkpoint-branch.test.ts",
+      "file": "gugu-core/tests/agent/context/history/checkpoint-branch.test.ts",
       "name": "只读分支Provider篡改请求不影响原始投影/工具或主continuation"
     },
     "ollamaPair": {

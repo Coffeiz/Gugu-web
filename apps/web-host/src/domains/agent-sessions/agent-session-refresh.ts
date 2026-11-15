@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
 import type { Pool } from 'pg'
+import { createAgentSessionRefresh, createPostgresAgentSessionRefreshRepository, type SessionRefreshResult } from '@gugu/core/agent-sessions'
 
 export interface RefreshedAgentSession {
   id: number
@@ -41,43 +42,34 @@ export function registerAgentSessionRefreshRoute(
   )
 }
 
-interface SnapshotSessionRow extends RefreshedAgentSession {
-  snapshot_hash: string | null
-  session_info_hash: string | null
-  snapshot_expires_at: Date
-}
-
-export function createPostgresAgentSessionRefresher(
-  pool: Pool,
+/** trace 在 Core 事务提交后发出，观测故障不影响刷新结果。 */
+export function createAgentSessionRefresher(
+  refresh: (ownerId: string, sessionId: number) => Promise<SessionRefreshResult | null>,
   recordInvalidation: (event: AgentSessionRefreshEvent) => Promise<void> | void = () => undefined,
 ) {
   return async function refreshAgentSession(
     ownerId: string,
     sessionId: number,
   ): Promise<RefreshedAgentSession | null> {
-    const result = await pool.query<SnapshotSessionRow>(
-      `UPDATE conversation_sessions
-       SET snapshot_expires_at = now(),
-           context_epoch = COALESCE(context_epoch, 0) + 1,
-           updated_at = now()
-       WHERE id = $1 AND user_id = $2
-       RETURNING id, context_epoch, snapshot_hash, session_info_hash, snapshot_expires_at`,
-      [sessionId, ownerId],
-    )
-    const row = result.rows[0]
+    const row = await refresh(ownerId, sessionId)
     if (!row) return null
 
     try {
       await recordInvalidation({
         sessionId: row.id,
-        contextEpoch: row.context_epoch,
-        snapshotHash: row.snapshot_hash,
-        sessionInfoHash: row.session_info_hash,
-        expiresAt: row.snapshot_expires_at.toISOString(),
+        contextEpoch: row.contextEpoch,
+        snapshotHash: row.snapshotHash,
+        sessionInfoHash: row.sessionInfoHash,
+        expiresAt: new Date(row.expiresAt).toISOString(),
       })
     } catch {
       // Python 的 trace 写入是 best-effort，不应改变快照失效的主结果。
     }
-    return { id: row.id, context_epoch: row.context_epoch }
+    return { id: row.id, context_epoch: row.contextEpoch }
   }
+}
+
+export function createPostgresAgentSessionRefresher(pool: Pool, recordInvalidation?: (event: AgentSessionRefreshEvent) => Promise<void> | void) {
+  const refresh = createAgentSessionRefresh(createPostgresAgentSessionRefreshRepository(pool))
+  return createAgentSessionRefresher(refresh, recordInvalidation)
 }

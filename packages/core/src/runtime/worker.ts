@@ -3,6 +3,7 @@ import { dataContext, CoreError } from '../contracts/index.js'
 import type { Fields } from '../contracts/index.js'
 import { initializeSqlite, openSqliteRuntime } from '../data/sqlite.js'
 import { execute, isMutation, validateCommandParams } from './commands.js'
+import { applyUndoInTransaction, createRuntimeUndoTransactionPort, createUndoStateMachine, UndoError } from '../undo/state-machine.js'
 
 interface Job {
   id: number
@@ -51,6 +52,16 @@ try {
           if (typeof operationId !== 'string')
             throw new CoreError('invalid_request', '操作标识必须是文本')
           result = await runtime.receipt(context, operationId)
+        } else if (job.method === 'undo.preview') {
+          validateCommandParams(job.method, job.params)
+          result = await createUndoStateMachine(createRuntimeUndoTransactionPort(runtime), async () => {}).preview(ownerId, job.params.context_id as string)
+        } else if (job.method === 'undo.apply' || job.method === 'undo.redo') {
+          validateCommandParams(job.method, job.params)
+          if (!job.operationId) throw new CoreError('invalid_request', '撤销写入必须提供稳定操作标识')
+          const { result: outcome, replayed } = await runtime.operationWithTransaction(context, job.operationId, job.method, job.params,
+            tx => applyUndoInTransaction(tx, runtime.backend, ownerId, job.params.context_id as string, job.params.undo_id as string, job.method === 'undo.apply' ? 'undo' : 'redo'), { signal })
+          if (outcome.error) throw new UndoError(outcome.error.code, outcome.error.message, outcome.error.statusCode)
+          result = replayed ? { ...outcome.result!, events: [] } : outcome.result
         } else if (job.operationId && isMutation(job.method))
           result = await runtime.operation(
             context,
@@ -68,11 +79,14 @@ try {
           )
         port.postMessage({ id: job.id, result })
       } catch (error) {
+        const safe = error instanceof UndoError
+          ? new CoreError(error.code === 'undo.not_found' ? 'not_found' : error.code === 'undo.unsupported' ? 'invalid_request' : 'conflict', error.message)
+          : error
         port.postMessage({
           id: job.id,
           error:
-            error instanceof CoreError
-              ? { code: error.code, message: error.message }
+            safe instanceof CoreError
+              ? { code: safe.code, message: safe.message }
               : { code: 'storage_error', message: '本地数据操作失败' },
         })
       }

@@ -5,7 +5,7 @@ import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createPostgresRegistrationSeedOperations } from '../../src/domains/onboarding/persistence/registration-seed-postgres.js'
-import { createRegistrationSeeder, type RegistrationSeedPlan } from '../../src/domains/onboarding/registration-seed.js'
+import { createRegistrationSeeder, type RegistrationSeedPlan } from '@gugu/core/onboarding'
 
 function plan(): RegistrationSeedPlan {
   return {

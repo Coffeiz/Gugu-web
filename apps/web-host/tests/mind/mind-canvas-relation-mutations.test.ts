@@ -1,14 +1,18 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  createMindCanvasRelationMutations,
+  createMindCanvasRelationCreate,
+  createMindCanvasRelationDelete,
+  createMindGlobalRelationDelete,
   MindCanvasRelationMutationError,
-  type MindCanvasRelationMutationRuntime,
-  type MindCanvasRelationRecord,
-} from '../../src/domains/mind/application/mind-canvas-relation-mutations.js'
+  type MindRelationCreateRuntime,
+  type CanvasRelationDeleteRuntime,
+  type GlobalRelationDeleteRuntime,
+  type GlobalRelationRecord,
+} from '@gugu/core/mind'
 
 const timestamp = new Date('2026-11-14T01:02:03.000Z')
-const relation: MindCanvasRelationRecord = {
+const relation: GlobalRelationRecord = {
   id: 18, canvas_id: 4, src_node_id: 9, dst_node_id: 12, rel_type: 'related', edge_key: '',
   origin: 'user', status: 'confirmed', note: null,
   created_at: timestamp, updated_at: timestamp, deleted_at: null,
@@ -19,7 +23,7 @@ test('canvas relation create keeps owner, Undo, metadata and post-transaction no
   const order: string[] = []
   let undo: unknown
   let event: unknown
-  const runtime: MindCanvasRelationMutationRuntime = {
+  const runtime: MindRelationCreateRuntime = {
     async transaction(ownerId, work) {
       order.push(`begin:${ownerId}`)
       const result = await work({
@@ -27,8 +31,6 @@ test('canvas relation create keeps owner, Undo, metadata and post-transaction no
           order.push(`create:${requestOwner}:${canvasId}:${sourceId}:${targetId}:${allowParallel}`)
           return { relation, before: null, created: true }
         },
-        async delete() { return null },
-        async deleteGlobal() { return null },
         async recordUndo(record) { undo = record; order.push('undo') },
       })
       order.push('commit')
@@ -37,7 +39,7 @@ test('canvas relation create keeps owner, Undo, metadata and post-transaction no
     async publishChanged(value) { event = value; order.push('publish') },
   }
 
-  const result = await createMindCanvasRelationMutations(runtime).create('owner-a', {
+  const result = await createMindCanvasRelationCreate(runtime)('owner-a', {
     canvas_id: '4', src_node_id: '12', dst_node_id: 9, allow_parallel: false,
   }, metadata)
 
@@ -63,19 +65,17 @@ test('canvas relation create keeps owner, Undo, metadata and post-transaction no
 
 test('idempotent relation creation returns existing edge and preserves Python create notification behavior', async () => {
   let publishes = 0
-  const runtime: MindCanvasRelationMutationRuntime = {
+  const runtime: MindRelationCreateRuntime = {
     async transaction(_ownerId, work) {
       return work({
         async create() { return { relation, before: relation, created: false } },
-        async delete() { return null },
-        async deleteGlobal() { return null },
         async recordUndo() {},
       })
     },
     async publishChanged() { publishes += 1 },
   }
 
-  const result = await createMindCanvasRelationMutations(runtime).create('owner-a', {
+  const result = await createMindCanvasRelationCreate(runtime)('owner-a', {
     canvasId: 4, srcNodeId: 9, dstNodeId: 12,
   }, metadata)
 
@@ -85,23 +85,21 @@ test('idempotent relation creation returns existing edge and preserves Python cr
 
 test('self relation and malformed parallel-edge flag fail before persistence', async () => {
   let transactions = 0
-  const runtime: MindCanvasRelationMutationRuntime = {
+  const runtime: MindRelationCreateRuntime = {
     async transaction(_ownerId, work) {
       transactions += 1
       return work({
         async create() { return { relation, before: null, created: true } },
-        async delete() { return null },
-        async deleteGlobal() { return null },
         async recordUndo() {},
       })
     },
     async publishChanged() {},
   }
-  const mutations = createMindCanvasRelationMutations(runtime)
+  const create = createMindCanvasRelationCreate(runtime)
 
-  await assert.rejects(mutations.create('owner-a', { canvasId: 4, srcNodeId: 9, dstNodeId: 9 }, metadata),
+  await assert.rejects(create('owner-a', { canvasId: 4, srcNodeId: 9, dstNodeId: 9 }, metadata),
     (error: unknown) => error instanceof MindCanvasRelationMutationError && error.statusCode === 422)
-  await assert.rejects(mutations.create('owner-a', {
+  await assert.rejects(create('owner-a', {
     canvasId: 4, srcNodeId: 9, dstNodeId: 12, allowParallel: 'yes',
   }, metadata),
   (error: unknown) => error instanceof MindCanvasRelationMutationError && error.statusCode === 422)
@@ -112,15 +110,13 @@ test('relation delete records reversible state and publishes only after transact
   const deleted = { ...relation, deleted_at: timestamp }
   const order: string[] = []
   let undo: unknown
-  const runtime: MindCanvasRelationMutationRuntime = {
+  const runtime: CanvasRelationDeleteRuntime = {
     async transaction(_ownerId, work) {
       const result = await work({
-        async create() { return { relation, before: null, created: true } },
         async delete(ownerId, canvasId, id) {
           order.push(`delete:${ownerId}:${canvasId}:${id}`)
           return { before: relation, after: deleted }
         },
-        async deleteGlobal() { return null },
         async recordUndo(record) { undo = record; order.push('undo') },
       })
       order.push('commit')
@@ -129,7 +125,7 @@ test('relation delete records reversible state and publishes only after transact
     async publishChanged(event) { order.push(`publish:${event.operation}`) },
   }
 
-  await createMindCanvasRelationMutations(runtime).delete('owner-a', 4, 18, metadata)
+  await createMindCanvasRelationDelete(runtime)('owner-a', 4, 18, metadata)
 
   assert.deepEqual(order, ['delete:owner-a:4:18', 'undo', 'commit', 'publish:delete'])
   assert.deepEqual(undo, {
@@ -153,11 +149,9 @@ test('global relation delete hides canvas relations, records null-canvas Undo an
   const order: string[] = []
   let undo: unknown
   let event: unknown
-  const runtime: MindCanvasRelationMutationRuntime = {
+  const runtime: GlobalRelationDeleteRuntime = {
     async transaction(ownerId, work) {
       const result = await work({
-        async create() { return { relation: globalRelation, before: null, created: true } },
-        async delete() { return null },
         async deleteGlobal(requestOwner, id) {
           order.push(`delete:${requestOwner}:${id}`)
           return requestOwner === 'owner-a' && id === 18 ? { before: globalRelation, after: deleted } : null
@@ -170,7 +164,7 @@ test('global relation delete hides canvas relations, records null-canvas Undo an
     async publishChanged(value) { event = value; order.push('publish') },
   }
 
-  await createMindCanvasRelationMutations(runtime).deleteGlobal('owner-a', 18, metadata)
+  await createMindGlobalRelationDelete(runtime)('owner-a', 18, metadata)
 
   assert.deepEqual(order, ['delete:owner-a:18', 'undo', 'commit', 'publish'])
   assert.deepEqual(undo, {

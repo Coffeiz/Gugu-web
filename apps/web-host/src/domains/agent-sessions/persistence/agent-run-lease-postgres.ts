@@ -1,10 +1,14 @@
 import { randomUUID } from 'node:crypto'
+import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import { agentRunStartupFailed, lockAgentRunSession } from './agent-run-startup-postgres.js'
 import type { Pool } from 'pg'
-import { RunStoreRejected, type Lease, type LeasePort, type RunIdentity } from '@gugu/core/harness'
+import { RunStoreRejected, type Lease, type LeasePort, type RunIdentity } from '@gugu/core/agent'
 
 export interface AgentRunLeaseOptions {
   leaseTtlMs?: number
   renewIntervalMs?: number
+  /** 调度运行必须传入当前选中租约；不配置仅供现有非调度调用方。 */
+  dispatchLease?: (identity: RunIdentity) => { token: string; fence: number } | null
 }
 
 interface ActiveLease {
@@ -44,7 +48,7 @@ function validateIdentity(identity: RunIdentity): number {
 
 /** 为 owner/session 提供 PostgreSQL fencing 租约；自动续租按进程管理，释放按 token 精确匹配。 */
 export function createPostgresAgentRunLeasePort(
-  pool: Pick<Pool, 'query'>,
+  pool: Pick<Pool, 'query' | 'connect'>,
   options: AgentRunLeaseOptions = {},
 ): LeasePort {
   const { leaseTtlMs, renewIntervalMs } = validateOptions(options)
@@ -89,7 +93,18 @@ export function createPostgresAgentRunLeasePort(
     async acquire(identity) {
       const sessionId = validateIdentity(identity)
       const token = randomUUID()
-      const result = await pool.query<{ fence: number | string }>(
+      const result = await withPostgresTransaction(pool, async client => {
+        if (!await lockAgentRunSession(client, identity) || await agentRunStartupFailed(client, identity)) return null
+        if (options.dispatchLease) {
+          const dispatch = options.dispatchLease(identity)
+          if (!dispatch) return null
+          const valid = await client.query(`SELECT 1 FROM agent_run_dispatch WHERE user_id=$1 AND session_id=$2 AND run_id=$3
+            AND state='selected' AND token=$4 AND fence=$5 AND lease_expires_at>clock_timestamp()`, [identity.ownerId, sessionId, identity.runId, dispatch.token, dispatch.fence])
+          if (valid.rowCount !== 1) return null
+        }
+        const session = await client.query<{ execution_state: string }>('SELECT execution_state FROM conversation_sessions WHERE user_id=$1 AND id=$2', [identity.ownerId, sessionId])
+        if (!session.rows[0] || session.rows[0].execution_state === 'baseline_updating') return null
+        const acquired = await client.query<{ fence: number | string }>(
         `INSERT INTO agent_run_leases (
            user_id, session_id, run_id, token, fence, expires_at, created_at, updated_at
          )
@@ -107,8 +122,11 @@ export function createPostgresAgentRunLeasePort(
          WHERE agent_run_leases.expires_at <= clock_timestamp()
          RETURNING fence`,
         [identity.ownerId, sessionId, identity.runId, token, leaseTtlMs],
-      )
-      const row = result.rows[0]
+        )
+        if (acquired.rowCount === 1) await client.query("UPDATE conversation_sessions SET execution_state='running',active_run_id=$3 WHERE user_id=$1 AND id=$2", [identity.ownerId, sessionId, identity.runId])
+        return acquired
+      })
+      const row = result?.rows[0]
       if (!row) return null
       const key = identityKey(identity)
       const previous = active.get(key)
@@ -146,13 +164,19 @@ export function createPostgresAgentRunLeasePort(
         stopRenewal(state)
         if (state.renewal) await state.renewal
       }
-      await pool.query(
+      await withPostgresTransaction(pool, async client => {
+        if (!await lockAgentRunSession(client, identity)) return
+        const released = await client.query(
         `UPDATE agent_run_leases
          SET expires_at = clock_timestamp(), updated_at = clock_timestamp()
          WHERE user_id = $1 AND session_id = $2 AND run_id = $3
            AND token = $4 AND fence = $5`,
         [identity.ownerId, sessionId, identity.runId, lease.token, lease.fence],
-      )
+        )
+        if (released.rowCount === 1) await client.query(`UPDATE conversation_sessions
+          SET execution_state=CASE WHEN execution_state='baseline_updating' THEN execution_state ELSE 'idle' END, active_run_id=NULL
+          WHERE user_id=$1 AND id=$2 AND active_run_id=$3`, [identity.ownerId, sessionId, identity.runId])
+      })
       if (state && active.get(key) === state) active.delete(key)
     },
   }

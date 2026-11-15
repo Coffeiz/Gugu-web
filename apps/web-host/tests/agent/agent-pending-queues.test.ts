@@ -131,7 +131,7 @@ test('PostgreSQL 队列读取按 owner 和 queue id 联合隔离', {
     )
     const readQueue = createPostgresAgentPendingQueueReader(pool)
     assert.deepEqual(await readQueue(owner, 'session-7'), {
-      sessionId: 7, items: [{ key: 1, text: 'owner' }],
+      sessionId: 7, projected: true, items: [{ key: 1, text: 'owner', queue_id: 'session-7', session_id: 7, claimed: false }],
     })
     assert.equal(await readQueue(other, 'absent'), null)
   } finally {
@@ -164,8 +164,8 @@ test('PostgreSQL 导入草稿只读 owner 所有的未绑定 import 队列并按
       ($2,'import-foreign',NULL,'[{"key":5,"text":"foreign"}]','2026-11-16T00:00:00Z')`, [owner, other])
     const readDrafts = createPostgresAgentImportedDraftQueueReader(pool)
     assert.deepEqual(await readDrafts(owner), [
-      { queueId: 'import-old', items: [{ key: 1, text: 'old' }] },
-      { queueId: 'import-new', items: [{ key: 2, text: 'new' }] },
+      { queueId: 'import-old', projected: true, items: [{ key: 1, text: 'old', queue_id: 'import-old', session_id: null, claimed: false }] },
+      { queueId: 'import-new', projected: true, items: [{ key: 2, text: 'new', queue_id: 'import-new', session_id: null, claimed: false }] },
     ])
   } finally {
     await pool.end()

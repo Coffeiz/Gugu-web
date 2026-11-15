@@ -53,7 +53,7 @@ export function registerAdminUserRiskRoute(app: FastifyInstance, options: AdminU
                    LEFT JOIN visible_events ON visible_events.user_id = u.id
                    LEFT JOIN recent_events ON recent_events.user_id = u.id
                    WHERE u.account_status <> 'active' OR visible_events.user_id IS NOT NULL
-                   ORDER BY u.updated_at DESC`
+                   ORDER BY u.created_at DESC`
       try {
         const rows = await options.query(sql, [visibleCutoff.toISOString(), policyCutoff.toISOString()])
         const items = rows.map((row) => {

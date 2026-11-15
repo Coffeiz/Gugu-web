@@ -1,9 +1,10 @@
-import { CoreError, dataContext } from '@gugu/core'
+import { CoreError } from '@gugu/core'
 import type { Fields } from '@gugu/core'
 import type { Pool, PoolClient } from 'pg'
 import { isPostgresUniqueViolation } from '../../../adapters/postgres-errors.js'
 import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
 import type { WorkspaceCreateResponse } from './workspace-create.js'
+import { createWorkspaceDeclarationUpdater, WorkspaceUpdateError } from '@gugu/core/workspace-declarations'
 
 type WorkspaceKind = 'folder' | 'project' | 'directory'
 
@@ -13,18 +14,6 @@ export interface WorkspaceUpdateInput extends Fields {
 }
 
 /** Service ValueError/LookupError status mapping from PATCH /workspaces/{id}. */
-export class WorkspaceUpdateError extends Error {
-  constructor(readonly statusCode: 400 | 404, message: string) {
-    super(message)
-    this.name = 'WorkspaceUpdateError'
-  }
-}
-
-interface NormalizedWorkspaceUpdate {
-  name: string | null
-  enabled: boolean | null
-}
-
 interface WorkspaceRow extends Record<string, unknown> {
   id: number
   user_id: string
@@ -35,25 +24,6 @@ interface WorkspaceRow extends Record<string, unknown> {
   directory_id: number | null
   enabled: boolean
   is_default: boolean
-}
-
-function normalize(input: Fields): NormalizedWorkspaceUpdate {
-  if (input === null || typeof input !== 'object' || Array.isArray(input))
-    throw new CoreError('invalid_request', '请求内容必须是对象')
-  const value = input as Record<string, unknown>
-  let name: string | null = null
-  let enabled: boolean | null = null
-  if ('name' in value && value.name !== null && value.name !== undefined) {
-    if (typeof value.name !== 'string') throw new CoreError('invalid_request', '名称必须是文本或空值')
-    const length = Array.from(value.name).length
-    if (length < 1 || length > 200) throw new CoreError('invalid_request', '名称长度必须为 1 至 200 个字符')
-    name = value.name
-  }
-  if ('enabled' in value && value.enabled !== null && value.enabled !== undefined) {
-    if (typeof value.enabled !== 'boolean') throw new CoreError('invalid_request', 'enabled 必须是布尔值或空值')
-    enabled = value.enabled
-  }
-  return { name, enabled }
 }
 
 function validateDirectoryDisplayName(value: string): string {
@@ -155,47 +125,21 @@ async function toResponse(
 
 /** Port of PATCH /api/v1/workspaces/{id}; directory display renames preserve the physical path. */
 export function createPostgresWorkspaceUpdater(pool: Pool) {
-  return async function updateWorkspace(
-    authenticatedOwnerId: string,
-    workspaceId: number,
-    rawInput: Fields,
-  ): Promise<WorkspaceCreateResponse> {
-    let ownerId: string
-    let input: NormalizedWorkspaceUpdate
-    try {
-      ownerId = dataContext(authenticatedOwnerId).ownerId
-      input = normalize(rawInput)
-    } catch (error) {
-      if (error instanceof CoreError) throw error
-      throw new CoreError('invalid_request', error instanceof Error ? error.message : '工作区字段无效')
-    }
-    if (!Number.isSafeInteger(workspaceId) || workspaceId < 1)
-      throw new CoreError('invalid_request', '工作区 ID 无效')
-    return withPostgresTransaction(pool, async (client) => {
-      const workspace = await loadOwnedWorkspace(client, ownerId, workspaceId)
-      if (input.name !== null) {
-        const name = input.name.trim()
-        if (!name) throw new WorkspaceUpdateError(400, '工作区名称不能为空')
-        if (workspace.kind === 'directory') {
-          if (workspace.directory_id === null)
-            throw new WorkspaceUpdateError(404, '工作区目录不存在')
-          await updateWorkspaceDirectoryName(client, ownerId, workspace.directory_id, name)
-        } else {
-          await client.query(
-            `UPDATE workspaces SET name = $3, updated_at = CURRENT_TIMESTAMP
-             WHERE id = $1 AND user_id = $2`,
-            [workspaceId, ownerId, name],
-          )
-        }
-      }
-      if (input.enabled !== null) {
-        await client.query(
-          `UPDATE workspaces SET enabled = $3, updated_at = CURRENT_TIMESTAMP
-           WHERE id = $1 AND user_id = $2`,
-          [workspaceId, ownerId, input.enabled],
-        )
-      }
-      return toResponse(client, ownerId, workspaceId)
-    })
-  }
+  return createWorkspaceDeclarationUpdater({
+    transaction: work => withPostgresTransaction(pool, client => work({
+      async relationExists() { throw new Error('更新事务不支持关联校验') },
+      async insert() { throw new Error('更新事务不支持创建工作区') },
+      async get(owner, id) {
+        try { return await toResponse(client, owner, id) }
+        catch (error) { if (error instanceof WorkspaceUpdateError && error.statusCode === 404) return null; throw error }
+      },
+      renameDirectory: (owner, id, name) => updateWorkspaceDirectoryName(client, owner, id, name),
+      async update(owner, id, fields) {
+        if (fields.name !== undefined) await client.query(
+          'UPDATE workspaces SET name = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND user_id = $2', [id, owner, fields.name])
+        if (fields.enabled !== undefined) await client.query(
+          'UPDATE workspaces SET enabled = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND user_id = $2', [id, owner, fields.enabled])
+      },
+    })),
+  })
 }

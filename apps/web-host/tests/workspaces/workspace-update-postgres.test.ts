@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
-import { createPostgresWorkspaceUpdater, WorkspaceUpdateError } from '../../src/domains/workspaces/persistence/workspace-update.js'
+import { createPostgresWorkspaceUpdater } from '../../src/domains/workspaces/persistence/workspace-update.js'
+import { WorkspaceUpdateError } from '@gugu/core/workspace-declarations'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
@@ -116,6 +117,7 @@ test('PATCH workspace 保持 owner、directory path、绑定名称、enabled 与
     await assert.rejects(update(ownerId, 41, { name: 'default' }), { statusCode: 400 })
     await assert.rejects(update(ownerId, 43, { name: 'Renamed System' }), { statusCode: 400 })
     await assert.rejects(update(ownerId, 41, { name: '   ' }), { statusCode: 400 })
+    await assert.rejects(update(ownerId, 41, { name: 123 }), { code: 'invalid_request', message: '名称必须是文本或空值' })
     await assert.rejects(update(ownerId, 44, { enabled: false }), { statusCode: 404 })
     await assert.rejects(update(ownerId, 999, { enabled: false }), { statusCode: 404 })
     const disabledProjectWorkspace = await update(ownerId, 45, { enabled: false })

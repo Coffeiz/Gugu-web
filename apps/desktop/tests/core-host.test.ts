@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname, resolve } from 'node:path'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import { DatabaseSync } from 'node:sqlite'
+import { LocalRuntime } from '@gugu/core/local'
+import { CORE_SCHEMA_VERSION } from '@gugu/core/desktop'
 import { pathToFileURL } from 'node:url'
 import {
   CoreHost,
@@ -27,16 +30,21 @@ afterEach(() => {
       retryDelay: 100,
     })
 })
-function fake(response: string) {
+function fake(response: string, undoAvailable = true) {
   const root = directory(),
     entry = join(root, 'host.mjs')
   writeFileSync(
     entry,
-    `import {createInterface} from 'node:readline'; process.stdout.write(JSON.stringify({v:2,event:'ready',schema:'3',capabilities:['operation_receipts']})+'\\n'); createInterface({input:process.stdin}).on('line',line=>{ const request=JSON.parse(line); const response=request.method==='operations.get'?{v:2,id:request.id,result:null}:${response}; process.stdout.write(JSON.stringify(response)+'\\n') });`,
+    `import {createInterface} from 'node:readline'; process.stdout.write(JSON.stringify({v:2,event:'ready',schema:'${CORE_SCHEMA_VERSION}',capabilities:${JSON.stringify(undoAvailable ? ['operation_receipts', 'undo_mind_v1'] : ['operation_receipts'])}})+'\\n'); createInterface({input:process.stdin}).on('line',line=>{ const request=JSON.parse(line); const response=request.method==='operations.get'?{v:2,id:request.id,result:null}:${response}; process.stdout.write(JSON.stringify(response)+'\\n') });`,
   )
   return CoreHost.launch(process.execPath, entry, join(root, 'core.db'))
 }
 describe('Electron 与独立 Node Core 的真实边界', () => {
+  it('拒绝旧 schema 的 Core 握手', async () => {
+    const root = directory(), entry = join(root, 'old.mjs')
+    writeFileSync(entry, `process.stdout.write(JSON.stringify({v:2,event:'ready',schema:'5',capabilities:['operation_receipts']})+'\\n')`)
+    await expect(CoreHost.launch(process.execPath, entry, join(root, 'core.db'))).rejects.toMatchObject({ code: 'startup_failed' })
+  })
   it('第二个 Host 拒绝打开同一数据库，原 Host 仍可写入且释放后可重新接管', async () => {
     const root = directory(),
       database = join(root, 'core.db'),
@@ -86,7 +94,7 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
       const {LocalRuntime} = await import(${JSON.stringify(local)});
       const database = process.argv[process.argv.indexOf('--database') + 1];
       const runtime = await LocalRuntime.initialize(database, {exclusive:true});
-      process.stdout.write(JSON.stringify({v:2,event:'ready',schema:'3',capabilities:['operation_receipts']})+'\\n');
+      process.stdout.write(JSON.stringify({v:2,event:'ready',schema:'${CORE_SCHEMA_VERSION}',capabilities:['operation_receipts']})+'\\n');
       for await (const line of createInterface({input:process.stdin})) {
         const request = JSON.parse(line);
         await runtime.call(request.method, request.params, {operationId:request.operation_id});
@@ -257,13 +265,16 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
       nodeVersion: process.versions.node,
       nodeAbi: process.versions.modules,
       protocol: 2,
-      schema: 3,
+      schema: CORE_SCHEMA_VERSION,
       executable,
       entry: 'host/dist/runtime/transport/stdio.js',
       files,
     }
     writeFileSync(join(root, 'manifest.json'), JSON.stringify(manifest))
     expect((await verifyArtifact(root)).manifest.protocol).toBe(2)
+    writeFileSync(join(root, 'manifest.json'), JSON.stringify({ ...manifest, schema: 5 }))
+    await expect(verifyArtifact(root)).rejects.toMatchObject({ code: 'artifact_invalid' })
+    writeFileSync(join(root, 'manifest.json'), JSON.stringify(manifest))
     writeFileSync(join(root, 'injected.js'), '合成额外模块')
     await expect(verifyArtifact(root)).rejects.toMatchObject({
       code: 'artifact_invalid',
@@ -278,6 +289,78 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
     await expect(verifyArtifact(root)).rejects.toMatchObject({
       code: 'artifact_invalid',
     })
+  })
+  it('旧 v2 侧车仍可启动但没有撤销能力时拒绝 Undo', async () => {
+    const host = await fake('{v:2,id:request.id,result:request}', false)
+    try {
+      expect(await host.request('projects.list')).toMatchObject({ method: 'projects.list' })
+      await expect(host.request('undo.preview', { context_id: 'tab' })).rejects.toMatchObject({ code: 'invalid_request' })
+      await expect(host.request('undo.apply', { context_id: 'tab', undo_id: 'op-1' }, randomUUID())).rejects.toMatchObject({ code: 'invalid_request' })
+      expect(await host.request('operations.get', { operation_id: randomUUID() })).toBeNull()
+    } finally { await host.close() }
+  })
+  it('具名 Undo IPC 通过真实 Core Worker 持久化撤销、重做与收据', async () => {
+    const root = directory(), database = join(root, 'core.db')
+    const runtime = await LocalRuntime.initialize(database), owner = runtime.ownerId.replaceAll('-', '')
+    await runtime.close()
+    const db = new DatabaseSync(database), stamp = '2026-01-01 00:00:00.000000'
+    try {
+      db.prepare("INSERT INTO mind_nodes (id,user_id,kind,title,content_md,content_plain,origin,version,captured_at,created_at,updated_at) VALUES (1,?,'note','本地','','','user',1,?,?,?)").run(owner, stamp, stamp, stamp)
+      const snapshot = { kind: 'note', title: '本地', content_md: '', content_plain: '', color: null, captured_at: stamp, deleted_at: null }
+      db.prepare("INSERT INTO undo_operations (id,user_id,undo_context_id,group_id,resource,action,target_refs,before_state,after_state,base_versions,artifact_refs,actor_type,status,created_at) VALUES ('undo-one',?,'tab','group','mind','create','[1]','{}',?,'{}','{}','web','active',?)").run(owner, JSON.stringify({ items: { 'note:1': snapshot } }), stamp)
+    } finally { db.close() }
+    const entry = resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js')
+    const host = await CoreHost.launch(process.execPath, entry, database)
+    try {
+      const handlers = desktopHandlers(host, async () => null)
+      expect(await handlers['gugu:undo:preview']!('tab')).toMatchObject({ available: true })
+      const operationId = randomUUID()
+      const first = await handlers['gugu:undo:apply']!('tab', 'undo-one', operationId) as { events: unknown[] }
+      expect(first.events).toHaveLength(1)
+      expect((await handlers['gugu:undo:apply']!('tab', 'undo-one', operationId) as { events: unknown[] }).events).toEqual([])
+      expect(await handlers['gugu:operations:get']!(operationId)).toMatchObject({ method: 'undo.apply' })
+      expect((await handlers['gugu:undo:redo']!('tab', 'undo-one', randomUUID()) as { events: unknown[] }).events).toHaveLength(1)
+    } finally { await host.close() }
+  })
+  it('Undo 仅允许具名 v2 调用并保留调用方操作标识', async () => {
+    const host = await fake('{v:2,id:request.id,result:request}')
+    const operationId = 'c60f3fd0-f9bb-4237-8a38-505be6769f42'
+    try {
+      const preview = await host.request<Record<string, unknown>>('undo.preview', { context_id: 'tab' })
+      expect(preview).toMatchObject({ v: 2, method: 'undo.preview', params: { context_id: 'tab' } })
+      expect(preview).not.toHaveProperty('operation_id')
+      for (const method of ['undo.apply', 'undo.redo']) {
+        const result = await host.request<Record<string, unknown>>(method, { context_id: 'tab', undo_id: 'op-1' }, operationId)
+        expect(result).toMatchObject({ v: 2, method, operation_id: operationId, params: { context_id: 'tab', undo_id: 'op-1' } })
+        await expect(host.request(method, { context_id: 'tab', undo_id: 'op-1' })).rejects.toMatchObject({ code: 'invalid_request' })
+        await expect(host.request(method, { context_id: 'tab', undo_id: 'op-1' }, 'invalid')).rejects.toMatchObject({ code: 'invalid_request' })
+      }
+      await expect(host.request('undo.apply', { context_id: 'tab', undo_id: 'op-1', owner_id: 'foreign' }, operationId)).rejects.toMatchObject({ code: 'invalid_request' })
+      await expect(host.request('undo.other', {}, operationId)).rejects.toMatchObject({ code: 'invalid_request' })
+    } finally { await host.close() }
+  })
+  it('Undo 未知结果保留调用方操作标识供收据查询', async () => {
+    const host = await fake("{v:2,id:request.id,error:{code:'synthetic_failure'}}")
+    const operationId = 'c60f3fd0-f9bb-4237-8a38-505be6769f42'
+    try {
+      await expect(host.request('undo.apply', { context_id: 'tab', undo_id: 'op-1' }, operationId)).rejects.toMatchObject({ code: 'unknown_result', operationId })
+      expect(await host.request('operations.get', { operation_id: operationId })).toBeNull()
+    } finally { await host.close() }
+  })
+  it('Undo 存储错误与通信中断保留收据标识，确定拒绝仍为业务错误', async () => {
+    const operationId = 'c60f3fd0-f9bb-4237-8a38-505be6769f42'
+    for (const response of ["{v:2,id:request.id,error:{code:'storage_error'}}", '{v:2,id:request.id+1,result:null}']) {
+      const host = await fake(response)
+      try {
+        await expect(host.request('undo.redo', { context_id: 'tab', undo_id: 'op-1' }, operationId))
+          .rejects.toMatchObject({ code: 'unknown_result', operationId })
+      } finally { await host.close() }
+    }
+    const host = await fake("{v:2,id:request.id,error:{code:'not_found'}}")
+    try {
+      await expect(host.request('undo.apply', { context_id: 'tab', undo_id: 'op-1' }, operationId))
+        .rejects.toMatchObject({ code: 'not_found', operationId: undefined })
+    } finally { await host.close() }
   })
   it('未授权窗口不调用 Core，错误信封不包含原始异常，暴露能力只有固定业务项', async () => {
     let called = false
@@ -302,6 +385,6 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
           async () => null,
         ),
       ),
-    ).toHaveLength(6)
+    ).toHaveLength(9)
   })
 })

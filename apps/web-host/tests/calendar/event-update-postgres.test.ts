@@ -1,15 +1,16 @@
+import { createPostgresRuntime } from '@gugu/core/data'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
-import { EventUpdateError, updateCalendarEvent } from '../../src/domains/calendar/application/event-update.js'
-import { createPostgresEventUpdateStore } from '../../src/domains/calendar/persistence/event-update-postgres.js'
+import { EventUpdateError, updateCalendarEvent } from '@gugu/core/calendar'
+import { calendarUpdateStore } from './calendar-core-stores.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
 const otherOwnerId = '3f5cfa3d-9cb7-46af-923e-8ef0eb3e7da2'
 
-async function withDatabase(work: (pool: Pool) => Promise<void>) {
+async function withDatabase(work: (pool: Pool, coreRuntime: Awaited<ReturnType<typeof createPostgresRuntime>>) => Promise<void>) {
   const schema = `gugu_event_update_${randomUUID().replaceAll('-', '')}`
   const adminPool = new Pool({ connectionString: databaseUrl, max: 1 })
   await adminPool.query(`CREATE SCHEMA "${schema}"`)
@@ -84,7 +85,8 @@ async function withDatabase(work: (pool: Pool) => Promise<void>) {
         failure_code varchar(80)
       )
     `)
-    await work(pool)
+    const coreRuntime = await createPostgresRuntime({ url: databaseUrl!, schema })
+    try { await work(pool, coreRuntime) } finally { await coreRuntime.close() }
   } finally {
     await pool.end()
     await adminPool.query(`DROP SCHEMA "${schema}" CASCADE`)
@@ -126,10 +128,10 @@ async function seed(pool: Pool, withReminders = true) {
 
 test('PATCH validates owner project and atomically updates event, enabled reminders, Undo, and post-commit calendar event', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
-}, async () => withDatabase(async (pool) => {
+}, async () => withDatabase(async (pool, coreRuntime) => {
   const { eventId, taskIds } = await seed(pool)
   const publications: unknown[] = []
-  const store = createPostgresEventUpdateStore(pool, async (publication) => {
+  const store = calendarUpdateStore(coreRuntime, async (publication) => {
     const event = await pool.query<{ version: number; title: string }>(
       'SELECT version, title FROM calendar_events WHERE id = $1', [eventId],
     )
@@ -198,10 +200,10 @@ test('PATCH validates owner project and atomically updates event, enabled remind
 
 test('empty PATCH returns the current event without a version change, Undo, reminder write, or publication', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
-}, async () => withDatabase(async (pool) => {
+}, async () => withDatabase(async (pool, coreRuntime) => {
   const { eventId } = await seed(pool)
   let publicationCount = 0
-  const store = createPostgresEventUpdateStore(pool, async () => { publicationCount += 1 })
+  const store = calendarUpdateStore(coreRuntime, async () => { publicationCount += 1 })
   const result = await updateCalendarEvent(store, { ownerId, eventId, body: { version: 3 } })
   assert.equal(result.version, 3)
   const undo = await pool.query('SELECT id FROM undo_operations')
@@ -215,9 +217,9 @@ test('empty PATCH returns the current event without a version change, Undo, remi
 
 test('PATCH stages enabled reminder crons before rescheduling into another reminder’s old slot', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
-}, async () => withDatabase(async (pool) => {
+}, async () => withDatabase(async (pool, coreRuntime) => {
   const { eventId } = await seed(pool)
-  const store = createPostgresEventUpdateStore(pool, async () => undefined)
+  const store = calendarUpdateStore(coreRuntime, async () => undefined)
   await updateCalendarEvent(store, {
     ownerId, eventId, body: { time: '08:00', version: 3 },
   })
@@ -232,13 +234,14 @@ test('PATCH stages enabled reminder crons before rescheduling into another remin
 
 test('PATCH rejects missing, foreign, soft-deleted, stale events and foreign/deleted projects without writes', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
-}, async () => withDatabase(async (pool) => {
+}, async () => withDatabase(async (pool, coreRuntime) => {
   const { eventId } = await seed(pool, false)
   const deleted = await pool.query<{ id: number }>(
     `INSERT INTO calendar_events(user_id, title, date, version, deleted_at)
      VALUES ($1, 'Deleted', '2099-01-02', 3, CURRENT_TIMESTAMP) RETURNING id`, [ownerId],
   )
-  const store = createPostgresEventUpdateStore(pool, async () => assert.fail('rejected PATCH must not publish'))
+  let publications = 0
+  const store = calendarUpdateStore(coreRuntime, async () => { publications++ })
   const requests = [
     { ownerId: otherOwnerId, eventId, body: { title: 'No', version: 3 }, status: 404 },
     { ownerId, eventId: deleted.rows[0]!.id, body: { title: 'No', version: 3 }, status: 404 },
@@ -259,14 +262,15 @@ test('PATCH rejects missing, foreign, soft-deleted, stale events and foreign/del
   assert.deepEqual(event.rows[0], { title: 'Old title', version: 3, project_id: 12 })
   const undo = await pool.query('SELECT id FROM undo_operations')
   assert.equal(undo.rows.length, 0)
+  assert.equal(publications, 0)
 }))
 
 test('invalid reminder reschedule rolls back event and reminder changes without Undo or publication', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
-}, async () => withDatabase(async (pool) => {
+}, async () => withDatabase(async (pool, coreRuntime) => {
   const { eventId } = await seed(pool)
   let publicationCount = 0
-  const store = createPostgresEventUpdateStore(pool, async () => { publicationCount += 1 })
+  const store = calendarUpdateStore(coreRuntime, async () => { publicationCount += 1 })
   await assert.rejects(
     updateCalendarEvent(store, {
       ownerId, eventId, body: { title: 'Rejected', date: '2000-01-01', time: '12:00', version: 3 },
@@ -290,10 +294,10 @@ test('invalid reminder reschedule rolls back event and reminder changes without 
 
 test('PATCH rolls event and reminder edits back when the Undo write fails', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
-}, async () => withDatabase(async (pool) => {
+}, async () => withDatabase(async (pool, coreRuntime) => {
   const { eventId } = await seed(pool)
   let publicationCount = 0
-  const store = createPostgresEventUpdateStore(pool, async () => { publicationCount += 1 })
+  const store = calendarUpdateStore(coreRuntime, async () => { publicationCount += 1 })
   await pool.query(`
     CREATE FUNCTION fail_update_undo() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN RAISE EXCEPTION 'synthetic undo failure'; END
@@ -322,11 +326,11 @@ test('PATCH rolls event and reminder edits back when the Undo write fails', {
 
 test('PATCH notification failure is diagnostic-only after the event and Undo commit', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
-}, async () => withDatabase(async (pool) => {
+}, async () => withDatabase(async (pool, coreRuntime) => {
   const { eventId } = await seed(pool, false)
   const diagnostics: string[] = []
-  const store = createPostgresEventUpdateStore(
-    pool,
+  const store = calendarUpdateStore(
+    coreRuntime,
     async () => { throw new Error('synthetic publisher failure') },
     (operation) => diagnostics.push(operation),
   )
@@ -344,10 +348,10 @@ test('PATCH notification failure is diagnostic-only after the event and Undo com
 
 test('concurrent PATCHes with the same version cannot overwrite one another', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
-}, async () => withDatabase(async (pool) => {
+}, async () => withDatabase(async (pool, coreRuntime) => {
   const { eventId } = await seed(pool, false)
   let publicationCount = 0
-  const store = createPostgresEventUpdateStore(pool, async () => { publicationCount += 1 })
+  const store = calendarUpdateStore(coreRuntime, async () => { publicationCount += 1 })
   const results = await Promise.allSettled([
     updateCalendarEvent(store, {
       ownerId, eventId, body: { title: 'Winner A', version: 3 }, undoContextId: 'calendar-tab',

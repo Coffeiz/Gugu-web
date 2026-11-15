@@ -4,6 +4,7 @@ import type { UserQuota } from './quota.js'
 
 export interface UserAuthOptions {
   secret: string
+  tokenExpiresMinutes?: number
   lookupUser: (userId: string) => Promise<PublicUserRecord | null>
   markUserActive?: (userId: string) => Promise<void>
   authenticateCredentials?: (username: string, password: string) => Promise<PublicUserRecord | null>

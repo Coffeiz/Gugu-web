@@ -23,7 +23,8 @@ it('注入的真实 IPC 端口保留同样的身份、收据和命令契约，�
     expect((await ready)[0]).toMatchObject({
       v: 2,
       event: 'ready',
-      schema: '3',
+      schema: runtime.schemaVersion,
+      capabilities: ['operation_receipts', 'undo_mind_v1'],
     })
     const operation = randomUUID(),
       create = {

@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "documents": [
+    {
+      "id": "S1",
+      "file": "canvas.md"
+    },
+    {
+      "id": "S2",
+      "file": "email.md"
+    },
+    {
+      "id": "S4",
+      "file": "im-bind.md"
+    },
+    {
+      "id": "S5",
+      "file": "image-analysis.md"
+    },
+    {
+      "id": "S6",
+      "file": "knowledge-writing.md"
+    },
+    {
+      "id": "S7",
+      "file": "chart-and-math.md"
+    },
+    {
+      "id": "S8",
+      "file": "note-writing.md"
+    },
+    {
+      "id": "S9",
+      "file": "project-planning.md"
+    },
+    {
+      "id": "S12",
+      "file": "weather.md"
+    },
+    {
+      "id": "S13",
+      "file": "web-search.md"
+    }
+  ],
+  "excluded": [
+    {
+      "id": "S3",
+      "file": "file-ops.md",
+      "reason": "待重设计：正文包含旧文件存储与文件操作边界，尚未完成 Node 领域依赖验收。"
+    },
+    {
+      "id": "S10",
+      "file": "scheduled-tasks.md",
+      "reason": "依赖未就绪：定时任务工具与可信平台调度授权尚未完成接入。"
+    },
+    {
+      "id": "S11",
+      "file": "shell-workspace.md",
+      "reason": "待重设计：正文包含旧 Docker 沙盒边界，MXC 执行与多用户隔离尚未验收。"
+    }
+  ]
+}

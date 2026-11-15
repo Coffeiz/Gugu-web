@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { registerAdminAgentUsageRoute } from '../../src/domains/admin/admin-agent-usage.js'
+import { registerAdminAgentUsageRoute } from '../../src/modules/admin/agent-usage.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
@@ -28,7 +28,7 @@ test('Agent用量按时区、BYOK/开发者过滤和旧token边界聚合真实PG
       id bigserial PRIMARY KEY, user_id uuid NOT NULL, provider text NOT NULL, model text NOT NULL,
       scenario text, tokens_in bigint NOT NULL DEFAULT 0, tokens_out bigint NOT NULL DEFAULT 0,
       cache_read bigint NOT NULL DEFAULT 0, cache_write bigint NOT NULL DEFAULT 0,
-      is_byok boolean NOT NULL DEFAULT false, created_at timestamptz NOT NULL
+      is_byok boolean NOT NULL DEFAULT false, created_at timestamptz NOT NULL, cache_round_stats json
     )`)
     await pool.query('CREATE TABLE user_mcp_servers (id bigserial PRIMARY KEY, user_id uuid NOT NULL, scope text NOT NULL, enabled boolean NOT NULL)')
     const owner = '00000000-0000-4000-8000-000000000001', developer = '00000000-0000-4000-8000-000000000002', byok = '00000000-0000-4000-8000-000000000003'
@@ -50,6 +50,25 @@ test('Agent用量按时区、BYOK/开发者过滤和旧token边界聚合真实PG
     assert.equal(body.daily.find((row: { date: string }) => row.date === '2026-09-02').tokens_in, 800)
     assert.equal(body.daily.find((row: { date: string }) => row.date === '2026-09-04').tokens_in, 1520)
     assert.equal(body.by_model.some((row: { model: string }) => row.model === 'developer-model' || row.model === 'byok-model'), false)
+    const alternate = await app.inject({ url: '/api/v1/admin/agent/usage?date=2026-99-99&timezone=UTC&exclude_dev=YES&include_byok=1', headers: { authorization: 'admin' } })
+    assert.equal(alternate.statusCode, 200)
+    assert.equal(alternate.json().anchor_date, '2026-09-04')
+    assert.equal(alternate.json().total.calls, 3)
+    const invalid = await app.inject({ url: '/api/v1/admin/agent/usage?include_byok=perhaps', headers: { authorization: 'admin' } })
+    assert.equal(invalid.statusCode, 422)
+    await pool.query("INSERT INTO agent_usage (user_id,provider,model,scenario,tokens_in,tokens_out,cache_read,cache_write,is_byok,created_at) VALUES ($1,'deepseek','older','old-month',1,1,0,0,false,'2026-08-01T00:00:00Z')", [owner])
+    await pool.query(`INSERT INTO agent_usage (user_id,provider,model,scenario,tokens_in,tokens_out,cache_read,cache_write,is_byok,created_at,cache_round_stats) VALUES
+      ($1,'minimax','model','mixed-rounds',1000,0,9,0,false,'2026-09-04T04:00:00Z',NULL),
+      ($1,'minimax','model','mixed-rounds',16872,0,9128,0,false,'2026-09-04T04:00:00Z','{"cold_calls":1,"warm_input":10000,"warm_read":9000}')`, [owner])
+    const otherMonth = await app.inject({ url: '/api/v1/admin/agent/usage?date=2026-09-04&month=2026-08&timezone=UTC', headers: { authorization: 'admin' } })
+    assert.equal(otherMonth.statusCode, 200)
+    assert.equal(otherMonth.json().month, '2026-08')
+    assert.equal(otherMonth.json().by_scenario_month.some((row: { scenario: string }) => row.scenario === 'old-month'), false)
+    assert.equal(otherMonth.json().by_scenario_month.some((row: { scenario: string }) => row.scenario === 'chat'), true)
+    const mixed = otherMonth.json().by_scenario_month.find((row: { scenario: string }) => row.scenario === 'mixed-rounds')
+    assert.equal(mixed.cold_calls, 2)
+    assert.equal(mixed.warm_tokens_in, 10000)
+    assert.equal(mixed.warm_cache_ratio, 0.9)
     assert.equal(JSON.stringify(body).includes('api_key'), false)
   } finally {
     await app.close()
@@ -81,7 +100,7 @@ test('聚合应用层保留总计/日历响应结构并将时区及BYOK/开发�
       if (sql.includes('FROM user_mcp_servers')) return { rows: [{ servers: '2', users: '1' }] }
       if (sql.includes("WHERE scenario='mcp'")) return { rows: [{ calls: '3' }] }
       if (sql.includes('EXTRACT(HOUR')) return { rows: [{ hour: 12, calls: '1', tokens_in: '1520', tokens_out: '100', cache_read: '700', cache_write: '20' }] }
-      if (sql.includes("COALESCE(scenario,'chat')")) return { rows: [{ scenario: 'chat', calls: '1', tokens_in: '1520', tokens_out: '100', cache_read: '700', cache_write: '20', cold_calls: '0', warm_tokens_in: '1520' }] }
+      if (sql.includes("COALESCE(scenario,'chat')")) return { rows: [{ scenario: 'chat', calls: '1', tokens_in: '1520', tokens_out: '100', cache_read: '700', cache_write: '20', cold_calls: '0', warm_tokens_in: '1520', warm_cache_read: '700' }] }
       if (sql.includes("TO_CHAR(created_at AT TIME ZONE $1")) return { rows: [{ month: '2026-09' }] }
       if (sql.includes("TO_CHAR(created_at AT TIME ZONE $3")) {
         const from = params?.[0] instanceof Date ? params[0].toISOString().slice(0, 10) : String(params?.[0] ?? '')

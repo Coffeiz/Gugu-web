@@ -2,6 +2,7 @@ import type { FastifyInstance, preHandlerHookHandler } from 'fastify'
 import type { FeedbackOptions, UserFromRequest } from '../../app.js'
 import { validateDto } from '../../http/dto.js'
 import { feedbackCreateBodySchema } from '../../http/dtos.js'
+import { FeedbackValidationError } from '@gugu/core/feedback'
 
 export function registerFeedbackRoute(
   app: FastifyInstance,
@@ -12,11 +13,12 @@ export function registerFeedbackRoute(
     const user = userFromRequest(request)
     const result = validateDto(feedbackCreateBodySchema, request.body)
     if (!result.ok) return reply.code(422).send({ detail: '反馈请求字段无效' })
-    if (!['bug', 'suggestion', 'other'].includes(result.value.category))
-      return reply.code(400).send({ detail: '无效分类' })
-    const content = result.value.content.trim()
-    if (!content) return reply.code(400).send({ detail: '反馈内容不能为空' })
-    await feedback.submit(user.id, user.displayName || user.username, result.value.category, content)
+    try {
+      await feedback.submit(user.id, user.displayName || user.username, result.value.category, result.value.content)
+    } catch (error) {
+      if (error instanceof FeedbackValidationError) return reply.code(400).send({ detail: error.message })
+      throw error
+    }
     return reply.code(201).send({ ok: true })
   })
 }

@@ -4,29 +4,38 @@
 
 > **当前 2.0 范围**：Linux/NAS 自托管只支持 Local 文件存储。Node WebUI 不迁移 OSS/S3 在线存储路径；下文历史记录中“OSS callback/对象搬移待接入”等事项已被该决定取代，不再作为 Node 迁移缺口。Local 行为回归已完成；旧版 OSS 数据迁移/导出仍须单独实现与验收。SaaS 和独立备份目标不在此范围内。
 
-> **项目/日历复验边界**：最新共享树在 devserver Node 26.13.1 下，项目/日历 Node、PG 和两条认证 Vite 集成路径 `105/105` 通过、0 失败、0 跳过，随机测试 schema 清理后残留 `0`；Python 对照 10 个项目、Undo、幂等和日历文件用例 `66/66` 通过，typecheck 通过。此前未注入测试连接变量的探测为 `76 passed / 29 skipped / 0 failed`，不计数据库验收；后续测试从只读运行配置在子进程内提供连接，没有修改配置。提交后 context/live 通知失败时，Node 保持 best-effort 成功响应，而 Python 部分路由可能在已提交后返回 500；该错误路径差异已记录，不据此宣称完全兼容。项目过期清理仍由 Python Worker 承担，Redis 跨进程广播与 Node durable RAG job 的 Python Worker 消费仍未验收。详见 `docs/devlog/2026-11-14-Node-WebUI项目日历当前树复验.md`。
+> **项目/日历复验边界**：最新共享树在 devserver Node 26.13.1 下，项目/日历 Node、PG 和两条认证 Vite 集成路径 `105/105` 通过、0 失败、0 跳过，随机测试 schema 清理后残留 `0`；Python 对照 10 个项目、Undo、幂等和日历文件用例 `66/66` 通过，typecheck 通过。此前未注入测试连接变量的探测为 `76 passed / 29 skipped / 0 failed`，不计数据库验收；后续测试从只读运行配置在子进程内提供连接，没有修改配置。提交后 context/live 通知失败时，Node 保持 best-effort 成功响应，而 Python 部分路由可能在已提交后返回 500；该错误路径差异已记录，不据此宣称完全兼容。项目过期清理仍由 Python 承担，Redis 跨进程广播与 Node durable RAG job 的 Python Worker 消费仍未验收。详见 `docs/devlog/2026-11-14-Node-WebUI项目日历当前树复验.md`。
+
+> **Core 公共化边界**：日历创建/更新/删除和 Mind 便签创建的应用逻辑已由 Host 调用 Core；日历隔离 PostgreSQL 回归 50/50。便签创建、更新、删除及 Undo 写入事务已接入 Core 双库适配，SQLite/PG 合同各 1/1；Vite→生产 Host→隔离 PG 的创建、读取与 Undo/redo 回归 5/5，使用合成 schema，真实部署及 Redis 广播未验收。便签更新/删除的生产 Host/Vite 回归另有 1/1；日历创建、更新、删除及画布创建、更新、删除已接入 Core 双库事务及生产 Host；画布其余写入和撤销执行器的 SQLite 适配仍未完整迁入 Core。
 
 ## 当前状态
 
+- 当前工作树认证、文件和 Agent 切片的行为校对、验证范围及尚未闭合的安全边界见 [Node 2.0 行为校对记录](../testing/node-2-behavior-review.md)。
+- **Agent 孤儿恢复竞态及生产切换阻塞**：真实 Node recovery/Redis adapter 在隔离 PG/Redis 中，与合成 Python 启动交错时已复现新运行状态及 Redis key 被清理；尚未运行真实 Python 协程或完整 HTTP，亦无线上的事故证据。恢复也尚未检查 Node PG fenced lease。须统一两端启动与恢复的运行身份、锁序和条件清理协议，再完成真实两端的隔离交错验证。Node chat 默认未装配。
+- **Agent 本轮组件验证**：共享 PostgreSQL 借用事务桥限制嵌套注释绕过并统一 Agent/Mind 的连接互斥，隔离 PG 合同 1/1、Agent Host 桥 2/2；调度监督器首次订阅失败后的扫描与重订阅 Node 1/1；模型异步身份绑定 Node 5/5、Python 5/5。组件尚未由生产聊天入口装配，可信配置、访问版本和附件媒体仍待接线，以上测试不代表真实 Provider 或生产执行链验收。
+- **历史图片回放**：Core owner/session 限定的 PG 两阶段读取已接入 Web 历史读取器；隔离 PG 端口和 Host→Harness 回放各 1/1、Core 历史 58/58、Python 历史对照 12/12，含历史数组中非对象项的兼容。生产聊天重建器尚未装配，真实部署和其他数据库方言未验收。
+- **Web 运行来源**：聊天准备将 Web 来源写入加密调度载荷，恢复时校验；旧载荷在无活跃 Harness 租约后保留数据并阻塞，不能从会话历史来源猜测。隔离 PG/Redis 调度与重建 5/5、Python 取消 11/11；测试使用合成 Provider 和部分上下文，生产聊天入口仍未装配。
+- Core Agent 工具的逐项行为、测试和未接入边界见 [Agent 工具回归映射](../testing/node-agent-tools-parity.md)；工具实现存在不等于 Web Host 已装配。
 - 路由逐项状态以本页下方的源路由表为准；旧的 `390/49/341` 快照已过期，不用于计算当前完成率。
 - Node 接入仅表示 method/path 已注册；行为兼容、真实 PostgreSQL/Redis、文件系统及后台 Worker 验收分别记录，不能用未认证 `401` 或 Python 基线通过代替。
 - 2.0 Linux/NAS 仅支持 Local 文件存储。OSS/S3 在线 API 不迁入；旧 OSS 数据迁移/导出仍需在切换前完成。
-- 当前树项目与日历验收见顶部边界说明及 devlog：两条认证 Vite→生产 Host→随机隔离 schema 集成验证项目 PATCH、DELETE/restore、Local 文件往返与日历创建。项目过期清理、提交后通知故障响应差异、Redis 跨进程广播和 Python Worker 消费仍未验收。
+- 当前树项目与日历验收见顶部边界说明及 devlog：两条认证 Vite→生产 Host→随机隔离 schema 集成验证项目 PATCH、DELETE/restore、Local 文件往返与日历创建。提交后通知故障响应差异、Redis 跨进程广播和 Python Worker 消费仍未验收。
+- 项目过期清理已有 Node 消费器、清理日志及崩溃恢复原型；隔离 PostgreSQL 和临时目录回归覆盖进程中断、未登记文件保留及锁竞争，Python 项目回收站和文件夹对照 21/21。暂存路径的目录组件检查仍有并发替换窗口，Host 启用入口已撤回，业务尚未接通；过期文件和顶层文件夹清理仍由 Python 承担。真实部署及生产 schema 尚未验收。
 - 细节与历史结果放在对应 [devlog](../devlog/README.md)，本页不重复按日期记录。
 
 ## 源路由
 
 | Python 模块 | 方法 | 运行时路径 | Handler | Node 状态 |
 | --- | --- | --- | --- | --- |
-| `backend/app/api/v1/admin_analytics.py` | `GET` | `/api/v1/admin/analytics/active-dimensions` | `get_active_dimensions` | 待迁移 |
-| `backend/app/api/v1/admin_analytics.py` | `GET` | `/api/v1/admin/analytics/chat-funnel` | `get_chat_funnel` | 待迁移 |
-| `backend/app/api/v1/admin_analytics.py` | `GET` | `/api/v1/admin/analytics/session-depth` | `get_session_depth` | 待迁移 |
-| `backend/app/api/v1/admin_analytics.py` | `GET` | `/api/v1/admin/analytics/summary` | `get_summary` | 待迁移 |
-| `backend/app/api/v1/admin_analytics.py` | `GET` | `/api/v1/admin/analytics/tool-distribution` | `get_tool_distribution` | 待迁移 |
-| `backend/app/api/v1/admin_analytics.py` | `GET` | `/api/v1/admin/analytics/trends` | `get_trends` | 待迁移 |
-| `backend/app/api/v1/admin_auth.py` | `GET` | `/api/v1/admin/auth/me` | `me` | Node Admin Host 已接入；Redis 版本存储与 Host allowlist 已适配，真实 Redis 尚未验收 |
-| `backend/app/api/v1/admin_auth.py` | `POST` | `/api/v1/admin/auth/login` | `login` | Node Admin Host 已接入；配置 Admin 凭据时可用，Redis 版本/限流真实服务尚未验收 |
-| `backend/app/api/v1/admin_auth.py` | `POST` | `/api/v1/admin/auth/logout` | `logout` | Node Admin Host 已接入；Redis 版本撤销真实服务尚未验收 |
+| `backend/app/api/v1/admin_analytics.py` | `GET` | `/api/v1/admin/analytics/active-dimensions` | `get_active_dimensions` | 生产 Host 已委托 Core 聚合并接入 PG；Node 聚合、原型与生产入口回归 10/10，Python 两组隔离 PG 直接对照各 1/1。bool 及 summary/trends 有先失败证据，其余追加测试的 TDD 边界见 devlog。PG 使用精简表，测试连接因临时环境缺 LLVM 禁用 JIT；正式 SQLite、完整 schema 和真实部署未验收。 |
+| `backend/app/api/v1/admin_analytics.py` | `GET` | `/api/v1/admin/analytics/chat-funnel` | `get_chat_funnel` | 生产 Host 已委托 Core 聚合并接入 PG；Node 聚合、原型与生产入口回归 10/10，Python 两组隔离 PG 直接对照各 1/1。bool 及 summary/trends 有先失败证据，其余追加测试的 TDD 边界见 devlog。PG 使用精简表，测试连接因临时环境缺 LLVM 禁用 JIT；正式 SQLite、完整 schema 和真实部署未验收。 |
+| `backend/app/api/v1/admin_analytics.py` | `GET` | `/api/v1/admin/analytics/session-depth` | `get_session_depth` | 生产 Host 已委托 Core 聚合并接入 PG；Node 聚合、原型与生产入口回归 10/10，Python 两组隔离 PG 直接对照各 1/1。bool 及 summary/trends 有先失败证据，其余追加测试的 TDD 边界见 devlog。PG 使用精简表，测试连接因临时环境缺 LLVM 禁用 JIT；正式 SQLite、完整 schema 和真实部署未验收。 |
+| `backend/app/api/v1/admin_analytics.py` | `GET` | `/api/v1/admin/analytics/summary` | `get_summary` | 生产 Host 已委托 Core 聚合并接入 PG；Node 聚合、原型与生产入口回归 10/10，Python 两组隔离 PG 直接对照各 1/1。bool 及 summary/trends 有先失败证据，其余追加测试的 TDD 边界见 devlog。PG 使用精简表，测试连接因临时环境缺 LLVM 禁用 JIT；正式 SQLite、完整 schema 和真实部署未验收。 |
+| `backend/app/api/v1/admin_analytics.py` | `GET` | `/api/v1/admin/analytics/tool-distribution` | `get_tool_distribution` | 生产 Host 已委托 Core 聚合并接入 PG；Node 聚合、原型与生产入口回归 10/10，Python 两组隔离 PG 直接对照各 1/1。bool 及 summary/trends 有先失败证据，其余追加测试的 TDD 边界见 devlog。PG 使用精简表，测试连接因临时环境缺 LLVM 禁用 JIT；正式 SQLite、完整 schema 和真实部署未验收。 |
+| `backend/app/api/v1/admin_analytics.py` | `GET` | `/api/v1/admin/analytics/trends` | `get_trends` | 生产 Host 已委托 Core 聚合并接入 PG；Node 聚合、原型与生产入口回归 10/10，Python 两组隔离 PG 直接对照各 1/1。bool 及 summary/trends 有先失败证据，其余追加测试的 TDD 边界见 devlog。PG 使用精简表，测试连接因临时环境缺 LLVM 禁用 JIT；正式 SQLite、完整 schema 和真实部署未验收。 |
+| `backend/app/api/v1/admin_auth.py` | `GET` | `/api/v1/admin/auth/me` | `me` | Node Admin Host 与 Host allowlist 已接入；配置 Redis 时读取 Python 共用的版本键，无 Redis 时为单实例内存版本。 |
+| `backend/app/api/v1/admin_auth.py` | `POST` | `/api/v1/admin/auth/login` | `login` | Node Admin Host 已接入；配置 Redis 时共享认证版本与限流，版本服务故障返回 503；无 Redis 时保留单实例内存模式。 |
+| `backend/app/api/v1/admin_auth.py` | `POST` | `/api/v1/admin/auth/logout` | `logout` | 配置 Redis 的两个生产 Host 在隔离 PostgreSQL/Redis 验证了跨实例撤销；无 Redis 时撤销仅在本进程生效。 |
 | `backend/app/api/v1/admin_debug.py` | `GET` | `/api/v1/admin/debug/logs/stream` | `stream_logs` | Node Host 已挂载，Admin guard 与每轮 token/auth-version 复验；Python最近邻不覆盖HTTP handler，devserver Node/Vite路由验收通过 |
 | `backend/app/api/v1/admin_debug.py` | `GET` | `/api/v1/admin/debug/logs/tail` | `tail_logs` | Node Host 已挂载固定可信日志路径及Admin guard；devserver Node行为测试通过，Vite未认证401 |
 | `backend/app/api/v1/admin_update.py` | `GET` | `/api/v1/admin/update/status` | `update_status` | 待迁移 |
@@ -35,63 +44,63 @@
 | `backend/app/api/v1/admin_update.py` | `POST` | `/api/v1/admin/update/rollback` | `rollback` | 待迁移 |
 | `backend/app/api/v1/admin_update.py` | `POST` | `/api/v1/admin/update/rollback/preflight` | `rollback_preflight` | 待迁移 |
 | `backend/app/api/v1/admin_update.py` | `POST` | `/api/v1/admin/update/start` | `start_update` | 待迁移 |
-| `backend/app/api/v1/agent_admin.py` | `DELETE` | `/api/v1/admin/agent/llm-presets/{preset_id}` | `delete_llm_preset` | 待迁移 |
-| `backend/app/api/v1/agent_admin.py` | `DELETE` | `/api/v1/admin/agent/voice-presets/{preset_id}` | `delete_voice_preset` | 待迁移 |
+| `backend/app/api/v1/agent_admin.py` | `DELETE` | `/api/v1/admin/agent/llm-presets/{preset_id}` | `delete_llm_preset` | 生产 Host 已接 Core 持锁配置与推理状态失效；先红后绿 Node 定向 3/3，Python 模型选择及失败语义对照通过。生产入口合批通过；Node 模型池与真实部署未验收。 |
+| `backend/app/api/v1/agent_admin.py` | `DELETE` | `/api/v1/admin/agent/voice-presets/{preset_id}` | `delete_voice_preset` | 生产 Host 已接 Core 配置用例与跨进程锁原子写入；先红后绿 Node 6/6、Python 对照 11/11，真实 Python flock 与 Node 并发验证通过。缺失或损坏配置拒绝写入为安全差异；语音执行器、真实 Provider 和部署未验收。 |
 | `backend/app/api/v1/agent_admin.py` | `GET` | `/api/v1/admin/agent/capabilities` | `list_capabilities` | 待迁移；Python 基线 `test_admin_capability_catalog_exposes_metadata_without_schema_or_body` 1/1；Node 缺少共享能力注册表，Host 需注入可信快照，不能用假数据替代 |
-| `backend/app/api/v1/agent_admin.py` | `GET` | `/api/v1/admin/agent/llm-presets` | `list_llm_presets` | 待迁移 |
-| `backend/app/api/v1/agent_admin.py` | `GET` | `/api/v1/admin/agent/llm-presets/{preset_id}/models` | `list_llm_preset_models` | 待迁移 |
-| `backend/app/api/v1/agent_admin.py` | `GET` | `/api/v1/admin/agent/memory/im-scopes` | `list_im_memory_scopes` | 待迁移 |
-| `backend/app/api/v1/agent_admin.py` | `GET` | `/api/v1/admin/agent/memory/im-scopes/maintenance/model-preview/status` | `im_memory_model_preview_status` | 待迁移 |
-| `backend/app/api/v1/agent_admin.py` | `GET` | `/api/v1/admin/agent/prompts` | `list_prompts` | 待迁移 |
-| `backend/app/api/v1/agent_admin.py` | `GET` | `/api/v1/admin/agent/prompts/{profile}` | `get_prompt` | 待迁移 |
+| `backend/app/api/v1/agent_admin.py` | `GET` | `/api/v1/admin/agent/llm-presets` | `list_llm_presets` | Node 路由原型与 Host 可选认证装配已实现，默认生产配置未注入；Node 预设行为 9/9、Host 认证/密钥遮蔽 1/1；实际配置写入、模型探测和运行时失效尚未接通或验收。 |
+| `backend/app/api/v1/agent_admin.py` | `GET` | `/api/v1/admin/agent/llm-presets/{preset_id}/models` | `list_llm_preset_models` | 生产 Host 已接 Core 模型目录与安全传输；先红后绿 Node 定向 2/2、Python 原回归 5/5，14 类 handler 请求和响应对照通过。生产入口合批通过；真实 Provider 与部署未验收。 |
+| `backend/app/api/v1/agent_admin.py` | `GET` | `/api/v1/admin/agent/memory/im-scopes` | `list_im_memory_scopes` | 生产 Host 已接 Core 四表只读汇总与管理员认证；Core/Host 先红后绿 2/2、生产入口 1/1，实际 Python 双 handler 对照及原隐私回归通过。正式 SQLite 和真实部署未验收，不启动维护任务或模型。 |
+| `backend/app/api/v1/agent_admin.py` | `GET` | `/api/v1/admin/agent/memory/im-scopes/maintenance/model-preview/status` | `im_memory_model_preview_status` | 生产 Host 已接 Core 状态读取及 Redis；先红后绿 Node 6/6（含生产认证和错误路径），Python handler 对照 1/1。不启动模型预览，生产者及真实部署未验收。 |
+| `backend/app/api/v1/agent_admin.py` | `GET` | `/api/v1/admin/agent/prompts` | `list_prompts` | 待迁移：旧 Host domains 中存在未注册原型，尚未确认目标 Core 运行时读取相同文件；不能按独立测试通过视为生产接通。 |
+| `backend/app/api/v1/agent_admin.py` | `GET` | `/api/v1/admin/agent/prompts/{profile}` | `get_prompt` | 待迁移：旧 Host domains 中存在未注册原型，尚未确认目标 Core 运行时读取相同文件；不能按独立测试通过视为生产接通。 |
 | `backend/app/api/v1/agent_admin.py` | `GET` | `/api/v1/admin/agent/state-labels` | `get_state_labels` | 待迁移 |
-| `backend/app/api/v1/agent_admin.py` | `GET` | `/api/v1/admin/agent/usage` | `get_usage` | 待迁移 |
-| `backend/app/api/v1/agent_admin.py` | `GET` | `/api/v1/admin/agent/voice-presets` | `list_voice_presets` | 待迁移 |
-| `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/llm-presets` | `create_llm_preset` | 待迁移 |
-| `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/llm-presets/capabilities-preview` | `preview_llm_capabilities` | 待迁移 |
-| `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/llm-presets/models-preview` | `preview_llm_preset_models` | 待迁移 |
+| `backend/app/api/v1/agent_admin.py` | `GET` | `/api/v1/admin/agent/usage` | `get_usage` | Node 生产 Host 已注册并使用真实 Admin guard 和 PostgreSQL 聚合；隔离 PG/Host 回归 5/5，覆盖登录、未授权拒绝、用量过滤和错误脱敏，Python 用量对照 5/5，Host 类型检查通过。真实部署尚未验收。 |
+| `backend/app/api/v1/agent_admin.py` | `GET` | `/api/v1/admin/agent/voice-presets` | `list_voice_presets` | 生产 Host 已接 Core 只读投影及密钥遮蔽；先红后绿 Node 3/3、原有 LLM/SMTP 回归 16/16，Python 对照与原回归 10/10。临时配置验证只读和热更新；真实部署及语音执行未验收。 |
+| `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/llm-presets` | `create_llm_preset` | 生产 Host 已接 Core 持锁配置与推理状态失效；先红后绿 Node 定向 3/3，真实 Python 配置与 DTO 对照通过。生产入口合批通过；Node 模型池及真实部署未验收。 |
+| `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/llm-presets/capabilities-preview` | `preview_llm_capabilities` | 待迁移：现有 Core Provider 快照与 Python 对 Ollama native 的协议与 reasoning 输出不一致；已做 handler 全字段对照，待共享注册表对齐后才能接生产。 |
+| `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/llm-presets/models-preview` | `preview_llm_preset_models` | 生产 Host 已接 Core 模型目录与安全传输；先红后绿 Node 定向 2/2、Python 原回归 5/5，14 类 handler 请求和响应对照通过。生产入口合批通过；真实 Provider 与部署未验收。 |
 | `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/llm-presets/probe-media-preview` | `probe_media_preview` | 待迁移 |
-| `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/llm-presets/strategy` | `set_llm_strategy` | 待迁移 |
-| `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/llm-presets/{preset_id}/activate` | `activate_llm_preset` | 待迁移 |
+| `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/llm-presets/strategy` | `set_llm_strategy` | 生产 Host 已接 Core 持锁配置与推理状态失效；先红后绿 Node 定向 3/3，真实 Python 模型选择消费及失败副作用对照通过。生产入口合批通过；Node 模型池及真实部署未验收。 |
+| `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/llm-presets/{preset_id}/activate` | `activate_llm_preset` | 生产 Host 已接 Core 持锁配置与推理状态失效；先红后绿 Node 定向 3/3，Python 模型选择及失败语义对照通过。生产入口合批通过；Node 模型池与真实部署未验收。 |
 | `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/llm-presets/{preset_id}/capabilities` | `probe_llm_capabilities` | 待迁移 |
 | `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/llm-presets/{preset_id}/probe-media` | `probe_media_preset` | 待迁移 |
 | `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/llm-presets/{preset_id}/test` | `test_llm_preset` | 待迁移 |
 | `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/memory/im-scopes/maintenance/apply` | `apply_im_memory_maintenance` | 待迁移 |
 | `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/memory/im-scopes/maintenance/model-preview` | `start_im_memory_model_preview` | 待迁移 |
-| `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/memory/im-scopes/maintenance/preview` | `preview_im_memory_maintenance` | 待迁移 |
-| `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/voice-presets` | `create_voice_preset` | 待迁移 |
-| `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/voice-presets/deactivate` | `deactivate_voice_preset` | 待迁移 |
-| `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/voice-presets/models-preview` | `preview_voice_preset_models` | 待迁移 |
-| `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/voice-presets/test` | `test_voice_preset` | 待迁移 |
-| `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/voice-presets/{preset_id}/activate` | `activate_voice_preset` | 待迁移 |
-| `backend/app/api/v1/agent_admin.py` | `PUT` | `/api/v1/admin/agent/llm-presets/{preset_id}` | `update_llm_preset` | 待迁移 |
-| `backend/app/api/v1/agent_admin.py` | `PUT` | `/api/v1/admin/agent/llm-presets/{preset_id}/capability-overrides` | `update_capability_overrides` | 待迁移 |
-| `backend/app/api/v1/agent_admin.py` | `PUT` | `/api/v1/admin/agent/prompts/{profile}` | `update_prompt` | 待迁移 |
+| `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/memory/im-scopes/maintenance/preview` | `preview_im_memory_maintenance` | 生产 Host 已接 Core 四表只读汇总与管理员认证；Core/Host 先红后绿 2/2、生产入口 1/1，实际 Python 双 handler 对照及原隐私回归通过。正式 SQLite 和真实部署未验收，不启动维护任务或模型。 |
+| `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/voice-presets` | `create_voice_preset` | 生产 Host 已接 Core 配置用例与跨进程锁原子写入；先红后绿 Node 6/6、Python 对照 11/11，真实 Python flock 与 Node 并发验证通过。缺失或损坏配置拒绝写入为安全差异；语音执行器、真实 Provider 和部署未验收。 |
+| `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/voice-presets/deactivate` | `deactivate_voice_preset` | 生产 Host 已接 Core 配置用例与跨进程锁原子写入；先红后绿 Node 6/6、Python 对照 11/11，真实 Python flock 与 Node 并发验证通过。缺失或损坏配置拒绝写入为安全差异；语音执行器、真实 Provider 和部署未验收。 |
+| `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/voice-presets/models-preview` | `preview_voice_preset_models` | 生产 Host 已接 Core 模型目录与安全传输；先红后绿 Node 定向 2/2、Python 原回归 5/5，14 类 handler 请求和响应对照通过。生产入口合批通过；真实 Provider 与部署未验收。 |
+| `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/voice-presets/test` | `test_voice_preset` | 待迁移：已有 ASR 适配，但缺 Python MiniMax 错误呈现 DTO、配置回退及协议对照。 |
+| `backend/app/api/v1/agent_admin.py` | `POST` | `/api/v1/admin/agent/voice-presets/{preset_id}/activate` | `activate_voice_preset` | 生产 Host 已接 Core 配置用例与跨进程锁原子写入；先红后绿 Node 6/6、Python 对照 11/11，真实 Python flock 与 Node 并发验证通过。缺失或损坏配置拒绝写入为安全差异；语音执行器、真实 Provider 和部署未验收。 |
+| `backend/app/api/v1/agent_admin.py` | `PUT` | `/api/v1/admin/agent/llm-presets/{preset_id}` | `update_llm_preset` | 生产 Host 已接 Core 持锁配置与推理状态失效；先红后绿 Node 定向 3/3，真实 Python 配置与 DTO 对照通过。生产入口合批通过；Node 模型池及真实部署未验收。 |
+| `backend/app/api/v1/agent_admin.py` | `PUT` | `/api/v1/admin/agent/llm-presets/{preset_id}/capability-overrides` | `update_capability_overrides` | 生产 Host 已接 Core 持锁配置及推理状态失效；先红后绿 Node 定向 3/3，真实 Python handler 和 capability_snapshot 对照通过。生产入口合批通过；Node 模型池及真实部署未验收。 |
+| `backend/app/api/v1/agent_admin.py` | `PUT` | `/api/v1/admin/agent/prompts/{profile}` | `update_prompt` | 待迁移：旧 Host domains 中存在未注册原型，尚未确认目标 Core 运行时读取相同文件；不能按独立测试通过视为生产接通。 |
 | `backend/app/api/v1/agent_admin.py` | `PUT` | `/api/v1/admin/agent/state-labels` | `update_state_labels` | 待迁移 |
-| `backend/app/api/v1/agent_admin.py` | `PUT` | `/api/v1/admin/agent/voice-presets/{preset_id}` | `update_voice_preset` | 待迁移 |
-| `backend/app/api/v1/agent_perception.py` | `GET` | `/api/v1/admin/perception/` | `perception_stats` | Node 模块原型8/8，Python最近邻6/6；Host guard/Redis/DB/记忆适配未接入，错误detail仍有差异 |
-| `backend/app/api/v1/agent_perception.py` | `GET` | `/api/v1/admin/perception/export` | `export_events` | Node 模块原型8/8，Host未注册；数据源及真实运行态未验收 |
-| `backend/app/api/v1/agent_perception.py` | `GET` | `/api/v1/admin/perception/misread/export` | `misread_export` | Node 模块原型8/8，Host未注册；需可信记忆读取与Admin guard |
-| `backend/app/api/v1/agent_perception.py` | `GET` | `/api/v1/admin/perception/misread/recent` | `misread_recent` | Node 模块原型8/8，Host未注册；需可信记忆读取与Admin guard |
-| `backend/app/api/v1/agent_routes/attachments.py` | `DELETE` | `/api/v1/agent/attachment/{attach_id}` | `delete_draft_attachment` | 待迁移 |
-| `backend/app/api/v1/agent_routes/attachments.py` | `DELETE` | `/api/v1/agent/attachments` | `clear_attachments` | 待迁移 |
-| `backend/app/api/v1/agent_routes/attachments.py` | `GET` | `/api/v1/agent/attachment/{attach_id}/download` | `attachment_download` | 待迁移 |
+| `backend/app/api/v1/agent_admin.py` | `PUT` | `/api/v1/admin/agent/voice-presets/{preset_id}` | `update_voice_preset` | 生产 Host 已接 Core 配置用例与跨进程锁原子写入；先红后绿 Node 6/6、Python 对照 11/11，真实 Python flock 与 Node 并发验证通过。缺失或损坏配置拒绝写入为安全差异；语音执行器、真实 Provider 和部署未验收。 |
+| `backend/app/api/v1/agent_perception.py` | `GET` | `/api/v1/admin/perception/` | `perception_stats` | 生产 Host 已接 Core、Redis 和 PG；先红后绿 Node 定向及感知合批 7/7，30 组真实 Python 全字段对照和实际生产者验证通过。正式 SQLite 和真实部署未验收。 |
+| `backend/app/api/v1/agent_perception.py` | `GET` | `/api/v1/admin/perception/export` | `export_events` | 生产 Host 已接 Core 与 Redis；先红后绿 Node 定向及感知合批 7/7，Python handler 差分和真实生产者验证通过。真实部署未验收。 |
+| `backend/app/api/v1/agent_perception.py` | `GET` | `/api/v1/admin/perception/misread/export` | `misread_export` | 生产 Host 已接 Core 和固定 Local 安全只读文件；先红后绿 Node 定向及感知合批 7/7，真实 Python 生产者及文件错误路径通过。非 Local 存储和真实部署未验收。 |
+| `backend/app/api/v1/agent_perception.py` | `GET` | `/api/v1/admin/perception/misread/recent` | `misread_recent` | 生产 Host 已接 Core、Redis 列表与 PG 开发者过滤；先红后绿 Node 3/3、Python 8/8，真实 Python 反思生产者→Redis→Host 对照及错误路径通过。正式 SQLite 与真实部署未验收。 |
+| `backend/app/api/v1/agent_routes/attachments.py` | `DELETE` | `/api/v1/agent/attachment/{attach_id}` | `delete_draft_attachment` | 待迁移：需与附件复用共享 advisory lock 的引用检查和提交后物理清理；批量清除还需 Redis 历史暂存清理。 |
+| `backend/app/api/v1/agent_routes/attachments.py` | `DELETE` | `/api/v1/agent/attachments` | `clear_attachments` | 待迁移：需与附件复用共享 advisory lock 的引用检查和提交后物理清理；批量清除还需 Redis 历史暂存清理。 |
+| `backend/app/api/v1/agent_routes/attachments.py` | `GET` | `/api/v1/agent/attachment/{attach_id}/download` | `attachment_download` | 生产 Host 已委托 Core owner 限定读取、PG/旧 Redis 元数据及安全 FS；先红后绿 Node 2/2，Python handler 1/1、原 get_meta 回归 3/3。物理长度修正、基础设施错误和 owner 限制为记录的差异；正式 SQLite、完整 Alembic、路径并发替换与真实部署未验收。 |
 | `backend/app/api/v1/agent_routes/attachments.py` | `GET` | `/api/v1/agent/attachment/{attach_id}/thumb` | `attachment_thumb` | 待迁移 |
 | `backend/app/api/v1/agent_routes/attachments.py` | `POST` | `/api/v1/agent/upload` | `upload_attachment` | 待迁移 |
-| `backend/app/api/v1/agent_routes/chat.py` | `GET` | `/api/v1/agent/sessions/{session_id}/state` | `get_session_state` | 待迁移 |
-| `backend/app/api/v1/agent_routes/chat.py` | `GET` | `/api/v1/agent/sessions/{session_id}/stream` | `resume_stream` | 待迁移 |
-| `backend/app/api/v1/agent_routes/chat.py` | `POST` | `/api/v1/agent/chat` | `chat` | 待迁移；2026-11-14 devserver Vite 空 JSON 探测仍为 404，当前 Node Host 无聊天生成路由。Python 聊天/stream/resume/queue/session events/cancel 基线本轮 257/257；RunStore 对照 `test_run_finalize.py` 与 `test_message_area.py` 另复跑 28/28。PostgreSQL RunStore adapter 与 lease/checkpoint/event/interaction receipt Alembic migration 已增加；当前 Node 行为测试 6/6，PG 集成 1 项因缺少测试 URL 跳过；history writer callback 现在可读取提交 checkpoint 中的 usage。定向 TypeScript 检查和当前全量 WebUI typecheck 通过；未应用 migration。Provider/Context、history writer 生产实现、实际生成、取消及 SSE 恢复和 Host 接线仍缺，不能以持久化 adapter 代替聊天迁移。详见 `docs/devlog/2026-11-14-Node-Agent-RunStore持久化基础.md` |
-| `backend/app/api/v1/agent_routes/chat.py` | `POST` | `/api/v1/agent/sessions/{session_id}/cancel` | `cancel_stream` | Node Core Redis `CancellationPort` 适配器已实现 owner/session/run 精确隔离、300 秒持久标记及先写标记后发布通知；devserver Node Redis 命令/取消端口回归 13/13、0 跳过，WebUI typecheck 通过，Python `test_run_cancellation.py` 11/11。尚未接入生产 Host/取消路由；未验收真实 Redis 与 Vite→Host，详见 `docs/devlog/2026-11-14-Node-Agent-Runs取消Redis端口.md` |
-| `backend/app/api/v1/agent_routes/interactions.py` | `GET` | `/api/v1/agent/interactions/{prompt_id}/session` | `get_interaction_session` | Node Host 已接认证上下文与 owner-scoped PostgreSQL lookup；devserver Node route/adapter/Host 合集 29 通过、0 失败、2 跳过（PG 因未配置隔离库）；Python secret-link 基线 1/1；Vite 未认证请求 401。真实 PG 查询未验收，详见 `docs/devlog/2026-11-14-Node-Agent凭据交互深链Host接入.md` |
-| `backend/app/api/v1/agent_routes/interactions.py` | `POST` | `/api/v1/agent/interactions/{prompt_id}/respond` | `respond_interaction` | 待迁移 |
+| `backend/app/api/v1/agent_routes/chat.py` | `GET` | `/api/v1/agent/sessions/{session_id}/state` | `get_session_state` | 待迁移：Python 要求先恢复孤儿再刷新；现有 Node 恢复路径在 Redis 租约探测与数据库加锁之间未复核租约，新 run 接管时可能误清，待共享恢复能力解决后接入。 |
+| `backend/app/api/v1/agent_routes/chat.py` | `GET` | `/api/v1/agent/sessions/{session_id}/stream` | `resume_stream` | Host 有可选聊天服务注册入口，默认生产装配未注入；隔离 PG/Redis 和测试替身已验证在线订阅、断线及 outbox 重放。调度重建暂不可用或版本冲突可投影为脱敏诊断，后者支持所属用户显式重试；相关持久运行时及重建器隔离 PG/Redis 回归 2/2，生产会话恢复尚未验收。 |
+| `backend/app/api/v1/agent_routes/chat.py` | `POST` | `/api/v1/agent/chat` | `chat` | Host 支持显式注入聊天服务并通过认证，默认生产装配尚未注入。隔离 PG/Redis 的 Host 认证→SSE 测试使用合成用户、会话准备、Provider 和历史替身；聊天准备、队列、历史/账本已有独立事务适配器及隔离 PG 回归，多次压缩校验已覆盖，原生续接默认仍显式拒绝。真实上下文、附件媒体、可信配置和完整事务仍未装配，真实用户依赖及调用方切换未验收，不能视为业务接通。此前 Python 聊天基线 257/257；本轮历史/取消/流协议 Python 29/29、用量与终态 26/26；旧 RunStore 记录见 `docs/devlog/2026-11-14-Node-Agent-RunStore持久化基础.md`。 |
+| `backend/app/api/v1/agent_routes/chat.py` | `POST` | `/api/v1/agent/sessions/{session_id}/cancel` | `cancel_stream` | Node 取消端口与路由按 owner/session/run 精确隔离，先写标记再通知；隔离 Redis 适配器 5/5，隔离 PG/Redis 的合成 Provider 运行取消已验证。Host 有可选注入入口但默认未注入，实际会话活动状态及 Vite→Host 取消尚未验收；此前 Python `test_run_cancellation.py` 11/11，详见 `docs/devlog/2026-11-14-Node-Agent-Runs取消Redis端口.md`。 |
+| `backend/app/api/v1/agent_routes/interactions.py` | `GET` | `/api/v1/agent/interactions/{prompt_id}/session` | `get_interaction_session` | 查询已迁入 Core，认证 Node Host 已接通；正式 SQLite v11 和隔离 PostgreSQL 契约各 1/1、Host 回归 8/8、Python 定向 1 通过（58 未选）。损坏 JSON 的错误不包含原始数据。仅返回所属会话；桌面交互及凭据提交、恢复尚未接通 |
+| `backend/app/api/v1/agent_routes/interactions.py` | `POST` | `/api/v1/agent/interactions/{prompt_id}/respond` | `respond_interaction` | Host 有可选认证路由注册，默认生产装配未注入；owner/token 一次性消费、恢复队列及 worker 已实现。隔离 PG/Redis 与真实 Harness 回归 2/2，覆盖收据后中断恢复和同名工具调用隔离；事务与路由隔离 PG 回归 3/3，Provider 等外部依赖使用测试替身。生产 worker、真实命令副作用和确认处理器尚未装配，调用方及真实依赖尚未验收。 |
 | `backend/app/api/v1/agent_routes/interactions.py` | `POST` | `/api/v1/agent/interactions/{prompt_id}/resume` | `resume_interaction` | 待迁移 |
 | `backend/app/api/v1/agent_routes/interactions.py` | `POST` | `/api/v1/agent/interactions/{prompt_id}/resume-text` | `resume_text_interaction` | 待迁移 |
-| `backend/app/api/v1/agent_routes/interactions.py` | `POST` | `/api/v1/agent/interactions/{prompt_id}/secrets` | `submit_secret_interaction` | 待迁移 |
-| `backend/app/api/v1/agent_routes/interactions.py` | `POST` | `/api/v1/agent/interactions/{prompt_id}/secrets/cancel` | `cancel_secret_interaction` | 待迁移 |
+| `backend/app/api/v1/agent_routes/interactions.py` | `POST` | `/api/v1/agent/interactions/{prompt_id}/secrets` | `submit_secret_interaction` | 凭据加密写入及无正文恢复引用的事务原型已有隔离 PG 回归；共用恢复 worker 已用隔离 PG/Redis 和 Harness 验证，凭据链路的 Host 路由、MCP 跨进程缓存失效和 IM 多步输入尚未接通，真实凭据恢复未验收。 |
+| `backend/app/api/v1/agent_routes/interactions.py` | `POST` | `/api/v1/agent/interactions/{prompt_id}/secrets/cancel` | `cancel_secret_interaction` | 部分接通：生产 Host 接 Core 事务并清空暂存密文；先红后绿 Node 3/3、Python 群聊回归 1/1，真实 Python waiter 消费取消结果。Node checkpoint 恢复及实际 Agent run 闭环、正式 SQLite 与真实部署未验收。 |
 | `backend/app/api/v1/agent_routes/misc.py` | `DELETE` | `/api/v1/agent/memory` | `clear_memory` | 待迁移 |
-| `backend/app/api/v1/agent_routes/misc.py` | `GET` | `/api/v1/agent/commands` | `get_commands` | Node `agent-misc` 已接认证 Host；commands/ui-labels/tool-event-details 相关 Node 回归 21 通过、2 个隔离 PG 用例跳过；Python commands 基线 65/65；Vite 未认证 401 |
+| `backend/app/api/v1/agent_routes/misc.py` | `GET` | `/api/v1/agent/commands` | `get_commands` | 静态命令菜单已迁入 Core，Node 认证 Host 已调用；Core 1/1、Host 4/4、Python 定向 2 通过（63 未选），Core 与 Python 返回值逐字段及顺序一致。菜单查询不代表命令执行链已接通 |
 | `backend/app/api/v1/agent_routes/misc.py` | `GET` | `/api/v1/agent/greeting` | `get_greeting` | 待迁移 |
-| `backend/app/api/v1/agent_routes/misc.py` | `GET` | `/api/v1/agent/ui-labels` | `get_ui_labels` | Node `agent-misc` 已接认证 Host，每次请求读取状态标签覆盖配置；Node/ Python/Vite 证据同 `/agent/commands` |
+| `backend/app/api/v1/agent_routes/misc.py` | `GET` | `/api/v1/agent/ui-labels` | `get_ui_labels` | 标签读取用例已迁入 Core，认证 Node Host 每次读取配置并兼容常见嵌套及旧扁平形式；Core 4/4、Host/config 9/9、Python 合成配置对照 2/2。JSON 解析后的数值字面量、极端浮点和数字键顺序仍可能与 Python 不同；非对象 overrides 保持 Node 现有行为，未复刻 Python 全局回滚。桌面配置来源尚未接入 |
 | `backend/app/api/v1/agent_routes/misc.py` | `GET` | `/api/v1/agent/voice-availability` | `get_voice_availability` | 待迁移；Python 依赖基线2/2；Node 缺 BYOK 凭据解密/密钥版本、Provider URL resolver 与 VoiceSettings，Host 契约待提供 |
 | `backend/app/api/v1/agent_routes/pending_queue.py` | `GET` | `/api/v1/agent/pending-queues/imported-drafts` | `list_imported_draft_queues` | Node Host 已接认证与 owner-scoped PostgreSQL reader；pending queue/Host 回归合计 34 通过、0 失败、5 个隔离 PG 用例跳过；Python pending queue 基线 13/13。 |
 | `backend/app/api/v1/agent_routes/pending_queue.py` | `GET` | `/api/v1/agent/pending-queues/{queue_id}` | `get_pending_queue_by_id` | Node Host 已接认证与 owner-scoped PostgreSQL reader；读取时隐藏 claim 凭据；pending queue/Host 回归合计 34 通过、0 失败、5 个隔离 PG 用例跳过；Python 基线 13/13。 |
@@ -106,13 +115,13 @@
 | `backend/app/api/v1/agent_routes/sessions.py` | `DELETE` | `/api/v1/agent/sessions/{session_id}/filesystem-authorization` | `revoke_session_filesystem_authorization` | Node 已接认证 Host、owner-scoped PostgreSQL 撤销、脱敏安全事件及交互 PTY 终止；session 授权 Node/Redis/Vite 集成 9/9、Python 基线 75/75、typecheck 通过，真实 Redis 与随机 PostgreSQL schema 已验收；详见 `docs/devlog/2026-11-14-Node-Agent会话文件系统授权.md` |
 | `backend/app/api/v1/agent_routes/sessions.py` | `GET` | `/api/v1/agent/messages/{message_id}` | `get_message_location` | 当前树已挂 Node 认证 Host 与 owner-scoped PostgreSQL locator；devserver route 3/3、Host 会话域 suite 23 通过/0 失败/1 隔离 PG 跳过，Python Agent 消息基线 59/59（未直接覆盖该 endpoint），Vite 未认证请求 401；locator 的真实 PG 集成因无隔离库跳过，详见 `docs/devlog/2026-11-14-Node-Agent消息定位路由Host状态核验.md` |
 | `backend/app/api/v1/agent_routes/sessions.py` | `GET` | `/api/v1/agent/sessions` | `list_sessions` | Node Host 已挂载认证与 owner-scoped PostgreSQL lister；Python `test_session_badges.py`/`test_session_display_order.py` 基线已跑，Node sessions/history/Host 回归 28/28（0 跳过）。Vite 未认证请求为 401；认证 Vite→Host→随机 PG schema 集成 1/1 验证伪造 owner 参数无效且仅返回当前用户会话。session 时间微秒边界仍需补测 |
-| `backend/app/api/v1/agent_routes/sessions.py` | `GET` | `/api/v1/agent/sessions/{session_id}/messages` | `get_session_messages` | Node Host 已挂载认证、owner-scoped 历史 adapter 与孤儿 run 回收；群聊正文/引用中的已知 @ ID 按会话最新昵称、当前 Bot 名称或用户自有 Bot 配置名替换，未知 ID 保持原样。Python `test_agent_api_messages.py` 全文件 59/59（含群聊 mention 6 项）；本轮 Node 历史/mention/恢复/Host 定向套件 10 通过、0 失败、2 个隔离 PG 用例因缺测试库跳过，typecheck 通过。先前 Vite→Host→随机 PG 认证读取/恢复集成 1/1 不覆盖本次 mention；真实 Redis 未验收。legacy timeline 迁移与 chat/SSE 仍待迁移 |
-| `backend/app/api/v1/agent_routes/sessions.py` | `GET` | `/api/v1/agent/sessions/{session_id}/tool-event-details` | `get_session_tool_event_details` | 已接 Node 认证 Host，按 owner/会话/消息定位并投影响应；与 Agent commands/ui-labels 合并回归 21 通过、2 个隔离 PG 用例跳过；Python 基线 3/3；Vite 未认证 401 |
+| `backend/app/api/v1/agent_routes/sessions.py` | `GET` | `/api/v1/agent/sessions/{session_id}/messages` | `get_session_messages` | Node Host 已挂载认证、owner-scoped 历史 adapter 与孤儿 run 回收；群聊正文/引用中的已知 @ ID 按会话最新昵称、当前 Bot 名称或用户自有 Bot 配置名替换，未知 ID 保持原样；最近发言昵称查询已委托 Core，正式 SQLite/隔离 PG 各 1/1、Host 11/11、Python 定向 6/6，Bot 默认名及配置名仍由 Host 补全。已修复异常跨用户工作区关联和负时间戳 through 窗口；隔离 PG 历史回归 8/8，Python 对照 2/2。此前 Python `test_agent_api_messages.py` 全文件 59/59；Node 历史/mention/恢复/Host 套件 10 通过、2 项因缺测试库跳过。先前 Vite→Host→随机 PG 集成不覆盖本次 mention；真实 Redis 未验收。交互历史投影与活动令牌轮换子用例已接 Core 双库和 Node Host；隔离 PG/Host 9/9、Python 定向 4/4。活动恢复叠加窗口可能有额外锁竞争，SQLite 为单写者，PG action 锁等待依赖数据库超时。消息页尚未完整迁入 Core，旧 Redis 孤儿回收与 Node 租约的竞态未解决。 |
+| `backend/app/api/v1/agent_routes/sessions.py` | `GET` | `/api/v1/agent/sessions/{session_id}/tool-event-details` | `get_session_tool_event_details` | 读取用例已迁入 Core，Node 认证 Host 已接通；正式 SQLite 和隔离 PostgreSQL 契约各 1/1、Host 隔离 PG 回归 7/7、Python 定向 4 通过（55 未选）。桌面 Host 尚未接入；两次查询非同一快照，第二次重新校验 owner |
 | `backend/app/api/v1/agent_routes/sessions.py` | `PATCH` | `/api/v1/agent/sessions/{session_id}` | `rename_session` | Node 已接认证 Host 与 owner-scoped PostgreSQL updater；devserver Python `test_scheduled_task_execution.py` 20/20（改名相关用例 2/2），Node route+随机 schema PostgreSQL+Host 回归 21/21、0 跳过，typecheck 通过；Vite 未认证请求 401。尚未用认证请求通过 Vite 验收真实数据库写入；Agent `POST /chat`/SSE 执行链仍未迁移 |
 | `backend/app/api/v1/agent_routes/sessions.py` | `POST` | `/api/v1/agent/sessions/{session_id}/filesystem-authorization` | `confirm_session_filesystem_authorization` | Node 已接认证 Host、一次性 Redis 确认码兑换、owner-scoped PostgreSQL 授权及脱敏安全事件；session 授权 Node/Redis/Vite 集成 9/9、Python 基线 75/75、typecheck 通过，详见 `docs/devlog/2026-11-14-Node-Agent会话文件系统授权.md` |
 | `backend/app/api/v1/agent_routes/sessions.py` | `POST` | `/api/v1/agent/sessions/{session_id}/filesystem-authorization/request` | `request_session_filesystem_authorization` | Node 已接认证 Host、Python 兼容确认码请求协议、功能开关与 owner-scoped PostgreSQL 审计；session 授权 Node/Redis/Vite 集成 9/9、Python 基线 75/75、typecheck 通过，详见 `docs/devlog/2026-11-14-Node-Agent会话文件系统授权.md` |
 | `backend/app/api/v1/agent_routes/sessions.py` | `POST` | `/api/v1/agent/sessions/{session_id}/refresh-context` | `refresh_session_context` | Node 已挂载认证 Host 与 owner-scoped PostgreSQL refresher；route 3/3 通过、1 个隔离 PG 用例因未配置测试库跳过，Host 注入回归通过；Python snapshot 基线 1/1，Vite 未认证请求 401，typecheck 通过。真实 PG 写入未验收，详见 `docs/devlog/2026-11-14-Node-Agent会话上下文刷新Host接入.md` |
-| `backend/app/api/v1/audit_log.py` | `GET` | `/api/v1/admin/audit-log/` | `list_audit_logs` | 待迁移 |
+| `backend/app/api/v1/audit_log.py` | `GET` | `/api/v1/admin/audit-log` | `list_audit_logs` | Core 只读用例及生产 Host 已接线；Node 3/3、Python 真实 handler 1/1，生产 startServer 五接口集成 1/1；隔离 PG 为精简审计表，正式 schema/Alembic、SQLite 及真实部署未验收。实际路径无末尾斜杠。 |
 | `backend/app/api/v1/audit_log.py` | `GET` | `/api/v1/admin/audit-log/security-events` | `list_security_events` | Node Host 已接可信 Admin guard、PG query 与 Python-compatible HMAC user fingerprint；Vite 未认证401；真实PG未验收 |
 | `backend/app/api/v1/auth.py` | `DELETE` | `/api/v1/auth/me` | `delete_my_account` | 待迁移 |
 | `backend/app/api/v1/auth.py` | `GET` | `/api/v1/auth/avatar/{user_id}` | `get_avatar` | Node 已接公共头像读取与 PostgreSQL owner 元数据校验，仅读取 Local `avatars/` 下的受限相对路径并拒绝符号链接；devserver Vite→Node Host→随机 schema PG 集成确认上传后的公开读取字节、MIME 与缓存头；Python 头像基线 5/5；见 `docs/devlog/2026-11-13-Node-WebUI头像VitePG闭环.md` |
@@ -131,24 +140,24 @@
 | `backend/app/api/v1/auth.py` | `POST` | `/api/v1/auth/register` | `register` | Node Host 已接 PostgreSQL 注册事务、Redis 限流/验证码校验、Local 默认 Workspace ACL 和 onboarding seed；播种事务会幂等初始化 `file_library` 配额账本并使用用户/Host 默认额度。devserver Node 定向 auth/seed/file 回归与 Vite→Node Host→随机隔离 PG schema 注册集成共 26/26、0 跳过；Vite 路径实际创建用户、Cookie 会话、默认工作区、引导项目/活动/两份 Local 文件与配额事件，账本用量与文件字节一致；TypeScript 检查通过。Python 配额账本及 onboarding 状态基线 28/28；暂无直接覆盖 `onboarding.seed_for_user` 的 Python 注册集成用例。生产 `startServer` 注册组合根、真实 SMTP 与 Redis 跨进程共享仍未验收，详见 `docs/devlog/2026-11-14-Node-WebUI注册当前树复验.md` |
 | `backend/app/api/v1/auth.py` | `POST` | `/api/v1/auth/registration-code` | `send_registration_code` | Node Host 已接 Redis code-store adapter 与系统 SMTP sender；注册码路由、SMTP sender 和 Host 定向回归 43/43，Python 注册安全/邮件能力/SMTP 相邻 pytest 20/20。Vite 合成空体返回 422，验证路由与代理；未发真实邮件。Redis 实时预留、真实 SMTP 投递、认证注册及 PostgreSQL 写入未验收 |
 | `backend/app/api/v1/auth.py` | `POST` | `/api/v1/auth/reset-password` | `reset_password` | Node Host 已接一次性 token 认领、凭据事务更新、security_version 递增、提交后通知及认证 cookie 清除；token 写入失败会释放冷却键。devserver Node/Vite 定向回归通过；Python 相关基线 21/21。隔离 PostgreSQL 集成未验收；见 `docs/devlog/2026-11-13-Node-WebUI密码找回重置切片.md` |
-| `backend/app/api/v1/byok.py` | `DELETE` | `/api/v1/byok/{credential_id}` | `delete_credential` | 待迁移 |
-| `backend/app/api/v1/byok.py` | `GET` | `/api/v1/byok/` | `get_credentials` | 待迁移 |
-| `backend/app/api/v1/byok.py` | `GET` | `/api/v1/byok/embedding-rebuild/status` | `rebuild_my_vectors_status` | 待迁移 |
-| `backend/app/api/v1/byok.py` | `PATCH` | `/api/v1/byok/{credential_id}` | `patch_credential` | 待迁移 |
-| `backend/app/api/v1/byok.py` | `POST` | `/api/v1/byok/` | `create_credential` | 待迁移 |
-| `backend/app/api/v1/byok.py` | `POST` | `/api/v1/byok/capabilities` | `preview_provider_capabilities` | 待迁移 |
-| `backend/app/api/v1/byok.py` | `POST` | `/api/v1/byok/embedding-rebuild` | `rebuild_my_vectors` | 待迁移 |
-| `backend/app/api/v1/byok.py` | `POST` | `/api/v1/byok/media-capability-probe` | `probe_media` | 待迁移 |
-| `backend/app/api/v1/byok.py` | `POST` | `/api/v1/byok/models-preview` | `preview_models` | 待迁移 |
-| `backend/app/api/v1/byok.py` | `POST` | `/api/v1/byok/test-preview` | `test_credential_preview` | 待迁移 |
-| `backend/app/api/v1/byok.py` | `POST` | `/api/v1/byok/{credential_id}/test` | `test_credential` | 待迁移 |
+| `backend/app/api/v1/byok.py` | `DELETE` | `/api/v1/byok/{credential_id}` | `delete_credential` | 生产 Host 经动态 BYOK 策略委托 Core 同事务删除凭据与失效推理状态；先红后绿 Node 4/4、Python handler/gate/失效规则各 1/1，生产入口使用 Python 模型 PG 表验收。损坏配置显式失败为安全差异；正式 SQLite、完整 Alembic、真实部署和其他 BYOK 接口未验收。 |
+| `backend/app/api/v1/byok.py` | `GET` | `/api/v1/byok/` | `get_credentials` | Core 公开入口已有 owner 隔离列表用例、PG 读取和显式信封校验端口；合成数据单测 1/1、隔离 PG 1/1、Python 安全定向 4/4；Host 解密器与 Python 合成双层信封组合测试 1/1。可信开关/主密钥、生产 Host 路由和正式 SQLite 尚未接通，隔离 PG 测试使用合成校验器。 |
+| `backend/app/api/v1/byok.py` | `GET` | `/api/v1/byok/embedding-rebuild/status` | `rebuild_my_vectors_status` | 生产 Host 已接 Core 状态读取与隔离 Redis 旧 Worker 协议键；先红后绿 Node 4/4、Python idle 基线 1/1，覆盖 owner 隔离、错误脱敏及未配置 Redis 的 503。实际 Worker、向量计算、POST 和真实部署未验收。 |
+| `backend/app/api/v1/byok.py` | `PATCH` | `/api/v1/byok/{credential_id}` | `patch_credential` | 待迁移：缺目标共享 BYOK 信封及密钥版本适配，更新还须按原目的地校验密钥复用和失败副作用。 |
+| `backend/app/api/v1/byok.py` | `POST` | `/api/v1/byok/` | `create_credential` | Core 创建、Python 兼容信封与 Host 生产入口已接线，隔离 PG、Python handler 和双向信封对照通过；生产入口测试因 devserver 高负载超时，尚未验收，亦未取得入口先红证据。默认文件密钥需可信目录及正确同步忽略；非 Linux 需环境密钥，正式 SQLite、真实部署未验收。 |
+| `backend/app/api/v1/byok.py` | `POST` | `/api/v1/byok/capabilities` | `preview_provider_capabilities` | 待迁移：共享 Provider 快照与 Python handler 的 Ollama native 行为不一致（协议选择及 reasoning 选项），custom/unknown 默认 base URL 也不一致；定向对照保留失败，未接生产，待共享能力对齐。 |
+| `backend/app/api/v1/byok.py` | `POST` | `/api/v1/byok/embedding-rebuild` | `rebuild_my_vectors` | 待迁移：缺实际用户向量重建执行器；已有 Redis 状态不是可消费的任务队列。 |
+| `backend/app/api/v1/byok.py` | `POST` | `/api/v1/byok/media-capability-probe` | `probe_media` | 待迁移：缺目标 BYOK 凭据解密及媒体探测执行与指纹校验能力。 |
+| `backend/app/api/v1/byok.py` | `POST` | `/api/v1/byok/models-preview` | `preview_models` | 待迁移：缺 owner 限定凭据解密与 resolve_preview_key 目的地绑定裁决，不能把保存的密钥用于不同端点。 |
+| `backend/app/api/v1/byok.py` | `POST` | `/api/v1/byok/test-preview` | `test_credential_preview` | 待迁移：缺 owner 限定凭据解密、目的地绑定裁决及一致的 Provider 能力协议。 |
+| `backend/app/api/v1/byok.py` | `POST` | `/api/v1/byok/{credential_id}/test` | `test_credential` | 待迁移：缺目标 BYOK 版本密钥解密与一致的 Provider 诊断能力。 |
 | `backend/app/api/v1/clients.py` | `DELETE` | `/api/v1/clients/{cid}` | `delete_client` | Node Host owner-scoped Core/PostgreSQL；联系人路由 4/4、隔离 schema Host/PG 集成 1/1、Python Core 数据桥 pytest 3/3；含越权删除 404 与通知模块同库集成，Vite 未认证 401；见 `docs/devlog/2026-11-13-Node-WebUI联系人当前树回归.md` |
 | `backend/app/api/v1/clients.py` | `GET` | `/api/v1/clients/` | `list_clients` | Node Host owner-scoped Core/PostgreSQL；联系人路由 4/4、隔离 schema Host/PG 集成 1/1、Python Core 数据桥 pytest 3/3；列表隔离与响应字段在隔离 schema 实测，Vite 未认证 401；见 `docs/devlog/2026-11-13-Node-WebUI联系人当前树回归.md` |
 | `backend/app/api/v1/clients.py` | `POST` | `/api/v1/clients/` | `create_client` | Node Host owner-scoped Core/PostgreSQL；联系人路由 4/4、隔离 schema Host/PG 集成 1/1、Python Core 数据桥 pytest 3/3；创建字段/响应及不同 owner 隔离在隔离 schema 实测，Vite 未认证 401；见 `docs/devlog/2026-11-13-Node-WebUI联系人当前树回归.md` |
 | `backend/app/api/v1/config.py` | `GET` | `/api/v1/admin/config/` | `read_config` | Node 已接入：读取兼容 `config.override.json` 配置，敏感值脱敏 |
-| `backend/app/api/v1/config.py` | `GET` | `/api/v1/admin/config/embedding-rebuild/status` | `embedding_rebuild_status` | 待迁移 |
-| `backend/app/api/v1/config.py` | `GET` | `/api/v1/admin/config/index-rebuild/status` | `index_rebuild_status` | 待迁移 |
-| `backend/app/api/v1/config.py` | `GET` | `/api/v1/admin/config/memory-cleanup/status` | `memory_cleanup_status` | 待迁移 |
+| `backend/app/api/v1/config.py` | `GET` | `/api/v1/admin/config/embedding-rebuild/status` | `embedding_rebuild_status` | 生产 Host 已接 Core 与 Redis 平台重建状态键；先红后绿 Node 2/2、生产认证 1/1、Python Worker/handler 对照 1/1。异常消息脱敏为安全差异；不启动重建，真实部署未验收。 |
+| `backend/app/api/v1/config.py` | `GET` | `/api/v1/admin/config/index-rebuild/status` | `index_rebuild_status` | 生产 Host 已委托 Core 状态读取并接入 Redis；先红后绿 Node 5/5（含生产认证、TTL、CAS 和故障503）、Python handler 1/1。CAS 避免覆盖并发终态、写失败返回503为有意差异；实际维护 Worker 和真实部署未验收。 |
+| `backend/app/api/v1/config.py` | `GET` | `/api/v1/admin/config/memory-cleanup/status` | `memory_cleanup_status` | 生产 Host 已委托 Core 状态读取并接入 Redis；先红后绿 Node 5/5（含生产认证、TTL、CAS 和故障503）、Python handler 1/1。CAS 避免覆盖并发终态、写失败返回503为有意差异；实际维护 Worker 和真实部署未验收。 |
 | `backend/app/api/v1/config.py` | `GET` | `/api/v1/admin/config/reconcile-storage` | `reconcile_storage` | 计划退役：旧 DB↔FS 对账仅兼容迁移期保留，不迁入 Node |
 | `backend/app/api/v1/config.py` | `GET` | `/api/v1/admin/config/reconcile-storage/path-migration` | `scan_path_migration` | 计划退役：旧路径镜像迁移仅兼容迁移期保留，不迁入 Node |
 | `backend/app/api/v1/config.py` | `GET` | `/api/v1/admin/config/reconcile-users` | `reconcile_users` | 计划退役：去除按存储目录缺失推断账号异常的扫描，不迁入 Node |
@@ -163,43 +172,43 @@
 | `backend/app/api/v1/config.py` | `POST` | `/api/v1/admin/config/reconcile-storage/repair` | `reconcile_repair` | 计划退役：孤儿对象导入/删除仅兼容迁移期保留，不迁入 Node |
 | `backend/app/api/v1/config.py` | `POST` | `/api/v1/admin/config/reconcile-users/repair` | `repair_users_without_storage` | 计划退役：不得按存储目录缺失删除账号，不迁入 Node |
 | `backend/app/api/v1/config.py` | `POST` | `/api/v1/admin/config/test-connection` | `test_connection` | 部分接入：PostgreSQL/Redis；OSS 明确不支持 |
-| `backend/app/api/v1/config.py` | `POST` | `/api/v1/admin/config/test-embedding` | `test_embedding` | 待迁移 |
-| `backend/app/api/v1/config.py` | `POST` | `/api/v1/admin/config/test-search` | `test_search` | 待迁移 |
-| `backend/app/api/v1/config.py` | `POST` | `/api/v1/admin/config/test-smtp` | `test_smtp` | 待迁移 |
-| `backend/app/api/v1/config.py` | `POST` | `/api/v1/admin/config/test-voice` | `test_voice` | 待迁移 |
-| `backend/app/api/v1/data_portability.py` | `DELETE` | `/api/v1/data-portability/exports/{job_id}` | `delete_export` | 待迁移 |
-| `backend/app/api/v1/data_portability.py` | `DELETE` | `/api/v1/data-portability/imports/{job_id}` | `delete_import` | 待迁移 |
-| `backend/app/api/v1/data_portability.py` | `GET` | `/api/v1/data-portability/export/preview` | `export_preview` | 待迁移 |
-| `backend/app/api/v1/data_portability.py` | `GET` | `/api/v1/data-portability/exports` | `list_exports` | 待迁移 |
-| `backend/app/api/v1/data_portability.py` | `GET` | `/api/v1/data-portability/exports/{job_id}` | `get_export` | 待迁移 |
-| `backend/app/api/v1/data_portability.py` | `GET` | `/api/v1/data-portability/exports/{job_id}/download` | `download_export` | 待迁移 |
-| `backend/app/api/v1/data_portability.py` | `GET` | `/api/v1/data-portability/exports/{job_id}/download/browser` | `download_export_browser` | 待迁移 |
-| `backend/app/api/v1/data_portability.py` | `GET` | `/api/v1/data-portability/imports` | `list_imports` | 待迁移 |
-| `backend/app/api/v1/data_portability.py` | `GET` | `/api/v1/data-portability/imports/{job_id}` | `get_import` | 待迁移 |
-| `backend/app/api/v1/data_portability.py` | `POST` | `/api/v1/data-portability/exports` | `create_export` | 待迁移 |
-| `backend/app/api/v1/data_portability.py` | `POST` | `/api/v1/data-portability/exports/{job_id}/cancel` | `cancel_export` | 待迁移 |
-| `backend/app/api/v1/data_portability.py` | `POST` | `/api/v1/data-portability/exports/{job_id}/download-ticket` | `create_browser_download_ticket` | 待迁移 |
-| `backend/app/api/v1/data_portability.py` | `POST` | `/api/v1/data-portability/imports/preflight` | `preflight_import` | 待迁移 |
-| `backend/app/api/v1/data_portability.py` | `POST` | `/api/v1/data-portability/imports/{job_id}/apply` | `apply_import` | 待迁移 |
-| `backend/app/api/v1/data_portability.py` | `POST` | `/api/v1/data-portability/imports/{job_id}/cancel` | `cancel_import` | 待迁移 |
-| `backend/app/api/v1/data_portability.py` | `POST` | `/api/v1/data-portability/imports/{job_id}/recover` | `recover_import` | 待迁移 |
-| `backend/app/api/v1/data_portability.py` | `POST` | `/api/v1/data-portability/imports/{job_id}/resume` | `resume_import` | 待迁移 |
-| `backend/app/api/v1/data_portability.py` | `POST` | `/api/v1/data-portability/imports/{job_id}/rollback` | `rollback_import` | 待迁移 |
+| `backend/app/api/v1/config.py` | `POST` | `/api/v1/admin/config/test-embedding` | `test_embedding` | 生产 Host 已接 Core 诊断、动态配置和安全传输；先红后绿 Node 3/3、Python 对照与原回归 20/20，使用合成 HTTP。云 Provider 禁止本地目标、错误脱敏及响应大小限制为安全差异；真实 Provider 和部署未验收。 |
+| `backend/app/api/v1/config.py` | `POST` | `/api/v1/admin/config/test-search` | `test_search` | 待迁移：缺 Tavily、DeepResearch 和百度搜索共享适配。 |
+| `backend/app/api/v1/config.py` | `POST` | `/api/v1/admin/config/test-smtp` | `test_smtp` | 生产 Host 已接 Core 测试消息与动态 SMTP 适配；先红后绿 Node 定向 2/2、Python 原回归 18/18，隔离 TLS/STARTTLS 及 MIME 对照通过。生产入口合批通过；真实邮件服务和部署未验收。 |
+| `backend/app/api/v1/config.py` | `POST` | `/api/v1/admin/config/test-voice` | `test_voice` | 待迁移：共享 ASR 与 Python 的空密钥及错误 message_key/params 契约不一致，本地端点安全权限也需同源适配。 |
+| `backend/app/api/v1/data_portability.py` | `DELETE` | `/api/v1/data-portability/exports/{job_id}` | `delete_export` | 待迁移：现有本地删除原语在检查后可被父目录 symlink 替换，隔离 canary 已复现越过授权根删除；需目录句柄锚定、无跟随删除及失败恢复保障后接入。 |
+| `backend/app/api/v1/data_portability.py` | `DELETE` | `/api/v1/data-portability/imports/{job_id}` | `delete_import` | 待迁移：缺安全的目录句柄锚定暂存/回滚文件删除与恢复事务。 |
+| `backend/app/api/v1/data_portability.py` | `GET` | `/api/v1/data-portability/export/preview` | `export_preview` | 生产 Host 已接 Core owner 归属统计；先红后绿 Node 定向 2/2、Python 原回归 9/9，正式模型 PG 的 26 类型及跨 owner 附件/记忆对照通过。生产入口合批通过；正式 SQLite schema 与部署未验收。 |
+| `backend/app/api/v1/data_portability.py` | `GET` | `/api/v1/data-portability/exports` | `list_exports` | 生产 Host 已委托 Core owner 限定查询；先缺模块红灯后隔离 PG 和生产认证集成 2/2，Python handler 对照 1/1、原有回归 8/8。PG 为精简表；任务执行由 Python Worker 承担；正式 SQLite、列表查询完整 schema 和真实部署未验收。 |
+| `backend/app/api/v1/data_portability.py` | `GET` | `/api/v1/data-portability/exports/{job_id}` | `get_export` | 生产 Host 已委托 Core owner 限定查询；先缺模块红灯后隔离 PG 和生产认证集成 2/2，Python handler 对照 1/1、原有回归 8/8。PG 为精简表；任务执行由 Python Worker 承担；正式 SQLite、列表查询完整 schema 和真实部署未验收。 |
+| `backend/app/api/v1/data_portability.py` | `GET` | `/api/v1/data-portability/exports/{job_id}/download` | `download_export` | 生产 Host 已接 Core 加密归档读取、完整性校验与限时票据；先红后绿 Node 4/4、Python 原有 12/12、票据互通 1/1。Node 创建→真实 Python Worker→生产下载/Range/浏览器票据全链 1/1；正式 SQLite 与真实部署未验收。 |
+| `backend/app/api/v1/data_portability.py` | `GET` | `/api/v1/data-portability/exports/{job_id}/download/browser` | `download_export_browser` | 生产 Host 已接 Core 加密归档读取、完整性校验与限时票据；先红后绿 Node 4/4、Python 原有 12/12、票据互通 1/1。Node 创建→真实 Python Worker→生产下载/Range/浏览器票据全链 1/1；正式 SQLite 与真实部署未验收。 |
+| `backend/app/api/v1/data_portability.py` | `GET` | `/api/v1/data-portability/imports` | `list_imports` | 生产 Host 已委托 Core owner 限定查询；先缺模块红灯后隔离 PG 和生产认证集成 2/2，Python handler 对照 1/1、原有回归 8/8。PG 为精简表；任务执行由 Python Worker 承担；正式 SQLite、列表查询完整 schema 和真实部署未验收。 |
+| `backend/app/api/v1/data_portability.py` | `GET` | `/api/v1/data-portability/imports/{job_id}` | `get_import` | 生产 Host 已委托 Core owner 限定查询；先缺模块红灯后隔离 PG 和生产认证集成 2/2，Python handler 对照 1/1、原有回归 8/8。PG 为精简表；任务执行由 Python Worker 承担；正式 SQLite、列表查询完整 schema 和真实部署未验收。 |
+| `backend/app/api/v1/data_portability.py` | `POST` | `/api/v1/data-portability/exports` | `create_export` | 生产 Host 已接 Core PG 行锁事务；先红后绿 Node 2/2、Python 原有回归 2/2。正式模型隔离 PG 中 Node 创建任务由真实 Python Worker 生成加密归档并解密验证用户隔离 1/1；正式 SQLite 和真实部署未验收。 |
+| `backend/app/api/v1/data_portability.py` | `POST` | `/api/v1/data-portability/exports/{job_id}/cancel` | `cancel_export` | 生产 Host 已委托 Core 行锁事务；先红后绿 Node 3/3，Python handler/并发刷新 2/2；隔离 PG 中 Node 取消由真实 Python Worker 心跳消费并清理 1/1（producer 为合成阻塞夹具）。完整归档/上传、正式 SQLite 和真实部署未验收。 |
+| `backend/app/api/v1/data_portability.py` | `POST` | `/api/v1/data-portability/exports/{job_id}/download-ticket` | `create_browser_download_ticket` | 生产 Host 已接 Core 加密归档读取、完整性校验与限时票据；先红后绿 Node 4/4、Python 原有 12/12、票据互通 1/1。Node 创建→真实 Python Worker→生产下载/Range/浏览器票据全链 1/1；正式 SQLite 与真实部署未验收。 |
+| `backend/app/api/v1/data_portability.py` | `POST` | `/api/v1/data-portability/imports/preflight` | `preflight_import` | 待迁移：缺流式 envelope 写入和上传失败后的安全文件清理链。 |
+| `backend/app/api/v1/data_portability.py` | `POST` | `/api/v1/data-portability/imports/{job_id}/apply` | `apply_import` | 部分实现，未接生产 main：Node 缺 Python 数据替换期间的跨 API 写入门禁，replace/rollback/recovery 并发写入会破坏一致性。定向事务测试通过；真实 Worker、正式 SQLite 和部署按各自记录，待写门禁接通后再验收。 |
+| `backend/app/api/v1/data_portability.py` | `POST` | `/api/v1/data-portability/imports/{job_id}/cancel` | `cancel_import` | 待迁移：缺安全的目录句柄锚定暂存文件清理；不能仅更新任务状态。 |
+| `backend/app/api/v1/data_portability.py` | `POST` | `/api/v1/data-portability/imports/{job_id}/recover` | `recover_import` | 部分实现，未接生产 main：Node 缺 Python 数据替换期间的跨 API 写入门禁，replace/rollback/recovery 并发写入会破坏一致性。定向事务测试通过；真实 Worker、正式 SQLite 和部署按各自记录，待写门禁接通后再验收。 |
+| `backend/app/api/v1/data_portability.py` | `POST` | `/api/v1/data-portability/imports/{job_id}/resume` | `resume_import` | 生产 Host 已接 Core 行锁令牌轮换；先红后绿 Node 4/4、Python 4/4。真实 Python apply 拒绝旧令牌并消费新令牌入队；Node apply/Worker、正式 SQLite 与真实部署未验收。 |
+| `backend/app/api/v1/data_portability.py` | `POST` | `/api/v1/data-portability/imports/{job_id}/rollback` | `rollback_import` | 部分实现，未接生产 main：Node 缺 Python 数据替换期间的跨 API 写入门禁，replace/rollback/recovery 并发写入会破坏一致性。定向事务测试通过；真实 Worker、正式 SQLite 和部署按各自记录，待写门禁接通后再验收。 |
 | `backend/app/api/v1/dev_attention.py` | `GET` | `/api/v1/dev/attention/defaults` | `attention_defaults` | 待迁移 |
 | `backend/app/api/v1/dev_attention.py` | `POST` | `/api/v1/dev/attention/score` | `score_attention` | 待迁移 |
-| `backend/app/api/v1/email_admin.py` | `GET` | `/api/v1/admin/email/recipient-count` | `recipient_count` | 待迁移 |
-| `backend/app/api/v1/email_admin.py` | `POST` | `/api/v1/admin/email/preview` | `preview_email` | 待迁移 |
-| `backend/app/api/v1/email_admin.py` | `POST` | `/api/v1/admin/email/publish` | `publish_email` | 待迁移 |
-| `backend/app/api/v1/email_admin.py` | `POST` | `/api/v1/admin/email/test` | `test_email` | 待迁移 |
-| `backend/app/api/v1/email_admin.py` | `POST` | `/api/v1/admin/email/translate` | `translate_email` | 待迁移 |
-| `backend/app/api/v1/events.py` | `DELETE` | `/api/v1/events/{eid}` | `delete_event` | Node Host/PG adapter 已接入；当前树项目/日历及两条 Vite 集成套件 105/105 通过，Python 对照 10 个文件 66/66、typecheck 通过。日历 post-commit adapter 与生产组合根在随机隔离 schema 验证；Redis 实时广播与 RAG Worker 消费仍待验收，详见项目日历当前树复验 devlog |
-| `backend/app/api/v1/events.py` | `GET` | `/api/v1/events/` | `list_events` | Node 已接入 |
-| `backend/app/api/v1/events.py` | `GET` | `/api/v1/events/{eid}` | `get_event` | Node 已接入 |
-| `backend/app/api/v1/events.py` | `PATCH` | `/api/v1/events/{eid}` | `update_event` | Node Host/PG adapter 已接入；当前树项目/日历及两条 Vite 集成套件 105/105 通过，Python 对照 10 个文件 66/66、typecheck 通过。日历 post-commit adapter 与生产组合根在随机隔离 schema 验证；Redis 实时广播与 RAG Worker 消费仍待验收，详见项目日历当前树复验 devlog |
-| `backend/app/api/v1/events.py` | `POST` | `/api/v1/events/` | `create_event` | Node Host/PG adapter 已接入；事件、Undo 与 durable RAG job 同事务提交，提交后 best-effort 执行 context revision/live event。当前树项目/日历及两条 Vite 集成套件 105/105 通过，Python 对照 10 个文件 66/66、typecheck 通过；随机隔离 schema 验证事务与生产组合根写入。Redis 跨进程广播与 Python RAG Worker 消费仍待验收，详见项目日历当前树复验 devlog |
-| `backend/app/api/v1/feedback.py` | `POST` | `/api/v1/feedback/` | `submit_feedback` | Node 认证 Host/PostgreSQL 持久化已接；管理员分页读取亦接入 Node；devserver Node 路由与随机 schema PG 回归 5/5、Python 邮件开关基线 2/2，typecheck 通过。Node SMTP sender 尚未迁移，经 Node 提交时不会发送邮件；见 `docs/devlog/2026-11-13-Node-WebUI反馈提交与管理读取迁移.md` |
-| `backend/app/api/v1/feishu_connect.py` | `GET` | `/api/v1/me/feishu/connect/{poll_id}` | `poll` | 待迁移 |
-| `backend/app/api/v1/feishu_connect.py` | `POST` | `/api/v1/me/feishu/connect/` | `start` | 待迁移 |
+| `backend/app/api/v1/email_admin.py` | `GET` | `/api/v1/admin/email/recipient-count` | `recipient_count` | 生产 Host 已委托 Core 汇总收件人数；先红后绿，隔离 PG 与生产入口 2/2，Python handler 对照 1/1、原有邮件回归 6/6。未发信；PG 为精简表，正式 SQLite、完整 schema 与真实部署未验收。 |
+| `backend/app/api/v1/email_admin.py` | `POST` | `/api/v1/admin/email/preview` | `preview_email` | 生产 Host 已接 Core 完整邮件预览与管理员认证；先红后绿 Node 3/3、Python 9/9，10 色板 HTML/plain/图片逐字节对照。部分非法 URL 错误文案为安全通用文案；真实部署未验收，不发送邮件。 |
+| `backend/app/api/v1/email_admin.py` | `POST` | `/api/v1/admin/email/publish` | `publish_email` | 待迁移：缺请求后邮件投递任务的生产生命周期与关闭排空；不能只返回 queued。 |
+| `backend/app/api/v1/email_admin.py` | `POST` | `/api/v1/admin/email/test` | `test_email` | 生产 Host 已接 Core 模板与 SMTP 发送；先红后绿 Node 定向合批 4/4、Python 原回归 21/21，隔离 SMTP/MIME 对照通过。生产入口合批通过；真实邮件服务与部署未验收。 |
+| `backend/app/api/v1/email_admin.py` | `POST` | `/api/v1/admin/email/translate` | `translate_email` | 待迁移：缺真实邮件翻译模型执行用例及其运行时消费者。 |
+| `backend/app/api/v1/events.py` | `DELETE` | `/api/v1/events/{eid}` | `delete_event` | Node Host 已接入 Core 双库事务，同事务禁用关联提醒并写入 Undo；SQLite/隔离 PG 合同 2/2，生产 Host/Vite/隔离 PG 验证跨 owner、版本冲突及删除 Undo/redo，Python 日历对照 6/6。真实部署、Redis 广播与 RAG 消费仍待验收。 |
+| `backend/app/api/v1/events.py` | `GET` | `/api/v1/events/` | `list_events` | Node Host 已委托 Core 管理读取；正式临时 SQLite 8/8、隔离 PG/Host 3/3、Python 管理与 Agent 读取对照共 5/5。Agent 范围/type/limit 和提醒聚合仍未公共化；真实部署未验收。 |
+| `backend/app/api/v1/events.py` | `GET` | `/api/v1/events/{eid}` | `get_event` | Node Host 已委托 Core 管理读取；正式临时 SQLite 8/8、隔离 PG/Host 3/3、Python 管理与 Agent 读取对照共 5/5。Agent 范围/type/limit 和提醒聚合仍未公共化；真实部署未验收。 |
+| `backend/app/api/v1/events.py` | `PATCH` | `/api/v1/events/{eid}` | `update_event` | Node Host 已接入 Core 双库事务，同事务重排关联提醒并写入 Undo；SQLite/隔离 PG 合同 2/2，生产 Host/Vite/隔离 PG 验证跨 owner、版本冲突及更新 Undo/redo，Python 日历对照 6/6。真实部署、Redis 广播与 RAG 消费仍待验收。 |
+| `backend/app/api/v1/events.py` | `POST` | `/api/v1/events/` | `create_event` | Node Host 已接入 Core 双库事务；事件、Undo 与 durable RAG job 同事务提交，提交后 best-effort 执行 context revision/live event。SQLite/隔离 PG 合同 2/2；生产 Host/Vite/隔离 PG 验证幂等、Undo/redo 及与旧生产者混合并发 1/1，Python 日历对照 6/6。Host 使用合成 schema；Redis 跨进程广播与 RAG 消费仍待验收。 |
+| `backend/app/api/v1/feedback.py` | `POST` | `/api/v1/feedback/` | `submit_feedback` | 认证 Host 已接入 Core 双库反馈持久化和提交后 SMTP 通知；隔离 PG、Host、配置及本地 TLS SMTP 定向回归 27/27，生产 Host→隔离 PG→本地 SMTP 组合测试 2/2，Core 构建通过。组合测试使用 Core 源码映射和合成 schema；邮件模板样式对齐及真实部署尚未验收，Web Host 全量类型检查此前受其他模块的 ES2023 类型配置错误阻断。 |
+| `backend/app/api/v1/feishu_connect.py` | `GET` | `/api/v1/me/feishu/connect/{poll_id}` | `poll` | 生产 Host 已接 Core、Redis 与固定安全门户；先红后绿 Node 合批 4/4，真实 Python handler、ORM 密文和 reachability 消费对照通过。旧飞书 pytest 因隔离环境缺 SDK 未运行；生产入口认证与 Redis 边界合批通过；固定官方目标的完整外网流、SQLite 和部署未验收。 |
+| `backend/app/api/v1/feishu_connect.py` | `POST` | `/api/v1/me/feishu/connect/` | `start` | 生产 Host 已接 Core、Redis 与固定安全门户；先红后绿 Node 合批 4/4，真实 Python handler、ORM 密文和 reachability 消费对照通过。旧飞书 pytest 因隔离环境缺 SDK 未运行；生产入口认证与 Redis 边界合批通过；固定官方目标的完整外网流、SQLite 和部署未验收。 |
 | `backend/app/api/v1/files.py` | `DELETE` | `/api/v1/files/{fid}` | `delete_file` | Local Host/认证 owner、PostgreSQL 软删、版本递增、文件移入回收站、Undo 状态和提交后资源事件已接入；devserver Node Host/路由/隔离 PG 文件回归 23/23，Python 回收站/文件 API 基线 53/53，Node typecheck 通过；Vite 未认证请求 401。部分迁移：缺 filesync path advisory lock，认证后的 Vite 删除未验收 |
 | `backend/app/api/v1/files.py` | `GET` | `/api/v1/files/` | `list_file_page` | Node Host PostgreSQL 文件分页已接 owner/scope、过滤、加密游标；隔离 PG Node测试通过，Python 分页/归属基线 11/11，Vite 未认证401 |
 | `backend/app/api/v1/files.py` | `GET` | `/api/v1/files/library-counts` | `file_library_counts` | Node Host/owner-scoped PostgreSQL adapter 已接入；devserver Vite/Host 与隔离 PostgreSQL 行为测试验证个人/项目/回收站计数及越权隔离，和 summary/storage 同组通过 |
@@ -209,12 +218,12 @@
 | `backend/app/api/v1/files.py` | `GET` | `/api/v1/files/{fid}` | `get_file` | Node Host/owner-scoped PostgreSQL adapter 已接入；项目/文件夹关联字段与权限边界经 devserver 隔离 PostgreSQL 验证 |
 | `backend/app/api/v1/files.py` | `GET` | `/api/v1/files/{fid}/download` | `download_file` | Local Host 已接入 owner-scoped PostgreSQL 元数据与安全文件流；devserver Node 文件域回归 37 通过、0 失败、1 个隔离 PG 用例跳过；Python 下载/流预览基线 17/17；Vite 未认证返回 401。认证后的真实 SQL/文件下载仍未端到端验收 |
 | `backend/app/api/v1/files.py` | `GET` | `/api/v1/files/{fid}/location` | `get_file_location` | Node Host/owner-scoped PostgreSQL adapter 已接入；祖先同 scope 校验和路径响应经 devserver 隔离 PostgreSQL 验证 |
-| `backend/app/api/v1/files.py` | `GET` | `/api/v1/files/{fid}/stream` | `stream_file` | Local 文件流已接入 Node Host；owner/scope 检查、字节范围和越界 symlink 拒绝由 Node 回归覆盖；测试结果与 `/download` 同组，未认证 Vite 请求为 401 |
-| `backend/app/api/v1/files.py` | `GET` | `/api/v1/files/{fid}/stream-url` | `get_stream_url` | 签名流 URL 已接入 Node Host 并要求用户认证；Node 文件域回归与 Vite 未认证 401 已验证；未做认证后的真实文件读取验收 |
+| `backend/app/api/v1/files.py` | `GET` | `/api/v1/files/{fid}/stream` | `stream_file` | Local 文件流已接入 Node Host；owner/scope、Range、越界 symlink 与非零 `dl` 附件语义有 Node 回归，Cookie 认证流及 Python `dl` 最近邻各 1 项通过；浏览器实机播放/下载未验收。 |
+| `backend/app/api/v1/files.py` | `GET` | `/api/v1/files/{fid}/stream-url` | `get_stream_url` | Node Host 返回不带凭据的认证流路径，流请求须携带用户认证 Cookie 或 Authorization；Python 返回短期签名 URL。原生媒体元素无法为仅 Bearer 调用方附加 Authorization，其播放路径尚未验收；不把凭据放入 URL。 |
 | `backend/app/api/v1/files.py` | `GET` | `/api/v1/files/{fid}/thumb` | `get_thumb` | 待迁移 |
 | `backend/app/api/v1/files.py` | `GET` | `/api/v1/files/{fid}/xlsx-preview` | `xlsx_preview` | 待迁移 |
 | `backend/app/api/v1/files.py` | `GET` | `/api/v1/files/{fid}/xlsx-preview-image/{image_id}` | `xlsx_preview_image` | 待迁移 |
-| `backend/app/api/v1/files.py` | `PATCH` | `/api/v1/files/{fid}` | `update_file` | Local Node Host/认证 owner 与 PostgreSQL 元数据更新、Local 文件事务搬移、version CAS、Undo 和资源事件已接入；devserver Node 文件域 67/67，typecheck 通过，Python 文件 API 邻近基线 47/47 |
+| `backend/app/api/v1/files.py` | `PATCH` | `/api/v1/files/{fid}` | `update_file` | Node Host 已注册并接入认证、PG 元数据、Local 搬移、CAS 和 Undo 记录；但隔离 PG + 临时目录复现 COMMIT 已提交而响应丢失时错误反向移动，现有回归 0/1，可能造成数据库路径与文件不一致。持久恢复日志、并发互斥及安全文件操作尚未完成，此路径不能视为验收通过。 |
 | `backend/app/api/v1/files.py` | `POST` | `/api/v1/files/` | `upload_file` | Local Node Host/认证 owner 与 PostgreSQL 上传/覆盖、配额账本、冲突处理和文件事务已接入；前端 proxy 上传主路径已补齐 presign 接线；devserver Node upload/presign 行为 5/5，Python `test_files_api.py` + `test_file_upload_service.py` 39/39，typecheck 通过；Vite/Node 未认证 presign 均为 401。真实 PG 文件写入未复验，OSS 上传路径不属于 2.0 |
 | `backend/app/api/v1/files.py` | `POST` | `/api/v1/files/archive` | `create_archive` | Local Node Host 认证与 owner 隔离已接入；devserver Vite→Host→隔离 PostgreSQL 验证真实 ZIP 写入、正文与解压往返、配额事件和资源事件；归档定向回归 11/11、Python 基准 33/33、typecheck 通过，详见 `docs/devlog/2026-11-14-Node-WebUI文件归档Host验收.md` |
 | `backend/app/api/v1/files.py` | `POST` | `/api/v1/files/batch-delete` | `batch_delete_files` | Local Node Host/认证 owner 与 PostgreSQL 单事务批量软删除已接入；排序 filesync 锁、统一 Undo 收据、提交后事件和失败物理补偿均有覆盖；devserver Node 文件域 63/63，Python 文件/Undo/分页路径基线 101/101，typecheck 通过 |
@@ -225,22 +234,22 @@
 | `backend/app/api/v1/files.py` | `POST` | `/api/v1/files/unarchive` | `unarchive_file` | Local Node Host 认证与 owner 隔离已接入；devserver Vite→Host→隔离 PostgreSQL 验证真实 ZIP 解压写入、路径树和文件正文；覆盖未认证拒绝与跨 owner 文件夹隔离。Node 归档定向回归 11/11、Python 基准 33/33、typecheck 通过，详见 `docs/devlog/2026-11-14-Node-WebUI文件归档Host验收.md` |
 | `backend/app/api/v1/files.py` | `POST` | `/api/v1/files/{fid}/copy` | `copy_file` | Local Node Host/认证 owner 与 PostgreSQL 文件复制、重名处理、覆盖、配额事件、Undo 和资源事件已接入；devserver Node 文件域回归 58/58，Python 文件 API/service/Undo 基线 91/91，typecheck 通过。复制到自身保留 Python 的 Undo 与 `create` 事件语义；OSS 不属于 2.0 范围 |
 | `backend/app/api/v1/files.py` | `POST` | `/api/v1/files/{fid}/resolve-paths` | `resolve_file_paths` | Local Node Host/认证 owner 与 PostgreSQL 相对路径解析已接入；限制请求路径预算、保护来源 scope/owner 并支持 URL 编码；devserver Node 文件域回归 62/62，Python 分页/路径基准 10/10，typecheck 通过 |
-| `backend/app/api/v1/files.py` | `PUT` | `/api/v1/files/{fid}/content` | `update_file_content` | Local Host/认证 owner 与 PostgreSQL CAS、正文替换、Undo 附件和资源事件已接入；devserver Node Host/路由/隔离 PG 定向测试 19/19，Python 文件/Undo/filesync 邻近基线 172/172，Node typecheck/build 通过；Vite 未认证请求 401。部分迁移：缺 filesync path advisory lock 与 canonical change journal，认证后的 Vite 正文写入未验收 |
-| `backend/app/api/v1/filesync_admin.py` | `GET` | `/api/v1/admin/filesync/events` | `filesync_admin_events` | 待迁移 |
-| `backend/app/api/v1/filesync_admin.py` | `GET` | `/api/v1/admin/filesync/runs` | `runs` | 待迁移 |
-| `backend/app/api/v1/filesync_admin.py` | `GET` | `/api/v1/admin/filesync/runs/{run_id}` | `run_status` | 待迁移 |
-| `backend/app/api/v1/filesync_admin.py` | `GET` | `/api/v1/admin/filesync/status` | `sync_status` | 待迁移 |
-| `backend/app/api/v1/filesync_admin.py` | `POST` | `/api/v1/admin/filesync/bindings/{binding_id}/dry-run` | `binding_dry_run` | 待迁移 |
-| `backend/app/api/v1/filesync_admin.py` | `POST` | `/api/v1/admin/filesync/bindings/{binding_id}/initialize` | `binding_initialize` | 待迁移 |
+| `backend/app/api/v1/files.py` | `PUT` | `/api/v1/files/{fid}/content` | `update_file_content` | Local Host/认证 owner 与 PostgreSQL CAS、正文替换、Undo 附件和资源事件已接入；新附件目录现与 Undo 操作 ID 一致，隔离 PG 正文与预检回归 4/4、Python 文件 Undo 与过期清理 6/6；历史错位附件目录的清理及文件 Undo 正文恢复仍待完成。认证后的 Vite 正文写入与真实服务待验收。 |
+| `backend/app/api/v1/filesync_admin.py` | `GET` | `/api/v1/admin/filesync/events` | `filesync_admin_events` | 生产 Host 已接 Core 事件编码与 Redis 管理频道；先红后绿 Node 3/3、Python 9/9、前端 Vitest 1/1。真实 Python 发布→Redis→生产 SSE 及断连清理通过；时间格式按已测边界对照，watcher 和真实部署未验收。 |
+| `backend/app/api/v1/filesync_admin.py` | `GET` | `/api/v1/admin/filesync/runs` | `runs` | 生产 Host 已接 Core 只读正式运行记录与管理员认证；先红后绿 Node 2/2、生产入口 1/1、Python 对照及原回归 3/3。继续读取已有 Worker 快照；Node 同步执行器、正式 SQLite 与真实部署未验收。 |
+| `backend/app/api/v1/filesync_admin.py` | `GET` | `/api/v1/admin/filesync/runs/{run_id}` | `run_status` | 生产 Host 已接 Core 只读正式运行记录与管理员认证；先红后绿 Node 2/2、生产入口 1/1、Python 对照及原回归 3/3。继续读取已有 Worker 快照；Node 同步执行器、正式 SQLite 与真实部署未验收。 |
+| `backend/app/api/v1/filesync_admin.py` | `GET` | `/api/v1/admin/filesync/status` | `sync_status` | 待迁移：Python 查询会清理过期冲突并提交，还依赖 workspace shell 支持、真实目录根和 inotify 管理服务，不能以只读聚合替代。 |
+| `backend/app/api/v1/filesync_admin.py` | `POST` | `/api/v1/admin/filesync/bindings/{binding_id}/dry-run` | `binding_dry_run` | 生产 Host 已接 Core 事务去重及 Redis 事件；先红后绿 Node 3/3、Python 原回归 2/2。真实 Python runner 消费 Node 任务并完成预演，隔离数据业务表零写入、源文件不变；Node Worker、正式 SQLite 和真实部署未验收。 |
+| `backend/app/api/v1/filesync_admin.py` | `POST` | `/api/v1/admin/filesync/bindings/{binding_id}/initialize` | `binding_initialize` | 生产 Host 已接 Core 事务与既有 Worker 协议；先红后绿 Node 合批 4/4、Python 1/1，隔离任务由真实 Python runner 消费。生产入口批量回归、Node Worker、正式 SQLite 和真实部署待验收。 |
 | `backend/app/api/v1/filesync_admin.py` | `POST` | `/api/v1/admin/filesync/bindings/{binding_id}/missing-apply` | `missing_apply` | 待迁移 |
 | `backend/app/api/v1/filesync_admin.py` | `POST` | `/api/v1/admin/filesync/bindings/{binding_id}/missing-preview` | `missing_preview` | 待迁移 |
 | `backend/app/api/v1/filesync_admin.py` | `POST` | `/api/v1/admin/filesync/bindings/{binding_id}/reconcile` | `binding_reconcile` | 待迁移 |
 | `backend/app/api/v1/filesync_admin.py` | `POST` | `/api/v1/admin/filesync/conflicts/{conflict_id}/resolve` | `conflict_resolve` | 待迁移 |
 | `backend/app/api/v1/filesync_admin.py` | `POST` | `/api/v1/admin/filesync/reconcile-issues` | `reconcile_issue_bindings` | 待迁移 |
-| `backend/app/api/v1/filesync_admin.py` | `POST` | `/api/v1/admin/filesync/runs/{run_id}/cancel` | `cancel_run` | 待迁移 |
-| `backend/app/api/v1/filesync_admin.py` | `POST` | `/api/v1/admin/filesync/watcher-capacity/expand` | `expand_watcher_capacity` | 待迁移 |
-| `backend/app/api/v1/folder_doctor_admin.py` | `GET` | `/api/v1/admin/folder-doctor/scan` | `scan_dirs` | 待迁移 |
-| `backend/app/api/v1/folder_doctor_admin.py` | `POST` | `/api/v1/admin/folder-doctor/repair` | `repair_dirs` | 待迁移 |
+| `backend/app/api/v1/filesync_admin.py` | `POST` | `/api/v1/admin/filesync/runs/{run_id}/cancel` | `cancel_run` | 生产 Host 已接 Core 行锁取消及 Redis 管理事件；先红后绿 Node 合批 5/5、Python 原回归 1/1，真实 Python Worker 消费取消标记且 SSE 收到事件；正式 SQLite、真实部署未验收。 |
+| `backend/app/api/v1/filesync_admin.py` | `POST` | `/api/v1/admin/filesync/watcher-capacity/expand` | `expand_watcher_capacity` | 生产 Host 已接 Core 和正式 Unix helper；先红后绿 Node 3/3、Python 19/19，真实 helper 在临时模拟 proc/sysctl/策略下验证权限、并发和扩容。同步 status 未迁移导致页面按钮待接通；真实 sysctl 与部署未验收。 |
+| `backend/app/api/v1/folder_doctor_admin.py` | `GET` | `/api/v1/admin/folder-doctor/scan` | `scan_dirs` | 待迁移：缺共享文件夹路径真源和 Local 目录遍历/存在/建目录端口；旧 Host 路径原型与 Python 删除项目语义不同。修复只补目录，删除或搬迁请求返回 400。 |
+| `backend/app/api/v1/folder_doctor_admin.py` | `POST` | `/api/v1/admin/folder-doctor/repair` | `repair_dirs` | 待迁移：缺共享文件夹路径真源和 Local 目录遍历/存在/建目录端口；旧 Host 路径原型与 Python 删除项目语义不同。修复只补目录，删除或搬迁请求返回 400。 |
 | `backend/app/api/v1/folders.py` | `DELETE` | `/api/v1/folders/{fid}` | `delete_folder` | 待迁移 |
 | `backend/app/api/v1/folders.py` | `GET` | `/api/v1/folders/` | `list_folder_page` | Node Host PostgreSQL 文件夹分页已接 owner/scope、直属计数与加密游标；隔离 PG Node测试通过，Python 分页/归属基线 11/11，Vite 未认证401 |
 | `backend/app/api/v1/folders.py` | `GET` | `/api/v1/folders/page` | `list_folder_page` | 与 `/folders/` 共用分页 Host/PG adapter；Node 路由测试通过 |
@@ -252,57 +261,57 @@
 | `backend/app/api/v1/folders.py` | `POST` | `/api/v1/folders/` | `create_folder` | Node Host/owner-scoped PostgreSQL adapter 已实现：scope 校验、路径镜像物化、Undo 与提交后事件；Node mock 回归通过。真实隔离 PG 未验收 |
 | `backend/app/api/v1/folders.py` | `POST` | `/api/v1/folders/resolve-paths` | `resolve_folder_paths` | Node Host/owner-scoped PostgreSQL adapter 已接入；请求预算、相对路径/URL 编码、父级归属与 scope 隔离由 route/PG 回归覆盖；devserver 文件域 67/67，Python 文件夹 API 14/14，typecheck 通过 |
 | `backend/app/api/v1/folders.py` | `POST` | `/api/v1/folders/{fid}/copy` | `copy_folder` | 待迁移 |
-| `backend/app/api/v1/live.py` | `GET` | `/api/v1/live/stream` | `stream_live_events` | Node Host 已接认证用户/广播频道 SSE、事件 allowlist 与字段裁剪、逐消息账号与 security version 复核、断连清理；Python Live/session pytest 23/23，Node Live/auth 定向 23 通过、0 失败、1 个隔离 PostgreSQL 集成用例跳过，typecheck 通过；Vite 未认证请求 401；真实 PostgreSQL/Redis Pub/Sub 未验收，见 `docs/devlog/2026-11-14-Node-WebUI-LiveSSEHost切片.md` |
-| `backend/app/api/v1/loopscope.py` | `GET` | `/api/v1/dev/loopscope/{path:path}` | `proxy_loopscope_read` | 待迁移 |
+| `backend/app/api/v1/live.py` | `GET` | `/api/v1/live/stream` | `stream_live_events` | Web Host 在 `modules/live` 保留认证、Redis 订阅与 SSE 生命周期；消息校验/字段裁剪复用 `@gugu/core/live-message`，与 Filesync 共用，严格时间解析遵循 Python；逐消息账号与 security version 复核、断连清理不变。真实 PostgreSQL/Redis Pub/Sub 未验收，详见 Live SSE Host devlog |
+| `backend/app/api/v1/loopscope.py` | `GET` | `/api/v1/dev/loopscope/{path:path}` | `proxy_loopscope_read` | 生产 Host 已接认证及受限只读 HTTP/SSE 代理；先红后绿 Node 2/2（合成 Collector/生产认证/断连）、Python handler 对照 1/1；真实 Collector 和部署未验收。 |
 | `backend/app/api/v1/mcp_settings.py` | `DELETE` | `/api/v1/mcp/servers/{server_id}` | `delete_server` | 待迁移 |
 | `backend/app/api/v1/mcp_settings.py` | `GET` | `/api/v1/mcp/servers` | `list_servers` | 待迁移 |
 | `backend/app/api/v1/mcp_settings.py` | `GET` | `/api/v1/mcp/servers/{server_id}/tools` | `list_loaded_tools` | 待迁移 |
-| `backend/app/api/v1/mcp_settings.py` | `GET` | `/api/v1/mcp/status` | `mcp_status` | 待迁移 |
+| `backend/app/api/v1/mcp_settings.py` | `GET` | `/api/v1/mcp/status` | `mcp_status` | 生产 Host 已接 Core 动态开关读取；先红后绿 Node 3/3（含生产认证和配置热更新）、Python handler 对照 1/1。仅读取入口状态，MCP 管理器、工具发现与真实部署未验收。 |
 | `backend/app/api/v1/mcp_settings.py` | `PATCH` | `/api/v1/mcp/servers/{server_id}` | `update_server` | 待迁移 |
 | `backend/app/api/v1/mcp_settings.py` | `POST` | `/api/v1/mcp/servers` | `create_server` | 待迁移 |
 | `backend/app/api/v1/mcp_settings.py` | `POST` | `/api/v1/mcp/servers/{server_id}/load_status` | `load_server_status` | 待迁移 |
 | `backend/app/api/v1/mcp_settings.py` | `POST` | `/api/v1/mcp/servers/{server_id}/reconnect` | `reconnect_server` | 待迁移 |
 | `backend/app/api/v1/mcp_settings.py` | `POST` | `/api/v1/mcp/servers/{server_id}/test_connection` | `test_connection` | 待迁移 |
-| `backend/app/api/v1/mind.py` | `DELETE` | `/api/v1/mind/canvases/{cid}` | `delete_canvas` | Node Host 已接入 owner-scoped 画布/画布项/活动关系软删，保留全局便签节点，并在同一事务写入完整 Undo 快照；devserver Mind Node/Vite/隔离 PG 回归 51/51、Python Mind/Undo 基线 68/68、typecheck 通过；随机 schema 残留 0，见 Mind 画布删除切片 |
-| `backend/app/api/v1/mind.py` | `DELETE` | `/api/v1/mind/canvases/{cid}/items/{iid}` | `remove_canvas_item` | Node Host 已接入事务内软删、关系脱离、Undo 与提交后事件；生产 `startServer` 经 Vite/隔离 PG 验证，Mind Node/Vite 定向套件 25/25、Python Mind 基线 68/68、typecheck 通过；随机 schema 残留 0。Redis 跨进程广播未验收，见 Mind 画布条目操作切片 |
-| `backend/app/api/v1/mind.py` | `DELETE` | `/api/v1/mind/canvases/{cid}/relations/{rid}` | `delete_canvas_relation` | Node Host 已接入 owner-scoped 删除、Undo 和事务提交后通知；生产 `startServer` 经 Vite/隔离 PG 验证关系查询、删除与重建；Node/Vite 25/25、Python Mind 基线 68/68、typecheck 通过；Redis 跨进程广播未验收，见 Mind 画布条目操作切片 |
-| `backend/app/api/v1/mind.py` | `DELETE` | `/api/v1/mind/notes/{nid}` | `delete_note` | Node Host 已接入 owner-scoped 软删除、版本递增、事务内 Undo 与提交后 mind 事件；Python Mind API/Undo 基线 39/39，Node Mind 行为套件 24/24；模拟 PostgreSQL 事务覆盖 rollback，真实 PG 尚无隔离库验收。 |
-| `backend/app/api/v1/mind.py` | `DELETE` | `/api/v1/mind/relations/{rid}` | `delete_relation` | Node Host 已接入仅匹配全局关系（canvas_id IS NULL）的 owner-scoped 软删、事务内 Undo 和提交后通知；devserver 关系行为与生产 Vite→Node Host→隔离 PG 回归 6/6、typecheck 通过；真实集成验证跨 owner 404、非法 ID 422 和 null-canvas Undo 快照，见 Mind 全局关系删除切片 |
-| `backend/app/api/v1/mind.py` | `GET` | `/api/v1/mind/canvases` | `list_canvases` | Node Host 已接入 owner-scoped PostgreSQL 读取、`project_id` 过滤和 200 条上限；生产 `startServer` 经 Vite/隔离 PG 验证列表、owner 隔离；Mind Node/Vite 25/25、Python Mind 基线 68/68、typecheck 通过；随机 schema 残留 0，见 Mind 画布条目操作切片 |
-| `backend/app/api/v1/mind.py` | `GET` | `/api/v1/mind/canvases/{cid}/items` | `list_canvas_items` | Node Host 已接入 owner-scoped 活动画布项/节点读取，并批量附带活动卡首屏快照；生产 `startServer` 经 Vite/隔离 PG 验证软删后列表与便签仍保留；Mind Node/Vite 25/25、Python Mind 基线 68/68、typecheck 通过；随机 schema 残留 0，见 Mind 画布条目操作切片 |
-| `backend/app/api/v1/mind.py` | `GET` | `/api/v1/mind/canvases/{cid}/relations` | `list_canvas_relations` | Node Host 已接入 owner-scoped 活动关系读取与 `detachedRelationIds` 过滤；生产 `startServer` 经 Vite/隔离 PG 验证关系删除后的列表与重建；Mind Node/Vite 25/25、Python Mind 基线 68/68、typecheck 通过；Redis 跨进程广播未验收，见 Mind 画布条目操作切片 |
-| `backend/app/api/v1/mind.py` | `GET` | `/api/v1/mind/nodes/{nid}/canvas-location` | `canvas_note_location` | Node Host 已接入 owner-scoped 画布便签定位；Mind Python 基线 36/36，Node 画布读取/Host 测试 6/6，隔离 PG 用例 1 项因测试 URL 未配置跳过；Vite 未认证请求 401。真实 PG 查询未验收 |
-| `backend/app/api/v1/mind.py` | `GET` | `/api/v1/mind/notes` | `list_notes` | Node Host 已接入 owner-scoped PostgreSQL 读取；生产 `startServer` 经 Vite/隔离 PG 验证便签仍在普通记录流可读；Mind Node/Vite 25/25、Python Mind 基线 68/68、typecheck 通过，随机 schema 残留 0，见 Mind 画布条目操作切片 |
-| `backend/app/api/v1/mind.py` | `GET` | `/api/v1/mind/notes/{nid}` | `get_note` | Node Host 已接入 owner-scoped PostgreSQL 读取；生产 `startServer` 经 Vite/隔离 PG 验证画布项软删后普通便签仍可读；Mind Node/Vite 25/25、Python Mind 基线 68/68、typecheck 通过，随机 schema 残留 0，见 Mind 画布条目操作切片 |
-| `backend/app/api/v1/mind.py` | `GET` | `/api/v1/mind/ref-suggest` | `ref_suggest` | Node 已接入 owner-scoped 最近候选、复用全局搜索以及逐条聊天消息定位；devserver Node 行为/PG adapter/Vite 生产组合根回归 4/4、Python Mind/引用建议基线 39/39、typecheck 通过；覆盖最近项目/文件/活动、项目搜索、消息片段与 owner 隔离，见 Mind 引用建议切片 |
-| `backend/app/api/v1/mind.py` | `PATCH` | `/api/v1/mind/canvases/{cid}` | `update_canvas` | Node Host 已接入 owner-scoped 字段校验、局部更新、事务内 Undo 与提交后事件；依赖注入 Host 经 Vite/隔离 PG 验证更新后重读、跨 owner 隐藏；Mind Node/Vite 25/25、Python Mind 基线 68/68、typecheck 通过，随机 schema 残留 0，见 Mind 画布条目操作切片 |
-| `backend/app/api/v1/mind.py` | `PATCH` | `/api/v1/mind/canvases/{cid}/items/{iid}` | `update_canvas_item` | Node Host 已接入 owner-scoped 字段更新、事务内 Undo 与提交后事件；生产 `startServer` 经 Vite/隔离 PG 验证位置/数据更新，依赖注入 Host 经 Vite/隔离 PG 验证置顶坐标和 z 重排；Mind Node/Vite 25/25、Python Mind 基线 68/68、typecheck 通过，见 Mind 画布条目操作切片 |
-| `backend/app/api/v1/mind.py` | `PATCH` | `/api/v1/mind/nodes/{nid}` | `update_canvas_note` | Node Host 已接入 owner-scoped 画布便签编辑、版本 CAS、Markdown 派生字段、Undo 与提交后事件；依赖注入 Host 经 Vite/隔离 PG 验证成功更新、过期版本 409 与跨 owner 隐藏；Mind Node/Vite 25/25、Python Mind 基线 68/68、typecheck 通过，见 Mind 画布条目操作切片 |
-| `backend/app/api/v1/mind.py` | `PATCH` | `/api/v1/mind/notes/{nid}` | `update_note` | Node Host 已接入 owner-scoped 字段校验、CAS、Markdown 搜索字段重算、空 PATCH 兼容、事务内 Undo 与提交后 mind 事件；Python Mind API/Undo 基线 39/39，Node Mind 行为套件 24/24；真实 PG 尚无隔离库验收。 |
-| `backend/app/api/v1/mind.py` | `POST` | `/api/v1/mind/canvases` | `create_canvas` | Node Host 已接入 owner-scoped PostgreSQL 创建与 Undo；生产 `startServer` 经 Vite/隔离 PG 验证创建和读取，依赖注入 Host 经 Vite/隔离 PG 验证返回默认值；Mind Node/Vite 25/25、Python Mind 基线 68/68、typecheck 通过，见 Mind 画布条目操作切片 |
-| `backend/app/api/v1/mind.py` | `POST` | `/api/v1/mind/canvases/{cid}/items` | `add_canvas_item` | Node Host 已接入 owner-scoped 幂等加入、事务内 Undo 与提交后事件；生产 `startServer` 经 Vite/隔离 PG 验证加入和重复加入，依赖注入 Host 经 Vite/隔离 PG 验证重复加入不重复写入；Mind Node/Vite 25/25、Python Mind 基线 68/68、typecheck 通过，见 Mind 画布条目操作切片 |
-| `backend/app/api/v1/mind.py` | `POST` | `/api/v1/mind/canvases/{cid}/items/{iid}/bring-to-front` | `bring_canvas_item_to_front` | Node Host 已接入事务内 z 重排与坐标更新、Undo 和提交后事件；依赖注入 Host 经 Vite/隔离 PG 验证坐标与 z 值；Mind Node/Vite 25/25、Python Mind 基线 68/68、typecheck 通过，见 Mind 画布条目操作切片 |
-| `backend/app/api/v1/mind.py` | `POST` | `/api/v1/mind/canvases/{cid}/notes` | `create_canvas_note` | Node Host 已接入便签创建、Markdown 索引、尺寸边界、Undo 与提交后事件；依赖注入 Host 经 Vite/隔离 PG 验证正文/元数据和默认尺寸，后续编辑与重读通过；Mind Node/Vite 25/25、Python Mind 基线 68/68、typecheck 通过，见 Mind 画布条目操作切片 |
-| `backend/app/api/v1/mind.py` | `POST` | `/api/v1/mind/nodes/ref` | `create_ref_node` | Node Host 已接入 project/file/event owner-scoped 快照、幂等复用、Undo 与提交后事件；生产 `startServer` 经 Vite/隔离 PG 验证三类引用、重复项目引用和跨 owner 拒绝；Mind Node/Vite 25/25、Python Mind 基线 68/68、typecheck 通过，见 Mind 画布条目操作切片 |
-| `backend/app/api/v1/mind.py` | `POST` | `/api/v1/mind/notes` | `create_note` | Node Host 已接入 owner-scoped Markdown 创建、纯文本/hash 派生、事务内 Undo 与提交后 mind 事件；Python Mind API/Undo 基线 39/39，Node Mind 行为套件 24/24；真实 PG 尚无隔离库验收。 |
-| `backend/app/api/v1/mind.py` | `POST` | `/api/v1/mind/relations` | `create_relation` | Node Host 已接入 owner-scoped 建立、幂等与并行边处理、Undo 和事务后通知；生产 `startServer` 经 Vite/隔离 PG 验证重复/并行关系、自连接拒绝、跨 owner 隔离与删除后重建；Mind Node/Vite 25/25、Python Mind 基线 68/68、typecheck 通过；Redis 跨进程广播未验收，见 Mind 画布条目操作切片 |
-| `backend/app/api/v1/notifications.py` | `DELETE` | `/api/v1/notifications/` | `clear_notifications` | Node Host owner-scoped PostgreSQL；通知域路由回归 4/4、隔离 schema Host/PG 集成 1/1、Python pytest 4/4；清除仅写当前用户 dismissal，不删除通知本体；见 `docs/devlog/2026-11-13-Node-WebUI通知中心当前树回归.md` |
-| `backend/app/api/v1/notifications.py` | `GET` | `/api/v1/notifications/` | `list_notifications` | Node Host owner-scoped PostgreSQL；通知域路由回归 4/4、隔离 schema Host/PG 集成 1/1、Python pytest 4/4；覆盖可见范围、注册时间边界、持久/临时通知、已读/清除状态和排序/limit；见 `docs/devlog/2026-11-13-Node-WebUI通知中心当前树回归.md` |
-| `backend/app/api/v1/notifications.py` | `GET` | `/api/v1/notifications/bubble` | `latest_bubble` | Node Host owner-scoped PostgreSQL；通知域路由回归 4/4、隔离 schema Host/PG 集成 1/1、Python pytest 4/4；覆盖未读、过期、已清除时的气泡选择；见 `docs/devlog/2026-11-13-Node-WebUI通知中心当前树回归.md` |
-| `backend/app/api/v1/notifications.py` | `POST` | `/api/v1/notifications/read` | `mark_read` | Node Host owner-scoped PostgreSQL；通知域路由回归 4/4、隔离 schema Host/PG 集成 1/1、Python pytest 4/4；覆盖重复 ID 幂等及空列表标记全部可见通知；见 `docs/devlog/2026-11-13-Node-WebUI通知中心当前树回归.md` |
+| `backend/app/api/v1/mind.py` | `DELETE` | `/api/v1/mind/canvases/{cid}` | `delete_canvas` | Node Host 已接入 Core 双库事务，软删画布、画布项及活动关系，保留便签正文并记录完整 Undo；SQLite/隔离 PG 合同各 1/1，生产 Host/Vite/隔离 PG 验证跨 owner 拒绝及关联项 Undo/redo 1/1，Python Mind/Undo 基线 68/68。Host 使用合成 schema，真实部署与 Redis 广播未验收。 |
+| `backend/app/api/v1/mind.py` | `DELETE` | `/api/v1/mind/canvases/{cid}/items/{iid}` | `remove_canvas_item` | Node Host 已接入 Core 双库事务，软删条目并记录关系脱离、Undo 和提交后事件；SQLite/隔离 PG 合同各 1/1，生产 Host/Vite/隔离 PG 验证越权、重复移除、关系保留及 Undo/redo，Python Mind 基线 68/68。Host 使用合成 schema，真实部署及 Redis 广播未验收。 |
+| `backend/app/api/v1/mind.py` | `DELETE` | `/api/v1/mind/canvases/{cid}/relations/{rid}` | `delete_canvas_relation` | Node Host 已接入 Core 双库事务和 Undo；SQLite 独立进程并发验证只成功一次，生产 Host/Vite/隔离 PG 验证越权、错误画布、重复删除和 Undo/redo，Python Mind 基线 68/68。Host 测试使用合成 schema，真实部署及 Redis 广播未验收。 |
+| `backend/app/api/v1/mind.py` | `DELETE` | `/api/v1/mind/notes/{nid}` | `delete_note` | Node Host 已接入 Core 双库事务，覆盖 owner-scoped 软删除、版本递增、事务内 Undo 与提交后事件；SQLite/隔离 PG 合同各 1/1，生产 Host/Vite/隔离 PG 验证跨用户拒绝及删除后的 Undo/redo，Python Mind API/Undo 39/39。Host 测试使用合成 schema，真实部署未验收。 |
+| `backend/app/api/v1/mind.py` | `DELETE` | `/api/v1/mind/relations/{rid}` | `delete_relation` | Node Host 已接入 Core 双库事务，仅软删所属的全局关系并同事务写 Undo；SQLite/隔离 PG 合同各 1/1，生产 Host/Vite/隔离 PG 验证越权、画布关系与重复删除拒绝及 Undo/redo。测试使用合成 schema，真实部署和 Redis 广播尚未验收。 |
+| `backend/app/api/v1/mind.py` | `GET` | `/api/v1/mind/canvases` | `list_canvases` | Node Host 已接入 Core 双库读取；正式 SQLite 合同 2/2、隔离 PG 1/1、生产 Host/Vite/隔离 PG 1/1，覆盖 owner、软删、脱离关系和日历引用；Python Mind 基线通过。Host 使用合成 schema，真实部署未验收。 |
+| `backend/app/api/v1/mind.py` | `GET` | `/api/v1/mind/canvases/{cid}/items` | `list_canvas_items` | Node Host 已接入 Core 双库读取；正式 SQLite 合同 2/2、隔离 PG 1/1、生产 Host/Vite/隔离 PG 1/1，覆盖 owner、软删、脱离关系和日历引用；Python Mind 基线通过。Host 使用合成 schema，真实部署未验收。 |
+| `backend/app/api/v1/mind.py` | `GET` | `/api/v1/mind/canvases/{cid}/relations` | `list_canvas_relations` | Node Host 已接入 Core 双库读取；正式 SQLite 合同 2/2、隔离 PG 1/1、生产 Host/Vite/隔离 PG 1/1，覆盖 owner、软删、脱离关系和日历引用；Python Mind 基线通过。Host 使用合成 schema，真实部署未验收。 |
+| `backend/app/api/v1/mind.py` | `GET` | `/api/v1/mind/nodes/{nid}/canvas-location` | `canvas_note_location` | Node Host 已接入 Core 双库读取；正式 SQLite 合同 2/2、隔离 PG 1/1、生产 Host/Vite/隔离 PG 1/1，覆盖 owner、软删、脱离关系和日历引用；Python Mind 基线通过。Host 使用合成 schema，真实部署未验收。 |
+| `backend/app/api/v1/mind.py` | `GET` | `/api/v1/mind/notes` | `list_notes` | Node Host 已接入 Core 双库读取；SQLite 合同 2/2、隔离 PG 合同 1/1、生产 Host/Vite/隔离 PG 1/1，覆盖排序、分页、owner、软删与画布便签排除。PG 的日期排序依赖会话时区，与 SQLite UTC 在跨日时可能不同；真实部署未验收。 |
+| `backend/app/api/v1/mind.py` | `GET` | `/api/v1/mind/notes/{nid}` | `get_note` | Node Host 已接入 Core 双库读取；SQLite 合同 2/2、隔离 PG 合同 1/1、生产 Host/Vite/隔离 PG 1/1，覆盖排序、分页、owner、软删与画布便签排除。PG 的日期排序依赖会话时区，与 SQLite UTC 在跨日时可能不同；真实部署未验收。 |
+| `backend/app/api/v1/mind.py` | `GET` | `/api/v1/mind/ref-suggest` | `ref_suggest` | Node Host PostgreSQL 路径已接入最近候选、搜索与逐条消息定位；跨端 Core 和完整 SQLite 来源尚未接通。空查询实际返回八类最近项，部分旧 pytest 仍断言空结果或仅三类，与当前 Python 源码不一致，需结合较新回归核实；真实部署未验收。 |
+| `backend/app/api/v1/mind.py` | `PATCH` | `/api/v1/mind/canvases/{cid}` | `update_canvas` | Node Host 已接入 Core 双库更新、事务内 Undo 与提交后事件；SQLite/隔离 PG 合同各 1/1，生产 Host/Vite/隔离 PG 验证跨 owner 拒绝、更新和 Undo/redo，Python Mind 基线 68/68。Host 使用合成 schema，真实部署与 Redis 广播未验收。 |
+| `backend/app/api/v1/mind.py` | `PATCH` | `/api/v1/mind/canvases/{cid}/items/{iid}` | `update_canvas_item` | Node Host 已接入 Core 双库事务；SQLite 独立进程并发和隔离 PG 合同通过，生产 Host/Vite/隔离 PG 验证越权、尺寸、排序及 Undo/redo。空 PATCH 按 Python 记录 Undo；真实部署与 Redis 广播未验收。 |
+| `backend/app/api/v1/mind.py` | `PATCH` | `/api/v1/mind/nodes/{nid}` | `update_canvas_note` | Node Host 已接入 Core 双库事务；SQLite 双进程与隔离 PG 合同通过，生产 Host/Vite/隔离 PG 验证 owner、版本冲突、内容派生及 Undo/redo。空 PATCH 按 Python 不校验旧版本、不写 Undo；Python Mind 基线 68/68。Host 使用合成 schema，真实部署及 Redis 广播未验收。 |
+| `backend/app/api/v1/mind.py` | `PATCH` | `/api/v1/mind/notes/{nid}` | `update_note` | Node Host 已接入 Core 双库事务，覆盖 owner、CAS、Markdown 搜索字段重算、空 PATCH、Undo 与提交后事件；SQLite/隔离 PG 合同各 1/1，生产 Host/Vite/隔离 PG 验证越权、旧版本冲突及更新后的 Undo/redo，Python Mind API/Undo 39/39。Host 测试使用合成 schema，真实部署未验收。 |
+| `backend/app/api/v1/mind.py` | `POST` | `/api/v1/mind/canvases` | `create_canvas` | Node Host 已接入 Core 双库创建与同事务 Undo；SQLite/隔离 PG 合同各 1/1，生产 Host/Vite/隔离 PG 验证关联项目、跨 owner 拒绝、读取和 Undo/redo，Python Mind 基线 68/68。Host 使用合成 schema，真实部署和 Redis 广播未验收。 |
+| `backend/app/api/v1/mind.py` | `POST` | `/api/v1/mind/canvases/{cid}/items` | `add_canvas_item` | Node Host 已接入 Core 双库事务；SQLite 双进程及隔离 PG 并发合同验证幂等和恢复，生产 Host/Vite/隔离 PG 验证越权、Undo/redo、重复添加和日历引用数据，Python Mind 基线 68/68。Host 使用合成 schema，真实部署与 Redis 广播未验收。 |
+| `backend/app/api/v1/mind.py` | `POST` | `/api/v1/mind/canvases/{cid}/items/{iid}/bring-to-front` | `bring_canvas_item_to_front` | Node Host 已接入 Core 双库事务；SQLite 独立进程并发和隔离 PG 合同通过，生产 Host/Vite/隔离 PG 验证越权、尺寸、排序及 Undo/redo。空 PATCH 按 Python 记录 Undo；真实部署与 Redis 广播未验收。 |
+| `backend/app/api/v1/mind.py` | `POST` | `/api/v1/mind/canvases/{cid}/notes` | `create_canvas_note` | Node Host 已接入 Core 双库事务；SQLite 双进程与隔离 PG 合同通过，生产 Host/Vite/隔离 PG 验证 owner、版本冲突、内容派生及 Undo/redo。空 PATCH 按 Python 不校验旧版本、不写 Undo；Python Mind 基线 68/68。Host 使用合成 schema，真实部署及 Redis 广播未验收。 |
+| `backend/app/api/v1/mind.py` | `POST` | `/api/v1/mind/nodes/ref` | `create_ref_node` | Node Host 已接入 Core 双库事务；生产 Host/Vite/隔离 PG 验证三类引用 owner、软删规则、并发幂等及 Undo/redo。SQLite 的文件引用依赖尚未迁入的正式 files 表；Host 测试使用合成 schema，真实部署及 Redis 广播未验收。 |
+| `backend/app/api/v1/mind.py` | `POST` | `/api/v1/mind/notes` | `create_note` | Node Host 已接入 Core 的 owner-scoped Markdown 创建、纯文本/hash 派生、同事务 Undo 写入与提交后事件；SQLite/PG 合同各 1/1，生产 Host/Vite/隔离 PG 创建、读取及 Undo/redo 回归 5/5，Python Mind API/Undo 39/39。Host 集成使用合成 schema，真实部署与 Redis 广播未验收。 |
+| `backend/app/api/v1/mind.py` | `POST` | `/api/v1/mind/relations` | `create_relation` | 画布关系创建已接入 Core 双库事务和生产 Host；隔离 PG 验证 owner、默认边幂等与恢复、平行边和 Undo/redo，SQLite 独立进程验证并发创建及恢复；Python Mind 基线 68/68。Host 测试使用合成 schema，真实部署及 Redis 广播未验收。 |
+| `backend/app/api/v1/notifications.py` | `DELETE` | `/api/v1/notifications/` | `clear_notifications` | Node Host 已接入 Core 双库通知操作；SQLite/隔离 PG 合同 2/2、生产 Host/Vite/隔离 PG 1/1、Python pytest 4/4，覆盖 owner、注册时间、微秒、气泡、已读/清除与并发幂等。Host 使用合成 schema，真实部署及 Redis 广播未验收。 |
+| `backend/app/api/v1/notifications.py` | `GET` | `/api/v1/notifications/` | `list_notifications` | Node Host 已接入 Core 双库通知操作；SQLite/隔离 PG 合同 2/2、生产 Host/Vite/隔离 PG 1/1、Python pytest 4/4，覆盖 owner、注册时间、微秒、气泡、已读/清除与并发幂等。Host 使用合成 schema，真实部署及 Redis 广播未验收。 |
+| `backend/app/api/v1/notifications.py` | `GET` | `/api/v1/notifications/bubble` | `latest_bubble` | Node Host 已接入 Core 双库通知操作；SQLite/隔离 PG 合同 2/2、生产 Host/Vite/隔离 PG 1/1、Python pytest 4/4，覆盖 owner、注册时间、微秒、气泡、已读/清除与并发幂等。Host 使用合成 schema，真实部署及 Redis 广播未验收。 |
+| `backend/app/api/v1/notifications.py` | `POST` | `/api/v1/notifications/read` | `mark_read` | Node Host 已接入 Core 双库通知操作；SQLite/隔离 PG 合同 2/2、生产 Host/Vite/隔离 PG 1/1、Python pytest 4/4，覆盖 owner、注册时间、微秒、气泡、已读/清除与并发幂等。Host 使用合成 schema，真实部署及 Redis 广播未验收。 |
 | `backend/onboarding/routes.py` | `GET` | `/api/v1/onboarding/state` | `get_onboarding_state` | Node Host 认证 owner 隔离、PostgreSQL 状态读取已接入；Node Host 定向 1/1、Python onboarding 基线 3/3、typecheck 通过；Vite 未认证 401；隔离 PG 用例因无测试库跳过；注册 seed 与 dev 接口仍由 Python 承担 |
 | `backend/onboarding/routes.py` | `PATCH` | `/api/v1/onboarding/state` | `update_onboarding_state` | Node Host 认证 owner 隔离与 guide 字段校验/增量保存已接入；保留 seed 状态、兼容历史扁平字段；同组验证见 `docs/devlog/2026-11-13-Node-WebUI新手引导状态切片.md` |
 | `backend/onboarding/routes.py` | `POST` | `/api/v1/onboarding/state/reopen` | `reopen_onboarding` | Node Host 已接入；恢复当前 guide 版本并保留已完成步骤和 seed 状态；同组验证见 `docs/devlog/2026-11-13-Node-WebUI新手引导状态切片.md` |
 | `backend/onboarding/routes.py` | `POST` | `/api/v1/onboarding/dev/reseed` | `dev_reseed` | 待迁移：仅用于开发账号重播种；需与 Local 项目/文件/日历播种事务一并处理 |
-| `backend/onboarding/routes.py` | `POST` | `/api/v1/onboarding/dev/reset-guide` | `dev_reset_guide` | 待迁移：仅用于开发账号重置引导状态 |
-| `backend/app/api/v1/notifications_admin.py` | `DELETE` | `/api/v1/admin/notifications/history/{nid}` | `delete_record` | 待迁移 |
-| `backend/app/api/v1/notifications_admin.py` | `GET` | `/api/v1/admin/notifications/history` | `history` | 待迁移 |
-| `backend/app/api/v1/notifications_admin.py` | `POST` | `/api/v1/admin/notifications/broadcast` | `broadcast` | 待迁移 |
-| `backend/app/api/v1/ops_admin.py` | `GET` | `/api/v1/admin/ops/storage-live-totals` | `storage_live_totals` | 待迁移 |
-| `backend/app/api/v1/ops_admin.py` | `GET` | `/api/v1/admin/ops/storage-snapshots` | `storage_snapshots_history` | Node 已接入 Admin guard、PG query 与 Local statfs；真实 PG 行为未验收 |
-| `backend/app/api/v1/ops_admin.py` | `GET` | `/api/v1/admin/ops/summary` | `ops_summary` | Node 模块原型4/4；Python 最近邻 opsmetrics 基线3/3（无直接 handler 回归）；Host/Admin guard/Redis adapter 未挂载，不计路由覆盖 |
+| `backend/onboarding/routes.py` | `POST` | `/api/v1/onboarding/dev/reset-guide` | `dev_reset_guide` | Core 状态更新与生产 Host 用户认证已接线；隔离 PG/HTTP 2/2、Python 对照 3/3、生产入口集成 1/1，保留播种和其他 owner 数据。Core 未在实现前跑出红灯，HTTP 缺导出红灯后通过；正式 SQLite 和真实部署未验收。 |
+| `backend/app/api/v1/notifications_admin.py` | `DELETE` | `/api/v1/admin/notifications/history/{nid}` | `delete_record` | Core 与生产 Host 已接线；验证同通知历史，幂等删除仅管理员通知，保留任务通知；不包含广播实现。 |
+| `backend/app/api/v1/notifications_admin.py` | `GET` | `/api/v1/admin/notifications/history` | `history` | Core 与生产 Host 已接线；正式 SQLite/隔离 PG 通知表合同 2/2、Host 协议及生产入口 2/2，Python 通知基线 4/4；真实部署未验收。 |
+| `backend/app/api/v1/notifications_admin.py` | `POST` | `/api/v1/admin/notifications/broadcast` | `broadcast` | 生产 Host 已委托 Core 持久化并接入 Redis/SSE；先红后绿 Node 隔离 PG 和生产入口 2/2，Python handler 对照 1/1，覆盖广播、上线补弹和无 Redis 持久化。定向频道 UUID 规范化为有意安全差异；完整 schema、正式 SQLite 和真实部署未验收。 |
+| `backend/app/api/v1/ops_admin.py` | `GET` | `/api/v1/admin/ops/storage-live-totals` | `storage_live_totals` | 生产 Host 已接 Core PG 聚合；先缺模块红灯后隔离 PG、鉴权和生产入口 3/3，Python 原基线 5/5。PG 为精简表，正式 schema、SQLite 与真实部署未验收。 |
+| `backend/app/api/v1/ops_admin.py` | `GET` | `/api/v1/admin/ops/storage-snapshots` | `storage_snapshots_history` | Node 已接入 Admin guard、PG query 与 Local statfs；隔离 PostgreSQL adapter 及定向回归 8/8，生产 Host 认证与实际磁盘尚未实机验收。 |
+| `backend/app/api/v1/ops_admin.py` | `GET` | `/api/v1/admin/ops/summary` | `ops_summary` | 生产 Host 已接 Core 聚合、管理员认证及真实 Redis；先红后绿 Node 目标/生产/旧原型 10/10、Python 最近邻 3/3，直接 handler 同 Redis 全字段对照通过。无 Redis 返回脱敏 503；真实部署未验收。 |
 | `backend/app/api/v1/preferences.py` | `GET` | `/api/v1/preferences/` | `get_preferences` | Node Host 已接通通用偏好、Local 隐藏人格/回复风格文件读取与旧回复风格 JSON 迁移；owner-scoped PostgreSQL 元数据、默认值及历史值归一化已回归。SMTP 配置、测试发送和邮件样式预览已迁移 |
-| `backend/app/api/v1/preferences.py` | `GET` | `/api/v1/preferences/smtp` | `get_user_smtp` | Node Host 已接入 owner-scoped PostgreSQL 读取，仅投影非密码字段；Python 兼容验证见用户 SMTP 配置切片 |
+| `backend/app/api/v1/preferences.py` | `GET` | `/api/v1/preferences/smtp` | `get_user_smtp` | 路由和业务已接通 Core 双库及 Node Host；正式 SQLite/隔离 PG 合同 2/2、生产 Host/Vite/隔离 PG 1/1、Python 对照 3/3；仅返回非密码字段，真实部署未验收 |
 | `backend/app/api/v1/preferences.py` | `PATCH` | `/api/v1/preferences/` | `update_preferences` | Node Host 已接通通用偏好局部更新、人格正文与开关、回复风格开关及 owner-scoped PostgreSQL；文本文件变化失效会话快照并递增上下文版本。Python 最近邻回归、Node 行为与路径测试通过；隔离 PG 用例跳过，shell_autopilot_enabled 清理与 Python 一致 |
 | `backend/app/api/v1/preferences.py` | `PATCH` | `/api/v1/preferences/reply-style` | `update_reply_style` | Node Host 已接入 Local 隐藏文件读写、规范化、快照失效与上下文版本更新；devserver 定向测试通过，真实 PG 失效 SQL未在隔离库执行 |
 | `backend/app/api/v1/preferences.py` | `POST` | `/api/v1/preferences/group-personality/upload` | `upload_group_personality` | Node Host 已接入 Markdown/UTF-8/字节与字符限制及 Local 隐藏文件写入；路径和上传行为回归通过，真实 PG 未验收 |
@@ -310,20 +319,20 @@
 | `backend/app/api/v1/preferences.py` | `POST` | `/api/v1/preferences/reply-style/upload` | `upload_reply_style` | Node Host 已接入 Markdown/TXT、UTF-8/字节与字符限制和 Local 隐藏文件写入；路径和上传行为回归通过，真实 PG 未验收 |
 | `backend/app/api/v1/preferences.py` | `POST` | `/api/v1/preferences/smtp/preview` | `preview_user_email` | Node Host 已接认证与独立 HTML 预览渲染，不依赖 SMTP 配置或发送器；Node 偏好路由与 Vite→Node Host→静态 Logo 路径回归 14 通过、0 失败，Python 邮件模板/能力/SMTP 基线 13/13，typecheck 通过；未发真实邮件，也不访问 Redis/PostgreSQL |
 | `backend/app/api/v1/preferences.py` | `POST` | `/api/v1/preferences/smtp/test` | `test_user_smtp` | Node Host 已接入认证、owner-scoped 密码回读、当前用户默认收件人及 SMTP 测试发送；Node/Python 定向回归通过，真实 SMTP 与隔离 PG 未验收 |
-| `backend/app/api/v1/preferences.py` | `PUT` | `/api/v1/preferences/smtp` | `update_user_smtp` | Node Host 已接入字段校验、owner-scoped upsert、密码加密及省略密码保留旧值；Python 兼容验证见用户 SMTP 配置切片 |
+| `backend/app/api/v1/preferences.py` | `PUT` | `/api/v1/preferences/smtp` | `update_user_smtp` | 路由和业务已接通 Core 双库及 Node Host；密码由 Host 加密，省略或 null 保留、空串清除；正式 SQLite/隔离 PG 合同 2/2、生产 Host/Vite/隔离 PG 1/1、Python 对照 3/3；真实部署未验收 |
 | `backend/app/api/v1/projects.py` | `DELETE` | `/api/v1/projects/{pid}` | `delete_project` | Node Host/Local 回收站已接入，文件移动随事务失败反向补偿；当前树项目/日历及两条 Vite 集成套件 105/105 通过，Python 对照 10 个文件 66/66、typecheck 通过。生产组合根在随机隔离 schema 和 Local 临时目录验证项目删除/恢复与关联文件物理往返；Redis 实时广播与 RAG Worker 消费仍待验收，详见项目日历当前树复验 devlog |
-| `backend/app/api/v1/projects.py` | `GET` | `/api/v1/projects/` | `list_projects` | Node 已接入 |
-| `backend/app/api/v1/projects.py` | `GET` | `/api/v1/projects/file-counts` | `list_project_file_counts` | Node 已接入 |
-| `backend/app/api/v1/projects.py` | `GET` | `/api/v1/projects/{pid}` | `get_project` | Node 已接入 |
+| `backend/app/api/v1/projects.py` | `GET` | `/api/v1/projects/` | `list_projects` | Node Host 已委托 Core 管理读取；隔离 PG/Host 和 Python 对照通过，公开项目时间已对齐 UTC ISO 与微秒规则。正式 SQLite 文件计数投影和真实部署尚未验收。 |
+| `backend/app/api/v1/projects.py` | `GET` | `/api/v1/projects/file-counts` | `list_project_file_counts` | Node Host 已委托 Core 管理读取；隔离 PG/Host 和 Python 对照通过，公开项目时间已对齐 UTC ISO 与微秒规则。正式 SQLite 文件计数投影和真实部署尚未验收。 |
+| `backend/app/api/v1/projects.py` | `GET` | `/api/v1/projects/{pid}` | `get_project` | Node Host 已委托 Core 管理读取；隔离 PG/Host 和 Python 对照通过，公开项目时间已对齐 UTC ISO 与微秒规则。正式 SQLite 文件计数投影和真实部署尚未验收。 |
 | `backend/app/api/v1/projects.py` | `PATCH` | `/api/v1/projects/{pid}` | `update_project` | Node Host 已接入认证与 Local 目录更新；schema 预校验、version/CAS、Undo 与提交后 context revision/RAG job/live event 已接入。事务失败会反向移动已改名目录。当前树项目/日历及两条 Vite 集成套件 105/105 通过，Python 对照 10 个文件 66/66、typecheck 通过；生产组合根在随机隔离 schema 和 Local 临时目录验证 PATCH 与目录改名。Redis 实时广播与 RAG Worker 消费仍待验收，详见项目日历当前树复验 devlog |
-| `backend/app/api/v1/projects.py` | `POST` | `/api/v1/projects/` | `create_project` | Node 已接入；devserver 行为与 PG 已验收 |
+| `backend/app/api/v1/projects.py` | `POST` | `/api/v1/projects/` | `create_project` | Node Host 已接入 Core 创建用例及双库事务；SQLite 2/2、隔离 PG 1/1，Vite→生产 Host→隔离 PG 创建与幂等重放 1/1，Python 项目工具对照 21/21。Host 测试使用合成 schema，真实部署未验收。 |
 | `backend/app/api/v1/projects.py` | `POST` | `/api/v1/projects/{pid}/restore` | `restore_project` | Node Host/Local 回收站已接入，恢复移动随事务失败回退至回收站 key；当前树项目/日历及两条 Vite 集成套件 105/105 通过，Python 对照 10 个文件 66/66、typecheck 通过。生产组合根在随机隔离 schema 和 Local 临时目录验证项目删除/恢复与关联文件物理往返；Linux/NAS 2.0 为 Local-only。Redis 实时广播与 RAG Worker 消费仍待验收，详见项目日历当前树复验 devlog |
-| `backend/app/api/v1/public_config.py` | `GET` | `/api/v1/site-config/` | `site_config` | Node 已接入 |
-| `backend/app/api/v1/qq_connect.py` | `GET` | `/api/v1/me/qq/connect/{task_id}` | `poll` | 待迁移 |
-| `backend/app/api/v1/qq_connect.py` | `POST` | `/api/v1/me/qq/connect/` | `start` | 待迁移 |
-| `backend/app/api/v1/safe_egress_admin.py` | `GET` | `/api/v1/admin/safe-egress/` | `get_safe_egress_config` | Node 独立读取 route 原型4/4，Python secret 不回显基线1/1；Vite 404，Host 未挂载；PATCH/POST 仍待迁移 |
-| `backend/app/api/v1/safe_egress_admin.py` | `PATCH` | `/api/v1/admin/safe-egress/` | `patch_safe_egress_config` | 待迁移 |
-| `backend/app/api/v1/safe_egress_admin.py` | `POST` | `/api/v1/admin/safe-egress/test` | `test_safe_egress` | 待迁移 |
+| `backend/app/api/v1/public_config.py` | `GET` | `/api/v1/site-config/` | `site_config` | Node 已接入；Web Host 路由与公开配置投影归入 `apps/web-host/src/modules/site/`，保持 Host 专属 |
+| `backend/app/api/v1/qq_connect.py` | `GET` | `/api/v1/me/qq/connect/{task_id}` | `poll` | 生产 Host 已接 Core、Redis 挑战、安全 HTTP 和 Bot 写入；先红后绿 Node 定向 3/3、Python 5/5，合成门户与真实 Gateway 解密对照通过。无 Redis 提前拒绝为安全差异；生产入口合批通过；SQLite、真实 QQ 和部署未验收。 |
+| `backend/app/api/v1/qq_connect.py` | `POST` | `/api/v1/me/qq/connect/` | `start` | 生产 Host 已接 Core、Redis 挑战、安全 HTTP 和 Bot 写入；先红后绿 Node 定向 3/3、Python 5/5，合成门户与真实 Gateway 解密对照通过。无 Redis 提前拒绝为安全差异；生产入口合批通过；SQLite、真实 QQ 和部署未验收。 |
+| `backend/app/api/v1/safe_egress_admin.py` | `GET` | `/api/v1/admin/safe-egress` | `get_safe_egress_config` | 生产 Host 已接 Core 配置投影与只读运行配置；Node 先红后绿及生产入口 7/7，Python 原有和新增对照各 2/2。内嵌 URL 凭据拒绝回显为有意安全差异，未隐式读取 dotenv；真实部署未验收；连通性测试 POST 的验证范围见对应条目。 |
+| `backend/app/api/v1/safe_egress_admin.py` | `PATCH` | `/api/v1/admin/safe-egress/` | `patch_safe_egress_config` | 生产 Host 已接 Core 持锁配置写入及凭据加密；先红后绿 Node 3/3、Python 对照及原回归 13/13，真实 Python 读取 Node 密文且并发更新通过。非标准 URL 与坏配置处理更严格；真实代理、部署未验收。 |
+| `backend/app/api/v1/safe_egress_admin.py` | `POST` | `/api/v1/admin/safe-egress/test` | `test_safe_egress` | 生产 Host 已接 Core 和受控代理、DoH、IP 钉扎及 TLS；先红后绿 Node 4/4、Python 原回归 12/12 与 handler 1/1。隔离代理全链及生产管理员入口通过；真实代理与部署未验收。 |
 | `backend/app/api/v1/sandbox_admin.py` | `GET` | `/api/v1/admin/sandbox/status` | `sandbox_status` | 重设计：迁移为 MXC 执行环境健康/能力与策略状态，不保留 Docker 字段 |
 | `backend/app/api/v1/sandbox_admin.py` | `POST` | `/api/v1/admin/sandbox/disable` | `disable_sandbox` | 保留语义并重设计：Linux/NAS Host 全局关闭执行能力及收紧相关权限 |
 | `backend/app/api/v1/sandbox_admin.py` | `POST` | `/api/v1/admin/sandbox/egress/config` | `save_egress_proxy` | 重设计为 Host/MXC 网络策略配置；移除 Docker 网络专属配置，不照搬旧接口语义 |
@@ -334,43 +343,43 @@
 | `backend/app/api/v1/sandbox_admin.py` | `POST` | `/api/v1/admin/sandbox/users/clear` | `clear_user_sandboxes` | 退役：容器状态清理语义；若需资源回收，按 owner-scoped MXC 资源操作设计 |
 | `backend/app/api/v1/sandbox_admin.py` | `POST` | `/api/v1/admin/sandbox/users/rebuild` | `rebuild_user_sandboxes` | 退役：用户容器重建操作；不迁移 Docker 生命周期接口 |
 | `backend/app/api/v1/sandbox_admin.py` | `POST` | `/api/v1/admin/sandbox/users/restart` | `restart_user_sandboxes` | 重设计：如需管理员中断用户执行，使用 owner-scoped MXC 任务/进程终止能力 |
-| `backend/app/api/v1/scheduled_tasks.py` | `DELETE` | `/api/v1/scheduled-tasks/{task_id}` | `delete_task` | 待迁移 |
-| `backend/app/api/v1/scheduled_tasks.py` | `DELETE` | `/api/v1/scheduled-tasks/{task_id}/filesystem-authorization` | `revoke_task_filesystem_authorization` | 待迁移 |
-| `backend/app/api/v1/scheduled_tasks.py` | `GET` | `/api/v1/scheduled-tasks/` | `list_tasks` | 待迁移 |
-| `backend/app/api/v1/scheduled_tasks.py` | `GET` | `/api/v1/scheduled-tasks/delivery-targets/{platform}` | `list_delivery_targets` | 待迁移 |
-| `backend/app/api/v1/scheduled_tasks.py` | `GET` | `/api/v1/scheduled-tasks/qq-targets` | `list_qq_targets` | 待迁移 |
+| `backend/app/api/v1/scheduled_tasks.py` | `DELETE` | `/api/v1/scheduled-tasks/{task_id}` | `delete_task` | Node Host 已委托 Core 用例与双库仓储，用户隔离的删除提交后发布事件；正式 SQLite/隔离 PG 合同 1/1，Vite→生产 Host→隔离 PG 与 Host 单测 2/2，Python 删除直接对照 1/1、邻近规则 30/30。删除记录不停止已在途执行；真实部署和 Redis 广播尚未验收。 |
+| `backend/app/api/v1/scheduled_tasks.py` | `DELETE` | `/api/v1/scheduled-tasks/{task_id}/filesystem-authorization` | `revoke_task_filesystem_authorization` | 生产 Host 已接 Core 事务、确认撤销、安全审计与 Redis 指标；先红后绿 Node 3/3，Python handler 与原回归各 1/1，使用模型 PG 表和隔离 Redis。owner 防线为安全差异；正式 SQLite、完整 Alembic、Worker、MXC 与真实部署未验收。 |
+| `backend/app/api/v1/scheduled_tasks.py` | `GET` | `/api/v1/scheduled-tasks/` | `list_tasks` | Node Host 直接使用 Core 双库只读查询，按 owner/事件筛选，能力由可信 Host 注入；不执行自动删除和判死，到期及疑似崩溃任务会保留。正式 SQLite/隔离 PG 合同 2/2、生产 Host/Vite 及真实 PG/Redis 失租和启动中保护 3/3、Python 规则/工作区对照 40/40。SQLite 工作区和文件授权引用受 schema 限制；Python 自身清理仍有同类竞态，真实部署和调度消费者尚未验收。 |
+| `backend/app/api/v1/scheduled_tasks.py` | `GET` | `/api/v1/scheduled-tasks/delivery-targets/{platform}` | `list_delivery_targets` | Node Host 已接入认证、owner/Bot 限定、私聊可用状态和群会话去重；隔离 PG 领域及 Vite→生产 Host 回归 2/2，Python 投递目标邻近基线 43/43；真实 IM 服务未验收。 |
+| `backend/app/api/v1/scheduled_tasks.py` | `GET` | `/api/v1/scheduled-tasks/qq-targets` | `list_qq_targets` | Node Host 已接入 owner 限定 QQ 群会话、最近优先去重；同组回归见投递目标接口。 |
 | `backend/app/api/v1/scheduled_tasks.py` | `PATCH` | `/api/v1/scheduled-tasks/{task_id}` | `update_task` | 待迁移 |
 | `backend/app/api/v1/scheduled_tasks.py` | `POST` | `/api/v1/scheduled-tasks/` | `create_task` | 待迁移 |
 | `backend/app/api/v1/scheduled_tasks.py` | `POST` | `/api/v1/scheduled-tasks/test-notify` | `test_notify` | 待迁移 |
-| `backend/app/api/v1/scheduled_tasks.py` | `POST` | `/api/v1/scheduled-tasks/{task_id}/filesystem-authorization` | `confirm_task_filesystem_authorization` | 待迁移 |
-| `backend/app/api/v1/scheduled_tasks.py` | `POST` | `/api/v1/scheduled-tasks/{task_id}/filesystem-authorization/request` | `request_task_filesystem_authorization` | 待迁移 |
+| `backend/app/api/v1/scheduled_tasks.py` | `POST` | `/api/v1/scheduled-tasks/{task_id}/filesystem-authorization` | `confirm_task_filesystem_authorization` | 生产 Host 已接 Core 事务、Redis 一次性确认码与审计；先红后绿 Node 3/3、Python 对照及原回归 12/12。隔离 PG/Redis 中真实 Python 策略读取 Node 授权；Node 执行器消费、正式 SQLite 和真实部署未验收。 |
+| `backend/app/api/v1/scheduled_tasks.py` | `POST` | `/api/v1/scheduled-tasks/{task_id}/filesystem-authorization/request` | `request_task_filesystem_authorization` | 生产 Host 已接 Core 事务、Redis 一次性确认码与审计；先红后绿 Node 3/3、Python 对照及原回归 12/12。隔离 PG/Redis 中真实 Python 策略读取 Node 授权；Node 执行器消费、正式 SQLite 和真实部署未验收。 |
 | `backend/app/api/v1/scheduled_tasks.py` | `POST` | `/api/v1/scheduled-tasks/{task_id}/run` | `run_now` | 待迁移 |
-| `backend/app/api/v1/search.py` | `GET` | `/api/v1/search/` | `search` | 迁移中：Node Host 与 PostgreSQL 查询已接入，基础关键词/owner 过滤/分组已实现；Node 覆盖与当前查询表字段的罗马音转换、隔离 PostgreSQL 集成验收仍待完成，不标记为完成。 |
-| `backend/app/api/v1/services_admin.py` | `GET` | `/api/v1/admin/services/` | `list_services` | 待迁移 |
+| `backend/app/api/v1/search.py` | `GET` | `/api/v1/search/` | `search` | Node Host 已委托 Core 搜索；PG 全 11 类来源及 Host 隔离回归 14/14。SQLite 仅项目/联系人/活动三类，Core 强制暴露能力，默认全量查询缺来源时查询前明确失败；SQLite 12/12、隔离 PG 对照 3/3、Python 对照 19/19。原生 SQL 非 ASCII 匹配、拼音/罗马音差异、桌面及 Agent 工具与真实部署尚未完成。 |
+| `backend/app/api/v1/services_admin.py` | `GET` | `/api/v1/admin/services` | `list_services` | 生产 Host 已接只读进程、PG 和 Redis 心跳/队列状态；先红后绿 Node 2/2、Python handler 对照 1/1。真实部署与服务重启 POST 未验收。 |
 | `backend/app/api/v1/services_admin.py` | `POST` | `/api/v1/admin/services/{name}/restart` | `restart_service` | 待迁移 |
-| `backend/app/api/v1/storage_quota_admin.py` | `GET` | `/api/v1/admin/storage-quota/reconcile` | `get_full_reconcile_status` | 待迁移 |
+| `backend/app/api/v1/storage_quota_admin.py` | `GET` | `/api/v1/admin/storage-quota/reconcile` | `get_full_reconcile_status` | 生产 Host 已接 Core 状态规则与 Redis；先红后绿 Node 4/4（含真实 Redis 锁、CAS、503 和生产认证），Python 对照及周期回归 6/6。CAS 避免覆盖并发终态为有意差异；POST 扫描、真实 Worker 和部署未验收。 |
 | `backend/app/api/v1/storage_quota_admin.py` | `POST` | `/api/v1/admin/storage-quota/reconcile` | `start_full_reconcile` | 待迁移 |
-| `backend/app/api/v1/system_logs.py` | `GET` | `/api/v1/admin/system-logs/` | `list_system_logs` | 待迁移 |
-| `backend/app/api/v1/telegram_connect.py` | `POST` | `/api/v1/me/telegram/connect/` | `connect` | 待迁移 |
-| `backend/app/api/v1/telegram_connect.py` | `POST` | `/api/v1/me/telegram/connect/{bot_id}/binding-code` | `create_binding_code` | 待迁移 |
-| `backend/app/api/v1/telegram_connect.py` | `PUT` | `/api/v1/me/telegram/connect/{bot_id}` | `replace_token` | 待迁移 |
-| `backend/app/api/v1/terminals.py` | `DELETE` | `/api/v1/terminals/{terminal_id}` | `delete_terminal_view` | 待迁移 |
-| `backend/app/api/v1/terminals.py` | `GET` | `/api/v1/terminals/` | `get_terminals` | 待迁移 |
-| `backend/app/api/v1/terminals.py` | `GET` | `/api/v1/terminals/metrics` | `get_terminal_metrics` | 待迁移 |
-| `backend/app/api/v1/terminals.py` | `GET` | `/api/v1/terminals/{terminal_id}` | `get_terminal_detail` | 待迁移 |
+| `backend/app/api/v1/system_logs.py` | `GET` | `/api/v1/admin/system-logs` | `list_system_logs` | Core 只读用例与生产 Host 已接线；先缺模块红灯后 PG 合同与 Host、生产入口组合回归 4/4，Python handler 隔离 SQLite 对照 1/1。PG 使用精简表，正式 schema、SQLite Core 和真实部署未验收。 |
+| `backend/app/api/v1/telegram_connect.py` | `POST` | `/api/v1/me/telegram/connect/` | `connect` | 待迁移：官方协议将 Token 放入请求 URL，与当前凭据不得写入 URL 的用户规则冲突；还缺动态 safe-egress 代理优先级装配。 |
+| `backend/app/api/v1/telegram_connect.py` | `POST` | `/api/v1/me/telegram/connect/{bot_id}/binding-code` | `create_binding_code` | 生产 Host 已委托 Core 签发并写入旧 Python 消费者使用的 Redis 键；先红后绿 Node 2/2（含生产 Host→隔离 PG/Redis→真实 Python 消费者）、Python 原回归 30/30。Redis 不可用时显式 503；真实 IM、Node 网关、正式 SQLite 和完整部署未验收。 |
+| `backend/app/api/v1/telegram_connect.py` | `PUT` | `/api/v1/me/telegram/connect/{bot_id}` | `replace_token` | 待迁移：官方协议将 Token 放入请求 URL，与当前凭据不得写入 URL 的用户规则冲突；还缺动态 safe-egress 代理优先级装配。 |
+| `backend/app/api/v1/terminals.py` | `DELETE` | `/api/v1/terminals/{terminal_id}` | `delete_terminal_view` | 生产 Host 已委托 Core 删除持久视图及事件并发布变更；先红后绿 Node 3/3（模型 PG 表及 Redis）、Python handler 1/1 与权限回归 2/2。只删除视图，不终止 PTY；正式 SQLite、完整 Alembic 和真实部署未验收。 |
+| `backend/app/api/v1/terminals.py` | `GET` | `/api/v1/terminals/` | `get_terminals` | 待迁移：缺真实终端运行时及页面授权、sandbox readiness 和有效权限接线，不能以固定拒绝或测试替身代替。 |
+| `backend/app/api/v1/terminals.py` | `GET` | `/api/v1/terminals/metrics` | `get_terminal_metrics` | 待迁移：缺真实终端运行时及页面授权、sandbox readiness 和有效权限接线，不能以固定拒绝或测试替身代替。 |
+| `backend/app/api/v1/terminals.py` | `GET` | `/api/v1/terminals/{terminal_id}` | `get_terminal_detail` | 待迁移：缺真实终端运行时及页面授权、sandbox readiness 和有效权限接线，不能以固定拒绝或测试替身代替。 |
 | `backend/app/api/v1/terminals.py` | `GET` | `/api/v1/terminals/{terminal_id}/events` | `stream_terminal_events` | 待迁移 |
-| `backend/app/api/v1/terminals.py` | `PATCH` | `/api/v1/terminals/{terminal_id}` | `rename_terminal_route` | 待迁移 |
+| `backend/app/api/v1/terminals.py` | `PATCH` | `/api/v1/terminals/{terminal_id}` | `rename_terminal_route` | 待迁移：缺真实终端运行时及页面授权、sandbox readiness 和有效权限接线，不能以固定拒绝或测试替身代替。 |
 | `backend/app/api/v1/terminals.py` | `POST` | `/api/v1/terminals/` | `add_terminal` | 待迁移 |
 | `backend/app/api/v1/terminals.py` | `POST` | `/api/v1/terminals/{terminal_id}/cancel/{request_id}` | `cancel_terminal_command` | 待迁移 |
 | `backend/app/api/v1/terminals.py` | `POST` | `/api/v1/terminals/{terminal_id}/input` | `terminal_input` | 待迁移 |
-| `backend/app/api/v1/terminals.py` | `POST` | `/api/v1/terminals/{terminal_id}/reopen` | `reopen_terminal_view` | 待迁移 |
+| `backend/app/api/v1/terminals.py` | `POST` | `/api/v1/terminals/{terminal_id}/reopen` | `reopen_terminal_view` | 待迁移：缺真实终端运行时及页面授权、sandbox readiness 和有效权限接线，不能以固定拒绝或测试替身代替。 |
 | `backend/app/api/v1/terminals.py` | `POST` | `/api/v1/terminals/{terminal_id}/reset` | `reset_terminal_view` | 待迁移 |
 | `backend/app/api/v1/terminals.py` | `POST` | `/api/v1/terminals/{terminal_id}/terminate` | `terminate_terminal_view` | 待迁移 |
 | `backend/app/api/v1/terminals.py` | `WEBSOCKET` | `/api/v1/terminals/{terminal_id}/ws` | `terminal_websocket` | 待迁移 |
-| `backend/app/api/v1/track.py` | `POST` | `/api/v1/track/` | `track` | Node 已接入；FastAPI 合成行为探针与 Node route 4/4；422 body 不同（Python结构化且含input，Node通用脱敏），真实PG未验收 |
+| `backend/app/api/v1/track.py` | `POST` | `/api/v1/track/` | `track` | Node 已接入；Web Host 路由与 PostgreSQL 适配归入 `apps/web-host/src/modules/site/`；FastAPI 合成行为探针与 Node route 4/4；422 body 不同（Python结构化且含input，Node通用脱敏），真实PG未验收 |
 | `backend/app/api/v1/trash.py` | `DELETE` | `/api/v1/trash/` | `empty_trash` | Node Host/Local PG route 已接入；后台 purge job 仍由 Python Worker 消费，真实 PG/Worker 验收见“回收站当前树 Host 接线”记录 |
-| `backend/app/api/v1/trash.py` | `DELETE` | `/api/v1/trash/folders/{fid}` | `hard_delete_folder` | Node Host/Local PG route 已接入；真实 PG 未验收，见“回收站当前树 Host 接线”记录 |
-| `backend/app/api/v1/trash.py` | `DELETE` | `/api/v1/trash/{fid}` | `hard_delete_file` | Node Host/Local PG route 已接入；真实 PG 未验收，见“回收站当前树 Host 接线”记录 |
+| `backend/app/api/v1/trash.py` | `DELETE` | `/api/v1/trash/folders/{fid}` | `hard_delete_folder` | Node Host 路由已接入；隔离 PG/临时目录确认路径安全检查失败仍删除墓碑并返回成功（Python 也有此行为），且存在目录替换窗口。可恢复暂存、日志与安全文件原语未完成，不能视为安全验收。 |
+| `backend/app/api/v1/trash.py` | `DELETE` | `/api/v1/trash/{fid}` | `hard_delete_file` | Node Host 路由已接入；隔离 PG/临时目录确认路径安全检查失败仍删除墓碑并返回成功（Python 也有此行为），且存在目录替换窗口。可恢复暂存、日志与安全文件原语未完成，不能视为安全验收。 |
 | `backend/app/api/v1/trash.py` | `GET` | `/api/v1/trash/empty/active` | `active_empty_trash` | Node Host/Local PG route 已接入；任务状态来自 Python Worker 的持久 job，见“回收站当前树 Host 接线”记录 |
 | `backend/app/api/v1/trash.py` | `GET` | `/api/v1/trash/empty/{job_id}` | `get_empty_trash_job` | Node Host/Local PG route 已接入；任务状态来自 Python Worker 的持久 job，见“回收站当前树 Host 接线”记录 |
 | `backend/app/api/v1/trash.py` | `GET` | `/api/v1/trash/folders/page` | `list_trash_folders_page` | Node Host/Local PG route 已接入；真实 PG 未验收，见“回收站当前树 Host 接线”记录 |
@@ -380,16 +389,16 @@
 | `backend/app/api/v1/trash.py` | `POST` | `/api/v1/trash/empty` | `start_empty_trash` | Node Host/Local PG route 已接入；持久 job 由 Python Worker 消费，真实 PG/Worker 验收见“回收站当前树 Host 接线”记录 |
 | `backend/app/api/v1/trash.py` | `POST` | `/api/v1/trash/folders/{fid}/restore` | `restore_folder` | Node Host/Local PG route 已接入；真实 PG 未验收，见“回收站当前树 Host 接线”记录 |
 | `backend/app/api/v1/trash.py` | `POST` | `/api/v1/trash/{fid}/restore` | `restore_file` | Node Host/Local PG route 已接入；真实 PG 未验收，见“回收站当前树 Host 接线”记录 |
-| `backend/app/api/v1/undo.py` | `GET` | `/api/v1/undo/preview` | `preview_undo` | 待迁移 |
-| `backend/app/api/v1/undo.py` | `POST` | `/api/v1/undo/` | `undo` | 待迁移 |
-| `backend/app/api/v1/undo.py` | `POST` | `/api/v1/undo/redo` | `redo` | 待迁移 |
-| `backend/app/api/v1/user_bots.py` | `DELETE` | `/api/v1/me/bots/{bot_id}` | `delete_my_bot` | 待迁移 |
-| `backend/app/api/v1/user_bots.py` | `DELETE` | `/api/v1/me/bots/{bot_id}/qq-binding` | `unbind_qq_identity` | 待迁移 |
-| `backend/app/api/v1/user_bots.py` | `GET` | `/api/v1/me/bots/` | `list_my_bots` | 待迁移 |
-| `backend/app/api/v1/user_bots.py` | `POST` | `/api/v1/me/bots/` | `create_my_bot` | 待迁移 |
-| `backend/app/api/v1/user_bots.py` | `POST` | `/api/v1/me/bots/{bot_id}/qq-binding-code` | `create_qq_binding_code` | 待迁移 |
-| `backend/app/api/v1/user_bots.py` | `PUT` | `/api/v1/me/bots/{bot_id}` | `update_my_bot` | 待迁移 |
-| `backend/app/api/v1/user_skills.py` | `DELETE` | `/api/v1/skills/{skill_id}` | `delete_skill` | 待迁移 |
+| `backend/app/api/v1/undo.py` | `GET` | `/api/v1/undo/preview` | `preview_undo` | Node Host 已注册认证路由与 owner/context 限定查询；临时独立 PostgreSQL 的随机 schema 和精简测试表验证认证预览与跨用户拒绝；生产 schema 路径待验收。 |
+| `backend/app/api/v1/undo.py` | `POST` | `/api/v1/undo/` | `undo` | Node Host 已委托 Core 统一状态机与 Mind 资源适配器，日历仍在同一事务调用 Host 适配；旧 Host 状态机和 Mind SQL 已删除。生产 Host/Vite/隔离 PG 及跨资源回归 12/12、Core SQLite 3/3 和隔离 PG 2/2、Python Mind 3/3。生产未装配项目存储；桌面调用、真实部署和 SSE 实际投递尚未验收。 |
+| `backend/app/api/v1/undo.py` | `POST` | `/api/v1/undo/redo` | `redo` | Node Host 已注册并接入 Mind、日历适配器；验证及剩余范围同 undo。 |
+| `backend/app/api/v1/user_bots.py` | `DELETE` | `/api/v1/me/bots/{bot_id}` | `delete_my_bot` | 生产 Host 已接 Core owner 删除、Redis reachability 清理、IM 快照失效及通知；先红后绿 Node 定向 1/1、Python 原回归 1/1，真实 Python handler/失效对照通过。生产 Host/PG/Redis/SSE 合批通过；正式 SQLite、真实 IM 和部署未验收。 |
+| `backend/app/api/v1/user_bots.py` | `DELETE` | `/api/v1/me/bots/{bot_id}/qq-binding` | `unbind_qq_identity` | 生产 Host 已接 Core 解绑、owner IM 快照失效与资源通知；既有 Node 5/5、Python 8/8，新增生产合批验证快照更新及失败后仍发布。正式 SQLite、真实 IM 和部署未验收。 |
+| `backend/app/api/v1/user_bots.py` | `GET` | `/api/v1/me/bots` | `list_my_bots` | 生产 Host 已接 Core owner 限定读取、动态平台配置和凭据掩码；先红后绿 Node 3/3、生产入口 1/1，Python 新旧对照 7/7。损坏配置显式失败为安全差异；PG 为精简表，正式 SQLite、完整 schema、外部 IM 和真实部署未验收。 |
+| `backend/app/api/v1/user_bots.py` | `POST` | `/api/v1/me/bots/` | `create_my_bot` | 生产 Host 已接 Core QQ 创建、加密和 owner IM 快照失效；先红后绿 Node 3/3、Python 5/5，真实 Gateway 解密和生产 SSE 通过。Node 并发由 owner 锁保护，混合 Python 并发唯一性不保证；正式 SQLite、真实 IM 和部署未验收。 |
+| `backend/app/api/v1/user_bots.py` | `POST` | `/api/v1/me/bots/{bot_id}/qq-binding-code` | `create_qq_binding_code` | 生产 Host 已委托 Core 签发并写入旧 Python 消费者使用的 Redis 键；先红后绿 Node 2/2（含生产 Host→隔离 PG/Redis→真实 Python 消费者）、Python 原回归 30/30。Redis 不可用时显式 503；真实 IM、Node 网关、正式 SQLite 和完整部署未验收。 |
+| `backend/app/api/v1/user_bots.py` | `PUT` | `/api/v1/me/bots/{bot_id}` | `update_my_bot` | 生产 Host 已接 Core 更新、加密、快照失效及通知；先红后绿 Node Bot 源码合批 4/4、Python 原回归 7/7，真实 handler 14 步对照通过。生产 Host/PG/Redis/SSE 合批通过，Core 构建及 Host typecheck 通过；正式 SQLite、真实 IM 和部署未验收。 |
+| `backend/app/api/v1/user_skills.py` | `DELETE` | `/api/v1/skills/{skill_id}` | `delete_skill` | 生产 Host 已委托 Core owner 限定删除，并在提交后发布 skills refresh；先红后绿 Node 2/2、Python 真实 handler 1/1，生产入口隔离 PG 正式模型表与 Redis 订阅集成 1/1。完整 Alembic、正式 SQLite、真实部署及技能列表 GET 尚未验收；Python 全文件另有 2 例因缺 httpx2 失败。 |
 | `backend/app/api/v1/user_skills.py` | `GET` | `/api/v1/skills/` | `list_skills` | 待迁移 |
 | `backend/app/api/v1/user_skills.py` | `GET` | `/api/v1/skills/tools` | `list_skill_tools` | 待迁移 |
 | `backend/app/api/v1/user_skills.py` | `PATCH` | `/api/v1/skills/{skill_id}` | `update_skill` | 待迁移 |
@@ -398,26 +407,26 @@
 | `backend/app/api/v1/users_admin.py` | `GET` | `/api/v1/admin/users/` | `list_users` | Node Host 已接入并受 Admin guard 保护；devserver行为测试4/4、Vite未认证401；Python最近邻9/9（无直接列表回归），真实PG未验收 |
 | `backend/app/api/v1/users_admin.py` | `GET` | `/api/v1/admin/users/risk` | `list_risk_users` | Node Host 已接 Admin guard + PostgreSQL query adapter；Python 最近邻 3/3、Node route/domain/Host 6/6、Vite 未认证 401；真实 PG 查询未验收 |
 | `backend/app/api/v1/users_admin.py` | `GET` | `/api/v1/admin/users/{user_id}/security-events` | `list_user_security_events` | Node Host 已接可信 Admin guard 与 PG query；Vite 未认证401；真实PG未验收 |
-| `backend/app/api/v1/users_admin.py` | `PATCH` | `/api/v1/admin/users/{user_id}/ban` | `toggle_ban` | 待迁移 |
-| `backend/app/api/v1/users_admin.py` | `PATCH` | `/api/v1/admin/users/{user_id}/developer` | `toggle_developer` | 待迁移 |
-| `backend/app/api/v1/users_admin.py` | `PATCH` | `/api/v1/admin/users/{user_id}/quota` | `update_quota` | 待迁移 |
+| `backend/app/api/v1/users_admin.py` | `PATCH` | `/api/v1/admin/users/{user_id}/ban` | `toggle_ban` | 生产 Host 已接 Core 行锁封禁/解封、安全版本、撤权通知及独立审计；先红后绿 Node 4/4、Python 1/1，验证真实 JWT 失效和 SSE 关闭。并发锁及超长 IP 截断为有意增强；正式 SQLite 和真实部署未验收。 |
+| `backend/app/api/v1/users_admin.py` | `PATCH` | `/api/v1/admin/users/{user_id}/developer` | `toggle_developer` | Core 用例与生产 Host 已接线；验证同配额切片，支持可逆标记及持久审计；SQLite、正式 schema 与真实部署未验收。 |
+| `backend/app/api/v1/users_admin.py` | `PATCH` | `/api/v1/admin/users/{user_id}/quota` | `update_quota` | Core 用例与生产 Host 已接线；Node 规则/隔离 PG 2/2、Python 真实 handler 1/1、生产 startServer 集成 1/1；覆盖转换、回滚与审计。SQLite、正式 schema 与真实部署未验收。 |
 | `backend/app/api/v1/users_admin.py` | `POST` | `/api/v1/admin/users/{user_id}/suspend` | `suspend_user` | Node Host已挂载Admin guard；事务更新状态/security_version，提交后发布auth-state并写审计；Python最近邻3/3为service级；真实PG未验收 |
 | `backend/app/api/v1/users_admin.py` | `POST` | `/api/v1/admin/users/{user_id}/unsuspend` | `unsuspend_user` | Node Host已挂载Admin guard；事务清除冻结状态并递增security_version，提交后发布auth-state并写审计；真实PG未验收 |
-| `backend/app/api/v1/wechat_connect.py` | `GET` | `/api/v1/me/wechat/connect/{task_id}` | `poll` | 待迁移 |
-| `backend/app/api/v1/wechat_connect.py` | `POST` | `/api/v1/me/wechat/connect/` | `start` | 待迁移 |
+| `backend/app/api/v1/wechat_connect.py` | `GET` | `/api/v1/me/wechat/connect/{task_id}` | `poll` | 生产 Host 已接 Core、Redis 与固定安全门户；先红后绿 Node 定向 2/2，真实 Python handler/ILink/Gateway 对照通过。生产认证及隔离 CONNECT/TLS→Redis→PG→SSE→Python Gateway 全链通过；SQLite、真实微信和部署未验收。 |
+| `backend/app/api/v1/wechat_connect.py` | `POST` | `/api/v1/me/wechat/connect/` | `start` | 生产 Host 已接 Core、Redis 与固定安全门户；先红后绿 Node 定向 2/2，真实 Python handler/ILink/Gateway 对照通过。生产认证及隔离 CONNECT/TLS→Redis→PG→SSE→Python Gateway 全链通过；SQLite、真实微信和部署未验收。 |
 | `backend/app/api/v1/workspace_migration_admin.py` | `POST` | `/api/v1/admin/workspace-migration/scan` | `scan_legacy_shell_directories_view` | 待迁移 |
 | `backend/app/api/v1/workspaces.py` | `DELETE` | `/api/v1/workspace-directories/{directory_id}` | `delete_workspace_directory_view` | Node route、PostgreSQL adapter 与 Host 已接入；Host 从认证 RequestContext 取 owner，并注入 `prepareDirectoryAcl` 与共享 sandboxd PTY terminator；Python 模块 12/12；devserver Node workspace/Host 回归 30 passed；Workspace PostgreSQL 隔离 schema 集合 6/6 通过 |
 | `backend/app/api/v1/workspaces.py` | `GET` | `/api/v1/workspace-directories` | `list_workspace_directory_view` | Node route、PostgreSQL adapter 与 Host 已接入；未认证在读 owner/数据前拒绝；本地 ACL adapter 已注入；devserver Vite→Node Host→随机 schema Local 目录 CRUD/owner 隔离/磁盘生命周期集成 1/1，workspace directory Node 套件 9/9、Python Local 基准 28/28；真实 sandboxd/PTy 与 ACL 权限未验收，详见 `docs/devlog/2026-11-13-Node-WebUI-Local工作区VitePG闭环.md` |
 | `backend/app/api/v1/workspaces.py` | `GET` | `/api/v1/workspace-directories/{directory_id}/delete-preview` | `preview_workspace_directory_delete` | Node route、PostgreSQL adapter 与 Host 已接入；devserver route/Host 回归通过，Workspace PostgreSQL 隔离 schema 集合 6/6 通过 |
 | `backend/app/api/v1/workspaces.py` | `PATCH` | `/api/v1/workspace-directories/{directory_id}` | `update_workspace_directory_view` | Node route、PostgreSQL adapter 与 Host 已接入；devserver route/Host 回归通过，Workspace PostgreSQL 隔离 schema 集合 6/6 通过 |
 | `backend/app/api/v1/workspaces.py` | `POST` | `/api/v1/workspace-directories` | `create_workspace_directory_view` | Node route、PostgreSQL adapter 与 Host 已接入；本地 ACL adapter 已注入；devserver route/Host 回归通过，Workspace PostgreSQL 隔离 schema 集合 6/6 通过 |
-| `backend/app/api/v1/workspaces.py` | `DELETE` | `/api/v1/workspaces/binding/{session_id}` | `unbind_workspace` | Node 已接入 Host；devserver 路由与 PG 行为回归通过 |
-| `backend/app/api/v1/workspaces.py` | `DELETE` | `/api/v1/workspaces/{workspace_id}` | `remove_workspace` | Node Host 已接入 PostgreSQL adapter；devserver Vite 未认证请求返回 401，确认路由受认证保护；Python 基线 3/3，Node adapter/PG 专测已编写但未运行，外键级联与真实 PG 行为未验收 |
-| `backend/app/api/v1/workspaces.py` | `GET` | `/api/v1/workspaces/` | `list_workspaces` | Node 已接入认证 Host 与 PostgreSQL lister；Node sandbox readiness 暂时 fail-closed；隔离 PostgreSQL 行为未验收 |
-| `backend/app/api/v1/workspaces.py` | `GET` | `/api/v1/workspaces/session/{session_id}` | `current_workspace` | Node 已接入 Host；devserver 路由与 PG 行为回归通过 |
-| `backend/app/api/v1/workspaces.py` | `PATCH` | `/api/v1/workspaces/{workspace_id}` | `edit_workspace` | Node 已接入认证 Host 与 PostgreSQL updater；本轮隔离 PostgreSQL 行为测试因未配置测试库跳过 |
-| `backend/app/api/v1/workspaces.py` | `POST` | `/api/v1/workspaces/` | `add_workspace` | Node 已接入；devserver 行为与 PG 已验收 |
-| `backend/app/api/v1/workspaces.py` | `POST` | `/api/v1/workspaces/{workspace_id}/bind/{session_id}` | `bind_workspace` | Node 已接入 Host；devserver 路由与 PG 行为回归通过 |
+| `backend/app/api/v1/workspaces.py` | `DELETE` | `/api/v1/workspaces/binding/{session_id}` | `unbind_workspace` | Node Host 已委托 Core 绑定用例和 PG 适配；隔离 SQLite 临时表 12/12、隔离 PG/Host 3/3、Python 工作区 19/19。正式 SQLite 工作区 schema 和授权尚未接通。 |
+| `backend/app/api/v1/workspaces.py` | `DELETE` | `/api/v1/workspaces/{workspace_id}` | `remove_workspace` | Node Host 已委托 Core 声明删除事务，覆盖同 owner 会话解绑及普通任务停用；隔离 SQLite 临时表 14/14、隔离 PG 4/4、Python 对照 2/2。正式 SQLite 工作区 schema、物理目录和授权仍未接通；此操作不删除物理目录。 |
+| `backend/app/api/v1/workspaces.py` | `GET` | `/api/v1/workspaces/` | `list_workspaces` | Node Host 的 PostgreSQL 读取已委托 Core 列表用例；Core Kysely reader 在隔离 SQLite 临时表 12/12、隔离 PG 1/1 且与 Host 结果一致；Host 4/4、Python 工作区 19/19。正式 SQLite 表与工具关联名称查询尚未接入；见 `docs/testing/node-agent-workspace-port.md`。 |
+| `backend/app/api/v1/workspaces.py` | `GET` | `/api/v1/workspaces/session/{session_id}` | `current_workspace` | Node Host 已委托 Core 绑定用例和 PG 适配；隔离 SQLite 临时表 12/12、隔离 PG/Host 3/3、Python 工作区 19/19。正式 SQLite 工作区 schema 和授权尚未接通。 |
+| `backend/app/api/v1/workspaces.py` | `PATCH` | `/api/v1/workspaces/{workspace_id}` | `edit_workspace` | Node Host 的 PostgreSQL 事务已委托 Core 声明用例；隔离 PG/Host 与相关 Python pytest 各 5/5，覆盖 owner、目录名称和冲突。SQLite 适配、Local ACL 与真实部署仍未验收。 |
+| `backend/app/api/v1/workspaces.py` | `POST` | `/api/v1/workspaces/` | `add_workspace` | Node Host 的 PostgreSQL 事务已委托 Core 声明用例；隔离 PG/Host 与相关 Python pytest 各 5/5。SQLite 适配、Local ACL 与真实部署仍未验收。 |
+| `backend/app/api/v1/workspaces.py` | `POST` | `/api/v1/workspaces/{workspace_id}/bind/{session_id}` | `bind_workspace` | Node Host 已委托 Core 绑定用例和 PG 适配；隔离 SQLite 临时表 12/12、隔离 PG/Host 3/3、Python 工作区 19/19。正式 SQLite 工作区 schema 和授权尚未接通。 |
 
 
 ## 验收原则
@@ -432,5 +441,5 @@
 - 迁移接口时先补 route contract 与隔离 PostgreSQL 回归，并在 devserver 验收后再更新状态。
 - 单独列出仍由 Python 完成的完整副作用（幂等、Undo、事件、存储、Worker）；不能把仅路由可访问标成行为等价。
 - `/api/v1/auth/login` 的 Node 固定窗口限流已接 Redis command adapter，配置 `GUGU_WEBUI_REDIS_URL` 时可跨进程共享；未配置或 Redis 故障时兼容地 fail-open。登录限流与 Python 的共享能力仍需真实 Redis 环境验收。
-- Node Admin 登录/注销/当前用户与存储快照路由已挂载 Host；Admin auth version store 要求 Redis，未配置时按 Python 语义返回 503。Admin 登录限流复用共享 Redis 固定窗口 adapter；快照 Local 磁盘统计只在进程内使用 storage path，不在响应或日志暴露路径。
+- Node Admin 登录/注销/当前用户与存储快照路由已挂载 Host；配置 Redis 时共享认证版本和限流，隔离 Redis 已验证同进程两个独立生产 Host 的撤销、交替登录限流及服务故障，跨进程仍待验收。无 Redis 的内存模式仅适用于单实例；快照 Local 磁盘统计不在响应或日志暴露路径。
 - 只有所有 Web 必需 HTTP、SSE、静态资源和后台调用方均有等价实现与实机证据后，才推进默认 Node Web 切换。

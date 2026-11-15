@@ -11,6 +11,7 @@ import { pipeline } from 'node:stream/promises'
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
 import type { WriteRequestMetadata } from '../../app.js'
 import { writeRequestMetadata } from '../../http/request.js'
+import { runBestEffort } from '../../adapters/best-effort.js'
 
 export interface FileUploadInput {
   space: string
@@ -48,6 +49,7 @@ export interface FileUploadRouteOptions {
   requireUser: preHandlerHookHandler
   ownerIdFromRequest(request: FastifyRequest): string
   operations: FileUploadOperations
+  cleanupTemp?: (directory: string) => Promise<void>
 }
 
 function integer(value: string | undefined, field: string): number | null {
@@ -183,7 +185,9 @@ export function registerFileUploadRoutes(app: FastifyInstance, options: FileUplo
       const result = await options.operations.store(options.ownerIdFromRequest(request), staged, writeRequestMetadata(request, { limitHeaders: true }))
       return reply.code(201).send(result)
     } finally {
-      await rm(directory, { recursive: true, force: true })
+      await runBestEffort('上传临时目录清理', () => options.cleanupTemp?.(directory) ?? rm(directory, { recursive: true, force: true }), () => {
+        console.error('上传临时目录清理失败，可能存在残留')
+      })
     }
   })
 }

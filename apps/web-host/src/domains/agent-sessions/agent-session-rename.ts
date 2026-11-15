@@ -1,3 +1,4 @@
+import { createAgentSessionApplication, createPostgresAgentSessionRepository, normalizeAgentSessionTitle } from '@gugu/core/agent-sessions'
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
 import type { Pool } from 'pg'
 
@@ -27,13 +28,9 @@ export function registerAgentSessionRenameRoute(
       const sessionId = Number(rawSessionId)
       if (!Number.isSafeInteger(sessionId)) return reply.code(422).send({ detail: '会话 ID 无效' })
 
-      const value = request.body?.title
-      if (typeof value !== 'string')
-        return reply.code(422).send({ detail: '标题必须为文本' })
-      const title = value.trim()
-      if (!title) return reply.code(422).send({ detail: '标题不能为空' })
-      // Python len(str) counts Unicode code points; JS string.length counts UTF-16 units.
-      if ([...title].length > 300) return reply.code(422).send({ detail: '标题过长' })
+      let title: string
+      try { title = normalizeAgentSessionTitle(request.body?.title) }
+      catch (error) { return reply.code(422).send({ detail: error instanceof Error ? error.message : '标题无效' }) }
 
       const renamed = await options.rename(options.userIdFromRequest(request), sessionId, title)
       if (!renamed) return reply.code(404).send({ detail: '对话不存在' })
@@ -43,18 +40,6 @@ export function registerAgentSessionRenameRoute(
 }
 
 export function createPostgresAgentSessionRenamer(pool: Pool) {
-  return async function renameAgentSession(
-    ownerId: string,
-    sessionId: number,
-    title: string,
-  ): Promise<RenamedAgentSession | null> {
-    const result = await pool.query<RenamedAgentSession>(
-      `UPDATE conversation_sessions
-       SET title = $1, title_locked = true
-       WHERE id = $2 AND user_id = $3
-       RETURNING id, title, title_locked`,
-      [title, sessionId, ownerId],
-    )
-    return result.rows[0] ?? null
-  }
+  const repository = createPostgresAgentSessionRepository(pool)
+  return createAgentSessionApplication(repository).rename
 }

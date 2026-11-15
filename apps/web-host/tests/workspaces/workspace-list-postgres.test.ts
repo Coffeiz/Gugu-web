@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
 import { createPostgresWorkspaceLister } from '../../src/domains/workspaces/persistence/workspace-list.js'
+import { createWorkspaceLister } from '@gugu/core'
+import { createKyselyWorkspaceListReader, createPostgresRuntime } from '@gugu/core/data'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
@@ -10,6 +12,7 @@ const otherOwnerId = 'ad0902a0-c899-44ee-b180-d54eb04e4604'
 
 test('PostgreSQL workspace list returns owner rows, disabled items, per-owner session counts and runtime flags', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
+  timeout: 10_000,
 }, async () => {
   const schema = `gugu_workspace_list_${randomUUID().replaceAll('-', '')}`
   const admin = new Pool({ connectionString: databaseUrl, max: 1 })
@@ -100,7 +103,47 @@ test('PostgreSQL workspace list returns owner rows, disabled items, per-owner se
         },
       ],
     })
-
+    // 两个实际PG读适配器读取同一隔离schema；业务投影必须一致。
+    const core = await createPostgresRuntime({ url: databaseUrl!, schema, maxConnections: 1 })
+    try {
+      const read = createKyselyWorkspaceListReader(core.db as unknown as Parameters<typeof createKyselyWorkspaceListReader>[0], 'postgres')
+      const listShared = createWorkspaceLister(read, { readRuntimeSettings: () => settings })
+      assert.deepEqual(await listShared(ownerId), await listLocal(ownerId))
+      assert.deepEqual(await listShared(otherOwnerId), await listLocal(otherOwnerId))
+      // 实际表锁控制查询等待；取消不能提前报告连接已清理。
+      const blocker = await pool.connect()
+      let locked = false
+      try {
+        await blocker.query('BEGIN'); locked = true
+        await blocker.query('LOCK TABLE user_preferences IN ACCESS EXCLUSIVE MODE')
+        let entered!: () => void
+        const waiting = new Promise<void>(resolve => { entered = resolve })
+        const blockedDb = core.db.withPlugin({
+          transformQuery(args) { entered(); return args.node },
+          async transformResult(args) { return args.result },
+        })
+        const blockedRead = createKyselyWorkspaceListReader(blockedDb as unknown as Parameters<typeof createKyselyWorkspaceListReader>[0], 'postgres')
+        const controller = new AbortController(), reason = new Error('合成工作区查询取消')
+        let settled = false
+        const pending = blockedRead.preferences(ownerId, controller.signal).finally(() => { settled = true })
+        const rejected = assert.rejects(pending, error => error === reason)
+        try {
+          await waiting
+          controller.abort(reason)
+          await new Promise<void>(resolve => setImmediate(resolve))
+          assert.equal(settled, false)
+        } finally {
+          await blocker.query('ROLLBACK'); locked = false
+        }
+        await rejected
+        assert.equal(settled, true)
+        // Core池只有一个连接；后续查询成功证明没有遗留占用或污染。
+        assert.equal(await read.preferences(ownerId), await pool.query('SELECT data_json FROM user_preferences WHERE user_id=$1', [ownerId]).then(result => result.rows[0].data_json))
+      } finally {
+        try { if (locked) await blocker.query('ROLLBACK') }
+        finally { blocker.release() }
+      }
+    } finally { await core.close() }
   } finally {
     await pool.end()
     await admin.query(`DROP SCHEMA "${schema}" CASCADE`).catch(() => undefined)

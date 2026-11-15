@@ -1,6 +1,6 @@
 import { observe } from '../values.js'
-import type { CanonicalMessage, Json, ProviderEvent, ToolCall } from '../../harness/contracts.js'
-import { isContextOverflowError } from '../../harness/context/budget.js'
+import type { CanonicalMessage, Json, ProviderEvent, ToolCall } from '../../models.js'
+import { isContextOverflowError } from '../../context/budget.js'
 import type { JsonObject, ProjectionOptions, ProtocolDriver, ProviderConfig, ProviderDriverDependencies, ProviderInvocation, ProviderPolicy, ResponsesInputCapabilities } from '../contracts.js'
 import { classifyProviderError, ProviderError } from '../errors.js'
 import { requestEvents, requestJson } from '../http.js'

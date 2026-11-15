@@ -19,10 +19,19 @@ it('Preload 只暴露固定业务函数，不透传任意 channel 或 Electron �
     'projects',
     'receipt',
     'sandboxStatus',
+    'undoApply',
+    'undoPreview',
+    'undoRedo',
   ])
   await bridge.createProject('合成计划')
   expect(spies.invoke).toHaveBeenCalledWith('gugu:projects:create', '合成计划')
   await bridge.receipt('合成操作 ID')
   expect(spies.invoke).toHaveBeenCalledWith('gugu:operations:get', '合成操作 ID')
+  await bridge.undoApply('合成上下文', '合成撤销', '合成操作')
+  expect(spies.invoke).toHaveBeenCalledWith('gugu:undo:apply', '合成上下文', '合成撤销', '合成操作')
+  await bridge.undoPreview('合成上下文')
+  expect(spies.invoke).toHaveBeenCalledWith('gugu:undo:preview', '合成上下文')
+  await bridge.undoRedo('合成上下文', '合成撤销', '合成操作')
+  expect(spies.invoke).toHaveBeenCalledWith('gugu:undo:redo', '合成上下文', '合成撤销', '合成操作')
   expect(Object.isFrozen(bridge)).toBe(true)
 })

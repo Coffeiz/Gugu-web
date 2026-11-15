@@ -44,6 +44,17 @@ describe('外连地址与DNS固定', () => {
   it.each(['127.0.0.1', '10.0.0.1', '100.64.0.1', '169.254.169.254', '192.0.2.1', '224.0.0.1', '::1', '::ffff:127.0.0.1', 'fd00::1', '2001:db8::1'])('拒绝非公网地址%s及IPv4映射绕过', address => {
     expect(isPublicAddress(address)).toBe(false)
   })
+  it.each(['1.1.1.1', '8.8.8.8', '93.184.216.34', '2606:4700:4700::1111'])('正常公网地址%s不能被其他地址族的保留网段误拒', address => {
+    expect(isPublicAddress(address)).toBe(true)
+  })
+  it.each(['::ffff:1.1.1.1', '::ffff:8.8.8.8', '::ffff:10.0.0.1', '::ffff:192.168.0.1', '::ffff:198.51.100.1', '::ffff:169.254.169.254'])('IPv4映射地址%s仍然拒绝，不扩大IPv6可访问集合', address => {
+    expect(isPublicAddress(address)).toBe(false)
+  })
+  it('可信DNS的纯公网IPv4通过并固定地址，混合映射私网仍拒绝', async () => {
+    const result = await resolvePinnedTarget('https://provider.example/v1', { resolve: async () => [{ address: '1.1.1.1', family: 4 }] })
+    expect(result.target).toEqual({ address: '1.1.1.1', family: 4 })
+    await expect(resolvePinnedTarget('https://provider.example/v1', { resolve: async () => [{ address: '1.1.1.1', family: 4 }, { address: '::ffff:127.0.0.1', family: 6 }] })).rejects.toMatchObject({ code: 'input_rejected' })
+  })
   it('混合公私DNS整体拒绝，凭据/fragment/query密钥不进入连接', async () => {
     const resolve = vi.fn(async () => [{ address: '1.1.1.1', family: 4 as const }, { address: '127.0.0.1', family: 4 as const }])
     await expect(resolvePinnedTarget('https://provider.example/v1', { resolve })).rejects.toMatchObject({ code: 'input_rejected' })

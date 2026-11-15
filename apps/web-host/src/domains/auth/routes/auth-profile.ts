@@ -25,6 +25,7 @@ export interface ProfileIdentity {
 export interface ProfileRouteOptions {
   readonly pool: Pick<Pool, 'connect'>
   readonly secret: string
+  readonly tokenExpiresMinutes?: number
   readonly authenticate: (
     request: FastifyRequest,
     reply: FastifyReply,
@@ -177,14 +178,15 @@ function setRenewedAuthCookies(
   userId: string,
   securityVersion: number,
   secret: string,
+  tokenExpiresMinutes: number,
 ): void {
   const forwardedProtocol = request.headers['x-forwarded-proto']
   const secure = request.protocol === 'https'
     || (typeof forwardedProtocol === 'string'
       && forwardedProtocol.split(',', 1)[0]?.trim().toLowerCase() === 'https')
   const secureSuffix = secure ? '; Secure' : ''
-  const maxAge = 10080 * 60
-  const accessToken = createUserToken(userId, securityVersion, secret)
+  const maxAge = tokenExpiresMinutes * 60
+  const accessToken = createUserToken(userId, securityVersion, secret, Date.now(), tokenExpiresMinutes)
   const csrfToken = createCsrfToken()
   reply.header('set-cookie', [
     `gugu_user_access_token=${accessToken}; Max-Age=${maxAge}; Path=/; HttpOnly${secureSuffix}; SameSite=Lax`,
@@ -221,6 +223,7 @@ export function registerProfileRoute(app: FastifyInstance, options: ProfileRoute
           identity.id,
           committed.securityVersion ?? 1,
           options.secret,
+          options.tokenExpiresMinutes ?? 10080,
         )
       }
       return userResponse(user)

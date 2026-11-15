@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import type { EventCreatePublication } from '../../src/domains/calendar/application/event-create.js'
+import type { EventCreatePublication } from '@gugu/core/calendar'
 import { createCalendarEventPostCommitPublisher } from '../../src/domains/calendar/persistence/calendar-create-post-commit-postgres.js'
 
 const publication: EventCreatePublication = {

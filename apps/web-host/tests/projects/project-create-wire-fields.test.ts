@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createProjectCreator } from '../../src/domains/projects/application/project-create.js'
-import type { ProjectCreateRecord, ProjectCreateRuntime, ProjectCreateTransaction } from '../../src/domains/projects/application/project-create.js'
+import { createProjectCreator } from '@gugu/core/project-create'
+import type { ProjectCreateRecord, ProjectCreateRuntime, ProjectCreateTransaction } from '@gugu/core/project-create'
 
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
 const stages = [
@@ -12,6 +12,7 @@ const stages = [
 function captureCreate() {
   let inserted: ProjectCreateRecord | null = null
   const runtime: ProjectCreateRuntime = {
+    isUniqueViolation: () => false,
     async transaction<T>(work: (tx: ProjectCreateTransaction) => Promise<T>): Promise<T> {
       return work({
         async findIdempotent() { return null },

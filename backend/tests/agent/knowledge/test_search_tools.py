@@ -1,5 +1,9 @@
-from app.models import ConversationMessage, ConversationSession
+import re
+
+from app.models import ConversationMessage, ConversationSession, Project
 from agent.rag.models import IndexDocument, Scope
+from agent.rag.adapters.conversations import ConversationAdapter
+from agent.rag.adapters.projects import ProjectAdapter
 from agent.tools.conversations import _search_conversations
 
 
@@ -8,6 +12,37 @@ async def _mk(db, obj):
     await db.commit()
     await db.refresh(obj)
     return obj
+
+
+async def test_conversation_adapter_searches_owned_history_before_baseline(db, user_a, user_b, monkeypatch):
+    """真实检索可按消息创建时间排序，不泄露其他用户或群聊。"""
+    session = await _mk(db, ConversationSession(user_id=user_a.id, title="合成对话", baseline_message_seq=2))
+    foreign = await _mk(db, ConversationSession(user_id=user_b.id, title="其他对话"))
+    group = await _mk(db, ConversationSession(user_id=user_a.id, title="群聊", chat_type="group"))
+    await _mk(db, ConversationMessage(session_id=session.id, role="user", content="旧消息 100%_完成", conversation_seq=1))
+    await _mk(db, ConversationMessage(session_id=foreign.id, role="user", content="其他 100%_完成", conversation_seq=1))
+    await _mk(db, ConversationMessage(session_id=group.id, role="user", content="群聊 100%_完成", conversation_seq=1))
+    adapter = ConversationAdapter(user_a.id, db=db)
+    result = await adapter.retrieve("100%_完成", scope=Scope(str(user_a.id)), strategy="bm25", candidate_limit=10)
+    assert [item.document.content for item in result.results] == ["旧消息 100%_完成"]
+    missing = await adapter.retrieve("100XX完成", scope=Scope(str(user_a.id)), strategy="bm25", candidate_limit=10)
+    assert missing.results == ()
+    # 原生分词器不是此测试的目标；在无编译扩展的环境固定词元，仍执行真实排序流程。
+    monkeypatch.setattr("agent.rag.cython_rank.tokenize_raw", lambda text: re.findall(r"[a-z0-9_]+|[\u4e00-\u9fff]+", text.lower()))
+    from agent.rag.service import search_conversations
+    ranked = await search_conversations(db, user_a.id, "100%_完成", queries=["100%_完成"])
+    assert [item["session_id"] for item in ranked["results"]] == [str(session.id)]
+    assert ranked["results"][0]["text"] == "合成对话\n旧消息 100%_完成"
+
+
+async def test_project_rag_source_uses_only_live_owner_projects(db, user_a, user_b):
+    await _mk(db, Project(user_id=user_a.id, name="上线计划", client="小北", status="active", progress=40))
+    await _mk(db, Project(user_id=user_a.id, name="归档项目", archived=True))
+    await _mk(db, Project(user_id=user_b.id, name="其他项目"))
+    records = await ProjectAdapter(user_a.id, db=db).build_source_records(scope=Scope(str(user_a.id)))
+    assert len(records) == 1
+    assert "项目：上线计划" in records[0][0]["content"]
+    assert "联系人：小北" in records[0][0]["content"]
 
 
 async def test_search_conversations_accepts_multiple_keywords(db, user_a, monkeypatch):

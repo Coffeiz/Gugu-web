@@ -197,3 +197,21 @@ test('file content refuses traversal keys and symlinks that point outside Local 
     await rm(outside, { recursive: true, force: true })
   }
 })
+
+test('读取旧导入文件仅允许当前用户 imported 子树且拒绝符号链接', async () => {
+  const root=await mkdtemp(path.join(os.tmpdir(),'gugu-import-read-'))
+  const outside=await mkdtemp(path.join(os.tmpdir(),'gugu-import-outside-'))
+  const hex=owner.replaceAll('-',''),key=`${hex}/.data-portability/imported/job/file`,target=path.join(root,...key.split('/'))
+  try {
+    await mkdir(path.dirname(target),{recursive:true});await writeFile(target,'导入正文')
+    const ops=(storage_key:string)=>createPostgresFileReadOperations(fakePool(()=>({rows:[fileRow({storage_key})]})),null,root)
+    const opened=await ops(key).openContent(owner,17);assert.ok(opened)
+    assert.equal((await opened.handle.readFile()).toString(),'导入正文');await opened.handle.close()
+    for(const bad of [`${hex}/其他/file`,`22222222222242228222222222222222/.data-portability/imported/job/file`,`${hex}/.data-portability/imported/../rollback/file`])
+      await assert.rejects(ops(bad).openContent(owner,17),(error:unknown)=>typeof error==='object'&&error!==null&&'code' in error&&error.code==='not_found')
+    const secret=path.join(outside,'secret');await writeFile(secret,'外部正文')
+    const linkKey=`${hex}/.data-portability/imported/job/link`;await symlink(secret,path.join(root,...linkKey.split('/')))
+    await assert.rejects(ops(linkKey).openContent(owner,17),(error:unknown)=>typeof error==='object'&&error!==null&&'code' in error&&error.code==='not_found')
+    assert.equal(await readFile(secret,'utf8'),'外部正文')
+  } finally {await rm(root,{recursive:true,force:true});await rm(outside,{recursive:true,force:true})}
+})

@@ -145,3 +145,23 @@ test('run cancellation never publishes when the durable marker write is rejected
   await assert.rejects(port.request(identity), /Agent run cancellation marker was not stored/)
   assert.deepEqual(redis.calls.map(([operation]) => operation), ['SET'])
 })
+
+test('隔离 Redis 中取消标记和通知只作用于指定 run', { skip: !process.env.GUGU_WEBUI_TEST_REDIS_URL && '需要隔离 Redis' }, async () => {
+  const { createRedisAgentCancellationCommands } = await import('../../src/adapters/redis-events.js')
+  const { createRedisLiveSubscription } = await import('../../src/adapters/redis-live-subscription.js')
+  const url = process.env.GUGU_WEBUI_TEST_REDIS_URL!
+  const current = { ownerId: `owner-${crypto.randomUUID()}`, sessionId: '17', runId: 'run-1' }
+  const port = createRedisAgentRunCancellationPort(createRedisAgentCancellationCommands(url), createRedisLiveSubscription(url))
+  let wake!: () => void
+  const received = new Promise<void>(resolve => { wake = resolve })
+  const close = await port.subscribe(current, wake)
+  try {
+    await port.request(current)
+    await port.notify(current)
+    const timer = AbortSignal.timeout(3000)
+    await Promise.race([received, new Promise<never>((_, reject) => timer.addEventListener('abort', () => reject(new Error('取消通知超时')), { once: true }))])
+    assert.equal(await port.isRequested(current), true)
+    assert.equal(await port.isRequested({ ...current, runId: 'run-2' }), false)
+    assert.equal(await port.isRequested({ ...current, ownerId: `${current.ownerId}-other` }), false)
+  } finally { close() }
+})

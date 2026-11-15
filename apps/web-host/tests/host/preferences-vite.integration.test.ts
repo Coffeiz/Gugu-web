@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import { Pool } from 'pg'
+import { createPostgresRuntime } from '@gugu/core/data'
+import { createKyselyPreferenceDocumentStore } from '@gugu/core'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
 import { createCsrfToken, createUserToken, type PublicUserRecord } from '../../src/domains/auth/auth.js'
@@ -17,6 +19,7 @@ test('Vite forwards cookie-authenticated preference reads and partial writes to 
   const admin = new Pool({ connectionString: databaseUrl, max: 1 })
   await admin.query(`CREATE SCHEMA "${schema}"`)
   const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema}`, max: 2 })
+  const core = await createPostgresRuntime({ url: databaseUrl!, schema })
   const ownerId = randomUUID()
   const secret = 'synthetic-preferences-vite-secret'
   const user: PublicUserRecord = {
@@ -37,7 +40,7 @@ test('Vite forwards cookie-authenticated preference reads and partial writes to 
     appName: 'preferences-vite-integration',
     async isReady() { return true },
     userAuth: { secret, async lookupUser(userId) { return userId === ownerId ? user : null } },
-    preferences: createPostgresPreferencesStore(pool),
+    preferences: createPostgresPreferencesStore(pool, { documentStore: createKyselyPreferenceDocumentStore(core.db, 'postgres') }),
   })
   let vite: {
     listen(): Promise<void>
@@ -62,7 +65,7 @@ test('Vite forwards cookie-authenticated preference reads and partial writes to 
 
     const hostAddress = await app.listen({ host: '127.0.0.1', port: 0 })
     process.env.VITE_API_PROXY_TARGET = hostAddress
-    const frontendRoot = resolve(process.cwd(), '../web')
+    const frontendRoot = process.env.GUGU_TEST_WEB_ROOT ?? resolve(process.cwd(), '../web')
     const requireFrontend = createRequire(resolve(frontendRoot, 'package.json'))
     const viteModule = requireFrontend('vite') as {
       createServer(options: Record<string, unknown>): Promise<{
@@ -116,6 +119,7 @@ test('Vite forwards cookie-authenticated preference reads and partial writes to 
   } finally {
     if (vite) await vite.close()
     await app.close().catch(() => undefined)
+    await core.close()
     if (previousProxyTarget === undefined) delete process.env.VITE_API_PROXY_TARGET
     else process.env.VITE_API_PROXY_TARGET = previousProxyTarget
     await pool.end()

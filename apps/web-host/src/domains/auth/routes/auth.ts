@@ -33,8 +33,9 @@ export function registerLoginRoute(app: FastifyInstance, auth: UserAuthOptions):
 
     await recordLogin(user.id)
     const securityVersion = user.securityVersion || 1
-    const token = createUserToken(user.id, securityVersion, auth.secret)
-    const maxAge = 10080 * 60
+    const expiresMinutes = auth.tokenExpiresMinutes ?? 10080
+    const token = createUserToken(user.id, securityVersion, auth.secret, Date.now(), expiresMinutes)
+    const maxAge = expiresMinutes * 60
     const forwardedProtocol = request.headers['x-forwarded-proto']
     const secure = request.protocol === 'https'
       || (typeof forwardedProtocol === 'string'

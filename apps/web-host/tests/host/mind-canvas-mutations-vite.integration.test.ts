@@ -6,14 +6,8 @@ import { Pool } from 'pg'
 import { after, test } from 'node:test'
 import { createApp } from '../../src/app.js'
 import { createUserToken } from '../../src/domains/auth/auth.js'
-import { createMindCanvasMutations } from '../../src/domains/mind/application/mind-canvas-mutations.js'
-import { createPostgresMindCanvasMutationRuntime } from '../../src/domains/mind/persistence/mind-canvas-mutations-postgres.js'
-import { createPostgresMindCanvasReader } from '../../src/domains/mind/mind-canvas-read.js'
-import { createMindCanvasNoteMutations } from '../../src/domains/mind/application/mind-canvas-note-mutations.js'
-import { createPostgresMindCanvasNoteMutationRuntime } from '../../src/domains/mind/persistence/mind-canvas-note-mutations-postgres.js'
-import { createMindCanvasItemMutations } from '../../src/domains/mind/application/mind-canvas-item-mutations.js'
-import { createPostgresMindCanvasItemMutationRuntime } from '../../src/domains/mind/persistence/mind-canvas-item-mutations-postgres.js'
-import { createPostgresMindNoteReader } from '../../src/domains/mind/mind-notes-read.js'
+import { createPostgresRuntime, type SqlDataRuntime } from '@gugu/core/data'
+import { createMindCanvasNoteMutations, createMindCanvasCreation, createMindCanvasUpdate, createMindCanvasDelete, createSqlMindCanvasCreateRuntime, createSqlMindCanvasUpdateRuntime, createSqlMindCanvasDeleteRuntime, createSqlMindCanvasNoteRuntime, createMindCanvasItemAdd, createMindCanvasItemUpdate, createMindCanvasItemRemove, createSqlMindCanvasItemAddRuntime, createSqlMindCanvasItemUpdateRuntime, createSqlMindCanvasItemRemoveRuntime, createSqlMindCanvasReader, createSqlMindNoteReader } from '@gugu/core/mind'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = 'b0510e94-10d2-4279-a692-4cff7b4f25cf'
@@ -22,12 +16,14 @@ const secret = 'synthetic-mind-canvas-vite-secret'
 let adminPool: Pool | undefined
 let schema: string | undefined
 const pools: Pool[] = []
+const runtimes: SqlDataRuntime[] = []
 const apps: Array<{ close(): Promise<void> }> = []
 const viteServers: Array<{ close(): Promise<void>; httpServer?: { address(): string | { port: number } | null } }> = []
 
 after(async () => {
   await Promise.all(viteServers.splice(0).map((server) => server.close()))
   await Promise.all(apps.splice(0).map((app) => app.close()))
+  await Promise.all(runtimes.splice(0).map((runtime) => runtime.close()))
   await Promise.all(pools.splice(0).map((pool) => pool.end()))
   if (adminPool && schema) await adminPool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`).catch(() => undefined)
   await adminPool?.end()
@@ -41,6 +37,8 @@ test('Vite→Node Host→随机 PostgreSQL schema 创建、编辑并重读画布
   await adminPool.query(`CREATE SCHEMA "${schema}"`)
   const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema}`, max: 4 })
   pools.push(pool)
+  const core = await createPostgresRuntime({ url: databaseUrl!, schema })
+  runtimes.push(core)
 
   await pool.query(`
     CREATE TABLE mind_maps (
@@ -91,13 +89,10 @@ test('Vite→Node Host→随机 PostgreSQL schema 创建、编辑并重读画布
         } : null
       },
     },
-    mindCanvasReads: createPostgresMindCanvasReader(pool),
-    mindNotes: createPostgresMindNoteReader(pool),
+    mindCanvasReads: createSqlMindCanvasReader(core.db, 'postgres'),
+    mindNotes: createSqlMindNoteReader(core.db, 'postgres'),
     mindCanvasNoteMutations: (() => {
-      const service = createMindCanvasNoteMutations(createPostgresMindCanvasNoteMutationRuntime(
-        pool,
-        async () => {},
-      ))
+      const service = createMindCanvasNoteMutations(createSqlMindCanvasNoteRuntime(core.db, 'postgres', async () => {}))
       return {
         create: (id, canvasId, input, metadata) => service.create(id, canvasId, input, {
           undoContextId: metadata.undoContextId,
@@ -112,27 +107,27 @@ test('Vite→Node Host→随机 PostgreSQL schema 创建、编辑并重读画布
       }
     })(),
     mindCanvasItemMutations: (() => {
-      const service = createMindCanvasItemMutations(createPostgresMindCanvasItemMutationRuntime(
-        pool,
-        async () => {},
-      ))
+      const publish = async () => {}
+      const add = createMindCanvasItemAdd(createSqlMindCanvasItemAddRuntime(core.db, 'postgres', publish))
+      const update = createMindCanvasItemUpdate(createSqlMindCanvasItemUpdateRuntime(core.db, 'postgres', publish))
+      const remove = createMindCanvasItemRemove(createSqlMindCanvasItemRemoveRuntime(core.db, 'postgres', publish))
       return {
-        add: (id, canvasId, input, metadata) => service.add(id, canvasId, input, {
+        add: (id, canvasId, input, metadata) => add(id, canvasId, input, {
           undoContextId: metadata.undoContextId,
           clientId: metadata.clientId,
           mutationId: metadata.mutationId,
         }),
-        update: (id, canvasId, itemId, input, metadata) => service.update(id, canvasId, itemId, input, {
+        update: (id, canvasId, itemId, input, metadata) => update.update(id, canvasId, itemId, input, {
           undoContextId: metadata.undoContextId,
           clientId: metadata.clientId,
           mutationId: metadata.mutationId,
         }),
-        bringToFront: (id, canvasId, itemId, input, metadata) => service.bringToFront(id, canvasId, itemId, input, {
+        bringToFront: (id, canvasId, itemId, input, metadata) => update.bringToFront(id, canvasId, itemId, input, {
           undoContextId: metadata.undoContextId,
           clientId: metadata.clientId,
           mutationId: metadata.mutationId,
         }),
-        remove: (id, canvasId, itemId, metadata) => service.remove(id, canvasId, itemId, {
+        remove: (id, canvasId, itemId, metadata) => remove(id, canvasId, itemId, {
           undoContextId: metadata.undoContextId,
           clientId: metadata.clientId,
           mutationId: metadata.mutationId,
@@ -140,20 +135,20 @@ test('Vite→Node Host→随机 PostgreSQL schema 创建、编辑并重读画布
       }
     })(),
     mindCanvasMutations: (() => {
-      const service = createMindCanvasMutations(createPostgresMindCanvasMutationRuntime(
-        pool,
-        async () => {},
-      ))
+      const publish = async () => {}
+      const create = createMindCanvasCreation(createSqlMindCanvasCreateRuntime(core.db, 'postgres', publish))
+      const update = createMindCanvasUpdate(createSqlMindCanvasUpdateRuntime(core.db, 'postgres', publish))
+      const remove = createMindCanvasDelete(createSqlMindCanvasDeleteRuntime(core.db, 'postgres', publish))
       return {
-        create: (id, input, metadata) => service.create(id, input, {
+        create: (id, input, metadata) => create(id, input, {
           undoContextId: metadata.undoContextId,
           clientId: metadata.clientId,
         }),
-        update: (id, canvasId, input, metadata) => service.update(id, canvasId, input, {
+        update: (id, canvasId, input, metadata) => update(id, canvasId, input, {
           undoContextId: metadata.undoContextId,
           clientId: metadata.clientId,
         }),
-        delete: (id, canvasId, metadata) => service.delete(id, canvasId, {
+        delete: (id, canvasId, metadata) => remove(id, canvasId, {
           undoContextId: metadata.undoContextId,
           clientId: metadata.clientId,
         }),
@@ -166,7 +161,7 @@ test('Vite→Node Host→随机 PostgreSQL schema 创建、编辑并重读画布
   process.env.VITE_API_PROXY_TARGET = hostAddress
 
   try {
-    const frontendRoot = resolve(process.cwd(), '../web')
+    const frontendRoot = process.env.GUGU_TEST_WEB_ROOT ?? resolve(process.cwd(), '../web')
     const requireFrontend = createRequire(resolve(frontendRoot, 'package.json'))
     const viteModule = requireFrontend('vite') as {
       createServer(options: Record<string, unknown>): Promise<{

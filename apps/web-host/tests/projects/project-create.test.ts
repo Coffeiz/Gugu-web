@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createProjectCreator } from '../../src/domains/projects/application/project-create.js'
-import type { ProjectCreateRecord } from '../../src/domains/projects/application/project-create.js'
+import { createProjectCreator } from '@gugu/core/project-create'
+import type { ProjectCreateRecord } from '@gugu/core/project-create'
 
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
 const projectInput = {
@@ -27,6 +27,7 @@ function fakeRuntime() {
   let nextId = 1
   let committed = false
   const runtime = {
+    isUniqueViolation: (error: unknown) => error instanceof UniqueViolation,
     async transaction<T>(work: (tx: any) => Promise<T>): Promise<T> {
       const tx = {
         async findIdempotent(owner: string, key: string) {
@@ -124,7 +125,7 @@ test('创建项目校验字段、绑定当前 owner，并在事务内记录 Undo
       priority: null,
       version: 1,
       doneAt: null,
-      updatedAt: '2026-11-13T00:00:00.000Z',
+      updatedAt: '2026-11-13T00:00:00+00:00',
       deletedAt: null,
       createdAt: '2026-11-13',
       fileCount: 0,

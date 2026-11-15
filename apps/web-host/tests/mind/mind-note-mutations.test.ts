@@ -4,7 +4,7 @@ import {
   createMindNoteMutations,
   MindNoteMutationError,
   prepareMindNoteUpdate,
-} from '../../src/domains/mind/application/mind-note-mutations.js'
+} from '@gugu/core/mind'
 
 const now = new Date('2026-11-14T10:00:00.000Z')
 

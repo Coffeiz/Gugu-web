@@ -1,0 +1,43 @@
+import type { PreparedToolDefinition, RunIdentity, ToolCall, ToolResult } from '../models.js'
+import type { ToolPort } from '../ports.js'
+
+export type ToolScope = Parameters<ToolPort['dispatch']>[1]
+
+/** 定义与实现由可信 Host 装配；参数不包含 owner、授权根或确认凭据。 */
+export interface ToolDefinition {
+  readonly definition: PreparedToolDefinition
+  readonly effect: 'read' | 'write'
+  /** 当前注册器尚未接入持久确认凭证，危险工具一律不开放。 */
+  readonly destructive?: boolean
+  /** 仅作调度分流，不能替代 handler 内的可信交互/确认门。 */
+  readonly requiresInteraction?: boolean
+  /** 按字段名禁止数组结构修复；仍允许合法 JSON 数组文本归一。 */
+  readonly strictArrayFields?: readonly string[]
+  validate(input: unknown): { success: true; data: unknown } | { success: false; error?: unknown }
+  execute(input: unknown, scope: ToolScope, call: ToolCall): Promise<ToolResult>
+  /** 仅恢复已提交收据；没有领域查询能力时保持unknown。 */
+  reconcile?(input: unknown, identity: RunIdentity & { readonly roundId: string }, call: ToolCall): Promise<ToolResult>
+}
+
+/** 工具领域分组，不是可供模型按需加载正文的 Skill。 */
+export interface ToolGroupDefinition {
+  readonly id: string
+  readonly name: string
+  readonly tools: readonly ToolDefinition[]
+}
+
+export interface ToolRegistryConfiguration {
+  readonly tools?: Readonly<Record<string, boolean>>
+  readonly groups?: Readonly<Record<string, boolean>>
+}
+
+export interface ToolRegistryOptions {
+  readonly tools?: readonly ToolDefinition[]
+  readonly groups?: readonly ToolGroupDefinition[]
+  readonly configuration?: ToolRegistryConfiguration
+  readonly maxConcurrency?: number
+  /** 仅用于缺年份的旧日期输入；未提供时不猜测年份。 */
+  normalizationYear?(identity: RunIdentity): number
+  /** 每次发现与执行重新判权；可结合平台能力及最新授权状态。 */
+  authorize(identity: RunIdentity, name: string): Promise<boolean>
+}

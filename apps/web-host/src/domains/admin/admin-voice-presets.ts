@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify'
-import { maskSecret } from '../../shared/secret-mask.js'
+import { maskSecret } from '@gugu/core/shared/secret-mask'
 
 type Preset = {
   id: string

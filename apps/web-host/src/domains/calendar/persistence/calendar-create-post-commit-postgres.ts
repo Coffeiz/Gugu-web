@@ -1,5 +1,5 @@
 import { runBestEffort } from '../../../adapters/best-effort.js'
-import type { EventCreatePublication } from '../application/event-create.js'
+import type { EventCreatePublication } from '@gugu/core/calendar'
 
 export interface CalendarCreatePostCommitEffects {
   /** Bump the user's context snapshot revision after the event transaction commits. */

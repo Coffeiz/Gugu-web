@@ -1,5 +1,5 @@
 import type { ProviderConfig } from '../contracts.js'
-import { failedProviderSearch, officialSearchHost, requestProviderSearch, type ProviderSearchAdapter, type SearchTarget } from '../search/shared.js'
+import { failedProviderSearch, officialSearchHost, requestProviderSearch, type ProviderSearchAdapter, type SearchTarget } from '../search/http.js'
 import { ollamaSearchSchema } from './search-schema.js'
 
 function target(config: ProviderConfig): SearchTarget | null {

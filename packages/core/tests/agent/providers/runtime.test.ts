@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
-import type { CanonicalContextPorts, HarnessPorts } from '../../../src/agent/harness/ports.js'
-import type { CanonicalHarnessContext, CanonicalMessage, Json, ProviderEvent } from '../../../src/agent/harness/contracts.js'
-import { createCanonicalContextPort, createCanonicalHarness, createCompactionSummarizer, isEarlyExit, stableJson } from '../../../src/agent/harness/index.js'
+import type { CanonicalContextPorts, AgentRunnerPorts } from '../../../src/agent/ports.js'
+import type { CanonicalRunContext, CanonicalMessage, Json, ProviderEvent } from '../../../src/agent/models.js'
+import { contextAccessScopeHash, createCanonicalContextPort, createCanonicalRunner, createCanonicalSourceLoader, createCompactionSummarizer, isEarlyExit, stableJson } from '../../../src/agent/index.js'
 import { connectProviderHarness } from '../../../src/agent/providers/runtime.js'
 import { ProviderError, classifyProviderError } from '../../../src/agent/providers/errors.js'
 import { openaiPolicy } from '../../../src/agent/providers/openai/driver.js'
@@ -11,7 +11,7 @@ import { InProcessPrefixCoordinator, providerCacheSupported } from '../../../src
 import type { PrefixCoordinator } from '../../../src/agent/providers/cache.js'
 import { ProviderClientPool, providerConfigKey } from '../../../src/agent/providers/client-pool.js'
 import { ProviderStreamSanitizer, stripThinking } from '../../../src/agent/providers/sanitize.js'
-import { runContextBranch } from '../../../src/agent/harness/context/reflection.js'
+import { runContextBranch } from '../../../src/agent/memory/reflection.js'
 import type { JsonObject, ProviderHttpRequest, ProviderTransport } from '../../../src/agent/providers/contracts.js'
 import type { ProviderConfig, ProviderWire } from '../../../src/agent/providers/contracts.js'
 import type { ProviderProbeSink, ProviderRequestProbe } from '../../../src/agent/providers/cache-probe.js'
@@ -20,13 +20,13 @@ import { requestJson } from '../../../src/agent/providers/http.js'
 import { listProviderModels, normalizedApiKey, providerDiagnosticRequest } from '../../../src/agent/providers/diagnostics.js'
 import { providerSelection } from '../../../src/agent/providers/registry.js'
 import { invocation } from './openai-fixtures.js'
-import { fixture, identity, collect, deferred } from '../harness/run/fixtures.js'
+import { fixture, identity, collect, deferred } from '../run/fixtures.js'
 
 const digest = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')
 const encode = (text: string) => new TextEncoder().encode(text)
 async function* collectSource<T>(values: readonly T[]) { yield* values }
 async function all(source: AsyncIterable<ProviderEvent>) { const result: ProviderEvent[] = []; for await (const event of source) result.push(event); return result }
-function setup(scripts: readonly (string | { status: number; body: JsonObject })[], options: { config?: ProviderConfig; history?: CanonicalMessage[]; requestPrefix?: CanonicalMessage[]; systemPrompt?: string; probeSink?: ProviderProbeSink; extraReminder?: string; initialImage?: boolean; now?: () => number; coordinator?: PrefixCoordinator; diagnose?: (code: string, error: unknown) => void } = {}) {
+function setup(scripts: readonly (string | { status: number; body: JsonObject })[], options: { config?: ProviderConfig; history?: CanonicalMessage[]; requestPrefix?: CanonicalMessage[]; systemPrompt?: string; probeSink?: ProviderProbeSink; extraReminder?: string; initialImage?: boolean; now?: () => number; coordinator?: PrefixCoordinator; diagnose?: (code: string, error: unknown) => void; sourceLoad?: CanonicalContextPorts['load']; scopeHash?: string } = {}) {
   let id = 0, index = 0
   const sent: ProviderHttpRequest[] = []
   const currentContent: Json = options.initialImage ? [{ type: 'text', text: '读取合成信息' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'aW5pdGlhbA==' } }] : '读取合成信息'
@@ -56,18 +56,19 @@ function setup(scripts: readonly (string | { status: number; body: JsonObject })
       input: { ...identity, fixedPrefix: [], history: (options.history ?? []).map((message, index) => ({ ...identity, id: `history-${index}`, conversationSeq: index + 1, ...message, ...(Array.isArray(message.content) ? { contentJson: message.content, content: '' } : {}) })), preparedRag: { tail: [] }, extraReminder: options.extraReminder, currentUser: { persistedMessageId: 'current', message: { role: 'user', content: currentContent } } } }),
     preparation: { buildRag: async () => ({ tail: [] }) },
     prepareRequest: async () => ({ prefix: options.requestPrefix ?? [], dynamicTail: options.extraReminder ? [{ role: 'user', content: `[system-reminder]\n${options.extraReminder}\n[/system-reminder]` }] : [] }),
-    references: { dehydrate: async entry => mediaCodec(entry.message, false) as import('../../../src/agent/harness/contracts.js').CanonicalMessage, hydrate: async entry => mediaCodec(entry.message, true) as import('../../../src/agent/harness/contracts.js').CanonicalMessage },
+    references: { dehydrate: async entry => mediaCodec(entry.message, false) as import('../../../src/agent/models.js').CanonicalMessage, hydrate: async entry => mediaCodec(entry.message, true) as import('../../../src/agent/models.js').CanonicalMessage },
     compaction: { summarize: vi.fn(async () => { throw new Error('不应触发压缩') }) },
     finalization: { complete: vi.fn(async () => undefined) },
     currentRequest: () => { throw new Error('Provider接线应替换该端口') },
     stageContinuation: async () => { throw new Error('Provider接线应替换该端口') }, releaseContinuations: async () => undefined,
     diagnoseCompactionFailure: vi.fn(),
   }
-  const connected = connectProviderHarness(context, { transport, resolve: async () => ({ modelIdentity: 'model-a', accessScopeHash: digest(identity), config: options.config ?? { provider: 'openai', model: 'synthetic-model' }, systemPrompt: options.systemPrompt ?? '固定人格' }), probeSink: options.probeSink, diagnose: options.diagnose, coordinator: options.coordinator, clock: { now: options.now ?? (() => 0), sleep: async () => undefined } })
+  if (options.sourceLoad) context.load = options.sourceLoad
+  const connected = connectProviderHarness(context, { transport, resolve: async () => ({ modelIdentity: 'model-a', accessScopeHash: options.scopeHash ?? digest(identity), config: options.config ?? { provider: 'openai', model: 'synthetic-model' }, systemPrompt: options.systemPrompt ?? '固定人格' }), probeSink: options.probeSink, diagnose: options.diagnose, coordinator: options.coordinator, clock: { now: options.now ?? (() => 0), sleep: async () => undefined } })
   const fake = fixture([])
   fake.ports.presentError = vi.fn(fake.ports.presentError)
-  const runtime = fake.ports as unknown as HarnessPorts<CanonicalHarnessContext>
-  const harness = createCanonicalHarness({ context: connected.context, executor: { authorize: async () => { throw new Error('lookup不执行原生进程') }, executor: { execute: async () => { throw new Error('lookup不执行原生进程') } } }, runtime: { ...runtime, provider: connected.provider } })
+  const runtime = fake.ports as unknown as AgentRunnerPorts<CanonicalRunContext>
+  const harness = createCanonicalRunner({ context: connected.context, executor: { authorize: async () => { throw new Error('lookup不执行原生进程') }, executor: { execute: async () => { throw new Error('lookup不执行原生进程') } } }, runtime: { ...runtime, provider: connected.provider } })
   return { ...connected, harness, sent, context, fake }
 }
 function chat(data: JsonObject) { return `data: ${JSON.stringify(data)}\n\ndata: [DONE]\n\n` }
@@ -95,6 +96,23 @@ function protocolFixture(protocol: string) {
 }
 
 describe('真实Provider到Canonical Harness组合', () => {
+  it('标准来源与 Provider 使用同一可信 scope 后可完成真实协议请求', async () => {
+    const selection = { modelIdentity: 'model-a', contextWindow: 10000, locale: 'zh-CN', groupChat: false, workspaceBinding: null,
+      contextScopeKey: 'opaque-version', contextPolicy: { loadOwnerContext: true, memoryEnabled: true } }
+    const source = createCanonicalSourceLoader({ digest, nextId: () => 'entry-source', now: () => 0,
+      readSnapshot: async () => ({ ...identity, contextEpoch: 0, context: null, snapshotHash: null, sessionInfoHash: null, snapshotExpiresAt: null, baselineMessageSeq: 0 }),
+      currentRevision: async () => 0, select: async () => selection,
+      historyReader: { read: async () => ({ baselineSeq: 0, rows: [] }) },
+      currentTurn: async () => ({ currentUser: { persistedMessageId: 'current', message: { role: 'user', content: '合成问题' } } }),
+      data: { loadTimezone: async () => 'UTC', loadProjects: async () => [], loadEvents: async () => [], loadNotes: async () => [], loadFilesOverview: async () => ({}), loadStylePreferences: async () => ({}), loadImChannels: async () => ({}), loadMemory: async () => ({}), loadImMemory: async () => ({}), loadKnowledge: async () => [] },
+      builder: { buildSnapshot: () => ({ systemPrompt: '系统', snapshotContext: '合成快照', sessionInfo: {}, userTimezone: 'UTC' }), buildRequest: () => ({ systemPrompt: '系统', systemInMessages: false, fixedPrefix: [] }) },
+    })
+    const value = setup([final], { scopeHash: contextAccessScopeHash(identity, selection, digest), sourceLoad: async (scope, signal) => ({ ...await source.load(scope, signal), capabilities: { toolNames: [], tools: [] } }) })
+    const result = await collect(value.harness.start(identity))
+    expect(result.state.status).toBe('completed')
+    expect(value.sent).toHaveLength(1)
+    await value.provider.close()
+  })
   it('实际OpenAI请求先清孤儿历史再放缓存断点，诊断报告真实删除位置且Canonical原文不变', async () => {
     const probes: ProviderRequestProbe[] = []
     const value = setup([final], { systemPrompt: '', requestPrefix: [{ role: 'system', content: '稳定系统提示' }], history: [{ role: 'user', content: '上一轮用户消息' }, { role: 'tool', tool_call_id: 'stale', content: '合成孤儿结果' }], probeSink: probe => probes.push(probe) })
@@ -231,6 +249,26 @@ describe('真实Provider到Canonical Harness组合', () => {
     expect(value.sent).toHaveLength(0)
     await value.provider.close()
   })
+  it('事务只能读取同一 Run 的私有续接，失败后可重试且修改副本不污染原值', async () => {
+    const value = setup([])
+    const context = await createCanonicalContextPort(value.context).prepare(identity, new AbortController().signal)
+    if (isEarlyExit(context)) throw new Error('合成上下文不应早退')
+    const continuationRef = await value.provider.stageContinuation({ identity, round: 2, modelIdentity: context.modelIdentity,
+      accessScopeHash: context.accessScopeHash, areaDigest: 'synthetic-digest', value: { private: 'synthetic-secret' } })
+    const staged = { ...context, continuationRef }
+    await expect(value.provider.withStagedContinuation(staged, async ({ value: privateValue }) => {
+      (privateValue as { private: string }).private = 'changed'
+      throw new Error('transaction rolled back')
+    })).rejects.toThrow('transaction rolled back')
+    const restored = await value.provider.withStagedContinuation(staged, async input => input)
+    expect(restored).toEqual({ value: { private: 'synthetic-secret' }, round: 2, areaDigest: 'synthetic-digest' })
+    await expect(value.provider.withStagedContinuation({ ...staged, identity: { ...identity, ownerId: 'other' } }, async () => null)).rejects.toMatchObject({ code: 'input_rejected' })
+    await expect(value.provider.withStagedContinuation({ ...staged, modelIdentity: 'other' }, async () => null)).rejects.toMatchObject({ code: 'input_rejected' })
+    await expect(value.provider.withStagedContinuation({ ...staged, accessScopeHash: 'other' }, async () => null)).rejects.toMatchObject({ code: 'input_rejected' })
+    value.provider.finishRun(identity)
+    await expect(value.provider.withStagedContinuation(staged, async () => null)).rejects.toMatchObject({ code: 'input_rejected' })
+    await value.provider.close()
+  })
   it.each(['首轮恢复工具', '次轮恢复正文'])('Anthropic缺块%s实际跨Harness工具轮，工具只派发一次且最终正文只输出一次', async mode => {
     const sse = (...events: JsonObject[]) => events.map(event => `event: ${String(event.type)}\ndata: ${JSON.stringify(event)}\n\n`).join('')
     const start: JsonObject = { type: 'message_start', message: { content: [], usage: { input_tokens: 3, output_tokens: 0 } } }
@@ -337,7 +375,7 @@ describe('真实Provider到Canonical Harness组合', () => {
     expect(completion.projection?.modelIdentity).toBe('model-a')
     expect(stableJson(completion)).not.toContain('api_key')
     const projection = completion.projection as import('../../../src/agent/providers/contracts.js').ProviderProjection
-    await expect(value.provider.completeBranch({ ...identity, ownerId: 'foreign-owner', modelIdentity: 'model-a', stableSystem: '固定人格', delta: '分支', tools: [], projection: projection as import('../../../src/agent/harness/contracts.js').OpaqueProviderProjection<ProviderWire> })).rejects.toMatchObject({ code: 'input_rejected' })
+    await expect(value.provider.completeBranch({ ...identity, ownerId: 'foreign-owner', modelIdentity: 'model-a', stableSystem: '固定人格', delta: '分支', tools: [], projection: projection as import('../../../src/agent/models.js').OpaqueProviderProjection<ProviderWire> })).rejects.toMatchObject({ code: 'input_rejected' })
     expect(value.sent).toHaveLength(1)
     await value.provider.close()
   })

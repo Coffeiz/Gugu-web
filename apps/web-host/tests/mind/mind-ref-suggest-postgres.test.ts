@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { Pool } from 'pg'
-import type { GlobalSearchOperations } from '../../src/domains/search/search.js'
+import { GLOBAL_SEARCH_TYPES, type GlobalSearchOperations } from '@gugu/core'
 import { createPostgresMindRefSuggestOperations } from '../../src/domains/mind/persistence/mind-ref-suggest-postgres.js'
 
 const ownerId = 'synthetic-suggest-owner'
@@ -22,7 +22,7 @@ test('recent suggestions return owner-scoped resource categories in Python order
       throw new Error(`unexpected SQL: ${sql}`)
     },
   } as unknown as Pool
-  const search: GlobalSearchOperations = { async search() { throw new Error('search should not be called for an empty query') } }
+  const search: GlobalSearchOperations = { availableTypes: GLOBAL_SEARCH_TYPES, missingTypes: [], async search() { throw new Error('search should not be called for an empty query') } }
 
   const result = await createPostgresMindRefSuggestOperations(pool, search).suggest(ownerId, '  ', 1)
 
@@ -55,6 +55,7 @@ test('query suggestions reuse typed global search results and return individual 
     },
   } as unknown as Pool
   const search: GlobalSearchOperations = {
+    availableTypes: GLOBAL_SEARCH_TYPES, missingTypes: [],
     async search(requestOwner, input) {
       searchInput = { requestOwner, input }
       return { groups: [{ type: 'project', items: [{ id: 2, title: '项目命中', subtitle: '客户' }] }] }

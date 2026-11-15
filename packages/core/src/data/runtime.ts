@@ -1,8 +1,8 @@
-import { Kysely, sql } from 'kysely'
+import { Kysely, sql, type Transaction } from 'kysely'
 import { createHash } from 'node:crypto'
 import { CoreError, dataContext, operationSchema } from '../contracts/index.js'
 import type { DataContext, Fields } from '../contracts/index.js'
-import type { DataServices } from '../application/services.js'
+import type { DataServices } from './services.js'
 import { databaseTime, nowUtc } from './codec.js'
 import type { Clock } from './codec.js'
 import type { Database } from './schema.js'
@@ -10,7 +10,8 @@ import { services } from './repositories.js'
 import type { Backend } from './repositories.js'
 
 // 保留现有数据入口，仓储实现与事务/收据生命周期分别维护。
-export { SqlProjectRepository, SqlClientRepository } from './repositories.js'
+export { SqlClientRepository } from '../clients/repository.js'
+export { SqlProjectRepository } from '../projects/repository.js'
 export type { Backend } from './repositories.js'
 
 function canonical(value: unknown): string {
@@ -61,6 +62,21 @@ export class SqlDataRuntime {
     work: (data: DataServices) => Promise<T>,
     options: { signal?: Pick<AbortSignal, 'aborted'> } = {},
   ): Promise<T> {
+    const { result } = await this.operationWithTransaction(
+      context, operationId, method, params,
+      (tx, owner) => work(services(tx, owner, this.backend, this.clock)), options,
+    )
+    return result
+  }
+  /** 调用方使用同一事务；replayed 仅用于禁止重复提交后的副作用。 */
+  async operationWithTransaction<T>(
+    context: DataContext,
+    operationId: string,
+    method: string,
+    params: Fields,
+    work: (tx: Transaction<Database>, owner: string) => Promise<T>,
+    options: { signal?: Pick<AbortSignal, 'aborted'> } = {},
+  ): Promise<{ result: T; replayed: boolean }> {
     this.check(options.signal)
     if (!this.receipts)
       throw new CoreError('schema_upgrade_required', '此数据库需要显式升级后才能记录操作收据')
@@ -84,9 +100,9 @@ export class SqlDataRuntime {
       if (previous) {
         if (previous.fingerprint !== fingerprint)
           throw new CoreError('conflict', '操作标识已用于不同内容')
-        return JSON.parse(previous.result_json) as T
+        return { result: JSON.parse(previous.result_json) as T, replayed: true }
       }
-      const result = await work(services(tx, owner, this.backend, this.clock))
+      const result = await work(tx, owner)
       this.check(options.signal)
       await tx
         .insertInto('core_operation_receipts')
@@ -100,7 +116,7 @@ export class SqlDataRuntime {
         })
         .execute()
       this.check(options.signal)
-      return result
+      return { result, replayed: false }
     })
   }
   async receipt(

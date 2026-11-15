@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { MindCanvasMutationError } from '../../src/domains/mind/application/mind-canvas-mutations.js'
+import { MindCanvasMutationError } from '@gugu/core/mind'
 import { signedUserToken } from '../helpers/auth.js'
 
 const secret = 'synthetic-mind-canvas-mutation-secret'

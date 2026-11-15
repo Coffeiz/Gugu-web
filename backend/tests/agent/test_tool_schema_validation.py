@@ -168,6 +168,74 @@ async def test_dispatch_rejects_missing_required_before_handler():
     assert called is False
 
 
+async def test_dispatch_success_reports_safe_ordered_input_adaptations():
+    async def handler(db, user_id, args):
+        assert args["project_id"] == 12
+        assert args["label"] == "123"
+        assert args["enabled"] is False
+        assert args["entries"] == [{"file_id": 7, "label": "456"}]
+        return {"ok": True}
+
+    registry, _ = _make_registry({
+        "type": "object", "properties": {
+            "project_id": {"type": "integer"}, "label": {"type": "string"},
+            "enabled": {"type": "boolean"}, "entries": {"type": "array", "items": {
+                "type": "object", "properties": {"file_id": {"type": "integer"}, "label": {"type": "string"}},
+            }},
+        },
+    }, handler)
+    raw, _ = await registry.dispatch("not-a-uuid", "schema_test_tool", {
+        "project_id": "#12", "label": 123, "enabled": "FALSE", "entries": {"item": [{"file_id": "#7", "label": 456}]},
+    })
+    assert json.loads(raw)["input_adaptations"] == [
+        "project_id:string_to_integer", "label:number_to_string", "enabled:string_to_boolean",
+        "entries:item_wrapper_unwrapped", "entries[0].file_id:string_to_integer", "entries[0].label:number_to_string",
+    ]
+
+
+@pytest.mark.parametrize("result", [[{"ok": True}], '{"ok":true}', {"status": "failed"}, {"error": "合成业务失败"}])
+async def test_dispatch_non_success_object_does_not_get_input_adaptations(result):
+    async def handler(db, user_id, args):
+        return json.loads(json.dumps(result))
+
+    registry, _ = _make_registry({"type": "object", "properties": {"project_id": {"type": "integer"}}}, handler)
+    raw, _ = await registry.dispatch("not-a-uuid", "schema_test_tool", {"project_id": "12"})
+    payload = json.loads(raw)
+    if isinstance(payload, dict):
+        assert "input_adaptations" not in payload
+    else:
+        assert payload == result
+
+
+@pytest.mark.parametrize("client_id", ["\U00011de1", "#\U00011de1", "1\U00011de1"])
+async def test_dispatch_rejects_digits_newer_than_python_unicode_before_write(client_id):
+    """禁止Node新版数字分类把Python拒绝的字符串变成可写ID。"""
+    called = False
+
+    async def handler(db, user_id, args):
+        nonlocal called
+        called = True
+        return {"ok": True}
+
+    registry, _ = _make_registry({
+        "type": "object",
+        "properties": {"client_id": {"type": "integer"}},
+        "required": ["client_id"],
+    }, handler, mutates=True)
+    raw, artifact = await registry.dispatch("not-a-uuid", "schema_test_tool", {"client_id": client_id})
+    assert artifact is None
+    assert json.loads(raw)["error"] == "tool_input_invalid"
+    assert called is False
+
+
+@pytest.mark.parametrize("target", ["\U00011de2", "\U00011de2-3"])
+def test_file_line_selection_rejects_digits_newer_than_python_unicode(target):
+    from agent.tools.text_edit import select_numbered_lines
+
+    with pytest.raises(ValueError, match="target_lines 格式无效"):
+        select_numbered_lines("甲\r\n乙\n丙", target)
+
+
 def test_note_tools_accept_legacy_text_inline_nodes_and_keep_strict_schema():
     raw = {
         "blocks": [

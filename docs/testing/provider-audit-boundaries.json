@@ -217,17 +217,17 @@
       },
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "file": "gugu-core/tests/agent/context/budget-compaction-reflection.test.ts",
           "name": "滚动压缩保留之前run、当前用户锚点及最新完整执行轮，返回新坐标",
           "coverage": "相邻部分行为"
         },
         {
-          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "file": "gugu-core/tests/agent/context/budget-compaction-reflection.test.ts",
           "name": "候选生成不推进baseline，持久化后apply保留十单元且并发CAS拒绝旧结果",
           "coverage": "相邻部分行为"
         },
         {
-          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "file": "gugu-core/tests/agent/context/budget-compaction-reflection.test.ts",
           "name": "持久化前缀边界不精确匹配拒绝追加，sibling读取不消费原快照",
           "coverage": "相邻部分行为"
         }
@@ -255,17 +255,17 @@
       },
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "file": "gugu-core/tests/agent/context/budget-compaction-reflection.test.ts",
           "name": "滚动压缩保留之前run、当前用户锚点及最新完整执行轮，返回新坐标",
           "coverage": "相邻部分行为"
         },
         {
-          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "file": "gugu-core/tests/agent/context/budget-compaction-reflection.test.ts",
           "name": "候选生成不推进baseline，持久化后apply保留十单元且并发CAS拒绝旧结果",
           "coverage": "相邻部分行为"
         },
         {
-          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "file": "gugu-core/tests/agent/context/budget-compaction-reflection.test.ts",
           "name": "持久化前缀边界不精确匹配拒绝追加，sibling读取不消费原快照",
           "coverage": "相邻部分行为"
         }
@@ -293,17 +293,17 @@
       },
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "file": "gugu-core/tests/agent/context/budget-compaction-reflection.test.ts",
           "name": "滚动压缩保留之前run、当前用户锚点及最新完整执行轮，返回新坐标",
           "coverage": "相邻部分行为"
         },
         {
-          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "file": "gugu-core/tests/agent/context/budget-compaction-reflection.test.ts",
           "name": "候选生成不推进baseline，持久化后apply保留十单元且并发CAS拒绝旧结果",
           "coverage": "相邻部分行为"
         },
         {
-          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "file": "gugu-core/tests/agent/context/budget-compaction-reflection.test.ts",
           "name": "持久化前缀边界不精确匹配拒绝追加，sibling读取不消费原快照",
           "coverage": "相邻部分行为"
         }
@@ -335,17 +335,17 @@
       },
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "file": "gugu-core/tests/agent/context/budget-compaction-reflection.test.ts",
           "name": "滚动压缩保留之前run、当前用户锚点及最新完整执行轮，返回新坐标",
           "coverage": "相邻部分行为"
         },
         {
-          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "file": "gugu-core/tests/agent/context/budget-compaction-reflection.test.ts",
           "name": "候选生成不推进baseline，持久化后apply保留十单元且并发CAS拒绝旧结果",
           "coverage": "相邻部分行为"
         },
         {
-          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "file": "gugu-core/tests/agent/context/budget-compaction-reflection.test.ts",
           "name": "持久化前缀边界不精确匹配拒绝追加，sibling读取不消费原快照",
           "coverage": "相邻部分行为"
         }
@@ -380,17 +380,17 @@
       },
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "file": "gugu-core/tests/agent/context/budget-compaction-reflection.test.ts",
           "name": "滚动压缩保留之前run、当前用户锚点及最新完整执行轮，返回新坐标",
           "coverage": "相邻部分行为"
         },
         {
-          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "file": "gugu-core/tests/agent/context/budget-compaction-reflection.test.ts",
           "name": "候选生成不推进baseline，持久化后apply保留十单元且并发CAS拒绝旧结果",
           "coverage": "相邻部分行为"
         },
         {
-          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "file": "gugu-core/tests/agent/context/budget-compaction-reflection.test.ts",
           "name": "持久化前缀边界不精确匹配拒绝追加，sibling读取不消费原快照",
           "coverage": "相邻部分行为"
         }
@@ -421,17 +421,17 @@
       },
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "file": "gugu-core/tests/agent/context/budget-compaction-reflection.test.ts",
           "name": "滚动压缩保留之前run、当前用户锚点及最新完整执行轮，返回新坐标",
           "coverage": "相邻部分行为"
         },
         {
-          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "file": "gugu-core/tests/agent/context/budget-compaction-reflection.test.ts",
           "name": "候选生成不推进baseline，持久化后apply保留十单元且并发CAS拒绝旧结果",
           "coverage": "相邻部分行为"
         },
         {
-          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "file": "gugu-core/tests/agent/context/budget-compaction-reflection.test.ts",
           "name": "持久化前缀边界不精确匹配拒绝追加，sibling读取不消费原快照",
           "coverage": "相邻部分行为"
         }
@@ -459,17 +459,17 @@
       },
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "file": "gugu-core/tests/agent/context/budget-compaction-reflection.test.ts",
           "name": "滚动压缩保留之前run、当前用户锚点及最新完整执行轮，返回新坐标",
           "coverage": "相邻部分行为"
         },
         {
-          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "file": "gugu-core/tests/agent/context/budget-compaction-reflection.test.ts",
           "name": "候选生成不推进baseline，持久化后apply保留十单元且并发CAS拒绝旧结果",
           "coverage": "相邻部分行为"
         },
         {
-          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "file": "gugu-core/tests/agent/context/budget-compaction-reflection.test.ts",
           "name": "持久化前缀边界不精确匹配拒绝追加，sibling读取不消费原快照",
           "coverage": "相邻部分行为"
         }

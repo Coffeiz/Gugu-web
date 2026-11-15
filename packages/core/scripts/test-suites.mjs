@@ -12,7 +12,7 @@ export function testSuites(suite) {
     for (const item of readdirSync(directory, { withFileTypes: true })) {
       const path = join(directory, item.name)
       if (item.isDirectory()) visit(path)
-      else if (item.name.endsWith('.test.ts'))
+      else if ((item.name.endsWith('.test.ts') || item.name.endsWith('.test.mjs')))
         discovered.push(relative(coreRoot, path).replaceAll('\\', '/'))
     }
   }

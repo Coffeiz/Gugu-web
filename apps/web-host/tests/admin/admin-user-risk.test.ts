@@ -73,7 +73,7 @@ test('风险列表按展示窗口聚合、保留已冻结用户并应用五分�
     ])
     assert.match(ctx.calls[0]!.sql, /security_events/)
     assert.match(ctx.calls[0]!.sql, /WHERE u\.account_status <> 'active' OR visible_events\.user_id IS NOT NULL/)
-    assert.match(ctx.calls[0]!.sql, /ORDER BY u\.updated_at DESC/)
+    assert.match(ctx.calls[0]!.sql, /ORDER BY u\.created_at DESC/)
   } finally { await ctx.cleanup() }
 })
 

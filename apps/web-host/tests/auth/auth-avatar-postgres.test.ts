@@ -68,6 +68,10 @@ test('PostgreSQL avatar upload is owner scoped, replaces old local files, and se
 
     const image = await operations.read(ownerId)
     assert.deepEqual(image, { data: Buffer.from('new-avatar'), mediaType: 'image/webp' })
+    const replacement = await operations.upload(ownerId, 'image/webp', Buffer.from('replacement-avatar'))
+    assert.notEqual(replacement.avatarUrl, uploaded.avatarUrl)
+    assert.deepEqual(await operations.read(ownerId), { data: Buffer.from('replacement-avatar'), mediaType: 'image/webp' })
+    assert.equal(await readFile(path.join(storageRoot, relative!)).then(() => true, () => false), false)
     assert.equal(await operations.read(otherId), null)
     assert.equal(await operations.read(randomUUID()), null)
 

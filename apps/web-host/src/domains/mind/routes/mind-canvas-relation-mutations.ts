@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import type { UserFromRequest } from '../../../app.js'
 import { parsePythonInteger, writeRequestMetadata } from '../../../http/request.js'
-import { MindCanvasRelationMutationError } from '../application/mind-canvas-relation-mutations.js'
+import { MindCanvasRelationMutationError } from '@gugu/core/mind'
 import type { MindRelationResponse } from '../mind-canvas-read.js'
 
 type RelationWriteMetadata = ReturnType<typeof writeRequestMetadata> & { mutationId: string | null }

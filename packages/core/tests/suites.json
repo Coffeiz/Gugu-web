@@ -1,100 +1,139 @@
 {
-  "tests/agent/harness/run/canonical-cancel.test.ts": {
+  "tests/preferences/document-store.test.ts": {"markers": ["external_service"], "layer": "L2", "purpose": "postgres"},
+  "tests/feedback/feedback.test.ts": {
+    "markers": ["external_service"],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/notifications/admin-history.test.ts": {"markers": ["external_service"], "layer": "L2", "purpose": "postgres"},
+  "tests/agent/tools/scheduled-tasks.test.ts": {
     "markers": [],
     "layer": "L1",
     "purpose": "contract"
   },
-  "tests/agent/harness/run/execution.test.ts": {
+  "tests/agent/tools/permissions.test.ts": {
     "markers": [],
     "layer": "L1",
     "purpose": "contract"
   },
-  "tests/agent/harness/streaming/portable-boundary.test.ts": {
+  "tests/agent/tools/input-feedback.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/tools/unicode-decimal.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/calendar/read-store.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/calendar/create-store.test.ts": {
+    "markers": [
+      "external_service"
+    ],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/agent/run/canonical-cancel.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/run/execution.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/core/portable-boundary.test.ts": {
     "markers": [],
     "layer": "L0",
     "purpose": "contract"
   },
-  "tests/agent/harness/context/finalization.test.ts": {
+  "tests/agent/context/finalization.test.ts": {
     "markers": [],
     "layer": "L1",
     "purpose": "contract"
   },
-  "tests/agent/harness/context/loading-reflection.test.ts": {
+  "tests/agent/context/loading-reflection.test.ts": {
     "markers": [],
     "layer": "L1",
     "purpose": "contract"
   },
-  "tests/agent/harness/context/sources.test.ts": {
+  "tests/agent/context/sources.test.ts": {
     "markers": [],
     "layer": "L1",
     "purpose": "contract"
   },
-  "tests/agent/harness/history/tool-result-checkpoint.test.ts": {
+  "tests/agent/context/history/tool-result-checkpoint.test.ts": {
     "markers": [],
     "layer": "L1",
     "purpose": "contract"
   },
-  "tests/agent/harness/streaming/tool-result.test.ts": {
+  "tests/agent/core/tool-result.test.ts": {
     "markers": [],
     "layer": "L1",
     "purpose": "contract"
   },
-  "tests/agent/harness/run/policy-reply.test.ts": {
+  "tests/agent/run/policy-reply.test.ts": {
     "markers": [],
     "layer": "L0",
     "purpose": "contract"
   },
-  "tests/agent/harness/context/preparation.test.ts": {
+  "tests/agent/context/preparation.test.ts": {
     "markers": [],
     "layer": "L1",
     "purpose": "contract"
   },
-  "tests/agent/harness/context/context-runtime.test.ts": {
+  "tests/agent/context/context-runtime.test.ts": {
     "markers": [],
     "layer": "L1",
     "purpose": "contract"
   },
-  "tests/agent/harness/context/session-snapshot.test.ts": {
+  "tests/agent/context/session-snapshot.test.ts": {
     "markers": [],
     "layer": "L1",
     "purpose": "contract"
   },
-  "tests/agent/harness/history/canonical-area.test.ts": {
+  "tests/agent/context/history/canonical-area.test.ts": {
     "markers": [],
     "layer": "L1",
     "purpose": "contract"
   },
-  "tests/agent/harness/context/history-preparation.test.ts": {
+  "tests/agent/context/history-preparation.test.ts": {
     "markers": [],
     "layer": "L1",
     "purpose": "contract"
   },
-  "tests/agent/harness/context/budget-compaction-reflection.test.ts": {
+  "tests/agent/context/budget-compaction-reflection.test.ts": {
     "markers": [],
     "layer": "L1",
     "purpose": "contract"
   },
-  "tests/agent/harness/run/engine.test.ts": {
+  "tests/agent/run/engine.test.ts": {
     "markers": [],
     "layer": "L1",
     "purpose": "contract"
   },
-  "tests/agent/harness/streaming/tool-scheduler.test.ts": {
+  "tests/agent/core/tool-scheduler.test.ts": {
     "markers": [],
     "layer": "L1",
     "purpose": "contract"
   },
-  "tests/agent/harness/run/reply.test.ts": {
+  "tests/agent/run/reply.test.ts": {
     "markers": [],
     "layer": "L1",
     "purpose": "contract"
   },
-  "tests/agent/harness/streaming/display.test.ts": {
+  "tests/agent/core/display.test.ts": {
     "markers": [],
     "layer": "L1",
     "purpose": "contract"
   },
-  "tests/agent/harness/history/checkpoint-branch.test.ts": {
+  "tests/agent/context/history/checkpoint-branch.test.ts": {
     "markers": [],
     "layer": "L1",
     "purpose": "contract"
@@ -176,17 +215,42 @@
     "layer": "L1",
     "purpose": "contract"
   },
-  "tests/agent/harness/interactions/coordinator.test.ts": {
+  "tests/agent/interactions/coordinator.test.ts": {
     "markers": [],
     "layer": "L1",
     "purpose": "contract"
   },
-  "tests/agent/harness/streaming/coordinator.test.ts": {
+  "tests/agent/core/coordinator.test.ts": {
     "markers": [],
     "layer": "L1",
     "purpose": "contract"
   },
-  "tests/agent/harness/run/lifecycle.test.ts": {
+  "tests/agent/run/lifecycle.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/context/snapshot-codec.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/memory/small-memory.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/knowledge/overview.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/config/byok-list.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/config/effective-ai-override.test.ts": {
     "markers": [],
     "layer": "L1",
     "purpose": "contract"
@@ -227,5 +291,459 @@
     ],
     "layer": "L1",
     "purpose": "contract"
-  }
-}
+  },
+  "tests/agent/tools/registry.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/tools/time.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/tools/files.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/tools/clients.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/tools/projects.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/skills/registry.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/tools/use-skill.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/tools/project-create.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/tools/confirmation.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/skills/builtin.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/tools/project-mutations.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/tools/input-errors.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/tools/normalize-input.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/tools/date-input.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/tools/registration.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/sessions/session-application.sqlite.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/sessions/session-application.postgres.test.ts": {
+    "markers": [
+      "external_service"
+    ],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/agent/session-list/session-list.sqlite.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/session-list/session-list.postgres.test.ts": {
+    "markers": [
+      "external_service"
+    ],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/integration/agent-queue-sqlite.contract.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/integration/mind-note-sql.contract.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/integration/postgres/mind-note-sql.contract.test.ts": {
+    "markers": [
+      "external_service"
+    ],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/integration/postgres/agent-queue.contract.test.ts": {
+    "markers": [
+      "external_service"
+    ],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/agent/session-refresh/sqlite.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/session-refresh/postgres.test.ts": {
+    "markers": [
+      "external_service"
+    ],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/unit/data/project-create-usecase.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/integration/postgres/project-create-usecase.test.ts": {
+    "markers": [
+      "external_service"
+    ],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/agent/context/messages.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/tools/project-create-port.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/sessions/schema-draft.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/unit/data/client-name-query.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/integration/postgres/client-name-query.test.ts": {
+    "markers": [
+      "external_service"
+    ],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/agent/run/run-codec.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/tools/parallel-plan.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/unit/data/project-name-query.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/integration/postgres/project-name-query.test.ts": {
+    "markers": [
+      "external_service"
+    ],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/calendar/mutation-store.test.ts": {
+    "markers": [
+      "external_service"
+    ],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/agent/tools/schema-selection.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/unit/data/workspace-declarations.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/scheduled-tasks/once-repository.test.ts": {
+    "markers": [
+      "external_service"
+    ],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/scheduled-tasks/fire-receipts.test.ts": {
+    "markers": [
+      "external_service"
+    ],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/agent/tool-event-details/tool-event-details.postgres.test.ts": {
+    "markers": [
+      "external_service"
+    ],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/agent/tool-event-details/tool-event-details.sqlite.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/group-names/sqlite.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/integration/postgres/agent-group-names.contract.test.ts": {
+    "markers": ["external_service"],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/agent/interaction-history/sqlite.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/interaction-session/sqlite.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/integration/postgres/agent-interaction-history.contract.test.ts": {
+    "markers": [
+      "external_service"
+    ],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/integration/postgres/agent-interaction-session.contract.test.ts": {
+    "markers": [
+      "external_service"
+    ],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/unit/data/global-search-conversations.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/integration/postgres/global-search-conversations-parity.test.ts": {
+    "markers": ["external_service"],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/agent/sessions/ui-labels.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/commands/menu.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/integration/postgres/workspace-declarations-data.test.ts": {
+    "markers": [
+      "external_service"
+    ],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/unit/data/workspace-list-query.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/notifications/notifications.test.ts": {
+    "markers": [
+      "external_service"
+    ],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/unit/data/global-search-query.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/unit/data/global-search-snippet.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/unit/data/project-time-projection.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/unit/data/project-read-query.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/unit/data/workspace-delete-query.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/unit/data/workspace-binding-query.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/scheduled-tasks/sqlite-lease.test.ts": {
+    "markers": [
+      "process"
+    ],
+    "layer": "L2",
+    "purpose": "contract"
+  },
+  "tests/integration/postgres/agent-history-images.contract.test.ts": {
+    "markers": [
+      "external_service"
+    ],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/integration/postgres/agent-byok-list.contract.test.ts": {
+    "markers": [
+      "external_service"
+    ],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/scheduled-tasks/task-list.test.ts": {
+    "markers": ["external_service"],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/undo/state-machine-sqlite.test.ts": {
+    "markers": ["process"],
+    "layer": "L2",
+    "purpose": "contract"
+  },
+  "tests/undo/state-machine-postgres.test.ts": {
+    "markers": ["external_service"],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/integration/postgres/borrowed-postgres.test.ts": {
+    "markers": [
+      "external_service"
+    ],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/integration/postgres/scheduled-task-delete.test.ts": {
+    "markers": [
+      "external_service"
+    ],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/onboarding/state-store.test.ts": {
+    "markers": [
+      "external_service"
+    ],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/preferences/smtp.test.ts": {
+    "markers": [
+      "external_service"
+    ],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/agent/interactions/schema.test.mjs": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/interactions/action-schema.test.mjs": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/tools/global-search.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/tools/overview.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/tools/trash.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/tools/domain-reads.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/tools/project-durable.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/tools/note-reads.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/mind/canvas-agent-read.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/agent/tools/workspace-update.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/agent/tools/canvas-focus.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/mind/canvas-detail.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/agent/tools/canvas-ready.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/agent/tools/skill-management.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/agent/tools/canvas-edits.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/agent/tools/canvas-placement.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/mind/canvas-layout.test.ts":{"markers": [], "layer": "L0", "purpose": "contract"},
+"tests/agent/tools/note-lifecycle.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/mind/note-lifecycle-contract.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/integration/postgres/note-lifecycle.test.ts":{"markers": ["external_service"], "layer": "L2", "purpose": "postgres"},
+"tests/agent/tools/link-buttons.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"}}

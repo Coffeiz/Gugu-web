@@ -13,6 +13,7 @@ import type { AddressResolver } from './network.js'
 import { openProxyTunnel, proxyFor, proxyOptionsFromEnvironment } from './proxy.js'
 import type { ProviderProxyOptions } from './proxy.js'
 export { proxyOptionsFromEnvironment } from './proxy.js'
+export { isPublicAddress } from './network.js'
 
 export interface NodeProviderTransportOptions {
   readonly resolve?: AddressResolver
@@ -30,7 +31,7 @@ export interface NodeProviderTransportOptions {
   readonly environment?: () => Readonly<Record<string, string | undefined>>
 }
 
-function environmentCa(environment: Readonly<Record<string, string | undefined>>): string | undefined {
+export function environmentCa(environment: Readonly<Record<string, string | undefined>>): string | undefined {
   const files: string[] = []
   if (environment.SSL_CERT_FILE) files.push(environment.SSL_CERT_FILE)
   for (const directory of (environment.SSL_CERT_DIR ?? '').split(delimiter).filter(Boolean))

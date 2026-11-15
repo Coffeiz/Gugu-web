@@ -32,6 +32,21 @@ const folders: ProjectTrashFolder[] = [{
   parent_id: null, name: '文档', version: 1, deleted_at: null,
 }]
 
+test('日志写入失败时不移动文件，缺失源文件不写移动日志', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'gugu-project-trash-journal-'))
+  try {
+    const storage = createLocalProjectTrashStorage(root, () => originalKey)
+    await mkdir(path.dirname(path.join(root, originalKey)), { recursive: true })
+    await writeFile(path.join(root, originalKey), '正文')
+    await assert.rejects(() => storage.moveToTrash(ownerId, file, async () => { throw new Error('日志失败') }))
+    assert.equal(await readFile(path.join(root, originalKey), 'utf8'), '正文')
+    let called = false
+    const restored = await storage.restoreFromTrash(ownerId, { ...file, storage_key: trashKey }, project, folders, async () => { called = true })
+    assert.equal(called, false)
+    assert.ok(restored.storageKey)
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
 test('Local 项目文件物理移入回收站，再恢复时按 Python 规则解决同名冲突', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'gugu-project-trash-'))
   try {

@@ -4,7 +4,7 @@ import {
   isTaskEnded,
   scheduleStatus,
   taskScheduleKind,
-} from '../../src/domains/scheduled-tasks/schedule-status.js'
+} from '../../src/modules/scheduled-tasks/schedule-status.js'
 
 const now = Date.parse('2026-09-05T12:00:00.000Z')
 

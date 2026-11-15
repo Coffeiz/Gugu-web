@@ -1,7 +1,7 @@
 # Gugu 2.0 — Python → Node.js / TypeScript 全量依赖迁移矩阵
 
 > **专题参考**：目标架构与目录职责见[架构说明](Gugu-2.0-架构说明.md)；实施顺序、完成状态与当前任务见[迁移任务清单](Gugu-2.0-迁移任务清单.md)。本表不作为另一份实施路线或完成率清单。
-> **2026-11-12 对齐**：首批 Core 已采用 Kysely、Zod、better-sqlite3、pg 与 Node 26；Drizzle 等并列项保留为原始候选，不代表同时采用。其他依赖只有存在真实迁移调用链及验收结果时才能标为已替换。
+> **依赖对齐**：Core 与 LoopScope 的 `better-sqlite3` 固定为 13.2.0，类型包固定为 9.6.0；驱动上游使用 SQLite 3.54.1。各目标平台原生制品仍须分别验证，Python 参考后端保持独立依赖。首批 Core 已采用 Kysely、Zod、better-sqlite3、pg 与 Node 26；Drizzle 等并列项保留为原始候选，不代表同时采用。其他依赖只有存在真实迁移调用链及验收结果时才能标为已替换。
 > **桌面路线更新**：目标为 Electron + TS Main/Preload + 独立 Node Core，使用 `electron-builder.yml` 打包；执行契约/策略/平台适配归入 Core `agent/executor/`，桌面 `sandbox/` 只做诊断。旧 Rust Host、依赖与构建配置已清除；Electron 验证切片已实现。目录与剩余验收见[架构说明](Gugu-2.0-架构说明.md)和[迁移任务清单](Gugu-2.0-迁移任务清单.md)。
 > 下文的 PR #116 和 Python 包位置是盘点基线；原 Python Core/Desktop 包当前分别位于 `compat/core-python/`、`compat/desktop-python/`。仍有调用方的 Python 依赖不能直接删除。
 
@@ -150,10 +150,10 @@
 | `gugu-core` Python wheel | 顶层 `packages/core/` TypeScript | 项目/联系人首批已迁；其余 Domain/Application 逐域迁移 | 中 |
 | `gugu_core/data` SQLAlchemy | `packages/core/src/data/` + Kysely | 首批已落地；后续仍须**跨域事务整体迁移**，不得 Python/Node 双写 | 高 |
 | `gugu_core.data.runtime.LocalRuntime` | Node SQLite Host | 显式 initialize/open/migrate/close | 高 |
-| `gugu_core.data.migrations` | SQLite 增量迁移器 | 当前本地 schema 3；v1/v2 显式备份升级及回滚验收，不因换壳升级 schema | 高 |
+| `gugu_core.data.migrations` | SQLite 增量迁移器 | 当前本地 schema 16；v1 至 v15 显式备份升级及失败回滚，不因换壳升级 schema；其余业务表仍待迁移 | 高 |
 | `gugu-desktop-host` Python 管道进程 | 独立 Node 26 Core 进程 | Node 已替换 Python；Electron Main 继续使用 NDJSON v2、Worker 与收据契约 | 中 |
 | 旧 Rust 桌面 Host | Electron + TS Main/Preload | 已迁入窗口/生命周期与 IPC 的安全、恢复契约；Core 不依赖 Electron | 高 |
-| `@microsoft/mxc-sdk@1.0.1` | **复用（PoC）** | 通过 Core `agent/executor/mxc.ts` 适配 Host 注入的原生后端；保留有界协议/能力校验，不导入 Electron | 高 |
+| `@microsoft/mxc-sdk@1.0.1` | **复用（PoC）** | 通过 `packages/sandbox/src/mxc.ts` 适配 Host 注入的原生后端；保留有界协议/能力校验，不导入 Electron | 高 |
 | 旧 Rust 桌面构建 CLI | `electron` + `electron-builder` | 已从活动依赖、源码和构建链移除；用 `electron-builder.yml` 及 `scripts/package.ts` / `smoke.ts` 验证依赖与资源 | 中～高 |
 | Vue `apps/web/` 独立 desktop 入口 | **复用** | 将旧桌面 bridge 改为最小 Preload API；不暴露通用 IPC/FS/进程接口 | 中 |
 | `gugu-desktop` Node engines 约束 | 构建 Node、Electron 内嵌 Node、Core Node 分别声明 | Core 保持已声明的 Node 26；不假设 Electron 内嵌版本相同 | 中 |
@@ -178,7 +178,7 @@ Core 的 `runtime/transport/stdio.ts` / `ipc.ts` 仅适配传输，复用 `runti
 | Cython 原生 RAG 内核 | 当前 Python 参考实现 | 复用 1.7.8 TypeScript RAG；迁移后 Node 只运行 TS 检索路径 | Python/Cython 差分回归、分词/排序/权限过滤、性能与索引重建 |
 | RAG 来源正文与文件/记忆内容 | 本地文件或既有 Canonical 来源 | 通过授权 FS / Core 来源 Adapter 按需读取；DB 只存可重建的派生索引/缓存，不复制文件正文或创建独立本地文件对象 ID | 路径授权、来源变更后的失效/重建、删除屏障、ACL 过滤 |
 | Linux sandboxd/容器 | Web/NAS 执行隔离 | 保留或实现同协议 Adapter | 防止 Host fallback |
-| Windows MXC | PR #116 有受限验证 | 从旧桌面 Host 绑定抽离后端，经 Core `executor/mxc.ts` 适配；桌面仅装配/诊断 | Node/MCP/PTY 严格隔离尚未证明；Electron Renderer sandbox 不替代它 |
+| Windows MXC | PR #116 有受限验证 | 从旧桌面 Host 绑定抽离后端，经 `packages/sandbox/src/mxc.ts` 适配；桌面仅装配/诊断 | Node/MCP/PTY 严格隔离尚未证明；Electron Renderer sandbox 不替代它 |
 | macOS sandbox | 尚未验收 | 原生 Adapter（待选型） | 签名、公证、文件授权、进程树 |
 | 文件监听 | Python watcher / TS Sidecar | `chokidar` 或 OS watcher Adapter | rename、丢事件、恢复对账 |
 | CLI、Shell、PTY、MCP stdio | sandboxd/Unix socket 与 Python 桥 | Node `spawn` + OS Sandbox Broker | 取消、stdio、终止信号、权限 |

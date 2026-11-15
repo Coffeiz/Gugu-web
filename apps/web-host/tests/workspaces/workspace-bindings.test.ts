@@ -4,7 +4,9 @@ import Fastify from 'fastify'
 import { Pool } from 'pg'
 import test from 'node:test'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
-import { CoreError } from '@gugu/core'
+import { CoreError, createWorkspaceBindings } from '@gugu/core'
+import { createPostgresRuntime } from '@gugu/core/data'
+import { createKyselyWorkspaceBindingRuntime } from '@gugu/core/workspaces'
 import type { UserFromRequest } from '../../src/app.js'
 import type { WorkspaceCreateResponse } from '../../src/domains/workspaces/persistence/workspace-create.js'
 import { registerWorkspaceRoutes } from '../../src/domains/workspaces/routes/workspaces.js'
@@ -179,6 +181,34 @@ test('PostgreSQL bind/unbind/current session operations preserve owner and enabl
     await operations.unbind(ownerId, 101)
     assert.equal(await operations.current(ownerId, 101), null)
     await assert.rejects(operations.unbind(ownerId, 103), { code: 'not_found' })
+
+    // 实际公共PG适配器复验旧Host行为，不用测试替身代替事务与owner限定。
+    const core = await createPostgresRuntime({ url: databaseUrl!, schema, maxConnections: 1 })
+    try {
+      const runtime = createKyselyWorkspaceBindingRuntime(
+        core.db as unknown as Parameters<typeof createKyselyWorkspaceBindingRuntime>[0], 'postgres',
+      )
+      const shared = createWorkspaceBindings(runtime)
+      assert.deepEqual(await shared.bind(ownerId, 1, 101), activeWorkspace)
+      assert.deepEqual(await shared.current(ownerId, 101), { ...activeWorkspace, boundSessionCount: 0 })
+      for (const [workspaceId, sessionId] of [[2, 101], [3, 101], [1, 103]]) {
+        await assert.rejects(shared.bind(ownerId, workspaceId!, sessionId!), { code: 'not_found' })
+      }
+      await assert.rejects(shared.current(ownerId, 103), { code: 'not_found' })
+      assert.equal(await shared.current(ownerId, 104), null)
+      assert.deepEqual(await shared.current(ownerId, 102), await operations.current(ownerId, 102))
+      await shared.unbind(ownerId, 101)
+      assert.equal(await operations.current(ownerId, 101), null)
+      const controller = new AbortController(), reason = new Error('合成事务取消')
+      await assert.rejects(runtime.transaction(async tx => {
+        await tx.setWorkspace(ownerId, 101, 1)
+        controller.abort(reason)
+      }, { signal: controller.signal }), error => error === reason)
+      assert.equal(await operations.current(ownerId, 101), null, '取消发生在提交前必须回滚绑定')
+      await assert.rejects(shared.unbind(ownerId, 103), { code: 'not_found' })
+    } finally {
+      await core.close()
+    }
 
   } finally {
     await pool.end()

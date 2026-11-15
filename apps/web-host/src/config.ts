@@ -1,4 +1,4 @@
-import { createPublicSiteConfig, type PublicSiteConfig } from './domains/site/site-config.js'
+import { createPublicSiteConfig, type PublicSiteConfig } from './modules/site/site-config.js'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readConfigOverride, type ConfigDocument } from './adapters/config-override-file.js'
@@ -21,6 +21,8 @@ export interface WebUiConfig {
     readonly fromAddress: string
     readonly enabled: boolean
     readonly useSsl: boolean
+    readonly toAddress: string
+    readonly feedbackEnabled: boolean
   }
   readonly publicAppUrl: string
   readonly staticRoot: string
@@ -184,6 +186,12 @@ export function loadConfig(env: NodeJS.ProcessEnv, configOverridePath: string | 
     user: String(smtpOverride.user ?? env.SMTP__USER ?? '').trim(),
     password: String(smtpOverride.password ?? env.SMTP__PASSWORD ?? ''),
     fromAddress: String(smtpOverride.from_addr ?? smtpOverride.fromAddress ?? env.SMTP__FROM_ADDR ?? '').trim(),
+    toAddress: String(smtpOverride.to_addr ?? env.SMTP__TO_ADDR ?? '').trim(),
+    feedbackEnabled: overrideBooleanSetting(
+      smtpOverride.feedback_email_enabled,
+      booleanSetting(env.SMTP__FEEDBACK_EMAIL_ENABLED, true, 'SMTP__FEEDBACK_EMAIL_ENABLED 配置无效'),
+      'smtp.feedback_email_enabled 配置无效',
+    ),
     enabled: overrideBooleanSetting(
       smtpOverride.enabled,
       booleanSetting(env.SMTP__ENABLED, true, 'SMTP__ENABLED 配置无效'),

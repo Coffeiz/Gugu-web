@@ -1,15 +1,16 @@
+import { createPostgresRuntime } from '@gugu/core/data'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
-import { deleteCalendarEvent, EventDeleteError } from '../../src/domains/calendar/application/event-delete.js'
-import { createPostgresEventDeleteStore } from '../../src/domains/calendar/persistence/event-delete-postgres.js'
+import { deleteCalendarEvent, EventDeleteError } from '@gugu/core/calendar'
+import { calendarDeleteStore } from './calendar-core-stores.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
 const otherOwnerId = '3f5cfa3d-9cb7-46af-923e-8ef0eb3e7da2'
 
-async function withDatabase(work: (pool: Pool) => Promise<void>) {
+async function withDatabase(work: (pool: Pool, coreRuntime: Awaited<ReturnType<typeof createPostgresRuntime>>) => Promise<void>) {
   const schema = `gugu_event_delete_${randomUUID().replaceAll('-', '')}`
   const adminPool = new Pool({ connectionString: databaseUrl, max: 1 })
   await adminPool.query(`CREATE SCHEMA "${schema}"`)
@@ -75,7 +76,8 @@ async function withDatabase(work: (pool: Pool) => Promise<void>) {
         failure_code varchar(80)
       )
     `)
-    await work(pool)
+    const coreRuntime = await createPostgresRuntime({ url: databaseUrl!, schema })
+    try { await work(pool, coreRuntime) } finally { await coreRuntime.close() }
   } finally {
     await pool.end()
     await adminPool.query(`DROP SCHEMA "${schema}" CASCADE`)
@@ -107,10 +109,10 @@ async function seedEvent(pool: Pool, taskCount = 0) {
 
 test('DELETE soft-deletes at the supplied version, disables reminders, records compatible Undo, and publishes after commit', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
-}, async () => withDatabase(async (pool) => {
+}, async () => withDatabase(async (pool, coreRuntime) => {
   const eventId = await seedEvent(pool, 2)
   const publications: unknown[] = []
-  const store = createPostgresEventDeleteStore(pool, async (publication) => {
+  const store = calendarDeleteStore(coreRuntime, async (publication) => {
     const event = await pool.query<{ version: number; deleted_at: Date | null }>(
       'SELECT version, deleted_at FROM calendar_events WHERE id = $1', [eventId],
     )
@@ -164,12 +166,12 @@ test('DELETE soft-deletes at the supplied version, disables reminders, records c
 
 test('DELETE rejects missing, foreign, deleted, and stale event versions without side effects', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
-}, async () => withDatabase(async (pool) => {
+}, async () => withDatabase(async (pool, coreRuntime) => {
   const eventId = await seedEvent(pool)
   const deletedId = await seedEvent(pool)
   await pool.query('UPDATE calendar_events SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1', [deletedId])
   const publications: unknown[] = []
-  const store = createPostgresEventDeleteStore(pool, async (publication) => { publications.push(publication) })
+  const store = calendarDeleteStore(coreRuntime, async (publication) => { publications.push(publication) })
 
   await assert.rejects(
     deleteCalendarEvent(store, { ownerId, eventId, version: 3 }),
@@ -202,10 +204,10 @@ test('DELETE rejects missing, foreign, deleted, and stale event versions without
 
 test('DELETE publishes only the calendar change when no reminders and no Undo context exist', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
-}, async () => withDatabase(async (pool) => {
+}, async () => withDatabase(async (pool, coreRuntime) => {
   const eventId = await seedEvent(pool)
   const publications: unknown[] = []
-  const store = createPostgresEventDeleteStore(pool, async (publication) => { publications.push(publication) })
+  const store = calendarDeleteStore(coreRuntime, async (publication) => { publications.push(publication) })
   await deleteCalendarEvent(store, { ownerId, eventId, version: 4 })
   const undo = await pool.query('SELECT id FROM undo_operations')
   assert.equal(undo.rows.length, 0)
@@ -216,7 +218,7 @@ test('DELETE publishes only the calendar change when no reminders and no Undo co
 
 test('a new DELETE expires the existing undone branch in the same Undo history context', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
-}, async () => withDatabase(async (pool) => {
+}, async () => withDatabase(async (pool, coreRuntime) => {
   const eventId = await seedEvent(pool)
   await pool.query(`
     INSERT INTO undo_operations (
@@ -227,7 +229,7 @@ test('a new DELETE expires the existing undone branch in the same Undo history c
       '[]'::json, '{}'::json, '{}'::json, '{}'::json, '{}'::json,
       'web', 'undone', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + INTERVAL '30 days')
   `, [ownerId])
-  const store = createPostgresEventDeleteStore(pool, async () => undefined)
+  const store = calendarDeleteStore(coreRuntime, async () => undefined)
   await deleteCalendarEvent(store, { ownerId, eventId, version: 4, undoContextId: 'calendar-tab' })
   const rows = await pool.query<{ id: string; status: string; failure_code: string | null }>(
     `SELECT id, status, failure_code FROM undo_operations WHERE user_id = $1`, [ownerId],
@@ -241,9 +243,10 @@ test('a new DELETE expires the existing undone branch in the same Undo history c
 
 test('DELETE rolls back event and reminder state if the Undo write fails', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
-}, async () => withDatabase(async (pool) => {
+}, async () => withDatabase(async (pool, coreRuntime) => {
   const eventId = await seedEvent(pool, 1)
-  const store = createPostgresEventDeleteStore(pool, async () => assert.fail('failed delete must not publish'))
+  let publications = 0
+  const store = calendarDeleteStore(coreRuntime, async () => { publications++ })
   await pool.query(`
     CREATE FUNCTION fail_delete_undo() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN RAISE EXCEPTION 'synthetic undo failure'; END
@@ -263,14 +266,15 @@ test('DELETE rolls back event and reminder state if the Undo write fails', {
   )
   assert.deepEqual(event.rows[0], { version: 4, deleted_at: null })
   assert.deepEqual(tasks.rows.map((task) => task.enabled), [true])
+  assert.equal(publications, 0)
 }))
 
 test('concurrent DELETE requests with the same version allow only one commit and publish', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
-}, async () => withDatabase(async (pool) => {
+}, async () => withDatabase(async (pool, coreRuntime) => {
   const eventId = await seedEvent(pool, 1)
   let publicationCount = 0
-  const store = createPostgresEventDeleteStore(pool, async () => { publicationCount += 1 })
+  const store = calendarDeleteStore(coreRuntime, async () => { publicationCount += 1 })
   const results = await Promise.allSettled([
     deleteCalendarEvent(store, { ownerId, eventId, version: 4 }),
     deleteCalendarEvent(store, { ownerId, eventId, version: 4 }),
@@ -294,11 +298,11 @@ test('concurrent DELETE requests with the same version allow only one commit and
 
 test('DELETE notification failures are diagnostic-only after commit', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
-}, async () => withDatabase(async (pool) => {
+}, async () => withDatabase(async (pool, coreRuntime) => {
   const eventId = await seedEvent(pool)
   const diagnostics: string[] = []
-  const store = createPostgresEventDeleteStore(
-    pool,
+  const store = calendarDeleteStore(
+    coreRuntime,
     async () => { throw new Error('synthetic publisher failure') },
     (operation) => diagnostics.push(operation),
   )

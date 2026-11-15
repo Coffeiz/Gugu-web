@@ -1,3 +1,4 @@
+import pytest
 from sqlalchemy import column
 
 from app.search.query import normalize_mode, normalize_queries, keyword_condition
@@ -13,6 +14,20 @@ def test_normalize_queries_limits_count_and_length():
     result = normalize_queries(queries=values)
     assert len(result) == 8
     assert len(result[0]) == 64
+
+
+@pytest.mark.parametrize(("values", "expected"), [
+    (["Straße", "STRASSE"], ["Straße"]),
+    (["Σ", "ς", "σ"], ["Σ"]),
+    (["ﬃ", "ffi"], ["ﬃ"]),
+    (["Ꭰ", "ꭰ"], ["Ꭰ"]),
+    (["İ", "i\u0307", "i", "ı", "Ａ", "a"], ["İ", "i", "ı", "Ａ", "a"]),
+    (["\u001c目标\u0085", "目标", "\ufeff目标\ufeff"], ["目标", "\ufeff目标\ufeff"]),
+    (["a" * 63 + "ß", "a" * 63 + "ss"], ["a" * 63 + "ß", "a" * 63 + "s"]),
+])
+def test_normalize_queries_preserves_python_unicode_and_operation_order(values, expected):
+    """保护跨语言迁移中的完整折叠、空白差异及先截断再去重顺序。"""
+    assert normalize_queries(queries=values) == expected
 
 
 def test_normalize_mode_defaults_invalid_values_to_or():

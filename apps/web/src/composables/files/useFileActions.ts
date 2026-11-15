@@ -60,13 +60,14 @@ export function useFileActions(options: FileActionOptions = {}) {
   async function downloadFile(file: Pick<FileMeta, 'id' | 'displayName' | 'ext'>) {
     const filename = `${file.displayName}.${file.ext.toLowerCase()}`
     try {
-      // 大文件直下：本地存储用 token 化的 stream 地址（dl=1 → attachment），
-      // 浏览器直接写盘，整个文件不进 JS 内存；OSS 等签名 URL 无 attachment
-      // 语义，回落 blob 下载。
+      // 本地流地址通过浏览器直接下载，避免将整个文件读入 JS 内存。
       const { url } = await filesApi.getStreamUrl(file.id)
-      if (url.startsWith('/')) {
+      if (url.startsWith('/') && !url.startsWith('//')) {
         const a = document.createElement('a')
-        a.href = `${url}&dl=1`
+        const downloadUrl = new URL(url, window.location.origin)
+        if (downloadUrl.origin !== window.location.origin) throw new Error('下载地址无效')
+        downloadUrl.searchParams.set('dl', '1')
+        a.href = downloadUrl.href
         a.download = filename
         a.click()
         return

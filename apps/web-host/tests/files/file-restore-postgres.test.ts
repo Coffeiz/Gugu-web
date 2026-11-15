@@ -196,3 +196,96 @@ test('PostgreSQL Local 恢复顶层回收站文件夹时按本次墓碑时间恢
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test('并发恢复同名文件保留两份正文', {skip: !databaseUrl && '需要隔离 PostgreSQL'}, async () => {
+  const schema = `gugu_restore_race_${randomUUID().replaceAll('-', '')}`
+  const admin = new Pool({connectionString: databaseUrl, max: 1})
+  await admin.query(`CREATE SCHEMA "${schema}"`)
+  const pool = new Pool({connectionString: databaseUrl, options: `-c search_path=${schema}`, max: 3})
+  const root = path.join(tmpdir(), `gugu-restore-race-${randomUUID()}`)
+  try {
+    await pool.query(`CREATE TABLE files(id serial PRIMARY KEY,user_id uuid,display_name text,ext text,space text,project_id int,folder_id int,workspace_directory_id int,stage_name text,mind_map_id int,storage_key text,version int,size text,size_bytes bigint,mime_type text,img_width int,img_height int,deleted_at timestamptz,updated_at timestamptz);
+      INSERT INTO files(user_id,display_name,ext,space,stage_name,storage_key,version,size,size_bytes,deleted_at) VALUES
+      ('${ownerId}','memo','txt','personal','','${ownerId}/trash/memo.txt',1,'1 B',1,CURRENT_TIMESTAMP),
+      ('${ownerId}','memo','txt','personal','','${ownerId}/trash/memo(1).txt',1,'1 B',1,CURRENT_TIMESTAMP)`)
+    for (const [name, body] of [['memo.txt','A'], ['memo(1).txt','B']]) {
+      const source = path.join(root, ownerId, 'trash', name!)
+      await mkdir(path.dirname(source), {recursive:true}); await writeFile(source, body!)
+    }
+    let arrivals=0; let release!:()=>void
+    const barrier=new Promise<void>(resolve=>{release=resolve})
+    const wrapped={async connect(){const client=await pool.connect();const query=client.query.bind(client)
+      client.query=(async (...args:Parameters<typeof client.query>)=>{
+        const result=await (query as (...args:any[])=>Promise<any>)(...args)
+        if(typeof args[0]==='string' && args[0].startsWith('SELECT * FROM files WHERE id=')) {
+          if(++arrivals===2)release();await Promise.race([barrier,new Promise(resolve=>setTimeout(resolve,300))])
+        }
+        return result
+      }) as typeof client.query;return client}} as unknown as Pool
+    const ops=createPostgresFileRestoreOperations(wrapped,{storageRoot:root,async publishChanged(){}})
+    await Promise.all([ops.restore(ownerId,1),ops.restore(ownerId,2)])
+    const rows=await pool.query<{storage_key:string}>('SELECT storage_key FROM files ORDER BY id')
+    assert.equal(new Set(rows.rows.map(row=>row.storage_key)).size,2)
+    const bodies=await Promise.all(rows.rows.map(row=>readFile(path.join(root,...row.storage_key.split('/')),'utf8')))
+    assert.deepEqual(bodies.sort(),['A','B'])
+  } finally {await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();await rm(root,{recursive:true,force:true})}
+})
+
+test('存储不支持原子恢复时保留回收站正文并回滚', async () => {
+  const root=path.join(tmpdir(),`gugu-restore-link-${randomUUID()}`)
+  const source=path.join(root,ownerId,'trash','note.md')
+  await mkdir(path.dirname(source),{recursive:true});await writeFile(source,'原正文')
+  const calls:string[]=[]
+  const file={id:1,user_id:ownerId,display_name:'note',ext:'md',space:'personal',project_id:null,folder_id:null,workspace_directory_id:null,mind_map_id:null,storage_key:`${ownerId}/trash/note.md`,deleted_at:new Date()}
+  const client={async query(sql:string){calls.push(sql);return {rows:sql.startsWith('SELECT * FROM files')?[file]:[],rowCount:1}},release(){}}
+  const ops=createPostgresFileRestoreOperations({connect:async()=>client} as unknown as PoolType,{
+    storageRoot:root,
+    async createRestoreLink(){throw Object.assign(new Error('synthetic'),{code:'EXDEV'})},
+    async publishChanged(){throw new Error('不应发布')},
+  })
+  try {
+    await assert.rejects(ops.restore(ownerId,1),/文件存储不支持安全恢复/)
+    assert.equal(await readFile(source,'utf8'),'原正文')
+    assert.ok(calls.includes('ROLLBACK'))
+    assert.equal(calls.some(sql=>sql.startsWith('UPDATE files')),false)
+  } finally {await rm(root,{recursive:true,force:true})}
+})
+
+test('恢复事务失败时原正文仍在回收站并移除临时目标', async () => {
+  const root=path.join(tmpdir(),`gugu-restore-rollback-${randomUUID()}`)
+  const source=path.join(root,ownerId,'trash','note.md')
+  const destination=path.join(root,ownerId,'个人文件','note.md')
+  await mkdir(path.dirname(source),{recursive:true});await writeFile(source,'原正文')
+  const file={id:1,user_id:ownerId,display_name:'note',ext:'md',space:'personal',project_id:null,folder_id:null,workspace_directory_id:null,mind_map_id:null,storage_key:`${ownerId}/trash/note.md`,deleted_at:new Date()}
+  const client={async query(sql:string){
+    if(sql.startsWith('SELECT * FROM files'))return {rows:[file],rowCount:1}
+    if(sql.startsWith('UPDATE files')){assert.equal(await readFile(source,'utf8'),'原正文');throw new Error('模拟数据库失败')}
+    return {rows:[],rowCount:1}
+  },release(){}}
+  const ops=createPostgresFileRestoreOperations({connect:async()=>client} as unknown as PoolType,{storageRoot:root,async publishChanged(){throw new Error('不应发布')}})
+  try {
+    await assert.rejects(ops.restore(ownerId,1),/模拟数据库失败/)
+    assert.equal(await readFile(source,'utf8'),'原正文')
+    await assert.rejects(readFile(destination), {code:'ENOENT'})
+  } finally {await rm(root,{recursive:true,force:true})}
+})
+
+test('恢复提交结果未知时保留两个路径以覆盖提交成功与失败', async () => {
+  const root=path.join(tmpdir(),`gugu-restore-unknown-${randomUUID()}`)
+  const source=path.join(root,ownerId,'trash','note.md')
+  const destination=path.join(root,ownerId,'个人文件','note.md')
+  await mkdir(path.dirname(source),{recursive:true});await writeFile(source,'原正文')
+  const file={id:1,user_id:ownerId,display_name:'note',ext:'md',space:'personal',project_id:null,folder_id:null,workspace_directory_id:null,mind_map_id:null,storage_key:`${ownerId}/trash/note.md`,deleted_at:new Date()}
+  const client={async query(sql:string){
+    if(sql.startsWith('SELECT * FROM files'))return {rows:[file],rowCount:1}
+    if(sql.startsWith('UPDATE files'))return {rows:[{id:1}],rowCount:1}
+    if(sql==='COMMIT')throw new Error('模拟提交后连接中断')
+    return {rows:[],rowCount:1}
+  },release(){}}
+  const ops=createPostgresFileRestoreOperations({connect:async()=>client} as unknown as PoolType,{storageRoot:root,async publishChanged(){throw new Error('不应发布')}})
+  try {
+    await assert.rejects(ops.restore(ownerId,1),/模拟提交后连接中断/)
+    assert.equal(await readFile(source,'utf8'),'原正文')
+    assert.equal(await readFile(destination,'utf8'),'原正文')
+  } finally {await rm(root,{recursive:true,force:true})}
+})

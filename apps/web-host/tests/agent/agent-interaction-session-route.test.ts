@@ -1,9 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import {
-  InteractionNotFoundError,
-} from '../../src/domains/agent-sessions/persistence/agent-interaction-session.js'
+import { InteractionNotFoundError } from '@gugu/core/agent-sessions'
 import {
   registerAgentInteractionSessionRoute,
 } from '../../src/domains/agent-sessions/agent-interaction-session-route.js'

@@ -1,4 +1,4 @@
-import { CoreError } from '@gugu/core'
+import { CoreError, normalizeWorkspaceDirectoryName, validateWorkspaceDirectoryName } from '@gugu/core'
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
 import { normalizeOwnerId } from '../../../adapters/owner-context.js'
 import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
@@ -43,27 +43,10 @@ export interface WorkspaceDirectoryRuntime {
   now?: () => Date
 }
 
-const reservedRoots = new Set(['workspace', 'shell', '个人文件', '项目文件', '思维', '素材板'])
-const invalidName = /[\\/:*?"<>|]/
-
 function directoryId(value: number): number {
   if (!Number.isSafeInteger(value))
     throw new CoreError('invalid_request', 'Workspace ID 无效')
   return value
-}
-
-function normalizeName(value: string): string {
-  const name = value.trim()
-  if (!name) throw new CoreError('invalid_request', '名称不能为空')
-  if (Array.from(name).length > 200) throw new CoreError('invalid_request', '名称长度不能超过 200 个字符')
-  if (invalidName.test(name)) throw new CoreError('invalid_request', '名称不能包含以下字符：\\ / : * ? " < > |')
-  return name
-}
-
-function validateDisplayName(name: string): void {
-  const safeName = name.replace(/[\\/:*?"<>|]/g, '_')
-  if (reservedRoots.has(safeName) || name.toLowerCase() === 'default')
-    throw new CoreError('conflict', 'Workspace 名称与系统目录冲突')
 }
 
 function segmentFor(name: string, id: number): string {
@@ -299,11 +282,11 @@ export function createPostgresWorkspaceDirectoryOperations(
 
     async create(rawOwnerId, rawName) {
       const user = normalizeOwnerId(rawOwnerId)
-      const name = normalizeName(rawName)
+      const name = normalizeWorkspaceDirectoryName(rawName)
       return withPostgresTransaction(pool, async (client) => {
         await lockOwner(client, user)
         await ensureDefaultDirectory(client, user, runtime)
-        validateDisplayName(name)
+        validateWorkspaceDirectoryName(name)
         const duplicate = await client.query(
           `SELECT id FROM workspace_directories
            WHERE user_id = $1 AND name = $2 AND deleted_at IS NULL`, [user, name],
@@ -343,12 +326,12 @@ export function createPostgresWorkspaceDirectoryOperations(
     async update(rawOwnerId, rawId, rawName) {
       const user = normalizeOwnerId(rawOwnerId)
       const id = directoryId(rawId)
-      const name = normalizeName(rawName)
+      const name = normalizeWorkspaceDirectoryName(rawName)
       return withPostgresTransaction(pool, async (client) => {
         await lockOwner(client, user)
         const row = await getDirectory(client, user, id, true)
         if (row.is_system) throw new CoreError('conflict', '默认 Workspace 不可重命名')
-        validateDisplayName(name)
+        validateWorkspaceDirectoryName(name)
         if (name !== row.name) {
           const duplicate = await client.query(
             `SELECT id FROM workspace_directories

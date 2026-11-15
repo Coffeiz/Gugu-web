@@ -234,8 +234,8 @@ export function createPostgresEmailChangeStore(pool: Pick<Pool, 'query' | 'conne
            WHERE user_id = $1 AND used_at IS NULL AND revoked_at IS NULL`, [userId],
         )
         await client.query(
-          `INSERT INTO email_change_requests (user_id, new_email, token_hash, expires_at)
-           VALUES ($1, $2, $3, $4)`, [userId, email, tokenHash, expiresAt],
+          `INSERT INTO email_change_requests (user_id, new_email, token_hash, expires_at, created_at)
+           VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)`, [userId, email, tokenHash, expiresAt],
         )
       })
     },

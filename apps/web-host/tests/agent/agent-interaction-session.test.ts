@@ -2,9 +2,11 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
-import { createInteractionSessionLookup, InteractionNotFoundError } from '../../src/domains/agent-sessions/persistence/agent-interaction-session.js'
+import { createInteractionSessionLookup } from '../../src/domains/agent-sessions/persistence/agent-interaction-session.js'
+import { InteractionNotFoundError } from '@gugu/core/agent-sessions'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
+const syntheticOwner = '00000000-0000-4000-8000-000000000101'
 
 test('交互深链查询限定 owner 与 prompt，且不投影敏感字段', async () => {
   const calls: Array<{ sql: string; params: unknown[] }> = []
@@ -23,9 +25,10 @@ test('交互深链查询限定 owner 与 prompt，且不投影敏感字段', asy
       }
     },
   }
-  const result = await createInteractionSessionLookup(pool as never).get('trusted-owner', 8)
+  const connected = { async connect() { return { query: pool.query.bind(pool), release() {} } } }
+  const result = await createInteractionSessionLookup(connected as never).get(syntheticOwner, 8)
   assert.deepEqual(result, { session_id: 41 })
-  assert.deepEqual(calls[0]?.params, [8, 'trusted-owner'])
+  assert.deepEqual(calls[0]?.params, [8, syntheticOwner])
   assert.doesNotMatch(calls[0]!.sql, /expires_at|status|secret_fields|secret_target/)
   assert.equal(JSON.stringify(result).includes('hidden-server'), false)
 })
@@ -47,7 +50,7 @@ test('空 secret_fields 即使带有 MCP target 也按 Python 语义隐藏深链
   }
 
   await assert.rejects(
-    createInteractionSessionLookup(pool as never).get('trusted-owner', 8),
+    createInteractionSessionLookup({ async connect() { return { query: pool.query.bind(pool), release() {} } } } as never).get(syntheticOwner, 8),
     (error: unknown) => error instanceof InteractionNotFoundError && error.statusCode === 404,
   )
 })

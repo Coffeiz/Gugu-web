@@ -10,5 +10,8 @@ const bridge: DesktopBridge = Object.freeze({
   receipt: (operationId: string) =>
     ipcRenderer.invoke(DESKTOP_CHANNELS.receipt, operationId),
   sandboxStatus: () => ipcRenderer.invoke(DESKTOP_CHANNELS.sandboxStatus),
+  undoPreview: (contextId: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.undoPreview, contextId),
+  undoApply: (contextId: string, undoId: string, operationId: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.undoApply, contextId, undoId, operationId),
+  undoRedo: (contextId: string, undoId: string, operationId: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.undoRedo, contextId, undoId, operationId),
 })
 contextBridge.exposeInMainWorld('guguDesktop', bridge)

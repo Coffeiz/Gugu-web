@@ -9,9 +9,10 @@ import {
   prepareProjectCreate,
   prepareClientFields,
   replaceProjectStages,
-} from '../../src/domain/index.js'
+} from '../../src/index.js'
 import { LocalRuntime } from '../../dist/runtime/local.js'
-import { migrateSqlite } from '../../src/data/sqlite.js'
+import { migrateSqlite, openSqliteRuntime } from '../../src/data/sqlite.js'
+import { dataContext } from '../../src/contracts/index.js'
 
 const root = fileURLToPath(new URL('../../../../', import.meta.url)),
   folders: string[] = []
@@ -72,7 +73,7 @@ it('同一合成语料在 Python 和 TS 上保留字段、阶段身份与错误�
     }
   }
 })
-it('Python v2 库经 Node 更新后仍能由旧包重读；升级 v3 保留可恢复 v2 备份', async () => {
+it('Python v2 库经 Node 更新后仍能由旧包重读；升级保留可恢复 v2 备份', async () => {
   const folder = mkdtempSync(join(tmpdir(), 'gugu-core-golden-'))
   folders.push(folder)
   const database = join(folder, '跨语言.db'),
@@ -102,8 +103,16 @@ it('Python v2 库经 Node 更新后仍能由旧包重读；升级 v3 保留可�
   expect(golden({ action: 'read', database: backup })).toEqual(restored)
   const upgraded = await LocalRuntime.open(database)
   try {
-    expect(await upgraded.call('projects.list')).toEqual(restored.projects)
+    expect(await upgraded.call('projects.list')).toEqual(
+      restored.projects.map(({ id, name, version }: { id: number; name: string; version: number }) => ({ id, name, version })),
+    )
   } finally {
     await upgraded.close()
+  }
+  const current = await openSqliteRuntime(database)
+  try {
+    expect(await current.runtime.transaction(dataContext(current.ownerId), data => data.projects.list())).toEqual(restored.projects)
+  } finally {
+    await current.runtime.close()
   }
 })

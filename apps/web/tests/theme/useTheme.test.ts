@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('@/services/api', () => ({ preferencesApi: { update: vi.fn().mockResolvedValue({}) } }))
+
 function installMatchMedia(matches = false) {
   window.matchMedia = vi.fn().mockReturnValue({
     matches,
@@ -54,10 +56,10 @@ describe('主题令牌状态', () => {
 
     expect(useTheme().preference.value).toBe('dark')
     expect(useTheme().family.value).toBe('mono')
-    expect(useTheme().palette.value).toBe('green')
+    expect(useTheme().palette.value).toBe('neutral')
     expect(document.documentElement.dataset.theme).toBe('dark')
     expect(document.documentElement.dataset.family).toBe('mono')
-    expect(document.documentElement.dataset.palette).toBe('green')
+    expect(document.documentElement.dataset.palette).toBe('neutral')
   })
 
   it('切换主题家族会持久化并更新根节点属性', async () => {

@@ -1,17 +1,19 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  createMindCanvasMutations,
+  createMindCanvasCreation,
+  createMindCanvasUpdate,
+  createMindCanvasDelete,
   MindCanvasMutationError,
-  type MindCanvasMutationRuntime,
-  type MindCanvasRecord,
-} from '../../src/domains/mind/application/mind-canvas-mutations.js'
+  type MindCanvasCreateRuntime,
+  type MindCanvasCreateRecord,
+} from '@gugu/core/mind'
 
 const ownerId = 'synthetic-owner'
 const metadata = { undoContextId: 'undo-context', clientId: 'mind-client' }
 const timestamp = new Date('2026-11-14T01:02:03.000Z')
 
-function canvas(overrides: Partial<MindCanvasRecord> = {}): MindCanvasRecord {
+function canvas(overrides: Partial<MindCanvasCreateRecord> = {}): MindCanvasCreateRecord {
   return {
     id: 7,
     title: '画布',
@@ -27,7 +29,7 @@ test('canvas creation keeps Python defaults, owner-scoped project validation, at
   const order: string[] = []
   let recordedOwner = ''
   let undoRecord: unknown
-  const runtime: MindCanvasMutationRuntime = {
+  const runtime: MindCanvasCreateRuntime = {
     async transaction(requestOwnerId, work) {
       recordedOwner = requestOwnerId
       return work({
@@ -36,16 +38,14 @@ test('canvas creation keeps Python defaults, owner-scoped project validation, at
           order.push(`insert:${owner}:${title}:${projectId}`)
           return canvas({ title, project_id: projectId, data_json: '{}' })
         },
-        async getOwned() { return null },
-        async update() { return null },
         async recordUndo(record) { undoRecord = record; order.push('undo') },
       })
     },
     async publishChanged(event) { order.push(`publish:${event.origin}:${event.entityId}`) },
   }
-  const mutations = createMindCanvasMutations(runtime)
+  const create = createMindCanvasCreation(runtime)
 
-  const result = await mutations.create(ownerId, { project_id: '3', title: '  ' }, metadata)
+  const result = await create(ownerId, { project_id: '3', title: '  ' }, metadata)
 
   assert.equal(recordedOwner, ownerId)
   assert.equal(result.title, '未命名画布')
@@ -65,20 +65,18 @@ test('canvas creation keeps Python defaults, owner-scoped project validation, at
 
 test('canvas creation rejects a project owned by somebody else before inserting', async () => {
   let inserted = false
-  const mutations = createMindCanvasMutations({
+  const create = createMindCanvasCreation({
     async transaction(_ownerId, work) {
       return work({
         async projectExistsForOwner() { return false },
         async insert() { inserted = true; return canvas() },
-        async getOwned() { return null },
-        async update() { return null },
         async recordUndo() {},
       })
     },
     async publishChanged() {},
   })
 
-  await assert.rejects(mutations.create(ownerId, { projectId: 9 }, metadata), (error: unknown) =>
+  await assert.rejects(create(ownerId, { projectId: 9 }, metadata), (error: unknown) =>
     error instanceof MindCanvasMutationError && error.statusCode === 404,
   )
   assert.equal(inserted, false)
@@ -88,11 +86,9 @@ test('canvas update keeps omitted fields, stores explicit null data, records bef
   const order: string[] = []
   let updateFields: { title?: string; dataJson?: string } | undefined
   let undoRecord: { action: string; beforeState: unknown; afterState: unknown } | undefined
-  const mutations = createMindCanvasMutations({
+  const update = createMindCanvasUpdate({
     async transaction(_ownerId, work) {
       return work({
-        async projectExistsForOwner() { return true },
-        async insert() { return canvas() },
         async getOwned(owner, id) { order.push(`lock:${owner}:${id}`); return canvas() },
         async update(owner, id, fields) {
           order.push(`update:${owner}:${id}`)
@@ -105,7 +101,7 @@ test('canvas update keeps omitted fields, stores explicit null data, records bef
     async publishChanged() { order.push('publish') },
   })
 
-  const result = await mutations.update(ownerId, 7, { data: null }, metadata)
+  const result = await update(ownerId, 7, { data: null }, metadata)
 
   assert.deepEqual(updateFields, { dataJson: 'null' })
   assert.deepEqual(result.data, {})
@@ -117,11 +113,9 @@ test('canvas update keeps omitted fields, stores explicit null data, records bef
 
 test('canvas update hides another owner and rejects non-object view data', async () => {
   let updated = false
-  const mutations = createMindCanvasMutations({
+  const update = createMindCanvasUpdate({
     async transaction(_ownerId, work) {
       return work({
-        async projectExistsForOwner() { return true },
-        async insert() { return canvas() },
         async getOwned() { return null },
         async update() { updated = true; return canvas() },
         async recordUndo() {},
@@ -130,23 +124,19 @@ test('canvas update hides another owner and rejects non-object view data', async
     async publishChanged() {},
   })
 
-  await assert.rejects(mutations.update(ownerId, 7, { title: '新标题' }, metadata), (error: unknown) =>
+  await assert.rejects(update(ownerId, 7, { title: '新标题' }, metadata), (error: unknown) =>
     error instanceof MindCanvasMutationError && error.statusCode === 404,
   )
-  await assert.rejects(mutations.update(ownerId, 7, { data: [] }, metadata), MindCanvasMutationError)
+  await assert.rejects(update(ownerId, 7, { data: [] }, metadata), MindCanvasMutationError)
   assert.equal(updated, false)
 })
 
 test('canvas deletion records every scoped resource atomically and publishes after the commit', async () => {
   const order: string[] = []
   let undo: unknown
-  const mutations = createMindCanvasMutations({
+  const remove = createMindCanvasDelete({
     async transaction(_ownerId, work) {
       return work({
-        async projectExistsForOwner() { return true },
-        async insert() { return canvas() },
-        async getOwned() { return canvas() },
-        async update() { return canvas() },
         async delete(owner, id) {
           order.push(`delete:${owner}:${id}`)
           return {
@@ -161,7 +151,7 @@ test('canvas deletion records every scoped resource atomically and publishes aft
     async publishChanged(event) { order.push(`publish:${event.operation}:${event.entityId}`) },
   })
 
-  await mutations.delete(ownerId, 7, metadata)
+  await remove(ownerId, 7, metadata)
 
   assert.deepEqual(order, [`delete:${ownerId}:7`, 'undo', 'publish:delete:7'])
   assert.deepEqual(undo, {

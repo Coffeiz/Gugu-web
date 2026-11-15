@@ -79,6 +79,8 @@ export async function renameLocalProjectDirectory(
   storageRoot: string,
   oldPrefix: string,
   newPrefix: string,
+  beforeMove?: (from: string, to: string) => Promise<void>,
+  onMoved?: () => void,
 ): Promise<void> {
   const absoluteRoot = path.resolve(storageRoot)
   // Validate both keys before checking existence so an absent source cannot hide traversal input.
@@ -117,7 +119,13 @@ export async function renameLocalProjectDirectory(
   await mkdir(parent, { recursive: true })
   await assertNoSymlinkComponents(root, parent)
   await assertRealpathWithin(root, parent)
+  if (beforeMove) {
+    try { await lstat(newPath); throw new Error('项目目录目标已存在') }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
+    await beforeMove(oldPrefix, newPrefix)
+  }
   await rename(oldPath, newPath)
+  onMoved?.()
   await assertNoSymlinkComponents(root, newPath)
   await assertRealpathWithin(root, newPath)
   await assertTreeContainsNoSymlinks(newPath)
@@ -126,9 +134,9 @@ export async function renameLocalProjectDirectory(
 
 /** Host callback factory; root must be the configured local storage root. */
 export function createLocalProjectDirectoryRenamer(storageRoot: string) {
-  return async (ownerId: string, oldPrefix: string, newPrefix: string): Promise<void> => {
+  return async (ownerId: string, oldPrefix: string, newPrefix: string, beforeMove?: (from: string, to: string) => Promise<void>, onMoved?: () => void): Promise<void> => {
     if (keySegments(oldPrefix)[0] !== ownerId || keySegments(newPrefix)[0] !== ownerId)
       throw new Error('项目目录前缀与 owner 不匹配')
-    await renameLocalProjectDirectory(storageRoot, oldPrefix, newPrefix)
+    await renameLocalProjectDirectory(storageRoot, oldPrefix, newPrefix, beforeMove, onMoved)
   }
 }

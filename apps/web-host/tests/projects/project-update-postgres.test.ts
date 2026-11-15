@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
-import { createProjectUpdater } from '../../src/domains/projects/application/project-update.js'
+import { createAgentProjectUpdater, createProjectUpdater } from '@gugu/core/project-update'
 import { createPostgresProjectUpdateRuntime } from '../../src/domains/projects/persistence/project-update-postgres.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
@@ -15,7 +15,7 @@ test('PostgreSQL 项目更新按 owner/version CAS，事务内更新目录键和
   const schema = `gugu_project_update_${randomUUID().replaceAll('-', '')}`
   const admin = new Pool({ connectionString: databaseUrl, max: 1 })
   await admin.query(`CREATE SCHEMA "${schema}"`)
-  const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema}`, max: 4 })
+  const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema} -c timezone=Asia/Shanghai`, max: 4 })
   const events: unknown[] = []
   const renames: unknown[] = []
   try {
@@ -60,6 +60,14 @@ test('PostgreSQL 项目更新按 owner/version CAS，事务内更新目录键和
       ownerId, projectId, `${oldPrefix}/资料.txt`,
     ])
     await pool.query('INSERT INTO project_file_counts (project_id, file_count) VALUES ($1, 1)', [projectId])
+    await pool.query("UPDATE projects SET created_at='2026-11-01T00:30:00+08:00' WHERE id=$1", [projectId])
+    await pool.query(`CREATE FUNCTION fixed_update_times() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        NEW.updated_at := '2026-11-14T00:30:00.123000+08:00';
+        IF NEW.status = 'done' THEN NEW.done_at := '2026-11-14T00:30:00+08:00'; END IF;
+        RETURN NEW;
+      END $$;
+      CREATE TRIGGER fixed_update_times BEFORE UPDATE ON projects FOR EACH ROW EXECUTE FUNCTION fixed_update_times()`)
     const runtime = createPostgresProjectUpdateRuntime(
       pool,
       async (_owner, oldPath, newPath) => { renames.push([oldPath, newPath]) },
@@ -81,6 +89,19 @@ test('PostgreSQL 项目更新按 owner/version CAS，事务内更新目录键和
     assert.match(String(result.updatedAt), /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/)
     assert.deepEqual(renames, [[oldPrefix, `${ownerId}/项目文件/2026/11/新项目 #${projectId}`]])
     assert.equal(events.length, 1)
+    assert.deepEqual((events[0] as { payload: unknown }).payload, result)
+    assert.equal(result.createdAt, '2026-10-31')
+    assert.equal(result.updatedAt, '2026-11-13T16:30:00.123000+00:00')
+    assert.equal(result.doneAt, '2026-11-13T16:30:00+00:00')
+    assert.equal(result.deletedAt, null)
+    const storedTimes = (await pool.query('SELECT updated_at::text,done_at::text FROM projects WHERE id=$1', [projectId])).rows[0]
+    assert.equal(storedTimes.updated_at, '2026-11-14 00:30:00.123+08')
+    assert.equal(storedTimes.done_at, '2026-11-14 00:30:00+08')
+    await pool.query('UPDATE projects SET summary=$2, priority=$3 WHERE id=$1', [projectId, '旧摘要', 'high'])
+    const agent = createAgentProjectUpdater(createPostgresProjectUpdateRuntime(pool, async () => {}, async () => {}))
+    await agent(ownerId, projectId, { summary: null, priority: null, current_stage: 's0' })
+    const agentRow = await pool.query('SELECT summary,priority,current_stage,version FROM projects WHERE id=$1', [projectId])
+    assert.deepEqual(agentRow.rows[0], { summary: null, priority: null, current_stage: 's0', version: 9 })
     const file = await pool.query('SELECT storage_key FROM files WHERE project_id = $1', [projectId])
     assert.equal(file.rows[0]?.storage_key, `${ownerId}/项目文件/2026/11/新项目 #${projectId}/资料.txt`)
     const undo = await pool.query('SELECT * FROM undo_operations WHERE undo_context_id = $1', ['tab-update'])

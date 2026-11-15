@@ -114,7 +114,7 @@ test('PostgreSQL 工具详情先校验会话 owner，再按 session/message/inde
     const read = createPostgresAgentToolEventDetails(pool)
     assert.deepEqual(await read(owner, 7, 9, 0), {
       toolInput: { query: '合成' },
-      toolResult: [{ type: 'image', source: { type: 'base64', data: 'secret' } }],
+      toolResult: [{ type: 'text', text: '[图片已查看]' }],
     })
     await assert.rejects(read(owner, 8, 11, 0), AgentToolEventSessionNotFoundError)
     await assert.rejects(read(owner, 7, 10, 0), AgentToolEventDetailsNotFoundError)

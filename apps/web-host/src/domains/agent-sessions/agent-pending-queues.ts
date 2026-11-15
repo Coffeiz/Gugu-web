@@ -1,9 +1,11 @@
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
 import type { Pool } from 'pg'
+import { createPostgresAgentPendingQueue, visiblePendingQueueItems } from '@gugu/core/agent-sessions'
 
 export interface AgentPendingQueueSnapshot {
   sessionId: number | null
   items: unknown
+  projected?: true
 }
 
 export interface AgentPendingQueueReadOptions {
@@ -16,6 +18,7 @@ export interface AgentPendingQueueReadOptions {
 export interface AgentImportedDraftQueue {
   queueId: string
   items: unknown
+  projected?: true
 }
 
 export interface AgentImportedDraftQueueReadOptions {
@@ -25,19 +28,8 @@ export interface AgentImportedDraftQueueReadOptions {
   nowSeconds?: () => number
 }
 
-function visibleQueueItems(queueId: string, sessionId: number | null, items: unknown, now: number) {
-  if (!Array.isArray(items)) return []
-  return items.flatMap((item) => {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) return []
-    const record = item as Record<string, unknown>
-    const { _claim_token: claimToken, _claim_until: claimUntil, ...visible } = record
-    return [{
-      ...visible,
-      queue_id: queueId,
-      session_id: sessionId,
-      claimed: Boolean(claimToken && typeof claimUntil === 'number' && claimUntil > now),
-    }]
-  })
+function visibleQueueItems(queueId: string, sessionId: number | null, items: unknown, now: number, projected = false) {
+  return visiblePendingQueueItems(queueId, sessionId, items, now, projected)
 }
 
 export function registerAgentPendingQueueReadRoute(
@@ -57,7 +49,7 @@ export function registerAgentPendingQueueReadRoute(
       const sessionId = queue?.sessionId ?? null
       return {
         sessionId,
-        items: visibleQueueItems(queueId, sessionId, queue?.items, (options.nowSeconds ?? (() => Date.now() / 1000))()),
+        items: visibleQueueItems(queueId, sessionId, queue?.items, (options.nowSeconds ?? (() => Date.now() / 1000))(), queue?.projected),
       }
     },
   )
@@ -74,7 +66,7 @@ export function registerAgentImportedDraftQueueRoute(
       const now = (options.nowSeconds ?? (() => Date.now() / 1000))()
       return {
         queues: drafts.flatMap((draft) => {
-          const items = visibleQueueItems(draft.queueId, null, draft.items, now)
+          const items = visibleQueueItems(draft.queueId, null, draft.items, now, draft.projected)
           return items.length ? [{ queue_id: draft.queueId, items }] : []
         }),
       }
@@ -83,28 +75,9 @@ export function registerAgentImportedDraftQueueRoute(
 }
 
 export function createPostgresAgentPendingQueueReader(pool: Pick<Pool, 'query'>) {
-  return async function readQueue(ownerId: string, queueId: string): Promise<AgentPendingQueueSnapshot | null> {
-    const result = await pool.query<{ session_id: number | null; items: unknown }>(
-      `SELECT session_id, items
-       FROM conversation_pending_queues
-       WHERE user_id = $1 AND queue_id = $2
-       LIMIT 1`,
-      [ownerId, queueId],
-    )
-    const row = result.rows[0]
-    return row ? { sessionId: row.session_id, items: row.items } : null
-  }
+  return createPostgresAgentPendingQueue(pool as Pool, {}).readQueue
 }
 
 export function createPostgresAgentImportedDraftQueueReader(pool: Pick<Pool, 'query'>) {
-  return async function readImportedDrafts(ownerId: string): Promise<AgentImportedDraftQueue[]> {
-    const result = await pool.query<{ queue_id: string; items: unknown }>(
-      `SELECT queue_id, items
-       FROM conversation_pending_queues
-       WHERE user_id = $1 AND session_id IS NULL AND queue_id LIKE 'import-%'
-       ORDER BY updated_at, id`,
-      [ownerId],
-    )
-    return result.rows.map((row) => ({ queueId: row.queue_id, items: row.items }))
-  }
+  return createPostgresAgentPendingQueue(pool as Pool, {}).readImportedDrafts
 }

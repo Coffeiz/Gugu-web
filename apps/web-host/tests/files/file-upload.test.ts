@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readFile, rm } from 'node:fs/promises'
+import { CoreError } from '@gugu/core'
 import test from 'node:test'
 import Fastify from 'fastify'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
@@ -170,4 +171,21 @@ test('文件后出现字段时拒绝请求，避免表单目标与暂存文件�
     assert.equal(response.statusCode, 422)
     assert.equal(context.getStored(), null)
   } finally { await context.app.close() }
+})
+
+test('上传临时目录清理失败不覆盖提交成功响应或业务错误', async () => {
+  const app=Fastify({logger:false});installHttpErrorHandler(app);installFileUploadSupport(app)
+  let shouldFail=false,cleanupCalls=0
+  registerFileUploadRoutes(app,{
+    requireUser:async()=>undefined,ownerIdFromRequest:()=> 'synthetic',
+    operations:{async getUploadCapacity(){return null},async store(){if(shouldFail)throw new CoreError('conflict','合成版本冲突');return {id:7}}},
+    async cleanupTemp(directory){cleanupCalls++;await rm(directory,{recursive:true,force:true});throw new Error('合成含敏感路径的原始错误')},
+  })
+  try {
+    const form=multipart([['space','personal']])
+    const send=()=>app.inject({method:'POST',url:'/api/v1/files',headers:{'content-type':`multipart/form-data; boundary=${form.boundary}`},payload:form.payload})
+    const success=await send();assert.equal(success.statusCode,201);assert.deepEqual(success.json(),{id:7})
+    shouldFail=true;const failure=await send();assert.equal(failure.statusCode,409);assert.equal(failure.json().detail,'合成版本冲突')
+    assert.equal(cleanupCalls,2)
+  } finally {await app.close()}
 })

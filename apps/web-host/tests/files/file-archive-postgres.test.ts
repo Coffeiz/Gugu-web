@@ -28,7 +28,8 @@ test('PostgreSQL Local 归档保留选中文件夹树并可解压回原空间', 
       CREATE TABLE projects(id integer PRIMARY KEY,user_id uuid,name text,color text,start_date date,created_at timestamptz,deleted_at timestamptz);
       CREATE TABLE workspace_directories(id integer PRIMARY KEY,user_id uuid,directory_name text,deleted_at timestamptz);
       CREATE TABLE folders(id serial PRIMARY KEY,user_id uuid NOT NULL,parent_id integer,name text NOT NULL,
-        project_id integer,workspace_directory_id integer,deleted_at timestamptz);
+        project_id integer,workspace_directory_id integer,deleted_at timestamptz,
+        created_at timestamptz NOT NULL,updated_at timestamptz NOT NULL,version integer NOT NULL);
       CREATE TABLE files(id serial PRIMARY KEY,user_id uuid NOT NULL,display_name text NOT NULL,ext text NOT NULL,
         space text NOT NULL,project_id integer,folder_id integer,workspace_directory_id integer,stage_name text NOT NULL,
         mind_map_id integer,storage_key text NOT NULL,storage_backend text NOT NULL,version integer NOT NULL,
@@ -40,9 +41,9 @@ test('PostgreSQL Local 归档保留选中文件夹树并可解压回原空间', 
         resource_type text,resource_id text,idempotency_key text,metadata_json jsonb,created_at timestamptz);
       INSERT INTO users VALUES ('${ownerId}',10000000),('${otherOwnerId}',10000000);
       INSERT INTO storage_quota_ledgers VALUES ('${ownerId}','file_library',4,0,10000000,'active',CURRENT_TIMESTAMP);
-      INSERT INTO folders(id,user_id,parent_id,name,project_id,workspace_directory_id,deleted_at) VALUES
-        (10,'${ownerId}',NULL,'资料',NULL,NULL,NULL),(11,'${ownerId}',10,'子目录',NULL,NULL,NULL),
-        (12,'${otherOwnerId}',NULL,'他人目录',NULL,NULL,NULL);
+      INSERT INTO folders(id,user_id,parent_id,name,project_id,workspace_directory_id,deleted_at,created_at,updated_at,version) VALUES
+        (10,'${ownerId}',NULL,'资料',NULL,NULL,NULL,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,1),(11,'${ownerId}',10,'子目录',NULL,NULL,NULL,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,1),
+        (12,'${otherOwnerId}',NULL,'他人目录',NULL,NULL,NULL,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,1);
       INSERT INTO files(user_id,display_name,ext,space,project_id,folder_id,workspace_directory_id,
         stage_name,mind_map_id,storage_key,storage_backend,version,size,size_bytes,mime_type,img_width,img_height,
         created_at,updated_at,deleted_at) VALUES
@@ -58,10 +59,13 @@ test('PostgreSQL Local 归档保留选中文件夹树并可解压回原空间', 
     await mkdir(path.dirname(foreignPath), { recursive: true })
     await writeFile(foreignPath, '不得读取')
 
-    const operations = createPostgresFileArchiveOperations(pool, {
+    let releases = 0
+    const trackedPool = {async connect() { const client=await pool.connect();const release=client.release.bind(client);client.release=(() => {releases++;release()}) as typeof client.release;return client }} as unknown as Pool
+    const operations = createPostgresFileArchiveOperations(trackedPool, {
       storageRoot,
       fileSyncEnabled: false,
       defaultLimitBytes: 10000000,
+      async cleanupTemp(directory) { await rm(directory,{recursive:true,force:true}); throw new Error('模拟清理失败') },
       async publishCreatedFile(event) { publishedFiles.push(event.entityId) },
       async publishCreatedBatch(owner, origin) { publishedBatches.push(`${owner}:${origin ?? ''}`) },
     })
@@ -102,6 +106,26 @@ test('PostgreSQL Local 归档保留选中文件夹树并可解压回原空间', 
     assert.equal(Number(quota.rows[0]!.used_bytes),
       4 + archived.sizeBytes + Number(extractedRow.rows[0]!.size_bytes))
     assert.deepEqual(quota.rows[0]!.operations, ['archive_compress', 'archive_extract'])
+    assert.equal(releases, 2)
+    await assert.rejects(operations.archive(ownerId,{fileIds:[],folderIds:[]},metadata), /请先选择/)
+    assert.equal(releases, 3)
+    const unknownPool = {async connect(){const client=await pool.connect();const query=client.query.bind(client)
+      client.query=(async (...args:Parameters<typeof client.query>)=>{const result=await (query as (...args:any[])=>Promise<any>)(...args);if(args[0]==='COMMIT')throw new Error('模拟提交后断连');return result}) as typeof client.query
+      return client}} as unknown as Pool
+    const unknownOps=createPostgresFileArchiveOperations(unknownPool,{storageRoot,fileSyncEnabled:false,defaultLimitBytes:10000000,async publishCreatedFile(){},async publishCreatedBatch(){}})
+    await assert.rejects(unknownOps.archive(ownerId,{fileIds:[],folderIds:[10],name:'未知提交'},metadata),/压缩文件失败/)
+    const unknownArchive=await pool.query<{id:number;storage_key:string}>("SELECT id,storage_key FROM files WHERE user_id=$1 AND display_name='未知提交'",[ownerId])
+    assert.equal(unknownArchive.rowCount,1)
+    assert.ok((await readFile(path.join(storageRoot,unknownArchive.rows[0]!.storage_key))).length>0)
+    const beforeIds=(await pool.query<{id:number}>('SELECT id FROM files WHERE user_id=$1',[ownerId])).rows.map(row=>row.id)
+    await assert.rejects(unknownOps.unarchive(ownerId,{fileId:archived.id},metadata), (error: unknown) =>
+      error instanceof Error && 'code' in error && error.code === 'storage_error' && error.message.includes('提交结果未知'))
+    const afterFiles=await pool.query<{id:number;storage_key:string}>('SELECT id,storage_key FROM files WHERE user_id=$1 AND NOT (id=ANY($2::int[]))',[ownerId,beforeIds])
+    assert.ok(afterFiles.rowCount)
+    assert.equal(await readFile(path.join(storageRoot,afterFiles.rows[0]!.storage_key),'utf8'),'正文')
+    await writeFile(path.join(storageRoot, archiveRow.rows[0]!.storage_key),'损坏的 ZIP')
+    await assert.rejects(operations.unarchive(ownerId,{fileId:archived.id},metadata), (error: unknown) =>
+      error instanceof Error && 'code' in error && error.code === 'invalid_request' && error.message === '压缩包损坏')
   } finally {
     await pool.end()
     await admin.query(`DROP SCHEMA "${schema}" CASCADE`)

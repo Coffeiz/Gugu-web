@@ -222,6 +222,11 @@ test('reset validation and failed closed rate limiting preserve endpoint semanti
     })
     assert.equal(shortPassword.statusCode, 400)
     assert.equal(shortPassword.json().detail, '密码至少 8 位')
+    const shortUnicode = await fixture.app.inject({
+      method: 'POST', url: '/api/v1/auth/reset-password', payload: { token: resetToken, newPassword: '🙂🙂🙂🙂' },
+    })
+    assert.equal(shortUnicode.statusCode, 400)
+    assert.equal(shortUnicode.json().detail, '密码至少 8 位')
     assert.equal(maskResetEmail('a@example.test'), '*@example.test')
     assert.equal(maskResetEmail('ab@example.test'), 'a***@example.test')
     assert.equal(maskResetEmail('abc@example.test'), 'a***c@example.test')

@@ -469,7 +469,7 @@
           "symbol": "completeBranch"
         },
         {
-          "file": "gugu-core/src/agent/harness/context/reflection.ts",
+          "file": "packages/core/src/agent/memory/reflection.ts",
           "line": 335,
           "symbol": "runContextBranch"
         }
@@ -510,7 +510,7 @@
           "symbol": "completeBranch"
         },
         {
-          "file": "gugu-core/src/agent/harness/context/reflection.ts",
+          "file": "packages/core/src/agent/memory/reflection.ts",
           "line": 335,
           "symbol": "runContextBranch"
         }
@@ -793,7 +793,7 @@
           "symbol": "completeBranch"
         },
         {
-          "file": "gugu-core/src/agent/harness/context/reflection.ts",
+          "file": "packages/core/src/agent/memory/reflection.ts",
           "line": 335,
           "symbol": "runContextBranch"
         }
@@ -1834,7 +1834,7 @@
           "symbol": "completeBranch"
         },
         {
-          "file": "gugu-core/src/agent/harness/context/reflection.ts",
+          "file": "packages/core/src/agent/memory/reflection.ts",
           "line": 335,
           "symbol": "runContextBranch"
         }

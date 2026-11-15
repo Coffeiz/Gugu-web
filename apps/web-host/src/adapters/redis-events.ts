@@ -5,10 +5,20 @@ import type { RedisRateLimitCommands } from '../domains/auth/rate-limit.js'
 import type { RegistrationCodeRedisCommands } from '../domains/auth/persistence/registration-codes.js'
 import type { PasswordResetRedisCommands } from '../domains/auth/password-reset.js'
 import type { FilesystemAuthorizationRedisCommands } from '../domains/agent-sessions/filesystem-authorization-confirmations.js'
+import type { ScheduledTaskRedisCommands } from '../modules/scheduled-tasks/persistence/redis-lease.js'
 
 type RedisConnection = Socket | TLSSocket
 type RedisReply = string | null
 type RedisCommand = (...parts: string[]) => Promise<RedisReply>
+
+/** 定时任务租约与 Python Worker 共用 Redis 锁。 */
+export function createRedisScheduledTaskCommands(redisUrl: string): ScheduledTaskRedisCommands {
+  return {
+    set: (key, value, ...options) => withRedis(redisUrl, command => command('SET', key, value, ...options)),
+    eval: (script, keyCount, ...args) => withRedis(redisUrl, command => command('EVAL', script, String(keyCount), ...args)),
+    exists: key => withRedis(redisUrl, command => command('EXISTS', key)),
+  }
+}
 
 export interface ResourceChangedInput {
   ownerId: string
@@ -37,6 +47,26 @@ const contextRevisionResources = new Set([
   'projects', 'calendar', 'files', 'memory', 'preferences', 'timezone', 'im_channels',
 ])
 
+/** 与 Python 管理员认证共用撤销版本。 */
+export function createRedisAdminAuthVersionStore(redisUrl: string) {
+  const key = 'auth:admin:security-version'
+  const parseVersion = (value: string | null): number => {
+    if (value === null) return 0
+    if (!/^\d+$/.test(value)) throw new Error('管理员认证版本无效')
+    const version = Number(value)
+    if (!Number.isSafeInteger(version)) throw new Error('管理员认证版本无效')
+    return version
+  }
+  return {
+    getAuthVersion: () => withRedis(redisUrl, async (command) => parseVersion(await command('GET', key))),
+    incrementAuthVersion: () => withRedis(redisUrl, async (command) => {
+      const value = await command('INCR', key)
+      if (value === null) throw new Error('管理员认证版本无效')
+      return parseVersion(value)
+    }),
+  }
+}
+
 export function createRedisRateLimitCommands(redisUrl: string): RedisRateLimitCommands {
   return {
     async incr(key) {
@@ -50,6 +80,109 @@ export function createRedisRateLimitCommands(redisUrl: string): RedisRateLimitCo
       if (!Number.isSafeInteger(seconds) || seconds < 1) throw new Error('Redis expiry invalid')
       return withRedis(redisUrl, (command) => command('EXPIRE', key, String(seconds)))
     },
+  }
+}
+
+/** 投递通知到现有 SSE 用户或广播频道；持久化成功不依赖 Redis 投递。 */
+export function createRedisNotificationPublisher(redisUrl: string) {
+  return async (target: string, notification: object): Promise<boolean> => {
+    if (target !== 'all' && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(target)) return false
+    try {
+      const channel = target === 'all' ? 'events:__broadcast__' : `events:${target}`
+      await withRedis(redisUrl, command => command('PUBLISH', channel, JSON.stringify({ notification })))
+      return true
+    } catch {
+      return false
+    }
+  }
+}
+
+/** 向已有管理员文件同步事件频道发布提交后的失效通知。 */
+export function createRedisFileSyncPublisher(redisUrl: string) {
+  return async (event: object): Promise<void> => {
+    await withRedis(redisUrl, command => command('PUBLISH', 'events:filesync-admin', JSON.stringify(event)))
+  }
+}
+
+/** 与 Python 文件授权运维计数共用键和过期周期。 */
+export function createRedisFilesystemRevokeMetric(redisUrl: string): () => Promise<void> {
+  return async () => {
+    const key = `ops:filesystem-auth:${new Date().toISOString().slice(0, 10).replaceAll('-', '')}`
+    await withRedis(redisUrl, async command => {
+      await command('HINCRBY', key, 'scheduled_task:revoked', '1')
+      await command('EXPIRE', key, String(14 * 24 * 60 * 60))
+    })
+  }
+}
+
+/** 服务面板读取心跳与队列状态，不写入健康数据。 */
+export function createRedisServiceStatusCommands(redisUrl: string) {
+  return {
+    get: (key: string) => withRedis(redisUrl, command => command('GET', key)),
+    eval: (script: string) => withRedis(redisUrl, command => command('EVAL', script, '0')),
+    ping: () => pingRedis(redisUrl),
+  }
+}
+
+/** 管理维护任务的只读状态和超时标记使用现有 Redis 键。 */
+export function createRedisAdminMaintenanceCommands(redisUrl: string) {
+  return {
+    get: (key: string) => withRedis(redisUrl, command => command('GET', key)),
+    compareAndSet: (key: string, expected: string, value: string, ttlSeconds: number) => {
+      if (!Number.isSafeInteger(ttlSeconds) || ttlSeconds < 1) throw new Error('Redis expiry invalid')
+      return withRedis(redisUrl, command => command('EVAL', "if redis.call('GET',KEYS[1])==ARGV[1] then redis.call('SET',KEYS[1],ARGV[2],'EX',ARGV[3]);return 1 end;return 0", '1', key, expected, value, String(ttlSeconds)))
+    },
+    set: (key: string, value: string, ttlSeconds: number) => {
+      if (!Number.isSafeInteger(ttlSeconds) || ttlSeconds < 1) throw new Error('Redis expiry invalid')
+      return withRedis(redisUrl, command => command('SET', key, value, 'EX', String(ttlSeconds)))
+    },
+  }
+}
+
+/** 定时任务授权申请和确认的无敏感数据指标。 */
+export function createRedisFilesystemAuthorizationMetric(redisUrl: string) {
+  return async (outcome: 'requested' | 'granted'): Promise<void> => {
+    const key = `ops:filesystem-auth:${new Date().toISOString().slice(0, 10).replaceAll('-', '')}`
+    await withRedis(redisUrl, async command => {
+      await command('HINCRBY', key, `scheduled_task:${outcome}`, '1')
+      await command('EXPIRE', key, String(14 * 24 * 60 * 60))
+    })
+  }
+}
+
+/** 读取与 Python Worker 共用的 Redis 状态键。 */
+export function createRedisValueReader(redisUrl: string): (key: string) => Promise<string | null> {
+  return key => withRedis(redisUrl, command => command('GET', key))
+}
+
+/** 读取hash完整快照；Lua仅把RESP数组编码为字符串，复用既有认证/超时传输。 */
+export function createRedisHashReader(redisUrl: string): (key: string) => Promise<Record<string, string>> {
+  return async key => {
+    const value = await withRedis(redisUrl, command => command('EVAL', "local rows=redis.call('HGETALL',KEYS[1]);if #rows==0 then return '[]' end;return cjson.encode(rows)", '1', key))
+    const pairs: unknown = JSON.parse(value ?? 'null')
+    if (!Array.isArray(pairs) || pairs.length % 2 || pairs.some(item => typeof item !== 'string')) throw new Error('Redis hash response invalid')
+    const hash: Record<string, string> = Object.create(null)
+    for (let index = 0; index < pairs.length; index += 2) hash[pairs[index] as string] = pairs[index + 1] as string
+    return hash
+  }
+}
+
+/** 读取指定范围内的 Redis 列表，空列表保持数组。 */
+export function createRedisListReader(redisUrl: string): (key: string, start: number, stop: number | bigint) => Promise<string[]> {
+  return async (key, start, stop) => {
+    const value = await withRedis(redisUrl, command => command('EVAL', "local rows=redis.call('LRANGE',KEYS[1],ARGV[1],ARGV[2]);if #rows==0 then return '[]' end;return cjson.encode(rows)", '1', key, String(start), String(stop)))
+    const rows: unknown = JSON.parse(value ?? 'null')
+    if (!Array.isArray(rows) || rows.some(item => typeof item !== 'string')) throw new Error('Redis list response invalid')
+    return rows
+  }
+}
+
+/** Bot解绑后清平台地址；最近地址仅在平台匹配时删除，坏JSON保留。 */
+export function createRedisUserBotReachCleaner(redisUrl: string) {
+  return async (ownerId: string, platform: string): Promise<void> => {
+    await withRedis(redisUrl, command => command('EVAL',
+      "redis.call('DEL',KEYS[1]);local raw=redis.call('GET',KEYS[2]);if raw then local ok,value=pcall(cjson.decode,raw);if ok and type(value)=='table' and value.platform==ARGV[1] then redis.call('DEL',KEYS[2]) end end;return 1",
+      '2', `imreach:${ownerId}:${platform}`, `imreach:${ownerId}`, platform))
   }
 }
 
@@ -213,11 +346,12 @@ export function createRedisAgentRunRecoveryState(redisUrl: string) {
             redisOk: true,
             active,
             stale: active && !beatExists && !ownerExists && !leaseExists,
+            snapshot: raw,
           }
         })
       } catch {
         reportFailure('agent run recovery probe')
-        return { redisOk: false, active: null, stale: false }
+        return { redisOk: false, active: null, stale: false, snapshot: null }
       }
     },
     async reap(sessionId: number) {
@@ -232,6 +366,17 @@ export function createRedisAgentRunRecoveryState(redisUrl: string) {
         ))
       } catch {
         reportFailure('agent run recovery reap')
+      }
+    },
+    async reapIfStale(sessionId: number, snapshot: string) {
+      try {
+        return await withRedis(redisUrl, async command => (await command('EVAL',
+          "if redis.call('GET',KEYS[1]) ~= ARGV[1] then return 0 end; if redis.call('EXISTS',KEYS[3],KEYS[4],KEYS[5]) ~= 0 then return 0 end; redis.call('DEL',KEYS[1],KEYS[2]); return 1",
+          '5', `genstream:state:${sessionId}`, `genstream:cancel:${sessionId}`,
+          `genstream:lease:${sessionId}`, `genstream:owner:${sessionId}`, `genstream:beat:${sessionId}`, snapshot)) === '1')
+      } catch {
+        reportFailure('agent run recovery conditional reap')
+        return false
       }
     },
     async compressionLockExists(sessionId: number) {
@@ -416,4 +561,21 @@ export function createRedisEventPublisher(
       }
     },
   }
+}
+
+/** 短期状态/挑战的通用原子存储；NX避免上游重复ID覆盖其他owner。 */
+export function createRedisExpiringValueStore(redisUrl:string) {
+ return {
+  get:createRedisValueReader(redisUrl),
+  saveIfAbsent:async(key:string,value:string,seconds:number)=>await withRedis(redisUrl,command=>command('SET',key,value,'EX',String(seconds),'NX'))==='OK',
+  delete:async(key:string)=>{await withRedis(redisUrl,command=>command('DEL',key))},
+ }
+}
+
+/** 飞书绑定产生的可触达地址，沿用Python两个90天协议键，不记录凭据。 */
+export function createRedisFeishuReachWriter(redisUrl:string) {
+ return async(ownerId:string,botId:string,openId:string):Promise<void>=>{
+  const value=JSON.stringify({platform:'feishu',channel_id:botId,chat_id:null,puid:openId,context_token:''})
+  await withRedis(redisUrl,command=>command('EVAL',"redis.call('SET',KEYS[1],ARGV[1],'EX',ARGV[2]);redis.call('SET',KEYS[2],ARGV[1],'EX',ARGV[2]);return 'OK'",'2',`imreach:${ownerId}:feishu`,`imreach:${ownerId}`,value,String(90*86400)))
+ }
 }

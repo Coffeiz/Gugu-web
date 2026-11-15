@@ -79,6 +79,16 @@ test('login fixed-window buckets isolate peer IP and username without storing ra
   assert.match(storedKeys, new RegExp(createHash('sha256').update('203.0.113.7').digest('hex')))
 })
 
+test('等价 IPv6 地址共用与 Python 相同的限流桶', async () => {
+  const memory = memoryRedis()
+  const limit = createRedisRateLimiter(memory.redis)
+  const options = { bucket: 'adminlogin', limit: 1, windowSeconds: 300 }
+  await limit(makeRequest('2001:0DB8:0000:0000:0000:0000:0000:0001'), options)
+  await assert.rejects(() => limit(makeRequest('2001:db8::1'), options), RateLimitError)
+  const hash = createHash('sha256').update('2001:db8::1').digest('hex')
+  assert.equal(memory.counts.get(`rl:adminlogin:ip:${hash}`), 2)
+})
+
 test('Redis failures fail open for login while explicit fail-closed buckets return service unavailable', async () => {
   const failedRedis: RedisRateLimitCommands = {
     async incr() { throw new Error('synthetic redis outage') },

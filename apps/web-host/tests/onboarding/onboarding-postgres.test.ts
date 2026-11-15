@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
-import { createPostgresOnboardingStore } from '../../src/domains/onboarding/persistence/postgres.js'
+import { createKyselyOnboardingStore } from '@gugu/core/onboarding'
+import { createPostgresRuntime, type SqlDataRuntime } from '@gugu/core/data'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
@@ -15,6 +16,7 @@ test('PostgreSQL onboarding updates preserve legacy seed state and isolate each 
   const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema}`, max: 3 })
   const ownerId = randomUUID()
   const otherOwnerId = randomUUID()
+  let runtime: SqlDataRuntime | undefined
 
   try {
     await pool.query('CREATE TABLE users (id uuid PRIMARY KEY)')
@@ -31,7 +33,8 @@ test('PostgreSQL onboarding updates preserve legacy seed state and isolate each 
       'INSERT INTO onboarding_state (user_id, state) VALUES ($1, $2::json)',
       [ownerId, JSON.stringify({ seeded: true, seeded_project_id: 41, seeded_project_name: '旧示例', custom: '保留' })],
     )
-    const store = createPostgresOnboardingStore(pool)
+    runtime = await createPostgresRuntime({ url: databaseUrl!, schema })
+    const store = createKyselyOnboardingStore(runtime.db, 'postgres')
 
     const initial = await store.getState(ownerId)
     assert.deepEqual(initial.seed, { seeded: true, project_id: 41, project_name: '旧示例' })
@@ -57,6 +60,7 @@ test('PostgreSQL onboarding updates preserve legacy seed state and isolate each 
     assert.equal(rows.rowCount, 2)
     assert.equal(rows.rows.find((row) => row.user_id === ownerId)?.state.custom, '保留')
   } finally {
+    await runtime?.close()
     await pool.end()
     await admin.query(`DROP SCHEMA "${schema}" CASCADE`).catch(() => undefined)
     await admin.end()

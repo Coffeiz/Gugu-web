@@ -1,7 +1,7 @@
 import type { Pool } from 'pg'
 import { runBestEffort } from '../../../adapters/best-effort.js'
-import type { CalendarEventDeletePublication } from '../application/event-delete.js'
-import type { EventUpdatePublication } from '../application/event-update.js'
+import type { CalendarEventDeletePublication } from '@gugu/core/calendar'
+import type { EventUpdatePublication } from '@gugu/core/calendar'
 
 export type CalendarMutationPublication = EventUpdatePublication | CalendarEventDeletePublication
 

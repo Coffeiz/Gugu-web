@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import type { CanonicalMessage } from '../../../src/agent/harness/contracts.js'
+import type { CanonicalMessage } from '../../../src/agent/models.js'
 import type { JsonObject } from '../../../src/agent/providers/contracts.js'
 import type { ProviderConfig, ProviderWire } from '../../../src/agent/providers/contracts.js'
 import { ProviderRuntime } from '../../../src/agent/providers/runtime.js'
-import { runContextBranch } from '../../../src/agent/harness/context/reflection.js'
+import { runContextBranch } from '../../../src/agent/memory/reflection.js'
 import { outputBudget, parseStructuredJson } from '../../../src/agent/providers/standalone.js'
 import { providerSelection } from '../../../src/agent/providers/registry.js'
 import { streamWithRetry } from '../../../src/agent/providers/retry.js'
 import { ProviderError } from '../../../src/agent/providers/errors.js'
-import { MessageArea, canonicalToolRound } from '../../../src/agent/harness/history/canonical-history.js'
+import { MessageArea, canonicalToolRound } from '../../../src/agent/context/history/canonical-history.js'
 import { anthropicDriver, anthropicPolicy } from '../../../src/agent/providers/anthropic/driver.js'
 import { mergeOpenaiSystemMessages, prepareOpenAiCache, projectOpenai, renderOpenaiHistory, sanitizeOpenaiToolHistory, transformOpenaiWireHistory } from '../../../src/agent/providers/openai/history.js'
 import { normalizedToolCall, normalizeOpenaiUsage, openaiDriver, openaiPolicy } from '../../../src/agent/providers/openai/driver.js'
@@ -289,7 +289,7 @@ describe('OpenAI缓存、分片与真实请求边界', () => {
     expect(output.at(-1)).toMatchObject({ type: 'complete', text: '最终成功' })
   })
   it('真实Chat的maxRetries=2只发送三次429请求，耗尽安全失败而不泄漏上游正文', async () => {
-    const f = transport({ error: { message: 'synthetic-secret 上游私有正文' } }, { status: 429 }), input = invocation(), pauses: number[] = [], output: import('../../../src/agent/harness/contracts.js').ProviderEvent[] = []
+    const f = transport({ error: { message: 'synthetic-secret 上游私有正文' } }, { status: 429 }), input = invocation(), pauses: number[] = [], output: import('../../../src/agent/models.js').ProviderEvent[] = []
     const failure = await (async () => {
       for await (const event of streamWithRetry(() => openaiDriver.stream(input, f.deps), input.signal, { maxRetries: 2, clock: { now: () => 0, sleep: async ms => { pauses.push(ms) } } })) output.push(event)
     })().catch(error => error as unknown)

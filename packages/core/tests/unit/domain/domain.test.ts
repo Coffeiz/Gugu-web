@@ -7,11 +7,28 @@ import {
   normalizeProjectStages,
   replaceProjectStages,
   nextProjectStageKey,
-} from '../../../src/domain/index.js'
+  nextProjectTodoNumber,
+} from '../../../src/index.js'
 import { utc } from '../../../src/data/codec.js'
 import { requestJsonSchema } from '../../../src/contracts/index.js'
 
 describe('领域输入与可移植边界', () => {
+  it('阶段待办只接受Python16十进制编号，新Unicode字符不推动计数且非十进制Digit安全失败', () => {
+    const newer = String.fromCodePoint(0x11de9)
+    const old = [{ key: 's2', label: '准备', todos: [{ id: 't2', text: '原待办' }] },
+      { key: `s1${newer}`, label: '历史文本', todos: [{ id: `t${newer}`, text: '历史待办' }] }]
+    const snapshot = structuredClone(old)
+    expect(nextProjectStageKey(old)).toBe('s3')
+    expect(nextProjectTodoNumber(old)).toBe(2)
+    expect(nextProjectStageKey([{ key: 's٢', label: '甲' }, { key: 's𝟜', label: '乙' }])).toBe('s5')
+    expect(nextProjectTodoNumber([{ key: 's0', label: '甲', todos: [{ id: 't９', text: '乙' }] }])).toBe(9)
+    for (const suffix of ['²', '①', '1²']) {
+      expect(() => nextProjectStageKey([{ key: `s${suffix}`, label: '甲' }])).toThrow('不是十进制数字')
+      expect(() => nextProjectTodoNumber([{ key: 's0', label: '甲', todos: [{ id: `t${suffix}`, text: '乙' }] }]))
+        .toThrow('不是十进制数字')
+    }
+    expect(old).toEqual(snapshot)
+  })
   it('阶段和待办编号耗尽安全整数范围时拒绝生成失真的身份', () => {
     const maximum = Number.MAX_SAFE_INTEGER
     expect(nextProjectStageKey([{ key: `s${maximum - 1}`, label: '临界阶段' }])).toBe(
@@ -108,10 +125,14 @@ describe('领域输入与可移植边界', () => {
     expect(() => utc('2026-02-30 10:00:00')).toThrow('格式无效')
   })
   it('可移植目录不依赖 Node、SQL 或宿主，协议可生成 JSON Schema', () => {
-    for (const directory of ['domain', 'contracts', 'agent/executor']) {
+    for (const directory of ['projects', 'clients', 'shared', 'contracts', 'agent/executor']) {
       const files =
         directory === 'agent/executor'
           ? ['contracts.ts', 'policy.ts']
+          : directory === 'projects'
+            ? ['domain.ts', 'colors.ts']
+            : directory === 'clients'
+              ? ['clients.ts']
           : readdirSync(new URL(`../../../src/${directory}/`, import.meta.url)).filter(
               (name) => name.endsWith('.ts'),
             )

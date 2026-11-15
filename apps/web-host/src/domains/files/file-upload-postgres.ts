@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
 import { isPathWithin } from '../../adapters/path-safety.js'
 import type { FileUploadInput, FileUploadOperations, StagedUpload } from './file-upload.js'
-import { normalizeFileOwnerId } from './file-owner.js'
+import { isOwnedFileStorageKey, normalizeFileOwnerId } from './file-owner.js'
 import { formatFileSize } from './file-size.js'
 import { ensureRegistrationFileLibraryQuota, updateFileStorageQuota } from './persistence/storage-quota.js'
 
@@ -258,6 +258,9 @@ async function insertUndo(
 interface UploadStoreOptions {
   storageRoot: string
   defaultLimitBytes: number | null
+  removeCommittedBackup?: (backupPath: string) => Promise<void>
+  restoreBackup?: typeof rename
+  afterStore?: () => Promise<void>
   publishChanged(event: {
     ownerId: string; operation: 'create' | 'update'; entityId: number
     payload: Record<string, unknown>; origin: string | null
@@ -313,6 +316,7 @@ async function storeOverwrite(
   userId: string, upload: StagedUpload, metadata: { undoContextId: string | null },
   target: Target, before: FileRow,
 ): Promise<FileRow> {
+  if (!isOwnedFileStorageKey(userId, before.storage_key)) throw new CoreError('not_found', '文件不存在')
   const destination = (await storagePath(options.storageRoot, before.storage_key)).target
   state.finalPath = destination
   const stagedPath = await stageForStorage(upload.path, destination, state)
@@ -512,6 +516,8 @@ export function createPostgresFileUploadOperations(
         stagingDirectories: [], createdArtifacts: [],
       }
       let committed = false
+      let commitAttempted = false
+      let preserveStage = false
       try {
         await client.query('BEGIN')
         const target = await resolveTarget(client, userId, upload.input)
@@ -522,25 +528,34 @@ export function createPostgresFileUploadOperations(
         const row = before
           ? await storeOverwrite(client, options, state, userId, upload, metadata, target, before)
           : await storeNewFile(client, options, state, userId, upload, metadata, target, displayName, ext)
+        await options.afterStore?.()
+        commitAttempted = true
         await client.query('COMMIT')
         committed = true
-        if (state.rollbackPath) await rm(state.rollbackPath, { force: true })
+        if (state.rollbackPath) await Promise.resolve().then(() => options.removeCommittedBackup?.(state.rollbackPath!) ?? rm(state.rollbackPath!, { force: true })).catch(() => {
+          console.error('文件上传备份清理失败，将尝试清理暂存目录')
+        })
         const response = fileResponse(row, target)
         await options.publishChanged({ ownerId: userId, operation: before ? 'update' : 'create', entityId: Number(row.id), payload: response, origin: metadata.clientId }).catch(() => undefined)
         return response
       } catch (error) {
         if (!committed) {
           await client.query('ROLLBACK').catch(() => undefined)
-          for (const artifact of state.createdArtifacts) await rm(artifact, { force: true }).catch(() => undefined)
-          for (const destination of state.createdDestinations) await rm(destination, { force: true }).catch(() => undefined)
-          if (state.finalPath && (state.replacedDestination || state.rollbackPath)) {
-            if (state.replacedDestination) await rm(state.finalPath, { force: true }).catch(() => undefined)
-            if (state.rollbackPath) await rename(state.rollbackPath, state.finalPath).catch(() => undefined)
-          }
+          if (!commitAttempted) {
+            for (const artifact of state.createdArtifacts) await rm(artifact, { force: true }).catch(() => undefined)
+            for (const destination of state.createdDestinations) await rm(destination, { force: true }).catch(() => undefined)
+            if (state.finalPath && (state.replacedDestination || state.rollbackPath)) {
+              if (state.replacedDestination) await rm(state.finalPath, { force: true }).catch(() => undefined)
+              if (state.rollbackPath) await Promise.resolve().then(() => (options.restoreBackup ?? rename)(state.rollbackPath!, state.finalPath!)).catch(() => {
+                preserveStage = true
+                console.error('文件上传回滚失败，保留备份供核查')
+              })
+            }
+          } else console.error('文件上传提交结果未知，保留文件供核查')
         }
         throw error
       } finally {
-        for (const directory of state.stagingDirectories) await rm(directory, { recursive: true, force: true }).catch(() => undefined)
+        if (!preserveStage && (!commitAttempted || committed)) for (const directory of state.stagingDirectories) await rm(directory, { recursive: true, force: true }).catch(() => console.error('文件上传暂存目录清理失败，可能存在残留'))
         client.release()
       }
     },

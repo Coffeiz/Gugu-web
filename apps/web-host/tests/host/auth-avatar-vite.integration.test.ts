@@ -121,6 +121,15 @@ test('Vite→Node Host→isolated PostgreSQL uploads an authenticated Local avat
     assert.equal(unsupported.status, 400)
     const stillReadable = await fetch(`${base}/${ownerId}`)
     assert.equal(Buffer.from(await stillReadable.arrayBuffer()).toString(), 'new-owner-avatar')
+    const replacementForm = new FormData()
+    replacementForm.append('file', new Blob(['replacement-avatar'], { type: 'image/webp' }), 'avatar.webp')
+    const replacement = await fetch(base, {
+      method: 'POST', headers: { authorization: `Bearer ${ownerToken}` }, body: replacementForm,
+    })
+    assert.equal(replacement.status, 200)
+    const replacementUser = await replacement.json() as { avatar_url: string }
+    assert.notEqual(replacementUser.avatar_url, user.avatar_url)
+    assert.equal(Buffer.from(await (await fetch(new URL(replacementUser.avatar_url, base))).arrayBuffer()).toString(), 'replacement-avatar')
   } finally {
     if (vite) await vite.close()
     await app.close().catch(() => undefined)

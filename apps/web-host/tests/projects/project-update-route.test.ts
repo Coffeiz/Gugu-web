@@ -4,7 +4,7 @@ import test from 'node:test'
 import { CoreError } from '@gugu/core'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
 import type { UserFromRequest } from '../../src/app.js'
-import { createProjectUpdater, type ProjectUpdateRuntime } from '../../src/domains/projects/application/project-update.js'
+import { createProjectUpdater, type ProjectUpdateRuntime } from '@gugu/core/project-update'
 import { registerProjectRoutes } from '../../src/domains/projects/routes/projects.js'
 
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'

@@ -10,7 +10,7 @@ import { registerProfileRoute, type ProfileUser } from '../../src/domains/auth/r
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const secret = 'synthetic-profile-secret-with-enough-entropy'
 
-async function createFixture(options: { failAuthNotification?: boolean } = {}) {
+async function createFixture(options: { failAuthNotification?: boolean; tokenExpiresMinutes?: number } = {}) {
   const schema = `gugu_auth_profile_${randomUUID().replaceAll('-', '')}`
   const adminPool = new Pool({ connectionString: databaseUrl, max: 1 })
   await adminPool.query(`CREATE SCHEMA "${schema}"`)
@@ -57,6 +57,7 @@ async function createFixture(options: { failAuthNotification?: boolean } = {}) {
   registerProfileRoute(app, {
     pool,
     secret,
+    tokenExpiresMinutes: options.tokenExpiresMinutes,
     async authenticate(request: FastifyRequest, reply: FastifyReply) {
       const token = request.headers.authorization?.match(/^Bearer\s+(.+)$/i)?.[1]
       if (!token) {
@@ -165,7 +166,7 @@ test('profile update validates timezone and changes only the authenticated user 
 test('password update checks the current password, advances the token version, and keeps the session after notification failure', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
 }, async () => {
-  const fixture = await createFixture({ failAuthNotification: true })
+  const fixture = await createFixture({ failAuthNotification: true, tokenExpiresMinutes: 2 })
   try {
     const missingCurrentPassword = await fixture.app.inject({
       method: 'PATCH', url: '/api/v1/auth/profile',
@@ -202,6 +203,9 @@ test('password update checks the current password, advances the token version, a
     const refreshedToken = cookies.match(/gugu_user_access_token=([^;]+)/)?.[1]
     assert.ok(refreshedToken)
     assert.equal(verifyUserToken(refreshedToken, secret).securityVersion, 5)
+    assert.match(cookies, /gugu_user_access_token=[^;]+; Max-Age=120;/)
+    assert.match(cookies, /gugu_user_csrf_token=[^;]+; Max-Age=120;/)
+    assert.throws(() => verifyUserToken(refreshedToken, secret, Date.now() + 180_000))
 
     const oldSession = await fixture.app.inject({
       method: 'PATCH', url: '/api/v1/auth/profile',

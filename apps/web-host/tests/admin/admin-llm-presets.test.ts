@@ -9,7 +9,7 @@ const initial = (): { ai_presets: { active_id: string; items: Preset[] }; ai: Re
   { id: 'other', name: '备用', provider: 'openai', api_key: '', base_url: 'https://api.example.test', model: 'gpt', max_tokens: 1000, context_tokens: 4000 },
 ] }, ai: {} as Record<string, unknown> })
 function setup(document = initial()) {
-  const app = Fastify(), audits: Array<{ action: string; detail: Record<string, unknown> }> = [], modelCalls: unknown[][] = [], invalidations: string[] = []
+  const app = Fastify(), audits: Array<{ action: string; detail: Record<string, unknown> }> = [], modelCalls: unknown[][] = [], invalidations: string[] = [], reasoningInvalidations: string[] = []
   registerAdminLlmPresetRoutes(app, {
     requireAdmin: async (request, reply) => {
       if (request.headers.authorization !== 'admin') return reply.code(401).send({ error: 'unauthorized' })
@@ -20,14 +20,29 @@ function setup(document = initial()) {
     capabilitySnapshot: () => ({ chat: true }),
     audit: (action, detail) => { audits.push({ action, detail }) },
     invalidateActiveRuntime: () => { invalidations.push('invalidated') },
+    invalidateReasoningStates: () => { reasoningInvalidations.push('invalidated') },
     fetchModels: async (baseUrl, provider, apiKey, apiFormat) => {
       modelCalls.push([baseUrl, provider, apiKey, apiFormat])
       if (provider === 'broken') throw new Error('synthetic-secret upstream response')
       return ['deepseek-chat']
     },
   })
-  return { app, document, audits, modelCalls, invalidations }
+  return { app, document, audits, modelCalls, invalidations, reasoningInvalidations }
 }
+
+test('策略更新保留未指定字段，拒绝非法值并使运行状态失效', async () => {
+  const { app, invalidations } = setup()
+  try {
+    const headers = { authorization: 'admin' }
+    const updated = await app.inject({ method: 'POST', url: '/api/v1/admin/agent/llm-presets/strategy', headers, payload: { strategy: 'pool', pool_mode: 'round_robin' } })
+    assert.deepEqual(updated.json(), { strategy: 'pool', pool_mode: 'round_robin' })
+    const rejected = await app.inject({ method: 'POST', url: '/api/v1/admin/agent/llm-presets/strategy', headers, payload: { strategy: 'invalid' } })
+    assert.equal(rejected.statusCode, 400)
+    const partial = await app.inject({ method: 'POST', url: '/api/v1/admin/agent/llm-presets/strategy', headers, payload: { pool_mode: 'random' } })
+    assert.deepEqual(partial.json(), { strategy: 'pool', pool_mode: 'random' })
+    assert.equal(invalidations.length, 2)
+  } finally { await app.close() }
+})
 
 test('读取预设只返回遮蔽后的密钥并容忍无效旧记录', async () => {
   const config = initial()
@@ -138,5 +153,33 @@ test('能力覆盖只接受布尔白名单，重置探测元数据并同步活�
     assert.deepEqual(document.ai.capability_overrides, { tools: true, structured_json: true })
     assert.equal(document.ai.api_key, 'synthetic-secret')
     assert.deepEqual(invalidations, ['invalidated'])
+  } finally { await app.close() }
+})
+
+
+test('创建、更新、切换和删除预设均使运行模型与推理状态失效', async () => {
+  const { app, invalidations, reasoningInvalidations } = setup()
+  const headers = { authorization: 'admin' }
+  try {
+    const create = await app.inject({ method: 'POST', url: '/api/v1/admin/agent/llm-presets', headers,
+      payload: { provider: 'openai', model: 'synthetic', base_url: 'https://model.example.test', max_tokens: 100, context_tokens: 1000 } })
+    assert.equal(create.statusCode, 201)
+    assert.equal((await app.inject({ method: 'PUT', url: '/api/v1/admin/agent/llm-presets/new-preset', headers, payload: { model: 'next' } })).statusCode, 200)
+    assert.equal((await app.inject({ method: 'POST', url: '/api/v1/admin/agent/llm-presets/new-preset/activate', headers })).statusCode, 200)
+    assert.equal((await app.inject({ method: 'DELETE', url: '/api/v1/admin/agent/llm-presets/other', headers })).statusCode, 200)
+    assert.equal(invalidations.length, 4); assert.equal(reasoningInvalidations.length, 4)
+  } finally { await app.close() }
+})
+
+
+test('预设写入忽略未声明字段，防止覆盖预设身份或回显额外密钥', async () => {
+  const { app, document } = setup()
+  try {
+    const response = await app.inject({ method: 'PUT', url: '/api/v1/admin/agent/llm-presets/active', headers: { authorization: 'admin' },
+      payload: { id: 'forged', private_token: 'synthetic-extra-secret', model: 'safe' } })
+    assert.equal(response.statusCode, 200)
+    assert.equal(response.body.includes('synthetic-extra-secret'), false)
+    assert.equal(document.ai_presets.items[0].id, 'active')
+    assert.equal('private_token' in document.ai_presets.items[0], false)
   } finally { await app.close() }
 })

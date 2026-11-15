@@ -1,5 +1,6 @@
 import type { Pool } from 'pg'
 import bcrypt from 'bcryptjs'
+import { createHash } from 'node:crypto'
 import type { PublicUserRecord } from '../auth.js'
 
 interface UserRow {
@@ -52,7 +53,9 @@ export function createUserRepository(pool: Pool): {
         isActive: row.is_active,
         accountStatus: row.account_status,
         securityVersion: row.security_version,
-        avatarUrl: row.avatar ? `/api/v1/auth/avatar/${row.id}` : null,
+        avatarUrl: row.avatar
+          ? `/api/v1/auth/avatar/${row.id}?v=${createHash('sha256').update(row.avatar).digest('hex').slice(0, 16)}`
+          : null,
         createdAt: row.created_at,
         timezone: row.timezone,
         emailSubscribed: row.email_subscribed ?? false,

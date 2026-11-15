@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Pool } from 'pg'
@@ -60,6 +60,7 @@ test('PostgreSQL Local 上传创建文件并覆盖时同步更新物理正文、
     const operations = createPostgresFileUploadOperations(pool, {
       storageRoot: root,
       defaultLimitBytes: 1000,
+      async removeCommittedBackup() { throw new Error('模拟清理失败') },
       async publishChanged(event) { published.push({ operation: event.operation, entityId: event.entityId }) },
     })
     const input = {
@@ -98,6 +99,37 @@ test('PostgreSQL Local 上传创建文件并覆盖时同步更新物理正文、
     )
     assert.equal(Number(quota.rows[0]!.used_bytes), 13)
     assert.deepEqual(published.map((event) => event.operation), ['create', 'update'])
+    const destination = path.join(root, ownerId, '个人文件', '记录.txt')
+    const unknownPool = { async connect() {
+      const client=await pool.connect();const rawQuery=client.query;const query=rawQuery.bind(client);const release=client.release.bind(client)
+      client.query=(async (...args:Parameters<typeof client.query>)=>{const result=await (query as (...args:any[])=>Promise<any>)(...args);if(args[0]==='COMMIT')throw new Error('模拟提交后断连');return result}) as typeof client.query
+      client.release=(() => {client.query=rawQuery;release()}) as typeof client.release
+      return client
+    }} as unknown as Pool
+    const upload = {input:{...input,onConflict:'overwrite' as const,overwriteFileId:created.id},originalName:'记录.txt',mimeType:'text/plain',path:overwritePath,sizeBytes:13,sha256:'synthetic',imgWidth:8,imgHeight:9}
+    await writeFile(overwritePath, 'new contents!')
+    const unknownOps=createPostgresFileUploadOperations(unknownPool,{storageRoot:root,defaultLimitBytes:1000,async publishChanged(){}})
+    await assert.rejects(unknownOps.store(ownerId,upload,{idempotencyKey:null,undoContextId:null,clientId:null}),/模拟提交后断连/)
+    assert.equal(await readFile(destination,'utf8'),'new contents!')
+    const stage=(await readdir(path.dirname(destination))).find(name=>name.startsWith('.upload-stage-'))!
+    assert.equal(await readFile(path.join(path.dirname(destination),stage,'content.old'),'utf8'),'after content')
+    const existingStages=new Set(await readdir(path.dirname(destination)))
+    const failedOps=createPostgresFileUploadOperations(pool,{storageRoot:root,defaultLimitBytes:1000,async publishChanged(){},async afterStore(){throw new Error('模拟写入失败')},restoreBackup(){throw new Error('模拟同步回滚失败')}})
+    await assert.rejects(failedOps.store(ownerId,upload,{idempotencyKey:null,undoContextId:null,clientId:null}),/模拟写入失败/)
+    const retained=(await readdir(path.dirname(destination))).find(name=>name.startsWith('.upload-stage-')&&!existingStages.has(name))!
+    assert.equal(await readFile(path.join(path.dirname(destination),retained,'content.old'),'utf8'),'new contents!')
+    const otherOwner='22222222-2222-4222-8222-222222222222'
+    const foreignKey=`${otherOwner}/个人文件/秘密.txt`,foreignPath=path.join(root,...foreignKey.split('/'))
+    await mkdir(path.dirname(foreignPath),{recursive:true});await writeFile(foreignPath,'他人正文')
+    const corrupt=await pool.query<{id:number}>(`INSERT INTO files(user_id,display_name,ext,space,stage_name,storage_key,storage_backend,version,size,size_bytes,mime_type,created_at,updated_at) VALUES($1,'秘密','TXT','personal','',$2,'local',1,'6 B',6,'text/plain',now(),now()) RETURNING id`,[ownerId,foreignKey])
+    const malicious={...upload,input:{...input,onConflict:'overwrite' as const,overwriteFileId:corrupt.rows[0]!.id},originalName:'秘密.txt'}
+    await assert.rejects(operations.store(ownerId,malicious,{idempotencyKey:null,undoContextId:null,clientId:null}),/文件不存在/)
+    assert.equal(await readFile(foreignPath,'utf8'),'他人正文')
+    const importedKey=`${ownerId.replaceAll('-','')}/.data-portability/imported/synthetic/file`,importedPath=path.join(root,...importedKey.split('/'))
+    await mkdir(path.dirname(importedPath),{recursive:true});await writeFile(importedPath,'导入正文')
+    const imported=await pool.query<{id:number}>(`INSERT INTO files(user_id,display_name,ext,space,stage_name,storage_key,storage_backend,version,size,size_bytes,mime_type,created_at,updated_at) VALUES($1,'导入','TXT','personal','',$2,'local',1,'12 B',12,'text/plain',now(),now()) RETURNING id`,[ownerId,importedKey])
+    await operations.store(ownerId,{...upload,input:{...input,onConflict:'overwrite',overwriteFileId:imported.rows[0]!.id},originalName:'导入.txt'},{idempotencyKey:null,undoContextId:null,clientId:null})
+    assert.equal(await readFile(importedPath,'utf8'),'new contents!')
   } finally {
     await pool.end()
     await admin.query(`DROP SCHEMA "${schema}" CASCADE`)

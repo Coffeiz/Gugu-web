@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
-import { createPostgresFeedbackOperations } from '../../src/domains/feedback/persistence/postgres.js'
+import { createFeedbackService, createKyselyFeedbackOperations } from '@gugu/core/feedback'
+import { createPostgresRuntime } from '@gugu/core/data'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '74dc11bf-f2b6-47c7-a167-682b82a4af24'
@@ -20,7 +21,7 @@ async function withDatabase(work: (pool: Pool) => Promise<void>) {
       username varchar(64) NOT NULL,
       category varchar(32) NOT NULL,
       content text NOT NULL,
-      created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+      created_at timestamptz NOT NULL
     )`)
     await work(pool)
   } finally {
@@ -33,7 +34,10 @@ async function withDatabase(work: (pool: Pool) => Promise<void>) {
 test('feedback persists the authenticated owner and admin listing filters and pages the canonical rows', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
 }, async () => withDatabase(async (pool) => {
-  const operations = createPostgresFeedbackOperations(pool)
+  const schema = (await pool.query<{ current_schema: string }>('SELECT current_schema()')).rows[0]!.current_schema
+  const runtime = await createPostgresRuntime({ url: databaseUrl!, schema })
+  try {
+  const operations = createFeedbackService(createKyselyFeedbackOperations(runtime.db, 'postgres'))
   await operations.submit(ownerId, 'Moon Example', 'bug', 'Synthetic issue')
   await operations.submit(anotherOwnerId, 'Example User', 'suggestion', 'Synthetic idea')
   await operations.submit(ownerId, 'Moon Example', 'bug', 'Second issue')
@@ -52,4 +56,5 @@ test('feedback persists the authenticated owner and admin listing filters and pa
   const all = await operations.list(1, 30, '')
   assert.equal(all.total, 3)
   assert.equal(all.items.length, 3)
+  } finally { await runtime.close() }
 }))

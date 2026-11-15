@@ -8,7 +8,7 @@ import {
 export interface AgentSessionToolEventDetailsRouteOptions {
   requireUser: preHandlerHookHandler
   userIdFromRequest(request: FastifyRequest): string
-  pool: Pick<Pool, 'query'>
+  pool: Pick<Pool, 'query' | 'connect'>
 }
 
 export function registerAgentSessionToolEventDetailsRoute(

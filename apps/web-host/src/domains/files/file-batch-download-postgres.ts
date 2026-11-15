@@ -39,12 +39,16 @@ function archivePath(path: string): string {
 
 function uniqueName(input: string, counts: Map<string, number>): string {
   const count = counts.get(input) ?? 0
-  counts.set(input, count + 1)
-  if (count === 0) return input
+  if (count === 0) { counts.set(input, 1); return input }
   const index = input.lastIndexOf('.')
   const stem = index > 0 ? input.slice(0, index) : input
   const extension = index > 0 ? input.slice(index) : ''
-  return `${stem}_${count}${extension}`
+  let suffix = count
+  let candidate = `${stem}_${suffix}${extension}`
+  while (counts.has(candidate)) candidate = `${stem}_${++suffix}${extension}`
+  counts.set(input, suffix + 1)
+  counts.set(candidate, 1)
+  return candidate
 }
 
 function filename(file: BatchFileRow): string {

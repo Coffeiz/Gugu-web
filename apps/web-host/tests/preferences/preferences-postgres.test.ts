@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
+import { createPostgresRuntime } from '@gugu/core/data'
+import { createKyselyPreferenceDocumentStore } from '@gugu/core'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
 import { createUserToken, type PublicUserRecord } from '../../src/domains/auth/auth.js'
@@ -15,6 +17,7 @@ test('PostgreSQL preferences Host route persists partial updates per authenticat
   const admin = new Pool({ connectionString: databaseUrl, max: 1 })
   await admin.query(`CREATE SCHEMA "${schema}"`)
   const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema}`, max: 2 })
+  const core = await createPostgresRuntime({ url: databaseUrl!, schema })
   const ownerId = randomUUID()
   const otherOwnerId = randomUUID()
   const secret = 'synthetic-test-secret-for-preferences-pg'
@@ -50,7 +53,7 @@ test('PostgreSQL preferences Host route persists partial updates per authenticat
         secret,
         async lookupUser(userId) { return users.get(userId) ?? null },
       },
-      preferences: createPostgresPreferencesStore(pool),
+      preferences: createPostgresPreferencesStore(pool, { documentStore: createKyselyPreferenceDocumentStore(core.db, 'postgres') }),
     })
     try {
       const ownerAuthorization = `Bearer ${createUserToken(ownerId, 1, secret)}`
@@ -99,6 +102,7 @@ test('PostgreSQL preferences Host route persists partial updates per authenticat
       await app.close()
     }
   } finally {
+    await core.close()
     await pool.end()
     await admin.query(`DROP SCHEMA "${schema}" CASCADE`).catch(() => undefined)
     await admin.end()

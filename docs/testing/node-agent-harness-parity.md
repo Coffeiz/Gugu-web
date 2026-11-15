@@ -4,27 +4,27 @@
 
 [逐 Python 定义映射](node-agent-harness-parity.json) 是本专题的细目清单。初始盘点包含用户指定的全部 **58 个 Python 文件、516 个 `test_` 定义**；这是源码定义数，不是 pytest 收集数或参数化用例数。每条保留 Python 节点、源码行、职责分组、TS 对应测试、状态和缺口；当前没有运行结果的条目不能记为通过。生产架构见 [架构说明](../refactor/Gugu-2.0-架构说明.md)，整体进度见 [迁移清单](../refactor/Gugu-2.0-迁移任务清单.md)。
 
-## 固定目录职责映射（先于本轮结构调整）
+## 当前目录职责映射
 
-现有职责均由用户指定的18个实现文件承载，没有扩展固定树。下表先确定 Python 生产调用链及行为归属；JSON 的每个已映射定义另含 targetModules。本轮先完成映射，再归位实现及测试；固定树调整后的完整Core回归为30文件、506通过、0失败/跳过。混合engine测试拆入run/streaming/interactions，使用不注册测试的共享fake fixture。
+2026-11-14 按 Python 原模块职责直接重整。原 `agent/harness/` 及旧包导出已删除，入口为 `@gugu/core/agent`；不保留兼容转发。下表与 JSON 更新实现和测试路径，保留既有 Python 基准和验收缺口，目录调整不升级功能完成状态。
 
-| 固定位置 | Python 生产链及 pytest 契约 |
+| 当前位置 | Python 生产链及 pytest 契约 |
 | --- | --- |
-| harness.ts / index.ts | runner.collect/stream 组合入口；不承载状态和协议业务 |
-| contracts.ts / ports.ts | Run/Canonical/事件领域契约；Data、Provider、Tools、时钟及发布依赖 |
+| runner.ts / index.ts | runner.collect/stream 组合入口；不承载状态和协议业务 |
+| models.ts / ports.ts | Run/Canonical/事件领域契约；Data、Provider、Tools、时钟及发布依赖 |
 | run/lifecycle.ts | loop.runner、reply/tool-intent/decision guard；test_run_lifecycle、core_loop_characterization |
 | run/cancellation.ts | run.cancellation、llm.genstream；test_run_cancellation、test_genstream_cancel |
 | run/finalization.ts | context.run_finalize；成功/失败/取消事务、摘要水位、已完成结果保护 |
-| history/canonical-history.ts | context.assembly/canonical_tool_history；MessageArea、批次副本、工具原子单元 |
-| history/ordering.ts | context.history/chat_timeline；序号、游标、晚消息、重载顺序 |
-| history/attachment-refs.ts | 历史轻量引用、工具媒体 checkpoint 固化与 owner/身份校验 |
+| context/history/canonical-history.ts | context.assembly/canonical_tool_history；MessageArea、批次副本、工具原子单元 |
+| context/history/ordering.ts | context.history/chat_timeline；序号、游标、晚消息、重载顺序 |
+| context/history/attachment-refs.ts | 历史轻量引用、工具媒体 checkpoint 固化与 owner/身份校验 |
 | context/prepare.ts | run.preparation、session_snapshot/loaders；可信来源、TTL、并发发现/RAG与能力过滤 |
 | context/assemble.ts | context.run_context/assembly；snapshot→history→stance/RAG→当前用户→dynamic tail |
 | context/budget.ts | context.budget；当前请求实际用量、85%门限、overflow完整单元 |
 | context/compaction.ts | context.compaction；摘要边界、保护窗口、候选成功后物化 |
-| context/reflection.ts | reflection branch/snapshot；冻结主请求、scope、缺快照延后；持久Job由外部端口承接 |
-| streaming/coordinator.ts | loop driver/collect；归一Provider事件、工具回执的串行提交和事件顺序 |
-| streaming/backpressure.ts | stream consumer及并行批次；慢消费、提前return、取消后资源排空 |
+| memory/reflection.ts | reflection branch/snapshot；冻结主请求、scope、缺快照延后；持久Job由外部端口承接 |
+| core.ts | loop driver/collect；归一Provider事件、工具回执的串行提交和事件顺序 |
+| run/streaming.ts | stream consumer及并行批次；慢消费、提前return、取消后资源排空 |
 | interactions/coordinator.ts | interactions/confirmation/resume；单次回执消费、等待队列与崩溃恢复 |
 
 真实 Provider wire/thinking/signature 投影、Tools registry/参数校验/dispatch 和共享持久 jobs/lease/outbox 实现不搬进 Harness。后续 Provider 切片现已提供实际反思追加、摘要 wire 转换和分支调用适配，并通过实际 Harness 快照的四协议三阶段摘要恢复；详见 [Provider 验收](node-agent-provider-parity.md)。Tools、持久 jobs/lease/outbox 仍保持明确端口依赖，不造空实现；本清单不据此批量升级旧 Host/Data 条目。
@@ -90,9 +90,9 @@ Node 使用已准备的原生 Node 26，经 Core 显式 suites 清单运行本�
 定向复跑入口如下；结果按本轮实际完整运行记录维护，不把这段命令本身当执行证据。
 
 ```sh
-cd gugu-core
+cd packages/core
 node --version  # 必须为 26.x
-node node_modules/vitest/vitest.mjs run tests/agent/harness --maxWorkers=1 --no-file-parallelism
+node node_modules/vitest/vitest.mjs run tests/agent/context tests/agent/core tests/agent/run tests/agent/interactions --maxWorkers=1 --no-file-parallelism
 ```
 
 本轮复查确认的问题已修复，逐项证据以 JSON 为准；部分覆盖及真实适配依赖仍不计完整迁移。当前清单不授权切换生产 Run、删除 Python 实现、提交、推送或触发 CI。
@@ -118,7 +118,7 @@ node node_modules/vitest/vitest.mjs run tests/agent/harness --maxWorkers=1 --no-
 
 ### 已复核的 Core 主链
 
-标准 `createCanonicalHarness` 已真实接入 `runPreparation`：owned 来源→共享取消下工具发现与一次 RAG→可信主体的配置/Shell/目录过滤→system/snapshot 分区与固定前缀→Canonical 准备。选中名称和稳定 Schema 进入 Provider 请求上下文，未开放工具不会派发。保留低层自定义 load API，但没有完整 capabilities 时明确失败，不能把来源 helper 单独当完整准备入口。
+标准 `createCanonicalRunner` 已真实接入 `runPreparation`：owned 来源→共享取消下工具发现与一次 RAG→可信主体的配置/Shell/目录过滤→system/snapshot 分区与固定前缀→Canonical 准备。选中名称和稳定 Schema 进入 Provider 请求上下文，未开放工具不会派发。保留低层自定义 load API，但没有完整 capabilities 时明确失败，不能把来源 helper 单独当完整准备入口。
 
 Canonical Area、批次副本/revision、授权媒体引用 checkpoint、用户时间/引用/群批次/历史回放、会话 TTL 与策略绑定、同请求实际输入压缩/rolling/有界 overflow、真实语言规则、serial/mixed parallel 调度、交互收据与终态恢复、工具安全展示、取消清理和成功反思捕获均已有行为回归。真实 Canonical 取消组合验证完成的工具 pair 和部分正文保留、摘要水位不前移、下一 Run 顺序一致；错误/提前 EOF 不把草稿伪装为成功历史。
 
@@ -212,3 +212,17 @@ N3 使用 EntryInput/Area batch 替代 Python MessageBatch/CanonicalTurn 类；�
 | `test_runner_collect.py` | 23 | Harness/runtime + Host Stream Adapter；Host / IM Adapter |
 | `test_tool_intent_guard.py` | 9 | Harness/runtime 与 Canonical 组合 |
 | `test_decision_guard_policy.py` | 4 | Harness/runtime 与 Canonical 组合 |
+
+## 2026-11-14 目录重整验收
+
+实现 19 文件及测试 25 文件（含一个共享 fixture）归位，旧目录和旧包导出已删除。新入口与旧入口拒绝均经过实际 Node 包解析验证。devserver 上运行模块 24 文件、463 项通过；Provider runtime 49 项通过；Host 运行、聊天、调度、交互 worker 和事件投影 6 文件、22 项通过，均无失败或跳过。Core、Core 测试源码与 Web Host 类型检查以及 Core/Web Host 构建通过。测试使用合成 Provider、内存状态和显式端口替身，保护上下文顺序、确认回执、取消、工具结果和事件重放。
+
+Python 基准尝试运行 cancellation、lifecycle、core loop 三个测试文件，但当前仓库在 devserver 缺少 `.venv/bin/pytest`，未执行用例。真实 PG/Redis、平台执行与真实外部服务未验收。静态质量增量以整个未提交工作区对比 HEAD，存在 Provider 历史投影的重复代码等既有差异告警，不能据此宣称本次结构调整的独立质量门全绿；本次没有为消除这些告警改动业务实现。工具迁移继续暂停。
+
+## Agent 全目录职责收敛补充（2026-11-14）
+
+顶层仅保留 `commands/config/context/executor/interactions/knowledge/memory/providers/run/sessions/skills/tools`。Run 编码归 `run/codec.ts`；正式 schema 归 `interactions/`；图片读取和消息辅助归 `context/`；BYOK 归 `config/`；待处理队列与标签归 `sessions/`。共用数据库事务借用直接从 Data 导入，删除 Agent 转发和旧别名。草案说明与 SQL 移入 `docs/refactor/agent/`，生产树内不再混放测试。
+
+两个原源码旁的 `.test.mjs` 合同文件已迁入正式测试树，保留原断言，并登记 suites 与元数据；测试发现支持 `.test.ts` 和 `.test.mjs`。本轮 devserver 定向 Core 回归 28 文件、458 项通过，无失败或跳过，覆盖编码隔离、schema owner/外键、快照恢复、消息清理、队列领域入口及运行上下文。并行会话新增 onboarding 文件一度导致清单发现失败，已由相应会话补登记后复跑通过。
+
+本轮最终验证：Core 测试源码类型检查、Core 构建、Web Host 类型检查及构建通过。Host 串行复跑 8 文件、28 项通过、8 项隔离 PG 测试跳过、0 失败。原先并行 Host 测试因 devserver 内存与交换空间耗尽而主动中断（9 通过、1 跳过、5 取消），不计通过；停止本会话进程后以 `--test-concurrency=1` 完整复跑。Host 证据包括临时 SQLite 的队列并发与 owner 隔离、合成 PG client 的加密 RunStore、脱敏 BYOK 及命令/标签路由；没有连接真实 PG/Redis 或付费模型。工具迁移继续暂停。

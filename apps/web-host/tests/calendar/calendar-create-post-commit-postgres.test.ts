@@ -1,15 +1,16 @@
+import { createPostgresRuntime } from '@gugu/core/data'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
-import { createCalendarEvent } from '../../src/domains/calendar/application/event-create.js'
+import { createCalendarEvent } from '@gugu/core/calendar'
 import { createCalendarEventPostCommitPublisher } from '../../src/domains/calendar/persistence/calendar-create-post-commit-postgres.js'
-import { createPostgresEventCreateStore } from '../../src/domains/calendar/persistence/event-create-postgres.js'
+import { calendarCreateStore } from './calendar-core-stores.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
 
-async function withDatabase(work: (pool: Pool) => Promise<void>) {
+async function withDatabase(work: (pool: Pool, coreRuntime: Awaited<ReturnType<typeof createPostgresRuntime>>) => Promise<void>) {
   const schema = `gugu_calendar_postcommit_${randomUUID().replaceAll('-', '')}`
   const adminPool = new Pool({ connectionString: databaseUrl, max: 1 })
   await adminPool.query(`CREATE SCHEMA "${schema}"`)
@@ -92,7 +93,8 @@ async function withDatabase(work: (pool: Pool) => Promise<void>) {
         CONSTRAINT uq_rag_index_job_user_source UNIQUE(user_id, source_type)
       )
     `)
-    await work(pool)
+    const coreRuntime = await createPostgresRuntime({ url: databaseUrl!, schema })
+    try { await work(pool, coreRuntime) } finally { await coreRuntime.close() }
   } finally {
     await pool.end()
     await adminPool.query(`DROP SCHEMA "${schema}" CASCADE`)
@@ -102,7 +104,7 @@ async function withDatabase(work: (pool: Pool) => Promise<void>) {
 
 test('calendar create commits before context/live effects and coalesces durable RAG entity IDs', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
-}, async () => withDatabase(async (pool) => {
+}, async () => withDatabase(async (pool, coreRuntime) => {
   const effectOrder: string[] = []
   const failures: Array<{ operation: string; code?: string; message?: string }> = []
   const postCommit = createCalendarEventPostCommitPublisher({
@@ -124,7 +126,7 @@ test('calendar create commits before context/live effects and coalesces durable 
       return true
     },
   }, (operation, code, message) => failures.push({ operation, code, message }))
-  const store = createPostgresEventCreateStore(pool, postCommit)
+  const store = calendarCreateStore(coreRuntime, postCommit)
 
   const first = await createCalendarEvent(store, {
     ownerId,

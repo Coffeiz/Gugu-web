@@ -104,6 +104,9 @@ test('空 patch 不创建或发布，错队列/越权保持 409/404，非法 pay
       type: 'string_type', loc: ['body', 'items', 0, 'text'],
       msg: 'Input should be a valid string', input: 7,
     }])
+    const unsafeInteger = await app.inject({ method: 'PATCH', url: '/api/v1/agent/pending-queues/session-3', payload: { session_id: 3, items: [{ key: 9007199254740992, text: 'bad' }] } })
+    assert.equal(unsafeInteger.statusCode, 422)
+    assert.deepEqual(unsafeInteger.json().detail, [{ type: 'value_error', loc: ['body', 'items', 0, 'key'], msg: 'Input is invalid', input: 9007199254740992 }])
     const extraReferenceField = await app.inject({ method: 'PATCH', url: '/api/v1/agent/pending-queues/session-3', payload: {
       session_id: 3, items: [{ key: 1, text: 'x', references: [{ type: 'project', id: 2, label: 'p', extra: 1 }] }],
     } })
@@ -200,12 +203,12 @@ test('PostgreSQL patch 合并时保留 claim lease，删除最后一项则移除
     const patch = createPostgresAgentPendingQueuePatch(pool)
     await assert.rejects(patch(owner, 'session-4', 4, [{ key: 1, text: '越权' }], []), AgentPendingQueueSessionNotFoundError)
     await assert.rejects(patch(owner, 'wrong-queue', 3, [{ key: 1, text: '错队列' }], []), AgentPendingQueueConflictError)
-    await patch(owner, 'session-3', 3, [{ key: 4, text: '原正文', _claim_token: 'lease', _claim_until: 500 }], [])
+    await pool.query("INSERT INTO conversation_pending_queues(user_id,queue_id,session_id,items,updated_at) VALUES ($1,'session-3',3,$2::jsonb,now())", [owner, JSON.stringify([{ key: 4, text: '原正文', _claim_token: 'lease', _claim_until: 500 }])])
     await patch(owner, 'session-3', 3, [{ key: 4, text: '更新正文' }], [])
     const { rows: [row] } = await pool.query<{ items: Array<Record<string, unknown>> }>(
       'SELECT items FROM conversation_pending_queues WHERE user_id=$1 AND queue_id=$2', [owner, 'session-3'],
     )
-    assert.deepEqual(row!.items, [{ key: 4, text: '更新正文', _claim_token: 'lease', _claim_until: 500 }])
+    assert.deepEqual(row!.items, [{ key: 4, text: '更新正文', attachments: [], references: [], _claim_token: 'lease', _claim_until: 500 }])
     await Promise.all([
       patch(owner, 'session-3', 3, [{ key: 7, text: '并发 A' }], []),
       patch(owner, 'session-3', 3, [{ key: 8, text: '并发 B' }], []),
@@ -249,7 +252,7 @@ test('PostgreSQL PUT 只改动当前 owner 的草稿并支持空列表删除', {
     )
     assert.equal(result.rowCount, 2)
     assert.ok(result.rows.every((row) => row.session_id === null))
-    assert.deepEqual(result.rows.find((row) => row.user_id === owner)?.items, [{ key: 2, text: '新内容' }])
+    assert.deepEqual(result.rows.find((row) => row.user_id === owner)?.items, [{ key: 2, text: '新内容', attachments: [], references: [] }])
     await replace(owner, 'draft-one', [])
     assert.equal((await pool.query('SELECT 1 FROM conversation_pending_queues WHERE user_id=$1', [owner])).rowCount, 0)
     assert.equal((await pool.query('SELECT 1 FROM conversation_pending_queues WHERE user_id=$1', [otherOwner])).rowCount, 1)

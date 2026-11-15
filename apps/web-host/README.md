@@ -4,7 +4,7 @@
 
 当前实现范围包括启动配置、PostgreSQL schema readiness、健康检查、主站/Admin Vue 静态资源、公开站点配置、认证与部分项目/文件/日历/客户/通知 API，以及 Admin 配置读取、保存和 PostgreSQL/Redis 连接测试。Admin 配置继续写入 `config.override.json` 格式，原子替换并保留其他配置段；数据库连接异常时 Host 仍提供仅 Admin 配置入口，健康检查保持未就绪，保存连接信息后重启生效。Redis 地址由 `GUGU_WEBUI_REDIS_URL` 提供，密码可单独放在 `GUGU_WEBUI_REDIS_PASSWORD`；独立密码变量优先于 URL 密码和配置文件密码。静态资源来自 `apps/web/dist`，未迁移的业务 API/SSE、Worker 和 Python 行为仍在迁移中，因此当前构建用于开发验收，不作为完整 Web 替代版。
 
-Admin 登录的认证版本和限流由单个 Node Host 进程内维护；登录认证不依赖 Redis 或 PostgreSQL 查询，审计写入失败也不会阻断登录。Host 重启会使旧 Admin token 失效，因此当前自托管部署按单实例运行。业务 API 需要 PostgreSQL；数据库不可用时只开放 Admin 配置界面和连接测试。未配置 Redis 时，注册的 fail-closed 限流和验证码能力不可用。
+配置 Redis 时，Admin 认证版本和登录限流在实例间共享；Redis 认证版本不可用时返回 503。未配置 Redis 时使用单进程内存版本和限流，Host 重启会使旧 Admin token 失效，因此该模式只适用于单实例。Admin 审计写入失败不阻断登录。业务 API 需要 PostgreSQL；数据库不可用时只开放 Admin 配置界面和连接测试。未配置 Redis 时，注册的 fail-closed 限流和验证码能力不可用。
 
 ## Docker Compose
 
@@ -42,6 +42,8 @@ corepack pnpm --filter @gugu/webui start
 ```
 
 本地运行必须设置 `SECRET_KEY` 和 Admin 登录密码。数据库连接可先设置 `GUGU_WEBUI_DATABASE_URL`，也可在 Admin 配置页首次录入；连接串支持 PostgreSQL URI 和 Python 现有的 `postgresql+asyncpg://` 形式。
+
+Agent 附件快照的 Node 专属数据库迁移目前只完成隔离 PostgreSQL 原型验收，快照读写、密钥轮换和部署流程尚未接通，不要将其视为附件功能可用。构建 Host 后，显式命令 `corepack pnpm --filter @gugu/webui migrate:agent-snapshot:check` 只读检查，`corepack pnpm --filter @gugu/webui migrate:agent-snapshot:apply` 才执行该 Node 迁移；两者只从环境变量 `GUGU_WEBUI_DATABASE_URL` 获取连接。迁移不修改 Alembic 台账，也不在启动时自动执行。实际部署前须先确认 Python schema 兼容、备份数据库，并与 Python 迁移串行；当前尚未验收真实部署和回滚流程。
 
 ## 回归测试
 

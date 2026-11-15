@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { vi } from 'vitest'
 import type { Mock } from 'vitest'
-import type { ProviderEvent } from '../../../src/agent/harness/contracts.js'
+import type { ProviderEvent } from '../../../src/agent/models.js'
 import type { JsonObject, ProviderDriverDependencies, ProviderHttpRequest, ProviderInvocation, ProviderPolicy } from '../../../src/agent/providers/contracts.js'
 import { openaiPolicy } from '../../../src/agent/providers/openai/driver.js'
 

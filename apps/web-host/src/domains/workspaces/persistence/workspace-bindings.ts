@@ -1,13 +1,15 @@
-import { CoreError } from '@gugu/core'
+import { createWorkspaceBindings } from '@gugu/core'
+import type { WorkspaceBindingOperations } from '@gugu/core'
+import type { WorkspaceDeclaration } from '@gugu/core/workspace-declarations'
 import type { Pool, PoolClient } from 'pg'
-import { normalizeOwnerId } from '../../../adapters/owner-context.js'
 import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
-import type { WorkspaceCreateResponse } from './workspace-create.js'
+
+export type { WorkspaceBindingOperations } from '@gugu/core'
 
 interface WorkspaceRow {
   id: number
   name: string
-  kind: WorkspaceCreateResponse['kind']
+  kind: WorkspaceDeclaration['kind']
   folder_id: number | null
   project_id: number | null
   directory_id: number | null
@@ -20,34 +22,12 @@ interface SessionRow {
   workspace_id: number | null
 }
 
-export interface WorkspaceBindingOperations {
-  bind(ownerId: string, workspaceId: number, sessionId: number): Promise<WorkspaceCreateResponse>
-  unbind(ownerId: string, sessionId: number): Promise<void>
-  current(ownerId: string, sessionId: number): Promise<WorkspaceCreateResponse | null>
-}
-
-function validateId(id: number, label: string): number {
-  if (!Number.isSafeInteger(id)) throw new CoreError('invalid_request', `${label} 无效`)
-  return id
-}
-
-async function ownedSession(client: PoolClient, ownerId: string, sessionId: number): Promise<SessionRow> {
-  const result = await client.query<SessionRow & Record<string, unknown>>(
-    `SELECT id, workspace_id FROM conversation_sessions
-     WHERE id = $1 AND user_id = $2 FOR UPDATE`,
-    [sessionId, ownerId],
-  )
-  const row = result.rows[0]
-  if (!row) throw new CoreError('not_found', '会话不存在')
-  return row
-}
-
 async function workspaceForOwner(
   client: PoolClient,
   ownerId: string,
   workspaceId: number,
   requireEnabled: boolean,
-): Promise<WorkspaceCreateResponse | null> {
+): Promise<WorkspaceDeclaration | null> {
   const result = await client.query<WorkspaceRow & Record<string, unknown>>(
     `SELECT id, name, kind, folder_id, project_id, directory_id, enabled, is_default
      FROM workspaces
@@ -69,49 +49,35 @@ async function workspaceForOwner(
   }
 }
 
-/** PostgreSQL port of bind_session, describe_session and current_workspace data access. */
+/** Host 保留 PostgreSQL 事务与行锁，绑定规则及错误判断委托 Core 公共用例。 */
 export function createPostgresWorkspaceBindingOperations(pool: Pool): WorkspaceBindingOperations {
-  return {
-    async bind(rawOwnerId, workspaceId, sessionId) {
-      const ownerId = normalizeOwnerId(rawOwnerId)
-      validateId(workspaceId, '工作区 ID')
-      validateId(sessionId, '会话 ID')
-      return withPostgresTransaction(pool, async (client) => {
-        await ownedSession(client, ownerId, sessionId)
-        const workspace = await workspaceForOwner(client, ownerId, workspaceId, true)
-        if (!workspace) throw new CoreError('not_found', '工作区不存在或已停用')
-        await client.query(
-          `UPDATE conversation_sessions SET workspace_id = $3
-           WHERE id = $1 AND user_id = $2`,
-          [sessionId, ownerId, workspace.id],
-        )
-        // Python bind_workspace explicitly responds with boundSessionCount=1.
-        return { ...workspace, boundSessionCount: 1 }
-      })
-    },
-
-    async unbind(rawOwnerId, sessionId) {
-      const ownerId = normalizeOwnerId(rawOwnerId)
-      validateId(sessionId, '会话 ID')
-      await withPostgresTransaction(pool, async (client) => {
-        await ownedSession(client, ownerId, sessionId)
-        await client.query(
-          `UPDATE conversation_sessions SET workspace_id = NULL
-           WHERE id = $1 AND user_id = $2`,
+  return createWorkspaceBindings({
+    transaction: work => withPostgresTransaction(pool, client => work({
+      async getOwnedSession(ownerId, sessionId) {
+        const result = await client.query<SessionRow & Record<string, unknown>>(
+          `SELECT id, workspace_id FROM conversation_sessions
+     WHERE id = $1 AND user_id = $2 FOR UPDATE`,
           [sessionId, ownerId],
         )
-      })
-    },
-
-    async current(rawOwnerId, sessionId) {
-      const ownerId = normalizeOwnerId(rawOwnerId)
-      validateId(sessionId, '会话 ID')
-      return withPostgresTransaction(pool, async (client) => {
-        const session = await ownedSession(client, ownerId, sessionId)
-        if (session.workspace_id == null) return null
-        // Python get_workspace does not require enabled here; stale/disabled bindings remain visible.
-        return workspaceForOwner(client, ownerId, session.workspace_id, false)
-      })
-    },
-  }
+        const row = result.rows[0]
+        return row ? { id: Number(row.id), workspaceId: row.workspace_id == null ? null : Number(row.workspace_id) } : null
+      },
+      workspaceForOwner: (ownerId, workspaceId, requireEnabled) => workspaceForOwner(client, ownerId, workspaceId, requireEnabled),
+      async setWorkspace(ownerId, sessionId, workspaceId) {
+        if (workspaceId === null) {
+          await client.query(
+            `UPDATE conversation_sessions SET workspace_id = NULL
+           WHERE id = $1 AND user_id = $2`,
+            [sessionId, ownerId],
+          )
+        } else {
+          await client.query(
+            `UPDATE conversation_sessions SET workspace_id = $3
+           WHERE id = $1 AND user_id = $2`,
+            [sessionId, ownerId, workspaceId],
+          )
+        }
+      },
+    })),
+  })
 }

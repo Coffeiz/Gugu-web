@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
-import type { CalendarEventDeletePublication } from '../../src/domains/calendar/application/event-delete.js'
+import type { CalendarEventDeletePublication } from '@gugu/core/calendar'
 import { createCalendarMutationPostCommitPublisher } from '../../src/domains/calendar/persistence/calendar-mutation-post-commit-postgres.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL

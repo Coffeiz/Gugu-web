@@ -85,8 +85,8 @@ export function createPostgresFileBrowserOperations(pool: Pool, secret: string):
           to_char(file.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') AS created_at,
           CASE WHEN file.deleted_at IS NULL THEN NULL ELSE to_char(file.deleted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS') END AS deleted_at,
           file.img_width,file.img_height,file.version,
-          ${query.sortBy === 'createdAt' ? `to_char(file.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"+00:00"')` : sort} AS page_sort FROM files file LEFT JOIN projects project ON project.id=file.project_id
-          LEFT JOIN folders folder ON folder.id=file.folder_id WHERE ${filters} ${boundarySql}
+          ${query.sortBy === 'createdAt' ? `to_char(file.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"+00:00"')` : sort} AS page_sort FROM files file LEFT JOIN projects project ON project.id=file.project_id AND project.user_id=file.user_id
+          LEFT JOIN folders folder ON folder.id=file.folder_id AND folder.user_id=file.user_id WHERE ${filters} ${boundarySql}
           ORDER BY ${sort} ${direction},file.id ${direction} LIMIT $${values.length}`, values,
       )
       const hasMore = rows.rows.length > query.limit; const page = rows.rows.slice(0, query.limit)

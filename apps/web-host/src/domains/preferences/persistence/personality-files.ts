@@ -1,15 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { lstat, mkdir, open, readFile, realpath, rename, rm } from 'node:fs/promises'
 import path from 'node:path'
+import type { PreferenceTextFiles, PreferenceTextKind } from '@gugu/core'
 import { normalizeOwnerId } from '../../../adapters/owner-context.js'
 import { isPathWithin } from '../../../adapters/path-safety.js'
 
-export type PreferenceTextKind = 'personality' | 'group-personality' | 'reply-style'
-
-export interface PreferenceTextFiles {
-  read(ownerId: string, kind: PreferenceTextKind): Promise<string | null>
-  write(ownerId: string, kind: PreferenceTextKind, value: string | null): Promise<boolean>
-}
+export type { PreferenceTextFiles, PreferenceTextKind } from '@gugu/core'
 
 const filenames: Record<PreferenceTextKind, string> = {
   personality: 'persona.md',

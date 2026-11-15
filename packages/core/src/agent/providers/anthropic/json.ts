@@ -1,4 +1,4 @@
-import type { Json } from '../../harness/contracts.js'
+import type { Json } from '../../models.js'
 import type { JsonObject } from '../contracts.js'
 import { ProviderError } from '../errors.js'
 

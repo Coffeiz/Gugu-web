@@ -1,5 +1,5 @@
 import type { JsonObject, ProviderDriverDependencies } from './contracts.js'
-import type { Usage } from '../harness/contracts.js'
+import type { Usage } from '../models.js'
 import { throwIfCancelled } from './errors.js'
 
 export function record(value: unknown): Record<string, unknown> {

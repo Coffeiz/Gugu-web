@@ -71,6 +71,7 @@ class ConversationAdapter:
                 ConversationMessage.session_id,
                 ConversationMessage.role,
                 ConversationMessage.content,
+                ConversationMessage.created_at,
                 ConversationMessage.conversation_seq,
                 ConversationSession.title,
                 ConversationSession.summary,

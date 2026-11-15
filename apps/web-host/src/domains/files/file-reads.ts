@@ -160,11 +160,14 @@ export function registerFileReadRoutes(app: FastifyInstance, options: FileReadRo
     app.get<{ Params: { fid: string } }>(`/api/v1/files/:fid/${suffix}`, {
       preHandler: options.requireUser,
     }, async (request, reply) => {
+      const dl = (request.query as { dl?: unknown }).dl
+      if (suffix === 'stream' && dl !== undefined && (typeof dl !== 'string' || !/^[+-]?\d+$/.test(dl.trim())))
+        throw new CoreError('invalid_request', '下载参数无效')
       const source = await options.operations.openContent(
         options.ownerIdFromRequest(request), pathInteger(request.params.fid),
       )
       if (!source) throw new CoreError('not_found', '文件不存在')
-      return sendContent(reply, request, source, disposition)
+      return sendContent(reply, request, source, suffix === 'stream' && dl !== undefined && Number(dl) !== 0 ? 'attachment' : disposition)
     })
   }
 

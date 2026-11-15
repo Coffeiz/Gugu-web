@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { EventUpdateError } from '../../src/domains/calendar/application/event-update.js'
+import { EventUpdateError } from '@gugu/core/calendar'
 import { signedUserToken } from '../helpers/auth.js'
 
 const secret = 'synthetic-events-route-secret'

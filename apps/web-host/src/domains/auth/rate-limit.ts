@@ -37,16 +37,31 @@ function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex')
 }
 
+function canonicalIp(value: string): string | null {
+  const family = isIP(value)
+  if (family === 4) return value
+  if (family !== 6) return null
+  const zoneIndex = value.indexOf('%')
+  const address = zoneIndex < 0 ? value : value.slice(0, zoneIndex)
+  const zone = zoneIndex < 0 ? '' : value.slice(zoneIndex)
+  try {
+    return new URL(`http://[${address}]/`).hostname.slice(1, -1) + zone
+  } catch { return null }
+}
+
 function clientIp(request: FastifyRequest): string {
   const forwardedFor = request.headers['x-forwarded-for']
   if (typeof forwardedFor === 'string') {
     const candidates = forwardedFor.split(',').map((part) => part.trim()).filter(Boolean)
     const appendedPeer = candidates.at(-1)
-    if (appendedPeer && isIP(appendedPeer)) return appendedPeer
+    if (appendedPeer) {
+      const normalized = canonicalIp(appendedPeer)
+      if (normalized) return normalized
+    }
   }
 
   const peer = request.raw.socket.remoteAddress
-  return peer && isIP(peer) ? peer : 'unknown'
+  return peer ? canonicalIp(peer) ?? 'unknown' : 'unknown'
 }
 
 function keyFor(bucket: string, kind: 'ip' | 'device', identity: string, extra: string): string {

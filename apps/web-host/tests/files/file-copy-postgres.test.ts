@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Pool } from 'pg'
@@ -39,7 +39,7 @@ test('PostgreSQL Local 复制创建重名副本，覆盖更新正文/版本/配�
     const source=path.join(root,owner,'个人文件','doc.txt');await mkdir(path.dirname(source),{recursive:true});await writeFile(source,'body')
     const target=path.join(root,owner,'个人文件','target','doc.txt');await mkdir(path.dirname(target),{recursive:true});await writeFile(target,'old')
     const foreign=path.join(root,other,'个人文件','private.txt');await mkdir(path.dirname(foreign),{recursive:true});await writeFile(foreign,'nope')
-    const ops=createPostgresFileCopyOperations(pool,{storageRoot:root,fileSyncEnabled:false,async publishChanged(e){events.push([e.entityId,e.operation])}})
+    const ops=createPostgresFileCopyOperations(pool,{storageRoot:root,fileSyncEnabled:false,removeCommittedBackup(){throw new Error('模拟同步清理失败')},async publishChanged(e){events.push([e.entityId,e.operation])}})
     const copy=await ops.copy(owner,1,{folderId:null,projectId:null,workspaceDirectoryId:null,onConflict:'keep_both',overwriteFileId:null},{idempotencyKey:null,undoContextId:'copy-tab',clientId:'renderer'}) as {id:number;displayName:string;version:number}
     assert.notEqual(copy.id,1);assert.equal(copy.displayName,'doc(1)');assert.equal(copy.version,1)
     assert.equal(await readFile(path.join(root,owner,'个人文件','doc(1).txt'),'utf8'),'body')
@@ -54,5 +54,28 @@ test('PostgreSQL Local 复制创建重名副本，覆盖更新正文/版本/配�
     assert.deepEqual(receipt.rows,[{action:'create',undo_context_id:'self-copy-tab'}])
     const quotaEvents=await pool.query<{operation:string;idempotency_key:string}>('SELECT operation,idempotency_key FROM storage_quota_events ORDER BY idempotency_key')
     assert.deepEqual(quotaEvents.rows.map(row=>row.operation).sort(),['file_copy','file_copy_overwrite'])
+    const unknownPool={async connect(){const client=await pool.connect();const rawQuery=client.query;const query=rawQuery.bind(client);const release=client.release.bind(client)
+      client.query=(async (...args:Parameters<typeof client.query>)=>{const result=await (query as (...args:any[])=>Promise<any>)(...args);if(args[0]==='COMMIT')throw new Error('模拟提交后断连');return result}) as typeof client.query
+      client.release=(() => {client.query=rawQuery;release()}) as typeof client.release
+      return client}} as unknown as Pool
+    const unknownOps=createPostgresFileCopyOperations(unknownPool,{storageRoot:root,fileSyncEnabled:false,async publishChanged(){}})
+    await writeFile(source,'new!')
+    await assert.rejects(unknownOps.copy(owner,1,{folderId:null,projectId:null,workspaceDirectoryId:null,onConflict:'overwrite',overwriteFileId:2},{idempotencyKey:null,undoContextId:null,clientId:null}),/模拟提交后断连/)
+    assert.equal(await readFile(target,'utf8'),'new!')
+    const stage=(await readdir(path.dirname(target))).find(name=>name.startsWith('.copy-stage-'))!
+    assert.equal(await readFile(path.join(path.dirname(target),stage,'content.old'),'utf8'),'body')
+    const existingStages=new Set(await readdir(path.dirname(target)))
+    const failedRollbackOps=createPostgresFileCopyOperations(pool,{storageRoot:root,fileSyncEnabled:false,async publishChanged(){},
+      async recordFileChange(){throw new Error('模拟写入失败')},restoreBackup(){throw new Error('模拟同步回滚失败')}})
+    await assert.rejects(failedRollbackOps.copy(owner,1,{folderId:null,projectId:null,workspaceDirectoryId:null,onConflict:'overwrite',overwriteFileId:2},{idempotencyKey:null,undoContextId:null,clientId:null}),/模拟写入失败/)
+    const retained=(await readdir(path.dirname(target))).find(name=>name.startsWith('.copy-stage-')&&!existingStages.has(name))!
+    assert.equal(await readFile(path.join(path.dirname(target),retained,'content.old'),'utf8'),'new!')
+    await pool.query('UPDATE files SET storage_key=$2 WHERE id=$1',[1,`${other}/个人文件/private.txt`])
+    await assert.rejects(ops.copy(owner,1,{folderId:null,projectId:null,workspaceDirectoryId:null,onConflict:'keep_both',overwriteFileId:null},{idempotencyKey:null,undoContextId:null,clientId:null}),/文件不存在/)
+    assert.equal(await readFile(foreign,'utf8'),'nope')
+    await pool.query('UPDATE files SET storage_key=$2 WHERE id=$1',[1,`${owner}/个人文件/doc.txt`])
+    await pool.query('UPDATE files SET storage_key=$2 WHERE id=$1',[2,`${other}/个人文件/private.txt`])
+    await assert.rejects(ops.copy(owner,1,{folderId:null,projectId:null,workspaceDirectoryId:null,onConflict:'overwrite',overwriteFileId:2},{idempotencyKey:null,undoContextId:null,clientId:null}),/文件不存在/)
+    assert.equal(await readFile(foreign,'utf8'),'nope')
   }finally{await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();await rm(root,{recursive:true,force:true})}
 })

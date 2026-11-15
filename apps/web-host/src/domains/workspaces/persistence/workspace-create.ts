@@ -1,7 +1,7 @@
-import { CoreError, dataContext } from '@gugu/core'
 import type { Fields } from '@gugu/core'
 import type { Pool, PoolClient } from 'pg'
 import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import { createWorkspaceDeclarationCreator } from '@gugu/core/workspace-declarations'
 
 type WorkspaceKind = 'folder' | 'project' | 'directory'
 
@@ -35,39 +35,6 @@ interface NormalizedWorkspaceCreate {
   enabled: boolean
 }
 
-function invalid(message: string): never {
-  throw new CoreError('invalid_request', message)
-}
-
-function optionalId(value: unknown, label: string): number | null {
-  if (value === undefined || value === null) return null
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1)
-    invalid(`${label} 必须是正整数或空值`)
-  return value
-}
-
-function normalize(input: Fields): NormalizedWorkspaceCreate {
-  if (input === null || typeof input !== 'object' || Array.isArray(input))
-    invalid('请求内容必须是对象')
-  const value = input as Record<string, unknown>
-  if (typeof value.name !== 'string') invalid('名称必须是文本')
-  const nameLength = Array.from(value.name).length
-  if (nameLength < 1 || nameLength > 200) invalid('名称长度必须为 1 至 200 个字符')
-  const kind = value.kind === undefined ? 'folder' : value.kind
-  if (kind !== 'folder' && kind !== 'project' && kind !== 'directory')
-    invalid('工作区类型无效')
-  if (value.enabled !== undefined && typeof value.enabled !== 'boolean')
-    invalid('enabled 必须是布尔值')
-  return {
-    name: value.name.trim(),
-    kind,
-    folderId: optionalId(value.folderId, 'folderId'),
-    projectId: optionalId(value.projectId, 'projectId'),
-    directoryId: optionalId(value.directoryId, 'directoryId'),
-    enabled: value.enabled === undefined ? true : value.enabled,
-  }
-}
-
 async function relationExists(
   client: PoolClient,
   table: 'folders' | 'projects' | 'workspace_directories',
@@ -89,26 +56,6 @@ async function createInTransaction(
   ownerId: string,
   input: NormalizedWorkspaceCreate,
 ): Promise<WorkspaceCreateResponse> {
-  let folderId: number | null = input.folderId
-  let projectId: number | null = input.projectId
-  let directoryId: number | null = null
-
-  if (input.kind === 'folder') {
-    if (!(await relationExists(client, 'folders', ownerId, folderId, false)))
-      throw new CoreError('conflict', '文件夹不存在')
-    projectId = null
-  } else if (input.kind === 'project') {
-    if (!(await relationExists(client, 'projects', ownerId, projectId, false)))
-      throw new CoreError('conflict', '项目不存在')
-    folderId = null
-  } else {
-    directoryId = input.directoryId
-    if (!(await relationExists(client, 'workspace_directories', ownerId, directoryId, true)))
-      throw new CoreError('conflict', 'Workspace 目录不存在')
-    folderId = null
-    projectId = null
-  }
-
   const inserted = await client.query<{
     id: number
     name: string
@@ -123,7 +70,7 @@ async function createInTransaction(
        (user_id, name, kind, folder_id, project_id, directory_id, enabled, is_default)
      VALUES ($1, $2, $3, $4, $5, $6, $7, FALSE)
      RETURNING id, name, kind, folder_id, project_id, directory_id, enabled, is_default`,
-    [ownerId, input.name, input.kind, folderId, projectId, directoryId, input.enabled],
+    [ownerId, input.name, input.kind, input.folderId, input.projectId, input.directoryId, input.enabled],
   )
   const row = inserted.rows[0]
   if (!row) throw new Error('工作区创建后未返回记录')
@@ -142,19 +89,14 @@ async function createInTransaction(
 
 /** Port of POST /api/v1/workspaces; relation checks and declaration insert share one PG transaction. */
 export function createPostgresWorkspaceCreator(pool: Pool) {
-  return async function createWorkspace(
-    authenticatedOwnerId: string,
-    rawInput: Fields,
-  ): Promise<WorkspaceCreateResponse> {
-    let ownerId: string
-    let input: NormalizedWorkspaceCreate
-    try {
-      ownerId = dataContext(authenticatedOwnerId).ownerId
-      input = normalize(rawInput)
-    } catch (error) {
-      if (error instanceof CoreError) throw error
-      throw new CoreError('invalid_request', error instanceof Error ? error.message : '工作区字段无效')
-    }
-    return withPostgresTransaction(pool, (client) => createInTransaction(client, ownerId, input))
-  }
+  return createWorkspaceDeclarationCreator({
+    transaction: work => withPostgresTransaction(pool, client => work({
+      relationExists: (owner, kind, id) => relationExists(client,
+        kind === 'folder' ? 'folders' : kind === 'project' ? 'projects' : 'workspace_directories', owner, id, kind === 'directory'),
+      insert: (owner, input) => createInTransaction(client, owner, input),
+      async get() { throw new Error('创建事务不支持读取工作区') },
+      async renameDirectory() { throw new Error('创建事务不支持目录改名') },
+      async update() { throw new Error('创建事务不支持更新工作区') },
+    })),
+  })
 }

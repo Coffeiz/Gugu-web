@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { CoreError } from '@gugu/core'
 import { createAgentProjectTool } from '../../src/domains/agent-sessions/tools/agent-project-tool.js'
-import type { ProjectCreateRecord } from '../../src/domains/projects/application/project-create.js'
+import type { ProjectCreateRecord } from '@gugu/core/project-create'
 
 const ownerA = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
 const ownerB = 'ad0902a0-c899-44ee-b180-d54eb04e4604'
@@ -12,6 +13,7 @@ function fakeRuntime() {
   const events: unknown[] = []
   let nextId = 1
   const runtime = {
+    isUniqueViolation: () => false,
     async transaction<T>(work: (tx: any) => Promise<T>): Promise<T> {
       const tx = {
         async findIdempotent(owner: string, keyHash: string) {
@@ -105,4 +107,15 @@ test('不同 owner 的相同 Agent dispatch key 各自创建并隔离项目', as
   assert.notEqual(first.project_id, second.project_id)
   assert.equal([...fake.rows.values()].filter(row => row.user_id === ownerA).length, 1)
   assert.equal([...fake.rows.values()].filter(row => row.user_id === ownerB).length, 1)
+})
+
+test('提交后同类异常保持未知结果，不伪装成确定未创建', async () => {
+  const fake = fakeRuntime()
+  const runtime = { ...fake.runtime, async transaction<T>(work: (tx: any) => Promise<T>): Promise<T> {
+    await fake.runtime.transaction(work)
+    throw new CoreError('invalid_request', '合成提交后异常')
+  } }
+  const create = createAgentProjectTool(runtime)
+  await assert.rejects(create(ownerA, args, dispatch), CoreError)
+  assert.equal(fake.rows.size, 1)
 })

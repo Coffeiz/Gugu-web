@@ -28,7 +28,8 @@ test('PostgreSQL orphan recovery preserves live leases, isolates owners, and cle
     CREATE TABLE conversation_sessions (
       id serial PRIMARY KEY, user_id uuid NOT NULL,
       execution_state varchar(24) NOT NULL, active_run_id varchar(64)
-    )
+    );
+    CREATE TABLE agent_run_leases (user_id uuid NOT NULL, session_id integer NOT NULL, expires_at timestamptz NOT NULL)
   `)
   const insert = async (userId: string, state: string, runId: string | null) => {
     const result = await pool!.query<{ id: number }>(
@@ -48,8 +49,8 @@ test('PostgreSQL orphan recovery preserves live leases, isolates owners, and cle
   const orphanBaselineId = await insert(ownerId, 'baseline_updating', 'run-baseline-dead')
   const reaped: number[] = []
   const state = (probe: { redisOk: boolean; active: boolean | null; stale: boolean }, lock = false) => ({
-    async probe() { return probe },
-    async reap(id: number) { reaped.push(id) },
+    async probe() { return { ...probe, snapshot: '{}' } },
+    async reapIfStale(id: number) { reaped.push(id); return true },
     async compressionLockExists() { return lock },
   })
 
@@ -74,4 +75,37 @@ test('PostgreSQL orphan recovery preserves live leases, isolates owners, and cle
   const unlocked = createPostgresAgentOrphanRecovery(pool!, state({ redisOk: true, active: false, stale: false }))
   assert.equal(await unlocked(ownerId, orphanBaselineId), true)
   assert.deepEqual(await read(orphanBaselineId), { execution_state: 'idle', active_run_id: null })
+
+  // 新 run 在首次 Redis 检查之后取得租约时，不得回收它的会话。
+  const racedId = await insert(ownerId, 'running', 'run-new')
+  let probes = 0
+  let reaps = 0
+  const raced = createPostgresAgentOrphanRecovery(pool!, {
+    async probe() {
+      probes += 1
+      return probes === 1
+        ? { redisOk: true, active: true, stale: true }
+        : { redisOk: true, active: true, stale: false }
+    },
+    async reapIfStale() { reaps += 1; return true },
+    async compressionLockExists() { return false },
+  })
+  assert.equal(await raced(ownerId, racedId), false)
+  assert.deepEqual(await read(racedId), { execution_state: 'running', active_run_id: 'run-new' })
+  assert.equal(reaps, 0)
+
+  const pgLiveId = await insert(ownerId, 'running', 'run-pg-live')
+  await pool!.query("INSERT INTO agent_run_leases VALUES ($1,$2,clock_timestamp()+interval '1 minute')", [ownerId, pgLiveId])
+  assert.equal(await recover(ownerId, pgLiveId), false)
+  assert.deepEqual(await read(pgLiveId), { execution_state: 'running', active_run_id: 'run-pg-live' })
+  assert.deepEqual(reaped, [orphanId])
+
+  const pythonClaimId = await insert(ownerId, 'running', 'new-python-run')
+  const oldSnapshot = createPostgresAgentOrphanRecovery(pool!, {
+    async probe() { return { redisOk: true, active: true, stale: true, snapshot: '{"done":false,"owner_run_id":"old-run"}' } },
+    async reapIfStale() { throw new Error('不得清理旧快照以覆盖新 run') },
+    async compressionLockExists() { return false },
+  })
+  assert.equal(await oldSnapshot(ownerId, pythonClaimId), false)
+  assert.equal((await read(pythonClaimId))?.active_run_id, 'new-python-run')
 })

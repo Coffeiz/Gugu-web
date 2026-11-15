@@ -1,7 +1,7 @@
 import { throwIfCancelled } from './errors.js'
-import type { BranchProviderPort, CanonicalContextPorts, ContextReferenceCodec, ContextServices, ProviderPort, ReflectionProjectionPort, SummaryGenerationPorts } from '../harness/ports.js'
-import type { BranchInput, CanonicalHarnessContext, FrozenProviderRequest, Json, ProviderEvent, ProviderRequest, RunIdentity } from '../harness/contracts.js'
-import { hasInitialInlineImage,restorePreparedContext } from '../harness/history/attachment-refs.js'
+import type { BranchProviderPort, CanonicalContextPorts, ContextReferenceCodec, ContextServices, ProviderPort, ReflectionProjectionPort, SummaryGenerationPorts } from '../ports.js'
+import type { BranchInput, CanonicalRunContext, FrozenProviderRequest, Json, ProviderEvent, ProviderRequest, RunIdentity } from '../models.js'
+import { hasInitialInlineImage,restorePreparedContext } from '../context/history/attachment-refs.js'
 import type { HistorySanitization, JsonObject, ProviderCompletion, ProviderConfig, ProviderDriverDependencies, ProviderInvocation, ProviderProjection, ProviderTransport, ProviderTransportFactory, ProviderWire } from './contracts.js'
 import { providerSelection } from './registry.js'
 import { ProviderError, classifyProviderError } from './errors.js'
@@ -37,7 +37,7 @@ export interface ProviderRuntimeOptions extends ContextServices {
   readonly maxContinuationBytes?: number
   readonly maxContinuationTotalBytes?: number
 }
-interface PrivateContinuation { identity: RunIdentity; modelIdentity: string; accessScopeHash: string; value: unknown; expiresAt: number; bytes: number }
+interface PrivateContinuation { identity: RunIdentity; modelIdentity: string; accessScopeHash: string; round: number; areaDigest: string; value: unknown; expiresAt: number; bytes: number }
 
 /** cache标记可能把字符串包成单个text块；这里只证明同构，复用时仍发送原始wire。 */
 function comparableWire(value: Json): Json {
@@ -56,7 +56,7 @@ function comparableWire(value: Json): Json {
 }
 
 /** 可实际装配到Harness的Provider运行时；仅存协议私有材料，不接管Run状态或数据事务。 */
-export class ProviderRuntime implements ProviderPort<CanonicalHarnessContext> {
+export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
   readonly #requests = new Map<string, FrozenProviderRequest>()
   readonly #continuations = new Map<string, PrivateContinuation>()
   readonly #prefixes = new Map<string, Promise<Awaited<ReturnType<CanonicalContextPorts['prepareRequest']>>>>()
@@ -128,7 +128,7 @@ export class ProviderRuntime implements ProviderPort<CanonicalHarnessContext> {
     return new RequestProbe(body, { id: this.options.nextId(), digest: this.options.digest, now: () => this.#now(), sink: this.options.probeSink!,
       secrets: config.api_key ? [config.api_key] : [], diagnose: error => this.#diagnose('provider_probe_sink', error), cacheSupported: policy.capabilities(config).cache_mode === 'active', stableRowCount, historySanitization })
   }
-  #continuation(context: CanonicalHarnessContext): unknown {
+  #continuation(context: CanonicalRunContext): unknown {
     if (!context.continuationRef) return undefined
     this.#pruneContinuations()
     const stored = this.#continuations.get(context.continuationRef)
@@ -152,16 +152,28 @@ export class ProviderRuntime implements ProviderPort<CanonicalHarnessContext> {
     if (!/^[A-Za-z0-9:._-]{1,256}$/.test(reference)) throw new ProviderError('protocol')
     this.#pruneContinuations()
     while (this.#continuations.size >= (this.options.maxContinuationEntries ?? 256) || this.#continuationBytes + bytes > (this.options.maxContinuationTotalBytes ?? 64 * 1024 * 1024)) this.#dropContinuation(this.#continuations.keys().next().value!)
-    this.#continuations.set(reference, { identity: clone(input.identity), modelIdentity: input.modelIdentity, accessScopeHash: input.accessScopeHash, value: clone(input.value), expiresAt: this.#now() + (this.options.continuationTtlMs ?? 15 * 60_000), bytes })
+    this.#continuations.set(reference, { identity: clone(input.identity), modelIdentity: input.modelIdentity, accessScopeHash: input.accessScopeHash, round: input.round, areaDigest: input.areaDigest, value: clone(input.value), expiresAt: this.#now() + (this.options.continuationTtlMs ?? 15 * 60_000), bytes })
     this.#continuationBytes += bytes
     return reference
+  }
+  /** 仅供 Host 事务回调访问私有值；失败不消费暂存记录，不能把结果写入 checkpoint。 */
+  async withStagedContinuation<T>(context: CanonicalRunContext, callback: (input: {
+    value: unknown; round: number; areaDigest: string
+  }) => Promise<T>): Promise<T> {
+    if (!context.continuationRef) throw new ProviderError('input_rejected')
+    this.#pruneContinuations()
+    const staged = this.#continuations.get(context.continuationRef)
+    if (!staged || this.#key(staged.identity) !== this.#key(context.identity)
+      || staged.modelIdentity !== context.modelIdentity || staged.accessScopeHash !== context.accessScopeHash)
+      throw new ProviderError('input_rejected')
+    return callback({ value: clone(staged.value), round: staged.round, areaDigest: staged.areaDigest })
   }
   readonly currentRequest: CanonicalContextPorts['currentRequest'] = (identity, input) => {
     const stored = this.#requests.get(this.#key(identity))
     if (!stored || stored.sourceCheckpointDigest !== input.checkpointDigest || stored.projection.modelIdentity !== input.modelIdentity || stored.accessScopeHash !== input.accessScopeHash) return null
     return clone(stored)
   }
-  async *stream(request: ProviderRequest<CanonicalHarnessContext>): AsyncGenerator<ProviderEvent> {
+  async *stream(request: ProviderRequest<CanonicalRunContext>): AsyncGenerator<ProviderEvent> {
     const { context, identity, signal } = request
     if (this.#key(context.identity) !== this.#key(identity)) throw new ProviderError('input_rejected')
     const { config, policy, driver, systemPrompt, accessScopeHash } = await this.#selection(identity, context.modelIdentity, signal)

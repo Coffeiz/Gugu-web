@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { PassThrough } from 'node:stream'
 import { executionPolicy } from '../../../src/agent/executor/policy.js'
-import { MxcExecutor } from '../../../src/agent/executor/mxc.js'
+import { MxcExecutor } from '@gugu/sandbox/mxc'
 import { Executor } from '../../../src/agent/executor/platform.js'
 import type {
   ExecutionGrant,

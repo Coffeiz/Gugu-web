@@ -1,16 +1,8 @@
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
-import type { Pool } from 'pg'
-import { sanitizeMediaPayload } from './media-payload.js'
+import { sanitizeMediaPayload } from '@gugu/core/agent/context/messages'
 
-export class AgentToolEventSessionNotFoundError extends Error {
-  readonly statusCode = 404
-  constructor() { super('对话不存在') }
-}
-
-export class AgentToolEventDetailsNotFoundError extends Error {
-  readonly statusCode = 404
-  constructor() { super('工具事件不存在') }
-}
+import { AgentToolEventSessionNotFoundError, AgentToolEventDetailsNotFoundError, createPostgresAgentToolEventDetails } from '@gugu/core/agent-sessions'
+export { AgentToolEventSessionNotFoundError, AgentToolEventDetailsNotFoundError, createPostgresAgentToolEventDetails }
 
 export interface AgentToolEventDetailsRouteOptions {
   requireUser: preHandlerHookHandler
@@ -52,38 +44,4 @@ export function registerAgentToolEventDetailsRoute(
       }
     },
   )
-}
-
-interface TimelineRecord { display_timeline: unknown }
-
-export function createPostgresAgentToolEventDetails(pool: Pick<Pool, 'query'>) {
-  return async function readDetails(
-    ownerId: string,
-    sessionId: number,
-    messageId: number,
-    timelineIndex: number,
-  ): Promise<Record<string, unknown>> {
-    const owned = await pool.query(
-      'SELECT id FROM conversation_sessions WHERE id = $1 AND user_id = $2',
-      [sessionId, ownerId],
-    )
-    if (!owned.rowCount) throw new AgentToolEventSessionNotFoundError()
-
-    const result = await pool.query<TimelineRecord>(
-      `SELECT CASE WHEN pg_column_size(display_timeline) > 1048576 THEN NULL
-                   ELSE display_timeline END AS display_timeline
-       FROM conversation_messages WHERE id = $1 AND session_id = $2`,
-      [messageId, sessionId],
-    )
-    const timeline = result.rows[0]?.display_timeline
-    if (!Array.isArray(timeline) || timelineIndex >= timeline.length)
-      throw new AgentToolEventDetailsNotFoundError()
-    const event = timeline[timelineIndex]
-    if (!event || typeof event !== 'object' || Array.isArray(event) || (event as Record<string, unknown>).kind !== 'tool')
-      throw new AgentToolEventDetailsNotFoundError()
-    const details: Record<string, unknown> = {}
-    for (const key of ['toolInput', 'toolResult'])
-      if (key in event) details[key] = (event as Record<string, unknown>)[key]
-    return details
-  }
 }

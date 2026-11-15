@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
+import { createPostgresRuntime } from '@gugu/core/data'
+import { createKyselyCalendarCreateStore } from '../../../../packages/core/src/calendar/create-store.js'
 import test from 'node:test'
-import { createCalendarEvent, EventCreateError } from '../../src/domains/calendar/application/event-create.js'
-import { createPostgresEventCreateStore } from '../../src/domains/calendar/persistence/event-create-postgres.js'
+import { createCalendarEvent, EventCreateError } from '@gugu/core/calendar'
+import { calendarCreateStore } from './calendar-core-stores.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
@@ -14,7 +16,7 @@ const input = {
   description: 'Synthetic description',
 }
 
-async function withDatabase(work: (pool: Pool) => Promise<void>) {
+async function withDatabase(work: (pool: Pool, coreRuntime: Awaited<ReturnType<typeof createPostgresRuntime>>) => Promise<void>) {
   const schema = `gugu_event_create_${randomUUID().replaceAll('-', '')}`
   const adminPool = new Pool({ connectionString: databaseUrl, max: 1 })
   await adminPool.query(`CREATE SCHEMA "${schema}"`)
@@ -96,7 +98,8 @@ async function withDatabase(work: (pool: Pool) => Promise<void>) {
         CONSTRAINT uq_rag_index_job_user_source UNIQUE(user_id, source_type)
       )
     `)
-    await work(pool)
+    const coreRuntime = await createPostgresRuntime({ url: databaseUrl!, schema })
+    try { await work(pool, coreRuntime) } finally { await coreRuntime.close() }
   } finally {
     await pool.end()
     await adminPool.query(`DROP SCHEMA "${schema}" CASCADE`)
@@ -106,10 +109,10 @@ async function withDatabase(work: (pool: Pool) => Promise<void>) {
 
 test('PostgreSQL store scopes project and idempotency, writes Undo in the event transaction, then publishes', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
-}, async () => withDatabase(async (pool) => {
+}, async () => withDatabase(async (pool, coreRuntime) => {
   await pool.query('INSERT INTO projects(id, user_id, name) VALUES ($1, $2, $3)', [12, ownerId, 'Owned'])
   const publications: unknown[] = []
-  const store = createPostgresEventCreateStore(pool, async (publication) => {
+  const store = calendarCreateStore(coreRuntime, async (publication) => {
     const eventCount = await pool.query('SELECT count(*)::int AS count FROM calendar_events')
     const undoCount = await pool.query('SELECT count(*)::int AS count FROM undo_operations')
     const jobCount = await pool.query('SELECT count(*)::int AS count FROM rag_index_jobs')
@@ -165,9 +168,9 @@ test('PostgreSQL store scopes project and idempotency, writes Undo in the event 
 
 test('PostgreSQL idempotency replays by owner, conflicts on changed payload, and survives concurrent inserts', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
-}, async () => withDatabase(async (pool) => {
+}, async () => withDatabase(async (pool, coreRuntime) => {
   let publicationCount = 0
-  const store = createPostgresEventCreateStore(pool, async () => { publicationCount += 1 })
+  const store = calendarCreateStore(coreRuntime, async () => { publicationCount += 1 })
   const noProjectInput = { ...input, project_id: null }
   const [first, concurrent] = await Promise.all([
     createCalendarEvent(store, { ownerId, input: noProjectInput, idempotencyKey: 'same-key', undoContextId: 'tab-1' }),
@@ -196,11 +199,12 @@ test('PostgreSQL idempotency replays by owner, conflicts on changed payload, and
 
 test('PostgreSQL rejects missing, foreign, and soft-deleted projects before inserting', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
-}, async () => withDatabase(async (pool) => {
+}, async () => withDatabase(async (pool, coreRuntime) => {
   await pool.query('INSERT INTO projects(id, user_id, name, deleted_at) VALUES (12, $1, $2, NULL), (13, $3, $4, NULL), (14, $1, $5, CURRENT_TIMESTAMP)', [
     ownerId, 'Owned', otherOwnerId, 'Foreign', 'Deleted',
   ])
-  const store = createPostgresEventCreateStore(pool, async () => assert.fail('invalid project must not publish'))
+  let publications = 0
+  const store = calendarCreateStore(coreRuntime, async () => { publications++ })
   for (const projectId of [99, 13, 14]) {
     await assert.rejects(
       createCalendarEvent(store, { ownerId, input: { ...input, project_id: projectId } }),
@@ -209,12 +213,13 @@ test('PostgreSQL rejects missing, foreign, and soft-deleted projects before inse
   }
   const rows = await pool.query('SELECT count(*)::int AS count FROM calendar_events')
   assert.equal(rows.rows[0]?.count, 0)
+  assert.equal(publications, 0)
 }))
 
 test('PostgreSQL rolls event back when Undo insert fails and keeps unrelated unique errors distinct', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
-}, async () => withDatabase(async (pool) => {
-  const store = createPostgresEventCreateStore(pool, async () => undefined)
+}, async () => withDatabase(async (pool, coreRuntime) => {
+  const store = calendarCreateStore(coreRuntime, async () => undefined)
   const noProjectInput = { ...input, project_id: null }
   await pool.query(`
     CREATE FUNCTION fail_event_undo() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -245,8 +250,9 @@ test('PostgreSQL rolls event back when Undo insert fails and keeps unrelated uni
 
 test('PostgreSQL rolls back event and Undo when the durable RAG job cannot be enqueued', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
-}, async () => withDatabase(async (pool) => {
-  const store = createPostgresEventCreateStore(pool, async () => assert.fail('rolled back event must not publish'))
+}, async () => withDatabase(async (pool, coreRuntime) => {
+  let publications = 0
+  const store = calendarCreateStore(coreRuntime, async () => { publications++ })
   await pool.query(`
     CREATE FUNCTION fail_calendar_rag_enqueue() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN RAISE EXCEPTION 'synthetic RAG enqueue failure'; END
@@ -264,15 +270,16 @@ test('PostgreSQL rolls back event and Undo when the durable RAG job cannot be en
   assert.equal(events.rows[0]?.count, 0)
   assert.equal(undo.rows[0]?.count, 0)
   assert.equal(jobs.rows[0]?.count, 0)
+  assert.equal(publications, 0)
 }))
 
 test('PostgreSQL publisher failure is logged and does not fail the committed create', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
-}, async () => withDatabase(async (pool) => {
+}, async () => withDatabase(async (pool, coreRuntime) => {
   const diagnostics: string[] = []
   const noProjectInput = { ...input, project_id: null }
-  const store = createPostgresEventCreateStore(
-    pool,
+  const store = calendarCreateStore(
+    coreRuntime,
     async () => { throw new Error('synthetic publisher failure') },
     (operation) => diagnostics.push(operation),
   )
@@ -283,4 +290,35 @@ test('PostgreSQL publisher failure is logged and does not fail the committed cre
   const undo = await pool.query('SELECT count(*)::int AS count FROM undo_operations')
   assert.equal(events.rows[0]?.count, 1)
   assert.equal(undo.rows[0]?.count, 1)
+}))
+
+
+test('PostgreSQL 独立 Core 连接并发合并同一日历索引任务', {
+  skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
+}, async () => withDatabase(async (pool, coreRuntime) => {
+  const schema = (await pool.query<{ schema: string }>('SELECT current_schema() AS schema')).rows[0]!.schema
+  const runtime = await createPostgresRuntime({ url: databaseUrl!, schema })
+  try {
+    let corePublications = 0
+    let otherPublications = 0
+    const core = createKyselyCalendarCreateStore(runtime.db, 'postgres', async () => { corePublications++ })
+    const otherCore = calendarCreateStore(coreRuntime, async () => { otherPublications++ })
+    const results = await Promise.all(Array.from({ length: 12 }, (_, index) => createCalendarEvent(
+      index % 2 === 0 ? core : otherCore,
+      { ownerId, input: { title: `混合并发 ${index}`, date: '2026-11-18' }, undoContextId: 'tab' },
+    )))
+    const job = (await pool.query<{ generation: number; pending_source_ids: string[]; status: string }>(
+      "SELECT generation, pending_source_ids, status FROM rag_index_jobs WHERE user_id = $1 AND source_type = 'calendar'", [ownerId],
+    )).rows[0]!
+    assert.equal(job.generation, 12)
+    assert.equal(job.status, 'queued')
+    assert.equal(job.pending_source_ids.length, 12)
+    assert.deepEqual(new Set(job.pending_source_ids), new Set(results.map(result => String(result.event.id))))
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM calendar_events')).rows[0].count, 12)
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM undo_operations')).rows[0].count, 12)
+    assert.equal(corePublications, 6)
+    assert.equal(otherPublications, 6)
+  } finally {
+    await runtime.close()
+  }
 }))

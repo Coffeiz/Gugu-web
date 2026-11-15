@@ -5,8 +5,9 @@ export interface AgentRunRecoveryState {
     redisOk: boolean
     active: boolean | null
     stale: boolean
+    snapshot?: string | null
   }>
-  reap(sessionId: number): Promise<void>
+  reapIfStale(sessionId: number, snapshot: string | null): Promise<boolean>
   compressionLockExists(sessionId: number): Promise<boolean>
 }
 
@@ -47,6 +48,33 @@ export function createPostgresAgentOrphanRecovery(
         return false
       }
 
+      // 获得会话锁后再次确认租约，避免锁等待期间新 run 接管。
+      const lockedProbe = await state.probe(sessionId)
+      if (!lockedProbe.redisOk || (lockedProbe.active && !lockedProbe.stale)) {
+        await client.query('COMMIT')
+        transactionOpen = false
+        return false
+      }
+      if (lockedProbe.stale && lockedProbe.snapshot && session.active_run_id) {
+        const snapshot: unknown = JSON.parse(lockedProbe.snapshot)
+        const snapshotOwner = snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)
+          ? (snapshot as { owner_run_id?: unknown }).owner_run_id : undefined
+        if (typeof snapshotOwner === 'string' && snapshotOwner && snapshotOwner !== session.active_run_id) {
+          await client.query('COMMIT')
+          transactionOpen = false
+          return false
+        }
+      }
+      const lease = await client.query(
+        'SELECT 1 FROM agent_run_leases WHERE user_id=$1 AND session_id=$2 AND expires_at>clock_timestamp()',
+        [ownerId, sessionId],
+      )
+      if (lease.rowCount) {
+        await client.query('COMMIT')
+        transactionOpen = false
+        return false
+      }
+
       if (session.execution_state === 'baseline_updating') {
         let compressionLocked: boolean
         try {
@@ -63,7 +91,11 @@ export function createPostgresAgentOrphanRecovery(
         }
       }
 
-      if (probe.stale) await state.reap(sessionId)
+      if (lockedProbe.stale && (lockedProbe.snapshot == null || !await state.reapIfStale(sessionId, lockedProbe.snapshot))) {
+        await client.query('COMMIT')
+        transactionOpen = false
+        return false
+      }
       const updated = await client.query(
         `UPDATE conversation_sessions
          SET execution_state = 'idle', active_run_id = NULL

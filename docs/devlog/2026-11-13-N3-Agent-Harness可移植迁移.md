@@ -4,7 +4,7 @@
 
 ## 迁移边界
 
-入口为 `@gugu/core/harness`。实现严格使用固定树的18个文件：`harness.ts` 薄组合，`contracts.ts`/`ports.ts` 分开领域类型和依赖接口，Run、历史、上下文、流及交互分别归入 `run/`、`history/`、`context/`、`streaming/`、`interactions/`。执行授权桥接归入既有 `executor/executor.ts`，只调用共用 Executor。原 `executor/platform.ts` 的协调器原样抽到 `executor/executor.ts` 并保留 re-export，防止 portable Harness 隐式装载原生 SDK。
+入口为 `@gugu/core/agent`。实现严格使用固定树的18个文件：`harness.ts` 薄组合，`contracts.ts`/`ports.ts` 分开领域类型和依赖接口，Run、历史、上下文、流及交互分别归入 `run/`、`history/`、`context/`、`streaming/`、`interactions/`。执行授权桥接归入既有 `executor/executor.ts`，只调用共用 Executor。原 `executor/platform.ts` 的协调器原样抽到 `executor/executor.ts` 并保留 re-export，防止 portable Harness 隐式装载原生 SDK。
 
 `createCanonicalHarness` 的标准 `runPreparation` 选项直接接入 `context/prepare.ts`：owned 来源后并发工具发现与一次 RAG，之后按可信入口/授权主体做能力过滤、Shell system 说明、工具/Skill 目录分区与前缀格式化，最后交 Canonical。共享 `buildRunRagContext` 维持同一有效历史和当前消息排他水位，主 prepare 复用已召回结果。选中的公开工具名称/schema 随 context 冻结给 Provider，未开放调用在派发前失败；能力查询也接收取消信号并在结束前清理。自定义完整 load 必须交付同等准备结果和能力快照，缺失即失败。重启后的冻结前缀仍由真实 `prepareRequest` adapter 按 Run 身份恢复，不能由当前配置代替。
 

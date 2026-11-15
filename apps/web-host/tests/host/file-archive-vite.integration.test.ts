@@ -55,7 +55,8 @@ test('Vite→Node Host→隔离 PostgreSQL 完成 Local 文件夹 ZIP 往返并�
       CREATE TABLE projects(id integer PRIMARY KEY,user_id uuid,name text,color text,start_date date,created_at timestamptz,deleted_at timestamptz);
       CREATE TABLE workspace_directories(id integer PRIMARY KEY,user_id uuid,directory_name text,deleted_at timestamptz);
       CREATE TABLE folders(id serial PRIMARY KEY,user_id uuid NOT NULL,parent_id integer,name text NOT NULL,
-        project_id integer,workspace_directory_id integer,deleted_at timestamptz);
+        project_id integer,workspace_directory_id integer,deleted_at timestamptz,
+        created_at timestamptz NOT NULL,updated_at timestamptz NOT NULL,version integer NOT NULL);
       CREATE TABLE files(id serial PRIMARY KEY,user_id uuid NOT NULL,display_name text NOT NULL,ext text NOT NULL,
         space text NOT NULL,project_id integer,folder_id integer,workspace_directory_id integer,stage_name text NOT NULL,
         mind_map_id integer,storage_key text NOT NULL,storage_backend text NOT NULL,version integer NOT NULL,
@@ -72,9 +73,9 @@ test('Vite→Node Host→隔离 PostgreSQL 完成 Local 文件夹 ZIP 往返并�
       [ownerId],
     )
     await pool.query(
-      `INSERT INTO folders(id,user_id,parent_id,name,project_id,workspace_directory_id,deleted_at) VALUES
-        (10,$1,NULL,'资料',NULL,NULL,NULL),(11,$1,10,'子目录',NULL,NULL,NULL),
-        (12,$2,NULL,'他人目录',NULL,NULL,NULL)`, [ownerId, foreignOwnerId],
+      `INSERT INTO folders(id,user_id,parent_id,name,project_id,workspace_directory_id,deleted_at,created_at,updated_at,version) VALUES
+        (10,$1,NULL,'资料',NULL,NULL,NULL,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,1),(11,$1,10,'子目录',NULL,NULL,NULL,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,1),
+        (12,$2,NULL,'他人目录',NULL,NULL,NULL,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,1)`, [ownerId, foreignOwnerId],
     )
     await pool.query(
       `INSERT INTO files(user_id,display_name,ext,space,project_id,folder_id,workspace_directory_id,

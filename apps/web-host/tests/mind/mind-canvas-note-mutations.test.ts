@@ -4,7 +4,7 @@ import {
   createMindCanvasNoteMutations,
   MindCanvasNoteMutationError,
   type MindCanvasNoteMutationRuntime,
-} from '../../src/domains/mind/application/mind-canvas-note-mutations.js'
+} from '@gugu/core/mind'
 
 const ownerId = 'synthetic-canvas-note-owner'
 const metadata = { undoContextId: 'canvas-note-tab', clientId: 'canvas-note-client', mutationId: 'canvas-note-mutation' }

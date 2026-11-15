@@ -1,4 +1,5 @@
 // 仅共享桌面 DTO 和固定能力名称；不依赖 Electron 或 Node。
+export { CORE_SCHEMA_VERSION } from './schema.js'
 export const MAX_FRAME = 65_536
 export const DESKTOP_METHODS = [
   'core.info',
@@ -21,6 +22,9 @@ export const DESKTOP_CHANNELS = {
   clients: 'gugu:clients:list',
   createClient: 'gugu:clients:create',
   receipt: 'gugu:operations:get',
+  undoPreview: 'gugu:undo:preview',
+  undoApply: 'gugu:undo:apply',
+  undoRedo: 'gugu:undo:redo',
   sandboxStatus: 'gugu:sandbox:diagnostics',
 } as const
 export interface DesktopProject {
@@ -50,5 +54,8 @@ export interface DesktopBridge {
   clients(): Promise<DesktopReply<DesktopClient[]>>
   createClient(name: string): Promise<DesktopReply<DesktopClient>>
   receipt(operationId: string): Promise<DesktopReply<unknown>>
+  undoPreview(contextId: string): Promise<DesktopReply<unknown>>
+  undoApply(contextId: string, undoId: string, operationId: string): Promise<DesktopReply<unknown>>
+  undoRedo(contextId: string, undoId: string, operationId: string): Promise<DesktopReply<unknown>>
   sandboxStatus(): Promise<DesktopReply<SandboxStatus>>
 }

@@ -1,5 +1,5 @@
 import type { JsonObject, ProviderConfig } from './contracts.js'
-import type { ProviderSearchAdapter, ProviderSearchDependencies } from './search/shared.js'
+import type { ProviderSearchAdapter, ProviderSearchDependencies } from './search/http.js'
 import { deepseekSearch } from './deepseek/search.js'
 import { glmSearch } from './glm/search.js'
 import { minimaxSearch } from './minimax/search.js'
@@ -33,8 +33,7 @@ export async function searchProvider(config: ProviderConfig, args: JsonObject, d
 }
 
 export {
-  MAX_SEARCH_ARRAY_ITEMS, MAX_SEARCH_RESPONSE_BYTES, MAX_SEARCH_RESULT_BYTES, MAX_SEARCH_TEXT_CHARS,
-  failedProviderSearch, limitSearchResult, officialSearchHost, pauseSearchRetry,
-  readSearchResponse, requestProviderSearch,
-} from './search/shared.js'
-export type { ProviderSearchAdapter, ProviderSearchDependencies, SearchTarget } from './search/shared.js'
+  MAX_SEARCH_ARRAY_ITEMS, MAX_SEARCH_RESPONSE_BYTES, MAX_SEARCH_RESULT_BYTES, MAX_SEARCH_TEXT_CHARS, limitSearchResult,
+} from './search/limits.js'
+export { failedProviderSearch, officialSearchHost, pauseSearchRetry, readSearchResponse, requestProviderSearch } from './search/http.js'
+export type { ProviderSearchAdapter, ProviderSearchDependencies, SearchTarget } from './search/http.js'

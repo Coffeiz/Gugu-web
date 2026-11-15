@@ -155,7 +155,10 @@ function pageRows<T extends QueryResultRow & { id: number | string; page_sort: s
 }
 const orderOperator = '<'
 
-export function createPostgresTrashReadOperations(pool: Pool, secret: string): Pick<
+export function createPostgresTrashReadOperations(pool: Pool, secret: string, projection: {
+  file(row: FilePageRow): Record<string, unknown>
+  folder(row: FolderPageRow): Record<string, unknown>
+} = { file: fileResponse, folder: folderResponse }): Pick<
   TrashOperations, 'listFiles' | 'listFolders' | 'listFolderContents'
 > {
   return {
@@ -183,7 +186,7 @@ export function createPostgresTrashReadOperations(pool: Pool, secret: string): P
          ORDER BY file.deleted_at DESC,file.id DESC LIMIT $${values.length}`,
         values,
       )
-      const rows = pageRows(result.rows, query.limit, fileResponse)
+      const rows = pageRows(result.rows, query.limit, projection.file)
       return page(rows, query.limit, secret, ownerId, scope)
     },
 
@@ -210,7 +213,7 @@ export function createPostgresTrashReadOperations(pool: Pool, secret: string): P
          ORDER BY folder.deleted_at DESC,folder.id DESC LIMIT $${values.length}`,
         values,
       )
-      const rows = pageRows(result.rows, query.limit, folderResponse)
+      const rows = pageRows(result.rows, query.limit, projection.folder)
       return page(rows, query.limit, secret, ownerId, scope)
     },
 
@@ -272,4 +275,17 @@ export function createPostgresTrashReadOperations(pool: Pool, secret: string): P
       }
     },
   }
+}
+
+
+/** Agent与Web共用相同owner/顶层过滤SQL；保留原始微秒，避免Web展示投影损失排序精度。 */
+export function createPostgresAgentTrashReader(pool: Pool, secret: string) {
+  const deletedAt = (stamp: string) => `${stamp.endsWith('.000000') ? stamp.slice(0, -7) : stamp}+00:00`
+  return createPostgresTrashReadOperations(pool, secret, {
+    file: row => ({ id: Number(row.id), file_id: Number(row.id), kind: 'file',
+      name: `${row.display_name}.${row.ext}`, space: row.space, deleted_at: deletedAt(row.page_sort) }),
+    folder: row => ({ id: Number(row.id), folder_id: Number(row.id), kind: 'folder', name: row.name,
+      space: row.project_id !== null ? 'project' : row.workspace_directory_id !== null ? 'workspace' : 'personal',
+      deleted_at: deletedAt(row.page_sort) }),
+  })
 }

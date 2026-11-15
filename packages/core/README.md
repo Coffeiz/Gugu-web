@@ -34,18 +34,18 @@ try {
 
 ## 旧库、收据与升级
 
-新库 schema 为 3，新增 `core_operation_receipts`；持久收据与业务写入同事务提交。相同操作 ID、相同方法与参数返回原结果；不同内容冲突。进程超时可能已提交，应凭操作 ID 查询或读取权威数据，不自动重试修改。
+新库 schema 为 16，包含用户偏好文档、反馈、操作收据、Undo、Mind、日历与 RAG、定时任务、通知、SMTP 设置、引导状态及 Agent 会话和交互提示/动作表；持久收据与业务写入同事务提交。相同操作 ID、相同方法与参数返回原结果；不同内容冲突。进程超时可能已提交，应凭操作 ID 查询或读取权威数据，不自动重试修改。
 
-v2 文件可通过显式 `allowLegacySchema` 用于差分验证，字段编码保持可被旧 Python 包重读；该模式没有持久收据。正式桌面协议 v2 要求 schema 3，遇到旧库拒绝隐式迁移。停止相关运行时后显式执行：
+v2 文件可通过显式 `allowLegacySchema` 用于差分验证，字段编码保持可被旧 Python 包重读；该模式没有持久收据。正式桌面协议 v2 要求 schema 16，遇到旧库拒绝隐式迁移。停止相关运行时后显式执行：
 
 ```bash
 pnpm --filter @gugu/core build
 pnpm --filter @gugu/core cli --database <本地数据库文件> migrate
 ```
 
-v1/v2 升级先锁定写入、生成并校验独立备份，再事务性升级。失败回滚 DDL 与版本。新库初始化先构建完整临时文件，再以不覆盖目标的方式发布；不会把失败的半初始化库当成有效文件。
+v1 至 v15 升级先锁定写入、生成并校验独立备份，再事务性升级。失败回滚 DDL 与版本。新库初始化先构建完整临时文件，再以不覆盖目标的方式发布；不会把失败的半初始化库当成有效文件。
 
-旧 Python 不能打开 v3。回滚需停止新版、恢复升级前备份并配套旧代码，不让旧进程直接写新 schema。用户 Web `.env` 和 `config.override.json` 不参与迁移。
+旧 Python 不能打开 v16。回滚需停止新版、恢复升级前备份并配套旧代码，不让旧进程直接写新 schema。用户 Web `.env` 和 `config.override.json` 不参与迁移。引导状态、反馈及偏好文档已具备 SQLite 仓储；桌面实际调用尚未验收。
 
 ## 分层、差分与真实数据库
 
@@ -70,13 +70,15 @@ pnpm --filter @gugu/core test:golden
 
 正式桌面 stdio 位于 `runtime/transport/stdio.ts`，以独占连接防止同一库被多个数据进程并行使用；可注入的进程 IPC 适配复用同一命令/收据契约，不依赖 Electron，也不自动切换传输。Executor 只接受 Host 已建立的授权，实际隔离交给选定后端；不提供无沙箱回退。当前执行去重属于进程内保护，持久 Job/Run 恢复仍属后续 Agent 阶段。
 
-## Agent Harness 迁移切片
+v2 ready 声明 `undo_mind_v1` 后，本地 Worker 可在同一事务中提交 Mind 撤销状态与操作收据；相同请求重放不重复返回事件。调用方须保存写请求 UUID，结果未知时查询收据并重读数据。该能力不代表其他资源撤销或桌面 Mind 编辑流程已接通；v1 不开放 Undo。
 
-固定实现树为 `harness.ts` 薄协调、`contracts.ts` 领域类型、`ports.ts` 依赖接口，以及 `run/`、`history/`、`context/`、`streaming/`、`interactions/`。对应测试统一位于 `tests/agent/harness/` 的这五个职责目录。Provider 协议和工具分发实现由外部模块提供，持久 Job、租约与 outbox 的真实共用实现也只通过端口接入；Harness 不建立平台或数据库后端。
+## Agent 运行模块
 
-`@gugu/core/harness` 提供可移植的 Canonical 上下文与 Run 编排；`createCanonicalContextPort` 连接历史准备、稳定引用 checkpoint、工具轮次、交互结果替换和预算/压缩，`createRunHarness` 协调启动/恢复/取消、工具调度、终态与 outbox。`@gugu/core/executor/runtime` 是现有共用 Executor 的可移植协调器，原 `/executor/platform` 保留同一类的兼容导出；原生后端仍由 Host 显式装配。
+实现按 Python 原职责放在 `agent/runner.ts`、`core.ts`、`models.ts`、`ports.ts`、`context/`、`run/`、`interactions/` 和 `memory/`。原 `agent/harness/` 已移除，不提供旧包导出或转发层。对应测试按职责分布在 `tests/agent/{context,core,run,interactions}/`。Provider、工具及持久 Job、租约与 outbox 通过显式端口接入。详见 [目录职责](src/agent/README.md)。
 
-推荐通过 `createCanonicalHarness` 的 `runPreparation` 接入标准准备主链：owned 来源读取后并发发现工具与召回 RAG，再按可信入口/主体过滤能力、组装系统规则和技能快照，最后进入 Canonical。能力目录只接收过滤后 Schema 与当前 query；用户 Skill 元数据随首次 session snapshot 候选冻结，后续 Run 复用。定时任务不注入交互历史或 RAG，当前输入仅用于请求。选择后的名称和公开 schema 随 Run context 冻结，Provider 必须使用这一快照；未开放的工具声明在实际派发前拒绝。端口查询须响应取消并在返回前释放资源。自定义完整 `context.load` 可以省略标准准备选项，但必须提供同等准备结果及能力快照，缺失时入口明确失败。
+`@gugu/core/agent` 提供可移植的 Canonical 上下文与 Run 编排；`createCanonicalContextPort` 连接历史准备、稳定引用 checkpoint、工具轮次、交互结果替换和预算/压缩，`createAgentRunner` 协调启动/恢复/取消、工具调度、终态与 outbox。`@gugu/core/executor/runtime` 是现有共用 Executor 的可移植协调器，原 `/executor/platform` 保留同一类的兼容导出；原生后端仍由 Host 显式装配。
+
+推荐通过 `createCanonicalRunner` 的 `runPreparation` 接入标准准备主链：owned 来源读取后并发发现工具与召回 RAG，再按可信入口/主体过滤能力、组装系统规则和技能快照，最后进入 Canonical。能力目录只接收过滤后 Schema 与当前 query；用户 Skill 元数据随首次 session snapshot 候选冻结，后续 Run 复用。定时任务不注入交互历史或 RAG，当前输入仅用于请求。选择后的名称和公开 schema 随 Run context 冻结，Provider 必须使用这一快照；未开放的工具声明在实际派发前拒绝。端口查询须响应取消并在返回前释放资源。自定义完整 `context.load` 可以省略标准准备选项，但必须提供同等准备结果及能力快照，缺失时入口明确失败。
 
 这些入口不自动创建数据库、连接 Provider、注册工具或接管 Web/IM。生产装配必须实现 owner/session 互斥租约、fenced CAS RunStore、单次交互授权、Provider 归一事件与续接、稳定附件引用、错误清洗和事件发布。`prepareRequest` 必须按 Run 身份恢复同一冻结前缀，不能重启后套用新配置。成功 finalize 的 Canonical delta、用量、摘要水位与 outbox 必须同事务；中间 checkpoint 仅保留可恢复状态，失败不应用待提交压缩，取消只保存允许的中断 delta。工具处于未知状态时只查询收据，不自动重发修改。
 

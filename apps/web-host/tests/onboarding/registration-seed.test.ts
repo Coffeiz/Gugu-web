@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createRegistrationSeeder, type RegistrationSeedPlan, type RegistrationSeedPorts } from '../../src/domains/onboarding/registration-seed.js'
+import { createRegistrationSeeder, type RegistrationSeedPlan, type RegistrationSeedPorts } from '@gugu/core/onboarding'
 
 function fixture(overrides: Partial<RegistrationSeedPorts> = {}) {
   const applied: Array<{ ownerId: string; plan: RegistrationSeedPlan }> = []

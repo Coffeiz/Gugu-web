@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { CoreError } from './contracts/index.js'
 import { initializeSqlite, migrateSqlite } from './data/sqlite.js'
+import { SCHEMA_VERSION } from './data/schema.js'
 import { LocalRuntime } from './runtime/local.js'
 
 async function main(): Promise<void> {
@@ -16,7 +17,7 @@ async function main(): Promise<void> {
   const command = args.shift()
   if (command === 'init') {
     await initializeSqlite(database)
-    console.log(JSON.stringify({ initialized: true, schema: 3 }))
+    console.log(JSON.stringify({ initialized: true, schema: Number(SCHEMA_VERSION) }))
     return
   }
   if (command === 'migrate') {

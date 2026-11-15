@@ -1,10 +1,10 @@
 import { CoreError } from '@gugu/core'
-import { lstat, mkdir, realpath, rename, rm, stat } from 'node:fs/promises'
+import { link, lstat, mkdir, realpath, rm, stat, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
 import { isPathWithin } from '../../adapters/path-safety.js'
-import { normalizeFileOwnerId } from './file-owner.js'
+import { isOwnedFileStorageKey, normalizeFileOwnerId } from './file-owner.js'
 import type { FileDeleteOperations } from './file-delete.js'
 import { lockFileSyncPath, lockFileSyncPaths } from './persistence/file-sync-canonical-change.js'
 
@@ -40,6 +40,14 @@ function trashKey(ownerId: string, storageKey: string, displayName: string, ext:
   logicalParent = logicalParent.includes('/') ? logicalParent.slice(logicalParent.indexOf('/') + 1) : ''
   const filename = `${safeSegment(displayName)}${ext ? `.${ext.toLowerCase()}` : ''}`
   return `${ownerId}/trash/${logicalParent ? `${logicalParent}/` : ''}${filename}`
+}
+
+async function removeMatchingLink(keep: string, remove: string): Promise<void> {
+  try {
+    const [a, b] = await Promise.all([lstat(keep), lstat(remove)])
+    if (a.isFile() && b.isFile() && a.dev === b.dev && a.ino === b.ino) { await unlink(remove); return }
+    console.error('文件删除清理遇到路径变化，可能存在残留')
+  } catch { console.error('文件删除清理失败，可能存在残留') }
 }
 
 async function safePath(storageRoot: string, key: string): Promise<{ root: string; target: string }> {
@@ -123,6 +131,7 @@ export function createPostgresFileDeleteOperations(
   pool: Pool,
   options: {
     storageRoot: string
+    createDeleteLink?: typeof link
     publishChanged(event: { ownerId: string; entityId: number; origin: string | null }): Promise<void>
   },
 ): FileDeleteOperations {
@@ -135,13 +144,17 @@ export function createPostgresFileDeleteOperations(
       let destinationPath: string | null = null
       let moved = false
       let committed = false
+      let commitAttempted = false
       try {
         await client.query('BEGIN')
+        // 先串行化同一用户的回收站目标分配，再取得文件行和来源路径锁。
+        await client.query("SELECT pg_advisory_xact_lock(hashtextextended('file-trash:' || $1, 0))", [ownerId])
         const result = await client.query<FileRow>(
           'SELECT * FROM files WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL FOR UPDATE', [fileId, ownerId],
         )
         const before = result.rows[0]
         if (!before) throw new CoreError('not_found', '文件不存在')
+        if (!isOwnedFileStorageKey(ownerId, before.storage_key)) throw new CoreError('not_found', '文件不存在')
         await lockFileSyncPath(client, ownerId, before.storage_key)
         sourcePath = (await safePath(options.storageRoot, before.storage_key)).target
         const destinationKey = await availableTrashKey(
@@ -150,7 +163,7 @@ export function createPostgresFileDeleteOperations(
         )
         destinationPath = (await safePath(options.storageRoot, destinationKey)).target
         await mkdir(path.dirname(destinationPath), { recursive: true, mode: 0o700 })
-        await rename(sourcePath, destinationPath)
+        await (options.createDeleteLink ?? link)(sourcePath, destinationPath)
         moved = true
         const updated = await client.query<FileRow>(
           `UPDATE files SET storage_key=$3,deleted_at=CURRENT_TIMESTAMP,version=version+1,updated_at=CURRENT_TIMESTAMP
@@ -159,14 +172,17 @@ export function createPostgresFileDeleteOperations(
         const after = updated.rows[0]
         if (!after) throw new CoreError('not_found', '文件不存在')
         await recordBatchDeleteUndo(client, ownerId, undoContextId, [before], [after])
+        commitAttempted = true
         await client.query('COMMIT')
         committed = true
+        if (sourcePath && destinationPath) await removeMatchingLink(destinationPath, sourcePath)
       } catch (error) {
         if (!committed) {
           await client.query('ROLLBACK').catch(() => undefined)
           if (moved && sourcePath && destinationPath) {
             await mkdir(path.dirname(sourcePath), { recursive: true, mode: 0o700 }).catch(() => undefined)
-            await rename(destinationPath, sourcePath).catch(() => undefined)
+            if (!commitAttempted) await removeMatchingLink(sourcePath, destinationPath)
+            else console.error('文件删除提交结果未知，保留两处文件供核查')
           }
         }
         throw error
@@ -183,15 +199,20 @@ export function createPostgresFileDeleteOperations(
       const client = await pool.connect()
       const movedFiles: Array<{ sourcePath: string; destinationPath: string }> = []
       let committed = false
+      let commitAttempted = false
       let changedIds: number[] = []
       try {
         await client.query('BEGIN')
+        await client.query("SELECT pg_advisory_xact_lock(hashtextextended('file-trash:' || $1, 0))", [ownerId])
         const result = await client.query<FileRow>(
           `SELECT * FROM files WHERE id=ANY($1::integer[]) AND user_id=$2 AND deleted_at IS NULL
            ORDER BY storage_key,id FOR UPDATE`, [fileIds, ownerId],
         )
         const beforeRows = result.rows
+        if (beforeRows.some((file) => !isOwnedFileStorageKey(ownerId, file.storage_key)))
+          throw new CoreError('not_found', '文件不存在')
         if (!beforeRows.length) {
+          commitAttempted = true
           await client.query('COMMIT')
           committed = true
           return
@@ -205,7 +226,7 @@ export function createPostgresFileDeleteOperations(
           )
           const destinationPath = (await safePath(options.storageRoot, destinationKey)).target
           await mkdir(path.dirname(destinationPath), { recursive: true, mode: 0o700 })
-          await rename(sourcePath, destinationPath)
+          await (options.createDeleteLink ?? link)(sourcePath, destinationPath)
           movedFiles.push({ sourcePath, destinationPath })
           const updated = await client.query<FileRow>(
             `UPDATE files SET storage_key=$3,deleted_at=CURRENT_TIMESTAMP,version=version+1,updated_at=CURRENT_TIMESTAMP
@@ -219,15 +240,18 @@ export function createPostgresFileDeleteOperations(
           [beforeRows.map((file) => Number(file.id)), ownerId],
         )
         await recordBatchDeleteUndo(client, ownerId, undoContextId, beforeRows, current.rows)
+        commitAttempted = true
         await client.query('COMMIT')
         committed = true
+        for (const move of movedFiles) await removeMatchingLink(move.destinationPath, move.sourcePath)
         changedIds = beforeRows.map((file) => Number(file.id))
       } catch (error) {
         if (!committed) {
           await client.query('ROLLBACK').catch(() => undefined)
           for (const move of movedFiles.reverse()) {
             await mkdir(path.dirname(move.sourcePath), { recursive: true, mode: 0o700 }).catch(() => undefined)
-            await rename(move.destinationPath, move.sourcePath).catch(() => undefined)
+            if (!commitAttempted) await removeMatchingLink(move.sourcePath, move.destinationPath)
+            else console.error('文件批量删除提交结果未知，保留两处文件供核查')
           }
         }
         throw error

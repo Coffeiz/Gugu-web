@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
-import { createPostgresMindCanvasReader } from '../../src/domains/mind/mind-canvas-read.js'
+import { createPostgresRuntime } from '@gugu/core/data'
+import { createSqlMindCanvasReader } from '@gugu/core/mind'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
@@ -13,6 +14,7 @@ test('canvas reader scopes canvases, active nodes, event snapshots, and relation
   const admin = new Pool({ connectionString: databaseUrl, max: 1 })
   await admin.query(`CREATE SCHEMA "${schema}"`)
   const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema}`, max: 2 })
+  const core = await createPostgresRuntime({ url: databaseUrl!, schema })
   const ownerId = randomUUID()
   const otherOwnerId = randomUUID()
   const now = new Date('2026-11-14T01:02:03.000Z')
@@ -78,7 +80,7 @@ test('canvas reader scopes canvases, active nodes, event snapshots, and relation
         (13, $2, 1, 1, 2, 'related', 'user', 'confirmed', $3, $3)
     `, [ownerId, otherOwnerId, now])
 
-    const reader = createPostgresMindCanvasReader(pool)
+    const reader = createSqlMindCanvasReader(core.db, 'postgres')
     const canvases = await reader.listCanvases(ownerId, 4)
     const items = await reader.listItems(ownerId, 1)
     const relations = await reader.listRelations(ownerId, 1)
@@ -92,6 +94,7 @@ test('canvas reader scopes canvases, active nodes, event snapshots, and relation
     assert.equal(canvasLocation, 1)
     assert.equal(await reader.canvasLocation(otherOwnerId, 4), null)
   } finally {
+    await core.close()
     await pool.end()
     await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`).catch(() => undefined)
     await admin.end()

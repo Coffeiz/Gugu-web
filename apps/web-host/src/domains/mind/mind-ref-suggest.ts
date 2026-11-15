@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import type { FastifyRequest } from 'fastify'
-import type { GlobalSearchOperations, GlobalSearchType } from '../search/search.js'
+import type { GlobalSearchOperations, GlobalSearchType } from '@gugu/core'
 import { parsePythonInteger } from '../../http/request.js'
 
 export interface MindRefSuggestItem {

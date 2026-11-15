@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import type { UserFromRequest, WriteRequestMetadata } from '../../../app.js'
 import { parsePythonInteger, writeRequestMetadata } from '../../../http/request.js'
-import { MindNoteMutationError } from '../application/mind-note-mutations.js'
+import { MindNoteMutationError } from '@gugu/core/mind'
 import type { MindNoteReadResponse } from '../mind-notes-read.js'
 
 export interface MindNoteMutationOptions {

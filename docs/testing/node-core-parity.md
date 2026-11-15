@@ -15,6 +15,17 @@
 
 Node 路径均在 `gugu-core/tests/`，桌面行除外。`layer` 与依赖 marker 分开；Golden 是用途，不替代 process 标记。只使用合成输入、新建临时目录/隔离 schema，不连接用户配置、数据库或真实 Provider。
 
+## 联系人模块的实际调用方
+
+- 共享校验和数据用例位于 Core；`fixtures/data-contract.ts` 对 SQLite 与 PostgreSQL 共用联系人创建、更新、删除、owner 隔离及失败回滚契约。Web API 由 `apps/web/src/services/api.ts` 调用，Host 的 `modules/clients/routes/clients.ts` 从认证上下文取 owner，并通过 `modules/clients/persistence/clients.ts` 进入 Core 数据服务；API 清单和隔离 PG/Python 结果见 `docs/refactor/Gugu-2.0-Node-WebUI-API迁移清单.md` 联系人三行。
+- 桌面 Preload/Renderer bridge 提供联系人读取和创建，Main 将其转为 `clients.list` / `clients.create` Core 命令；`apps/desktop/tests/core-host.test.ts` 覆盖同一 SQLite 实例的写入、关闭后重开和回读。桌面未暴露删除入口，不把未暴露的操作记为桌面调用方接通。
+- Web Host Agent 联系人注册器直接使用 Core `createClientTools`；仅供旧 Host 单测调用的 `agent-client-tool.ts` 创建/更新转发层及对应测试已删除，Core 侧 SQLite 工具回归覆盖这些调用行为。当前树在 devserver 的定向结果：Core 临时 SQLite 数据合同 11/11、Core Agent 联系人工具 16/16、Web Host 联系人路由 4/4、Python `test_core_data_bridge.py` 3/3；运行前相关本地与远端源码 SHA-256 一致。PostgreSQL 测试 URL 当前未提供，本轮未重跑隔离 PG；既有 PG 证据保留在 Node WebUI 联系人 devlog。桌面 CoreHost 回归本轮未启动：devserver 桌面包缺少 Vitest，不能计入本轮通过。
+- 因此，联系人规则、双库适配、Web 调用方和现有桌面读写调用方已有代码与回归；项目文件计数、跨文件恢复和 Undo 仍是独立未完成缺口，不能由联系人完成状态推断。
+
+## 文件读取适配测试边界
+
+Core 的 `openAuthorizedRelativeFile` 只依赖 Host 注入的文件打开端口；使用 `packages/fs` 真实本地文件适配器的组合测试位于 `apps/web-host/tests/files/local-file-read.test.ts`，不让 Core 测试直接导入其他 workspace 包的源码。该测试拒绝越界路径和符号链接，并确认系统读取错误原样传播。2026-11-15 devserver 验证：Core 测试 TypeScript 项目 `tsc -p tsconfig.tests.json` 通过，Web Host 全量类型检查通过，文件读取定向回归 1/1 通过；运行前 Core/Web Host 源码与测试树本地、远端哈希一致。
+
 ## 已有语义差异
 
 | 差异 | Python 参考 | Node 处理 |

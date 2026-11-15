@@ -5,10 +5,10 @@ import test from 'node:test'
 import { createPostgresRuntime, type SqlDataRuntime } from '@gugu/core/data'
 import bcrypt from 'bcryptjs'
 import { createApp } from '../../src/app.js'
-import { createClientOperations } from '../../src/domains/clients/persistence/clients.js'
-import { createEventOperations } from '../../src/domains/calendar/persistence/events.js'
-import { createNotificationOperations } from '../../src/domains/notifications/persistence/notifications.js'
-import { createTrackOperations } from '../../src/domains/site/persistence/track.js'
+import { createClientOperations } from '../../src/modules/clients/persistence/clients.js'
+import { createCalendarEventReader, createKyselyCalendarReadPort } from '@gugu/core/calendar'
+import { createKyselyNotificationOperations } from '@gugu/core/notifications'
+import { createTrackOperations } from '../../src/modules/site/persistence/track.js'
 import { createProjectFileCountListing, createProjectGetter, createProjectListing } from '../../src/domains/projects/persistence/projects.js'
 import { signedUserToken } from '../helpers/auth.js'
 import { createUserRepository } from '../../src/domains/auth/persistence/users.js'
@@ -159,7 +159,7 @@ test('Node auth, project, client, calendar, and notification routes preserve Pos
         user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         event varchar(64) NOT NULL,
         properties jsonb,
-        created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+        created_at timestamptz NOT NULL
       )
     `)
     const userId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
@@ -251,11 +251,12 @@ test('Node auth, project, client, calendar, and notification routes preserve Pos
       'INSERT INTO notification_dismissals (user_id, notification_id, dismissed_at) VALUES ($1, $2, $3)',
       [userId, dismissedId, '2026-11-11T00:00:00Z'],
     )
+    core = await createPostgresRuntime({ url: databaseUrl!, schema, maxConnections: 2 })
     const notificationsApp = createApp({
       appName: 'Gugu',
       isReady: async () => true,
       userAuth: { secret, ...createUserRepository(pool) },
-      notifications: createNotificationOperations(pool),
+      notifications: createKyselyNotificationOperations(core.db, 'postgres', () => '2026-11-14T00:00:00Z'),
     })
     try {
       const headers = { authorization: `Bearer ${signedUserToken(secret, userId, 4)}` }
@@ -353,7 +354,6 @@ test('Node auth, project, client, calendar, and notification routes preserve Pos
     } finally {
       await trackApp.close()
     }
-    core = await createPostgresRuntime({ url: databaseUrl!, schema, maxConnections: 2 })
     const projectApp = createApp({
       appName: 'Gugu',
       isReady: async () => true,
@@ -361,7 +361,7 @@ test('Node auth, project, client, calendar, and notification routes preserve Pos
       listProjects: createProjectListing(core, pool),
       listProjectFileCounts: createProjectFileCountListing(pool),
       getProject: createProjectGetter(core, pool),
-      events: createEventOperations(pool),
+      events: createCalendarEventReader(createKyselyCalendarReadPort(core.db, 'postgres')),
     })
 
     try {
@@ -386,7 +386,7 @@ test('Node auth, project, client, calendar, and notification routes preserve Pos
         priority: null,
         version: 1,
         doneAt: null,
-        updatedAt: '2026-11-02 00:00:00+00:00',
+        updatedAt: '2026-11-02T00:00:00+00:00',
         deletedAt: null,
         createdAt: '2026-11-02',
         fileCount: 2,

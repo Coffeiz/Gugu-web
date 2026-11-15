@@ -4,12 +4,12 @@ import {
   EventUpdateError,
   updateCalendarEvent,
   type EventUpdateStore,
-} from '../../src/domains/calendar/application/event-update.js'
+} from '@gugu/core/calendar'
 import {
   deleteCalendarEvent,
   EventDeleteError,
   type CalendarEventDeleteStore,
-} from '../../src/domains/calendar/application/event-delete.js'
+} from '@gugu/core/calendar'
 
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
 

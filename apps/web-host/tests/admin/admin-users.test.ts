@@ -307,7 +307,7 @@ test('PostgreSQL 状态存储在事务中锁定用户、递增 security_version 
   const update = calls.find(({ sql }) => sql.startsWith('UPDATE'))!
   assert.match(update.sql, /account_status = 'active', is_active = TRUE, suspended_until = NULL/)
   assert.match(update.sql, /suspended_reason = NULL, security_version = COALESCE\(security_version, 0\) \+ 1/)
-  assert.deepEqual(update.values, [userIdA, at])
+  assert.deepEqual(update.values, [userIdA])
   assert.equal(calls.at(-2)!.sql, 'COMMIT')
   assert.equal(calls.at(-1)!.sql, 'RELEASE')
 })

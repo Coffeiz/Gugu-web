@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Pool } from 'pg'
@@ -114,6 +114,7 @@ test('PostgreSQL Local 正文保存执行版本 CAS、更新正文并保存撤�
     await mkdir(path.dirname(folderSource), { recursive: true })
     await writeFile(folderSource, '旧会议记录')
     const operations = createPostgresFileContentOperations(pool, {
+      async removeCommittedBackup() { throw new Error('模拟清理失败') },
       storageRoot: root,
       async publishChanged(event) { published.push(event.entityId) },
     })
@@ -144,10 +145,13 @@ test('PostgreSQL Local 正文保存执行版本 CAS、更新正文并保存撤�
     assert.equal(updated.version, 2)
     assert.equal(updated.sizeBytes, Buffer.byteLength('新内容\n'))
     assert.equal(await readFile(source, 'utf8'), '新内容\n')
-    const operation = await pool.query<{ artifact_refs: Record<string, { before_key: string; after_key: string }> }>(
-      'SELECT artifact_refs FROM undo_operations WHERE user_id=$1 AND undo_context_id=$2', [ownerId, 'editor-tab'],
+    const operation = await pool.query<{ id: string; artifact_refs: Record<string, { before_key: string; after_key: string }> }>(
+      'SELECT id, artifact_refs FROM undo_operations WHERE user_id=$1 AND undo_context_id=$2', [ownerId, 'editor-tab'],
     )
     const artifacts = operation.rows[0]!.artifact_refs['file:1']!
+    // 到期清理按操作 ID 删除 artifact 目录，正文必须归入该目录。
+    assert.ok(artifacts.before_key.startsWith(`${ownerId}/.undo/${operation.rows[0]!.id}/`))
+    assert.ok(artifacts.after_key.startsWith(`${ownerId}/.undo/${operation.rows[0]!.id}/`))
     assert.equal(await readFile(path.join(root, artifacts.before_key), 'utf8'), '旧内容')
     assert.equal(await readFile(path.join(root, artifacts.after_key), 'utf8'), '新内容\n')
     const journal = await pool.query<{
@@ -207,6 +211,33 @@ test('PostgreSQL Local 正文保存执行版本 CAS、更新正文并保存撤�
     }), (error: unknown) => error instanceof Error && error.message === '文件不存在')
     assert.equal(await readFile(foreign, 'utf8'), '不应读取')
     assert.deepEqual(published, [1, 3, 4, 5])
+    const unknownPool = { async connect() {
+      const client = await pool.connect(); const rawQuery=client.query; const query = rawQuery.bind(client); const release=client.release.bind(client)
+      client.query = (async (...args: Parameters<typeof client.query>) => {
+        const result = await (query as (...args: any[]) => Promise<any>)(...args)
+        if (args[0] === 'COMMIT') throw new Error('模拟提交后断连')
+        return result
+      }) as typeof client.query
+      client.release=(() => {client.query=rawQuery;release()}) as typeof client.release
+      return client
+    } } as unknown as Pool
+    const unknownOps = createPostgresFileContentOperations(unknownPool, {storageRoot: root, async publishChanged() {}})
+    await assert.rejects(unknownOps.update(ownerId, 1, '提交的新正文', 2, {idempotencyKey:null,undoContextId:null,clientId:null}), /模拟提交后断连/)
+    assert.equal(await readFile(source, 'utf8'), '提交的新正文')
+    const stage = (await readdir(path.dirname(source))).find(name => name.startsWith('.content-stage-'))!
+    assert.equal(await readFile(path.join(path.dirname(source), stage, 'content.old'), 'utf8'), '新内容\n')
+    const existingStages = new Set(await readdir(path.dirname(source)))
+    const failedRollbackOps = createPostgresFileContentOperations(pool, {
+      storageRoot: root, async publishChanged() {},
+      async recordFileChange() { throw new Error('模拟写入失败') },
+      restoreBackup() { throw new Error('模拟同步回滚失败') },
+    })
+    await assert.rejects(failedRollbackOps.update(ownerId, 1, '待回滚正文', 3, {idempotencyKey:null,undoContextId:null,clientId:null}), /模拟写入失败/)
+    const retained = (await readdir(path.dirname(source))).find(name => name.startsWith('.content-stage-') && !existingStages.has(name))!
+    assert.equal(await readFile(path.join(path.dirname(source), retained, 'content.old'), 'utf8'), '提交的新正文')
+    await pool.query('UPDATE files SET storage_key=$2 WHERE id=$1',[1,`${otherOwnerId}/个人文件/私有.md`])
+    await assert.rejects(operations.update(ownerId,1,'不可写入',3,{idempotencyKey:null,undoContextId:null,clientId:null}),/文件不存在/)
+    assert.equal(await readFile(foreign,'utf8'),'不应读取')
   } finally {
     await pool.end()
     await admin.query(`DROP SCHEMA "${schema}" CASCADE`)

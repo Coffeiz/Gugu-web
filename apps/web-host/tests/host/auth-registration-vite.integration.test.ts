@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
-import { mkdtemp, mkdir, rm, stat } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -10,7 +10,7 @@ import { createApp } from '../../src/app.js'
 import { createUserRepository } from '../../src/domains/auth/persistence/users.js'
 import { createPostgresRegistrationOperations } from '../../src/domains/auth/persistence/registration.js'
 import { createPostgresWorkspaceDirectoryOperations } from '../../src/domains/workspaces/persistence/workspace-directories.js'
-import { createRegistrationSeeder } from '../../src/domains/onboarding/registration-seed.js'
+import { createRegistrationSeeder } from '@gugu/core/onboarding'
 import { createPostgresRegistrationSeedOperations } from '../../src/domains/onboarding/persistence/registration-seed-postgres.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
@@ -275,7 +275,9 @@ test('Vite→Node Host registers a user and seeds the Local onboarding flow with
     const seededFiles = await pool.query<{ storage_key: string }>(
       'SELECT storage_key FROM files WHERE user_id=$1 ORDER BY id', [registered.user.id],
     )
-    for (const file of seededFiles.rows) await stat(join(storageRoot, ...file.storage_key.split('/')))
+    const contents = await Promise.all(seededFiles.rows.map(file => readFile(join(storageRoot, ...file.storage_key.split('/')), 'utf8')))
+    assert.match(contents[0]!, /^# 给未来的自己\n/)
+    assert.match(contents[1]!, /^# 可以删掉我\n/)
   } finally {
     if (vite) await vite.close()
     await app.close().catch(() => undefined)

@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import type { UserFromRequest } from '../../../app.js'
 import { writeRequestMetadata } from '../../../http/request.js'
-import { MindRefNodeCreateError } from '../application/mind-ref-node-create.js'
+import { MindRefNodeCreateError } from '@gugu/core/mind'
 import type { MindNoteReadResponse } from '../mind-notes-read.js'
 
 type RefNodeWriteMetadata = ReturnType<typeof writeRequestMetadata> & { mutationId: string | null }

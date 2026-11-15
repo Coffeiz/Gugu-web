@@ -2,9 +2,11 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
+import { CoreError, projectResponse } from '@gugu/core'
 import { createAgentProjectTool } from '../../src/domains/agent-sessions/tools/agent-project-tool.js'
-import { createProjectCreator } from '../../src/domains/projects/application/project-create.js'
-import { createPostgresProjectCreateRuntime } from '../../src/domains/projects/persistence/project-create-postgres.js'
+import { createProjectCreator } from '@gugu/core/project-create'
+import { createPostgresRuntime } from '@gugu/core/data'
+import { createKyselyProjectCreateRuntime } from '@gugu/core/project-create-data'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
@@ -16,7 +18,8 @@ test('PostgreSQL 项目创建在单事务内持久化项目与 Undo，并支持 
   const schema = `gugu_project_create_${randomUUID().replaceAll('-', '')}`
   const admin = new Pool({ connectionString: databaseUrl, max: 1 })
   await admin.query(`CREATE SCHEMA "${schema}"`)
-  const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema}`, max: 4 })
+  const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema} -c timezone=Asia/Shanghai`, max: 4 })
+  const coreRuntime = await createPostgresRuntime({ url: databaseUrl!, schema })
   const events: unknown[] = []
   try {
     await pool.query(`
@@ -67,11 +70,19 @@ test('PostgreSQL 项目创建在单事务内持久化项目与 Undo，并支持 
       )
     `)
 
-    const runtime = createPostgresProjectCreateRuntime(pool, async (event) => {
+    // 真正由PG生成跨日非UTC和微秒值，Host行查询必须用::text保留全部精度。
+    await pool.query(`CREATE FUNCTION fixed_create_times() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        NEW.created_at := '2026-11-14T00:30:00.123000+08:00';
+        NEW.updated_at := '2026-11-14T00:30:00.123456+08:00';
+        RETURN NEW;
+      END $$;
+      CREATE TRIGGER fixed_create_times BEFORE INSERT ON projects FOR EACH ROW EXECUTE FUNCTION fixed_create_times()`)
+    const runtime = createKyselyProjectCreateRuntime({ db: coreRuntime.db, backend: 'postgres', async publishProjectCreated(event) {
       const visible = await pool.query('SELECT id FROM projects WHERE id = $1', [event.entityId])
       assert.equal(visible.rowCount, 1, '项目事件应在事务提交后发布')
       events.push(event)
-    })
+    } })
     const create = createProjectCreator(runtime)
     const now = new Date().toISOString()
     await pool.query(
@@ -96,6 +107,16 @@ test('PostgreSQL 项目创建在单事务内持久化项目与 Undo，并支持 
     const firstEvent = events[0] as { payload: { createdAt: string; updatedAt: string } }
     assert.match(firstEvent.payload.createdAt, /^\d{4}-\d{2}-\d{2}$/)
     assert.match(firstEvent.payload.updatedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/)
+
+    const createdResponse = projectResponse(first.project, 0)
+    assert.deepEqual(firstEvent.payload, createdResponse)
+    assert.equal(createdResponse.createdAt, '2026-11-13')
+    assert.equal(createdResponse.updatedAt, '2026-11-13T16:30:00.123456+00:00')
+    assert.equal(createdResponse.doneAt, null)
+    assert.equal(createdResponse.deletedAt, null)
+    const storedTimes = (await pool.query('SELECT created_at::text,updated_at::text FROM projects WHERE id=$1', [first.project.id])).rows[0]
+    assert.equal(storedTimes.created_at, '2026-11-14 00:30:00.123+08')
+    assert.equal(storedTimes.updated_at, '2026-11-14 00:30:00.123456+08')
 
     const projects = await pool.query('SELECT * FROM projects WHERE user_id = $1', [ownerId])
     assert.equal(projects.rowCount, 1)
@@ -149,6 +170,23 @@ test('PostgreSQL 项目创建在单事务内持久化项目与 Undo，并支持 
     ])
     assert.equal(agentFirst.project_id, agentReplay.project_id)
     assert.equal([agentFirst, agentReplay].filter(result => !result.idempotent_replay).length, 1)
+    const scopedDispatch = { ...agentDispatch, runId: 'run-a', roundId: 'round-a' }
+    const scopedFirst = await createAgentProject(ownerId, agentArgs, scopedDispatch)
+    const scopedReplay = await createAgentProject(ownerId, agentArgs, scopedDispatch)
+    const nextRun = await createAgentProject(ownerId, agentArgs, { ...scopedDispatch, runId: 'run-b' })
+    const nextRound = await createAgentProject(ownerId, agentArgs, { ...scopedDispatch, roundId: 'round-b' })
+    assert.equal(scopedReplay.project_id, scopedFirst.project_id)
+    assert.equal(scopedReplay.idempotent_replay, true)
+    assert.equal(new Set([scopedFirst.project_id, nextRun.project_id, nextRound.project_id]).size, 3)
+    const uncertainDispatch = { ...scopedDispatch, toolCallId: 'uncertain-call' }
+    const uncertainCreate = createAgentProjectTool({ ...runtime, async transaction<T>(work: Parameters<typeof runtime.transaction<T>>[0]): Promise<T> {
+      await runtime.transaction(work)
+      throw new CoreError('invalid_request', '合成提交后异常')
+    } })
+    await assert.rejects(uncertainCreate(ownerId, agentArgs, uncertainDispatch), CoreError)
+    const recovered = await createAgentProject(ownerId, agentArgs, uncertainDispatch)
+    assert.equal(recovered.idempotent_replay, true)
+    assert.equal((await pool.query('SELECT count(*)::integer AS count FROM projects WHERE user_id=$1 AND id=$2', [ownerId, recovered.project_id])).rows[0].count, 1)
     assert.equal(events.length, 2, 'Agent 创建沿用 Python 行为，不发送 Web 项目事件')
     const agentProject = await pool.query(
       'SELECT summary, priority FROM projects WHERE id = $1', [agentFirst.project_id],
@@ -172,6 +210,7 @@ test('PostgreSQL 项目创建在单事务内持久化项目与 Undo，并支持 
     assert.equal(rolledBackProject.rowCount, 0, 'Undo 写入失败时项目插入必须回滚')
     assert.equal(events.length, 2, '回滚的项目不应发布事件')
   } finally {
+    await coreRuntime.close()
     await pool.end()
     await admin.query(`DROP SCHEMA "${schema}" CASCADE`).catch(() => undefined)
     await admin.end()

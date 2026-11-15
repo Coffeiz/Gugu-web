@@ -5,7 +5,7 @@ import {
   MindRefNodeCreateError,
   type MindReferenceNodeSnapshot,
   type MindRefNodeCreateRuntime,
-} from '../../src/domains/mind/application/mind-ref-node-create.js'
+} from '@gugu/core/mind'
 
 const timestamp = new Date('2026-11-14T01:02:03.000Z')
 const referenceNode: MindReferenceNodeSnapshot = {

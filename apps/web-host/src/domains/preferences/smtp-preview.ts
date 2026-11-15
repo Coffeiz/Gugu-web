@@ -1,19 +1,12 @@
-import { CoreError } from '@gugu/core'
+import { CoreError, isThemePalette, themePaletteColor, type ThemePalette } from '@gugu/core'
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify'
 
 export type SmtpPreviewTemplate = 'notification' | 'reminder' | 'report' | 'security' | 'test'
 export type SmtpPreviewTheme = 'light' | 'dark'
-export type SmtpPreviewPalette = 'cafe' | 'neutral' | 'red' | 'blue' | 'green'
+export type SmtpPreviewPalette = ThemePalette
 
 const templates = new Set<SmtpPreviewTemplate>(['notification', 'reminder', 'report', 'security', 'test'])
 const themes = new Set<SmtpPreviewTheme>(['light', 'dark'])
-const palettes: Record<SmtpPreviewPalette, { light: string; dark: string }> = {
-  cafe: { light: '#715653', dark: '#be9d98' },
-  neutral: { light: '#565b64', dark: '#c0c3c9' },
-  red: { light: '#a66e73', dark: '#d0a1a4' },
-  blue: { light: '#65789a', dark: '#9aaecd' },
-  green: { light: '#718a7e', dark: '#a9c2b5' },
-}
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({
@@ -32,7 +25,7 @@ function previewInput(value: unknown): { template: SmtpPreviewTemplate; theme: S
     throw new CoreError('invalid_request', 'template 无效')
   if (typeof theme !== 'string' || !themes.has(theme as SmtpPreviewTheme))
     throw new CoreError('invalid_request', 'theme 无效')
-  if (typeof palette !== 'string' || !Object.hasOwn(palettes, palette))
+  if (!isThemePalette(palette))
     throw new CoreError('invalid_request', 'palette 无效')
   return {
     template: template as SmtpPreviewTemplate,
@@ -47,7 +40,7 @@ export function renderUserSmtpPreview(value: unknown): { html: string } {
   const colors = {
     canvas: dark ? '#171925' : '#f3f4f8',
     surface: dark ? '#232638' : '#ffffff',
-    brand: palettes[palette][dark ? 'dark' : 'light'],
+    brand: themePaletteColor(palette, theme),
     text: dark ? '#f3f4f8' : '#20222b',
     muted: dark ? '#b7bbca' : '#6f7486',
     border: dark ? '#41465c' : '#dfe2eb',

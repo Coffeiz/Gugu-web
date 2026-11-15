@@ -1,7 +1,7 @@
 import { ProviderError, throwIfCancelled } from '../errors.js'
 import { record, text } from '../values.js'
 import type { JsonObject, ProviderConfig } from '../contracts.js'
-import { failedProviderSearch, officialSearchHost, pauseSearchRetry, requestProviderSearch, type ProviderSearchAdapter, type SearchTarget } from '../search/shared.js'
+import { failedProviderSearch, officialSearchHost, pauseSearchRetry, requestProviderSearch, type ProviderSearchAdapter, type SearchTarget } from '../search/http.js'
 import { minimaxSearchSchema } from './search-schema.js'
 
 function target(config: ProviderConfig): SearchTarget | null {

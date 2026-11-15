@@ -1,5 +1,5 @@
 import type { Pool } from 'pg'
-import type { GlobalSearchOperations } from '../../search/search.js'
+import type { GlobalSearchOperations } from '@gugu/core'
 import type { MindRefSuggestItem, MindRefSuggestOperations } from '../mind-ref-suggest.js'
 import { MIND_REF_SUGGEST_TYPES } from '../mind-ref-suggest.js'
 

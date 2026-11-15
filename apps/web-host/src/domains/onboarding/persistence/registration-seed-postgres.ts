@@ -1,8 +1,8 @@
 import type { Pool, PoolClient } from 'pg'
 import { normalizeOwnerId } from '../../../adapters/owner-context.js'
 import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
-import { normalizeOnboardingState } from '../onboarding.js'
-import type { RegistrationSeedPlan, RegistrationSeedPorts } from '../registration-seed.js'
+import { normalizeOnboardingState } from '@gugu/core/onboarding'
+import type { RegistrationSeedPlan, RegistrationSeedPorts } from '@gugu/core/onboarding'
 import { createPostgresRegistrationSeedFileWriter } from '../../files/file-upload-postgres.js'
 
 interface SeedStateRow { state: unknown }

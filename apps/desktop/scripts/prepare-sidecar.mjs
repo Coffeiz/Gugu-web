@@ -14,7 +14,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const desktop = resolve(fileURLToPath(new URL('..', import.meta.url))),
   root = resolve(desktop, '../..')
@@ -27,6 +27,7 @@ execFileSync(process.execPath, [join(core, 'scripts/build.mjs')], {
   cwd: root,
   stdio: 'inherit',
 })
+const { CORE_SCHEMA_VERSION } = await import(pathToFileURL(join(core, 'dist/contracts/desktop.js')).href)
 const resourceParent = join(desktop, 'resources'),
   target = join(resourceParent, 'core-sidecar')
 mkdirSync(resourceParent, { recursive: true })
@@ -102,7 +103,7 @@ try {
     platform: process.platform,
     arch: process.arch,
     protocol: 2,
-    schema: 3,
+    schema: CORE_SCHEMA_VERSION,
     executable,
     entry: 'host/dist/runtime/transport/stdio.js',
     dependencies: [...dependencies.values()],

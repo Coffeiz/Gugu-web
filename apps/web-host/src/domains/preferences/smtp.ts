@@ -1,14 +1,8 @@
-import { CoreError } from '@gugu/core'
+import { CoreError, isThemePalette } from '@gugu/core'
+import { parseSmtpSettings, type SmtpSettings } from '@gugu/core/smtp'
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
 
-export interface UserSmtpSettings {
-  host: string
-  port: number
-  user: string
-  fromAddr: string
-  useSsl: boolean
-  enabled: boolean
-}
+export type UserSmtpSettings = SmtpSettings
 
 export interface UserSmtpSettingsStore {
   read(ownerId: string): Promise<UserSmtpSettings | null>
@@ -46,48 +40,9 @@ function stringField(body: Record<string, unknown>, camel: string, snake: string
   return value
 }
 
-function booleanField(value: unknown, field: string, fallback: boolean): boolean {
-  if (value === undefined) return fallback
-  if (typeof value === 'boolean') return value
-  if (value === 0 || value === 1) return value === 1
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase()
-    if (['1', 'true', 't', 'yes', 'y', 'on'].includes(normalized)) return true
-    if (['0', 'false', 'f', 'no', 'n', 'off'].includes(normalized)) return false
-  }
-  throw new CoreError('invalid_request', `${field} 无效`)
-}
-
-function settingsBody(value: unknown): { settings: UserSmtpSettings; password: string | null } {
-  const body = record(value)
-  const host = stringField(body, 'host', 'host', '', 255)
-  if (!host) throw new CoreError('invalid_request', 'host 无效')
-  const portValue = body.port === undefined ? 587 : body.port
-  const rawPort = typeof portValue === 'string' && /^\d+$/.test(portValue.trim()) ? Number(portValue.trim()) : portValue
-  if (typeof rawPort !== 'number' || !Number.isSafeInteger(rawPort) || rawPort < 1 || rawPort > 65535)
-    throw new CoreError('invalid_request', 'port 无效')
-  let password: string | null = null
-  if (body.password !== undefined && body.password !== null) {
-    if (typeof body.password !== 'string' || body.password.length > 1000)
-      throw new CoreError('invalid_request', 'password 无效')
-    password = body.password
-  }
-  return {
-    settings: {
-      host,
-      port: rawPort,
-      user: stringField(body, 'user', 'user', '', 300),
-      fromAddr: stringField(body, 'fromAddr', 'from_addr', '', 300),
-      useSsl: booleanField(body.useSsl === undefined ? body.use_ssl : body.useSsl, 'useSsl', false),
-      enabled: booleanField(body.enabled, 'enabled', true),
-    },
-    password,
-  }
-}
-
 function smtpTestBody(value: unknown): Omit<UserSmtpTestInput, 'toAddr'> & { toAddr?: string } {
   const body = record(value)
-  const settings = settingsBody(body).settings
+  const settings = parseSmtpSettings(body).settings
   const password = body.password === undefined ? '' : body.password
   if (typeof password !== 'string' || password.length > 1000)
     throw new CoreError('invalid_request', 'password 无效')
@@ -98,7 +53,7 @@ function smtpTestBody(value: unknown): Omit<UserSmtpTestInput, 'toAddr'> & { toA
   if (!['notification', 'reminder', 'report', 'security', 'test'].includes(template))
     throw new CoreError('invalid_request', 'template 无效')
   if (!['light', 'dark'].includes(theme)) throw new CoreError('invalid_request', 'theme 无效')
-  if (!['cafe', 'neutral', 'red', 'blue', 'green'].includes(palette))
+  if (!isThemePalette(palette))
     throw new CoreError('invalid_request', 'palette 无效')
   return { ...settings, password, ...(toAddr ? { toAddr } : {}), template, theme, palette } as Omit<UserSmtpTestInput, 'toAddr'> & { toAddr?: string }
 }
@@ -113,7 +68,7 @@ export function registerUserSmtpSettingsRoutes(app: FastifyInstance, options: Us
     response(await options.store.read(options.ownerIdFromRequest(request))))
 
   app.put('/api/v1/preferences/smtp', { preHandler: options.requireUser }, async (request) => {
-    const { settings, password } = settingsBody(request.body)
+    const { settings, password } = parseSmtpSettings(request.body)
     await options.store.write(options.ownerIdFromRequest(request), settings, password)
     return response(settings)
   })

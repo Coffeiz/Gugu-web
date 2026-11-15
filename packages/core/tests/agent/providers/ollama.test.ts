@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { CanonicalMessage, ProviderEvent, Usage } from '../../../src/agent/harness/contracts.js'
+import type { CanonicalMessage, ProviderEvent, Usage } from '../../../src/agent/models.js'
 import type { JsonObject } from '../../../src/agent/providers/contracts.js'
 import { providerSelection } from '../../../src/agent/providers/registry.js'
 import { ollamaDriver, projectOllamaHistory } from '../../../src/agent/providers/ollama/driver.js'

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { Pool } from 'pg'
-import type { EventUpdatePublication } from '../../src/domains/calendar/application/event-update.js'
-import type { CalendarEventDeletePublication } from '../../src/domains/calendar/application/event-delete.js'
+import type { EventUpdatePublication } from '@gugu/core/calendar'
+import type { CalendarEventDeletePublication } from '@gugu/core/calendar'
 import { createCalendarMutationPostCommitPublisher } from '../../src/domains/calendar/persistence/calendar-mutation-post-commit-postgres.js'
 
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'

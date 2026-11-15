@@ -276,19 +276,19 @@ export function createPostgresAdminUserStatusStore(pool: Pick<Pool, 'connect'>):
       `UPDATE users
        SET account_status = 'suspended', is_active = FALSE,
            suspended_until = $2::timestamptz + ($3::double precision * interval '1 second'),
-           suspended_reason = $4, security_version = COALESCE(security_version, 0) + 1, updated_at = $2
+           suspended_reason = $4, security_version = COALESCE(security_version, 0) + 1
        WHERE id = $1::uuid
        RETURNING id, username, account_status, is_active, suspended_until`,
       [userId, now, durationSeconds, Array.from(reason).slice(0, 200).join('')],
     )),
-    unsuspend: (userId, now) => inStatusTransaction(pool, (client) => transitionUserStatus(
+    unsuspend: (userId) => inStatusTransaction(pool, (client) => transitionUserStatus(
       client,
       `UPDATE users
        SET account_status = 'active', is_active = TRUE, suspended_until = NULL,
-           suspended_reason = NULL, security_version = COALESCE(security_version, 0) + 1, updated_at = $2
+           suspended_reason = NULL, security_version = COALESCE(security_version, 0) + 1
        WHERE id = $1::uuid
        RETURNING id, username, account_status, is_active, suspended_until`,
-      [userId, now],
+      [userId],
     )),
   }
 }

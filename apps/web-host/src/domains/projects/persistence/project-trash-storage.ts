@@ -42,7 +42,7 @@ function withConflictName(key: string, displayName: string, ext: string, number:
   return { key: `${parent}${safeName(name)}.${ext.toLowerCase()}`, name }
 }
 
-async function checkedPath(root: string, ownerId: string, key: string, allowMissing = true): Promise<string> {
+export async function checkedPath(root: string, ownerId: string, key: string, allowMissing = true): Promise<string> {
   const segments = safeKey(ownerId, key)
   const target = path.resolve(root, ...segments)
   if (!isPathWithin(root, target)) throw new ProjectTrashStoragePathError('文件存储路径超出配置根目录')
@@ -250,13 +250,14 @@ export function createLocalProjectTrashStorage(
     }
   }
 
-  async function move(oldKey: string, newKey: string, ownerId: string): Promise<() => Promise<void>> {
+  async function move(oldKey: string, newKey: string, ownerId: string, beforeMove?: (from: string, to: string) => Promise<void>): Promise<() => Promise<void>> {
     const root = await rootPath()
     const oldPath = await checkedPath(root, ownerId, oldKey, false)
     const newPath = await checkedPath(root, ownerId, newKey)
     const newParent = path.dirname(newPath)
     await mkdir(newParent, { recursive: true })
     await checkedPath(root, ownerId, newKey)
+    if (beforeMove) await beforeMove(oldKey, newKey)
     await rename(oldPath, newPath)
     try {
       await checkedPath(root, ownerId, newKey, false)
@@ -279,21 +280,23 @@ export function createLocalProjectTrashStorage(
   }
 
   return {
-    async moveToTrash(ownerId, file) {
+    async moveToTrash(ownerId, file, beforeMove) {
       const root = await rootPath()
       const baseKey = trashKey(ownerId, file)
       if (file.storage_key === baseKey) return { storageKey: file.storage_key }
       const available = await findAvailableKey(root, ownerId, baseKey, file.display_name, file.ext)
+      let journaled = false
       try {
-        const rollback = await move(file.storage_key, available.key, ownerId)
+        const rollback = await move(file.storage_key, available.key, ownerId, beforeMove && (async (from, to) => { await beforeMove(from, to); journaled = true }))
         return { storageKey: available.key, rollback }
       } catch (error) {
-        if (error instanceof ProjectTrashStoragePathError) throw error
+        const missing = ['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')
+        if ((beforeMove && (journaled || !missing)) || error instanceof ProjectTrashStoragePathError) throw error
         // Python 捕获 storage.rename_file 异常，继续提交墓碑并保留原 key。
         return { storageKey: file.storage_key }
       }
     },
-    async restoreFromTrash(ownerId, file, project, folders) {
+    async restoreFromTrash(ownerId, file, project, folders, beforeMove) {
       const baseKey = await originalKeyFor(ownerId, file, project, folders)
       safeKey(ownerId, baseKey)
       let available: { key: string; name: string }
@@ -312,10 +315,12 @@ export function createLocalProjectTrashStorage(
         available = await findAvailableKey(root, ownerId, baseKey, file.display_name, file.ext)
       }
       let rollback: (() => Promise<void>) | undefined
+      let journaled = false
       try {
-        if (file.storage_key !== available.key) rollback = await move(file.storage_key, available.key, ownerId)
+        if (file.storage_key !== available.key) rollback = await move(file.storage_key, available.key, ownerId, beforeMove && (async (from, to) => { await beforeMove(from, to); journaled = true }))
       } catch (error) {
-        if (error instanceof ProjectTrashStoragePathError) throw error
+        const missing = ['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')
+        if ((beforeMove && (journaled || !missing)) || error instanceof ProjectTrashStoragePathError) throw error
         /* 与 restore_file_storage 一致：物理源缺失时也复原预期 DB 路径 */
       }
       return { storageKey: available.key, displayName: available.name, rollback }

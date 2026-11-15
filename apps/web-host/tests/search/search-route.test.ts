@@ -3,14 +3,16 @@ import test from 'node:test'
 import { createApp } from '../../src/app.js'
 import { signedUserToken } from '../helpers/auth.js'
 import {
+  GLOBAL_SEARCH_TYPES,
   normalizeGlobalSearchQueries,
   parseGlobalSearchQuery,
-} from '../../src/domains/search/search.js'
+} from '@gugu/core'
 
 test('global search normalizes repeated keywords with the Python limits and AND/OR fallback', () => {
   assert.deepEqual(normalizeGlobalSearchQueries('', ['部署', ' 部署 ', '上线']), ['部署', '上线'])
   assert.deepEqual(normalizeGlobalSearchQueries('旧入口', []), ['旧入口'])
   assert.equal(normalizeGlobalSearchQueries('', ['x'.repeat(70)])[0]?.length, 64)
+  assert.deepEqual(normalizeGlobalSearchQueries('', [`${'x'.repeat(63)}🙂尾`]), [`${'x'.repeat(63)}🙂`])
   assert.equal(normalizeGlobalSearchQueries('', Array.from({ length: 10 }, (_, index) => `q${index}`)).length, 8)
   assert.deepEqual(parseGlobalSearchQuery({ mode: 'unexpected' }), {
     q: '', queries: [], mode: 'OR', perType: 6, types: null,
@@ -35,6 +37,7 @@ test('global search route requires authentication and forwards owner plus normal
       },
     },
     globalSearch: {
+      availableTypes: GLOBAL_SEARCH_TYPES, missingTypes: [],
       async search(ownerId, query) {
         calls.push([ownerId, query])
         return { query: query.q, queries: query.queries, mode: query.mode, total: 0, groups: [] }

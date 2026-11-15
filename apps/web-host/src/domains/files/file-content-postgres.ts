@@ -4,8 +4,9 @@ import { copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeF
 import path from 'node:path'
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
 import { isPathWithin } from '../../adapters/path-safety.js'
+import { runBestEffort } from '../../adapters/best-effort.js'
 import type { WriteRequestMetadata } from '../../app.js'
-import { normalizeFileOwnerId } from './file-owner.js'
+import { isOwnedFileStorageKey, normalizeFileOwnerId } from './file-owner.js'
 import { formatFileSize } from './file-size.js'
 import type { FileContentOperations } from './file-content.js'
 import { lockFileSyncPath, recordCanonicalFileChange } from './persistence/file-sync-canonical-change.js'
@@ -59,12 +60,11 @@ function snapshot(row: FileRow) {
 
 async function recordUndo(
   client: PoolClient, ownerId: string, contextId: string | null, before: FileRow, after: FileRow,
-  beforeKey: string, afterKey: string,
+  beforeKey: string, afterKey: string, id: string,
 ): Promise<void> {
   const context = contextId?.trim().slice(0, 128)
   if (!context) return
   const ref = `file:${after.id}`
-  const id = `op-${randomUUID().replaceAll('-', '')}`
   await client.query(
     `UPDATE undo_operations SET status='expired',failure_code='redo_cleared_by_new_operation'
      WHERE user_id=$1 AND undo_context_id=$2 AND actor_type='web' AND status='undone'`, [ownerId, context],
@@ -102,6 +102,9 @@ export function createPostgresFileContentOperations(
   options: {
     storageRoot: string
     fileSyncEnabled?: boolean
+    removeCommittedBackup?: (backupPath: string) => Promise<void>
+    restoreBackup?: typeof rename
+    recordFileChange?: typeof recordCanonicalFileChange
     publishChanged(event: { ownerId: string; entityId: number; payload: Record<string, unknown>; origin: string | null }): Promise<void>
   },
 ): FileContentOperations {
@@ -112,6 +115,8 @@ export function createPostgresFileContentOperations(
       if (data.byteLength > 1024 * 1024) throw Object.assign(new Error('内容过大（上限 1MB）'), { statusCode: 400 })
       const client = await pool.connect()
       let committed = false
+      let commitAttempted = false
+      let preserveStage = false
       let destination: string | null = null
       let rollbackPath: string | null = null
       let stagedPath: string | null = null
@@ -123,6 +128,7 @@ export function createPostgresFileContentOperations(
         )
         const before = found.rows[0]
         if (!before) throw new CoreError('not_found', '文件不存在')
+        if (!isOwnedFileStorageKey(ownerId, before.storage_key)) throw new CoreError('not_found', '文件不存在')
         await lockFileSyncPath(client, ownerId, before.storage_key)
         const mime = (before.mime_type ?? '').toLowerCase()
         if (!TEXT_EXTS.has(before.ext.toLowerCase()) && !mime.startsWith('text/')
@@ -149,7 +155,8 @@ export function createPostgresFileContentOperations(
         let beforeKey = ''
         let afterKey = ''
         if (undoContext) {
-          const prefix = `${ownerId}/.undo/op-${randomUUID().replaceAll('-', '')}/file-${fileId}`
+          const operationId = `op-${randomUUID().replaceAll('-', '')}`
+          const prefix = `${ownerId}/.undo/${operationId}/file-${fileId}`
           beforeKey = `${prefix}/before`
           afterKey = `${prefix}/after`
           const beforePath = await storagePath(options.storageRoot, beforeKey)
@@ -158,21 +165,24 @@ export function createPostgresFileContentOperations(
           await copyFile(destination, beforePath)
           artifactPaths.push(beforePath, afterPath)
           await copyFile(stagedPath, afterPath)
-          await recordUndo(client, ownerId, undoContext, before, after, beforeKey, afterKey)
+          await recordUndo(client, ownerId, undoContext, before, after, beforeKey, afterKey, operationId)
         }
         rollbackPath = `${stagedPath}.old`
         await rename(destination, rollbackPath)
         await rename(stagedPath, destination)
-        await recordCanonicalFileChange(client, {
+        await (options.recordFileChange ?? recordCanonicalFileChange)(client, {
           ownerId,
           storageRoot: options.storageRoot,
           storageKey: before.storage_key,
           observedFingerprint: createHash('sha256').update(data).digest('hex'),
           enabled: options.fileSyncEnabled ?? true,
         })
+        commitAttempted = true
         await client.query('COMMIT')
         committed = true
-        await rm(rollbackPath, { force: true })
+        await runBestEffort('文件正文备份清理', () => options.removeCommittedBackup?.(rollbackPath!) ?? rm(rollbackPath!, { force: true }), () => {
+          console.error('文件正文备份清理失败，将尝试清理暂存目录')
+        })
         const full = await client.query<FileRow>(
           `SELECT file.*,project.name AS project_name,project.color AS project_color,folder.name AS folder_name
            FROM files file LEFT JOIN projects project ON project.id=file.project_id AND project.user_id=file.user_id
@@ -185,12 +195,18 @@ export function createPostgresFileContentOperations(
       } catch (error) {
         if (!committed) {
           await client.query('ROLLBACK').catch(() => undefined)
-          if (destination && rollbackPath) await rename(rollbackPath, destination).catch(() => undefined)
-          for (const artifact of artifactPaths) await rm(artifact, { force: true }).catch(() => undefined)
+          if (!commitAttempted && destination && rollbackPath) await Promise.resolve().then(() => (options.restoreBackup ?? rename)(rollbackPath!, destination!)).catch(() => {
+            preserveStage = true
+            console.error('文件正文回滚失败，保留备份供核查')
+          })
+          if (!commitAttempted) for (const artifact of artifactPaths) await rm(artifact, { force: true }).catch(() => undefined)
+          if (commitAttempted) console.error('文件正文提交结果未知，保留备份供核查')
         }
         throw error
       } finally {
-        if (stagedPath) await rm(path.dirname(stagedPath), { recursive: true, force: true }).catch(() => undefined)
+        if (stagedPath && !preserveStage && (!commitAttempted || committed)) await rm(path.dirname(stagedPath), { recursive: true, force: true }).catch(() => {
+          console.error('文件正文暂存目录清理失败，可能存在残留')
+        })
         client.release()
       }
     },

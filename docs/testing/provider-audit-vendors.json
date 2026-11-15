@@ -3938,7 +3938,7 @@
       "classification": "Tools",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/harness/context/history-preparation.test.ts",
+          "file": "gugu-core/tests/agent/context/history-preparation.test.ts",
           "name": "主准备链按当前模型registry刷新schema仅作本请求增量，旧调用仍解释为旧schema"
         },
         {
@@ -3964,7 +3964,7 @@
         "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
         "sharedTestsInIntegratedRun": [
           {
-            "file": "gugu-core/tests/agent/harness/context/history-preparation.test.ts",
+            "file": "gugu-core/tests/agent/context/history-preparation.test.ts",
             "name": "主准备链按当前模型registry刷新schema仅作本请求增量，旧调用仍解释为旧schema"
           }
         ]

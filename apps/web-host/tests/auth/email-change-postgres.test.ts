@@ -35,7 +35,7 @@ test('PostgreSQL email change rotates pending requests and atomically updates em
         new_email varchar(300) NOT NULL, token_hash varchar(64) NOT NULL UNIQUE,
         purpose varchar(32) NOT NULL DEFAULT 'email_change', expires_at timestamptz NOT NULL,
         used_at timestamptz, revoked_at timestamptz,
-        created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        created_at timestamptz NOT NULL,
         request_ip_hash varchar(64), user_agent_hash varchar(64)
       )
     `)
@@ -70,7 +70,7 @@ test('PostgreSQL email change rotates pending requests and atomically updates em
     assert.deepEqual(persisted.rows[0], { email: 'fresh@example.test', security_version: 5 })
     assert.equal(await store.completeToken(hashEmailChangeToken(replacementToken)).then((result) => result.kind), 'invalid')
 
-    await store.createRequest(ownerId, 'another@example.test', hashEmailChangeToken(firstToken), new Date(Date.now() + 60_000))
+    await store.createRequest(ownerId, 'another@example.test', hashEmailChangeToken('synthetic-final-token'), new Date(Date.now() + 60_000))
     await store.revokeActive(ownerId)
     assert.equal(await store.activeRequest(ownerId), null)
   } finally {

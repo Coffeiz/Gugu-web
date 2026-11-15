@@ -1,51 +1,15 @@
 import { z } from 'zod'
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
 import type { Pool } from 'pg'
-import { withPostgresTransaction } from '../../adapters/postgres-transaction.js'
+import { createPostgresAgentPendingQueue, mergePendingQueueItems, pendingQueueItemSchema, QueueSessionNotFound as AgentPendingQueueSessionNotFoundError, QueueConflict as AgentPendingQueueConflictError } from '@gugu/core/agent-sessions'
+export { mergePendingQueueItems, AgentPendingQueueSessionNotFoundError, AgentPendingQueueConflictError }
 
-export class AgentPendingQueueSessionNotFoundError extends Error {
-  readonly statusCode = 404
-  constructor() { super('对话不存在') }
-}
-
-export class AgentPendingQueueConflictError extends Error {
-  readonly statusCode = 409
-  constructor() { super('队列标识与会话不一致') }
-}
-
-const attachment = z.object({
-  file_id: z.number().int().optional(),
-  attach_id: z.string().max(128).optional(),
-  name: z.string().max(512).optional(),
-  ext: z.string().max(32).optional(),
-  size: z.number().int().nonnegative().optional(),
-  size_bytes: z.number().int().nonnegative().optional(),
-  kind: z.string().max(32).optional(),
-  mime: z.string().max(128).optional(),
-  qq_face: z.boolean().optional(),
-  quoted: z.boolean().optional(),
-  duration: z.number().nonnegative().optional(),
-  upload: z.boolean().optional(),
-  img_width: z.number().int().nonnegative().optional(),
-  img_height: z.number().int().nonnegative().optional(),
-})
-const reference = z.object({
-  type: z.enum(['project', 'file', 'event', 'conversation', 'canvas_note', 'skill', 'mcp', 'scheduled_task']),
-  id: z.union([z.number().int().positive(), z.string().uuid()]),
-  label: z.string().max(512),
-}).strict()
-const item = z.object({
-  key: z.number().int().positive(),
-  text: z.string().max(200_000),
-  attachments: z.array(attachment).max(32).default([]),
-  references: z.array(reference).max(50).default([]),
-}).strict()
 const patchBody = z.object({
   session_id: z.number().int().positive(),
-  items: z.array(item).max(200).default([]),
+  items: z.array(pendingQueueItemSchema).max(200).default([]),
   remove_keys: z.array(z.number().int()).max(200).default([]),
 }).strict()
-const replaceBody = z.object({ items: z.array(item).max(200) }).strict()
+const replaceBody = z.object({ items: z.array(pendingQueueItemSchema).max(200) }).strict()
 
 const integerFields = new Set(['session_id', 'key', 'id', 'remove_keys', 'file_id', 'size', 'size_bytes', 'img_width', 'img_height'])
 const floatFields = new Set(['duration'])
@@ -171,31 +135,6 @@ export function registerAgentPendingQueueReplaceRoute(
   )
 }
 
-export function mergePendingQueueItems(
-  existingItems: unknown,
-  upsertItems: Array<Record<string, unknown>>,
-  removeKeys: number[],
-): Array<Record<string, unknown>> {
-  const byKey = new Map<unknown, Record<string, unknown>>()
-  for (const value of Array.isArray(existingItems) ? existingItems : []) {
-    if (value && typeof value === 'object' && !Array.isArray(value)) {
-      const record = value as Record<string, unknown>
-      byKey.set(record.key, record)
-    }
-  }
-  for (const key of removeKeys) byKey.delete(key)
-  for (const incoming of upsertItems) {
-    const key = incoming.key
-    const existing = byKey.get(key) ?? {}
-    const merged = { ...existing, ...incoming }
-    for (const field of ['_claim_token', '_claim_until']) {
-      if (!(field in incoming) && field in existing) merged[field] = existing[field]
-    }
-    byKey.set(key, merged)
-  }
-  return [...byKey.values()]
-}
-
 export function registerAgentPendingQueuePatchRoute(
   app: FastifyInstance,
   options: AgentPendingQueuePatchRouteOptions,
@@ -229,76 +168,10 @@ export function registerAgentPendingQueuePatchRoute(
   )
 }
 
-interface QueueRow { session_id: number | null; items: unknown }
-
 export function createPostgresAgentPendingQueuePatch(pool: Pick<Pool, 'query' | 'connect'>) {
-  return async function patch(
-    ownerId: string,
-    queueId: string,
-    sessionId: number,
-    upsertItems: Array<Record<string, unknown>>,
-    removeKeys: number[],
-  ): Promise<void> {
-    const session = await pool.query(
-      'SELECT id FROM conversation_sessions WHERE id = $1 AND user_id = $2', [sessionId, ownerId],
-    )
-    if (!session.rowCount) throw new AgentPendingQueueSessionNotFoundError()
-    if (queueId !== `session-${sessionId}`) throw new AgentPendingQueueConflictError()
-
-    await withPostgresTransaction(pool, async (client) => {
-      let selected = await client.query<QueueRow>(
-        `SELECT session_id, items FROM conversation_pending_queues
-         WHERE user_id=$1 AND queue_id=$2 FOR UPDATE`, [ownerId, queueId],
-      )
-      if (!selected.rows[0] && upsertItems.length) {
-        await client.query(
-          `INSERT INTO conversation_pending_queues(user_id,queue_id,session_id,items,updated_at)
-           VALUES ($1,$2,$3,'[]'::jsonb,now()) ON CONFLICT (user_id,queue_id) DO NOTHING`,
-          [ownerId, queueId, sessionId],
-        )
-        selected = await client.query<QueueRow>(
-          `SELECT session_id, items FROM conversation_pending_queues
-           WHERE user_id=$1 AND queue_id=$2 FOR UPDATE`, [ownerId, queueId],
-        )
-      }
-      const row = selected.rows[0]
-      if (!row) return
-
-      const items = mergePendingQueueItems(row.items, upsertItems, removeKeys)
-      if (!items.length) {
-        await client.query(
-          'DELETE FROM conversation_pending_queues WHERE user_id=$1 AND queue_id=$2', [ownerId, queueId],
-        )
-      } else {
-        await client.query(
-          `UPDATE conversation_pending_queues SET session_id=$1, items=$2::jsonb, updated_at=now()
-           WHERE user_id=$3 AND queue_id=$4`, [sessionId, JSON.stringify(items), ownerId, queueId],
-        )
-      }
-    })
-  }
+  return createPostgresAgentPendingQueue(pool, {}).patch
 }
 
 export function createPostgresAgentPendingQueueReplace(pool: Pick<Pool, 'query' | 'connect'>) {
-  return async function replaceDraft(
-    ownerId: string,
-    queueId: string,
-    items: Array<Record<string, unknown>>,
-  ): Promise<void> {
-    await withPostgresTransaction(pool, async (client) => {
-      if (!items.length) {
-        await client.query(
-          'DELETE FROM conversation_pending_queues WHERE user_id=$1 AND queue_id=$2', [ownerId, queueId],
-        )
-        return
-      }
-      await client.query(
-        `INSERT INTO conversation_pending_queues(user_id,queue_id,session_id,items,updated_at)
-         VALUES ($1,$2,NULL,$3::jsonb,now())
-         ON CONFLICT (user_id,queue_id) DO UPDATE
-         SET session_id=NULL, items=EXCLUDED.items, updated_at=now()`,
-        [ownerId, queueId, JSON.stringify(items)],
-      )
-    })
-  }
+  return createPostgresAgentPendingQueue(pool, {}).replaceDraft
 }

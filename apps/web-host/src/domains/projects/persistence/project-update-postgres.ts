@@ -8,10 +8,10 @@ import type {
   ProjectUpdateRuntime,
   ProjectUpdateTransaction,
   ProjectUpdateUndoRecord,
-} from '../application/project-update.js'
+} from '@gugu/core/project-update'
 
 type EventPublisher = (event: ProjectUpdatedEvent) => Promise<void>
-type DirectoryRenamer = (ownerId: string, oldPrefix: string, newPrefix: string) => Promise<void>
+type DirectoryRenamer = (ownerId: string, oldPrefix: string, newPrefix: string, beforeMove?: (from: string, to: string) => Promise<void>, onMoved?: () => void) => Promise<void>
 
 const columns = `id, user_id::text AS user_id, name, summary, contact_name AS client, status,
   start_date, deadline, color, progress, stages_json, current_stage, priority, version, archived,
@@ -44,6 +44,7 @@ function project(row: Record<string, unknown>): ProjectRecord {
 
 const fieldColumns: Record<string, string> = {
   name: 'name',
+  summary: 'summary',
   client: 'contact_name',
   status: 'status',
   start_date: 'start_date',
@@ -118,7 +119,7 @@ export function createPostgresProjectUpdateRuntime(
     async transaction<T>(work: (tx: ProjectUpdateTransaction) => Promise<T>): Promise<T> {
       return withPostgresTransaction(pool, (client) => work(transactionAdapter(client)))
     },
-    renameProjectDirectory,
+    renameProjectDirectory: (owner, oldPrefix, newPrefix, onMoved) => renameProjectDirectory(owner, oldPrefix, newPrefix, undefined, onMoved),
     async getFileCount(ownerId, projectId) {
       return readProjectFileCount(pool, ownerId, projectId)
     },

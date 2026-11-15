@@ -1,5 +1,5 @@
-import type { DesktopBridge, DesktopProject, DesktopClient, DesktopReply } from '../../../../packages/core/src/contracts/desktop'
-export type { SandboxStatus } from '../../../../packages/core/src/contracts/desktop'
+import type { DesktopBridge, DesktopProject, DesktopClient, DesktopReply } from '@gugu/core/desktop'
+export type { SandboxStatus } from '@gugu/core/desktop'
 export type ProjectRow = DesktopProject
 export type ClientRow = DesktopClient
 type DesktopWindow = Window & { guguDesktop?: DesktopBridge }

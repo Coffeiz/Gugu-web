@@ -1,0 +1,142 @@
+---
+id: S1
+name: 思维画布
+description_long: "用户要查看、搜索、创建、摆放、整理、连接、删除、调整便签尺寸或批量编排思维画布节点时使用。"
+description_short: 用户要管理画布节点、连接或便签尺寸时使用。
+category: canvas
+related_tools: canvas_list, canvas_get, canvas_search, canvas_focus_node, canvas_search_placeable, canvas_create, canvas_delete, canvas_create_note, canvas_add_node, canvas_update_node, canvas_remove_node, canvas_update_note, canvas_delete_note, canvas_connect, canvas_update_anchor, canvas_disconnect, canvas_batch
+emoji: 🧠
+---
+
+# 思维画布操作技能
+
+## 必须遵守
+
+- 不要猜 `canvas_id`：必须来自 `canvas_list`、`canvas_get` 或用户明确提供；不能根据 `item_id` 推导。
+- ID 必须传 JSON 数字，不要传字符串；单项入口和数组入口不能混用。
+- 查看、评估和搜索请求只能调用只读工具；用户确认前不得创建、移动、连接、改端点或删除。
+- 删除便签、关系或整张画布必须经过确认门；整张画布删除会清除其中的便签、引用节点和连接关系。
+- Schema 报错后按完整 `issues` 修正，不要用相同参数重复提交；写操作完成后以工具回执核验结果。
+
+## 工具路由
+
+- 搜索画布中已经存在的节点用 `canvas_search`。
+- 用户希望找回画布中的具体卡片时，先用 `canvas_get` / `canvas_search` 确认目标，再用 `canvas_focus_node` 生成定位链接，并将链接提供给用户点击；该操作不移动卡片，也不改保存的视口。
+- 搜索可以放入画布的项目、文件、活动用 `canvas_search_placeable`。
+- 普通时间流 `note` 不能放入画布；画布便签必须使用 `canvas_create_note`。
+- 创建、放置、更新、移除和删除工具都支持单项或数组调用；数组一次最多 20 项。
+- 创建、移动、连接或批量编排后，以工具结果为准，不要只用文字声称成功。
+- “查看、评估、看看是否需要整理、再决定”等只读请求只能调用读取/搜索工具；在用户确认前不得调用任何创建、移动、连接、改端点或删除工具。
+
+## 便签内容与标题
+
+- `canvas_create_note` / `canvas_update_note` 的 `title` 参数**用户看不到**——只进搜索和列表索引。
+- **用户可见的标题必须写在 `content` 的第一行，格式 `# 标题`**（渲染成卡片标题，其余行是正文）。
+- 正确示范：`content: "# 合肥\n安徽\n商合杭、京港\n主要客运站：合肥站、合肥南站、合肥西站"`
+- 反例：`title: "合肥"` 但 `content` 第一行是 `安徽` → 用户看到的是"安徽"，城市名丢了。
+
+## 尺寸、坐标和安全距离
+
+画布节点是有尺寸的矩形，不是无尺寸的点。
+
+- `position.x/y` 是卡片**左上角**的世界坐标，不是中心坐标。
+- 创建便签、放置节点及批量创建共用坐标格式：x/y 必须同时提供数值；省略坐标才自动布局，无效坐标会报错。
+- 节点实际占用尺寸优先使用 `layout.effective_size`；读取尺寸用返回结果里的 `layout.effective_size`，设置画布便签尺寸使用 `width` / `height`，不要传内部字段 `w/h`。
+- 未显式设置尺寸时使用 `layout.default_size`。
+- 当前默认尺寸约定：画布便签 `240×140`、项目卡 `240×120`、文件卡 `156×140`、活动卡 `220×96`。
+- 画布便签可设置宽 `180–520px`、高 `100–420px`；超出范围时系统会限制到边界。项目、文件和活动引用卡不支持设置尺寸。
+- 两个卡片在上、下、左、右任一方向相邻时，矩形边缘之间都必须至少保持 `150px` 安全距离；不能只满足横向间距。
+- 如果采用中心点排布，则两个卡片中心必须至少相隔 `750px`；不要把中心点距离规则误当成卡片左上角距离。
+- 两个规则满足其一即可，但优先使用边缘 `150px` 规则；除非用户明确要求紧凑排列，不得重叠或贴边。
+
+判断两个矩形是否安全时，先计算：
+
+```text
+right = x + width
+bottom = y + height
+```
+
+不能只比较两个节点的 `x/y`，也不能忽略不同卡片类型的宽高。
+
+## 创建与摆放流程
+
+每次放置或移动遵循以下顺序：
+
+1. 读取当前画布节点、有效尺寸和最后查看的视口。
+2. 确认用户要放置的对象，先搜索再使用稳定的 `node_id` 或引用 ID。
+3. 解析用户指定的位置；明确位置优先，但仍要检查是否与已有节点冲突。
+4. 发生冲突时，优先向右寻找最近的可用位置，再向下换行；不要自动移动已有节点。
+5. 批量放置时先在脑中完成所有矩形布局，再调用 `canvas_batch`，每个新节点都要避让已有节点和同批节点。
+6. 用户要求“大范围整理”时，先说明将移动哪些节点并请求确认；没有明确授权时只寻找空位。
+
+位置锚点的使用：
+
+- “靠近某节点”使用 `near_node`，在目标节点右侧留出至少 150px；如果用户指定上、下或左侧，也必须在对应方向留出同样的 150px。
+- “放在当前视野中央/角落”使用 `viewport_center` 或 `viewport_*`，不要把屏幕坐标直接写成世界坐标。
+- `auto` 只适合没有指定位置的普通新增，不代表可以与已有卡片重叠。
+- 用户要查看或回到刚创建/查到的画布时，在回复中附 `[画布名](gugu://open-object/canvas/{canvas_id})`；ID 只使用本轮真实结果中的 `canvas_id`。
+
+## 连接与端点
+
+画布支持左右两侧的连接点（left/right）；同张卡片左右两个端口独立，同一个端口也允许连接多个不同节点。
+端口不是单连接插槽；只有完全相同的节点对和端点组合才应复用，不能为了避免多条线而擅自换端点。
+
+**树状/层级图（默认推荐）**：左右相邻的节点用相向端点，避免线条交叉：
+| 目标相对位置 | 源端点 | 目标端点 |
+|---|---|---|
+| 目标在源节点右侧 | `right` | `left` |
+| 目标在源节点左侧 | `left` | `right` |
+
+**Loop/回环图（用户明确要循环、互相连接、形成闭环时）**：可以使用同向端点：
+- 形成 loop：`right → right` 或 `left → left`，让线条绕回
+- 同卡片多线：左右两个端口可分别连向不同节点，无需换向
+
+**判断逻辑**：
+- 普通连接不要由模型自行填 `source_side` / `target_side`；`canvas_connect` 和 `canvas_batch` 会根据当前卡片中心自动计算相向端点。
+- 用户要求"画一个循环"、"能互相连"、"形成闭环"或明确指定端点时，才传同向/指定端点，并将 `allow_custom_anchor` 设为 `true`。
+- 方向判断必须用服务端读取到的两卡片中心水平坐标，不用节点 ID 顺序或旧快照推断。
+
+**其它规则**：
+- 创建普通关系时不要传 `source_side` / `target_side`；只有有意回环或明确端点时才传，并同时传 `allow_custom_anchor=true`。
+- 读取画布关系时，以返回的 `source_node_id` / `target_node_id` 对应端点；数据库可能按节点 ID 归一，不能因此自行交换端点。
+- `canvas_get` 的 `relation_audit` 是只读核对依据：先看两端卡片中心坐标和 `recommended`，`custom` 只表示与默认布局不同，可能是有意回环，不得直接当作错误改写。
+- `include_nodes` 与 `include_relations` 独立；只读关系时不返回节点正文，审计只读取端点几何，`relation_audit_scope=relation_endpoints`。
+- 已有关系修改端点使用 `canvas_update_anchor`；移动节点后不要擅自重算已经确认的端点。
+- 删除便签或关系必须先走确认门。
+
+## 批量操作与回滚
+
+- 各 CRUD 工具优先直接使用数组参数完成同类操作：
+  - `canvas_create_note.notes`
+  - `canvas_add_node.nodes`
+  - `canvas_update_node.updates`
+  - `canvas_update_note.updates`
+  - `canvas_remove_node.item_ids`
+  - `canvas_delete_note.notes`
+- 上述数组每次最多 20 项；单项调用继续使用原来的单数参数和返回格式。`canvas_create_note` 的单项参数或 `notes[]` 每项可传 `width` / `height`；`canvas_update_node` 的单项参数或 `updates[]` 每项可传 `width` / `height`，但只对画布便签生效。不要传内部字段 `w/h`，也不要把尺寸放进 `position`。
+- `canvas_batch` 用于需要跨类型、跨步骤保持原子性的事务，单次最多 20 个操作。支持 `create_note`、`add_node`、`update_item`、`remove_item`、`delete_note` 和 `connect`。
+- 批量事务使用稳定的 `request_id`；任一操作失败会整体回滚。
+- 批量连接默认由服务端按卡片中心自动选择相向端点；只有有意回环或明确端点时才指定两端连接点。
+- 批量布局失败会整体回滚；收到回滚结果后先调整方案，不要盲目重复提交。
+- `canvas_delete_note` 和批量中的 `delete_note` 都会一次性展示影响并请求确认；版本冲突时整批不执行。
+
+同类操作不要为了凑批量事务而逐项调用：例如创建多条便签直接使用
+`canvas_create_note.notes`，移动多个节点直接使用 `canvas_update_node.updates`。
+只有“创建便签 → 放置引用 → 调整布局 → 建立连接”这类相互依赖的多类型流程，才使用
+`canvas_batch`。
+
+调用 Canvas 修改工具时，`canvas_id` 必须来自 `canvas_list`/`canvas_get` 或用户明确提供，不能根据 `item_id` 猜测；ID 必须传 JSON 数字而不是字符串。单项与批量入口不能混用：移动节点使用 `canvas_id + item_id + 至少一个布局字段`，或 `canvas_id + updates[]`；删除节点/关系同样在单数 ID 与数组 ID 之间二选一。收到 Schema 错误后必须按全部 issues 修正，不要重复提交相同参数。
+
+## 典型示例
+
+把项目放到文件右侧：先读取文件的 `position` 和 `layout.effective_size`，令项目的
+`x = 文件 right + 150`，并保持合适的 `y`；如果用户没有指定高度方向，不要覆盖文件。
+
+把两个节点连接起来（普通连接不传端点）：
+
+```json
+{
+  "source_node_id": 12,
+  "target_node_id": 34
+}
+```

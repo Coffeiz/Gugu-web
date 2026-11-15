@@ -12,6 +12,7 @@ function makeApp(options: {
   transport?: string
   user?: Partial<PublicUserRecord>
   rateLimit?: RateLimitHandler
+  tokenExpiresMinutes?: number
 } = {}) {
   const calls: unknown[][] = []
   const app = createApp({
@@ -19,6 +20,7 @@ function makeApp(options: {
     isReady: async () => true,
     userAuth: {
       secret,
+      tokenExpiresMinutes: options.tokenExpiresMinutes,
       lookupUser: async () => null,
       authenticateCredentials: async (username, password) => {
         calls.push(['authenticateCredentials', username, password])
@@ -45,6 +47,20 @@ function makeApp(options: {
   })
   return { app, calls, transport: options.transport }
 }
+
+test('登录令牌和 Cookie 使用配置的有效期', async () => {
+  const { app } = makeApp({ tokenExpiresMinutes: 2 })
+  try {
+    const before = Date.now()
+    const response = await app.inject({ method: 'POST', url: '/api/v1/auth/login', payload: { username: 'synthetic-user', password: 'valid-password' } })
+    assert.equal(response.statusCode, 200)
+    const token = response.json().access_token as string
+    assert.equal(verifyUserToken(token, secret, before + 60_000).userId, userId)
+    assert.throws(() => verifyUserToken(token, secret, before + 180_000))
+    const cookies = response.headers['set-cookie']
+    assert.match(Array.isArray(cookies) ? cookies.join('\n') : cookies ?? '', /Max-Age=120/)
+  } finally { await app.close() }
+})
 
 test('password login signs a compatible token, records activity, and returns the public user shape', async () => {
   const { app, calls } = makeApp()

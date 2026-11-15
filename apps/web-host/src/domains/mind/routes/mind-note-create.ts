@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import type { UserFromRequest, WriteRequestMetadata } from '../../../app.js'
-import { MindNoteCreateError } from '../application/mind-note-create.js'
+import { MindNoteCreateError } from '@gugu/core/mind'
 import type { MindNoteReadResponse } from '../mind-notes-read.js'
 import { writeRequestMetadata } from '../../../http/request.js'
 

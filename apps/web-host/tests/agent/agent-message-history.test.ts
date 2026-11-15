@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
+import { createPostgresAgentInteractionHistory } from '../../src/domains/agent-sessions/persistence/agent-interaction-history.js'
 import {
   AgentSessionNotFoundError,
   createAgentMessageHistory,
@@ -182,8 +183,10 @@ test('消息历史按可见行分页、旧到新返回，并排除摘要与纯 c
         title text, chat_type text, workspace_id integer, session_context jsonb,
         execution_state text, pending_message_count integer, bot_id text
       );
-      CREATE TABLE workspaces (id serial PRIMARY KEY, name text);
+      CREATE TABLE workspaces (id serial PRIMARY KEY, name text, user_id uuid NOT NULL);
       CREATE TABLE conversation_pending_queues (user_id uuid, queue_id text, items jsonb);
+      CREATE TABLE interaction_prompts (id integer PRIMARY KEY,user_id uuid,session_id integer,kind text,title text,body text,schema_json jsonb,status text,expires_at timestamptz,created_at timestamptz);
+      CREATE TABLE interaction_actions (id integer PRIMARY KEY,prompt_id integer,token_hash text,option_id text,status text,expires_at timestamptz);
       CREATE TABLE conversation_messages (
         id serial PRIMARY KEY, session_id integer NOT NULL REFERENCES conversation_sessions(id),
         role text NOT NULL, content text NOT NULL, content_json jsonb, display_timeline jsonb,
@@ -201,6 +204,14 @@ test('消息历史按可见行分页、旧到新返回，并排除摘要与纯 c
     const { rows: [foreign] } = await pool.query<{ id: number }>(
       'INSERT INTO conversation_sessions (user_id) VALUES ($1) RETURNING id', [other],
     )
+    const workspaces = await pool.query<{ id: number }>(
+      "INSERT INTO workspaces(name,user_id) VALUES ('本人的工作区',$1),('他人的工作区',$2) RETURNING id", [owner, other],
+    )
+    await pool.query('UPDATE conversation_sessions SET workspace_id=$1 WHERE id=$2', [workspaces.rows[1]!.id, session.id])
+    const securedHistory = createAgentMessageHistory(pool, { workspaceShellSupported: () => true })
+    assert.equal((await securedHistory.list(owner, session.id, {})).session.workspaceName, null)
+    await pool.query('UPDATE conversation_sessions SET workspace_id=$1 WHERE id=$2', [workspaces.rows[0]!.id, session.id])
+    assert.equal((await securedHistory.list(owner, session.id, {})).session.workspaceName, '本人的工作区')
     const created = new Date('2026-11-12T00:00:00Z')
     for (let index = 0; index < 4; index++) {
       await pool.query(
@@ -234,6 +245,33 @@ test('消息历史按可见行分页、旧到新返回，并排除摘要与纯 c
     assert.equal(all.timelineEvents.length, 1)
     assert.equal('toolInput' in (all.timelineEvents[0] as object), false)
     assert.equal('toolResult' in (all.timelineEvents[0] as object), false)
+    const negative = await pool.query<{ id: number }>(
+      `INSERT INTO conversation_messages (session_id,role,content,conversation_seq,im_platform_sent_ms,created_at)
+       VALUES ($1,'user','负时间',9,-1,$2) RETURNING id`, [session.id, created],
+    )
+    const windows: Array<{ endBeforeMs?: string }> = []
+    const windowHistory = createAgentMessageHistory(pool, { async listInteractions(_owner, _session, window) { windows.push(window); return [] } })
+    const negativePage = await windowHistory.list(owner, session.id, { throughId: negative.rows[0]!.id })
+    assert.equal(negativePage.messages[0]?.content, '负时间')
+    assert.equal(windows[0]?.endBeforeMs, '-0.999')
+    for (const [sequence, timestamp, expected] of [
+      [10, '1969-12-31T23:59:59.999999Z', '0.000'],
+      [11, '1969-12-31T23:59:59.998500Z', '-1.499'],
+    ] as const) {
+      const cursor = await pool.query<{ id: number }>(
+        "INSERT INTO conversation_messages (session_id,role,content,conversation_seq,created_at) VALUES ($1,'user','边界',$2,$3::timestamptz) RETURNING id",
+        [session.id, sequence, timestamp],
+      )
+      await windowHistory.list(owner, session.id, { throughId: cursor.rows[0]!.id })
+      assert.equal(windows.at(-1)?.endBeforeMs, expected)
+    }
+    await pool.query(`INSERT INTO interaction_prompts VALUES
+      (21,$1,$2,'choice','边界内','','{}','resolved','1970-01-01','1969-12-31T23:59:59.998500Z'),
+      (22,$1,$2,'choice','边界外','','{}','resolved','1970-01-01','1969-12-31T23:59:59.998501Z')`, [owner, session.id])
+    const actual = createAgentMessageHistory(pool, { listInteractions: createPostgresAgentInteractionHistory(pool).list })
+    const cursorId = (await pool.query<{ id: number }>('SELECT id FROM conversation_messages WHERE session_id=$1 AND conversation_seq=11', [session.id])).rows[0]!.id
+    const actualPage = await actual.list(owner, session.id, { throughId: cursorId })
+    assert.deepEqual(actualPage.interactions.map((item: unknown) => (item as { id: number }).id), [21])
     const absentThroughCursor = await history.list(owner, session.id, { throughId: 9999 })
     assert.deepEqual(absentThroughCursor.messages, [])
     await assert.rejects(

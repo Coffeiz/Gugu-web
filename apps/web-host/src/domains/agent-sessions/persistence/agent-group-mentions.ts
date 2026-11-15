@@ -1,3 +1,5 @@
+import { createPostgresAgentGroupNames } from '@gugu/core/agent-sessions'
+import { extractPlatformMentionIds } from '@gugu/core/agent/context/messages'
 import type { Pool } from 'pg'
 
 export interface GroupMentionSession {
@@ -25,21 +27,6 @@ interface NameRow {
   name: string | null
 }
 
-export function extractPlatformMentionIds(text: string | null | undefined): string[] {
-  return [...new Set([...(text ?? '').matchAll(/<@!?([A-Za-z0-9_-]{1,64})>/g)].map((match) => match[1]!))]
-}
-
-export function replacePlatformMentionIds(text: string | null, names: ReadonlyMap<string, string>): string | null {
-  if (text === null || names.size === 0) return text
-  let result = text
-  for (const [platformUserId, displayName] of names) {
-    if (!platformUserId || !displayName) continue
-    const escaped = platformUserId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    result = result.replace(new RegExp(`<@!?${escaped}>|@${escaped}`, 'g'), () => `@${displayName}`)
-  }
-  return result
-}
-
 function collectCandidateIds(messages: GroupMentionMessage[]): Set<string> {
   const ids = new Set<string>()
   for (const message of messages) {
@@ -50,16 +37,8 @@ function collectCandidateIds(messages: GroupMentionMessage[]): Set<string> {
   return ids
 }
 
-async function latestSessionNames(pool: Pool, sessionId: number, ids: string[]): Promise<Map<string, string>> {
-  return queryNames({
-    pool,
-    sql: `SELECT DISTINCT ON (platform_user_id) platform_user_id AS id,platform_user_name AS name
-     FROM conversation_messages
-     WHERE session_id=$1 AND platform_user_id=ANY($2::text[])
-       AND platform_user_name IS NOT NULL AND platform_user_name<>''
-     ORDER BY platform_user_id,created_at DESC,id DESC`,
-    params: [sessionId, ids],
-  })
+async function latestSessionNames(pool: Pool, ownerId: string, sessionId: number, ids: string[]): Promise<Map<string, string>> {
+  return createPostgresAgentGroupNames(pool)(ownerId, sessionId, ids)
 }
 
 function namesById(rows: NameRow[], allowed?: ReadonlySet<string>): Map<string, string> {
@@ -82,7 +61,7 @@ export async function loadGroupMentionNames(input: LoadGroupMentionNamesInput): 
   const candidateIds = collectCandidateIds(messages)
   if (candidateIds.size === 0) return new Map()
 
-  const names = await latestSessionNames(pool, sessionId, [...candidateIds])
+  const names = await latestSessionNames(pool, ownerId, sessionId, [...candidateIds])
   if (currentBotPlatformUserId && candidateIds.has(currentBotPlatformUserId))
     names.set(currentBotPlatformUserId, names.get(currentBotPlatformUserId) ?? '咕咕')
   const unresolved = new Set([...candidateIds].filter((id) => !names.has(id)))

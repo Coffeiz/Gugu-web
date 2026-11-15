@@ -7,7 +7,7 @@ import {
   RedisLiveSubscriptionError,
   type LiveSubscription,
 } from '../../src/adapters/redis-live-subscription.js'
-import { LIVE_BROADCAST_CHANNEL, registerLiveRoutes, type LiveStreamOperations } from '../../src/domains/live/live.js'
+import { LIVE_BROADCAST_CHANNEL, registerLiveRoutes, type LiveStreamOperations } from '../../src/modules/live/live.js'
 
 const ownerId = 'f45a2d6c-8f42-48c2-a07a-91edb07c9383'
 const securityVersion = 7
@@ -100,12 +100,14 @@ test('实时流裁剪 agent/filesync 字段并过滤无效 envelope 与控制消
     binding_id: 5, run_id: 'run-5', revision: 4, created_at: '2026-11-14T00:00:00+00:00',
     payload: 'drop-me',
   }
+  const permissiveDate = { ...filesync, event_id: 'sync-invalid-date', created_at: 'October 7, 2026' }
   const invalid = JSON.stringify(liveEvent({ resource: 'unknown' }))
   const subscription = makeSubscription([
     invalid,
     JSON.stringify({ type: 'auth.state.changed' }),
     JSON.stringify(agent),
     JSON.stringify(filesync),
+    JSON.stringify(permissiveDate),
   ])
   const { app, calls } = makeApp(subscription)
   try {
@@ -117,7 +119,8 @@ test('实时流裁剪 agent/filesync 字段并过滤无效 envelope 与控制消
     assert.equal(response.body.includes('"secret"'), false)
     assert.ok(response.body.includes('"binding_id":5'))
     assert.equal(response.body.includes('"payload"'), false)
-    assert.equal(calls.filter((call) => call.kind === 'active').length, 5)
+    assert.equal(response.body.includes('sync-invalid-date'), false)
+    assert.equal(calls.filter((call) => call.kind === 'active').length, 6)
     assert.equal(subscription.closed, true)
   } finally {
     await app.close()

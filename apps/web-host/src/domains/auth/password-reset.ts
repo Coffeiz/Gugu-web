@@ -162,7 +162,7 @@ export function registerPasswordResetRoutes(app: FastifyInstance, options: Passw
       const body = resetBody(request.body)
       if (!body || body.token === undefined || body.newPassword === undefined)
         return reply.code(422).send({ detail: '重置密码请求字段无效' })
-      if (body.newPassword.length < 8) throw new PasswordResetError('密码至少 8 位', 400)
+      if ([...body.newPassword].length < 8) throw new PasswordResetError('密码至少 8 位', 400)
       if (!body.token) throw new PasswordResetError('链接无效', 400)
       if (!options.redis) throw new PasswordResetError('密码重置服务暂不可用', 503)
 

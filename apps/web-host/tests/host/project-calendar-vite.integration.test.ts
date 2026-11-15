@@ -10,7 +10,7 @@ import { createApp } from '../../src/app.js'
 import { createUserToken } from '../../src/domains/auth/auth.js'
 import { createPostgresFileContentOperations } from '../../src/domains/files/file-content-postgres.js'
 import { createPostgresFileDeleteOperations } from '../../src/domains/files/file-delete-postgres.js'
-import { createProjectUpdater } from '../../src/domains/projects/application/project-update.js'
+import { createProjectUpdater } from '@gugu/core/project-update'
 import { createProjectTrashService } from '../../src/domains/projects/application/project-trash.js'
 import {
   createLocalProjectTrashStorage,
@@ -19,8 +19,9 @@ import {
 import { createPostgresProjectTrashPathMetadataReader } from '../../src/domains/projects/persistence/project-trash-path-metadata-postgres.js'
 import { createPostgresProjectTrashRuntime } from '../../src/domains/projects/persistence/project-trash-postgres.js'
 import { createPostgresProjectUpdateRuntime } from '../../src/domains/projects/persistence/project-update-postgres.js'
-import { createCalendarEvent } from '../../src/domains/calendar/application/event-create.js'
-import { createPostgresEventCreateStore } from '../../src/domains/calendar/persistence/event-create-postgres.js'
+import { createCalendarEvent } from '@gugu/core/calendar'
+import { createPostgresRuntime, type SqlDataRuntime } from '@gugu/core/data'
+import { calendarCreateStore } from '../calendar/calendar-core-stores.js'
 import { createCalendarEventPostCommitPublisher } from '../../src/domains/calendar/persistence/calendar-create-post-commit-postgres.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
@@ -29,6 +30,7 @@ const secret = 'synthetic-project-calendar-vite-secret'
 const apps: Array<{ close(): Promise<void> }> = []
 const viteServers: Array<{ close(): Promise<void>; httpServer?: { address(): string | { port: number } | null } }> = []
 const pools: Pool[] = []
+const calendarRuntimes: SqlDataRuntime[] = []
 const storageRoots: string[] = []
 let adminPool: Pool | undefined
 let schema: string | undefined
@@ -36,6 +38,7 @@ let schema: string | undefined
 after(async () => {
   await Promise.all(viteServers.splice(0).map((server) => server.close()))
   await Promise.all(apps.splice(0).map((app) => app.close()))
+  await Promise.all(calendarRuntimes.splice(0).map((runtime) => runtime.close()))
   await Promise.all(pools.splice(0).map((pool) => pool.end()))
   await Promise.all(storageRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
   if (adminPool && schema) await adminPool.query(`DROP SCHEMA "${schema}" CASCADE`).catch(() => undefined)
@@ -157,7 +160,9 @@ test('Vite→Node Host→随机 PostgreSQL schema 完成项目、日历与正文
       assert.equal(job.rows[0]?.source_id, String(event.entityId), 'RAG job 必须在提交后 live event 前可见')
     },
   }, (operation) => { throw new Error(`post-commit effect failed: ${operation}`) })
-  const eventStore = createPostgresEventCreateStore(pool, postCommit)
+  const calendarRuntime = await createPostgresRuntime({ url: databaseUrl!, schema })
+  calendarRuntimes.push(calendarRuntime)
+  const eventStore = calendarCreateStore(calendarRuntime, postCommit)
   const fileEvents: number[] = []
   const fileDeleteEvents: number[] = []
   const app = createApp({

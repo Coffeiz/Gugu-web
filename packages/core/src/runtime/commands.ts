@@ -1,8 +1,8 @@
 import { CoreError, frameSchema } from '../contracts/index.js'
 import type { Fields } from '../contracts/index.js'
-import type { DataServices } from '../application/services.js'
+import type { DataServices } from '../data/services.js'
 import type { LocalRuntime } from './local.js'
-import { object, onlyFields, safeInteger } from '../domain/values.js'
+import { object, onlyFields, safeInteger } from '../shared/values.js'
 import { DESKTOP_METHODS, MAX_FRAME } from '../contracts/desktop.js'
 export { DESKTOP_METHODS, MAX_FRAME } from '../contracts/desktop.js'
 
@@ -15,6 +15,8 @@ export function isMutation(method: string): boolean {
     'clients.update',
     'clients.delete',
     'projects.createWithClient',
+    'undo.apply',
+    'undo.redo',
   ].includes(method)
 }
 const commandFields: Readonly<Record<string, readonly string[]>> = {
@@ -28,6 +30,9 @@ const commandFields: Readonly<Record<string, readonly string[]>> = {
   'clients.delete': ['id'],
   'projects.createWithClient': ['project', 'client'],
   'operations.get': ['operation_id'],
+  'undo.preview': ['context_id'],
+  'undo.apply': ['context_id', 'undo_id'],
+  'undo.redo': ['context_id', 'undo_id'],
 }
 
 export function visibleError(error: unknown): {
@@ -78,7 +83,7 @@ export async function desktopFrame(
       throw new CoreError('invalid_request', '协议版本不兼容')
     id = request.id
     if (
-      !(DESKTOP_METHODS as readonly string[]).includes(request.method) ||
+      (!(DESKTOP_METHODS as readonly string[]).includes(request.method) && !(protocol === 2 && ['undo.preview', 'undo.apply', 'undo.redo'].includes(request.method))) ||
       (protocol === 1 && request.method === 'operations.get')
     )
       throw new CoreError('invalid_request', '此能力不可用')
@@ -118,6 +123,10 @@ export function validateCommandParams(method: string, params: Fields): void {
     throw new CoreError('invalid_request', '桌面请求参数无效')
   const allowed = Object.hasOwn(commandFields, method) ? commandFields[method] : undefined
   if (allowed) onlyFields(params, allowed)
+  if (['undo.preview', 'undo.apply', 'undo.redo'].includes(method)) {
+    if (typeof params.context_id !== 'string' || !params.context_id.trim() || params.context_id.length > 128) throw new CoreError('invalid_request', '撤销上下文无效')
+    if (method !== 'undo.preview' && (typeof params.undo_id !== 'string' || !params.undo_id || params.undo_id.length > 80)) throw new CoreError('invalid_request', '撤销标识无效')
+  }
 }
 export async function execute(
   data: DataServices,

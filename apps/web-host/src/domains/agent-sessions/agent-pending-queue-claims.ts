@@ -1,17 +1,7 @@
-import { randomBytes, timingSafeEqual } from 'node:crypto'
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
-import type { Pool, PoolClient } from 'pg'
-import { withPostgresTransaction } from '../../adapters/postgres-transaction.js'
-
-export class AgentPendingQueueSessionNotFoundError extends Error {
-  readonly statusCode = 404
-  constructor() { super('对话不存在') }
-}
-
-export class AgentPendingQueueConflictError extends Error {
-  readonly statusCode = 409
-  constructor() { super('队列标识与会话不一致') }
-}
+import type { Pool } from 'pg'
+import { createPostgresAgentPendingQueue, QueueSessionNotFound as AgentPendingQueueSessionNotFoundError, QueueConflict as AgentPendingQueueConflictError } from '@gugu/core/agent-sessions'
+export { AgentPendingQueueSessionNotFoundError, AgentPendingQueueConflictError }
 
 export interface AgentPendingQueueClaimRouteOptions {
   requireUser: preHandlerHookHandler
@@ -96,89 +86,10 @@ export function registerAgentPendingQueueClaimRoutes(
   )
 }
 
-interface QueueRow { session_id: number | null; items: unknown }
-
-function isActiveClaim(item: Record<string, unknown>, now: number): boolean {
-  return Boolean(item._claim_token)
-    && typeof item._claim_until === 'number'
-    && item._claim_until > now
-}
-
-function tokensMatch(stored: unknown, candidate: string): boolean {
-  if (typeof stored !== 'string') return false
-  const left = Buffer.from(stored), right = Buffer.from(candidate)
-  return left.length === right.length && timingSafeEqual(left, right)
-}
-
 export function createPostgresAgentPendingQueueClaims(
   pool: Pick<Pool, 'query' | 'connect'>,
-  options: {
-    isSessionActive(sessionId: number): Promise<boolean>
-    nowSeconds?: () => number
-    createToken?: () => string
-  },
+  options: { isSessionActive(sessionId: number): Promise<boolean>; nowSeconds?: () => number; createToken?: () => string },
 ) {
-  const nowSeconds = options.nowSeconds ?? (() => Date.now() / 1000)
-  const createToken = options.createToken ?? (() => randomBytes(32).toString('base64url'))
-
-  async function assertOwnedSession(ownerId: string, sessionId: number, queueId: string): Promise<void> {
-    const session = await pool.query(
-      'SELECT id FROM conversation_sessions WHERE id = $1 AND user_id = $2', [sessionId, ownerId],
-    )
-    if (!session.rowCount) throw new AgentPendingQueueSessionNotFoundError()
-    if (queueId !== `session-${sessionId}`) throw new AgentPendingQueueConflictError()
-  }
-
-  async function lockQueue(client: PoolClient, ownerId: string, sessionId: number, queueId: string) {
-    const result = await client.query<QueueRow>(
-      `SELECT session_id, items FROM conversation_pending_queues
-       WHERE user_id = $1 AND queue_id = $2 FOR UPDATE`, [ownerId, queueId],
-    )
-    const row = result.rows[0]
-    return row?.session_id === sessionId ? row : null
-  }
-
-  return {
-    async claim(ownerId: string, sessionId: number, queueId: string, itemKey: number) {
-      await assertOwnedSession(ownerId, sessionId, queueId)
-      if (await options.isSessionActive(sessionId)) return { claimToken: null, reason: 'session_active' as const }
-      return withPostgresTransaction(pool, async (client) => {
-        const row = await lockQueue(client, ownerId, sessionId, queueId)
-        const items = Array.isArray(row?.items) ? row.items : []
-        const item = items.find((entry) => !!entry && typeof entry === 'object'
-          && (entry as Record<string, unknown>).key === itemKey) as Record<string, unknown> | undefined
-        if (!item || isActiveClaim(item, nowSeconds())) return { claimToken: null }
-        const claimToken = createToken()
-        const updated = items.map((entry) => entry === item
-          ? { ...item, _claim_token: claimToken, _claim_until: nowSeconds() + 60 }
-          : entry)
-        await client.query(
-          `UPDATE conversation_pending_queues SET items = $1::jsonb, updated_at = now()
-           WHERE user_id = $2 AND queue_id = $3`, [JSON.stringify(updated), ownerId, queueId],
-        )
-        return { claimToken }
-      })
-    },
-
-    async release(ownerId: string, sessionId: number, queueId: string, itemKey: number, claimToken: string) {
-      await assertOwnedSession(ownerId, sessionId, queueId)
-      return withPostgresTransaction(pool, async (client) => {
-        const row = await lockQueue(client, ownerId, sessionId, queueId)
-        const items = Array.isArray(row?.items) ? row.items : []
-        const index = items.findIndex((entry) => !!entry && typeof entry === 'object'
-          && (entry as Record<string, unknown>).key === itemKey
-          && tokensMatch((entry as Record<string, unknown>)._claim_token, claimToken))
-        if (index < 0) return false
-        const updated = [...items]
-        const item = updated[index] as Record<string, unknown>
-        updated[index] = Object.fromEntries(Object.entries(item)
-          .filter(([key]) => key !== '_claim_token' && key !== '_claim_until'))
-        await client.query(
-          `UPDATE conversation_pending_queues SET items = $1::jsonb, updated_at = now()
-           WHERE user_id = $2 AND queue_id = $3`, [JSON.stringify(updated), ownerId, queueId],
-        )
-        return true
-      })
-    },
-  }
+  const service = createPostgresAgentPendingQueue(pool, options)
+  return { claim: service.claim, release: service.release }
 }

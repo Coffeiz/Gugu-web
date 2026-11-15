@@ -8,12 +8,14 @@
   "scripts": {
     "predev": "corepack pnpm@10.15.0 --filter @gugu/fs build",
     "dev": "tsx watch src/main.ts",
-    "prebuild": "corepack pnpm@10.15.0 --filter @gugu/fs build",
+    "prebuild": "corepack pnpm@10.15.0 --filter @gugu/core build && corepack pnpm@10.15.0 --filter @gugu/fs build",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
-    "pretest": "corepack pnpm@10.15.0 --filter @gugu/fs build",
+    "migrate:agent-snapshot:check": "node dist/migrations/agent-snapshot-cli.js check",
+    "migrate:agent-snapshot:apply": "node dist/migrations/agent-snapshot-cli.js apply",
+    "pretest": "corepack pnpm@10.15.0 --filter @gugu/core build && corepack pnpm@10.15.0 --filter @gugu/fs build",
     "test": "node --import tsx --test tests/**/*.test.ts",
-    "pretypecheck": "corepack pnpm@10.15.0 --filter @gugu/fs build",
+    "pretypecheck": "corepack pnpm@10.15.0 --filter @gugu/core build && corepack pnpm@10.15.0 --filter @gugu/fs build",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
@@ -21,6 +23,7 @@
     "@fastify/static": "10.1.5",
     "@gugu/core": "workspace:*",
     "@gugu/fs": "workspace:*",
+    "@modelcontextprotocol/sdk": "1.32.0",
     "bcryptjs": "3.0.2",
     "fastify": "5.12.8",
     "image-size": "2.0.4",

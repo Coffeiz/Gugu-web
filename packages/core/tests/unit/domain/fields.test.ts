@@ -4,7 +4,7 @@ import {
   prepareProjectCreate,
   normalizeProjectStages,
   replaceProjectStages,
-} from '../../../src/domain/index.js'
+} from '../../../src/index.js'
 
 describe('Python 字段契约的边界回归', () => {
   it.each([

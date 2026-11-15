@@ -1,5 +1,5 @@
 import { throwIfCancelled } from './errors.js'
-import type { ProviderEvent } from '../harness/contracts.js'
+import type { ProviderEvent } from '../models.js'
 import { classifyProviderError, ProviderError } from './errors.js'
 
 export interface RetryClock {

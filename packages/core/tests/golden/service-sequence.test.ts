@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { initializeSqlite, openSqliteRuntime } from '../../src/data/sqlite.js'
 import { dataContext } from '../../src/contracts/index.js'
-import type { DataServices } from '../../src/application/services.js'
+import type { DataServices } from '../../src/data/services.js'
 
 const root = resolve(import.meta.dirname, '../../../..'),
   python = process.env.GUGU_CORE_GOLDEN_PYTHON

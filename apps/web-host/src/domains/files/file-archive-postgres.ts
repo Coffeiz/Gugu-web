@@ -277,6 +277,7 @@ export interface PostgresFileArchiveOptions {
   storageRoot: string
   fileSyncEnabled: boolean
   defaultLimitBytes: number | null
+  cleanupTemp?: (directory: string) => Promise<void>
   publishCreatedFile(event: { ownerId: string; entityId: number; payload: Record<string, unknown>; origin: string | null }): Promise<void>
   publishCreatedBatch(ownerId: string, origin: string | null): Promise<void>
 }
@@ -285,10 +286,11 @@ async function archiveFiles(pool: Pool, options: PostgresFileArchiveOptions, raw
   input: FileArchiveInput, metadata: WriteRequestMetadata): Promise<unknown> {
   const userId = ownerId(rawOwner)
   const client = await pool.connect()
-  const tempDirectory = await mkdtemp(path.join(tmpdir(), 'gugu-archive-'))
+  const tempDirectory = await mkdtemp(path.join(tmpdir(), 'gugu-archive-')).catch((error: unknown) => { client.release(); throw error })
   const zipPath = path.join(tempDirectory, 'archive.zip')
   let finalPath: string | null = null
   let committed = false
+  let commitAttempted = false
   try {
     await client.query('BEGIN')
     const built = await compressionEntries(client, userId, input)
@@ -346,6 +348,7 @@ async function archiveFiles(pool: Pool, options: PostgresFileArchiveOptions, raw
       observedFingerprint: hash.digest('hex'), enabled: options.fileSyncEnabled,
     })
     await recordQuota(client, userId, zipStat.size, 'archive_compress')
+    commitAttempted = true
     await client.query('COMMIT')
     committed = true
     const response = filePayload(row, target.project, target.folderName)
@@ -353,14 +356,16 @@ async function archiveFiles(pool: Pool, options: PostgresFileArchiveOptions, raw
     return response
   } catch (error) {
     if (!committed) await client.query('ROLLBACK').catch(() => undefined)
-    if (finalPath && !committed) await rm(finalPath, { force: true }).catch(() => undefined)
+    if (finalPath && !committed && !commitAttempted) await rm(finalPath, { force: true }).catch(() => undefined)
+    if (!committed && commitAttempted) console.error('压缩文件提交结果未知，保留文件供核查')
     if (error instanceof CoreError) throw error
     if ((error as NodeJS.ErrnoException).code === 'EEXIST')
       throw new CoreError('conflict', '目标存储路径已被占用，请重试')
     throw new CoreError('storage_error', '压缩文件失败')
   } finally {
-    await rm(tempDirectory, { recursive: true, force: true })
-    client.release()
+    try { await (options.cleanupTemp ?? ((directory: string) => rm(directory, { recursive: true, force: true })))(tempDirectory) }
+    catch { console.error('压缩临时目录清理失败，可能存在残留') }
+    finally { client.release() }
   }
 }
 
@@ -530,12 +535,13 @@ async function unarchiveFiles(pool: Pool, options: PostgresFileArchiveOptions, r
   input: FileUnarchiveInput, metadata: WriteRequestMetadata): Promise<unknown> {
   const userId = ownerId(rawOwner)
   const client = await pool.connect()
-  const tempDirectory = await mkdtemp(path.join(tmpdir(), 'gugu-unarchive-'))
+  const tempDirectory = await mkdtemp(path.join(tmpdir(), 'gugu-unarchive-')).catch((error: unknown) => { client.release(); throw error })
   const localArchive = path.join(tempDirectory, 'source.archive')
   const stageDirectory = path.join(tempDirectory, 'members')
   const createdFilePaths: string[] = []
   const createdFolderPaths: string[] = []
   let committed = false
+  let commitAttempted = false
   try {
     await mkdir(stageDirectory, { mode: 0o700 })
     await client.query('BEGIN')
@@ -593,8 +599,8 @@ async function unarchiveFiles(pool: Pool, options: PostgresFileArchiveOptions, r
         if (!occupied) { occupied = await occupiedNames(client, userId, scope, parentId); folderNames.set(parentId, occupied) }
         const chosen = nextArchiveName(safeSegment(part), occupied, true)
         const inserted = await client.query<Row>(
-          `INSERT INTO folders(user_id,project_id,workspace_directory_id,parent_id,name,deleted_at)
-           VALUES($1,$2,$3,$4,$5,NULL) RETURNING id`,
+          `INSERT INTO folders(user_id,project_id,workspace_directory_id,parent_id,name,deleted_at,created_at,updated_at,version)
+           VALUES($1,$2,$3,$4,$5,NULL,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,1) RETURNING id`,
           [userId, scope.projectId, scope.workspaceId, parentId, chosen])
         const id = Number(inserted.rows[0]!.id)
         const directoryTarget = await storageKey(client, userId, scope, parentId, safeSegment(chosen))
@@ -700,6 +706,7 @@ async function unarchiveFiles(pool: Pool, options: PostgresFileArchiveOptions, r
       file_ids: createdFileIds,
       folder_ids: createdFolderIds,
     }
+    commitAttempted = true
     await client.query('COMMIT')
     committed = true
     if (result.created_count) await options.publishCreatedBatch(userId, metadata.clientId).catch(() => undefined)
@@ -707,16 +714,20 @@ async function unarchiveFiles(pool: Pool, options: PostgresFileArchiveOptions, r
   } catch (error) {
     if (!committed) {
       await client.query('ROLLBACK').catch(() => undefined)
-      for (const item of createdFilePaths) await rm(item, { force: true }).catch(() => undefined)
-      for (const item of [...createdFolderPaths].reverse()) await rm(item, { recursive: false, force: true }).catch(() => undefined)
+      if (!commitAttempted) {
+        for (const item of createdFilePaths) await rm(item, { force: true }).catch(() => undefined)
+        for (const item of [...createdFolderPaths].reverse()) await rm(item, { recursive: false, force: true }).catch(() => undefined)
+      } else console.error('解压文件提交结果未知，保留文件供核查')
     }
+    if (!committed && commitAttempted) throw new CoreError('storage_error', '解压提交结果未知，请检查解压结果')
     if (error instanceof CoreError) throw error
     if ((error as NodeJS.ErrnoException).code === 'EEXIST')
       throw new CoreError('conflict', '目标存储路径已被占用，请重试')
     throw new CoreError('invalid_request', '压缩包损坏')
   } finally {
-    await rm(tempDirectory, { recursive: true, force: true })
-    client.release()
+    try { await (options.cleanupTemp ?? ((directory: string) => rm(directory, { recursive: true, force: true })))(tempDirectory) }
+    catch { console.error('解压临时目录清理失败，可能存在残留') }
+    finally { client.release() }
   }
 }
 

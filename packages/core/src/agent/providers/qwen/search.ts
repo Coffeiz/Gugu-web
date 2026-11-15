@@ -1,5 +1,5 @@
 import type { ProviderConfig } from '../contracts.js'
-import { failedProviderSearch, requestProviderSearch, type ProviderSearchAdapter, type SearchTarget } from '../search/shared.js'
+import { failedProviderSearch, requestProviderSearch, type ProviderSearchAdapter, type SearchTarget } from '../search/http.js'
 import { qwenChatSearchSchema } from './chat-search-schema.js'
 import { qwenResponsesSearchSchema } from './responses-search-schema.js'
 

@@ -64,7 +64,7 @@ test('会话列表只返回 owner 会话，并按 Python 语义投影运行态�
   try {
     await pool.query(`
       CREATE TABLE users (id uuid PRIMARY KEY);
-      CREATE TABLE workspaces (id serial PRIMARY KEY, name text NOT NULL);
+      CREATE TABLE workspaces (id serial PRIMARY KEY, name text NOT NULL, user_id uuid NOT NULL);
       CREATE TABLE conversation_sessions (
         id serial PRIMARY KEY, user_id uuid NOT NULL REFERENCES users(id), title text NOT NULL,
         source text, chat_type text, workspace_id integer REFERENCES workspaces(id),
@@ -83,7 +83,7 @@ test('会话列表只返回 owner 会话，并按 Python 语义投影运行态�
     const owner = randomUUID(), other = randomUUID()
     await pool.query('INSERT INTO users (id) VALUES ($1), ($2)', [owner, other])
     const { rows: [workspace] } = await pool.query<{ id: number }>(
-      "INSERT INTO workspaces (name) VALUES ('合成工作区') RETURNING id",
+      "INSERT INTO workspaces (name,user_id) VALUES ('合成工作区',$1) RETURNING id", [owner],
     )
     const stamp = '2026-11-12T00:00:00Z'
     const { rows: sessions } = await pool.query<{ id: number; title: string }>(

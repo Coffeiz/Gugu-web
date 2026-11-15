@@ -245,8 +245,8 @@ test('Agent 孤儿 run 探测区分活跃租约与僵尸快照，并复用 Pytho
   const redis = await fakeRedis(() => undefined, values)
   const recovery = createRedisAgentRunRecoveryState(redis.url)
   try {
-    assert.deepEqual(await recovery.probe(11), { redisOk: true, active: true, stale: true })
-    assert.deepEqual(await recovery.probe(12), { redisOk: true, active: true, stale: false })
+    assert.deepEqual(await recovery.probe(11), { redisOk: true, active: true, stale: true, snapshot: values['genstream:state:11'] })
+    assert.deepEqual(await recovery.probe(12), { redisOk: true, active: true, stale: false, snapshot: values['genstream:state:12'] })
     assert.equal(await recovery.compressionLockExists(11), false)
     await recovery.reap(11)
   } finally {

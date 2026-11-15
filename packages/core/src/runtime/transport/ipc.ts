@@ -75,7 +75,7 @@ export function attachIpcTransport(
     v: 2,
     event: 'ready',
     schema: runtime.schemaVersion,
-    capabilities: ['operation_receipts'],
+    capabilities: ['operation_receipts', 'undo_mind_v1'],
   })
   return { close }
 }

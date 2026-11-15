@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
-import { RunStoreRejected } from '@gugu/core/harness'
-import type { Lease, RunCheckpoint, RunEvent, RunIdentity } from '@gugu/core/harness'
+import { RunStoreRejected } from '@gugu/core/agent'
+import type { Lease, RunCheckpoint, RunEvent, RunIdentity } from '@gugu/core/agent'
 import { createPostgresAgentRunStore } from '../../src/domains/agent-sessions/persistence/agent-run-store-postgres.js'
 
 const ownerId = '00000000-0000-4000-8000-000000000091'
@@ -61,6 +61,8 @@ function fakePool() {
         }
         return { rows: [], rowCount: null }
       }
+      if (sql.startsWith('SELECT id FROM conversation_sessions')) return { rows: [{ id: 71 }], rowCount: 1 }
+      if (sql.startsWith('SELECT 1 FROM agent_run_startups')) return { rows: [], rowCount: 0 }
       if (sql.includes('FROM agent_run_leases'))
         return { rows: state.leaseValid ? [{ '?column?': 1 }] : [], rowCount: state.leaseValid ? 1 : 0 }
       if (sql.includes('INSERT INTO agent_run_checkpoints')) {
@@ -71,9 +73,9 @@ function fakePool() {
         }
         return { rows: [], rowCount: 1 }
       }
-      if (sql.includes('SELECT version, sequence FROM agent_run_checkpoints'))
+      if (sql.includes('SELECT version, sequence, nonce, payload FROM agent_run_checkpoints'))
         return { rows: state.checkpoint
-          ? [{ version: state.checkpoint.version, sequence: state.checkpoint.sequence }]
+          ? [{ version: state.checkpoint.version, sequence: state.checkpoint.sequence, nonce: state.checkpoint.nonce, payload: state.checkpoint.payload }]
           : [], rowCount: state.checkpoint ? 1 : 0 }
       if (sql.includes('INSERT INTO agent_run_interaction_receipts')) {
         const receipt = String(values[3])
@@ -116,7 +118,7 @@ function fakePool() {
         return { rows: state.checkpoint ? [{ ...state.checkpoint }] : [], rowCount: state.checkpoint ? 1 : 0 }
       }
       if (sql.includes('FROM agent_run_events')) {
-        const rows = [...state.events].filter(([, row]) => !row.acknowledged)
+        const rows = [...state.events].filter(([, row]) => sql.includes('acknowledged_at IS NULL') ? !row.acknowledged : row.sequence > Number(values[3]))
           .map(([event_id, row]) => ({ event_id, sequence: row.sequence, nonce: row.nonce, payload: row.payload }))
           .sort((left, right) => left.sequence - right.sequence)
         return { rows, rowCount: rows.length }
@@ -140,6 +142,9 @@ test('PostgreSQL RunStore keeps checkpoints/events encrypted and supports ordere
 
   await store.acknowledgeEvents(identity, ['event-1'])
   assert.deepEqual(await store.pendingEvents(identity), [])
+  assert.deepEqual(await store.readEventsAfter(identity, 0), [event(1)])
+  assert.deepEqual(await store.readEventsAfter(identity, 1), [])
+  await assert.rejects(store.readEventsAfter(identity, -1), /序号无效/)
 })
 
 test('RunStore binds encrypted checkpoint data to owner and fails closed on ciphertext tampering', async () => {
@@ -150,6 +155,45 @@ test('RunStore binds encrypted checkpoint data to owner and fails closed on ciph
   await assert.rejects(store.read({ ...identity, ownerId: randomUUID() }), /无法安全解密/)
   state.checkpoint!.payload[state.checkpoint!.payload.length - 1] ^= 1
   await assert.rejects(store.read(identity), /无法安全解密/)
+})
+
+test('隔离 PostgreSQL 的跨身份密文复制及事件篡改不能通过认证', { skip: !process.env.GUGU_WEBUI_TEST_DATABASE_URL && '需要隔离 PostgreSQL' }, async () => {
+  const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL, schema = `codec_${randomUUID().replaceAll('-', '')}`
+  const admin = new Pool({ connectionString: url }); await admin.query(`CREATE SCHEMA "${schema}"`)
+  const pool = new Pool({ connectionString: url, options: `-c search_path=${schema}` })
+  try {
+    await pool.query(`CREATE TABLE conversation_sessions(id integer PRIMARY KEY,user_id uuid);
+      CREATE TABLE agent_run_startups(user_id uuid,session_id integer,run_id text,status text);
+      CREATE TABLE agent_run_leases(user_id uuid,session_id integer,run_id text,token text,fence bigint,expires_at timestamptz);
+      CREATE TABLE agent_run_checkpoints(user_id uuid,session_id integer,run_id text,version bigint,sequence bigint,status text,phase text,nonce bytea,payload bytea,created_at timestamptz,updated_at timestamptz,PRIMARY KEY(user_id,session_id,run_id));
+      CREATE TABLE agent_run_events(user_id uuid,session_id integer,run_id text,event_id text,sequence bigint,nonce bytea,payload bytea,created_at timestamptz,acknowledged_at timestamptz,PRIMARY KEY(user_id,session_id,run_id,event_id))`)
+    const otherOwner = randomUUID(), other = { ownerId: otherOwner, sessionId: '92', runId: 'other-run' }
+    await pool.query("INSERT INTO conversation_sessions VALUES (91,$1),(92,$2)", [ownerId, otherOwner])
+    await pool.query("INSERT INTO agent_run_leases VALUES ($1,91,$2,$3,$4,clock_timestamp()+interval '1 minute')", [ownerId, identity.runId, lease.token, lease.fence])
+    const store = createPostgresAgentRunStore(pool, 'synthetic-secret-key', { async writeHistory() {} })
+    await store.create(checkpoint(0, 1, null), lease, [event(1)])
+    const interactionClient = await pool.connect(), concurrent = await pool.connect()
+    try {
+      await interactionClient.query('BEGIN')
+      await interactionClient.query('SELECT id FROM conversation_sessions WHERE id=$1 AND user_id=$2 FOR UPDATE', [91, ownerId])
+      assert.equal((await store.readForUpdate(interactionClient, identity))?.sequence, 1)
+      await concurrent.query('BEGIN')
+      await concurrent.query("SET LOCAL lock_timeout='100ms'")
+      await assert.rejects(concurrent.query('UPDATE agent_run_checkpoints SET version=version WHERE user_id=$1 AND session_id=91 AND run_id=$2', [ownerId, identity.runId]), (error: unknown) => (error as { code?: string }).code === '55P03')
+      await concurrent.query('ROLLBACK')
+      await interactionClient.query('ROLLBACK')
+    } finally { interactionClient.release(); concurrent.release() }
+    await pool.query(`INSERT INTO agent_run_checkpoints(user_id,session_id,run_id,version,sequence,status,phase,nonce,payload,created_at,updated_at)
+      SELECT $1,92,$2,version,sequence,status,phase,nonce,payload,created_at,updated_at FROM agent_run_checkpoints WHERE user_id=$3 AND session_id=91 AND run_id=$4`, [otherOwner, other.runId, ownerId, identity.runId])
+    await assert.rejects(store.read(other), /无法安全解密/)
+    await pool.query(`INSERT INTO agent_run_events(user_id,session_id,run_id,event_id,sequence,nonce,payload,created_at)
+      SELECT $1,92,$2,event_id,sequence,nonce,payload,created_at FROM agent_run_events WHERE user_id=$3 AND session_id=91 AND run_id=$4`, [otherOwner, other.runId, ownerId, identity.runId])
+    await assert.rejects(store.pendingEvents(other), /无法安全解密/)
+    await pool.query("UPDATE agent_run_events SET event_id='altered' WHERE user_id=$1 AND session_id=91 AND run_id=$2", [ownerId, identity.runId])
+    await assert.rejects(store.pendingEvents(identity), /无法安全解密/)
+    await pool.query("UPDATE agent_run_checkpoints SET payload=set_byte(payload,0,get_byte(payload,0)#1) WHERE user_id=$1 AND session_id=91 AND run_id=$2", [ownerId, identity.runId])
+    await assert.rejects(store.read(identity), /无法安全解密/)
+  } finally { await pool.end(); await admin.query(`DROP SCHEMA "${schema}" CASCADE`); await admin.end() }
 })
 
 test('RunStore commits history, receipt, checkpoint and events atomically under the current lease and version', async () => {
@@ -203,6 +247,24 @@ test('RunStore rolls back a checkpoint and outbox update when canonical history 
   assert.equal(state.events.has('event-2'), false)
 })
 
+test('首次准备快照失败回滚检查点与事件，成功后后续提交不重复应用', async () => {
+  const { pool, state } = fakePool()
+  let attempts = 0
+  const store = createPostgresAgentRunStore(pool, 'synthetic-secret-key', {
+    async writeHistory() {},
+    async applyPreparedContext() { attempts++; if (attempts === 1) throw new Error('快照冲突') },
+  })
+  await store.create(checkpoint(0, 0, null), lease, [])
+  const change = { identity, expectedVersion: 0, lease, checkpoint: checkpoint(1, 1, { ready: true }),
+    events: [event(1)], history: null, interactionReceipt: null }
+  await assert.rejects(store.commit(change), /快照冲突/)
+  assert.equal((await store.read(identity))?.version, 0)
+  assert.equal(state.events.size, 0)
+  await store.commit(change)
+  await store.commit({ ...change, expectedVersion: 1, checkpoint: checkpoint(2, 2, { ready: true }), events: [event(2)] })
+  assert.equal(attempts, 2)
+})
+
 test('RunStore rejects a regressing checkpoint or an outbox sequence that does not match the committed checkpoint', async () => {
   const { pool } = fakePool()
   const store = createPostgresAgentRunStore(pool, 'synthetic-secret-key', { async writeHistory() {} })
@@ -248,6 +310,7 @@ test('PostgreSQL RunStore integration persists owner-scoped encrypted checkpoint
   try {
     await pool.query('CREATE TABLE users (id uuid PRIMARY KEY)')
     await pool.query('CREATE TABLE conversation_sessions (id integer PRIMARY KEY, user_id uuid NOT NULL REFERENCES users(id))')
+    await pool.query(`CREATE TABLE agent_run_startups (user_id uuid, session_id integer, run_id text, status text, PRIMARY KEY(user_id, session_id, run_id))`)
     await pool.query(`CREATE TABLE agent_run_leases (
       user_id uuid NOT NULL, session_id integer NOT NULL, run_id varchar(128) NOT NULL,
       token varchar(64) NOT NULL, fence bigint NOT NULL, expires_at timestamptz NOT NULL,
@@ -292,16 +355,33 @@ test('PostgreSQL RunStore integration persists owner-scoped encrypted checkpoint
     await store.create(checkpoint(0, 1, { privateContext: 'private-run-text' }), lease, [event(1)])
     assert.equal((await store.read(identity))?.context && (await store.read(identity))?.version, 0)
     assert.deepEqual((await store.pendingEvents(identity)).map((item) => item.id), ['event-1'])
-    await store.commit({
+    // 租约释放按 session → lease 加锁；并发终态提交不得先持有 lease 等待 session。
+    const competing = await pool.connect()
+    await competing.query('BEGIN')
+    await competing.query("SET LOCAL lock_timeout = '2s'")
+    await competing.query('SELECT id FROM conversation_sessions WHERE id=$1 AND user_id=$2 FOR UPDATE', [91, ownerId])
+    const commit = store.commit({
       identity, expectedVersion: 0, lease, checkpoint: checkpoint(1, 2, { final: true }),
       events: [event(2)], history: { outcome: 'success', context: { final: true }, text: 'synthetic history' },
       interactionReceipt: 'receipt-1',
     })
+    try {
+      await new Promise(resolve => setTimeout(resolve, 100))
+      await competing.query('UPDATE agent_run_leases SET expires_at=expires_at WHERE user_id=$1 AND session_id=$2', [ownerId, 91])
+      await competing.query('COMMIT')
+    } finally { competing.release() }
+    await commit
     assert.equal((await store.read(identity))?.version, 1)
     assert.equal(historyWrites, 1)
     assert.equal((await pool.query('SELECT body FROM synthetic_history')).rows[0]?.body, 'synthetic history')
     assert.equal((await store.pendingEvents(identity)).length, 2)
 
+    assert.equal(await store.read({ ...identity, ownerId: secondOwner }), null)
+    await pool.query(`INSERT INTO agent_run_checkpoints
+      (user_id, session_id, run_id, version, sequence, status, phase, nonce, payload, created_at, updated_at)
+      SELECT $1, session_id, run_id, version, sequence, status, phase, nonce, payload, created_at, updated_at
+      FROM agent_run_checkpoints WHERE user_id = $2 AND session_id = $3 AND run_id = $4`,
+    [secondOwner, ownerId, identity.sessionId, identity.runId])
     await assert.rejects(store.read({ ...identity, ownerId: secondOwner }), /无法安全解密/)
     await store.acknowledgeEvents(identity, ['event-1'])
     assert.deepEqual((await store.pendingEvents(identity)).map((item) => item.id), ['event-2'])

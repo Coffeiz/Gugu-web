@@ -1,3 +1,4 @@
+import { createAgentSessionApplication, createPostgresAgentSessionRepository } from '@gugu/core/agent-sessions'
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
 import type { Pool } from 'pg'
 
@@ -34,18 +35,6 @@ export function registerAgentMessageLocationRoute(
 }
 
 export function createPostgresAgentMessageLocator(pool: Pool) {
-  return async function locateAgentMessage(
-    ownerId: string,
-    messageId: number,
-  ): Promise<AgentMessageLocation | null> {
-    const result = await pool.query<AgentMessageLocation>(
-      `SELECT message.id, message.session_id AS "sessionId"
-       FROM conversation_messages AS message
-       JOIN conversation_sessions AS session ON session.id = message.session_id
-       WHERE message.id = $1 AND session.user_id = $2
-         AND message.content_json IS NULL AND message.role <> 'summary'`,
-      [messageId, ownerId],
-    )
-    return result.rows[0] ?? null
-  }
+  const repository = createPostgresAgentSessionRepository(pool)
+  return createAgentSessionApplication(repository).locate
 }

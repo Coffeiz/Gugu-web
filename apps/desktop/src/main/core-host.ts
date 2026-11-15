@@ -8,8 +8,10 @@ import {
   DESKTOP_METHODS,
   DESKTOP_MUTATIONS,
   MAX_FRAME,
+  CORE_SCHEMA_VERSION,
 } from '@gugu/core/desktop'
 import type { DesktopReply } from '@gugu/core/desktop'
+import { operationSchema } from '@gugu/core'
 
 export class DesktopError extends Error {
   constructor(
@@ -40,7 +42,7 @@ export async function verifyArtifact(
     manifest.platform !== process.platform ||
     manifest.arch !== process.arch ||
     manifest.protocol !== 2 ||
-    manifest.schema !== 3 ||
+    manifest.schema !== CORE_SCHEMA_VERSION ||
     manifest.coreVersion !== '0.2.0' ||
     !/^26\.(?:1[3-9]|[2-9]\d|\d{3,})\.\d+$/.test(manifest.nodeVersion) ||
     typeof manifest.nodeAbi !== 'string' ||
@@ -106,6 +108,7 @@ export class CoreHost {
   private count = 0
   private sequence = 0
   private healthy = true
+  private undoAvailable = false
   private closing?: Promise<void>
   private stopped = false
   private constructor(
@@ -162,7 +165,7 @@ export class CoreHost {
       if (
         ready.v !== 2 ||
         ready.event !== 'ready' ||
-        ready.schema !== '3' ||
+        ready.schema !== String(CORE_SCHEMA_VERSION) ||
         !Array.isArray(ready.capabilities) ||
         !ready.capabilities.includes('operation_receipts') ||
         (manifest &&
@@ -170,6 +173,7 @@ export class CoreHost {
             ready.nodeAbi !== manifest.nodeAbi))
       )
         throw new DesktopError('startup_failed', 'Core 数据库或运行时无法通过启动校验')
+      host.undoAvailable = ready.capabilities.includes('undo_mind_v1')
       return host
     } catch (error) {
       host.fail()
@@ -224,11 +228,17 @@ export class CoreHost {
       }
     })
   }
-  request<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+  request<T = unknown>(method: string, params: Record<string, unknown> = {}, callerOperationId?: string): Promise<T> {
     if (this.closing || !this.healthy)
       return Promise.reject(new DesktopError('closed', 'Core 已停止，请重新启动应用'))
-    if (!(DESKTOP_METHODS as readonly string[]).includes(method))
+    const undoWrite = method === 'undo.apply' || method === 'undo.redo'
+    const undoMethod = undoWrite || method === 'undo.preview'
+    if (undoMethod && !this.undoAvailable)
+      return Promise.reject(new DesktopError('invalid_request', '当前 Core 未提供撤销能力'))
+    if (!(DESKTOP_METHODS as readonly string[]).includes(method) && !undoMethod)
       return Promise.reject(new DesktopError('invalid_request', '此桌面能力不可用'))
+    if ((undoWrite && !operationSchema.safeParse(callerOperationId).success) || (!undoWrite && callerOperationId !== undefined))
+      return Promise.reject(new DesktopError('invalid_request', '操作标识无效'))
     if (
       !params ||
       typeof params !== 'object' ||
@@ -253,7 +263,7 @@ export class CoreHost {
       .then(async () => {
         if (!this.healthy) throw new DesktopError('closed', 'Core 已停止，请重新启动应用')
         const id = ++this.sequence,
-          operationId = DESKTOP_MUTATIONS.includes(method) ? randomUUID() : undefined
+          operationId = undoWrite ? callerOperationId : DESKTOP_MUTATIONS.includes(method) ? randomUUID() : undefined
         const request =
           JSON.stringify({
             v: 2,
@@ -310,6 +320,8 @@ export class CoreHost {
             storage_error: '本地数据操作失败，请刷新数据确认状态',
             closed: 'Core 已停止，请重新启动应用',
           }
+          if (undoWrite && error.code === 'storage_error')
+            throw new DesktopError('unknown_result', '撤销结果未确认，请查询操作收据或重新读取数据，勿重复提交', operationId)
           if (Object.hasOwn(messages, error.code))
             throw new DesktopError(error.code, messages[error.code]!, undefined)
           throw new DesktopError(
@@ -369,6 +381,12 @@ export function desktopHandlers(
     [DESKTOP_CHANNELS.receipt]: (operation: unknown) =>
       host.request('operations.get', { operation_id: operation }),
     [DESKTOP_CHANNELS.sandboxStatus]: diagnostics,
+    [DESKTOP_CHANNELS.undoPreview]: (contextId: unknown) =>
+      host.request('undo.preview', { context_id: contextId }),
+    [DESKTOP_CHANNELS.undoApply]: (contextId: unknown, undoId: unknown, operationId: unknown) =>
+      host.request('undo.apply', { context_id: contextId, undo_id: undoId }, operationId as string),
+    [DESKTOP_CHANNELS.undoRedo]: (contextId: unknown, undoId: unknown, operationId: unknown) =>
+      host.request('undo.redo', { context_id: contextId, undo_id: undoId }, operationId as string),
   }
 }
 export async function desktopReply<T>(

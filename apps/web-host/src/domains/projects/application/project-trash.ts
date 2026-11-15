@@ -1,7 +1,5 @@
-import { CoreError, dataContext, type ProjectRecord } from '@gugu/core'
-import { scheduledTaskUndoSnapshot } from '../../scheduled-tasks/undo-snapshot.js'
-import { calendarEventSnapshot } from '../../calendar/event-projection.js'
-import { projectResponse } from '../persistence/projects.js'
+import { CoreError, dataContext, projectResponse, type ProjectRecord } from '@gugu/core'
+import { calendarEventSnapshot, scheduledTaskUndoSnapshot } from '@gugu/core/calendar'
 
 export interface ProjectTrashFile extends Record<string, unknown> {
   id: number
@@ -111,7 +109,7 @@ export interface ProjectTrashRuntime {
 }
 
 export interface ProjectTrashStorage {
-  moveToTrash(ownerId: string, file: ProjectTrashFile): Promise<{
+  moveToTrash(ownerId: string, file: ProjectTrashFile, beforeMove?: (from: string, to: string) => Promise<void>): Promise<{
     storageKey: string
     rollback?: () => Promise<void>
   }>
@@ -120,6 +118,7 @@ export interface ProjectTrashStorage {
     file: ProjectTrashFile,
     project: ProjectRecord,
     folders: ProjectTrashFolder[],
+    beforeMove?: (from: string, to: string) => Promise<void>,
   ): Promise<{ storageKey: string; displayName: string; rollback?: () => Promise<void> }>
 }
 

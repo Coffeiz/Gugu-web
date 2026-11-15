@@ -1,7 +1,8 @@
 import type { Pool } from 'pg'
 import type { AgentInteractionHistoryWindow } from './agent-interaction-history.js'
-import { loadGroupMentionNames, replacePlatformMentionIds } from './agent-group-mentions.js'
-import { sanitizeMediaPayload } from '../media-payload.js'
+import { loadGroupMentionNames } from './agent-group-mentions.js'
+import { replacePlatformMentionIds } from '@gugu/core/agent/context/messages'
+import { sanitizeMediaPayload } from '@gugu/core/agent/context/messages'
 
 export class AgentSessionNotFoundError extends Error {
   readonly statusCode = 404
@@ -80,9 +81,12 @@ const timeKey = `COALESCE(
 )`
 
 function addOneMicrosecondMs(value: string): string {
-  const [whole = '0', fraction = ''] = value.split('.')
-  const units = BigInt(whole) * 1000n + BigInt((fraction + '000').slice(0, 3)) + 1n
-  return `${units / 1000n}.${String(units % 1000n).padStart(3, '0')}`
+  const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(value)
+  if (!match || /[1-9]/.test((match[3] ?? '').slice(3))) throw new Error('交互窗口时间无效')
+  const magnitude = BigInt(match[2]!) * 1000n + BigInt((match[3] ?? '').slice(0, 3).padEnd(3, '0'))
+  const units = (match[1] === '-' ? -magnitude : magnitude) + 1n
+  const absolute = units < 0n ? -units : units
+  return `${units < 0n ? '-' : ''}${absolute / 1000n}.${String(absolute % 1000n).padStart(3, '0')}`
 }
 
 function messageTimeMs(message: MessageRow): string {
@@ -207,7 +211,7 @@ export function createAgentMessageHistory(pool: Pool, runtime: AgentMessageHisto
                 session.workspace_id, workspace.name AS workspace_name, session.session_context,
                 session.execution_state, session.pending_message_count, session.bot_id
          FROM conversation_sessions AS session
-         LEFT JOIN workspaces AS workspace ON workspace.id = session.workspace_id
+         LEFT JOIN workspaces AS workspace ON workspace.id = session.workspace_id AND workspace.user_id = session.user_id
          WHERE session.id = $1 AND session.user_id = $2`,
         [sessionId, ownerId],
       )

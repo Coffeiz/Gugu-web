@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { MindNoteMutationError } from '../../src/domains/mind/application/mind-note-mutations.js'
+import { MindNoteMutationError } from '@gugu/core/mind'
 import { signedUserToken } from '../helpers/auth.js'
 
 const secret = 'synthetic-mind-mutation-secret'

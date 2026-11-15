@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { agentCommandMenu, registerAgentMiscRoutes } from '../../src/domains/agent-sessions/agent-misc.js'
+import { registerAgentMiscRoutes } from '../../src/domains/agent-sessions/agent-misc.js'
+import { agentCommandMenu } from '@gugu/core/agent/commands/menu'
 
 test('Agent 斜杠命令路由先鉴权，并返回共享命令菜单', async () => {
   const app = Fastify()
@@ -61,6 +62,15 @@ test('状态标签只接受特殊键覆盖，并按竖线或换行拆分候选',
   } finally {
     await app.close()
   }
+})
+
+test('状态标签先鉴权，配置错误不会被当作默认值', async () => {
+  const denied = Fastify()
+  registerAgentMiscRoutes(denied, { async requireUser(_request, reply) { return reply.code(401).send({ detail: '未认证' }) }, commandMenu: () => [], defaultStateLabels: {}, stateLabelOverrides() { throw new Error('不得读取') } })
+  try { assert.equal((await denied.inject({ url: '/api/v1/agent/ui-labels' })).statusCode, 401) } finally { await denied.close() }
+  const failed = Fastify()
+  registerAgentMiscRoutes(failed, { async requireUser() {}, commandMenu: () => [], defaultStateLabels: {}, stateLabelOverrides() { throw new Error('合成配置错误') } })
+  try { assert.equal((await failed.inject({ url: '/api/v1/agent/ui-labels' })).statusCode, 500) } finally { await failed.close() }
 })
 
 test('规范命令菜单只公开可用命令且保留各自插入文本', async () => {

@@ -1,5 +1,4 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
-import type { Pool } from 'pg'
 import { toUtcIsoWithOffset } from '../../shared/date-time.js'
 import { parsePythonInteger } from '../../http/request.js'
 
@@ -57,37 +56,6 @@ export function toMindNoteReadResponse(row: MindNoteRow): MindNoteReadResponse {
     refType: row.ref_type,
     refId: row.ref_id === null ? null : Number(row.ref_id),
     refSnapshot: row.ref_snapshot,
-  }
-}
-
-/** 读取与 Python Mind API 一致的活动 note 时间流，查询始终绑定可信 owner。 */
-export function createPostgresMindNoteReader(pool: Pick<Pool, 'query'>): MindNoteReadOperations {
-  return {
-    async list(ownerId, limit, offset) {
-      const result = await pool.query<MindNoteRow>(
-        `SELECT id, kind, title, content_md, color, captured_at, version,
-                created_at, updated_at, deleted_at, ref_type, ref_id, ref_snapshot
-         FROM mind_nodes
-         WHERE user_id = $1 AND kind = 'note' AND deleted_at IS NULL
-         ORDER BY date(captured_at) DESC, created_at DESC, id DESC
-         LIMIT $2 OFFSET $3`,
-        [ownerId, limit, offset],
-      )
-      return result.rows.map(toMindNoteReadResponse)
-    },
-
-    async get(ownerId, noteId) {
-      const result = await pool.query<MindNoteRow>(
-        `SELECT id, kind, title, content_md, color, captured_at, version,
-                created_at, updated_at, deleted_at, ref_type, ref_id, ref_snapshot
-         FROM mind_nodes
-         WHERE id = $1 AND user_id = $2 AND kind = 'note' AND deleted_at IS NULL
-         LIMIT 1`,
-        [noteId, ownerId],
-      )
-      const row = result.rows[0]
-      return row ? toMindNoteReadResponse(row) : null
-    },
   }
 }
 

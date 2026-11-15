@@ -56,5 +56,12 @@ test('PostgreSQL Local PATCH 保留省略字段、搬迁文件、写撤销记录
     assert.equal(undo.rows.length,1); assert.equal(undo.rows[0]!.before_state.items['file:1'].storage_key,`${owner}/个人文件/笔记.md`)
     assert.deepEqual(events,[1,1])
     assert.equal(await readFile(foreign,'utf8'),'私有')
+    const unknownPool={async connect(){const client=await pool.connect(),query=client.query.bind(client)
+      client.query=(async (...args:Parameters<typeof client.query>)=>{const result=await (query as (...args:any[])=>Promise<any>)(...args);if(args[0]==='COMMIT')throw new Error('模拟提交后断连');return result}) as typeof client.query
+      return client}} as unknown as Pool
+    const unknownOps=createPostgresFileUpdateOperations(unknownPool,{storageRoot:root,async publishChanged(){}})
+    await assert.rejects(unknownOps.update(owner,1,{version:3,displayName:'提交后名称',folderSet:false,projectSet:false,workspaceDirectorySet:false},{idempotencyKey:null,undoContextId:null,clientId:null}),/模拟提交后断连/)
+    const stored=await pool.query<{storage_key:string}>('SELECT storage_key FROM files WHERE id=1')
+    assert.equal(await readFile(path.join(root,...stored.rows[0]!.storage_key.split('/')),'utf8'),'正文')
   }finally{await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();await rm(root,{recursive:true,force:true})}
 })

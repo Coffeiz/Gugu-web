@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
-import { InteractionNotFoundError } from './persistence/agent-interaction-session.js'
+import { InteractionNotFoundError } from '@gugu/core/agent-sessions'
 
 export interface AgentInteractionSessionRouteOptions {
   requireUser: preHandlerHookHandler

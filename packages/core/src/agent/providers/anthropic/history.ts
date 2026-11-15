@@ -1,5 +1,5 @@
-import type { CanonicalMessage, Json } from '../../harness/contracts.js'
-import { renderCanonicalEvents, toolResultIsError } from '../../harness/history/canonical-history.js'
+import type { CanonicalMessage, Json } from '../../models.js'
+import { renderCanonicalEvents, toolResultIsError } from '../../context/history/canonical-history.js'
 import type { JsonObject, ProjectionOptions, ProviderConfig, ProviderPolicy, WireTransformStage } from '../contracts.js'
 import { ProviderError } from '../errors.js'
 import { array, clone, object, record, text } from '../values.js'

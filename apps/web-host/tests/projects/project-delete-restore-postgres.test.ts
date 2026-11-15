@@ -15,9 +15,10 @@ test('PostgreSQL 项目删除/恢复原子更新同批资源、Undo 和提交后
   const schema = `gugu_project_trash_${randomUUID().replaceAll('-', '')}`
   const admin = new Pool({ connectionString: databaseUrl, max: 1 })
   await admin.query(`CREATE SCHEMA "${schema}"`)
-  const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema}`, max: 4 })
+  const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema} -c timezone=Asia/Shanghai`, max: 4 })
   const published: Array<{ resource: string; operation: string }> = []
   const storage: Array<[string, number]> = []
+  const projectPayloads: unknown[] = []
   const stamp = new Date().toISOString()
   try {
     await pool.query(`CREATE TABLE projects (
@@ -93,12 +94,17 @@ test('PostgreSQL 项目删除/恢复原子更新同批资源、Undo 和提交后
                '{}', 'web', 'undone', $2, $2)`, [ownerId, stamp],
     )
 
+    await pool.query("UPDATE projects SET created_at='2026-11-14T00:30:00+08:00' WHERE id=$1", [projectId])
+    await pool.query(`CREATE FUNCTION fixed_restore_times() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN NEW.updated_at := '2026-11-14T00:30:00.123000+08:00'; RETURN NEW; END $$;
+      CREATE TRIGGER fixed_restore_times BEFORE UPDATE ON projects FOR EACH ROW EXECUTE FUNCTION fixed_restore_times()`)
     const runtime = createPostgresProjectTrashRuntime(pool, async (event) => {
       const projectState = await pool.query('SELECT deleted_at FROM projects WHERE id = $1', [projectId])
       assert.equal(projectState.rowCount, 1, '事件发送时 project 必须已提交')
       if (event.operation === 'delete') assert.ok(projectState.rows[0]!.deleted_at)
       if (event.operation === 'create') assert.equal(projectState.rows[0]!.deleted_at, null)
       published.push({ resource: event.resource, operation: event.operation })
+      if (event.resource === 'projects' && event.payload !== undefined) projectPayloads.push(event.payload)
     })
     const trash = createProjectTrashService(runtime, {
       async moveToTrash(owner, file) {
@@ -147,6 +153,12 @@ test('PostgreSQL 项目删除/恢复原子更新同批资源、Undo 和提交后
 
     const restored = await trash.restoreProject(ownerId, projectId, { clientId: 'pg-restore' })
     assert.equal((restored as any).id, projectId)
+    assert.deepEqual(projectPayloads, [restored])
+    assert.equal((restored as any).createdAt, '2026-11-13')
+    assert.equal((restored as any).updatedAt, '2026-11-13T16:30:00.123000+00:00')
+    assert.equal((restored as any).doneAt, null)
+    assert.equal((restored as any).deletedAt, null)
+    assert.equal((await pool.query('SELECT updated_at::text FROM projects WHERE id=$1', [projectId])).rows[0].updated_at, '2026-11-14 00:30:00.123+08')
     const activeRows = await pool.query(
       `SELECT p.deleted_at AS project_deleted, p.version AS project_version,
               f.deleted_at AS file_deleted, f.version AS file_version, d.deleted_at AS folder_deleted,

@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import type { UserFromRequest } from '../../../app.js'
 import { parsePythonInteger, writeRequestMetadata } from '../../../http/request.js'
-import { MindCanvasItemMutationError } from '../application/mind-canvas-item-mutations.js'
+import { MindCanvasItemMutationError } from '@gugu/core/mind'
 import type { MindCanvasItemResponse } from '../mind-canvas-read.js'
 
 type ItemWriteMetadata = ReturnType<typeof writeRequestMetadata> & { mutationId: string | null }

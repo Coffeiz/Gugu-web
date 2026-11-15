@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Pool } from 'pg'
 import test from 'node:test'
 import type { Pool as PoolType, PoolClient } from 'pg'
-import { createPostgresTrashMutationOperations } from '../../src/domains/files/persistence/trash-mutations-postgres.js'
+import { createPostgresTrashMutationOperations, removeLocalFile } from '../../src/domains/files/persistence/trash-mutations-postgres.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '11111111-1111-4111-8111-111111111111'
@@ -117,7 +117,7 @@ test('Local 永久删除文件夹子树只扣除成功删除的实体文件并�
   }
 })
 
-test('PostgreSQL Local 永久删除回收站目录子树并仅释放成功删除的文件配额', {
+test('PostgreSQL Local 永久删除回收站目录子树时释放已删除及缺失文件的配额', {
   skip: !databaseUrl && '设置 GUGU_WEBUI_TEST_DATABASE_URL 后运行隔离 PostgreSQL 回收站删除回归',
 }, async () => {
   const schema = `gugu_trash_delete_${randomUUID().replaceAll('-', '')}`
@@ -130,7 +130,7 @@ test('PostgreSQL Local 永久删除回收站目录子树并仅释放成功删除
     await pool.query(`
       CREATE TABLE files (
         id integer PRIMARY KEY, user_id uuid NOT NULL, storage_key text NOT NULL,
-        size_bytes bigint NOT NULL, deleted_at timestamptz
+        size_bytes bigint NOT NULL, deleted_at timestamptz, folder_id integer
       );
       CREATE TABLE folders (
         id integer PRIMARY KEY, user_id uuid NOT NULL, parent_id integer, deleted_at timestamptz
@@ -147,9 +147,9 @@ test('PostgreSQL Local 永久删除回收站目录子树并仅释放成功删除
       );
       INSERT INTO folders (id,user_id,parent_id,deleted_at) VALUES
         (20,'${ownerId}',NULL,CURRENT_TIMESTAMP),(21,'${ownerId}',20,CURRENT_TIMESTAMP);
-      INSERT INTO files (id,user_id,storage_key,size_bytes,deleted_at) VALUES
-        (1,'${ownerId}','${ownerId}/trash/root.txt',5,CURRENT_TIMESTAMP),
-        (2,'${ownerId}','${ownerId}/trash/child.txt',4,CURRENT_TIMESTAMP);
+      INSERT INTO files (id,user_id,storage_key,size_bytes,deleted_at,folder_id) VALUES
+        (1,'${ownerId}','${ownerId}/trash/root.txt',5,CURRENT_TIMESTAMP,20),
+        (2,'${ownerId}','${ownerId}/trash/child.txt',4,CURRENT_TIMESTAMP,21);
       INSERT INTO storage_quota_ledgers (user_id,category,used_bytes,status)
         VALUES ('${ownerId}','file_library',9,'active');
     `)
@@ -172,16 +172,36 @@ test('PostgreSQL Local 永久删除回收站目录子树并仅释放成功删除
     assert.equal((await pool.query('SELECT id FROM files')).rowCount, 0)
     assert.equal(Number((await pool.query<{ used_bytes: number | string }>(
       'SELECT used_bytes FROM storage_quota_ledgers WHERE user_id=$1 AND category=$2', [ownerId, 'file_library'],
-    )).rows[0]?.used_bytes), 4)
+    )).rows[0]?.used_bytes), 0)
     assert.deepEqual((await pool.query<{ resource_id: string; delta_bytes: number | string }>(
       'SELECT resource_id,delta_bytes FROM storage_quota_events ORDER BY resource_id',
-    )).rows.map((row) => [row.resource_id, Number(row.delta_bytes)]), [['1', -5]])
+    )).rows.map((row) => [row.resource_id, Number(row.delta_bytes)]), [['1', -5], ['2', -4]])
     assert.deepEqual(events, [{ id: 1, type: 'file' }, { id: 2, type: 'file' }, { id: 20, type: 'folder' }])
     assert.equal(await readFile(path.join(storageRoot, ownerId, 'trash', 'root.txt'), 'utf8').then(() => true, () => false), false)
+    await pool.query(`INSERT INTO files (id,user_id,storage_key,size_bytes,deleted_at) VALUES
+      (3,'${ownerId}','${ownerId}/trash/missing.txt',4,CURRENT_TIMESTAMP),
+      (4,'${ownerId}','${ownerId}/trash/link.txt',3,CURRENT_TIMESTAMP);
+      UPDATE storage_quota_ledgers SET used_bytes=10 WHERE user_id='${ownerId}'`)
+    await symlink(path.join(storageRoot, ownerId, 'trash', 'missing.txt'), path.join(storageRoot, ownerId, 'trash', 'link.txt'))
+    await operations.hardDeleteFile(ownerId, 3, null)
+    assert.equal(Number((await pool.query('SELECT used_bytes FROM storage_quota_ledgers WHERE user_id=$1', [ownerId])).rows[0].used_bytes), 6)
+    await operations.hardDeleteFile(ownerId, 4, null)
+    assert.equal(Number((await pool.query('SELECT used_bytes FROM storage_quota_ledgers WHERE user_id=$1', [ownerId])).rows[0].used_bytes), 6)
   } finally {
     await pool.end()
     await admin.query(`DROP SCHEMA "${schema}" CASCADE`)
     await admin.end()
     await rm(storageRoot, { recursive: true, force: true })
   }
+})
+
+test('删除检查后文件消失按已删除处理，权限错误仍向调用方抛出', async () => {
+  const root=path.join(tmpdir(),`gugu-trash-race-${randomUUID()}`)
+  const file=path.join(root,ownerId,'trash','item.txt')
+  try {
+    await mkdir(path.dirname(file),{recursive:true});await writeFile(file,'内容')
+    const key=`${ownerId}/trash/item.txt`
+    assert.equal(await removeLocalFile(root,ownerId,key,async()=>{throw Object.assign(new Error('synthetic'),{code:'ENOENT'})}),true)
+    await assert.rejects(removeLocalFile(root,ownerId,key,async()=>{throw Object.assign(new Error('synthetic'),{code:'EACCES'})}),{code:'EACCES'})
+  } finally {await rm(root,{recursive:true,force:true})}
 })

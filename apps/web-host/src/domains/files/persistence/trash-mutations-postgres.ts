@@ -1,6 +1,7 @@
 import { CoreError } from '@gugu/core'
 import { randomUUID } from 'node:crypto'
 import { lstat, readdir, realpath, unlink } from 'node:fs/promises'
+import { finishStagedLocalFile, stageLocalFile } from '@gugu/fs/node'
 import path from 'node:path'
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
 import { isPathWithin } from '../../../adapters/path-safety.js'
@@ -24,7 +25,7 @@ export interface TrashMutationEvent {
   origin: string | null
 }
 
-async function removeLocalFile(storageRoot: string, ownerId: string, key: string): Promise<boolean> {
+async function checkedLocalFile(storageRoot: string, ownerId: string, key: string): Promise<string | null> {
   const segments = key.split('/')
   if (segments[0] !== ownerId || segments.length < 2
     || segments.some((segment) => !segment || segment === '.' || segment === '..'
@@ -39,15 +40,63 @@ async function removeLocalFile(storageRoot: string, ownerId: string, key: string
       if ((await lstat(current)).isSymbolicLink()) throw new Error('local file path traverses symlink')
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code
-      if (code === 'ENOENT' || code === 'ENOTDIR') return false
+      if (code === 'ENOENT') return null
       throw error
     }
   }
-  await unlink(current)
+  return current
+}
+
+export async function removeLocalFile(storageRoot: string, ownerId: string, key: string, remove: typeof unlink = unlink): Promise<boolean> {
+  const current = await checkedLocalFile(storageRoot, ownerId, key)
+  if (current === null) return true
+  try { await remove(current) } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
   return true
 }
 
-async function lockQuota(client: PoolClient, ownerId: string): Promise<number> {
+/** 提交前暂存待清理文件；失败时由调用方按相反顺序恢复。 */
+async function authorizedFileRoot(storageRoot: string, ownerId: string, key: string): Promise<{ root: string; relative: string } | null> {
+  const owner = normalizeFileOwnerId(ownerId)
+  const segments = key.split('/')
+  if (segments[0] !== owner || segments.length < 2) throw new Error('invalid local file key')
+  const root = await realpath(storageRoot)
+  const ownerRoot = path.join(root, owner)
+  try {
+    const info = await lstat(ownerRoot)
+    if (info.isSymbolicLink() || !info.isDirectory()) throw new Error('invalid owner root')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
+  }
+  return { root: ownerRoot, relative: segments.slice(1).join('/') }
+}
+
+export async function stageLocalFileRemoval(storageRoot: string, ownerId: string, key: string, journalId: string): Promise<{
+  size: number
+  stagedPath: string
+  restore(): Promise<void>
+  discard(): Promise<void>
+} | null> {
+  const authorized = await authorizedFileRoot(storageRoot, ownerId, key)
+  if (!authorized) return null
+  const staged = await stageLocalFile(authorized.root, authorized.relative, journalId)
+  if (!staged) return null
+  return {
+    ...staged,
+    restore: () => finishStagedLocalFile(authorized.root, authorized.relative, journalId, true),
+    discard: () => finishStagedLocalFile(authorized.root, authorized.relative, journalId, false),
+  }
+}
+
+/** 仅恢复日志中声明的文件；目标存在时 link 会拒绝覆盖。 */
+export async function recoverStagedLocalFile(storageRoot: string, ownerId: string, key: string, journalId: string, restore: boolean): Promise<void> {
+  const authorized = await authorizedFileRoot(storageRoot, ownerId, key)
+  if (authorized) await finishStagedLocalFile(authorized.root, authorized.relative, journalId, restore)
+}
+
+export async function lockQuota(client: PoolClient, ownerId: string): Promise<number> {
   const result = await client.query<QuotaRow>(
     `SELECT used_bytes FROM storage_quota_ledgers
      WHERE user_id=$1 AND category='file_library' AND status='active' FOR UPDATE`, [ownerId],
@@ -57,7 +106,7 @@ async function lockQuota(client: PoolClient, ownerId: string): Promise<number> {
   return Number(row.used_bytes)
 }
 
-async function measureDirectory(storageRoot: string, root: string): Promise<number> {
+async function measureDirectory(storageRoot: string, root: string, excluded: ReadonlySet<string>): Promise<number> {
   let total = 0
   let current = storageRoot
   for (const part of path.relative(storageRoot, root).split(path.sep).filter(Boolean)) {
@@ -81,6 +130,7 @@ async function measureDirectory(storageRoot: string, root: string): Promise<numb
     }
     for (const entry of entries) {
       const target = path.join(directory, entry.name)
+      if (excluded.has(target)) continue
       let info
       try { info = await lstat(target) }
       catch (error) {
@@ -97,11 +147,12 @@ async function measureDirectory(storageRoot: string, root: string): Promise<numb
   return total
 }
 
-async function reconcileLocalUsage(
+export async function reconcileLocalUsage(
   client: PoolClient,
   storageRoot: string,
   ownerId: string,
   usedBytes: number,
+  excluded: ReadonlySet<string> = new Set(),
 ): Promise<number> {
   const root = await realpath(storageRoot)
   const roots = [
@@ -111,7 +162,7 @@ async function reconcileLocalUsage(
     path.join(root, ownerId, 'trash'),
     path.join(root, ownerId.replaceAll('-', ''), '.data-portability', 'imported'),
   ]
-  const sizes = await Promise.all(roots.map((directory) => measureDirectory(root, directory)))
+  const sizes = await Promise.all(roots.map((directory) => measureDirectory(root, directory, excluded)))
   const measured = sizes.reduce((sum, size) => sum + size, 0)
   const delta = measured - usedBytes
   if (delta !== 0) {
@@ -123,9 +174,9 @@ async function reconcileLocalUsage(
     )
   }
   await client.query(
-    `UPDATE storage_quota_ledgers SET used_bytes=$3,last_reconciled_at=CURRENT_TIMESTAMP,
+    `UPDATE storage_quota_ledgers SET used_bytes=$2,last_reconciled_at=CURRENT_TIMESTAMP,
        updated_at=CURRENT_TIMESTAMP WHERE user_id=$1 AND category='file_library' AND status='active'`,
-    [ownerId, 'file_library', measured],
+    [ownerId, measured],
   )
   return measured
 }

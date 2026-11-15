@@ -4,6 +4,7 @@ import { Pool } from 'pg'
 import test from 'node:test'
 import Fastify from 'fastify'
 import {
+  createAgentSessionRefresher,
   createPostgresAgentSessionRefresher,
   registerAgentSessionRefreshRoute,
 } from '../../src/domains/agent-sessions/agent-session-refresh.js'
@@ -155,19 +156,13 @@ test('PostgreSQL 刷新只递增 epoch 并过期快照，不清空上下文或�
 })
 
 test('snapshot trace 失败不回滚已完成的失效结果', async () => {
-  const pool = {
-    async query() {
-      return {
-        rows: [{
-          id: 7, context_epoch: 8, snapshot_hash: 'hash', session_info_hash: 'info-hash',
-          snapshot_expires_at: new Date('2026-11-13T00:00:00Z'),
-        }],
-        rowCount: 1,
-      }
-    },
-  } as unknown as Pool
-  const refresh = createPostgresAgentSessionRefresher(pool, () => { throw new Error('trace unavailable') })
+  let expiresAt = ''
+  const refresh = createAgentSessionRefresher(async () => ({ id: 7, contextEpoch: 8, snapshotHash: 'hash', sessionInfoHash: 'info-hash', expiresAt: '2026-11-13T00:00:00Z' }), (event) => {
+    expiresAt = event.expiresAt
+    throw new Error('trace unavailable')
+  })
   assert.deepEqual(await refresh('8f5048f4-8e16-43d0-9a8d-3c08087f5131', 7), {
     id: 7, context_epoch: 8,
   })
+  assert.equal(expiresAt, '2026-11-13T00:00:00.000Z')
 })

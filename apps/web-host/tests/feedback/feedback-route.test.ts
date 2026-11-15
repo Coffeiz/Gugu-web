@@ -5,6 +5,7 @@ import { createApp } from '../../src/app.js'
 import { createAdminAuthAdapter } from '../../src/domains/admin/admin-auth.js'
 import { createAdminHostGuard } from '../../src/http/admin-host-guard.js'
 import { signedUserToken } from '../helpers/auth.js'
+import { createFeedbackService } from '@gugu/core/feedback'
 
 const userId = 'cfa94a82-62d0-44a3-88bc-8c0cf37e5085'
 const userSecret = 'synthetic-feedback-user-secret'
@@ -24,7 +25,7 @@ function makeApp(submit: (...args: [string, string, string, string]) => Promise<
         emailSubscribed: false, imChannels: [],
       }),
     },
-    feedback: { submit },
+    feedback: createFeedbackService({ submit, async list() { return { total: 0, items: [] } } }),
     adminAuth: createAdminAuthAdapter({
       username: 'admin-example',
       password: 'synthetic-admin-password',

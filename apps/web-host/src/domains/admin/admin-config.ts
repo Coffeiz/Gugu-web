@@ -2,6 +2,7 @@ import type { FastifyInstance, preHandlerHookHandler } from 'fastify'
 import { Client } from 'pg'
 import { pingRedis } from '../../adapters/redis-events.js'
 import { readConfigOverride, updateConfigOverride, type ConfigDocument } from '../../adapters/config-override-file.js'
+import { createPosixConfigFileLock } from '../agent-config/posix-config-lock.js'
 
 export interface AdminConfigOptions {
   readonly requireAdmin: preHandlerHookHandler
@@ -97,7 +98,7 @@ export function registerAdminConfigRoutes(app: FastifyInstance, options: AdminCo
     if (storage.backend !== undefined && storage.backend !== 'local')
       return reply.code(400).send({ detail: 'Gugu 2.0 自托管版只支持本地文件系统' })
     try {
-      updateConfigOverride(options.path, clean)
+      await updateConfigOverride(options.path, clean, createPosixConfigFileLock())
       return { ok: true, restart_required: true, detail: '配置已保存，重启 Node Host 后生效' }
     } catch {
       return reply.code(500).send({ detail: '用户运行配置保存失败' })

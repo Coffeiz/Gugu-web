@@ -1,7 +1,9 @@
 import { CoreError } from '@gugu/core'
+import { openAuthorizedRelativeFile } from '@gugu/core/files/read'
 import { openLocalFile, UnsafeLocalPathError } from '@gugu/fs/node'
 import type { Pool, QueryResultRow } from 'pg'
 import type { FileContentSource, FileReadOperations } from './file-reads.js'
+import { isOwnedFileStorageKey } from './file-owner.js'
 
 type FileRow = QueryResultRow & Record<string, unknown> & {
   id: number | string
@@ -219,18 +221,12 @@ export async function openOwnedLocalFile(
   fileName: string,
   mimeType: string,
 ): Promise<FileContentSource | null> {
-  const segments = storageKey.split('/')
-  if (segments[0] !== ownerId || segments.some((segment) =>
-    !segment || segment === '.' || segment === '..' || segment.includes('\\') || segment.includes('\0')))
+  if (!isOwnedFileStorageKey(ownerId, storageKey))
     throw new CoreError('not_found', '文件不存在')
 
-  try {
-    const opened = await openLocalFile(storageRoot, storageKey)
-    return opened ? { file, ...opened, fileName, mimeType } : null
-  } catch (error) {
-    if (error instanceof UnsafeLocalPathError) throw new CoreError('not_found', '文件不存在')
-    throw error
-  }
+  const opened = await openAuthorizedRelativeFile(storageKey, key => openLocalFile(storageRoot, key),
+    error => error instanceof UnsafeLocalPathError)
+  return opened ? { file, ...opened, fileName, mimeType } : null
 }
 
 export function createPostgresFileReadOperations(

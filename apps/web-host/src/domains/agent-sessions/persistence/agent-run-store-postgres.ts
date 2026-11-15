@@ -1,11 +1,12 @@
-import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
-import { RunStoreRejected } from '@gugu/core/harness'
-import type { Lease, RunCheckpoint, RunEvent, RunIdentity, RunStore } from '@gugu/core/harness'
+import { RunStoreRejected } from '@gugu/core/agent'
+import { createAgentRunCodec, assertRunIdentity as validateIdentity, sameRunIdentity as sameIdentity, assertRunCheckpoint as assertCheckpointIdentity } from '@gugu/core/agent/run/codec'
+import { withBorrowedPostgresQuery } from '@gugu/core/data'
+import type { Lease, RunCheckpoint, RunEvent, RunIdentity, RunStore } from '@gugu/core/agent'
+import { agentRunStartupFailed, lockAgentRunSession } from './agent-run-startup-postgres.js'
 import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
 import { isPostgresUniqueViolation } from '../../../adapters/postgres-errors.js'
 
-const encryptionInfo = Buffer.from('gugu-agent-run-store-v1', 'utf8')
 export interface AgentRunHistoryWrite<C> {
   outcome: 'success' | 'interruption' | 'silent'
   context: C
@@ -13,6 +14,8 @@ export interface AgentRunHistoryWrite<C> {
 }
 
 export interface AgentRunStoreOptions<C> {
+  /** 首次 prepared checkpoint 与快照 CAS 同事务提交。 */
+  applyPreparedContext?(client: PoolClient, identity: RunIdentity, context: C): Promise<void>
   /** Canonical history, usage and pending compaction must share the checkpoint transaction. */
   writeHistory(
     client: PoolClient,
@@ -34,63 +37,14 @@ interface StoredEvent {
   nonce: Buffer
   payload: Buffer
 }
+const checkpointReadSql = `SELECT version, nonce, payload FROM agent_run_checkpoints
+  WHERE user_id = $1 AND session_id = $2 AND run_id = $3`
 
 function sessionNumber(sessionId: string): number {
   if (!/^[1-9]\d*$/.test(sessionId)) throw new TypeError('Agent 会话身份无效')
   const value = Number(sessionId)
   if (!Number.isSafeInteger(value)) throw new TypeError('Agent 会话身份无效')
   return value
-}
-
-function validateIdentity(identity: RunIdentity): void {
-  if (!identity.ownerId || !identity.runId || identity.runId.length > 128)
-    throw new TypeError('Agent run 身份无效')
-  sessionNumber(identity.sessionId)
-}
-
-function sameIdentity(left: RunIdentity, right: RunIdentity): boolean {
-  return left.ownerId === right.ownerId
-    && left.sessionId === right.sessionId
-    && left.runId === right.runId
-}
-
-function identityAad(identity: RunIdentity, kind: 'checkpoint' | 'event', id: string): Buffer {
-  return Buffer.from(`${identity.ownerId}\n${identity.sessionId}\n${identity.runId}\n${kind}\n${id}`, 'utf8')
-}
-
-function deriveKey(secretKey: string): Buffer {
-  return Buffer.from(hkdfSync('sha256', Buffer.from(secretKey, 'utf8'), Buffer.alloc(0), encryptionInfo, 32))
-}
-
-function encrypt(secretKey: string, identity: RunIdentity, kind: 'checkpoint' | 'event', id: string, value: unknown) {
-  const json = JSON.stringify(value)
-  if (json === undefined) throw new TypeError('Agent run 状态无法序列化')
-  const nonce = randomBytes(12)
-  const cipher = createCipheriv('aes-256-gcm', deriveKey(secretKey), nonce)
-  cipher.setAAD(identityAad(identity, kind, id))
-  const payload = Buffer.concat([cipher.update(json, 'utf8'), cipher.final(), cipher.getAuthTag()])
-  return { nonce, payload }
-}
-
-function decrypt<T>(secretKey: string, identity: RunIdentity, kind: 'checkpoint' | 'event', id: string, nonce: Buffer, payload: Buffer): T {
-  if (nonce.length !== 12 || payload.length < 16) throw new Error('Agent run 状态密文无效')
-  try {
-    const decipher = createDecipheriv('aes-256-gcm', deriveKey(secretKey), nonce)
-    decipher.setAAD(identityAad(identity, kind, id))
-    decipher.setAuthTag(payload.subarray(-16))
-    const json = Buffer.concat([decipher.update(payload.subarray(0, -16)), decipher.final()]).toString('utf8')
-    return JSON.parse(json) as T
-  } catch {
-    throw new Error('Agent run 状态无法安全解密')
-  }
-}
-
-function assertCheckpointIdentity<C>(identity: RunIdentity, checkpoint: RunCheckpoint<C>): void {
-  validateIdentity(identity)
-  if (!sameIdentity(identity, checkpoint.identity)) throw new TypeError('Agent run checkpoint 身份不一致')
-  if (!Number.isSafeInteger(checkpoint.version) || checkpoint.version < 0
-    || !Number.isSafeInteger(checkpoint.sequence) || checkpoint.sequence < 0)
-    throw new TypeError('Agent run checkpoint 版本无效')
 }
 
 async function assertLease(client: PoolClient, identity: RunIdentity, lease: Lease): Promise<void> {
@@ -112,14 +66,14 @@ async function assertLease(client: PoolClient, identity: RunIdentity, lease: Lea
 
 async function insertEvents(
   client: PoolClient,
-  secretKey: string,
+  codec: ReturnType<typeof createAgentRunCodec>,
   identity: RunIdentity,
   events: readonly RunEvent[],
 ): Promise<void> {
   for (const event of events) {
     if (!sameIdentity(identity, event.identity) || !Number.isSafeInteger(event.sequence) || event.sequence < 1)
       throw new TypeError('Agent run event 身份或序号无效')
-    const encrypted = encrypt(secretKey, identity, 'event', event.id, event)
+    const encrypted = codec.encryptEvent(identity, event)
     await client.query(
       `INSERT INTO agent_run_events (
          user_id, session_id, run_id, event_id, sequence, nonce, payload, created_at
@@ -153,24 +107,39 @@ export function createPostgresAgentRunStore<C>(
   pool: Pick<Pool, 'connect' | 'query'>,
   secretKey: string,
   options: AgentRunStoreOptions<C>,
-): RunStore<C> {
-  if (!secretKey) throw new TypeError('Agent run 加密密钥不能为空')
+): RunStore<C> & { readEventsAfter(identity: RunIdentity, sequence: number): Promise<readonly RunEvent[]>; readForUpdate(client: PoolClient, identity: RunIdentity): Promise<RunCheckpoint<C> | null> } {
+  const codec = createAgentRunCodec(secretKey)
+  const decodeCheckpoint = (identity: RunIdentity, row: StoredCheckpoint | undefined): RunCheckpoint<C> | null =>
+    row ? codec.decryptCheckpoint<C>(identity, Number(row.version), row.nonce, row.payload) : null
+
+  async function loadEvents(identity: RunIdentity, after: number | null): Promise<readonly RunEvent[]> {
+    validateIdentity(identity)
+    const result = after === null
+      ? await pool.query<StoredEvent>(`SELECT event_id, sequence, nonce, payload
+         FROM agent_run_events
+         WHERE user_id = $1 AND session_id = $2 AND run_id = $3 AND acknowledged_at IS NULL
+         ORDER BY sequence ASC`, [identity.ownerId, sessionNumber(identity.sessionId), identity.runId])
+      : await pool.query<StoredEvent>(`SELECT event_id, sequence, nonce, payload FROM agent_run_events
+         WHERE user_id = $1 AND session_id = $2 AND run_id = $3 AND sequence > $4
+         ORDER BY sequence ASC LIMIT 256`, [identity.ownerId, sessionNumber(identity.sessionId), identity.runId, after])
+    return result.rows.map(row => codec.decryptEvent(identity, row.event_id, Number(row.sequence), row.nonce, row.payload))
+  }
 
   return {
+    async readForUpdate(client, identity) {
+      validateIdentity(identity)
+      return withBorrowedPostgresQuery(client, async query => {
+        const result = await query.query<StoredCheckpoint>(`${checkpointReadSql} FOR UPDATE`, [identity.ownerId, sessionNumber(identity.sessionId), identity.runId])
+        return decodeCheckpoint(identity, result.rows[0])
+      })
+    },
     async read(identity) {
       validateIdentity(identity)
       const result = await pool.query<StoredCheckpoint>(
-        `SELECT version, nonce, payload
-         FROM agent_run_checkpoints
-         WHERE user_id = $1 AND session_id = $2 AND run_id = $3`,
+        checkpointReadSql,
         [identity.ownerId, sessionNumber(identity.sessionId), identity.runId],
       )
-      const row = result.rows[0]
-      if (!row) return null
-      const checkpoint = decrypt<RunCheckpoint<C>>(secretKey, identity, 'checkpoint', 'current', row.nonce, row.payload)
-      assertCheckpointIdentity(identity, checkpoint)
-      if (checkpoint.version !== Number(row.version)) throw new Error('Agent run checkpoint 版本不一致')
-      return checkpoint
+      return decodeCheckpoint(identity, result.rows[0])
     },
 
     async create(checkpoint, lease, events) {
@@ -178,8 +147,9 @@ export function createPostgresAgentRunStore<C>(
       if (checkpoint.version !== 0) throw new TypeError('Agent run 初始 checkpoint 版本必须为 0')
       const identity = checkpoint.identity
       assertEventTransition(identity, 0, checkpoint.sequence, events)
-      const encrypted = encrypt(secretKey, identity, 'checkpoint', 'current', checkpoint)
+      const encrypted = codec.encryptCheckpoint(checkpoint)
       await withPostgresTransaction(pool, async (client) => {
+        if (!await lockAgentRunSession(client, identity) || await agentRunStartupFailed(client, identity)) throw new RunStoreRejected('conflict')
         await assertLease(client, identity, lease)
         await client.query(
           `INSERT INTO agent_run_checkpoints (
@@ -189,7 +159,9 @@ export function createPostgresAgentRunStore<C>(
           [identity.ownerId, sessionNumber(identity.sessionId), identity.runId, checkpoint.version,
             checkpoint.sequence, checkpoint.status, checkpoint.phase, encrypted.nonce, encrypted.payload],
         )
-        await insertEvents(client, secretKey, identity, events)
+        await insertEvents(client, codec, identity, events)
+        if (checkpoint.context !== null && options.applyPreparedContext)
+          await options.applyPreparedContext(client, identity, checkpoint.context)
       }, (error) => isPostgresUniqueViolation(error) ? new RunStoreRejected('conflict') : error)
     },
 
@@ -199,11 +171,13 @@ export function createPostgresAgentRunStore<C>(
         || change.checkpoint.version !== change.expectedVersion + 1)
         throw new TypeError('Agent run checkpoint CAS 版本无效')
       const identity = change.identity
-      const encrypted = encrypt(secretKey, identity, 'checkpoint', 'current', change.checkpoint)
+      const encrypted = codec.encryptCheckpoint(change.checkpoint)
       await withPostgresTransaction(pool, async (client) => {
+        // 与租约获取和释放保持一致的 session → lease → checkpoint 锁顺序。
+        if (!await lockAgentRunSession(client, identity)) throw new RunStoreRejected('lease_lost')
         await assertLease(client, identity, change.lease)
-        const current = await client.query<{ version: string | number; sequence: string | number }>(
-          `SELECT version, sequence FROM agent_run_checkpoints
+        const current = await client.query<{ version: string | number; sequence: string | number; nonce: Buffer; payload: Buffer }>(
+          `SELECT version, sequence, nonce, payload FROM agent_run_checkpoints
            WHERE user_id = $1 AND session_id = $2 AND run_id = $3
            FOR UPDATE`,
           [identity.ownerId, sessionNumber(identity.sessionId), identity.runId],
@@ -237,27 +211,25 @@ export function createPostgresAgentRunStore<C>(
             encrypted.nonce, encrypted.payload, change.expectedVersion],
         )
         if (updated.rowCount !== 1) throw new RunStoreRejected('conflict')
-        await insertEvents(client, secretKey, identity, change.events)
+        await insertEvents(client, codec, identity, change.events)
+        if (change.checkpoint.context !== null && options.applyPreparedContext) {
+          const previous = codec.decryptCheckpoint<C>(identity, Number(current.rows[0].version), current.rows[0].nonce, current.rows[0].payload)
+          if (previous.context === null)
+            await options.applyPreparedContext(client, identity, change.checkpoint.context)
+        }
         if (change.history !== null)
           await options.writeHistory(client, identity, change.history, change.checkpoint)
       }, (error) => isPostgresUniqueViolation(error) ? new RunStoreRejected('conflict') : error)
     },
 
     async pendingEvents(identity) {
+      return loadEvents(identity, null)
+    },
+
+    async readEventsAfter(identity, sequence) {
       validateIdentity(identity)
-      const result = await pool.query<StoredEvent>(
-        `SELECT event_id, sequence, nonce, payload
-         FROM agent_run_events
-         WHERE user_id = $1 AND session_id = $2 AND run_id = $3 AND acknowledged_at IS NULL
-         ORDER BY sequence ASC`,
-        [identity.ownerId, sessionNumber(identity.sessionId), identity.runId],
-      )
-      return result.rows.map((row) => {
-        const event = decrypt<RunEvent>(secretKey, identity, 'event', row.event_id, row.nonce, row.payload)
-        if (event.id !== row.event_id || event.sequence !== Number(row.sequence)
-          || !sameIdentity(identity, event.identity)) throw new Error('Agent run outbox 内容无效')
-        return event
-      })
+      if (!Number.isSafeInteger(sequence) || sequence < 0) throw new TypeError('Agent run 事件序号无效')
+      return loadEvents(identity, sequence)
     },
 
     async acknowledgeEvents(identity, ids) {

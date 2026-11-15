@@ -1,5 +1,5 @@
 import { observe } from '../values.js'
-import type { Json, ProviderEvent, ToolCall, Usage } from '../../harness/contracts.js'
+import type { Json, ProviderEvent, ToolCall, Usage } from '../../models.js'
 import { createPolicy, DEFAULT_CAPABILITIES, DEFAULT_REASONING, genericThinkingParams, normalizeBaseUrl, reasoningEffort } from '../base.js'
 import type { JsonObject, ProviderCompletion, ProviderConfig, ProviderDriverDependencies, ProviderHttpRequest, ProviderInvocation, ProtocolDriver, ReasoningCapabilities } from '../contracts.js'
 import { classifyProviderError, ProviderError } from '../errors.js'

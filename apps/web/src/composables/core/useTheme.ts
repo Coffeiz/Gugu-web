@@ -38,11 +38,7 @@ function readPalette(): ThemePalette {
 
 function normalizePalette(value: unknown): ThemePalette {
   if (value === 'cafe' || value === 'neutral' || value === 'red' || value === 'blue' || value === 'green') return value
-  const migrated: Record<string, ThemePalette> = {
-    mist: 'blue', rose: 'red', sky: 'blue', sage: 'green',
-    lavender: 'blue', amber: 'neutral', aero: 'blue', mono: 'neutral', coral: 'red', teal: 'green',
-  }
-  return typeof value === 'string' ? migrated[value] ?? 'neutral' : 'neutral'
+  return 'neutral'
 }
 
 function resolve(value: ThemePreference): ResolvedTheme {

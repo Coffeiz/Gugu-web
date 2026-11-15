@@ -45,6 +45,7 @@ test('Vite→Node Host→随机 PostgreSQL schema 认证读取 owner 会话与�
       execution_state text, active_run_id text,
       pending_message_count integer NOT NULL DEFAULT 0, bot_id integer
     );
+    CREATE TABLE agent_run_leases (user_id uuid NOT NULL, session_id integer NOT NULL, expires_at timestamptz NOT NULL);
     CREATE TABLE conversation_messages (
       id integer PRIMARY KEY, session_id integer NOT NULL REFERENCES conversation_sessions(id),
       role text NOT NULL, content text NOT NULL DEFAULT '', content_json jsonb,
@@ -94,7 +95,7 @@ test('Vite→Node Host→随机 PostgreSQL schema 认证读取 owner 会话与�
       listInteractions: async () => [],
       recoverOrphanedSession: createPostgresAgentOrphanRecovery(pool, {
         async probe() { return { redisOk: true, active: false, stale: false } },
-        async reap() {},
+        async reapIfStale() { return true },
         async compressionLockExists() { return false },
       }),
     }).list,

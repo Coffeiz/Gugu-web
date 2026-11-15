@@ -35,7 +35,9 @@ Main 的入口、窗口、Core 通信、生命周期与更新分别位于 `index
 
 数据继续使用原 `com.gugu.desktop.preview` 位置及 `core.db` 中的稳定 owner。Electron 单实例和 Core SQLite 独占连接共同保护本地数据；退出/暂停先拒绝新增调用，再关闭数据进程。平台、协议/schema、版本/ABI 或摘要失配时拒绝启动。
 
-schema 仍为 3。修改生成稳定操作 UUID；未知结果保留标识，不自动重放。重启后读取权威数据，或通过固定收据 API / Core CLI 查询。v1/v2 库仍须停应用后显式备份升级；旧 Python 不写 v3，回滚恢复升级前备份，见 [Core README](../../packages/core/README.md)。
+schema 为 16。修改生成稳定操作 UUID；未知结果保留标识，不自动重放。重启后读取权威数据，或通过固定收据 API / Core CLI 查询。v1 至 v15 库须停应用后显式备份升级；旧 Python 不写 v16，回滚恢复升级前备份，见 [Core README](../../packages/core/README.md)。
+
+v2 侧车声明 `undo_mind_v1` 时，受信桌面桥提供 Mind 撤销预览、撤销和重做；写入由调用方提供稳定操作 UUID。未声明该能力的旧侧车仍可启动，但不开放撤销。结果未知时凭 UUID 查询收据并重新读取数据；v1 不开放这些方法。桌面 Mind 正向编辑界面和其他资源的本地撤销尚未接通。
 
 ## 原生执行与发行边界
 

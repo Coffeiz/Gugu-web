@@ -1,4 +1,4 @@
-import type { CancellationPort, RunIdentity } from '@gugu/core/harness'
+import type { CancellationPort, RunIdentity } from '@gugu/core/agent'
 import type { RedisAgentCancellationCommands } from '../../../adapters/redis-events.js'
 import type { LiveSubscriptionFactory } from '../../../adapters/redis-live-subscription.js'
 

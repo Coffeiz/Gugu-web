@@ -1,4 +1,4 @@
-import { CoreError } from '@gugu/core'
+import { CoreError, normalizeWorkspaceDirectoryName } from '@gugu/core'
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
 
 export interface WorkspaceDirectoryCard {
@@ -43,11 +43,7 @@ function directoryName(body: unknown): string {
   if (typeof name !== 'string') throw new CoreError('invalid_request', '名称必须是文本')
   if (Array.from(name).length > 200)
     throw new CoreError('invalid_request', '名称长度不能超过 200 个字符')
-  const normalized = name.trim()
-  if (!normalized) throw new CoreError('invalid_request', '名称不能为空')
-  if (/[\\/:*?"<>|]/.test(normalized))
-    throw new CoreError('invalid_request', '名称不能包含以下字符：\\ / : * ? " < > |')
-  return normalized
+  return normalizeWorkspaceDirectoryName(name)
 }
 
 function cardResponse(row: WorkspaceDirectoryCard) {

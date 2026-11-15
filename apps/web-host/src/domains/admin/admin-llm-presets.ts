@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify'
-import { maskSecret } from '../../shared/secret-mask.js'
+import { maskSecret } from '@gugu/core/shared/secret-mask'
 
 type Preset = Record<string, unknown> & { id: string; provider: string; api_key: string; base_url: string; model: string }
 type Config = { ai_presets?: { active_id?: string; items?: Preset[]; strategy?: string; pool_mode?: string }; ai?: Record<string, unknown> }
@@ -14,6 +14,7 @@ export interface AdminLlmPresetOptions {
   fetchModels: (baseUrl: string, provider: string, apiKey: string, apiFormat: string) => Promise<string[]>
   destinationMatches?: (provider: string, apiFormat: string, baseUrl: string) => boolean
   invalidateActiveRuntime?: () => void | Promise<void>
+  invalidateReasoningStates?: () => void | Promise<void>
 }
 
 const aiKeys = [
@@ -22,6 +23,8 @@ const aiKeys = [
   'ollama_mode', 'ollama_api_mode', 'ollama_keep_alive', 'deployment_mode', 'local_runtime',
   'capability_overrides', 'capability_checked_at', 'capability_fingerprint',
 ]
+const createFields = new Set(['name', ...aiKeys])
+const updateFields = new Set(['name', 'in_pool', ...aiKeys.filter(key => !['capability_checked_at', 'capability_fingerprint'].includes(key))])
 const defaults: Record<string, unknown> = {
   max_tokens: 25600, context_tokens: 128000, thinking: '', reasoning_effort: '', reasoning_persistence: 'off',
   image: false, image_detail: 'auto', video: false, audio: false, web_search_enabled: false, api_format: '',
@@ -62,7 +65,7 @@ function itemFrom(body: Record<string, unknown>, id: string): Preset {
   const search = body.web_search_enabled === undefined ? providerSupportsSearch(provider, apiFormat) : Boolean(body.web_search_enabled)
   if (search && !providerSupportsSearch(provider, apiFormat)) fail(422, '当前 Provider 或 API 格式不支持联网搜索')
   return {
-    ...defaults, ...body, id, provider, api_format: apiFormat, api_key: String(body.api_key ?? ''),
+    ...defaults, ...Object.fromEntries(Object.entries(body).filter(([key]) => createFields.has(key))), id, provider, api_format: apiFormat, api_key: String(body.api_key ?? ''),
     base_url: String(body.base_url ?? ''), model: String(body.model ?? ''),
     max_tokens: Number(body.max_tokens ?? defaults.max_tokens), context_tokens: Number(body.context_tokens ?? defaults.context_tokens),
     image_detail: ['auto', 'low', 'high', 'original'].includes(String(body.image_detail)) ? body.image_detail : 'auto',
@@ -72,6 +75,7 @@ function itemFrom(body: Record<string, unknown>, id: string): Preset {
 
 export function registerAdminLlmPresetRoutes(app: FastifyInstance, options: AdminLlmPresetOptions): void {
   const preHandler = options.requireAdmin, capabilitySnapshot = options.capabilitySnapshot ?? (() => ({})), audit = options.audit ?? (() => undefined)
+  const invalidate = async () => { await options.invalidateActiveRuntime?.(); await options.invalidateReasoningStates?.() }
   const matches = options.destinationMatches ?? ((_provider, _apiFormat, baseUrl) => {
     try { const url = new URL(baseUrl); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password }
     catch { return false }
@@ -79,6 +83,19 @@ export function registerAdminLlmPresetRoutes(app: FastifyInstance, options: Admi
   app.get('/api/v1/admin/agent/llm-presets', { preHandler }, async () => {
     const config = options.read(), collection = presets(config)
     return { active_id: collection.active_id ?? '', strategy: collection.strategy ?? 'active', pool_mode: collection.pool_mode ?? 'random', items: collection.items!.map((item) => show(item, capabilitySnapshot)) }
+  })
+  app.post('/api/v1/admin/agent/llm-presets/strategy', { preHandler }, async (request) => {
+    const body = (request.body ?? {}) as Record<string, unknown>
+    if (body.strategy != null && !['active', 'pool', 'router'].includes(String(body.strategy))) fail(400, 'strategy 只能是 active / pool / router')
+    if (body.pool_mode != null && !['random', 'round_robin', 'least_loaded'].includes(String(body.pool_mode))) fail(400, 'pool_mode 只能是 random / round_robin / least_loaded')
+    const result = options.mutate((config) => {
+      const collection = presets(config)
+      if (body.strategy != null) collection.strategy = String(body.strategy)
+      if (body.pool_mode != null) collection.pool_mode = String(body.pool_mode)
+      return { strategy: collection.strategy ?? 'active', pool_mode: collection.pool_mode ?? 'random' }
+    })
+    await invalidate()
+    return result
   })
   app.post('/api/v1/admin/agent/llm-presets', { preHandler }, async (request, reply) => {
     const id = options.newId?.() ?? `p_${randomUUID().replaceAll('-', '').slice(0, 8)}`
@@ -88,6 +105,7 @@ export function registerAdminLlmPresetRoutes(app: FastifyInstance, options: Admi
       if (!collection.active_id) { collection.active_id = id; config.ai = activeSegment(item) }
       return { ...item, api_key: maskSecret(item.api_key) }
     })
+    await invalidate()
     await audit('llm_preset.create', { preset_id: id, provider: item.provider })
     return reply.code(201).send(result)
   })
@@ -97,7 +115,7 @@ export function registerAdminLlmPresetRoutes(app: FastifyInstance, options: Admi
       const { all, item } = find(config, request.params.preset_id)
       const nextProvider = String(changes.provider ?? item.provider), nextFormat = String(changes.api_format ?? item.api_format ?? ''), nextUrl = String(changes.base_url ?? item.base_url)
       if (item.api_key && !changes.api_key && (nextProvider !== item.provider || nextFormat !== String(item.api_format ?? '') || nextUrl.replace(/\/$/, '') !== item.base_url.replace(/\/$/, ''))) fail(422, '服务商、接口格式或地址已变更，请重新填写 API Key')
-      const next: Record<string, unknown> = { ...item, ...Object.fromEntries(Object.entries(changes).filter(([, value]) => value !== null)), api_key: changes.api_key || item.api_key }
+      const next: Record<string, unknown> = { ...item, ...Object.fromEntries(Object.entries(changes).filter(([key, value]) => updateFields.has(key) && value !== null)), api_key: changes.api_key || item.api_key }
       validateDimensions(next.max_tokens, next.context_tokens)
       if (next.web_search_enabled && !providerSupportsSearch(String(next.provider), String(next.api_format ?? ''))) fail(422, '当前 Provider 或 API 格式不支持联网搜索')
       if (!providerSupportsSearch(String(next.provider), String(next.api_format ?? ''))) next.web_search_enabled = false
@@ -106,6 +124,7 @@ export function registerAdminLlmPresetRoutes(app: FastifyInstance, options: Admi
       if (all.active_id === item.id) config.ai = activeSegment(item)
       return { ...item, api_key: maskSecret(item.api_key) }
     })
+    await invalidate()
     await audit('llm_preset.update', { preset_id: request.params.preset_id })
     return result
   })
@@ -119,11 +138,13 @@ export function registerAdminLlmPresetRoutes(app: FastifyInstance, options: Admi
       all.items = all.items!.filter((item) => item.id !== id)
       return { deleted: id }
     })
+    await invalidate()
     await audit('llm_preset.delete', { preset_id: id })
     return result
   })
   app.post<{ Params: { preset_id: string } }>('/api/v1/admin/agent/llm-presets/:preset_id/activate', { preHandler }, async (request) => {
     const result = options.mutate((config) => { const { all, item } = find(config, request.params.preset_id); all.active_id = item.id; config.ai = activeSegment(item); return { active_id: item.id } })
+    await invalidate()
     await audit('llm_preset.activate', { preset_id: request.params.preset_id })
     return result
   })
@@ -140,7 +161,7 @@ export function registerAdminLlmPresetRoutes(app: FastifyInstance, options: Admi
       if (all.active_id === item.id) config.ai = activeSegment(item)
       return { capability_overrides: overrides }
     })
-    await options.invalidateActiveRuntime?.()
+    await invalidate()
     await audit('llm_preset.capability_overrides', { preset_id: request.params.preset_id, capabilities: Object.keys(overrides) })
     return result
   })
