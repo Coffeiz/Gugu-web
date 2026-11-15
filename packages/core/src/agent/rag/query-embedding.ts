@@ -48,7 +48,7 @@ export async function embedRagQuery(settings:RagQueryEmbeddingSettings,text:stri
  if(!request)return {vector:[],outcome:'invalid_config'}
  const timeout=AbortSignal.timeout(4000),combined=AbortSignal.any([signal,timeout])
  try{
-  const response=await transport.request({url:request.url,method:'POST',headers:{'content-type':'application/json',...(settings.apiKey?{authorization:`Bearer ${settings.apiKey}`}:{})},body:request.body,timeoutMs:4000,allowLocal:settings.allowLocal===true&&['local','ollama'].includes(settings.provider.trim().toLowerCase())},combined)
+  const response=await transport.request({url:request.url,method:'POST',headers:{accept:'application/json','accept-encoding':'identity','content-type':'application/json',...(settings.apiKey?{authorization:`Bearer ${settings.apiKey}`}:{})},body:request.body,timeoutMs:4000,allowLocal:settings.allowLocal===true&&['local','ollama'].includes(settings.provider.trim().toLowerCase())},combined)
   if(response.status!==200){await response.cancel();signal.throwIfAborted();return {vector:[],outcome:'http_error',httpStatus:response.status}}
   let bytes=0;const chunks:Uint8Array[]=[]
   for await(const chunk of response.body){

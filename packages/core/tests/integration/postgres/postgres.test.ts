@@ -28,7 +28,14 @@ describe('真实 PostgreSQL 的相同业务契约', () => {
       await admin.query(
         `CREATE TABLE users(id UUID PRIMARY KEY); ${definitions.projects}; ${definitions.clients}; ${definitions.receipts}; ALTER TABLE projects ADD FOREIGN KEY(user_id) REFERENCES users(id); ALTER TABLE clients ADD FOREIGN KEY(user_id) REFERENCES users(id)`,
       )
+      await admin.query(definitions.ragIndexEntries)
+      for (const index of definitions.ragIndexIndexes) await admin.query(index)
       await admin.query('INSERT INTO users(id) VALUES($1),($2)', [owner, other])
+      await sql`INSERT INTO knowledge_index_entries(owner_user_id,source_type,source_id,scope_type,scope_id,platform,bot_id,group_id,document_id,document_version,chunk_index,chunk_count,content_hash,metadata_json) VALUES(${owner},'conversation','1','owner','','web','','','conversation:1','v1',0,1,${'a'.repeat(64)},'{}'::json),(${other},'conversation','2','owner','','web','','','conversation:2','v1',0,1,${'b'.repeat(64)},'{}'::json)`.execute(runtime.db)
+      const indexed = await sql<{ owner_user_id: string; source_id: string }>`SELECT owner_user_id,source_id FROM knowledge_index_entries WHERE owner_user_id=${owner} ORDER BY id`.execute(runtime.db)
+      expect(indexed.rows).toEqual([{ owner_user_id: owner, source_id: '1' }])
+      const indexes = await sql<{ indexname: string }>`SELECT indexname FROM pg_indexes WHERE schemaname=${schema} AND tablename='knowledge_index_entries'`.execute(runtime.db)
+      expect(indexes.rows.map(row => row.indexname)).toContain('ix_knowledge_index_owner_source_indexed')
       const context = dataContext(owner)
       await expect(
         runtime.transaction(context, async (data) => {

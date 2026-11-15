@@ -9,6 +9,18 @@ export const DESKTOP_METHODS = [
   'clients.list',
   'clients.create',
   'clients.update',
+  'clients.delete',
+  'calendar.update',
+  'calendar.delete',
+  'mind.canvases.list',
+  'mind.canvases.items.list',
+  'mind.canvases.create',
+  'mind.canvases.update',
+  'mind.canvases.delete',
+  'mind.canvases.notes.create',
+  'mind.canvases.notes.update',
+  'mind.canvases.items.update',
+  'mind.canvases.items.delete',
   'operations.get',
   'executor.diagnostics',
 ] as const
@@ -17,6 +29,20 @@ export const DESKTOP_MUTATIONS: readonly string[] = [
   'projects.rename',
   'clients.create',
   'clients.update',
+  'clients.delete',
+  'calendar.create',
+  'calendar.update',
+  'calendar.delete',
+  'mind.canvases.create',
+  'mind.canvases.update',
+  'mind.canvases.delete',
+  'mind.notes.create',
+  'mind.notes.update',
+  'mind.notes.delete',
+  'mind.canvases.notes.create',
+  'mind.canvases.notes.update',
+  'mind.canvases.items.update',
+  'mind.canvases.items.delete',
 ]
 export const DESKTOP_CHANNELS = {
   projects: 'gugu:projects:list',
@@ -25,6 +51,24 @@ export const DESKTOP_CHANNELS = {
   clients: 'gugu:clients:list',
   createClient: 'gugu:clients:create',
   renameClient: 'gugu:clients:rename',
+  deleteClient: 'gugu:clients:delete',
+  calendar: 'gugu:calendar:list',
+  createCalendarEvent: 'gugu:calendar:create',
+  updateCalendarEvent: 'gugu:calendar:update',
+  deleteCalendarEvent: 'gugu:calendar:delete',
+  canvases: 'gugu:mind:canvases:list',
+  createCanvas: 'gugu:mind:canvases:create',
+  updateCanvas: 'gugu:mind:canvases:update',
+  deleteCanvas: 'gugu:mind:canvases:delete',
+  canvasItems: 'gugu:mind:canvases:items:list',
+  createCanvasNote: 'gugu:mind:canvases:notes:create',
+  updateCanvasNote: 'gugu:mind:canvases:notes:update',
+  updateCanvasItem: 'gugu:mind:canvases:items:update',
+  deleteCanvasItem: 'gugu:mind:canvases:items:delete',
+  notes: 'gugu:mind:notes:list',
+  createNote: 'gugu:mind:notes:create',
+  updateNote: 'gugu:mind:notes:update',
+  deleteNote: 'gugu:mind:notes:delete',
   receipt: 'gugu:operations:get',
   undoPreview: 'gugu:undo:preview',
   undoApply: 'gugu:undo:apply',
@@ -39,6 +83,46 @@ export interface DesktopProject {
 export interface DesktopClient {
   id: number
   name: string
+}
+export interface DesktopCalendarEvent {
+  id: number
+  title: string
+  date: string
+  version: number
+}
+export interface DesktopCanvas {
+  id: number
+  title: string
+  projectId: number | null
+  data: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+}
+export interface DesktopNote {
+  id: number
+  title: string | null
+  contentMd: string
+  color: string | null
+  version: number
+}
+export interface DesktopCanvasItemNode extends DesktopNote {
+  kind: string
+}
+export interface DesktopCanvasItem {
+  id: number
+  canvasId: number
+  nodeId: number
+  x: number
+  y: number
+  w: number | null
+  h: number | null
+  z: number
+  collapsed: boolean
+  data: Record<string, unknown>
+  refData: { date: string; time: string | null; endTime: string | null; description: string | null } | null
+  node: DesktopCanvasItemNode
+  createdAt: string
+  updatedAt: string
 }
 export interface SandboxStatus {
   supported: boolean
@@ -59,6 +143,24 @@ export interface DesktopBridge {
   clients(): Promise<DesktopReply<DesktopClient[]>>
   createClient(name: string): Promise<DesktopReply<DesktopClient>>
   renameClient(id: number, name: string): Promise<DesktopReply<DesktopClient>>
+  deleteClient(id: number): Promise<DesktopReply<null>>
+  calendar(): Promise<DesktopReply<DesktopCalendarEvent[]>>
+  createCalendarEvent(title: string, date: string): Promise<DesktopReply<DesktopCalendarEvent>>
+  updateCalendarEvent(id: number, body: { version: number; title?: string; date?: string }): Promise<DesktopReply<DesktopCalendarEvent>>
+  deleteCalendarEvent(id: number, version: number): Promise<DesktopReply<null>>
+  canvases(): Promise<DesktopReply<DesktopCanvas[]>>
+  createCanvas(title: string): Promise<DesktopReply<DesktopCanvas>>
+  updateCanvas(id: number, body: { title: string }): Promise<DesktopReply<DesktopCanvas>>
+  deleteCanvas(id: number): Promise<DesktopReply<null>>
+  canvasItems(canvasId: number): Promise<DesktopReply<DesktopCanvasItem[]>>
+  createCanvasNote(canvasId: number, contentMd: string, color?: string, x?: number, y?: number): Promise<DesktopReply<DesktopCanvasItem>>
+  updateCanvasNote(id: number, fields: { version: number; contentMd?: string; title?: string | null; color?: string | null }): Promise<DesktopReply<DesktopNote>>
+  updateCanvasItem(canvasId: number, id: number, body: { x?: number; y?: number; w?: number | null; h?: number | null }): Promise<DesktopReply<DesktopCanvasItem>>
+  deleteCanvasItem(canvasId: number, id: number): Promise<DesktopReply<null>>
+  notes(): Promise<DesktopReply<DesktopNote[]>>
+  createNote(contentMd: string, color?: string): Promise<DesktopReply<DesktopNote>>
+  updateNote(id: number, fields: { version: number; contentMd?: string; title?: string | null; color?: string | null }): Promise<DesktopReply<DesktopNote>>
+  deleteNote(id: number): Promise<DesktopReply<null>>
   receipt(operationId: string): Promise<DesktopReply<unknown>>
   undoPreview(contextId: string): Promise<DesktopReply<unknown>>
   undoApply(contextId: string, undoId: string, operationId: string): Promise<DesktopReply<unknown>>

@@ -647,6 +647,7 @@ it('持久 RAG 查询限制授权范围并在 embedding 中撤权时拒绝返回
   await initializeSqlite(path);const {runtime,ownerId}=await openSqliteRuntime(path)
   try{
    const owner=ownerId.replaceAll('-','')
+   await sql.raw('DROP TABLE knowledge_index_entries').execute(runtime.db)
    await sql.raw(`CREATE TABLE knowledge_index_entries(id INTEGER PRIMARY KEY,owner_user_id TEXT,indexed_at TEXT,deleted_at TEXT,source_type TEXT,source_id TEXT,scope_type TEXT,scope_id TEXT,platform TEXT,bot_id TEXT,group_id TEXT,document_id TEXT,parent_document_id TEXT,document_version TEXT,chunk_index INTEGER,chunk_count INTEGER,title TEXT,summary TEXT,content TEXT,metadata_json TEXT,source_updated_at TEXT)`).execute(runtime.db)
    await sql`INSERT INTO knowledge_index_entries VALUES
     (1,${owner},'2026-01-01 00:00:00.000001',NULL,'memory','daily','owner','','','','','a','a','v1',0,1,'合成','','alpha first','{}',NULL),
@@ -679,7 +680,7 @@ it('查询 embedding 使用受控传输、限制重定向并且不泄露凭据�
  const settings={provider:'openai',baseUrl:'https://embedding.example/v1',model:'synthetic-model',apiKey:'synthetic-secret',dimensions:2}
  const result=await embedRagQuery(settings,'  合成查询  ',transport,new AbortController().signal)
  expect(result).toEqual({vector:[0.25,-0.75],outcome:'success',httpStatus:200})
- expect(requests).toMatchObject([{url:'https://embedding.example/v1/embeddings',headers:{authorization:'Bearer synthetic-secret'},body:{model:'synthetic-model',input:'合成查询',dimensions:2}}])
+ expect(requests).toMatchObject([{url:'https://embedding.example/v1/embeddings',headers:{accept:'application/json','accept-encoding':'identity',authorization:'Bearer synthetic-secret'},body:{model:'synthetic-model',input:'合成查询',dimensions:2}}])
  expect(JSON.stringify(result)).not.toContain('synthetic-secret')
  const redirect=await embedRagQuery(settings,'查询',{request:async()=>({status:302,headers:{location:'https://other.example/'},body:(async function*(){})(),cancel:async()=>{}})},new AbortController().signal)
  expect(redirect).toEqual({vector:[],outcome:'http_error',httpStatus:302})
@@ -714,6 +715,7 @@ it('旧版持久索引读取隔离 owner、排除文件索引并用微秒游标�
   const {runtime,ownerId}=await openSqliteRuntime(path)
   try{
    const owner=ownerId.replaceAll('-',''),other=randomUUID(),foreign=other.replaceAll('-','')
+   await sql.raw('DROP TABLE knowledge_index_entries').execute(runtime.db)
    await sql.raw(`CREATE TABLE knowledge_index_entries(id INTEGER PRIMARY KEY,owner_user_id TEXT,indexed_at TEXT,deleted_at TEXT,source_type TEXT,source_id TEXT,scope_type TEXT,scope_id TEXT,platform TEXT,bot_id TEXT,group_id TEXT,document_id TEXT,parent_document_id TEXT,document_version TEXT,chunk_index INTEGER,chunk_count INTEGER,title TEXT,summary TEXT,content TEXT,metadata_json TEXT,source_updated_at TEXT)`).execute(runtime.db)
    const insert=async(id:number,user:string,kind:string,time:string,deleted:string|null,content:string)=>sql`INSERT INTO knowledge_index_entries VALUES (${id},${user},${time},${deleted},${kind},${String(id)},'owner','','','','',${String(id)},${String(id)},'v1',0,1,'合成标题','',${content},'{}',NULL)`.execute(runtime.db)
    await insert(1,owner,'conversation','2026-01-01 00:00:00.000001',null,'合成正文')
@@ -749,6 +751,7 @@ it('持久索引来源替换和单文档更新保留墓碑、归属与可恢复�
  try{
   await initializeSqlite(path);const {runtime,ownerId}=await openSqliteRuntime(path)
   try{
+   await sql.raw('DROP TABLE knowledge_index_entries').execute(runtime.db)
    await sql.raw(`CREATE TABLE knowledge_index_entries(id INTEGER PRIMARY KEY,owner_user_id TEXT,indexed_at TEXT,deleted_at TEXT,source_type TEXT,source_id TEXT,scope_type TEXT,scope_id TEXT,platform TEXT,bot_id TEXT,group_id TEXT,document_id TEXT,parent_document_id TEXT,document_version TEXT,chunk_index INTEGER,chunk_count INTEGER,title TEXT,summary TEXT,content TEXT,content_hash TEXT,metadata_json TEXT,source_updated_at TEXT,UNIQUE(owner_user_id,source_type,source_id,document_version,chunk_index))`).execute(runtime.db)
    const make=(id:string,text:string)=>buildDocuments({id,source_type:'conversation',title:'合成',content:text,document_version:'v1',scope:{scope_type:'owner',scope_id:''}})
    const writer=createSqlRagPersistentIndexWriter(runtime.db,'sqlite'),reader=createSqlRagPersistentIndexReader(runtime.db,'sqlite'),other=randomUUID()
@@ -805,6 +808,44 @@ it('历史对话来源经过真实工具链搜索 baseline 前消息并隔离群
  }finally{await rm(dir,{recursive:true,force:true})}
 })
 
+it('持久 RAG 会话来源按 Python baseline、上下文和群聊授权投影并由 Worker 实际写入',async()=>{
+ const {createConversationRagSource}=await import('../../../src/agent/rag/conversation-index-source.js')
+ const {createSqlRagRebuildWorker}=await import('../../../src/agent/rag/rebuild-worker.js')
+ const dir=await mkdtemp(join(tmpdir(),'gugu-rag-conversation-index-')),path=join(dir,'core.db')
+ try{
+  await initializeSqlite(path);const {runtime,ownerId}=await openSqliteRuntime(path)
+  try{
+   const owner=ownerId.replaceAll('-',''),stamp='2026-01-01 00:00:00.123456'
+   await sql`INSERT INTO conversation_sessions(id,user_id,title,title_locked,summary,source,bot_id,chat_id,chat_type,context_epoch,baseline_message_seq,created_at,updated_at)
+    VALUES (31,${owner},'私聊标题',0,'摘要','web',NULL,NULL,'private',1,1,${stamp},${stamp}),
+    (32,${owner},'群聊标题',0,'群摘要','qq','bot-7','group-9','group',1,0,${stamp},${stamp})`.execute(runtime.db)
+   await sql`INSERT INTO conversation_messages(id,session_id,conversation_seq,role,content,created_at,sent_at) VALUES
+    (301,31,1,'user','baseline 不能索引',${stamp},${stamp}),(302,31,2,'user','前序消息',${stamp},${stamp}),
+    (303,31,3,'assistant','当前答案 😀',${stamp},${stamp}),(304,31,4,'tool','工具内容不入索引',${stamp},${stamp}),
+    (321,32,1,'user','群内问题',${stamp},${stamp}),(322,32,2,'assistant','群内回答',${stamp},${stamp})`.execute(runtime.db)
+   await sql`INSERT INTO rag_index_jobs(user_id,source_type,source_id,pending_source_ids,version,operation,status,generation,completed_generation,attempts,next_attempt_at,created_at,updated_at)
+    VALUES (${owner},'conversation','',NULL,'','upsert','queued',1,0,0,${stamp},${stamp},${stamp})`.execute(runtime.db)
+   const source=createConversationRagSource(runtime.db,'sqlite')
+   const worker=createSqlRagRebuildWorker(runtime.db,'sqlite',{conversation:source},()=>new Date('2026-02-01T00:00:00.000Z'))
+   expect(await worker()).toBe('ready')
+   const indexed=await sql<{source_id:string;scope_type:string;scope_id:string;platform:string;bot_id:string;group_id:string;content:string;metadata_json:string}>`
+    SELECT source_id,scope_type,scope_id,platform,bot_id,group_id,content,metadata_json FROM knowledge_index_entries WHERE owner_user_id=${owner} AND deleted_at IS NULL ORDER BY source_id`.execute(runtime.db)
+   expect(indexed.rows.map(row=>row.source_id)).toEqual(['302','303','31:summary','321','322','32:summary'])
+   expect(indexed.rows.find(row=>row.source_id==='301')).toBeUndefined()
+   expect(JSON.parse(indexed.rows.find(row=>row.source_id==='303')!.metadata_json)).toMatchObject({context_before:'user：前序消息',context_current:'assistant：当前答案 😀'})
+   expect(JSON.parse(indexed.rows.find(row=>row.source_id==='302')!.metadata_json)).toMatchObject({context_after:'assistant：当前答案 😀'})
+   expect(indexed.rows.find(row=>row.source_id==='322')).toMatchObject({scope_type:'group',scope_id:'group-9',platform:'qq',bot_id:'bot-7',group_id:'group-9'})
+   expect(JSON.parse(indexed.rows.find(row=>row.source_id==='322')!.metadata_json)).toMatchObject({kind:'message',session_id:'32',role:'assistant',session_updated_at:'2026-01-01T00:00:00.123456'})
+   expect((await source(ownerId,'303')).map(doc=>doc.source_id)).toEqual(['303'])
+   expect((await source(ownerId,'31:summary')).map(doc=>doc.source_id)).toEqual(['31:summary'])
+   expect(await source(randomUUID(),'303')).toEqual([])
+   await expect(source(ownerId,'0')).rejects.toThrow('来源标识无效')
+   const aborted=new AbortController();aborted.abort();await expect(source(ownerId,null,aborted.signal)).rejects.toThrow()
+   expect((await sql<{status:string}>`SELECT status FROM rag_index_jobs WHERE source_type='conversation'`.execute(runtime.db)).rows[0]?.status).toBe('ready')
+  }finally{await runtime.close()}
+ }finally{await rm(dir,{recursive:true,force:true})}
+})
+
 it('持久重建任务消费多个来源 ID，并在新 generation 出现时阻止旧结果提交',async()=>{
  const {createSqlRagRebuildWorker}=await import('../../../src/agent/rag/rebuild-worker.js')
  const {createSqlRagPersistentIndexReader}=await import('../../../src/agent/rag/persistent-index.js')
@@ -813,6 +854,7 @@ it('持久重建任务消费多个来源 ID，并在新 generation 出现时阻�
  try{
   await initializeSqlite(path);const {runtime,ownerId}=await openSqliteRuntime(path)
   try{
+   await sql.raw('DROP TABLE knowledge_index_entries').execute(runtime.db)
    await sql.raw(`CREATE TABLE knowledge_index_entries(id INTEGER PRIMARY KEY,owner_user_id TEXT,indexed_at TEXT,deleted_at TEXT,source_type TEXT,source_id TEXT,scope_type TEXT,scope_id TEXT,platform TEXT,bot_id TEXT,group_id TEXT,document_id TEXT,parent_document_id TEXT,document_version TEXT,chunk_index INTEGER,chunk_count INTEGER,title TEXT,summary TEXT,content TEXT,content_hash TEXT,metadata_json TEXT,source_updated_at TEXT)`).execute(runtime.db)
    await sql.raw('CREATE TABLE fixture_sources(id TEXT PRIMARY KEY,content TEXT NOT NULL)').execute(runtime.db)
    await sql`INSERT INTO fixture_sources VALUES ('one','第一条'),('two','第二条')`.execute(runtime.db)
@@ -909,6 +951,48 @@ it('持久重建任务消费多个来源 ID，并在新 generation 出现时阻�
    await sql`UPDATE rag_index_jobs SET status='queued',generation=generation+1,pending_source_ids='["1"]',next_attempt_at=${now} WHERE source_type='scheduled_task'`.execute(runtime.db)
    expect(await taskWorker()).toBe('ready')
    expect((await reader.snapshot(ownerId)).documents.some(item=>item.source_type==='scheduled_task')).toBe(false)
+  }finally{await runtime.close()}
+ }finally{await rm(dir,{recursive:true,force:true})}
+})
+
+it('画布重建复用 Mind owner 查询、分页完整读取并把来源接入正式索引写入',async()=>{
+ const {createCanvasRagSource}=await import('../../../src/agent/rag/canvas-source.js')
+ const {createSqlMindCanvasReader}=await import('../../../src/mind/canvas-read.js')
+ const {createSqlRagRebuildWorker}=await import('../../../src/agent/rag/rebuild-worker.js')
+ const {createSqlRagPersistentIndexReader}=await import('../../../src/agent/rag/persistent-index.js')
+ const dir=await mkdtemp(join(tmpdir(),'gugu-rag-canvas-')),path=join(dir,'core.db')
+ try{
+  await initializeSqlite(path);const {runtime,ownerId}=await openSqliteRuntime(path)
+  try{
+   const owner=ownerId.replaceAll('-',''),other=randomUUID().replaceAll('-',''),now='2026-01-01 00:00:00.000000'
+   await sql`INSERT INTO mind_maps(id,user_id,title,project_id,data_json,created_at,updated_at) VALUES
+    (1,${owner},'合成画布',NULL,'{}',${now},${now}),
+    (2,${other},'他人画布',NULL,'{}',${now},${now})`.execute(runtime.db)
+   await sql`INSERT INTO mind_nodes(id,user_id,kind,title,content_md,content_plain,origin,version,captured_at,created_at,updated_at) VALUES
+    (1,${owner},'canvas_note','工作计划','# Markdown 正文','纯文本正文','user',3,${now},${now},${now}),
+    (2,${other},'canvas_note','私有节点','不应读取','他人私有正文','user',1,${now},${now},${now})`.execute(runtime.db)
+   await sql`INSERT INTO mind_canvas_items(id,user_id,canvas_id,node_id,x,y,z,collapsed,data_json,created_at,updated_at) VALUES
+    (10,${owner},1,1,0,0,1,0,'{"group_path":"阶段 A"}',${now},${now}),
+    (20,${other},2,2,0,0,1,0,'{}',${now},${now})`.execute(runtime.db)
+   const source=createCanvasRagSource(createSqlMindCanvasReader(runtime.db,'sqlite'))
+   const docs=await source(ownerId,null)
+   expect(docs).toHaveLength(1)
+   expect(docs[0]).toMatchObject({source_type:'canvas',source_id:'10',scope_type:'owner',title:'合成画布 · 工作计划',content:'画布：合成画布\n节点：工作计划\n类型：canvas_note\n分组：阶段 A\n纯文本正文',metadata:{canvas_id:'1',node_id:'1',node_type:'canvas_note'}})
+   expect(await source(ownerId,'10')).toHaveLength(1)
+   expect(await source(randomUUID(),'10')).toEqual([])
+   await expect(source(ownerId,'10x')).rejects.toThrow('RAG 画布来源标识无效')
+   const aborted=new AbortController();aborted.abort()
+   await expect(source(ownerId,null,aborted.signal)).rejects.toThrow()
+   await sql`INSERT INTO rag_index_jobs(user_id,source_type,source_id,pending_source_ids,version,operation,status,generation,completed_generation,attempts,next_attempt_at,created_at,updated_at)
+    VALUES(${owner},'canvas','10','["10"]','','upsert','queued',1,0,0,${now},${now},${now})`.execute(runtime.db)
+   const worker=createSqlRagRebuildWorker(runtime.db,'sqlite',{canvas:source},()=>new Date('2026-02-01T00:00:00Z'))
+   expect(await worker()).toBe('ready')
+   const index=createSqlRagPersistentIndexReader(runtime.db,'sqlite')
+   expect((await index.snapshot(ownerId)).documents.map(doc=>doc.content)).toEqual([docs[0]!.content])
+   await sql`UPDATE mind_canvas_items SET deleted_at=${now} WHERE id=10`.execute(runtime.db)
+   await sql`UPDATE rag_index_jobs SET status='queued',generation=2,pending_source_ids='["10"]',next_attempt_at=${now} WHERE source_type='canvas'`.execute(runtime.db)
+   expect(await worker()).toBe('ready')
+   expect((await index.snapshot(ownerId)).documents).toEqual([])
   }finally{await runtime.close()}
  }finally{await rm(dir,{recursive:true,force:true})}
 })

@@ -53,7 +53,7 @@ it('正式 SQLite 版本 13 升级保留数据并约束引导状态 owner', asyn
     await migrateSqlite(path)
     const opened = await openSqliteRuntime(path)
     try {
-      expect(opened.schemaVersion).toBe('16')
+      expect(opened.schemaVersion).toBe('17')
       const store = createKyselyOnboardingStore(opened.runtime.db, 'sqlite')
       await store.updateGuide(opened.ownerId, { current_step: 'model' })
       expect((await store.getState(opened.ownerId)).guide).toMatchObject({ current_step: 'model' })
@@ -74,7 +74,7 @@ it('正式 SQLite 版本 12 连续升级创建 SMTP 和引导状态', async () =
     await migrateSqlite(path)
     const opened = await openSqliteRuntime(path)
     try {
-      expect(opened.schemaVersion).toBe('16')
+      expect(opened.schemaVersion).toBe('17')
       const store = createKyselyOnboardingStore(opened.runtime.db, 'sqlite')
       expect((await store.getState(opened.ownerId)).seed).toMatchObject({ seeded: false })
       expect((await sql`SELECT count(*) AS total FROM user_smtp_configs`.execute(opened.runtime.db)).rows).toHaveLength(1)

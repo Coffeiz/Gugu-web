@@ -1,7 +1,11 @@
-import type { DesktopBridge, DesktopProject, DesktopClient, DesktopReply } from '@gugu/core/desktop'
+import type { DesktopBridge, DesktopProject, DesktopClient, DesktopCalendarEvent, DesktopCanvas, DesktopCanvasItem, DesktopNote, DesktopReply } from '@gugu/core/desktop'
 export type { SandboxStatus } from '@gugu/core/desktop'
 export type ProjectRow = DesktopProject
 export type ClientRow = DesktopClient
+export type CalendarRow = DesktopCalendarEvent
+export type CanvasRow = DesktopCanvas
+export type CanvasItemRow = DesktopCanvasItem
+export type NoteRow = DesktopNote
 type DesktopWindow = Window & { guguDesktop?: DesktopBridge }
 
 export class DesktopBridgeError extends Error {
@@ -25,6 +29,27 @@ export const desktopData = {
   clients: () => call(bridge => bridge.clients()),
   createClient: (name: string) => call(bridge => bridge.createClient(name)),
   renameClient: (id: number, name: string) => call(bridge => bridge.renameClient(id, name)),
+  deleteClient: (id: number) => call(bridge => bridge.deleteClient(id)),
+  calendar: () => call(bridge => bridge.calendar()),
+  createCalendarEvent: (title: string, date: string) => call(bridge => bridge.createCalendarEvent(title, date)),
+  updateCalendarEvent: (id: number, body: { version: number; title?: string; date?: string }) => call(bridge => bridge.updateCalendarEvent(id, body)),
+  deleteCalendarEvent: (id: number, version: number) => call(bridge => bridge.deleteCalendarEvent(id, version)),
+  canvases: () => call(bridge => bridge.canvases()),
+  createCanvas: (title: string) => call(bridge => bridge.createCanvas(title)),
+  updateCanvas: (id: number, body: { title: string }) => call(bridge => bridge.updateCanvas(id, body)),
+  deleteCanvas: (id: number) => call(bridge => bridge.deleteCanvas(id)),
+  canvasItems: (canvasId: number) => call(bridge => bridge.canvasItems(canvasId)),
+  createCanvasNote: (canvasId: number, contentMd: string, color?: string, x?: number, y?: number) => call(bridge => bridge.createCanvasNote(canvasId, contentMd, color, x, y)),
+  updateCanvasNote: (id: number, fields: { version: number; contentMd?: string; title?: string | null; color?: string | null }) => call(bridge => bridge.updateCanvasNote(id, fields)),
+  updateCanvasItem: (canvasId: number, id: number, body: { x?: number; y?: number; w?: number | null; h?: number | null }) => call(bridge => bridge.updateCanvasItem(canvasId, id, body)),
+  deleteCanvasItem: (canvasId: number, id: number) => call(bridge => bridge.deleteCanvasItem(canvasId, id)),
+  notes: () => call(bridge => bridge.notes()),
+  createNote: (contentMd: string, color?: string) => call(bridge => bridge.createNote(contentMd, color)),
+  updateNote: (id: number, fields: { version: number; contentMd?: string; title?: string | null; color?: string | null }) => call(bridge => bridge.updateNote(id, fields)),
+  deleteNote: (id: number) => call(bridge => bridge.deleteNote(id)),
+  undoPreview: (contextId: string) => call(bridge => bridge.undoPreview(contextId)),
+  undoApply: (contextId: string, undoId: string, operationId: string) => call(bridge => bridge.undoApply(contextId, undoId, operationId)),
+  undoRedo: (contextId: string, undoId: string, operationId: string) => call(bridge => bridge.undoRedo(contextId, undoId, operationId)),
   sandboxStatus: () => call(bridge => bridge.sandboxStatus()),
   receipt: (operationId: string) => call(bridge => bridge.receipt(operationId)),
 }

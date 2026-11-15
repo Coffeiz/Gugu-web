@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import SQLite from 'better-sqlite3'
+import { sql } from 'kysely'
 import { dataContext } from '../../../src/contracts/index.js'
 import {
   initializeSqlite,
@@ -32,6 +33,29 @@ afterEach(() => {
 })
 
 describe('共享 SQL 数据契约', () => {
+  it('版本 16 升级为正式 RAG 索引表并保留可恢复备份', async () => {
+    const path = file()
+    await initializeSqlite(path)
+    const before = new SQLite(path)
+    before.exec("DROP TABLE knowledge_index_entries; UPDATE core_runtime_meta SET value='16' WHERE key='schema_version'")
+    before.close()
+
+    const backup = await migrateSqlite(path)
+    const saved = new SQLite(backup, { readonly: true })
+    try {
+      expect(saved.prepare("SELECT value FROM core_runtime_meta WHERE key='schema_version'").pluck().get()).toBe('16')
+      expect(saved.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge_index_entries'").get()).toBeUndefined()
+    } finally { saved.close() }
+
+    const opened = await openSqliteRuntime(path)
+    try {
+      expect(opened.schemaVersion).toBe('17')
+      const owner = opened.ownerId.replaceAll('-', '')
+      await sql`INSERT INTO knowledge_index_entries(owner_user_id,source_type,source_id,scope_type,scope_id,platform,bot_id,group_id,document_id,parent_document_id,document_version,chunk_index,chunk_count,title,summary,content,content_hash,metadata_json,indexed_at) VALUES(${owner},'conversation','m-1','owner','','web','','','conversation:m-1','session:1','1',0,1,'合成索引','','合成正文',${'a'.repeat(64)},'{}','2026-11-15 00:00:00.000000')`.execute(opened.runtime.db)
+      const rows = await sql<{ source_type: string; content: string }>`SELECT source_type,content FROM knowledge_index_entries WHERE owner_user_id=${owner}`.execute(opened.runtime.db)
+      expect(rows.rows).toEqual([{ source_type: 'conversation', content: '合成正文' }])
+    } finally { await opened.runtime.close() }
+  })
   it('部分唯一索引不能冒充覆盖全部操作收据的唯一约束', async () => {
     const path = file()
     await initializeSqlite(path)
@@ -310,7 +334,7 @@ describe('共享 SQL 数据契约', () => {
     backupDb.close()
     const current = await openSqliteRuntime(path)
     try {
-      expect(current.schemaVersion).toBe('16')
+      expect(current.schemaVersion).toBe('17')
       expect(current.ownerId).toBe(owner)
       expect(await current.runtime.transaction(dataContext(owner), data => data.projects.list())).toHaveLength(1)
       expect(await current.runtime.receipt(dataContext(owner), operationId)).not.toBeNull()
@@ -682,7 +706,7 @@ describe('共享 SQL 数据契约', () => {
     expect(saved.prepare("SELECT value FROM core_runtime_meta WHERE key='schema_version'").pluck().get()).toBe('11')
     expect(saved.prepare('SELECT schema_json FROM interaction_prompts').pluck().get()).toBe('null')
     expect(saved.prepare('SELECT title FROM site_notifications').pluck().get()).toBe('保留通知'); saved.close()
-    const opened = await openSqliteRuntime(path); expect(opened.schemaVersion).toBe('16'); await opened.runtime.close()
+    const opened = await openSqliteRuntime(path); expect(opened.schemaVersion).toBe('17'); await opened.runtime.close()
     const db = new SQLite(path); db.pragma('foreign_keys=ON')
     expect(db.prepare('SELECT schema_json FROM interaction_prompts').pluck().get()).toBe('null')
     expect(db.prepare('SELECT title FROM site_notifications').pluck().get()).toBe('保留通知')
@@ -743,7 +767,7 @@ describe('共享 SQL 数据契约', () => {
     const saved = new SQLite(backup, { readonly: true })
     expect(saved.prepare('SELECT name FROM scheduled_tasks').pluck().get()).toBe('保留任务')
     expect(saved.prepare('SELECT title FROM site_notifications').pluck().get()).toBe('保留通知'); saved.close()
-    const opened = await openSqliteRuntime(path); expect(opened.schemaVersion).toBe('16'); await opened.runtime.close()
+    const opened = await openSqliteRuntime(path); expect(opened.schemaVersion).toBe('17'); await opened.runtime.close()
     const current = new SQLite(path)
     expect(current.prepare('SELECT name FROM scheduled_tasks').pluck().get()).toBe('保留任务')
     const insert = current.prepare('INSERT INTO user_smtp_configs(user_id,host,port,"user",password,from_addr,use_ssl,enabled,updated_at) VALUES (?,\'example.invalid\',587,\'\',\'\',\'\',0,1,\'2026\')')

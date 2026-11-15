@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import Fastify from 'fastify'
 import { Pool } from 'pg'
 import test from 'node:test'
 import { registerFileReadRoutes } from '../../src/domains/files/file-reads.js'
 import { createPostgresFileReadOperations } from '../../src/domains/files/file-reads-postgres.js'
+import { registerFileThumbnailRoute } from '../../src/modules/files/thumbnail.js'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
@@ -19,6 +23,7 @@ test('PostgreSQL 文件摘要、分类计数和存储快照按 owner 返回 Pyth
   await admin.query(`CREATE SCHEMA "${schema}"`)
   const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema}`, max: 2 })
   const app = Fastify()
+  const storageRoot = await mkdtemp(path.join(tmpdir(), 'gugu-file-reads-thumbnail-'))
   installHttpErrorHandler(app)
   try {
     await pool.query(`
@@ -51,16 +56,37 @@ test('PostgreSQL 文件摘要、分类计数和存储快照按 owner 返回 Pyth
         (1,'${owner}','个人文件','TXT','personal',NULL,'${owner}/个人文件.txt',NULL,'',NULL,NULL,'512 B',512,'text/plain','2026-11-13T10:00:00Z',NULL,NULL,NULL,1),
         (2,'${owner}','项目文件','MD','project',NULL,'${owner}/项目文件.md',7,'阶段一',22,NULL,'768 B',768,'text/markdown','2026-11-13T11:00:00Z',NULL,NULL,NULL,2),
         (3,'${owner}','回收文件','TXT','personal',NULL,'${owner}/回收文件.txt',NULL,'',NULL,NULL,'256 B',256,'text/plain','2026-11-13T12:00:00Z',now(),NULL,NULL,1),
-        (4,'${other}','他人文件','TXT','personal',NULL,'${other}/他人文件.txt',NULL,'',NULL,NULL,'99 B',99,'text/plain','2026-11-13T13:00:00Z',NULL,NULL,NULL,1);
+        (4,'${other}','他人文件','TXT','personal',NULL,'${other}/他人文件.txt',NULL,'',NULL,NULL,'99 B',99,'text/plain','2026-11-13T13:00:00Z',NULL,NULL,NULL,1),
+        (5,'${owner}','合成图片','PNG','personal',NULL,'${owner}/thumbnail.png',NULL,'',NULL,NULL,'1 B',1,'image/png','2026-11-13T14:00:00Z',NULL,1,1,1),
+        (6,'${owner}','丢失图片','PNG','personal',NULL,'${owner}/missing.png',NULL,'',NULL,NULL,'1 B',1,'image/png','2026-11-13T15:00:00Z',NULL,1,1,1);
       INSERT INTO storage_quota_ledgers VALUES ('${owner}','file_library',1280);
     `)
-    const operations = createPostgresFileReadOperations(pool, 8192)
+    const image = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lXcAAAAASUVORK5CYII=',
+      'base64',
+    )
+    await mkdir(path.join(storageRoot, owner), { recursive: true })
+    await writeFile(path.join(storageRoot, owner, 'thumbnail.png'), image)
+    await writeFile(path.join(storageRoot, owner, '个人文件.txt'), '合成文本')
+    const operations = createPostgresFileReadOperations(pool, 8192, storageRoot)
+    const ownerForRequest = (request: import('fastify').FastifyRequest) =>
+      request.headers.authorization === 'Bearer files-read-other' ? other : owner
     registerFileReadRoutes(app, {
       requireUser: async (request) => {
-        if (request.headers.authorization !== 'Bearer files-read-test')
+        if (request.headers.authorization !== 'Bearer files-read-test'
+          && request.headers.authorization !== 'Bearer files-read-other')
           throw Object.assign(new Error('未认证'), { statusCode: 401 })
       },
-      ownerIdFromRequest: () => owner,
+      ownerIdFromRequest: ownerForRequest,
+      operations,
+    })
+    registerFileThumbnailRoute(app, {
+      requireUser: async (request) => {
+        if (request.headers.authorization !== 'Bearer files-read-test'
+          && request.headers.authorization !== 'Bearer files-read-other')
+          throw Object.assign(new Error('未认证'), { statusCode: 401 })
+      },
+      ownerIdFromRequest: ownerForRequest,
       operations,
     })
 
@@ -86,10 +112,40 @@ test('PostgreSQL 文件摘要、分类计数和存储快照按 owner 返回 Pyth
     assert.equal(location.statusCode, 200, location.body)
     assert.deepEqual(location.json<{ folderPath: Array<{ name: string }> }>().folderPath.map((folder) => folder.name), ['项目目录'])
     assert.equal((await app.inject({ url: '/api/v1/files/library-counts' })).statusCode, 401)
+    const fullThumbnail = await app.inject({
+      url: '/api/v1/files/5/thumb?size=full',
+      headers: { authorization: 'Bearer files-read-test' },
+    })
+    const smallThumbnail = await app.inject({
+      url: '/api/v1/files/5/thumb?size=tiny',
+      headers: { authorization: 'Bearer files-read-test' },
+    })
+    const otherThumbnail = await app.inject({
+      url: '/api/v1/files/5/thumb',
+      headers: { authorization: 'Bearer files-read-other' },
+    })
+    const missingPhysicalThumbnail = await app.inject({
+      url: '/api/v1/files/6/thumb',
+      headers: { authorization: 'Bearer files-read-test' },
+    })
+    const nonImageThumbnail = await app.inject({
+      url: '/api/v1/files/1/thumb',
+      headers: { authorization: 'Bearer files-read-test' },
+    })
+    assert.equal(fullThumbnail.statusCode, 200, fullThumbnail.body)
+    assert.equal(fullThumbnail.headers['content-type'], 'image/png')
+    assert.deepEqual(fullThumbnail.rawPayload, image)
+    assert.equal(smallThumbnail.statusCode, 200, smallThumbnail.body)
+    assert.equal(smallThumbnail.headers['content-type'], 'image/webp')
+    assert.equal(otherThumbnail.statusCode, 404)
+    assert.equal(missingPhysicalThumbnail.statusCode, 404)
+    assert.equal(missingPhysicalThumbnail.json<{ detail: string }>().detail, '物理文件丢失')
+    assert.equal(nonImageThumbnail.statusCode, 415)
   } finally {
     await app.close()
     await pool.end()
     await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`)
     await admin.end()
+    await rm(storageRoot, { recursive: true, force: true })
   }
 })

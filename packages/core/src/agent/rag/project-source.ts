@@ -4,7 +4,7 @@ import { buildSourceDocuments } from './index-builder.js'
 import type { RagRebuildSource } from './rebuild-worker.js'
 
 /** 复用项目领域查询；索引只包含旧版项目事实，不读取文件正文。 */
-export function createProjectRagSource(core:SqlDataRuntime):RagRebuildSource {
+export function createProjectRagSource(core:Pick<SqlDataRuntime,'transaction'>):RagRebuildSource {
  return async (rawOwner,sourceId,signal)=>{
   signal?.throwIfAborted()
   const owner=dataContext(rawOwner)

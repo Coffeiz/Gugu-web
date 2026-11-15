@@ -62,9 +62,9 @@ Admin 专属 API 为服务端能力，当前 Web 使用 PostgreSQL，未来 SaaS
 - [ ] 按架构说明将现有共享业务、用例和适用数据实现逐步按领域收敛到 `packages/core/src/` 对应模块；Web Host 的目标 `modules/` 保留 HTTP、平台适配和装配。同步迁移真实调用方、测试与包导出，移除确认无调用方的旧 Node 内部转发层；保留 Python 参考后端及既有对外行为、数据和运行时协议。
 
 - [x] 建立共享 Core、SQLite/PG 适配、事务和首批项目/联系人双库契约。
-- [ ] **项目与联系人**：补齐项目更新的正式 SQLite 验收，以及文件计数、文件引用、恢复和 Undo 等跨域路径；核对联系人剩余调用方和双库行为。
-- [ ] **日历**：已有列表、读取和增删改进入 Core；完成 Agent 范围查询、撤销执行器和相关消费链路验收。
-- [ ] **Mind 与 Undo**：已有便签增删改及画布创建、更新、删除接入 Core；完成其余画布操作、通用撤销执行器、跨域事务及调用方接线。未集成原型不计为完成。
+- [ ] **项目与联系人**：桌面已通过受限 IPC 接通项目列表/创建/重命名及联系人列表/创建/重命名/删除，真实 SQLite Worker 回归覆盖重启持久化；仍需补项目更新的正式 SQLite 覆盖，以及文件计数、引用、恢复和 Undo 等跨域路径，并核对联系人双库行为。
+- [ ] **日历**：桌面已接通列表、创建、标题/日期编辑、软删除及 Undo/Redo，具名 IPC + Core Worker + 正式 SQLite 回归覆盖版本冲突、重启恢复和 RAG 队列；Web/Node 侧仍需完成 Agent 范围查询与提醒/后台消费链路验收。
+- [ ] **Mind 与 Undo**：桌面便签列表、创建、更新、软删除及 Undo 已通过具名 IPC、真实 SQLite Worker 和重启回归；便签 Redo 尚未做同层持久化验证。桌面画布现已接通元数据 CRUD、画布便签列表/创建/正文编辑/从画布移除，以及画布条目位置更新；写入走受限 IPC、稳定操作收据、正式 SQLite 与共享 Mind Undo/Redo，Worker 回归覆盖版本冲突及重启后撤销/重做，工作台回归覆盖打开画布、创建/编辑正文和四向移动。当前 UI 仍是工作台列表与 Markdown 编辑表单，没有完整空间画布、拖放/缩放、引用放置或关系编辑；便签移除保留时间流内容。未集成原型不计为完成。
 - [ ] **工作区**：已有声明管理及部分会话绑定用例进入 Core；补齐正式 SQLite 适配、Agent 工作区绑定、Local 权限和物理目录清理。
 - [ ] **Local 文件**：明确授权根与相对路径身份，完成旧 ID 引用迁移、正式 SQLite 数据模型、文件授权、恢复和安全删除；回收站消费者须待删除安全边界与生命周期验收后接入。
 - [ ] **Agent 会话与运行**：在已有列表、改名、消息定位、上下文刷新及待发送队列的基础上，完成消息历史、RunStore、运行身份与租约、孤儿恢复、队列事务和桌面 IPC 接线。
@@ -72,6 +72,8 @@ Admin 专属 API 为服务端能力，当前 Web 使用 PostgreSQL，未来 SaaS
 - [ ] **定时任务与后台消费者**：在已有双库仓储和删除用例基础上，接通 runner、poller、执行和投递，完成租约、持久 fencing、重启恢复及关闭排空；RAG 等消费者分别验收。
 - [ ] **工具与调用方**：让已有跨端工具复用 Core 用例及平台端口，接通实际注册和装配，并核对授权、确认、错误与提交后副作用。
 - [ ] **公共化收尾**：逐项核对 PostgreSQL / 正式 SQLite、Web Host 及适用的桌面调用方，保留 Python 对照和必要回归；记录仍属于单端的能力及未覆盖边界，再继续新增 N2 功能迁移。
+
+**桌面首批定向验收记录**：devserver Core 构建通过；`apps/desktop/tests/core-host.test.ts` 与 `preload.test.ts` 合计 28/28，覆盖项目/联系人、日历 Undo/Redo、便签操作、画布便签/位置/移除及 Undo/Redo 的真实 Core Worker/正式 SQLite 路径；`apps/web/tests/desktop/DesktopWorkbench.test.ts` 12/12，desktop 与 Web 类型检查通过。Core 单测入口因当前工作区 `tests/suites.json` 与实际测试发现清单不一致而未能启动；该文件处于并行未提交修改中，本轮保持未改，也未跑全量测试。偏好和引导仍没有 Desktop Renderer 实际调用方，Core/SQLite 能力不计为桌面接通。Windows/macOS 实际 Electron 窗口与打包制品验收、完整空间画布 UI、引用/关系编辑、偏好/引导 UI、文件授权根与旧库升级流程仍待处理。
 
 **状态：进行中。** Node WebUI Host 和主要用户、项目、文件、日历、工作区、偏好、通知及部分 Admin/Agent 路由已接入。逐路由覆盖见[Node WebUI API 迁移清单](Gugu-2.0-Node-WebUI-API迁移清单.md)；历史测试与切片细节见[devlog 索引](../devlog/README.md)。旧版全量数量快照已过期，不作为当前完成率。
 
@@ -138,6 +140,8 @@ Host 定时任务目录已由 `domains` 迁至 `modules/scheduled-tasks`，真�
 
 **RAG 目标**：复用 Gugu 1.7.7 TypeScript RAG 作为 Node/Core 唯一生产检索路径，不迁移 Cython 算法到 TS，也不保留双引擎线上选择。迁移时以当前 Python/Cython 行为回归和固定质量语料为基准，接入 Node/Core 授权来源读取、派生索引存储/重建及 ACL 过滤；具体验收见依赖迁移矩阵。RAG 来源文件正文按架构说明从授权 FS 直读，DB 不保存文件正文副本。
 
+**当前 RAG 接入证据**：Core schema 17 已定义 SQLite/PostgreSQL `knowledge_index_entries` DDL，SQLite v1-v16 通过显式备份升级新增该派生表。Web Host 已增加显式 `migrate:rag-index:check/apply` 命令，可校验并认领结构兼容的旧 Python 索引表；隔离 PostgreSQL 行为尚未验收/执行，不能称生产数据库已升级。project、calendar、note、scheduled_task、conversation 及 canvas 来源可复用 Core 业务读取服务，但仍未接 Node 生产重建调度；memory、knowledge、file 仍依赖授权 FS/领域服务。`search_conversations` 已有临时 SQLite 工具边界回归，通过 Host 搜索适配器与真实注册器验证 owner 注入、群聊过滤、OR/AND 和结果正文结构；测试使用固定 Jieba 替身。正式 Jieba 依赖、生产向量与 embedding 注入、可信 scope 授权、Node 重建消费者以及到生产 Agent Run 的真实调用链仍未完成。不得按 schema、worker 工厂或工具注册代码将 RAG/search 标为完成。
+
 - [ ] 会话/消息/附件引用、Canonical 历史与顺序规则。
 - [ ] 待发消息队列按架构说明收敛为 Core 共用规则与存储/通知契约；Web 接入 PostgreSQL 和所需跨进程事件，桌面接入 SQLite、本地 Run 生命周期和 IPC 通知，不依赖 Redis。以现有 Python 队列与 pytest 为行为基线，分别验收消息顺序、认领冲突、停止后排队消息、通知丢失重读、重启恢复和发送结果未知时防重复；当前 Web PostgreSQL 部分实现不等于桌面或共享队列已完成。Steer 和跨设备同步另行设计。
 - [ ] Run/Job、确认授权、租约、持久调度、outbox 和重启恢复。
@@ -184,11 +188,13 @@ Host 定时任务目录已由 `domains` 迁至 `modules/scheduled-tasks`，真�
 
 ### N4——桌面产品化与发行准备
 
-**桌面首批实际入口（2026-11-15）**：当前桌面验证工作台已调用项目和联系人列表、创建；项目重命名现经具名 Preload/IPC、Core 命令及正式 SQLite 接通，携带版本并使用操作收据。devserver 的 Preload 定向 1/1、真实 CoreHost/SQLite 重命名及重启恢复 1/1、桌面工作台组件 5/5、桌面类型检查通过；未验收真实 Electron 窗口、跨平台制品与最终交互布局。联系人编辑/删除、日历、笔记、画布、偏好和引导尚未由该界面接通；Mind Undo IPC 已有独立接线，但不代表桌面正向编辑可用。文件授权根、相对路径身份和恢复仍待落实，不能用 Web 文件 ID 替代。
+**桌面首批实际入口（2026-11-15）**：当前桌面验证工作台已调用项目和联系人列表、创建及名称编辑；项目重命名与联系人删除经具名 Preload/IPC、Core 命令及正式 SQLite 接通，并使用操作收据。日历已有列表/创建，便签已有 Markdown 创建/列表/版本更新/软删除；本轮 CoreHost/Preload 定向 26/26、工作台组件 9/9。未验收真实 Electron 窗口、跨平台制品与最终交互布局。日历编辑/删除、画布、偏好和引导尚未由该界面接通；Mind Undo IPC 已有独立接线，但不代表桌面正向画布编辑可用。文件授权根、相对路径身份和恢复仍待落实，不能用 Web 文件 ID 替代。
 
-联系人名称编辑现由工作台经具名 Preload/IPC 调用 Core `clients.update`，使用正式 SQLite 和操作收据；devserver Preload 1/1、真实 CoreHost/SQLite 重命名及重启恢复 1/1、工作台组件 6/6、桌面类型检查通过。上段的联系人编辑缺口现限于名称以外的字段；删除尚未接通。未验收真实 Electron 窗口及跨平台制品。
+联系人名称编辑与删除现由工作台经具名 Preload/IPC 调用 Core `clients.update`、`clients.delete`，使用正式 SQLite 和操作收据；删除按 owner 限定，确认前不写入，删除后刷新列表。devserver CoreHost/Preload 定向 26/26，真实 Worker/SQLite 删除及重启后不可见回归通过，工作台组件 9/9，桌面和 Web 类型检查通过。联系人名称以外字段、真实 Electron 窗口及跨平台制品尚未验收。
 
-桌面日历创建的事务基础已增加 Core 显式借用事务入口，外层负责提交后通知；正式 SQLite 定向验证活动、索引、Undo 与操作收据同事务回滚及幂等重放 2 项通过，隔离 PostgreSQL 1 项跳过。日历命令、受限 IPC 和桌面界面尚未接通；本轮 Core 构建被并行 BYOK 凭据更新的类型错误阻断，不能算构建通过。
+桌面日历已由工作台调用具名 Preload/IPC，接入 Core 列表与创建命令、正式 SQLite 读写和持久操作回执；创建同事务写入活动、RAG 索引任务及 Undo。devserver Core 构建通过，Core SQLite 合同 2/2、桌面 CoreHost 经真实 Worker 创建/列表/重启恢复 1/1、CoreHost/preload 23/23、工作台组件 6/6；隔离 PostgreSQL 用例未配置而跳过。桌面创建目前仅暴露标题和日期，编辑/删除、日历视图及真实 Electron 窗口未验收；版本升级由既有正式 schema 初始化/升级负责，仍需验证旧库迁移。项目/联系人与日历真实 SQLite 接入不代表笔记、画布、偏好和引导已由该界面接通。
+
+桌面便签现已接通 Markdown 创建、列表、版本更新和软删除：Core 复用正式 SQLite 适配，写入借用外层事务并与 Undo、操作回执原子提交；桌面 IPC 受能力协商与字段白名单约束。devserver Core 构建通过，真实 Worker/SQLite 创建、更新版本冲突、软删除、重启恢复及 Undo 恢复回归通过，工作台组件 9/9（含删除确认、取消不写入、确认后刷新和撤销恢复）。桌面/Web 类型检查通过。未验收旧库升级、真实 Electron 窗口及完整渲染交互；便签尚无画布操作入口。
 
 - [ ] 按架构说明设计并接入用户可控的桌面埋点采集和批量上传：可用 SQLite 实现受容量和保留时间限制的离线队列，上传故障不阻塞主流程；验证授权、关闭后停止上传、敏感字段排除和自部署目标配置。SaaS 接收、聚合与控制台在独立仓库规划，不以此要求实现桌面 Admin API。
 
@@ -399,6 +405,12 @@ CI 若按 `unit`、`ipc`、`postgres`、`parity` 分片，不能再额外执行�
 连续交付note_delete、note_restore、note_undo，统一在note工具组。复用共享Mind CAS、恢复/软删和事务内目标选择，补齐借用外层事务、持久收据、双库恢复/Undo合同与微秒快照。Host显式noteLifecycle，缺能力不开放；恢复同一撤销调用只查原收据，不重新选择下一条gugu记录。
 
 累计已实现待生产接入45、部分1、依赖阻塞62、退役/重设计1，共109；生产完成0。最终Core 43文件500项、Host隔离PG五文件23项、共享PG两文件2项及Python四文件78项通过，无失败/跳过。新增Host夹具的并发顺序错误及修正已保留记录；类型/质量限制及替身范围见[工具行为清单](../testing/node-agent-tools-parity.md#普通笔记生命周期连续交付2026-11-15)。生产Run/事件、真实Redis/Provider及完整笔记创建/追加用例尚未验收，未扩展永久删除或危险确认能力。
+
+### 1.7.7 TypeScript RAG：会话持久来源补齐（2026-11-15）
+
+Core 新增会话重建来源，复用旧版 baseline/角色过滤、摘要/消息投影、相邻上下文和群聊 scope；临时 SQLite 测试通过既有持久 Worker 写入正式索引表。对应 Core 会话/RAG 文件 **41/41 通过**，来源严格类型检查通过；Python pytest 未能运行（devserver 当前没有 pytest）。生产 Node 调度、可信 scope 来源、正式 Jieba/向量装配、PG 回归及 Agent Run 接通仍未完成，因此 `search_conversations` 仍不是生产完成。实现与未验收边界见[工具行为迁移清单](../testing/node-agent-tools-parity.md#会话索引来源与持久-worker-写入2026-11-15)。
+
+Host RAG 单消费者调度器已新增，并经临时 SQLite 的真实队列、Core Worker 与正式索引表验证 **5/5 通过**；启动排空、串行、不重叠、错误重试、取消停止和禁用路径均有回归。尚未接入 `main.ts`，也没有 PostgreSQL、生产来源全量装配或 Agent Run 验收；因此当前仅为已验证的 Host 调度模块，不是生产 RAG 完成。详见[工具行为迁移清单](../testing/node-agent-tools-parity.md#host-rag-重建调度器2026-11-15)。
 
 
 链接按钮新增安全校验及可信投递端口原型；实际平台投递、持久恢复及Host装配未完成，仍记依赖阻塞。Node专项1项、Python基准49项通过，详见工具行为清单。

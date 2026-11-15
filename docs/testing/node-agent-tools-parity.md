@@ -988,3 +988,24 @@ RAG 专项严格类型检查通过；Web Host 全量类型检查未通过，当�
 相同范围检索组合再以隔离 PostgreSQL、真实临时向量文件和旧版 Jieba 运行，验证 owner/群隔离、向量命中及查询中撤权；授权与 embedding 依旧为替身。此测试不改变生产接入状态。
 
 临时依赖环境下尝试完整 Core 类型检查时，因未安装可选 `@microsoft/mxc-sdk/v1` 而无法完成；RAG 子集严格类型检查通过。未为本次查询验证安装或运行沙盒后端。
+
+### Core 正式 RAG 索引表（2026-11-15）
+
+Core schema 17 增加 `knowledge_index_entries` 的 SQLite/PostgreSQL DDL 和范围/增量索引；SQLite v1-v16 显式备份升级。Web Host 现提供 `migrate:rag-index:check/apply`：检查列、唯一键、owner 外键，可认领兼容的 Python 索引表。迁移测试两项已实现，但因 devserver 未设置隔离变量 `GUGU_WEBUI_TEST_DATABASE_URL` 均跳过；新 CLI、迁移实现及测试的严格 TS 定向检查通过。该命令未在部署中运行，Node 生产重建消费者、可信授权/向量、全量来源以及 `search_conversations` 到 Agent Run 仍未接通，不代表生产迁移或工具完成。
+
+
+### Core Canvas RAG 来源（2026-11-15）
+
+新增 `canvas-source.ts`，并在 Mind 共享读取服务加入 `listForRag`：通过单个 owner 约束查询存活画布项/画布/节点，按稳定 item ID keyset 分页；保留旧版标题、纯文本优先、分组路径及 item 更新时间/节点版本投影，再经旧 canvas adapter 和持久 Worker 写入正式索引。临时依赖隔离配置运行 Core SQLite RAG/迁移回归：两个文件 **81/81 通过**（RAG 对话/索引/来源 40 项、schema/备份升级 41 项）；新增行为覆盖合成 SQLite 实际来源读取、跨 owner 隔离、非法 ID、取消、Worker/索引写入和软删除墓碑。`canvas-source.ts` 与 Mind 读取文件的 NodeNext 严格类型检查通过。此前 RAG 对应 Python pytest 为 32 项通过，本轮未因 canvas 来源新增回归重跑 Python；因此 Python canvas 投影差分仍未验收。Core Worker 生产调度及 Agent 生产装配、PG 正式迁移仍未完成。
+
+`search_conversations` 新增真实 Host 工具边界回归：使用临时正式 SQLite schema，经 `createCoreAgentConversationSearchPort`、Node 工具注册器和真实 dispatch 查询事实表；覆盖模型伪传 owner 不生效、关键词检索排除群聊、OR/AND、空结果和 Python 一致的标题/摘要/正文 snippet。固定 Jieba 切词为测试替身，不代表真实 Jieba 依赖或向量召回验收。Core 定向 RAG/工具测试 **72/72 通过**（使用临时 Vitest 配置绕过并行会话中新测试未登记导致的 suites 清单不一致；未改清单）；Host SQLite dispatch 测试 **1/1 通过**；隔离 PG/文件工具测试 **1 通过、2 跳过**（未设置测试库）。对应 Python pytest 未能启动：2.0 后端没有项目 venv，系统 Python 无 pytest，借用 Gugu-web venv 时缺少 2.0 的 `gugu_core` 模块。Core 标准构建 **通过**。Host 全量类型检查仍失败于并行会话的 user-list 测试 fixture 元数据缺项及 BYOK 测试导入缺失，未修改对方文件。生产 PostgreSQL、真实 Jieba/向量、重建调度与 Agent Run 装配仍未完成。
+
+本轮为上述 Host SQLite dispatch 用例补充 Python `test_conversation_adapter_searches_owned_history_before_baseline` 对照：baseline 之前仍保留在事实表的历史可搜索，LIKE `%`/`_` 是字面字符；同时排除其他 owner、群聊和工具角色，并验证 Host 拒绝工具权限时不泄露命中正文。测试尚待 devserver 重跑；该补充不改变上段已验证状态。真实 Agent Run、PostgreSQL、正式 Jieba、综合 RAG 向量接线仍未完成。
+
+### 会话索引来源与持久 Worker 写入（2026-11-15）
+
+新增 `conversation-index-source.ts`，对应 Python `build_source_records(conversation)`：按可信 owner 读取会话/消息，应用 baseline、user/assistant 和非空正文过滤，生成摘要与消息记录；消息上下文按历史序列取相邻合格记录并截断 600 个 Unicode 码点，群会话保留平台、bot、group 授权 scope。支持全量、单消息和单摘要重建；非法/越界 ID 被拒绝。新增临时正式 SQLite 行为测试，从持久任务队列实际 dispatch Worker 并写入 `knowledge_index_entries`，检查 baseline 排除、工具角色排除、上下文、群 scope 元数据和任务状态。Core 会话/RAG 测试文件 **41/41 通过**，包含上述行为；新增来源文件独立 NodeNext strict 类型检查及 Core build 通过。对应 Python `test_search_tools.py` / 来源基准 pytest 未能运行：devserver 2.0 工作区没有项目 pytest，系统 Python 也未安装 pytest。PG 来源行为、版本时间序列化差分、生产调度与 Agent 装配仍未验收，不改变生产状态。
+
+### Host RAG 重建调度器（2026-11-15）
+
+新增 Host 单消费者轮询器：启动即工作，按 Core Worker 返回的状态排空可用任务，空闲/重试后退避轮询；捕获错误并回调、取消停止且等待当前任务退出，禁用时不触发工作。临时 SQLite 回归经该调度器调用 Core 持久 Worker 消费 `rag_index_jobs` 并写入 `knowledge_index_entries`；另覆盖排空、无并发、失败重试、取消和禁用，共 **5/5 通过**。该调度器模块尚未接入 `main.ts` 生产组合根，未证明多实例/部署环境接管；不能记为生产重建已上线。

@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely'
+import type { Kysely, Transaction } from 'kysely'
 import { dataContext } from '../contracts/index.js'
 import { databaseTime, nowUtc, utc, type Clock } from '../data/codec.js'
 import type { Backend } from '../data/repositories.js'
@@ -8,12 +8,12 @@ import type { MindNoteCreateInput, MindNoteReadResponse } from './note-create.js
 
 export type MindDatabase = Database
 
-/** 在同一事务中创建便签和 Undo，调用方在提交后发布事件。 */
-export function createSqlMindNoteInserter(db: Kysely<MindDatabase>, backend: Backend, clock: Clock = nowUtc) {
-  return async (rawOwner: string, input: MindNoteCreateInput, contextId: string | null): Promise<MindNoteReadResponse> => {
+type MindNoteInsert = (rawOwner: string, input: MindNoteCreateInput, contextId: string | null) => Promise<MindNoteReadResponse>
+function noteInserter(db: Kysely<MindDatabase> | Transaction<MindDatabase>, backend: Backend, clock: Clock): MindNoteInsert {
+  return async (rawOwner, input, contextId) => {
     const canonicalOwner = dataContext(rawOwner).ownerId
     const owner = backend === 'sqlite' ? canonicalOwner.replaceAll('-', '') : canonicalOwner
-    return db.transaction().execute(async tx => {
+    const insert = async (tx: Transaction<MindDatabase>) => {
       const now = databaseTime(clock(), backend)
       const row = await tx.insertInto('mind_nodes').values({
         user_id: owner, kind: 'note', title: input.title, content_md: input.contentMd,
@@ -43,6 +43,18 @@ export function createSqlMindNoteInserter(db: Kysely<MindDatabase>, backend: Bac
         }, clock)
       }
       return response
-    })
+    }
+    return db.isTransaction ? insert(db as Transaction<MindDatabase>) : db.transaction().execute(insert)
   }
+}
+
+/** 在同一事务中创建便签和 Undo，调用方在提交后发布事件。 */
+export function createSqlMindNoteInserter(db: Kysely<MindDatabase>, backend: Backend, clock: Clock = nowUtc): MindNoteInsert {
+  if (db.isTransaction) throw new Error('借用事务必须使用便签借用事务入口')
+  return noteInserter(db, backend, clock)
+}
+
+/** 与操作收据或跨域事务共用同一 SQLite/PG 事务；提交后事件由外层发布。 */
+export function createBorrowedSqlMindNoteInserter(tx: Transaction<MindDatabase>, backend: Backend, clock: Clock = nowUtc): MindNoteInsert {
+  return noteInserter(tx, backend, clock)
 }

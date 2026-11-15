@@ -27,6 +27,7 @@ import {
   PROJECT_COLUMNS,
   RECEIPT_COLUMNS,
   RAG_JOB_COLUMNS,
+  RAG_INDEX_COLUMNS,
   SCHEDULED_FIRE_COLUMNS,
   SCHEDULED_TASK_COLUMNS,
   SITE_NOTIFICATION_COLUMNS,
@@ -87,6 +88,11 @@ function uniqueColumns(db: SQLite.Database, table: string, expected: string[]): 
       ) === JSON.stringify([...expected].sort()),
   )
   if (!found) throw new CoreError('storage_error', '本地唯一约束缺失，已拒绝自动修复')
+}
+function indexColumns(db: SQLite.Database, name: string, expected: string[]): boolean {
+  const actual = (db.pragma(`index_info(${name})`) as { name: string | null }[])
+    .map(column => column.name)
+  return JSON.stringify(actual) === JSON.stringify(expected)
 }
 function validateAgentSchema(db: SQLite.Database): void {
   const Driver = db.constructor as typeof SQLite
@@ -218,6 +224,17 @@ function metadata(db: SQLite.Database): { owner: string; version: string } {
     if (!keys.some(key => key.table === 'projects' && key.from === 'project_id' && key.to === 'id' && key.on_delete === 'SET NULL'))
       throw new CoreError('storage_error', '日历项目外键缺失，已拒绝打开')
   }
+  if (values.schema_version === SCHEMA_VERSION) {
+    matchColumns(db, 'knowledge_index_entries', RAG_INDEX_COLUMNS)
+    uniqueColumns(db, 'knowledge_index_entries', ['owner_user_id', 'source_type', 'source_id', 'document_version', 'chunk_index'])
+    for (const [name, expected] of [
+      ['ix_knowledge_index_scope_source', ['owner_user_id', 'scope_type', 'scope_id', 'source_type']],
+      ['ix_knowledge_index_owner_source_indexed', ['owner_user_id', 'source_type', 'indexed_at']],
+    ] as const) {
+      if (!indexColumns(db, name, [...expected]))
+        throw new CoreError('storage_error', 'RAG 检索索引缺失或不兼容，已拒绝打开')
+    }
+  }
   if (['9', '10', '11', '12', '13', '14', '15', SCHEMA_VERSION].includes(values.schema_version!)) {
     matchColumns(db, 'mind_canvas_items', MIND_ITEM_COLUMNS)
     uniqueColumns(db, 'mind_canvas_items', ['canvas_id', 'node_id'])
@@ -340,6 +357,9 @@ function createCanvasIndexes(db: SQLite.Database): void {
 function createCalendarIndexes(db: SQLite.Database): void {
   db.exec('CREATE INDEX ix_calendar_events_user_id ON calendar_events(user_id); CREATE INDEX ix_calendar_events_deleted_at ON calendar_events(deleted_at); CREATE INDEX ix_rag_index_jobs_user_id ON rag_index_jobs(user_id); CREATE INDEX ix_rag_index_jobs_due ON rag_index_jobs(status,next_attempt_at)')
 }
+function createRagIndexIndexes(db: SQLite.Database): void {
+  db.exec(tablesSql('sqlite').ragIndexIndexes.join(';'))
+}
 function createMindRelationIndexes(db: SQLite.Database): void {
   db.exec('CREATE INDEX ix_mind_canvas_items_user_id ON mind_canvas_items(user_id); CREATE INDEX ix_mind_canvas_items_canvas_id ON mind_canvas_items(canvas_id); CREATE INDEX ix_mind_canvas_items_node_id ON mind_canvas_items(node_id); CREATE INDEX ix_mind_canvas_items_deleted_at ON mind_canvas_items(deleted_at); CREATE INDEX ix_mind_relations_user_id ON mind_relations(user_id); CREATE INDEX ix_mind_relations_canvas_id ON mind_relations(canvas_id); CREATE INDEX ix_mind_relations_src_node_id ON mind_relations(src_node_id); CREATE INDEX ix_mind_relations_dst_node_id ON mind_relations(dst_node_id); CREATE INDEX ix_mind_relations_deleted_at ON mind_relations(deleted_at); CREATE UNIQUE INDEX uq_mind_relation_legacy ON mind_relations(user_id,src_node_id,dst_node_id,rel_type,edge_key) WHERE canvas_id IS NULL')
 }
@@ -367,13 +387,14 @@ export async function initializeSqlite(path: string): Promise<void> {
     db.exec('BEGIN IMMEDIATE')
     const schema = tablesSql('sqlite')
     db.exec(
-      `${schema.projects}; ${schema.clients}; ${schema.receipts}; ${schema.undo}; ${schema.mindNodes}; ${schema.mindMaps}; ${schema.calendarEvents}; ${schema.ragJobs}; ${schema.mindItems}; ${schema.mindRelations}; ${schema.scheduledTasks}; ${schema.scheduledFires}; ${schema.siteNotifications}; ${schema.notificationReads}; ${schema.notificationDismissals}; ${schema.userSmtp}; ${schema.onboarding}; ${schema.feedback}; ${schema.userPreferences}; CREATE TABLE core_runtime_meta (key VARCHAR(50) PRIMARY KEY NOT NULL,value VARCHAR(100) NOT NULL);`,
+      `${schema.projects}; ${schema.clients}; ${schema.receipts}; ${schema.undo}; ${schema.mindNodes}; ${schema.mindMaps}; ${schema.calendarEvents}; ${schema.ragJobs}; ${schema.ragIndexEntries}; ${schema.mindItems}; ${schema.mindRelations}; ${schema.scheduledTasks}; ${schema.scheduledFires}; ${schema.siteNotifications}; ${schema.notificationReads}; ${schema.notificationDismissals}; ${schema.userSmtp}; ${schema.onboarding}; ${schema.feedback}; ${schema.userPreferences}; CREATE TABLE core_runtime_meta (key VARCHAR(50) PRIMARY KEY NOT NULL,value VARCHAR(100) NOT NULL);`,
     )
     createIndexes(db)
     createUndoIndexes(db)
     createMindIndexes(db)
     createCanvasIndexes(db)
     createCalendarIndexes(db)
+    createRagIndexIndexes(db)
     createMindRelationIndexes(db)
     createScheduledTaskIndexes(db)
     createNotificationIndexes(db)
@@ -413,8 +434,8 @@ export async function migrateSqlite(path: string): Promise<string> {
     pragmas(db)
     db.exec('BEGIN IMMEDIATE')
     const info = metadata(db)
-    if (!['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15'].includes(info.version))
-      throw new CoreError('schema_upgrade_required', '只支持版本 1 至 15 的显式升级')
+    if (!['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16'].includes(info.version))
+      throw new CoreError('schema_upgrade_required', '只支持版本 1 至 16 的显式升级')
     if (info.version === '1' && columns(db, 'clients').length)
       throw new CoreError('storage_error', '本地表结构不兼容，已拒绝自动修复')
     backup = join(
@@ -450,34 +471,34 @@ export async function migrateSqlite(path: string): Promise<string> {
       db.exec(schema.undo)
       createUndoIndexes(db)
     }
-    if (!['5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15'].includes(info.version)) {
+    if (!['5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16'].includes(info.version)) {
       db.exec(schema.mindNodes)
       createMindIndexes(db)
     }
-    if (!['6', '7', '8', '9', '10', '11', '12', '13', '14', '15'].includes(info.version)) {
+    if (!['6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16'].includes(info.version)) {
       db.exec(SQLITE_AGENT_SCHEMA)
       validateAgentSchema(db)
     }
-    if (!['7', '8', '9', '10', '11', '12', '13', '14', '15'].includes(info.version)) {
+    if (!['7', '8', '9', '10', '11', '12', '13', '14', '15', '16'].includes(info.version)) {
       db.exec(schema.mindMaps)
       createCanvasIndexes(db)
     }
-    if (!['8', '9', '10', '11', '12', '13', '14', '15'].includes(info.version)) {
+    if (!['8', '9', '10', '11', '12', '13', '14', '15', '16'].includes(info.version)) {
       db.exec(schema.calendarEvents)
       db.exec(schema.ragJobs)
       createCalendarIndexes(db)
     }
-    if (!['9', '10', '11', '12', '13', '14', '15'].includes(info.version)) {
+    if (!['9', '10', '11', '12', '13', '14', '15', '16'].includes(info.version)) {
       db.exec(schema.mindItems)
       db.exec(schema.mindRelations)
       createMindRelationIndexes(db)
     }
-    if (!['10', '11', '12', '13', '14', '15'].includes(info.version)) {
+    if (!['10', '11', '12', '13', '14', '15', '16'].includes(info.version)) {
       db.exec(schema.scheduledTasks)
       db.exec(schema.scheduledFires)
       createScheduledTaskIndexes(db)
     }
-    if (!['11', '12', '13', '14', '15'].includes(info.version)) {
+    if (!['11', '12', '13', '14', '15', '16'].includes(info.version)) {
       db.exec(schema.siteNotifications)
       db.exec(schema.notificationReads)
       db.exec(schema.notificationDismissals)
@@ -485,29 +506,35 @@ export async function migrateSqlite(path: string): Promise<string> {
       db.exec(SQLITE_INTERACTION_PROMPTS_SCHEMA)
       validateSqliteInteractionPrompts(db)
     }
-    if (!['12', '13', '14', '15'].includes(info.version)) {
+    if (!['12', '13', '14', '15', '16'].includes(info.version)) {
       db.exec(SQLITE_INTERACTION_ACTIONS_SCHEMA)
       validateSqliteInteractionActions(db)
     }
-    if (!['13', '14', '15'].includes(info.version)) {
+    if (!['13', '14', '15', '16'].includes(info.version)) {
       db.exec(schema.userSmtp)
       db.exec('CREATE INDEX ix_user_smtp_configs_enabled ON user_smtp_configs(enabled)')
       for (const trigger of SMTP_OWNER_TRIGGERS) db.exec(trigger)
     }
     validateSmtpSchema(db, info.owner)
-    if (!['14', '15'].includes(info.version)) {
+    if (!['14', '15', '16'].includes(info.version)) {
       db.exec(schema.onboarding)
       for (const trigger of ONBOARDING_OWNER_TRIGGERS) db.exec(trigger)
     }
     validateOnboardingSchema(db, info.owner)
-    if (info.version !== '15') {
+    if (!['15', '16'].includes(info.version)) {
       db.exec(schema.feedback)
       for (const trigger of FEEDBACK_OWNER_TRIGGERS) db.exec(trigger)
     }
     validateFeedbackSchema(db, info.owner)
-    db.exec(schema.userPreferences)
-    for (const trigger of PREFERENCES_OWNER_TRIGGERS) db.exec(trigger)
+    if (info.version !== '16') {
+      db.exec(schema.userPreferences)
+      for (const trigger of PREFERENCES_OWNER_TRIGGERS) db.exec(trigger)
+    }
     validatePreferencesSchema(db, info.owner)
+    db.exec(schema.ragIndexEntries)
+    createRagIndexIndexes(db)
+    matchColumns(db, 'knowledge_index_entries', RAG_INDEX_COLUMNS)
+    uniqueColumns(db, 'knowledge_index_entries', ['owner_user_id', 'source_type', 'source_id', 'document_version', 'chunk_index'])
     db.prepare("UPDATE core_runtime_meta SET value=? WHERE key='schema_version'").run(
       SCHEMA_VERSION,
     )

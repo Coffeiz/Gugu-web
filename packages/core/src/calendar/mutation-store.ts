@@ -3,6 +3,7 @@ import { dataContext } from '../contracts/index.js'
 import { databaseTime, nowUtc, utc, type Clock } from '../data/codec.js'
 import type { Database } from '../data/schema.js'
 import { recordForwardUndoOperation } from '../data/undo.js'
+import { enqueueCalendarRagIndex } from './create-store.js'
 import { calendarEventRecord } from './event-projection.js'
 import type { CalendarEventUpdateFields, EventUpdatePublication, EventUpdateStore, EventUpdateTransaction } from './application/event-update.js'
 import type { CalendarEventDeletePublication, CalendarEventDeleteStore, CalendarEventDeleteTransaction } from './application/event-delete.js'
@@ -86,6 +87,39 @@ export function createKyselyCalendarMutationStores<DB>(db: Kysely<DB>, backend: 
     delete: {
       transaction: (owner, work) => db.transaction().execute(tx => work(adapter(tx, backend, owner, clock))),
       publishResourceChanged: async event => { await publish(event) },
+    },
+  }
+}
+
+/** Borrow the desktop operation-receipt transaction and stage RAG invalidation before it commits. */
+export function createBorrowedKyselyCalendarMutationStores<DB>(tx: Transaction<DB>, backend: Backend, clock: Clock = nowUtc): { update: EventUpdateStore; delete: CalendarEventDeleteStore } {
+  const now = backend === 'sqlite' ? sql`${databaseTime(clock(), backend)}` : sql`CURRENT_TIMESTAMP`
+  const ownerKey = (rawOwner: string) => {
+    const owner = dataContext(rawOwner).ownerId
+    return backend === 'sqlite' ? owner.replaceAll('-', '') : owner
+  }
+  return {
+    update: {
+      async transaction(owner, work) {
+        const result = await work(adapter(tx, backend, owner, clock))
+        const outcome = result as { changed?: unknown; event?: { id?: unknown } } | null
+        if (outcome?.changed === true && Number.isSafeInteger(outcome.event?.id)) {
+          await enqueueCalendarRagIndex(tx, backend, ownerKey(owner), String(outcome.event!.id), now, 'update')
+        }
+        return result
+      },
+      async publishCalendarEvent() {},
+    },
+    delete: {
+      async transaction(owner, work) {
+        const result = await work(adapter(tx, backend, owner, clock))
+        const outcome = result as { eventId?: unknown } | null
+        if (Number.isSafeInteger(outcome?.eventId)) {
+          await enqueueCalendarRagIndex(tx, backend, ownerKey(owner), String(outcome!.eventId), now, 'delete')
+        }
+        return result
+      },
+      async publishResourceChanged() {},
     },
   }
 }

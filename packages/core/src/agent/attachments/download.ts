@@ -31,6 +31,9 @@ export function createAttachmentDownloader<DB,Handle>(db:Kysely<DB>,ports:Attach
   }
   if(!opened)throw new CoreError('not_found','附件已过期或物理文件丢失')
   const name=typeof meta.name==='string'?meta.name:'file',ext=typeof meta.ext==='string'?meta.ext:''
-  return {...opened,fileName:`${name}.${ext}`,mimeType:typeof meta.mime==='string'&&meta.mime?meta.mime:'application/octet-stream'}
+  return {
+   ...opened,fileName:`${name}.${ext}`,mimeType:typeof meta.mime==='string'&&meta.mime?meta.mime:'application/octet-stream',
+   ext,kind:typeof meta.kind==='string'?meta.kind:null,qqFace:Boolean(meta.qq_face),
+  }
  }
 }

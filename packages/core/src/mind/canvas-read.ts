@@ -16,6 +16,27 @@ export function createSqlMindCanvasReader(db: Kysely<Database>, backend: Backend
   async function findCanvas(owner: string, id: number) { return db.selectFrom('mind_maps').selectAll().where('id', '=', id).where('user_id', '=', owner).where('deleted_at', 'is', null).executeTakeFirst() }
   return {
     ...createAgentCanvasQueries(db,backend),
+    /** RAG 重建专用投影：同一查询绑定 owner、存活画布/节点/项，并支持稳定分页。 */
+    async listForRag(raw: string, options: { itemId?: number; afterId?: number; limit: number; signal?: AbortSignal }) {
+      options.signal?.throwIfAborted()
+      const owner = ownerId(raw)
+      const itemUpdated = backend === 'postgres'
+        ? sql<string>`to_char(i.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI:SS.US') || '+00:00'`
+        : sql<string>`i.updated_at`
+      let query = db.selectFrom('mind_canvas_items as i')
+        .innerJoin('mind_maps as m', join => join.onRef('m.id', '=', 'i.canvas_id').onRef('m.user_id', '=', 'i.user_id'))
+        .innerJoin('mind_nodes as n', join => join.onRef('n.id', '=', 'i.node_id').onRef('n.user_id', '=', 'i.user_id'))
+        .select(['i.id', 'i.canvas_id', 'i.node_id', 'i.data_json', 'm.title as canvas_title', 'm.project_id',
+          'n.title as node_title', 'n.kind as node_type', 'n.content_plain', 'n.content_md', 'n.version as node_version'])
+        .select(itemUpdated.as('item_updated_at'))
+        .where('i.user_id', '=', owner).where('m.user_id', '=', owner).where('n.user_id', '=', owner)
+        .where('i.deleted_at', 'is', null).where('m.deleted_at', 'is', null).where('n.deleted_at', 'is', null)
+      if (options.itemId !== undefined) query = query.where('i.id', '=', options.itemId)
+      if (options.afterId !== undefined) query = query.where('i.id', '>', options.afterId)
+      const rows = await query.orderBy('i.id', 'asc').limit(options.limit).execute()
+      options.signal?.throwIfAborted()
+      return rows.map(row => ({ ...row, item_updated_at: utc(row.item_updated_at).replace(' ', 'T').replace(/Z$/, '+00:00') }))
+    },
     /** Agent 分页查询不使用 Web 列表的 200 条截断；计数只依据画布项。 */
     async listAgentCanvases(raw: string, options: { projectId?: number | null; limit: number; offset: number; signal?: AbortSignal }) {
       options.signal?.throwIfAborted()

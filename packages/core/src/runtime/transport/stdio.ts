@@ -44,7 +44,7 @@ async function main(): Promise<number> {
     event: 'ready',
     ...(protocol === 2
       ? {
-          capabilities: ['operation_receipts', 'undo_mind_v1'],
+          capabilities: ['operation_receipts', 'undo_mind_v1', 'calendar_v1', 'mind_notes_v1', 'mind_canvases_v1'],
           schema: runtime.schemaVersion,
           nodeVersion: process.versions.node,
           nodeAbi: process.versions.modules,

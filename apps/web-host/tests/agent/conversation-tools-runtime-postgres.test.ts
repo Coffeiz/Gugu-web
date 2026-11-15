@@ -4,9 +4,8 @@ import test from 'node:test'
 import { Pool } from 'pg'
 import { createPostgresRuntime } from '@gugu/core/data'
 import { createAgentToolRegistry } from '../../src/domains/agent-sessions/tools/agent-tool-registry.js'
-import { createAgentConversationReadPort,createAgentConversationSearchPort } from '../../src/domains/agent-sessions/tools/agent-conversations.js'
-import { createSqlRagConversationSearch,createSqlRagConversationSource } from '../../../../packages/core/src/agent/rag/conversation-source.js'
-import { configureRagJieba } from '../../../../packages/core/src/agent/rag/tokenizer.js'
+import { createAgentConversationReadPort,createAgentConversationSearchPort,createCoreAgentConversationSearchPort } from '../../src/domains/agent-sessions/tools/agent-conversations.js'
+import { createSqlRagConversationSource } from '../../../../packages/core/src/agent/rag/conversation-source.js'
 
 const url=process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
@@ -67,9 +66,7 @@ test('真实历史工具读取当前 owner 最近普通消息，结构化消息�
   assert.match(JSON.stringify(actual),/最近用户/);assert.doesNotMatch(JSON.stringify(actual),/群私有|他人私有/)
   const foreignResults=await history(other,{scope_type:'owner'},['他人'],'OR',10)
   assert.equal(foreignResults[0]?.text,'他人私有')
-  configureRagJieba({cut:text=>[text]})
-  const ranked=createSqlRagConversationSearch(core.db,'postgres')
-  const rankedPort=createAgentConversationSearchPort(core,{search:ranked})
+  const rankedPort=createCoreAgentConversationSearchPort(core,{cut:text=>[text]})
   const rankedRegistry=createAgentToolRegistry({core,conversationSearch:rankedPort,authorize:async()=>true})
   const rankedResult=await rankedRegistry.tools.dispatch({id:'ranked',name:'search_conversations',input:{query:'最近'}},scope)
   assert.match(JSON.stringify(rankedResult),/原对话/);assert.match(JSON.stringify(rankedResult),/最近用户/);assert.doesNotMatch(JSON.stringify(rankedResult),/群私有|他人私有/)

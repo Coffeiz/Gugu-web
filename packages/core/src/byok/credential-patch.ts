@@ -8,7 +8,7 @@ export interface CredentialPatchInput {
  reasoning_persistence?:string|null;web_search_enabled?:boolean|null;image?:boolean|null;video?:boolean|null;audio?:boolean|null
  image_detail?:string|null;enabled?:boolean|null
 }
-type Row=Record<string,any>&{provider:string;api_format:string;capability:string;encrypted_value:string;nonce:string;encrypted_data_key:string;key_version:number;user_id:string;id:number;dimensions:number|null;enabled:boolean;last_verified_at:unknown;created_at:unknown;updated_at:unknown}
+type Row=Record<string,any>&{provider:string;api_format:string;capability:string;base_url:string;model:string;encrypted_value:string;nonce:string;encrypted_data_key:string;key_version:number;user_id:string;id:number;dimensions:number|null;enabled:boolean;last_verified_at:unknown;created_at:unknown;updated_at:unknown}
 export interface CredentialPatchOptions {
  enabled:()=>boolean
  encrypt:(value:string,allowEmpty:boolean)=>Promise<{ciphertext:string;nonce:string;encryptedDataKey:string;keyVersion:number}>

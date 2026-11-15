@@ -750,4 +750,8 @@
 "tests/agent/tools/note-lifecycle.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/mind/note-lifecycle-contract.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/integration/postgres/note-lifecycle.test.ts":{"markers": ["external_service"], "layer": "L2", "purpose": "postgres"},
-"tests/agent/tools/link-buttons.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"}}
+"tests/agent/tools/link-buttons.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/unit/files/attachment-thumbnail.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/byok/media-capability-probe.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/unit/files/file-thumbnail.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/byok/credential-test-preview.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"}}

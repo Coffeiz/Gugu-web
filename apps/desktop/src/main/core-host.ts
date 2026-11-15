@@ -109,6 +109,9 @@ export class CoreHost {
   private sequence = 0
   private healthy = true
   private undoAvailable = false
+  private calendarAvailable = false
+  private notesAvailable = false
+  private canvasesAvailable = false
   private closing?: Promise<void>
   private stopped = false
   private constructor(
@@ -174,6 +177,9 @@ export class CoreHost {
       )
         throw new DesktopError('startup_failed', 'Core 数据库或运行时无法通过启动校验')
       host.undoAvailable = ready.capabilities.includes('undo_mind_v1')
+      host.calendarAvailable = ready.capabilities.includes('calendar_v1')
+      host.notesAvailable = ready.capabilities.includes('mind_notes_v1')
+      host.canvasesAvailable = ready.capabilities.includes('mind_canvases_v1')
       return host
     } catch (error) {
       host.fail()
@@ -233,9 +239,18 @@ export class CoreHost {
       return Promise.reject(new DesktopError('closed', 'Core 已停止，请重新启动应用'))
     const undoWrite = method === 'undo.apply' || method === 'undo.redo'
     const undoMethod = undoWrite || method === 'undo.preview'
+    const calendarMethod = method === 'calendar.list' || method === 'calendar.create' || method === 'calendar.update' || method === 'calendar.delete'
+    const notesMethod = method.startsWith('mind.notes.')
+    const canvasesMethod = method.startsWith('mind.canvases.')
+    if (calendarMethod && !this.calendarAvailable)
+      return Promise.reject(new DesktopError('invalid_request', '当前 Core 未提供日历能力'))
+    if (notesMethod && !this.notesAvailable)
+      return Promise.reject(new DesktopError('invalid_request', '当前 Core 未提供便签能力'))
+    if (canvasesMethod && !this.canvasesAvailable)
+      return Promise.reject(new DesktopError('invalid_request', '当前 Core 未提供画布能力'))
     if (undoMethod && !this.undoAvailable)
       return Promise.reject(new DesktopError('invalid_request', '当前 Core 未提供撤销能力'))
-    if (!(DESKTOP_METHODS as readonly string[]).includes(method) && !undoMethod)
+    if (!(DESKTOP_METHODS as readonly string[]).includes(method) && !undoMethod && !calendarMethod && !notesMethod && !canvasesMethod)
       return Promise.reject(new DesktopError('invalid_request', '此桌面能力不可用'))
     if ((undoWrite && !operationSchema.safeParse(callerOperationId).success) || (!undoWrite && callerOperationId !== undefined))
       return Promise.reject(new DesktopError('invalid_request', '操作标识无效'))
@@ -382,6 +397,29 @@ export function desktopHandlers(
       host.request('clients.create', { name }),
     [DESKTOP_CHANNELS.renameClient]: (id: unknown, name: unknown) =>
       host.request('clients.update', { id, fields: { name } }),
+    [DESKTOP_CHANNELS.deleteClient]: (id: unknown) =>
+      host.request('clients.delete', { id }),
+    [DESKTOP_CHANNELS.calendar]: () => host.request('calendar.list'),
+    [DESKTOP_CHANNELS.createCalendarEvent]: (title: unknown, date: unknown) =>
+      host.request('calendar.create', { title, date }),
+    [DESKTOP_CHANNELS.updateCalendarEvent]: (id: unknown, body: unknown) =>
+      host.request('calendar.update', { id, body }),
+    [DESKTOP_CHANNELS.deleteCalendarEvent]: (id: unknown, version: unknown) =>
+      host.request('calendar.delete', { id, version }),
+    [DESKTOP_CHANNELS.canvases]: () => host.request('mind.canvases.list'),
+    [DESKTOP_CHANNELS.createCanvas]: (title: unknown) => host.request('mind.canvases.create', { title }),
+    [DESKTOP_CHANNELS.updateCanvas]: (id: unknown, body: unknown) => host.request('mind.canvases.update', { id, body }),
+    [DESKTOP_CHANNELS.deleteCanvas]: (id: unknown) => host.request('mind.canvases.delete', { id }),
+    [DESKTOP_CHANNELS.canvasItems]: (canvasId: unknown) => host.request('mind.canvases.items.list', { canvasId }),
+    [DESKTOP_CHANNELS.createCanvasNote]: (canvasId: unknown, body: unknown) => host.request('mind.canvases.notes.create', { canvasId, body }),
+    [DESKTOP_CHANNELS.updateCanvasNote]: (id: unknown, fields: unknown) => host.request('mind.canvases.notes.update', { id, fields }),
+    [DESKTOP_CHANNELS.updateCanvasItem]: (canvasId: unknown, id: unknown, body: unknown) => host.request('mind.canvases.items.update', { canvasId, id, body }),
+    [DESKTOP_CHANNELS.deleteCanvasItem]: (canvasId: unknown, id: unknown) => host.request('mind.canvases.items.delete', { canvasId, id }),
+    [DESKTOP_CHANNELS.notes]: () => host.request('mind.notes.list'),
+    [DESKTOP_CHANNELS.createNote]: (contentMd: unknown, color: unknown) =>
+      host.request('mind.notes.create', { contentMd, color }),
+    [DESKTOP_CHANNELS.updateNote]: (id: unknown, fields: unknown) => host.request('mind.notes.update', { id, fields }),
+    [DESKTOP_CHANNELS.deleteNote]: (id: unknown) => host.request('mind.notes.delete', { id }),
     [DESKTOP_CHANNELS.receipt]: (operation: unknown) =>
       host.request('operations.get', { operation_id: operation }),
     [DESKTOP_CHANNELS.sandboxStatus]: diagnostics,

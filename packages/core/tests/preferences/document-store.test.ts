@@ -31,7 +31,7 @@ it('正式 SQLite 保存偏好并拒绝其他 owner 写入', async () => {
   } finally { await rm(directory, { recursive: true, force: true }) }
 })
 
-it('版本 15 升级保留已有数据和可恢复备份，冲突表不被覆盖', async () => {
+it('旧版升级保留已有数据和可恢复备份，冲突表不被覆盖', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gugu-preference-upgrade-'))
   try {
     const path = join(directory, 'data.db')
@@ -50,7 +50,7 @@ it('版本 15 升级保留已有数据和可恢复备份，冲突表不被覆盖
     } finally { saved.close() }
     const opened = await openSqliteRuntime(path)
     try {
-      expect(opened.schemaVersion).toBe('16')
+      expect(opened.schemaVersion).toBe('17')
       expect((await sql<{ content: string }>`SELECT content FROM feedbacks`.execute(opened.runtime.db)).rows[0]?.content).toBe('保留反馈')
       await createKyselyPreferenceDocumentStore(opened.runtime.db, 'sqlite').write(opened.ownerId, { palette: 'neutral' })
     } finally { await opened.runtime.close() }

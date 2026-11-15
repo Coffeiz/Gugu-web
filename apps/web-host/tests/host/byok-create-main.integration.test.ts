@@ -24,13 +24,22 @@ test('生产入口创建的凭据由正式 PG 模型持久化并由 Python 解�
   const env={...process.env,BYOK_TEST_PG:databaseUrl!.replace(/^postgresql:/,'postgresql+asyncpg:'),BYOK_TEST_SCHEMA:schema,CREDENTIALS_MASTER_KEY:master,CREDENTIALS_MASTER_KEY_FILE:join(root,'master'),GUGU_ENV_FILE:'/dev/null',GUGU_CONFIG_OVERRIDE_FILE:join(root,'config.json'),PYTHONPATH:'.:../compat/core-python/src'}
   await writeFile(env.GUGU_CONFIG_OVERRIDE_FILE,'{}')
   execFileSync(python!,['../apps/web-host/tests/byok/fixtures/create_python.py'],{cwd:'../../backend',env,encoding:'utf8',timeout:60000})
-  const providerRequests:string[]=[]
-  providerServer=createHttpServer((request,response)=>{providerRequests.push(request.headers.authorization??'');response.writeHead(200,{'content-type':'application/json'});response.end(JSON.stringify({data:[{id:'model-z'},{id:'model-a'},{id:'model-z'}]}))})
+  const providerRequests:string[]=[],providerBodies:Record<string,unknown>[]=[]
+  providerServer=createHttpServer((request,response)=>{
+   const chunks:Buffer[]=[]
+   request.on('data',chunk=>chunks.push(Buffer.from(chunk)))
+   request.on('end',()=>{
+    providerRequests.push(request.headers.authorization??'')
+    const raw=Buffer.concat(chunks).toString()
+    providerBodies.push(raw?JSON.parse(raw) as Record<string,unknown>:{})
+    response.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({data:[{id:'model-z'},{id:'model-a'},{id:'model-z'}]}))
+   })
+  })
   await new Promise<void>(resolve=>providerServer!.listen(0,'127.0.0.1',resolve));const providerAddress=providerServer.address();assert.ok(providerAddress&&typeof providerAddress!=='string')
   const providerBase=`http://127.0.0.1:${providerAddress.port}/v1`
   const socket=createServer();await new Promise<void>(resolve=>socket.listen(0,'127.0.0.1',resolve));const address=socket.address();assert.ok(address&&typeof address!=='string');await new Promise<void>(resolve=>socket.close(()=>resolve()))
   host=await startServer({GUGU_WEBUI_DATABASE_URL:scoped.toString(),GUGU_WEBUI_SECRET_KEY:secret,GUGU_CONFIG_OVERRIDE_FILE:env.GUGU_CONFIG_OVERRIDE_FILE,GUGU_WEBUI_HOST:'127.0.0.1',GUGU_WEBUI_PORT:String(address.port),GUGU_WEBUI_REDIS_URL:'',STORAGE__LOCAL_PATH:root,CREDENTIALS_MASTER_KEY:master,BYOK__ENABLED:'true'})
-  const owner='00000000-0000-4000-8000-000000000072',headers={authorization:`Bearer ${signedUserToken(secret,owner)}`},payload={provider:'local',capability:'embedding',value:'synthetic-host-value',base_url:providerBase,model:'original-model'}
+  const owner='00000000-0000-4000-8000-000000000072',headers={authorization:`Bearer ${signedUserToken(secret,owner)}`},payload={provider:'local',api_format:'openai',capability:'embedding',value:'synthetic-host-value',base_url:providerBase,model:'original-model'}
   assert.equal((await host.app.inject({method:'POST',url:'/api/v1/byok',payload})).statusCode,401)
   const response=await host.app.inject({method:'POST',url:'/api/v1/byok',headers,payload})
   assert.equal(response.statusCode,200,response.body)
@@ -53,6 +62,18 @@ test('生产入口创建的凭据由正式 PG 模型持久化并由 Python 解�
   assert.equal(foreignCredential.statusCode,404,foreignCredential.body);assert.equal(providerRequests.length,1)
   const wrongDestination=await host.app.inject({method:'POST',url:'/api/v1/byok/models-preview',headers,payload:{provider:'local',base_url:'http://127.0.0.1:9/v1',credential_id:credentialId}})
   assert.equal(wrongDestination.statusCode,422,wrongDestination.body);assert.equal(providerRequests.length,1)
+  assert.equal((await host.app.inject({method:'POST',url:'/api/v1/byok/media-capability-probe',payload:{provider:'local',dim:'image'}})).statusCode,401)
+  const media=await host.app.inject({method:'POST',url:'/api/v1/byok/media-capability-probe',headers,payload:{provider:'local',api_format:'openai',base_url:providerBase,model:'preview-vision',credential_id:credentialId,dim:'image'}})
+  assert.equal(media.statusCode,200,media.body)
+  assert.deepEqual(media.json(),{dim:'image',supported:true,status:200,detail:'模型接受了图片输入'})
+  assert.equal(providerRequests.length,2);assert.equal(providerRequests[1],'Bearer synthetic-host-value')
+  const mediaMessages=providerBodies[1]?.messages as Array<{content:Array<{image_url?:{url:string}}>}>|undefined
+  assert.match(mediaMessages?.[0]?.content[1]?.image_url?.url??'',/^data:image\/png;base64,/)
+  assert.doesNotMatch(media.body,/synthetic-host-value|encrypted_value|encrypted_data_key/)
+  const foreignMedia=await host.app.inject({method:'POST',url:'/api/v1/byok/media-capability-probe',headers,payload:{provider:'local',api_format:'openai',base_url:providerBase,model:'preview-vision',credential_id:foreignCredentialId,dim:'image'}})
+  assert.equal(foreignMedia.statusCode,404,foreignMedia.body);assert.equal(providerRequests.length,2)
+  const wrongMediaDestination=await host.app.inject({method:'POST',url:'/api/v1/byok/media-capability-probe',headers,payload:{provider:'local',api_format:'openai',base_url:'http://127.0.0.1:9/v1',model:'preview-vision',credential_id:credentialId,dim:'image'}})
+  assert.equal(wrongMediaDestination.statusCode,422,wrongMediaDestination.body);assert.equal(providerRequests.length,2)
   assert.equal((await host.app.inject({method:'PATCH',url:`/api/v1/byok/${credentialId}`,payload:{model:'patched-model'}})).statusCode,401)
   const deniedPatch=await host.app.inject({method:'PATCH',url:`/api/v1/byok/${credentialId}`,headers,payload:{base_url:'https://other.example.test/v1'}})
   assert.equal(deniedPatch.statusCode,422,deniedPatch.body)

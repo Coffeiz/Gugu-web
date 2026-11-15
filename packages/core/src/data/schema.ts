@@ -82,6 +82,15 @@ export interface MindRelationTable {
   rel_type: string; edge_key: string; origin: string; status: string; note: string | null
   created_at: string; updated_at: string; deleted_at: string | null
 }
+/** 可重建的 RAG 投影；事实正文仍由对应领域来源提供。 */
+export interface RagIndexEntryTable {
+  id: Generated<number>; owner_user_id: string; source_type: string; source_id: string
+  scope_type: string; scope_id: string; platform: string; bot_id: string; group_id: string
+  document_id: string; parent_document_id: string | null; document_version: string
+  chunk_index: number; chunk_count: number; title: string; summary: string; content: string
+  content_hash: string; metadata_json: ColumnType<unknown, string, string>
+  source_updated_at: string | null; indexed_at: string; deleted_at: string | null
+}
 export interface SiteNotificationTable {
   id: Generated<number>; title: string; content: string; color: string; target: string
   bubble: boolean | number; persist: boolean | number; bubble_expire_at: string | null
@@ -103,6 +112,7 @@ export interface Database {
   mind_maps: MindCanvasTable
   mind_canvas_items: MindCanvasItemTable
   mind_relations: MindRelationTable
+  knowledge_index_entries: RagIndexEntryTable
   site_notifications: SiteNotificationTable
   notification_reads: NotificationReadTable
   notification_dismissals: NotificationDismissalTable
@@ -161,6 +171,7 @@ export const MIND_NODE_COLUMNS = [
 export const MIND_CANVAS_COLUMNS = ['id', 'user_id', 'title', 'project_id', 'data_json', 'created_at', 'updated_at', 'deleted_at']
 export const CALENDAR_EVENT_COLUMNS = ['id', 'user_id', 'title', 'date', 'time', 'end_time', 'type', 'contact_name', 'project_id', 'description', 'version', 'created_at', 'deleted_at', 'idempotency_key', 'idempotency_fingerprint']
 export const RAG_JOB_COLUMNS = ['id', 'user_id', 'source_type', 'source_id', 'pending_source_ids', 'version', 'operation', 'status', 'generation', 'completed_generation', 'attempts', 'next_attempt_at', 'lease_until', 'last_error_code', 'last_started_at', 'last_succeeded_at', 'created_at', 'updated_at']
+export const RAG_INDEX_COLUMNS = ['id', 'owner_user_id', 'source_type', 'source_id', 'scope_type', 'scope_id', 'platform', 'bot_id', 'group_id', 'document_id', 'parent_document_id', 'document_version', 'chunk_index', 'chunk_count', 'title', 'summary', 'content', 'content_hash', 'metadata_json', 'source_updated_at', 'indexed_at', 'deleted_at']
 export const MIND_ITEM_COLUMNS = ['id', 'user_id', 'canvas_id', 'node_id', 'x', 'y', 'w', 'h', 'z', 'collapsed', 'data_json', 'created_at', 'updated_at', 'deleted_at']
 export const MIND_RELATION_COLUMNS = ['id', 'user_id', 'canvas_id', 'src_node_id', 'dst_node_id', 'rel_type', 'edge_key', 'origin', 'status', 'note', 'created_at', 'updated_at', 'deleted_at']
 export const SCHEDULED_TASK_COLUMNS = ['id', 'user_id', 'event_id', 'reminder_lead_minutes', 'workspace_id', 'filesystem_authorization_grant_id', 'name', 'payload', 'cron', 'schedule_kind', 'interval_minutes', 'start_at', 'end_at', 'channels', 'enabled', 'delivery_targets', 'authorized_tools', 'email_attachment_file_ids', 'last_run_at', 'last_run_failed', 'created_at', 'updated_at']
@@ -179,6 +190,8 @@ export function tablesSql(backend: 'sqlite' | 'postgres'): {
   mindMaps: string
   calendarEvents: string
   ragJobs: string
+  ragIndexEntries: string
+  ragIndexIndexes: string[]
   mindItems: string
   mindRelations: string
   scheduledTasks: string
@@ -203,6 +216,20 @@ export function tablesSql(backend: 'sqlite' | 'postgres'): {
     mindMaps: `CREATE TABLE mind_maps (id ${id}, user_id ${owner} NOT NULL, title VARCHAR(300) NOT NULL, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, data_json TEXT NOT NULL, created_at ${timestamp} NOT NULL, updated_at ${timestamp} NOT NULL, deleted_at ${timestamp})`,
     calendarEvents: `CREATE TABLE calendar_events (id ${id}, user_id ${owner} NOT NULL, title VARCHAR(300) NOT NULL, date VARCHAR(10) NOT NULL, time VARCHAR(5), end_time VARCHAR(5), type VARCHAR(50) NOT NULL, contact_name VARCHAR(200), project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, description TEXT, version INTEGER NOT NULL, created_at ${timestamp} NOT NULL, deleted_at ${timestamp}, idempotency_key VARCHAR(64), idempotency_fingerprint VARCHAR(64), CONSTRAINT uq_calendar_events_user_idempotency_key UNIQUE(user_id,idempotency_key))`,
     ragJobs: `CREATE TABLE rag_index_jobs (id ${id}, user_id ${owner} NOT NULL, source_type VARCHAR(32) NOT NULL, source_id VARCHAR(255) NOT NULL, pending_source_ids ${backend === 'sqlite' ? 'TEXT' : 'JSON'}, version VARCHAR(64) NOT NULL, operation VARCHAR(24) NOT NULL, status VARCHAR(16) NOT NULL, generation INTEGER NOT NULL, completed_generation INTEGER NOT NULL, attempts INTEGER NOT NULL, next_attempt_at ${timestamp}, lease_until ${timestamp}, last_error_code VARCHAR(64), last_started_at ${timestamp}, last_succeeded_at ${timestamp}, created_at ${timestamp} NOT NULL, updated_at ${timestamp} NOT NULL, CONSTRAINT uq_rag_index_job_user_source UNIQUE(user_id,source_type))`,
+    ragIndexEntries: `CREATE TABLE IF NOT EXISTS knowledge_index_entries (id ${id}, owner_user_id ${owner} NOT NULL, source_type VARCHAR(32) NOT NULL, source_id VARCHAR(255) NOT NULL, scope_type VARCHAR(32) NOT NULL DEFAULT 'owner', scope_id VARCHAR(255) NOT NULL DEFAULT '', platform VARCHAR(32) NOT NULL DEFAULT '', bot_id VARCHAR(128) NOT NULL DEFAULT '', group_id VARCHAR(255) NOT NULL DEFAULT '', document_id VARCHAR(255) NOT NULL, parent_document_id VARCHAR(255), document_version VARCHAR(64) NOT NULL, chunk_index INTEGER NOT NULL DEFAULT 0, chunk_count INTEGER NOT NULL DEFAULT 1, title VARCHAR(300) NOT NULL DEFAULT '', summary TEXT NOT NULL DEFAULT '', content TEXT NOT NULL DEFAULT '', content_hash VARCHAR(64) NOT NULL, metadata_json ${backend === 'sqlite' ? 'TEXT' : 'JSON'} NOT NULL DEFAULT ${backend === 'sqlite' ? "'{}'" : "'{}'::json"}, source_updated_at ${timestamp}, indexed_at ${timestamp} NOT NULL DEFAULT CURRENT_TIMESTAMP, deleted_at ${timestamp}, CONSTRAINT uq_knowledge_index_entry_chunk UNIQUE(owner_user_id,source_type,source_id,document_version,chunk_index))`,
+    ragIndexIndexes: [
+      `CREATE INDEX IF NOT EXISTS ix_knowledge_index_entries_owner_user_id ON knowledge_index_entries(owner_user_id)`,
+      `CREATE INDEX IF NOT EXISTS ix_knowledge_index_entries_source_type ON knowledge_index_entries(source_type)`,
+      `CREATE INDEX IF NOT EXISTS ix_knowledge_index_entries_source_id ON knowledge_index_entries(source_id)`,
+      `CREATE INDEX IF NOT EXISTS ix_knowledge_index_entries_scope_type ON knowledge_index_entries(scope_type)`,
+      `CREATE INDEX IF NOT EXISTS ix_knowledge_index_entries_scope_id ON knowledge_index_entries(scope_id)`,
+      `CREATE INDEX IF NOT EXISTS ix_knowledge_index_entries_document_id ON knowledge_index_entries(document_id)`,
+      `CREATE INDEX IF NOT EXISTS ix_knowledge_index_entries_content_hash ON knowledge_index_entries(content_hash)`,
+      `CREATE INDEX IF NOT EXISTS ix_knowledge_index_entries_indexed_at ON knowledge_index_entries(indexed_at)`,
+      `CREATE INDEX IF NOT EXISTS ix_knowledge_index_entries_deleted_at ON knowledge_index_entries(deleted_at)`,
+      `CREATE INDEX IF NOT EXISTS ix_knowledge_index_scope_source ON knowledge_index_entries(owner_user_id,scope_type,scope_id,source_type)`,
+      `CREATE INDEX IF NOT EXISTS ix_knowledge_index_owner_source_indexed ON knowledge_index_entries(owner_user_id,source_type,indexed_at)`,
+    ],
     mindItems: `CREATE TABLE mind_canvas_items (id ${id}, user_id ${owner} NOT NULL, canvas_id INTEGER NOT NULL REFERENCES mind_maps(id) ON DELETE CASCADE, node_id INTEGER NOT NULL REFERENCES mind_nodes(id) ON DELETE CASCADE, x FLOAT NOT NULL, y FLOAT NOT NULL, w FLOAT, h FLOAT, z INTEGER NOT NULL, collapsed BOOLEAN NOT NULL, data_json TEXT NOT NULL, created_at ${timestamp} NOT NULL, updated_at ${timestamp} NOT NULL, deleted_at ${timestamp}, CONSTRAINT uq_canvas_node UNIQUE(canvas_id,node_id))`,
     mindRelations: `CREATE TABLE mind_relations (id ${id}, user_id ${owner} NOT NULL, canvas_id INTEGER REFERENCES mind_maps(id) ON DELETE CASCADE, src_node_id INTEGER NOT NULL REFERENCES mind_nodes(id) ON DELETE CASCADE, dst_node_id INTEGER NOT NULL REFERENCES mind_nodes(id) ON DELETE CASCADE, rel_type VARCHAR(20) NOT NULL, edge_key VARCHAR(32) NOT NULL, origin VARCHAR(10) NOT NULL, status VARCHAR(10) NOT NULL, note TEXT, created_at ${timestamp} NOT NULL, updated_at ${timestamp} NOT NULL, deleted_at ${timestamp}, CONSTRAINT uq_mind_relation UNIQUE(user_id,canvas_id,src_node_id,dst_node_id,rel_type,edge_key), CONSTRAINT ck_mind_relation_no_self CHECK(src_node_id <> dst_node_id))`,
     scheduledTasks: `CREATE TABLE scheduled_tasks (id ${id}, user_id ${owner}, event_id INTEGER, reminder_lead_minutes INTEGER, workspace_id INTEGER, filesystem_authorization_grant_id INTEGER, name VARCHAR(100) NOT NULL, payload TEXT NOT NULL, cron VARCHAR(60) NOT NULL, schedule_kind VARCHAR(16) NOT NULL DEFAULT 'cron', interval_minutes INTEGER, start_at ${timestamp}, end_at ${timestamp}, channels VARCHAR(40) NOT NULL, enabled BOOLEAN NOT NULL, delivery_targets ${backend === 'sqlite' ? 'TEXT' : 'JSON'}, authorized_tools ${backend === 'sqlite' ? 'TEXT' : 'JSON'} NOT NULL DEFAULT '[]', email_attachment_file_ids ${backend === 'sqlite' ? 'TEXT' : 'JSON'} NOT NULL DEFAULT '[]', last_run_at ${timestamp}, last_run_failed BOOLEAN, created_at ${timestamp} NOT NULL, updated_at ${timestamp} NOT NULL${backend === 'sqlite' ? ', CHECK(workspace_id IS NULL AND filesystem_authorization_grant_id IS NULL)' : ''})`,

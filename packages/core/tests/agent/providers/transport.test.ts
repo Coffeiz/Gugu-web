@@ -34,9 +34,9 @@ async function close(value: Server) { value.closeAllConnections(); await new Pro
 const deps = (transport: ProviderDriverDependencies['transport']): ProviderDriverDependencies => ({ transport, digest: () => 'synthetic-network-digest' })
 
 it('RAG 查询 embedding 经真实受控传输读取向量且不跟随重定向',async()=>{
- let calls=0,redirect=false,authorization='',body=''
+ let calls=0,redirect=false,authorization='',encoding='',accept='',body=''
  const {value,base}=await server((request,response)=>{
-  calls++;authorization=String(request.headers.authorization||'');request.setEncoding('utf8')
+  calls++;authorization=String(request.headers.authorization||'');encoding=String(request.headers['accept-encoding']||'');accept=String(request.headers.accept||'');request.setEncoding('utf8')
   request.on('data',chunk=>{body+=chunk});request.on('end',()=>{
    if(redirect){response.writeHead(302,{location:'/unexpected'});response.end();return}
    response.writeHead(200,{'content-type':'application/json'});response.end(JSON.stringify({data:[{embedding:[0.2,0.8]}]}))
@@ -46,7 +46,7 @@ it('RAG 查询 embedding 经真实受控传输读取向量且不跟随重定向'
  const settings={provider:'local',baseUrl:`${base}/v1`,model:'synthetic-model',apiKey:'synthetic-key',dimensions:2,allowLocal:true}
  try{
   expect(await embedRagQuery(settings,'合成查询',transport,new AbortController().signal)).toEqual({vector:[0.2,0.8],outcome:'success',httpStatus:200})
-  expect(authorization).toBe('Bearer synthetic-key');expect(JSON.parse(body)).toMatchObject({model:'synthetic-model',input:'合成查询'})
+  expect(authorization).toBe('Bearer synthetic-key');expect(encoding).toBe('identity');expect(accept).toBe('application/json');expect(JSON.parse(body)).toMatchObject({model:'synthetic-model',input:'合成查询'})
   redirect=true;body=''
   expect(await embedRagQuery(settings,'其他查询',transport,new AbortController().signal)).toEqual({vector:[],outcome:'http_error',httpStatus:302})
   expect(calls).toBe(2)

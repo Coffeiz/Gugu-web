@@ -56,6 +56,22 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
     try { expect(await desktopHandlers(host, async () => null)['gugu:clients:list']!()).toEqual(expect.arrayContaining([expect.objectContaining({ name: '新联系人' })])) }
     finally { await host.close() }
   })
+  it('联系人经具名 IPC 删除后不再出现在 SQLite 列表中，且重启后仍已删除', async () => {
+    const root = directory(), database = join(root, 'core.db')
+    const entry = resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js')
+    let host = await CoreHost.launch(process.execPath, entry, database)
+    let client: { id: number }
+    try {
+      const handlers = desktopHandlers(host, async () => null)
+      client = await handlers['gugu:clients:create']!('待删除联系人') as typeof client
+      await handlers['gugu:clients:delete']!(client.id)
+      expect(await handlers['gugu:clients:list']!()).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: client.id })]))
+    } finally { await host.close() }
+    host = await CoreHost.launch(process.execPath, entry, database)
+    try {
+      expect(await desktopHandlers(host, async () => null)['gugu:clients:list']!()).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: client!.id })]))
+    } finally { await host.close() }
+  })
   it('项目重命名经具名 IPC 写入正式 SQLite 并在重启后保留', async () => {
     const root = directory(), database = join(root, 'core.db')
     const runtime = await LocalRuntime.initialize(database)
@@ -72,6 +88,134 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
     host = await CoreHost.launch(process.execPath, entry, database)
     try { expect(await desktopHandlers(host, async () => null)['gugu:projects:list']!()).toEqual(expect.arrayContaining([expect.objectContaining({ name: '新项目', version: 2 })])) }
     finally { await host.close() }
+  })
+  it('日历经具名 IPC 编辑、软删除、Undo/Redo 并通过正式 SQLite 持久化', async () => {
+    const root = directory(), database = join(root, 'core.db')
+    const entry = resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js')
+    let host = await CoreHost.launch(process.execPath, entry, database)
+    let event: { id: number; title: string; date: string; version: number }
+    try {
+      const handlers = desktopHandlers(host, async () => null)
+      event = await handlers['gugu:calendar:create']!('桌面日历回归', '2026-11-16') as typeof event
+      expect(event).toMatchObject({ title: '桌面日历回归', date: '2026-11-16', version: 1 })
+      event = await handlers['gugu:calendar:update']!(event.id, { version: event.version, title: '更新的桌面日程', date: '2026-11-17' }) as typeof event
+      expect(event).toMatchObject({ title: '更新的桌面日程', date: '2026-11-17', version: 2 })
+      await expect(handlers['gugu:calendar:update']!(event.id, { version: 1, title: '旧版本' })).rejects.toMatchObject({ code: 'conflict' })
+      await handlers['gugu:calendar:delete']!(event.id, event.version)
+      expect(await handlers['gugu:calendar:list']!()).toEqual([])
+      const preview = await handlers['gugu:undo:preview']!('desktop-calendar') as { undo: { operation_id: string; can_undo: boolean } }
+      expect(preview.undo).toMatchObject({ can_undo: true })
+    } finally { await host.close() }
+    host = await CoreHost.launch(process.execPath, entry, database)
+    try {
+      const handlers = desktopHandlers(host, async () => null)
+      await handlers['gugu:undo:apply']!('desktop-calendar', (await handlers['gugu:undo:preview']!('desktop-calendar') as { undo: { operation_id: string } }).undo.operation_id, randomUUID())
+      const events = await handlers['gugu:calendar:list']!() as typeof event[]
+      event = events[0]!
+      expect(event).toMatchObject({ id: event.id, title: '更新的桌面日程', date: '2026-11-17', version: 4 })
+      const preview = await handlers['gugu:undo:preview']!('desktop-calendar') as { redo: { operation_id: string; can_redo: boolean } }
+      expect(preview.redo).toMatchObject({ can_redo: true })
+      await handlers['gugu:undo:redo']!('desktop-calendar', preview.redo.operation_id, randomUUID())
+      expect(await handlers['gugu:calendar:list']!()).toEqual([])
+    } finally { await host.close() }
+    const databaseView = new DatabaseSync(database)
+    try {
+      expect(databaseView.prepare("SELECT operation FROM rag_index_jobs WHERE source_type='calendar' AND source_id=?").get(String(event!.id))).toMatchObject({ operation: 'delete' })
+    } finally { databaseView.close() }
+  })
+  it('便签经具名 IPC 创建、版本更新和软删除，均写入正式 SQLite 并在重启后保留', async () => {
+    const root = directory(), database = join(root, 'core.db')
+    const entry = resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js')
+    let host = await CoreHost.launch(process.execPath, entry, database)
+    let note: { id: number; contentMd: string; version: number }
+    try {
+      const handlers = desktopHandlers(host, async () => null)
+      note = await handlers['gugu:mind:notes:create']!('# 桌面便签\n\n正文') as typeof note
+      expect(note).toMatchObject({ contentMd: '# 桌面便签\n\n正文', version: 1 })
+      expect(await handlers['gugu:mind:notes:list']!()).toEqual([note])
+      note = await handlers['gugu:mind:notes:update']!(note.id, { version: note.version, contentMd: '# 桌面便签\n\n更新正文' }) as typeof note
+      expect(note).toMatchObject({ contentMd: '# 桌面便签\n\n更新正文', version: 2 })
+      await expect(handlers['gugu:mind:notes:update']!(note.id, { version: 1, contentMd: '过期版本' })).rejects.toMatchObject({ code: 'conflict' })
+    } finally { await host.close() }
+    host = await CoreHost.launch(process.execPath, entry, database)
+    try {
+      const handlers = desktopHandlers(host, async () => null)
+      expect(await handlers['gugu:mind:notes:list']!()).toEqual([note!])
+      await handlers['gugu:mind:notes:delete']!(note!.id)
+      expect(await handlers['gugu:mind:notes:list']!()).toEqual([])
+      const preview = await handlers['gugu:undo:preview']!('desktop-mind') as { undo: { operation_id: string; can_undo: boolean } }
+      expect(preview.undo).toMatchObject({ can_undo: true })
+      await handlers['gugu:undo:apply']!('desktop-mind', preview.undo.operation_id, randomUUID())
+      expect(await handlers['gugu:mind:notes:list']!()).toEqual([
+        expect.objectContaining({ id: note!.id, contentMd: '# 桌面便签\n\n更新正文', version: 4 }),
+      ])
+    }
+    finally { await host.close() }
+  })
+  it('画布经具名 IPC 创建、改名、软删除及 Undo/Redo 持久化到正式 SQLite', async () => {
+    const root = directory(), database = join(root, 'core.db')
+    const entry = resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js')
+    let host = await CoreHost.launch(process.execPath, entry, database)
+    let canvas: { id: number; title: string }
+    try {
+      const handlers = desktopHandlers(host, async () => null)
+      canvas = await handlers['gugu:mind:canvases:create']!('桌面画布') as typeof canvas
+      expect(await handlers['gugu:mind:canvases:list']!()).toEqual([expect.objectContaining({ id: canvas.id, title: '桌面画布' })])
+      canvas = await handlers['gugu:mind:canvases:update']!(canvas.id, { title: '更新的桌面画布' }) as typeof canvas
+      expect(canvas.title).toBe('更新的桌面画布')
+      await handlers['gugu:mind:canvases:delete']!(canvas.id)
+      expect(await handlers['gugu:mind:canvases:list']!()).toEqual([])
+    } finally { await host.close() }
+    host = await CoreHost.launch(process.execPath, entry, database)
+    try {
+      const handlers = desktopHandlers(host, async () => null)
+      const undo = await handlers['gugu:undo:preview']!('desktop-mind') as { undo: { operation_id: string; can_undo: boolean } }
+      expect(undo.undo).toMatchObject({ can_undo: true })
+      await handlers['gugu:undo:apply']!('desktop-mind', undo.undo.operation_id, randomUUID())
+      expect(await handlers['gugu:mind:canvases:list']!()).toEqual([expect.objectContaining({ id: canvas!.id, title: '更新的桌面画布' })])
+      const redo = await handlers['gugu:undo:preview']!('desktop-mind') as { redo: { operation_id: string; can_redo: boolean } }
+      expect(redo.redo).toMatchObject({ can_redo: true })
+      await handlers['gugu:undo:redo']!('desktop-mind', redo.redo.operation_id, randomUUID())
+      expect(await handlers['gugu:mind:canvases:list']!()).toEqual([])
+    } finally { await host.close() }
+    const databaseView = new DatabaseSync(database)
+    try {
+      expect(databaseView.prepare('SELECT deleted_at FROM mind_maps WHERE id=?').get(canvas!.id)).toMatchObject({ deleted_at: expect.any(String) })
+    } finally { databaseView.close() }
+  })
+  it('画布便签经具名 IPC 创建、编辑、定位、移除并通过 SQLite 与 Undo/Redo 持久化', async () => {
+    const root = directory(), database = join(root, 'core.db')
+    const entry = resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js')
+    let host = await CoreHost.launch(process.execPath, entry, database)
+    let canvas: { id: number }
+    let item: { id: number; nodeId: number; x: number; y: number; node: { id: number; kind: string; contentMd: string; version: number } }
+    try {
+      const handlers = desktopHandlers(host, async () => null)
+      canvas = await handlers['gugu:mind:canvases:create']!('可编辑画布') as typeof canvas
+      item = await handlers['gugu:mind:canvases:notes:create']!(canvas.id, { contentMd: '# 画布便签\n\n初始正文', color: 'amber', x: 12, y: 34 }) as typeof item
+      expect(item).toMatchObject({ canvasId: canvas.id, x: 12, y: 34, node: { kind: 'canvas_note', contentMd: '# 画布便签\n\n初始正文', version: 1 } })
+      expect(await handlers['gugu:mind:canvases:items:list']!(canvas.id)).toEqual([expect.objectContaining({ id: item.id, nodeId: item.nodeId })])
+      await handlers['gugu:mind:canvases:notes:update']!(item.nodeId, { version: 1, contentMd: '# 画布便签\n\n更新正文' })
+      await expect(handlers['gugu:mind:canvases:notes:update']!(item.nodeId, { version: 1, contentMd: '过期版本' })).rejects.toMatchObject({ code: 'conflict' })
+      item = await handlers['gugu:mind:canvases:items:update']!(canvas.id, item.id, { x: 90, y: 120 }) as typeof item
+      expect(item).toMatchObject({ x: 90, y: 120 })
+      await handlers['gugu:mind:canvases:items:delete']!(canvas.id, item.id)
+      expect(await handlers['gugu:mind:canvases:items:list']!(canvas.id)).toEqual([])
+    } finally { await host.close() }
+    host = await CoreHost.launch(process.execPath, entry, database)
+    try {
+      const handlers = desktopHandlers(host, async () => null)
+      const undo = await handlers['gugu:undo:preview']!('desktop-mind') as { undo: { operation_id: string; can_undo: boolean } }
+      expect(undo.undo.can_undo).toBe(true)
+      await handlers['gugu:undo:apply']!('desktop-mind', undo.undo.operation_id, randomUUID())
+      expect(await handlers['gugu:mind:canvases:items:list']!(canvas!.id)).toEqual([
+        expect.objectContaining({ id: item!.id, x: 90, y: 120, node: expect.objectContaining({ contentMd: '# 画布便签\n\n更新正文', version: 2 }) }),
+      ])
+      const redo = await handlers['gugu:undo:preview']!('desktop-mind') as { redo: { operation_id: string; can_redo: boolean } }
+      expect(redo.redo.can_redo).toBe(true)
+      await handlers['gugu:undo:redo']!('desktop-mind', redo.redo.operation_id, randomUUID())
+      expect(await handlers['gugu:mind:canvases:items:list']!(canvas!.id)).toEqual([])
+    } finally { await host.close() }
   })
   it('拒绝旧 schema 的 Core 握手', async () => {
     const root = directory(), entry = join(root, 'old.mjs')
@@ -418,6 +562,6 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
           async () => null,
         ),
       ),
-    ).toHaveLength(9)
+    ).toHaveLength(29)
   })
 })

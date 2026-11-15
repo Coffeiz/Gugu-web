@@ -1,4 +1,4 @@
-import type { Kysely, Selectable } from 'kysely'
+import type { Kysely, Selectable, Transaction } from 'kysely'
 import { dataContext } from '../contracts/index.js'
 import { databaseTime, nowUtc, utc, type Clock } from '../data/codec.js'
 import type { Backend } from '../data/repositories.js'
@@ -17,7 +17,7 @@ export function createSqlMindCanvasDeleteRuntime(db: Kysely<Database>, backend: 
     transaction: (rawOwner, work) => {
       const canonical = dataContext(rawOwner).ownerId
       const owner = backend === 'sqlite' ? canonical.replaceAll('-', '') : canonical
-      return db.transaction().execute(async tx => work({
+      const run = async (tx: Transaction<Database>) => work({
         async delete(_owner, id) {
           let query = tx.selectFrom('mind_maps').selectAll().where('id', '=', id).where('user_id', '=', owner).where('deleted_at', 'is', null)
           if (backend === 'postgres') query = query.forUpdate()
@@ -49,7 +49,8 @@ export function createSqlMindCanvasDeleteRuntime(db: Kysely<Database>, backend: 
           return result
         },
         async recordUndo(record) { await recordForwardUndoOperation(tx, backend, { ...record, userId: canonical }, clock) },
-      }))
+      })
+      return db.isTransaction ? run(db as Transaction<Database>) : db.transaction().execute(run)
     }, publishChanged, reportFailure,
   }
 }

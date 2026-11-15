@@ -73,14 +73,19 @@ import { createImPlatformSettingsReader } from './modules/im/platform-settings.j
 import { createCredentialDeletion } from '@gugu/core/byok/credential-delete'
 import { createCredentialPatch } from '@gugu/core/byok/credential-patch'
 import { createCredentialModelsPreview } from '@gugu/core/byok/credential-models-preview'
+import { createCredentialSavedTest, createCredentialTestPreview } from '@gugu/core/byok/credential-test-preview'
+import { createByokMediaCapabilityProbe } from '@gugu/core/byok/media-capability-probe'
 import { createCredentialCreator } from '@gugu/core/byok/credential-create'
 import { createProviderCapabilityPreview } from '@gugu/core/byok/capabilities-preview'
 import { createByokListService, createPostgresByokListReader } from '@gugu/core/agent/config'
 import { createConfiguredByokEnvelope } from './adapters/byok-envelope.js'
 import { createByokGateReader } from './modules/byok/gate.js'
 import { createByokModelsPreviewFetcher } from './modules/byok/models-preview.js'
+import { createByokMediaCapabilityProbeRunner } from './modules/byok/media-capability-probe.js'
+import { createByokCredentialTestProbe } from './modules/byok/credential-test-preview.js'
 import { createStorageLiveTotals } from '@gugu/core/admin/storage-live-totals'
 import { createUserSkillDeletion } from '@gugu/core/agent/skills/user-delete'
+import { createUserSkillLister } from '@gugu/core/agent/skills/user-list'
 import { createSafeEgressSettingsReader } from './modules/admin/safe-egress-settings.js'
 import { createSafeEgressFileUpdater } from './modules/admin/safe-egress-update.js'
 import { createSafeEgressFileProbe } from './modules/admin/safe-egress-probe.js'
@@ -1356,6 +1361,21 @@ function createWebUiApp(
       decrypt: async row => createConfiguredByokEnvelope(env).decrypt({ ciphertext: row.encrypted_value, nonce: row.nonce, encryptedDataKey: row.encrypted_data_key, keyVersion: row.key_version }),
       fetchModels: createByokModelsPreviewFetcher(env),
     }) },
+    credentialTestPreview: { preview: createCredentialTestPreview(core.db, {
+      enabled: createByokGateReader(resolveConfigOverridePath(env), env),
+      decrypt: async row => createConfiguredByokEnvelope(env).decrypt({ ciphertext: row.encrypted_value, nonce: row.nonce, encryptedDataKey: row.encrypted_data_key, keyVersion: row.key_version }),
+      probe: createByokCredentialTestProbe(env),
+    }), savedTest: createCredentialSavedTest(core.db, {
+      enabled: createByokGateReader(resolveConfigOverridePath(env), env),
+      decrypt: async row => createConfiguredByokEnvelope(env).decrypt({ ciphertext: row.encrypted_value, nonce: row.nonce, encryptedDataKey: row.encrypted_data_key, keyVersion: row.key_version }),
+      probe: createByokCredentialTestProbe(env),
+    }) },
+    credentialMediaProbe: { probe: createByokMediaCapabilityProbe(core.db, {
+      enabled: createByokGateReader(resolveConfigOverridePath(env), env),
+      decrypt: async row => createConfiguredByokEnvelope(env).decrypt({ ciphertext: row.encrypted_value, nonce: row.nonce,
+        encryptedDataKey: row.encrypted_data_key, keyVersion: row.key_version }),
+      probe: createByokMediaCapabilityProbeRunner(env),
+    }) },
     credentialCreate: { create: createCredentialCreator({
       transaction: work => withPostgresTransaction(pool, client => work((sql, values) => client.query<Record<string, unknown>>(sql, [...values]))),
       enabled: createByokGateReader(resolveConfigOverridePath(env), env),
@@ -1371,6 +1391,7 @@ function createWebUiApp(
     }) },
     providerCapabilityPreview: { preview: createProviderCapabilityPreview(createByokGateReader(resolveConfigOverridePath(env), env)) },
     userSkillDelete: { remove: createUserSkillDeletion(core.db, 'postgres', async ownerId => { await publisher.publishResourceChanged({ ownerId, resource: 'skills', operation: 'refresh' }) }) },
+    userSkillList: { list: createUserSkillLister(core.db, 'postgres') },
     notifications: createKyselyNotificationOperations(core.db, 'postgres'),
     track: createTrackOperations(pool),
   })

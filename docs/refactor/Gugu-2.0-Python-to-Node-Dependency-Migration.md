@@ -150,7 +150,7 @@
 | `gugu-core` Python wheel | 顶层 `packages/core/` TypeScript | 项目/联系人首批已迁；其余 Domain/Application 逐域迁移 | 中 |
 | `gugu_core/data` SQLAlchemy | `packages/core/src/data/` + Kysely | 首批已落地；后续仍须**跨域事务整体迁移**，不得 Python/Node 双写 | 高 |
 | `gugu_core.data.runtime.LocalRuntime` | Node SQLite Host | 显式 initialize/open/migrate/close | 高 |
-| `gugu_core.data.migrations` | SQLite 增量迁移器 | 当前本地 schema 16；v1 至 v15 显式备份升级及失败回滚，不因换壳升级 schema；其余业务表仍待迁移 | 高 |
+| `gugu_core.data.migrations` | SQLite 增量迁移器 | 当前本地 schema 17；v1 至 v16 显式备份升级及失败回滚；schema 17 增加可重建 RAG 索引表，业务来源和 Worker 生产接入仍待完成 | 高 |
 | `gugu-desktop-host` Python 管道进程 | 独立 Node 26 Core 进程 | Node 已替换 Python；Electron Main 继续使用 NDJSON v2、Worker 与收据契约 | 中 |
 | 旧 Rust 桌面 Host | Electron + TS Main/Preload | 已迁入窗口/生命周期与 IPC 的安全、恢复契约；Core 不依赖 Electron | 高 |
 | `@microsoft/mxc-sdk@1.0.1` | **复用（PoC）** | 通过 `packages/sandbox/src/mxc.ts` 适配 Host 注入的原生后端；保留有界协议/能力校验，不导入 Electron | 高 |

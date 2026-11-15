@@ -27,6 +27,7 @@ import { registerAdminMaintenanceStatusRoutes } from './modules/admin/maintenanc
 import type { createAdminMaintenanceStatus } from '@gugu/core/maintenance/admin-status'
 import { registerServiceStatusRoute, type createServiceStatusReader } from './modules/admin/service-status.js'
 import { registerAttachmentDownloadRoute, type AttachmentDownloadOptions } from './modules/agent/attachments/download.js'
+import { registerAttachmentThumbnailRoute } from './modules/agent/attachment-thumbnail.js'
 import { registerUserBotBindingCodeRoutes, type UserBotBindingCodeOptions } from './modules/im/binding-code.js'
 import { registerLoopScopeProxyRoutes } from './modules/loopscope/proxy.js'
 import { registerTaskFilesystemRevokeRoute, type TaskFilesystemRevokeOptions } from './modules/scheduled-tasks/task-filesystem-revoke.js'
@@ -45,9 +46,12 @@ import { registerCredentialCreateRoute, type CredentialCreateOptions } from './m
 import { registerCredentialListRoute, type CredentialListOptions } from './modules/byok/credential-list.js'
 import { registerCredentialPatchRoute, type CredentialPatchRouteOptions } from './modules/byok/credential-patch.js'
 import { registerCredentialModelsPreviewRoute, type CredentialModelsPreviewOptions } from './modules/byok/models-preview.js'
+import { registerCredentialTestPreviewRoute, type CredentialTestPreviewRouteOptions } from './modules/byok/credential-test-preview.js'
+import { registerByokMediaCapabilityProbeRoute, type ByokMediaProbeOptions } from './modules/byok/media-capability-probe.js'
 import { registerProviderCapabilityPreviewRoute, type ProviderCapabilityPreviewOptions } from './modules/byok/capabilities-preview.js'
 import { registerStorageLiveTotalsRoute } from './modules/admin/storage-live-totals.js'
 import { registerUserSkillDeleteRoute, type UserSkillDeleteOptions } from './modules/skills/user-delete.js'
+import { registerUserSkillListRoute, type UserSkillListOptions } from './modules/agent-skills/user-list.js'
 import { registerSafeEgressReadRoute } from './modules/admin/safe-egress-read.js'
 import { registerImMemorySummaryRoutes, type ImMemorySummaryOptions } from './modules/admin/im-memory-summary.js'
 import { registerAdminUserBanRoute, type AdminUserBanOptions } from './modules/admin/user-ban.js'
@@ -147,6 +151,7 @@ import { registerWorkspaceDirectoryRoutes } from './domains/workspaces/workspace
 import { registerFileBrowserRoutes, type FileBrowserOperations } from './domains/files/browser.js'
 import { registerFolderWriteRoutes, type FolderWriteOperations } from './domains/files/folder-writes.js'
 import { registerFileReadRoutes, type FileReadOperations } from './domains/files/file-reads.js'
+import { registerFileThumbnailRoute } from './modules/files/thumbnail.js'
 import { registerFileDeleteRoutes, type FileDeleteOperations } from './domains/files/file-delete.js'
 import { registerFileRestoreRoutes, type FileRestoreOperations } from './domains/files/file-restore.js'
 import { registerTrashRoutes, type TrashOperations } from './domains/files/trash.js'
@@ -419,9 +424,12 @@ export interface WebUiOptions {
   credentialCreate?: Omit<CredentialCreateOptions, 'requireUser' | 'ownerIdFromRequest'>
   credentialPatch?: Omit<CredentialPatchRouteOptions, 'requireUser' | 'ownerIdFromRequest'>
   credentialModelsPreview?: Omit<CredentialModelsPreviewOptions, 'requireUser' | 'ownerIdFromRequest'>
+  credentialTestPreview?: Omit<CredentialTestPreviewRouteOptions, 'requireUser' | 'ownerIdFromRequest'>
+  credentialMediaProbe?: Omit<ByokMediaProbeOptions, 'requireUser' | 'ownerIdFromRequest'>
   credentialList?: Omit<CredentialListOptions, 'requireUser' | 'ownerIdFromRequest'>
   providerCapabilityPreview?: Omit<ProviderCapabilityPreviewOptions, 'requireUser'>
   userSkillDelete?: Omit<UserSkillDeleteOptions, 'requireUser' | 'ownerIdFromRequest'>
+  userSkillList?: Omit<UserSkillListOptions, 'requireUser' | 'ownerIdFromRequest'>
   secretPromptCancel?: Omit<SecretPromptCancelOptions, 'requireUser' | 'ownerIdFromRequest'>
   safeEgressRead?: { readSettings(): SafeEgressReadSettings }
   imMemorySummary?: Omit<ImMemorySummaryOptions, 'requireAdmin'>
@@ -700,6 +708,9 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => registerAttachmentDownloadRoute(routes, { ...options.attachmentDownload!,
       requireUser: async request => { void userFromRequest(request) },
       ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId }))
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerAttachmentThumbnailRoute(routes, { ...options.attachmentDownload!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId }))
   }
   if (options.terminalDelete) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => registerTerminalDeleteRoute(routes, { ...options.terminalDelete!,
@@ -748,6 +759,18 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
       requireUser: async request => { void userFromRequest(request) },
       ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId }))
   }
+  if (options.credentialTestPreview) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerCredentialTestPreviewRoute(routes, { ...options.credentialTestPreview!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId }))
+  }
+  if (options.credentialMediaProbe) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerByokMediaCapabilityProbeRoute(routes, {
+      ...options.credentialMediaProbe!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
+    }))
+  }
   if (options.providerCapabilityPreview) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => registerProviderCapabilityPreviewRoute(routes, { ...options.providerCapabilityPreview!,
       requireUser: async request => { void userFromRequest(request) } }))
@@ -765,6 +788,13 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
         requireUser: async (request) => { void userFromRequest(request) },
         ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId })
     })
+  }
+  if (options.userSkillList) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerUserSkillListRoute(routes, {
+      ...options.userSkillList!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
+    }))
   }
   if (options.onboarding) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => {
@@ -1026,6 +1056,11 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
   if (options.fileReads) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => {
       registerFileReadRoutes(routes, {
+        requireUser: async (request) => { void userFromRequest(request) },
+        ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId,
+        operations: options.fileReads!,
+      })
+      registerFileThumbnailRoute(routes, {
         requireUser: async (request) => { void userFromRequest(request) },
         ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId,
         operations: options.fileReads!,

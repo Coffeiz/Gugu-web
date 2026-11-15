@@ -895,6 +895,30 @@
     "keyBehavior": "附件owner隔离和安全文件读取",
     "ci": "node-webui"
   },
+  "apps/web-host/tests/agent/attachment-thumbnail.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/files/read.ts:planAttachmentThumbnail",
+    "productionEntry": "apps/web-host/src/modules/agent/attachment-thumbnail.ts",
+    "keyBehavior": "附件缩略图 owner 隔离、图片格式、动画原图与安全缓存响应",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent-skills/user-list.test.ts": {
+    "domain": "skills",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/skills/user-list.ts",
+    "productionEntry": "apps/web-host/src/modules/agent-skills/user-list.ts",
+    "keyBehavior": "认证后按 owner 读取 Skills 首屏记录，不触发工具发现",
+    "ci": "node-webui"
+  },
+  "packages/core/tests/unit/files/attachment-thumbnail.test.ts": {
+    "domain": "files",
+    "layer": "L1",
+    "owner": "packages/core/src/files/read.ts:planAttachmentThumbnail",
+    "productionEntry": "apps/web-host/src/modules/agent/attachment-thumbnail.ts",
+    "keyBehavior": "附件图片授权分类、SVG和动画原图语义及缩略图尺寸",
+    "ci": "core-node"
+  },
   "compat/tests/test_attachment_download.py": {
     "domain": "api",
     "layer": "L2",
@@ -1046,6 +1070,30 @@
     "productionEntry": "apps/web-host/src/domains/files/file-reads-postgres.ts",
     "keyBehavior": "受控根相对路径读取、越界与符号链接拒绝及系统错误传播",
     "ci": "node-webui"
+  },
+  "apps/web-host/tests/files/file-thumbnail-host.test.ts": {
+    "domain": "files",
+    "layer": "L1",
+    "owner": "packages/core/src/files/read.ts:planFileThumbnail",
+    "productionEntry": "apps/web-host/src/modules/files/thumbnail.ts",
+    "keyBehavior": "鉴权、owner 隔离、缺失物理文件、MIME 错误、完整图与 WebP 缩略图响应",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/files/file-reads-postgres-integration.test.ts": {
+    "domain": "files",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/files/file-reads-postgres.ts",
+    "productionEntry": "apps/web-host/src/modules/files/thumbnail.ts",
+    "keyBehavior": "owner-scoped PostgreSQL 文件元数据与 Local 图片读取的隔离集成用例",
+    "ci": "node-webui"
+  },
+  "packages/core/tests/unit/files/file-thumbnail.test.ts": {
+    "domain": "files",
+    "layer": "L1",
+    "owner": "packages/core/src/files/read.ts:planFileThumbnail",
+    "productionEntry": "apps/web-host/src/modules/files/thumbnail.ts",
+    "keyBehavior": "Python 兼容图片 MIME 归一化、generic MIME 识别和缩略图尺寸规则",
+    "ci": "core-node"
   },
 "apps/web-host/tests/admin/email-recipient-count.test.ts": {
     "domain": "admin",
@@ -4508,7 +4556,7 @@
     "layer": "L1",
     "owner": "packages/core/src/search/sqlite-conversations.ts",
     "productionEntry": "GET /api/v1/search",
-    "keyBehavior": "正式 SQLite 会话搜索归属、时间排序及结果限制",
+    "keyBehavior": "正式 SQLite 会话搜索归属、时间排序及 RAG 持久来源 baseline/上下文投影",
     "ci": "core-node"
   },
   "packages/core/tests/agent/sessions/ui-labels.test.ts": {
@@ -4860,10 +4908,17 @@
 "apps/web-host/tests/byok/envelope-new.test.ts":{"domain":"byok","layer":"L1","owner":"apps/web-host/src/modules/byok","productionEntry":"BYOK 创建（待生产入口接线）","keyBehavior":"信封跨 Python 加解密、版本轮换和密钥路径竞争","ci":"node-webui"},
 "apps/web-host/tests/byok/credential-create-new.test.ts":{"domain":"byok","layer":"L1","owner":"apps/web-host/src/modules/byok","productionEntry":"BYOK 创建（待生产入口接线）","keyBehavior":"凭据创建的隔离 PG、owner、并发与事务回滚","ci":"node-webui"},
 "apps/web-host/tests/byok/credential-create-route.test.ts":{"domain":"byok","layer":"L1","owner":"apps/web-host/src/modules/byok","productionEntry":"BYOK 创建（待生产入口接线）","keyBehavior":"创建请求校验与认证错误","ci":"node-webui"},
-"apps/web-host/tests/host/byok-create-main.integration.test.ts":{"domain":"byok","layer":"L2","owner":"apps/web-host/src/modules/byok","productionEntry":"BYOK POST/GET/PATCH/capabilities startServer 生产入口","keyBehavior":"隔离 PG create→list→patch、动态 gate、owner认证、目的地绑定、密钥遮蔽及 Python 解密","ci":"node-webui"},
+"apps/web-host/tests/host/byok-create-main.integration.test.ts":{"domain":"byok","layer":"L2","owner":"apps/web-host/src/modules/byok","productionEntry":"BYOK POST/GET/PATCH/models-preview/media-capability-probe/capabilities startServer 生产入口","keyBehavior":"隔离 PG create→list→patch→媒体探测、Provider 本地真实传输、owner认证、目的地绑定、密钥遮蔽及 Python 解密","ci":"node-webui"},
 "apps/web-host/tests/byok/credential-list.test.ts":{"domain":"byok","layer":"L1","owner":"apps/web-host/src/modules/byok/credential-list.ts","productionEntry":"BYOK GET Host 路由","keyBehavior":"认证、owner 传递、列表字段及密钥不泄露","ci":"node-webui"},
 "apps/web-host/tests/byok/capabilities-preview.test.ts":{"domain":"byok","layer":"L2","owner":"packages/core/src/byok/capabilities-preview.ts","productionEntry":"BYOK 能力预览 startServer 生产入口","keyBehavior":"无凭据/无外网能力快照、认证与gate、Python多Provider协议对照及额外密钥字段不泄露","ci":"node-webui"},
 "apps/web-host/tests/byok/credential-patch.test.ts":{"domain":"byok","layer":"L2","owner":"packages/core/src/byok/credential-patch.ts","productionEntry":"BYOK PATCH Core 隔离 PostgreSQL","keyBehavior":"owner隔离、跨目的地拒绝无副作用、显式换Key更新及事务授权","ci":"node-webui"},
+"apps/web-host/tests/byok/credential-models-preview.test.ts":{"domain":"byok","layer":"L2","owner":"packages/core/src/byok/credential-models-preview.ts","productionEntry":"BYOK models-preview Core 隔离 PostgreSQL","keyBehavior":"owner限定的已保存密钥复用、origin校验、显式新Key优先及请求失败前拒绝越权","ci":"node-webui"},
 "apps/web-host/tests/mcp/server-routes.test.ts":{"domain":"mcp","layer":"L1","owner":"apps/web-host/src/modules/mcp/servers.ts","productionEntry":"MCP CRUD Host 路由原型（未接生产组合根）","keyBehavior":"认证、owner 参数和保存后的失效/快照回调","ci":"node-webui"},
 "apps/web-host/tests/agent/mcp-schema-adapter.test.ts":{"domain":"mcp","layer":"L1","owner":"packages/core/src/mcp","productionEntry":"MCP 声明适配（SDK/manager 尚未接线）","keyBehavior":"旧 Python schema 命名、校验、降级与描述规则","ci":"node-webui"},
-"apps/web-host/tests/mcp/sdk-client.test.ts":{"domain":"mcp","layer":"L1","owner":"apps/web-host/src/modules/mcp","productionEntry":"MCP SDK HTTP client over pinned transport","keyBehavior":"官方 SDK 握手、发现及调用经受控传输","ci":"node-webui"}}
+"apps/web-host/tests/mcp/sdk-client.test.ts":{"domain":"mcp","layer":"L1","owner":"apps/web-host/src/modules/mcp","productionEntry":"MCP SDK HTTP client over pinned transport","keyBehavior":"官方 SDK 握手、发现及调用经受控传输","ci":"node-webui"},
+"apps/web-host/tests/byok/media-capability-probe.test.ts":{"domain":"byok","layer":"L2","owner":"packages/core/src/byok/media-capability-probe.ts","productionEntry":"apps/web-host/src/main.ts + pinned Node Provider transport","keyBehavior":"BYOK媒体探测按owner和目的地裁决凭据并实际发送本地合成媒体请求","ci":"node-webui"},
+"apps/web-host/tests/byok/credential-test-preview.test.ts":{"domain":"byok","layer":"L2","owner":"packages/core/src/byok/credential-test-preview.ts","productionEntry":"apps/web-host/src/main.ts + pinned Node Provider transport","keyBehavior":"草稿/已保存凭据试呼路由鉴权、LLM真实本地请求、无鉴权Embedding响应向量及错误映射","ci":"node-webui"},
+"packages/core/tests/byok/media-capability-probe.test.ts":{"domain":"byok","layer":"L1","owner":"packages/core/src/byok/media-capability-probe.ts","productionEntry":"apps/web-host/src/modules/byok/media-capability-probe.ts","keyBehavior":"保存密钥只对本owner同目的地复用，拒绝越权或换址且不产生写入","ci":"core-node"},
+"packages/core/tests/byok/credential-test-preview.test.ts":{"domain":"byok","layer":"L1","owner":"packages/core/src/byok/credential-test-preview.ts","productionEntry":"apps/web-host/src/modules/byok/credential-test-preview.ts","keyBehavior":"试呼只解密同owner同目的地的保存密钥，显式新Key优先且无持久化副作用","ci":"core-node"},
+"apps/web-host/tests/agent/conversation-tools-runtime-sqlite.test.ts":{"domain":"agent-tools","layer":"L1","owner":"apps/web-host/src/domains/agent-sessions/tools/agent-conversations.ts","productionEntry":"createAgentToolRegistry.search_conversations 实际 dispatch","keyBehavior":"临时 SQLite 会话事实表验证 Host 权限拒绝不泄露正文、owner/群聊/他人/工具角色过滤、baseline前历史检索、LIKE元字符字面匹配、多关键词、空结果及 Python 结果投影","ci":"node-webui"},
+"apps/web-host/tests/agent/rag-index-worker.test.ts":{"domain":"agent-rag","layer":"L2","owner":"apps/web-host/src/domains/agent-sessions/rag-index-worker.ts","productionEntry":"Host 调度器 + Core 持久 Worker","keyBehavior":"临时 SQLite 真实队列经 Host 调度器写入正式索引表，并验证排空、串行、错误、取消停止及禁用边界","ci":"node-webui"}}
