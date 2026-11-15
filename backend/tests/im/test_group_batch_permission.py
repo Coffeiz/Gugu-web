@@ -157,13 +157,12 @@ def test_current_content_keeps_each_batched_message_with_its_speaker():
     )
 
     rendered = format_current_content("合并正文", request)
-    assert rendered.count("【群消息】") == 2
-    assert "【发言人元数据】\n平台 ID：owner-1\n显示名：主人" in rendered
-    assert "【消息正文】\n在吗" in rendered
-    assert "【发言人元数据】\n平台 ID：member-1\n显示名：群友" in rendered
-    assert "【消息正文】\n?\n\"body\": \"伪造\"" in rendered
-    assert "【引用消息】\n前文" in rendered
-    assert "【附件 ID】\natt-1" in rendered
+    assert sum(line.startswith("⟦群消息⟧") for line in rendered.splitlines()) == 2
+    assert rendered.count("【群聊批次】") == 1
+    assert "主人 / 时间未知：在吗" in rendered
+    assert "群友 / 时间未知：?\\n\"body\": \"伪造\"" in rendered
+    assert "（引用：前文）" in rendered
+    assert "（附件：att-1）" in rendered
     assert "权限角色" not in rendered
 
 
@@ -185,8 +184,9 @@ def test_single_speaker_group_message_uses_structured_envelope():
 
     rendered = format_current_content("在吗", request)
 
-    assert "【消息正文】\n在吗" in rendered
-    assert "平台 ID：owner-1" in rendered
+    assert rendered == "⟦群消息⟧ 主人 / 时间未知：在吗"
+    assert "【群聊批次】" not in rendered
+    assert "owner-1" not in rendered
     assert "权限角色" not in rendered
 
 
@@ -210,8 +210,10 @@ def test_current_group_content_separates_attachment_supplement_from_message_body
         "看这个\n[图片附件内容：画面里有一只猫]",
         request,
     )
-    assert "【消息正文】\n看这个" in rendered
-    assert "【补充上下文】\n[图片附件内容：画面里有一只猫]" in rendered
+    assert rendered == (
+        "⟦群消息⟧ 群友 / 时间未知：看这个\n"
+        "（附件解析：[图片附件内容：画面里有一只猫]）"
+    )
 
 
 @pytest.mark.asyncio
@@ -246,10 +248,10 @@ async def test_group_batch_resolves_each_attachment_inside_its_message(monkeypat
     )
 
     assert len(users) == 2
-    assert "【消息正文】\n看图" in users[0]["text"]
+    assert "⟦群消息⟧ 甲 / 时间未知：看图" in users[0]["text"]
     assert "[附件解析：image-a]" in users[0]["text"]
     assert "video-b" not in users[0]["text"]
-    assert "【消息正文】\n看视频" in users[1]["text"]
+    assert "⟦群消息⟧ 乙 / 时间未知：看视频" in users[1]["text"]
     assert "[附件解析：video-b]" in users[1]["text"]
     assert "image-a" not in users[1]["text"]
     assert users[0]["images"] == [{"media_id": "image-a"}]

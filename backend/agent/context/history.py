@@ -315,7 +315,8 @@ def _adapt_saved_image_content(saved: list[dict], *, use_anthropic: bool) -> lis
 
 def _openai_history_message(message, request, *, strip_thinking: bool = False,
                             content_json=None, strip_history_images: bool = True,
-                            allow_tool_images: bool = False) -> list[dict]:
+                            allow_tool_images: bool = False, user_tz=None,
+                            batch_reminder: bool = False) -> list[dict]:
     if content_json is None:
         content_json = getattr(message, "content_json", None)
     if content_json is None:
@@ -323,7 +324,12 @@ def _openai_history_message(message, request, *, strip_thinking: bool = False,
             return [{"role": message.role, "content": message.content or ""}]
         from agent.im.context_loader import format_history_content
 
-        return [{"role": message.role, "content": format_history_content(message, request)}]
+        return [{
+            "role": message.role,
+            "content": format_history_content(
+                message, request, user_tz=user_tz, batch_reminder=batch_reminder,
+            ),
+        }]
 
     from agent.media.images import strip_image_for_history
     if strip_history_images:
@@ -437,9 +443,23 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
     """
     from .dynamic_tail import inline_message_time, message_time_reminder, message_timestamp
 
+    history = list(history)
+    group_batches: dict[str, list[int]] = {}
+    for index, message in enumerate(history):
+        run_id = getattr(message, "run_id", None)
+        if (getattr(message, "role", None) == "user"
+                and getattr(message, "chat_type", None) == "group"
+                and run_id):
+            group_batches.setdefault(str(run_id), []).append(index)
+    batch_reminder_indices = {
+        indices[0]
+        for indices in group_batches.values()
+        if len(indices) > 1
+    }
+
     parts: list[dict] = []
     protected_start = None
-    for message in history:
+    for message_index, message in enumerate(history):
         if (protected_start is None and protected_message_ids
                 and getattr(message, "id", None) in protected_message_ids):
             protected_start = len(parts)
@@ -544,7 +564,10 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
             else:
                 from agent.im.context_loader import format_history_content
 
-                content = format_history_content(message, request)
+                content = format_history_content(
+                    message, request, user_tz=user_tz,
+                    batch_reminder=message_index in batch_reminder_indices,
+                )
                 if is_user_message:
                     content = inline_message_time(content, timestamp)
                 parts.append({"role": message.role, "content": content})
@@ -554,6 +577,8 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
                 content_json=content_json,
                 strip_history_images=getattr(message, "_canonical_restored", True),
                 allow_tool_images=allow_tool_images,
+                user_tz=user_tz,
+                batch_reminder=message_index in batch_reminder_indices,
             )
             if is_user_message and rendered and rendered[0].get("role") == "user":
                 rendered[0]["content"] = inline_message_time(rendered[0].get("content"), timestamp)

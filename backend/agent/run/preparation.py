@@ -76,7 +76,7 @@ async def _load_mcp_tools(user_id, settings, allowed_tool_names=None):
     return [tool for tool in tools if tool.name in allowed]
 
 
-async def _prepare_group_batch_inputs(user_id, batch_messages, request, model_cfg, db):
+async def _prepare_group_batch_inputs(user_id, batch_messages, request, model_cfg, db, *, user_tz=None):
     """逐条解析群批次的正文和附件，返回当前轮 entries 及汇总附件数据。"""
     from agent.im.context_loader import format_current_group_message
     from agent.chat.attachments import IMAGE_COUNT
@@ -101,7 +101,10 @@ async def _prepare_group_batch_inputs(user_id, batch_messages, request, model_cf
         images.extend(row_images)
         media.extend(row_media)
         current_users.append({
-            "text": format_current_group_message(augmented_text, request, item),
+            "text": format_current_group_message(
+                augmented_text, request, item, user_tz=user_tz,
+                batch_reminder=len(batch_messages) > 1 and not current_users,
+            ),
             "images": row_images,
             "media": row_media,
             "platform_sent_ms": item.get("platform_sent_ms"),
@@ -662,7 +665,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         if req.chat_id and isinstance(batch_messages, list) and batch_messages:
             (current_user_inputs, aug_text, attach_cards,
              aug_images, aug_media) = await _prepare_group_batch_inputs(
-                user_id, batch_messages, req, model_cfg, db,
+                user_id, batch_messages, req, model_cfg, db, user_tz=user_tz,
             )
         else:
             # 引用属于各条群消息；私聊/Web 继续沿用原有引用前缀。
@@ -953,7 +956,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
 
     from agent.im.context_loader import format_current_content
     current_llm_text = (
-        "" if current_user_inputs else format_current_content(aug_text, req)
+        "" if current_user_inputs else format_current_content(aug_text, req, user_tz=user_tz)
     )
     prepared = await run_context.prepare_run(
         system_prompt=system_prompt,

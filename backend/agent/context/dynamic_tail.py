@@ -76,6 +76,14 @@ def message_timestamp(message):
     received_ms = _value("im_event_received_ms") or _value("event_received_ms")
     if isinstance(received_ms, (int, float)) and received_ms > 0:
         return datetime.fromtimestamp(received_ms / 1000, timezone.utc)
+    event_id = _value("event_id")
+    if event_id:
+        try:
+            event_ms = int(str(event_id).split("-", 1)[0])
+            if event_ms > 0:
+                return datetime.fromtimestamp(event_ms / 1000, timezone.utc)
+        except (TypeError, ValueError):
+            pass
     return (
         _value("created_at")
         or _value("sent_at")
@@ -99,12 +107,17 @@ def inline_message_time(content, message_time) -> str | list | dict:
             text.lstrip().startswith("【消息时间】") and "【消息正文】" in text
         ) or text.lstrip().startswith("【消息正文】")
 
+    def _has_group_record(text: str) -> bool:
+        return "⟦群消息⟧" in text
+
     def _header(text: str) -> str:
         if not prefix:
             return text
         return f"{prefix}\n{text}" if text else prefix
 
     if isinstance(content, str):
+        if _has_group_record(content):
+            return content
         if _already_wrapped(content):
             return _header(content)
         body_header = "【消息正文】\n"
@@ -114,6 +127,8 @@ def inline_message_time(content, message_time) -> str | list | dict:
             str(block.get("text") or "") for block in content
             if isinstance(block, dict) and block.get("type") == "text"
         ), "")
+        if _has_group_record(first_text):
+            return content
         if _already_wrapped(first_text):
             return ([{"type": "text", "text": f"{prefix}\n"}] if prefix else []) + content
         header = f"{prefix}\n【消息正文】\n" if prefix else "【消息正文】\n"
