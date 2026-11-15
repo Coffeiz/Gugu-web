@@ -272,6 +272,12 @@ test('IM 记忆 scope 从可信上下文和 owner reflection cursor 解析并经
     assert.match(JSON.stringify(ownerCrossGroupRows), /coffee current group/u)
     assert.match(JSON.stringify(ownerCrossGroupRows), /coffee other group/u)
     assert.doesNotMatch(JSON.stringify(await results('current_group')), /coffee other group/u)
+    const privateFromGroup = await dispatch('private-from-group', 'private_memory')
+    assert.equal(privateFromGroup.kind === 'completed' && privateFromGroup.successful, false)
+    if (privateFromGroup.kind === 'completed') {
+      assert.equal((privateFromGroup.value as { error: string }).error, '当前会话不能读取 owner 私人记忆')
+      assert.doesNotMatch(JSON.stringify(privateFromGroup.value), /coffee private memory/u)
+    }
   } finally {
     await core.close()
     await rm(directory, { recursive: true, force: true })
