@@ -116,3 +116,11 @@ export async function enqueueAgentRagRebuild(db:Kysely<any>,backend:'postgres'|'
    WHERE owner_user_id=${owner} AND source_type='memory' AND deleted_at IS NULL`.execute(tx)
  })
 }
+
+export async function readAgentRagRebuildProgress(db:Kysely<any>,backend:'postgres'|'sqlite',rawOwner:string,sourceType:string):Promise<{generation:number;completedGeneration:number;status:string}|null>{
+ const normalized=dataContext(rawOwner).ownerId
+ const owner=backend==='sqlite'?normalized.replaceAll('-',''):normalized
+ const result=await sql<{generation:number|string;completed_generation:number|string;status:string}>`SELECT generation,completed_generation,status FROM rag_index_jobs WHERE user_id=${owner} AND source_type=${sourceType}`.execute(db)
+ const row=result.rows[0]
+ return row?{generation:Number(row.generation),completedGeneration:Number(row.completed_generation),status:String(row.status)}:null
+}

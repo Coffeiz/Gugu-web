@@ -59,12 +59,22 @@ describe('read_knowledge through the Core tool dispatcher', () => {
     expect(observed).toEqual([{ operation: 'search', current: identity(), keyword: '发布 回滚', scopeType: '', limit: 5 }])
   })
 
-  it('rejects missing, ambiguous and out-of-range inputs before calling the Host port', async () => {
-    for (const input of [{}, { keyword: 'x', knowledge_id: 'k-1' }, { keyword: 'x', limit: 26 }]) {
+  it('preserves Python handler errors, ID precedence and range checks without searching invalid input', async () => {
+    const missing = await registry.tools.dispatch(call({}), scope())
+    expect(missing).toMatchObject({ kind: 'completed', successful: false, executed: true,
+      value: { error: expect.stringContaining('keyword') } })
+    const exact = await registry.tools.dispatch(call({ keyword: 'ignored', knowledge_id: 'k-1' }), scope())
+    expect(exact).toMatchObject({ kind: 'completed', successful: true, value: { entry: { knowledge_id: 'k-1' } } })
+    const invalidLimit = await registry.tools.dispatch(call({ keyword: 'x', limit: 26 }), scope())
+    expect(invalidLimit).toMatchObject({ kind: 'completed', successful: false, executed: true,
+      value: { error: expect.stringContaining('1 到 25') } })
+    for (const input of [null, []]) {
       const result = await registry.tools.dispatch(call(input), scope())
       expect(result).toMatchObject({ kind: 'completed', successful: false, executed: false })
     }
-    expect(observed).toEqual([])
+    expect(observed).toEqual([
+      { operation: 'read', current: identity(), id: 'k-1' },
+    ])
   })
 
   it('rechecks permission and does not reveal indexed content after revocation', async () => {

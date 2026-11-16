@@ -359,6 +359,14 @@
     "keyBehavior": "能力覆盖HTTP参数与管理员权限",
     "ci": "node-webui"
   },
+  "apps/web-host/tests/admin/llm-capabilities-preview.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/providers/registry.ts",
+    "productionEntry": "apps/web-host/src/app.ts 管理员认证 → Core Provider能力快照",
+    "keyBehavior": "管理员认证、Python Ollama native能力预览、DTO限制与额外密钥不回显",
+    "ci": "node-webui"
+  },
   "apps/web-host/tests/admin/llm-preset-selection.test.ts": {
     "domain": "api",
     "layer": "L2",
@@ -951,6 +959,78 @@
     "keyBehavior": "附件owner隔离和安全文件读取",
     "ci": "node-webui"
   },
+  "apps/web-host/tests/agent/attachment-upload.test.ts": {
+    "domain": "agent-attachments",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/agent/attachment-upload.ts",
+    "productionEntry": "apps/web-host/src/main.ts → createApp authenticated owner route",
+    "keyBehavior": "multipart 文件先于 voice 字段、上传容量流式限制、Python 响应 DTO 与 owner 认证",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/attachment-delete.test.ts": {
+    "domain": "agent-attachments",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/agent/attachment-delete.ts",
+    "productionEntry": "apps/web-host/src/main.ts → Core delete use case → PostgreSQL/Local adapter",
+    "keyBehavior": "认证 owner、Python 200/404/409 回执映射及 attached 附件拒删",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/attachment-clear.test.ts": {
+    "domain": "agent-attachments",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/agent/attachment-clear.ts",
+    "productionEntry": "apps/web-host/src/main.ts → Core clear use case → PostgreSQL/Local and optional Redis legacy adapter",
+    "keyBehavior": "认证 owner、批量删除回执及旧 Redis 清理装配",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/attachment-legacy-redis.test.ts": {
+    "domain": "agent-attachments",
+    "layer": "L2",
+    "owner": "apps/web-host/src/adapters/redis-events.ts",
+    "productionEntry": "Host Redis RESP adapter for legacy chatfile scan/delete",
+    "keyBehavior": "Redis 脚本按 owner 前缀列出兼容旧键并按精确键删除；隔离 RESP server 不代表真实 Redis 验收",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/attachment-delete-postgres.test.ts": {
+    "domain": "agent-attachments",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/agent/attachment-staging-postgres.ts",
+    "productionEntry": "PostgreSQL draft row and shared-storage cleanup adapter with Local FS",
+    "keyBehavior": "draft 行锁删除、attached 状态保护、共享 storage_key 引用检查；Pool 为合成替身",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/attachment-staging-postgres.test.ts": {
+    "domain": "agent-attachments",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/agent/attachment-staging-postgres.ts",
+    "productionEntry": "apps/web-host/src/main.ts PostgreSQL staging adapter with Local storage",
+    "keyBehavior": "owner 锁定容量复核、草稿 DTO/字节持久化及写入失败后的孤儿文件清理；Pool 为合成替身",
+    "ci": "node-webui"
+  },
+  "packages/core/tests/agent/attachment-staging.test.ts": {
+    "domain": "agent-attachments",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/attachments/staging.ts",
+    "productionEntry": "Core attachment staging rules used by the Web Host",
+    "keyBehavior": "Python 文件名、扩展名分类、音频物化边界及语音过大状态码兼容",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/attachment-draft-delete.test.ts": {
+    "domain": "agent-attachments",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/attachments/delete-draft.ts",
+    "productionEntry": "Core owner-bound draft deletion use case",
+    "keyBehavior": "草稿删除后才做未引用字节清理，not_found/conflict 不触碰存储",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/attachment-draft-clear.test.ts": {
+    "domain": "agent-attachments",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/attachments/clear-drafts.ts",
+    "productionEntry": "Core clear use case used by PostgreSQL/Redis Host ports",
+    "keyBehavior": "DB draft rows precede unique byte cleanup and per-entry legacy Redis cleanup",
+    "ci": "core-node"
+  },
   "apps/web-host/tests/agent/attachment-thumbnail.test.ts": {
     "domain": "api",
     "layer": "L2",
@@ -1189,6 +1269,22 @@
     "owner": "packages/core/src/byok/embedding-rebuild-status.ts",
     "productionEntry": "apps/web-host/src/main.ts",
     "keyBehavior": "用户重建状态及错误脱敏",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/byok/embedding-rebuild.test.ts": {
+    "domain": "byok",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/byok/embedding-rebuild.ts",
+    "productionEntry": "createApp authenticated POST /api/v1/byok/embedding-rebuild → Redis owner lock/status → Host rebuild runtime",
+    "keyBehavior": "认证身份决定 owner、无凭据不启动、同 owner 幂等互斥、跨 owner 隔离、Redis token 锁安全释放和 Host 关闭取消后台任务",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/byok/embedding-rebuild-storage.test.ts": {
+    "domain": "byok",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/byok/memory-vector-store.ts + packages/core/src/byok/vector-rebuild.ts",
+    "productionEntry": "Core vector rebuild → owner-bound Local file adapter → atomic Linux file replacement",
+    "keyBehavior": "临时 owner 文件经真实存储适配器重建 pattern/memory 向量并替换旧缓存，验证 Python chunk key 与模型标记",
     "ci": "node-webui"
   },
 "apps/web-host/tests/host/data-portability-main.integration.test.ts": {
@@ -4335,6 +4431,14 @@
     "keyBehavior": "SQLite 会话改名、消息定位、用户隔离及缺表失败",
     "ci": "core-node"
   },
+  "packages/core/tests/agent/sessions/delete.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/sessions",
+    "productionEntry": "packages/core/src/agent/sessions/index.ts",
+    "keyBehavior": "会话删除 owner 隔离、事务提交后附件清理与失败补偿",
+    "ci": "core-node"
+  },
   "packages/core/tests/agent/sessions/session-application.postgres.test.ts": {
     "domain": "agent-sessions",
     "layer": "L2",
@@ -4969,6 +5073,7 @@
 "packages/core/tests/mind/canvas-detail.test.ts":{"domain": "agent-tools", "layer": "L1", "owner": "packages/core/src/mind", "productionEntry": "canvas_get/search", "keyBehavior": "真实SQLite分页关系审计、搜索探测、定位和owner边界", "ci": "core-node"},
 "packages/core/tests/agent/tools/canvas-ready.test.ts":{"domain": "agent-tools", "layer": "L1", "owner": "packages/core/src/agent/tools", "productionEntry": "canvas_create/canvas_search_placeable", "keyBehavior": "真实SQL候选与owner隔离、创建Undo收据重放、取消和Agent续轮", "ci": "core-node"},
 "packages/core/tests/agent/tools/skill-management.test.ts":{"domain": "agent-tools", "layer": "L1", "owner": "packages/core/src/agent/tools", "productionEntry": "list_skills", "keyBehavior": "Markdown head和用户元数据目录、停用项、正文与owner隔离", "ci": "core-node"},
+"packages/core/tests/agent/skills/user-management-sqlite.test.ts":{"domain": "agent-skills", "layer": "L1", "owner": "packages/core/src/agent/skills/user-management.ts", "productionEntry": "User Skill Core管理器→SQLite正式schema", "keyBehavior": "SQLite技能创建/更新、MCP关联保留、用户接管及owner隔离", "ci": "core-node"},
 "packages/core/tests/agent/tools/canvas-edits.test.ts":{"domain": "agent-tools", "layer": "L1", "owner": "packages/core/src/agent/tools", "productionEntry": "canvas_update_node/canvas_remove_node/canvas_update_note", "keyBehavior": "真实SQLite批量原子性、owner与正文保留、版本、收据恢复及Agent续轮", "ci": "core-node"},
 "packages/core/tests/agent/tools/canvas-placement.test.ts":{"domain": "agent-tools", "layer": "L1", "owner": "packages/core/src/agent/tools", "productionEntry": "canvas_create_note/canvas_add_node/canvas_update_anchor/canvas_connect", "keyBehavior": "实际SQL定位、引用复用、几何连接端点、原子回滚、收据及续轮", "ci": "core-node"},
 "packages/core/tests/mind/canvas-layout.test.ts":{"domain": "mind", "layer": "L0", "owner": "packages/core/src/mind", "productionEntry": "resolveCanvasPosition", "keyBehavior": "视口到世界坐标、非法位置不回退、auto/near偏移与零宽规则", "ci": "core-node"},
@@ -4992,11 +5097,13 @@
 "apps/web-host/tests/mcp/server-list-route.test.ts":{"domain":"mcp","layer":"L1","owner":"apps/web-host/src/modules/mcp/server-list.ts","productionEntry":"apps/web-host/src/main.ts owner-scoped PG 配置列表与 owner-only 编辑视图","keyBehavior":"认证/owner 传递、envelope 解密、未加载状态不触发外网","ci":"node-webui"},
 "apps/web-host/tests/mcp/test-connection.test.ts":{"domain":"mcp","layer":"L1","owner":"apps/web-host/src/modules/mcp/test-connection.ts","productionEntry":"apps/web-host/src/main.ts PG MCP 探测组合","keyBehavior":"owner 限定读取、信封解密、仅 Header 凭据、schema/白名单/热读工具上限过滤、资源关闭和错误脱敏","ci":"node-webui"},
 "packages/core/tests/mcp/test-connection.test.ts":{"domain":"mcp","layer":"L1","owner":"packages/core/src/mcp/test-connection.ts","productionEntry":"MCP tools/list 业务筛选","keyBehavior":"无效声明/白名单过滤、重复名去重及超过单 server 限额时整体拒绝","ci":"core-node"},
+"packages/core/tests/mcp/schema-adapter.test.ts":{"domain":"mcp","layer":"L1","owner":"packages/core/src/mcp/schema-adapter.ts","productionEntry":"MCP tools/call 参数预检","keyBehavior":"沿用 Python 兼容归一化与结构化错误；必填、类型/范围错误和额外字段均在出站调用前拒绝且不回显输入","ci":"core-node"},
 "apps/web-host/tests/agent/mcp-schema-adapter.test.ts":{"domain":"mcp","layer":"L1","owner":"packages/core/src/mcp","productionEntry":"MCP 声明适配（SDK/manager 尚未接线）","keyBehavior":"旧 Python schema 命名、校验、降级与描述规则","ci":"node-webui"},
 "apps/web-host/tests/mcp/sdk-client.test.ts":{"domain":"mcp","layer":"L1","owner":"apps/web-host/src/modules/mcp","productionEntry":"MCP SDK HTTP client over pinned transport","keyBehavior":"官方 SDK 握手、发现及调用经受控传输","ci":"node-webui"},
 "apps/web-host/tests/byok/media-capability-probe.test.ts":{"domain":"byok","layer":"L2","owner":"packages/core/src/byok/media-capability-probe.ts","productionEntry":"apps/web-host/src/main.ts + pinned Node Provider transport","keyBehavior":"BYOK媒体探测按owner和目的地裁决凭据并实际发送本地合成媒体请求","ci":"node-webui"},
 "apps/web-host/tests/byok/credential-test-preview.test.ts":{"domain":"byok","layer":"L2","owner":"packages/core/src/byok/credential-test-preview.ts + packages/core/src/agent/providers/deep-research.ts + similar-image.ts + asr.ts","productionEntry":"apps/web-host/src/main.ts + pinned Node Provider transport","keyBehavior":"草稿试呼路由鉴权、LLM本地请求、无鉴权Embedding向量、DashScope/MiniMax原生ASR、Tavily深度研究和百度相似图探测及安全错误映射","ci":"node-webui"},
 "packages/core/tests/byok/media-capability-probe.test.ts":{"domain":"byok","layer":"L1","owner":"packages/core/src/byok/media-capability-probe.ts","productionEntry":"apps/web-host/src/modules/byok/media-capability-probe.ts","keyBehavior":"保存密钥只对本owner同目的地复用，拒绝越权或换址且不产生写入","ci":"core-node"},
+"packages/core/tests/byok/vector-rebuild.test.ts":{"domain":"byok","layer":"L1","owner":"packages/core/src/byok/vector-rebuild.ts","productionEntry":"apps/web-host/src/modules/byok/embedding-rebuild.ts","keyBehavior":"Python pattern与memory分块、owner边界、模型标记、嵌入失败不写半成品，以及来源清空删除孤儿向量","ci":"core-node"},
 "packages/core/tests/byok/credential-test-preview.test.ts":{"domain":"byok","layer":"L1","owner":"packages/core/src/byok/credential-test-preview.ts","productionEntry":"apps/web-host/src/modules/byok/credential-test-preview.ts","keyBehavior":"试呼只解密同owner同目的地的保存密钥，显式新Key优先；已保存深度研究和相似图凭据会真实探测且不写入","ci":"core-node"},
 "apps/web-host/tests/agent/conversation-tools-runtime-sqlite.test.ts":{"domain":"agent-tools","layer":"L1","owner":"apps/web-host/src/domains/agent-sessions/tools/agent-conversations.ts","productionEntry":"临时 SQLite Host 搜索适配器 + 真实 Jieba + 工具注册器 dispatch（Agent Run 尚未接入）","keyBehavior":"临时 SQLite 会话事实表验证 Host 权限拒绝不泄露正文、模型伪传 owner 无效、群聊/工具角色过滤、baseline前历史检索、LIKE元字符字面匹配、多关键词、空结果、Python 结果投影与真实 Jieba 分词","ci":"node-webui"},
 "apps/web-host/tests/agent/rag-index-worker.test.ts":{"domain":"agent-rag","layer":"L2","owner":"apps/web-host/src/domains/agent-sessions/rag-rebuild.ts","productionEntry":"main.ts 迁移门控 + Host 来源组工厂 + 调度器 + Core 持久 Worker","keyBehavior":"临时 SQLite 真实 Core 项目、owner FS knowledge 与队列经七类来源 Worker 写入正式索引表；未就绪的 memory 任务保持 queued；验证首次基线、幂等、排空、串行、错误、取消停止及禁用边界","ci":"node-webui"},
@@ -5014,7 +5121,7 @@
 "packages/core/tests/agent/rag/tokenizer.test.ts":{"domain":"agent-rag","layer":"L1","owner":"packages/core/src/agent/rag/tokenizer.ts","productionEntry":"tokenizeRaw","keyBehavior":"保护月别名、英文月份日期语境与普通词区分，并验证索引和查询共享日期词项","ci":"core-node"},
 "packages/core/tests/agent/rag/source-adapters.test.ts":{"domain":"agent-rag","layer":"L1","owner":"packages/core/src/agent/rag/adapters + index-builder.ts","productionEntry":"RAG 来源适配器组合入口","keyBehavior":"对照 1.7.7 冻结适配器文本、版本摘要、会话上下文、分块边界及退役文件索引，保护来源投影不漂移","ci":"core-node"},
 "packages/core/tests/agent/rag/query-embedding.test.ts":{"domain":"agent-rag","layer":"L1","owner":"packages/core/src/agent/rag/query-embedding.ts","productionEntry":"embedRagQuery + Host 注入 ProviderTransport","keyBehavior":"模拟传输验证 OpenAI/Bailian payload、非法 URL 拒绝、redirect 不跟随、响应过限取消与凭据结果脱敏；不触发外部 Provider","ci":"core-node"},
-"packages/core/tests/agent/rag/scoped-search.test.ts":{"domain":"agent-rag","layer":"L1","owner":"packages/core/src/agent/rag/scoped-search.ts","productionEntry":"createScopedRagSearch + Host 授权与向量端口","keyBehavior":"查询 embedding 失败时保留 owner 授权 BM25 结果；调用取消仍以取消错误结束；scope 命名空间化后仍用 1.7.7 原始 memory parent ID 读取向量","ci":"core-node"},
+"packages/core/tests/agent/rag/scoped-search.test.ts":{"domain":"agent-rag","layer":"L1","owner":"packages/core/src/agent/rag/scoped-search.ts + vector-reader.ts","productionEntry":"createScopedRagSearch + Host 授权与向量端口","keyBehavior":"查询 embedding 失败时保留 owner 授权 BM25 结果；调用取消仍以取消错误结束；scope 命名空间化后仍用 1.7.7 原始 memory parent ID 读取向量；owner 文件内容变化后缓存向量立即失效并更新融合结果","ci":"core-node"},
 "packages/core/tests/agent/rag/ttl-cache.test.ts":{"domain":"agent-rag","layer":"L1","owner":"packages/core/src/agent/rag/ttl-cache.ts","productionEntry":"memory-loader document/vector cache","keyBehavior":"冻结滑动 TTL、静默过期、Infinity TTL 与 LRU 驱逐，防止活跃 memory 索引被固定 TTL 提前淘汰","ci":"core-node"},
 "packages/core/tests/agent/rag/service-cache.test.ts":{"domain":"agent-rag","layer":"L1","owner":"packages/core/src/agent/rag/index-cache-service.ts + snapshot-cache.ts + rag-service.ts","productionEntry":"Core TS RAG cache lifecycle and scoped search service","keyBehavior":"固定旧版索引/snapshot滑动TTL、revision失效、scope隔离、构建失败重试和查询错误显式传播，避免串用户缓存或把失败当空召回","ci":"core-node"},
 "apps/web-host/tests/agent/memory-tools-runtime-sqlite.test.ts":{"domain":"agent-rag","layer":"L2","owner":"apps/web-host/src/domains/agent-sessions/tools/agent-memory-search.ts + agent-memory-scopes.ts","productionEntry":"Web owner/可信 IM scope Host 适配器 + 受限本地 memory FS + Core RAG + 实际工具注册器","keyBehavior":"临时 owner 与 IM scope 文件经真实 Host registry dispatch 命中；owner reflection cursor 限定跨群，成员范围只返回本人，群聊不得读取 owner 私人记忆；同名来源键在多个已授权 scope 下均保留；跨 owner 文档不返回、授权撤销不泄露正文、BYOK gate 关闭时不查询或发送凭据","ci":"node-webui"},
@@ -5030,5 +5137,8 @@
 "apps/web-host/tests/mcp/server-mutations-postgres.test.ts":{"domain":"mcp","layer":"L2","owner":"packages/core/src/mcp/server-mutations.ts","productionEntry":"apps/web-host/src/main.ts MCP 配置生产事务","keyBehavior":"隔离 PostgreSQL 更新密文、owner 隔离和配置快照原子失效","ci":"node-webui"},
 "apps/web-host/tests/files/file-undo.test.ts":{"domain":"files","layer":"L2","owner":"packages/core/src/undo/file-adapter.ts + apps/web-host/src/modules/files/undo-storage.ts","productionEntry":"apps/web-host/src/main.ts → authenticated Undo route → Core SQLite/PostgreSQL transaction → safe local file replacement","keyBehavior":"合成用户正文 Undo/redo 恢复正文和版本、隔离异主、数据库失败时回滚本地文件替换","ci":"node-webui"},
 "packages/core/tests/auth/profile-update.test.ts":{"domain":"auth","layer":"L1","owner":"packages/core/src/auth/profile-update.ts","productionEntry":"Core 个人资料更新用例与 Host 持久化端口","keyBehavior":"认证 owner 更新、字段规范化、时区校验、改密验证和版本递增","ci":"core-node"},
-"apps/web-host/tests/auth/auth-profile.test.ts":{"domain":"auth","layer":"L2","owner":"packages/core/src/auth/profile-update.ts + apps/web-host/src/modules/auth/profile-update-postgres.ts","productionEntry":"apps/web-host/src/main.ts → authenticated profile route → Core → PostgreSQL row-lock transaction","keyBehavior":"用户资料更新、时区上下文失效、错密码无副作用、改密后安全版本与通知顺序","ci":"node-webui"}
+"apps/web-host/tests/auth/auth-profile.test.ts":{"domain":"auth","layer":"L2","owner":"packages/core/src/auth/profile-update.ts + apps/web-host/src/modules/auth/profile-update-postgres.ts","productionEntry":"apps/web-host/src/main.ts → authenticated profile route → Core → PostgreSQL row-lock transaction","keyBehavior":"用户资料更新、时区上下文失效、错密码无副作用、改密后安全版本与通知顺序","ci":"node-webui"},
+"packages/core/tests/agent/sessions/delete.test.ts":{"domain":"agent-sessions","layer":"L1","owner":"packages/core/src/agent/sessions/delete.ts","productionEntry":"Core 会话删除用例与提交后清理端口","keyBehavior":"owner 隔离、附件共享引用保护、DB 失败时跳过外部清理","ci":"core-node"},
+"packages/core/tests/agent/sessions/delete.postgres.test.ts":{"domain":"agent-sessions","layer":"L2","owner":"packages/core/src/agent/sessions/delete-data.ts","productionEntry":"隔离 PostgreSQL owner-row-lock transaction","keyBehavior":"同事务终止 Agent 终端并显式删除会话附件、消息和会话","ci":"core-node"},
+"apps/web-host/tests/agent/session-delete.test.ts":{"domain":"agent-sessions","layer":"L2","owner":"apps/web-host/src/modules/agent/session-delete.ts + apps/web-host/src/app.ts","productionEntry":"startServer → authenticated Fastify route → Core PostgreSQL transaction → storage/Redis cleanup","keyBehavior":"认证 owner、204 删除、404 owner 隔离、422 参数语义","ci":"node-webui"}
 }

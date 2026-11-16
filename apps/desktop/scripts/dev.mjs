@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
+import { createServer } from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 
@@ -19,7 +20,30 @@ if (required.some((path) => !existsSync(path))) {
   process.exit(1)
 }
 
-const port = 5176
+const preferredPort = 5176
+const lastPort = 5190
+
+async function findAvailablePort() {
+  for (let candidate = preferredPort; candidate <= lastPort; candidate += 1) {
+    const server = createServer()
+    try {
+      await new Promise((resolvePromise, reject) => {
+        server.once('error', reject)
+        server.listen(candidate, '127.0.0.1', resolvePromise)
+      })
+      await new Promise((resolvePromise, reject) => {
+        server.close((error) => error ? reject(error) : resolvePromise())
+      })
+      return candidate
+    } catch (error) {
+      if (server.listening) server.close()
+      if (error?.code !== 'EADDRINUSE') throw error
+    }
+  }
+  throw new Error(`桌面开发端口 ${preferredPort}-${lastPort} 均被占用，请关闭不需要的开发服务后重试`)
+}
+
+const port = await findAvailablePort()
 const devUrl = `http://127.0.0.1:${port}/desktop.html?desktopPreview=1`
 const vite = spawn(process.execPath, [viteCli, '--config', 'vite.desktop.config.js', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], {
   cwd: web,
@@ -58,6 +82,7 @@ vite.on('exit', (code) => {
 
 try {
   await waitForVite()
+  if (port !== preferredPort) console.log(`端口 ${preferredPort} 已被占用，改用 ${port}`)
   console.log(`桌面 UI 热更新地址：${devUrl}`)
   const electronEnv = { ...process.env, GUGU_DESKTOP_DEV_URL: devUrl }
   // Node 的代理 CA 参数被 Electron 运行时拒绝；它只对包管理器下载有用。

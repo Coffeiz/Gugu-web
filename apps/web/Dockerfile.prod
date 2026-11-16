@@ -10,12 +10,13 @@ RUN npm install --global pnpm@10.15.0
 # lockfile 变更时只下载增量。
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/web/package.json ./apps/web/package.json
+COPY packages/charts/package.json ./packages/charts/package.json
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm config set store-dir /pnpm/store \
     && pnpm install --filter gugu-web --frozen-lockfile
 
 COPY apps/web/ ./apps/web/
-COPY backend/ts/workers/chart-renderer/diagram-source.mjs backend/ts/workers/chart-renderer/diagram-source.d.mts backend/ts/workers/chart-renderer/svg-style.mjs backend/ts/workers/chart-renderer/theme.mjs backend/ts/workers/chart-renderer/theme.d.mts ./backend/ts/workers/chart-renderer/
+COPY packages/charts/ ./packages/charts/
 WORKDIR /workspace/apps/web
 RUN pnpm build
 

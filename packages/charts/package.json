@@ -1,0 +1,44 @@
+{
+  "name": "@gugu/charts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.d.mts",
+      "import": "./src/index.mjs"
+    },
+    "./diagram-source": {
+      "types": "./src/diagram-source.d.mts",
+      "import": "./src/diagram-source.mjs"
+    },
+    "./render": {
+      "types": "./src/render.d.mts",
+      "import": "./src/render.mjs"
+    },
+    "./svg-style": {
+      "types": "./src/svg-style.d.mts",
+      "import": "./src/svg-style.mjs"
+    },
+    "./theme": {
+      "types": "./src/theme.d.mts",
+      "import": "./src/theme.mjs"
+    },
+    "./worker": "./src/worker.mjs"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@mermaid-js/mermaid-zenuml": "1.0.1",
+    "@resvg/resvg-js": "2.6.2",
+    "@xmldom/xmldom": "0.9.12",
+    "mathjax": "4.1.3",
+    "mermaid": "12.1.0",
+    "svgdom": "0.1.28"
+  }
+}

@@ -68,21 +68,43 @@ def _ensure_rag_worker(key: tuple[str, str]) -> None:
         worker.add_done_callback(_tasks.discard)
 
 
-async def _persist_rag_event_and_start(event: RagIndexUpdated) -> None:
+def _python_rag_worker_enabled() -> bool:
+    """配置无法读取时 fail closed，避免并行消费者争抢共享索引任务。"""
+    try:
+        from app.core.config import get_settings
+        return get_settings().rag_index_worker_owner == "python"
+    except Exception:
+        _log.warning("rag index worker ownership unavailable; Python consumer remains stopped")
+        return False
+
+
+async def _persist_rag_event_and_start(event: RagIndexUpdated, *, python_worker_enabled: bool) -> None:
     key = _rag_event_key(event)
     lock = _rag_persist_locks.setdefault(key, asyncio.Lock())
     async with lock:
         try:
             await index_jobs.persist_event(event)
         except Exception:
-            # 持久任务是可靠性旁路，不能让文件/知识主写入失败；内存 worker 仍继续执行。
+            # 持久任务是可靠性旁路，不能让文件/知识主写入失败。
             _log.warning("rag index durable enqueue failed for source=%s", key[1])
-        _ensure_rag_worker(key)
+        if python_worker_enabled:
+            _ensure_rag_worker(key)
 
 
 def _enqueue_rag_index_event(event: RagIndexUpdated, *, persist: bool = True) -> None:
-    """合并同源事件：按 source_id 保留各自最新一条，先持久化再启动唯一 worker。"""
+    """持久化共享任务；仅 Python 是消费者时才合并进程内事件并启动本地 worker。"""
     key = _rag_event_key(event)
+    python_worker_enabled = _python_rag_worker_enabled()
+    if not python_worker_enabled:
+        # Node 作为共享队列消费者时，Python 只生产持久任务；不保留无消费者的进程内副本。
+        if persist:
+            try:
+                task = asyncio.create_task(_persist_rag_event_and_start(event, python_worker_enabled=False))
+            except RuntimeError:
+                return
+            _tasks.add(task)
+            task.add_done_callback(_tasks.discard)
+        return
     source_key = str(event.source_id or "").strip()
     if source_key:
         _rag_pending.setdefault(key, {})[source_key] = event
@@ -102,7 +124,7 @@ def _enqueue_rag_index_event(event: RagIndexUpdated, *, persist: bool = True) ->
         _ensure_rag_worker(key)
         return
     try:
-        task = asyncio.create_task(_persist_rag_event_and_start(event))
+        task = asyncio.create_task(_persist_rag_event_and_start(event, python_worker_enabled=True))
     except RuntimeError:
         try:
             _ensure_rag_worker(key)

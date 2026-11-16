@@ -4,6 +4,17 @@ import { RAG_INDEX_COLUMNS, tablesSql } from '@gugu/core/data'
 
 const ledger='gugu_node_rag_migrations',revision='rag_index_0001'
 const ddl=[tablesSql('postgres').ragIndexEntries,...tablesSql('postgres').ragIndexIndexes].join(';\n')
+const expectedIndexes=tablesSql('postgres').ragIndexIndexes.map(statement=>{
+ const match=/^CREATE INDEX IF NOT EXISTS ([a-z0-9_]+) ON knowledge_index_entries\(([^)]+)\)$/u.exec(statement)
+ if(!match)throw new Error('RAG 索引定义无效')
+ return {name:match[1]!,columns:match[2]!.split(',').map(column=>column.trim())}
+})
+export function ragIndexDefinitionsMatch(actual:readonly {index_name:string;columns:string[];valid:boolean;ready:boolean}[]):boolean {
+ return expectedIndexes.every(expected=>{
+  const index=actual.find(item=>item.index_name===expected.name)
+  return Boolean(index&&index.valid&&index.ready&&JSON.stringify(index.columns)===JSON.stringify(expected.columns))
+ })
+}
 const checksum=createHash('sha256').update(revision).update('\n').update(ddl).digest('hex')
 export class RagIndexMigrationError extends Error {
  constructor(readonly code:'incompatible'|'unavailable'){super(code==='incompatible'?'RAG 索引迁移状态不兼容':'RAG 索引迁移失败')}
@@ -19,7 +30,7 @@ async function inspect(client:PoolClient):Promise<'pending'|'applied'>{
   const expected=RAG_INDEX_COLUMNS.map((name:string)=>`${name}:${['parent_document_id','source_updated_at','deleted_at'].includes(name)?'YES':'NO'}`)
   const actual=columns.rows.map(row=>`${row.column_name}:${row.is_nullable}`)
   if(JSON.stringify(actual)!==JSON.stringify(expected))throw new RagIndexMigrationError('incompatible')
-  const unique=await client.query<{columns:string[]}>('SELECT array_agg(a.attname ORDER BY u.ordinality) AS columns FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_namespace n ON n.oid=t.relnamespace CROSS JOIN LATERAL unnest(c.conkey) WITH ORDINALITY u(attnum,ordinality) JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=u.attnum WHERE n.nspname=current_schema() AND t.relname=$1 AND c.contype=\'u\' GROUP BY c.conname',['knowledge_index_entries'])
+  const unique=await client.query<{columns:string[]}>('SELECT array_agg(a.attname::text ORDER BY u.ordinality) AS columns FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_namespace n ON n.oid=t.relnamespace CROSS JOIN LATERAL unnest(c.conkey) WITH ORDINALITY u(attnum,ordinality) JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=u.attnum WHERE n.nspname=current_schema() AND t.relname=$1 AND c.contype=\'u\' GROUP BY c.conname',['knowledge_index_entries'])
   if(!unique.rows.some(row=>JSON.stringify(row.columns)===JSON.stringify(['owner_user_id','source_type','source_id','document_version','chunk_index'])))throw new RagIndexMigrationError('incompatible')
   const ownerFk=await client.query<{valid:boolean}>(`SELECT EXISTS(SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname=current_schema() AND t.relname='knowledge_index_entries' AND c.contype='f' AND pg_get_constraintdef(c.oid) ~ 'FOREIGN KEY \\(owner_user_id\\) REFERENCES users\\(id\\) ON DELETE CASCADE') AS valid`)
   if(found.rows[0]?.name&&!ownerFk.rows[0]?.valid)throw new RagIndexMigrationError('incompatible')
@@ -30,6 +41,14 @@ async function inspect(client:PoolClient):Promise<'pending'|'applied'>{
  if(rows.rows.length!==1||rows.rows[0]?.revision!==revision||rows.rows[0]?.checksum!==checksum)throw new RagIndexMigrationError('incompatible')
  const ownerFk=await client.query<{valid:boolean}>(`SELECT EXISTS(SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname=current_schema() AND t.relname='knowledge_index_entries' AND c.contype='f' AND pg_get_constraintdef(c.oid) ~ 'FOREIGN KEY \\(owner_user_id\\) REFERENCES users\\(id\\) ON DELETE CASCADE') AS valid`)
  if(!ownerFk.rows[0]?.valid)throw new RagIndexMigrationError('incompatible')
+ const indexes=await client.query<{index_name:string;columns:string[];valid:boolean;ready:boolean}>(`SELECT index_class.relname AS index_name,array_agg(attribute.attname::text ORDER BY key.ordinality) AS columns,index_data.indisvalid AS valid,index_data.indisready AS ready
+  FROM pg_class table_class JOIN pg_namespace table_schema ON table_schema.oid=table_class.relnamespace
+  JOIN pg_index index_data ON index_data.indrelid=table_class.oid JOIN pg_class index_class ON index_class.oid=index_data.indexrelid
+  CROSS JOIN LATERAL unnest(index_data.indkey) WITH ORDINALITY AS key(attnum,ordinality)
+  JOIN pg_attribute attribute ON attribute.attrelid=table_class.oid AND attribute.attnum=key.attnum
+  WHERE table_schema.nspname=current_schema() AND table_class.relname='knowledge_index_entries' AND index_class.relname=ANY($1::text[])
+  GROUP BY index_class.relname,index_data.indisvalid,index_data.indisready`,[expectedIndexes.map(index=>index.name)])
+  if(!ragIndexDefinitionsMatch(indexes.rows))throw new RagIndexMigrationError('incompatible')
  return 'applied'
 }
 export async function checkRagIndexMigration(pool:Pick<Pool,'connect'>):Promise<'pending'|'applied'>{

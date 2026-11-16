@@ -12,7 +12,7 @@
   "scripts": {
     "gen:api": "node scripts/generate-api-contract.mjs",
     "lint": "node scripts/typecheck.mjs",
-    "test": "node --import tsx --test api/*.test.ts workers/chart-renderer/test/*.test.mjs packages/contracts/test/*.test.ts packages/filesync-watcher/test/*.test.ts",
+    "test": "node --import tsx --test api/*.test.ts packages/contracts/test/*.test.ts packages/filesync-watcher/test/*.test.ts",
     "typecheck": "node scripts/typecheck.mjs"
   },
   "dependencies": {

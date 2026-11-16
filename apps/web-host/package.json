@@ -8,19 +8,20 @@
   "scripts": {
     "predev": "corepack pnpm@10.15.0 --filter @gugu/fs build",
     "dev": "tsx watch src/main.ts",
-    "prebuild": "corepack pnpm@10.15.0 --filter @gugu/core build && corepack pnpm@10.15.0 --filter @gugu/fs build",
+    "prebuild": "corepack pnpm@10.15.0 --filter @gugu/core build && corepack pnpm@10.15.0 --filter @gugu/fs build && corepack pnpm@10.15.0 --filter @gugu/charts build",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
     "migrate:agent-snapshot:check": "node dist/migrations/agent-snapshot-cli.js check",
     "migrate:agent-snapshot:apply": "node dist/migrations/agent-snapshot-cli.js apply",
     "migrate:rag-index:check": "node dist/migrations/rag-index-cli.js check",
     "migrate:rag-index:apply": "node dist/migrations/rag-index-cli.js apply",
-    "pretest": "corepack pnpm@10.15.0 --filter @gugu/core build && corepack pnpm@10.15.0 --filter @gugu/fs build",
+    "pretest": "corepack pnpm@10.15.0 --filter @gugu/core build && corepack pnpm@10.15.0 --filter @gugu/fs build && corepack pnpm@10.15.0 --filter @gugu/charts build",
     "test": "node --import tsx --test tests/**/*.test.ts",
-    "pretypecheck": "corepack pnpm@10.15.0 --filter @gugu/core build && corepack pnpm@10.15.0 --filter @gugu/fs build",
+    "pretypecheck": "corepack pnpm@10.15.0 --filter @gugu/core build && corepack pnpm@10.15.0 --filter @gugu/fs build && corepack pnpm@10.15.0 --filter @gugu/charts build",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@gugu/charts": "workspace:*",
     "@fastify/multipart": "10.1.4",
     "@fastify/static": "10.1.5",
     "@gugu/core": "workspace:*",

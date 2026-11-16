@@ -19,12 +19,13 @@ RUN npm install --global pnpm@10.15.0
 # pnpm store 走 cache mount，lockfile 变更时只下载增量。
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/web/package.json ./apps/web/package.json
+COPY packages/charts/package.json ./packages/charts/package.json
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm config set store-dir /pnpm/store \
     && pnpm install --filter gugu-web --frozen-lockfile
 
 COPY apps/web/ ./apps/web/
-COPY backend/ts/workers/chart-renderer/diagram-source.mjs backend/ts/workers/chart-renderer/diagram-source.d.mts backend/ts/workers/chart-renderer/svg-style.mjs backend/ts/workers/chart-renderer/theme.mjs backend/ts/workers/chart-renderer/theme.d.mts ./backend/ts/workers/chart-renderer/
+COPY packages/charts/ ./packages/charts/
 RUN cd apps/web && pnpm build
 
 # ── Stage 1.5：图表渲染 Worker 运行时依赖 ───────────────────────────────────
@@ -32,13 +33,8 @@ FROM node:26-trixie AS chart-runtime
 ENV NODE_OPTIONS=--use-bundled-ca
 
 WORKDIR /chart
+COPY packages/charts/package.json ./package.json
 RUN npm install --omit=dev --ignore-scripts --no-fund --no-audit \
-        @xmldom/xmldom@0.9.12 \
-        @resvg/resvg-js@2.6.2 \
-        mermaid@12.1.0 \
-        @mermaid-js/mermaid-zenuml@1.0.1 \
-        svgdom@0.1.28 \
-        mathjax@4.1.3 \
     && node -e "Promise.all([import('@resvg/resvg-js'), import('svgdom'), import('mermaid'), import('@mermaid-js/mermaid-zenuml')]).then(() => console.log('Chart runtime dependencies ready'))"
 
 # ── Stage 2：后端依赖构建（venv 与最终镜像分离） ─────────────────────────────
@@ -259,9 +255,9 @@ RUN set -eux; \
     chmod 0700 /run/user/1000
 RUN mkdir -p ./bin
 COPY backend/bin/gugu-filesync-ts-worker.cjs ./bin/gugu-filesync-ts-worker.cjs
-COPY backend/ts/workers/chart-renderer/worker.mjs ./bin/gugu-chart-worker.mjs
-COPY backend/ts/workers/chart-renderer/diagram-source.mjs backend/ts/workers/chart-renderer/svg-style.mjs backend/ts/workers/chart-renderer/theme.mjs backend/ts/workers/chart-renderer/raster-dimensions.mjs ./bin/
-COPY apps/web/public/fonts/Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf ./bin/fonts/NotoSansSC-VariableFont_wght.ttf
+COPY packages/charts/src/worker.mjs ./bin/gugu-chart-worker.mjs
+COPY packages/charts/src/diagram-source.mjs packages/charts/src/svg-style.mjs packages/charts/src/theme.mjs packages/charts/src/raster-dimensions.mjs ./bin/
+COPY packages/charts/assets/NotoSansSC-VariableFont_wght.ttf ./assets/NotoSansSC-VariableFont_wght.ttf
 COPY --from=chart-runtime /chart/node_modules ./bin/node_modules
 # 冒烟启动图表 Worker：解析它的全部同级依赖与 CJK 字体路径。缺任何一个都让镜像构建失败，
 # 而不是等到线上渲染时才 ERR_MODULE_NOT_FOUND。

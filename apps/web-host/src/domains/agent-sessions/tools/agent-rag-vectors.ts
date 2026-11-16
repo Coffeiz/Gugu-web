@@ -4,6 +4,8 @@ import type { ProviderTransport } from '@gugu/core/providers'
 import { createNodeProviderTransport } from '@gugu/core/providers/node'
 import type { Pool } from 'pg'
 import { normalizeOwnerId } from '../../../adapters/owner-context.js'
+import { createPostgresAgentEmbeddingSettingsResolver, type EmbeddingCredentialEnvelope } from '../../../modules/byok/embedding-settings.js'
+export { createPostgresAgentEmbeddingSettingsResolver } from '../../../modules/byok/embedding-settings.js'
 
 const vectorFiles = {
  memory: '.agent/memory_vec.json',
@@ -11,7 +13,6 @@ const vectorFiles = {
  pattern: '.agent/pattern_vec.json',
 } as const
 const maxCharacters = 50_000_000
-type EmbeddingCredentialEnvelope={encrypted_value:string;nonce:string;encrypted_data_key:string;key_version:number}
 
 /** 由可信 Host 绑定存储根与 owner，模型不得控制两者。 */
 export function createOwnerRagVectorSource(root:string,ownerId:string) {
@@ -62,28 +63,6 @@ export function createOwnerAgentRagVectorResolver(options:{
    } finally { await transport.close?.() }
   }
   return {version,source,embed}
- }
-}
-
-/** 只读取当前 owner 明确启用的 embedding BYOK；解密器与密钥轮换由 Host 注入。 */
-export function createPostgresAgentEmbeddingSettingsResolver(pool:Pick<Pool,'query'>,options:{enabled():boolean|Promise<boolean>;decrypt(row:EmbeddingCredentialEnvelope):Promise<string>}) {
- return async(ownerId:string,signal?:AbortSignal):Promise<RagQueryEmbeddingSettings|null>=>{
-  signal?.throwIfAborted()
-  if(!await options.enabled())return null
-  signal?.throwIfAborted()
-  const owner=normalizeOwnerId(ownerId)
-  const result=await pool.query(`SELECT provider,base_url,model,dimensions,encrypted_value,nonce,encrypted_data_key,key_version
-   FROM user_provider_credentials WHERE user_id=$1 AND capability='embedding' AND enabled IS TRUE ORDER BY id LIMIT 1`,[owner])
-  signal?.throwIfAborted()
-  const row=result.rows[0] as (EmbeddingCredentialEnvelope&{provider?:unknown;base_url?:unknown;model?:unknown;dimensions?:unknown})|undefined
-  if(!row||typeof row.provider!=='string'||typeof row.base_url!=='string'||typeof row.model!=='string'||!row.base_url.trim()||!row.model.trim())return null
-  const dimensions=row.dimensions==null?0:Number(row.dimensions)
-  if(!Number.isSafeInteger(dimensions)||dimensions<0||dimensions>65536)return null
-  const apiKey=await options.decrypt(row)
-  signal?.throwIfAborted()
-  if(!await options.enabled())return null
-  signal?.throwIfAborted()
-  return {provider:row.provider,baseUrl:row.base_url,model:row.model,apiKey,dimensions,allowLocal:false}
  }
 }
 

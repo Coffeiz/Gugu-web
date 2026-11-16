@@ -6,7 +6,7 @@
         <Icon name="action.close" :size="12" />
       </button>
     </div>
-    <EventFormFields :event="event" :form="form" :is-past-date="isPastDate" :autofocus="autofocus"
+    <EventFormFields :event="event" :form="form" :is-past-date="isPastDate" :autofocus="autofocus" :show-reminders="showReminders"
                      @save="emit('save')" @close="emit('close')" @test-reminder="emit('test-reminder')" />
     <div class="popup-actions">
       <button class="popup-save" @click="emit('save')" :disabled="!event.name || saving">{{ t('common.actions.save') }}</button>
@@ -31,7 +31,8 @@ withDefaults(defineProps<{
   autofocus?: boolean
   saving?: boolean
   surface?: boolean
-}>(), { title: '编辑活动', showDelete: false, surface: false })
+  showReminders?: boolean
+}>(), { title: '编辑活动', showDelete: false, surface: false, showReminders: true })
 
 const emit = defineEmits<{
   save: []

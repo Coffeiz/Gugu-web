@@ -7,10 +7,10 @@ import {
   normalizeMermaidDatabaseLabelPosition,
   normalizeMermaidEdgeLabelBounds,
   normalizeMermaidRasterText,
-} from '../svg-style.mjs'
-import { calculateMermaidRasterDimensions } from '../raster-dimensions.mjs'
+} from '../src/svg-style.mjs'
+import { calculateMermaidRasterDimensions } from '../src/raster-dimensions.mjs'
 
-const workerPath = fileURLToPath(new URL('../worker.mjs', import.meta.url))
+const workerPath = fileURLToPath(new URL('../src/worker.mjs', import.meta.url))
 
 test('IM 光栅化时数据库节点标签应回到圆柱中心', () => {
   const document = new DOMParser().parseFromString(

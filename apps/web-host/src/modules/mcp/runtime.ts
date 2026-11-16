@@ -1,6 +1,6 @@
 import {pinyin} from 'pinyin-pro'
 import type {McpStoredServer} from '@gugu/core/mcp/server-list'
-import {descriptionForProvider,descriptionShortOf,prefixedToolName,sanitizeInputSchema,validateInputSchema} from '@gugu/core/mcp/schema-adapter'
+import {descriptionForProvider,descriptionShortOf,prefixedToolName,sanitizeInputSchema,validateInputArguments,validateInputSchema} from '@gugu/core/mcp/schema-adapter'
 import {normalizeMcpSlots,validateMcpCredentialValues} from '@gugu/core/mcp/server-config'
 import type {ProviderTransport} from '@gugu/core/providers'
 import {createMcpHttpClient} from './sdk-client.js'
@@ -11,6 +11,7 @@ interface RuntimeTool {name:string;tool_name:string;description:string;descripti
 interface RuntimeClient {
  connect():Promise<void>
  listTools():Promise<{tools:unknown[]}>
+ callTool(name:string,args:Record<string,unknown>,options?:{signal?:AbortSignal;timeout?:number}):Promise<unknown>
  close():Promise<void>
 }
 interface RuntimeEntry {
@@ -24,6 +25,24 @@ function safeError(error:unknown):string {
  if(text.startsWith('MCP 缺少凭据值'))return 'MCP 缺少凭据值，请填写凭据后重试'
  if(text.startsWith('MCP 凭据不得放入 URL'))return 'MCP 凭据不得放入 URL；请改用 Header 凭据槽位'
  return '无法连接 MCP server，请检查地址与网络'
+}
+function extractText(value:unknown):string {
+ if(!value||typeof value!=='object'||Array.isArray(value))return ''
+ const content=(value as Record<string,unknown>).content
+ if(!Array.isArray(content))return ''
+ const parts:string[]=[]
+ for(const block of content){
+  if(!block||typeof block!=='object'||Array.isArray(block))continue
+  if((block as Record<string,unknown>).type==='text'){
+   const text=(block as Record<string,unknown>).text
+   const normalized=typeof text==='string'?text:String(text??'')
+   if(normalized)parts.push(normalized)
+  }else{
+   try{const encoded=JSON.stringify(block);if(encoded)parts.push(encoded)}catch{parts.push('[无法读取的 MCP 内容]')}
+  }
+ }
+ const text=parts.join('\n')
+ return text.length>20_000?`${text.slice(0,20_000)}\n…（结果过长已截断）`:text
 }
 function romanize(value:string){return pinyin(value,{toneType:'none',type:'array'}).join('')}
 async function decryptedObject(decrypt:EnvelopeReader,row:McpStoredServer,prefix:'credentials'|'headers'){
@@ -89,7 +108,31 @@ export function createMcpRuntime(options:{
  }
  function statusResult(entry:RuntimeEntry){return {ok:entry.state==='ok',state:entry.state,tool_count:entry.state==='ok'?entry.tools.length:0,tool_names:entry.state==='ok'?entry.tools.map(tool=>tool.name).sort():[],error:entry.last_error}}
  async function reconnect(owner:string,id:string){const entryKey=key(owner,id),previous=entries.get(entryKey);if(previous){entries.delete(entryKey);await closeEntry(previous)}return load(owner,id)}
+ async function dispatch(owner:string,id:string,name:string,args:unknown,signal?:AbortSignal):Promise<{result:string}|{error:string}>{
+  let row:McpStoredServer
+  try{row=await rowFor(owner,id)}catch(error){if(Number((error as {statusCode?:unknown})?.statusCode)===404)return {error:'MCP 工具不可用，请重新加载工具目录'};throw error}
+  if(!row.enabled||!(await options.enabled()))return {error:'MCP 工具不可用，请重新加载工具目录'}
+  signal?.throwIfAborted()
+  const loaded=await load(owner,id)
+  signal?.throwIfAborted()
+  if(!loaded.ok)return {error:loaded.error??'MCP server 不可用'}
+  const entry=entries.get(key(owner,id)),tool=entry?.tools.find(item=>item.name===name)
+  if(!entry||entry.state!=='ok'||!entry.client||!tool)return {error:'MCP 工具不可用，请重新加载工具目录'}
+  const validated=validateInputArguments(tool.name,tool.input_schema,args)
+  if(!validated.success)return {result:JSON.stringify(validated.error)}
+  try{
+   const response=await entry.client.callTool(tool.tool_name,validated.data,{signal,timeout:Math.max(1000,Math.min(300_000,row.timeout_seconds*1000))})
+   signal?.throwIfAborted()
+   if(response&&typeof response==='object'&&!Array.isArray(response)&&(response as Record<string,unknown>).isError===true){
+    return {error:extractText(response).slice(0,2000)||'MCP 工具执行失败'}
+   }
+   return {result:extractText(response)}
+  }catch(error){
+   signal?.throwIfAborted()
+   return {error:safeError(error)}
+  }
+ }
  async function invalidate(owner:string,id:string){const entryKey=key(owner,id),entry=entries.get(entryKey);entries.delete(entryKey);if(entry)await closeEntry(entry)}
  async function close(){const current=[...entries.values()];entries.clear();await Promise.all(current.map(closeEntry))}
- return {load,reconnect,tools:async(owner:string,id:string)=>{await rowFor(owner,id);return state(owner,id)},state,invalidate,close}
+ return {load,reconnect,dispatch,tools:async(owner:string,id:string)=>{await rowFor(owner,id);return state(owner,id)},state,invalidate,close}
 }

@@ -43,7 +43,8 @@ import { createTerminalDeletion } from '@gugu/core/terminals/delete'
 import { createVoicePresetsFileReader } from './modules/admin/voice-presets-read.js'
 import { createPostgresVoiceAvailabilityReader } from './modules/agent/voice-availability.js'
 import { createMemoryClearer } from '@gugu/core/agent/memory-clear'
-import { enqueueAgentRagRebuild } from '@gugu/core/agent'
+import { embedRagQuery, enqueueAgentRagRebuild } from '@gugu/core/agent'
+import { createUserMemoryVectorRebuilder } from '@gugu/core/byok/vector-rebuild'
 import { activeVoiceTestSettings } from '@gugu/core/agent/config/voice-test'
 import { createAdminVoicePresetTestOperations, createAdminVoiceTestOperations } from './modules/admin/voice-test.js'
 import { createAdminSearchTestOperations } from './modules/admin/search-test.js'
@@ -53,6 +54,10 @@ import { createServiceStatusReader } from './modules/admin/service-status.js'
 import { createNodeServiceRestartRuntime, createServiceRestarter } from './modules/admin/service-restart.js'
 import { createRedisServiceStatusCommands } from './adapters/redis-events.js'
 import { createAttachmentDownloader } from '@gugu/core/agent/attachments/download'
+import { createChatAttachmentDraftDeleter } from '@gugu/core/agent/attachments/delete-draft'
+import { createChatAttachmentDraftClearer } from '@gugu/core/agent/attachments/clear-drafts'
+import { createPostgresAgentAttachmentUploadOperations, createPostgresChatAttachmentDraftDeletePorts } from './modules/agent/attachment-staging-postgres.js'
+import { createRedisLegacyChatAttachmentCleaner } from './adapters/redis-events.js'
 import { openLocalFile, removeLocalTree, UnsafeLocalPathError } from '@gugu/fs/node'
 import { createPostgresRedisBindingCodeIssuer } from './modules/im/binding-code.js'
 import { createTaskFilesystemRevoker } from '@gugu/core/scheduled-task-filesystem-revoke'
@@ -110,6 +115,10 @@ import { createByokGateReader } from './modules/byok/gate.js'
 import { createByokModelsPreviewFetcher } from './modules/byok/models-preview.js'
 import { createByokMediaCapabilityProbeRunner } from './modules/byok/media-capability-probe.js'
 import { createByokCredentialTestProbe } from './modules/byok/credential-test-preview.js'
+import { createPostgresAgentEmbeddingSettingsResolver } from './modules/byok/embedding-settings.js'
+import { createLocalUserMemoryVectorStore } from './modules/byok/memory-vector-store.js'
+import { createPersistentMemoryIndexRebuilder, waitForMemoryIndexRebuild } from './modules/byok/memory-index-rebuild.js'
+import { createRedisUserEmbeddingRebuildState, createUserEmbeddingRebuildRuntime } from './modules/byok/embedding-rebuild.js'
 import { createStorageLiveTotals } from '@gugu/core/admin/storage-live-totals'
 import { createUserSkillDeletion } from '@gugu/core/agent/skills/user-delete'
 import { createUserSkillLister } from '@gugu/core/agent/skills/user-list'
@@ -179,7 +188,7 @@ import { createKyselySmtpStore, createUserSmtpSettings } from '@gugu/core/smtp'
 import { encryptEncryptedString as encryptSmtpPassword } from './adapters/encrypted-string.js'
 import { startSecurityRetentionWorker } from './maintenance/security-retention.js'
 import { checkRagIndexMigration, RagIndexMigrationError } from './migrations/rag-index-migrate.js'
-import { startAgentRagIndexWorker } from './domains/agent-sessions/rag-rebuild.js'
+import { resolveAgentRagIndexWorkerOwner, startAgentRagIndexWorker } from './domains/agent-sessions/rag-rebuild.js'
 import { createLocalAgentKnowledgeReadStore } from './domains/agent-sessions/tools/agent-rag-knowledge-store.js'
 import { createTrackOperations } from './modules/site/persistence/track.js'
 import { createFeedbackNotifier, createFeedbackService, createFeedbackSubmission, createKyselyFeedbackOperations } from '@gugu/core/feedback'
@@ -218,6 +227,7 @@ import {
 import { createFilesystemAuthorizationConfirmationStore } from './domains/agent-sessions/filesystem-authorization-confirmations.js'
 import { createPostgresAgentSessionRefresher } from './domains/agent-sessions/agent-session-refresh.js'
 import { createPostgresAgentSessionRenamer } from './domains/agent-sessions/agent-session-rename.js'
+import { createPostgresAgentSessionDeleteOperations } from './modules/agent/session-delete.js'
 import { createAgentMessageHistory } from './domains/agent-sessions/persistence/agent-message-history.js'
 import { createPostgresAgentOrphanRecovery } from './domains/agent-sessions/persistence/agent-run-recovery.js'
 import { createPostgresAgentInteractionHistory } from '@gugu/core/agent-sessions'
@@ -267,6 +277,8 @@ import {
   createRedisPasswordResetCommands,
   createRedisAgentActiveStatusReader,
   createRedisAgentRunRecoveryState,
+  createRedisAgentSessionReflectionCleaner,
+  createRedisScheduledTaskCommands,
   createRedisFilesystemAuthorizationCommands,
   createRedisTrashPurgeNotifier,
   type RedisEventPublisher,
@@ -473,6 +485,7 @@ function createWebUiApp(
   core: SqlDataRuntime,
   redisEvents?: RedisEventPublisher,
   env: NodeJS.ProcessEnv = process.env,
+  canRebuildAgentMemoryIndex: () => boolean = () => false,
 ) {
   const publisher = redisEvents ?? noRedisEvents
   const readMcpSettings = createMcpSettingsReader(resolveConfigOverridePath(env), env)
@@ -932,6 +945,45 @@ function createWebUiApp(
       return fileRestores.restoreBatch(ownerId, fileIds, origin)
     },
   }
+  const embeddingGate = createByokGateReader(resolveConfigOverridePath(env), env)
+  const embeddingRebuildState = createRedisUserEmbeddingRebuildState(
+    config.redisUrl ? createRedisScheduledTaskCommands(config.redisUrl) : null,
+  )
+  const embeddingTransport = createNodeProviderTransport({
+    allowLocal: false,
+    connectTimeoutMs: 5_000,
+    writeTimeoutMs: 10_000,
+    environment: () => env,
+  })
+  const resolveEmbeddingSettings = createPostgresAgentEmbeddingSettingsResolver(pool, {
+    enabled: embeddingGate,
+    decrypt: async row => createConfiguredByokEnvelope(env).decrypt({
+      ciphertext: row.encrypted_value,
+      nonce: row.nonce,
+      encryptedDataKey: row.encrypted_data_key,
+      keyVersion: row.key_version,
+    }),
+  })
+  const memoryVectorStore = createLocalUserMemoryVectorStore(config.storageLocalPath)
+  const rebuildMemoryIndex = createPersistentMemoryIndexRebuilder(core, {
+    now: Date.now,
+    wait: waitForMemoryIndexRebuild,
+  })
+  const embeddingRebuildRuntime = createUserEmbeddingRebuildRuntime({
+    state: embeddingRebuildState,
+    resolve: resolveEmbeddingSettings,
+    now: Date.now,
+    async rebuild(ownerId, settings, signal) {
+      return createUserMemoryVectorRebuilder({
+        ...memoryVectorStore,
+        async embed(_ownerId, text, embedSignal) {
+          const result = await embedRagQuery(settings, text, embeddingTransport, embedSignal)
+          return result.outcome === 'success' ? result.vector : null
+        },
+        rebuildMemoryIndex,
+      })(ownerId, `${settings.provider}:${settings.model}:${settings.dimensions || 'default'}`, signal)
+    },
+  })
   const app = createApp({
     appName: config.appName,
     publicSiteConfig: config.publicSiteConfig,
@@ -1245,6 +1297,12 @@ function createWebUiApp(
     agentFilesystemAuthorization: { operations: agentFilesystemAuthorization },
     refreshAgentSession: createPostgresAgentSessionRefresher(pool),
     renameAgentSession: createPostgresAgentSessionRenamer(pool),
+    deleteAgentSession: createPostgresAgentSessionDeleteOperations(pool, {
+      removeIfUnreferenced: (ownerId, storageKey) => createPostgresChatAttachmentDraftDeletePorts(pool, config.storageLocalPath).removeUnreferenced(ownerId, storageKey),
+      clearReflection: config.redisUrl
+        ? createRedisAgentSessionReflectionCleaner(config.redisUrl)
+        : async () => { throw new Error('Redis 会话反思清理不可用') },
+    }),
     lookupAgentInteractionSession: createInteractionSessionLookup(pool).get,
     listAgentMessages,
     locateAgentMessage: createPostgresAgentMessageLocator(pool),
@@ -1564,12 +1622,42 @@ function createWebUiApp(
       readLegacy: async (ownerId, attachId) => { if (!config.redisUrl) throw new Error('附件元数据服务不可用'); return createRedisValueReader(config.redisUrl)(`chatfile:${ownerId}:${attachId}`) },
       open: key => openLocalFile(config.storageLocalPath, key), isUnsafe: error => error instanceof UnsafeLocalPathError
     }) },
+    attachmentUpload: { operations: createPostgresAgentAttachmentUploadOperations(pool, config.storageLocalPath) },
+    attachmentDelete: { remove: createChatAttachmentDraftDeleter(
+      createPostgresChatAttachmentDraftDeletePorts(pool, config.storageLocalPath),
+    ) },
+    attachmentClear: (() => {
+      const ports = createPostgresChatAttachmentDraftDeletePorts(pool, config.storageLocalPath)
+      const legacy = config.redisUrl ? createRedisLegacyChatAttachmentCleaner(config.redisUrl) : null
+      return { clear: createChatAttachmentDraftClearer({
+        deleteDraftRows: ports.deleteDraftRows,
+        removeUnreferenced: ports.removeUnreferenced,
+        async clearLegacy(ownerId, removeStorage) {
+          if (!legacy) return 0
+          const entries = await legacy.list(ownerId)
+          let deleted = 0
+          for (const entry of entries) {
+            try {
+              if (entry.storageKey) await removeStorage(entry.storageKey)
+              await legacy.remove(ownerId, entry.id)
+              deleted += 1
+            } catch { /* Python 按单个旧记录 best-effort 清理，保留其他记录的进度。 */ }
+          }
+          return deleted
+        },
+      }) }
+    })(),
     terminalDelete: { remove: createTerminalDeletion(core.db, async (ownerId, terminalId, origin) => { await publisher.publishResourceChanged({ ownerId, resource: 'terminals', operation: 'delete', entityId: terminalId, origin }) }) },
     userBotsList: { readBots: createPostgresUserBotsReader(pool, config.secretKey, createImPlatformSettingsReader(env, resolveConfigOverridePath(env))) },
     embeddingRebuildStatus: { available: () => Boolean(config.redisUrl), read: createEmbeddingRebuildStatusReader(async ownerId => {
       if (!config.redisUrl) throw Object.assign(new Error('重建状态服务不可用'), { statusCode: 503 })
       return createRedisValueReader(config.redisUrl)(`emb:rebuild:user:${ownerId}`)
     }) },
+    embeddingRebuild: {
+      state: embeddingRebuildState,
+      canStart: canRebuildAgentMemoryIndex,
+      start: embeddingRebuildRuntime.start,
+    },
     voiceAvailability: createPostgresVoiceAvailabilityReader(pool, {
       enabled: createByokGateReader(resolveConfigOverridePath(env), env),
       readBaseSettings: () => activeVoiceTestSettings(readConfigOverride(resolveConfigOverridePath(env))),
@@ -1635,7 +1723,15 @@ function createWebUiApp(
     notifications: createKyselyNotificationOperations(core.db, 'postgres'),
     track: createTrackOperations(pool),
   })
-  app.addHook('onClose', async () => { await Promise.all([qqConnectOptions.transport.close(), feishuConnectOptions.transport.close(), wechatConnectOptions.transport.close()]) })
+  app.addHook('onClose', async () => {
+    await embeddingRebuildRuntime.close()
+    await embeddingTransport.close?.()
+    await Promise.all([
+      qqConnectOptions.transport.close(),
+      feishuConnectOptions.transport.close(),
+      wechatConnectOptions.transport.close(),
+    ])
+  })
   return app
 }
 
@@ -1689,7 +1785,8 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
       },
     }
   }
-  const app = createWebUiApp(config, pool, core, redisEvents, env)
+  let canRebuildAgentMemoryIndex = false
+  const app = createWebUiApp(config, pool, core, redisEvents, env, () => canRebuildAgentMemoryIndex)
   let ragIndexMigration: 'pending' | 'applied' | 'unavailable'
   try {
     ragIndexMigration = await checkRagIndexMigration(pool)
@@ -1699,6 +1796,8 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
       ? `Agent RAG 索引检查不可用（${error.code}），后台重建未启动`
       : 'Agent RAG 索引检查不可用，后台重建未启动')
   }
+  canRebuildAgentMemoryIndex = ragIndexMigration === 'applied'
+    && resolveAgentRagIndexWorkerOwner(env.AGENT__RAG_INDEX_WORKER_OWNER) === 'node'
   try {
     await listen(app, config.host, config.port)
   } catch (error) {
@@ -1714,6 +1813,7 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
   const ragIndexWorker = ragIndexMigration === 'applied'
     ? startAgentRagIndexWorker(core, {
         enabled: true,
+        workerOwner: resolveAgentRagIndexWorkerOwner(env.AGENT__RAG_INDEX_WORKER_OWNER),
         knowledgeStore: createLocalAgentKnowledgeReadStore(config.storageLocalPath),
         memoryStorageRoot: config.storageLocalPath,
         onError: () => { console.error('Agent RAG 索引重建失败') },

@@ -3,7 +3,6 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { configureRagJieba } from '@gugu/core/agent'
 import { prepareMemory } from '@gugu/core/agent'
 import { initializeSqlite, openSqliteRuntime } from '@gugu/core/data'
 import { createAgentToolRegistry } from '../../src/domains/agent-sessions/tools/agent-tool-registry.js'
@@ -11,8 +10,6 @@ import { createPostgresAgentMemorySearchPort, createWebOwnerMemorySearchPort } f
 import { createPostgresAgentImMemoryContextReader, createPostgresAgentMemoryScopeResolver } from '../../src/domains/agent-sessions/tools/agent-memory-scopes.js'
 import { createLocalAgentMemoryRagStore } from '../../src/domains/agent-sessions/tools/agent-rag-memory-store.js'
 import { createPostgresAgentEmbeddingSettingsResolver, createPostgresAgentRagEmbeddingPort } from '../../src/domains/agent-sessions/tools/agent-rag-vectors.js'
-
-configureRagJieba({ cut: text => [text] })
 
 test('IM memory context 从当前 owner 会话和本次 run 的用户消息读取，并对缺失身份 fail closed', async () => {
   const owner = 'f17421a3-8520-4c8b-92e5-736882f4bd82'
@@ -67,7 +64,7 @@ test('Web owner memory 经受限 Host FS、Core RAG 与实际工具 registry dis
     await mkdir(memoryDirectory, { recursive: true })
     await writeFile(join(memoryDirectory, 'index.json'), JSON.stringify({ schema_version: 1, documents: [
       { document_id: 'profile:0', parent_document_id: 'memory:profile', chunk_index: 0, chunk_count: 1,
-        source_type: 'memory', source_id: 'profile', title: '用户画像', summary: 'coffee', content: 'coffee after lunch',
+        source_type: 'memory', source_id: 'profile', title: '用户画像', summary: 'coffee 群消息分词测试', content: 'coffee after lunch 群消息分词测试',
         version: 'profile-v1', scope: { owner_user_id: owner, scope_type: 'owner', scope_id: '' }, metadata: {} },
       { document_id: 'foreign:0', parent_document_id: 'memory:foreign', chunk_index: 0, chunk_count: 1,
         source_type: 'memory', source_id: 'profile', title: '其他用户', summary: '', content: 'foreign coffee',
@@ -96,6 +93,14 @@ test('Web owner memory 经受限 Host FS、Core RAG 与实际工具 registry dis
       assert.equal((found.value as { results: Array<Record<string, unknown>> }).results[0]?.source, 'memory')
     }
     assert.equal(snapshotReads, 1)
+
+    const chineseCall = await registry.tools.dispatch({ id: 'jieba-search', name: 'search_memory',
+      input: { query: '群消息' } }, scope)
+    assert.equal(chineseCall.kind, 'completed')
+    if (chineseCall.kind === 'completed') {
+      assert.equal(chineseCall.successful, true)
+      assert.match(JSON.stringify(chineseCall.value), /coffee after lunch 群消息分词测试/u)
+    }
 
     await writeFile(join(storageRoot, owner, '.agent', 'memory_vec.json'), JSON.stringify({
       'rag:memory:profile:profile-v1:0': { t: 'synthetic:embedding-v1:2', v: [1, 0] },
@@ -166,7 +171,7 @@ test('Web owner memory 经受限 Host FS、Core RAG 与实际工具 registry dis
     const revoked = await registry.tools.dispatch({ ...call, id: 'revoked' }, scope)
     assert.equal(revoked.kind, 'completed')
     if (revoked.kind === 'completed') assert.equal(revoked.executed, false)
-    assert.equal(snapshotReads, 2)
+    assert.equal(snapshotReads, 3)
   } finally {
     await core.close()
     await rm(directory, { recursive: true, force: true })

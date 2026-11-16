@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
 import {registerMcpRuntimeRoutes} from '../../src/modules/mcp/runtime-routes.js'
+import {createApp} from '../../src/app.js'
+import {createUserToken} from '../../src/domains/auth/auth.js'
 
 test('MCP runtime API requires auth, derives owner and forwards load/reconnect/tools',async()=>{
  const app=Fastify(),calls:string[]=[]
@@ -29,4 +31,18 @@ test('MCP runtime API keeps missing owner resources as 404',async()=>{
   load:async()=>{throw Object.assign(new Error('not found'),{statusCode:404})},reconnect:async()=>{throw Object.assign(new Error('not found'),{statusCode:404})},tools:async()=>{throw Object.assign(new Error('not found'),{statusCode:404})},
  }})
  try{const response=await app.inject({method:'GET',url:'/api/v1/mcp/servers/private/tools'});assert.equal(response.statusCode,404);assert.deepEqual(response.json(),{detail:'MCP server 不存在'})}finally{await app.close()}
+})
+
+test('MCP runtime routes are mounted behind the production user-auth domain and use its owner',async()=>{
+ const owner='00000000-0000-4000-8000-000000000081',secret='synthetic-auth-secret',calls:string[]=[]
+ const app=createApp({appName:'MCP runtime integration',isReady:async()=>true,userAuth:{secret,async lookupUser(id){return id===owner?{id,username:'sample',displayName:'示例',email:null,avatarUrl:null,createdAt:null,timezone:null,emailSubscribed:false,imChannels:[],isActive:true,securityVersion:1}:null}},mcpRuntime:{runtime:{
+  load:async(user,id)=>{calls.push(`${user}:${id}`);return {ok:true,state:'ok',tool_count:0,tool_names:[],error:null}},
+  reconnect:async()=>({ok:true,state:'ok',tool_count:0,tool_names:[],error:null}),tools:async(user,id)=>({server_id:id,state:user===owner?'unloaded':'error',loaded_tool_count:0,last_error:null}),
+ }}})
+ try{
+  const denied=await app.inject({method:'POST',url:'/api/v1/mcp/servers/s1/load_status'})
+  assert.equal(denied.statusCode,401);assert.deepEqual(calls,[])
+  const allowed=await app.inject({method:'POST',url:'/api/v1/mcp/servers/s1/load_status',headers:{authorization:`Bearer ${createUserToken(owner,1,secret)}`}})
+  assert.equal(allowed.statusCode,200);assert.deepEqual(calls,[`${owner}:s1`])
+ }finally{await app.close()}
 })

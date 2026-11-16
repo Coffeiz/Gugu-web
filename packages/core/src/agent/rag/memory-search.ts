@@ -80,6 +80,9 @@ export function createMemorySearch(ports: MemorySearchPorts) {
     const index = createRagLexicalIndex(identity.ownerId)
     index.replace(identity.ownerId, prepared.indexSource || 'memory-transient', indexedDocuments)
     let fused
+    let fallbackReason: string | null = strategy === 'bm25'
+      ? 'lexical_only'
+      : vectors ? 'embedding_cache_unavailable' : 'embedding_disabled'
     if (vectors && strategy !== 'bm25' && documents.length) {
       let queryVector: readonly number[] = []
       try { queryVector = await vectors.embed(query, signal) } catch { signal.throwIfAborted() }
@@ -93,6 +96,7 @@ export function createMemorySearch(ports: MemorySearchPorts) {
           })),
         })
       }
+      if (fused?.fusion === 'hybrid-rrf') fallbackReason = null
     }
     fused ??= { ...index.search(identity.ownerId, query, 50, ['memory']), fusion: 'bm25' as const, vectorDocCount: 0 }
     const byId = new Map(indexedDocuments.map(document => [document.id, document]))
@@ -124,7 +128,7 @@ export function createMemorySearch(ports: MemorySearchPorts) {
     })
     const strategyUsed = fused.fusion === 'hybrid-rrf' ? 'hybrid' : 'bm25'
     return { query, results, has_more: fused.diagnostics.eligible_count > results.length,
-      strategy: strategyUsed, fallback_reason: null, index_source: prepared.indexSource, sources: ['memory'],
+      strategy: strategyUsed, fallback_reason: fallbackReason, index_source: prepared.indexSource, sources: ['memory'],
       candidate_count: candidates.length, permission_rejected: 0,
       rejected_low_score: ranked.diagnostics.rejected_low_score, rejected_not_preferred: ranked.diagnostics.rejected_not_preferred,
       rejected_duplicate: ranked.diagnostics.rejected_duplicate, rejected_parent: ranked.diagnostics.rejected_parent,

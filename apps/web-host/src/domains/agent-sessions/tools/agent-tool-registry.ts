@@ -4,6 +4,7 @@ import { createAskUserTool } from '@gugu/core/tools'
 import { createTrashRestoreTools, type TrashRestorePort } from '@gugu/core/tools'
 import { createConversationReadTool, createConversationSearchTool, type ConversationReadPort, type ConversationSearchPort } from '@gugu/core/tools'
 import { createMemorySearchTool, type MemorySearchPort } from '@gugu/core/tools'
+import { createKnowledgeReadTool, type KnowledgeReadPort } from '@gugu/core/tools'
 import { createCanvasPlacementTools, createCanvasRelationTools, createCanvasEditTools, type CanvasEditPort } from '@gugu/core/tools'
 import { createCanvasPlaceableSearchTool, createCanvasCreateTool, createSkillManagementReadTools, createSkillManagementWriteTools } from '@gugu/core/tools'
 import type { CanvasCreatePort, SkillMetadataListPort } from '@gugu/core/tools'
@@ -27,13 +28,15 @@ export interface AgentToolRegistryOptions {
   /** 没有可信项目创建后端时，不开放创建工具。 */
   projects?: ProjectCreateRuntime
   /** 可信权限服务；模型输出不得决定此权限。 */
-  authorize(identity: RunIdentity, name: AuthorizedToolName | 'send_link_buttons' | 'ask_user' | 'restore_file' | 'restore_folder' | 'read_conversation' | 'search_conversations' | 'search_memory'): Promise<boolean>
+  authorize(identity: RunIdentity, name: AuthorizedToolName | 'send_link_buttons' | 'ask_user' | 'restore_file' | 'restore_folder' | 'read_conversation' | 'search_conversations' | 'search_memory' | 'read_knowledge'): Promise<boolean>
   /** 历史正文读取必须限定可信 owner；缺少共享读取服务时不开放。 */
   conversations?: ConversationReadPort
   /** 必须同时提供 owner 限定的 RAG 与会话定位能力。 */
   conversationSearch?: ConversationSearchPort
   /** Memory 文件、scope ACL、授权和可选 embedding 均须由可信 Host 完整提供。 */
   memorySearch?: MemorySearchPort
+  /** 知识正文由 owner FS 读取，关键词召回必须走正式索引和可信 scope 授权。 */
+  knowledge?: KnowledgeReadPort
   /** Host 已装配普通问题激活和回答消费时显式开放。 */
   askUser?: boolean
   /** 仅提供可信渠道与可恢复投递时开放；不会推断或降级渠道。 */
@@ -88,6 +91,7 @@ export function createAgentToolRegistry(options: AgentToolRegistryOptions) {
       { id: 'clients', name: '联系人', tools: createClientTools(options.core) },
       ...(options.conversations || options.conversationSearch ? [{ id:'conversations', name:'历史对话', tools:[...(options.conversations?[createConversationReadTool(options.conversations)]:[]),...(options.conversationSearch?[createConversationSearchTool(options.conversationSearch)]:[])] }] : []),
       ...(options.memorySearch ? [{ id:'memory', name:'记忆', tools:[createMemorySearchTool(options.memorySearch)] }] : []),
+      ...(options.knowledge ? [{ id:'knowledge', name:'知识', tools:[createKnowledgeReadTool(options.knowledge)] }] : []),
       ...(options.linkButtons ? [{ id:'link_buttons', name:'链接按钮', tools:createLinkButtonsTools(options.linkButtons) }] : []),
       { id: 'projects', name: '项目', tools: [
         createListProjectsTool(options.core),
@@ -121,7 +125,7 @@ export function createAgentToolRegistry(options: AgentToolRegistryOptions) {
       ...(options.notes || options.noteLifecycle ? [{id:'mind',name:'思维笔记',tools:[...(options.notes?createNoteReadTools(options.notes):[]),...(options.noteLifecycle?createNoteLifecycleTools(options.noteLifecycle):[])]}] : []),
       ...(options.scheduledTasks ? [{ id: 'scheduled_tasks', name: '定时任务', tools: [createListScheduledTasksTool(options.scheduledTasks)] }] : []),
     ],
-    authorize: (identity, name) => options.authorize(identity, name as AuthorizedToolName | 'send_link_buttons' | 'ask_user' | 'restore_file' | 'restore_folder' | 'read_conversation' | 'search_conversations' | 'search_memory'),
+    authorize: (identity, name) => options.authorize(identity, name as AuthorizedToolName | 'send_link_buttons' | 'ask_user' | 'restore_file' | 'restore_folder' | 'read_conversation' | 'search_conversations' | 'search_memory' | 'read_knowledge'),
   })
   return registry
 }

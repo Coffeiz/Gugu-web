@@ -381,6 +381,7 @@
     "layer": "L1",
     "purpose": "contract"
   },
+  "tests/agent/sessions/delete.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/agent/sessions/session-application.postgres.test.ts": {
     "markers": [
       "external_service"
@@ -764,6 +765,7 @@
 "tests/mind/canvas-detail.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/agent/tools/canvas-ready.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/agent/tools/skill-management.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/agent/skills/user-management-sqlite.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/agent/tools/canvas-edits.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/agent/tools/canvas-placement.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/mind/canvas-layout.test.ts":{"markers": [], "layer": "L0", "purpose": "contract"},
@@ -773,6 +775,7 @@
 "tests/agent/tools/link-buttons.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/unit/files/attachment-thumbnail.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/byok/media-capability-probe.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/byok/vector-rebuild.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/unit/files/file-thumbnail.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/byok/credential-test-preview.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/files/xlsx-preview.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
@@ -788,6 +791,10 @@
 "tests/mind/rag-freshness.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/account/delete-account.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/mcp/test-connection.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/mcp/schema-adapter.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/agent/attachment-staging.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/agent/attachment-draft-delete.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/agent/attachment-draft-clear.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/auth/profile-update.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/agent/tools/web.test.ts": {
   "markers": [],
@@ -798,5 +805,6 @@
   "markers": [],
   "layer": "L1",
   "purpose": "contract"
-}
+  },
+  "tests/agent/sessions/delete.postgres.test.ts": {"markers": ["external_service"], "layer": "L2", "purpose": "postgres"}
 }

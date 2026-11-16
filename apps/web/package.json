@@ -9,7 +9,9 @@
     "build": "vite build",
     "build:verify": "vite build && node scripts/check-css-glass-regression.mjs && node scripts/check-ui-dialog-regression.mjs",
     "preview": "vite preview",
-    "pretypecheck": "pnpm --filter @gugu/core build",
+    "predev": "pnpm --filter @gugu/charts build",
+    "prebuild": "pnpm --filter @gugu/charts build",
+    "pretypecheck": "pnpm --filter @gugu/core build && pnpm --filter @gugu/charts build",
     "typecheck": "vue-tsc --noEmit",
     "typecheck:strict": "vue-tsc -p tsconfig.strict.json --noEmit",
     "i18n:scan": "node scripts/check-i18n-static.mjs",
@@ -28,6 +30,7 @@
     "build:desktop": "vite build --config vite.desktop.config.js"
   },
   "dependencies": {
+    "@gugu/charts": "workspace:*",
     "@aiden0z/pptx-renderer": "^1.3.0",
     "@arco-design/web-vue": "^2.55.0",
     "@codemirror/autocomplete": "^6.20.3",

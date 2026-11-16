@@ -6,6 +6,7 @@ import { createPostgresCurrentTurnReader, createWebAgentSourceLoader } from './c
 import { createPersistentAgentRuntime, type PersistentAgentRuntimeOptions } from './agent-persistent-runtime.js'
 import { createPostgresAgentRunStore } from './persistence/agent-run-store-postgres.js'
 import type { AgentDispatchLease } from './persistence/agent-run-dispatch-postgres.js'
+import type { createAgentToolRegistry } from './tools/agent-tool-registry.js'
 
 /** 不含密钥、配置版本或底层异常的可公开错误类型。 */
 export class AgentReconstructionVersionError extends Error {}
@@ -19,12 +20,38 @@ export interface WebAgentReconstructionResources {
   /** 每个业务数据源均为真实服务；没有服务应返回 null，不得提供假空值。 */
   source: Omit<ContextSourcePorts, 'readSnapshot' | 'historyReader' | 'currentTurn' | 'select' | 'digest' | 'nextId' | 'data'> & { data: Omit<ContextSourcePorts['data'], 'loadImMemory'> }
   context: Omit<CanonicalContextPorts, 'load'>
-  preparation: CanonicalRunPreparationPorts
+  preparation: Omit<CanonicalRunPreparationPorts, 'discover'>
+  /** 工具 schema 发现和运行时分派必须复用同一个授权注册器。 */
+  toolRegistry: Pick<ReturnType<typeof createAgentToolRegistry>, 'capabilities' | 'tools'>
   materialize(identity: RunIdentity, message: OwnedCurrentMessage, signal?: AbortSignal): Promise<CurrentTurnSources>
-  runtime: PersistentAgentRuntimeOptions['runtime']
+  runtime: Omit<PersistentAgentRuntimeOptions['runtime'], 'tools'>
   executor: PersistentAgentRuntimeOptions['executor']
   provider: Omit<PersistentAgentRuntimeOptions['provider'], 'resolve'>
   interactionActivation?: PersistentAgentRuntimeOptions['interactionActivation']
+}
+
+/** 同一个租约绑定注册器同时提供 Provider schema 和 Harness 实际分派端口。 */
+export function createWebAgentToolPorts(
+  lease: Pick<AgentDispatchLease, 'identity'>,
+  registry: Pick<ReturnType<typeof createAgentToolRegistry>, 'capabilities' | 'tools'>,
+  preparation: Omit<CanonicalRunPreparationPorts, 'discover'>,
+): { tools: typeof registry.tools; preparation: CanonicalRunPreparationPorts } {
+  const identity = Object.freeze({ ...lease.identity })
+  return {
+    tools: registry.tools,
+    preparation: {
+      ...preparation,
+      async discover(input, signal) {
+        signal.throwIfAborted()
+        if (input.identity.ownerId !== identity.ownerId || input.identity.subject.kind !== 'session'
+          || input.identity.subject.id !== identity.sessionId) throw new AgentReconstructionVersionError('工具运行身份不匹配')
+        const configured = new Set(input.toolNames)
+        const definitions = await registry.capabilities(identity)
+        signal.throwIfAborted()
+        return definitions.filter(definition => configured.has(definition.name))
+      },
+    },
+  }
 }
 export interface WebAgentReconstructorOptions {
   pool: PersistentAgentRuntimeOptions['pool']
@@ -74,8 +101,10 @@ export function createWebAgentReconstructor(options: WebAgentReconstructorOption
       if (selected.modelIdentity !== selection.modelIdentity || selected.accessScopeHash !== expected) throw new AgentReconstructionVersionError('Provider 访问范围不匹配')
       const source = createWebAgentSourceLoader(options.pool, { ...resources.source, data: { ...resources.source.data, loadImMemory: createWebImMemoryLoader(lease) }, digest: resources.context.digest, nextId: resources.context.nextId,
         select: async () => selection, currentTurn: createPostgresCurrentTurnReader(options.pool, String(lease.input.userMessageId), resources.materialize) })
+      const toolPorts = createWebAgentToolPorts(lease, resources.toolRegistry, resources.preparation)
       const instance = createPersistentAgentRuntime({ pool: options.pool, secretKey: options.secretKey, redis: options.redis, subscribe: options.subscribe, history: options.history,
-        context: { ...resources.context, load: source.load }, runPreparation: resources.preparation, runtime: resources.runtime, executor: resources.executor,
+        context: { ...resources.context, load: source.load }, runPreparation: toolPorts.preparation,
+        runtime: { ...resources.runtime, tools: toolPorts.tools }, executor: resources.executor,
         provider: { ...resources.provider, resolve: binding.resolve }, interactionActivation: resources.interactionActivation,
         scheduling: { mode: 'dispatch', readReconstructionStatus: options.readReconstructionStatus, leaseFor: target => target.ownerId === id.ownerId && target.sessionId === id.sessionId && target.runId === id.runId ? lease : null } })
       let closed = false

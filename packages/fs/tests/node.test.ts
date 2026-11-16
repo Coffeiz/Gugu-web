@@ -2,7 +2,7 @@ import { link, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, expect, it } from 'vitest'
-import { finishStagedLocalFile, openLocalFile, removeLocalTree, stageLocalFile, UnsafeLocalPathError } from '../src/node.js'
+import { finishStagedLocalFile, openLocalFile, removeLocalTree, stageLocalFile, UnsafeLocalPathError, writeLocalFile } from '../src/node.js'
 
 const root = await mkdtemp(path.join(tmpdir(), 'gugu-fs-'))
 afterEach(async () => { await rm(root, { recursive: true, force: true }) })
@@ -72,4 +72,17 @@ it('递归删除拒绝根目录和不安全相对路径，缺失目标幂等', a
   await expect(removeLocalTree(root, '../outside')).rejects.toBeInstanceOf(UnsafeLocalPathError)
   expect(await removeLocalTree(root, 'missing')).toBe(0)
   expect(await readFile(path.join(root, 'sibling.txt'), 'utf8')).toBe('保留')
+})
+
+it.skipIf(process.platform !== 'linux')('原子写入授权根内的嵌套文件并拒绝越界或符号链接父目录', async () => {
+  const outside = await mkdtemp(path.join(tmpdir(), 'gugu-fs-outside-'))
+  try {
+    await mkdir(root, { recursive: true })
+    await writeLocalFile(root, 'owner/.agent/memory_vec.json', '{"safe":true}')
+    expect(await readFile(path.join(root, 'owner/.agent/memory_vec.json'), 'utf8')).toBe('{"safe":true}')
+    await expect(writeLocalFile(root, '../outside', '越界')).rejects.toBeInstanceOf(UnsafeLocalPathError)
+    await symlink(outside, path.join(root, 'linked'))
+    await expect(writeLocalFile(root, 'linked/data.json', '越界')).rejects.toBeInstanceOf(UnsafeLocalPathError)
+    await expect(readFile(path.join(outside, 'data.json'))).rejects.toThrow()
+  } finally { await rm(outside, { recursive: true, force: true }) }
 })

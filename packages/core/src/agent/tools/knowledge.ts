@@ -46,8 +46,8 @@ const schema = z.object({
   knowledge_id: z.string().optional(),
   keyword: z.string().optional(),
   scope: z.string().optional(),
-  limit: z.number().int().min(1).max(25).optional(),
-}).passthrough().refine(value => Boolean(value.knowledge_id?.trim()) !== Boolean(value.keyword?.trim()))
+  limit: z.number().int().optional(),
+}).passthrough()
 
 /** 对齐 Python read_knowledge：按 ID 直读，关键词查询走统一 BM25 索引。 */
 export function createKnowledgeReadTool(port: KnowledgeReadPort): ToolDefinition {
@@ -58,7 +58,7 @@ export function createKnowledgeReadTool(port: KnowledgeReadPort): ToolDefinition
       parameters: { type: 'object', properties: {
         knowledge_id: { type: 'string' }, keyword: { type: 'string' }, scope: { type: 'string' },
         limit: { type: 'integer', minimum: 1, maximum: 25 },
-      }, oneOf: [{ required: ['knowledge_id'], not: { required: ['keyword'] } }, { required: ['keyword'], not: { required: ['knowledge_id'] } }] },
+      } },
     } } }, effect: 'read', validate: input => schema.safeParse(input),
     async execute(input, scope) {
       const args = input as z.infer<typeof schema>
@@ -71,8 +71,10 @@ export function createKnowledgeReadTool(port: KnowledgeReadPort): ToolDefinition
           : { kind: 'completed', successful: false, mutated: false, value: { error: '知识条目不存在或已停用；可用 keyword 进行 BM25 搜索' } }
       }
       const keyword = args.keyword?.trim() ?? ''
-      if (!keyword) return { kind: 'completed', successful: false, mutated: false, value: { error: '请提供 keyword 进行 BM25 检索，或提供 knowledge_id 精确读取完整条目' } }
-      const recall = await port.search(scope.identity, keyword, args.scope?.trim().toLowerCase() ?? '', args.limit ?? 5, scope.signal)
+      if (!keyword) return { kind: 'completed', successful: false, mutated: false, executed: true, value: { error: '请提供 keyword 进行 BM25 检索，或提供 knowledge_id 精确读取完整条目' } }
+      const limit = args.limit || 5
+      if (limit < 1 || limit > 25) return { kind: 'completed', successful: false, mutated: false, executed: true, value: { error: 'limit 必须是 1 到 25 的整数' } }
+      const recall = await port.search(scope.identity, keyword, args.scope?.trim().toLowerCase() ?? '', limit, scope.signal)
       scope.signal.throwIfAborted()
       const grouped = new Map<string, KnowledgeSearchHit>()
       for (const hit of recall.results) {

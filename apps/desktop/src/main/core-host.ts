@@ -403,8 +403,8 @@ export function desktopHandlers(
     [DESKTOP_CHANNELS.deleteClient]: (id: unknown) =>
       host.request('clients.delete', { id }),
     [DESKTOP_CHANNELS.calendar]: () => host.request('calendar.list'),
-    [DESKTOP_CHANNELS.createCalendarEvent]: (title: unknown, date: unknown) =>
-      host.request('calendar.create', { title, date }),
+    [DESKTOP_CHANNELS.createCalendarEvent]: (title: unknown, date: unknown, details?: unknown) =>
+      host.request('calendar.create', { title, date, ...(details && typeof details === 'object' ? details : {}) }),
     [DESKTOP_CHANNELS.updateCalendarEvent]: (id: unknown, body: unknown) =>
       host.request('calendar.update', { id, body }),
     [DESKTOP_CHANNELS.deleteCalendarEvent]: (id: unknown, version: unknown) =>

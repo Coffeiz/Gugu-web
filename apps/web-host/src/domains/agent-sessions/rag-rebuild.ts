@@ -22,7 +22,7 @@ import { createPostgresAgentMemoryIndexScopeReader } from './tools/agent-memory-
 
 export type AgentRagIndexWorkerOwner = 'python' | 'node'
 
-function configuredWorkerOwner(value: string | undefined): AgentRagIndexWorkerOwner {
+export function resolveAgentRagIndexWorkerOwner(value: string | undefined): AgentRagIndexWorkerOwner {
   if (value === undefined || value === '') return 'python'
   if (value === 'python' || value === 'node') return value
   throw new Error('Agent RAG Worker owner 配置无效')
@@ -58,8 +58,12 @@ export function createAgentRagRebuildWorker(core: SqlDataRuntime, options: { kno
 /** Host 生命周期入口：统一装配可用来源、持久 Worker 与单消费者调度器。 */
 export function startAgentRagIndexWorker(core: SqlDataRuntime, options: Omit<RagIndexWorkerOptions, 'work'> & { knowledgeStore?: AgentKnowledgeReadStore; memoryStorageRoot?: string; workerOwner?: AgentRagIndexWorkerOwner }) {
   const { knowledgeStore, memoryStorageRoot, workerOwner: requestedOwner, ...schedulerOptions } = options
-  const workerOwner = requestedOwner ?? configuredWorkerOwner(process.env.AGENT__RAG_INDEX_WORKER_OWNER)
+  const workerOwner = requestedOwner ?? resolveAgentRagIndexWorkerOwner(process.env.AGENT__RAG_INDEX_WORKER_OWNER)
   const { work, sources } = createAgentRagRebuildWorker(core, { knowledgeStore, memoryStorageRoot })
+  if (schedulerOptions.enabled && workerOwner === 'node') {
+    const missing = (['knowledge', 'memory'] as const).filter(source => !sources.includes(source))
+    if (missing.length) throw new Error('Node RAG Worker 来源未完整')
+  }
   let baselineEnqueued = false
   const scheduler = startRagIndexWorker({
     ...schedulerOptions,

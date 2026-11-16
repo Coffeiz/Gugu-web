@@ -37,7 +37,7 @@ export function createScopedRagSearch(ports:{
    signal?.throwIfAborted()
    if(queryVector.length){
     const source=await ports.vectors.source(owner,signal)
-    const vectorMap=await readRagDocumentVectors(documents,ports.vectors.version,source,signal)
+    const vectorMap=await readRagDocumentVectors(documents,ports.vectors.version,source,signal,owner)
     signal?.throwIfAborted()
     fused=index.searchHybrid(owner,query,50,options.sourceTypes,trustedScope,{vectors:new Map(Object.entries(vectorMap)),queryVector,vectorVersion:ports.vectors.version,expectedVersion:ports.vectors.version})
    }else{

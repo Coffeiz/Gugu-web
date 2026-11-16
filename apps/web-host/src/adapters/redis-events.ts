@@ -198,6 +198,43 @@ export function createRedisAccountAttachmentCleaner(redisUrl:string) {
   }
 }
 
+/** 列出 Python 旧 chatfile 暂存键；坏 JSON/缺少 storage_key 保留不动以匹配 clear_staged。 */
+export function createRedisLegacyChatAttachmentCleaner(redisUrl: string) {
+  const script = `local cursor='0';local entries={};repeat local page=redis.call('SCAN',cursor,'MATCH',ARGV[1],'COUNT','200');cursor=page[1];for _,key in ipairs(page[2]) do local raw=redis.call('GET',key);local id=string.sub(key,#ARGV[2]+1);if not raw then table.insert(entries,{id=id,storageKey=cjson.null}) else local ok,value=pcall(cjson.decode,raw);if ok and type(value)=='table' and type(value.storage_key)=='string' then table.insert(entries,{id=id,storageKey=value.storage_key}) end end end until cursor=='0';if #entries==0 then return '[]' end;return cjson.encode(entries)`
+  return {
+    async list(ownerId: string): Promise<Array<{ id: string; storageKey: string | null }>> {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ownerId))
+        throw new Error('附件 owner 无效')
+      const prefix = `chatfile:${ownerId}:`
+      const raw = await withRedis(redisUrl, command => command('EVAL', script, '0', `${prefix}*`, prefix))
+      const parsed: unknown = JSON.parse(raw ?? 'null')
+      if (!Array.isArray(parsed) || parsed.some(item => !item || typeof item !== 'object'
+        || typeof item.id !== 'string' || (item.storageKey !== null && typeof item.storageKey !== 'string')))
+        throw new Error('Redis 附件暂存响应无效')
+      return parsed as Array<{ id: string; storageKey: string | null }>
+    },
+    async remove(ownerId: string, id: string): Promise<void> {
+      await withRedis(redisUrl, command => command('DEL', `chatfile:${ownerId}:${id}`))
+    },
+  }
+}
+
+/** 删除会话后清理 Python Worker 共用的 owner/group 反思缓冲与 idle 索引。 */
+export function createRedisAgentSessionReflectionCleaner(redisUrl: string) {
+  return async (ownerId: string, sessionId: number): Promise<void> => {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ownerId)
+      || !Number.isSafeInteger(sessionId) || sessionId < 1)
+      throw new Error('Agent session reflection identity invalid')
+    const member = `${ownerId}:${sessionId}`
+    await withRedis(redisUrl, async command => {
+      await command('DEL', `memory:owner-reflection:${ownerId}:${sessionId}`)
+      await command('DEL', `memory:owner-group-reflection:${ownerId}:${sessionId}`)
+      await command('ZREM', 'memory:owner-reflection-idle', member)
+      await command('ZREM', 'memory:owner-group-reflection-idle', member)
+    })
+  }
+}
+
 /** Agent run 取消适配器使用的 Redis 命令；写入标记与发布通知分别执行。 */
 export function createRedisAgentCancellationCommands(redisUrl: string): RedisAgentCancellationCommands {
   return {

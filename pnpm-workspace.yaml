@@ -1,5 +1,6 @@
 packages:
   - "packages/core"
+  - "packages/charts"
   - "packages/fs"
   - "packages/sandbox"
   - "apps/desktop"

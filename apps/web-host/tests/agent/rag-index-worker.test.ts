@@ -10,13 +10,21 @@ import { createSqlRagPersistentIndexReader } from '../../../../packages/core/src
 import { createSqlRagPersistentIndexWriter } from '../../../../packages/core/src/agent/rag/persistent-writer.js'
 import { createSqlRagRebuildWorker } from '../../../../packages/core/src/agent/rag/rebuild-worker.js'
 import { enqueueMissingAgentRagBaselines } from '../../../../packages/core/src/agent/rag/rebuild-worker.js'
-import { startAgentRagIndexWorker } from '../../src/domains/agent-sessions/rag-rebuild.js'
+import { resolveAgentRagIndexWorkerOwner, startAgentRagIndexWorker } from '../../src/domains/agent-sessions/rag-rebuild.js'
 import { startRagIndexWorker } from '../../src/domains/agent-sessions/rag-index-worker.js'
 import { createLocalAgentKnowledgeReadStore } from '../../src/domains/agent-sessions/tools/agent-rag-knowledge-store.js'
 
 const tick = async (count = 1) => {
   for (let i = 0; i < count; i++) await new Promise(resolve => setImmediate(resolve))
 }
+
+test('RAG Worker owner follows the Host-injected environment and rejects unsupported consumers', () => {
+  assert.equal(resolveAgentRagIndexWorkerOwner(undefined), 'python')
+  assert.equal(resolveAgentRagIndexWorkerOwner(''), 'python')
+  assert.equal(resolveAgentRagIndexWorkerOwner('python'), 'python')
+  assert.equal(resolveAgentRagIndexWorkerOwner('node'), 'node')
+  assert.throws(() => resolveAgentRagIndexWorkerOwner('both'), /Worker owner 配置无效/u)
+})
 
 test('RAG 调度器立即运行并串行排空 ready 任务，空队列后按间隔轮询', async () => {
   const results = ['ready', 'superseded', 'idle', 'idle'] as const
@@ -218,8 +226,74 @@ test('生产 Host RAG 生命周期经共享 Core 项目服务重建正式索引�
     const job = (sourceType: string, sourceId: string) => ({ user_id: owner, source_type: sourceType, source_id: sourceId,
       pending_source_ids: JSON.stringify([sourceId]), version: '', operation: 'upsert', status: 'queued', generation: 1,
       completed_generation: 0, attempts: 0, next_attempt_at: now, created_at: now, updated_at: now })
+    const calendar = await runtime.db.insertInto('calendar_events').values({
+      user_id: owner, title: '来源验收活动', date: '2026-11-16', time: '09:30', end_time: null,
+      type: 'event', contact_name: null, project_id: null, description: '日历来源正文', version: 1,
+      created_at: now, deleted_at: null, idempotency_key: null, idempotency_fingerprint: null,
+    }).returning(['id']).executeTakeFirstOrThrow()
+    const note = await runtime.db.insertInto('mind_nodes').values({
+      user_id: owner, kind: 'note', title: '来源验收便签', content_md: '便签来源正文', content_plain: '便签来源正文',
+      color: null, ref_type: null, ref_id: null, ref_snapshot: null, origin: 'user', indexed_at: null,
+      indexed_hash: 'note-v1', version: 1, captured_at: now, created_at: now, updated_at: now, deleted_at: null,
+    }).returning(['id']).executeTakeFirstOrThrow()
+    const canvas = await runtime.db.insertInto('mind_maps').values({
+      user_id: owner, title: '来源验收画布', project_id: null, data_json: '{}',
+      created_at: now, updated_at: now, deleted_at: null,
+    }).returning(['id']).executeTakeFirstOrThrow()
+    const canvasNode = await runtime.db.insertInto('mind_nodes').values({
+      user_id: owner, kind: 'canvas_note', title: '画布来源节点', content_md: '画布来源正文', content_plain: '画布来源正文',
+      color: null, ref_type: null, ref_id: null, ref_snapshot: null, origin: 'user', indexed_at: null,
+      indexed_hash: 'canvas-v1', version: 1, captured_at: now, created_at: now, updated_at: now, deleted_at: null,
+    }).returning(['id']).executeTakeFirstOrThrow()
+    const canvasItem = await runtime.db.insertInto('mind_canvas_items').values({
+      user_id: owner, canvas_id: Number(canvas.id), node_id: Number(canvasNode.id), x: 0, y: 0, w: null, h: null,
+      z: 0, collapsed: 0 as unknown as boolean, data_json: '{}', created_at: now, updated_at: now, deleted_at: null,
+    }).returning(['id']).executeTakeFirstOrThrow()
+    const scheduledTask = await runtime.db.insertInto('scheduled_tasks').values({
+      user_id: owner, event_id: null, reminder_lead_minutes: null, workspace_id: null, filesystem_authorization_grant_id: null,
+      name: '来源验收任务', payload: '定时任务来源正文', cron: '0 9 * * *', schedule_kind: 'cron', interval_minutes: null,
+      start_at: null, end_at: null, channels: 'web', enabled: 1 as unknown as boolean, delivery_targets: null, authorized_tools: '[]',
+      email_attachment_file_ids: '[]', last_run_at: null, last_run_failed: null, created_at: now, updated_at: now,
+    }).returning(['id']).executeTakeFirstOrThrow()
+    const conversation = await runtime.db.insertInto('conversation_sessions').values({
+      user_id: owner, title: '来源验收对话', title_locked: 0 as unknown as boolean, summary: '', source: 'web', bot_id: null, chat_id: null,
+      platform_user_id: null, chat_type: null, workspace_id: null, context_epoch: 1, session_context: null,
+      session_info_hash: null, snapshot_hash: null, snapshot_expires_at: null, baseline_message_seq: 0,
+      baseline_message_hash: null, last_message_seq: 1, execution_state: 'idle', active_run_id: null,
+      pending_message_count: 0, history_provider: null, history_api_format: null, created_at: now, updated_at: now,
+    }).returning(['id']).executeTakeFirstOrThrow()
+    await runtime.db.insertInto('conversation_messages').values({
+      session_id: Number(conversation.id), conversation_seq: 1, history_anchor_seq: null, role: 'user',
+      content: '对话来源正文', client_message_id: null, content_json: null, provider_image_content: null,
+      display_timeline: null, files: null, quoted_text: null, references_json: null, platform_user_id: null,
+      platform_user_name: null, platform_bot_user_id: null, im_platform_message_id: null, im_reply_to_message_id: null,
+      im_reply_target_sender_id: null, im_reply_target_is_bot: null, im_sender_is_bot: null, im_event_received_ms: null,
+      im_platform_sent_ms: null, im_media_kinds: null, im_media_processable: null, im_mention_facts: null, chat_type: null,
+      sent_at: now, created_at: now, canonical_batch_id: null, run_id: null, round_id: null, run_outcome: null,
+      covers_until_seq: null,
+    }).execute()
+    await runtime.db.schema.createTable('memory_reflection_cursors')
+      .addColumn('id', 'integer', column => column.primaryKey().autoIncrement())
+      .addColumn('owner_user_id', 'text', column => column.notNull())
+      .addColumn('platform', 'text', column => column.notNull())
+      .addColumn('bot_id', 'text', column => column.notNull())
+      .addColumn('scope_type', 'text', column => column.notNull())
+      .addColumn('scope_id', 'text', column => column.notNull())
+      .addColumn('scope_version', 'integer')
+      .addColumn('updated_at', 'text')
+      .execute()
+    await runtime.db.schema.createTable('memory_scope_tombstones')
+      .addColumn('id', 'integer', column => column.primaryKey().autoIncrement())
+      .addColumn('owner_user_id', 'text', column => column.notNull())
+      .addColumn('platform', 'text', column => column.notNull())
+      .addColumn('bot_id', 'text', column => column.notNull())
+      .addColumn('scope_type', 'text', column => column.notNull())
+      .addColumn('scope_id', 'text', column => column.notNull())
+      .execute()
     await fixtureDb.insertInto('rag_index_jobs').values([
-      job('project', String(project.id)), job('knowledge', 'knowledge-k1'), job('memory', 'not-ready'),
+      job('project', String(project.id)), job('calendar', String(calendar.id)), job('note', String(note.id)),
+      job('canvas', String(canvasItem.id)), job('scheduled_task', String(scheduledTask.id)),
+      job('conversation', String(conversation.id)), job('knowledge', 'knowledge-k1'), job('memory', 'not-ready'),
     ]).execute()
 
     const reader = createSqlRagPersistentIndexReader(runtime.db, 'sqlite')
@@ -261,26 +335,50 @@ test('生产 Host RAG 生命周期经共享 Core 项目服务重建正式索引�
     assert.deepEqual(await fixtureDb.selectFrom('rag_index_jobs').select('status').where('source_type', '=', 'project').executeTakeFirst(), { status: 'queued' })
     await pythonOwned.stop()
 
+    for (const partialSources of [
+      { knowledgeStore: createLocalAgentKnowledgeReadStore(storageRoot) },
+      { memoryStorageRoot: storageRoot },
+    ]) {
+      assert.throws(() => startAgentRagIndexWorker(runtime!, {
+        enabled: true, intervalMs: 1000, onError: error => { throw error }, workerOwner: 'node', ...partialSources,
+      }), /来源未完整/u)
+    }
+
     const production = startAgentRagIndexWorker(runtime, {
       enabled: true,
       intervalMs: 1000,
       onError: error => { throw error },
       workerOwner: 'node',
       knowledgeStore: createLocalAgentKnowledgeReadStore(storageRoot),
+      memoryStorageRoot: storageRoot,
     })
     try {
+      assert.deepEqual(production.sources, ['project', 'calendar', 'note', 'scheduled_task', 'conversation', 'canvas', 'knowledge', 'memory'])
       let snapshot = await reader.snapshot(opened.ownerId)
-      const ready = () => snapshot.documents.some(document => document.title === '来源组项目')
-        && snapshot.documents.some(document => document.source_type === 'knowledge' && document.source_id === 'knowledge-k1')
+      const sourceContent = new Map(snapshot.documents.map(document => [document.source_type, document.content]))
+      const ready = () => ['project', 'calendar', 'note', 'canvas', 'scheduled_task', 'conversation', 'knowledge']
+        .every(source => sourceContent.has(source))
       for (let attempt = 0; attempt < 50 && !ready(); attempt++) {
         await new Promise(resolve => setTimeout(resolve, 2))
         snapshot = await reader.snapshot(opened.ownerId)
+        sourceContent.clear()
+        for (const document of snapshot.documents) sourceContent.set(document.source_type, document.content)
       }
       assert.equal(snapshot.documents.some(document => document.title === '来源组项目' && document.content?.startsWith('项目：来源组项目')), true)
+      assert.equal(snapshot.documents.some(document => document.source_type === 'calendar' && document.content?.includes('日历来源正文')), true)
+      assert.equal(snapshot.documents.some(document => document.source_type === 'note' && document.content?.includes('便签来源正文')), true)
+      assert.equal(snapshot.documents.some(document => document.source_type === 'canvas' && document.content?.includes('画布来源正文')), true)
+      assert.equal(snapshot.documents.some(document => document.source_type === 'scheduled_task' && document.content?.includes('定时任务来源正文')), true)
+      assert.equal(snapshot.documents.some(document => document.source_type === 'conversation' && document.content?.includes('对话来源正文')), true)
       assert.equal(snapshot.documents.some(document => document.source_type === 'knowledge'
         && document.source_id === 'knowledge-k1' && document.content === '先核对健康探针，再按批次切换流量。'), true)
       assert.deepEqual(await fixtureDb.selectFrom('rag_index_jobs').select('status').where('source_type', '=', 'knowledge').executeTakeFirst(), { status: 'ready' })
-      assert.deepEqual(await fixtureDb.selectFrom('rag_index_jobs').select('status').where('source_type', '=', 'memory').executeTakeFirst(), { status: 'queued' })
+      let memoryJob = await fixtureDb.selectFrom('rag_index_jobs').select('status').where('source_type', '=', 'memory').executeTakeFirst()
+      for (let attempt = 0; attempt < 50 && memoryJob?.status !== 'ready'; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 5))
+        memoryJob = await fixtureDb.selectFrom('rag_index_jobs').select('status').where('source_type', '=', 'memory').executeTakeFirst()
+      }
+      assert.deepEqual(memoryJob, { status: 'ready' })
     } finally {
       await production.stop()
     }
@@ -366,6 +464,7 @@ test('Host Memory 来源经可信 owner scope 与旧版 FS 投影重建正式索
 
     const production = startAgentRagIndexWorker(runtime, {
       enabled: true, intervalMs: 1000, onError: error => { throw error }, workerOwner: 'node', memoryStorageRoot: storageRoot,
+      knowledgeStore: createLocalAgentKnowledgeReadStore(storageRoot),
     })
     try {
       let status = await memoryDb.selectFrom('rag_index_jobs').select('status').where('source_type', '=', 'memory').executeTakeFirst()

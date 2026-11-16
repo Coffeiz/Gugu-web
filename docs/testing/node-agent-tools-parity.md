@@ -1147,7 +1147,7 @@ Node Core RAG 定向回归 **9 个文件、56/56 通过**；标准 Core Vitest �
 
 2026-11-16 当前源码复验：devserver 使用 Core 标准 Vitest 配置显式选择 `tests/agent/rag` 和 Mind RAG freshness 文件，Core RAG **9 个文件、57/57**、Mind freshness **1 个文件、5/5**，合计 **10 个文件、62/62** 通过；本次只验证 Core RAG 排序、tokenizer、scope/owner、向量降级、cache revision/TTL、来源适配及 Mind freshness，不连接 PG、Redis 或外部服务。该显式文件选择未要求 Vitest 加载未登记的其他 suite，因此不代表 Core 全量测试发现配置已解决。
 
-生产 Worker 装配现通过 `main.ts` 将 `config.storageLocalPath` 注入 `memoryStorageRoot`，使 memory loader/source 成为迁移门控通过后的重建来源；memory 写入仍缺 Node job producer。生产 Agent Run 仍没有 `createAgentToolRegistry` caller，可信 IM scope、memory 授权和 embedding 尚未接入；Python FastAPI 仍无条件启动 Cython recovery loop，与 Node Worker 共享 `rag_index_jobs`，尚未切换为 Node-only；正式 PostgreSQL migration 仍未验收。因此上述测试与入口接线不代表生产 RAG 全量迁移完成。
+生产 Worker 装配现通过 `main.ts` 将 `config.storageLocalPath` 注入 `memoryStorageRoot`，使 memory loader/source 成为迁移门控通过后的重建来源；memory 写入仍缺 Node job producer。生产 Agent Run 仍没有 `createAgentToolRegistry` caller，可信 IM scope、memory 授权和 embedding 尚未接入。Python FastAPI 现遵循 `AGENT__RAG_INDEX_WORKER_OWNER`：默认仍由 Python 消费；配置为 `node` 时只持久化 job，不启动 Python 内存 Worker 或恢复消费者。代码分支已有回归，但尚无两端统一配置及部署切换证据。正式 PostgreSQL migration 仍未验收，因此上述测试与入口接线不代表生产 RAG 全量迁移完成。
 
 共享固定质量语料复验（2026-11-16）：Host 正式 `@node-rs/jieba` + Core lexical index **1/1**；旧版 Cython fixture pytest **1/1**。两端逐查询结果一致：部署、天气、GTA6 发售和 owner scope 查询均 Recall@3=1、MRR=1；无关查询为空；完全匹配 owner scope 查询词的 group 干扰文档不出现在结果中。Node 测试用例经过正式 Jieba 和 Core 索引实际查询；Python 测试通过临时副本执行，复用仓库固定语料和当前测试源码，只将 fixture 路径改为临时副本路径，Cython 扩展编译在独立临时目录。该项补齐词法相关性与 scope 裁剪基准，不涉及 PG/真实向量服务或生产 Agent Run；因 Mutagen 会话现有构建产物冲突，本轮没有全量 flush。
 
@@ -1187,3 +1187,39 @@ Core 持久索引读取遇到无法解析的 `metadata_json` 时，原先把 `JS
 ### devserver 追加验收（2026-11-16）
 
 Core RAG 与 Mind freshness **10 个文件、63/63 通过**；Host memory scope/BYOK、conversation Runner、索引损坏恢复、持久 Worker、正式 Jieba 与共享相关性语料 **19/19 通过**；Python RAG、conversation parity/search limits 与 knowledge search 工具 **300/300 通过**。Node 测试使用临时 SQLite/FS，授权、凭据、Provider transport、RunStore 与 Provider 为模拟依赖。Python 使用临时 venv（Cython 3.3.1、rjieba 0.2.2、OpenAI/Anthropic SDK），只测试 SDK 导入，不发送 Provider 请求、不读取凭据。隔离 PostgreSQL 未配置。Core 标准 Vitest suite 受并行工作区未登记测试影响，本次使用 `/tmp` 临时配置运行 RAG 文件，未修改共享 suite 清单。生产 Agent Run 装配、knowledge/memory Node 写入 producer、Python/Cython 与 Node Worker 唯一归属及正式 PostgreSQL migration 仍是生产阻塞项。
+
+### `read_knowledge` Core 工具与 Host 持久 RAG 适配（2026-11-16）
+
+旧 Python `backend/agent/tools/knowledge.py::_read_knowledge` 的按 ID 完整读取与关键词 BM25 行为现有 Core 工具组 `tools/knowledge.ts`：默认 limit=5、业务范围 1–25；ID 与 keyword 同时提供时 ID 优先，空查询与越界 limit 返回 handler 业务错误；Core 合并同一知识记录的重复命中片段。Web Host `agent-knowledge.ts` 的 ID 路径通过受限 owner FS reader 解析完整 Markdown 正文、版本和按可信用户时区投影的时间；keyword 路径从 `knowledge_index_entries` 经 `createScopedRagSearch` 召回，只能使用 Host `resolveScope` 与 `authorize` 确认的 scope，并固定使用词法 BM25，不调用可选向量或 embedding Provider。关键词结果返回 ranker 的 `item.text` 投影（标题、摘要、正文，受共享字符预算限制），与 Python `as_public_result()` 一致；按 ID 才返回完整正文。工具端口已作为可选 `knowledge` 组加入现有 Host registry。
+
+devserver Core 行为用例 **4/4**；Core 标准测试启动被并行新增但未登记的 `tests/agent/skills/user-management-sqlite.test.ts` 阻断，本次使用 `/tmp` 临时 Vitest 配置只选该用例运行，未改共享清单中其他会话的登记。Host 临时 SQLite/FS 经真实持久索引 reader、Host 适配器、实际 `createAgentToolRegistry` 注册与 dispatch **1/1**；回归提供了可用的向量/embedding spy，并验证 Python 固定 BM25 契约下二者均未被调用。Core typecheck/build、Host 本次文件的严格单文件 TypeScript 检查与当时的 Web Host production build 通过。回归保护 owner 隔离、正文/时间/版本、固定 BM25、不触发向量/Provider、Python 排序文本投影、重复 chunk 合并、非法参数无查询副作用、撤权和 Web 越权 scope 拒绝。`backend/tests/agent/knowledge/test_read_knowledge_tool.py` 当时未运行：devserver 没有项目 `.venv/bin/pytest`。测试使用临时 SQLite/FS、正式 `@node-rs/jieba` 内置词典、合成 scope/授权/时区，不调用外部 Provider。生产 Agent Run 仍未装配 registry/knowledge port，Node knowledge 写路径及 freshness producer、正式 PostgreSQL migration 未验收，因此该工具目前是已实现待生产接入。
+
+同日追加真实 Runner 续轮回归：Core `knowledge.test.ts` **4/4**、`source-adapters.test.ts` **8/8**（临时 Vitest 配置只选目标文件，配置已移除）；Host `conversation-tools-runtime-sqlite.test.ts` 的 SQL 事实表搜索、隔离与 `AgentRuntime → Core Runner → 工具注册器 dispatch → Provider 续轮` **4/4**，与 `knowledge-tool.test.ts` 实际 Host registry 调用 **1/1**、owner knowledge store/持久 Worker/baseline/正式 Jieba **11/11** 合计 Host **16/16**。Core build、Web Host production build 通过。该 Runner 仍使用合成 Provider、RunStore、授权与上下文，不能替代 `main.ts` 的生产 Agent Run 装配或正式 PostgreSQL 验收。
+
+### `read_knowledge` 强制 BM25 与 Python 一致（2026-11-16）
+
+复核发现 Host knowledge adapter 虽然把工具结果标成 `bm25`，但实际将可选向量与 embedding 传给共享 hybrid 检索；单知识条目测试未能暴露这一差异。旧 Python `_read_knowledge` 显式调用 `search_knowledge(... strategy="bm25")`。已先将 Host dispatch 回归改为断言注入的向量读取和 embedding 均不发生，首轮在 devserver 以 `1 !== 0` 失败；随后移除 knowledge port 的向量依赖，保留 Core 持久索引、BM25 ranker、owner scope 及授权复核。修复后 knowledge、memory scope/BYOK、Worker 生命周期和 Web Run 工具绑定合计 **4 个文件、17/17 通过**；包含 `knowledge-tool.test.ts` 的实际 registry dispatch，其他用例保护 memory 向量召回、队列消费及注册器撤权行为。严格单文件 TypeScript 检查通过。Python pytest 因 devserver 没有 pytest 模块未运行；Web Host production build 被并行改动的 `packages/core/src/byok/vector-rebuild.ts` TS6133（未使用 `storedVectors`）挡在 Core prebuild 阶段，未改该共享文件。Host production-source 类型检查的其他诊断只落在并行 BYOK embedding 模块，本次文件没有诊断。此修复保持 Python 知识工具的 BM25 行为；memory 等明确支持 embedding 的 RAG 入口不受影响。真实 PostgreSQL 与生产 Agent Run 仍未验收。
+
+### Node 消费者必须装配完整来源（2026-11-16）
+
+`AGENT__RAG_INDEX_WORKER_OWNER=node` 选择的是共享 RAG 队列的全局消费者。Host 若缺少 knowledge 或 memory 来源仍启动 Node Worker，会让 Python 按配置停止消费后把对应任务留在队列中。`startAgentRagIndexWorker` 现对 Node 消费者 fail closed：缺任一来源时拒绝启动；两种不完整装配及完整的 project/knowledge/memory 持久任务生命周期由 Host `rag-index-worker.test.ts` **8/8** 覆盖。测试通过临时 SQLite、owner FS 和合成 memory 游标验证实际队列状态与索引副作用。devserver 只有 PostgreSQL 客户端，没有 `initdb`/`postgres` 服务端，因此本轮未运行迁移的隔离 PostgreSQL 集成用例；无生产数据库或配置被访问。
+
+Host `startServer(env)` 现把同一个注入环境中的 `AGENT__RAG_INDEX_WORKER_OWNER` 传给生产 Worker 装配，避免读取进程全局环境而忽略显式 Host 配置。`resolveAgentRagIndexWorkerOwner` 行为回归覆盖默认 `python`、两个合法值与非法值拒绝。此项只修正 Worker 所有权配置的生产装配，不代表 Agent Run 已注册工具或 Node 消费者已在部署中切换。
+
+devserver 同步哈希逐文件匹配后，`rag-index-worker.test.ts` **9/9 通过**。生产 Host Worker 用临时 SQLite 实际重建 project、calendar、note、canvas、scheduled_task、conversation、knowledge 的正文索引，并确认 memory 来源参与全量来源集合；同时覆盖 owner 配置解析、Worker 生命周期、正式索引写入和取消停机。测试使用临时 SQLite/FS，不连 PostgreSQL/Redis 或 embedding Provider。Web Host production build 通过。此前本地尝试构建因本地依赖目录缺少 package manifest 已声明的 `pinyin-pro`，在 MCP 两处 import 报 TS2307；本次变更文件未见构建诊断。
+
+### Web 重建器绑定 RAG 工具注册器（2026-11-16）
+
+`createWebAgentToolPorts` 把同一个 Host `createAgentToolRegistry` 同时接到 Web Run 的能力发现和 Harness `ToolPort`：Provider schema 只暴露运行身份已授权、且在可信配置白名单内的工具；每次 dispatch 仍由同一 registry 重新授权。发现阶段还校验准备身份与持久 lease 的 owner/session 一致并响应取消。devserver **2/2** 通过，其中一项使用临时 SQLite 会话事实表、正式 Jieba、真实 Host conversation adapter 和 registry dispatch，验证 `search_conversations` 返回实际 owner 会话结果、撤权后隐藏且不再查询。Web 重建器完整 PostgreSQL/Redis 生命周期测试因缺少隔离服务跳过；`main.ts` 仍没有生产 `createWebAgentReconstructor`/`agentChat` 调用方，因此该接线组件还未成为生产 Run。
+
+### `search_memory` fallback reason 与 Python 对齐（2026-11-16）
+
+旧版 `UnifiedQueryRetriever` 会把未启用 embedding 标为 `embedding_disabled`，显式 `strategy=bm25` 标为 `lexical_only`，embedding 已配置但本轮没有可用匹配向量时标为 `embedding_cache_unavailable`；混合召回成功时为 `null`。Node Core 曾在所有分支固定返回 `null`。修复后这些状态沿 `createAgentToolRegistry` 实际 dispatch 返回；`memory-search.test.ts` **6/6 通过**，其中回归先因 `fallback_reason` 不一致失败，再在实现后通过；向量 transport 失败仍返回已授权 BM25 结果且不暴露异常。测试使用临时合成 owner 索引和向量，不调用 Provider；生产 Agent Run、真实 PostgreSQL/Redis 与外部 embedding 尚未验收。
+
+### 1.7.7 向量文件解析缓存迁入 Core（2026-11-16）
+
+Core `vector-reader.ts` 补入 1.7.7 的向量文件解析缓存：owner、`memory`/`knowledge`/`pattern` 文件种类和 embedding 版本共同确定缓存键；每次仍从 owner-bound Host reader 读取当前文件，以内容 SHA-256 检测变更；缓存仅持有解析映射、无 TTL、LRU 上限 8。`scoped-search.test.ts` 通过实际 hybrid 搜索先后读取同一 owner 的两种向量文件内容，验证更新后的融合分数随之变化，定向回归 **5/5 通过**。测试使用合成授权 scope、模拟索引快照、向量文件和 embedding；未访问真实 FS、PostgreSQL 或 Provider。此项恢复旧缓存生命周期，不代表生产 Agent Run 已装配 RAG 查询端口。
+
+### `search_memory` 独立装配正式 Jieba（2026-11-16）
+
+`createWebOwnerMemorySearchPort` 与 conversation Host factory 一样，独立确保 1.7.7 的 `@node-rs/jieba` 包内词典已装配；memory 搜索不要求调用方先创建 conversation 端口。Host `memory-tools-runtime-sqlite.test.ts` 经临时 SQLite/FS、Core RAG 和实际工具 registry dispatch 用中文查询验证分词召回，**5/5 通过**。测试使用模拟授权、snapshot 和 embedding 依赖，不连接 PostgreSQL 或真实 Provider；Python memory pytest 本轮未运行。生产 Agent Run 尚未注入该 memory port。

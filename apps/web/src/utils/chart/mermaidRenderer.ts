@@ -2,9 +2,9 @@ import { nextTick } from 'vue'
 import { bindMermaidInteractions, cleanupMermaidInteractions, type MermaidInteractionLabels } from './mermaidInteraction'
 import { sanitizeHtml } from '@/utils/markdown'
 import { resolveMermaidThemeColors } from './mermaidTheme'
-import { createMermaidThemeConfig } from '../../../../../backend/ts/workers/chart-renderer/theme.mjs'
-import { prepareMermaidDiagramSource, restoreMermaidDiagramLabels } from '../../../../../backend/ts/workers/chart-renderer/diagram-source.mjs'
-import { normalizeMermaidDatabaseLabelPosition, normalizeMermaidEdgeLabelBounds, normalizeMermaidEdgeStyles, normalizeMermaidMindmapRootLabel, normalizeMermaidNodeCorners, normalizeMermaidStateDiagramLabelAlignment } from '../../../../../backend/ts/workers/chart-renderer/svg-style.mjs'
+import { createMermaidThemeConfig } from '@gugu/charts/theme'
+import { prepareMermaidDiagramSource, restoreMermaidDiagramLabels } from '@gugu/charts/diagram-source'
+import { normalizeMermaidDatabaseLabelPosition, normalizeMermaidEdgeLabelBounds, normalizeMermaidEdgeStyles, normalizeMermaidMindmapRootLabel, normalizeMermaidNodeCorners, normalizeMermaidStateDiagramLabelAlignment } from '@gugu/charts/svg-style'
 
 type MermaidApi = typeof import('mermaid').default
 

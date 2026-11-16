@@ -78,8 +78,8 @@ onBeforeUnmount(() => unregEsc?.())
 .bm-overlay {
   position: fixed; inset: 0;
   background: rgba(20, 22, 30, 0.3);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: var(--modal-overlay-blur, blur(6px));
+  -webkit-backdrop-filter: var(--modal-overlay-blur, blur(6px));
 }
 
 /* ── 居中容器：不拦截指针（下面的窗口照点），只有卡片本体可交互 ── */

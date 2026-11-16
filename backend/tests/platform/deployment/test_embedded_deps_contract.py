@@ -24,20 +24,24 @@ def test_unified_image_defaults_to_embedded_deps():
 
 def test_production_dockerfiles_copy_chart_build_and_worker_dependencies():
     """图表静态导入和公式渲染依赖在对应镜像运行时都必须存在。"""
-    worker = (REPO_ROOT / "backend/ts/workers/chart-renderer/worker.mjs").read_text(encoding="utf-8")
+    package_manifest = (REPO_ROOT / "packages/charts/package.json").read_text(encoding="utf-8")
+    worker = (REPO_ROOT / "packages/charts/src/worker.mjs").read_text(encoding="utf-8")
     worker_modules = re.findall(r"from ['\"]\./([^'\"]+)['\"]", worker)
-    browser_renderer = (REPO_ROOT / "frontend/src/utils/chart/mermaidRenderer.ts").read_text(encoding="utf-8")
+    browser_renderer = (REPO_ROOT / "apps/web/src/utils/chart/mermaidRenderer.ts").read_text(encoding="utf-8")
     browser_modules = re.findall(
-        r"from ['\"][^'\"]*backend/ts/workers/chart-renderer/([^'\"]+)['\"]",
+        r"from ['\"]@gugu/charts/([^'\"]+)['\"]",
         browser_renderer,
     )
     unified = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
-    standalone_frontend = (REPO_ROOT / "frontend/Dockerfile.prod").read_text(encoding="utf-8")
+    standalone_frontend = (REPO_ROOT / "apps/web/Dockerfile.prod").read_text(encoding="utf-8")
     standalone_backend = (REPO_ROOT / "backend/Dockerfile.prod").read_text(encoding="utf-8")
 
+    for dependency in ("@resvg/resvg-js", "@xmldom/xmldom", "mathjax", "mermaid", "svgdom"):
+        assert dependency in package_manifest
+    assert "mathjax@4.1.3" in package_manifest
     for dockerfile in (unified, standalone_backend):
-        assert "mathjax@4.1.3" in dockerfile
         assert "import('mathjax')" in dockerfile
+        assert "COPY packages/charts/package.json ./package.json" in dockerfile
 
     def has_copy(dockerfile, source, destination):
         return any(
@@ -46,23 +50,29 @@ def test_production_dockerfiles_copy_chart_build_and_worker_dependencies():
         )
 
     for module in browser_modules:
-        source = f"backend/ts/workers/chart-renderer/{module}"
-        destination = "./backend/ts/workers/chart-renderer/"
-        assert has_copy(unified, source, destination)
-        assert has_copy(standalone_frontend, source, destination)
+        assert module in package_manifest
+        assert has_copy(unified, "packages/charts/", "./packages/charts/")
+        assert has_copy(standalone_frontend, "packages/charts/", "./packages/charts/")
     for module in worker_modules:
-        source = f"backend/ts/workers/chart-renderer/{module}"
+        source = f"packages/charts/src/{module}"
         assert has_copy(unified, source, "./bin/")
         assert has_copy(standalone_backend, source, "./bin/")
-    worker_source = "backend/ts/workers/chart-renderer/worker.mjs"
+    worker_source = "packages/charts/src/worker.mjs"
     assert has_copy(unified, worker_source, "./bin/")
     assert has_copy(standalone_backend, worker_source, "./bin/")
 
     assert has_copy(
         unified,
-        "frontend/public/fonts/Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf",
-        "./bin/fonts/",
+        "packages/charts/assets/NotoSansSC-VariableFont_wght.ttf",
+        "./assets/",
     )
+    assert has_copy(
+        standalone_backend,
+        "packages/charts/assets/NotoSansSC-VariableFont_wght.ttf",
+        "./assets/",
+    )
+    for dockerfile in (unified, standalone_frontend, standalone_backend):
+        assert "backend/ts/workers/chart-renderer" not in dockerfile
 
 
 def test_integrated_compose_uses_embedded_deps():

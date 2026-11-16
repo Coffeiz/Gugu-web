@@ -3,7 +3,7 @@ import { createPinia } from 'pinia'
 import ArcoVue from '@arco-design/web-vue'
 import '@arco-design/web-vue/dist/arco.css'
 import '@/assets/styles/global.css'
-import DesktopWorkbench from '../../../desktop/src/ui/DesktopWorkbench.vue'
+import DesktopWorkbench from '../../../desktop/src/ui/shell/index.vue'
 import { i18n } from '@/i18n'
 import { setupInteractionRuntime } from '@/interaction/runtime/setup'
 

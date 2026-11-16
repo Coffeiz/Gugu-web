@@ -1,5 +1,6 @@
 import { constants } from 'node:fs'
-import { link, lstat, open, readdir, realpath, rmdir, unlink } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { link, lstat, mkdir, open, readdir, realpath, rename, rmdir, unlink } from 'node:fs/promises'
 import path from 'node:path'
 
 /** 不可信路径不能用于访问授权根之外的内容。 */
@@ -36,6 +37,67 @@ export async function openLocalFile(rootPath: string, relativePath: string) {
     const code = (error as NodeJS.ErrnoException).code
     if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'ELOOP') return null
     throw error
+  }
+}
+
+/** 在授权根内原子替换普通文件；目录遍历锚定已打开的 Linux 目录句柄。 */
+export async function writeLocalFile(rootPath: string, relativePath: string, content: string | Uint8Array): Promise<void> {
+  const segments = relativePath.split('/')
+  if (process.platform !== 'linux' || segments.length < 2 || segments.some(segment => !segment || segment === '.' || segment === '..' || segment.includes('\\') || segment.includes('\0')))
+    throw new UnsafeLocalPathError()
+
+  const root = await realpath(rootPath)
+  const rootHandle = await open(root, constants.O_RDONLY | constants.O_DIRECTORY | (constants.O_NOFOLLOW ?? 0))
+  const parents: Awaited<ReturnType<typeof open>>[] = []
+  let parent = `/proc/self/fd/${rootHandle.fd}`
+  let temporaryPath: string | undefined
+  try {
+    for (const segment of segments.slice(0, -1)) {
+      const nextPath = `${parent}/${segment}`
+      let next
+      try { next = await open(nextPath, constants.O_RDONLY | constants.O_DIRECTORY | (constants.O_NOFOLLOW ?? 0)) }
+      catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        if (code !== 'ENOENT') {
+          if (code === 'ELOOP' || code === 'ENOTDIR') throw new UnsafeLocalPathError()
+          throw error
+        }
+        try { await mkdir(nextPath, { mode: 0o700 }) }
+        catch (mkdirError) { if ((mkdirError as NodeJS.ErrnoException).code !== 'EEXIST') throw mkdirError }
+        try { next = await open(nextPath, constants.O_RDONLY | constants.O_DIRECTORY | (constants.O_NOFOLLOW ?? 0)) }
+        catch (openError) {
+          const openCode = (openError as NodeJS.ErrnoException).code
+          if (openCode === 'ELOOP' || openCode === 'ENOTDIR') throw new UnsafeLocalPathError()
+          throw openError
+        }
+      }
+      parents.push(next)
+      parent = `/proc/self/fd/${next.fd}`
+    }
+
+    const name = segments.at(-1)!
+    const targetPath = `${parent}/${name}`
+    try {
+      if ((await lstat(targetPath)).isSymbolicLink()) throw new UnsafeLocalPathError()
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    temporaryPath = `${parent}/.gugu-write-${randomUUID()}`
+    const file = await open(temporaryPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600)
+    try {
+      await file.writeFile(content)
+      await file.sync()
+    } finally { await file.close() }
+    await rename(temporaryPath, targetPath)
+    temporaryPath = undefined
+    await (parents.at(-1) ?? rootHandle).sync()
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ELOOP' || (error as NodeJS.ErrnoException).code === 'ENOTDIR') throw new UnsafeLocalPathError()
+    throw error
+  } finally {
+    if (temporaryPath) await unlink(temporaryPath).catch(() => undefined)
+    for (const handle of parents.reverse()) await handle.close()
+    await rootHandle.close()
   }
 }
 

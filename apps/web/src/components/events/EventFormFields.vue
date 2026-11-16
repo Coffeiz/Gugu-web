@@ -24,7 +24,7 @@
     :ref="mountAutoGrow"
     @input="autoGrow($event.target)"
   ></textarea>
-  <div class="reminder-section" v-if="!isPastDate(event.date)">
+  <div class="reminder-section" v-if="showReminders && !isPastDate(event.date)">
     <div class="reminder-label"><Icon name="admin.bell" :size="11" /> {{ t('calendar.reminder') }}</div>
     <div v-for="(r, i) in form.reminders.value" :key="i" class="reminder-item">
       <button
@@ -95,6 +95,7 @@ const props = defineProps<{
   form: ReturnType<typeof useEventEditForm>
   autofocus?: boolean
   isPastDate: (d: string | null | undefined) => boolean
+  showReminders?: boolean
 }>()
 const emit = defineEmits<{ (e: 'save'): void; (e: 'close'): void; (e: 'test-reminder'): void }>()
 const { t } = useI18n()

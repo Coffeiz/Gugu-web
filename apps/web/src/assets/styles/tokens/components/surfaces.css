@@ -54,6 +54,7 @@
   --modal-card-side-highlight: color-mix(in srgb,var(--border-highlight) 58%,transparent);
   --modal-card-shadow: var(--elevation-window);
   --modal-overlay-bg: var(--surface-scrim);
+  --modal-overlay-blur: blur(6px);
 
   --confirm-dialog-width: 420px;
   --confirm-dialog-bg: var(--modal-card-bg);

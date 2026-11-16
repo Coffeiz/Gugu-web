@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import SQLite from 'better-sqlite3'
 import { Kysely, SqliteDialect } from 'kysely'
-import test from 'node:test'
+import { test } from 'vitest'
 import { CoreError } from '../../../src/contracts/index.js'
 import { createUserSkillManager } from '../../../src/agent/skills/user-management.js'
 

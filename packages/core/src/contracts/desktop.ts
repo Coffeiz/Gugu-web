@@ -95,6 +95,9 @@ export interface DesktopCalendarEvent {
   id: number
   title: string
   date: string
+  time: string | null
+  endTime: string | null
+  description: string | null
   version: number
 }
 export interface DesktopCanvas {
@@ -155,8 +158,8 @@ export interface DesktopBridge {
   renameClient(id: number, name: string): Promise<DesktopReply<DesktopClient>>
   deleteClient(id: number): Promise<DesktopReply<null>>
   calendar(): Promise<DesktopReply<DesktopCalendarEvent[]>>
-  createCalendarEvent(title: string, date: string): Promise<DesktopReply<DesktopCalendarEvent>>
-  updateCalendarEvent(id: number, body: { version: number; title?: string; date?: string }): Promise<DesktopReply<DesktopCalendarEvent>>
+  createCalendarEvent(title: string, date: string, details?: { time?: string | null; endTime?: string | null; description?: string | null }): Promise<DesktopReply<DesktopCalendarEvent>>
+  updateCalendarEvent(id: number, body: { version: number; title?: string; date?: string; time?: string | null; endTime?: string | null; description?: string | null }): Promise<DesktopReply<DesktopCalendarEvent>>
   deleteCalendarEvent(id: number, version: number): Promise<DesktopReply<null>>
   canvases(): Promise<DesktopReply<DesktopCanvas[]>>
   createCanvas(title: string): Promise<DesktopReply<DesktopCanvas>>

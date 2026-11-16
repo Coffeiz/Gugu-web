@@ -48,7 +48,7 @@ const commandFields: Readonly<Record<string, readonly string[]>> = {
   'undo.apply': ['context_id', 'undo_id'],
   'undo.redo': ['context_id', 'undo_id'],
   'calendar.list': [],
-  'calendar.create': ['title', 'date'],
+  'calendar.create': ['title', 'date', 'time', 'endTime', 'description'],
   'calendar.update': ['id', 'body'],
   'calendar.delete': ['id', 'version'],
   'preferences.desktop.get': [],

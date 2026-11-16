@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
@@ -126,6 +127,7 @@ async def _modify_entry(owner_id, entry_id: str, content: str):
 async def test_bus_keeps_all_pending_source_ids(monkeypatch):
     """阻塞 A 的处理时连续提交 B/C：三个文档最终都被处理（PRD §5.2 规则 2）。"""
     key = ("p5-bus-owner", "knowledge")
+    monkeypatch.setattr(bus, "_python_rag_worker_enabled", lambda: True)
     processed: list[str] = []
     first_started = asyncio.Event()
     release = asyncio.Event()
@@ -170,6 +172,7 @@ async def test_bus_keeps_all_pending_source_ids(monkeypatch):
 async def test_bus_refresh_event_overrides_document_pending(monkeypatch):
     """无 source_id 的 refresh 升级为来源级重建，清空文档级 pending（§5.2 规则 3）。"""
     key = ("p5-bus-refresh", "knowledge")
+    monkeypatch.setattr(bus, "_python_rag_worker_enabled", lambda: True)
     processed: list[str] = []
     first_started = asyncio.Event()
     release = asyncio.Event()
@@ -204,6 +207,48 @@ async def test_bus_refresh_event_overrides_document_pending(monkeypatch):
         if worker is not None and not worker.done():
             worker.cancel()
             await asyncio.gather(worker, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("worker_owner", "should_start_local_worker"),
+    [("python", True), ("node", False), (None, False)],
+)
+async def test_event_persists_for_shared_consumer_without_python_double_processing(
+    monkeypatch, worker_owner, should_start_local_worker,
+):
+    """Node 持有共享队列时 Python 仍写持久任务，但不启动第二个索引消费者。"""
+    event = RagIndexUpdated(
+        user_id="p5-shared-consumer-owner", source_type="knowledge", source_id="k-a",
+    )
+    key = bus._rag_event_key(event)
+    persisted = []
+    workers = []
+
+    async def persist(value):
+        persisted.append(value)
+        return 1
+
+    def get_settings():
+        if worker_owner is None:
+            raise RuntimeError("synthetic config read failure")
+        return SimpleNamespace(rag_index_worker_owner=worker_owner)
+
+    monkeypatch.setattr("app.core.config.get_settings", get_settings)
+    monkeypatch.setattr(index_jobs, "persist_event", persist)
+    monkeypatch.setattr(bus, "_ensure_rag_worker", lambda key: workers.append(key))
+
+    previous_tasks = set(bus._tasks)
+    bus._enqueue_rag_index_event(event)
+    scheduled = bus._tasks - previous_tasks
+    if scheduled:
+        await asyncio.gather(*scheduled)
+
+    assert persisted == [event]
+    assert workers == ([bus._rag_event_key(event)] if should_start_local_worker else [])
+    assert (key in bus._rag_pending) is should_start_local_worker
+    bus._rag_pending.pop(key, None)
+    bus._rag_status.pop(key, None)
 
 
 # ── 2. durable outbox：多 ID 保留、逐 ID 移除、失败保留 ──

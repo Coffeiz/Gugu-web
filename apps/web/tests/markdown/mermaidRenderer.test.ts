@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { cleanupMarkdownMermaid, renderMarkdownMermaid, renderMermaidSvg } from '@/utils/chart/mermaidRenderer'
 import type { MermaidInteractionLabels } from '@/utils/chart/mermaidInteraction'
-import { createMermaidThemeConfig, MERMAID_NEUTRAL_THEME_COLORS } from '../../../../backend/ts/workers/chart-renderer/theme.mjs'
+import { createMermaidThemeConfig, MERMAID_NEUTRAL_THEME_COLORS } from '@gugu/charts/theme'
 
 const mermaidMock = vi.hoisted(() => ({
   initialize: vi.fn(),

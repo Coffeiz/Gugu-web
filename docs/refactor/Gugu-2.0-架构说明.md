@@ -330,7 +330,7 @@ SQLite 内部数据文件、初始化与备份属于 Data Adapter，不等于提
 
 本地文件正文不进入 DB 作为同步副本。派生索引或缓存必须能丢弃并从源文件重建，不能在 DB 与文件不一致时回写旧内容覆盖源文件。需要持久化的文件引用使用授权根目录及相对路径；路径改变后引用可以失效，由用户重新定位，不通过 watcher 推断或重建文件身份。
 
-RAG 复用既有 TypeScript 算法实现，不从 Cython 重写算法。迁移重点是接入 Node/Core 的授权数据读取、来源适配、派生索引生命周期和重建流程，并以当前 Python/Cython 回归及固定质量语料验证召回来源、Token、候选、排序、confidence 与 ACL 过滤；索引格式或 tokenizer 版本变化时须明确重建策略。迁移期间 Python/Cython 仅用于差分参考，不与 TS 同时成为线上权威结果。
+RAG 复用既有 TypeScript 算法实现，不从 Cython 重写算法。迁移重点是接入 Node/Core 的授权数据读取、来源适配、派生索引生命周期和重建流程，并以当前 Python/Cython 回归及固定质量语料验证召回来源、Token、候选、排序、confidence 与 ACL 过滤；索引格式或 tokenizer 版本变化时须明确重建策略。迁移期间 Python/Cython 可继续作为业务写入方和共享持久 job 的事件生产者，但只有配置指定的一个 Worker 可以构建索引；Node 成为消费者时，Python 必须只持久化事件，不运行内存 Worker 或恢复消费者。Python/Cython 不与 TS 同时成为线上索引写入权威，也不作为 Node 查询回退。
 
 ### 2.2 Transport、Executor 与桌面装配边界
 

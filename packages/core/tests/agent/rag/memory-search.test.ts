@@ -64,6 +64,7 @@ describe('search_memory 经 Core RAG 和实际工具 dispatch', () => {
     const result = await fixture.dispatch({ query: 'coffee', source: 'profile', owner_id: other, group_id: 'forged' })
     expect(result).toMatchObject({ kind: 'completed', successful: true, mutated: false, value: {
       query: 'coffee', has_more: false, candidate_count: 1, engine: 'typescript', strategy: 'bm25',
+      fallback_reason: 'embedding_disabled',
       results: [{ source_id: 'profile', text: expect.stringContaining('coffee after lunch') }],
     } })
     expect(JSON.stringify(result)).not.toContain('foreign coffee')
@@ -114,8 +115,61 @@ describe('search_memory 经 Core RAG 和实际工具 dispatch', () => {
       execute: async () => { throw new Error('不应执行命令') },
     })
     expect(result).toMatchObject({ kind: 'completed', successful: true, value: {
-      strategy: 'hybrid', results: [{ source_id: 'profile', text: expect.stringContaining('coffee after lunch') }],
+      strategy: 'hybrid', fallback_reason: null,
+      results: [{ source_id: 'profile', text: expect.stringContaining('coffee after lunch') }],
     } })
+  })
+
+  it('显式 BM25 标记 lexical_only；有 embedding 但无匹配向量时标记缓存不可用', async () => {
+    const fixture = createFixture()
+    const bm25 = await fixture.dispatch({ query: 'coffee', strategy: 'bm25' })
+    expect(bm25).toMatchObject({ successful: true, value: { strategy: 'bm25', fallback_reason: 'lexical_only' } })
+
+    const service = createMemorySearch({
+      async resolveScopes(runIdentity) { return [{ ownerId: runIdentity.ownerId, type: 'owner', id: runIdentity.ownerId }] },
+      async authorize() { return true },
+      async snapshot() { return { revision: 'snapshot-1', text: '' } },
+      storage() { return { async readText() { return JSON.stringify({ schema_version: 1, documents: [
+        { document_id: 'memory:uncached:0', parent_document_id: 'memory:uncached', chunk_index: 0, chunk_count: 1,
+          source_type: 'memory', source_id: 'uncached', title: '其他记忆', content: 'coffee can be searched lexically', version: 'v1',
+          scope: { owner_user_id: owner, scope_type: 'owner', scope_id: '' }, metadata: {} },
+      ] }) } } },
+      scopeState: { async getMemoryScopeState() { return { revision: 'unused', tombstoned: false } } },
+      async vectors() { return { version: 'test-embedding-v1', async embed() { return [1, 0] } } },
+    })
+    const registry = createToolRegistry({
+      groups: [{ id: 'memory', name: '记忆', tools: [createMemorySearchTool({ search: service })] }],
+      async authorize() { return true },
+    })
+    const result = await registry.tools.dispatch({ id: 'uncached', name: 'search_memory', input: { query: 'coffee' } }, {
+      identity, roundId: 'round-1', signal: new AbortController().signal, resolution: null,
+      execute: async () => { throw new Error('不应执行命令') },
+    })
+    expect(result).toMatchObject({ successful: true, value: { strategy: 'bm25', fallback_reason: 'embedding_cache_unavailable' } })
+  })
+
+  it('query embedding 失败仍返回授权范围内的 BM25 命中并标记降级', async () => {
+    const service = createMemorySearch({
+      async resolveScopes(runIdentity) { return [{ ownerId: runIdentity.ownerId, type: 'owner', id: runIdentity.ownerId }] },
+      async authorize() { return true },
+      async snapshot() { return { revision: 'snapshot-1', text: '' } },
+      storage() { return store },
+      scopeState: { async getMemoryScopeState() { return { revision: 'unused', tombstoned: false } } },
+      async vectors() { return { version: 'test-embedding-v1', async embed() { throw new Error('synthetic provider failure') } } },
+    })
+    const registry = createToolRegistry({
+      groups: [{ id: 'memory', name: '记忆', tools: [createMemorySearchTool({ search: service })] }],
+      async authorize() { return true },
+    })
+    const result = await registry.tools.dispatch({ id: 'failed-embedding', name: 'search_memory', input: { query: 'coffee' } }, {
+      identity, roundId: 'round-1', signal: new AbortController().signal, resolution: null,
+      execute: async () => { throw new Error('不应执行命令') },
+    })
+    expect(result).toMatchObject({ successful: true, value: {
+      strategy: 'bm25', fallback_reason: 'embedding_cache_unavailable',
+      results: [{ source_id: 'profile', text: expect.stringContaining('coffee after lunch') }],
+    } })
+    expect(JSON.stringify(result)).not.toContain('synthetic provider failure')
   })
 
   it('空关键词和非法上限遵循工具边界验证', async () => {

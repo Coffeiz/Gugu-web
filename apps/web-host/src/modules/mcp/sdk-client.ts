@@ -32,7 +32,7 @@ export function createMcpHttpClient(options:McpHttpClientOptions){
    if(cursor)throw new Error('MCP tools/list 分页超过上限')
    return {tools}
   },
-  callTool:(name:string,args:Record<string,unknown>)=>client.callTool({name,arguments:args}),
+  callTool:(name:string,args:Record<string,unknown>,options?:{signal?:AbortSignal;timeout?:number})=>client.callTool({name,arguments:args},undefined,options),
   close:()=>client.close(),
  }
 }

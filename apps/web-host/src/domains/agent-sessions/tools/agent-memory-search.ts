@@ -1,4 +1,4 @@
-import { createMemorySearch, createSqlMemoryScopeStateReader, type AuthorizedMemoryScope, type MemorySearchScope, type MemorySearchSnapshot } from '@gugu/core/agent'
+import { configureRagJieba, createMemorySearch, createSqlMemoryScopeStateReader, type AuthorizedMemoryScope, type MemorySearchScope, type MemorySearchSnapshot } from '@gugu/core/agent'
 import type { RunIdentity } from '@gugu/core/agent'
 import type { SqlDataRuntime } from '@gugu/core/data'
 import type { ProviderTransport } from '@gugu/core/providers'
@@ -6,6 +6,7 @@ import type { RagQueryEmbeddingSettings } from '@gugu/core/agent'
 import type { MemorySearchPort } from '@gugu/core/tools'
 import type { Pool } from 'pg'
 import { createLocalAgentMemoryRagStore } from './agent-rag-memory-store.js'
+import { getAgentRagJieba } from './agent-rag-jieba.js'
 import { createOwnerAgentRagVectorResolver } from './agent-rag-vectors.js'
 import { createPostgresAgentImMemoryContextReader, createPostgresAgentMemoryScopeResolver } from './agent-memory-scopes.js'
 
@@ -27,6 +28,8 @@ export function createWebOwnerMemorySearchPort(core: Pick<SqlDataRuntime, 'db'>,
   if (!options.storageRoot.trim() || typeof options.authorize !== 'function' || typeof options.snapshot !== 'function') {
     throw new TypeError('Web 记忆搜索依赖未就绪')
   }
+  // memory 和 conversation 搜索共享同一个 1.7.7 Jieba 实例；不能依赖别的端口先被装配。
+  configureRagJieba(getAgentRagJieba())
   const storage = createLocalAgentMemoryRagStore(options.storageRoot)
   const resolveVectors = options.embedding ? createOwnerAgentRagVectorResolver({ root: options.storageRoot,
     resolveEmbedding: options.embedding.resolve, createTransport: options.embedding.createTransport }) : null

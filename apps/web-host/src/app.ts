@@ -32,11 +32,16 @@ import { registerAdminMaintenanceStatusRoutes } from './modules/admin/maintenanc
 import { registerAccountDeleteRoute, type AccountDeleteOptions } from './modules/auth/account-delete.js'
 import { registerAdminUserDeleteRoute, type AdminUserDeleteOptions } from './modules/admin/user-delete.js'
 import type { createAdminMaintenanceStatus } from '@gugu/core/maintenance/admin-status'
+import { createProviderCapabilityPreview } from '@gugu/core/byok/capabilities-preview'
 import { registerServiceStatusRoute, type createServiceStatusReader } from './modules/admin/service-status.js'
 import { registerServiceRestartRoute, type ServiceRestartOperations } from './modules/admin/service-restart.js'
 import { registerAttachmentDownloadRoute, type AttachmentDownloadOptions } from './modules/agent/attachments/download.js'
+import { registerAgentAttachmentUploadRoute, type AgentAttachmentUploadOperations } from './modules/agent/attachment-upload.js'
+import { registerAttachmentDraftDeleteRoute, type AttachmentDraftDeleteOptions } from './modules/agent/attachment-delete.js'
+import { registerAttachmentDraftClearRoute, type AttachmentDraftClearOptions } from './modules/agent/attachment-clear.js'
 import { registerVoiceAvailabilityRoute, type VoiceAvailabilityOptions } from './modules/agent/voice-availability.js'
 import { registerMemoryClearRoute, type MemoryClearOptions } from './modules/agent/memory-clear.js'
+import { registerAgentSessionDeleteRoute, type AgentSessionDeleteOperations } from './modules/agent/session-delete.js'
 import { registerAttachmentThumbnailRoute } from './modules/agent/attachment-thumbnail.js'
 import { registerUserBotBindingCodeRoutes, type UserBotBindingCodeOptions } from './modules/im/binding-code.js'
 import { registerLoopScopeProxyRoutes } from './modules/loopscope/proxy.js'
@@ -52,6 +57,7 @@ import { registerMcpRuntimeRoutes, type McpRuntimeRouteOptions } from './modules
 import { registerAttentionDefaultsRoute, type AttentionDefaultsOptions } from './modules/im/attention-defaults.js'
 import { registerEmailRecipientCountRoute } from './modules/admin/email-recipient-count.js'
 import { registerEmbeddingRebuildStatusRoute, type EmbeddingRebuildStatusOptions } from './modules/byok/embedding-rebuild-status.js'
+import { registerEmbeddingRebuildRoute, type EmbeddingRebuildRouteOptions } from './modules/byok/embedding-rebuild.js'
 import { registerUserBotUnbindRoute, type UserBotUnbindOptions } from './modules/im/user-bot-unbind.js'
 import { registerPortabilityJobReadRoutes } from './modules/data-portability/read-jobs.js'
 import type { createPortabilityJobReader } from '@gugu/core/data-portability/read-jobs'
@@ -95,6 +101,7 @@ import { registerAdminMediaProbePreviewRoute, type AdminMediaProbePreview } from
 import { registerAdminLlmPresetTestRoute } from './modules/admin/llm-preset-test.js'
 import { registerAdminLlmPresetMediaProbeRoute } from './modules/admin/llm-preset-media-probe.js'
 import { registerAdminLlmCapabilityProbeRoute } from './modules/admin/llm-capability-probe.js'
+import { registerAdminLlmCapabilityPreviewRoute } from './modules/admin/llm-capabilities-preview.js'
 import { registerAdminEmbeddingRebuildStatusRoute, type AdminEmbeddingRebuildStatusOptions } from './modules/admin/embedding-rebuild-status.js'
 import { registerSafeEgressUpdateRoute, type SafeEgressUpdateOptions } from './modules/admin/safe-egress-update.js'
 import { registerSafeEgressProbeRoute } from './modules/admin/safe-egress-probe.js'
@@ -387,6 +394,7 @@ export interface WebUiOptions {
   agentPendingQueueReplace?: Omit<AgentPendingQueueReplaceRouteOptions, 'requireUser' | 'userIdFromRequest'>
   agentPendingQueueClaims?: Omit<AgentPendingQueueClaimRouteOptions, 'requireUser' | 'userIdFromRequest'>
   renameAgentSession?: (ownerId: string, sessionId: number, title: string) => Promise<RenamedAgentSession | null>
+  deleteAgentSession?: AgentSessionDeleteOperations
   listAgentMessages?: (ownerId: string, sessionId: number, options: AgentMessagePageOptions) => Promise<unknown>
   locateAgentMessage?: (ownerId: string, messageId: number) => Promise<{ id: number; sessionId: number } | null>
   readAgentToolEventDetails?: (
@@ -455,11 +463,15 @@ export interface WebUiOptions {
   attentionDefaults?: Omit<AttentionDefaultsOptions, 'requireUser'>
   loopScopeProxy?: { endpoint: string }
   attachmentDownload?: Omit<AttachmentDownloadOptions, 'requireUser' | 'ownerIdFromRequest'>
+  attachmentUpload?: { operations: AgentAttachmentUploadOperations }
+  attachmentDelete?: Omit<AttachmentDraftDeleteOptions, 'requireUser' | 'ownerIdFromRequest'>
+  attachmentClear?: Omit<AttachmentDraftClearOptions, 'requireUser' | 'ownerIdFromRequest'>
   voiceAvailability?: Omit<VoiceAvailabilityOptions, 'requireUser' | 'ownerIdFromRequest'>
   clearAgentMemory?: { clear: MemoryClearOptions['clear'] }
   terminalDelete?: Omit<TerminalDeleteOptions, 'requireUser' | 'ownerIdFromRequest'>
   userBotsList?: Omit<UserBotsListOptions, 'requireUser' | 'ownerIdFromRequest'>
   embeddingRebuildStatus?: Omit<EmbeddingRebuildStatusOptions, 'requireUser' | 'ownerIdFromRequest'>
+  embeddingRebuild?: Omit<EmbeddingRebuildRouteOptions, 'requireUser' | 'ownerIdFromRequest'>
   taskFilesystemAuthorization?: Omit<TaskFilesystemAuthorizationOptions, 'requireUser' | 'ownerIdFromRequest'>
   taskFilesystemRevoke?: Omit<TaskFilesystemRevokeOptions, 'requireUser' | 'ownerIdFromRequest'>
   credentialDelete?: Omit<CredentialDeleteOptions, 'requireUser' | 'ownerIdFromRequest'>
@@ -808,6 +820,27 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
       requireUser: async request => { void userFromRequest(request) },
       ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId }))
   }
+  if (options.attachmentUpload) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerAgentAttachmentUploadRoute(routes, {
+      ...options.attachmentUpload!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
+    }))
+  }
+  if (options.attachmentDelete) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerAttachmentDraftDeleteRoute(routes, {
+      ...options.attachmentDelete!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
+    }))
+  }
+  if (options.attachmentClear) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerAttachmentDraftClearRoute(routes, {
+      ...options.attachmentClear!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
+    }))
+  }
   if (options.voiceAvailability) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => registerVoiceAvailabilityRoute(routes, {
       ...options.voiceAvailability!,
@@ -836,6 +869,11 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
   }
   if (options.embeddingRebuildStatus) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => registerEmbeddingRebuildStatusRoute(routes, { ...options.embeddingRebuildStatus!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId }))
+  }
+  if (options.embeddingRebuild) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerEmbeddingRebuildRoute(routes, { ...options.embeddingRebuild!,
       requireUser: async request => { void userFromRequest(request) },
       ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId }))
   }
@@ -1060,7 +1098,7 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
   }
   if (options.agentChat || options.agentInteractionRespond || options.listAgentSessions || options.lookupAgentInteractionSession || options.refreshAgentSession
     || options.agentPendingQueueReads || options.agentPendingQueuePatch || options.agentPendingQueueReplace || options.agentPendingQueueClaims
-    || options.renameAgentSession || options.listAgentMessages || options.locateAgentMessage
+    || options.renameAgentSession || options.deleteAgentSession || options.listAgentMessages || options.locateAgentMessage
     || options.readAgentToolEventDetails || options.agentFilesystemAuthorization || options.agentMisc) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) =>
       {
@@ -1135,6 +1173,13 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
             requireUser,
             userIdFromRequest,
             rename: options.renameAgentSession,
+          })
+        }
+        if (options.deleteAgentSession) {
+          registerAgentSessionDeleteRoute(routes, {
+            requireUser,
+            userIdFromRequest,
+            operations: options.deleteAgentSession,
           })
         }
         if (options.listAgentMessages) {
@@ -1359,7 +1404,7 @@ export function createApp(options: WebUiOptions) {
     jsonParser(request, source, done)
   })
   installHttpErrorHandler(app)
-  if (options.fileUploads || options.userAvatar || options.preferences?.textFiles) installFileUploadSupport(app)
+  if (options.fileUploads || options.userAvatar || options.preferences?.textFiles || options.attachmentUpload) installFileUploadSupport(app)
   app.get('/health', async () => ({ status: 'ok', app: options.appName }))
   app.get('/health/ready', async (_request, reply) => {
     try {
@@ -1476,6 +1521,10 @@ export function createApp(options: WebUiOptions) {
   if (options.adminAuth && options.adminLlmPresetTest) registerAdminLlmPresetTestRoute(app, { ...options.adminLlmPresetTest, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.adminLlmPresetMediaProbe) registerAdminLlmPresetMediaProbeRoute(app, { ...options.adminLlmPresetMediaProbe, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.adminLlmCapabilityProbe) registerAdminLlmCapabilityProbeRoute(app, { ...options.adminLlmCapabilityProbe, requireAdmin: options.adminAuth.requireAdmin })
+  if (options.adminAuth) registerAdminLlmCapabilityPreviewRoute(app, {
+    requireAdmin: options.adminAuth.requireAdmin,
+    preview: createProviderCapabilityPreview(() => true),
+  })
   if (options.adminAuth && options.adminEmbeddingRebuildStatus) registerAdminEmbeddingRebuildStatusRoute(app, { ...options.adminEmbeddingRebuildStatus, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.safeEgressUpdate) registerSafeEgressUpdateRoute(app, { ...options.safeEgressUpdate, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.safeEgressProbe) registerSafeEgressProbeRoute(app, { ...options.safeEgressProbe, requireAdmin: options.adminAuth.requireAdmin })

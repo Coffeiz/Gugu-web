@@ -1,3 +1,8 @@
+import { z } from 'zod'
+import { invalidInputResult } from '../agent/tools/input-errors.js'
+import { normalizeToolInput } from '../agent/tools/normalize-input.js'
+import type { PreparedToolDefinition } from '../agent/models.js'
+
 const KEEP = new Set(['type','description','enum','const','format','minimum','maximum','minLength','maxLength','properties','required','items','additionalProperties','default'])
 const NAME = /^[A-Za-z0-9_]+$/
 const MAX_DEPTH = 8
@@ -23,6 +28,28 @@ export function validateInputSchema(schema: unknown): string|null {
  if(value.type!=='object')return `inputSchema 顶层类型必须是 object（实际 ${JSON.stringify(value.type)??'undefined'}）`
  if(value.properties!==undefined&&(!value.properties||typeof value.properties!=='object'||Array.isArray(value.properties)))return 'inputSchema.properties 必须是对象'
  return null
+}
+/** MCP 工具参数复用 Python 兼容归一化和无敏感输入回显的错误投影；失败时调用方不得外呼。 */
+export function validateInputArguments(name:string,schema:unknown,input:unknown):{success:true;data:Record<string,unknown>}|{success:false;error:Record<string,unknown>}{
+ const definition={name,schema:{function:{name,parameters:schema}}} as unknown as PreparedToolDefinition
+ const invalid=(value:unknown,error?:unknown)=>{
+  const result=invalidInputResult(definition,value,error)
+  return result.kind==='completed'&&result.value&&typeof result.value==='object'&&!Array.isArray(result.value)
+   ?result.value as Record<string,unknown>:{error:'tool_input_invalid',tool:name}
+ }
+ if(validateInputSchema(schema)!==null){
+  return {success:false,error:invalid(input)}
+ }
+ const normalized=normalizeToolInput(definition,input)
+ if(!normalized||typeof normalized!=='object'||Array.isArray(normalized)){
+  return {success:false,error:invalid(normalized)}
+ }
+ try{
+  const parsed=z.fromJSONSchema(schema as Record<string,unknown>).safeParse(normalized)
+  return parsed.success&&parsed.data&&typeof parsed.data==='object'&&!Array.isArray(parsed.data)
+   ?{success:true,data:parsed.data as Record<string,unknown>}
+   :{success:false,error:invalid(normalized,parsed.success?undefined:parsed.error)}
+ }catch{return {success:false,error:invalid(normalized)}}
 }
 const degraded=()=>({type:'string',description:'该参数结构过于复杂，已降级为字符串'})
 function sanitize(node:unknown,depth:number,defs:Record<string,unknown>,resolving:Set<string>):unknown {

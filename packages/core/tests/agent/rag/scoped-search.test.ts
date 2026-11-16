@@ -12,9 +12,9 @@ const document: RagDocument = {
   document_version: 'v1', parent_id: 'fact', chunk_index: 0, chunk_count: 1,
 }
 
-function setup(embed: (owner: string, query: string, signal?: AbortSignal) => Promise<readonly number[]>, documents = [document], memoryVectors?: string) {
+function setup(embed: (owner: string, query: string, signal?: AbortSignal) => Promise<readonly number[]>, documents = [document], memoryVectors?: string | (() => string)) {
   const authorize = vi.fn(async () => true)
-  const source = vi.fn(async (kind: string) => kind === 'memory' ? memoryVectors ?? null : null)
+  const source = vi.fn(async (kind: string) => kind === 'memory' ? typeof memoryVectors === 'function' ? memoryVectors() : memoryVectors ?? null : null)
   const snapshotForScope = vi.fn(async () => ({ revision: 'rev-1', documents, watermark: null }))
   const index = { snapshotForScope } as unknown as Parameters<typeof createScopedRagSearch>[0]['index']
   const search = createScopedRagSearch({
@@ -66,6 +66,27 @@ describe('scoped RAG embedding fallback', () => {
     expect(result.fusion).toBe('hybrid-rrf')
     expect(result.results[0]?.document.source_id).toBe('semantic')
     expect(ports.source).toHaveBeenCalledWith('memory', undefined)
+  })
+
+  it('invalidates the owner vector parse cache when the authorized file content changes', async () => {
+    const lexical = { ...document, id: 'memory:lexical:0', source_id: 'lexical', parent_id: 'lexical',
+      title: '项目进度', content: '项目进度 已经更新多次', text: '项目进度\n项目进度 已经更新多次' }
+    const semantic = { ...document, id: 'memory:semantic:0', source_id: 'semantic', parent_id: 'semantic',
+      title: '项目进度', content: '项目进度', text: '项目进度\n项目进度' }
+    const vectors = {
+      'rag:lexical:v1:0': { v: [1, 0], t: 'embed-v1' },
+      'rag:semantic:v1:0': { v: [0, 1], t: 'embed-v1' },
+    }
+    const ports = setup(async () => [0, 1], [lexical, semantic], () => JSON.stringify(vectors))
+    const args = [{ scope_type: 'owner', scope_id: '' }, '项目进度', { sourceTypes: ['memory'], limit: 5 }] as const
+
+    const first = await ports.search('owner-a', ...args)
+    vectors['rag:lexical:v1:0'] = { v: [0, 1], t: 'embed-v1' }
+    vectors['rag:semantic:v1:0'] = { v: [1, 0], t: 'embed-v1' }
+    const second = await ports.search('owner-a', ...args)
+
+    expect(second.results.map(item => item.fused_score)).not.toEqual(first.results.map(item => item.fused_score))
+    expect(ports.source).toHaveBeenCalledTimes(6)
   })
 
   it('reads 1.7.7 memory vectors after persistent IDs are namespaced by authorized scope', async () => {

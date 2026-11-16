@@ -6,6 +6,9 @@
 @import './filesListRows.css';
 @import './search-highlight.css';
 
+/* 桌面端弹窗需要更强的背景虚化，避免看板文字和控件边缘穿透遮罩。 */
+html[data-desktop-shell='true'] { --modal-overlay-blur: blur(16px); }
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 svg { shape-rendering: geometricPrecision; }
