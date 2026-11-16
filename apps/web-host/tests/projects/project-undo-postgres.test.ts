@@ -14,9 +14,10 @@ import { createLocalProjectTrashStorage, projectFileTrashKey } from '../../src/d
 import type { ProjectTrashFile } from '../../src/domains/projects/application/project-trash.js'
 import { recoverProjectUndoJournal, saveProjectUndoJournal } from '../../src/domains/undo/persistence/project-journal.js'
 import { createLocalProjectUndoJournalStorage } from '../../src/domains/undo/persistence/project-journal-local.js'
+import { directoryPort } from './fixtures/directory-port.js'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
-test('项目撤销改名时同步真实目录与数据库路径，重做可恢复', { skip: !url }, async () => {
+test('项目撤销改名时协调显式目录端口与数据库路径，重做可恢复', { skip: !url }, async () => {
   const admin = new Pool({ connectionString: url })
   const schema = `gugu_project_undo_${randomUUID().replaceAll('-', '')}`
   const root = await mkdtemp(path.join(tmpdir(), 'gugu-project-undo-'))
@@ -36,8 +37,7 @@ test('项目撤销改名时同步真实目录与数据库路径，重做可恢�
     await pool.query(`CREATE TABLE undo_operations (id text PRIMARY KEY,user_id text,undo_context_id text,group_id text,resource text,action text,target_refs json,before_state json,after_state json,actor_type text,status varchar(16),created_at timestamptz,expires_at timestamptz,undone_at timestamptz,failure_code text)`)
     await pool.query(`CREATE TABLE project_undo_journals (id uuid PRIMARY KEY,user_id text,operation_id text,before_status text,after_status text,moves json,created_at timestamptz)`)
     const oldKey = '11111111-1111-4111-8111-111111111111/项目文件/2026/01/旧 #1', newKey = '11111111-1111-4111-8111-111111111111/项目文件/2026/01/新 #1'
-    await mkdir(path.join(root, newKey), { recursive: true })
-    await writeFile(path.join(root, newKey, 'a.txt'), '内容')
+    const directories = directoryPort(newKey, '内容')
     await pool.query(`INSERT INTO projects (id,user_id,name,start_date,created_at,version,stages_json) VALUES (1,'11111111-1111-4111-8111-111111111111','新','2026-01-01','2026-01-01T00:30:00.123000+08:00',2,'[]')`)
     await pool.query(`INSERT INTO files VALUES (1,'11111111-1111-4111-8111-111111111111',1,$1)`, [`${newKey}/a.txt`])
     await pool.query(`INSERT INTO undo_operations VALUES ('op','11111111-1111-4111-8111-111111111111','ctx','g','projects','update','[]',$1::json,$2::json,'web','active',now(),now()+interval '1 day',NULL,NULL)`, [JSON.stringify({ items: { 'project:1': { name: '旧', stages: [] } } }), JSON.stringify({ items: { 'project:1': { name: '新', stages: [], version: 2 } } })])
@@ -45,7 +45,7 @@ test('项目撤销改名时同步真实目录与数据库路径，重做可恢�
     const reread = async () => projectResponse((await pool.query(`SELECT *, contact_name AS client,
       created_at::text AS created_at,updated_at::text AS updated_at,done_at::text AS done_at,
       deleted_at::text AS deleted_at FROM projects WHERE id=1`)).rows[0] as ProjectRecord, 0)
-    const service = createHostCoreUndoOperations(pool, createRuntimeUndoTransactionPort(runtime), async (_owner, event) => { notifications.push(event) }, { renameDirectory: createLocalProjectDirectoryRenamer(root), trash: createLocalProjectTrashStorage(root) })
+    const service = createHostCoreUndoOperations(pool, createRuntimeUndoTransactionPort(runtime), async (_owner, event) => { notifications.push(event) }, { renameDirectory: directories.renameDirectory, trash: createLocalProjectTrashStorage(root) })
     const undone = await service.apply('11111111-1111-4111-8111-111111111111', 'ctx', 'op', 'undo') as { events: Record<string, unknown>[] }
     assert.deepEqual(undone.events, [{ resource: 'projects', operation: 'update', entity_ids: [1], origin: 'undo:op' }])
     const afterUndo = await reread()
@@ -54,7 +54,7 @@ test('项目撤销改名时同步真实目录与数据库路径，重做可恢�
     assert.equal(afterUndo.updatedAt, '2025-12-31T16:30:00.123456+00:00')
     assert.equal(afterUndo.doneAt, null)
     assert.equal(afterUndo.deletedAt, null)
-    assert.equal(await readFile(path.join(root, oldKey, 'a.txt'), 'utf8'), '内容')
+    assert.equal(directories.contents(oldKey), '内容')
     assert.equal((await pool.query('SELECT storage_key FROM files')).rows[0].storage_key, `${oldKey}/a.txt`)
     const redone = await service.apply('11111111-1111-4111-8111-111111111111', 'ctx', 'op', 'redo') as { events: Record<string, unknown>[] }
     assert.deepEqual(redone.events, [{ resource: 'projects', operation: 'update', entity_ids: [1], origin: 'undo:op' }])
@@ -65,11 +65,11 @@ test('项目撤销改名时同步真实目录与数据库路径，重做可恢�
     assert.equal(afterRedo.updatedAt, '2025-12-31T16:30:00.123456+00:00')
     assert.equal(afterRedo.doneAt, null)
     assert.equal(afterRedo.deletedAt, null)
-    assert.equal(await readFile(path.join(root, newKey, 'a.txt'), 'utf8'), '内容')
+    assert.equal(directories.contents(newKey), '内容')
     await pool.query(`ALTER TABLE projects ADD CONSTRAINT reject_name CHECK (name <> '失败')`)
     await pool.query(`INSERT INTO undo_operations VALUES ('fail','11111111-1111-4111-8111-111111111111','ctx','g','projects','update','[]',$1::json,$2::json,'web','active',now(),now()+interval '1 day',NULL,NULL)`, [JSON.stringify({ items: { 'project:1': { name: '失败', stages: [] } } }), JSON.stringify({ items: { 'project:1': { name: '新', stages: [], version: 4 } } })])
     await assert.rejects(() => service.apply('11111111-1111-4111-8111-111111111111', 'ctx', 'fail', 'undo'))
-    assert.equal(await readFile(path.join(root, newKey, 'a.txt'), 'utf8'), '内容')
+    assert.equal(directories.contents(newKey), '内容')
     assert.equal((await pool.query('SELECT storage_key FROM files')).rows[0].storage_key, `${newKey}/a.txt`)
   } finally {
     await runtime.close()

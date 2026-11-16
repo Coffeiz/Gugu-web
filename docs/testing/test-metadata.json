@@ -1,4 +1,44 @@
 {
+  "packages/core/tests/projects/relative-references.test.ts": {
+    "domain": "files",
+    "layer": "L1",
+    "owner": "packages/core/src/files",
+    "productionEntry": "resolveRelativeReferences",
+    "keyBehavior": "按来源路径逐段解析，根边界、编码与文件优先规则，查询失败不得伪装不存在",
+    "ci": "core-node"
+  },
+  "apps/web-host/tests/projects/project-core-sqlite.test.ts": {
+    "domain": "projects",
+    "layer": "L2",
+    "owner": "packages/core/src/projects",
+    "productionEntry": "createProjectTrashService / applyProjectUndo / createKyselyProjectFileCountReader",
+    "keyBehavior": "临时 SQLite 与真实 Host FS：删除/恢复及 Undo/redo 目标竞态回滚项目、文件和操作终态；补偿冲突保留双方，兼顾同批恢复、owner、版本和计数",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/projects/project-trash-storage.test.ts": {
+    "domain": "projects",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/projects/persistence",
+    "productionEntry": "createLocalProjectTrashStorage",
+    "keyBehavior": "真实临时文件在预检查后创建目标、rollback 冲突均不覆盖双方；目录拒绝、owner 根和 symlink fail-closed",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/projects/project-directory-storage.test.ts": {
+    "domain": "projects",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/projects/persistence",
+    "productionEntry": "createLocalProjectDirectoryRenamer",
+    "keyBehavior": "无原子不覆盖目录原语时拒绝正反向移动，保留源树和权限；缺失源兼容、owner 与 symlink 边界",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/projects/project-undo-journal.test.ts": {
+    "domain": "undo",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/undo/persistence",
+    "productionEntry": "recoverProjectUndoJournal / createLocalProjectUndoJournalStorage",
+    "keyBehavior": "合成 SQL 端口与真实临时文件验证正反向恢复竞态、双硬链接和不支持目录时保留双方及 journal，不冒充 PG 集成",
+    "ci": "node-webui"
+  },
 "apps/web-host/tests/admin/safe-egress-probe.test.ts": {
     "domain": "api",
     "layer": "L2",
@@ -3842,17 +3882,17 @@
   "packages/core/tests/unit/data/contract.test.ts": {
     "domain": "core-node-contract",
     "layer": "L1",
-    "owner": "gugu-core",
-    "productionEntry": "packages/core/src/data/services.ts",
-    "keyBehavior": "双库联系人维护/隔离/回滚、收据内容规范化与冲突、同 UUID 跨用户隔离、CAS 失败恢复及重放不递增",
+    "owner": "packages/core/src/projects + clients",
+    "productionEntry": "ProjectService / createProjectUpdater / ClientService / runtime/commands",
+    "keyBehavior": "正式 SQLite 项目更新字段、完成时间、owner/墓碑、CAS 和回滚；联系人码点长度/null/删除原子性；桌面命令收据与重开持久化",
     "ci": "core-node"
   },
   "packages/core/tests/integration/postgres/contract.test.ts": {
     "domain": "core-node-contract",
     "layer": "L2",
-    "owner": "gugu-core",
-    "productionEntry": "packages/core/src/data/services.ts",
-    "keyBehavior": "双库联系人维护/隔离/回滚、收据内容规范化与冲突、同 UUID 跨用户隔离、CAS 失败恢复及重放不递增",
+    "owner": "packages/core/src/projects + clients",
+    "productionEntry": "ProjectService / createProjectUpdater / ClientService",
+    "keyBehavior": "与 SQLite 共用项目更新字段、完成时间、owner/墓碑、CAS/事务回滚和联系人码点长度/null/删除原子性合同；须显式提供隔离 PG",
     "ci": "core-node"
   },
   "packages/core/tests/unit/domain/fields.test.ts": {
@@ -4788,7 +4828,7 @@
     "layer": "L2",
     "owner": "apps/web-host/src/domains/undo",
     "productionEntry": "apps/web-host/src/domains/undo/persistence/core-operations.ts",
-    "keyBehavior": "项目撤销的日志锁序、提交不确定及文件恢复",
+    "keyBehavior": "PG 项目撤销的日志锁序、提交不确定与恢复协调；目录使用显式内存能力端口，不验收 Local 目录原语",
     "ci": "web-host-node"
   },
   "apps/web-host/tests/mind/core-undo-host-postgres.test.ts": {

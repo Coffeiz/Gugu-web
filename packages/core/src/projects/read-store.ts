@@ -1,6 +1,11 @@
-import { sql, type Kysely } from 'kysely'
+import { sql, Kysely, PostgresDialect, type PostgresPool } from 'kysely'
 import { CoreError, dataContext } from '../contracts/index.js'
 import type { ProjectFileCountPort } from './project-read.js'
+
+/** 借用 Host 连接池读取既有投影，不导入 pg，也不拥有池的关闭权。 */
+export function createPostgresProjectFileCountReader(pool: PostgresPool): ProjectFileCountPort {
+  return createKyselyProjectFileCountReader(new Kysely({ dialect: new PostgresDialect({ pool }) }), 'postgres')
+}
 
 async function read<T>(work: () => Promise<T>, signal?: AbortSignal): Promise<T> {
   signal?.throwIfAborted()

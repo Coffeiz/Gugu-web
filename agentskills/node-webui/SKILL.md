@@ -30,6 +30,8 @@ description: gugu-webui Node.js/Fastify 后端开发、Python API 迁移与实�
 | 文件 owner 校验、正向 Undo 写入、项目查询与时间戳格式化 | `apps/web-host/src/domains/files/file-owner.ts`；`apps/web-host/src/domains/undo/persistence/forward-operation.ts`；`apps/web-host/src/domains/projects/persistence/projects.ts`：`readProjectFileCount`、`projectExistsForOwner`、`projectTimestamp` |
 | 日历事件投影与持有查询 | `packages/core/src/calendar/event-projection.ts`：数据库行、DTO 与 Undo 快照投影；Core 日历读写端口执行 owner 限定查询 |
 | 项目公开 DTO 与时间投影 | `packages/core/src/projects/project-projection.ts`：`projectResponse`，读写与恢复事件共同复用；`packages/core/src/shared/timestamps.ts`：严格 UTC 微秒解析，`data/codec.ts`保留兼容出口，公开 ISO 与数据库/Undo 编码分开 |
+| 项目文件计数、恢复和 Undo | `packages/core/src/projects/read-store.ts`：借用 Host 池读取投影；`project-trash.ts`：同批恢复、保留期与事务补偿；`file-paths.ts`：逻辑路径和关系元数据规则；`undo.ts`：owner/版本预检、资源顺序及快照。Host 保留物理访问和 PG/旧记录兼容适配，不新增文件对象身份 |
+| 文件相对引用 | `packages/core/src/files/relative-references.ts`：路径编码、逐段目录解析、scope 根和文件优先规则；Host 绑定可信 owner/scope 查询及公开 DTO，Core 不接收数据库文件 ID 作为定位依据 |
 | 日历管理列表与详情 | `packages/core/src/calendar/application/event-read.ts`：`createCalendarEventReader`；`packages/core/src/calendar/read-store.ts`：实际 PG/SQLite 读取，不以管理查询代替 Agent 提醒聚合 |
 | 站内全局搜索 | `packages/core/src/search/`：查询解析、来源能力、分组及实际 PG/SQLite 读端口；Host 仅注入后端，未接来源明确不可用，不能把 Web 查询公共化算作 Agent 工具或 RAG 完成 |
 | 实时消息 envelope 与安全字段裁剪 | `@gugu/core/live-message`：共享业务消息校验及敏感字段裁剪；Web Host 保留认证、Redis 订阅、SSE 与账户状态复核 |

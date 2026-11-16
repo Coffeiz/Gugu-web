@@ -6,6 +6,7 @@
 | --- | --- | --- | --- |
 | 项目字段、日期、阶段/待办身份 | `backend/tests/projects/test_projects_core.py`；Python Core `domain/projects.py` | `unit/domain/domain.test.ts`、`fields.test.ts`；42 组共享语料 | 快速 L0；跨语言语料另为 process / slow |
 | 联系人创建/部分更新/null/长度/删除与不存在 | `backend/tests/core/test_data_runtime.py`、`test_core_data_bridge.py` | `fixtures/data-contract.ts` 在 `unit/data/contract.test.ts` 与 `integration/postgres/contract.test.ts` 共用 | SQLite 快速 L1；PG external_service / slow / L2 |
+| 项目更新公开字段、跨 owner/墓碑、空补丁、完成时间、CAS 与失败回滚 | `backend/app/api/v1/projects.py`、`test_projects_core.py`、`test_projects_live_events.py`；Core `domain/projects.py` | 同一 `fixtures/data-contract.ts` 调用 `createProjectUpdater` 与真实 Kysely 事务；桌面命令另验证改名、联系人更新/删除和重开收据 | 正式 SQLite 已实测；本轮 PG 因无可用隔离实例未运行，文件计数/目录联动不在该合同内 |
 | 全仓储 owner 隔离、CAS、完成时间与回滚 | `test_data_runtime.py`、`test_postgres_projects.py`、`test_core_project_bridge.py` 的已迁移规则 | 原 data/postgres 断言保留；共用契约补联系人越权、跨域修改回滚、归档/墓碑、稳定排序和关闭终态 | 同一数据契约双库执行；Web Session 接缝仍待 N3 |
 | SQLite 初始化、坏库拒绝、备份升级与重开 | `test_local_runtime.py`、`test_data_runtime.py` | `unit/data/data.test.ts`、`exclusive.test.ts`、`golden/python-interop.test.ts` | 临时 SQLite 快速 L1；Python 重读/恢复为 process / slow |
 | Worker、stdio、取消/关闭、崩溃与未知提交状态 | `test_desktop_ipc.py`、`test_local_runtime.py` | `integration/runtime/local-ipc.test.ts`、`transport.test.ts`；桌面 `core-host.test.ts` | process / slow / L2；保留满队列、并发关闭及旧协议安全断言 |

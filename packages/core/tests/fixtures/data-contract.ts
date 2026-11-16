@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { dataContext } from '../../src/contracts/index.js'
 import type { SqlDataRuntime } from '../../src/data/runtime.js'
-import { databaseTime } from '../../src/data/codec.js'
+import { databaseTime, type Clock } from '../../src/data/codec.js'
+import { createProjectUpdater, type ProjectUpdatedEvent } from '../../src/projects/project-update.js'
+import { createKyselyProjectUpdateTransaction } from '../../src/projects/update-store.js'
+import { PROJECT_COLOR_PRESETS } from '../../src/projects/colors.js'
 
 export interface ContractFixture {
   runtime: SqlDataRuntime
@@ -154,6 +157,48 @@ export function dataContract(label: string, create: () => Promise<ContractFixtur
         expect(await data.clients.list()).toEqual([updated])
       })
     })
+    it('联系人各字段按 Unicode 码点限制长度，保留空白和未提供字段，非法更新不落库', async () => {
+      const { runtime, owner } = fixture, context = dataContext(owner)
+      const fields = {
+        name: '😀'.repeat(200), contact: '😀'.repeat(200),
+        email: '甲'.repeat(300), phone: '1'.repeat(50), notes: '  原始备注\n',
+      }
+      const contact = await runtime.transaction(context, data => data.clients.create(fields))
+      expect(contact).toMatchObject(fields)
+      for (const [field, maximum] of Object.entries({ name: 200, contact: 200, email: 300, phone: 50 })) {
+        const invalid = { [field]: '😀'.repeat(maximum + 1) }
+        await expect(runtime.transaction(context, data => data.clients.create({ ...fields, ...invalid })))
+          .rejects.toMatchObject({ code: 'invalid_request' })
+        await expect(runtime.transaction(context, data => data.clients.update(contact.id, invalid)))
+          .rejects.toMatchObject({ code: 'invalid_request' })
+      }
+      const updated = await runtime.transaction(context, data => data.clients.update(contact.id, {
+        name: '  小北  ', contact: null, email: null, phone: null,
+      }))
+      expect(updated).toEqual({ ...contact, name: '  小北  ', contact: null, email: null, phone: null })
+      expect(await runtime.transaction(context, data => data.clients.update(contact.id, { name: updated.name })))
+        .toEqual(updated)
+      expect(await runtime.transaction(context, data => data.clients.list())).toEqual([updated])
+    })
+    it('联系人删除随外层事务或收据写入失败回滚，成功删除收据重放不再次执行', async () => {
+      const { runtime, owner } = fixture, context = dataContext(owner)
+      const contact = await runtime.transaction(context, data => data.clients.create({ name: '保留联系人' }))
+      const operationId = randomUUID()
+      await expect(runtime.operation(context, operationId, 'clients.delete', { id: contact.id }, async data => {
+        await data.clients.delete(contact.id)
+        // 序列化收据时抛错，验证已经执行的 DELETE 仍由同一事务回滚。
+        return { invalidReceipt: 1n }
+      })).rejects.toThrow()
+      expect(await runtime.receipt(context, operationId)).toBeNull()
+      expect(await runtime.transaction(context, data => data.clients.list())).toEqual([contact])
+      const remove = () => runtime.operation(context, operationId, 'clients.delete', { id: contact.id }, async data => {
+        await data.clients.delete(contact.id)
+        return null
+      })
+      expect(await remove()).toBeNull()
+      expect(await remove()).toBeNull()
+      expect(await runtime.transaction(context, data => data.clients.list())).toEqual([])
+    })
     it('空更新或非法联系人字段不改变已有资料，删除后所有入口返回不存在', async () => {
       const { runtime, owner } = fixture,
         context = dataContext(owner)
@@ -266,6 +311,102 @@ export function dataContract(label: string, create: () => Promise<ContractFixtur
       expect(
         await runtime.transaction(context, (data) => data.projects.list(true)),
       ).toEqual([archived])
+    })
+    // Web 完整更新用例与桌面数据服务分开验证；此切片不装配旧文件库或物理目录。
+    function projectUpdater(events: ProjectUpdatedEvent[], owner = fixture.owner, clock: Clock = () => '2026-11-10T10:00:00.123456Z') {
+      const { runtime } = fixture
+      return createProjectUpdater({
+        transaction: work => runtime.db.transaction().execute(tx =>
+          work(createKyselyProjectUpdateTransaction(tx, runtime.backend, owner, clock))),
+        async renameProjectDirectory() { throw new Error('本合同不提供旧项目文件目录能力') },
+        async getFileCount() { return 0 },
+        async publishProjectUpdated(event) {
+          // 在另一事务重读，防止把未提交的版本作为成功事件发布。
+          const saved = await runtime.transaction(dataContext(event.userId), data => data.projects.get(event.entityId))
+          expect(saved?.version).toBe(event.payload.version)
+          events.push(event)
+        },
+      })
+    }
+    it('项目更新用例双库持久化公开字段、阶段、归档和完成时间，仅修改提交字段', async () => {
+      const { runtime, owner } = fixture, context = dataContext(owner), events: ProjectUpdatedEvent[] = []
+      const project = await runtime.transaction(context, data => data.projects.create({
+        name: '原项目', summary: '保留摘要', client: '旧联系人',
+        start_date: '2026-01-01', deadline: '2026-12-31',
+      }))
+      let updateTime = '2026-11-10T10:00:00.123456Z'
+      const update = projectUpdater(events, owner, () => updateTime)
+      const stages = [{ key: 's0', label: '计划', todos: [{ id: 't1', text: '验收', done: true }] }]
+      const result = await update(owner, project.id, {
+        version: 1, client: '小北', status: 'done', startDate: '2026-02-01', deadline: '2026-12-01',
+        color: PROJECT_COLOR_PRESETS[1], progress: 100, stages, currentStage: 's0', archived: true, priority: 'high',
+      }, { clientId: ' desktop-test ' })
+      expect(result).toMatchObject({
+        id: project.id, name: '原项目', client: '小北', status: 'done', startDate: '2026-02-01', deadline: '2026-12-01',
+        color: PROJECT_COLOR_PRESETS[1], progress: 100, stages, currentStage: 's0', archived: true, priority: 'high',
+        version: 2, doneAt: '2026-11-10T10:00:00.123456+00:00', updatedAt: '2026-11-10T10:00:00.123456+00:00', fileCount: 0,
+      })
+      const saved = await runtime.transaction(context, data => data.projects.get(project.id))
+      expect(saved).toMatchObject({ summary: '保留摘要', client: '小北', archived: true, version: 2 })
+      expect(JSON.parse(saved!.stages_json)).toEqual(stages)
+      expect(await runtime.transaction(context, data => data.projects.list())).toEqual([])
+      expect(await runtime.transaction(context, data => data.projects.list(true))).toEqual([saved])
+      expect(events).toEqual([expect.objectContaining({ origin: 'desktop-test', payload: result })])
+      updateTime = '2026-11-11T11:00:00.654321Z'
+      const sameDone = await update(owner, project.id, { version: 2, status: 'done' })
+      expect(sameDone.doneAt).toBe(result.doneAt)
+      expect(sameDone.updatedAt).toBe('2026-11-11T11:00:00.654321+00:00')
+      const cleared = await update(owner, project.id, {
+        version: 3, status: 'active', client: null, startDate: null, deadline: null, currentStage: null, priority: null, archived: false,
+      })
+      expect(cleared).toMatchObject({ version: 4, doneAt: null, client: null, startDate: null, deadline: null, currentStage: null, priority: null, archived: false })
+    })
+    it('项目更新用例拒绝跨 owner、墓碑、缺版本和非法字段；版本空补丁保持 Python 无写入语义', async () => {
+      const { runtime, owner, other } = fixture, context = dataContext(owner), events: ProjectUpdatedEvent[] = []
+      const project = await runtime.transaction(context, data => data.projects.create({
+        name: '有期限项目', start_date: '2026-01-10', deadline: '2026-01-20',
+        stages: [{ key: 's0', label: '计划', todos: [] }], current_stage: 's0',
+      }))
+      const update = projectUpdater(events)
+      const foreignUpdate = projectUpdater(events, other)
+      await expect(foreignUpdate(other, project.id, { version: 1, progress: 30 })).rejects.toMatchObject({ code: 'not_found' })
+      for (const input of [
+        { progress: 30 }, { version: 1, progress: 101 }, { version: 1, deadline: '2026-01-09' },
+        { version: 1, startDate: '2026-01-21' }, { version: 1, currentStage: 'missing' },
+        { version: 1, stages: [], currentStage: 's0' }, { version: 1, color: 'invalid' },
+      ]) await expect(update(owner, project.id, input)).rejects.toMatchObject({ code: 'invalid_request' })
+      // Python handler 对只有 version（即使陈旧）的 PATCH 不执行 CAS 或写入。
+      expect(await update(owner, project.id, { version: 9 })).toMatchObject({ version: 1 })
+      expect(await runtime.transaction(context, data => data.projects.get(project.id))).toEqual(project)
+      expect(events).toEqual([])
+      await runtime.db.updateTable('projects').set({ deleted_at: databaseTime('2026-11-10T00:00:00Z', runtime.backend) })
+        .where('id', '=', project.id).execute()
+      await expect(update(owner, project.id, { version: 1, progress: 30 })).rejects.toMatchObject({ code: 'not_found' })
+    })
+    it('项目更新用例同版本竞争仅一方提交，失败的更新不污染事务和提交后事件', async () => {
+      const { runtime, owner } = fixture, context = dataContext(owner), events: ProjectUpdatedEvent[] = []
+      const project = await runtime.transaction(context, data => data.projects.create({ name: '竞争项目' }))
+      const update = projectUpdater(events)
+      const results = await Promise.allSettled([20, 80].map(progress => update(owner, project.id, { version: 1, progress })))
+      const winners = results.filter(result => result.status === 'fulfilled')
+      const losers = results.filter(result => result.status === 'rejected')
+      expect(winners).toHaveLength(1)
+      expect(losers).toEqual([expect.objectContaining({ reason: expect.objectContaining({ code: 'conflict' }) })])
+      const saved = await runtime.transaction(context, data => data.projects.get(project.id))
+      expect(saved).toMatchObject({ version: 2, progress: events[0]!.payload.progress })
+      expect(events).toHaveLength(1)
+      // 在真实 UPDATE 后注入外层事务故障，确保回滚版本与字段且不发布成功事件。
+      const failing = createProjectUpdater({
+        transaction: work => runtime.db.transaction().execute(async tx => {
+          await work(createKyselyProjectUpdateTransaction(tx, runtime.backend, owner))
+          throw new Error('合成提交前故障')
+        }),
+        async renameProjectDirectory() {}, async getFileCount() { return 0 },
+        async publishProjectUpdated(event) { events.push(event) },
+      })
+      await expect(failing(owner, project.id, { version: 2, progress: 50 })).rejects.toThrow('合成提交前故障')
+      expect(await runtime.transaction(context, data => data.projects.get(project.id))).toEqual(saved)
+      expect(events).toHaveLength(1)
     })
     it('取消回滚所有领域且不留收据；关闭后查询和修改均拒绝', async () => {
       const { runtime, owner } = fixture,
