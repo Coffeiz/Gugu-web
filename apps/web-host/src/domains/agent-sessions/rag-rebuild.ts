@@ -20,6 +20,14 @@ import { startRagIndexWorker, type RagIndexWorkerOptions } from './rag-index-wor
 import { createLocalAgentMemoryRagStore } from './tools/agent-rag-memory-store.js'
 import { createPostgresAgentMemoryIndexScopeReader } from './tools/agent-memory-index-scopes.js'
 
+export type AgentRagIndexWorkerOwner = 'python' | 'node'
+
+function configuredWorkerOwner(value: string | undefined): AgentRagIndexWorkerOwner {
+  if (value === undefined || value === '') return 'python'
+  if (value === 'python' || value === 'node') return value
+  throw new Error('Agent RAG Worker owner 配置无效')
+}
+
 /**
  * Production PostgreSQL source set for the persistent RAG index.
  * Every source delegates to a Core domain reader or an explicitly injected owner-bound
@@ -48,12 +56,14 @@ export function createAgentRagRebuildWorker(core: SqlDataRuntime, options: { kno
 }
 
 /** Host 生命周期入口：统一装配可用来源、持久 Worker 与单消费者调度器。 */
-export function startAgentRagIndexWorker(core: SqlDataRuntime, options: Omit<RagIndexWorkerOptions, 'work'> & { knowledgeStore?: AgentKnowledgeReadStore; memoryStorageRoot?: string }) {
-  const { knowledgeStore, memoryStorageRoot, ...schedulerOptions } = options
+export function startAgentRagIndexWorker(core: SqlDataRuntime, options: Omit<RagIndexWorkerOptions, 'work'> & { knowledgeStore?: AgentKnowledgeReadStore; memoryStorageRoot?: string; workerOwner?: AgentRagIndexWorkerOwner }) {
+  const { knowledgeStore, memoryStorageRoot, workerOwner: requestedOwner, ...schedulerOptions } = options
+  const workerOwner = requestedOwner ?? configuredWorkerOwner(process.env.AGENT__RAG_INDEX_WORKER_OWNER)
   const { work, sources } = createAgentRagRebuildWorker(core, { knowledgeStore, memoryStorageRoot })
   let baselineEnqueued = false
   const scheduler = startRagIndexWorker({
     ...schedulerOptions,
+    enabled: schedulerOptions.enabled && workerOwner === 'node',
     work: async signal => {
       if (!baselineEnqueued) {
         await enqueueMissingAgentRagBaselines(core.db, core.backend, sources)
@@ -62,5 +72,5 @@ export function startAgentRagIndexWorker(core: SqlDataRuntime, options: Omit<Rag
       return work(signal)
     },
   })
-  return { sources, stop: scheduler.stop }
+  return { sources, workerOwner, stop: scheduler.stop }
 }

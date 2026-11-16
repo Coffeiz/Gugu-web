@@ -18,7 +18,7 @@ function timestamp(value: unknown): string {
   return utc(value).replace(' ', 'T').replace(/\.(\d{1,6})\+00:00$/u, (_match, fraction: string) => `.${fraction.padEnd(6, '0')}+00:00`)
 }
 
-function parseRecord(raw: Uint8Array) {
+export function parseAgentKnowledgeRecord(raw: Uint8Array) {
   const text = new TextDecoder('utf-8').decode(raw)
   if (!text.startsWith('---\n')) throw new Error('知识文件格式无效')
   const end = text.indexOf('\n---\n', 4)
@@ -62,9 +62,6 @@ function parseRecord(raw: Uint8Array) {
     parent_id: fields.parent_id ?? '',
     project_id: typeof scope.project_id === 'string' ? scope.project_id : '',
   }
-  // Python KnowledgeAdapter treats malformed records as absent; timestamps and required structure
-  // are validated before a record enters the persistent index.
-  void createdAt
   return {
     id,
     source_type: 'knowledge',
@@ -74,6 +71,7 @@ function parseRecord(raw: Uint8Array) {
     summary,
     content,
     document_version: `${version}:k${revision}`,
+    created_at: createdAt,
     updated_at: updatedAt,
     scope: {
       scope_type: scopeType,
@@ -122,7 +120,7 @@ export function createKnowledgeRagSource(store: AgentKnowledgeReadStore): RagReb
     for (const key of keys) {
       signal?.throwIfAborted()
       let record
-      try { record = parseRecord(await store.read(key)) } catch { continue }
+      try { record = parseAgentKnowledgeRecord(await store.read(key)) } catch { continue }
       if (record.owner !== owner || !record.active) continue
       records.push(record)
     }

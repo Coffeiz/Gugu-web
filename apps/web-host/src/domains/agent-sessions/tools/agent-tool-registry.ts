@@ -15,7 +15,7 @@ import type { createAgentMindReader } from '@gugu/core/mind'
 import type { SqlDataRuntime } from '@gugu/core/data'
 import { CoreError, type GlobalSearchOperations, type DashboardCountPort, type createAgentWorkspaceQueries } from '@gugu/core'
 import type { RunIdentity } from '@gugu/core/agent'
-import { createClientTools, createCanvasReadTools, createWorkspaceUpdateTool, createNoteReadTools, createGetToolSchemaTool, createProjectStageTools, createListEventsTool, createWorkspaceReadTools, createDashboardStatsTool, createProjectMutationTools, createGlobalSearchTool, createUpcomingTool, createListTrashTool, createGetProjectTool, createListProjectsTool, createListScheduledTasksTool, createProjectCreationPort, createProjectTool, createTimeTool, createToolRegistry, createUseSkillTool } from '@gugu/core/tools'
+import { createClientTools, createCanvasReadTools, createWorkspaceUpdateTool, createNoteReadTools, createGetToolSchemaTool, createProjectStageTools, createListEventsTool, createWorkspaceReadTools, createDashboardStatsTool, createProjectMutationTools, createGlobalSearchTool, createUpcomingTool, createListTrashTool, createGetProjectTool, createListProjectsTool, createListScheduledTasksTool, createProjectCreationPort, createProjectTool, createTimeTool, createToolRegistry, createUseSkillTool, createHttpGetTool } from '@gugu/core/tools'
 import type { WorkspaceMutationPort, ProjectMutationPort, TrashListPort, ProjectFileOverview, ScheduledTaskListPort, UseSkillPorts } from '@gugu/core/tools'
 import type { ProjectCreateRuntime } from '@gugu/core/project-create'
 import { agentProjectDispatchKey } from './agent-project-tool.js'
@@ -50,6 +50,8 @@ export interface AgentToolRegistryOptions {
   search?: GlobalSearchOperations
   /** 可信日历读取能力；近期待办同时依赖用户时区。 */
   events?: CalendarEventReadPort
+  /** 必须是 Host 提供的固定公网目标且不跟随重定向的读取端口；缺失时不注册。 */
+  httpGet?: Parameters<typeof createHttpGetTool>[0]
   trash?: TrashListPort
   /** 文件恢复后端需提供持久防重放和归属校验。 */
   trashRestore?: TrashRestorePort
@@ -98,6 +100,7 @@ export function createAgentToolRegistry(options: AgentToolRegistryOptions) {
         ...(options.dashboard ? [createDashboardStatsTool({ counts: options.dashboard, time: options.time })] : []),
       ] }] : []),
       ...(options.calendar ? [{ id: 'calendar', name: '日历', tools: [createListEventsTool(options.calendar)] }] : []),
+      ...(options.httpGet ? [{ id: 'web', name: '联网读取', tools: [createHttpGetTool(options.httpGet)] }] : []),
       ...(options.workspaces || options.workspaceMutations ? [{ id: 'workspaces', name: '工作区', tools: [
         ...(options.workspaces ? createWorkspaceReadTools(options.workspaces) : []),
         ...(options.workspaceMutations ? [createWorkspaceUpdateTool(options.workspaceMutations)] : []),

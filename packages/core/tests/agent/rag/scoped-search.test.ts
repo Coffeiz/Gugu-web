@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import type { RagDocument } from '../../../src/agent/rag/contracts.js'
+import { createMemoryRagSource } from '../../../src/agent/rag/memory-source.js'
 import { createScopedRagSearch } from '../../../src/agent/rag/scoped-search.js'
 import { configureRagJieba } from '../../../src/agent/rag/tokenizer.js'
 
@@ -68,24 +69,36 @@ describe('scoped RAG embedding fallback', () => {
   })
 
   it('reads 1.7.7 memory vectors after persistent IDs are namespaced by authorized scope', async () => {
-    const namespaced = {
-      ...document,
-      id: 'memory:memory:profile:profile:0:scope:ab12:0',
-      parent_id: 'memory:profile:profile:0:scope:ab12',
-      metadata: { memory_parent_id: 'memory:profile:profile:0' },
-    }
-    const legacyVectors = JSON.stringify({
-      'rag:memory:profile:profile:0:v1:0': { v: [0, 1], t: 'embed-v1' },
+    const owner = 'f17421a3-8520-4c8b-92e5-736882f4bd82'
+    const parent = 'memory:profile:profile:0'
+    const buildSource = createMemoryRagSource({
+      storage: { async readText({ key }) {
+        if (key !== `${owner}/.agent/rag/memory/index.json`) return null
+        return JSON.stringify({ schema_version: 1, documents: [{
+          document_id: 'profile:0', parent_document_id: parent, chunk_index: 0, chunk_count: 1,
+          source_type: 'memory', source_id: 'profile', title: '项目进度', summary: '',
+          content: '项目进度已经更新', version: 'v1',
+          scope: { owner_user_id: owner, scope_type: 'owner', scope_id: '' }, metadata: {},
+        }] })
+      } },
+      scopeState: { async getMemoryScopeState() { throw new Error('owner source does not query IM scope state') } },
+      async scopes() { return [] },
     })
-    const ports = setup(async () => [0, 1], [namespaced], legacyVectors)
+    const namespaced = await buildSource(owner, null)
+    expect(namespaced).toHaveLength(1)
+    expect(namespaced[0]?.metadata?.memory_parent_id).toBe(parent)
+    const legacyVectors = JSON.stringify({
+      [`rag:${parent}:v1:0`]: { v: [0, 1], t: 'embed-v1' },
+    })
+    const ports = setup(async () => [0, 1], [...namespaced], legacyVectors)
 
-    const result = await ports.search('owner-a', { scope_type: 'owner', scope_id: '' }, '项目进度', {
+    const result = await ports.search(owner, { scope_type: 'owner', scope_id: '' }, '项目进度', {
       sourceTypes: ['memory'], limit: 5,
     })
 
     expect(result.fusion).toBe('hybrid-rrf')
     expect(result.vectorDocCount).toBe(1)
-    expect(result.results[0]?.document.id).toBe(namespaced.id)
+    expect(result.results[0]?.document.id).toBe(namespaced[0]?.id)
     expect(ports.source).toHaveBeenCalledWith('memory', undefined)
   })
 })

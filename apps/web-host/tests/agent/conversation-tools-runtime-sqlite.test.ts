@@ -7,14 +7,12 @@ import test from 'node:test'
 import { initializeSqlite, openSqliteRuntime } from '@gugu/core/data'
 import { createAgentToolRegistry } from '../../src/domains/agent-sessions/tools/agent-tool-registry.js'
 import { createCoreAgentConversationSearchPort } from '../../src/domains/agent-sessions/tools/agent-conversations.js'
-import { createIndexedAgentConversationSearchPort } from '../../src/domains/agent-sessions/tools/agent-conversations.js'
 import { createConversationRagSource } from '../../../../packages/core/src/agent/rag/conversation-index-source.js'
-import { createSqlRagPersistentIndexWriter } from '../../../../packages/core/src/agent/rag/persistent-writer.js'
+import { createCanonicalSourceLoader, createSqlRagRebuildWorker, enqueueAgentRagRebuild, stableJson } from '@gugu/core/agent'
 import { createOwnerAgentRagVectorResolver } from '../../src/domains/agent-sessions/tools/agent-rag-vectors.js'
 import { createAgentRuntime } from '../../src/domains/agent-sessions/agent-runtime.js'
 import { agentContextAccessScope } from '../../src/domains/agent-config/access-scope.js'
 import { bindProviderSelection } from '../../src/domains/agent-config/provider-resolver.js'
-import { createCanonicalSourceLoader, stableJson } from '@gugu/core/agent'
 import type { AgentRunnerPorts, CanonicalContextPorts, CanonicalRunContext, RunCheckpoint, RunEvent } from '@gugu/core/agent'
 import { ProviderStreamSanitizer, stripThinking } from '@gugu/core/providers'
 
@@ -97,7 +95,7 @@ test('search_conversations 经 Host 适配器和真实工具分派查询 owner �
   }
 })
 
-test('search_conversations 经真实注册器调用持久 TS RAG、正式 Jieba 并保持 Python BM25 语义', async () => {
+test('search_conversations 经正式 Jieba 和 TypeScript BM25 搜索完整 owner 历史', async () => {
   const folder = await mkdtemp(join(tmpdir(), 'gugu-conversation-rag-'))
   const path = join(folder, 'core.db')
   let runtime: Awaited<ReturnType<typeof openSqliteRuntime>>['runtime'] | undefined
@@ -125,22 +123,20 @@ test('search_conversations 经真实注册器调用持久 TS RAG、正式 Jieba 
       { session_id: 31, conversation_seq: 3, role: 'tool', content: '工具部署结果不能被索引。', created_at: '2026-01-02T04:00:00Z' },
     ]).execute()
 
-    const documents = await createConversationRagSource(runtime.db, runtime.backend)(owner, null)
-    await createSqlRagPersistentIndexWriter(runtime.db, runtime.backend).replaceSource(owner, 'conversation', documents)
-    const conversationSearch = createIndexedAgentConversationSearchPort(runtime)
+    const conversationSearch = createCoreAgentConversationSearchPort(runtime)
     const registry = createAgentToolRegistry({ core: runtime, conversationSearch, authorize: async () => true })
     const scope = {
       identity: { ownerId: owner, sessionId: '91', runId: 'synthetic-rag-run' }, roundId: '1',
       signal: new AbortController().signal, resolution: null,
       execute: async () => { throw new Error('只读工具不得调用执行后端') },
     }
-    const result = await registry.tools.dispatch({ id: 'indexed-search', name: 'search_conversations', input: { query: '部署', owner_id: randomUUID() } }, scope)
+    const result = await registry.tools.dispatch({ id: 'rag-search', name: 'search_conversations', input: { query: '部署', owner_id: randomUUID() } }, scope)
     assert.equal(result.kind === 'completed' && result.successful, true)
     assert.deepEqual(result.kind === 'completed' ? (result.value as { matches: Array<{ session_id: number; match: { snippet: string } }> }).matches.map(row => ({ session_id: row.session_id, snippet: row.match.snippet })) : [], [
-      { session_id: 31, snippet: '部署回顾\n发布排期\nuser：请安排合成部署与发布回归。' },
+      { session_id: 31, snippet: '部署回顾\n发布排期\n请安排合成部署与发布回归。' },
     ])
     const deniedRegistry = createAgentToolRegistry({ core: runtime, conversationSearch, authorize: async () => false })
-    const denied = await deniedRegistry.tools.dispatch({ id: 'denied-indexed-search', name: 'search_conversations', input: { query: '部署' } }, scope)
+    const denied = await deniedRegistry.tools.dispatch({ id: 'denied-rag-search', name: 'search_conversations', input: { query: '部署' } }, scope)
     assert.equal(denied.kind === 'completed' && denied.successful, false)
     assert.doesNotMatch(JSON.stringify(denied), /部署回顾|发布排期/u)
   } finally {
@@ -149,7 +145,7 @@ test('search_conversations 经真实注册器调用持久 TS RAG、正式 Jieba 
   }
 })
 
-test('search_conversations 保留 Python 的 20 条 RAG 候选上限后再按会话去重', async () => {
+test('search_conversations 每个会话先取最新命中，避免同会话消息挤掉其他会话', async () => {
   const folder = await mkdtemp(join(tmpdir(), 'gugu-conversation-rag-limit-'))
   const path = join(folder, 'core.db')
   let runtime: Awaited<ReturnType<typeof openSqliteRuntime>>['runtime'] | undefined
@@ -162,6 +158,9 @@ test('search_conversations 保留 Python 的 20 条 RAG 候选上限后再按会
       insertInto(table: 'conversation_sessions' | 'conversation_messages'): {
         values(rows: Record<string, unknown> | Record<string, unknown>[]): { execute(): Promise<unknown> }
       }
+      updateTable(table: 'conversation_messages'): {
+        set(values: Record<string, unknown>): { where(column: string, operator: '=', value: number): { execute(): Promise<unknown> } }
+      }
     }
     await fixtureDb.insertInto('conversation_sessions').values([
       { id: 51, user_id: owner.replaceAll('-', ''), title: '重复命中会话', title_locked: 0, summary: '', source: 'web', chat_type: null, context_epoch: 0, baseline_message_seq: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-02T03:04:00Z' },
@@ -171,14 +170,37 @@ test('search_conversations 保留 Python 的 20 条 RAG 候选上限后再按会
       ...Array.from({ length: 20 }, (_, index) => ({ session_id: 51, conversation_seq: index + 1, role: 'user', content: `候选窗口词 记录 ${index + 1}`, created_at: `2026-01-02T03:${String(index).padStart(2, '0')}:00Z` })),
       { session_id: 52, conversation_seq: 1, role: 'user', content: '候选窗口词 第二会话', created_at: '2026-01-02T04:00:00Z' },
     ]).execute()
-    const documents = await createConversationRagSource(runtime.db, runtime.backend)(owner, null)
-    await createSqlRagPersistentIndexWriter(runtime.db, runtime.backend).replaceSource(owner, 'conversation', documents)
-    const registry = createAgentToolRegistry({ core: runtime, conversationSearch: createIndexedAgentConversationSearchPort(runtime), authorize: async () => true })
+    await enqueueAgentRagRebuild(runtime.db, runtime.backend, owner, 'conversation')
+    const rebuild = createSqlRagRebuildWorker(runtime.db, runtime.backend, {
+      conversation: createConversationRagSource(runtime.db, runtime.backend),
+    })
+    assert.equal(await rebuild(), 'ready')
+    const jobs = runtime.db as unknown as { selectFrom(table: string): { select(columns: readonly string[]): {
+      where(column: string, operator: '=', value: string): { where(column: string, operator: '=', value: string): {
+        executeTakeFirstOrThrow(): Promise<{ status: string; generation: number; completed_generation: number }>
+      } }
+    } } }
+    const job = await jobs.selectFrom('rag_index_jobs').select(['status', 'generation', 'completed_generation'])
+      .where('user_id', '=', owner.replaceAll('-', '')).where('source_type', '=', 'conversation').executeTakeFirstOrThrow()
+    assert.deepEqual(job, { status: 'ready', generation: 1, completed_generation: 1 })
+    const registry = createAgentToolRegistry({ core: runtime, conversationSearch: createCoreAgentConversationSearchPort(runtime), authorize: async () => true })
     const scope = { identity: { ownerId: owner, sessionId: '93', runId: 'synthetic-limit-run' }, roundId: '1',
       signal: new AbortController().signal, resolution: null, execute: async () => { throw new Error('只读工具不得调用执行后端') } }
     const result = await registry.tools.dispatch({ id: 'limit-search', name: 'search_conversations', input: { query: '候选窗口词' } }, scope)
     assert.equal(result.kind === 'completed' && result.successful, true)
-    assert.deepEqual(result.kind === 'completed' ? (result.value as { matches: Array<{ session_id: number }> }).matches.map(row => row.session_id) : [], [51])
+    assert.deepEqual(result.kind === 'completed' ? (result.value as { matches: Array<{ session_id: number }> }).matches.map(row => row.session_id) : [], [51, 52])
+
+    // 工具消息不再属于 Python 会话 RAG 来源；重建必须给旧消息索引写墓碑。
+    await fixtureDb.updateTable('conversation_messages').set({ role: 'tool' }).where('session_id', '=', 51).execute()
+    await fixtureDb.updateTable('conversation_messages').set({ role: 'tool' }).where('session_id', '=', 52).execute()
+    await enqueueAgentRagRebuild(runtime.db, runtime.backend, owner, 'conversation')
+    assert.equal(await rebuild(), 'ready')
+    const refreshed = await registry.tools.dispatch({ id: 'limit-search-refreshed', name: 'search_conversations', input: { query: '候选窗口词' } }, scope)
+    assert.equal(refreshed.kind === 'completed' && refreshed.successful, true)
+    assert.deepEqual(refreshed.kind === 'completed' ? (refreshed.value as { matches: unknown[] }).matches : null, [])
+    const refreshedJob = await jobs.selectFrom('rag_index_jobs').select(['status', 'generation', 'completed_generation'])
+      .where('user_id', '=', owner.replaceAll('-', '')).where('source_type', '=', 'conversation').executeTakeFirstOrThrow()
+    assert.deepEqual(refreshedJob, { status: 'ready', generation: 2, completed_generation: 2 })
   } finally {
     await runtime?.close()
     await rm(folder, { recursive: true, force: true })
@@ -209,8 +231,7 @@ test('AgentRuntime 经 Core Runner 将 search_conversations 结果送入 Provide
     await tables.insertInto('conversation_messages').values({
       session_id: 41, conversation_seq: 1, role: 'user', content: '请查找上次部署复盘。', created_at: '2026-01-02T03:00:00Z',
     }).execute()
-    // 生产 Python search_conversations 先从 owner 会话事实表生成候选，再走统一 ranker；
-    // Runner 续轮应覆盖这条 Core SQL RAG 路径。持久索引路径由上面的独立用例覆盖。
+    // Runner → 工具注册器调用与 Python 一致的 owner 会话事实表 BM25 来源。
     const conversationSearch = createCoreAgentConversationSearchPort(runtimeDb)
     const registry = createAgentToolRegistry({
       core: runtimeDb,

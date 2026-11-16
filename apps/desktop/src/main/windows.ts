@@ -35,6 +35,22 @@ export function windowOptions(
     title: '咕咕 · 本地工作台',
     titleBarStyle: 'hidden',
     trafficLightPosition: { x: 16, y: 16 },
+    ...(process.platform === 'darwin'
+      ? {
+          vibrancy: 'under-window',
+          visualEffectState: 'followWindow',
+          transparent: true,
+          backgroundColor: '#00000000',
+        }
+      : process.platform === 'win32'
+        ? {
+            frame: false,
+            titleBarOverlay: { color: '#00000000', symbolColor: '#343741', height: 64 },
+            backgroundMaterial: 'acrylic',
+            transparent: true,
+            backgroundColor: '#00000000',
+          }
+        : {}),
     width: 1024,
     height: 740,
     minWidth: 680,

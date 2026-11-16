@@ -12,7 +12,7 @@ import { createWebLinkButtonDeliveryPort } from '@gugu/core/tools'
 import { createAgentToolRegistry, type AgentToolRegistryOptions } from '../../src/domains/agent-sessions/tools/agent-tool-registry.js'
 
 const identity = { ownerId: '00000000-0000-4000-8000-000000000001', sessionId: '1', runId: 'run' }
-function fixture(includeTime = false, includeOverview = false, includeProjects = true, skills?: UseSkillPorts, scheduledTasks?: ScheduledTaskListPort, search?: GlobalSearchOperations, extra: Pick<AgentToolRegistryOptions, 'events' | 'trash'> = {}) {
+function fixture(includeTime = false, includeOverview = false, includeProjects = true, skills?: UseSkillPorts, scheduledTasks?: ScheduledTaskListPort, search?: GlobalSearchOperations, extra: Pick<AgentToolRegistryOptions, 'events' | 'trash' | 'httpGet'> = {}) {
   const records: Array<{ id: number; userId: string; name: string; contact: null; email: null; phone: null; notes: string }> = []
   let enabled = new Set(['list_clients', 'create_client', 'create_project'])
   let failed = false, readFailed = false
@@ -51,6 +51,29 @@ test('缺少项目创建后端时不开放写工具，已授权只读工具仍�
 })
 const scope = (ownerId = identity.ownerId) => ({ identity: { ...identity, ownerId }, roundId: 'round-1', signal: new AbortController().signal,
   resolution: null, execute: async () => { throw new Error('不可调用宿主 Shell') } })
+
+test('http_get 缺少可信网络端口时不注册，注入后使用认证 owner 且撤权后不请求', async () => {
+  const absent = fixture(false, false, false)
+  absent.grant('http_get')
+  assert.equal((await absent.capabilities(identity)).some(item => item.name === 'http_get'), false)
+  let observed: unknown
+  const enabled = fixture(false, false, false, undefined, undefined, undefined, { httpGet: { async get(input) {
+    observed = input
+    return { status: 200, body: '合成正文' }
+  } } })
+  enabled.grant('http_get')
+  assert.equal((await enabled.capabilities(identity)).some(item => item.name === 'http_get'), true)
+  const call = { id: 'web', name: 'http_get', input: { url: 'https://public.example.test' } }
+  const result = await enabled.tools.dispatch(call, scope())
+  assert.equal(result.kind, 'completed')
+  if (result.kind === 'completed') assert.deepEqual(result.value, { status: 200, body: '合成正文' })
+  assert.deepEqual(observed, { ownerId: identity.ownerId, url: 'https://public.example.test', maxChars: 4000 })
+  enabled.revoke('http_get')
+  const denied = await enabled.tools.dispatch(call, scope())
+  if (denied.kind === 'completed') assert.equal(denied.executed, false)
+  else assert.fail('撤权后不能执行')
+  assert.deepEqual(observed, { ownerId: identity.ownerId, url: 'https://public.example.test', maxChars: 4000 })
+})
 
 test('历史搜索仅在完整可信搜索端口注入且授权时开放', async () => {
   let allowed=true

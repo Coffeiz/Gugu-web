@@ -1,0 +1,95 @@
+import {pinyin} from 'pinyin-pro'
+import type {McpStoredServer} from '@gugu/core/mcp/server-list'
+import {descriptionForProvider,descriptionShortOf,prefixedToolName,sanitizeInputSchema,validateInputSchema} from '@gugu/core/mcp/schema-adapter'
+import {normalizeMcpSlots,validateMcpCredentialValues} from '@gugu/core/mcp/server-config'
+import type {ProviderTransport} from '@gugu/core/providers'
+import {createMcpHttpClient} from './sdk-client.js'
+import {createMcpSafeFetch} from './safe-fetch.js'
+
+interface EnvelopeReader {decrypt(input:{ciphertext:string;nonce:string;encryptedDataKey:string;keyVersion:number}):Promise<string>}
+interface RuntimeTool {name:string;tool_name:string;description:string;description_short:string;input_schema:Record<string,unknown>}
+interface RuntimeClient {
+ connect():Promise<void>
+ listTools():Promise<{tools:unknown[]}>
+ close():Promise<void>
+}
+interface RuntimeEntry {
+ state:'ok'|'error';tools:RuntimeTool[];last_error:string|null;client?:RuntimeClient;transport?:ProviderTransport
+}
+function safeError(error:unknown):string {
+ const text=error instanceof Error?error.message:''
+ if(/\b(401|403)\b/.test(text))return 'MCP server 认证失败，请检查凭据'
+ if(/timeout|timed out|超时/i.test(text))return '连接 MCP server 超时'
+ if(text.includes('超出单个 server 上限'))return 'MCP server 工具数量超出上限，请配置工具白名单后重试'
+ if(text.startsWith('MCP 缺少凭据值'))return 'MCP 缺少凭据值，请填写凭据后重试'
+ if(text.startsWith('MCP 凭据不得放入 URL'))return 'MCP 凭据不得放入 URL；请改用 Header 凭据槽位'
+ return '无法连接 MCP server，请检查地址与网络'
+}
+function romanize(value:string){return pinyin(value,{toneType:'none',type:'array'}).join('')}
+async function decryptedObject(decrypt:EnvelopeReader,row:McpStoredServer,prefix:'credentials'|'headers'){
+ const ciphertext=row[`encrypted_${prefix}`]
+ if(!ciphertext)return {}
+ const result=JSON.parse(await decrypt.decrypt({ciphertext,nonce:row[`${prefix}_nonce`],encryptedDataKey:row[`encrypted_${prefix}_key`],keyVersion:row[`${prefix}_key_version`]}))
+ return result&&typeof result==='object'&&!Array.isArray(result)?Object.fromEntries(Object.entries(result).filter((entry):entry is [string,string]=>typeof entry[1]==='string')):{}
+}
+async function headersFor(decrypt:EnvelopeReader,row:McpStoredServer){
+ const slots=normalizeMcpSlots(Array.isArray(row.credential_slots)?row.credential_slots.filter((value):value is Record<string,unknown>=>Boolean(value)&&typeof value==='object'&&!Array.isArray(value)):[])
+ const values=await decryptedObject(decrypt,row,'credentials'),validated=validateMcpCredentialValues(slots,values),headers:Record<string,string>={}
+ for(const slot of slots){const value=validated[slot.id];if(value===undefined)throw new Error('MCP 缺少凭据值');if(slot.target==='query')throw new Error('MCP 凭据不得放入 URL');headers[slot.name]=slot.prefix+value}
+ if(row.encrypted_headers)Object.assign(headers,await decryptedObject(decrypt,row,'headers'))
+ if(row.encrypted_query_params)throw new Error('MCP 凭据不得放入 URL')
+ return headers
+}
+
+/** Host 持有进程内连接状态；配置与工具语义来自 owner scoped Core 配置和共享 schema 规则。 */
+export function createMcpRuntime(options:{
+ configs(owner:string):Promise<readonly McpStoredServer[]>;enabled:()=>boolean|Promise<boolean>;maxTools:number|(()=>number)
+ decrypt:EnvelopeReader;transport():ProviderTransport;builtinNames(owner:string):Promise<ReadonlySet<string>>
+ client?:(input:Parameters<typeof createMcpHttpClient>[0])=>RuntimeClient
+}){
+ const entries=new Map<string,RuntimeEntry>(),locks=new Map<string,Promise<RuntimeEntry>>()
+ const key=(owner:string,id:string)=>`${owner}\u0000${id}`
+ async function rowFor(owner:string,id:string){const row=(await options.configs(owner)).find(item=>item.id===id);if(!row)throw Object.assign(new Error('MCP server 不存在'),{statusCode:404});return row}
+ async function closeEntry(entry:RuntimeEntry){await entry.client?.close().catch(()=>{});await entry.transport?.close?.().catch(()=>{})}
+ function state(owner:string,id:string){const entry=entries.get(key(owner,id));return entry?{server_id:id,state:entry.state,loaded_tool_count:entry.state==='ok'?entry.tools.length:0,loaded_tool_names:entry.state==='ok'?entry.tools.map(tool=>tool.name).sort():[],last_error:entry.last_error}:{server_id:id,state:'unloaded',loaded_tool_count:0,loaded_tool_names:[],last_error:null}}
+ async function load(owner:string,id:string){
+  const row=await rowFor(owner,id),entryKey=key(owner,id)
+  if(!row.enabled||!(await options.enabled())){const previous=entries.get(entryKey);if(previous){entries.delete(entryKey);await closeEntry(previous)}return {ok:false as const,state:'disabled' as const,tool_count:0,tool_names:[] as string[],error:null}}
+  const cached=entries.get(entryKey)
+  if(cached?.state==='ok')return statusResult(cached)
+  if(cached)entries.delete(entryKey)
+  if(row.transport!=='http'){
+   const entry:RuntimeEntry={state:'error',tools:[],last_error:'Node Web Host 暂不支持 stdio MCP runtime'};entries.set(entryKey,entry)
+   return {ok:false as const,state:entry.state,tool_count:0,tool_names:[] as string[],error:entry.last_error}
+  }
+  const pending=locks.get(entryKey);if(pending)return statusResult(await pending)
+  const work=(async():Promise<RuntimeEntry>=>{
+   let transport:ProviderTransport|undefined,client:RuntimeClient|undefined
+   try{
+    const endpoint=row.encrypted_endpoint?await options.decrypt.decrypt({ciphertext:row.encrypted_endpoint,nonce:row.endpoint_nonce,encryptedDataKey:row.encrypted_endpoint_key,keyVersion:row.endpoint_key_version}):row.endpoint
+    transport=options.transport()
+    client=(options.client??(input=>createMcpHttpClient(input)))({endpoint,headers:await headersFor(options.decrypt,row),fetch:createMcpSafeFetch(transport,{timeoutMs:Math.max(1000,Math.min(300_000,row.timeout_seconds*1000))})})
+    await client.connect()
+    const raw=(await client.listTools()).tools,allowlist=new Set(Array.isArray(row.tool_allowlist)?row.tool_allowlist.filter((item):item is string=>typeof item==='string'):[]),builtin=await options.builtinNames(owner),seen=new Set<string>(),tools:RuntimeTool[]=[]
+    for(const value of raw){
+     if(!value||typeof value!=='object'||Array.isArray(value))continue
+     const tool=value as Record<string,unknown>,toolName=typeof tool.name==='string'?tool.name.trim():''
+     if(!toolName||validateInputSchema(tool.inputSchema)!==null)continue
+     const name=prefixedToolName(row.name,toolName,romanize)
+     if(!name||builtin.has(name)||seen.has(name)||(allowlist.size&&!allowlist.has(toolName)))continue
+     seen.add(name);tools.push({name,tool_name:toolName,description:descriptionForProvider(typeof tool.description==='string'?tool.description:null,`${row.name} MCP 工具：${toolName}`),description_short:descriptionShortOf(typeof tool.description==='string'?tool.description:null)||`${row.name} MCP 工具：${toolName}`,input_schema:sanitizeInputSchema(tool.inputSchema)})
+    }
+    const max=typeof options.maxTools==='function'?options.maxTools():options.maxTools
+    if(tools.length>max)throw new Error('MCP server 工具数量超出单个 server 上限')
+    const loaded:RuntimeEntry={state:'ok',tools,last_error:null,client,transport};entries.set(entryKey,loaded);return loaded
+   }catch(error){await client?.close().catch(()=>{});await transport?.close?.().catch(()=>{});const failed:RuntimeEntry={state:'error',tools:[],last_error:safeError(error)};entries.set(entryKey,failed);return failed}
+  })()
+  locks.set(entryKey,work)
+  try{return statusResult(await work)}finally{locks.delete(entryKey)}
+ }
+ function statusResult(entry:RuntimeEntry){return {ok:entry.state==='ok',state:entry.state,tool_count:entry.state==='ok'?entry.tools.length:0,tool_names:entry.state==='ok'?entry.tools.map(tool=>tool.name).sort():[],error:entry.last_error}}
+ async function reconnect(owner:string,id:string){const entryKey=key(owner,id),previous=entries.get(entryKey);if(previous){entries.delete(entryKey);await closeEntry(previous)}return load(owner,id)}
+ async function invalidate(owner:string,id:string){const entryKey=key(owner,id),entry=entries.get(entryKey);entries.delete(entryKey);if(entry)await closeEntry(entry)}
+ async function close(){const current=[...entries.values()];entries.clear();await Promise.all(current.map(closeEntry))}
+ return {load,reconnect,tools:async(owner:string,id:string)=>{await rowFor(owner,id);return state(owner,id)},state,invalidate,close}
+}

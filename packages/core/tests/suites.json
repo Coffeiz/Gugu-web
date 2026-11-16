@@ -674,6 +674,11 @@
     "layer": "L2",
     "purpose": "postgres"
   },
+  "tests/scheduled-tasks/test-notify.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
   "tests/undo/state-machine-sqlite.test.ts": {
     "markers": ["process"],
     "layer": "L2",
@@ -778,4 +783,15 @@
 "tests/mind/rag-freshness.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/account/delete-account.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/mcp/test-connection.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
-"tests/auth/profile-update.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"}}
+"tests/auth/profile-update.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/agent/tools/web.test.ts": {
+  "markers": [],
+  "layer": "L1",
+  "purpose": "contract"
+},
+"tests/agent/tools/knowledge.test.ts": {
+  "markers": [],
+  "layer": "L1",
+  "purpose": "contract"
+}
+}

@@ -128,6 +128,30 @@ def test_parallel_tool_execution_defaults_to_enabled():
     assert settings.parallel_tool_max_concurrency == 5
 
 
+def test_rag_index_worker_owner_is_shared_env_setting_not_admin_override(tmp_path, monkeypatch):
+    fake = tmp_path / "config.override.json"
+    fake.write_text(json.dumps({"agent": {"rag_index_worker_owner": "node"}}), encoding="utf-8")
+    monkeypatch.setattr(cfg, "OVERRIDE_FILE", fake)
+    monkeypatch.setenv("AGENT__RAG_INDEX_WORKER_OWNER", "python")
+
+    assert cfg.AppSettings(_env_file=None).apply_override().rag_index_worker_owner == "python"
+    monkeypatch.setenv("AGENT__RAG_INDEX_WORKER_OWNER", "node")
+    assert cfg.AppSettings(_env_file=None).apply_override().rag_index_worker_owner == "node"
+    monkeypatch.setenv("AGENT__RAG_INDEX_WORKER_OWNER", "both")
+    with pytest.raises(ValidationError):
+        cfg.AppSettings(_env_file=None)
+
+
+def test_rag_index_worker_owner_defaults_to_python_and_only_accepts_known_owners(monkeypatch):
+    monkeypatch.delenv("AGENT__RAG_INDEX_WORKER_OWNER", raising=False)
+    assert cfg.AppSettings(_env_file=None).rag_index_worker_owner == "python"
+    monkeypatch.setenv("AGENT__RAG_INDEX_WORKER_OWNER", "node")
+    assert cfg.AppSettings(_env_file=None).rag_index_worker_owner == "node"
+    monkeypatch.setenv("AGENT__RAG_INDEX_WORKER_OWNER", "both")
+    with pytest.raises(ValidationError):
+        cfg.AppSettings(_env_file=None)
+
+
 def test_parallel_tool_max_concurrency_is_bounded():
     with pytest.raises(ValidationError):
         cfg.AgentBehaviorSettings(parallel_tool_max_concurrency=0)

@@ -10,14 +10,29 @@ type NotificationRow = {
   persist: boolean
 }
 
+async function deliverEmail(
+  plan: ScheduledTaskTestNotificationPlan,
+  send: (plan: ScheduledTaskTestNotificationPlan) => Promise<Record<string, string>>,
+): Promise<string> {
+  try {
+    const result = await send(plan)
+    return result['邮件'] ?? '发送失败（smtp_delivery_error）'
+  } catch {
+    return '发送失败（smtp_delivery_error）'
+  }
+}
+
 export function createPostgresScheduledTaskTestDelivery(
   pool: Pick<Pool, 'query'>,
   publish: (target: string, notification: NotificationRow) => Promise<boolean>,
+  options: {
+    email(plan: ScheduledTaskTestNotificationPlan): Promise<Record<string, string>>
+  },
 ) {
   return async (plan: ScheduledTaskTestNotificationPlan): Promise<Record<string, string>> => {
     const result: Record<string, string> = {}
     const selected = new Set(plan.channels)
-    if (selected.has('email')) result['邮件'] = 'Node 服务暂未接入该投递渠道'
+    if (selected.has('email')) result['邮件'] = await deliverEmail(plan, options.email)
     if (selected.has('web') || selected.has('chat')) {
       try {
         const inserted = await pool.query<NotificationRow>(

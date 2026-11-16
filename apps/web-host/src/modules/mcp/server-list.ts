@@ -13,7 +13,7 @@ function endpoint(row:McpStoredServer,envelope:EnvelopeReader){
  if(!row.encrypted_endpoint)return Promise.resolve(row.endpoint)
  return envelope.decrypt({ciphertext:row.encrypted_endpoint,nonce:row.endpoint_nonce,encryptedDataKey:row.encrypted_endpoint_key,keyVersion:row.endpoint_key_version}).catch(()=> '')
 }
-export function createMcpServerListReader(options:{list(owner:string):Promise<McpStoredServer[]>;decrypt:EnvelopeReader;settings():{enabled:unknown;max_servers_per_user:number}}){
+export function createMcpServerListReader(options:{list(owner:string):Promise<McpStoredServer[]>;decrypt:EnvelopeReader;settings():{enabled:unknown;max_servers_per_user:number};runtimeState?(owner:string,id:string):{state:string;loaded_tool_count:number;loaded_tool_names?:string[];last_error?:string|null}}){
  return async(owner:string)=>{
   const rows=await options.list(owner),items=[]
   for(const row of rows){
@@ -28,7 +28,8 @@ export function createMcpServerListReader(options:{list(owner:string):Promise<Mc
    let endpointHasCredential=false
    try{endpointHasCredential=[...new URL(endpointValue).searchParams.values()].some(value=>!value.includes('{{secret:'))}catch{}
    const configured=Boolean(row.encrypted_credentials||row.encrypted_headers||row.encrypted_query_params||Object.keys(values).length||endpointHasCredential)
-   items.push({id:row.id,name:row.name,scope:row.scope,transport:row.transport,endpoint:endpointValue,command:row.command,credential_slots:slots,credential_values:values,credential_state:{configured,slot_ids:slots.filter(item=>item&&typeof item==='object').map(item=>String(item.id??''))},has_credentials:configured,enabled:Boolean(row.enabled),confirm_mode:row.confirm_mode,timeout_seconds:row.timeout_seconds,tool_allowlist:Array.isArray(row.tool_allowlist)?row.tool_allowlist:[],created_at:timestamp(row.created_at),state:'unloaded',loaded_tool_count:0,loaded_tool_names:[]})
+   const runtime=options.runtimeState?.(owner,row.id)
+   items.push({id:row.id,name:row.name,scope:row.scope,transport:row.transport,endpoint:endpointValue,command:row.command,credential_slots:slots,credential_values:values,credential_state:{configured,slot_ids:slots.filter(item=>item&&typeof item==='object').map(item=>String(item.id??''))},has_credentials:configured,enabled:Boolean(row.enabled),confirm_mode:row.confirm_mode,timeout_seconds:row.timeout_seconds,tool_allowlist:Array.isArray(row.tool_allowlist)?row.tool_allowlist:[],created_at:timestamp(row.created_at),state:runtime?.state??'unloaded',loaded_tool_count:runtime?.loaded_tool_count??0,loaded_tool_names:runtime?.loaded_tool_names??[]})
   }
   const settings=options.settings()
   return {enabled:settings.enabled,max_servers:settings.max_servers_per_user,items}

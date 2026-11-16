@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+from pathlib import Path
 
 from agent.rag.cython_projection import project_source_records
 from agent.rag.models import Scope
@@ -108,6 +110,24 @@ def test_conversation_projection_keeps_message_role_and_neighbor_context() -> No
     assert document.contextual_content() == "assistant：我来看看\nuser：查一下缓存\nassistant：已找到"
     assert document.metadata["message_id"] == "77"
     assert document.metadata["session_id"] == "22"
+
+
+def test_conversation_projection_matches_shared_typescript_contract() -> None:
+    fixture = json.loads((Path(__file__).parents[4] / "docs/testing/fixtures/rag-conversation-projection.json").read_text())
+    scope = Scope(owner_user_id=fixture["owner"])
+
+    for record in fixture["records"]:
+        document, = project_source_records(fixture["owner"], "conversation", [(record, scope)])
+        expected = record["expected"]
+        assert document.source_id == expected["source_id"]
+        assert document.parent_document_id == expected["parent_document_id"]
+        assert document.title == expected["title"]
+        assert document.summary == expected["summary"]
+        assert document.content == expected["content"]
+        assert document.version == expected["version"]
+        assert document.metadata == expected["metadata"]
+        if "contextual_content" in expected:
+            assert document.contextual_content() == expected["contextual_content"]
 
 
 def test_projection_rejects_cross_owner_and_incomplete_group_scope() -> None:

@@ -13,7 +13,8 @@
   "scripts": {
     "prepare:sidecar": "node scripts/prepare-sidecar.mjs",
     "smoke:sidecar": "node scripts/smoke-sidecar.mjs",
-    "dev": "pnpm build:host && pnpm --filter gugu-web build:desktop && pnpm prepare:sidecar && electron .",
+    "dev": "node scripts/dev.mjs",
+    "dev:prepare": "pnpm build:host && pnpm prepare:sidecar",
     "dev:web": "pnpm --dir ../web exec vite --config vite.desktop.config.js --host 127.0.0.1 --port 5174 --open '/desktop.html?desktopPreview=1'",
     "build": "node scripts/package.ts",
     "build:host": "pnpm --filter @gugu/core build && node scripts/build.mjs",

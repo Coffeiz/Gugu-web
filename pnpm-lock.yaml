@@ -335,6 +335,9 @@ importers:
       pg:
         specifier: 8.23.1
         version: 8.23.1
+      pinyin-pro:
+        specifier: 3.29.5
+        version: 3.29.5
       tar:
         specifier: 7.5.23
         version: 7.5.23
@@ -4833,6 +4836,9 @@ packages:
   pino@10.4.0:
     resolution: {integrity: sha512-bk1ZMTwG/Vymx+zPoa28MhNzucFvXJWp3csrSuxuHPSMeUettaCoQ5Jvg07mtC4JGNpcfTwz41oVCnNgBK9+vA==}
     hasBin: true
+
+  pinyin-pro@3.29.5:
+    resolution: {integrity: sha512-Fk5YoRmtdHqJWqAuzYVG/NzvzeCbaG+ZEwbY6Nbps3QAIrvQQEtcm49frcyCM8i2b5najnzPDtYqrHRYTTiuwQ==}
 
   pkce-challenge@5.0.1:
     resolution: {integrity: sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==}
@@ -10320,6 +10326,8 @@ snapshots:
       safe-stable-stringify: 2.5.0
       sonic-boom: 4.2.1
       thread-stream: 4.2.1
+
+  pinyin-pro@3.29.5: {}
 
   pkce-challenge@5.0.1: {}
 

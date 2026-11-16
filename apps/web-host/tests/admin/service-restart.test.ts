@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import Fastify from 'fastify'
 import test from 'node:test'
+import { createApp } from '../../src/app.js'
 import { createServiceRestarter, registerServiceRestartRoute, type ServiceRestartRuntime } from '../../src/modules/admin/service-restart.js'
 
 function runtime(overrides: Partial<ServiceRestartRuntime> = {}) {
@@ -13,14 +14,15 @@ function runtime(overrides: Partial<ServiceRestartRuntime> = {}) {
     hostName: () => 'synthetic-host',
     processCommandLine: (_pid: number) => '/venv/bin/python -m worker',
     processExecutable: (_pid: number) => '/venv/bin/python',
+    processEnvironment: (_pid: number) => ({ GUGU_TEST_VALUE: 'synthetic-worker-env' }),
     signal(_pid: number, signal: string) { calls.push(`signal:${signal}`) },
     async waitForExit(_pid: number, timeoutMs: number) {
       calls.push(`wait:${timeoutMs}`)
       return true
     },
     async isSystemdManaged(_name: string) { return true },
-    async respawn(name: string, executable: string) {
-      calls.push(`respawn:${name}:${executable}`)
+    async respawn(name: string, executable: string, environment: NodeJS.ProcessEnv) {
+      calls.push(`respawn:${name}:${executable}:${environment.GUGU_TEST_VALUE}`)
       return 9001
     },
   }
@@ -63,8 +65,19 @@ test('非 systemd 服务等待旧进程退出后按白名单模块重新拉起',
   assert.equal(result.ok, true)
   assert.equal(result.msg, '已重启 gateway：旧 pid 4242 → 新 pid 9001（后端自管理，非 systemd）。')
   assert.deepEqual(fake.calls, [
-    'heartbeat:gateway', 'signal:SIGTERM', 'wait:8000', 'signal:SIGKILL', 'wait:3000', 'respawn:gateway:/venv/bin/python',
+    'heartbeat:gateway', 'signal:SIGTERM', 'wait:8000', 'signal:SIGKILL', 'wait:3000', 'respawn:gateway:/venv/bin/python:synthetic-worker-env',
   ])
+})
+
+test('无法读取手动拉起上下文时不会停止旧服务', async () => {
+  const fake = runtime({
+    async isSystemdManaged() { return false },
+    processEnvironment: () => null,
+  })
+  const result = await createServiceRestarter(fake.ports)('worker')
+  assert.equal(result.ok, false)
+  assert.match(result.msg, /未停止服务/)
+  assert.deepEqual(fake.calls, ['heartbeat:worker'])
 })
 
 test('管理员守卫先于服务重启执行', async () => {
@@ -78,6 +91,30 @@ test('管理员守卫先于服务重启执行', async () => {
     const response = await app.inject({ method: 'POST', url: '/api/v1/admin/services/worker/restart' })
     assert.equal(response.statusCode, 401)
     assert.deepEqual(fake.calls, [])
+  } finally {
+    await app.close()
+  }
+})
+
+test('createApp 将服务重启路由接入管理员保护域', async () => {
+  const calls: string[] = []
+  const app = createApp({
+    appName: '合成测试应用',
+    async isReady() { return true },
+    adminAuth: {
+      registerRoutes() {},
+      async requireAdmin() {},
+      async verifyAdmin() { return true },
+    },
+    serviceRestart: {
+      async restart(name) { calls.push(name); return { ok: true, msg: `已请求重启 ${name}` } },
+    },
+  })
+  try {
+    const response = await app.inject({ method: 'POST', url: '/api/v1/admin/services/worker/restart' })
+    assert.equal(response.statusCode, 200)
+    assert.deepEqual(response.json(), { ok: true, msg: '已请求重启 worker' })
+    assert.deepEqual(calls, ['worker'])
   } finally {
     await app.close()
   }

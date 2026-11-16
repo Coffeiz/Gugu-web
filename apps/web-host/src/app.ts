@@ -48,6 +48,7 @@ import { registerMcpStatusRoute, type McpStatusOptions } from './modules/mcp/sta
 import { registerMcpServerCreateRoute, registerMcpServerRoutes, type McpServerCreateRouteOptions, type McpServerRoutesOptions } from './modules/mcp/servers.js'
 import { registerMcpConnectionTestRoute, type McpConnectionTestOptions } from './modules/mcp/test-connection.js'
 import { registerMcpServerListRoute, type McpServerListRouteOptions } from './modules/mcp/server-list.js'
+import { registerMcpRuntimeRoutes, type McpRuntimeRouteOptions } from './modules/mcp/runtime-routes.js'
 import { registerAttentionDefaultsRoute, type AttentionDefaultsOptions } from './modules/im/attention-defaults.js'
 import { registerEmailRecipientCountRoute } from './modules/admin/email-recipient-count.js'
 import { registerEmbeddingRebuildStatusRoute, type EmbeddingRebuildStatusOptions } from './modules/byok/embedding-rebuild-status.js'
@@ -66,6 +67,7 @@ import { registerProviderCapabilityPreviewRoute, type ProviderCapabilityPreviewO
 import { registerStorageLiveTotalsRoute } from './modules/admin/storage-live-totals.js'
 import { registerUserSkillDeleteRoute, type UserSkillDeleteOptions } from './modules/skills/user-delete.js'
 import { registerUserSkillListRoute, type UserSkillListOptions } from './modules/agent-skills/user-list.js'
+import { registerUserSkillWriteRoutes, type UserSkillWriteOptions } from './modules/agent-skills/user-write.js'
 import { registerSafeEgressReadRoute } from './modules/admin/safe-egress-read.js'
 import { registerImMemorySummaryRoutes, type ImMemorySummaryOptions } from './modules/admin/im-memory-summary.js'
 import { registerAdminUserBanRoute, type AdminUserBanOptions } from './modules/admin/user-ban.js'
@@ -449,6 +451,7 @@ export interface WebUiOptions {
   mcpServerConfig?: Omit<McpServerRoutesOptions, 'requireUser' | 'ownerIdFromRequest'>
   mcpConnectionTest?: Omit<McpConnectionTestOptions, 'requireUser' | 'ownerIdFromRequest'>
   mcpServerList?: Omit<McpServerListRouteOptions, 'requireUser' | 'ownerIdFromRequest'>
+  mcpRuntime?: Omit<McpRuntimeRouteOptions, 'requireUser' | 'ownerIdFromRequest'>
   attentionDefaults?: Omit<AttentionDefaultsOptions, 'requireUser'>
   loopScopeProxy?: { endpoint: string }
   attachmentDownload?: Omit<AttachmentDownloadOptions, 'requireUser' | 'ownerIdFromRequest'>
@@ -469,6 +472,7 @@ export interface WebUiOptions {
   providerCapabilityPreview?: Omit<ProviderCapabilityPreviewOptions, 'requireUser'>
   userSkillDelete?: Omit<UserSkillDeleteOptions, 'requireUser' | 'ownerIdFromRequest'>
   userSkillList?: Omit<UserSkillListOptions, 'requireUser' | 'ownerIdFromRequest'>
+  userSkillWrite?: Omit<UserSkillWriteOptions, 'requireUser' | 'ownerIdFromRequest'>
   accountDelete?: Omit<AccountDeleteOptions, 'requireUser' | 'ownerIdFromRequest'>
   secretPromptCancel?: Omit<SecretPromptCancelOptions, 'requireUser' | 'ownerIdFromRequest'>
   safeEgressRead?: { readSettings(): SafeEgressReadSettings }
@@ -782,6 +786,14 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
       ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
     }))
   }
+  if (options.mcpRuntime) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerMcpRuntimeRoutes(routes, {
+      ...options.mcpRuntime!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
+    }))
+    if (options.mcpRuntime.runtime.close) app.addHook('onClose', async () => options.mcpRuntime!.runtime.close!())
+  }
   if (options.attentionDefaults) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => registerAttentionDefaultsRoute(routes, { ...options.attentionDefaults!, requireUser: async request => { void userFromRequest(request) } }))
   }
@@ -890,6 +902,13 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
   if (options.userSkillList) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => registerUserSkillListRoute(routes, {
       ...options.userSkillList!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
+    }))
+  }
+  if (options.userSkillWrite) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerUserSkillWriteRoutes(routes, {
+      ...options.userSkillWrite!,
       requireUser: async request => { void userFromRequest(request) },
       ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
     }))

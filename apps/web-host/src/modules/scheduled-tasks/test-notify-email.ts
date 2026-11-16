@@ -1,0 +1,127 @@
+import type { Pool } from 'pg'
+import { normalizeThemePalette } from '@gugu/core'
+import { renderSmtpDraftMessage, SmtpDeliveryFailure, type SmtpTestDelivery } from '@gugu/core/email/smtp-test'
+import type { ScheduledTaskTestNotificationPlan } from '@gugu/core/scheduled-task-test-notify'
+import { decryptEncryptedString } from '../../adapters/encrypted-string.js'
+
+interface EmailRow {
+  preferences: unknown
+  smtp_host: string | null
+  smtp_port: number | null
+  smtp_user: string | null
+  smtp_password: string | null
+  smtp_from_addr: string | null
+  smtp_use_ssl: boolean | null
+}
+
+interface SmtpFallback {
+  host: string
+  port: number
+  user: string
+  password: string
+  fromAddress: string
+  enabled: boolean
+  useSsl: boolean
+}
+
+interface EmailProfile extends EmailRow {
+  readonly ownerEmail: string | null
+}
+
+async function readEmailProfile(pool: Pick<Pool, 'query'>, ownerId: string): Promise<EmailProfile | undefined> {
+  const result = await pool.query<EmailRow>(
+    `SELECT u.email AS owner_email,p.data AS preferences,s.host AS smtp_host,s.port AS smtp_port,
+            s."user" AS smtp_user,s.password AS smtp_password,s.from_addr AS smtp_from_addr,
+            s.use_ssl AS smtp_use_ssl
+       FROM users u
+       LEFT JOIN user_preferences p ON p.user_id=u.id
+       LEFT JOIN user_smtp_configs s ON s.user_id=u.id AND s.enabled IS TRUE
+      WHERE u.id=$1`,
+    [ownerId],
+  )
+  const row = result.rows[0] as (EmailRow & { owner_email?: string | null }) | undefined
+  return row ? { ...row, ownerEmail: row.owner_email ?? null } : undefined
+}
+
+function preferences(value: unknown): Record<string, unknown> {
+  if (typeof value === 'string') {
+    try { value = JSON.parse(value) } catch { return {} }
+  }
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+
+function sender(from: string, user: string): { fromName: string; fromAddress: string } {
+  if (from.includes('@')) return { fromName: '咕咕', fromAddress: from }
+  return { fromName: from || '咕咕', fromAddress: user }
+}
+
+function smtpSettings(row: EmailProfile, fallback: SmtpFallback, secretKey: string) {
+  if (row.smtp_host !== null) {
+    return {
+      host: row.smtp_host,
+      port: Number(row.smtp_port),
+      user: row.smtp_user ?? '',
+      password: decryptEncryptedString(secretKey, row.smtp_password ?? ''),
+      from: row.smtp_from_addr ?? '',
+      secure: Boolean(row.smtp_use_ssl),
+    }
+  }
+  return {
+    host: fallback.host,
+    port: fallback.port,
+    user: fallback.user,
+    password: fallback.password,
+    from: fallback.fromAddress,
+    secure: fallback.useSsl,
+  }
+}
+
+function reminderMessage(plan: ScheduledTaskTestNotificationPlan, value: unknown) {
+  const prefs = preferences(value)
+  const message = renderSmtpDraftMessage({
+    subject: `咕咕 · ${plan.title}`,
+    title: plan.title,
+    preheader: '咕咕定时任务提醒',
+    body: plan.text,
+    sections: [{ heading: '任务内容', text: plan.text }],
+    template: 'reminder',
+    theme: prefs.theme === 'dark' ? 'dark' : 'light',
+    palette: normalizeThemePalette(prefs.palette),
+  })
+  message.plain = plan.text
+  return message
+}
+
+/** 使用 owner 的注册邮箱和启用的 SMTP 配置投递提醒测试邮件。 */
+export function createPostgresScheduledTaskTestEmailDelivery(
+  pool: Pick<Pool, 'query'>,
+  options: {
+    secretKey: string
+    globalSmtp: SmtpFallback
+    send(delivery: SmtpTestDelivery): Promise<void>
+  },
+) {
+  return async (plan: ScheduledTaskTestNotificationPlan): Promise<Record<string, string>> => {
+    try {
+      const row = await readEmailProfile(pool, plan.ownerId)
+      if (!row?.ownerEmail) return { '邮件': '收件人邮箱不存在' }
+      const smtp = smtpSettings(row, options.globalSmtp, options.secretKey)
+      if (!smtp.host) return { '邮件': '发送失败（smtp_not_configured）' }
+      await options.send({
+        host: smtp.host,
+        port: smtp.port,
+        user: smtp.user,
+        password: smtp.password,
+        ...sender(smtp.from, smtp.user),
+        toAddress: row.ownerEmail,
+        secure: smtp.secure,
+        message: reminderMessage(plan, row.preferences),
+      })
+      return { '邮件': '已发送' }
+    } catch (error) {
+      const reason = error instanceof SmtpDeliveryFailure ? error.reason : 'delivery'
+      const code = reason === 'tls_mismatch' ? 'smtp_tls_mismatch' : reason === 'tls' ? 'smtp_tls_error' : 'smtp_delivery_error'
+      return { '邮件': `发送失败（${code}）` }
+    }
+  }
+}

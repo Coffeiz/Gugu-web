@@ -223,10 +223,49 @@ test('生产 Host RAG 生命周期经共享 Core 项目服务重建正式索引�
     ]).execute()
 
     const reader = createSqlRagPersistentIndexReader(runtime.db, 'sqlite')
+    const previousOwner = process.env.AGENT__RAG_INDEX_WORKER_OWNER
+    try {
+      delete process.env.AGENT__RAG_INDEX_WORKER_OWNER
+      const defaultOwned = startAgentRagIndexWorker(runtime, {
+        enabled: true, intervalMs: 1, onError: error => { throw error },
+        knowledgeStore: createLocalAgentKnowledgeReadStore(storageRoot),
+      })
+      try {
+        await tick(3)
+        assert.equal(defaultOwned.workerOwner, 'python')
+        assert.equal(await reader.snapshot(opened.ownerId).then(snapshot => snapshot.documents.length), 0)
+        assert.deepEqual(await fixtureDb.selectFrom('rag_index_jobs').select('status').where('source_type', '=', 'project').executeTakeFirst(), { status: 'queued' })
+      } finally {
+        await defaultOwned.stop()
+      }
+      process.env.AGENT__RAG_INDEX_WORKER_OWNER = 'both'
+      assert.throws(() => startAgentRagIndexWorker(runtime!, {
+        enabled: true, intervalMs: 1, onError: error => { throw error },
+        knowledgeStore: createLocalAgentKnowledgeReadStore(storageRoot),
+      }), /Worker owner 配置无效/u)
+    } finally {
+      if (previousOwner === undefined) delete process.env.AGENT__RAG_INDEX_WORKER_OWNER
+      else process.env.AGENT__RAG_INDEX_WORKER_OWNER = previousOwner
+    }
+
+    const pythonOwned = startAgentRagIndexWorker(runtime, {
+      enabled: true,
+      intervalMs: 1,
+      onError: error => { throw error },
+      workerOwner: 'python',
+      knowledgeStore: createLocalAgentKnowledgeReadStore(storageRoot),
+    })
+    await tick(3)
+    assert.equal(pythonOwned.workerOwner, 'python')
+    assert.equal(await reader.snapshot(opened.ownerId).then(snapshot => snapshot.documents.length), 0)
+    assert.deepEqual(await fixtureDb.selectFrom('rag_index_jobs').select('status').where('source_type', '=', 'project').executeTakeFirst(), { status: 'queued' })
+    await pythonOwned.stop()
+
     const production = startAgentRagIndexWorker(runtime, {
       enabled: true,
       intervalMs: 1000,
       onError: error => { throw error },
+      workerOwner: 'node',
       knowledgeStore: createLocalAgentKnowledgeReadStore(storageRoot),
     })
     try {
@@ -326,7 +365,7 @@ test('Host Memory 来源经可信 owner scope 与旧版 FS 投影重建正式索
     }).execute()
 
     const production = startAgentRagIndexWorker(runtime, {
-      enabled: true, intervalMs: 1000, onError: error => { throw error }, memoryStorageRoot: storageRoot,
+      enabled: true, intervalMs: 1000, onError: error => { throw error }, workerOwner: 'node', memoryStorageRoot: storageRoot,
     })
     try {
       let status = await memoryDb.selectFrom('rag_index_jobs').select('status').where('source_type', '=', 'memory').executeTakeFirst()

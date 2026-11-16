@@ -1,6 +1,6 @@
 # Node Agent 工具行为迁移清单
 
-盘点日期：2026-11-15。此清单是当前工作树源码盘点，未运行的测试不记为通过；并行会话的未提交文件也不视为发布或生产接入证据。
+盘点日期：2026-11-16。此清单是当前工作树源码盘点，未运行的测试不记为通过；并行会话的未提交文件也不视为发布或生产接入证据。
 
 ## 状态口径
 
@@ -10,17 +10,17 @@
 - **依赖阻塞**：共享服务、可信能力或领域适配/回归尚未就绪；HTTP API 存在不等于工具可直接迁移。
 - **退役/重设计**：架构明确退出旧实现，保留数据迁移与恢复责任。
 
-初始盘点：`backend/agent/tools/` 有 109 个静态 `Tool(...)` 声明。此数字不包含动态 MCP 工具，也不是 pytest 数量。初始 `packages/core/src/agent/tools/` 尚不存在。Host 独立注册表仅列 `list_clients`、`create_client`、`create_project`；全 `apps/web-host/src` 查找未发现 `createAgentToolRegistry` 生产调用，不能据名称注册认定接入。
+当前 AST 盘点：`backend/agent/tools/` 有 26 个直接继承 `BaseSkill` 的工具组和 109 个静态 `Tool(...)` 声明。此数字不包含动态 MCP 工具，也不是 pytest 数量。全 `apps/web-host/src` 查找未发现 `createAgentToolRegistry` 生产调用，不能据 Core 实现或工厂注册认定生产接入。
 
 ## 当前交付状态摘要
 
-本表按**完整工具及实际生产Run装配**计数，不将Core合成Harness、注册器工厂或部分端口记为生产完成。当前109个静态工具：**已完成并接入0、已实现待接入49、部分实现3、依赖共享能力或平台56、退役/重设计1**。动态MCP另计；部分实现的工具同样仍有依赖阻塞，不重复计数。
+本表按**完整工具及实际生产Run装配**计数，不将Core合成Harness、注册器工厂或部分端口记为生产完成。当前109个静态工具：**已完成并接入0、已实现待接入49、部分实现4、依赖共享能力或平台55、退役/重设计1**。动态MCP另计；部分实现的工具同样仍有依赖阻塞，不重复计数。
 
 | 状态 | 工具/范围 | 当前证据与缺口 |
 | --- | --- | --- |
 | 已实现待接入（49） | list_clients、create_client、update_client、list_projects、get_project、create_project、get_current_time、use_skill、list_scheduled_tasks、global_search、get_upcoming、list_trash、restore_file、restore_folder、read_conversation、search_memory、list_events、list_workspaces、get_workspace、get_dashboard_stats、update_project、set_color、archive_project、add_stage、remove_stage、rename_stage、set_stages、update_stage、note_search、note_get、get_tool_schema、update_workspace、canvas_list、canvas_get、canvas_search、canvas_focus_node、canvas_search_placeable、canvas_create、list_skills、canvas_update_node、canvas_remove_node、canvas_update_note、canvas_create_note、canvas_add_node、canvas_update_anchor、canvas_connect、note_delete、note_restore、note_undo | Core真实调用及行为回归已列；Node生产main尚未装配Agent runtime/registry，Skill可信loader/资源source与部分领域Host链仍缺验收。此状态不保证全部后端已经具备。 |
-| 部分实现（3） | read_file、ask_user、search_conversations | read_file 仅文本file_id子集；ask_user 的表单、沙盒授权与生产Host待接入；历史搜索已有持久 RAG/Jieba BM25 适配器（遵循 Python strategy），但真实生产 Agent Run 资源装配和 PostgreSQL 验收未完成。 |
-| 依赖共享能力或平台（56） | 见逐工具清单 | 依赖共享领域/文件/历史/渠道/MCP/RAG/确认与实际执行后端；对应能力由A/B或可信平台Host提供，不注册假成功工具。 |
+| 部分实现（4） | read_file、ask_user、search_conversations、http_get | read_file 仅文本file_id子集；ask_user 的表单、沙盒授权与生产Host待接入；历史搜索已有 owner 限定的 TypeScript RAG/Jieba BM25 事实表适配器，按 Python 行为覆盖 baseline 前仍保留的消息，但真实生产 Agent Run 资源装配和 PostgreSQL 验收未完成；http_get 已有 Core 参数/批量/结果契约和条件注册，公网安全传输端口、HTML/PDF提取、headers安全与脱敏以及生产Run装配未完成。 |
+| 依赖共享能力或平台（55） | 见逐工具清单 | 依赖共享领域/文件/历史/渠道/MCP/RAG/确认与实际执行后端；对应能力由A/B或可信平台Host提供，不注册假成功工具。 |
 | 退役/重设计（1） | shell | 工具用途保留；Docker生命周期实现退役，Linux MXC多用户隔离及真实平台后端未验收，当前不开放。 |
 
 真实调用方复核：`main.ts`未装配Agent chat/runtime/reconstructor，`createAgentToolRegistry`只有工厂与测试引用，已由聊天会话再次确认；技能生产source同样未接入。上述判断与本文件后续历史分阶段测试记录分别看待；旧记录中的“Core完成/已接入Harness”只描述当时测试层级，不能覆盖当前生产状态。
@@ -76,7 +76,7 @@ Node 保持现有 `Harness ToolPort.plan/dispatch/reconcile` 和 Executor 边界
 | `clients.py` | `create_client` | client_name | 否 | 已实现待接入 |
 | `clients.py` | `update_client` | 无 | 否 | 已实现待接入 |
 | `clients.py` | `delete_client` | 无 | 是 | 依赖阻塞 |
-| `conversations.py` | `search_conversations` | 无 | 否 | 部分实现（工具边界、近期查询与 owner 会话解析；真实 RAG 待装配） |
+| `conversations.py` | `search_conversations` | 无 | 否 | 部分实现（真实 TypeScript RAG/Jieba BM25 事实表适配器已实现；生产 Agent Run 装配与 PostgreSQL 验收待完成） |
 | `conversations.py` | `read_conversation` | session_id | 否 | 已实现待接入（PostgreSQL/SQLite 共用 owner 限定正文读取；生产 Host 待装配） |
 | `conversations.py` | `bind_web_session` | session_id | 否 | 依赖阻塞 |
 | `email.py` | `send_email` | subject, body | 是 | 依赖阻塞 |
@@ -152,7 +152,7 @@ Node 保持现有 `Harness ToolPort.plan/dispatch/reconcile` 和 Executor 边界
 | `trash.py` | `restore_folder` | folder_id | 否 | 已实现待接入（共享 Host 恢复服务与持久调用收据） |
 | `trash.py` | `permanent_delete` | 无 | 是 | 依赖阻塞 |
 | `undo.py` | `undo_last_action` | 无 | 否 | 依赖阻塞 |
-| `web.py` | `http_get` | 无 | 否 | 依赖阻塞 |
+| `web.py` | `http_get` | 无 | 否 | 部分实现（Core契约；安全网络端口、HTML/PDF提取及生产接入缺失；Python基准见 `agent/test_tool_schema_security_contract.py`、`agent/test_tool_schema_validation.py`、`platform/test_io_retry_contract.py`） |
 | `web.py` | `web_download` | url | 否 | 依赖阻塞 |
 | `workspaces.py` | `delete_workspace_directory` | directory_id | 是 | 依赖阻塞 |
 | `workspaces.py` | `list_workspaces` | 无 | 否 | 已实现待接入 |
@@ -178,7 +178,7 @@ Node 保持现有 `Harness ToolPort.plan/dispatch/reconcile` 和 Executor 边界
 | Mind/画布 | `domains/mind` 有服务，需 canvas/note 工具适配、owner、批量原子性、CAS/Undo 与事件；本盘点未改动画布 | `mind/test_mind_agent_tools.py`、`test_mind_canvas_tools.py`、`test_mind_canvas_gaps.py`、`test_undo_mind.py` |
 | 定时任务 | `modules/scheduled-tasks` 有并行会话开发中的服务；需 Agent 适配与可信任务主体/授权、创建更新确认、调度/投递凭据和副作用 | `scheduling/tasks/test_scheduled_task_schedule_rules.py`、`test_scheduled_task_execution.py`、`test_scheduled_task_workspace.py`、`im/test_scheduled_group_imctx.py` |
 | Web/图片/研究搜索 | Core Provider search adapter 存在，不能等同具体 Agent 搜索工具；需配置、可信凭据、URL/重定向/代理安全及结果归一 | `agent/knowledge/test_search_tools.py`、`agent/test_search_limits.py`、`agent/knowledge/test_similar_image_search.py`、`agent/providers/test_deep_research_providers.py` |
-| http_get/web_download | Core Provider 网络 transport 是 Provider 出站边界；工具仍需明确 URL/DNS/重定向安全、下载配额/文件落点/媒体提取端口，不能直接裸 fetch | `agent/test_tool_schema_security_contract.py`、`agent/test_tool_schema_validation.py`；沿 `tools/web.py` 的 URL 安全服务继续核对专门测试 |
+| http_get/web_download | `packages/core/src/agent/tools/web.ts` 实现 http_get 默认/硬上限、单/批URL、顺序、部分失败和取消；Host仅在显式提供端口时注册。端口契约要求固定公网DNS目标且不跟随重定向，但尚无生产实现；HTML/PDF提取、自定义headers校验与历史脱敏、web_download配额/本地FS落点仍待实现。Core定向Node回归 `tests/agent/tools/web.test.ts` devserver 6/6通过；Host注册回归 17/17、Core build通过；本轮未运行Python pytest，未验证真实网络或生产Run。 | `agent/test_tool_schema_security_contract.py`、`agent/test_tool_schema_validation.py`、`platform/test_io_retry_contract.py`；`storage/files/test_web_download.py` |
 | 知识/记忆/全局搜索 | 目标复用 1.7.7 TypeScript RAG；需知识/长期记忆持久服务和 owner/IM scope、CAS、索引一致性，Cython 不迁 TS | `agent/knowledge/test_knowledge.py`、`test_read_knowledge_tool.py`、`test_knowledge_append_reuse.py`、`test_global_search.py`、`test_search_memory_boundary.py`、`agent/memory/test_remember_tool.py`、`im/test_im_memory_scopes.py` |
 | 对话/群上下文 | Node Canonical 历史有持久适配，搜索/读取/绑定工具尚无 adapter；需 owner、群身份、访问范围与可信会话绑定 | `agent/test_tool_isolation.py`、`im/test_group_tool_permissions.py`、`agent/test_tool_history_request_boundary.py` |
 | react/link buttons/email | 需可信渠道、地址/目标、邮件凭据与收件人安全策略；邮件 destructive 确认及附件 owner 校验不可省略 | `agent/test_send_link_buttons_tool.py`、`platform/email/test_email_tool.py`、`test_email_attachments.py`、`im/feishu/test_feishu_tool_summary.py` |
@@ -947,7 +947,7 @@ Core 历史查询测试 12 项、Host 注册器 15 项、Python 对照 6 项通�
 
 ### TypeScript RAG 恢复进度（2026-11-15）
 
-经用户确认，源码基线为旧仓库 `f0c0b391352ceb2dd0b26afc224f22ca2f10159a`：这是 Python/Cython 替换前最后完整 TypeScript RAG，版本为 1.7.7；本地 1.7.8 发布树已不含该实现。已迁入原协议类型、全部来源文档适配、缓存及部分不依赖分词的排序辅助，并保留原适配/缓存测试。尚未迁入词法分词、BM25、完整排序、索引构建和重建、授权来源、向量及生产 Host；当前代码没有注册为生产 RAG。旧 Data Runtime 的 OSS/S3 和独立 Worker 启动流程不会机械作为 2.0 在线架构启用。
+经用户确认，源码基线为旧仓库 Git tag `v1.7.7`（commit `14c544f1faf1193e8a073844af4a5d7a4872045c`）；本地 1.7.8 发布树已不含该实现。**本段只记录 2026-11-15 当时的迁移快照**：当时已迁入原协议类型、来源文档适配、缓存和部分排序辅助，尚未迁入词法分词、BM25、完整排序、索引构建/重建、授权、向量及生产 Host。后续完成项和当前阻塞见本文末尾 2026-11-16 记录及 `packages/core/src/agent/rag/README.md`。旧 Data Runtime 的 OSS/S3 和独立 Worker 启动流程不会机械作为 2.0 在线架构启用。
 
 历史搜索补充 ISO 基本日期/时间、周日期、任意日期时间分隔符及偏移的旧行为测试；旧索引补充显式 session_id 优先、message_id 优先、source_id 回查和 owner 隔离测试。Core 定向 25 项、Python 对照 6 项通过；SQLite 使用临时数据库，RAG 索引与原生分词器尚未运行。全 Core 类型检查受并行 BYOK 模块的 `CreatedCredential.id` 类型错误阻塞，未修改对方代码。Jieba 依赖和锁文件正在与并行会话协调；真实 RAG、PG 最终复验、生产 Host 和完整 Python 差分均未验收，search_conversations 仍为部分实现。
 
@@ -1083,7 +1083,7 @@ Host SQLite 会话回归新增一条完整的 Node Agent 调用路径：实际 `
 
 同批补充了 `search_conversations` 时间投影边界：实际注册器 dispatch 用例扩展到 **42/42 通过**；另在 pytest 缺失时直接对照 Python `datetime.fromisoformat` 的 6 种偏移输入。Python 会规范化偏移中超范围的分钟/秒分量，但拒绝归一化后达到 24 小时的偏移；Core 原实现已一致，未更改生产解析逻辑。
 
-同日补齐 RAG 候选上限差异：Python `search_conversations` 调用 `UnifiedRecallService` 时最多召回 20 条，再由工具层对 session 去重；Node Host 之前允许最多 50 条，可能因此返回 Python 不会返回的后续会话。`createIndexedAgentConversationSearchPort` 现遵守 20 条限制；新增持久索引、正式 Jieba、注册器 dispatch 回归，让前 20 条来自同一会话、下一条来自另一个会话，并验证结果仍只有 Python 上限内的首个会话。该 Host 文件 **4/4**、RAG 相关六个 Host 文件合计 **19/19**、Core RAG **35/35** 通过（隔离 SQLite、正式 Jieba；未连接真实 PG/Provider）。Python `test_search_tools.py` 本轮未能运行：devserver Python 环境缺少 pytest。生产 `main.ts` 尚无 Agent Run 调用 `createAgentToolRegistry`；另检索当前写路径仅发现 project/calendar 在事务中写入 RAG job，Mind 与会话消息变更尚未找到持久索引任务生产者，需与对应领域接线一起补齐。这不改变 `search_conversations` 的生产未完成状态。
+同日曾发现候选上限与会话去重顺序差异，并据此尝试了持久索引搜索。随后对照 Python `ConversationAdapter.retrieve` 确认：Python 在事实表查询中先按会话选出最新命中，再限制候选；因此不能把多个持久索引消息交给工具层去重。该临时 Indexed adapter 已删除，当前工具按事实表 SQL BM25 路径执行；修正与回归证据见本文末尾“`search_conversations` 恢复 Python 事实表召回语义”。
 
 ### 1.7.7 memory 持久来源接入 Core Worker（2026-11-15）
 
@@ -1137,13 +1137,15 @@ Core RAG、conversation search 和 ranking 定向集合 **7 个文件、47/47 �
 
 Core `createScopedRagSearch` 现在对 query embedding transport 错误执行 Python 兼容的 BM25 降级，并在返回结果前继续复核 scope 授权；调用信号取消仍传播取消错误。devserver 定向行为回归 **3/3 通过**，实际验证 owner-bound 向量版本读取和 hybrid 重排，使用合成索引、模拟 embedding 和确定性 tokenizer，不调用真实 Provider。此修复只覆盖共享检索服务的降级边界，不证明生产 Agent Run 已装配该服务或实际 embedding 凭据/授权端口。
 
-同日 Host 对照：`conversation-tools-runtime-sqlite.test.ts` 经 Host conversation adapter、持久 TS RAG、正式 Jieba、Core 注册器和 AgentRuntime Runner 完成 `search_conversations` 调用，**4/4 通过**；数据使用临时 SQLite，Runner/Provider 为合成依赖。它验证实际 Node 工具链与 Python 的 owner/BM25/20 候选上限契约，不代表生产 `main.ts` 已装配 Agent Run。
+此前 Host 对照曾用持久 TS RAG 验证 `search_conversations` dispatch；该用法在核对 Python 事实表召回后已移除。现在 Runner 续轮和工具搜索使用 TypeScript SQL BM25 来源；持久 Worker 的队列消费、generation fencing 与墓碑由独立 Worker 用例覆盖。当前验收以本文末尾的 Python 行为修正记录为准。
 
 ### RAG 基准与生产来源增量（2026-11-16）
 
 在 devserver 的临时 Python venv 中安装项目 requirements 与 `compat/core-python` editable package 后，旧版 `backend/tests/agent/rag` 全集 **279/279 通过**，旧版 `search_conversations`、`search_memory` 与工具 schema 用例 **37/37 通过**。这保护 Cython 编译/运行、tokenizer、来源投影、索引任务生命周期、scope/owner 过滤、向量缓存及旧工具参数/结果行为；测试数据由仓库隔离 fixture 提供，Cython 产物写入测试临时目录。首次完整运行只有一个子进程因为临时 venv 未安装 `gugu_core` 失败；安装仓库 editable 包后该用例单独通过，整组复跑通过。
 
 Node Core RAG 定向回归 **9 个文件、56/56 通过**；标准 Core Vitest 配置因并行会话加入但未登记 suite 的新测试无法加载，使用临时 RAG-only Vitest 配置运行，未修改共享测试清单。Host RAG/会话集合 **17 通过、6 跳过、0 失败**；6 项都需要隔离 PostgreSQL URL，SQLite/FS 为临时数据，Jieba 使用正式 1.7.7 同版包内词典，授权/IM context/凭据/embedding transport/Provider 为模拟依赖。Host production build 通过。Node 调用链验证了工具注册器 dispatch、AgentRuntime Runner 续轮、持久索引 Worker、memory 来源重建和 URL-independent owner 文件边界；没有连接真实 PG、Redis、外部 Provider 或真实 embedding 服务。
+
+2026-11-16 当前源码复验：devserver 使用 Core 标准 Vitest 配置显式选择 `tests/agent/rag` 和 Mind RAG freshness 文件，Core RAG **9 个文件、57/57**、Mind freshness **1 个文件、5/5**，合计 **10 个文件、62/62** 通过；本次只验证 Core RAG 排序、tokenizer、scope/owner、向量降级、cache revision/TTL、来源适配及 Mind freshness，不连接 PG、Redis 或外部服务。该显式文件选择未要求 Vitest 加载未登记的其他 suite，因此不代表 Core 全量测试发现配置已解决。
 
 生产 Worker 装配现通过 `main.ts` 将 `config.storageLocalPath` 注入 `memoryStorageRoot`，使 memory loader/source 成为迁移门控通过后的重建来源；memory 写入仍缺 Node job producer。生产 Agent Run 仍没有 `createAgentToolRegistry` caller，可信 IM scope、memory 授权和 embedding 尚未接入；Python FastAPI 仍无条件启动 Cython recovery loop，与 Node Worker 共享 `rag_index_jobs`，尚未切换为 Node-only；正式 PostgreSQL migration 仍未验收。因此上述测试与入口接线不代表生产 RAG 全量迁移完成。
 
@@ -1164,4 +1166,24 @@ Core 持久索引读取遇到无法解析的 `metadata_json` 时，原先把 `JS
 
 ### 1.7.7 memory 向量键与 scope 命名空间兼容（2026-11-16）
 
-持久 memory 文档为区分同一 owner 的 owner/group/member 同源文档，会把 SQL `parent_document_id` 加 scope 命名空间；旧 `memory_vec.json` 的 key 仍使用 1.7.7 原始 parent ID。Core 向量读取器现优先用 Host/Core 来源投影保留的 `metadata.memory_parent_id` 查旧向量，同时仍以持久文档 ID 关联 hybrid 结果。devserver 临时副本中 `createScopedRagSearch` 定向用例 **4/4 通过**，新增用例以合成旧向量文件和 namespaced 持久文档实际完成 hybrid 查询，防止静默退化为 BM25；不调用 embedding Provider。此前完整 Python RAG 基准验证的是旧 key 投影，本轮未重跑 Python。生产 Agent Run 尚未注入可信 scope 与 embedding，真实 PostgreSQL 和外部 embedding 未验收。
+持久 memory 文档为区分同一 owner 的 owner/group/member 同源文档，会把 SQL `parent_document_id` 加 scope 命名空间；旧 `memory_vec.json` 的 key 仍使用 1.7.7 原始 parent ID。Core 向量读取器现优先用 Host/Core 来源投影保留的 `metadata.memory_parent_id` 查旧向量，同时仍以持久文档 ID 关联 hybrid 结果。devserver 临时副本中 `createScopedRagSearch` 定向用例 **4/4 通过**；新增用例经真实 `createMemoryRagSource` 读取合成的 1.7.7 owner index、生成 scope 命名空间文档，再读取旧向量文件完成 hybrid 查询，保护来源元数据到召回的整段映射；严格 TypeScript 检查通过，不调用 embedding Provider。此前完整 Python RAG 基准验证的是旧 key 投影，本轮未重跑 Python。生产 Agent Run 尚未注入可信 scope 与 embedding，真实 PostgreSQL 和外部 embedding 未验收。
+
+### BaseSkill Web 工具切片：`http_get`（2026-11-16）
+
+`backend/agent/tools/web.py::http_get` 对照 Core `packages/core/src/agent/tools/web.ts`，Host 边界在 `apps/web-host/src/domains/agent-sessions/tools/agent-tool-registry.ts`：Core 实现参数校验、默认/硬字符上限、URL 归一、单次最多 5 个 URL、顺序结果、单项错误隔离和取消传播；owner 仅从可信 RunIdentity 传给 Host port。Registry 仅在明确注入联网端口时注册此工具，当前 `main.ts` 没有生产 Run/联网端口装配，因此列为部分实现，不宣称生产可用。Host port 的生产实现仍须固定/校验公网 DNS 目标、拒绝重定向并解析正文；HTML/PDF 提取、自定义 headers 校验及历史脱敏、`web_download` 配额和本地 FS 落点仍未迁移。Python 回归基准为 `agent/test_tool_schema_security_contract.py`、`agent/test_tool_schema_validation.py`、`platform/test_io_retry_contract.py`；devserver `.venv/bin/pytest` 不存在，故本轮未运行这些 Python 用例。Node `tests/agent/tools/web.test.ts` **6/6**、Core `domain-reads.test.ts` **5/5**（共11/11）、Host `agent-tool-registry.test.ts` **17/17**，Core build通过；Host 全量 typecheck 被其他并行工作区错误阻断，未报告通过。测试使用合成网络端口和身份，不是生产接入。测试 manifest 同时登记了此前未登记的 scheduled-task 新测试，使标准 Vitest 配置可加载；该测试来自并行工作区变更。
+
+### Node 工具层引用与重复实现核查（2026-11-16）
+
+全仓引用核查未找到可安全删除的重复工具组、单工具转发模块或仍存在于 Node 的 `get_tool_schema` 占位实现；Core 工具领域模块被索引/注册器和行为测试使用。`createAgentToolRegistry` 目前没有生产调用方，但它是现有唯一 Host 工具装配边界，且由多组真实注册器行为测试覆盖；删除会移除待接入工具的唯一完整装配点，不是清理死代码。`agent-overview-postgres.ts` 与 `formatAgentProjects` 属上下文快照原型而非 BaseSkill 工具层；前者仍被上下文装配器引用并由查询测试覆盖，本轮不把它误判成重复工具或删除共享上下文服务。当前 Node 生产 Run 尚未接线已作为明确 Host 阻塞列出。
+
+### Runner 持久索引端到端回归（2026-11-16）
+
+此前 Runner 续轮用例曾先重建持久 conversation index，再经 `AgentRuntime → Core Runner → Host 工具注册器 → search_conversations` dispatch；本轮核对 Python `ConversationAdapter.retrieve` 后发现工具实际读取 owner 限定的事实表，而不是该压缩索引。现有调用链回归改为从 TypeScript RAG/Jieba 的事实表 BM25 适配器检索，结果不增加 Cython 索引投影的角色前缀；持久 Worker 的更新和墓碑仍由独立 RAG Worker 测试覆盖。devserver 临时 SQLite Host 文件 **4/4 通过**。Runner/Provider/RunStore/上下文/授权是合成依赖；没有连接真实 PostgreSQL、Redis 或外部 embedding。`main.ts` 仍无生产 `agentChat`/dispatch/reconstructor 调用方，因此这是 Node 真实 Runner 行为回归，不是生产 Host 部署验收。
+
+### `search_conversations` 恢复 Python 事实表召回语义（2026-11-16）
+
+逐项核对 `ConversationAdapter.retrieve` 后确认 Python 工具从 owner 会话事实表查询，不依赖压缩索引：它排除群聊与非 user/assistant 消息、按每个会话选最新命中，再应用 BM25 候选上限。因此 Host 工具搜索改用 TypeScript `createSqlRagConversationSearch` 和正式 Jieba；不会让 baseline 以前仍在事实表中的消息漏检，也不会让同一会话的多条索引记录占满候选窗口。devserver Host 工具/Runner 调用链 **4/4 通过**，Python `test_search_tools.py -k conversation` **4/4 通过**；Python RAG 与相邻搜索/schema 基准 **317 通过、1 项环境失败**（native-extension 子进程重置 `PYTHONPATH` 后找不到仓库内 `gugu_core`），RAG owner 配置 pytest **2/2 通过**。旧会话索引仍用于持久来源重建及其他 RAG 消费者；本工具本身遵循 Python 的事实表 BM25 路径。生产 Agent Run 尚未装配 registry，真实 PostgreSQL 未验收。
+
+### devserver 追加验收（2026-11-16）
+
+Core RAG 与 Mind freshness **10 个文件、63/63 通过**；Host memory scope/BYOK、conversation Runner、索引损坏恢复、持久 Worker、正式 Jieba 与共享相关性语料 **19/19 通过**；Python RAG、conversation parity/search limits 与 knowledge search 工具 **300/300 通过**。Node 测试使用临时 SQLite/FS，授权、凭据、Provider transport、RunStore 与 Provider 为模拟依赖。Python 使用临时 venv（Cython 3.3.1、rjieba 0.2.2、OpenAI/Anthropic SDK），只测试 SDK 导入，不发送 Provider 请求、不读取凭据。隔离 PostgreSQL 未配置。Core 标准 Vitest suite 受并行工作区未登记测试影响，本次使用 `/tmp` 临时配置运行 RAG 文件，未修改共享 suite 清单。生产 Agent Run 装配、knowledge/memory Node 写入 producer、Python/Cython 与 Node Worker 唯一归属及正式 PostgreSQL migration 仍是生产阻塞项。

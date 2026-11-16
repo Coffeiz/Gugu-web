@@ -72,6 +72,8 @@ import type { McpServerPatch } from '@gugu/core/mcp/server-mutations'
 import { createMcpServerConfigLister } from '@gugu/core/mcp/server-list'
 import { createMcpServerListReader } from './modules/mcp/server-list.js'
 import { createPostgresMcpConnectionTester } from './modules/mcp/test-connection.js'
+import { createMcpSkillToolDirectory } from './modules/mcp/skill-tool-directory.js'
+import { createMcpRuntime } from './modules/mcp/runtime.js'
 import { getAttentionDefaults } from '@gugu/core/im/attention/defaults'
 import { createMcpSettingsReader } from './modules/mcp/status.js'
 import { createEmailRecipientCounter } from '@gugu/core/admin/email-recipient-count'
@@ -111,6 +113,9 @@ import { createByokCredentialTestProbe } from './modules/byok/credential-test-pr
 import { createStorageLiveTotals } from '@gugu/core/admin/storage-live-totals'
 import { createUserSkillDeletion } from '@gugu/core/agent/skills/user-delete'
 import { createUserSkillLister } from '@gugu/core/agent/skills/user-list'
+import { createUserSkillManager } from '@gugu/core/agent/skills/user-management'
+import { createAgentToolRegistry } from './domains/agent-sessions/tools/agent-tool-registry.js'
+import { createAgentSkillToolCatalog } from './modules/agent-skills/tool-catalog.js'
 import { createSafeEgressSettingsReader } from './modules/admin/safe-egress-settings.js'
 import { createSafeEgressFileUpdater } from './modules/admin/safe-egress-update.js'
 import { createSafeEgressFileProbe } from './modules/admin/safe-egress-probe.js'
@@ -167,6 +172,8 @@ import { createKyselyScheduledTaskReader, createScheduledTaskQueries } from '@gu
 import { createScheduledTaskDeliveryTargets } from './modules/scheduled-tasks/delivery-targets.js'
 import { createScheduledTaskTestNotifier } from '@gugu/core/scheduled-task-test-notify'
 import { createPostgresScheduledTaskTestDelivery } from './modules/scheduled-tasks/test-notify-postgres.js'
+import { createPostgresScheduledTaskTestEmailDelivery } from './modules/scheduled-tasks/test-notify-email.js'
+import { createSmtpTestDelivery } from './adapters/smtp-test-delivery.js'
 import { createKyselyNotificationOperations } from '@gugu/core/notifications'
 import { createKyselySmtpStore, createUserSmtpSettings } from '@gugu/core/smtp'
 import { encryptEncryptedString as encryptSmtpPassword } from './adapters/encrypted-string.js'
@@ -469,6 +476,43 @@ function createWebUiApp(
 ) {
   const publisher = redisEvents ?? noRedisEvents
   const readMcpSettings = createMcpSettingsReader(resolveConfigOverridePath(env), env)
+  const skillToolRegistry = createAgentToolRegistry({ core, authorize: async () => true })
+  const builtinSkillTools = createAgentSkillToolCatalog(skillToolRegistry)
+  const mcpSkillTools = createMcpSkillToolDirectory(core.db, {
+    enabled: () => readMcpSettings().enabled === true,
+    decrypt: createConfiguredByokEnvelope(env),
+    transport: () => createNodeProviderTransport({ allowLocal: false, connectTimeoutMs: 5_000, writeTimeoutMs: 10_000, environment: () => env }),
+    maxTools: () => readMcpSettings().max_tools_per_server,
+    async builtinNames(owner) {
+      const definitions = await skillToolRegistry.capabilities({ ownerId: owner, sessionId: 'skills-tool-catalog', runId: 'skills-tool-catalog' })
+      return new Set(definitions.map(item => item.name))
+    },
+  })
+  const mcpRuntime = createMcpRuntime({
+    configs: createMcpServerConfigLister(core.db), enabled: () => readMcpSettings().enabled === true,
+    decrypt: createConfiguredByokEnvelope(env),
+    transport: () => createNodeProviderTransport({ allowLocal: false, connectTimeoutMs: 5_000, writeTimeoutMs: 10_000, environment: () => env }),
+    maxTools: () => readMcpSettings().max_tools_per_server,
+    async builtinNames(owner) {
+      const definitions = await skillToolRegistry.capabilities({ ownerId: owner, sessionId: 'mcp-runtime', runId: 'mcp-runtime' })
+      return new Set(definitions.map(item => item.name))
+    },
+  })
+  const userSkillTools = async (owner: string) => {
+    const [builtins, dynamic] = await Promise.all([builtinSkillTools(owner), mcpSkillTools(owner)])
+    const known = new Set(builtins.map(item => item.name))
+    return [...builtins, ...dynamic.filter(item => !known.has(item.name)).map(item => ({
+      name: item.name, description_short: item.description_short, category: 'mcp', enabled: true,
+    }))]
+  }
+  const userSkillManager = createUserSkillManager(core.db, 'postgres', {
+    async knownTools(owner) {
+      const definitions = await skillToolRegistry.capabilities({ ownerId: owner, sessionId: 'skills-api', runId: 'skills-api' })
+      return new Set(definitions.map(item => item.name).filter(name => !['list_skills', 'create_skill', 'update_skill', 'delete_skill'].includes(name)))
+    },
+    digest: text => createHash('sha256').update(text).digest('hex').slice(0, 16),
+    publish: async ownerId => publisher.publishResourceChanged({ ownerId, resource: 'skills', operation: 'refresh' }),
+  })
   const accountDeleter = createPostgresAccountDeleter(
     pool,
     config.storageLocalPath,
@@ -1060,6 +1104,11 @@ function createWebUiApp(
     scheduledTaskTestNotify: createScheduledTaskTestNotifier(createPostgresScheduledTaskTestDelivery(
       pool,
       config.redisUrl ? createRedisNotificationPublisher(config.redisUrl) : async () => false,
+      { email: createPostgresScheduledTaskTestEmailDelivery(pool, {
+        secretKey: config.secretKey,
+        globalSmtp: config.smtp,
+        send: createSmtpTestDelivery(env),
+      }) },
     )),
     scheduledTaskWrites: createPostgresTaskWrites(pool, {
       validateCron: validateTaskCron,
@@ -1489,20 +1538,21 @@ function createWebUiApp(
       publishChanged: ownerId => publisher.publishResourceChanged({ ownerId, resource: 'im_channels', operation: 'refresh' }),
     }) },
     mcpStatus: { read: createMcpStatusReader(() => readMcpSettings().enabled) },
-    mcpServerConfig: { operations: (() => {
+    mcpServerConfig: (() => {
       const crypto = createConfiguredByokEnvelope(env)
       const create = createMcpServerCreator(core.db, {
         maxServersPerUser: () => readMcpSettings().max_servers_per_user,
         id: () => randomUUID(), encrypt: async plaintext => crypto.encrypt(plaintext),
       })
       const mutations = createMcpServerMutations(core.db, { crypto, maxTools: () => readMcpSettings().max_tools_per_server })
-      return {
-        list: createMcpServerListReader({ list: createMcpServerConfigLister(core.db), decrypt: crypto, settings: readMcpSettings }),
+      return { operations: {
+        list: createMcpServerListReader({ list: createMcpServerConfigLister(core.db), decrypt: crypto, settings: readMcpSettings, runtimeState: (owner, id) => mcpRuntime.state(owner, id) }),
         create: (owner: string, input: Record<string, unknown>) => create(owner, input as unknown as McpServerCreateInput),
         update: (owner: string, id: string, input: Record<string, unknown>) => mutations.update(owner, id, input as McpServerPatch),
         remove: mutations.remove,
-      }
-    })() },
+      }, invalidate: (owner: string, id: string) => mcpRuntime.invalidate(owner, id) }
+    })(),
+    mcpRuntime: { runtime: mcpRuntime },
     mcpConnectionTest: { test: createPostgresMcpConnectionTester(core.db, {
       decrypt: createConfiguredByokEnvelope(env),
       transport: () => createNodeProviderTransport({ allowLocal: false, connectTimeoutMs: 5_000, writeTimeoutMs: 10_000, environment: () => env }),
@@ -1576,7 +1626,8 @@ function createWebUiApp(
     }) },
     providerCapabilityPreview: { preview: createProviderCapabilityPreview(createByokGateReader(resolveConfigOverridePath(env), env)) },
     userSkillDelete: { remove: createUserSkillDeletion(core.db, 'postgres', async ownerId => { await publisher.publishResourceChanged({ ownerId, resource: 'skills', operation: 'refresh' }) }) },
-    userSkillList: { list: createUserSkillLister(core.db, 'postgres') },
+    userSkillList: { list: createUserSkillLister(core.db, 'postgres'), tools: userSkillTools },
+    userSkillWrite: { manager: userSkillManager },
     accountDelete: {
       verifyPassword: createPostgresAccountPasswordVerifier(pool),
       remove: accountDeleter,

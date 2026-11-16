@@ -10,6 +10,7 @@ test('测试提醒只持久化到当前用户通知中心并发布 best-effort �
   const owner = 'e2dc7e3a-e0a7-4ce3-a782-3efb560c6d91'
   const writes: Array<{ sql: string; values: unknown[] }> = []
   const published: Array<[string, unknown]> = []
+  const emailPlans: Array<{ ownerId: string; channels: string[]; title: string; text: string }> = []
   let databaseAvailable = true
   let redisAvailable = true
   const pool = {
@@ -20,7 +21,9 @@ test('测试提醒只持久化到当前用户通知中心并发布 best-effort �
     },
   }
   const publish = async (target: string, note: unknown) => { published.push([target, note]); return redisAvailable }
-  const notify = createScheduledTaskTestNotifier(createPostgresScheduledTaskTestDelivery(pool as never, publish))
+  const notify = createScheduledTaskTestNotifier(createPostgresScheduledTaskTestDelivery(pool as never, publish, {
+    async email(plan) { emailPlans.push(plan); return { '邮件': '已发送' } },
+  }))
   const app = createApp({
     appName: 'Gugu', isReady: async () => true,
     userAuth: { secret, lookupUser: async id => ({ id, username: 'synthetic', displayName: null, email: 'synthetic@example.test', isActive: true, accountStatus: 'active', securityVersion: 1, avatarUrl: null, createdAt: null, timezone: null, emailSubscribed: false, imChannels: [] }) },
@@ -50,16 +53,20 @@ test('测试提醒只持久化到当前用户通知中心并发布 best-effort �
       color: '#7b7fb2', bubble: true, persist: true,
     }]])
 
-    const unsupported = await app.inject({
+    const email = await app.inject({
       method: 'POST', url: '/api/v1/scheduled-tasks/test-notify', headers, payload: { channels: ['email'] },
     })
-    assert.equal(unsupported.statusCode, 200, unsupported.body)
-    assert.deepEqual(unsupported.json(), {
+    assert.equal(email.statusCode, 200, email.body)
+    assert.deepEqual(email.json(), {
       ok: true,
-      result: { '邮件': 'Node 服务暂未接入该投递渠道' },
-      msg: '测试发送结果：\n· 邮件：Node 服务暂未接入该投递渠道',
+      result: { '邮件': '已发送' },
+      msg: '测试发送结果：\n· 邮件：已发送',
     })
-    assert.equal(writes.length, 1, '未接入的邮件渠道不能假写 Web 通知')
+    assert.deepEqual(emailPlans, [{
+      ownerId: owner, channels: ['email'], title: '活动提醒（测试）',
+      text: '这是一条测试提醒——「活动提醒」。如果你收到了这条消息，说明提醒渠道工作正常。',
+    }])
+    assert.equal(writes.length, 1, '纯邮件测试不应创建 Web 通知')
 
     redisAvailable = false
     const redisFailure = await app.inject({

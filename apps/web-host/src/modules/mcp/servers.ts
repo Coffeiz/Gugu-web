@@ -17,7 +17,7 @@ export interface McpServerRoutesOptions {
  requireUser:preHandlerHookHandler
  ownerIdFromRequest(request:FastifyRequest):string
  operations:McpServerConfigOperations
- invalidate?(owner:string,id:string):void
+ invalidate?(owner:string,id:string):void|Promise<void>
  refreshSnapshot?(owner:string):void|Promise<void>
 }
 export interface McpServerCreateRouteOptions {
@@ -59,10 +59,10 @@ export function registerMcpServerRoutes(app:FastifyInstance,options:McpServerRou
   if(!parsed.success)return reply.code(422).send({detail:'MCP server 参数无效'})
   let input:Record<string,unknown>
   try{input=validateInput(parsed.data,true)}catch(error){return reply.code(400).send({detail:(error as Error).message})}
-  try{const owner=options.ownerIdFromRequest(request),result=await options.operations.update(owner,request.params.server_id,input);options.invalidate?.(owner,request.params.server_id);await options.refreshSnapshot?.(owner);return result}catch(error){return sendError(reply,error)}
+  try{const owner=options.ownerIdFromRequest(request),result=await options.operations.update(owner,request.params.server_id,input);await options.invalidate?.(owner,request.params.server_id);await options.refreshSnapshot?.(owner);return result}catch(error){return sendError(reply,error)}
  })
  app.delete<{Params:{server_id:string}}>('/api/v1/mcp/servers/:server_id',{preHandler:options.requireUser},async(request,reply)=>{
-  try{const owner=options.ownerIdFromRequest(request),result=await options.operations.remove(owner,request.params.server_id);options.invalidate?.(owner,request.params.server_id);await options.refreshSnapshot?.(owner);return result}catch(error){return sendError(reply,error)}
+  try{const owner=options.ownerIdFromRequest(request),result=await options.operations.remove(owner,request.params.server_id);await options.invalidate?.(owner,request.params.server_id);await options.refreshSnapshot?.(owner);return result}catch(error){return sendError(reply,error)}
  })
 }
 

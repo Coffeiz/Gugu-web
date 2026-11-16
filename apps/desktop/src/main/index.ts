@@ -44,6 +44,7 @@ protocol.registerSchemesAsPrivileged([
   },
 ])
 const smoke = process.argv.includes('--smoke')
+const devUiUrl = !app.isPackaged ? process.env.GUGU_DESKTOP_DEV_URL : undefined
 let dataDirectory = join(app.getPath('appData'), 'com.gugu.desktop.preview')
 if (smoke) {
   const provided = process.env.GUGU_DESKTOP_TEST_DIRECTORY
@@ -82,6 +83,14 @@ else {
   void app
     .whenReady()
     .then(async () => {
+      if (devUiUrl) {
+        const devUrl = new URL(devUiUrl)
+        if (
+          devUrl.protocol !== 'http:' ||
+          !['127.0.0.1', 'localhost'].includes(devUrl.hostname)
+        )
+          throw new DesktopError('invalid_request', '桌面开发界面必须来自本机 Vite 服务')
+      }
       if (!smoke && !['win32', 'darwin'].includes(process.platform))
         throw new DesktopError(
           'unsupported',
@@ -106,6 +115,7 @@ else {
         ? join(app.getAppPath(), 'ui/desktop.html')
         : resolve(app.getAppPath(), '../web/dist-desktop/desktop.html')
       const uiUrl = DESKTOP_UI_URL
+      const trustedUiUrl = devUiUrl ?? uiUrl
       protocol.handle('gugu-desktop', async (request) => {
         if (request.method !== 'GET') return new Response('界面资源不可用', { status: 405 })
         try {
@@ -121,14 +131,14 @@ else {
           windowOptions(join(app.getAppPath(), 'dist/preload/index.cjs'), smoke),
         )
         secureWindow(window)
-        await window.loadURL(uiUrl)
+        await window.loadURL(devUiUrl ?? uiUrl)
         return window
       }
       for (const [channel, action] of Object.entries(
         desktopHandlers(host, () => sandboxDiagnostics(host)),
       ))
         ipcMain.handle(channel, (event, ...args: unknown[]) =>
-          desktopReply(trustedCaller(event, BrowserWindow.getAllWindows(), uiUrl), () =>
+          desktopReply(trustedCaller(event, BrowserWindow.getAllWindows(), trustedUiUrl), () =>
             action(...args),
           ),
         )

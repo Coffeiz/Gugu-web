@@ -1,0 +1,69 @@
+{
+  "description": "Python/TypeScript conversation source projection contract",
+  "owner": "rag-projection-owner",
+  "scope": {
+    "scope_type": "owner",
+    "scope_id": ""
+  },
+  "records": [
+    {
+      "id": "31:summary",
+      "kind": "summary",
+      "session_id": 31,
+      "summary": "讨论了部署回滚",
+      "title": "发布复盘",
+      "session_source": "web",
+      "session_updated_at": "2026-10-01T09:00:00",
+      "version_parts": [31, "2026-10-01T09:00:00", "讨论了部署回滚"],
+      "updated_at": "2026-10-01T09:00:00",
+      "expected": {
+        "source_id": "31:summary",
+        "parent_document_id": "conversation:31:summary",
+        "title": "发布复盘",
+        "summary": "会话摘要：讨论了部署回滚",
+        "content": "会话摘要：讨论了部署回滚",
+        "version": "25049902052d0e54",
+        "metadata": {
+          "session_id": "31",
+          "kind": "summary",
+          "session_source": "web",
+          "session_updated_at": "2026-10-01T09:00:00"
+        }
+      }
+    },
+    {
+      "id": 808,
+      "kind": "message",
+      "session_id": 31,
+      "role": "user",
+      "content": "上线后如何回滚",
+      "context_before": "assistant：我先核对发布记录",
+      "context_after": "assistant：按版本执行回滚",
+      "title": "发布复盘",
+      "session_source": "web",
+      "session_updated_at": "2026-10-01T09:00:00",
+      "version_parts": [808, "2026-10-01T08:45:00", "上线后如何回滚"],
+      "updated_at": "2026-10-01T08:45:00",
+      "expected": {
+        "source_id": "808",
+        "parent_document_id": "conversation:808",
+        "title": "发布复盘",
+        "summary": "",
+        "content": "user：上线后如何回滚",
+        "version": "4654d1c19a230dba",
+        "contextual_content": "assistant：我先核对发布记录\nuser：上线后如何回滚\nassistant：按版本执行回滚",
+        "metadata": {
+          "session_id": "31",
+          "kind": "message",
+          "session_source": "web",
+          "session_updated_at": "2026-10-01T09:00:00",
+          "message_id": "808",
+          "role": "user",
+          "context_before": "assistant：我先核对发布记录",
+          "context_after": "assistant：按版本执行回滚",
+          "context_current": "user：上线后如何回滚"
+        }
+      }
+    }
+  ]
+}

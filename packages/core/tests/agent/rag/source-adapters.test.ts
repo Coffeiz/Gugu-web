@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { textVersion, buildDocuments } from '../../../src/agent/rag/adapters/base.js'
 import { calendarAdapter } from '../../../src/agent/rag/adapters/calendar.js'
 import { canvasAdapter } from '../../../src/agent/rag/adapters/canvas.js'
@@ -6,6 +7,36 @@ import { conversationAdapter } from '../../../src/agent/rag/adapters/conversatio
 import { noteAdapter } from '../../../src/agent/rag/adapters/note.js'
 import { scheduledTaskAdapter } from '../../../src/agent/rag/adapters/scheduled-tasks.js'
 import { buildSourceDocuments } from '../../../src/agent/rag/index-builder.js'
+
+const projectionFixture = JSON.parse(readFileSync(new URL('../../../../../docs/testing/fixtures/rag-conversation-projection.json', import.meta.url), 'utf8')) as {
+  owner: string
+  scope: { scope_type: string; scope_id: string }
+  records: Array<{
+    id: string | number
+    kind: 'summary' | 'message'
+    session_id: number
+    summary?: string
+    content?: string
+    role?: string
+    context_before?: string
+    context_after?: string
+    title: string
+    session_source: string
+    session_updated_at: string
+    version_parts: Array<string | number>
+    updated_at: string
+    expected: {
+      source_id: string
+      parent_document_id: string
+      title: string
+      summary: string
+      content: string
+      version: string
+      contextual_content?: string
+      metadata: Record<string, string>
+    }
+  }>
+}
 
 const ownerScope = { scope_type: 'owner', scope_id: '' }
 
@@ -84,6 +115,28 @@ describe('1.7.7 RAG source adapter projection compatibility', () => {
       context_text: 'user：之前的部署问题\nuser：怎么部署\nassistant：可以先检查配置',
       metadata: { session_id: '1', kind: 'message', message_id: '12', role: 'user',
         context_current: 'user：怎么部署' } })
+  })
+
+  it('matches the shared Python conversation projection fixture field by field', () => {
+    const documents = conversationAdapter.toDocuments(projectionFixture.records.map(record => ({
+      ...record,
+      scope: projectionFixture.scope,
+    })))
+    expect(documents).toHaveLength(projectionFixture.records.length)
+    for (const [index, document] of documents.entries()) {
+      const expected = projectionFixture.records[index]!.expected
+      expect(document).toMatchObject({
+        source_type: 'conversation',
+        source_id: expected.source_id,
+        parent_id: expected.parent_document_id,
+        title: expected.title,
+        summary: expected.summary,
+        content: expected.content,
+        document_version: expected.version,
+        metadata: expected.metadata,
+      })
+      if (expected.contextual_content) expect(document.context_text).toBe(expected.contextual_content)
+    }
   })
 
   it('source composition ignores retired file indexing and keeps shared chunk defaults', () => {
