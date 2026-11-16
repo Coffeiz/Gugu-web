@@ -32,6 +32,69 @@ const folders: ProjectTrashFolder[] = [{
   parent_id: null, name: '文档', version: 1, deleted_at: null,
 }]
 
+test('删除和恢复在预检查后出现同名目标时原子拒绝，源和并发目标均保留', async t => {
+  for (const direction of ['delete', 'restore'] as const) await t.test(direction, async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'gugu-project-race-'))
+    try {
+      const sourceKey = direction === 'delete' ? originalKey : trashKey
+      const targetKey = direction === 'delete' ? trashKey : originalKey
+      await mkdir(path.dirname(path.join(root, sourceKey)), { recursive: true })
+      await writeFile(path.join(root, sourceKey), '原始正文')
+      const storage = createLocalProjectTrashStorage(root, () => originalKey)
+      let checked = false
+      const afterCheck = async (from: string, to: string) => {
+        assert.equal(from, sourceKey)
+        assert.equal(to, targetKey)
+        await assert.rejects(stat(path.join(root, to)), { code: 'ENOENT' })
+        await writeFile(path.join(root, to), '并发创建的正文', { flag: 'wx' })
+        checked = true
+      }
+      await assert.rejects(direction === 'delete'
+        ? storage.moveToTrash(ownerId, file, afterCheck)
+        : storage.restoreFromTrash(ownerId, { ...file, storage_key: trashKey }, project, folders, afterCheck),
+      { code: 'EEXIST', name: 'ProjectPathMoveError' })
+      assert.equal(checked, true)
+      assert.equal(await readFile(path.join(root, sourceKey), 'utf8'), '原始正文')
+      assert.equal(await readFile(path.join(root, targetKey), 'utf8'), '并发创建的正文')
+    } finally { await rm(root, { recursive: true, force: true }) }
+  })
+})
+
+test('删除和恢复的 rollback 遇到原位置已有新文件时保留两边，不覆盖新文件', async t => {
+  for (const direction of ['delete', 'restore'] as const) await t.test(direction, async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'gugu-project-rollback-race-'))
+    try {
+      const sourceKey = direction === 'delete' ? originalKey : trashKey
+      await mkdir(path.dirname(path.join(root, sourceKey)), { recursive: true })
+      await writeFile(path.join(root, sourceKey), '原始正文')
+      const storage = createLocalProjectTrashStorage(root, () => originalKey)
+      const moved = direction === 'delete'
+        ? await storage.moveToTrash(ownerId, file)
+        : await storage.restoreFromTrash(ownerId, { ...file, storage_key: trashKey }, project, folders)
+      assert.ok(moved.rollback)
+      await writeFile(path.join(root, sourceKey), '新文件', { flag: 'wx' })
+      await assert.rejects(moved.rollback(), { code: 'EEXIST', name: 'ProjectPathMoveError' })
+      assert.equal(await readFile(path.join(root, sourceKey), 'utf8'), '新文件')
+      assert.equal(await readFile(path.join(root, moved.storageKey), 'utf8'), '原始正文')
+    } finally { await rm(root, { recursive: true, force: true }) }
+  })
+})
+
+test('目录不能借用文件移动能力，删除与恢复均拒绝并保留源目录', async t => {
+  for (const direction of ['delete', 'restore'] as const) await t.test(direction, async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'gugu-project-directory-refused-'))
+    try {
+      const sourceKey = direction === 'delete' ? originalKey : trashKey
+      await mkdir(path.join(root, sourceKey), { recursive: true })
+      await writeFile(path.join(root, sourceKey, '保留.md'), '目录内容')
+      const storage = createLocalProjectTrashStorage(root, () => originalKey)
+      await assert.rejects(direction === 'delete' ? storage.moveToTrash(ownerId, file)
+        : storage.restoreFromTrash(ownerId, { ...file, storage_key: trashKey }, project, folders), { code: 'ENOTSUP' })
+      assert.equal(await readFile(path.join(root, sourceKey, '保留.md'), 'utf8'), '目录内容')
+    } finally { await rm(root, { recursive: true, force: true }) }
+  })
+})
+
 test('日志写入失败时不移动文件，缺失源文件不写移动日志', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'gugu-project-trash-journal-'))
   try {

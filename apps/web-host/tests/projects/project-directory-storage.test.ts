@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { stat } from 'node:fs/promises'
@@ -12,50 +12,36 @@ async function temporaryRoot(t: TestContext) {
   return root
 }
 
-test('本地项目目录改名移动整棵树并为目录/文件继承 group rw(X)', async (t) => {
+test('没有原子不覆盖目录原语时拒绝改名，源树和权限保持不变', async t => {
   const root = await temporaryRoot(t)
-  const oldPath = path.join(root, 'owner', '项目文件', '2026', '11', '旧项目 #7')
-  const nested = path.join(oldPath, '嵌套目录')
-  const destinationParent = path.join(root, 'owner', '项目文件', '2026', '12')
+  const oldPrefix = 'owner/项目文件/2026/11/旧项目 #7', newPrefix = 'owner/项目文件/2026/11/新项目 #7'
+  const source = path.join(root, oldPrefix), nested = path.join(source, '嵌套目录')
   await mkdir(nested, { recursive: true, mode: 0o700 })
   await writeFile(path.join(nested, '资料.txt'), '内容', { mode: 0o600 })
-  const newPrefix = 'owner/项目文件/2026/12/新项目 #7'
-
-  await createLocalProjectDirectoryRenamer(root)('owner', 'owner/项目文件/2026/11/旧项目 #7', newPrefix)
-
-  const moved = path.join(root, newPrefix)
-  const newNested = path.join(moved, '嵌套目录')
-  const newFile = path.join(newNested, '资料.txt')
-  assert.equal(await readFile(newFile, 'utf8'), '内容')
-  assert.equal(await stat(oldPath).then(() => true, () => false), false)
-  assert.equal(await readdir(destinationParent).then((names) => names.includes('新项目 #7')), true)
-  for (const directory of [moved, newNested]) {
-    const mode = (await stat(directory)).mode
-    assert.equal(mode & 0o070, 0o070)
-    assert.equal(mode & 0o007, 0, '不得新增 world 权限')
-  }
-  const fileMode = (await stat(newFile)).mode
-  assert.equal(fileMode & 0o060, 0o060)
-  assert.equal(fileMode & 0o007, 0, '不得新增 world 权限')
-  const targetGid = (await stat(destinationParent)).gid
-  assert.equal((await stat(moved)).gid, targetGid)
-  assert.equal((await stat(newNested)).gid, (await stat(moved)).gid)
-  assert.equal((await stat(newFile)).gid, (await stat(newNested)).gid)
+  const before = await stat(nested)
+  await assert.rejects(createLocalProjectDirectoryRenamer(root)('owner', oldPrefix, newPrefix), { code: 'ENOTSUP' })
+  assert.equal(await readFile(path.join(nested, '资料.txt'), 'utf8'), '内容')
+  const after = await stat(nested)
+  assert.equal(after.mode, before.mode)
+  assert.equal(after.gid, before.gid)
+  await assert.rejects(stat(path.join(root, newPrefix)), { code: 'ENOENT' })
 })
 
-test('项目数据库事务失败时可用同一 Local 移动能力把整棵目录树移回', async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'gugu-project-rollback-'))
-  t.after(() => rm(root, { recursive: true, force: true }))
-  const original = path.join(root, 'owner', '项目文件', '2026', '11', '原项目 #17')
-  const renamed = path.join(root, 'owner', '项目文件', '2026', '11', '新项目 #17')
-  await mkdir(path.join(original, '嵌套'), { recursive: true })
-  await writeFile(path.join(original, '嵌套', '说明.txt'), '保留正文')
-
-  await renameLocalProjectDirectory(root, 'owner/项目文件/2026/11/原项目 #17', 'owner/项目文件/2026/11/新项目 #17')
-  await renameLocalProjectDirectory(root, 'owner/项目文件/2026/11/新项目 #17', 'owner/项目文件/2026/11/原项目 #17')
-
-  assert.equal(await readFile(path.join(original, '嵌套', '说明.txt'), 'utf8'), '保留正文')
-  await assert.rejects(stat(renamed), { code: 'ENOENT' })
+test('目录目标在预检查后出现也不覆盖，反向移动同样保留两棵目录', async t => {
+  const root = await temporaryRoot(t)
+  const oldPrefix = 'owner/原项目 #17', newPrefix = 'owner/新项目 #17'
+  await mkdir(path.join(root, oldPrefix), { recursive: true })
+  await writeFile(path.join(root, oldPrefix, '说明.txt'), '原目录正文')
+  let called = false
+  await assert.rejects(renameLocalProjectDirectory(root, oldPrefix, newPrefix, async () => {
+    await mkdir(path.join(root, newPrefix))
+    await writeFile(path.join(root, newPrefix, '保留.txt'), '并发目录正文')
+    called = true
+  }), { code: 'ENOTSUP' })
+  assert.equal(called, true)
+  await assert.rejects(renameLocalProjectDirectory(root, newPrefix, oldPrefix), { code: 'ENOTSUP' })
+  assert.equal(await readFile(path.join(root, oldPrefix, '说明.txt'), 'utf8'), '原目录正文')
+  assert.equal(await readFile(path.join(root, newPrefix, '保留.txt'), 'utf8'), '并发目录正文')
 })
 
 test('源目录不存在时静默返回且不创建目标父目录', async (t) => {
@@ -84,8 +70,8 @@ test('本地项目目录改名拒绝源树和目标父路径中的符号链接',
   await mkdir(path.join(outside, 'source'), { recursive: true })
   await writeFile(path.join(outside, 'source', 'secret.txt'), 'outside')
   await mkdir(path.join(root, 'owner'))
-  await symlink(path.join(outside, 'source'), path.join(root, 'owner', 'source-link'))
-  await symlink(outside, path.join(root, 'owner', 'target-link'))
+  await symlink(path.join(outside, 'source'), path.join(root, 'owner', 'source-link'), process.platform === 'win32' ? 'junction' : 'dir')
+  await symlink(outside, path.join(root, 'owner', 'target-link'), process.platform === 'win32' ? 'junction' : 'dir')
   const rename = createLocalProjectDirectoryRenamer(root)
 
   await assert.rejects(rename('owner', 'owner/source-link', 'owner/moved'), /符号链接/)

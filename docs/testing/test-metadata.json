@@ -12,7 +12,31 @@
     "layer": "L2",
     "owner": "packages/core/src/projects",
     "productionEntry": "createProjectTrashService / applyProjectUndo / createKyselyProjectFileCountReader",
-    "keyBehavior": "临时 SQLite 与真实 Host FS：同批恢复、冲突改名、owner、提交失败补偿及 Undo/redo 版本冲突与计数",
+    "keyBehavior": "临时 SQLite 与真实 Host FS：删除/恢复及 Undo/redo 目标竞态回滚项目、文件和操作终态；补偿冲突保留双方，兼顾同批恢复、owner、版本和计数",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/projects/project-trash-storage.test.ts": {
+    "domain": "projects",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/projects/persistence",
+    "productionEntry": "createLocalProjectTrashStorage",
+    "keyBehavior": "真实临时文件在预检查后创建目标、rollback 冲突均不覆盖双方；目录拒绝、owner 根和 symlink fail-closed",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/projects/project-directory-storage.test.ts": {
+    "domain": "projects",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/projects/persistence",
+    "productionEntry": "createLocalProjectDirectoryRenamer",
+    "keyBehavior": "无原子不覆盖目录原语时拒绝正反向移动，保留源树和权限；缺失源兼容、owner 与 symlink 边界",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/projects/project-undo-journal.test.ts": {
+    "domain": "undo",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/undo/persistence",
+    "productionEntry": "recoverProjectUndoJournal / createLocalProjectUndoJournalStorage",
+    "keyBehavior": "合成 SQL 端口与真实临时文件验证正反向恢复竞态、双硬链接和不支持目录时保留双方及 journal，不冒充 PG 集成",
     "ci": "node-webui"
   },
 "apps/web-host/tests/admin/safe-egress-probe.test.ts": {
@@ -4804,7 +4828,7 @@
     "layer": "L2",
     "owner": "apps/web-host/src/domains/undo",
     "productionEntry": "apps/web-host/src/domains/undo/persistence/core-operations.ts",
-    "keyBehavior": "项目撤销的日志锁序、提交不确定及文件恢复",
+    "keyBehavior": "PG 项目撤销的日志锁序、提交不确定与恢复协调；目录使用显式内存能力端口，不验收 Local 目录原语",
     "ci": "web-host-node"
   },
   "apps/web-host/tests/mind/core-undo-host-postgres.test.ts": {

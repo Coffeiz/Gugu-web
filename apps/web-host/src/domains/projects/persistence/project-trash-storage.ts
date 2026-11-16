@@ -1,7 +1,7 @@
 import { safeKey, trashKey, withConflictName, projectOriginalStorageKey, type OriginalProjectFileKey } from '@gugu/core/project-file-paths'
 export { projectOriginalStorageKey, projectFileTrashKey, createProjectTrashOriginalStorageKeyResolver } from '@gugu/core/project-file-paths'
 export type { OriginalProjectFileKey, ProjectTrashPathMetadataReader } from '@gugu/core/project-file-paths'
-import { chmod, chown, lstat, mkdir, realpath, rename, stat } from 'node:fs/promises'
+import { chmod, chown, lstat, mkdir, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import type {
   ProjectTrashFile,
@@ -10,6 +10,7 @@ import type {
 } from '../application/project-trash.js'
 import { ProjectTrashStoragePathError } from '../application/project-trash.js'
 import { isPathWithin } from '../../../adapters/path-safety.js'
+import { moveProjectFileNoReplace } from './project-path-move.js'
 
 export async function checkedPath(root: string, ownerId: string, key: string, allowMissing = true): Promise<string> {
   const segments = safeKey(ownerId, key)
@@ -44,7 +45,7 @@ async function inheritGroupAccess(filePath: string): Promise<void> {
   } catch { /* 与 Python 存储一致：文件移动成功优先，权限修复为 best-effort */ }
 }
 
-/** LocalStorageBackend 语义：物理 rename、(n) 冲突名、越界/symlink fail-closed。 */
+/** 保留 Local 冲突命名与缺文件语义，物理移动和补偿必须原子拒绝覆盖。 */
 export function createLocalProjectTrashStorage(
   storageRoot: string,
   originalKeyFor: OriginalProjectFileKey = projectOriginalStorageKey,
@@ -83,18 +84,12 @@ export function createLocalProjectTrashStorage(
     await mkdir(newParent, { recursive: true })
     await checkedPath(root, ownerId, newKey)
     if (beforeMove) await beforeMove(oldKey, newKey)
-    await rename(oldPath, newPath)
-    try {
-      await checkedPath(root, ownerId, newKey, false)
-      await verifyRealFileWithin(root, newPath)
-    } catch (error) {
-      try {
-        await rename(newPath, oldPath)
-      } catch {
-        throw new ProjectTrashStoragePathError('文件移动后无法恢复原路径')
-      }
-      throw error
-    }
+    await moveProjectFileNoReplace(oldPath, newPath, async () => {
+      await checkedPath(root, ownerId, oldKey, false)
+      await checkedPath(root, ownerId, newKey)
+      await verifyRealFileWithin(root, oldPath)
+      await verifyRealFileWithin(root, newParent)
+    })
     await inheritGroupAccess(newPath)
     let rolledBack = false
     return async () => {

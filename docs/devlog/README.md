@@ -8,6 +8,7 @@
 
 ### 2026-11-16
 
+- [PR #121 项目移动原子防覆盖](./2026-11-16-PR121项目移动原子防覆盖.md)
 - [Projects 文件计数、引用、恢复与 Undo 共享 Core](./2026-11-16-Projects文件计数引用恢复Undo共享Core.md)
 - [Projects/Clients 共享 Core 回归收尾](./2026-11-16-Projects-Clients共享Core回归收尾.md)
 

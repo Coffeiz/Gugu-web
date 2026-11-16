@@ -1,6 +1,7 @@
-import { chmod, chown, lstat, mkdir, readdir, realpath, rename, stat } from 'node:fs/promises'
+import { chmod, chown, lstat, mkdir, readdir, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { isPathWithin } from '../../../adapters/path-safety.js'
+import { moveProjectFileNoReplace } from './project-path-move.js'
 
 function keySegments(key: string): string[] {
   if (typeof key !== 'string' || key.length === 0 || key.includes('\0') || key.includes('\\') || key.startsWith('/'))
@@ -74,7 +75,7 @@ async function applyGroupAccessToTree(directory: string): Promise<void> {
   }
 }
 
-/** Rename a project directory inside a local storage root, matching LocalStorageBackend semantics. */
+/** 保留 Local 路径约束；平台缺少原子不覆盖目录移动能力时拒绝。 */
 export async function renameLocalProjectDirectory(
   storageRoot: string,
   oldPrefix: string,
@@ -124,7 +125,13 @@ export async function renameLocalProjectDirectory(
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
     await beforeMove(oldPrefix, newPrefix)
   }
-  await rename(oldPath, newPath)
+  // 当前 Node 无目录 rename-noreplace 原语；安全移动端口会拒绝，保留源目录。
+  await moveProjectFileNoReplace(oldPath, newPath, async () => {
+    await assertNoSymlinkComponents(root, oldPath)
+    await assertNoSymlinkComponents(root, newPath)
+    await assertRealpathWithin(root, oldPath)
+    await assertRealpathWithin(root, parent)
+  })
   onMoved?.()
   await assertNoSymlinkComponents(root, newPath)
   await assertRealpathWithin(root, newPath)

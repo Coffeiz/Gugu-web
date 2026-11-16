@@ -192,7 +192,7 @@ test('Vite→生产 main.ts→Node Host→隔离 PostgreSQL 完成项目与日�
     )
     const projectId = inserted.rows[0]!.id
     const oldProjectKey = `${ownerId}/项目文件/2026/11/旧项目 #${projectId}`
-    const newProjectKey = `${ownerId}/项目文件/2026/11/已更新项目 #${projectId}`
+    const newProjectKey = oldProjectKey // 不具备原子目录移动能力时保持原物理路径。
     const projectFileKey = `${oldProjectKey}/关联文档.md`
     const projectFilePath = join(storageRoot, ...projectFileKey.split('/'))
     await mkdir(dirname(projectFilePath), { recursive: true })
@@ -364,10 +364,13 @@ test('Vite→生产 main.ts→Node Host→隔离 PostgreSQL 完成项目与日�
         method: 'PATCH', headers,
         body: JSON.stringify({ version: 1, name: '已更新项目' }),
       })
-      assert.equal(update.status, 200)
-      assert.equal((await update.json() as { version: number }).version, 2)
-      assert.equal(await readFile(join(storageRoot, ...newProjectKey.split('/'), '关联文档.md'), 'utf8'), '合成项目文件')
-      await assert.rejects(readFile(projectFilePath), { code: 'ENOENT' })
+      assert.equal(update.status, 500, '缺少原子不覆盖目录移动能力时必须拒绝改名，沿用通用服务器错误脱敏')
+      assert.equal(await readFile(projectFilePath, 'utf8'), '合成项目文件')
+      const metadataUpdate = await fetch(`${base}/api/v1/projects/${projectId}`, {
+        method: 'PATCH', headers, body: JSON.stringify({ version: 1, progress: 30 }),
+      })
+      assert.equal(metadataUpdate.status, 200)
+      assert.equal((await metadataUpdate.json() as { version: number }).version, 2)
 
       const calendarInput = { title: '交付验收', date: '2099-11-14', type: 'deadline', projectId }
       const calendarHeaders = { ...headers, 'idempotency-key': 'calendar-create-contract' }
@@ -490,7 +493,7 @@ test('Vite→生产 main.ts→Node Host→隔离 PostgreSQL 完成项目与日�
         [projectId, created.id, ownerId],
       )
       assert.deepEqual(persisted.rows[0], {
-        project_name: '已更新项目', project_version: 4, project_deleted: null,
+        project_name: '旧项目', project_version: 4, project_deleted: null,
         event_version: 8, event_deleted: null, file_key: `${newProjectKey}/关联文档.md`, file_version: 3,
       })
       assert.equal(await readFile(join(storageRoot, ...newProjectKey.split('/'), '关联文档.md'), 'utf8'), '合成项目文件')

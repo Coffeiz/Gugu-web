@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { sql } from 'kysely'
 import { dataContext, createProjectGetter } from '@gugu/core'
 import { initializeSqlite, openSqliteRuntime, projectRecord, databaseTime } from '@gugu/core/data'
-import { createProjectTrashService, type ProjectTrashFile, type ProjectTrashTransaction } from '@gugu/core/project-trash'
+import { createProjectTrashService, type ProjectTrashFile, type ProjectTrashStorage, type ProjectTrashTransaction } from '@gugu/core/project-trash'
+import { projectFileTrashKey } from '@gugu/core/project-file-paths'
 import { applyProjectUndo, type ProjectUndoTransaction } from '@gugu/core/projects/undo'
 import { createKyselyProjectFileCountReader } from '@gugu/core/project-read-data'
 import { createRuntimeUndoTransactionPort, createUndoStateMachine } from '@gugu/core/undo'
@@ -18,7 +19,19 @@ test('Core 项目恢复/Undo 经过临时 SQLite 与真实 Host 文件端口，�
   await initializeSqlite(path)
   const { runtime, ownerId: owner } = await openSqliteRuntime(path)
   const context = dataContext(owner), key = owner.replaceAll('-', ''), events: unknown[] = []
-  const storage = createLocalProjectTrashStorage(root)
+  const diskStorage = createLocalProjectTrashStorage(root)
+  let conflictMove: 'delete' | 'restore' | null = null, conflictPath = '', rollbackConflict = false
+  function gate(direction: 'delete' | 'restore', before?: (from: string, to: string) => Promise<void>) {
+    if (!before && conflictMove !== direction) return undefined
+    return async (from: string, to: string) => {
+      await before?.(from, to)
+      if (conflictMove === direction) { conflictPath = to; await writeFile(join(root, to), '并发目标', { flag: 'wx' }) }
+    }
+  }
+  const storage: ProjectTrashStorage = {
+    moveToTrash: (user, item, before) => diskStorage.moveToTrash(user, item, gate('delete', before)),
+    restoreFromTrash: (user, item, project, folders, before) => diskStorage.restoreFromTrash(user, item, project, folders, gate('restore', before)),
+  }
   // 仅测试夹具投影：按路径保存旧模型快照，不给正式 SQLite 新建旧文件对象表。
   // 实际业务项目与 Undo 使用正式表；正式文件索引/授权根仍是单独的 Host 迁移事项。
   try {
@@ -70,7 +83,10 @@ test('Core 项目恢复/Undo 经过临时 SQLite 与真实 Host 文件端口，�
             artifact_refs: '{}', actor_type: 'web', status: 'active', created_at: databaseTime(now, 'sqlite'), expires_at: databaseTime(expires, 'sqlite'), undone_at: null, failure_code: null }).execute()
         },
       })
-      if (failCommit) throw new Error('合成提交前故障')
+      if (failCommit) {
+        if (rollbackConflict) await writeFile(join(root, originalPath), '回滚位置的新文件', { flag: 'wx' })
+        throw new Error('合成提交前故障')
+      }
       return result
     })
     const counts = createKyselyProjectFileCountReader(runtime.db, 'sqlite')
@@ -83,11 +99,43 @@ test('Core 项目恢复/Undo 经过临时 SQLite 与真实 Host 文件端口，�
     assert.equal((await getProject(runtime.db as unknown as Session, owner, project.id))!.version, 1)
     assert.equal(events.length, 0)
     failCommit = false
+    // 删除目标在预检查后才出现：安全错误必须穿过 Python 兼容 catch，回滚所有数据库写入。
+    conflictMove = 'delete'
+    await assert.rejects(service.deleteProject(owner, project.id), { code: 'EEXIST' })
+    assert.equal((await readCurrent()).deleted_at, null)
+    assert.equal((await getProject(runtime.db as unknown as Session, owner, project.id))!.version, 1)
+    assert.equal(events.length, 0)
+    assert.equal(await readFile(join(root, originalPath), 'utf8'), '原始内容')
+    assert.equal(await readFile(join(root, conflictPath), 'utf8'), '并发目标')
+    await unlink(join(root, conflictPath))
+    conflictMove = null
+    // 提交失败后补偿目标被占：事务仍回滚，磁盘两边均保留并报告 busy，不能覆盖新文件。
+    failCommit = true; rollbackConflict = true
+    await assert.rejects(service.deleteProject(owner, project.id), { code: 'busy' })
+    const trashPath = projectFileTrashKey(owner, file)
+    assert.equal(await readFile(join(root, originalPath), 'utf8'), '回滚位置的新文件')
+    assert.equal(await readFile(join(root, trashPath), 'utf8'), '原始内容')
+    assert.equal((await readCurrent()).deleted_at, null)
+    assert.equal((await getProject(runtime.db as unknown as Session, owner, project.id))!.version, 1)
+    assert.equal(events.length, 0)
+    await unlink(join(root, originalPath))
+    await diskStorage.restoreFromTrash(owner, { ...file, storage_key: trashPath }, project, [])
+    failCommit = false; rollbackConflict = false
     await service.deleteProject(owner, project.id, { undoContextId: 'project-test' })
     const deletedFile = await readCurrent()
     assert.equal(await readFile(join(root, deletedFile.storage_key), 'utf8'), '原始内容')
     assert.deepEqual(await counts.list(owner), [{ projectId: project.id, fileCount: 0 }])
     assert.deepEqual((await readFiles()).find(row => row.id === older.id), older)
+    conflictMove = 'restore'
+    const deletedProject = await getProject(runtime.db as unknown as Session, owner, project.id), eventCount = events.length
+    await assert.rejects(service.restoreProject(owner, project.id), { code: 'EEXIST' })
+    assert.deepEqual(await getProject(runtime.db as unknown as Session, owner, project.id), deletedProject)
+    assert.deepEqual(await readCurrent(), deletedFile)
+    assert.equal(events.length, eventCount)
+    assert.equal(await readFile(join(root, deletedFile.storage_key), 'utf8'), '原始内容')
+    assert.equal(await readFile(join(root, conflictPath), 'utf8'), '并发目标')
+    await unlink(join(root, conflictPath))
+    conflictMove = null
     await writeFile(join(root, originalPath), '保留重名文件')
     const restored = await service.restoreProject(owner, project.id)
     assert.equal(restored.fileCount, 1)
@@ -118,8 +166,27 @@ test('Core 项目恢复/Undo 经过临时 SQLite 与真实 Host 文件端口，�
     assert.equal(rollback.length, 0)
     await service.deleteProject(owner, project.id, { undoContextId: 'project-test-2' })
     const undoId = operationId
+    const undoSnapshot = async () => ({
+      project: await getProject(runtime.db as unknown as Session, owner, project.id), file: await readCurrent(),
+      operation: await runtime.db.selectFrom('undo_operations').selectAll().where('id', '=', undoId).executeTakeFirstOrThrow(),
+    })
+    // Undo 已先修改项目行；文件冲突必须使整笔 SQLite 事务回滚，终态也不能提前变更。
+    const beforeUndo = await undoSnapshot()
+    conflictMove = 'restore'
+    await assert.rejects(engine.apply(owner, 'project-test-2', undoId, 'undo'), { code: 'EEXIST' })
+    assert.deepEqual(await undoSnapshot(), beforeUndo)
+    assert.equal(await readFile(join(root, beforeUndo.file.storage_key), 'utf8'), '原始内容')
+    assert.equal(await readFile(join(root, conflictPath), 'utf8'), '并发目标')
+    await unlink(join(root, conflictPath)); conflictMove = null
     await engine.apply(owner, 'project-test-2', undoId, 'undo')
     assert.equal((await readCurrent()).deleted_at, null)
+    const beforeRedo = await undoSnapshot()
+    conflictMove = 'delete'
+    await assert.rejects(engine.apply(owner, 'project-test-2', undoId, 'redo'), { code: 'EEXIST' })
+    assert.deepEqual(await undoSnapshot(), beforeRedo)
+    assert.equal(await readFile(join(root, beforeRedo.file.storage_key), 'utf8'), '原始内容')
+    assert.equal(await readFile(join(root, conflictPath), 'utf8'), '并发目标')
+    await unlink(join(root, conflictPath)); conflictMove = null
     await engine.apply(owner, 'project-test-2', undoId, 'redo')
     assert.ok((await readCurrent()).deleted_at)
     assert.equal(await readFile(join(root, (await readCurrent()).storage_key), 'utf8'), '原始内容')
