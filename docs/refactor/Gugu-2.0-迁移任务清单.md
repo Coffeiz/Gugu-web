@@ -41,7 +41,26 @@ Agent 工具与技能正文的注册、配置和授权边界见 [Agent 工具与
 - [x] 补充现有项目/联系人同逻辑回归、共用双库契约、Python 序列对照及 pytest 语义分层；最终门禁结果以 PR 为准。
 - [ ] 完整业务 schema/Alembic 历史、升级与跨版本回滚策略交接。
 
+**Projects/Clients 本轮收尾（2026-11-16）**：
+
+- [x] 正式 SQLite schema 17 的项目更新回归：Core Web 更新用例经共享 Kysely 事务验证字段/null、阶段、归档、完成时间、owner/墓碑、空补丁、CAS 和失败回滚；桌面基础改名经实际 IPC/Worker 验证。
+- [x] 核对联系人 SQLite/PG 共用实现与 Python 契约；补充码点长度、部分更新、删除/收据原子性和重开持久化，Web/桌面实际调用者均使用公开 Core 能力。
+- [ ] 本轮 PostgreSQL 合同重跑：当前环境没有可用隔离实例或连接变量，未实测，不用历史报告、SQLite 或 mock 代替。
+
+本机 Core 定向 6 文件 71/71、桌面项目/联系人 3/3、Python pytest 57/57；Core 生产构建及本切片定向 TypeScript 构建通过。完整测试类型检查和标准发现入口另有无关既存错误。旧文件目录改名、计数、文件引用/恢复/Undo、生产 schema 和部署不在本轮闭合范围，详见 [回归证据与边界](../devlog/2026-11-16-Projects-Clients共享Core回归收尾.md)。
+
 ### N2——Node Web/NAS 后端迁移
+
+**Projects 文件共享层（2026-11-16，续接前述数据更新切片）**：
+
+- [x] 项目文件计数读取统一到 Core，Web 项目列表/详情/计数和变更回执复用同一适配；保留 owner 与旧投影语义，不扫描文件库或假造缺失投影。
+- [x] 文件相对引用的路径解码、逐段查询、scope 根和文件优先规则进入 Core；现有 Web 文件查询适配已接入，Host 保留 owner/scope 查询和旧 DTO。
+- [x] 项目删除/恢复、逻辑恢复路径、项目 Undo/redo 和 journal 文件恢复决策进入 Core；现有 Web 接线通过薄事务/存储适配复用，物理文件访问留在 Host。
+- [x] 临时 SQLite/真实临时文件验证同批恢复、冲突改名、事务失败补偿、owner/版本拒绝与 Undo/redo；Node Core 26/26、Host 有效子集 30/30、原 Python pytest 72/72、补充路径对照 12/12，Core 构建及定向类型检查通过。
+- [ ] 正式 SQLite 路径索引/计数投影、授权根和桌面文件端口生产装配；不新建旧文件对象 ID 体系来补齐此项。
+- [ ] 隔离 PostgreSQL/完整多域 schema、完整认证文件 Undo 路由与跨进程 journal 验收；本轮无 PG，整站路由测试另因缺少图像依赖未加载，不计通过。
+
+具体 Python 规则、实际调用链、夹具范围、已保留差异和 FS 依赖见 [共享层与验收记录](../devlog/2026-11-16-Projects文件计数引用恢复Undo共享Core.md)。这完成可独立的共享规则与现有 Web 接入，不代表完整 Local 文件库或桌面物理生命周期已迁移。
 
 引导状态规则与事务仓储已移入 Core，Web Host 已接入 PostgreSQL 仓储；正式 SQLite schema 14 新增状态表及 owner 约束。隔离 SQLite 的引导及旧版升级回归 44 通过，覆盖版本 12/13 升级、冲突回滚和非空约束；另以临时用户态 PostgreSQL 运行 Core 双库合同 5/5、Host 路由与 PG 仓储 3/3、生产 startServer 鉴权与 PG 集成 1/1，Python 基线 3/3。Core 构建及当前树 Host 类型检查通过；先前类型检查曾被 Admin 测试缺失模块阻断。生产组合根测试使用 Fastify 注入，桌面调用方尚未验收。
 
@@ -113,7 +132,7 @@ Harness 已支持可信工具适配器分别提供模型结果和原始展示结
 
 本轮冻结源码的 Harness 与全部 Core Provider 定向回归共 10 文件、572/572 通过、无跳过；这是源码级回归，不代表生产 Host 或真实 Provider 已验收。
 
-**跨端公共化进度**：日历创建、更新、删除用例已迁入 Core，Web Host 保留 PostgreSQL 适配；隔离 PG/生产 Host 回归 50/50、Python 对照 6/6，日历管理 list/get 也已委托 Core，正式临时 SQLite 8/8、隔离 PG/Host 3/3、Python 读取对照 5/5，Agent 范围查询仍待迁移。日历创建、更新和删除双库事务已接入 Core 和生产 Host；隔离 SQLite/PG 合同通过，生产 Host/Vite 验证幂等、提醒重排、越权、冲突、Undo/redo 和与现有 Host RAG 生产者混合并发；撤销执行器和 RAG 消费仍需独立验收。便签创建、更新、删除用例及 Undo 写入事务已接入 Core；各自 SQLite/PG 合同通过，生产 Host/Vite 在合成隔离 PG schema 验证创建、更新、删除、读取、越权、冲突及 Undo/redo，Python Mind 对照 39/39；画布创建、更新和删除已接入 Core 双库事务及生产 Host；隔离 PG 验证项目归属、跨 owner 拒绝、关联项和关系的 Undo/redo 与便签正文保留；画布其他操作和撤销执行器尚未完整公共化。Core SQLite schema 13 增加 SMTP 设置表并保留此前交互动作、通知和业务数据；工作区和文件授权字段尚受限，后台消费者及凭据交互尚未由建表接通；版本升级回归 40/40、桌面 Host 回归 15/15、Python 互读 2/2。SMTP 设置读写已接通 Core 双库和生产 Host，正式 SQLite/隔离 PG 合同 2/2、Host/Vite/隔离 PG 1/1、Python 对照 3/3；真实邮件与部署未验收。项目创建用例和事务适配器已接入 Core，SQLite/PG 合同回归 2/2，生产 Host/Vite 在合成隔离 PG schema 验证创建和幂等重放 1/1；项目更新用例也已迁入 Core，Host 的隔离 PG、临时 FS 和生产组合根回归 21/21；工作区声明创建/更新及列表已委托 Core，Host 隔离 PG 与相关 Python pytest 各 5/5；列表另有隔离 SQLite 原型 12/12、PG 1/1、Host 4/4、Python 19/19，详见 `docs/testing/node-agent-workspace-port.md`。工作区会话绑定、解绑和当前查询也已委托 Core，临时 SQLite 12/12、隔离 PG/Host 3/3、Python 19/19；声明删除已委托 Core，临时 SQLite 14/14、隔离 PG 4/4、Python 2/2，正式 SQLite 和物理目录清理未接通；通知中心已接入 Core 双库及生产 Host，隔离合同 2/2、Host/Vite/PG 1/1、Python 4/4。项目更新与工作区的正式 SQLite 适配、Local ACL、完整生产 schema 和真实部署尚未验收。
+**跨端公共化进度**：日历创建、更新、删除用例已迁入 Core，Web Host 保留 PostgreSQL 适配；隔离 PG/生产 Host 回归 50/50、Python 对照 6/6，日历管理 list/get 也已委托 Core，正式临时 SQLite 8/8、隔离 PG/Host 3/3、Python 读取对照 5/5，Agent 范围查询仍待迁移。日历创建、更新和删除双库事务已接入 Core 和生产 Host；隔离 SQLite/PG 合同通过，生产 Host/Vite 验证幂等、提醒重排、越权、冲突、Undo/redo 和与现有 Host RAG 生产者混合并发；撤销执行器和 RAG 消费仍需独立验收。便签创建、更新、删除用例及 Undo 写入事务已接入 Core；各自 SQLite/PG 合同通过，生产 Host/Vite 在合成隔离 PG schema 验证创建、更新、删除、读取、越权、冲突及 Undo/redo，Python Mind 对照 39/39；画布创建、更新和删除已接入 Core 双库事务及生产 Host；隔离 PG 验证项目归属、跨 owner 拒绝、关联项和关系的 Undo/redo 与便签正文保留；画布其他操作和撤销执行器尚未完整公共化。Core SQLite schema 13 增加 SMTP 设置表并保留此前交互动作、通知和业务数据；工作区和文件授权字段尚受限，后台消费者及凭据交互尚未由建表接通；版本升级回归 40/40、桌面 Host 回归 15/15、Python 互读 2/2。SMTP 设置读写已接通 Core 双库和生产 Host，正式 SQLite/隔离 PG 合同 2/2、Host/Vite/隔离 PG 1/1、Python 对照 3/3；真实邮件与部署未验收。项目创建用例和事务适配器已接入 Core，SQLite/PG 合同回归 2/2，生产 Host/Vite 在合成隔离 PG schema 验证创建和幂等重放 1/1；项目更新用例也已迁入 Core，Host 的隔离 PG、临时 FS 和生产组合根回归 21/21；工作区声明创建/更新及列表已委托 Core，Host 隔离 PG 与相关 Python pytest 各 5/5；列表另有隔离 SQLite 原型 12/12、PG 1/1、Host 4/4、Python 19/19，详见 `docs/testing/node-agent-workspace-port.md`。工作区会话绑定、解绑和当前查询也已委托 Core，临时 SQLite 12/12、隔离 PG/Host 3/3、Python 19/19；声明删除已委托 Core，临时 SQLite 14/14、隔离 PG 4/4、Python 2/2，正式 SQLite 和物理目录清理未接通；通知中心已接入 Core 双库及生产 Host，隔离合同 2/2、Host/Vite/PG 1/1、Python 4/4。项目更新的正式 SQLite 数据路径已补充回归，见下方 Projects/Clients 收尾记录；旧文件目录/计数联动、工作区正式 SQLite 适配、Local ACL、完整生产 schema 和真实部署仍未验收。
 
 Agent 会话改名、消息定位、会话列表、上下文刷新和待发送队列的现有 Web 用例已委托 Core；HTTP、认证与 Redis 状态仍由 Host 提供。隔离 PostgreSQL 和 SQLite 契约、相关 Web Host 与 Python 对照已通过。SQLite schema 6 增加会话、消息、批次和队列表，以及显式备份升级和 owner/会话约束；Core 定向回归 31/31、桌面 CoreHost 15/15、Python 互读 2/2。工作区绑定目前只允许为空，文件授权与桌面 Agent IPC 未接入，真实生产打包制品未验收。Core 队列公开读取已移除认领令牌和到期字段；队列与聊天发送尚未共享完整事务，Redis 活跃状态也不是数据库事务事实。消息媒体脱敏、群聊提及规则、群会话最近发言昵称查询及 Run 密文编解码已由 Core 共用；昵称查询正式 SQLite/隔离 PG 各 1/1、Host 11/11、Python 定向 6/6，当前 Bot 默认名及用户 Bot 配置名仍由 Host 补全；交互历史投影和活动令牌轮换已委托 Core 双库事务及 Node Host，隔离 PG/Host 9/9、Python 定向 4/4；实际消费、桌面调用与完整消息历史尚未接通。历史分页、孤儿恢复和完整 RunStore 尚未完成公共化。活动恢复叠加时间窗口可能对无关过期记录产生锁竞争，SQLite 为单写者，PG action 锁等待依赖数据库超时；既有 Python 与 Node 消费者间锁序差异仍需解决。现有孤儿恢复只检查旧 Redis 状态；真实 Node 恢复函数在隔离 PG/Redis 中与合成的新运行启动交错时，已复现清空新运行和删除其状态键。该实验未运行真实 Python 协程或完整 HTTP，也不是生产事故证据；接入 Node 租约前必须协调两端运行身份与回收协议并完成真实两端交错验证。
 
@@ -121,7 +140,7 @@ Agent 会话改名、消息定位、会话列表、上下文刷新和待发送�
 
 **通知与日历读取目录收敛**：通知 HTTP 路由迁至 `modules/notifications`，生产继续使用 Core 双库实现；旧 Host PostgreSQL 适配器及其旧目录已删除，原持久化测试改用 Core 适配器。隔离 SQLite/PG 合同 2/2、生产 Host/Vite/隔离 PG 1/1、Host 路由 4/4、Python 对照 4/4。日历列表与详情由生产 Host 直接装配 Core 读取用例及双库端口，旧 Host 重复查询已删除，写事务仍需的查询辅助保留；正式 SQLite 8/8、隔离 PG/Host 3/3、Python 管理读取 3/3，隔离 PG 综合持久化 1/1。两项均未验收真实部署；Agent 日历提醒聚合仍未接通。
 
-**联系人 Host 目录收敛**：Web 联系人路由和身份/事务桥已迁至 `modules/clients`，真实读写仍复用既有 Core 服务及双库仓储；Agent 工具、Host 装配和测试导入已更新，旧目录无引用。正式 SQLite 40/40、隔离 PG 1/1、Host/隔离 PG 与生产 Vite 6/6、Python 对照 3/3，Host 类型检查通过；目录移动本身不代表新增业务能力，真实部署未验收。
+**联系人 Host 目录收敛**：Web 联系人路由和身份/事务桥已迁至 `modules/clients`，真实读写复用 Core `ClientService`/双库仓储；桌面通过公开 Core 命令维护联系人。历史 PG/Vite 结果不替代当前验收，本轮正式 SQLite 共用合同、桌面具名 IPC 与 Python 结果见下方收尾记录；PG 本轮未运行，真实部署未验收。
 
 **项目 Core 目录收敛**：创建、更新、读取和投影及相应数据端口已归入 `packages/core/src/projects/`，公开包子路径不变；旧 Core 内部路径及 Host 创建/更新转发已删除，实际调用方和测试使用新入口。Core 定向 73/73、隔离 PG 1/1、Host 项目与生产 Vite/隔离 PG 29/29、Python 工具及读取 28/28；真实部署未验收。跨领域共享事务和仓储仍保留在共享基础设施，项目文件操作与恢复不因目录迁移而算作跨端完成。
 

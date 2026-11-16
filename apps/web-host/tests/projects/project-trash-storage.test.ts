@@ -178,7 +178,8 @@ test('Local restore rejects a symlinked metadata target instead of swallowing th
   try {
     const ownerRoot = path.join(root, ownerId)
     await mkdir(ownerRoot, { recursive: true })
-    await symlink(outside, path.join(ownerRoot, '思维'))
+    // Windows 用目录 junction 表达同一越界链接，无需系统符号链接创建特权。
+    await symlink(outside, path.join(ownerRoot, '思维'), process.platform === 'win32' ? 'junction' : 'dir')
     const storage = createLocalProjectTrashStorage(root, () => `${ownerId}/思维/路线图 #9/note.md`)
     await assert.rejects(
       storage.restoreFromTrash(ownerId, { ...file, space: 'mind', storage_key: `${ownerId}/trash/note.md` }, project, []),

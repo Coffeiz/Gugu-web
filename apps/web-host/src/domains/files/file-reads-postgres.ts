@@ -1,3 +1,4 @@
+import { resolveRelativeReferences } from '@gugu/core/files/relative-references'
 import { CoreError } from '@gugu/core'
 import { openAuthorizedRelativeFile } from '@gugu/core/files/read'
 import { openLocalFile, UnsafeLocalPathError } from '@gugu/fs/node'
@@ -45,17 +46,6 @@ function nullableNumber(value: number | string | null): number | null {
 function colorValue(raw: string | null): string | null {
   if (!raw) return null
   return raw.match(/#[0-9a-fA-F]{3,6}/)?.[0] ?? raw
-}
-
-function relativePathParts(pathValue: string): string[] | null {
-  let decoded: string
-  try { decoded = decodeURIComponent(pathValue) } catch { return null }
-  const logicalPath = decoded.split(/[?#]/, 1)[0] ?? ''
-  if (/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(decoded) || decoded.startsWith('//')
-    || logicalPath.startsWith('/') || logicalPath.startsWith('\\')
-    || logicalPath.includes('\\') || logicalPath.includes('\0')) return null
-  const parts = logicalPath.split('/').filter((part) => part !== '' && part !== '.')
-  return parts.length ? parts : null
 }
 
 async function sourceFolderPath(pool: Pool, ownerId: string, file: FileRow): Promise<FolderRow[] | null> {
@@ -119,42 +109,6 @@ async function relativeFolder(
 ): Promise<FolderRow | null> {
   if (name === '' || name === '.' || name === '..') return null
   return childFolder(pool, ownerId, source, parentId, name)
-}
-
-async function resolveRelativePath(
-  pool: Pool, ownerId: string, source: FileRow, sourcePath: FolderRow[], originalPath: string,
-): Promise<Record<string, unknown>> {
-  const parts = relativePathParts(originalPath)
-  if (!parts) return { path: originalPath, file: null, folder: null }
-  const currentPath = [...sourcePath]
-  for (const part of parts.slice(0, -1)) {
-    if (part === '..') {
-      if (!currentPath.length) return { path: originalPath, file: null, folder: null }
-      currentPath.pop()
-      continue
-    }
-    const folder = await childFolder(pool, ownerId, source, currentPath.at(-1) ? Number(currentPath.at(-1)!.id) : null, part)
-    if (!folder) return { path: originalPath, file: null, folder: null }
-    currentPath.push(folder)
-  }
-  const parentId = currentPath.at(-1) ? Number(currentPath.at(-1)!.id) : null
-  const basename = parts.at(-1)!
-  const file = await relativeFile(pool, ownerId, source, parentId, basename)
-  const folder = file ? null : await relativeFolder(pool, ownerId, source, parentId, basename)
-  return {
-    path: originalPath,
-    file: file ? fileResponse(file) : null,
-    folder: folder ? {
-      id: Number(folder.id),
-      projectId: nullableNumber(folder.project_id),
-      workspaceDirectoryId: nullableNumber(folder.workspace_directory_id),
-      parentId: nullableNumber(folder.parent_id),
-      name: folder.name,
-      fileCount: 0,
-      folderCount: 0,
-      version: Number(folder.version ?? 1),
-    } : null,
-  }
 }
 
 function isoUtc(raw: string | Date): string {
@@ -295,10 +249,25 @@ export function createPostgresFileReadOperations(
       if (!source) return null
       const folders = await sourceFolderPath(pool, ownerId, source)
       if (folders === null) return null
-      const resolved = []
-      for (const pathValue of paths)
-        resolved.push(await resolveRelativePath(pool, ownerId, source, folders, pathValue))
-      return resolved
+      const byPath = new Map<string, FolderRow>()
+      const key = (parts: readonly string[]) => JSON.stringify(parts)
+      const sourcePath: string[] = []
+      for (const folder of folders) { sourcePath.push(folder.name); byPath.set(key(sourcePath), folder) }
+      const parentId = (parts: readonly string[]) => parts.length ? Number(byPath.get(key(parts))!.id) : null
+      return resolveRelativeReferences(sourcePath, paths, {
+        async fileAt(directory, name) {
+          const file = await relativeFile(pool, ownerId, source, parentId(directory), name)
+          return file ? fileResponse(file) : null
+        },
+        async folderAt(directory, name) {
+          const folder = await relativeFolder(pool, ownerId, source, parentId(directory), name)
+          if (!folder) return null
+          byPath.set(key([...directory, name]), folder)
+          return { id: Number(folder.id), projectId: nullableNumber(folder.project_id),
+            workspaceDirectoryId: nullableNumber(folder.workspace_directory_id), parentId: nullableNumber(folder.parent_id),
+            name: folder.name, fileCount: 0, folderCount: 0, version: Number(folder.version ?? 1) }
+        },
+      })
     },
 
     async getSummary(ownerId, recentLimit) {

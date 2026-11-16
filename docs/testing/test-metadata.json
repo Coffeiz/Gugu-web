@@ -1,4 +1,20 @@
 {
+  "packages/core/tests/projects/relative-references.test.ts": {
+    "domain": "files",
+    "layer": "L1",
+    "owner": "packages/core/src/files",
+    "productionEntry": "resolveRelativeReferences",
+    "keyBehavior": "按来源路径逐段解析，根边界、编码与文件优先规则，查询失败不得伪装不存在",
+    "ci": "core-node"
+  },
+  "apps/web-host/tests/projects/project-core-sqlite.test.ts": {
+    "domain": "projects",
+    "layer": "L2",
+    "owner": "packages/core/src/projects",
+    "productionEntry": "createProjectTrashService / applyProjectUndo / createKyselyProjectFileCountReader",
+    "keyBehavior": "临时 SQLite 与真实 Host FS：同批恢复、冲突改名、owner、提交失败补偿及 Undo/redo 版本冲突与计数",
+    "ci": "node-webui"
+  },
 "apps/web-host/tests/admin/safe-egress-probe.test.ts": {
     "domain": "api",
     "layer": "L2",
@@ -3842,17 +3858,17 @@
   "packages/core/tests/unit/data/contract.test.ts": {
     "domain": "core-node-contract",
     "layer": "L1",
-    "owner": "gugu-core",
-    "productionEntry": "packages/core/src/data/services.ts",
-    "keyBehavior": "双库联系人维护/隔离/回滚、收据内容规范化与冲突、同 UUID 跨用户隔离、CAS 失败恢复及重放不递增",
+    "owner": "packages/core/src/projects + clients",
+    "productionEntry": "ProjectService / createProjectUpdater / ClientService / runtime/commands",
+    "keyBehavior": "正式 SQLite 项目更新字段、完成时间、owner/墓碑、CAS 和回滚；联系人码点长度/null/删除原子性；桌面命令收据与重开持久化",
     "ci": "core-node"
   },
   "packages/core/tests/integration/postgres/contract.test.ts": {
     "domain": "core-node-contract",
     "layer": "L2",
-    "owner": "gugu-core",
-    "productionEntry": "packages/core/src/data/services.ts",
-    "keyBehavior": "双库联系人维护/隔离/回滚、收据内容规范化与冲突、同 UUID 跨用户隔离、CAS 失败恢复及重放不递增",
+    "owner": "packages/core/src/projects + clients",
+    "productionEntry": "ProjectService / createProjectUpdater / ClientService",
+    "keyBehavior": "与 SQLite 共用项目更新字段、完成时间、owner/墓碑、CAS/事务回滚和联系人码点长度/null/删除原子性合同；须显式提供隔离 PG",
     "ci": "core-node"
   },
   "packages/core/tests/unit/domain/fields.test.ts": {

@@ -56,7 +56,7 @@ test('Local 恢复不覆盖目标且拒绝符号链接', async () => {
     await assert.rejects(() => storage.move('owner', 'owner/a', 'owner/b'))
     assert.equal(await readFile(path.join(root, 'owner', 'a'), 'utf8'), '源')
     assert.equal(await readFile(path.join(root, 'owner', 'b'), 'utf8'), '目标')
-    await symlink(tmpdir(), path.join(root, 'owner', 'outside'))
+    await symlink(tmpdir(), path.join(root, 'owner', 'outside'), process.platform === 'win32' ? 'junction' : 'dir')
     await assert.rejects(() => storage.exists('owner', 'owner/outside/a'))
     await assert.rejects(() => storage.exists('owner', '../outside'))
   } finally { await rm(root, { recursive: true, force: true }) }

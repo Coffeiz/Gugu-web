@@ -1,12 +1,8 @@
+import { recoverProjectFileMoves, type ProjectUndoMove } from '@gugu/core/projects/undo'
+export type { ProjectUndoMove, ProjectUndoJournalStorage } from '@gugu/core/projects/undo'
+import type { ProjectUndoJournalStorage } from '@gugu/core/projects/undo'
 import type { Pool } from 'pg'
 
-export interface ProjectUndoMove { from: string; to: string }
-export interface ProjectUndoJournalStorage {
-  /** 检查授权根内路径，拒绝符号链接和越界。 */
-  exists(ownerId: string, key: string): Promise<boolean>
-  /** 不得覆盖目标；源和目标都必须处于 owner 授权根内。 */
-  move(ownerId: string, from: string, to: string): Promise<void>
-}
 export interface ProjectUndoJournal {
   id: string
   ownerId: string
@@ -47,17 +43,8 @@ export async function recoverProjectUndoJournal(pool: Pool, storage: ProjectUndo
     if (!journal) { await client.query('COMMIT'); return false }
     const operation = await client.query<{ status: string }>('SELECT status FROM undo_operations WHERE id=$1 AND user_id=$2 FOR UPDATE', [journal.operation_id, journal.user_id])
     const status = operation.rows[0]?.status
-    if (status !== journal.before_status && status !== journal.after_status) throw new Error('撤销操作状态与文件日志不一致')
-    const committed = status === journal.after_status
-    const moves = committed ? journal.moves : [...journal.moves].reverse()
-    for (const move of moves) {
-      const from = committed ? move.from : move.to
-      const to = committed ? move.to : move.from
-      const source = await storage.exists(journal.user_id, from)
-      const target = await storage.exists(journal.user_id, to)
-      if (source && !target) await storage.move(journal.user_id, from, to)
-      else if (source || !target) throw new Error('撤销文件日志路径状态不明确')
-    }
+    await recoverProjectFileMoves({ ownerId: journal.user_id, beforeStatus: journal.before_status,
+      afterStatus: journal.after_status, moves: journal.moves }, status, storage)
     await client.query('DELETE FROM project_undo_journals WHERE id=$1', [journal.id])
     await client.query('COMMIT')
     return true

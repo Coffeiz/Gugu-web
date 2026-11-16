@@ -1,4 +1,9 @@
 {
+  "tests/projects/relative-references.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
   "tests/im/attention/message.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/im/attention/normalization.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/im/attention/question.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},

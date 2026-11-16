@@ -1,3 +1,4 @@
+import { buildOriginalKey } from '@gugu/core/project-file-paths'
 import { CoreError } from '@gugu/core'
 import { link, lstat, mkdir, realpath, unlink } from 'node:fs/promises'
 import path from 'node:path'
@@ -149,19 +150,10 @@ async function originalStorageKey(client: PoolClient, ownerId: string, file: Fil
     mindMapTitle = result.rows[0]?.title ?? ''
   }
 
-  const ext = file.ext ? `.${file.ext.toLowerCase()}` : ''
-  const filename = `${safeName(file.display_name)}${ext}`
-  if (file.space === 'project') {
-    const datePath = projectDate.slice(0, 4) && projectDate.slice(5, 7)
-      ? `${projectDate.slice(0, 4)}/${projectDate.slice(5, 7)}/` : ''
-    return `${ownerId}/项目文件/${datePath}${safeName(projectName)} #${Number(file.project_id ?? 0)}${folderPath ? `/${folderPath}` : ''}/${filename}`
-  }
-  if (file.space === 'mind')
-    return `${ownerId}/思维/${safeName(mindMapTitle)} #${Number(file.mind_map_id ?? 0)}/${filename}`
-  if (file.space === 'asset') return `${ownerId}/素材板/${filename}`
-  if (file.space === 'workspace')
-    return `${ownerId}/workspace/${workspaceName}${folderPath ? `/${folderPath}` : ''}/${filename}`
-  return `${ownerId}/个人文件/${folderPath ? `${folderPath}/` : ''}${filename}`
+  return buildOriginalKey(ownerId, file, {
+    projectName, projectDate, projectId: Number(file.project_id ?? 0), folderPath,
+    mindMapTitle, mindMapId: Number(file.mind_map_id ?? 0), workspaceDirectoryName: workspaceName,
+  })
 }
 
 async function restoreLocalFile(
