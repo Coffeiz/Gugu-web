@@ -3,6 +3,11 @@ import { DESKTOP_CHANNELS } from '@gugu/core/desktop'
 import type { DesktopBridge } from '@gugu/core/desktop'
 import type { DesktopAppearancePreferences } from '@gugu/core/desktop'
 
+type CanvasItemAddBody = Parameters<DesktopBridge['addCanvasItem']>[1]
+type CanvasItemFrontBody = Parameters<DesktopBridge['bringCanvasItemToFront']>[2]
+type CanvasRelationBody = Parameters<DesktopBridge['createCanvasRelation']>[0]
+type CanvasNoteBody = Parameters<DesktopBridge['createCanvasNote']>[1]
+
 const bridge: DesktopBridge = Object.freeze({
   appearance: () => ipcRenderer.invoke(DESKTOP_CHANNELS.appearance),
   updateAppearance: (patch: Partial<DesktopAppearancePreferences>) => ipcRenderer.invoke(DESKTOP_CHANNELS.updateAppearance, patch),
@@ -20,12 +25,19 @@ const bridge: DesktopBridge = Object.freeze({
   deleteCalendarEvent: (id: number, version: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.deleteCalendarEvent, id, version),
   canvases: () => ipcRenderer.invoke(DESKTOP_CHANNELS.canvases),
   createCanvas: (title: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.createCanvas, title),
-  updateCanvas: (id: number, body: { title: string }) => ipcRenderer.invoke(DESKTOP_CHANNELS.updateCanvas, id, body),
+  updateCanvas: (id: number, body: { title?: string; data?: Record<string, unknown> }) => ipcRenderer.invoke(DESKTOP_CHANNELS.updateCanvas, id, body),
   deleteCanvas: (id: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.deleteCanvas, id),
   canvasItems: (canvasId: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.canvasItems, canvasId),
-  createCanvasNote: (canvasId: number, contentMd: string, color?: string, x?: number, y?: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.createCanvasNote, canvasId, { contentMd, color, x, y }),
+  canvasRelations: (canvasId: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.canvasRelations, canvasId),
+  addCanvasItem: (canvasId: number, body: CanvasItemAddBody) => ipcRenderer.invoke(DESKTOP_CHANNELS.addCanvasItem, canvasId, body),
+  bringCanvasItemToFront: (canvasId: number, id: number, body: CanvasItemFrontBody) => ipcRenderer.invoke(DESKTOP_CHANNELS.bringCanvasItemToFront, canvasId, id, body),
+  createCanvasRelation: (body: CanvasRelationBody) => ipcRenderer.invoke(DESKTOP_CHANNELS.createCanvasRelation, body),
+  deleteCanvasRelation: (canvasId: number, id: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.deleteCanvasRelation, canvasId, id),
+  createRefNode: (refType: 'project' | 'file' | 'event', refId: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.createRefNode, refType, refId),
+  canvasNoteLocation: (nodeId: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.canvasNoteLocation, nodeId),
+  createCanvasNote: (canvasId: number, body: CanvasNoteBody) => ipcRenderer.invoke(DESKTOP_CHANNELS.createCanvasNote, canvasId, body),
   updateCanvasNote: (id: number, fields: { version: number; contentMd?: string; title?: string | null; color?: string | null }) => ipcRenderer.invoke(DESKTOP_CHANNELS.updateCanvasNote, id, fields),
-  updateCanvasItem: (canvasId: number, id: number, body: { x?: number; y?: number; w?: number | null; h?: number | null }) => ipcRenderer.invoke(DESKTOP_CHANNELS.updateCanvasItem, canvasId, id, body),
+  updateCanvasItem: (canvasId: number, id: number, body: Parameters<DesktopBridge['updateCanvasItem']>[2]) => ipcRenderer.invoke(DESKTOP_CHANNELS.updateCanvasItem, canvasId, id, body),
   deleteCanvasItem: (canvasId: number, id: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.deleteCanvasItem, canvasId, id),
   notes: () => ipcRenderer.invoke(DESKTOP_CHANNELS.notes),
   createNote: (contentMd: string, color?: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.createNote, contentMd, color),

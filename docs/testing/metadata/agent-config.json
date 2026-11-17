@@ -1,0 +1,26 @@
+{
+  "apps/web-host/tests/agent-config/platform-model-settings.test.ts": {
+    "domain": "agent-provider",
+    "layer": "L1",
+    "owner": "apps/web-host/src/domains/agent-config/platform-model-settings.ts",
+    "productionEntry": "可信平台模型配置解析 → BYOK gate 与模型池策略",
+    "keyBehavior": "验证默认值、AI JSON/嵌套环境/override 优先级、预设池保留、local deployment BYOK 规则及无效配置 fail closed",
+    "ci": "web-host-node"
+  },
+  "apps/web-host/tests/agent-config/web-provider-binding.test.ts": {
+    "domain": "agent-provider",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/agent-config/web-provider-binding.ts",
+    "productionEntry": "Web Run provider snapshot binding",
+    "keyBehavior": "队列 contextScopeKey 与 Core accessScopeHash 分离绑定；版本变化拒绝恢复且释放凭据快照",
+    "ci": "web-host-node"
+  },
+  "apps/web-host/tests/agent-config/configured-web-provider-binding.test.ts": {
+    "domain": "agent-provider",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/agent-config/configured-web-provider-binding.ts",
+    "productionEntry": "当前 Web Host 配置/提示词/BYOK → recoverable provider binding → Core Run selection",
+    "keyBehavior": "合成配置变更生成不同访问范围摘要，敏感材料不出现在摘要中；Run selection 复用同一 scope key/model identity 并验证上下文预算与 locale",
+    "ci": "web-host-node"
+  }
+}

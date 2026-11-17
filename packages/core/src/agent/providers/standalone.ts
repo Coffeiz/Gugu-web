@@ -23,17 +23,22 @@ export function parseStructuredJson(text: string): JsonObject {
 /** 通过共享协议驱动执行不依赖聊天 Run 的短文本请求；Host 必须注入受控 transport。 */
 export async function completeStandaloneText(input: {
   config: ProviderConfig
+  system?: string
   prompt: string
   maxTokens: number | null
+  outputMode?: 'text' | 'json'
+  thinking?: string | null
+  exactMaxTokens?: boolean
   signal: AbortSignal
   identity: RunIdentity
 }, dependencies: ProviderDriverDependencies): Promise<string> {
-  const { config, policy, driver } = providerSelection(input.config)
+  const { config, policy, driver } = providerSelection({ ...input.config, ...(input.thinking === undefined ? {} : { thinking: input.thinking }) })
   const history = driver.project([{ role: 'user', content: input.prompt }], config, policy)
   const result = await driver.complete({
-    config, policy, history, system: '', tools: [], signal: input.signal,
+    config, policy, history, system: input.system ?? '', tools: [], signal: input.signal,
     scope: { ...input.identity, round: 0, modelIdentity: config.model, accessScopeHash: '' },
-    purpose: 'standalone', maxOutputTokens: outputBudget(config, policy, input.maxTokens),
+    purpose: 'standalone', maxOutputTokens: input.exactMaxTokens ? input.maxTokens : outputBudget(config, policy, input.maxTokens),
+    ...(input.outputMode === undefined ? {} : { outputMode: input.outputMode }),
   }, dependencies)
   return stripThinking(result.text).trim()
 }

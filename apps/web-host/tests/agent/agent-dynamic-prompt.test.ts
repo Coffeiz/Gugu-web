@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { agentCurrentTimeReminder, buildAgentDynamicSnapshot } from '../../src/domains/agent-sessions/context/agent-dynamic-prompt.js'
+import { agentCurrentTimeReminder, buildAgentDynamicSnapshot } from '@gugu/core/agent'
 
 test('快照按业务顺序展示截断边界，当前时间只存在动态尾', () => {
   const snapshot = buildAgentDynamicSnapshot({ memoryBlock: '记忆快照', projectBlock: '项目资料', sourceBlock: '对话来源', events: [{ date: '2026-01-02', title: '会议' }], notes: [], files: { total: 2, folders: [{ name: '资料', file_count: 2 }], files: [{ name: '示例.md' }] }, knowledge: Array.from({ length: 41 }, (_, i) => ({ title: `标题${i}` })), includeProjects: true, includeCalendar: true, includeFiles: true, includeKnowledge: true })

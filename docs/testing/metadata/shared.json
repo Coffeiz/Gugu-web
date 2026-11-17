@@ -1,0 +1,18 @@
+{
+  "apps/web/tests/shared/liveRevisionRefresh.test.ts": {
+    "domain": "live-events",
+    "layer": "L0",
+    "owner": "apps/web/composables/shared",
+    "productionEntry": "apps/web/src/composables/shared/liveRevisionRefresh.ts",
+    "keyBehavior": "连续 revision 变化合并为一次权威刷新，停止监听后不再触发刷新",
+    "ci": "frontend-test"
+  },
+  "apps/web/tests/shared/resourceRefreshEvents.test.ts": {
+    "domain": "live-resource-refresh",
+    "layer": "L0",
+    "owner": "apps/web/services",
+    "productionEntry": "apps/web/src/services/resourceRefreshEvents.ts",
+    "keyBehavior": "跨端资源变化事件按类型通知订阅者并保持事件载荷一致",
+    "ci": "frontend-test"
+  }
+}

@@ -1,0 +1,1789 @@
+{
+  "apps/web-host/tests/agent/user-skill-mcp-tool-names.test.ts": {
+    "domain": "skills",
+    "layer": "L1",
+    "owner": "apps/web-host/src/modules/skills/tool-names.ts",
+    "productionEntry": "apps/web-host/src/main.ts → owner scoped MCP skill directory → Core Skill manager",
+    "keyBehavior": "Skill 编辑器可保存当前 owner 已发现的 MCP 工具且不会泄露给其他 owner",
+    "ci": "web-host-node"
+  },
+  "apps/web-host/tests/agent/user-skill-validation.test.ts": {
+    "domain": "agent",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/skills/user-validation.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "技能内容及工具关联校验",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/user-skill-management.test.ts": {
+    "domain": "agent",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/skills/user-management.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "技能owner隔离及事务",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/mcp-tool-directory.test.ts": {
+    "domain": "agent",
+    "layer": "L2",
+    "owner": "packages/core/src/mcp/tool-directory.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "MCP目录快照及失败保留",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/mcp-snapshot-store.test.ts": {
+    "domain": "agent",
+    "layer": "L2",
+    "owner": "packages/core/src/mcp/snapshot-store.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "MCP快照owner隔离与更新",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/mcp-config-digest.test.ts": {
+    "domain": "agent",
+    "layer": "L2",
+    "owner": "packages/core/src/mcp/config-digest.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "MCP配置摘要兼容",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/agent-run-recovery.test.ts": {
+    "domain": "agent",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/agent-sessions/persistence/agent-run-recovery.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "恢复时PG与Redis租约交错防误清",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/agent-recovery-redis.integration.test.ts": {
+    "domain": "agent",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/agent-sessions/persistence/agent-run-lease-postgres.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "Redis原子比较清理保护新运行租约",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/attachment-download.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/attachments/download.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "附件owner隔离和安全文件读取",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/attachment-upload.test.ts": {
+    "domain": "agent-attachments",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/agent/attachment-upload.ts",
+    "productionEntry": "apps/web-host/src/main.ts → createApp authenticated owner route",
+    "keyBehavior": "multipart 文件先于 voice 字段、上传容量流式限制、Python 响应 DTO 与 owner 认证",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/attachment-delete.test.ts": {
+    "domain": "agent-attachments",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/agent/attachment-delete.ts",
+    "productionEntry": "apps/web-host/src/main.ts → Core delete use case → PostgreSQL/Local adapter",
+    "keyBehavior": "认证 owner、Python 200/404/409 回执映射及 attached 附件拒删",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/attachment-clear.test.ts": {
+    "domain": "agent-attachments",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/agent/attachment-clear.ts",
+    "productionEntry": "apps/web-host/src/main.ts → Core clear use case → PostgreSQL/Local and optional Redis legacy adapter",
+    "keyBehavior": "认证 owner、批量删除回执及旧 Redis 清理装配",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/attachment-legacy-redis.test.ts": {
+    "domain": "agent-attachments",
+    "layer": "L2",
+    "owner": "apps/web-host/src/adapters/redis-events.ts",
+    "productionEntry": "Host Redis RESP adapter for legacy chatfile scan/delete",
+    "keyBehavior": "Redis 脚本按 owner 前缀列出兼容旧键并按精确键删除；隔离 RESP server 不代表真实 Redis 验收",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/attachment-delete-postgres.test.ts": {
+    "domain": "agent-attachments",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/agent/attachment-staging-postgres.ts",
+    "productionEntry": "PostgreSQL draft row and shared-storage cleanup adapter with Local FS",
+    "keyBehavior": "draft 行锁删除、attached 状态保护、共享 storage_key 引用检查；Pool 为合成替身",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/attachment-staging-postgres.test.ts": {
+    "domain": "agent-attachments",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/agent/attachment-staging-postgres.ts",
+    "productionEntry": "apps/web-host/src/main.ts PostgreSQL staging adapter with Local storage",
+    "keyBehavior": "owner 锁定容量复核、草稿 DTO/字节持久化及写入失败后的孤儿文件清理；Pool 为合成替身",
+    "ci": "node-webui"
+  },
+  "packages/core/tests/agent/attachment-staging.test.ts": {
+    "domain": "agent-attachments",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/attachments/staging.ts",
+    "productionEntry": "Core attachment staging rules used by the Web Host",
+    "keyBehavior": "Python 文件名、扩展名分类、音频物化边界及语音过大状态码兼容",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/attachment-draft-delete.test.ts": {
+    "domain": "agent-attachments",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/attachments/delete-draft.ts",
+    "productionEntry": "Core owner-bound draft deletion use case",
+    "keyBehavior": "草稿删除后才做未引用字节清理，not_found/conflict 不触碰存储",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/attachment-draft-clear.test.ts": {
+    "domain": "agent-attachments",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/attachments/clear-drafts.ts",
+    "productionEntry": "Core clear use case used by PostgreSQL/Redis Host ports",
+    "keyBehavior": "DB draft rows precede unique byte cleanup and per-entry legacy Redis cleanup",
+    "ci": "core-node"
+  },
+  "apps/web-host/tests/agent/attachment-thumbnail.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/files/read.ts:planAttachmentThumbnail",
+    "productionEntry": "apps/web-host/src/modules/agent/attachment-thumbnail.ts",
+    "keyBehavior": "附件缩略图 owner 隔离、图片格式、动画原图与安全缓存响应",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/user-skill-delete.test.ts": {
+    "domain": "agent",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/skills/user-delete.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "技能删除owner隔离及事件",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/scheduled-tasks-runtime-postgres.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/agent-sessions/tools/agent-tool-registry.ts",
+    "productionEntry": "apps/web-host/src/domains/agent-sessions/agent-runtime.ts",
+    "keyBehavior": "Host Runtime经共享只读查询及隔离PG验证任务owner、提醒过滤、平台能力、撤权和Provider续轮",
+    "ci": "node-webui"
+  },
+  "packages/core/tests/agent/tools/scheduled-tasks.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools/scheduled-tasks.ts",
+    "productionEntry": "packages/core/src/agent/tools/registry.ts",
+    "keyBehavior": "真实注册器经正式SQLite共享查询验证定时任务owner隔离、提醒过滤、排序、撤权及取消",
+    "ci": "core-node"
+  },
+  "apps/web-host/tests/agent/create-project-runtime-postgres.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/agent-sessions/tools/agent-tool-registry.ts",
+    "productionEntry": "apps/web-host/src/domains/agent-sessions/agent-runtime.ts",
+    "keyBehavior": "Host Runtime经隔离PG创建项目并向Provider投影字段及幂等冲突，验证重放顺序和owner隔离",
+    "ci": "node-webui"
+  },
+  "packages/core/tests/agent/tools/permissions.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools/permissions.ts",
+    "productionEntry": "packages/core/src/agent/tools/registry.ts",
+    "keyBehavior": "保护Python工具白名单、群聊与固定工具派发规则及发现后撤权；可信上下文由Host提供",
+    "ci": "core-node"
+  },
+  "apps/web-host/tests/agent/client-tools-runtime-postgres.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/agent-sessions/tools/agent-tool-registry.ts",
+    "productionEntry": "apps/web-host/src/domains/agent-sessions/agent-runtime.ts",
+    "keyBehavior": "真实Host Runtime经隔离PG创建更新联系人，验证跨owner写入拒绝及撤权后数据库不变",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/use-skill-runtime.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/agent-sessions/tools/agent-tool-registry.ts",
+    "productionEntry": "apps/web-host/src/domains/agent-sessions/agent-runtime.ts",
+    "keyBehavior": "真实Host Runtime经Markdown技能注册器进入Provider续轮，重复加载去重及发现后撤权不泄露正文",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/read-tools-runtime-postgres.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/agent-sessions/tools/agent-tool-registry.ts",
+    "productionEntry": "apps/web-host/src/domains/agent-sessions/agent-runtime.ts",
+    "keyBehavior": "真实Host Runtime与注册器经隔离PG续轮验证读取owner、项目及阶段修改收据恢复、笔记关系/正文引用与Schema发现、工作区更新/画布详情搜索定位及真实目录副作用与并发去重",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/get-project-overview-postgres.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/agent-sessions/tools/project-file-overview-port.ts",
+    "productionEntry": "apps/web-host/src/domains/agent-sessions/tools/agent-tool-registry.ts",
+    "keyBehavior": "真实注册器与隔离PG验证项目概览计数、owner权限、SQL错误脱敏和取消等待清理",
+    "ci": "node-webui"
+  },
+  "packages/core/tests/agent/tools/input-feedback.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools/registry.ts",
+    "productionEntry": "packages/core/src/agent/tools/registry.ts",
+    "keyBehavior": "真实注册器成功对象报告固定修复路径且并发隔离，错误确认列表字符串和未知写入保持协议，未知键值不泄漏",
+    "ci": "core-node"
+  },
+  "backend/tests/agent/test_tool_schema_validation.py": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "backend/agent/tools/tool_contract.py",
+    "productionEntry": "backend/agent/tools/base.py",
+    "keyBehavior": "真实注册派发保护参数校验与安全修复回执；拒绝非法类型和新数字，成功标签不混入失败或非对象结果",
+    "ci": "backend-pytest"
+  },
+  "packages/core/tests/agent/tools/unicode-decimal.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/shared/unicode-decimal.ts",
+    "productionEntry": "packages/core/src/agent/tools/normalize-input.ts",
+    "keyBehavior": "全Unicode标量独立Python摘要保护固定16 Nd转换与isdigit分类，拒绝新版Unicode字符且保留未知输入",
+    "ci": "core-node"
+  },
+  "backend/tests/agent/knowledge/test_search_snippet.py": {
+    "domain": "search",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/search.py",
+    "productionEntry": "backend/app/api/v1/search.py",
+    "keyBehavior": "共享合成Unicode样例保护片段首词选择、码点边界、上下文小写及Python空白与换行语义",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/knowledge/test_search_query.py": {
+    "domain": "search",
+    "layer": "L1",
+    "owner": "backend/app/search/query.py",
+    "productionEntry": "backend/app/search/query.py",
+    "keyBehavior": "保护短语计数限额及完整Unicode折叠、Python空白、先码点截断后首词去重的跨语言基准",
+    "ci": "backend-pytest"
+  },
+  "packages/core/tests/agent/run/canonical-cancel.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "packages/core/src/agent",
+    "productionEntry": "packages/core/src/agent/runner.ts",
+    "keyBehavior": "真实Canonical取消保留完整工具pair与部分正文、不推进摘要水位，下一Run按持久顺序回放",
+    "ci": "core-node"
+  },
+  "backend/tests/agent/test_display_event_contract.py": {
+    "domain": "chat-display-events",
+    "layer": "L1",
+    "owner": "backend/agent/context/display_timeline.py",
+    "productionEntry": "backend/app/db/migrations/display_events.py",
+    "keyBehavior": "工具更新保留首次身份时间序号，版本迁移保留正文及结果，真实 SQL 表重复升级幂等",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_im_web_stream_bridge.py": {
+    "domain": "im-web-stream",
+    "layer": "L1",
+    "owner": "backend/agent/im/stream_bridge.py",
+    "productionEntry": "backend/agent/im/dispatch.py",
+    "keyBehavior": "平台 tuple 不作为第二展示源，公共展示事件透传且不重新生成身份",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_session_badges.py": {
+    "domain": "chat-session-status",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/agent_routes/sessions.py",
+    "productionEntry": "GET /agent/sessions",
+    "keyBehavior": "列表只返回本人 Web 会话的运行状态和完成正文版本，不统计模型内部行、检查点或 IM，不泄露其他账号",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_agent_delete_undo.py": {
+    "domain": "agent-undo",
+    "layer": "L1",
+    "owner": "backend/app/services/undo",
+    "productionEntry": "backend/agent/tools/undo.py 与 backend/app/services/undo/agent.py",
+    "keyBehavior": "Agent 项目和日历软删除可从原会话撤销，日历提醒状态一并恢复，Agent 操作不进入 Web 撤销栈",
+    "ci": "backend-test"
+  },
+  "backend/tests/agent/test_error_presentation.py": {
+    "domain": "agent-provider-errors",
+    "layer": "L0",
+    "owner": "backend/agent",
+    "productionEntry": "backend/agent/errors.py",
+    "keyBehavior": "上游 Responses 流失败与内部异常分开分类，Web 与 IM 错误一致且不泄露原始诊断正文",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_phase2_reasoning_drivers.py": {
+    "domain": "agent-reasoning",
+    "layer": "L1",
+    "owner": "backend/agent",
+    "productionEntry": "agent/loop_drivers.py",
+    "keyBehavior": "Provider 推理状态提取、恢复与 Responses 链路保持一致；流失败不伪装成功或重放已返回的工具调用",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_reasoning_state.py": {
+    "domain": "agent-reasoning",
+    "layer": "L1",
+    "owner": "backend/agent",
+    "productionEntry": "agent/context/reasoning_state.py",
+    "keyBehavior": "Provider 推理状态隔离、指纹校验、过期与冲突处理",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_run_cancellation.py": {
+    "domain": "agent-cancellation",
+    "layer": "L1",
+    "owner": "backend/agent/runtime",
+    "productionEntry": "agent/runtime/cancellation.py",
+    "keyBehavior": "共享取消信号同时停止工具和 Sandbox 请求且完成结果优先",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/context/test_context_retention.py": {
+    "domain": "agent-context",
+    "layer": "L1",
+    "owner": "backend/agent/context",
+    "productionEntry": "agent/context/retention.py",
+    "keyBehavior": "上下文保护统一按最近 run 的完整 round 窗口执行",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/context/test_context_loader_query_scaling.py": {
+    "domain": "agent-context",
+    "layer": "L1",
+    "owner": "backend/agent/context",
+    "productionEntry": "agent/context/loaders.py:load_files_overview",
+    "keyBehavior": "个人库根目录数量增长时文件概览查询数保持有界，工作区目录不混入个人目录",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/context/test_im_source_prompt.py": {
+    "domain": "agent-context",
+    "layer": "L1",
+    "owner": "backend/agent/context",
+    "productionEntry": "agent/context/builder.py:build_split",
+    "keyBehavior": "所有已注册 IM 来源都进入会话提示词，且连接状态显示与平台注册表保持一致",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/providers/test_model_reasoning_policy.py": {
+    "domain": "agent-reasoning",
+    "layer": "L1",
+    "owner": "backend/agent",
+    "productionEntry": "agent/llm/llm_select.py",
+    "keyBehavior": "模型配置决定推理持久化策略，缺省值安全关闭",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/providers/test_admin_voice_presets.py": {
+    "domain": "agent-voice",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/agent_admin.py",
+    "productionEntry": "backend/app/api/v1/agent_admin.py 与 backend/app/api/v1/byok.py",
+    "keyBehavior": "语音预设密钥只对原服务商和地址复用；测试、模型列表与运行配置使用一致的语音产品线",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/providers/test_minimax_voice_audio.py": {
+    "domain": "agent-voice",
+    "layer": "L0",
+    "owner": "backend/agent/providers/minimax",
+    "productionEntry": "backend/agent/providers/minimax/voice.py",
+    "keyBehavior": "语音容器扩展名与 MIME 类型匹配，未知或超时长音频在发起请求前被拒绝",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_group_file_read_boundary.py": {
+    "domain": "agent-file-tools",
+    "layer": "L1",
+    "owner": "backend/agent/tools/files",
+    "productionEntry": "agent/tools/files/read.py",
+    "keyBehavior": "群聊成员只能读取当前消息明确提供的图片附件，不能按 Owner 文件 ID 或历史附件探测私人文件",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_user_skill_manager_migration.py": {
+    "domain": "skills",
+    "layer": "L2",
+    "owner": "backend/alembic/versions",
+    "productionEntry": "backend/alembic/versions/20261009000002_add_user_skill_manager.py",
+    "keyBehavior": "既有 Skill 迁移后仍由用户管理，缺失字段按兼容默认值填充",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/knowledge/test_read_knowledge_tool.py": {
+    "domain": "memory-rag",
+    "layer": "L1",
+    "owner": "backend/agent/tools",
+    "productionEntry": "backend/agent/tools/knowledge.py",
+    "keyBehavior": "knowledge 关键词请求走 BM25，按 id 直读全文且保持 owner 隔离和稳定结果元数据",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/rag/test_cython_lifecycle.py": {
+    "domain": "memory-rag-cython-lifecycle",
+    "layer": "L1",
+    "owner": "backend/agent/rag/cython_lifecycle.py",
+    "productionEntry": "backend/agent/rag/index_cache.py 与 Cython 索引/向量生命周期",
+    "keyBehavior": "Cython 索引的构建、快照恢复、数据库加载与生命周期遵循统一 revision 契约",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/rag/test_cython_runtime.py": {
+    "domain": "memory-rag-cython-runtime",
+    "layer": "L1",
+    "owner": "backend/agent/rag/cython_runtime.py",
+    "productionEntry": "backend/agent/rag/index_cache.py",
+    "keyBehavior": "普通应用进程可装载 Cython 内核与 tokenizer；缺少构建依赖时明确失败，不静默切换实现",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/context/test_tool_media_projection.py": {
+    "domain": "agent-multimodal",
+    "layer": "L1",
+    "owner": "backend/agent/context",
+    "productionEntry": "agent/context/assembly",
+    "keyBehavior": "工具结果中的图像在实时和历史投影中保持多模态内容，不进入文本和文本 Token 估算",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/memory/test_memory_prompt_contract.py": {
+    "domain": "agent-memory",
+    "layer": "L1",
+    "owner": "backend/agent/memory",
+    "productionEntry": "agent/memory/reflection.py 与 agent/memory/memory_compress.py",
+    "keyBehavior": "记忆提示词保留有回顾价值的日常事实并区分计划候选与实际结果",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/context/test_reflection_failure_lifecycle.py": {
+    "domain": "agent-reflection",
+    "layer": "L1",
+    "owner": "backend/agent/memory",
+    "productionEntry": "agent/memory/reflection.py、agent/memory/im_reflection.py 与 app/services/conversation_cleanup.py",
+    "keyBehavior": "模型拒绝输入时反思任务终止而暂时故障可重试；已删除会话的缓冲清理不影响其他用户",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_run_preparation_parallel.py": {
+    "domain": "agent-run-preparation",
+    "layer": "L1",
+    "owner": "backend/agent/run",
+    "productionEntry": "agent/run/preparation.py",
+    "keyBehavior": "MCP 发现与 RAG 召回并行执行，保留消息水位且 MCP 失败时取消召回并传播原始错误",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/context/test_inline_compaction_progress.py": {
+    "domain": "agent-compaction",
+    "layer": "L1",
+    "owner": "backend/agent/loop",
+    "productionEntry": "backend/agent/loop/context_runtime.py 与 backend/agent/context/compaction.py",
+    "keyBehavior": "压力压缩保护前一 run 窗口和当前用户原文，仅摘要较早执行轮并保留最新工具往返",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/context/test_branch_request_prefix.py": {
+    "domain": "agent-context",
+    "layer": "L1",
+    "owner": "backend/agent/context",
+    "productionEntry": "backend/agent/context/provider_runner.py",
+    "keyBehavior": "不同 Provider 的分支请求前缀复用已有 system 消息且不会重复注入提示内容",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_skill_id_migration.py": {
+    "domain": "skills-migration",
+    "layer": "L2",
+    "owner": "backend/alembic/versions",
+    "productionEntry": "backend/alembic/versions/20261013000001_use_skill_ids.py",
+    "keyBehavior": "迁移为既有技能分配稳定顺序 ID 并让后续序列从最大 ID 之后继续",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/providers/test_anthropic_stream_recovery.py": {
+    "domain": "agent-stream-recovery",
+    "layer": "L2",
+    "owner": "backend/agent/providers",
+    "productionEntry": "backend/agent/loop/provider.py:stream_round",
+    "keyBehavior": "Anthropic 坏流恢复只重放未输出正文的请求，保留请求内容并防止工具重复执行",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/providers/test_sdk_compat_streaming.py": {
+    "domain": "provider-sdk-compat",
+    "layer": "L1",
+    "owner": "backend/agent/providers",
+    "productionEntry": "backend/agent/providers/__init__.py:build_openai_client",
+    "keyBehavior": "真实 OpenAI 与 Anthropic SDK 在兼容传输上支持流式工具调用、超时分类和超时转换",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/providers/test_provider_client_pool.py": {
+    "domain": "provider-client-pool",
+    "layer": "L1",
+    "owner": "backend/agent/providers/client_pool.py",
+    "productionEntry": "backend/agent/providers/__init__.py",
+    "keyBehavior": "相同配置跨 run 复用 SDK 客户端，活跃 run 释放前不回收，空闲 TTL 后关闭且配置键不含密钥",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/providers/test_cache_singleflight.py": {
+    "domain": "provider-cache-singleflight",
+    "layer": "L1",
+    "owner": "backend/agent/providers/cache_singleflight.py",
+    "productionEntry": "backend/agent/loop/provider.py 与后台反思 Provider 请求",
+    "keyBehavior": "相同缓存前缀跨 Worker 串行协调、不同前缀并行，任务结束释放锁，Redis 异常不阻断后台模型请求，诊断只保留脱敏指纹",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_search_limits.py": {
+    "domain": "search",
+    "layer": "L0",
+    "owner": "backend/agent/providers",
+    "productionEntry": "agent/providers/search_limits.py 与 search_http.py",
+    "keyBehavior": "限制响应流和结果大小，截断显式标记，保留完整链接与错误状态",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_provider_web_search.py": {
+    "domain": "search",
+    "layer": "L1",
+    "owner": "backend/agent/providers",
+    "productionEntry": "agent/providers/web_search.py",
+    "keyBehavior": "原生参数、运行快照隔离、模型切换与实际 HTTP 响应边界",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/knowledge/test_search_tool_migration.py": {
+    "domain": "search",
+    "layer": "L0",
+    "owner": "backend/alembic",
+    "productionEntry": "alembic/versions/20261018000001_migrate_search_tool_references.py",
+    "keyBehavior": "旧搜索工具授权和快照转换保留无关字段",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/knowledge/test_search_tool_migration_postgres.py": {
+    "domain": "search",
+    "layer": "L1",
+    "owner": "backend/alembic",
+    "productionEntry": "alembic/versions/20261018000001_migrate_search_tool_references.py",
+    "keyBehavior": "真实 PostgreSQL 临时 schema 验证列约束、默认值和迁移升降级",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/context/test_chat_timeline_migration.py": {
+    "domain": "chat-history",
+    "layer": "L1",
+    "owner": "backend/app/db/migrations/chat_timeline.py",
+    "productionEntry": "Alembic 20261022000003 与 run_finalize 展示收尾",
+    "keyBehavior": "历史跨行工具去重且保留真实耗时、模型原文与调用隔离；数据库迁移可重复执行，新 run 收尾不遗留进行中状态",
+    "ci": "backend-test"
+  },
+  "backend/tests/agent/knowledge/test_group_tool_permission_migration.py": {
+    "domain": "group-tool-permissions",
+    "layer": "L1",
+    "owner": "backend/alembic",
+    "productionEntry": "backend/app/models/group_tool_permissions.py 与 Alembic group tool permission migration",
+    "keyBehavior": "迁移保留 provider search 授权并规范旧群工具名称，不丢失无关权限字段",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/providers/test_llm_read_timeout.py": {
+    "domain": "agent-provider-timeout",
+    "layer": "L0",
+    "owner": "backend/agent/providers",
+    "productionEntry": "backend/agent/loop_drivers.py 与 backend/agent/providers/openai_responses.py",
+    "keyBehavior": "主对话各协议驱动共享五分钟响应读取超时，避免单个驱动回退到旧限制",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/providers/test_minimax_media_upload.py": {
+    "domain": "provider-media",
+    "layer": "L1",
+    "owner": "backend/agent/providers/minimax",
+    "productionEntry": "backend/agent/providers/minimax/media.py 与 provider adapter upload_media_file",
+    "keyBehavior": "MiniMax 媒体上传正确处理成功、上游失败与缺失凭据，基类不伪装支持上传",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/providers/test_minimax_error_details.py": {
+    "domain": "agent-provider-error",
+    "layer": "L1",
+    "owner": "backend/agent/providers/minimax",
+    "productionEntry": "backend/agent/providers/minimax/__init__.py 与 backend/agent/errors.py",
+    "keyBehavior": "上游以通用错误码 2013 返回输入上下文超限时按文案判为上下文超限并给专用提示，其它 2013 仍是通用参数错误",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/providers/test_minimax_video_duration_gate.py": {
+    "domain": "provider-media",
+    "layer": "L1",
+    "owner": "backend/agent/providers",
+    "productionEntry": "backend/agent/providers/media.py 与视频准备/时长探测路径",
+    "keyBehavior": "视频上传前按 Provider 官方时长限制拦截超限或未知时长输入，并复用本地路径探测",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/providers/test_provider_media.py": {
+    "domain": "provider-media",
+    "layer": "L1",
+    "owner": "backend/agent/providers",
+    "productionEntry": "backend/agent/providers/media.py、minimax/media.py 与各 Provider 的 ASR/media 配置",
+    "keyBehavior": "通用多模态默认值与 Provider 专属图片、视频、音频及 ASR 规格由对应模块提供",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_request_headers.py": {
+    "domain": "provider-request-security",
+    "layer": "L1",
+    "owner": "backend/agent/providers/request_headers.py",
+    "productionEntry": "模型请求历史序列化入口",
+    "keyBehavior": "自定义请求头值在工具历史文本和 JSON 字符串中均脱敏，保留头名称",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/context/test_conversation_order.py": {
+    "domain": "conversation-order",
+    "layer": "L1",
+    "owner": "backend/agent/context/conversation_sequence.py",
+    "productionEntry": "IM run 写入、早落库与展示检查点",
+    "keyBehavior": "并发晚到消息排在已完成输出之前；检查点按会话序列重排且不同会话互相隔离",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/context/test_conversation_sequence_migration.py": {
+    "domain": "conversation-order-migration",
+    "layer": "L1",
+    "owner": "backend/alembic/versions 会话序列迁移",
+    "productionEntry": "conversation_messages 序列字段迁移",
+    "keyBehavior": "迁移保留原序列水位并重写冲突上下文序号，不丢消息顺序",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/mcp/test_mcp_schema_snapshot.py": {
+    "domain": "mcp-schema-snapshot",
+    "layer": "L1",
+    "owner": "backend/agent/mcp 与持久化模型",
+    "productionEntry": "用户 MCP 设置更新和 Provider tool schema 读取",
+    "keyBehavior": "schema 快照可离线往返、旧配置发现不能覆盖较新快照、启用服务器发现失败不能报告成功",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/mcp/test_github_compat.py": {
+    "domain": "mcp-github-compatibility",
+    "layer": "L1",
+    "owner": "backend/agent/mcp/github",
+    "productionEntry": "GitHub MCP 参数头兼容适配器",
+    "keyBehavior": "仅官方 GitHub MCP 端点按需重试参数头；普通 MCP 不受影响",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_context_loader_parallel.py": {
+    "domain": "context-loader-concurrency",
+    "layer": "L1",
+    "owner": "backend/agent/run/preparation.py",
+    "productionEntry": "IM 与 Web Agent 请求上下文准备",
+    "keyBehavior": "相互独立的上下文数据库读取并发执行，维持各自结果和异常边界",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/providers/test_rag_query_embedding.py": {
+    "domain": "rag-query-embedding",
+    "layer": "L1",
+    "owner": "backend/agent/rag/cython_backend.py",
+    "productionEntry": "backend/agent/rag/service.py 与 provider embedding 适配",
+    "keyBehavior": "查询向量按校验后的 provider 配置生成并安全缓存；拒绝无效向量和配置",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/rag/test_cython_backend.py": {
+    "domain": "rag-cython-backend",
+    "layer": "L1",
+    "owner": "backend/agent/rag/cython_backend.py",
+    "productionEntry": "backend/agent/rag/service.py",
+    "keyBehavior": "瞬态索引按内容版本更新或失效；投影、切块、排序及增量索引遵循统一检索契约",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/rag/test_cython_collation.py": {
+    "domain": "rag-cython-collation",
+    "layer": "L0",
+    "owner": "backend/agent/rag/cython_collation.py",
+    "productionEntry": "backend/agent/rag/cython_rank.py",
+    "keyBehavior": "相同分数按稳定的英文区域排序规则处理，反向排序保持前缀顺序",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/rag/test_cython_projection.py": {
+    "domain": "rag-cython-projection",
+    "layer": "L1",
+    "owner": "backend/agent/rag/cython_projection.py",
+    "productionEntry": "backend/agent/rag/service.py 的数据源投影",
+    "keyBehavior": "不同数据源保留稳定分块身份、来源和所有者边界；Unicode 切块不拆分码点",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/rag/test_cython_rank.py": {
+    "domain": "rag-cython-ranking",
+    "layer": "L1",
+    "owner": "backend/agent/rag/cython_rank.py",
+    "productionEntry": "backend/agent/rag/service.py 的候选排序",
+    "keyBehavior": "置信区间、locale-independent Python lower、去重、来源上限和上下文预算遵循排序契约与确定性边界",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/rag/test_rag_relevance_corpus.py": {
+    "domain": "rag-cython-quality",
+    "layer": "L1",
+    "owner": "backend/agent/rag/cython_backend.py + docs/testing/fixtures/rag-relevance-corpus.json",
+    "productionEntry": "旧版 Cython BM25 build_text_index/search 与固定检索语料",
+    "keyBehavior": "共享固定语料验证旧 tokenizer/BM25 的 Recall@3、MRR、同词 group scope 候选过滤及无关查询空结果",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/rag/test_cython_sidecar.py": {
+    "domain": "rag-cython-sidecar",
+    "layer": "L1",
+    "owner": "backend/agent/rag/cython_sidecar.py",
+    "productionEntry": "backend/agent/rag/sidecar_host.py",
+    "keyBehavior": "sidecar 复用按用户隔离的索引生命周期；拒绝跨所有者访问，查询不卡住事件循环",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/rag/test_cython_tokenizer.py": {
+    "domain": "rag-cython-tokenizer",
+    "layer": "L0",
+    "owner": "backend/agent/rag/cython_tokenizer.pyx",
+    "productionEntry": "backend/agent/rag/cython_backend.py",
+    "keyBehavior": "共享 golden 逐词核对 Cython、Python 参考与 Node RAG 分词，保护 locale-independent 大小写、ASCII 压缩、日期别名和索引查询一致性",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_session_display_order.py": {
+    "domain": "im-history-order",
+    "layer": "L1",
+    "owner": "backend/agent/context/session_history.py",
+    "productionEntry": "会话消息分页与历史恢复入口",
+    "keyBehavior": "展示消息和历史页优先按平台实际时间排序，保留稳定的到达时间与序号次序",
+    "ci": "backend-pytest"
+  },
+  "packages/core/tests/agent/context/finalization.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "packages/core/src/agent",
+    "productionEntry": "packages/core/src/agent/memory/reflection.ts",
+    "keyBehavior": "成功主Run捕获原请求反思快照、原生前缀与回复不重复、策略禁用和缺快照延后、通知不含正文或wire",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/context/loading-reflection.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/context",
+    "productionEntry": "packages/core/src/agent/context/prepare.ts",
+    "keyBehavior": "多源上下文DB串行非DB并发、受限群成员隔离、反思被动尾部复用、显式重建租约与压力门",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/context/sources.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/context",
+    "productionEntry": "packages/core/src/agent/context/prepare.ts",
+    "keyBehavior": "标准来源loader串起owner快照、上下文域加载、连续历史与当前输入，命中不重读且RAG只一次，快照只交原子CAS候选",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/context/history/tool-result-checkpoint.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/context",
+    "productionEntry": "packages/core/src/agent/context/history/attachment-refs.ts",
+    "keyBehavior": "工具结果媒体固化后按owner/run/round/call与控制指纹恢复，篡改在codec前拒绝且当前Provider媒体不丢失",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/core/tool-result.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/runtime",
+    "productionEntry": "packages/core/src/agent/core.ts",
+    "keyBehavior": "工具卡安全结果详情、递归媒体占位、error脱敏而正常正文不误删、制品仅持久化稳定引用",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/run/policy-reply.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L0",
+    "owner": "packages/core/src/agent/policy",
+    "productionEntry": "packages/core/src/agent/run/lifecycle.ts",
+    "keyBehavior": "中英日真实语义分类、问句和第三方事实不误判、QQ引用隔离、显式decision opt-in与当轮requiresTools元数据",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/core/portable-boundary.test.ts": {
+    "domain": "security",
+    "layer": "L0",
+    "owner": "packages/core/src/agent",
+    "productionEntry": "packages/core/src/agent/index.ts",
+    "keyBehavior": "通过AST遍历运行依赖闭包，防止可移植Harness入口隐式装载Node平台、数据库驱动或原生SDK",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/run/execution.test.ts": {
+    "domain": "security",
+    "layer": "L1",
+    "owner": "packages/core/src/agent",
+    "productionEntry": "packages/core/src/agent/executor/executor.ts",
+    "keyBehavior": "可信Run身份、每调用授权、Executor确认和隔离、未知副作用不重放、取消和错误脱敏",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/context/preparation.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "packages/core/src/agent",
+    "productionEntry": "packages/core/src/agent/context/prepare.ts",
+    "keyBehavior": "MCP与RAG并行准备失败取消收尾、Shell状态仅system、保留会话或任务授权主体和目录边界",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/context/context-runtime.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "packages/core/src/agent",
+    "productionEntry": "packages/core/src/agent/context/assemble.ts",
+    "keyBehavior": "Canonical与Run真实组合、持久化先于final、交互结果唯一、冻结前缀与续接材料隔离、滚动压缩水位",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/context/session-snapshot.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/context",
+    "productionEntry": "packages/core/src/agent/context/prepare.ts",
+    "keyBehavior": "会话快照TTL和epoch候选、locale和workspace绑定失效、重建保留控制字段和owner隔离",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/context/history/canonical-area.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/context",
+    "productionEntry": "packages/core/src/agent/context/history/canonical-history.ts",
+    "keyBehavior": "Canonical消息序号、不可变投影、revision与批次持久化摘要、工具配对和请求边界",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/context/history-preparation.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/context",
+    "productionEntry": "packages/core/src/agent/context/assemble.ts",
+    "keyBehavior": "owner隔离、摘要水位和历史顺序、附件稳定引用、当前消息去重与动态上下文布局",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/run/engine.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/runtime",
+    "productionEntry": "packages/core/src/agent/run/lifecycle.ts",
+    "keyBehavior": "Run启动恢复、持久化先于final、取消中断历史、错误终态、owner隔离、背压和未知结果禁止重放",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/context/budget-compaction-reflection.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/context",
+    "productionEntry": "packages/core/src/agent/context/compaction.ts",
+    "keyBehavior": "仅实际用量85%触发、工具单元边界、压缩水位与CAS、同模型反思前缀复用和群缺快照延后",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/run/reply.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/runtime",
+    "productionEntry": "packages/core/src/agent/run/lifecycle.ts",
+    "keyBehavior": "空回复重试额度、工具进展重置、回复守卫优先序、旁白和冒号续轮抑制",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/core/display.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/runtime",
+    "productionEntry": "packages/core/src/agent/core.ts",
+    "keyBehavior": "展示事件稳定身份和顺序、工具状态原位置更新、取消封存打开气泡",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/core/tool-scheduler.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/runtime",
+    "productionEntry": "packages/core/src/agent/run/streaming.ts",
+    "keyBehavior": "有界并发、模型顺序提交、失败隔离、共享取消等待已启动工具清理和未启动任务延后",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/context/history/checkpoint-branch.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/context",
+    "productionEntry": "packages/core/src/agent/context/history/attachment-refs.ts",
+    "keyBehavior": "稳定附件引用checkpoint、owner和指纹复验、临时材料拒绝、分支重试取消与Provider wire边界",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/interactions/coordinator.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/runtime",
+    "productionEntry": "packages/core/src/agent/interactions/coordinator.ts",
+    "keyBehavior": "Run启动恢复、持久化先于final、取消中断历史、错误终态、owner隔离、背压和未知结果禁止重放",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/core/coordinator.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/runtime",
+    "productionEntry": "packages/core/src/agent/core.ts",
+    "keyBehavior": "Run启动恢复、持久化先于final、取消中断历史、错误终态、owner隔离、背压和未知结果禁止重放",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/run/lifecycle.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/run/lifecycle.ts",
+    "productionEntry": "packages/core/src/agent/runner.ts",
+    "keyBehavior": "终态不得重开，准备、交互等待和恢复不能绕过合法状态转换",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/providers/openai.test.ts": {
+    "domain": "agent-provider",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/providers",
+    "productionEntry": "packages/core/src/agent/providers/openai/driver.ts",
+    "keyBehavior": "OpenAI Chat真实请求参数、配对历史与缓存锚点、工具参数和usage归一化、空流/断流及输出后禁止重放",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/providers/openai-responses.test.ts": {
+    "domain": "agent-provider",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/providers",
+    "productionEntry": "packages/core/src/agent/providers/openai/responses.ts",
+    "keyBehavior": "Responses独立input/instructions、稳定item/call标识和原生推理续接、媒体能力拒绝、结构化输出及failed/incomplete/usage终态",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/providers/anthropic.test.ts": {
+    "domain": "agent-provider",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/providers",
+    "productionEntry": "packages/core/src/agent/providers/anthropic/driver.ts",
+    "keyBehavior": "Anthropic内容块顺序、签名思考历史与工具JSON解析、已知缺块恢复边界、缓存usage和MiniMax业务错误分类",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/providers/runtime.test.ts": {
+    "domain": "agent-provider",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/providers",
+    "productionEntry": "packages/core/src/agent/providers/runtime.ts",
+    "keyBehavior": "Provider真实协议事件跨Harness工具轮及交互恢复，Canonical不存私有块；请求快照、probe、取消、退避、池复用和同前缀排队边界",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/providers/transport.test.ts": {
+    "domain": "agent-provider",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/providers",
+    "productionEntry": "packages/core/src/agent/providers/transport/node.ts",
+    "keyBehavior": "真实TCP验证DNS固定与SSRF拒绝、代理CONNECT/NO_PROXY、TLS域名及CA、重定向拒绝、gzip体积预算、读写空闲超时及取消释放",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/providers/policies.test.ts": {
+    "domain": "agent-provider",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/providers",
+    "productionEntry": "packages/core/src/agent/providers/provider-policies.ts、search.ts + search/、deep-research.ts、similar-image.ts、asr.ts + asr/shared.ts + openai/asr.ts + qwen/asr.ts + minimax/asr.ts、media.ts + minimax/media.ts + mimo/media.ts",
+    "keyBehavior": "厂商与模型能力/思考参数及协议选择、深度研究和相似图请求投影、显式本地授权、MiniMax图片/视频时长和上传/ASR预检、业务码及安全错误边界",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/providers/ollama.test.ts": {
+    "domain": "agent-provider",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/providers",
+    "productionEntry": "packages/core/src/agent/providers/ollama/driver.ts",
+    "keyBehavior": "Ollama原生NDJSON与工具历史配对、usage原始钩子和显式空输出预算、终止/取消；厂商搜索原生字段、官方主机凭据限制及结果体积预算",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/registry.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "packages/core/src/agent/tools/registry.ts",
+    "keyBehavior": "发现与调用身份/参数快照防跨await替换；重新判权，非法输入和危险操作拒绝，未知写入不重放",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/time.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "packages/core/src/agent/tools/time.ts",
+    "keyBehavior": "可信用户时区的实时日期星期、跨日和夏令时，Python固定偏移名称与非法偏移边界",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/files.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "packages/core/src/agent/tools/files.ts",
+    "keyBehavior": "授权file_id文本读取与Python行号/换行语义，路径逃逸和取消拒绝且不修改源文件",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/clients.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "packages/core/src/agent/tools/clients.ts",
+    "keyBehavior": "真实临时SQLite联系人创建更新重载和owner隔离，歧义拒绝与空修改不假成功",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/projects.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "packages/core/src/agent/tools/projects.ts",
+    "keyBehavior": "项目列表owner隔离、状态归档过滤、更新时间排序与阶段计数",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/skills/registry.test.ts": {
+    "domain": "skills",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/skills",
+    "productionEntry": "packages/core/src/agent/skills/registry.ts",
+    "keyBehavior": "技能显式注册与配置停用同时控制发现加载、owner判权、取消与错误脱敏",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/use-skill.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "packages/core/src/agent/tools/meta.ts",
+    "keyBehavior": "技能工具实际调用技能注册器、去重摘要、owner授权与配置停用",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/project-create.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "packages/core/src/agent/tools/projects.ts",
+    "keyBehavior": "项目创建参数验证、可信身份与幂等重放结果，未知提交不重试",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/confirmation.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "packages/core/src/agent/tools/confirmation.ts",
+    "keyBehavior": "可信意图与身份输入版本精确绑定、撤权过期取消和伪造收据拒绝，不执行业务",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/skills/builtin.test.ts": {
+    "domain": "skills",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/skills",
+    "productionEntry": "packages/core/src/agent/skills/builtin.ts",
+    "keyBehavior": "自动发现资源目录Markdown并按frontmatter ID注册；校验元数据快照、按需正文摘要、重复ID与漂移拒绝",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/project-mutations.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "packages/core/src/agent/tools/projects.ts",
+    "keyBehavior": "项目变更参数/可信意图传递、明确拒绝与提交未知区分，不重放",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/input-errors.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "packages/core/src/agent/tools/input-errors.ts",
+    "keyBehavior": "安全字段路径与最多5项纠错issues、业务错误增强保持字符串对象形状",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/normalize-input.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "packages/core/src/agent/tools/normalize-input.ts",
+    "keyBehavior": "旧名称和标量归一经过真实工具与SQLite；严格数组禁止包装和拍平修复，非法输入不产生副作用",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/date-input.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "packages/core/src/agent/tools/date-input.ts",
+    "keyBehavior": "Python日期候选顺序、中文数字和闰年边界；缺年份仅由可信Host提供",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/registration.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "packages/core/src/agent/tools/registry.ts",
+    "keyBehavior": "公开声明名称参数与读写属性非法时注册拒绝，领域分组注册失败无残留",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/sessions/session-application.sqlite.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/sessions",
+    "productionEntry": "packages/core/src/agent/sessions/index.ts",
+    "keyBehavior": "SQLite 会话改名、消息定位、用户隔离及缺表失败",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/sessions/delete.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/sessions/delete.ts",
+    "productionEntry": "Core 会话删除用例与提交后清理端口",
+    "keyBehavior": "owner 隔离、附件共享引用保护、DB 失败时跳过外部清理",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/sessions/session-application.postgres.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/sessions",
+    "productionEntry": "packages/core/src/agent/sessions/index.ts",
+    "keyBehavior": "隔离 PostgreSQL 会话改名和消息定位契约",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/session-list/session-list.sqlite.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/sessions",
+    "productionEntry": "packages/core/src/agent/sessions/list.ts",
+    "keyBehavior": "SQLite 会话列表、消息可见性、授权与用户隔离",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/session-list/session-list.postgres.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/sessions",
+    "productionEntry": "packages/core/src/agent/sessions/list.ts",
+    "keyBehavior": "隔离 PostgreSQL 会话列表跨端契约",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/session-refresh/sqlite.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/sessions",
+    "productionEntry": "packages/core/src/agent/sessions/refresh.ts",
+    "keyBehavior": "SQLite 快照失效、并发 epoch 和用户隔离",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/session-refresh/postgres.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/sessions",
+    "productionEntry": "packages/core/src/agent/sessions/refresh.ts",
+    "keyBehavior": "隔离 PostgreSQL 快照失效与并发 epoch 契约",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/context/messages.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/context/messages",
+    "productionEntry": "packages/core/src/agent/context/messages/index.ts",
+    "keyBehavior": "消息媒体脱敏与群聊提及映射共享契约",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/project-create-port.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "packages/core/src/agent/tools/projects/creation-port.ts",
+    "keyBehavior": "真实注册器与SQLite验证项目幂等先查、字段及冲突模型错误、脱敏、owner隔离和提交未知",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/sessions/schema-draft.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L1",
+    "owner": "docs/refactor/agent",
+    "productionEntry": "docs/refactor/agent/agent-tables.sql",
+    "keyBehavior": "隔离草案表结构、事务回滚及备份保护，不代表正式升级",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/run/run-codec.test.ts": {
+    "domain": "agent-run",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/run",
+    "productionEntry": "packages/core/src/agent/run/codec.ts",
+    "keyBehavior": "检查点及事件加密兼容、运行身份绑定与篡改拒绝",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/parallel-plan.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "packages/core/src/agent/tools/registry.ts",
+    "keyBehavior": "真实Harness同轮读写并发、并发上限、单项非法参数不阻断兄弟调用、取消等待清理及交互分流",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/schema-selection.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "packages/core/src/agent/tools/schema-selection.ts",
+    "keyBehavior": "真实注册器授权快照限定Schema名称选择，前缀展开/重复/上限保持Python语义且不执行业务工具",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tool-event-details/tool-event-details.postgres.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/sessions",
+    "productionEntry": "GET /agent/sessions/{session_id}/tool-event-details",
+    "keyBehavior": "隔离 PostgreSQL 工具事件详情读取及用户归属",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tool-event-details/tool-event-details.sqlite.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/sessions",
+    "productionEntry": "GET /agent/sessions/{session_id}/tool-event-details",
+    "keyBehavior": "SQLite 工具事件详情读取、归属隔离和展示脱敏",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/group-names/sqlite.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/sessions",
+    "productionEntry": "GET /agent/sessions/{session_id}/messages",
+    "keyBehavior": "正式 SQLite 群成员昵称用户隔离与时间排序",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/interaction-history/sqlite.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/sessions",
+    "productionEntry": "GET /agent/sessions/{session_id}/messages",
+    "keyBehavior": "正式 SQLite 交互历史窗口、令牌轮换与回滚",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/interaction-session/sqlite.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/sessions",
+    "productionEntry": "GET /agent/interactions/{prompt_id}/session",
+    "keyBehavior": "正式 SQLite 凭据交互深链查询与用户隔离",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/sessions/ui-labels.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/sessions",
+    "productionEntry": "GET /agent/ui-labels",
+    "keyBehavior": "状态标签的动态覆盖、拆分与配置读取失败传播",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/commands/menu.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/commands",
+    "productionEntry": "GET /agent/commands",
+    "keyBehavior": "规范命令菜单完整内容及返回值隔离",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/interactions/schema.test.mjs": {
+    "domain": "agent-interactions",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/interactions",
+    "productionEntry": "packages/core/src/agent/interactions/schema.ts",
+    "keyBehavior": "提示表 owner、会话外键、JSON 和级联校验",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/interactions/action-schema.test.mjs": {
+    "domain": "agent-interactions",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/interactions",
+    "productionEntry": "packages/core/src/agent/interactions/action-schema.ts",
+    "keyBehavior": "动作哈希存储、提示外键、JSON、UTC 微秒及删除级联",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/global-search.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "packages/core/src/agent/tools/global-search.ts",
+    "keyBehavior": "真实注册器与SQLite验证owner隔离、固定20条、AND归一、缺来源、撤权、取消、错误脱敏及Agent续轮",
+    "ci": "core-node"
+  },
+  "apps/web-host/tests/agent/agent-tool-registry.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "apps/web-host/src/domains/agent-sessions/tools",
+    "productionEntry": "apps/web-host/src/domains/agent-sessions/tools/agent-tool-registry.ts",
+    "keyBehavior": "可信Host按实际服务与逐调用授权启用工具，验证搜索与任务缺端口拒绝、Memory 工具显式注入/授权后派发、日历创建和更新缺Core端口拒绝、撤权隔离及真实注册器派发",
+    "ci": "node-webui"
+  },
+  "packages/core/tests/agent/tools/overview.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "packages/core/src/agent/tools/overview.ts",
+    "keyBehavior": "真实注册器与Agent循环验证可信身份、取消、结果投影、只读副作用和领域安全边界",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/trash.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "packages/core/src/agent/tools/trash.ts",
+    "keyBehavior": "真实注册器与Agent循环验证可信身份、取消、结果投影、只读副作用和领域安全边界",
+    "ci": "core-node"
+  },
+  "apps/web-host/tests/agent/trash-tools-runtime-postgres.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L2",
+    "markers": [
+      "external_service"
+    ],
+    "owner": "apps/web-host/src/domains/agent-sessions/tools",
+    "productionEntry": "createAgentToolRegistry → createAgentTrashListPort → createPostgresAgentTrashReader",
+    "keyBehavior": "隔离PG验证回收站owner、顶层资源过滤、微秒排序、整组启停和只读副作用",
+    "ci": "node-webui"
+  },
+  "backend/tests/agent/test_readonly_tool_migration.py": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "backend/agent/tools",
+    "productionEntry": "SkillRegistry.dispatch → calendar/workspaces/overview/trash/projects",
+    "keyBehavior": "隔离SQLite实际注册器验证只读聚合、提醒微秒、工作区owner关联、项目阶段/待办、笔记与Schema发现、旧ORM回执及实际持久化",
+    "ci": "manual"
+  },
+  "packages/core/tests/agent/tools/domain-reads.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "calendar/workspaces/overview tool groups",
+    "keyBehavior": "真实Agent与SQLite验证日历提醒、工作区关联名称、总览计数、owner、取消、错误和只读副作用",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/project-durable.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools/projects",
+    "productionEntry": "createDurableProjectMutationPort",
+    "keyBehavior": "真实注册器/SQLite/临时文件系统验证事务收据、重建重放、owner、并发、阶段/批量待办部分成功与失败项零副作用、改名补偿、嵌套错误在收据/Provider前脱敏与未知提交恢复",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/note-reads.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "note/meta工具组与Mind共享读取",
+    "keyBehavior": "实际注册器和临时SQLite验证笔记搜索/关系/正文引用、微秒、权限、取消、Schema发现与Agent续轮",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/workspace-update.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "update_workspace",
+    "keyBehavior": "真实SQLite事务显示名同步、完整payload、收据、取消和Agent续轮",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/canvas-focus.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "canvas_focus_node",
+    "keyBehavior": "定位入口owner和节点类型校验",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/canvas-ready.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "canvas_create/canvas_search_placeable",
+    "keyBehavior": "真实SQL候选与owner隔离、创建Undo收据重放、取消和Agent续轮",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/skill-management.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "list_skills",
+    "keyBehavior": "Markdown head和用户元数据目录、停用项、正文与owner隔离",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/skills/user-management-sqlite.test.ts": {
+    "domain": "skills",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/skills/user-management.ts",
+    "productionEntry": "User Skill Core管理器→SQLite正式schema",
+    "keyBehavior": "SQLite技能创建/更新、MCP关联保留、用户接管及owner隔离",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/canvas-edits.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "canvas_update_node/canvas_remove_node/canvas_update_note",
+    "keyBehavior": "真实SQLite批量原子性、owner与正文保留、版本、收据恢复及Agent续轮",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/calendar-delete.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools/calendar.ts",
+    "productionEntry": "delete_event→ToolRegistry→Core确认门→SQLite软删",
+    "keyBehavior": "目标快照确认、owner隔离、批量同事务、提醒停用、Undo、提交后通知和收据重放",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/calendar-create.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools/calendar.ts + packages/core/src/calendar/create-store.ts",
+    "productionEntry": "create_event→ToolRegistry→SQLite事件与提醒事务",
+    "keyBehavior": "全天/定时结果形状、owner授权、提醒渠道与目标、过去提醒拒绝、事件/提醒幂等重放和无副作用取消",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/calendar-update.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools/calendar.ts + packages/core/src/calendar/application/event-update.ts + packages/core/src/calendar/mutation-store.ts",
+    "productionEntry": "update_event→ToolRegistry→Core CAS/提醒同步与收据",
+    "keyBehavior": "标题/日期选择、owner授权、CAS冲突、提醒保留重排/整体替换/清除、失败回滚和收据重放",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/canvas-placement.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "canvas_create_note/canvas_add_node/canvas_update_anchor/canvas_connect",
+    "keyBehavior": "实际SQL定位、引用复用、几何连接端点、原子回滚、收据及续轮",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/note-lifecycle.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "note_delete/note_restore/note_undo",
+    "keyBehavior": "真实SQL普通笔记软删恢复、最近gugu目标冻结、owner/CAS/收据/取消与续轮",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/link-buttons.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools",
+    "productionEntry": "send_link_buttons",
+    "keyBehavior": "URL安全和可信投递边界",
+    "ci": "core-node"
+  },
+  "apps/web-host/tests/agent/mcp-schema-adapter.test.ts": {
+    "domain": "mcp",
+    "layer": "L1",
+    "owner": "packages/core/src/mcp",
+    "productionEntry": "MCP 声明适配（SDK/manager 尚未接线）",
+    "keyBehavior": "旧 Python schema 命名、校验、降级与描述规则",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/conversation-tools-runtime-sqlite.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "apps/web-host/src/domains/agent-sessions/tools/agent-conversations.ts",
+    "productionEntry": "临时 SQLite Host 搜索适配器 + 真实 Jieba + 工具注册器 dispatch（Agent Run 尚未接入）",
+    "keyBehavior": "临时 SQLite 会话事实表验证 Host 权限拒绝不泄露正文、模型伪传 owner 无效、群聊/工具角色过滤、baseline前历史检索、LIKE元字符字面匹配、多关键词、空结果、Python 结果投影与真实 Jieba 分词、ISO 时区偏移归一化按 fromisoformat 保持",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/agent-calendar-reminder-targets.test.ts": {
+    "domain": "agent-calendar",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/agent-sessions/tools/agent-calendar-reminder-targets.ts",
+    "productionEntry": "Web dispatch lease → 日历提醒目标解析端口（待生产装配）",
+    "keyBehavior": "按有效租约解析 owner 私聊目标，拒绝跨用户、当前群和失效租约；使用合成数据库与投递端口",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/agent-calendar-write-ports.test.ts": {
+    "domain": "agent-calendar",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/agent-sessions/tools/agent-calendar-write-ports.ts",
+    "productionEntry": "Web 日历端口 → 工具注册器 dispatch（待生产 Run 装配）",
+    "keyBehavior": "临时 SQLite 验证创建事件与提醒、更新、提交后通知及撤权拒绝；lease 和投递目标使用合成依赖",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/agent-rag-tool-ports.test.ts": {
+    "domain": "agent-rag",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/agent-sessions/tools/agent-rag-production-ports.ts + agent-rag-run-context.ts + agent-rag-context.ts",
+    "productionEntry": "Web dispatch lease → Core Run preparation → 正式持久索引自动 RAG",
+    "keyBehavior": "真实 registry dispatch 验证 owner RAG 召回、会话快照去重、租约绑定、Run 替换拒绝和 search_memory 撤权；自动 RAG 经 Core buildRunRagContext 调用正式 SQLite 持久索引，按 lease owner 授权并排除历史已注入正文；关闭开关不访问索引、授权期间取消向上传播；使用临时 SQLite/FS 与合成 PG/auth/config 端口，不声明生产 Run 已接入",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/agent-conversation-owner-bound.test.ts": {
+    "domain": "agent-rag",
+    "layer": "L1",
+    "owner": "apps/web-host/src/domains/agent-sessions/tools/agent-conversations.ts",
+    "productionEntry": "Web lease-bound conversation search port",
+    "keyBehavior": "跨 owner 的 recent/search/resolve 在访问会话数据源前拒绝；取消优先传播；同 owner 大小写归一后继续委托原查询端口",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/agent-web-tool-port-identity.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "apps/web-host/src/domains/agent-sessions/agent-web-reconstructor.ts",
+    "productionEntry": "Web dispatch lease → Harness ToolPort plan/dispatch/reconcile",
+    "keyBehavior": "ToolPort 对 owner/session/run 完整身份绑定；错身份 dispatch 不触达 registry 且返回失败，reconcile fail closed，plan 拒绝；取消优先传播；正确 lease 正常委托",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/agent-web-mcp-authorization.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/agent-sessions/agent-web-reconstructor.ts + tools/agent-mcp-tool-ports.ts",
+    "productionEntry": "Web dispatch lease → current session tool configuration → MCP authorization → owner runtime dispatch",
+    "keyBehavior": "MCP 调用前重读当前 Web 会话工具配置；已撤销或未配置的 MCP tool 不触达远端，已配置且授权工具正常执行",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/agent-rag-run-context.test.ts": {
+    "domain": "agent-rag",
+    "layer": "L1",
+    "owner": "apps/web-host/src/domains/agent-sessions/tools/agent-rag-run-context.ts",
+    "productionEntry": "Web dispatch lease → owner/session/run memory authorization and persisted snapshot reader",
+    "keyBehavior": "每次校验当前 active Run、配置工具名、Registry grant 与 owner scope；快照只接受 owner/session/active_run 一致、版本有效的记录，损坏和取消显式失败",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/rag-index-worker.test.ts": {
+    "domain": "agent-rag",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/agent-sessions/rag-rebuild.ts",
+    "productionEntry": "main.ts 迁移门控 + Host 来源组工厂 + 调度器 + Core 持久 Worker",
+    "keyBehavior": "临时 SQLite 真实 Core 项目、owner FS knowledge 与队列经七类来源 Worker 写入正式索引表；Node 消费 Python MemoryUpdated 产生的 source_id/pending_source_ids 任务形状并全量重建 memory；未就绪任务保持 queued；验证首次基线、幂等、排空、串行、错误、取消停止及禁用边界",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/rag-index-corruption.test.ts": {
+    "domain": "agent-rag",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/rag/persistent-index.ts + rebuild-worker.ts + persistent-writer.ts",
+    "productionEntry": "Host SQLite adapter → Core 持久读取器/重建 Worker/写入器",
+    "keyBehavior": "损坏 metadata_json 映射为脱敏索引错误；持久任务重建源投影后恢复可读，不回显原始损坏值",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/rag-relevance-corpus.test.ts": {
+    "domain": "agent-rag-quality",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/rag/lexical-index.ts + docs/testing/fixtures/rag-relevance-corpus.json",
+    "productionEntry": "Host 正式 Jieba → Core RAG lexical index",
+    "keyBehavior": "与旧 Python/Cython 共用中文、英文、混合固定语料，检查 Recall@3、MRR、owner scope、同词 group 干扰过滤及无关查询空结果",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/conversation-rag-job-postgres.test.ts": {
+    "domain": "agent-rag",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/agent-sessions/persistence/conversation-rag-job-postgres.ts",
+    "productionEntry": "Web 用户消息准备与 Canonical 历史写入事务 → owner 级 conversation RAG 持久任务",
+    "keyBehavior": "隔离 PostgreSQL 验证全来源重建合并、generation 使旧租约失效，以及队列与会话事务一同回滚",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/rag-jieba.test.ts": {
+    "domain": "agent-rag",
+    "layer": "L1",
+    "owner": "apps/web-host/src/domains/agent-sessions/tools/agent-rag-jieba.ts + packages/core/src/agent/rag/tokenizer.ts",
+    "productionEntry": "Host 1.7.7 Jieba → Core tokenizer",
+    "keyBehavior": "实际 Host Jieba 经 Core tokenizer 对照固定 golden 语料，保护词典、HMM=false、ASCII实体和中文切词不漂移",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/agent-rag-memory-store.test.ts": {
+    "domain": "agent-rag",
+    "layer": "L1",
+    "owner": "apps/web-host/src/domains/agent-sessions/tools/agent-rag-memory-store.ts",
+    "productionEntry": "Host owner-bound memory RAG 文件读取适配器",
+    "keyBehavior": "限制 owner namespace 和 RAG 文件白名单，执行字符/字节上限并拒绝跨 owner、路径穿越、未知文件和符号链接",
+    "ci": "node-webui"
+  },
+  "packages/core/tests/agent/rag/memory-loader.test.ts": {
+    "domain": "agent-rag",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/rag/memory-loader.ts + memory-scope-state.ts",
+    "productionEntry": "Core 1.7.7 memory loader 与 SQL scope 状态读取器，StorageReader 由 Host 注入",
+    "keyBehavior": "按 owner/scope/tombstone/source/snapshot 裁剪 memory 文档；scope revision 和删除屏障按完整 owner key 查询；只装载与 embedding 版本一致的 owner-bound 向量；scope 状态读取取消不会被转成存储错误",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/rag/memory-search.test.ts": {
+    "domain": "agent-rag",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/rag/memory-search.ts + tools/memory.ts",
+    "productionEntry": "Core RAG memory query 经工具注册器 dispatch；Host scope/storage/授权/embedding 端口显式注入",
+    "keyBehavior": "临时 owner memory index 经真实工具 dispatch 排序；异主文档被拒、伪造身份无效、撤权不返回正文、非法参数拒绝；owner 与向量文件读取取消传播且不伪装成 BM25 成功",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/rag/ranking.test.ts": {
+    "domain": "agent-rag",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/rag/ranking",
+    "productionEntry": "rankCandidates",
+    "keyBehavior": "保护 1.7.7 confidence-v4、locale-independent confidence match、来源权重、阈值、v1 回滚和 corpus IDF 重评分上界",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/rag/tokenizer.test.ts": {
+    "domain": "agent-rag",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/rag/tokenizer.ts",
+    "productionEntry": "tokenizeRaw",
+    "keyBehavior": "保护月别名、英文月份日期语境与普通词区分，并验证索引和查询共享日期词项",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/rag/source-adapters.test.ts": {
+    "domain": "agent-rag",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/rag/adapters + index-builder.ts",
+    "productionEntry": "RAG 来源适配器组合入口",
+    "keyBehavior": "对照 1.7.7 冻结适配器文本、版本摘要、会话上下文、分块边界及退役文件索引，保护来源投影不漂移",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/rag/query-embedding.test.ts": {
+    "domain": "agent-rag",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/rag/query-embedding.ts",
+    "productionEntry": "embedRagQuery + Host 注入 ProviderTransport",
+    "keyBehavior": "模拟传输验证 OpenAI/Bailian payload、非法 URL 拒绝、redirect 不跟随、响应过限取消与凭据结果脱敏；不触发外部 Provider",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/rag/scoped-search.test.ts": {
+    "domain": "agent-rag",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/rag/scoped-search.ts + vector-reader.ts",
+    "productionEntry": "createScopedRagSearch + Host 授权与向量端口",
+    "keyBehavior": "查询 embedding 失败时保留 owner 授权 BM25 结果；调用取消仍以取消错误结束；scope 命名空间化后仍用 1.7.7 原始 memory parent ID 读取向量；owner 文件内容变化后缓存向量立即失效并更新融合结果；自动检索 confidence 筛选与历史正文 hash 去重",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/rag/ttl-cache.test.ts": {
+    "domain": "agent-rag",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/rag/ttl-cache.ts",
+    "productionEntry": "memory-loader document/vector cache",
+    "keyBehavior": "冻结滑动 TTL、静默过期、Infinity TTL 与 LRU 驱逐，防止活跃 memory 索引被固定 TTL 提前淘汰",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/rag/service-cache.test.ts": {
+    "domain": "agent-rag",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/rag/index-cache-service.ts + snapshot-cache.ts + rag-service.ts",
+    "productionEntry": "Core TS RAG cache lifecycle and scoped search service",
+    "keyBehavior": "固定旧版索引/snapshot滑动TTL、revision失效、scope隔离、构建失败重试和查询错误显式传播，避免串用户缓存或把失败当空召回",
+    "ci": "core-node"
+  },
+  "apps/web-host/tests/agent/memory-tools-runtime-sqlite.test.ts": {
+    "domain": "agent-rag",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/agent-sessions/tools/agent-memory-search.ts + agent-memory-scopes.ts",
+    "productionEntry": "Web owner/可信 IM scope Host 适配器 + 受限本地 memory FS + Core RAG + 实际工具注册器",
+    "keyBehavior": "临时 owner 与 IM scope 文件经真实 Host registry dispatch 命中；owner reflection cursor 限定跨群，成员范围只返回本人，群聊不得读取 owner 私人记忆；同名来源键在多个已授权 scope 下均保留；跨 owner 文档不返回、授权撤销不泄露正文、BYOK gate 关闭时不查询或发送凭据",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/voice-availability.test.ts": {
+    "domain": "byok",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/config/voice-availability.ts + apps/web-host/src/modules/agent/voice-availability.ts",
+    "productionEntry": "startServer → authenticated Fastify route → owner-scoped PostgreSQL credential → configured envelope decrypt → Core voice support rule",
+    "keyBehavior": "公开配置与有效用户 BYOK 按旧 Python 规则选择语音识别能力；拒绝未支持格式且不暴露凭据",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/memory-clear.test.ts": {
+    "domain": "agent-memory",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/memory-clear.ts + packages/core/src/agent/rag/rebuild-worker.ts + apps/web-host/src/modules/agent/memory-clear.ts",
+    "productionEntry": "startServer → authenticated route → Core clearer → Local storage delete → transactionally tombstone old memory projection and enqueue rebuild → context revision publisher → Core worker rebuild",
+    "keyBehavior": "临时目录和 SQLite 验证 DELETE 只清认证 owner、generation 更新，旧正文立即隐藏、重建后仍不可见；不支持的来源拒绝入队，墓碑写失败时队列与索引变更一起回滚；清理失败不入队或递增上下文版本",
+    "ci": "node-webui"
+  },
+  "packages/core/tests/agent/sessions/delete.postgres.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/sessions/delete-data.ts",
+    "productionEntry": "隔离 PostgreSQL owner-row-lock transaction",
+    "keyBehavior": "同事务终止 Agent 终端并显式删除会话附件、消息和会话",
+    "ci": "core-node"
+  },
+  "apps/web-host/tests/agent/session-delete.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/agent/session-delete.ts + apps/web-host/src/app.ts",
+    "productionEntry": "startServer → authenticated Fastify route → Core PostgreSQL transaction → storage/Redis cleanup",
+    "keyBehavior": "认证 owner、204 删除、404 owner 隔离、422 参数语义",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/agent/chart-renderer.test.ts": {
+    "domain": "chart-rendering",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/agent/chart-renderer.ts",
+    "productionEntry": "Node Host chart renderer service → @gugu/charts worker",
+    "keyBehavior": "Node Host 通过 workspace 包边界渲染 Mermaid/Math PNG、保持数量限制并传播取消",
+    "ci": "web-host-node"
+  },
+  "packages/core/tests/agent/config/llm-presets-read.test.ts": {
+    "domain": "byok",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/config/llm-presets-read.ts",
+    "productionEntry": "Core 只读投影管理员 LLM 预设及 Provider 能力",
+    "keyBehavior": "兼容旧 ai 配置、遮蔽 API Key、返回静态能力且读取不改写配置",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/providers/standalone.test.ts": {
+    "domain": "agent-provider",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/providers/standalone.ts",
+    "productionEntry": "共享 Provider standalone completion 与注入的安全 Host transport",
+    "keyBehavior": "按选定协议生成短 completion，应用输出预算并移除思考内容",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/greeting.test.ts": {
+    "domain": "agent-greeting",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/greeting.ts",
+    "productionEntry": "createGreetingGenerator → buildGreetingPrompt + injected context/provider/cache ports",
+    "keyBehavior": "保留 Python locale、owner 问候缓存、锁等待/取消释放、用户时区七日记忆截取和失败语义",
+    "ci": "core-node"
+  },
+  "apps/web-host/tests/agent/agent-misc.test.ts": {
+    "domain": "agent-greeting",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/agent-sessions/agent-misc.ts + apps/web-host/src/app.ts",
+    "productionEntry": "createApp 认证上下文 → Core GreetingGenerator",
+    "keyBehavior": "问候路由鉴权后采用认证 owner，支持三种 locale、保持旧响应形状并拒绝无效语言",
+    "ci": "web-host-node"
+  },
+  "apps/web-host/tests/agent/greeting-context.test.ts": {
+    "domain": "agent-greeting",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/agent-sessions/greeting.ts",
+    "productionEntry": "PostgreSQL owner 查询 + Local 安全文件读取 + Redis 原子锁适配",
+    "keyBehavior": "项目、最近消息和 .agent 记忆均限定 owner；互斥锁以 SET NX 和 token 比对释放",
+    "ci": "web-host-node"
+  },
+  "packages/core/tests/agent/capabilities/catalog.test.ts": {
+    "domain": "agent-capabilities",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/capabilities/catalog.ts + packages/core/src/agent/tools/registry.ts",
+    "productionEntry": "Core 注册表元数据 → 不含 Schema/Skill 正文的共享能力目录",
+    "keyBehavior": "真实注册工具投影短描述与类别；目录拒绝缺少短描述且不暴露参数声明或 Skill 正文",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/interactions/secrets.test.ts": {
+    "domain": "agent-interactions",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/interactions/secrets.ts",
+    "productionEntry": "Host 敏感交互 PG 事务复用 Core 字段校验及脱敏完成回执",
+    "keyBehavior": "只接受当前 prompt 声明的完整字段，规范空白并拒绝不合法定义、空值、超长值，回执不含敏感值",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/attachments/current-turn.test.ts": {
+    "domain": "agent-attachments",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/attachments/current-turn.ts",
+    "productionEntry": "Web 当前消息物化将 owner-scoped 附件文本注入 Agent Core",
+    "keyBehavior": "保留用户原文与附件卡片；超 32 MiB 前拒绝读取；提取失败不泄露异常",
+    "ci": "core-node"
+  },
+  "apps/web-host/tests/agent/agent-current-attachments.test.ts": {
+    "domain": "agent-attachments",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/agent-sessions/context/agent-current-attachments.ts + agent-current-message.ts",
+    "productionEntry": "Web Run 当前消息物化器 → owner/message 限定 PostgreSQL 元数据 → Local 安全文件读取器 → Core 文本附件投影（生产 Chat resources 尚未接线）",
+    "keyBehavior": "临时 Local 文件与合成 PG 适配器验证 owner 和消息绑定、文件大小门及当前消息正文注入；明确记录生产 Agent Chat 未装配",
+    "ci": "web-host-node"
+  },
+  "apps/web-host/tests/agent/agent-web-chat-preparation.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/agent-sessions/persistence/agent-web-chat-preparation.ts + context/agent-references.ts",
+    "productionEntry": "Web PostgreSQL 聊天事务准备 factory → owner/platform 引用和附件 → 消息、队列与持久 dispatch",
+    "keyBehavior": "经实际准备函数验证附件私有 storage key 不进入消息、claim 失败回滚、业务/MCP 引用按 owner 或 platform scope 解析，且 endpoint/凭据不进入 canonical context；PostgreSQL Pool 为合成适配器",
+    "ci": "web-host-node"
+  },
+  "apps/web-host/tests/agent/agent-chat-service.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/agent-sessions/agent-chat-service.ts",
+    "productionEntry": "Chat service → 持久 Run outbox event stream",
+    "keyBehavior": "start/resume 将断连取消传给 outbox 读取；取消订阅不取消已持久化 dispatch Run",
+    "ci": "web-host-node"
+  },
+  "apps/web-host/tests/agent/agent-chat-route.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/agent-sessions/agent-chat-route.ts",
+    "productionEntry": "Fastify Agent Chat HTTP/SSE route",
+    "keyBehavior": "真实 loopback HTTP 断连清理事件订阅且不取消后台 Run，保持路由认证/错误边界",
+    "ci": "web-host-node"
+  },
+  "apps/web-host/tests/agent/agent-chat-preparation.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/agent-sessions/persistence/agent-chat-preparation.ts",
+    "productionEntry": "PostgreSQL Web Chat 准备事务 → trusted access version resolver → persistent dispatch",
+    "keyBehavior": "最终 owner/session/run 解析访问版本；无效版本不得入队且消息/附件事务回滚",
+    "ci": "web-host-node"
+  },
+  "apps/web-host/tests/agent/agent-web-reconstructor.integration.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/agent-sessions/agent-web-reconstructor.ts",
+    "productionEntry": "持久 Web dispatch lease → 恢复模型绑定 → Core checkpoint scope/RAG preparation → Harness 组装",
+    "keyBehavior": "通过实际重建器验证队列 contextScopeKey 与 Core accessScopeHash 分开校验，且 lease 提供的 RAG builder 被交给 Core Run preparation；PG/Redis 持久恢复用例仍需隔离服务",
+    "ci": "web-host-node"
+  },
+  "packages/core/tests/agent/context/source-policy.test.ts": {
+    "domain": "agent-context",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/context/source-policy.ts",
+    "productionEntry": "Core trusted source and role policy",
+    "keyBehavior": "Web ignores stale IM role fields; only trusted IM member/unknown restrict owner context, reflection and continuity; configured memory gate is preserved",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/security/shell-command-risk.test.ts": {
+    "domain": "agent-security",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/security/shell-command-risk.ts",
+    "productionEntry": "Core Shell command risk classification for Host authorization",
+    "keyBehavior": "Full command classification matches Python safe/write/dangerous cases; exact runtime version queries remain safe and script execution, chaining, redirection and substitutions remain dangerous",
+    "ci": "core-node"
+  }
+}

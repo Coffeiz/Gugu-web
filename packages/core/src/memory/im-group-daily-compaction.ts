@@ -2,9 +2,35 @@ import { createHash } from 'node:crypto'
 
 export const GROUP_DAILY_COMPACTION_TRIGGER = 100
 export const GROUP_DAILY_COMPACTION_BATCH_SIZE = 100
+export const GROUP_DAILY_HARD_CAP = 300
 
 export function shouldCompactGroupDaily(count: number, trigger = GROUP_DAILY_COMPACTION_TRIGGER): boolean {
   return count >= trigger
+}
+
+export function parseGroupDailyEntries(value: string): Array<[string, string]> {
+  const entries: Array<[string, string]> = []
+  let date = ''
+  for (const raw of value.split(/\r?\n/u)) {
+    const line = raw.trim()
+    if (line.startsWith('## ') && line.length >= 12) date = line.slice(3).trim()
+    else if (date && line.startsWith('- ') && line.slice(2).trim()) entries.push([date, line.slice(2).trim()])
+  }
+  return entries
+}
+
+export function renderGroupDailyEntries(entries: readonly (readonly [string, string])[]): string {
+  const lines: string[] = []
+  let date = ''
+  for (const [entryDate, note] of entries) {
+    if (entryDate !== date) {
+      if (lines.length) lines.push('')
+      lines.push(`## ${entryDate}`)
+      date = entryDate
+    }
+    lines.push(`- ${note}`)
+  }
+  return lines.length ? `${lines.join('\n').trim()}\n` : ''
 }
 
 /** 输入按新到旧排列；返回仍待处理的较新条目和当前最旧批次。 */

@@ -17,7 +17,7 @@ import { createSqlMindCanvasCreateRuntime } from '../../mind/canvas-create-sql.j
 import { z } from 'zod'
 import type { createSqlMindCanvasReader } from '../../mind/canvas-read.js'
 import type { ToolDefinition } from './contracts.js'
-import { createConfirmationGate, type ConfirmationIntentReference, type ConfirmationTargetSnapshot } from './confirmation.js'
+import { createConfirmationGate, type ConfirmationClaimReference, type ConfirmationTargetSnapshot } from './confirmation.js'
 
 const inputSchema = z.object({ project_id: z.number().int().safe().optional(), limit: z.number().int().safe().optional(), offset: z.number().int().safe().optional() }).passthrough()
 export type AgentCanvasReader = Pick<ReturnType<typeof createSqlMindCanvasReader>, 'listAgentCanvases' | 'getAgentCanvas' | 'searchAgentCanvas' | 'getAgentCanvasFocus'>
@@ -181,7 +181,7 @@ export interface CanvasBatchRequest {
 export interface CanvasBatchConfirmationPort {
   gate:ReturnType<typeof createConfirmationGate>
   /** 必须在操作收据与领域写入的同一数据库事务中校验目标版本并单次 claim。 */
-  claim(tx:Transaction<Database>,reference:ConfirmationIntentReference,signal:AbortSignal):Promise<boolean>
+  claim(tx:Transaction<Database>,reference:ConfirmationClaimReference,signal:AbortSignal):Promise<boolean>
 }
 export interface CanvasBatchPort {
   confirmation?:CanvasBatchConfirmationPort
@@ -218,7 +218,8 @@ function batchCanonical(value:unknown):string{
   return JSON.stringify(value)??'null'
 }
 function batchDigest(value:unknown){return createHash('sha256').update(batchCanonical(value)).digest('hex')}
-async function canvasBatchDeleteSnapshot(core:import('../../data/runtime.js').SqlDataRuntime,owner:string,intent:CanvasBatchIntent,signal:AbortSignal):Promise<ConfirmationTargetSnapshot|null>{
+type CanvasSnapshotData = Pick<import('../../data/runtime.js').SqlDataRuntime, 'db' | 'backend'>
+async function canvasBatchDeleteSnapshot(core:CanvasSnapshotData,owner:string,intent:CanvasBatchIntent,signal:AbortSignal):Promise<ConfirmationTargetSnapshot|null>{
   const nodeIds=[...new Set(intent.operations.filter(operation=>operation.kind==='delete_note').map(operation=>operation.node_id).filter((id):id is number=>typeof id==='number'&&Number.isSafeInteger(id)&&id>0))].sort((a,b)=>a-b)
   if(!nodeIds.length)return null
   const notes=await core.db.selectFrom('mind_nodes').select(['id','version']).where('id','in',nodeIds).where('user_id','=',owner).where('kind','=','canvas_note').where('deleted_at','is',null).orderBy('id').execute()
@@ -227,13 +228,14 @@ async function canvasBatchDeleteSnapshot(core:import('../../data/runtime.js').Sq
   const items=await core.db.selectFrom('mind_canvas_items').select(['id','node_id','updated_at']).where('user_id','=',owner).where('node_id','in',nodeIds).where('deleted_at','is',null).orderBy('id').execute()
   signal.throwIfAborted()
   return {
+    targetIds:{nodeIds,viewItemIds:items.map(item=>Number(item.id))},
     targetsDigest:batchDigest({nodeIds,viewItemIds:items.map(item=>Number(item.id))}),
     versionsDigest:batchDigest({notes:notes.map(note=>({id:Number(note.id),version:Number(note.version)})),items:items.map(item=>({id:Number(item.id),node_id:Number(item.node_id),updated_at:dateStamp(item.updated_at)}))}),
   }
 }
 function dateStamp(value:unknown){return value instanceof Date?value.toISOString():String(value)}
 
-async function canvasNoteDeleteSnapshot(core:import('../../data/runtime.js').SqlDataRuntime,owner:string,nodeIds:number[],signal:AbortSignal):Promise<ConfirmationTargetSnapshot|null>{
+async function canvasNoteDeleteSnapshot(core:CanvasSnapshotData,owner:string,nodeIds:number[],signal:AbortSignal):Promise<ConfirmationTargetSnapshot|null>{
   const normalized=[...new Set(nodeIds)].sort((a,b)=>a-b)
   const key=core.backend==='sqlite'?owner.replaceAll('-',''):owner
   const notes=await core.db.selectFrom('mind_nodes').select(['id','version']).where('id','in',normalized).where('user_id','=',key).where('kind','=','canvas_note').where('deleted_at','is',null).orderBy('id').execute()
@@ -241,7 +243,7 @@ async function canvasNoteDeleteSnapshot(core:import('../../data/runtime.js').Sql
   if(notes.length!==normalized.length)return null
   const items=await core.db.selectFrom('mind_canvas_items').select(['id','node_id','updated_at']).where('user_id','=',key).where('node_id','in',normalized).where('deleted_at','is',null).orderBy('id').execute()
   signal.throwIfAborted()
-  return {targetsDigest:batchDigest({nodeIds:normalized,viewItemIds:items.map(item=>Number(item.id))}),versionsDigest:batchDigest({notes:notes.map(note=>({id:Number(note.id),version:Number(note.version)})),items:items.map(item=>({id:Number(item.id),node_id:Number(item.node_id),updated_at:dateStamp(item.updated_at)}))})}
+  return {targetIds:{nodeIds:normalized,viewItemIds:items.map(item=>Number(item.id))},targetsDigest:batchDigest({nodeIds:normalized,viewItemIds:items.map(item=>Number(item.id))}),versionsDigest:batchDigest({notes:notes.map(note=>({id:Number(note.id),version:Number(note.version)})),items:items.map(item=>({id:Number(item.id),node_id:Number(item.node_id),updated_at:dateStamp(item.updated_at)}))})}
 }
 
 /** 独立便签删除复用 Mind 写用例；确认、事务内claim与收据必须一并提供。 */
@@ -277,6 +279,8 @@ export function createCanvasDeleteNotePort(core:import('../../data/runtime.js').
         try{
           input.signal.throwIfAborted()
           if(!await confirmation.claim(tx,verified.value,input.signal))throw new Error('画布便签删除确认已使用或目标已变化')
+          const current=await canvasNoteDeleteSnapshot({db:tx,backend:core.backend},key.context.ownerId,ids,input.signal)
+          if(!current||current.targetsDigest!==targets.targetsDigest||current.versionsDigest!==targets.versionsDigest)throw new Error('画布便签删除确认已使用或目标已变化')
           const result=await applyCanvasEdits(tx,core.backend,key.context.ownerId,deletion,key.operationId,input.signal)
           events=result.publications
           return result.value
@@ -323,7 +327,8 @@ export function createCanvasDisconnectPort(core:import('../../data/runtime.js').
     input.signal.throwIfAborted()
     if(relations.length!==ids.length){const missing=ids.find(id=>!relations.some(row=>Number(row.id)===id))!;return {kind:'completed',successful:false,mutated:false,value:{error:input.batched?`关联 ${missing} 不存在`:'关联不存在'}}}
     if(!confirmation)return {kind:'completed',successful:false,mutated:false,value:{error:'画布关系删除需要可信确认能力'}}
-    const targets={targetsDigest:batchDigest({canvasId:input.canvasId,relationIds:ids}),versionsDigest:batchDigest(relations.map(row=>({id:Number(row.id),src:Number(row.src_node_id),dst:Number(row.dst_node_id),type:row.rel_type,key:row.edge_key,status:row.status,updated_at:dateStamp(row.updated_at)})))}
+    const versions=(rows:typeof relations)=>batchDigest(rows.map(row=>({id:Number(row.id),src:Number(row.src_node_id),dst:Number(row.dst_node_id),type:row.rel_type,key:row.edge_key,status:row.status,updated_at:dateStamp(row.updated_at)})))
+    const targets={targetIds:{canvasIds:[input.canvasId],relationIds:ids},targetsDigest:batchDigest({canvasId:input.canvasId,relationIds:ids}),versionsDigest:versions(relations)}
     const args={canvas_id:input.canvasId,relation_ids:ids,batched:input.batched},digest=batchDigest(args)
     if(input.scope.resolution===null){const prepared=await confirmation.gate.prepare(input.call,input.scope,digest,targets);return prepared.ok?{kind:'waiting',interaction:prepared.value}:{kind:'completed',successful:false,mutated:false,value:{error:'画布关系删除确认无效或已过期'}}}
     const verified=await confirmation.gate.verify(input.call,input.scope,digest,targets)
@@ -335,6 +340,10 @@ export function createCanvasDisconnectPort(core:import('../../data/runtime.js').
         try{
           input.signal.throwIfAborted()
           if(!await confirmation.claim(tx,verified.value,input.signal))throw new Error('画布关系删除确认已使用或目标已变化')
+          const currentCanvas=await tx.selectFrom('mind_maps').select('id').where('id','=',input.canvasId).where('user_id','=',dbOwner).where('deleted_at','is',null).executeTakeFirst()
+          const current=await tx.selectFrom('mind_relations').select(['id','src_node_id','dst_node_id','rel_type','edge_key','status','updated_at']).where('id','in',ids).where('canvas_id','=',input.canvasId).where('user_id','=',dbOwner).where('deleted_at','is',null).orderBy('id').execute()
+          input.signal.throwIfAborted()
+          if(!currentCanvas||current.length!==ids.length||versions(current)!==targets.versionsDigest)throw new Error('画布关系删除确认已使用或目标已变化')
           const remove=createMindCanvasRelationDelete(createSqlMindCanvasRelationDeleteRuntime(tx,core.backend,async event=>{events.push(event)}))
           for(const id of ids){await remove(key.context.ownerId,input.canvasId,id,{undoContextId:null,clientId:null,mutationId:key.operationId});input.signal.throwIfAborted()}
           return input.batched?{success:true,deleted_count:ids.length,deleted_relation_ids:ids}:{deleted_relation_id:ids[0]}
@@ -361,7 +370,7 @@ export function createCanvasDisconnectTool(port:CanvasDisconnectPort):ToolDefini
   }
 }
 
-async function canvasDeleteTargetSnapshot(core:import('../../data/runtime.js').SqlDataRuntime,owner:string,canvasIds:number[],signal:AbortSignal):Promise<{snapshot:ConfirmationTargetSnapshot;titles:string[]}|null>{
+async function canvasDeleteTargetSnapshot(core:CanvasSnapshotData,owner:string,canvasIds:number[],signal:AbortSignal):Promise<{snapshot:ConfirmationTargetSnapshot;titles:string[]}|null>{
   const ids=[...new Set(canvasIds)].sort((a,b)=>a-b),key=core.backend==='sqlite'?owner.replaceAll('-',''):owner
   const canvases=await core.db.selectFrom('mind_maps').select(['id','title','project_id','data_json','updated_at']).where('id','in',ids).where('user_id','=',key).where('deleted_at','is',null).orderBy('id').execute()
   signal.throwIfAborted()
@@ -372,7 +381,7 @@ async function canvasDeleteTargetSnapshot(core:import('../../data/runtime.js').S
   const nodeIds=[...new Set(items.map(item=>Number(item.node_id)))].sort((a,b)=>a-b)
   const notes=nodeIds.length?await core.db.selectFrom('mind_nodes').select(['id','version','updated_at','deleted_at']).where('id','in',nodeIds).where('user_id','=',key).where('kind','=','canvas_note').orderBy('id').execute():[]
   signal.throwIfAborted()
-  return {snapshot:{targetsDigest:batchDigest({canvasIds:ids,itemIds:items.map(row=>Number(row.id)),relationIds:relations.map(row=>Number(row.id)),canvasNoteIds:notes.map(row=>Number(row.id))}),versionsDigest:batchDigest({canvases:canvases.map(row=>({id:Number(row.id),title:row.title,project_id:row.project_id,data_json:row.data_json,updated_at:dateStamp(row.updated_at)})),items:items.map(row=>({id:Number(row.id),canvas_id:Number(row.canvas_id),node_id:Number(row.node_id),updated_at:dateStamp(row.updated_at),deleted_at:row.deleted_at===null?null:dateStamp(row.deleted_at)})),relations:relations.map(row=>({id:Number(row.id),canvas_id:row.canvas_id===null?null:Number(row.canvas_id),src:Number(row.src_node_id),dst:Number(row.dst_node_id),type:row.rel_type,key:row.edge_key,status:row.status,updated_at:dateStamp(row.updated_at),deleted_at:row.deleted_at===null?null:dateStamp(row.deleted_at)})),notes:notes.map(row=>({id:Number(row.id),version:Number(row.version),updated_at:dateStamp(row.updated_at),deleted_at:row.deleted_at===null?null:dateStamp(row.deleted_at)}))})},titles:canvases.map(row=>row.title||'未命名画布')}
+  return {snapshot:{targetIds:{canvasIds:ids,itemIds:items.map(row=>Number(row.id)),relationIds:relations.map(row=>Number(row.id)),canvasNoteIds:notes.map(row=>Number(row.id))},targetsDigest:batchDigest({canvasIds:ids,itemIds:items.map(row=>Number(row.id)),relationIds:relations.map(row=>Number(row.id)),canvasNoteIds:notes.map(row=>Number(row.id))}),versionsDigest:batchDigest({canvases:canvases.map(row=>({id:Number(row.id),title:row.title,project_id:row.project_id,data_json:row.data_json,updated_at:dateStamp(row.updated_at)})),items:items.map(row=>({id:Number(row.id),canvas_id:Number(row.canvas_id),node_id:Number(row.node_id),updated_at:dateStamp(row.updated_at),deleted_at:row.deleted_at===null?null:dateStamp(row.deleted_at)})),relations:relations.map(row=>({id:Number(row.id),canvas_id:row.canvas_id===null?null:Number(row.canvas_id),src:Number(row.src_node_id),dst:Number(row.dst_node_id),type:row.rel_type,key:row.edge_key,status:row.status,updated_at:dateStamp(row.updated_at),deleted_at:row.deleted_at===null?null:dateStamp(row.deleted_at)})),notes:notes.map(row=>({id:Number(row.id),version:Number(row.version),updated_at:dateStamp(row.updated_at),deleted_at:row.deleted_at===null?null:dateStamp(row.deleted_at)}))})},titles:canvases.map(row=>row.title||'未命名画布')}
 }
 
 /** 级联删除复用共享Mind删除服务，批量目标与级联集合在一次收据事务中提交。 */
@@ -402,6 +411,8 @@ export function createCanvasDeletePort(core:import('../../data/runtime.js').SqlD
         try{
           input.signal.throwIfAborted()
           if(!await confirmation.claim(tx,verified.value,input.signal))throw new Error('画布删除确认已使用或目标已变化')
+          const current=await canvasDeleteTargetSnapshot({db:tx,backend:core.backend},owner,ids,input.signal)
+          if(!current||current.snapshot.targetsDigest!==targets.snapshot.targetsDigest||current.snapshot.versionsDigest!==targets.snapshot.versionsDigest)throw new Error('画布删除确认已使用或目标已变化')
           const remove=createMindCanvasDelete(createSqlMindCanvasDeleteRuntime(tx,core.backend,async event=>{events.push(event)}))
           for(const id of ids){await remove(key.context.ownerId,id,{undoContextId:null,clientId:null});input.signal.throwIfAborted()}
           return input.batched?{success:true,deleted_count:ids.length,deleted_canvas_ids:ids}:{deleted:true,canvas_id:ids[0],title:targets.titles[0]}
@@ -447,7 +458,7 @@ export function createCanvasBatchPort(core:import('../../data/runtime.js').SqlDa
     input.signal.throwIfAborted()
     if(!canvas)return {kind:'completed',successful:false,mutated:false,value:{error:'画布不存在'}}
     const hasDelete=input.args.operations.some(operation=>operation.kind==='delete_note')
-    let claim:ConfirmationIntentReference|null=null
+    let claim:ConfirmationClaimReference|null=null,confirmedTargets:ConfirmationTargetSnapshot|null=null
     if(hasDelete){
       if(!confirmation)return {kind:'completed',successful:false,mutated:false,value:{error:'画布便签删除需要可信确认能力',request_id:input.args.request_id}}
       const targets=await canvasBatchDeleteSnapshot(core,owner,input.args,input.signal)
@@ -460,7 +471,7 @@ export function createCanvasBatchPort(core:import('../../data/runtime.js').SqlDa
       }
       const verified=await confirmation.gate.verify(input.call,input.scope,digest,targets)
       if(!verified.ok)return {kind:'completed',successful:false,mutated:false,value:{error:'画布便签删除确认无效或已过期',request_id:input.args.request_id}}
-      claim=verified.value
+      claim=verified.value;confirmedTargets=targets
     }
     const context=dataContext(input.identity.ownerId),operationId=batchOperationId(context.ownerId,input.args.canvas_id,input.args.request_id)
     let callbackError:unknown
@@ -471,6 +482,10 @@ export function createCanvasBatchPort(core:import('../../data/runtime.js').SqlDa
         try{
           input.signal.throwIfAborted()
           if(claim&&(!confirmation||!await confirmation.claim(tx,claim,input.signal)))throw new Error('画布便签删除确认已使用或目标已变化')
+          if(claim){
+            const current=await canvasBatchDeleteSnapshot({db:tx,backend:core.backend},owner,input.args,input.signal)
+            if(!current||!confirmedTargets||current.targetsDigest!==confirmedTargets.targetsDigest||current.versionsDigest!==confirmedTargets.versionsDigest)throw new Error('画布便签删除确认已使用或目标已变化')
+          }
           const result=await applyCanvasEditBatch(tx,core.backend,context.ownerId,input.args,operationId,input.signal)
           events=result.publications;mutated=result.mutated
           return result.value

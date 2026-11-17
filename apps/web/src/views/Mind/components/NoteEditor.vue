@@ -21,7 +21,7 @@
          屏幕哪，跟"谁移动了它"无关，不用另外去接相机变化的事件。 -->
     <Teleport to="body" :disabled="!floatToolbar">
       <div class="ne-toolbar" ref="toolbarRef" v-if="editor"
-           :class="{ 'ne-toolbar-floating': floatToolbar, pending: floatToolbar && !editReady }">
+           :class="{ 'ne-toolbar-floating': floatToolbar, 'ne-toolbar-link-open': linkInputOpen, pending: floatToolbar && !editReady }">
         <div class="ne-toolbar-main">
         <button class="ne-tool" :class="{ on: isFocused && editor.isActive('taskList') }"
                 @mousedown.prevent="editor.chain().focus().toggleTaskList().run()" :title="t('mindEditorUi.task')">
@@ -44,7 +44,7 @@
              items 从 0 宽长开，把按钮"挤"到右边）；按钮本身就是收起入口，再点一下收回去，
              不需要额外的收起按钮。「样式」「插入」互斥：开一个收起另一个，且要等对方的收起
              动画播完才开（见 toggleStylesMenu/DRAWER_CLOSE_MS）。 -->
-        <div class="ne-drawer" :class="{ open: expandDrawers || stylesOpen }">
+        <div class="ne-drawer" :class="{ open: expandDrawers || stylesOpen, 'has-link-input': linkInputOpen }">
           <div class="ne-drawer-items">
             <template v-if="!linkInputOpen">
               <button class="ne-style-item" :class="{ on: editor.isActive('bold') }"
@@ -489,8 +489,12 @@ onBeforeUnmount(() => {
 }
 .ne-toolbar-main {
   display: flex; align-items: center; gap: var(--ne-toolbar-gap, 4px);
-  min-width: 0; flex: 1 1 auto;
+  min-width: 0; flex: 1 1 auto; overflow-x: auto;
 }
+.ne-toolbar-link-open .ne-toolbar-main { padding: 6px; margin-block: -6px; }
+/* 编辑链接时把行内空间留给地址和确认操作，保留右侧完成、取消。 */
+.ne-toolbar-link-open .ne-toolbar-main > .ne-tool,
+.ne-toolbar-link-open .ne-toolbar-main > .ne-drawer:not(.has-link-input) { display: none; }
 /* 浮动态（画布便签）：脱出卡片本身悬在下方（或翻到上方，见 .flipped），不再是卡片纸面
    的一部分，得自己长一副独立的浮层皮——跟公共引用补全菜单同一套玻璃质感语言，
    两者本来就经常同时出现在屏幕上（点了 @ 工具栏按钮，下拉紧跟着弹出来），视觉上得是
@@ -569,7 +573,7 @@ onBeforeUnmount(() => {
    硬裁掉，看起来是硬切而不是淡出。这个 270ms 也是 script 里 DRAWER_CLOSE_MS 的来源，
    两边必须对上。 */
 .ne-drawer {
-  display: inline-flex; align-items: center; gap: 0;
+  display: inline-flex; flex-shrink: 0; align-items: center; gap: 0;
   transition: gap 0.27s cubic-bezier(0.65,0,0.35,1);
 }
 .ne-drawer.open { gap: var(--ne-toolbar-gap, 4px); }
@@ -580,6 +584,8 @@ onBeforeUnmount(() => {
   transition: max-width 0.27s cubic-bezier(0.65,0,0.35,1);
 }
 .ne-drawer.open .ne-drawer-items { max-width: var(--ne-drawer-max-width, 220px); }
+/* 链接表单比格式图标组宽，展开时须为输入框和确认按钮同时留出空间。 */
+.ne-toolbar .ne-drawer.open.has-link-input .ne-drawer-items { max-width: 240px; padding: 6px; margin-block: -6px; transition: none; }
 .ne-style-item {
   display: inline-flex; align-items: center; justify-content: center;
   box-sizing: border-box; flex: 0 0 var(--ne-tool-size, 26px);
@@ -607,7 +613,7 @@ onBeforeUnmount(() => {
 .ne-style-item:nth-last-child(3) { --stagger-delay: 0.06s; }
 .ne-style-item:nth-last-child(4) { --stagger-delay: 0.09s; }
 .ne-style-item:nth-last-child(5) { --stagger-delay: 0.12s; }
-.ne-link-input { display: flex; align-items: center; gap: 4px; }
+.ne-link-input { display: flex; flex: none; align-items: center; gap: 4px; }
 .ne-link-input input {
   width: 160px; height: 24px; padding: 0 8px; box-sizing: border-box;
   border: 1px solid color-mix(in srgb, var(--action-primary) 25%, transparent); border-radius: 6px;

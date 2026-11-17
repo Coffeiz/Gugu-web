@@ -1,26 +1,25 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
+import { RouterView, useRoute, useRouter } from 'vue-router'
 import { desktopData, DesktopBridgeError } from '@/desktop/bridge'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import Icon from '@/components/common/icons/Icon.vue'
-import { useDesktopCanvases } from '@/desktop/composables/useDesktopCanvases'
 import type { SandboxStatus } from '@/desktop/bridge'
 import type { DesktopOnboardingState } from '@gugu/core/desktop'
 import { applyServerTheme, useTheme, type ThemeFamily, type ThemePalette, type ThemePreference } from '@/composables/core/useTheme'
 import ProjectsPage from '../projects/index.vue'
 import WorkbenchPage from '../workbench/index.vue'
 import ContactsPage from '../contacts/index.vue'
-import NotesPage from '../notes/index.vue'
-import CanvasesPage from '../canvases/index.vue'
 import ComingSoon from '../shared/components/ComingSoon.vue'
 import { useDesktopContacts } from '../contacts/composables/useDesktopContacts'
-import { useDesktopNotes } from '../notes/composables/useDesktopNotes'
 import { useDesktopCalendar } from '../calendar/composables/useDesktopCalendar'
 import DesktopSidebar from './components/DesktopSidebar.vue'
 import { useDesktopSidebar } from './composables/useDesktopSidebar'
 import NewProjectModal from '@/views/Projects/components/NewProjectModal.vue'
 import ProjectModal from '@/views/Projects/components/ProjectModal.vue'
 import DesktopCalendar from '../calendar/index.vue'
+import DesktopSchedules from '../schedules/index.vue'
+import DesktopResources from '../resources/index.vue'
 import AppToast from '@/components/common/feedback/AppToast.vue'
 import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
@@ -28,6 +27,8 @@ import { runtime } from '@/interaction/runtime'
 import { provideRuntime } from '@/interaction/runtime/vue'
 
 const projectStore = useProjectStore()
+const route = useRoute()
+const router = useRouter()
 const uiStore = useUiStore()
 provideRuntime(runtime)
 
@@ -55,21 +56,14 @@ const activeSection = ref('home')
 const { width: sidebarWidth, compact: sidebarCompact, restore: restoreSidebar, startResize: startSidebarResize, resize: resizeSidebar, finishResize: finishSidebarResize, handleResizeKeydown, minWidth: sidebarMinWidth, maxWidth: sidebarMaxWidth } = useDesktopSidebar()
 const PENDING_OPERATION_KEY = 'gugu.desktop.pending-operation'
 const contactsPanel = useDesktopContacts(perform, refresh)
-const notesPanel = useDesktopNotes(perform, refresh)
 const calendarPanel = useDesktopCalendar(perform, refresh)
-const canvasPanel = useDesktopCanvases({ perform, refresh, refreshHistory: notesPanel.refreshHistory })
 const { clients, clientName, editingClient, editedClientName } = contactsPanel
-const { notes, history: noteHistory, noteContent, editingNote, editedNoteContent } = notesPanel
 const { calendar, calendarHistory } = calendarPanel
-const {
-  canvases, title: canvasTitle, editingCanvas, editedTitle: editedCanvasTitle,
-  startEdit: startCanvasEdit, create: createCanvas, update: updateCanvas, remove: deleteCanvas,
-  selectedCanvasId, items: canvasItems, noteContent: canvasNoteContent, editingItem: editingCanvasItem,
-  editedNoteContent: editedCanvasNoteContent, select: selectCanvas, createNote: createCanvasNote,
-  updateNote: updateCanvasNote, moveItem: moveCanvasItem, removeItem: removeCanvasItem,
-} = canvasPanel
 
 function navigateTo(section: string) {
+  if (section === 'notes' || section === 'canvases') {
+    void router.push(`/${section}`)
+  }
   activeSection.value = section
   if (contentArea.value) contentArea.value.scrollTop = 0
 }
@@ -96,13 +90,16 @@ async function perform(action: () => Promise<void>) {
 }
 
 async function refresh() {
-  const [clientRows, events, canvasRows, noteRows] = await Promise.all([desktopData.clients(), desktopData.calendar(), desktopData.canvases(), desktopData.notes()])
+  const [clientRows, events] = await Promise.all([desktopData.clients(), desktopData.calendar()])
   await contactsPanel.setRows(clientRows)
   await calendarPanel.setRows(events)
-  await canvasPanel.setRows(canvasRows)
-  await notesPanel.setRows(noteRows)
   connected.value = true
 }
+
+watch(() => route.path, path => {
+  if (path === '/notes') activeSection.value = 'notes'
+  else if (path === '/canvases') activeSection.value = 'canvases'
+}, { immediate: true })
 
 async function recoverPendingOperation() {
   if (!pendingOperation.value) return
@@ -197,27 +194,12 @@ onMounted(() => perform(async () => {
       <DesktopCalendar :events="calendar" :busy="busy" @create="calendarPanel.create" @update="calendarPanel.update" @delete="calendarPanel.remove" @add-project="openCalendarProjectDialog" />
       <div class="calendar-history-actions"><ActionButton v-if="calendarHistory.undo" fit variant="secondary" :disabled="busy" @click="calendarPanel.applyHistoryAction('undo')">撤销</ActionButton><ActionButton v-if="calendarHistory.redo" fit variant="secondary" :disabled="busy" @click="calendarPanel.applyHistoryAction('redo')">重做</ActionButton></div>
     </section>
-    <NotesPage
-      v-if="activeSection === 'notes'"
-      v-model:note-content="noteContent"
-      v-model:editing-note="editingNote"
-      v-model:edited-note-content="editedNoteContent"
-      :notes="notes"
-      :busy="busy"
-      @create="notesPanel.create"
-      @update="notesPanel.update"
-      @remove="notesPanel.remove"
-    />
-    <CanvasesPage
-      v-if="activeSection === 'canvases'"
-      :panel="canvasPanel"
-      :busy="busy"
-      :can-undo="Boolean(noteHistory.undo)"
-      :can-redo="Boolean(noteHistory.redo)"
-      @undo="notesPanel.applyHistoryAction('undo')"
-      @redo="notesPanel.applyHistoryAction('redo')"
-    />
-    <ComingSoon v-if="['files','terminals','skills','mcp','customers','team','notifications','schedules'].includes(activeSection)" :section="activeSection" />
+    <section v-if="activeSection === 'notes' || activeSection === 'canvases'" class="desktop-mind-page">
+      <RouterView />
+    </section>
+    <DesktopSchedules v-if="activeSection === 'schedules'" />
+    <DesktopResources v-if="activeSection === 'terminals' || activeSection === 'skills' || activeSection === 'mcp'" :section="activeSection" />
+    <ComingSoon v-if="['files','customers','team','notifications'].includes(activeSection)" :section="activeSection" />
     </main>
     <NewProjectModal :show="uiStore.openNewProject" :init-status="uiStore.newProjectInitStatus" @close="uiStore.openNewProject = false; uiStore.newProjectInitStatus = null" />
     <ProjectModal :project="projectStore.modalProject" @close="projectStore.closeModal()" />
@@ -228,8 +210,11 @@ onMounted(() => perform(async () => {
 <style scoped>
 .desktop-shell { --desktop-topbar-height: 52px; position: relative; isolation: isolate; height: 100vh; width: 100vw; overflow: hidden; display: grid; grid-template-columns: var(--desktop-sidebar-width, 204px) minmax(0, 1fr); grid-template-rows: var(--desktop-topbar-height) minmax(0, 1fr); color: var(--text-primary); background: rgb(from var(--surface-card-solid) r g b / 50%); }
 .desktop-topbar { position: relative; grid-column: 2; grid-row: 1; z-index: 3; display: flex; align-items: center; justify-content: flex-end; min-width: 0; margin: 0 var(--space-sm) 0 0; padding: 0; background: transparent; -webkit-app-region: drag; }.desktop-topbar::before { position: absolute; top: 0; right: 100%; bottom: 0; width: var(--desktop-sidebar-width, 204px); content: ''; -webkit-app-region: drag; pointer-events: none; }.topbar-search { position: absolute; z-index: 2; left: 50%; box-sizing: border-box; -webkit-app-region: no-drag; display: flex; align-items: center; gap: 10px; width: min(400px, 48%); height: 36px; padding: 7px 12px; border: 1px solid color-mix(in srgb, var(--content-divider) 70%, transparent); border-radius: 11px; color: var(--text-secondary); background: color-mix(in srgb, var(--surface-card-solid) 55%, transparent); font-size: 12px; transform: translateX(-50%); }.topbar-search > span:first-child { font-size: 17px; }.topbar-search kbd { margin-left: auto; font: inherit; opacity: .7; }.desktop-topbar :deep(.topbar-create-button) { -webkit-app-region: no-drag; flex: 0 0 auto; width: max-content; min-width: max-content; }
-.desktop-workbench { grid-column: 2; grid-row: 2; min-width: 0; min-height: 0; overflow: auto; margin: 0 var(--space-sm) var(--space-sm) 0; padding: var(--space-lg); border: 1px solid color-mix(in srgb, var(--content-divider) 75%, transparent); border-radius: 18px; background: rgb(from var(--surface-card-solid) r g b / 75%); box-shadow: 0 12px 34px rgba(34, 39, 52, .08); scroll-behavior: smooth; }
+.desktop-workbench { position: relative; grid-column: 2; grid-row: 2; min-width: 0; min-height: 0; overflow: auto; margin: 0 var(--space-sm) var(--space-sm) 0; padding: var(--space-lg); border: 1px solid color-mix(in srgb, var(--content-divider) 75%, transparent); border-radius: 18px; background: rgb(from var(--surface-card-solid) r g b / 75%); box-shadow: 0 12px 34px rgba(34, 39, 52, .08); scroll-behavior: smooth; }
 .desktop-workbench:has(.desktop-calendar-page) { display: flex; flex-direction: column; }
+.desktop-workbench:has(.desktop-mind-page) { display: flex; overflow: hidden; padding: 0; }
+.desktop-mind-page { position: relative; display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; padding: var(--space-lg); box-sizing: border-box; }
+.desktop-mind-page :deep(.ntp-layout) { box-sizing: border-box; width: 100%; padding: 0; }
 .desktop-calendar-page { position: relative; display: flex; flex: 1; flex-direction: column; gap: var(--space-md); min-width: 0; min-height: 0; }
 .calendar-history-actions { position: absolute; right: var(--space-md); bottom: var(--space-md); z-index: 3; display: flex; gap: var(--space-xs); }
 .desktop-error { padding: 12px 16px; background: var(--control-bg); border: 1px solid var(--status-danger); border-radius: 8px; }

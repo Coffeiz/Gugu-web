@@ -1,0 +1,698 @@
+{
+  "packages/core/tests/im/attention/question.test.ts": {
+    "domain": "agent",
+    "layer": "L1",
+    "owner": "packages/core/src/im/attention/question.ts",
+    "productionEntry": "packages/core/src/im/attention/question.ts",
+    "keyBehavior": "区分疑问、转述与否定劝告",
+    "ci": "node-webui"
+  },
+  "packages/core/tests/im/attention/message.test.ts": {
+    "domain": "agent",
+    "layer": "L1",
+    "owner": "packages/core/src/im/attention/message.ts",
+    "productionEntry": "packages/core/src/im/attention/message.ts",
+    "keyBehavior": "注意力事件时间和媒体提及事实",
+    "ci": "node-webui"
+  },
+  "packages/core/tests/im/attention/algorithm.test.ts": {
+    "domain": "agent",
+    "layer": "L1",
+    "owner": "packages/core/src/im/attention/algorithm.ts + dev-sandbox.ts",
+    "productionEntry": "Core attention scorer → Web Host dev attention route",
+    "keyBehavior": "Python v3 决策契约覆盖问句、能力动作、话题锚点、成员窗口、模式阈值且沙盒不回显正文",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/im/attention-score.test.ts": {
+    "domain": "agent",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/im/attention-defaults.ts + packages/core/src/im/attention/dev-sandbox.ts",
+    "productionEntry": "createApp 认证路由 → Core v3 attention scorer",
+    "keyBehavior": "认证先于评分，DTO 拒绝额外字段，评分复用 Core 且不泄露合成消息正文",
+    "ci": "web-host-node"
+  },
+  "packages/core/tests/im/attention/normalization.test.ts": {
+    "domain": "agent",
+    "layer": "L1",
+    "owner": "packages/core/src/im/attention/normalization.ts",
+    "productionEntry": "packages/core/src/im/attention/normalization.ts",
+    "keyBehavior": "注意力话题归一化和候选去重",
+    "ci": "node-webui"
+  },
+  "packages/core/tests/im/attention/visible-units.test.ts": {
+    "domain": "agent",
+    "layer": "L1",
+    "owner": "packages/core/src/im/attention/visible-units.ts",
+    "productionEntry": "packages/core/src/im/attention/visible-units.ts",
+    "keyBehavior": "引用与代码屏蔽和Unicode偏移",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/im/wechat-connect.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/im/wechat-connect.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "微信连接挑战和Python Gateway消费",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/im/wechat-connect-route.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/im/wechat-connect.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "微信连接授权及错误语义",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/im/feishu-connect.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/im/feishu-connect.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "飞书设备流与Python消费者",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/im/feishu-connect-route.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/im/feishu-connect.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "飞书连接认证与错误语义",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/im/qq-connect.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/im/qq-connect.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "QQ扫码挑战与Python Gateway消费",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/im/qq-connect-route.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/im/qq-connect.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "QQ扫码认证和错误语义",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/im/user-bot-update.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/im/user-bot-update.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "Bot更新事务和Python规则对照",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/im/user-bot-update-route.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/im/user-bot-update.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "Bot更新HTTP参数和错误语义",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/im/user-bot-delete.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/im/user-bot-delete.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "Bot删除事务、Redis清理及Python对照",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/im/user-bot-create.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/im/user-bot-create.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "QQ创建加密、owner隔离及Python Gateway",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/im/user-bot-create-route.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/im/user-bot-create.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "QQ创建请求和错误语义",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/im/fixtures/binding_code_consumer.py": {
+    "domain": "im",
+    "layer": "L2",
+    "owner": "backend/app/services/im_identity.py",
+    "productionEntry": "backend/app/services/im_identity.py",
+    "keyBehavior": "Python实际消费者读取Node签发的QQ和Telegram绑定码",
+    "ci": "manual"
+  },
+  "apps/web-host/tests/im/user-bot-binding-code.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/im/binding-code.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "绑定码owner隔离、签名和过期",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/im/user-bot-unbind.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/im/user-bots.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "QQ解绑授权与持久字段",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/im/im-platform-settings.test.ts": {
+    "domain": "im",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/im/platform-settings.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "平台配置优先级与热更新",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/im/user-bots-list.test.ts": {
+    "domain": "im",
+    "layer": "L2",
+    "owner": "packages/core/src/im/user-bots.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "Bot读取用户隔离和凭据掩码",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/im/fixtures/user_bots_python.py": {
+    "domain": "im",
+    "layer": "L2",
+    "owner": "backend/app/api/v1/user_bots.py",
+    "productionEntry": "backend/app/api/v1/user_bots.py",
+    "keyBehavior": "Python用户Bot读取和密文对照",
+    "ci": "manual"
+  },
+  "backend/tests/im/qq/test_qq_final_active_delivery.py": {
+    "domain": "qq-final-delivery",
+    "layer": "L1",
+    "owner": "backend/agent/im/dispatch_finalization.py",
+    "productionEntry": "backend/agent/im/dispatch.py 与 backend/agent/im/streaming/qq.py",
+    "keyBehavior": "最终正文和错误提示主动发送且不重放中间轮；过程送达不掩盖最终失败；取消不补发，缺模型终态不伪造成功",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_inbound_recovery.py": {
+    "domain": "im-recovery",
+    "layer": "L1",
+    "owner": "backend/agent/im/inbound_recovery.py",
+    "productionEntry": "backend/worker.py 与 backend/agent/run",
+    "keyBehavior": "崩溃重领不重跑已开始任务；回复发送前落库，检查点保留中间轮和工具状态，正常收尾复用同一展示行",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_immediate_files.py": {
+    "domain": "im-file-delivery",
+    "layer": "L1",
+    "owner": "backend/agent/im/immediate_files.py",
+    "productionEntry": "IM 工具文件发送入口",
+    "keyBehavior": "同一消息与文件并发只发送一次，UUID 所有者标识稳定去重，发送状态未知时不重试",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_im_commands.py": {
+    "domain": "im-command-auth",
+    "layer": "L1",
+    "owner": "backend/agent/commands/__init__.py",
+    "productionEntry": "backend/agent/im/dispatch.py 与 backend/agent/commands/__init__.py",
+    "keyBehavior": "IM 命令按可信角色限制 Owner 私有数据与账号状态操作，缺少角色时按未知身份拒绝",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_group_reflection_snapshot_reuse.py": {
+    "domain": "im-memory",
+    "layer": "L1",
+    "owner": "backend/agent/memory",
+    "productionEntry": "backend/agent/context/reflection_snapshot.py 与 backend/agent/memory/reflection_jobs.py",
+    "keyBehavior": "数据库历史恢复后仅在消息序列严格匹配时复用原始 Provider 前缀；闲置调度可刷新、取消并在 worker 接管",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_group_reflection_policy.py": {
+    "domain": "im-memory",
+    "layer": "L1",
+    "owner": "backend/agent/memory",
+    "productionEntry": "backend/agent/im/conversation.py:record_passive_im_message、backend/agent/memory/reflection_jobs.py 与 im_reflection.py",
+    "keyBehavior": "群被动消息累计条数但不启动或续期闲置；主动 Run 完成后计时且保留较新水位；没有 Provider 用量时不触发压力任务，旧版已入队的任务仍可重建历史后执行",
+    "ci": "backend-test"
+  },
+  "backend/tests/im/test_im_memory_scopes.py": {
+    "domain": "im-memory",
+    "layer": "L1",
+    "owner": "backend/agent/memory",
+    "productionEntry": "agent/memory/im_reflection.py 与 reflection_jobs.py",
+    "keyBehavior": "IM 记忆按用户平台机器人群与成员隔离；群与成员反思完整共享资料前缀，保留快照工具和各自规则，私聊范围不重复正文",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_im_interrupted_run_persistence.py": {
+    "domain": "agent-cancellation",
+    "layer": "L1",
+    "owner": "backend/agent/im",
+    "productionEntry": "agent/im/loop.py",
+    "keyBehavior": "IM 中断后已生成的部分回复会持久化供下一轮继续使用",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_user_bot_live_events.py": {
+    "domain": "im-platform-settings",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/user_bots.py",
+    "productionEntry": "backend/app/api/v1/user_bots.py:delete_my_bot",
+    "keyBehavior": "删除 Bot 提交后发布 IM 渠道刷新事件，使其他已打开客户端读取权威状态",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/telegram/test_telegram_bot_api.py": {
+    "domain": "im",
+    "layer": "L1",
+    "owner": "backend/agent/gateway/telegram.py",
+    "productionEntry": "backend/app/services/telegram_bot_api.py",
+    "keyBehavior": "Telegram API 固定 HTTPS 主机、禁用重定向、约束下载路径、代理失败关闭且不泄漏 Token",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/telegram/test_telegram_connect.py": {
+    "domain": "im",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/telegram_connect.py",
+    "productionEntry": "backend/app/api/v1/telegram_connect.py",
+    "keyBehavior": "连接与换 Token 按所有权加密保存，失败不覆盖凭据，owner 绑定码限次且单次使用",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/telegram/test_telegram_contract.py": {
+    "domain": "im",
+    "layer": "L1",
+    "owner": "backend/agent/im",
+    "productionEntry": "backend/agent/im/models.py",
+    "keyBehavior": "Telegram 会话身份按平台、Bot 与群聊隔离，绑定命令在进入 Agent 前消费且停止命令作用域准确",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/telegram/test_telegram_format.py": {
+    "domain": "im",
+    "layer": "L0",
+    "owner": "backend/agent/im",
+    "productionEntry": "backend/agent/im/telegram_format.py",
+    "keyBehavior": "MarkdownV2 转义、链接安全与消息分块遵循 Telegram 字符及 UTF-16 长度限制",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/telegram/test_telegram_gateway.py": {
+    "domain": "im",
+    "layer": "L1",
+    "owner": "backend/agent/gateway/telegram.py",
+    "productionEntry": "backend/agent/gateway/telegram.py",
+    "keyBehavior": "Telegram 按钮按标签长度自适应分行；回调仅允许 Bot owner 消费，重复点击不覆盖 Agent 结果，MCP 凭据按钮仅能从私聊启动；长轮询和出站行为符合契约",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/telegram/test_telegram_im_policy.py": {
+    "domain": "im",
+    "layer": "L1",
+    "owner": "backend/agent/im/permissions.py",
+    "productionEntry": "backend/agent/im/permissions.py",
+    "keyBehavior": "owner、群成员及未知角色按 Bot 隔离，群聊记录、回复、记忆与上下文搜索遵循策略",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/telegram/test_telegram_media.py": {
+    "domain": "im",
+    "layer": "L1",
+    "owner": "backend/agent/im/media_ingress_telegram.py",
+    "productionEntry": "backend/agent/im/media_ingress_telegram.py",
+    "keyBehavior": "媒体下载限制大小与归属，引用媒体仅复用同平台同消息附件，失败不暂存对象",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/telegram/test_telegram_message_parser.py": {
+    "domain": "im",
+    "layer": "L0",
+    "owner": "backend/agent/im/parsers/telegram.py",
+    "productionEntry": "backend/agent/im/parsers/telegram.py",
+    "keyBehavior": "命令实体按 UTF-16 偏移解析，身份提及、匿名发送者、引用和受支持媒体映射到统一 IM 协议",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/feishu/test_feishu_tool_summary.py": {
+    "domain": "im",
+    "layer": "L1",
+    "owner": "backend/agent/gateway",
+    "productionEntry": "backend/agent/gateway/feishu_tool_summary.py",
+    "keyBehavior": "飞书工具事件按调用 ID 更新折叠摘要，正文分组、取消态、回退和详情长度遵循消息契约",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_im_permissions_types.py": {
+    "domain": "im",
+    "layer": "L1",
+    "owner": "backend/agent/im",
+    "productionEntry": "backend/agent/im/permissions.py",
+    "keyBehavior": "非数字 Bot 身份拒绝授权，群策略按平台开关隔离并保留旧飞书空值语义",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/qq/test_qq_text.py": {
+    "domain": "qq-streaming",
+    "layer": "L1",
+    "owner": "backend/agent/gateway/qq",
+    "productionEntry": "backend/agent/gateway/qq/text.py",
+    "keyBehavior": "QQ 输出安全转换地图链接，流式任意前缀不截断且不泄露不支持的自定义协议",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/qq/test_qq_reply_sequences.py": {
+    "domain": "qq-streaming",
+    "layer": "L2",
+    "owner": "backend/agent/gateway/qq",
+    "productionEntry": "backend/agent/gateway/qq/outbound.py",
+    "keyBehavior": "QQ 图文共用被动回复序号且长任务跨过旧 10 分钟窗口仍递增；中间刷新失败后仍关闭已创建的流；回执只确认实际发送的文字，关闭失败向调用方报告",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/qq/test_qq_package_facade.py": {
+    "domain": "qq-gateway",
+    "layer": "L1",
+    "owner": "backend/agent/gateway/qq",
+    "productionEntry": "backend/agent/gateway/qq/__init__.py",
+    "keyBehavior": "QQ 门面稳定导出生命周期与发送入口，并关闭自己创建的 HTTP 会话",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/telegram/test_telegram_streaming.py": {
+    "domain": "telegram-streaming",
+    "layer": "L1",
+    "owner": "backend/agent/gateway/telegram",
+    "productionEntry": "backend/agent/im/replies.py",
+    "keyBehavior": "Telegram 草稿流保留轮次顺序、隐藏轮次和 Mermaid 图消息的交付与持久化约定",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_mermaid.py": {
+    "domain": "markdown-mermaid",
+    "layer": "L1",
+    "owner": "backend/agent/im",
+    "productionEntry": "backend/agent/im/chart.py",
+    "keyBehavior": "Mermaid 图表渲染失败时保留可读源码，成功时替换图表并维持前后文本流式输出",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_im_replies.py": {
+    "domain": "im-replies",
+    "layer": "L1",
+    "owner": "backend/agent/im",
+    "productionEntry": "backend/agent/im/replies.py",
+    "keyBehavior": "QQ 被动文本回复不施加应用层条数上限，按入站消息关联并由平台响应决定交付结果",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_qq_message_format_migration.py": {
+    "domain": "qq-message-format",
+    "layer": "L2",
+    "owner": "backend/alembic/versions",
+    "productionEntry": "backend/alembic/versions/20261014000001_remove_smart_qq_message_format.py",
+    "keyBehavior": "移除 smart 格式时仅迁移既有选项并保留其他偏好与数据默认值",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_qq_private_streaming_migration.py": {
+    "domain": "qq-streaming",
+    "layer": "L2",
+    "owner": "backend/alembic/versions",
+    "productionEntry": "backend/alembic/versions/20261024000001_restore_qq_private_streaming_setting.py",
+    "keyBehavior": "新增独立私聊流式开关时保留既有 Markdown 行为，新建机器人默认关闭且回滚移除字段",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_qq_private_streaming.py": {
+    "domain": "qq-streaming",
+    "layer": "L1",
+    "owner": "backend/agent/im",
+    "productionEntry": "backend/agent/im/loop.py",
+    "keyBehavior": "QQ 私聊仅在支持流式的消息格式下启用增量输出",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_user_bot_message_format.py": {
+    "domain": "qq-message-format",
+    "layer": "L1",
+    "owner": "backend/app/api/v1",
+    "productionEntry": "backend/app/api/v1/user_bots.py",
+    "keyBehavior": "用户机器人消息格式设置持久化受支持模式并拒绝已移除的 smart 模式",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/wechat/test_wechat_gateway_components.py": {
+    "domain": "wechat-gateway",
+    "layer": "L1",
+    "owner": "backend/agent/gateway/wechat",
+    "productionEntry": "backend/agent/gateway/wechat/outbound.py",
+    "keyBehavior": "微信网关保留上下文令牌、媒体协议、缓存退避与长轮询取消清理约定",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_group_tool_permissions.py": {
+    "domain": "group-tool-permissions",
+    "layer": "L1",
+    "owner": "backend/agent/im 与 backend/app/api/v1",
+    "productionEntry": "backend/agent/im 与 backend/app/api/v1/user_bots.py",
+    "keyBehavior": "群工具授权允许受支持的 Provider 搜索工具并删除未知名称",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/qq/test_qq_instant_ack.py": {
+    "domain": "im-instant-ack",
+    "layer": "L1",
+    "owner": "backend/agent/gateway/qq",
+    "productionEntry": "backend/agent/gateway/qq/events.py 与 backend/agent/im/shortcuts.py",
+    "keyBehavior": "QQ 带附件时秒回「文件收到啦」，同一会话 10 秒冷却不刷屏，群聊按只响应@与静默记录策略决定是否回复，纯文本不触发秒回",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_protocol_retry.py": {
+    "domain": "im-group-reply-gate",
+    "layer": "L1",
+    "owner": "backend/agent/loop/runner.py",
+    "productionEntry": "backend/agent/im/auto_reply/decision.py",
+    "keyBehavior": "模型跳过选择工具直接输出正文时，把协议错误回灌模型补选一次，上限一轮；超限落静默与 error 终态，群里零输出；decision 工具调用在 IM 侧静默而 Web 镜像保留",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_capability.py": {
+    "domain": "group-reply-gate",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply",
+    "productionEntry": "IM 群聊自动回复工具目录与 Provider schema",
+    "keyBehavior": "回复选择是群自动回复的必经门，但内部选择工具不暴露给业务工具目录",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_decision.py": {
+    "domain": "group-reply-gate",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/gate.py",
+    "productionEntry": "backend/agent/im/dispatch.py 与 Agent 工具分发",
+    "keyBehavior": "回复门选择不可绕过或改写；门状态按 run 隔离，工具调用按选择状态校验",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_duplicate_decision.py": {
+    "domain": "group-reply-gate",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/gate.py",
+    "productionEntry": "backend/agent/im/dispatch.py",
+    "keyBehavior": "重复选择幂等且有界；冲突选择不覆盖首次决定，复读不会直接废弃整轮",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_gate_recovery.py": {
+    "domain": "group-reply-gate",
+    "layer": "L1",
+    "owner": "backend/agent/im/loop_drivers.py",
+    "productionEntry": "backend/agent/im/auto_reply 与 Provider 请求入口",
+    "keyBehavior": "绕过回复门时阻止业务工具并回灌协议错误；仅支持的协议能力错误触发本 run 回退",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_group_commands.py": {
+    "domain": "group-command-auth",
+    "layer": "L1",
+    "owner": "backend/agent/commands 与 backend/agent/im/auto_reply",
+    "productionEntry": "backend/agent/im/dispatch.py",
+    "keyBehavior": "群命令要求明确 @；私有命令和结果保护 owner 数据，私聊命令不受群聊 @ 规则影响",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_attention_budget.py": {
+    "domain": "group-attention-budget",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/budget.py",
+    "productionEntry": "backend/agent/im/dispatch.py 与 scored 群聊预算收尾",
+    "keyBehavior": "PROACTIVE 与 SOFT 预算按平台机器人群及成员作用域原子预留，限制窗口、幂等重试、失败释放和未知状态有界占位",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_attention_delivery.py": {
+    "domain": "group-attention-delivery-ledger",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/delivery.py",
+    "productionEntry": "backend/agent/im/replies.py 与 attention snapshot",
+    "keyBehavior": "投递幂等且只把已接受的原生消息 ID 按平台、Bot、群索引；已回答来源映射回 N07；可信引用必须发给同一成员",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_attention_platform_facts.py": {
+    "domain": "group-attention-platform-facts",
+    "layer": "L1",
+    "owner": "backend/agent/gateway 与 backend/agent/im/parsers",
+    "productionEntry": "QQ、飞书、Telegram 群聊事件适配",
+    "keyBehavior": "平台 @ 与引用只从原生结构化目标解析；未知引用身份保持 UNKNOWN 并按会话范围隔离",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_attention_decision.py": {
+    "domain": "group-attention-decisions",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/attention.py",
+    "productionEntry": "backend/agent/im/dispatch.py 的注意力决策入口",
+    "keyBehavior": "自主路径旁路评分；DIRECT 和可信引用先于硬拒绝；natural、active 阈值与预算按模式执行，缺失快照不准入开放候选",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_attention_features.py": {
+    "domain": "group-attention-features",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/attention.py",
+    "productionEntry": "Gateway 事实规范化与 scored 特征计算",
+    "keyBehavior": "结构化消息事实保留 UNKNOWN；只使用可靠 Stream 时间和作用域；逻辑候选去重且不跨成员或群拼接",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/qq/test_qq_attachment_placeholders.py": {
+    "domain": "qq-attachment-parser",
+    "layer": "L1",
+    "owner": "backend/agent/im/parsers/qq.py",
+    "productionEntry": "QQ 入站引用与附件规范化",
+    "keyBehavior": "只有与真实附件匹配的占位标记会移除；无对应附件时保留用户正文",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_attention_runtime.py": {
+    "domain": "group-attention-snapshot",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/runtime.py",
+    "productionEntry": "backend/agent/im/dispatch.py",
+    "keyBehavior": "自主模式绕过评分与新预算；scored 上下文合并数据库和尚未落库的同群消息，并审计模式版本、准入、分项分数和快照完整性",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_attention_conversation_ttl.py": {
+    "domain": "group-attention-conversation-ttl",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/conversation_ttl.py",
+    "productionEntry": "backend/agent/im/dispatch.py 的群聊准入与最终回复投递",
+    "keyBehavior": "只允许同 Bot、群和成员在有效 TTL 内续聊；TTL 由最终回复平台接受回执创建，结束、转向、成员隔离和只读群规则有效",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_attention_scenario_matrix.py": {
+    "domain": "group-attention-scenarios",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/attention.py",
+    "productionEntry": "backend/agent/im/dispatch.py 的 scored 决策入口",
+    "keyBehavior": "覆盖 PRD v1.4 P/N 权重、H 规则、三值关系、跨成员对话、邀请、媒体兜底和预算场景的分数与准入结果",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_attention_review_matrix.py": {
+    "domain": "group-attention-review-matrix",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/attention.py",
+    "productionEntry": "backend/agent/im/dispatch.py 的群聊注意力决策入口",
+    "keyBehavior": "以 60 余个独立合成对话验证四种模式、邀请与续接、硬拒绝、阈值、历史证据、预算和媒体准入结果",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_attention_passive_persistence.py": {
+    "domain": "group-attention-passive-persistence",
+    "layer": "L1",
+    "owner": "backend/agent/im/conversation.py",
+    "productionEntry": "backend/agent/im/dispatch.py 与 Worker ACK",
+    "keyBehavior": "PASSIVE 批次逐条保存成员身份和附件归属，在单事务完成后记录结构化决策摘要并支持事件幂等重投",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_group_attention_mode.py": {
+    "domain": "group-attention-mode",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/user_bots.py 与 UserBot",
+    "productionEntry": "用户 Bot 设置 API 与群聊 dispatch",
+    "keyBehavior": "模式按 Bot 持久化并校验为 autonomous、quiet、natural 或 active；仅变化时递增配置版本，未配置时兼容默认 autonomous",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_group_silence.py": {
+    "domain": "group-reply-gate",
+    "layer": "L1",
+    "owner": "backend/agent/im/dispatch_finalization.py",
+    "productionEntry": "backend/agent/im/dispatch.py",
+    "keyBehavior": "群回复门未开启时协议错误、模型失败和未选择均保持静默；choose_no_reply 释放未消费的注意力预算并记录脱敏收尾事实",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_protocol_failure.py": {
+    "domain": "group-reply-gate",
+    "layer": "L1",
+    "owner": "backend/agent/im/loop_drivers.py",
+    "productionEntry": "backend/agent/im/dispatch.py 与工具分发",
+    "keyBehavior": "回复门未开时违规业务工具不执行；连续违规有界结束并保留结构化错误且群内静默",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_runtime.py": {
+    "domain": "group-reply-gate",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply",
+    "productionEntry": "backend/agent/im/dispatch.py 与 Provider schema 构造",
+    "keyBehavior": "Provider schema 仅在完成回复选择后开放业务工具",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/qq/test_qq_other_bot_mention.py": {
+    "domain": "qq-mention-routing",
+    "layer": "L1",
+    "owner": "backend/agent/im/platforms/qq",
+    "productionEntry": "backend/agent/im/dispatch.py",
+    "keyBehavior": "@其他 Bot 的群消息只路由到目标 Bot；区分他人提及和当前 Bot 提及",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_early_persist_run_prefix.py": {
+    "domain": "im-early-persistence",
+    "layer": "L1",
+    "owner": "backend/agent/im/early_persist.py",
+    "productionEntry": "backend/worker.py 与历史上下文装载",
+    "keyBehavior": "待消费行前缀稳定且与批次/展示键隔离；只有待消费行暂不进入历史，提升后恢复",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_group_batch_permission.py": {
+    "domain": "im-batch-permissions",
+    "layer": "L1",
+    "owner": "backend/agent/run/preparation.py",
+    "productionEntry": "backend/agent/im/dispatch.py 与 run 准备阶段",
+    "keyBehavior": "合并批次按最弱身份与工具权限交集执行；缺失身份不继承 owner 权限；正文准确标注发言人",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_im_early_persist_prompt_stability.py": {
+    "domain": "im-early-persistence",
+    "layer": "L1",
+    "owner": "backend/agent/im/early_persist.py",
+    "productionEntry": "backend/agent/run/preparation.py",
+    "keyBehavior": "早落库不改变 Provider 历史消息字节内容，展示时间保留到达时刻",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_im_early_persistence.py": {
+    "domain": "im-early-persistence",
+    "layer": "L1",
+    "owner": "backend/agent/im/early_persist.py",
+    "productionEntry": "backend/worker.py 与 backend/agent/run/preparation.py",
+    "keyBehavior": "早落库幂等、批次复用与失败补齐保持消息顺序；敏感控制消息不落历史；附件仍归属原发言人",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_im_message_batch.py": {
+    "domain": "im-message-batching",
+    "layer": "L1",
+    "owner": "backend/agent/im/message_batch.py",
+    "productionEntry": "backend/agent/im/dispatch.py 与 Worker 入站处理",
+    "keyBehavior": "群聊和私聊按到达顺序合并并只触发一次回复；慢持久化不拆批；run 中到达消息进入下一批",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_im_message_persistence_timing.py": {
+    "domain": "im-message-persistence",
+    "layer": "L1",
+    "owner": "backend/agent/im/early_persist.py",
+    "productionEntry": "backend/worker.py 与 SSE 会话增量发布",
+    "keyBehavior": "会话锁期间消息仍及时持久化并发布；MCP 凭据先消费，秘密正文不进入数据库或 SSE",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_interaction_fast_path.py": {
+    "domain": "im-interaction-fast-path",
+    "layer": "L1",
+    "owner": "backend/agent/im/dispatch.py",
+    "productionEntry": "backend/worker.py 与 IM 交互路由",
+    "keyBehavior": "活动交互归属键规范化正确；过期或无效 owner 不进入快速通道，活动交互回复不等待会话锁",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_attention_algorithm.py": {
+    "domain": "group-attention-scoring",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/attention_algorithm.py",
+    "productionEntry": "backend/agent/im/auto_reply/runtime.py",
+    "keyBehavior": "CALL、ASK、CAP 与 TOPIC 按当前评分规则处理；长文弱问句位置和句末标点修正不误伤强证据",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_pending_ask.py": {
+    "domain": "group-pending-ask",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/pending_ask.py",
+    "productionEntry": "backend/agent/im/auto_reply/runtime.py 与延迟恢复 Worker",
+    "keyBehavior": "延迟记录只绑定确切 ASK 消息；其他成员原生回复可原子取消，避免批次中旧候选被恢复",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_im_delivery_receipts.py": {
+    "domain": "im-delivery-receipts",
+    "layer": "L1",
+    "owner": "backend/agent/im/delivery_receipts.py",
+    "productionEntry": "backend/agent/im/dispatch_finalization.py",
+    "keyBehavior": "附件投递回执进入内部上下文，但不能跨会话或泄漏到其他用户历史",
+    "ci": "backend-pytest"
+  }
+}

@@ -332,6 +332,9 @@ importers:
       jszip:
         specifier: 3.10.2
         version: 3.10.2
+      kysely:
+        specifier: 0.29.8
+        version: 0.29.8
       mime-types:
         specifier: 2.1.35
         version: 2.1.35

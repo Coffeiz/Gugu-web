@@ -112,7 +112,7 @@ export function useMindRefActions() {
       try {
         const location = await mindApi.canvasNoteLocation(Number(refId))
         uiStore.pendingCanvasTarget = { canvasId: location.canvasId, nodeId: Number(refId) }
-        await router.push('/mind/canvases')
+        await router.push('/canvases')
         return true
       } catch (error) {
         if (isNotFound(error)) showAppNotice(i18n.global.t('mindUi.referenceMissing'))

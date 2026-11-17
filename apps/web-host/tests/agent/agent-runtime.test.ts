@@ -4,14 +4,14 @@ import { test } from 'node:test'
 import type { CanonicalContextPorts, CanonicalRunContext, AgentRunnerPorts, RunCheckpoint, RunEvent } from '@gugu/core/agent'
 import { createCanonicalSourceLoader, stableJson } from '@gugu/core/agent'
 import { ProviderStreamSanitizer, stripThinking } from '@gugu/core/providers'
-import { createAgentRuntime } from '../../src/domains/agent-sessions/agent-runtime.js'
+import { createAgentRuntime } from '@gugu/core/agent'
 import { agentContextAccessScope } from '../../src/domains/agent-config/access-scope.js'
 import { bindProviderSelection } from '../../src/domains/agent-config/provider-resolver.js'
 
 const identity = { ownerId: 'owner-synthetic', sessionId: '1', runId: 'run-synthetic' }
 const digest = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')
 
-test('Host 装配的 Harness 经 Provider 请求输出并持久化终态', async () => {
+test('Core Agent Runtime 使用 Host 注入端口请求 Provider 并持久化终态', async () => {
   let checkpoint: RunCheckpoint<CanonicalRunContext> | null = null
   const outbox: RunEvent[] = []
   const histories: string[] = []

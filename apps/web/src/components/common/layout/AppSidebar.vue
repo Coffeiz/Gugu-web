@@ -8,7 +8,8 @@
         <span class="nav-label">{{ t('navigation.workspace') }}</span>
         <NavItem to="/projects" icon="navigation.projects">{{ t('navigation.projects') }}<template #badge>{{ projectStore.activeCount }}</template></NavItem>
         <NavItem to="/calendar" icon="navigation.calendar">{{ t('navigation.calendar') }}</NavItem>
-        <NavItem to="/mind" icon="canvas.note">{{ t('navigation.mind') }}</NavItem>
+        <NavItem to="/notes" icon="canvas.note">{{ t('mind.notes') }}</NavItem>
+        <NavItem to="/canvases" icon="canvas.graph">{{ t('mind.canvases') }}</NavItem>
         <NavItem to="/schedules" icon="admin.alarm">{{ t('navigation.schedules') }}</NavItem>
       </div>
 

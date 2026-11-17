@@ -39,13 +39,14 @@ export interface ExecutionResult {
 export interface ExecutionBackend {
   readonly id: string
   readonly capabilities: ExecutionCapabilities
-  execute(policy: ExecutionPolicy, signal?: AbortSignal): Promise<ExecutionResult>
+  execute(policy: ExecutionPolicy, signal?: AbortSignal, onOutput?: (stream: 'stdout' | 'stderr', chunk: Uint8Array) => void): Promise<ExecutionResult>
 }
 export interface ExecutionService {
   execute(
     request: ExecutionRequest,
     grant: ExecutionGrant,
     signal?: AbortSignal,
+    onOutput?: (stream: 'stdout' | 'stderr', chunk: Uint8Array) => void,
   ): Promise<ExecutionResult>
 }
 export class ExecutionError extends Error {

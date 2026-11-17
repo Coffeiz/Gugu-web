@@ -2,7 +2,7 @@
   <Teleport to="body">
     <Transition name="menu-pop" @before-leave="raiseLeaveLayer" @after-leave="emit('after-leave')">
       <!-- v-if 只在打开或离场过渡期间挂载，避免每个业务实例长期留下隐藏 host 占位。 -->
-      <div v-if="show" ref="popupRef" class="popup-menu-host" :class="[popupClass, { 'popup-menu-host--transparent': transparent }]" :style="transparent ? { ...popupStyle, padding: 0, border: 0, background: 'transparent', boxShadow: 'none', backdropFilter: 'none', WebkitBackdropFilter: 'none' } : popupStyle" @mousedown.stop @click.stop @contextmenu.prevent>
+      <div v-if="show" ref="popupRef" class="popup-menu-host" :class="[popupClass, { 'popup-menu-host--transparent': transparent, 'popup-menu-host--animated-blur': animatedBlur }]" :style="transparent ? { ...popupStyle, padding: 0, border: 0, background: 'transparent', boxShadow: 'none' } : popupStyle" @mousedown.stop @click.stop @contextmenu.prevent>
         <slot />
       </div>
     </Transition>
@@ -18,6 +18,7 @@ const props = defineProps({
   anchor: { type: Object as PropType<HTMLElement | null>, default: null },
   popupClass: { type: String, default: '' },
   transparent: { type: Boolean, default: false },
+  animatedBlur: { type: Boolean, default: false },
   placement: { type: String as PropType<'bottom' | 'top'>, default: 'bottom' },
   position: { type: Object as PropType<{ x: number; y: number } | null>, default: null },
   style: { type: Object as PropType<Record<string, string | number | undefined>>, default: () => ({}) },
@@ -113,5 +114,7 @@ defineExpose({ contains: (target: Node) => !!popupRef.value?.contains(target), e
    弹层整个推到视口外且无法滚动查看；transparent 变体同样受此兜底。 */
 .popup-menu-host { max-height: calc(100dvh - 12px); overflow-y: auto; overscroll-behavior: contain; padding: var(--popup-surface-padding); border: 1px solid var(--popup-surface-border); border-radius: var(--popup-surface-radius); background: var(--popup-surface-bg); box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight); backdrop-filter: var(--popup-surface-blur); -webkit-backdrop-filter: var(--popup-surface-blur); }
 :global(.popup-menu-host.popup-menu-host--transparent) { padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; overflow: visible; }
+/* 动画期间宿主参与合成，结束后由内部 surface 独自绘制模糊。 */
+:global(.popup-menu-host--transparent.popup-menu-host--animated-blur:is(.menu-pop-enter-active, .menu-pop-leave-active)) { border-radius: var(--popup-surface-radius); backdrop-filter: var(--popup-surface-blur); -webkit-backdrop-filter: var(--popup-surface-blur); }
 :global(.popup-menu-host.menu-pop-leave-active) { z-index: 100001 !important; }
 </style>

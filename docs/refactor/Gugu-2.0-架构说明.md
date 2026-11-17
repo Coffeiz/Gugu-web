@@ -319,7 +319,7 @@ packages/ui/                  # 多个 App 确有共用需求时再提取
 | --- | --- | --- |
 | Core Domain / Application | 领域不变量、业务用例、所有权规则、确认与副作用语义 | Host 建立可信身份、展示确认并验证调用来源 |
 | Core Data Runtime | 仓储、schema、事务、精度、CAS、操作收据及迁移实现 | Host 停写、备份编排、独占升级、启动和运维配置 |
-| Core Agent | Canonical 历史、Provider 适配、上下文、工具及 Run 编排 | Host 注入凭据、网络/进程能力与入口交付 |
+| Core Agent | Canonical 历史、Provider 适配、上下文/提示词业务格式、工具及 Run 编排 | Host 注入可信数据、凭据、网络/进程能力与入口交付 |
 | Core RAG | 复用 1.7.7 TypeScript 检索与排序规则；索引为派生数据，可从授权 FS/Canonical 数据重建 | Host/Core Data Adapter 负责授权来源读取和索引持久化；Python/Cython 不作为 Node 生产执行路径 |
 | Core Runtime / Transport | `commands.ts` 统一命令边界；stdio/进程 IPC 只处理编码、消息、背压、超时与错误终态 | Electron IPC 的窗口/frame 来源校验和 Preload 暴露由 Desktop 负责 |
 | Sandbox 包（目标；当前部分实现位于 Core Executor） | 共用执行契约、策略计算、能力协商、MXC/平台适配及执行终态 | Host 注入真实授权、原生后端、私有资源与生命周期；OS 后端强制隔离 |

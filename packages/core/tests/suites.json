@@ -4,6 +4,15 @@
     "layer": "L1",
     "purpose": "contract"
   },
+  "tests/terminals/metrics.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/terminals/list.test.ts": {"markers": [], "layer": "L2", "purpose": "contract"},
+  "tests/terminals/detail.test.ts": {"markers": [], "layer": "L2", "purpose": "contract"},
+  "tests/terminals/rename.test.ts": {"markers": [], "layer": "L2", "purpose": "contract"},
+  "tests/terminals/events.test.ts": {"markers": [], "layer": "L2", "purpose": "contract"},
   "tests/im/attention/message.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/im/attention/algorithm.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/im/attention/normalization.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
@@ -836,5 +845,14 @@
   "tests/agent/interactions/secrets.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/agent/context/memory-context.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/agent/capabilities/catalog.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
-  "tests/agent/attachments/current-turn.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"}
+  "tests/agent/attachments/current-turn.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+  "tests/agent/memory/im-group-daily-compaction.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+  "tests/agent/memory/im-maintenance-apply.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+  "tests/agent/memory/im-maintenance-preview.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+  "tests/agent/memory/im-maintenance-source.test.ts": {"markers": [], "layer": "L2", "purpose": "contract"},
+  "tests/agent/memory/maintenance-batches.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+  "tests/mcp/server-config-sqlite.test.ts": {"markers": [], "layer": "L2", "purpose": "contract"},
+  "tests/agent/context/source-policy.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+  "tests/agent/security/shell-command-risk.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+  "tests/agent/context/prompt-format.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"}
 }

@@ -30,6 +30,13 @@ import { createMindCanvasItemUpdate } from '../mind/canvas-item-update.js'
 import { createSqlMindCanvasItemUpdateRuntime } from '../mind/canvas-item-update-sql.js'
 import { createMindCanvasItemRemove, MindCanvasItemMutationError } from '../mind/canvas-item-remove.js'
 import { createSqlMindCanvasItemRemoveRuntime } from '../mind/canvas-item-remove-sql.js'
+import { createMindCanvasItemAdd } from '../mind/canvas-item-add.js'
+import { createSqlMindCanvasItemAddRuntime } from '../mind/canvas-item-add-sql.js'
+import { createMindCanvasRelationCreate, createMindCanvasRelationDelete } from '../mind/index.js'
+import { createSqlMindCanvasRelationCreateRuntime } from '../mind/relation-create-sql.js'
+import { createSqlMindCanvasRelationDeleteRuntime } from '../mind/relation-delete-canvas-sql.js'
+import { createMindRefNodeCreator } from '../mind/ref-node-create.js'
+import { createSqlMindRefNodeCreateRuntime } from '../mind/ref-node-create-sql.js'
 import { createDesktopAppearanceService } from '../preferences/desktop-appearance.js'
 import { createKyselyPreferenceDocumentStore } from '../preferences/document-store.js'
 import { createKyselyOnboardingStore } from '../onboarding/store.js'
@@ -154,6 +161,38 @@ try {
         } else if (job.method === 'mind.canvases.items.list') {
           validateCommandParams(job.method, job.params)
           result = await createSqlMindCanvasReader(runtime.db, runtime.backend).listItems(ownerId, Number(job.params.canvasId)) ?? []
+        } else if (job.method === 'mind.canvases.relations.list') {
+          validateCommandParams(job.method, job.params)
+          result = await createSqlMindCanvasReader(runtime.db, runtime.backend).listRelations(ownerId, Number(job.params.canvasId)) ?? []
+        } else if (job.method === 'mind.canvas-note.location') {
+          validateCommandParams(job.method, job.params)
+          const canvasId = await createSqlMindCanvasReader(runtime.db, runtime.backend).canvasLocation(ownerId, Number(job.params.nodeId))
+          result = canvasId === null ? null : { canvasId }
+        } else if (job.method === 'mind.canvases.items.add') {
+          validateCommandParams(job.method, job.params)
+          if (!job.operationId) throw new CoreError('invalid_request', '画布写入必须提供稳定操作标识')
+          const outcome = await runtime.operationWithTransaction(context, job.operationId, job.method, job.params, tx =>
+            createMindCanvasItemAdd(createSqlMindCanvasItemAddRuntime(tx, runtime.backend, async () => {}))(ownerId, Number(job.params.canvasId), job.params.body, { undoContextId: 'desktop-mind', clientId: null, mutationId: null }), { signal })
+          result = outcome.result
+        } else if (job.method === 'mind.canvases.items.bring-to-front') {
+          validateCommandParams(job.method, job.params)
+          if (!job.operationId) throw new CoreError('invalid_request', '画布写入必须提供稳定操作标识')
+          const outcome = await runtime.operationWithTransaction(context, job.operationId, job.method, job.params, tx =>
+            createMindCanvasItemUpdate(createSqlMindCanvasItemUpdateRuntime(tx, runtime.backend, async () => {})).bringToFront(ownerId, Number(job.params.canvasId), Number(job.params.id), job.params.body, { undoContextId: 'desktop-mind', clientId: null, mutationId: null }), { signal })
+          result = outcome.result
+        } else if (job.method === 'mind.canvases.relations.create' || job.method === 'mind.canvases.relations.delete') {
+          validateCommandParams(job.method, job.params)
+          if (!job.operationId) throw new CoreError('invalid_request', '画布关系写入必须提供稳定操作标识')
+          const outcome = await runtime.operationWithTransaction(context, job.operationId, job.method, job.params, tx => job.method === 'mind.canvases.relations.create'
+            ? createMindCanvasRelationCreate(createSqlMindCanvasRelationCreateRuntime(tx, runtime.backend, async () => {}))(ownerId, job.params.body, { undoContextId: 'desktop-mind', clientId: null, mutationId: null })
+            : createMindCanvasRelationDelete(createSqlMindCanvasRelationDeleteRuntime(tx, runtime.backend, async () => {}))(ownerId, Number(job.params.canvasId), Number(job.params.id), { undoContextId: 'desktop-mind', clientId: null, mutationId: null }).then(() => null), { signal })
+          result = outcome.result
+        } else if (job.method === 'mind.ref.create') {
+          validateCommandParams(job.method, job.params)
+          if (!job.operationId) throw new CoreError('invalid_request', '引用创建必须提供稳定操作标识')
+          const outcome = await runtime.operationWithTransaction(context, job.operationId, job.method, job.params, tx =>
+            createMindRefNodeCreator(createSqlMindRefNodeCreateRuntime(tx, runtime.backend, async () => {})).create(ownerId, job.params.body, { undoContextId: 'desktop-mind', clientId: null, mutationId: null }), { signal })
+          result = outcome.result
         } else if (job.method === 'mind.canvases.notes.create' || job.method === 'mind.canvases.notes.update' || job.method === 'mind.canvases.items.update' || job.method === 'mind.canvases.items.delete') {
           validateCommandParams(job.method, job.params)
           if (!job.operationId) throw new CoreError('invalid_request', '画布内容写入必须提供稳定操作标识')

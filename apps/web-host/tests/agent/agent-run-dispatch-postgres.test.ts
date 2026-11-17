@@ -6,7 +6,42 @@ import { withPostgresTransaction } from '../../src/adapters/postgres-transaction
 import { lockAgentRunSession } from '../../src/domains/agent-sessions/persistence/agent-run-startup-postgres.js'
 import { createPostgresAgentDispatch, enqueueAgentRunLocked } from '../../src/domains/agent-sessions/persistence/agent-run-dispatch-postgres.js'
 import { createPostgresAgentRunLeasePort } from '../../src/domains/agent-sessions/persistence/agent-run-lease-postgres.js'
+
+test('聊天运行定位限定 owner，区分不存在、空闲及运行中会话', async () => {
+  let rows: Array<{ run_id: string | null }> = []
+  const calls: unknown[][] = []
+  const pool = { async query(_sql: string, args: unknown[]) { calls.push(args); return { rows } } }
+  const dispatch = createPostgresAgentDispatch(pool as never, 'synthetic-key')
+  assert.equal(await dispatch.active('owner-a', 1), null)
+  rows = [{ run_id: null }]
+  assert.deepEqual(await dispatch.active('owner-a', 1), { identity: null })
+  rows = [{ run_id: 'run-a' }]
+  assert.deepEqual(await dispatch.active('owner-a', 1), { identity: { ownerId: 'owner-a', sessionId: '1', runId: 'run-a' } })
+  assert.deepEqual(calls, [['owner-a', 1], ['owner-a', 1], ['owner-a', 1]])
+  await assert.rejects(dispatch.active('owner-a', 0))
+})
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
+
+test('运行定位优先当前运行和选中队列，再恢复等待交互，并隔离 owner', { skip: !url && '需要隔离 PostgreSQL' }, async () => {
+  const schema = `active_${randomUUID().replaceAll('-', '')}`, admin = new Pool({ connectionString: url })
+  await admin.query(`CREATE SCHEMA "${schema}"`)
+  const pool = new Pool({ connectionString: url, options: `-c search_path=${schema}` })
+  try {
+    await pool.query(`CREATE TABLE conversation_sessions(id integer PRIMARY KEY,user_id uuid,active_run_id text);
+      CREATE TABLE agent_run_dispatch(user_id uuid,session_id integer,run_id text,state text);
+      CREATE TABLE agent_run_checkpoints(user_id uuid,session_id integer,run_id text,status text,updated_at timestamptz)`)
+    const owner = randomUUID(), other = randomUUID(), dispatch = createPostgresAgentDispatch(pool, 'synthetic-key')
+    await pool.query('INSERT INTO conversation_sessions VALUES (1,$1,NULL)', [owner])
+    assert.equal(await dispatch.active(other, 1), null)
+    assert.deepEqual(await dispatch.active(owner, 1), { identity: null })
+    await pool.query("INSERT INTO agent_run_checkpoints VALUES ($1,1,'waiting','waiting',clock_timestamp())", [owner])
+    assert.equal((await dispatch.active(owner, 1))?.identity?.runId, 'waiting')
+    await pool.query("INSERT INTO agent_run_dispatch VALUES ($1,1,'selected','selected')", [owner])
+    assert.equal((await dispatch.active(owner, 1))?.identity?.runId, 'selected')
+    await pool.query("UPDATE conversation_sessions SET active_run_id='running' WHERE id=1")
+    assert.equal((await dispatch.active(owner, 1))?.identity?.runId, 'running')
+  } finally { await pool.end(); await admin.query(`DROP SCHEMA "${schema}" CASCADE`); await admin.end() }
+})
 
 test('调度租约并发仅一人选中，过期只接管原 run，密文绑定 owner 和消息', { skip: !url && '需要隔离 PostgreSQL' }, async () => {
   const schema = `dispatch_${randomUUID().replaceAll('-', '')}`, admin = new Pool({ connectionString: url })
@@ -55,6 +90,10 @@ test('调度租约并发仅一人选中，过期只接管原 run，密文绑定 
     const recovered = await service.claim(owner, '1')
     assert.equal(recovered?.identity.runId, 'run-one'); assert.equal(recovered?.fence, first.fence + 1)
     assert.equal(recovered?.cancelRequested, true)
+    await pool.query("INSERT INTO agent_run_startups VALUES ($1,1,'run-one','pending',clock_timestamp())", [owner])
+    assert.equal(await service.failStart(first), false)
+    assert.equal((await pool.query("SELECT status FROM agent_run_startups WHERE run_id='run-one'")).rows[0].status, 'pending')
+    await pool.query("DELETE FROM agent_run_startups WHERE run_id='run-one'")
     assert.equal(await service.renew(first), false); assert.equal(await service.renew(recovered!), true)
     const badCore = createPostgresAgentRunLeasePort(pool, { dispatchLease: () => first })
     assert.equal(await badCore.acquire(identity), null)

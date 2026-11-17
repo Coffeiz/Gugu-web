@@ -60,6 +60,18 @@ export function createPostgresAgentDispatch(pool: Pick<Pool, 'connect' | 'query'
   key(secret)
   if (!Number.isSafeInteger(leaseMs) || leaseMs < 1000) throw new RangeError('调度租约无效')
   return {
+    /** 查询认证 owner 的当前运行；没有选中项时保留等待交互的最近运行。 */
+    async active(ownerId: string, sessionId: number): Promise<{ identity: RunIdentity | null } | null> {
+      if (!ownerId || !Number.isSafeInteger(sessionId) || sessionId < 1) throw new TypeError('Agent 会话身份无效')
+      const result = await pool.query<{ run_id: string | null }>(`SELECT coalesce(s.active_run_id,
+        (SELECT d.run_id FROM agent_run_dispatch d WHERE d.user_id=s.user_id AND d.session_id=s.id AND d.state='selected' LIMIT 1),
+        (SELECT c.run_id FROM agent_run_checkpoints c WHERE c.user_id=s.user_id AND c.session_id=s.id AND c.status='waiting' ORDER BY c.updated_at DESC,c.run_id DESC LIMIT 1)) AS run_id
+        FROM conversation_sessions s WHERE s.user_id=$1 AND s.id=$2`, [ownerId, sessionId])
+      if (!result.rows.length) return null
+      const runId = result.rows[0]!.run_id
+      if (runId !== null && (typeof runId !== 'string' || !runId || runId.length > 128)) throw new Error('Agent 运行身份无效')
+      return { identity: runId === null ? null : { ownerId, sessionId: String(sessionId), runId } }
+    },
     /** 仅供可信 Host 扫描可恢复会话；密文和用户内容不进入唤醒通知。 */
     async listReady(limit = 100): Promise<Array<{ ownerId: string; sessionId: string }>> {
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new RangeError('调度扫描数量无效')
@@ -136,6 +148,21 @@ export function createPostgresAgentDispatch(pool: Pick<Pool, 'connect' | 'query'
     async readReconstructionStatus(id: RunIdentity): Promise<'unavailable' | 'version_conflict' | null> {
       const result = await pool.query<{ blocked_reason: 'unavailable' | 'version_conflict' | null }>("SELECT blocked_reason FROM agent_run_dispatch WHERE user_id=$1 AND session_id=$2 AND run_id=$3 AND state='selected'", [id.ownerId,id.sessionId,id.runId])
       return result.rows[0]?.blocked_reason ?? null
+    },
+    /** 仅当前调度租约可记录无 checkpoint 的启动失败。 */
+    async failStart(lease: AgentDispatchLease): Promise<boolean> {
+      return withPostgresTransaction(pool, async client => {
+        const id = lease.identity
+        if (!await lockAgentRunSession(client, id)) return false
+        const result = await client.query(`UPDATE agent_run_startups s SET status='failed',updated_at=clock_timestamp()
+          WHERE s.user_id=$1 AND s.session_id=$2 AND s.run_id=$3 AND s.status='pending'
+            AND EXISTS (SELECT 1 FROM agent_run_dispatch d WHERE d.user_id=$1 AND d.session_id=$2 AND d.run_id=$3
+              AND d.state='selected' AND d.token=$4 AND d.fence=$5 AND d.lease_expires_at>clock_timestamp())
+            AND NOT EXISTS (SELECT 1 FROM agent_run_checkpoints c WHERE c.user_id=$1 AND c.session_id=$2 AND c.run_id=$3)
+            AND NOT EXISTS (SELECT 1 FROM agent_run_leases l WHERE l.user_id=$1 AND l.session_id=$2 AND l.expires_at>clock_timestamp())`,
+        [id.ownerId, id.sessionId, id.runId, lease.token, lease.fence])
+        return result.rowCount === 1
+      })
     },
     async retryReconstruction(id: RunIdentity): Promise<boolean> {
       return withPostgresTransaction(pool, async client => {

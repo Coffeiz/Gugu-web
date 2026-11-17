@@ -1,0 +1,18 @@
+{
+  "packages/core/tests/email/translate.test.ts": {
+    "domain": "email",
+    "layer": "L1",
+    "owner": "packages/core/src/email/translate.ts",
+    "productionEntry": "Core 邮件翻译用例与 Host Provider 端口",
+    "keyBehavior": "多语言输出结构、原始操作链接、空标题清理、占位符拒绝与最多三次模型重试",
+    "ci": "core-node"
+  },
+  "packages/core/tests/email/publish.test.ts": {
+    "domain": "email",
+    "layer": "L1",
+    "owner": "packages/core/src/email/publish.ts + packages/core/src/admin/email-recipient-list.ts",
+    "productionEntry": "Core 收件人读取和邮件批量投递用例",
+    "keyBehavior": "只发送给活跃订阅且邮箱有效的用户、按 locale 选翻译、单封失败不阻断其余收件人并限制并发",
+    "ci": "core-node"
+  }
+}

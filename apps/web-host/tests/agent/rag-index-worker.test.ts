@@ -9,10 +9,11 @@ import { buildDocuments } from '../../../../packages/core/src/agent/rag/adapters
 import { createSqlRagPersistentIndexReader } from '../../../../packages/core/src/agent/rag/persistent-index.js'
 import { createSqlRagPersistentIndexWriter } from '../../../../packages/core/src/agent/rag/persistent-writer.js'
 import { createSqlRagRebuildWorker } from '../../../../packages/core/src/agent/rag/rebuild-worker.js'
-import { enqueueMissingAgentRagBaselines } from '../../../../packages/core/src/agent/rag/rebuild-worker.js'
+import { enqueueMissingAgentRagBaselines, readAgentRagRebuildProgress } from '../../../../packages/core/src/agent/rag/rebuild-worker.js'
 import { resolveAgentRagIndexWorkerOwner, startAgentRagIndexWorker } from '../../src/domains/agent-sessions/rag-rebuild.js'
 import { startRagIndexWorker } from '../../src/domains/agent-sessions/rag-index-worker.js'
 import { createLocalAgentKnowledgeReadStore } from '../../src/domains/agent-sessions/tools/agent-rag-knowledge-store.js'
+import { createAgentImMemoryRagMutationPorts } from '../../src/domains/agent-sessions/persistence/agent-im-memory-rag-mutations.js'
 
 const tick = async (count = 1) => {
   for (let i = 0; i < count; i++) await new Promise(resolve => setImmediate(resolve))
@@ -468,7 +469,7 @@ test('Host Memory 来源经可信 owner scope 与旧版 FS 投影重建正式索
     }).execute()
 
     const production = startAgentRagIndexWorker(runtime, {
-      enabled: true, intervalMs: 1000, onError: error => { throw error }, workerOwner: 'node', memoryStorageRoot: storageRoot,
+      enabled: true, intervalMs: 10, onError: error => { throw error }, workerOwner: 'node', memoryStorageRoot: storageRoot,
       knowledgeStore: createLocalAgentKnowledgeReadStore(storageRoot),
     })
     try {
@@ -494,6 +495,28 @@ test('Host Memory 来源经可信 owner scope 与旧版 FS 投影重建正式索
       assert.equal(new Set(groupDocs.map(document => document.parent_id)).size, 2)
       assert.equal(snapshot.documents.filter(document => document.source_type === 'memory' && document.scope_type === 'member').length, 1)
       assert.doesNotMatch(JSON.stringify(snapshot.documents), /foreign private fact|tombstoned group fact|foreign-group/u)
+
+      const memoryIndex = createAgentImMemoryRagMutationPorts(runtime)
+      await memoryIndex.invalidate(owner)
+      const hidden = await createSqlRagPersistentIndexReader(runtime.db, 'sqlite').snapshot(owner)
+      assert.equal(hidden.documents.some(document => document.source_type === 'memory'), false)
+      await writeFile(join(groupDirectory, 'profile.json'), JSON.stringify({ text: 'maintained group fact' }), 'utf8')
+      await memoryIndex.changed({ owner_user_id: owner, platform: 'qq', bot_id: 'bot-a', scope_type: 'group', scope_id: 'group-live' })
+
+      const queued = await readAgentRagRebuildProgress(runtime.db, 'sqlite', owner, 'memory')
+      assert.equal(queued?.status, 'queued')
+      assert.ok(queued && queued.generation > queued.completedGeneration)
+      let completed = await readAgentRagRebuildProgress(runtime.db, 'sqlite', owner, 'memory')
+      for (let attempt = 0; attempt < 100 && completed?.completedGeneration !== queued?.generation; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 2))
+        completed = await readAgentRagRebuildProgress(runtime.db, 'sqlite', owner, 'memory')
+      }
+      assert.equal(completed?.status, 'ready')
+      assert.equal(completed?.completedGeneration, queued?.generation)
+      const refreshed = await createSqlRagPersistentIndexReader(runtime.db, 'sqlite').snapshot(owner)
+      assert.ok(refreshed.documents.some(document => document.source_type === 'memory'
+        && document.scope_type === 'group' && document.scope_id === 'group-live' && document.content === 'maintained group fact'))
+      assert.equal(refreshed.documents.some(document => document.content === 'authorized group fact' && document.scope_id === 'group-live'), false)
     } finally {
       await production.stop()
     }

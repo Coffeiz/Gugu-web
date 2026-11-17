@@ -18,6 +18,7 @@ export class Executor implements ExecutionService {
     request: ExecutionRequest,
     grant: ExecutionGrant,
     signal?: AbortSignal,
+    onOutput?: (stream: 'stdout' | 'stderr', chunk: Uint8Array) => void,
   ): Promise<ExecutionResult> {
     const backend = this.backends.find((item) => item.id === grant.backend)
     if (!backend) throw new ExecutionError('unsupported', 'Host 未装配已授权的执行后端')
@@ -26,7 +27,7 @@ export class Executor implements ExecutionService {
       throw new ExecutionError('denied', '执行结果可能已有副作用，禁止自动重放')
     if (signal?.aborted) throw new ExecutionError('cancelled', '执行已取消')
     this.attempted.add(request.id)
-    return backend.execute(policy, signal)
+    return backend.execute(policy, signal, onOutput)
   }
 }
 

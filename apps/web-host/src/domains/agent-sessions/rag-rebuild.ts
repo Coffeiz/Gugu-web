@@ -1,4 +1,5 @@
 import {
+  configureRagJieba,
   createCalendarRagSource,
   createCanvasRagSource,
   createConversationRagSource,
@@ -19,6 +20,7 @@ import { createKyselyScheduledTaskRagReader } from '@gugu/core/scheduled-task-li
 import { startRagIndexWorker, type RagIndexWorkerOptions } from './rag-index-worker.js'
 import { createLocalAgentMemoryRagStore } from './tools/agent-rag-memory-store.js'
 import { createPostgresAgentMemoryIndexScopeReader } from './tools/agent-memory-index-scopes.js'
+import { getAgentRagJieba } from './tools/agent-rag-jieba.js'
 
 export type AgentRagIndexWorkerOwner = 'python' | 'node'
 
@@ -60,6 +62,8 @@ export function startAgentRagIndexWorker(core: SqlDataRuntime, options: Omit<Rag
   const { knowledgeStore, memoryStorageRoot, workerOwner: requestedOwner, ...schedulerOptions } = options
   const workerOwner = requestedOwner ?? resolveAgentRagIndexWorkerOwner(process.env.AGENT__RAG_INDEX_WORKER_OWNER)
   const { work, sources } = createAgentRagRebuildWorker(core, { knowledgeStore, memoryStorageRoot })
+  // 索引分词与查询共用 1.7.7 Jieba；Worker 是独立生产入口，不能依赖 Agent 查询先初始化全局分词器。
+  if (schedulerOptions.enabled && workerOwner === 'node') configureRagJieba(getAgentRagJieba())
   if (schedulerOptions.enabled && workerOwner === 'node') {
     const missing = (['knowledge', 'memory'] as const).filter(source => !sources.includes(source))
     if (missing.length) throw new Error('Node RAG Worker 来源未完整')

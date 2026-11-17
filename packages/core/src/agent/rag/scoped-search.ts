@@ -10,7 +10,7 @@ export function createScopedRagSearch(ports:{
  authorize(owner:string,scope:RagSearchScope,signal?:AbortSignal):Promise<boolean>
  vectors?:{version:string;source(owner:string,signal?:AbortSignal):Promise<RagVectorSource>;embed(owner:string,query:string,signal?:AbortSignal):Promise<readonly number[]>}
 }) {
- return async(owner:string,scope:RagSearchScope,query:string,options:{sourceTypes:readonly string[];limit:number;beforeMessageId?:number},signal?:AbortSignal)=>{
+ return async(owner:string,scope:RagSearchScope,query:string,options:{sourceTypes:readonly string[];limit:number;beforeMessageId?:number;selectionMode?:'confidence'|'top_k';excludeContentHashes?:readonly string[]},signal?:AbortSignal)=>{
   signal?.throwIfAborted()
   if(!options.sourceTypes.length||!Number.isSafeInteger(options.limit)||options.limit<1||options.limit>50)throw new Error('RAG 查询参数无效')
   if(options.beforeMessageId!==undefined&&(!Number.isSafeInteger(options.beforeMessageId)||options.beforeMessageId<1))throw new Error('RAG 消息水位无效')
@@ -56,7 +56,7 @@ export function createScopedRagSearch(ports:{
    const semantic='semantic_score' in hit?hit.semantic_score:undefined
    return [{id:hit.id,source_type:hit.source_type,raw_score:hit.score,document,...(typeof semantic==='number'?{semantic_score:semantic}:{})}]
   })
-  const ranked=rankCandidates(query,candidates,{limit:options.limit,maxChars:3000,selectionMode:'top_k',corpusStatistics:index.statistics(owner)})
+  const ranked=rankCandidates(query,candidates,{limit:options.limit,maxChars:3000,selectionMode:options.selectionMode??'top_k',excludeContentHashes:[...(options.excludeContentHashes??[])],corpusStatistics:index.statistics(owner)})
   signal?.throwIfAborted()
   if(!await ports.authorize(owner,trustedScope,signal))throw new Error('RAG 检索授权已撤销')
   signal?.throwIfAborted()

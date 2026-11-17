@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { Pool } from 'pg'
-import { createAgentOverviewSources, formatAgentProjects } from '../../src/domains/agent-sessions/context/agent-overview-postgres.js'
+import { formatAgentProjects } from '@gugu/core/agent'
+import { createAgentOverviewSources } from '../../src/domains/agent-sessions/context/agent-overview-postgres.js'
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
 test('上下文概览限定 owner、保留时区日期、项目排序及个人文件边界', { skip: !url && '需要隔离 PostgreSQL' }, async () => {

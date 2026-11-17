@@ -1,0 +1,66 @@
+{
+  "apps/web/tests/agent-configuration/llmThinkingOptions.test.ts": {
+    "domain": "agent-configuration",
+    "layer": "L0",
+    "owner": "apps/web/utils",
+    "productionEntry": "apps/web/src/utils/llmThinkingOptions.ts",
+    "keyBehavior": "思考选项按 Provider 与模型身份切换并保留有效选择",
+    "ci": "frontend-test"
+  },
+  "apps/web/tests/agent-configuration/modelProviders.test.ts": {
+    "domain": "agent-configuration",
+    "layer": "L0",
+    "owner": "apps/web/utils",
+    "productionEntry": "apps/web/src/utils/modelProviders.ts",
+    "keyBehavior": "Provider API 协议选项与默认值符合端点能力且保留有效选择",
+    "ci": "frontend-test"
+  },
+  "apps/web/tests/agent-configuration/ModelPicker.test.ts": {
+    "domain": "agent-configuration",
+    "layer": "L1",
+    "owner": "apps/web/components/common/models",
+    "productionEntry": "apps/web/src/components/common/models/ModelPicker.vue",
+    "keyBehavior": "模型列表和错误反馈始终显示在当前模型输入行下方，不脱离编辑器弹出",
+    "ci": "frontend-test"
+  },
+  "apps/web/tests/agent-configuration/SpeechModelFields.test.ts": {
+    "domain": "agent-configuration",
+    "layer": "L1",
+    "owner": "apps/web/components/common/models",
+    "productionEntry": "apps/web/src/components/common/models/SpeechModelFields.vue",
+    "keyBehavior": "语音服务商切换同步协议与默认值、清除不适用于新目的地的草稿密钥，并忽略过期模型列表",
+    "ci": "frontend-test"
+  },
+  "apps/web/tests/agent-configuration/VoiceModelConfig.test.ts": {
+    "domain": "agent-configuration",
+    "layer": "L1",
+    "owner": "apps/web/views/Admin/Agent/runtime-config",
+    "productionEntry": "apps/web/src/views/Admin/Agent/runtime-config/components/VoiceModelConfig.vue",
+    "keyBehavior": "关闭语音转写仅在用户确认后执行停用",
+    "ci": "frontend-test"
+  },
+  "apps/web/tests/agent-configuration/useMultimodalProbe.test.ts": {
+    "domain": "agent-configuration",
+    "layer": "L1",
+    "owner": "apps/web/views/Admin/Agent/llm",
+    "productionEntry": "apps/web/src/views/Admin/Agent/llm/useMultimodalProbe.ts",
+    "keyBehavior": "模型检测反馈留在当前编辑器，且旧模型检测结果不会覆盖后续草稿",
+    "ci": "frontend-test"
+  },
+  "apps/web/tests/agent-configuration/useVoicePresets.test.ts": {
+    "domain": "agent-configuration",
+    "layer": "L1",
+    "owner": "apps/web/views/Admin/Agent/runtime-config",
+    "productionEntry": "apps/web/src/views/Admin/Agent/runtime-config/useVoicePresets.ts",
+    "keyBehavior": "保存后以服务端列表和启用项为准；失败时保留草稿并显示错误",
+    "ci": "frontend-test"
+  },
+  "apps/web/tests/agent-configuration/voiceActivationRefresh.test.ts": {
+    "domain": "agent-configuration",
+    "layer": "L1",
+    "owner": "apps/web/views/Admin/Agent/runtime-config",
+    "productionEntry": "apps/web/src/views/Admin/Agent/runtime-config/components/VoiceModelConfig.vue",
+    "keyBehavior": "语音模型启停期间保留原卡片实例，异步刷新结束后才更新启用状态",
+    "ci": "frontend-test"
+  }
+}

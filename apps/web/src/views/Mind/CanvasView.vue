@@ -1,5 +1,5 @@
 <template>
-  <div class="canvas-page">
+  <div class="canvas-page" :class="{ 'is-desktop-shell': isDesktopShell }">
     <MindCanvas
       ref="canvasRef"
       class="canvas-page-canvas"
@@ -78,6 +78,7 @@ type CanvasRefItem = MindRefSuggestItem & { type: 'project' | 'file' | 'event' }
 
 const store = useMindStore()
 const uiStore = useUiStore()
+const isDesktopShell = document.documentElement.dataset.desktopShell === 'true'
 const route = useRoute()
 const router = useRouter()
 // 用完即清：object_id 留在地址栏的话，刷新/重进会强制跳回那张画布；
@@ -539,6 +540,8 @@ async function onItemMoved(item: MindCanvasItem) {
 /* background 跟 MindCanvas.vue 的 .mind-canvas 底色（#e8ebf3）保持一致——画布本身
    opacity:0 藏起来的这段时间，底下露出来的是这层背景，不跟着变黑/透出页面默认底色。 */
 .canvas-page { position: fixed; inset: 0; z-index: 8; background: #e8ebf3; }
+.canvas-page.is-desktop-shell { position: absolute; inset: 0; z-index: 1; background: transparent; }
+.canvas-page.is-desktop-shell :deep(.mind-canvas) { position: absolute; inset: 0; }
 /* 相机真实视角要等 restoreView() 异步跑完才定下来，之前有一帧是默认原点/1倍缩放——
    进画布/切画布时藏起来，只在相机定好之后才淡入，不让用户看到那帧过渡态。 */
 .canvas-page-canvas { opacity: 0; transition: none; }

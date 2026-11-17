@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import { test } from 'vitest'
 import { Kysely, SqliteDialect, sql } from 'kysely'
 import Database from 'better-sqlite3'
 import { createImMaintenanceSource } from '../../../src/memory/im-maintenance-source.js'
@@ -68,6 +68,5 @@ test('maintenance source rejects unsafe scope components and invalid ranges befo
     await assert.rejects(source.messages({ owner_user_id: 'owner', platform: 'qq', bot_id: 'bot', scope_type: 'group', scope_id: '../g' }, 1, 2), /scope_id/u)
     await assert.rejects(source.messages({ owner_user_id: 'owner', platform: 'qq', bot_id: 'bot', scope_type: 'platform-user', scope_id: 'g:' }, 1, 2), /成员作用域/u)
     await assert.rejects(source.messages({ owner_user_id: 'owner', platform: 'qq', bot_id: 'bot', scope_type: 'group', scope_id: 'g' }, 3, 2), /消息范围/u)
-    await assert.rejects(source.listCursors(10_001), /上限/u)
   } finally { await db.destroy() }
 })

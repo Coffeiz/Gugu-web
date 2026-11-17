@@ -175,7 +175,7 @@ export function useChatActions(options: {
     const mCanvasFocus = href.match(/^gugu:\/\/focus-canvas\/(\d+)\/(\d+)$/i)
     if (mCanvasFocus) {
       uiStore.pendingCanvasTarget = { canvasId: Number(mCanvasFocus[1]), nodeId: Number(mCanvasFocus[2]) }
-      await options.router.push('/mind/canvases')
+      await options.router.push('/canvases')
       return
     }
     const mObject = href.match(/^gugu:\/\/open-object\/(project|event|canvas|note|scheduled-task)\/(\d+)$/i)

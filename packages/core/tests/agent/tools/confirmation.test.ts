@@ -13,14 +13,41 @@ function fixture() {
   const ports = { now: () => 100, authorize: vi.fn(async () => 'epoch-1' as string | null), prepare: vi.fn(async (_binding: ConfirmationBinding, _targets: ConfirmationTargetSnapshot): Promise<unknown> => intent), load: vi.fn(async (): Promise<unknown> => ({ intent, receipt })), inspect: vi.fn(async () => ({ targetsDigest: 'resolved-target-1', versionsDigest: 'version-1' })) }
   const gate = createConfirmationGate(ports, { purpose: 'action', action: 'delete_client' })
   const resumed = { ...scope, resolution: { interactionId: intent.interactionId, receiptId: receipt.receiptId, status: 'confirmed' as const, value: { confirm: true, targets: [999] } } }
-  return { gate, ports, call, scope, resumed, binding, targets, intent, receipt }
+  const claimReference = { intentId: intent.intentId, operationId: intent.operationId, interactionId: intent.interactionId,
+    receiptId: receipt.receiptId, binding, purpose: intent.purpose, action: intent.action, targetsDigest: intent.targetsDigest,
+    versionsDigest: intent.versionsDigest, authorizationEpoch: intent.authorizationEpoch, expiresAt: intent.expiresAt }
+  return { gate, ports, call, scope, resumed, binding, targets, intent, receipt, claimReference }
 }
 describe('可信确认意图核验（不含授权claim或危险业务执行）', () => {
+  it('向可信存储传递领域固定目标的独立快照，不采用模型中的目标', async () => {
+    const f = fixture()
+    const ids = [1, 2]
+    const targets = { ...f.targets, targetIds: { eventIds: ids } }
+    f.ports.prepare.mockImplementation(async (_binding, snapshot) => {
+      expect(snapshot.targetIds).toEqual({ eventIds: [1, 2] })
+      ids.push(3)
+      expect(snapshot.targetIds).toEqual({ eventIds: [1, 2] })
+      expect(Object.isFrozen(snapshot.targetIds?.eventIds)).toBe(true)
+      return f.intent
+    })
+    expect((await f.gate.prepare(f.call, f.scope, f.binding.normalizedInputDigest, targets)).ok).toBe(true)
+  })
+  it('恢复确认等待存储期间目标与回答被修改，不改变本次核验绑定', async () => {
+    const f = fixture()
+    const targets = { ...f.targets, targetIds: { eventIds: [1] } }
+    f.ports.load.mockImplementation(async () => {
+      targets.targetsDigest = 'changed'
+      targets.targetIds.eventIds.push(2)
+      f.resumed.resolution.receiptId = 'changed'
+      return { intent: f.intent, receipt: f.receipt }
+    })
+    expect(await f.gate.verify(f.call, f.resumed, f.binding.normalizedInputDigest, targets)).toEqual({ ok: true, value: f.claimReference })
+  })
   it('只保存可信scope与摘要，模型confirm/targets不参与授权，核验只返回受限引用', async () => {
     const f = fixture()
     expect(await f.gate.prepare(f.call, f.scope, f.binding.normalizedInputDigest, f.targets)).toEqual({ ok: true, value: { id: 'interaction', kind: 'confirmation', toolCall: f.call } })
     expect(f.ports.prepare).toHaveBeenCalledWith(f.binding, f.targets, f.scope.signal)
-    expect(await f.gate.verify(f.call, f.resumed, f.binding.normalizedInputDigest, f.targets)).toEqual({ ok: true, value: { intentId: 'intent', operationId: 'operation' } })
+    expect(await f.gate.verify(f.call, f.resumed, f.binding.normalizedInputDigest, f.targets)).toEqual({ ok: true, value: f.claimReference })
     expect(f.scope.execute).not.toHaveBeenCalled()
   })
   it.each(['ownerId', 'sessionId', 'runId', 'roundId', 'toolCallId', 'toolName', 'normalizedInputDigest'] as const)('拒绝旧意图的异%s绑定', async key => {

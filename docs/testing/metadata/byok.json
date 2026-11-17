@@ -1,0 +1,162 @@
+{
+  "apps/web-host/tests/byok/embedding-rebuild-status.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/byok/embedding-rebuild-status.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "用户重建状态及错误脱敏",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/byok/embedding-rebuild.test.ts": {
+    "domain": "byok",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/byok/embedding-rebuild.ts",
+    "productionEntry": "createApp authenticated POST /api/v1/byok/embedding-rebuild → Redis owner lock/status → Host rebuild runtime",
+    "keyBehavior": "认证身份决定 owner、无凭据不启动、同 owner 幂等互斥、跨 owner 隔离、Redis token 锁安全释放和 Host 关闭取消后台任务",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/byok/embedding-settings.test.ts": {
+    "domain": "agent-rag",
+    "layer": "L1",
+    "owner": "apps/web-host/src/modules/byok",
+    "productionEntry": "apps/web-host/src/modules/byok/embedding-settings.ts",
+    "keyBehavior": "BYOK gate、owner 规范化与凭据读取；只有 local/ollama 获得单请求本地地址授权",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/byok/agent-rag-transport.test.ts": {
+    "domain": "agent-rag",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/byok/agent-rag-transport.ts",
+    "productionEntry": "apps/web-host/src/main.ts → RAG query embedding → pinned Node transport",
+    "keyBehavior": "真实合成 HTTP 服务验证 local/ollama 可以连接本机，而云 Provider 在同一 Host transport 下不能连接",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/byok/embedding-rebuild-storage.test.ts": {
+    "domain": "byok",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/byok/memory-vector-store.ts + packages/core/src/byok/vector-rebuild.ts",
+    "productionEntry": "Core vector rebuild → owner-bound Local file adapter → atomic Linux file replacement",
+    "keyBehavior": "临时 owner 文件经真实存储适配器重建 pattern/memory 向量并替换旧缓存，验证 Python chunk key 与模型标记",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/byok/credential-gate.test.ts": {
+    "domain": "byok",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/byok/gate.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "BYOK策略配置优先级与热更新",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/byok/credential-delete.test.ts": {
+    "domain": "byok",
+    "layer": "L2",
+    "owner": "packages/core/src/byok/credential-delete.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "owner删除及推理状态失效事务回滚",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/byok/envelope-new.test.ts": {
+    "domain": "byok",
+    "layer": "L1",
+    "owner": "apps/web-host/src/modules/byok",
+    "productionEntry": "BYOK 创建（待生产入口接线）",
+    "keyBehavior": "信封跨 Python 加解密、版本轮换和密钥路径竞争",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/byok/credential-create-new.test.ts": {
+    "domain": "byok",
+    "layer": "L1",
+    "owner": "apps/web-host/src/modules/byok",
+    "productionEntry": "BYOK 创建（待生产入口接线）",
+    "keyBehavior": "凭据创建的隔离 PG、owner、并发与事务回滚",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/byok/credential-create-route.test.ts": {
+    "domain": "byok",
+    "layer": "L1",
+    "owner": "apps/web-host/src/modules/byok",
+    "productionEntry": "BYOK 创建（待生产入口接线）",
+    "keyBehavior": "创建请求校验与认证错误",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/byok/credential-list.test.ts": {
+    "domain": "byok",
+    "layer": "L1",
+    "owner": "apps/web-host/src/modules/byok/credential-list.ts",
+    "productionEntry": "BYOK GET Host 路由",
+    "keyBehavior": "认证、owner 传递、列表字段及密钥不泄露",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/byok/capabilities-preview.test.ts": {
+    "domain": "byok",
+    "layer": "L2",
+    "owner": "packages/core/src/byok/capabilities-preview.ts",
+    "productionEntry": "BYOK 能力预览 startServer 生产入口",
+    "keyBehavior": "无凭据/无外网能力快照、认证与gate、Python多Provider协议对照及额外密钥字段不泄露",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/byok/credential-patch.test.ts": {
+    "domain": "byok",
+    "layer": "L2",
+    "owner": "packages/core/src/byok/credential-patch.ts",
+    "productionEntry": "BYOK PATCH Core 隔离 PostgreSQL",
+    "keyBehavior": "owner隔离、跨目的地拒绝无副作用、显式换Key更新及事务授权",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/byok/credential-models-preview.test.ts": {
+    "domain": "byok",
+    "layer": "L2",
+    "owner": "packages/core/src/byok/credential-models-preview.ts",
+    "productionEntry": "BYOK models-preview Core 隔离 PostgreSQL",
+    "keyBehavior": "owner限定的已保存密钥复用、origin校验、显式新Key优先及请求失败前拒绝越权",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/byok/models-preview-route.test.ts": {
+    "domain": "byok",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/byok/models-preview.ts + dto.ts",
+    "productionEntry": "BYOK models-preview Fastify DTO route",
+    "keyBehavior": "Pydantic整数字符串credential_id兼容，空字符串在Core读取前返回422",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/byok/media-capability-probe.test.ts": {
+    "domain": "byok",
+    "layer": "L2",
+    "owner": "packages/core/src/byok/media-capability-probe.ts",
+    "productionEntry": "apps/web-host/src/main.ts + pinned Node Provider transport",
+    "keyBehavior": "媒体探测兼容Pydantic整数字符串credential_id，并按owner和目的地裁决凭据、实际发送本地合成媒体请求",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/byok/credential-test-preview.test.ts": {
+    "domain": "byok",
+    "layer": "L2",
+    "owner": "packages/core/src/byok/credential-test-preview.ts + packages/core/src/agent/providers/deep-research.ts + similar-image.ts + asr.ts",
+    "productionEntry": "apps/web-host/src/main.ts + pinned Node Provider transport",
+    "keyBehavior": "草稿试呼路由鉴权、Pydantic整数字符串credential_id/dimensions DTO兼容、LLM本地请求、无鉴权Embedding向量、DashScope/MiniMax原生ASR、Tavily深度研究和百度相似图探测及安全错误映射",
+    "ci": "node-webui"
+  },
+  "packages/core/tests/byok/media-capability-probe.test.ts": {
+    "domain": "byok",
+    "layer": "L1",
+    "owner": "packages/core/src/byok/media-capability-probe.ts",
+    "productionEntry": "apps/web-host/src/modules/byok/media-capability-probe.ts",
+    "keyBehavior": "保存密钥只对本owner同目的地复用，拒绝越权或换址且不产生写入",
+    "ci": "core-node"
+  },
+  "packages/core/tests/byok/vector-rebuild.test.ts": {
+    "domain": "byok",
+    "layer": "L1",
+    "owner": "packages/core/src/byok/vector-rebuild.ts",
+    "productionEntry": "apps/web-host/src/modules/byok/embedding-rebuild.ts",
+    "keyBehavior": "Python pattern与memory分块、owner边界、模型标记、嵌入失败不写半成品，以及来源清空删除孤儿向量",
+    "ci": "core-node"
+  },
+  "packages/core/tests/byok/credential-test-preview.test.ts": {
+    "domain": "byok",
+    "layer": "L1",
+    "owner": "packages/core/src/byok/credential-test-preview.ts",
+    "productionEntry": "apps/web-host/src/modules/byok/credential-test-preview.ts",
+    "keyBehavior": "试呼只解密同owner同目的地的保存密钥，显式新Key优先；已保存深度研究和相似图凭据会真实探测且不写入",
+    "ci": "core-node"
+  }
+}

@@ -5,7 +5,7 @@ import { agentAccessScopeHash } from '../../src/domains/agent-config/access-scop
 import { bindProviderSelection } from '../../src/domains/agent-config/provider-resolver.js'
 const signal = new AbortController().signal
 const items = [{ id: 'a', model: 'a', in_pool: true }, { id: 'b', model: 'b', in_pool: true }, { id: 'c', model: 'c', in_pool: false }]
-const settings = (mode: string, strategy = 'pool') => ({ ai: { model: 'active', api_key: 'synthetic-secret' }, ai_presets: { strategy, pool_mode: mode, items }, systemPrompt: 'system', accessScopeHash: 'scope', byokEnabled: false })
+const settings = (mode: string, strategy = 'pool') => ({ ai: { model: 'active', api_key: 'synthetic-secret' }, ai_presets: { strategy, pool_mode: mode, items }, systemPrompt: 'system', contextScopeKey: 'a'.repeat(64), accessScopeHash: 'scope', byokEnabled: false })
 test('active、空池、router 默认选择激活模型；随机和轮询只选池内模型', async () => {
   for (const value of [settings('random', 'active'), settings('random', 'router'), { ...settings('random'), ai_presets: { strategy: 'pool', items: [] } }]) {
     const selected = await createModelStrategy(async () => value)('owner', signal); assert.equal(selected.config.model, 'active'); selected.release()

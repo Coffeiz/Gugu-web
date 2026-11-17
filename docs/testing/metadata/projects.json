@@ -1,0 +1,130 @@
+{
+  "packages/core/tests/projects/relative-references.test.ts": {
+    "domain": "files",
+    "layer": "L1",
+    "owner": "packages/core/src/files",
+    "productionEntry": "resolveRelativeReferences",
+    "keyBehavior": "按来源路径逐段解析，根边界、编码与文件优先规则，查询失败不得伪装不存在",
+    "ci": "core-node"
+  },
+  "apps/web-host/tests/projects/project-core-sqlite.test.ts": {
+    "domain": "projects",
+    "layer": "L2",
+    "owner": "packages/core/src/projects",
+    "productionEntry": "createProjectTrashService / applyProjectUndo / createKyselyProjectFileCountReader",
+    "keyBehavior": "临时 SQLite 与真实 Host FS：删除/恢复及 Undo/redo 目标竞态回滚项目、文件和操作终态；补偿冲突保留双方，兼顾同批恢复、owner、版本和计数",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/projects/project-trash-storage.test.ts": {
+    "domain": "projects",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/projects/persistence",
+    "productionEntry": "createLocalProjectTrashStorage",
+    "keyBehavior": "真实临时文件在预检查后创建目标、rollback 冲突均不覆盖双方；目录拒绝、owner 根和 symlink fail-closed",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/projects/project-directory-storage.test.ts": {
+    "domain": "projects",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/projects/persistence",
+    "productionEntry": "createLocalProjectDirectoryRenamer",
+    "keyBehavior": "无原子不覆盖目录原语时拒绝正反向移动，保留源树和权限；缺失源兼容、owner 与 symlink 边界",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/projects/project-undo-journal.test.ts": {
+    "domain": "undo",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/undo/persistence",
+    "productionEntry": "recoverProjectUndoJournal / createLocalProjectUndoJournalStorage",
+    "keyBehavior": "合成 SQL 端口与真实临时文件验证正反向恢复竞态、双硬链接和不支持目录时保留双方及 journal，不冒充 PG 集成",
+    "ci": "node-webui"
+  },
+  "backend/tests/projects/test_project_unicode_counters.py": {
+    "domain": "projects",
+    "layer": "L1",
+    "owner": "compat/core-python/src/gugu_core/domain/projects.py",
+    "productionEntry": "backend/app/core/projects.py",
+    "keyBehavior": "保护Python16项目编号及日期拒绝新版Unicode数字，isdigit非十进制值必须失败而非静默忽略",
+    "ci": "backend-pytest"
+  },
+  "apps/web/tests/projects/composables/useProjectCollectionModals.test.ts": {
+    "domain": "projects",
+    "layer": "L1",
+    "owner": "apps/web/composables/projects",
+    "productionEntry": "apps/web/src/composables/projects/useProjectCollectionModals.ts",
+    "keyBehavior": "项目看板初次进入不请求归档与回收站列表，只有用户打开对应弹窗才加载",
+    "ci": "frontend-test"
+  },
+  "apps/web/tests/projects/composables/useProjectFileCounts.test.ts": {
+    "domain": "projects",
+    "layer": "L1",
+    "owner": "apps/web/composables/projects",
+    "productionEntry": "apps/web/src/composables/projects/useProjectFileCounts.ts",
+    "keyBehavior": "项目文件徽标使用聚合计数接口，并把连续文件变更合并为一次刷新而不加载全量清单",
+    "ci": "frontend-test"
+  },
+  "apps/web/tests/projects/done/DoneGroup.test.ts": {
+    "domain": "projects",
+    "layer": "L1",
+    "owner": "apps/web/views/Projects/components/done",
+    "productionEntry": "apps/web/src/views/Projects/components/done/DoneGroup.vue",
+    "keyBehavior": "折叠的完成项目年月组不挂载内部卡片，展开后才创建卡片组件",
+    "ci": "frontend-test"
+  },
+  "backend/tests/projects/test_project_agent_context.py": {
+    "domain": "context",
+    "layer": "L1",
+    "owner": "backend/agent/context",
+    "productionEntry": "backend/agent/context/builder.py",
+    "keyBehavior": "项目摘要和文件概览在 Agent 详情、snapshot、文件范围及数据导出间一致并保持用户隔离",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/projects/test_project_trash.py": {
+    "domain": "projects",
+    "layer": "L1",
+    "owner": "backend/app/services",
+    "productionEntry": "backend/app/services/projects.py",
+    "keyBehavior": "项目列表只统计归属项目的直属存活文件，并为无文件项目返回零",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/projects/test_core_project_bridge.py": {
+    "domain": "core-project-runtime",
+    "layer": "L1",
+    "owner": "backend/app/core/projects.py",
+    "productionEntry": "backend/app/api/v1/projects.py",
+    "keyBehavior": "Web 与 Core 映射共用项目行、客户列别名和版本锁；用户外键和事务提交边界保留",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/projects/test_core_data_bridge.py": {
+    "domain": "core-data-runtime",
+    "layer": "L1",
+    "owner": "backend/app/services/core_data.py",
+    "productionEntry": "backend/app/services/clients.py",
+    "keyBehavior": "Web 借用现有事务，项目联系人共同回滚，联系人读写沿用用户隔离与原有 schema",
+    "ci": "backend-pytest"
+  },
+  "apps/web-host/tests/projects/project-read-postgres.test.ts": {
+    "domain": "projects",
+    "layer": "L2",
+    "owner": "packages/core/src/projects/project-read.ts",
+    "productionEntry": "apps/web-host/src/domains/projects/persistence/projects.ts",
+    "keyBehavior": "真实Fastify与隔离PG验证项目读取计数投影、owner归档回收站、完整DTO阶段历史兼容、SQL错误脱敏和表锁取消清理",
+    "ci": "node-webui"
+  },
+  "backend/tests/projects/test_project_read_api.py": {
+    "domain": "projects",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/projects.py",
+    "productionEntry": "backend/app/api/v1/projects.py",
+    "keyBehavior": "Python项目读取真实handler基准保护owner归档回收站、文件数投影和完整DTO、阶段JSON历史回退且不改库",
+    "ci": "backend-pytest"
+  },
+  "apps/web-host/tests/projects/core-undo-project-postgres.test.ts": {
+    "domain": "undo",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/undo",
+    "productionEntry": "apps/web-host/src/domains/undo/persistence/core-operations.ts",
+    "keyBehavior": "PG 项目撤销的日志锁序、提交不确定与恢复协调；目录使用显式内存能力端口，不验收 Local 目录原语",
+    "ci": "web-host-node"
+  }
+}

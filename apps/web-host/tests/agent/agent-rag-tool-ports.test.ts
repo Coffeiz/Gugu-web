@@ -8,9 +8,13 @@ import { initializeSqlite, openSqliteRuntime } from '@gugu/core/data'
 import { createAgentToolRegistry } from '../../src/domains/agent-sessions/tools/agent-tool-registry.js'
 import { createMcpAgentToolPorts } from '../../src/domains/agent-sessions/tools/agent-mcp-tool-ports.js'
 import { createWebAgentRagToolPorts } from '../../src/domains/agent-sessions/tools/agent-rag-tool-ports.js'
-import { createWebAgentProductionRagToolPorts } from '../../src/domains/agent-sessions/tools/agent-rag-production-ports.js'
+import { createWebAgentProductionRagContextBuilder, createWebAgentProductionRagToolPorts, createWebAgentProductionRagRunPorts, createAuthorizedWebAgentProductionRagRunPorts } from '../../src/domains/agent-sessions/tools/agent-rag-production-ports.js'
 import { createWebAgentProductionToolRegistry } from '../../src/domains/agent-sessions/tools/agent-rag-production-ports.js'
+import { createWebAgentRagRunAuthorization } from '../../src/domains/agent-sessions/tools/agent-rag-run-authorization.js'
 import { createWebAgentToolPorts } from '../../src/domains/agent-sessions/agent-web-reconstructor.js'
+import { createWebAgentRagContextBuilder } from '../../src/domains/agent-sessions/tools/agent-rag-context.js'
+import { createSqlRagPersistentIndexWriter } from '../../../../packages/core/src/agent/rag/persistent-writer.js'
+import { buildRunRagContext } from '@gugu/core/agent'
 
 test('Web RAG 组合端口经真实注册器同时接通 conversation 与 owner memory 搜索', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gugu-agent-rag-ports-'))
@@ -106,6 +110,31 @@ test('Web RAG 组合端口经真实注册器同时接通 conversation 与 owner 
     await runtime?.close()
     await rm(directory, { recursive: true, force: true })
   }
+})
+
+test('Web RAG Run 配置只公开只读工具并在每次授权时复验 PostgreSQL lease', async () => {
+  const identity = { ownerId: 'owner-synthetic', sessionId: '41', runId: 'run-synthetic' }
+  const lease = { identity, token: 'token-synthetic', fence: 7, input: { v: 2, source: 'web' }, mode: 'start', cancelRequested: false } as const
+  let isActive = true
+  const queries: unknown[][] = []
+  const authorization = createWebAgentRagRunAuthorization({ async query(sql: string, values: unknown[]) {
+    assert.match(sql, /d\.token=\$4 AND d\.fence=\$5/u)
+    queries.push(values)
+    return { rowCount: isActive ? 1 : 0, rows: [] }
+  } } as never, lease)
+  const signal = new AbortController().signal
+  const configuration = await authorization.configuration(identity, signal)
+  assert.deepEqual(configuration.identity, { ownerId: identity.ownerId, workspaceId: null,
+    subject: { kind: 'session', id: identity.sessionId } })
+  assert.deepEqual(configuration.toolNames, ['search_conversations', 'search_memory'])
+  assert.equal(configuration.source, 'web')
+  assert.equal(await authorization.authorize(identity, 'search_conversations', signal), true)
+  assert.equal(await authorization.authorize(identity, 'delete_project', signal), false)
+  assert.equal(await authorization.authorize({ ...identity, ownerId: 'other-owner' }, 'search_memory', signal), false)
+  isActive = false
+  assert.equal(await authorization.authorize(identity, 'search_memory', signal), false)
+  await assert.rejects(authorization.configuration(identity, signal), /授权不可用/u)
+  assert.deepEqual(queries, Array.from({ length: 4 }, () => [identity.ownerId, identity.sessionId, identity.runId, lease.token, lease.fence]))
 })
 
 test('生产 RAG 端口将 memory 检索绑定到当前 Web lease、已配置工具和持久快照', async () => {
@@ -257,6 +286,228 @@ test('生产 RAG 端口将 memory 检索绑定到当前 Web lease、已配置工
       preparation: noLongerConfigured, authorize: async () => true })
     const deniedResult = await deniedRegistry.tools.dispatch({ id: 'memory-disabled', name: 'search_memory', input: { query: '记忆' } }, scope)
     assert.equal(deniedResult.kind === 'completed' && deniedResult.successful, false)
+  } finally {
+    await runtime?.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('Web 自动 RAG 从正式索引召回 owner 内容并排除历史已注入正文', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gugu-agent-rag-context-'))
+  let runtime: Awaited<ReturnType<typeof openSqliteRuntime>>['runtime'] | undefined
+  try {
+    await initializeSqlite(join(directory, 'core.db'))
+    const opened = await openSqliteRuntime(join(directory, 'core.db'))
+    runtime = opened.runtime
+    const ownerId = opened.ownerId
+    const identity = { ownerId, sessionId: '81', runId: 'rag-context-run' }
+    const lease = { identity, token: 'synthetic-lease', fence: 1, mode: 'start' as const, cancelRequested: false,
+      input: { userMessageId: 5, locale: 'zh-CN' as const, origin: null, accessVersion: 'c'.repeat(64), v: 2 as const, source: 'web' as const } }
+    const writer = createSqlRagPersistentIndexWriter(runtime.db, runtime.backend)
+    await writer.replaceSource(ownerId, 'memory', [{
+      id: 'memory:deployment:0', source_id: 'deployment', source_type: 'memory',
+      scope_type: 'owner', scope_id: '', title: '部署复盘', summary: '版本上线检查',
+      content: '发布前先完成部署回归和 owner 隔离检查。', text: '部署复盘\n发布前先完成部署回归和 owner 隔离检查。',
+      parent_id: 'memory:deployment', document_version: 'v1', chunk_index: 0, chunk_count: 1,
+      metadata: {},
+    }])
+    let authorized = 0
+    const build = createWebAgentRagContextBuilder({
+      core: runtime,
+      lease,
+      enabled: async () => true,
+      async authorize(bound, scope) {
+        authorized++
+        return bound.identity.ownerId === ownerId && scope.scope_type === 'owner' && scope.scope_id === ''
+      },
+    })
+    const input = {
+      ownerId, sessionId: identity.sessionId, history: [], fixedPrefix: [], snapshotText: '',
+      currentUser: { persistedMessageId: '5', rawText: '部署回归', message: { role: 'user' as const, content: '部署回归' } },
+    }
+    const preparation = { digest: () => 'digest', nextId: () => 'id', buildRag: build }
+    const first = await buildRunRagContext(input, preparation, new AbortController().signal)
+    assert.equal(first.injected, true)
+    assert.match(JSON.stringify(first.tail), /发布前先完成部署回归/u)
+    assert.equal(authorized, 3)
+    await assert.rejects(buildRunRagContext({ ...input, ownerId: randomUUID() }, preparation, new AbortController().signal), /运行身份不匹配/u)
+    await assert.rejects(buildRunRagContext({ ...input, sessionId: '82' }, preparation, new AbortController().signal), /运行身份不匹配/u)
+
+    await mkdir(join(directory, 'rag-storage', ownerId, '.agent'), { recursive: true })
+    await writeFile(join(directory, 'rag-storage', ownerId, '.agent', 'memory_vec.json'), JSON.stringify({
+      'rag:memory:deployment:v1:0': { t: 'synthetic:embedding-v1:2', v: [1, 0] },
+    }), 'utf8')
+    let embeddingCalls = 0, activeScopeChecks = 0, leaseActive = true
+    const activePool = { async query(_sql: string, values?: unknown[]) {
+      activeScopeChecks++
+      assert.deepEqual(values, [ownerId, identity.sessionId, identity.runId, lease.token, lease.fence])
+      return { rowCount: leaseActive ? 1 : 0, rows: leaseActive ? [{}] : [] }
+    } }
+    const productionBuild = createWebAgentProductionRagContextBuilder({
+      core: runtime,
+      pool: activePool as never,
+      storageRoot: join(directory, 'rag-storage'),
+      lease,
+      selection: { modelIdentity: 'synthetic-model', contextScopeKey: lease.input.accessVersion,
+        contextPolicy: { loadOwnerContext: true, memoryEnabled: true } },
+      enabled: () => true,
+      embedding: {
+        async resolve(boundOwner) {
+          assert.equal(boundOwner, ownerId)
+          return { provider: 'synthetic', baseUrl: 'https://embedding.example/v1', model: 'embedding-v1', apiKey: 'test-only', dimensions: 2 }
+        },
+        createTransport() {
+          return { async request(_request, signal) {
+            signal.throwIfAborted()
+            embeddingCalls++
+            return { status: 200, headers: {}, body: (async function* () {
+              yield new TextEncoder().encode(JSON.stringify({ data: [{ embedding: [1, 0] }] }))
+            })(), async cancel() {} }
+          } }
+        },
+      },
+    })
+    const vectorResult = await buildRunRagContext(input, { ...preparation, buildRag: productionBuild }, new AbortController().signal)
+    assert.equal(vectorResult.injected, true)
+    assert.match(JSON.stringify(vectorResult.tail), /发布前先完成部署回归/u)
+    assert.equal(embeddingCalls, 1)
+    assert.ok(activeScopeChecks > 0)
+
+    const memoryContextDisabledBuild = createWebAgentProductionRagContextBuilder({
+      core: runtime, pool: activePool as never, storageRoot: join(directory, 'rag-storage'), lease,
+      selection: { modelIdentity: 'synthetic-model', contextScopeKey: lease.input.accessVersion,
+        contextPolicy: { loadOwnerContext: true, memoryEnabled: false } }, enabled: () => true,
+    })
+    const memoryContextDisabled = await buildRunRagContext(input, { ...preparation, buildRag: memoryContextDisabledBuild }, new AbortController().signal)
+    assert.equal(memoryContextDisabled.injected, true)
+
+    leaseActive = false
+    const expiredLeaseResult = await buildRunRagContext(input, { ...preparation, buildRag: productionBuild }, new AbortController().signal)
+    assert.equal(expiredLeaseResult.injected, false)
+    assert.equal(expiredLeaseResult.reason, 'no_eligible_scope')
+
+    const block = (first.tail[0]!.content as import('@gugu/core/agent').Json[])[0]!
+    const second = await buildRunRagContext({ ...input, history: [{
+      ownerId, sessionId: identity.sessionId, id: '3', conversationSeq: 3, role: 'user', content: [],
+      contentJson: [block],
+    }] }, preparation, new AbortController().signal)
+    assert.equal(second.injected, false)
+    assert.deepEqual(second.tail, [])
+
+    const denied = createWebAgentRagContextBuilder({ core: runtime, lease, enabled: () => true, async authorize() { return false } })
+    assert.equal((await buildRunRagContext(input, { ...preparation, buildRag: denied }, new AbortController().signal)).reason, 'no_eligible_scope')
+
+    const disabled = createWebAgentRagContextBuilder({ core: runtime, lease, enabled: () => false, async authorize() { assert.fail('关闭 RAG 后不得检查索引授权') } })
+    assert.equal((await buildRunRagContext(input, { ...preparation, buildRag: disabled }, new AbortController().signal)).reason, 'disabled')
+
+    let authorizeStarted!: () => void
+    let resumeAuthorization!: () => void
+    const authorizationStarted = new Promise<void>(resolve => { authorizeStarted = resolve })
+    const authorizationGate = new Promise<void>(resolve => { resumeAuthorization = resolve })
+    const cancellable = createWebAgentRagContextBuilder({
+      core: runtime, lease, enabled: () => true,
+      async authorize() {
+        authorizeStarted()
+        await authorizationGate
+        return true
+      },
+    })
+    const controller = new AbortController()
+    const pending = buildRunRagContext(input, { ...preparation, buildRag: cancellable }, controller.signal)
+    await authorizationStarted
+    controller.abort()
+    resumeAuthorization()
+    await assert.rejects(pending, { name: 'AbortError' })
+  } finally {
+    await runtime?.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('生产 Web RAG 在选中模型或 scope 版本不匹配时不创建授权端口', () => {
+  const identity = { ownerId: 'owner-a', sessionId: '7', runId: 'scope-mismatch' }
+  const lease = { identity, token: 'lease', fence: 1, mode: 'start' as const, cancelRequested: false,
+    input: { userMessageId: 11, locale: 'zh-CN' as const, origin: null, accessVersion: 'a'.repeat(64), v: 2 as const, source: 'web' as const } }
+  let queries = 0
+  const pool = { async query() { queries++; return { rows: [], rowCount: 0 } } }
+  const selection = { modelIdentity: 'synthetic-model', contextScopeKey: 'b'.repeat(64),
+    contextPolicy: { loadOwnerContext: true, memoryEnabled: true } }
+  assert.throws(() => createAuthorizedWebAgentProductionRagRunPorts({ core: {} as never, pool: pool as never,
+    storageRoot: '/synthetic-root', lease, selection, enabled: () => true }), /配置版本与调度授权不匹配/u)
+  assert.equal(queries, 0)
+  assert.throws(() => createAuthorizedWebAgentProductionRagRunPorts({ core: {} as never, pool: pool as never,
+    storageRoot: '/synthetic-root', lease, selection: { ...selection, contextScopeKey: lease.input.accessVersion, modelIdentity: '' }, enabled: () => true }), /配置版本与调度授权不匹配/u)
+  assert.equal(queries, 0)
+})
+
+test('生产 Run RAG 组合让自动注入与检索工具共享 lease 和可信配置', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gugu-agent-rag-run-ports-'))
+  let runtime: Awaited<ReturnType<typeof openSqliteRuntime>>['runtime'] | undefined
+  try {
+    await initializeSqlite(join(directory, 'core.db'))
+    const opened = await openSqliteRuntime(join(directory, 'core.db'))
+    runtime = opened.runtime
+    const ownerId = opened.ownerId, identity = { ownerId, sessionId: '91', runId: 'shared-rag-run' }
+    const lease = { identity, token: 'synthetic-lease', fence: 1, mode: 'start' as const, cancelRequested: false,
+      input: { userMessageId: 6, locale: 'zh-CN' as const, origin: null, accessVersion: 'd'.repeat(64), v: 2 as const, source: 'web' as const } }
+    const fixtureDb = runtime.db as unknown as {
+      insertInto(table: 'conversation_sessions' | 'conversation_messages'): {
+        values(row: Record<string, unknown>): { execute(): Promise<unknown> }
+      }
+    }
+    await fixtureDb.insertInto('conversation_sessions').values({ id: 91, user_id: ownerId.replaceAll('-', ''), title: '共享 RAG', title_locked: 0,
+      summary: '', source: 'web', chat_type: null, context_epoch: 3, baseline_message_seq: 0,
+      created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }).execute()
+    await fixtureDb.insertInto('conversation_messages').values({ session_id: 91, conversation_seq: 1, role: 'user',
+      content: '共享 lease 会话检索', created_at: '2026-01-01T00:00:00Z' }).execute()
+    const writer = createSqlRagPersistentIndexWriter(runtime.db, runtime.backend)
+    await writer.replaceSource(ownerId, 'memory', [{ id: 'memory:profile:0', source_id: 'profile', source_type: 'memory',
+      scope_type: 'owner', scope_id: '', title: '共享运行', summary: '', content: '共享授权记忆内容', text: '共享授权记忆内容',
+      parent_id: 'memory:profile', document_version: 'profile-v1', chunk_index: 0, chunk_count: 1, metadata: {} }])
+    const ownerIndex = join(directory, ownerId, '.agent', 'rag', 'memory')
+    await mkdir(ownerIndex, { recursive: true })
+    await writeFile(join(ownerIndex, 'index.json'), JSON.stringify({ schema_version: 1, documents: [
+      { document_id: 'profile:0', parent_document_id: 'memory:profile', chunk_index: 0, chunk_count: 1,
+        source_type: 'memory', source_id: 'profile', title: '共享运行', summary: '', content: '共享授权记忆内容',
+        version: 'profile-v1', scope: { owner_user_id: ownerId, scope_type: 'owner', scope_id: '' }, metadata: {} },
+    ] }), 'utf8')
+    let active = true
+    const pool = { async query(sql: string) {
+      if (!active) return { rows: [], rowCount: 0 }
+      if (sql.includes('SELECT active_run_id,context_epoch,session_context'))
+        return { rows: [{ active_run_id: identity.runId, context_epoch: 3, session_context: { rag_revision: 'r3', snapshot_context: '' } }], rowCount: 1 }
+      if (sql.includes('SELECT active_run_id FROM conversation_sessions'))
+        return { rows: [{ active_run_id: identity.runId }], rowCount: 1 }
+      return { rows: [{}], rowCount: 1 }
+    } }
+    const ports = createAuthorizedWebAgentProductionRagRunPorts({ core: runtime, pool: pool as never, storageRoot: directory,
+      lease, selection: { modelIdentity: 'synthetic-model', contextScopeKey: lease.input.accessVersion,
+        contextPolicy: { loadOwnerContext: true, memoryEnabled: true } }, enabled: () => true })
+    const definitions = await ports.toolRegistry.capabilities(identity)
+    assert.ok(definitions.some(item => item.name === 'search_conversations'))
+    assert.ok(definitions.some(item => item.name === 'search_memory'))
+    const restricted = createAuthorizedWebAgentProductionRagRunPorts({ core: runtime, pool: pool as never, storageRoot: directory,
+      lease, selection: { modelIdentity: 'synthetic-model', contextScopeKey: lease.input.accessVersion,
+        contextPolicy: { loadOwnerContext: false, memoryEnabled: true } }, enabled: () => true })
+    assert.deepEqual((await restricted.configuration(identity, new AbortController().signal)).toolNames, [])
+    assert.deepEqual(await restricted.toolRegistry.capabilities(identity), [])
+    const scope = { identity, roundId: '1', signal: new AbortController().signal, resolution: null,
+      execute: async () => { throw new Error('RAG 只读调用不能请求进程执行') } }
+    const result = await ports.toolRegistry.tools.dispatch({ id: 'search-memory', name: 'search_memory', input: { query: '授权记忆' } }, scope)
+    assert.equal(result.kind === 'completed' && result.successful, true, JSON.stringify(result))
+    assert.match(JSON.stringify(result), /共享授权记忆内容/u)
+    const automatic = await buildRunRagContext({ ownerId, sessionId: identity.sessionId, history: [], fixedPrefix: [], snapshotText: '',
+      currentUser: { persistedMessageId: '6', rawText: '授权记忆', message: { role: 'user', content: '授权记忆' } } },
+    { digest: () => 'digest', nextId: () => 'id', buildRag: ports.ragContext }, new AbortController().signal)
+    assert.equal(automatic.injected, true)
+    assert.match(JSON.stringify(automatic.tail), /共享授权记忆内容/u)
+    active = false
+    const stale = await ports.toolRegistry.tools.dispatch({ id: 'stale-memory', name: 'search_memory', input: { query: '授权记忆' } }, scope)
+    assert.equal(stale.kind === 'completed' && stale.successful, false)
+    const staleAutomatic = await buildRunRagContext({ ownerId, sessionId: identity.sessionId, history: [], fixedPrefix: [], snapshotText: '',
+      currentUser: { persistedMessageId: '6', rawText: '授权记忆', message: { role: 'user', content: '授权记忆' } } },
+    { digest: () => 'digest', nextId: () => 'id', buildRag: ports.ragContext }, new AbortController().signal)
+    assert.equal(staleAutomatic.injected, false)
   } finally {
     await runtime?.close()
     await rm(directory, { recursive: true, force: true })

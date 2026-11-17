@@ -20,6 +20,7 @@
     "test:all": "node scripts/tests/run-test-tier.mjs all",
     "test:affected": "node scripts/tests/run-affected-tests.mjs",
     "test:metadata": "node scripts/tests/check-test-metadata.mjs",
+    "test:metadata:generate": "node scripts/tests/generate-test-metadata.mjs",
     "test:maintenance": "node scripts/tests/run-maintenance-audit.mjs",
     "test:inventory": "node scripts/tests/collect-test-inventory.mjs",
     "test:inventory:details": "node scripts/tests/generate-test-details.mjs",

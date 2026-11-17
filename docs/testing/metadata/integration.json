@@ -1,0 +1,154 @@
+{
+  "packages/core/tests/integration/postgres/postgres.test.ts": {
+    "domain": "core-node-data",
+    "layer": "L2",
+    "owner": "packages/core/src/data/postgres.ts",
+    "productionEntry": "packages/core/src/data/runtime.ts",
+    "keyBehavior": "真实 PostgreSQL 保留微秒/用户外键、事务隔离、CAS、重复操作与连接超时保护",
+    "ci": "core-node"
+  },
+  "packages/core/tests/integration/runtime/local-ipc.test.ts": {
+    "domain": "core-node-ipc",
+    "layer": "L2",
+    "owner": "packages/core/src/runtime/transport/stdio.ts",
+    "productionEntry": "packages/core/src/runtime/local.ts",
+    "keyBehavior": "真实进程重启及回包丢失后查询收据，满队列并发关闭正确释放，拒绝越权/超长帧/非法能力并隔离 Worker",
+    "ci": "core-node"
+  },
+  "packages/core/tests/integration/postgres/contract.test.ts": {
+    "domain": "core-node-contract",
+    "layer": "L2",
+    "owner": "packages/core/src/projects + clients",
+    "productionEntry": "ProjectService / createProjectUpdater / ClientService",
+    "keyBehavior": "与 SQLite 共用项目更新字段、完成时间、owner/墓碑、CAS/事务回滚和联系人码点长度/null/删除原子性合同；须显式提供隔离 PG",
+    "ci": "core-node"
+  },
+  "packages/core/tests/integration/runtime/transport.test.ts": {
+    "domain": "core-desktop",
+    "layer": "L2",
+    "owner": "gugu-core",
+    "productionEntry": "packages/core/src/runtime/transport/ipc.ts",
+    "keyBehavior": "真实消息端口保留身份/操作收据/命令白名单，关闭释放 Worker",
+    "ci": "core-node"
+  },
+  "packages/core/tests/integration/agent-queue-sqlite.contract.test.ts": {
+    "domain": "agent-queue",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/pending-queue",
+    "productionEntry": "packages/core/src/agent/sessions/pending-queue.ts",
+    "keyBehavior": "SQLite 待发队列事务、认领、排序与隔离",
+    "ci": "core-node"
+  },
+  "packages/core/tests/integration/mind-note-sql.contract.test.ts": {
+    "domain": "mind-notes",
+    "layer": "L1",
+    "owner": "packages/core/src/mind",
+    "productionEntry": "packages/core/src/mind/note-postgres-sqlite.ts",
+    "keyBehavior": "SQLite 便签与 Undo 同事务提交、用户隔离与失败回滚",
+    "ci": "core-node"
+  },
+  "packages/core/tests/integration/postgres/mind-note-sql.contract.test.ts": {
+    "domain": "mind-notes",
+    "layer": "L2",
+    "owner": "packages/core/src/mind",
+    "productionEntry": "packages/core/src/mind/note-postgres-sqlite.ts",
+    "keyBehavior": "隔离 PostgreSQL 便签与 Undo 同事务提交、用户隔离与失败回滚",
+    "ci": "core-node"
+  },
+  "packages/core/tests/integration/postgres/agent-queue.contract.test.ts": {
+    "domain": "agent-queue",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/pending-queue",
+    "productionEntry": "packages/core/src/agent/sessions/pending-queue.ts",
+    "keyBehavior": "隔离 PostgreSQL 待发队列事务和认领契约",
+    "ci": "core-node"
+  },
+  "packages/core/tests/integration/postgres/project-create-usecase.test.ts": {
+    "domain": "projects",
+    "layer": "L2",
+    "owner": "packages/core/src",
+    "productionEntry": "packages/core/src/data",
+    "keyBehavior": "隔离 PostgreSQL 项目创建完整用例与事务契约",
+    "ci": "core-node"
+  },
+  "packages/core/tests/integration/postgres/client-name-query.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L2",
+    "owner": "packages/core/src/clients",
+    "productionEntry": "packages/core/src/clients/repository.ts",
+    "keyBehavior": "owner限定联系人精确优先和原生LIKE/ILIKE语义，通配符反斜线Unicode及参数安全",
+    "ci": "core-node"
+  },
+  "packages/core/tests/integration/postgres/project-name-query.test.ts": {
+    "domain": "projects",
+    "layer": "L2",
+    "owner": "packages/core/src/projects",
+    "productionEntry": "packages/core/src/projects/repository.ts",
+    "keyBehavior": "项目owner与软删除隔离，精确优先及原生SQL模糊匹配、归档候选与参数安全",
+    "ci": "core-node"
+  },
+  "packages/core/tests/integration/postgres/agent-group-names.contract.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/sessions",
+    "productionEntry": "GET /agent/sessions/{session_id}/messages",
+    "keyBehavior": "隔离 PostgreSQL 群成员最近有效昵称与归属",
+    "ci": "core-node"
+  },
+  "packages/core/tests/integration/postgres/agent-interaction-history.contract.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/sessions",
+    "productionEntry": "GET /agent/sessions/{session_id}/messages",
+    "keyBehavior": "交互历史投影、令牌轮换和事务隔离",
+    "ci": "core-node"
+  },
+  "packages/core/tests/integration/postgres/agent-interaction-session.contract.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/sessions",
+    "productionEntry": "GET /agent/interactions/{prompt_id}/session",
+    "keyBehavior": "隔离 PostgreSQL 凭据交互深链与历史兼容",
+    "ci": "core-node"
+  },
+  "packages/core/tests/integration/postgres/workspace-declarations-data.test.ts": {
+    "domain": "workspaces",
+    "layer": "L2",
+    "owner": "packages/core/src/data",
+    "productionEntry": "packages/core/src/data/workspace-declarations.ts",
+    "keyBehavior": "双库工作区声明用户隔离、事务及目录名称同步",
+    "ci": "core-node"
+  },
+  "packages/core/tests/integration/postgres/global-search-conversations-parity.test.ts": {
+    "domain": "search",
+    "layer": "L2",
+    "owner": "packages/core/src/search/sqlite-conversations.ts",
+    "productionEntry": "packages/core/src/search/postgres.ts",
+    "keyBehavior": "隔离PG与正式临时SQLite对照会话来源排序去重角色和owner，实测原生匹配差异且不开放公共能力",
+    "ci": "core-node"
+  },
+  "packages/core/tests/integration/postgres/borrowed-postgres.test.ts": {
+    "domain": "core-data",
+    "layer": "L2",
+    "owner": "packages/core/src/data",
+    "productionEntry": "packages/core/src/data/borrowed-postgres.ts",
+    "keyBehavior": "借用 PostgreSQL 事务的连接所有权、并发隔离和事务控制限制",
+    "ci": "core-node"
+  },
+  "packages/core/tests/integration/postgres/scheduled-task-delete.test.ts": {
+    "domain": "scheduled-tasks",
+    "layer": "L2",
+    "owner": "packages/core/src/scheduled-tasks",
+    "productionEntry": "packages/core/src/scheduled-tasks/task-delete.ts",
+    "keyBehavior": "双库任务显式删除归属隔离、并发和提交后通知",
+    "ci": "core-node"
+  },
+  "packages/core/tests/integration/postgres/note-lifecycle.test.ts": {
+    "domain": "mind",
+    "layer": "L2",
+    "owner": "packages/core/src/mind",
+    "productionEntry": "createSqlMindNoteMutator.restore",
+    "keyBehavior": "PG复用同一恢复合同及外层/Undo失败回滚",
+    "ci": "core-node"
+  }
+}

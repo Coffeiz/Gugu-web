@@ -4,7 +4,7 @@ import {execFileSync} from 'node:child_process'
 import {mkdtemp,rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
-import {createByokEnvelope,createConfiguredByokEnvelope,resolveByokKeyFile} from '../../src/adapters/byok-envelope.js'
+import {createByokEnvelope,createConfiguredByokEnvelope,readConfiguredByokMasterKeys,resolveByokKeyFile} from '../../src/adapters/byok-envelope.js'
 
 test('隔离主密钥跨语言加解密、版本轮换和并发首次创建',{skip:!process.env.GUGU_CORE_GOLDEN_PYTHON&&'需要隔离 Python'},async()=>{
  const dir=await mkdtemp(join(tmpdir(),'byok-test-'))
@@ -41,6 +41,25 @@ test('显式主密钥与上一版本解析不创建文件，空文件不覆盖',
   await assert.rejects(createConfiguredByokEnvelope({CREDENTIALS_MASTER_KEY_FILE:path}).encrypt('synthetic'))
   assert.equal(await readFile(path,'utf8'),'')
   assert.throws(()=>createConfiguredByokEnvelope({CREDENTIALS_MASTER_KEY_VERSION:'invalid'}))
+ }finally{await rm(dir,{recursive:true,force:true})}
+})
+
+test('模型版本材料只读解析当前与上一密钥，不创建缺失密钥文件',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'byok-version-material-'))
+ try{
+  const {writeFile,stat}=await import('node:fs/promises'),path=join(dir,'key')
+  assert.deepEqual(await readConfiguredByokMasterKeys({CREDENTIALS_MASTER_KEY_FILE:path,CREDENTIALS_MASTER_KEY_VERSION:'2'}),{})
+  await assert.rejects(stat(path),(error:unknown)=>(error as NodeJS.ErrnoException).code==='ENOENT')
+  await writeFile(path,'file-current-synthetic\n',{mode:0o600})
+  assert.deepEqual(await readConfiguredByokMasterKeys({CREDENTIALS_MASTER_KEY_FILE:path,CREDENTIALS_MASTER_KEY_VERSION:'3',CREDENTIALS_MASTER_KEY_PREVIOUS:'previous-synthetic'}),{
+   '2':'previous-synthetic','3':'file-current-synthetic',
+  })
+  assert.deepEqual(await readConfiguredByokMasterKeys({CREDENTIALS_MASTER_KEY:'current-synthetic',CREDENTIALS_MASTER_KEY_PREVIOUS:'previous-synthetic',CREDENTIALS_MASTER_KEY_VERSION:'3'}),{
+   '2':'previous-synthetic','3':'current-synthetic',
+  })
+  assert.deepEqual(await readConfiguredByokMasterKeys({BYOK:'{"master_key":"nested-synthetic"}',CREDENTIALS_MASTER_KEY_VERSION:'1'}),{
+   '1':'nested-synthetic',
+  })
  }finally{await rm(dir,{recursive:true,force:true})}
 })
 

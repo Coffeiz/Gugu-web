@@ -111,6 +111,24 @@ async function ancestorNames(client: PoolClient, ownerId: string, root: FolderRe
   return reversed.reverse()
 }
 
+/** 复用文件库的路径镜像规则，只解析当前 owner 的目标文件夹，不遍历子树。 */
+export async function readPostgresFolderPathMirrorKey(client: PoolClient, ownerId: string, folderId: number): Promise<string> {
+  const result = await client.query<FolderRecord>(
+    `SELECT id,parent_id,name,project_id,workspace_directory_id FROM folders WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL`,
+    [folderId, ownerId],
+  )
+  const folder = result.rows[0]
+  if (!folder) throw new Error('文件夹不存在')
+  const scope = await pathScope(client, ownerId, folder)
+  return folderKey(ownerId, scope.baseSegments.join('/'), [...await ancestorNames(client, ownerId, folder), folder.name])
+}
+
+/** 复用项目文件的日期和名称目录规则，且只解析当前 owner 的活动项目。 */
+export async function readPostgresProjectPathMirrorKey(client: PoolClient, ownerId: string, projectId: number): Promise<string> {
+  const scope = await pathScope(client, ownerId, { id: 0, parent_id: null, name: '', project_id: projectId, workspace_directory_id: null })
+  return folderKey(ownerId, scope.baseSegments.join('/'), [])
+}
+
 async function loadSubtree(client: PoolClient, ownerId: string, folderId: number): Promise<FolderRecord[]> {
   const result = await client.query<FolderRecord>(
     `WITH RECURSIVE subtree(id,parent_id,name,project_id,workspace_directory_id,visited) AS (

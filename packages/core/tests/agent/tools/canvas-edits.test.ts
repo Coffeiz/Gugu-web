@@ -142,7 +142,8 @@ it('便签删除分支等待可信确认，并在同一操作事务claim后软�
   now:()=>100,
   authorize:async()=> 'epoch-1',
   prepare:async(binding,targets)=>{
-   prepared={schemaVersion:2,binding,intentId:'intent-batch-delete',interactionId:'interaction-batch-delete',operationId:'operation-batch-delete',purpose:'action',action:'delete_canvas_note',...targets,authorizationEpoch:'epoch-1',expiresAt:1000}
+   expect(targets.targetIds).toMatchObject({nodeIds:[1],viewItemIds:[1]})
+   prepared={schemaVersion:2,binding,intentId:'intent-batch-delete',interactionId:'interaction-batch-delete',operationId:'operation-batch-delete',purpose:'action',action:'delete_canvas_note',targetsDigest:targets.targetsDigest,versionsDigest:targets.versionsDigest,authorizationEpoch:'epoch-1',expiresAt:1000}
    receipt={schemaVersion:2,intentId:prepared.intentId,interactionId:prepared.interactionId,receiptId:'receipt-batch-delete',binding,purpose:'action',action:'delete_canvas_note',status:'approved',expiresAt:1000}
    return prepared
   },
@@ -168,11 +169,30 @@ it('便签删除分支等待可信确认，并在同一操作事务claim后软�
  expect(claimCalls).toBe(1)
 })
 
+it.each(['canvas_delete_note','canvas_batch'] as const)('%s 在事务 claim 期间目标变化时回滚',async name=>{
+ let prepared:any,receipt:any
+ const gate=createConfirmationGate({now:()=>100,authorize:async()=>'epoch-1',
+  prepare:async(binding,targets)=>{prepared={schemaVersion:2,binding,intentId:'intent',interactionId:'interaction',operationId:'operation',purpose:'action',action:'delete_canvas_note',targetsDigest:targets.targetsDigest,versionsDigest:targets.versionsDigest,authorizationEpoch:'epoch-1',expiresAt:1000};receipt={schemaVersion:2,intentId:'intent',interactionId:'interaction',receiptId:'receipt',binding,purpose:'action',action:'delete_canvas_note',status:'approved',expiresAt:1000};return prepared},
+  load:async()=>({intent:prepared,receipt}),inspect:async()=>({targetsDigest:prepared.targetsDigest,versionsDigest:prepared.versionsDigest}),
+ },{purpose:'action',action:'delete_canvas_note'})
+ const confirmation:CanvasBatchConfirmationPort={gate,async claim(tx){await sql`UPDATE mind_nodes SET version=version+1 WHERE id=1`.execute(tx);return true}}
+ const tool=name==='canvas_batch'?createCanvasBatchTool(createCanvasBatchPort(core,publish,confirmation)):createCanvasDeleteNoteTool(createCanvasDeleteNotePort(core,publish,confirmation))
+ registry=createToolRegistry({tools:[tool],authorize:async()=>allowed})
+ const input=name==='canvas_batch'?{canvas_id:1,request_id:'claim-change',operations:[{kind:'delete_note',node_id:1}]}:{node_id:1}
+ const toolCall=call(name,input,'claim-change')
+ expect((await registry.tools.dispatch(toolCall,scope())).kind).toBe('waiting')
+ const result=await registry.tools.dispatch(toolCall,{...scope(),resolution:{interactionId:'interaction',receiptId:'receipt',status:'confirmed',value:null}})
+ expect(result).toMatchObject({successful:false,mutated:false,value:{error:'画布便签删除确认已使用或目标已变化'}})
+ expect((await rows('mind_nodes'))[0]).toMatchObject({version:1,deleted_at:null})
+ expect(await rows('undo_operations')).toHaveLength(0)
+ expect(publish).not.toHaveBeenCalled()
+})
+
 it('独立便签删除按旧版单项/批量结果执行，确认绑定目标版本且claim失败不产生副作用',async()=>{
  let prepared:any,receipt:any,claimed=false,allowClaim=false,claimCalls=0
  const gate=createConfirmationGate({
   now:()=>100,authorize:async()=>'epoch-1',
-  prepare:async(binding,targets)=>{prepared={schemaVersion:2,binding,intentId:'intent-note-delete',interactionId:'interaction-note-delete',operationId:'operation-note-delete',purpose:'action',action:'delete_canvas_note',...targets,authorizationEpoch:'epoch-1',expiresAt:1000};receipt={schemaVersion:2,intentId:prepared.intentId,interactionId:prepared.interactionId,receiptId:'receipt-note-delete',binding,purpose:'action',action:'delete_canvas_note',status:'approved',expiresAt:1000};return prepared},
+  prepare:async(binding,targets)=>{prepared={schemaVersion:2,binding,intentId:'intent-note-delete',interactionId:'interaction-note-delete',operationId:'operation-note-delete',purpose:'action',action:'delete_canvas_note',targetsDigest:targets.targetsDigest,versionsDigest:targets.versionsDigest,authorizationEpoch:'epoch-1',expiresAt:1000};receipt={schemaVersion:2,intentId:prepared.intentId,interactionId:prepared.interactionId,receiptId:'receipt-note-delete',binding,purpose:'action',action:'delete_canvas_note',status:'approved',expiresAt:1000};return prepared},
   load:async()=>({intent:prepared,receipt}),inspect:async()=>({targetsDigest:prepared.targetsDigest,versionsDigest:prepared.versionsDigest}),
  },{purpose:'action',action:'delete_canvas_note'})
  const confirmation:CanvasBatchConfirmationPort={gate,async claim(_tx,reference){claimCalls++;if(!allowClaim||claimed||reference.intentId!=='intent-note-delete')return false;claimed=true;return true}}
@@ -213,12 +233,37 @@ it('独立便签删除按旧版单项/批量结果执行，确认绑定目标版
  expect(await rows('mind_nodes')).not.toEqual(beforeNotes);expect(await rows('mind_canvas_items')).not.toEqual(beforeItems)
 })
 
+it.each(['canvas_disconnect','canvas_delete'] as const)('%s 在事务 claim 期间目标变化时回滚',async name=>{
+ let prepared:any,receipt:any
+ const action=name==='canvas_disconnect'?'delete_canvas_relation':'delete_canvas'
+ const gate=createConfirmationGate({now:()=>100,authorize:async()=>'epoch-1',
+  prepare:async(binding,targets)=>{prepared={schemaVersion:2,binding,intentId:'intent',interactionId:'interaction',operationId:'operation',purpose:'action',action,targetsDigest:targets.targetsDigest,versionsDigest:targets.versionsDigest,authorizationEpoch:'epoch-1',expiresAt:1000};receipt={schemaVersion:2,intentId:'intent',interactionId:'interaction',receiptId:'receipt',binding,purpose:'action',action,status:'approved',expiresAt:1000};return prepared},
+  load:async()=>({intent:prepared,receipt}),inspect:async()=>({targetsDigest:prepared.targetsDigest,versionsDigest:prepared.versionsDigest}),
+ },{purpose:'action',action})
+ const confirmation:CanvasBatchConfirmationPort={gate,async claim(tx){
+  if(name==='canvas_disconnect')await sql`UPDATE mind_relations SET status='changed' WHERE id=1`.execute(tx)
+  else await sql`UPDATE mind_maps SET title='变更画布' WHERE id=1`.execute(tx)
+  return true
+ }}
+ const tool=name==='canvas_disconnect'?createCanvasDisconnectTool(createCanvasDisconnectPort(core,publish,confirmation)):createCanvasDeleteTool(createCanvasDeletePort(core,publish,confirmation))
+ registry=createToolRegistry({tools:[tool],authorize:async()=>allowed})
+ const input=name==='canvas_disconnect'?{canvas_id:1,relation_id:1}:{canvas_id:1}
+ const toolCall=call(name,input,'claim-change')
+ expect((await registry.tools.dispatch(toolCall,scope())).kind).toBe('waiting')
+ const result=await registry.tools.dispatch(toolCall,{...scope(),resolution:{interactionId:'interaction',receiptId:'receipt',status:'confirmed',value:null}})
+ expect(result).toMatchObject({successful:false,mutated:false})
+ expect((await rows('mind_relations'))[0]).toMatchObject({status:'confirmed',deleted_at:null})
+ expect((await rows('mind_maps'))[0]).toMatchObject({title:'画布',deleted_at:null})
+ expect(await rows('undo_operations')).toHaveLength(0)
+ expect(publish).not.toHaveBeenCalled()
+})
+
 it('关系断开按Python批量目标排序与结果契约确认，claim失败无副作用且重放不重复通知',async()=>{
  const key=owner.replaceAll('-',''),stamp='2026-11-15 00:00:00.000002'
  await sql`INSERT INTO mind_relations(id,user_id,canvas_id,src_node_id,dst_node_id,rel_type,edge_key,origin,status,created_at,updated_at) VALUES(2,${key},1,1,2,'related','manual','user','confirmed',${stamp},${stamp})`.execute(core.db)
  let prepared:any,receipt:any,allowClaim=false,claimed=false,claimCalls=0
  const gate=createConfirmationGate({now:()=>100,authorize:async()=>'epoch-1',
-  prepare:async(binding,targets)=>{prepared={schemaVersion:2,binding,intentId:'intent-disconnect',interactionId:'interaction-disconnect',operationId:'operation-disconnect',purpose:'action',action:'delete_canvas_relation',...targets,authorizationEpoch:'epoch-1',expiresAt:1000};receipt={schemaVersion:2,intentId:prepared.intentId,interactionId:prepared.interactionId,receiptId:'receipt-disconnect',binding,purpose:'action',action:'delete_canvas_relation',status:'approved',expiresAt:1000};return prepared},
+  prepare:async(binding,targets)=>{prepared={schemaVersion:2,binding,intentId:'intent-disconnect',interactionId:'interaction-disconnect',operationId:'operation-disconnect',purpose:'action',action:'delete_canvas_relation',targetsDigest:targets.targetsDigest,versionsDigest:targets.versionsDigest,authorizationEpoch:'epoch-1',expiresAt:1000};receipt={schemaVersion:2,intentId:prepared.intentId,interactionId:prepared.interactionId,receiptId:'receipt-disconnect',binding,purpose:'action',action:'delete_canvas_relation',status:'approved',expiresAt:1000};return prepared},
   load:async()=>({intent:prepared,receipt}),inspect:async()=>({targetsDigest:prepared.targetsDigest,versionsDigest:prepared.versionsDigest}),
  },{purpose:'action',action:'delete_canvas_relation'})
  const confirmation:CanvasBatchConfirmationPort={gate,async claim(_tx,reference){claimCalls++;if(!allowClaim||claimed||reference.intentId!=='intent-disconnect')return false;claimed=true;return true}}
@@ -245,7 +290,7 @@ it('画布级联删除批量共享快照确认和原子收据，复用Mind级联
  await sql`INSERT INTO mind_maps(id,user_id,title,data_json,created_at,updated_at) VALUES(3,${key},'第二画布','{}',${stamp},${stamp})`.execute(core.db)
  let prepared:any,receipt:any,allowClaim=false,claimed=false,claimCalls=0
  const gate=createConfirmationGate({now:()=>100,authorize:async()=>'epoch-1',
-  prepare:async(binding,targets)=>{prepared={schemaVersion:2,binding,intentId:'intent-canvas-delete',interactionId:'interaction-canvas-delete',operationId:'operation-canvas-delete',purpose:'action',action:'delete_canvas',...targets,authorizationEpoch:'epoch-1',expiresAt:1000};receipt={schemaVersion:2,intentId:prepared.intentId,interactionId:prepared.interactionId,receiptId:'receipt-canvas-delete',binding,purpose:'action',action:'delete_canvas',status:'approved',expiresAt:1000};return prepared},
+  prepare:async(binding,targets)=>{prepared={schemaVersion:2,binding,intentId:'intent-canvas-delete',interactionId:'interaction-canvas-delete',operationId:'operation-canvas-delete',purpose:'action',action:'delete_canvas',targetsDigest:targets.targetsDigest,versionsDigest:targets.versionsDigest,authorizationEpoch:'epoch-1',expiresAt:1000};receipt={schemaVersion:2,intentId:prepared.intentId,interactionId:prepared.interactionId,receiptId:'receipt-canvas-delete',binding,purpose:'action',action:'delete_canvas',status:'approved',expiresAt:1000};return prepared},
   load:async()=>({intent:prepared,receipt}),inspect:async()=>({targetsDigest:prepared.targetsDigest,versionsDigest:prepared.versionsDigest}),
  },{purpose:'action',action:'delete_canvas'})
  const confirmation:CanvasBatchConfirmationPort={gate,async claim(_tx,reference){claimCalls++;if(!allowClaim||claimed||reference.intentId!=='intent-canvas-delete')return false;claimed=true;return true}}

@@ -1,0 +1,58 @@
+{
+  "apps/web-host/tests/scheduled-tasks/task-filesystem-authorize.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/scheduled-tasks/task-filesystem-authorize.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "任务文件授权确认、事务和并发",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/scheduled-tasks/task-filesystem-revoke.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/scheduled-tasks/task-filesystem-revoke.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "撤权事务、审计及确认码",
+    "ci": "node-webui"
+  },
+  "packages/core/tests/scheduled-tasks/once-repository.test.ts": {
+    "domain": "scheduled-tasks",
+    "layer": "L2",
+    "owner": "packages/core/src/scheduled-tasks",
+    "productionEntry": "packages/core/src/scheduled-tasks/once-repository.ts",
+    "keyBehavior": "双库一次性任务认领、失败重试、owner 隔离和崩溃恢复候选",
+    "ci": "core-node"
+  },
+  "packages/core/tests/scheduled-tasks/fire-receipts.test.ts": {
+    "domain": "scheduled-tasks",
+    "layer": "L2",
+    "owner": "packages/core/src/scheduled-tasks",
+    "productionEntry": "packages/core/src/scheduled-tasks/fire-receipts.ts",
+    "keyBehavior": "双库触发收据并发认领、租约 owner 和终态重启后禁止自动重放",
+    "ci": "core-node"
+  },
+  "packages/core/tests/scheduled-tasks/sqlite-lease.test.ts": {
+    "domain": "scheduled-tasks",
+    "layer": "L2",
+    "owner": "packages/core/src/scheduled-tasks",
+    "productionEntry": "packages/core/src/scheduled-tasks/sqlite-lease.ts",
+    "keyBehavior": "跨进程 SQLite 租约竞争、过期 owner 隔离与存储失败",
+    "ci": "core-node"
+  },
+  "packages/core/tests/scheduled-tasks/task-list.test.ts": {
+    "domain": "scheduled-tasks",
+    "layer": "L2",
+    "owner": "packages/core/src/scheduled-tasks",
+    "productionEntry": "packages/core/src/scheduled-tasks/task-list.ts",
+    "keyBehavior": "双库任务读取、用户隔离与可信能力投影",
+    "ci": "core-node"
+  },
+  "packages/core/tests/scheduled-tasks/task-write.test.ts": {
+    "domain": "scheduled-tasks",
+    "layer": "L1",
+    "owner": "packages/core/src/scheduled-tasks/task-write.ts",
+    "productionEntry": "Core 创建/更新用例 → PostgreSQL 事务适配器",
+    "keyBehavior": "活动提醒幂等与只通知一次、调度类型切换、owner 事务校验失败不写入及提交后发布",
+    "ci": "core-node"
+  }
+}

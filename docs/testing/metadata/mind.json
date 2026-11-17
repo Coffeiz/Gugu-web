@@ -1,0 +1,106 @@
+{
+  "apps/web/tests/mind/noteDraft.test.ts": {
+    "domain": "mind-notes",
+    "layer": "L0",
+    "owner": "apps/web/mind",
+    "productionEntry": "apps/web/src/views/Mind/utils/noteDraft.ts",
+    "keyBehavior": "未编辑空白草稿离开时不创建笔记；正文或仅标题草稿只持久化一次并保留 capturedAt",
+    "ci": "frontend-test"
+  },
+  "apps/web/tests/mind/noteEditCommit.test.ts": {
+    "domain": "mind-notes",
+    "layer": "L0",
+    "owner": "apps/web/composables/mind",
+    "productionEntry": "apps/web/src/composables/mind/noteEditCommit.ts",
+    "keyBehavior": "保存失败保留编辑态供重试，只有保存成功后才退出编辑",
+    "ci": "frontend-test"
+  },
+  "apps/web/tests/mind/CanvasToolbar.test.ts": {
+    "domain": "mind-canvas",
+    "layer": "L1",
+    "owner": "apps/web/mind",
+    "productionEntry": "apps/web/src/views/Mind/components/CanvasToolbar.vue",
+    "keyBehavior": "画布对象选择器排除不可加入的文件夹和会话，仅将可加入对象交给画布",
+    "ci": "frontend-test"
+  },
+  "apps/web-host/tests/mind/core-undo-host-postgres.test.ts": {
+    "domain": "undo",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/undo",
+    "productionEntry": "apps/web-host/src/domains/undo/persistence/core-operations.ts",
+    "keyBehavior": "Core 撤销 Host 错误映射、用户隔离和幂等通知",
+    "ci": "web-host-node"
+  },
+  "apps/web-host/tests/mind/core-undo-query.test.ts": {
+    "domain": "undo",
+    "layer": "L1",
+    "owner": "apps/web-host/src/domains/undo",
+    "productionEntry": "apps/web-host/src/domains/undo/persistence/core-operations.ts",
+    "keyBehavior": "撤销事务查询桥的语句限制、并发和借用期",
+    "ci": "web-host-node"
+  },
+  "apps/web-host/tests/mind/mind-core-postgres.test.ts": {
+    "domain": "mind",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/undo",
+    "productionEntry": "apps/web-host/src/domains/undo/persistence/mind-core.ts",
+    "keyBehavior": "Mind 撤销借用同一事务及冲突映射与外层回滚",
+    "ci": "web-host-node"
+  },
+  "packages/core/tests/mind/canvas-agent-read.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/mind",
+    "productionEntry": "canvas_list",
+    "keyBehavior": "画布分页owner计数与Python视图投影",
+    "ci": "core-node"
+  },
+  "packages/core/tests/mind/canvas-detail.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/mind",
+    "productionEntry": "canvas_get/search",
+    "keyBehavior": "真实SQLite分页关系审计、搜索探测、定位和owner边界",
+    "ci": "core-node"
+  },
+  "packages/core/tests/mind/canvas-layout.test.ts": {
+    "domain": "mind",
+    "layer": "L0",
+    "owner": "packages/core/src/mind",
+    "productionEntry": "resolveCanvasPosition",
+    "keyBehavior": "视口到世界坐标、非法位置不回退、auto/near偏移与零宽规则",
+    "ci": "core-node"
+  },
+  "packages/core/tests/mind/note-lifecycle-contract.test.ts": {
+    "domain": "mind",
+    "layer": "L1",
+    "owner": "packages/core/src/mind",
+    "productionEntry": "createSqlMindNoteMutator.restore",
+    "keyBehavior": "SQLite恢复字段/版本和Undo原子性、借用外层事务回滚",
+    "ci": "core-node"
+  },
+  "apps/web-host/tests/mind/mind-ref-suggest-core.test.ts": {
+    "domain": "mind",
+    "layer": "L1",
+    "owner": "packages/core/src/mind/ref-suggest.ts",
+    "productionEntry": "Core 引用建议用例与注入查询端口",
+    "keyBehavior": "空查询类别顺序/总量上限、owner 限定全局搜索参数、逐消息引用锚点及 Unicode 片段裁剪",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/mind/mind-ref-suggest-postgres.test.ts": {
+    "domain": "mind",
+    "layer": "L1",
+    "owner": "apps/web-host/src/modules/mind/ref-suggest-postgres.ts",
+    "productionEntry": "PostgreSQL 查询适配器由 Core 引用建议用例调用",
+    "keyBehavior": "owner 限定的近期对象读取、已删除画布项排除、平台 MCP 候选及逐条消息结果投影；Pool 为合成测试",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/mind/mind-ref-suggest-host.test.ts": {
+    "domain": "mind",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/mind/ref-suggest.ts",
+    "productionEntry": "createApp 认证路由和 Core use-case 类型接线",
+    "keyBehavior": "未认证拒绝、owner 从已验证身份提取、query/limit 参数边界",
+    "ci": "node-webui"
+  }
+}

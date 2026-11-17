@@ -6,6 +6,8 @@ export interface ModelSettingsSnapshot {
   readonly ai_presets?: { readonly strategy?: string; readonly pool_mode?: string; readonly items?: readonly ModelPreset[] }
   readonly byokEnabled: boolean
   readonly systemPrompt: string
+  /** 入队时冻结的上下文 scope key，供恢复时和可信选择策略逐项比较。 */
+  readonly contextScopeKey?: string
   /** 服务端生成的不可逆范围标识，权限、模型配置和凭据版本变化时必须更新。 */
   readonly accessScopeHash: string
 }
@@ -42,7 +44,7 @@ export function createModelStrategy(read: (ownerId: string, signal: AbortSignal)
     }
     let released = false
     return { config: structuredClone(model), modelRef, systemPrompt: settings.systemPrompt, byokEnabled: settings.byokEnabled,
-      accessScopeHash: settings.accessScopeHash, localDeployment: settings.ai.deployment_mode === 'local', release: () => {
+      contextScopeKey: settings.contextScopeKey, accessScopeHash: settings.accessScopeHash, localDeployment: settings.ai.deployment_mode === 'local', release: () => {
         if (released) return
         released = true
         if (reserved) { const count = inflight.get(reserved) ?? 0; if (count <= 1) inflight.delete(reserved); else inflight.set(reserved, count - 1) }

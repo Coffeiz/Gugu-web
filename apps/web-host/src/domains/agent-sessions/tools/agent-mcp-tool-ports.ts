@@ -8,15 +8,19 @@ type RuntimeDispatch = { result: string; executed?: boolean } | { error: string;
 export interface AgentMcpToolPortsOptions {
   directory(ownerId: string): Promise<readonly McpDirectoryTool[]>
   runtime: { dispatchForAgent(ownerId: string, serverId: string, name: string, args: unknown, signal?: AbortSignal): Promise<RuntimeDispatch> }
-  authorize(identity: RunIdentity, name: string): Promise<boolean>
+  authorize(identity: RunIdentity, name: string, signal?: AbortSignal): Promise<boolean>
+  configured?(identity: RunIdentity, name: string, signal?: AbortSignal): Promise<boolean>
 }
 
 /** 将 owner-scoped MCP 声明接到同一 Harness ToolPort；远端调用状态不确定时禁止重放。 */
 export function createMcpAgentToolPorts(options: {
   base: Registry
 } & AgentMcpToolPortsOptions) {
-  async function authorized(identity: RunIdentity, name: string): Promise<boolean> {
-    try { return await options.authorize(identity, name) === true } catch { return false }
+  async function authorized(identity: RunIdentity, name: string, signal?: AbortSignal): Promise<boolean> {
+    try { return await options.authorize(identity, name, signal) === true } catch { return false }
+  }
+  async function configured(identity: RunIdentity, name: string, signal?: AbortSignal): Promise<boolean> {
+    try { return !options.configured || await options.configured(identity, name, signal) === true } catch { return false }
   }
 
   async function declared(ownerId: string): Promise<Map<string, McpDirectoryTool>> {
@@ -47,7 +51,8 @@ export function createMcpAgentToolPorts(options: {
       if (!call.name.startsWith('mcp_')) return options.base.tools.dispatch(call, scope)
       const identity = Object.freeze({ ...scope.identity })
       scope.signal.throwIfAborted()
-      if (!await authorized(identity, call.name)) return { kind: 'completed', value: { error: '没有权限使用此工具' }, successful: false, mutated: false, executed: false }
+      if (!await configured(identity, call.name, scope.signal)) return { kind: 'completed', value: { error: '工具不存在或未开放' }, successful: false, mutated: false, executed: false }
+      if (!await authorized(identity, call.name, scope.signal)) return { kind: 'completed', value: { error: '没有权限使用此工具' }, successful: false, mutated: false, executed: false }
       const tool = (await declared(identity.ownerId)).get(call.name)
       if (!tool) return { kind: 'completed', value: { error: '工具不存在或未开放' }, successful: false, mutated: false, executed: false }
       scope.signal.throwIfAborted()
@@ -78,7 +83,7 @@ export function createMcpAgentToolPorts(options: {
       const names = new Set(builtins.map(item => item.name))
       const dynamic: PreparedToolDefinition[] = []
       for (const tool of await declared(identity.ownerId)) {
-        if (names.has(tool[0]) || !await authorized(identity, tool[0])) continue
+        if (names.has(tool[0]) || !await configured(identity, tool[0]) || !await authorized(identity, tool[0])) continue
         names.add(tool[0]); dynamic.push(definition(tool[1]))
       }
       return [...builtins, ...dynamic]

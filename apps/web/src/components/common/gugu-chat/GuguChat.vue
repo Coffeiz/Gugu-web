@@ -787,7 +787,7 @@ async function openChatObject(type: string, id: number) {
     return
   }
   const paths: Record<string, string> = {
-    canvas: '/mind/canvases', note: '/mind/notes', 'scheduled-task': '/schedules',
+    canvas: '/canvases', note: '/notes', 'scheduled-task': '/schedules',
   }
   const path = paths[type]
   if (path) {

@@ -1,0 +1,26 @@
+{
+  "apps/web-host/tests/onboarding/onboarding-reset-guide.test.ts": {
+    "domain": "onboarding",
+    "layer": "L2",
+    "owner": "packages/core/src/onboarding/reset-guide.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "重置owner引导且保留播种与扩展字段及认证",
+    "ci": "node-webui"
+  },
+  "packages/core/tests/onboarding/state-store.test.ts": {
+    "domain": "onboarding",
+    "layer": "L2",
+    "owner": "packages/core/src/onboarding/store.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "引导状态隔离双库 owner，保留历史播种并验证 SQLite 升级及冲突回滚；PostgreSQL 需要隔离连接",
+    "ci": "core-node"
+  },
+  "apps/web/tests/onboarding/progressSaver.test.ts": {
+    "domain": "onboarding",
+    "layer": "L0",
+    "owner": "apps/web/composables/onboarding",
+    "productionEntry": "apps/web/src/composables/onboarding/progressSaver.ts",
+    "keyBehavior": "引导步骤快速切换时进度写入合并且串行；旧响应不覆盖更新的本地进度和已完成步骤；退出时立即冲刷；相同模拟延迟的对照测试验证请求数和等待时间下降",
+    "ci": "frontend-test"
+  }
+}

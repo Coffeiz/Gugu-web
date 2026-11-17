@@ -1,0 +1,10 @@
+{
+  "apps/web/tests/filesystem/useFilesystemAuthorization.test.ts": {
+    "domain": "frontend-scheduling",
+    "layer": "L0",
+    "owner": "apps/web/composables",
+    "productionEntry": "apps/web/src/composables/useFilesystemAuthorization.ts",
+    "keyBehavior": "文件系统授权确认、完成与撤销遵循 API 边界",
+    "ci": "frontend-test"
+  }
+}

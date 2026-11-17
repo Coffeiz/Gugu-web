@@ -1,0 +1,10 @@
+{
+  "apps/web/tests/schedules/ScheduleFormModal.test.ts": {
+    "domain": "scheduled-tasks",
+    "layer": "L1",
+    "owner": "apps/web/views/Schedules",
+    "productionEntry": "apps/web/src/views/Schedules/components/ScheduleFormModal.vue",
+    "keyBehavior": "编辑任务时保留管理员暂时关闭的平台渠道，新建任务仍不能选择未开放平台",
+    "ci": "frontend-test"
+  }
+}

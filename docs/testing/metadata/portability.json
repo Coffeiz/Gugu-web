@@ -1,0 +1,42 @@
+{
+  "apps/web-host/tests/portability/export-preview.test.ts": {
+    "domain": "data-portability",
+    "layer": "L2",
+    "owner": "packages/core/src/data-portability/export-preview.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "导出归属统计及Python正式模型对照",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/portability/export-preview-route.test.ts": {
+    "domain": "data-portability",
+    "layer": "L2",
+    "owner": "packages/core/src/data-portability/export-preview.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "导出预览认证与响应",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/portability/delete-export-postgres.test.ts": {
+    "domain": "data-portability",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/data-portability/delete-export-postgres.ts",
+    "productionEntry": "PostgreSQL行锁事务 + 目录句柄锚定的Local删除",
+    "keyBehavior": "隔离PG检查owner/状态事务及真实临时归档删除，拒绝符号链接父路径且不触碰外部目标",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/portability/apply-import.test.ts": {
+    "domain": "data-portability",
+    "layer": "L2",
+    "owner": "packages/core/src/data-portability/apply-import.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "导入确认令牌、事务互斥和回滚",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/portability/resume-import.test.ts": {
+    "domain": "data-portability",
+    "layer": "L2",
+    "owner": "packages/core/src/data-portability/resume-import.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "导入确认令牌并发轮换与Python消费者",
+    "ci": "node-webui"
+  }
+}

@@ -27,11 +27,11 @@ test('PG 快照按 owner 隔离并捕获密文变化，不依赖更新时间', {
       assert.equal((await readPostgresLlmCredentialSnapshot(client, 'owner-b', 'synthetic-version-key')).credential?.model, 'model-b')
       assert.equal((await readPostgresLlmCredentialSnapshot(client, 'owner-c', 'synthetic-version-key')).credential, null)
     } finally { client.release() }
-    assert.throws(() => createAtomicAgentModelSnapshot(pool, 'synthetic-key', null), /一致性边界不可用/)
+    assert.throws(() => createAtomicAgentModelSnapshot(pool, 'synthetic-key', null, null), /一致性边界不可用/)
     let locked = false, released = 0
     const select = createAtomicAgentModelSnapshot(pool, 'synthetic-key', { async withLockedConfig(work) { locked = true; try { return await work() } finally { locked = false } },
       async readLockedModel(_id, ref) { assert.equal(locked, true); return { modelRef: ref ?? 'active', configVersion: 'config-v1', config: { model: 'platform' }, systemPrompt: '', byokEnabled: true, localDeployment: false, release() { released++ } } },
-      async accessScope() { assert.equal(locked, true); return 'scope-v1' } })
+      async accessScope() { assert.equal(locked, true); return { contextScopeKey: 'b'.repeat(64), accessScopeHash: 'c'.repeat(64) } } }, null)
     const snapshot = await select({ ownerId: 'owner-a', sessionId: '1', runId: 'run' }, new AbortController().signal)
     assert.equal(snapshot.credential?.model, 'model-a'); assert.equal(snapshot.configVersion, 'config-v1'); snapshot.release(); assert.equal(released, 1)
   } finally { await pool.end(); await admin.query(`DROP SCHEMA "${schema}" CASCADE`); await admin.end() }

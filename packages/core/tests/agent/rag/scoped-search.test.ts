@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import type { RagDocument } from '../../../src/agent/rag/contracts.js'
 import { createMemoryRagSource } from '../../../src/agent/rag/memory-source.js'
@@ -26,6 +27,19 @@ function setup(embed: (owner: string, query: string, signal?: AbortSignal) => Pr
 }
 
 describe('scoped RAG embedding fallback', () => {
+  it('supports automatic confidence filtering and excludes context hashes already in history', async () => {
+    const duplicate = { ...document, id: 'memory:duplicate:0', source_id: 'duplicate', parent_id: 'duplicate' }
+    const ports = setup(async () => [], [document, duplicate])
+    const contentHash = createHash('sha256').update(document.content!.trim()).digest('hex')
+    const result = await ports.search('owner-a', { scope_type: 'owner', scope_id: '' }, '项目进度', {
+      sourceTypes: ['memory'], limit: 5, selectionMode: 'confidence', excludeContentHashes: [contentHash],
+    })
+
+    expect(result.results).toEqual([])
+    expect(result.diagnostics.selection_mode).toBe('confidence')
+    expect(result.fusion).toBe('bm25')
+  })
+
   it('preserves owner-scoped BM25 results when query embedding fails', async () => {
     const ports = setup(async () => { throw new Error('synthetic transport failure') })
     const result = await ports.search('owner-a', { scope_type: 'owner', scope_id: '' }, '项目进度', {

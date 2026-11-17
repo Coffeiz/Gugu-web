@@ -1,0 +1,90 @@
+{
+  "apps/web-host/tests/terminals/delete.test.ts": {
+    "domain": "terminals",
+    "layer": "L2",
+    "owner": "packages/core/src/terminals/delete.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "终端owner授权事务与事件删除",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/terminals/metrics.test.ts": {
+    "domain": "terminals",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/terminals/persistence/metrics.ts + apps/web-host/src/modules/terminals/metrics.ts",
+    "productionEntry": "认证 Fastify 路由 → PostgreSQL owner preferences/MXC readiness → Core owner metrics query",
+    "keyBehavior": "页面 Shell 授权与 MXC readiness 失败为 403；成功时只统计认证 owner，响应字段与 Python 一致",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/terminals/list.test.ts": {
+    "domain": "terminals",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/terminals/persistence/list.ts + apps/web-host/src/modules/terminals/list.ts",
+    "productionEntry": "认证 Fastify 路由 → PostgreSQL owner preferences/MXC readiness → Core cleanup/list query",
+    "keyBehavior": "owner-scoped 终端 DTO、30 天/Agent cap 清理、Shell 页面 403 与 PTY capability",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/terminals/detail.test.ts": {
+    "domain": "terminals",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/terminals/persistence/detail.ts + apps/web-host/src/modules/terminals/detail.ts",
+    "productionEntry": "认证 Fastify 路由 → PostgreSQL owner preferences/MXC readiness → Core detail query",
+    "keyBehavior": "终端 owner 隔离、关联会话授权、页面 Shell 403 与 Python DTO",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/terminals/rename.test.ts": {
+    "domain": "terminals",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/terminals/persistence/rename.ts + apps/web-host/src/modules/terminals/rename.ts",
+    "productionEntry": "认证 Fastify 路由 → PostgreSQL owner preferences/MXC readiness → Core rename transaction → terminals update publisher",
+    "keyBehavior": "名称 DTO、owner/session/Shell 授权、事务更新和提交后资源通知",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/terminals/events.test.ts": {
+    "domain": "terminals",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/terminals/persistence/events.ts + apps/web-host/src/modules/terminals/events.ts",
+    "productionEntry": "认证 Fastify SSE → Core owner-scoped event pages → PostgreSQL terminal_events",
+    "keyBehavior": "认证、after 游标、事件 DTO、已关闭结束帧和 owner 隔离",
+    "ci": "node-webui"
+  },
+  "packages/core/tests/terminals/list.test.ts": {
+    "domain": "terminals",
+    "layer": "L2",
+    "owner": "packages/core/src/terminals/list.ts",
+    "productionEntry": "Core terminalPageAccess / createTerminalListReader",
+    "keyBehavior": "owner隔离、过期和超额记录及事件清理、Python DTO顺序与PTY gate",
+    "ci": "core-node"
+  },
+  "packages/core/tests/terminals/rename.test.ts": {
+    "domain": "terminals",
+    "layer": "L2",
+    "owner": "packages/core/src/terminals/rename.ts",
+    "productionEntry": "Core createTerminalRenamer",
+    "keyBehavior": "owner/session/Shell 授权、名称规范化与事务后通知",
+    "ci": "core-node"
+  },
+  "packages/core/tests/terminals/events.test.ts": {
+    "domain": "terminals",
+    "layer": "L2",
+    "owner": "packages/core/src/terminals/events.ts",
+    "productionEntry": "Core createTerminalEventPageReader",
+    "keyBehavior": "owner-scoped cursor读取、Python事件序列化和关闭状态",
+    "ci": "core-node"
+  },
+  "packages/core/tests/terminals/detail.test.ts": {
+    "domain": "terminals",
+    "layer": "L2",
+    "owner": "packages/core/src/terminals/detail.ts",
+    "productionEntry": "Core terminalPageAccess / createTerminalDetailReader",
+    "keyBehavior": "owner查询、session owner授权、Shell gate 与 Python DTO",
+    "ci": "core-node"
+  },
+  "packages/core/tests/terminals/metrics.test.ts": {
+    "domain": "terminals",
+    "layer": "L1",
+    "owner": "packages/core/src/terminals/metrics.ts",
+    "productionEntry": "Core terminalPageAccess / createTerminalMetricsReader",
+    "keyBehavior": "Python Shell 页面 gate 与终端计数/保留字段契约；真实临时 SQLite 查询验证 owner 隔离和 running 过滤",
+    "ci": "core-node"
+  }
+}

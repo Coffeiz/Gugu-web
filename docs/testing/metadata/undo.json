@@ -1,0 +1,18 @@
+{
+  "packages/core/tests/undo/state-machine-sqlite.test.ts": {
+    "domain": "undo",
+    "layer": "L2",
+    "owner": "packages/core/src/undo",
+    "productionEntry": "packages/core/src/undo/state-machine.ts",
+    "keyBehavior": "SQLite 撤销状态机跨资源预览、冲突和幂等",
+    "ci": "core-node"
+  },
+  "packages/core/tests/undo/state-machine-postgres.test.ts": {
+    "domain": "undo",
+    "layer": "L2",
+    "owner": "packages/core/src/undo",
+    "productionEntry": "packages/core/src/undo/state-machine.ts",
+    "keyBehavior": "PostgreSQL 撤销状态机事务、并发和归属隔离",
+    "ci": "core-node"
+  }
+}

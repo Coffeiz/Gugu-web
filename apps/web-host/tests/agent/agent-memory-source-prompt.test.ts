@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { formatAgentMemory, formatAgentSource } from '../../src/domains/agent-sessions/context/agent-memory-source-prompt.js'
+import { formatAgentMemory, formatAgentSource } from '@gugu/core/agent'
 
 test('记忆衰减、时间锚点、字符预算和无依据声明保持业务语义', () => {
   const now = 20 * 86400 * 1000

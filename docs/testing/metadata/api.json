@@ -1,0 +1,18 @@
+{
+  "backend/tests/api/test_create_idempotency.py": {
+    "domain": "create-idempotency",
+    "layer": "L1",
+    "owner": "backend/app/services/idempotency.py",
+    "productionEntry": "backend/app/api/v1/projects.py、backend/app/api/v1/events.py 与 Agent 创建工具",
+    "keyBehavior": "Web 与 Agent 项目和日历创建对相同请求键返回同一资源，同键不同内容明确冲突",
+    "ci": "backend-test"
+  },
+  "backend/tests/api/test_dev_attention.py": {
+    "domain": "group-attention-sandbox",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/dev_attention.py",
+    "productionEntry": "开发注意力算法复现 API",
+    "keyBehavior": "沙盒复用生产评分器并只返回安全诊断；模拟有效锚点、成员 TTL、长问句和能力操作边界",
+    "ci": "backend-pytest"
+  }
+}

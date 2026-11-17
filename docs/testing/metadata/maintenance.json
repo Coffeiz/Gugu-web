@@ -1,0 +1,10 @@
+{
+  "apps/web-host/tests/maintenance/security-retention.test.ts": {
+    "domain": "maintenance",
+    "layer": "L2",
+    "owner": "apps/web-host/src/maintenance",
+    "productionEntry": "apps/web-host/src/maintenance/security-retention.ts",
+    "keyBehavior": "安全事件过期边界、SQL 故障恢复和关闭排空",
+    "ci": "web-host-node"
+  }
+}

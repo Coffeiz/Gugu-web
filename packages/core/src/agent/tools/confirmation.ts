@@ -20,8 +20,24 @@ const receiptSchema = z.object({
 }).strict()
 
 /** 仅指向受限持久意图，不是可执行授权；领域事务仍须原子核验并 claim。 */
-export interface ConfirmationIntentReference { readonly intentId: string; readonly operationId: string }
-export interface ConfirmationTargetSnapshot { readonly targetsDigest: string; readonly versionsDigest: string }
+export interface ConfirmationIntentReference { readonly intentId: string; readonly operationId: string; readonly interactionId: string }
+/** 供事务 claim 重新读取已批准交互的完整绑定；本身不能授予执行权限。 */
+export interface ConfirmationClaimReference extends ConfirmationIntentReference {
+  readonly receiptId: string
+  readonly binding: ConfirmationBinding
+  readonly purpose: ConfirmationIntent['purpose']
+  readonly action: string
+  readonly targetsDigest: string
+  readonly versionsDigest: string
+  readonly authorizationEpoch: string
+  readonly expiresAt: number
+}
+export interface ConfirmationTargetSnapshot {
+  readonly targetsDigest: string
+  readonly versionsDigest: string
+  /** 由领域解析的固定 ID，供可信存储和事务内复核；不得从模型确认字段构造。 */
+  readonly targetIds?: Readonly<Record<string, readonly number[]>>
+}
 export interface ConfirmationGatePorts {
   now(): number
   /** 最新权限判断；拒绝为 null，通过返回授权版本。 */
@@ -37,6 +53,12 @@ export type ConfirmationGateResult<T> = { ok: true; value: T } | { ok: false; co
 
 function equalBinding(a: ConfirmationBinding, b: ConfirmationBinding): boolean {
   return (Object.keys(a) as (keyof ConfirmationBinding)[]).every(key => a[key] === b[key])
+}
+
+function freezeTargets(targets: ConfirmationTargetSnapshot): ConfirmationTargetSnapshot {
+  const targetIds = targets.targetIds && Object.freeze(Object.fromEntries(Object.entries(targets.targetIds)
+    .map(([key, ids]) => [key, Object.freeze([...ids])])))
+  return Object.freeze({ targetsDigest: targets.targetsDigest, versionsDigest: targets.versionsDigest, ...(targetIds ? { targetIds } : {}) })
 }
 
 /**
@@ -57,7 +79,7 @@ export function createConfirmationGate(ports: ConfirmationGatePorts, configurati
       || intent.targetsDigest !== targets.targetsDigest || intent.versionsDigest !== targets.versionsDigest) return false
     const epoch = await ports.authorize(expected, policy.purpose, policy.action, signal)
     if (signal.aborted || epoch === null || epoch !== intent.authorizationEpoch) return false
-    const current = await ports.inspect({ intentId: intent.intentId, operationId: intent.operationId }, expected, signal)
+    const current = await ports.inspect({ intentId: intent.intentId, operationId: intent.operationId, interactionId: intent.interactionId }, expected, signal)
     const after = ports.now()
     return Number.isFinite(after) && !signal.aborted && intent.expiresAt > after && current !== null && current.targetsDigest === intent.targetsDigest && current.versionsDigest === intent.versionsDigest
   }
@@ -68,10 +90,10 @@ export function createConfirmationGate(ports: ConfirmationGatePorts, configurati
         const expected = binding(originalCall, scope, normalizedInputDigest)
         scope.signal.throwIfAborted()
         if (!expected || !targets.targetsDigest || !targets.versionsDigest || scope.resolution !== null || originalCall.parseError) return reject
+        const snapshot = freezeTargets(targets)
         const epoch = await ports.authorize(expected, policy.purpose, policy.action, scope.signal)
         scope.signal.throwIfAborted()
         if (epoch === null) return reject
-        const snapshot = Object.freeze({ targetsDigest: targets.targetsDigest, versionsDigest: targets.versionsDigest })
         const parsed = intentSchema.safeParse(await ports.prepare(expected, snapshot, scope.signal))
         scope.signal.throwIfAborted()
         if (!parsed.success) return reject
@@ -81,13 +103,14 @@ export function createConfirmationGate(ports: ConfirmationGatePorts, configurati
         return { ok: true, value: { id: parsed.data.interactionId, kind: 'confirmation', toolCall: originalCall } }
       } catch { scope.signal.throwIfAborted(); return reject }
     },
-    async verify(call: ToolCall, scope: ToolScope, normalizedInputDigest: string, targets: ConfirmationTargetSnapshot): Promise<ConfirmationGateResult<ConfirmationIntentReference>> {
+    async verify(call: ToolCall, scope: ToolScope, normalizedInputDigest: string, targets: ConfirmationTargetSnapshot): Promise<ConfirmationGateResult<ConfirmationClaimReference>> {
       try {
         const originalCall = structuredClone(call)
         const expected = binding(originalCall, scope, normalizedInputDigest)
-        const resolution: InteractionResolution | null = scope.resolution
+        const resolution: InteractionResolution | null = scope.resolution ? structuredClone(scope.resolution) : null
         scope.signal.throwIfAborted()
         if (!expected || !targets.targetsDigest || !targets.versionsDigest || originalCall.parseError || resolution?.status !== 'confirmed' || !resolution.receiptId || !resolution.interactionId) return reject
+        const snapshot = freezeTargets(targets)
         const epoch = await ports.authorize(expected, policy.purpose, policy.action, scope.signal)
         scope.signal.throwIfAborted()
         if (epoch === null) return reject
@@ -96,11 +119,14 @@ export function createConfirmationGate(ports: ConfirmationGatePorts, configurati
         if (!loaded.success) return reject
         const { intent, receipt } = loaded.data
         if (intent.interactionId !== resolution.interactionId || receipt.interactionId !== resolution.interactionId || receipt.receiptId !== resolution.receiptId || receipt.intentId !== intent.intentId || receipt.expiresAt <= ports.now() || receipt.purpose !== policy.purpose || receipt.action !== policy.action || !equalBinding(receipt.binding, expected)) return reject
-        const valid = await validate(intent, expected, targets, scope.signal)
+        const valid = await validate(intent, expected, snapshot, scope.signal)
         scope.signal.throwIfAborted()
         const verifiedAt = ports.now()
         if (!valid || !Number.isFinite(verifiedAt) || receipt.expiresAt <= verifiedAt) return reject
-        return { ok: true, value: { intentId: intent.intentId, operationId: intent.operationId } }
+        return { ok: true, value: { intentId: intent.intentId, operationId: intent.operationId, interactionId: intent.interactionId,
+          receiptId: receipt.receiptId, binding: expected, purpose: intent.purpose, action: intent.action,
+          targetsDigest: intent.targetsDigest, versionsDigest: intent.versionsDigest,
+          authorizationEpoch: intent.authorizationEpoch, expiresAt: intent.expiresAt } }
       } catch { scope.signal.throwIfAborted(); return reject }
     },
   }

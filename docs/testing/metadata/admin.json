@@ -1,0 +1,506 @@
+{
+  "apps/web-host/tests/admin/safe-egress-probe.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/preferences/safe-egress-probe.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "安全出站DoH与错误阶段",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/safe-egress-probe-route.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/preferences/safe-egress-probe.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "安全出站管理员认证与DTO",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/safe-egress-proxy.integration.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/preferences/safe-egress-probe.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "隔离代理DoH和TLS安全边界",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/llm-model-directory.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/config/llm-model-directory.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "模型目录请求与Python适配器对照",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/llm-model-directory-routes.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/config/admin-model-directory.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "模型目录管理员HTTP语义",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/admin-email-test.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/email/test-delivery.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "测试邮件MIME与Python对照",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/admin-email-test-route.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/email/test-delivery.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "测试邮件管理员授权与校验",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/llm-preset-mutations.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/config/llm-preset-mutations.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "LLM预设创建更新配置与Python对照",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/llm-preset-mutations-route.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/config/llm-preset-mutations.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "LLM预设创建更新HTTP协议",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/llm-capability-overrides.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/config/llm-capability-overrides.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "能力覆盖配置和Python消费者对照",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/llm-capability-overrides-route.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/config/llm-capability-overrides.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "能力覆盖HTTP参数与管理员权限",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/llm-capabilities-preview.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/providers/registry.ts",
+    "productionEntry": "apps/web-host/src/app.ts 管理员认证 → Core Provider能力快照",
+    "keyBehavior": "管理员认证、Python Ollama native能力预览、DTO限制与额外密钥不回显",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/llm-preset-selection.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/config/llm-preset-selection.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "LLM预设激活删除规则和Python消费者",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/llm-preset-selection-route.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/config/llm-preset-selection.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "LLM预设激活删除管理员权限",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/smtp-probe.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/email/smtp-test.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "SMTP测试TLS及动态配置",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/smtp-test-message.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/email/smtp-test.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "测试邮件MIME与Python对照",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/llm-strategy.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/config/llm-strategy.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "模型分流配置与Python消费及失效",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/llm-strategy-route.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/config/llm-strategy.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "模型分流参数及管理员授权",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/perception-misread-export.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/perception/export-misread.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "错读Markdown导出和安全只读路径",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/perception-stats.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/perception/stats.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "感知汇总统计与Python全字段对照",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/perception-export.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/perception/export-events.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "感知事件导出排序、时间和Python协议对照",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/perception-misread.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/perception/recent-misread.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "错读记录过滤和Python协议对照",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/watcher-capacity.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/filesync/watcher-capacity.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "容量扩展helper协议与错误边界",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/ops-summary.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/admin/ops-summary.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "运维计数聚合与请求边界",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/email-preview.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/email/preview.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "模板和主题资产与Python逐字节对照",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/user-ban.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/admin/user-ban.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "封禁状态事务、审计与Python对照",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/embedding-rebuild-status.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/admin/embedding-rebuild-status.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "平台重建状态读取与错误脱敏",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/embedding-probe.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/preferences/embedding-probe.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "Embedding诊断规则与Python响应对照",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/im-memory-summary.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/memory/im-scope-summary.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "IM汇总真实PG与Python排序截断及隐私对照",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/im-memory-summary-route.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/memory/im-scope-summary.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "IM汇总与预览管理员授权",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/safe-egress-update.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/preferences/safe-egress-update.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "安全出口写入校验、凭据保留与临时配置持久化",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/voice-presets-mutate.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/config/voice-presets-mutate.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "语音配置写入锁与密钥保留",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/voice-presets-read.test.ts": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/config/voice-presets-read.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "语音预设密钥遮蔽和只读投影",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/fixtures/voice_presets_read_python.py": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "backend/app/api/v1/agent_admin.py",
+    "productionEntry": "backend/app/api/v1/agent_admin.py",
+    "keyBehavior": "Python语音预设读取对照",
+    "ci": "manual"
+  },
+  "apps/web-host/tests/admin/maintenance-status.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/maintenance/admin-status.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "维护状态读取与并发标记",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/service-status.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/admin/service-status.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "服务状态及Redis故障",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/service-restart.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/admin/service-restart.ts",
+    "productionEntry": "apps/web-host/src/main.ts → admin guard → process and systemd adapter",
+    "keyBehavior": "白名单、主机和PID命令行校验、systemd/手动拉起分支及管理员守卫",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/notification-broadcast.test.ts": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "packages/core/src/notifications/broadcast.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "广播参数与持久化副作用",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/storage-quota-status.test.ts": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "packages/core/src/admin/storage-quota-status.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "失锁状态及并发终态保护",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/admin-analytics-summary-current.test.ts": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "packages/core/src/admin/analytics-summary.ts",
+    "productionEntry": "apps/web-host/src/modules/admin/analytics.ts",
+    "keyBehavior": "鉴权、时区、筛选和错误脱敏",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/email-recipient-count.test.ts": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "packages/core/src/admin/email-recipient-count.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "有效订阅者数量与语言分类",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/storage-live-totals.test.ts": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "packages/core/src/admin/storage-live-totals.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "隔离PG验证附件状态与文件总量聚合",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/safe-egress-read-module.test.ts": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "packages/core/src/preferences/safe-egress.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "管理员读取配置权限和URL回显行为",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/fixtures/analytics_extended_python.py": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "backend/app/api/v1/admin_analytics.py",
+    "productionEntry": "backend/app/api/v1/admin_analytics.py",
+    "keyBehavior": "隔离PG验证Python汇总与趋势handler统计行为",
+    "ci": "manual"
+  },
+  "apps/web-host/tests/admin/system-logs.test.ts": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "packages/core/src/admin/system-logs.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "隔离PG系统日志筛选排序条数与微秒",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/admin-analytics-slices.test.ts": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "packages/core/src/admin/analytics.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "四类统计聚合、developer与BYOK及过滤",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/fixtures/analytics_python.py": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "backend/app/api/v1/admin_analytics.py",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "Python真实PG四handler行为对照",
+    "ci": "manual"
+  },
+  "apps/web-host/tests/admin/fixtures/user_settings_python.py": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "apps/web-host/src/main.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "Python真实handler配额转换与开发者标记对照",
+    "ci": "manual"
+  },
+  "apps/web-host/tests/admin/admin-audit-list.test.ts": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "packages/core/src/admin/audit-log.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "审计列表字段白名单、排序与参数边界",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/admin-audit-list-postgres.test.ts": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "packages/core/src/admin/audit-log.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "隔离PG审计列表排序、微秒与错误脱敏",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/admin-user-settings.test.ts": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "packages/core/src/admin/user-settings.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "配额转换、事务回滚、开发者标记与鉴权",
+    "ci": "node-webui"
+  },
+  "apps/web/tests/admin/agent/useAgentRuntimeConfig.test.ts": {
+    "domain": "agent-runtime-config",
+    "layer": "L1",
+    "owner": "apps/web/views/Admin/Agent/runtime-config",
+    "productionEntry": "apps/web/src/views/Admin/Agent/runtime-config/useAgentRuntimeConfig.ts",
+    "keyBehavior": "五个配置分区只提交各自草案，保留在途状态、三秒成功提示、失败反馈与草案以及服务端归一化回填",
+    "ci": "frontend-test"
+  },
+  "apps/web/tests/admin/agent/UsageScenarioTable.test.ts": {
+    "domain": "admin-usage",
+    "layer": "L1",
+    "owner": "apps/web/views/Admin/Agent",
+    "productionEntry": "apps/web/src/views/Admin/Agent/observability/components/UsageScenarioTable.vue",
+    "keyBehavior": "场景表展示冷请求和服务端加权非冷缓存率，周期数据变化后更新，无非冷样本显示横线而非零",
+    "ci": "frontend-test"
+  },
+  "apps/web/tests/admin/filesync/FileSyncAdminPanel.test.ts": {
+    "domain": "filesync",
+    "layer": "L1",
+    "owner": "apps/web/components/filesync",
+    "productionEntry": "apps/web/src/components/filesync/FileSyncAdminPanel.vue",
+    "keyBehavior": "异常绑定、任务状态和冲突批量结果可见；一键对账仅排入异常有效绑定，服务端复核后复用排队任务并跳过忙碌绑定；冲突列表截断时阻止批量处理",
+    "ci": "frontend-test"
+  },
+  "apps/web/tests/admin/storage-audit/GhostRecordCleanup.test.ts": {
+    "domain": "storage-audit",
+    "layer": "L2",
+    "owner": "apps/web/views/Admin/StorageAudit/components/GhostRecordCleanup.vue",
+    "productionEntry": "apps/web/src/views/Admin/StorageAudit/components/GhostRecordCleanup.vue",
+    "keyBehavior": "幽灵记录清理需确认后分批提交完整记录 ID、展示进度并刷新；取消确认不发请求",
+    "ci": "frontend-test"
+  },
+  "apps/web/tests/admin/storage-audit/ReconciliationPanels.test.ts": {
+    "domain": "storage-audit",
+    "layer": "L1",
+    "owner": "apps/web/views/Admin/StorageAudit/components",
+    "productionEntry": "apps/web/src/views/Admin/StorageAudit/components/FileObjectReconciliation.vue",
+    "keyBehavior": "文件扫描分开呈现幽灵记录与孤儿文件，目录错位只走目录修复接口且取消删除确认不发请求",
+    "ci": "frontend-test"
+  },
+  "apps/web/tests/admin/ImPlatformSettings.test.ts": {
+    "domain": "im-platform-settings",
+    "layer": "L1",
+    "owner": "apps/web/views/Admin/Config",
+    "productionEntry": "apps/web/src/views/Admin/Config/components/ImPlatformSettings.vue",
+    "keyBehavior": "管理员切换单个平台开关只更新被切换的平台并呈现当前配置状态",
+    "ci": "frontend-test"
+  },
+  "apps/web/tests/admin/agent/LlmPresetEditor.test.ts": {
+    "domain": "agent-configuration",
+    "layer": "L1",
+    "owner": "apps/web/views/Admin/Agent",
+    "productionEntry": "apps/web/src/views/Admin/Agent/llm/components/LlmPresetEditor.vue",
+    "keyBehavior": "模型预设编辑、保存及多模态能力配置保持表单状态和提交数据一致",
+    "ci": "frontend-test"
+  },
+  "apps/web/tests/admin/filesync/FileSyncMissingBatch.test.ts": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "apps/web/components/filesync",
+    "productionEntry": "apps/web/src/components/filesync/FileSyncMissingBatch.vue",
+    "keyBehavior": "缺失记录按绑定预览后确认，取消不提交，按25项分批并展示跳过项",
+    "ci": "frontend-test"
+  },
+  "apps/web-host/tests/admin/user-delete.test.ts": {
+    "domain": "admin-users",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/admin/user-delete.ts",
+    "productionEntry": "startServer → Admin guard → PostgreSQL/Core account deletion → audit_logs",
+    "keyBehavior": "管理员删除完成后写入审计并返回存储清理数；目标不存在时返回 404 且不写审计",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/admin/email-translate.test.ts": {
+    "domain": "email",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/admin/email-translate.ts + packages/core/src/email/translate.ts",
+    "productionEntry": "createApp 管理员认证路由 → Core 翻译用例 → Host Provider 调用",
+    "keyBehavior": "认证先于模型调用、兼容双语结果和 Python 502 通用错误且不泄露上游异常",
+    "ci": "web-host-node"
+  },
+  "apps/web-host/tests/admin/email-publish.test.ts": {
+    "domain": "email",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/admin/email-publish.ts + packages/core/src/email/publish.ts",
+    "productionEntry": "createApp 管理员认证路由 → Core 收件人读取与批量投递 → Host SMTP 和可排空任务生命周期",
+    "keyBehavior": "未认证、未确认、无收件人和无效 DTO 不启动任务；成功响应只含汇总且关闭 Host 等待已启动任务",
+    "ci": "web-host-node"
+  },
+  "apps/web-host/tests/admin/agent-capabilities.test.ts": {
+    "domain": "agent-capabilities",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/admin/agent-capabilities.ts + apps/web-host/src/main.ts",
+    "productionEntry": "startServer → Admin guard → Core 注册表和 bundled Skills → Fastify JSON",
+    "keyBehavior": "管理员认证后返回实际 Node 能力元数据；未认证请求在读取前拒绝，响应不含 schema",
+    "ci": "web-host-node"
+  }
+}

@@ -2,9 +2,12 @@ import type { PoolClient } from 'pg'
 import type { PendingInteraction, RunIdentity } from '@gugu/core/agent'
 import { targetConfirmationIdentity, type ConfirmationContext, type ConfirmationTargetId } from '../tools/confirmation-identity.js'
 import type { AgentPromptSpec } from './agent-interaction-activate-postgres.js'
+import type { ConfirmationIntent, ConfirmationTargetSnapshot } from '@gugu/core/tools'
 
 export type TrustedPromptIntent = {
   kind: 'confirmation'; summary: string; action: string; targets: Readonly<Record<string, readonly ConfirmationTargetId[]>>; context?: ConfirmationContext; ttlMinutes: number
+  /** 可供事务确认协议恢复的可信意图和领域目标；不来自模型输入。 */
+  operation?: { intent: ConfirmationIntent; snapshot: ConfirmationTargetSnapshot }
 } | { kind: 'credential'; serverId: string; action: string }
 export interface TrustedPromptPorts {
   /** 必须由可信工具执行层写入并按 owner/session/run/interaction 读取，不能查询模型参数。 */
@@ -21,7 +24,11 @@ export function createTrustedPromptDescriptions(ports: TrustedPromptPorts) {
       const intent = await ports.loadIntent(client, identity, request)
       checkedIntent(intent, 'confirmation')
       if (intent.kind !== 'confirmation' || !intent.summary.trim() || intent.summary.length > 1000 || !Number.isSafeInteger(intent.ttlMinutes) || intent.ttlMinutes < 1 || intent.ttlMinutes > 30) throw new Error('确认上下文无效')
-      const targetIdentity = targetConfirmationIdentity(intent.action, intent.targets, intent.context)
+      const operation = intent.operation
+      // 空级联集合仍由摘要绑定；旧确认身份格式只接受非空目标类别。
+      const targets = operation ? Object.fromEntries(Object.entries(intent.targets).filter(([, ids]) => ids.length > 0)) : intent.targets
+      const context = operation ? { ...intent.context, targets_digest: operation.intent.targetsDigest, versions_digest: operation.intent.versionsDigest } : intent.context
+      const targetIdentity = targetConfirmationIdentity(intent.action, targets, context)
       const code = await ports.createConfirmation(identity.ownerId, intent.summary, targetIdentity, intent.ttlMinutes)
       if (!code) throw new Error('确认服务暂不可用')
       return { kind: 'confirm', title: '请确认操作', body: intent.summary, options: [

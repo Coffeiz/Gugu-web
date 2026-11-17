@@ -1,3 +1,4 @@
+import { loadMetadata } from './test-metadata.mjs'
 #!/usr/bin/env node
 
 import fs from 'node:fs'
@@ -12,7 +13,7 @@ const workflow = fs.readdirSync(workflowDirectory)
   .map(file => fs.readFileSync(path.join(workflowDirectory, file), 'utf8'))
   .join('\n')
 const frontendPackage = JSON.parse(fs.readFileSync(path.join(root, 'apps/web/package.json'), 'utf8'))
-const metadata = JSON.parse(fs.readFileSync(path.join(root, 'docs/testing/test-metadata.json'), 'utf8'))
+const metadata = loadMetadata()
 const coreSuites = Object.fromEntries(testSuites('all').map(item => [item.file, item]))
 const outputPath = process.argv.slice(2).find(arg => arg.startsWith('--output='))?.slice('--output='.length)
 

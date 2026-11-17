@@ -1,3 +1,4 @@
+import { loadMetadata } from './test-metadata.mjs'
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process'
@@ -5,8 +6,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 const root = path.resolve(import.meta.dirname, '../..')
-const metadataPath = path.join(root, 'docs/testing/test-metadata.json')
-const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'))
+const metadata = loadMetadata()
 const testPattern = /(^|\/)(test_[^/]+\.py|[^/]+_test\.py|[^/]+\.(test|spec)\.(ts|js))$/
 
 function git(args) {
@@ -77,7 +77,7 @@ const errors = []
 for (const file of added) {
   const item = metadata[file]
   if (!item) {
-    errors.push(`${file}: 缺少 docs/testing/test-metadata.json 条目`)
+    errors.push(`${file}: 缺少 docs/testing/metadata 条目`)
     continue
   }
   for (const field of required) {

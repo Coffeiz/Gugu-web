@@ -31,8 +31,19 @@ function createPreviewBridge(): DesktopBridge | undefined {
     sandboxStatus: { supported: false, methods: [], checkAvailable: false, reason: '浏览器预览模式' },
   }
   const arrayMethods = new Set(['projects', 'clients', 'calendar', 'canvases', 'canvasItems', 'notes'])
+  const previewCanvases: DesktopCanvas[] = []
+  let nextCanvasId = 1
   return new Proxy({} as DesktopBridge, {
-    get: (_target, key: string) => async () => ({ ok: true, result: key in defaults ? defaults[key as keyof typeof defaults] : arrayMethods.has(key) ? [] : null }),
+    get: (_target, key: string) => {
+      if (key === 'canvases') return async () => ({ ok: true, result: [...previewCanvases] })
+      if (key === 'createCanvas') return async (title = '未命名画布') => {
+        const now = new Date().toISOString()
+        const canvas: DesktopCanvas = { id: nextCanvasId++, title, projectId: null, data: {}, createdAt: now, updatedAt: now }
+        previewCanvases.unshift(canvas)
+        return { ok: true, result: canvas }
+      }
+      return async () => ({ ok: true, result: key in defaults ? defaults[key as keyof typeof defaults] : arrayMethods.has(key) ? [] : null })
+    },
   })
 }
 
@@ -53,12 +64,19 @@ export const desktopData = {
   deleteCalendarEvent: (id: number, version: number) => call(bridge => bridge.deleteCalendarEvent(id, version)),
   canvases: () => call(bridge => bridge.canvases()),
   createCanvas: (title: string) => call(bridge => bridge.createCanvas(title)),
-  updateCanvas: (id: number, body: { title: string }) => call(bridge => bridge.updateCanvas(id, body)),
+  updateCanvas: (id: number, body: { title?: string; data?: Record<string, unknown> }) => call(bridge => bridge.updateCanvas(id, body)),
   deleteCanvas: (id: number) => call(bridge => bridge.deleteCanvas(id)),
   canvasItems: (canvasId: number) => call(bridge => bridge.canvasItems(canvasId)),
-  createCanvasNote: (canvasId: number, contentMd: string, color?: string, x?: number, y?: number) => call(bridge => bridge.createCanvasNote(canvasId, contentMd, color, x, y)),
+  canvasRelations: (canvasId: number) => call(bridge => bridge.canvasRelations(canvasId)),
+  addCanvasItem: (canvasId: number, body: { nodeId: number; x?: number; y?: number; w?: number | null; h?: number | null; z?: number; collapsed?: boolean; data?: Record<string, unknown> }) => call(bridge => bridge.addCanvasItem(canvasId, body)),
+  bringCanvasItemToFront: (canvasId: number, id: number, body: { x: number; y: number }) => call(bridge => bridge.bringCanvasItemToFront(canvasId, id, body)),
+  createCanvasRelation: (body: { canvasId: number; srcNodeId: number; dstNodeId: number; allowParallel?: boolean }) => call(bridge => bridge.createCanvasRelation(body)),
+  deleteCanvasRelation: (canvasId: number, id: number) => call(bridge => bridge.deleteCanvasRelation(canvasId, id)),
+  createRefNode: (refType: 'project' | 'file' | 'event', refId: number) => call(bridge => bridge.createRefNode(refType, refId)),
+  canvasNoteLocation: (nodeId: number) => call(bridge => bridge.canvasNoteLocation(nodeId)),
+  createCanvasNote: (canvasId: number, body: { title?: string; contentMd?: string; color?: string | null; x?: number; y?: number; w?: number | null; h?: number | null; z?: number }) => call(bridge => bridge.createCanvasNote(canvasId, body)),
   updateCanvasNote: (id: number, fields: { version: number; contentMd?: string; title?: string | null; color?: string | null }) => call(bridge => bridge.updateCanvasNote(id, fields)),
-  updateCanvasItem: (canvasId: number, id: number, body: { x?: number; y?: number; w?: number | null; h?: number | null }) => call(bridge => bridge.updateCanvasItem(canvasId, id, body)),
+  updateCanvasItem: (canvasId: number, id: number, body: { x?: number; y?: number; w?: number | null; h?: number | null; z?: number; collapsed?: boolean; data?: Record<string, unknown> }) => call(bridge => bridge.updateCanvasItem(canvasId, id, body)),
   deleteCanvasItem: (canvasId: number, id: number) => call(bridge => bridge.deleteCanvasItem(canvasId, id)),
   notes: () => call(bridge => bridge.notes()),
   createNote: (contentMd: string, color?: string) => call(bridge => bridge.createNote(contentMd, color)),

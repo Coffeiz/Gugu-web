@@ -1,16 +1,6 @@
 <template>
   <div class="mind-bar">
     <div class="mind-bar-side"></div>
-    <SegmentedControl class="mind-tabs" :active-index="isCanvas ? 1 : 0" style="--pill-radius: 999px">
-      <RouterLink to="/mind/notes" class="mind-tab" :class="{ on: isNotes }">
-        <PhNotePencil :size="16" weight="bold" />
-        {{ t('mind.notes') }}
-      </RouterLink>
-      <RouterLink to="/mind/canvases" class="mind-tab" :class="{ on: isCanvas }">
-        <PhGraph :size="16" weight="bold" />
-        {{ t('mind.canvases') }}
-      </RouterLink>
-    </SegmentedControl>
     <div class="mind-bar-side right">
       <template v-if="isNotes">
         <span v-if="devMode" class="mind-dev-badge">DEV</span>
@@ -39,23 +29,17 @@
 
 <script setup lang="ts">
 import { computed, nextTick } from 'vue'
-import { useRoute } from 'vue-router'
-import { RouterLink } from 'vue-router'
-import { PhGraph, PhMagnifyingGlass, PhNotePencil, PhX } from '@phosphor-icons/vue'
+import { PhMagnifyingGlass, PhX } from '@phosphor-icons/vue'
 import { useMindStore } from '@/stores/mind'
 import { localDayKey } from '@/utils/dateAttribution'
 import DatePicker from '@/components/common/controls/DatePicker.vue'
-import SegmentedControl from '@/components/common/controls/SegmentedControl.vue'
 import { useI18n } from 'vue-i18n'
 
 defineProps({ devMode: { type: Boolean, default: false } })
 defineEmits<{ (event: 'seed'): void }>()
 
-const route = useRoute()
 const store = useMindStore()
 const { t } = useI18n()
-const isNotes = computed(() => route.path.startsWith('/mind/notes') || route.path.startsWith('/dev/notes-'))
-const isCanvas = computed(() => route.path.startsWith('/mind/canvases'))
 const todayIso = computed(() => localDayKey(new Date()))
 
 function retriggerTodayJump() {
@@ -66,7 +50,7 @@ function retriggerTodayJump() {
 
 <style scoped>
 .mind-bar {
-  display: grid; grid-template-columns: 1fr auto 1fr;
+  display: grid; grid-template-columns: 1fr auto;
   align-items: center; gap: 12px;
   position: relative; z-index: 40; pointer-events: none;
   flex-shrink: 0; margin: 28px 24px 0;
@@ -86,24 +70,6 @@ function retriggerTodayJump() {
   transition: background 0.15s;
 }
 .mind-seed:hover { background: color-mix(in srgb, var(--color-primary) 10%, transparent); }
-.mind-tabs {
-  gap: 2px; padding: 2px;
-  border-radius: 999px;
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  box-shadow: var(--glass-shadow);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-  pointer-events: auto;
-}
-.mind-tab {
-  display: inline-flex; align-items: center; gap: 6px;
-  height: 36px; box-sizing: border-box; padding: 0 17px; border-radius: 999px;
-  font-size: 13.5px; font-weight: 600; color: var(--text-secondary);
-  text-decoration: none; cursor: pointer; transition: color 0.15s;
-}
-.mind-tab:hover { color: var(--color-primary); }
-.mind-tab.on { color: var(--text-primary); }
 :deep(.mind-cal-picker) { width: auto !important; }
 :deep(.mind-cal-picker .dp-input) {
   width: 40px; height: 40px; padding: 0; box-sizing: border-box; justify-content: center;

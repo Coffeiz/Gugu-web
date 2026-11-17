@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
-import { deduplicateGroupEventMemory, groupDailyDatesPreserved, shouldCompactGroupDaily, splitOldestGroupDailyBatch } from '../../../src/memory/im-group-daily-compaction.js'
+import { test } from 'vitest'
+import { deduplicateGroupEventMemory, groupDailyDatesPreserved, parseGroupDailyEntries, renderGroupDailyEntries, shouldCompactGroupDaily, splitOldestGroupDailyBatch } from '../../../src/memory/im-group-daily-compaction.js'
 
 test('group daily starts compaction at the Python trigger and splits oldest records first', () => {
   const entries = Array.from({ length: 150 }, (_, index) => index + 1)
@@ -17,6 +17,13 @@ test('group compaction requires every date anchor from the selected batch', () =
   assert.equal(groupDailyDatesPreserved(entries, '## 决定\n- 2026-08-04 新\n- 2026-07-31 旧'), true)
   assert.equal(groupDailyDatesPreserved(entries, '## 决定\n- 2026-08-04 新'), false)
   assert.equal(groupDailyDatesPreserved([], '无日期'), true)
+})
+
+test('group daily parsing and rendering preserve Python heading and note order', () => {
+  const source = '## 2026-08-04\n- 新记录\n\n## 2026-07-31\n- 旧记录\n'
+  const entries = parseGroupDailyEntries(source)
+  assert.deepEqual(entries, [['2026-08-04', '新记录'], ['2026-07-31', '旧记录']])
+  assert.equal(renderGroupDailyEntries(entries), source)
 })
 
 test('group event memory normalizes legacy headings and deduplicates repeated sections', () => {

@@ -25,7 +25,9 @@ Node Core 已接入与 pytest 相同的 `slow`、`external_service`、`process`�
 
 ## 新增测试元数据
 
-新增自动回归测试文件必须放入对应测试目录，并在 `test-metadata.json` 增加同路径条目。主动验证脚本不登记为自动回归测试：
+运行 `pnpm test:metadata:generate <测试文件路径>` 生成草稿，随后填写空字段并确认推断的领域和 CI；`keyBehavior` 须描述具体回归行为。元数据按测试目录分片，校验和盘点自动合并并拒绝重复路径。
+
+新增自动回归测试文件必须放入对应测试目录，并在 `metadata/` 分片 增加同路径条目。主动验证脚本不登记为自动回归测试：
 
 ```json
 {

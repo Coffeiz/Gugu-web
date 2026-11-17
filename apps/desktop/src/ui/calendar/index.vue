@@ -58,7 +58,7 @@ const weekDays = computed<CalendarWeekDay[]>(() => {
     }
   })
 })
-const { viewMode, periodLabel, prev, next, goToday, setView, pickerOpen, pickerYear, pickerStyle, togglePicker, selectYearMonth } = useCalendarNav({
+const { viewMode, periodLabel, prev, next, goToday, setView, pickerOpen, pickerYear, pickerCursor, pickerStyle, togglePicker, selectYearMonth } = useCalendarNav({
   cursor,
   selectedDate,
   todayIso,
@@ -496,7 +496,7 @@ onUnmounted(() => document.removeEventListener('mousedown', closePopupsOutside, 
       ref="pickerRef"
       :open="pickerOpen"
       :year="pickerYear"
-      :cursor="cursor"
+      :cursor="pickerCursor"
       :style="pickerStyle"
       @prev-year="pickerYear--"
       @next-year="pickerYear++"
@@ -517,6 +517,7 @@ onUnmounted(() => document.removeEventListener('mousedown', closePopupsOutside, 
     :style="{ width: '240px' }"
     popup-class="desktop-calendar-add-popup"
     :transparent="true"
+    :animated-blur="true"
     @after-leave="onEventPopupAfterLeave"
   >
     <EventFormPanel

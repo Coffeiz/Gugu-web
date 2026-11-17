@@ -13,7 +13,7 @@ import type { SqlDataRuntime } from '../../data/runtime.js'
 import { createBorrowedKyselyCalendarMutationStores } from '../../calendar/mutation-store.js'
 import { deleteCalendarEvents, EventDeleteError } from '../../calendar/application/event-delete.js'
 import type { CalendarEventDeletePublication } from '../../calendar/application/event-delete.js'
-import { createConfirmationGate, type ConfirmationIntentReference, type ConfirmationTargetSnapshot } from './confirmation.js'
+import { createConfirmationGate, type ConfirmationClaimReference, type ConfirmationTargetSnapshot } from './confirmation.js'
 import type { RunIdentity, ToolCall, ToolResult } from '../models.js'
 import { agentCalendarEventResponse } from '../../calendar/application/event-read.js'
 import type { CalendarAgentReadPort, createAgentCalendarReader } from '../../calendar/application/event-read.js'
@@ -348,7 +348,7 @@ export function createCalendarEventUpdateTool(port: CalendarEventUpdateToolPort)
 export interface CalendarDeleteConfirmationPort {
   gate: ReturnType<typeof createConfirmationGate>
   /** 必须在事件写入和操作收据所在的同一事务中核验目标并单次 claim。 */
-  claim(tx: Transaction<Database>, reference: ConfirmationIntentReference, signal: AbortSignal): Promise<boolean>
+  claim(tx: Transaction<Database>, reference: ConfirmationClaimReference, signal: AbortSignal): Promise<boolean>
 }
 
 export interface CalendarDeleteRequest {
@@ -390,12 +390,12 @@ function operationCoordinate(input: { identity: RunIdentity; roundId: string; to
   const raw = hex.slice(0, 12) + '5' + hex.slice(13, 16) + '8' + hex.slice(17, 32)
   return { context, operationId: `${raw.slice(0, 8)}-${raw.slice(8, 12)}-${raw.slice(12, 16)}-${raw.slice(16, 20)}-${raw.slice(20)}` }
 }
-function ownerKey(core: SqlDataRuntime, rawOwner: string) {
+function ownerKey(core: Pick<SqlDataRuntime, 'backend'>, rawOwner: string) {
   const owner = dataContext(rawOwner).ownerId
   return core.backend === 'sqlite' ? owner.replaceAll('-', '') : owner
 }
 
-async function resolveCalendarDeleteTarget(core: SqlDataRuntime, rawOwner: string, args: CalendarDeleteRequest['args'], signal: AbortSignal): Promise<DeleteTarget> {
+async function resolveCalendarDeleteTarget(core: Pick<SqlDataRuntime, 'db' | 'backend'>, rawOwner: string, args: CalendarDeleteRequest['args'], signal: AbortSignal): Promise<DeleteTarget> {
   const owner = ownerKey(core, rawOwner)
   const submitted = args.event_ids ?? (args.event_id !== undefined ? [args.event_id] : null)
   let ids: number[]
@@ -434,6 +434,7 @@ async function resolveCalendarDeleteTarget(core: SqlDataRuntime, rawOwner: strin
   signal.throwIfAborted()
   const reminderIds = tasks.map(task => Number(task.id))
   const snapshot = {
+    targetIds: { eventIds: ids, reminderIds },
     targetsDigest: digest({ eventIds: ids, reminderIds }),
     versionsDigest: digest({ events: events.map(event => ({ ...event, id: Number(event.id), version: Number(event.version) })),
       reminders: tasks.map(task => ({ ...task, id: Number(task.id), event_id: Number(task.event_id), start_at: task.start_at instanceof Date ? task.start_at.toISOString() : task.start_at,
@@ -487,6 +488,9 @@ export function createCalendarDeletePort(
         try {
           input.signal.throwIfAborted()
           if (!await confirmation.claim(tx, verified.value, input.signal)) throw new Error('日历事件删除确认已使用或目标已变化')
+          const current = await resolveCalendarDeleteTarget({ db: tx, backend: core.backend }, input.identity.ownerId, { event_ids: targets.ids }, input.signal)
+          if (current.error || current.snapshot.targetsDigest !== targets.snapshot.targetsDigest || current.snapshot.versionsDigest !== targets.snapshot.versionsDigest)
+            throw new Error('日历事件删除确认已使用或目标已变化')
           const stores = createBorrowedKyselyCalendarMutationStores(tx, core.backend)
           const deleteStore = { ...stores.delete, async publishResourceChanged(event: CalendarEventDeletePublication) { publications.push(event) } }
           const results = await deleteCalendarEvents(deleteStore, { ownerId: input.identity.ownerId, eventIds: targets.ids,

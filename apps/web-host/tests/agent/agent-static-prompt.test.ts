@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { agentCurrentDate, buildAgentStaticPrompt } from '../../src/domains/agent-sessions/context/agent-static-prompt.js'
+import { agentCurrentDate, buildAgentStaticPrompt } from '@gugu/core/agent'
 
 test('静态提示按用户时区和明确偏好组装，不把分钟时间放入前缀', () => {
   const now = new Date('2026-01-01T16:30:00Z')

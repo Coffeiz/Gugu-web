@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import { test } from 'vitest'
 import { applyImMaintenanceOutput, mergeImMaintenanceOutputs } from '../../../src/memory/im-maintenance-apply.js'
 
 test('group maintenance removes similar public profile entries and rejects member identifiers', () => {

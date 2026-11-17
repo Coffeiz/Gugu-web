@@ -6,6 +6,7 @@
 
 | 位置 | Python 职责参照 | 当前实现 |
 | --- | --- | --- |
+| `runtime.ts` | Runner 与 Provider Runtime 组合 | 可复用 Agent Runtime 入口；Host 注入身份关联的上下文、Provider binding、授权、持久化、取消和执行端口。 |
 | `runner.ts` | `runner.py` | 组合可信运行准备、上下文、执行器和回复策略。 |
 | `core.ts` | `core.py` / 模型循环 | Provider 轮次、工具派发、运行推进和事件提交。 |
 | `models.ts`、`ports.ts` | 模型与依赖契约 | 运行状态、事件和显式注入的领域端口。 |

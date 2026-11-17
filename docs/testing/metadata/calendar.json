@@ -1,0 +1,74 @@
+{
+  "packages/core/tests/calendar/create-store.test.ts": {
+    "domain": "calendar",
+    "layer": "L2",
+    "owner": "packages/core/src/calendar",
+    "productionEntry": "packages/core/src/calendar/create-store.ts",
+    "keyBehavior": "SQLite 与 PostgreSQL 日历创建保持用户隔离、幂等、Undo 和索引事务回滚",
+    "ci": "core-node"
+  },
+  "apps/web/tests/calendar/DashboardCalendarPanel.test.ts": {
+    "domain": "calendar",
+    "layer": "L1",
+    "owner": "apps/web/views/Dashboard",
+    "productionEntry": "apps/web/src/views/Dashboard/components/CalendarPanel.vue",
+    "keyBehavior": "快捷编辑提交打开时捕获的事件版本；服务端拒绝并发旧草稿后恢复乐观状态、展示冲突提示并刷新缓存",
+    "ci": "frontend-test"
+  },
+  "apps/web/tests/calendar/useCalendarNav.test.ts": {
+    "domain": "calendar",
+    "layer": "L0",
+    "owner": "apps/web/composables/calendar",
+    "productionEntry": "apps/web/src/composables/calendar/useCalendarNav.ts",
+    "keyBehavior": "月/周视图选择可跨页面实例持久化恢复，非法存储值回退到月视图",
+    "ci": "frontend-test"
+  },
+  "apps/web/tests/calendar/utils/calendarMoreItems.test.ts": {
+    "domain": "calendar",
+    "layer": "L0",
+    "owner": "apps/web/views/Calendar",
+    "productionEntry": "apps/web/src/views/Calendar/utils/calendarMoreItems.ts",
+    "keyBehavior": "日历更多列表使用更新后的活动数据并移除已删除活动，同时保留项目项",
+    "ci": "frontend-test"
+  },
+  "apps/web-host/tests/calendar/event-create-postgres.test.ts": {
+    "domain": "calendar",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/calendar",
+    "productionEntry": "packages/core/src/calendar/create-store.ts",
+    "keyBehavior": "隔离 PostgreSQL 验证日历创建事务与独立 Core 连接并发下 RAG 任务合并",
+    "ci": "web-host-node"
+  },
+  "packages/core/tests/calendar/mutation-store.test.ts": {
+    "domain": "calendar",
+    "layer": "L2",
+    "owner": "packages/core/src/calendar",
+    "productionEntry": "packages/core/src/calendar/mutation-store.ts",
+    "keyBehavior": "日历更新删除事务保护 owner、并发版本、提醒重排与整体替换、撤销、RAG索引和回滚；SQLite与隔离PostgreSQL共享验证",
+    "ci": "core-node"
+  },
+  "apps/web-host/tests/calendar/events-read-postgres.test.ts": {
+    "domain": "calendar",
+    "layer": "L2",
+    "owner": "packages/core/src/calendar/application/event-read.ts",
+    "productionEntry": "apps/web-host/src/domains/calendar/persistence/events.ts",
+    "keyBehavior": "Host及共享Core经真实Fastify与隔离PG保护日历查询认证、owner软删和DTO、SQL错误脱敏及锁等待取消清理",
+    "ci": "node-webui"
+  },
+  "packages/core/tests/calendar/read-store.test.ts": {
+    "domain": "calendar",
+    "layer": "L1",
+    "owner": "packages/core/src/calendar/application/event-read.ts",
+    "productionEntry": "packages/core/src/calendar/read-store.ts",
+    "keyBehavior": "正式临时SQLite经实际日历查询保护owner与软删过滤、year/month兼容和DTO、错误不假空及等待清理后取消",
+    "ci": "core-node"
+  },
+  "apps/web-host/tests/calendar/core-undo-calendar-postgres.test.ts": {
+    "domain": "undo",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/undo",
+    "productionEntry": "apps/web-host/src/domains/undo/persistence/core-operations.ts",
+    "keyBehavior": "日历撤销接入 Core 状态机时的事务、幂等和用户隔离",
+    "ci": "web-host-node"
+  }
+}

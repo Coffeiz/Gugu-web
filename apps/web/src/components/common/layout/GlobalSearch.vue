@@ -184,12 +184,12 @@ function go(type: string, it: SearchItem) {
   } else if (type === 'client') {
     Message.info('联系人页面还在开发中，先在项目里看吧～')
   } else if (type === 'note') {
-    router.push({ path: '/mind/notes', query: { object_id: String(numericId) } })
+    router.push({ path: '/notes', query: { object_id: String(numericId) } })
   } else if (type === 'canvas_note') {
     const canvasId = Number(it.canvas_id)
     if (Number.isSafeInteger(canvasId) && canvasId > 0 && Number.isSafeInteger(numericId) && numericId > 0) {
       uiStore.pendingCanvasTarget = { canvasId, nodeId: numericId }
-      router.push('/mind/canvases')
+      router.push('/canvases')
     }
   } else if (type === 'skill') {
     router.push({ path: '/skills', query: { skill: String(it.id) } })

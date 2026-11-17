@@ -1,0 +1,266 @@
+{
+  "compat/tests/test_export_download_ticket_interop.py": {
+    "domain": "data-portability",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/data-portability/download-ticket.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "Node和Python下载票据双向兼容",
+    "ci": "manual"
+  },
+  "compat/tests/test_data_export_create_worker_postgres.py": {
+    "domain": "data-portability",
+    "layer": "L2",
+    "owner": "backend/app/services/data_portability/worker.py",
+    "productionEntry": "backend/app/services/data_portability/worker.py",
+    "keyBehavior": "Node创建的导出任务由真实Python Worker生成隔离加密归档",
+    "ci": "manual"
+  },
+  "compat/tests/test_data_export_cancel_worker_postgres.py": {
+    "domain": "data-portability",
+    "layer": "L2",
+    "owner": "backend/app/services/data_portability/worker.py",
+    "productionEntry": "backend/app/services/data_portability/worker.py",
+    "keyBehavior": "隔离PG中Node取消由真实Python Worker消费并清理",
+    "ci": "manual"
+  },
+  "compat/tests/test_data_export_cancel.py": {
+    "domain": "data-portability",
+    "layer": "L2",
+    "owner": "backend/app/api/v1/data_portability.py",
+    "productionEntry": "backend/app/api/v1/data_portability.py",
+    "keyBehavior": "Python导出取消handler对照",
+    "ci": "manual"
+  },
+  "compat/tests/test_terminal_delete.py": {
+    "domain": "terminals",
+    "layer": "L2",
+    "owner": "backend/app/api/v1/terminals.py",
+    "productionEntry": "backend/app/api/v1/terminals.py",
+    "keyBehavior": "Python终端删除权限和事件对照",
+    "ci": "manual"
+  },
+  "compat/tests/test_admin_maintenance_status.py": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "backend/app/api/v1/config.py",
+    "productionEntry": "backend/app/api/v1/config.py",
+    "keyBehavior": "Python维护状态handler对照",
+    "ci": "manual"
+  },
+  "compat/tests/test_mcp_status.py": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "backend/app/api/v1/mcp_settings.py",
+    "productionEntry": "backend/app/api/v1/mcp_settings.py",
+    "keyBehavior": "Python MCP状态handler对照",
+    "ci": "manual"
+  },
+  "compat/tests/test_service_status.py": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "backend/app/api/v1/services_admin.py",
+    "productionEntry": "backend/app/api/v1/services_admin.py",
+    "keyBehavior": "Python服务状态handler对照",
+    "ci": "manual"
+  },
+  "compat/tests/test_attachment_download.py": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "backend/app/api/v1/agent_routes/attachments.py",
+    "productionEntry": "backend/app/api/v1/agent_routes/attachments.py",
+    "keyBehavior": "Python附件下载响应与历史大小差异",
+    "ci": "manual"
+  },
+  "compat/tests/test_notification_broadcast.py": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "backend/app/api/v1/notifications_admin.py",
+    "productionEntry": "backend/app/api/v1/notifications_admin.py",
+    "keyBehavior": "Python广播handler对照",
+    "ci": "manual"
+  },
+  "compat/tests/test_email_recipient_count.py": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "backend/app/api/v1/email_admin.py",
+    "productionEntry": "backend/app/api/v1/email_admin.py",
+    "keyBehavior": "Python收件人数handler对照",
+    "ci": "manual"
+  },
+  "compat/tests/test_data_portability_reads.py": {
+    "domain": "data-portability",
+    "layer": "L2",
+    "owner": "backend/app/api/v1/data_portability.py",
+    "productionEntry": "backend/app/api/v1/data_portability.py",
+    "keyBehavior": "Python任务状态读取与用户隔离对照",
+    "ci": "manual"
+  },
+  "compat/tests/test_byok_gate.py": {
+    "domain": "byok",
+    "layer": "L2",
+    "owner": "backend/app/byok/policy.py",
+    "productionEntry": "backend/app/byok/policy.py",
+    "keyBehavior": "Python BYOK配置策略对照",
+    "ci": "manual"
+  },
+  "compat/tests/test_byok_credential_delete.py": {
+    "domain": "byok",
+    "layer": "L2",
+    "owner": "backend/app/api/v1/byok.py",
+    "productionEntry": "backend/app/api/v1/byok.py",
+    "keyBehavior": "Python BYOK删除handler权限对照",
+    "ci": "manual"
+  },
+  "compat/tests/test_user_skill_delete.py": {
+    "domain": "agent",
+    "layer": "L2",
+    "owner": "backend/app/api/v1/user_skills.py",
+    "productionEntry": "backend/app/api/v1/user_skills.py",
+    "keyBehavior": "Python技能删除权限和事件基线",
+    "ci": "manual"
+  },
+  "compat/tests/test_safe_egress_read.py": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "backend/app/api/v1/safe_egress_admin.py",
+    "productionEntry": "backend/app/api/v1/safe_egress_admin.py",
+    "keyBehavior": "Python安全出站配置读取基线",
+    "ci": "manual"
+  },
+  "compat/tests/test_admin_system_logs.py": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "backend/app/api/v1/system_logs.py",
+    "productionEntry": "backend/app/api/v1/system_logs.py",
+    "keyBehavior": "Python真实系统日志handler过滤、排序、条数与微秒对照",
+    "ci": "manual"
+  },
+  "compat/tests/test_admin_audit_list.py": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "backend/app/api/v1/audit_log.py",
+    "productionEntry": "backend/app/api/v1/audit_log.py",
+    "keyBehavior": "Python真实handler审计列表独立SQLite对照",
+    "ci": "manual"
+  },
+  "backend/ts/packages/filesync-watcher/test/protocol-output.test.ts": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/ts/packages/filesync-watcher",
+    "productionEntry": "src/protocol-output.ts",
+    "keyBehavior": "输出拥塞时不丢已受理事件和控制响应，且保留待手动核对信号",
+    "ci": "backend-ts"
+  },
+  "scripts/release/test_build_embedded_sandbox_bundle.py": {
+    "domain": "sandbox-deployment",
+    "layer": "L0",
+    "owner": "scripts/release",
+    "productionEntry": "scripts/release/build_embedded_sandbox_bundle.py",
+    "keyBehavior": "runtime bundle 仅接受与归档镜像身份及摘要一致的构建输入",
+    "ci": "docker-release"
+  },
+  "scripts/release/test_verify_embedded_app_image.py": {
+    "domain": "sandbox-deployment",
+    "layer": "L0",
+    "owner": "scripts/release",
+    "productionEntry": "scripts/release/verify_embedded_app_image.py",
+    "keyBehavior": "候选 app 必须保留基础配置并通过离线 bundle 与 Shell smoke 校验",
+    "ci": "docker-release"
+  },
+  "apps/web/e2e/theme-divider.spec.ts": {
+    "domain": "frontend-ui",
+    "layer": "L3",
+    "owner": "apps/web/e2e",
+    "productionEntry": "apps/web/src/assets/styles/tokens/semantic.css",
+    "keyBehavior": "浅色分隔线和虚线边界与背景保持可见对比，日历侧栏的组间分隔线在各主题下使用内容分隔线颜色",
+    "ci": "runtime-integration"
+  },
+  "apps/web/e2e/page-lifecycle.spec.ts": {
+    "domain": "frontend-ui",
+    "layer": "L3",
+    "owner": "apps/web/e2e",
+    "productionEntry": "apps/web/src/router/index.ts",
+    "keyBehavior": "主导航顺序打开各页面并离开，确认视图加载完成、可关闭且无运行时异常",
+    "ci": "runtime-integration"
+  },
+  "apps/web/e2e/project-file-drag-experimental.spec.ts": {
+    "domain": "file-library",
+    "layer": "L3",
+    "owner": "apps/web/e2e",
+    "productionEntry": "apps/web/src/views/Projects/components/ProjectFilesPanel.vue",
+    "keyBehavior": "项目文件区拖拽完成目标命中、持久化移动和目标目录导航",
+    "ci": "experimental"
+  },
+  "apps/web/e2e/file-library-bounded-pagination.spec.ts": {
+    "domain": "file-library",
+    "layer": "L3",
+    "owner": "apps/web/e2e",
+    "productionEntry": "apps/web/src/views/Files",
+    "keyBehavior": "进入个人目录仅请求有界文件页，继续滚动时使用游标加载后续页",
+    "ci": "experimental"
+  },
+  "apps/web/e2e/global-search-navigation.spec.ts": {
+    "domain": "global-search",
+    "layer": "L3",
+    "owner": "apps/web/e2e",
+    "productionEntry": "apps/web/src/components/common/gugu-chat",
+    "keyBehavior": "全局搜索可按目标 ID 打开首屏外便签或定时任务，并正确消费路由参数",
+    "ci": "experimental"
+  },
+  "apps/web/e2e/mermaid.spec.ts": {
+    "domain": "markdown-mermaid",
+    "layer": "L3",
+    "owner": "apps/web/e2e",
+    "productionEntry": "apps/web/src/utils/chart/mermaidRenderer.ts",
+    "keyBehavior": "浏览器验证 Mermaid 路由样式、窄屏预览与导出 PNG 的用户可见结果",
+    "ci": "frontend-e2e"
+  },
+  "apps/desktop/tests/core-host.test.ts": {
+    "domain": "core-desktop",
+    "layer": "L2",
+    "owner": "gugu-desktop",
+    "productionEntry": "apps/desktop/src/main/core-host.ts",
+    "keyBehavior": "真实双 Host 独占拒绝与释放接管、提交后断线的收据恢复、不自动重放、错误脱敏与制品边界",
+    "ci": "desktop-node"
+  },
+  "apps/desktop/tests/lifecycle-window-update.test.ts": {
+    "domain": "core-desktop",
+    "layer": "L1",
+    "owner": "gugu-desktop",
+    "productionEntry": "apps/desktop/src/main/lifecycle.ts",
+    "keyBehavior": "并发启动/休眠退出回收、窗口来源/权限边界、更新取消与先停写后安装",
+    "ci": "desktop-node"
+  },
+  "apps/desktop/tests/preload.test.ts": {
+    "domain": "core-desktop",
+    "layer": "L0",
+    "owner": "gugu-desktop",
+    "productionEntry": "apps/desktop/src/preload/index.ts",
+    "keyBehavior": "只暴露固定业务方法，不透传通用 IPC 或 Electron 对象",
+    "ci": "desktop-node"
+  },
+  "packages/fs/tests/node.test.ts": {
+    "domain": "storage",
+    "layer": "L1",
+    "owner": "packages/fs/src",
+    "productionEntry": "packages/fs/src/node.ts",
+    "keyBehavior": "只读打开限制在授权根下，拒绝路径穿越、符号链接和非普通文件",
+    "ci": "core-node"
+  },
+  "packages/charts/test/worker.test.mjs": {
+    "domain": "chart-rendering",
+    "layer": "L1",
+    "owner": "packages/charts/src/worker.mjs + packages/charts/src/svg-style.mjs",
+    "productionEntry": "@gugu/charts worker 的 Mermaid → 安全 SVG → Resvg PNG 流程",
+    "keyBehavior": "保留中日韩 Mermaid 布局、标签边界修正、有效 PNG 输出及 worker 大图限制",
+    "ci": "backend-ts"
+  },
+  "packages/charts/test/render.test.mjs": {
+    "domain": "chart-rendering",
+    "layer": "L1",
+    "owner": "packages/charts/src/render.mjs",
+    "productionEntry": "Node Host 与 @gugu/charts 的隔离渲染调用入口",
+    "keyBehavior": "Mermaid 与 TeX 返回有效 PNG、请求上限和取消不返回残帧",
+    "ci": "backend-ts"
+  }
+}

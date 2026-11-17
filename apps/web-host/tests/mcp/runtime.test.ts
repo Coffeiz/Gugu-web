@@ -49,6 +49,48 @@ test('另一实例轮换凭据后，旧连接关闭并使用最新 owner 配置�
  await f.service.close()
 })
 
+test('配置变更期间完成的旧 MCP 握手不会重新写入失效缓存',async()=>{
+ let currentRow={...row}
+ let releaseConnect!:()=>void
+ let markConnecting!:()=>void
+ const connecting=new Promise<void>(resolve=>{markConnecting=resolve})
+ const gate=new Promise<void>(resolve=>{releaseConnect=resolve})
+ let connects=0,closed=0
+ const receivedAuthorization:string[]=[]
+ const service=createMcpRuntime({
+  configs:async user=>user===owner?[currentRow]:[],enabled:()=>true,maxTools:5,builtinNames:async()=>new Set(),
+  decrypt:{async decrypt(input){return input.ciphertext.startsWith('cipher-endpoint')?'https://mcp.example/rpc':JSON.stringify({auth:input.ciphertext==='rotated-cipher'?'rotated-synthetic-secret':'synthetic-secret'})}},
+  transport:()=>({async request(){throw new Error('unused')},async close(){}} as never),
+  client:input=>{receivedAuthorization.push(input.headers.Authorization??'');return {async connect(){connects++;markConnecting();await gate},async listTools(){return {tools:[{name:'lookup',inputSchema:{type:'object'}}]}},async callTool(){return {content:[]}},async close(){closed++}}},
+ })
+ const pending=service.load(owner,server)
+ await connecting
+ currentRow={...row,encrypted_credentials:'rotated-cipher'}
+ const invalidation=service.invalidate(owner,server)
+ const concurrentLoad=service.load(owner,server)
+ await Promise.resolve()
+ await Promise.resolve()
+ releaseConnect()
+ await invalidation
+ const staleResult=await pending
+ assert.notEqual(staleResult.state,'ok')
+ assert.equal(closed,1)
+ const fresh=await concurrentLoad
+ assert.equal(fresh.state,'ok')
+ assert.equal(connects,2)
+ assert.deepEqual(receivedAuthorization,['Bearer synthetic-secret','Bearer rotated-synthetic-secret'])
+ await service.close()
+})
+
+test('读取工具状态时发现其他实例已更新配置会关闭旧连接并返回未载入',async()=>{
+ const f=fixture()
+ assert.equal((await f.service.load(owner,server)).state,'ok')
+ f.setRow({...row,encrypted_credentials:'cipher-creds-v2',credentials_nonce:'new-nonce'})
+ assert.deepEqual(await f.service.tools(owner,server),{server_id:server,state:'unloaded',loaded_tool_count:0,loaded_tool_names:[],last_error:null})
+ assert.deepEqual(f.stats(),{closed:1,transportClosed:1,connects:1,listed:1,calls:0})
+ await f.service.close()
+})
+
 test('禁用时不外连；重连先关闭旧连接，调用复用当前 owner runtime',async()=>{
  const f=fixture();f.setEnabled(false)
  assert.equal((await f.service.load(owner,server)).state,'disabled')

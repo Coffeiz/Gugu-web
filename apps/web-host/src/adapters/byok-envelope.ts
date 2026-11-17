@@ -21,6 +21,46 @@ export function resolveByokKeyFile(env:NodeJS.ProcessEnv):string{
  const root=resolve(dirname(fileURLToPath(import.meta.url)),'../../../../')
  return resolve(env.CREDENTIALS_MASTER_KEY_FILE??resolve(root,'backend/data/.byok-master-key'))
 }
+/**
+ * 只读解析模型版本材料所需的密钥身份。与 createConfiguredByokEnvelope 不同，
+ * 此路径绝不创建目录/文件、改权限或补写密钥；缺少文件时返回空集供调用方 fail closed。
+ */
+export async function readConfiguredByokMasterKeys(env:NodeJS.ProcessEnv):Promise<Readonly<Record<string,string>>>{
+ const versionText=env.CREDENTIALS_MASTER_KEY_VERSION??'1'
+ if(!/^[+-]?\d+$/.test(versionText.trim()))throw new Error('凭据主密钥版本无效')
+ const version=Number(versionText)
+ if(!Number.isSafeInteger(version)||version<1)throw new Error('凭据主密钥版本无效')
+ let current=env.CREDENTIALS_MASTER_KEY
+ if(!current){
+  const normalized=Object.fromEntries(Object.entries(env).map(([name,value])=>[name.toLowerCase(),value]))
+  let nested:unknown
+  if(normalized.byok!==undefined){try{const value:unknown=JSON.parse(normalized.byok as string);if(!value||typeof value!=='object'||Array.isArray(value))throw new Error();nested=(value as Record<string,unknown>).master_key}catch{throw new Error('BYOK 环境配置无效')}}
+  const configured=normalized.byok__master_key??nested
+  if(configured!==undefined&&typeof configured!=='string')throw new Error('BYOK 环境配置无效')
+  current=configured as string|undefined
+ }
+ if(!current){
+  const root=resolve(dirname(fileURLToPath(import.meta.url)),'../../../../')
+  const defaultPath=resolve(root,'backend/data/.byok-master-key'),path=resolveByokKeyFile(env)
+  const within=(base:string,target:string)=>{const rel=relative(base,target);return rel===''||(!rel.startsWith('..'+sep)&&rel!=='..'&&!isAbsolute(rel))}
+  if(path!==defaultPath&&within(root,path))throw new Error('凭据主密钥路径不能位于同步工作区')
+  try{
+   const parent=await realpath(dirname(path))
+   const anchored=resolve(parent,basename(path))
+   if(path!==defaultPath&&within(await realpath(root),anchored))throw new Error('凭据主密钥路径不能位于同步工作区')
+   if(anchored!==path)throw new Error('凭据主密钥目录不可安全解析')
+   const file=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW)
+   try{
+    const metadata=await file.stat()
+    if(!metadata.isFile()||metadata.size>4096||(metadata.mode&0o077)!==0)throw new Error('凭据主密钥文件权限或格式无效')
+    current=(await file.readFile('ascii')).trim()
+    if(!current)throw new Error('凭据主密钥文件为空')
+   }finally{await file.close()}
+  }catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')current=undefined;else throw error}
+ }
+ const previous=env.CREDENTIALS_MASTER_KEY_PREVIOUS
+ return Object.freeze(current?{[String(version)]:current,...(previous&&version>1?{[String(version-1)]:previous}:{})}:{})
+}
 /** 与 Python 同源的部署密钥选择；调用者传入显式环境，不读取 dotenv。 */
 export function createConfiguredByokEnvelope(env:NodeJS.ProcessEnv){
  const versionText=env.CREDENTIALS_MASTER_KEY_VERSION??'1'

@@ -1,7 +1,6 @@
 <template>
   <div class="mind-page">
-    <!-- 正式笔记与 DEV 时间轴共用同一 Mind 顶栏。 -->
-    <MindToolbar />
+    <MindToolbar v-if="isNotes" />
 
     <div class="mind-body">
       <RouterView />
@@ -10,16 +9,17 @@
 </template>
 
 <script setup lang="ts">
-import { watch } from 'vue'
+import { computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import MindToolbar from './components/MindToolbar.vue'
 
 const route = useRoute()
+const isNotes = computed(() => route.path === '/notes')
 
-// /mind 是侧栏唯一入口；把当前子视图记下来，下一次从侧栏回来时由路由重定向恢复它。
+// 记录最近访问的独立页面，供旧 /mind 链接和默认入口恢复使用。
 watch(() => route.path, (path) => {
-  if (path.startsWith('/mind/notes')) localStorage.setItem('mind-last-mode', 'notes')
-  else if (path.startsWith('/mind/canvases')) localStorage.setItem('mind-last-mode', 'canvas')
+  if (path === '/notes') localStorage.setItem('mind-last-mode', 'notes')
+  else if (path === '/canvases') localStorage.setItem('mind-last-mode', 'canvas')
 }, { immediate: true })
 </script>
 

@@ -7,9 +7,31 @@ import type { PoolClient } from 'pg'
 import {
   capturePostgresFolderPathMirrorDirectoryKeys,
   createPostgresFolderPathMirrorPlanner,
+  readPostgresFolderPathMirrorKey,
+  readPostgresProjectPathMirrorKey,
 } from '../../src/domains/files/folder-path-planner.js'
 
 const owner = '00000000-0000-4000-8000-000000000014'
+
+test('只读目录键沿用文件夹镜像规则并拒绝失效父级', async () => {
+  const client = clientFor((sql, values) => {
+    if (sql.includes('FROM folders WHERE id=$1') && Number(values?.[0]) === 2) return { rows: [folder(2, 1, '子目录')] }
+    if (sql.includes('FROM folders WHERE id=$1') && Number(values?.[0]) === 1) return { rows: [folder(1, null, '父目录')] }
+    throw new Error('未预期查询')
+  })
+  assert.equal(await readPostgresFolderPathMirrorKey(client, owner, 2), `${owner}/个人文件/父目录/子目录`)
+  const missing = clientFor(() => ({ rows: [] }))
+  await assert.rejects(readPostgresFolderPathMirrorKey(missing, owner, 2), /文件夹不存在/)
+})
+
+test('项目工作区目录键复用项目日期和名称路径', async () => {
+  const client = clientFor((sql, values) => {
+    assert.ok(sql.includes('FROM projects'))
+    assert.deepEqual(values, [77, owner])
+    return { rows: [{ name: '计划', start_date: '2024-05-03', created_at: '2020-01-01' }] }
+  })
+  assert.equal(await readPostgresProjectPathMirrorKey(client, owner, 77), `${owner}/项目文件/2024/05/计划 #77`)
+})
 
 function clientFor(query: (sql: string, values?: unknown[]) => Promise<{ rows?: unknown[]; rowCount?: number }> | { rows?: unknown[]; rowCount?: number }): PoolClient {
   return { query: async (sql: string, values?: unknown[]) => await query(sql, values) } as unknown as PoolClient

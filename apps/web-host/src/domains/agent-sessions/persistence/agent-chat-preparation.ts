@@ -15,7 +15,16 @@ export interface AgentChatPreparationPorts {
   bindQueue(client: PoolClient, ownerId: string, sessionId: number, isNew: boolean, input: AgentChatInput): Promise<void>
   enqueueDispatch(client: PoolClient, identity: RunIdentity, input: AgentDispatchInput, ttlSeconds: number): Promise<void>
 }
-export type AgentChatScheduling = { mode: 'direct' } | { mode: 'dispatch'; origin: string | null; accessVersion: string; ttlSeconds: number }
+export type AgentChatScheduling = { mode: 'direct' } | {
+  mode: 'dispatch'
+  origin: string | null
+  /**
+   * 固定值仅用于已在可信入口快照中计算过的版本；生产 Host 可在会话身份确立后
+   * 解析范围版本，使队列材料绑定本次真实模型/凭据/权限快照。
+   */
+  accessVersion: string | ((identity: RunIdentity) => Promise<string>)
+  ttlSeconds: number
+}
 
 /** Python ORM 的客户端默认值须显式写入，不能依赖数据库具有相同的默认值。 */
 export async function createPostgresWebChatSession(client: PoolClient, ownerId: string, title: string): Promise<number> {
@@ -62,7 +71,14 @@ export function createPostgresAgentChatPreparation(pool: Pick<Pool, 'connect'>, 
     await enqueueConversationRagRebuild(client, ownerId)
     await ports.claimAttachments(client, ownerId, messageId, attachments.attachIds)
     await ports.bindQueue(client, ownerId, sessionId, isNew, input)
-    if (scheduling.mode === 'dispatch') await ports.enqueueDispatch(client, { ownerId, sessionId: String(sessionId), runId }, { userMessageId: messageId, locale: input.locale ?? null, origin: scheduling.origin, accessVersion: scheduling.accessVersion, v: 2, source: 'web' }, scheduling.ttlSeconds)
+    if (scheduling.mode === 'dispatch') {
+      const identity = { ownerId, sessionId: String(sessionId), runId }
+      const accessVersion = typeof scheduling.accessVersion === 'function'
+        ? await scheduling.accessVersion(identity)
+        : scheduling.accessVersion
+      if (!/^[a-f0-9]{64}$/.test(accessVersion)) throw new TypeError('运行访问范围版本无效')
+      await ports.enqueueDispatch(client, identity, { userMessageId: messageId, locale: input.locale ?? null, origin: scheduling.origin, accessVersion, v: 2, source: 'web' }, scheduling.ttlSeconds)
+    }
     return { sessionId, userMessageId: messageId, isNew, runId }
   })
 }

@@ -1,0 +1,42 @@
+{
+  "apps/web-host/tests/skills/user-list.test.ts": {
+    "domain": "skills",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/skills/user-list.ts",
+    "productionEntry": "apps/web-host/src/modules/skills/user-list.ts",
+    "keyBehavior": "认证后按 owner 读取 Skills 首屏记录，不触发工具发现",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/skills/tool-names.test.ts": {
+    "domain": "skills",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/skills/tool-names.ts",
+    "productionEntry": "apps/web-host/src/main.ts → Core Skill manager → Host MCP 工具目录",
+    "keyBehavior": "普通 Skill 保存只校验内置工具且不触发 MCP 外呼；显式关联 MCP 工具时按认证 owner 发现",
+    "ci": "node-webui"
+  },
+  "apps/web/tests/skills/SkillForm.test.ts": {
+    "domain": "frontend-skills",
+    "layer": "L0",
+    "owner": "apps/web/skills",
+    "productionEntry": "apps/web/src/views/Skills/components/SkillForm.vue",
+    "keyBehavior": "工具卡片长名称和说明可省略显示且悬停可读取全文",
+    "ci": "test:fast"
+  },
+  "apps/web/tests/skills/skillGroups.test.ts": {
+    "domain": "frontend-skills",
+    "layer": "L0",
+    "owner": "apps/web/views/Skills",
+    "productionEntry": "apps/web/src/views/Skills/skillGroups.ts",
+    "keyBehavior": "助手管理的 Skill 单独归组，旧记录与未标记记录默认归为用户管理",
+    "ci": "frontend-test"
+  },
+  "apps/web/tests/skills/composables/useMcpStatusLoader.test.ts": {
+    "domain": "skills-mcp",
+    "layer": "L1",
+    "owner": "apps/web/skills/composables",
+    "productionEntry": "apps/web/src/views/Skills/composables/useMcpStatusLoader.ts",
+    "keyBehavior": "启用且未加载的 MCP 状态受并发上限控制并逐项更新，取消后丢弃过期结果",
+    "ci": "frontend-test"
+  }
+}

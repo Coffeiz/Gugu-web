@@ -1,0 +1,18 @@
+{
+  "apps/web/tests/common/useWindowDrag.test.ts": {
+    "domain": "window-interaction",
+    "layer": "L1",
+    "owner": "apps/web/composables/core",
+    "productionEntry": "apps/web/src/composables/core/useWindowDrag.ts",
+    "keyBehavior": "预览窗和信息弹层保留主键拖动、独立偏移和动态边界，松开或卸载停止监听且不干扰其他窗口",
+    "ci": "frontend-test"
+  },
+  "apps/web/tests/common/DatePicker.test.ts": {
+    "domain": "frontend-ui",
+    "layer": "L1",
+    "owner": "apps/web/components/common/controls",
+    "productionEntry": "apps/web/src/components/common/controls/DatePicker.vue",
+    "keyBehavior": "今天快捷入口不受 allowed-dates 排除影响，且当前已是今天时仍通知调用方重新定位",
+    "ci": "frontend-test"
+  }
+}

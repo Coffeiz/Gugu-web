@@ -26,6 +26,12 @@ import { registerDataExportDeleteRoute, type DataExportDeleteOptions } from './m
 import type { createDataExportDeleter } from '@gugu/core/data-portability/delete-export'
 import type { createDataExportCanceler } from '@gugu/core/data-portability/cancel-export'
 import { registerTerminalDeleteRoute, type TerminalDeleteOptions } from './modules/terminals/delete.js'
+import { registerTerminalMetricsRoute, type TerminalMetricsOptions } from './modules/terminals/metrics.js'
+import { registerTerminalListRoute, type TerminalListOptions } from './modules/terminals/list.js'
+import { registerTerminalDetailRoute, type TerminalDetailOptions } from './modules/terminals/detail.js'
+import { registerTerminalRenameRoute, type TerminalRenameOptions } from './modules/terminals/rename.js'
+import { registerTerminalEventsRoute, type TerminalEventsOptions } from './modules/terminals/events.js'
+import { registerTerminalCommandRoutes, type TerminalCommandRouteOptions } from './modules/terminals/command.js'
 import { registerVoicePresetsReadRoute, type VoicePresetsReadOptions } from './modules/admin/voice-presets-read.js'
 import { registerAdminVoicePresetTestRoute, registerAdminVoiceTestRoute, type AdminVoicePresetTestOptions, type AdminVoiceTestOptions } from './modules/admin/voice-test.js'
 import { registerAdminSearchTestRoute, type AdminSearchTestOptions } from './modules/admin/search-test.js'
@@ -77,11 +83,12 @@ import { registerByokMediaCapabilityProbeRoute, type ByokMediaProbeOptions } fro
 import { registerProviderCapabilityPreviewRoute, type ProviderCapabilityPreviewOptions } from './modules/byok/capabilities-preview.js'
 import { registerStorageLiveTotalsRoute } from './modules/admin/storage-live-totals.js'
 import { registerUserSkillDeleteRoute, type UserSkillDeleteOptions } from './modules/skills/user-delete.js'
-import { registerUserSkillListRoute, type UserSkillListOptions } from './modules/agent-skills/user-list.js'
-import { registerUserSkillWriteRoutes, type UserSkillWriteOptions } from './modules/agent-skills/user-write.js'
+import { registerUserSkillListRoute, type UserSkillListOptions } from './modules/skills/user-list.js'
+import { registerUserSkillWriteRoutes, type UserSkillWriteOptions } from './modules/skills/user-write.js'
 import { registerSafeEgressReadRoute } from './modules/admin/safe-egress-read.js'
 import { registerImMemorySummaryRoutes, type ImMemorySummaryOptions } from './modules/admin/im-memory-summary.js'
 import { registerImMemoryMaintenanceApplyRoute } from './modules/admin/im-memory-maintenance-apply.js'
+import { registerImMemoryMaintenancePreviewRoute } from './modules/admin/im-memory-maintenance-preview.js'
 import { registerAdminUserBanRoute, type AdminUserBanOptions } from './modules/admin/user-ban.js'
 import { registerAdminEmailPreviewRoute, type AdminEmailPreviewOptions } from './modules/admin/email-preview.js'
 import { registerSmtpProbeRoute } from './modules/admin/smtp-probe.js'
@@ -485,6 +492,12 @@ export interface WebUiOptions {
   voiceAvailability?: Omit<VoiceAvailabilityOptions, 'requireUser' | 'ownerIdFromRequest'>
   clearAgentMemory?: { clear: MemoryClearOptions['clear'] }
   terminalDelete?: Omit<TerminalDeleteOptions, 'requireUser' | 'ownerIdFromRequest'>
+  terminalMetrics?: Omit<TerminalMetricsOptions, 'requireUser' | 'ownerIdFromRequest'>
+  terminalList?: Omit<TerminalListOptions, 'requireUser' | 'ownerIdFromRequest'>
+  terminalDetail?: Omit<TerminalDetailOptions, 'requireUser' | 'ownerIdFromRequest'>
+  terminalRename?: Omit<TerminalRenameOptions, 'requireUser' | 'ownerIdFromRequest'>
+  terminalEvents?: Omit<TerminalEventsOptions, 'requireUser' | 'ownerIdFromRequest'>
+  terminalCommand?: Omit<TerminalCommandRouteOptions, 'requireUser' | 'ownerIdFromRequest'> & { close?(): Promise<void> }
   userBotsList?: Omit<UserBotsListOptions, 'requireUser' | 'ownerIdFromRequest'>
   embeddingRebuildStatus?: Omit<EmbeddingRebuildStatusOptions, 'requireUser' | 'ownerIdFromRequest'>
   embeddingRebuild?: Omit<EmbeddingRebuildRouteOptions, 'requireUser' | 'ownerIdFromRequest'>
@@ -506,6 +519,7 @@ export interface WebUiOptions {
   safeEgressRead?: { readSettings(): SafeEgressReadSettings }
   imMemorySummary?: Omit<ImMemorySummaryOptions, 'requireAdmin'>
   imMemoryMaintenanceApply?: { apply(confirm: unknown): Promise<{ ok: true; applied: number; queued: number }> }
+  imMemoryMaintenancePreview?: { start(): Promise<{ ok: true; total: number } | { ok: false; message: string; status: unknown }> }
   adminUserBan?: Omit<AdminUserBanOptions, 'requireAdmin'>
   adminEmailPreview?: Omit<AdminEmailPreviewOptions, 'requireAdmin'>
   smtpProbe?: Omit<Parameters<typeof registerSmtpProbeRoute>[1], 'requireAdmin'>
@@ -881,6 +895,49 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => registerTerminalDeleteRoute(routes, { ...options.terminalDelete!,
       requireUser: async request => { void userFromRequest(request) },
       ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId }))
+  }
+  if (options.terminalMetrics) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerTerminalMetricsRoute(routes, {
+      ...options.terminalMetrics!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
+    }))
+  }
+  if (options.terminalList) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerTerminalListRoute(routes, {
+      ...options.terminalList!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
+    }))
+  }
+  if (options.terminalDetail) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerTerminalDetailRoute(routes, {
+      ...options.terminalDetail!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
+    }))
+  }
+  if (options.terminalRename) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerTerminalRenameRoute(routes, {
+      ...options.terminalRename!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
+    }))
+  }
+  if (options.terminalEvents) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerTerminalEventsRoute(routes, {
+      ...options.terminalEvents!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
+    }))
+  }
+  if (options.terminalCommand) {
+    if (options.terminalCommand.close) app.addHook('onClose', async () => options.terminalCommand!.close!())
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerTerminalCommandRoutes(routes, {
+      ...options.terminalCommand!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
+    }))
   }
   if (options.userBotsList) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => {
@@ -1528,6 +1585,7 @@ export function createApp(options: WebUiOptions) {
   if (options.adminAuth && options.storageLiveTotals) registerStorageLiveTotalsRoute(app, { ...options.storageLiveTotals, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.safeEgressRead) registerSafeEgressReadRoute(app, { ...options.safeEgressRead, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.imMemorySummary) registerImMemorySummaryRoutes(app, { ...options.imMemorySummary, requireAdmin: options.adminAuth.requireAdmin })
+  if (options.adminAuth && options.imMemoryMaintenancePreview) registerImMemoryMaintenancePreviewRoute(app, { ...options.imMemoryMaintenancePreview, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.imMemoryMaintenanceApply) registerImMemoryMaintenanceApplyRoute(app, { ...options.imMemoryMaintenanceApply, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.adminUserBan) registerAdminUserBanRoute(app, { ...options.adminUserBan, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.adminEmailPreview) registerAdminEmailPreviewRoute(app, { ...options.adminEmailPreview, requireAdmin: options.adminAuth.requireAdmin })

@@ -1,0 +1,18 @@
+{
+  "packages/core/tests/golden/python-interop.test.ts": {
+    "domain": "core-node-golden",
+    "layer": "L2",
+    "owner": "packages/core/src/domain",
+    "productionEntry": "backend/tests/core/fixtures/node_golden.py",
+    "keyBehavior": "同一合成规则语料跨语言一致，Python v2 与 Node 双向读写、显式 v3 升级备份保留身份和数据",
+    "ci": "core-node"
+  },
+  "packages/core/tests/golden/service-sequence.test.ts": {
+    "domain": "core-node-parity",
+    "layer": "L2",
+    "owner": "gugu-core",
+    "productionEntry": "packages/core/src/data/services.ts",
+    "keyBehavior": "Python/Node 同序列比对联系人维护、原子回滚、项目 CAS/归档和错误类别",
+    "ci": "core-node"
+  }
+}

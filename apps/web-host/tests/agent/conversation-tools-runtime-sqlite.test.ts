@@ -10,9 +10,10 @@ import { createCoreAgentConversationSearchPort } from '../../src/domains/agent-s
 import { createWebAgentRagToolPorts } from '../../src/domains/agent-sessions/tools/agent-rag-tool-ports.js'
 import { createWebAgentProductionToolRegistry } from '../../src/domains/agent-sessions/tools/agent-rag-production-ports.js'
 import { createConversationRagSource } from '../../../../packages/core/src/agent/rag/conversation-index-source.js'
+import { createConversationSearchTool } from '../../../../packages/core/src/agent/tools/conversations.js'
 import { createCanonicalSourceLoader, createSqlRagRebuildWorker, enqueueAgentRagRebuild, stableJson } from '@gugu/core/agent'
 import { createOwnerAgentRagVectorResolver } from '../../src/domains/agent-sessions/tools/agent-rag-vectors.js'
-import { createAgentRuntime } from '../../src/domains/agent-sessions/agent-runtime.js'
+import { createAgentRuntime } from '@gugu/core/agent'
 import { agentContextAccessScope } from '../../src/domains/agent-config/access-scope.js'
 import { bindProviderSelection } from '../../src/domains/agent-config/provider-resolver.js'
 import type { AgentRunnerPorts, CanonicalContextPorts, CanonicalRunContext, RunCheckpoint, RunEvent } from '@gugu/core/agent'
@@ -353,6 +354,33 @@ test('AgentRuntime 经 Core Runner 将 search_conversations 结果送入 Provide
     providerBinding?.release()
     await runtimeDb?.close()
     await rm(folder, { recursive: true, force: true })
+  }
+})
+
+test('search_conversations 时间格式遵循 Python fromisoformat 的偏移归一化边界', async () => {
+  let candidateTimestamp = ''
+  const tool = createConversationSearchTool({
+    async recent() { return [] },
+    async search(_identity, _queries, _mode, _limit, _signal) {
+      return [{ session_id: 7, message_id: 9, role: 'user', text: '合成命中', session_updated_at: candidateTimestamp }]
+    },
+    async resolve() { return 7 },
+  })
+  const scope = { identity: { ownerId: 'owner', sessionId: '1', runId: 'timestamp-parity' }, roundId: '1',
+    signal: new AbortController().signal, resolution: null, execute: async () => { throw new Error('只读工具不得调用执行后端') } }
+  const cases = [
+    ['2026-01-02T03:04:05+01:30', '2026-01-02 03:04'],
+    ['2026-01-02T03:04:05+01:99', '2026-01-02 03:04'],
+    ['2026-01-02T03:04:05+24:00', ''],
+    ['2026-01-02T03:04:05+01:02:99', '2026-01-02 03:04'],
+    ['2026-01-02T03:04:05+23:99', ''],
+  ] as const
+
+  for (const [timestamp, expected] of cases) {
+    candidateTimestamp = timestamp
+    const result = await tool.execute({ query: '命中' }, scope)
+    assert.equal(result.kind, 'completed')
+    assert.equal((result.value as { matches: Array<{ updated_at: string }> }).matches[0]?.updated_at, expected, timestamp)
   }
 })
 

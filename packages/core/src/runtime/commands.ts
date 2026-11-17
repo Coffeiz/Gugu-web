@@ -31,6 +31,11 @@ export function isMutation(method: string): boolean {
     'mind.canvases.notes.update',
     'mind.canvases.items.update',
     'mind.canvases.items.delete',
+    'mind.canvases.items.add',
+    'mind.canvases.items.bring-to-front',
+    'mind.canvases.relations.create',
+    'mind.canvases.relations.delete',
+    'mind.ref.create',
   ].includes(method)
 }
 const commandFields: Readonly<Record<string, readonly string[]>> = {
@@ -60,6 +65,13 @@ const commandFields: Readonly<Record<string, readonly string[]>> = {
   'mind.notes.delete': ['id'],
   'mind.canvases.list': [],
   'mind.canvases.items.list': ['canvasId'],
+  'mind.canvases.relations.list': ['canvasId'],
+  'mind.canvases.items.add': ['canvasId', 'body'],
+  'mind.canvases.items.bring-to-front': ['canvasId', 'id', 'body'],
+  'mind.canvases.relations.create': ['body'],
+  'mind.canvases.relations.delete': ['canvasId', 'id'],
+  'mind.ref.create': ['body'],
+  'mind.canvas-note.location': ['nodeId'],
   'mind.canvases.create': ['title', 'projectId'],
   'mind.canvases.update': ['id', 'body'],
   'mind.canvases.delete': ['id'],
@@ -117,7 +129,7 @@ export async function desktopFrame(
       throw new CoreError('invalid_request', '协议版本不兼容')
     id = request.id
     if (
-      (!(DESKTOP_METHODS as readonly string[]).includes(request.method) && !(protocol === 2 && ['undo.preview', 'undo.apply', 'undo.redo', 'calendar.list', 'calendar.create', 'calendar.update', 'calendar.delete', 'mind.notes.list', 'mind.notes.create', 'mind.notes.update', 'mind.notes.delete', 'mind.canvases.list', 'mind.canvases.items.list', 'mind.canvases.create', 'mind.canvases.update', 'mind.canvases.delete', 'mind.canvases.notes.create', 'mind.canvases.notes.update', 'mind.canvases.items.update', 'mind.canvases.items.delete'].includes(request.method))) ||
+      (!(DESKTOP_METHODS as readonly string[]).includes(request.method) && !(protocol === 2 && ['undo.preview', 'undo.apply', 'undo.redo', 'calendar.list', 'calendar.create', 'calendar.update', 'calendar.delete', 'mind.notes.list', 'mind.notes.create', 'mind.notes.update', 'mind.notes.delete', 'mind.canvases.list', 'mind.canvases.items.list', 'mind.canvases.relations.list', 'mind.canvases.items.add', 'mind.canvases.items.bring-to-front', 'mind.canvases.relations.create', 'mind.canvases.relations.delete', 'mind.ref.create', 'mind.canvas-note.location', 'mind.canvases.create', 'mind.canvases.update', 'mind.canvases.delete', 'mind.canvases.notes.create', 'mind.canvases.notes.update', 'mind.canvases.items.update', 'mind.canvases.items.delete'].includes(request.method))) ||
       (protocol === 1 && request.method === 'operations.get')
     )
       throw new CoreError('invalid_request', '此能力不可用')
@@ -162,14 +174,18 @@ export function validateCommandParams(method: string, params: Fields): void {
     if (method !== 'undo.preview' && (typeof params.undo_id !== 'string' || !params.undo_id || params.undo_id.length > 80)) throw new CoreError('invalid_request', '撤销标识无效')
   }
   if (method.startsWith('mind.canvases.')) {
-    if (['mind.canvases.items.list', 'mind.canvases.notes.create', 'mind.canvases.items.update', 'mind.canvases.items.delete'].includes(method)) safeInteger(params.canvasId)
-    if (['mind.canvases.notes.update', 'mind.canvases.items.update', 'mind.canvases.items.delete'].includes(method)) safeInteger(params.id)
+    if (['mind.canvases.items.list', 'mind.canvases.relations.list', 'mind.canvases.notes.create', 'mind.canvases.items.add', 'mind.canvases.items.update', 'mind.canvases.items.delete', 'mind.canvases.items.bring-to-front', 'mind.canvases.relations.delete'].includes(method)) safeInteger(params.canvasId)
+    if (['mind.canvases.notes.update', 'mind.canvases.items.update', 'mind.canvases.items.delete', 'mind.canvases.items.bring-to-front', 'mind.canvases.relations.delete'].includes(method)) safeInteger(params.id)
     if (method === 'mind.canvases.notes.create' && (!params.body || typeof params.body !== 'object' || Array.isArray(params.body))) throw new CoreError('invalid_request', '便签内容无效')
+    if (['mind.canvases.items.add', 'mind.canvases.items.bring-to-front', 'mind.canvases.relations.create'].includes(method) && (!params.body || typeof params.body !== 'object' || Array.isArray(params.body))) throw new CoreError('invalid_request', '画布内容无效')
     if (method === 'mind.canvases.notes.update' && (!params.fields || typeof params.fields !== 'object' || Array.isArray(params.fields))) throw new CoreError('invalid_request', '便签内容无效')
     if (method === 'mind.canvases.items.update' && (!params.body || typeof params.body !== 'object' || Array.isArray(params.body))) throw new CoreError('invalid_request', '画布位置无效')
   }
   if (method === 'preferences.desktop.update' && (!params.patch || typeof params.patch !== 'object' || Array.isArray(params.patch)))
     throw new CoreError('invalid_request', '桌面外观设置无效')
+  if (method === 'mind.ref.create' && (!params.body || typeof params.body !== 'object' || Array.isArray(params.body)))
+    throw new CoreError('invalid_request', '引用内容无效')
+  if (method === 'mind.canvas-note.location') safeInteger(params.nodeId)
 }
 export async function execute(
   data: DataServices,

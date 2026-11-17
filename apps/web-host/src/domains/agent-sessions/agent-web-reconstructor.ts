@@ -6,8 +6,12 @@ import { createPostgresCurrentTurnReader, createWebAgentSourceLoader } from './c
 import { createPersistentAgentRuntime, type PersistentAgentRuntimeOptions } from './agent-persistent-runtime.js'
 import { createPostgresAgentRunStore } from './persistence/agent-run-store-postgres.js'
 import type { AgentDispatchLease } from './persistence/agent-run-dispatch-postgres.js'
+import type { AgentUsageConfig } from './persistence/agent-usage-postgres.js'
+import { createCanonicalHistoryWriter } from './persistence/agent-canonical-write-postgres.js'
 import type { createAgentToolRegistry } from './tools/agent-tool-registry.js'
 import { createMcpAgentToolPorts, type AgentMcpToolPortsOptions } from './tools/agent-mcp-tool-ports.js'
+import { createAgentContextSources, type AgentContextAssemblyOptions } from './context/agent-context-assembly.js'
+import { createAuthorizedWebAgentProductionRagRunPorts } from './tools/agent-rag-production-ports.js'
 
 /** 不含密钥、配置版本或底层异常的可公开错误类型。 */
 export class AgentReconstructionVersionError extends Error {}
@@ -15,12 +19,28 @@ export class AgentReconstructionVersionError extends Error {}
 export interface WebAgentBinding {
   selection: ContextSourceSelection
   resolve: ProviderRuntimeOptions['resolve']
+  usageConfig: AgentUsageConfig
   release(): void
+}
+
+/** 从与 Provider 相同的原子绑定中取非密钥用量配置，禁止按模型身份字符串推断。 */
+export function createWebAgentBindingHistory(lease: AgentDispatchLease, binding: WebAgentBinding): PersistentAgentRuntimeOptions['history'] {
+  const identity = Object.freeze({ ...lease.identity })
+  const writer = createCanonicalHistoryWriter(async () => binding.usageConfig)
+  return { writeHistory: async (client, candidate, history, checkpoint) => {
+    if (candidate.ownerId !== identity.ownerId || candidate.sessionId !== identity.sessionId || candidate.runId !== identity.runId
+      || history.context.identity.ownerId !== identity.ownerId || history.context.identity.sessionId !== identity.sessionId
+      || history.context.identity.runId !== identity.runId || history.context.modelIdentity !== binding.selection.modelIdentity)
+      throw new Error('Agent 用量配置身份不匹配')
+    await writer(client, candidate, history, checkpoint)
+  } }
 }
 export interface WebAgentReconstructionResources {
   /** 每个业务数据源均为真实服务；没有服务应返回 null，不得提供假空值。 */
   source: Omit<ContextSourcePorts, 'readSnapshot' | 'historyReader' | 'currentTurn' | 'select' | 'digest' | 'nextId' | 'data'> & { data: Omit<ContextSourcePorts['data'], 'loadImMemory'> }
   context: Omit<CanonicalContextPorts, 'load'>
+  /** Web Agent 每轮的正式 RAG 构建器；由 Host 按该 lease 提供，Core 准备链直接调用。 */
+  ragContext(input: Parameters<CanonicalContextPorts['preparation']['buildRag']>[0], signal?: AbortSignal): ReturnType<CanonicalContextPorts['preparation']['buildRag']>
   preparation: Omit<CanonicalRunPreparationPorts, 'discover'>
   /** 工具 schema 发现和运行时分派必须复用同一个授权注册器。 */
   toolRegistry: Pick<ReturnType<typeof createAgentToolRegistry>, 'capabilities' | 'tools'>
@@ -41,9 +61,22 @@ export function createWebAgentToolPorts(
   mcp?: AgentMcpToolPortsOptions,
 ): { tools: typeof registry.tools; preparation: CanonicalRunPreparationPorts } {
   const identity = Object.freeze({ ...lease.identity })
-  const boundRegistry = mcp ? createMcpAgentToolPorts({ base: registry, ...mcp }) : registry
   const matchesLease = (candidate: RunIdentity) => candidate.ownerId === identity.ownerId
     && candidate.sessionId === identity.sessionId && candidate.runId === identity.runId
+  const boundRegistry = mcp ? createMcpAgentToolPorts({
+    base: registry,
+    ...mcp,
+    async configured(candidate, name, signal) {
+      if (!matchesLease(candidate)) return false
+      const configuration = await preparation.configuration(candidate, signal ?? new AbortController().signal)
+      return configuration.identity.ownerId === identity.ownerId
+        && configuration.identity.subject.kind === 'session'
+        && configuration.identity.subject.id === identity.sessionId
+        && configuration.source === 'web'
+        && configuration.toolNames.includes(name)
+        && (!mcp.configured || await mcp.configured(candidate, name, signal))
+    },
+  }) : registry
   const plan = boundRegistry.tools.plan
   const tools: ToolPort = {
     ...(plan ? { async plan(calls, candidate) {
@@ -84,10 +117,27 @@ export interface WebAgentReconstructorOptions {
   redis: PersistentAgentRuntimeOptions['redis']
   subscribe: PersistentAgentRuntimeOptions['subscribe']
   history: PersistentAgentRuntimeOptions['history']
+  historyForBinding?(lease: AgentDispatchLease, binding: WebAgentBinding): PersistentAgentRuntimeOptions['history']
   readReconstructionStatus(identity: RunIdentity): Promise<'unavailable' | 'version_conflict' | null>
   /** 已有模型身份只来自已认证解密的 checkpoint；版本发生变化应返回 null。 */
   bind(lease: AgentDispatchLease, checkpoint: CanonicalRunContext | null): Promise<WebAgentBinding | null>
   resources(lease: AgentDispatchLease, binding: WebAgentBinding): Promise<WebAgentReconstructionResources | null>
+}
+
+/** 将已配置的 Host 资源与当前租约的上下文、RAG 授权及注册器组合。 */
+export function createWebAgentRagResources(options: {
+  source: Omit<AgentContextAssemblyOptions, 'digest' | 'nextId' | 'select' | 'currentTurn'>
+  rag: Omit<Parameters<typeof createAuthorizedWebAgentProductionRagRunPorts>[0], 'lease' | 'selection'>
+  remaining: Omit<WebAgentReconstructionResources, 'source' | 'ragContext' | 'toolRegistry' | 'preparation'> & {
+    preparation: Omit<WebAgentReconstructionResources['preparation'], 'configuration'>
+  }
+}) {
+  const source = createAgentContextSources(options.source)
+  return async (lease: AgentDispatchLease, binding: WebAgentBinding): Promise<WebAgentReconstructionResources> => {
+    const rag = createAuthorizedWebAgentProductionRagRunPorts({ ...options.rag, lease, selection: binding.selection })
+    return { ...options.remaining, source, ragContext: rag.ragContext, toolRegistry: rag.toolRegistry,
+      preparation: { ...options.remaining.preparation, configuration: rag.configuration } }
+  }
 }
 
 /** Web gateway 的请求来源已由调度载荷验证；历史会话来源不影响本次请求。 */
@@ -115,11 +165,11 @@ export function createWebAgentReconstructor(options: WebAgentReconstructorOption
     const binding = await options.bind(lease, checkpoint?.context ?? null)
     if (!binding) return null
     try {
-      const resources = await options.resources(lease, binding)
-      if (!resources) { binding.release(); return null }
       const selection = binding.selection
       if (selection.contextScopeKey !== lease.input.accessVersion || !selection.modelIdentity || (lease.input.locale && selection.locale !== lease.input.locale)) throw new AgentReconstructionVersionError('运行授权或语言版本不匹配')
       if (checkpoint?.context && checkpoint.context.modelIdentity !== selection.modelIdentity) throw new AgentReconstructionVersionError('运行模型身份不匹配')
+      const resources = await options.resources(lease, binding)
+      if (!resources) { binding.release(); return null }
       const expected = contextAccessScopeHash(id, selection, resources.context.digest)
       if (checkpoint?.context && checkpoint.context.accessScopeHash !== expected) throw new AgentReconstructionVersionError('运行访问范围不匹配')
       const selected = await binding.resolve(id, selection.modelIdentity, new AbortController().signal)
@@ -127,8 +177,9 @@ export function createWebAgentReconstructor(options: WebAgentReconstructorOption
       const source = createWebAgentSourceLoader(options.pool, { ...resources.source, data: { ...resources.source.data, loadImMemory: createWebImMemoryLoader(lease) }, digest: resources.context.digest, nextId: resources.context.nextId,
         select: async () => selection, currentTurn: createPostgresCurrentTurnReader(options.pool, String(lease.input.userMessageId), resources.materialize) })
       const toolPorts = createWebAgentToolPorts(lease, resources.toolRegistry, resources.preparation, resources.mcp)
-      const instance = createPersistentAgentRuntime({ pool: options.pool, secretKey: options.secretKey, redis: options.redis, subscribe: options.subscribe, history: options.history,
-        context: { ...resources.context, load: source.load }, runPreparation: toolPorts.preparation,
+      const history = options.historyForBinding?.(lease, binding) ?? createWebAgentBindingHistory(lease, binding)
+      const instance = createPersistentAgentRuntime({ pool: options.pool, secretKey: options.secretKey, redis: options.redis, subscribe: options.subscribe, history,
+        context: { ...resources.context, preparation: { ...resources.context.preparation, buildRag: resources.ragContext }, load: source.load }, runPreparation: toolPorts.preparation,
         runtime: { ...resources.runtime, tools: toolPorts.tools }, executor: resources.executor,
         provider: { ...resources.provider, resolve: binding.resolve }, interactionActivation: resources.interactionActivation,
         scheduling: { mode: 'dispatch', readReconstructionStatus: options.readReconstructionStatus, leaseFor: target => target.ownerId === id.ownerId && target.sessionId === id.sessionId && target.runId === id.runId ? lease : null } })

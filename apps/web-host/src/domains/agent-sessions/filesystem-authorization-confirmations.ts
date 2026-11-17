@@ -51,7 +51,7 @@ return '1'
 export function createFilesystemAuthorizationConfirmationStore(
   redis: FilesystemAuthorizationRedisCommands,
   createCode: () => string = () => randomBytes(6).toString('hex'),
-): FilesystemAuthorizationConfirmationPort {
+): FilesystemAuthorizationConfirmationPort & { consumeGrant(ownerId: string, summary: string, identity: string): Promise<boolean | null> } {
   return {
     async revoke(ownerId, summary, identity) {
       try {
@@ -114,6 +114,12 @@ export function createFilesystemAuthorizationConfirmationStore(
       } catch {
         return false
       }
+    },
+
+    /** 单条 DEL 原子消费目标授权，避免并发执行重复使用同一确认。 */
+    async consumeGrant(ownerId: string, summary: string, identity: string) {
+      try { return await redis.del(grantKey(ownerId, summary, identity)) === 1 }
+      catch { return null }
     },
   }
 }

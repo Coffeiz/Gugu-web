@@ -1,0 +1,10 @@
+{
+  "apps/web/tests/desktop/DesktopWorkbench.test.ts": {
+    "domain": "desktop-core-ipc",
+    "layer": "L1",
+    "owner": "apps/web/src/desktop/DesktopWorkbench.vue",
+    "productionEntry": "apps/web/desktop.html",
+    "keyBehavior": "通过原生业务桥创建后补读本地列表，不依赖 HTTP；缺少桥时显示错误并恢复交互",
+    "ci": "frontend-vitest"
+  }
+}

@@ -67,6 +67,23 @@ test('test-preview preserves Pydantic integer coercion for numeric-string intege
   assert.equal(malformed.statusCode, 422)
 })
 
+test('saved credential test rejects exponent-form IDs like FastAPI int path parameters', async () => {
+  const app = Fastify()
+  apps.push(app)
+  let reads = 0
+  registerCredentialTestPreviewRoute(app, {
+    requireUser: async () => {},
+    ownerIdFromRequest: () => ownerId,
+    preview: async () => ({ ok: true, status: 200, message: 'unused' }),
+    savedTest: async () => { reads++; return { ok: true, status: 'stored', message: '凭据正常' } },
+  })
+
+  const response = await app.inject({ method: 'POST', url: '/api/v1/byok/1e2/test' })
+
+  assert.equal(response.statusCode, 422)
+  assert.equal(reads, 0)
+})
+
 test('LLM draft probe performs a real local request via the pinned Node transport without following redirects', async () => {
   let captured: { path?: string; authorization?: string; body?: { model?: string } } = {}
   const server = createServer((request, response) => {

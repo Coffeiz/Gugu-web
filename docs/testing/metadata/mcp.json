@@ -1,0 +1,90 @@
+{
+  "apps/web-host/tests/mcp/status.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/mcp/status.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "认证、开关与server/tool限额的Python env/override优先级和热更新",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/mcp/safe-fetch.test.ts": {
+    "domain": "mcp",
+    "layer": "L1",
+    "owner": "apps/web-host/src/modules/mcp/safe-fetch.ts",
+    "productionEntry": "MCP 连接测试 startServer 固定 DNS 出站适配",
+    "keyBehavior": "拒绝跳转、传播 SSE 取消、限制响应体大小",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/mcp/server-routes.test.ts": {
+    "domain": "mcp",
+    "layer": "L1",
+    "owner": "apps/web-host/src/modules/mcp/servers.ts",
+    "productionEntry": "MCP 配置 CRUD 路由原型及创建路由",
+    "keyBehavior": "认证、owner 参数、Python 创建 DTO 与 201 响应",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/mcp/server-create-postgres.test.ts": {
+    "domain": "mcp",
+    "layer": "L2",
+    "owner": "packages/core/src/mcp/server-create.ts",
+    "productionEntry": "apps/web-host/src/main.ts MCP 创建生产接线",
+    "keyBehavior": "owner 配置事务、端点与凭据只存 envelope、限额及 Python 工具快照失效",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/mcp/test-connection-route.test.ts": {
+    "domain": "mcp",
+    "layer": "L1",
+    "owner": "apps/web-host/src/modules/mcp/test-connection.ts",
+    "productionEntry": "apps/web-host/src/app.ts MCP 连接测试认证路由",
+    "keyBehavior": "认证、owner 传递、成功/失败 Python DTO",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/mcp/server-list-route.test.ts": {
+    "domain": "mcp",
+    "layer": "L1",
+    "owner": "apps/web-host/src/modules/mcp/server-list.ts",
+    "productionEntry": "apps/web-host/src/main.ts owner-scoped PG 配置列表与 owner-only 编辑视图",
+    "keyBehavior": "认证/owner 传递、envelope 解密、未加载状态不触发外网",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/mcp/test-connection.test.ts": {
+    "domain": "mcp",
+    "layer": "L1",
+    "owner": "apps/web-host/src/modules/mcp/test-connection.ts",
+    "productionEntry": "apps/web-host/src/main.ts PG MCP 探测组合",
+    "keyBehavior": "owner 限定读取、信封解密、仅 Header 凭据、schema/白名单/热读工具上限过滤、资源关闭和错误脱敏",
+    "ci": "node-webui"
+  },
+  "packages/core/tests/mcp/test-connection.test.ts": {
+    "domain": "mcp",
+    "layer": "L1",
+    "owner": "packages/core/src/mcp/test-connection.ts",
+    "productionEntry": "MCP tools/list 业务筛选",
+    "keyBehavior": "无效声明/白名单过滤、重复名去重及超过单 server 限额时整体拒绝",
+    "ci": "core-node"
+  },
+  "packages/core/tests/mcp/schema-adapter.test.ts": {
+    "domain": "mcp",
+    "layer": "L1",
+    "owner": "packages/core/src/mcp/schema-adapter.ts",
+    "productionEntry": "MCP tools/call 参数预检",
+    "keyBehavior": "沿用 Python 兼容归一化与结构化错误；必填、类型/范围错误和额外字段均在出站调用前拒绝且不回显输入",
+    "ci": "core-node"
+  },
+  "apps/web-host/tests/mcp/sdk-client.test.ts": {
+    "domain": "mcp",
+    "layer": "L1",
+    "owner": "apps/web-host/src/modules/mcp",
+    "productionEntry": "MCP SDK HTTP client over pinned transport",
+    "keyBehavior": "官方 SDK 握手、发现及调用经受控传输",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/mcp/server-mutations-postgres.test.ts": {
+    "domain": "mcp",
+    "layer": "L2",
+    "owner": "packages/core/src/mcp/server-mutations.ts",
+    "productionEntry": "apps/web-host/src/main.ts MCP 配置生产事务",
+    "keyBehavior": "隔离 PostgreSQL 更新密文、owner 隔离和配置快照原子失效",
+    "ci": "node-webui"
+  }
+}

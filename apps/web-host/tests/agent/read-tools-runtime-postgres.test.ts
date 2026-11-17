@@ -21,7 +21,7 @@ import { createPostgresProjectUpdateRuntime } from '../../src/domains/projects/p
 import { ProviderStreamSanitizer, stripThinking } from '@gugu/core/providers'
 import { createAgentMindReader, createSqlMindCanvasReader } from '@gugu/core/mind'
 import { tablesSql } from '../../../../packages/core/src/data/schema.js'
-import { createAgentRuntime } from '../../src/domains/agent-sessions/agent-runtime.js'
+import { createAgentRuntime } from '@gugu/core/agent'
 import { createAgentToolRegistry } from '../../src/domains/agent-sessions/tools/agent-tool-registry.js'
 import { agentContextAccessScope } from '../../src/domains/agent-config/access-scope.js'
 import { bindProviderSelection } from '../../src/domains/agent-config/provider-resolver.js'

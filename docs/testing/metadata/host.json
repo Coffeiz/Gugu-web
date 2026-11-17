@@ -1,0 +1,426 @@
+{
+  "apps/web-host/tests/host/safe-egress-probe-main.integration.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/preferences/safe-egress-probe.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产安全出站探测及动态配置",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/export-preview-main.integration.test.ts": {
+    "domain": "data-portability",
+    "layer": "L2",
+    "owner": "packages/core/src/data-portability/export-preview.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产导出预览与跨用户隔离",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/wechat-connect-tls-main.integration.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/im/wechat-connect.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "微信固定目标经隔离TLS代理的完整扫码、SSE与网关消费者",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/wechat-connect-main.integration.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/im/wechat-connect.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产微信认证与owner、平台和Redis边界",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/feishu-connect-main.integration.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/im/feishu-connect.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产飞书连接认证及生命周期",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/model-directory-main.integration.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/config/admin-model-directory.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产安全传输与配置读取",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/qq-connect-main.integration.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/im/qq-connect.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产QQ扫码合成服务与资源关闭",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/admin-email-test-main.integration.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/email/test-delivery.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产测试邮件与隔离SMTP",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/llm-preset-configuration-main.integration.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/config/llm-preset-selection.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产配置与Python模型选择",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/smtp-probe-main.integration.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/email/smtp-test.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产认证和隔离SMTP测试",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/user-bot-delete-main.integration.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/im/user-bot-delete.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产Bot删除认证和实时通知",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/qq-bot-create-main.integration.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/im/user-bot-create.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产创建和解绑快照失效",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/data-import-apply-main.integration.test.ts": {
+    "domain": "data-portability",
+    "layer": "L2",
+    "owner": "packages/core/src/data-portability/apply-import.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产导入与真实Python Worker两模式消费",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/admin-perception-recent-main.integration.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/perception/recent-misread.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "真实Python生产者、Redis与管理员读取",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/watcher-capacity-main.integration.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/filesync/watcher-capacity.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产认证与隔离Python helper算法",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/ops-summary-main.integration.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/admin/ops-summary.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产管理员认证与真实Redis/Python对照",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/admin-email-preview-main.integration.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/email/preview.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产管理员认证与邮件预览",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/filesync-dry-run-main.integration.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/filesync/dry-run.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产预演、SSE和真实runner无业务副作用",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/admin-user-ban-main.integration.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/admin/user-ban.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产封禁撤销JWT与SSE",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/data-import-resume-main.integration.test.ts": {
+    "domain": "data-portability",
+    "layer": "L2",
+    "owner": "packages/core/src/data-portability/resume-import.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产认证与Python apply令牌消费",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/embedding-probe-main.integration.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/preferences/embedding-probe.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产认证和合成HTTP诊断",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/portable-archive-reader.test.ts": {
+    "domain": "data-portability",
+    "layer": "L2",
+    "owner": "packages/core/src/data-portability/download-export-node.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "Python多块归档跨语言解密与篡改拒绝",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/data-export-download.test.ts": {
+    "domain": "data-portability",
+    "layer": "L2",
+    "owner": "packages/core/src/data-portability/download-export-node.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "导出文件权限、完整性与范围读取",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/export-download-ticket.test.ts": {
+    "domain": "data-portability",
+    "layer": "L2",
+    "owner": "packages/core/src/data-portability/download-export-node.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "限时下载票据与浏览器认证",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/data-export-download-main.integration.test.ts": {
+    "domain": "data-portability",
+    "layer": "L2",
+    "owner": "packages/core/src/data-portability/download-export-node.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产入口下载与范围请求",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/safe-egress-update-main.integration.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/preferences/safe-egress-update.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "管理员写入与Python代理认证配置互通",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/data-export-create.test.ts": {
+    "domain": "data-portability",
+    "layer": "L2",
+    "owner": "packages/core/src/data-portability/create-export.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "导出创建认证、幂等、互斥和参数校验",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/data-export-cancel.test.ts": {
+    "domain": "data-portability",
+    "layer": "L2",
+    "owner": "packages/core/src/data-portability/cancel-export.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "导出取消owner隔离、行锁、回滚与刷新",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/voice-presets-read-main.integration.test.ts": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "apps/web-host/src/main.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产管理员认证和语音配置热读取",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/service-status-main.integration.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/admin/service-status.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产Host服务心跳与Redis队列状态",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/binding-code-main.integration.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "apps/web-host/src/main.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产认证和Redis跨语言绑定码",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/loopscope-proxy.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/loopscope/proxy.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "认证与受限代理协议",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/notification-broadcast-main.integration.test.ts": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "packages/core/src/notifications/broadcast.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产认证、持久通知及实时投递",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/storage-quota-status-main.integration.test.ts": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "packages/core/src/admin/storage-quota-status.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产鉴权和Redis对账状态",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/preferences-main-postgres.integration.test.ts": {
+    "domain": "preferences",
+    "layer": "L2",
+    "owner": "packages/core/src/preferences/document-store.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产 Host 通过 Core 读写偏好并隔离用户",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/data-portability-read.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/data-portability/read-jobs.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "任务状态owner隔离和敏感字段不回显",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/data-portability-main.integration.test.ts": {
+    "domain": "data-portability",
+    "layer": "L2",
+    "owner": "apps/web-host/src/main.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "真实Host认证和四条导入导出任务只读查询",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/user-bots-main.integration.test.ts": {
+    "domain": "im",
+    "layer": "L2",
+    "owner": "apps/web-host/src/main.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产Host认证、owner隔离和平台配置",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/feedback-main-postgres.integration.test.ts": {
+    "domain": "feedback",
+    "layer": "L2",
+    "owner": "packages/core/src/feedback/feedback.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产 Host 用户认证、反馈持久化、管理员查询及隔离 TLS SMTP 邮件投递",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/onboarding-main-postgres.integration.test.ts": {
+    "domain": "onboarding",
+    "layer": "L2",
+    "owner": "packages/core/src/onboarding/store.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产 Host 鉴权后通过 Core 和隔离 PostgreSQL 验证旧播种保留、更新、重开和用户隔离",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/storage-live-totals-route.test.ts": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "packages/core/src/admin/storage-live-totals.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "管理员认证后读取实时存储分类聚合",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/safe-egress-config-reader.test.ts": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/admin/safe-egress-settings.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "安全出站配置覆盖优先级和凭据保护",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/admin-analytics-main.integration.test.ts": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "packages/core/src/admin/analytics.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产入口管理员分析查询、过滤与趋势合同",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/system-logs-route.test.ts": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "packages/core/src/admin/system-logs.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "管理员日志协议参数和鉴权",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/admin-audit-settings-main.integration.test.ts": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "apps/web-host/src/main.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产启动入口验证管理员五条API与用户引导重置持久化",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/notification-admin-main.integration.test.ts": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "apps/web-host/src/main.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产启动管理员通知历史筛选和幂等删除",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/notification-admin-history.test.ts": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "packages/core/src/notifications/admin-history.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "管理员通知历史读取删除及未授权拒绝",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/project-calendar-main-vite.integration.test.ts": {
+    "domain": "web-host-calendar-project",
+    "layer": "L3",
+    "owner": "apps/web-host/src/main.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "生产 Host 与 Vite 经隔离 PostgreSQL 完成项目、日历创建、幂等、撤销及 RAG 混合并发",
+    "ci": "web-host-node"
+  },
+  "apps/web-host/tests/host/byok-create-main.integration.test.ts": {
+    "domain": "byok",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/byok",
+    "productionEntry": "BYOK POST/GET/PATCH/models-preview/media-capability-probe/capabilities startServer 生产入口",
+    "keyBehavior": "隔离 PG create→list→patch→媒体探测、Provider 本地真实传输、owner认证、目的地绑定、密钥遮蔽及 Python 解密",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/mcp-server-create-host.test.ts": {
+    "domain": "mcp",
+    "layer": "L2",
+    "owner": "apps/web-host/src/main.ts MCP 创建接线",
+    "productionEntry": "createApp 认证路由与注入 Core creator",
+    "keyBehavior": "JWT owner 优先于伪造 header，未认证请求无业务副作用",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/mcp-server-mutations-host.test.ts": {
+    "domain": "mcp",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/mcp/servers.ts + apps/web-host/src/app.ts",
+    "productionEntry": "createApp 认证 MCP 配置 CRUD 路由与注入 Core mutations",
+    "keyBehavior": "认证 owner 限定配置 PATCH/DELETE、Core not_found 映射为 404 且回执保持兼容",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/host/admin-llm-presets-host.test.ts": {
+    "domain": "byok",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/admin/llm-preset-read.ts + apps/web-host/src/main.ts",
+    "productionEntry": "startServer → Admin guard → Core 只读投影 → 运行配置文件",
+    "keyBehavior": "认证先于读取，真实 Host list 路由不依赖 CRUD 原型装配",
+    "ci": "web-host-node"
+  },
+  "apps/web-host/tests/host/app.test.ts": {
+    "domain": "agent-greeting",
+    "layer": "L2",
+    "owner": "apps/web-host/src/app.ts",
+    "productionEntry": "createApp 认证用户 token → owner 上下文 → Agent Misc Greeting route",
+    "keyBehavior": "认证失败时不执行问候；伪造 owner query/header 不改变经过认证的 owner",
+    "ci": "web-host-node"
+  }
+}

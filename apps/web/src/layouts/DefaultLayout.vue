@@ -170,7 +170,7 @@ onBeforeUnmount(() => liveStore.disconnect())
 
 const currentTitle = computed(() => route.meta.title ? t(String(route.meta.title)) : t('navigation.defaultTitle'))
 const fullBleed    = computed(() => !!route.meta.fullBleed)
-const isCanvasWorkspace = computed(() => route.path.startsWith('/mind/canvases'))
+const isCanvasWorkspace = computed(() => route.path.startsWith('/canvases'))
 
 const todayStr = computed(() => {
   // 中文日期格式默认会把日期和星期连在一起，增加一个可见间隔。

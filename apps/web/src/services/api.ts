@@ -5,6 +5,7 @@ import type { components } from '@/types/api'
 import { BASE_URL, CLIENT_ID, UNDO_CONTEXT_ID, del, get, getCookieValue, getCsrfHeaders, patch, post, put, request, upload, uploadWithProgress } from '@/api/client'
 import type { RequestMeta } from '@/api/client'
 import { getLocale, i18n, type SupportedLocale } from '@/i18n'
+import { desktopData } from '@/desktop/bridge'
 import { isUnauthorizedResponse } from '@/services/authSession'
 
 export { CLIENT_ID, UNDO_CONTEXT_ID, getCookieValue, getCsrfHeaders, uploadWithProgress }
@@ -546,39 +547,68 @@ export interface MindCanvasNoteCreate {
   z?: number
 }
 
+function desktopBridge() {
+  return typeof window !== 'undefined' && (document.documentElement.dataset.desktopShell === 'true' || 'guguDesktop' in window) ? desktopData : undefined
+}
+
 export const mindApi = {
-  listNotes:  (limit = 50, offset = 0) => get<MindNote[]>(`/mind/notes?limit=${limit}&offset=${offset}`),
-  getNote:    (id: number) => get<MindNote>(`/mind/notes/${id}`),
-  createNote: (data: MindNoteCreate)             => post<MindNote>('/mind/notes', data),
-  updateNote: (id: number, data: MindNoteUpdate, meta?: RequestMeta) => patch<MindNote>(`/mind/notes/${id}`, data, meta),
-  deleteNote: (id: number, meta?: RequestMeta)                       => del(`/mind/notes/${id}`, meta),
-  refSuggest: (q: string, limit = 6) =>
-    get<MindRefSuggestItem[]>(`/mind/ref-suggest?q=${encodeURIComponent(q)}&limit=${limit}`),
-  canvasNoteLocation: (nodeId: number) => get<{ canvasId: number }>(`/mind/nodes/${nodeId}/canvas-location`),
-  listCanvases: () => get<MindCanvas[]>('/mind/canvases'),
-  createCanvas: (data: { title?: string; projectId?: number | null } = {}) =>
-    post<MindCanvas>('/mind/canvases', data),
-  updateCanvas: (id: number, data: { title?: string; data?: Record<string, unknown> }) =>
-    patch<MindCanvas>(`/mind/canvases/${id}`, data),
-  deleteCanvas: (id: number) => del(`/mind/canvases/${id}`),
-  listCanvasItems: (id: number) => get<MindCanvasItem[]>(`/mind/canvases/${id}/items`),
+  listNotes:  async (limit = 50, offset = 0) => {
+    if (desktopBridge()) return (await desktopBridge()!.notes()).slice(offset, offset + limit) as MindNote[]
+    return get<MindNote[]>(`/mind/notes?limit=${limit}&offset=${offset}`)
+  },
+  getNote: async (id: number) => {
+    if (desktopBridge()) {
+      const note = (await desktopBridge()!.notes()).find(item => item.id === id)
+      if (!note) throw new Error('便签不存在')
+      return note as MindNote
+    }
+    return get<MindNote>(`/mind/notes/${id}`)
+  },
+  createNote: (data: MindNoteCreate) => desktopBridge() ? desktopBridge()!.createNote(data.contentMd, data.color ?? undefined) as Promise<MindNote> : post<MindNote>('/mind/notes', data),
+  updateNote: (id: number, data: MindNoteUpdate, meta?: RequestMeta) => desktopBridge() ? desktopBridge()!.updateNote(id, data) as Promise<MindNote> : patch<MindNote>(`/mind/notes/${id}`, data, meta),
+  deleteNote: (id: number, meta?: RequestMeta) => desktopBridge() ? desktopBridge()!.deleteNote(id) : del(`/mind/notes/${id}`, meta),
+  refSuggest: async (q: string, limit = 6) => {
+    if (desktopBridge()) {
+      const query = q.trim().toLocaleLowerCase()
+      if (!query) return []
+      const [projects, events] = await Promise.all([desktopData.projects(), desktopData.calendar()])
+      return [
+        ...projects.filter(item => item.name.toLocaleLowerCase().includes(query)).map(item => ({ type: 'project' as const, id: item.id, label: item.name })),
+        ...events.filter(item => item.title.toLocaleLowerCase().includes(query)).map(item => ({ type: 'event' as const, id: item.id, label: item.title, subtitle: item.date })),
+      ].slice(0, limit)
+    }
+    return get<MindRefSuggestItem[]>(`/mind/ref-suggest?q=${encodeURIComponent(q)}&limit=${limit}`)
+  },
+  canvasNoteLocation: async (nodeId: number) => {
+    if (desktopBridge()) {
+      const location = await desktopData.canvasNoteLocation(nodeId)
+      if (!location) throw new Error('画布便签位置不存在')
+      return location
+    }
+    return get<{ canvasId: number }>(`/mind/nodes/${nodeId}/canvas-location`)
+  },
+  listCanvases: () => desktopBridge() ? desktopBridge()!.canvases() as Promise<MindCanvas[]> : get<MindCanvas[]>('/mind/canvases'),
+  createCanvas: (data: { title?: string; projectId?: number | null } = {}) => desktopBridge() ? desktopBridge()!.createCanvas(data.title ?? '') as Promise<MindCanvas> : post<MindCanvas>('/mind/canvases', data),
+  updateCanvas: (id: number, data: { title?: string; data?: Record<string, unknown> }) => desktopBridge() ? desktopBridge()!.updateCanvas(id, data) as Promise<MindCanvas> : patch<MindCanvas>(`/mind/canvases/${id}`, data),
+  deleteCanvas: (id: number) => desktopBridge() ? desktopBridge()!.deleteCanvas(id) : del(`/mind/canvases/${id}`),
+  listCanvasItems: (id: number) => desktopBridge() ? desktopBridge()!.canvasItems(id) as Promise<MindCanvasItem[]> : get<MindCanvasItem[]>(`/mind/canvases/${id}/items`),
   addCanvasItem: (id: number, data: { nodeId: number; x?: number; y?: number; w?: number | null; h?: number | null; z?: number; collapsed?: boolean; data?: Record<string, unknown> }, meta?: RequestMeta) =>
-    post<MindCanvasItem>(`/mind/canvases/${id}/items`, data, meta),
+    desktopBridge() ? desktopData.addCanvasItem(id, data) as Promise<MindCanvasItem> : post<MindCanvasItem>(`/mind/canvases/${id}/items`, data, meta),
   createCanvasNote: (id: number, data: MindCanvasNoteCreate) =>
-    post<MindCanvasItem>(`/mind/canvases/${id}/notes`, data),
+    desktopBridge() ? desktopBridge()!.createCanvasNote(id, data) as Promise<MindCanvasItem> : post<MindCanvasItem>(`/mind/canvases/${id}/notes`, data),
   updateCanvasNote: (id: number, data: { title?: string; contentMd?: string; color?: string | null; version: number }, meta?: RequestMeta) =>
-    patch<MindNote>(`/mind/nodes/${id}`, data, meta),
+    desktopBridge() ? desktopBridge()!.updateCanvasNote(id, data) as Promise<MindNote> : patch<MindNote>(`/mind/nodes/${id}`, data, meta),
   updateCanvasItem: (canvasId: number, itemId: number, data: Partial<Pick<MindCanvasItem, 'x' | 'y' | 'w' | 'h' | 'z' | 'collapsed' | 'data'>>, meta?: RequestMeta) =>
-    patch<MindCanvasItem>(`/mind/canvases/${canvasId}/items/${itemId}`, data, meta),
+    desktopBridge() ? desktopBridge()!.updateCanvasItem(canvasId, itemId, data) as Promise<MindCanvasItem> : patch<MindCanvasItem>(`/mind/canvases/${canvasId}/items/${itemId}`, data, meta),
   bringCanvasItemToFront: (canvasId: number, itemId: number, data: { x: number; y: number }, meta?: RequestMeta) =>
-    post<MindCanvasItem>(`/mind/canvases/${canvasId}/items/${itemId}/bring-to-front`, data, meta),
-  removeCanvasItem: (canvasId: number, itemId: number, meta?: RequestMeta) => del(`/mind/canvases/${canvasId}/items/${itemId}`, meta),
-  listCanvasRelations: (id: number) => get<MindRelation[]>(`/mind/canvases/${id}/relations`),
+    desktopBridge() ? desktopData.bringCanvasItemToFront(canvasId, itemId, data) as Promise<MindCanvasItem> : post<MindCanvasItem>(`/mind/canvases/${canvasId}/items/${itemId}/bring-to-front`, data, meta),
+  removeCanvasItem: (canvasId: number, itemId: number, meta?: RequestMeta) => desktopBridge() ? desktopBridge()!.deleteCanvasItem(canvasId, itemId) : del(`/mind/canvases/${canvasId}/items/${itemId}`, meta),
+  listCanvasRelations: (id: number) => desktopBridge() ? desktopBridge()!.canvasRelations(id) as Promise<MindRelation[]> : get<MindRelation[]>(`/mind/canvases/${id}/relations`),
   createRelation: (canvasId: number, srcNodeId: number, dstNodeId: number, allowParallel = false) =>
-    post<MindRelation>('/mind/relations', { canvasId, srcNodeId, dstNodeId, allowParallel }),
-  deleteRelation: (canvasId: number, id: number) => del(`/mind/canvases/${canvasId}/relations/${id}`),
+    desktopBridge() ? desktopData.createCanvasRelation({ canvasId, srcNodeId, dstNodeId, allowParallel }) as Promise<MindRelation> : post<MindRelation>('/mind/relations', { canvasId, srcNodeId, dstNodeId, allowParallel }),
+  deleteRelation: (canvasId: number, id: number) => desktopBridge() ? desktopData.deleteCanvasRelation(canvasId, id) : del(`/mind/canvases/${canvasId}/relations/${id}`),
   createRefNode: (refType: 'project' | 'file' | 'event', refId: number, meta?: RequestMeta) =>
-    post<MindNote>('/mind/nodes/ref', { refType, refId }, meta),
+    desktopBridge() ? desktopData.createRefNode(refType, refId) as Promise<MindNote> : post<MindNote>('/mind/nodes/ref', { refType, refId }, meta),
 }
 
 // ── Folders ───────────────────────────────────────────────────────────────────
@@ -952,6 +982,13 @@ export const searchApi = {
     return request('GET', `/search?${params.toString()}`, null, false, signal)
   },
   queryNotes: (query: string, signal?: AbortSignal) => {
+    if (desktopBridge()) {
+      if (signal?.aborted) return Promise.reject(new DOMException('已取消', 'AbortError'))
+      const normalized = query.trim().toLocaleLowerCase()
+      return desktopData.notes().then(notes => ({
+        groups: [{ type: 'note', items: notes.filter(note => `${note.title ?? ''}\n${note.contentMd}`.toLocaleLowerCase().includes(normalized)).map(note => ({ id: note.id })) }],
+      }))
+    }
     const params = new URLSearchParams({ mode: 'OR', per_type: '200', types: 'note' })
     params.append('queries', query)
     return request('GET', `/search?${params.toString()}`, null, false, signal)

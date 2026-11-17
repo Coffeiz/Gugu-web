@@ -10,7 +10,7 @@ export interface NativeProcess {
   dispose(): void
 }
 export type NativeSpawn = (request: {
-  containment: { type: 'process' }
+  containment: { type: 'process' | 'bubblewrap' }
   command: string
   workingDirectory: string
   timeoutMs: number
@@ -33,8 +33,8 @@ export class MxcExecutor implements ExecutionBackend {
     timeout: true,
     cancellation: true,
   })
-  constructor(private spawn: NativeSpawn) {}
-  async execute(policy: ExecutionPolicy, signal?: AbortSignal): Promise<ExecutionResult> {
+  constructor(private spawn: NativeSpawn, private containment: 'process' | 'bubblewrap' = 'process') {}
+  async execute(policy: ExecutionPolicy, signal?: AbortSignal, onOutput?: (stream: 'stdout' | 'stderr', chunk: Uint8Array) => void): Promise<ExecutionResult> {
     if (signal?.aborted) throw new ExecutionError('cancelled', '执行已取消')
     let child: NativeProcess | undefined
     const output: Buffer[] = [],
@@ -49,23 +49,26 @@ export class MxcExecutor implements ExecutionBackend {
         /* 后续 wait/dispose 完成回收，原始异常不透出。 */
       }
     }
-    const collect = (target: Buffer[]) => (value: Buffer | string) => {
+    const collect = (target: Buffer[], stream: 'stdout' | 'stderr') => (value: Buffer | string) => {
       const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value)
       size += chunk.length
       if (size > policy.maxOutputBytes) {
         exceeded = true
         cancel()
-      } else target.push(chunk)
+      } else {
+        target.push(chunk)
+        try { onOutput?.(stream, chunk) } catch { /* 通知失败不能中断命令执行。 */ }
+      }
     }
-    const stdout = collect(output),
-      stderr = collect(errors)
+    const stdout = collect(output, 'stdout'),
+      stderr = collect(errors, 'stderr')
     const streamError = () => {
       streamFailed = true
       cancel()
     }
     try {
       child = await this.spawn({
-        containment: { type: 'process' },
+        containment: { type: this.containment },
         command: policy.command,
         workingDirectory: policy.cwd,
         timeoutMs: policy.timeoutMs,

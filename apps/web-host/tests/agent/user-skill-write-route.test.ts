@@ -3,7 +3,7 @@ import Fastify from 'fastify'
 import test from 'node:test'
 import { CoreError } from '@gugu/core'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
-import { registerUserSkillWriteRoutes } from '../../src/modules/agent-skills/user-write.js'
+import { registerUserSkillWriteRoutes } from '../../src/modules/skills/user-write.js'
 
 const skillRow = (id: string, name: string, related_tools: readonly string[] = []) => ({
   id, name, description_short: '摘要', description_long: null, category: 'personal', related_tools: [...related_tools],

@@ -1,6 +1,7 @@
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify'
 import { applyImMaintenanceOutput } from '@gugu/core/im-memory-maintenance-apply'
 import { scopeRevision } from '@gugu/core/im-memory-maintenance-batches'
+import { GROUP_DAILY_HARD_CAP, parseGroupDailyEntries } from '@gugu/core/im-group-daily-compaction'
 import type { ImMaintenanceCursor, ImMaintenanceMessage } from '@gugu/core/im-memory-maintenance-source'
 import { openLocalFile, UnsafeLocalPathError, writeLocalFile } from '@gugu/fs/node'
 
@@ -22,6 +23,13 @@ export interface ImMemoryMaintenanceApplyPorts {
     read(key: string): Promise<string | null>
     write(key: string, text: string): Promise<void>
   }
+  /** RAG 投影先撤回旧文档；scope 文件变更后推进可信 revision 并排入重建。 */
+  memoryIndex: {
+    invalidate(ownerId: string): Promise<void>
+    changed(scope: Pick<ImMaintenanceCursor, 'owner_user_id' | 'platform' | 'bot_id' | 'scope_type' | 'scope_id'>): Promise<void>
+  }
+  compactGroupDaily?(scope: Pick<ImMaintenanceCursor, 'owner_user_id' | 'platform' | 'bot_id' | 'scope_type' | 'scope_id'>, currentMemory: string, daily: string): Promise<void>
+  onGroupDailyCompactionError?(): void
   now?: () => number
 }
 
@@ -46,7 +54,7 @@ function safeComponent(value: unknown): string {
   return text
 }
 
-function scopeKey(plan: ScopePlan, filename: string): string {
+export function imMemoryMaintenanceScopeFileKey(plan: Pick<ImMaintenanceCursor, 'owner_user_id' | 'platform' | 'bot_id' | 'scope_type' | 'scope_id'>, filename: string): string {
   const type = plan.scope_type
   if (type !== 'group' && type !== 'platform-user') throw new ImMemoryMaintenanceApplyError(400, '模型预览计划无效')
   const branch = type === 'group' ? 'groups' : 'platform-users'
@@ -64,7 +72,7 @@ async function readScope(plan: ScopePlan, storage: ImMemoryMaintenanceApplyPorts
     : ['profile.json', 'pattern.json', 'summary.json', 'daily.md', 'memory.md']
   const scope: RecordValue = {}
   for (const filename of files) {
-    const key = scopeKey(plan, filename)
+    const key = imMemoryMaintenanceScopeFileKey(plan, filename)
     const raw = await storage.read(key)
     const field = filename.replace(/\.(?:json|md)$/u, '')
     if (filename.endsWith('.md')) scope[field] = raw?.trim() ?? ''
@@ -81,7 +89,7 @@ async function readScope(plan: ScopePlan, storage: ImMemoryMaintenanceApplyPorts
 
 function renderMessage(message: ImMaintenanceMessage): string {
   const timestamp = message.created_at == null ? '未知时间'
-    : message.created_at instanceof Date ? message.created_at.toISOString()
+    : message.created_at instanceof Date ? message.created_at.toISOString().replace(/Z$/u, '+00:00')
       : String(message.created_at)
   const name = message.platform_user_name || '未提供昵称'
   const sender = message.platform_user_id || '未知ID'
@@ -99,10 +107,15 @@ function jsonFile(value: unknown): string { return `${JSON.stringify(value, null
 function filesToWrite(scopeType: string, result: ReturnType<typeof applyImMaintenanceOutput>): Array<[string, string]> {
   const files: Array<[string, string]> = []
   if (result.profile !== undefined) files.push(['profile.json', jsonFile(result.profile)])
-  if (result.pattern !== undefined) files.push(['pattern.json', jsonFile(result.pattern)])
-  if (result.summary !== undefined) files.push(['summary.json', jsonFile(result.summary)])
-  if (result.daily !== undefined) files.push(['daily.md', result.daily])
-  if (scopeType === 'group' && result.members !== undefined) files.push(['members.json', jsonFile(result.members)])
+  if (scopeType === 'group') {
+    if (result.members !== undefined) files.push(['members.json', jsonFile(result.members)])
+    if (result.daily !== undefined) files.push(['daily.md', result.daily])
+    if (result.summary !== undefined) files.push(['summary.json', jsonFile(result.summary)])
+  } else {
+    if (result.pattern !== undefined) files.push(['pattern.json', jsonFile(result.pattern)])
+    if (result.summary !== undefined) files.push(['summary.json', jsonFile(result.summary)])
+    if (result.daily !== undefined) files.push(['daily.md', result.daily])
+  }
   return files
 }
 
@@ -149,16 +162,46 @@ export function createImMemoryMaintenanceApplier(ports: ImMemoryMaintenanceApply
     }
 
     let applied = 0
+    const invalidatedOwners = new Set<string>()
     for (const { plan, current, messages } of validated) {
       const appliedAt = now()
       const result = applyImMaintenanceOutput({
         scopeType: plan.scope_type, current, output: plan.output ?? {},
         now: appliedAt, date: sourceDate(messages, appliedAt),
       })
-      for (const [filename, content] of filesToWrite(plan.scope_type, result)) {
-        if (await ports.isTombstoned(plan)) break
-        await ports.storage.write(scopeKey(plan, filename), content)
+      let dailyWritten = false
+      let changed = false
+      let failed = false
+      let failure: unknown
+      try {
+        for (const [filename, content] of filesToWrite(plan.scope_type, result)) {
+          if (await ports.isTombstoned(plan)) break
+          if (!invalidatedOwners.has(plan.owner_user_id)) {
+            await ports.memoryIndex.invalidate(plan.owner_user_id)
+            invalidatedOwners.add(plan.owner_user_id)
+          }
+          // write 实现可能在抛错前已完成原子替换；先标记，finally 路径仍刷新实际文件状态。
+          changed = true
+          await ports.storage.write(imMemoryMaintenanceScopeFileKey(plan, filename), content)
+          if (filename === 'daily.md') dailyWritten = true
+        }
+      } catch (error) {
+        failed = true
+        failure = error
       }
+      if (plan.scope_type === 'group' && dailyWritten && result.daily !== undefined && ports.compactGroupDaily) {
+        try { await ports.compactGroupDaily(plan, typeof current.memory === 'string' ? current.memory : '', result.daily) }
+        catch {
+          if (parseGroupDailyEntries(result.daily).length >= GROUP_DAILY_HARD_CAP) ports.onGroupDailyCompactionError?.()
+        }
+      }
+      // 若文件写入部分失败，仍为已写入的实际状态推进 scope revision 并排入重建；
+      // 失败时旧索引已在写入前撤回，不能继续返回过期内容。
+      if (changed) {
+        try { await ports.memoryIndex.changed(plan) }
+        catch (error) { if (!failed) { failed = true; failure = error } }
+      }
+      if (failed) throw failure
       applied++
     }
     await ports.state.delete(IM_MEMORY_MODEL_PREVIEW_PLAN_KEY)

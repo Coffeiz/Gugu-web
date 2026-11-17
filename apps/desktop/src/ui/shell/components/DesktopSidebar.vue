@@ -18,8 +18,9 @@ const emit = defineEmits<{
         <span class="nav-group-label">工作区</span>
         <button type="button" class="nav-item" :class="{ active: activeSection === 'projects' }" aria-label="项目" @click="emit('navigate', 'projects')"><Icon name="navigation.projects" size="sm" /><span class="nav-label">项目</span></button>
         <button type="button" class="nav-item" :class="{ active: activeSection === 'calendar' }" aria-label="日历" @click="emit('navigate', 'calendar')"><Icon name="navigation.calendar" size="sm" /><span class="nav-label">日历</span></button>
-        <button type="button" class="nav-item" :class="{ active: activeSection === 'canvases' || activeSection === 'notes' }" aria-label="思维" @click="emit('navigate', 'canvases')"><Icon name="canvas.note" size="sm" /><span class="nav-label">思维</span></button>
-        <button type="button" class="nav-item nav-item-disabled" :class="{ active: activeSection === 'schedules' }" aria-label="定时任务" @click="emit('navigate', 'schedules')"><Icon name="admin.alarm" size="sm" /><span class="nav-label">定时任务</span></button>
+        <button type="button" class="nav-item" :class="{ active: activeSection === 'notes' }" aria-label="笔记" @click="emit('navigate', 'notes')"><Icon name="canvas.note" size="sm" /><span class="nav-label">笔记</span></button>
+        <button type="button" class="nav-item" :class="{ active: activeSection === 'canvases' }" aria-label="画布" @click="emit('navigate', 'canvases')"><Icon name="canvas.graph" size="sm" /><span class="nav-label">画布</span></button>
+        <button type="button" class="nav-item" :class="{ active: activeSection === 'schedules' }" aria-label="定时任务" @click="emit('navigate', 'schedules')"><Icon name="admin.alarm" size="sm" /><span class="nav-label">定时任务</span></button>
       </div>
       <div class="nav-group">
         <span class="nav-group-label">资源</span>

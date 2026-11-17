@@ -57,7 +57,7 @@ const routes: RouteRecordRaw[] = [
         const view = localStorage.getItem('gugu-default-view')
         return view === 'calendar' ? '/calendar'
           : view === 'files' ? '/files'
-          : view === 'mind' ? '/mind'
+          : view === 'mind' ? (localStorage.getItem('mind-last-mode') === 'canvas' ? '/canvases' : '/notes')
           : '/projects'
       } },
       // 总览面板暂时隐藏（个人用户用处不大，默认进项目）；代码保留，未来作团队功能再开启。
@@ -118,35 +118,26 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'navigation.terminals' },
       },
       {
-        // 思维面板：记录时间流与空间画布共享便签本体，但各自拥有独立界面。
-        // fullBleed：思维是「工作台」不是「管理」视图，隐藏 topbar 让便签流/画布铺满内容区
-        // （笔记页UI设计.md）；topbar 的全局搜索由页内胶囊条的便签筛选补位
-        path: 'mind',
+        // 笔记与画布是独立路由，共用 mind 数据与组件模块。
+        path: 'notes',
         component: () => import('@/views/Mind/index.vue'),
-        meta: { title: 'navigation.mind', fullBleed: true },
-        children: [
-          {
-            path: '',
-            // 侧栏入口始终是 /mind：恢复用户上次停留的子视图；失效的画布 id 由 CanvasView 回退。
-            redirect: () => {
-              const lastMode = localStorage.getItem('mind-last-mode')
-              return lastMode === 'canvas' ? '/mind/canvases' : '/mind/notes'
-            },
-          },
-          {
-            path: 'notes',
-            name: 'MindNotes',
-            component: () => import('@/views/Mind/NotesThreePaneView.vue'),
-            meta: { title: 'navigation.mind', fullBleed: true },
-          },
-          {
-            path: 'canvases',
-            name: 'MindCanvas',
-            component: () => import('@/views/Mind/CanvasView.vue'),
-            meta: { title: 'navigation.mind', fullBleed: true },
-          },
-        ],
+        meta: { title: 'mind.notes', fullBleed: true },
+        children: [{ path: '', name: 'MindNotes', component: () => import('@/views/Mind/NotesThreePaneView.vue') }],
       },
+      {
+        path: 'canvases',
+        name: 'MindCanvas',
+        component: () => import('@/views/Mind/CanvasView.vue'),
+        meta: { title: 'mind.canvases', fullBleed: true },
+        beforeEnter: () => { localStorage.setItem('mind-last-mode', 'canvas') },
+      },
+      {
+        // 旧链接兼容；新导航与生成的链接使用 /notes 和 /canvases。
+        path: 'mind',
+        redirect: () => localStorage.getItem('mind-last-mode') === 'canvas' ? '/canvases' : '/notes',
+      },
+      { path: 'mind/notes', redirect: to => ({ path: '/notes', query: to.query, hash: to.hash }) },
+      { path: 'mind/canvases', redirect: to => ({ path: '/canvases', query: to.query, hash: to.hash }) },
       {
         path: 'schedules',
         name: 'Schedules',

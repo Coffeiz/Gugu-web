@@ -47,11 +47,10 @@ function cursor(row: Record<string, unknown>): ImMaintenanceCursor {
 /** Core 只读 IM 维护输入。Host 负责管理员权限、模型调用与 Local 文件适配。 */
 export function createImMaintenanceSource<DB>(db: Kysely<DB>) {
   return {
-    async listCursors(limit = 10_000): Promise<ImMaintenanceCursor[]> {
-      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) throw new RangeError('IM 记忆游标上限无效')
+    async listCursors(): Promise<ImMaintenanceCursor[]> {
       const rows = (await sql<Record<string, unknown>>`
         SELECT owner_user_id,platform,bot_id,scope_type,scope_id,last_message_id,last_reflected_message_id
-        FROM memory_reflection_cursors ORDER BY updated_at DESC LIMIT ${limit}
+        FROM memory_reflection_cursors ORDER BY updated_at DESC
       `.execute(db)).rows
       return rows.map(cursor)
     },

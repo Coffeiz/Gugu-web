@@ -5,6 +5,7 @@ import {
   createFilesystemAuthorizationConfirmationStore,
   type FilesystemAuthorizationRedisCommands,
 } from '../../src/domains/agent-sessions/filesystem-authorization-confirmations.js'
+import { createTerminalConfirmationGate } from '../../src/modules/terminals/confirmation.js'
 
 class MemoryConfirmationRedis implements FilesystemAuthorizationRedisCommands {
   readonly values = new Map<string, string>()
@@ -46,6 +47,20 @@ function hash(value: string) {
   return createHash('sha256').update(value, 'utf8').digest('hex')
 }
 
+test('Shell 确认绑定完整命令和工作目录并仅消费一次', async () => {
+  const redis = new MemoryConfirmationRedis()
+  const store = createFilesystemAuthorizationConfirmationStore(redis, () => 'a1b2c3d4e5f6')
+  const gate = createTerminalConfirmationGate(store)
+  const input = { command: 'rm -rf tmp', sessionId: 42, workspaceId: 7, cwd: '.' }
+  const pending = await gate('owner', input)
+  assert.equal(pending.allowed, false)
+  if (pending.allowed) throw new Error('应要求确认')
+  const code = JSON.parse(pending.error).confirm_code
+  assert.equal((await gate('owner', { ...input, cwd: 'other', confirmCode: code })).allowed, false)
+  assert.equal((await gate('owner', input)).allowed, true)
+  assert.equal((await gate('owner', input)).allowed, false)
+})
+
 test('Redis 确认码与 Python 键协议兼容、按 owner 和会话身份隔离且只能兑换一次', async () => {
   const redis = new MemoryConfirmationRedis()
   const store = createFilesystemAuthorizationConfirmationStore(redis, () => 'a1b2c3d4e5f6')
@@ -72,6 +87,9 @@ test('Redis 确认码与 Python 键协议兼容、按 owner 和会话身份隔�
   assert.equal(await store.hasGrant(owner, summary, 'session:filesystem:43'), false)
   assert.equal(await store.redeem(owner, code!), false)
 
+  assert.deepEqual((await Promise.all([store.consumeGrant(owner, summary, identity), store.consumeGrant(owner, summary, identity)])).sort(), [false, true])
+  assert.equal(await store.hasGrant(owner, summary, identity), false)
+
   assert.equal(await store.revoke(owner, summary, identity), true)
   assert.equal(await store.hasGrant(owner, summary, identity), false)
   assert.equal(await redis.get(reqKey), null)
@@ -89,4 +107,5 @@ test('Redis 故障或无效确认码 fail closed', async () => {
   assert.equal(await store.createPending('owner', summary, 'session:filesystem:1', 10), null)
   assert.equal(await store.redeem('owner', 'invalid'), false)
   assert.equal(await store.hasGrant('owner', summary, 'session:filesystem:1'), false)
+  assert.equal(await store.consumeGrant('owner', summary, 'session:filesystem:1'), null)
 })

@@ -17,6 +17,13 @@ export const DESKTOP_METHODS = [
   'onboarding.desktop.get',
   'mind.canvases.list',
   'mind.canvases.items.list',
+  'mind.canvases.relations.list',
+  'mind.canvases.items.add',
+  'mind.canvases.items.bring-to-front',
+  'mind.canvases.relations.create',
+  'mind.canvases.relations.delete',
+  'mind.ref.create',
+  'mind.canvas-note.location',
   'mind.canvases.create',
   'mind.canvases.update',
   'mind.canvases.delete',
@@ -47,6 +54,11 @@ export const DESKTOP_MUTATIONS: readonly string[] = [
   'mind.canvases.notes.update',
   'mind.canvases.items.update',
   'mind.canvases.items.delete',
+  'mind.canvases.items.add',
+  'mind.canvases.items.bring-to-front',
+  'mind.canvases.relations.create',
+  'mind.canvases.relations.delete',
+  'mind.ref.create',
 ]
 export const DESKTOP_CHANNELS = {
   projects: 'gugu:projects:list',
@@ -68,6 +80,13 @@ export const DESKTOP_CHANNELS = {
   updateCanvas: 'gugu:mind:canvases:update',
   deleteCanvas: 'gugu:mind:canvases:delete',
   canvasItems: 'gugu:mind:canvases:items:list',
+  canvasRelations: 'gugu:mind:canvases:relations:list',
+  addCanvasItem: 'gugu:mind:canvases:items:add',
+  bringCanvasItemToFront: 'gugu:mind:canvases:items:bring-to-front',
+  createCanvasRelation: 'gugu:mind:canvases:relations:create',
+  deleteCanvasRelation: 'gugu:mind:canvases:relations:delete',
+  createRefNode: 'gugu:mind:ref:create',
+  canvasNoteLocation: 'gugu:mind:canvas-note:location',
   createCanvasNote: 'gugu:mind:canvases:notes:create',
   updateCanvasNote: 'gugu:mind:canvases:notes:update',
   updateCanvasItem: 'gugu:mind:canvases:items:update',
@@ -163,12 +182,19 @@ export interface DesktopBridge {
   deleteCalendarEvent(id: number, version: number): Promise<DesktopReply<null>>
   canvases(): Promise<DesktopReply<DesktopCanvas[]>>
   createCanvas(title: string): Promise<DesktopReply<DesktopCanvas>>
-  updateCanvas(id: number, body: { title: string }): Promise<DesktopReply<DesktopCanvas>>
+  updateCanvas(id: number, body: { title?: string; data?: Record<string, unknown> }): Promise<DesktopReply<DesktopCanvas>>
   deleteCanvas(id: number): Promise<DesktopReply<null>>
   canvasItems(canvasId: number): Promise<DesktopReply<DesktopCanvasItem[]>>
-  createCanvasNote(canvasId: number, contentMd: string, color?: string, x?: number, y?: number): Promise<DesktopReply<DesktopCanvasItem>>
+  canvasRelations(canvasId: number): Promise<DesktopReply<Array<{ id: number; canvasId: number | null; srcNodeId: number; dstNodeId: number; relType: string; origin: string; status: string; createdAt: string; updatedAt: string }>>>
+  addCanvasItem(canvasId: number, body: { nodeId: number; x?: number; y?: number; w?: number | null; h?: number | null; z?: number; collapsed?: boolean; data?: Record<string, unknown> }): Promise<DesktopReply<DesktopCanvasItem>>
+  bringCanvasItemToFront(canvasId: number, id: number, body: { x: number; y: number }): Promise<DesktopReply<DesktopCanvasItem>>
+  createCanvasRelation(body: { canvasId: number; srcNodeId: number; dstNodeId: number; allowParallel?: boolean }): Promise<DesktopReply<unknown>>
+  deleteCanvasRelation(canvasId: number, id: number): Promise<DesktopReply<null>>
+  createRefNode(refType: 'project' | 'file' | 'event', refId: number): Promise<DesktopReply<DesktopNote>>
+  canvasNoteLocation(nodeId: number): Promise<DesktopReply<{ canvasId: number } | null>>
+  createCanvasNote(canvasId: number, body: { title?: string; contentMd?: string; color?: string | null; x?: number; y?: number; w?: number | null; h?: number | null; z?: number }): Promise<DesktopReply<DesktopCanvasItem>>
   updateCanvasNote(id: number, fields: { version: number; contentMd?: string; title?: string | null; color?: string | null }): Promise<DesktopReply<DesktopNote>>
-  updateCanvasItem(canvasId: number, id: number, body: { x?: number; y?: number; w?: number | null; h?: number | null }): Promise<DesktopReply<DesktopCanvasItem>>
+  updateCanvasItem(canvasId: number, id: number, body: { x?: number; y?: number; w?: number | null; h?: number | null; z?: number; collapsed?: boolean; data?: Record<string, unknown> }): Promise<DesktopReply<DesktopCanvasItem>>
   deleteCanvasItem(canvasId: number, id: number): Promise<DesktopReply<null>>
   notes(): Promise<DesktopReply<DesktopNote[]>>
   createNote(contentMd: string, color?: string): Promise<DesktopReply<DesktopNote>>

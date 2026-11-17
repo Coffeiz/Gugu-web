@@ -1,0 +1,170 @@
+{
+  "packages/core/tests/unit/files/attachment-thumbnail.test.ts": {
+    "domain": "files",
+    "layer": "L1",
+    "owner": "packages/core/src/files/read.ts:planAttachmentThumbnail",
+    "productionEntry": "apps/web-host/src/modules/agent/attachment-thumbnail.ts",
+    "keyBehavior": "附件图片授权分类、SVG和动画原图语义及缩略图尺寸",
+    "ci": "core-node"
+  },
+  "packages/core/tests/unit/files/file-thumbnail.test.ts": {
+    "domain": "files",
+    "layer": "L1",
+    "owner": "packages/core/src/files/read.ts:planFileThumbnail",
+    "productionEntry": "apps/web-host/src/modules/files/thumbnail.ts",
+    "keyBehavior": "Python 兼容图片 MIME 归一化、generic MIME 识别和缩略图尺寸规则",
+    "ci": "core-node"
+  },
+  "packages/core/tests/unit/data/global-search-snippet.test.ts": {
+    "domain": "search",
+    "layer": "L1",
+    "owner": "packages/core/src/search/global-search.ts",
+    "productionEntry": "packages/core/src/search/global-search.ts",
+    "keyBehavior": "保护Python片段casefold选词lower码点定位及空白处理，全部标量与上下文摘要固定Unicode16",
+    "ci": "core-node"
+  },
+  "packages/core/tests/unit/domain/domain.test.ts": {
+    "domain": "core-node-domain",
+    "layer": "L1",
+    "owner": "packages/core/src/domain",
+    "productionEntry": "packages/core/src/contracts/index.ts",
+    "keyBehavior": "Unicode/日期与 UTC 年份边界、缺省字段、阶段待办身份及编号溢出保护，拒绝 Node/SQL 反向依赖",
+    "ci": "core-node"
+  },
+  "packages/core/tests/unit/data/data.test.ts": {
+    "domain": "core-node-data",
+    "layer": "L1",
+    "owner": "packages/core/src/data/runtime.ts",
+    "productionEntry": "packages/core/src/data/sqlite.ts",
+    "keyBehavior": "跨域提交/取消回滚、所有者与 CAS、收据原子性、完整唯一约束、备份 DDL 故障恢复及连接回收",
+    "ci": "core-node"
+  },
+  "packages/core/tests/unit/data/contract.test.ts": {
+    "domain": "core-node-contract",
+    "layer": "L1",
+    "owner": "packages/core/src/projects + clients",
+    "productionEntry": "ProjectService / createProjectUpdater / ClientService / runtime/commands",
+    "keyBehavior": "正式 SQLite 项目更新字段、完成时间、owner/墓碑、CAS 和回滚；联系人码点长度/null/删除原子性；桌面命令收据与重开持久化",
+    "ci": "core-node"
+  },
+  "packages/core/tests/unit/domain/fields.test.ts": {
+    "domain": "core-node-contract",
+    "layer": "L0",
+    "owner": "gugu-core",
+    "productionEntry": "packages/core/src/data/services.ts",
+    "keyBehavior": "同一合成输入在双库保护字段、联系人维护、跨用户隔离和原子回滚",
+    "ci": "core-node"
+  },
+  "packages/core/tests/unit/domain/test-selection.test.ts": {
+    "domain": "test-governance",
+    "layer": "L0",
+    "owner": "gugu-core",
+    "productionEntry": "packages/core/scripts/test-suites.mjs",
+    "keyBehavior": "快速/集成并集完整且无交集，进程/服务标记自动归慢速，IPC 排除 Python 对照",
+    "ci": "core-node"
+  },
+  "packages/core/tests/unit/domain/executor.test.ts": {
+    "domain": "security",
+    "layer": "L1",
+    "owner": "gugu-core",
+    "productionEntry": "packages/core/src/agent/executor",
+    "keyBehavior": "授权绑定/确认门、禁止降级或重放、原生取消与输出限制、错误脱敏",
+    "ci": "core-node"
+  },
+  "packages/core/tests/unit/data/exclusive.test.ts": {
+    "domain": "core-node-data",
+    "layer": "L1",
+    "owner": "gugu-core",
+    "productionEntry": "packages/core/src/data/sqlite.ts",
+    "keyBehavior": "桌面独占连接拒绝第二个连接读取/写入，释放后保留稳定 owner 和已提交数据",
+    "ci": "core-node"
+  },
+  "packages/core/tests/unit/data/project-create-usecase.test.ts": {
+    "domain": "projects",
+    "layer": "L1",
+    "owner": "packages/core/src",
+    "productionEntry": "packages/core/src/data",
+    "keyBehavior": "SQLite 项目创建完整用例与事务契约",
+    "ci": "core-node"
+  },
+  "packages/core/tests/unit/data/client-name-query.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/clients",
+    "productionEntry": "packages/core/src/clients/repository.ts",
+    "keyBehavior": "owner限定联系人精确优先和原生LIKE/ILIKE语义，通配符反斜线Unicode及参数安全",
+    "ci": "core-node"
+  },
+  "packages/core/tests/unit/data/project-name-query.test.ts": {
+    "domain": "projects",
+    "layer": "L1",
+    "owner": "packages/core/src/projects",
+    "productionEntry": "packages/core/src/projects/repository.ts",
+    "keyBehavior": "项目owner与软删除隔离，精确优先及原生SQL模糊匹配、归档候选与参数安全",
+    "ci": "core-node"
+  },
+  "packages/core/tests/unit/data/workspace-declarations.test.ts": {
+    "domain": "workspaces",
+    "layer": "L1",
+    "owner": "packages/core/src/application",
+    "productionEntry": "packages/core/src/workspaces/workspace-declarations.ts",
+    "keyBehavior": "工作区声明创建和更新保护用户关联隔离与事务回滚",
+    "ci": "core-node"
+  },
+  "packages/core/tests/unit/data/global-search-conversations.test.ts": {
+    "domain": "agent-sessions",
+    "layer": "L1",
+    "owner": "packages/core/src/search/sqlite-conversations.ts",
+    "productionEntry": "GET /api/v1/search",
+    "keyBehavior": "正式 SQLite 会话搜索归属、时间排序及 RAG 持久来源 baseline/上下文投影",
+    "ci": "core-node"
+  },
+  "packages/core/tests/unit/data/workspace-list-query.test.ts": {
+    "domain": "workspaces",
+    "layer": "L1",
+    "owner": "packages/core/src/workspaces/workspace-list.ts",
+    "productionEntry": "packages/core/src/workspaces/workspace-list.ts",
+    "keyBehavior": "共享工作区管理列表经真实临时SQLite读端口保护owner计数隔离、停用项、偏好真假和可信运行能力投影",
+    "ci": "core-node"
+  },
+  "packages/core/tests/unit/data/global-search-query.test.ts": {
+    "domain": "search",
+    "layer": "L1",
+    "owner": "packages/core/src/search/global-search.ts",
+    "productionEntry": "packages/core/src/search/sqlite.ts",
+    "keyBehavior": "正式SQLite保护搜索owner排序及取消；全Unicode标量oracle和实际SQL保护Python strip/casefold去重与原词查询",
+    "ci": "core-node"
+  },
+  "packages/core/tests/unit/data/project-time-projection.test.ts": {
+    "domain": "projects",
+    "layer": "L1",
+    "owner": "packages/core/src/projects/project-projection.ts",
+    "productionEntry": "packages/core/src/shared/timestamps.ts",
+    "keyBehavior": "项目公开DTO和创建事件按Python UTC ISO保留微秒及跨日日期，旧codec入口和SQLite/PG编码及Undo内部值保持不变",
+    "ci": "core-node"
+  },
+  "packages/core/tests/unit/data/project-read-query.test.ts": {
+    "domain": "projects",
+    "layer": "L1",
+    "owner": "packages/core/src/projects/project-read.ts",
+    "productionEntry": "packages/core/src/projects/read-store.ts",
+    "keyBehavior": "真实SQLite项目查询与合成计数投影保护owner归档回收站、DTO阶段JSON兼容、缺表失败关闭与取消清理",
+    "ci": "core-node"
+  },
+  "packages/core/tests/unit/data/workspace-delete-query.test.ts": {
+    "domain": "workspaces",
+    "layer": "L1",
+    "owner": "packages/core/src/workspaces/workspace-delete.ts",
+    "productionEntry": "packages/core/src/data/workspace-delete.ts",
+    "keyBehavior": "真实临时SQLite事务保护删除声明的owner限定、普通任务停用、提醒与终端外键清理、物理资源保留及故障取消回滚",
+    "ci": "core-node"
+  },
+  "packages/core/tests/unit/data/workspace-binding-query.test.ts": {
+    "domain": "workspaces",
+    "layer": "L1",
+    "owner": "packages/core/src/workspaces/workspace-bindings.ts",
+    "productionEntry": "packages/core/src/data/workspace-bindings.ts",
+    "keyBehavior": "共享工作区绑定经真实临时SQLite事务保护会话与工作区owner、禁用目标、解绑和取消回滚，兼容绑定回复与current投影",
+    "ci": "core-node"
+  }
+}

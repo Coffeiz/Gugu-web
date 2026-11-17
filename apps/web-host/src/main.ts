@@ -1,4 +1,5 @@
 import bcrypt from 'bcryptjs'
+import { readFile } from 'node:fs/promises'
 import { createProfileUpdater } from '@gugu/core/auth/profile-update'
 import { createDataExportCreator } from '@gugu/core/data-portability/create-export'
 import { createDataExportPreviewReader } from '@gugu/core/data-portability/export-preview'
@@ -18,6 +19,7 @@ import { createLlmPresetMutations } from '@gugu/core/agent/config/llm-preset-mut
 import { createLlmModelDirectory } from '@gugu/core/agent/config/llm-model-directory'
 import { createAdminModelDirectory } from '@gugu/core/agent/config/admin-model-directory'
 import { createNodeProviderTransport } from '@gugu/core/providers/node'
+import type { ProviderConfig } from '@gugu/core/providers'
 import { createLlmStrategyFileMutator } from './modules/admin/llm-strategy.js'
 import { createAdminMisreadReader } from '@gugu/core/perception-recent-misread'
 import { createPerceptionEventExporter } from '@gugu/core/perception-export'
@@ -43,6 +45,12 @@ import { createDataExportCanceler } from '@gugu/core/data-portability/cancel-exp
 import { createPostgresDataExportDeleter } from './modules/data-portability/delete-export-postgres.js'
 import { withPostgresTransaction } from './adapters/postgres-transaction.js'
 import { createTerminalDeletion } from '@gugu/core/terminals/delete'
+import { mxcDiagnostics } from '@gugu/core/executor/platform'
+import { createPostgresTerminalMetricsReader } from './domains/terminals/persistence/metrics.js'
+import { createPostgresTerminalListReader } from './domains/terminals/persistence/list.js'
+import { createPostgresTerminalDetailReader } from './domains/terminals/persistence/detail.js'
+import { createPostgresTerminalRenamer } from './domains/terminals/persistence/rename.js'
+import { createPostgresTerminalEventStream } from './domains/terminals/persistence/events.js'
 import { createVoicePresetsFileReader } from './modules/admin/voice-presets-read.js'
 import { createAdminLlmPresetReader } from './modules/admin/llm-preset-read.js'
 import { createPostgresVoiceAvailabilityReader } from './modules/agent/voice-availability.js'
@@ -95,6 +103,8 @@ import { createEmailRecipientCounter } from '@gugu/core/admin/email-recipient-co
 import { createEmbeddingRebuildStatusReader } from '@gugu/core/byok/embedding-rebuild-status'
 import { createRedisExpiringValueStore, createRedisValueReader } from './adapters/redis-events.js'
 import { createImMemoryMaintenanceApplier, createLocalImMemoryMaintenanceStorage } from './modules/admin/im-memory-maintenance-apply.js'
+import { createImMemoryMaintenancePreviewStarter, createImMemoryMaintenancePreviewWorker, createStandaloneImMemoryModelCaller } from './modules/admin/im-memory-maintenance-preview.js'
+import { createImMemoryGroupDailyCompactor } from './modules/admin/im-memory-group-daily-compaction.js'
 import { createPostgresUserBotUnbinder } from './modules/im/user-bot-unbind.js'
 import { createQqBotCreator, invalidateOwnerImSnapshots } from '@gugu/core/im/user-bot-create'
 import { createUserBotDeleter } from '@gugu/core/im/user-bot-delete'
@@ -141,8 +151,8 @@ import { createAgentToolRegistry } from './domains/agent-sessions/tools/agent-to
 import { createCapabilityCatalog } from '@gugu/core/agent/capabilities'
 import { createBuiltinSkillDefinitions } from '@gugu/core/skills'
 import { createBundledSkillDocuments } from '@gugu/core/skills/bundled'
-import { createAgentSkillToolCatalog } from './modules/agent-skills/tool-catalog.js'
-import { createUserSkillToolNameReader } from './modules/agent-skills/tool-names.js'
+import { createSkillToolCatalog } from './modules/skills/tool-catalog.js'
+import { createUserSkillToolNameReader } from './modules/skills/tool-names.js'
 import { createSafeEgressSettingsReader } from './modules/admin/safe-egress-settings.js'
 import { createSafeEgressFileUpdater } from './modules/admin/safe-egress-update.js'
 import { createSafeEgressFileProbe } from './modules/admin/safe-egress-probe.js'
@@ -249,6 +259,7 @@ import { createPostgresAgentSessionRenamer } from './domains/agent-sessions/agen
 import { createPostgresAgentSessionDeleteOperations } from './modules/agent/session-delete.js'
 import { createAgentMessageHistory } from './domains/agent-sessions/persistence/agent-message-history.js'
 import { createPostgresAgentOrphanRecovery } from './domains/agent-sessions/persistence/agent-run-recovery.js'
+import { createAgentImMemoryRagMutationPorts } from './domains/agent-sessions/persistence/agent-im-memory-rag-mutations.js'
 import { createPostgresAgentSessionStateReader } from './modules/agent-sessions/state.js'
 import { createPostgresAgentInteractionHistory } from '@gugu/core/agent-sessions'
 import { createInteractionSessionLookup } from './domains/agent-sessions/persistence/agent-interaction-session.js'
@@ -423,6 +434,33 @@ function objectSetting(value: unknown): Record<string, unknown> {
     : {}
 }
 
+function imMaintenanceProviderConfig(environment: NodeJS.ProcessEnv, path: string): ProviderConfig {
+  const values = objectSetting(readConfigOverride(path).ai)
+  const text = (key: string, envKey: string, fallback: string) => environment[envKey] ?? String(values[key] ?? fallback)
+  const integer = (key: string, envKey: string, fallback: number) => {
+    const raw = environment[envKey] === undefined ? values[key] : environment[envKey]
+    if (raw === undefined || raw === null || raw === '') return fallback
+    const parsed = Number(raw)
+    if (!Number.isSafeInteger(parsed) || parsed <= 0) throw new Error('IM 记忆维护模型配置无效')
+    return parsed
+  }
+  return {
+    provider: text('provider', 'AI__PROVIDER', 'qwen'),
+    api_key: text('api_key', 'AI__API_KEY', ''),
+    base_url: text('base_url', 'AI__BASE_URL', 'https://dashscope.aliyuncs.com/compatible-mode/v1'),
+    model: text('model', 'AI__MODEL', 'qwen-max'),
+    api_format: text('api_format', 'AI__API_FORMAT', ''),
+    thinking: text('thinking', 'AI__THINKING', ''),
+    reasoning_effort: text('reasoning_effort', 'AI__REASONING_EFFORT', ''),
+    ollama_mode: text('ollama_mode', 'AI__OLLAMA_MODE', 'local'),
+    ollama_api_mode: text('ollama_api_mode', 'AI__OLLAMA_API_MODE', 'native'),
+    max_tokens: integer('max_tokens', 'AI__MAX_TOKENS', 25_600),
+    context_tokens: integer('context_tokens', 'AI__CONTEXT_TOKENS', 128_000),
+    timeout_ms: 300_000,
+    ...(objectSetting(values.capability_overrides) ? { capability_overrides: values.capability_overrides as Record<string, boolean> } : {}),
+  }
+}
+
 function optionalIntegerSetting(envValue: string | undefined, configValue: unknown, key: string): number | null {
   const raw = envValue === undefined ? configValue : envValue.trim()
   if (raw === undefined || raw === null || raw === '') return null
@@ -532,6 +570,56 @@ function createWebUiApp(
 ) {
   const publisher = redisEvents ?? noRedisEvents
   const imMemoryMaintenanceSource = createImMaintenanceSource(core.db)
+  const imMemoryStorage = createLocalImMemoryMaintenanceStorage(config.storageLocalPath)
+  const imMemoryGroupDailyCompactor = createImMemoryGroupDailyCompactor({
+    storage: imMemoryStorage,
+    isTombstoned: imMemoryMaintenanceSource.isTombstoned,
+    readPrompt: () => readFile(resolve(dirname(fileURLToPath(import.meta.url)), '../../../backend/agent/prompts/im/group_compress.md'), 'utf8'),
+    readModelSettings: () => imMaintenanceProviderConfig(env, resolveConfigOverridePath(env)),
+    complete: createStandaloneImMemoryModelCaller({ environment: env }),
+  })
+  const imMemoryMaintenancePreviewWorker = createImMemoryMaintenancePreviewWorker({
+    state: {
+      async set(key, value, ttlSeconds) {
+        if (!config.redisUrl) throw Object.assign(new Error('Redis 维护计划服务不可用'), { statusCode: 503 })
+        await createRedisAdminMaintenanceCommands(config.redisUrl).set(key, value, ttlSeconds)
+      },
+    },
+    listCursors: imMemoryMaintenanceSource.listCursors,
+    messages: imMemoryMaintenanceSource.messages,
+    storage: imMemoryStorage,
+    readModelSettings: () => imMaintenanceProviderConfig(env, resolveConfigOverridePath(env)),
+    readPrompt: scopeType => readFile(resolve(dirname(fileURLToPath(import.meta.url)), '../../../backend/agent/prompts/im', scopeType === 'group' ? 'group_reflection.md' : 'member_reflection.md'), 'utf8'),
+    complete: createStandaloneImMemoryModelCaller({ environment: env }),
+    diagnose() { console.error('管理员 IM 记忆模型预览 scope 处理失败') },
+  })
+  const imMemoryMaintenancePreview = createImMemoryMaintenancePreviewStarter({
+    state: {
+      async get(key) {
+        if (!config.redisUrl) throw Object.assign(new Error('Redis 维护计划服务不可用'), { statusCode: 503 })
+        return createRedisAdminMaintenanceCommands(config.redisUrl).get(key)
+      },
+      async set(key, value, ttlSeconds) {
+        if (!config.redisUrl) throw Object.assign(new Error('Redis 维护计划服务不可用'), { statusCode: 503 })
+        await createRedisAdminMaintenanceCommands(config.redisUrl).set(key, value, ttlSeconds)
+      },
+      async delete(key) {
+        if (!config.redisUrl) throw Object.assign(new Error('Redis 维护计划服务不可用'), { statusCode: 503 })
+        await createRedisExpiringValueStore(config.redisUrl).delete(key)
+      },
+      async acquire(key, value, ttlSeconds) {
+        if (!config.redisUrl) throw Object.assign(new Error('Redis 维护计划服务不可用'), { statusCode: 503 })
+        return await createRedisScheduledTaskCommands(config.redisUrl).set(key, value, 'EX', String(ttlSeconds), 'NX') === 'OK'
+      },
+      async release(key, value) {
+        if (!config.redisUrl) return
+        await createRedisScheduledTaskCommands(config.redisUrl).eval("if redis.call('GET',KEYS[1])==ARGV[1] then return redis.call('DEL',KEYS[1]) end;return 0", 1, key, value)
+      },
+    },
+    listCursors: imMemoryMaintenanceSource.listCursors,
+    run: imMemoryMaintenancePreviewWorker,
+    diagnose() { console.error('管理员 IM 记忆模型预览启动失败') },
+  })
   // Collector URL 来自可信部署配置；仍需固定 DNS 目标并拒绝重定向，允许本地地址仅用于该固定内部服务。
   const loopScopeTransport = createNodeProviderTransport({ allowLocal: true, connectTimeoutMs: 5_000, writeTimeoutMs: 10_000, environment: () => env })
   const recordEmailDelivery = config.redisUrl ? createRedisEmailDeliveryMetric(config.redisUrl) : undefined
@@ -560,7 +648,7 @@ function createWebUiApp(
   const readMcpSettings = createMcpSettingsReader(resolveConfigOverridePath(env), env)
   const skillToolRegistry = createAgentToolRegistry({ core, authorize: async () => true })
   const capabilitySkills = createBuiltinSkillDefinitions(createBundledSkillDocuments(), new AbortController().signal)
-  const builtinSkillTools = createAgentSkillToolCatalog(skillToolRegistry)
+  const builtinSkillTools = createSkillToolCatalog(skillToolRegistry)
   const mcpSkillTools = createMcpSkillToolDirectory(core.db, {
     enabled: () => readMcpSettings().enabled === true,
     decrypt: createConfiguredByokEnvelope(env),
@@ -1607,9 +1695,13 @@ function createWebUiApp(
           },
         messages: createImMaintenanceSource(core.db).messages,
         isTombstoned: imMemoryMaintenanceSource.isTombstoned,
-        storage: createLocalImMemoryMaintenanceStorage(config.storageLocalPath),
+        storage: imMemoryStorage,
+        memoryIndex: createAgentImMemoryRagMutationPorts(core),
+        compactGroupDaily: imMemoryGroupDailyCompactor,
+        onGroupDailyCompactionError() { console.error('群日报压缩超过硬上限，保留未压缩记录') },
       }),
     },
+    imMemoryMaintenancePreview: { start: imMemoryMaintenancePreview },
     adminUserBan: { adminUsername: request => request.adminIdentity?.username ?? 'admin', toggle: createAdminUserBanToggle(core.db, userId => publisher.publishAuthStateChanged(userId)) },
     adminEmailPreview: { render: renderEmailPreview },
     smtpProbe: { probe: createSmtpFileProbe(env, resolveConfigOverridePath(env)) },
@@ -1820,6 +1912,43 @@ function createWebUiApp(
       }) }
     })(),
     terminalDelete: { remove: createTerminalDeletion(core.db, async (ownerId, terminalId, origin) => { await publisher.publishResourceChanged({ ownerId, resource: 'terminals', operation: 'delete', entityId: terminalId, origin }) }) },
+    terminalMetrics: { read: createPostgresTerminalMetricsReader(pool, core.db, {
+      ...config.workspaceRuntimeSettings,
+      async readSandboxReadiness() {
+        const diagnostics = await mxcDiagnostics()
+        return { ready: diagnostics.supported, ...(diagnostics.reason ? { reason: diagnostics.reason } : {}) }
+      },
+    }) },
+    terminalList: { read: createPostgresTerminalListReader(pool, core.db, {
+      ...config.workspaceRuntimeSettings,
+      async readSandboxReadiness() {
+        const diagnostics = await mxcDiagnostics()
+        return { ready: diagnostics.supported, ...(diagnostics.reason ? { reason: diagnostics.reason } : {}) }
+      },
+    }) },
+    terminalDetail: { read: createPostgresTerminalDetailReader(pool, core.db, {
+      ...config.workspaceRuntimeSettings,
+      async readSandboxReadiness() {
+        const diagnostics = await mxcDiagnostics()
+        return { ready: diagnostics.supported, ...(diagnostics.reason ? { reason: diagnostics.reason } : {}) }
+      },
+    }) },
+    terminalRename: { rename: createPostgresTerminalRenamer(pool, core.db, {
+      ...config.workspaceRuntimeSettings,
+      async readSandboxReadiness() {
+        const diagnostics = await mxcDiagnostics()
+        return { ready: diagnostics.supported, ...(diagnostics.reason ? { reason: diagnostics.reason } : {}) }
+      },
+    }, async (ownerId, terminalId, origin) => {
+      await publisher.publishResourceChanged({ ownerId, resource: 'terminals', operation: 'update', entityId: terminalId, origin })
+    }) },
+    terminalEvents: createPostgresTerminalEventStream(pool, core.db, {
+      ...config.workspaceRuntimeSettings,
+      async readSandboxReadiness() {
+        const diagnostics = await mxcDiagnostics()
+        return { ready: diagnostics.supported, ...(diagnostics.reason ? { reason: diagnostics.reason } : {}) }
+      },
+    }),
     userBotsList: { readBots: createPostgresUserBotsReader(pool, config.secretKey, createImPlatformSettingsReader(env, resolveConfigOverridePath(env))) },
     embeddingRebuildStatus: { available: () => Boolean(config.redisUrl), read: createEmbeddingRebuildStatusReader(async ownerId => {
       if (!config.redisUrl) throw Object.assign(new Error('重建状态服务不可用'), { statusCode: 503 })

@@ -1,0 +1,18 @@
+{
+  "apps/web/tests/loopscope/guguCsrf.test.ts": {
+    "domain": "loopscope-auth",
+    "layer": "L0",
+    "owner": "loopscope/frontend/src/services",
+    "productionEntry": "loopscope/frontend/src/services/gugu.ts:sendMessage",
+    "keyBehavior": "Cookie 认证发送消息时将 CSRF Cookie 解码后放入请求头并携带认证凭据",
+    "ci": "frontend-test"
+  },
+  "apps/web/tests/loopscope/monitorSelection.test.ts": {
+    "domain": "loopscope-monitor",
+    "layer": "L0",
+    "owner": "loopscope/frontend/src/utils/monitorSelection.ts",
+    "productionEntry": "loopscope/frontend/src/views/Monitor.vue",
+    "keyBehavior": "列表刷新时保留用户手动选择的旧 run；显式焦点变化跟随目标 run；当前选择移除后回到最新可用项",
+    "ci": "frontend-vitest"
+  }
+}

@@ -9,7 +9,7 @@ import type { SqlDataRuntime } from '@gugu/core/data'
 import { createCanonicalSourceLoader, stableJson } from '@gugu/core/agent'
 import type { CanonicalContextPorts, CanonicalRunContext, AgentRunnerPorts, RunCheckpoint, RunEvent } from '@gugu/core/agent'
 import { ProviderStreamSanitizer, stripThinking } from '@gugu/core/providers'
-import { createAgentRuntime } from '../../src/domains/agent-sessions/agent-runtime.js'
+import { createAgentRuntime } from '@gugu/core/agent'
 import { createAgentToolRegistry } from '../../src/domains/agent-sessions/tools/agent-tool-registry.js'
 import { agentContextAccessScope } from '../../src/domains/agent-config/access-scope.js'
 import { bindProviderSelection } from '../../src/domains/agent-config/provider-resolver.js'
@@ -118,7 +118,7 @@ function response(delta: Record<string, unknown>, finish: string) {
   })(), cancel: async () => {} }
 }
 
-test('Host runtime 经 Markdown 注册器加载技能并送入 Provider 续轮，撤权后拒绝', async () => {
+test('Core Agent Runtime 经 Markdown 注册器加载技能并送入 Provider 续轮，撤权后拒绝', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'gugu-skill-runtime-'))
   try {
     const path = join(dir, 'skill.md')

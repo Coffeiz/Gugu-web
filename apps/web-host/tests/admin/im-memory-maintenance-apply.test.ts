@@ -17,6 +17,7 @@ test('apply requires confirmation and preserves Python missing, running and fail
   const applier = createImMemoryMaintenanceApplier({
     state: { async get(key) { return data.get(key) ?? null }, async delete(key) { data.delete(key) } },
     async messages() { return [] }, async isTombstoned() { return false }, storage: { async read() { return null }, async write() {} }, now: () => 100,
+    memoryIndex: { async invalidate() {}, async changed() {} },
   })
   await assert.rejects(applier(false), (error: unknown) => error instanceof ImMemoryMaintenanceApplyError && error.statusCode === 400 && /confirm=true/u.test(error.message))
   await assert.rejects(applier(true), (error: unknown) => error instanceof ImMemoryMaintenanceApplyError && /没有可执行/u.test(error.message))
@@ -36,6 +37,7 @@ test('all scope revisions are checked before writing and stale plans remain avai
   const applier = createImMemoryMaintenanceApplier({
     state: { async get(key) { return data.get(key) ?? null }, async delete(key) { data.delete(key) } },
     async messages() { return [] }, async isTombstoned() { return false }, storage: { async read() { return null }, async write(key) { writes.push(key) } }, now: () => 100,
+    memoryIndex: { async invalidate() {}, async changed() {} },
   })
   await assert.rejects(applier(true), (error: unknown) => error instanceof ImMemoryMaintenanceApplyError && error.statusCode === 409 && /预览已过期/u.test(error.message))
   assert.deepEqual(writes, [])
@@ -48,15 +50,56 @@ test('valid confirmed plan is applied through Core rules and deleted after Local
     [IM_MEMORY_MODEL_PREVIEW_PLAN_KEY, JSON.stringify([plan('g1')])],
   ])
   const writes: Array<[string, string]> = []
+  const indexCalls: string[] = []
   const applier = createImMemoryMaintenanceApplier({
     state: { async get(key) { return data.get(key) ?? null }, async delete(key) { data.delete(key) } },
-    async messages() { return [] }, async isTombstoned() { return false }, storage: { async read() { return null }, async write(key, value) { writes.push([key, value]) } }, now: () => 100,
+    async messages() { return [] }, async isTombstoned() { return false },
+    storage: { async read() { return null }, async write(key, value) { indexCalls.push('write'); writes.push([key, value]) } },
+    memoryIndex: { async invalidate(ownerId) { indexCalls.push(`invalidate:${ownerId}`) }, async changed(scope) { indexCalls.push(`changed:${scope.scope_id}`) } },
+    now: () => 100,
   })
   assert.deepEqual(await applier(true), { ok: true, applied: 1, queued: 1 })
   assert.deepEqual(writes, [[
     '00000000-0000-0000-0000-000000000001/.agent/im/qq/synthetic-bot/groups/g1/daily.md',
     '## 1970-01-01\n- 合成记录 g1\n',
   ]])
+  assert.deepEqual(indexCalls, [
+    'invalidate:00000000-0000-0000-0000-000000000001',
+    'write',
+    'changed:g1',
+  ])
+  assert.equal(data.has(IM_MEMORY_MODEL_PREVIEW_PLAN_KEY), false)
+})
+
+test('apply invokes group daily compaction after crossing the Python threshold and keeps apply successful on compaction failure', async () => {
+  const daily = `## 2026-01-01\n${Array.from({ length: 99 }, (_, index) => `- 旧记录${index}`).join('\n')}\n`
+  const snapshot = { ...current, daily: daily.trim() }
+  const groupPlan = { ...plan('g1', scopeRevision(snapshot, [], '')), output: { daily: '新增记录' } }
+  const data = new Map<string, string>([
+    [IM_MEMORY_MODEL_PREVIEW_KEY, JSON.stringify({ status: 'done', plan_ready: true })],
+    [IM_MEMORY_MODEL_PREVIEW_PLAN_KEY, JSON.stringify([groupPlan])],
+  ])
+  const writes: string[] = []
+  const compacted: Array<[string, string, string]> = []
+  const applier = createImMemoryMaintenanceApplier({
+    state: { async get(key) { return data.get(key) ?? null }, async delete(key) { data.delete(key) } },
+    async messages() { return [] }, async isTombstoned() { return false },
+    memoryIndex: { async invalidate() {}, async changed() {} },
+    storage: {
+      async read(key) { return key.endsWith('/daily.md') ? daily : null },
+      async write(key) { writes.push(key) },
+    },
+    async compactGroupDaily(scope, memory, updatedDaily) {
+      compacted.push([scope.scope_id, memory, updatedDaily])
+      throw new Error('synthetic compaction failure')
+    },
+    now: () => 100,
+  })
+  assert.deepEqual(await applier(true), { ok: true, applied: 1, queued: 1 })
+  assert.deepEqual(writes.map(key => key.slice(key.lastIndexOf('/') + 1)), ['daily.md'])
+  assert.equal(compacted.length, 1)
+  assert.equal(compacted[0]?.[0], 'g1')
+  assert.match(compacted[0]?.[2] ?? '', /新增记录/u)
   assert.equal(data.has(IM_MEMORY_MODEL_PREVIEW_PLAN_KEY), false)
 })
 

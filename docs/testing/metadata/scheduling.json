@@ -1,0 +1,42 @@
+{
+  "backend/tests/scheduling/events/test_event_atomic_update.py": {
+    "domain": "calendar",
+    "layer": "L1",
+    "owner": "backend/app/services/calendar",
+    "productionEntry": "backend/app/api/v1/events.py 与 backend/agent/tools/calendar.py",
+    "keyBehavior": "Web 与 Agent 并发更新拒绝旧版本覆盖；事件软删除与提醒停用使用版本保护",
+    "ci": "backend-test"
+  },
+  "backend/tests/scheduling/tasks/test_scheduled_task_delete_route.py": {
+    "domain": "scheduled-tasks",
+    "layer": "L1",
+    "owner": "backend/app",
+    "productionEntry": "app/api/v1/scheduled_tasks.py:delete_task",
+    "keyBehavior": "显式删除任务的用户隔离、提交后事件及重复删除",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/scheduling/tasks/test_scheduled_task_schedule_rules.py": {
+    "domain": "scheduled-tasks",
+    "layer": "L1",
+    "owner": "backend/app",
+    "productionEntry": "app/core/schedule_rules.py",
+    "keyBehavior": "单次、间隔和 cron 任务的独立起止时间窗口校验",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/scheduling/tasks/test_scheduled_task_workspace.py": {
+    "domain": "scheduled-tasks",
+    "layer": "L1",
+    "owner": "backend/app",
+    "productionEntry": "app/services/scheduled_tasks.py",
+    "keyBehavior": "定时任务工作区归属与任务级文件授权隔离",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/scheduling/calendar/test_calendar_api_reads.py": {
+    "domain": "calendar",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/events.py",
+    "productionEntry": "backend/app/api/v1/events.py",
+    "keyBehavior": "Python日历Web真实handler基准保护列表与详情的owner软删、月份真值规则、完整驼峰DTO及历史版本回退不改库",
+    "ci": "backend-pytest"
+  }
+}

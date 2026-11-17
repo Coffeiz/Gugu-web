@@ -1,0 +1,10 @@
+{
+  "apps/web-host/tests/sandbox/mxc-platform.test.ts": {
+    "domain": "sandbox",
+    "layer": "L2",
+    "owner": "packages/sandbox/src/platform.ts + packages/sandbox/src/mxc.ts",
+    "productionEntry": "Linux Web Host MXC platform selection and execution adapter",
+    "keyBehavior": "Linux only enables Bubblewrap when detected; execution explicitly selects it, denies network and inherited environment; Windows ProcessContainer probe remains unchanged",
+    "ci": "web-host-node"
+  }
+}

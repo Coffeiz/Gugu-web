@@ -1,0 +1,170 @@
+{
+  "backend/tests/platform/usage/test_usage_cold_cache.py": {
+    "domain": "agent-usage",
+    "layer": "L1",
+    "owner": "backend/app/api/v1",
+    "productionEntry": "app/api/v1/agent_admin.py:_scenario_usage",
+    "keyBehavior": "按场景统计零缓存冷请求和非冷请求的完整输入加权缓存率；保留日期、BYOK、开发者筛选和历史输入口径，零输入工具计数不计冷请求",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/security/test_phase3_filesystem_policy.py": {
+    "domain": "filesystem-security",
+    "layer": "L1",
+    "owner": "backend/app",
+    "productionEntry": "app/services/filesystem_authorization.py",
+    "keyBehavior": "工作区目录边界与文件工具写权限策略正确执行",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/security/test_phase4_filesystem_authorization.py": {
+    "domain": "filesystem-security",
+    "layer": "L1",
+    "owner": "backend/app",
+    "productionEntry": "app/services/filesystem_authorization.py",
+    "keyBehavior": "文件系统授权开关、确认流程与审计记录安全",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/deployment/test_admin_entry_gate.py": {
+    "domain": "admin-entry-security",
+    "layer": "L1",
+    "owner": "nginx",
+    "productionEntry": "nginx/prepare-admin-entry.sh",
+    "keyBehavior": "Admin 入口配置生成正确限制令牌路径与主机白名单，并拒绝不安全配置",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/deployment/test_bundle_runtime.py": {
+    "domain": "sandbox-deployment",
+    "layer": "L1",
+    "owner": "backend/agent/sandbox",
+    "productionEntry": "agent/sandbox/bundle_runtime.py",
+    "keyBehavior": "内置 runtime 只从校验过的离线归档导入并核对镜像身份",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/deployment/test_postgres_migrations.py": {
+    "domain": "database-migrations",
+    "layer": "L2",
+    "owner": "backend/alembic",
+    "productionEntry": "alembic/env.py:_bootstrap_empty_database",
+    "keyBehavior": "全新 PostgreSQL 经 ORM 建表和 Alembic 初始化后仍具有自定义 collation 与分页索引",
+    "ci": "experimental"
+  },
+  "backend/tests/platform/deployment/test_rag_sidecar_unit_contract.py": {
+    "domain": "rag-deployment",
+    "layer": "L1",
+    "owner": "backend/gugu-rag-sidecar.service",
+    "productionEntry": "backend/gugu-backend.service、backend/gugu-worker.service、backend/gugu-gateway.service 与 backend/gugu-rag-sidecar.service",
+    "keyBehavior": "RAG 消费服务等待 sidecar 完成冷启动并监听 socket，且不再宣称会进程内回退",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/test_contact_name_column_migration.py": {
+    "domain": "contact-name-migration",
+    "layer": "L1",
+    "owner": "backend/alembic",
+    "productionEntry": "backend/alembic/versions/20261016000001_rename_client_columns_to_contact_name.py",
+    "keyBehavior": "项目与日历活动联系人列重命名保留既有值且可降级恢复",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/auth/test_auth_token_revocation.py": {
+    "domain": "authentication",
+    "layer": "L1",
+    "owner": "backend/app/api/v1",
+    "productionEntry": "backend/app/api/v1/auth.py",
+    "keyBehavior": "登出、改密和换邮箱在旧令牌失效提交后通知长连接，通知失败不撤销数据库结果；管理员登出撤销旧令牌",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/realtime/test_live_stream.py": {
+    "domain": "filesync-live-events",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/live.py",
+    "productionEntry": "backend/app/core/events.py:publish_filesync_run_changed",
+    "keyBehavior": "SSE 空闲阻塞且撤销事件唤醒鉴权，发送前拦截失效会话并在客户端断开时清理订阅；文件同步通知仅含安全标识并按任务合并进度",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/realtime/test_websocket_cookie_origin.py": {
+    "domain": "websocket-auth",
+    "layer": "L1",
+    "owner": "backend/app/api/v1",
+    "productionEntry": "backend/app/api/v1/terminals.py:_websocket_token",
+    "keyBehavior": "Cookie 鉴权的终端 WebSocket 仅接受与 Host 同源的 Origin，并保留非标准端口",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/admin/test_admin_host_access.py": {
+    "domain": "admin-access",
+    "layer": "L1",
+    "owner": "backend/app/core",
+    "productionEntry": "backend/app/core/admin_access.py:is_admin_api_host_allowed",
+    "keyBehavior": "管理员 API 只接受配置的精确主机名，普通用户 API 不受限且运行时配置不能覆盖环境变量",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/security/test_filesync_workspace_permissions.py": {
+    "domain": "security",
+    "layer": "L2",
+    "owner": "backend/agent/sandbox",
+    "productionEntry": "backend/agent/sandbox/docker.py",
+    "keyBehavior": "ACL 助手只访问授权工作区并使用动态 Rootless 身份，拒绝越界路径和不匹配的 daemon 所有者",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/observability/test_loopscope_trace_restore.py": {
+    "domain": "loopscope-observability",
+    "layer": "L1",
+    "owner": "backend/agent/runtime/loopscope_trace",
+    "productionEntry": "agent/runtime/loopscope_trace 与 agent/context/builder.py",
+    "keyBehavior": "跨进程 trace 恢复、工具参数脱敏以及上下文准备阶段耗时归属保持正确",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/observability/test_responses_request_capture.py": {
+    "domain": "loopscope-observability",
+    "layer": "L1",
+    "owner": "backend/agent/runtime/loopscope_trace",
+    "productionEntry": "agent/runtime/loopscope_trace/provider_request.py 与 agent/providers/openai_responses.py",
+    "keyBehavior": "仅失败轮捕获含原生 reasoning 的最终请求，拒绝保存凭据，深层 Schema 经 trace 数据库往返后摘要不变且只读回放不调用模型",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/observability/test_provider_token_usage_contract.py": {
+    "domain": "provider-token-usage-contract",
+    "layer": "L0",
+    "owner": "backend/agent/context",
+    "productionEntry": "agent/context/provider_runner.py 与上下文压缩流程",
+    "keyBehavior": "模型上下文与压缩决策只依据 Provider 实际用量，不重新引入本地 tokenizer 或 token 估算器",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/test_im_platform_settings.py": {
+    "domain": "im-platform-settings",
+    "layer": "L1",
+    "owner": "backend/app",
+    "productionEntry": "app/services/im_platforms.py 与 app/core/config.py",
+    "keyBehavior": "即时通讯平台默认全开、配置可局部覆盖且 Admin 更新拒绝未知或非布尔值",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/test_orm_boundaries.py": {
+    "domain": "orm-boundary-checks",
+    "layer": "L0",
+    "owner": "backend/scripts/checks",
+    "productionEntry": "scripts/checks/check_orm_boundaries.py",
+    "keyBehavior": "ORM 棘轮识别 SQLAlchemy constructor，同时不把同名函数声明和普通对象 update 方法误判为 ORM",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/realtime/test_web_generation_contract.py": {
+    "domain": "realtime-generation",
+    "layer": "L1",
+    "owner": "backend/agent/gateway",
+    "productionEntry": "backend/agent/gateway/web/generation.py",
+    "keyBehavior": "Web 生成保持去重、时间线、用量统计及完成事件前持久化的顺序",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/realtime/test_web_resume_contract.py": {
+    "domain": "realtime-resume",
+    "layer": "L1",
+    "owner": "backend/agent/gateway",
+    "productionEntry": "backend/agent/gateway/web/resume.py",
+    "keyBehavior": "恢复实时会话时先按序重放时间线，缺少活动快照时发送空闲完成状态",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/realtime/test_web_stream_contract.py": {
+    "domain": "realtime-streaming",
+    "layer": "L1",
+    "owner": "backend/agent/gateway",
+    "productionEntry": "backend/agent/gateway/web/stream.py",
+    "keyBehavior": "Web 流先持久化用户消息再转发后台 SSE 事件",
+    "ci": "backend-pytest"
+  }
+}

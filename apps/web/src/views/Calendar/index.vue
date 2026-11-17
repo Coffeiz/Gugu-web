@@ -114,7 +114,7 @@
                      @open-project="onMoreProject" @edit-event="onMoreEditEvent" @drag-item="onMoreDragItem" />
 
   <Teleport to="body">
-    <YearMonthPicker ref="pickerRef" :open="pickerOpen" :year="pickerYear" :cursor="cursor" :style="pickerStyle"
+    <YearMonthPicker ref="pickerRef" :open="pickerOpen" :year="pickerYear" :cursor="pickerCursor" :style="pickerStyle"
                      @prev-year="pickerYear--" @next-year="pickerYear++" @select="selectYearMonth" />
   </Teleport>
 
@@ -762,7 +762,7 @@ const weekDays = computed<WeekViewDay[]>(() => {
 
 const {
   viewMode, periodLabel, prev, next, goToday, setView,
-  pickerOpen, pickerYear, pickerAnchorRef, pickerStyle, togglePicker, selectYearMonth,
+  pickerOpen, pickerYear, pickerCursor, pickerAnchorRef, pickerStyle, togglePicker, selectYearMonth,
 } = useCalendarNav({ cursor, selectedDate, todayIso, weekRef, weekDays, locale })
 
 const { upcomingList, refresh: refreshUpcoming } = useCalendarUpcoming()
@@ -1047,7 +1047,7 @@ const selectedDateLabel = computed(() => {
 const { selectedNotes, loading: notesLoading, failed: notesFailed } = useCalendarNotes(selectedDate)
 
 function openNote(id: number) {
-  void router.push({ path: '/mind/notes', query: { object_id: String(id) } })
+  void router.push({ path: '/notes', query: { object_id: String(id) } })
 }
 
 const selectedEvents = computed<CalItem[]>(() => {

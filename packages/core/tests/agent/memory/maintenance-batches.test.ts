@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import { test } from 'vitest'
 import { boundedScopeMemory, messageBatches, resolveMaintenanceBudget, scopeRevision } from '../../../src/memory/maintenance-batches.js'
 
 test('maintenance batching keeps full messages and stable source ids within the budget', () => {

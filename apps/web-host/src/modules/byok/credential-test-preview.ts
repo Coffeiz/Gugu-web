@@ -237,7 +237,7 @@ export function registerCredentialTestPreviewRoute(app: FastifyInstance, options
     }
   })
   app.post('/api/v1/byok/:credential_id/test', { preHandler: options.requireUser }, async (request, reply) => {
-    const params = z.object({ credential_id: z.coerce.number().int() }).safeParse(request.params)
+    const params = z.object({ credential_id: z.preprocess(pydanticIntegerInput, z.number().int()) }).safeParse(request.params)
     if (!params.success) return reply.code(422).send({ detail: '凭据参数无效' })
     try { return await options.savedTest(options.ownerIdFromRequest(request), params.data.credential_id) }
     catch (error) {

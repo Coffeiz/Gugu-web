@@ -1,0 +1,18 @@
+{
+  "packages/core/tests/notifications/admin-history.test.ts": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "packages/core/src/notifications/admin-history.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "正式SQLite和隔离PG通知管理员历史筛选与幂等删除",
+    "ci": "core-node"
+  },
+  "packages/core/tests/notifications/notifications.test.ts": {
+    "domain": "notifications",
+    "layer": "L2",
+    "owner": "packages/core/src/notifications",
+    "productionEntry": "packages/core/src/notifications/notifications.ts",
+    "keyBehavior": "双库通知可见性、气泡、用户已读清除和并发幂等",
+    "ci": "core-node"
+  }
+}

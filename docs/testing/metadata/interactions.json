@@ -1,0 +1,18 @@
+{
+  "apps/web-host/tests/interactions/secret-cancel.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/interactions/secret-cancel.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "凭据提示取消事务、用户隔离和等待者消费",
+    "ci": "node-webui"
+  },
+  "apps/web/tests/interactions/runtime/setup.test.ts": {
+    "domain": "mind-canvas-drag-runtime",
+    "layer": "L1",
+    "owner": "apps/web/src/interaction/runtime/setup.ts",
+    "productionEntry": "思维导图项目抽屉拖入画布交互",
+    "keyBehavior": "项目卡片落地时保留代理卡片外观，避免目标视觉 morph 将毛玻璃模糊插值消失",
+    "ci": "frontend-vitest"
+  }
+}

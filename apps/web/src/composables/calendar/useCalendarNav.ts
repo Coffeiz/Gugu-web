@@ -36,6 +36,7 @@ export function useCalendarNav({ cursor, selectedDate, todayIso, weekRef, weekDa
   const pickerYear = ref(new Date().getFullYear())
   const pickerAnchorRef = ref<HTMLElement | null>(null)
   const pickerStyle = ref<Record<string, string | number>>({})
+  const pickerCursor = computed(() => viewMode.value === 'week' ? weekRef.value : cursor.value)
 
   function formatDate(date: Date, options: Intl.DateTimeFormatOptions) {
     return new Intl.DateTimeFormat(locale.value, options).format(date)
@@ -94,7 +95,7 @@ export function useCalendarNav({ cursor, selectedDate, todayIso, weekRef, weekDa
       return
     }
     pickerAnchorRef.value = anchor
-    pickerYear.value = cursor.value.getFullYear()
+    pickerYear.value = pickerCursor.value.getFullYear()
     pickerOpen.value = true
     nextTick(() => {
       const rect = pickerAnchorRef.value?.getBoundingClientRect()
@@ -117,8 +118,18 @@ export function useCalendarNav({ cursor, selectedDate, todayIso, weekRef, weekDa
 
   function selectYearMonth(year: number, month: number) {
     cursor.value = new Date(year, month, 1)
+    if (viewMode.value === 'week') {
+      const selectedIsVisible = selectedDate.value && weekDays.value.some(day => day.iso === selectedDate.value)
+      const reference = selectedIsVisible
+        ? new Date(`${selectedDate.value}T00:00:00`)
+        : weekRef.value
+      const day = Math.min(reference.getDate(), new Date(year, month + 1, 0).getDate())
+      const target = new Date(year, month, day)
+      weekRef.value = target
+      selectedDate.value = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    }
     pickerOpen.value = false
   }
 
-  return { viewMode, periodLabel, prev, next, goToday, setView, pickerOpen, pickerYear, pickerAnchorRef, pickerStyle, togglePicker, selectYearMonth }
+  return { viewMode, periodLabel, prev, next, goToday, setView, pickerOpen, pickerYear, pickerCursor, pickerAnchorRef, pickerStyle, togglePicker, selectYearMonth }
 }
