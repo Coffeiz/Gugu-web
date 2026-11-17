@@ -205,3 +205,64 @@ test('删除检查后文件消失按已删除处理，权限错误仍向调用�
     await assert.rejects(removeLocalFile(root,ownerId,key,async()=>{throw Object.assign(new Error('synthetic'),{code:'EACCES'})}),{code:'EACCES'})
   } finally {await rm(root,{recursive:true,force:true})}
 })
+
+test('永久删除提交失败时恢复已暂存文件并保留原路径', async () => {
+  const storageRoot = path.join(tmpdir(), `gugu-trash-rollback-${randomUUID()}`)
+  const original = path.join(storageRoot, ownerId, 'trash', 'item.txt')
+  await mkdir(path.dirname(original), { recursive: true })
+  await writeFile(original, '保留正文')
+  const file = { id: 72, user_id: ownerId, storage_key: `${ownerId}/trash/item.txt`, size_bytes: 12 }
+  const { pool } = fakeMutationPool(file, 12)
+  const client = (await pool.connect()) as unknown as PoolClient
+  const originalQuery = client.query.bind(client)
+  ;(client as unknown as { query: (sql: string, values?: unknown[]) => Promise<unknown> }).query = async (sql, values) => {
+    if (sql === 'COMMIT') throw new Error('synthetic commit failure')
+    return originalQuery(sql, values)
+  }
+  try {
+    const operations = createPostgresTrashMutationOperations(pool, {
+      storageRoot,
+      async publishChanged() { throw new Error('失败事务不得发布资源变更') },
+    })
+    await assert.rejects(operations.hardDeleteFile(ownerId, file.id, null), /synthetic commit failure/)
+    assert.equal(await readFile(original, 'utf8'), '保留正文')
+  } finally {
+    await rm(storageRoot, { recursive: true, force: true })
+  }
+})
+
+test('永久删除文件夹提交失败时逆序恢复所有暂存文件且不发布事件', async () => {
+  const storageRoot = path.join(tmpdir(), `gugu-trash-tree-rollback-${randomUUID()}`)
+  const paths = ['root.txt', 'child.txt'].map((name) => path.join(storageRoot, ownerId, 'trash', name))
+  await mkdir(path.dirname(paths[0]!), { recursive: true })
+  await Promise.all(paths.map((file, index) => writeFile(file, `正文${index}`)))
+  const calls: string[] = []
+  const client = {
+    async query(sql: string) {
+      calls.push(sql)
+      if (sql.includes('SELECT folder.id FROM folders')) return { rows: [{ id: 20 }], rowCount: 1 }
+      if (sql.includes('WITH RECURSIVE descendants')) return { rows: [{ id: 20 }, { id: 21 }], rowCount: 2 }
+      if (sql.includes('SELECT id,storage_key,size_bytes FROM files')) return { rows: [
+        { id: 81, user_id: ownerId, storage_key: `${ownerId}/trash/root.txt`, size_bytes: 6 },
+        { id: 82, user_id: ownerId, storage_key: `${ownerId}/trash/child.txt`, size_bytes: 6 },
+      ], rowCount: 2 }
+      if (sql === 'COMMIT') throw new Error('synthetic folder commit failure')
+      if (sql.includes('SELECT used_bytes FROM storage_quota_ledgers')) return { rows: [{ used_bytes: 12 }], rowCount: 1 }
+      return { rows: [], rowCount: 1 }
+    },
+    release() {},
+  }
+  let published = false
+  try {
+    const operations = createPostgresTrashMutationOperations({ connect: async () => client } as unknown as PoolType, {
+      storageRoot,
+      async publishChanged() { published = true },
+    })
+    await assert.rejects(operations.hardDeleteFolder(ownerId, 20, null), /synthetic folder commit failure/)
+    assert.deepEqual(await Promise.all(paths.map((file) => readFile(file, 'utf8'))), ['正文0', '正文1'])
+    assert.equal(published, false)
+    assert.ok(calls.includes('ROLLBACK'))
+  } finally {
+    await rm(storageRoot, { recursive: true, force: true })
+  }
+})

@@ -1,4 +1,6 @@
 import type { JsonObject, ProviderTransport } from '../providers/contracts.js'
+import { createHash } from 'node:crypto'
+import { performance } from 'node:perf_hooks'
 
 export interface RagQueryEmbeddingSettings {
  provider:string
@@ -13,6 +15,13 @@ export interface RagQueryEmbeddingSettings {
 export type RagQueryEmbeddingOutcome='success'|'invalid_config'|'http_error'|'invalid_response'|'response_too_large'|'timeout'|'network_error'
 export type RagQueryEmbeddingResult={vector:number[];outcome:RagQueryEmbeddingOutcome;httpStatus?:number}
 const MAX_RESPONSE_BYTES=2*1024*1024
+const QUERY_CACHE_TTL_MS=5*60_000
+const QUERY_CACHE_LIMIT=64
+const queryCache=new Map<string,{createdAt:number;vector:number[]}>()
+
+function cacheKey(settings:RagQueryEmbeddingSettings,query:string):string {
+ return createHash('sha256').update(`${settings.provider}\n${settings.model}\n${settings.dimensions}\n${query}`).digest('hex')
+}
 
 /** 1.7.7 的端点和载荷规则；DNS、重定向及网络能力由可信传输实现约束。 */
 function requestFor(settings:RagQueryEmbeddingSettings,text:string):{url:string;body:JsonObject;format:'openai'|'bailian'}|null {
@@ -46,6 +55,11 @@ export async function embedRagQuery(settings:RagQueryEmbeddingSettings,text:stri
  signal.throwIfAborted()
  const normalized=text.trim(),request=normalized?requestFor(settings,normalized):null
  if(!request)return {vector:[],outcome:'invalid_config'}
+ const key=cacheKey(settings,normalized),now=performance.now(),cached=queryCache.get(key)
+ if(cached){
+  if(now-cached.createdAt<QUERY_CACHE_TTL_MS)return {vector:[...cached.vector],outcome:'success'}
+  queryCache.delete(key)
+ }
  const timeout=AbortSignal.timeout(4000),combined=AbortSignal.any([signal,timeout])
  try{
   const response=await transport.request({url:request.url,method:'POST',headers:{accept:'application/json','accept-encoding':'identity','content-type':'application/json',...(settings.apiKey?{authorization:`Bearer ${settings.apiKey}`}:{})},body:request.body,timeoutMs:4000,allowLocal:settings.allowLocal===true&&['local','ollama'].includes(settings.provider.trim().toLowerCase())},combined)
@@ -61,7 +75,14 @@ export async function embedRagQuery(settings:RagQueryEmbeddingSettings,text:stri
   let parsed:unknown
   try{parsed=JSON.parse(Buffer.concat(chunks).toString('utf8'))}catch{return {vector:[],outcome:'invalid_response',httpStatus:response.status}}
   const vector=vectorFrom(parsed,request.format)
-  return vector?{vector,outcome:'success',httpStatus:response.status}:{vector:[],outcome:'invalid_response',httpStatus:response.status}
+  if(!vector)return {vector:[],outcome:'invalid_response',httpStatus:response.status}
+  if(queryCache.size>=QUERY_CACHE_LIMIT){
+   let oldestKey:string|undefined,oldestAt=Infinity
+   for(const [entryKey,entry] of queryCache)if(entry.createdAt<oldestAt){oldestKey=entryKey;oldestAt=entry.createdAt}
+   if(oldestKey!==undefined)queryCache.delete(oldestKey)
+  }
+  queryCache.set(key,{createdAt:performance.now(),vector:[...vector]})
+  return {vector,outcome:'success',httpStatus:response.status}
  }catch{
   signal.throwIfAborted()
   return {vector:[],outcome:timeout.aborted?'timeout':'network_error'}

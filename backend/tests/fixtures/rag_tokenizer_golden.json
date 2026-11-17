@@ -6,5 +6,11 @@
   {"text":"中文分词和专有名词", "tokens":["中文","分词","和","专有名词"]},
   {"text":"OpenAI_API v2.1", "tokens":["openai_api","v2","1"]},
   {"text":"南京天气 30°C", "tokens":["南京","天气","30","c"]},
-  {"text":"HXD5 驾驶室", "tokens":["hxd5","驾驶室"]}
+  {"text":"HXD5 驾驶室", "tokens":["hxd5","驾驶室"]},
+  {"text":"Istanbul 与 I 事件", "tokens":["istanbul","与","i","事件"]},
+  {"text":"İstanbul 与 I 事件", "tokens":["i","stanbul","与","i","事件"]},
+  {"text":"Café 与 café 与 RAG", "tokens":["cafe","与","caf","与","rag"]},
+  {"text":"未登录词龘犇", "tokens":["未","登录","词","龘","犇"]},
+  {"text":"ＡＢＣ１２３ 🐈 中文", "tokens":["中文"]},
+  {"text":"𠀀 扩展汉字", "tokens":["扩展","汉字"]}
 ]

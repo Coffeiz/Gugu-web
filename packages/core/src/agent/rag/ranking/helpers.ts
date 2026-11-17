@@ -3,7 +3,7 @@ import type { RagCitation, RagDocument } from "../contracts.js";
 import { tokenize } from "./bm25.js";
 
 export function compact(value: string): string {
-  return String(value || "").replace(/\s+/gu, "").trim().toLocaleLowerCase();
+  return String(value || "").replace(/\s+/gu, "").trim().toLowerCase();
 }
 
 export function digest(value: string): string {

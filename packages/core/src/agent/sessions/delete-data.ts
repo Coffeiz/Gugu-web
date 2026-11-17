@@ -18,13 +18,14 @@ export function createPostgresAgentSessionDeleteRepository(pool: Pick<Pool, 'que
           FROM chat_attachments a
           JOIN conversation_messages m ON m.id=a.message_id
           WHERE a.user_id=${ownerId} AND m.session_id=${sessionId}
+          ORDER BY a.storage_key
         `.execute(tx)
         const storageKeys = rows.rows.map(row => row.storage_key)
 
         await sql`
           UPDATE terminal_sessions
           SET status='terminated', closed_at=clock_timestamp(), updated_at=clock_timestamp()
-          WHERE session_id=${sessionId} AND source='agent' AND closed_at IS NULL
+          WHERE owner_id=${ownerId} AND session_id=${sessionId} AND source='agent' AND closed_at IS NULL
         `.execute(tx)
         await sql`
           DELETE FROM chat_attachments

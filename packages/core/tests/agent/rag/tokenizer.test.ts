@@ -16,6 +16,7 @@ describe('1.7.7 RAG tokenizer 兼容边界', () => {
     ['you may want to check', ['you', 'may', 'want', 'to', 'check']],
     ['March 2026', ['march', '2026', 'march2026', 'month_03']],
     ['we march forward', ['we', 'march', 'forward']],
+    ['Istanbul 与 I 事件', ['istanbul', '与', 'i', '事件']],
   ])('日期与英文月名保持旧别名且不误识别普通词：%s', (text, expected) => {
     expect(tokenizeRaw(text)).toEqual(expected)
   })

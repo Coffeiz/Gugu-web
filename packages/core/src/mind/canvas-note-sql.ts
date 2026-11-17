@@ -57,5 +57,33 @@ export function createSqlMindCanvasNoteRuntime(db: Kysely<Database>, backend: Ba
         return { note: response(after), changed: true }
       })
     }, publishChanged, reportFailure,
+    async delete(rawOwner,nodeId,contextId){
+      const {canonical,owner}=ownerId(rawOwner)
+      return transact(async tx=>{
+        let query=tx.selectFrom('mind_nodes').selectAll().where('id','=',nodeId).where('user_id','=',owner).where('kind','=','canvas_note').where('deleted_at','is',null)
+        if(backend==='postgres')query=query.forUpdate()
+        const before=await query.executeTakeFirst()
+        if(!before)throw new MindCanvasNoteMutationError('画布便签不存在',404)
+        const itemsQuery=tx.selectFrom('mind_canvas_items').selectAll().where('user_id','=',owner).where('node_id','=',nodeId).where('deleted_at','is',null)
+        const items=await (backend==='postgres'?itemsQuery.forUpdate():itemsQuery).execute()
+        const now=databaseTime(clock(),backend)
+        const after=await tx.updateTable('mind_nodes').set({deleted_at:now,updated_at:now}).set({version:sql`version + 1`})
+          .where('id','=',nodeId).where('user_id','=',owner).where('kind','=','canvas_note').where('version','=',Number(before.version)).where('deleted_at','is',null).returningAll().executeTakeFirst()
+        if(!after)throw new MindCanvasNoteMutationError('画布便签刚被修改，请稍后重试',409)
+        if(items.length)await tx.updateTable('mind_canvas_items').set({deleted_at:now,updated_at:now}).where('user_id','=',owner).where('node_id','=',nodeId).where('deleted_at','is',null).execute()
+        const context=contextId?.trim().slice(0,128)
+        if(context){
+          const beforeItems:Record<string,Record<string,unknown>>={[`canvas_note:${nodeId}`]:snapshot(before)}
+          const afterItems:Record<string,Record<string,unknown>>={[`canvas_note:${nodeId}`]:snapshot(after)}
+          const targetRefs:Array<{kind:string;id:number}>=[{kind:'canvas_note',id:nodeId}]
+          const baseVersions:Record<string,Record<string,never>|{version:number}>={[`canvas_note:${nodeId}`]:{version:Number(before.version)}}
+          for(const item of items){const key=`canvas_item:${Number(item.id)}`;beforeItems[key]=canvasItemSnapshot(item);afterItems[key]={...canvasItemSnapshot(item),deleted_at:utc(now)};targetRefs.push({kind:'canvas_item',id:Number(item.id)});baseVersions[key]={}}
+          await recordForwardUndoOperation(tx,backend,{userId:canonical,contextId:context,resource:'mind',action:'delete',targetRefs,
+            beforeState:{items:beforeItems},afterState:{items:afterItems},baseVersions},clock)
+        }
+        await enqueueMindRagIndex(tx,backend,owner,'canvas','',now,'update')
+        return response(after)
+      })
+    },
   }
 }

@@ -86,7 +86,10 @@ function stripUnchangedSecrets(patch: ConfigDocument): ConfigDocument {
 }
 
 export function registerAdminConfigRoutes(app: FastifyInstance, options: AdminConfigOptions): void {
-  app.get('/api/v1/admin/config', { preHandler: options.requireAdmin }, async () => ({ data: currentData(options) }))
+  app.get('/api/v1/admin/config', { preHandler: options.requireAdmin }, async () => ({
+    data: currentData(options),
+    capabilities: { database_schema_managed_externally: true },
+  }))
   app.patch('/api/v1/admin/config', { preHandler: options.requireAdmin }, async (request, reply) => {
     const payload = object(request.body)
     const patch = object(payload.patch)

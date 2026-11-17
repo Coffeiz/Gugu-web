@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { scheduledTaskUndoSnapshot } from '../undo-snapshot.js'
 import { calendarEventSnapshot } from '../event-projection.js'
+import type { PreparedEventReminder } from './event-create.js'
 
 export type CalendarEventUpdateFields = Partial<{
   title: string | null
@@ -72,6 +73,7 @@ export interface EventUpdateTransaction {
     taskId: number,
     update: { name: string; payload: string; schedule?: EventUpdateReminderSchedule },
   ): Promise<void>
+  replaceEventReminders?(event: CalendarEventUpdateRecord, reminders: readonly PreparedEventReminder[]): Promise<EventUpdateReminderRecord[]>
   recordUndo(record: EventUpdateUndoRecord): Promise<void>
 }
 
@@ -106,6 +108,8 @@ export interface UpdateCalendarEventOptions {
   body: unknown
   undoContextId?: string | null
   clientId?: string | null
+  /** Agent完整提醒字段；省略时仅随事件时间重排已启用提醒。 */
+  reminders?: readonly PreparedEventReminder[]
 }
 
 export class EventUpdateError extends Error {
@@ -294,7 +298,8 @@ export async function updateCalendarEvent(
     if (!event) throw new EventUpdateError(404, '事件不存在')
     if (event.version !== version)
       throw new EventUpdateError(409, '数据已被其他用户修改，请刷新后重试')
-    if (Object.keys(fields).length === 0) return { event: response(event), changed: false }
+    if (Object.keys(fields).length === 0 && options.reminders === undefined)
+      return { event: response(event), changed: false }
 
     const beforeTasks = await tx.listOwnedEventReminders(event.id)
     const beforeItems: Record<string, Record<string, unknown>> = {
@@ -313,7 +318,7 @@ export async function updateCalendarEvent(
     const metadataChanged = ['title', 'date', 'time'].some((field) => Object.hasOwn(fields, field))
     const beforeBase = eventBaseMillis(event)
     const schedules = new Map<number, EventUpdateReminderSchedule>()
-    if (timingChanged) {
+    if (timingChanged && options.reminders === undefined) {
       for (const task of beforeTasks) {
         if (!task.enabled) continue
         const lead = leadMinutes(task, beforeBase)
@@ -326,7 +331,12 @@ export async function updateCalendarEvent(
         await tx.stageReminderCron(taskId, `@once:reschedule-${randomUUID().replaceAll('-', '')}`)
     }
 
-    if (metadataChanged) {
+    if (options.reminders !== undefined) {
+      if (!tx.replaceEventReminders) throw new EventUpdateError(422, '活动提醒写入能力不可用')
+      if (new Set(options.reminders.map(reminder => reminder.cron)).size !== options.reminders.length)
+        throw new EventUpdateError(422, 'reminders 中存在相同的触发时刻，请删除重复项')
+      await tx.replaceEventReminders(updated, options.reminders)
+    } else if (metadataChanged) {
       const when = updated.date + (updated.time ? ` ${updated.time}` : '')
       for (const task of beforeTasks) {
         await tx.updateReminder(task.id, {

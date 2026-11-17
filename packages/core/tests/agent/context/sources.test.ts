@@ -105,11 +105,12 @@ describe('Core标准上下文来源组合', () => {
     expect(restricted.sourceEffects.sessionSnapshot.phase).toBe('rebuild')
     expect(restricted.sourceEffects.sessionSnapshot.state.context).not.toHaveProperty('user_skill_snapshot')
   })
-  it('owned snapshot→模型→数据快照→历史→current顺序，返回原子snapshot候选而不独立提交', async () => {
+  it('owner快照→模型→current query→数据快照→历史顺序，返回原子snapshot候选而不独立提交', async () => {
     const value = fixture(), original = structuredClone(value.stored())
     const loaded = await createCanonicalSourceLoader(value.ports).load(identity, new AbortController().signal)
     expect(value.events[0]).toBe('owned-snapshot'); expect(value.events.indexOf('selection')).toBeLessThan(value.events.indexOf('projects'))
-    expect(value.events.indexOf('history')).toBeLessThan(value.events.indexOf('current-turn'))
+    expect(value.events.indexOf('current-turn')).toBeLessThan(value.events.indexOf('projects'))
+    expect(value.events.indexOf('projects')).toBeLessThan(value.events.indexOf('history'))
     expect(loaded.sourceEffects.sessionSnapshot).toMatchObject({ expectedEpoch: 0, phase: 'rebuild', state: { contextEpoch: 1 } })
     expect(value.stored()).toEqual(original)
     expect(loaded.input.systemPrompt).toBe('本Run最新静态system'); expect(loaded.input.snapshotText).toBe('项目概览1')
@@ -129,6 +130,16 @@ describe('Core标准上下文来源组合', () => {
     const loaded = await createCanonicalSourceLoader(value.ports).load(identity, new AbortController().signal)
     await prepareContext(loaded.input, value.preparation)
     expect(seen).toEqual([{ query: '  原始检索问题\n第二行  ', before: '3', ids: ['1', '2'] }])
+  })
+  it('快照重建把 owner 限定的当前消息 query 交给共享记忆loader', async () => {
+    const value = fixture()
+    let observed: string | undefined
+    value.ports.currentTurn = async () => ({ currentUser: {
+      persistedMessageId: '3', rawText: '当前需要检索的记忆', message: { role: 'user', content: '当前需要检索的记忆' }
+    } })
+    value.ports.data.loadMemory = async (_identity, _signal, query) => { observed = query; return {} }
+    await prepareRunContextSources(identity, value.ports)
+    expect(observed).toBe('当前需要检索的记忆')
   })
   it('快照命中不重复读数据域但静态system每Run重建，sliding TTL仍通过首次checkpoint effect交接', async () => {
     const value = fixture(), first = await prepareRunContextSources(identity, value.ports)

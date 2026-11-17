@@ -102,6 +102,34 @@ export interface UserSmtpConfigTable {
   id: Generated<number>; user_id: string; host: string; port: number; user: string; password: string
   from_addr: string; use_ssl: boolean | number; enabled: boolean | number; updated_at: string
 }
+export interface UserMcpServerTable {
+  id: string; user_id: string | null; scope: string; name: string; transport: string
+  endpoint: string; encrypted_endpoint: string; endpoint_nonce: string; encrypted_endpoint_key: string
+  endpoint_key_version: number; command: string; auth_mode: string; encrypted_headers: string
+  headers_nonce: string; encrypted_headers_key: string; headers_key_version: number
+  encrypted_query_params: string; query_params_nonce: string; encrypted_query_params_key: string
+  query_params_key_version: number; credential_slots: ColumnType<unknown, string, string>
+  encrypted_credentials: string; credentials_nonce: string; encrypted_credentials_key: string
+  credentials_key_version: number; enabled: boolean | number; confirm_mode: string; timeout_seconds: number
+  tool_allowlist: ColumnType<unknown, string, string>; created_at: string; updated_at: string
+}
+export interface McpToolSchemaSnapshotTable {
+  user_id: string; config_digest: string; schemas: ColumnType<unknown, string, string>; refreshed_at: string
+}
+export interface CalendarEventTable {
+  id: Generated<number>; user_id: string; title: string; date: string; time: string | null; end_time: string | null
+  type: string; contact_name: string | null; project_id: number | null; description: string | null; version: number
+  created_at: string; deleted_at: string | null; idempotency_key: string | null; idempotency_fingerprint: string | null
+}
+export interface ScheduledTaskTable {
+  id: Generated<number>; user_id: string; event_id: number | null; reminder_lead_minutes: number | null
+  workspace_id: number | null; filesystem_authorization_grant_id: number | null; name: string; payload: string; cron: string
+  schedule_kind: string; interval_minutes: number | null; start_at: ColumnType<Date | string | null, Date | string | null, Date | string | null>
+  end_at: ColumnType<Date | string | null, Date | string | null, Date | string | null>; channels: string; enabled: boolean | number
+  delivery_targets: ColumnType<unknown, string, string>; authorized_tools: ColumnType<unknown, string, string>
+  email_attachment_file_ids: ColumnType<unknown, string, string>; last_run_at: ColumnType<Date | string | null, Date | string | null, Date | string | null>
+  last_run_failed: boolean | number | null; created_at: string; updated_at: string
+}
 export interface Database {
   projects: ProjectTable
   clients: ClientTable
@@ -117,6 +145,10 @@ export interface Database {
   notification_reads: NotificationReadTable
   notification_dismissals: NotificationDismissalTable
   user_smtp_configs: UserSmtpConfigTable
+  user_mcp_servers: UserMcpServerTable
+  user_mcp_tool_schema_snapshots: McpToolSchemaSnapshotTable
+  calendar_events: CalendarEventTable
+  scheduled_tasks: ScheduledTaskTable
 }
 export const PROJECT_COLUMNS = [
   'id',
@@ -203,6 +235,8 @@ export function tablesSql(backend: 'sqlite' | 'postgres'): {
   onboarding: string
   feedback: string
   userPreferences: string
+  mcpServers: string
+  mcpSnapshots: string
 } {
   const id = backend === 'sqlite' ? 'INTEGER PRIMARY KEY NOT NULL' : 'SERIAL PRIMARY KEY'
   const owner = backend === 'sqlite' ? 'CHAR(32)' : 'UUID'
@@ -241,6 +275,8 @@ export function tablesSql(backend: 'sqlite' | 'postgres'): {
     onboarding: `CREATE TABLE onboarding_state (user_id ${owner} PRIMARY KEY NOT NULL, state ${backend === 'sqlite' ? 'TEXT' : 'JSON'} NOT NULL, created_at ${timestamp} NOT NULL, updated_at ${timestamp} NOT NULL)`,
     feedback: `CREATE TABLE feedbacks (id ${id}, user_id ${owner}, username VARCHAR(64) NOT NULL, category VARCHAR(32) NOT NULL, content TEXT NOT NULL, created_at ${timestamp} NOT NULL)`,
     userPreferences: `CREATE TABLE user_preferences (id ${id}, user_id ${owner} NOT NULL UNIQUE, data_json TEXT NOT NULL, updated_at ${timestamp} NOT NULL)`,
+    mcpServers: `CREATE TABLE IF NOT EXISTS user_mcp_servers (id ${backend === 'sqlite' ? 'TEXT' : 'UUID'} PRIMARY KEY NOT NULL, user_id ${owner}, scope VARCHAR(16) NOT NULL DEFAULT 'user', name VARCHAR(64) NOT NULL, transport VARCHAR(16) NOT NULL DEFAULT 'http', endpoint VARCHAR(1000) NOT NULL DEFAULT '', encrypted_headers TEXT NOT NULL DEFAULT '', headers_nonce VARCHAR(64) NOT NULL DEFAULT '', encrypted_headers_key TEXT NOT NULL DEFAULT '', headers_key_version INTEGER NOT NULL DEFAULT 1, enabled BOOLEAN NOT NULL DEFAULT TRUE, confirm_mode VARCHAR(16) NOT NULL DEFAULT 'confirm_all', timeout_seconds INTEGER NOT NULL DEFAULT 30, tool_allowlist ${backend === 'sqlite' ? 'TEXT' : 'JSON'}, created_at ${timestamp} NOT NULL, updated_at ${timestamp} NOT NULL, command VARCHAR(1000) NOT NULL DEFAULT '', auth_mode VARCHAR(16) NOT NULL DEFAULT 'headers', encrypted_query_params TEXT NOT NULL DEFAULT '', query_params_nonce VARCHAR(64) NOT NULL DEFAULT '', encrypted_query_params_key TEXT NOT NULL DEFAULT '', query_params_key_version INTEGER NOT NULL DEFAULT 1, encrypted_endpoint TEXT NOT NULL DEFAULT '', endpoint_nonce VARCHAR(64) NOT NULL DEFAULT '', encrypted_endpoint_key TEXT NOT NULL DEFAULT '', endpoint_key_version INTEGER NOT NULL DEFAULT 1, credential_slots ${backend === 'sqlite' ? 'TEXT' : 'JSON'} NOT NULL DEFAULT ${backend === 'sqlite' ? "'[]'" : "'[]'::json"}, encrypted_credentials TEXT NOT NULL DEFAULT '', credentials_nonce VARCHAR(64) NOT NULL DEFAULT '', encrypted_credentials_key TEXT NOT NULL DEFAULT '', credentials_key_version INTEGER NOT NULL DEFAULT 1, CONSTRAINT uq_user_mcp_servers_scope_name UNIQUE(user_id,scope,name))`,
+    mcpSnapshots: `CREATE TABLE IF NOT EXISTS user_mcp_tool_schema_snapshots (user_id ${owner} PRIMARY KEY NOT NULL, config_digest VARCHAR(64) NOT NULL, schemas ${backend === 'sqlite' ? 'TEXT' : 'JSON'} NOT NULL DEFAULT ${backend === 'sqlite' ? "'[]'" : "'[]'::json"}, refreshed_at ${timestamp} NOT NULL)`,
   }
 }
 

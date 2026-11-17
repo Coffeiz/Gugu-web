@@ -1,6 +1,8 @@
 import type { CurrentTurnSources, Json, RunIdentity } from '@gugu/core/agent'
+import { resolveCurrentTurnTextAttachments } from '@gugu/core/agent'
 import type { Pool } from 'pg'
 import type { OwnedCurrentMessage } from './agent-context-source.js'
+import { createCurrentMessageAttachmentReader, type CurrentMessageAttachmentReaderOptions } from './agent-current-attachments.js'
 
 /** 当前 Web 消息尚不支持附件媒体与需要专用命令处理器的输入。 */
 export class UnsupportedWebAgentMessageError extends Error {
@@ -18,7 +20,8 @@ function isCommand(text: string): boolean {
 }
 
 /** 快照只读取服务端发送事务写入的消息，调用方提供的消息字段不作为引用来源。 */
-export function createWebCurrentMessageMaterializer(pool: Pick<Pool, 'query'>) {
+export function createWebCurrentMessageMaterializer(pool: Pick<Pool, 'query'>, attachmentOptions?: Omit<CurrentMessageAttachmentReaderOptions, 'pool'>) {
+  const readAttachments = attachmentOptions ? createCurrentMessageAttachmentReader({ pool, ...attachmentOptions }) : null
   return async (identity: RunIdentity, message: OwnedCurrentMessage, signal?: AbortSignal): Promise<CurrentTurnSources> => {
     signal?.throwIfAborted()
     if (!identity.ownerId || !identity.sessionId || !identity.runId || !/^[1-9]\d*$/.test(message.id) || typeof message.content !== 'string') throw new Error('当前消息身份无效')
@@ -27,7 +30,7 @@ export function createWebCurrentMessageMaterializer(pool: Pick<Pool, 'query'>) {
     signal?.throwIfAborted()
     const stored = result.rows[0]
     if (!stored || typeof stored.content !== 'string') throw new Error('用户消息不存在')
-    if (stored.files != null && (!Array.isArray(stored.files) || stored.files.length)) throw new UnsupportedWebAgentMessageError('attachment')
+    if (stored.files != null && !Array.isArray(stored.files)) throw new UnsupportedWebAgentMessageError('content')
     if (isCommand(stored.content)) throw new UnsupportedWebAgentMessageError('command')
     if (stored.references_json != null && !Array.isArray(stored.references_json)) throw new UnsupportedWebAgentMessageError('content')
     const references = (stored.references_json ?? []) as unknown[]
@@ -38,6 +41,23 @@ export function createWebCurrentMessageMaterializer(pool: Pick<Pool, 'query'>) {
         || !blocks[1] || typeof blocks[1] !== 'object' || blocks[1].type !== 'text' || blocks[1].text !== stored.content)
         throw new UnsupportedWebAgentMessageError('content')
     }
-    return { currentUser: { persistedMessageId: message.id, rawText: stored.content, message: { role: 'user', content: stored.content_json != null ? stored.content_json as Json : stored.content } } }
+    let rawText = stored.content
+    let content: Json = stored.content_json != null ? stored.content_json as Json : stored.content
+    const cards = Array.isArray(stored.files) ? stored.files : []
+    if (cards.length) {
+      if (!readAttachments) throw new UnsupportedWebAgentMessageError('attachment')
+      const resolved = await readAttachments(identity.ownerId, message.id, cards)
+      signal?.throwIfAborted()
+      if (resolved.attachments.some(attachment => attachment.kind !== 'text')) throw new UnsupportedWebAgentMessageError('attachment')
+      const materialized = await resolveCurrentTurnTextAttachments(stored.content, resolved.attachments, resolved.readText)
+      rawText = materialized.rawText
+      if (stored.content_json != null && Array.isArray(stored.content_json)) {
+        const blocks = structuredClone(stored.content_json) as Array<Record<string, unknown>>
+        const textBlock = blocks[1]
+        if (textBlock && textBlock.type === 'text' && textBlock.text === stored.content) textBlock.text = rawText
+        content = blocks as Json
+      } else content = rawText
+    }
+    return { currentUser: { persistedMessageId: message.id, rawText, message: { role: 'user', content } } }
   }
 }

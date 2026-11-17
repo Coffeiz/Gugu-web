@@ -65,7 +65,7 @@ test('大尺寸 block-beta 图超过未缩放像素预算后仍应生成预算�
     process.execPath,
     ['--max-old-space-size=256', workerPath],
     {
-      input: JSON.stringify({ sources: [source] }),
+      input: JSON.stringify({ charts: [{ type: 'mermaid', source }] }),
       encoding: null,
       maxBuffer: 4 * 1024 * 1024,
       timeout: 20_000,
@@ -156,7 +156,7 @@ test('用户提供的纵向流程图在 IM 光栅化后应完整容纳左侧连�
     process.execPath,
     ['--max-old-space-size=256', workerPath],
     {
-      input: JSON.stringify({ sources: [source] }),
+      input: JSON.stringify({ charts: [{ type: 'mermaid', source }] }),
       encoding: null,
       maxBuffer: 4 * 1024 * 1024,
       timeout: 20_000,
@@ -183,7 +183,7 @@ test('中文 Sankey 能通过图片渲染器输出 PNG', () => {
     process.execPath,
     ['--max-old-space-size=256', workerPath],
     {
-      input: JSON.stringify({ sources: [source] }),
+      input: JSON.stringify({ charts: [{ type: 'mermaid', source }] }),
       encoding: null,
       maxBuffer: 4 * 1024 * 1024,
       timeout: 20_000,
@@ -213,7 +213,7 @@ test('block-beta 能通过服务端 SVG DOM 渲染出 PNG', () => {
     process.execPath,
     ['--max-old-space-size=256', workerPath],
     {
-      input: JSON.stringify({ sources: [source] }),
+      input: JSON.stringify({ charts: [{ type: 'mermaid', source }] }),
       encoding: null,
       maxBuffer: 4 * 1024 * 1024,
       timeout: 20_000,
@@ -254,7 +254,7 @@ test('用户自有端与 SaaS 跨子图连接时 A2A 图能生成完整 PNG', ()
     process.execPath,
     ['--max-old-space-size=256', workerPath],
     {
-      input: JSON.stringify({ sources: [source] }),
+      input: JSON.stringify({ charts: [{ type: 'mermaid', source }] }),
       encoding: null,
       maxBuffer: 4 * 1024 * 1024,
       timeout: 20_000,

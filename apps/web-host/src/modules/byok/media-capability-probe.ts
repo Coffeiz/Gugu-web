@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
 import { z } from 'zod'
+import { pydanticIntegerInput } from './dto.js'
 import { redactToolError } from '@gugu/core/agent'
 import { vendorMediaCapabilities, providerSelection } from '@gugu/core/providers'
 import type { JsonObject, ProviderHttpResponse } from '@gugu/core/providers'
@@ -194,7 +195,7 @@ const schema = z.object({
   base_url: z.string().max(500).default(''),
   model: z.string().max(200).default(''),
   api_key: z.string().max(20_000).default(''),
-  credential_id: z.number().int().nullable().optional(),
+  credential_id: z.preprocess(pydanticIntegerInput, z.number().int().nullable().optional()),
   dim: z.enum(['image', 'audio', 'video']),
 })
 

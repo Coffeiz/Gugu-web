@@ -101,7 +101,7 @@ html[data-theme][data-family] .cal-page .wv-ad-hover.weekend {
   background: var(--calendar-weekend-hover-bg) !important;
 }
 html[data-theme][data-family] .cal-page .month-cell.is-today.is-weekend {
-  background: var(--calendar-weekend-hover-bg) !important;
+  background: var(--calendar-weekend-bg) !important;
 }
 html[data-theme][data-family] .cal-page .month-cell.in-range.is-weekend,
 html[data-theme][data-family] .cal-page .wv-dhead.selected.weekend::before,
@@ -110,11 +110,23 @@ html[data-theme][data-family] .cal-page .wv-col.weekend .wv-selected {
   background: var(--calendar-weekend-selected-bg) !important;
 }
 html[data-theme][data-family] .cal-page .month-cell.is-selected.is-weekend {
-  background: var(--calendar-weekend-range-edge-bg) !important;
+  background: var(--calendar-weekend-selected-bg) !important;
 }
 html[data-theme][data-family] .cal-page .month-cell.range-start.is-weekend,
 html[data-theme][data-family] .cal-page .month-cell.range-end.is-weekend {
-  background: var(--calendar-weekend-range-edge-bg) !important;
+  background: var(--calendar-weekend-selected-bg) !important;
+}
+html[data-theme][data-family] .cal-page .month-cell.is-today.is-selected,
+html[data-theme][data-family] .cal-page .month-cell.is-today.in-range,
+html[data-theme][data-family] .cal-page .month-cell.is-today.range-start,
+html[data-theme][data-family] .cal-page .month-cell.is-today.range-end {
+  background: var(--calendar-today-cell-bg) !important;
+}
+html[data-theme][data-family] .cal-page .month-cell.is-today.is-selected.is-weekend,
+html[data-theme][data-family] .cal-page .month-cell.is-today.in-range.is-weekend,
+html[data-theme][data-family] .cal-page .month-cell.is-today.range-start.is-weekend,
+html[data-theme][data-family] .cal-page .month-cell.is-today.range-end.is-weekend {
+  background: var(--calendar-weekend-bg) !important;
 }
 html[data-theme][data-family] .cal-page .month-cell.is-selected:not(.is-today).is-weekend .cell-num,
 html[data-theme][data-family] .cal-page .month-cell.range-start.is-weekend .cell-num,

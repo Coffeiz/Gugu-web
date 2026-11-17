@@ -112,6 +112,6 @@ defineExpose({ contains: (target: Node) => !!popupRef.value?.contains(target), e
 /* 内容超过一屏时限制在视口内并内部滚动（如模型列表 7000px+），否则定位钳位会把
    弹层整个推到视口外且无法滚动查看；transparent 变体同样受此兜底。 */
 .popup-menu-host { max-height: calc(100dvh - 12px); overflow-y: auto; overscroll-behavior: contain; padding: var(--popup-surface-padding); border: 1px solid var(--popup-surface-border); border-radius: var(--popup-surface-radius); background: var(--popup-surface-bg); box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight); backdrop-filter: var(--popup-surface-blur); -webkit-backdrop-filter: var(--popup-surface-blur); }
-:global(.popup-menu-host--transparent) { padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+:global(.popup-menu-host.popup-menu-host--transparent) { padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; overflow: visible; }
 :global(.popup-menu-host.menu-pop-leave-active) { z-index: 100001 !important; }
 </style>

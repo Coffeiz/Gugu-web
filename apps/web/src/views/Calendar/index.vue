@@ -877,7 +877,7 @@ const wvAllDayH = computed(() => {
     const rows = wvShownRows.value + allDayItemsFor(d.iso).length + (weekMoreFor(ci).length ? 1 : 0)
     if (rows > maxRows) maxRows = rows
   })
-  return Math.max(maxRows * 20 + 6, 26)
+  return Math.max(maxRows * 20 + 6, 52)
 })
 
 // 当前时间红线（每分钟更新）

@@ -4,15 +4,16 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { SqlDataRuntime } from '@gugu/core/data'
+import type { AgentKnowledgeEntry } from '@gugu/core/agent'
 import { createGlobalSearchOperations, type GlobalSearchOperations } from '@gugu/core'
 import type { ProjectCreateRuntime } from '@gugu/core/project-create'
 import { createBuiltinSkillDefinitions, createSkillRegistry } from '@gugu/core/skills'
-import type { ScheduledTaskListPort, UseSkillPorts } from '@gugu/core/tools'
+import type { CalendarDeleteConfirmationPort, CalendarDeletePort, CalendarEventCreateToolPort, CalendarEventUpdateToolPort, CanvasBatchConfirmationPort, CanvasBatchPort, CanvasDeleteNotePort, CanvasDisconnectPort, CanvasDeletePort, KnowledgeWritePort, ScheduledTaskListPort, UseSkillPorts } from '@gugu/core/tools'
 import { createWebLinkButtonDeliveryPort } from '@gugu/core/tools'
 import { createAgentToolRegistry, type AgentToolRegistryOptions } from '../../src/domains/agent-sessions/tools/agent-tool-registry.js'
 
 const identity = { ownerId: '00000000-0000-4000-8000-000000000001', sessionId: '1', runId: 'run' }
-function fixture(includeTime = false, includeOverview = false, includeProjects = true, skills?: UseSkillPorts, scheduledTasks?: ScheduledTaskListPort, search?: GlobalSearchOperations, extra: Pick<AgentToolRegistryOptions, 'events' | 'trash' | 'httpGet'> = {}) {
+function fixture(includeTime = false, includeOverview = false, includeProjects = true, skills?: UseSkillPorts, scheduledTasks?: ScheduledTaskListPort, search?: GlobalSearchOperations, extra: Pick<AgentToolRegistryOptions, 'events' | 'calendarCreate' | 'calendarUpdate' | 'calendarDelete' | 'trash' | 'httpGet'> = {}) {
   const records: Array<{ id: number; userId: string; name: string; contact: null; email: null; phone: null; notes: string }> = []
   let enabled = new Set(['list_clients', 'create_client', 'create_project'])
   let failed = false, readFailed = false
@@ -49,8 +50,144 @@ test('缺少项目创建后端时不开放写工具，已授权只读工具仍�
   assert.equal(listed.kind, 'completed')
   if (listed.kind === 'completed') { assert.equal(listed.successful, true); assert.deepEqual(listed.value, []) }
 })
+
+test('知识写工具由 Host 注册器显式启用并继续使用可信 owner 身份', async () => {
+  let authorized = true
+  const entries: AgentKnowledgeEntry[] = []
+  const observedOwners: string[] = []
+  const knowledgeWrites: KnowledgeWritePort = {
+    async list(current) { observedOwners.push(current.ownerId); return structuredClone(entries) },
+    async commit(current, entry) {
+      observedOwners.push(current.ownerId)
+      entries.push(structuredClone(entry))
+    },
+  }
+  const registry = createAgentToolRegistry({ core: {} as SqlDataRuntime, knowledgeWrites,
+    authorize: async (_current, name) => authorized && ['save_knowledge', 'update_knowledge'].includes(name) })
+  const names = (await registry.capabilities(identity)).map(item => item.name)
+  assert.ok(names.includes('save_knowledge'))
+  assert.ok(names.includes('update_knowledge'))
+  const saved = await registry.tools.dispatch({ id: 'save-knowledge', name: 'save_knowledge', input: {
+    title: '可信 owner', content: 'owner 只能来自 Run identity。', owner_id: '00000000-0000-4000-8000-000000000002', path: '/outside',
+  } }, scope())
+  assert.equal(saved.kind === 'completed' && saved.successful, true)
+  assert.deepEqual(observedOwners, [identity.ownerId, identity.ownerId])
+  assert.equal(entries[0]?.scope.owner_user_id, identity.ownerId)
+  authorized = false
+  const denied = await registry.tools.dispatch({ id: 'denied', name: 'save_knowledge', input: { title: '拒绝', content: '不写入' } }, scope())
+  assert.equal(denied.kind === 'completed' && denied.successful, false)
+  assert.equal(entries.length, 1)
+})
+
 const scope = (ownerId = identity.ownerId) => ({ identity: { ...identity, ownerId }, roundId: 'round-1', signal: new AbortController().signal,
   resolution: null, execute: async () => { throw new Error('不可调用宿主 Shell') } })
+
+test('画布批处理只有 Host 注入持久确认与事务 claim 后才向模型注册', async () => {
+  let allowed = true
+  const options = { core: {} as SqlDataRuntime, authorize: async (_identity: typeof identity, name: string) => allowed && name === 'canvas_batch' }
+  const absent = createAgentToolRegistry(options)
+  assert.equal((await absent.capabilities(identity)).some(item => item.name === 'canvas_batch'), false)
+  const confirmation = { gate: {} as CanvasBatchConfirmationPort['gate'], claim: async () => false }
+  const batch: CanvasBatchPort = {
+    confirmation,
+    async apply() { return { kind: 'completed', successful: false, mutated: false, value: { error: '未执行' } } },
+    async reconcile() { return { kind: 'unknown' } },
+  }
+  const registry = createAgentToolRegistry({ ...options, canvasBatch: batch })
+  assert.equal((await registry.capabilities(identity)).some(item => item.name === 'canvas_batch'), true)
+  allowed = false
+  assert.equal((await registry.capabilities(identity)).some(item => item.name === 'canvas_batch'), false)
+})
+
+test('独立画布便笺删除仅在 Host 提供持久确认与事务 claim 时注册', async () => {
+  let allowed = true
+  const options = { core: {} as SqlDataRuntime, authorize: async (_identity: typeof identity, name: string) => allowed && name === 'canvas_delete_note' }
+  assert.equal((await createAgentToolRegistry(options).capabilities(identity)).some(item => item.name === 'canvas_delete_note'), false)
+  const port: CanvasDeleteNotePort = {
+    confirmation: { gate: {} as CanvasBatchConfirmationPort['gate'], claim: async () => false },
+    async apply() { return { kind: 'completed', successful: false, mutated: false, value: { error: '未执行' } } },
+    async reconcile() { return { kind: 'unknown' } },
+  }
+  const registry = createAgentToolRegistry({ ...options, canvasDeleteNote: port })
+  assert.equal((await registry.capabilities(identity)).some(item => item.name === 'canvas_delete_note'), true)
+  allowed = false
+  assert.equal((await registry.capabilities(identity)).some(item => item.name === 'canvas_delete_note'), false)
+})
+
+test('画布关系断开仅在 Host 提供持久确认与事务 claim 时注册', async () => {
+  let allowed = true
+  const options = { core: {} as SqlDataRuntime, authorize: async (_identity: typeof identity, name: string) => allowed && name === 'canvas_disconnect' }
+  assert.equal((await createAgentToolRegistry(options).capabilities(identity)).some(item => item.name === 'canvas_disconnect'), false)
+  const port: CanvasDisconnectPort = {
+    confirmation: { gate: {} as CanvasBatchConfirmationPort['gate'], claim: async () => false },
+    async apply() { return { kind: 'completed', successful: false, mutated: false, value: { error: '未执行' } } },
+    async reconcile() { return { kind: 'unknown' } },
+  }
+  const registry = createAgentToolRegistry({ ...options, canvasDisconnect: port })
+  assert.equal((await registry.capabilities(identity)).some(item => item.name === 'canvas_disconnect'), true)
+  allowed = false
+  assert.equal((await registry.capabilities(identity)).some(item => item.name === 'canvas_disconnect'), false)
+})
+
+test('画布级联删除仅在 Host 提供持久确认与事务 claim 时注册', async () => {
+  let allowed = true
+  const options = { core: {} as SqlDataRuntime, authorize: async (_identity: typeof identity, name: string) => allowed && name === 'canvas_delete' }
+  assert.equal((await createAgentToolRegistry(options).capabilities(identity)).some(item => item.name === 'canvas_delete'), false)
+  const port: CanvasDeletePort = {
+    confirmation: { gate: {} as CanvasBatchConfirmationPort['gate'], claim: async () => false },
+    async apply() { return { kind: 'completed', successful: false, mutated: false, value: { error: '未执行' } } },
+    async reconcile() { return { kind: 'unknown' } },
+  }
+  const registry = createAgentToolRegistry({ ...options, canvasDelete: port })
+  assert.equal((await registry.capabilities(identity)).some(item => item.name === 'canvas_delete'), true)
+  allowed = false
+  assert.equal((await registry.capabilities(identity)).some(item => item.name === 'canvas_delete'), false)
+})
+
+test('日历事件删除仅在 Host 注入持久确认与事务 claim 后注册', async () => {
+  let allowed = true
+  const options = { core: {} as SqlDataRuntime, authorize: async (_identity: typeof identity, name: string) => allowed && name === 'delete_event' }
+  assert.equal((await createAgentToolRegistry(options).capabilities(identity)).some(item => item.name === 'delete_event'), false)
+  const port: CalendarDeletePort = {
+    confirmation: { gate: {} as CalendarDeleteConfirmationPort['gate'], claim: async () => false },
+    async apply() { return { kind: 'completed', successful: false, mutated: false, value: { error: '未执行' } } },
+    async reconcile() { return { kind: 'unknown' } },
+  }
+  const registry = createAgentToolRegistry({ ...options, calendarDelete: port })
+  assert.equal((await registry.capabilities(identity)).some(item => item.name === 'delete_event'), true)
+  allowed = false
+  assert.equal((await registry.capabilities(identity)).some(item => item.name === 'delete_event'), false)
+})
+
+test('日历事件创建仅在 Host 注入 Core 日历创建和提醒目标端口后注册', async () => {
+  const absent = fixture(false, false, false)
+  absent.grant('create_event')
+  assert.equal((await absent.capabilities(identity)).some(item => item.name === 'create_event'), false)
+  const port: CalendarEventCreateToolPort = {
+    async apply() { return { kind: 'completed', successful: false, mutated: false, value: { error: '未执行' } } },
+    async reconcile() { return { kind: 'unknown' } },
+  }
+  const enabled = fixture(false, false, false, undefined, undefined, undefined, { calendarCreate: port })
+  enabled.grant('create_event')
+  assert.equal((await enabled.capabilities(identity)).some(item => item.name === 'create_event'), true)
+  enabled.revoke('create_event')
+  assert.equal((await enabled.capabilities(identity)).some(item => item.name === 'create_event'), false)
+})
+
+test('日历事件更新只有在Host注入owner目标查询与Core写端口后注册', async () => {
+  const absent = fixture(false, false, false)
+  absent.grant('update_event')
+  assert.equal((await absent.capabilities(identity)).some(item => item.name === 'update_event'), false)
+  const port: CalendarEventUpdateToolPort = {
+    async apply() { return { kind: 'completed', successful: false, mutated: false, value: { error: '未执行' } } },
+    async reconcile() { return { kind: 'unknown' } },
+  }
+  const enabled = fixture(false, false, false, undefined, undefined, undefined, { calendarUpdate: port })
+  enabled.grant('update_event')
+  assert.equal((await enabled.capabilities(identity)).some(item => item.name === 'update_event'), true)
+  enabled.revoke('update_event')
+  assert.equal((await enabled.capabilities(identity)).some(item => item.name === 'update_event'), false)
+})
 
 test('http_get 缺少可信网络端口时不注册，注入后使用认证 owner 且撤权后不请求', async () => {
   const absent = fixture(false, false, false)

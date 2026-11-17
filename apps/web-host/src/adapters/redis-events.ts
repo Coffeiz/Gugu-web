@@ -150,6 +150,20 @@ export function createRedisFilesystemAuthorizationMetric(redisUrl: string) {
   }
 }
 
+/** 与 Python 管理员邮件投递共用脱敏统计键；调用方负责吞掉旁路故障。 */
+export function createRedisEmailDeliveryMetric(redisUrl: string) {
+  return async (metric: { status: 'sent' | 'failed'; elapsed_ms: number; error_code?: string }): Promise<void> => {
+    const key = `ops:email:${new Date().toISOString().slice(0, 10).replaceAll('-', '')}`
+    await withRedis(redisUrl, async command => {
+      await command('HINCRBY', key, 'calls', '1')
+      await command('HINCRBY', key, metric.status, '1')
+      if (metric.error_code) await command('HINCRBY', key, `error:${metric.error_code}`, '1')
+      await command('HINCRBY', key, 'ms_sum', String(Math.max(0, Math.trunc(metric.elapsed_ms))))
+      await command('EXPIRE', key, String(14 * 24 * 60 * 60))
+    })
+  }
+}
+
 /** 读取与 Python Worker 共用的 Redis 状态键。 */
 export function createRedisValueReader(redisUrl: string): (key: string) => Promise<string | null> {
   return key => withRedis(redisUrl, command => command('GET', key))

@@ -78,9 +78,9 @@ Python 最近邻串行基准：`test_capability_registry.py`、`test_skill_id_mi
 
 ## 内置 Markdown 技能资源适配
 
-`createBuiltinSkillDefinitions(documents, signal)` 将可信 Host 提供的 `{name,read(signal)}` 文档转换为可显式注册的 SkillDefinition。沿用 Python 扁平 frontmatter，保留短/长描述、分类、emoji、来源和关联工具；SkillRegistry 对这些元数据保存独立快照。正文每次加载重读，UTF-8 SHA256前16位与Python摘要一致；重复ID拒绝，加载时ID漂移拒绝，README不作为技能。
+`createBuiltinSkillDefinitions(documents, signal)` 将可信 Host 提供的 `{name,read(signal)}` 文档转换为 SkillDefinition。Core 构建脚本 `scripts/build-skills.mjs` 自动发现 `packages/core/resources/skills/` 下全部 Markdown（README除外），再沿用 Python 扁平 frontmatter 读取 `id`、名称、短/长描述、分类、emoji、来源和关联工具；不使用 `manifest.json` 或手写 ID/文件注册清单。SkillRegistry 对元数据保存独立快照，正文每次加载重读，UTF-8 SHA256前16位与Python摘要一致；重复ID拒绝，加载时ID漂移拒绝。文件操作、定时任务和 Shell 正文仍未复制到 Node 资源目录，因此不会被自动发现或提前启用。
 
-当前仓库13份内置文档已通过实际读取→定义→注册器目录/正文加载验证。文档位置由Host决定，Core不读取Python目录或解释模型路径；Node制品的资源打包及生产Host的文档source仍待接入。注册后的目录名称/描述固定，正文与摘要可更新；修改目录元数据需重新装配注册器，避免热编辑改变已冻结目录。来源字段限定builtin/user，是相对旧Python任意source字符串的明确收紧。
+当前 Core 资源目录中的 Markdown 由构建脚本自动发现，并打包到 `@gugu/core/skills/bundled`；Host 将打包文档交给 `createBuiltinSkillDefinitions` 生成定义，再传给 SkillRegistry 显式注册。Web Host 当前用这些定义生成共享能力目录，但 Agent Run 的 `use_skill` 注册器端口仍未接通。注册后的目录名称/描述固定，正文与摘要可更新；修改目录元数据需重新装配注册器，避免热编辑改变已冻结目录。来源字段限定builtin/user，是相对旧Python任意source字符串的明确收紧。
 
 ### 注册期声明校验
 

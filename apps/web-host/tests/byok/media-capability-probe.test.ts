@@ -33,7 +33,7 @@ test('media probe authenticates, validates dimensions and delegates the owner-sc
   const response = await app.inject({
     method: 'POST', url: '/api/v1/byok/media-capability-probe',
     headers: { authorization: 'Bearer test' },
-    payload: { provider: 'minimax', api_format: 'anthropic', base_url: 'https://api.example.invalid', model: 'm3', api_key: 'sk-synthetic', dim: 'image' },
+    payload: { provider: 'minimax', api_format: 'anthropic', base_url: 'https://api.example.invalid', model: 'm3', api_key: 'sk-synthetic', credential_id: '7', dim: 'image' },
   })
 
   assert.equal(unauthorized.statusCode, 401)
@@ -42,7 +42,7 @@ test('media probe authenticates, validates dimensions and delegates the owner-sc
   assert.deepEqual(response.json(), { dim: 'image', supported: true, status: 200, detail: '模型支持图片输入' })
   assert.deepEqual(calls, [{ owner: ownerId, input: {
     provider: 'minimax', api_format: 'anthropic', base_url: 'https://api.example.invalid',
-    model: 'm3', api_key: 'sk-synthetic', dim: 'image',
+    model: 'm3', api_key: 'sk-synthetic', credential_id: 7, dim: 'image',
   } }])
 })
 

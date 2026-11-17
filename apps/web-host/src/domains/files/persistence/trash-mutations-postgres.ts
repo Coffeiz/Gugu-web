@@ -218,6 +218,7 @@ export function createPostgresTrashMutationOperations(
       const client = await pool.connect()
       let committed = false
       let fileDeleted = false
+      let staged: Awaited<ReturnType<typeof stageLocalFileRemoval>> = null
       try {
         await client.query('BEGIN')
         const found = await client.query<DeletedFileRow>(
@@ -230,8 +231,11 @@ export function createPostgresTrashMutationOperations(
         if (quota !== null && quota < Number(file.size_bytes))
           quota = await reconcileLocalUsage(client, options.storageRoot, ownerId, quota)
         let deletedFromStorage = false
-        try { deletedFromStorage = await removeLocalFile(options.storageRoot, ownerId, file.storage_key) }
-        catch { /* Python 同样在物理删除失败时清除数据库墓碑，避免坏对象阻塞回收站。 */ }
+        try {
+          staged = await stageLocalFileRemoval(options.storageRoot, ownerId, file.storage_key, randomUUID())
+          // 缺失文件与 Python 一样仍清理墓碑并释放账本；实际对象先暂存，等数据库提交后再销毁。
+          deletedFromStorage = true
+        } catch { /* 保留 Python 的坏对象清理语义，不因不可访问对象阻塞回收站。 */ }
         if (deletedFromStorage && quota !== null)
           await releaseQuota(client, ownerId, fileId, Number(file.size_bytes), quota)
         await client.query('DELETE FROM files WHERE id=$1 AND user_id=$2', [fileId, ownerId])
@@ -239,11 +243,16 @@ export function createPostgresTrashMutationOperations(
         committed = true
         fileDeleted = true
       } catch (error) {
-        if (!committed) await client.query('ROLLBACK').catch(() => undefined)
+        if (!committed) {
+          let rolledBack = false
+          try { await client.query('ROLLBACK'); rolledBack = true } catch { /* 回滚结果未知时不能猜测文件是否应恢复。 */ }
+          if (rolledBack && staged) await staged.restore()
+        }
         throw error
       } finally {
         client.release()
       }
+      await staged?.discard().catch(() => undefined)
       if (fileDeleted)
         await options.publishChanged({ ownerId, entityId: fileId, entityType: 'file', origin }).catch(() => undefined)
     },
@@ -255,6 +264,7 @@ export function createPostgresTrashMutationOperations(
       let committed = false
       let folderIds: number[] = []
       let deletedFileIds: number[] = []
+      const stagedFiles: Array<NonNullable<Awaited<ReturnType<typeof stageLocalFileRemoval>>>> = []
       try {
         await client.query('BEGIN')
         const root = await client.query<{ id: number | string }>(
@@ -286,8 +296,11 @@ export function createPostgresTrashMutationOperations(
           usedBytes = await reconcileLocalUsage(client, options.storageRoot, ownerId, usedBytes)
         for (const file of files.rows) {
           let deletedFromStorage = false
-          try { deletedFromStorage = await removeLocalFile(options.storageRoot, ownerId, file.storage_key) }
-          catch { /* 清理墓碑与 Python 一致，即使对象已缺失或不可访问。 */ }
+          try {
+            const staged = await stageLocalFileRemoval(options.storageRoot, ownerId, file.storage_key, randomUUID())
+            deletedFromStorage = true
+            if (staged) stagedFiles.push(staged)
+          } catch { /* 保留 Python 的坏对象清理语义；成功暂存的对象在提交失败时可恢复。 */ }
           if (deletedFromStorage && Number(file.size_bytes) > 0) {
             usedBytes = await releaseQuota(client, ownerId, Number(file.id), Number(file.size_bytes), usedBytes)
           }
@@ -297,11 +310,18 @@ export function createPostgresTrashMutationOperations(
         await client.query('COMMIT')
         committed = true
       } catch (error) {
-        if (!committed) await client.query('ROLLBACK').catch(() => undefined)
+        if (!committed) {
+          let rolledBack = false
+          try { await client.query('ROLLBACK'); rolledBack = true } catch { /* 回滚结果未知时不能猜测文件是否应恢复。 */ }
+          if (rolledBack) {
+            for (const staged of stagedFiles.reverse()) await staged.restore()
+          }
+        }
         throw error
       } finally {
         client.release()
       }
+      for (const staged of stagedFiles) await staged.discard().catch(() => undefined)
       for (const entityId of deletedFileIds)
         await options.publishChanged({ ownerId, entityId, entityType: 'file', origin }).catch(() => undefined)
       await options.publishChanged({ ownerId, entityId: folderId, entityType: 'folder', origin }).catch(() => undefined)

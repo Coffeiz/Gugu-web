@@ -5,7 +5,7 @@ export interface AdminEmailPreviewOptions {
  requireAdmin:preHandlerHookHandler
  render(draft:EmailPreviewDraft):{html:string;plain:string}
 }
-function object(value:unknown):value is Record<string,unknown>{return value!==null&&typeof value==='object'&&!Array.isArray(value)}
+export function object(value:unknown):value is Record<string,unknown>{return value!==null&&typeof value==='object'&&!Array.isArray(value)}
 function string(value:unknown,min:number,max:number):value is string{return typeof value==='string'&&Array.from(value).length>=min&&Array.from(value).length<=max}
 function localized(value:unknown):value is EmailPreviewDraft{
  if(!object(value)||!string(value.subject,1,200)||!string(value.title,1,200)||!string(value.body,1,20000))return false

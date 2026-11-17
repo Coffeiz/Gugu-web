@@ -1,5 +1,6 @@
 import type { Pool } from 'pg'
 import type { ConversationReadPort,ConversationSearchPort,ConversationSearchHit } from '@gugu/core/tools'
+import type { RunIdentity } from '@gugu/core/agent'
 import type { SqlDataRuntime } from '@gugu/core/data'
 import { createPostgresAgentConversationTextReader,createSqlAgentConversationSearchSources } from '@gugu/core/agent-sessions'
 import { configureRagJieba,createSqlRagConversationSearch,type RagJieba } from '@gugu/core/agent'
@@ -24,4 +25,19 @@ export function createAgentConversationSearchPort(core:Pick<SqlDataRuntime,'db'|
 export function createCoreAgentConversationSearchPort(core:Pick<SqlDataRuntime,'db'|'backend'>,jieba:RagJieba=getAgentRagJieba()):ConversationSearchPort {
  configureRagJieba(jieba)
  return createAgentConversationSearchPort(core,{search:createSqlRagConversationSearch(core.db,core.backend)})
+}
+
+/** 将生产 Web RAG 会话搜索限制在 dispatch lease 的 owner 范围。 */
+export function bindAgentConversationSearchOwner(port: ConversationSearchPort, ownerId: string): ConversationSearchPort {
+ if(typeof ownerId!=='string'||!ownerId.trim())throw new TypeError('Agent RAG owner 身份无效')
+ const expectedOwner=ownerId.toLowerCase()
+ const assertOwner=(identity:RunIdentity,signal:AbortSignal)=>{
+  signal.throwIfAborted()
+  if(typeof identity?.ownerId!=='string'||identity.ownerId.toLowerCase()!==expectedOwner)throw new Error('Agent RAG 运行身份不匹配')
+ }
+ return {
+  async recent(identity,limit,signal){assertOwner(identity,signal);return port.recent(identity,limit,signal)},
+  async search(identity,queries,mode,limit,signal){assertOwner(identity,signal);return port.search(identity,queries,mode,limit,signal)},
+  async resolve(identity,hit,signal){assertOwner(identity,signal);return port.resolve(identity,hit,signal)},
+ }
 }

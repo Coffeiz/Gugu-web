@@ -148,7 +148,7 @@ const emit = defineEmits<{
 .wv-dhead.selected.weekend .wv-dnum:not(.today) { color: rgba(195,90,90,0.9); }
 .wv-allday { display: flex; align-items: stretch; padding-right: calc(var(--scrollbar-size-default) + 2px); border-bottom: 1px solid var(--calendar-grid-line-strong); }
 .wv-allday-tag { display: flex; align-items: flex-start; justify-content: flex-end; padding: 4px 6px 0 0; font-size: 10px; color: #a8acc4; }
-.wv-allday-grid { position: relative; flex: 1; min-height: 26px; overflow: hidden; }
+.wv-allday-grid { position: relative; flex: 1; min-height: 52px; overflow: hidden; }
 .wv-aco { position: absolute; top: 0; bottom: 0; width: 14.2857%; box-sizing: border-box; border-left: 1px solid color-mix(in srgb, var(--action-primary) 10%, transparent); pointer-events: none; }
 .wv-aco.today { background: color-mix(in srgb, var(--action-primary) 6%, transparent); }
 .wv-aco.weekend { background: rgba(195,90,90,0.028); }

@@ -1,5 +1,5 @@
 
-import type { CanonicalMessage,CanonicalSourceLoaderResult,CapabilityCatalog,ContextData,ContextLoadPolicy,HistoryIdentity,Json,PreparationIdentity,PreparedToolDefinition,RunCapabilities,RunIdentity,SessionSnapshotState } from '../models.js'
+import type { CanonicalMessage,CanonicalSourceLoaderResult,CapabilityCatalog,ContextData,ContextLoadPolicy,CurrentTurnSources,HistoryIdentity,Json,PreparationIdentity,PreparedToolDefinition,RunCapabilities,RunIdentity,SessionSnapshotState } from '../models.js'
 import { AgentRunError,isEarlyExit } from '../models.js'
 import { copy,portableSnapshot,stableJson } from './history/canonical-history.js'
 import { loadSessionHistory } from './history/ordering.js'
@@ -7,7 +7,7 @@ import type { CanonicalContextPorts,CanonicalRunPreparationPorts,CapabilityPrepa
 import { buildRunRagContext,currentRunQuery } from './assemble.js'
 
 /** 权限策略由可信Host计算；受限群成员只能读取自己的scope记忆与时区，不能触碰owner域。 */
-export async function loadContextData(identity: HistoryIdentity, policy: ContextLoadPolicy, ports: ContextDataPorts, signal?: AbortSignal): Promise<ContextData> {
+export async function loadContextData(identity: HistoryIdentity, policy: ContextLoadPolicy, ports: ContextDataPorts, signal?: AbortSignal, query = ''): Promise<ContextData> {
   signal?.throwIfAborted()
   const userTimezone = await ports.loadTimezone(identity, signal)
   signal?.throwIfAborted()
@@ -30,7 +30,7 @@ export async function loadContextData(identity: HistoryIdentity, policy: Context
     error: unknown
   }> => Promise.resolve().then(operation)
     .then(value => ({ ok: true as const, value }), error => { cancel.abort(error); return { ok: false as const, error } })
-  const memory = policy.memoryEnabled ? start(() => ports.loadMemory(identity, cancel.signal)) : Promise.resolve({ ok: true as const, value: {} })
+  const memory = policy.memoryEnabled ? start(() => ports.loadMemory(identity, cancel.signal, query)) : Promise.resolve({ ok: true as const, value: {} })
   const imMemory = start(() => ports.loadImMemory(identity, cancel.signal))
   const knowledge = start(() => ports.loadKnowledge(identity, cancel.signal))
   try {
@@ -99,11 +99,16 @@ export async function prepareRunContextSources(identity: RunIdentity, ports: Con
     throw new Error('模型上下文身份或预算无效')
   const accessScopeHash = contextAccessScopeHash(scope, selection, ports.digest)
   signal?.throwIfAborted()
+  let currentTurnPromise: Promise<CurrentTurnSources> | null = null
+  const readCurrentTurn = (requestSignal?: AbortSignal) => currentTurnPromise ??= ports.currentTurn(copy(scope), requestSignal ?? signal)
   const snapshot = await ensureSessionSnapshot(scope, original, {
     digest: ports.digest, nextId: ports.nextId, now: ports.now,
     currentRevision: (_, requestSignal) => ports.currentRevision(copy(scope), requestSignal),
     loadContext: async (_, requestSignal) => {
-      const data = await loadContextData(copy(scope), selection.contextPolicy, ports.data, requestSignal)
+      const current = await readCurrentTurn(requestSignal)
+      requestSignal?.throwIfAborted()
+      const data = await loadContextData(copy(scope), selection.contextPolicy, ports.data, requestSignal,
+        current.currentUser?.rawText ?? current.query ?? '')
       requestSignal?.throwIfAborted()
       return ports.builder.buildSnapshot(copy(data), copy(selection), copy(scope))
     },
@@ -117,7 +122,7 @@ export async function prepareRunContextSources(identity: RunIdentity, ports: Con
     ...(ports.historyReader.hydrateReferences ? { hydrateReferences: (_, rows, requestSignal) => ports.historyReader.hydrateReferences!(copy(scope), rows, requestSignal) } : {}),
     ...(ports.historyReader.images ? { images: ports.historyReader.images } : {}),
   }, signal, { loadImages: selection.allowHistoricalImages })
-  const current = await ports.currentTurn(copy(scope), signal)
+  const current = await readCurrentTurn(signal)
   signal?.throwIfAborted()
   const request = ports.builder.buildRequest(copy(snapshot.payload), copy(selection), copy(scope))
   return {

@@ -10,3 +10,6 @@ export const configExtraUi = {
 } as const
 Object.assign(configExtraUi['ja-JP'], { testRecipient: 'テスト受信者' })
 Object.assign(configExtraUi['en-US'], { testRecipient: 'Test recipient' })
+Object.assign(configExtraUi['zh-CN'], { schemaManagedExternally: '数据库结构由部署迁移流程管理' })
+Object.assign(configExtraUi['ja-JP'], { schemaManagedExternally: 'データベース構造はデプロイ時のマイグレーションで管理されます' })
+Object.assign(configExtraUi['en-US'], { schemaManagedExternally: 'Database schema is managed by the deployment migration process' })

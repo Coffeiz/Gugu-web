@@ -329,6 +329,10 @@ const weekInteraction = useCalendarWeekInteraction({
 function allDayItemsFor(iso: string) { return renderEvents.value.filter(event => event.date === iso && !event.time) }
 function timedEventsFor(iso: string) { return calculateTimedLayout(renderEvents.value, iso, 36) }
 function openAddFromSidebar(anchor: HTMLElement | null) {
+  if (eventFormOpen.value) {
+    eventFormOpen.value = false
+    return
+  }
   if (!anchor) {
     openCreateEvent()
     return
@@ -372,28 +376,31 @@ function selectWeekday(event: MouseEvent) {
 }
 function closePopupsOutside(event: MouseEvent) {
   const target = event.target as HTMLElement
-  if (eventFormOpen.value && !target.closest('.desktop-calendar-add-popup')) eventFormOpen.value = false
+  const addEventButton = target.closest('.cal-sidebar .add-event-btn:not(.add-proj-btn)')
+  if (eventFormOpen.value && !addEventButton && !target.closest('.desktop-calendar-add-popup')) eventFormOpen.value = false
   if (pickerOpen.value && !pickerRef.value?.contains(target) && !target.closest('.period-btn')) pickerOpen.value = false
   if (context.value && !contextMenuRef.value?.contains(target)) context.value = null
   if (morePopup.value.open && !moreAnchor.value?.contains(target) && !morePopupRef.value?.contains(target)) closeMore()
+}
+function onEventPopupAfterLeave() {
+  // 快速关闭后重开时，旧实例的离场回调可能晚于新一轮打开；不要清掉新弹层的位置。
+  if (!eventFormOpen.value) eventPopupPosition.value = null
 }
 onMounted(() => document.addEventListener('mousedown', closePopupsOutside, true))
 onUnmounted(() => document.removeEventListener('mousedown', closePopupsOutside, true))
 </script>
 
 <template>
-  <Teleport to="#desktop-calendar-topbar">
-    <CalendarToolbar
-      :period-label="periodLabel"
-      :view-mode="viewMode"
-      :picker-open="pickerOpen"
-      @prev="prev"
-      @next="next"
-      @today="goToday"
-      @set-view="setView"
-      @toggle-picker="togglePicker"
-    />
-  </Teleport>
+  <CalendarToolbar
+    :period-label="periodLabel"
+    :view-mode="viewMode"
+    :picker-open="pickerOpen"
+    @prev="prev"
+    @next="next"
+    @today="goToday"
+    @set-view="setView"
+    @toggle-picker="togglePicker"
+  />
   <div class="desktop-cal-layout">
     <section class="desktop-cal-grid glass-card" aria-label="月历">
       <div class="desktop-cal-month" :class="{ 'is-week-view': viewMode === 'week' }">
@@ -510,7 +517,7 @@ onUnmounted(() => document.removeEventListener('mousedown', closePopupsOutside, 
     :style="{ width: '240px' }"
     popup-class="desktop-calendar-add-popup"
     :transparent="true"
-    @after-leave="eventPopupPosition = null"
+    @after-leave="onEventPopupAfterLeave"
   >
     <EventFormPanel
       :event="eventDraft"
@@ -528,7 +535,7 @@ onUnmounted(() => document.removeEventListener('mousedown', closePopupsOutside, 
 </template>
 
 <style>
-.desktop-cal-layout { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 14px; height: 100%; min-height: 0; }
+.desktop-cal-layout { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 14px; flex: 1; height: auto; min-height: 0; }
 .desktop-cal-grid,.desktop-cal-info > .cal-sidebar { min-width: 0; min-height: 0; border-radius: var(--radius-lg, 16px); }
 .desktop-cal-grid { display: flex; flex-direction: column; padding: var(--space-md, 16px); overflow: hidden; }
 .desktop-cal-month { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; user-select: none; -webkit-user-select: none; }
@@ -539,17 +546,6 @@ onUnmounted(() => document.removeEventListener('mousedown', closePopupsOutside, 
 .desktop-cal-month .month-cell { user-select: none; -webkit-user-select: none; }
 .desktop-cal-info { display: flex; min-width: 0; min-height: 0; overflow: hidden; }
 .desktop-cal-info > .cal-sidebar { flex: 1; width: 100%; overflow: auto; }
-.desktop-topbar-calendar { display: flex; align-items: center; flex: 1; min-width: 0; height: 100%; }
-.desktop-topbar-calendar > .cal-toolbar { width: 100%; height: 100%; padding: 0; overflow: visible; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
-.desktop-topbar-calendar > .cal-toolbar > .glass-bg { display: none; }
-#desktop-calendar-topbar { position: absolute; inset: 0; z-index: 3; min-width: 0; pointer-events: none; }
-#desktop-calendar-topbar > .cal-toolbar { position: absolute; inset: 0; display: block; width: auto; height: 100%; padding: 0; overflow: visible; border: 0; border-radius: 0; background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; pointer-events: none; }
-#desktop-calendar-topbar > .cal-toolbar > .toolbar-left,
-#desktop-calendar-topbar > .cal-toolbar > .toolbar-right { position: absolute; top: 50%; z-index: 4; display: flex; align-items: center; transform: translateY(-50%); pointer-events: auto; -webkit-app-region: no-drag; }
-#desktop-calendar-topbar > .cal-toolbar > .toolbar-left { left: 0; }
-#desktop-calendar-topbar > .cal-toolbar > .toolbar-right { right: 0; }
-#desktop-calendar-topbar .toolbar-left button,
-#desktop-calendar-topbar .toolbar-right button { pointer-events: auto; -webkit-app-region: no-drag; }
 .desktop-calendar-add-popup { width: 240px; max-width: calc(100vw - 16px); }
 @media (max-width: 820px) { .desktop-cal-layout { grid-template-columns: minmax(0, 1fr); overflow: auto; }.desktop-cal-grid { min-height: 560px; }.desktop-cal-info { min-height: 280px; overflow: visible; } }
 </style>

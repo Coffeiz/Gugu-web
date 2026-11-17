@@ -47,6 +47,8 @@ it('RAG 查询 embedding 经真实受控传输读取向量且不跟随重定向'
  try{
   expect(await embedRagQuery(settings,'合成查询',transport,new AbortController().signal)).toEqual({vector:[0.2,0.8],outcome:'success',httpStatus:200})
   expect(authorization).toBe('Bearer synthetic-key');expect(encoding).toBe('identity');expect(accept).toBe('application/json');expect(JSON.parse(body)).toMatchObject({model:'synthetic-model',input:'合成查询'})
+  expect(await embedRagQuery({...settings,provider:'openai',allowLocal:false},'云端服务不得访问本地地址',transport,new AbortController().signal)).toEqual({vector:[],outcome:'network_error'})
+  expect(calls).toBe(1)
   redirect=true;body=''
   expect(await embedRagQuery(settings,'其他查询',transport,new AbortController().signal)).toEqual({vector:[],outcome:'http_error',httpStatus:302})
   expect(calls).toBe(2)

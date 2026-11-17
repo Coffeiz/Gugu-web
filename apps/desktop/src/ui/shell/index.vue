@@ -154,8 +154,7 @@ onMounted(() => perform(async () => {
       @resize-finish="finishSidebarResize"
       @resize-keydown="handleResizeKeydown"
     />
-    <header class="desktop-topbar" :class="{ 'desktop-topbar--calendar': activeSection === 'calendar' }">
-      <div v-if="activeSection === 'calendar'" id="desktop-calendar-topbar" class="desktop-topbar-calendar"></div>
+    <header class="desktop-topbar">
       <div class="topbar-search"><span>⌕</span><span>搜索项目、日程与便签</span><kbd>⌘ K</kbd></div>
       <ActionButton v-if="activeSection === 'projects'" fit class="topbar-create-button" @click="uiStore.openNewProject = true"><Icon name="action.add" :size="14" />新建项目</ActionButton>
     </header>
@@ -227,11 +226,11 @@ onMounted(() => perform(async () => {
 </template>
 
 <style scoped>
-.desktop-shell { --desktop-topbar-height: 52px; position: relative; isolation: isolate; height: 100vh; width: 100vw; overflow: hidden; display: grid; grid-template-columns: var(--desktop-sidebar-width, 204px) minmax(0, 1fr); grid-template-rows: var(--desktop-topbar-height) minmax(0, 1fr); color: var(--text-primary); background: transparent; backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); }
-.desktop-topbar { position: relative; grid-column: 2; grid-row: 1; z-index: 1; display: flex; align-items: center; justify-content: flex-end; min-width: 0; margin: 0 16px; padding: 0; background: transparent; -webkit-app-region: drag; }.topbar-search { position: absolute; z-index: 2; left: 50%; box-sizing: border-box; -webkit-app-region: no-drag; display: flex; align-items: center; gap: 10px; width: min(400px, 48%); height: 36px; padding: 7px 12px; border: 1px solid color-mix(in srgb, var(--content-divider) 70%, transparent); border-radius: 11px; color: var(--text-secondary); background: color-mix(in srgb, var(--surface-card-solid) 55%, transparent); font-size: 12px; transform: translateX(-50%); }.topbar-search > span:first-child { font-size: 17px; }.topbar-search kbd { margin-left: auto; font: inherit; opacity: .7; }.desktop-topbar :deep(.topbar-create-button) { -webkit-app-region: no-drag; flex: 0 0 auto; width: max-content; min-width: max-content; }
-.desktop-workbench { grid-column: 2; grid-row: 2; min-width: 0; min-height: 0; overflow: auto; margin: 0 var(--space-sm) var(--space-sm) 0; padding: var(--space-sm); border: 1px solid color-mix(in srgb, var(--content-divider) 75%, transparent); border-radius: 18px; background: var(--surface-card-solid, #fff); box-shadow: 0 12px 34px rgba(34, 39, 52, .08); scroll-behavior: smooth; }
+.desktop-shell { --desktop-topbar-height: 52px; position: relative; isolation: isolate; height: 100vh; width: 100vw; overflow: hidden; display: grid; grid-template-columns: var(--desktop-sidebar-width, 204px) minmax(0, 1fr); grid-template-rows: var(--desktop-topbar-height) minmax(0, 1fr); color: var(--text-primary); background: rgb(from var(--surface-card-solid) r g b / 50%); }
+.desktop-topbar { position: relative; grid-column: 2; grid-row: 1; z-index: 3; display: flex; align-items: center; justify-content: flex-end; min-width: 0; margin: 0 var(--space-sm) 0 0; padding: 0; background: transparent; -webkit-app-region: drag; }.desktop-topbar::before { position: absolute; top: 0; right: 100%; bottom: 0; width: var(--desktop-sidebar-width, 204px); content: ''; -webkit-app-region: drag; pointer-events: none; }.topbar-search { position: absolute; z-index: 2; left: 50%; box-sizing: border-box; -webkit-app-region: no-drag; display: flex; align-items: center; gap: 10px; width: min(400px, 48%); height: 36px; padding: 7px 12px; border: 1px solid color-mix(in srgb, var(--content-divider) 70%, transparent); border-radius: 11px; color: var(--text-secondary); background: color-mix(in srgb, var(--surface-card-solid) 55%, transparent); font-size: 12px; transform: translateX(-50%); }.topbar-search > span:first-child { font-size: 17px; }.topbar-search kbd { margin-left: auto; font: inherit; opacity: .7; }.desktop-topbar :deep(.topbar-create-button) { -webkit-app-region: no-drag; flex: 0 0 auto; width: max-content; min-width: max-content; }
+.desktop-workbench { grid-column: 2; grid-row: 2; min-width: 0; min-height: 0; overflow: auto; margin: 0 var(--space-sm) var(--space-sm) 0; padding: var(--space-lg); border: 1px solid color-mix(in srgb, var(--content-divider) 75%, transparent); border-radius: 18px; background: rgb(from var(--surface-card-solid) r g b / 75%); box-shadow: 0 12px 34px rgba(34, 39, 52, .08); scroll-behavior: smooth; }
 .desktop-workbench:has(.desktop-calendar-page) { display: flex; flex-direction: column; }
-.desktop-calendar-page { position: relative; flex: 1; min-width: 0; min-height: 0; }
+.desktop-calendar-page { position: relative; display: flex; flex: 1; flex-direction: column; gap: var(--space-md); min-width: 0; min-height: 0; }
 .calendar-history-actions { position: absolute; right: var(--space-md); bottom: var(--space-md); z-index: 3; display: flex; gap: var(--space-xs); }
 .desktop-error { padding: 12px 16px; background: var(--control-bg); border: 1px solid var(--status-danger); border-radius: 8px; }
 @media (max-width: 760px) {

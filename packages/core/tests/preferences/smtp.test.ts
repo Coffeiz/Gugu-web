@@ -23,7 +23,7 @@ describe.each(['sqlite', 'postgres'] as const)('用户 SMTP 设置 %s', backend 
     try {
       if (backend === 'postgres') await sql.raw(tablesSql('postgres').userSmtp).execute(db)
       const owner = opened?.ownerId ?? randomUUID(), other = randomUUID()
-      if (opened) expect(opened.schemaVersion).toBe('17')
+      if (opened) expect(opened.schemaVersion).toBe('18')
       const stored = backend === 'sqlite' ? owner.replaceAll('-', '') : owner
       const store = createKyselySmtpStore(db, backend, () => '2026-01-01T01:02:03.123Z')
       const app = createUserSmtpSettings(store, password => password ? `cipher:${password}` : '')

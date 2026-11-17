@@ -6,6 +6,7 @@ import type { AsrDependencies, CompatibleAsrDependencies, ProviderConfig, Provid
 import { createNodeProviderTransport } from '@gugu/core/providers/node'
 import { redactToolError } from '@gugu/core/agent'
 import type { CredentialTestPreviewOptions, createCredentialSavedTest, createCredentialTestPreview } from '@gugu/core/byok/credential-test-preview'
+import { pydanticIntegerInput } from './dto.js'
 
 const schema = z.object({
   provider: z.string().min(1).max(64),
@@ -14,8 +15,8 @@ const schema = z.object({
   api_format: z.string().max(32).default(''),
   base_url: z.string().max(500).default(''),
   model: z.string().max(200).default(''),
-  dimensions: z.number().int().min(0).max(65_536).nullable().optional(),
-  credential_id: z.number().int().nullable().optional(),
+  dimensions: z.preprocess(pydanticIntegerInput, z.number().int().min(0).max(65_536).nullable().optional()),
+  credential_id: z.preprocess(pydanticIntegerInput, z.number().int().nullable().optional()),
 })
 
 export interface CredentialTestPreviewRouteOptions {

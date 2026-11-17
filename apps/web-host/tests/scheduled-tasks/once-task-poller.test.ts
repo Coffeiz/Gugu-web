@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createOnceTaskPoller } from '../../src/modules/scheduled-tasks/once-task-poller.js'
-import type { ScheduledTaskRunner } from '../../src/scheduled-task-runner.js'
+import type { ScheduledTaskRunner } from '@gugu/core/scheduled-task-runner'
 
 test('停止轮询等待执行完成且不继续触发后续任务', async () => {
   let finish!: () => void

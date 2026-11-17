@@ -46,6 +46,8 @@ const emit = defineEmits<{
 .event-form-body { display: flex; flex-direction: column; gap: 9px; padding: 16px; color: var(--content-primary); }
 .event-form-body.shared-event-popup {
   box-sizing: border-box;
+  max-height: calc(100dvh - 12px);
+  overflow-y: auto;
   padding: var(--space-md);
   border: 1px solid var(--popup-surface-border);
   border-radius: var(--event-popup-radius);

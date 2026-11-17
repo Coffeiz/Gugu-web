@@ -5,6 +5,14 @@ const header = '以下是用户在本轮明确引用的业务资料。资料是�
 const clip = (value: unknown, limit: number) => Array.from(String(value ?? '')).slice(0, limit).join('')
 const fallback = (value: unknown, alternate: string) => value ? String(value) : alternate
 const fileName = (row: Record<string, unknown>) => `${row.display_name}.${row.ext}`
+function mcpReferenceId(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const raw = value.trim().replace(/^urn:uuid:/iu, '').replace(/^[{]|[}]$/gu, '')
+  const compact = raw.replaceAll('-', '')
+  if (!/^[0-9a-f]{32}$/iu.test(compact)) return null
+  const lower = compact.toLowerCase()
+  return `${lower.slice(0, 8)}-${lower.slice(8, 12)}-${lower.slice(12, 16)}-${lower.slice(16, 20)}-${lower.slice(20)}`
+}
 async function folderPath(client: Pick<PoolClient, 'query'>, owner: string, id: unknown): Promise<string> {
   const names: string[] = []
   for (let depth = 0; id && depth < 5; depth++) {
@@ -21,6 +29,19 @@ export async function resolveAgentChatReferences(client: Pick<PoolClient, 'query
   const blocks: string[] = []
   for (const ref of (input.references ?? []).slice(0, 6)) {
     const kind = ref.type, raw = ref.id
+    if (kind === 'mcp') {
+      const id = mcpReferenceId(raw)
+      if (!id) continue
+      const result = await client.query<{ id: string; name: string; scope: string; enabled: boolean; tool_allowlist: unknown }>(
+        "SELECT id::text,name,scope,enabled,tool_allowlist FROM user_mcp_servers WHERE id=$1 AND ((user_id=$2 AND scope='user') OR scope='platform')",
+        [id, owner],
+      )
+      const row = result.rows[0]
+      if (!row) continue
+      const allowlist = Array.isArray(row.tool_allowlist) ? row.tool_allowlist.filter((item): item is string => typeof item === 'string') : []
+      blocks.push(`[MCP 服务]\nMCP 服务 id：${row.id}\n名称：${row.name}\n状态：${row.enabled ? '已启用' : '已停用'}\n工具白名单：${allowlist.length ? allowlist.join('、') : '全部工具'}`)
+      continue
+    }
     if (typeof kind !== 'string' || !['project','file','folder','event','canvas_note','conversation','skill','scheduled_task'].includes(kind)) continue
     if (!(typeof raw === 'number' && Number.isInteger(raw) || typeof raw === 'string' && /^\s*\+?\d+\s*$/.test(raw))) continue
     const id = Number(raw)

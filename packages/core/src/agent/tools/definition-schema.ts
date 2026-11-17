@@ -47,6 +47,8 @@ export function snapshotToolDefinition(tool: ToolDefinition): ToolDefinition {
   if (tool.reconcile !== undefined && typeof tool.reconcile !== 'function') throw new Error('工具收据恢复配置无效')
   if (tool.effect !== 'read' && tool.effect !== 'write') throw new Error('工具读写属性无效')
   if (tool.requiresInteraction !== undefined && typeof tool.requiresInteraction !== 'boolean') throw new Error('工具交互属性无效')
+  if (tool.confirmationReplay !== undefined && typeof tool.confirmationReplay !== 'boolean') throw new Error('工具确认恢复属性无效')
+  if (tool.confirmationReplay && !tool.requiresInteraction) throw new Error('确认恢复工具必须声明交互')
   if (tool.strictArrayFields !== undefined && (!Array.isArray(tool.strictArrayFields)
     || tool.strictArrayFields.some(field => typeof field !== 'string' || !field.trim()))) throw new Error('严格数组字段无效')
   const schema = tool.definition.schema

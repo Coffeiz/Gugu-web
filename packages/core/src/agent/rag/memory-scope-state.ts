@@ -14,7 +14,8 @@ type ScopeStateRow = {
  * 但不会自行授予 scope 权限或枚举 scope。
  */
 export function createSqlMemoryScopeStateReader<DB>(db: Kysely<DB>): MemoryRagScopeStatePort['getMemoryScopeState'] {
-  return async (context, scope) => {
+  return async (context, scope, signal) => {
+    signal?.throwIfAborted()
     const ownerId = dataContext(context.ownerId).ownerId
     if (!scope.id || !scope.platform || !scope.botId || !['group', 'member'].includes(scope.type)) {
       throw new CoreError('invalid_request', 'Memory scope 缺少必要字段')
@@ -40,8 +41,10 @@ export function createSqlMemoryScopeStateReader<DB>(db: Kysely<DB>): MemoryRagSc
       `.execute(db)
       row = result.rows[0]
     } catch {
+      signal?.throwIfAborted()
       throw new CoreError('storage_error', 'Memory scope 状态查询失败')
     }
+    signal?.throwIfAborted()
     if (!row) throw new CoreError('storage_error', 'Memory scope 状态查询失败')
 
     const updatedAt = row.updated_at instanceof Date

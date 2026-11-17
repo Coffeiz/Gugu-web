@@ -4,9 +4,10 @@ import { databaseTime, nowUtc, utc, type Clock } from '../data/codec.js'
 import type { Database } from '../data/schema.js'
 import { recordForwardUndoOperation } from '../data/undo.js'
 import { enqueueScheduledTaskRagIndex } from '../scheduled-tasks/rag-index-job.js'
-import { enqueueCalendarRagIndex } from './create-store.js'
+import { enqueueCalendarRagIndex, insertCalendarEventReminder } from './create-store.js'
+import type { PreparedEventReminder } from './application/event-create.js'
 import { calendarEventRecord } from './event-projection.js'
-import type { CalendarEventUpdateFields, EventUpdatePublication, EventUpdateStore, EventUpdateTransaction } from './application/event-update.js'
+import type { CalendarEventUpdateFields, EventUpdatePublication, EventUpdateReminderRecord, EventUpdateStore, EventUpdateTransaction } from './application/event-update.js'
 import type { CalendarEventDeletePublication, CalendarEventDeleteStore, CalendarEventDeleteTransaction } from './application/event-delete.js'
 
 type Backend = 'sqlite' | 'postgres'
@@ -56,7 +57,8 @@ function adapter<DB>(tx: Transaction<DB>, backend: Backend, rawOwner: string, cl
         if (!name) throw new Error('不支持的日历字段')
         return sql`${sql.ref(name)} = ${value}`
       })
-      const result = await sql<Row>`UPDATE calendar_events SET version=version+1, ${sql.join(assignments)} WHERE id=${id} AND user_id=${owner} AND deleted_at IS NULL AND version=${version} RETURNING ${eventFields}`.execute(tx)
+      const setClause = assignments.length ? sql`version=version+1, ${sql.join(assignments)}` : sql`version=version+1`
+      const result = await sql<Row>`UPDATE calendar_events SET ${setClause} WHERE id=${id} AND user_id=${owner} AND deleted_at IS NULL AND version=${version} RETURNING ${eventFields}`.execute(tx)
       const row = result.rows[0]
       if (row) await enqueueCalendarRagIndex(tx, backend, owner, String(id), timestamp(), 'update')
       return row ? calendarEventRecord(row, Number(row.version || 1)) : null
@@ -72,6 +74,39 @@ function adapter<DB>(tx: Transaction<DB>, backend: Backend, rawOwner: string, cl
       const result = await sql`UPDATE scheduled_tasks SET name=${update.name},payload=${update.payload},schedule_kind=COALESCE(${schedule?.scheduleKind ?? null},schedule_kind),cron=COALESCE(${schedule?.cron ?? null},cron),start_at=COALESCE(${start},start_at),reminder_lead_minutes=COALESCE(${schedule?.reminderLeadMinutes ?? null},reminder_lead_minutes),channels=COALESCE(${schedule?.channels ?? null},channels),updated_at=${timestamp()} WHERE id=${id} AND user_id=${owner}`.execute(tx)
       if (Number(result.numAffectedRows) !== 1) throw new Error('活动提醒不存在')
       await enqueueTaskRag(id)
+    },
+    async replaceEventReminders(event: import('./application/event-update.js').CalendarEventUpdateRecord, reminders: readonly PreparedEventReminder[]) {
+      const existing = await this.listOwnedEventReminders(event.id)
+      const byCron = new Map(existing.map(task => [task.cron, task]))
+      const requested = new Map(reminders.map(reminder => [reminder.cron, reminder]))
+      const removed = existing.filter(task => !requested.has(task.cron))
+      for (const task of removed) {
+        await sql`DELETE FROM scheduled_tasks WHERE user_id=${owner} AND event_id=${event.id} AND id=${task.id}`.execute(tx)
+        await enqueueTaskRag(task.id)
+      }
+      const result: EventUpdateReminderRecord[] = []
+      for (const reminder of reminders) {
+        const current = byCron.get(reminder.cron)
+        if (!current) {
+          const inserted = await insertCalendarEventReminder(tx, backend, owner, event.id, reminder, timestamp())
+          result.push({ id: inserted.id, enabled: inserted.enabled, name: inserted.name, payload: inserted.payload, cron: inserted.cron,
+            schedule_kind: inserted.scheduleKind, start_at: inserted.startAt, reminder_lead_minutes: inserted.leadMinutes,
+            channels: inserted.channels, delivery_targets: inserted.deliveryTargets })
+          continue
+        }
+        const start = backend === 'sqlite' ? databaseTime(reminder.startAt.toISOString(), backend) : reminder.startAt
+        const enabled = backend === 'sqlite' ? Number(reminder.enabled) : reminder.enabled
+        const targetJson = JSON.stringify(reminder.deliveryTargets ?? null)
+        const targets = backend === 'postgres' ? sql`${targetJson}::json` : sql`${targetJson}`
+        await sql`UPDATE scheduled_tasks SET name=${reminder.name},payload=${reminder.payload},cron=${reminder.cron},schedule_kind=${reminder.scheduleKind},
+          start_at=${start},reminder_lead_minutes=${reminder.leadMinutes},channels=${reminder.channels},enabled=${enabled},delivery_targets=${targets},updated_at=${timestamp()}
+          WHERE user_id=${owner} AND event_id=${event.id} AND id=${current.id}`.execute(tx)
+        await enqueueTaskRag(current.id)
+        result.push({ id: current.id, enabled: reminder.enabled, name: reminder.name, payload: reminder.payload, cron: reminder.cron,
+          schedule_kind: reminder.scheduleKind, start_at: reminder.startAt, reminder_lead_minutes: reminder.leadMinutes,
+          channels: reminder.channels, delivery_targets: reminder.deliveryTargets })
+      }
+      return result
     },
     async softDeleteEventIfVersion(id: number, version: number) {
       const result = await sql<Row>`UPDATE calendar_events SET deleted_at=${timestamp()},version=version+1 WHERE id=${id} AND user_id=${owner} AND deleted_at IS NULL AND version=${version} RETURNING ${eventFields}`.execute(tx)

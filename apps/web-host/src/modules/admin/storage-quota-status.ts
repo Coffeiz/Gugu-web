@@ -1,6 +1,7 @@
 import type {FastifyInstance,preHandlerHookHandler} from 'fastify'
 import {readStorageQuotaStatus,StorageQuotaStatusUnavailable,type StorageQuotaStatusStore} from '@gugu/core/admin/storage-quota-status'
 import {createRedisValueReader,createRedisScheduledTaskCommands} from '../../adapters/redis-events.js'
+import {StorageQuotaReconcileUnavailable} from './storage-quota-reconcile.js'
 export const storageQuotaStateKey='storage:quota_reconcile:manual_state'
 export const storageQuotaLockKey='storage:quota_reconcile:lock'
 const ttl=7*24*60*60
@@ -13,7 +14,15 @@ export function createRedisStorageQuotaStatusStore(redisUrl:string):StorageQuota
   interruptIfUnchanged:async(expected,next)=>Number(await commands.eval("if redis.call('GET',KEYS[1])==ARGV[1] and redis.call('EXISTS',KEYS[2])==0 then redis.call('SET',KEYS[1],ARGV[2],'EX',ARGV[3]);return 1 end;return 0",2,storageQuotaStateKey,storageQuotaLockKey,expected,next,String(ttl)))===1,
  }
 }
-export interface StorageQuotaStatusOptions {requireAdmin:preHandlerHookHandler;store:StorageQuotaStatusStore}
+export interface StorageQuotaManualStarter {start():Promise<{started:boolean;state:unknown}>;close?():Promise<void>}
+export interface StorageQuotaStatusOptions {requireAdmin:preHandlerHookHandler;store:StorageQuotaStatusStore;reconcile?:StorageQuotaManualStarter}
 export function registerStorageQuotaStatusRoute(app:FastifyInstance,options:StorageQuotaStatusOptions):void {
  app.get('/api/v1/admin/storage-quota/reconcile',{preHandler:options.requireAdmin},async(_request,reply)=>{try{return await readStorageQuotaStatus(options.store)}catch(error){if(error instanceof StorageQuotaStatusUnavailable)return reply.code(503).send({detail:error.message});throw error}})
+ if(options.reconcile){
+  app.post('/api/v1/admin/storage-quota/reconcile',{preHandler:options.requireAdmin},async(_request,reply)=>{
+   try{return await options.reconcile!.start()}
+   catch(error){if(error instanceof StorageQuotaReconcileUnavailable)return reply.code(503).send({detail:error.message});throw error}
+  })
+  if(options.reconcile.close)app.addHook('onClose',async()=>options.reconcile!.close!())
+ }
 }

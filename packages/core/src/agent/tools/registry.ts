@@ -38,6 +38,7 @@ function withInputAdaptations(result: ToolResult, adaptations: readonly string[]
 export function createToolRegistry(options: ToolRegistryOptions): {
   tools: ToolPort
   capabilities(identity: RunIdentity): Promise<PreparedToolDefinition[]>
+  catalog(): { name: string; description: string; category: string; enabled: boolean; source: 'builtin' }[]
   register(tool: ToolDefinition): void
   registerGroup(group: ToolGroupDefinition): void
   configure(configuration: ToolRegistryConfiguration): void
@@ -47,6 +48,7 @@ export function createToolRegistry(options: ToolRegistryOptions): {
   if (!Number.isSafeInteger(maxConcurrency) || maxConcurrency < 1 || maxConcurrency > 128) throw new Error('工具并发上限无效')
   const entries = new Map<string, ToolDefinition>()
   const groups = new Map<string, readonly string[]>()
+  const groupNames = new Map<string, string>()
   const membership = new Map<string, string>()
   let configuration: ToolRegistryConfiguration = {}
   function checked(tool: ToolDefinition, names = new Set(entries.keys())) {
@@ -65,6 +67,7 @@ export function createToolRegistry(options: ToolRegistryOptions): {
     const additions = group.tools.map(tool => { const entry = checked(tool, names); names.add(entry.definition.name); return entry })
     for (const entry of additions) { entries.set(entry.definition.name, entry); membership.set(entry.definition.name, group.id) }
     groups.set(group.id, additions.map(entry => entry.definition.name))
+    groupNames.set(group.id, group.name)
   }
   function configure(next: ToolRegistryConfiguration) {
     if (!record(next) || Object.keys(next).some(key => key !== 'tools' && key !== 'groups')
@@ -119,7 +122,8 @@ export function createToolRegistry(options: ToolRegistryOptions): {
       }
       catch { return invalidInputResult(tool.definition, call.input) }
       if (!parsed.success) return invalidInputResult(tool.definition, normalized, parsed.error)
-      if (scope.resolution !== null) return rejected('工具不接受交互确认')
+      if (scope.resolution !== null && (!tool.confirmationReplay || !tool.requiresInteraction || scope.resolution.status !== 'confirmed'))
+        return rejected('工具不接受交互确认')
       // Python在成功回执中补这项业务事实；数组名字本身仍交给项目领域服务处理。
       if (['create_project','set_stages'].includes(call.name) && record(normalized) && Array.isArray(normalized.stages)
         && normalized.stages.some(stage => typeof stage === 'string')) adaptations.push('stages:stage_names_to_objects')
@@ -154,7 +158,17 @@ export function createToolRegistry(options: ToolRegistryOptions): {
       } catch { return { kind: 'unknown' } }
     },
   }
-  return { tools, register, registerGroup, configure, async capabilities(identity) {
+  return { tools, register, registerGroup, configure, catalog() {
+    return [...entries].map(([name, tool]) => {
+      const schema = tool.definition.schema
+      const fn = record(schema.function) ? schema.function : null
+      const description = typeof fn?.description === 'string' ? fn.description
+        : typeof schema.description === 'string' ? schema.description : ''
+      const groupId = membership.get(name)
+      return { name, description, category: groupId ? groupNames.get(groupId) ?? '' : '',
+        enabled: enabled(name), source: 'builtin' as const }
+    })
+  }, async capabilities(identity) {
     identity = Object.freeze({ ...identity })
     const definitions: PreparedToolDefinition[] = []
     for (const [name, tool] of entries) {

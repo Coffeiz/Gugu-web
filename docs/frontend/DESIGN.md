@@ -2,6 +2,8 @@
 
 本文档是 Gugu 前端视觉实现的执行规范。设计稿、页面样式和公共组件发生冲突时，优先遵守 token 分层、组件 owner 和可访问性规则；不要通过增加一层临时 CSS 来掩盖冲突。
 
+桌面端 Electron 的 L0–L5 表面层级、L1/L2 间距、窗口拖动区域和未来浮动面板边界见[桌面端视觉与层级规范](./DESKTOP-DESIGN.md)。
+
 ## 设计目标
 
 - 让页面在 `Aero / Mono`、`Light / Dark` 和 `Mist / Cafe / Rose / Sky / Sage` 下保持同一信息层级。

@@ -1,5 +1,4 @@
-import {Client} from '@modelcontextprotocol/sdk/client/index.js'
-import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import {Client,StreamableHTTPClientTransport} from '@modelcontextprotocol/client'
 
 export interface McpHttpClientOptions {
  endpoint:string
@@ -16,23 +15,11 @@ export function createMcpHttpClient(options:McpHttpClientOptions){
   requestInit:{redirect:'manual',headers:options.headers},
   redirectPolicy:'same-origin',
  })
- const client=new Client({name:'gugu-webui',version:'2.0.0'},{capabilities:{}})
+ const client=new Client({name:'gugu-webui',version:'2.0.0'},{listMaxPages:8,enforceStrictCapabilities:true})
  return {
   connect:()=>client.connect(transport),
-  listTools:async()=>{
-   const tools:unknown[]=[],seen=new Set<string>();let cursor:string|undefined
-   for(let page=0;page<8;page++){
-    const result=await client.listTools(cursor?{cursor}:undefined)
-    tools.push(...result.tools)
-    const next=result.nextCursor
-    if(!next)return {tools}
-    if(seen.has(next))throw new Error('MCP tools/list 分页游标重复')
-    seen.add(next);cursor=next
-   }
-   if(cursor)throw new Error('MCP tools/list 分页超过上限')
-   return {tools}
-  },
-  callTool:(name:string,args:Record<string,unknown>,options?:{signal?:AbortSignal;timeout?:number})=>client.callTool({name,arguments:args},undefined,options),
+  listTools:async()=>client.listTools(),
+  callTool:(name:string,args:Record<string,unknown>,options?:{signal?:AbortSignal;timeout?:number})=>client.callTool({name,arguments:args},options),
   close:()=>client.close(),
  }
 }

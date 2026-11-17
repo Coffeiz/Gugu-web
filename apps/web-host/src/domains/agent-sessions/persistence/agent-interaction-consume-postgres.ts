@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from 'pg'
+import type { InteractionTextPrompt, InteractionTextStore } from '@gugu/core/agent'
 import type { InteractionActionRecord, InteractionCommandActionInput, InteractionCommandActionResult, InteractionConsumeStore, InteractionConsumeTransaction, InteractionPromptRecord } from '../application/agent-interaction-consume.js'
 export interface InteractionSideEffects {
   applyCommandAction(client: PoolClient, input: InteractionCommandActionInput): Promise<InteractionCommandActionResult>
@@ -34,6 +35,46 @@ export function createPostgresInteractionConsumeStore(pool: Pick<Pool, 'connect'
           if (prompt) await client.query('UPDATE interaction_prompts SET status = $3, resolved_at = $4, schema_json = $5 WHERE id = $1 AND user_id = $2', [prompt.id, prompt.ownerId, prompt.status, prompt.resolvedAt, JSON.stringify(prompt.schema)])
           if (action) await client.query('UPDATE interaction_actions SET status = $3, consumed_at = $4, consumed_event_id = $5 WHERE id = $1 AND prompt_id = $2', [action.id, action.promptId, action.status, action.consumedAt, action.consumedEventId])
           await client.query('COMMIT'); committed = true
+        },
+      }
+      const result = await run(tx)
+      if (!committed) await client.query('ROLLBACK')
+      return result
+    } catch (error) {
+      if (!committed) try { await client.query('ROLLBACK') } catch { discard = true }
+      throw error
+    } finally { client.release(discard) }
+  } }
+}
+
+/** 文本回答与恢复队列使用同一事务；过期用例允许显式提交后再返回 409。 */
+export function createPostgresInteractionTextStore(
+  pool: Pick<Pool, 'connect'>,
+  enqueue: (client: PoolClient, prompt: InteractionTextPrompt, eventId?: string) => Promise<void>,
+): InteractionTextStore {
+  return { async transaction(run) {
+    const client = await pool.connect()
+    let prompt: InteractionTextPrompt | null = null, committed = false, discard = false
+    try {
+      await client.query('BEGIN')
+      const tx = {
+        async getOwnedPrompt(ownerId: string, promptId: number) {
+          const result = await client.query('SELECT id,user_id,session_id,kind,status,expires_at,resolved_at,schema_json FROM interaction_prompts WHERE id=$1 AND user_id=$2 FOR UPDATE', [promptId, ownerId])
+          const row = result.rows[0]
+          prompt = row ? { id: row.id, ownerId: row.user_id, sessionId: row.session_id, kind: row.kind, status: row.status,
+            expiresAt: new Date(row.expires_at), resolvedAt: row.resolved_at ? new Date(row.resolved_at) : null, schema: object(row.schema_json) } : null
+          return prompt
+        },
+        async enqueueResume(current: InteractionTextPrompt, eventId?: string) {
+          if (!prompt || current.id !== prompt.id || current.ownerId !== prompt.ownerId) throw new Error('交互恢复绑定无效')
+          await enqueue(client, prompt, eventId)
+        },
+        async commit() {
+          if (committed) throw new Error('交互事务已提交')
+          if (prompt) await client.query('UPDATE interaction_prompts SET status=$3,resolved_at=$4,schema_json=$5 WHERE id=$1 AND user_id=$2',
+            [prompt.id, prompt.ownerId, prompt.status, prompt.resolvedAt, JSON.stringify(prompt.schema)])
+          await client.query('COMMIT')
+          committed = true
         },
       }
       const result = await run(tx)

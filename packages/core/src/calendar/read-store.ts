@@ -65,5 +65,24 @@ export function createKyselyCalendarAgentReadPort<DB>(db: Kysely<DB>, backend: '
       }
       return { events, reminders }
     }), signal)
+  }, async findByTitle(rawOwner, title, signal) {
+    signal?.throwIfAborted()
+    const normalized = dataContext(rawOwner).ownerId, owner = backend === 'sqlite' ? normalized.replaceAll('-', '') : normalized
+    const pattern = `%${title}%`
+    const matches = backend === 'postgres' ? sql`title ILIKE ${pattern}` : sql`LOWER(title) LIKE LOWER(${pattern})`
+    return read(async () => {
+      const rows = await sql<Record<string, unknown>>`SELECT id,title,date,time,end_time,type,contact_name AS client,project_id,description,version
+        FROM calendar_events WHERE user_id=${owner} AND deleted_at IS NULL AND ${matches} ORDER BY id`.execute(db)
+      return rows.rows.map(row => calendarEventRecord(row, Number(row.version ?? 1)))
+    }, signal)
+  }, async getById(rawOwner, eventId, signal) {
+    signal?.throwIfAborted()
+    const normalized = dataContext(rawOwner).ownerId, owner = backend === 'sqlite' ? normalized.replaceAll('-', '') : normalized
+    return read(async () => {
+      const result = await sql<Record<string, unknown>>`SELECT id,title,date,time,end_time,type,contact_name AS client,project_id,description,version
+        FROM calendar_events WHERE user_id=${owner} AND id=${eventId} AND deleted_at IS NULL LIMIT 1`.execute(db)
+      const row = result.rows[0]
+      return row ? calendarEventRecord(row, Number(row.version ?? 1)) : null
+    }, signal)
   } }
 }

@@ -1,5 +1,5 @@
 import type { Pool } from 'pg'
-import type { OnceTaskRepository, ScheduledTaskRecord } from '../../../scheduled-task-runner.js'
+import type { OnceTaskRepository, ScheduledTaskRecord } from '@gugu/core/scheduled-task-runner'
 import { enqueueScheduledTaskRagRebuild } from './task-rag-job-postgres.js'
 
 type Row = { id: number; user_id: string; enabled: boolean; start_at: Date; last_run_at: Date | null; last_run_failed: boolean | null }

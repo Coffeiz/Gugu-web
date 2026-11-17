@@ -1,6 +1,7 @@
-import type { ProviderConfig, ProviderPolicy } from './contracts.js'
-import type { JsonObject } from './contracts.js'
+import type { RunIdentity } from '../models.js'
+import type { JsonObject, ProviderConfig, ProviderDriverDependencies, ProviderPolicy } from './contracts.js'
 import { stripThinking } from './sanitize.js'
+import { providerSelection } from './registry.js'
 
 /** 明确null保留Provider默认上限，不把推理预算强加给无限设置。 */
 export function outputBudget(config: ProviderConfig, policy: ProviderPolicy, requested: number | null): number | null {
@@ -17,4 +18,22 @@ export function parseStructuredJson(text: string): JsonObject {
   if (first < 0 || last < first) return {}
   try { const parsed: unknown = JSON.parse(value.slice(first, last + 1)); return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as JsonObject : {} }
   catch { return {} }
+}
+
+/** 通过共享协议驱动执行不依赖聊天 Run 的短文本请求；Host 必须注入受控 transport。 */
+export async function completeStandaloneText(input: {
+  config: ProviderConfig
+  prompt: string
+  maxTokens: number | null
+  signal: AbortSignal
+  identity: RunIdentity
+}, dependencies: ProviderDriverDependencies): Promise<string> {
+  const { config, policy, driver } = providerSelection(input.config)
+  const history = driver.project([{ role: 'user', content: input.prompt }], config, policy)
+  const result = await driver.complete({
+    config, policy, history, system: '', tools: [], signal: input.signal,
+    scope: { ...input.identity, round: 0, modelIdentity: config.model, accessScopeHash: '' },
+    purpose: 'standalone', maxOutputTokens: outputBudget(config, policy, input.maxTokens),
+  }, dependencies)
+  return stripThinking(result.text).trim()
 }

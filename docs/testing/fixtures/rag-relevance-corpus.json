@@ -48,6 +48,13 @@
       "text": "GTA6 发售日期和 release date 尚未由发行方确认。"
     },
     {
+      "id": "note:english-migration",
+      "source_type": "note",
+      "scope_type": "owner",
+      "scope_id": "fixture-owner-a",
+      "text": "The deployment window is Tuesday after the database migration."
+    },
+    {
       "id": "project:f1-maintenance",
       "source_type": "project",
       "scope_type": "owner",
@@ -77,6 +84,11 @@
       "id": "mixed-gta6-release",
       "query": "GTA6 发售 release date",
       "relevant_ids": ["conversation:gta6-release"]
+    },
+    {
+      "id": "english-deployment-window",
+      "query": "deployment window Tuesday migration",
+      "relevant_ids": ["note:english-migration"]
     },
     {
       "id": "mixed-owner-scope",

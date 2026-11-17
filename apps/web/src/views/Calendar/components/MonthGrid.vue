@@ -19,7 +19,7 @@
         :class="{
           'other-month': d.other,
           'is-today': d.isToday,
-          'is-selected': d.iso === selectedDate && !activeRange,
+          'is-selected': d.iso === selectedDate && !d.isToday && !activeRange,
           'is-weekend': d.dow >= 5,
           'is-holiday': !d.other && hdayType(d.iso) === 'holiday',
           'is-workday': !d.other && hdayType(d.iso) === 'workday',
@@ -154,26 +154,24 @@ const emit = defineEmits<{
 .month-body { flex: 1; display: flex; flex-direction: column; border-top: 1px solid var(--calendar-grid-line); overflow: hidden; }
 .week-row { flex: 1; display: grid; grid-template-columns: repeat(7, 1fr); position: relative; border-bottom: 1px solid var(--calendar-grid-line); min-height: 80px; overflow: hidden; }
 .week-row:last-child { border-bottom: none; }
-.month-cell { padding: 7px 6px 4px; border-right: 1px solid var(--calendar-grid-line); cursor: pointer; overflow: hidden; position: relative; transition: background 0.12s ease; }
+.month-cell { padding: 7px 6px 4px; border-right: 1px solid var(--calendar-grid-line); cursor: pointer; overflow: hidden; position: relative; background: var(--calendar-cell-bg); transition: background-color var(--hover-motion-micro); }
 .month-cell:last-child { border-right: none; }
-.month-cell::before { content: ''; position: absolute; inset: 0; z-index: 0; background: var(--calendar-cell-hover-bg); opacity: 0; transition: opacity 0.12s ease; pointer-events: none; }
+.month-cell::before { content: ''; position: absolute; inset: 0; z-index: 0; background: var(--calendar-cell-hover-bg); opacity: 0; transition: opacity var(--hover-motion-micro); pointer-events: none; }
 .month-cell.cell-hovered::before { opacity: 1; }
 .month-cell.is-weekend::before { background: var(--calendar-weekend-hover-bg); }
 .month-cell > * { position: relative; z-index: 1; }
 .month-cell.other-month { opacity: 0.3; }
 .month-cell.is-weekend { background: var(--calendar-weekend-bg); }
-.month-cell.is-today { background: var(--calendar-today-cell-bg); }
-.month-cell.is-today.is-weekend { background: var(--calendar-weekend-hover-bg); }
 .month-cell.is-today .cell-num { background: var(--calendar-today-date-bg); color: var(--content-on-accent); font-weight: 700; border-radius: 6px; }
 .month-cell.is-today.is-weekend .cell-num { background: var(--calendar-weekend-date-bg); }
-.month-cell.is-selected { background: var(--calendar-range-edge-bg); }
-.month-cell.is-selected.is-weekend { background: var(--calendar-weekend-range-edge-bg); }
+.month-cell.is-selected { background: var(--calendar-selected-cell-bg); }
+.month-cell.is-selected.is-weekend { background: var(--calendar-weekend-selected-bg); }
 .month-cell.is-selected:not(.is-today) .cell-num { background: var(--calendar-range-edge-bg); color: var(--color-primary); font-weight: 700; border-radius: 6px; }
 .month-cell.is-selected:not(.is-today).is-weekend .cell-num { background: var(--calendar-weekend-range-edge-bg); color: var(--calendar-weekend-fg); }
 .month-cell.is-selected:not(.is-today).is-workday .cell-num { color: var(--color-primary); }
 .month-cell.in-range { background: var(--calendar-range-cell-bg); }
-.month-cell.in-range.is-weekend { background: var(--calendar-weekend-hover-bg); }
-.month-cell.range-start, .month-cell.range-end { background: var(--calendar-range-edge-bg); }
+.month-cell.in-range.is-weekend { background: var(--calendar-weekend-selected-bg); }
+.month-cell.range-start, .month-cell.range-end { background: var(--calendar-selected-cell-bg); }
 .month-cell.range-start.is-weekend, .month-cell.range-end.is-weekend { background: var(--calendar-weekend-selected-bg); }
 .month-cell.range-start .cell-num, .month-cell.range-end .cell-num { background: var(--calendar-range-edge-bg); color: var(--color-primary); font-weight: 700; border-radius: 6px; }
 .month-cell.range-start.is-weekend .cell-num, .month-cell.range-end.is-weekend .cell-num { background: var(--calendar-weekend-date-bg); color: var(--calendar-weekend-fg); }

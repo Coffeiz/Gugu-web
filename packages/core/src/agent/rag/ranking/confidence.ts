@@ -58,8 +58,8 @@ export function queryMatch(query: string, document: RagDocument): number {
   const meaningful = new Set(tokenize(query).filter((token) => !/^[\d\p{P}\p{S}_]+$/u.test(token)));
   if (!meaningful.size) return 0;
   const text = rankingText(document);
-  const compactQuery = String(query || "").replace(/\s+/gu, "").toLocaleLowerCase();
-  const compactText = text.replace(/\s+/gu, "").toLocaleLowerCase();
+  const compactQuery = String(query || "").replace(/\s+/gu, "").toLowerCase();
+  const compactText = text.replace(/\s+/gu, "").toLowerCase();
   if (compactQuery.length >= 2 && compactText.includes(compactQuery)) return 1;
   const documentTerms = new Set(tokenize(text));
   let matched = 0;

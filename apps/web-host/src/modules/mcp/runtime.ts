@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto'
 import {pinyin} from 'pinyin-pro'
 import type {McpStoredServer} from '@gugu/core/mcp/server-list'
 import {descriptionForProvider,descriptionShortOf,prefixedToolName,sanitizeInputSchema,validateInputArguments,validateInputSchema} from '@gugu/core/mcp/schema-adapter'
@@ -15,7 +16,15 @@ interface RuntimeClient {
  close():Promise<void>
 }
 interface RuntimeEntry {
- state:'ok'|'error';tools:RuntimeTool[];last_error:string|null;client?:RuntimeClient;transport?:ProviderTransport
+ state:'ok'|'error';tools:RuntimeTool[];last_error:string|null;configFingerprint:string;client?:RuntimeClient;transport?:ProviderTransport
+}
+function configFingerprint(row:McpStoredServer):string{
+ const configuration=[row.name,row.transport,row.endpoint,row.encrypted_endpoint,row.endpoint_nonce,row.encrypted_endpoint_key,row.endpoint_key_version,
+  row.command,row.credential_slots,row.encrypted_credentials,row.credentials_nonce,row.encrypted_credentials_key,row.credentials_key_version,
+  row.encrypted_headers,row.headers_nonce,row.encrypted_headers_key,row.headers_key_version,
+  row.encrypted_query_params,row.query_params_nonce,row.encrypted_query_params_key,row.query_params_key_version,
+  row.enabled,row.timeout_seconds,row.tool_allowlist]
+ return createHash('sha256').update(JSON.stringify(configuration)).digest('hex')
 }
 function safeError(error:unknown):string {
  const text=error instanceof Error?error.message:''
@@ -72,13 +81,14 @@ export function createMcpRuntime(options:{
  async function closeEntry(entry:RuntimeEntry){await entry.client?.close().catch(()=>{});await entry.transport?.close?.().catch(()=>{})}
  function state(owner:string,id:string){const entry=entries.get(key(owner,id));return entry?{server_id:id,state:entry.state,loaded_tool_count:entry.state==='ok'?entry.tools.length:0,loaded_tool_names:entry.state==='ok'?entry.tools.map(tool=>tool.name).sort():[],last_error:entry.last_error}:{server_id:id,state:'unloaded',loaded_tool_count:0,loaded_tool_names:[],last_error:null}}
  async function load(owner:string,id:string){
-  const row=await rowFor(owner,id),entryKey=key(owner,id)
+  const row=await rowFor(owner,id),entryKey=key(owner,id),fingerprint=configFingerprint(row)
   if(!row.enabled||!(await options.enabled())){const previous=entries.get(entryKey);if(previous){entries.delete(entryKey);await closeEntry(previous)}return {ok:false as const,state:'disabled' as const,tool_count:0,tool_names:[] as string[],error:null}}
   const cached=entries.get(entryKey)
-  if(cached?.state==='ok')return statusResult(cached)
+  if(cached?.state==='ok'&&cached.configFingerprint===fingerprint)return statusResult(cached)
   if(cached)entries.delete(entryKey)
+  if(cached)await closeEntry(cached)
   if(row.transport!=='http'){
-   const entry:RuntimeEntry={state:'error',tools:[],last_error:'Node Web Host 暂不支持 stdio MCP runtime'};entries.set(entryKey,entry)
+   const entry:RuntimeEntry={state:'error',tools:[],last_error:'Node Web Host 暂不支持 stdio MCP runtime',configFingerprint:fingerprint};entries.set(entryKey,entry)
    return {ok:false as const,state:entry.state,tool_count:0,tool_names:[] as string[],error:entry.last_error}
   }
   const pending=locks.get(entryKey);if(pending)return statusResult(await pending)
@@ -100,39 +110,53 @@ export function createMcpRuntime(options:{
     }
     const max=typeof options.maxTools==='function'?options.maxTools():options.maxTools
     if(tools.length>max)throw new Error('MCP server 工具数量超出单个 server 上限')
-    const loaded:RuntimeEntry={state:'ok',tools,last_error:null,client,transport};entries.set(entryKey,loaded);return loaded
-   }catch(error){await client?.close().catch(()=>{});await transport?.close?.().catch(()=>{});const failed:RuntimeEntry={state:'error',tools:[],last_error:safeError(error)};entries.set(entryKey,failed);return failed}
+    const loaded:RuntimeEntry={state:'ok',tools,last_error:null,configFingerprint:fingerprint,client,transport};entries.set(entryKey,loaded);return loaded
+   }catch(error){await client?.close().catch(()=>{});await transport?.close?.().catch(()=>{});const failed:RuntimeEntry={state:'error',tools:[],last_error:safeError(error),configFingerprint:fingerprint};entries.set(entryKey,failed);return failed}
   })()
   locks.set(entryKey,work)
   try{return statusResult(await work)}finally{locks.delete(entryKey)}
  }
  function statusResult(entry:RuntimeEntry){return {ok:entry.state==='ok',state:entry.state,tool_count:entry.state==='ok'?entry.tools.length:0,tool_names:entry.state==='ok'?entry.tools.map(tool=>tool.name).sort():[],error:entry.last_error}}
  async function reconnect(owner:string,id:string){const entryKey=key(owner,id),previous=entries.get(entryKey);if(previous){entries.delete(entryKey);await closeEntry(previous)}return load(owner,id)}
- async function dispatch(owner:string,id:string,name:string,args:unknown,signal?:AbortSignal):Promise<{result:string}|{error:string}>{
+ async function dispatchForAgent(owner:string,id:string,name:string,args:unknown,signal?:AbortSignal):Promise<{result:string;executed?:false}|{error:string;executed?:boolean}|{uncertain:true}>{
   let row:McpStoredServer
-  try{row=await rowFor(owner,id)}catch(error){if(Number((error as {statusCode?:unknown})?.statusCode)===404)return {error:'MCP 工具不可用，请重新加载工具目录'};throw error}
-  if(!row.enabled||!(await options.enabled()))return {error:'MCP 工具不可用，请重新加载工具目录'}
+  try{row=await rowFor(owner,id)}catch(error){if(Number((error as {statusCode?:unknown})?.statusCode)===404)return {error:'MCP 工具不可用，请重新加载工具目录',executed:false};throw error}
+  if(!row.enabled||!(await options.enabled()))return {error:'MCP 工具不可用，请重新加载工具目录',executed:false}
   signal?.throwIfAborted()
   const loaded=await load(owner,id)
   signal?.throwIfAborted()
-  if(!loaded.ok)return {error:loaded.error??'MCP server 不可用'}
+  if(!loaded.ok)return {error:loaded.error??'MCP server 不可用',executed:false}
   const entry=entries.get(key(owner,id)),tool=entry?.tools.find(item=>item.name===name)
-  if(!entry||entry.state!=='ok'||!entry.client||!tool)return {error:'MCP 工具不可用，请重新加载工具目录'}
+  if(!entry||entry.state!=='ok'||!entry.client||!tool)return {error:'MCP 工具不可用，请重新加载工具目录',executed:false}
   const validated=validateInputArguments(tool.name,tool.input_schema,args)
-  if(!validated.success)return {result:JSON.stringify(validated.error)}
+  if(!validated.success)return {result:JSON.stringify(validated.error),executed:false}
+  let response:unknown
   try{
-   const response=await entry.client.callTool(tool.tool_name,validated.data,{signal,timeout:Math.max(1000,Math.min(300_000,row.timeout_seconds*1000))})
+   response=await entry.client.callTool(tool.tool_name,validated.data,{signal,timeout:Math.max(1000,Math.min(300_000,row.timeout_seconds*1000))})
+  }catch{
+   signal?.throwIfAborted()
+   // 外部请求已开始，超时/断连不能证明 server 未提交副作用；Agent Harness 收到 unknown 后不得重放。
+   return {uncertain:true}
+  }
+  try{
    signal?.throwIfAborted()
    if(response&&typeof response==='object'&&!Array.isArray(response)&&(response as Record<string,unknown>).isError===true){
-    return {error:extractText(response).slice(0,2000)||'MCP 工具执行失败'}
+    return {error:extractText(response).slice(0,2000)||'MCP 工具执行失败',executed:true}
    }
    return {result:extractText(response)}
   }catch(error){
    signal?.throwIfAborted()
-   return {error:safeError(error)}
+   // tools/call 已返回，若结果投影本身失败也不能把可能已执行的外部操作当作安全重试。
+   return {uncertain:true}
   }
+ }
+ async function dispatch(owner:string,id:string,name:string,args:unknown,signal?:AbortSignal):Promise<{result:string}|{error:string}>{
+  const result=await dispatchForAgent(owner,id,name,args,signal)
+  if('uncertain' in result)return {error:'MCP 工具结果不确定，请检查服务端状态后再决定是否重试'}
+  if('error' in result)return {error:result.error}
+  return {result:result.result}
  }
  async function invalidate(owner:string,id:string){const entryKey=key(owner,id),entry=entries.get(entryKey);entries.delete(entryKey);if(entry)await closeEntry(entry)}
  async function close(){const current=[...entries.values()];entries.clear();await Promise.all(current.map(closeEntry))}
- return {load,reconnect,dispatch,tools:async(owner:string,id:string)=>{await rowFor(owner,id);return state(owner,id)},state,invalidate,close}
+ return {load,reconnect,dispatch,dispatchForAgent,tools:async(owner:string,id:string)=>{await rowFor(owner,id);return state(owner,id)},state,invalidate,close}
 }

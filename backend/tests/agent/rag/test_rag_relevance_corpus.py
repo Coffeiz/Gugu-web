@@ -23,6 +23,9 @@ def test_shared_relevance_corpus_has_stable_recall_and_empty_results():
     for case in corpus["queries"]:
         hits = search(index, tokenize_raw(case["query"]), corpus["top_k"], eligible_ids=eligible_ids)
         hit_ids = [documents[index_id]["id"] for index_id, _score in hits]
+        repeated = search(index, tokenize_raw(case["query"]), corpus["top_k"], eligible_ids=eligible_ids)
+        repeated_ids = [documents[index_id]["id"] for index_id, _score in repeated]
+        assert repeated_ids == hit_ids, {"case": case["id"], "first": hit_ids, "repeated": repeated_ids}
         assert all(
             documents[index_id]["scope_type"] == "owner"
             and documents[index_id]["scope_id"] == corpus["owner_id"]
@@ -36,6 +39,6 @@ def test_shared_relevance_corpus_has_stable_recall_and_empty_results():
         if not relevant:
             assert hit_ids == [], {"case": case["id"], "hit_ids": hit_ids}
         else:
-            assert reciprocal_rank >= 0.5, {
+            assert reciprocal_rank == 1.0, {
                 "case": case["id"], "hit_ids": hit_ids, "mrr": reciprocal_rank,
             }

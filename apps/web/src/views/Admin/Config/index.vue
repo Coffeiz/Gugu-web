@@ -55,13 +55,15 @@
               </svg>
               {{ testLoading.db ? t('configUi.testing') : t('configUi.test') }}
             </button>
-            <button class="btn-test btn-init" :class="{ loading: initing }" :disabled="initing" @click="initDb" :title="t('configUi.initTitle')">
-              <svg v-if="initing" class="spin-icon" width="12" height="12" viewBox="0 0 12 12"
-                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <path d="M6 1v2M6 9v2M1 6h2M9 6h2"/>
-              </svg>
-              {{ initing ? t('configUi.initializing') : t('configUi.init') }}
-            </button>
+            <DatabaseInitializationControl
+              :supported="configStore.databaseInitializationSupported"
+              :loading="initing"
+              :label="t('configUi.init')"
+              :loading-label="t('configUi.initializing')"
+              :title="t('configUi.initTitle')"
+              :managed-externally-note="t('configUi.schemaManagedExternally')"
+              @initialize="initDb"
+            />
           </div>
         </div>
       </section>
@@ -268,7 +270,9 @@ import RegistrationVerificationSettings from './components/RegistrationVerificat
 import SecurityAlertSettings from './components/SecurityAlertSettings.vue'
 import OutboundNetworkSettings from './components/OutboundNetworkSettings.vue'
 import ImPlatformSettings from './components/ImPlatformSettings.vue'
+import DatabaseInitializationControl from './components/DatabaseInitializationControl.vue'
 import { useSystemSmtpConfiguration } from './composables/useSystemSmtpConfiguration'
+import { useDatabaseInitialization } from './composables/useDatabaseInitialization'
 
 const { t } = useI18n()
 
@@ -312,7 +316,7 @@ const redisConnString = computed(() => {
 // ── 连接测试 ──────────────────────────────────────────────────────────────
 const testStatus  = reactive<Record<string, any>>({ db: null, redis: null, oss: null, smtp: null })
 const testLoading = reactive({ db: false, redis: false, oss: false })
-const initing     = ref(false)        // 「初始化数据库」按钮状态
+const { loading: initing, initialize: initializeDatabase } = useDatabaseInitialization()
 
 async function testDb() {
   testLoading.db = true
@@ -341,19 +345,7 @@ async function testDb() {
 
 // 手动初始化数据库（重建表）。保存配置后会自动调一次，这里是兜底按钮。
 async function initDb() {
-  if (initing.value) return
-  initing.value = true
-  try {
-    const res = await adminStore.authFetch('/api/v1/admin/config/init-db', {
-      method: 'POST',
-    })
-    const data = await res.json()
-    testStatus.db = data
-  } catch (e) {
-    testStatus.db = { ok: false, message: (e instanceof Error ? e.message : String(e)) }
-  } finally {
-    initing.value = false
-  }
+  if (!initing.value) testStatus.db = await initializeDatabase()
 }
 
 async function testRedis() {

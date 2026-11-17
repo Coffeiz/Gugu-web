@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 
-from agent.rag.cython_rank import rank_candidates
+from agent.rag.cython_rank import _query_match, rank_candidates
 
 
 def _candidate(candidate_id: str, source: str, raw_score: float, text: str, **fields):
@@ -14,6 +14,10 @@ def _candidate(candidate_id: str, source: str, raw_score: float, text: str, **fi
     }
     document.update(fields.pop("document", {}))
     return {"id": candidate_id, "source_type": source, "raw_score": raw_score, "document": document, **fields}
+
+
+def test_query_match_keeps_python_lower_semantics_for_turkish_i() -> None:
+    assert _query_match("Istanbul", {"text": "ıstanbul"}) == 0.0
 
 
 def test_v4_prefers_preferred_band_and_excludes_unrelated_content() -> None:

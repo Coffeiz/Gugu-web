@@ -1,4 +1,4 @@
-import type { ScheduledTaskRunner } from '../../scheduled-task-runner.js'
+import type { ScheduledTaskRunner } from '@gugu/core/scheduled-task-runner'
 
 export interface OnceTaskPollerOptions {
   runner: ScheduledTaskRunner

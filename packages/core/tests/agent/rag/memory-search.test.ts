@@ -28,7 +28,7 @@ const store: MemoryRagStorageReader = {
   },
 }
 
-function createFixture() {
+function createFixture(readStore: MemoryRagStorageReader = store, snapshotRevision = 'snapshot-1') {
   let allowed = true
   const authorize = vi.fn(async () => allowed)
   const service = createMemorySearch({
@@ -37,8 +37,8 @@ function createFixture() {
       return [{ ownerId: runIdentity.ownerId, type: 'owner', id: runIdentity.ownerId }]
     },
     authorize,
-    async snapshot() { return { revision: 'snapshot-1', text: '' } },
-    storage() { return store },
+    async snapshot() { return { revision: snapshotRevision, text: '' } },
+    storage() { return readStore },
     scopeState: { async getMemoryScopeState() { return { revision: 'unused', tombstoned: false } } },
   })
   const registry = createToolRegistry({
@@ -49,9 +49,9 @@ function createFixture() {
     registry,
     setAllowed(value: boolean) { allowed = value },
     authorize,
-    async dispatch(input: unknown) {
+    async dispatch(input: unknown, signal = new AbortController().signal) {
       return registry.tools.dispatch({ id: 'search', name: 'search_memory', input }, {
-        identity, roundId: 'round-1', signal: new AbortController().signal, resolution: null,
+        identity, roundId: 'round-1', signal, resolution: null,
         execute: async () => { throw new Error('不应执行命令') },
       })
     },
@@ -170,6 +170,69 @@ describe('search_memory 经 Core RAG 和实际工具 dispatch', () => {
       results: [{ source_id: 'profile', text: expect.stringContaining('coffee after lunch') }],
     } })
     expect(JSON.stringify(result)).not.toContain('synthetic provider failure')
+  })
+
+  it('工具取消会传入 owner 文件读取，并在真实读取挂起时传播取消', async () => {
+    let markStarted!: () => void
+    const started = new Promise<void>(resolve => { markStarted = resolve })
+    const readStore: MemoryRagStorageReader = {
+      readText({ signal }) {
+        markStarted()
+        expect(signal).toBeDefined()
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+        })
+      },
+    }
+    const fixture = createFixture(readStore, 'cancel-owner-file-read')
+    const controller = new AbortController()
+    const pending = fixture.dispatch({ query: 'coffee' }, controller.signal)
+    await started
+    controller.abort(new Error('synthetic cancellation'))
+    await expect(pending).rejects.toThrow('synthetic cancellation')
+  })
+
+  it('向量文件读取取消不会被可选向量回退吞掉并伪装成 BM25 成功', async () => {
+    let markVectorRead!: () => void
+    const vectorRead = new Promise<void>(resolve => { markVectorRead = resolve })
+    const readStore: MemoryRagStorageReader = {
+      async readText({ key, signal }) {
+        if (key === `${owner}/.agent/rag/memory/index.json`) return JSON.stringify({ schema_version: 1, documents: [
+          { document_id: parent, parent_document_id: parent, chunk_index: 0, chunk_count: 1,
+            source_type: 'memory', source_id: 'profile', title: '用户画像', content: 'coffee after lunch',
+            version: 'v1', scope: { owner_user_id: owner, scope_type: 'owner', scope_id: '' }, metadata: {} },
+        ] })
+        if (key === `${owner}/.agent/daily.md`) return null
+        if (key === `${owner}/.agent/memory_vec.json`) {
+          markVectorRead()
+          expect(signal).toBeDefined()
+          return new Promise((_resolve, reject) => {
+            signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+          })
+        }
+        return null
+      },
+    }
+    const service = createMemorySearch({
+      async resolveScopes(runIdentity) { return [{ ownerId: runIdentity.ownerId, type: 'owner', id: runIdentity.ownerId }] },
+      async authorize() { return true },
+      async snapshot() { return { revision: 'snapshot-1', text: '' } },
+      storage() { return readStore },
+      scopeState: { async getMemoryScopeState() { return { revision: 'unused', tombstoned: false } } },
+      async vectors() { return { version: 'test-embedding-v1', async embed() { return [1, 0] } } },
+    })
+    const registry = createToolRegistry({
+      groups: [{ id: 'memory', name: '记忆', tools: [createMemorySearchTool({ search: service })] }],
+      async authorize() { return true },
+    })
+    const controller = new AbortController()
+    const pending = registry.tools.dispatch({ id: 'cancel-vector', name: 'search_memory', input: { query: 'coffee' } }, {
+      identity, roundId: 'round-1', signal: controller.signal, resolution: null,
+      execute: async () => { throw new Error('不应执行命令') },
+    })
+    await vectorRead
+    controller.abort(new Error('synthetic vector cancellation'))
+    await expect(pending).rejects.toThrow('synthetic vector cancellation')
   })
 
   it('空关键词和非法上限遵循工具边界验证', async () => {

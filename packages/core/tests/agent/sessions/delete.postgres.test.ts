@@ -24,7 +24,7 @@ test('会话删除在 PostgreSQL 同事务关闭 Agent 终端并显式删除附�
     await pool.query("INSERT INTO terminal_sessions VALUES ('agent-1',1,'agent','running',NULL,now()),('manual-1',1,'user','running',NULL,now())")
     const repository = createPostgresAgentSessionDeleteRepository(pool)
 
-    assert.deepEqual(await repository.delete(owner, 1), { storageKeys: ['shared', 'orphan'] })
+    assert.deepEqual(await repository.delete(owner, 1), { storageKeys: ['orphan', 'shared'] })
     assert.equal((await pool.query('SELECT id FROM conversation_sessions WHERE id=1')).rowCount, 0)
     assert.equal((await pool.query('SELECT id FROM conversation_messages WHERE session_id=1')).rowCount, 0)
     assert.equal((await pool.query('SELECT id FROM chat_attachments WHERE message_id=11')).rowCount, 0)

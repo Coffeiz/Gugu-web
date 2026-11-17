@@ -9,6 +9,7 @@ import type { createDataImportRollbackCreator } from '@gugu/core/data-portabilit
 import type { createDataImportApplier } from '@gugu/core/data-portability/apply-import'
 import type { createDataImportResumer } from '@gugu/core/data-portability/resume-import'
 import { registerSecretPromptCancelRoute, type SecretPromptCancelOptions } from './modules/agent-sessions/secret-cancel.js'
+import { registerAgentSessionStateRoute } from './modules/agent-sessions/state.js'
 import { registerUserBotCreateRoute, type UserBotCreateOptions } from './modules/im/user-bot-create.js'
 import { registerUserBotDeleteRoute } from './modules/im/user-bot-delete.js'
 import { registerUserBotUpdateRoute } from './modules/im/user-bot-update.js'
@@ -29,8 +30,10 @@ import { registerVoicePresetsReadRoute, type VoicePresetsReadOptions } from './m
 import { registerAdminVoicePresetTestRoute, registerAdminVoiceTestRoute, type AdminVoicePresetTestOptions, type AdminVoiceTestOptions } from './modules/admin/voice-test.js'
 import { registerAdminSearchTestRoute, type AdminSearchTestOptions } from './modules/admin/search-test.js'
 import { registerAdminMaintenanceStatusRoutes } from './modules/admin/maintenance-status.js'
+import { registerAdminUpdateStatusRoute, type AdminUpdateMode } from './modules/admin/update-status.js'
 import { registerAccountDeleteRoute, type AccountDeleteOptions } from './modules/auth/account-delete.js'
 import { registerAdminUserDeleteRoute, type AdminUserDeleteOptions } from './modules/admin/user-delete.js'
+import { registerAgentCapabilityCatalogRoute, type AgentCapabilityCatalog } from './modules/admin/agent-capabilities.js'
 import type { createAdminMaintenanceStatus } from '@gugu/core/maintenance/admin-status'
 import { createProviderCapabilityPreview } from '@gugu/core/byok/capabilities-preview'
 import { registerServiceStatusRoute, type createServiceStatusReader } from './modules/admin/service-status.js'
@@ -44,7 +47,7 @@ import { registerMemoryClearRoute, type MemoryClearOptions } from './modules/age
 import { registerAgentSessionDeleteRoute, type AgentSessionDeleteOperations } from './modules/agent/session-delete.js'
 import { registerAttachmentThumbnailRoute } from './modules/agent/attachment-thumbnail.js'
 import { registerUserBotBindingCodeRoutes, type UserBotBindingCodeOptions } from './modules/im/binding-code.js'
-import { registerLoopScopeProxyRoutes } from './modules/loopscope/proxy.js'
+import { registerLoopScopeProxyRoutes, type LoopScopeProxyOptions } from './modules/loopscope/proxy.js'
 import { registerTaskFilesystemRevokeRoute, type TaskFilesystemRevokeOptions } from './modules/scheduled-tasks/task-filesystem-revoke.js'
 import { registerStorageQuotaStatusRoute, type StorageQuotaStatusOptions } from './modules/admin/storage-quota-status.js'
 import { registerNotificationBroadcastRoute } from './modules/notifications/routes/broadcast.js'
@@ -58,6 +61,8 @@ import { registerAttentionDefaultsRoute, type AttentionDefaultsOptions } from '.
 import { registerEmailRecipientCountRoute } from './modules/admin/email-recipient-count.js'
 import { registerEmbeddingRebuildStatusRoute, type EmbeddingRebuildStatusOptions } from './modules/byok/embedding-rebuild-status.js'
 import { registerEmbeddingRebuildRoute, type EmbeddingRebuildRouteOptions } from './modules/byok/embedding-rebuild.js'
+import { registerAdminEmbeddingRebuildRoutes, type AdminEmbeddingRebuildRouteOptions } from './modules/admin/embedding-rebuild.js'
+import { registerAdminIndexRebuildRoute, type AdminIndexRebuildRouteOptions } from './modules/admin/index-rebuild.js'
 import { registerUserBotUnbindRoute, type UserBotUnbindOptions } from './modules/im/user-bot-unbind.js'
 import { registerPortabilityJobReadRoutes } from './modules/data-portability/read-jobs.js'
 import type { createPortabilityJobReader } from '@gugu/core/data-portability/read-jobs'
@@ -76,10 +81,14 @@ import { registerUserSkillListRoute, type UserSkillListOptions } from './modules
 import { registerUserSkillWriteRoutes, type UserSkillWriteOptions } from './modules/agent-skills/user-write.js'
 import { registerSafeEgressReadRoute } from './modules/admin/safe-egress-read.js'
 import { registerImMemorySummaryRoutes, type ImMemorySummaryOptions } from './modules/admin/im-memory-summary.js'
+import { registerImMemoryMaintenanceApplyRoute } from './modules/admin/im-memory-maintenance-apply.js'
 import { registerAdminUserBanRoute, type AdminUserBanOptions } from './modules/admin/user-ban.js'
 import { registerAdminEmailPreviewRoute, type AdminEmailPreviewOptions } from './modules/admin/email-preview.js'
 import { registerSmtpProbeRoute } from './modules/admin/smtp-probe.js'
 import { registerAdminEmailTestRoute } from './modules/admin/email-test.js'
+import { registerAdminEmailPublishRoute, type AdminEmailPublishOperations } from './modules/admin/email-publish.js'
+import { registerAdminEmailTranslateRoute, type AdminEmailTranslateOptions } from './modules/admin/email-translate.js'
+import { registerAdminPromptRoutes, type AdminPromptOptions } from './modules/admin/prompts.js'
 import { registerLlmStrategyRoute, type LlmStrategyRouteOptions } from './modules/admin/llm-strategy.js'
 import { registerLlmPresetSelectionRoutes, type LlmPresetSelectionOptions } from './modules/admin/llm-preset-selection.js'
 import { registerLlmCapabilityOverrideRoute, type LlmCapabilityOverrideOptions } from './modules/admin/llm-capability-overrides.js'
@@ -100,6 +109,7 @@ import { registerEmbeddingProbeRoute, type createEmbeddingFileProbe } from './mo
 import { registerAdminMediaProbePreviewRoute, type AdminMediaProbePreview } from './modules/admin/media-probe-preview.js'
 import { registerAdminLlmPresetTestRoute } from './modules/admin/llm-preset-test.js'
 import { registerAdminLlmPresetMediaProbeRoute } from './modules/admin/llm-preset-media-probe.js'
+import { registerAdminLlmPresetReadRoute, type AdminLlmPresetReadOptions } from './modules/admin/llm-preset-read.js'
 import { registerAdminLlmCapabilityProbeRoute } from './modules/admin/llm-capability-probe.js'
 import { registerAdminLlmCapabilityPreviewRoute } from './modules/admin/llm-capabilities-preview.js'
 import { registerAdminEmbeddingRebuildStatusRoute, type AdminEmbeddingRebuildStatusOptions } from './modules/admin/embedding-rebuild-status.js'
@@ -130,6 +140,7 @@ import { registerLogoutRoute } from './domains/auth/routes/auth-logout.js'
 import { registerUserRoute, type RegisterUserRouteOptions } from './domains/auth/routes/auth-register.js'
 import { registerPreferencesRoutes, type PreferencesStore } from './domains/preferences/preferences.js'
 import { registerOnboardingRoutes } from './modules/onboarding/onboarding.js'
+import { registerOnboardingReseedRoute } from './modules/onboarding/reseed.js'
 import type { OnboardingStore } from '@gugu/core/onboarding'
 import {
   registerRegistrationCodeRoute,
@@ -374,6 +385,7 @@ export interface WebUiOptions {
   userAvatar?: UserAvatarOperations
   preferences?: PreferencesStore
   onboarding?: OnboardingStore
+  onboardingReseed?: (ownerId: string) => Promise<unknown>
   createWorkspace?: (ownerId: string, input: unknown) => Promise<unknown>
   listWorkspaces?: (ownerId: string) => Promise<unknown>
   workspaceBindings?: WorkspaceBindingOperations
@@ -381,6 +393,7 @@ export interface WebUiOptions {
   deleteWorkspace?: (ownerId: string, workspaceId: number) => Promise<unknown>
   workspaceDirectories?: WorkspaceDirectoryOperations
   listAgentSessions?: (ownerId: string) => Promise<unknown[]>
+  readAgentSessionState?: (ownerId: string, sessionId: number) => Promise<{ executionState: string; pendingMessageCount: number; active: boolean } | null>
   agentChat?: AgentChatService
   agentInteractionRespond?: AgentInteractionRespondService
   lookupAgentInteractionSession?: (ownerId: string, promptId: number) => Promise<{ session_id: number }>
@@ -424,11 +437,14 @@ export interface WebUiOptions {
   globalSearch?: GlobalSearchOperations
   folderDownloads?: FolderDownloadOperations
   adminAuth?: AdminAuthAdapter
+  adminUpdateMode?: AdminUpdateMode
   adminConfig?: Omit<AdminConfigOptions, 'requireAdmin'>
   adminVoiceTest?: Omit<AdminVoiceTestOptions, 'requireAdmin'>
   adminVoicePresetTest?: Omit<AdminVoicePresetTestOptions, 'requireAdmin'>
   adminSearchTest?: Omit<AdminSearchTestOptions, 'requireAdmin'>
   adminLlmPresets?: Omit<AdminLlmPresetOptions, 'requireAdmin'>
+  adminLlmPresetList?: Omit<AdminLlmPresetReadOptions, 'requireAdmin'>
+  adminPrompts?: Omit<AdminPromptOptions, 'requireAdmin'>
   adminStorageSnapshots?: Omit<AdminStorageSnapshotOptions, 'requireAdmin'>
   adminUsers?: Omit<AdminUsersOptions, 'requireAdmin'>
   adminUserStatus?: Omit<AdminUserStatusRouteOptions, 'requireAdmin'>
@@ -461,7 +477,7 @@ export interface WebUiOptions {
   mcpServerList?: Omit<McpServerListRouteOptions, 'requireUser' | 'ownerIdFromRequest'>
   mcpRuntime?: Omit<McpRuntimeRouteOptions, 'requireUser' | 'ownerIdFromRequest'>
   attentionDefaults?: Omit<AttentionDefaultsOptions, 'requireUser'>
-  loopScopeProxy?: { endpoint: string }
+  loopScopeProxy?: Pick<LoopScopeProxyOptions, 'endpoint' | 'transport'>
   attachmentDownload?: Omit<AttachmentDownloadOptions, 'requireUser' | 'ownerIdFromRequest'>
   attachmentUpload?: { operations: AgentAttachmentUploadOperations }
   attachmentDelete?: Omit<AttachmentDraftDeleteOptions, 'requireUser' | 'ownerIdFromRequest'>
@@ -489,10 +505,13 @@ export interface WebUiOptions {
   secretPromptCancel?: Omit<SecretPromptCancelOptions, 'requireUser' | 'ownerIdFromRequest'>
   safeEgressRead?: { readSettings(): SafeEgressReadSettings }
   imMemorySummary?: Omit<ImMemorySummaryOptions, 'requireAdmin'>
+  imMemoryMaintenanceApply?: { apply(confirm: unknown): Promise<{ ok: true; applied: number; queued: number }> }
   adminUserBan?: Omit<AdminUserBanOptions, 'requireAdmin'>
   adminEmailPreview?: Omit<AdminEmailPreviewOptions, 'requireAdmin'>
   smtpProbe?: Omit<Parameters<typeof registerSmtpProbeRoute>[1], 'requireAdmin'>
   adminEmailTest?: Omit<Parameters<typeof registerAdminEmailTestRoute>[1], 'requireAdmin'>
+  adminEmailPublish?: AdminEmailPublishOperations
+  adminEmailTranslate?: Omit<AdminEmailTranslateOptions, 'requireAdmin'>
   llmStrategy?: Omit<LlmStrategyRouteOptions, 'requireAdmin'>
   llmPresetSelection?: Omit<LlmPresetSelectionOptions, 'requireAdmin'>
   llmCapabilityOverrides?: Omit<LlmCapabilityOverrideOptions, 'requireAdmin'>
@@ -515,6 +534,8 @@ export interface WebUiOptions {
   adminLlmPresetMediaProbe?: { probe(id: string, dim?: 'image' | 'video' | 'audio'): Promise<unknown> }
   adminLlmCapabilityProbe?: { probe(id: string): Promise<unknown> }
   adminEmbeddingRebuildStatus?: Omit<AdminEmbeddingRebuildStatusOptions, 'requireAdmin'>
+  adminEmbeddingRebuild?: Omit<AdminEmbeddingRebuildRouteOptions, 'requireAdmin'>
+  adminIndexRebuild?: Omit<AdminIndexRebuildRouteOptions, 'requireAdmin'>
   safeEgressUpdate?: Omit<SafeEgressUpdateOptions, 'requireAdmin'>
   safeEgressProbe?: Omit<Parameters<typeof registerSafeEgressProbeRoute>[1], 'requireAdmin'>
   emailRecipientCount?: { read(): Promise<{ count: number; locale_counts: Record<string, number> }> }
@@ -530,6 +551,7 @@ export interface WebUiOptions {
   adminAuditLog?: Omit<AdminAuditLogOptions, 'requireAdmin'>
   adminUserSettings?: Omit<AdminUserSettingsOptions, 'requireAdmin'>
   adminUserDelete?: Omit<AdminUserDeleteOptions, 'requireAdmin'>
+  adminAgentCapabilities?: { read(): Promise<AgentCapabilityCatalog> }
   notificationBroadcast?: { broadcast(input: NotificationBroadcastInput): Promise<{ ok: true; id: number }> }
   notificationAdminHistory?: Omit<NotificationAdminHistoryOptions, 'requireAdmin'>
   adminAgentUsage?: Omit<AgentUsageOptions, 'requireAdmin'>
@@ -958,18 +980,16 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
       ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
     }))
   }
-  if (options.onboarding) {
+  if (options.onboarding || options.onboardingReseed) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => {
-      registerOnboardingResetGuideRoute(routes, {
-        requireUser: async (request) => { void userFromRequest(request) },
-        ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId,
-        store: options.onboarding!,
-      })
-      registerOnboardingRoutes(routes, {
-        requireUser: async (request) => { void userFromRequest(request) },
-        ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId,
-        store: options.onboarding!,
-      })
+      const requireUser = async (request: FastifyRequest) => { void userFromRequest(request) }
+      const ownerIdFromRequest = (request: FastifyRequest) => userFromRequest(request).requestContext.data.ownerId
+      if (options.onboarding) {
+        registerOnboardingResetGuideRoute(routes, { requireUser, ownerIdFromRequest, store: options.onboarding })
+        registerOnboardingRoutes(routes, { requireUser, ownerIdFromRequest, store: options.onboarding })
+      }
+      if (options.onboardingReseed)
+        registerOnboardingReseedRoute(routes, { requireUser, ownerIdFromRequest, reseed: options.onboardingReseed })
     })
   }
   if (options.listProjects || options.createProject || options.listProjectFileCounts || options.getProject
@@ -1096,7 +1116,7 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
       }),
     )
   }
-  if (options.agentChat || options.agentInteractionRespond || options.listAgentSessions || options.lookupAgentInteractionSession || options.refreshAgentSession
+  if (options.agentChat || options.agentInteractionRespond || options.listAgentSessions || options.readAgentSessionState || options.lookupAgentInteractionSession || options.refreshAgentSession
     || options.agentPendingQueueReads || options.agentPendingQueuePatch || options.agentPendingQueueReplace || options.agentPendingQueueClaims
     || options.renameAgentSession || options.deleteAgentSession || options.listAgentMessages || options.locateAgentMessage
     || options.readAgentToolEventDetails || options.agentFilesystemAuthorization || options.agentMisc) {
@@ -1118,6 +1138,13 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
             requireUser,
             userIdFromRequest,
             list: options.listAgentSessions,
+          })
+        }
+        if (options.readAgentSessionState) {
+          registerAgentSessionStateRoute(routes, {
+            requireUser,
+            ownerIdFromRequest: userIdFromRequest,
+            readState: options.readAgentSessionState,
           })
         }
         if (options.lookupAgentInteractionSession) {
@@ -1206,6 +1233,7 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
         if (options.agentMisc) {
           registerAgentMiscRoutes(routes, {
             requireUser,
+            ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId,
             ...options.agentMisc,
           })
         }
@@ -1436,6 +1464,9 @@ export function createApp(options: WebUiOptions) {
   if (options.adminAuth && options.adminLlmPresets) {
     registerAdminLlmPresetRoutes(app, { ...options.adminLlmPresets, requireAdmin: options.adminAuth.requireAdmin })
   }
+  if (options.adminAuth && options.adminLlmPresetList) {
+    registerAdminLlmPresetReadRoute(app, { ...options.adminLlmPresetList, requireAdmin: options.adminAuth.requireAdmin })
+  }
   if (options.adminAuth && options.adminStorageSnapshots) {
     registerAdminStorageSnapshotsRoute(app, {
       ...options.adminStorageSnapshots,
@@ -1493,13 +1524,18 @@ export function createApp(options: WebUiOptions) {
   if (options.adminAuth && options.serviceStatus) registerServiceStatusRoute(app, { ...options.serviceStatus, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.serviceRestart) registerServiceRestartRoute(app, { ...options.serviceRestart, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.adminMaintenanceStatus) registerAdminMaintenanceStatusRoutes(app, { ...options.adminMaintenanceStatus, requireAdmin: options.adminAuth.requireAdmin })
+  if (options.adminAuth && options.adminUpdateMode) registerAdminUpdateStatusRoute(app, { mode: options.adminUpdateMode, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.storageLiveTotals) registerStorageLiveTotalsRoute(app, { ...options.storageLiveTotals, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.safeEgressRead) registerSafeEgressReadRoute(app, { ...options.safeEgressRead, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.imMemorySummary) registerImMemorySummaryRoutes(app, { ...options.imMemorySummary, requireAdmin: options.adminAuth.requireAdmin })
+  if (options.adminAuth && options.imMemoryMaintenanceApply) registerImMemoryMaintenanceApplyRoute(app, { ...options.imMemoryMaintenanceApply, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.adminUserBan) registerAdminUserBanRoute(app, { ...options.adminUserBan, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.adminEmailPreview) registerAdminEmailPreviewRoute(app, { ...options.adminEmailPreview, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.smtpProbe) registerSmtpProbeRoute(app, { ...options.smtpProbe, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.adminEmailTest) registerAdminEmailTestRoute(app, { ...options.adminEmailTest, requireAdmin: options.adminAuth.requireAdmin })
+  if (options.adminAuth && options.adminEmailPublish) registerAdminEmailPublishRoute(app, { operations: options.adminEmailPublish, requireAdmin: options.adminAuth.requireAdmin })
+  if (options.adminAuth && options.adminEmailTranslate) registerAdminEmailTranslateRoute(app, { ...options.adminEmailTranslate, requireAdmin: options.adminAuth.requireAdmin })
+  if (options.adminAuth && options.adminPrompts) registerAdminPromptRoutes(app, { ...options.adminPrompts, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.llmStrategy) registerLlmStrategyRoute(app, { ...options.llmStrategy, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.llmPresetSelection) registerLlmPresetSelectionRoutes(app, { ...options.llmPresetSelection, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.llmCapabilityOverrides) registerLlmCapabilityOverrideRoute(app, { ...options.llmCapabilityOverrides, requireAdmin: options.adminAuth.requireAdmin })
@@ -1526,6 +1562,8 @@ export function createApp(options: WebUiOptions) {
     preview: createProviderCapabilityPreview(() => true),
   })
   if (options.adminAuth && options.adminEmbeddingRebuildStatus) registerAdminEmbeddingRebuildStatusRoute(app, { ...options.adminEmbeddingRebuildStatus, requireAdmin: options.adminAuth.requireAdmin })
+  if (options.adminAuth && options.adminEmbeddingRebuild) registerAdminEmbeddingRebuildRoutes(app, { ...options.adminEmbeddingRebuild, requireAdmin: options.adminAuth.requireAdmin })
+  if (options.adminAuth && options.adminIndexRebuild) registerAdminIndexRebuildRoute(app, { ...options.adminIndexRebuild, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.safeEgressUpdate) registerSafeEgressUpdateRoute(app, { ...options.safeEgressUpdate, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.safeEgressProbe) registerSafeEgressProbeRoute(app, { ...options.safeEgressProbe, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.voicePresetsMutate) registerVoicePresetMutationRoutes(app, { ...options.voicePresetsMutate, requireAdmin: options.adminAuth.requireAdmin })
@@ -1536,6 +1574,10 @@ export function createApp(options: WebUiOptions) {
   if (options.adminAuth && options.adminUserSettings) registerAdminUserSettingsRoutes(app, { ...options.adminUserSettings, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.adminUserDelete) registerAdminUserDeleteRoute(app, {
     ...options.adminUserDelete,
+    requireAdmin: options.adminAuth.requireAdmin,
+  })
+  if (options.adminAuth && options.adminAgentCapabilities) registerAgentCapabilityCatalogRoute(app, {
+    ...options.adminAgentCapabilities,
     requireAdmin: options.adminAuth.requireAdmin,
   })
   if (options.adminAuth && options.notificationBroadcast) registerNotificationBroadcastRoute(app, { ...options.notificationBroadcast, requireAdmin: options.adminAuth.requireAdmin })

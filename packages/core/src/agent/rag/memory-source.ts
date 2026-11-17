@@ -27,6 +27,7 @@ export function createMemoryRagSource(options: {
       snapshotRevision: '',
       snapshotText: '',
       vectorVersion: '',
+      signal,
     }, options.scopeState, options.storage)
     signal?.throwIfAborted()
     return prepared.documents.map(document => {

@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from 'pg'
 import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
 import type { InteractionActionRecord, InteractionPromptRecord } from '../application/agent-interaction-consume.js'
+import { resolvedSecretPromptResult, validateSecretValues } from '@gugu/core/agent'
 
 interface SecretEnvelope { ciphertext: string; nonce: string; encryptedDataKey: string; keyVersion: number }
 export interface SecretInteractionPorts {
@@ -28,11 +29,11 @@ export function createPostgresSecretInteraction(pool: Pick<Pool, 'connect'>, por
       invalid(409, values === null ? '凭据输入已结束' : '敏感信息输入已过期')
     }
     if (values !== null) {
-      const fields = schema.secret_fields.map(object), names = fields.map(field => String(field.name ?? ''))
-      const keys = Object.keys(values)
-      if (names.length > 16 || names.some(name => !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(name)) || new Set(names).size !== names.length || names.length !== keys.length || keys.some(key => !names.includes(key))) invalid(400, '敏感字段不匹配')
-      const normalized: Record<string, string> = Object.create(null)
-      for (const key of keys) { const value = values[key]; if (typeof value !== 'string' || !value.trim() || value.length > 4096) invalid(400, '敏感字段不能为空或过长'); normalized[key] = value.trim() }
+      const fields = schema.secret_fields.map(object), keys = Object.keys(values)
+      if (fields.length > 16 || fields.some(field => !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(String(field.name ?? ''))) || new Set(fields.map(field => String(field.name ?? ''))).size !== fields.length) invalid(400, '敏感字段不匹配')
+      let normalized: Record<string, string>
+      try { normalized = validateSecretValues(fields, values) }
+      catch (error) { invalid(400, error instanceof Error && error.message === '敏感字段不能为空或过长' ? error.message : '敏感字段不匹配') }
       if (typeof target.server_id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(target.server_id)) invalid(409, '敏感信息目标已失效')
       const servers = await client.query('SELECT credential_slots FROM user_mcp_servers WHERE id = $1 AND user_id = $2 AND scope = $3 FOR UPDATE', [target.server_id, ownerId, 'user'])
       const server = servers.rows[0]; if (!server) invalid(404, 'MCP server 不存在')
@@ -47,7 +48,9 @@ export function createPostgresSecretInteraction(pool: Pick<Pool, 'connect'>, por
       await client.query('UPDATE user_mcp_servers SET encrypted_credentials = $3, credentials_nonce = $4, encrypted_credentials_key = $5, credentials_key_version = $6 WHERE id = $1 AND user_id = $2', [target.server_id, ownerId, sealed.ciphertext, sealed.nonce, sealed.encryptedDataKey, sealed.keyVersion])
       await ports.invalidate(client, ownerId, target.server_id)
     }
-    const resolved = { kind: values === null ? row.kind : 'form', status: values === null ? 'cancelled' : 'answered', prompt_id: promptId, option_id: values === null ? 'cancel' : null, value: null, text: values === null ? '已取消凭据输入' : '敏感信息已安全保存' }
+    const resolved = values === null
+      ? { kind: row.kind, status: 'cancelled', prompt_id: promptId, option_id: 'cancel', value: null, text: '已取消凭据输入' }
+      : resolvedSecretPromptResult(promptId)
     const prompt: InteractionPromptRecord = { id: row.id, ownerId, sessionId: row.session_id, kind: row.kind, status: 'resolved', expiresAt: new Date(row.expires_at), resolvedAt: new Date(), schema: { ...schema, resolved_result: resolved } }
     await client.query('UPDATE interaction_prompts SET status = $3, resolved_at = $4, schema_json = $5 WHERE id = $1 AND user_id = $2', [promptId, ownerId, 'resolved', prompt.resolvedAt, JSON.stringify(prompt.schema)])
     await client.query(`UPDATE mcp_secret_inputs SET status = $3, encrypted_payload = '', payload_nonce = '', encrypted_data_key = ''

@@ -20,4 +20,9 @@ const result = spawnSync(
   [require.resolve('typescript/bin/tsc'), '-p', join(coreRoot, 'tsconfig.json')],
   { stdio: 'inherit' },
 )
-process.exitCode = result.status ?? 1
+if (result.status !== 0) {
+  process.exitCode = result.status ?? 1
+} else {
+  const skills = spawnSync(process.execPath, [join(coreRoot, 'scripts/build-skills.mjs')], { stdio: 'inherit' })
+  process.exitCode = skills.status ?? 1
+}

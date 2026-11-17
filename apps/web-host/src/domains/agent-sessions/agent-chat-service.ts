@@ -3,7 +3,7 @@ import type { AgentChatEvent, AgentChatInput, AgentChatService } from './agent-c
 import { projectAgentRunEvent, type AgentRunEventProjection } from './agent-run-events.js'
 
 export interface AgentChatEventBus {
-  open(identity: RunIdentity, afterSequence?: number): Promise<AsyncIterable<RunEvent>>
+  open(identity: RunIdentity, afterSequence?: number, signal?: AbortSignal): Promise<AsyncIterable<RunEvent>>
   notify(identity: RunIdentity): Promise<void>
 }
 export interface AgentChatServicePorts<C> {
@@ -36,8 +36,8 @@ export function createAgentChatService<C>(ports: AgentChatServicePorts<C>): Agen
       try { await ports.events.notify(identity) } catch { /* 持久状态仍可读取。 */ }
     }
   }
-  async function project(identity: RunIdentity): Promise<AsyncIterable<AgentChatEvent>> {
-    const subscription = await ports.events.open(identity)
+  async function project(identity: RunIdentity, signal?: AbortSignal): Promise<AsyncIterable<AgentChatEvent>> {
+    const subscription = await ports.events.open(identity, 0, signal)
     return (async function* () {
       let waiting = false
       let finalized = false
@@ -51,11 +51,11 @@ export function createAgentChatService<C>(ports: AgentChatServicePorts<C>): Agen
     })()
   }
   return {
-    async start(owner, input, origin) {
+    async start(owner, input, origin, signal) {
       const { identity, userMessageId } = await ports.prepare(owner, input, origin)
       assertIdentity(identity, owner)
       if (!Number.isSafeInteger(userMessageId) || userMessageId < 1) throw new Error('用户消息身份无效')
-      const subscription = await project(identity)
+      const subscription = await project(identity, signal)
       if (ports.dispatch) {
         try { await ports.dispatch.notify() } catch { ports.dispatch.diagnose() }
         void ports.dispatch.kick(owner, identity.sessionId).catch(() => { ports.dispatch?.diagnose() })
@@ -63,12 +63,12 @@ export function createAgentChatService<C>(ports: AgentChatServicePorts<C>): Agen
       else void drive(identity).catch(() => {})
       return (async function* () { yield { type: 'session_id', session_id: Number(identity.sessionId), user_message_id: userMessageId, ...(input.client_message_id ? { client_message_id: input.client_message_id } : {}) }; yield* subscription })()
     },
-    async resume(owner, sessionId) {
+    async resume(owner, sessionId, signal) {
       const active = await ports.active(owner, sessionId)
       if (!active) return null
       if (!active.identity) return (async function* () { yield { type: 'done', idle: true } })()
       assertIdentity(active.identity, owner, sessionId)
-      return project(active.identity)
+      return project(active.identity, signal)
     },
     async cancel(owner, sessionId) {
       const active = await ports.active(owner, sessionId)

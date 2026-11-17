@@ -26,6 +26,7 @@ export function createPostgresAgentEmbeddingSettingsResolver(pool: Pick<Pool, 'q
     signal?.throwIfAborted()
     if (!await options.enabled()) return null
     signal?.throwIfAborted()
-    return { provider: row.provider, baseUrl: row.base_url, model: row.model, apiKey, dimensions, allowLocal: false }
+    const allowLocal = ['local', 'ollama'].includes(row.provider.trim().toLowerCase())
+    return { provider: row.provider, baseUrl: row.base_url, model: row.model, apiKey, dimensions, allowLocal }
   }
 }

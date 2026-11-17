@@ -78,6 +78,13 @@ export interface DeleteCalendarEventOptions {
   clientId?: string | null
 }
 
+export interface DeleteCalendarEventsOptions {
+  ownerId: string
+  eventIds: readonly number[]
+  undoContextId?: string | null
+  clientId?: string | null
+}
+
 export class EventDeleteError extends Error {
   constructor(readonly statusCode: 404 | 409, message: string) {
     super(message)
@@ -87,26 +94,26 @@ export class EventDeleteError extends Error {
 
 function makeUndoRecord(
   contextId: string,
-  beforeEvent: CalendarEventDeleteRecord,
-  afterEvent: CalendarEventDeleteRecord,
-  beforeTasks: CalendarEventReminderRecord[],
+  events: Array<{ before: CalendarEventDeleteRecord; after: CalendarEventDeleteRecord; reminders: CalendarEventReminderRecord[] }>,
 ): CalendarEventDeleteUndoRecord {
-  const eventRef = `event:${beforeEvent.id}`
-  const beforeItems: Record<string, Record<string, unknown>> = { [eventRef]: calendarEventSnapshot(beforeEvent) }
-  const afterItems: Record<string, Record<string, unknown>> = { [eventRef]: calendarEventSnapshot(afterEvent) }
-  const targetRefs: Array<{ kind: 'event' | 'task'; id: number }> = [
-    { kind: 'event', id: beforeEvent.id },
-  ]
-  const baseVersions: Record<string, { version: number }> = {
-    [eventRef]: { version: beforeEvent.version || 1 },
-  }
-  for (const task of beforeTasks) {
-    const taskRef = `task:${task.id}`
-    const before = scheduledTaskUndoSnapshot(task)
-    beforeItems[taskRef] = before
-    afterItems[taskRef] = { ...before, enabled: false }
-    targetRefs.push({ kind: 'task', id: task.id })
-    baseVersions[taskRef] = { version: 0 }
+  const beforeItems: Record<string, Record<string, unknown>> = {}
+  const afterItems: Record<string, Record<string, unknown>> = {}
+  const targetRefs: Array<{ kind: 'event' | 'task'; id: number }> = []
+  const baseVersions: Record<string, { version: number }> = {}
+  for (const { before, after, reminders } of events) {
+    const eventRef = `event:${before.id}`
+    beforeItems[eventRef] = calendarEventSnapshot(before)
+    afterItems[eventRef] = calendarEventSnapshot(after)
+    targetRefs.push({ kind: 'event', id: before.id })
+    baseVersions[eventRef] = { version: before.version || 1 }
+    for (const task of reminders) {
+      const taskRef = `task:${task.id}`
+      const taskState = scheduledTaskUndoSnapshot(task)
+      beforeItems[taskRef] = taskState
+      afterItems[taskRef] = { ...taskState, enabled: false }
+      targetRefs.push({ kind: 'task', id: task.id })
+      baseVersions[taskRef] = { version: 0 }
+    }
   }
   return {
     contextId: contextId.slice(0, 128),
@@ -123,48 +130,63 @@ export async function deleteCalendarEvent(
   store: CalendarEventDeleteStore,
   options: DeleteCalendarEventOptions,
 ): Promise<void> {
-  if (!Number.isSafeInteger(options.eventId) || !Number.isSafeInteger(options.version)) {
+  if (!Number.isSafeInteger(options.eventId) || !Number.isSafeInteger(options.version))
     throw new EventDeleteError(409, '事件版本无效')
-  }
+  await deleteCalendarEvents(store, { ...options, eventIds: [options.eventId], expectedVersions: new Map([[options.eventId, options.version]]) })
+}
+
+export async function deleteCalendarEvents(
+  store: CalendarEventDeleteStore,
+  options: DeleteCalendarEventsOptions & { expectedVersions?: ReadonlyMap<number, number> },
+): Promise<Array<{ eventId: number; title: string; deletedReminders: number }>> {
+  const ids = [...options.eventIds]
+  if (!ids.length || ids.some(id => !Number.isSafeInteger(id)) || new Set(ids).size !== ids.length)
+    throw new EventDeleteError(404, '事件不存在')
   const clientId = options.clientId?.trim() || null
   const deleted = await store.transaction(options.ownerId, async (tx) => {
-    const event = await tx.findOwnedActiveEvent(options.eventId)
-    if (!event) throw new EventDeleteError(404, '事件不存在')
-    if (event.version !== options.version)
-      throw new EventDeleteError(409, '数据已被其他端修改，请刷新后重试')
-
-    const tasks = await tx.listOwnedEventReminders(event.id)
-    const afterEvent = await tx.softDeleteEventIfVersion(event.id, options.version)
-    if (!afterEvent) throw new EventDeleteError(409, '数据已被其他端修改，请刷新后重试')
-    await tx.disableReminders(event.id, tasks.map((task) => task.id))
-
+    const targets: Array<{ event: CalendarEventDeleteRecord; reminders: CalendarEventReminderRecord[] }> = []
+    for (const id of ids) {
+      const event = await tx.findOwnedActiveEvent(id)
+      if (!event) throw new EventDeleteError(404, '事件不存在')
+      const expectedVersion = options.expectedVersions?.get(id)
+      if (expectedVersion !== undefined && event.version !== expectedVersion)
+        throw new EventDeleteError(409, '数据已被其他端修改，请刷新后重试')
+      targets.push({ event, reminders: await tx.listOwnedEventReminders(event.id) })
+    }
+    const committed: Array<{ before: CalendarEventDeleteRecord; after: CalendarEventDeleteRecord; reminders: CalendarEventReminderRecord[] }> = []
+    for (const { event, reminders } of targets) {
+      const after = await tx.softDeleteEventIfVersion(event.id, event.version)
+      if (!after) throw new EventDeleteError(409, '数据已被其他端修改，未删除，请重试')
+      await tx.disableReminders(event.id, reminders.map(task => task.id))
+      committed.push({ before: event, after, reminders })
+    }
     const contextId = options.undoContextId?.trim()
-    if (contextId) await tx.recordUndo(makeUndoRecord(contextId, event, afterEvent, tasks))
-    return { eventId: event.id, taskIds: tasks.map((task) => task.id) }
+    if (contextId) await tx.recordUndo(makeUndoRecord(contextId, committed))
+    return committed.map(({ before, reminders }) => ({ eventId: before.id, title: before.title, taskIds: reminders.map(task => task.id), deletedReminders: reminders.length }))
   })
 
-  try {
-    await store.publishResourceChanged({
-      ownerId: options.ownerId,
-      resource: 'calendar',
-      origin: clientId,
-      operation: 'delete',
-      entityId: deleted.eventId,
-    })
-  } catch {
-    // The database commit is authoritative; live notification is best-effort.
+  for (const event of deleted) {
+    try {
+      await store.publishResourceChanged({
+        ownerId: options.ownerId, resource: 'calendar', origin: clientId, operation: 'delete', entityId: event.eventId,
+      })
+    } catch {
+      // The database commit is authoritative; live notification is best-effort.
+    }
   }
-  if (deleted.taskIds.length > 0) {
+  const taskIds = deleted.flatMap(event => event.taskIds)
+  if (taskIds.length > 0) {
     try {
       await store.publishResourceChanged({
         ownerId: options.ownerId,
         resource: 'scheduled_tasks',
         origin: clientId,
         operation: 'update',
-        entityIds: deleted.taskIds,
+        entityIds: taskIds,
       })
     } catch {
       // Keep the successful delete result if the task notification is unavailable.
     }
   }
+  return deleted.map(({ eventId, title, deletedReminders }) => ({ eventId, title, deletedReminders }))
 }

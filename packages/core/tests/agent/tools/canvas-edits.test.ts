@@ -6,7 +6,8 @@ import { sql } from 'kysely'
 import { beforeEach,afterEach,it,expect,vi,type Mock } from 'vitest'
 import { initializeSqlite,openSqliteRuntime } from '../../../src/data/sqlite.js'
 import { SqlDataRuntime } from '../../../src/data/runtime.js'
-import { createCanvasEditPort,createCanvasEditTools } from '../../../src/agent/tools/canvas.js'
+import { createCanvasBatchPort,createCanvasBatchTool,createCanvasDeleteNotePort,createCanvasDeleteNoteTool,createCanvasDisconnectPort,createCanvasDisconnectTool,createCanvasDeletePort,createCanvasDeleteTool,createCanvasEditPort,createCanvasEditTools,type CanvasBatchConfirmationPort } from '../../../src/agent/tools/canvas.js'
+import { createConfirmationGate } from '../../../src/agent/tools/confirmation.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import { collect,fixture } from '../run/fixtures.js'
 
@@ -16,7 +17,7 @@ const identity=()=>({ownerId:owner,sessionId:'1',runId:'canvas-edits'})
 const scope=()=>({identity:identity(),roundId:'round',signal:new AbortController().signal,resolution:null,execute:async()=>{throw new Error('不执行进程')}})
 const call=(name:string,input:unknown,id=name)=>({id,name,input})
 const send=(name:string,input:unknown,id=name)=>registry.tools.dispatch(call(name,input,id),scope())
-function mount(){registry=createToolRegistry({groups:[{id:'canvas',name:'画布',tools:createCanvasEditTools(createCanvasEditPort(core,publish))}],authorize:async()=>allowed})}
+function mount(confirmation?:CanvasBatchConfirmationPort){registry=createToolRegistry({groups:[{id:'canvas',name:'画布',tools:[...createCanvasEditTools(createCanvasEditPort(core,publish)),createCanvasBatchTool(createCanvasBatchPort(core,publish,confirmation))]}],authorize:async()=>allowed})}
 const rows=async(table:string)=>(await sql.raw<Record<string,unknown>>('SELECT * FROM '+table+' ORDER BY id').execute(core.db)).rows
 beforeEach(async()=>{
  folder=await mkdtemp(join(tmpdir(),'gugu-canvas-edits-'));await initializeSqlite(join(folder,'core.db'))
@@ -106,4 +107,179 @@ it('SQL写入后取消回滚整批，Undo失败也不能留下部分布局或成
  expect(await send('canvas_update_node',{canvas_id:1,item_id:1,x:20})).toEqual({kind:'unknown'})
  expect((await rows('mind_canvas_items'))[0]!.x).toBe(0)
  expect(publish).not.toHaveBeenCalled()
+})
+
+it('批处理按Python顺序原子执行，request_id同参重放、异参冲突，非法后项整批回滚',async()=>{
+ const beforeNodes=await rows('mind_nodes'),beforeItems=await rows('mind_canvas_items')
+ const input={canvas_id:1,request_id:'batch-shape',operations:[
+  {kind:'create_note',title:'批次便签',content:'正文',position:{x:500,y:30}},
+  {kind:'update_item',item_id:1,x:64},
+ ]}
+ const first=await send('canvas_batch',input,'batch-first')
+ expect(first).toMatchObject({successful:true,mutated:true,value:{canvas_id:1,request_id:'batch-shape',atomic:true,operations:[{index:0,kind:'create_note',created:true,node:{title:'批次便签'}},{index:1,kind:'update_item',updated:true,node:{position:{x:64}}}]}})
+ expect(publish).toHaveBeenCalledTimes(2)
+ expect(await send('canvas_batch',input,'batch-replay')).toMatchObject({successful:true,mutated:false,value:first.value})
+ expect((await rows('mind_nodes')).filter(row=>row.kind==='canvas_note')).toHaveLength(5)
+ expect(await send('canvas_batch',{...input,operations:[{kind:'remove_item',item_id:1}]},'batch-conflict')).toMatchObject({successful:false,value:{idempotency_conflict:true}})
+
+ const beforeRollbackNodes=await rows('mind_nodes'),beforeRollbackItems=await rows('mind_canvas_items'),beforeUndo=await rows('undo_operations')
+ const failed=await send('canvas_batch',{canvas_id:1,request_id:'batch-rollback',operations:[{kind:'create_note',title:'应回滚'},{kind:'update_item',item_id:999,x:1}]},'batch-rollback')
+ expect(failed).toMatchObject({successful:false,value:{rolled_back:true,error:'第 2 个操作画布节点不存在'}})
+ expect(await rows('mind_nodes')).toEqual(beforeRollbackNodes)
+ expect(await rows('mind_canvas_items')).toEqual(beforeRollbackItems)
+ expect(await rows('undo_operations')).toEqual(beforeUndo)
+ expect(await send('canvas_batch',{canvas_id:2,request_id:'foreign-canvas',operations:[{kind:'remove_item',item_id:1}]},'batch-foreign')).toMatchObject({successful:false,value:{error:'画布不存在'}})
+ expect(await send('canvas_batch',{canvas_id:1,request_id:' ',operations:[{kind:'remove_item',item_id:1}]},'batch-empty-request')).toMatchObject({successful:false,value:{error:'需要提供用于重试去重的 request_id'}})
+ expect(await send('canvas_batch',{canvas_id:1,request_id:'batch-legacy',operations:[{kind:'remove_item',item_id:1,w:200}]},'batch-legacy')).toMatchObject({successful:false,value:{rolled_back:true,error:'第 1 个操作不能修改画布卡片大小，请使用 width 和 height 设置画布便签大小'}})
+ expect(await send('canvas_batch',{canvas_id:1,request_id:'batch-delete',operations:[{kind:'delete_note',node_id:1}]},'batch-delete-closed')).toMatchObject({successful:false,value:{error:'画布便签删除需要可信确认能力'}})
+ expect(await rows('mind_nodes')).not.toEqual(beforeNodes)
+ expect(await rows('mind_canvas_items')).not.toEqual(beforeItems)
+})
+
+it('便签删除分支等待可信确认，并在同一操作事务claim后软删便签和视图',async()=>{
+ let prepared:any,receipt:any,claimed=false,allowClaim=true,claimCalls=0
+ const gate=createConfirmationGate({
+  now:()=>100,
+  authorize:async()=> 'epoch-1',
+  prepare:async(binding,targets)=>{
+   prepared={schemaVersion:2,binding,intentId:'intent-batch-delete',interactionId:'interaction-batch-delete',operationId:'operation-batch-delete',purpose:'action',action:'delete_canvas_note',...targets,authorizationEpoch:'epoch-1',expiresAt:1000}
+   receipt={schemaVersion:2,intentId:prepared.intentId,interactionId:prepared.interactionId,receiptId:'receipt-batch-delete',binding,purpose:'action',action:'delete_canvas_note',status:'approved',expiresAt:1000}
+   return prepared
+  },
+  load:async()=>({intent:prepared,receipt}),
+  inspect:async()=>({targetsDigest:prepared.targetsDigest,versionsDigest:prepared.versionsDigest}),
+ },{purpose:'action',action:'delete_canvas_note'})
+ const confirmation:CanvasBatchConfirmationPort={gate,async claim(_tx,reference){claimCalls++;if(!allowClaim||claimed||reference.intentId!=='intent-batch-delete')return false;claimed=true;return true}}
+ mount(confirmation)
+ const input={canvas_id:1,request_id:'batch-delete-confirmed',operations:[{kind:'delete_note',node_id:1}]}
+ const callId='batch-delete-confirmed-call',toolCall=call('canvas_batch',input,callId)
+ const waiting=await registry.tools.dispatch(toolCall,scope())
+ expect(waiting).toMatchObject({kind:'waiting',interaction:{kind:'confirmation',toolCall:{id:callId}}})
+ allowClaim=false
+ const declinedClaim=await registry.tools.dispatch(toolCall,{...scope(),resolution:{interactionId:'interaction-batch-delete',receiptId:'receipt-batch-delete',status:'confirmed',value:null}})
+ expect(declinedClaim).toMatchObject({successful:false,value:{rolled_back:true}})
+ expect((await rows('mind_nodes'))[0]!.deleted_at).toBeNull()
+ allowClaim=true;claimed=false;claimCalls=0
+ const success=await registry.tools.dispatch(toolCall,{...scope(),resolution:{interactionId:'interaction-batch-delete',receiptId:'receipt-batch-delete',status:'confirmed',value:null}})
+ expect(success).toMatchObject({successful:true,mutated:true,value:{operations:[{kind:'delete_note',deleted_node_id:1,can_restore:true}]}})
+ expect((await rows('mind_nodes'))[0]).toMatchObject({deleted_at:expect.any(String),version:2})
+ expect((await rows('mind_canvas_items'))[0]!.deleted_at).not.toBeNull()
+ expect(await rows('undo_operations')).toHaveLength(1)
+ expect(claimCalls).toBe(1)
+})
+
+it('独立便签删除按旧版单项/批量结果执行，确认绑定目标版本且claim失败不产生副作用',async()=>{
+ let prepared:any,receipt:any,claimed=false,allowClaim=false,claimCalls=0
+ const gate=createConfirmationGate({
+  now:()=>100,authorize:async()=>'epoch-1',
+  prepare:async(binding,targets)=>{prepared={schemaVersion:2,binding,intentId:'intent-note-delete',interactionId:'interaction-note-delete',operationId:'operation-note-delete',purpose:'action',action:'delete_canvas_note',...targets,authorizationEpoch:'epoch-1',expiresAt:1000};receipt={schemaVersion:2,intentId:prepared.intentId,interactionId:prepared.interactionId,receiptId:'receipt-note-delete',binding,purpose:'action',action:'delete_canvas_note',status:'approved',expiresAt:1000};return prepared},
+  load:async()=>({intent:prepared,receipt}),inspect:async()=>({targetsDigest:prepared.targetsDigest,versionsDigest:prepared.versionsDigest}),
+ },{purpose:'action',action:'delete_canvas_note'})
+ const confirmation:CanvasBatchConfirmationPort={gate,async claim(_tx,reference){claimCalls++;if(!allowClaim||claimed||reference.intentId!=='intent-note-delete')return false;claimed=true;return true}}
+ const tools=[createCanvasDeleteNoteTool(createCanvasDeleteNotePort(core,publish,confirmation))]
+ registry=createToolRegistry({groups:[{id:'canvas',name:'画布',tools}],authorize:async()=>allowed})
+ const beforeNotes=await rows('mind_nodes'),beforeItems=await rows('mind_canvas_items')
+ const input={notes:[{node_id:2},{node_id:1}]},toolCall=call('canvas_delete_note',input,'confirmed-note-delete')
+ const waiting=await registry.tools.dispatch(toolCall,scope())
+ expect(waiting).toMatchObject({kind:'waiting',interaction:{kind:'confirmation',toolCall:{id:'confirmed-note-delete'}}})
+ // 修改已展示目标后，确认检查不得扩大或沿用旧版本。
+ await sql`UPDATE mind_nodes SET version=version+1 WHERE id=1 AND user_id=${owner.replaceAll('-','')}`.execute(core.db)
+ const stale=await registry.tools.dispatch(toolCall,{...scope(),resolution:{interactionId:'interaction-note-delete',receiptId:'receipt-note-delete',status:'confirmed',value:null}})
+ expect(stale).toMatchObject({successful:false,value:{error:'画布便签删除确认无效或已过期'}})
+ expect((await rows('mind_nodes')).filter(row=>[1,2].includes(Number(row.id))).every(row=>row.deleted_at===null)).toBe(true)
+ // 为确认读取当前版本重置本用例的准备意图。
+ prepared=undefined;receipt=undefined;claimed=false;claimCalls=0
+ const current=await rows('mind_nodes');expect(current[0]!.version).toBe(Number(beforeNotes[0]!.version)+1)
+ const fresh={notes:[{node_id:1}]},freshCall=call('canvas_delete_note',fresh,'fresh-note-delete')
+ const freshWait=await registry.tools.dispatch(freshCall,scope());expect(freshWait.kind).toBe('waiting')
+ const deniedClaim=await registry.tools.dispatch(freshCall,{...scope(),resolution:{interactionId:'interaction-note-delete',receiptId:'receipt-note-delete',status:'confirmed',value:null}})
+ expect(deniedClaim).toMatchObject({successful:false,value:{error:'画布便签删除确认已使用或目标已变化'}})
+ expect((await rows('mind_nodes')).find(row=>row.id===1)!.deleted_at).toBeNull();expect(await rows('undo_operations')).toHaveLength(0)
+ allowClaim=true
+ const deleted=await registry.tools.dispatch(freshCall,{...scope(),resolution:{interactionId:'interaction-note-delete',receiptId:'receipt-note-delete',status:'confirmed',value:null}})
+ expect(deleted).toMatchObject({successful:true,mutated:true,value:{count:1,results:[{deleted_node_id:1,can_restore:true}]}})
+ expect((await rows('mind_nodes')).find(row=>row.id===1)).toMatchObject({deleted_at:expect.any(String),version:3})
+ expect((await rows('mind_canvas_items')).find(row=>row.node_id===1)!.deleted_at).not.toBeNull()
+ expect(await rows('undo_operations')).toHaveLength(1);expect(publish).toHaveBeenCalledTimes(1);expect(claimCalls).toBe(2)
+ expect(await registry.tools.dispatch(freshCall,{...scope(),resolution:{interactionId:'interaction-note-delete',receiptId:'receipt-note-delete',status:'confirmed',value:null}})).toMatchObject({successful:true,mutated:false,value:{count:1,results:[{deleted_node_id:1,can_restore:true}]}})
+ expect(publish).toHaveBeenCalledTimes(1);expect(claimCalls).toBe(2)
+ prepared=undefined;receipt=undefined;claimed=false;claimCalls=0
+ const singleCall=call('canvas_delete_note',{node_id:2},'single-note-delete')
+ expect((await registry.tools.dispatch(singleCall,scope())).kind).toBe('waiting')
+ const single=await registry.tools.dispatch(singleCall,{...scope(),resolution:{interactionId:'interaction-note-delete',receiptId:'receipt-note-delete',status:'confirmed',value:null}})
+ expect(single).toMatchObject({successful:true,mutated:true,value:{deleted_node_id:2,can_restore:true}})
+ expect(publish).toHaveBeenCalledTimes(2);expect(await rows('undo_operations')).toHaveLength(2)
+ expect(await registry.tools.dispatch(call('canvas_delete_note',{notes:Array.from({length:21},(_,index)=>({node_id:index+1}))},'too-many'),scope())).toMatchObject({successful:false})
+ expect(await rows('mind_nodes')).not.toEqual(beforeNotes);expect(await rows('mind_canvas_items')).not.toEqual(beforeItems)
+})
+
+it('关系断开按Python批量目标排序与结果契约确认，claim失败无副作用且重放不重复通知',async()=>{
+ const key=owner.replaceAll('-',''),stamp='2026-11-15 00:00:00.000002'
+ await sql`INSERT INTO mind_relations(id,user_id,canvas_id,src_node_id,dst_node_id,rel_type,edge_key,origin,status,created_at,updated_at) VALUES(2,${key},1,1,2,'related','manual','user','confirmed',${stamp},${stamp})`.execute(core.db)
+ let prepared:any,receipt:any,allowClaim=false,claimed=false,claimCalls=0
+ const gate=createConfirmationGate({now:()=>100,authorize:async()=>'epoch-1',
+  prepare:async(binding,targets)=>{prepared={schemaVersion:2,binding,intentId:'intent-disconnect',interactionId:'interaction-disconnect',operationId:'operation-disconnect',purpose:'action',action:'delete_canvas_relation',...targets,authorizationEpoch:'epoch-1',expiresAt:1000};receipt={schemaVersion:2,intentId:prepared.intentId,interactionId:prepared.interactionId,receiptId:'receipt-disconnect',binding,purpose:'action',action:'delete_canvas_relation',status:'approved',expiresAt:1000};return prepared},
+  load:async()=>({intent:prepared,receipt}),inspect:async()=>({targetsDigest:prepared.targetsDigest,versionsDigest:prepared.versionsDigest}),
+ },{purpose:'action',action:'delete_canvas_relation'})
+ const confirmation:CanvasBatchConfirmationPort={gate,async claim(_tx,reference){claimCalls++;if(!allowClaim||claimed||reference.intentId!=='intent-disconnect')return false;claimed=true;return true}}
+ const port=createCanvasDisconnectPort(core,publish,confirmation)
+ registry=createToolRegistry({tools:[createCanvasDisconnectTool(port)],authorize:async()=>allowed})
+ expect(await send('canvas_disconnect',{canvas_id:1,relation_ids:[]},'empty-relations')).toMatchObject({successful:false,value:{error:'relation_ids 必须是 1-50 个关联 id'}})
+ expect(await send('canvas_disconnect',{canvas_id:1,relation_ids:[999]},'missing-relation')).toMatchObject({successful:false,value:{error:'关联 999 不存在'}})
+ expect(await send('canvas_disconnect',{canvas_id:2,relation_id:1},'foreign-canvas')).toMatchObject({successful:false,value:{error:'关联不存在'}})
+ const input={canvas_id:1,relation_ids:[2,1]},callId='confirmed-disconnect',toolCall=call('canvas_disconnect',input,callId)
+ expect(await registry.tools.dispatch(toolCall,scope())).toMatchObject({kind:'waiting',interaction:{kind:'confirmation',toolCall:{id:callId}}})
+ const denied=await registry.tools.dispatch(toolCall,{...scope(),resolution:{interactionId:'interaction-disconnect',receiptId:'receipt-disconnect',status:'confirmed',value:null}})
+ expect(denied).toMatchObject({successful:false,value:{error:'画布关系删除确认已使用或目标已变化'}})
+ expect((await rows('mind_relations')).filter(row=>[1,2].includes(Number(row.id))).every(row=>row.deleted_at===null)).toBe(true)
+ allowClaim=true
+ expect(await registry.tools.dispatch(toolCall,{...scope(),resolution:{interactionId:'interaction-disconnect',receiptId:'receipt-disconnect',status:'confirmed',value:null}})).toMatchObject({successful:true,mutated:true,value:{success:true,deleted_count:2,deleted_relation_ids:[1,2]}})
+ expect((await rows('mind_relations')).filter(row=>[1,2].includes(Number(row.id))).every(row=>row.deleted_at!==null)).toBe(true)
+ expect(await rows('undo_operations')).toEqual([]);expect(publish).toHaveBeenCalledTimes(2);expect(claimCalls).toBe(2)
+ expect(await registry.tools.dispatch(toolCall,{...scope(),resolution:{interactionId:'interaction-disconnect',receiptId:'receipt-disconnect',status:'confirmed',value:null}})).toMatchObject({successful:true,mutated:false,value:{success:true,deleted_count:2,deleted_relation_ids:[1,2]}})
+ expect(publish).toHaveBeenCalledTimes(2);expect(claimCalls).toBe(2)
+})
+
+it('画布级联删除批量共享快照确认和原子收据，复用Mind级联服务且重放不重复通知',async()=>{
+ const key=owner.replaceAll('-',''),stamp='2026-11-15 00:00:00.000003'
+ await sql`INSERT INTO mind_maps(id,user_id,title,data_json,created_at,updated_at) VALUES(3,${key},'第二画布','{}',${stamp},${stamp})`.execute(core.db)
+ let prepared:any,receipt:any,allowClaim=false,claimed=false,claimCalls=0
+ const gate=createConfirmationGate({now:()=>100,authorize:async()=>'epoch-1',
+  prepare:async(binding,targets)=>{prepared={schemaVersion:2,binding,intentId:'intent-canvas-delete',interactionId:'interaction-canvas-delete',operationId:'operation-canvas-delete',purpose:'action',action:'delete_canvas',...targets,authorizationEpoch:'epoch-1',expiresAt:1000};receipt={schemaVersion:2,intentId:prepared.intentId,interactionId:prepared.interactionId,receiptId:'receipt-canvas-delete',binding,purpose:'action',action:'delete_canvas',status:'approved',expiresAt:1000};return prepared},
+  load:async()=>({intent:prepared,receipt}),inspect:async()=>({targetsDigest:prepared.targetsDigest,versionsDigest:prepared.versionsDigest}),
+ },{purpose:'action',action:'delete_canvas'})
+ const confirmation:CanvasBatchConfirmationPort={gate,async claim(_tx,reference){claimCalls++;if(!allowClaim||claimed||reference.intentId!=='intent-canvas-delete')return false;claimed=true;return true}}
+ const port=createCanvasDeletePort(core,publish,confirmation)
+ registry=createToolRegistry({tools:[createCanvasDeleteTool(port)],authorize:async()=>allowed})
+ expect(await send('canvas_delete',{canvas_ids:[]},'empty-canvases')).toMatchObject({successful:false,value:{error:'canvas_ids 必须是 1-20 个画布 id'}})
+ expect(await send('canvas_delete',{canvas_ids:[1,999]},'missing-canvas')).toMatchObject({successful:false,value:{error:'画布 999 不存在'}})
+ const input={canvas_ids:[3,1]},toolCall=call('canvas_delete',input,'confirmed-canvas-delete')
+ expect(await registry.tools.dispatch(toolCall,scope())).toMatchObject({kind:'waiting',interaction:{kind:'confirmation',toolCall:{id:'confirmed-canvas-delete'}}})
+ const denied=await registry.tools.dispatch(toolCall,{...scope(),resolution:{interactionId:'interaction-canvas-delete',receiptId:'receipt-canvas-delete',status:'confirmed',value:null}})
+ expect(denied).toMatchObject({successful:false,value:{error:'画布删除确认已使用或目标已变化'}})
+ expect((await rows('mind_maps')).filter(row=>[1,3].includes(Number(row.id))).every(row=>row.deleted_at===null)).toBe(true)
+ allowClaim=true
+ expect(await registry.tools.dispatch(toolCall,{...scope(),resolution:{interactionId:'interaction-canvas-delete',receiptId:'receipt-canvas-delete',status:'confirmed',value:null}})).toMatchObject({successful:true,mutated:true,value:{success:true,deleted_count:2,deleted_canvas_ids:[1,3]}})
+ expect((await rows('mind_maps')).filter(row=>[1,3].includes(Number(row.id))).every(row=>row.deleted_at!==null)).toBe(true)
+ expect((await rows('mind_canvas_items')).filter(row=>Number(row.canvas_id)===1).every(row=>row.deleted_at!==null)).toBe(true)
+ expect((await rows('mind_relations')).filter(row=>Number(row.canvas_id)===1).every(row=>row.deleted_at!==null)).toBe(true)
+ expect(await rows('undo_operations')).toEqual([]);expect(publish).toHaveBeenCalledTimes(2);expect(claimCalls).toBe(2)
+ expect(await registry.tools.dispatch(toolCall,{...scope(),resolution:{interactionId:'interaction-canvas-delete',receiptId:'receipt-canvas-delete',status:'confirmed',value:null}})).toMatchObject({successful:true,mutated:false,value:{success:true,deleted_count:2,deleted_canvas_ids:[1,3]}})
+ expect(publish).toHaveBeenCalledTimes(2);expect(claimCalls).toBe(2)
+})
+
+it('批处理复用既有放置、连接和移除领域行为并按输入顺序返回结果',async()=>{
+ const project=await core.transaction({ownerId:owner},data=>data.projects.create({name:'批处理来源'}))
+ const result=await send('canvas_batch',{canvas_id:1,request_id:'batch-placement-relation-remove',operations:[
+  {kind:'add_node',ref_type:'project',ref_id:project.id,position:{x:240,y:80}},
+  {kind:'connect',source_node_id:1,target_node_id:2},
+  {kind:'remove_item',item_id:3},
+ ]})
+ expect(result).toMatchObject({successful:true,mutated:true,value:{atomic:true,operations:[
+  {index:0,kind:'add_node',created:true,node:{ref_type:'project',ref_id:project.id}},
+  {index:1,kind:'connect',created_or_reused:true},
+  {index:2,kind:'remove_item',removed_item_id:3,node_preserved:true},
+ ]}})
+ expect((await rows('mind_canvas_items')).find(row=>row.id===3)?.deleted_at).not.toBeNull()
+ expect((await rows('mind_nodes')).find(row=>row.id===3)?.deleted_at).toBeNull()
 })

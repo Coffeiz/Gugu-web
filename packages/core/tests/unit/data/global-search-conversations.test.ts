@@ -762,6 +762,11 @@ it('持久索引来源替换和单文档更新保留墓碑、归属与可恢复�
    const make=(id:string,text:string)=>buildDocuments({id,source_type:'conversation',title:'合成',content:text,document_version:'v1',scope:{scope_type:'owner',scope_id:''}})
    const writer=createSqlRagPersistentIndexWriter(runtime.db,'sqlite'),reader=createSqlRagPersistentIndexReader(runtime.db,'sqlite'),other=randomUUID()
    const first=make('one','alpha'),second=make('two','beta')
+   // 2.0 文件正文唯一真源是授权 FS；拒绝把文件正文写进正式 DB RAG 索引。
+   const fileDocument=buildDocuments({id:'relative/path.txt',source_type:'file',title:'文件',content:'不得进入数据库的文件正文',document_version:'v1',scope:{scope_type:'owner',scope_id:''}})
+   await expect(writer.replaceSource(ownerId,'file',fileDocument)).rejects.toThrow('来源无效')
+   await expect(writer.replaceDocument(ownerId,'file','relative/path.txt',fileDocument)).rejects.toThrow('来源无效')
+   expect((await reader.snapshot(ownerId)).documents).toEqual([])
    expect(await writer.replaceSource(ownerId,'conversation',[...first,...second])).toEqual({inserted:2,updated:0,deleted:0})
    await writer.replaceSource(other,'conversation',make('other','私有'))
    const snapshot=await reader.snapshot(ownerId)

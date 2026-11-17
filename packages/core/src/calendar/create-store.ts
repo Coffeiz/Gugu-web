@@ -2,9 +2,46 @@ import { sql, type Kysely, type Transaction } from 'kysely'
 import { calendarEventRecord } from './event-projection.js'
 import { dataContext } from '../contracts/index.js'
 import { recordForwardUndoOperation } from '../data/undo.js'
-import { databaseTime, nowUtc, type Clock } from '../data/codec.js'
+import { databaseTime, nowUtc, utc, type Clock } from '../data/codec.js'
 import type { Database } from '../data/schema.js'
+import { enqueueScheduledTaskRagIndex } from '../scheduled-tasks/rag-index-job.js'
 import { CalendarEventIdempotencyUniqueViolation, type EventCreatePublication, type EventCreateStore, type EventCreateTransaction } from './application/event-create.js'
+import type { EventCreateReminderRecord, PreparedEventReminder } from './application/event-create.js'
+
+function reminderDate(value: unknown, backend: 'sqlite' | 'postgres'): Date {
+  if (value instanceof Date) return value
+  if (typeof value !== 'string') throw new Error('活动提醒时间无效')
+  const normalized = backend === 'sqlite' ? utc(value).replace(' ', 'T') : value.replace(' ', 'T')
+  const result = new Date(normalized)
+  if (!Number.isFinite(result.getTime())) throw new Error('活动提醒时间无效')
+  return result
+}
+
+/** 插入日历内联提醒的共享 SQL；创建和整体替换共用同一 scheduled_tasks 契约。 */
+export async function insertCalendarEventReminder<DB>(
+  tx: Transaction<DB>, backend: 'sqlite' | 'postgres', ownerId: string, eventId: number,
+  reminder: PreparedEventReminder, timestamp: ReturnType<typeof sql>,
+): Promise<EventCreateReminderRecord> {
+  const start = backend === 'sqlite' ? databaseTime(reminder.startAt.toISOString(), backend) : reminder.startAt
+  const enabled = backend === 'sqlite' ? Number(reminder.enabled) : reminder.enabled
+  const targetJson = JSON.stringify(reminder.deliveryTargets ?? null)
+  const targets = backend === 'postgres' ? sql`${targetJson}::json` : sql`${targetJson}`
+  const result = await sql<Record<string, unknown>>`INSERT INTO scheduled_tasks(
+    user_id,event_id,reminder_lead_minutes,workspace_id,filesystem_authorization_grant_id,name,payload,cron,schedule_kind,
+    interval_minutes,start_at,end_at,channels,enabled,delivery_targets,authorized_tools,email_attachment_file_ids,last_run_at,last_run_failed,created_at,updated_at
+  ) VALUES(${ownerId},${eventId},${reminder.leadMinutes},NULL,NULL,${reminder.name},${reminder.payload},${reminder.cron},'once',NULL,${start},NULL,${reminder.channels},${enabled},${targets},'[]','[]',NULL,NULL,${timestamp},${timestamp})
+    RETURNING id,enabled,name,payload,cron,schedule_kind,start_at,reminder_lead_minutes,channels,delivery_targets`.execute(tx)
+  const row = result.rows[0]
+  if (!row) throw new Error('活动提醒创建失败')
+  const id = Number(row.id)
+  await enqueueScheduledTaskRagIndex(tx, backend, ownerId, id, timestamp)
+  return {
+    ...reminder, id, enabled: Boolean(row.enabled), name: String(row.name), payload: String(row.payload ?? ''),
+    cron: String(row.cron), scheduleKind: 'once', startAt: reminderDate(row.start_at, backend),
+    leadMinutes: Number(row.reminder_lead_minutes), channels: String(row.channels),
+    deliveryTargets: backend === 'sqlite' && typeof row.delivery_targets === 'string' ? JSON.parse(row.delivery_targets) : row.delivery_targets,
+  }
+}
 
 /** 此适配器要求宿主使用单写者 SQLite 或 BEGIN IMMEDIATE；PG 使用行锁。 */
 export function createKyselyCalendarCreateStore<DB>(db: Kysely<DB>, backend: 'sqlite' | 'postgres', publish: (event: EventCreatePublication) => Promise<unknown>, clock: Clock = nowUtc): EventCreateStore {
@@ -33,6 +70,19 @@ function calendarCreateStore<DB>(db: Kysely<DB>, backend: 'sqlite' | 'postgres',
           async projectExistsForOwner(id) {
             const result = await sql`SELECT id FROM projects WHERE user_id=${ownerId} AND id=${id} AND deleted_at IS NULL`.execute(tx)
             return result.rows.length > 0
+          },
+          async createEventReminder(event, reminder: PreparedEventReminder) {
+            return insertCalendarEventReminder(tx, backend, ownerId, event.id, reminder, timestamp)
+          },
+          async listEventReminders(eventId) {
+            const rows = await sql<Record<string, unknown>>`SELECT id,enabled,name,payload,cron,schedule_kind,start_at,reminder_lead_minutes,channels,delivery_targets
+              FROM scheduled_tasks WHERE user_id=${ownerId} AND event_id=${eventId} ORDER BY id`.execute(tx)
+            return rows.rows.map(row => ({
+              id: Number(row.id), enabled: Boolean(row.enabled), name: String(row.name), payload: String(row.payload ?? ''),
+              cron: String(row.cron), scheduleKind: 'once', startAt: reminderDate(row.start_at, backend),
+              leadMinutes: Number(row.reminder_lead_minutes), channels: String(row.channels),
+              deliveryTargets: backend === 'sqlite' && typeof row.delivery_targets === 'string' ? JSON.parse(row.delivery_targets) : row.delivery_targets,
+            } as EventCreateReminderRecord))
           },
           async insertWithSavepoint(input, idem) {
             const result = await sql<Record<string, unknown>>`INSERT INTO calendar_events(user_id,title,date,time,end_time,type,contact_name,project_id,description,version,created_at,idempotency_key,idempotency_fingerprint)

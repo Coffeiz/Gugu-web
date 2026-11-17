@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {readStorageQuotaStatus} from '@gugu/core/admin/storage-quota-status'
+import {StorageQuotaReconcileUnavailable} from '../../src/modules/admin/storage-quota-reconcile.js'
 test('配额状态保留终态、无锁标记中断且不覆盖并发完成',async()=>{
  let raw=JSON.stringify({status:'running',processed:2});const saved:string[]=[]
  const store={read:async()=>raw,lockExists:async()=>false,interruptIfUnchanged:async(expected:string,next:string)=>{if(raw!==expected)return false;raw=next;saved.push(next);return true}}
@@ -34,4 +35,16 @@ test('真实Redis连接失败返回503且不泄露连接细节',async()=>{
  const app=Fastify()
  registerStorageQuotaStatusRoute(app,{requireAdmin:async()=>{},store:createRedisStorageQuotaStatusStore('redis://127.0.0.1:1')})
  try{const response=await app.inject({url:'/api/v1/admin/storage-quota/reconcile'});assert.equal(response.statusCode,503);assert.deepEqual(response.json(),{detail:'暂时无法读取对账状态'});assert.equal(response.body.includes('127.0.0.1'),false)}finally{await app.close()}
+})
+
+test('管理员可启动全量配额对账，重复启动返回现有状态，Redis 故障映射为脱敏 503',async()=>{
+ const app=Fastify();let starts=0
+ registerStorageQuotaStatusRoute(app,{requireAdmin:async(request,reply)=>{if(request.headers.authorization!=='admin')return reply.code(401).send({detail:'未登录'})},store:{async read(){return null},async lockExists(){return true},async interruptIfUnchanged(){return false}},reconcile:{async start(){starts++;return {started:false,state:{status:'running',processed:2}}}}})
+ try{
+  assert.equal((await app.inject({method:'POST',url:'/api/v1/admin/storage-quota/reconcile'})).statusCode,401)
+  const response=await app.inject({method:'POST',url:'/api/v1/admin/storage-quota/reconcile',headers:{authorization:'admin'}})
+  assert.equal(response.statusCode,200);assert.deepEqual(response.json(),{started:false,state:{status:'running',processed:2}});assert.equal(starts,1)
+ }finally{await app.close()}
+ const unavailable=Fastify();registerStorageQuotaStatusRoute(unavailable,{requireAdmin:async()=>{},store:{async read(){return null},async lockExists(){return true},async interruptIfUnchanged(){return false}},reconcile:{async start(){throw new StorageQuotaReconcileUnavailable()}}})
+ try{const response=await unavailable.inject({method:'POST',url:'/api/v1/admin/storage-quota/reconcile'});assert.equal(response.statusCode,503);assert.deepEqual(response.json(),{detail:'暂时无法启动对账'})}finally{await unavailable.close()}
 })

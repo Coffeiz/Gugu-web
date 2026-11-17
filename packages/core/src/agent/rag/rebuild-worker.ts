@@ -117,6 +117,48 @@ export async function enqueueAgentRagRebuild(db:Kysely<any>,backend:'postgres'|'
  })
 }
 
+/**
+ * Hide memory projections and fence any in-flight rebuild before the Host removes
+ * the source files. The row is left in a settled generation (not claimable); after
+ * file removal, enqueueAgentRagRebuild creates the actual rebuild generation.
+ */
+export async function invalidateAgentMemoryRag(db:Kysely<any>,backend:'postgres'|'sqlite',rawOwner:string):Promise<void> {
+ const normalized=dataContext(rawOwner).ownerId
+ const owner=backend==='sqlite'?normalized.replaceAll('-',''):normalized
+ const empty=JSON.stringify([])
+ await db.transaction().execute(async tx=>{
+  await sql`INSERT INTO rag_index_jobs (
+   user_id,source_type,source_id,pending_source_ids,version,operation,status,generation,completed_generation,attempts,
+   next_attempt_at,lease_until,last_error_code,last_started_at,last_succeeded_at,created_at,updated_at
+  ) VALUES (${owner},'memory','',${empty},'','refresh','ready',1,1,0,NULL,NULL,NULL,NULL,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+  ON CONFLICT (user_id,source_type) DO UPDATE SET
+   source_id='',pending_source_ids=${empty},version='',operation='refresh',status='ready',
+   generation=rag_index_jobs.generation+1,completed_generation=rag_index_jobs.generation+1,
+   next_attempt_at=NULL,lease_until=NULL,last_error_code=NULL,updated_at=CURRENT_TIMESTAMP`.execute(tx)
+  await sql`UPDATE knowledge_index_entries SET deleted_at=CURRENT_TIMESTAMP,indexed_at=CURRENT_TIMESTAMP
+   WHERE owner_user_id=${owner} AND source_type='memory' AND deleted_at IS NULL`.execute(tx)
+ })
+}
+
+/** 知识主文件变化前撤回旧投影并围栏正在运行的重建。 */
+export async function invalidateAgentKnowledgeRag(db:Kysely<any>,backend:'postgres'|'sqlite',rawOwner:string):Promise<void> {
+ const normalized=dataContext(rawOwner).ownerId
+ const owner=backend==='sqlite'?normalized.replaceAll('-',''):normalized
+ const empty=JSON.stringify([])
+ await db.transaction().execute(async tx=>{
+  await sql`INSERT INTO rag_index_jobs (
+   user_id,source_type,source_id,pending_source_ids,version,operation,status,generation,completed_generation,attempts,
+   next_attempt_at,lease_until,last_error_code,last_started_at,last_succeeded_at,created_at,updated_at
+  ) VALUES (${owner},'knowledge','',${empty},'','refresh','ready',1,1,0,NULL,NULL,NULL,NULL,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+  ON CONFLICT (user_id,source_type) DO UPDATE SET
+   source_id='',pending_source_ids=${empty},version='',operation='refresh',status='ready',
+   generation=rag_index_jobs.generation+1,completed_generation=rag_index_jobs.generation+1,
+   next_attempt_at=NULL,lease_until=NULL,last_error_code=NULL,updated_at=CURRENT_TIMESTAMP`.execute(tx)
+  await sql`UPDATE knowledge_index_entries SET deleted_at=CURRENT_TIMESTAMP,indexed_at=CURRENT_TIMESTAMP
+   WHERE owner_user_id=${owner} AND source_type='knowledge' AND deleted_at IS NULL`.execute(tx)
+ })
+}
+
 export async function readAgentRagRebuildProgress(db:Kysely<any>,backend:'postgres'|'sqlite',rawOwner:string,sourceType:string):Promise<{generation:number;completedGeneration:number;status:string}|null>{
  const normalized=dataContext(rawOwner).ownerId
  const owner=backend==='sqlite'?normalized.replaceAll('-',''):normalized

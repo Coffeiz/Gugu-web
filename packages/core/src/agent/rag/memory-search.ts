@@ -66,7 +66,7 @@ export function createMemorySearch(ports: MemorySearchPorts) {
     const vectors = strategy === 'bm25' ? null : await ports.vectors?.(identity, signal) ?? null
     signal.throwIfAborted()
     const prepared = await prepareMemory({ ownerId: identity.ownerId, scopes, sourceFilter: source,
-      snapshotRevision: snapshot.revision, snapshotText: snapshot.text, vectorVersion: vectors?.version ?? '' },
+      snapshotRevision: snapshot.revision, snapshotText: snapshot.text, vectorVersion: vectors?.version ?? '', signal },
     ports.scopeState, ports.storage(identity))
     signal.throwIfAborted()
     const documents = prepared.documents.filter(document => scopes.some(scope => exactScopeMatch(document, scope)))

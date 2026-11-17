@@ -29,17 +29,20 @@ test('RAG Worker owner follows the Host-injected environment and rejects unsuppo
 test('RAG 调度器立即运行并串行排空 ready 任务，空队列后按间隔轮询', async () => {
   const results = ['ready', 'superseded', 'idle', 'idle'] as const
   const calls: number[] = []
+  let reachedThirdCall!: () => void
+  const thirdCall = new Promise<void>(resolve => { reachedThirdCall = resolve })
   const worker = startRagIndexWorker({
     enabled: true,
     intervalMs: 10,
     onError: error => { throw error },
     work: async () => {
       calls.push(calls.length + 1)
+      if (calls.length === 3) reachedThirdCall()
       return results[calls.length - 1] ?? 'idle'
     },
   })
   try {
-    await tick()
+    await thirdCall
     assert.deepEqual(calls, [1, 2, 3])
     await new Promise(resolve => setTimeout(resolve, 25))
     assert.equal(calls.length >= 4, true)
@@ -456,8 +459,10 @@ test('Host Memory 来源经可信 owner scope 与旧版 FS 投影重建正式索
     const oldGroupDirectory = join(storageRoot, owner, '.agent', 'im', 'qq', 'bot-a', 'groups', 'group-old')
     await mkdir(oldGroupDirectory, { recursive: true })
     await writeFile(join(oldGroupDirectory, 'profile.json'), JSON.stringify({ text: 'tombstoned group fact' }), 'utf8')
+    // Python MemoryUpdated listener emits a source-level RAG event with this exact
+    // persisted shape; the Node consumer must still rebuild the complete memory source.
     await memoryDb.insertInto('rag_index_jobs').values({
-      user_id: ownerKey, source_type: 'memory', source_id: '', pending_source_ids: '[]', version: '', operation: 'upsert',
+      user_id: ownerKey, source_type: 'memory', source_id: 'memory', pending_source_ids: '["memory"]', version: '', operation: 'upsert',
       status: 'queued', generation: 1, completed_generation: 0, attempts: 0,
       next_attempt_at: '2026-01-01 00:00:00.000000', created_at: '2026-01-01 00:00:00.000000', updated_at: '2026-01-01 00:00:00.000000',
     }).execute()

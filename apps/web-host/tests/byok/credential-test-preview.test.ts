@@ -40,6 +40,33 @@ test('test-preview authenticates, validates the draft and returns safe HTTP erro
   assert.deepEqual(savedMissing.json(), { detail: '凭据不存在' })
 })
 
+test('test-preview preserves Pydantic integer coercion for numeric-string integer fields', async () => {
+  const app = Fastify()
+  apps.push(app)
+  let receivedId: number | null | undefined
+  let receivedDimensions: number | null | undefined
+  registerCredentialTestPreviewRoute(app, {
+    requireUser: async () => {},
+    ownerIdFromRequest: () => ownerId,
+    savedTest: async () => ({ ok: true, status: 'stored', message: '凭据正常' }),
+    preview: async (_owner, input) => {
+      receivedId = input.credential_id
+      receivedDimensions = input.dimensions
+      throw Object.assign(new Error('凭据不存在'), { code: 'not_found' })
+    },
+  })
+
+  const response = await app.inject({ method: 'POST', url: '/api/v1/byok/test-preview',
+    payload: { provider: 'deepseek', capability: 'embedding', credential_id: '7', dimensions: '1536' } })
+  const malformed = await app.inject({ method: 'POST', url: '/api/v1/byok/test-preview',
+    payload: { provider: 'deepseek', capability: 'llm', credential_id: '7.0' } })
+
+  assert.equal(response.statusCode, 404)
+  assert.equal(receivedId, 7)
+  assert.equal(receivedDimensions, 1536)
+  assert.equal(malformed.statusCode, 422)
+})
+
 test('LLM draft probe performs a real local request via the pinned Node transport without following redirects', async () => {
   let captured: { path?: string; authorization?: string; body?: { model?: string } } = {}
   const server = createServer((request, response) => {

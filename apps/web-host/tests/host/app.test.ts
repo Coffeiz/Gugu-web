@@ -380,6 +380,7 @@ test('Agent 会话列表只接受 Host 认证上下文中的 owner', async () =>
   const owners: string[] = []
   const messageLookups: Array<{ ownerId: string; messageId: number }> = []
   const detailLookups: Array<{ ownerId: string; sessionId: number; messageId: number; timelineIndex: number }> = []
+  const greetingOwners: Array<{ ownerId: string; locale: string }> = []
   let stateLabelReads = 0
   const app = testApp({
     appName: '合成测试应用',
@@ -421,6 +422,7 @@ test('Agent 会话列表只接受 Host 认证上下文中的 owner', async () =>
         stateLabelReads++
         return { _thinking: '覆盖思考文案', web_search: '不得覆盖普通标签' }
       },
+      async greeting(ownerId, locale) { greetingOwners.push({ ownerId, locale }); return { text: '早呀', enabled: true } },
     },
   })
   const token = createUserToken(userId, 1, secret)
@@ -432,6 +434,7 @@ test('Agent 会话列表只接受 Host 认证上下文中的 owner', async () =>
   })
   const deniedCommands = await app.inject({ url: '/api/v1/agent/commands' })
   const deniedLabels = await app.inject({ url: '/api/v1/agent/ui-labels' })
+  const deniedGreeting = await app.inject({ url: '/api/v1/agent/greeting' })
   const allowed = await app.inject({
     url: '/api/v1/agent/sessions?ownerId=00000000-0000-4000-8000-000000000099',
     headers: { authorization: `Bearer ${token}`, 'x-user-id': '00000000-0000-4000-8000-000000000099' },
@@ -452,12 +455,17 @@ test('Agent 会话列表只接受 Host 认证上下文中的 owner', async () =>
     url: '/api/v1/agent/ui-labels',
     headers: { authorization: `Bearer ${token}` },
   })
+  const allowedGreeting = await app.inject({
+    url: '/api/v1/agent/greeting?locale=ja-JP&ownerId=00000000-0000-4000-8000-000000000099',
+    headers: { authorization: `Bearer ${token}`, 'x-user-id': '00000000-0000-4000-8000-000000000099' },
+  })
 
   assert.equal(denied.statusCode, 401)
   assert.equal(deniedMessage.statusCode, 401)
   assert.equal(deniedDetails.statusCode, 401)
   assert.equal(deniedCommands.statusCode, 401)
   assert.equal(deniedLabels.statusCode, 401)
+  assert.equal(deniedGreeting.statusCode, 401)
   assert.equal(allowed.statusCode, 200)
   assert.equal(allowedMessage.statusCode, 200)
   assert.equal(allowedDetails.statusCode, 200)
@@ -467,6 +475,9 @@ test('Agent 会话列表只接受 Host 认证上下文中的 owner', async () =>
     thinking: ['覆盖思考文案'],
     contextCompacting: ['默认整理文案'],
   })
+  assert.equal(allowedGreeting.statusCode, 200)
+  assert.deepEqual(allowedGreeting.json(), { text: '早呀', enabled: true })
+  assert.deepEqual(greetingOwners, [{ ownerId: userId, locale: 'ja-JP' }])
   assert.deepEqual(allowedMessage.json(), { id: 23, sessionId: 9 })
   assert.deepEqual(allowed.json(), [{ id: 9, title: '合成会话' }])
   assert.deepEqual(owners, [userId])

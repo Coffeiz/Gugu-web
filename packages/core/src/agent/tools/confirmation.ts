@@ -21,12 +21,13 @@ const receiptSchema = z.object({
 
 /** 仅指向受限持久意图，不是可执行授权；领域事务仍须原子核验并 claim。 */
 export interface ConfirmationIntentReference { readonly intentId: string; readonly operationId: string }
+export interface ConfirmationTargetSnapshot { readonly targetsDigest: string; readonly versionsDigest: string }
 export interface ConfirmationGatePorts {
   now(): number
   /** 最新权限判断；拒绝为 null，通过返回授权版本。 */
   authorize(binding: ConfirmationBinding, purpose: ConfirmationIntent['purpose'], action: string, signal: AbortSignal): Promise<string | null>
   /** 可信领域解析精确目标并通过已有安全 store 保存，不能从模型 confirm/targets 建授权。 */
-  prepare(binding: ConfirmationBinding, signal: AbortSignal): Promise<unknown>
+  prepare(binding: ConfirmationBinding, targets: ConfirmationTargetSnapshot, signal: AbortSignal): Promise<unknown>
   /** 通过既有受限 store 查询意图及已验证服务端 receipt；value 不作为凭据。 */
   load(binding: ConfirmationBinding, receipt: { interactionId: string; receiptId: string }, signal: AbortSignal): Promise<unknown>
   /** 重新读取原意图的固定目标，检查当前 owner/版本/级联集合；不能重跑名称选择扩大目标。 */
@@ -40,8 +41,8 @@ function equalBinding(a: ConfirmationBinding, b: ConfirmationBinding): boolean {
 
 /**
  * 仅完成可信意图核验，不消费 claim、不执行业务、不开放 destructive 注册。
- * normalizedInputDigest 必须由可信 handler 对实际规范化输入生成稳定摘要，
- * 禁止直接传递模型参数中的 digest/confirm/targets；返回意图不能覆盖真实 scope 绑定。
+ * normalizedInputDigest 必须由可信 handler 对实际规范化输入生成稳定摘要；target snapshot
+ * 必须由可信领域读取解析。禁止直接传递模型参数中的digest/confirm/targets，返回意图也不能覆盖真实scope绑定。
  */
 export function createConfirmationGate(ports: ConfirmationGatePorts, configuration: { purpose: ConfirmationIntent['purpose']; action: string }) {
   const policy = Object.freeze({ ...configuration })
@@ -50,9 +51,10 @@ export function createConfirmationGate(ports: ConfirmationGatePorts, configurati
     const parsed = bindingSchema.safeParse({ ...scope.identity, roundId: scope.roundId, toolCallId: call.id, toolName: call.name, normalizedInputDigest })
     return parsed.success ? Object.freeze(parsed.data) : null
   }
-  async function validate(intent: ConfirmationIntent, expected: ConfirmationBinding, signal: AbortSignal): Promise<boolean> {
+  async function validate(intent: ConfirmationIntent, expected: ConfirmationBinding, targets: ConfirmationTargetSnapshot, signal: AbortSignal): Promise<boolean> {
     const now = ports.now()
-    if (!Number.isFinite(now) || signal.aborted || !equalBinding(intent.binding, expected) || intent.purpose !== policy.purpose || intent.action !== policy.action || intent.expiresAt <= now) return false
+    if (!Number.isFinite(now) || signal.aborted || !equalBinding(intent.binding, expected) || intent.purpose !== policy.purpose || intent.action !== policy.action || intent.expiresAt <= now
+      || intent.targetsDigest !== targets.targetsDigest || intent.versionsDigest !== targets.versionsDigest) return false
     const epoch = await ports.authorize(expected, policy.purpose, policy.action, signal)
     if (signal.aborted || epoch === null || epoch !== intent.authorizationEpoch) return false
     const current = await ports.inspect({ intentId: intent.intentId, operationId: intent.operationId }, expected, signal)
@@ -60,31 +62,32 @@ export function createConfirmationGate(ports: ConfirmationGatePorts, configurati
     return Number.isFinite(after) && !signal.aborted && intent.expiresAt > after && current !== null && current.targetsDigest === intent.targetsDigest && current.versionsDigest === intent.versionsDigest
   }
   return {
-    async prepare(call: ToolCall, scope: ToolScope, normalizedInputDigest: string): Promise<ConfirmationGateResult<PendingInteraction>> {
+    async prepare(call: ToolCall, scope: ToolScope, normalizedInputDigest: string, targets: ConfirmationTargetSnapshot): Promise<ConfirmationGateResult<PendingInteraction>> {
       try {
         const originalCall = structuredClone(call)
         const expected = binding(originalCall, scope, normalizedInputDigest)
         scope.signal.throwIfAborted()
-        if (!expected || scope.resolution !== null || originalCall.parseError) return reject
+        if (!expected || !targets.targetsDigest || !targets.versionsDigest || scope.resolution !== null || originalCall.parseError) return reject
         const epoch = await ports.authorize(expected, policy.purpose, policy.action, scope.signal)
         scope.signal.throwIfAborted()
         if (epoch === null) return reject
-        const parsed = intentSchema.safeParse(await ports.prepare(expected, scope.signal))
+        const snapshot = Object.freeze({ targetsDigest: targets.targetsDigest, versionsDigest: targets.versionsDigest })
+        const parsed = intentSchema.safeParse(await ports.prepare(expected, snapshot, scope.signal))
         scope.signal.throwIfAborted()
         if (!parsed.success) return reject
-        const valid = await validate(parsed.data, expected, scope.signal)
+        const valid = await validate(parsed.data, expected, snapshot, scope.signal)
         scope.signal.throwIfAborted()
         if (!valid) return reject
         return { ok: true, value: { id: parsed.data.interactionId, kind: 'confirmation', toolCall: originalCall } }
       } catch { scope.signal.throwIfAborted(); return reject }
     },
-    async verify(call: ToolCall, scope: ToolScope, normalizedInputDigest: string): Promise<ConfirmationGateResult<ConfirmationIntentReference>> {
+    async verify(call: ToolCall, scope: ToolScope, normalizedInputDigest: string, targets: ConfirmationTargetSnapshot): Promise<ConfirmationGateResult<ConfirmationIntentReference>> {
       try {
         const originalCall = structuredClone(call)
         const expected = binding(originalCall, scope, normalizedInputDigest)
         const resolution: InteractionResolution | null = scope.resolution
         scope.signal.throwIfAborted()
-        if (!expected || originalCall.parseError || resolution?.status !== 'confirmed' || !resolution.receiptId || !resolution.interactionId) return reject
+        if (!expected || !targets.targetsDigest || !targets.versionsDigest || originalCall.parseError || resolution?.status !== 'confirmed' || !resolution.receiptId || !resolution.interactionId) return reject
         const epoch = await ports.authorize(expected, policy.purpose, policy.action, scope.signal)
         scope.signal.throwIfAborted()
         if (epoch === null) return reject
@@ -93,7 +96,7 @@ export function createConfirmationGate(ports: ConfirmationGatePorts, configurati
         if (!loaded.success) return reject
         const { intent, receipt } = loaded.data
         if (intent.interactionId !== resolution.interactionId || receipt.interactionId !== resolution.interactionId || receipt.receiptId !== resolution.receiptId || receipt.intentId !== intent.intentId || receipt.expiresAt <= ports.now() || receipt.purpose !== policy.purpose || receipt.action !== policy.action || !equalBinding(receipt.binding, expected)) return reject
-        const valid = await validate(intent, expected, scope.signal)
+        const valid = await validate(intent, expected, targets, scope.signal)
         scope.signal.throwIfAborted()
         const verifiedAt = ports.now()
         if (!valid || !Number.isFinite(verifiedAt) || receipt.expiresAt <= verifiedAt) return reject

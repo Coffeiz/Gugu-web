@@ -70,7 +70,8 @@ test('Web Run 从同一授权 registry 发现并分派 RAG 工具', async () => 
       formatPrefix: () => [],
     })
 
-    assert.equal(ports.tools, actualRegistry.tools)
+    assert.notEqual(ports.tools, actualRegistry.tools)
+    assert.equal(typeof ports.tools.dispatch, 'function')
     const definitions = await ports.preparation.discover({ identity: identityForPreparation, toolNames: ['search_conversations', 'read_knowledge'] }, new AbortController().signal)
     assert.deepEqual(definitions.map(definition => definition.name), ['search_conversations'])
     const result = await ports.tools.dispatch({ id: 'search', name: 'search_conversations', input: { query: '部署复盘' } }, {
@@ -126,4 +127,45 @@ test('Web Run 拒绝与持久 lease 不一致的 owner 或 session 工具发现'
   await assert.rejects(ports.preparation.discover({
     identity: { ...preparationIdentity, subject: { kind: 'session', id: '13' } }, toolNames: [],
   }, new AbortController().signal), /身份不匹配/u)
+})
+
+test('Web Run 用同一 owner-scoped MCP 目录发现工具并把调用交给 Host MCP runtime', async () => {
+  const registry = createAgentToolRegistry({ core: {} as SqlDataRuntime, authorize: async () => true })
+  const calls: unknown[][] = []
+  const ports = createWebAgentToolPorts(lease, registry, {
+    configuration: async identity => ({ identity: {
+      ownerId: identity.ownerId,
+      subject: { kind: 'session', id: identity.sessionId },
+      workspaceId: null,
+    }, source: 'web', toolNames: ['mcp_gaode_lookup'] }),
+    capabilities: {
+      workspaceSupported: false,
+      filterConfigured: async names => names,
+      shellPolicy: async () => ({ allowed: false, needsConfirmation: false }),
+      shellState: async () => null,
+      appendShellProtocol: value => value,
+      catalog: async () => null,
+    },
+    formatPrefix: () => [],
+  }, {
+    directory: async owner => owner === lease.identity.ownerId ? [{
+      name: 'mcp_gaode_lookup', description: '地点查询', description_short: '地点查询',
+      input_schema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+      server_id: 'server-a', server_name: '高德', tool_name: 'lookup',
+    }] : [],
+    runtime: { async dispatchForAgent(...args: unknown[]) { calls.push(args); return { result: '杭州西湖' } } },
+    authorize: async identity => identity.ownerId === lease.identity.ownerId && identity.runId === lease.identity.runId,
+  })
+
+  const definitions = await ports.preparation.discover({
+    identity: { ...preparationIdentity }, toolNames: ['mcp_gaode_lookup'],
+  }, new AbortController().signal)
+  assert.deepEqual(definitions.map(item => item.name), ['mcp_gaode_lookup'])
+  const signal = new AbortController().signal
+  const dispatched = await ports.tools.dispatch({ id: 'mcp-call', name: 'mcp_gaode_lookup', input: { query: '杭州' } }, {
+    identity: lease.identity, roundId: 'round-1', signal, resolution: null,
+    execute: async () => { throw new Error('MCP 调用不应进入本机 Executor') },
+  })
+  assert.deepEqual(dispatched, { kind: 'completed', value: { result: '杭州西湖' }, successful: true, mutated: true, executed: true })
+  assert.deepEqual(calls, [[lease.identity.ownerId, 'server-a', 'mcp_gaode_lookup', { query: '杭州' }, signal]])
 })

@@ -213,7 +213,7 @@ html[data-theme][data-family] .shared-event-popup {
   color: var(--content-primary);
   background: var(--popup-background);
   border-color: var(--popup-border);
-  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--popup-shadow);
+  box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight);
 }
 html[data-theme][data-family] :is(.cal-month-picker, .month-picker) .picker-year,
 html[data-theme][data-family] :is(.cal-month-picker, .month-picker) .picker-month { color: var(--content-primary); }

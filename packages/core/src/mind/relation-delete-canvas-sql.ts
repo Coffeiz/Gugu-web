@@ -1,4 +1,4 @@
-import type { Kysely, Selectable } from 'kysely'
+import type { Kysely, Selectable, Transaction } from 'kysely'
 import { dataContext } from '../contracts/index.js'
 import { databaseTime, nowUtc, utc, type Clock } from '../data/codec.js'
 import type { Backend } from '../data/repositories.js'
@@ -10,7 +10,7 @@ function map(row: Selectable<MindRelationTable>) { const date = (value: unknown)
 export function createSqlMindCanvasRelationDeleteRuntime(db: Kysely<Database>, backend: Backend, publishChanged: CanvasRelationDeleteRuntime['publishChanged'], reportFailure?: CanvasRelationDeleteRuntime['reportFailure'], clock: Clock = nowUtc): CanvasRelationDeleteRuntime {
   return { transaction: (rawOwner, work) => {
     const canonical = dataContext(rawOwner).ownerId, owner = backend === 'sqlite' ? canonical.replaceAll('-', '') : canonical
-    return db.transaction().execute(async tx => work({
+    const run = async (tx: Transaction<Database>) => work({
       async delete(_owner, canvasId, id) {
         let canvas = tx.selectFrom('mind_maps').select('id').where('id', '=', canvasId).where('user_id', '=', owner).where('deleted_at', 'is', null)
         if (backend === 'postgres') canvas = canvas.forUpdate()
@@ -24,6 +24,7 @@ export function createSqlMindCanvasRelationDeleteRuntime(db: Kysely<Database>, b
         return after ? { before: map(before), after: map(after) } : null
       },
       async recordUndo(record) { await recordForwardUndoOperation(tx, backend, { ...record, userId: canonical }, clock) },
-    }))
+    })
+    return db.isTransaction ? run(db as Transaction<Database>) : db.transaction().execute(run)
   }, publishChanged, reportFailure }
 }

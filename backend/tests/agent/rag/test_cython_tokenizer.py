@@ -1,10 +1,22 @@
 """保护 Cython RAG tokenizer 与 TS 词项契约的稳定行为。"""
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from agent.rag.cython_backend import build_text_index
 from agent.rag.cython_tokenizer import tokenize_raw, tokenize_raw_python_reference
+
+
+def test_shared_rag_tokenizer_golden_matches_compiled_and_reference_paths():
+    """共享语料保护 Cython 与 Node 的 locale-independent Python lower() 投影。"""
+    fixture = Path(__file__).parents[2] / "fixtures" / "rag_tokenizer_golden.json"
+    cases = json.loads(fixture.read_text(encoding="utf-8"))
+    for case in cases:
+        assert tokenize_raw(case["text"]) == case["tokens"]
+        assert tokenize_raw_python_reference(case["text"]) == case["tokens"]
 
 
 @pytest.mark.parametrize(

@@ -51,6 +51,9 @@ export interface EventCreateTransaction {
     input: CalendarEventCreateInput,
     idempotency: { keyHash: string; fingerprint: string } | null,
   ): Promise<CalendarEventRecord>
+  /** Agent活动提醒与事件在同一事务创建；未使用提醒能力的API调用保持兼容。 */
+  createEventReminder?(event: CalendarEventRecord, reminder: PreparedEventReminder): Promise<EventCreateReminderRecord>
+  listEventReminders?(eventId: number): Promise<EventCreateReminderRecord[]>
   /** Must enqueue the durable RAG job in the same transaction as the event. */
   enqueueRagIndex(eventId: number): Promise<void>
   /** Must persist the Undo row using the same transaction as the event insert. */
@@ -78,12 +81,31 @@ export interface CreateCalendarEventOptions {
   idempotencyKey?: string | null
   undoContextId?: string | null
   clientId?: string | null
+  /** Agent原始参数用于幂等指纹，保留all_day、别名及空提醒数组等调用语义。 */
+  idempotencyPayload?: unknown
+  reminders?: readonly PreparedEventReminder[]
+  now?: number
 }
 
 export interface CreateCalendarEventResult {
   event: CalendarEventResponse
   created: boolean
+  reminders?: EventCreateReminderRecord[]
 }
+
+export interface PreparedEventReminder {
+  leadMinutes: number
+  channels: string
+  deliveryTargets: unknown
+  enabled: boolean
+  cron: string
+  startAt: Date
+  scheduleKind: 'once'
+  name: string
+  payload: string
+}
+
+export interface EventCreateReminderRecord extends PreparedEventReminder { id: number }
 
 export class EventCreateError extends Error {
   constructor(readonly statusCode: 400 | 409 | 422, message: string) {
@@ -165,12 +187,12 @@ export function calendarEventFingerprint(input: CalendarEventCreateInput): strin
   return digest(canonical(input))
 }
 
-function idempotencyValues(key: string | null | undefined, input: CalendarEventCreateInput) {
+function idempotencyValues(key: string | null | undefined, input: CalendarEventCreateInput, payload?: unknown) {
   if (key == null) return null
   const normalized = String(key).trim()
   if (!normalized || [...normalized].length > 256)
     throw new EventCreateError(422, 'Idempotency-Key 必须为 1 至 256 个字符')
-  return { keyHash: digest(normalized), fingerprint: calendarEventFingerprint(input) }
+  return { keyHash: digest(normalized), fingerprint: payload === undefined ? calendarEventFingerprint(input) : digest(canonical(payload)) }
 }
 
 function eventResponse(event: CalendarEventRecord): CalendarEventResponse {
@@ -201,14 +223,17 @@ export async function createCalendarEvent(
   if (!options.ownerId || typeof options.ownerId !== 'string')
     throw new EventCreateError(422, '用户身份无效')
   const input = parseEventCreateInput(options.input)
-  const idem = idempotencyValues(options.idempotencyKey, input)
+  const idem = idempotencyValues(options.idempotencyKey, input, options.idempotencyPayload)
+  const reminders = options.reminders ?? []
+  const now = options.now ?? Date.now()
 
   const result = await store.transaction(options.ownerId, async (tx) => {
     if (idem) {
       const existing = await tx.findIdempotent(idem.keyHash)
       if (existing) {
         if (existing.fingerprint !== idem.fingerprint) throw conflict()
-        return { event: eventResponse(existing.event), created: false }
+        const rows = reminders.length ? await requiredEventReminders(tx, existing.event.id) : []
+        return { event: eventResponse(existing.event), created: false, reminders: rows }
       }
     }
     if (input.project_id !== null && !await tx.projectExistsForOwner(input.project_id))
@@ -223,13 +248,24 @@ export async function createCalendarEvent(
       const winner = await tx.findIdempotent(idem.keyHash)
       if (!winner) throw error
       if (winner.fingerprint !== idem.fingerprint) throw conflict()
-      return { event: eventResponse(winner.event), created: false }
+      const rows = reminders.length ? await requiredEventReminders(tx, winner.event.id) : []
+      return { event: eventResponse(winner.event), created: false, reminders: rows }
+    }
+
+    const rows: EventCreateReminderRecord[] = []
+    const seenCrons = new Set<string>()
+    for (const reminder of reminders) {
+      validatePreparedReminder(event, reminder, now)
+      if (seenCrons.has(reminder.cron)) throw new EventCreateError(422, 'reminders 中存在相同的触发时刻，请删除重复项')
+      seenCrons.add(reminder.cron)
+      if (!tx.createEventReminder) throw new EventCreateError(422, '活动提醒写入能力不可用')
+      rows.push(await tx.createEventReminder(event, reminder))
     }
 
     await tx.enqueueRagIndex(event.id)
     const contextId = options.undoContextId?.trim()
     if (contextId) await tx.recordUndo(makeUndoRecord(contextId, event))
-    return { event: eventResponse(event), created: true }
+    return { event: eventResponse(event), created: true, reminders: rows }
   })
 
   if (result.created) {
@@ -246,4 +282,34 @@ export async function createCalendarEvent(
     }
   }
   return result
+}
+
+async function requiredEventReminders(tx: EventCreateTransaction, eventId: number): Promise<EventCreateReminderRecord[]> {
+  if (!tx.listEventReminders) throw new EventCreateError(422, '活动提醒读取能力不可用')
+  return tx.listEventReminders(eventId)
+}
+
+function validatePreparedReminder(event: CalendarEventRecord, reminder: PreparedEventReminder, now: number): void {
+  if (!Number.isSafeInteger(reminder.leadMinutes)) throw new EventCreateError(422, 'lead_minutes 需为整数分钟（0=活动开始时）')
+  if (reminder.leadMinutes < 0) throw new EventCreateError(422, 'lead_minutes 不能为负')
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(event.date)
+  if (!match) throw new EventCreateError(422, '事件日期无效')
+  const [year, month, day] = match.slice(1).map(Number) as [number, number, number]
+  const [hour, minute] = (event.time || '09:00').split(':').map(Number) as [number, number]
+  const base = new Date(0)
+  base.setUTCFullYear(year, month - 1, day); base.setUTCHours(hour, minute, 0, 0)
+  if (base.getUTCFullYear() !== year || base.getUTCMonth() !== month - 1 || base.getUTCDate() !== day
+    || !Number.isInteger(hour) || hour < 0 || hour > 23 || !Number.isInteger(minute) || minute < 0 || minute > 59)
+    throw new EventCreateError(422, '事件日期或时间无效')
+  const fireWall = base.getTime() - reminder.leadMinutes * 60_000
+  const fireUtc = fireWall - 8 * 60 * 60 * 1000
+  if (reminder.enabled && fireUtc <= now) {
+    const fire = new Date(fireWall)
+    const formatted = `${fire.getUTCFullYear()}-${String(fire.getUTCMonth() + 1).padStart(2, '0')}-${String(fire.getUTCDate()).padStart(2, '0')} ${String(fire.getUTCHours()).padStart(2, '0')}:${String(fire.getUTCMinutes()).padStart(2, '0')}`
+    throw new EventCreateError(422, `提前 ${reminder.leadMinutes} 分钟（${formatted}）已过，跳过`)
+  }
+  const expectedStart = new Date(fireUtc)
+  if (expectedStart.getTime() !== reminder.startAt.getTime()
+    || reminder.cron !== `@once:${expectedStart.toISOString().replace('.000Z', '+00:00')}`)
+    throw new EventCreateError(422, '活动提醒时间无效')
 }

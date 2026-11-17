@@ -110,7 +110,7 @@ export interface ContextDataPorts {
   loadStylePreferences(identity: HistoryIdentity, signal?: AbortSignal): Promise<Json>
   loadImChannels(identity: HistoryIdentity, signal?: AbortSignal): Promise<Json>
   /** 下列端口不得复用上方串行数据库session。 */
-  loadMemory(identity: HistoryIdentity, signal?: AbortSignal): Promise<Json>
+  loadMemory(identity: HistoryIdentity, signal?: AbortSignal, query?: string): Promise<Json>
   loadImMemory(identity: HistoryIdentity, signal?: AbortSignal): Promise<Json>
   loadKnowledge(identity: HistoryIdentity, signal?: AbortSignal): Promise<Json>
 }

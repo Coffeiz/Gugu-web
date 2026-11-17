@@ -5,6 +5,7 @@ const personReference = new Set(Array.from('我你您他她它咱俺吾人谁各
 const reportingRoots = new Set(Array.from('说讲问答回听知懂想觉得称提写引述记报'))
 const questionOperators = new Set(Array.from('谁哪几怎咋啥何'))
 const grammar = new Set(Array.from('我你您他她它咱俺吾们人谁各众全群这那此该其某哪啥个些种样事物前后上下里外内旁边左右近远什么怎何为几多少否可能是还或与吗呢吧啊呀哦嘛请帮替给让使叫快先再试务必不没无别勿莫非未要想愿会应得需肯敢了过着正在已曾将刚又起来去的地得把被对向跟同但而就才因所既并及如咋'))
+const specificityNeutral = new Set([...grammar, ...reportingRoots, '咋'])
 const ambiguous = new Set(['确实', '离谱', '太好了', '这也行', '怎么这么离谱'])
 
 /** 转述中的疑问不是向当前接收者发问。 */
@@ -62,7 +63,7 @@ export function questionEvidence(unit: string): [number, boolean] {
   const hasFinal = finalMarker !== undefined && '吗么呢'.includes(finalMarker)
   if (!(scaffold || operator || hasFinal || hasMark)) return [0, scaffold]
   if (hasMark && !(operator || scaffold) && /(?:别|不要|不必|不用|不需要|无需|勿|莫).{0,12}吧$/u.test(compact)) return [0, scaffold]
-  const payload = Array.from(compact).filter(char => !grammar.has(char))
+  const payload = Array.from(compact).filter(char => !specificityNeutral.has(char))
   if (operator || scaffold) return [payload.length ? 1 : 0.85, scaffold]
   if (hasFinal) return [payload.length > 1 ? 1 : 0.85, scaffold]
   return [hasMark ? 0.85 : 0, scaffold]

@@ -168,6 +168,22 @@ function validateFeedbackSchema(db: SQLite.Database, owner: string): void {
   if (db.prepare('SELECT 1 FROM feedbacks WHERE user_id IS NOT ? LIMIT 1').get(owner.replaceAll('-', '')))
     throw new CoreError('storage_error', '反馈归属数据不一致，已拒绝打开')
 }
+const MCP_SERVER_COLUMNS = ['id','user_id','scope','name','transport','endpoint','encrypted_headers','headers_nonce','encrypted_headers_key','headers_key_version','enabled','confirm_mode','timeout_seconds','tool_allowlist','created_at','updated_at','command','auth_mode','encrypted_query_params','query_params_nonce','encrypted_query_params_key','query_params_key_version','encrypted_endpoint','endpoint_nonce','encrypted_endpoint_key','endpoint_key_version','credential_slots','encrypted_credentials','credentials_nonce','encrypted_credentials_key','credentials_key_version']
+const MCP_OWNER_TRIGGERS = ['user_mcp_servers','user_mcp_tool_schema_snapshots'].flatMap(table => ['INSERT','UPDATE'].map(action => `CREATE TRIGGER validate_${table}_owner_${action.toLowerCase()} BEFORE ${action} ON ${table} WHEN NEW.user_id IS NOT (SELECT lower(replace(value,'-','')) FROM core_runtime_meta WHERE key='owner_id') BEGIN SELECT RAISE(ABORT, 'owner 不匹配'); END`))
+function validateMcpSchema(db: SQLite.Database, owner: string): void {
+  matchColumns(db, 'user_mcp_servers', MCP_SERVER_COLUMNS)
+  matchColumns(db, 'user_mcp_tool_schema_snapshots', ['user_id','config_digest','schemas','refreshed_at'])
+  uniqueColumns(db, 'user_mcp_servers', ['id'])
+  uniqueColumns(db, 'user_mcp_servers', ['user_id','scope','name'])
+  uniqueColumns(db, 'user_mcp_tool_schema_snapshots', ['user_id'])
+  for (const [index, name] of ['validate_user_mcp_servers_owner_insert','validate_user_mcp_servers_owner_update','validate_user_mcp_tool_schema_snapshots_owner_insert','validate_user_mcp_tool_schema_snapshots_owner_update'].entries()) {
+    const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?").get(name) as { sql: string } | undefined
+    if (row?.sql !== MCP_OWNER_TRIGGERS[index]) throw new CoreError('storage_error', 'MCP 归属约束缺失，已拒绝打开')
+  }
+  if (db.prepare('SELECT 1 FROM user_mcp_servers WHERE user_id IS NOT ? LIMIT 1').get(owner.replaceAll('-',''))
+      || db.prepare('SELECT 1 FROM user_mcp_tool_schema_snapshots WHERE user_id IS NOT ? LIMIT 1').get(owner.replaceAll('-','')))
+    throw new CoreError('storage_error', 'MCP 本地数据身份不匹配')
+}
 function metadata(db: SQLite.Database): { owner: string; version: string } {
   const tables = (
     db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {
@@ -196,26 +212,26 @@ function metadata(db: SQLite.Database): { owner: string; version: string } {
   matchColumns(db, 'projects', PROJECT_COLUMNS)
   uniqueColumns(db, 'projects', ['user_id', 'idempotency_key'])
   if (values.schema_version !== '1') matchColumns(db, 'clients', CLIENT_COLUMNS)
-  if (['3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', SCHEMA_VERSION].includes(values.schema_version!)) {
+  if (['3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', SCHEMA_VERSION].includes(values.schema_version!)) {
     matchColumns(db, 'core_operation_receipts', RECEIPT_COLUMNS)
     uniqueColumns(db, 'core_operation_receipts', ['owner_id', 'operation_id'])
   }
-  if (['4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', SCHEMA_VERSION].includes(values.schema_version!)) {
+  if (['4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', SCHEMA_VERSION].includes(values.schema_version!)) {
     matchColumns(db, 'undo_operations', UNDO_COLUMNS)
     uniqueColumns(db, 'undo_operations', ['id'])
   }
-  if (['5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', SCHEMA_VERSION].includes(values.schema_version!)) {
+  if (['5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', SCHEMA_VERSION].includes(values.schema_version!)) {
     matchColumns(db, 'mind_nodes', MIND_NODE_COLUMNS)
     uniqueColumns(db, 'mind_nodes', ['user_id', 'ref_type', 'ref_id'])
   }
-  if (['6', '7', '8', '9', '10', '11', '12', '13', '14', '15', SCHEMA_VERSION].includes(values.schema_version!)) validateAgentSchema(db)
-  if (['7', '8', '9', '10', '11', '12', '13', '14', '15', SCHEMA_VERSION].includes(values.schema_version!)) {
+  if (['6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', SCHEMA_VERSION].includes(values.schema_version!)) validateAgentSchema(db)
+  if (['7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', SCHEMA_VERSION].includes(values.schema_version!)) {
     matchColumns(db, 'mind_maps', MIND_CANVAS_COLUMNS)
     const keys = db.pragma('foreign_key_list(mind_maps)') as { table: string; from: string; to: string; on_delete: string }[]
     if (!keys.some(key => key.table === 'projects' && key.from === 'project_id' && key.to === 'id' && key.on_delete === 'SET NULL'))
       throw new CoreError('storage_error', '画布项目外键缺失，已拒绝打开')
   }
-  if (['8', '9', '10', '11', '12', '13', '14', '15', SCHEMA_VERSION].includes(values.schema_version!)) {
+  if (['8', '9', '10', '11', '12', '13', '14', '15', '16', '17', SCHEMA_VERSION].includes(values.schema_version!)) {
     matchColumns(db, 'calendar_events', CALENDAR_EVENT_COLUMNS)
     uniqueColumns(db, 'calendar_events', ['user_id', 'idempotency_key'])
     matchColumns(db, 'rag_index_jobs', RAG_JOB_COLUMNS)
@@ -235,7 +251,7 @@ function metadata(db: SQLite.Database): { owner: string; version: string } {
         throw new CoreError('storage_error', 'RAG 检索索引缺失或不兼容，已拒绝打开')
     }
   }
-  if (['9', '10', '11', '12', '13', '14', '15', SCHEMA_VERSION].includes(values.schema_version!)) {
+  if (['9', '10', '11', '12', '13', '14', '15', '16', '17', SCHEMA_VERSION].includes(values.schema_version!)) {
     matchColumns(db, 'mind_canvas_items', MIND_ITEM_COLUMNS)
     uniqueColumns(db, 'mind_canvas_items', ['canvas_id', 'node_id'])
     matchColumns(db, 'mind_relations', MIND_RELATION_COLUMNS)
@@ -255,7 +271,7 @@ function metadata(db: SQLite.Database): { owner: string; version: string } {
         throw new CoreError('storage_error', '画布关联外键缺失，已拒绝打开')
     }
   }
-  if (['10', '11', '12', '13', '14', '15', SCHEMA_VERSION].includes(values.schema_version!)) {
+  if (['10', '11', '12', '13', '14', '15', '16', '17', SCHEMA_VERSION].includes(values.schema_version!)) {
     matchColumns(db, 'scheduled_tasks', SCHEDULED_TASK_COLUMNS)
     matchColumns(db, 'scheduled_task_fires', SCHEDULED_FIRE_COLUMNS)
     uniqueColumns(db, 'scheduled_task_fires', ['task_id', 'fire_at'])
@@ -269,7 +285,7 @@ function metadata(db: SQLite.Database): { owner: string; version: string } {
     if (!/CHECK\s*\(\s*workspace_id\s+IS\s+NULL\s+AND\s+filesystem_authorization_grant_id\s+IS\s+NULL\s*\)/i.test(tableSql))
       throw new CoreError('storage_error', '定时任务工作区授权边界缺失，已拒绝打开')
   }
-  if (['11', '12', '13', '14', '15', SCHEMA_VERSION].includes(values.schema_version!)) {
+  if (['11', '12', '13', '14', '15', '16', '17', SCHEMA_VERSION].includes(values.schema_version!)) {
     matchColumns(db, 'site_notifications', SITE_NOTIFICATION_COLUMNS)
     for (const [table, expected] of [['notification_reads', NOTIFICATION_READ_COLUMNS], ['notification_dismissals', NOTIFICATION_DISMISSAL_COLUMNS]] as const) {
       matchColumns(db, table, expected)
@@ -280,11 +296,12 @@ function metadata(db: SQLite.Database): { owner: string; version: string } {
     }
     validateSqliteInteractionPrompts(db)
   }
-  if (['12', '13', '14', '15', SCHEMA_VERSION].includes(values.schema_version!)) validateSqliteInteractionActions(db)
-  if (['13', '14', '15', SCHEMA_VERSION].includes(values.schema_version!)) validateSmtpSchema(db, owner)
-  if (['14', '15', SCHEMA_VERSION].includes(values.schema_version!)) validateOnboardingSchema(db, owner)
-  if (['15', SCHEMA_VERSION].includes(values.schema_version!)) validateFeedbackSchema(db, owner)
-  if (values.schema_version === SCHEMA_VERSION) validatePreferencesSchema(db, owner)
+  if (['12', '13', '14', '15', '16', '17', SCHEMA_VERSION].includes(values.schema_version!)) validateSqliteInteractionActions(db)
+  if (['13', '14', '15', '16', '17', SCHEMA_VERSION].includes(values.schema_version!)) validateSmtpSchema(db, owner)
+  if (['14', '15', '16', '17', SCHEMA_VERSION].includes(values.schema_version!)) validateOnboardingSchema(db, owner)
+  if (['15', '16', '17', SCHEMA_VERSION].includes(values.schema_version!)) validateFeedbackSchema(db, owner)
+  if (['17', '16', SCHEMA_VERSION].includes(values.schema_version!)) validatePreferencesSchema(db, owner)
+  if (values.schema_version === SCHEMA_VERSION) validateMcpSchema(db, owner)
   return { owner, version: values.schema_version! }
 }
 function pragmas(db: SQLite.Database): void {
@@ -369,6 +386,10 @@ function createScheduledTaskIndexes(db: SQLite.Database): void {
 function createNotificationIndexes(db: SQLite.Database): void {
   db.exec('CREATE INDEX ix_notification_reads_user_id ON notification_reads(user_id); CREATE INDEX ix_notification_reads_notification_id ON notification_reads(notification_id); CREATE INDEX ix_notification_dismissals_user_id ON notification_dismissals(user_id); CREATE INDEX ix_notification_dismissals_notification_id ON notification_dismissals(notification_id)')
 }
+function createMcpIndexes(db: SQLite.Database): void {
+  db.exec('CREATE INDEX IF NOT EXISTS ix_user_mcp_servers_user_id ON user_mcp_servers(user_id)')
+  for (const trigger of MCP_OWNER_TRIGGERS) db.exec(trigger.replace('CREATE TRIGGER ', 'CREATE TRIGGER IF NOT EXISTS '))
+}
 export async function initializeSqlite(path: string): Promise<void> {
   const target = resolve(path),
     parent = dirname(target),
@@ -387,7 +408,7 @@ export async function initializeSqlite(path: string): Promise<void> {
     db.exec('BEGIN IMMEDIATE')
     const schema = tablesSql('sqlite')
     db.exec(
-      `${schema.projects}; ${schema.clients}; ${schema.receipts}; ${schema.undo}; ${schema.mindNodes}; ${schema.mindMaps}; ${schema.calendarEvents}; ${schema.ragJobs}; ${schema.ragIndexEntries}; ${schema.mindItems}; ${schema.mindRelations}; ${schema.scheduledTasks}; ${schema.scheduledFires}; ${schema.siteNotifications}; ${schema.notificationReads}; ${schema.notificationDismissals}; ${schema.userSmtp}; ${schema.onboarding}; ${schema.feedback}; ${schema.userPreferences}; CREATE TABLE core_runtime_meta (key VARCHAR(50) PRIMARY KEY NOT NULL,value VARCHAR(100) NOT NULL);`,
+      `${schema.projects}; ${schema.clients}; ${schema.receipts}; ${schema.undo}; ${schema.mindNodes}; ${schema.mindMaps}; ${schema.calendarEvents}; ${schema.ragJobs}; ${schema.ragIndexEntries}; ${schema.mindItems}; ${schema.mindRelations}; ${schema.scheduledTasks}; ${schema.scheduledFires}; ${schema.siteNotifications}; ${schema.notificationReads}; ${schema.notificationDismissals}; ${schema.userSmtp}; ${schema.onboarding}; ${schema.feedback}; ${schema.userPreferences}; ${schema.mcpServers}; ${schema.mcpSnapshots}; CREATE TABLE core_runtime_meta (key VARCHAR(50) PRIMARY KEY NOT NULL,value VARCHAR(100) NOT NULL);`,
     )
     createIndexes(db)
     createUndoIndexes(db)
@@ -402,6 +423,7 @@ export async function initializeSqlite(path: string): Promise<void> {
     insert.run('schema_version', SCHEMA_VERSION)
     insert.run('owner_id', randomUUID())
     db.exec('CREATE INDEX ix_user_smtp_configs_enabled ON user_smtp_configs(enabled)')
+    createMcpIndexes(db)
     for (const trigger of SMTP_OWNER_TRIGGERS) db.exec(trigger)
     for (const trigger of ONBOARDING_OWNER_TRIGGERS) db.exec(trigger)
     for (const trigger of FEEDBACK_OWNER_TRIGGERS) db.exec(trigger)
@@ -434,8 +456,8 @@ export async function migrateSqlite(path: string): Promise<string> {
     pragmas(db)
     db.exec('BEGIN IMMEDIATE')
     const info = metadata(db)
-    if (!['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16'].includes(info.version))
-      throw new CoreError('schema_upgrade_required', '只支持版本 1 至 16 的显式升级')
+    if (!['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17'].includes(info.version))
+      throw new CoreError('schema_upgrade_required', '只支持版本 1 至 17 的显式升级')
     if (info.version === '1' && columns(db, 'clients').length)
       throw new CoreError('storage_error', '本地表结构不兼容，已拒绝自动修复')
     backup = join(
@@ -471,34 +493,34 @@ export async function migrateSqlite(path: string): Promise<string> {
       db.exec(schema.undo)
       createUndoIndexes(db)
     }
-    if (!['5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16'].includes(info.version)) {
+    if (!['5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17'].includes(info.version)) {
       db.exec(schema.mindNodes)
       createMindIndexes(db)
     }
-    if (!['6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16'].includes(info.version)) {
+    if (!['6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17'].includes(info.version)) {
       db.exec(SQLITE_AGENT_SCHEMA)
       validateAgentSchema(db)
     }
-    if (!['7', '8', '9', '10', '11', '12', '13', '14', '15', '16'].includes(info.version)) {
+    if (!['7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17'].includes(info.version)) {
       db.exec(schema.mindMaps)
       createCanvasIndexes(db)
     }
-    if (!['8', '9', '10', '11', '12', '13', '14', '15', '16'].includes(info.version)) {
+    if (!['8', '9', '10', '11', '12', '13', '14', '15', '16', '17'].includes(info.version)) {
       db.exec(schema.calendarEvents)
       db.exec(schema.ragJobs)
       createCalendarIndexes(db)
     }
-    if (!['9', '10', '11', '12', '13', '14', '15', '16'].includes(info.version)) {
+    if (!['9', '10', '11', '12', '13', '14', '15', '16', '17'].includes(info.version)) {
       db.exec(schema.mindItems)
       db.exec(schema.mindRelations)
       createMindRelationIndexes(db)
     }
-    if (!['10', '11', '12', '13', '14', '15', '16'].includes(info.version)) {
+    if (!['10', '11', '12', '13', '14', '15', '16', '17'].includes(info.version)) {
       db.exec(schema.scheduledTasks)
       db.exec(schema.scheduledFires)
       createScheduledTaskIndexes(db)
     }
-    if (!['11', '12', '13', '14', '15', '16'].includes(info.version)) {
+    if (!['11', '12', '13', '14', '15', '16', '17'].includes(info.version)) {
       db.exec(schema.siteNotifications)
       db.exec(schema.notificationReads)
       db.exec(schema.notificationDismissals)
@@ -506,31 +528,35 @@ export async function migrateSqlite(path: string): Promise<string> {
       db.exec(SQLITE_INTERACTION_PROMPTS_SCHEMA)
       validateSqliteInteractionPrompts(db)
     }
-    if (!['12', '13', '14', '15', '16'].includes(info.version)) {
+    if (!['12', '13', '14', '15', '16', '17'].includes(info.version)) {
       db.exec(SQLITE_INTERACTION_ACTIONS_SCHEMA)
       validateSqliteInteractionActions(db)
     }
-    if (!['13', '14', '15', '16'].includes(info.version)) {
+    if (!['13', '14', '15', '16', '17'].includes(info.version)) {
       db.exec(schema.userSmtp)
       db.exec('CREATE INDEX ix_user_smtp_configs_enabled ON user_smtp_configs(enabled)')
       for (const trigger of SMTP_OWNER_TRIGGERS) db.exec(trigger)
     }
     validateSmtpSchema(db, info.owner)
-    if (!['14', '15', '16'].includes(info.version)) {
+    if (!['14', '15', '16', '17'].includes(info.version)) {
       db.exec(schema.onboarding)
       for (const trigger of ONBOARDING_OWNER_TRIGGERS) db.exec(trigger)
     }
     validateOnboardingSchema(db, info.owner)
-    if (!['15', '16'].includes(info.version)) {
+    if (!['15', '16', '17'].includes(info.version)) {
       db.exec(schema.feedback)
       for (const trigger of FEEDBACK_OWNER_TRIGGERS) db.exec(trigger)
     }
     validateFeedbackSchema(db, info.owner)
-    if (info.version !== '16') {
+    if (!['16', '17'].includes(info.version)) {
       db.exec(schema.userPreferences)
       for (const trigger of PREFERENCES_OWNER_TRIGGERS) db.exec(trigger)
     }
     validatePreferencesSchema(db, info.owner)
+    db.exec(schema.mcpServers)
+    db.exec(schema.mcpSnapshots)
+    createMcpIndexes(db)
+    validateMcpSchema(db, info.owner)
     db.exec(schema.ragIndexEntries)
     createRagIndexIndexes(db)
     matchColumns(db, 'knowledge_index_entries', RAG_INDEX_COLUMNS)

@@ -9,7 +9,7 @@ export type { ProviderRequestProbe, ProviderProbeSink, ProviderCacheDiagnostics 
 export { InProcessPrefixCoordinator, stableRequestFingerprint } from './cache.js'
 export { streamWithRetry } from './retry.js'
 export { filterReasoningConfig } from './base.js'
-export { outputBudget, parseStructuredJson } from './standalone.js'
+export { completeStandaloneText, outputBudget, parseStructuredJson } from './standalone.js'
 export { ProviderStreamSanitizer, stripThinking } from './sanitize.js'
 export { providerDiagnosticRequest, listProviderModels, normalizedApiKey } from './diagnostics.js'
 export { openaiPolicy, openaiDriver } from './openai/driver.js'

@@ -1,6 +1,7 @@
 import { sql, type Kysely } from 'kysely'
 import { CoreError, dataContext } from '../contracts/index.js'
 import { normalizeMcpServerName, normalizeMcpSlots, validateMcpCredentialValues } from './server-config.js'
+import { isMcpUniqueViolation, mcpOwnerKey, type McpDatabaseBackend } from './storage.js'
 
 export interface McpEnvelope {
   ciphertext: string
@@ -34,9 +35,9 @@ export function createMcpServerCreator<DB>(db: Kysely<DB>, options: {
   maxServersPerUser: number | (() => number)
   id(): string
   encrypt(plaintext: string): Promise<McpEnvelope>
-}) {
+}, backend: McpDatabaseBackend = 'postgres') {
   return async (rawOwner: string, input: McpServerCreateInput) => {
-    const owner = dataContext(rawOwner).ownerId
+    const owner = mcpOwnerKey(dataContext(rawOwner).ownerId, backend)
     const maxServers = typeof options.maxServersPerUser === 'function' ? options.maxServersPerUser() : options.maxServersPerUser
     if (!Number.isSafeInteger(maxServers) || maxServers < 0) throw new TypeError('MCP server 数量上限无效')
     const name = normalizeMcpServerName(input.name)
@@ -49,6 +50,7 @@ export function createMcpServerCreator<DB>(db: Kysely<DB>, options: {
       ? await options.encrypt(JSON.stringify(credentials))
       : { ciphertext: '', nonce: '', encryptedDataKey: '', keyVersion: 1 }
     const id = options.id()
+    const enabledValue = backend === 'sqlite' ? Number(input.enabled) : input.enabled
 
     let stored: StoredServer
     try {
@@ -62,7 +64,7 @@ export function createMcpServerCreator<DB>(db: Kysely<DB>, options: {
         if (Number(count.rows[0]?.count ?? 0) >= maxServers)
           throw new CoreError('invalid_request', `每个用户最多添加 ${maxServers} 个 MCP server`)
 
-        const result = await sql<StoredServer>`INSERT INTO user_mcp_servers (
+        const result = backend === 'postgres' ? await sql<StoredServer>`INSERT INTO user_mcp_servers (
           id,user_id,scope,name,transport,endpoint,encrypted_endpoint,endpoint_nonce,encrypted_endpoint_key,endpoint_key_version,
           command,auth_mode,encrypted_headers,headers_nonce,encrypted_headers_key,headers_key_version,
           encrypted_query_params,query_params_nonce,encrypted_query_params_key,query_params_key_version,
@@ -72,14 +74,26 @@ export function createMcpServerCreator<DB>(db: Kysely<DB>, options: {
           ${id},${owner},'user',${name},${input.transport},'',${encryptedEndpoint.ciphertext},${encryptedEndpoint.nonce},
           ${encryptedEndpoint.encryptedDataKey},${encryptedEndpoint.keyVersion},${input.command},'headers','','','',1,'','','',1,
           ${JSON.stringify(slots)}::jsonb,${encryptedCredentials.ciphertext},${encryptedCredentials.nonce},
-          ${encryptedCredentials.encryptedDataKey},${encryptedCredentials.keyVersion},${input.enabled},${input.confirm_mode},
+          ${encryptedCredentials.encryptedDataKey},${encryptedCredentials.keyVersion},${enabledValue},${input.confirm_mode},
           ${input.timeout_seconds},${JSON.stringify(input.tool_allowlist)}::jsonb,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP
-        ) RETURNING id::text AS id,name,transport,created_at`.execute(tx)
+        ) RETURNING id::text AS id,name,transport,created_at`.execute(tx) : await sql<StoredServer>`INSERT INTO user_mcp_servers (
+          id,user_id,scope,name,transport,endpoint,encrypted_endpoint,endpoint_nonce,encrypted_endpoint_key,endpoint_key_version,
+          command,auth_mode,encrypted_headers,headers_nonce,encrypted_headers_key,headers_key_version,
+          encrypted_query_params,query_params_nonce,encrypted_query_params_key,query_params_key_version,
+          credential_slots,encrypted_credentials,credentials_nonce,encrypted_credentials_key,credentials_key_version,
+          enabled,confirm_mode,timeout_seconds,tool_allowlist,created_at,updated_at
+        ) VALUES (
+          ${id},${owner},'user',${name},${input.transport},'',${encryptedEndpoint.ciphertext},${encryptedEndpoint.nonce},
+          ${encryptedEndpoint.encryptedDataKey},${encryptedEndpoint.keyVersion},${input.command},'headers','','','',1,'','','',1,
+          ${JSON.stringify(slots)},${encryptedCredentials.ciphertext},${encryptedCredentials.nonce},
+          ${encryptedCredentials.encryptedDataKey},${encryptedCredentials.keyVersion},${enabledValue},${input.confirm_mode},
+          ${input.timeout_seconds},${JSON.stringify(input.tool_allowlist)},CURRENT_TIMESTAMP,CURRENT_TIMESTAMP
+        ) RETURNING id,name,transport,created_at`.execute(tx)
         await sql`DELETE FROM user_mcp_tool_schema_snapshots WHERE user_id=${owner}`.execute(tx)
         return result.rows[0]!
       })
     } catch (error) {
-      if ((error as { code?: unknown }).code === '23505')
+      if (isMcpUniqueViolation(error))
         throw new CoreError('invalid_request', `名称 ${name} 已存在`)
       throw error
     }

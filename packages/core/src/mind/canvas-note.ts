@@ -29,7 +29,7 @@ export interface MindCanvasNoteUpdateInput {
 
 export interface MindCanvasNoteMutationEvent {
   ownerId: string
-  operation: 'create' | 'update'
+  operation: 'create' | 'update' | 'delete'
   entityId: number
   origin: string | null
   mutationId: string | null
@@ -50,6 +50,7 @@ export interface MindCanvasNoteMutationRuntime {
     input: MindCanvasNoteUpdateInput,
     undoContextId: string | null,
   ): Promise<{ note: MindNoteReadResponse; changed: boolean }>
+  delete?(ownerId:string,nodeId:number,undoContextId:string|null):Promise<MindNoteReadResponse>
   publishChanged(event: MindCanvasNoteMutationEvent): Promise<void>
   reportFailure?(operation: string, error?: unknown): void
 }
@@ -171,6 +172,16 @@ export function createMindCanvasNoteMutations(runtime: MindCanvasNoteMutationRun
         )
       }
       return result.note
+    },
+
+    async delete(ownerId:string,nodeId:number,metadata:MindCanvasNoteMutationMetadata){
+      if(!runtime.delete)throw new MindCanvasNoteMutationError('画布便签删除不可用',422)
+      const note=await runtime.delete(ownerId,nodeId,metadata.undoContextId)
+      await runBestEffort('Mind canvas note delete notification',()=>runtime.publishChanged({
+        ownerId,operation:'delete',entityId:nodeId,origin:metadata.clientId,mutationId:metadata.mutationId??null,
+        entityKind:'canvas_note',entity:note,
+      }),(operation,error)=>runtime.reportFailure?.(operation,error))
+      return {deleted_node_id:nodeId,can_restore:true}
     },
   }
 }

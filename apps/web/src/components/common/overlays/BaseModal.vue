@@ -102,9 +102,9 @@ onBeforeUnmount(() => unregEsc?.())
   -webkit-backdrop-filter: var(--glass-blur);
   border: 1px solid rgba(255, 255, 255, 0.72);
   border-radius: 20px;
-  box-shadow: 0 24px 64px rgba(20, 25, 50, 0.2),
-              inset 0 1px 0 rgba(255, 255, 255, 0.95),
-              inset 1px 0 0 rgba(255, 255, 255, 0.55);
+  box-shadow: var(--modal-card-shadow),
+              inset 0 1px 0 var(--border-highlight),
+              inset 1px 0 0 var(--aero-glass-highlight-side);
   display: flex; flex-direction: column;
   overflow: hidden;
 }

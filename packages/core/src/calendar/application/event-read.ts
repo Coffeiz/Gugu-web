@@ -11,6 +11,8 @@ export interface CalendarAgentReadPort {
     events: readonly CalendarEventProjectionInput[]
     reminders: ReadonlyMap<number, readonly EventUpdateReminderRecord[]>
   }>
+  getById?(ownerId: string, eventId: number, signal?: AbortSignal): Promise<CalendarEventProjectionInput | null>
+  findByTitle?(ownerId: string, title: string, signal?: AbortSignal): Promise<readonly CalendarEventProjectionInput[]>
 }
 
 /** Python round 的 half-even，保留旧提醒的微秒，不用 JS Math.round 改变半分钟边界。 */
@@ -36,20 +38,23 @@ function reminderLead(event: CalendarEventProjectionInput, task: EventUpdateRemi
 }
 
 /** Agent与管理读取共用领域边界；这里只转换活动+提醒，不触发任务清理或调度。 */
+export function agentCalendarEventResponse(event: CalendarEventProjectionInput, tasks: readonly EventUpdateReminderRecord[] = []) {
+  return { id: event.id, title: event.title, date: event.date, time: event.time,
+    end_time: event.end_time, type: event.type, project_id: event.project_id, description: event.description,
+    reminders: tasks.map(task => {
+      const channels = (task.channels || '').split(',').filter(Boolean)
+      const targets = task.delivery_targets as { qq?: { chat_type?: string } } | null
+      return { lead_minutes: reminderLead(event, task), channels, enabled: task.enabled,
+        ...(channels.includes('qq') ? { delivery_mode: targets?.qq?.chat_type === 'group' ? 'current_group' : 'owner_private' } : {}) }
+    }),
+  }
+}
 export function createAgentCalendarReader(port: CalendarAgentReadPort) {
   return async (rawOwner: string, query: AgentEventQuery, signal?: AbortSignal) => {
     signal?.throwIfAborted()
     const result = await port.list(dataContext(rawOwner).ownerId, query, signal)
     signal?.throwIfAborted()
-    return result.events.map(event => ({ id: event.id, title: event.title, date: event.date, time: event.time,
-      end_time: event.end_time, type: event.type, project_id: event.project_id, description: event.description,
-      reminders: (result.reminders.get(event.id) ?? []).map(task => {
-        const channels = (task.channels || '').split(',').filter(Boolean)
-        const targets = task.delivery_targets as { qq?: { chat_type?: string } } | null
-        return { lead_minutes: reminderLead(event, task), channels, enabled: task.enabled,
-          ...(channels.includes('qq') ? { delivery_mode: targets?.qq?.chat_type === 'group' ? 'current_group' : 'owner_private' } : {}) }
-      }),
-    }))
+    return result.events.map(event => agentCalendarEventResponse(event, result.reminders.get(event.id) ?? []))
   }
 }
 export interface CalendarEventReadPort {

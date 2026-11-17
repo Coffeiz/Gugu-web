@@ -496,7 +496,7 @@ function openProject(e: any) {
   -webkit-backdrop-filter: blur(24px);
   border: 1px solid rgba(255,255,255,0.85);
   border-radius: 16px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 32px rgba(60,70,100,0.12);
+  box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight);
   padding: 14px;
 }
 
@@ -536,7 +536,7 @@ function openProject(e: any) {
 .dash-edit-popup {
   background: rgba(255,255,255,0.66); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
   border: 1px solid rgba(255,255,255,0.88); border-radius: 16px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 32px rgba(60,70,100,0.12);
+  box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight);
   padding: 16px; display: flex; flex-direction: column; gap: 9px;
 }
 .dash-popup-title { font-size: 13px; font-weight: 700; color: #1e2028; margin-bottom: 2px; }

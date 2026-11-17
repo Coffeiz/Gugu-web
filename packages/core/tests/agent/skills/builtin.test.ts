@@ -1,8 +1,12 @@
 import { createHash } from 'node:crypto'
-import { readFile, readdir } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { createBuiltinSkillDefinitions } from '../../../src/agent/skills/builtin.js'
 import { createSkillRegistry } from '../../../src/agent/skills/index.js'
+import { createBundledSkillDocuments } from '../../../dist/agent/skills/bundled.js'
+import { discoverSkillDocuments } from '../../../scripts/build-skills.mjs'
 
 const identity = { ownerId: '小北', sessionId: '1', runId: 'run' }
 const signal = () => new AbortController().signal
@@ -11,6 +15,35 @@ function document(body = '正文') {
 }
 
 describe('内置Skill文档到注册器', () => {
+  it('自动扫描Markdown并按frontmatter头部ID生成注册项', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'gugu-skill-discovery-'))
+    try {
+      await writeFile(join(directory, 'README.md'), '# 说明')
+      await writeFile(join(directory, 'one.md'), document('第一个正文'))
+      await writeFile(join(directory, 'two.md'), document('第二个正文').replace('id: S1', 'id: S2').replace("name: '写作'", "name: '第二技能'"))
+      const discovered = await discoverSkillDocuments(directory)
+      const definitions = await createBuiltinSkillDefinitions(discovered.map(item => ({
+        name: item.name,
+        async read() { return item.content },
+      })), signal())
+      const registry = createSkillRegistry({ skills: definitions, authorize: async () => true })
+      expect((await registry.catalog(identity)).map(item => item.id)).toEqual(['S1', 'S2'])
+      expect((await registry.catalog(identity)).map(item => item.name)).toEqual(['写作', '第二技能'])
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+  it('自动从资源目录Markdown的frontmatter发现并注册全部内置Skill', async () => {
+    const definitions = await createBuiltinSkillDefinitions(createBundledSkillDocuments(), signal())
+    const registry = createSkillRegistry({ skills: definitions, authorize: async () => true })
+    const catalog = await registry.catalog(identity)
+    expect(catalog.map(item => item.id).sort((left, right) => Number(left.slice(1)) - Number(right.slice(1)))).toEqual([
+      'S1', 'S2', 'S4', 'S5', 'S6', 'S7', 'S8', 'S9', 'S12', 'S13',
+    ])
+    expect(catalog.find(item => item.id === 'S7')).toMatchObject({
+      name: '图表与数学表达', description: '按问题选择 Mermaid 图表或数学公式表达，并检查语法与呈现格式。',
+    })
+  })
   it('扁平frontmatter提取元数据，正文digest对齐Python SHA256前16hex', async () => {
     const definitions = await createBuiltinSkillDefinitions([{ name: 'writing.md', read: async () => document('正文😀') }], signal())
     const registry = createSkillRegistry({ skills: definitions, authorize: async () => true })

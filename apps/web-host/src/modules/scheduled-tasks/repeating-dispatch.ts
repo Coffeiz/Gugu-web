@@ -1,4 +1,4 @@
-import type { ScheduledTaskLease } from '../../scheduled-task-runner.js'
+import type { ScheduledTaskLease } from '@gugu/core/scheduled-task-runner'
 
 export interface ScheduledFire {
   taskId: string

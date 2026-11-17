@@ -1,6 +1,5 @@
 <template>
-  <div class="cal-toolbar glass-card">
-    <GlassBg />
+  <PageToolbar class="cal-toolbar">
     <div class="toolbar-left">
       <button class="nav-btn" @click="$emit('prev')"><Icon name="action.back" :size="14" /></button>
       <button ref="periodButton" class="period-btn" @click="$emit('toggle-picker', periodButton)">
@@ -16,13 +15,13 @@
       </SegmentedControl>
       <button class="today-btn" @click="$emit('today')">{{ t('calendar.today') }}</button>
     </div>
-  </div>
+  </PageToolbar>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import GlassBg from '@/components/common/layout/GlassBg.vue'
+import PageToolbar from '@/components/common/layout/PageToolbar.vue'
 import SegmentedControl from '@/components/common/controls/SegmentedControl.vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import FlipChevron from '@/components/common/controls/FlipChevron.vue'
@@ -40,7 +39,7 @@ const { t } = useI18n()
 </script>
 
 <style>
-.cal-toolbar { --gb-tint: var(--glass-bg); display: flex; align-items: center; justify-content: space-between; height: 52px; box-sizing: border-box; padding: 0 18px; flex-shrink: 0; position: relative; isolation: isolate; background: transparent; overflow: hidden; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.cal-toolbar { --gb-tint: var(--glass-bg); height: 52px; padding: 0 18px; }
 .cal-toolbar .toolbar-left { display: flex; align-items: center; gap: 4px; }
 .cal-toolbar .nav-btn { width: 30px; height: 30px; border-radius: 8px; border: none; background: none; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text-secondary); transition: background 0.15s; }
 .cal-toolbar .nav-btn:hover { background: rgba(0,0,0,0.06); }

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { configureRagJieba } from '../../../src/agent/rag/tokenizer.js'
 import { rankCandidates } from '../../../src/agent/rag/ranking/rank-candidates.js'
-import { SCORING_THRESHOLDS, sourceQualityV4, V4_LOW_SCORE_THRESHOLD, V4_PREFERRED_THRESHOLD } from '../../../src/agent/rag/ranking/confidence.js'
+import { queryMatch, SCORING_THRESHOLDS, sourceQualityV4, V4_LOW_SCORE_THRESHOLD, V4_PREFERRED_THRESHOLD } from '../../../src/agent/rag/ranking/confidence.js'
 import { CONTRIBUTION_EXPONENT } from '../../../src/agent/rag/ranking/idf-rescore.js'
 import type { RagDocument, RagRankCandidate } from '../../../src/agent/rag/contracts.js'
 
@@ -18,6 +18,11 @@ function candidate(id: string, sourceType: string, rawScore: number, text: strin
 beforeAll(() => configureRagJieba({ cut: text => [text] }))
 
 describe('1.7.7 RAG candidate scoring behavior', () => {
+  it('does not use locale-sensitive Turkish I folding to create a Python-incompatible confidence match', () => {
+    const row = candidate('file:turkish-i', 'file', 1, 'ıstanbul')
+    expect(queryMatch('Istanbul', row.document)).toBe(0)
+  })
+
   it('keeps production thresholds, IDF contribution exponent and source quality weights', () => {
     expect(V4_PREFERRED_THRESHOLD).toBe(0.55)
     expect(V4_LOW_SCORE_THRESHOLD).toBe(0.35)

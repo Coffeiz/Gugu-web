@@ -31,17 +31,18 @@ export function buildCalendarMonthDays(cursor: Date, weekStart: 0 | 1 = 1) {
   const startDow = (new Date(year, month, 1).getDay() - weekStart + 7) % 7
   const lastDate = new Date(year, month + 1, 0).getDate()
   const days: Array<{ key: string; date: number; iso: string; other: boolean; dow: number }> = []
-  const append = (date: Date, key: string, other: boolean) => {
-    days.push({ key, date: date.getDate(), iso: browserDayKey(date), other, dow: (date.getDay() + 6) % 7 })
+  const append = (date: Date, other: boolean) => {
+    const iso = browserDayKey(date)
+    days.push({ key: iso, date: date.getDate(), iso, other, dow: (date.getDay() + 6) % 7 })
   }
-  for (let index = startDow - 1; index >= 0; index--) append(new Date(year, month, -index), `p${index}`, true)
+  for (let index = startDow - 1; index >= 0; index--) append(new Date(year, month, -index), true)
   for (let day = 1; day <= lastDate; day++) {
     const date = new Date(year, month, day)
-    append(date, browserDayKey(date), false)
+    append(date, false)
   }
   const remaining = 7 - (days.length % 7)
   if (remaining < 7) {
-    for (let day = 1; day <= remaining; day++) append(new Date(year, month + 1, day), `n${day}`, true)
+    for (let day = 1; day <= remaining; day++) append(new Date(year, month + 1, day), true)
   }
   return days
 }

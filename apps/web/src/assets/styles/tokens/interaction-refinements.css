@@ -77,17 +77,6 @@ html[data-theme='dark'][data-family] .cal-toolbar .view-toggle button.on {
 html[data-theme][data-family] .month-cell {
   transition: background-color var(--hover-motion-micro);
 }
-html[data-theme][data-family] .month-cell::before {
-  background: var(--calendar-cell-hover-bg);
-  transition: opacity var(--hover-motion-micro);
-}
-html[data-theme][data-family] .month-cell:hover::before,
-html[data-theme][data-family] .month-cell.cell-hovered::before {
-  opacity: 1;
-}
-html[data-theme][data-family] .month-cell.is-weekend::before {
-  background: var(--calendar-weekend-hover-bg);
-}
 /* Dim contents, not the cell itself, so outside-month hover is as strong as current-month hover. */
 html[data-theme][data-family] .month-cell.other-month {
   opacity: 1;

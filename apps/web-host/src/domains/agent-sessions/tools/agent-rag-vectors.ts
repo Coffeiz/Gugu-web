@@ -72,7 +72,8 @@ export function createPostgresAgentRagEmbeddingPort(pool:Pick<Pool,'query'>,opti
  return {
   resolve,
   createTransport(settings:RagQueryEmbeddingSettings):ProviderTransport {
-   const transport=options.createTransport?.(settings)??createNodeProviderTransport({allowLocal:false})
+   const allowLocal=settings.allowLocal===true&&['local','ollama'].includes(settings.provider.trim().toLowerCase())
+   const transport=options.createTransport?.(settings)??createNodeProviderTransport({allowLocal})
    return {
     async request(request,signal) {
      signal.throwIfAborted()

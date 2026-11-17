@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { randomUUID } from 'node:crypto'
 import type { ProviderHttpRequest, ProviderHttpResponse, ProviderTransport } from '../../../src/agent/providers/contracts.js'
 import { embedRagQuery, type RagQueryEmbeddingSettings } from '../../../src/agent/rag/query-embedding.js'
 
@@ -43,6 +44,59 @@ describe('1.7.7 RAG query embedding transport boundary', () => {
     expect(received).toMatchObject({ url: 'https://dashscope.example/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding',
       body: { model: 'embed-v1', input: { contents: [{ text: '图片描述' }] },
         parameters: { output_type: 'dense', dimension: 2, enable_fusion: false } } })
+  })
+
+  it('caches successful query vectors for the same model and returns isolated copies', async () => {
+    let requests = 0
+    const transport: ProviderTransport = { async request() {
+      requests += 1
+      return response(200, jsonBody({ data: [{ embedding: [0.25, -0.5] }] }))
+    } }
+    const query = `synthetic cache query ${randomUUID()}`
+    const first = await embedRagQuery(settings(), query, transport, new AbortController().signal)
+    first.vector[0] = 99
+
+    const cachedTransport: ProviderTransport = { async request() { throw new Error('cache hit must not call transport') } }
+    const second = await embedRagQuery(settings(), ` ${query} `, cachedTransport, new AbortController().signal)
+
+    expect(first.outcome).toBe('success')
+    expect(second).toMatchObject({ vector: [0.25, -0.5], outcome: 'success' })
+    expect(requests).toBe(1)
+  })
+
+  it('keeps query vectors isolated by model and dimensions', async () => {
+    const requests: string[] = []
+    const transport: ProviderTransport = { async request(request) {
+      const model = String(request.body.model)
+      requests.push(`${model}:${String(request.body.dimensions)}`)
+      const vector = model === 'embed-v1' ? [0.25, -0.5] : [0.75, -1, 0.5]
+      return response(200, jsonBody({ data: [{ embedding: vector }] }))
+    } }
+    const query = `synthetic model cache query ${randomUUID()}`
+
+    expect((await embedRagQuery(settings(), query, transport, new AbortController().signal)).vector)
+      .toEqual([0.25, -0.5])
+    expect((await embedRagQuery(settings({ model: 'embed-v2', dimensions: 3 }), query, transport,
+      new AbortController().signal)).vector).toEqual([0.75, -1, 0.5])
+
+    expect(requests).toEqual(['embed-v1:2', 'embed-v2:3'])
+  })
+
+  it('does not cache failed responses', async () => {
+    let requests = 0
+    const transport: ProviderTransport = { async request() {
+      requests += 1
+      return requests === 1
+        ? response(503, jsonBody({ error: 'synthetic outage' }))
+        : response(200, jsonBody({ data: [{ embedding: [0.25, -0.5] }] }))
+    } }
+    const query = `synthetic retry cache query ${randomUUID()}`
+
+    expect(await embedRagQuery(settings(), query, transport, new AbortController().signal))
+      .toMatchObject({ vector: [], outcome: 'http_error', httpStatus: 503 })
+    expect(await embedRagQuery(settings(), query, transport, new AbortController().signal))
+      .toMatchObject({ vector: [0.25, -0.5], outcome: 'success', httpStatus: 200 })
+    expect(requests).toBe(2)
   })
 
   it('rejects unsafe endpoint configuration before transport and does not follow a redirect response', async () => {

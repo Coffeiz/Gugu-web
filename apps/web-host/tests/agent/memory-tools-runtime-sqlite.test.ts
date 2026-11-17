@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { prepareMemory } from '@gugu/core/agent'
+import { embedRagQuery, prepareMemory } from '@gugu/core/agent'
 import { initializeSqlite, openSqliteRuntime } from '@gugu/core/data'
 import { createAgentToolRegistry } from '../../src/domains/agent-sessions/tools/agent-tool-registry.js'
 import { createPostgresAgentMemorySearchPort, createWebOwnerMemorySearchPort } from '../../src/domains/agent-sessions/tools/agent-memory-search.js'
@@ -351,5 +351,39 @@ test('BYOK gate 在 query embedding 发起网络请求前再次校验', async ()
   const transport = embedding.createTransport(settings)
   await assert.rejects(transport.request({ url: 'https://embedding.example/v1/embeddings', method: 'POST', headers: {}, body: {} }, new AbortController().signal), /BYOK embedding 当前不可用/u)
   assert.equal(requests, 0)
+  await transport.close?.()
+})
+
+test('仅 Local/Ollama embedding 保留旧版本地 Provider 通道并继续传给安全 transport', async () => {
+  const owner = 'f17421a3-8520-4c8b-92e5-736882f4bd82'
+  let received: Record<string, unknown> | undefined
+  const pool = { async query() {
+    return { rows: [{ provider: ' Ollama ', base_url: 'http://127.0.0.1:11434/v1', model: 'local-embed', dimensions: 2,
+      encrypted_value: 'cipher', nonce: 'nonce', encrypted_data_key: 'wrapped', key_version: 1 }] }
+  } } as unknown as Parameters<typeof createPostgresAgentRagEmbeddingPort>[0]
+  let configuredAllowLocal = false
+  const embedding = createPostgresAgentRagEmbeddingPort(pool, {
+    enabled: () => true,
+    async decrypt() { return '' },
+    createTransport(settings) {
+      configuredAllowLocal = settings.allowLocal === true
+      return { async request(request) {
+        received = request as unknown as Record<string, unknown>
+        return { status: 200, headers: {}, body: (async function* () {
+          yield new TextEncoder().encode(JSON.stringify({ data: [{ embedding: [0.25, -0.5] }] }))
+        })(), cancel: async () => {} }
+      } }
+    },
+  })
+  const settings = await embedding.resolve(owner)
+  assert.equal(settings?.allowLocal, true)
+  assert.equal(settings?.apiKey, '')
+
+  const transport = embedding.createTransport(settings!)
+  const result = await embedRagQuery(settings!, ' local query ', transport, new AbortController().signal)
+  assert.equal(configuredAllowLocal, true)
+  assert.deepEqual(result.vector, [0.25, -0.5])
+  assert.equal(received?.allowLocal, true)
+  assert.equal((received?.headers as Record<string, string>).authorization, undefined)
   await transport.close?.()
 })

@@ -119,6 +119,10 @@ it('scope 状态查询按 owner 和完整 scope key 读取 revision、映射成�
       VALUES (${owner}, 'qq', 'bot-a', 'group', 'group-a', 'deleted')`.execute(db)
 
     const read = createSqlMemoryScopeStateReader(db)
+    const cancelled = new AbortController()
+    cancelled.abort(new Error('synthetic scope cancellation'))
+    await expect(read({ ownerId: owner }, { type: 'group', id: 'group-a', platform: 'qq', botId: 'bot-a' }, cancelled.signal))
+      .rejects.toThrow('synthetic scope cancellation')
     expect(await read({ ownerId: owner }, { type: 'group', id: 'group-a', platform: 'qq', botId: 'bot-a' }))
       .toEqual({ revision: '4:2026-11-14T09:10:11.000Z', tombstoned: true })
     expect(await read({ ownerId: owner }, { type: 'member', id: 'group-a:user-a', platform: 'qq', botId: 'bot-a' }))

@@ -59,7 +59,7 @@ it('正式 SQLite 从版本 14 安全升级并限制反馈 owner', async () => {
     await migrateSqlite(path)
     const opened = await openSqliteRuntime(path)
     try {
-      expect(opened.schemaVersion).toBe('17')
+      expect(opened.schemaVersion).toBe('18')
       const service = createFeedbackService(createKyselyFeedbackOperations(opened.runtime.db, 'sqlite', opened.ownerId))
       await service.submit(opened.ownerId, '合成用户', 'bug', '反馈')
       expect((await service.list(1, 30, '')).total).toBe(1)

@@ -24,8 +24,8 @@ export type AgentChatEvent = { type: string; [key: string]: unknown }
 
 /** 实现负责身份隔离、后台执行以及断开订阅后继续运行。 */
 export interface AgentChatService {
-  start(ownerId: string, input: AgentChatInput, origin: string | undefined): Promise<AsyncIterable<AgentChatEvent>>
-  resume(ownerId: string, sessionId: number): Promise<AsyncIterable<AgentChatEvent> | null>
+  start(ownerId: string, input: AgentChatInput, origin: string | undefined, signal?: AbortSignal): Promise<AsyncIterable<AgentChatEvent>>
+  resume(ownerId: string, sessionId: number, signal?: AbortSignal): Promise<AsyncIterable<AgentChatEvent> | null>
   cancel(ownerId: string, sessionId: number): Promise<Record<string, unknown> | null>
   retryReconstruction?(ownerId: string, sessionId: number): Promise<Record<string, unknown> | null>
 }
@@ -34,6 +34,24 @@ export interface AgentChatRouteOptions {
   requireUser: preHandlerHookHandler
   userIdFromRequest(request: FastifyRequest): string
   service: AgentChatService
+}
+
+function requestStreamSignal(request: FastifyRequest, reply: import('fastify').FastifyReply) {
+  const controller = new AbortController()
+  const onRequestAborted = () => controller.abort()
+  const cleanup = () => {
+    request.raw.off('aborted', onRequestAborted)
+    reply.raw.off('close', onResponseClose)
+    reply.raw.off('finish', cleanup)
+  }
+  const onResponseClose = () => {
+    if (!reply.raw.writableFinished) controller.abort()
+    cleanup()
+  }
+  request.raw.once('aborted', onRequestAborted)
+  reply.raw.once('close', onResponseClose)
+  reply.raw.once('finish', cleanup)
+  return { signal: controller.signal, cleanup }
 }
 
 async function* encodeEvents(events: AsyncIterable<AgentChatEvent>): AsyncGenerator<string> {
@@ -54,14 +72,24 @@ export function registerAgentChatRoutes(app: FastifyInstance, options: AgentChat
     const body = chatBody.safeParse(request.body)
     if (!body.success) return reply.code(422).send({ detail: '聊天请求无效' })
     const origin = request.headers['x-client-id']
-    return stream(reply, await options.service.start(options.userIdFromRequest(request), body.data,
-      typeof origin === 'string' ? origin : undefined))
+    const connection = requestStreamSignal(request, reply)
+    try {
+      const events = await options.service.start(options.userIdFromRequest(request), body.data,
+        typeof origin === 'string' ? origin : undefined, connection.signal)
+      return stream(reply, events)
+    } catch (error) {
+      connection.cleanup()
+      throw error
+    }
   })
   app.get<{ Params: { session_id: string } }>('/api/v1/agent/sessions/:session_id/stream', { preHandler: options.requireUser }, async (request, reply) => {
     const id = parsePythonInteger(request.params.session_id)
     if (id == null) return reply.code(422).send({ detail: '会话 ID 无效' })
-    const events = await options.service.resume(options.userIdFromRequest(request), id)
-    if (!events) return reply.code(404).send({ detail: '对话不存在' })
+    const connection = requestStreamSignal(request, reply)
+    let events: AsyncIterable<AgentChatEvent> | null
+    try { events = await options.service.resume(options.userIdFromRequest(request), id, connection.signal) }
+    catch (error) { connection.cleanup(); throw error }
+    if (!events) { connection.cleanup(); return reply.code(404).send({ detail: '对话不存在' }) }
     return stream(reply, events)
   })
   app.post<{ Params: { session_id: string } }>('/api/v1/agent/sessions/:session_id/cancel', { preHandler: options.requireUser }, async (request, reply) => {

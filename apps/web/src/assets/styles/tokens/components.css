@@ -141,15 +141,16 @@
      values through theme-refinements.css. These roles must not reuse generic glass borders/status BG. */
   --calendar-grid-line: color-mix(in srgb,var(--action-primary) 15%,transparent);
   --calendar-grid-line-strong: color-mix(in srgb,var(--action-primary) 18%,transparent);
-  --calendar-cell-hover-bg: color-mix(in srgb,var(--action-primary) 6%,transparent);
-  --calendar-today-cell-bg: color-mix(in srgb,var(--action-primary) 7%,transparent);
-  --calendar-range-cell-bg: color-mix(in srgb,var(--action-primary) 8%,transparent);
+  --calendar-cell-bg: transparent;
+  --calendar-cell-hover-bg: color-mix(in srgb,var(--action-primary) 10%,transparent);
+  --calendar-today-cell-bg: var(--calendar-cell-bg);
+  --calendar-range-cell-bg: var(--calendar-selected-cell-bg);
   --calendar-selected-cell-bg: color-mix(in srgb,var(--action-primary) 10%,transparent);
   --calendar-range-edge-bg: color-mix(in srgb,var(--action-primary) 15%,transparent);
   --calendar-weekend-fg: color-mix(in srgb,var(--status-danger) 85%,transparent);
   --calendar-weekend-bg: color-mix(in srgb,var(--status-danger) 3%,transparent);
-  --calendar-weekend-hover-bg: color-mix(in srgb,var(--status-danger) 7%,transparent);
-  --calendar-weekend-selected-bg: color-mix(in srgb,var(--status-danger) 9%,transparent);
+  --calendar-weekend-hover-bg: color-mix(in srgb,var(--status-danger) 10%,transparent);
+  --calendar-weekend-selected-bg: color-mix(in srgb,var(--status-danger) 10%,transparent);
   --calendar-weekend-range-edge-bg: color-mix(in srgb,var(--status-danger) 15%,transparent);
   --calendar-weekend-date-bg: color-mix(in srgb,var(--status-danger) 20%,transparent);
   --calendar-today-date-bg: var(--action-primary-bg);

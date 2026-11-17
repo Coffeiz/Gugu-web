@@ -11,6 +11,8 @@ export interface ToolDefinition {
   readonly destructive?: boolean
   /** 仅作调度分流，不能替代 handler 内的可信交互/确认门。 */
   readonly requiresInteraction?: boolean
+  /** 仅确认恢复会重放且已由 Run 收据绑定的交互；handler 仍须验证可信意图/receipt 后才能产生副作用。 */
+  readonly confirmationReplay?: boolean
   /** 按字段名禁止数组结构修复；仍允许合法 JSON 数组文本归一。 */
   readonly strictArrayFields?: readonly string[]
   validate(input: unknown): { success: true; data: unknown } | { success: false; error?: unknown }

@@ -92,3 +92,37 @@ test('调度模式不直接启动 Harness，早期取消写 selected 后标记�
   assert.equal((await service.cancel('owner', 1))?.outcome, 'requested')
   assert.deepEqual(order, ['wake', 'kick', 'selected', 'cancel', 'marker', 'notify'])
 })
+
+test('SSE 订阅取消只停止 outbox 读取，不取消持久 dispatch Run', async () => {
+  const controller = new AbortController(), actions: string[] = []
+  let openedSignal: AbortSignal | undefined
+  const service = createAgentChatService({
+    harness: { async *start() { actions.push('harness-start'); return {} as never }, async cancel() { actions.push('harness-cancel'); return true } },
+    cancellation: { async request() { actions.push('cancel-request') }, async notify() {} },
+    async prepare() { return { identity, userMessageId: 42 } },
+    async active() { return { identity } },
+    events: {
+      async open(_identity, _afterSequence, signal) {
+        openedSignal = signal
+        return (async function* () {
+          if (signal?.aborted) return
+          await new Promise<void>(resolve => signal?.addEventListener('abort', () => resolve(), { once: true }))
+        })()
+      },
+      async notify() {},
+    },
+    projection: { async interaction() { return { type: 'interaction_required' } } },
+    async failStart() {},
+    dispatch: {
+      async kick() { actions.push('dispatch-kick') }, async notify() {}, diagnose() {},
+      async requestCancel() { actions.push('cancel-request'); return null },
+    },
+  })
+
+  const iterator = (await service.start('owner-a', { message: '你好' }, undefined, controller.signal))[Symbol.asyncIterator]()
+  assert.equal((await iterator.next()).value?.type, 'session_id')
+  controller.abort()
+  assert.equal((await iterator.next()).done, true)
+  assert.equal(openedSignal, controller.signal)
+  assert.deepEqual(actions, ['dispatch-kick'])
+})

@@ -1,5 +1,5 @@
 import { contextAccessScopeHash } from '@gugu/core/agent'
-import type { CanonicalContextPorts, CanonicalRunContext, CanonicalRunPreparationPorts, ContextSourcePorts, ContextSourceSelection, CurrentTurnSources, RunIdentity, HistoryIdentity } from '@gugu/core/agent'
+import type { CanonicalContextPorts, CanonicalRunContext, CanonicalRunPreparationPorts, ContextSourcePorts, ContextSourceSelection, CurrentTurnSources, RunIdentity, HistoryIdentity, ToolPort, ToolResult } from '@gugu/core/agent'
 import type { ProviderRuntimeOptions } from '@gugu/core/providers'
 import type { OwnedCurrentMessage } from './context/agent-context-source.js'
 import { createPostgresCurrentTurnReader, createWebAgentSourceLoader } from './context/agent-context-source.js'
@@ -7,6 +7,7 @@ import { createPersistentAgentRuntime, type PersistentAgentRuntimeOptions } from
 import { createPostgresAgentRunStore } from './persistence/agent-run-store-postgres.js'
 import type { AgentDispatchLease } from './persistence/agent-run-dispatch-postgres.js'
 import type { createAgentToolRegistry } from './tools/agent-tool-registry.js'
+import { createMcpAgentToolPorts, type AgentMcpToolPortsOptions } from './tools/agent-mcp-tool-ports.js'
 
 /** 不含密钥、配置版本或底层异常的可公开错误类型。 */
 export class AgentReconstructionVersionError extends Error {}
@@ -23,6 +24,8 @@ export interface WebAgentReconstructionResources {
   preparation: Omit<CanonicalRunPreparationPorts, 'discover'>
   /** 工具 schema 发现和运行时分派必须复用同一个授权注册器。 */
   toolRegistry: Pick<ReturnType<typeof createAgentToolRegistry>, 'capabilities' | 'tools'>
+  /** MCP 目录、执行 runtime 与权限由 Host 按同一 lease/owner 装配；缺省时不暴露远端工具。 */
+  mcp?: AgentMcpToolPortsOptions
   materialize(identity: RunIdentity, message: OwnedCurrentMessage, signal?: AbortSignal): Promise<CurrentTurnSources>
   runtime: Omit<PersistentAgentRuntimeOptions['runtime'], 'tools'>
   executor: PersistentAgentRuntimeOptions['executor']
@@ -35,10 +38,32 @@ export function createWebAgentToolPorts(
   lease: Pick<AgentDispatchLease, 'identity'>,
   registry: Pick<ReturnType<typeof createAgentToolRegistry>, 'capabilities' | 'tools'>,
   preparation: Omit<CanonicalRunPreparationPorts, 'discover'>,
+  mcp?: AgentMcpToolPortsOptions,
 ): { tools: typeof registry.tools; preparation: CanonicalRunPreparationPorts } {
   const identity = Object.freeze({ ...lease.identity })
+  const boundRegistry = mcp ? createMcpAgentToolPorts({ base: registry, ...mcp }) : registry
+  const matchesLease = (candidate: RunIdentity) => candidate.ownerId === identity.ownerId
+    && candidate.sessionId === identity.sessionId && candidate.runId === identity.runId
+  const plan = boundRegistry.tools.plan
+  const tools: ToolPort = {
+    ...(plan ? { async plan(calls, candidate) {
+      if (!matchesLease(candidate)) throw new AgentReconstructionVersionError('工具运行身份不匹配')
+      return plan(calls, candidate)
+    } } : {}),
+    async dispatch(call, scope) {
+      scope.signal.throwIfAborted()
+      if (!matchesLease(scope.identity)) return {
+        kind: 'completed', value: { error: '工具运行身份不匹配' }, successful: false, mutated: false, executed: false,
+      } satisfies ToolResult
+      return boundRegistry.tools.dispatch(call, scope)
+    },
+    async reconcile(call, candidate) {
+      if (!matchesLease(candidate)) return { kind: 'unknown' }
+      return boundRegistry.tools.reconcile(call, candidate)
+    },
+  }
   return {
-    tools: registry.tools,
+    tools,
     preparation: {
       ...preparation,
       async discover(input, signal) {
@@ -46,7 +71,7 @@ export function createWebAgentToolPorts(
         if (input.identity.ownerId !== identity.ownerId || input.identity.subject.kind !== 'session'
           || input.identity.subject.id !== identity.sessionId) throw new AgentReconstructionVersionError('工具运行身份不匹配')
         const configured = new Set(input.toolNames)
-        const definitions = await registry.capabilities(identity)
+        const definitions = await boundRegistry.capabilities(identity)
         signal.throwIfAborted()
         return definitions.filter(definition => configured.has(definition.name))
       },
@@ -101,7 +126,7 @@ export function createWebAgentReconstructor(options: WebAgentReconstructorOption
       if (selected.modelIdentity !== selection.modelIdentity || selected.accessScopeHash !== expected) throw new AgentReconstructionVersionError('Provider 访问范围不匹配')
       const source = createWebAgentSourceLoader(options.pool, { ...resources.source, data: { ...resources.source.data, loadImMemory: createWebImMemoryLoader(lease) }, digest: resources.context.digest, nextId: resources.context.nextId,
         select: async () => selection, currentTurn: createPostgresCurrentTurnReader(options.pool, String(lease.input.userMessageId), resources.materialize) })
-      const toolPorts = createWebAgentToolPorts(lease, resources.toolRegistry, resources.preparation)
+      const toolPorts = createWebAgentToolPorts(lease, resources.toolRegistry, resources.preparation, resources.mcp)
       const instance = createPersistentAgentRuntime({ pool: options.pool, secretKey: options.secretKey, redis: options.redis, subscribe: options.subscribe, history: options.history,
         context: { ...resources.context, load: source.load }, runPreparation: toolPorts.preparation,
         runtime: { ...resources.runtime, tools: toolPorts.tools }, executor: resources.executor,

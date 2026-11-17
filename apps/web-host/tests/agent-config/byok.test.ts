@@ -30,6 +30,16 @@ test('用户凭据仅绑定自身地址，未知目的地不使用用户密钥',
   assert.equal(resolved.base_url, 'https://provider.example.test'); assert.equal(resolved.api_key, 'synthetic-key')
 })
 
+test('问候短文本异步解封BYOK后仍绑定用户目的地并覆盖模型字段', async () => {
+  const { resolveByokLlmAsync } = await import('../../src/domains/agent-config/byok.js')
+  const row = fixture(), base = { provider: 'platform', base_url: 'https://platform.example.test', api_key: 'platform-key', model: 'platform-model' }
+  const resolved = await resolveByokLlmAsync(base, row, async value => decryptByokCredential(value, () => 'synthetic-master'), () => 'https://provider.example.test/')
+  assert.equal(resolved.provider, 'deepseek')
+  assert.equal(resolved.base_url, 'https://provider.example.test')
+  assert.equal(resolved.api_key, 'synthetic-key')
+  assert.equal(resolved.model, 'user-model')
+})
+
 test('运行绑定仅允许原 owner 和 run 使用，身份不含配置密钥', async () => {
   const { bindProviderSelection } = await import('../../src/domains/agent-config/provider-resolver.js')
   const identity = { ownerId: 'owner-a', sessionId: 'session-a', runId: 'run-a' }, signal = new AbortController().signal

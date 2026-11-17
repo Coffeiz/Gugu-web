@@ -1,12 +1,13 @@
 import {createHash} from 'node:crypto'
 import type {FastifyInstance,FastifyRequest,preHandlerHookHandler} from 'fastify'
 import {z} from 'zod'
+import {pydanticIntegerInput} from './dto.js'
 import {listProviderModels} from '@gugu/core/providers'
 import {createNodeProviderTransport} from '@gugu/core/providers/node'
 import {stableJson} from '@gugu/core/agent'
 import type {createCredentialModelsPreview} from '@gugu/core/byok/credential-models-preview'
 
-const schema=z.object({provider:z.string().min(1).max(64),api_format:z.string().max(32).default(''),base_url:z.string().max(500).default(''),model:z.string().max(200).default(''),api_key:z.string().max(20000).default(''),credential_id:z.coerce.number().int().nullable().optional()})
+const schema=z.object({provider:z.string().min(1).max(64),api_format:z.string().max(32).default(''),base_url:z.string().max(500).default(''),model:z.string().max(200).default(''),api_key:z.string().max(20000).default(''),credential_id:z.preprocess(pydanticIntegerInput,z.number().int().nullable().optional())})
 export interface CredentialModelsPreviewOptions {requireUser:preHandlerHookHandler;ownerIdFromRequest(request:FastifyRequest):string;preview:ReturnType<typeof createCredentialModelsPreview>}
 
 /** 查询真实 Provider 模型目录，沿用 Provider 的 DNS 固定、地址校验及禁止重定向传输。 */

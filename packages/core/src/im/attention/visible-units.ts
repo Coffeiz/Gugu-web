@@ -23,7 +23,7 @@ export function visibleAttentionUnits(text: string): { units: VisibleAttentionUn
   const masked = Array.from(source)
   const count = (needle: string) => source.split(needle).length - 1
   const uncertain = count('```') % 2 === 1 || count('~~~') % 2 === 1
-  for (const pattern of patterns) {
+  const mask = (pattern: RegExp) => {
     const view = masked.join('')
     pattern.lastIndex = 0
     for (const match of view.matchAll(pattern)) {
@@ -32,6 +32,22 @@ export function visibleAttentionUnits(text: string): { units: VisibleAttentionUn
       for (let index = begin; index < end; index++) if (masked[index] !== '\r' && masked[index] !== '\n') masked[index] = ' '
     }
   }
+  mask(patterns[0]!)
+  // 与 Python 的 top-level 分段规则一致：未闭合围栏从开标记处保守截断，
+  // 包括没有换行、因而不匹配围栏正则的输入。
+  if (uncertain) {
+    const remaining = masked.join('')
+    const positions = ['```', '~~~']
+      .map(marker => remaining.indexOf(marker))
+      .filter(position => position >= 0)
+    if (positions.length) {
+      const start = Math.min(...positions)
+      for (let index = start; index < masked.length; index++) {
+        if (masked[index] !== '\r' && masked[index] !== '\n') masked[index] = ' '
+      }
+    }
+  }
+  for (const pattern of patterns.slice(1)) mask(pattern)
   const visiblePrefix = [0]
   for (const char of masked) visiblePrefix.push(visiblePrefix.at(-1)! + Number(!whitespace(char)))
   const units: VisibleAttentionUnit[] = []

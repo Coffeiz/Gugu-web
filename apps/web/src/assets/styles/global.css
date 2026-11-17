@@ -6,8 +6,8 @@
 @import './filesListRows.css';
 @import './search-highlight.css';
 
-/* 桌面端弹窗需要更强的背景虚化，避免看板文字和控件边缘穿透遮罩。 */
-html[data-desktop-shell='true'] { --modal-overlay-blur: blur(16px); }
+/* 桌面窗口 L0 已有系统材质模糊，L4 遮罩只做轻度柔化，避免模糊叠加过重。 */
+html[data-desktop-shell='true'] { --modal-overlay-blur: blur(3px); }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 

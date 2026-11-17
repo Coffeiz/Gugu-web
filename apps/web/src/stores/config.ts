@@ -30,6 +30,8 @@ export const useConfigStore = defineStore('config', () => {
   // 后端把已存的密钥脱敏成 ****、前端又清空显示，导致「已存」无任何痕迹 → 看着像没保存。
   // 这里记录各保密字段后端当前是否已有值，供 UI 显示「已配置」指示。
   const secretSet = reactive({ embeddingApiKey: false, smtpPassword: false })
+  // 能力未知时先隐藏 DDL 操作；Python 旧 Host 成功读取后按缺少标记恢复兼容按钮。
+  const databaseInitializationSupported = ref(false)
 
   const cfg = reactive({
     db: {
@@ -165,7 +167,8 @@ export const useConfigStore = defineStore('config', () => {
     const adminStore = useAdminStore()
     try {
       const res = await adminStore.authFetch('/api/v1/admin/config')
-      const { data } = await res.json()
+      const { data, capabilities } = await res.json()
+      databaseInitializationSupported.value = capabilities?.database_schema_managed_externally !== true
       if (data.db)      Object.assign(cfg.db,      sanitizeForEdit(data.db))
       if (data.redis)   Object.assign(cfg.redis,   sanitizeForEdit(data.redis))
       if (data.storage) Object.assign(cfg.storage, sanitizeForEdit(data.storage))
@@ -225,5 +228,5 @@ export const useConfigStore = defineStore('config', () => {
     }
   }
 
-  return { cfg, loading, saving, saved, saveError, secretSet, fetchConfig, saveConfig }
+  return { cfg, loading, saving, saved, saveError, secretSet, databaseInitializationSupported, fetchConfig, saveConfig }
 })

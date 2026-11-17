@@ -19,12 +19,26 @@ import { createSqlMindCanvasItemRemoveRuntime } from './canvas-item-remove-sql.j
 import { MindCanvasItemMutationError } from './canvas-item-remove.js'
 import { createSqlMindCanvasNoteRuntime } from './canvas-note-sql.js'
 import { MindCanvasNoteMutationError, type MindCanvasNoteMutationEvent } from './canvas-note.js'
+import { MindRefNodeCreateError } from './ref-node-create.js'
+import { MindCanvasRelationMutationError } from './relation-delete-global.js'
 import type { CanvasItemUpdateRuntime } from './canvas-item-update.js'
 import type { MindCanvasItemRemoveRuntime } from './canvas-item-remove.js'
 
 export interface CanvasLayoutEdit { item_id: number; x?: number; y?: number; z?: number; collapsed?: boolean; width?: number; height?: number }
 export interface CanvasNoteEdit { node_id: number; title?: string; content?: string; color?: 'amber'|'coral'|'blue'|'teal' }
+export interface CanvasBatchOperation {
+  kind: 'create_note'|'add_node'|'update_item'|'remove_item'|'delete_note'|'connect'
+  ref_type?: 'project'|'file'|'event'; ref_id?: number; node_id?: number
+  item_id?: number; source_node_id?: number; target_node_id?: number
+  source_side?: 'left'|'right'; target_side?: 'left'|'right'
+  title?: string; content?: string; color?: 'amber'|'coral'|'blue'|'teal'
+  x?: number; y?: number; width?: number; height?: number; z?: number; collapsed?: boolean
+  position?: import('./canvas-layout.js').CanvasPosition
+  [key:string]:unknown
+}
+export interface CanvasBatchIntent { canvas_id:number; request_id:string; operations:CanvasBatchOperation[] }
 export type CanvasEditIntent = CanvasPlacementIntent
+  | {action:'delete_note';canvas_id:number;node_ids:number[];batched:boolean}
   | {action:'connect';canvas_id:number;source_node_id:number;target_node_id:number;source_side?:'left'|'right';target_side?:'left'|'right';allow_custom_anchor?:boolean;batched:false}
   | {action:'anchor';canvas_id:number;relation_id:number;source_side:'left'|'right';target_side:'left'|'right';batched:false}
   | { action:'layout'; canvas_id:number; entries:CanvasLayoutEdit[]; batched:boolean }
@@ -103,6 +117,20 @@ async function updateNotes(ctx:EditContext,intent:Extract<CanvasEditIntent,{acti
   }
   return result
 }
+async function deleteNotes(ctx:EditContext,intent:Extract<CanvasEditIntent,{action:'delete_note'}>):Promise<EditResult>{
+  const runtime=createSqlMindCanvasNoteRuntime(ctx.tx,ctx.backend,async()=>{})
+  const remove=runtime.delete
+  if(!remove)throw new MindCanvasNoteMutationError('画布便签删除不可用',422)
+  const result:EditResult={results:[],publications:[],changed:false}
+  for(const nodeId of intent.node_ids){
+    const note=await remove(ctx.canonical,nodeId,ctx.context)
+    ctx.signal.throwIfAborted()
+    result.changed=true
+    result.results.push({deleted_node_id:nodeId,can_restore:true})
+    result.publications.push({ownerId:ctx.canonical,operation:'delete',entityId:nodeId,origin:null,mutationId:null,entityKind:'canvas_note',entity:note})
+  }
+  return result
+}
 async function updateAnchor(ctx:EditContext,intent:Extract<CanvasEditIntent,{action:'anchor'}>):Promise<EditResult> {
   const relation=await ctx.tx.selectFrom('mind_relations').selectAll().where('id','=',intent.relation_id).where('canvas_id','=',intent.canvas_id).where('user_id','=',ctx.owner).where('deleted_at','is',null).executeTakeFirst()
   ctx.signal.throwIfAborted()
@@ -170,19 +198,69 @@ export async function applyCanvasEdits(tx: Transaction<Database>, backend: Backe
   const canonical=dataContext(rawOwner).ownerId,owner=backend==='sqlite'?canonical.replaceAll('-',''):canonical
   const ctx:EditContext={tx,backend,owner,canonical,context,signal}
   signal.throwIfAborted()
-  if(intent.action!=='note'&&intent.action!=='anchor') {
+  if(intent.action!=='note'&&intent.action!=='anchor'&&intent.action!=='delete_note') {
     let query=tx.selectFrom('mind_maps').select('id').where('id','=',intent.canvas_id).where('user_id','=',owner).where('deleted_at','is',null)
     if(backend==='postgres')query=query.forUpdate()
     if(!await query.executeTakeFirst())throw new MindCanvasItemMutationError('画布不存在',404)
     signal.throwIfAborted()
   }
-  const operations={layout:()=>updateItems(ctx,intent as Extract<CanvasEditIntent,{action:'layout'}>),remove:()=>removeItems(ctx,intent as Extract<CanvasEditIntent,{action:'remove'}>),
+  const operations={layout:()=>updateItems(ctx,intent as Extract<CanvasEditIntent,{action:'layout'}>),remove:()=>removeItems(ctx,intent as Extract<CanvasEditIntent,{action:'remove'}>),delete_note:()=>deleteNotes(ctx,intent as Extract<CanvasEditIntent,{action:'delete_note'}>),
     note:()=>updateNotes(ctx,intent as Extract<CanvasEditIntent,{action:'note'}>),connect:()=>connectItems(ctx,intent as Extract<CanvasEditIntent,{action:'connect'}>),anchor:()=>updateAnchor(ctx,intent as Extract<CanvasEditIntent,{action:'anchor'}>),
     create_note:()=>applyCanvasPlacements(ctx,intent as CanvasPlacementIntent),add:()=>applyCanvasPlacements(ctx,intent as CanvasPlacementIntent)}
   const result=await operations[intent.action]()
   signal.throwIfAborted()
   const changed= 'changed' in result ? result.changed : undefined
   const mutated:boolean=typeof changed==='boolean'?changed:result.results.some(row=>row.created===true)
-  const value=intent.batched?{...(intent.action==='note'?{}:{canvas_id:intent.canvas_id}),results:result.results,count:result.results.length}:result.results[0]!
+  const value=intent.batched?{...(intent.action==='note'||intent.action==='delete_note'?{}:{canvas_id:intent.canvas_id}),results:result.results,count:result.results.length}:result.results[0]!
   return {value,publications:result.publications,mutated}
+}
+
+/** 批处理按旧 Python 顺序在同一外层事务中复用 Mind 用例；失败由调用方回滚整批。 */
+export async function applyCanvasEditBatch(tx:Transaction<Database>,backend:Backend,rawOwner:string,intent:CanvasBatchIntent,context:string,signal:AbortSignal){
+  const publications:CanvasEditPublication[]=[]
+  const results:Record<string,unknown>[]=[]
+  let mutated=false
+  for(let index=0;index<intent.operations.length;index++){
+    signal.throwIfAborted()
+    const entry=intent.operations[index]!
+    try{
+      if('w' in entry||'h' in entry)throw new MindCanvasItemMutationError('不能修改画布卡片大小，请使用 width 和 height 设置画布便签大小',422)
+      if(entry.position&&('w' in entry.position||'h' in entry.position))throw new MindCanvasItemMutationError('不能在 position 中传入卡片大小，请使用 width/height',422)
+      if(entry.kind!=='create_note'&&entry.kind!=='update_item'&&('width' in entry||'height' in entry))throw new MindCanvasItemMutationError('只有画布便签支持设置大小',422)
+      let edit:CanvasEditIntent
+      switch(entry.kind){
+        case 'create_note':
+          if(entry.title!==undefined&&(typeof entry.title!=='string'||[...entry.title.trim()].length>300)||entry.content!==undefined&&typeof entry.content!=='string')throw new MindCanvasNoteMutationError('第 '+(index+1)+' 个便签操作格式不正确',422)
+          edit={action:'create_note',canvas_id:intent.canvas_id,entries:[{title:entry.title,content:entry.content,color:entry.color,position:entry.position,width:entry.width,height:entry.height}],batched:false};break
+        case 'add_node':
+          if(!['project','file','event'].includes(String(entry.ref_type))||!Number.isSafeInteger(entry.ref_id))throw new MindRefNodeCreateError(422,'第 '+(index+1)+' 个放置操作缺少有效引用')
+          edit={action:'add',canvas_id:intent.canvas_id,entries:[{ref_type:entry.ref_type,ref_id:entry.ref_id,position:entry.position}],batched:false};break
+        case 'update_item':
+          if(!Number.isSafeInteger(entry.item_id))throw new MindCanvasItemMutationError('第 '+(index+1)+' 个布局操作缺少 item_id',422)
+          if(!['x','y','z','collapsed','width','height'].some(field=>entry[field]!==undefined))throw new MindCanvasItemMutationError('第 '+(index+1)+' 个布局操作没有修改字段',422)
+          edit={action:'layout',canvas_id:intent.canvas_id,entries:[{item_id:entry.item_id!,x:entry.x,y:entry.y,z:entry.z,collapsed:entry.collapsed,width:entry.width,height:entry.height}],batched:false};break
+        case 'remove_item':
+          if(!Number.isSafeInteger(entry.item_id))throw new MindCanvasItemMutationError('第 '+(index+1)+' 个移除操作缺少 item_id',422)
+          edit={action:'remove',canvas_id:intent.canvas_id,item_ids:[entry.item_id!],batched:false};break
+        case 'delete_note':
+          if(!Number.isSafeInteger(entry.node_id)||entry.node_id!<=0)throw new MindCanvasNoteMutationError('第 '+(index+1)+' 个删除便签操作必须提供正整数 node_id',422)
+          edit={action:'delete_note',canvas_id:intent.canvas_id,node_ids:[entry.node_id!],batched:false};break
+        case 'connect':
+          if(!Number.isSafeInteger(entry.source_node_id)||!Number.isSafeInteger(entry.target_node_id))throw new MindCanvasRelationMutationError(422,'第 '+(index+1)+' 个连接操作缺少节点')
+          if((entry.source_side===undefined)!==(entry.target_side===undefined))throw new MindCanvasRelationMutationError(422,'第 '+(index+1)+' 个连接操作的两端连接点必须同时提供')
+          edit={action:'connect',canvas_id:intent.canvas_id,source_node_id:entry.source_node_id!,target_node_id:entry.target_node_id!,source_side:entry.source_side,target_side:entry.target_side,batched:false};break
+        default: throw new MindCanvasItemMutationError(`不支持的批量操作 ${(entry as {kind?:string}).kind??'空操作'}`,422)
+      }
+      const result=await applyCanvasEdits(tx,backend,rawOwner,edit,context,signal)
+      const value=result.value&&typeof result.value==='object'&&!Array.isArray(result.value)?result.value as Record<string,unknown>:{}
+      delete value.canvas_id
+      results.push({index,kind:entry.kind,...value})
+      publications.push(...result.publications)
+      mutated ||= result.mutated
+    }catch(error){
+      if(error instanceof Error)error.message=`第 ${index+1} 个操作${error.message}`
+      throw error
+    }
+  }
+  return {value:{canvas_id:intent.canvas_id,request_id:intent.request_id,operations:results,atomic:true},publications,mutated}
 }

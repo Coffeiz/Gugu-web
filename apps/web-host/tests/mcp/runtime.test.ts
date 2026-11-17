@@ -7,23 +7,25 @@ const other='00000000-0000-4000-8000-000000000072'
 const server='00000000-0000-4000-8000-000000000073'
 const row={id:server,name:'高德',scope:'user',transport:'http',endpoint:'',encrypted_endpoint:'cipher-endpoint',endpoint_nonce:'n',encrypted_endpoint_key:'k',endpoint_key_version:1,command:'',credential_slots:[{id:'auth',target:'header',name:'Authorization',prefix:'Bearer '}],encrypted_credentials:'cipher-creds',credentials_nonce:'n',encrypted_credentials_key:'k',credentials_key_version:1,encrypted_headers:'',headers_nonce:'',encrypted_headers_key:'',headers_key_version:1,encrypted_query_params:'',query_params_nonce:'',encrypted_query_params_key:'',query_params_key_version:1,enabled:true,confirm_mode:'confirm_all',timeout_seconds:15,tool_allowlist:['geocode'],created_at:null,updated_at:null}
 
-function fixture(callResponse?:unknown){
+function fixture(callResponse?:unknown, callError?:unknown){
  let enabled=true,closed=0,transportClosed=0,connects=0,listed=0,calls=0
  let receivedSignal:AbortSignal|undefined
+ let currentRow={...row}
+ const receivedAuthorization:string[]=[]
  const service=createMcpRuntime({
-  configs:async user=>user===owner?[row]:[],enabled:()=>enabled,maxTools:5,builtinNames:async()=>new Set(['builtin_tool']),
-  decrypt:{async decrypt(input){return input.ciphertext==='cipher-endpoint'?'https://mcp.example/rpc':JSON.stringify({auth:'synthetic-secret'})}},
+  configs:async user=>user===owner?[currentRow]:[],enabled:()=>enabled,maxTools:5,builtinNames:async()=>new Set(['builtin_tool']),
+  decrypt:{async decrypt(input){return input.ciphertext.startsWith('cipher-endpoint')?`https://mcp.example/${input.ciphertext.slice('cipher-endpoint'.length)||'rpc'}`:JSON.stringify({auth:input.ciphertext==='cipher-creds-v2'?'rotated-synthetic-secret':'synthetic-secret'})}},
   transport:()=>({async request(){throw new Error('must use SDK fetch')},async close(){transportClosed++}} as never),
   client(input){
-   assert.equal(input.headers.Authorization,'Bearer synthetic-secret')
+   receivedAuthorization.push(input.headers.Authorization??'')
    assert.notEqual(input.fetch,globalThis.fetch)
    return {async connect(){connects++},async listTools(){listed++;return {tools:[
     {name:'geocode',description:'地址查询',inputSchema:{type:'object',properties:{address:{type:'string',minLength:2,examples:['private']}},required:['address'],additionalProperties:false}},
     {name:'not_allowed',inputSchema:{type:'object'}},{name:'builtin_tool',inputSchema:{type:'object'}},
-   ]}},async callTool(name:string,args:Record<string,unknown>,options?:{signal?:AbortSignal}){calls++;receivedSignal=options?.signal;return callResponse??{isError:false,content:[{type:'text',text:`called:${name}:${String(args.address)}`}]}},async close(){closed++}}
+   ]}},async callTool(name:string,args:Record<string,unknown>,options?:{signal?:AbortSignal}){calls++;receivedSignal=options?.signal;if(callError)throw callError;return callResponse??{isError:false,content:[{type:'text',text:`called:${name}:${String(args.address)}`}]}},async close(){closed++}}
   },
  })
- return {service,setEnabled(v:boolean){enabled=v},stats:()=>({closed,transportClosed,connects,listed,calls}),receivedSignal:()=>receivedSignal}
+ return {service,setEnabled(v:boolean){enabled=v},setRow(next:typeof currentRow){currentRow=next},stats:()=>({closed,transportClosed,connects,listed,calls}),receivedAuthorization:()=>receivedAuthorization,receivedSignal:()=>receivedSignal}
 }
 
 test('MCP runtime 按 owner 和启用状态按需载入，列表只返回实际加载的过滤工具',async()=>{
@@ -34,6 +36,17 @@ test('MCP runtime 按 owner 和启用状态按需载入，列表只返回实际�
  assert.deepEqual(await f.service.tools(owner,server),{server_id:server,state:'ok',loaded_tool_count:1,loaded_tool_names:['mcp_gaode_geocode'],last_error:null})
  assert.equal(f.stats().connects,1)
  assert.equal(f.stats().listed,1)
+})
+
+test('另一实例轮换凭据后，旧连接关闭并使用最新 owner 配置重连',async()=>{
+ const f=fixture()
+ assert.equal((await f.service.load(owner,server)).state,'ok')
+ assert.deepEqual(f.receivedAuthorization(),['Bearer synthetic-secret'])
+ f.setRow({...row,encrypted_credentials:'cipher-creds-v2',credentials_nonce:'new-nonce'})
+ assert.equal((await f.service.dispatch(owner,server,'mcp_gaode_geocode',{address:'杭州'})).result,'called:geocode:杭州')
+ assert.deepEqual(f.receivedAuthorization(),['Bearer synthetic-secret','Bearer rotated-synthetic-secret'])
+ assert.deepEqual(f.stats(),{closed:1,transportClosed:1,connects:2,listed:2,calls:1})
+ await f.service.close()
 })
 
 test('禁用时不外连；重连先关闭旧连接，调用复用当前 owner runtime',async()=>{
@@ -83,6 +96,23 @@ test('MCP 工具执行只调用当前 owner 已发现的原名工具并投影 Py
  await f.service.close()
 })
 
+test('Agent runtime 区分外呼前拒绝和服务端执行错误，HTTP dispatch 不扩展旧响应',async()=>{
+ const f=fixture()
+ assert.deepEqual(await f.service.dispatchForAgent(other,server,'mcp_gaode_geocode',{address:'杭州'}),{
+  error:'MCP 工具不可用，请重新加载工具目录',executed:false,
+ })
+ assert.equal(f.stats().calls,0)
+ assert.deepEqual(await f.service.dispatch(other,server,'mcp_gaode_geocode',{address:'杭州'}),{
+  error:'MCP 工具不可用，请重新加载工具目录',
+ })
+
+ const failed=fixture({isError:true,content:[{type:'text',text:'服务端执行失败'}]})
+ assert.deepEqual(await failed.service.dispatchForAgent(owner,server,'mcp_gaode_geocode',{address:'杭州'}),{
+  error:'服务端执行失败',executed:true,
+ })
+ await f.service.close();await failed.service.close()
+})
+
 test('MCP 工具执行将取消信号交给 SDK，并把不可信结果限制在 20000 字符',async()=>{
  const f=fixture({isError:false,content:[{type:'text',text:'x'.repeat(20001)}]})
  const controller=new AbortController()
@@ -90,6 +120,14 @@ test('MCP 工具执行将取消信号交给 SDK，并把不可信结果限制在
  assert.equal(result.result,`${'x'.repeat(20000)}\n…（结果过长已截断）`)
  assert.equal(f.receivedSignal(),controller.signal)
  assert.equal(f.stats().calls,1)
+ await f.service.close()
+})
+
+test('tools/call 已发出后连接失败标记为不确定，不能把潜在副作用作为可重试失败',async()=>{
+ const f=fixture(undefined,new Error('synthetic disconnect after request write'))
+ assert.deepEqual(await f.service.dispatchForAgent(owner,server,'mcp_gaode_geocode',{address:'杭州'}),{uncertain:true})
+ assert.deepEqual(await f.service.dispatch(owner,server,'mcp_gaode_geocode',{address:'杭州'}),{error:'MCP 工具结果不确定，请检查服务端状态后再决定是否重试'})
+ assert.equal(f.stats().calls,2)
  await f.service.close()
 })
 
@@ -102,6 +140,8 @@ test('MCP tools/call 的服务端错误作为工具错误返回，不暴露连�
 
 test('MCP 工具调用拒绝非对象参数，不向 server 发起 tools/call',async()=>{
  const f=fixture()
+ const agentResult=await f.service.dispatchForAgent(owner,server,'mcp_gaode_geocode',null as never)
+ assert.equal('executed' in agentResult && agentResult.executed,false)
  const result=await f.service.dispatch(owner,server,'mcp_gaode_geocode',null as never)
  assert.equal('result' in result, true)
  const payload=JSON.parse((result as {result:string}).result)

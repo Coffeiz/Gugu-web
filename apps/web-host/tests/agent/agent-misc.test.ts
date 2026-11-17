@@ -92,3 +92,20 @@ test('规范命令菜单只公开可用命令且保留各自插入文本', async
     await app.close()
   }
 })
+
+test('问候路由鉴权后按 owner 生成，拒绝不支持的 locale 并维持旧响应形状', async () => {
+  const app = Fastify()
+  const calls: unknown[][] = []
+  registerAgentMiscRoutes(app, {
+    async requireUser() {}, ownerIdFromRequest: () => 'owner-a',
+    commandMenu: () => [], defaultStateLabels: {}, stateLabelOverrides: () => ({}),
+    async greeting(ownerId, locale) { calls.push([ownerId, locale]); return { text: '早呀', enabled: true } },
+  })
+  try {
+    const response = await app.inject({ method: 'GET', url: '/api/v1/agent/greeting?locale=zh-CN' })
+    assert.equal(response.statusCode, 200)
+    assert.deepEqual(response.json(), { text: '早呀', enabled: true })
+    assert.deepEqual(calls, [['owner-a', 'zh-CN']])
+    assert.equal((await app.inject({ method: 'GET', url: '/api/v1/agent/greeting?locale=fr-FR' })).statusCode, 422)
+  } finally { await app.close() }
+})

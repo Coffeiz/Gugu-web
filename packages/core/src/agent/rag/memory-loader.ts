@@ -5,13 +5,14 @@ import { buildDocuments } from "./adapters/base.js";
 import { TtlCache } from "./ttl-cache.js";
 
 export type MemoryRagStorageReader = {
-  readText(input: { ownerId: string; key: string; maxChars: number }): Promise<string | null>;
+  readText(input: { ownerId: string; key: string; maxChars: number; signal?: AbortSignal }): Promise<string | null>;
 };
 
 export type MemoryRagScopeStatePort = {
   getMemoryScopeState(
     context: { ownerId: string },
     scope: { type: "group" | "member"; id: string; platform: string; botId: string },
+    signal?: AbortSignal,
   ): Promise<{ revision: string; tombstoned: boolean }>;
 };
 
@@ -275,10 +276,13 @@ function splitSections(text: string): Array<{ title: string; content: string }> 
   return sections;
 }
 
-async function readOwnerDocuments(ownerId: string, storage: MemoryRagStorageReader): Promise<{ documents: RagDocument[]; source: string }> {
+async function readOwnerDocuments(ownerId: string, storage: MemoryRagStorageReader, signal?: AbortSignal): Promise<{ documents: RagDocument[]; source: string }> {
+  signal?.throwIfAborted();
   const base = `${ownerId}/.agent/`;
-  const indexRaw = await storage.readText({ ownerId, key: `${ownerId}/${MEMORY_INDEX_KEY}`, maxChars: 50_000_000 });
-  const dailyRaw = await storage.readText({ ownerId, key: `${base}daily.md`, maxChars: 500_000 });
+  const indexRaw = await storage.readText({ ownerId, key: `${ownerId}/${MEMORY_INDEX_KEY}`, maxChars: 50_000_000, signal });
+  signal?.throwIfAborted();
+  const dailyRaw = await storage.readText({ ownerId, key: `${base}daily.md`, maxChars: 500_000, signal });
+  signal?.throwIfAborted();
   const indexValue = objectValue(parseJson(indexRaw));
   const storedRows = Array.isArray(indexValue?.documents) ? indexValue.documents : null;
   const hasValidIndex = indexValue?.schema_version === 1 && storedRows !== null;
@@ -288,12 +292,13 @@ async function readOwnerDocuments(ownerId: string, storage: MemoryRagStorageRead
       .filter((document): document is RagDocument => document !== null && document.source_id !== "daily");
   } else {
     const [profileRaw, patternRaw, factsJsonRaw, factsMarkdown, memoryRaw] = await Promise.all([
-      storage.readText({ ownerId, key: `${base}profile.json`, maxChars: 1_000_000 }),
-      storage.readText({ ownerId, key: `${base}pattern.json`, maxChars: 2_000_000 }),
-      storage.readText({ ownerId, key: `${base}facts.json`, maxChars: 2_000_000 }),
-      storage.readText({ ownerId, key: `${base}facts.md`, maxChars: 2_000_000 }),
-      storage.readText({ ownerId, key: `${base}memory.md`, maxChars: 20_000_000 }),
+      storage.readText({ ownerId, key: `${base}profile.json`, maxChars: 1_000_000, signal }),
+      storage.readText({ ownerId, key: `${base}pattern.json`, maxChars: 2_000_000, signal }),
+      storage.readText({ ownerId, key: `${base}facts.json`, maxChars: 2_000_000, signal }),
+      storage.readText({ ownerId, key: `${base}facts.md`, maxChars: 2_000_000, signal }),
+      storage.readText({ ownerId, key: `${base}memory.md`, maxChars: 20_000_000, signal }),
     ]);
+    signal?.throwIfAborted();
     const records: RagSourceRecord[] = [];
     profileItems(parseJson(profileRaw)).forEach((item, index) => {
       const record = memoryRecord({ type: "owner", id: ownerId, ownerId }, "profile", item.text, "用户画像", index);
@@ -343,14 +348,17 @@ async function readScopedDocuments(
   scope: AuthorizedMemoryScope,
   storage: MemoryRagStorageReader,
   revision: string,
+  signal?: AbortSignal,
 ): Promise<{ documents: RagDocument[]; revision: string; source: string }> {
+  signal?.throwIfAborted();
   const filenames = scope.type === "group"
     ? ["profile.json", "summary.json", "daily.md", "memory.md"]
     : ["profile.json", "pattern.json", "summary.json", "daily.md", "memory.md"];
   const prefix = groupScopePrefix(ownerId, scope);
   const values = await Promise.all(filenames.map((filename) => storage.readText({
-    ownerId, key: `${prefix}${filename}`, maxChars: 2_000_000,
+    ownerId, key: `${prefix}${filename}`, maxChars: 2_000_000, signal,
   })));
+  signal?.throwIfAborted();
   const data = Object.fromEntries(filenames.map((filename, index) => [
     filename.replace(/\.(json|md)$/u, ""), parseScopeFile(filename, values[index] ?? null),
   ]));
@@ -397,15 +405,26 @@ export async function loadDocumentVectors(
   vectorVersion: string,
   storage: MemoryRagStorageReader,
   probe?: MemoryProbe,
+  signal?: AbortSignal,
 ): Promise<Record<string, number[]>> {
+  signal?.throwIfAborted();
   if (!vectorVersion || !documents.length) return {};
   const base = `${ownerId}/.agent/`;
   const storageStarted = performance.now();
+  const optionalRead = async (key: string): Promise<string | null> => {
+    try {
+      return await storage.readText({ ownerId, key, maxChars: 50_000_000, signal });
+    } catch {
+      signal?.throwIfAborted();
+      return null;
+    }
+  };
   const [memoryRaw, knowledgeRaw, patternRaw] = await Promise.all([
-    storage.readText({ ownerId, key: `${base}memory_vec.json`, maxChars: 50_000_000 }).catch(() => null),
-    storage.readText({ ownerId, key: `${ownerId}/.agent/knowledge/vectors.json`, maxChars: 50_000_000 }).catch(() => null),
-    storage.readText({ ownerId, key: `${base}pattern_vec.json`, maxChars: 50_000_000 }).catch(() => null),
+    optionalRead(`${base}memory_vec.json`),
+    optionalRead(`${ownerId}/.agent/knowledge/vectors.json`),
+    optionalRead(`${base}pattern_vec.json`),
   ]);
+  signal?.throwIfAborted();
   if (probe) recordElapsed(probe, "vector_storage_read", storageStarted);
   const parseStarted = performance.now();
   const parseCached = (raw: string | null, cacheKey: string) => {
@@ -455,10 +474,12 @@ export async function prepareMemory(
     snapshotRevision: string;
     snapshotText: string;
     vectorVersion: string;
+    signal?: AbortSignal;
   },
   runtime: MemoryRagScopeStatePort,
   storage: MemoryRagStorageReader,
 ): Promise<PreparedMemory> {
+  input.signal?.throwIfAborted();
   const prepareStarted = performance.now();
   const probe: MemoryProbe = { stage_ms: {}, counts: {}, cache: { owner_cache_hit: false, scoped_cache_hit: false } };
   const ownerId = dataContext(input.ownerId).ownerId;
@@ -482,7 +503,8 @@ export async function prepareMemory(
       sourceNames.push("owner-cache");
     } else {
       const readStarted = performance.now();
-      const loaded = await readOwnerDocuments(ownerId, storage);
+      const loaded = await readOwnerDocuments(ownerId, storage, input.signal);
+      input.signal?.throwIfAborted();
       recordElapsed(probe, "owner_document_read_and_adapt", readStarted);
       baseDocuments.push(...loaded.documents);
       sourceNames.push(loaded.source);
@@ -504,8 +526,9 @@ export async function prepareMemory(
       state: await runtime.getMemoryScopeState({ ownerId }, {
         type: scope.type as "group" | "member", id: scope.id,
         platform: String(scope.platform || ""), botId: String(scope.botId || ""),
-      }),
+      }, input.signal),
     })));
+    input.signal?.throwIfAborted();
     recordElapsed(probe, "scope_state_read", stageStarted);
     const revisions = states.map(({ scope, state }) => `${scope.type}:${scope.id}:${state.revision}:${state.tombstoned ? 1 : 0}`);
     const revision = revisions.join("|");
@@ -521,7 +544,8 @@ export async function prepareMemory(
       const readStarted = performance.now();
       const loaded = await Promise.all(states.map(({ scope, state }) => state.tombstoned
         ? Promise.resolve({ documents: [], revision: `tombstoned:${state.revision}`, source: "scope-tombstone" })
-        : readScopedDocuments(ownerId, scope, storage, state.revision)));
+        : readScopedDocuments(ownerId, scope, storage, state.revision, input.signal)));
+      input.signal?.throwIfAborted();
       recordElapsed(probe, "scoped_document_read_and_adapt", readStarted);
       const documents = loaded.flatMap((entry) => entry.documents);
       baseDocuments.push(...documents);
@@ -560,7 +584,8 @@ export async function prepareMemory(
   probe.counts.selected_documents = selected.length;
 
   stageStarted = performance.now();
-  const vectors = await loadDocumentVectors(ownerId, selected, input.vectorVersion, storage, probe);
+  const vectors = await loadDocumentVectors(ownerId, selected, input.vectorVersion, storage, probe, input.signal);
+  input.signal?.throwIfAborted();
   recordElapsed(probe, "vector_load", stageStarted);
   probe.counts.vector_count = Object.keys(vectors).length;
   recordElapsed(probe, "prepare_memory_total", prepareStarted);

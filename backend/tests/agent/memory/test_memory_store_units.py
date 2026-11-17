@@ -407,3 +407,25 @@ async def test_read_memory_vector_branch_embeds_query_once(storage, monkeypatch)
     assert "喜欢猫" in result["pattern"] and "夜猫子" in result["pattern"]  # 重要度保底全保
     # 向量挑块生效：注入按预算截断而不是整篇（整篇 2202 字）
     assert len(result["memory"]) <= store.MEMORY_INJECT_CHARS < len(memory_text)
+
+
+async def test_read_memory_triggers_embedding_from_raw_pattern_count_before_retirement_filter(storage, monkeypatch):
+    from agent.memory import store
+
+    calls = _fake_embedding(monkeypatch)
+    monkeypatch.setattr(store, "PATTERN_INJECT_MAX", 2)
+    async def fake_lens(_uid):
+        return ""
+    monkeypatch.setattr("agent.memory.lens.read_block", fake_lens)
+    await store.write_pattern_list(UID, [
+        _pattern("p1", "有效模式甲"),
+        _pattern("p2", "有效模式乙"),
+        _pattern("retired", "已退休模式", conf=0.1),
+    ])
+    await store.write_pattern_vecs(UID, {"retired": {"v": [1.0], "t": "t"}})
+
+    result = await store.read_memory(UID, query="猫")
+
+    assert calls["embed"] == 1
+    assert "有效模式甲" in result["pattern"] and "有效模式乙" in result["pattern"]
+    assert "已退休模式" not in result["pattern"]

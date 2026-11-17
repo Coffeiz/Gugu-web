@@ -1,11 +1,28 @@
-import { createScopedRagSearch, createSqlRagPersistentIndexReader, parseAgentKnowledgeRecord, type RagSearchScope } from '@gugu/core/agent'
+import { createAgentKnowledgeOverview, createScopedRagSearch, createSqlRagPersistentIndexReader, parseAgentKnowledgeRecord, type AgentKnowledgeReadStore, type ContextDataPorts, type Json, type RagSearchScope, type RunIdentity } from '@gugu/core/agent'
 import type { SqlDataRuntime } from '@gugu/core/data'
 import type { KnowledgeReadPort, KnowledgeSearchHit } from '@gugu/core/tools'
-import type { RunIdentity } from '@gugu/core/agent'
-import type { AgentKnowledgeReadStore } from '@gugu/core/agent'
 import { dataContext } from '@gugu/core/contracts'
 
 const ID = /^[A-Za-z0-9_-]{1,128}$/u
+
+/** Python load_knowledge_overview 在知识存储不可用时保留本轮上下文，其它数据仍可继续加载。 */
+export function createAgentKnowledgeOverviewLoader(store: AgentKnowledgeReadStore): ContextDataPorts['loadKnowledge'] {
+  const readOverview = createAgentKnowledgeOverview(store)
+  return async (identity, signal) => {
+    signal?.throwIfAborted()
+    const owner = dataContext(identity.ownerId).ownerId
+    try {
+      return (await readOverview(owner, signal)).map(item => ({
+        title: item.title,
+        topic: item.topic,
+        description: item.description,
+      }) as Record<string, Json>)
+    } catch {
+      signal?.throwIfAborted()
+      return []
+    }
+  }
+}
 
 function localIso(value: string, timezone: string): string {
   const timestamp = Date.parse(value)

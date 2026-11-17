@@ -31,6 +31,10 @@ test('共享固定语料保持中文、英文、混合检索相关性与空结�
       scope_type: 'owner', scope_id: corpus.owner_id,
     })
     const hitIds = result.results.map((item) => item.id)
+    const repeated = index.search(corpus.owner_id, queryCase.query, corpus.top_k, [], {
+      scope_type: 'owner', scope_id: corpus.owner_id,
+    })
+    assert.deepEqual(repeated.results.map((item) => item.id), hitIds, `${queryCase.id}: repeated query changed hit order`)
     assert.ok(result.results.every((item) => item.document?.scope_type === 'owner' && item.document?.scope_id === corpus.owner_id),
       `${queryCase.id}: owner search returned an out-of-scope result`)
     const relevant = new Set(queryCase.relevant_ids)
@@ -41,7 +45,7 @@ test('共享固定语料保持中文、英文、混合检索相关性与空结�
     const mrr = reciprocalRank < 0 ? 0 : 1 / (reciprocalRank + 1)
 
     assert.equal(recallAt3, 1, `${queryCase.id}: hits=${hitIds.join(',')}`)
-    if (relevant.size) assert.ok(mrr >= 0.5, `${queryCase.id}: MRR=${mrr}, hits=${hitIds.join(',')}`)
+    if (relevant.size) assert.equal(mrr, 1, `${queryCase.id}: MRR=${mrr}, hits=${hitIds.join(',')}`)
     else assert.deepEqual(hitIds, [], `${queryCase.id} must return no unrelated candidates`)
   }
 })

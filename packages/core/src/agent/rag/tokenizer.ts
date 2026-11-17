@@ -32,7 +32,8 @@ function monthToken(month: number): string {
 
 /** 将明确的日期/月名映射为规范月份词项；不从月份猜测年份。 */
 function dateMonthTokens(text: string): string[] {
-  const normalized = text.toLocaleLowerCase();
+  // Python str.lower() 不依赖进程 locale；Host 使用土耳其语等 locale 时，索引和查询仍须一致。
+  const normalized = text.toLowerCase();
   const months = new Set<number>();
 
   for (const match of normalized.matchAll(/\b\d{4}[-/.](0?[1-9]|1[0-2])(?=[-/.]\d{1,2}\b|\b)/gu)) {
@@ -75,7 +76,7 @@ function segmentChinese(token: string): string[] {
 /** 只保留 Jieba 中文词和完整 ASCII 实体，去除空格、标点及派生 token。 */
 export function tokenizeRaw(text: string): string[] {
   if (!jieba) throw new Error("RAG 分词器未装配")
-  const normalized = (text || "").toLocaleLowerCase();
+  const normalized = (text || "").toLowerCase();
   const raw = (normalized.match(TOKEN_RE) ?? []) as string[];
   const compact = normalized.replace(/(?<=[a-z])\s+(?=\d)|(?<=\d)\s+(?=[a-z])/gu, "");
   const compactTokens = (compact.match(TOKEN_RE) ?? []).filter((token: string) => !raw.includes(token));

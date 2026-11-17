@@ -89,6 +89,27 @@ describe('可信工具注册边界', () => {
     expect(await f.registry.tools.dispatch(f.call, { ...f.scope, resolution: { interactionId: 'fake', receiptId: 'fake', status: 'confirmed', value: true } })).toMatchObject({ successful: false, executed: false })
     expect(f.execute).not.toHaveBeenCalled()
   })
+  it('只有显式支持确认重放的工具可收到已确认的可信交互回执', async () => {
+    const execute = vi.fn<ToolDefinition['execute']>().mockImplementation(async (_input, scope) => scope.resolution
+      ? { kind: 'completed', value: { status: scope.resolution.status }, successful: true, mutated: true }
+      : { kind: 'waiting', interaction: { id: 'interaction-a', kind: 'confirmation', toolCall: { id: 'call-a', name: 'example', input: {} } } })
+    const definition: ToolDefinition = {
+      definition: { name: 'example', schema: { type: 'function', function: { name: 'example', parameters: { type: 'object', properties: {} } } } },
+      effect: 'write', requiresInteraction: true, confirmationReplay: true,
+      validate: input => typeof input === 'object' && input !== null && !Array.isArray(input) ? { success: true, data: input } : { success: false },
+      execute,
+    }
+    const registry = createToolRegistry({ tools: [definition], authorize: async () => true })
+    const scope: ToolScope = { identity, roundId: 'round-a', signal: new AbortController().signal, execute: vi.fn(), resolution: null }
+    const call = { id: 'call-a', name: 'example', input: {} }
+    expect(await registry.tools.dispatch(call, scope)).toMatchObject({ kind: 'waiting', interaction: { id: 'interaction-a' } })
+    expect(await registry.tools.dispatch(call, { ...scope, resolution: { interactionId: 'interaction-a', receiptId: 'receipt-a', status: 'answered', value: null } }))
+      .toMatchObject({ kind: 'completed', successful: false, executed: false })
+    expect(await registry.tools.dispatch(call, { ...scope, resolution: { interactionId: 'interaction-a', receiptId: 'receipt-a', status: 'confirmed', value: null } }))
+      .toMatchObject({ kind: 'completed', successful: true, mutated: true, value: { status: 'confirmed' } })
+    expect(execute).toHaveBeenCalledTimes(2)
+    expect(execute.mock.calls[1]?.[1].resolution).toMatchObject({ status: 'confirmed', receiptId: 'receipt-a' })
+  })
   it('危险工具未接可信确认时保持不可用', async () => {
     const f = setup('write', true)
     expect(await f.registry.capabilities(identity)).toEqual([])

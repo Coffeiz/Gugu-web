@@ -2,6 +2,7 @@ import { sql, type Kysely } from 'kysely'
 import { CoreError, dataContext } from '../contracts/index.js'
 import { normalizeMcpServerName, normalizeMcpSlots, validateMcpCredentialValues, type McpCredentialSlot } from './server-config.js'
 import type { McpEnvelope } from './server-create.js'
+import { isMcpUniqueViolation, mcpJsonArray, mcpOwnerKey, type McpDatabaseBackend } from './storage.js'
 
 export interface McpServerPatch {
   name?: string | null
@@ -69,18 +70,23 @@ async function readEndpoint(row: Stored, crypto: McpEnvelopeCrypto) {
 export function createMcpServerMutations<DB>(db: Kysely<DB>, options: {
   crypto: McpEnvelopeCrypto
   maxTools: number | (() => number)
-}) {
+}, backend: McpDatabaseBackend = 'postgres') {
   async function update(rawOwner: string, rawId: string, patch: McpServerPatch) {
-    const owner = dataContext(rawOwner).ownerId
+    const owner = mcpOwnerKey(dataContext(rawOwner).ownerId, backend)
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawId))
       throw new CoreError('not_found', 'MCP server 不存在')
     return db.transaction().execute(async tx => {
-      const selected = await sql<Stored>`SELECT id::text AS id,name,transport,endpoint,encrypted_endpoint,endpoint_nonce,
+      const selected = backend === 'postgres' ? await sql<Stored>`SELECT id::text AS id,name,transport,endpoint,encrypted_endpoint,endpoint_nonce,
         encrypted_endpoint_key,endpoint_key_version,command,credential_slots,encrypted_credentials,credentials_nonce,
         encrypted_credentials_key,credentials_key_version,encrypted_headers,headers_nonce,encrypted_headers_key,headers_key_version,
         encrypted_query_params,query_params_nonce,encrypted_query_params_key,query_params_key_version,
         enabled,confirm_mode,timeout_seconds,tool_allowlist,created_at
-        FROM user_mcp_servers WHERE id=${rawId} AND user_id=${owner} AND scope='user' FOR UPDATE`.execute(tx)
+        FROM user_mcp_servers WHERE id=${rawId} AND user_id=${owner} AND scope='user' FOR UPDATE`.execute(tx) : await sql<Stored>`SELECT id,name,transport,endpoint,encrypted_endpoint,endpoint_nonce,
+        encrypted_endpoint_key,endpoint_key_version,command,credential_slots,encrypted_credentials,credentials_nonce,
+        encrypted_credentials_key,credentials_key_version,encrypted_headers,headers_nonce,encrypted_headers_key,headers_key_version,
+        encrypted_query_params,query_params_nonce,encrypted_query_params_key,query_params_key_version,
+        enabled,confirm_mode,timeout_seconds,tool_allowlist,created_at
+        FROM user_mcp_servers WHERE id=${rawId} AND user_id=${owner} AND scope='user'`.execute(tx)
       const row = selected.rows[0]
       if (!row) throw new CoreError('not_found', 'MCP server 不存在')
 
@@ -108,7 +114,7 @@ export function createMcpServerMutations<DB>(db: Kysely<DB>, options: {
       if (command.includes('\0')) throw new CoreError('invalid_request', 'stdio 启动命令无效')
 
       const slots: McpCredentialSlot[] = patch.credential_slots == null
-        ? (Array.isArray(row.credential_slots) ? row.credential_slots as McpCredentialSlot[] : [])
+        ? mcpJsonArray<McpCredentialSlot>(row.credential_slots)
         : normalizeMcpSlots(patch.credential_slots)
       let encryptedCredentials = row.encrypted_credentials, credentialsNonce = row.credentials_nonce
       let wrappedCredentialsKey = row.encrypted_credentials_key, credentialsKeyVersion = row.credentials_key_version
@@ -130,7 +136,9 @@ export function createMcpServerMutations<DB>(db: Kysely<DB>, options: {
       }
       const confirmMode = patch.confirm_mode ?? row.confirm_mode
       const timeout = patch.timeout_seconds ?? row.timeout_seconds
-      const allowlist = patch.tool_allowlist ?? (Array.isArray(row.tool_allowlist) ? row.tool_allowlist as string[] : [])
+      const enabled = patch.enabled ?? Boolean(row.enabled)
+      const enabledValue = backend === 'sqlite' ? Number(enabled) : enabled
+      const allowlist = patch.tool_allowlist ?? mcpJsonArray<string>(row.tool_allowlist)
       const maxTools = typeof options.maxTools === 'function' ? options.maxTools() : options.maxTools
       if (!['auto', 'confirm_all'].includes(confirmMode)) throw new CoreError('invalid_request', '确认模式只支持 auto / confirm_all')
       if (!Number.isInteger(timeout) || timeout < 1 || timeout > 300) throw new CoreError('invalid_request', '超时秒数需在 1-300 之间')
@@ -139,18 +147,28 @@ export function createMcpServerMutations<DB>(db: Kysely<DB>, options: {
 
       const slotsJson = JSON.stringify(slots), allowlistJson = JSON.stringify(allowlist)
       try {
-        await sql`UPDATE user_mcp_servers SET name=${name},transport=${transport},endpoint='',encrypted_endpoint=${encryptedEndpoint},
+        if (backend === 'postgres') await sql`UPDATE user_mcp_servers SET name=${name},transport=${transport},endpoint='',encrypted_endpoint=${encryptedEndpoint},
           endpoint_nonce=${endpointNonce},encrypted_endpoint_key=${wrappedEndpointKey},endpoint_key_version=${endpointKeyVersion},
           command=${command},credential_slots=${slotsJson}::jsonb,encrypted_credentials=${encryptedCredentials},
           credentials_nonce=${credentialsNonce},encrypted_credentials_key=${wrappedCredentialsKey},
           credentials_key_version=${credentialsKeyVersion},encrypted_headers=${encryptedHeaders},headers_nonce=${headersNonce},
           encrypted_headers_key=${wrappedHeadersKey},headers_key_version=${headersKeyVersion},
           encrypted_query_params=${encryptedQuery},query_params_nonce=${queryNonce},encrypted_query_params_key=${wrappedQueryKey},
-          query_params_key_version=${queryKeyVersion},enabled=${patch.enabled ?? row.enabled},confirm_mode=${confirmMode},
+          query_params_key_version=${queryKeyVersion},enabled=${enabledValue},confirm_mode=${confirmMode},
           timeout_seconds=${timeout},tool_allowlist=${allowlistJson}::jsonb,updated_at=CURRENT_TIMESTAMP
           WHERE id=${rawId} AND user_id=${owner} AND scope='user'`.execute(tx)
+        else await sql`UPDATE user_mcp_servers SET name=${name},transport=${transport},endpoint='',encrypted_endpoint=${encryptedEndpoint},
+          endpoint_nonce=${endpointNonce},encrypted_endpoint_key=${wrappedEndpointKey},endpoint_key_version=${endpointKeyVersion},
+          command=${command},credential_slots=${slotsJson},encrypted_credentials=${encryptedCredentials},
+          credentials_nonce=${credentialsNonce},encrypted_credentials_key=${wrappedCredentialsKey},
+          credentials_key_version=${credentialsKeyVersion},encrypted_headers=${encryptedHeaders},headers_nonce=${headersNonce},
+          encrypted_headers_key=${wrappedHeadersKey},headers_key_version=${headersKeyVersion},
+          encrypted_query_params=${encryptedQuery},query_params_nonce=${queryNonce},encrypted_query_params_key=${wrappedQueryKey},
+          query_params_key_version=${queryKeyVersion},enabled=${enabledValue},confirm_mode=${confirmMode},
+          timeout_seconds=${timeout},tool_allowlist=${allowlistJson},updated_at=CURRENT_TIMESTAMP
+          WHERE id=${rawId} AND user_id=${owner} AND scope='user'`.execute(tx)
       } catch (error) {
-        if ((error as { code?: unknown }).code === '23505') throw new CoreError('invalid_request', `名称 ${name} 已存在`)
+        if (isMcpUniqueViolation(error)) throw new CoreError('invalid_request', `名称 ${name} 已存在`)
         throw error
       }
       await sql`DELETE FROM user_mcp_tool_schema_snapshots WHERE user_id=${owner}`.execute(tx)
@@ -161,7 +179,7 @@ export function createMcpServerMutations<DB>(db: Kysely<DB>, options: {
         encrypted_headers: encryptedHeaders, headers_nonce: headersNonce, encrypted_headers_key: wrappedHeadersKey, headers_key_version: headersKeyVersion,
         encrypted_query_params: encryptedQuery, query_params_nonce: queryNonce,
         encrypted_query_params_key: wrappedQueryKey, query_params_key_version: queryKeyVersion,
-        enabled: patch.enabled ?? row.enabled, confirm_mode: confirmMode, timeout_seconds: timeout,
+        enabled, confirm_mode: confirmMode, timeout_seconds: timeout,
         tool_allowlist: allowlist }
       const [plainEndpoint, decryptedValues] = await Promise.all([readEndpoint(updated, options.crypto), readCredentials(updated, options.crypto)])
       let responseSlots = slots
@@ -183,19 +201,20 @@ export function createMcpServerMutations<DB>(db: Kysely<DB>, options: {
         id: row.id, name, scope: 'user', transport, endpoint: transport === 'http' ? plainEndpoint : '', command,
         credential_slots: responseSlots, credential_values: credentialValues,
         credential_state: { configured, slot_ids: responseSlots.map(slot => slot.id) }, has_credentials: configured,
-        enabled: patch.enabled ?? row.enabled, confirm_mode: confirmMode, timeout_seconds: timeout,
+        enabled, confirm_mode: confirmMode, timeout_seconds: timeout,
         tool_allowlist: [...allowlist], created_at: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
       }
     })
   }
 
   async function remove(rawOwner: string, rawId: string) {
-    const owner = dataContext(rawOwner).ownerId
+    const owner = mcpOwnerKey(dataContext(rawOwner).ownerId, backend)
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawId))
       throw new CoreError('not_found', 'MCP server 不存在')
     return db.transaction().execute(async tx => {
-      const deleted = await sql<{ id: string }>`DELETE FROM user_mcp_servers
-        WHERE id=${rawId} AND user_id=${owner} AND scope='user' RETURNING id::text AS id`.execute(tx)
+      const deleted = backend === 'postgres' ? await sql<{ id: string }>`DELETE FROM user_mcp_servers
+        WHERE id=${rawId} AND user_id=${owner} AND scope='user' RETURNING id::text AS id`.execute(tx) : await sql<{ id: string }>`DELETE FROM user_mcp_servers
+        WHERE id=${rawId} AND user_id=${owner} AND scope='user' RETURNING id`.execute(tx)
       if (!deleted.rows[0]) throw new CoreError('not_found', 'MCP server 不存在')
       await sql`DELETE FROM user_mcp_tool_schema_snapshots WHERE user_id=${owner}`.execute(tx)
       return { deleted: true, id: deleted.rows[0].id }

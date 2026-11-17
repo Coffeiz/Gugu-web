@@ -82,4 +82,40 @@ describe.each(['sqlite', 'postgres'] as const)('日历更新和删除事务 %s',
       if (admin) { await admin.query(`DROP SCHEMA "${schema}" CASCADE`); await admin.end() }
     }
   })
+
+  it.skipIf(backend === 'postgres' && !url)('完整提醒替换与活动版本、Undo和RAG索引在同一事务内提交', async () => {
+    const schema = `calendar_reminder_replace_${randomUUID().replaceAll('-', '')}`
+    const admin = backend === 'postgres' ? new Pool({ connectionString: url }) : undefined
+    if (admin) await admin.query(`CREATE SCHEMA "${schema}"`)
+    const db = backend === 'postgres'
+      ? new Kysely<{}>({ dialect: new PostgresDialect({ pool: new Pool({ connectionString: url, options: `-c search_path=${schema}` }) }) })
+      : new Kysely<{}>({ dialect: new SqliteDialect({ database: new SQLite(':memory:') }) })
+    try {
+      const definitions = tablesSql(backend)
+      for (const statement of [definitions.projects, definitions.undo, definitions.calendarEvents, definitions.ragJobs, definitions.scheduledTasks]) await sql.raw(statement).execute(db)
+      await sql`CREATE UNIQUE INDEX uq_scheduled_tasks_event_fire ON scheduled_tasks(user_id,event_id,cron) WHERE event_id IS NOT NULL`.execute(db)
+      const owner = randomUUID(), stored = backend === 'sqlite' ? owner.replaceAll('-', '') : owner
+      await sql`INSERT INTO calendar_events(id,user_id,title,date,time,type,version,created_at) VALUES(1,${stored},'原活动','2099-11-14','10:00','event',1,'2026-11-14 00:00:00')`.execute(db)
+      for (const [id, lead, cron] of [[1, 5, '@once:old-a'], [2, 10, '@once:old-b']] as const)
+        await sql`INSERT INTO scheduled_tasks(id,user_id,event_id,reminder_lead_minutes,name,payload,cron,schedule_kind,start_at,channels,enabled,delivery_targets,authorized_tools,email_attachment_file_ids,created_at,updated_at)
+          VALUES(${id},${stored},1,${lead},'旧提醒','旧正文',${cron},'once','2099-11-14 01:55:00','web',${backend === 'sqlite' ? 1 : true},NULL,'[]','[]','2026-11-14 00:00:00','2026-11-14 00:00:00')`.execute(db)
+      const publications: unknown[] = []
+      const stores = createKyselyCalendarMutationStores(db, backend, async event => { publications.push(event) })
+      const result = await updateCalendarEvent(stores.update, { ownerId: owner, eventId: 1, body: { version: 1 }, undoContextId: 'agent-session', reminders: [{
+        leadMinutes: 60, channels: 'feishu', deliveryTargets: { feishu: { recipient: 'synthetic-owner' } }, enabled: true,
+        cron: '@once:2099-11-14T01:00:00+00:00', startAt: new Date('2099-11-14T01:00:00.000Z'), scheduleKind: 'once',
+        name: '原活动 提醒', payload: '提醒：原活动（2099-11-14 10:00）',
+      }] })
+      expect(result.version).toBe(2)
+      const tasks = (await sql<{ reminder_lead_minutes: number; channels: string; cron: string }>`SELECT reminder_lead_minutes,channels,cron FROM scheduled_tasks WHERE user_id=${stored} AND event_id=1`.execute(db)).rows
+      expect(tasks).toEqual([{ reminder_lead_minutes: 60, channels: 'feishu', cron: '@once:2099-11-14T01:00:00+00:00' }])
+      expect((await sql`SELECT id FROM undo_operations`.execute(db)).rows).toHaveLength(1)
+      expect((await sql`SELECT id FROM rag_index_jobs WHERE source_type='calendar'`.execute(db)).rows).toHaveLength(1)
+      expect((await sql`SELECT id FROM rag_index_jobs WHERE source_type='scheduled_task'`.execute(db)).rows).toHaveLength(1)
+      expect(publications).toHaveLength(1)
+    } finally {
+      await db.destroy()
+      if (admin) { await admin.query(`DROP SCHEMA "${schema}" CASCADE`); await admin.end() }
+    }
+  })
 })

@@ -3,8 +3,10 @@ import { createHash, randomUUID } from 'node:crypto'
 import test from 'node:test'
 import Fastify from 'fastify'
 import { Pool } from 'pg'
+import { consumeInteractionText } from '@gugu/core/agent'
 import { registerAgentInteractionRespondRoute, createAgentInteractionRespondService } from '../../src/domains/agent-sessions/agent-interaction-respond.js'
 import { InteractionConsumeError } from '../../src/domains/agent-sessions/application/agent-interaction-consume.js'
+import { createPostgresInteractionTextStore } from '../../src/domains/agent-sessions/persistence/agent-interaction-consume-postgres.js'
 
 test('路由认证、可信 owner、参数与错误脱敏', async () => {
   const app = Fastify(); let calls = 0
@@ -21,6 +23,30 @@ test('路由认证、可信 owner、参数与错误脱敏', async () => {
     assert.equal(hidden.statusCode, 404); assert.deepEqual(hidden.json(), { detail: '交互不存在' })
     const failure = await app.inject({ method: 'POST', url: '/api/v1/agent/interactions/7/respond', headers: { authorization: 'yes' }, payload: { token: 'test-token' } })
     assert.equal(failure.statusCode, 500); assert.doesNotMatch(failure.body, /secret-detail|test-token/)
+  } finally { await app.close() }
+})
+
+test('恢复选择与文本回答通过认证并只返回可恢复原 Run 的结果', async () => {
+  const app = Fastify(); const calls: unknown[][] = []
+  registerAgentInteractionRespondRoute(app, { async requireUser(request, reply) { if (!request.headers.authorization) return reply.code(401).send() }, userIdFromRequest: () => 'trusted-owner', service: {
+    async respond(owner, id, token, eventId) {
+      calls.push(['respond', owner, id, token, eventId])
+      return { prompt_id: id, session_id: 12, kind: 'confirm', option_id: 'confirm', action_type: 'choice', context: { tool_call_id: 'call-a' }, result: { status: 'confirmed' } } as never
+    },
+    async resumeText(owner, id, text, eventId) {
+      calls.push(['resumeText', owner, id, text, eventId])
+      return { prompt_id: id, session_id: 12, kind: 'question', context: { tool_call_id: 'call-b' }, result: { status: 'answered' }, event_id: eventId } as never
+    },
+  } })
+  try {
+    assert.equal((await app.inject({ method: 'POST', url: '/api/v1/agent/interactions/7/resume', payload: { token: 'choice-token' } })).statusCode, 401)
+    const choice = await app.inject({ method: 'POST', url: '/api/v1/agent/interactions/7/resume', headers: { authorization: 'yes' }, payload: { token: 'choice-token', event_id: 'event-a' } })
+    assert.equal(choice.statusCode, 200)
+    assert.deepEqual(choice.json(), { ok: true, session_id: 12, status: 'confirmed', option_id: 'confirm' })
+    const text = await app.inject({ method: 'POST', url: '/api/v1/agent/interactions/8/resume-text', headers: { authorization: 'yes' }, payload: { text: '回答', event_id: 'event-b' } })
+    assert.equal(text.statusCode, 200)
+    assert.deepEqual(text.json(), { ok: true, session_id: 12 })
+    assert.deepEqual(calls, [['respond', 'trusted-owner', 7, 'choice-token', 'event-a'], ['resumeText', 'trusted-owner', 8, '回答', 'event-b']])
   } finally { await app.close() }
 })
 
@@ -43,5 +69,29 @@ test('真实事务提交一次并原子入恢复队列，唤醒失败不重复�
     assert.equal(Number((await pool.query('SELECT count(*) AS n FROM jobs')).rows[0].n), 1)
     assert.equal(wake, 1); assert.equal(diagnosed, 1)
     assert.equal((await pool.query('SELECT status FROM interaction_prompts')).rows[0].status, 'resolved')
+  } finally { await pool.end(); await admin.query(`DROP SCHEMA "${schema}" CASCADE`); await admin.end() }
+})
+
+test('文本恢复的 owner 校验、回答和 Run 恢复入队共用事务', { skip: !url && '需要隔离 PostgreSQL' }, async () => {
+  const schema = `agent_text_resume_${randomUUID().replaceAll('-', '')}`, admin = new Pool({ connectionString: url })
+  await admin.query(`CREATE SCHEMA "${schema}"`)
+  const pool = new Pool({ connectionString: url, options: `-c search_path=${schema}` })
+  try {
+    await pool.query('CREATE TABLE interaction_prompts (id integer PRIMARY KEY,user_id text,session_id integer,kind text,status text,expires_at timestamptz,resolved_at timestamptz,schema_json jsonb); CREATE TABLE jobs(prompt_id integer,event_id text)')
+    await pool.query("INSERT INTO interaction_prompts VALUES (1,'owner',12,'question','active',clock_timestamp()+interval '1 hour',NULL,$1)", [JSON.stringify({ source: 'agent', allow_text_input: true, context: { tool_call_id: 'call-a' } })])
+    await pool.query("INSERT INTO interaction_prompts VALUES (2,'owner',12,'question','active',clock_timestamp()+interval '1 hour',NULL,$1)", [JSON.stringify({ source: 'agent', allow_text_input: true, context: {} })])
+    const store = createPostgresInteractionTextStore(pool, async (client, prompt, eventId) => { await client.query('INSERT INTO jobs VALUES ($1,$2)', [prompt.id, eventId ?? null]) })
+    await assert.rejects(consumeInteractionText(store, { ownerId: 'other', promptId: 1, text: '回答' }), /交互不存在/)
+    await assert.rejects(consumeInteractionText(store, { ownerId: 'owner', promptId: 2, text: '回答' }, () => new Date(Date.now() + 3_600_001)))
+    assert.equal((await pool.query('SELECT status FROM interaction_prompts WHERE id=2')).rows[0].status, 'expired')
+    const failingStore = createPostgresInteractionTextStore(pool, async () => { throw new Error('enqueue failed') })
+    await assert.rejects(consumeInteractionText(failingStore, { ownerId: 'owner', promptId: 1, text: '回答', eventId: 'event-a' }), /enqueue failed/)
+    assert.equal((await pool.query('SELECT status FROM interaction_prompts WHERE id=1')).rows[0].status, 'active')
+    const answered = await consumeInteractionText(store, { ownerId: 'owner', promptId: 1, text: '合成回答', eventId: 'event-a' })
+    assert.equal(answered.result.text, '合成回答')
+    assert.equal((await pool.query('SELECT status FROM interaction_prompts WHERE id=1')).rows[0].status, 'resolved')
+    assert.deepEqual((await pool.query('SELECT prompt_id,event_id FROM jobs')).rows, [{ prompt_id: 1, event_id: 'event-a' }])
+    await assert.rejects(consumeInteractionText(store, { ownerId: 'owner', promptId: 1, text: '重复回答' }), /交互已过期/)
+    assert.equal(Number((await pool.query('SELECT count(*) AS n FROM jobs')).rows[0].n), 1)
   } finally { await pool.end(); await admin.query(`DROP SCHEMA "${schema}" CASCADE`); await admin.end() }
 })

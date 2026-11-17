@@ -7,6 +7,8 @@ import test from 'node:test'
 import { initializeSqlite, openSqliteRuntime } from '@gugu/core/data'
 import { createAgentToolRegistry } from '../../src/domains/agent-sessions/tools/agent-tool-registry.js'
 import { createCoreAgentConversationSearchPort } from '../../src/domains/agent-sessions/tools/agent-conversations.js'
+import { createWebAgentRagToolPorts } from '../../src/domains/agent-sessions/tools/agent-rag-tool-ports.js'
+import { createWebAgentProductionToolRegistry } from '../../src/domains/agent-sessions/tools/agent-rag-production-ports.js'
 import { createConversationRagSource } from '../../../../packages/core/src/agent/rag/conversation-index-source.js'
 import { createCanonicalSourceLoader, createSqlRagRebuildWorker, enqueueAgentRagRebuild, stableJson } from '@gugu/core/agent'
 import { createOwnerAgentRagVectorResolver } from '../../src/domains/agent-sessions/tools/agent-rag-vectors.js'
@@ -231,14 +233,21 @@ test('AgentRuntime 经 Core Runner 将 search_conversations 结果送入 Provide
     await tables.insertInto('conversation_messages').values({
       session_id: 41, conversation_seq: 1, role: 'user', content: '请查找上次部署复盘。', created_at: '2026-01-02T03:00:00Z',
     }).execute()
-    // Runner → 工具注册器调用与 Python 一致的 owner 会话事实表 BM25 来源。
-    const conversationSearch = createCoreAgentConversationSearchPort(runtimeDb)
-    const registry = createAgentToolRegistry({
-      core: runtimeDb,
-      conversationSearch,
-      authorize: async (identity, name) => identity.ownerId === ownerId && name === 'search_conversations',
-    })
     const identity = { ownerId, sessionId: '92', runId: randomUUID() }
+    const lease = { identity, token: 'synthetic-lease', fence: 1, mode: 'start' as const, cancelRequested: false,
+      input: { userMessageId: 1, locale: 'zh-CN' as const, origin: null, accessVersion: 'a'.repeat(64), v: 2 as const, source: 'web' as const } }
+    // Core Runner → 生产 Web RAG registry/lease 授权组合 → owner facts-table 检索 → Provider 续轮。
+    // 本测试不调用 memory，因此 pool 与会话配置仅用于构造可信 Run 绑定；memory 的 PG 授权/快照在 Host 专项用例验证。
+    const registry = createWebAgentProductionToolRegistry({
+      core: runtimeDb,
+      pool: { async query() { throw new Error('search_conversations 不得读取 memory PostgreSQL 授权/快照') } } as never,
+      storageRoot: join(folder, 'storage'),
+      lease,
+      preparation: { async configuration(input) { assert.deepEqual(input, identity); return { identity: { ownerId: input.ownerId,
+        subject: { kind: 'session' as const, id: input.sessionId }, workspaceId: null }, source: 'web', toolNames: ['search_conversations'] } } },
+      authorize: async (input, name) => input.ownerId === ownerId && input.sessionId === identity.sessionId
+        && input.runId === identity.runId && name === 'search_conversations',
+    })
     const policy = { groupChat: false, contextPolicy: { loadOwnerContext: true, memoryEnabled: true } }
     const access = agentContextAccessScope('synthetic-conversation-run-secret', identity, policy,
       { permissions: '1', model: '1', credentials: '1' }, digest, 'owner')

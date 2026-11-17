@@ -163,7 +163,7 @@ describe('Canonical上下文与Run运行时组合', () => {
     ports.load = loader.load
     const rag = vi.spyOn(ports.preparation, 'buildRag')
     const prepared = await context.prepare(identity, signal())
-    expect(order).toEqual(['snapshot', 'model', 'projects', 'history', 'current'])
+    expect(order).toEqual(['snapshot', 'model', 'current', 'projects', 'history'])
     expect(rag).toHaveBeenCalledOnce()
     expect(prepared.historyBaseline).toEqual({ baselineSeq: 0, baselineHash: 'baseline', snapshotHash: 'snapshot' })
     expect(prepared.sourceEffects?.sessionSnapshot).toMatchObject({ expectedEpoch: 0, phase: 'rebuild', state: { contextEpoch: 1 } })

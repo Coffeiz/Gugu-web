@@ -8,7 +8,7 @@
 ### 1.1 已确定的方向
 
 - 2.0 目标使用 `apps/` 放可运行应用，`packages/` 放可复用库：Vue 前端、Linux/NAS Node Host、Electron Host 分别归入 `apps/web/`、`apps/web-host/`、`apps/desktop/`；共享业务 Core 归入 `packages/core/`。四个包已迁入目标路径，构建与部署验收正在进行。
-- `packages/core/` 承载可复用的领域规则、应用用例、统一数据运行时和 Agent 编排，目标语言为 TypeScript，完整桌面/服务端 Runtime 由 Node 承载。Core 不反向依赖 Web Host、SaaS 或 Electron 源码。
+- `packages/core/` 承载可复用的领域规则、应用用例、统一数据运行时和 Agent 编排，目标语言为 TypeScript，完整桌面/服务端 Runtime 由 Node 承载。Core 不反向依赖 Web Host、SaaS 或 Electron 源码。跨端图表栅格化和 Mermaid 共享表现规则位于独立的 `packages/charts/`；Host 通过显式渲染入口调用，worker 隔离不替代 Host 的能力授权或生产工具注册。
 - `apps/desktop/` 使用 Electron + TypeScript 装配桌面 Host，负责窗口、生命周期和受限 IPC。可复用的执行契约、策略与平台适配目标收敛到 `packages/sandbox/`；端侧 Host 注入授权与原生后端，必要时使用独立原生 helper。`apps/web-host/` 是 Linux/NAS 自托管版的 Node HTTP Host，负责 Web API/SSE、可信身份上下文、服务生命周期和 Core 装配，并提供 `apps/web/` 构建的静态资源。SaaS 保留独立的 Gateway、身份、同步和部署装配边界；具备独立构建边界后可迁入私有仓库，不为尚未实现的 SaaS Host 创建空包。
 - `apps/web/` 暂时承载 Vue 功能 UI；Web 与桌面共享看板、日历、笔记、画布等领域功能，分别装配应用壳、顶栏和主导航。不要求桌面沿用 Web Host 布局。
 - macOS、Windows 桌面采用本地优先、应用内单用户；Linux/NAS 与 SaaS 保留多用户。桌面是默认家节点，SaaS 不是必经中转。
@@ -268,7 +268,7 @@ apps/web/                          # Vue Web/桌面 Renderer；桌面 bridge 由
     integrations.ts                # BYOK、MCP、IM 连接 API
     preferences.ts                 # 用户偏好 API
     admin/                          # Admin API，按业务域继续拆分
-      filesync.ts                  # 文件同步管理 API
+      # 2.0 不提供 filesync / watcher 对账管理 API；旧版本相关能力退役
     types/                          # 仅跨领域共享类型；领域类型留在对应 API 模块
     index.ts                       # 可选兼容导出
 backend/                           # 迁移期 Python Web/Agent/Worker 与行为基线；按退出条件清理
@@ -280,6 +280,8 @@ docs/                              # refactor 主清单/矩阵/归档，testing 
 WebUI 目录参照 Python `backend/app/api/v1/`、`backend/app/services/`、`backend/app/db/` 与 `backend/app/core/` 的职责边界：业务域作为路由/服务模块组织边界，域内按 `routes/`、`application/`、`persistence/` 拆分；共享认证身份、DTO 校验、HTTP 错误和日志归 `http/` 公共边界，跨域运行时 Adapter 放在 `adapters/`。域插件只能从 Host 收到显式依赖，不能自行读取请求头推断 owner、创建全局连接或绕过 Core 契约。`app.ts` 只负责安装共享 HTTP 能力并注册域插件，`main.ts` 负责构造并注入 PG/Redis/Core 等 Adapter。
 
 2026-11-13 已将现有认证、Admin、Agent 会话、项目、工作区、日历、联系人、通知和站点 API 模块从 `src/` 根目录移入 `src/domains/<domain>/`，并将共享 Redis 事件 Adapter 移入 `src/adapters/`；`app.ts`、`main.ts`、启动配置、数据库 readiness、静态资源、HTTP 边界、Worker 与 migrations 保持 Host/基础设施职责。当前部分 Admin 与 Agent 原型仍在单个模块中混合 route/service/persistence，后续在行为切片稳定和 Host 接线时按上述分层继续拆分，不做一次性全树重写。`src/http/` 是共享边界，不能把业务 SQL/服务塞入该目录。
+
+**FileSync 退役决策（2026-11-16）**：2.0 采用本地文件直读，不再维护本地 FS 与 DB watcher 同步方案。因此旧 FileSync 绑定、事件、对账、冲突修复、watcher 容量及 folder-doctor 对账 API 不迁入 Core 或 Node Host；迁移清单应标为“退役/不迁移”，后续清理其 UI、路由、Worker 和部署依赖。普通文件读写及按路径访问仍保留，不属于 FileSync。
 
 Vue 前端 API 客户端目标位于 `apps/web/src/api/`，并按业务域组织：通用传输、CSRF、错误与请求去重由 `client.ts` 承担；`auth.ts`、`files.ts`、`projects.ts`、`mind.ts`、`calendar.ts`、`schedules.ts`、`agent.ts`、`integrations.ts`、`preferences.ts` 和 `admin/` 各自负责对应领域。领域类型放在所属 API 模块，`types/` 只收真正跨域共享类型。现有 `apps/web/src/services/api.ts` 在迁移期作为兼容入口逐步收口到新模块，调用方分批迁移；`index.ts` 可提供短期兼容导出，不能重新成为所有业务 API 的集中实现。
 

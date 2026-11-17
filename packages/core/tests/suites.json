@@ -5,6 +5,7 @@
     "purpose": "contract"
   },
   "tests/im/attention/message.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+  "tests/im/attention/algorithm.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/im/attention/normalization.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/im/attention/question.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/im/attention/visible-units.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
@@ -16,6 +17,21 @@
   },
   "tests/notifications/admin-history.test.ts": {"markers": ["external_service"], "layer": "L2", "purpose": "postgres"},
   "tests/agent/tools/scheduled-tasks.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/tools/calendar-delete.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/tools/calendar-create.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/tools/calendar-update.test.ts": {
     "markers": [],
     "layer": "L1",
     "purpose": "contract"
@@ -590,6 +606,7 @@
     "layer": "L1",
     "purpose": "contract"
   },
+  "tests/unit/data/global-search-sqlite.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/integration/postgres/global-search-conversations-parity.test.ts": {
     "markers": ["external_service"],
     "layer": "L2",
@@ -806,5 +823,18 @@
   "layer": "L1",
   "purpose": "contract"
   },
-  "tests/agent/sessions/delete.postgres.test.ts": {"markers": ["external_service"], "layer": "L2", "purpose": "postgres"}
+  "tests/agent/sessions/delete.postgres.test.ts": {"markers": ["external_service"], "layer": "L2", "purpose": "postgres"},
+  "tests/agent/config/llm-presets-read.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+  "tests/email/translate.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+  "tests/agent/providers/standalone.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+  "tests/agent/greeting.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+  "tests/email/publish.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+  "tests/agent/sessions/state.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+  "tests/admin/storage-quota-reconcile.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+  "tests/onboarding/reseed.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+  "tests/agent/interactions/consume-text.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+  "tests/agent/interactions/secrets.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+  "tests/agent/context/memory-context.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+  "tests/agent/capabilities/catalog.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+  "tests/agent/attachments/current-turn.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"}
 }
