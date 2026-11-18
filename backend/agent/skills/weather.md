@@ -41,6 +41,7 @@ emoji: 🌤️
 `https://api.open-meteo.com/v1/forecast?latitude=32.0603&longitude=118.7969&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,wind_direction_10m,is_day&daily=weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,precipitation_probability_max,precipitation_sum,wind_speed_10m_max,wind_gusts_10m_max,uv_index_max,relative_humidity_2m_max,sunrise,sunset,daylight_duration&forecast_days=5&timezone=auto&wind_speed_unit=kmh`
 
 - 请求包含 `daily` 时必须使用 `timezone=auto`，按地点当地日期解释。
+- 只有用户明确指定超出默认窗口的未来日期时，才将 `forecast_days` 增至覆盖该日期所需的最少天数（当地今天算第 1 天，上限 16 天）。超过上限，或返回的 `daily.time` 不包含目标日期时，说明该日暂无逐日预报，不拿其他日期代替。
 - 默认使用上述详细字段。用户明确限定问题范围，或日照信息无关时，可省略 `sunrise`、`sunset`、`daylight_duration`；仍同时获取当前天气和逐日预报。
 - 详细请求字段较多，可能计为多个用量单位；不要因问题简短而改成另一套轻量查询。
 - `relative_humidity_2m_max` 不受支持或缺失时忽略，不要为它反复尝试无关参数组合。
