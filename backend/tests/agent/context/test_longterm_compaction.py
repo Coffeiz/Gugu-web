@@ -86,8 +86,8 @@ async def _json(value):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["profile", "pattern"])
-@pytest.mark.parametrize("source_count, retry_count", [(100, 1), (101, 20), (101, 21), (400, None)])
-async def test_compaction_keeps_snapshot_unless_enough_distinct_items_survive(
+@pytest.mark.parametrize("source_count, retry_count", [(1600, 70), (1600, 1), (100, 0), (100, 71)])
+async def test_compaction_checks_output_without_a_minimum_retention_ratio(
     kind, source_count, retry_count, tmp_path, monkeypatch,
 ):
     monkeypatch.setattr(store, "get_storage", lambda: LocalStorageBackend(tmp_path))
@@ -101,10 +101,9 @@ async def test_compaction_keeps_snapshot_unless_enough_distinct_items_survive(
     before = await read(user_id)
     prompts = []
 
-    async def complete(prompt, *_args, **_kwargs):
+    async def complete(prompt, input_text, *_args, **_kwargs):
         prompts.append(prompt)
-        if retry_count is None:
-            pytest.fail("保留下限高于输出上限时不应调用模型")
+        assert len(input_text.splitlines()) == source_count
         if len(prompts) == 1:
             # 每条的结构合法且 ID 不重复，但只有一条不同的记忆。
             return {kind: [{**entry, "text": item["text"]} for entry in original[:21]]}
@@ -112,9 +111,10 @@ async def test_compaction_keeps_snapshot_unless_enough_distinct_items_survive(
 
     monkeypatch.setattr(longterm_compaction, "complete_json", complete)
     monkeypatch.setattr(store, "sync_pattern_vecs", lambda *_args, **_kwargs: _read(None))
-    committed = retry_count == 21
+    committed = retry_count in (1, 70)
     assert await getattr(longterm_compaction, f"compact_{kind}")(user_id, None) is committed
-    assert len(prompts) == (0 if retry_count is None else 2)
+    assert len(prompts) == 2
+    assert "reason=duplicate_text" in prompts[1]
     if committed:
         assert {entry["text"] for entry in await read(user_id)} == {
             entry["text"] for entry in original[:retry_count]
