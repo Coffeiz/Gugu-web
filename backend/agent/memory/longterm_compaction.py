@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from pathlib import Path
 
 from agent.context.provider_runner import complete_json
@@ -12,6 +13,7 @@ from agent.memory import store
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 COMPACTION_THRESHOLD = 100
 COMPACTION_TARGET = 70
+COMPACTION_MIN_RETAIN_RATIO = 0.2
 _logger = logging.getLogger("agent.memory.longterm_compaction")
 
 
@@ -24,14 +26,18 @@ def _memory_input(items: list[dict]) -> str:
 
 
 async def _complete_maintenance(
-    user_id, prompt: str, items: list[dict], settings, *, correction: str | None = None,
+    user_id, prompt: str, items: list[dict], settings, *,
+    min_retained: int, correction: str | None = None,
 ) -> dict:
     """将自动画像和行为整理归入压缩，保留同用户的触发会话。"""
     parent = get_usage_context()
     session_id = parent.session_id if parent is not None and parent.user_id == user_id else None
     with usage_context_scope(user_id, session_id, scenario="compaction"):
         output_limit = getattr(effective_ai(settings), "max_tokens", None) if settings is not None else None
-        system_prompt = _prompt(prompt)
+        system_prompt = (
+            f"{_prompt(prompt)}\n\n为防止遗漏，本次结果至少保留 {min_retained} 条不同的有效条目。"
+            "无法满足时返回空数组，保留原记忆。"
+        )
         if correction:
             # 仅传递校验码与位置，不回显模型原始输出或任何记忆正文。
             system_prompt += (
@@ -120,31 +126,35 @@ def _valid_pattern(value, source_items: list[dict]) -> list[dict] | None:
 
 
 async def _complete_validated_maintenance(user_id, prompt, field, items, settings, checker):
-    """输出结构不合法时允许一次定向修正；失败后保留原记忆并结束。"""
-    result = await _complete_maintenance(user_id, prompt, items, settings)
-    normalized, reason, index, output_count = checker(
-        result.get(field) if isinstance(result, dict) else None,
-    )
-    if normalized is not None:
-        return normalized
-
-    _logger.warning(
-        "长期记忆整理输出校验失败: kind=%s reason=%s attempt=1 item_index=%s output_count=%s",
-        field, reason, index, output_count,
-    )
-    correction = f"reason={reason}, item_index={index if index is not None else 'none'}"
-    result = await _complete_maintenance(
-        user_id, prompt, items, settings, correction=correction,
-    )
-    normalized, reason, index, output_count = checker(
-        result.get(field) if isinstance(result, dict) else None,
-    )
-    if normalized is None:
+    """结构错误或缩减过度时允许一次修正，仍不合格则保留原记忆。"""
+    min_retained = math.ceil(len(items) * COMPACTION_MIN_RETAIN_RATIO)
+    if min_retained > COMPACTION_TARGET:
         _logger.warning(
-            "长期记忆整理修正后仍未通过校验: kind=%s reason=%s attempt=2 item_index=%s output_count=%s",
-            field, reason, index, output_count,
+            "长期记忆整理跳过：保留下限超过输出上限 kind=%s input_count=%s min_retained=%s",
+            field, len(items), min_retained,
         )
-    return normalized
+        return None
+
+    correction = None
+    for attempt in (1, 2):
+        result = await _complete_maintenance(
+            user_id, prompt, items, settings, min_retained=min_retained, correction=correction,
+        )
+        normalized, reason, index, output_count = checker(
+            result.get(field) if isinstance(result, dict) else None,
+        )
+        if normalized is not None:
+            # 同文重复的条目不能填满保留下限；pattern 的多个 ID 也可能有同一段文本。
+            distinct_count = len({item["text"] for item in normalized})
+            if distinct_count >= min_retained:
+                return normalized
+            reason = "distinct_count_below_min_retained"
+        _logger.warning(
+            "长期记忆整理输出校验失败: kind=%s reason=%s attempt=%s item_index=%s output_count=%s min_retained=%s",
+            field, reason, attempt, index, output_count, min_retained,
+        )
+        correction = f"reason={reason}, item_index={index if index is not None else 'none'}"
+    return None
 
 
 async def compact_profile(user_id, settings) -> bool:

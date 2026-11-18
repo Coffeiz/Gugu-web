@@ -86,17 +86,38 @@ async def _json(value):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["profile", "pattern"])
-async def test_large_snapshot_can_compact_to_one_valid_item(kind, tmp_path, monkeypatch):
+@pytest.mark.parametrize("source_count, retry_count", [(100, 1), (101, 20), (101, 21), (400, None)])
+async def test_compaction_keeps_snapshot_unless_enough_distinct_items_survive(
+    kind, source_count, retry_count, tmp_path, monkeypatch,
+):
     monkeypatch.setattr(store, "get_storage", lambda: LocalStorageBackend(tmp_path))
     user_id = "u1"
     item = {"type": "preference", "text": "偏好简洁回复"}
     if kind == "pattern":
         item = {"id": "p0", "kind": "observed", "text": "习惯先做小范围验证"}
-    # 超过 350 条时，旧的 20% 下限与最多 70 条互斥。
-    original = [{**item, "id": f"p{i}", "text": f"原条目 {i}"} for i in range(400)]
+    original = [{**item, "id": f"p{i}", "text": f"原条目 {i}"} for i in range(source_count)]
     await getattr(store, f"write_{kind}_list")(user_id, original)
-    monkeypatch.setattr(longterm_compaction, "complete_json", lambda *_a, **_kw: _json({kind: [item]}))
+    read = getattr(store, f"read_{kind}_list")
+    before = await read(user_id)
+    prompts = []
+
+    async def complete(prompt, *_args, **_kwargs):
+        prompts.append(prompt)
+        if retry_count is None:
+            pytest.fail("保留下限高于输出上限时不应调用模型")
+        if len(prompts) == 1:
+            # 每条的结构合法且 ID 不重复，但只有一条不同的记忆。
+            return {kind: [{**entry, "text": item["text"]} for entry in original[:21]]}
+        return {kind: original[:retry_count]}
+
+    monkeypatch.setattr(longterm_compaction, "complete_json", complete)
     monkeypatch.setattr(store, "sync_pattern_vecs", lambda *_args, **_kwargs: _read(None))
-    assert await getattr(longterm_compaction, f"compact_{kind}")(user_id, None)
-    saved = await getattr(store, f"read_{kind}_list")(user_id)
-    assert [entry["text"] for entry in saved] == [item["text"]]
+    committed = retry_count == 21
+    assert await getattr(longterm_compaction, f"compact_{kind}")(user_id, None) is committed
+    assert len(prompts) == (0 if retry_count is None else 2)
+    if committed:
+        assert {entry["text"] for entry in await read(user_id)} == {
+            entry["text"] for entry in original[:retry_count]
+        }
+    else:
+        assert await read(user_id) == before
