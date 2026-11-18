@@ -16,7 +16,7 @@ description: 产品设计规范摘要。Glassmorphism 视觉风格、色板系�
 ## 核心设计原则
 
 - **ToC 优先**：面向个人/小团队的项目管理工具
-- **玻璃视觉**：常驻内容面板以半透明 tint、细边框和阴影建立层次；应用/Admin 导航侧栏和 Mind 笔记 glass 保留真实 `backdrop-filter`，其他临时浮层也可按需使用
+- **玻璃视觉**：常驻内容面板以半透明 tint、细边框和阴影建立层次；应用/Admin 导航侧栏保留真实 `backdrop-filter`，临时浮层也可按需使用
 - **冷紫灰调色板**：主色 `#7b7fb2`，所有颜色通过 CSS 变量（design token）管理
 
 ## 交互规范

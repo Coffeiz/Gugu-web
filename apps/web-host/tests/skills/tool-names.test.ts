@@ -1,6 +1,20 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createUserSkillToolNameReader } from '../../src/modules/skills/tool-names.js'
+import { createRegisteredUserSkillToolNameReader, createUserSkillToolNameReader } from '../../src/modules/skills/tool-names.js'
+
+test('Skill 工具名校验使用注册目录，不把运行时授权拒绝误当成未注册', async () => {
+  const calls: string[] = []
+  const read = createRegisteredUserSkillToolNameReader({
+    registry: {
+      catalog() { return [{ name: 'web_search', description: '搜索' }] },
+      capabilities() { throw new Error('保存校验不能以伪造 Run 身份请求授权') },
+    } as never,
+    async mcp(owner) { calls.push(owner); return [{ name: 'mcp_weather_lookup' }] },
+  })
+
+  assert.deepEqual([...await read('owner-a', ['web_search'])], ['web_search'])
+  assert.deepEqual(calls, [])
+})
 
 test('普通 Skill 保存只读取内置工具名，不触发外部 MCP 发现', async () => {
   const calls: string[] = []

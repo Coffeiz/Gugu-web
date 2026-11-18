@@ -1,7 +1,8 @@
 import type { SqlDataRuntime } from '@gugu/core/data'
-import type { CanonicalRunPreparationPorts, ContextSourceSelection, RagSearchScope, RunIdentity } from '@gugu/core/agent'
+import type { CanonicalRunPreparationPorts, ContextSourceSelection, RunIdentity } from '@gugu/core/agent'
+import type { RagSearchScope } from '@gugu/core/agent/rag'
 import type { ProviderTransport } from '@gugu/core/providers'
-import type { RagQueryEmbeddingSettings } from '@gugu/core/agent'
+import type { RagQueryEmbeddingSettings } from '@gugu/core/agent/rag'
 import type { Pool } from 'pg'
 import type { AgentDispatchLease } from '../persistence/agent-run-dispatch-postgres.js'
 import type { createAgentToolRegistry } from './agent-tool-registry.js'
@@ -13,6 +14,7 @@ import { createOwnerAgentRagVectorResolver } from './agent-rag-vectors.js'
 import { bindAgentConversationSearchOwner } from './agent-conversations.js'
 import { createPostgresWebAgentMemorySnapshotReader, createWebAgentMemoryAuthorizer } from './agent-rag-run-context.js'
 import { createWebAgentRagRunAuthorization } from './agent-rag-run-authorization.js'
+import type { WebCalendarCanvasToolName } from './agent-rag-run-authorization.js'
 
 /**
  * 为单个已验证 Web lease 组合生产 RAG 查询端口。授权仍以同一 registry 的
@@ -167,15 +169,48 @@ export function createWebAgentProductionRagRunPorts(options: Omit<AgentToolRegis
  * Web 主 Run 的安全装配入口：授权和工具发现均绑定同一 dispatch lease，
  * 不接受调用方另行提供的宽授权器或另一份配置读取器。
  */
-export function createAuthorizedWebAgentProductionRagRunPorts(options: Omit<Parameters<typeof createWebAgentProductionRagRunPorts>[0], 'authorize' | 'preparation'>) {
-  const authorization = createWebAgentRagRunAuthorization(options.pool, options.lease)
+export function createAuthorizedWebAgentProductionRagRunPorts(options: Omit<Parameters<typeof createWebAgentProductionRagRunPorts>[0], 'authorize' | 'preparation'> & {
+  enabledConversationRead?: boolean
+  enabledTime?: boolean
+  enabledCalendarCanvasTools?: readonly WebCalendarCanvasToolName[]
+  enabledKnowledgeRead?: boolean
+  enabledKnowledgeWrites?: boolean
+  enabledGlobalSearch?: boolean
+  enabledAskUser?: boolean
+  enabledLinkButtons?: boolean
+  enabledFileRead?: boolean
+  enabledCalendarRead?: boolean
+  enabledUpcoming?: boolean
+  enabledDashboard?: boolean
+  enabledWorkspaces?: boolean
+  enabledWorkspaceMutations?: boolean
+  enabledTrashList?: boolean
+  enabledTrashRestore?: boolean
+  enabledCanvasReads?: boolean
+  enabledCanvasPlaceableSearch?: boolean
+  enabledCanvasCreate?: boolean
+  enabledCanvasMutations?: boolean
+  enabledNoteReads?: boolean
+  enabledNoteLifecycle?: boolean
+  enabledProjectCreation?: boolean
+  enabledProjectMutations?: boolean
+  enabledClientTools?: boolean
+  enabledClientDelete?: boolean
+  enabledProjectOverview?: boolean
+  enabledScheduledTasks?: boolean
+}) {
+  const { enabledConversationRead = false, enabledTime = false, enabledCalendarRead = false, enabledUpcoming = false, enabledDashboard = false, enabledWorkspaces = false, enabledWorkspaceMutations = false, enabledTrashList = false, enabledTrashRestore = false, enabledCanvasReads = false, enabledCanvasPlaceableSearch = false, enabledCanvasCreate = false, enabledCanvasMutations = false, enabledNoteReads = false, enabledNoteLifecycle = false, enabledProjectCreation = false, enabledProjectMutations = false, enabledClientTools = false, enabledClientDelete = false, enabledProjectOverview = false, enabledScheduledTasks = false, enabledCalendarCanvasTools = [], enabledKnowledgeRead = false, enabledKnowledgeWrites = false, enabledGlobalSearch = false, enabledAskUser = false, enabledLinkButtons = false, enabledFileRead = false, ...runOptions } = options
+  const authorization = createWebAgentRagRunAuthorization(options.pool, options.lease, { enabledConversationRead, enabledTime, enabledCalendarRead, enabledUpcoming, enabledDashboard, enabledWorkspaces, enabledWorkspaceMutations, enabledTrashList, enabledTrashRestore, enabledCanvasReads, enabledCanvasPlaceableSearch, enabledCanvasCreate, enabledCanvasMutations, enabledNoteReads, enabledNoteLifecycle, enabledProjectCreation, enabledProjectMutations, enabledProjectDelete: Boolean(runOptions.projectDelete), enabledClientTools, enabledClientDelete, enabledProjectOverview, enabledScheduledTasks, enabledCalendarCanvasTools, enabledKnowledgeRead, enabledKnowledgeWrites, enabledKnowledgeDelete: Boolean(runOptions.knowledgeDelete), enabledRemember: Boolean(runOptions.remember), enabledGlobalSearch, enabledAskUser, enabledLinkButtons, enabledFileRead, enabledSkillManagement: Boolean(runOptions.skillManagement), enabledSkillDelete: Boolean(runOptions.skillDelete), enabledNoteWrites: Boolean(runOptions.noteWrites), enabledCallTool: Boolean(runOptions.callTool), enabledMcpManagement: Boolean(runOptions.mcpManagement), enabledScheduledTaskWrites: Boolean(runOptions.scheduledTaskWrites?.length), enabledScheduledTaskDelete: Boolean(runOptions.scheduledTaskDelete), enabledSendEmail: Boolean(runOptions.sendEmail), enabledWebSearch: Boolean(runOptions.webSearch), enabledWebDownload: Boolean(runOptions.webDownload), enabledSimilarImageSearch: Boolean(runOptions.similarImageSearch), enabledDeepResearch: Boolean(runOptions.deepResearch) })
   const ownerContextAllowed = options.selection.contextPolicy.loadOwnerContext === true
   const configuration: CanonicalRunPreparationPorts['configuration'] = async (identity, signal) => {
     const result = await authorization.configuration(identity, signal)
     return ownerContextAllowed ? result : { ...result, toolNames: [] }
   }
   const ports = createWebAgentProductionRagRunPorts({
-    ...options,
+    ...runOptions,
+    askUser: enabledAskUser,
+    linkButtons: enabledLinkButtons ? runOptions.linkButtons : undefined,
+    readFile: enabledFileRead ? runOptions.readFile : undefined,
     authorize: async (identity, name) => ownerContextAllowed && await authorization.authorize(identity, name),
     preparation: { configuration },
   })

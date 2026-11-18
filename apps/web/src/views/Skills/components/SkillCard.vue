@@ -44,7 +44,7 @@ function fmtDate(value: string | null) {
 .skill-card {
   position: relative;
   background: var(--surface-card); border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   box-shadow: var(--card-shadow);
   padding: 13px 15px; display: flex; flex-direction: column; gap: 7px;
   box-sizing: border-box; overflow: hidden; break-inside: avoid;

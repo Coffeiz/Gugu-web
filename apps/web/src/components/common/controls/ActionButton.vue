@@ -43,7 +43,7 @@ withDefaults(defineProps<{
   justify-content: center;
   gap: 6px;
   padding: 8px 10px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   font: 500 13px/var(--line-height-ui) var(--font-sans);
   white-space: nowrap;
   word-break: keep-all;

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { bindRecoverableProvider, type RecoverableProviderServices } from '../../src/domains/agent-config/recoverable-provider.js'
+import { bindRecoverableProvider, createReflectionModelScope, RecoverableProviderVersionError, type RecoverableProviderServices } from '../../src/domains/agent-config/recoverable-provider.js'
 import { createModelStrategy } from '../../src/domains/agent-config/model-strategy.js'
 const identity = { ownerId: 'owner-a', sessionId: '1', runId: 'run-a' }, signal = new AbortController().signal
 function setup() {
@@ -9,6 +9,29 @@ function setup() {
   const services: RecoverableProviderServices = { async select(id, abort, ref) { const selected = await strategy(id.ownerId, abort, ref); return { ...selected, configVersion: configuration, credentialVersion: credential, credential: null, defaultLimit6h: 0, release() { releases++; selected.release() } } }, decryptCredential: () => '', defaultBaseUrl: () => '' }
   return { services, setConfig: (v: string) => { configuration = v }, setCredential: (v: string) => { credential = v }, setScope: (v: string) => { scope = v }, releases: () => releases }
 }
+
+test('反思分组核验各 Run 的签名，并按预设、凭据版本和作用域分组', async () => {
+  const state = setup(), key = 'synthetic-key'
+  const modelScope = createReflectionModelScope(key)
+  const capture = async (runId: string) => {
+    const run = { ...identity, runId }
+    const bound = await bindRecoverableProvider(run, state.services, key, signal)
+    try { return { run, bound, scope: modelScope(run, bound) } }
+    finally { bound.release() }
+  }
+  const first = await capture('a1')
+  const otherPreset = await capture('b1')
+  const samePreset = await capture('a2')
+  assert.notEqual(first.bound.modelIdentity, samePreset.bound.modelIdentity)
+  assert.equal(first.scope, samePreset.scope)
+  assert.notEqual(first.scope, otherPreset.scope)
+  state.setCredential('c2')
+  const refreshed = await capture('b2')
+  assert.notEqual(otherPreset.scope, refreshed.scope)
+  assert.throws(() => modelScope(samePreset.run, first.bound), RecoverableProviderVersionError)
+  assert.throws(() => modelScope({ ...first.run, ownerId: 'other' }, first.bound), RecoverableProviderVersionError)
+  assert.throws(() => modelScope(first.run, { ...first.bound, accessScopeHash: 'c'.repeat(64) }), RecoverableProviderVersionError)
+})
 test('重启按 checkpoint 固定模型恢复，不再轮询，身份不包含凭据', async () => {
   const { services, releases } = setup()
   const first = await bindRecoverableProvider(identity, services, 'synthetic-signing-key', signal)
@@ -30,6 +53,28 @@ test('版本、范围和运行身份漂移拒绝恢复并释放模型占位', as
   await assert.rejects(bindRecoverableProvider({ ...identity, runId: 'run-b' }, state.services, 'synthetic-key', signal, recovery))
   await assert.rejects(bindRecoverableProvider(identity, state.services, 'synthetic-key', signal, { ...recovery, modelIdentity: 'legacy-random-uuid' }))
   assert.equal(state.releases(), 3); first.release()
+})
+
+test('已删除的预设不能换用当前模型，暂时的配置读取故障仍可重试', async () => {
+  const { services } = setup()
+  const key = 'synthetic-key'
+  const first = await bindRecoverableProvider(identity, services, key, signal)
+  const recovery = { identity, modelIdentity: first.modelIdentity, accessScopeHash: first.accessScopeHash }
+  first.release()
+  const select = createModelStrategy(async () => ({
+    ai: { provider: 'synthetic', model: 'active', context_tokens: 128_000 },
+    byokEnabled: false, systemPrompt: '', accessScopeHash: 'a'.repeat(64),
+  }))
+  await assert.rejects(bindRecoverableProvider(identity, { ...services, async select(run, abort, ref) {
+    assert.equal(ref, 'preset:a')
+    await select(run.ownerId, abort, ref)
+    assert.fail('原预设删除后必须拒绝选择')
+  } }, key, signal, recovery), RecoverableProviderVersionError)
+
+  const unavailable = new Error('合成配置读取失败')
+  await assert.rejects(bindRecoverableProvider(identity, { ...services, async select() {
+    throw unavailable
+  } }, key, signal, recovery), error => error === unavailable)
 })
 
 test('恢复复用最少在途预设并在版本拒绝后释放预留', async () => {

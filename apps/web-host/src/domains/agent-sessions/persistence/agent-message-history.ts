@@ -1,8 +1,7 @@
 import type { Pool } from 'pg'
-import type { AgentInteractionHistoryWindow } from '@gugu/core/agent-sessions'
+import { projectAgentMessageBodiesWithMentions, projectAgentTimelineEvents, type AgentInteractionHistoryWindow, type AgentMessageProjectionRow } from '@gugu/core/agent-sessions'
 import { loadGroupMentionNames } from './agent-group-mentions.js'
-import { replacePlatformMentionIds } from '@gugu/core/agent/context/messages'
-import { sanitizeMediaPayload } from '@gugu/core/agent/context/messages'
+import { readActiveSessionFilesystemGrant } from '../agent-filesystem-authorization.js'
 
 export class AgentSessionNotFoundError extends Error {
   readonly statusCode = 404
@@ -33,27 +32,8 @@ export interface AgentMessageHistoryRuntime {
   nowSeconds?(): number
 }
 
-interface MessageRow {
-  id: number
-  role: string
-  content: string
-  is_display_body: boolean
-  display_timeline: unknown
-  has_display_timeline: boolean
-  files: unknown
+type MessageRow = AgentMessageProjectionRow & {
   conversation_seq: string
-  run_id: string | null
-  round_id: string | null
-  created_at: Date | string
-  client_message_id?: string | null
-  quoted_text?: string | null
-  references_json?: unknown
-  platform_user_id?: string | null
-  platform_user_name?: string | null
-  platform_bot_user_id?: string | null
-  run_outcome?: unknown
-  im_platform_sent_ms?: number | string | null
-  im_event_received_ms?: number | string | null
   time_key?: string
 }
 
@@ -97,109 +77,6 @@ function messageTimeMs(message: MessageRow): string {
   return message.time_key ?? String(new Date(message.created_at).getTime())
 }
 
-/** Removes internal provider payloads and media bytes before historical events reach the UI. */
-export function projectTimelineEvents(
-  messages: Array<{ id: number; displayTimeline: unknown }>,
-): unknown[] {
-  const events: unknown[] = []
-  for (const message of messages) {
-    if (!Array.isArray(message.displayTimeline)) continue
-    message.displayTimeline.forEach((raw, index) => {
-      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return
-      const item = sanitizeMediaPayload(raw) as Record<string, unknown>
-      const event: Record<string, unknown> = {}
-      for (const [key, value] of Object.entries(item))
-        if (!(item.kind === 'tool' && (key === 'toolInput' || key === 'toolResult'))) event[key] = value
-      event.id = `${message.id}:${index}`
-      event.messageId = message.id
-      event.timelineOrder = item.timelineOrder
-      event.createdAt = item.createdAt
-      if (item.kind === 'tool' && ('toolInput' in item || 'toolResult' in item)) {
-        event.detailsAvailable = true
-        event.detailSource = { kind: 'timeline', messageId: message.id, index }
-      }
-      events.push(event)
-    })
-  }
-  return events
-}
-
-function normalizeQqAttachmentPlaceholders(text: string, files: unknown, quoted = false): string {
-  if (!text || !Array.isArray(files) || files.length === 0) return text
-  let changed = false
-  const normalized = text.replace(
-    /<attachmentType="([A-Za-z0-9.+-]+\/[A-Za-z0-9.+-]+)",attachmentIndex=(\d+),description="[^"]*">/g,
-    (placeholder, expectedMime: string, rawIndex: string) => {
-      const index = Number(rawIndex)
-      if (!Number.isSafeInteger(index) || index >= files.length) return placeholder
-      const attachment = files[index]
-      if (!attachment || typeof attachment !== 'object' || Array.isArray(attachment)) return placeholder
-      const record = attachment as Record<string, unknown>
-      if (record.quoted !== quoted) return placeholder
-      const rawMime = record.content_type || record.mime || record.type || ''
-      const actualMime = String(rawMime).split(';', 1)[0]!.trim().toLowerCase()
-      if (actualMime !== expectedMime.toLowerCase()) return placeholder
-      changed = true
-      return ''
-    },
-  )
-  return changed ? normalized.trim() : text
-}
-
-export function projectMessageBodies(messages: MessageRow[], source?: string) {
-  return projectMessageBodiesWithMentions(messages, source, new Map())
-}
-
-export function projectMessageBodiesWithMentions(
-  messages: MessageRow[],
-  source: string | undefined,
-  mentionNames: ReadonlyMap<string, string>,
-) {
-  return messages.flatMap((message) => {
-    if (!message.is_display_body || (message.has_display_timeline && message.display_timeline !== null))
-      return []
-    const files = message.files ?? []
-    const normalizedContent = typeof message.content === 'string' && source === 'qq'
-      ? normalizeQqAttachmentPlaceholders(message.content, files)
-      : message.content
-    const normalizedQuotedText = typeof message.quoted_text === 'string' && source === 'qq'
-      ? normalizeQqAttachmentPlaceholders(message.quoted_text, files, true)
-      : message.quoted_text ?? null
-    const content = typeof normalizedContent === 'string'
-      ? replacePlatformMentionIds(normalizedContent, mentionNames) ?? normalizedContent
-      : normalizedContent
-    const quotedText = typeof normalizedQuotedText === 'string'
-      ? replacePlatformMentionIds(normalizedQuotedText, mentionNames)
-      : normalizedQuotedText
-    const platformSentAt = Number(message.im_platform_sent_ms)
-    const eventReceivedAt = Number(message.im_event_received_ms)
-    const occurredAt = platformSentAt > 0
-      ? new Date(platformSentAt).toISOString()
-      : eventReceivedAt > 0
-        ? new Date(eventReceivedAt).toISOString()
-        : new Date(message.created_at).toISOString()
-    return [{
-      id: message.id,
-      role: message.role,
-      clientMessageId: message.client_message_id ?? null,
-      timelineOrder: message.id * 1_000_000,
-      content,
-      files,
-      references: message.references_json ?? [],
-      quotedText,
-      platformUserId: message.platform_user_id ?? null,
-      platformUserName: message.platform_user_name ?? null,
-      platformBotUserId: message.platform_bot_user_id ?? null,
-      runOutcome: message.run_outcome ?? null,
-      runId: message.run_id,
-      roundId: message.round_id,
-      createdAt: new Date(message.created_at).toISOString(),
-      occurredAt,
-      ...(message.has_display_timeline ? { timelineOmitted: true } : {}),
-    }]
-  })
-}
-
 /**
  * 按 Python display-message store 的排序和游标规则读取消息页，并组装会话恢复所需数据。
  */
@@ -228,14 +105,8 @@ export function createAgentMessageHistory(pool: Pool, runtime: AgentMessageHisto
           [ownerId, `session-${sessionId}`],
         ),
         filesystemAuthorizationEnabled
-          ? pool.query<{ subject_id: string }>(
-            `SELECT subject_id FROM filesystem_authorization_grants
-             WHERE user_id = $1 AND subject_type = 'session' AND subject_id = $2
-               AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())
-             LIMIT 1`,
-            [ownerId, String(sessionId)],
-          )
-          : Promise.resolve({ rows: [] as { subject_id: string }[], rowCount: 0 }),
+          ? readActiveSessionFilesystemGrant(pool, ownerId, sessionId, new Date())
+          : Promise.resolve(null),
         session.source
           ? pool.query<{ owner_platform_user_id: string | null; bot_platform_user_id: string | null }>(
           `SELECT owner_platform_user_id,bot_platform_user_id FROM user_bots
@@ -365,7 +236,7 @@ export function createAgentMessageHistory(pool: Pool, runtime: AgentMessageHisto
         hasMore = await probe(older)
         if (forward && messages.length === limit) hasNewer = await probe(newer)
       }
-      const timelineEvents = projectTimelineEvents(messages.map((message) => ({
+      const timelineEvents = projectAgentTimelineEvents(messages.map((message) => ({
         id: message.id,
         displayTimeline: message.display_timeline,
       }))) as Array<Record<string, unknown>>
@@ -406,7 +277,7 @@ export function createAgentMessageHistory(pool: Pool, runtime: AgentMessageHisto
           chatType: session.chat_type,
           ownerPlatformUserId: bot.rows[0]?.owner_platform_user_id ?? null,
           workspaceName: runtime.workspaceShellSupported?.() ? session.workspace_name : null,
-          filesystemAuthorized: grant.rows.length > 0,
+          filesystemAuthorized: grant !== null,
           filesystemAuthorizationEnabled,
           goalActive: Boolean(sessionContext.goal_mode && sessionContext.goal_text),
           goalStatus: sessionContext.goal_text
@@ -418,7 +289,7 @@ export function createAgentMessageHistory(pool: Pool, runtime: AgentMessageHisto
         pendingMessageCount: Number(session.pending_message_count ?? 0),
         pendingQueue: queueItems,
         interactions,
-        messages: projectMessageBodiesWithMentions(messages, session.source ?? undefined, await loadGroupMentionNames({
+        messages: projectAgentMessageBodiesWithMentions(messages, session.source ?? undefined, await loadGroupMentionNames({
           pool,
           ownerId,
           sessionId,

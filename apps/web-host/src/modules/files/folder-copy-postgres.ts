@@ -63,8 +63,8 @@ async function targetBase(client: PoolClient, ownerId: string, projectId: number
   if (projectId !== null && workspaceId !== null) throw new CoreError('invalid_request', '项目与 Workspace 目录不能同时指定')
   if (projectId !== null) {
     const result = await client.query<Row>(
-      `SELECT name,COALESCE(to_char(start_date,'YYYY'),to_char(created_at,'YYYY')) year,
-         COALESCE(to_char(start_date,'MM'),to_char(created_at,'MM')) month
+      `SELECT name,COALESCE(to_char(NULLIF(start_date::text,'')::date,'YYYY'),to_char(created_at,'YYYY')) year,
+         COALESCE(to_char(NULLIF(start_date::text,'')::date,'MM'),to_char(created_at,'MM')) month
        FROM projects WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL`, [projectId, ownerId],
     )
     const row = result.rows[0]

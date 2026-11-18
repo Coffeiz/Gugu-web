@@ -75,11 +75,13 @@ function providerErrorStatus(error: unknown): number {
   return Number.isInteger(status) && status >= 100 && status <= 599 ? status : 0
 }
 
-async function nativeAsrProbe(input: Parameters<CredentialTestPreviewOptions['probe']>[0], transport: ProviderTransport): Promise<{ ok: boolean; status: number; detail: string; message: string }> {
+async function nativeAsrProbe(input: Parameters<CredentialTestPreviewOptions['probe']>[0], transport: ProviderTransport): Promise<{ ok: boolean; status?: number; detail: string; message: string }> {
   let dashscopeService: string | undefined
-  if (input.apiFormat === 'dashscope') {
+  const dashscope = input.apiFormat === 'dashscope'
+  if (dashscope) {
     try { dashscopeService = dashscopeAsrServiceForModel(input.model) }
     catch (error) { return { ok: false, status: 0, detail: '', message: error instanceof Error ? error.message : '百炼原生语音模型不受支持' } }
+    if (!input.baseUrl.trim()) return { ok: false, detail: '', message: '请先填写模型名和 Base URL' }
   } else if (input.provider.toLowerCase() === 'minimax' && input.apiFormat !== 'minimax-asr') {
     return { ok: false, status: 0, detail: '', message: 'MiniMax 语音识别需要选择 MiniMax ASR 接口格式' }
   } else if (input.provider.toLowerCase() !== 'minimax' || input.apiFormat !== 'minimax-asr') {
@@ -104,18 +106,19 @@ async function nativeAsrProbe(input: Parameters<CredentialTestPreviewOptions['pr
   const signal = AbortSignal.timeout(10_000)
   try {
     const media = [{ type: 'audio', mime: 'audio/wav', ext: 'wav', duration: 1, raw: silentWav() }]
-    const text = input.apiFormat === 'dashscope'
+    const text = dashscope
       ? await transcribeDashscopeAsr(media, config, { ...dependencies, toWav: async () => null } satisfies CompatibleAsrDependencies, signal, { raiseErrors: true })
       : await transcribeMiniMax(media, config, { ...dependencies, probeAudioDuration: async () => 1, toWav: async () => null } satisfies AsrDependencies, signal, { raiseErrors: true })
-    return { ok: text !== null, status: 200, detail: '', message: input.provider.toLowerCase() === 'minimax'
-      ? 'MiniMax ASR 连接正常' : '连接正常（静音测试已收到响应）' }
+    if (text === null) return { ok: false, ...(dashscope ? {} : { status: 0 }), detail: '', message: '语音模型未配置' }
+    return { ok: true, ...(dashscope ? {} : { status: 200 }), detail: '', message: dashscope
+      ? '连接正常（静音测试已收到响应）' : 'MiniMax ASR 连接正常' }
   } catch (error) {
     const status = providerErrorStatus(error)
     const detail = safeUpstreamMessage(upstreamBody, input.apiKey)
     const message = status
       ? `语音测试失败（HTTP ${status}）${detail ? `：${detail}` : ''}`
       : '无法连接语音识别服务，请检查 Base URL、模型和 API Key'
-    return { ok: false, status, detail: '', message }
+    return { ok: false, ...(dashscope ? {} : { status }), detail: '', message }
   }
 }
 

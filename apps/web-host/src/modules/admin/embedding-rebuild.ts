@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify'
 import { dataContext } from '@gugu/core/contracts'
-import type { RagQueryEmbeddingSettings } from '@gugu/core/agent'
+import type { RagQueryEmbeddingSettings } from '@gugu/core/agent/rag'
 import type { ScheduledTaskRedisCommands } from '../scheduled-tasks/persistence/redis-lease.js'
 
 const statusKey = 'emb:rebuild'

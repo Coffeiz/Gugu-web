@@ -190,7 +190,7 @@
       <!-- 底部 -->
       <div class="modal-footer">
         <ActionButton variant="secondary" @click="$emit('close')">{{ t('projects.cancel') }}</ActionButton>
-        <ActionButton @click="handleCreate">{{ t('projects.create') }}</ActionButton>
+        <ActionButton :disabled="creating" @click="handleCreate">{{ t('projects.create') }}</ActionButton>
       </div>
 
       <Teleport to="body">
@@ -208,6 +208,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useProjectStore } from '@/stores/projects'
+import { showAppError } from '@/composables/core/useAppToast'
 import { useUiStore } from '@/stores/ui'
 import DateRangePicker from '@/components/common/controls/DateSpanPicker.vue'
 import BaseModal from '@/components/common/overlays/BaseModal.vue'
@@ -231,6 +232,7 @@ const uiStore         = useUiStore()
 const { t } = useI18n()
 const stagesEditorRef = ref<HTMLElement | null>(null)
 const nameInputRef    = ref<HTMLInputElement | null>(null)
+const creating       = ref(false)
 async function startNameEdit() {
   await nextTick()
   nameInputRef.value?.focus()
@@ -501,23 +503,32 @@ function cycleStatus() {
   form.status = cols[(idx + 1) % cols.length].key
 }
 
-function handleCreate() {
+async function handleCreate() {
+  if (creating.value) return
   const name = form.name.trim()
   if (!name) { errors.name = t('projects.fillName'); return }
   if (INVALID_NAME_RE.test(name)) { errors.name = t('projects.invalidName'); return }
   const stages = form.stages.filter(s => s.label.trim())
-  prefsStore.saveLastStages(stages.map(s => s.label.trim()))
-  projectStore.addProject({
-    name:            name,
-    client:          form.client.trim(),
-    startDate:       form.startDate,
-    deadline:        form.deadline,
-    status:          form.status,
-    color:           form.color,
-    stages,
-    currentStageIdx: form.currentStageIdx,
-  })
-  emit('close')
+  const selectedStage = form.stages[form.currentStageIdx]
+  creating.value = true
+  try {
+    await projectStore.addProject({
+      name,
+      client: form.client.trim(),
+      startDate: form.startDate,
+      deadline: form.deadline,
+      status: form.status,
+      color: form.color,
+      stages,
+      currentStageIdx: Math.max(0, stages.indexOf(selectedStage)),
+    })
+    emit('close')
+    await prefsStore.saveLastStages(stages.map(s => s.label.trim()))
+  } catch (error) {
+    showAppError(error instanceof Error ? error.message : String(error))
+  } finally {
+    creating.value = false
+  }
 }
 </script>
 
@@ -546,7 +557,7 @@ function handleCreate() {
   font-size: 17px; font-weight: 700; color: var(--text-primary);
   font-family: var(--font-sans); line-height: 1.2; outline: none;
   padding: 7px 8px; margin: 0;
-  border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; corner-shape: squircle;
+  border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; corner-shape: round;
   background: rgba(255,255,255,0.72); caret-color: var(--input-caret-color);   /* 与下方字段框统一：0.72 白底 + 0.1 边框 */
   transition: border-color 0.15s, box-shadow 0.15s;
 }
@@ -676,7 +687,7 @@ input:not(.name-input):not(.header-name-input):focus:not(:disabled) {
   background: rgba(255,255,255,0.96);
   backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
   border: 1px solid rgba(0,0,0,0.08);
-  border-radius: 10px;
+  border-radius: var(--card-radius);
   box-shadow: 0 4px 20px rgba(0,0,0,0.1);
   padding: 4px 0; overflow: hidden;
 }
@@ -821,7 +832,7 @@ input:not(.name-input):not(.header-name-input):focus:not(:disabled) {
 .add-stage-btn {
   display: flex; align-items: center; gap: 6px;
   border: 1.5px dashed var(--inline-action-border);
-  border-radius: var(--radius-sm); padding: 6px 9px;
+  border-radius: var(--radius-xs); padding: 6px 9px;
   background: var(--inline-action-bg); font-size: 12px; color: var(--inline-action-fg);
   cursor: pointer; font-family: var(--font-sans);
   transition: all 0.15s; margin-left: 27px; margin-right: 29px;

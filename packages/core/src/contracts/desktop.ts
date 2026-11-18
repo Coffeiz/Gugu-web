@@ -6,6 +6,12 @@ export const DESKTOP_METHODS = [
   'projects.list',
   'projects.create',
   'projects.rename',
+  'projects.board.list',
+  'projects.board.get',
+  'projects.board.create',
+  'projects.board.update',
+  'projects.board.delete',
+  'projects.board.restore',
   'clients.list',
   'clients.create',
   'clients.update',
@@ -37,6 +43,10 @@ export const DESKTOP_METHODS = [
 export const DESKTOP_MUTATIONS: readonly string[] = [
   'projects.create',
   'projects.rename',
+  'projects.board.create',
+  'projects.board.update',
+  'projects.board.delete',
+  'projects.board.restore',
   'clients.create',
   'clients.update',
   'clients.delete',
@@ -64,6 +74,12 @@ export const DESKTOP_CHANNELS = {
   projects: 'gugu:projects:list',
   createProject: 'gugu:projects:create',
   renameProject: 'gugu:projects:rename',
+  projectBoard: 'gugu:projects:board:list',
+  projectDetails: 'gugu:projects:board:get',
+  createBoardProject: 'gugu:projects:board:create',
+  updateBoardProject: 'gugu:projects:board:update',
+  deleteBoardProject: 'gugu:projects:board:delete',
+  restoreBoardProject: 'gugu:projects:board:restore',
   clients: 'gugu:clients:list',
   createClient: 'gugu:clients:create',
   renameClient: 'gugu:clients:rename',
@@ -105,6 +121,27 @@ export interface DesktopProject {
   id: number
   name: string
   version: number
+}
+export type DesktopProjectCollection = 'active' | 'archived' | 'deleted'
+export interface DesktopProjectDetails extends DesktopProject {
+  client: string | null
+  status: string
+  startDate: string | null
+  deadline: string | null
+  color: string
+  progress: number
+  stages: Record<string, unknown>[]
+  currentStage: string | null
+  archived: boolean
+  priority: string | null
+  doneAt: string | null
+  updatedAt: string
+  deletedAt: string | null
+  createdAt: string
+}
+export interface DesktopProjectPage {
+  items: DesktopProjectDetails[]
+  nextOffset: number | null
 }
 export interface DesktopClient {
   id: number
@@ -172,6 +209,12 @@ export interface DesktopBridge {
   projects(): Promise<DesktopReply<DesktopProject[]>>
   createProject(name: string): Promise<DesktopReply<DesktopProject>>
   renameProject(id: number, version: number, name: string): Promise<DesktopReply<DesktopProject>>
+  projectBoard(collection: DesktopProjectCollection, offset: number): Promise<DesktopReply<DesktopProjectPage>>
+  projectDetails(id: number): Promise<DesktopReply<DesktopProjectDetails>>
+  createBoardProject(fields: Record<string, unknown>, operationId?: string): Promise<DesktopReply<DesktopProjectDetails>>
+  updateBoardProject(id: number, version: number, fields: Record<string, unknown>): Promise<DesktopReply<DesktopProjectDetails>>
+  deleteBoardProject(id: number): Promise<DesktopReply<null>>
+  restoreBoardProject(id: number): Promise<DesktopReply<DesktopProjectDetails>>
   clients(): Promise<DesktopReply<DesktopClient[]>>
   createClient(name: string): Promise<DesktopReply<DesktopClient>>
   renameClient(id: number, name: string): Promise<DesktopReply<DesktopClient>>

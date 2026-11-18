@@ -387,8 +387,8 @@
     "domain": "byok",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/byok",
-    "productionEntry": "BYOK POST/GET/PATCH/models-preview/media-capability-probe/capabilities startServer 生产入口",
-    "keyBehavior": "隔离 PG create→list→patch→媒体探测、Provider 本地真实传输、owner认证、目的地绑定、密钥遮蔽及 Python 解密",
+    "productionEntry": "BYOK POST/GET/PATCH、模型列表、媒体探测、草稿及已保存凭据试呼的 startServer 生产入口",
+    "keyBehavior": "隔离 PostgreSQL、实际本地 Provider 协议、owner 认证、目的地绑定、草稿不写库、密钥遮蔽及 Python 解密",
     "ci": "node-webui"
   },
   "apps/web-host/tests/host/mcp-server-create-host.test.ts": {

@@ -42,8 +42,19 @@ it('Agent、Provider和共用Executor可移植入口的运行依赖闭包不装�
       inspect(target)
     }
   }
-  inspect(resolve(source, 'agent/index.ts'))
-  inspect(resolve(source, 'agent/providers/index.ts'))
-  inspect(resolve(source, 'agent/executor/executor.ts'))
+  const entries = [
+    'agent/index.ts',
+    'agent/runtime.ts',
+    'agent/chat-service.ts',
+    'agent/run/dispatch-worker.ts',
+    'agent/run/dispatch-supervisor.ts',
+    'agent/run/reconstruct.ts',
+    'agent/run/event-stream.ts',
+    'agent/providers/index.ts',
+    'agent/executor/executor.ts',
+  ]
+  for (const entry of entries) inspect(resolve(source, entry))
+  for (const entry of entries.slice(1, 7))
+    expect(visited.has(resolve(source, entry)), `${entry} must remain inside the Core Agent runtime`).toBe(true)
   expect(visited.size).toBeGreaterThan(2)
 })

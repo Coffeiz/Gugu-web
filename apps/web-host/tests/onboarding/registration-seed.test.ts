@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createRegistrationSeeder, type RegistrationSeedPlan, type RegistrationSeedPorts } from '@gugu/core/onboarding'
+import { createOnboardingSurpriseMp3Reader } from '../../src/modules/onboarding/surprise-asset.js'
 
 function fixture(overrides: Partial<RegistrationSeedPorts> = {}) {
   const applied: Array<{ ownerId: string; plan: RegistrationSeedPlan }> = []
@@ -66,6 +67,17 @@ test('素材存在时计划包含个人 MP3，不存在时只计划两份项目�
   const withoutAsset = fixture()
   await createRegistrationSeeder(withoutAsset.ports, { random: () => 0 })('owner-synthetic')
   assert.equal(withoutAsset.applied[0]!.plan.files.length, 2)
+})
+
+test('注册计划从 Node Host 打包资产读取实际 MP3', async () => {
+  const { applied, ports } = fixture({ surpriseMp3: createOnboardingSurpriseMp3Reader() })
+  await createRegistrationSeeder(ports)('owner-synthetic')
+  const audio = applied[0]!.plan.files.find(file => file.ext === 'mp3')
+  assert.ok(audio)
+  assert.equal(audio.space, 'personal')
+  assert.equal(audio.displayName, 'Gymnopedie No. 1')
+  assert.equal(audio.mimeType, 'audio/mpeg')
+  assert.equal(Buffer.from(audio.data.subarray(0, 3)).toString('ascii'), 'ID3')
 })
 
 test('原子端口失败不影响已提交的注册调用方，诊断回调失败也不外溢', async () => {

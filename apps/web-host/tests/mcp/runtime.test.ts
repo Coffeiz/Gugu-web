@@ -7,7 +7,7 @@ const other='00000000-0000-4000-8000-000000000072'
 const server='00000000-0000-4000-8000-000000000073'
 const row={id:server,name:'高德',scope:'user',transport:'http',endpoint:'',encrypted_endpoint:'cipher-endpoint',endpoint_nonce:'n',encrypted_endpoint_key:'k',endpoint_key_version:1,command:'',credential_slots:[{id:'auth',target:'header',name:'Authorization',prefix:'Bearer '}],encrypted_credentials:'cipher-creds',credentials_nonce:'n',encrypted_credentials_key:'k',credentials_key_version:1,encrypted_headers:'',headers_nonce:'',encrypted_headers_key:'',headers_key_version:1,encrypted_query_params:'',query_params_nonce:'',encrypted_query_params_key:'',query_params_key_version:1,enabled:true,confirm_mode:'confirm_all',timeout_seconds:15,tool_allowlist:['geocode'],created_at:null,updated_at:null}
 
-function fixture(callResponse?:unknown, callError?:unknown){
+function fixture(callResponse?:unknown, callError?:unknown, connectError?:unknown){
  let enabled=true,closed=0,transportClosed=0,connects=0,listed=0,calls=0
  let receivedSignal:AbortSignal|undefined
  let currentRow={...row}
@@ -19,7 +19,7 @@ function fixture(callResponse?:unknown, callError?:unknown){
   client(input){
    receivedAuthorization.push(input.headers.Authorization??'')
    assert.notEqual(input.fetch,globalThis.fetch)
-   return {async connect(){connects++},async listTools(){listed++;return {tools:[
+   return {async connect(){connects++;if(connectError)throw connectError},async listTools(){listed++;return {tools:[
     {name:'geocode',description:'地址查询',inputSchema:{type:'object',properties:{address:{type:'string',minLength:2,examples:['private']}},required:['address'],additionalProperties:false}},
     {name:'not_allowed',inputSchema:{type:'object'}},{name:'builtin_tool',inputSchema:{type:'object'}},
    ]}},async callTool(name:string,args:Record<string,unknown>,options?:{signal?:AbortSignal}){calls++;receivedSignal=options?.signal;if(callError)throw callError;return callResponse??{isError:false,content:[{type:'text',text:`called:${name}:${String(args.address)}`}]}},async close(){closed++}}
@@ -27,6 +27,28 @@ function fixture(callResponse?:unknown, callError?:unknown){
  })
  return {service,setEnabled(v:boolean){enabled=v},setRow(next:typeof currentRow){currentRow=next},stats:()=>({closed,transportClosed,connects,listed,calls}),receivedAuthorization:()=>receivedAuthorization,receivedSignal:()=>receivedSignal}
 }
+
+test('Agent 探测刷新已保存连接，只发现工具，失败分类不返回上游正文',async()=>{
+ const signal=new AbortController().signal
+ const f=fixture()
+ try{
+  await assert.rejects(f.service.testConnection(other,server,signal),{statusCode:404})
+  await assert.rejects(f.service.testConnection(owner,server,AbortSignal.abort()),{name:'AbortError'})
+  assert.equal(f.stats().connects,0)
+  await f.service.load(owner,server)
+  assert.deepEqual(await f.service.testConnection(owner,server,signal),{ok:true,toolNames:['mcp_gaode_geocode']})
+  assert.equal(f.service.state(owner,server).loaded_tool_count,1)
+  assert.deepEqual(f.stats(),{connects:2,listed:2,calls:0,closed:1,transportClosed:1})
+  f.setRow({...row,enabled:false})
+  assert.deepEqual(await f.service.testConnection(owner,server,signal),{ok:false,errorKind:null})
+  assert.equal(f.stats().connects,2)
+ }finally{await f.service.close()}
+ const failed=fixture(undefined,undefined,new Error('401 synthetic-secret'))
+ try{
+  assert.deepEqual(await failed.service.testConnection(owner,server,signal),{ok:false,errorKind:'auth'})
+  assert.equal(failed.service.state(owner,server).last_error,'MCP server 认证失败，请检查凭据')
+ }finally{await failed.service.close()}
+})
 
 test('MCP runtime 按 owner 和启用状态按需载入，列表只返回实际加载的过滤工具',async()=>{
  const f=fixture()

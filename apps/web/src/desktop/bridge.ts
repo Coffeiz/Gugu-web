@@ -1,5 +1,7 @@
 import type { DesktopBridge, DesktopProject, DesktopClient, DesktopCalendarEvent, DesktopCanvas, DesktopCanvasItem, DesktopNote, DesktopReply } from '@gugu/core/desktop'
 import type { DesktopAppearancePreferences, DesktopOnboardingState } from '@gugu/core/desktop'
+import type { DesktopProjectCollection, DesktopProjectDetails } from '@gugu/core/desktop'
+import { desktopPreviewCalendarEndpoint, desktopPreviewCalendarMethods } from './preview-calendar'
 export type { SandboxStatus } from '@gugu/core/desktop'
 export type ProjectRow = DesktopProject
 export type ClientRow = DesktopClient
@@ -13,6 +15,14 @@ export class DesktopBridgeError extends Error {
   constructor(readonly code: string, message: string, readonly operationId?: string) {
     super(message)
   }
+
+  get status() {
+    return this.code === 'conflict' ? 409 : this.code === 'not_found' ? 404 : undefined
+  }
+}
+
+export function isDesktopRenderer() {
+  return typeof window !== 'undefined' && (document.documentElement.dataset.desktopShell === 'true' || 'guguDesktop' in window)
 }
 
 async function call<T>(action: (bridge: DesktopBridge) => Promise<DesktopReply<T>>): Promise<T> {
@@ -23,6 +33,33 @@ async function call<T>(action: (bridge: DesktopBridge) => Promise<DesktopReply<T
   return reply.result
 }
 
+const projectBoardMethods = [
+  'projectBoard', 'projectDetails', 'createBoardProject',
+  'updateBoardProject', 'deleteBoardProject', 'restoreBoardProject',
+] as const satisfies readonly (keyof DesktopBridge)[]
+
+function callProjectBoard<T>(action: (bridge: DesktopBridge) => Promise<DesktopReply<T>>): Promise<T> {
+  return call(bridge => {
+    if (projectBoardMethods.some(method => typeof bridge[method] !== 'function'))
+      throw new DesktopBridgeError('desktop_update_required', '桌面应用版本过旧，请更新并重新启动后再操作项目')
+    return action(bridge)
+  })
+}
+
+const previewCalendarMethods = new Set<string>(desktopPreviewCalendarMethods)
+
+async function callPreviewCalendar(method: string, args: unknown[]): Promise<DesktopReply<unknown>> {
+  const response = await fetch(desktopPreviewCalendarEndpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ method, args }),
+  })
+  if (!response.ok || !response.headers.get('content-type')?.includes('application/json')) {
+    throw new DesktopBridgeError('preview_unavailable', '本机日历预览服务未就绪，请通过桌面开发服务打开预览')
+  }
+  return response.json()
+}
+
 function createPreviewBridge(): DesktopBridge | undefined {
   if (!import.meta.env.DEV || new URLSearchParams(location.search).get('desktopPreview') !== '1') return undefined
   const defaults = {
@@ -30,11 +67,15 @@ function createPreviewBridge(): DesktopBridge | undefined {
     onboarding: { should_show: false, guide: { enabled: false, current_step: '', completed_steps: [], dismissed: false, completed_at: null, should_show: false }, seed: {} },
     sandboxStatus: { supported: false, methods: [], checkAvailable: false, reason: '浏览器预览模式' },
   }
-  const arrayMethods = new Set(['projects', 'clients', 'calendar', 'canvases', 'canvasItems', 'notes'])
+  const arrayMethods = new Set(['projects', 'clients', 'canvases', 'canvasItems', 'notes'])
   const previewCanvases: DesktopCanvas[] = []
   let nextCanvasId = 1
   return new Proxy({} as DesktopBridge, {
     get: (_target, key: string) => {
+      if (key === 'projectBoard') return async () => ({ ok: true, result: { items: [], nextOffset: null } })
+      if (['projectDetails', 'createBoardProject', 'updateBoardProject', 'deleteBoardProject', 'restoreBoardProject'].includes(key))
+        return async () => ({ ok: false, error: { code: 'invalid_request', message: '请在桌面应用中操作本地项目' } })
+      if (previewCalendarMethods.has(key)) return (...args: unknown[]) => callPreviewCalendar(key, args)
       if (key === 'canvases') return async () => ({ ok: true, result: [...previewCanvases] })
       if (key === 'createCanvas') return async (title = '未命名画布') => {
         const now = new Date().toISOString()
@@ -54,6 +95,24 @@ export const desktopData = {
   projects: () => call(bridge => bridge.projects()),
   createProject: (name: string) => call(bridge => bridge.createProject(name)),
   renameProject: (id: number, version: number, name: string) => call(bridge => bridge.renameProject(id, version, name)),
+  async projectBoard(collection: DesktopProjectCollection) {
+    const projects: DesktopProjectDetails[] = []
+    let offset: number | null = 0
+    while (offset !== null) {
+      const currentOffset: number = offset
+      const page = await callProjectBoard(bridge => bridge.projectBoard(collection, currentOffset))
+      for (const project of page.items) projects.push(project)
+      offset = page.nextOffset
+    }
+    return projects
+  },
+  projectDetails: (id: number) => callProjectBoard(bridge => bridge.projectDetails(id)),
+  createBoardProject: (fields: Record<string, unknown>, operationId?: string) =>
+    callProjectBoard(bridge => bridge.createBoardProject(JSON.parse(JSON.stringify(fields)), operationId)),
+  updateBoardProject: (id: number, version: number, fields: Record<string, unknown>) =>
+    callProjectBoard(bridge => bridge.updateBoardProject(id, version, JSON.parse(JSON.stringify(fields)))),
+  deleteBoardProject: (id: number) => callProjectBoard(bridge => bridge.deleteBoardProject(id)),
+  restoreBoardProject: (id: number) => callProjectBoard(bridge => bridge.restoreBoardProject(id)),
   clients: () => call(bridge => bridge.clients()),
   createClient: (name: string) => call(bridge => bridge.createClient(name)),
   renameClient: (id: number, name: string) => call(bridge => bridge.renameClient(id, name)),

@@ -7,7 +7,8 @@ export const MAX_SEARCH_ARRAY_ITEMS = 20
 const encoder = new TextEncoder()
 const encodedSize = (value: unknown) => encoder.encode(JSON.stringify(value)).byteLength
 const omit = Symbol('省略')
-const links = new Set(['url', 'link', 'img_src', 'image_url', 'site_icon', 'logo_url'])
+const links = new Set(['url', 'link', 'img_src', 'image_url', 'source_url', 'detail_url', 'site_icon', 'logo_url',
+  'fromurl', 'objurl', 'detail_page', 'result_page'])
 
 /** 限制模型可见搜索结果的正文体积，保留 URL 完整性。 */
 export function limitSearchResult(data: JsonObject): JsonObject {

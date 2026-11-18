@@ -18,12 +18,12 @@ export function createPostgresOnceTaskRepository(pool: Pick<Pool, 'query' | 'con
       const result = await pool.query<Row>(`SELECT ${columns} FROM scheduled_tasks WHERE id=$1 AND schedule_kind='once' AND user_id IS NOT NULL AND start_at IS NOT NULL`, [id])
       return result.rows[0] ? record(result.rows[0]) : null
     },
-    async markStarted(id, at) {
-      const result = await pool.query(`UPDATE scheduled_tasks SET last_run_at=$2, last_run_failed=FALSE WHERE id=$1 AND enabled=TRUE AND schedule_kind='once' AND (last_run_at IS NULL OR last_run_failed=TRUE)`, [id, new Date(at)])
+    async markStarted(id, at, userId) {
+      const result = await pool.query(`UPDATE scheduled_tasks SET last_run_at=$2, last_run_failed=FALSE WHERE id=$1 AND user_id=$3 AND enabled=TRUE AND schedule_kind='once' AND (last_run_at IS NULL OR last_run_failed=TRUE)`, [id, new Date(at), userId])
       return result.rowCount === 1
     },
-    async markFailed(id) {
-      await pool.query(`UPDATE scheduled_tasks SET last_run_failed=TRUE WHERE id=$1 AND schedule_kind='once' AND last_run_at IS NOT NULL`, [id])
+    async markFailed(id, userId) {
+      await pool.query(`UPDATE scheduled_tasks SET last_run_failed=TRUE WHERE id=$1 AND user_id=$2 AND schedule_kind='once' AND last_run_at IS NOT NULL`, [id, userId])
     },
     async deleteCompleted(id, userId) {
       const client = await pool.connect()

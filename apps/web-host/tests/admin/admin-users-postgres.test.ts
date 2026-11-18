@@ -2,8 +2,10 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import Fastify from 'fastify'
 import { Pool } from 'pg'
+import { Kysely, PostgresDialect } from 'kysely'
 import test from 'node:test'
-import { createPostgresAdminUsersQuery, registerAdminUsersRoute } from '../../src/domains/admin/admin-users.js'
+import { createAdminUserListReader } from '@gugu/core/admin/users'
+import { registerAdminUsersRoute } from '../../src/modules/admin/users.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 test('管理员用户列表按真实 PostgreSQL 聚合用量和 Local 账本', {
@@ -13,6 +15,7 @@ test('管理员用户列表按真实 PostgreSQL 聚合用量和 Local 账本', {
   const admin = new Pool({ connectionString: databaseUrl, max: 1 })
   await admin.query(`CREATE SCHEMA "${schema}"`)
   const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema}`, max: 3 })
+  const db = new Kysely<any>({ dialect: new PostgresDialect({ pool }) })
   const app = Fastify()
   try {
     await pool.query(`CREATE TABLE users(id uuid PRIMARY KEY, username text, email text, display_name text,
@@ -27,14 +30,14 @@ test('管理员用户列表按真实 PostgreSQL 聚合用量和 Local 账本', {
     await pool.query(`INSERT INTO agent_usage VALUES ($1,3,4,'2026-11-13T12:00Z',false),($1,100,100,'2026-11-13T12:00Z',true)`, [owner])
     await pool.query('INSERT INTO files VALUES ($1,99)', [owner])
     await pool.query("INSERT INTO storage_quota_ledgers VALUES ($1,'file_library',12)", [owner])
-    registerAdminUsersRoute(app, { requireAdmin: async () => {}, query: createPostgresAdminUsersQuery(pool),
-      now: () => new Date('2026-11-13T13:00:00Z') })
+    registerAdminUsersRoute(app, { requireAdmin: async () => {},
+      read: createAdminUserListReader(db, () => new Date('2026-11-13T13:00:00Z')) })
     const response = await app.inject({ url: '/api/v1/admin/users?q=synthetic' })
     assert.equal(response.statusCode, 200)
     const body = response.json() as { total: number; items: Array<{ id: string; tokens_week: number; tokens_6h: number; storage_used: number }> }
     assert.equal(body.total, 1)
     assert.deepEqual([body.items[0]!.id, body.items[0]!.tokens_week, body.items[0]!.tokens_6h, body.items[0]!.storage_used], [owner, 7, 7, 12])
   } finally {
-    await app.close(); await pool.end(); await admin.query(`DROP SCHEMA "${schema}" CASCADE`); await admin.end()
+    await app.close(); await db.destroy(); await admin.query(`DROP SCHEMA "${schema}" CASCADE`); await admin.end()
   }
 })

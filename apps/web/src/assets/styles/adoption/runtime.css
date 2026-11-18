@@ -123,3 +123,9 @@ html[data-theme='light'][data-family] .fc-card[data-runtime-proxy-content='true'
 html[data-theme='light'][data-family] .fc-card[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing']) .fc-thumb-full.fc-loaded {
   opacity: .75;
 }
+
+/* 亮色抓取阶段由 Runtime 写入内联滤镜。桌面端只替换滤镜，落位阶段仍由 Runtime 接管。 */
+html[data-desktop-shell='true'][data-theme='light'] [data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing']) {
+  backdrop-filter: var(--runtime-drag-glass-filter) !important;
+  -webkit-backdrop-filter: var(--runtime-drag-glass-filter) !important;
+}

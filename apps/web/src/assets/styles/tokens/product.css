@@ -14,7 +14,7 @@ html[data-theme][data-family] :is(.sidebar, .admin-sidebar) .nav-item.active {
   color: var(--sidebar-item-active-fg);
   background: var(--sidebar-item-active);
   border-color: var(--sidebar-item-active-border);
-  box-shadow: var(--sidebar-item-active-shadow);
+  box-shadow: var(--sidebar-item-selected-shadow);
   font-weight: var(--font-weight-bold);
 }
 html[data-theme][data-family] .sidebar .notif-btn { color: var(--sidebar-item-fg); }
@@ -23,7 +23,7 @@ html[data-theme][data-family] .sidebar .notif-btn.notif-active {
   color: var(--sidebar-item-active-fg);
   background: var(--sidebar-item-active);
   border-color: var(--sidebar-item-active-border);
-  box-shadow: var(--sidebar-item-active-shadow);
+  box-shadow: var(--sidebar-item-selected-shadow);
 }
 html[data-theme][data-family] .sidebar .user-card {
   background: var(--sidebar-user-bg);
@@ -112,6 +112,6 @@ html[data-theme][data-family='mono'] .chat-window .msg.ai .msg-bubble {
 
 /* Mono is the public name; mono remains the compatibility data-family id.
    Persistent page surfaces inherit the global no-blur contract; floating surfaces opt in separately. */
-html[data-theme][data-family='mono'] .sidebar {
+html[data-theme='light'][data-family='mono'] .sidebar {
   background: var(--chrome-glass-bg);
 }

@@ -17,8 +17,8 @@
       @view-change="onViewChange"
     />
 
-    <!-- UI 与顶部胶囊一样放到 body 顶层，避免被 body 上的拖拽 clone/camGlue 层叠上下文压住。 -->
-    <Teleport to="body">
+    <!-- 桌面抽屉留在画布内，和底部工具栏一起进入弹窗遮罩的采样范围。 -->
+    <Teleport to="body" :disabled="isDesktopShell">
       <CanvasSidebar
         ref="canvasSidebarRef"
         :canvases="store.canvases"
@@ -36,7 +36,10 @@
         @delete-many="deleteCanvases"
         @add-project="addProjectAtCenter"
       />
+    </Teleport>
 
+    <!-- 桌面底部工具栏以实际的 L2 内容宽度为定位基准。 -->
+    <Teleport to="body" :disabled="isDesktopShell">
       <CanvasToolbar
         :scale="canvasRef?.camera.scale ?? 1"
         :items="store.canvasItems"
@@ -540,8 +543,25 @@ async function onItemMoved(item: MindCanvasItem) {
 /* background 跟 MindCanvas.vue 的 .mind-canvas 底色（#e8ebf3）保持一致——画布本身
    opacity:0 藏起来的这段时间，底下露出来的是这层背景，不跟着变黑/透出页面默认底色。 */
 .canvas-page { position: fixed; inset: 0; z-index: 8; background: #e8ebf3; }
-.canvas-page.is-desktop-shell { position: absolute; inset: 0; z-index: 1; background: transparent; }
+.canvas-page.is-desktop-shell {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  --mind-canvas-bg: var(--glass-card-background);
+}
+html[data-theme='dark'] .canvas-page.is-desktop-shell {
+  --mind-canvas-dot: color-mix(in srgb, var(--content-primary) 32%, transparent);
+}
 .canvas-page.is-desktop-shell :deep(.mind-canvas) { position: absolute; inset: 0; }
+.canvas-page.is-desktop-shell :deep(.canvas-toolbar-wrap) {
+  left: 50%;
+  bottom: calc(var(--floating-edge) - var(--desktop-workspace-edge) - 1px);
+}
+.canvas-page.is-desktop-shell :deep(.canvas-drawer) {
+  top: calc(50% - (var(--desktop-topbar-height) - var(--desktop-workspace-edge)) / 2);
+  right: calc(var(--floating-edge) - var(--desktop-workspace-edge) - 1px);
+}
 /* 相机真实视角要等 restoreView() 异步跑完才定下来，之前有一帧是默认原点/1倍缩放——
    进画布/切画布时藏起来，只在相机定好之后才淡入，不让用户看到那帧过渡态。 */
 .canvas-page-canvas { opacity: 0; transition: none; }

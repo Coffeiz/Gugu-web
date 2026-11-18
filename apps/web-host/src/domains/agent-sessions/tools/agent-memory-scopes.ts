@@ -1,5 +1,6 @@
-import { MemorySearchAccessError, type RunIdentity } from '@gugu/core/agent'
-import type { AuthorizedMemoryScope, MemorySearchScope } from '@gugu/core/agent'
+import { MemorySearchAccessError } from '@gugu/core/agent/rag'
+import { type RunIdentity } from '@gugu/core/agent'
+import type { AuthorizedMemoryScope, MemorySearchScope } from '@gugu/core/agent/rag'
 import type { Pool } from 'pg'
 import { normalizeOwnerId } from '../../../adapters/owner-context.js'
 

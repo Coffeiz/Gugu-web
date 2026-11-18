@@ -201,7 +201,7 @@ function mountAutoGrow(el: unknown) {
 .nextday-tag {
   position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
   font-size: 10px; font-weight: 600; color: var(--selection-fg); background: var(--selection-bg);
-  padding: 1px 6px; border-radius: var(--radius-xs); white-space: nowrap; pointer-events: none;
+  padding: 1px 6px; border-radius: var(--radius-compact); white-space: nowrap; pointer-events: none;
 }
 .popup-input { width: 100%; padding: 8px 11px; border-radius: var(--input-radius); font-size: 13px; }
 .popup-textarea {
@@ -219,14 +219,14 @@ function mountAutoGrow(el: unknown) {
 .reminder-label { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: var(--content-secondary); }
 .reminder-item { display: flex; align-items: center; gap: 6px; }
 .reminder-del {
-  display: flex; align-items: center; padding: 3px; border: none; border-radius: var(--radius-xs);
+  display: flex; align-items: center; padding: 3px; border: none; border-radius: var(--radius-compact);
   background: transparent; cursor: pointer; color: var(--danger-button-fg);
   transition: background-color var(--motion-hover-control) var(--motion-ease-standard);
 }
 .reminder-del:hover { background: var(--danger-button-bg); }
 .reminder-add-toggle,
 .reminder-test-bar {
-  width: 100%; box-sizing: border-box; padding: 6px 10px; border-radius: var(--radius-sm);
+  width: 100%; box-sizing: border-box; padding: 6px 10px; border-radius: var(--radius-xs);
   color: var(--option-fg); font-size: 11px; font-weight: 600; cursor: pointer; font-family: var(--font-sans);
   transition:
     color var(--motion-hover-control) var(--motion-ease-standard),
@@ -267,7 +267,7 @@ function mountAutoGrow(el: unknown) {
   justify-content: center;
   gap: 6px;
   padding: 5px 8px;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-compact);
   font-size: 12px;
   font-weight: 400;
   cursor: pointer;

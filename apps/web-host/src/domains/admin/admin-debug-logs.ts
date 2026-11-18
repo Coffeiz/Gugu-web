@@ -1,4 +1,6 @@
 import { open, stat } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify'
 
@@ -10,6 +12,15 @@ export interface AdminDebugLogOptions {
   paths: Record<AdminDebugLogSource, string>
   webCandidates: string[]
   pollIntervalMs?: number
+}
+
+export function resolveAdminDebugLogFiles(logFile: string | null): Pick<AdminDebugLogOptions, 'paths' | 'webCandidates'> {
+  const directory = logFile ? dirname(logFile) : fileURLToPath(new URL('../../../logs/', import.meta.url))
+  const web = logFile ?? join(directory, 'gugu.log')
+  return {
+    paths: { web, worker: join(directory, 'gugu-worker.log'), gateway: join(directory, 'gugu-gateway.log') },
+    webCandidates: logFile ? [web] : [join(directory, 'gugu-web-dev.log'), web],
+  }
 }
 
 type Cursor = Partial<Record<AdminDebugLogSource, number>>

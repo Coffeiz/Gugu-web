@@ -1,6 +1,5 @@
 
 import type { ExecutionRequest,ExecutionResult } from './executor/contracts.js'
-import type { ensureSessionSnapshot } from './context/prepare.js'
 import type { ReflectionSnapshots } from './memory/reflection.js'
 import type { Block,BranchInput,BranchName,CanonicalAreaSnapshot,CanonicalCompletionInput,CanonicalMessage,CanonicalSourceEffects,CapabilityCatalog,CompactionSummaryInput,ContextData,ContextSourceSelection,CurrentTurnSources,DispatchOutcome,DisplayItem,EarlyExit,FrozenProviderRequest,HistoryIdentity,InteractionResolution,Json,Lease,MessageEntry,NormalizedProviderRecovery,OpaqueProviderProjection,PendingInteraction,PersistedHistoryRow,PreparationIdentity,PrepareContextInput,PreparedContext,PreparedToolDefinition,ProviderEvent,ProviderRecoveryBoundary,ProviderRequest,RagContext,ReflectionSnapshot,ReplyFacts,ReplyGateCall,RunCapabilities,RunCheckpoint,RunEvent,RunIdentity,SanitizerCheckpoint,SessionSnapshotState,SnapshotPayload,ToolCall,ToolPlan,ToolResult,Usage } from './models.js'
 
@@ -73,6 +72,8 @@ export interface CanonicalContextPorts extends ContextServices {
     prefix: CanonicalMessage[]
     dynamicTail: CanonicalMessage[]
   }>
+  /** 将本轮实际生成的请求前缀交给同一进程的 Provider。独立恢复仍由 prepareRequest 授权重建。 */
+  rememberPreparedRequest?(identity: RunIdentity, request: Awaited<ReturnType<CanonicalContextPorts['prepareRequest']>>): void
   /** 压缩模型调用由独立 Provider adapter 提供，Harness 负责候选/边界/应用顺序。 */
   readonly compaction: CompactionPort<unknown>
   /** 从进程内快照取精确匹配的已追加主轮输出投影；缺失只能显式重建。 */
@@ -130,7 +131,7 @@ export interface ContextSourcePorts extends ContextServices {
     /** 纯格式化边界，各数据域提供自己的可读概览；不得在此另开数据库或扩大读取权限。 */
     buildSnapshot(data: ContextData, selection: ContextSourceSelection, identity: RunIdentity): SnapshotPayload
     /** 每Run重算静态system；冻结snapshot正文仍由上一个步骤维护。 */
-    buildRequest(snapshot: Awaited<ReturnType<typeof ensureSessionSnapshot>>['payload'], selection: ContextSourceSelection, identity: RunIdentity): {
+    buildRequest(snapshot: Pick<SnapshotPayload, 'snapshotContext' | 'userTimezone'> & { sessionInfo: Json }, selection: ContextSourceSelection, identity: RunIdentity): {
       systemPrompt: string
       systemInMessages: boolean
       fixedPrefix: CanonicalMessage[]
@@ -404,6 +405,8 @@ export interface ExecutionPort {
 }
 
 export interface ToolPort {
+  /** 固定 Adapter 只有在 Run 授权且最终工具可用时才解析到业务调用。 */
+  resolveCall?(call: ToolCall, identity: RunIdentity, signal: AbortSignal): Promise<{ call: ToolCall } | { error: string }>
   /** 可信注册表逐项区分交互/审批；普通同轮调用并行，isolated结果不进入dispatch。 */
   plan?(calls: readonly ToolCall[], identity: RunIdentity): Promise<ToolPlan>
   /** 注册表、权限与 confirm 在调用前检查；通过该参数使用共用 Executor。signal取消后须等待已启动资源清理再settle。提交/远端结果未知必须return unknown，不能抛普通工具错误。 */
@@ -414,6 +417,7 @@ export interface ToolPort {
     readonly execute: (request: ExecutionRequest) => Promise<ExecutionResult>
     readonly resolution: InteractionResolution | null
     readonly loadedSkills?: Readonly<Record<string, { digest: string; source: 'builtin' | 'user'; ownerFingerprint?: string }>>
+    readonly discoverRelatedTools?: () => Promise<readonly PreparedToolDefinition[]>
   }): Promise<ToolResult>
   /** 跨进程恢复只查已提交操作收据；未知结果必须明确返回 unknown。 */
   reconcile(call: ToolCall, identity: RunIdentity & {
@@ -467,6 +471,8 @@ export interface AgentRunnerPorts<C> {
     readonly round: number
     readonly call: ToolCall
   }) => Promise<unknown>
+  /** 可信显示配置。每张新工具卡片只读取一次，状态更新沿用首次标签。 */
+  readonly toolLabelOverride?: (name: string) => string | undefined
   readonly publish: (event: RunEvent, signal?: AbortSignal) => Promise<void>
   readonly diagnose: (code: 'publish_failed' | 'release_failed' | 'unsubscribe_failed' | 'context_release_failed' | 'finalization_hook_failed') => void
 }

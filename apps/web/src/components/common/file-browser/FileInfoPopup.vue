@@ -160,7 +160,7 @@ const { startDrag } = useWindowDrag(posX, posY, (x, y) => {
 .fp-info-win {
   position: fixed;
   width: 220px;
-  border-radius: 12px;
+  border-radius: var(--card-radius);
   overflow: hidden;
   background: var(--popup-surface-bg);
   backdrop-filter: var(--popup-surface-blur);

@@ -53,7 +53,7 @@ function toggleQr(channel: 'alipay' | 'wechat') { expandedQr.value = expandedQr.
 .support-header p { margin:6px 0 0; color:var(--content-secondary); font-size:12px; }
 .support-header :deep(.app-close-button) { flex:0 0 30px; }
 .support-grid { display:flex; flex-direction:column; gap:8px; }
-.support-card { width:100%; min-width:0; padding:12px 14px; display:flex; align-items:center; gap:12px; appearance:none; border:1px solid var(--border-document-table); border-radius:var(--radius-md); background:var(--surface-soft); box-shadow:none; color:var(--content-primary); text-align:left; cursor:pointer; transition:border-color var(--motion-hover-control) var(--motion-ease-standard); }
+.support-card { width:100%; min-width:0; padding:12px 14px; display:flex; align-items:center; gap:12px; appearance:none; border:1px solid var(--border-document-table); border-radius:var(--radius-sm); background:var(--surface-soft); box-shadow:none; color:var(--content-primary); text-align:left; cursor:pointer; transition:border-color var(--motion-hover-control) var(--motion-ease-standard); }
 .support-card:hover { background:var(--surface-soft); border-color:color-mix(in srgb,var(--content-primary) 28%,transparent); }
 .support-card-summary { width:100%; display:flex; align-items:center; gap:12px; }
 .support-card-summary :deep(.flip-chevron) { margin-left:auto; }
@@ -66,5 +66,5 @@ function toggleQr(channel: 'alipay' | 'wechat') { expandedQr.value = expandedQr.
 .support-qr-detail { width:100%; height:0; opacity:0; overflow:hidden; transition:height var(--motion-hover-card) var(--motion-ease-emphasis), opacity var(--motion-hover-card) var(--motion-ease-standard), margin-top var(--motion-hover-card) var(--motion-ease-emphasis); }
 .support-qr-detail.expanded { height:360px; margin-top:12px; opacity:1; }
 .support-qr-detail-inner { display:flex; justify-content:center; min-height:0; height:360px; overflow:hidden; }
-.support-qr-detail img { display:block; width:auto; max-width:100%; height:360px; object-fit:contain; border-radius:var(--radius-sm); background:#fff; }
+.support-qr-detail img { display:block; width:auto; max-width:100%; height:360px; object-fit:contain; border-radius:var(--radius-xs); background:#fff; }
 </style>

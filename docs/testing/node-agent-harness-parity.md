@@ -12,6 +12,8 @@
 | --- | --- |
 | runner.ts / index.ts | runner.collect/stream 组合入口；不承载状态和协议业务 |
 | models.ts / ports.ts | Run/Canonical/事件领域契约；Data、Provider、Tools、时钟及发布依赖 |
+| runtime.ts / chat-service.ts | 平台注入的模型与 Harness 运行组合，受信任身份的启动、恢复和取消 |
+| run/reconstruct.ts / run/dispatch-worker.ts | 持久 Run 重建、检查点与 Provider 版本校验、租约驱动执行。来源验证、owner 锚点和持久存储由 Host 提供 |
 | run/lifecycle.ts | loop.runner、reply/tool-intent/decision guard；test_run_lifecycle、core_loop_characterization |
 | run/cancellation.ts | run.cancellation、llm.genstream；test_run_cancellation、test_genstream_cancel |
 | run/finalization.ts | context.run_finalize；成功/失败/取消事务、摘要水位、已完成结果保护 |
@@ -25,7 +27,9 @@
 | memory/reflection.ts | reflection branch/snapshot；冻结主请求、scope、缺快照延后；持久Job由外部端口承接 |
 | core.ts | loop driver/collect；归一Provider事件、工具回执的串行提交和事件顺序 |
 | run/streaming.ts | stream consumer及并行批次；慢消费、提前return、取消后资源排空 |
+| run/event-stream.ts | 按已提交 outbox 序号恢复事件、校验 owner/Run 与顺序、通知丢失后重读。Redis 频道由 Web Host 提供 |
 | interactions/coordinator.ts | interactions/confirmation/resume；单次回执消费、等待队列与崩溃恢复 |
+| interactions/consume-action.ts | interactions 的动作确认、取消、过期提交、自定义回复、可信事件重放。事务和命令副作用由 Host 注入 |
 
 真实 Provider wire/thinking/signature 投影、Tools registry/参数校验/dispatch 和共享持久 jobs/lease/outbox 实现不搬进 Harness。后续 Provider 切片现已提供实际反思追加、摘要 wire 转换和分支调用适配，并通过实际 Harness 快照的四协议三阶段摘要恢复；详见 [Provider 验收](node-agent-provider-parity.md)。Tools、持久 jobs/lease/outbox 仍保持明确端口依赖，不造空实现；本清单不据此批量升级旧 Host/Data 条目。
 

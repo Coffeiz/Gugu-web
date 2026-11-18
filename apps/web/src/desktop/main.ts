@@ -7,6 +7,7 @@ import '@/assets/styles/global.css'
 import DesktopWorkbench from '../../../desktop/src/ui/shell/index.vue'
 import { i18n } from '@/i18n'
 import { setupInteractionRuntime } from '@/interaction/runtime/setup'
+import { initializeDesktopTheme } from '@/composables/core/useTheme'
 
 const router = createRouter({
   history: createMemoryHistory(),
@@ -19,9 +20,9 @@ const router = createRouter({
   ],
 })
 
-document.documentElement.dataset.theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 document.documentElement.dataset.desktopShell = 'true'
 document.documentElement.style.background = 'transparent'
 document.body.style.background = 'transparent'
+initializeDesktopTheme()
 setupInteractionRuntime()
 createApp(DesktopWorkbench).use(createPinia()).use(i18n).use(ArcoVue).use(router).mount('#app')

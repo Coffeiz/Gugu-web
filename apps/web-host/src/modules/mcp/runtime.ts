@@ -14,9 +14,11 @@ interface RuntimeClient {
  listTools():Promise<{tools:unknown[]}>
  callTool(name:string,args:Record<string,unknown>,options?:{signal?:AbortSignal;timeout?:number}):Promise<unknown>
  close():Promise<void>
+ isOpen?():boolean
 }
 interface RuntimeEntry {
  state:'ok'|'error';tools:RuntimeTool[];last_error:string|null;configFingerprint:string;client?:RuntimeClient;transport?:ProviderTransport
+ errorKind?:'configuration'|'auth'|'timeout'|'network'|'protocol'
 }
 function configFingerprint(row:McpStoredServer):string{
  const configuration=[row.name,row.transport,row.endpoint,row.encrypted_endpoint,row.endpoint_nonce,row.encrypted_endpoint_key,row.endpoint_key_version,
@@ -26,14 +28,17 @@ function configFingerprint(row:McpStoredServer):string{
   row.enabled,row.timeout_seconds,row.tool_allowlist]
  return createHash('sha256').update(JSON.stringify(configuration)).digest('hex')
 }
-function safeError(error:unknown):string {
+function safeError(error:unknown):{last_error:string;errorKind:NonNullable<RuntimeEntry['errorKind']>} {
  const text=error instanceof Error?error.message:''
- if(/\b(401|403)\b/.test(text))return 'MCP server 认证失败，请检查凭据'
- if(/timeout|timed out|超时/i.test(text))return '连接 MCP server 超时'
- if(text.includes('超出单个 server 上限'))return 'MCP server 工具数量超出上限，请配置工具白名单后重试'
- if(text.startsWith('MCP 缺少凭据值'))return 'MCP 缺少凭据值，请填写凭据后重试'
- if(text.startsWith('MCP 凭据不得放入 URL'))return 'MCP 凭据不得放入 URL；请改用 Header 凭据槽位'
- return '无法连接 MCP server，请检查地址与网络'
+ if(/\b(401|403)\b/.test(text))return {last_error:'MCP server 认证失败，请检查凭据',errorKind:'auth'}
+ if(/timeout|timed out|超时/i.test(text))return {last_error:'连接 MCP server 超时',errorKind:'timeout'}
+ if(text.includes('超出单个 server 上限'))return {last_error:'MCP server 工具数量超出上限，请配置工具白名单后重试',errorKind:'configuration'}
+ if(text.includes('stdio MCP 会话数已达上限'))return {last_error:'MCP stdio 会话数已达上限，请稍后重试',errorKind:'configuration'}
+ if(text.includes('stdio MCP 隔离运行能力不可用'))return {last_error:'MCP stdio 隔离运行能力不可用',errorKind:'configuration'}
+ if(text.startsWith('MCP 缺少凭据值'))return {last_error:'MCP 缺少凭据值，请填写凭据后重试',errorKind:'configuration'}
+ if(text.startsWith('MCP 凭据不得放入 URL'))return {last_error:'MCP 凭据不得放入 URL；请改用 Header 凭据槽位',errorKind:'configuration'}
+ if(text.startsWith('MCP endpoint 无效'))return {last_error:'MCP endpoint 无效',errorKind:'configuration'}
+ return {last_error:'无法连接 MCP server，请检查地址与网络',errorKind:'network'}
 }
 function extractText(value:unknown):string {
  if(!value||typeof value!=='object'||Array.isArray(value))return ''
@@ -74,34 +79,40 @@ export function createMcpRuntime(options:{
  configs(owner:string):Promise<readonly McpStoredServer[]>;enabled:()=>boolean|Promise<boolean>;maxTools:number|(()=>number)
  decrypt:EnvelopeReader;transport():ProviderTransport;builtinNames(owner:string):Promise<ReadonlySet<string>>
  client?:(input:Parameters<typeof createMcpHttpClient>[0])=>RuntimeClient
+ stdioClient?:(input:{owner:string;command:string;timeoutSeconds:number})=>Promise<RuntimeClient>|RuntimeClient
 }){
  const entries=new Map<string,RuntimeEntry>(),locks=new Map<string,Promise<RuntimeEntry>>(),versions=new Map<string,number>()
  const key=(owner:string,id:string)=>`${owner}\u0000${id}`
  const version=(entryKey:string)=>versions.get(entryKey)??0
- const staleEntry=(fingerprint:string):RuntimeEntry=>({state:'error',tools:[],last_error:'MCP 配置已变更，请重试',configFingerprint:fingerprint})
+ const staleEntry=(fingerprint:string):RuntimeEntry=>({state:'error',tools:[],last_error:'MCP 配置已变更，请重试',configFingerprint:fingerprint,errorKind:'configuration'})
  async function rowFor(owner:string,id:string){const row=(await options.configs(owner)).find(item=>item.id===id);if(!row)throw Object.assign(new Error('MCP server 不存在'),{statusCode:404});return row}
  async function closeEntry(entry:RuntimeEntry){await entry.client?.close().catch(()=>{});await entry.transport?.close?.().catch(()=>{})}
  function state(owner:string,id:string){const entry=entries.get(key(owner,id));return entry?{server_id:id,state:entry.state,loaded_tool_count:entry.state==='ok'?entry.tools.length:0,loaded_tool_names:entry.state==='ok'?entry.tools.map(tool=>tool.name).sort():[],last_error:entry.last_error}:{server_id:id,state:'unloaded',loaded_tool_count:0,loaded_tool_names:[],last_error:null}}
- async function load(owner:string,id:string){
+ async function loadWithDiagnosis(owner:string,id:string){
   const entryKey=key(owner,id),startingVersion=version(entryKey)
   const row=await rowFor(owner,id),fingerprint=configFingerprint(row)
   if(version(entryKey)!==startingVersion)return statusResult(staleEntry(fingerprint))
-  if(!row.enabled||!(await options.enabled())){const previous=entries.get(entryKey);if(previous){entries.delete(entryKey);await closeEntry(previous)}return {ok:false as const,state:'disabled' as const,tool_count:0,tool_names:[] as string[],error:null}}
+  if(!row.enabled||!(await options.enabled())){const previous=entries.get(entryKey);if(previous){entries.delete(entryKey);await closeEntry(previous)}return {ok:false as const,state:'disabled' as const,tool_count:0,tool_names:[] as string[],error:null,errorKind:null}}
   const cached=entries.get(entryKey)
-  if(cached?.state==='ok'&&cached.configFingerprint===fingerprint)return statusResult(cached)
+  if(cached?.state==='ok'&&cached.configFingerprint===fingerprint&&cached.client?.isOpen?.()!==false)return statusResult(cached)
   if(cached)entries.delete(entryKey)
   if(cached)await closeEntry(cached)
-  if(row.transport!=='http'){
-   const entry:RuntimeEntry={state:'error',tools:[],last_error:'Node Web Host 暂不支持 stdio MCP runtime',configFingerprint:fingerprint};entries.set(entryKey,entry)
-   return {ok:false as const,state:entry.state,tool_count:0,tool_names:[] as string[],error:entry.last_error}
+  if(row.transport!=='http'&&row.transport!=='stdio'){
+   const entry:RuntimeEntry={state:'error',tools:[],last_error:'MCP transport 配置无效',configFingerprint:fingerprint,errorKind:'configuration'};entries.set(entryKey,entry)
+   return statusResult(entry)
   }
-  const pending=locks.get(entryKey);if(pending){const result=await pending;if(version(entryKey)!==startingVersion||result.configFingerprint!==fingerprint)return load(owner,id);return statusResult(result)}
+  const pending=locks.get(entryKey);if(pending){const result=await pending;if(version(entryKey)!==startingVersion||result.configFingerprint!==fingerprint)return loadWithDiagnosis(owner,id);return statusResult(result)}
   const work=(async():Promise<RuntimeEntry>=>{
    let transport:ProviderTransport|undefined,client:RuntimeClient|undefined
    try{
-    const endpoint=row.encrypted_endpoint?await options.decrypt.decrypt({ciphertext:row.encrypted_endpoint,nonce:row.endpoint_nonce,encryptedDataKey:row.encrypted_endpoint_key,keyVersion:row.endpoint_key_version}):row.endpoint
-    transport=options.transport()
-    client=(options.client??(input=>createMcpHttpClient(input)))({endpoint,headers:await headersFor(options.decrypt,row),fetch:createMcpSafeFetch(transport,{timeoutMs:Math.max(1000,Math.min(300_000,row.timeout_seconds*1000))})})
+    if(row.transport==='stdio'){
+     if(!row.command.trim()||!options.stdioClient)throw new Error('stdio MCP 隔离运行能力不可用')
+     client=await options.stdioClient({owner,command:row.command,timeoutSeconds:Math.max(1,Math.min(300,row.timeout_seconds))})
+    }else{
+     const endpoint=row.encrypted_endpoint?await options.decrypt.decrypt({ciphertext:row.encrypted_endpoint,nonce:row.endpoint_nonce,encryptedDataKey:row.encrypted_endpoint_key,keyVersion:row.endpoint_key_version}):row.endpoint
+     transport=options.transport()
+     client=(options.client??(input=>createMcpHttpClient(input)))({endpoint,headers:await headersFor(options.decrypt,row),fetch:createMcpSafeFetch(transport,{timeoutMs:Math.max(1000,Math.min(300_000,row.timeout_seconds*1000))})})
+    }
     await client.connect()
     const raw=(await client.listTools()).tools,allowlist=new Set(Array.isArray(row.tool_allowlist)?row.tool_allowlist.filter((item):item is string=>typeof item==='string'):[]),builtin=await options.builtinNames(owner),seen=new Set<string>(),tools:RuntimeTool[]=[]
     for(const value of raw){
@@ -114,16 +125,31 @@ export function createMcpRuntime(options:{
     }
     const max=typeof options.maxTools==='function'?options.maxTools():options.maxTools
     if(tools.length>max)throw new Error('MCP server 工具数量超出单个 server 上限')
-    if(version(entryKey)!==startingVersion){await client.close().catch(()=>{});await transport.close?.().catch(()=>{});return staleEntry(fingerprint)}
+    if(version(entryKey)!==startingVersion){await client.close().catch(()=>{});await transport?.close?.().catch(()=>{});return staleEntry(fingerprint)}
     const loaded:RuntimeEntry={state:'ok',tools,last_error:null,configFingerprint:fingerprint,client,transport};entries.set(entryKey,loaded);return loaded
-   }catch(error){await client?.close().catch(()=>{});await transport?.close?.().catch(()=>{});const failed:RuntimeEntry={state:'error',tools:[],last_error:safeError(error),configFingerprint:fingerprint};if(version(entryKey)===startingVersion)entries.set(entryKey,failed);return version(entryKey)===startingVersion?failed:staleEntry(fingerprint)}
+   }catch(error){await client?.close().catch(()=>{});await transport?.close?.().catch(()=>{});const failed:RuntimeEntry={state:'error',tools:[],...safeError(error),configFingerprint:fingerprint};if(version(entryKey)===startingVersion)entries.set(entryKey,failed);return version(entryKey)===startingVersion?failed:staleEntry(fingerprint)}
   })()
   locks.set(entryKey,work)
   try{return statusResult(await work)}finally{locks.delete(entryKey)}
  }
- function statusResult(entry:RuntimeEntry){return {ok:entry.state==='ok',state:entry.state,tool_count:entry.state==='ok'?entry.tools.length:0,tool_names:entry.state==='ok'?entry.tools.map(tool=>tool.name).sort():[],error:entry.last_error}}
+ function statusResult(entry:RuntimeEntry){return {ok:entry.state==='ok',state:entry.state,tool_count:entry.state==='ok'?entry.tools.length:0,tool_names:entry.state==='ok'?entry.tools.map(tool=>tool.name).sort():[],error:entry.last_error,errorKind:entry.errorKind??null}}
+ async function load(owner:string,id:string){
+  const {errorKind:_errorKind,...result}=await loadWithDiagnosis(owner,id)
+  return result
+ }
  async function reconnect(owner:string,id:string){await invalidate(owner,id);return load(owner,id)}
- async function dispatchForAgent(owner:string,id:string,name:string,args:unknown,signal?:AbortSignal):Promise<{result:string;executed?:false}|{error:string;executed?:boolean}|{uncertain:true}>{
+ /** 探测的是已保存且启用的 owner 配置，只执行握手及工具发现。 */
+ async function testConnection(owner:string,id:string,signal:AbortSignal){
+  signal.throwIfAborted()
+  await rowFor(owner,id)
+  signal.throwIfAborted()
+  await invalidate(owner,id)
+  signal.throwIfAborted()
+  const result=await loadWithDiagnosis(owner,id)
+  signal.throwIfAborted()
+  return result.ok ? {ok:true as const,toolNames:result.tool_names} : {ok:false as const,errorKind:result.errorKind}
+ }
+ async function dispatchForAgent(owner:string,id:string,name:string,args:unknown,signal?:AbortSignal,authorize?:(row:McpStoredServer)=>Promise<boolean>):Promise<{result:string;executed?:false}|{error:string;executed?:boolean}|{uncertain:true}>{
   let row:McpStoredServer
   try{row=await rowFor(owner,id)}catch(error){if(Number((error as {statusCode?:unknown})?.statusCode)===404)return {error:'MCP 工具不可用，请重新加载工具目录',executed:false};throw error}
   if(!row.enabled||!(await options.enabled()))return {error:'MCP 工具不可用，请重新加载工具目录',executed:false}
@@ -135,6 +161,16 @@ export function createMcpRuntime(options:{
   if(!entry||entry.state!=='ok'||!entry.client||!tool)return {error:'MCP 工具不可用，请重新加载工具目录',executed:false}
   const validated=validateInputArguments(tool.name,tool.input_schema,args)
   if(!validated.success)return {result:JSON.stringify(validated.error),executed:false}
+  if(authorize){
+   // 连接、发现和校验均可能等待；只在最新配置和任务授权仍有效时发送 tools/call。
+   try{
+    const current=await rowFor(owner,id)
+    if(!current.enabled||configFingerprint(current)!==entry.configFingerprint||!await options.enabled()
+     ||!await authorize(current)||entries.get(key(owner,id))!==entry)
+     return {error:'当前定时任务无权调用该 MCP 工具',executed:false}
+   }catch{signal?.throwIfAborted();return {error:'当前定时任务无权调用该 MCP 工具',executed:false}}
+   signal?.throwIfAborted()
+  }
   let response:unknown
   try{
    response=await entry.client.callTool(tool.tool_name,validated.data,{signal,timeout:Math.max(1000,Math.min(300_000,row.timeout_seconds*1000))})
@@ -171,5 +207,5 @@ export function createMcpRuntime(options:{
   if(entry&&entry.configFingerprint!==configFingerprint(row))await invalidate(owner,id)
   return state(owner,id)
  }
- return {load,reconnect,dispatch,dispatchForAgent,tools,state,invalidate,close}
+ return {load,reconnect,testConnection,dispatch,dispatchForAgent,tools,state,invalidate,close}
 }

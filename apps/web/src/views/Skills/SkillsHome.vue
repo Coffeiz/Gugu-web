@@ -117,8 +117,8 @@ async function removeSkill(skill: UserSkillItem) {
 .skill-group-title { margin:0 0 12px; color:var(--text-primary); font-size:14px; font-weight:600; }
 .skill-group-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px; }
 .skill-group-grid :deep(.skill-card) { height:100%; }
-.skill-group-empty { margin:0; padding:14px; border:1px dashed var(--content-outline); border-radius:var(--radius-md); color:var(--text-secondary); font-size:12px; text-align:center; }
-.error-banner { padding:10px 12px; border-radius:var(--radius-sm); color:var(--danger-fg); background:var(--danger-bg); font-size:12px; margin-bottom:12px; }
+.skill-group-empty { margin:0; padding:14px; border:1px dashed var(--content-outline); border-radius:var(--radius-sm); color:var(--text-secondary); font-size:12px; text-align:center; }
+.error-banner { padding:10px 12px; border-radius:var(--radius-xs); color:var(--danger-fg); background:var(--danger-bg); font-size:12px; margin-bottom:12px; }
 .error-banner button { margin-left:10px; border:0; background:transparent; color:inherit; cursor:pointer; }
 @media (max-width:720px) { .skill-group-grid { grid-template-columns:1fr; } }
 </style>

@@ -521,7 +521,7 @@ function formatBytes(value: number) {
 .data-muted { color: var(--content-tertiary); }
 .data-warning { color: var(--warning-text, var(--content-secondary)); }
 .data-conflict { color: var(--pm-danger-text, #a44949) !important; }
-.data-summary { border: 1px solid var(--subpanel-border); background: var(--subpanel-bg); border-radius: var(--radius-md); padding: 12px 14px; }
+.data-summary { border: 1px solid var(--subpanel-border); background: var(--subpanel-bg); border-radius: var(--radius-sm); padding: 12px 14px; }
 .data-summary-row { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; font-size: 13px; color: var(--content-secondary); }
 .data-summary-total { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--panel-divider); font-size: 12px; color: var(--content-tertiary); }
 .data-options { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }

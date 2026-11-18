@@ -140,6 +140,21 @@ describe('useChatStream 展示事件与生命周期', () => {
     expect(options.messages.value.map(message => [message.toolCallId, message.toolStatus, message.toolDurationMs])).toEqual([['a', 'error', 20], ['b', 'success', 12]])
   })
 
+  it('工具事件状态和刷新后的卡片都使用管理员覆盖标签', async () => {
+    const label = '正在核对已有项目'
+    const tool = item('custom-tool', 'tool', 1, { toolName: 'list_projects', toolCallId: 'projects',
+      toolStatus: 'running', toolLabelOverride: label })
+    const finished = { ...tool, toolStatus: 'success' }
+    vi.mocked(agentApi.getMessages).mockResolvedValue({ timelineEvents: [finished] } as never)
+    const options = createOptions([])
+    vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
+      { type: 'display_event', item: tool }, { type: 'done' },
+    ])))
+    await useChatStream(options).resumeStream(42)
+    expect(options.setStatus).toHaveBeenCalledWith({ kind: 'text', label })
+    expect(options.messages.value).toEqual([expect.objectContaining({ toolStatus: 'success', toolLabelOverride: label })])
+  })
+
   it('同一附件事件重复重放不产生第二张文件卡', async () => {
     const file = item('file-a', 'assistant', 1, { files: [{ file_id: 19 }] })
     const options = createOptions([])

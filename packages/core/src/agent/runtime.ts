@@ -4,7 +4,16 @@ import type { CanonicalContextPorts, CanonicalRunPreparationPorts, AgentRunnerPo
 import type { HarnessExecutorPorts } from './executor/contracts.js'
 import { connectProviderHarness } from './providers/runtime.js'
 import type { ProviderRuntimeOptions } from './providers/runtime.js'
-import { createNodeProviderTransportFactory } from './providers/transport/node.js'
+import { createAgentChatService, type AgentChatServicePorts } from './chat-service.js'
+import { createAgentDispatchSupervisor, type AgentDispatchSupervisorPorts } from './run/dispatch-supervisor.js'
+import { createAgentDispatchWorker, type AgentDispatchRuntimeLease, type AgentDispatchWorkerPorts } from './run/dispatch-worker.js'
+
+/**
+ * 同一可信模型绑定下供 Host 摘要、反思等后台分支复用的 Provider 能力。
+ * 不包含密钥读取或模型选择；每个调用仍须传入原 Run 的模型身份。
+ */
+export type AgentProviderAuxiliaryPorts = Pick<ReturnType<typeof connectProviderHarness>['provider'],
+  'branchProvider' | 'reflectionProjection' | 'summaryProjection' | 'completeText'>
 
 /** Agent Harness 的可移植组合入口；可信身份、存储、授权和执行能力由 Host 注入。 */
 export interface AgentRuntimeOptions {
@@ -17,16 +26,60 @@ export interface AgentRuntimeOptions {
 
 /** 同一组上下文端口同时供 Provider 与 Harness 使用，避免模型身份或历史分叉。 */
 export function createAgentRuntime(options: AgentRuntimeOptions) {
-  const connected = connectProviderHarness(options.context, {
-    ...options.provider,
-    ...(!options.provider.transport && !options.provider.createTransport && !options.provider.transportFactory
-      ? { transportFactory: createNodeProviderTransportFactory() } : {}),
-  })
+  const connected = connectProviderHarness(options.context, options.provider)
   const harness = createCanonicalRunner({
     context: connected.context,
     runPreparation: options.runPreparation,
     executor: options.executor,
     runtime: { ...options.runtime, provider: connected.provider },
   })
-  return { harness, close: () => connected.provider.close() }
+  return { harness, provider: connected.provider, close: () => connected.provider.close() }
+}
+
+/** 持久 Chat、调度执行与恢复共用一个 Worker；Host 提供端口并显式启停。 */
+export function createAgentDispatchRuntime<C, L extends AgentDispatchRuntimeLease, I>(options: {
+  chat: Omit<AgentChatServicePorts<C, I>, 'harness' | 'dispatch' | 'active'>
+  worker: Omit<AgentDispatchWorkerPorts<C, L>, 'dispatch' | 'failStart'>
+  dispatch: AgentDispatchWorkerPorts<C, L>['dispatch']
+    & Pick<AgentChatServicePorts<C, I>, 'active'>
+    & Pick<NonNullable<AgentChatServicePorts<C, I>['dispatch']>, 'requestCancel' | 'retryReconstruction'>
+    & { failStart: AgentDispatchWorkerPorts<C, L>['failStart']; listReady: AgentDispatchSupervisorPorts['listReady'] }
+  supervisor: Omit<AgentDispatchSupervisorPorts, 'kick' | 'listReady'>
+}) {
+  const { dispatch } = options
+  const worker = createAgentDispatchWorker({ ...options.worker, dispatch, failStart: lease => dispatch.failStart(lease) })
+  const supervisor = createAgentDispatchSupervisor({ ...options.supervisor, listReady: limit => dispatch.listReady(limit), kick: worker.kick })
+  const service = createAgentChatService<C, I>({
+    ...options.chat,
+    active: (owner, session) => dispatch.active(owner, session),
+    dispatch: {
+      kick: worker.kick,
+      notify: supervisor.notify,
+      diagnose: () => options.supervisor.diagnose('worker_failed'),
+      requestCancel: (owner, session) => dispatch.requestCancel(owner, session),
+      retryReconstruction: dispatch.retryReconstruction?.bind(dispatch),
+    },
+  })
+  let running: ReturnType<typeof supervisor.start> | undefined
+  let closing: Promise<void> | undefined
+  return {
+    service,
+    async start() {
+      if (closing) await closing
+      running ??= supervisor.start()
+      const current = running
+      try { await current } catch (error) {
+        if (running === current) running = undefined
+        throw error
+      }
+    },
+    close() {
+      if (closing) return closing
+      if (!running) return Promise.resolve()
+      closing = running.then(async current => {
+        try { await current.stop() } finally { await current.drain() }
+      }).finally(() => { running = undefined; closing = undefined })
+      return closing
+    },
+  }
 }

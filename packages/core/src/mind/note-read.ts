@@ -41,7 +41,7 @@ type RelationRow = Selectable<MindRelationTable>
 type Reference = {ref_type:string;ref_id:number;label:string|null}
 
 /** Python物理行规则（含CRLF和Unicode分隔符），供引用解析与原始行号共用。 */
-function physicalLines(text:string):string[]{
+export function physicalLines(text:string):string[]{
   return text.match(/[^\n\r\v\f\x1c-\x1e\x85\u2028\u2029]*(?:\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]|$)/gu)?.filter(Boolean)??[]
 }
 function lineText(line:string){return line.replace(/(?:\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029])$/u,'')}

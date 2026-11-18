@@ -2,16 +2,12 @@
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import type { DesktopOnboardingState } from '@gugu/core/desktop'
 import type { SandboxStatus } from '@/desktop/bridge'
-import type { ThemeFamily, ThemePalette, ThemePreference } from '@/composables/core/useTheme'
+import type { ThemePalette } from '@/composables/core/useTheme'
 
 defineProps<{
   connected: boolean
   busy: boolean
-  preference: ThemePreference
-  family: ThemeFamily
   palette: ThemePalette
-  themeOptions: { value: ThemePreference; label: string }[]
-  familyOptions: { value: ThemeFamily; label: string }[]
   paletteOptions: { value: ThemePalette; label: string }[]
   onboarding: DesktopOnboardingState | null
   sandbox: SandboxStatus | null
@@ -20,8 +16,6 @@ defineProps<{
 }>()
 
 const emit = defineEmits<{
-  theme: [value: ThemePreference]
-  family: [value: ThemeFamily]
   palette: [value: ThemePalette]
   refresh: []
   recover: []
@@ -36,14 +30,7 @@ const emit = defineEmits<{
   </header>
   <section class="desktop-panel glass-card desktop-appearance" aria-labelledby="desktop-appearance">
     <h2 id="desktop-appearance" class="section-title">外观</h2>
-    <div class="appearance-group" role="group" aria-label="主题模式">
-      <span>主题</span>
-      <ActionButton v-for="option in themeOptions" :key="option.value" fit variant="secondary" :aria-pressed="preference === option.value" :disabled="busy" @click="emit('theme', option.value)">{{ option.label }}</ActionButton>
-    </div>
-    <div class="appearance-group" role="group" aria-label="主题样式">
-      <span>样式</span>
-      <ActionButton v-for="option in familyOptions" :key="option.value" fit variant="secondary" :aria-pressed="family === option.value" :disabled="busy" @click="emit('family', option.value)">{{ option.label }}</ActionButton>
-    </div>
+    <p>Mono · 深浅色跟随系统</p>
     <div class="appearance-group" role="group" aria-label="强调配色">
       <span>配色</span>
       <ActionButton v-for="option in paletteOptions" :key="option.value" fit variant="secondary" :aria-pressed="palette === option.value" :disabled="busy" @click="emit('palette', option.value)">{{ option.label }}</ActionButton>

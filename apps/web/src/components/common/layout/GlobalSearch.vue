@@ -263,13 +263,13 @@ onBeforeUnmount(() => {
   padding: 6px;
   background: rgba(255, 255, 255, 0.6);
   border: 1px solid rgba(255, 255, 255, 0.75);
-  border-radius: 16px;
+  border-radius: var(--card-radius);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.98), 0 8px 32px rgba(60, 70, 100, 0.12);
   backdrop-filter: var(--popup-blur);
   -webkit-backdrop-filter: var(--popup-blur);
   /* z-index 由 :style 动态 */
 }
-/* 滚动面套浮层滚动条契约；滑块右移进面板内侧，避免压到 16px 圆角毛玻璃边框。 */
+/* 滚动面套浮层滚动条契约；滑块右移进面板内侧，避免压到玻璃面板的圆角边框。 */
 .gs-scroll { max-height: calc(62vh - 12px); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; --scrollbar-overlay-right-offset: 4px; }
 
 .gs-hint {
@@ -302,7 +302,7 @@ onBeforeUnmount(() => {
   border: none;
   background: transparent;
   padding: 7px 10px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   cursor: pointer;
   transition: background 0.18s ease;
 }

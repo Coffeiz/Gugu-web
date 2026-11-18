@@ -4,50 +4,43 @@ import Fastify from 'fastify'
 import {
   createPostgresAdminUserStatusStore,
   registerAdminUserStatusRoutes,
-  registerAdminUsersRoute,
 } from '../../src/domains/admin/admin-users.js'
+import { registerAdminUsersRoute } from '../../src/modules/admin/users.js'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
 
 const userIdA = '00000000-0000-4000-8000-000000000001'
 const userIdB = '00000000-0000-4000-8000-000000000002'
 
 function setup() {
-  const calls: { sql: string; values: unknown[] }[] = []
+  const calls: (string | undefined)[] = []
   let queryError: Error | undefined
   const app = Fastify()
   registerAdminUsersRoute(app, {
     requireAdmin: async (request, reply) => {
       if (request.headers.authorization !== 'admin') return reply.code(401).send({ error: 'unauthorized' })
     },
-    now: () => new Date('2026-11-13T14:23:45.000Z'),
-    query: async (sql, values) => {
-      calls.push({ sql, values })
+    read: async search => {
+      calls.push(search)
       if (queryError) throw queryError
-      if (sql.includes('FROM users')) {
-        return [
-          {
+      const items = [
+        {
             id: userIdA, username: '合成账号甲', email: 'alpha@example.invalid', display_name: '甲',
-            is_active: true, account_status: null, suspended_until: null, is_developer: null,
-            created_at: new Date('2026-02-01T10:00:00.000Z'), token_limit_6h: 100,
+            is_active: true, account_status: 'active', suspended_until: null, is_developer: false,
+            created_at: '2026-02-01T10:00:00.000+00:00', token_limit_6h: 100,
             token_limit_weekly: 700, storage_limit_bytes: 4096, search_limit_daily: 20,
+            tokens_week: 31, tokens_6h: 7, storage_used: 55,
           },
           {
             id: userIdB, username: '合成账号乙', email: 'beta@example.invalid', display_name: null,
-            is_active: false, account_status: 'suspended', suspended_until: new Date('2026-02-02T10:00:00.000Z'),
-            is_developer: true, created_at: new Date('2026-01-01T10:00:00.000Z'), token_limit_6h: null,
+            is_active: false, account_status: 'suspended', suspended_until: '2026-02-02T10:00:00.000+00:00',
+            is_developer: true, created_at: '2026-01-01T10:00:00.000+00:00', token_limit_6h: null,
             token_limit_weekly: null, storage_limit_bytes: null, search_limit_daily: null,
+            tokens_week: 90, tokens_6h: 5, storage_used: 11,
           },
-        ]
-      }
-      if (sql.includes('FROM agent_usage')) {
-        const start = new Date(String(values[0])).toISOString()
-        return start === '2026-11-09T00:00:00.000Z'
-          ? [{ user_id: userIdA, tokens: '31' }, { user_id: userIdB, tokens: '90' }]
-          : [{ user_id: userIdA, tokens: '7' }, { user_id: userIdB, tokens: '5' }]
-      }
-      if (sql.includes('FROM files')) return [{ user_id: userIdA, storage_used: '40' }, { user_id: userIdB, storage_used: '11' }]
-      if (sql.includes('FROM storage_quota_ledgers')) return [{ user_id: userIdA, storage_used: '55' }]
-      return []
+      ]
+      const needle = search?.toLowerCase()
+      const visible = needle ? items.filter(user => user.username?.toLowerCase().includes(needle) || user.email?.toLowerCase().includes(needle)) : items
+      return { items: visible, total: visible.length }
     },
   })
   return {
@@ -81,11 +74,7 @@ test('列表按创建时间倒序，q 对用户名和邮箱不区分大小写过
       }],
       total: 1,
     })
-    assert.deepEqual(ctx.calls[0]!.values, [])
-    assert.match(ctx.calls[0]!.sql, /ORDER BY created_at DESC/)
-    assert.deepEqual(ctx.calls[1]!.values, [new Date('2026-11-09T00:00:00.000Z')])
-    assert.deepEqual(ctx.calls[2]!.values, [new Date('2026-11-13T12:00:00.000Z')])
-    assert.equal(ctx.calls.some(({ sql }) => sql.includes('storage_quota_ledgers')), true)
+    assert.equal(ctx.calls[0], 'ALPHA')
   } finally { await ctx.cleanup() }
 })
 
@@ -103,7 +92,7 @@ test('搜索邮箱命中，保留账户状态和空配额，并为无本地账�
     assert.equal(body.items[0].tokens_6h, 5)
     assert.equal(body.items[0].storage_used, 11)
     assert.equal(body.items[0].token_limit_6h, null)
-    assert.equal(ctx.calls.some(({ sql }) => sql.includes('storage_quota_ledgers')), true)
+    assert.equal(ctx.calls[0], 'BETA@EXAMPLE')
   } finally { await ctx.cleanup() }
 })
 

@@ -1,11 +1,11 @@
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
 import type { Pool, PoolClient } from 'pg'
+import { consumeInteractionAction, InteractionConsumeError } from '@gugu/core/agent/interactions/consume-action'
 import { consumeInteractionText, InteractionTextError } from '@gugu/core/agent'
+import type { InteractionActionRecord, InteractionConsumeResult, InteractionPromptRecord } from '@gugu/core/agent/interactions/consume-action'
 import { z } from 'zod'
 import { parsePythonInteger } from '../../http/request.js'
-import { consumeInteractionAction, InteractionConsumeError, type InteractionConsumeResult } from './application/agent-interaction-consume.js'
 import { createPostgresInteractionConsumeStore, createPostgresInteractionTextStore, type InteractionSideEffects } from './persistence/agent-interaction-consume-postgres.js'
-import type { InteractionActionRecord, InteractionPromptRecord } from './application/agent-interaction-consume.js'
 
 export interface AgentInteractionRespondService {
   respond(ownerId: string, promptId: number, token: string, eventId?: string): Promise<InteractionConsumeResult>
@@ -19,7 +19,7 @@ export function createAgentInteractionRespondService(options: {
   pool: Pick<Pool, 'connect'>
   effects: Pick<InteractionSideEffects, 'applyCommandAction' | 'redeemConfirmation'>
   enqueue(client: PoolClient, prompt: InteractionPromptRecord, action: InteractionActionRecord): Promise<void>
-  wake(): Promise<void>
+  wake(ownerId: string, sessionId: number): Promise<unknown>
   diagnose(): void
 }): AgentInteractionRespondService {
   if (!options.effects || typeof options.effects.applyCommandAction !== 'function' || typeof options.effects.redeemConfirmation !== 'function' || typeof options.enqueue !== 'function' || typeof options.wake !== 'function' || typeof options.diagnose !== 'function') throw new TypeError('交互服务未完整配置')
@@ -43,14 +43,14 @@ export function createAgentInteractionRespondService(options: {
       const result = await consumeInteractionAction(store, { ownerId, promptId, token, ...(eventId != null ? { eventId } : {}) })
       const resolved = result.result
       if (typeof result.context.tool_call_id === 'string' && result.context.tool_call_id && resolved.status !== 'awaiting_text' && resolved.status !== 'error') {
-        try { await options.wake() } catch { try { options.diagnose() } catch { /* 诊断不得影响已提交结果。 */ } }
+        try { await options.wake(ownerId, result.session_id) } catch { try { options.diagnose() } catch { /* 诊断不得影响已提交结果。 */ } }
       }
       return result
     },
     async resumeText(ownerId, promptId, text, eventId) {
       const result = await consumeInteractionText(textStore, { ownerId, promptId, text, ...(eventId != null ? { eventId } : {}) })
       if (typeof result.context.tool_call_id === 'string' && result.context.tool_call_id) {
-        try { await options.wake() } catch { try { options.diagnose() } catch { /* 已提交事务不受诊断失败影响。 */ } }
+        try { await options.wake(ownerId, result.session_id) } catch { try { options.diagnose() } catch { /* 已提交事务不受诊断失败影响。 */ } }
       }
       return result
     },

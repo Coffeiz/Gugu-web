@@ -29,6 +29,7 @@
         <template v-for="(d, ci) in weekDays" :key="'it' + d.iso">
           <div v-for="(it, ii) in allDayItemsFor(d.iso)" :key="it.calendarType === 'project' ? it.id : it._uid"
                class="wv-allday-ev cal-chip" :class="{ 'cal-done': it.calendarType === 'project' && it.status === 'done' }"
+               :data-calendar-edit-event="it.calendarType === 'event' ? it.id : undefined"
                :style="{ left: `calc(${ci / 7 * 100}% + 6px)`, right: `calc(${(6 - ci) / 7 * 100}% + 6px)`, top: ((wvShownRows + ii) * 20) + 'px', background: it.calendarType === 'project' ? capBg(it.accent, it.progress) : it.accent + '28', color: darkenHex(it.accent), borderColor: it.accent + '70' }"
                @click.stop="it.calendarType === 'project' ? emit('open-project', it) : emit('edit-event', it, $event)" :title="it.name">
             <span class="chip-proj-tag" :class="{ 'chip-ev-tag': it.calendarType !== 'project' }">{{ it.calendarType === 'project' ? t('calendar.project') : t('calendar.event') }}</span>
@@ -60,6 +61,7 @@
           </Transition>
           <div v-if="d.isToday" class="wv-now" :style="{ top: nowTop + 'px' }"></div>
           <div v-for="b in timedLayoutFor(d.iso)" :key="b.ev._uid" class="wv-ev cal-chip"
+               :data-calendar-edit-event="b.ev.id"
                :style="{ top: b.top + 'px', height: b.height + 'px', left: 'calc(' + b.leftPct + '% + 1px)', width: 'calc(' + b.widthPct + '% - 2px)', background: b.ev.accent + '2e', borderColor: b.ev.accent + '85', color: darkenHex(b.ev.accent) }"
                @mousedown.stop="emit('event-down', b.ev, $event)" @mousemove="emit('event-hover', $event)" :title="b.ev.name">
             <span class="wv-ev-t">{{ b.ev.time }}{{ b.ev.endTime ? '–' + b.ev.endTime : '' }}</span>
@@ -139,13 +141,12 @@ const emit = defineEmits<{
 .wv-dhead:hover::after { opacity: 1; }
 .wv-dhead.weekend::before { background: var(--calendar-weekend-selected-bg); }
 .wv-dhead.weekend::after { background: var(--calendar-weekend-hover-bg); }
-.wv-dhead.weekend .wv-dow { color: #b06a78; }
-.wv-dow { font-size: 11px; font-weight: 600; color: #8a8fa8; }
-.wv-dnum { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 50%; font-size: 15px; font-weight: 600; color: #3a3d52; line-height: 1; }
-.wv-dnum.today { background: linear-gradient(135deg,var(--action-primary),var(--action-primary-hover)); color: rgba(255,255,255,0.88); font-weight: 700; border-radius: 6px; }
-.wv-dhead.weekend .wv-dnum.today { background: linear-gradient(135deg,#b85c5c,#c97070); }
+.wv-dhead.weekend .wv-dow { color: var(--calendar-weekend-fg); }
+.wv-dow { font-size: 11px; font-weight: 600; color: var(--content-secondary); }
+.wv-dnum { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 50%; font-size: 15px; font-weight: 600; color: var(--content-primary); line-height: 1; }
+.wv-dnum.today { background: var(--calendar-today-date-bg); color: var(--content-on-accent); font-weight: 700; border-radius: 6px; }
 .wv-dhead.selected .wv-dnum:not(.today) { color: var(--color-primary); }
-.wv-dhead.selected.weekend .wv-dnum:not(.today) { color: rgba(195,90,90,0.9); }
+.wv-dhead.selected.weekend .wv-dnum:not(.today) { color: var(--calendar-weekend-fg); }
 .wv-allday { display: flex; align-items: stretch; padding-right: calc(var(--scrollbar-size-default) + 2px); border-bottom: 1px solid var(--calendar-grid-line-strong); }
 .wv-allday-tag { display: flex; align-items: flex-start; justify-content: flex-end; padding: 4px 6px 0 0; font-size: 10px; color: #a8acc4; }
 .wv-allday-grid { position: relative; flex: 1; min-height: 52px; overflow: hidden; }

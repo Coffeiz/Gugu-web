@@ -140,7 +140,7 @@ async function removeWorkspace(item: WorkspaceDirectory) {
 </script>
 
 <style scoped>
-.workspace-panel { margin-bottom: 12px; padding: 16px; border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface-card); }
+.workspace-panel { margin-bottom: 12px; padding: 16px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-card); }
 .workspace-panel-head { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:12px; }
 .workspace-panel h2 { margin:0; color:var(--text-primary); font:var(--font-weight-semibold) var(--font-size-md)/var(--line-height-ui) var(--font-sans); }
 .workspace-panel p { margin:5px 0 0; color:var(--text-secondary); font:var(--font-weight-regular) var(--font-size-sm)/var(--line-height-body) var(--font-sans); }
@@ -151,7 +151,7 @@ async function removeWorkspace(item: WorkspaceDirectory) {
 .workspace-modal h2 { margin:0; font:var(--font-weight-semibold) var(--font-size-lg)/var(--line-height-ui) var(--font-sans); }
 /* 输入框交互口径对齐 .pm-workspace-input（ProfileWorkspacesPane）：基态声明透明
    box-shadow + 三属性过渡，focus 叠加 --input-focus-shadow，泛光才有淡入淡出。 */
-.workspace-input { box-sizing:border-box; width:100%; height:38px; padding:0 12px; color:var(--text-primary); background:var(--input-bg); border:1px solid var(--input-border); border-radius:var(--radius-sm); font:var(--font-weight-regular) var(--font-size-sm) var(--font-sans); outline:none; box-shadow:var(--input-hover-shadow), 0 0 0 0 transparent; transition:background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
+.workspace-input { box-sizing:border-box; width:100%; height:38px; padding:0 12px; color:var(--text-primary); background:var(--input-bg); border:1px solid var(--input-border); border-radius:var(--radius-xs); font:var(--font-weight-regular) var(--font-size-sm) var(--font-sans); outline:none; box-shadow:var(--input-hover-shadow), 0 0 0 0 transparent; transition:background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
 .workspace-input:hover { border-color:var(--input-border-hover); background:var(--input-bg-hover); }
 .workspace-input:focus { border-color:var(--input-border-focus); background:var(--input-bg-focus); box-shadow:var(--input-hover-shadow), var(--input-focus-shadow); }
 .workspace-form-error { color:var(--danger-button-fg) !important; }

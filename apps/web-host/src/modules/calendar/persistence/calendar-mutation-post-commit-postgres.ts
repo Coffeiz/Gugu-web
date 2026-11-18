@@ -60,13 +60,13 @@ export function createCalendarMutationPostCommitPublisher(
              lease_until, last_started_at, last_succeeded_at, last_error_code,
              pending_source_ids, created_at, updated_at
            ) VALUES (
-             $1, $2, $3, '', $4, 'queued',
+             $1, $2, $3::varchar, '', $4, 'queued',
              1, 0, 0, CURRENT_TIMESTAMP,
              NULL, NULL, NULL, NULL,
              json_build_array($3::varchar), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
            )
            ON CONFLICT (user_id, source_type) DO UPDATE SET
-             source_id = EXCLUDED.source_id,
+             source_id = CASE WHEN rag_index_jobs.source_id = '' AND rag_index_jobs.status IN ('queued','running','retrying') THEN '' ELSE EXCLUDED.source_id END,
              version = EXCLUDED.version,
              operation = EXCLUDED.operation,
              status = 'queued',
@@ -74,7 +74,7 @@ export function createCalendarMutationPostCommitPublisher(
              next_attempt_at = CURRENT_TIMESTAMP,
              lease_until = NULL,
              last_error_code = NULL,
-             pending_source_ids = (
+             pending_source_ids = CASE WHEN rag_index_jobs.source_id = '' AND rag_index_jobs.status IN ('queued','running','retrying') THEN '[]'::json ELSE (
                SELECT COALESCE(json_agg(ordered.id ORDER BY ordered.first_ordinal), '[]'::json)
                FROM (
                  SELECT candidates.id, MIN(candidates.ordinal) AS first_ordinal
@@ -88,7 +88,7 @@ export function createCalendarMutationPostCommitPublisher(
                  ) AS candidates
                  GROUP BY candidates.id
                ) AS ordered
-             ),
+             ) END,
              updated_at = CURRENT_TIMESTAMP`,
           [publication.ownerId, rag.sourceType, sourceId, rag.operation],
         )

@@ -65,11 +65,21 @@ test('终端执行配置读取管理员覆盖并拒绝无效网络策略', async
     const read = createTerminalRuntimeSettingsReader(file, { SANDBOX__ENABLED: 'true' }, async () => ({ supported: true }))
     assert.match(JSON.stringify(await read()), /"sandboxEnabled":false/)
     assert.equal((await read()).networkProfile, 'egress')
+    assert.equal((await read()).sandboxReady, false)
     await writeFile(file, '{}')
     assert.equal((await read()).networkProfile, 'egress')
     const nested = createTerminalRuntimeSettingsReader(file, { SANDBOX: '{"network_profile":"none","enabled":false}' }, async () => ({ supported: true }))
     assert.equal((await nested()).networkProfile, 'none')
     assert.equal((await nested()).sandboxEnabled, false)
+    await writeFile(file, JSON.stringify({ sandbox: { network_profile: 'egress', egress_proxy_url: 'http://127.0.0.1:3128' } }))
+    assert.equal((await read()).egressProxyUrl, 'http://127.0.0.1:3128')
+    const egressReady = createTerminalRuntimeSettingsReader(file, {}, async () => ({ supported: true, proxyEnforcement: true }))
+    assert.equal((await egressReady()).sandboxReady, true)
+    const missingProxyEnforcement = createTerminalRuntimeSettingsReader(file, {}, async () => ({ supported: true, proxyEnforcement: false }))
+    assert.equal((await missingProxyEnforcement()).sandboxReady, false)
+    await writeFile(file, JSON.stringify({ sandbox: { network_profile: 'egress', egress_proxy_url: 'http://proxy.example:3128' } }))
+    assert.equal((await read()).sandboxReady, false)
+    assert.match((await read()).egressProxyError ?? '', /MXC 代理必须是本机回环 HTTP\/S 地址/)
     await writeFile(file, JSON.stringify({ sandbox: { network_profile: 'unsafe' } }))
     await assert.rejects(read(), /网络配置无效/)
     await writeFile(file, '{invalid')
@@ -151,17 +161,29 @@ test('危险 Shell 命令在执行前检查开关并消费确认', async () => {
   assert.equal(runs, 0)
 })
 
-test('后台要求受控 egress 时不会静默改为断网执行', async () => {
+test('管理员配置了受 MXC 限制的回环代理时，后台 egress 通过生产执行端运行', async () => {
   let runs = 0
   const execute = createTerminalShellExecution({
-    read: async () => ({ sessionId: 1, workspaceId: null, networkProfile: 'egress', facts: { adminEnabled: true, userEnabled: true, sandboxEnabled: true, sandboxReady: true,
+    read: async () => ({ sessionId: 1, workspaceId: null, networkProfile: 'egress', egressProxyUrl: 'http://127.0.0.1:3128', facts: { adminEnabled: true, userEnabled: true, sandboxEnabled: true, sandboxReady: true,
+      sessionOwned: true, workspaceValid: true, filesystemAuthorizationAvailable: true, fullUserSandboxWrite: false, adminDangerousEnabled: true, userDangerousEnabled: true } }),
+    redeem: async () => true, confirm: async () => ({ allowed: true }),
+    run: async (_owner, _terminal, _id, _input, snapshot) => { runs++; assert.equal(snapshot.egressProxyUrl, 'http://127.0.0.1:3128'); return { stdout: '', stderr: '', exitCode: 0, ok: true } },
+  })
+  const result = await execute(owner, 'mine', 'request', { command: 'pwd', cwd: '.', timeout: 30, maxOutputChars: 100, network: 'none' }, new AbortController().signal)
+  assert.equal(result.ok, true)
+  assert.equal(runs, 1)
+})
+
+test('请求级 egress 在 MXC 未实现受控出站时拒绝执行，不静默降级为断网', async () => {
+  let runs = 0
+  const execute = createTerminalShellExecution({
+    read: async () => ({ sessionId: null, workspaceId: null, networkProfile: 'none', facts: { adminEnabled: true, userEnabled: true, sandboxEnabled: true, sandboxReady: true,
       sessionOwned: true, workspaceValid: true, filesystemAuthorizationAvailable: true, fullUserSandboxWrite: false, adminDangerousEnabled: true, userDangerousEnabled: true } }),
     redeem: async () => true, confirm: async () => ({ allowed: true }),
     run: async () => { runs++; return { stdout: '', stderr: '', exitCode: 0, ok: true } },
   })
-  const result = await execute(owner, 'mine', 'request', { command: 'pwd', cwd: '.', timeout: 30, maxOutputChars: 100, network: 'none' }, new AbortController().signal)
-  assert.equal(result.ok, false)
-  assert.match(result.stderr, /egress/)
+  const result = await execute(owner, 'mine', 'request', { command: 'curl https://example.invalid', cwd: '.', timeout: 30, maxOutputChars: 100, network: 'egress' }, new AbortController().signal)
+  assert.equal(result.stderr, '受控 egress 尚未配置，当前沙盒保持断网')
   assert.equal(runs, 0)
 })
 

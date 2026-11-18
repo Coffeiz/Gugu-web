@@ -3,6 +3,7 @@ import type { RunIdentity } from '@gugu/core/agent'
 import type { ProviderConfig, ProviderRuntimeOptions } from '@gugu/core/providers'
 import { resolveByokLlm, type ByokCredential } from './byok.js'
 import type { AgentUsageConfig } from '../agent-sessions/persistence/agent-usage-postgres.js'
+import { ModelPresetUnavailable } from './model-strategy.js'
 
 /** 由同一可信配置快照返回所选模型、凭据及对应的不透明版本；版本变更必须与写入原子提交。 */
 export interface RecoverableModelSnapshot {
@@ -26,17 +27,37 @@ export interface RecoverableProviderServices {
   defaultBaseUrl(provider: string, format: string): string
 }
 type Binding = { v: 1; nonce: string; ownerId: string; sessionId: string; runId: string; modelRef: string; configVersion: string; credentialVersion: string; contextScopeKey: string; accessScopeHash: string }
+export class RecoverableProviderVersionError extends Error {}
 function sign(payload: string, secret: string): Buffer { return createHmac('sha256', secret).update(payload).digest() }
 function decode(value: string, secret: string): Binding {
-  if (value.length > 8192) throw new Error('模型恢复身份无效')
+  if (typeof value !== 'string' || value.length > 8192) throw new RecoverableProviderVersionError('模型恢复身份无效')
   const parts = value.split('.')
-  if (parts.length !== 3 || parts[0] !== 'gugu-model-v1' || !/^[A-Za-z0-9_-]+$/.test(parts[1]!) || !/^[A-Za-z0-9_-]+$/.test(parts[2]!)) throw new Error('模型恢复身份无效')
+  if (parts.length !== 3 || parts[0] !== 'gugu-model-v1' || !/^[A-Za-z0-9_-]+$/.test(parts[1]!) || !/^[A-Za-z0-9_-]+$/.test(parts[2]!)) throw new RecoverableProviderVersionError('模型恢复身份无效')
   const expected = sign(parts[1]!, secret), actual = Buffer.from(parts[2]!, 'base64url')
-  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) throw new Error('模型恢复身份无效')
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) throw new RecoverableProviderVersionError('模型恢复身份无效')
   let binding: Binding
-  try { binding = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8')) as Binding } catch { throw new Error('模型恢复身份无效') }
-  if (!binding || binding.v !== 1 || !['nonce', 'ownerId', 'sessionId', 'runId', 'modelRef', 'configVersion', 'credentialVersion', 'contextScopeKey', 'accessScopeHash'].every(key => typeof (binding as unknown as Record<string, unknown>)[key] === 'string' && !!(binding as unknown as Record<string, string>)[key])) throw new Error('模型恢复身份无效')
+  try { binding = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8')) as Binding } catch { throw new RecoverableProviderVersionError('模型恢复身份无效') }
+  if (!binding || binding.v !== 1 || !['nonce', 'ownerId', 'sessionId', 'runId', 'modelRef', 'configVersion', 'credentialVersion', 'contextScopeKey', 'accessScopeHash'].every(key => typeof (binding as unknown as Record<string, unknown>)[key] === 'string' && !!(binding as unknown as Record<string, string>)[key])) throw new RecoverableProviderVersionError('模型恢复身份无效')
   return binding
+}
+
+type ModelIdentity = { modelIdentity: string; accessScopeHash: string }
+function readRunModel(identity: RunIdentity, model: ModelIdentity, secret: string): Binding {
+  const binding = decode(model.modelIdentity, secret)
+  if (binding.ownerId !== identity.ownerId || binding.sessionId !== identity.sessionId
+    || binding.runId !== identity.runId || binding.accessScopeHash !== model.accessScopeHash)
+    throw new RecoverableProviderVersionError('模型恢复身份不匹配')
+  return binding
+}
+
+/** 验证每个 Run 的签名，再用不含 Run ID 的摘要标识可使用同一模型的回合。 */
+export function createReflectionModelScope(secret: string) {
+  if (!secret) throw new TypeError('反思模型范围签名不可用')
+  return (identity: RunIdentity, model: ModelIdentity): string => {
+    const binding = readRunModel(identity, model, secret)
+    return sign(JSON.stringify(['owner-reflection-model-v1', binding.ownerId, binding.sessionId, binding.modelRef,
+      binding.configVersion, binding.credentialVersion, binding.contextScopeKey, binding.accessScopeHash]), secret).toString('hex')
+  }
 }
 
 /** recovery 必须来自已解密且验证 owner/run 的 checkpoint，不接受 HTTP 请求数据。 */
@@ -46,15 +67,20 @@ export async function bindRecoverableProvider(identity: RunIdentity, services: R
   signal.throwIfAborted()
   let previous: Binding | undefined
   if (recovery) {
-    if (recovery.identity.ownerId !== identity.ownerId || recovery.identity.sessionId !== identity.sessionId || recovery.identity.runId !== identity.runId) throw new Error('模型恢复身份不匹配')
-    previous = decode(recovery.modelIdentity, secret)
-    if (previous.ownerId !== identity.ownerId || previous.sessionId !== identity.sessionId || previous.runId !== identity.runId || previous.accessScopeHash !== recovery.accessScopeHash) throw new Error('模型恢复身份不匹配')
+    if (recovery.identity.ownerId !== identity.ownerId || recovery.identity.sessionId !== identity.sessionId || recovery.identity.runId !== identity.runId) throw new RecoverableProviderVersionError('模型恢复身份不匹配')
+    previous = readRunModel(identity, recovery, secret)
   }
-  const snapshot = await services.select(identity, signal, previous?.modelRef)
+  let snapshot: RecoverableModelSnapshot
+  try { snapshot = await services.select(identity, signal, previous?.modelRef) }
+  catch (error) {
+    if (previous && error instanceof ModelPresetUnavailable)
+      throw new RecoverableProviderVersionError('原模型预设已不可用，无法恢复')
+    throw error
+  }
   try {
     signal.throwIfAborted()
     if (!(snapshot.modelRef === 'active' || /^preset:[A-Za-z0-9_-]{1,128}$/.test(snapshot.modelRef)) || !/^[A-Za-z0-9:_-]{1,256}$/.test(snapshot.configVersion) || !/^[A-Za-z0-9:_-]{1,256}$/.test(snapshot.credentialVersion) || !/^[a-f0-9]{64}$/.test(snapshot.contextScopeKey) || !/^[a-f0-9]{64}$/.test(snapshot.accessScopeHash)) throw new Error('模型配置版本无效')
-    if (previous && (snapshot.modelRef !== previous.modelRef || snapshot.configVersion !== previous.configVersion || snapshot.credentialVersion !== previous.credentialVersion || snapshot.contextScopeKey !== previous.contextScopeKey || snapshot.accessScopeHash !== previous.accessScopeHash)) throw new Error('模型配置或访问范围已变化，无法恢复')
+    if (previous && (snapshot.modelRef !== previous.modelRef || snapshot.configVersion !== previous.configVersion || snapshot.credentialVersion !== previous.credentialVersion || snapshot.contextScopeKey !== previous.contextScopeKey || snapshot.accessScopeHash !== previous.accessScopeHash)) throw new RecoverableProviderVersionError('模型配置或访问范围已变化，无法恢复')
     const config = structuredClone(resolveByokLlm(snapshot.config, snapshot.credential, services.decryptCredential, services.defaultBaseUrl))
     const contextWindow = Number(config.context_tokens)
     if (!Number.isSafeInteger(contextWindow) || contextWindow < 1) throw new Error('模型上下文长度无效')

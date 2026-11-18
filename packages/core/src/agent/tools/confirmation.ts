@@ -37,6 +37,10 @@ export interface ConfirmationTargetSnapshot {
   readonly versionsDigest: string
   /** 由领域解析的固定 ID，供可信存储和事务内复核；不得从模型确认字段构造。 */
   readonly targetIds?: Readonly<Record<string, readonly number[]>>
+  /** UUID 等非数字标识；资源类别不可与数字目标重复。 */
+  readonly targetRefs?: Readonly<Record<string, readonly string[]>>
+  /** 领域适配器提供的确认界面摘要；只在准备阶段供可信 Host 使用。 */
+  readonly displaySummary?: string
 }
 export interface ConfirmationGatePorts {
   now(): number
@@ -58,7 +62,11 @@ function equalBinding(a: ConfirmationBinding, b: ConfirmationBinding): boolean {
 function freezeTargets(targets: ConfirmationTargetSnapshot): ConfirmationTargetSnapshot {
   const targetIds = targets.targetIds && Object.freeze(Object.fromEntries(Object.entries(targets.targetIds)
     .map(([key, ids]) => [key, Object.freeze([...ids])])))
-  return Object.freeze({ targetsDigest: targets.targetsDigest, versionsDigest: targets.versionsDigest, ...(targetIds ? { targetIds } : {}) })
+  const targetRefs = targets.targetRefs && Object.freeze(Object.fromEntries(Object.entries(targets.targetRefs)
+    .map(([key, refs]) => [key, Object.freeze([...refs])])))
+  return Object.freeze({ targetsDigest: targets.targetsDigest, versionsDigest: targets.versionsDigest,
+    ...(targets.displaySummary !== undefined ? { displaySummary: targets.displaySummary } : {}),
+    ...(targetIds ? { targetIds } : {}), ...(targetRefs ? { targetRefs } : {}) })
 }
 
 /**

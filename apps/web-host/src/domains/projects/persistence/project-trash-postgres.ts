@@ -1,3 +1,5 @@
+import { CompiledQuery, type Transaction } from 'kysely'
+import type { Database } from '@gugu/core/data'
 import type { ProjectRecord } from '@gugu/core'
 import type { Pool, PoolClient } from 'pg'
 import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
@@ -97,7 +99,7 @@ function taskRow(row: Record<string, unknown>): ProjectTrashTask {
   }
 }
 
-function transactionAdapter(client: PoolClient): ProjectTrashTransaction {
+function transactionAdapter(client: Pick<PoolClient, 'query'>, lockCascade = true): ProjectTrashTransaction {
   return {
     async getOwnedProject(ownerId, projectId) {
       const result = await client.query<Record<string, unknown>>(
@@ -112,7 +114,8 @@ function transactionAdapter(client: PoolClient): ProjectTrashTransaction {
         `SELECT id, user_id::text AS user_id, project_id, workspace_directory_id, parent_id,
                 name, version, deleted_at::text AS deleted_at
          FROM folders WHERE user_id = $1 AND project_id = $2
-           AND ${deletedAt === undefined ? 'deleted_at IS NULL' : 'deleted_at = $3::timestamptz'}`,
+           AND ${deletedAt === undefined ? 'deleted_at IS NULL' : 'deleted_at = $3::timestamptz'}
+         ORDER BY id ${lockCascade ? 'FOR UPDATE' : ''}`,
         deletedAt === undefined ? [ownerId, projectId] : [ownerId, projectId, deletedAt],
       )
       const folders = folderResult.rows.map(folderRow)
@@ -126,7 +129,8 @@ function transactionAdapter(client: PoolClient): ProjectTrashTransaction {
                 version, size, size_bytes, mime_type, img_width, img_height,
                 deleted_at::text AS deleted_at
          FROM files WHERE user_id = $1 AND ${fileDelete}
-           AND (project_id = $2 OR folder_id = ANY($3::integer[]))`,
+           AND (project_id = $2 OR folder_id = ANY($3::integer[]))
+         ORDER BY id ${lockCascade ? 'FOR UPDATE' : ''}`,
         fileParams,
       )
       const eventParams: unknown[] = [ownerId, projectId]
@@ -136,7 +140,7 @@ function transactionAdapter(client: PoolClient): ProjectTrashTransaction {
         `SELECT id, user_id::text AS user_id, title, date, time, end_time, type,
                 contact_name AS client, project_id, description, version,
                 deleted_at::text AS deleted_at
-         FROM calendar_events WHERE user_id = $1 AND project_id = $2 AND ${eventDelete}`,
+         FROM calendar_events WHERE user_id = $1 AND project_id = $2 AND ${eventDelete} ORDER BY id ${lockCascade ? 'FOR UPDATE' : ''}`,
         eventParams,
       )
       const events = eventsResult.rows.map(eventRow)
@@ -147,7 +151,7 @@ function transactionAdapter(client: PoolClient): ProjectTrashTransaction {
           `SELECT id, user_id::text AS user_id, event_id, enabled, name, payload, cron,
                   schedule_kind, start_at::text AS start_at, reminder_lead_minutes,
                   channels, delivery_targets
-           FROM scheduled_tasks WHERE user_id = $1 AND event_id = ANY($2::integer[])`,
+           FROM scheduled_tasks WHERE user_id = $1 AND event_id = ANY($2::integer[]) ORDER BY id ${lockCascade ? 'FOR UPDATE' : ''}`,
           [ownerId, eventIds],
         )
       return { files: filesResult.rows.map(fileRow), folders, events, tasks: tasksResult.rows.map(taskRow) }
@@ -223,4 +227,13 @@ export function createPostgresProjectTrashRuntime(pool: Pool, publish: EventPubl
     },
     publishResourceChanged: publish,
   }
+}
+
+/** Agent 必须借用外层 Core 收据事务，保持确认 claim、级联删除和 Undo 原子提交。 */
+export function createBorrowedPostgresProjectTrashTransaction(tx: Transaction<Database>): ProjectTrashTransaction {
+  const query = async <Row>(text: string, parameters: unknown[] = []) => {
+    const result = await tx.getExecutor().executeQuery<Row>(CompiledQuery.raw(text, parameters))
+    return { rows: result.rows, rowCount: Number(result.numAffectedRows ?? result.rows.length) }
+  }
+  return transactionAdapter({ query: query as PoolClient['query'] }, true)
 }

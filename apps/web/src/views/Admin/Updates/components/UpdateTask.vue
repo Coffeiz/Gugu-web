@@ -69,11 +69,11 @@ function formatTime(value: string) {
 </script>
 
 <style scoped>
-.update-card { padding: 22px 24px; border: 1px solid var(--panel-glass-border); border-radius: var(--radius-lg); background: var(--panel-glass-bg); color: var(--content-primary); box-shadow: var(--elevation-card); }
+.update-card { padding: 22px 24px; border: 1px solid var(--panel-glass-border); border-radius: var(--card-radius); background: var(--panel-glass-bg); color: var(--content-primary); box-shadow: var(--elevation-card); }
 .section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .section-head h3 { margin: 0; font-size: 14px; }
 .section-head p { margin: 5px 0 0; color: var(--content-tertiary); font-size: 12px; }
-.btn-ghost, .btn-danger { min-height: 30px; padding: 5px 12px; border-radius: var(--radius-sm); font-size: 12px; cursor: pointer; }
+.btn-ghost, .btn-danger { min-height: 30px; padding: 5px 12px; border-radius: var(--radius-xs); font-size: 12px; cursor: pointer; }
 .btn-ghost { border: 1px solid var(--border-subtle); background: var(--surface-glass); color: var(--content-secondary); }
 .btn-danger { border: 1px solid color-mix(in srgb, var(--status-danger) 45%, transparent); background: color-mix(in srgb, var(--status-danger) 15%, transparent); color: var(--status-danger); }
 .btn-ghost:disabled, .btn-danger:disabled { cursor: default; opacity: .5; }

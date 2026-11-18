@@ -1,5 +1,7 @@
 import { z } from 'zod'
-import type { ToolDefinition } from './contracts.js'
+import type { ToolCall, ToolResult } from '../models.js'
+import type { ProviderHttpResponse } from '../providers/contracts.js'
+import type { ToolDefinition, ToolScope } from './contracts.js'
 
 const schema = z.object({
   url: z.string().optional(),
@@ -74,6 +76,154 @@ export function createHttpGetTool(port: HttpGetPort): ToolDefinition {
       if ('error' in normalized) return { kind: 'completed', successful: true, mutated: false, value: normalized }
       const result = await fetchOne(port, scope.identity.ownerId, normalized.url, maxChars, scope.signal)
       return { kind: 'completed', successful: true, mutated: false, value: result }
+    },
+  }
+}
+
+const downloadSchema = z.object({
+  url: z.string().min(1),
+  file_name: z.string().nullable().optional(),
+  space: z.enum(['personal', 'project', 'workspace']).nullable().optional(),
+  project_id: z.number().int().safe().nullable().optional(),
+  folder_id: z.number().int().safe().nullable().optional(),
+}).strict()
+
+type DownloadLocation = { space: 'personal' | 'project' | 'workspace' | null; projectId: number | null; folderId: number | null }
+type FileDirectory = { projectId: number | null; workspaceDirectoryId: number | null }
+type DownloadTarget = DownloadLocation & FileDirectory & { space: NonNullable<DownloadLocation['space']>; workspaceId: number | null }
+type DownloadTargetError = { error: string; expected?: { space: string; project_id: number | null; folder_id: number | null }; hint?: string }
+
+/** 工作区绑定只决定默认目标和显式 workspace 空间，文件夹推断仍以 owner 限定的查询为准。 */
+export async function resolveWebDownloadLocation(location: DownloadLocation, sources: {
+  bound(): Promise<DownloadTarget | null>
+  folder(id: number): Promise<FileDirectory | null>
+}): Promise<DownloadTarget | DownloadTargetError> {
+  const { space, projectId, folderId } = location
+  const omitted = space === null && projectId === null && folderId === null
+  if (omitted || space === 'workspace') {
+    const target = await sources.bound()
+    if (omitted && target) return target
+    if (space === 'workspace') {
+      if (!target) return { error: 'space=workspace 需要会话绑定工作区；未绑定会话请使用 personal/project。' }
+      if (target.workspaceDirectoryId === null) return {
+        error: '当前会话绑定的工作区没有可写入的文件目录（绑定的是项目或文件夹）。',
+        expected: { space: target.space, project_id: target.projectId, folder_id: target.folderId },
+        hint: '省略目标位置参数即可写入当前工作区落点。',
+      }
+      return { ...target, folderId }
+    }
+  }
+  if (space === null && projectId === null && folderId !== null) {
+    const folder = await sources.folder(folderId)
+    if (!folder) return { error: '文件夹不存在' }
+    const inferredSpace = folder.workspaceDirectoryId !== null ? 'workspace' : folder.projectId !== null ? 'project' : 'personal'
+    return { ...folder, space: inferredSpace, folderId, workspaceId: null }
+  }
+  return { space: space ?? (projectId === null ? 'personal' : 'project'), projectId, folderId, workspaceDirectoryId: null, workspaceId: null }
+}
+
+export interface WebDownloadPort {
+  /** 仅按 Host 批准的 owner、工作区授权和领域资源定位，结束读取事务再返回。 */
+  prepare(location: DownloadLocation, scope: ToolScope): Promise<{
+    capacity: number | null
+    /** 未完整读取正文、取消或超限时不得提交；写入原子落点并再次确认容量。 */
+    store(input: { name: string; mimeType: string; data: AsyncIterable<Uint8Array> }, scope: ToolScope, call: ToolCall): Promise<ToolResult>
+  } | DownloadTargetError>
+  /** 校验并固定公网 DNS 目标，不得自动跟随重定向。 */
+  open(url: string, signal: AbortSignal): Promise<ProviderHttpResponse>
+  extension(mimeType: string): string | null
+  reconcile?(identity: ToolScope['identity'] & { roundId: string }, call: ToolCall): Promise<ToolResult>
+}
+
+function decodeFilename(value: string): string {
+  try { return decodeURIComponent(value) } catch { return value }
+}
+
+function downloadName(raw: string | null | undefined, url: string, headers: Readonly<Record<string, string>>, inferred: string | null): string {
+  const disposition = /filename\*\s*=\s*[^']*''([^;]+)|filename\s*=\s*"?([^;"]+)/iu.exec(headers['content-disposition'] || '')
+  const supplied = raw?.trim() || decodeFilename((disposition?.[1] || disposition?.[2] || '').trim())
+    || decodeFilename(new URL(url).pathname)
+  const last = supplied.replaceAll('\\', '/').replace(/\/+$/u, '').split('/').at(-1)!.trim()
+  const clean = [...last].filter(char => char >= ' ' && !'<>:"|?*'.includes(char)).join('')
+  const name = !clean || clean === '.' || clean === '..' ? 'download' : clean
+  const dot = name.lastIndexOf('.')
+  const extension = dot > 0 ? name.slice(dot + 1).toLowerCase() : ''
+  if (extension.length <= 20 && /^[\p{L}\p{N}_-]+$/u.test(extension) && /[\p{L}\p{N}]/u.test(extension)) return `${name.slice(0, dot)}.${extension}`
+  const fallback = inferred?.replace(/^\./u, '').slice(0, 20)
+  return `${name}.${fallback && /^[A-Za-z0-9_-]+$/u.test(fallback) ? fallback : 'bin'}`
+}
+
+class DownloadCapacityExceeded extends Error {}
+const downloadFailure = (error: string) => ({ kind: 'completed', successful: false, mutated: false, value: { error } } as const)
+
+/** 下载流程只在授权的存储端口完成提交；网络流与文件正文不进入 Provider 上下文。 */
+export function createWebDownloadTool(port: WebDownloadPort): ToolDefinition {
+  return {
+    definition: { name: 'web_download', schema: { type: 'function', function: {
+      name: 'web_download',
+      description: '下载公网 URL 到个人、项目或当前工作区文件目录。',
+      parameters: { type: 'object', additionalProperties: false, required: ['url'], properties: {
+        url: { type: 'string', minLength: 1 },
+        file_name: { type: ['string', 'null'] },
+        space: { type: ['string', 'null'], enum: ['personal', 'project', 'workspace', null] },
+        project_id: { type: ['integer', 'null'] },
+        folder_id: { type: ['integer', 'null'] },
+      } },
+    } } },
+    effect: 'write',
+    validate(input) { return downloadSchema.safeParse(input) },
+    ...(port.reconcile ? { reconcile: (_input, identity, call) => port.reconcile!(identity, call) } : {}),
+    async execute(input, scope, call) {
+      const args = input as z.infer<typeof downloadSchema>
+      const candidate = args.url.trim()
+      if (/^[a-z][a-z0-9+.-]*:\/\//iu.test(candidate) && !/^https?:\/\//iu.test(candidate)) return downloadFailure('非法 url')
+      const normalized = normalizeUrl(candidate)
+      if ('error' in normalized) return downloadFailure(normalized.error)
+      if (args.project_id != null && args.space && args.space !== 'project')
+        return downloadFailure(`space=${args.space} 不能提供 project_id`)
+      scope.signal.throwIfAborted()
+      if (port.reconcile) {
+        const previous = await port.reconcile({ ...scope.identity, roundId: scope.roundId }, call)
+        scope.signal.throwIfAborted()
+        if (previous.kind === 'completed') return previous
+      }
+      const target = await port.prepare({ space: args.space ?? null, projectId: args.project_id ?? null, folderId: args.folder_id ?? null }, scope)
+      if ('error' in target) return { kind: 'completed', successful: false, mutated: false, value: target }
+      if (target.capacity !== null && (!Number.isSafeInteger(target.capacity) || target.capacity < 0))
+        return downloadFailure('文件容量无法确认')
+      scope.signal.throwIfAborted()
+      let response: ProviderHttpResponse
+      try { response = await port.open(normalized.url, scope.signal) }
+      catch {
+        scope.signal.throwIfAborted()
+        return downloadFailure('下载失败：网络超时或连接失败')
+      }
+      try {
+        scope.signal.throwIfAborted()
+        if (response.status < 200 || response.status >= 300) return downloadFailure(`下载失败：远端返回 HTTP ${response.status}`)
+        const capacity = target.capacity
+        const capacityError = '下载内容超过当前用户可用存储空间'
+        const remoteLength = response.headers['content-length'] ?? ''
+        if (capacity !== null && /^\d+$/u.test(remoteLength) && Number(remoteLength) > capacity)
+          return downloadFailure(capacityError)
+        const mimeType = response.headers['content-type']?.split(';', 1)[0]?.trim().toLowerCase() || 'application/octet-stream'
+        const name = downloadName(args.file_name, normalized.url, response.headers, port.extension(mimeType))
+        async function* data() {
+          let size = 0
+          for await (const chunk of response.body) {
+            scope.signal.throwIfAborted()
+            size += chunk.byteLength
+            if (capacity !== null && size > capacity) throw new DownloadCapacityExceeded()
+            yield chunk
+          }
+          scope.signal.throwIfAborted()
+        }
+        try { return await target.store({ name, mimeType, data: data() }, scope, call) }
+        catch (error) {
+          if (error instanceof DownloadCapacityExceeded) return downloadFailure(capacityError)
+          throw error
+        }
+      } finally { await Promise.resolve().then(() => response.cancel()).catch(() => undefined) }
     },
   }
 }

@@ -81,7 +81,7 @@ const emit = defineEmits<{
 .todo-input {
   flex: 1; min-width: 0; height: var(--input-control-height-compact); padding: 0 5px; box-sizing: border-box;
   font: 12px var(--font-sans); line-height: var(--line-height-ui); color: var(--input-fg); background: transparent;
-  border: 1.5px solid transparent; border-radius: var(--radius-xs); outline: none;
+  border: 1.5px solid transparent; border-radius: var(--radius-compact); outline: none;
   transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard);
 }
 .todo-input:focus { background: var(--input-bg-focus); border-color: var(--input-border-focus); box-shadow: var(--input-focus-shadow); }
@@ -103,7 +103,7 @@ const emit = defineEmits<{
 .todo-del:focus-visible { opacity: 1; outline: none; box-shadow: var(--control-focus-shadow); }
 .todo-add-btn {
   display: flex; align-items: center; gap: 4px; height: 24px; margin-top: 2px; margin-right: 18px;
-  padding: 0 10px; border-radius: var(--radius-xs); border: 1px dashed var(--option-border);
+  padding: 0 10px; border-radius: var(--radius-compact); border: 1px dashed var(--option-border);
   background: var(--option-bg); color: var(--option-fg);
   font: 500 11px var(--font-sans); cursor: pointer;
   transition: color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard);

@@ -2,23 +2,21 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
 import { createAdminAuthAdapter } from '../../src/domains/admin/admin-auth.js'
-import type { AdminUserRiskQuery } from '../../src/domains/admin/admin-user-risk.js'
 import { createAdminHostGuard } from '../../src/http/admin-host-guard.js'
 
 const host = { host: 'admin.example.test' }
 const userId = '00000000-0000-4000-8000-000000000021'
 
 test('Host mounts risk-user query behind Admin authentication and injects its display window', async () => {
-  const queryCalls: Array<{ sql: string; values: unknown[] }> = []
-  const query: AdminUserRiskQuery = async (sql, values) => {
-    queryCalls.push({ sql, values })
-    return [{
+  const readCalls: number[] = []
+  const read = async (windowMinutes = 1440) => {
+    readCalls.push(windowMinutes)
+    return { total: 1, window_minutes: windowMinutes, policy_window_minutes: 5, items: [{
       id: userId, username: '合成风险用户', email: 'synthetic@example.invalid',
       display_name: '风险用户', account_status: 'active', is_active: true,
       suspended_until: null, suspended_reason: null, security_version: 3,
-      recent_event_count: 5, visible_event_count: 9,
-      last_event_at: '2026-11-13T12:30:00.000Z', created_at: '2026-11-01T00:00:00.000Z',
-    }]
+      recent_event_count: 5, visible_event_count: 9, last_event_at: '2026-11-13T12:30:00.000+00:00', risk_action: 'throttled',
+    }] }
   }
   let version = 0
   const app = createApp({
@@ -35,15 +33,14 @@ test('Host mounts risk-user query behind Admin authentication and injects its di
       hostGuard: createAdminHostGuard('admin.example.test'),
     }),
     adminUserRisk: {
-      now: () => new Date('2026-11-13T12:34:56.000Z'),
-      query,
+      read,
     },
   })
 
   try {
     const denied = await app.inject({ url: '/api/v1/admin/users/risk', headers: host })
     assert.equal(denied.statusCode, 401)
-    assert.equal(queryCalls.length, 0)
+    assert.equal(readCalls.length, 0)
 
     const login = await app.inject({
       method: 'POST', url: '/api/v1/admin/auth/login', headers: host,
@@ -64,10 +61,7 @@ test('Host mounts risk-user query behind Admin authentication and injects its di
       recent_event_count: 5, visible_event_count: 9,
       last_event_at: '2026-11-13T12:30:00.000+00:00', risk_action: 'throttled',
     })
-    assert.deepEqual(queryCalls[0]?.values, [
-      new Date('2026-11-13T12:04:56.000Z').toISOString(),
-      new Date('2026-11-13T12:29:56.000Z').toISOString(),
-    ])
+    assert.deepEqual(readCalls, [30])
   } finally {
     await app.close()
   }

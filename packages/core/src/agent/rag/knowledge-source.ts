@@ -94,9 +94,11 @@ export function createKnowledgeRagSource(store: AgentKnowledgeReadStore): RagReb
     const owner = dataContext(rawOwner).ownerId
     if (sourceId !== null && !safeId(sourceId)) throw new Error('RAG 知识标识无效')
     const base = `${owner}/.agent/knowledge/`, prefix = `${base}entries/`
-    if (!await store.exists(`${base}.timestamps-iso-v1`)) throw new Error('知识时间格式尚未迁移')
     const keys: string[] = []
-    if (sourceId !== null) keys.push(`${prefix}${sourceId}.md`)
+    if (sourceId !== null) {
+      const key = `${prefix}${sourceId}.md`
+      if (await store.exists(key)) keys.push(key)
+    }
     else {
       const seen = new Set<string>()
       let cursor: string | null = null
@@ -116,6 +118,9 @@ export function createKnowledgeRagSource(store: AgentKnowledgeReadStore): RagReb
         if (cursor !== null) seen.add(cursor)
       } while (cursor !== null)
     }
+    signal?.throwIfAborted()
+    if (!keys.length) return []
+    if (!await store.exists(`${base}.timestamps-iso-v1`)) throw new Error('知识时间格式尚未迁移')
     const records = []
     for (const key of keys) {
       signal?.throwIfAborted()

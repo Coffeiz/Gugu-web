@@ -298,6 +298,27 @@ describe('Harness Run生命周期与持久化边界', () => {
     expect(updates[1]).toMatchObject({ eventId: tool[0]!.eventId, sequence: 2 })
   })
 
+  it('工具的自定义状态标签跟随同一个卡片进入事件与持久时间线', async () => {
+    const f = fixture([[{ type: 'complete', text: '', calls: [toolCall] }],
+      [{ type: 'complete', text: '查询结束', calls: [] }]])
+    let label = '正在核对项目'
+    Object.assign(f.ports, { toolLabelOverride: (name: string) => name === toolCall.name ? label : undefined })
+    const run = f.harness.start(identity)
+    const updates = []
+    for (let next = await run.next(); !next.done; next = await run.next()) {
+      if (next.value.type === 'tool_call' || next.value.type === 'tool_done') {
+        updates.push(next.value.payload.display)
+        label = '保存到下一次运行的新标签'
+      }
+    }
+    expect(updates).toEqual([
+      expect.objectContaining({ toolLabelOverride: '正在核对项目', toolStatus: 'running' }),
+      expect.objectContaining({ toolLabelOverride: '正在核对项目', toolStatus: 'success' }),
+    ])
+    const stored = await f.ports.store.read(identity)
+    expect(stored?.displayTimeline.find(item => item.kind === 'tool')).toMatchObject({ toolLabelOverride: '正在核对项目' })
+  })
+
   it('串行单项工具异常脱敏并隔离，剩余工具继续，提交未知则必须显式unknown终止', async () => {
     const f = fixture([[{ type: 'complete', text: '', calls: [toolCall, { ...toolCall, id: 'second-call' }] }], [{ type: 'complete', text: '完成', calls: [] }]])
     f.ports.tools.dispatch = vi.fn<ToolPort['dispatch']>(async (call) => {

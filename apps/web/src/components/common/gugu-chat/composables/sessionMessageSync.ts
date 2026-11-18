@@ -89,6 +89,7 @@ export function mapSessionMessageDelta(
     : {
         id: mkid(), role: 'tool', text: '', toolCallId: event.toolCallId,
         toolName: event.toolName, toolLabel: event.toolLabel,
+        toolLabelOverride: typeof event.toolLabelOverride === 'string' ? event.toolLabelOverride : undefined,
         runId: event.runId, roundId: event.roundId,
         toolStatus: event.toolStatus || (event.toolResult !== undefined ? 'success' : 'running'),
         toolInput: event.toolInput, toolResult: event.toolResult,

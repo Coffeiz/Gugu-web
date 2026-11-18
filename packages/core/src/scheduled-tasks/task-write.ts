@@ -1,5 +1,8 @@
 import { normalizeSchedule, type ScheduleInput, type ScheduleSpec } from './normalize-schedule.js'
 
+/** 共享写入服务可安全返回的引用校验错误。 */
+export class ScheduledTaskReferenceError extends TypeError {}
+
 export interface ScheduledTaskCreateInput extends ScheduleInput {
   name: unknown
   event_id?: unknown

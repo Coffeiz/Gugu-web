@@ -22,7 +22,11 @@ function fixture(configured: readonly string[]) {
       return { identity: { ownerId: current.ownerId, subject: { kind: 'session', id: current.sessionId }, workspaceId: null }, source: 'web', toolNames: currentTools }
     },
     async discover() { return [] },
-    capabilities: {},
+    capabilities: {
+      async filterConfigured(names: readonly string[]) {
+        return names.filter(name => currentTools.includes(name))
+      },
+    },
     formatPrefix() { return [] },
   }
   const mcp = {

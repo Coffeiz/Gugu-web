@@ -88,6 +88,9 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
     }
     return pending.then(clone)
   }
+  readonly rememberPreparedRequest: NonNullable<CanonicalContextPorts['rememberPreparedRequest']> = (identity, request) => {
+    this.#prefixes.set(this.#key(identity), Promise.resolve(clone(request)))
+  }
   async #selection(identity: RunIdentity, modelIdentity: string, signal: AbortSignal) {
     throwIfCancelled(signal)
     let selected: Awaited<ReturnType<ProviderRuntimeOptions['resolve']>>
@@ -364,7 +367,7 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
 /** 复用现有Canonical Context各业务端口，只替换已经真实实现的Provider接线。 */
 export function connectProviderHarness(context: CanonicalContextPorts, options: Omit<ProviderRuntimeOptions, 'references' | 'prepareRequest' | keyof ContextServices>) {
   const runtime = new ProviderRuntime({ ...options, digest: context.digest, nextId: context.nextId, references: context.references, prepareRequest: context.prepareRequest })
-  return { provider: runtime, context: { ...context, prepareRequest: runtime.prepareRequest, currentRequest: runtime.currentRequest, stageContinuation: runtime.stageContinuation, releaseContinuations: runtime.releaseContinuations,
+  return { provider: runtime, context: { ...context, prepareRequest: runtime.prepareRequest, rememberPreparedRequest: runtime.rememberPreparedRequest, currentRequest: runtime.currentRequest, stageContinuation: runtime.stageContinuation, releaseContinuations: runtime.releaseContinuations,
     finalization: { async complete(input) { await context.finalization.complete(input); runtime.finishRun(input.identity) } },
   } satisfies CanonicalContextPorts }
 }

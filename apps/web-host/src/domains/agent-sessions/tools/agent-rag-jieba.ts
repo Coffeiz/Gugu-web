@@ -1,6 +1,6 @@
 import { Jieba } from '@node-rs/jieba'
 import { dict } from '@node-rs/jieba/dict.js'
-import type { RagJieba } from '@gugu/core/agent'
+import type { RagJieba } from '@gugu/core/agent/rag'
 
 let instance: RagJieba | undefined
 

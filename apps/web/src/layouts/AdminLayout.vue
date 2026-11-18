@@ -226,7 +226,7 @@ async function handleLogout() {
 }
 .nav-item {
   display: flex; align-items: center; gap: 9px;
-  padding: 9px 10px; border-radius: var(--radius-sm);
+  padding: 9px 10px; border-radius: var(--radius-xs);
   font-size: var(--font-size-md); color: var(--content-secondary);
   text-decoration: none; cursor: pointer;
   border: 1px solid transparent;
@@ -248,7 +248,7 @@ async function handleLogout() {
 /* 用户卡片 — 对齐前端 user-card 风格，暗色版 */
 .user-card {
   display: flex; align-items: center; gap: 10px;
-  padding: 10px; border-radius: var(--radius-md);
+  padding: 10px; border-radius: var(--radius-sm);
   background: var(--surface-glass);
   border: 1px solid var(--border-strong);
   box-shadow: inset 0 1px 0 var(--border-subtle);
@@ -258,7 +258,7 @@ async function handleLogout() {
 
 .user-avatar {
   width: 32px; height: 32px; border-radius: 50%;
-  background: var(--action-primary);
+  background: var(--avatar-fallback-bg);
   display: flex; align-items: center; justify-content: center;
   font-size: var(--font-size-md); font-weight: 700; color: var(--content-on-accent); flex-shrink: 0;
 }

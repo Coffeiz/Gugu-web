@@ -1,13 +1,27 @@
+import { createHash } from 'node:crypto'
+import { sql } from 'kysely'
 import { dataContext } from '@gugu/core/contracts'
-import { invalidateAgentKnowledgeRag, enqueueAgentRagRebuild, parseAgentKnowledgeEntry, serializeAgentKnowledgeEntry } from '@gugu/core/agent'
-import type { AgentKnowledgeEntry, AgentKnowledgeReadStore } from '@gugu/core/agent'
-import type { SqlDataRuntime } from '@gugu/core/data'
-import type { KnowledgeWritePort } from '@gugu/core/tools'
+import { invalidateAgentKnowledgeRag, enqueueAgentRagRebuild, enqueueAgentRagRebuildInTransaction,
+  invalidateAgentKnowledgeRagInTransaction } from '@gugu/core/agent/rag'
+import { parseAgentKnowledgeEntry, serializeAgentKnowledgeEntry } from '@gugu/core/agent/knowledge/entry'
+import type { AgentKnowledgeEntry } from '@gugu/core/agent/knowledge/entry'
+import type { AgentKnowledgeReadStore } from '@gugu/core/agent/knowledge/overview'
+import type { ToolResult } from '@gugu/core/agent'
+import type { Database, SqlDataRuntime } from '@gugu/core/data'
+import type { KnowledgeDeletePort, KnowledgeWritePort } from '@gugu/core/tools'
+import type { Transaction } from 'kysely'
 import { writeLocalFile } from '@gugu/fs/node'
+import type { createWebAgentToolConfirmation } from './agent-confirmation.js'
 
 const ENTRY_ID = /^[A-Za-z0-9_-]{1,128}$/u
 const MARKER_CONTENT = 'knowledge-timestamps=iso8601-utc-v1\n'
 const migrations = new Map<string, Promise<void>>()
+
+const digest = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex')
+
+async function lockKnowledge(tx: Transaction<Database>, owner: string, backend: SqlDataRuntime['backend']) {
+  if (backend === 'postgres') await sql`SELECT pg_advisory_xact_lock(hashtextextended(${'agent-knowledge:' + owner}, 0))`.execute(tx)
+}
 
 function isoTimestamp(value: unknown): string {
   if (typeof value === 'number' && !Number.isFinite(value)) throw new Error('知识时间无效')
@@ -147,13 +161,111 @@ export function createLocalAgentKnowledgeWritePort(core: Pick<SqlDataRuntime, 'd
       signal.throwIfAborted()
       // 先撤回旧投影并推进 generation，保证文件更新失败也不会继续返回旧正文。
       await invalidateAgentKnowledgeRag(core.db, core.backend, owner)
-      try { await writeLocalFile(storageRoot, `${root}entries/${entry.id}.md`, serializeAgentKnowledgeEntry(entry)) }
+      try {
+        await core.db.transaction().execute(async tx => {
+          await lockKnowledge(tx, owner, core.backend)
+          const key = `${root}entries/${entry.id}.md`
+          if (await store.exists(key)) {
+            const current = parseAgentKnowledgeEntry(await store.read(key))
+            const unchanged = current.version === entry.version
+              && digest(serializeAgentKnowledgeEntry(current)) === digest(serializeAgentKnowledgeEntry(entry))
+            if (!current.active || current.id !== entry.id || current.scope.owner_user_id !== owner
+              || !(unchanged || current.version + 1 === entry.version)) throw new Error('知识条目已变化')
+          } else if (entry.version !== 1) throw new Error('知识条目已变化')
+          signal.throwIfAborted()
+          await writeLocalFile(storageRoot, key, serializeAgentKnowledgeEntry(entry))
+        })
+      }
       catch (error) {
         // 即使文件写失败，也重建当前主数据状态；若重新读取仍失败，Worker 会持久重试。
         await enqueueAgentRagRebuild(core.db, core.backend, owner, 'knowledge').catch(() => undefined)
         throw error
       }
       await enqueueAgentRagRebuild(core.db, core.backend, owner, 'knowledge')
+    },
+  }
+}
+
+/** 确认认领和删除计划持久化后才发布文件墓碑，重放仅复核该计划中的精确文件版本。 */
+export function createLocalAgentKnowledgeDeletePort(core: SqlDataRuntime, storageRoot: string,
+  store: AgentKnowledgeReadStore, confirmation: Pick<ReturnType<typeof createWebAgentToolConfirmation>, 'gate' | 'claim'>): KnowledgeDeletePort {
+  if (!core.receipts || core.backend !== 'postgres') throw new Error('知识删除持久收据不可用')
+  type Identity = Parameters<KnowledgeDeletePort['reconcile']>[0]
+  type Plan = { before: string; after: string }
+  const noReceipt = new Error('知识删除收据不存在')
+  const changed = new Error('知识条目已变化')
+  const failed = (): ToolResult => ({ kind: 'completed', successful: false, mutated: false, value: { error: changed.message } })
+  const keyFor = (owner: string, id: string) => `${owner}/.agent/knowledge/entries/${id}.md`
+  function coordinates(identity: Identity, phase: 'plan' | 'finish') {
+    const context = dataContext(identity.ownerId)
+    const method = `agent.knowledge.delete.${phase}`
+    const hex = digest(JSON.stringify([method, context.ownerId, identity.sessionId, identity.runId, identity.roundId, identity.toolCallId]))
+    return { context, method, id: `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}` }
+  }
+  async function read(owner: string, id: string) {
+    if (!ENTRY_ID.test(id)) return null
+    const key = keyFor(owner, id)
+    if (!await store.exists(key)) return null
+    const raw = await store.read(key)
+    let entry: AgentKnowledgeEntry
+    try { entry = parseAgentKnowledgeEntry(raw) } catch { return null }
+    if (entry.id !== id || entry.scope.type !== 'owner' || entry.scope.owner_user_id !== owner) return null
+    return { entry, version: digest(raw), key }
+  }
+  const tombstone = (entry: AgentKnowledgeEntry) => serializeAgentKnowledgeEntry({ ...entry, active: false })
+  async function finish(identity: Identity, id: string, plan: Plan): Promise<ToolResult> {
+    const operation = coordinates(identity, 'finish')
+    const owner = operation.context.ownerId
+    const receipt = await core.operationWithTransaction(operation.context, operation.id, operation.method, { id }, async tx => {
+      await lockKnowledge(tx, owner, core.backend)
+      const current = await read(owner, id)
+      const needsWrite = current?.entry.active === true && current.version === plan.before
+      const alreadyWritten = current?.entry.active === false && current.version === plan.after
+      if (needsWrite || alreadyWritten) await invalidateAgentKnowledgeRagInTransaction(tx, core.backend, owner, id)
+      if (needsWrite) await writeLocalFile(storageRoot, current.key, tombstone(current.entry))
+      // 即使目标已被其它操作修改，也要恢复计划阶段撤回的有效索引。
+      await enqueueAgentRagRebuildInTransaction(tx, core.backend, owner, 'knowledge')
+      return { success: needsWrite || alreadyWritten, knowledge_id: id }
+    })
+    return { kind: 'completed', successful: receipt.result.success, mutated: receipt.result.success && !receipt.replayed, value: receipt.result }
+  }
+  return {
+    gate: confirmation.gate,
+    async readTarget(identity, id, signal) {
+      signal.throwIfAborted()
+      const owner = dataContext(identity.ownerId).ownerId
+      const current = await read(owner, id)
+      signal.throwIfAborted()
+      if (!current?.entry.active) return null
+      const title = [...current.entry.title.replace(/[\p{Cc}\p{Cf}]/gu, ' ')].slice(0, 200).join('')
+      return { knowledgeId: id, snapshot: {
+        targetsDigest: digest(JSON.stringify([owner, id])), versionsDigest: current.version, targetRefs: { knowledge_id: [id] },
+        displaySummary: `将删除知识条目「${title}」，保留历史但停止检索`,
+      } }
+    },
+    async commit(identity, target, claim, signal) {
+      const id = target.knowledgeId
+      const operation = coordinates(identity, 'plan')
+      const owner = operation.context.ownerId
+      try {
+        const receipt = await core.operationWithTransaction(operation.context, operation.id, operation.method, { id }, async tx => {
+          await lockKnowledge(tx, owner, core.backend)
+          const current = await read(owner, id)
+          if (!current?.entry.active || current.version !== target.snapshot.versionsDigest
+            || !await confirmation.claim(tx, claim, signal)) throw changed
+          await invalidateAgentKnowledgeRagInTransaction(tx, core.backend, owner, id)
+          return { before: current.version, after: digest(tombstone(current.entry)) }
+        }, { signal })
+        if (signal.aborted) return { kind: 'unknown' }
+        return await finish(identity, id, receipt.result)
+      } catch (error) { return error === changed ? failed() : { kind: 'unknown' } }
+    },
+    async reconcile(identity, id) {
+      const operation = coordinates(identity, 'plan')
+      try {
+        const receipt = await core.operationWithTransaction<Plan>(operation.context, operation.id, operation.method, { id }, async () => { throw noReceipt })
+        return await finish(identity, id, receipt.result)
+      } catch { return { kind: 'unknown' } }
     },
   }
 }

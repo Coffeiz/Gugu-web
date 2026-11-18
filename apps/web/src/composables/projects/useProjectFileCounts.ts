@@ -1,6 +1,7 @@
 import { ref, watch, type ComputedRef } from 'vue'
 import { showAppError } from '@/composables/core/useAppToast'
 import { projectsApi } from '@/api/projects'
+import { isDesktopRenderer } from '@/desktop/bridge'
 
 /** 文件数由服务端事务投影维护；文件变更后只读取小型项目计数摘要。 */
 export function useProjectFileCounts(filesRevision: ComputedRef<unknown>) {
@@ -8,6 +9,7 @@ export function useProjectFileCounts(filesRevision: ComputedRef<unknown>) {
   let requestVersion = 0
 
   async function refresh() {
+    if (isDesktopRenderer()) return
     const version = ++requestVersion
     try {
       const rows = await projectsApi.fileCounts()

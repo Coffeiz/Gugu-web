@@ -1,5 +1,6 @@
 import type { Pool } from 'pg'
 import type { ContextDataPorts, HistoryIdentity, Json } from '@gugu/core/agent'
+import { agentContextSubject } from './agent-context-subject.js'
 import type { PreferenceTextFiles } from '../../preferences/persistence/personality-files.js'
 
 const truthy = (value: unknown): boolean => value != null && value !== false && value !== 0 && value !== '' && (!Array.isArray(value) || value.length > 0) && (typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length > 0)
@@ -22,13 +23,13 @@ function validTimezone(value: string): boolean {
 }
 
 /** 只负责用户时区/偏好和业务修订；其他领域数据必须显式注入。 */
-export function createAgentPreferenceContextSources(pool: Pick<Pool, 'query'>, files: Pick<PreferenceTextFiles, 'read'>, redis: { get(key: string): Promise<string | null> }, serverTimezone: string) {
+export function createAgentPreferenceContextSources(pool: Pick<Pool, 'query'>, files: Pick<PreferenceTextFiles, 'read'>, redis: { get(key: string): Promise<string | null> }, serverTimezone: string, kind: 'chat' | 'scheduled_task' = 'chat') {
   if (!validTimezone(serverTimezone)) throw new TypeError('服务时区无效')
   async function owned(identity: HistoryIdentity) {
-    if (!identity.ownerId || !/^[1-9]\d*$/.test(identity.sessionId)) throw new TypeError('会话身份无效')
-    const result = await pool.query<{ timezone: string | null; data_json: string | null }>(`SELECT u.timezone,p.data_json FROM conversation_sessions s
-      JOIN users u ON u.id=s.user_id LEFT JOIN user_preferences p ON p.user_id=u.id WHERE s.user_id=$1 AND s.id=$2`, [identity.ownerId, identity.sessionId])
-    if (!result.rows[0]) throw new Error('会话不存在')
+    const subject = agentContextSubject(kind, identity)
+    const result = await pool.query<{ timezone: string | null; data_json: string | null }>(`SELECT u.timezone,p.data_json FROM ${subject.from} s
+      JOIN users u ON u.id=s.user_id LEFT JOIN user_preferences p ON p.user_id=u.id WHERE s.user_id=$1 AND s.id=$2`, [identity.ownerId, subject.id])
+    if (!result.rows[0]) throw new Error(subject.missing)
     return result.rows[0]
   }
   const loadTimezone: ContextDataPorts['loadTimezone'] = async (identity, signal) => {

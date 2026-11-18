@@ -4,6 +4,8 @@ import type { DataServices } from '../data/services.js'
 import type { LocalRuntime } from './local.js'
 import { object, onlyFields, safeInteger } from '../shared/values.js'
 import { DESKTOP_METHODS, MAX_FRAME } from '../contracts/desktop.js'
+import { desktopProjectFields, getDesktopProject, listDesktopProjects } from '../projects/desktop-board.js'
+import { projectResponse } from '../projects/project-projection.js'
 export { DESKTOP_METHODS, MAX_FRAME } from '../contracts/desktop.js'
 
 export function isMutation(method: string): boolean {
@@ -11,6 +13,10 @@ export function isMutation(method: string): boolean {
     'projects.create',
     'projects.rename',
     'projects.update',
+    'projects.board.create',
+    'projects.board.update',
+    'projects.board.delete',
+    'projects.board.restore',
     'clients.create',
     'clients.update',
     'clients.delete',
@@ -44,6 +50,12 @@ const commandFields: Readonly<Record<string, readonly string[]>> = {
   'projects.list': ['archived'],
   'projects.rename': ['id', 'version', 'name'],
   'projects.update': ['id', 'version', 'fields'],
+  'projects.board.list': ['collection', 'offset'],
+  'projects.board.get': ['id'],
+  'projects.board.create': ['fields'],
+  'projects.board.update': ['id', 'version', 'fields'],
+  'projects.board.delete': ['id'],
+  'projects.board.restore': ['id'],
   'clients.list': [],
   'clients.update': ['id', 'fields'],
   'clients.delete': ['id'],
@@ -213,6 +225,16 @@ export async function execute(
         safeInteger(params.version),
         params.fields,
       )
+    case 'projects.board.list':
+      return listDesktopProjects(data.projects, params.collection, safeInteger(params.offset ?? 0, 0))
+    case 'projects.board.get':
+      return getDesktopProject(data.projects, safeInteger(params.id))
+    case 'projects.board.create':
+      return projectResponse(await data.projects.create(desktopProjectFields(params.fields)), 0)
+    case 'projects.board.update':
+      return projectResponse(await data.projects.update(
+        safeInteger(params.id), safeInteger(params.version), desktopProjectFields(params.fields),
+      ), 0)
     case 'clients.list':
       return (await data.clients.list()).map(({ id, name }) => ({ id, name }))
     case 'clients.create':

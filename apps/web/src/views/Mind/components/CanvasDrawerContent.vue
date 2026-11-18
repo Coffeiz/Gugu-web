@@ -195,7 +195,7 @@ defineExpose({ listRef })
 .ci-delete:hover { background: var(--status-danger-bg); color: var(--status-danger); }
 .canvas-drawer-footer { position: sticky; bottom: 0; z-index: 2; width: 100%; padding: 6px 0 9px; }
 .canvas-selection-actions { display: flex; align-items: center; width: 100%; gap: 6px; padding: 7px 4px 0; }
-.ci-batch-delete, .ci-clear-selection { display: inline-flex; align-items: center; justify-content: center; flex: 1 1 0; gap: 4px; min-height: 26px; padding: 4px 9px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); font: 600 11px var(--font-sans); cursor: pointer; transition: background .15s ease, border-color .15s ease, color .15s ease; }
+.ci-batch-delete, .ci-clear-selection { display: inline-flex; align-items: center; justify-content: center; flex: 1 1 0; gap: 4px; min-height: 26px; padding: 4px 9px; border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); font: 600 11px var(--font-sans); cursor: pointer; transition: background .15s ease, border-color .15s ease, color .15s ease; }
 .ci-batch-delete { color: var(--status-danger); background: var(--status-danger-bg); border-color: color-mix(in srgb, var(--status-danger) 30%, var(--border-subtle)); }
 .ci-batch-delete:hover { background: color-mix(in srgb, var(--status-danger) 14%, var(--surface-soft)); border-color: var(--status-danger); }
 .ci-clear-selection { color: var(--content-secondary); background: var(--surface-soft); }

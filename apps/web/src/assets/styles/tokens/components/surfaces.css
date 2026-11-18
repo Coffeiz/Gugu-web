@@ -1,5 +1,12 @@
 /* Shared floating surface / modal / input / choice contracts.
    Components consume these roles; light/dark differences come from semantic theme values. */
+/* 单独插值半径，避免附带 SVG 滤镜时整个滤镜列表跳变。 */
+@property --modal-overlay-blur-radius {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 6px;
+}
+
 :root {
   /* 用户气泡保持品牌紫主体，边缘高光不要直接复用 Aero 亮色的纯白玻璃边框。 */
   --gugu-chat-user-highlight: color-mix(in srgb,var(--action-primary) 26%,#fff);
@@ -54,7 +61,6 @@
   --modal-card-side-highlight: color-mix(in srgb,var(--border-highlight) 58%,transparent);
   --modal-card-shadow: var(--elevation-window);
   --modal-overlay-bg: var(--surface-scrim);
-  --modal-overlay-blur: blur(6px);
 
   --confirm-dialog-width: 420px;
   --confirm-dialog-bg: var(--modal-card-bg);
@@ -163,8 +169,8 @@
   --popup-surface-highlight: var(--border-highlight);
   --popup-surface-shadow: var(--popup-shadow);
   --popup-surface-blur: var(--popup-blur);
-  --popup-surface-radius: var(--radius-sm);
-  --event-popup-radius: 16px;
+  --popup-surface-radius: var(--popup-radius);
+  --event-popup-radius: var(--popup-radius);
   --popup-surface-padding: 4px;
   --popup-item-fg: var(--content-primary);
   --popup-item-fg-muted: var(--content-secondary);
@@ -172,7 +178,7 @@
   --popup-item-bg-active: var(--selection-bg);
   --popup-item-fg-active: var(--selection-fg);
   --popup-item-padding: 7px 9px;
-  --popup-item-radius: var(--radius-xs);
+  --popup-item-radius: var(--radius-compact);
   --popup-item-danger: var(--status-danger);
   --popup-item-danger-bg-hover: var(--status-danger-bg);
   /* 浮层内部内容分割线复用内容语义色，不使用玻璃外框的 border-subtle。 */
@@ -198,7 +204,7 @@
   --input-border-focus: var(--border-focus);
   --input-hover-shadow: inset 0 1px 0 var(--highlight-muted);
   --input-focus-shadow: var(--control-focus-shadow);
-  --input-radius: var(--radius-sm);
+  --input-radius: var(--radius-xs);
   /* 单行文本行框覆盖完整控件高度，保证点击上下区域时仍按横坐标定位光标。 */
   --input-control-height: var(--control-height-md);
   --input-text-line-height: var(--input-control-height);
@@ -261,7 +267,7 @@
   --danger-button-border: color-mix(in srgb,var(--status-danger) 30%,transparent);
   --danger-button-border-hover: color-mix(in srgb,var(--status-danger) 48%,transparent);
   --danger-button-shadow: none;
-  --danger-button-radius: var(--radius-sm);
+  --danger-button-radius: var(--radius-xs);
 
   --switch-track-bg: color-mix(in srgb,var(--content-primary) 18%,transparent);
   --switch-track-bg-active: var(--action-primary);
@@ -273,7 +279,7 @@
 
   --runtime-drag-glass-bg: color-mix(in srgb,var(--surface-floating) 72%,transparent);
   --runtime-drag-glass-border: var(--border-strong);
-  --runtime-drag-glass-filter: blur(12px) saturate(1.15);
+  --runtime-drag-glass-filter: blur(12px) saturate(1.15) var(--desktop-backdrop-alpha, );
   --runtime-drag-glass-shadow: 0 22px 50px color-mix(in srgb,var(--content-primary) 18%,transparent);
   /* 咕咕卡片抓取层：保留旧版卡片底色与 Runtime 通用玻璃的两层观感。 */
   --gugu-card-drag-bg: color-mix(in srgb,var(--surface-floating) 50%,transparent);
@@ -394,9 +400,9 @@ html[data-theme='dark'][data-family] {
   --file-dialog-toolbar-highlight-strong: var(--highlight-strong);
   --file-dialog-toolbar-highlight-side: var(--highlight-side);
 
-  /* Dark keeps the same state structure but maps cards into the active family theme. Folder values
-     deliberately restore the pre-regression dark contract that used to live in adoption CSS. */
-  --file-card-bg: var(--surface-card-solid);
+  /* 暗色文件和文件夹共用比 Glass 稍亮的中性底板。 */
+  --file-card-bg: color-mix(in srgb, var(--palette-surface) 75%, var(--glass-card-background));
+  --file-card-canvas-bg: var(--file-card-bg);
   --file-card-border: var(--border-strong);
   --file-card-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card);
   --file-card-bg-hover: var(--file-card-bg);
@@ -407,7 +413,7 @@ html[data-theme='dark'][data-family] {
   --file-card-hover-overlay: color-mix(in srgb,var(--theme-highlight-hover) 30%,transparent);
   /* 暗色文件夹悬停只做中性提亮，避免把用户主色叠到卡片上造成偏色。 */
   --folder-card-hover-overlay: var(--file-card-hover-overlay);
-  --file-card-preselection-bg: color-mix(in srgb,var(--action-primary) 5%,var(--surface-card-solid));
+  --file-card-preselection-bg: color-mix(in srgb,var(--action-primary) 5%,var(--file-card-bg));
   --file-card-preselection-border: color-mix(in srgb,var(--action-primary) 38%,transparent);
   --file-card-preselection-shadow: inset 0 1px 0 var(--highlight-soft), 0 0 0 1.5px color-mix(in srgb,var(--action-primary) 12%,transparent);
   --file-card-selection-overlay: color-mix(in srgb,var(--action-primary) 8%,transparent);
@@ -418,13 +424,13 @@ html[data-theme='dark'][data-family] {
   --file-card-image-badge-bg: rgba(0,0,0,.42);
   --file-card-image-badge-fg: var(--content-primary);
 
-  --folder-card-bg-base: var(--surface-card-solid);
+  --folder-card-bg-base: var(--file-card-bg);
   --folder-card-border-base: var(--border-strong);
   --folder-card-shadow: inset 0 1px 0 var(--highlight-soft), var(--card-shadow);
   --folder-card-border-selected: var(--action-outline);
   --folder-card-shadow-selected: inset 0 1px 0 var(--highlight-soft), 0 0 0 2px var(--selection-bg);
   --folder-card-selection-overlay: color-mix(in srgb,var(--action-primary) 8%,transparent);
-  --folder-card-bg-preselected: color-mix(in srgb,var(--action-primary) 5%,var(--surface-card-solid));
+  --folder-card-bg-preselected: color-mix(in srgb,var(--action-primary) 5%,var(--folder-card-bg-base));
   --folder-card-border-preselected: color-mix(in srgb,var(--action-primary) 38%,transparent);
   --folder-card-shadow-preselected: inset 0 1px 0 var(--highlight-muted), 0 0 0 1px color-mix(in srgb,var(--action-primary) 12%,transparent);
   --switch-track-bg: color-mix(in srgb,var(--content-primary) 9%,transparent);

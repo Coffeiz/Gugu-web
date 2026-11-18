@@ -174,7 +174,7 @@ async function confirmAuthorization() {
 <style scoped>
 .sched-page { height: 100%; font-family: var(--font-sans); }
 .btn-primary {
-  padding: 8px 16px; border: none; border-radius: var(--radius-sm);
+  padding: 8px 16px; border: none; border-radius: var(--radius-xs);
   background: var(--action-primary-bg); color: var(--content-on-accent);
   font-size: 13px; font-weight: 500; cursor: pointer; font-family: var(--font-sans);
   display: inline-flex; align-items: center;
@@ -184,8 +184,6 @@ async function confirmAuthorization() {
 .btn-primary:hover { background: var(--action-primary-bg-hover); opacity: 0.92; }
 .btn-primary:disabled { opacity: 0.5; cursor: default; transform: none; }
 .panel {
-  --glass-card-background: var(--column-bg);
-  --glass-card-background-hover: var(--column-bg);
   height: 100%; box-sizing: border-box;
   display: flex; flex-direction: column;
   padding: 0 24px;

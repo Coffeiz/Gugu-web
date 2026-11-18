@@ -59,7 +59,7 @@ const emit = defineEmits<{
 .nav-item :deep(svg) { width: 18px; height: 18px; flex: 0 0 18px; }
 .nav-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav-item:hover { color: var(--content-primary, var(--text-primary)); background: color-mix(in srgb, var(--sidebar-item-active) 55%, transparent); }
-.nav-item.active { color: var(--sidebar-item-active-fg); background: var(--sidebar-item-active); border-color: var(--sidebar-item-active-border); box-shadow: var(--sidebar-item-active-shadow); font-weight: 650; }
+.nav-item.active { color: var(--sidebar-item-active-fg); background: var(--sidebar-item-active); border-color: var(--sidebar-item-active-border); box-shadow: var(--sidebar-item-selected-shadow); font-weight: 650; }
 .nav-item-disabled { color: var(--text-secondary); }
 .sidebar-footer { margin-top: auto; display: flex; align-items: center; gap: 8px; padding: 12px; color: var(--text-secondary); font-size: 11px; }
 .connection-dot { width: 8px; height: 8px; border-radius: 50%; background: #d9a441; }

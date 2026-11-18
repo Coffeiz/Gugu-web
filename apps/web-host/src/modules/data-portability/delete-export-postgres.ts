@@ -1,6 +1,6 @@
 import {createDataExportDeleter,type DataExportDeleteStore} from '@gugu/core/data-portability/delete-export'
 import {withPostgresTransaction} from '../../adapters/postgres-transaction.js'
-import {removeLocalTree} from '@gugu/fs/node'
+import {removeLocalFile} from '@gugu/fs/node'
 import type {Pool,PoolClient} from 'pg'
 import path from 'node:path'
 
@@ -25,6 +25,6 @@ export function createPostgresDataExportDeleter(pool:Pick<Pool,'connect'>,storag
     const ownerHex=ownerId.replaceAll('-',''),jobHex=jobId.replaceAll('-','')
     const expected=`${ownerHex}/.data-portability/exports/${jobHex}.gupa`
     if(key!==expected)throw new Error('导出归档路径无效')
-    await removeLocalTree(path.resolve(storageRoot),expected)
+    await removeLocalFile(path.resolve(storageRoot),expected)
   })
 }

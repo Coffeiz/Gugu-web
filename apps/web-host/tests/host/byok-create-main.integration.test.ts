@@ -32,7 +32,10 @@ test('生产入口创建的凭据由正式 PG 模型持久化并由 Python 解�
     providerRequests.push(request.headers.authorization??'')
     const raw=Buffer.concat(chunks).toString()
     providerBodies.push(raw?JSON.parse(raw) as Record<string,unknown>:{})
-    response.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({data:[{id:'model-z'},{id:'model-a'},{id:'model-z'}]}))
+    const data=request.url?.endsWith('/embeddings')
+     ? [{embedding:[0.25,0.5]}]
+     : [{id:'model-z'},{id:'model-a'},{id:'model-z'}]
+    response.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({data}))
    })
   })
   await new Promise<void>(resolve=>providerServer!.listen(0,'127.0.0.1',resolve));const providerAddress=providerServer.address();assert.ok(providerAddress&&typeof providerAddress!=='string')
@@ -74,6 +77,25 @@ test('生产入口创建的凭据由正式 PG 模型持久化并由 Python 解�
   assert.equal(foreignMedia.statusCode,404,foreignMedia.body);assert.equal(providerRequests.length,2)
   const wrongMediaDestination=await host.app.inject({method:'POST',url:'/api/v1/byok/media-capability-probe',headers,payload:{provider:'local',api_format:'openai',base_url:'http://127.0.0.1:9/v1',model:'preview-vision',credential_id:credentialId,dim:'image'}})
   assert.equal(wrongMediaDestination.statusCode,422,wrongMediaDestination.body);assert.equal(providerRequests.length,2)
+  const draft={provider:'local',api_format:'openai',capability:'embedding',base_url:providerBase,model:'preview-embedding',dimensions:2,credential_id:credentialId}
+  assert.equal((await host.app.inject({method:'POST',url:'/api/v1/byok/test-preview',payload:draft})).statusCode,401)
+  const foreignDraft=await host.app.inject({method:'POST',url:'/api/v1/byok/test-preview',headers,payload:{...draft,credential_id:foreignCredentialId}})
+  assert.equal(foreignDraft.statusCode,404,foreignDraft.body)
+  assert.equal(providerRequests.length,2)
+  const preview=await host.app.inject({method:'POST',url:'/api/v1/byok/test-preview',headers,payload:draft})
+  const saved=await host.app.inject({method:'POST',url:`/api/v1/byok/${credentialId}/test`,headers})
+  for(const probe of [preview,saved]){
+   assert.equal(probe.statusCode,200,probe.body)
+   assert.deepEqual(probe.json(),{ok:true,status:200,message:'Embedding 连接正常'})
+  }
+  assert.deepEqual(providerRequests.slice(2),['','Bearer synthetic-host-value'])
+  assert.deepEqual(providerBodies.slice(2),[
+   {model:'preview-embedding',input:'ping',dimensions:2},
+   {model:'original-model',input:'ping'},
+  ])
+  const afterPreview=await host.app.inject({url:'/api/v1/byok',headers})
+  assert.equal(afterPreview.json().items[0].model,'original-model')
+  assert.equal(afterPreview.json().items[0].dimensions,null)
   assert.equal((await host.app.inject({method:'PATCH',url:`/api/v1/byok/${credentialId}`,payload:{model:'patched-model'}})).statusCode,401)
   const deniedPatch=await host.app.inject({method:'PATCH',url:`/api/v1/byok/${credentialId}`,headers,payload:{base_url:'https://other.example.test/v1'}})
   assert.equal(deniedPatch.statusCode,422,deniedPatch.body)

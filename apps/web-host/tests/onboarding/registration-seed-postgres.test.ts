@@ -74,6 +74,7 @@ function fakePool(options: {
         if (sql.includes("'initialize'")) quotaInitializationEvents.push(values)
         return { rows: [], rowCount: 1 } as never
       }
+      if (sql.includes('INSERT INTO rag_index_jobs')) return { rows: [], rowCount: 1 } as never
       if (sql.includes('UPDATE onboarding_state SET state=')) {
         if (options.failOnStateUpdate) throw new Error('synthetic onboarding state failure')
         state = JSON.parse(String(values[1])) as Record<string, unknown>

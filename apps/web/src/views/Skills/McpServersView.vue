@@ -315,7 +315,7 @@ onBeforeUnmount(() => {
 .mcp-page { min-height:0; height:100%; display:flex; flex-direction:column; }
 .mcp-list { column-count:2; column-gap:12px; }
 .mcp-list :deep(.skill-card) { margin:0 0 12px; }
-.error-banner { padding:10px 12px; border-radius:var(--radius-sm); color:var(--danger-fg); background:var(--danger-bg); font-size:12px; margin-bottom:12px; }
+.error-banner { padding:10px 12px; border-radius:var(--radius-xs); color:var(--danger-fg); background:var(--danger-bg); font-size:12px; margin-bottom:12px; }
 .error-banner button { margin-left:10px; border:0; background:transparent; color:inherit; cursor:pointer; }
 .mcp-footer { display:flex; align-items:center; gap:14px; flex-shrink:0; border-top:1px solid var(--content-divider); padding:14px 8px 22px; }
 .mcp-muted { color:var(--content-secondary); font-size:12px; }

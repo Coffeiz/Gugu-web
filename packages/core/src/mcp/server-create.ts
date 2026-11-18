@@ -36,10 +36,19 @@ export function createMcpServerCreator<DB>(db: Kysely<DB>, options: {
   id(): string
   encrypt(plaintext: string): Promise<McpEnvelope>
 }, backend: McpDatabaseBackend = 'postgres') {
-  return async (rawOwner: string, input: McpServerCreateInput) => {
-    const owner = mcpOwnerKey(dataContext(rawOwner).ownerId, backend)
+  async function assertAvailable(connection: Kysely<DB>, owner: string, name: string) {
     const maxServers = typeof options.maxServersPerUser === 'function' ? options.maxServersPerUser() : options.maxServersPerUser
     if (!Number.isSafeInteger(maxServers) || maxServers < 0) throw new TypeError('MCP server 数量上限无效')
+    const existing = await sql<{ id: string }>`SELECT id FROM user_mcp_servers
+      WHERE user_id=${owner} AND scope='user' AND name=${name} LIMIT 1`.execute(connection)
+    if (existing.rows.length) throw new CoreError('invalid_request', `名称 ${name} 已存在`)
+    const count = await sql<{ count: number | string }>`SELECT count(*) AS count FROM user_mcp_servers
+      WHERE user_id=${owner} AND scope='user'`.execute(connection)
+    if (Number(count.rows[0]?.count ?? 0) >= maxServers)
+      throw new CoreError('invalid_request', `每个用户最多添加 ${maxServers} 个 MCP server`)
+  }
+  async function create(rawOwner: string, input: McpServerCreateInput) {
+    const owner = mcpOwnerKey(dataContext(rawOwner).ownerId, backend)
     const name = normalizeMcpServerName(input.name)
     const slots = normalizeMcpSlots(input.credential_slots)
     const credentials = validateMcpCredentialValues(slots, input.credential_values)
@@ -54,16 +63,10 @@ export function createMcpServerCreator<DB>(db: Kysely<DB>, options: {
 
     let stored: StoredServer
     try {
-      stored = await db.transaction().execute(async (tx) => {
-        const existing = await sql<{ id: string }>`SELECT id FROM user_mcp_servers
-          WHERE user_id=${owner} AND scope='user' AND name=${name} LIMIT 1`.execute(tx)
-        if (existing.rows.length) throw new CoreError('invalid_request', `名称 ${name} 已存在`)
-
-        const count = await sql<{ count: number | string }>`SELECT count(*) AS count FROM user_mcp_servers
-          WHERE user_id=${owner} AND scope='user'`.execute(tx)
-        if (Number(count.rows[0]?.count ?? 0) >= maxServers)
-          throw new CoreError('invalid_request', `每个用户最多添加 ${maxServers} 个 MCP server`)
-
+      const work = async (tx: Kysely<DB>) => {
+        if (backend === 'postgres')
+          await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`mcp-server-create:${owner}`}, 0))`.execute(tx)
+        await assertAvailable(tx, owner, name)
         const result = backend === 'postgres' ? await sql<StoredServer>`INSERT INTO user_mcp_servers (
           id,user_id,scope,name,transport,endpoint,encrypted_endpoint,endpoint_nonce,encrypted_endpoint_key,endpoint_key_version,
           command,auth_mode,encrypted_headers,headers_nonce,encrypted_headers_key,headers_key_version,
@@ -91,7 +94,8 @@ export function createMcpServerCreator<DB>(db: Kysely<DB>, options: {
         ) RETURNING id,name,transport,created_at`.execute(tx)
         await sql`DELETE FROM user_mcp_tool_schema_snapshots WHERE user_id=${owner}`.execute(tx)
         return result.rows[0]!
-      })
+      }
+      stored = db.isTransaction ? await work(db) : await db.transaction().execute(work)
     } catch (error) {
       if (isMcpUniqueViolation(error))
         throw new CoreError('invalid_request', `名称 ${name} 已存在`)
@@ -121,4 +125,9 @@ export function createMcpServerCreator<DB>(db: Kysely<DB>, options: {
       created_at: stored.created_at instanceof Date ? stored.created_at.toISOString() : stored.created_at,
     }
   }
+  return Object.assign(create, {
+    assertAvailable(rawOwner: string, rawName: string) {
+      return assertAvailable(db, mcpOwnerKey(dataContext(rawOwner).ownerId, backend), normalizeMcpServerName(rawName))
+    },
+  })
 }

@@ -1,10 +1,18 @@
 {
+  "apps/web-host/tests/mcp/runtime.test.ts": {
+    "domain": "mcp",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/mcp/runtime.ts",
+    "productionEntry": "Web Host MCP 连接运行时及 Agent 连接检测",
+    "keyBehavior": "按 owner 和当前启用配置重新发现工具，保护凭据与错误投影，停用及取消时不启动连接，探测不执行远端工具",
+    "ci": "web-host-node"
+  },
   "apps/web-host/tests/mcp/status.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/mcp/status.ts",
     "productionEntry": "apps/web-host/src/main.ts",
-    "keyBehavior": "认证、开关与server/tool限额的Python env/override优先级和热更新",
+    "keyBehavior": "MCP 认证与状态接口，开关、限额和默认超时遵守 Python 环境变量及 override 优先级",
     "ci": "node-webui"
   },
   "apps/web-host/tests/mcp/safe-fetch.test.ts": {
@@ -26,9 +34,9 @@
   "apps/web-host/tests/mcp/server-create-postgres.test.ts": {
     "domain": "mcp",
     "layer": "L2",
-    "owner": "packages/core/src/mcp/server-create.ts",
-    "productionEntry": "apps/web-host/src/main.ts MCP 创建生产接线",
-    "keyBehavior": "owner 配置事务、端点与凭据只存 envelope、限额及 Python 工具快照失效",
+    "owner": "packages/core/src/agent/tools/mcp-management.ts + packages/core/src/mcp/server-create.ts",
+    "productionEntry": "apps/web-host/src/main.ts MCP 添加、更新与私密交互接线",
+    "keyBehavior": "确认认领与新增、更换或清空凭据槽位、加密意图及收据原子提交。失败保留旧凭据，重放复用表单，配置变化拒绝私密提交，恢复不携带凭据值",
     "ci": "node-webui"
   },
   "apps/web-host/tests/mcp/test-connection-route.test.ts": {
@@ -84,7 +92,7 @@
     "layer": "L2",
     "owner": "packages/core/src/mcp/server-mutations.ts",
     "productionEntry": "apps/web-host/src/main.ts MCP 配置生产事务",
-    "keyBehavior": "隔离 PostgreSQL 更新密文、owner 隔离和配置快照原子失效",
+    "keyBehavior": "隔离 PostgreSQL 更新密文、owner 隔离和配置快照原子失效。Agent 启停和非凭据更新复核租约及访问版本，重放只返回持久收据",
     "ci": "node-webui"
   }
 }

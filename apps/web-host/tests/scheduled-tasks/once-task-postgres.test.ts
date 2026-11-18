@@ -13,13 +13,18 @@ test('一次性任务并发开始仅一次成功，失败后可重试且完成�
   const pool = new Pool({ connectionString: url, options: `-c search_path=${schema}` })
   try {
     await pool.query(`CREATE TABLE scheduled_tasks (id integer primary key, user_id uuid, enabled boolean, schedule_kind text, start_at timestamptz, last_run_at timestamptz, last_run_failed boolean);
-      CREATE TABLE rag_index_jobs(id bigserial PRIMARY KEY,user_id uuid NOT NULL,source_type text NOT NULL,source_id text NOT NULL,pending_source_ids json,version text NOT NULL,operation text NOT NULL,status text NOT NULL,generation int NOT NULL,completed_generation int NOT NULL,attempts int NOT NULL,next_attempt_at timestamptz,lease_until timestamptz,last_error_code text,last_started_at timestamptz,last_succeeded_at timestamptz,created_at timestamptz NOT NULL,updated_at timestamptz NOT NULL,UNIQUE(user_id,source_type))`)
+      CREATE TABLE rag_index_jobs(id bigserial PRIMARY KEY,user_id uuid NOT NULL,source_type text NOT NULL,source_id varchar(255) NOT NULL,pending_source_ids json,version text NOT NULL,operation text NOT NULL,status text NOT NULL,generation int NOT NULL,completed_generation int NOT NULL,attempts int NOT NULL,next_attempt_at timestamptz,lease_until timestamptz,last_error_code text,last_started_at timestamptz,last_succeeded_at timestamptz,created_at timestamptz NOT NULL,updated_at timestamptz NOT NULL,UNIQUE(user_id,source_type))`)
     await pool.query(`INSERT INTO scheduled_tasks VALUES (1,'11111111-1111-4111-8111-111111111111',true,'once',now(),NULL,NULL)`)
     const repo = createPostgresOnceTaskRepository(pool)
-    const results = await Promise.all([repo.markStarted('1', 1000), repo.markStarted('1', 1000)])
+    const owner = '11111111-1111-4111-8111-111111111111'
+    const other = '22222222-2222-4222-8222-222222222222'
+    assert.equal(await repo.markStarted('1', 1000, other), false)
+    const results = await Promise.all([repo.markStarted('1', 1000, owner), repo.markStarted('1', 1000, owner)])
     assert.equal(results.filter(Boolean).length, 1)
-    await repo.markFailed('1')
-    assert.equal(await repo.markStarted('1', 2000), true)
+    await repo.markFailed('1', other)
+    assert.equal((await repo.getOnce('1'))?.lastRunFailed, false)
+    await repo.markFailed('1', owner)
+    assert.equal(await repo.markStarted('1', 2000, owner), true)
     await repo.deleteCompleted('1', '22222222-2222-4222-8222-222222222222')
     assert.ok(await repo.getOnce('1'))
     await repo.deleteCompleted('1', '11111111-1111-4111-8111-111111111111')

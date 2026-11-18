@@ -3,8 +3,9 @@ import { applyAgentSnapshotMigration, checkAgentSnapshotMigration } from './agen
 
 async function main() {
   const command = process.argv[2]
-  if (!['check', 'apply'].includes(command ?? '') || process.argv.length !== 3 || !process.env.GUGU_WEBUI_DATABASE_URL) throw new Error('迁移命令或数据库配置无效')
-  const pool = new Pool({ connectionString: process.env.GUGU_WEBUI_DATABASE_URL.trim().replace(/^postgresql\+asyncpg:/i, 'postgresql:'), max: 1 })
+  const connectionString = process.env.GUGU_WEBUI_DATABASE_URL?.trim()
+  if (!['check', 'apply'].includes(command ?? '') || process.argv.length !== 3 || !connectionString || !/^postgres(?:ql)?:\/\//i.test(connectionString)) throw new Error('迁移命令或数据库配置无效')
+  const pool = new Pool({ connectionString, max: 1 })
   try {
     const result = command === 'check' ? await checkAgentSnapshotMigration(pool) : await applyAgentSnapshotMigration(pool)
     process.stdout.write(`${result}\n`)

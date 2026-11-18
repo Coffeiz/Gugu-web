@@ -47,7 +47,7 @@ export function createSqlMindNoteMutator(db: Kysely<Database>, backend: Backend,
         if (input.contentMd !== undefined) { fields.content_md = input.contentMd; fields.content_plain = input.contentPlain; fields.indexed_hash = input.indexedHash; fields.indexed_at = null }
         if (input.title !== undefined) fields.title = input.title
         if (input.color !== undefined) fields.color = input.color
-        if (input.capturedAt !== undefined) fields.captured_at = databaseTime(input.capturedAt.toISOString(), backend)
+        if (input.capturedAt !== undefined) fields.captured_at = databaseTime(input.preciseCapturedAt ?? input.capturedAt.toISOString(), backend)
         if (!Object.keys(fields).length) return { note: response(before), changed: false }
         if (input.version !== Number(before.version)) throw new MindNoteMutationError('便签已被其他端修改，请刷新后重试', 409)
       } else fields.deleted_at = databaseTime(clock(), backend)

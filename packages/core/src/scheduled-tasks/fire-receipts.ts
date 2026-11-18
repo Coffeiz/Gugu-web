@@ -9,6 +9,9 @@ export function createKyselyScheduledFireReceipts<DB>(db: Kysely<DB>, backend: '
   const fireTime = (fire: ScheduledFire) => databaseTime(new Date(fire.fireAt).toISOString(), backend)
   const currentTime = () => backend === 'sqlite' ? sql`${databaseTime(clock(), backend)}` : sql`CURRENT_TIMESTAMP`
   return {
+    async verifySchema(): Promise<void> {
+      await sql`SELECT task_id,fire_at,lease_owner,status,created_at,updated_at FROM scheduled_task_fires LIMIT 0`.execute(db)
+    },
     async claim(fire: ScheduledFire, owner: string): Promise<boolean> {
       const timestamp = currentTime()
       const result = await sql`INSERT INTO scheduled_task_fires(task_id,fire_at,lease_owner,status,created_at,updated_at)

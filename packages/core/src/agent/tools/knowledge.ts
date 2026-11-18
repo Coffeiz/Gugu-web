@@ -1,10 +1,11 @@
 import { z } from 'zod'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { dataContext } from '../../contracts/index.js'
 import { serializeAgentKnowledgeEntry } from '../knowledge/entry.js'
 import type { AgentKnowledgeEntry, AgentKnowledgeSourceType } from '../knowledge/entry.js'
 import type { RunIdentity } from '../models.js'
 import type { ToolDefinition } from './contracts.js'
+import type { createConfirmationGate, ConfirmationClaimReference, ConfirmationTargetSnapshot } from './confirmation.js'
 import type { ToolResult } from '../models.js'
 
 export interface KnowledgeReadEntry {
@@ -72,8 +73,9 @@ function normalizedKeywords(value: unknown, stringifyScalars: boolean): string[]
   if (!Array.isArray(value)) return []
   const result: string[] = [], seen = new Set<string>()
   for (const item of value) {
-    if (typeof item !== 'string' && !(stringifyScalars && (typeof item === 'number' && Number.isFinite(item)))) continue
-    const keyword = (typeof item === 'string' ? item : String(item)).replace(/\s+/gu, ' ').trim()
+    if (typeof item !== 'string' && !(stringifyScalars && ((typeof item === 'number' && Number.isFinite(item)) || typeof item === 'boolean'))) continue
+    const scalar = typeof item === 'string' ? item : typeof item === 'boolean' ? (item ? 'True' : 'False') : String(item)
+    const keyword = scalar.replace(/\s+/gu, ' ').trim()
     const key = keyword.toLocaleLowerCase('und')
     if (!keyword || characterLength(keyword) > 40 || seen.has(key)) continue
     result.push(keyword); seen.add(key)
@@ -81,7 +83,7 @@ function normalizedKeywords(value: unknown, stringifyScalars: boolean): string[]
   }
   return result
 }
-function captureValues(input: Record<string, unknown>) {
+function captureValues(input: Record<string, unknown>, stringifyKeywordScalars = false) {
   const title = textValue(input.title), content = textValue(input.content), topic = textValue(input.topic)
   const description = textValue(input.description).replace(/\s+/gu, ' ')
   const sourceType = textValue(input.source_type || 'user').toLowerCase()
@@ -97,7 +99,7 @@ function captureValues(input: Record<string, unknown>) {
     if (characterLength(value) > limit) throw new Error(`${name} 不能超过 ${limit} 个字符`)
   }
   return { title, content, topic, description, sourceType: sourceType as AgentKnowledgeSourceType, sourceRef, sourceLabel,
-    confidence: captureMode === 'explicit' ? confidence : 'probable', keywords: normalizedKeywords(input.keywords, false) }
+    confidence: captureMode === 'explicit' ? confidence : 'probable', keywords: normalizedKeywords(input.keywords, stringifyKeywordScalars) }
 }
 
 function updateEntry(entries: AgentKnowledgeEntry[], current: AgentKnowledgeEntry | null, values: ReturnType<typeof captureValues>, ownerId: string, now: number): AgentKnowledgeEntry {
@@ -208,9 +210,9 @@ export function createKnowledgeWriteTools(port: KnowledgeWritePort, now: () => n
       try {
         values = captureValues({ title: args.title || current.title, content: textValue(args.content) || current.content,
           topic: args.topic || current.topic, description: textValue(args.description) || current.description,
-          keywords: Array.isArray(args.keywords) ? args.keywords.filter(item => typeof item === 'string' || typeof item === 'number') : current.keywords,
+          keywords: Array.isArray(args.keywords) ? args.keywords : current.keywords,
           source_type: current.source.type, source_ref: current.source.ref, source_label: current.source.label,
-          confidence: confidenceTypes.has(confidence) ? confidence : 'probable', capture_mode: 'explicit' })
+          confidence: confidenceTypes.has(confidence) ? confidence : 'probable', capture_mode: 'explicit' }, true)
       } catch (error) { return toolFailure(error instanceof Error ? error.message : '知识参数无效') }
       const next = updateEntry(entries, current, values, dataContext(scope.identity.ownerId).ownerId, now())
       const unchanged = next.version === current.version
@@ -277,6 +279,63 @@ export function createKnowledgeReadTool(port: KnowledgeReadPort): ToolDefinition
       }
       if (!entries.length) value.note = 'BM25 索引中没有命中；刚保存或更新的知识可能尚未完成索引同步'
       return { kind: 'completed', successful: true, mutated: false, value }
+    },
+  }
+}
+
+export interface KnowledgeDeleteTarget {
+  readonly knowledgeId: string
+  readonly snapshot: ConfirmationTargetSnapshot
+}
+
+export interface KnowledgeDeletePort {
+  readonly gate: ReturnType<typeof createConfirmationGate>
+  /** 按可信 owner 定位活跃知识；文件句柄与版本不得来自模型。 */
+  readTarget(identity: RunIdentity, id: string, signal: AbortSignal): Promise<KnowledgeDeleteTarget | null>
+  /** 使用领域事务联动确认认领、目标版本校验、墓碑、持久操作收据与索引失效。 */
+  commit(identity: KnowledgeDeleteIdentity, target: KnowledgeDeleteTarget, claim: ConfirmationClaimReference, signal: AbortSignal): Promise<ToolResult>
+  reconcile(identity: KnowledgeDeleteIdentity, id: string): Promise<ToolResult>
+}
+type KnowledgeDeleteIdentity = RunIdentity & { roundId: string; toolCallId: string }
+
+const deleteKnowledgeSchema = z.object({ knowledge_id: z.string() }).strict()
+
+/** 删除保留知识历史；只有完整的持久确认与写端口具备时才由 Host 提供工具。 */
+export function createKnowledgeDeleteTool(port: KnowledgeDeletePort): ToolDefinition {
+  const idOf = (input: unknown) => (input as z.infer<typeof deleteKnowledgeSchema>).knowledge_id.trim()
+  const key = (identity: RunIdentity, roundId: string, toolCallId: string) => ({ ...identity, roundId, toolCallId })
+  const failure = (error: string): ToolResult => ({ kind: 'completed', successful: false, mutated: false, value: { error } })
+  return {
+    definition: { name: 'delete_knowledge', schema: { type: 'function', function: {
+      name: 'delete_knowledge', description: '删除指定知识条目，保留历史并停止检索，执行前需确认。',
+      parameters: { type: 'object', properties: { knowledge_id: { type: 'string' } },
+        required: ['knowledge_id'], additionalProperties: false },
+    } } },
+    effect: 'write', requiresInteraction: true, confirmationReplay: true,
+    validate: input => deleteKnowledgeSchema.safeParse(input),
+    reconcile(input, identity, call) { return port.reconcile(key(identity, identity.roundId, call.id), idOf(input)) },
+    async execute(input, scope, call) {
+      const id = idOf(input)
+      if (id === '') return failure('需要提供 knowledge_id')
+      scope.signal.throwIfAborted()
+      const identity = key(scope.identity, scope.roundId, call.id)
+      if (scope.resolution) {
+        const previous = await port.reconcile(identity, id)
+        scope.signal.throwIfAborted()
+        if (previous.kind === 'completed') return previous
+      }
+      const target = await port.readTarget(scope.identity, id, scope.signal)
+      scope.signal.throwIfAborted()
+      if (!target || target.knowledgeId !== id) return failure('知识条目不存在')
+      const digest = createHash('sha256').update(JSON.stringify({ knowledge_id: id })).digest('hex')
+      if (!scope.resolution) {
+        const result = await port.gate.prepare(call, scope, digest, target.snapshot)
+        return result.ok ? { kind: 'waiting', interaction: result.value } : failure('知识删除确认无效或已过期')
+      }
+      const result = await port.gate.verify(call, scope, digest, target.snapshot)
+      if (!result.ok) return failure('知识删除确认无效或已过期')
+      scope.signal.throwIfAborted()
+      return port.commit(identity, target, result.value, scope.signal)
     },
   }
 }

@@ -1,5 +1,5 @@
 import { openLocalFile } from '@gugu/fs/node'
-import { embedRagQuery, type RagQueryEmbeddingSettings, type RagVectorSource } from '@gugu/core/agent'
+import { embedRagQuery, type RagQueryEmbeddingSettings, type RagVectorSource } from '@gugu/core/agent/rag'
 import type { ProviderTransport } from '@gugu/core/providers'
 import { createNodeProviderTransport } from '@gugu/core/providers/node'
 import type { Pool } from 'pg'
@@ -57,7 +57,7 @@ export function createOwnerAgentRagVectorResolver(options:{
    embedSignal?.throwIfAborted()
    const transport=options.createTransport(settings)
    try {
-    const result=await embedRagQuery(settings,query,transport,embedSignal??new AbortController().signal)
+    const result=await embedRagQuery(settings,query,transport,embedSignal??new AbortController().signal,owner)
     embedSignal?.throwIfAborted()
     return result.outcome==='success'?result.vector:[]
    } finally { await transport.close?.() }

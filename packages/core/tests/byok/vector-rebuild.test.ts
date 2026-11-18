@@ -1,7 +1,87 @@
-import { createUserMemoryVectorRebuilder } from '../../src/byok/vector-rebuild.js'
+import { createHash } from 'node:crypto'
+import { createUserLongMemoryVectorRefresher, createUserMemoryVectorRebuilder, createUserPatternVectorRefresher } from '../../src/byok/vector-rebuild.js'
 import { expect, it, vi } from 'vitest'
 
 const owner = '8ef418ec-8bad-44d2-9c16-317fae7a849d'
+const memoryKey = (text: string) => createHash('md5').update(text).digest('hex').slice(0, 12)
+
+it('长期记忆只补算新增或换模型的分段，保留当前模型的缓存', async () => {
+  const original = { v: [0.1], t: 'same-model' }
+  const writeVectors = vi.fn()
+  const embed = vi.fn(async () => [0.2])
+  const refresh = createUserLongMemoryVectorRefresher({
+    readMemory: async () => '保留的长期记忆\n\n迁入的新事件\n\n旧模型计算的分段',
+    readVectors: async () => ({
+      [memoryKey('保留的长期记忆')]: original,
+      [memoryKey('旧模型计算的分段')]: { v: [0.3], t: 'old-model' },
+      obsolete: { v: [9], t: 'same-model' },
+    }),
+    writeVectors, embed, withSourceLock: (_owner, operation) => operation(),
+  })
+  const signal = new AbortController().signal
+  await refresh(owner, 'same-model', signal)
+  expect(embed.mock.calls).toEqual([[owner, '迁入的新事件', signal], [owner, '旧模型计算的分段', signal]])
+  expect(writeVectors).toHaveBeenCalledExactlyOnceWith(owner, 'memory', {
+    [memoryKey('保留的长期记忆')]: original, [memoryKey('迁入的新事件')]: { v: [0.2], t: 'same-model' },
+    [memoryKey('旧模型计算的分段')]: { v: [0.2], t: 'same-model' },
+  })
+})
+
+it.each(['正文', '缓存'])('长期记忆的%s在模型请求期间变更时，不发布旧结果', async changed => {
+  let memory = '旧长期记忆'
+  let vectors: unknown = {}
+  const writeVectors = vi.fn()
+  const refresh = createUserLongMemoryVectorRefresher({
+    readMemory: async () => memory, readVectors: async () => vectors, writeVectors,
+    withSourceLock: (_owner, operation) => operation(),
+    async embed() {
+      if (changed === '正文') memory = '另一次提交的长期记忆'
+      else vectors = { [memoryKey(memory)]: { v: [2], t: 'newer-model' } }
+      return [1]
+    },
+  })
+  await refresh(owner, 'model-tag', new AbortController().signal)
+  expect(writeVectors).not.toHaveBeenCalled()
+})
+
+it('全量重建不会覆盖生成期间已发布的新模型缓存', async () => {
+  let vectors: Record<string, unknown> = {}
+  const newer = { p1: { v: [2], t: 'new-model' } }
+  const writeVectors = vi.fn()
+  const rebuild = createUserMemoryVectorRebuilder({
+    readPatterns: async () => [{ id: 'p1', text: '同一档案' }],
+    readMemory: async () => '',
+    readVectors: async () => vectors,
+    writeVectors,
+    async embed() {
+      vectors = newer
+      return [1]
+    },
+    rebuildMemoryIndex: async () => undefined,
+  })
+  expect((await rebuild(owner, 'old-model')).failedUsers).toBe(1)
+  expect(writeVectors).not.toHaveBeenCalled()
+  expect(vectors).toEqual(newer)
+})
+
+it('并发管理重建发布向量后，增量刷新保留新缓存', async () => {
+  let vectors: Record<string, unknown> = {}
+  const newer = { p1: { v: [2], t: '管理重建' } }
+  const writeVectors = vi.fn()
+  const refresh = createUserPatternVectorRefresher({
+    readPatterns: async () => [{ id: 'p1', text: '同一偏好' }],
+    readVectors: async () => vectors,
+    writeVectors,
+    withSourceLock: (_owner, operation) => operation(),
+    async embed() {
+      vectors = newer
+      return [1]
+    },
+  })
+  await refresh(owner, '增量刷新', new AbortController().signal)
+  expect(writeVectors).not.toHaveBeenCalled()
+  expect(vectors).toEqual(newer)
+})
 
 it('按 Python chunk 规则重建用户 pattern 与 memory 向量，并清除已删除来源的孤儿向量', async () => {
   const writes: Array<{ kind: string; value: Record<string, { v: number[]; t: string }> }> = []

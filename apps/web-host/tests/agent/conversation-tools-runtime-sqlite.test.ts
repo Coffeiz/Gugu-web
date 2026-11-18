@@ -5,13 +5,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { initializeSqlite, openSqliteRuntime } from '@gugu/core/data'
+import { createSqlAgentConversationTextReader } from '@gugu/core/agent-sessions'
 import { createAgentToolRegistry } from '../../src/domains/agent-sessions/tools/agent-tool-registry.js'
 import { createCoreAgentConversationSearchPort } from '../../src/domains/agent-sessions/tools/agent-conversations.js'
 import { createWebAgentRagToolPorts } from '../../src/domains/agent-sessions/tools/agent-rag-tool-ports.js'
 import { createWebAgentProductionToolRegistry } from '../../src/domains/agent-sessions/tools/agent-rag-production-ports.js'
 import { createConversationRagSource } from '../../../../packages/core/src/agent/rag/conversation-index-source.js'
 import { createConversationSearchTool } from '../../../../packages/core/src/agent/tools/conversations.js'
-import { createCanonicalSourceLoader, createSqlRagRebuildWorker, enqueueAgentRagRebuild, stableJson } from '@gugu/core/agent'
+import { createCanonicalSourceLoader, stableJson } from '@gugu/core/agent'
+import { createSqlRagRebuildWorker, enqueueAgentRagRebuild } from '@gugu/core/agent/rag'
 import { createOwnerAgentRagVectorResolver } from '../../src/domains/agent-sessions/tools/agent-rag-vectors.js'
 import { createAgentRuntime } from '@gugu/core/agent'
 import { agentContextAccessScope } from '../../src/domains/agent-config/access-scope.js'
@@ -47,12 +49,17 @@ test('search_conversations 经 Host 适配器和真实工具分派查询 owner �
       { session_id: 2, conversation_seq: 1, role: 'user', content: '群里的部署凭据。', created_at: '2026-01-03T03:00:00Z' },
       { session_id: 1, conversation_seq: 2, role: 'user', content: '历史 literal 100%_完成。', created_at: '2026-01-02T04:00:00Z' },
       { session_id: 1, conversation_seq: 3, role: 'tool', content: '工具正文 100%_完成 不得命中。', created_at: '2026-01-02T05:00:00Z' },
+      { session_id: 1, conversation_seq: 4, role: 'user', content: '结构化消息不显示。', content_json: '{"type":"tool_call"}', created_at: '2026-01-02T06:00:00Z' },
+      { session_id: 1, conversation_seq: 5, role: 'user', content: '😀'.repeat(1201), created_at: '2026-01-02T07:00:00Z' },
+      { session_id: 1, conversation_seq: 6, role: 'assistant', content: '', created_at: '2026-01-02T08:00:00Z' },
     ]).execute()
-
     // 工具调用使用与生产 Host 相同的 1.7.7 Jieba 词典和 HMM=false 配置。
     const conversationSearch = createCoreAgentConversationSearchPort(runtime)
     let authorized = true
-    const registry = createAgentToolRegistry({ core: runtime, conversationSearch, authorize: async () => authorized })
+    const readText = createSqlAgentConversationTextReader(runtime.db, runtime.backend)
+    const registry = createAgentToolRegistry({ core: runtime, conversationSearch,
+      conversations: { read: (identity, sessionId, limit, signal) => readText(identity.ownerId, sessionId, limit, signal) },
+      authorize: async () => authorized })
     const identity = { ownerId: owner, sessionId: '90', runId: 'synthetic-run' }
     const scope = {
       identity,
@@ -74,6 +81,21 @@ test('search_conversations 经 Host 适配器和真实工具分派查询 owner �
     const noMatch = await registry.tools.dispatch({ id: 'and-2', name: 'search_conversations', input: { queries: ['部署', '不存在'], mode: 'AND' } }, scope)
     assert.equal(noMatch.kind === 'completed' && noMatch.successful, true)
     assert.deepEqual(noMatch.kind === 'completed' ? (noMatch.value as { matches: unknown[] }).matches : [], [])
+
+    const recentHistory = await registry.tools.dispatch({ id: 'read-1', name: 'read_conversation', input: { session_id: 1, limit: 2, owner_id: randomUUID() } }, scope)
+    assert.equal(recentHistory.kind === 'completed' && recentHistory.successful, true)
+    assert.deepEqual(recentHistory.kind === 'completed' ? (recentHistory.value as { messages: Array<{ role: string; content: string }> }).messages : [], [
+      { role: '你', content: '😀'.repeat(1200) },
+    ], '应先取最近 limit 条普通记录，再过滤空正文，并按 Unicode 字符截断')
+    const historyWithTool = await registry.tools.dispatch({ id: 'read-2', name: 'read_conversation', input: { session_id: 1, limit: 4 } }, scope)
+    assert.deepEqual(historyWithTool.kind === 'completed' ? (historyWithTool.value as { messages: Array<{ role: string; content: string }> }).messages : [], [
+      { role: '你', content: '历史 literal 100%_完成。' },
+      { role: '咕咕', content: '工具正文 100%_完成 不得命中。' },
+      { role: '你', content: '😀'.repeat(1200) },
+    ])
+    const foreignHistory = await registry.tools.dispatch({ id: 'read-3', name: 'read_conversation', input: { session_id: 9 } }, scope)
+    assert.equal(foreignHistory.kind === 'completed' && foreignHistory.successful, false)
+    assert.match(JSON.stringify(foreignHistory), /对话不存在或不属于你/u)
 
     // Python 基准允许搜索被 baseline 压缩前仍保留的历史，并把 SQL LIKE 元字符视作字面词。
     const literalHistory = await registry.tools.dispatch({ id: 'literal-1', name: 'search_conversations', input: { queries: ['100%_完成'] } }, scope)

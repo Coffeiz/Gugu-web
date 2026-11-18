@@ -41,7 +41,7 @@ const activeIndex = computed(() => Math.max(0, props.tabs.findIndex(tab => tab.k
   gap: 4px;
   padding: 4px;
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: var(--segmented-track-bg);
   width: fit-content;
   max-width: 100%;
@@ -55,7 +55,7 @@ const activeIndex = computed(() => Math.max(0, props.tabs.findIndex(tab => tab.k
   flex: 0 0 auto;
   padding: 7px 14px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--control-fg);
   font-size: 12px;
@@ -70,11 +70,11 @@ const activeIndex = computed(() => Math.max(0, props.tabs.findIndex(tab => tab.k
   height: 32px;
   box-sizing: border-box;
   padding: 2px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
 }
 .segment-tabs.compact .segment-tab {
   height: 26px;
   padding: 0 12px;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-compact);
 }
 </style>

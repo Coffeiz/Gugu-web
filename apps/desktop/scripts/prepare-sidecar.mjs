@@ -30,6 +30,34 @@ execFileSync(process.execPath, [join(core, 'scripts/build.mjs')], {
 const { CORE_SCHEMA_VERSION } = await import(pathToFileURL(join(core, 'dist/contracts/desktop.js')).href)
 const resourceParent = join(desktop, 'resources'),
   target = join(resourceParent, 'core-sidecar')
+const executable = process.platform === 'win32' ? 'node.exe' : 'node'
+const digest = (path) => createHash('sha256').update(readFileSync(path)).digest('hex')
+const isolatedEnv = Object.fromEntries(Object.entries(process.env)
+  .filter(([key]) => !/^(NODE_OPTIONS|NODE_PATH|ELECTRON_RUN_AS_NODE|LD_.*|DYLD_.*)$/i.test(key)))
+
+function canRunStandalone(path) {
+  try {
+    const version = execFileSync(path, ['--version'], { env: isolatedEnv, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+    return version.trim() === process.version
+  } catch {
+    return false
+  }
+}
+
+function installedRuntime() {
+  const node = join(target, executable)
+  const license = join(target, 'NODE-LICENSE')
+  const manifestPath = join(target, 'manifest.json')
+  if (![node, license, manifestPath].every(existsSync) || realpathSync(target) !== target) return null
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  if (manifest.platform !== process.platform || manifest.arch !== process.arch ||
+      manifest.nodeVersion !== process.versions.node || manifest.nodeAbi !== process.versions.modules) return null
+  if (realpathSync(node) !== node || realpathSync(license) !== license ||
+      manifest.files?.[executable] !== digest(node) || manifest.files?.['NODE-LICENSE'] !== digest(license) ||
+      !canRunStandalone(node)) return null
+  return { node, license }
+}
+
 mkdirSync(resourceParent, { recursive: true })
 mkdirSync(join(desktop, '.tools'), { recursive: true })
 const stage = mkdtempSync(join(desktop, '.tools/sidecar-stage-'))
@@ -64,15 +92,19 @@ try {
   rmSync(owned(host), { recursive: true, force: true })
   renameSync(expanded, host)
   cpSync(join(root, 'LICENSE'), join(host, 'LICENSE'))
-  const executable = process.platform === 'win32' ? 'node.exe' : 'node'
-  cpSync(process.execPath, join(stage, executable))
-  const license = [
+  const installed = installedRuntime()
+  const embeddedNode = join(stage, executable)
+  cpSync(installed?.node ?? process.execPath, embeddedNode)
+  const license = installed?.license ?? [
     join(dirname(process.execPath), 'LICENSE'),
     resolve(dirname(process.execPath), '../LICENSE'),
     resolve(dirname(process.execPath), '../share/doc/node/LICENSE'),
   ].find((path) => existsSync(path) && readFileSync(path, 'utf8').includes('Node.js'))
   if (!license) throw new Error('Node 发行制品缺少可核验的许可证文件')
   cpSync(license, join(stage, 'NODE-LICENSE'))
+  // 确认复制后的 Node 不依赖安装目录的动态库，再替换已有制品。
+  if (!canRunStandalone(embeddedNode))
+    throw new Error('复制后的 Node 不能独立运行，请使用官方 Node 发行版准备桌面制品')
   const files = {}
   const dependencies = new Map()
   function inventory(directory) {
@@ -80,9 +112,7 @@ try {
       const path = join(directory, item.name)
       if (item.isDirectory()) inventory(path)
       else if (item.isFile()) {
-        files[relative(stage, path).split(sep).join('/')] = createHash('sha256')
-          .update(readFileSync(path))
-          .digest('hex')
+        files[relative(stage, path).split(sep).join('/')] = digest(path)
         if (item.name === 'package.json' && path.includes(`${sep}node_modules${sep}`)) {
           const pkg = JSON.parse(readFileSync(path, 'utf8'))
           if (pkg.name && pkg.version)

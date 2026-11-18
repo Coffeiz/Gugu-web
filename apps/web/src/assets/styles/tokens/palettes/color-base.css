@@ -17,19 +17,20 @@
   --palette-scrim: rgba(31,34,45,.22);
 }
 
-:root[data-theme='dark'][data-palette] {
-  --palette-page-start: color-mix(in srgb, var(--theme-action-primary) 5%, #0e101a);
-  --palette-page-mid: color-mix(in srgb, var(--theme-action-primary) 3%, #11131f);
-  --palette-page-end: color-mix(in srgb, var(--theme-action-primary) 6%, #17192b);
-  --palette-surface: color-mix(in srgb, var(--theme-action-primary) 5%, #1e2133);
-  --palette-surface-strong: color-mix(in srgb, var(--theme-action-primary) 7%, #242735);
-  --palette-surface-raised: color-mix(in srgb, var(--theme-action-primary) 9%, #2a2d42);
+:root[data-theme='dark'] {
+  /* 暗色背景独立于品牌配色，配色只给交互和强调元素上色。 */
+  --palette-page-start: #101010;
+  --palette-page-mid: #141414;
+  --palette-page-end: #191919;
+  --palette-surface: #252525;
+  --palette-surface-strong: #303030;
+  --palette-surface-raised: #383838;
   --palette-text-primary: rgba(255,255,255,.92);
-  --palette-text-secondary: color-mix(in srgb, var(--theme-action-primary) 14%, rgba(255,255,255,.62));
-  --palette-text-tertiary: color-mix(in srgb, var(--theme-action-primary) 10%, rgba(255,255,255,.40));
+  --palette-text-secondary: rgba(255,255,255,.76);
+  --palette-text-tertiary: rgba(255,255,255,.60);
   --palette-text-disabled: rgba(255,255,255,.24);
-  --palette-border: color-mix(in srgb, var(--theme-action-primary) 13%, transparent);
-  --palette-border-strong: color-mix(in srgb, var(--theme-action-primary) 22%, transparent);
+  --palette-border: rgba(255,255,255,.16);
+  --palette-border-strong: rgba(255,255,255,.24);
   --palette-highlight: color-mix(in srgb, var(--theme-action-primary) 12%, transparent);
   --palette-scrim: rgba(0,0,0,.50);
 }

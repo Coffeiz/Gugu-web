@@ -9,8 +9,8 @@
     <div class="col-header">
       <div class="col-title"><span class="col-dot"></span>{{ t('projects.done') }}</div>
       <div class="col-header-right">
-        <button class="project-collection-entry-mini archived-entry-mini" @click="$emit('open-archived')" :title="t('projects.archivedView')">{{ t('projects.archivedShort') }}</button>
-        <button class="project-collection-entry-mini deleted-entry-mini" @click="$emit('open-deleted')" :title="t('projectsDeleted.deletedView')">{{ t('projectsDeleted.deletedShort') }}</button>
+        <button v-if="showCollectionActions" class="project-collection-entry-mini archived-entry-mini" @click="$emit('open-archived')" :title="t('projects.archivedView')">{{ t('projects.archivedShort') }}</button>
+        <button v-if="showCollectionActions" class="project-collection-entry-mini deleted-entry-mini" @click="$emit('open-deleted')" :title="t('projectsDeleted.deletedView')">{{ t('projectsDeleted.deletedShort') }}</button>
         <span class="col-count">{{ projects.length }}</span>
       </div>
     </div>
@@ -26,6 +26,7 @@ import DoneLayout from './done/DoneLayout.vue'
 import { useI18n } from 'vue-i18n'
 
 defineProps({
+  showCollectionActions: { type: Boolean, default: true },
   projects: { type: Array as PropType<Project[]>, default: () => [] },
   ownershipVersionFor: { type: Function as PropType<(projects: Project[]) => number>, required: true },
   isProjectDetached: { type: Function as PropType<(projectId: string) => boolean>, required: true },
@@ -56,7 +57,7 @@ onUnmounted(() => {
 </script>
 
 <style>
-.done-col { --glass-card-background: var(--column-bg); --glass-card-background-hover: var(--column-bg); --done-year-chevron-center:10px; --done-year-content-indent:20px; display:flex; flex-direction:column; padding:12px 10px; gap:8px; min-height:0; overflow:hidden; }
+.done-col { --done-year-chevron-center:10px; --done-year-content-indent:20px; display:flex; flex-direction:column; padding:12px 10px; gap:8px; min-height:0; overflow:hidden; }
 .done-col .col-header { display:flex; align-items:center; justify-content:space-between; padding:0 4px; flex-shrink:0; }
 .done-col .col-title { display:flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:var(--text-primary); }
 .done-col .col-dot { width:7px; height:7px; border-radius:50%; background:#5a9e88; flex-shrink:0; }

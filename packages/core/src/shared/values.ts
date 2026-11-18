@@ -1,4 +1,4 @@
-import { CoreError } from '../contracts/index.js'
+import { CoreError } from '../contracts/error.js'
 
 export function invalid(message: string): never {
   throw new CoreError('invalid_request', message)

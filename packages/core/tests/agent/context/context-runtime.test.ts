@@ -685,3 +685,23 @@ describe('Canonical上下文与Run运行时组合', () => {
     expect(stableJson({ checkpoints, history, outbox, stored })).not.toContain('synthetic-private-key')
   })
 })
+
+it('工具转发的确认回执通过同一个外层 Provider 调用 ID 进入历史', async () => {
+  const { context } = fixture()
+  let state = await context.prepare(identity, signal())
+  const wrapped = { id: 'adapter-call', name: 'call_tool', input: { tool_name: 'synthetic_tool', arguments: { text: '参数' } } }
+  const target = { id: wrapped.id, name: 'synthetic_tool', input: { text: '参数' } }
+  state = await context.afterRound(state, { text: '', calls: [wrapped] }, 1)
+  const pending = { id: 'required-1', kind: 'confirmation' as const, toolCall: target }
+  state = await context.afterTool(state, target, { kind: 'waiting', interaction: pending }, 1)
+  state = await context.resumeInteraction(state, pending, {
+    interactionId: pending.id, receiptId: 'receipt', status: 'confirmed', value: null,
+  })
+  const success = { kind: 'completed' as const, value: { ok: true }, successful: true, mutated: true }
+  await expect(context.afterTool(state, { ...target, name: 'other_tool' }, success, 1)).rejects.toThrow('工具回执')
+  state = await context.afterTool(state, target, success, 1)
+  expect(state.prepared.area.entries.filter(entry => entry.source === 'tool_round').map(entry => entry.message)).toEqual([
+    { role: 'assistant', content: [{ type: 'tool_call', id: 'adapter-call', name: 'call_tool', arguments: wrapped.input }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_call_id: 'adapter-call', content: '{"ok":true}', tool_name: 'synthetic_tool' }] },
+  ])
+})

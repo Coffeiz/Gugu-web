@@ -100,9 +100,9 @@ async function confirmAndStartRollback() {
 .page-title-block { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .page-title { margin: 0; color: var(--content-primary); font-size: 22px; font-weight: 700; line-height: 1.2; }
 .page-description { margin: 6px 0 0; color: var(--content-tertiary); font-size: 12px; line-height: 1.55; }
-.icon-refresh { display: grid; width: 32px; height: 32px; flex: 0 0 32px; place-items: center; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-glass); color: var(--content-secondary); cursor: pointer; }
+.icon-refresh { display: grid; width: 32px; height: 32px; flex: 0 0 32px; place-items: center; border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); background: var(--surface-glass); color: var(--content-secondary); cursor: pointer; }
 .icon-refresh:disabled { opacity: .5; cursor: default; }
-.scope-note, .error-note { padding: 11px 14px; border: 1px solid var(--panel-glass-border); border-radius: var(--radius-md); background: var(--panel-glass-bg); color: var(--content-secondary); font-size: 12px; line-height: 1.55; }
+.scope-note, .error-note { padding: 11px 14px; border: 1px solid var(--panel-glass-border); border-radius: var(--radius-sm); background: var(--panel-glass-bg); color: var(--content-secondary); font-size: 12px; line-height: 1.55; }
 .deployment-note { display: flex; flex-direction: column; gap: 4px; }
 .deployment-note strong { color: var(--content-primary); }
 .error-note { display: flex; flex-direction: column; gap: 4px; border-color: color-mix(in srgb, var(--status-danger) 32%, transparent); background: color-mix(in srgb, var(--status-danger) 8%, var(--panel-glass-bg)); color: var(--status-danger); }

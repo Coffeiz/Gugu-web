@@ -6,23 +6,54 @@ import { completeStandaloneText } from '@gugu/core/providers'
 import type { ProviderConfig, ProviderDriverDependencies, ProviderTransport } from '@gugu/core/providers'
 import { createNodeProviderTransport } from '@gugu/core/providers/node'
 import type { ImMaintenanceCursor, ImMaintenanceMessage } from '@gugu/core/im-memory-maintenance-source'
-import { imMemoryMaintenanceScopeFileKey } from './im-memory-maintenance-apply.js'
+import { IM_MEMORY_MODEL_PREVIEW_KEY as stateKey, IM_MEMORY_MODEL_PREVIEW_PLAN_KEY as planKey, imMemoryMaintenanceScopeFileKey } from './im-memory-maintenance-apply.js'
 
 export const IM_MEMORY_MODEL_PREVIEW_LOCK_KEY = 'im_memory:maintenance:model_preview:lock'
-const stateKey = 'im_memory:maintenance:model_preview'
-const planKey = 'im_memory:maintenance:model_preview:plan'
 const TTL_SECONDS = 3600
 
 type ValueStore = {
   get(key: string): Promise<string | Uint8Array | null>
-  set(key: string, value: string, ttlSeconds: number): Promise<void>
-  delete(key: string): Promise<void>
+  publish(token: string, state: string, plan: string | null): Promise<boolean>
   acquire(key: string, value: string, ttlSeconds: number): Promise<boolean>
   release(key: string, value: string): Promise<void>
 }
 type Storage = { read(key: string): Promise<string | null> }
 type Scope = Pick<ImMaintenanceCursor, 'owner_user_id' | 'platform' | 'bot_id' | 'scope_type' | 'scope_id'>
 type Stats = { status: 'running' | 'done'; done: number; total: number; needs_review: number; failed: number; total_batches: number; completed_batches: number; truncated_batches: number; plan_ready: boolean; ts: number }
+type PublishProgress = (state: Stats, plans: readonly unknown[]) => Promise<boolean>
+
+const publishPreview = `
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+if ARGV[4] == '' then
+  redis.call('DEL', KEYS[3])
+else
+  redis.call('SET', KEYS[3], ARGV[4], 'EX', ARGV[2])
+end
+redis.call('SET', KEYS[2], ARGV[3], 'EX', ARGV[2])
+redis.call('EXPIRE', KEYS[1], ARGV[2])
+return 1
+`
+
+/** 状态和计划由同一租约发布，过期任务无法覆盖后续预览。 */
+export function createImMemoryMaintenancePreviewState(commands: {
+  get(key: string): Promise<string | null>
+  set(key: string, value: string, ...options: string[]): Promise<unknown>
+  eval(script: string, keyCount: number, ...args: string[]): Promise<unknown>
+}): ValueStore {
+  return {
+    get: key => commands.get(key),
+    async acquire(key, token, ttl) {
+      return await commands.set(key, token, 'EX', String(ttl), 'NX') === 'OK'
+    },
+    async publish(token, state, plan) {
+      return String(await commands.eval(publishPreview, 3, IM_MEMORY_MODEL_PREVIEW_LOCK_KEY, stateKey, planKey,
+        token, String(TTL_SECONDS), state, plan ?? '')) === '1'
+    },
+    async release(key, token) {
+      await commands.eval("if redis.call('GET',KEYS[1])==ARGV[1] then return redis.call('DEL',KEYS[1]) end;return 0", 1, key, token)
+    },
+  }
+}
 
 export class ImMemoryMaintenancePreviewError extends Error {
   constructor(readonly statusCode: 409 | 503, message: string) { super(message) }
@@ -52,8 +83,6 @@ function render(message: ImMaintenanceMessage): string {
 }
 
 export interface ImMemoryMaintenancePreviewWorkerPorts {
-  readonly state: Pick<ValueStore, 'set'>
-  listCursors(): Promise<ImMaintenanceCursor[]>
   messages(scope: Scope, fromId: number, toId: number): Promise<ImMaintenanceMessage[]>
   readonly storage: Storage
   readModelSettings(): ProviderConfig
@@ -65,7 +94,7 @@ export interface ImMemoryMaintenancePreviewWorkerPorts {
 
 export function createImMemoryMaintenancePreviewWorker(ports: ImMemoryMaintenancePreviewWorkerPorts) {
   const now = ports.now ?? (() => Date.now() / 1000)
-  return async function run(cursors: readonly ImMaintenanceCursor[]): Promise<void> {
+  return async function run(cursors: readonly ImMaintenanceCursor[], publish: PublishProgress): Promise<void> {
     let done = 0, needsReview = 0, failed = 0, totalBatches = 0, completedBatches = 0, truncatedBatches = 0
     const plans: unknown[] = []
     const total = cursors.length
@@ -79,7 +108,8 @@ export function createImMemoryMaintenancePreviewWorker(ports: ImMemoryMaintenanc
     for (const cursor of cursors) {
       try {
         const [messages, current, stableSystem] = await Promise.all([
-          ports.messages(cursor, cursor.first_message_id, cursor.last_message_id),
+          // 游标追平时仍检查现有记忆，Python 的区间查询在此返回空消息。
+          cursor.first_message_id > cursor.last_message_id ? [] : ports.messages(cursor, cursor.first_message_id, cursor.last_message_id),
           readScope(cursor, ports.storage), ports.readPrompt(cursor.scope_type),
         ])
         const result = await previewImMaintenanceScope({ scope: cursor, current, messages, render, stableSystem, budget,
@@ -94,48 +124,49 @@ export function createImMemoryMaintenancePreviewWorker(ports: ImMemoryMaintenanc
         failed++
       }
       done++
-      await ports.state.set(stateKey, JSON.stringify(state('running')), TTL_SECONDS)
-      await ports.state.set(planKey, JSON.stringify(plans), TTL_SECONDS)
+      if (!await publish(state('running'), plans)) return
     }
-    await ports.state.set(planKey, JSON.stringify(plans), TTL_SECONDS)
-    await ports.state.set(stateKey, JSON.stringify(state('done')), TTL_SECONDS)
+    await publish(state('done'), plans)
   }
 }
 
 export function createImMemoryMaintenancePreviewStarter(ports: {
-  readonly state: ValueStore
+  readonly state: ValueStore | null
   listCursors(): Promise<ImMaintenanceCursor[]>
-  run(cursors: readonly ImMaintenanceCursor[]): Promise<void>
+  run(cursors: readonly ImMaintenanceCursor[], publish: PublishProgress): Promise<void>
   readonly diagnose?: (error: unknown) => void
   readonly now?: () => number
 }) {
   const now = ports.now ?? (() => Date.now() / 1000)
   return async function start(): Promise<{ ok: true; total: number } | { ok: false; message: string; status: unknown }> {
-    const raw = await ports.state.get(stateKey)
+    const state = ports.state
+    if (!state) throw new ImMemoryMaintenancePreviewError(503, 'Redis 维护计划服务不可用')
+    const raw = await state.get(stateKey)
     if (raw) {
       const current: unknown = JSON.parse(decode(raw)!)
       if (record(current) && current.status === 'running') return { ok: false, message: '已有模型预览正在运行', status: current }
     }
     const token = randomUUID()
-    if (!await ports.state.acquire(IM_MEMORY_MODEL_PREVIEW_LOCK_KEY, token, TTL_SECONDS)) {
-      const currentRaw = await ports.state.get(stateKey)
+    if (!await state.acquire(IM_MEMORY_MODEL_PREVIEW_LOCK_KEY, token, TTL_SECONDS)) {
+      const currentRaw = await state.get(stateKey)
       const current: unknown = currentRaw ? JSON.parse(decode(currentRaw)!) : null
-      if (record(current)) return { ok: false, message: '已有模型预览正在运行', status: current }
+      if (record(current) && current.status === 'running') return { ok: false, message: '已有模型预览正在运行', status: current }
       throw new ImMemoryMaintenancePreviewError(409, '已有模型预览正在启动')
     }
     let keepLock = false
     try {
       const cursors = await ports.listCursors()
-      await ports.state.delete(planKey)
-      await ports.state.set(stateKey, JSON.stringify({ status: 'running', done: 0, total: cursors.length, needs_review: 0, failed: 0, plan_ready: false, ts: now() }), TTL_SECONDS)
+      const initial = JSON.stringify({ status: 'running', done: 0, total: cursors.length, needs_review: 0, failed: 0, plan_ready: false, ts: now() })
+      if (!await state.publish(token, initial, null)) throw new ImMemoryMaintenancePreviewError(409, '模型预览启动租约已过期')
       keepLock = true
-      void ports.run(cursors).catch(async error => {
+      void ports.run(cursors, (progress, plans) => state.publish(token, JSON.stringify(progress), JSON.stringify(plans))).catch(async error => {
         ports.diagnose?.(error)
-        try { await ports.state.set(stateKey, JSON.stringify({ status: 'done', done: 0, total: cursors.length, needs_review: 0, failed: 1, plan_ready: false, ts: now() }), TTL_SECONDS) } catch {}
-      }).finally(() => ports.state.release(IM_MEMORY_MODEL_PREVIEW_LOCK_KEY, token).catch(() => {}))
+        const failed = JSON.stringify({ status: 'done', done: 0, total: cursors.length, needs_review: 0, failed: 1, plan_ready: false, ts: now() })
+        await state.publish(token, failed, null).catch(() => {})
+      }).finally(() => state.release(IM_MEMORY_MODEL_PREVIEW_LOCK_KEY, token).catch(() => {}))
       return { ok: true, total: cursors.length }
     } finally {
-      if (!keepLock) await ports.state.release(IM_MEMORY_MODEL_PREVIEW_LOCK_KEY, token).catch(() => {})
+      if (!keepLock) await state.release(IM_MEMORY_MODEL_PREVIEW_LOCK_KEY, token).catch(() => {})
     }
   }
 }

@@ -1,4 +1,5 @@
-import type { AuthorizedMemoryScope, MemorySearchSnapshot, RunIdentity } from '@gugu/core/agent'
+import type { AuthorizedMemoryScope, MemorySearchSnapshot } from '@gugu/core/agent/rag'
+import type { RunIdentity } from '@gugu/core/agent'
 import type { Pool } from 'pg'
 import type { AgentDispatchLease } from '../persistence/agent-run-dispatch-postgres.js'
 import type { createAgentToolRegistry } from './agent-tool-registry.js'

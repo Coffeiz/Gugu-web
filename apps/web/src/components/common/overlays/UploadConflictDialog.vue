@@ -166,7 +166,7 @@ defineExpose({ show })
   flex-shrink: 0;
 }
 .btn-cancel {
-  padding: 8px 18px; border-radius: var(--radius-sm);
+  padding: 8px 18px; border-radius: var(--radius-xs);
   border: 1px solid var(--control-border);
   background: var(--control-bg);
   font-size: 13px; color: var(--text-secondary);
@@ -175,7 +175,7 @@ defineExpose({ show })
 }
 .btn-cancel:hover { background: var(--control-bg-hover); color: var(--content-primary); }
 .btn-confirm {
-  padding: 8px 22px; border-radius: var(--radius-sm);
+  padding: 8px 22px; border-radius: var(--radius-xs);
   background: var(--action-primary-bg);
   border: none; color: var(--content-on-accent);
   font-size: 13px; font-weight: 600;

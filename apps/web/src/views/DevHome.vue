@@ -80,8 +80,6 @@ function openExternal(tool: DevToolEntry) {
 <style scoped>
 .dev-home {
   --dev-divider: color-mix(in srgb, var(--content-secondary) 22%, transparent);
-  --glass-card-background: var(--column-bg);
-  --glass-card-background-hover: var(--column-bg);
   --glass-card-border: var(--border-default);
   --glass-card-border-hover: var(--border-default);
   --glass-card-shadow: var(--elevation-card);
@@ -114,13 +112,11 @@ function openExternal(tool: DevToolEntry) {
 .tool-card {
   min-height: 176px;
   padding: var(--space-lg);
-  --glass-card-background: var(--surface-glass);
-  --glass-card-background-hover: var(--surface-glass-hover);
   --glass-card-border: var(--dev-divider);
   --glass-card-border-hover: var(--border-default);
   --glass-card-shadow: var(--elevation-card);
   --glass-card-shadow-hover: var(--elevation-card-hover);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   transition: var(--card-motion), background var(--glass-card-transition);
 }
 .tool-card:hover {
@@ -140,7 +136,7 @@ function openExternal(tool: DevToolEntry) {
   display: grid;
   place-items: center;
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: var(--surface-raised);
   color: var(--action-primary);
   text-decoration: none;

@@ -11,6 +11,12 @@ import CalendarToolbar from '@/views/Calendar/components/CalendarToolbar.vue'
 import MonthGrid from '@/views/Calendar/components/MonthGrid.vue'
 import WeekTimeline from '@/views/Calendar/components/WeekTimeline.vue'
 import YearMonthPicker from '@/views/Calendar/components/YearMonthPicker.vue'
+import { useCalendarNotes } from '@/composables/calendar/useCalendarNotes'
+import { buildUpcomingList } from '@/composables/calendar/useCalendarUpcoming'
+import { useProjectStore } from '@/stores/projects'
+import { layout, useDesktopCalendarLayout } from './composables/useDesktopCalendarLayout'
+import { useDesktopWeekEventDrag } from './composables/useDesktopWeekEventDrag'
+import type { EventDetails } from './composables/useDesktopCalendar'
 import { useCalendarDrag, type CalendarDragState } from '@/composables/calendar/useCalendarDrag'
 import { useCalendarNav } from '@/composables/calendar/useCalendarNav'
 import { useCalendarWeekInteraction } from '@/composables/calendar/useCalendarWeekInteraction'
@@ -20,14 +26,19 @@ import { capBg, darkenHex } from '@/utils/calendarColors'
 import type { CalendarContext } from '@/views/Calendar/domain/calendarContext'
 import type { CalendarMonthDay, CalendarRenderItem, CalendarWeekDay } from '@/views/Calendar/domain/calendarTypes'
 
-const props = defineProps<{ events: CalendarRow[]; busy: boolean }>()
+const props = defineProps<{
+  events: CalendarRow[]
+  busy: boolean
+  saveEvent: (event: CalendarRow | null, title: string, date: string, details: EventDetails) => Promise<boolean>
+  removeEvent: (event: CalendarRow) => Promise<boolean>
+}>()
 const emit = defineEmits<{
-  create: [title: string, date: string, details: { time: string | null; endTime: string | null; description: string | null }]
-  update: [event: CalendarRow, title: string, date: string, details: { time: string | null; endTime: string | null; description: string | null }]
-  delete: [event: CalendarRow]
   'add-project': [range: { start: string; end: string }]
+  'open-note': [id: number]
+  'move-project': [id: number, range: { start: string; end: string }]
 }>()
 
+const projectStore = useProjectStore()
 const locale = ref('zh-CN')
 const todayIso = ref(browserDayKey(new Date()))
 const selectedDate = ref<string | null>(todayIso.value)
@@ -83,11 +94,19 @@ const renderEvents = computed<CalendarRenderItem[]>(() => props.events.map(event
   accent: '#7b7fb2',
   version: event.version,
 })))
-const selectedEvents = computed(() => renderEvents.value.filter(event => event.date === selectedDate.value))
-const upcomingList = computed(() => renderEvents.value
-  .filter(event => (event.date ?? '') >= todayIso.value)
-  .sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''))
-  .slice(0, 8))
+const weekHeights = reactive<Record<number, number>>({})
+const { projects, dayLayout, weekBarsCapped, wvAllDayH, weekAllDayShown, wvShownRows, allDayItemsFor, weekMoreFor, pbarStyle } =
+  useDesktopCalendarLayout(renderEvents, monthWeeks, weekDays, weekHeights)
+const { selectedNotes, loading: notesLoading, failed: notesFailed } = useCalendarNotes(selectedDate)
+const selectedEvents = computed(() => {
+  const date = selectedDate.value
+  if (!date) return []
+  return [
+    ...projects.value.filter(project => (project.startDate ?? '') <= date && (project.endDate ?? '') >= date),
+    ...renderEvents.value.filter(event => event.date === date),
+  ]
+})
+const upcomingList = computed(() => buildUpcomingList(projects.value, renderEvents.value))
 const selectedDateLabel = computed(() => selectedDate.value
   ? new Intl.DateTimeFormat(locale.value, { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' }).format(new Date(`${selectedDate.value}T00:00:00`))
   : '')
@@ -100,19 +119,36 @@ const dragOverIso = ref<string | null>(null)
 const hoveredDateIso = ref<string | null>(null)
 const hoveredBarId = ref<string | number | null>(null)
 const weekRowElements: HTMLElement[] = []
+const weekRowObserver = new ResizeObserver(entries => {
+  for (const entry of entries) weekHeights[Number((entry.target as HTMLElement).dataset.wi)] = entry.contentRect.height
+})
+const dragRange = computed(() => {
+  const item = drag.item
+  const target = dragOverIso.value
+  if (!drag.active || !item || !target) return null
+  if (drag.type === 'event' || drag.type === 'proj-chip') return { start: target, end: target }
+  if (!item.startDate || !item.endDate) return null
+  if (drag.type === 'proj-resize-start' && target <= item.endDate) return { start: target, end: item.endDate }
+  if (drag.type === 'proj-resize-end' && target >= item.startDate) return { start: item.startDate, end: target }
+  if (drag.type === 'proj-bar') {
+    const start = addDays(target, -drag.offsetDays)
+    return { start, end: addDays(start, daysBetween(item.startDate, item.endDate)) }
+  }
+  return null
+})
 const activeRange = computed(() => {
   if (rangeSelect.active && rangeSelect.anchor && hoverRangeEnd.value) {
     const [start, end] = [rangeSelect.anchor, hoverRangeEnd.value].sort()
     return start === end ? null : { start, end }
   }
-  if (drag.active && dragOverIso.value && drag.item?.calendarType === 'event') {
-    return { start: dragOverIso.value, end: dragOverIso.value }
-  }
+  if (drag.active) return dragRange.value
   return selectedRange.value
 })
 
 const eventFormOpen = ref(false)
+const confirmingDelete = ref(false)
 const eventPopupPosition = ref<{ x: number; y: number } | null>(null)
+const eventPopupAnchor = ref<HTMLElement | null>(null)
 const eventDraft = reactive<EventDraft>({ name: '', date: todayIso.value, ...defaultTimeRange(), description: '', allDay: false })
 const eventForm = useEventEditForm()
 const editingEvent = ref<CalendarRow | null>(null)
@@ -121,20 +157,21 @@ const contextMenuRef = ref<InstanceType<typeof CalendarContextMenu> | null>(null
 const context = ref<CalendarContext | null>(null)
 const contextPosition = reactive({ x: 0, y: 0 })
 const morePopupRef = ref<InstanceType<typeof CalendarMorePopup> | null>(null)
-const morePopup = ref<{ open: boolean; items: CalendarRenderItem[]; dateLabel: string; style: Record<string, string | number | undefined> }>({ open: false, items: [], dateLabel: '', style: {} })
+const morePopup = ref<{ open: boolean; items: CalendarRenderItem[]; dateLabel: string }>({ open: false, items: [], dateLabel: '' })
 const moreAnchor = ref<HTMLElement | null>(null)
 
 function eventFor(item: CalendarRenderItem) {
   return props.events.find(event => event.id === Number(item.id)) ?? null
 }
-function dayLayout(iso: string) {
-  const items = renderEvents.value.filter(event => event.date === iso && !event.time)
-  return { paddingTop: 0, visibleChips: items.slice(0, 3), moreCount: Math.max(0, items.length - 3), moreItems: items.slice(3) }
-}
 function setWeekRef(el: Element | { $el?: Element } | null, index: number) {
   const row = el as HTMLElement | null
-  if (row) weekRowElements[index] = row
-  else delete weekRowElements[index]
+  const existing = weekRowElements[index]
+  if (existing === row) return
+  if (existing) weekRowObserver.unobserve(existing)
+  if (row) {
+    weekRowElements[index] = row
+    weekRowObserver.observe(row)
+  } else delete weekRowElements[index]
 }
 function isoFromPoint(x: number, y: number) {
   for (let index = 0; index < monthWeeks.value.length; index++) {
@@ -201,17 +238,11 @@ function openMore(event: MouseEvent, iso: string, items: CalendarRenderItem[]) {
     moreAnchor.value = null
     return
   }
-  const rect = anchor.getBoundingClientRect()
-  const width = 250
-  const estimatedHeight = Math.min(320, 56 + items.length * 30)
-  const top = window.innerHeight - rect.bottom > estimatedHeight + 8 ? rect.bottom + 6 : Math.max(8, rect.top - estimatedHeight - 6)
-  const left = Math.max(8, Math.min(rect.left + rect.width / 2 - width / 2, window.innerWidth - width - 8))
   moreAnchor.value = anchor
   morePopup.value = {
     open: true,
     items,
     dateLabel: new Intl.DateTimeFormat(locale.value, { month: 'long', day: 'numeric' }).format(new Date(`${iso}T00:00:00`)),
-    style: { position: 'fixed', top, left, width, zIndex: 2100 },
   }
 }
 function closeMore() {
@@ -226,14 +257,19 @@ function openContext(event: MouseEvent, date: string, type: 'month-cell' | 'alld
 function onAllDayContextMenu(event: MouseEvent) {
   if ((event.target as HTMLElement).closest('.wv-pbar,.wv-allday-ev,.wv-more')) return
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
-  const index = Math.max(0, Math.min(6, Math.floor((event.clientX - rect.left) / (rect.width / 7))))
+  const index = (event.currentTarget as HTMLElement).classList.contains('wv-dhead')
+    ? weekHeaderIndex(event)
+    : Math.max(0, Math.min(6, Math.floor((event.clientX - rect.left) / (rect.width / 7))))
   const iso = weekDays.value[index]?.iso
   if (iso) openContext(event, iso, 'allday')
 }
 function onWeekColumnContextMenu(event: MouseEvent, day: CalendarWeekDay) {
   if ((event.target as HTMLElement).closest('.wv-ev')) return
-  const hour = Math.max(0, Math.min(23, Math.floor((event.clientY - (event.currentTarget as HTMLElement).getBoundingClientRect().top) / 36)))
-  context.value = { type: 'week-column', date: day.iso, time: `${String(hour).padStart(2, '0')}:00`, endTime: `${String(Math.min(23, hour + 1)).padStart(2, '0')}:00` }
+  const slot = weekInteraction.wvSelectedSlot.value
+  const hour = Math.max(0, Math.min(23, Math.floor((event.clientY - (event.currentTarget as HTMLElement).getBoundingClientRect().top) / layout.hourHeight)))
+  const start = slot?.iso === day.iso ? Math.min(slot.h0, slot.h1) : hour
+  const end = slot?.iso === day.iso ? Math.max(slot.h0, slot.h1) + 1 : hour + 1
+  context.value = { type: 'week-column', date: day.iso, time: hourLabel(start), endTime: hourLabel(end) }
   contextPosition.x = event.clientX
   contextPosition.y = event.clientY
 }
@@ -250,12 +286,21 @@ function openCreateEvent(date = selectedDate.value ?? todayIso.value, time = def
   editingEvent.value = null
   Object.assign(eventDraft, { name: '', date, ...time, description: '', allDay })
   eventForm.resetReminder()
+  eventPopupAnchor.value = null
   eventPopupPosition.value = position ?? popupPositionFromPoint(window.innerWidth / 2, window.innerHeight / 2)
   eventFormOpen.value = true
 }
-function openEditEvent(item: CalendarRenderItem) {
+function openEditEvent(
+  item: CalendarRenderItem,
+  event: MouseEvent,
+  anchor = event.currentTarget instanceof HTMLElement ? event.currentTarget : null,
+) {
   const row = eventFor(item)
   if (!row) return
+  if (eventFormOpen.value && editingEvent.value?.id === row.id) {
+    if (!props.busy) eventFormOpen.value = false
+    return
+  }
   selectedDate.value = row.date
   editingEvent.value = row
   Object.assign(eventDraft, {
@@ -267,13 +312,14 @@ function openEditEvent(item: CalendarRenderItem) {
     allDay: !row.time,
   })
   eventForm.resetReminder()
-  eventPopupPosition.value = popupPositionFromPoint(window.innerWidth / 2, window.innerHeight / 2)
+  eventPopupAnchor.value = anchor
+  eventPopupPosition.value = anchor ? null : popupPositionFromPoint(event.clientX, event.clientY)
   eventFormOpen.value = true
 }
 function onSidebarEdit(payload: { item: CalendarRenderItem; event: MouseEvent }) {
-  openEditEvent(payload.item)
+  openEditEvent(payload.item, payload.event)
 }
-function saveEvent() {
+async function saveEvent() {
   const title = eventDraft.name.trim()
   if (!title || props.busy) return
   const details = {
@@ -281,9 +327,17 @@ function saveEvent() {
     endTime: eventDraft.allDay ? null : eventDraft.endTime || null,
     description: eventDraft.description.trim() || null,
   }
-  if (editingEvent.value) emit('update', editingEvent.value, title, eventDraft.date, details)
-  else emit('create', title, eventDraft.date, details)
-  eventFormOpen.value = false
+  if (await props.saveEvent(editingEvent.value, title, eventDraft.date, details)) eventFormOpen.value = false
+}
+async function deleteEditedEvent() {
+  const event = editingEvent.value
+  if (!event || props.busy || confirmingDelete.value) return
+  confirmingDelete.value = true
+  try {
+    if (await props.removeEvent(event)) eventFormOpen.value = false
+  } finally {
+    confirmingDelete.value = false
+  }
 }
 function ctxAddEvent() {
   const value = context.value
@@ -309,7 +363,7 @@ function sidebarAddProject() {
 
 const weekInteraction = useCalendarWeekInteraction({
   viewMode,
-  hourHeight: 36,
+  hourHeight: layout.hourHeight,
   weekDays,
   activeRange,
   rangeSelect,
@@ -321,13 +375,31 @@ const weekInteraction = useCalendarWeekInteraction({
     selectedDate.value = slot.iso
     const isRepeatedSingleHour = slot.h0 === slot.h1 && previous?.iso === slot.iso && previous.h0 === slot.h0 && previous.h1 === slot.h1
     if (isRepeatedSingleHour) {
-      const pad = (hour: number) => String(hour % 24).padStart(2, '0') + ':00'
-      openCreateEvent(slot.iso, { time: pad(slot.h0), endTime: pad(slot.h1 + 1) }, false, popupPositionFromPoint(event.clientX, event.clientY))
+      openCreateEvent(slot.iso, { time: hourLabel(slot.h0), endTime: hourLabel(slot.h1 + 1) }, false, popupPositionFromPoint(event.clientX, event.clientY))
     }
   },
 })
-function allDayItemsFor(iso: string) { return renderEvents.value.filter(event => event.date === iso && !event.time) }
-function timedEventsFor(iso: string) { return calculateTimedLayout(renderEvents.value, iso, 36) }
+const weekEventDrag = useDesktopWeekEventDrag({
+  hourHeight: layout.hourHeight,
+  weekDates: () => weekDays.value.map(day => day.iso),
+  blocked: () => props.busy,
+  open: openEditEvent,
+  async commit(item, { date, time, endTime }) {
+    const row = eventFor(item)
+    if (row && await props.saveEvent(row, row.title, date, { time, endTime })) selectedDate.value = date
+  },
+})
+const weeklyEvents = computed(() => {
+  const preview = weekEventDrag.preview.value
+  return preview ? renderEvents.value.map(item => item.id === preview.id ? { ...item, ...preview.timing } : item) : renderEvents.value
+})
+function timedEventsFor(iso: string) {
+  return calculateTimedLayout(weeklyEvents.value, iso, layout.hourHeight)
+}
+function onWeekEventHover(event: MouseEvent) {
+  weekInteraction.onColLeave()
+  weekEventDrag.hover(event)
+}
 function openAddFromSidebar(anchor: HTMLElement | null) {
   if (eventFormOpen.value) {
     eventFormOpen.value = false
@@ -348,46 +420,75 @@ function openAddFromSidebar(anchor: HTMLElement | null) {
     y: Math.max(8, top),
   })
 }
-function commitEventDrag() {
-  const item = drag.item
-  const targetDate = dragOverIso.value
-  if (!item || item.calendarType !== 'event' || !targetDate) return
-  const row = eventFor(item)
-  if (row && row.date !== targetDate) emit('update', row, row.title, targetDate, {
-    time: row.time,
-    endTime: row.endTime,
-    description: row.description,
-  })
+function hourLabel(hour: number) {
+  return String(hour % 24).padStart(2, '0') + ':00'
 }
-const calendarDrag = useCalendarDrag({
-  drag,
-  dragOverIso,
-  isoFromPoint,
-  daysBetween: (start, end) => Math.round((new Date(`${end}T00:00:00`).getTime() - new Date(`${start}T00:00:00`).getTime()) / 86400000),
-  commitDrag: commitEventDrag,
-  closeMorePopup: closeMore,
-})
-function selectMoreEvent(payload: { item: CalendarRenderItem }) { closeMore(); openEditEvent(payload.item) }
-function selectWeekday(event: MouseEvent) {
+function daysBetween(start: string, end: string) {
+  return (Date.parse(end) - Date.parse(start)) / 86400000
+}
+function addDays(iso: string, days: number) {
+  return new Date(Date.parse(iso) + days * 86400000).toISOString().slice(0, 10)
+}
+function projectId(item: CalendarRenderItem) {
+  return Number(String(item.id).slice(1))
+}
+function openProject(item: CalendarRenderItem) {
+  closeMore()
+  projectStore.openModal({ id: projectId(item) })
+}
+function commitDrag() {
+  const item = drag.item
+  const range = dragRange.value
+  if (!item || !range || props.busy) return
+  if (item.calendarType === 'event') {
+    const row = eventFor(item)
+    if (row && row.date !== range.start) void props.saveEvent(row, row.title, range.start, {})
+  } else if (range.start !== item.startDate || range.end !== item.endDate) {
+    emit('move-project', projectId(item), range)
+  }
+}
+const calendarDrag = useCalendarDrag({ drag, dragOverIso, isoFromPoint, daysBetween, commitDrag, closeMorePopup: closeMore })
+function selectMoreEvent(payload: { item: CalendarRenderItem; event: MouseEvent }) {
+  const anchor = moreAnchor.value
+  closeMore()
+  openEditEvent(payload.item, payload.event, anchor)
+}
+function weekHeaderIndex(event: MouseEvent) {
   const head = (event.target as HTMLElement).closest('.wv-dhead')
-  const headers = Array.from(head?.parentElement?.querySelectorAll('.wv-dhead') ?? [])
-  const index = headers.indexOf(head as Element)
-  if (index >= 0 && weekDays.value[index]) selectedDate.value = weekDays.value[index].iso
+  if (!head?.parentElement) return -1
+  return Array.from(head.parentElement.querySelectorAll('.wv-dhead')).indexOf(head)
+}
+function selectWeekday(event: MouseEvent) {
+  const day = weekDays.value[weekHeaderIndex(event)]
+  if (!day) return
+  selectedRange.value = null
+  selectedDate.value = day.iso
 }
 function closePopupsOutside(event: MouseEvent) {
   const target = event.target as HTMLElement
   const addEventButton = target.closest('.cal-sidebar .add-event-btn:not(.add-proj-btn)')
-  if (eventFormOpen.value && !addEventButton && !target.closest('.desktop-calendar-add-popup')) eventFormOpen.value = false
+  const eventTrigger = target.closest('[data-calendar-edit-event]')
+  // 同一活动的点击（周视图中为 mouseup）负责切换弹层，按下时保留打开状态。
+  const togglesCurrentEvent = event.button === 0 && editingEvent.value
+    && eventTrigger?.getAttribute('data-calendar-edit-event') === String(editingEvent.value.id)
+    && !target.closest('.ev-del-btn')
+  if (eventFormOpen.value && !props.busy && !addEventButton && !togglesCurrentEvent && !target.closest('.desktop-calendar-add-popup, .dp-popup')) eventFormOpen.value = false
   if (pickerOpen.value && !pickerRef.value?.contains(target) && !target.closest('.period-btn')) pickerOpen.value = false
   if (context.value && !contextMenuRef.value?.contains(target)) context.value = null
   if (morePopup.value.open && !moreAnchor.value?.contains(target) && !morePopupRef.value?.contains(target)) closeMore()
 }
 function onEventPopupAfterLeave() {
   // 快速关闭后重开时，旧实例的离场回调可能晚于新一轮打开；不要清掉新弹层的位置。
-  if (!eventFormOpen.value) eventPopupPosition.value = null
+  if (!eventFormOpen.value) {
+    eventPopupAnchor.value = null
+    eventPopupPosition.value = null
+  }
 }
 onMounted(() => document.addEventListener('mousedown', closePopupsOutside, true))
-onUnmounted(() => document.removeEventListener('mousedown', closePopupsOutside, true))
+onUnmounted(() => {
+  weekRowObserver.disconnect()
+  document.removeEventListener('mousedown', closePopupsOutside, true)
+})
 </script>
 
 <template>
@@ -413,22 +514,26 @@ onUnmounted(() => document.removeEventListener('mousedown', closePopupsOutside, 
           :hovered-date-iso="hoveredDateIso"
           :hovered-bar-id="hoveredBarId"
           :drag="drag"
-          :header-height="0"
-          :bar-height="16"
+          :header-height="layout.headerHeight"
+          :bar-height="layout.barHeight"
           :hday-type="() => null"
           :is-in-active-range="isInActiveRange"
-          :day-layout="iso => dayLayout(iso)"
-          :week-bars-capped="() => ({ bars: [] })"
+          :day-layout="dayLayout"
+          :week-bars-capped="weekBarsCapped"
           :deadline-warn-layer="() => null"
-          :bar-seg-fill="() => 100"
+          :bar-seg-fill="bar => bar.progress ?? 0"
           :darken-hex="darkenHex"
           :set-week-ref="setWeekRef"
           @week-mousemove="(event, week) => { const rect = (event.currentTarget as HTMLElement).getBoundingClientRect(); const col = Math.max(0, Math.min(6, Math.floor((event.clientX - rect.left) / rect.width * 7))); hoveredDateIso = week[col]?.iso ?? null }"
           @week-mouseleave="hoveredDateIso = null"
           @week-contextmenu="onMonthContextMenu"
           @cell-mousedown="onCellMouseDown"
-          @edit-event="item => openEditEvent(item)"
+          @edit-event="openEditEvent"
           @start-event-drag="calendarDrag.startEventDrag"
+          @open-project="openProject"
+          @start-project-chip-drag="calendarDrag.startProjectChipDrag"
+          @start-bar-drag="calendarDrag.startBarDrag"
+          @start-bar-resize="calendarDrag.startBarResize"
           @show-more="openMore"
           @bar-mouseenter="hoveredBarId = $event"
           @bar-mouseleave="hoveredBarId = null"
@@ -437,29 +542,33 @@ onUnmounted(() => document.removeEventListener('mousedown', closePopupsOutside, 
           v-else
           :week-days="weekDays"
           :range-select-active="rangeSelect.active"
-          :wv-all-day-h="42"
+          :wv-all-day-h="wvAllDayH"
           :wv-sel-cols="weekInteraction.wvSelCols.value"
           :wv-ad-hover="weekInteraction.wvAdHover.value"
-          :week-all-day-shown="[]"
-          :wv-shown-rows="0"
+          :week-all-day-shown="weekAllDayShown"
+          :wv-shown-rows="wvShownRows"
           :all-day-items-for="allDayItemsFor"
-          :week-more-for="() => []"
-          :pbar-style="() => ({})"
+          :week-more-for="weekMoreFor"
+          :pbar-style="pbarStyle"
           :cap-bg="capBg"
           :darken-hex="darkenHex"
           :set-all-day-grid-ref="weekInteraction.setAllDayGridRef"
-          :hour-height="36"
+          :hour-height="layout.hourHeight"
           :selected-slot="weekInteraction.wvSelectedSlot.value"
           :hover="weekInteraction.wvHover.value"
           :dragging="weekInteraction.wvDragging.value"
-          :now-top="(new Date().getHours() + new Date().getMinutes() / 60) * 36"
+          :now-top="(new Date().getHours() + new Date().getMinutes() / 60) * layout.hourHeight"
           :timed-layout-for="timedEventsFor"
           :is-day-selected="weekInteraction.wvDaySelected"
-          @all-day-down="weekInteraction.onAllDayDown"
+          @all-day-down="event => { selectWeekday(event); weekInteraction.onAllDayDown(event) }"
+          @open-project="openProject"
+          @show-more="openMore"
+          @event-down="weekEventDrag.start"
+          @event-hover="onWeekEventHover"
           @all-day-hover="weekInteraction.onAllDayHover"
           @all-day-leave="weekInteraction.onAllDayLeave"
           @all-day-contextmenu="onAllDayContextMenu"
-          @edit-event="item => openEditEvent(item)"
+          @edit-event="openEditEvent"
           @column-down="weekInteraction.onColDown"
           @column-move="weekInteraction.onColMove"
           @column-leave="weekInteraction.onColLeave"
@@ -471,14 +580,16 @@ onUnmounted(() => document.removeEventListener('mousedown', closePopupsOutside, 
       <CalendarSidebar
         :selected-date-label="selectedDateLabel"
         :selected-events="selectedEvents"
-        :selected-notes="[]"
-        :notes-loading="false"
-        :notes-failed="false"
+        :selected-notes="selectedNotes"
+        :notes-loading="notesLoading"
+        :notes-failed="notesFailed"
         :upcoming-list="upcomingList"
         @add-project="sidebarAddProject"
+        @open-project="openProject"
+        @open-note="emit('open-note', $event)"
         @add-event="openAddFromSidebar"
         @edit-event="onSidebarEdit"
-        @delete-event="item => { const event = eventFor(item); if (event) emit('delete', event) }"
+        @delete-event="item => { const event = eventFor(item); if (event) removeEvent(event) }"
       />
     </aside>
   </div>
@@ -487,9 +598,11 @@ onUnmounted(() => document.removeEventListener('mousedown', closePopupsOutside, 
     :open="morePopup.open"
     :items="morePopup.items"
     :date-label="morePopup.dateLabel"
-    :style="morePopup.style"
+    :style="{ width: '250px' }"
+    :anchor="moreAnchor"
     @edit-event="selectMoreEvent"
-    @drag-item="payload => { closeMore(); calendarDrag.startEventDrag(payload.item, payload.event) }"
+    @open-project="openProject"
+    @drag-item="payload => { if (viewMode === 'month') calendarDrag.startMoreItemDrag(payload.item, payload.event) }"
   />
   <Teleport to="body">
     <YearMonthPicker
@@ -512,8 +625,10 @@ onUnmounted(() => document.removeEventListener('mousedown', closePopupsOutside, 
     @add-project="ctxAddProject"
   />
   <PopupMenu
-    :show="eventFormOpen"
+    :show="eventFormOpen && !confirmingDelete"
+    :anchor="eventPopupAnchor"
     :position="eventPopupPosition"
+    placement="auto"
     :style="{ width: '240px' }"
     popup-class="desktop-calendar-add-popup"
     :transparent="true"
@@ -527,9 +642,11 @@ onUnmounted(() => document.removeEventListener('mousedown', closePopupsOutside, 
       :title="editingEvent ? '编辑活动' : '添加活动'"
       :saving="busy"
       :show-reminders="false"
+      :show-delete="!!editingEvent"
       autofocus
       surface
       @save="saveEvent"
+      @delete="deleteEditedEvent"
       @close="eventFormOpen = false"
     />
   </PopupMenu>
@@ -537,7 +654,7 @@ onUnmounted(() => document.removeEventListener('mousedown', closePopupsOutside, 
 
 <style>
 .desktop-cal-layout { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 14px; flex: 1; height: auto; min-height: 0; }
-.desktop-cal-grid,.desktop-cal-info > .cal-sidebar { min-width: 0; min-height: 0; border-radius: var(--radius-lg, 16px); }
+.desktop-cal-grid,.desktop-cal-info > .cal-sidebar { min-width: 0; min-height: 0; }
 .desktop-cal-grid { display: flex; flex-direction: column; padding: var(--space-md, 16px); overflow: hidden; }
 .desktop-cal-month { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; user-select: none; -webkit-user-select: none; }
 .desktop-cal-month .weekday-row { margin: 0; }

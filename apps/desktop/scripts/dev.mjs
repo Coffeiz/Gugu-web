@@ -16,7 +16,7 @@ const required = [
 
 if (!existsSync(viteCli) || !existsSync(electronCli)) throw new Error('桌面开发依赖未安装')
 if (required.some((path) => !existsSync(path))) {
-  console.error('桌面运行产物缺失。首次运行请先执行 npm run dev:prepare。')
+  console.error('桌面运行产物缺失。请先执行 corepack pnpm run dev:prepare。')
   process.exit(1)
 }
 

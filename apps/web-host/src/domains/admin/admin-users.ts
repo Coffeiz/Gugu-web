@@ -4,14 +4,6 @@ import { withPostgresTransaction } from '../../adapters/postgres-transaction.js'
 import { adminHttpError } from './errors.js'
 import { toUtcIsoWithOffset } from '../../shared/date-time.js'
 
-export type AdminUsersQuery = (sql: string, values: unknown[]) => Promise<Record<string, unknown>[]>
-
-export interface AdminUsersOptions {
-  requireAdmin: preHandlerHookHandler
-  query: AdminUsersQuery
-  now?: () => Date
-}
-
 export interface AdminManagedUserStatus {
   id: string
   username: string
@@ -36,135 +28,9 @@ export interface AdminUserStatusRouteOptions {
   now?: () => Date
 }
 
-type UserRow = Record<string, unknown> & {
-  id: string
-  username: string | null
-  email: string | null
-  display_name: string | null
-  is_active: boolean
-  account_status: string | null
-  suspended_until: Date | string | null
-  is_developer: boolean | null
-  created_at: Date | string | null
-  token_limit_6h: number | string | null
-  token_limit_weekly: number | string | null
-  storage_limit_bytes: number | string | null
-  search_limit_daily: number | string | null
-}
-
-export function createPostgresAdminUsersQuery(pool: Pick<Pool, 'query'>): AdminUsersQuery {
-  return async (sql, values) => (await pool.query(sql, values as never[])).rows as Record<string, unknown>[]
-}
-
 function utcIso(value: unknown): string | null {
   if (value === null || value === undefined) return null
   return toUtcIsoWithOffset(value)
-}
-
-function asNumber(value: unknown): number {
-  return Number(value ?? 0)
-}
-
-function mondayUtc(now: Date): Date {
-  const result = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
-  result.setUTCDate(result.getUTCDate() - ((result.getUTCDay() + 6) % 7))
-  return result
-}
-
-function sixHourWindowUtc(now: Date): Date {
-  return new Date(Date.UTC(
-    now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(),
-    Math.floor(now.getUTCHours() / 6) * 6,
-  ))
-}
-
-const USER_QUERY = `SELECT id, username, email, display_name, is_active, account_status,
-                           suspended_until, is_developer, created_at, token_limit_6h,
-                           token_limit_weekly, storage_limit_bytes, search_limit_daily
-                    FROM users
-                    ORDER BY created_at DESC`
-
-const USAGE_QUERY = `SELECT user_id, COALESCE(SUM(tokens_in + tokens_out), 0)::bigint AS tokens
-                     FROM agent_usage
-                     WHERE created_at >= $1 AND is_byok IS FALSE
-                     GROUP BY user_id`
-
-const FILE_USAGE_QUERY = `SELECT user_id, COALESCE(SUM(size_bytes), 0)::bigint AS storage_used
-                          FROM files
-                          GROUP BY user_id`
-
-const LOCAL_LIBRARY_USAGE_QUERY = `SELECT user_id, used_bytes AS storage_used
-                                   FROM storage_quota_ledgers
-                                   WHERE category = 'file_library'`
-
-export function registerAdminUsersRoute(app: FastifyInstance, options: AdminUsersOptions): void {
-  app.get<{ Querystring: { q?: string } }>(
-    '/api/v1/admin/users',
-    {
-      preHandler: options.requireAdmin,
-      schema: {
-        querystring: {
-          type: 'object',
-          properties: { q: { type: 'string' } },
-        },
-      },
-    },
-    async (request) => {
-      try {
-        // The optional search is applied after ordering, matching Python's list-then-filter flow.
-        const users = await options.query(USER_QUERY, []) as UserRow[]
-        const now = options.now?.() ?? new Date()
-        const [weekRows, sixHourRows, fileRows, libraryRows] = await Promise.all([
-          options.query(USAGE_QUERY, [mondayUtc(now)]),
-          options.query(USAGE_QUERY, [sixHourWindowUtc(now)]),
-          options.query(FILE_USAGE_QUERY, []),
-          options.query(LOCAL_LIBRARY_USAGE_QUERY, []),
-        ])
-
-        const q = request.query.q
-        const needle = q ? q.toLowerCase() : null
-        const visibleUsers = needle
-          ? users.filter((user) => (user.username ?? '').toLowerCase().includes(needle)
-            || (user.email ?? '').toLowerCase().includes(needle))
-          : users
-        const toUsageMap = (rows: Record<string, unknown>[]) => new Map(
-          rows.map((row) => [String(row.user_id), asNumber(row.tokens)]),
-        )
-        const weekUsage = toUsageMap(weekRows)
-        const sixHourUsage = toUsageMap(sixHourRows)
-        const storageUsage = new Map(fileRows.map((row) => [String(row.user_id), asNumber(row.storage_used)]))
-        // Local 的 file_library 账本已经含所有可写持久根；按 Python update 语义覆盖文件记录值。
-        for (const row of libraryRows) storageUsage.set(String(row.user_id), asNumber(row.storage_used))
-
-        return {
-          items: visibleUsers.map((user) => {
-            const id = String(user.id)
-            return {
-              id,
-              username: user.username,
-              email: user.email,
-              display_name: user.display_name,
-              is_active: user.is_active,
-              account_status: user.account_status ?? 'active',
-              suspended_until: utcIso(user.suspended_until),
-              is_developer: Boolean(user.is_developer ?? false),
-              created_at: utcIso(user.created_at),
-              tokens_week: weekUsage.get(id) ?? 0,
-              tokens_6h: sixHourUsage.get(id) ?? 0,
-              storage_used: storageUsage.get(id) ?? 0,
-              token_limit_6h: user.token_limit_6h,
-              token_limit_weekly: user.token_limit_weekly,
-              storage_limit_bytes: user.storage_limit_bytes,
-              search_limit_daily: user.search_limit_daily,
-            }
-          }),
-          total: visibleUsers.length,
-        }
-      } catch {
-        throw adminHttpError(500, '用户列表查询失败')
-      }
-    },
-  )
 }
 
 function createStatusRoutesOptions(options: AdminUserStatusRouteOptions) {

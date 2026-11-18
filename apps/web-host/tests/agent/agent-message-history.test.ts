@@ -2,13 +2,15 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
-import { createPostgresAgentInteractionHistory } from '@gugu/core/agent-sessions'
+import {
+  createPostgresAgentInteractionHistory,
+  projectAgentMessageBodies as projectMessageBodies,
+  projectAgentMessageBodiesWithMentions as projectMessageBodiesWithMentions,
+  projectAgentTimelineEvents as projectTimelineEvents,
+} from '@gugu/core/agent-sessions'
 import {
   AgentSessionNotFoundError,
   createAgentMessageHistory,
-  projectMessageBodies,
-  projectMessageBodiesWithMentions,
-  projectTimelineEvents,
 } from '../../src/domains/agent-sessions/persistence/agent-message-history.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL

@@ -2,95 +2,78 @@ import assert from 'node:assert/strict'
 import Fastify from 'fastify'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createServiceRestarter, registerServiceRestartRoute, type ServiceRestartRuntime } from '../../src/modules/admin/service-restart.js'
+import { createServiceRestarter, registerServiceRestartRoute } from '../../src/modules/admin/service-restart.js'
 
-function runtime(overrides: Partial<ServiceRestartRuntime> = {}) {
-  const calls: string[] = []
-  const base = {
-    async readHeartbeat(name: string) {
-      calls.push(`heartbeat:${name}`)
-      return { pid: 4242, host: 'synthetic-host' }
-    },
-    hostName: () => 'synthetic-host',
-    processCommandLine: (_pid: number) => '/venv/bin/python -m worker',
-    processExecutable: (_pid: number) => '/venv/bin/python',
-    processEnvironment: (_pid: number) => ({ GUGU_TEST_VALUE: 'synthetic-worker-env' }),
-    signal(_pid: number, signal: string) { calls.push(`signal:${signal}`) },
-    async waitForExit(_pid: number, timeoutMs: number) {
-      calls.push(`wait:${timeoutMs}`)
-      return true
-    },
-    async isSystemdManaged(_name: string) { return true },
-    async respawn(name: string, executable: string, environment: NodeJS.ProcessEnv) {
-      calls.push(`respawn:${name}:${executable}:${environment.GUGU_TEST_VALUE}`)
-      return 9001
-    },
-  }
-  return { calls, ports: { ...base, ...overrides } }
-}
+import { createBackgroundWorkerLifecycle } from '../../src/maintenance/background-workers.js'
 
-test('仅允许重启白名单中的 worker/gateway', async () => {
-  const fake = runtime()
-  const restart = createServiceRestarter(fake.ports)
+test('只重启 Node 后台任务，缺少 Node 网关能力时明确不可用', async () => {
+  let calls = 0
+  const restart = createServiceRestarter(async () => { calls++; return true })
   await assert.rejects(restart('web'), { code: 'unsupported_service' })
-  assert.deepEqual(fake.calls, [])
+  assert.equal((await restart('gateway')).ok, false)
+  assert.equal(calls, 0)
+  assert.equal((await restart('worker')).ok, true)
+  assert.equal(calls, 1)
 })
 
-test('远端心跳和命令行不匹配时跳过进程操作', async () => {
-  const remote = runtime({ async readHeartbeat() { return { pid: 4242, host: 'other-host' } } })
-  const remoteResult = await createServiceRestarter(remote.ports)('worker')
-  assert.equal(remoteResult.ok, false)
-  assert.deepEqual(remote.calls, [])
-
-  const reusedPid = runtime({ processCommandLine: () => '/usr/bin/python -m unrelated' })
-  const reusedResult = await createServiceRestarter(reusedPid.ports)('worker')
-  assert.equal(reusedResult.ok, false)
-  assert.deepEqual(reusedPid.calls, ['heartbeat:worker'])
+test('重启等待旧实例退出并合并并发请求，关闭期间不再启动', async () => {
+  const events: string[] = []
+  let generation = 0
+  let release!: () => void
+  let entered!: () => void
+  const draining = new Promise<void>(resolve => { entered = resolve })
+  const stopGate = new Promise<void>(resolve => { release = resolve })
+  const lifecycle = createBackgroundWorkerLifecycle([() => {
+    const instance = ++generation
+    events.push(`start:${instance}`)
+    return { async stop() {
+      events.push(`stop:${instance}`)
+      if (instance === 1) { entered(); await stopGate }
+    } }
+  }])
+  assert.equal(await lifecycle.restart(), false)
+  await lifecycle.start()
+  assert.deepEqual(lifecycle.status(), { online: true, restartable: true })
+  const restart = lifecycle.restart()
+  const concurrent = lifecycle.restart()
+  assert.equal(restart, concurrent)
+  await draining
+  assert.deepEqual(events, ['start:1', 'stop:1'])
+  release()
+  assert.deepEqual(await Promise.all([restart, concurrent]), [true, true])
+  const interrupted = lifecycle.restart()
+  const closed = lifecycle.stop()
+  assert.equal(await interrupted, false)
+  await closed
+  assert.deepEqual(events, ['start:1', 'stop:1', 'start:2', 'stop:2'])
+  assert.deepEqual(lifecycle.status(), { online: false, restartable: false })
 })
 
-test('systemd 管理的服务只发 SIGTERM 并交由 systemd 拉起', async () => {
-  const fake = runtime()
-  const result = await createServiceRestarter(fake.ports)('worker')
-  assert.deepEqual(result, { ok: true, msg: '已重启 worker(pid 4242)，systemd 将在几秒内自动拉起。' })
-  assert.deepEqual(fake.calls, ['heartbeat:worker', 'signal:SIGTERM'])
-})
-
-test('非 systemd 服务等待旧进程退出后按白名单模块重新拉起', async () => {
-  const fake = runtime({
-    async isSystemdManaged() { return false },
-    processCommandLine: () => '/venv/bin/python -m agent.gateway.gateway',
-    async waitForExit(_pid: number, timeoutMs: number) { fake.calls.push(`wait:${timeoutMs}`); return false },
-  })
-  const result = await createServiceRestarter(fake.ports)('gateway')
-  assert.equal(result.ok, true)
-  assert.equal(result.msg, '已重启 gateway：旧 pid 4242 → 新 pid 9001（后端自管理，非 systemd）。')
-  assert.deepEqual(fake.calls, [
-    'heartbeat:gateway', 'signal:SIGTERM', 'wait:8000', 'signal:SIGKILL', 'wait:3000', 'respawn:gateway:/venv/bin/python:synthetic-worker-env',
-  ])
-})
-
-test('无法读取手动拉起上下文时不会停止旧服务', async () => {
-  const fake = runtime({
-    async isSystemdManaged() { return false },
-    processEnvironment: () => null,
-  })
-  const result = await createServiceRestarter(fake.ports)('worker')
-  assert.equal(result.ok, false)
-  assert.match(result.msg, /未停止服务/)
-  assert.deepEqual(fake.calls, ['heartbeat:worker'])
+test('旧实例停止失败时禁止启动新实例，返回脱敏信息', async () => {
+  let started = 0, fail = true
+  const lifecycle = createBackgroundWorkerLifecycle([() => {
+    started++
+    return { async stop() { if (fail) throw new Error('synthetic private failure') } }
+  }])
+  await lifecycle.start()
+  const result = await createServiceRestarter(lifecycle.restart)('worker')
+  assert.deepEqual(result, { ok: false, msg: 'Node 后台任务重启失败。' })
+  assert.equal(started, 1)
+  fail = false
+  await lifecycle.stop()
 })
 
 test('管理员守卫先于服务重启执行', async () => {
-  const fake = runtime()
+  let calls = 0
   const app = Fastify({ logger: false })
   registerServiceRestartRoute(app, {
     requireAdmin: async (_request, reply) => reply.code(401).send({ detail: '未认证' }),
-    restart: createServiceRestarter(fake.ports),
+    restart: createServiceRestarter(async () => { calls++; return true }),
   })
   try {
     const response = await app.inject({ method: 'POST', url: '/api/v1/admin/services/worker/restart' })
     assert.equal(response.statusCode, 401)
-    assert.deepEqual(fake.calls, [])
+    assert.equal(calls, 0)
   } finally {
     await app.close()
   }

@@ -24,7 +24,7 @@ function serialize(value: unknown): string {
 
 /** 清理同一 web Undo context 的 redo 分支，并在当前业务事务中插入操作记录。 */
 export async function recordForwardUndoOperation(
-  client: PoolClient,
+  client: Pick<PoolClient, 'query'>,
   record: ForwardUndoOperation,
 ): Promise<void> {
   await client.query(

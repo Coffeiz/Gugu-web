@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { UserFromRequest } from '../../app.js'
 import type { createScheduledTaskTestNotifier } from '@gugu/core/scheduled-task-test-notify'
+import { InvalidScheduledTaskDeliveryTarget } from '@gugu/core/scheduled-task-test-notify'
 
 const record = z.record(z.string(), z.unknown()).nullable().optional()
 const bodySchema = z.object({
@@ -22,6 +23,11 @@ export function registerScheduledTaskTestNotify(
   app.post('/api/v1/scheduled-tasks/test-notify', async (request, reply) => {
     const parsed = bodySchema.safeParse(request.body)
     if (!parsed.success) return reply.code(422).send({ detail: '测试提醒请求无效' })
-    return notify(userFromRequest(request).requestContext.data.ownerId, parsed.data)
+    try {
+      return await notify(userFromRequest(request).requestContext.data.ownerId, parsed.data)
+    } catch (error) {
+      if (error instanceof InvalidScheduledTaskDeliveryTarget) return reply.code(400).send({ detail: error.message })
+      throw error
+    }
   })
 }

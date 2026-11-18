@@ -12,5 +12,5 @@ import SkillsHome from './SkillsHome.vue'
 
 <style scoped>
 .skills-page { height:100%; font-family:var(--font-sans); }
-.skills-panel { --glass-card-background:var(--column-bg); --glass-card-background-hover:var(--column-bg); height:100%; box-sizing:border-box; display:flex; flex-direction:column; padding:0 24px; }
+.skills-panel { height:100%; box-sizing:border-box; display:flex; flex-direction:column; padding:0 24px; }
 </style>

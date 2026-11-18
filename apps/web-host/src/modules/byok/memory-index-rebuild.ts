@@ -1,4 +1,4 @@
-import { enqueueAgentRagRebuild, readAgentRagRebuildProgress } from '@gugu/core/agent'
+import { enqueueAgentRagRebuild, readAgentRagRebuildProgress } from '@gugu/core/agent/rag'
 import type { SqlDataRuntime } from '@gugu/core/data'
 
 const pollIntervalMs = 1000

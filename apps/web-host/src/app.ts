@@ -16,6 +16,7 @@ import { registerUserBotUpdateRoute } from './modules/im/user-bot-update.js'
 import { registerQqConnectRoutes, type QqConnectRouteOptions } from './modules/im/qq-connect.js'
 import { registerFeishuConnectRoutes, type FeishuConnectRouteOptions } from './modules/im/feishu-connect.js'
 import { registerWechatConnectRoutes, type WechatConnectRouteOptions } from './modules/im/wechat-connect.js'
+import { registerTelegramConnectRoutes, type TelegramConnectRouteOptions } from './modules/im/telegram-connect.js'
 import { registerDataExportBrowserDownloadRoute, registerDataExportDownloadRoutes, type DataExportDownloadOptions } from './modules/data-portability/download-export.js'
 import type { createDataExportCreator } from '@gugu/core/data-portability/create-export'
 import type { LlmPresetTestResult } from '@gugu/core/agent/config'
@@ -26,6 +27,10 @@ import { registerDataExportDeleteRoute, type DataExportDeleteOptions } from './m
 import type { createDataExportDeleter } from '@gugu/core/data-portability/delete-export'
 import type { createDataExportCanceler } from '@gugu/core/data-portability/cancel-export'
 import { registerTerminalDeleteRoute, type TerminalDeleteOptions } from './modules/terminals/delete.js'
+import { registerTerminalCreateRoute, type TerminalCreateRouteOptions } from './modules/terminals/create-route.js'
+import { registerTerminalReopenRoute, type TerminalReopenRouteOptions } from './modules/terminals/reopen-route.js'
+import { registerTerminalLifecycleRoutes, type TerminalLifecycleRouteOptions } from './modules/terminals/lifecycle-route.js'
+import { registerTerminalWebsocket, type TerminalWebsocketOptions } from './modules/terminals/websocket.js'
 import { registerTerminalMetricsRoute, type TerminalMetricsOptions } from './modules/terminals/metrics.js'
 import { registerTerminalListRoute, type TerminalListOptions } from './modules/terminals/list.js'
 import { registerTerminalDetailRoute, type TerminalDetailOptions } from './modules/terminals/detail.js'
@@ -36,10 +41,12 @@ import { registerVoicePresetsReadRoute, type VoicePresetsReadOptions } from './m
 import { registerAdminVoicePresetTestRoute, registerAdminVoiceTestRoute, type AdminVoicePresetTestOptions, type AdminVoiceTestOptions } from './modules/admin/voice-test.js'
 import { registerAdminSearchTestRoute, type AdminSearchTestOptions } from './modules/admin/search-test.js'
 import { registerAdminMaintenanceStatusRoutes } from './modules/admin/maintenance-status.js'
+import { registerAccountMemoryCleanupRoutes, type createAccountMemoryCleanupRuntime } from './modules/admin/account-memory-cleanup.js'
 import { registerAdminUpdateStatusRoute, type AdminUpdateMode } from './modules/admin/update-status.js'
 import { registerAccountDeleteRoute, type AccountDeleteOptions } from './modules/auth/account-delete.js'
 import { registerAdminUserDeleteRoute, type AdminUserDeleteOptions } from './modules/admin/user-delete.js'
 import { registerAgentCapabilityCatalogRoute, type AgentCapabilityCatalog } from './modules/admin/agent-capabilities.js'
+import { registerAgentStateLabelRoutes } from './modules/admin/agent-state-labels.js'
 import type { createAdminMaintenanceStatus } from '@gugu/core/maintenance/admin-status'
 import { createProviderCapabilityPreview } from '@gugu/core/byok/capabilities-preview'
 import { registerServiceStatusRoute, type createServiceStatusReader } from './modules/admin/service-status.js'
@@ -122,6 +129,10 @@ import { registerAdminLlmCapabilityPreviewRoute } from './modules/admin/llm-capa
 import { registerAdminEmbeddingRebuildStatusRoute, type AdminEmbeddingRebuildStatusOptions } from './modules/admin/embedding-rebuild-status.js'
 import { registerSafeEgressUpdateRoute, type SafeEgressUpdateOptions } from './modules/admin/safe-egress-update.js'
 import { registerSafeEgressProbeRoute } from './modules/admin/safe-egress-probe.js'
+import { registerSandboxEgressRoutes, type SandboxEgressRouteOptions } from './modules/admin/sandbox-egress.js'
+import { registerSandboxStatusRoute, type SandboxStatusRouteOptions } from './modules/admin/sandbox-status.js'
+import { registerSandboxEnableRoute, type SandboxEnableRouteOptions } from './modules/admin/sandbox-enable.js'
+import { registerSandboxDisableRoute, type SandboxDisableRouteOptions } from './modules/admin/sandbox-disable.js'
 import type { SafeEgressReadSettings } from '@gugu/core/preferences/safe-egress'
 import { registerOnboardingResetGuideRoute } from './modules/onboarding/reset-guide.js'
 import { registerSystemLogRoutes, type SystemLogOptions } from './modules/admin/system-logs.js'
@@ -191,6 +202,7 @@ import { registerScheduledTaskDeliveryTargets, type createScheduledTaskDeliveryT
 import { registerScheduledTaskTestNotify, type ScheduledTaskTestNotifier } from './modules/scheduled-tasks/test-notify.js'
 import { registerScheduledTaskWrites } from './modules/scheduled-tasks/task-write-routes.js'
 import type { createPostgresTaskWrites } from './modules/scheduled-tasks/persistence/task-writes-postgres.js'
+import { registerScheduledTaskRunNow, type ScheduledTaskRunNow } from './modules/scheduled-tasks/run-now.js'
 import { registerNotificationRoutes } from './modules/notifications/routes/notifications.js'
 import { registerTrackRoute } from './modules/site/routes/track.js'
 import { registerAdminFeedbackRoute, registerFeedbackRoute, type AdminFeedbackOperations } from './modules/feedback/feedback.js'
@@ -222,7 +234,7 @@ import {
 } from './domains/files/file-upload.js'
 import { registerFolderReadRoutes, type FolderReadOperations } from './domains/files/folder-reads.js'
 import type { AdminAuthAdapter } from './domains/admin/admin-auth.js'
-import { registerAdminUsersRoute, type AdminUsersOptions } from './domains/admin/admin-users.js'
+import { registerAdminUsersRoute, registerAdminUserRiskRoute, type AdminUsersOptions, type AdminUserRiskOptions } from './modules/admin/users.js'
 import {
   registerAdminUserStatusRoutes,
   type AdminUserStatusRouteOptions,
@@ -243,7 +255,6 @@ import {
   registerAdminUserSecurityEventRoute,
   type AdminUserSecurityEventOptions,
 } from './domains/admin/admin-user-security-events.js'
-import { registerAdminUserRiskRoute, type AdminUserRiskOptions } from './domains/admin/admin-user-risk.js'
 import { registerAdminAgentUsageRoute, type AgentUsageOptions } from './modules/admin/agent-usage.js'
 import { registerAdminConfigRoutes, type AdminConfigOptions } from './domains/admin/admin-config.js'
 import { registerAdminLlmPresetRoutes, type AdminLlmPresetOptions } from './domains/admin/admin-llm-presets.js'
@@ -252,6 +263,7 @@ import { registerAgentMessageHistoryRoute } from './domains/agent-sessions/agent
 import type { AgentMessagePageOptions } from './domains/agent-sessions/persistence/agent-message-history.js'
 import { registerAgentInteractionSessionRoute } from './domains/agent-sessions/agent-interaction-session-route.js'
 import { registerAgentInteractionRespondRoute, type AgentInteractionRespondService } from './domains/agent-sessions/agent-interaction-respond.js'
+import { registerAgentSecretInteractionRoutes, type AgentSecretInteractionService } from './domains/agent-sessions/agent-secret-interaction-route.js'
 import { registerAgentSessionRoute } from './domains/agent-sessions/agent-sessions.js'
 import { registerAgentChatRoutes, type AgentChatService } from './domains/agent-sessions/agent-chat-route.js'
 import { registerAgentSessionRefreshRoute } from './domains/agent-sessions/agent-session-refresh.js'
@@ -384,6 +396,7 @@ export interface WebUiOptions {
   scheduledTaskDeliveryTargets?: ReturnType<typeof createScheduledTaskDeliveryTargets>
   scheduledTaskTestNotify?: ScheduledTaskTestNotifier
   scheduledTaskWrites?: ReturnType<typeof createPostgresTaskWrites>
+  scheduledTaskRunNow?: ScheduledTaskRunNow
   notifications?: NotificationOptions
   track?: TrackOptions
   feedback?: FeedbackOptions
@@ -403,6 +416,7 @@ export interface WebUiOptions {
   readAgentSessionState?: (ownerId: string, sessionId: number) => Promise<{ executionState: string; pendingMessageCount: number; active: boolean } | null>
   agentChat?: AgentChatService
   agentInteractionRespond?: AgentInteractionRespondService
+  agentSecretInteraction?: AgentSecretInteractionService
   lookupAgentInteractionSession?: (ownerId: string, promptId: number) => Promise<{ session_id: number }>
   refreshAgentSession?: (ownerId: string, sessionId: number) => Promise<{ id: number; context_epoch: number } | null>
   agentPendingQueueReads?: {
@@ -477,6 +491,7 @@ export interface WebUiOptions {
   qqConnect?: Omit<QqConnectRouteOptions, 'requireUser' | 'ownerIdFromRequest'>
   feishuConnect?: Omit<FeishuConnectRouteOptions, 'requireUser' | 'ownerIdFromRequest'>
   wechatConnect?: Omit<WechatConnectRouteOptions, 'requireUser' | 'ownerIdFromRequest'>
+  telegramConnect?: Omit<TelegramConnectRouteOptions, 'requireUser' | 'ownerIdFromRequest'>
   mcpStatus?: Omit<McpStatusOptions, 'requireUser'>
   mcpServerCreate?: Omit<McpServerCreateRouteOptions, 'requireUser' | 'ownerIdFromRequest'>
   mcpServerConfig?: Omit<McpServerRoutesOptions, 'requireUser' | 'ownerIdFromRequest'>
@@ -492,6 +507,10 @@ export interface WebUiOptions {
   voiceAvailability?: Omit<VoiceAvailabilityOptions, 'requireUser' | 'ownerIdFromRequest'>
   clearAgentMemory?: { clear: MemoryClearOptions['clear'] }
   terminalDelete?: Omit<TerminalDeleteOptions, 'requireUser' | 'ownerIdFromRequest'>
+  terminalCreate?: Omit<TerminalCreateRouteOptions, 'requireUser' | 'ownerIdFromRequest'>
+  terminalReopen?: Omit<TerminalReopenRouteOptions, 'requireUser' | 'ownerIdFromRequest'>
+  terminalLifecycle?: Omit<TerminalLifecycleRouteOptions, 'requireUser' | 'ownerIdFromRequest'>
+  terminalWebsocket?: Omit<TerminalWebsocketOptions, 'auth'>
   terminalMetrics?: Omit<TerminalMetricsOptions, 'requireUser' | 'ownerIdFromRequest'>
   terminalList?: Omit<TerminalListOptions, 'requireUser' | 'ownerIdFromRequest'>
   terminalDetail?: Omit<TerminalDetailOptions, 'requireUser' | 'ownerIdFromRequest'>
@@ -552,11 +571,16 @@ export interface WebUiOptions {
   adminIndexRebuild?: Omit<AdminIndexRebuildRouteOptions, 'requireAdmin'>
   safeEgressUpdate?: Omit<SafeEgressUpdateOptions, 'requireAdmin'>
   safeEgressProbe?: Omit<Parameters<typeof registerSafeEgressProbeRoute>[1], 'requireAdmin'>
+  sandboxEgress?: Omit<SandboxEgressRouteOptions, 'requireAdmin'>
+  sandboxStatus?: Omit<SandboxStatusRouteOptions, 'requireAdmin'>
+  sandboxEnable?: Omit<SandboxEnableRouteOptions, 'requireAdmin'>
+  sandboxDisable?: Omit<SandboxDisableRouteOptions, 'requireAdmin'>
   emailRecipientCount?: { read(): Promise<{ count: number; locale_counts: Record<string, number> }> }
   storageQuotaStatus?: Omit<StorageQuotaStatusOptions, 'requireAdmin'>
   serviceStatus?: { read: ReturnType<typeof createServiceStatusReader> }
   serviceRestart?: ServiceRestartOperations
   adminMaintenanceStatus?: { available(): boolean; read: ReturnType<typeof createAdminMaintenanceStatus> }
+  accountMemoryCleanup?: ReturnType<typeof createAccountMemoryCleanupRuntime>
   storageLiveTotals?: { read(): Promise<{ categories: Record<string, { object_count: number; total_bytes: number }> }> }
   voicePresetsMutate?: Omit<VoicePresetMutationOptions, 'requireAdmin'>
   voicePresetsRead?: Omit<VoicePresetsReadOptions, 'requireAdmin'>
@@ -566,6 +590,7 @@ export interface WebUiOptions {
   adminUserSettings?: Omit<AdminUserSettingsOptions, 'requireAdmin'>
   adminUserDelete?: Omit<AdminUserDeleteOptions, 'requireAdmin'>
   adminAgentCapabilities?: { read(): Promise<AgentCapabilityCatalog> }
+  adminAgentStateLabels?: Omit<Parameters<typeof registerAgentStateLabelRoutes>[1], 'requireAdmin'>
   notificationBroadcast?: { broadcast(input: NotificationBroadcastInput): Promise<{ ok: true; id: number }> }
   notificationAdminHistory?: Omit<NotificationAdminHistoryOptions, 'requireAdmin'>
   adminAgentUsage?: Omit<AgentUsageOptions, 'requireAdmin'>
@@ -717,7 +742,7 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
   if (options.dataExportDownload) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => registerDataExportDownloadRoutes(routes, userFromRequest, options.dataExportDownload!))
   }
-  if (options.secretPromptCancel) {
+  if (options.secretPromptCancel && !options.agentSecretInteraction) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => registerSecretPromptCancelRoute(routes, {
       ...options.secretPromptCancel!, requireUser: async (request) => { void userFromRequest(request) },
       ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId,
@@ -778,6 +803,12 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => registerQqConnectRoutes(routes, {
       ...options.qqConnect!, requireUser: async (request) => { void userFromRequest(request) },
       ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId,
+    }))
+  }
+  if (options.telegramConnect) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerTelegramConnectRoutes(routes, {
+      ...options.telegramConnect!, requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
     }))
   }
   if (options.userBotUpdate) {
@@ -895,6 +926,27 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => registerTerminalDeleteRoute(routes, { ...options.terminalDelete!,
       requireUser: async request => { void userFromRequest(request) },
       ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId }))
+  }
+  if (options.terminalCreate) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerTerminalCreateRoute(routes, {
+      ...options.terminalCreate!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
+    }))
+  }
+  if (options.terminalReopen) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerTerminalReopenRoute(routes, {
+      ...options.terminalReopen!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
+    }))
+  }
+  if (options.terminalLifecycle) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerTerminalLifecycleRoutes(routes, {
+      ...options.terminalLifecycle!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
+    }))
   }
   if (options.terminalMetrics) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => registerTerminalMetricsRoute(routes, {
@@ -1138,6 +1190,10 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) =>
       registerScheduledTaskWrites(routes, userFromRequest, options.scheduledTaskWrites!),
     )
+  if (options.scheduledTaskRunNow)
+    registerProtectedDomain(app, auth, (routes, userFromRequest) =>
+      registerScheduledTaskRunNow(routes, userFromRequest, options.scheduledTaskRunNow!),
+    )
   if (options.notifications)
     registerProtectedDomain(app, auth, (routes, userFromRequest) =>
       registerNotificationRoutes(routes, userFromRequest, options.notifications!),
@@ -1173,7 +1229,7 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
       }),
     )
   }
-  if (options.agentChat || options.agentInteractionRespond || options.listAgentSessions || options.readAgentSessionState || options.lookupAgentInteractionSession || options.refreshAgentSession
+  if (options.agentChat || options.agentInteractionRespond || options.agentSecretInteraction || options.listAgentSessions || options.readAgentSessionState || options.lookupAgentInteractionSession || options.refreshAgentSession
     || options.agentPendingQueueReads || options.agentPendingQueuePatch || options.agentPendingQueueReplace || options.agentPendingQueueClaims
     || options.renameAgentSession || options.deleteAgentSession || options.listAgentMessages || options.locateAgentMessage
     || options.readAgentToolEventDetails || options.agentFilesystemAuthorization || options.agentMisc) {
@@ -1183,6 +1239,7 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
         const userIdFromRequest = (request: FastifyRequest) => userFromRequest(request).requestContext.data.ownerId
         if (options.agentChat) registerAgentChatRoutes(routes, { requireUser, userIdFromRequest, service: options.agentChat })
         if (options.agentInteractionRespond) registerAgentInteractionRespondRoute(routes, { requireUser, userIdFromRequest, service: options.agentInteractionRespond })
+        if (options.agentSecretInteraction) registerAgentSecretInteractionRoutes(routes, { requireUser, userIdFromRequest, service: options.agentSecretInteraction })
         if (options.agentFilesystemAuthorization) {
           registerAgentFilesystemAuthorizationRoutes(routes, {
             requireUser,
@@ -1501,6 +1558,10 @@ export function createApp(options: WebUiOptions) {
   })
   registerSiteConfigRoute(app, options.publicSiteConfig ?? DEFAULT_PUBLIC_SITE_CONFIG)
   registerUserRoutes(app, options)
+  if (options.terminalWebsocket && options.userAuth) {
+    const closeTerminalWebsocket = registerTerminalWebsocket(app.server, { ...options.terminalWebsocket, auth: options.userAuth })
+    app.addHook('onClose', closeTerminalWebsocket)
+  }
   if (options.dataExportDownload) registerDataExportBrowserDownloadRoute(app, options.dataExportDownload)
   options.adminAuth?.registerRoutes(app)
   if (options.adminAuth && options.adminConfig) {
@@ -1580,7 +1641,13 @@ export function createApp(options: WebUiOptions) {
   if (options.adminAuth && options.storageQuotaStatus) registerStorageQuotaStatusRoute(app, { ...options.storageQuotaStatus, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.serviceStatus) registerServiceStatusRoute(app, { ...options.serviceStatus, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.serviceRestart) registerServiceRestartRoute(app, { ...options.serviceRestart, requireAdmin: options.adminAuth.requireAdmin })
-  if (options.adminAuth && options.adminMaintenanceStatus) registerAdminMaintenanceStatusRoutes(app, { ...options.adminMaintenanceStatus, requireAdmin: options.adminAuth.requireAdmin })
+  if (options.adminAuth && options.adminMaintenanceStatus) registerAdminMaintenanceStatusRoutes(app, {
+    ...options.adminMaintenanceStatus, requireAdmin: options.adminAuth.requireAdmin,
+    readAccountMemoryCleanup: options.accountMemoryCleanup?.status,
+  })
+  if (options.adminAuth && options.accountMemoryCleanup) registerAccountMemoryCleanupRoutes(app, {
+    requireAdmin: options.adminAuth.requireAdmin, runtime: options.accountMemoryCleanup,
+  })
   if (options.adminAuth && options.adminUpdateMode) registerAdminUpdateStatusRoute(app, { mode: options.adminUpdateMode, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.storageLiveTotals) registerStorageLiveTotalsRoute(app, { ...options.storageLiveTotals, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.safeEgressRead) registerSafeEgressReadRoute(app, { ...options.safeEgressRead, requireAdmin: options.adminAuth.requireAdmin })
@@ -1624,6 +1691,10 @@ export function createApp(options: WebUiOptions) {
   if (options.adminAuth && options.adminIndexRebuild) registerAdminIndexRebuildRoute(app, { ...options.adminIndexRebuild, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.safeEgressUpdate) registerSafeEgressUpdateRoute(app, { ...options.safeEgressUpdate, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.safeEgressProbe) registerSafeEgressProbeRoute(app, { ...options.safeEgressProbe, requireAdmin: options.adminAuth.requireAdmin })
+  if (options.adminAuth && options.sandboxEgress) registerSandboxEgressRoutes(app, { ...options.sandboxEgress, requireAdmin: options.adminAuth.requireAdmin })
+  if (options.adminAuth && options.sandboxStatus) registerSandboxStatusRoute(app, { ...options.sandboxStatus, requireAdmin: options.adminAuth.requireAdmin })
+  if (options.adminAuth && options.sandboxEnable) registerSandboxEnableRoute(app, { ...options.sandboxEnable, requireAdmin: options.adminAuth.requireAdmin })
+  if (options.adminAuth && options.sandboxDisable) registerSandboxDisableRoute(app, { ...options.sandboxDisable, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.voicePresetsMutate) registerVoicePresetMutationRoutes(app, { ...options.voicePresetsMutate, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.voicePresetsRead) registerVoicePresetsReadRoute(app, { ...options.voicePresetsRead, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.adminSystemLogs) registerSystemLogRoutes(app, { ...options.adminSystemLogs, requireAdmin: options.adminAuth.requireAdmin })
@@ -1636,6 +1707,10 @@ export function createApp(options: WebUiOptions) {
   })
   if (options.adminAuth && options.adminAgentCapabilities) registerAgentCapabilityCatalogRoute(app, {
     ...options.adminAgentCapabilities,
+    requireAdmin: options.adminAuth.requireAdmin,
+  })
+  if (options.adminAuth && options.adminAgentStateLabels) registerAgentStateLabelRoutes(app, {
+    ...options.adminAgentStateLabels,
     requireAdmin: options.adminAuth.requireAdmin,
   })
   if (options.adminAuth && options.notificationBroadcast) registerNotificationBroadcastRoute(app, { ...options.notificationBroadcast, requireAdmin: options.adminAuth.requireAdmin })

@@ -1,11 +1,11 @@
 import { openLocalFile, UnsafeLocalPathError } from '@gugu/fs/node'
-import type { MemoryRagStorageReader } from '@gugu/core/agent'
+import type { MemoryRagStorageReader } from '@gugu/core/agent/rag'
 
 const OWNER = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 const COMPONENT = '(?:[A-Za-z0-9._~-]|%[0-9a-fA-F]{2})+'
 const MAX_TEXT_CHARS = 50_000_000
 const SAFE_KEYS = new RegExp(
-  `^${OWNER}/\\.agent/(?:rag/memory/index\\.json|(?:profile|pattern|facts|summary|stance|lens)\\.json|(?:facts|summary)\\.md|summary\\.ts|memory\\.md|daily\\.md|(?:memory|pattern)_vec\\.json|knowledge/vectors\\.json|im/${COMPONENT}/${COMPONENT}/(?:groups|platform-users)/${COMPONENT}/(?:profile|pattern|summary)\\.json|im/${COMPONENT}/${COMPONENT}/(?:groups|platform-users)/${COMPONENT}/(?:daily|memory)\\.md)$`,
+  `^${OWNER}/\\.agent/(?:rag/memory/index\\.json|(?:profile|pattern|facts|summary|stance|lens)\\.json|(?:facts|summary)\\.md|summary\\.ts|memory\\.md|daily\\.md|(?:memory|pattern)_vec\\.json|knowledge/vectors\\.json|im/${COMPONENT}/${COMPONENT}/groups/${COMPONENT}/members\\.json|im/${COMPONENT}/${COMPONENT}/(?:groups|platform-users)/${COMPONENT}/(?:profile|pattern|summary)\\.json|im/${COMPONENT}/${COMPONENT}/(?:groups|platform-users)/${COMPONENT}/(?:daily|memory)\\.md)$`,
   'u',
 )
 

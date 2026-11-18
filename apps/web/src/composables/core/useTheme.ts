@@ -93,15 +93,27 @@ export function initializeTheme(forcedTheme?: ResolvedTheme, forcedFamily?: Them
   watchSystem()
 }
 
+export function initializeDesktopTheme() {
+  hydrate()
+  preference.value = 'system'
+  family.value = 'mono'
+  apply()
+  watchSystem()
+}
+
+export function applyThemePalette(nextPalette: unknown) {
+  palette.value = normalizePalette(nextPalette)
+  localStorage.setItem('gugu-palette', palette.value)
+  apply()
+}
+
 export function applyServerTheme(nextTheme: unknown, nextFamily: unknown, nextPalette: unknown) {
   hydrate()
   preference.value = nextTheme === 'dark' || nextTheme === 'system' ? nextTheme : 'light'
   family.value = nextFamily === 'mono' ? 'mono' : 'glass'
-  palette.value = normalizePalette(nextPalette)
   localStorage.setItem('gugu-theme', preference.value)
   localStorage.setItem('gugu-theme-family', family.value)
-  localStorage.setItem('gugu-palette', palette.value)
-  apply()
+  applyThemePalette(nextPalette)
   watchSystem()
 }
 
@@ -126,13 +138,10 @@ export function useTheme(writePreference?: ThemePreferenceWriter) {
   }
 
   function setPalette(value: ThemePalette) {
-    const next = normalizePalette(value)
-    palette.value = next
-    localStorage.setItem('gugu-palette', next)
-    apply()
+    applyThemePalette(value)
     return writePreference
-      ? writePreference({ palette: next })
-      : preferencesApi.update({ palette: next } as any).catch(() => {})
+      ? writePreference({ palette: palette.value })
+      : preferencesApi.update({ palette: palette.value } as any).catch(() => {})
   }
 
   return {

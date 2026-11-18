@@ -6,7 +6,7 @@ import type { ChatMessage } from '@/components/common/gugu-chat/chatTypes'
 import { agentApi } from '@/services/api'
 
 vi.mock('@/services/api', () => ({ agentApi: { getToolEventDetails: vi.fn() } }))
-vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key, te: () => false }) }))
+vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key, te: (key: string) => key === 'toolNames.list_projects' }) }))
 
 const mounted: Array<{ app: ReturnType<typeof createApp>; host: HTMLElement }> = []
 function mountBubble(overrides: Partial<ChatMessage> = {}) {
@@ -36,6 +36,13 @@ async function settle() { await Promise.resolve(); await nextTick() }
 afterEach(() => {
   for (const { app, host } of mounted.splice(0)) { app.unmount(); host.remove() }
   vi.clearAllMocks()
+})
+
+it('管理员覆盖优先显示，只有历史默认标签时沿用当前语言', () => {
+  const custom = mountBubble(Object.assign({ toolName: 'list_projects' }, { toolLabelOverride: '正在核对项目' }))
+  expect(custom.host.querySelector('.tool-event-label')?.textContent).toBe('正在核对项目')
+  const localized = mountBubble({ toolName: 'list_projects', toolLabel: '查询项目' })
+  expect(localized.host.querySelector('.tool-event-label')?.textContent).toBe('toolNames.list_projects')
 })
 
 it('详情返回前保持折叠，完整输入和结果就绪后只展开一次', async () => {

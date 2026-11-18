@@ -35,6 +35,7 @@ function roundStats(rounds: readonly Readonly<Record<string, string | number | n
 export async function recordAgentUsage(
   client: PoolClient, identity: RunIdentity, usage: Usage, config: AgentUsageConfig,
   rounds: readonly Readonly<Record<string, string | number | null>>[], toolsUsed: readonly string[],
+  scenario: 'chat' | 'scheduled' | 'reflection' = 'chat',
 ): Promise<{ input: number; output: number }> {
   let input = count(usage.input), output = count(usage.output)
   const read = count(usage.cacheRead), write = count(usage.cacheWrite)
@@ -42,11 +43,13 @@ export async function recordAgentUsage(
   if (!config.model || !config.provider || typeof config.isByok !== 'boolean'
     || typeof config.byokEnabled !== 'boolean' || typeof config.localDeployment !== 'boolean') throw new TypeError('Agent 记账配置无效')
   const owner = await client.query<{ token_limit_6h: number | null; quota_window_started_at: Date | null }>(
-    `SELECT u.token_limit_6h, u.quota_window_started_at FROM users u
+    scenario === 'scheduled'
+      ? 'SELECT u.token_limit_6h, u.quota_window_started_at FROM users u WHERE u.id = $1 FOR UPDATE OF u'
+      : `SELECT u.token_limit_6h, u.quota_window_started_at FROM users u
       JOIN conversation_sessions s ON s.user_id = u.id WHERE u.id = $1 AND s.id = $2 FOR UPDATE OF u`,
-    [identity.ownerId, identity.sessionId],
+    scenario === 'scheduled' ? [identity.ownerId] : [identity.ownerId, identity.sessionId],
   )
-  if (!owner.rows[0]) throw new Error('Agent 会话不存在')
+  if (!owner.rows[0]) throw new Error(scenario === 'scheduled' ? '定时任务用户不存在' : 'Agent 会话不存在')
   if (!(input || output || read || write)) return { input: 0, output: 0 }
   const user = owner.rows[0]
   const limit = user.token_limit_6h === -1 ? null : user.token_limit_6h ?? config.defaultLimit6h
@@ -74,8 +77,9 @@ export async function recordAgentUsage(
   const stats = roundStats(rounds, input, read, write)
   await client.query(`INSERT INTO agent_usage (user_id, session_id, tokens_in, tokens_out, cache_read, cache_write,
     cache_round_stats, model, provider, is_byok, tools_used, scenario, input_source, created_at)
-    VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,'chat','web',clock_timestamp())`,
-  [identity.ownerId, identity.sessionId, input, output, read, write, stats ? JSON.stringify(stats) : null,
-    config.model, config.provider, config.isByok, toolsUsed.length ? JSON.stringify(toolsUsed) : null])
+    VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,$12,$13,clock_timestamp())`,
+  [identity.ownerId, scenario === 'scheduled' ? null : identity.sessionId, input, output, read, write, stats ? JSON.stringify(stats) : null,
+    config.model, config.provider, config.isByok, toolsUsed.length ? JSON.stringify(toolsUsed) : null,
+    scenario, scenario === 'scheduled' ? null : 'web'])
   return { input, output }
 }

@@ -1,4 +1,12 @@
 {
+  "apps/web-host/tests/files/file-upload-postgres.test.ts": {
+    "domain": "file-upload",
+    "layer": "L2",
+    "owner": "apps/web-host/src/domains/files",
+    "productionEntry": "共享 Local 上传与 Web Agent 下载端口",
+    "keyBehavior": "隔离 PostgreSQL 与 Local 文件验证覆盖、配额、工作区落点与变更拒绝；下载提交断连后保留已提交或已替换文件、清理可证实的回滚残留，恢复读取失败时保留证据",
+    "ci": "node-webui"
+  },
   "apps/web-host/tests/files/local-file-read.test.ts": {
     "domain": "files",
     "layer": "L1",

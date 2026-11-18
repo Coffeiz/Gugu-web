@@ -327,7 +327,7 @@ async function readOwnerDocuments(ownerId: string, storage: MemoryRagStorageRead
   return { documents, source: hasValidIndex ? "owner-index+daily" : "owner-files+daily" };
 }
 
-function groupScopePrefix(ownerId: string, scope: AuthorizedMemoryScope): string {
+export function groupScopePrefix(ownerId: string, scope: AuthorizedMemoryScope): string {
   const owner = safeComponent(ownerId, "owner");
   const platform = safeComponent(String(scope.platform || ""), "platform");
   const bot = safeComponent(String(scope.botId || ""), "botId");

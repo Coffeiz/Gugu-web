@@ -3,7 +3,7 @@
     <!-- 栏 1：按日期分组的便签列表（竖列）。数据走 useMindStore 的 timeline（filterQ 已在
          store 内生效），与现行 NotesView 共享同一份数据源与筛选状态。 -->
     <section class="ntp-list">
-      <div class="ntp-list-surface">
+      <div class="ntp-list-surface glass-card">
         <DateIndex
           v-if="dateIndexGroups.length"
           class="ntp-date-index"
@@ -93,7 +93,7 @@
 
     <!-- 栏 2+3：阅读窗格与信息栏合并为同一块玻璃面板，中间只用内容色细分隔线 -->
     <section
-      class="ntp-detail"
+      class="ntp-detail glass-card"
       :class="[selected?.color ? `tint-${selected.color}` : '', { empty: !selected }]"
     >
       <div ref="readingRef" class="ntp-reading" :class="{ editing }">
@@ -789,11 +789,6 @@ function onListScroll() {
   flex: 1; min-width: 0; min-height: 0;
   display: flex; flex-direction: column;
   padding: 8px 10px 10px;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-lg);
-  background: var(--glass-bg);
-  box-shadow: var(--glass-shadow);
-  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
 }
 .ntp-list-surface > .ntp-date-index {
   flex: none; position: relative; z-index: 2;
@@ -841,12 +836,12 @@ function onListScroll() {
   padding: 14px 6px 8px; font-size: 12px; font-weight: 600; color: var(--text-secondary);
 }
 .ntp-day-label:first-child { padding-top: 4px; }
-.ntp-day-label .n { font-weight: 400; opacity: 0.7; }
+.ntp-day-label .n { font-weight: 400; opacity: var(--mind-notes-meta-opacity, 0.7); }
 .ntp-item {
   position: relative; display: block; width: 100%; text-align: left;
   padding: 11px 13px 10px; margin-bottom: 8px;
   /* 不能加 overflow:hidden——颜色弹层要从卡片向上弹出，裁剪会把弹层吃掉 */
-  background: var(--surface-card-solid); border: 1px solid transparent; border-radius: var(--radius-md);
+  background: var(--mind-notes-list-card-bg); border: 1px solid transparent; border-radius: var(--radius-sm);
   box-shadow: var(--elevation-card); cursor: pointer; color: inherit; font-family: inherit;
   transition: var(--card-motion), box-shadow var(--motion-hover-card) ease;
 }
@@ -877,7 +872,7 @@ function onListScroll() {
 .ntp-item.tint-blue  { background: var(--note-paper-blue); }
 .ntp-item.tint-teal  { background: var(--note-paper-teal); }
 .ni-head { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
-.ni-time { font-size: 11px; color: var(--text-secondary); opacity: 0.85; font-variant-numeric: tabular-nums; flex: none; }
+.ni-time { font-size: 11px; color: var(--text-secondary); opacity: var(--mind-notes-meta-opacity, 0.85); font-variant-numeric: tabular-nums; flex: none; }
 .ni-title {
   flex: 1; min-width: 0; font-size: 13.5px; line-height: 1.4; font-weight: 600; color: var(--text-primary);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-bottom: 1px; margin-bottom: -1px;
@@ -930,14 +925,12 @@ function onListScroll() {
 .ntp-detail {
   flex: 1; min-width: 0; min-height: 0;
   display: grid; grid-template-columns: minmax(0, 1fr) 264px;
-  background: var(--ntp-detail-note-paper);
-  border: 1px solid var(--glass-border); border-radius: var(--radius-lg);
-  box-shadow: var(--glass-shadow);
-  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
   overflow: hidden;
-  --ntp-detail-note-paper: var(--glass-bg);
 }
-.ntp-detail[class*="tint-"] { border-color: color-mix(in srgb, var(--glass-border) 90%, var(--ntp-detail-note-paper)); }
+.ntp-detail[class*="tint-"] {
+  --glass-card-background: var(--ntp-detail-note-paper);
+  border-color: color-mix(in srgb, var(--glass-card-border) 90%, var(--ntp-detail-note-paper));
+}
 .ntp-detail.tint-amber { --ntp-detail-note-paper: var(--note-paper-amber); }
 .ntp-detail.tint-coral { --ntp-detail-note-paper: var(--note-paper-coral); }
 .ntp-detail.tint-blue  { --ntp-detail-note-paper: var(--note-paper-blue); }
@@ -986,6 +979,9 @@ function onListScroll() {
 .rp-foot .app-action-button.is-secondary,
 .rp-editor :deep(.app-action-button.is-secondary) {
   --action-secondary-bg: var(--surface-card-solid);
+}
+html[data-theme='dark'] .rp-foot .app-action-button.is-secondary,
+html[data-theme='dark'] .rp-editor :deep(.app-action-button.is-secondary) {
   --action-secondary-border: color-mix(in srgb, var(--content-primary) 24%, transparent);
   --action-secondary-border-hover: color-mix(in srgb, var(--content-primary) 40%, transparent);
 }
@@ -1046,12 +1042,12 @@ function onListScroll() {
 }
 .info-title { font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 10px; }
 .kv { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 4px 0; }
-.kv .k { font-size: 12px; color: var(--text-secondary); opacity: 0.8; flex: none; }
+.kv .k { font-size: 12px; color: var(--text-secondary); opacity: var(--mind-notes-meta-opacity, 0.8); flex: none; }
 .kv .v { font-size: 12.5px; color: var(--text-primary); font-variant-numeric: tabular-nums; }
 .record-date-value { display: flex; align-items: center; justify-content: flex-end; width: 98px; flex: 0 0 98px; min-width: 0; }
 .record-date-value :deep(.dp-wrap) { width: 100%; }
 .record-date-value :deep(.dp-input) { min-height: 30px; padding: 5px 8px; box-sizing: border-box; font-size: 12px; }
-.info-empty { font-size: 12px; color: var(--text-secondary); opacity: 0.75; line-height: 1.6; }
+.info-empty { font-size: 12px; color: var(--text-secondary); opacity: var(--mind-notes-meta-opacity, 0.75); line-height: 1.6; }
 </style>
 <!-- 只读正文的排版结构（np-tasks / np-quote / 代码块…）是全局样式，NoteCard.vue 用同一份；
      本页独立于 Mind 路由挂载时也要加载它，否则任务/引用块退化为裸列表 -->

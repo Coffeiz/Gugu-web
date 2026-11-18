@@ -130,14 +130,13 @@
   --space-10: var(--space-xl);
   --space-12: var(--space-xl);
 
-  /* ── Shape ─────────────────────────────────────────────────────
-     Four geometric radii + pill = five shapes. xl is a compatibility alias. */
-  --radius-xs: 6px;
-  --radius-sm: 10px;
-  --radius-md: 14px;
-  --radius-lg: 20px;
+  /* 四档常规圆角、胶囊，以及紧凑控件使用的 6px 圆角。 */
+  --radius-compact: 6px;
+  --radius-xs: 10px;
+  --radius-sm: 14px;
+  --radius-md: 20px;
+  --radius-lg: 28px;
   --radius-pill: 999px;
-  --radius-xl: var(--radius-lg);
 
   /* Raw geometry. Components should prefer semantic/component aliases. */
   --sidebar-width: 200px;

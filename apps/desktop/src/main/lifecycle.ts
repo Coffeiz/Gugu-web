@@ -34,12 +34,12 @@ export class DesktopLifecycle {
       })
     return this.starting
   }
-  request<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+  request<T = unknown>(method: string, params: Record<string, unknown> = {}, operationId?: string): Promise<T> {
     if (this.phase !== 'running' || !this.current)
       return Promise.reject(
         new DesktopError('closed', '本地运行时正在暂停或退出，请稍后重读数据'),
       )
-    return this.current.request<T>(method, params)
+    return this.current.request<T>(method, params, operationId)
   }
   pause(): Promise<void> {
     if (this.stopping) return this.stopping

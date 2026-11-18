@@ -38,6 +38,9 @@ import { createSqlMindCanvasRelationDeleteRuntime } from '../mind/relation-delet
 import { createMindRefNodeCreator } from '../mind/ref-node-create.js'
 import { createSqlMindRefNodeCreateRuntime } from '../mind/ref-node-create-sql.js'
 import { createDesktopAppearanceService } from '../preferences/desktop-appearance.js'
+import { setDesktopProjectDeleted } from '../projects/desktop-board.js'
+import { projectResponse } from '../projects/project-projection.js'
+import { projectRecord } from '../data/codec.js'
 import { createKyselyPreferenceDocumentStore } from '../preferences/document-store.js'
 import { createKyselyOnboardingStore } from '../onboarding/store.js'
 import { createOnboardingService } from '../onboarding/service.js'
@@ -91,6 +94,16 @@ try {
           if (!job.operationId) throw new CoreError('invalid_request', '偏好写入必须提供稳定操作标识')
           const outcome = await runtime.operationWithTransaction(context, job.operationId, job.method, job.params,
             tx => createDesktopAppearanceService(createKyselyPreferenceDocumentStore(tx, runtime.backend)).update(ownerId, job.params.patch), { signal })
+          result = outcome.result
+        } else if (job.method === 'projects.board.delete' || job.method === 'projects.board.restore') {
+          validateCommandParams(job.method, job.params)
+          if (!job.operationId) throw new CoreError('invalid_request', '项目写入必须提供稳定操作标识')
+          const deleted = job.method === 'projects.board.delete'
+          const outcome = await runtime.operationWithTransaction(context, job.operationId, job.method, job.params,
+            async (tx, owner) => {
+              const project = await setDesktopProjectDeleted(tx, owner, job.params.id, deleted)
+              return deleted ? null : projectResponse(projectRecord(project), 0)
+            }, { signal })
           result = outcome.result
         } else if (job.method === 'onboarding.desktop.get') {
           validateCommandParams(job.method, job.params)

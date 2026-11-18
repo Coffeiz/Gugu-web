@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto'
-import { Executor, createMxcExecutor } from '@gugu/core/executor/platform'
+import { Executor, createMxcExecutor } from '@gugu/sandbox/platform'
 import { classifyShellCommandRisk } from '@gugu/core/agent/security/shell-command-risk'
 import type { TerminalCommandInput } from '@gugu/core/terminals/command'
 
 /** 目录与环境只能来自可信 Host 挂载解析器，不能从命令参数构造授权。 */
 export function createTerminalMxcCommand(resolveMounts: (owner: string, terminal: string, cwd: string) => Promise<{
   cwd: string; readonlyPaths: string[]; readwritePaths: string[]; environment: Record<string, string>; close(): Promise<void>
-}>, publishOutput?: (owner: string, terminal: string, requestId: string, command: string, stream: 'stdout' | 'stderr', text: string) => Promise<void>) {
+}>, publishOutput?: (owner: string, terminal: string, requestId: string, command: string, stream: 'stdout' | 'stderr', text: string) => Promise<void>, networkProxy?: string) {
   let executor: Promise<Executor> | undefined
+  let executorProxy: string | undefined
   return async (owner: string, terminal: string, requestId: string, input: TerminalCommandInput, confirmed: boolean, signal: AbortSignal) => {
     const mounts = await resolveMounts(owner, terminal, input.cwd)
     try {
@@ -23,9 +24,16 @@ export function createTerminalMxcCommand(resolveMounts: (owner: string, terminal
     const publish = (stream: 'stdout' | 'stderr', text: string) => {
       if (text && publishOutput) pending = pending.then(() => publishOutput(owner, terminal, requestId, command, stream, text)).catch(() => {})
     }
-    executor ??= createMxcExecutor().then(backend => new Executor([backend])).catch(error => { executor = undefined; throw error })
+    if (!executor || executorProxy !== networkProxy) {
+      const created = createMxcExecutor(networkProxy).then(backend => new Executor([backend]))
+      let guarded: Promise<Executor>
+      guarded = created.catch(error => { if (executor === guarded) { executor = undefined; executorProxy = undefined } throw error })
+      executorProxy = networkProxy
+      executor = guarded
+    }
     let result
-    try { result = await (await executor).execute(request, {
+    const currentExecutor = executor
+    try { result = await (await currentExecutor).execute(request, {
       requestId: id, backend: 'mxc', command, cwd: mounts.cwd, timeoutMs,
       confirmed, readonlyPaths: mounts.readonlyPaths, readwritePaths: mounts.readwritePaths,
       environment: mounts.environment, maxOutputBytes: Math.min(1048576, input.maxOutputChars * 4),

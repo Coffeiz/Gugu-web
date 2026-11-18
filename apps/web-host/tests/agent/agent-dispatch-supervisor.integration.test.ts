@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { createRedisAgentCancellationCommands } from '../../src/adapters/redis-events.js'
 import { createRedisLiveSubscription } from '../../src/adapters/redis-live-subscription.js'
-import { createAgentDispatchSupervisor } from '../../src/domains/agent-sessions/agent-dispatch-supervisor.js'
+import { createAgentDispatchSupervisor } from '@gugu/core/agent'
 const url = process.env.GUGU_WEBUI_TEST_REDIS_URL
 
 test('Redis 唤醒跨实例扫描，通知丢失时定期扫描仍恢复', { skip: !url && '需要隔离 Redis', timeout: 10000 }, async () => {

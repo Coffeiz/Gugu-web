@@ -40,7 +40,7 @@ defineEmits<{ (event: 'click', value: MouseEvent): void }>()
   height: var(--control-height-sm);
   padding: 0;
   border: 1px solid var(--content-divider);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: var(--surface-card-solid);
   color: var(--content-secondary);
   cursor: pointer;
@@ -58,7 +58,7 @@ defineEmits<{ (event: 'click', value: MouseEvent): void }>()
   flex-basis: var(--control-xs);
   width: var(--control-xs);
   height: var(--control-xs);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-compact);
 }
 .app-close-button:focus-visible { outline:2px solid var(--action-primary); outline-offset:2px; }
 </style>

@@ -1,6 +1,7 @@
 import { normalizeOnboardingState } from '@gugu/core/onboarding'
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
 import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import { enqueuePostgresAgentRagRebuild } from '../../../domains/agent-sessions/persistence/agent-rag-job-postgres.js'
 import { normalizeFileOwnerId, isOwnedFileStorageKey } from '../../../domains/files/file-owner.js'
 import { removeLocalFile } from '../../../domains/files/persistence/trash-mutations-postgres.js'
 
@@ -40,7 +41,11 @@ export function createPostgresOnboardingReseedOperations(pool: Pick<Pool, 'conne
           if (!isOwnedFileStorageKey(ownerId, file.storage_key)) throw new Error('引导文件存储归属无效')
         }
         await client.query('DELETE FROM files WHERE user_id=$1 AND project_id=$2', [ownerId, projectId])
-        await client.query('DELETE FROM projects WHERE id=$1 AND user_id=$2', [projectId, ownerId])
+        const deleted = await client.query('DELETE FROM projects WHERE id=$1 AND user_id=$2', [projectId, ownerId])
+        if (deleted.rowCount) {
+          await enqueuePostgresAgentRagRebuild(client, ownerId, 'calendar')
+          await enqueuePostgresAgentRagRebuild(client, ownerId, 'project')
+        }
 
         if (ledger.rows[0]) {
           for (const file of files.rows) {

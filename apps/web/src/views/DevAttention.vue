@@ -160,8 +160,8 @@ function formatScore(value: number | null | undefined) { return value == null ? 
 .page-heading h1 { margin: 0; font-size: 1.5rem; }
 .eyebrow { margin: 0 0 var(--space-xs); color: var(--content-tertiary); font-size: .75rem; letter-spacing: .06em; }
 .intro { color: var(--content-secondary); }
-.panel { min-width: 0; padding: var(--space-lg); border: 1px solid var(--border-default); border-radius: var(--radius-lg); background: var(--surface-card); box-shadow: var(--shadow-sm); }
-.reset-button { display: inline-flex; min-height: 36px; align-items: center; justify-content: center; gap: var(--space-xs); padding: 0 var(--space-md); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--surface-glass); color: var(--content-secondary); font: inherit; font-size: .82rem; cursor: pointer; transition: background-color .15s ease, border-color .15s ease, color .15s ease; }
+.panel { min-width: 0; padding: var(--space-lg); border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--surface-card); box-shadow: var(--shadow-sm); }
+.reset-button { display: inline-flex; min-height: 36px; align-items: center; justify-content: center; gap: var(--space-xs); padding: 0 var(--space-md); border: 1px solid var(--border-default); border-radius: var(--radius-xs); background: var(--surface-glass); color: var(--content-secondary); font: inherit; font-size: .82rem; cursor: pointer; transition: background-color .15s ease, border-color .15s ease, color .15s ease; }
 .reset-button:hover { border-color: var(--border-focus); background: var(--surface-glass-hover); color: var(--content-primary); }
 .reset-button:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
 .reset-button :deep(.app-icon) { font-size: .95rem; }

@@ -39,7 +39,15 @@ export interface CredentialTestPreviewOptions {
     model: string
     dimensions?: number | null
     apiKey: string
-  }) => Promise<{ ok: boolean; status: number; detail: string; message?: string }>
+  }) => Promise<{ ok: boolean; status?: number; detail: string; message?: string }>
+}
+
+function probeResponse(capability: CredentialTestPreviewInput['capability'], result: Awaited<ReturnType<CredentialTestPreviewOptions['probe']>>) {
+  const genericModel = capability === 'llm' || capability === 'speech_to_text'
+  const message = result.message ?? (genericModel
+    ? result.ok ? '模型连接正常' : result.status ? `模型连接失败（HTTP ${result.status}）` : result.detail
+    : result.detail)
+  return { ok: result.ok, ...(result.status === undefined ? {} : { status: result.status }), message }
 }
 
 const canUseKeylessEmbedding = (input: CredentialTestPreviewInput): boolean =>
@@ -86,10 +94,7 @@ export function createCredentialTestPreview<DB>(db: Kysely<DB>, options: Credent
 
     const result = await options.probe({ provider: input.provider, capability: input.capability,
       apiFormat, baseUrl, model, ...(input.dimensions == null ? {} : { dimensions: input.dimensions }), apiKey })
-    if (input.capability !== 'llm' && input.capability !== 'speech_to_text')
-      return { ok: result.ok, status: result.status, message: result.message ?? result.detail }
-    return { ok: result.ok, status: result.status,
-      message: result.ok ? '模型连接正常' : (result.status ? `模型连接失败（HTTP ${result.status}）` : result.detail) }
+    return probeResponse(input.capability, result)
   }
 }
 
@@ -117,9 +122,6 @@ export function createCredentialSavedTest<DB>(db: Kysely<DB>, options: Credentia
     const probe = await options.probe({ provider: row.provider, capability: row.capability,
       apiFormat: row.api_format ?? '', baseUrl: row.base_url ?? '', model: row.model ?? '',
       ...(row.dimensions == null ? {} : { dimensions: row.dimensions }), apiKey })
-    if (row.capability === 'llm' || row.capability === 'speech_to_text')
-      return { ok: probe.ok, status: probe.status,
-        message: probe.ok ? '模型连接正常' : (probe.status ? `模型连接失败（HTTP ${probe.status}）` : probe.detail) }
-    return { ok: probe.ok, status: probe.status, message: probe.message ?? probe.detail }
+    return probeResponse(row.capability, probe)
   }
 }

@@ -1,7 +1,8 @@
 import { z } from 'zod'
 import { createHash } from 'node:crypto'
 import { selectToolSchemas } from './schema-selection.js'
-import type { RunIdentity } from '../models.js'
+import { stableJson } from '../context/history/canonical-history.js'
+import type { PreparedToolDefinition, RunIdentity } from '../models.js'
 import type { SkillRegistry } from '../skills/contracts.js'
 import { SkillRegistryError } from '../skills/registry.js'
 import type { ToolDefinition } from './contracts.js'
@@ -14,6 +15,11 @@ export interface UseSkillPorts {
   origin(identity: RunIdentity, id: string, signal: AbortSignal): Promise<
     { source: 'builtin' } | { source: 'user'; ownerFingerprint: string }
   >
+}
+
+function toolSchemaEvent(tool: PreparedToolDefinition) {
+  return { type: 'tool-schema', tool_name: tool.name, schema_version: 1,
+    schema_digest: createHash('sha256').update(stableJson(tool.schema)).digest('hex'), schema: tool.schema }
 }
 
 /** 使用真实技能注册器；usage marker 由 Harness 成功合入上下文后再记录摘要。 */
@@ -43,18 +49,29 @@ export function createUseSkillTool(ports: UseSkillPorts): ToolDefinition {
       // 元数据/上下文查询也可能等待；发布正文前重新校验技能当前可见性。
       const visible = await ports.skills.catalog(scope.identity)
       scope.signal.throwIfAborted()
-      if (!visible.some(item => item.id === id)) throw new SkillRegistryError('unavailable')
+      const skill = visible.find(item => item.id === id)
+      if (!skill) throw new SkillRegistryError('unavailable')
+      const definitions = skill.related_tools?.length && scope.discoverRelatedTools ? await scope.discoverRelatedTools() : []
+      const latest = definitions.length > 0 ? (await ports.skills.catalog(scope.identity)).find(item => item.id === id) : skill
+      if (!latest) throw new SkillRegistryError('unavailable')
+      scope.signal.throwIfAborted()
+      const related = new Set(latest.related_tools ?? [])
+      const schemas = definitions.filter(tool => related.has(tool.name))
+      const canonicalEvents = schemas.length > 0 ? [
+        { type: 'skill-schema', skill_name: id, tool_names: schemas.map(tool => tool.name) },
+        ...schemas.map(toolSchemaEvent),
+      ] : undefined
       const previous = scope.loadedSkills?.[id]
       if (previous?.digest === loaded.contentDigest && previous.source === origin.source
         && (origin.source === 'builtin' || previous.ownerFingerprint === origin.ownerFingerprint)) return { kind: 'completed', successful: true, mutated: false, value: {
         skill_id: id, skill_name: loaded.name, already_loaded: true,
         message: `技能「${loaded.name}」的正文已在当前上下文中，无需重复加载。`,
-      } }
+      }, ...(canonicalEvents ? { canonicalEvents } : {}) }
       return { kind: 'completed', successful: true, mutated: false, value: {
         skill_id: id, skill_name: loaded.name, content: loaded.content,
         _capability_usage: { kind: 'skill', id, loaded: true, content_digest: loaded.contentDigest,
           ...(origin.source === 'user' ? { source: 'user', owner_fingerprint: origin.ownerFingerprint } : {}) },
-      } }
+      }, ...(canonicalEvents ? { canonicalEvents } : {}) }
     },
   }
 }
@@ -67,10 +84,17 @@ export function createGetToolSchemaTool(capabilities:(identity:RunIdentity)=>Pro
       parameters:{type:'object',properties:{tools:{type:'array',minItems:1,maxItems:12,items:{type:'string',minLength:1,maxLength:80}}},required:['tools'],additionalProperties:false}}}},
     effect:'read',validate:input=>schema.safeParse(input),
     async execute(input,scope){
-      const available=await capabilities(scope.identity)
+      const available=scope.discoverRelatedTools ? await scope.discoverRelatedTools() : await capabilities(scope.identity)
       scope.signal.throwIfAborted()
       const value=selectToolSchemas((input as z.infer<typeof schema>).tools,available)
-      return {kind:'completed',successful:!('error' in value),mutated:false,value}
+      const names = 'tool_schemas' in value ? value.tool_schemas : []
+      const definitions = new Map(available.map(tool => [tool.name, tool]))
+      return {kind:'completed',successful:!('error' in value),mutated:false,value,
+        ...(names.length ? { canonicalEvents: [
+          { type: 'tool-discovery', tool_names: names },
+          ...names.map(name => toolSchemaEvent(definitions.get(name)!)),
+        ] } : {}),
+      }
     },
   }
 }

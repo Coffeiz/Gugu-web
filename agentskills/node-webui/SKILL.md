@@ -27,6 +27,7 @@ description: gugu-webui Node.js/Fastify 后端开发、Python API 迁移与实�
 | 日期键与 UTC 时间格式化 | `apps/web-host/src/shared/date-time.ts`：`dateKeyInTimeZone`、`addUtcDaysToDateKey`、`startOfDateKeyInTimeZone`、`toUtcIsoWithOffset` |
 | Admin HTTP 错误、通用密钥遮蔽 | `apps/web-host/src/domains/admin/errors.ts`；`@gugu/core/shared/secret-mask`：`maskSecret` |
 | Agent 媒体载荷清理 | `packages/core/src/agent/context/messages/`：`sanitizeMediaPayload` |
+| Agent 持久 Run 与交互 | `@gugu/core/agent` 提供 `createAgentRunReconstructor` 和 `createAgentRunEventStream`，持久动作消费使用 `@gugu/core/agent/interactions/consume-action`。Host 提供可信来源和身份、owner 查询、事务、租约及唤醒端口。 |
 | 文件 owner 校验、正向 Undo 写入、项目查询与时间戳格式化 | `apps/web-host/src/domains/files/file-owner.ts`；`apps/web-host/src/domains/undo/persistence/forward-operation.ts`；`apps/web-host/src/domains/projects/persistence/projects.ts`：`readProjectFileCount`、`projectExistsForOwner`、`projectTimestamp` |
 | 日历事件投影与持有查询 | `packages/core/src/calendar/event-projection.ts`：数据库行、DTO 与 Undo 快照投影；Core 日历读写端口执行 owner 限定查询 |
 | 项目公开 DTO 与时间投影 | `packages/core/src/projects/project-projection.ts`：`projectResponse`，读写与恢复事件共同复用；`packages/core/src/shared/timestamps.ts`：严格 UTC 微秒解析，`data/codec.ts`保留兼容出口，公开 ISO 与数据库/Undo 编码分开 |
@@ -39,6 +40,7 @@ description: gugu-webui Node.js/Fastify 后端开发、Python API 迁移与实�
 | 画布放置与几何 | `packages/core/src/mind/canvas-layout.ts`：Python世界坐标/端点纯规则；`canvas-placement.ts`：借用事务创建canvas_note、引用和视图，复用原SQL服务，不在工具里复制数据库业务 |
 | Agent画布批量编辑 | `packages/core/src/mind/canvas-edits.ts`：布局、视图移除、画布便签字段更新复用原SQL服务和外层事务；工具组持久收据与Undo共同提交，事件在提交后发布 |
 | Agent画布候选和技能元数据目录 | `packages/core/src/mind/canvas-read.ts`：owner限定候选检索及旧分页探测；`packages/core/src/agent/skills/user-read.ts`：Markdown head定义和含停用项的用户Skill元数据，不使用可加载catalog替代管理目录 |
+| 用户 Skill 写入 | `packages/core/src/agent/skills/user-management.ts` 的准备端口供 Agent 把共享写入纳入 Run 收据事务，REST 使用同一管理器的创建和更新入口。Host 提供当前租约的事务内授权及提交后通知。 |
 | Python 数字分类与转换 | `packages/core/src/shared/unicode-decimal.ts`：固定生产 Python 的 Unicode 16，区分 Nd 十进制和 isdigit；工具整数/日期/行号与项目编号共用，不使用 Node 较新 Unicode 属性扩大可接受输入；维护生成器为 `packages/core/scripts/generate-tool-unicode.py` |
 
 新增稳定复用入口时，在本节补充契约与路径；删除或迁移入口时同步更新，避免清单过期。

@@ -94,8 +94,8 @@ async function storageKey(client: PoolClient, userId: string, scope: Scope, fold
   let project: Row | null = null
   if (scope.space === 'project') {
     const query = await client.query<Row>(
-      `SELECT id,name,color,COALESCE(to_char(start_date,'YYYY'),to_char(created_at,'YYYY')) year_value,
-       COALESCE(to_char(start_date,'MM'),to_char(created_at,'MM')) month_value
+      `SELECT id,name,color,COALESCE(to_char(NULLIF(start_date::text,'')::date,'YYYY'),to_char(created_at,'YYYY')) year_value,
+       COALESCE(to_char(NULLIF(start_date::text,'')::date,'MM'),to_char(created_at,'MM')) month_value
        FROM projects WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL`, [scope.projectId, userId])
     project = query.rows[0] ?? null
     if (!project) throw new CoreError('not_found', '项目不存在')

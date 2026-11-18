@@ -68,6 +68,8 @@ watch(() => [props.msg, props.sessionId, props.expanded], () => {
 onBeforeUnmount(resetDetailsRequest)
 const OUTPUT_DISPLAY_LIMIT = 32_000
 const toolLabel = computed(() => {
+  const custom = props.msg.toolLabelOverride?.trim()
+  if (custom) return custom
   const toolName = props.msg.toolName || ''
   const key = `toolNames.${toolName}`
   // 历史升级已统一业务工具名；已知工具优先使用当前语言。

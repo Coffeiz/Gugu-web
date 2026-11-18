@@ -163,11 +163,9 @@ html[data-theme][data-family] .cal-page .wv-allday,
 html[data-theme][data-family] .cal-page .wv-aco,
 html[data-theme][data-family] .cal-page .wv-col { border-color: var(--border-subtle); }
 html[data-theme][data-family] .cal-page .weekday-hdr,
-html[data-theme][data-family] .cal-page .wv-dow,
 html[data-theme][data-family] .cal-page .wv-allday-tag,
 html[data-theme][data-family] .cal-page .wv-hour span { color: var(--content-secondary); }
-html[data-theme][data-family] .cal-page .cell-num,
-html[data-theme][data-family] .cal-page .wv-dnum { color: var(--content-primary); }
+html[data-theme][data-family] .cal-page .cell-num { color: var(--content-primary); }
 html[data-theme][data-family] .cal-page .month-cell::before,
 html[data-theme][data-family] .cal-page .wv-dhead::after,
 html[data-theme][data-family] .cal-page .wv-ad-hover { background: var(--action-soft); }
@@ -178,10 +176,8 @@ html[data-theme][data-family] .cal-page .wv-ad-sel,
 html[data-theme][data-family] .cal-page .wv-selected { background: var(--calendar-selected-cell-bg); }
 html[data-theme][data-family] .cal-page .month-cell.is-weekend,
 html[data-theme][data-family] .cal-page .wv-aco.weekend { background: var(--status-danger-bg); }
-html[data-theme][data-family] .cal-page .weekday-hdr.weekend,
-html[data-theme][data-family] .cal-page .wv-dhead.weekend .wv-dow { color: var(--status-danger); }
-html[data-theme][data-family] .cal-page .month-cell.is-today .cell-num,
-html[data-theme][data-family] .cal-page .wv-dnum.today {
+html[data-theme][data-family] .cal-page .weekday-hdr.weekend { color: var(--status-danger); }
+html[data-theme][data-family] .cal-page .month-cell.is-today .cell-num {
   color: var(--content-on-accent) !important;
   background: var(--brand-gradient);
 }
@@ -193,15 +189,6 @@ html[data-theme][data-family] .cal-page .chip-more-btn {
 html[data-theme][data-family] .cal-page .chip-more-btn:hover { background: var(--action-soft-hover); }
 html[data-theme][data-family] .cal-page .wv-col {
   background-image: linear-gradient(to bottom,var(--border-subtle) 1px,transparent 1px);
-}
-html[data-theme='dark'][data-family] .cal-page .event-chip,
-html[data-theme='dark'][data-family] .cal-page .project-bar,
-html[data-theme='dark'][data-family] .cal-page .wv-pbar,
-html[data-theme='dark'][data-family] .cal-page .wv-allday-ev,
-html[data-theme='dark'][data-family] .cal-page .wv-ev,
-html[data-theme='dark'][data-family] .cal-sidebar .sidebar-ev-name,
-html[data-theme='dark'][data-family] .cal-sidebar .cap-name {
-  color: var(--content-primary) !important;
 }
 html[data-theme][data-family] .cal-page .wv-now { background: var(--status-danger); }
 
@@ -402,7 +389,7 @@ html[data-theme][data-family] .chat-window .chat-reference {
   max-width: 22ch;
   padding: 1px 6px;
   border: 1px solid var(--action-outline);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: var(--surface-raised);
   color: var(--action-primary-hover);
   font-weight: 650;

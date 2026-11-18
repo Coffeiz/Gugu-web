@@ -39,11 +39,14 @@ defineExpose({ rootRef })
   box-sizing: border-box;
   width: var(--drawer-width);
   overflow: hidden;
-  border-radius: 25px;
+  border-radius: var(--card-radius);
   corner-shape: round;
   transform: translateY(-50%);
   /* 与 Runtime 的 Surface resize profile 保持同一时长和缓动，避免高度先结束、宽度再滞后。 */
   transition: width .35s cubic-bezier(.22,1,.36,1), border-radius .35s cubic-bezier(.22,1,.36,1), background .35s ease, box-shadow .35s ease;
+}
+.drawer-shell:not(.open) {
+  border-radius: min(var(--radius-pill), var(--canvas-toolbar-height) / 2);
 }
 .drawer-shell-collapse { position: relative; width: 100%; overflow: hidden; }
 </style>

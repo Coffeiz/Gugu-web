@@ -3,6 +3,7 @@ import { createServer } from 'node:http'
 import Fastify from 'fastify'
 import { afterEach, test } from 'node:test'
 import type { ProviderHttpRequest } from '@gugu/core/providers'
+import { createCredentialTestPreview } from '@gugu/core/byok/credential-test-preview'
 import { createByokCredentialTestProbe, registerCredentialTestPreviewRoute } from '../../src/modules/byok/credential-test-preview.js'
 
 const ownerId = '00000000-0000-4000-8000-000000000141'
@@ -179,7 +180,7 @@ test('BYOK语音草稿经Core DashScope ASR协议发送静音探针且不改写�
     model: 'Qwen3-ASR-Flash', apiKey: 'synthetic-key' })
 
   assert.ok(captured, 'ASR 探测应通过注入的传输发出协议请求')
-  assert.deepEqual(result, { ok: true, status: 200, detail: '', message: '连接正常（静音测试已收到响应）' })
+  assert.deepEqual(result, { ok: true, detail: '', message: '连接正常（静音测试已收到响应）' })
   assert.equal(captured?.url, 'http://127.0.0.1:39999/api/v1/services/aigc/multimodal-generation/generation')
   assert.equal(captured?.headers.Authorization, 'Bearer synthetic-key')
   assert.deepEqual(captured?.body && typeof captured.body === 'object' && !(captured.body instanceof Uint8Array)
@@ -187,6 +188,37 @@ test('BYOK语音草稿经Core DashScope ASR协议发送静音探针且不改写�
   const body = captured?.body as Record<string, any>
   assert.equal(body.input.messages[0].content[0].audio.startsWith('data:audio/wav;base64,'), true)
   assert.equal(closed, true)
+})
+
+test('百炼语音草稿沿用 Python 的响应字段，地址缺失时不发出请求', async () => {
+  let requests = 0
+  const probe = createByokCredentialTestProbe({}, {
+    createTransport: () => ({
+      async request() {
+        requests++
+        return {
+          status: 200, headers: {},
+          body: (async function* () { yield new TextEncoder().encode('{"output":{"sentence":{"text":""}}}') })(),
+          async cancel() {},
+        }
+      },
+    }),
+  })
+  const app = Fastify()
+  apps.push(app)
+  registerCredentialTestPreviewRoute(app, {
+    requireUser: async () => {},
+    ownerIdFromRequest: () => ownerId,
+    savedTest: async () => { throw new Error('草稿不应读取持久化凭据') },
+    preview: createCredentialTestPreview(null as never, { enabled: () => true, decrypt: async () => { throw new Error('草稿不应解密') }, probe }),
+  })
+  const payload = { provider: 'qwen', capability: 'speech_to_text', api_format: 'dashscope', model: 'Qwen3-ASR-Flash', value: 'synthetic-key' }
+  const run = (base_url: string) => app.inject({ method: 'POST', url: '/api/v1/byok/test-preview', payload: { ...payload, base_url } })
+  assert.deepEqual((await run('')).json(), { ok: false, message: '请先填写模型名和 Base URL' })
+  assert.equal(requests, 0)
+  assert.deepEqual((await run('https://voice.example.test/api/v1/services/aigc/multimodal-generation/generation')).json(),
+    { ok: true, message: '连接正常（静音测试已收到响应）' })
+  assert.equal(requests, 1)
 })
 
 test('BYOK MiniMax原生ASR通过共享Provider传输上传一分钟内的wav静音探针', async () => {

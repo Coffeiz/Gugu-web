@@ -321,7 +321,7 @@ test('GET /health/ready hides readiness dependency errors from HTTP clients', as
   assert.equal(reportedFailure, true)
 })
 
-test('Admin user list is registered with the Host Admin guard and query dependency', async () => {
+test('Admin user list is registered with the Host Admin guard and Core reader dependency', async () => {
   const calls: string[] = []
   const app = testApp({
     appName: '合成测试应用',
@@ -335,9 +335,9 @@ test('Admin user list is registered with the Host Admin guard and query dependen
       },
     },
     adminUsers: {
-      async query(sql) {
-        calls.push(sql)
-        return []
+      async read(search) {
+        calls.push(search ?? '')
+        return { items: [], total: 0 }
       },
     },
   })
@@ -351,7 +351,7 @@ test('Admin user list is registered with the Host Admin guard and query dependen
   })
   assert.equal(allowed.statusCode, 200)
   assert.deepEqual(allowed.json(), { items: [], total: 0 })
-  assert.equal(calls.length, 5)
+  assert.deepEqual(calls, [''])
 })
 
 test('project PATCH is mounted behind user authentication', async () => {
@@ -539,13 +539,12 @@ test('global and per-user Admin security events use the Host guard and injected 
       },
     },
     adminSecurityEvents: {
-      fingerprintUserId: (id) => `fingerprint:${id}`,
-      async query(sql) { queries.push(sql); return [] },
+      async read(filters) { queries.push(JSON.stringify(filters)); return { items: [], total: 0, since_minutes: filters.since_minutes ?? 1440 } },
     },
     adminUserSecurityEvents: {
-      async query(sql) {
-        queries.push(sql)
-        return sql.includes('FROM users') ? [{ id: '00000000-0000-4000-8000-000000000001' }] : []
+      async read(userId, limit) {
+        queries.push(`${userId}:${limit}`)
+        return { items: [] }
       },
     },
   })
@@ -561,7 +560,7 @@ test('global and per-user Admin security events use the Host guard and injected 
   const user = await app.inject({ url: '/api/v1/admin/users/00000000-0000-4000-8000-000000000001/security-events', headers })
   assert.equal(global.statusCode, 200)
   assert.equal(user.statusCode, 200)
-  assert.equal(queries.length, 3)
+  assert.equal(queries.length, 2)
   const invalidGlobal = await app.inject({
     url: '/api/v1/admin/audit-log/security-events?limit=0', headers,
   })
@@ -570,7 +569,7 @@ test('global and per-user Admin security events use the Host guard and injected 
   })
   assert.equal(invalidGlobal.statusCode, 422)
   assert.equal(invalidUser.statusCode, 422)
-  assert.equal(queries.length, 3)
+  assert.equal(queries.length, 2)
   await app.close()
 })
 

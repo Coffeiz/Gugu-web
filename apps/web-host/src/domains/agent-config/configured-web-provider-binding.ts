@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import type { Pool } from 'pg'
 import { capabilitySnapshot } from '@gugu/core/providers'
-import { stableJson, type ContextLoadPolicy, type ContextSourceSelection, type RunIdentity } from '@gugu/core/agent'
+import { stableJson, DEFAULT_AGENT_COMPACTION_INSTRUCTION, type ContextLoadPolicy, type ContextSourceSelection, type RunIdentity } from '@gugu/core/agent'
 import { decryptByokCredential } from './byok.js'
 import { resolveHostEffectiveModelConfiguration } from './effective-model-resolver.js'
 import { readConfigOverride } from '../../adapters/config-override-file.js'
@@ -38,6 +38,12 @@ export async function createConfiguredWebAgentProviderBinding(options: {
   const credentialsMasterKeys = await readConfiguredByokMasterKeys(options.environment)
   const prompt = (await Promise.all(promptFiles.map(name => readFile(join(options.promptRoot, name), 'utf8')))).join('\n\n---\n\n')
   if (!prompt.trim()) throw new Error('Web Agent 提示词不可用')
+  let compactionInstruction: string
+  try { compactionInstruction = (await readFile(join(options.promptRoot, 'compress_conv.md'), 'utf8')).trim() || DEFAULT_AGENT_COMPACTION_INSTRUCTION }
+  catch (error) {
+    if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'ENOENT') throw error
+    compactionInstruction = DEFAULT_AGENT_COMPACTION_INSTRUCTION
+  }
   const policies = new Map<string, ContextLoadPolicy>()
   const runKey = (identity: RunIdentity) => JSON.stringify([identity.ownerId, identity.sessionId, identity.runId])
   const contextPolicy = (identity: RunIdentity) => {
@@ -115,6 +121,7 @@ export async function createConfiguredWebAgentProviderBinding(options: {
       let released = false
       return {
         selection,
+        compactionInstruction,
         resolve: bound.resolve,
         usageConfig: bound.usageConfig satisfies AgentUsageConfig,
         release() {

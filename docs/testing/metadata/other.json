@@ -220,7 +220,7 @@
     "layer": "L2",
     "owner": "gugu-desktop",
     "productionEntry": "apps/desktop/src/main/core-host.ts",
-    "keyBehavior": "真实双 Host 独占拒绝与释放接管、提交后断线的收据恢复、不自动重放、错误脱敏与制品边界",
+    "keyBehavior": "真实双 Host 独占拒绝与释放接管、提交后断线的收据恢复、不自动重放、错误脱敏与制品边界，项目看板经具名 IPC 创建重放、版本校验和回收站持久化",
     "ci": "desktop-node"
   },
   "apps/desktop/tests/lifecycle-window-update.test.ts": {
@@ -244,7 +244,7 @@
     "layer": "L1",
     "owner": "packages/fs/src",
     "productionEntry": "packages/fs/src/node.ts",
-    "keyBehavior": "只读打开限制在授权根下，拒绝路径穿越、符号链接和非普通文件",
+    "keyBehavior": "只读打开限制在授权根下；流式文件导入仅在完整收到并同步后发布，同名竞争不覆盖，取消或路径越界时拒绝并清理",
     "ci": "core-node"
   },
   "packages/charts/test/worker.test.mjs": {

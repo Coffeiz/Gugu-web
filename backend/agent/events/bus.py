@@ -83,7 +83,7 @@ async def _persist_rag_event_and_start(event: RagIndexUpdated, *, python_worker_
     lock = _rag_persist_locks.setdefault(key, asyncio.Lock())
     async with lock:
         try:
-            await index_jobs.persist_event(event)
+            await index_jobs.persist_event(event, preserve_full_rebuild=not python_worker_enabled)
         except Exception:
             # 持久任务是可靠性旁路，不能让文件/知识主写入失败。
             _log.warning("rag index durable enqueue failed for source=%s", key[1])

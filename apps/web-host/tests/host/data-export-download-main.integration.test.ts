@@ -12,7 +12,7 @@ import {writePythonPortableArchive} from '../helpers/portable-archive.js'
 const url=process.env.GUGU_WEBUI_TEST_DATABASE_URL,python=process.env.GUGU_CORE_GOLDEN_PYTHON
 async function port(){const socket=createServer();await new Promise<void>(resolve=>socket.listen(0,'127.0.0.1',resolve));const address=socket.address();assert.ok(address&&typeof address!=='string');await new Promise<void>(resolve=>socket.close(()=>resolve()));return address.port}
 
-test('生产导出下载与HttpOnly票据完整闭环，权限/过期/Range/完整性失败不改记录或文件', {skip:(!url||!python)&&'需要隔离PG/Python'},async()=>{
+test('生产导出下载、HttpOnly 票据与属主删除闭环，读取失败不改记录或文件', {skip:(!url||!python)&&'需要隔离PG/Python'},async()=>{
  const schema=`export_download_${randomUUID().replaceAll('-','')}`,admin=new Pool({connectionString:url});await admin.query(`CREATE SCHEMA "${schema}"`)
  const scoped=new URL(url!);scoped.searchParams.set('options',`-c search_path=${schema}`)
  const pool=new Pool({connectionString:scoped.toString()}),root=await mkdtemp(join(tmpdir(),'gugu-export-download-main-'))
@@ -45,5 +45,13 @@ test('生产导出下载与HttpOnly票据完整闭环，权限/过期/Range/完�
   assert.deepEqual(await readFile(path),encrypted);assert.equal((await pool.query('SELECT status FROM data_export_jobs WHERE id=$1',[job])).rows[0].status,'ready')
   await pool.query('UPDATE data_export_jobs SET artifact_sha256=$2,expires_at=$3 WHERE id=$1',[job,sha,new Date(Date.now()-1000).toISOString()])
   assert.equal((await host.app.inject({url:`${base}/download`,headers})).statusCode,404);assert.equal((await host.app.inject({method:'POST',url:`${base}/download-ticket`,headers})).statusCode,404)
+  assert.equal((await host.app.inject({method:'DELETE',url:base})).statusCode,401)
+  assert.equal((await host.app.inject({method:'DELETE',url:base,headers:foreign})).statusCode,404)
+  assert.deepEqual(await readFile(path),encrypted)
+  const deleted=await host.app.inject({method:'DELETE',url:base,headers})
+  assert.equal(deleted.statusCode,204,deleted.body)
+  assert.equal(deleted.body,'')
+  await assert.rejects(readFile(path),{code:'ENOENT'})
+  assert.equal((await pool.query('SELECT id FROM data_export_jobs WHERE id=$1',[job])).rowCount,0)
  }finally{await host?.close();await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();await rm(root,{recursive:true,force:true})}
 })

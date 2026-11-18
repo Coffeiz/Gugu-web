@@ -2,10 +2,11 @@ import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { sql } from 'kysely'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { initializeSqlite, openSqliteRuntime } from '../../../src/data/sqlite.js'
 import type { SqlDataRuntime } from '../../../src/data/runtime.js'
-import { createClientTools } from '../../../src/agent/tools/clients.js'
+import { createClientTools, createClientDeletePort, createClientDeleteTool, type ClientDeleteConfirmationPort } from '../../../src/agent/tools/clients.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import type { ToolResult } from '../../../src/agent/models.js'
 import { expectedBusinessError } from './error-fixtures.js'
@@ -207,6 +208,95 @@ describe('联系人事务结果不确定时不伪装为字段失败', () => {
         modelValue: { error: '工具 create_client 执行出错：ValueError: 联系人字段超过长度限制' } })
     }
     expect(await runtime.transaction(dataContext(ownerId), data => data.clients.list())).toEqual(saved)
+  })
+})
+
+describe('delete_client 经真实 Core 注册器与临时 SQLite 执行', () => {
+  function deleteRegistry(options: { claim?: boolean; duringClaim?: (tx: Parameters<ClientDeleteConfirmationPort['claim']>[0]) => Promise<void> } = {}) {
+    let preparedDigest: string | null = null, preparedTargets: unknown = null, claims = 0
+    const gate = {
+      async prepare(toolCall: any, _scope: unknown, inputDigest: string, targets: unknown) {
+        preparedDigest = inputDigest; preparedTargets = structuredClone(targets)
+        return { ok: true as const, value: { id: 'confirm-delete-client', kind: 'confirmation' as const, toolCall } }
+      },
+      async verify(_toolCall: any, _scope: unknown, inputDigest: string, targets: unknown) {
+        return preparedDigest === inputDigest && JSON.stringify(preparedTargets) === JSON.stringify(targets)
+          ? { ok: true as const, value: { intentId: 'intent', operationId: 'operation' } }
+          : { ok: false as const, code: 'confirmation_rejected' as const }
+      },
+    } as unknown as ClientDeleteConfirmationPort['gate']
+    const confirmation: ClientDeleteConfirmationPort = {
+      gate,
+      async claim(tx) { claims++; await options.duringClaim?.(tx); return options.claim ?? true },
+    }
+    return { registry: createToolRegistry({ tools: [...createClientTools(runtime), createClientDeleteTool(createClientDeletePort(runtime, confirmation))], authorize: async () => true }), claims: () => claims }
+  }
+  const deleteScope = (owner = ownerId, confirmed = false) => ({
+    identity: { ownerId: owner, sessionId: '1', runId: 'delete-client-run' }, roundId: 'delete-round',
+    signal: new AbortController().signal, execute: vi.fn(), resolution: confirmed
+      ? { interactionId: 'confirm-delete-client', receiptId: 'trusted-receipt', status: 'confirmed' as const, value: { confirm: true, targets: [999] } }
+      : null,
+  })
+
+  it('联系人名候选经可信确认冻结；确认后只删除精确owner目标并产生正确单项/批量结果', async () => {
+    const first = value(await call('create_client', { client_name: '小北' }))
+    const second = value(await call('create_client', { client_name: '小南' }))
+    const f = deleteRegistry()
+    const toolCall = { id: 'delete-one', name: 'delete_client', input: { client: '小北', confirm: true, targets: [999] } }
+    const waiting = await f.registry.tools.dispatch(toolCall, deleteScope())
+    expect(waiting).toMatchObject({ kind: 'waiting' })
+    expect(value(await call('list_clients', {}))).toHaveLength(2)
+    const deleted = await f.registry.tools.dispatch(toolCall, deleteScope(ownerId, true))
+    expect(deleted).toMatchObject({ kind: 'completed', successful: true, mutated: true, value: { success: true, deleted_client_id: first.client_id, name: '小北' } })
+    expect(value(await call('list_clients', {}))).toEqual([expect.objectContaining({ id: second.client_id, name: '小南' })])
+    expect(f.claims()).toBe(1)
+  })
+
+  it('批量候选先按ID排序，空集合、缺失目标与跨owner目标均无副作用', async () => {
+    const first = value(await call('create_client', { client_name: '甲' }))
+    const second = value(await call('create_client', { client_name: '乙' }))
+    const f = deleteRegistry()
+    const callBatch = { id: 'delete-batch', name: 'delete_client', input: { client_ids: [second.client_id, first.client_id] } }
+    expect(await f.registry.tools.dispatch({ ...callBatch, input: { client_ids: [] } }, deleteScope()))
+      .toMatchObject({ kind: 'completed', successful: false, mutated: false, value: { error: 'client_ids 必须是 1-50 个联系人 id' } })
+    expect(await f.registry.tools.dispatch({ ...callBatch, input: { client_ids: [first.client_id, 999] } }, deleteScope()))
+      .toMatchObject({ kind: 'completed', successful: false, mutated: false, value: { error: '联系人 999 不存在' } })
+    expect(await f.registry.tools.dispatch({ ...callBatch, input: { client_id: first.client_id } }, deleteScope(randomUUID())))
+      .toMatchObject({ kind: 'completed', successful: false, mutated: false, value: { error: '联系人不存在' } })
+    expect(await f.registry.tools.dispatch(callBatch, deleteScope())).toMatchObject({ kind: 'waiting' })
+    expect(await f.registry.tools.dispatch(callBatch, deleteScope(ownerId, true))).toMatchObject({
+      kind: 'completed', successful: true, mutated: true, value: { success: true, deleted_count: 2, results: [
+        { deleted_client_id: first.client_id, name: '甲' }, { deleted_client_id: second.client_id, name: '乙' },
+      ] },
+    })
+    expect(value(await call('list_clients', {}))).toEqual([])
+  })
+
+  it('client_id=0 依旧按旧版 truthy 规则回退到联系人名', async () => {
+    await call('create_client', { client_name: '回退联系人' })
+    const f = deleteRegistry()
+    const input = { id: 'delete-zero-id', name: 'delete_client', input: { client_id: 0, client: '回退联系人' } }
+    expect(await f.registry.tools.dispatch(input, deleteScope())).toMatchObject({ kind: 'waiting' })
+    expect(await f.registry.tools.dispatch(input, deleteScope(ownerId, true))).toMatchObject({ kind: 'completed', successful: true,
+      value: { success: true, name: '回退联系人' } })
+    expect(value(await call('list_clients', {}))).toEqual([])
+  })
+
+  it('确认等待期间目标改变或事务claim拒绝时回滚，不删除其他版本', async () => {
+    const client = value(await call('create_client', { client_name: '原联系人' }))
+    const changed = deleteRegistry({ duringClaim: async tx => {
+      await sql`UPDATE clients SET name='并发改名' WHERE id=${client.client_id}`.execute(tx)
+    } })
+    const input = { id: 'delete-change', name: 'delete_client', input: { client_id: client.client_id } }
+    expect(await changed.registry.tools.dispatch(input, deleteScope())).toMatchObject({ kind: 'waiting' })
+    expect(await changed.registry.tools.dispatch(input, deleteScope(ownerId, true))).toMatchObject({ kind: 'completed', successful: false, mutated: false,
+      value: { error: '联系人删除确认已使用或目标已变化' } })
+    expect(value(await call('list_clients', {}))).toMatchObject([{ id: client.client_id, name: '原联系人' }])
+    const denied = deleteRegistry({ claim: false })
+    const next = { id: 'delete-claim-denied', name: 'delete_client', input: { client_id: client.client_id } }
+    expect(await denied.registry.tools.dispatch(next, deleteScope())).toMatchObject({ kind: 'waiting' })
+    expect(await denied.registry.tools.dispatch(next, deleteScope(ownerId, true))).toMatchObject({ kind: 'completed', successful: false, mutated: false })
+    expect(value(await call('list_clients', {}))).toMatchObject([{ id: client.client_id, name: '原联系人' }])
   })
 })
 

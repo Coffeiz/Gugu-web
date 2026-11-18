@@ -37,6 +37,7 @@ describe('安全上下文checkpoint', () => {
       hydrate: async (entry, owner) => { expect(owner).toEqual(identity); return entry.source === 'attachment' ? user([{ type: 'image', source: { type: 'base64', data: 'newly-authorized' } }]) : entry.message },
     }
     const saved = await savePreparedContext(prepared, identity, codec)
+    expect(saved.requestDigest).toBe(ports.digest({ prefix: [user('旧前缀')], dynamicTail: [user('旧动态')] }))
     expect(stableJson(saved)).not.toContain('base64'); expect(stableJson(saved)).not.toContain('旧前缀'); expect(stableJson(saved)).not.toContain('旧动态')
     const restored = await restorePreparedContext(saved, identity, { ...ports, prepareRequest: async () => ({ prefix: [user('新前缀')], dynamicTail: [user('新动态')] }) }, codec)
     expect(restored.area.entries.map(entry => [entry.entryId, entry.sequence, entry.roundId])).toEqual(area.entries.map(entry => [entry.entryId, entry.sequence, entry.roundId]))

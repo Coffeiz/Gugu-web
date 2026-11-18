@@ -6,8 +6,8 @@
 @import './filesListRows.css';
 @import './search-highlight.css';
 
-/* 桌面窗口 L0 已有系统材质模糊，L4 遮罩只做轻度柔化，避免模糊叠加过重。 */
-html[data-desktop-shell='true'] { --modal-overlay-blur: blur(3px); }
+/* 透明窗口的 Shell tint 为 50%。补足模糊取样的 alpha，避免原始图标边缘透出。 */
+html[data-desktop-shell='true'] { --desktop-backdrop-alpha: url(#desktop-backdrop-alpha); }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -146,8 +146,8 @@ body {
 .glass-card {
   background: var(--glass-card-background);
   border: 1px solid var(--glass-card-border);
-  border-radius: var(--radius-lg);
-  corner-shape: squircle;
+  border-radius: var(--card-radius);
+  corner-shape: round;
   box-shadow: var(--glass-card-shadow);
   backdrop-filter: var(--glass-card-blur);
   -webkit-backdrop-filter: var(--glass-card-blur);

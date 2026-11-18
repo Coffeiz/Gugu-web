@@ -692,10 +692,13 @@ export function snapshotToolCall(call: ToolCall): ToolCall {
     throw new AgentRunError('invalid_state', '工具调用原始元数据无效')
   if (call.parseError !== undefined && !['invalid_json', 'not_object'].includes(call.parseError))
     throw new AgentRunError('invalid_state', '工具参数错误分类无效')
+  if (call.adapter !== undefined && (call.adapter !== 'call_tool' || call.name === 'call_tool'))
+    throw new AgentRunError('invalid_state', '工具转发来源无效')
   return Object.freeze({
     id: call.id, name: call.name, input: portableSnapshot(call.input),
     ...(call.rawArguments === undefined ? {} : { rawArguments: call.rawArguments }),
     ...(call.responsesItemId === undefined ? {} : { responsesItemId: call.responsesItemId }),
+    ...(call.adapter === undefined ? {} : { adapter: call.adapter }),
     ...(call.parseError === undefined ? {} : { parseError: call.parseError }),
   })
 }

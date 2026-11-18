@@ -13,6 +13,10 @@ import { createPostgresWorkspaceDirectoryOperations } from '../../src/domains/wo
 import { createRegistrationSeeder } from '@gugu/core/onboarding'
 import { createPostgresRegistrationSeedOperations } from '../../src/modules/onboarding/persistence/registration-seed-postgres.js'
 
+import { applyAgentBaseMigration } from '../../src/migrations/agent-base-migrate.js'
+import { applyWebDomainMigration } from '../../src/migrations/web-domain-migrate.js'
+import { checkDatabaseReadiness } from '../../src/database.js'
+
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const secret = 'synthetic-registration-vite-secret'
 
@@ -32,6 +36,7 @@ test('Vite→Node Host registers a user and seeds the Local onboarding flow with
     onFailure(error) { seedFailures.push(error) },
   }, { now: () => new Date('2026-11-14T00:00:00.000Z'), random: () => 0 })
   const registration = createPostgresRegistrationOperations(pool, {
+    defaultStorageLimitBytes: 1024 * 1024,
     workspaceShellSupported: () => true,
     async prepareDefaultWorkspaceRoot(userId, directoryName) {
       await mkdir(join(storageRoot, userId, 'workspace', directoryName), { recursive: true })
@@ -45,7 +50,10 @@ test('Vite→Node Host registers a user and seeds the Local onboarding flow with
   })
   const app = createApp({
     appName: 'Registration Vite integration',
-    isReady: async () => true,
+    async isReady() {
+      await checkDatabaseReadiness(statement => pool.query(statement))
+      return true
+    },
     userAuth: { secret, ...userRepository },
     registration: {
       secret,
@@ -66,84 +74,13 @@ test('Vite→Node Host registers a user and seeds the Local onboarding flow with
   const previousProxyTarget = process.env.VITE_API_PROXY_TARGET
 
   try {
-    await pool.query(`
-      CREATE TABLE users (
-        id uuid PRIMARY KEY, username varchar(100) NOT NULL UNIQUE, email varchar(300) NOT NULL UNIQUE,
-        hashed_password varchar(200) NOT NULL, display_name varchar(100), is_active boolean NOT NULL,
-        account_status varchar(16) NOT NULL, security_version integer NOT NULL, avatar varchar(500),
-        is_developer boolean NOT NULL, created_at timestamptz NOT NULL, timezone varchar(64),
-        email_subscribed boolean NOT NULL, last_active_at timestamptz, storage_limit_bytes bigint
-      );
-      CREATE TABLE user_bots (
-        id serial PRIMARY KEY, user_id uuid NOT NULL, platform varchar(20) NOT NULL, enabled boolean NOT NULL
-      );
-      CREATE TABLE user_preferences (
-        id serial PRIMARY KEY, user_id uuid NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-        data_json text NOT NULL, updated_at timestamptz NOT NULL
-      );
-      CREATE TABLE workspace_directories (
-        id serial PRIMARY KEY, user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        name varchar(200) NOT NULL, directory_name varchar(200) NOT NULL,
-        is_default boolean NOT NULL DEFAULT false, is_system boolean NOT NULL DEFAULT false,
-        deleted_at timestamptz, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL
-      );
-      CREATE UNIQUE INDEX uq_workspace_directory_name
-        ON workspace_directories(user_id, directory_name) WHERE deleted_at IS NULL;
-      CREATE UNIQUE INDEX uq_workspace_directory_display_name
-        ON workspace_directories(user_id, name) WHERE deleted_at IS NULL;
-      CREATE TABLE workspaces (
-        id serial PRIMARY KEY, user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        name varchar(200) NOT NULL, kind varchar(20) NOT NULL, folder_id integer, project_id integer,
-        directory_id integer REFERENCES workspace_directories(id) ON DELETE SET NULL,
-        enabled boolean NOT NULL, is_default boolean NOT NULL, created_at timestamptz NOT NULL,
-        updated_at timestamptz NOT NULL, UNIQUE(user_id, directory_id)
-      );
-      CREATE TABLE files (
-        id serial PRIMARY KEY, user_id uuid NOT NULL, display_name varchar(300) NOT NULL, ext varchar(20) NOT NULL,
-        space text NOT NULL, project_id integer, folder_id integer, workspace_directory_id integer,
-        stage_name varchar(100), mind_map_id integer, storage_key varchar(1000) NOT NULL,
-        storage_backend varchar(20) NOT NULL, version integer NOT NULL, size varchar(50), size_bytes bigint NOT NULL,
-        mime_type varchar(200), img_width integer, img_height integer, created_at timestamptz NOT NULL,
-        updated_at timestamptz NOT NULL, deleted_at timestamptz
-      );
-      CREATE TABLE folders (
-        id serial PRIMARY KEY, user_id uuid NOT NULL, workspace_directory_id integer NOT NULL,
-        parent_id integer, deleted_at timestamptz, updated_at timestamptz, version integer NOT NULL DEFAULT 1
-      );
-      CREATE TABLE conversation_sessions (id serial PRIMARY KEY, user_id uuid NOT NULL, workspace_id integer);
-      CREATE TABLE scheduled_tasks (id serial PRIMARY KEY, user_id uuid, workspace_id integer, enabled boolean NOT NULL);
-      CREATE TABLE projects (
-        id serial PRIMARY KEY, user_id uuid NOT NULL, name varchar(200) NOT NULL, summary text, contact_name text,
-        status varchar(20) NOT NULL, start_date date, deadline date, color varchar(300),
-        progress integer NOT NULL, stages_json text NOT NULL, current_stage varchar(100), priority varchar(20),
-        version integer NOT NULL, archived boolean NOT NULL, done_at timestamptz, created_at timestamptz NOT NULL,
-        updated_at timestamptz NOT NULL, deleted_at timestamptz
-      );
-      CREATE TABLE calendar_events (
-        id serial PRIMARY KEY, user_id uuid NOT NULL, title varchar(300) NOT NULL, date varchar(10) NOT NULL,
-        type varchar(50) NOT NULL, project_id integer, version integer NOT NULL,
-        created_at timestamptz NOT NULL, deleted_at timestamptz
-      );
-      CREATE TABLE onboarding_state (
-        user_id uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-        state json NOT NULL, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL
-      );
-      CREATE TABLE storage_quota_ledgers (
-        id serial PRIMARY KEY, user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        category varchar(32) NOT NULL, root_path varchar(1000), limit_bytes bigint NOT NULL,
-        used_bytes bigint NOT NULL, reserved_bytes bigint NOT NULL, status varchar(20) NOT NULL,
-        initialized_at timestamptz NOT NULL, last_reconciled_at timestamptz, updated_at timestamptz NOT NULL,
-        UNIQUE(user_id, category)
-      );
-      CREATE TABLE storage_quota_events (
-        id serial PRIMARY KEY, user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        category varchar(32) NOT NULL, operation varchar(32) NOT NULL, delta_bytes bigint NOT NULL,
-        resource_type varchar(32), resource_id varchar(255), idempotency_key varchar(255) NOT NULL,
-        metadata_json json, created_at timestamptz NOT NULL, UNIQUE(user_id, idempotency_key)
-      );
-    `)
+    await applyAgentBaseMigration(pool)
+    await applyWebDomainMigration(pool)
 
     const hostAddress = await app.listen({ host: '127.0.0.1', port: 0 })
+    const readiness = await fetch(`${hostAddress}/health/ready`)
+    assert.equal(readiness.status, 200)
+    assert.deepEqual(await readiness.json(), { status: 'ok' })
     process.env.VITE_API_PROXY_TARGET = hostAddress
     const frontendRoot = resolve(process.cwd(), '../web')
     const requireFrontend = createRequire(resolve(frontendRoot, 'package.json'))
@@ -278,6 +215,28 @@ test('Vite→Node Host registers a user and seeds the Local onboarding flow with
     const contents = await Promise.all(seededFiles.rows.map(file => readFile(join(storageRoot, ...file.storage_key.split('/')), 'utf8')))
     assert.match(contents[0]!, /^# 给未来的自己\n/)
     assert.match(contents[1]!, /^# 可以删掉我\n/)
+
+    await pool.query('ALTER TABLE files ADD CONSTRAINT synthetic_reject_new_files CHECK (size_bytes < 0) NOT VALID')
+    const failedSeedRegistration = await fetch(`${base}/auth/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-device-id': 'synthetic-seed-failure' },
+      body: JSON.stringify({
+        username: 'sample-seed-failure', email: 'second@example.test', password: 'Synthetic123!', locale: 'zh-CN',
+      }),
+    })
+    assert.equal(failedSeedRegistration.status, 201)
+    const second = await failedSeedRegistration.json() as { user: { id: string } }
+    assert.equal(seedFailures.length, 1)
+    assert.equal((seedFailures[0] as { code?: string }).code, '23514')
+    const secondQuota = await pool.query(`SELECT used_bytes::integer,limit_bytes::integer,
+        (SELECT count(*)::integer FROM files WHERE user_id=$1) AS files,
+        (SELECT count(*)::integer FROM projects WHERE user_id=$1) AS projects,
+        (SELECT count(*)::integer FROM rag_index_jobs WHERE user_id=$1) AS jobs,
+        (SELECT array_agg(operation) FROM storage_quota_events WHERE user_id=$1) AS quota_events
+      FROM storage_quota_ledgers WHERE user_id=$1 AND category='file_library'`, [second.user.id])
+    assert.deepEqual(secondQuota.rows, [{
+      used_bytes: 0, limit_bytes: 1024 * 1024, files: 0, projects: 0, jobs: 0, quota_events: ['initialize'],
+    }])
   } finally {
     if (vite) await vite.close()
     await app.close().catch(() => undefined)

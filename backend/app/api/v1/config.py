@@ -1379,15 +1379,17 @@ async def memory_cleanup_apply():
             drop_ids = remove_ids | move_ids
             new_patterns = [pattern for pattern in patterns if pattern["id"] not in drop_ids]
             if len(new_patterns) != len(patterns):
-                await store.write_pattern_list(uid, new_patterns)
-                await store.sync_pattern_vecs(uid, new_patterns)
+                if not await store.write_pattern_list_if_unchanged(uid, store.pattern_list_digest(patterns), new_patterns):
+                    raise HTTPException(409, "记忆维护预览已过期，源数据发生变化，请重新生成预览")
+                await store.sync_pattern_vecs(uid, new_patterns, require_current=True)
                 applied_total += len(remove_ids)
                 touched = True
 
         if moved_texts:
             profile = await store.read_profile_list(uid)
-            profile = store.apply_profile_ops(profile, moved_texts, [])
-            await store.write_profile_list(uid, profile)
+            updated_profile = store.apply_profile_ops(profile, moved_texts, [])
+            if not await store.write_profile_list_if_unchanged(uid, store.profile_list_digest(profile), updated_profile):
+                raise HTTPException(409, "记忆维护预览已过期，源数据发生变化，请重新生成预览")
             moved_total += len(moved_texts)
             touched = True
 

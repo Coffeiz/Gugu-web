@@ -42,7 +42,7 @@
   padding: 28px 32px 32px;
   background: var(--surface-glass);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
+  border-radius: var(--card-radius);
   box-shadow: var(--elevation-window), inset 0 1px 0 var(--border-highlight);
 }
 
@@ -94,7 +94,7 @@
   color: var(--status-danger);
   background: var(--status-danger-bg);
   border: 1px solid color-mix(in srgb,var(--status-danger) 28%,transparent);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   font-size: var(--font-size-xs);
 }
 
@@ -105,7 +105,7 @@
   color: var(--content-on-accent);
   background: var(--action-primary-bg);
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   box-shadow: none;
   cursor: pointer;
   font-size: var(--font-size-sm);

@@ -74,3 +74,22 @@ describe('use_skill经真实工具及技能注册器', () => {
     expect(JSON.stringify(result.state)).toContain('_capability_usage')
   })
 })
+
+it('关联 Schema 只加入当前 Run 授权目录匹配项，撤权后不会再次注入', async () => {
+  const f = setup()
+  f.skills.register({ id: 'U2', name: '外部资料', description: '', related_tools: ['mcp_visible', 'mcp_revoked'],
+    load: async () => ({ content: '相关资料正文', contentDigest: 'v1' }) })
+  const call = { ...f.call, input: { id: 'U2' } }
+  let authorized = true
+  const scope = { ...f.scope, async discoverRelatedTools() {
+    return authorized ? [{ name: 'mcp_visible', schema: { input_schema: { type: 'object' } } }] : []
+  } }
+  const result = await f.registry.tools.dispatch(call, scope)
+  expect(result).toMatchObject({ canonicalEvents: [
+    { type: 'skill-schema', skill_name: 'U2', tool_names: ['mcp_visible'] },
+    { type: 'tool-schema', tool_name: 'mcp_visible', schema: { input_schema: { type: 'object' } } },
+  ] })
+  expect(JSON.stringify(result)).not.toContain('mcp_revoked')
+  authorized = false
+  expect(await f.registry.tools.dispatch(call, scope)).not.toHaveProperty('canonicalEvents')
+})

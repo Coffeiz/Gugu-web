@@ -5,7 +5,7 @@ import {basename,dirname,resolve,relative,isAbsolute,sep} from 'node:path'
 import {fileURLToPath} from 'node:url'
 
 export interface ByokEnvelope {ciphertext:string;nonce:string;encryptedDataKey:string;keyVersion:number}
-export interface ByokEnvelopeOptions {keyFile:string;version:number;masterKey?:string;previousKey?:string|Promise<string>;validateKeyFile?:(afterMkdir:boolean)=>Promise<void>}
+export interface ByokEnvelopeOptions {keyFile:string|null;version:number;masterKey?:string;previousKey?:string|Promise<string>;validateKeyFile?:(afterMkdir:boolean)=>Promise<void>}
 const info='gugu-byok-envelope-v1'
 const keyLoads=new Map<string,Promise<string>>()
 async function readExisting(path:string):Promise<string>{const file=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW);try{const raw=(await file.readFile('ascii')).trim();if(!raw)throw new Error('凭据主密钥文件为空');await file.chmod(0o600);return raw}finally{await file.close()}}
@@ -16,10 +16,10 @@ function key(raw:string):Buffer {
 }
 function encrypt(key:Buffer,nonce:Buffer,plain:Buffer,aad:string):Buffer{const cipher=createCipheriv('aes-256-gcm',key,nonce);cipher.setAAD(Buffer.from(aad));return Buffer.concat([cipher.update(plain),cipher.final(),cipher.getAuthTag()])}
 function decrypt(key:Buffer,nonce:Buffer,value:Buffer,aad:string):Buffer{if(value.length<16)throw new Error('凭据信封无效');const cipher=createDecipheriv('aes-256-gcm',key,nonce);cipher.setAAD(Buffer.from(aad));cipher.setAuthTag(value.subarray(-16));return Buffer.concat([cipher.update(value.subarray(0,-16)),cipher.final()])}
-/** 返回 Python 同源默认位置；此函数不读取或创建文件。 */
-export function resolveByokKeyFile(env:NodeJS.ProcessEnv):string{
- const root=resolve(dirname(fileURLToPath(import.meta.url)),'../../../../')
- return resolve(env.CREDENTIALS_MASTER_KEY_FILE??resolve(root,'backend/data/.byok-master-key'))
+/** 密钥文件只能由部署环境显式提供。 */
+export function resolveByokKeyFile(env:NodeJS.ProcessEnv):string|null{
+ const path=env.CREDENTIALS_MASTER_KEY_FILE?.trim()
+ return path?resolve(path):null
 }
 /**
  * 只读解析模型版本材料所需的密钥身份。与 createConfiguredByokEnvelope 不同，
@@ -39,15 +39,15 @@ export async function readConfiguredByokMasterKeys(env:NodeJS.ProcessEnv):Promis
   if(configured!==undefined&&typeof configured!=='string')throw new Error('BYOK 环境配置无效')
   current=configured as string|undefined
  }
- if(!current){
+ const path=resolveByokKeyFile(env)
+ if(!current&&path){
   const root=resolve(dirname(fileURLToPath(import.meta.url)),'../../../../')
-  const defaultPath=resolve(root,'backend/data/.byok-master-key'),path=resolveByokKeyFile(env)
   const within=(base:string,target:string)=>{const rel=relative(base,target);return rel===''||(!rel.startsWith('..'+sep)&&rel!=='..'&&!isAbsolute(rel))}
-  if(path!==defaultPath&&within(root,path))throw new Error('凭据主密钥路径不能位于同步工作区')
+  if(within(root,path))throw new Error('凭据主密钥路径不能位于同步工作区')
   try{
    const parent=await realpath(dirname(path))
    const anchored=resolve(parent,basename(path))
-   if(path!==defaultPath&&within(await realpath(root),anchored))throw new Error('凭据主密钥路径不能位于同步工作区')
+   if(within(await realpath(root),anchored))throw new Error('凭据主密钥路径不能位于同步工作区')
    if(anchored!==path)throw new Error('凭据主密钥目录不可安全解析')
    const file=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW)
    try{
@@ -61,14 +61,14 @@ export async function readConfiguredByokMasterKeys(env:NodeJS.ProcessEnv):Promis
  const previous=env.CREDENTIALS_MASTER_KEY_PREVIOUS
  return Object.freeze(current?{[String(version)]:current,...(previous&&version>1?{[String(version-1)]:previous}:{})}:{})
 }
-/** 与 Python 同源的部署密钥选择；调用者传入显式环境，不读取 dotenv。 */
+/** 调用者提供部署环境，密钥按需加载。 */
 export function createConfiguredByokEnvelope(env:NodeJS.ProcessEnv){
  const versionText=env.CREDENTIALS_MASTER_KEY_VERSION??'1'
  if(!/^[+-]?\d+$/.test(versionText.trim()))throw new Error('凭据主密钥版本无效')
  const version=Number(versionText)
  if(!Number.isSafeInteger(version))throw new Error('凭据主密钥版本无效')
  const root=resolve(dirname(fileURLToPath(import.meta.url)),'../../../../')
- const defaultPath=resolve(root,'backend/data/.byok-master-key'),keyFile=resolveByokKeyFile(env)
+ const keyFile=resolveByokKeyFile(env)
  let masterKey=env.CREDENTIALS_MASTER_KEY
  if(!masterKey){
   const normalized=Object.fromEntries(Object.entries(env).map(([key,value])=>[key.toLowerCase(),value]))
@@ -79,33 +79,36 @@ export function createConfiguredByokEnvelope(env:NodeJS.ProcessEnv){
   masterKey=configured as string|undefined
  }
  return createByokEnvelope({keyFile,version,masterKey,previousKey:env.CREDENTIALS_MASTER_KEY_PREVIOUS,validateKeyFile:async(afterMkdir)=>{
+  if(!keyFile)return
   const within=(base:string,target:string)=>{const rel=relative(base,target);return rel===''||(!rel.startsWith('..'+sep)&&rel!=='..'&&!isAbsolute(rel))}
-  if(keyFile!==defaultPath&&within(root,keyFile))throw new Error('凭据主密钥路径不能位于同步工作区')
-  if(afterMkdir&&keyFile!==defaultPath&&within(await realpath(root),resolve(await realpath(dirname(keyFile)),basename(keyFile))))throw new Error('凭据主密钥路径不能位于同步工作区')
+  if(within(root,keyFile))throw new Error('凭据主密钥路径不能位于同步工作区')
+  if(afterMkdir&&within(await realpath(root),resolve(await realpath(dirname(keyFile)),basename(keyFile))))throw new Error('凭据主密钥路径不能位于同步工作区')
  }})
 }
 export function createByokEnvelope(options:ByokEnvelopeOptions){
+ const keyFile=options.keyFile
  async function current():Promise<string>{
   if(options.masterKey)return options.masterKey
-  let pending=keyLoads.get(options.keyFile)
+  if(!keyFile)throw new Error('未配置凭据主密钥')
+  let pending=keyLoads.get(keyFile)
   if(!pending){
    pending=(async()=>{
     await options.validateKeyFile?.(false)
-    await mkdir(dirname(options.keyFile),{recursive:true})
+    await mkdir(dirname(keyFile),{recursive:true})
     if(process.platform!=='linux')throw new Error('文件主密钥需要 Linux 目录句柄支持；请配置环境主密钥')
-    const directory=await open(dirname(options.keyFile),constants.O_RDONLY|constants.O_DIRECTORY|constants.O_NOFOLLOW)
+    const directory=await open(dirname(keyFile),constants.O_RDONLY|constants.O_DIRECTORY|constants.O_NOFOLLOW)
     try{
      await options.validateKeyFile?.(true)
-     const [opened,named]=await Promise.all([directory.stat(),stat(dirname(options.keyFile))])
+     const [opened,named]=await Promise.all([directory.stat(),stat(dirname(keyFile))])
      if(opened.dev!==named.dev||opened.ino!==named.ino)throw new Error('凭据主密钥目录已变更')
-     const anchored=`/proc/self/fd/${directory.fd}/${basename(options.keyFile)}`
+     const anchored=`/proc/self/fd/${directory.fd}/${basename(keyFile)}`
      try{return await readExisting(anchored)}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error}
      const raw=randomBytes(32).toString('base64url')
      try{const file=await open(anchored,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600);try{await file.writeFile(raw+'\n');await file.sync()}finally{await file.close()}return raw}
      catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;return await readExisting(anchored)}
     }finally{await directory.close()}
-   })().finally(()=>{keyLoads.delete(options.keyFile)})
-   keyLoads.set(options.keyFile,pending)
+   })().finally(()=>{keyLoads.delete(keyFile)})
+   keyLoads.set(keyFile,pending)
   }
   return pending
  }

@@ -160,7 +160,7 @@ onBeforeUnmount(() => { stopPoll(); if (closeTimer) clearTimeout(closeTimer) })
 .onboarding-im-connect:hover, .onboarding-im-cancel:hover { border-color: var(--choice-chip-border-hover); background: var(--choice-chip-bg-hover); color: var(--choice-chip-fg-hover); }
 .onboarding-im-connect:disabled { opacity: .45; cursor: not-allowed; }
 .onboarding-im-connect:disabled:hover { border-color: var(--choice-chip-border); background: var(--choice-chip-bg); color: var(--choice-chip-fg); }
-.onboarding-im-qr-canvas { display: block; width: 168px; height: 168px; padding: var(--space-xs); border-radius: var(--radius-sm); background: var(--content-on-accent); }
+.onboarding-im-qr-canvas { display: block; width: 168px; height: 168px; padding: var(--space-xs); border-radius: var(--radius-xs); background: var(--content-on-accent); }
 .onboarding-im-qr-copy { min-width: 0; color: var(--content-secondary); font-size: var(--font-size-xs); line-height: 1.55; }
 .onboarding-im-modal { padding: var(--space-lg); }
 .onboarding-im-modal-head { display: flex; align-items: center; gap: var(--space-sm); padding-bottom: var(--space-md); border-bottom: 1px solid var(--panel-divider); }

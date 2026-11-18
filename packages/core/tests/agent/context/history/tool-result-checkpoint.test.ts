@@ -121,13 +121,15 @@ describe('工具回执授权引用checkpoint', () => {
     for (const value of [NaN, Infinity, cycle, getter, () => 'function']) await expect(port.checkpointToolResult(scope, completed(value))).rejects.toThrow()
     expect(calls).toBe(0); expect(getters).toBe(0)
   })
-  it('waiting控制事实深快照并精确绑定原调用，unknown不能夹带业务值', async () => {
+  it.each([undefined, 'call_tool'] as const)('等待交互精确绑定原调用和转发来源 %s，unknown 不夹带业务值', async adapter => {
     const port = createToolResultCheckpoint(passthrough, services)
-    const waiting: ToolResult = { kind: 'waiting', interaction: { id: 'interaction', kind: 'confirmation', afterConfirmation: false, toolCall: scope.call } }
-    const saved = await port.checkpointToolResult(scope, waiting)
+    const forwardedScope = { ...scope, call: { ...scope.call, ...(adapter ? { adapter } : {}) } }
+    const waiting: ToolResult = { kind: 'waiting', interaction: { id: 'interaction', kind: 'confirmation', afterConfirmation: false, toolCall: forwardedScope.call } }
+    const saved = await port.checkpointToolResult(forwardedScope, waiting)
     expect(saved).toEqual(waiting); expect(saved).not.toBe(waiting)
-    expect(await port.restoreToolResult(scope, saved)).toEqual(waiting)
-    await expect(port.checkpointToolResult(scope, { ...waiting, interaction: { ...waiting.interaction, toolCall: { ...scope.call, input: { file: 'other' } } } })).rejects.toThrow('原工具')
+    expect(await port.restoreToolResult(forwardedScope, saved)).toEqual(waiting)
+    await expect(port.checkpointToolResult(forwardedScope, { ...waiting, interaction: { ...waiting.interaction, toolCall: { ...forwardedScope.call, input: { file: 'other' } } } })).rejects.toThrow('原工具')
+    if (adapter) await expect(port.restoreToolResult(scope, saved)).rejects.toThrow('原工具')
     expect(await port.checkpointToolResult(scope, { kind: 'unknown' })).toEqual({ kind: 'unknown' })
     await expect(port.checkpointToolResult(scope, { kind: 'unknown', value: '不允许' } as unknown as ToolResult)).rejects.toThrow()
   })

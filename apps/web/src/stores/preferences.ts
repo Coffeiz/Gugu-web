@@ -4,14 +4,26 @@ import { preferencesApi } from '@/services/api'
 import { isSupportedLocale, setLocale, type SupportedLocale } from '@/i18n'
 import { applyServerTheme } from '@/composables/core/useTheme'
 import { InteractionSync } from '@/interaction/sync/InteractionSync'
+import { isDesktopRenderer } from '@/desktop/bridge'
 
 const AUTOMATIC_MODE_SYNC_KEY = 'gugu-automatic-mode-sync'
+const DESKTOP_PROJECT_PREFS = 'gugu.desktop.project.'
+
+function readDesktopProjectArray(key: 'lastStages' | 'stageTemplates'): unknown[] {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(DESKTOP_PROJECT_PREFS + key) ?? 'null')
+    return Array.isArray(value) ? value : []
+  } catch {
+    return []
+  }
+}
 
 export const usePreferencesStore = defineStore('preferences', () => {
+  const desktop = isDesktopRenderer()
   // 偏好里的松结构数组（阶段/模板元素类型待后端入 OpenAPI 后 gen:types 收紧），暂 any[]
-  const lastStages       = ref<any[]>([])
-  const stageTemplates   = ref<any[]>([])
-  const pmStagesExpanded  = ref(false)  // 项目编辑卡阶段区展开版面记忆
+  const lastStages       = ref<any[]>(desktop ? readDesktopProjectArray('lastStages') : [])
+  const stageTemplates   = ref<any[]>(desktop ? readDesktopProjectArray('stageTemplates') : [])
+  const pmStagesExpanded  = ref(desktop && localStorage.getItem(DESKTOP_PROJECT_PREFS + 'pmStagesExpanded') === 'true')
   const calendarWeekStart = ref('monday') // 'monday' 或 'sunday'
   const calendarDoneMode  = ref('done') // 'done' = 已完成项目显示到完成日；'deadline' = 显示到截止日
   const defaultView       = ref(localStorage.getItem('gugu-default-view') ?? 'projects')
@@ -33,7 +45,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   const emailChangeEnabled = ref(false)
   const personalityPreferenceRevision = ref(0)
   const locale = ref<SupportedLocale | null>(null)
-  const loaded            = ref(false)
+  const loaded            = ref(desktop)
   const automaticModeChannel = typeof BroadcastChannel === 'undefined'
     ? null
     : new BroadcastChannel('gugu_preferences')
@@ -70,6 +82,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   }
 
   async function fetch() {
+    if (desktop) return
     try {
       const data = await preferencesApi.get()
       lastStages.value       = data.lastStages     ?? []
@@ -127,6 +140,11 @@ export const usePreferencesStore = defineStore('preferences', () => {
   }
 
   async function savePmStagesExpanded(v: boolean) {
+    if (desktop) {
+      localStorage.setItem(DESKTOP_PROJECT_PREFS + 'pmStagesExpanded', String(v))
+      pmStagesExpanded.value = v
+      return
+    }
     await savePreferenceValue('pmStagesExpanded', pmStagesExpanded, v)
   }
 
@@ -282,11 +300,19 @@ export const usePreferencesStore = defineStore('preferences', () => {
 
   async function saveLastStages(stages: any[]) {
     lastStages.value = stages
+    if (desktop) {
+      localStorage.setItem(DESKTOP_PROJECT_PREFS + 'lastStages', JSON.stringify(stages))
+      return
+    }
     try { await preferencesApi.update({ lastStages: stages }) } catch {}
   }
 
   async function saveTemplates(templates: any[]) {
     stageTemplates.value = templates
+    if (desktop) {
+      localStorage.setItem(DESKTOP_PROJECT_PREFS + 'stageTemplates', JSON.stringify(templates))
+      return
+    }
     try { await preferencesApi.update({ stageTemplates: templates }) } catch {}
   }
 

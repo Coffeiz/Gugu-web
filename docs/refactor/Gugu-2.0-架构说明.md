@@ -7,6 +7,8 @@
 
 ### 1.1 已确定的方向
 
+- **2.0 运行时统一使用 Node。** 继续提供的 API、Agent 工具和后台任务全部由 Node/Core 与各 Host 承担。生产与开发入口直接调用 Node。缺少能力时由 Node 明确返回不可用；不引入 Python 代理、回退或双运行时交接。旧版需要保留的数据通过显式备份、导入和恢复流程迁移。完成切换与验收后从 2.0 删除 Python 后端、Worker 和兼容包。
+
 - 2.0 目标使用 `apps/` 放可运行应用，`packages/` 放可复用库：Vue 前端、Linux/NAS Node Host、Electron Host 分别归入 `apps/web/`、`apps/web-host/`、`apps/desktop/`；共享业务 Core 归入 `packages/core/`。四个包已迁入目标路径，构建与部署验收正在进行。
 - `packages/core/` 承载可复用的领域规则、应用用例、统一数据运行时和 Agent 编排，目标语言为 TypeScript，完整桌面/服务端 Runtime 由 Node 承载。Core 不反向依赖 Web Host、SaaS 或 Electron 源码。跨端图表栅格化和 Mermaid 共享表现规则位于独立的 `packages/charts/`；Host 通过显式渲染入口调用，worker 隔离不替代 Host 的能力授权或生产工具注册。
 - `apps/desktop/` 使用 Electron + TypeScript 装配桌面 Host，负责窗口、生命周期和受限 IPC。可复用的执行契约、策略与平台适配目标收敛到 `packages/sandbox/`；端侧 Host 注入授权与原生后端，必要时使用独立原生 helper。`apps/web-host/` 是 Linux/NAS 自托管版的 Node HTTP Host，负责 Web API/SSE、可信身份上下文、服务生命周期和 Core 装配，并提供 `apps/web/` 构建的静态资源。SaaS 保留独立的 Gateway、身份、同步和部署装配边界；具备独立构建边界后可迁入私有仓库，不为尚未实现的 SaaS Host 创建空包。
@@ -15,7 +17,7 @@
 - 桌面端和移动端不提供 Admin 页面；本机权限、执行能力及运行状态通过各端自身的设置和状态界面管理。Linux/NAS 自托管保留管理后台；未来 SaaS 的管理能力以独立控制台的产品形态提供，具体部署和代码拆分另行确定。
 - **Admin 数据边界**：Admin 专属 API 面向 Linux/NAS Web 和未来独立 SaaS 控制台，不要求 SQLite 适配或桌面 IPC；按服务端实际数据库与部署能力实现并验证，当前 Linux/NAS 以 PostgreSQL 为准，SaaS 使用自己的服务端适配。被普通业务或桌面实际复用的规则与数据能力仍须遵循对应跨端契约；不得把此例外扩展到普通用户 API，也不代表 SaaS 当前已接入。
 - **桌面埋点与服务端统计分离**：桌面和移动端不运行 Admin 查询，但可在用户授权和设置控制下向用户选择的服务上传必要的使用事件。事件契约、采集与上传属于普通跨端能力；离线队列可使用 SQLite，批量上传失败不得阻塞正常使用，按容量及保留时间限制暂存。默认不采集聊天正文、文件内容、凭据和本机绝对路径等敏感内容；关闭非必要统计后停止相关上传。SaaS 接收、存储与聚合事件并供其独立控制台查询；Linux/NAS 自部署的接收端及上报目标由部署者配置，不默认上传官方 SaaS。具体接收协议、数据类别及桌面授权界面须在实现时独立验收。
-- SaaS 长期以多用户 DB、云同步及相应消息/任务路由为职责，不持有用户 FS，也不装配本机用户目录、watcher 或通用 Shell。首版可保留旧 FS 兼容链路，须完成数据去向和恢复验收后再退出。
+- SaaS 长期以多用户 DB、云同步及相应消息/任务路由为职责，不持有用户 FS，也不装配本机用户目录、watcher 或通用 Shell。旧 FS 数据须在 SaaS 切换前完成去向与恢复验收。
 - 文件正文以授权范围内的本地 FS 为唯一真源，业务读写直接通过 FS Adapter 完成；不再采用“本地文件与 DB 正文副本靠 watcher 同步”的方案。DB 不为本地文件单独生成持久对象 ID；需要索引、搜索或预览时，可保存可丢弃、可从文件重建的派生数据。文件以授权根目录下的相对路径定位，改名或移动后旧路径引用允许失效；watcher 仅可作为派生数据刷新的优化，不得作为一致性或数据恢复的前提。
 - 可复用的 FS 能力收敛于 `packages/fs/`，Node 实现通过独立入口按需导入；Host 负责建立可信身份和授权根。当前仅安全只读打开已接入 Web 文件读取，写入、目录操作和其他端的接入仍待迁移。
 - Linux/NAS 自托管版 2.0 只支持本地文件系统存储，取消应用在线文件/附件/记忆存储的 OSS/S3 后端及其直传、预签名 URL、对象配额和对象搬移 API。升级路径必须包含旧版 OSS 数据的盘点与迁移/导出验收；不能在数据去向未确认时直接禁用旧对象读取。独立备份目标可另行设计，SaaS 云端对象存储由 SaaS 架构单独决定，不受此项取消决定约束。
@@ -101,21 +103,19 @@ packages/
   core/                           # 多端共享的 TypeScript Core
   fs/                             # 〔目标〕授权范围内的本地文件系统能力
   sandbox/                        # 〔目标〕执行契约、策略与平台适配
-backend/                           # 迁移期间的 Python API/Worker 基线；按 N2/N3/N5 退出或仅保留未迁移 Worker
-compat/                            # 迁移期 Python 兼容与差分回归；按生产调用方退出条件收敛
 loopscope/                         # 独立子项目，保留自身 workspace 与构建边界
 docs/
 agentskills/
 scripts/
 ```
 
-SaaS 尚无当前仓库内的 Node Host；稳定后可维持独立私有仓库，不在本仓库预建空 `apps/saas/`。迁移期间若 Python Worker 仍需独立运行，才迁入 `apps/python-worker/`；Node Worker 只有需要独立部署、扩缩容或生命周期时才增加 `apps/worker/`，否则由相应 Host 装配 Core Job Runtime，不额外拆包。
+SaaS 尚无当前仓库内的 Node Host。稳定后可维持独立私有仓库，无需预建空 `apps/saas/`。2.0 的业务、后台任务与执行入口最终由 Node 承担，完成切换后删除 Python 后端。Node Worker 在需要独立部署、扩缩容或生命周期时增加 `apps/worker/`，其余由相应 Host 装配 Core Job Runtime。
 
 `packages/fs/` 与 `packages/sandbox/` 是独立共享包目标：FS 负责授权根目录内的直接读写、路径边界与文件操作；Sandbox 负责执行契约、策略和平台适配。Host 建立可信身份与授权，按部署能力注入文件根目录、执行后端及生命周期；共享包不自行授予权限。两个独立包已建立：只读 FS 已接入 Web Host，Sandbox 已承载现有执行器实现，Core 保留兼容导出。完整 FS 产品路径和 Linux MXC 多用户隔离仍待实现和验收。
 
 核心职责树如下；目标是 Core 按业务模块组织共享规则与用例，Web Host 按模块组织协议接线。Core 顶层旧 `domain/`、`application/` 已按业务和共用职责归位；`apps/web-host/src/domains/` 等仍处于迁移中，不表示目标结构已完成。桌面和 Web 共用的业务规则、完整业务用例及其数据契约先按领域归入 Core，再继续新增 N2 业务迁移。业务规则、事务、Undo、文件和事件作为完整用例处理，不能只移动代码或复制两份实现；各 Host 保留可信身份、平台能力和生命周期装配。
 
-同名业务模块在 Core 和 Host 中分别承担业务实现与入口适配，不维护两套规则。按需拆分领域规则、用例与仓储，不要求每个模块创建相同的空目录，也不为每条接口增加一层。2.0 尚未发布：现有内部调用、测试及导出应随迁移同步切换，确认无调用方后删除仅为旧 Node 目录或导出保留的转发层；不得因此删除 Python 参考后端或改变旧版对外行为、数据兼容及仍在使用的运行时协议。
+同名业务模块在 Core 和 Host 中分别承担业务实现与入口适配，不维护两套规则。按需拆分领域规则、用例与仓储，不要求每个模块创建相同的空目录，也不为每条接口增加一层。2.0 尚未发布：现有内部调用、测试及导出应随迁移同步切换，确认无调用方后删除仅为旧 Node 目录或导出保留的转发层；仍要兑现已确定的产品行为和数据迁移契约；旧版代码可从 Git 历史查阅。
 
 Web Host 的 `app.ts` 与 `main.ts` 是组合根，不承担逐路由业务实现。`app.ts` 创建 Fastify 实例、安装共享认证/错误/请求上下文边界、提供健康检查并注册业务域插件；各 `modules/<domain>/routes.ts` 汇总本域路由并作为 Fastify 插件挂载，单条路由可继续留在同域现有文件中。`main.ts` 负责解析启动配置、建立 PostgreSQL/Core/Redis 等共享资源、调用 Host 装配、启动服务与 Worker，并管理关闭顺序。只有当一个业务域确有多项平台依赖或生命周期需要集中构造时，才在 `modules/<domain>/host.ts` 放该域 Host 工厂；不要求每个目录都创建它。
 
@@ -152,17 +152,21 @@ packages/core/                     # 公开、可独立构建的 TS Core
         ipc.ts                     # 可注入消息端口的进程 IPC；不导入 Electron
       jobs/                        # 〔规划〕持久 Job、租约、恢复及调度
     agent/                         # Executor 已实现；其他 Agent 能力逐域迁移
+      runtime.ts                   # 装配共享 Agent Runtime 与持久 Chat 调度，Host 注入端口并管理进程启停
+      chat-service.ts              # 受信任调用方的启动、恢复和取消用例
       runner.ts                    # 运行准备、依赖组合
       core.ts                      # 模型与工具循环、运行推进
       models.ts                    # 运行领域契约
       ports.ts                     # 显式依赖端口
       context/                     # 上下文、历史组装、预算与压缩
-      run/                         # 生命周期、取消、终结与流消费
+      run/                         # 生命周期、持久调度与重建用例、取消、终结与流消费
       interactions/                # 交互确认与恢复
       memory/                      # 记忆与反思
       providers/                   # 〔规划〕模型协议、事件映射、用量和错误契约
       tools/                       # 〔规划〕工具定义、参数校验、确认与执行协调
+      skills/                      # 从 Markdown 头部读取元数据、注册并按需加载
       executor/                    # 兼容导出；实现位于 packages/sandbox/
+  resources/skills/                # Core 自有的内置 Prompt Skill Markdown 文档
   tests/                           # 独立 Core 的回归；T1 再按类型整理
 apps/desktop/
   src/                             # Electron Host，不放领域/数据库实现
@@ -271,8 +275,6 @@ apps/web/                          # Vue Web/桌面 Renderer；桌面 bridge 由
       # 2.0 不提供 filesync / watcher 对账管理 API；旧版本相关能力退役
     types/                          # 仅跨领域共享类型；领域类型留在对应 API 模块
     index.ts                       # 可选兼容导出
-backend/                           # 迁移期 Python Web/Agent/Worker 与行为基线；按退出条件清理
-compat/                            # 仍在使用的 Python 兼容包，不复制新能力
 loopscope/                         # 独立子项目及 workspace，不为统一目录而强行拆并
 docs/                              # refactor 主清单/矩阵/归档，testing 分层规范与映射
 ```
@@ -319,7 +321,7 @@ packages/ui/                  # 多个 App 确有共用需求时再提取
 | --- | --- | --- |
 | Core Domain / Application | 领域不变量、业务用例、所有权规则、确认与副作用语义 | Host 建立可信身份、展示确认并验证调用来源 |
 | Core Data Runtime | 仓储、schema、事务、精度、CAS、操作收据及迁移实现 | Host 停写、备份编排、独占升级、启动和运维配置 |
-| Core Agent | Canonical 历史、Provider 适配、上下文/提示词业务格式、工具及 Run 编排 | Host 注入可信数据、凭据、网络/进程能力与入口交付 |
+| Core Agent | Canonical 历史、Provider 适配、上下文/提示词业务格式、工具及 Run 编排。共享入口覆盖调度、固定请求前缀重建与指纹校验、取消、交互恢复和事件重放 | Host 注入可信身份与数据、授权、持久化、凭据、网络和执行能力，负责进程启停与协议投影 |
 | Core RAG | 复用 1.7.7 TypeScript 检索与排序规则；索引为派生数据，可从授权 FS/Canonical 数据重建 | Host/Core Data Adapter 负责授权来源读取和索引持久化；Python/Cython 不作为 Node 生产执行路径 |
 | Core Runtime / Transport | `commands.ts` 统一命令边界；stdio/进程 IPC 只处理编码、消息、背压、超时与错误终态 | Electron IPC 的窗口/frame 来源校验和 Preload 暴露由 Desktop 负责 |
 | Sandbox 包（目标；当前部分实现位于 Core Executor） | 共用执行契约、策略计算、能力协商、MXC/平台适配及执行终态 | Host 注入真实授权、原生后端、私有资源与生命周期；OS 后端强制隔离 |
@@ -332,7 +334,7 @@ SQLite 内部数据文件、初始化与备份属于 Data Adapter，不等于提
 
 本地文件正文不进入 DB 作为同步副本。派生索引或缓存必须能丢弃并从源文件重建，不能在 DB 与文件不一致时回写旧内容覆盖源文件。需要持久化的文件引用使用授权根目录及相对路径；路径改变后引用可以失效，由用户重新定位，不通过 watcher 推断或重建文件身份。
 
-RAG 复用既有 TypeScript 算法实现，不从 Cython 重写算法。迁移重点是接入 Node/Core 的授权数据读取、来源适配、派生索引生命周期和重建流程，并以当前 Python/Cython 回归及固定质量语料验证召回来源、Token、候选、排序、confidence 与 ACL 过滤；索引格式或 tokenizer 版本变化时须明确重建策略。迁移期间 Python/Cython 可继续作为业务写入方和共享持久 job 的事件生产者，但只有配置指定的一个 Worker 可以构建索引；Node 成为消费者时，Python 必须只持久化事件，不运行内存 Worker 或恢复消费者。Python/Cython 不与 TS 同时成为线上索引写入权威，也不作为 Node 查询回退。
+RAG 复用既有 TypeScript 算法。Node/Core 负责授权数据读取、来源适配、派生索引和重建流程，以固定语料和历史回归验证召回来源、Token、候选、排序、confidence 和 ACL 过滤。索引格式或 tokenizer 版本变化时须明确重建策略。2.0 Web Host 在正式索引迁移就绪后启动 Node 消费者，Node 业务写入通过持久任务驱动索引更新。迁移前后的两种后端分别运行，2.0 部署以退出旧消费者为切换条件。
 
 ### 2.2 Transport、Executor 与桌面装配边界
 
@@ -365,7 +367,7 @@ Core 负责队列项状态、顺序、认领和恢复规则，并通过存储与
 ## 3. 数据统一与 Node 迁移规则
 
 1. 一个完整业务命令由同一个 UoW/连接拥有事务。仓储不自行 commit；项目、撤销记录、关联元数据、需要可靠投递的 outbox 必须一起设计。
-2. 同一部署的同一写域只有一个权威写入口。未具备完整 Node 命令时，整条 Web 命令继续走原 Python 路径，不拆成 Python/Node 两次提交，也不双写。
+2. 同一部署的同一写域只有一个权威写入口。2.0 在 Node 命令和授权能力具备时开放对应 Web 操作，未迁完的操作保持未接入。数据迁移与恢复使用显式流程。
 3. SQLite 与 PG 通过同一业务契约验收，差异集中在 Adapter：用户隔离、UUID、UTC 微秒、缺字段/null、布尔/整数、JSON、排序、CAS、回滚与持久化均需验证。
 4. 当前本地 schema 为 **3**、正式桌面 NDJSON 为 **v2**。业务写入与操作收据同事务提交；相同操作 ID/内容重读原结果，内容不一致冲突。未知提交状态不自动重放修改。
 5. 旧本地 v1/v2 库须停应用后显式备份升级；不自动覆盖或修复用户库。旧 Python 不直接写 v3，回滚需恢复升级前备份并配套旧代码。

@@ -92,7 +92,7 @@ function submit() {
 .archive-dialog-body { display: grid; gap: 16px; padding: 20px 22px; }
 .archive-field { display: grid; gap: 7px; color: var(--content-secondary); font-size: 12px; }
 .archive-field input { width: 100%; min-width: 0; box-sizing: border-box; height: 36px; }
-.archive-message { margin: 0; padding: 9px 11px; border-radius: var(--radius-sm); font-size: 12px; line-height: 1.5; }
+.archive-message { margin: 0; padding: 9px 11px; border-radius: var(--radius-xs); font-size: 12px; line-height: 1.5; }
 .archive-message.is-error { color: var(--danger-fg); background: var(--danger-bg); }
 .archive-message.is-success { color: var(--status-success); background: var(--status-success-bg); }
 .archive-dialog-footer {

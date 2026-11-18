@@ -1,4 +1,5 @@
 import type { Pool } from 'pg'
+import type { Kysely } from 'kysely'
 import { createTerminalShellFactsReader } from '@gugu/core/terminals/shell-facts'
 import type { TerminalListItem } from '@gugu/core/terminals/list'
 import type { RedisEventPublisher } from '../../adapters/redis-events.js'
@@ -13,8 +14,8 @@ import { createTerminalWorkspaceMounts } from './workspace-mounts.js'
 import type { TerminalCommandPorts } from '@gugu/core/terminals/command'
 
 /** 将认证后的终端用例、持久化、确认、挂载和 MXC 组合为同一生命周期。 */
-export function createTerminalRuntime(options: {
-  pool: Pick<Pool, 'connect'>; db: Parameters<typeof createTerminalShellFactsReader>[0]; storageRoot: string
+export function createTerminalRuntime<DB>(options: {
+  pool: Pick<Pool, 'connect'>; db: Kysely<DB>; storageRoot: string
   publisher: Pick<RedisEventPublisher, 'publishResourceChanged'>; confirmations: TerminalConfirmationStore
   read(owner: string, terminal: string): Promise<TerminalListItem>
   runtime: Parameters<typeof createTerminalShellSnapshotReader>[2]
@@ -31,7 +32,7 @@ export function createTerminalRuntime(options: {
     read: snapshot, redeem: options.confirmations.redeem, confirm: gate,
     isCancelled: options.cancellation.isRequested,
     async run(owner, terminal, requestId, input, current, confirmed, signal) {
-      const mxc = createTerminalMxcCommand((_owner, _terminal, cwd) => mounts(owner, current.workspaceId, current.facts.fullUserSandboxWrite, cwd), createTerminalLiveOutput(options.publisher))
+      const mxc = createTerminalMxcCommand((_owner, _terminal, cwd) => mounts(owner, current.workspaceId, current.facts.fullUserSandboxWrite, cwd), createTerminalLiveOutput(options.publisher), current.egressProxyUrl)
       return mxc(owner, terminal, requestId, input, confirmed, signal)
     },
   })

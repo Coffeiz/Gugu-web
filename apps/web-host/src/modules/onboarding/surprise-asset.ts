@@ -1,8 +1,11 @@
 import { readFile, readdir } from 'node:fs/promises'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-/** 从随应用发布的 onboarding/assets 中读取排序后的首个 MP3；目录缺失时与 Python 一样跳过。 */
-export function createOnboardingSurpriseMp3Reader(assetDirectory: string) {
+const bundledAssets = fileURLToPath(new URL('../../../assets/onboarding', import.meta.url))
+
+/** 读取随 Web Host 发布的首个 MP3。未打包音频时跳过此项播种。 */
+export function createOnboardingSurpriseMp3Reader(assetDirectory = bundledAssets) {
   return async (): Promise<{ name: string; data: Uint8Array } | null> => {
     let names: string[]
     try { names = await readdir(assetDirectory) }

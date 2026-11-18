@@ -1,9 +1,8 @@
 import type { Pool } from 'pg'
-import type { ContextDataPorts, ContextSourcePorts } from '@gugu/core/agent'
+import { createWebAgentContextBuilder, type AgentContextBuilderPorts, type ContextDataPorts, type ContextSourcePorts } from '@gugu/core/agent'
 import type { PreferenceTextFiles } from '../../preferences/persistence/personality-files.js'
 import { createAgentPreferenceContextSources } from './agent-context-preferences.js'
 import { createAgentOverviewSources } from './agent-overview-postgres.js'
-import { createWebAgentContextBuilder, type AgentContextBuilderPorts } from './agent-context-builder.js'
 import { createWebAgentSourceLoader } from './agent-context-source.js'
 import { createAgentMemoryContextLoader, type AgentMemoryVectorSearchFactory } from '../../../modules/agent-sessions/memory-context.js'
 

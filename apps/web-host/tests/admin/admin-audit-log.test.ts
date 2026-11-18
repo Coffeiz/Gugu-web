@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createHmac } from 'node:crypto'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { createSecurityEventFingerprint, registerAdminSecurityEventRoutes } from '../../src/domains/admin/admin-audit-log.js'
+import { createSecurityEventFingerprint, registerAdminSecurityEventRoutes, type AdminSecurityEventFilters } from '../../src/domains/admin/admin-audit-log.js'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
 
 type DbRow = Record<string, unknown>
@@ -27,7 +27,7 @@ function eventRow(id: number, occurredAt: string, userId: string): DbRow {
 }
 
 function setup(rows: DbRow[] = []) {
-  const calls: { sql: string; params: unknown[] }[] = []
+  const calls: AdminSecurityEventFilters[] = []
   let queryError: Error | undefined
   const app = Fastify()
   installHttpErrorHandler(app)
@@ -35,12 +35,24 @@ function setup(rows: DbRow[] = []) {
     requireAdmin: async (request, reply) => {
       if (request.headers.authorization !== 'admin') return reply.code(401).send({ error: 'unauthorized' })
     },
-    query: async (sql, params) => {
-      calls.push({ sql, params })
+    read: async filters => {
+      calls.push(filters)
       if (queryError) throw queryError
-      return rows.slice(0, Number(params.at(-1)))
+      const limit = filters.limit ?? 200
+      return {
+        items: rows.slice(0, limit).map(row => ({
+          id: Number(row.id), user_id: 'synthetic-user-fingerprint', event_type: String(row.event_type),
+          resource_type: String(row.resource_type), resource_fingerprint: String(row.resource_fingerprint),
+          owner_fingerprint: row.owner_fingerprint as string | null,
+          client_fingerprint: row.client_fingerprint as string | null,
+          ip_fingerprint: row.ip_fingerprint as string | null,
+          user_agent_fingerprint: row.user_agent_fingerprint as string | null,
+          action: String(row.action), reason_code: String(row.reason_code),
+          occurred_at: new Date(String(row.occurred_at)).toISOString().replace(/Z$/, '+00:00'),
+        })),
+        total: Math.min(rows.length, limit), since_minutes: filters.since_minutes ?? 1440,
+      }
     },
-    fingerprintUserId: (id) => createHmac('sha256', 'synthetic-test-key').update(id).digest('hex'),
   })
   return { app, calls, set queryError(error: Error | undefined) { queryError = error }, cleanup: () => app.close() }
 }
@@ -65,22 +77,16 @@ test('筛选条件使用参数绑定，按时间窗/上限查询并只投影安�
       headers: { authorization: 'admin' },
     })
     assert.equal(response.statusCode, 200)
-    const call = ctx.calls[0]!
-    assert.match(call.sql, /occurred_at\s*>=\s*\$1/)
-    assert.match(call.sql, /event_type\s*=\s*\$2/)
-    assert.match(call.sql, /action\s*=\s*\$3/)
-    assert.match(call.sql, /resource_type\s*=\s*\$4/)
-    assert.match(call.sql, /user_id\s*=\s*\$5/)
-    assert.match(call.sql, /ORDER BY occurred_at DESC LIMIT \$6/)
-    assert.deepEqual(call.params.slice(1), ['ownership.denied', 'logged', 'Project', '00000000-0000-4000-8000-000000000007', 1])
-    assert.ok(call.params[0] instanceof Date)
-    assert.equal((Date.now() - (call.params[0] as Date).getTime()) >= 60 * 60 * 1000 - 5000, true)
+    assert.deepEqual({ ...ctx.calls[0] }, {
+      event_type: 'ownership.denied', action: 'logged', resource_type: 'Project',
+      user_id: '00000000-0000-4000-8000-000000000007', since_minutes: 60, limit: 1,
+    })
     const body = response.json()
     assert.equal(body.total, 1)
     assert.equal(body.since_minutes, 60)
-    assert.equal(body.items[0].user_id, createHmac('sha256', 'synthetic-test-key').update('00000000-0000-4000-8000-000000000007').digest('hex'))
+    assert.equal(body.items[0].user_id, 'synthetic-user-fingerprint')
     assert.equal(body.items[0].event_type, 'ownership.denied')
-    assert.equal(body.items[0].occurred_at, '2026-11-12T12:00:00.000Z')
+    assert.equal(body.items[0].occurred_at, '2026-11-12T12:00:00.000+00:00')
     assert.equal(JSON.stringify(body).includes('must-not-be-returned'), false)
     assert.equal(JSON.stringify(body).includes('192.0.2.99'), false)
     assert.equal(JSON.stringify(body).includes('00000000-0000-4000-8000-000000000007'), false)
@@ -90,14 +96,10 @@ test('筛选条件使用参数绑定，按时间窗/上限查询并只投影安�
 test('默认时间窗与条数匹配Python默认值，超界参数和非法UUID在查询前拒绝', async () => {
   const ctx = setup()
   try {
-    const before = Date.now()
     const defaults = await ctx.app.inject({ url: '/api/v1/admin/audit-log/security-events', headers: { authorization: 'admin' } })
     assert.equal(defaults.statusCode, 200)
     assert.equal(defaults.json().since_minutes, 1440)
-    assert.deepEqual(ctx.calls[0]!.params.slice(1), [200])
-    const since = ctx.calls[0]!.params[0] as Date
-    assert.ok(since.getTime() >= before - 1440 * 60 * 1000)
-    assert.ok(since.getTime() <= before - 1440 * 60 * 1000 + 5000)
+    assert.deepEqual({ ...ctx.calls[0] }, { since_minutes: 1440, limit: 200 })
     for (const suffix of ['?limit=0', '?limit=501', '?since_minutes=0', '?since_minutes=129601', '?user_id=bad']) {
       const invalid = await ctx.app.inject({ url: `/api/v1/admin/audit-log/security-events${suffix}`, headers: { authorization: 'admin' } })
       assert.equal(invalid.statusCode, 422)

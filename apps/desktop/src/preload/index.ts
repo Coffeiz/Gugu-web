@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { DESKTOP_CHANNELS } from '@gugu/core/desktop'
-import type { DesktopBridge } from '@gugu/core/desktop'
+import type { DesktopBridge, DesktopProjectCollection } from '@gugu/core/desktop'
 import type { DesktopAppearancePreferences } from '@gugu/core/desktop'
 
 type CanvasItemAddBody = Parameters<DesktopBridge['addCanvasItem']>[1]
@@ -15,13 +15,19 @@ const bridge: DesktopBridge = Object.freeze({
   projects: () => ipcRenderer.invoke(DESKTOP_CHANNELS.projects),
   createProject: (name: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.createProject, name),
   renameProject: (id: number, version: number, name: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.renameProject, id, version, name),
+  projectBoard: (collection: DesktopProjectCollection, offset: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.projectBoard, collection, offset),
+  projectDetails: (id: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.projectDetails, id),
+  createBoardProject: (fields: Record<string, unknown>, operationId?: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.createBoardProject, fields, operationId),
+  updateBoardProject: (id: number, version: number, fields: Record<string, unknown>) => ipcRenderer.invoke(DESKTOP_CHANNELS.updateBoardProject, id, version, fields),
+  deleteBoardProject: (id: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.deleteBoardProject, id),
+  restoreBoardProject: (id: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.restoreBoardProject, id),
   clients: () => ipcRenderer.invoke(DESKTOP_CHANNELS.clients),
   createClient: (name: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.createClient, name),
   renameClient: (id: number, name: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.renameClient, id, name),
   deleteClient: (id: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.deleteClient, id),
   calendar: () => ipcRenderer.invoke(DESKTOP_CHANNELS.calendar),
-  createCalendarEvent: (title: string, date: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.createCalendarEvent, title, date),
-  updateCalendarEvent: (id: number, body: { version: number; title?: string; date?: string }) => ipcRenderer.invoke(DESKTOP_CHANNELS.updateCalendarEvent, id, body),
+  createCalendarEvent: (...args: Parameters<DesktopBridge['createCalendarEvent']>) => ipcRenderer.invoke(DESKTOP_CHANNELS.createCalendarEvent, ...args),
+  updateCalendarEvent: (...args: Parameters<DesktopBridge['updateCalendarEvent']>) => ipcRenderer.invoke(DESKTOP_CHANNELS.updateCalendarEvent, ...args),
   deleteCalendarEvent: (id: number, version: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.deleteCalendarEvent, id, version),
   canvases: () => ipcRenderer.invoke(DESKTOP_CHANNELS.canvases),
   createCanvas: (title: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.createCanvas, title),

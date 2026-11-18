@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createAgentRunStateReader, createPostgresAgentRunStartupStore } from '../../src/domains/agent-sessions/persistence/agent-run-startup-postgres.js'
+import { createPostgresAgentRunStartupStore } from '../../src/domains/agent-sessions/persistence/agent-run-startup-postgres.js'
 const owner = { ownerId: 'owner-a', sessionId: '1', runId: 'run-a' }
 function setup() {
   const entries = new Map<string, string>(); let activeLease = false, checkpoint = false
@@ -26,10 +26,4 @@ test('只允许登记过的归属 run 在无活动租约或 checkpoint 时标记
   setCheckpoint(false); assert.equal(await store.failStart(owner), true)
   assert.equal(await store.readFailure(owner), true)
   assert.equal(await store.readFailure({ ...owner, runId: 'run-b' }), false)
-})
-test('读取状态优先可信 checkpoint，读取错误不会冒充失败', async () => {
-  const reader = createAgentRunStateReader({ read: async () => ({ sequence: 4, status: 'running' }) }, { readFailure: async () => true })
-  assert.deepEqual(await reader(owner), { sequence: 4, status: 'running' })
-  const failed = createAgentRunStateReader({ read: async () => { throw new Error('failed') } }, { readFailure: async () => true })
-  await assert.rejects(failed(owner))
 })

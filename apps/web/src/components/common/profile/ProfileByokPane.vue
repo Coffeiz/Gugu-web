@@ -591,7 +591,7 @@ onBeforeUnmount(() => { stopRebuildPolling() })
 }
 .profile-byok-pane--onboarding .byok-card {
   gap: var(--space-md); padding: 13px 14px;
-  border-color: var(--workspace-card-border); border-radius: var(--radius-md);
+  border-color: var(--workspace-card-border); border-radius: var(--radius-sm);
   background: var(--workspace-card-bg); box-shadow: var(--workspace-card-shadow);
   transition: border-color var(--motion-hover-control) var(--motion-ease-standard);
 }

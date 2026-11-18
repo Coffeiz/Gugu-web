@@ -4,6 +4,8 @@ import { useFilesCacheStore } from '@/stores/filesCache'
 import type { Project, ProjectStage } from '@/types/project'
 import { calculateStageProgress } from '@/composables/projects/useProjectProgress'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
+import { showAppError } from '@/composables/core/useAppToast'
+import { isDesktopRenderer } from '@/desktop/bridge'
 import { i18n } from '@/i18n'
 
 interface ProjectModalActionsOptions {
@@ -70,7 +72,8 @@ export function useProjectModalActions(options: ProjectModalActionsOptions) {
     const current = project()
     if (!current) return
 
-    const message = i18n.global.t('projects.deleteContentsMessage', { name: current.name })
+    const desktop = isDesktopRenderer()
+    const message = i18n.global.t(desktop ? 'projects.desktopTrashMessage' : 'projects.deleteContentsMessage', { name: current.name })
     if (!await confirmDialog({
       title: i18n.global.t('projects.deleteTitle'),
       message,
@@ -78,16 +81,24 @@ export function useProjectModalActions(options: ProjectModalActionsOptions) {
       confirmText: i18n.global.t('projects.deleteConfirm'),
     })) return
 
-    await projectStore.deleteProject(current.id)
-    fileCacheStore.invalidatePages()
-    close()
+    try {
+      await projectStore.deleteProject(current.id)
+      if (!desktop) fileCacheStore.invalidatePages()
+      close()
+    } catch (error) {
+      showAppError(error instanceof Error ? error.message : String(error))
+    }
   }
 
   async function handleArchive() {
     const current = project()
     if (!current) return
-    await projectStore.archiveProject(current.id)
-    close()
+    try {
+      await projectStore.archiveProject(current.id)
+      close()
+    } catch (error) {
+      showAppError(error instanceof Error ? error.message : String(error))
+    }
   }
 
   return { saveName, cancelName, setColor, cycleStatus, saveStages, saveTodos, handleDelete, handleArchive }

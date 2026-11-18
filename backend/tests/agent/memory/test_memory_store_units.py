@@ -290,6 +290,25 @@ async def _null_embed(_text):
     return None
 
 
+async def test_pattern_vector_job_does_not_publish_after_its_source_changes(storage, monkeypatch):
+    from agent.memory import store
+
+    _fake_embedding(monkeypatch)
+    patterns = [_pattern("initial", "需要生成向量的记录")]
+    newer = [_pattern("new", "并行写入的新记录")]
+    await store.write_pattern_list(UID, patterns)
+
+    async def embed_then_change(_text):
+        await store.write_pattern_list(UID, newer)
+        await store.write_pattern_vecs(UID, {"new": {"v": [1.0], "t": "t"}})
+        return [0.5]
+
+    monkeypatch.setattr("agent.memory.embedding.embed", embed_then_change)
+    assert await store.sync_pattern_vecs(UID, patterns, require_current=True) == 0
+    assert await store.read_pattern_list(UID) == newer
+    assert await store.read_pattern_vecs(UID) == {"new": {"v": [1.0], "t": "t"}}
+
+
 async def test_sync_memory_vecs_chunk_gc_and_force(storage, monkeypatch):
     from agent.memory import store
 
@@ -340,6 +359,90 @@ async def test_read_pattern_list_falls_through_corrupt_facts_json_to_md(storage)
     assert all(p["kind"] == "observed" and p["conf"] == 0.75 for p in patterns)
     # 迁移结果落到 pattern.json，下次直接命中
     assert [p["text"] for p in await store.read_pattern_list(UID)] == ["旧模式甲", "旧模式乙"]
+
+
+async def test_read_pattern_list_does_not_rewrite_a_current_snapshot(storage):
+    from agent.memory import store
+
+    key = f"{UID}/.agent/pattern.json"
+    original = json.dumps([_pattern("a", "现有条目")], ensure_ascii=False).encode()
+    await storage.put(key, original)
+    assert (await store.read_pattern_list(UID))[0]["text"] == "现有条目"
+    assert await storage.get(key) == original
+
+
+async def test_pattern_migration_rechecks_current_file_before_restoring_old_facts(storage, monkeypatch):
+    from agent.memory import store
+
+    key = f"{UID}/.agent/pattern.json"
+    await storage.put(key, b"")
+    await storage.put(f"{UID}/.agent/facts.json", json.dumps([_pattern("old", "旧档案")]).encode())
+    newer = [_pattern("new", "期间新写入的档案")]
+    exists = storage.exists
+
+    async def concurrent_existence_check(candidate):
+        if candidate == key:
+            await storage.put(key, json.dumps(newer).encode())
+        return await exists(candidate)
+
+    monkeypatch.setattr(storage, "exists", concurrent_existence_check)
+    assert await store.read_pattern_list(UID) == newer
+    assert json.loads(await storage.get(key)) == newer
+
+
+async def test_owner_memory_edit_replans_from_the_new_snapshot_after_cas_conflict(storage, monkeypatch):
+    from agent.memory import store
+
+    initial = [{"type": "note", "text": "原有画像", "ts": 1}]
+    concurrent = {"type": "note", "text": "并行新增的条目", "ts": 2}
+    await store.write_profile_list(UID, initial)
+    write = store.write_profile_list_if_unchanged
+    attempts = 0
+
+    async def concurrently_write(user_id, expected, updated):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            await store.write_profile_list(user_id, [*initial, concurrent])
+        return await write(user_id, expected, updated)
+
+    monkeypatch.setattr(store, "write_profile_list_if_unchanged", concurrently_write)
+    before, after = await store.mutate_owner_memory_list(
+        UID, "profile", lambda current: store.apply_profile_ops(current, ["明确记住的偏好"], []),
+    )
+    assert attempts == 2
+    assert before == [*initial, concurrent]
+    assert [item["text"] for item in after] == ["原有画像", "并行新增的条目", "明确记住的偏好"]
+    assert await store.read_profile_list(UID) == after
+
+
+async def test_memory_cleanup_apply_rejects_change_between_preview_and_cas(storage, monkeypatch):
+    from fastapi import HTTPException
+    from agent.memory import store
+    from app.api.v1 import config
+
+    initial = [_pattern("old", "清理预览中的旧模式")]
+    newer = [*initial, _pattern("new", "并行写入的新模式")]
+    await store.write_pattern_list(UID, initial)
+    revision = await config._memory_cleanup_revision(UID, storage)
+
+    async def get_plan(_key):
+        return json.dumps({"status": "done", "plan_ready": True, "plan": {
+            UID: {"source_revision": revision, "removed_ids": ["old"]},
+        }})
+
+    monkeypatch.setattr("app.core.redis.get_redis", lambda: SimpleNamespace(get=get_plan))
+    write = store.write_pattern_list_if_unchanged
+
+    async def competing_write(user_id, expected, updated):
+        await store.write_pattern_list(user_id, newer)
+        return await write(user_id, expected, updated)
+
+    monkeypatch.setattr(store, "write_pattern_list_if_unchanged", competing_write)
+    with pytest.raises(HTTPException) as error:
+        await config.memory_cleanup_apply()
+    assert error.value.status_code == 409
+    assert await store.read_pattern_list(UID) == newer
 
 
 async def test_read_pattern_list_filters_items_without_text(storage):

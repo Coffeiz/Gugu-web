@@ -121,7 +121,7 @@ const routes: RouteRecordRaw[] = [
         // 笔记与画布是独立路由，共用 mind 数据与组件模块。
         path: 'notes',
         component: () => import('@/views/Mind/index.vue'),
-        meta: { title: 'mind.notes', fullBleed: true },
+        meta: { title: 'mind.notes' },
         children: [{ path: '', name: 'MindNotes', component: () => import('@/views/Mind/NotesThreePaneView.vue') }],
       },
       {

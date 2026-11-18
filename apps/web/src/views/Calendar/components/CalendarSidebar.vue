@@ -30,6 +30,7 @@
         <button ref="addButton" class="add-event-btn" @click="$emit('add-event', addButton)"><Icon name="action.add" :size="13" />{{ t('calendar.addEvent') }}</button>
       </div>
       <div v-for="ev in selectedDayEvents" :key="ev.id" class="sidebar-ev sidebar-event"
+           :data-calendar-edit-event="ev.id"
            :data-event-id="ev.id" @click.left="$emit('edit-event', { item: ev, event: $event })"
            @contextmenu.prevent="$emit('edit-event', { item: ev, event: $event })">
         <div class="sidebar-ev-body">
@@ -59,6 +60,7 @@
     <div class="sidebar-divider"></div>
     <div class="sidebar-section-title">{{ t('calendar.upcoming') }}</div>
     <div v-for="ev in upcomingList" :key="ev.id" class="upcoming-item cap-row" :class="{ 'upcoming-proj': ev.calendarType === 'project', 'upcoming-ev': ev.calendarType === 'event', 'cal-done': ev.calendarType === 'project' && ev.status === 'done' }"
+         :data-calendar-edit-event="ev.calendarType === 'event' ? ev.id : undefined"
          :style="{ cursor: ev.calendarType ? 'pointer' : 'default' }"
          @click.left="ev.calendarType === 'project' ? $emit('open-project', ev) : (ev.calendarType === 'event' && $emit('edit-event', { item: ev, event: $event }))"
          @contextmenu.prevent="ev.calendarType === 'event' && $emit('edit-event', { item: ev, event: $event })">

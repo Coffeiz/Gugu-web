@@ -79,7 +79,7 @@ defineProps({
    hover / selected 状态继续由下方共享状态规则处理。 */
 .fc-card.canvas-mode {
   overflow: visible;
-  background: var(--surface-canvas-card);
+  background: var(--file-card-canvas-bg, var(--surface-canvas-card));
   border-color: var(--border-strong);
 }
 .fc-card:hover:not(.selected):not(.pre-selected) {
@@ -89,7 +89,7 @@ defineProps({
 }
 /* 画布文件卡 hover 不回退到文件库的半透明 hover 底色；高亮仍由共享 ::after 提供。 */
 .fc-card.canvas-mode:hover:not(.selected):not(.pre-selected) {
-  background: var(--surface-canvas-card);
+  background: var(--file-card-canvas-bg, var(--surface-canvas-card));
 }
 .fc-card.selected {
   border-color: var(--file-card-border-selected);

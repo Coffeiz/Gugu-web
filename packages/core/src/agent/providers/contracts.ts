@@ -109,7 +109,7 @@ export interface ProviderCompletion {
 
 export interface ProviderHttpRequest {
   readonly url: string
-  readonly method: 'GET' | 'POST' | 'DELETE'
+  readonly method: 'GET' | 'POST' | 'PUT' | 'DELETE'
   readonly headers: Readonly<Record<string, string>>
   readonly body?: JsonObject | Uint8Array | AsyncIterable<Uint8Array>
   readonly timeoutMs?: number

@@ -19,8 +19,10 @@ const QUERY_CACHE_TTL_MS=5*60_000
 const QUERY_CACHE_LIMIT=64
 const queryCache=new Map<string,{createdAt:number;vector:number[]}>()
 
-function cacheKey(settings:RagQueryEmbeddingSettings,query:string):string {
- return createHash('sha256').update(`${settings.provider}\n${settings.model}\n${settings.dimensions}\n${query}`).digest('hex')
+function cacheKey(ownerId:string,settings:RagQueryEmbeddingSettings,url:string,format:string,query:string):string {
+ return createHash('sha256').update(JSON.stringify([
+  ownerId,settings.provider,settings.model,settings.dimensions,url,format,settings.apiKey,settings.allowLocal===true,query,
+ ])).digest('hex')
 }
 
 /** 1.7.7 的端点和载荷规则；DNS、重定向及网络能力由可信传输实现约束。 */
@@ -50,13 +52,14 @@ function vectorFrom(value:unknown,format:'openai'|'bailian'):number[]|null {
  return Array.isArray(vector)&&vector.length>0&&vector.every(value=>typeof value==='number'&&Number.isFinite(value))?vector:null
 }
 
-/** 不缓存跨用户查询或凭据；公开结果只包含稳定状态和向量。 */
-export async function embedRagQuery(settings:RagQueryEmbeddingSettings,text:string,transport:ProviderTransport,signal:AbortSignal):Promise<RagQueryEmbeddingResult> {
+/** 仅对可信 Host 提供的 owner 缓存成功查询；凭据及正文不保留于缓存。 */
+export async function embedRagQuery(settings:RagQueryEmbeddingSettings,text:string,transport:ProviderTransport,signal:AbortSignal,cacheOwnerId?:string):Promise<RagQueryEmbeddingResult> {
  signal.throwIfAborted()
  const normalized=text.trim(),request=normalized?requestFor(settings,normalized):null
  if(!request)return {vector:[],outcome:'invalid_config'}
- const key=cacheKey(settings,normalized),now=performance.now(),cached=queryCache.get(key)
- if(cached){
+ const key=cacheOwnerId?cacheKey(cacheOwnerId,settings,request.url,request.format,normalized):null
+ const now=performance.now(),cached=key?queryCache.get(key):undefined
+ if(key&&cached){
   if(now-cached.createdAt<QUERY_CACHE_TTL_MS)return {vector:[...cached.vector],outcome:'success'}
   queryCache.delete(key)
  }
@@ -76,12 +79,14 @@ export async function embedRagQuery(settings:RagQueryEmbeddingSettings,text:stri
   try{parsed=JSON.parse(Buffer.concat(chunks).toString('utf8'))}catch{return {vector:[],outcome:'invalid_response',httpStatus:response.status}}
   const vector=vectorFrom(parsed,request.format)
   if(!vector)return {vector:[],outcome:'invalid_response',httpStatus:response.status}
-  if(queryCache.size>=QUERY_CACHE_LIMIT){
-   let oldestKey:string|undefined,oldestAt=Infinity
-   for(const [entryKey,entry] of queryCache)if(entry.createdAt<oldestAt){oldestKey=entryKey;oldestAt=entry.createdAt}
-   if(oldestKey!==undefined)queryCache.delete(oldestKey)
+  if(key){
+   if(queryCache.size>=QUERY_CACHE_LIMIT){
+    let oldestKey:string|undefined,oldestAt=Infinity
+    for(const [entryKey,entry] of queryCache)if(entry.createdAt<oldestAt){oldestKey=entryKey;oldestAt=entry.createdAt}
+    if(oldestKey!==undefined)queryCache.delete(oldestKey)
+   }
+   queryCache.set(key,{createdAt:performance.now(),vector:[...vector]})
   }
-  queryCache.set(key,{createdAt:performance.now(),vector:[...vector]})
   return {vector,outcome:'success',httpStatus:response.status}
  }catch{
   signal.throwIfAborted()

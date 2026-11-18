@@ -461,8 +461,8 @@ async function setPriority(n: number) {
   position: relative; display: flex; flex-shrink: 0;
   color: var(--content-primary);
   border: 1px solid var(--project-card-border);
-  border-radius: var(--radius-md);
-  corner-shape: squircle;
+  border-radius: var(--radius-sm);
+  corner-shape: round;
   box-shadow: var(--project-card-shadow);
   background: linear-gradient(to right, var(--project-card-gradient-start) 0%, var(--project-card-gradient-end) 40%), var(--project-color);
   overflow: hidden; cursor: pointer;
@@ -479,7 +479,7 @@ async function setPriority(n: number) {
   transform: translateY(-2px);
 }
 .drop-overlay {
-  position: absolute; inset: 0; border-radius: inherit; corner-shape: squircle;
+  position: absolute; inset: 0; border-radius: inherit; corner-shape: round;
   overflow: hidden; pointer-events: none; z-index: 10;
 }
 .upload-progress-bg {
@@ -504,7 +504,7 @@ async function setPriority(n: number) {
   content: '';
   position: absolute; inset: 0;
   border-radius: inherit;
-  corner-shape: squircle;   /* corner-shape 不随 border-radius:inherit 继承，需显式声明，否则圆角与卡片不重合 → 双层圆角 */
+  corner-shape: round;   /* corner-shape 不随 border-radius:inherit 继承，需显式声明，否则圆角与卡片不重合 → 双层圆角 */
   background: var(--project-card-sheen-rest);
   box-shadow: inset 0 1px 0 var(--project-card-highlight-rest);
   pointer-events: none;
@@ -518,7 +518,7 @@ async function setPriority(n: number) {
   content: '';
   position: absolute; inset: 0;
   border-radius: inherit;
-  corner-shape: squircle;
+  corner-shape: round;
   background: var(--project-card-sheen-hover);
   box-shadow: inset 0 1px 0 var(--project-card-highlight-hover);
   opacity: 0;

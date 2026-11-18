@@ -315,10 +315,7 @@ onMounted(() => {
      插值，不能让头部先瞬跳再等内容区收合。 */
   transition: height .35s cubic-bezier(.22,1,.36,1);
 }
-/* 顶栏行高固定 50px（--canvas-toolbar-height），flex 竖直居中天然让内容的几何中心落在
-   距顶 25px——跟圆角半径（.canvas-drawer.open 的 25px）相同，横向也照这个数走：标题
-   左边距、返回按钮的几何中心（padding-right 7px + 自身宽 36px 的一半 18px = 25px）
-   都钉在离边缘 25px，三边统一对齐同一个「圆角中心」，不再各自取不同的数。 */
+/* 抽屉标题和返回按钮中心距左右边缘各 25px，与 50px 顶栏的垂直中心对齐。 */
 .cd-expanded-nav { position: absolute; inset: 0; display: flex; align-items: center; width: 100%; box-sizing: border-box; padding: 0 7px 0 25px; }
 .cd-compact-nav { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: space-evenly; width: 100%; height: calc(var(--canvas-toolbar-height) * 2); pointer-events: auto; }
 .cd-toggle { flex-shrink: 0; width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 50%; background: none; color: var(--text-secondary); cursor: pointer; transition: background .18s ease, color .18s ease; }
@@ -395,5 +392,5 @@ onMounted(() => {
 .project-status-dot.is-done { background: #5a9e88; }
 .project-empty { padding: 18px 8px; color: var(--text-secondary); font-size: 11px; text-align: center; }
 .project-skeletons { display: flex; flex-direction: column; gap: 9px; }
-.project-skeleton { display: block; height: 104px; border-radius: var(--radius-md); background: rgba(255,255,255,.38); box-shadow: inset 0 1px 0 rgba(255,255,255,.55); }
+.project-skeleton { display: block; height: 104px; border-radius: var(--radius-sm); background: rgba(255,255,255,.38); box-shadow: inset 0 1px 0 rgba(255,255,255,.55); }
 </style>

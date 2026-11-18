@@ -102,8 +102,8 @@ export function createPostgresFileUpdateOperations(pool: Pool, options: {
         if(!workspaceName) throw new CoreError('not_found','Workspace 不存在')
       } else if(pid!==null){
         space='project'
-        const p=await client.query<Row>(`SELECT id,name,color,COALESCE(to_char(start_date,'YYYY'),to_char(created_at,'YYYY')) AS year_value,
-          COALESCE(to_char(start_date,'MM'),to_char(created_at,'MM')) AS month_value FROM projects WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL`,[pid,userId])
+        const p=await client.query<Row>(`SELECT id,name,color,COALESCE(to_char(NULLIF(start_date::text,'')::date,'YYYY'),to_char(created_at,'YYYY')) AS year_value,
+          COALESCE(to_char(NULLIF(start_date::text,'')::date,'MM'),to_char(created_at,'MM')) AS month_value FROM projects WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL`,[pid,userId])
         project=p.rows[0]??null
         if(!project) throw new CoreError('not_found','目标项目不存在')
       } else { space='personal'; pid=null; wid=null }

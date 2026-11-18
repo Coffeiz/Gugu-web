@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from 'pg'
+import type { InteractionActionRecord, InteractionCommandActionInput, InteractionCommandActionResult, InteractionConsumeStore,
+  InteractionConsumeTransaction, InteractionPromptRecord } from '@gugu/core/agent/interactions/consume-action'
 import type { InteractionTextPrompt, InteractionTextStore } from '@gugu/core/agent'
-import type { InteractionActionRecord, InteractionCommandActionInput, InteractionCommandActionResult, InteractionConsumeStore, InteractionConsumeTransaction, InteractionPromptRecord } from '../application/agent-interaction-consume.js'
 export interface InteractionSideEffects {
   applyCommandAction(client: PoolClient, input: InteractionCommandActionInput): Promise<InteractionCommandActionResult>
   redeemConfirmation(client: PoolClient, ownerId: string, code: string): Promise<boolean>

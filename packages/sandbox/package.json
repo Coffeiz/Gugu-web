@@ -7,6 +7,7 @@
     "./contracts": "./dist/contracts.js",
     "./executor": "./dist/executor.js",
     "./mxc": "./dist/mxc.js",
+    "./pty": "./dist/pty.js",
     "./platform": "./dist/platform.js",
     "./policy": "./dist/policy.js"
   },

@@ -70,7 +70,12 @@ test('PostgreSQL 项目更新按 owner/version CAS，事务内更新目录键和
       CREATE TRIGGER fixed_update_times BEFORE UPDATE ON projects FOR EACH ROW EXECUTE FUNCTION fixed_update_times()`)
     const runtime = createPostgresProjectUpdateRuntime(
       pool,
-      async (_owner, oldPath, newPath) => { renames.push([oldPath, newPath]) },
+      async (_owner, oldPath, newPath) => {
+        const current = await pool.query('SELECT storage_key FROM files WHERE user_id=$1 AND project_id=$2', [ownerId, projectId])
+        assert.equal(current.rows[0]?.storage_key, `${oldPath}/资料.txt`, '未提交的路径更新不能被其它连接看到')
+        await assert.rejects(pool.query('SELECT id FROM files WHERE user_id=$1 AND project_id=$2 FOR UPDATE NOWAIT', [ownerId, projectId]), { code: '55P03' })
+        renames.push([oldPath, newPath])
+      },
       async (event) => {
         const committed = await pool.query('SELECT version FROM projects WHERE id = $1', [event.entityId])
         assert.equal(committed.rows[0]?.version, 8, '更新事件必须在项目事务提交后发布')

@@ -1,6 +1,7 @@
+import type { ConfirmationTargetSnapshot } from '../../../src/agent/tools/confirmation.js'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { KnowledgeReadPort } from '../../../src/agent/tools/knowledge.js'
-import { createKnowledgeReadTool, createKnowledgeWriteTools, type KnowledgeWritePort } from '../../../src/agent/tools/knowledge.js'
+import { createKnowledgeDeleteTool, createKnowledgeReadTool, createKnowledgeWriteTools, type KnowledgeDeletePort, type KnowledgeWritePort } from '../../../src/agent/tools/knowledge.js'
 import { parseAgentKnowledgeEntry, serializeAgentKnowledgeEntry, type AgentKnowledgeEntry } from '../../../src/agent/knowledge/entry.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 
@@ -138,9 +139,9 @@ describe('save_knowledge and update_knowledge through the Core tool dispatcher',
       expect(entries).toHaveLength(1)
       expect(entries[0]).toMatchObject({ id: first.id, version: 2, content: '已更新 版本', history: [{ version: 1, content: '保留 当前 版本' }] })
 
-      const updated = await dispatch('update_knowledge', { knowledge_id: first.id, content: '最终回滚步骤', keywords: ['正式', 2026, { ignored: true }] })
+      const updated = await dispatch('update_knowledge', { knowledge_id: first.id, content: '最终回滚步骤', keywords: ['正式', 2026, true, { ignored: true }] })
       expect(updated).toMatchObject({ kind: 'completed', successful: true, mutated: true, value: { version: 3, unchanged: false } })
-      expect(entries[0]).toMatchObject({ version: 3, content: '最终回滚步骤', keywords: ['正式', '2026'], history: [
+      expect(entries[0]).toMatchObject({ version: 3, content: '最终回滚步骤', keywords: ['正式', '2026', 'True'], history: [
         { version: 1, content: '保留 当前 版本' }, { version: 2, content: '已更新 版本' },
       ] })
       const conflict = await dispatch('save_knowledge', { title: '外部核对', content: '来源不同的同主题事实', topic: '上线发布', source_type: 'web', source_ref: 'https://example.test/release' })
@@ -173,4 +174,52 @@ describe('save_knowledge and update_knowledge through the Core tool dispatcher',
       expect(committed).toBe(1)
     } finally { writer.configure({}) }
   })
+})
+
+it('知识删除将准确 owner 与版本绑定到确认，失效确认不提交，恢复复用可信收据', async () => {
+  let currentVersion = 'v1', frozenVersion: string | undefined
+  let receipt = false, effects = 0
+  const gate = {
+    async prepare(toolCall: { name: string }, _scope: unknown, _digest: string, snapshot: ConfirmationTargetSnapshot) {
+      frozenVersion = snapshot.versionsDigest
+      return { ok: true, value: { id: 'confirmation', kind: 'confirmation', toolCall } }
+    },
+    async verify(_call: unknown, _scope: unknown, _digest: string, snapshot: ConfirmationTargetSnapshot) {
+      return snapshot.versionsDigest === frozenVersion ? { ok: true, value: { intentId: 'confirmed' } } : { ok: false }
+    },
+  } as unknown as KnowledgeDeletePort['gate']
+  const tool = createKnowledgeDeleteTool({
+    gate,
+    async readTarget(actor, id) {
+      if (actor.ownerId !== owner || id !== 'k-1' || receipt) return null
+      return { knowledgeId: id, snapshot: { targetsDigest: 'stable', versionsDigest: currentVersion } }
+    },
+    async commit(actor, target, claim) {
+      expect(actor).toEqual({ ...identity(), roundId: 'round-1', toolCallId: 'delete' })
+      expect(target.knowledgeId).toBe('k-1')
+      expect(claim.intentId).toBe('confirmed')
+      receipt = true
+      effects++
+      return { kind: 'completed', successful: true, mutated: true, value: { success: true, knowledge_id: 'k-1' } }
+    },
+    async reconcile(actor) {
+      return actor.ownerId === owner && receipt
+        ? { kind: 'completed', successful: true, mutated: false, value: { success: true, knowledge_id: 'k-1' } }
+        : { kind: 'unknown' }
+    },
+  })
+  const registry = createToolRegistry({ tools: [tool], authorize: async () => true })
+  const call = { id: 'delete', name: 'delete_knowledge', input: { knowledge_id: ' k-1 ' } }
+  const response = { interactionId: 'confirmation', receiptId: 'receipt', status: 'confirmed' as const, value: null }
+  expect(await registry.tools.dispatch(call, scope(other))).toMatchObject({ successful: false })
+  expect(await registry.tools.dispatch(call, scope())).toMatchObject({ kind: 'waiting' })
+  currentVersion = 'v2'
+  expect(await registry.tools.dispatch(call, { ...scope(), resolution: response })).toMatchObject({ successful: false })
+  expect(effects).toBe(0)
+  expect(await registry.tools.dispatch(call, scope())).toMatchObject({ kind: 'waiting' })
+  expect(await registry.tools.dispatch(call, { ...scope(), resolution: response })).toMatchObject({
+    successful: true, mutated: true, value: { success: true, knowledge_id: 'k-1' },
+  })
+  expect(await registry.tools.dispatch(call, { ...scope(), resolution: response })).toMatchObject({ successful: true, mutated: false })
+  expect(effects).toBe(1)
 })

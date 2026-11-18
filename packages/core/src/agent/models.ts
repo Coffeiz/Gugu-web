@@ -154,6 +154,8 @@ export interface PreparedContextCheckpoint extends HistoryIdentity {
   area: CanonicalAreaSnapshot
   protectedHistoryStart: number | null
   requestPrefixSize: number
+  /** 请求前缀与动态尾部的摘要，正文只从已授权的快照重建。 */
+  requestDigest?: string
   stanceToPersist: string | null
   digest: string
 }
@@ -646,6 +648,7 @@ export interface DisplayItem {
   readonly linkButtons?: unknown
   readonly toolCallId?: string
   readonly toolName?: string
+  readonly toolLabelOverride?: string
   readonly toolStatus?: string
   readonly toolResult?: unknown
 }
@@ -719,6 +722,8 @@ export interface ToolCall {
   readonly input: unknown
   readonly rawArguments?: string
   readonly responsesItemId?: string
+  /** 由可信 Run 解析后设置，使持久恢复仍能复核转发入口。 */
+  readonly adapter?: 'call_tool'
   /** Provider 已确认参数不是合法对象；保留调用以反馈模型，禁止派发空参数。 */
   readonly parseError?: 'invalid_json' | 'not_object'
 }

@@ -1,14 +1,14 @@
 import type { Pool } from 'pg'
-import type { CanonicalRunContext, RunIdentity } from '@gugu/core/agent'
+import { createAgentRunStateReader, createAgentRuntime, type AgentRuntimeOptions, type CanonicalRunContext, type RunIdentity } from '@gugu/core/agent'
+import { createNodeProviderTransportFactory } from '@gugu/core/providers/node'
 import type { RedisAgentCancellationCommands } from '../../adapters/redis-events.js'
 import type { LiveSubscriptionFactory } from '../../adapters/redis-live-subscription.js'
-import { createAgentRuntime, type AgentRuntimeOptions } from '@gugu/core/agent'
 import { createAgentRunEventStream } from './agent-run-event-stream.js'
 import { createPostgresAgentRunStore, type AgentRunStoreOptions } from './persistence/agent-run-store-postgres.js'
 import { createPostgresAgentRunLeasePort } from './persistence/agent-run-lease-postgres.js'
 import { createRedisAgentRunCancellationPort } from './persistence/agent-run-cancellation-redis.js'
 import { applyCanonicalSnapshotEffects } from './persistence/agent-snapshot-effects-postgres.js'
-import { createAgentRunStateReader, createPostgresAgentRunStartupStore } from './persistence/agent-run-startup-postgres.js'
+import { createPostgresAgentRunStartupStore } from './persistence/agent-run-startup-postgres.js'
 import { createPostgresInteractionActivator, type AgentPromptActivationPorts } from './persistence/agent-interaction-activate-postgres.js'
 
 export interface PersistentAgentRuntimeOptions extends Omit<AgentRuntimeOptions, 'runtime'> {
@@ -41,7 +41,11 @@ export function createPersistentAgentRuntime(options: PersistentAgentRuntimeOpti
     context: options.context,
     runPreparation: options.runPreparation,
     executor: options.executor,
-    provider: options.provider,
+    provider: {
+      ...options.provider,
+      ...(!options.provider.transport && !options.provider.createTransport && !options.provider.transportFactory
+        ? { transportFactory: createNodeProviderTransportFactory() } : {}),
+    },
     runtime: {
       ...options.runtime,
       ...(options.interactionActivation ? { interactions: createPostgresInteractionActivator(options.pool, options.interactionActivation) } : {}),

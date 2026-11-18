@@ -1,6 +1,6 @@
 import type { Pool } from 'pg'
 import type { SqlDataRuntime } from '@gugu/core/data'
-import { createKyselyCalendarAgentReadPort, type EventCreatePublication, type EventUpdatePublication } from '@gugu/core/calendar'
+import { createAgentCalendarReader, createKyselyCalendarAgentReadPort, createKyselyCalendarReadPort, type EventCreatePublication, type EventUpdatePublication } from '@gugu/core/calendar'
 import { createCalendarDeletePort, createCalendarEventCreatePort, createCalendarEventUpdatePort } from '@gugu/core/tools'
 import type { CalendarDeleteConfirmationPort } from '@gugu/core/tools'
 import type { AgentDispatchLease } from '../persistence/agent-run-dispatch-postgres.js'
@@ -21,6 +21,8 @@ export function createWebAgentCalendarWritePorts(options: {
   const targets = createWebCalendarReminderTargets(options)
   const events = createKyselyCalendarAgentReadPort(options.core.db, options.core.backend)
   return {
+    calendar: createAgentCalendarReader(events),
+    events: createKyselyCalendarReadPort(options.core.db, options.core.backend),
     calendarCreate: createCalendarEventCreatePort(options.core, options.publishCreate, targets),
     calendarUpdate: createCalendarEventUpdatePort(options.core, options.publishUpdate, events, targets),
     ...(options.publishDelete && options.deleteConfirmation ? {

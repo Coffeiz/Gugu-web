@@ -41,9 +41,24 @@ export async function openLocalFile(rootPath: string, relativePath: string) {
 }
 
 /** 在授权根内原子替换普通文件；目录遍历锚定已打开的 Linux 目录句柄。 */
-export async function writeLocalFile(rootPath: string, relativePath: string, content: string | Uint8Array): Promise<void> {
+export function writeLocalFile(rootPath: string, relativePath: string, content: string | Uint8Array): Promise<void> {
+  return publishLocalFile(rootPath, relativePath, content, { replace: true })
+}
+
+/** 完整接收并同步文件后才发布；目录已存在，且并发写入同名目标时拒绝覆盖。 */
+export function importLocalFile(
+  rootPath: string, relativePath: string, content: AsyncIterable<Uint8Array>, signal: AbortSignal,
+): Promise<void> {
+  return publishLocalFile(rootPath, relativePath, content, { replace: false, signal })
+}
+
+async function publishLocalFile(
+  rootPath: string, relativePath: string, content: string | Uint8Array | AsyncIterable<Uint8Array>,
+  options: { replace: boolean; signal?: AbortSignal },
+): Promise<void> {
+  options.signal?.throwIfAborted()
   const segments = relativePath.split('/')
-  if (process.platform !== 'linux' || segments.length < 2 || segments.some(segment => !segment || segment === '.' || segment === '..' || segment.includes('\\') || segment.includes('\0')))
+  if (process.platform !== 'linux' || options.replace && segments.length < 2 || segments.some(segment => !segment || segment === '.' || segment === '..' || segment.includes('\\') || segment.includes('\0')))
     throw new UnsafeLocalPathError()
 
   const root = await realpath(rootPath)
@@ -58,10 +73,8 @@ export async function writeLocalFile(rootPath: string, relativePath: string, con
       try { next = await open(nextPath, constants.O_RDONLY | constants.O_DIRECTORY | (constants.O_NOFOLLOW ?? 0)) }
       catch (error) {
         const code = (error as NodeJS.ErrnoException).code
-        if (code !== 'ENOENT') {
-          if (code === 'ELOOP' || code === 'ENOTDIR') throw new UnsafeLocalPathError()
-          throw error
-        }
+        if (code === 'ELOOP' || code === 'ENOTDIR') throw new UnsafeLocalPathError()
+        if (code !== 'ENOENT' || !options.replace) throw error
         try { await mkdir(nextPath, { mode: 0o700 }) }
         catch (mkdirError) { if ((mkdirError as NodeJS.ErrnoException).code !== 'EEXIST') throw mkdirError }
         try { next = await open(nextPath, constants.O_RDONLY | constants.O_DIRECTORY | (constants.O_NOFOLLOW ?? 0)) }
@@ -77,18 +90,27 @@ export async function writeLocalFile(rootPath: string, relativePath: string, con
 
     const name = segments.at(-1)!
     const targetPath = `${parent}/${name}`
-    try {
-      if ((await lstat(targetPath)).isSymbolicLink()) throw new UnsafeLocalPathError()
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    if (options.replace) {
+      try {
+        if ((await lstat(targetPath)).isSymbolicLink()) throw new UnsafeLocalPathError()
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
     }
-    temporaryPath = `${parent}/.gugu-write-${randomUUID()}`
-    const file = await open(temporaryPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600)
+    const staged = `${parent}/.gugu-write-${randomUUID()}`
+    const file = await open(staged, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600)
+    temporaryPath = staged
     try {
-      await file.writeFile(content)
+      await file.writeFile(content, { signal: options.signal })
+      options.signal?.throwIfAborted()
       await file.sync()
     } finally { await file.close() }
-    await rename(temporaryPath, targetPath)
+    options.signal?.throwIfAborted()
+    if (options.replace) await rename(staged, targetPath)
+    else {
+      await link(staged, targetPath)
+      await unlink(staged)
+    }
     temporaryPath = undefined
     await (parents.at(-1) ?? rootHandle).sync()
   } catch (error) {
@@ -106,7 +128,16 @@ export async function writeLocalFile(rootPath: string, relativePath: string, con
  * 检查后的父目录即使被替换为符号链接，也不会把递归删除导向根目录之外。
  * 返回删除的普通文件数；目录、符号链接和其他文件系统节点不计数。
  */
-export async function removeLocalTree(rootPath: string, relativePath: string): Promise<number> {
+export function removeLocalTree(rootPath: string, relativePath: string): Promise<number> {
+  return removeLocalPath(rootPath, relativePath, false)
+}
+
+/** 只删除普通文件。父目录或目标类型异常时拒绝，真实缺失允许幂等清理。 */
+export async function removeLocalFile(rootPath: string, relativePath: string): Promise<void> {
+  await removeLocalPath(rootPath, relativePath, true)
+}
+
+async function removeLocalPath(rootPath: string, relativePath: string, fileOnly: boolean): Promise<number> {
   const segments = relativePath.split('/')
   if (process.platform !== 'linux' || segments.some(segment =>
     !segment || segment === '.' || segment === '..' || segment.includes('\\') || segment.includes('\0')))
@@ -118,9 +149,10 @@ export async function removeLocalTree(rootPath: string, relativePath: string): P
     try { info = await lstat(entry) }
     catch (error) {
       const code = (error as NodeJS.ErrnoException).code
-      if (code === 'ENOENT' || code === 'ENOTDIR') return 0
+      if (code === 'ENOENT' || (!fileOnly && code === 'ENOTDIR')) return 0
       throw error
     }
+    if (fileOnly && !info.isFile()) throw new UnsafeLocalPathError()
     if (info.isSymbolicLink() || !info.isDirectory()) {
       try { await unlink(entry) }
       catch (error) {
@@ -165,8 +197,8 @@ export async function removeLocalTree(rootPath: string, relativePath: string): P
       try { next = await open(current, constants.O_RDONLY | constants.O_DIRECTORY | (constants.O_NOFOLLOW ?? 0)) }
       catch (error) {
         const code = (error as NodeJS.ErrnoException).code
-        if (code === 'ENOENT' || code === 'ENOTDIR') return 0
-        if (code === 'ELOOP') throw new UnsafeLocalPathError()
+        if (code === 'ENOENT' || (!fileOnly && code === 'ENOTDIR')) return 0
+        if (code === 'ELOOP' || code === 'ENOTDIR') throw new UnsafeLocalPathError()
         throw error
       }
       parent = `/proc/self/fd/${next.fd}`

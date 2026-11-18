@@ -25,6 +25,7 @@ COPY --from=build --chown=node:node /workspace/packages/core/node_modules ./pack
 COPY --from=build --chown=node:node /workspace/packages/sandbox/node_modules ./packages/sandbox/node_modules
 COPY --from=build --chown=node:node /workspace/apps/web-host/package.json ./apps/web-host/package.json
 COPY --from=build --chown=node:node /workspace/apps/web-host/dist ./apps/web-host/dist
+COPY --from=build --chown=node:node /workspace/apps/web-host/assets ./apps/web-host/assets
 COPY --from=build --chown=node:node /workspace/packages/core/package.json ./packages/core/package.json
 COPY --from=build --chown=node:node /workspace/packages/core/dist ./packages/core/dist
 COPY --from=build --chown=node:node /workspace/packages/sandbox/package.json ./packages/sandbox/package.json
@@ -32,7 +33,6 @@ COPY --from=build --chown=node:node /workspace/packages/sandbox/dist ./packages/
 COPY --from=build --chown=node:node /workspace/packages/fs/package.json ./packages/fs/package.json
 COPY --from=build --chown=node:node /workspace/packages/fs/dist ./packages/fs/dist
 COPY --from=build --chown=node:node /workspace/apps/web/dist ./apps/web/dist
-COPY --from=build --chown=node:node /workspace/backend/onboarding/assets ./backend/onboarding/assets
 RUN mkdir -p /data && chown node:node /data
 
 USER node

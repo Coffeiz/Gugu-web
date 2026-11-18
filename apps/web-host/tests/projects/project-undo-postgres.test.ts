@@ -5,18 +5,119 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Pool } from 'pg'
+import { sql } from 'kysely'
 import { projectResponse, type ProjectRecord } from '@gugu/core'
 import { createHostCoreUndoOperations } from '../../src/domains/undo/persistence/core-operations.js'
-import { createPostgresRuntime } from '@gugu/core/data'
+import { createPostgresRuntime, tablesSql } from '@gugu/core/data'
 import { createRuntimeUndoTransactionPort } from '@gugu/core/undo'
 import { createLocalProjectDirectoryRenamer } from '../../src/domains/projects/persistence/project-directory-storage.js'
 import { createLocalProjectTrashStorage, projectFileTrashKey } from '../../src/domains/projects/persistence/project-trash-storage.js'
 import type { ProjectTrashFile } from '../../src/domains/projects/application/project-trash.js'
-import { recoverProjectUndoJournal, saveProjectUndoJournal } from '../../src/domains/undo/persistence/project-journal.js'
+import { createPostgresProjectDeleteJournal, recoverProjectUndoJournal, saveProjectUndoJournal } from '../../src/domains/undo/persistence/project-journal.js'
 import { createLocalProjectUndoJournalStorage } from '../../src/domains/undo/persistence/project-journal-local.js'
 import { directoryPort } from './fixtures/directory-port.js'
+import { startProjectDeleteRecoveryWorker } from '../../src/domains/projects/project-delete-recovery-worker.js'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
+test('Agent 项目删除日志在物理移动前落库，后台跳过活动操作并按收据恢复', { skip: !url, timeout: 15_000 }, async () => {
+  const admin = new Pool({ connectionString: url })
+  const schema = `gugu_agent_project_journal_${randomUUID().replaceAll('-', '')}`
+  const pool = new Pool({ connectionString: url, options: `-c search_path=${schema}` })
+  const root = await mkdtemp(path.join(tmpdir(), 'gugu-agent-project-journal-'))
+  const core = await createPostgresRuntime({ url: url!, schema })
+  const ownerId = randomUUID()
+  const context = { ownerId }
+  const storage = createLocalProjectUndoJournalStorage(root)
+  const journal = () => createPostgresProjectDeleteJournal(pool, storage)
+  const logs = async () => (await pool.query('SELECT user_id::text,operation_id,moves FROM project_undo_journals ORDER BY operation_id')).rows
+  const moved = new Error('在文件发布后中断调用')
+  let workerErrors = 0
+  const runRecovery = () => startProjectDeleteRecoveryWorker({
+    pool, storageRoot: root, onError: () => { workerErrors++ },
+  }).stop()
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`)
+    await pool.query(tablesSql('postgres').receipts)
+    await pool.query(`CREATE TABLE project_undo_journals (id uuid PRIMARY KEY,user_id uuid NOT NULL,operation_id varchar(64) NOT NULL,
+      before_status varchar(16) NOT NULL,after_status varchar(16) NOT NULL,moves json NOT NULL,created_at timestamptz NOT NULL,UNIQUE(user_id,operation_id))`)
+    await pool.query('CREATE TABLE files(id integer PRIMARY KEY,user_id uuid,storage_key text,deleted_at timestamptz)')
+    await mkdir(path.join(root, ownerId))
+    const from = `${ownerId}/source.txt`, to = `${ownerId}/trash.txt`
+    const otherFrom = `${ownerId}/other.txt`, otherTo = `${ownerId}/other-trash.txt`
+    await writeFile(path.join(root, from), '合成原文')
+    await writeFile(path.join(root, otherFrom), '另一文件')
+    await pool.query('INSERT INTO files VALUES (1,$1,$2,NULL),(2,$1,$3,NULL)', [ownerId, from, otherFrom])
+    const operation = randomUUID()
+    await assert.rejects(journal().withJournal(ownerId, operation, async (log) => {
+      await log.record(1, from, to)
+      assert.deepEqual(await logs(), [{ user_id: ownerId, operation_id: operation, moves: [{ fileId: 1, from, to }] }])
+      const lock = await pool.query("SELECT pg_try_advisory_xact_lock(hashtext('gugu-project-undo-journal')) AS acquired")
+      assert.equal(lock.rows[0].acquired, false)
+      await storage.move(ownerId, from, to)
+      await log.record(2, otherFrom, otherTo)
+      await storage.move(ownerId, otherFrom, otherTo)
+      await runRecovery()
+      assert.equal(await storage.exists(ownerId, from), false)
+      assert.equal((await logs()).length, 1)
+      throw moved
+    }), error => error === moved)
+    await journal().recoverJournal(randomUUID(), operation)
+    assert.equal((await logs()).length, 1)
+    assert.equal(await readFile(path.join(root, to), 'utf8'), '合成原文')
+    const fileLock = await pool.connect()
+    try {
+      await fileLock.query('BEGIN')
+      await fileLock.query('SELECT id FROM files WHERE id=1 FOR UPDATE')
+      await runRecovery()
+      assert.equal((await logs()).length, 1)
+      assert.equal(workerErrors, 0)
+    } finally {
+      await fileLock.query('ROLLBACK')
+      fileLock.release()
+    }
+    await runRecovery()
+    assert.deepEqual(await logs(), [])
+    assert.equal(await readFile(path.join(root, from), 'utf8'), '合成原文')
+    assert.equal(await readFile(path.join(root, otherFrom), 'utf8'), '另一文件')
+    assert.equal(await storage.exists(ownerId, otherTo), false)
+    assert.equal(await storage.exists(ownerId, to), false)
+
+    const committed = randomUUID()
+    await assert.rejects(journal().withJournal(ownerId, committed, async log => {
+      await log.record(1, from, to)
+      await storage.move(ownerId, from, to)
+      await core.operationWithTransaction(context, committed, 'agent.project.delete', {}, async tx => {
+        await sql`UPDATE files SET storage_key=${to},deleted_at=CURRENT_TIMESTAMP WHERE user_id=${ownerId} AND id=1`.execute(tx)
+        return { success: true }
+      })
+      throw moved
+    }), error => error === moved)
+    assert.equal((await logs()).length, 1)
+    await pool.query('UPDATE files SET storage_key=$1 WHERE id=1', [from])
+    const otherOperation = randomUUID()
+    await assert.rejects(journal().withJournal(ownerId, otherOperation, async log => {
+      await log.record(2, otherFrom, otherTo)
+      await storage.move(ownerId, otherFrom, otherTo)
+      throw moved
+    }), error => error === moved)
+    await runRecovery()
+    assert.equal((await logs()).length, 1)
+    assert.equal(workerErrors, 1)
+    assert.equal(await readFile(path.join(root, otherFrom), 'utf8'), '另一文件')
+    assert.equal(await readFile(path.join(root, to), 'utf8'), '合成原文')
+    await pool.query('UPDATE files SET storage_key=$1 WHERE id=1', [to])
+    await journal().recoverJournal(ownerId, committed)
+    assert.equal(await readFile(path.join(root, to), 'utf8'), '合成原文')
+    assert.equal(await storage.exists(ownerId, from), false)
+    assert.deepEqual(await logs(), [])
+  } finally {
+    await core.close()
+    await pool.end()
+    try { await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`) }
+    finally { await admin.end(); await rm(root, { recursive: true, force: true }) }
+  }
+})
+
 test('项目撤销改名时协调显式目录端口与数据库路径，重做可恢复', { skip: !url }, async () => {
   const admin = new Pool({ connectionString: url })
   const schema = `gugu_project_undo_${randomUUID().replaceAll('-', '')}`

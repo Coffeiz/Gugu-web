@@ -135,10 +135,9 @@ export default defineConfig({
     allowedHosts: ['myhome.coffeiz.space'],
     proxy: {
       // Cookie 鉴权的终端 WebSocket 会校验 Origin 与 Host 同源。
-      // 单独代理终端路径并保留浏览器 Host，避免 changeOrigin 改成 backend:8000 后握手被拒绝。
+      // 终端与其他 API 使用同一个 Node Host，保留浏览器 Host 供 WebSocket 检查。
       '^/api/v1/terminals/': {
-        // 终端尚未迁移到 Node Host，继续使用 Python API。
-        target: 'http://localhost:8000',
+        target: process.env.VITE_API_PROXY_TARGET || 'http://localhost:9595',
         changeOrigin: false,
         ws: true,
       },

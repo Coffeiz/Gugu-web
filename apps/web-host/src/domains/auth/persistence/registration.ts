@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { performance } from 'node:perf_hooks'
 import type { Pool, PoolClient } from 'pg'
 import { isPostgresUniqueViolation } from '../../../adapters/postgres-errors.js'
+import { ensureRegistrationFileLibraryQuota } from '../../files/persistence/storage-quota.js'
 import type { PublicUserRecord } from '../auth.js'
 import {
   RegistrationRequestError,
@@ -21,6 +22,7 @@ export interface RegistrationCodeTransactionPort {
 }
 
 export interface PostgresRegistrationDependencies {
+  defaultStorageLimitBytes: number | null
   workspaceShellSupported: () => boolean | Promise<boolean>
   /** Required for Local storage; must safely prepare the user's default workspace root and ACL. */
   prepareDefaultWorkspaceRoot: (userId: string, directoryName: string) => void | Promise<void>
@@ -82,7 +84,7 @@ function publicUser(row: InsertedUser): PublicUserRecord {
   }
 }
 
-/** PostgreSQL adapter for user registration and its initial preference/workspace rows. */
+/** 同事务创建账号、基础文件配额、偏好和默认工作区记录。 */
 export function createPostgresRegistrationOperations(
   pool: Pick<Pool, 'connect' | 'query'>,
   dependencies: PostgresRegistrationDependencies,
@@ -136,6 +138,7 @@ export function createPostgresRegistrationOperations(
         )
         const userRow = inserted.rows[0]
         if (!userRow) throw new Error('注册用户插入后未返回记录')
+        await ensureRegistrationFileLibraryQuota(client, userRow.id, dependencies.defaultStorageLimitBytes)
 
         if (input.locale) {
           await client.query(

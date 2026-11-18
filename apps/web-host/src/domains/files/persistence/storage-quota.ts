@@ -39,7 +39,7 @@ export async function ensureRegistrationFileLibraryQuota(
   )
 }
 
-export type FileQuotaOperation = 'file_upload' | 'file_copy' | 'file_copy_overwrite' | 'onboarding_seed'
+export type FileQuotaOperation = 'file_upload' | 'file_copy' | 'file_copy_overwrite' | 'onboarding_seed' | 'web_download'
 
 /** 在当前文件事务中更新配额账本与事件，调用方提供操作语义和幂等键。 */
 export async function updateFileStorageQuota(

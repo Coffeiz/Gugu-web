@@ -1,5 +1,6 @@
 import type { Pool } from 'pg'
 import type { ContextDataPorts, HistoryIdentity, Json } from '@gugu/core/agent'
+import { agentContextSubject } from './agent-context-subject.js'
 import { dateKeyInTimeZone } from '../../../shared/date-time.js'
 
 type QueryPool = Pick<Pool, 'query'>
@@ -17,19 +18,19 @@ async function loadAgentProjectOverviews(pool: QueryPool, ownerId: string, ids: 
   }
   return result
 }
-async function owned(pool: QueryPool, identity: HistoryIdentity, signal?: AbortSignal) {
+async function owned(pool: QueryPool, identity: HistoryIdentity, kind: 'chat' | 'scheduled_task', signal?: AbortSignal) {
   signal?.throwIfAborted()
-  if (!identity.ownerId || !/^[1-9]\d*$/.test(identity.sessionId)) throw new TypeError('会话身份无效')
-  const result = await pool.query('SELECT 1 FROM conversation_sessions WHERE id=$1 AND user_id=$2', [identity.sessionId, identity.ownerId])
-  if (result.rowCount !== 1) throw new Error('会话不存在')
+  const subject = agentContextSubject(kind, identity)
+  const result = await pool.query(`SELECT 1 FROM ${subject.from} AS s WHERE s.id=$1 AND s.user_id=$2`, [subject.id, identity.ownerId])
+  if (result.rowCount !== 1) throw new Error(subject.missing)
   signal?.throwIfAborted()
 }
 
 /** 数据读取严格限定 owner；只返回模型快照所需的受限概览。 */
-export function createAgentOverviewSources(pool: QueryPool, now: () => Date = () => new Date()): Pick<ContextDataPorts, 'loadProjects' | 'loadEvents' | 'loadNotes' | 'loadFilesOverview'> {
+export function createAgentOverviewSources(pool: QueryPool, now: () => Date = () => new Date(), kind: 'chat' | 'scheduled_task' = 'chat'): Pick<ContextDataPorts, 'loadProjects' | 'loadEvents' | 'loadNotes' | 'loadFilesOverview'> {
   return {
     async loadProjects(identity, signal) {
-      await owned(pool, identity, signal)
+      await owned(pool, identity, kind, signal)
       const projects = await pool.query(`SELECT id,name,status,priority,start_date,deadline,done_at,contact_name,summary,stages_json
         FROM projects WHERE user_id=$1 AND deleted_at IS NULL AND archived=false AND status IN ('pending','active','done')`, [identity.ownerId])
       const order = { high: 3, medium: 2, low: 1 } as Record<string, number>
@@ -51,19 +52,19 @@ export function createAgentOverviewSources(pool: QueryPool, now: () => Date = ()
       }) as Json
     },
     async loadEvents(identity, timezone, signal) {
-      await owned(pool, identity, signal)
+      await owned(pool, identity, kind, signal)
       const today = dateKeyInTimeZone(now(), timezone)
       const result = await pool.query('SELECT date,title FROM calendar_events WHERE user_id=$1 AND deleted_at IS NULL AND date >= $2 ORDER BY date LIMIT 10', [identity.ownerId, today])
       signal?.throwIfAborted(); return result.rows as Json
     },
     async loadNotes(identity, signal) {
-      await owned(pool, identity, signal)
+      await owned(pool, identity, kind, signal)
       const result = await pool.query(`SELECT title,content_plain,content_md,captured_at FROM mind_nodes WHERE user_id=$1 AND kind='note' AND deleted_at IS NULL AND captured_at >= $2 ORDER BY captured_at DESC,id DESC LIMIT 20`, [identity.ownerId, new Date(now().getTime() - 7*86400000)])
       signal?.throwIfAborted()
       return result.rows.map(row => ({ title: String(row.title ?? '').trim(), content: Array.from(String(row.content_plain || row.content_md || '').trim()).slice(0,500).join(''), capturedAt: new Date(row.captured_at).toISOString() })) as Json
     },
     async loadFilesOverview(identity, signal) {
-      await owned(pool, identity, signal)
+      await owned(pool, identity, kind, signal)
       const folders = (await pool.query(`SELECT id,name FROM folders WHERE user_id=$1 AND project_id IS NULL AND workspace_directory_id IS NULL AND parent_id IS NULL AND deleted_at IS NULL ORDER BY id`, [identity.ownerId])).rows
       const counts = (await pool.query(`SELECT folder_id,count(*)::int AS n FROM files WHERE user_id=$1 AND space='personal' AND deleted_at IS NULL AND folder_id IS NOT NULL GROUP BY folder_id`, [identity.ownerId])).rows
       const totals = (await pool.query(`SELECT count(*) FILTER (WHERE deleted_at IS NULL)::int AS total,count(*) FILTER (WHERE deleted_at IS NOT NULL)::int AS trash FROM files WHERE user_id=$1 AND space='personal'`, [identity.ownerId])).rows[0]

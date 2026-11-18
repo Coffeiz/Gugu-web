@@ -81,11 +81,7 @@ const colColor  = colColors[props.column.key] ?? '#9e9fc4'
 </script>
 
 <style scoped>
-/* Column background is a product role now. Feed the shared --column-bg into glass-card rather than
-   shadowing --surface-glass locally, so Projects / Schedules / Design preview resolve the same value. */
 .column {
-  --glass-card-background: var(--column-bg);
-  --glass-card-background-hover: var(--column-bg);
   display: flex; flex-direction: column;
   padding: 12px 10px; gap: 8px;
   min-width: 0; min-height: 0;
@@ -130,8 +126,8 @@ const colColor  = colColors[props.column.key] ?? '#9e9fc4'
   width: 100%; flex-shrink: 0; min-height: 96px;
   background: var(--inline-action-bg);
   border: 1.5px dashed var(--inline-action-border);
-  border-radius: var(--radius-md);
-  corner-shape: squircle;
+  border-radius: var(--radius-sm);
+  corner-shape: round;
   color: var(--inline-action-fg);
   cursor: pointer;
   /* transform 由 Runtime FLIP 独占；不能使用 transition: all，

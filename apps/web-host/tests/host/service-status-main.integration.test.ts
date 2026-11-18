@@ -12,7 +12,7 @@ import {createRedisAdminMaintenanceCommands,createRedisServiceStatusCommands} fr
 const url=process.env.GUGU_WEBUI_TEST_DATABASE_URL,redis=process.env.GUGU_WEBUI_TEST_REDIS_URL
 async function port(){const socket=createServer();await new Promise<void>(resolve=>socket.listen(0,'127.0.0.1',resolve));const address=socket.address();assert.ok(address&&typeof address!=='string');await new Promise<void>(resolve=>socket.close(()=>resolve()));return address.port}
 
-test('生产服务面板读取真实隔离Redis/PG和当前Node事实，不写心跳或执行重启', {skip:(!url||!redis)&&'需要隔离PG/Redis'},async()=>{
+test('生产服务面板读取真实隔离Redis/PG和当前 Node 生命周期，管理员可重启后台任务', {skip:(!url||!redis)&&'需要隔离PG/Redis'},async()=>{
  const schema=`services_${randomUUID().replaceAll('-','')}`,admin=new Pool({connectionString:url});await admin.query(`CREATE SCHEMA "${schema}"`)
  const scoped=new URL(url!);scoped.searchParams.set('options',`-c search_path=${schema}`)
  const pool=new Pool({connectionString:scoped.toString()}),root=await mkdtemp(join(tmpdir(),'gugu-service-status-'))
@@ -31,8 +31,14 @@ test('生产服务面板读取真实隔离Redis/PG和当前Node事实，不写�
   const login=await host.app.inject({method:'POST',url:'/api/v1/admin/auth/login',payload:{username:'synthetic-services-admin',password:'synthetic-password'}});assert.equal(login.statusCode,200)
   const response=await host.app.inject({url:'/api/v1/admin/services',headers:{authorization:`Bearer ${login.json().access_token}`}});assert.equal(response.statusCode,200)
   const result=response.json();assert.equal(result.services[0].pid,process.pid);assert.equal(result.services[0].restartable,false)
-  assert.equal(result.services.find((s:{name:string})=>s.name==='worker').status,'online');assert.equal(result.services.find((s:{name:string})=>s.name==='gateway').status,'stale')
+  assert.equal(result.services.find((s:{name:string})=>s.name==='worker').status,'online');assert.equal(result.services.find((s:{name:string})=>s.name==='gateway').status,'offline')
   assert.deepEqual(result.deps,{redis:true,db:true});assert.deepEqual(result.queue,{length:1,pending:0,lag:1,consumers:0})
+  assert.equal(result.services.find((s:{name:string})=>s.name==='worker').pid,process.pid)
+  const headers={authorization:`Bearer ${login.json().access_token}`}
+  const restarted=await host.app.inject({method:'POST',url:'/api/v1/admin/services/worker/restart',headers})
+  assert.deepEqual(restarted.json(),{ok:true,msg:'Node 后台任务已重启。'})
+  const gateway=await host.app.inject({method:'POST',url:'/api/v1/admin/services/gateway/restart',headers})
+  assert.equal(gateway.json().ok,false)
   assert.equal(JSON.parse((await commands.get('health:worker'))!).pid,1234)
   const maintenance=createRedisAdminMaintenanceCommands(redisUrl.toString());maintenanceSeeded=true
   await maintenance.set('rag:index-rebuild',JSON.stringify({status:'done',documents:3}),3600)
@@ -55,7 +61,7 @@ test('生产服务面板读取真实隔离Redis/PG和当前Node事实，不写�
   assert.equal(await maintenance.compareAndSet('mem_cleanup:plan',stale,JSON.stringify({status:'stale'}),3600),'0')
   assert.equal(JSON.parse((await maintenance.get('mem_cleanup:plan'))!).status,'done')
   const independent=await createServiceStatusReader({redis:createRedisServiceStatusCommands(redisUrl.toString()),dbOk:async()=>{await pool.query('SELECT 1');return true}})()
-  assert.equal(independent.services.find(s=>s.name==='worker')!.pid,1234)
+  assert.equal(independent.services.find(s=>s.name==='worker')!.pid,null)
   const down=await createServiceStatusReader({redis:createRedisServiceStatusCommands('redis://127.0.0.1:1'),dbOk:async()=>{await pool.query('SELECT 1');return true}})()
   assert.deepEqual(down.deps,{redis:false,db:true});assert.equal(down.services.find(s=>s.name==='worker')!.status,'offline');assert.deepEqual(down.queue,{length:null,pending:null,lag:null,consumers:null})
  }finally{await host?.close();if(maintenanceSeeded)await commands.eval("redis.call('DEL','rag:index-rebuild','mem_cleanup:plan','im_memory:maintenance:model_preview');return 'ok'");if(seeded)await commands.eval("redis.call('DEL','health:worker','health:gateway','im:inbound');return 'ok'");await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();await rm(root,{recursive:true,force:true})}

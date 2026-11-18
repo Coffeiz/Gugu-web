@@ -1,7 +1,5 @@
 <template>
   <div class="mind-page">
-    <MindToolbar v-if="isNotes" />
-
     <div class="mind-body">
       <RouterView />
     </div>
@@ -9,12 +7,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { watch } from 'vue'
 import { useRoute } from 'vue-router'
-import MindToolbar from './components/MindToolbar.vue'
 
 const route = useRoute()
-const isNotes = computed(() => route.path === '/notes')
 
 // 记录最近访问的独立页面，供旧 /mind 链接和默认入口恢复使用。
 watch(() => route.path, (path) => {
@@ -24,6 +20,8 @@ watch(() => route.path, (path) => {
 </script>
 
 <style scoped>
-.mind-page { display: flex; flex-direction: column; gap: 8px; height: 100%; min-height: 0; }
+.mind-page { display: flex; flex-direction: column; height: 100%; min-height: 0; box-sizing: border-box; }
 .mind-body { position: relative; z-index: 1; flex: 1; min-height: 0; }
+/* Web 笔记页沿用全局内容区的内边距。 */
+.mind-body > .ntp-layout { padding: 0; }
 </style>

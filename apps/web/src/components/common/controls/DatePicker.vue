@@ -283,7 +283,7 @@ watch(() => props.modelValue, v => {
   padding: 8px 11px;
   background: var(--input-bg);
   border: 1px solid var(--input-border);
-  border-radius: var(--radius-sm, 10px);
+  border-radius: var(--radius-xs, 10px);
   font-size: 13px; color: var(--input-fg);
   cursor: pointer; user-select: none;
   transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;

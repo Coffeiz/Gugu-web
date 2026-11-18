@@ -2,8 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
 import type { ProviderHttpRequest, ProviderTransport } from '@gugu/core/providers'
+import { createRedisScheduledTaskCommands, createRedisValueReader } from '../../src/adapters/redis-events.js'
 import {
-  createImMemoryMaintenancePreviewStarter, createImMemoryMaintenancePreviewWorker, createStandaloneImMemoryModelCaller, IM_MEMORY_MODEL_PREVIEW_LOCK_KEY,
+  createImMemoryMaintenancePreviewStarter, createImMemoryMaintenancePreviewState, createImMemoryMaintenancePreviewWorker, createStandaloneImMemoryModelCaller, IM_MEMORY_MODEL_PREVIEW_LOCK_KEY,
   ImMemoryMaintenancePreviewError, registerImMemoryMaintenancePreviewRoute,
 } from '../../src/modules/admin/im-memory-maintenance-preview.js'
 
@@ -16,9 +17,15 @@ function memoryState(initial: Record<string, string> = {}) {
     values, locks,
     async get(key: string) { return values.get(key) ?? null },
     async set(key: string, value: string) { values.set(key, value) },
-    async delete(key: string) { values.delete(key) },
     async acquire(key: string, value: string) { if (locks.has(key)) return false; locks.set(key, value); return true },
     async release(key: string, value: string) { if (locks.get(key) === value) locks.delete(key) },
+    async publish(token: string, status: string, plan: string | null) {
+      if (locks.get(IM_MEMORY_MODEL_PREVIEW_LOCK_KEY) !== token) return false
+      if (plan === null) values.delete(planKey)
+      else values.set(planKey, plan)
+      values.set(stateKey, status)
+      return true
+    },
   }
 }
 
@@ -42,6 +49,43 @@ test('preview start atomically claims the worker, clears stale plans and publish
   await launch?.()
 })
 
+test('上一轮预览结果仍可见时，并发启动返回 409 且保留旧计划', { timeout: 5_000 }, async () => {
+  const oldStatus = JSON.stringify({ status: 'done', done: 1, total: 1 })
+  const oldPlan = '[{"keep":true}]'
+  const state = memoryState({ [stateKey]: oldStatus, [planKey]: oldPlan })
+  let releaseEnumeration!: () => void
+  let notifyEntered!: () => void
+  const enumerationEntered = new Promise<void>(resolve => { notifyEntered = resolve })
+  const enumerationGate = new Promise<void>(resolve => { releaseEnumeration = resolve })
+  let launches = 0
+  const start = createImMemoryMaintenancePreviewStarter({
+    state,
+    async listCursors() {
+      notifyEntered()
+      await enumerationGate
+      return []
+    },
+    async run() { launches++ },
+  })
+  const app = Fastify()
+  registerImMemoryMaintenancePreviewRoute(app, { requireAdmin: async () => {}, start })
+  const first = start()
+  try {
+    await Promise.race([enumerationEntered, first.then(() => assert.fail('首个请求未进入枚举阶段'))])
+    const competing = await app.inject({ method: 'POST', url: '/api/v1/admin/agent/memory/im-scopes/maintenance/model-preview' })
+    assert.equal(competing.statusCode, 409)
+    assert.deepEqual(competing.json(), { detail: '已有模型预览正在启动' })
+    assert.equal(state.values.get(stateKey), oldStatus)
+    assert.equal(state.values.get(planKey), oldPlan)
+    assert.equal(launches, 0)
+  } finally {
+    releaseEnumeration()
+    await app.close()
+  }
+  assert.deepEqual(await first, { ok: true, total: 0 })
+  assert.equal(launches, 1)
+})
+
 test('preview route authenticates first and maps unavailable launch errors', async () => {
   const app = Fastify()
   registerImMemoryMaintenancePreviewRoute(app, {
@@ -56,13 +100,56 @@ test('preview route authenticates first and maps unavailable launch errors', asy
   } finally { await app.close() }
 })
 
+test('枚举期间旧锁过期时，已失去租约的请求不能清除新一轮计划或启动模型', async () => {
+  const newerStatus = JSON.stringify({ status: 'running', done: 1 })
+  const newerPlan = '[{"keep":true}]'
+  const state = memoryState()
+  let launches = 0
+  const start = createImMemoryMaintenancePreviewStarter({
+    state,
+    async listCursors() {
+      state.locks.set(IM_MEMORY_MODEL_PREVIEW_LOCK_KEY, 'new-lease')
+      await state.set(stateKey, newerStatus)
+      await state.set(planKey, newerPlan)
+      return []
+    },
+    async run() { launches++ },
+  })
+  await assert.rejects(start(), { statusCode: 409 })
+  assert.equal(launches, 0)
+  assert.equal(state.values.get(stateKey), newerStatus)
+  assert.equal(state.values.get(planKey), newerPlan)
+  assert.equal(state.locks.get(IM_MEMORY_MODEL_PREVIEW_LOCK_KEY), 'new-lease')
+})
+
+const redisUrl = process.env.GUGU_WEBUI_TEST_REDIS_URL
+test('真实 Redis 拒绝失去租约的 Worker 发布进度或释放新租约', { skip: !redisUrl }, async () => {
+  const commands = createRedisScheduledTaskCommands(redisUrl!)
+  const get = createRedisValueReader(redisUrl!)
+  const state = createImMemoryMaintenancePreviewState({ ...commands, get })
+  const lock = IM_MEMORY_MODEL_PREVIEW_LOCK_KEY
+  assert.deepEqual(await Promise.all([get(lock), get(stateKey), get(planKey)]), [null, null, null])
+  try {
+    assert.equal(await state.acquire(lock, 'first', 10), true)
+    assert.equal(await state.publish('first', '{"status":"running"}', null), true)
+    await commands.eval("return redis.call('DEL', KEYS[1])", 1, lock)
+    assert.equal(await state.acquire(lock, 'second', 10), true)
+    const nextStatus = '{"status":"running","done":1}'
+    const nextPlan = '[{"source_revision":"next"}]'
+    assert.equal(await state.publish('second', nextStatus, nextPlan), true)
+    assert.equal(await state.publish('first', '{"status":"done"}', null), false)
+    await state.release(lock, 'first')
+    assert.deepEqual(await Promise.all([get(lock), get(stateKey), get(planKey)]), ['second', nextStatus, nextPlan])
+  } finally {
+    await commands.eval("return redis.call('DEL', KEYS[1], KEYS[2], KEYS[3])", 3, lock, stateKey, planKey)
+  }
+})
+
 test('preview worker stores revisions and plans while progress excludes owner and scope identifiers', async () => {
   const values = new Map<string, string>()
   const progress: Array<Record<string, unknown>> = []
   const cursor = { owner_user_id: 'synthetic-owner', platform: 'qq', bot_id: 'synthetic-bot', scope_type: 'group' as const, scope_id: 'synthetic-group', first_message_id: 3, last_message_id: 4 }
   const worker = createImMemoryMaintenancePreviewWorker({
-    state: { async set(key, value) { values.set(key, value); if (key === stateKey) progress.push(JSON.parse(value)) } },
-    async listCursors() { return [cursor] },
     async messages() { return [{ id: 4, conversation_seq: 4, role: 'user', content: '合成消息', platform_user_id: 'member-1', platform_user_name: '小北', created_at: new Date('2026-01-01T00:00:00.000Z') }] },
     storage: { async read() { return null } },
     readModelSettings() { return { provider: 'synthetic', model: 'synthetic', context_tokens: 4096, max_tokens: 1000 } },
@@ -70,7 +157,12 @@ test('preview worker stores revisions and plans while progress excludes owner an
     async complete(request) { assert.equal(request.system, '合成提示'); return { daily: ['合成记忆'] } },
     now: () => 200,
   })
-  await worker([cursor])
+  await worker([cursor], async (status, plans) => {
+    values.set(stateKey, JSON.stringify(status))
+    values.set(planKey, JSON.stringify(plans))
+    progress.push(status)
+    return true
+  })
   const status = JSON.parse(values.get(stateKey)!)
   const plans = JSON.parse(values.get(planKey)!)
   assert.equal(status.status, 'done')

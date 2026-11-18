@@ -36,16 +36,8 @@ export function createLocalUserMemoryVectorStore(root: string) {
       const ownerId = dataContext(rawOwnerId).ownerId
       const current = await readText(root, ownerId, '.agent/pattern.json')
       if (current !== null) {
-        if (current.trim()) {
-          const parsed = parseJson(current)
-          if (Array.isArray(parsed)) return parsed.filter(value => object(value) && typeof value.text === 'string' && value.text.trim())
-        } else {
-          // Python 把显式清空留下的空文件规范化为空列表，并清掉对应向量缓存。
-          const vectors = parseJson(await readText(root, ownerId, vectorPath.pattern))
-          if (object(vectors) && Object.keys(vectors).length)
-            await writeLocalFile(root, `${ownerId}/${vectorPath.pattern}`, '{}')
-          return []
-        }
+        const parsed = parseJson(current)
+        return Array.isArray(parsed) ? parsed.filter(value => object(value) && typeof value.text === 'string' && value.text.trim()) : []
       }
 
       const legacyJson = await readText(root, ownerId, '.agent/facts.json')

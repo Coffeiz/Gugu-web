@@ -26,6 +26,7 @@ html[data-theme][data-family] .admin-layout :is(
   .memory-subpanel,
   .feedback-item
 ) {
+  border-radius: var(--card-radius);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }

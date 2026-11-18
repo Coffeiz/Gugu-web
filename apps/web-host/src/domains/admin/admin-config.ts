@@ -21,7 +21,8 @@ function currentData(options: AdminConfigOptions): ConfigDocument {
   let db: Section = { host: 'localhost', port: 5432, name: 'gugu_web', user: 'gugu', password: '' }
   if (dbUrl) {
     try {
-      const url = new URL(dbUrl.replace(/^postgresql\+asyncpg:/i, 'postgresql:'))
+      const url = new URL(dbUrl)
+      if (url.protocol !== 'postgres:' && url.protocol !== 'postgresql:') throw new Error()
       db = { host: url.hostname, port: Number(url.port || 5432), name: url.pathname.slice(1), user: decodeURIComponent(url.username), password: decodeURIComponent(url.password) }
     } catch { /* Node startup validates this value before mounting the routes. */ }
   }
@@ -120,7 +121,11 @@ export function registerAdminConfigRoutes(app: FastifyInstance, options: AdminCo
           const rawUrl = payload.type === 'redis'
             ? options.env.GUGU_WEBUI_REDIS_URL
             : options.env.GUGU_WEBUI_DATABASE_URL
-          if (rawUrl) envPassword = decodeURIComponent(new URL(rawUrl.replace(/^postgresql\+asyncpg:/i, 'postgresql:')).password)
+          if (rawUrl) {
+            const url = new URL(rawUrl)
+            if (['postgres:', 'postgresql:', 'redis:', 'rediss:'].includes(url.protocol))
+              envPassword = decodeURIComponent(url.password)
+          }
         } catch { /* The connection probe returns a generic configuration error below. */ }
         input.password = payload.type === 'redis'
           ? options.env.GUGU_WEBUI_REDIS_PASSWORD || String(stored.password || envPassword)

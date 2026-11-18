@@ -507,7 +507,7 @@ defineExpose({
   overflow-y: auto;
   padding: 5px;
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: var(--popup-surface-bg);
   box-shadow: var(--elevation-popup);
   backdrop-filter: var(--popup-surface-blur);
@@ -538,7 +538,7 @@ defineExpose({
   width: 100%;
   padding: 6px 8px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--content-primary);
   text-align: left;

@@ -3,6 +3,7 @@ import { normalizeOwnerId } from '../../../adapters/owner-context.js'
 import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
 import { normalizeOnboardingState } from '@gugu/core/onboarding'
 import type { RegistrationSeedPlan, RegistrationSeedPorts } from '@gugu/core/onboarding'
+import { enqueuePostgresAgentRagRebuild } from '../../../domains/agent-sessions/persistence/agent-rag-job-postgres.js'
 import { createPostgresRegistrationSeedFileWriter } from '../../../domains/files/file-upload-postgres.js'
 
 interface SeedStateRow { state: unknown }
@@ -68,6 +69,8 @@ async function applySeed(
     data: file.data,
   })))
   try {
+    await enqueuePostgresAgentRagRebuild(client, ownerId, 'calendar')
+    await enqueuePostgresAgentRagRebuild(client, ownerId, 'project')
     const nextState = normalizeOnboardingState({
       ...state,
       seed: { ...seedState, ...plan.seedState, project_id: numericProjectId },

@@ -55,14 +55,3 @@ export function createPostgresAgentRunStartupStore(pool: Pick<Pool, 'connect' | 
     },
   }
 }
-
-/** checkpoint 为权威状态；读取失败不可静默转换为启动失败。 */
-export function createAgentRunStateReader<C>(checkpoint: { read(identity: RunIdentity): Promise<{ sequence: number; status: string } | null> }, startup: { readFailure(identity: RunIdentity): Promise<boolean> }, dispatch?: { readReconstructionStatus(identity: RunIdentity): Promise<'unavailable' | 'version_conflict' | null> }) {
-  return async (identity: RunIdentity) => {
-    const state = await checkpoint.read(identity)
-    const blocked = await dispatch?.readReconstructionStatus(identity)
-    if (blocked && (!state || ['preparing', 'running'].includes(state.status))) return { sequence: state?.sequence ?? 0, status: `reconstruction_${blocked}` }
-    if (state) return { sequence: state.sequence, status: state.status }
-    return await startup.readFailure(identity) ? { sequence: 0, status: 'startup_failed' } : null
-  }
-}

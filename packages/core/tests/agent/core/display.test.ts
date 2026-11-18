@@ -1,8 +1,17 @@
 import { describe,expect,it } from 'vitest'
-import { sealDisplayTimeline,updateDisplayItem } from "../../../src/agent/index.js"
+import { canonicalToolsUsed,sealDisplayTimeline,updateDisplayItem, type MessageEntry, type RunCheckpoint } from "../../../src/agent/index.js"
 
 const scope = { anchorMessageId: '17', now: '2026-01-01T00:00:00Z' }
 const tool = { kind: 'tool' as const, runId: 'run-synthetic', roundId: 'round-synthetic', toolCallId: 'call-synthetic', toolStatus: 'running' }
+
+it('多轮工具用量来自时间线与持久化工具轮，去重并排除静默选择', () => {
+  const checkpoint = { displayTimeline: [
+    { kind: 'tool', toolName: '查询' }, { kind: 'tool', toolName: '写入' },
+    { kind: 'tool', toolName: '查询' }, { kind: 'tool', toolName: 'choose_no_reply' },
+  ] } as Pick<RunCheckpoint<unknown>, 'displayTimeline'>
+  const entries = [{ source: 'tool_round', message: { role: 'assistant', content: [{ type: 'tool_call', name: '_内部工具' }] } }] as unknown as MessageEntry[]
+  expect(canonicalToolsUsed(checkpoint, entries)).toEqual(['查询', '写入', '_内部工具'])
+})
 
 describe('统一展示时间线', () => {
   it('工具更新保留首次身份、时间、序号、原问题anchor，迟到running不能覆盖终态', () => {

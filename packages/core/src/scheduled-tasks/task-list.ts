@@ -19,16 +19,17 @@ export function createKyselyScheduledTaskReader<DB>(db: Kysely<DB>, backend: Bac
   const time = (column: string) => backend === 'postgres'
     ? sql`to_char(${sql.ref(column)} AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI:SS.US') || '+00:00'`
     : sql.ref(column)
-  return async (rawOwner: string, eventId: number | null, signal?: AbortSignal): Promise<ScheduledTaskListRow[]> => {
+  return async (rawOwner: string, eventId: number | null, signal?: AbortSignal, taskId?: number): Promise<ScheduledTaskListRow[]> => {
     signal?.throwIfAborted()
     const owner = dataContext(rawOwner).ownerId
     const ownerKey = backend === 'sqlite' ? owner.replaceAll('-', '') : owner
     try {
       const event = eventId === null ? sql`event_id IS NULL` : sql`event_id=${eventId}`
+      const filter = taskId === undefined ? sql`` : sql`AND id=${taskId}`
       const result = await sql<Record<string, unknown>>`SELECT id,name,payload,cron,schedule_kind,interval_minutes,
         ${time('start_at')} AS start_at,${time('end_at')} AS end_at,channels,enabled,event_id,workspace_id,filesystem_authorization_grant_id,
         ${time('last_run_at')} AS last_run_at,last_run_failed,delivery_targets,authorized_tools,email_attachment_file_ids
-        FROM scheduled_tasks WHERE user_id=${ownerKey} AND ${event} ORDER BY id DESC`.execute(db)
+        FROM scheduled_tasks WHERE user_id=${ownerKey} AND ${event} ${filter} ORDER BY id DESC`.execute(db)
       return result.rows.map(row => ({
         id: integer(row.id), name: String(row.name), payload: String(row.payload), cron: String(row.cron), schedule_kind: String(row.schedule_kind),
         interval_minutes: row.interval_minutes == null ? null : integer(row.interval_minutes), start_at: stamp(row.start_at), end_at: stamp(row.end_at),

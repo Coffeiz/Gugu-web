@@ -5,12 +5,15 @@
         <h2 class="page-title">{{ t('adminSandbox.title') }}</h2>
         <p class="page-desc">{{ t('adminSandbox.description') }}</p>
       </div>
-      <ActionButton fit :disabled="loading || !canEnable" @click="toggleSandbox">
-        {{ loading ? t('adminSandbox.working') : status.enabled ? t('adminSandbox.disable') : t('adminSandbox.enable') }}
+      <ActionButton v-if="!status.enabled" fit :disabled="!canEnable || loading" @click="enableSandbox">
+        {{ loading ? t('adminSandbox.working') : t('adminSandbox.enable') }}
+      </ActionButton>
+      <ActionButton v-else fit :disabled="loading" @click="disableSandbox">
+        {{ loading ? t('adminSandbox.working') : t('adminSandbox.disable') }}
       </ActionButton>
     </div>
 
-    <SandboxRuntimeStatus :status="status" :can-enable="canEnable" />
+    <SandboxRuntimeStatus :status="status" />
 
     <section class="sandbox-config-section">
       <div class="sandbox-config-section__head">
@@ -18,17 +21,15 @@
         <span class="sandbox-config-section__desc">{{ t('adminSandbox.configHint') }}</span>
       </div>
       <div class="panel-card">
-      <div class="config-row"><span>{{ t('adminSandbox.image') }}</span><code>{{ status.image }}</code></div>
-      <div class="config-row"><span>{{ t('adminSandbox.digest') }}</span><code>{{ status.image_digest || t('adminSandbox.notConfigured') }}</code></div>
-      <div v-if="status.storage_backend === 'oss'" class="config-row"><span>{{ t('adminSandbox.persistentQuota') }}</span><strong>{{ formatBytes(status.persistent_quota_bytes) }}</strong></div>
-      <div class="config-row"><span>{{ t('adminSandbox.ephemeralQuota') }}</span><strong>{{ formatBytes(status.ephemeral_quota_bytes) }}</strong></div>
+      <div v-if="configStore.cfg.storage.backend === 'oss'" class="config-row"><span>{{ t('adminSandbox.persistentQuota') }}</span><strong>{{ formatBytes(configStore.cfg.sandbox.persistent_quota_bytes) }}</strong></div>
+      <div class="config-row"><span>{{ t('adminSandbox.ephemeralQuota') }}</span><strong>{{ formatBytes(configStore.cfg.sandbox.ephemeral_quota_bytes) }}</strong></div>
       <div class="config-row"><span>{{ t('adminSandbox.networkPolicy') }}</span><strong>{{ status.network_profile === 'none' ? t('adminSandbox.offline') : status.network_profile }}</strong></div>
       <div class="config-row config-row-switch">
         <div class="config-row-copy"><span>{{ t('adminSandbox.fullUserSandboxAuthorization') }}</span><small>{{ t('adminSandbox.fullUserSandboxAuthorizationHint') }}</small></div>
-        <ToggleSwitch :model-value="status.full_user_sandbox_authorization_enabled" :disabled="fullUserSandboxAuthorizationSaving" :aria-label="t('adminSandbox.fullUserSandboxAuthorization')" @update:model-value="toggleFullUserSandboxAuthorization" />
+        <ToggleSwitch :model-value="configStore.cfg.sandbox.full_user_sandbox_authorization_enabled" :disabled="fullUserSandboxAuthorizationSaving" :aria-label="t('adminSandbox.fullUserSandboxAuthorization')" @update:model-value="toggleFullUserSandboxAuthorization" />
       </div>
       <div class="config-row terminal-mode-row">
-        <div class="config-row-copy"><span>{{ t('adminSandbox.terminalMode') }}</span><small>{{ t('adminSandbox.terminalModeHint', { entry: status.terminal_entry_enabled ? t('adminSandbox.enabled') : t('adminSandbox.disabled') }) }}</small></div>
+        <div class="config-row-copy"><span>{{ t('adminSandbox.terminalMode') }}</span><small>{{ t('adminSandbox.terminalModeHint', { entry: terminalModeDraft !== 'entry_disabled' ? t('adminSandbox.enabled') : t('adminSandbox.disabled') }) }}</small></div>
         <AdminSelect
           :model-value="terminalModeDraft"
           :options="terminalModeOptions"
@@ -52,10 +53,9 @@
         <p class="egress-note">{{ t('adminSandbox.proxyHint') }}</p>
         <p v-if="egressMessage" class="action-message" :class="{ error: egressError }">{{ egressMessage }}</p>
       </div>
-      <div class="config-row"><span>{{ t('adminSandbox.lifecycle') }}</span><strong>{{ status.lifecycle_mode === 'ephemeral' ? t('adminSandbox.oneShot') : status.lifecycle_mode }}</strong></div>
       <p class="section-note">{{ t('adminSandbox.policyHint') }}</p>
       <div class="quota-editor">
-        <div v-if="status.storage_backend === 'oss'" class="quota-field"><span>{{ t('adminSandbox.persistentMb') }}</span><input v-model.number="quotaDraft.persistentMb" type="number" min="64" step="64" :aria-label="t('adminSandbox.persistentMb')" /></div>
+        <div v-if="configStore.cfg.storage.backend === 'oss'" class="quota-field"><span>{{ t('adminSandbox.persistentMb') }}</span><input v-model.number="quotaDraft.persistentMb" type="number" min="64" step="64" :aria-label="t('adminSandbox.persistentMb')" /></div>
         <div class="quota-field"><span>{{ t('adminSandbox.ephemeralMb') }}</span><input v-model.number="quotaDraft.ephemeralMb" type="number" min="64" step="64" :aria-label="t('adminSandbox.ephemeralMb')" /></div>
         <div class="quota-actions"><span v-if="quotaMessage" class="action-message" :class="{ error: quotaError }">{{ quotaMessage }}</span><ActionButton variant="secondary" fit :disabled="quotaSaving" @click="resetQuotaDraft">{{ t('adminSandbox.undo') }}</ActionButton><ActionButton fit :disabled="quotaSaving" @click="saveQuotas">{{ quotaSaving ? t('adminSandbox.saving') : t('adminSandbox.saveRuntimeConfig') }}</ActionButton></div>
       </div>
@@ -70,6 +70,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import { useConfigStore } from '@/stores/config'
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import AdminSelect from '@/components/AdminSelect.vue'
@@ -77,35 +78,22 @@ import SandboxRuntimeStatus from './components/SandboxRuntimeStatus.vue'
 import { useI18n } from 'vue-i18n'
 
 type SandboxStatus = {
-  storage_backend: 'local' | 'oss'
-  manager_mode: string
-  manager_ready: boolean
-  manager_message: string
   enabled: boolean
-  full_user_sandbox_authorization_enabled: boolean
-  terminal_mode: 'auto' | 'pty_disabled' | 'entry_disabled'
-  terminal_entry_enabled: boolean
-  pty_enabled: boolean
-  docker_installed: boolean
-  docker_daemon_ready: boolean
-  rootless: boolean | null
-  rootless_required: boolean
-  image_ready: boolean
-  executor_ready: boolean
+  sandbox_ready: boolean
+  runtime_supported: boolean
+  runtime_methods: string[]
+  readiness_checked: boolean
+  shell_enabled: boolean
+  shell_dangerous_enabled: boolean
   state: string
   message: string
-  image: string
-  image_digest: string
-  persistent_quota_bytes: number
-  ephemeral_quota_bytes: number
-  network_profile: string
+  network_profile: 'none' | 'egress'
   egress_proxy_configured: boolean
   egress_proxy_url: string
   egress_network_ready: boolean
   egress_config_error: string | null
   egress_available: boolean
   egress_enabled: boolean
-  lifecycle_mode: string
 }
 
 const adminStore = useAdminStore()
@@ -113,14 +101,14 @@ const { t } = useI18n()
 const configStore = useConfigStore()
 const loading = ref(false)
 const error = ref('')
-const status = reactive<SandboxStatus>({ storage_backend: 'local', manager_mode: 'disabled', manager_ready: false, manager_message: '', enabled: true, full_user_sandbox_authorization_enabled: true, terminal_mode: 'auto', terminal_entry_enabled: false, pty_enabled: false, docker_installed: false, docker_daemon_ready: false, rootless: null, rootless_required: false, image_ready: false, executor_ready: false, state: 'unknown', message: '', image: '', image_digest: '', persistent_quota_bytes: 0, ephemeral_quota_bytes: 1073741824, network_profile: 'egress', egress_proxy_configured: false, egress_proxy_url: '', egress_network_ready: false, egress_config_error: null, egress_available: false, egress_enabled: false, lifecycle_mode: 'ephemeral' })
+const status = reactive<SandboxStatus>({ enabled: true, sandbox_ready: false, runtime_supported: false, runtime_methods: [], readiness_checked: false, shell_enabled: false, shell_dangerous_enabled: false, state: 'unknown', message: '', network_profile: 'egress', egress_proxy_configured: false, egress_proxy_url: '', egress_network_ready: false, egress_config_error: null, egress_available: false, egress_enabled: false })
 const quotaDraft = reactive({ persistentMb: 512, ephemeralMb: 1024 })
 const quotaSaving = ref(false)
 const quotaMessage = ref('')
 const quotaError = ref(false)
 const fullUserSandboxAuthorizationSaving = ref(false)
 const terminalModeSaving = ref(false)
-const terminalModeDraft = ref<SandboxStatus['terminal_mode']>('auto')
+const terminalModeDraft = ref<'auto' | 'pty_disabled' | 'entry_disabled'>('auto')
 const terminalModeOptions = computed(() => [
   { value: 'auto', label: t('adminSandbox.terminalModeAuto') },
   { value: 'pty_disabled', label: t('adminSandbox.terminalModePtyDisabled') },
@@ -131,20 +119,20 @@ const egressTesting = ref(false)
 const proxyDraft = ref('')
 const egressMessage = ref('')
 const egressError = ref(false)
-const canEnable = computed(() => status.executor_ready)
 const egressHint = computed(() => {
   if (status.egress_config_error) return status.egress_config_error
   if (!status.egress_proxy_configured) return t('adminSandbox.proxyNotConfigured')
   if (!status.egress_network_ready) return t('adminSandbox.networkNotReady')
   return status.network_profile === 'egress' ? t('adminSandbox.egressEnabled') : t('adminSandbox.egressAvailable')
 })
+const canEnable = computed(() => status.runtime_supported && status.sandbox_ready)
 function formatBytes(value: number) {
   if (value >= 1024 * 1024 * 1024) return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`
   return `${Math.round(value / (1024 * 1024))} MB`
 }
 function syncQuotaDraft() {
-  quotaDraft.persistentMb = Math.round((configStore.cfg.sandbox.persistent_quota_bytes || status.persistent_quota_bytes) / (1024 * 1024))
-  quotaDraft.ephemeralMb = Math.round((configStore.cfg.sandbox.ephemeral_quota_bytes || status.ephemeral_quota_bytes) / (1024 * 1024))
+  quotaDraft.persistentMb = Math.round(configStore.cfg.sandbox.persistent_quota_bytes / (1024 * 1024))
+  quotaDraft.ephemeralMb = Math.round(configStore.cfg.sandbox.ephemeral_quota_bytes / (1024 * 1024))
 }
 function resetQuotaDraft() { syncQuotaDraft(); quotaMessage.value = ''; quotaError.value = false }
 async function saveQuotas() {
@@ -172,8 +160,7 @@ async function toggleEgress(enabled: boolean) {
 }
 
 async function toggleFullUserSandboxAuthorization(enabled: boolean) {
-  const previousValue = status.full_user_sandbox_authorization_enabled
-  status.full_user_sandbox_authorization_enabled = enabled
+  const previousValue = configStore.cfg.sandbox.full_user_sandbox_authorization_enabled
   fullUserSandboxAuthorizationSaving.value = true
   try {
     await configStore.saveConfig({ sandbox: {
@@ -182,14 +169,14 @@ async function toggleFullUserSandboxAuthorization(enabled: boolean) {
     if (configStore.saveError) throw new Error(configStore.saveError)
     await loadStatus()
   } catch (cause) {
-    status.full_user_sandbox_authorization_enabled = previousValue
+    configStore.cfg.sandbox.full_user_sandbox_authorization_enabled = previousValue
     error.value = cause instanceof Error ? cause.message : String(cause)
   } finally {
     fullUserSandboxAuthorizationSaving.value = false
   }
 }
 
-async function saveTerminalMode(value: SandboxStatus['terminal_mode']) {
+async function saveTerminalMode(value: 'auto' | 'pty_disabled' | 'entry_disabled') {
   terminalModeDraft.value = value
   terminalModeSaving.value = true
   try {
@@ -198,7 +185,7 @@ async function saveTerminalMode(value: SandboxStatus['terminal_mode']) {
     await loadStatus()
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : String(cause)
-    terminalModeDraft.value = status.terminal_mode
+    terminalModeDraft.value = configStore.cfg.sandbox.terminal_mode
   } finally {
     terminalModeSaving.value = false
   }
@@ -247,17 +234,31 @@ async function loadStatus() {
   const response = await adminStore.authFetch('/api/v1/admin/sandbox/status')
   if (!response.ok) throw new Error(`读取沙盒状态失败（${response.status}）`)
   Object.assign(status, await response.json())
-  terminalModeDraft.value = status.terminal_mode
+  terminalModeDraft.value = configStore.cfg.sandbox.terminal_mode
   proxyDraft.value = status.egress_proxy_url || ''
 }
 
-async function toggleSandbox() {
-  loading.value = true; error.value = ''
+async function enableSandbox() {
+  loading.value = true
+  error.value = ''
   try {
-    const action = status.enabled ? 'disable' : 'enable'
-    const response = await adminStore.authFetch(`/api/v1/admin/sandbox/${action}`, { method: 'POST' })
+    const response = await adminStore.authFetch('/api/v1/admin/sandbox/enable', { method: 'POST' })
     const body = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(body.detail || `操作失败（${response.status}）`)
+    if (!response.ok) throw new Error(body.detail || `开启执行环境失败（${response.status}）`)
+    Object.assign(status, body)
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : String(cause)
+  } finally { loading.value = false }
+}
+
+async function disableSandbox() {
+  if (!await confirmDialog({ title: t('adminSandbox.disableTitle'), message: t('adminSandbox.disableMessage'), tone: 'danger', confirmText: t('adminSandbox.disable') })) return
+  loading.value = true
+  error.value = ''
+  try {
+    const response = await adminStore.authFetch('/api/v1/admin/sandbox/disable', { method: 'POST' })
+    const body = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(body.detail || `关闭执行环境失败（${response.status}）`)
     Object.assign(status, body)
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : String(cause)
@@ -280,7 +281,7 @@ onMounted(async () => {
 .sandbox-config-section__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; min-width: 0; margin-bottom: 10px; }
 .sandbox-config-section__label { flex: 0 0 auto; color: var(--content-primary); font-size: 13px; font-weight: 600; }
 .sandbox-config-section__desc { flex: 1 1 280px; min-width: 0; color: var(--content-tertiary); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
-.panel-card { padding: 22px 24px; border: 1px solid var(--panel-glass-border); border-radius: var(--radius-lg); background: var(--panel-glass-bg); box-shadow: var(--elevation-card); color: var(--content-primary); backdrop-filter: var(--panel-glass-blur); -webkit-backdrop-filter: var(--panel-glass-blur); }
+.panel-card { padding: 22px 24px; border: 1px solid var(--panel-glass-border); border-radius: var(--card-radius); background: var(--panel-glass-bg); box-shadow: var(--elevation-card); color: var(--content-primary); backdrop-filter: var(--panel-glass-blur); -webkit-backdrop-filter: var(--panel-glass-blur); }
 .section-note { margin: 10px 0 0; color: var(--content-tertiary); font-size: 12px; line-height: 1.6; }
 .config-row span { display: block; color: var(--content-tertiary); font-size: 12px; }
 .config-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 0; border-bottom: 1px solid var(--panel-divider); }
@@ -295,12 +296,12 @@ onMounted(async () => {
 .egress-editor { padding: 14px 0 4px; border-bottom: 1px solid var(--panel-divider); }
 .egress-label { display: block; margin-bottom: 8px; color: var(--content-secondary); font-size: 12px; font-weight: 600; }
 .egress-input-row { display: flex; align-items: center; gap: 8px; }
-.egress-input { min-width: 0; flex: 1; box-sizing: border-box; padding: 7px 10px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-glass); color: var(--content-primary); font-family: var(--font-mono); font-size: 12px; outline: none; }
+.egress-input { min-width: 0; flex: 1; box-sizing: border-box; padding: 7px 10px; border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); background: var(--surface-glass); color: var(--content-primary); font-family: var(--font-mono); font-size: 12px; outline: none; }
 .egress-input:focus { border-color: var(--action-primary); box-shadow: var(--control-focus-shadow); }
 .egress-note { margin: 8px 0 0; color: var(--content-tertiary); font-size: 11px; line-height: 1.5; }
 .quota-editor { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--panel-divider); }
 .quota-editor .quota-field { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 0; color: var(--content-secondary); font-size: 12px; }
-.quota-editor input { width: 150px; box-sizing: border-box; padding: 7px 10px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-glass); color: var(--content-primary); outline: none; }
+.quota-editor input { width: 150px; box-sizing: border-box; padding: 7px 10px; border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); background: var(--surface-glass); color: var(--content-primary); outline: none; }
 .quota-editor input:focus { border-color: var(--action-primary); }
 .quota-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 12px; }
 .action-message { margin-right: auto; color: var(--status-success); font-size: 12px; }

@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { sql } from 'kysely'
 import { initializeSqlite, openSqliteRuntime } from '@gugu/core/data'
 import { dataContext } from '@gugu/core/contracts'
 import { buildDocuments } from '../../../../packages/core/src/agent/rag/adapters/base.js'
@@ -10,7 +11,9 @@ import { createSqlRagPersistentIndexReader } from '../../../../packages/core/src
 import { createSqlRagPersistentIndexWriter } from '../../../../packages/core/src/agent/rag/persistent-writer.js'
 import { createSqlRagRebuildWorker } from '../../../../packages/core/src/agent/rag/rebuild-worker.js'
 import { enqueueMissingAgentRagBaselines, readAgentRagRebuildProgress } from '../../../../packages/core/src/agent/rag/rebuild-worker.js'
-import { resolveAgentRagIndexWorkerOwner, startAgentRagIndexWorker } from '../../src/domains/agent-sessions/rag-rebuild.js'
+import { enqueueCalendarRagIndex } from '../../../../packages/core/src/calendar/create-store.js'
+import { enqueueMindRagIndex } from '../../../../packages/core/src/mind/rag-index-job.js'
+import { startAgentRagIndexWorker } from '../../src/domains/agent-sessions/rag-rebuild.js'
 import { startRagIndexWorker } from '../../src/domains/agent-sessions/rag-index-worker.js'
 import { createLocalAgentKnowledgeReadStore } from '../../src/domains/agent-sessions/tools/agent-rag-knowledge-store.js'
 import { createAgentImMemoryRagMutationPorts } from '../../src/domains/agent-sessions/persistence/agent-im-memory-rag-mutations.js'
@@ -18,14 +21,6 @@ import { createAgentImMemoryRagMutationPorts } from '../../src/domains/agent-ses
 const tick = async (count = 1) => {
   for (let i = 0; i < count; i++) await new Promise(resolve => setImmediate(resolve))
 }
-
-test('RAG Worker owner follows the Host-injected environment and rejects unsupported consumers', () => {
-  assert.equal(resolveAgentRagIndexWorkerOwner(undefined), 'python')
-  assert.equal(resolveAgentRagIndexWorkerOwner(''), 'python')
-  assert.equal(resolveAgentRagIndexWorkerOwner('python'), 'python')
-  assert.equal(resolveAgentRagIndexWorkerOwner('node'), 'node')
-  assert.throws(() => resolveAgentRagIndexWorkerOwner('both'), /Worker owner 配置无效/u)
-})
 
 test('RAG 调度器立即运行并串行排空 ready 任务，空队列后按间隔轮询', async () => {
   const results = ['ready', 'superseded', 'idle', 'idle'] as const
@@ -199,6 +194,67 @@ test('首次 RAG 启动只为缺少索引和任务的来源建立幂等全量基
   }
 })
 
+test('首次 RAG 入队遇到同键任务时保留先写入的增量任务和 generation', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gugu-rag-baseline-conflict-'))
+  const path = join(directory, 'core.db')
+  try {
+    await initializeSqlite(path)
+    const { runtime, ownerId } = await openSqliteRuntime(path)
+    try {
+      await runtime.transaction(dataContext(ownerId), data => data.projects.create({ name: '已有来源' }))
+      // 在缺失检查之后、插入之前写入同键任务，确定性重现唯一键冲突。
+      await sql`CREATE TRIGGER insert_competing_job BEFORE INSERT ON rag_index_jobs
+        WHEN NEW.source_type = 'conversation' AND NEW.generation = 1
+        BEGIN
+          INSERT INTO rag_index_jobs (
+            user_id, source_type, source_id, pending_source_ids, version, operation, status,
+            generation, completed_generation, attempts, next_attempt_at, created_at, updated_at
+          ) VALUES (NEW.user_id, NEW.source_type, '71', '["71"]', '', 'upsert', 'queued',
+            3, 2, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+        END`.execute(runtime.db)
+
+      assert.equal(await enqueueMissingAgentRagBaselines(runtime.db, 'sqlite', ['conversation', 'calendar']), 1)
+      const jobs = await sql`SELECT source_type, source_id, pending_source_ids, generation
+        FROM rag_index_jobs WHERE source_type IN ('calendar', 'conversation') ORDER BY source_type`.execute(runtime.db)
+      assert.deepEqual(jobs.rows, [
+        { source_type: 'calendar', source_id: '', pending_source_ids: '[]', generation: 1 },
+        { source_type: 'conversation', source_id: '71', pending_source_ids: '["71"]', generation: 3 },
+      ])
+    } finally {
+      await runtime.close()
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('增量写入不会缩小 SQLite 中尚未完成的全量重建范围', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gugu-rag-full-pending-'))
+  const path = join(directory, 'core.db')
+  try {
+    await initializeSqlite(path)
+    const { runtime, ownerId } = await openSqliteRuntime(path)
+    try {
+      await runtime.transaction(dataContext(ownerId), data => data.projects.create({ name: '已有来源' }))
+      await enqueueMissingAgentRagBaselines(runtime.db, 'sqlite', ['calendar', 'note'])
+      const owner = ownerId.replaceAll('-', '')
+      await runtime.db.transaction().execute(async tx => {
+        await enqueueCalendarRagIndex(tx, 'sqlite', owner, '71', sql`CURRENT_TIMESTAMP`)
+        await enqueueMindRagIndex(tx, 'sqlite', owner, 'note', '72', '2026-11-15 00:00:00', 'update')
+      })
+      const { rows } = await sql`SELECT source_type, source_id, pending_source_ids, generation
+        FROM rag_index_jobs WHERE source_type IN ('calendar', 'note') ORDER BY source_type`.execute(runtime.db)
+      assert.deepEqual(rows, ['calendar', 'note'].map(source_type => ({
+        source_type, source_id: '', pending_source_ids: '[]', generation: 2,
+      })))
+    } finally {
+      await runtime.close()
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('生产 Host RAG 生命周期经共享 Core 项目服务重建正式索引并保留未就绪来源', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gugu-rag-host-sources-'))
   const path = join(directory, 'core.db')
@@ -301,50 +357,20 @@ test('生产 Host RAG 生命周期经共享 Core 项目服务重建正式索引�
     ]).execute()
 
     const reader = createSqlRagPersistentIndexReader(runtime.db, 'sqlite')
-    const previousOwner = process.env.AGENT__RAG_INDEX_WORKER_OWNER
-    try {
-      delete process.env.AGENT__RAG_INDEX_WORKER_OWNER
-      const defaultOwned = startAgentRagIndexWorker(runtime, {
-        enabled: true, intervalMs: 1, onError: error => { throw error },
-        knowledgeStore: createLocalAgentKnowledgeReadStore(storageRoot),
-      })
-      try {
-        await tick(3)
-        assert.equal(defaultOwned.workerOwner, 'python')
-        assert.equal(await reader.snapshot(opened.ownerId).then(snapshot => snapshot.documents.length), 0)
-        assert.deepEqual(await fixtureDb.selectFrom('rag_index_jobs').select('status').where('source_type', '=', 'project').executeTakeFirst(), { status: 'queued' })
-      } finally {
-        await defaultOwned.stop()
-      }
-      process.env.AGENT__RAG_INDEX_WORKER_OWNER = 'both'
-      assert.throws(() => startAgentRagIndexWorker(runtime!, {
-        enabled: true, intervalMs: 1, onError: error => { throw error },
-        knowledgeStore: createLocalAgentKnowledgeReadStore(storageRoot),
-      }), /Worker owner 配置无效/u)
-    } finally {
-      if (previousOwner === undefined) delete process.env.AGENT__RAG_INDEX_WORKER_OWNER
-      else process.env.AGENT__RAG_INDEX_WORKER_OWNER = previousOwner
-    }
-
-    const pythonOwned = startAgentRagIndexWorker(runtime, {
-      enabled: true,
-      intervalMs: 1,
-      onError: error => { throw error },
-      workerOwner: 'python',
-      knowledgeStore: createLocalAgentKnowledgeReadStore(storageRoot),
+    const disabled = startAgentRagIndexWorker(runtime, {
+      enabled: false, intervalMs: 1, onError: error => { throw error },
     })
     await tick(3)
-    assert.equal(pythonOwned.workerOwner, 'python')
     assert.equal(await reader.snapshot(opened.ownerId).then(snapshot => snapshot.documents.length), 0)
     assert.deepEqual(await fixtureDb.selectFrom('rag_index_jobs').select('status').where('source_type', '=', 'project').executeTakeFirst(), { status: 'queued' })
-    await pythonOwned.stop()
+    await disabled.stop()
 
     for (const partialSources of [
       { knowledgeStore: createLocalAgentKnowledgeReadStore(storageRoot) },
       { memoryStorageRoot: storageRoot },
     ]) {
       assert.throws(() => startAgentRagIndexWorker(runtime!, {
-        enabled: true, intervalMs: 1000, onError: error => { throw error }, workerOwner: 'node', ...partialSources,
+        enabled: true, intervalMs: 1000, onError: error => { throw error }, ...partialSources,
       }), /来源未完整/u)
     }
 
@@ -352,7 +378,6 @@ test('生产 Host RAG 生命周期经共享 Core 项目服务重建正式索引�
       enabled: true,
       intervalMs: 1000,
       onError: error => { throw error },
-      workerOwner: 'node',
       knowledgeStore: createLocalAgentKnowledgeReadStore(storageRoot),
       memoryStorageRoot: storageRoot,
     })
@@ -469,7 +494,7 @@ test('Host Memory 来源经可信 owner scope 与旧版 FS 投影重建正式索
     }).execute()
 
     const production = startAgentRagIndexWorker(runtime, {
-      enabled: true, intervalMs: 10, onError: error => { throw error }, workerOwner: 'node', memoryStorageRoot: storageRoot,
+      enabled: true, intervalMs: 10, onError: error => { throw error }, memoryStorageRoot: storageRoot,
       knowledgeStore: createLocalAgentKnowledgeReadStore(storageRoot),
     })
     try {
@@ -517,6 +542,29 @@ test('Host Memory 来源经可信 owner scope 与旧版 FS 投影重建正式索
       assert.ok(refreshed.documents.some(document => document.source_type === 'memory'
         && document.scope_type === 'group' && document.scope_id === 'group-live' && document.content === 'maintained group fact'))
       assert.equal(refreshed.documents.some(document => document.content === 'authorized group fact' && document.scope_id === 'group-live'), false)
+
+      const beforeFailure = await sql<{ scope_version: number }>`SELECT scope_version FROM memory_reflection_cursors
+        WHERE owner_user_id=${owner} AND platform='qq' AND bot_id='bot-a' AND scope_type='group' AND scope_id='group-live'`.execute(runtime.db)
+      const beforeJobFailure = await readAgentRagRebuildProgress(runtime.db, 'sqlite', owner, 'memory')
+      await sql.raw(`CREATE TRIGGER reject_memory_rebuild BEFORE UPDATE ON rag_index_jobs
+        WHEN OLD.source_type='memory' BEGIN SELECT RAISE(ABORT, 'synthetic queue unavailable'); END`).execute(runtime.db)
+      try {
+        await assert.rejects(memoryIndex.changed({ owner_user_id: owner, platform: 'qq', bot_id: 'bot-a', scope_type: 'group', scope_id: 'group-live' }), /synthetic queue unavailable/u)
+      } finally {
+        await sql.raw('DROP TRIGGER reject_memory_rebuild').execute(runtime.db)
+      }
+      const afterFailure = await sql<{ scope_version: number }>`SELECT scope_version FROM memory_reflection_cursors
+        WHERE owner_user_id=${owner} AND platform='qq' AND bot_id='bot-a' AND scope_type='group' AND scope_id='group-live'`.execute(runtime.db)
+      const afterJobFailure = await readAgentRagRebuildProgress(runtime.db, 'sqlite', owner, 'memory')
+      assert.equal(afterFailure.rows[0]?.scope_version, beforeFailure.rows[0]?.scope_version)
+      assert.equal(afterJobFailure?.generation, beforeJobFailure?.generation)
+
+      const tombstoneBefore = await sql<{ scope_version: number }>`SELECT scope_version FROM memory_reflection_cursors
+        WHERE owner_user_id=${owner} AND platform='qq' AND bot_id='bot-a' AND scope_type='group' AND scope_id='group-old'`.execute(runtime.db)
+      await assert.rejects(memoryIndex.changed({ owner_user_id: owner, platform: 'qq', bot_id: 'bot-a', scope_type: 'group', scope_id: 'group-old' }), /scope 已失效或不存在/u)
+      const tombstoneAfter = await sql<{ scope_version: number }>`SELECT scope_version FROM memory_reflection_cursors
+        WHERE owner_user_id=${owner} AND platform='qq' AND bot_id='bot-a' AND scope_type='group' AND scope_id='group-old'`.execute(runtime.db)
+      assert.equal(tombstoneAfter.rows[0]?.scope_version, tombstoneBefore.rows[0]?.scope_version)
     } finally {
       await production.stop()
     }

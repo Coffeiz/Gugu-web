@@ -211,7 +211,7 @@ watch(() => liveStore.resourceEvent, (event) => {
 <style>
 .pm-workspaces-intro { margin: -4px 0 16px; color: var(--content-secondary); font-size: 12px; line-height: 1.6; }
 .pm-workspace-list { display: flex; flex-direction: column; gap: 10px; }
-.pm-workspace-card { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 13px 14px; border: 1px solid var(--workspace-card-border); border-radius: var(--radius-md); background: var(--workspace-card-bg); box-shadow: var(--workspace-card-shadow); transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
+.pm-workspace-card { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 13px 14px; border: 1px solid var(--workspace-card-border); border-radius: var(--radius-sm); background: var(--workspace-card-bg); box-shadow: var(--workspace-card-shadow); transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
 .pm-workspace-card:hover { border-color: var(--theme-action-primary); background: var(--workspace-card-bg); box-shadow: var(--workspace-card-shadow); }
 .pm-workspace-main { min-width: 0; }
 .pm-workspace-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--content-primary); }
@@ -221,7 +221,7 @@ watch(() => liveStore.resourceEvent, (event) => {
 .pm-workspace-meta { margin-top: 5px; color: var(--content-secondary); font-size: 12px; }
 .pm-workspace-badge { flex: 0 0 auto; padding: 2px 7px; border-radius: var(--radius-pill); background: var(--workspace-badge-bg); color: var(--workspace-badge-fg); font-size: 11px; }
 .pm-workspace-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; }
-.pm-workspace-action { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--content-secondary); cursor: pointer; transition: color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard); }
+.pm-workspace-action { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid transparent; border-radius: var(--radius-xs); background: transparent; color: var(--content-secondary); cursor: pointer; transition: color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard); }
 .pm-workspace-action:hover:not(:disabled) { background: var(--sidebar-item-hover); color: var(--content-primary); }
 .pm-workspace-action.danger:hover:not(:disabled) { background: var(--danger-button-bg); color: var(--danger-button-fg); }
 .pm-workspace-action:disabled { cursor: wait; opacity: .5; }
@@ -229,7 +229,7 @@ watch(() => liveStore.resourceEvent, (event) => {
 .pm-tool-rows { display: flex; flex-direction: column; gap: 14px; }
 .pm-shell-reset-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--panel-divider); }
 .pm-shell-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
-.pm-shell-reset { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex: 0 0 auto; min-height: 32px; padding: 0 11px; border: 1px solid var(--control-border); border-radius: var(--radius-sm); background: var(--control-bg); color: var(--content-secondary); font: inherit; font-size: 12px; cursor: pointer; transition: background-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard); }
+.pm-shell-reset { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex: 0 0 auto; min-height: 32px; padding: 0 11px; border: 1px solid var(--control-border); border-radius: var(--radius-xs); background: var(--control-bg); color: var(--content-secondary); font: inherit; font-size: 12px; cursor: pointer; transition: background-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard); }
 .pm-shell-reset:hover:not(:disabled) { border-color: var(--control-border-hover); background: var(--control-bg-hover); color: var(--content-primary); }
 .pm-shell-reset:disabled { cursor: wait; opacity: .55; }
 @media (max-width: 560px) { .pm-shell-reset-row { align-items: flex-start; flex-direction: column; } .pm-shell-actions { width: 100%; } .pm-shell-reset { flex: 1; } }

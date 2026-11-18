@@ -5,6 +5,9 @@ import { Pool } from 'pg'
 import { createPostgresRuntime } from '@gugu/core/data'
 import { CoreError } from '@gugu/core'
 import { createMcpServerMutations } from '@gugu/core/mcp/server-mutations'
+import { createMcpServerConfigLister } from '@gugu/core/mcp/server-list'
+import { createMcpManagementEditOperations, createMcpManagementTool, createToolRegistry, type ClientDeleteConfirmationPort } from '@gugu/core/tools'
+import { createWebAgentConfirmationAuthorization } from '../../src/domains/agent-sessions/tools/agent-confirmation.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const seal = (plaintext: string) => `sealed:${Buffer.from(plaintext, 'utf8').toString('base64')}`
@@ -18,10 +21,14 @@ test('MCP 配置更新和删除按 owner 写入密文并原子失效对应工具
   await admin.query(`CREATE SCHEMA "${schema}"`)
   const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema}`, max: 3 })
   const runtime = await createPostgresRuntime({ url: databaseUrl!, schema })
+  const decrypt = async (envelope: { ciphertext: string }) => Buffer.from(envelope.ciphertext.slice('sealed:'.length), 'base64').toString('utf8')
+  const crypto = {
+    async encrypt(plaintext: string) { return { ciphertext: seal(plaintext), nonce: 'nonce', encryptedDataKey: 'wrapped', keyVersion: 1 } },
+    decrypt,
+  }
   const mutations = createMcpServerMutations(runtime.db, {
     maxTools: 8,
-    async encrypt(plaintext) { return { ciphertext: seal(plaintext), nonce: 'nonce', encryptedDataKey: 'wrapped', keyVersion: 1 } },
-    async decrypt(envelope) { return Buffer.from(envelope.ciphertext.slice('sealed:'.length), 'base64').toString('utf8') },
+    crypto,
   })
   try {
     await pool.query(`CREATE TABLE user_mcp_servers (
@@ -79,13 +86,86 @@ test('MCP 配置更新和删除按 owner 写入密文并原子失效对应工具
     assert.equal(migrated.encrypted_credentials, seal('{"legacy_header_0":"Bearer legacy-secret"}'))
     assert.equal(migrated.encrypted_headers, '')
 
+    await pool.query(`CREATE TABLE core_operation_receipts(owner_id uuid,operation_id uuid,fingerprint text,method text,
+      result_json text,created_at timestamptz,PRIMARY KEY(owner_id,operation_id));
+      CREATE TABLE users(id uuid,is_active boolean,account_status text,security_version integer);
+      CREATE TABLE conversation_sessions(id integer,user_id uuid,active_run_id text);
+      CREATE TABLE agent_run_dispatch(user_id uuid,session_id integer,run_id text,state text,token text,fence integer,lease_expires_at timestamptz);
+      CREATE TABLE agent_run_leases(user_id uuid,session_id integer,run_id text,expires_at timestamptz)`)
+    await pool.query("INSERT INTO users VALUES($1,true,'active',1)", [owner])
+    await pool.query("INSERT INTO conversation_sessions VALUES(17,$1,'synthetic-run')", [owner])
+    await pool.query("INSERT INTO agent_run_dispatch VALUES($1,17,'synthetic-run','selected','token',1,clock_timestamp()+interval '2 minutes')", [owner])
+    await pool.query("INSERT INTO agent_run_leases VALUES($1,17,'synthetic-run',clock_timestamp()+interval '2 minutes')", [owner])
+    await pool.query('INSERT INTO user_mcp_tool_schema_snapshots VALUES($1,$2,$3,clock_timestamp())', [owner, 'cached', '[]'])
+    const identity = { ownerId: owner, sessionId: '17', runId: 'synthetic-run' }
+    const version = 'a'.repeat(64)
+    let currentVersion = version
+    const authority = createWebAgentConfirmationAuthorization({
+      pool, lease: { identity, token: 'token', fence: 1, mode: 'start', cancelRequested: false,
+        input: { userMessageId: 7, locale: null, origin: null, accessVersion: version, v: 2, source: 'web' } },
+      accessVersion: async () => currentVersion,
+    })
+    const list = createMcpServerConfigLister(runtime.db)
+    const callbacks: boolean[] = []
+    const unusedConfirmation = { gate: { async prepare() { throw new Error('常规配置无需确认') } } } as ClientDeleteConfirmationPort
+    const toggle = createMcpManagementEditOperations(runtime, {
+      decrypt,
+      update: { crypto, maxTools: 8, validateEndpoint: value => value, confirmation: unusedConfirmation },
+      async authorize(tx, candidate, signal) { return (await authority.authorizeInTransaction(tx, candidate, signal))?.endsWith(`:${version}`) === true },
+      async afterCommit(candidate, id, enabled) {
+        assert.equal(candidate, owner)
+        assert.equal(id, serverId)
+        assert.equal((await list(owner))[0]?.enabled, enabled)
+        assert.deepEqual((await pool.query('SELECT user_id FROM user_mcp_tool_schema_snapshots')).rows.map(row => row.user_id), [foreign])
+        callbacks.push(enabled)
+        if (enabled) return { ok: false, state: 'error', error: 'MCP server 认证失败' }
+      },
+    })
+    const { tools } = createToolRegistry({ authorize: async () => true,
+      tools: [createMcpManagementTool({ list, decrypt, enabled: () => true, state: () => ({ state: 'unloaded', loaded_tool_count: 0 }) }, undefined, toggle)] })
+    const scope = { identity, roundId: '1', signal: new AbortController().signal, resolution: null, execute: async () => { throw new Error('不应执行进程') } }
+    const enable = { id: 'enable', name: 'manage_mcp_servers', input: { action: 'enable', server_name: 'weather-v2' } }
+    assert.equal((await tools.dispatch(enable, { ...scope, identity: { ...identity, ownerId: foreign } })).kind, 'completed')
+    assert.equal((await list(owner))[0]?.enabled, false)
+    assert.deepEqual(callbacks, [])
+    currentVersion = 'b'.repeat(64)
+    const revoked = await tools.dispatch(enable, scope)
+    assert.equal(revoked.kind === 'completed' && revoked.successful, false)
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM core_operation_receipts')).rows[0].n, 0)
+    currentVersion = version
+    const enabled = await tools.dispatch(enable, scope)
+    assert.equal(enabled.kind === 'completed' && enabled.mutated, true)
+    assert.match(JSON.stringify(enabled), /MCP server 认证失败/)
+    assert.doesNotMatch(JSON.stringify(enabled), /legacy-secret|encrypted_credentials|credential_values/)
+    const disable = { id: 'disable', name: enable.name, input: { action: 'disable', server_id: serverId } }
+    const disabled = await tools.dispatch(disable, scope)
+    assert.equal(disabled.kind === 'completed' && disabled.mutated, true)
+    const replay = await tools.dispatch(enable, scope)
+    assert.equal(replay.kind === 'completed' && replay.mutated, false)
+    assert.equal((await list(owner))[0]?.enabled, false)
+    assert.equal((await list(owner))[0]?.encrypted_credentials, migrated.encrypted_credentials)
+    assert.deepEqual(callbacks, [true, false])
+    assert.deepEqual(await tools.reconcile(disable, { ...identity, roundId: scope.roundId }), { ...disabled, mutated: false })
+
+    const edit = { id: 'edit', name: enable.name, input: { action: 'update', server_id: serverId, new_server_name: 'weather-v3', timeout_seconds: 45 } }
+    await pool.query('INSERT INTO user_mcp_tool_schema_snapshots VALUES($1,$2,$3,clock_timestamp())', [owner, 'cached-again', '[]'])
+    const edited = await tools.dispatch(edit, scope)
+    assert.equal(edited.kind === 'completed' && edited.mutated, true)
+    assert.match(JSON.stringify(edited), /weather-v3/)
+    assert.doesNotMatch(JSON.stringify(edited), /new-secret|legacy-secret|credential_values/)
+    assert.equal((await list(owner))[0]?.timeout_seconds, 45)
+    assert.equal((await list(owner))[0]?.encrypted_credentials, migrated.encrypted_credentials)
+    assert.deepEqual(await tools.reconcile(edit, { ...identity, roundId: scope.roundId }), { ...edited, mutated: false })
+    assert.deepEqual(callbacks, [true, false, false])
+
     await assert.rejects(mutations.update(foreign, serverId, { enabled: true }), (error: unknown) => error instanceof CoreError && error.code === 'not_found')
     await assert.rejects(mutations.remove(foreign, serverId), (error: unknown) => error instanceof CoreError && error.code === 'not_found')
     assert.equal((await pool.query('SELECT count(*)::int AS count FROM user_mcp_servers')).rows[0].count, 1)
 
+    await pool.query('INSERT INTO user_mcp_tool_schema_snapshots VALUES($1,$2,$3,clock_timestamp())', [owner, 'before-delete', '[]'])
     assert.deepEqual(await mutations.remove(owner, serverId), { deleted: true, id: serverId })
     assert.equal((await pool.query('SELECT count(*)::int AS count FROM user_mcp_servers')).rows[0].count, 0)
-    assert.equal((await pool.query('SELECT count(*)::int AS count FROM user_mcp_tool_schema_snapshots')).rows[0].count, 0)
+    assert.deepEqual((await pool.query('SELECT user_id FROM user_mcp_tool_schema_snapshots')).rows.map(row => row.user_id), [foreign])
   } finally {
     await runtime.close()
     await pool.end()

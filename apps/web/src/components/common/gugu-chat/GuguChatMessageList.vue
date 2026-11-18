@@ -285,7 +285,7 @@ defineExpose({
 .chat-message-viewport { position: relative; display: flex; flex: 1; min-height: 0; min-width: 0; }
 .chat-messages { overflow-anchor: none; }
 .chat-history-status { position: sticky; top: 0; height: 0; z-index: 1; text-align: center; }
-.chat-history-status button { position: relative; margin-top: var(--space-xs); padding: var(--space-xs) var(--space-sm); border: 1px solid var(--input-border); border-radius: var(--radius-md); background: var(--surface-base); color: var(--text-secondary); font: inherit; cursor: pointer; }
+.chat-history-status button { position: relative; margin-top: var(--space-xs); padding: var(--space-xs) var(--space-sm); border: 1px solid var(--input-border); border-radius: var(--radius-sm); background: var(--surface-base); color: var(--text-secondary); font: inherit; cursor: pointer; }
 .chat-scroll-to-bottom {
   position: absolute; left: 50%; bottom: 16px; z-index: 2;
   display: grid; place-items: center; width: 32px; height: 32px; padding: 0;

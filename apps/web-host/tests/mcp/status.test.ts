@@ -30,11 +30,11 @@ test('MCP limits follow Python env and override precedence and hot reload',async
  try{
   await writeFile(path,'{}')
   const read=createMcpSettingsReader(path,{MCP:'{"enabled":false,"max_servers_per_user":7,"max_tools_per_server":21}'})
-  assert.deepEqual(read(),{enabled:false,max_servers_per_user:7,max_tools_per_server:21})
-  const explicit=createMcpSettingsReader(path,{MCP:'{"max_servers_per_user":7}',MCP__MAX_SERVERS_PER_USER:'5',MCP__MAX_TOOLS_PER_SERVER:'12'})
-  assert.deepEqual(explicit(),{enabled:true,max_servers_per_user:5,max_tools_per_server:12})
-  await writeFile(path,'{"mcp":{"max_servers_per_user":3,"max_tools_per_server":9}}')
-  assert.deepEqual(explicit(),{enabled:true,max_servers_per_user:3,max_tools_per_server:9})
+  assert.deepEqual(read(),{enabled:false,max_servers_per_user:7,max_tools_per_server:21,default_timeout_seconds:30,stdio_max_sessions:8,stdio_max_sessions_per_user:4,stdio_idle_seconds:300})
+  const explicit=createMcpSettingsReader(path,{MCP:'{"max_servers_per_user":7,"default_timeout_seconds":45}',MCP__MAX_SERVERS_PER_USER:'5',MCP__MAX_TOOLS_PER_SERVER:'12',MCP__DEFAULT_TIMEOUT_SECONDS:'60'})
+  assert.deepEqual(explicit(),{enabled:true,max_servers_per_user:5,max_tools_per_server:12,default_timeout_seconds:60,stdio_max_sessions:8,stdio_max_sessions_per_user:4,stdio_idle_seconds:300})
+  await writeFile(path,'{"mcp":{"max_servers_per_user":3,"max_tools_per_server":9,"default_timeout_seconds":90}}')
+  assert.deepEqual(explicit(),{enabled:true,max_servers_per_user:3,max_tools_per_server:9,default_timeout_seconds:90,stdio_max_sessions:8,stdio_max_sessions_per_user:4,stdio_idle_seconds:300})
   await writeFile(path,'{')
   assert.throws(()=>explicit())
  }finally{await rm(root,{recursive:true,force:true})}

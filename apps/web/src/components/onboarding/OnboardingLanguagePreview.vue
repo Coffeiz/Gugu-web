@@ -32,7 +32,7 @@ const { t } = useI18n()
 <style scoped>
 .language-preview { position: relative; width: 100%; height: 100%; padding: 22px 46px 54px; box-sizing: border-box; -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 58%, transparent 100%); mask-image: linear-gradient(to bottom, #000 0%, #000 58%, transparent 100%); }
 .workspace-preview { position: absolute; top: 22px; right: 46px; left: 46px; width: auto; height: 100%; box-sizing: border-box; }
-.language-preview-window { position: absolute; z-index: 2; right: 18px; bottom: 12px; width: min(360px, calc(100% - 36px)); height: min(360px, calc(100% - 44px)); display: flex; overflow: hidden; border: 1px solid var(--gugu-chat-border, var(--glass-card-border)); border-radius: var(--gugu-chat-radius, 20px); background: var(--gugu-chat-bg, var(--panel-bg)); box-shadow: var(--gugu-chat-shadow, var(--elevation-window)); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); }
+.language-preview-window { position: absolute; z-index: 2; right: 18px; bottom: 12px; width: min(360px, calc(100% - 36px)); height: min(360px, calc(100% - 44px)); display: flex; overflow: hidden; border: 1px solid var(--gugu-chat-border, var(--glass-card-border)); border-radius: var(--gugu-chat-radius, var(--card-radius)); background: var(--gugu-chat-bg, var(--panel-bg)); box-shadow: var(--gugu-chat-shadow, var(--elevation-window)); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); }
 .language-preview-sidebar { position: relative; display: flex; flex: 0 0 154px; flex-direction: column; gap: 5px; padding: 18px 12px 14px; border-right: 1px solid var(--panel-divider); background: var(--surface-soft); }
 .language-preview-brand { display: flex; align-items: center; gap: 7px; margin: 0 5px 18px; color: var(--content-primary); font-size: 12px; font-weight: 700; }
 .brand-mark, .user-avatar, .gugu-avatar { display: inline-grid; place-items: center; border-radius: 9px; color: var(--content-on-accent); background: var(--action-primary); font-weight: 700; }
@@ -65,35 +65,35 @@ const { t } = useI18n()
 .language-preview-sidebar-divider { height: 1px; margin: 0 10px; background: var(--gugu-chat-header-border, var(--panel-divider)); }
 .language-preview-session-list { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 3px; padding: 12px 8px; overflow: hidden; }
 .language-preview-caption { padding: 3px 6px; color: var(--gugu-chat-caption, var(--content-tertiary)); font-size: 8px; font-weight: 600; letter-spacing: .04em; }
-.language-preview-im-head { display: flex; align-items: center; gap: 5px; min-height: 25px; padding: 0 6px; border-radius: var(--radius-sm); color: var(--content-secondary); font-size: 9px; }
+.language-preview-im-head { display: flex; align-items: center; gap: 5px; min-height: 25px; padding: 0 6px; border-radius: var(--radius-xs); color: var(--content-secondary); font-size: 9px; }
 .language-preview-im-head strong { flex: 1; font-size: 9px; font-weight: 600; }
 .language-preview-im-head span { color: var(--status-success); font-size: 7px; }
 .language-preview-im-head:nth-of-type(5) span { color: var(--content-tertiary); }
 .language-preview-im-head.active { color: var(--content-primary); background: var(--surface-soft); }
-.language-preview-session { display: flex; align-items: center; gap: 5px; min-height: 29px; padding: 4px 6px; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--content-secondary); }
+.language-preview-session { display: flex; align-items: center; gap: 5px; min-height: 29px; padding: 4px 6px; border: 1px solid transparent; border-radius: var(--radius-xs); color: var(--content-secondary); }
 .language-preview-session.selected { color: var(--gugu-chat-session-active-fg, var(--content-primary)); background: var(--gugu-chat-session-active, var(--action-soft)); border-color: var(--sidebar-item-active-border); }
 .language-preview-session span:last-child, .language-preview-session > span:not(.session-tag) { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
 .language-preview-session strong { overflow: hidden; font-size: 9px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .language-preview-session small { color: var(--content-tertiary); font-size: 7px; }
-.session-tag { padding: 2px 4px; border-radius: var(--radius-xs); color: var(--selection-fg); background: var(--selection-bg); font-size: 7px; }
-.language-preview-new-chat { display: flex; align-items: center; justify-content: center; gap: 4px; min-height: 34px; margin: 7px 8px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--action-primary); background: color-mix(in srgb, var(--surface-raised) 84%, transparent); font: 600 9px var(--font-sans); }
+.session-tag { padding: 2px 4px; border-radius: var(--radius-compact); color: var(--selection-fg); background: var(--selection-bg); font-size: 7px; }
+.language-preview-new-chat { display: flex; align-items: center; justify-content: center; gap: 4px; min-height: 34px; margin: 7px 8px; border: 1px solid var(--border-default); border-radius: var(--radius-xs); color: var(--action-primary); background: color-mix(in srgb, var(--surface-raised) 84%, transparent); font: 600 9px var(--font-sans); }
 .language-preview-chat { background: var(--gugu-chat-main-bg, var(--panel-bg)); }
 .language-preview-toolbar { min-height: 42px; padding: 0 14px; border-bottom-color: var(--gugu-chat-header-border, var(--panel-divider)); background: transparent; }
 .language-preview-toolbar > .language-preview-title { font-size: 11px; }
 .toolbar-status { margin-left: auto; }
 .language-preview-toolbar > .language-preview-header-actions { display: flex; flex-shrink: 0; gap: var(--space-xs); margin-left: 0; }
-.language-preview-header-actions button, .language-preview-composer > button:not(.send) { display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: var(--radius-sm); color: var(--content-secondary); background: transparent; }
+.language-preview-header-actions button, .language-preview-composer > button:not(.send) { display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: var(--radius-xs); color: var(--content-secondary); background: transparent; }
 .language-preview-header-actions button:hover, .language-preview-composer > button:not(.send):hover { background: var(--surface-soft-hover); }
 .language-preview-body { gap: 10px; padding: 14px; background: var(--gugu-chat-main-bg, var(--panel-bg)); }
 .language-preview-day-label { align-self: center; color: var(--content-tertiary); font-size: 8px; }
 .language-preview-message-row { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
 .language-preview-message-row.user-row { align-items: flex-end; }
 .language-preview-message-row > small { padding: 0 4px; color: var(--content-tertiary); font-size: 7px; }
-.language-preview-message { max-width: 82%; padding: 7px 9px; border-radius: var(--radius-md); font-size: 9px; line-height: 1.45; }
+.language-preview-message { max-width: 82%; padding: 7px 9px; border-radius: var(--radius-sm); font-size: 9px; line-height: 1.45; }
 .language-preview-message strong { display: block; margin-top: 3px; }
-.gugu-message { border-bottom-left-radius: var(--radius-xs); background: var(--gugu-chat-assistant-bg, var(--surface-soft)); box-shadow: var(--elevation-card); }
-.user-message { border-bottom-right-radius: var(--radius-xs); background: var(--gugu-chat-user-bg, var(--action-primary-bg)); }
-.language-preview-tool-result { display: flex; align-items: center; gap: 5px; margin-top: 6px; padding: 5px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-soft); color: var(--content-secondary); }
+.gugu-message { border-bottom-left-radius: var(--radius-compact); background: var(--gugu-chat-assistant-bg, var(--surface-soft)); box-shadow: var(--elevation-card); }
+.user-message { border-bottom-right-radius: var(--radius-compact); background: var(--gugu-chat-user-bg, var(--action-primary-bg)); }
+.language-preview-tool-result { display: flex; align-items: center; gap: 5px; margin-top: 6px; padding: 5px; border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); background: var(--surface-soft); color: var(--content-secondary); }
 .language-preview-tool-result span { color: var(--status-success); }
 .language-preview-tool-result strong { margin: 0; font-size: 8px; }
 .language-preview-composer { min-height: 38px; margin: 0; padding: 7px 9px; border: 0; border-top: 1px solid var(--gugu-chat-header-border, var(--panel-divider)); border-radius: 0; background: var(--gugu-chat-composer-bg, var(--surface-soft)); box-shadow: inset 0 1px 0 var(--border-highlight); }

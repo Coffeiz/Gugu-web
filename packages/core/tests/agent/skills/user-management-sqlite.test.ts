@@ -3,12 +3,17 @@ import { createHash } from 'node:crypto'
 import SQLite from 'better-sqlite3'
 import { Kysely, SqliteDialect } from 'kysely'
 import { test } from 'vitest'
+import { SqlDataRuntime } from '../../../src/data/runtime.js'
+import { tablesSql, type Database } from '../../../src/data/schema.js'
 import { CoreError } from '../../../src/contracts/index.js'
+import { createSkillManagementWriteTools } from '../../../src/agent/tools/skill-management.js'
+import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import { createUserSkillManager } from '../../../src/agent/skills/user-management.js'
 
 test('SQLite Skill 更新保留 MCP 关联、允许用户接管并隔离 owner', async () => {
   const file = new SQLite(':memory:')
-  const db = new Kysely<Record<string, never>>({ dialect: new SqliteDialect({ database: file }) })
+  const db = new Kysely<Database>({ dialect: new SqliteDialect({ database: file }) })
+  const runtime = new SqlDataRuntime(db, 'sqlite')
   const owner = '00000000-0000-4000-8000-000000000101'
   const other = '00000000-0000-4000-8000-000000000102'
   const events: string[] = []
@@ -22,6 +27,7 @@ test('SQLite Skill 更新保留 MCP 关联、允许用户接管并隔离 owner',
       UNIQUE(owner_id,skill_id)
     );
   `)
+  file.exec(tablesSql('sqlite').receipts)
   const ownerKey = owner.replaceAll('-', '')
   file.prepare('INSERT INTO users(id,next_skill_sequence) VALUES(?,1)').run(ownerKey)
   file.prepare(`INSERT INTO user_skills(owner_id,skill_id,name,description_short,category,body,related_tools,source,managed_by,enabled,content_digest)
@@ -48,7 +54,33 @@ test('SQLite Skill 更新保留 MCP 关联、允许用户接管并隔离 owner',
     assert.equal(updated.body, '新正文')
     assert.equal((await manager.list(owner))[0]?.managed_by, 'user')
     await assert.rejects(manager.update(other, 'S1', { body: '越权' }), (error: unknown) => error instanceof CoreError && error.code === 'not_found')
-    assert.deepEqual(events, [owner, owner])
+    const identity = { ownerId: owner, sessionId: '1', runId: 'skill-run' }
+    const registry = createToolRegistry({ tools: createSkillManagementWriteTools(runtime, manager, async (_tx, candidate) => candidate.ownerId === owner), authorize: async id => id.ownerId === owner })
+    const scope = {
+      identity, roundId: '1', signal: new AbortController().signal, resolution: null,
+      async execute(): Promise<never> { throw new Error('不执行进程') },
+      async discoverRelatedTools() { return [{ name: 'similar_image_search', schema: {} }] },
+    }
+    const result = await registry.tools.dispatch({ id: 'create-skill', name: 'create_skill', input: {
+      skill_name: '图片搜索', description_short: '按需找相似图片', body: '按主题找图',
+      related_tools: ['similar_image_search'], managed_by: 'user',
+    } }, scope)
+    assert.deepEqual(result.kind === 'completed' && result.value, {
+      success: true, skill: { id: 'U2', name: '图片搜索', description_short: '按需找相似图片',
+        related_tools: ['similar_image_search'], enabled: true, managed_by: 'user' },
+      message: '已创建这个咕咕技能，后续会在需要时按需加载。',
+    })
+    const updatedByAgent = await registry.tools.dispatch({ id: 'update-skill', name: 'update_skill', input: { id: 'U2', enabled: false } }, scope)
+    const agentRow = (await manager.list(owner)).find(item => item.id === 'U2')
+    assert.ok(updatedByAgent.kind === 'completed' && updatedByAgent.successful && updatedByAgent.mutated)
+    assert.equal(agentRow?.name, '图片搜索')
+    assert.equal(agentRow?.enabled, false)
+    assert.equal(agentRow?.managed_by, 'user')
+    assert.equal(agentRow?.body, '按主题找图')
+    const bad = await registry.tools.dispatch({ id: 'bad', name: 'create_skill', input: { skill_name: 'x' } }, scope)
+    assert.equal(bad.kind === 'completed' && bad.executed, false)
+    assert.deepEqual((await manager.list(owner)).find(item => item.id === 'U2')?.related_tools, ['similar_image_search'])
+    assert.deepEqual(events, [owner, owner, owner, owner])
   } finally {
     await db.destroy()
   }

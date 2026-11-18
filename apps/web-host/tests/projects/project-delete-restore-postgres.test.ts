@@ -1,9 +1,18 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { Pool } from 'pg'
 import test from 'node:test'
+import { createPostgresRuntime, tablesSql } from '@gugu/core/data'
+import { createConfirmationGate, createProjectDeleteTool, type ConfirmationIntent } from '@gugu/core/tools'
 import { createProjectTrashService } from '../../src/domains/projects/application/project-trash.js'
-import { createPostgresProjectTrashRuntime } from '../../src/domains/projects/persistence/project-trash-postgres.js'
+import { createBorrowedPostgresProjectTrashTransaction, createPostgresProjectTrashRuntime } from '../../src/domains/projects/persistence/project-trash-postgres.js'
+import { createLocalProjectTrashStorage } from '../../src/domains/projects/persistence/project-trash-storage.js'
+import { createPostgresProjectDeleteJournal } from '../../src/domains/undo/persistence/project-journal.js'
+import { createLocalProjectUndoJournalStorage } from '../../src/domains/undo/persistence/project-journal-local.js'
+import { createAuthorizedWebAgentProductionRagRunPorts } from '../../src/domains/agent-sessions/tools/agent-rag-production-ports.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
@@ -16,6 +25,8 @@ test('PostgreSQL 项目删除/恢复原子更新同批资源、Undo 和提交后
   const admin = new Pool({ connectionString: databaseUrl, max: 1 })
   await admin.query(`CREATE SCHEMA "${schema}"`)
   const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema} -c timezone=Asia/Shanghai`, max: 4 })
+  const core = await createPostgresRuntime({ url: databaseUrl!, schema })
+  const root = await mkdtemp(path.join(tmpdir(), 'gugu-project-trash-tool-'))
   const published: Array<{ resource: string; operation: string }> = []
   const storage: Array<[string, number]> = []
   const projectPayloads: unknown[] = []
@@ -185,7 +196,78 @@ test('PostgreSQL 项目删除/恢复原子更新同批资源、Undo 和提交后
       ['projects', 'create'], ['files', 'create'], ['calendar', 'create'], ['scheduled_tasks', 'update'],
     ])
     assert.deepEqual(storage, [['trash', 41], ['restore', 41]])
+
+    await pool.query(`${tablesSql('postgres').receipts};
+      CREATE TABLE project_undo_journals(id uuid PRIMARY KEY,user_id uuid,operation_id varchar(64),before_status varchar(16),
+        after_status varchar(16),moves json,created_at timestamptz,UNIQUE(user_id,operation_id));
+      CREATE TABLE conversation_sessions(id integer PRIMARY KEY,user_id uuid,active_run_id text);
+      CREATE TABLE agent_run_dispatch(user_id uuid,session_id integer,run_id text,state text,token text,fence bigint,lease_expires_at timestamptz)`)
+    const identity = { ownerId, sessionId: '1', runId: 'synthetic-project-delete' }
+    const lease = { identity, token: 'synthetic-lease', fence: 1, mode: 'start' as const, cancelRequested: false,
+      input: { userMessageId: 1, locale: null, origin: null, accessVersion: 'a'.repeat(64), v: 2 as const, source: 'web' as const } }
+    await pool.query('INSERT INTO conversation_sessions VALUES (1,$1,$2)', [ownerId, identity.runId])
+    await pool.query("INSERT INTO agent_run_dispatch VALUES ($1,1,$2,'selected',$3,1,CURRENT_TIMESTAMP+interval '5 minutes')", [ownerId, identity.runId, lease.token])
+    const originalKey: string = active.storage_key
+    await mkdir(path.dirname(path.join(root, originalKey)), { recursive: true })
+    await writeFile(path.join(root, originalKey), '实际文件内容')
+    let intent: ConfirmationIntent | undefined, publishedAgent = 0
+    const gate = createConfirmationGate({
+      now: () => 0,
+      async authorize() { return 'synthetic-epoch' },
+      async prepare(binding, snapshot) {
+        assert.deepEqual(snapshot.targetIds?.file_id, [41])
+        intent = { schemaVersion: 2, binding, intentId: 'intent', interactionId: 'confirm', operationId: 'operation',
+          purpose: 'action', action: 'delete_project', authorizationEpoch: 'synthetic-epoch', expiresAt: 60_000,
+          targetsDigest: snapshot.targetsDigest, versionsDigest: snapshot.versionsDigest }
+        return intent
+      },
+      async inspect() { return intent ?? null },
+      async load(_binding, receipt) {
+        if (!intent || receipt.receiptId !== 'approved') return null
+        return { intent, receipt: { schemaVersion: 2, binding: intent.binding, intentId: intent.intentId, interactionId: intent.interactionId,
+          receiptId: receipt.receiptId, purpose: intent.purpose, action: intent.action, expiresAt: intent.expiresAt, status: 'approved' as const } }
+      },
+    }, { purpose: 'action', action: 'delete_project' })
+    const local = createLocalProjectUndoJournalStorage(root)
+    const makeRegistry = () => createAuthorizedWebAgentProductionRagRunPorts({
+      core, pool, lease, storageRoot: root, enabled: () => true,
+      selection: { modelIdentity: 'synthetic', contextScopeKey: lease.input.accessVersion, contextPolicy: { loadOwnerContext: true, memoryEnabled: false } },
+      projectDelete: createProjectDeleteTool(core, {
+        ...createPostgresProjectDeleteJournal(pool, local), storage: createLocalProjectTrashStorage(root),
+        transactionPort: createBorrowedPostgresProjectTrashTransaction,
+        async publish() {
+          const lock = await pool.query("SELECT pg_try_advisory_xact_lock(hashtext('gugu-project-undo-journal')) AS acquired")
+          assert.equal(lock.rows[0].acquired, true)
+          publishedAgent++
+        },
+      }, { gate, async claim() { return true } }),
+    }).toolRegistry
+    const registry = makeRegistry()
+    const call = { id: 'delete', name: 'delete_project', input: { project_ids: [projectId] } }
+    const scope = { identity, roundId: '1', resolution: null, signal: new AbortController().signal,
+      async execute(): Promise<never> { throw new Error('不调用沙盒') } }
+    assert.equal((await registry.tools.dispatch(call, scope)).kind, 'waiting')
+    assert.equal(await local.exists(ownerId, originalKey), true)
+    const resume = { ...scope, resolution: { interactionId: 'confirm', receiptId: 'approved', status: 'confirmed' as const, value: {} } }
+    await pool.query("ALTER TABLE rag_index_jobs ADD CONSTRAINT reject_calendar_job CHECK(source_type <> 'calendar')")
+    assert.equal((await registry.tools.dispatch(call, resume)).kind, 'unknown')
+    assert.equal(await readFile(path.join(root, originalKey), 'utf8'), '实际文件内容')
+    assert.equal((await pool.query('SELECT deleted_at FROM projects WHERE id=$1', [projectId])).rows[0].deleted_at, null)
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM project_undo_journals')).rows[0].n, 0)
+    await pool.query('ALTER TABLE rag_index_jobs DROP CONSTRAINT reject_calendar_job')
+    const result = await registry.tools.dispatch(call, resume)
+    assert.ok(result.kind === 'completed' && result.successful && result.mutated, JSON.stringify(result))
+    const trashedKey = (await pool.query('SELECT storage_key FROM files WHERE id=41')).rows[0].storage_key
+    assert.equal(await readFile(path.join(root, trashedKey), 'utf8'), '实际文件内容')
+    assert.equal(await local.exists(ownerId, originalKey), false)
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM project_undo_journals')).rows[0].n, 0)
+    assert.deepEqual(await makeRegistry().tools.dispatch(call, resume), { ...result, mutated: false })
+    assert.equal(publishedAgent, 4)
+    const jobs = await pool.query('SELECT source_type FROM rag_index_jobs WHERE user_id=$1 ORDER BY source_type', [ownerId])
+    assert.deepEqual(jobs.rows.map(row => row.source_type), ['calendar', 'project', 'scheduled_task'])
   } finally {
+    await rm(root, { recursive: true, force: true })
+    await core.close()
     await pool.end()
     await admin.query(`DROP SCHEMA "${schema}" CASCADE`).catch(() => undefined)
     await admin.end()

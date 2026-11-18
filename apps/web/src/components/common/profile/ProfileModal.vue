@@ -3,7 +3,7 @@
     <div class="pm-layout">
       <div class="pm-nav panel-left">
         <div class="pm-user-block">
-          <div class="pm-avatar" :class="{ uploading: avatarUploading }" @click="triggerAvatarUpload" :title="t('sharedUi.changeAvatar')">
+          <div class="pm-avatar" :class="{ uploading: avatarUploading, 'avatar--fallback': !authStore.user?.avatarUrl }" @click="triggerAvatarUpload" :title="t('sharedUi.changeAvatar')">
             <img v-if="authStore.user?.avatarUrl" :src="authStore.user.avatarUrl" class="pm-avatar-img" />
             <template v-else>{{ initial }}</template>
             <div class="pm-avatar-overlay">
@@ -207,11 +207,13 @@ async function doDeleteAccount() {
 .pm-nav { display: flex; flex-direction: column; padding: 20px 14px; gap: 2px; }
 .pm-user-block { display: flex; align-items: center; gap: 10px; padding: 4px 6px 12px; }
 .pm-avatar {
+  --profile-avatar-bg: var(--action-primary);
   width: 42px; height: 42px; border-radius: 50%; flex-shrink: 0;
-  background: var(--action-primary); display: flex; align-items: center; justify-content: center;
+  background: var(--profile-avatar-bg); display: flex; align-items: center; justify-content: center;
   font-size: 16px; font-weight: 700; color: var(--content-on-accent); position: relative; cursor: pointer; overflow: hidden;
-  box-shadow: 0 2px 6px color-mix(in srgb,var(--action-primary) 20%,transparent);
+  box-shadow: 0 2px 6px color-mix(in srgb,var(--profile-avatar-bg) 20%,transparent);
 }
+.pm-avatar.avatar--fallback { --profile-avatar-bg: var(--avatar-fallback-bg); }
 .pm-avatar-img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
 .pm-avatar-overlay {
   position: absolute; inset: 0; border-radius: 50%; background: rgba(0,0,0,.38);
@@ -228,7 +230,7 @@ async function doDeleteAccount() {
 .pm-nav-divider { height: 1px; background: var(--divider-line); margin: 6px 4px; }
 .pm-nav-item {
   display: flex; align-items: center; gap: 9px; width: 100%; padding: 10px 12px;
-  border-radius: var(--radius-sm); border: 1px solid transparent; background: none;
+  border-radius: var(--radius-xs); border: 1px solid transparent; background: none;
   font: 14px var(--font-sans); color: var(--content-secondary); cursor: pointer; text-align: left;
   transition: color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard);
 }
@@ -237,7 +239,7 @@ async function doDeleteAccount() {
 .pm-nav-spacer { flex: 1; }
 .pm-logout {
   display: flex; align-items: center; gap: 9px; width: 100%; padding: 10px 12px;
-  border-radius: var(--radius-sm); border: 1px solid transparent; background: transparent;
+  border-radius: var(--radius-xs); border: 1px solid transparent; background: transparent;
   font: 14px var(--font-sans); color: var(--content-secondary); cursor: pointer;
   position: relative; isolation: isolate; overflow: hidden;
   transition: color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard);
@@ -259,7 +261,7 @@ async function doDeleteAccount() {
 .pm-confirm-box {
   width: 100%; max-width: 380px; padding: 22px; display: flex; flex-direction: column; gap: 12px;
   background: var(--modal-card-bg); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--modal-card-border); border-radius: var(--radius-lg);
+  border: 1px solid var(--modal-card-border); border-radius: var(--card-radius);
   box-shadow: var(--modal-card-shadow), inset 0 1px 0 var(--modal-card-highlight);
 }
 .pm-confirm-enter-active { transition: background-color var(--modal-enter-duration) var(--modal-enter-easing), backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing), -webkit-backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing); }
@@ -274,7 +276,7 @@ async function doDeleteAccount() {
 .pm-confirm-input { width: 100%; box-sizing: border-box; }
 .pm-confirm-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
 .btn-cancel {
-  padding: 7px 16px; border-radius: var(--radius-sm); border: 1px solid var(--control-border);
+  padding: 7px 16px; border-radius: var(--radius-xs); border: 1px solid var(--control-border);
   background: var(--control-bg); color: var(--control-fg); font: 13px var(--font-sans); cursor: pointer;
   transition: color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard);
 }
@@ -312,7 +314,7 @@ async function doDeleteAccount() {
 .pm-family-chip.active { background: var(--surface-raised); border-color: var(--border-default); color: var(--content-primary); }
 .pm-bind-btn {
   flex: 0 0 auto; white-space: nowrap;
-  padding: 6px 16px; border-radius: var(--radius-sm); border: none; background: var(--action-primary-bg); color: var(--content-on-accent);
+  padding: 6px 16px; border-radius: var(--radius-xs); border: none; background: var(--action-primary-bg); color: var(--content-on-accent);
   font: 600 12px var(--font-sans); cursor: pointer; box-shadow: var(--elevation-card);
   transition: opacity var(--motion-hover-control) var(--motion-ease-standard);
 }
@@ -327,12 +329,12 @@ async function doDeleteAccount() {
 .pm-danger-btn:hover:not(:disabled) { background: var(--danger-button-bg-hover); border-color: var(--danger-button-border-hover); }
 .pm-danger-btn:disabled { opacity: .4; cursor: default; }
 .pm-bind-btn.off { background: var(--control-bg); color: var(--control-fg); border: 1px solid var(--control-border); box-shadow: none; }
-.pm-qr-box { margin-top: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 16px; background: var(--subpanel-bg); border: 1px solid var(--subpanel-border); border-radius: var(--radius-md); }
-.pm-qr-canvas { border-radius: var(--radius-sm); background: #fff; }
+.pm-qr-box { margin-top: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 16px; background: var(--subpanel-bg); border: 1px solid var(--subpanel-border); border-radius: var(--radius-sm); }
+.pm-qr-canvas { border-radius: var(--radius-xs); background: #fff; }
 .pm-qr-hint { font-size: 12px; color: var(--content-secondary); text-align: center; }
 .pm-qr-hint a { color: var(--action-primary); font-weight: 600; }
 
-.pm-bot-item { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; padding: 9px 12px; border-radius: var(--radius-sm); background: var(--subpanel-bg); border: 1px solid var(--subpanel-border); }
+.pm-bot-item { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; padding: 9px 12px; border-radius: var(--radius-xs); background: var(--subpanel-bg); border: 1px solid var(--subpanel-border); }
 .pm-bot-item-top { display: flex; align-items: center; gap: 10px; }
 .pm-bot-group-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--panel-divider); }
 .pm-bot-item > .pm-bot-group-row { margin-top: 0; }
@@ -341,15 +343,15 @@ async function doDeleteAccount() {
 .pm-tool-options { justify-content: flex-end; flex-wrap: wrap; max-width: 58%; }
 .pm-bot-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .pm-bot-name { font-size: 13px; font-weight: 600; color: var(--content-primary); display: flex; align-items: center; gap: 6px; }
-.pm-bot-tag { font-size: 10px; font-weight: 600; color: var(--status-warning); background: var(--status-warning-bg); padding: 1px 6px; border-radius: var(--radius-xs); }
+.pm-bot-tag { font-size: 10px; font-weight: 600; color: var(--status-warning); background: var(--status-warning-bg); padding: 1px 6px; border-radius: var(--radius-compact); }
 .pm-bot-appid { font-size: 11px; color: var(--content-secondary); font-family: var(--font-family-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pm-switch-wrap { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; }
 .pm-switch-label { font-size: 11px; color: var(--content-secondary); }
 .pm-switch-label.on { color: var(--action-primary); font-weight: 600; }
 .pm-bot-del { flex-shrink: 0; font-size: 12px; color: var(--status-danger); background: none; border: none; cursor: pointer; }
-.pm-add-bot { margin-top: 8px; width: 100%; padding: 8px; border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; color: var(--content-secondary); border: 1px dashed var(--input-border); background: none; }
+.pm-add-bot { margin-top: 8px; width: 100%; padding: 8px; border-radius: var(--radius-xs); cursor: pointer; font-size: 13px; color: var(--content-secondary); border: 1px dashed var(--input-border); background: none; }
 .pm-add-bot:hover { color: var(--action-primary); border-color: var(--action-outline); }
-.pm-bot-form { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: var(--radius-sm); background: var(--subpanel-bg); border: 1px solid var(--subpanel-border); }
+.pm-bot-form { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: var(--radius-xs); background: var(--subpanel-bg); border: 1px solid var(--subpanel-border); }
 .pm-bot-input { width: 100%; padding: 8px 11px; border-radius: var(--input-radius); font-size: 13px; border: 1px solid var(--input-border); background: var(--input-bg); color: var(--input-fg); outline: none; box-shadow: var(--input-hover-shadow), 0 0 0 0 transparent; transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
 .pm-bot-input:hover { background: var(--input-bg-hover); border-color: var(--input-border-hover); box-shadow: var(--input-hover-shadow), 0 0 0 0 transparent; }
 .pm-bot-input:focus { border-color: var(--input-border-focus); box-shadow: var(--input-hover-shadow), var(--input-focus-shadow); }
@@ -363,7 +365,7 @@ async function doDeleteAccount() {
 .pm-msg { font-size: 12px; margin-right: auto; }
 .pm-msg.ok { color: var(--status-success); }
 .pm-msg.err { color: var(--status-danger); }
-.pm-save-btn { padding: 7px 22px; border-radius: var(--radius-sm); border: none; background: var(--action-primary-bg); color: var(--content-on-accent); font: 600 13px var(--font-sans); cursor: pointer; box-shadow: none; transition: opacity var(--motion-hover-control) var(--motion-ease-standard); }
+.pm-save-btn { padding: 7px 22px; border-radius: var(--radius-xs); border: none; background: var(--action-primary-bg); color: var(--content-on-accent); font: 600 13px var(--font-sans); cursor: pointer; box-shadow: none; transition: opacity var(--motion-hover-control) var(--motion-ease-standard); }
 .pm-save-btn:hover:not(:disabled) { opacity: .88; }
 .pm-save-btn:disabled { opacity: .35; cursor: default; transform: none; }
 

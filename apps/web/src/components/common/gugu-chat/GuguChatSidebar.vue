@@ -167,7 +167,7 @@ defineExpose({ imGroupEl: computed(() => imConnectRef.value?.imGroupEl ?? null) 
   justify-content: center;
   gap: var(--space-xs);
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   color: var(--action-primary);
   background: color-mix(in srgb,var(--surface-raised) 84%,transparent);
   box-shadow: var(--elevation-card);
@@ -201,7 +201,7 @@ defineExpose({ imGroupEl: computed(() => imConnectRef.value?.imGroupEl ?? null) 
   gap: var(--space-xs);
   padding: var(--space-sm);
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   color: var(--content-secondary);
   cursor: pointer;
   flex-shrink: 0;
@@ -228,7 +228,7 @@ defineExpose({ imGroupEl: computed(() => imConnectRef.value?.imGroupEl ?? null) 
 :deep(.exp-session-del) {
   width: 22px;
   height: 22px;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-compact);
   border: none;
   background: transparent;
   color: var(--content-tertiary);
@@ -246,7 +246,7 @@ defineExpose({ imGroupEl: computed(() => imConnectRef.value?.imGroupEl ?? null) 
 :deep(.exp-session-tag) {
   flex-shrink: 0;
   padding: 2px var(--space-xs);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-compact);
   color: var(--selection-fg);
   background: var(--selection-bg);
   font-size: var(--font-size-xs);

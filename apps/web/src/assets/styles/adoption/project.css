@@ -5,12 +5,13 @@
 html[data-theme][data-family] .proj-header::after {
   box-shadow: inset 0 1px 0 var(--panel-glass-highlight);
 }
-/* The project editor file pane and UploadModal intentionally share the file-dialog surface contract.
-   Light restores the original panel paper; the dark mapping in surfaces.css is exactly the current
-   dark panel/highlight treatment. */
+/* 项目文件区沿用文件弹窗的高光。暗色下右栏统一绘制 L3 底色。 */
 html[data-theme][data-family] .project-modal-root .modal-right {
   background: var(--file-dialog-panel-bg);
   box-shadow: var(--file-dialog-panel-shadow);
+}
+html[data-theme='dark'][data-family] .project-modal-root .modal-right {
+  background: var(--glass-card-background);
 }
 html[data-theme][data-family] .project-modal-root .right-header {
   border-bottom: 1px solid var(--file-dialog-toolbar-divider);
@@ -19,6 +20,9 @@ html[data-theme][data-family] .project-modal-root .file-browser-toolbar {
   --gb-tint: var(--file-dialog-toolbar-tint);
   --gb-highlight-strong: var(--file-dialog-toolbar-highlight-strong);
   --gb-highlight-side: var(--file-dialog-toolbar-highlight-side);
+}
+html[data-theme='dark'][data-family] .project-modal-root .file-browser-toolbar {
+  --gb-tint: transparent;
 }
 /* Project adoption must not leak into unrelated BaseModal consumers such as UploadModal. */
 html[data-theme][data-family] :is(

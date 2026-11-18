@@ -1,27 +1,33 @@
-import { sql, type Kysely } from 'kysely'
+import { sql, type Kysely, type RawBuilder } from 'kysely'
 import { dataContext } from '../contracts/index.js'
 
 /** 返回业务目标标识；宿主文件路径必须由 Host 单独安全解析。 */
-export function createWorkspaceShellTargetReader<DB>(db: Kysely<DB>, dialect: 'postgres' | 'sqlite') {
+type TargetQuery = <Row>(statement: RawBuilder<Row>) => Promise<readonly Row[]>
+
+function queryTargets<DB>(db: Kysely<DB>): TargetQuery {
+  return async statement => (await statement.execute(db)).rows
+}
+
+export function createWorkspaceShellTargetReader<DB>(db: Kysely<DB>, dialect: 'postgres' | 'sqlite', query = queryTargets(db)) {
   return async (rawOwner: string, workspaceId: number) => {
     const canonical = dataContext(rawOwner).ownerId
     const owner = dialect === 'sqlite' ? canonical.replaceAll('-', '') : canonical
-    const workspace = (await sql<{ id: number; name: string; kind: string; folder_id: number | null; project_id: number | null; directory_id: number | null; enabled: boolean | number }>`SELECT id,name,kind,folder_id,project_id,directory_id,enabled FROM workspaces WHERE id=${workspaceId} AND user_id=${owner}`.execute(db)).rows[0]
+    const [workspace] = await query(sql<{ id: number; name: string; kind: string; folder_id: number | null; project_id: number | null; directory_id: number | null; enabled: boolean | number }>`SELECT id,name,kind,folder_id,project_id,directory_id,enabled FROM workspaces WHERE id=${workspaceId} AND user_id=${owner}`)
     if (!workspace?.enabled) return null
     const base = { workspaceId: Number(workspace.id), workspaceName: workspace.name }
     if (workspace.kind === 'directory' && workspace.directory_id !== null) {
-      const directory = (await sql<{ id: number; directory_name: string }>`SELECT id,directory_name FROM workspace_directories WHERE id=${workspace.directory_id} AND user_id=${owner} AND deleted_at IS NULL`.execute(db)).rows[0]
+      const [directory] = await query(sql<{ id: number; directory_name: string }>`SELECT id,directory_name FROM workspace_directories WHERE id=${workspace.directory_id} AND user_id=${owner} AND deleted_at IS NULL`)
       return directory ? { ...base, kind: 'directory' as const, space: 'workspace' as const, directoryId: Number(directory.id), directoryName: directory.directory_name } : null
     }
     if (workspace.kind === 'project' && workspace.project_id !== null) {
-      const project = (await sql<{ id: number; name: string }>`SELECT id,name FROM projects WHERE id=${workspace.project_id} AND user_id=${owner}`.execute(db)).rows[0]
+      const [project] = await query(sql<{ id: number; name: string }>`SELECT id,name FROM projects WHERE id=${workspace.project_id} AND user_id=${owner}`)
       return project ? { ...base, kind: 'project' as const, space: 'project' as const, projectId: Number(project.id), projectName: project.name, folderId: null } : null
     }
     if (workspace.kind === 'folder' && workspace.folder_id !== null) {
-      const folder = (await sql<{ id: number; name: string; project_id: number | null }>`SELECT id,name,project_id FROM folders WHERE id=${workspace.folder_id} AND user_id=${owner} AND deleted_at IS NULL`.execute(db)).rows[0]
+      const [folder] = await query(sql<{ id: number; name: string; project_id: number | null }>`SELECT id,name,project_id FROM folders WHERE id=${workspace.folder_id} AND user_id=${owner} AND deleted_at IS NULL`)
       if (!folder) return null
       if (folder.project_id === null) return { ...base, kind: 'folder' as const, space: 'personal' as const, folderId: Number(folder.id), folderName: folder.name, projectId: null }
-      const project = (await sql<{ id: number; name: string }>`SELECT id,name FROM projects WHERE id=${folder.project_id} AND user_id=${owner}`.execute(db)).rows[0]
+      const [project] = await query(sql<{ id: number; name: string }>`SELECT id,name FROM projects WHERE id=${folder.project_id} AND user_id=${owner}`)
       return project ? { ...base, kind: 'folder' as const, space: 'project' as const, folderId: Number(folder.id), folderName: folder.name, projectId: Number(project.id), projectName: project.name } : null
     }
     return null
@@ -29,15 +35,30 @@ export function createWorkspaceShellTargetReader<DB>(db: Kysely<DB>, dialect: 'p
 }
 
 /** 未绑定工作区时使用用户默认目录，不修改会话绑定或授予完整用户沙箱权限。 */
-export function createDefaultWorkspaceShellTargetReader<DB>(db: Kysely<DB>, dialect: 'postgres' | 'sqlite') {
-  const read = createWorkspaceShellTargetReader(db, dialect)
+export function createDefaultWorkspaceShellTargetReader<DB>(db: Kysely<DB>, dialect: 'postgres' | 'sqlite', query = queryTargets(db)) {
+  const read = createWorkspaceShellTargetReader(db, dialect, query)
   return async (rawOwner: string) => {
     const canonical = dataContext(rawOwner).ownerId
     const owner = dialect === 'sqlite' ? canonical.replaceAll('-', '') : canonical
-    const row = (await sql<{ id: number }>`SELECT w.id FROM workspaces w JOIN workspace_directories d ON d.id=w.directory_id
+    const [row] = await query(sql<{ id: number }>`SELECT w.id FROM workspaces w JOIN workspace_directories d ON d.id=w.directory_id
       WHERE w.user_id=${owner} AND w.enabled=TRUE AND d.user_id=${owner} AND d.is_default=TRUE AND d.deleted_at IS NULL
-      ORDER BY w.id LIMIT 1`.execute(db)).rows[0]
+      ORDER BY w.id LIMIT 1`)
     return row ? read(rawOwner, Number(row.id)) : null
+  }
+}
+
+/** 下载和会话文件工具只读取可信主体的 Workspace 声明。 */
+export function createSessionWorkspaceTargetReader<DB>(db: Kysely<DB>, dialect: 'postgres' | 'sqlite', query = queryTargets(db)) {
+  const bound = createWorkspaceShellTargetReader(db, dialect, query)
+  const defaultTarget = createDefaultWorkspaceShellTargetReader(db, dialect, query)
+  return async (rawOwner: string, sessionId: number, options: { lockSession?: boolean } = {}) => {
+    const canonical = dataContext(rawOwner).ownerId
+    const owner = dialect === 'sqlite' ? canonical.replaceAll('-', '') : canonical
+    const lock = dialect === 'postgres' && options.lockSession ? sql`FOR SHARE` : sql``
+    const [session] = await query(sql<{ workspace_id: number | null }>`SELECT workspace_id FROM conversation_sessions
+      WHERE id=${sessionId} AND user_id=${owner} ${lock}`)
+    if (!session) return null
+    return session.workspace_id === null ? defaultTarget(rawOwner) : bound(rawOwner, Number(session.workspace_id))
   }
 }
 

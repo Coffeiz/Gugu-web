@@ -11,9 +11,9 @@ export interface ScheduledTaskRecord {
 export interface OnceTaskRepository {
   getOnce(taskId: string): Promise<ScheduledTaskRecord | null>
   /** 必须持久化开始时间，并只允许未完成或已失败的一次性任务进入执行态。 */
-  markStarted(taskId: string, at: number): Promise<boolean>
+  markStarted(taskId: string, at: number, userId: string, expectedStartAt?: number): Promise<boolean>
   /** Promise 仅在失败态事务提交后 resolve；通知由 runner 在提交后发出。 */
-  markFailed(taskId: string): Promise<void>
+  markFailed(taskId: string, userId: string): Promise<void>
   /** Promise 仅在删除事务提交后 resolve；通知由 runner 在提交后发出。 */
   deleteCompleted(taskId: string, userId: string): Promise<void>
   findStartedOnceBefore(at: number): Promise<ScheduledTaskRecord[]>
@@ -26,6 +26,9 @@ export interface ScheduledTaskLease {
   release(taskId: string, owner: string): Promise<void>
   isHeld(taskId: string): Promise<boolean>
 }
+
+export type AssertScheduledTaskLease = () => Promise<void>
+export type ScheduledTaskExecutionCallback = (assertLease: AssertScheduledTaskLease) => Promise<Record<string, string>>
 
 export type ScheduledTaskRunResult =
   | 'completed'
@@ -48,6 +51,7 @@ export interface ScheduledTaskRunnerOptions {
   notifyTasksChanged(userId: string): Promise<void>
 }
 
+const ONCE_EXPIRATION_GRACE_MS = 120_000
 const DEFAULT_LOCK_TIMEOUT_MS = 600_000
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 180_000
 const SUCCESSFUL_DELIVERIES = new Set(['已发送', '已保存（实时提示失败）'])
@@ -72,31 +76,39 @@ export class ScheduledTaskRunner {
 
   async runDue(
     taskId: string,
-    execute: () => Promise<Record<string, string>>,
+    execute: ScheduledTaskExecutionCallback,
     now = Date.now(),
+    options: { allowFutureRetry?: boolean; userId?: string; expectedStartAt?: number; beforeStart?: (task: ScheduledTaskRecord) => Promise<boolean> } = {},
   ): Promise<ScheduledTaskRunResult> {
     const owner = this.options.createOwner()
     if (!await this.options.lease.acquire(taskId, owner, this.lockTimeoutMs)) return 'busy'
 
-    let started = false
+    let startedFor: string | undefined
     // Python 在获取分布式锁后立即续租，覆盖随后发生的数据库读取和写入。
     const heartbeat = this.startHeartbeat(taskId, owner)
     try {
       const task = await this.options.repository.getOnce(taskId)
-      if (!task || !task.enabled || task.scheduleKind !== 'once') return 'not_found'
-      if (task.startAt > now) return 'not_due'
-      if (task.lastRunAt !== null && !task.lastRunFailed) return 'already_run'
-      if (!await this.options.repository.markStarted(taskId, now)) return 'already_run'
-      started = true
+      if (!task || !task.enabled || task.scheduleKind !== 'once' || (options.userId !== undefined && task.userId !== options.userId)) return 'not_found'
+      const expectedStartAt = options.expectedStartAt
+      if (expectedStartAt !== undefined && (task.startAt !== expectedStartAt || now - expectedStartAt > 1000)) return 'not_due'
+      if (task.startAt > now && !(options.allowFutureRetry && task.lastRunFailed)) return 'not_due'
+      if (task.lastRunAt !== null && (!task.lastRunFailed || expectedStartAt !== undefined)) return 'already_run'
+      if (options.beforeStart && !await options.beforeStart(task)) return 'failed'
+      if (heartbeat.lost) return 'lease_lost'
+      if (expectedStartAt !== undefined) {
+        try { await heartbeat.assertLease() } catch { return 'lease_lost' }
+      }
+      if (!await this.options.repository.markStarted(taskId, now, task.userId, expectedStartAt)) return 'already_run'
+      startedFor = task.userId
 
       let delivery: Record<string, string>
       try {
-        delivery = await execute()
+        delivery = await execute(heartbeat.assertLease)
       } catch {
         heartbeat.stop()
         await heartbeat.done
         if (heartbeat.lost) return 'lease_lost'
-        await this.options.repository.markFailed(taskId)
+        await this.options.repository.markFailed(taskId, task.userId)
         await this.notifyTasksChanged(task.userId)
         return 'failed'
       }
@@ -105,7 +117,7 @@ export class ScheduledTaskRunner {
       if (heartbeat.lost) return 'lease_lost'
 
       if (!this.deliverySucceeded(delivery)) {
-        await this.options.repository.markFailed(taskId)
+        await this.options.repository.markFailed(taskId, task.userId)
         await this.notifyTasksChanged(task.userId)
         return 'failed'
       }
@@ -113,10 +125,9 @@ export class ScheduledTaskRunner {
       await this.notifyTasksChanged(task.userId)
       return 'completed'
     } catch (error) {
-      if (started && !heartbeat.lost) {
-        const task = await this.options.repository.getOnce(taskId)
-        await this.options.repository.markFailed(taskId)
-        if (task) await this.notifyTasksChanged(task.userId)
+      if (startedFor !== undefined && !heartbeat.lost) {
+        await this.options.repository.markFailed(taskId, startedFor)
+        await this.notifyTasksChanged(startedFor)
       }
       throw error
     } finally {
@@ -126,8 +137,36 @@ export class ScheduledTaskRunner {
     }
   }
 
+  /** 用户手动试运行共用同一分布式租约，但不写一次性任务调度状态。 */
+  async runTrial(
+    taskId: string,
+    execute: ScheduledTaskExecutionCallback,
+  ): Promise<{ status: 'completed' | 'failed' | 'busy' | 'lease_lost'; delivery?: Record<string, string> }> {
+    const owner = this.options.createOwner()
+    if (!await this.options.lease.acquire(taskId, owner, this.lockTimeoutMs)) return { status: 'busy' }
+    const heartbeat = this.startHeartbeat(taskId, owner)
+    try {
+      let delivery: Record<string, string>
+      try {
+        delivery = await execute(heartbeat.assertLease)
+      } catch {
+        heartbeat.stop()
+        await heartbeat.done
+        return heartbeat.lost ? { status: 'lease_lost' } : { status: 'failed' }
+      }
+      heartbeat.stop()
+      await heartbeat.done
+      if (heartbeat.lost) return { status: 'lease_lost' }
+      return { status: this.deliverySucceeded(delivery) ? 'completed' : 'failed', delivery }
+    } finally {
+      heartbeat.stop()
+      await heartbeat.done
+      await this.options.lease.release(taskId, owner)
+    }
+  }
+
   /** 重启扫描只修复已超出锁宽限且没有活跃 lease 的一次性任务。 */
-  async recoverAbandoned(now = Date.now()): Promise<string[]> {
+  async recoverAbandoned(now = Date.now(), requireExpired = false): Promise<string[]> {
     const cutoff = now - this.lockTimeoutMs
     const candidates = await this.options.repository.findStartedOnceBefore(cutoff)
     const recovered: string[] = []
@@ -141,8 +180,9 @@ export class ScheduledTaskRunner {
       }
       try {
         const current = await this.options.repository.getOnce(task.id)
-        if (!current || current.lastRunAt === null || current.lastRunAt >= cutoff || current.lastRunFailed) continue
-        await this.options.repository.markFailed(task.id)
+        if (!current || current.userId !== task.userId || current.lastRunAt === null || current.lastRunAt >= cutoff
+          || current.lastRunFailed || (requireExpired && current.startAt >= now - ONCE_EXPIRATION_GRACE_MS)) continue
+        await this.options.repository.markFailed(task.id, current.userId)
         await this.notifyTasksChanged(current.userId)
         recovered.push(task.id)
       } finally {
@@ -150,6 +190,28 @@ export class ScheduledTaskRunner {
       }
     }
     return recovered
+  }
+
+  /** 只清理从未执行的过期任务。手动试运行和其他 Worker 持锁时保留。 */
+  async collectExpiredOnce(repository: {
+    findExpiredUnstarted(before: number): Promise<ScheduledTaskRecord[]>
+    deleteExpiredUnstarted(taskId: string, ownerId: string, before: number): Promise<boolean>
+  }, now = Date.now()): Promise<void> {
+    const before = now - ONCE_EXPIRATION_GRACE_MS
+    const changed = new Set<string>()
+    try {
+      for (const task of await repository.findExpiredUnstarted(before)) {
+        const owner = this.options.createOwner()
+        if (!await this.options.lease.acquire(task.id, owner, this.lockTimeoutMs)) continue
+        try {
+          if (await repository.deleteExpiredUnstarted(task.id, task.userId, before)) changed.add(task.userId)
+        } finally {
+          await this.options.lease.release(task.id, owner)
+        }
+      }
+    } finally {
+      for (const owner of changed) await this.notifyTasksChanged(owner)
+    }
   }
 
   private deliverySucceeded(result: Record<string, string>): boolean {
@@ -168,6 +230,8 @@ export class ScheduledTaskRunner {
     let stopped = false
     let lost = false
     let cancelDelay = () => {}
+    const { lease, onLeaseRenewError: diagnose } = this.options
+    const timeout = this.lockTimeoutMs
     const done = (async () => {
       while (!stopped) {
         await new Promise<void>(resolve => {
@@ -194,6 +258,16 @@ export class ScheduledTaskRunner {
     })()
     return {
       done,
+      async assertLease() {
+        if (!lost && !stopped) {
+          try { lost = !await lease.renew(taskId, owner, timeout) || lost }
+          catch {
+            lost = true
+            try { diagnose?.() } catch { /* 诊断异常不改变失租结果。 */ }
+          }
+        }
+        if (lost || stopped) throw new Error('定时任务执行租约已失效')
+      },
       get lost() { return lost },
       stop() {
         stopped = true

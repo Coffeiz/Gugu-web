@@ -10,6 +10,7 @@ import { Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
 import type { WriteRequestMetadata } from '../../app.js'
+import type { PoolClient } from 'pg'
 import { writeRequestMetadata } from '../../http/request.js'
 import { runBestEffort } from '../../adapters/best-effort.js'
 
@@ -37,8 +38,10 @@ export interface StagedUpload {
 
 export interface FileUploadOperations {
   getUploadCapacity(ownerId: string, input: FileUploadInput): Promise<number | null>
-  store(ownerId: string, upload: StagedUpload, metadata: WriteRequestMetadata): Promise<unknown>
+  store(ownerId: string, upload: StagedUpload, metadata: WriteRequestMetadata,
+    operation?: { receipt: FileUploadReceipt; signal?: AbortSignal; authorize(client: Pick<PoolClient, 'query'>): Promise<void> }): Promise<unknown>
 }
+export interface FileUploadReceipt { operationId: string; fingerprint: string }
 
 const IMAGE_MIMES = new Set([
   'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif',
@@ -114,11 +117,12 @@ function uploadError(): Error {
   return error
 }
 
-async function stageFile(
+export async function stageFile(
   file: NodeJS.ReadableStream,
   directory: string,
   capacity: number | null,
   mimeType: string | null,
+  signal?: AbortSignal,
 ): Promise<{ path: string; sizeBytes: number; sha256: string; imgWidth: number | null; imgHeight: number | null }> {
   const filePath = path.join(directory, 'upload')
   let sizeBytes = 0
@@ -131,7 +135,7 @@ async function stageFile(
       callback(null, chunk)
     },
   })
-  await pipeline(file, measure, createWriteStream(filePath, { flags: 'wx', mode: 0o600 }))
+  await pipeline(file, measure, createWriteStream(filePath, { flags: 'wx', mode: 0o600 }), { signal })
   let imgWidth: number | null = null
   let imgHeight: number | null = null
   const normalizedMimeType = mimeType?.toLowerCase()

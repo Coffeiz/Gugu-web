@@ -1,11 +1,12 @@
 import { CoreError } from '@gugu/core'
-import { copyFile, lstat, mkdir, mkdtemp, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { copyFile, link, lstat, mkdir, mkdtemp, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
 import { isPathWithin } from '../../adapters/path-safety.js'
-import type { FileUploadInput, FileUploadOperations, StagedUpload } from './file-upload.js'
+import { withPostgresTransaction } from '../../adapters/postgres-transaction.js'
+import type { FileUploadInput, FileUploadOperations, FileUploadReceipt, StagedUpload } from './file-upload.js'
 import { isOwnedFileStorageKey, normalizeFileOwnerId } from './file-owner.js'
 import { formatFileSize } from './file-size.js'
 import { ensureRegistrationFileLibraryQuota, updateFileStorageQuota } from './persistence/storage-quota.js'
@@ -103,8 +104,8 @@ function validateUploadScope(input: FileUploadInput): void {
 async function loadProjectTarget(client: PoolClient, userId: string, projectId: number | null): Promise<Target['project']> {
   if (projectId === null) return null
   const result = await client.query<QueryResultRow & { id: string | number; name: string; color: string | null; year: string; month: string }>(
-    `SELECT id,name,color,COALESCE(to_char(start_date,'YYYY'),to_char(created_at,'YYYY')) AS year,
-       COALESCE(to_char(start_date,'MM'),to_char(created_at,'MM')) AS month
+    `SELECT id,name,color,COALESCE(to_char(NULLIF(start_date::text,'')::date,'YYYY'),to_char(created_at,'YYYY')) AS year,
+       COALESCE(to_char(NULLIF(start_date::text,'')::date,'MM'),to_char(created_at,'MM')) AS month
        FROM projects WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL`, [projectId, userId],
   )
   const row = result.rows[0]
@@ -274,6 +275,7 @@ interface UploadStoreState {
   replacedDestination: boolean
   stagingDirectories: string[]
   createdArtifacts: string[]
+  downloadLink?: { key: string; stagedPath: string; fileId: number }
 }
 
 function uploadTooLarge(): Error {
@@ -382,7 +384,7 @@ async function availableStorageKey(
 async function storeNewFile(
   client: PoolClient, options: UploadStoreOptions, state: UploadStoreState,
   userId: string, upload: StagedUpload, metadata: { undoContextId: string | null },
-  target: Target, displayName: string, ext: string, quotaOperation: 'file_upload' | 'onboarding_seed' = 'file_upload',
+  target: Target, displayName: string, ext: string, quotaOperation: 'file_upload' | 'onboarding_seed' | 'web_download' = 'file_upload',
 ): Promise<FileRow> {
   const baseKey = keyFor(userId, upload.input, target, displayName, ext)
   const { key, name } = await availableStorageKey(client, options, userId, baseKey, displayName, ext)
@@ -402,10 +404,13 @@ async function storeNewFile(
   )
   const row = inserted.rows[0]
   if (!row) throw new CoreError('storage_error', '文件记录未能创建')
-  await rename(stagedPath, destination)
+  await link(stagedPath, destination)
   state.finalPath = destination
   state.createdDestinations.push(destination)
   state.replacedDestination = true
+  // 下载保留一个硬链接，用于核对 COMMIT 响应丢失后的文件归属。
+  if (quotaOperation === 'web_download') state.downloadLink = { key, stagedPath, fileId: Number(row.id) }
+  else await rm(stagedPath)
   if (metadata.undoContextId && upload.sizeBytes <= UNDO_CONTENT_MAX)
     await insertUndo(client, userId, metadata.undoContextId, 'create', row, null, {})
   await updateFileStorageQuota(
@@ -493,11 +498,55 @@ export function createPostgresRegistrationSeedFileWriter(storageRoot: string, de
   }
 }
 
+const downloadMethod = 'agent.web.download'
+async function readDownloadReceipt(client: Pick<Pool, 'query'>, owner: string, receipt: FileUploadReceipt): Promise<unknown | null> {
+  const result = await client.query<{ method: string; fingerprint: string; result_json: string }>(
+    'SELECT method,fingerprint,result_json FROM core_operation_receipts WHERE owner_id=$1 AND operation_id=$2',
+    [owner, receipt.operationId],
+  )
+  const row = result.rows[0]
+  if (!row) return null
+  if (row.method !== downloadMethod || row.fingerprint !== receipt.fingerprint)
+    throw new CoreError('conflict', '操作标识已用于不同内容')
+  return JSON.parse(row.result_json)
+}
+
+async function lockDownload(client: PoolClient, owner: string, receipt: FileUploadReceipt) {
+  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${owner}:${receipt.operationId}`])
+}
+
+async function lockOwnerUploads(client: PoolClient, owner: string) {
+  await client.query("SELECT pg_advisory_xact_lock(hashtextextended('file-upload:' || $1, 0))", [owner])
+}
+
+async function recoverDownloadLink(pool: Pool, storageRoot: string, owner: string, receipt: FileUploadReceipt,
+  pending: NonNullable<UploadStoreState['downloadLink']>,
+): Promise<void> {
+  await withPostgresTransaction(pool, async client => {
+    await lockDownload(client, owner, receipt)
+    await lockOwnerUploads(client, owner)
+    const result = await readDownloadReceipt(client, owner, receipt) as { id?: unknown } | null
+    if (result?.id === pending.fileId) return
+    const registered = await client.query('SELECT 1 FROM files WHERE user_id=$1 AND storage_key=$2 LIMIT 1', [owner, pending.key])
+    if (registered.rows.length) return
+    const { target } = await storagePath(storageRoot, pending.key)
+    const destination = await lstat(target, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error
+      return null
+    })
+    if (!destination) return
+    const staged = await lstat(pending.stagedPath, { bigint: true })
+    if (destination.isFile() && staged.isFile() && destination.dev === staged.dev && destination.ino === staged.ino)
+      await unlink(target)
+  })
+}
+
 export function createPostgresFileUploadOperations(
   pool: Pool,
   options: UploadStoreOptions,
-): FileUploadOperations {
+): FileUploadOperations & { readDownloadReceipt(ownerId: string, receipt: FileUploadReceipt): Promise<unknown | null> } {
   return {
+    readDownloadReceipt: (ownerId, receipt) => readDownloadReceipt(pool, normalizeFileOwnerId(ownerId), receipt),
     async getUploadCapacity(rawOwnerId, input) {
       const userId = normalizeFileOwnerId(rawOwnerId)
       const client = await pool.connect()
@@ -507,7 +556,8 @@ export function createPostgresFileUploadOperations(
       } finally { client.release() }
     },
 
-    async store(rawOwnerId, upload: StagedUpload, metadata) {
+    async store(rawOwnerId, upload: StagedUpload, metadata, operation) {
+      operation?.signal?.throwIfAborted()
       const userId = normalizeFileOwnerId(rawOwnerId)
       const { displayName, ext } = parseName(upload.originalName)
       const client = await pool.connect()
@@ -518,8 +568,23 @@ export function createPostgresFileUploadOperations(
       let committed = false
       let commitAttempted = false
       let preserveStage = false
+      let released = false
+      let discardConnection = false
       try {
         await client.query('BEGIN')
+        if (operation) {
+          const { receipt } = operation
+          await lockDownload(client, userId, receipt)
+          operation.signal?.throwIfAborted()
+          const previous = await readDownloadReceipt(client, userId, receipt)
+          if (previous !== null) {
+            await client.query('COMMIT')
+            committed = true
+            return { file: previous, replayed: true }
+          }
+        }
+        await lockOwnerUploads(client, userId)
+        await operation?.authorize(client)
         const target = await resolveTarget(client, userId, upload.input)
         const before = await loadOverwriteTarget(client, userId, upload)
         if (before) validateOverwriteTarget(before, upload, displayName, ext)
@@ -527,20 +592,28 @@ export function createPostgresFileUploadOperations(
         if (uploadCapacity !== null && upload.sizeBytes > uploadCapacity) throw uploadTooLarge()
         const row = before
           ? await storeOverwrite(client, options, state, userId, upload, metadata, target, before)
-          : await storeNewFile(client, options, state, userId, upload, metadata, target, displayName, ext)
+          : await storeNewFile(client, options, state, userId, upload, metadata, target, displayName, ext, operation ? 'web_download' : 'file_upload')
         await options.afterStore?.()
+        const response = fileResponse(row, target)
+        if (operation) {
+          const { receipt } = operation
+          await operation.authorize(client)
+          operation.signal?.throwIfAborted()
+          await client.query(`INSERT INTO core_operation_receipts(owner_id,operation_id,method,fingerprint,result_json,created_at)
+            VALUES ($1,$2,$3,$4,$5,CURRENT_TIMESTAMP)`, [userId, receipt.operationId, downloadMethod, receipt.fingerprint, JSON.stringify(response)])
+          operation.signal?.throwIfAborted()
+        }
         commitAttempted = true
         await client.query('COMMIT')
         committed = true
         if (state.rollbackPath) await Promise.resolve().then(() => options.removeCommittedBackup?.(state.rollbackPath!) ?? rm(state.rollbackPath!, { force: true })).catch(() => {
           console.error('文件上传备份清理失败，将尝试清理暂存目录')
         })
-        const response = fileResponse(row, target)
         await options.publishChanged({ ownerId: userId, operation: before ? 'update' : 'create', entityId: Number(row.id), payload: response, origin: metadata.clientId }).catch(() => undefined)
-        return response
+        return operation ? { file: response, replayed: false } : response
       } catch (error) {
         if (!committed) {
-          await client.query('ROLLBACK').catch(() => undefined)
+          await client.query('ROLLBACK').catch(() => { discardConnection = true })
           if (!commitAttempted) {
             for (const artifact of state.createdArtifacts) await rm(artifact, { force: true }).catch(() => undefined)
             for (const destination of state.createdDestinations) await rm(destination, { force: true }).catch(() => undefined)
@@ -551,12 +624,24 @@ export function createPostgresFileUploadOperations(
                 console.error('文件上传回滚失败，保留备份供核查')
               })
             }
-          } else console.error('文件上传提交结果未知，保留文件供核查')
+          } else if (operation && state.downloadLink) {
+            // 先归还旧连接，避免重查等待该连接的事务锁或池容量。
+            client.release(true)
+            released = true
+            try { await recoverDownloadLink(pool, options.storageRoot, userId, operation.receipt, state.downloadLink) }
+            catch {
+              preserveStage = true
+              console.error('下载提交结果暂时无法核对，保留文件供核查')
+            }
+          } else {
+            preserveStage = true
+            console.error('文件上传提交结果未知，保留文件供核查')
+          }
         }
         throw error
       } finally {
-        if (!preserveStage && (!commitAttempted || committed)) for (const directory of state.stagingDirectories) await rm(directory, { recursive: true, force: true }).catch(() => console.error('文件上传暂存目录清理失败，可能存在残留'))
-        client.release()
+        if (!preserveStage) for (const directory of state.stagingDirectories) await rm(directory, { recursive: true, force: true }).catch(() => console.error('文件上传暂存目录清理失败，可能存在残留'))
+        if (!released) client.release(discardConnection)
       }
     },
   }

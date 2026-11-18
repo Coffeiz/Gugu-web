@@ -1,8 +1,21 @@
 
 import { mergeUsage } from '../context/budget.js'
-import type { RunEvent } from '../models.js'
+import type { MessageEntry, RunCheckpoint, RunEvent } from '../models.js'
 import { AgentRunError } from '../models.js'
 import type { RunCoordination } from '../ports.js'
+
+/** 汇总已派发的多轮工具名称，保留首次出现顺序并排除静默选择工具。 */
+export function canonicalToolsUsed(checkpoint: Pick<RunCheckpoint<unknown>, 'displayTimeline'>, entries: readonly MessageEntry[]): string[] {
+  const names = new Set<string>()
+  const add = (value: unknown) => {
+    if (typeof value === 'string' && value && value !== 'choose_no_reply') names.add(value)
+  }
+  for (const item of checkpoint.displayTimeline) if (item.kind === 'tool') add(item.toolName)
+  for (const entry of entries) if (entry.source === 'tool_round' && Array.isArray(entry.message.content))
+    for (const block of entry.message.content)
+      if (block && typeof block === 'object' && !Array.isArray(block) && block.type === 'tool_call') add(block.name)
+  return [...names]
+}
 
 export async function finishForRun<C>(scope: RunCoordination<C>, status: 'completed' | 'cancelled' | 'failed' | 'unknown', code: string | null, text: string, silent = false): Promise<RunEvent> {
   if (!scope.state || scope.finalized)

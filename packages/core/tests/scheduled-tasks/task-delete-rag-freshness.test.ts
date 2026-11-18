@@ -19,9 +19,11 @@ test('定时任务删除与 RAG 墓碑队列原子提交并保持 owner 隔离',
     await sql.raw(tablesSql('sqlite').ragIndexEntries).execute(db)
     await sql`INSERT INTO scheduled_tasks(id,user_id,name,payload,cron,schedule_kind,channels,enabled,created_at,updated_at)
       VALUES(1,${user},'task','','* * * * *','cron','web',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`.execute(db)
+    // 队列用数据库墙钟写入 next_attempt_at，测试 Worker 的时钟在该写入之后。
+    const now = new Date(Date.now() + 60_000)
     const worker = createSqlRagRebuildWorker(db, 'sqlite', {
       scheduled_task: createScheduledTaskRagSource(createKyselyScheduledTaskRagReader(db, 'sqlite')),
-    }, () => new Date('2026-11-16T10:00:00.000Z'))
+    }, () => now)
     await sql`INSERT INTO rag_index_jobs(user_id,source_type,source_id,pending_source_ids,version,operation,status,generation,completed_generation,attempts,next_attempt_at,created_at,updated_at)
       VALUES(${user},'scheduled_task','1','[]','','upsert','queued',1,0,0,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`.execute(db)
     assert.equal(await worker(), 'ready')

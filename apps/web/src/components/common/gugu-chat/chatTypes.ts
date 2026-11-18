@@ -51,6 +51,7 @@ export interface ChatMessage {
   toolCallId?: string
   toolName?: string
   toolLabel?: string
+  toolLabelOverride?: string
   toolStatus?: 'queued' | 'running' | 'waiting' | 'success' | 'error' | 'skipped' | 'cancelled' | 'stopped'
   toolInput?: unknown
   toolResult?: unknown

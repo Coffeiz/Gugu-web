@@ -8,6 +8,10 @@
 
 ## Docker Compose
 
+Web Host 发布时包含同级的 `dist/` 和 `assets/`。对话、定时任务、管理员提示词编辑及 IM 维护共用 `assets/agent-prompts/`。运行服务账号需要对此目录有写权限，管理员保存的文本会用于后续运行。注册引导音频位于 `assets/onboarding/`。
+
+运行配置默认位于 Web Host 包目录的 `config.override.json`，可用 `GUGU_CONFIG_OVERRIDE_FILE` 指定。Compose 使用持久卷中的文件。管理员保存需要部署预先提供合法的配置文件，首次配置可从空 JSON 对象开始。管理员日志默认从包目录的 `logs/` 读取，也可用 `GUGU_LOG_FILE` 指定 Web 日志。使用 BYOK 时，通过 `CREDENTIALS_MASTER_KEY` 或工作区外的 `CREDENTIALS_MASTER_KEY_FILE` 提供主密钥。已有加密凭据继续使用对应的原密钥。
+
 在仓库根目录执行：
 
 ```sh
@@ -41,9 +45,27 @@ corepack pnpm --filter @gugu/webui build
 corepack pnpm --filter @gugu/webui start
 ```
 
-本地运行必须设置 `SECRET_KEY` 和 Admin 登录密码。数据库连接可先设置 `GUGU_WEBUI_DATABASE_URL`，也可在 Admin 配置页首次录入；连接串支持 PostgreSQL URI 和 Python 现有的 `postgresql+asyncpg://` 形式。
+本地运行必须设置 `SECRET_KEY` 和 Admin 登录密码。数据库连接可先设置 `GUGU_WEBUI_DATABASE_URL`，也可在 Admin 配置页首次录入；连接串使用标准 `postgresql://` 或 `postgres://` URI。
 
-Agent 附件快照的 Node 专属数据库迁移目前只完成隔离 PostgreSQL 原型验收，快照读写、密钥轮换和部署流程尚未接通，不要将其视为附件功能可用。构建 Host 后，显式命令 `corepack pnpm --filter @gugu/webui migrate:agent-snapshot:check` 只读检查，`corepack pnpm --filter @gugu/webui migrate:agent-snapshot:apply` 才执行该 Node 迁移；两者只从环境变量 `GUGU_WEBUI_DATABASE_URL` 获取连接。迁移不修改 Alembic 台账，也不在启动时自动执行。实际部署前须先确认 Python schema 兼容、备份数据库，并与 Python 迁移串行；当前尚未验收真实部署和回滚流程。
+### Node Web Host 数据库迁移
+
+使用 PostgreSQL 15 或更新版本。构建 Web Host 后，将 `GUGU_WEBUI_DATABASE_URL` 设为目标 schema 的标准 PostgreSQL URI，并按顺序初始化账号与偏好、会话与消息、待发送队列、交互提示、附件元数据、用量、RAG 重建队列，项目、日历、Mind、定时任务、工作区、文件与配额等 Web 就绪表，以及九张运行调度表和 RAG 派生索引。启动 Host 时使用相同的 schema。
+
+```sh
+corepack pnpm --filter @gugu/webui migrate:agent-base:apply
+corepack pnpm --filter @gugu/webui migrate:web-domain:apply
+corepack pnpm --filter @gugu/webui migrate:filesystem-authorization:apply
+corepack pnpm --filter @gugu/webui migrate:security-events:apply
+corepack pnpm --filter @gugu/webui migrate:terminal-sessions:apply
+corepack pnpm --filter @gugu/webui migrate:agent-run:apply
+corepack pnpm --filter @gugu/webui migrate:rag-index:apply
+```
+
+各组均提供 `check` 命令。检查只读，待迁移时输出 `pending` 并退出 2，结构损坏或出现未登记的同名表时退出 1。迁移在事务内完成，重复执行返回 `unchanged`。旧版业务数据在备份后通过显式导入进入 Node schema，RAG 派生索引由 Node 从授权来源重建。Web 业务迁移覆盖 `/health/ready`、首个账号注册与引导，以及当前 RAG 八类来源所需的 PostgreSQL 表。整站各可选功能的存储和部署另行验收。
+
+默认启用的会话沙箱授权依赖授权表、安全审计表和完整终端会话表。已有 Node schema 可分别应用 `migrate:filesystem-authorization:apply`、`migrate:security-events:apply` 与 `migrate:terminal-sessions:apply`，无需重新初始化基础迁移。终端迁移要求账号、会话和工作区表已就绪；三组结构均按对应旧 Python Alembic 表定义创建，不导入旧数据。
+
+Agent 附件快照使用独立 Node 迁移。构建 Host 后，可用 `migrate:agent-snapshot:check` 检查，再以 `migrate:agent-snapshot:apply` 显式应用。当前已有隔离数据库结构验证，快照业务读写、密钥轮换和部署恢复需单独验收。
 
 ## 回归测试
 

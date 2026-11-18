@@ -348,8 +348,8 @@ async function updateProjectInTransaction(
   if (typeof newName === 'string' && newName !== current.name) {
     const oldPrefix = prefix(current, current.name)
     const newPrefix = prefix(current, newName)
-    await runtime.renameProjectDirectory(ownerId, oldPrefix, newPrefix, () => onDirectoryRename(oldPrefix, newPrefix))
     await tx.updateFileStoragePrefixes(ownerId, projectId, oldPrefix, newPrefix)
+    await runtime.renameProjectDirectory(ownerId, oldPrefix, newPrefix, () => onDirectoryRename(oldPrefix, newPrefix))
   }
 
   const updated = await tx.updateIfVersion(ownerId, projectId, version, fields)

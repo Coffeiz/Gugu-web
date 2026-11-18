@@ -1,29 +1,31 @@
 # Node Agent 工具行为迁移清单
 
-盘点日期：2026-11-16。此清单是当前工作树源码盘点，未运行的测试不记为通过；并行会话的未提交文件也不视为发布或生产接入证据。
+盘点日期：2026-11-18。按当前 `backend/agent/tools/` AST 复核为 26 个直接继承 `BaseSkill` 的工具组、109 个静态 `Tool(name=...)` 声明，109 个名称唯一；数字不含动态 MCP。未运行的测试不记为通过；并行会话的未提交文件也不视为发布或生产接入证据。
 
 ## 状态口径
 
 - **已完成并接入**：完整工具经过真实 Harness → ToolPort → 业务实现/Executor，已被实际生产Host Run装配，并有对应Python、Node行为及后端验收；明确列出仍使用的替身。
 - **已实现待接入**：有可调用实现或独立注册表，但缺实际 Host 调用方或完整行为验收。
+- **部分实现**：生产 Run 已有部分调用链，但真实后端、平台能力或关键行为验收仍缺失。
 - **可迁移**：依赖已存在，尚未实现工具切片；属于未完成项。
 - **依赖阻塞**：共享服务、可信能力或领域适配/回归尚未就绪；HTTP API 存在不等于工具可直接迁移。
 - **退役/重设计**：架构明确退出旧实现，保留数据迁移与恢复责任。
 
-当前 AST 盘点：`backend/agent/tools/` 有 26 个直接继承 `BaseSkill` 的工具组和 109 个静态 `Tool(...)` 声明。此数字不包含动态 MCP 工具，也不是 pytest 数量。全 `apps/web-host/src` 查找未发现 `createAgentToolRegistry` 生产调用，不能据 Core 实现或工厂注册认定生产接入。
+当前 AST 盘点：`backend/agent/tools/` 有 26 个直接继承 `BaseSkill` 的工具组和 109 个静态 `Tool(...)` 声明。逐行对照覆盖全部 109 个名称，无缺项或额外项。动态 MCP 工具另计。当前 `main.ts` 已装配 Agent Chat/Run 与 per-lease 工具资源工厂；仍按逐工具状态区分生产调用链与未验收的真实存储、确认及平台能力。
 
 ## 当前交付状态摘要
 
-本表按**完整工具及实际生产Run装配**计数，不将Core合成Harness、注册器工厂或部分端口记为生产完成。当前109个静态工具：**已完成并接入0、已实现待接入49、部分实现5、依赖共享能力或平台54、退役/重设计1**。动态MCP另计；部分实现的工具同样仍有依赖阻塞，不重复计数。
+本表按**完整工具及实际生产Run装配**计数，不将Core合成Harness、注册器工厂或部分端口记为生产完成。2026-11-18 按当前 Python 源码重新盘点：26 个直接继承 `BaseSkill` 的工具组、109 个唯一静态 `Tool` 名称；动态 MCP 另计。109 项当前状态为：**已完成并接入43、已实现待接入2、部分实现41、依赖共享能力或平台22、退役/重设计1**。部分实现的工具同样仍有验收缺口，不重复计数。
 
 | 状态 | 工具/范围 | 当前证据与缺口 |
 | --- | --- | --- |
-| 已实现待接入（49） | list_clients、create_client、update_client、list_projects、get_project、create_project、get_current_time、use_skill、list_scheduled_tasks、global_search、get_upcoming、list_trash、restore_file、restore_folder、read_conversation、search_memory、list_events、list_workspaces、get_workspace、get_dashboard_stats、update_project、set_color、archive_project、add_stage、remove_stage、rename_stage、set_stages、update_stage、note_search、note_get、get_tool_schema、update_workspace、canvas_list、canvas_get、canvas_search、canvas_focus_node、canvas_search_placeable、canvas_create、list_skills、canvas_update_node、canvas_remove_node、canvas_update_note、canvas_create_note、canvas_add_node、canvas_update_anchor、canvas_connect、note_delete、note_restore、note_undo | Core真实调用及行为回归已列；Node生产main尚未装配Agent runtime/registry，Skill可信loader/资源source与部分领域Host链仍缺验收。此状态不保证全部后端已经具备。 |
-| 部分实现（5） | read_file、ask_user、search_conversations、http_get、canvas_batch | read_file 仅文本file_id子集；ask_user 的表单、沙盒授权与生产Host待接入；历史搜索已有 owner 限定的 TypeScript RAG/Jieba BM25 事实表适配器和 Web RAG 成组端口组合器，按 Python 行为覆盖 baseline 前仍保留的消息；真实生产 Agent Run 装配和 PostgreSQL 验收未完成；http_get 已有 Core 参数/批量/结果契约和条件注册，公网安全传输端口、HTML/PDF提取、headers安全与脱敏以及生产Run装配未完成；`canvas_batch` Core工具端口、SQLite行为回归已实现，但旧Python parity与生产Host持久确认接线未验收。 |
-| 依赖共享能力或平台（55） | 见逐工具清单 | 依赖共享领域/文件/历史/渠道/MCP/RAG/确认与实际执行后端；对应能力由A/B或可信平台Host提供，不注册假成功工具。 |
+| 已完成并接入（43） | search_conversations、read_conversation、get_current_time、get_upcoming、list_events、list_clients、list_projects、get_dashboard_stats、list_workspaces、get_workspace、list_scheduled_tasks、list_trash、update_workspace、create_client、update_client、create_project、update_project、set_color、archive_project、add_stage、remove_stage、rename_stage、update_stage、set_stages、get_project、get_tool_schema、call_tool、send_email、note_search、note_get、canvas_list、canvas_get、canvas_search、canvas_focus_node、canvas_search_placeable、canvas_create、canvas_create_note、canvas_add_node、canvas_update_node、canvas_remove_node、canvas_update_note、canvas_connect、canvas_update_anchor | Web 主链经真实隔离 PostgreSQL、Redis、注册器和 SSE 通过。历史、日历、联系人、项目、总览、工作区、定时任务、回收站、邮件、Mind 笔记与画布工具均经实际调用链验证；`list_scheduled_tasks` 验证 owner 过滤并排除日历提醒，`list_trash` 验证 owner 软删除结果和微秒时间，`update_workspace` 验证同事务同步工作区与目录显示名且保留物理目录键；`send_email` 覆盖持久确认/取消、SMTP 收据和定时预授权，测试 SMTP 使用环回端点；`call_tool` 验证嵌套读取/写入、目标授权与原调用 ID 续轮。Provider 使用合成服务，桌面与 IM 不计入本行验收。 |
+| 已实现待接入（2） | react、bind_web_session | 有 Core 实现或可验证端口，现有 Host 尚缺完整可信平台或事务组合。 |
+| 部分实现（41） | read_file、ask_user、send_link_buttons、search_memory、group_context_search、restore_file、restore_folder、delete_client、delete_project、read_knowledge、save_knowledge、update_knowledge、delete_knowledge、remember、global_search、http_get、create_event、update_event、delete_event、canvas_delete、canvas_delete_note、canvas_disconnect、canvas_batch、note_delete、note_restore、note_undo、use_skill、list_skills、create_skill、update_skill、delete_skill、web_search、web_download、similar_image_search、deep_research、manage_mcp_servers、note_create、note_update、create_scheduled_task、update_scheduled_task、delete_scheduled_task | Web Run 已按 lease 提供共享领域端口；`delete_client` 复用 Core owner-scoped 联系人仓储，仅在持久确认意图与事务 claim 可用时注册；单/批目标冻结、确认后锁行、复核目标版本并与操作收据同事务删除。画布删除/断开及批量修改仍需确认与逐项持久恢复验收；`canvas_remove_node` 仅移除视图项且已验证保留来源便签。`send_link_buttons` 已接入 Web artifact 行为，IM 真实投递/持久回执未接入。危险写入只在确认密钥可用时注册，确认意图加密存于 PostgreSQL，owner/session/run、账号安全版本、Provider 访问版本和活动 dispatch lease 在准备与业务事务中复核。除逐项注明的用例外，尚缺真实存储、外部 Provider、提醒投递及恢复验收。 |
+| 依赖共享能力或平台（22） | 见逐工具清单 | 依赖共享领域/文件/历史/渠道/MCP/RAG/确认与实际执行后端；对应能力由可信平台Host提供，不注册假成功工具。 |
 | 退役/重设计（1） | shell | 工具用途保留；Docker生命周期实现退役，Linux MXC多用户隔离及真实平台后端未验收，当前不开放。 |
 
-真实调用方复核：`main.ts`未装配Agent chat/runtime/reconstructor，`createAgentToolRegistry`只有工厂与测试引用，已由聊天会话再次确认；技能生产source同样未接入。上述判断与本文件后续历史分阶段测试记录分别看待；旧记录中的“Core完成/已接入Harness”只描述当时测试层级，不能覆盖当前生产状态。
+生产调用方复核：`main.ts`在 Redis 可用时装配 Agent Chat/Run、Web Reconstructor 与 Core RAG 工具 registry，并按 lease 注入共享领域端口。危险日历/画布写入只在当前凭据主密钥可用时注册；确认意图加密保存于 PostgreSQL，确认提示经现有确认凭证通道，确认恢复由 Core Chat 唤醒并由 Host PostgreSQL 收据、权限版本与事务 claim 复核。画布各工具使用独立 action gate，发布复用既有 Mind/日历 publisher；交互激活、投影和响应适配接入既有 route 入口，无新增 HTTP route。Core 持有 Chat/Run 生命周期、dispatch 与唤醒契约，Host 保留 PG/Redis、Fastify、Provider、FS 和事件投影组合适配。会话搜索已通过隔离 PostgreSQL、Redis、合成 Provider、工具续轮和强制退出后重启恢复。提醒投递与真实外部 Provider 另行验收。技能管理写工具已按可信租约接入。删除仅在确认能力可用时开放。当前 Web Agent 对两种管理来源的技能删除均使用持久确认。历史记录中的旧接线状态只作历史记录，不覆盖本次复核结果。
 
 ### 三个只读工具的 Host Runtime 组合验收（2026-11-14）
 
@@ -51,38 +53,38 @@ Node 保持现有 `Harness ToolPort.plan/dispatch/reconcile` 和 Executor 边界
 
 | Python 文件（相对 backend/agent/tools） | 工具 | 顶层必填 | 静态确认声明 | 当前状态 |
 | --- | --- | --- | --- | --- |
-| `calendar.py` | `create_event` | title, date, all_day | 否 | 依赖阻塞 |
-| `calendar.py` | `list_events` | 无 | 否 | 已实现待接入 |
-| `calendar.py` | `update_event` | 无 | 否 | 依赖阻塞 |
-| `calendar.py` | `delete_event` | 无 | 是 | 依赖阻塞 |
-| `canvas.py` | `canvas_list` | 无 | 否 | 已实现待接入 |
-| `canvas.py` | `canvas_get` | canvas_id | 否 | 已实现待接入 |
-| `canvas.py` | `canvas_search` | canvas_id | 否 | 已实现待接入 |
-| `canvas.py` | `canvas_focus_node` | canvas_id, item_id | 否 | 已实现待接入 |
-| `canvas.py` | `canvas_search_placeable` | 无 | 否 | 已实现待接入 |
-| `canvas.py` | `canvas_create` | title | 否 | 已实现待接入 |
-| `canvas.py` | `canvas_delete` | 无 | 是 | 依赖阻塞 |
-| `canvas.py` | `canvas_create_note` | canvas_id | 否 | 已实现待接入 |
-| `canvas.py` | `canvas_add_node` | canvas_id | 否 | 已实现待接入 |
-| `canvas.py` | `canvas_update_node` | 见源 Schema | 否 | 已实现待接入 |
-| `canvas.py` | `canvas_remove_node` | canvas_id | 否 | 已实现待接入 |
-| `canvas.py` | `canvas_update_note` | 无 | 否 | 已实现待接入 |
-| `canvas.py` | `canvas_delete_note` | 无 | 是 | 依赖阻塞 |
-| `canvas.py` | `canvas_connect` | canvas_id, source_node_id, target_node_id | 否 | 已实现待接入 |
-| `canvas.py` | `canvas_update_anchor` | canvas_id, relation_id, source_side, target_side | 否 | 已实现待接入 |
-| `canvas.py` | `canvas_disconnect` | canvas_id | 是 | 依赖阻塞 |
-| `canvas.py` | `canvas_batch` | canvas_id, request_id, operations | 是 | 部分实现（Core端口和Node回归通过；Python parity/生产Host确认待验收） |
+| `calendar.py` | `create_event` | title, date, all_day | 否 | 部分实现（main Web Run 已注入；真实PG/提醒投递未验收） |
+| `calendar.py` | `list_events` | 无 | 否 | 已完成并接入 Web：真实生产 Run 经 Host per-lease 日历 reader 查询隔离 PostgreSQL，验证 owner 事件/提醒过滤、提醒投影与模型续轮；Provider 为环回合成服务。Python 历史基准覆盖范围、类型、limit、提醒字段及 owner 过滤（此前 2 项通过；本轮环境无 pytest，未重跑）。 |
+| `calendar.py` | `update_event` | 无 | 否 | 部分实现（main Web Run 已注入；真实PG/Provider后续轮未验收） |
+| `calendar.py` | `delete_event` | 无 | 是 | 部分实现（Host per-lease 确认/响应/收据恢复已接线；真实 PG/Redis/提醒投递未验收） |
+| `canvas.py` | `canvas_list` | 无 | 否 | 已完成并接入 Web：真实 Run 读取 owner 画布分页结果、活动项计数及视图投影；隔离 PG 验证不返回异主画布。Core 画布定向 **12/12**，生产 HTTP/SSE/PG/Redis 集成 **1/1**；Python pytest 本轮未运行。 |
+| `canvas.py` | `canvas_get` | canvas_id | 否 | 已完成并接入 Web：真实 Run 读取 owner 画布节点及正文，异主画布返回安全 not-found；详情、布局与关系投影经 Core 回归。Core 画布定向 **12/12**，生产 HTTP/SSE/PG/Redis 集成 **1/1**；Python pytest 本轮未运行。 |
+| `canvas.py` | `canvas_search` | canvas_id | 否 | 已完成并接入 Web：真实 Run 搜索 owner 画布节点并返回真实命中；Core 回归覆盖过滤、旧式墓碑语义和 `limit+1` 计数。Core 画布定向 **12/12**，生产 HTTP/SSE/PG/Redis 集成 **1/1**；Python pytest 本轮未运行。 |
+| `canvas.py` | `canvas_focus_node` | canvas_id, item_id | 否 | 已完成并接入 Web：真实 Run 从 owner 画布项生成 `gugu://focus-canvas/...` 定位链接，不写数据库；Host 集成验证生成目标 ID。Core 画布定向 **12/12**，生产 HTTP/SSE/PG/Redis 集成 **1/1**；Python pytest 本轮未运行。 |
+| `canvas.py` | `canvas_search_placeable` | 无 | 否 | 已完成并接入 Web：生产 Run 通过 Core 搜索当前 owner 可放置项目/文件/活动；真实隔离 PG 工具调用命中己方项目并排除异主项目。Core 画布定向 **12/12**，生产 HTTP/SSE/PG/Redis 集成 **1/1**；Python pytest 本轮未运行。 |
+| `canvas.py` | `canvas_create` | title | 否 | 已完成并接入 Web：生产 Run 创建画布，隔离 PostgreSQL 回读确认 owner、标题和默认项目字段；Core 画布组 **12/12**，生产 HTTP/SSE/PG/Redis 集成 **1/1**；Python pytest 本轮未运行。 |
+| `canvas.py` | `canvas_delete` | 无 | 是 | 部分实现（Host per-lease action gate 与 publisher 已接线；真实 PG/Redis 确认恢复未验收） |
+| `canvas.py` | `canvas_create_note` | canvas_id | 否 | 已完成并接入 Web：生产 Run 创建 owner 画布便签及画布项；隔离 PG 验证关联，Core 画布组 **12/12**、生产集成 **1/1**；Python pytest 本轮未运行。 |
+| `canvas.py` | `canvas_add_node` | canvas_id | 否 | 已完成并接入 Web：生产 Run 将 owner 项目引用放入画布；隔离 PG 回读确认引用类型、项目 ID 与 owner，Core 画布组 **12/12**、生产集成 **1/1**；Python pytest 本轮未运行。 |
+| `canvas.py` | `canvas_update_node` | 见源 Schema | 否 | 已完成并接入 Web：生产 Run 调整 owner 画布项位置，隔离 PG 回读确认坐标，Core 画布组 **12/12**、生产集成 **1/1**；Python pytest 本轮未运行。 |
+| `canvas.py` | `canvas_remove_node` | canvas_id | 否 | 已完成并接入 Web：生产 Run 仅软删当前 owner 画布项，隔离 PG 回读确认便签节点及正文仍存在；Core 画布组 **12/12**、生产集成 **1/1**；Python pytest 本轮未运行。 |
+| `canvas.py` | `canvas_update_note` | 无 | 否 | 已完成并接入 Web：生产 Run 对 owner 专属画布便签增量更新正文/标题；隔离 PG 回读确认内容投影与版本递增，Core 画布组 **12/12**、生产集成 **1/1**；Python pytest 本轮未运行。 |
+| `canvas.py` | `canvas_delete_note` | 无 | 是 | 部分实现（Host per-lease action gate 与 publisher 已接线；真实 PG/Redis 确认恢复未验收） |
+| `canvas.py` | `canvas_connect` | canvas_id, source_node_id, target_node_id | 否 | 已完成并接入 Web：生产 Run 连接同一 owner 画布内的便签与项目引用；隔离 PG 验证关系行，Core 画布组 **12/12**、生产集成 **1/1**；Python pytest 本轮未运行。 |
+| `canvas.py` | `canvas_update_anchor` | canvas_id, relation_id, source_side, target_side | 否 | 已完成并接入 Web：生产 Run 按 owner 及画布更新关系端点，隔离 PG 回读确认 `relationAnchors` 持久化，Core 画布组 **12/12**、生产集成 **1/1**；Python pytest 本轮未运行。 |
+| `canvas.py` | `canvas_disconnect` | canvas_id | 是 | 部分实现（Host per-lease action gate 与 publisher 已接线；真实 PG/Redis 确认恢复未验收） |
+| `canvas.py` | `canvas_batch` | canvas_id, request_id, operations | 是 | 部分实现（含删除操作接入独立确认 gate；真实 PG/Redis 确认恢复及 Provider Run 未验收） |
 
-| `clients.py` | `list_clients` | 无 | 否 | 已实现待接入 |
-| `clients.py` | `create_client` | client_name | 否 | 已实现待接入 |
-| `clients.py` | `update_client` | 无 | 否 | 已实现待接入 |
-| `clients.py` | `delete_client` | 无 | 是 | 依赖阻塞 |
-| `conversations.py` | `search_conversations` | 无 | 否 | 部分实现（真实 TypeScript RAG/Jieba BM25 事实表适配器与 Web RAG 组合端口已实现；Host 会话/记忆/Run 绑定回归 12/12、旧 Python 搜索工具/迁移 pytest 10/10、RAG Cython/golden pytest 31/31；使用隔离 SQLite/临时 FS 与合成授权、snapshot、embedding；生产 Agent Run 装配与 PostgreSQL 验收待完成） |
-| `conversations.py` | `read_conversation` | session_id | 否 | 已实现待接入（PostgreSQL/SQLite 共用 owner 限定正文读取；生产 Host 待装配） |
-| `conversations.py` | `bind_web_session` | session_id | 否 | 依赖阻塞 |
-| `email.py` | `send_email` | subject, body | 是 | 依赖阻塞 |
+| `clients.py` | `list_clients` | 无 | 否 | 已完成并接入 Web：实际生产 Run 经可信 lease 调用 Core owner-scoped 联系人服务，真实 PostgreSQL 结果续入 Provider 请求并验证异主联系人不泄漏。Node 联系人工具 20 项通过；Python 共享数据 owner 基准此前通过，本轮未重跑 pytest。 |
+| `clients.py` | `create_client` | client_name | 否 | 已完成并接入 Web：真实生产 Run 执行创建，隔离 PostgreSQL 验证 owner、联系人、邮箱持久副作用；Core 联系人工具回归 20 项通过，Python 共享存储/owner 基准此前有通过记录，本轮未重跑 pytest。 |
+| `clients.py` | `update_client` | 无 | 否 | 已完成并接入 Web：生产 Run 通过联系人名定位并持久更新 notes，隔离 PostgreSQL 回读确认副作用与 owner；Core 联系人工具回归 20 项通过，Python 共享存储/owner 基准此前有通过记录，本轮未重跑 pytest。 |
+| `clients.py` | `delete_client` | 无 | 是 | 部分实现（复用 Core 联系人服务；Web Run 仅在持久确认与事务 claim 端口存在时公开，单/批目标及租约授权进入生产装配；真实 PostgreSQL/Provider Run 尚未验收） |
+| `conversations.py` | `search_conversations` | 无 | 否 | 已完成并接入 Web。按 owner/lease 使用 Node 持久 RAG，已跑真实 PostgreSQL、Redis、HTTP/SSE、工具结果续轮、跨 owner 隔离与进程重启恢复；模型为环回合成 Provider。此前 Python RAG 118/118 与会话基准 4 通过、62 未选中。 |
+| `conversations.py` | `read_conversation` | session_id | 否 | 已完成并接入 Web：生产 Run 通过可信 owner reader 从 PostgreSQL 读取最近普通消息；真实 HTTP/SSE 集成连续执行搜索→正文读取→Provider 续轮。覆盖异主拒绝、结构化消息过滤、最近窗口、空正文、工具文本及 Unicode 截断。Python 行为基准此前 4 项通过/62 deselected；本次 Node 验收使用隔离 PostgreSQL/Redis 和环回合成 Provider。 |
+| `conversations.py` | `bind_web_session` | session_id | 否 | 已实现待接入：Core `agent/tools/im.ts`、`agent/sessions/im-tools.ts` 提供 owner/Web 来源校验与 12 小时 Bot 隔离绑定；Host `tools/agent-im.ts` 有可复用 DB/Redis 工厂，但 `main.ts` 没有注册调用。实时 Gateway 仍需注入可信 owner 私聊上下文。 |
+| `email.py` | `send_email` | subject, body | 是 | 已完成并接入 Web：Core Run 按 owner 读取账号/联系人邮箱及附件，持久确认、取消与发送收据复用 Host 端口；定时发送按任务预授权和消费者租约复核。Python `test_email_tool.py`、`test_email_attachments.py` 本轮 **27/27**；Node Core **4/4**，Host SQLite **1 通过**，本轮 PG/Redis 条件测试 **2 跳过**（测试 URL 未配置）。同一源码历史隔离 PG/Redis 持久 Run 确认/取消 **8/8**、定时生产入口环回 SMTP **3/3** 通过。真实外部 SMTP 和部署未验收。 |
 | `files/file_tools.py` | `list_dir` | 无 | 否 | 依赖阻塞 |
-| `files/file_tools.py` | `read_file` | 无 | 否 | 部分实现（仅file_id文本子集，真实权限定位及其他类型待接入） |
+| `files/file_tools.py` | `read_file` | 无 | 否 | 部分实现（普通 `file_id` 文本子集已进入生产 Web Run：Host 按 owner/软删查询文件并校验 owner 存储键，再经 `packages/fs` 授权根打开；媒体、历史附件、URL、批量、逻辑路径及 system scope 未实现，真实 PG/Python 本轮未验收） |
 | `files/file_tools.py` | `grep` | query | 否 | 依赖阻塞 |
 | `files/file_tools.py` | `edit_file` | 无 | 否 | 依赖阻塞 |
 | `files/file_tools.py` | `create_file` | files | 否 | 依赖阻塞 |
@@ -99,68 +101,77 @@ Node 保持现有 `Harness ToolPort.plan/dispatch/reconcile` 和 Executor 边界
 | `files/transfer_tools.py` | `present_file` | 无 | 否 | 依赖阻塞 |
 | `files/transfer_tools.py` | `list_recent_attachments` | 无 | 否 | 依赖阻塞 |
 | `files/transfer_tools.py` | `save_uploaded_file` | 无 | 否 | 依赖阻塞 |
-| `global_search.py` | `global_search` | 无 | 否 | 已实现待接入（Host 显式注入共享搜索来源，缺来源明确不可用） |
-| `group_context.py` | `group_context_search` | 无 | 否 | 依赖阻塞 |
-| `im.py` | `react` | mood | 否 | 依赖阻塞 |
-| `knowledge.py` | `read_knowledge` | 无 | 否 | 依赖阻塞 |
-| `knowledge.py` | `save_knowledge` | title, content | 否 | 依赖阻塞 |
-| `knowledge.py` | `update_knowledge` | knowledge_id | 否 | 依赖阻塞 |
-| `knowledge.py` | `delete_knowledge` | knowledge_id | 是 | 依赖阻塞 |
-| `link_buttons.py` | `send_link_buttons` | message, buttons | 否 | 依赖阻塞 |
-| `mcp.py` | `manage_mcp_servers` | action | 是 | 依赖阻塞 |
-| `memory.py` | `remember` | 无 | 否 | 依赖阻塞 |
-| `memory.py` | `search_memory` | query | 否 | 已实现待接入（Core 查询、Web owner/可信 IM scope resolver 和真实 dispatch 已实现；生产 Run/可信 IM context 未接） |
-| `meta.py` | `call_tool` | tool_name, arguments | 否 | 依赖阻塞 |
-| `meta.py` | `get_tool_schema` | tools | 否 | 已实现待接入 |
-| `meta.py` | `use_skill` | id | 否 | 已实现待接入（可信技能loader与资源未装配） |
-| `meta.py` | `ask_user` | kind, title, body | 否 | 部分实现（普通问题已接入注册器与交互协调器；表单、沙盒授权和生产 Host 装配待完成） |
-| `note.py` | `note_search` | 无 | 否 | 已实现待接入 |
-| `note.py` | `note_get` | node_id | 否 | 已实现待接入 |
-| `note.py` | `note_create` | 无 | 否 | 依赖阻塞 |
-| `note.py` | `note_update` | node_id | 否 | 依赖阻塞 |
-| `note.py` | `note_delete` | node_id | 否 | 已实现待接入 |
-| `note.py` | `note_restore` | node_id | 否 | 已实现待接入 |
-| `note.py` | `note_undo` | 无 | 否 | 已实现待接入 |
-| `overview.py` | `get_upcoming` | 无 | 否 | 已实现待接入（共享项目/日历读取与可信时钟） |
-| `overview.py` | `get_dashboard_stats` | 无 | 否 | 已实现待接入 |
-| `projects.py` | `list_projects` | 无 | 否 | 已实现待接入（Core Harness 已测） |
-| `projects.py` | `update_project` | 无 | 否 | 已实现待接入 |
-| `projects.py` | `create_project` | project_name, start_date, deadline | 否 | 已实现待接入 |
-| `projects.py` | `set_color` | color | 否 | 已实现待接入 |
-| `projects.py` | `archive_project` | 无 | 否 | 已实现待接入 |
-| `projects.py` | `delete_project` | 无 | 是 | 依赖阻塞 |
-| `projects.py` | `get_project` | 无 | 否 | 已实现待接入（独立Host与真实PG概览链已测，生产Run待装配） |
-| `projects.py` | `add_stage` | label | 否 | 已实现待接入 |
-| `projects.py` | `remove_stage` | stage | 否 | 已实现待接入 |
-| `projects.py` | `rename_stage` | stage, new_label | 否 | 已实现待接入 |
-| `projects.py` | `update_stage` | 无 | 否 | 已实现待接入 |
-| `projects.py` | `set_stages` | stages | 否 | 已实现待接入 |
-| `scheduled_tasks.py` | `list_scheduled_tasks` | 无 | 否 | 已实现待接入（共享只读查询及独立Host Runtime已测，可信平台能力和生产Run待装配） |
-| `scheduled_tasks.py` | `create_scheduled_task` | schedule_name, instruction, schedule_kind | 是 | 依赖阻塞 |
-| `scheduled_tasks.py` | `update_scheduled_task` | 无 | 是 | 依赖阻塞 |
-| `scheduled_tasks.py` | `delete_scheduled_task` | 无 | 是 | 依赖阻塞 |
-| `search.py` | `web_search` | 无 | 否 | 依赖阻塞 |
-| `search.py` | `similar_image_search` | 无 | 否 | 依赖阻塞 |
-| `search.py` | `deep_research` | query | 否 | 依赖阻塞 |
+| `global_search.py` | `global_search` | 无 | 否 | 部分实现（已接入生产 Web Run：main 注入共享 PostgreSQL 搜索服务；缺端口不注册，按同一 lease 授权，模型提供的 owner/per-type 参数不生效；Core 工具 5/5、Host RAG/工具调用 15/15、Python 搜索/场景 pytest 27/27；Host 行为使用隔离 SQLite/合成 lease，真实 PG/Provider Run 未验收） |
+| `group_context.py` | `group_context_search` | 无 | 否 | 部分实现（Node 定时群任务已接入） |
+| `im.py` | `react` | mood | 否 | 已实现待接入：Core `agent/tools/im.ts` 固定目标为可信当前飞书消息，Host `tools/agent-im.ts` 校验当下消息、启用 Bot、取 token、发回应并回调标记；`main.ts` 没有注册调用。需要实时 Gateway 注入当前消息和标记写入端口。 |
+| `knowledge.py` | `read_knowledge` | 无 | 否 | 部分实现（main 按 lease 注入 owner-bound FS/持久 BM25 索引端口；Node registry/Host 与 Python 知识基准已通过，真实 PG/生产 FS 未验收） |
+| `knowledge.py` | `save_knowledge` | title, content | 否 | 部分实现（main 按 lease 注入 owner-bound 原子 FS 写入及 freshness job；Host RAG resource factory 实际 dispatch 写入/更新/回读和 Python 知识/schema 基准已通过，生产 FS/PG/重启恢复未验收） |
+| `knowledge.py` | `update_knowledge` | knowledge_id | 否 | 部分实现（main 按 lease 注入 owner-bound Markdown 更新及 freshness job；Host dispatch 与 Python 知识/schema 基准已通过，生产 FS/PG/重启恢复未验收） |
+| `knowledge.py` | `delete_knowledge` | knowledge_id | 是 | 部分实现（生产 Linux Web Run 按持久确认开放，owner Markdown 软删除与 RAG 失效已进隔离 PostgreSQL 恢复用例；实际用户确认与 Provider 续轮待验收） |
+| `link_buttons.py` | `send_link_buttons` | message, buttons | 否 | 部分实现（Web artifact 已接生产 Run；IM 平台投递/持久回执待接） |
+| `mcp.py` | `manage_mcp_servers` | action | 是 | 部分实现 |
+| `memory.py` | `remember` | 无 | 否 | 部分实现（Linux Node Web Run 按能力接入） |
+| `memory.py` | `search_memory` | query | 否 | 部分实现（main RAG factory 按 lease 接入 owner scope、持久快照与可选 embedding；Host/Core dispatch 通过，IM group/member scope、真实 PG/Redis/Provider 与生产索引消费者未验收） |
+| `meta.py` | `call_tool` | tool_name, arguments | 否 | 已完成并接入 Web：Core `tools/call-adapter.ts` 与 `run/tool-ports.ts` 在计划前有限解析目标，并于计划、分派和确认恢复时复核入口及目标的最新授权，目标沿正式 Schema/确认/注册路径执行，可信转发来源随检查点持久化，结果按原调用 ID 续轮。Node Core `tool-ports.test.ts`、`input-feedback.test.ts` 本轮 **21/21**，Python `test_tool_schema_security_contract.py -k call_tool` 本轮 **2/2**；正式 `startServer` HTTP/SSE 隔离 PostgreSQL/Redis 集成另已实际执行嵌套读取/写入并验证副作用和续轮（历史 **1/1**）。真实外部 Provider 与部署未验收。 |
+| `meta.py` | `get_tool_schema` | tools | 否 | 已完成并接入 Web：生产 Run 按当前 lease registry 的授权 capabilities 执行 schema discovery；真实 HTTP/SSE discovery event 验证仅返回请求的授权工具 schema 名称。Core `note-reads.test.ts` **6/6**，真实生产 Host 集成 **1/1**；Python schema selection 近邻测试此前有通过记录，本轮未重跑 pytest。 |
+| `meta.py` | `use_skill` | id | 否 | 部分实现（main per-lease Skill registry 已接入；真实 PostgreSQL/Provider Run 未验收） |
+| `meta.py` | `ask_user` | kind, title, body | 否 | 部分实现（普通 choice/question 已进入生产 Web Run，按可信配置发现并经 lease 授权后调用持久交互激活/恢复；form 与 user_sandbox 授权未开放，真实 PostgreSQL/Redis/Provider 及 Python pytest 本轮未验收） |
+| `note.py` | `note_search` | 无 | 否 | 已完成并接入 Web：生产 Run 真实调用 owner-scoped Mind reader；隔离 PG 中搜索命中己方笔记并排除异主正文。Core 笔记读取本轮 **6/6**，生产 HTTP/SSE/PG/Redis 集成 **1/1**；Python pytest 本轮未运行。 |
+| `note.py` | `note_get` | node_id | 否 | 已完成并接入 Web：生产 Run 真实读取 owner 节点、逐行正文及物理行号；异主 node_id 返回安全 not-found 且不泄露标题/正文。Core 笔记读取本轮 **6/6**，生产 HTTP/SSE/PG/Redis 集成 **1/1**；Python pytest 本轮未运行。 |
+| `note.py` | `note_create` | 无 | 否 | 部分实现（生产租约注册器、PostgreSQL 写入/Undo/收据和持久索引更新已验收，真实 Provider 未验收） |
+| `note.py` | `note_update` | node_id | 否 | 部分实现（生产租约注册器、PostgreSQL 写入/Undo/收据和持久索引更新已验收，真实 Provider 未验收） |
+| `note.py` | `note_delete` | node_id | 否 | 部分实现（生产 Web Run 复用 Core 普通 note 软删及持久收据；Host dispatch 覆盖删除/恢复，真实 PG/Python pytest 未验收） |
+| `note.py` | `note_restore` | node_id | 否 | 部分实现（生产 Web Run 复用 Core CAS 恢复事务；Host dispatch 验证原正文可恢复，真实 PG/Python pytest 未验收） |
+| `note.py` | `note_undo` | 无 | 否 | 部分实现（生产 Web Run 复用 Core owner-scoped 最近咕咕 note 选择与收据重放；Host dispatch 验证真实调用，真实 PG/Python pytest 未验收） |
+| `overview.py` | `get_upcoming` | 无 | 否 | 已完成并接入 Web：真实生产 Run 从 Core owner 项目查询与 Host owner 日历 reader 读取，按可信账号时区计算日期范围并合并排序；隔离 PostgreSQL 回归验证 owner 事件可见、异主事件不可见。Python 旧行为测试此前 2/2 通过，本轮 Node 通过隔离 PostgreSQL/Redis 和环回合成 Provider 的真实 HTTP/SSE 调用链。 |
+| `overview.py` | `get_dashboard_stats` | 无 | 否 | 已完成并接入 Web：生产 Run 使用可信时区和 Core owner-scoped PostgreSQL 聚合统计，真实结果续入 Provider 请求；覆盖项目/事件/文件/联系人计数和异主联系人隔离。 |
+| `projects.py` | `list_projects` | 无 | 否 | 已完成并接入 Web：实际生产 Run 经可信 lease 调用 Core owner-scoped 项目服务，真实 PostgreSQL 结果续入 Provider 请求并验证异主项目不泄漏。Node 项目工具 12 项通过；Python 项目筛选与 owner 基准此前通过，本轮未重跑 pytest。 |
+| `projects.py` | `update_project` | 无 | 否 | 已完成并接入 Web：真实生产 Run 按项目名称更新隔离 PostgreSQL 摘要并回读确认 owner 副作用；Core 持久修改回归此前通过，本轮 Host 主链已实测。Python 项目修改基准此前通过，本轮未重跑 pytest。 |
+| `projects.py` | `create_project` | project_name, start_date, deadline | 否 | 已完成并接入 Web：生产 Run 实际创建项目并通过隔离 PostgreSQL 回读 owner、默认 pending 状态、高优先级和标准阶段；Core 项目工具回归 12 项通过，Python `test_project_tools.py` 创建/阶段/优先级等基准此前通过，本轮未重跑 pytest。 |
+| `projects.py` | `set_color` | color | 否 | 已完成并接入 Web：真实生产 Run 传入语义色并在隔离 PostgreSQL 验证映射为既有渐变存储值；Core 项目修改回归此前通过，Python 色彩基准此前通过，本轮未重跑 pytest。 |
+
+| `projects.py` | `archive_project` | 无 | 否 | 已完成并接入 Web：真实生产 Run 归档 owner 项目并在隔离 PostgreSQL 回读确认 archived 标记；Core Host 组合覆盖归档与取消归档，Python 归档行为此前通过，本轮未重跑 pytest。 |
+| `projects.py` | `delete_project` | 无 | 是 | 部分实现（已接入具备持久确认和文件日志的生产 Linux Web Run；隔离 PostgreSQL、Local 文件和恢复 Worker 回归已覆盖，真实确认交互待验收） |
+| `projects.py` | `get_project` | 无 | 否 | 已完成并接入 Web：生产 Run 经 Core owner reader 和 Host PostgreSQL 文件概览端口读取项目/文件数；异主 ID 返回不存在且不执行文件 reader。Host 隔离 PG **1/1**、主链集成 **1/1**；Python 项目详情此前 **7/7**，本轮未重跑 pytest。 |
+| `projects.py` | `add_stage` | label | 否 | 已完成并接入 Web：生产 Run 创建项目后实际追加阶段，隔离 PostgreSQL 核对已提交阶段。Core durable stages/registry 回归此前通过，Python 默认 key 与插入顺序基准此前通过，本轮未重跑 pytest。 |
+| `projects.py` | `remove_stage` | stage | 否 | 已完成并接入 Web：生产 Run 实际删除指定阶段并验证剩余阶段和待办仍在隔离 PostgreSQL；当前阶段回退语义由 Core/Python既有回归覆盖，本轮未重跑 pytest。 |
+| `projects.py` | `rename_stage` | stage, new_label | 否 | 已完成并接入 Web：生产 Run 按唯一名称重命名阶段，随后按稳定 key 重排并保留阶段/待办；Node 与 Python 重名必须使用 key 的历史回归未在本轮重跑。 |
+| `projects.py` | `update_stage` | 无 | 否 | 已完成并接入 Web：生产 Run 向指定阶段新增待办，之后 set_stages 保留其稳定 key 与待办身份；隔离 PostgreSQL 回读确认未完成状态，Node/Python 待办行为回归此前通过。 |
+| `projects.py` | `set_stages` | stages | 否 | 已完成并接入 Web：生产 Run 以稳定 key 保留原阶段和待办身份、增加后再删除另一阶段；隔离 PostgreSQL 回读确认最后保留项及当前阶段回退，Node/Python重排和数据保留回归此前通过。 |
+| `scheduled_tasks.py` | `list_scheduled_tasks` | 无 | 否 | 已完成并接入 Web：真实 Agent Run 经 owner-scoped PostgreSQL reader 和可信 workspace/filesystem 能力投影；结果只含 owner 的独立任务，不含日历提醒或异主任务。Core 定时任务/工具测试 **3 文件 7/7**，生产 HTTP/SSE/PG/Redis 集成 **1/1**；Python pytest 本轮未运行。 |
+| `scheduled_tasks.py` | `create_scheduled_task` | schedule_name, instruction, schedule_kind | 是 | 部分实现（Web 按消费者能力接入） |
+| `scheduled_tasks.py` | `update_scheduled_task` | 无 | 是 | 部分实现（Web 按消费者能力接入） |
+| `scheduled_tasks.py` | `delete_scheduled_task` | 无 | 是 | 部分实现（已接入生产 Web Run，需启用持久确认；隔离 PostgreSQL 验证真实删除、回滚、收据重放及 RAG 索引清理；Redis 通知和完整确认交互待验收） |
+| `search.py` | `web_search` | 无 | 否 | 部分实现 |
+| `search.py` | `similar_image_search` | 无 | 否 | 部分实现 |
+| `search.py` | `deep_research` | query | 否 | 部分实现 |
 | `shell.py` | `shell` | command | 是 | 退役/重设计（工具保留，真实隔离后端待验收） |
-| `skill_management.py` | `list_skills` | 无 | 否 | 已实现待接入 |
-| `skill_management.py` | `create_skill` | skill_name, description_short, body, related_tools, managed_by | 否 | 依赖阻塞 |
-| `skill_management.py` | `update_skill` | id | 否 | 依赖阻塞 |
-| `skill_management.py` | `delete_skill` | id | 是 | 依赖阻塞 |
-| `time.py` | `get_current_time` | 无 | 否 | 已实现待接入（Core Harness 已测） |
-| `trash.py` | `list_trash` | 无 | 否 | 已实现待接入（共享回收站只读PG后端） |
-| `trash.py` | `restore_file` | file_id | 否 | 已实现待接入（共享 Host 恢复服务与持久调用收据） |
-| `trash.py` | `restore_folder` | folder_id | 否 | 已实现待接入（共享 Host 恢复服务与持久调用收据） |
+| `skill_management.py` | `list_skills` | 无 | 否 | 部分实现（main per-lease registry 已接入 owner scoped metadata reader；真实 PostgreSQL/Provider Run 未验收） |
+| `skill_management.py` | `create_skill` | skill_name, description_short, body, related_tools, managed_by | 否 | 部分实现（生产 Web lease 复用共享用户技能管理服务，真实 Provider 未验收） |
+| `skill_management.py` | `update_skill` | id | 否 | 部分实现（生产 Web lease 复用共享用户技能管理服务，真实 Provider 未验收） |
+| `skill_management.py` | `delete_skill` | id | 是 | 部分实现（生产 registry 与 PostgreSQL 验证 owner、管理者、目标版本和收据重放，确认意图与 Provider 使用替身） |
+| `time.py` | `get_current_time` | 无 | 否 | 已完成并接入 Web：生产 Run 经 Core 注册器实际分派，时区从 PostgreSQL 的 owner 偏好读取；模型传入 `timezone=UTC` 仍返回可信账号的 Asia/Tokyo。结果日期、星期、时分秒结构经真实 Provider 续轮检查。历史 Python `test_time_tool.py` 1/1 已通过；本次 Node 验收为隔离 PostgreSQL/Redis 和环回合成 Provider。 |
+| `trash.py` | `list_trash` | 无 | 否 | 已完成并接入 Web：真实 Agent Run 经 Host PostgreSQL 回收站 reader 返回 owner 的软删除文件；异主文件不进入 Provider 续轮，时间戳保留微秒。Core `trash.test.ts` **4/4**，生产 HTTP/SSE/PG/Redis 集成 **1/1**；Python 回收站 pytest 曾在隔离临时环境 **1/1** 通过，本轮未重跑。 |
+| `trash.py` | `restore_file` | file_id | 否 | 部分实现（per-lease 生产端口已接入；隔离 PostgreSQL 恢复回归需配置后验收） |
+| `trash.py` | `restore_folder` | folder_id | 否 | 部分实现（per-lease 生产端口已接入；隔离 PostgreSQL 恢复回归需配置后验收） |
 | `trash.py` | `permanent_delete` | 无 | 是 | 依赖阻塞 |
 | `undo.py` | `undo_last_action` | 无 | 否 | 依赖阻塞 |
+| `web.py` | `http_get` | 无 | 否 | 部分实现（Core契约；安全网络端口、HTML/PDF提取及生产接入缺失；Python基准见 `agent/test_tool_schema_security_contract.py`、`agent/test_tool_schema_validation.py`、`platform/test_io_retry_contract.py`） |
+| `web.py` | `web_download` | url | 否 | 部分实现（已接入生产 Web 租约和安全公网出站；隔离 PostgreSQL、临时文件及发布收据回归通过。显式绑定工作区落点及真实远端未验收） |
+| `workspaces.py` | `delete_workspace_directory` | directory_id | 是 | 依赖阻塞 |
+| `workspaces.py` | `list_workspaces` | 无 | 否 | 已完成并接入 Web：生产 Run 经 Core owner-scoped PostgreSQL reader 返回账号默认工作区，结果进入 Provider 后续请求；Core/Host workspace owner 与停用项行为测试此前通过。 |
+| `workspaces.py` | `get_workspace` | workspace_id | 否 | 已完成并接入 Web：生产 Run 使用数据库中账号自己的 workspace_id 读取详情并续入 Provider；Core/Host 测试覆盖异主资源“不存在”语义，本轮真实集成验证默认目录详情。 |
+| `workspaces.py` | `create_workspace` | workspace_name, kind | 否 | 依赖阻塞 |
+| `workspaces.py` | `update_workspace` | 无 | 否 | 已完成并接入 Web：生产 Agent Run 经 Core 声明更新事务同步工作区/目录显示名，保持物理目录键不变；隔离 PostgreSQL 回读确认持久副作用。Core 工作区工具行为在本轮对应批次通过，生产 HTTP/SSE/PG/Redis 集成 **1/1**；Python pytest 本轮未运行。 |
+| `workspaces.py` | `unlink_workspace` | workspace_id | 是 | 依赖阻塞 |
 
 ### 日历与画布七项待迁移工具复核（2026-11-17）
 
 生产接线复核：`createWebAgentRagRunAuthorization` 当前只配置并授权 `search_conversations`、`search_memory`；即使把七项端口传入 registry，Web Run 准备阶段也不会发现它们。须由可信 Run 配置与授权同时开放实际具备能力的工具，并在执行时重新验证 lease。现有 `createScheduledTaskDeliveryTargets` 只列出用户可选的群和私聊可用性，不生成日历提醒所需的可信投递目标；不能直接作为提醒 resolver。旧 Python 对 QQ 群的提醒要求明确选择群聊或私聊，选择当前群时从可信 IM 上下文取群标识，并按需补入 QQ 渠道；Web Run 没有该群上下文时须拒绝当前群投递。上述是源码核对，尚未构成生产接线或真实服务验收。
 
-Web 提醒目标增量：`apps/web-host/src/domains/agent-sessions/tools/agent-calendar-reminder-targets.ts` 复用定时任务的 owner 私聊目标解析，在解析前后验证 Web dispatch lease，拒绝其他运行身份及缺少群上下文的当前群请求。新增 `apps/web-host/tests/agent/agent-calendar-reminder-targets.test.ts` 覆盖私聊、错身份、群目标和过期 lease；因当前 devserver Mutagen 会话存在冲突，未同步或运行该测试，构建亦未运行。此端口尚未装配到生产 Agent Run，提醒消费者及真实 PostgreSQL/Redis 尚未验收。
+Web 提醒目标增量：`apps/web-host/src/domains/agent-sessions/tools/agent-calendar-reminder-targets.ts` 复用定时任务的 owner 私聊目标解析，在解析前后验证 Web dispatch lease，拒绝其他运行身份及缺少群上下文的当前群请求。devserver 测试前核对源码与用例哈希一致；`agent-calendar-reminder-targets.test.ts` **2/2 通过**，覆盖私聊、错身份、群目标、过期 lease、解析期间 lease 失效及取消传播。Mutagen 有冲突，未 flush。此端口尚未装配到生产 Agent Run；devserver Python Worker 的提醒消费行为已确认，但 Node Host 与 Worker 共用数据库以及真实 PostgreSQL/Redis 仍未验收。
 
-`apps/web-host/src/domains/agent-sessions/tools/agent-calendar-write-ports.ts` 将上述提醒解析与 Core 事件读取、创建、更新端口组合，要求 Host 注入同一 lease、定时任务目标解析和提交后发布器；该组合入口尚无生产调用方，未运行构建或回归，不改变 `create_event`、`update_event` 的生产状态。
+`apps/web-host/src/domains/agent-sessions/tools/agent-calendar-write-ports.ts` 将提醒解析与 Core 事件读取、创建、更新端口组合，要求 Host 注入同一 lease、定时任务目标解析和提交后发布器。当前 `main.ts` 已在 per-lease resource factory 调用该组合并允许 `create_event`/`update_event` 进入生产 Web registry；真实 PostgreSQL、提醒投递消费者与 Provider 后续轮仍未验收。
 
 新增 `apps/web-host/tests/agent/agent-calendar-write-ports.test.ts`，计划经 Host 组合入口和 registry dispatch 验证临时 SQLite 的事件与提醒创建、更新、通知及撤权；使用合成 lease 和投递端口。devserver 同步冲突尚未解除，测试未运行，不能作为通过证据。
 
@@ -192,17 +203,19 @@ Web 提醒目标增量：`apps/web-host/src/domains/agent-sessions/tools/agent-c
 
 确认门事务引用现在包含完整可信运行绑定、交互 ID 和收据 ID，供未来事务内重新核验批准记录；引用本身不授予权限。devserver 目标源码与用例哈希一致后，确认、日历删除和画布编辑回归重跑 **48/48 通过**，Core `typecheck` 通过；测试使用临时 SQLite 与合成确认端口，生产 claim 仍未装配。
 
-本次 Goal 只处理以下七项；`canvas_delete_note`、`canvas_disconnect` 与 `canvas_delete` 已新增 Core ToolDefinition 和可选 Host registry 端口，但没有生产确认接线，不能将共享实现或合成回归计为生产迁移完成：
+本次 Goal 只处理以下七项；当前 `main.ts` 已按 lease 装配删除端口、可信确认及交互恢复，但真实 PostgreSQL/Redis/Provider 运行仍未验收，故按部分实现统计：
+
+当前树定向复验：Core `calendar-create.test.ts`、`calendar-update.test.ts`、`calendar-delete.test.ts`、`canvas-edits.test.ts`、`confirmation.test.ts` 历史记录为 **54/54 通过**。本轮重新构建 Core 成功；Host 确认授权、画布端口、注册器、Core Chat wake、交互响应/消费六文件 **56 通过、2 个 PostgreSQL 用例跳过、0 失败**。其中确认授权测试验证 fence 递增后权限 epoch 稳定，而活动执行 lease 仍按新 token/fence 复核。旧 Python 行为基准日历/提醒/画布/删除撤销/创建幂等七文件 **66/66 通过**，fixtures 使用每测试内存 SQLite、fakeredis 与临时存储；测试及旧 Python 实现哈希与 devserver 一致。Host production `tsc -p tsconfig.build.json --noEmit` 当前仅报并行终端模块 `ws` 声明及其隐式参数错误；本轮 `main.ts`、确认、交互和画布接线文件无诊断。真实 PG/Redis/Provider、提醒消费者和跨进程恢复未验收。
 
 | 工具 | Python 行为基准 | Node 现有实现与具体缺口 | 状态 |
 | --- | --- | --- | --- |
-| `create_event` | `backend/tests/scheduling/calendar/test_calendar_tools.py::test_create_event_shapes_and_inline_reminders`、`backend/tests/api/test_create_idempotency.py` | `packages/core/src/agent/tools/calendar.ts` 注册 Core 创建端口；`event-create.ts`、`create-store.ts` 同事务保存事件、提醒、RAG job、Undo 和调用收据。可信 Host 注入提醒渠道/目标解析，按旧工具保留 `all_day` 归一、提醒顺序与结果形状，并用 session 作为 Undo 上下文。SQLite ToolRegistry dispatch 覆盖全天/定时、提醒/群目标、过去提醒拒绝、项目缺失错误、owner 授权、取消和同调用重放。devserver `calendar-create.test.ts` 3/3、Host registry 25/25；Core build/typecheck 通过。对应旧 Python 基准本轮通过（见复验记录）；生产 Host 未装配日历写端口，Agent Run 未接工具派发。 | Core/Node与Python行为回归通过；生产Host日历写端口/Run接线阻塞 |
-| `update_event` | `backend/tests/scheduling/calendar/test_calendar_tools.py::test_update_event_validations_and_apply`、`backend/tests/scheduling/events/test_event_atomic_update.py`、`backend/tests/scheduling/events/test_event_update_reminders.py` | `packages/core/src/agent/tools/calendar.ts` 提供 ID/标题/日期定位、无字段与 `all_day` 校验、可信 owner 目标解析、当前版本 CAS、幂等收据和结果映射；`event-update.ts`、`mutation-store.ts` 复用同事务事件更新、提醒自动改期/整体替换、Undo、RAG job 与提交后通知。Node 行为回归覆盖标题候选、提醒 ID 保留/新建/清空、缺项目/过去时间拒绝、过期版本冲突、撤权、回滚和重放。devserver `calendar-update.test.ts` 3/3、跨 SQLite/PostgreSQL 的 `mutation-store.test.ts` SQLite 用例 2/2；Core build/typecheck 通过，Host registry 25/25。对应旧 Python 原子更新与提醒基准本轮通过（见复验记录）；生产 Host 尚未注入日历读写与提醒目标解析，Agent Run 未消费注册器。 | Core/Node与Python行为回归通过；生产Host日历写端口/Run接线阻塞 |
-| `delete_event` | `backend/tests/scheduling/calendar/test_calendar_tools.py::test_delete_event_single_blocked_then_confirmed`、`test_delete_event_batch_validation_and_confirmed`、`backend/tests/agent/test_agent_delete_undo.py` | `packages/core/src/agent/tools/calendar.ts` 提供事件 ID/标题/日期解析、目标快照确认与收据重放；`event-delete.ts` 复用软删服务，最多 50 项单事务、单条聚合 Undo、提醒停用与提交后通知。Host registry 只在可信确认 gate 和事务内 claim 同时注入时注册。devserver Core 删除行为回归 4/4、Core build/typecheck 通过，Host registry 25/25；对应旧 Python 删除与撤销基准本轮通过（见复验记录）；生产 Agent Run 未装配。 | Core/Node与Python行为回归通过；生产确认/Run接线阻塞 |
-| `canvas_delete` | `backend/tests/mind/test_mind_canvas_gaps.py::test_canvas_delete_batch_and_single_with_confirmation` | 新增 `createCanvasDeletePort/Tool`，复用 Mind 级联删除服务，支持单项与最多 20 项批量；owner 过滤、级联目标/版本快照、可信确认、事务内 claim、同事务调用收据和批量回滚，单项/批量结果形状按 Python。Agent 旧实现不记录 Undo，迁移同样不额外创建 Undo。Core `canvas-edits.test.ts`/`confirmation.test.ts` 37/37、Host registry 25/25 通过；对应旧 Python 画布基准本轮通过（见复验记录）；生产 Host 未装配确认端口。 | Core/Node与Python行为回归通过；生产确认/Run接线阻塞 |
-| `canvas_delete_note` | `backend/tests/mind/test_mind_canvas_gaps.py::test_canvas_batch_guards_and_delete_note_confirmation`、`backend/tests/mind/test_mind_canvas_tools.py` 中便笺删除/恢复用例 | 新增 `createCanvasDeleteNotePort/Tool`，复用 `applyCanvasEdits` 和 Mind 便笺删除服务，按 owner 锁定目标版本与全部存活视图项；最多 20 项，保留 Python 单项/批量返回形状、事务 Undo/视图清理与收据重放。Host registry 仅在提供持久确认 gate 和事务内 claim 时注册。Core `canvas-edits.test.ts`、`confirmation.test.ts` 本轮套件 37/37 通过；Host registry 25/25 通过；对应旧 Python 便笺基准本轮通过（见复验记录）。生产 Host 未装配该端口。 | Core/Node与Python行为回归通过；生产确认/Run接线阻塞 |
-| `canvas_disconnect` | `backend/tests/mind/test_mind_canvas_gaps.py::test_canvas_disconnect_batch_validation_and_confirmed` | 新增 `createCanvasDisconnectPort/Tool`，复用 Mind 关系删除服务，支持单项及最多 50 项有序批量；owner/画布过滤、目标快照确认、事务内 claim、操作收据和批量原子回滚。与旧 Agent 直接删除行为一致，不额外创建 Undo。Core `canvas-edits.test.ts`/`confirmation.test.ts` 37/37、Host registry 25/25 通过；对应旧 Python 关系删除基准本轮通过（见复验记录）；生产 Host 未装配确认端口。 | Core/Node与Python行为回归通过；生产确认/Run接线阻塞 |
-| `canvas_batch` | `backend/tests/mind/test_mind_canvas_gaps.py::test_canvas_batch_guards_and_delete_note_confirmation`、`backend/tests/mind/test_mind_canvas_tools.py` 中批量操作用例、`backend/app/services/canvas/batch.py` | `packages/core/src/mind/canvas-edits.ts` 与 `packages/core/src/agent/tools/canvas.ts` 已实现 20 项有序批操作、同事务复用既有 Mind 用例、owner/画布校验、request_id 收据重放与冲突、整批回滚及便签删除确认。可信Core端口先解析便签/视图集合和版本摘要，再绑定持久确认；claim 仍须由 Host 在业务事务内实现。旧 Python 批操作基准本轮通过，但未运行跨语言逐字段比较；生产 main/Run 未注入确认端口。 | Core/Node与Python行为回归通过；待生产Host确认能力与Run接线 |
+| `create_event` | `backend/tests/scheduling/calendar/test_calendar_tools.py::test_create_event_shapes_and_inline_reminders`、`backend/tests/api/test_create_idempotency.py` | `packages/core/src/agent/tools/calendar.ts` 注册 Core 创建端口；`event-create.ts`、`create-store.ts` 同事务保存事件、提醒、RAG job、Undo 和调用收据。`main.ts` 为每个可信 lease 注入该端口和 owner 受限提醒目标解析，并允许该工具进入 Web registry。Node 与 Python 行为回归通过（见复验记录）；真实 PostgreSQL 写入、提醒消费者与外部 Provider 后续轮尚未验收。 | 生产 Run 代码路径已接入；真实存储/投递验收待完成 |
+| `update_event` | `backend/tests/scheduling/calendar/test_calendar_tools.py::test_update_event_validations_and_apply`、`backend/tests/scheduling/events/test_event_atomic_update.py`、`backend/tests/scheduling/events/test_event_update_reminders.py` | `packages/core/src/agent/tools/calendar.ts` 提供 ID/标题/日期定位、无字段与 `all_day` 校验、可信 owner 目标解析、当前版本 CAS、幂等收据和结果映射；`event-update.ts`、`mutation-store.ts` 复用同事务事件更新、提醒自动改期/整体替换、Undo、RAG job 与提交后通知。`main.ts` 已为可信 lease 注入该端口并允许进入 Web registry。Node 与 Python 行为回归通过（见复验记录）；真实 PostgreSQL、提醒投递与 Provider 后续轮尚未验收。 | 生产 Run 代码路径已接入；真实存储/投递验收待完成 |
+| `delete_event` | `backend/tests/scheduling/calendar/test_calendar_tools.py::test_delete_event_single_blocked_then_confirmed`、`test_delete_event_batch_validation_and_confirmed`、`backend/tests/agent/test_agent_delete_undo.py` | Core 事件目标快照、确认 gate、事务内 claim、软删/提醒停用、Undo 和收据已实现；`main.ts` 按 lease 注入日历删除端口、独立 action 确认和现有 publisher。交互激活/投影/响应已接入；Node 六文件组合回归 **56 通过、2 个 PG 用例跳过、0 失败**。确认恢复的真实 PG/Redis、提醒消费者和 Provider Run 未验收。 | 部分实现；生产存储与投递待验收 |
+| `canvas_delete` | `backend/tests/mind/test_mind_canvas_gaps.py::test_canvas_delete_batch_and_single_with_confirmation` | Core 级联删除服务实现 owner 过滤、目标/版本快照、事务内 claim、操作收据和整批回滚；`main.ts` 仅在确认密钥可用时按 lease 注入独立 action gate 与 Mind publisher。真实 PG/Redis 确认恢复和 Provider Run 未验收。 | 部分实现；确认恢复待验收 |
+| `canvas_delete_note` | `backend/tests/mind/test_mind_canvas_gaps.py::test_canvas_batch_guards_and_delete_note_confirmation`、`backend/tests/mind/test_mind_canvas_tools.py` 中便笺删除/恢复用例 | Core 复用 `applyCanvasEdits` 和 Mind 删除服务，固定 owner、目标版本及存活视图项；最多 20 项，保留事务 Undo、视图清理与收据重放。`main.ts` 注入独立 action gate 和 Mind publisher；真实 PG/Redis 确认恢复与 Provider Run 未验收。 | 部分实现；确认恢复待验收 |
+| `canvas_disconnect` | `backend/tests/mind/test_mind_canvas_gaps.py::test_canvas_disconnect_batch_validation_and_confirmed` | Core 关系删除服务支持单项/最多 50 项有序批量、owner/画布过滤、目标快照、事务 claim、收据和原子回滚；Host 按 lease 注入独立 action gate 与 relation publisher。真实 PG/Redis 确认恢复和 Provider Run 未验收。 | 部分实现；确认恢复待验收 |
+| `canvas_batch` | `backend/tests/mind/test_mind_canvas_gaps.py::test_canvas_batch_guards_and_delete_note_confirmation`、`backend/tests/mind/test_mind_canvas_tools.py` 中批量操作用例、`backend/app/services/canvas/batch.py` | Core 实现 20 项有序批操作、owner/画布校验、request_id 收据重放、整批回滚及删除便笺确认；Host 按 lease 注入独立 action gate 和 Mind publisher。真实 PG/Redis 确认恢复与 Provider Run 未验收。 | 部分实现；确认恢复待验收 |
 
 
 2026-11-17 日历/画布七项当前树复验：旧 Python 基准在 devserver 的临时 Python 3.12 venv、隔离空环境/配置路径下串行运行日历工具、事件原子更新/提醒、Mind Canvas gaps 与画布工具 **60/60 通过**；另运行事件创建幂等和日历删除恢复用例 **3/3 通过**，合计 **63/63**。pytest fixtures 使用内存 SQLite、fakeredis 和临时存储，不读取运行配置或真实用户数据。Node Core build/typecheck 通过；目标 Core Vitest **8 文件、59 通过、3 跳过、0 失败**，跳过为未配置隔离 PostgreSQL URL 的子用例；Host `agent-tool-registry.test.ts` **25/25**。确认 gate、事务 claim 和提醒目标 resolver 使用合成端口，未连接真实 PG、平台投递或生产 Agent Run。生产 `main.ts` 仍无 Agent Run/reconstructor caller；破坏性工具仅在可信持久确认 gate 与事务 claim 同时提供时注册，生产端口未接入，不能开放调用。
@@ -215,31 +228,27 @@ Web 提醒目标增量：`apps/web-host/src/domains/agent-sessions/tools/agent-c
 
 2026-11-17 `update_event` devserver 回归：Core build/typecheck 通过；包含创建、更新、删除、画布编辑、确认、Markdown Skill、Calendar Store 的临时 Vitest 配置共 **59 项通过、3 项跳过、0 失败**；跳过项为未配置隔离 PostgreSQL URL 的子测试。Host `agent-tool-registry.test.ts` **25/25**。新增测试数据均为临时 SQLite 与合成 owner。生产 Agent Run、Host 平台提醒目标解析及 Python pytest 未验收/未运行。
 
-2026-11-17 生产接线复核及 Host 端口回归：当前 `apps/web-host/src/main.ts` 仍未创建 `AgentChatService`、`createWebAgentReconstructor` 或 dispatch worker/supervisor，也未向 `createApp` 提供 Agent Chat/interaction service；`createWebAgentRagRunAuthorization` 只授权 `search_conversations` 与 `search_memory`。七项日历/画布写工具因此没有生产发现或执行调用链。Core `createConfirmationGate`、Host 加密意图存储和交互描述/激活零件分别存在，但当前没有 Host 组合器把它们接入工具执行；`createPostgresTrustedIntentStore.saveIntent` 没有生产调用方。工具授权、持久确认和事务内再授权不可由零件存在推定完成。`main.ts` 还没有启动一次性/重复定时任务 poller；已有 `createRepeatingPoller` 明确标记为实验实现，不可装配生产。Node 日历提醒的真实消费链因此未验收，写入提醒表不等于用户会收到提醒。devserver 上目标 Host 源码与测试哈希和本地完全一致后，串行运行日历写端口、画布写端口、可信确认存储和 Reconstructor 回归：**6 项通过、3 项跳过、0 失败**；跳过项需隔离 PostgreSQL 与 Redis。通过项使用临时 SQLite、合成确认/lease；不证明真实事务 claim、提醒消费者、Redis、PostgreSQL 或生产 Run 已验收。现有端口在 registry 未注入可信确认 gate 时隐藏删除/画布破坏工具；Host 确认和 Agent Run 生产装配仍待实现，因此保持未接入。
+2026-11-17 生产接线复核及 Host 端口回归：当前 `apps/web-host/src/main.ts` 仍未创建 `AgentChatService`、`createWebAgentReconstructor` 或 dispatch worker/supervisor，也未向 `createApp` 提供 Agent Chat/interaction service；`createWebAgentRagRunAuthorization` 默认只授权 `search_conversations` 与 `search_memory`。本轮给它增加了一个仅接受七个目标工具名的 Host 显式开关，并继续在发现和每次执行时核验当前 owner/session/run 与有效 dispatch lease；该选项目前没有生产调用方，因此七项日历/画布写工具仍没有生产发现或执行调用链。Core `createConfirmationGate`、Host 加密意图存储和交互描述/激活零件分别存在，但当前没有 Host 组合器把它们接入工具执行；`createPostgresTrustedIntentStore.saveIntent` 没有生产调用方。工具授权、持久确认和事务内再授权不可由零件存在推定完成。`main.ts` 还没有启动一次性/重复定时任务 poller；已有 `createRepeatingPoller` 明确标记为实验实现，不可装配生产。Python `gugu-worker` 在 devserver 当前为 active/running；旧 `scheduled_tasks.reconcile()` 会将所有启用且未运行的一次性任务挂入 APScheduler，`execute_task()` 按任务渠道调用 Agent 和实际投递器，未按 `event_id` 排除事件提醒。Node `insertCalendarEventReminder()` 写入 `user_id/event_id/start_at/schedule_kind='once'/channels/delivery_targets` 对应字段。但 devserver 没有运行中的 Node Web Host service，Node Host 与 Python Worker 数据库实例是否相同未验证，所以不能据此认定 Node 创建的提醒已有生产消费者。目标 Host 源码与测试哈希和本地完全一致后，串行运行日历写端口、画布写端口、可信确认存储和 Reconstructor 回归：**6 项通过、3 项跳过、0 失败**；跳过项需隔离 PostgreSQL 与 Redis。通过项使用临时 SQLite、合成确认/lease；不证明真实事务 claim、跨端共享提醒消费者、Redis、PostgreSQL 或生产 Run 已验收。现有端口在 registry 未注入可信确认 gate 时隐藏删除/画布破坏工具；Host 确认和 Agent Run 生产装配仍待实现，因此保持未接入。
+
+Web RAG/Run 端口回归在 devserver **7/7 通过**，包含新增“Host 显式启用日历/画布名称、按当前 lease 逐次授权、配置外工具/身份漂移/租约失效拒绝”用例；Web Host production `tsconfig.build.json --noEmit` 通过。用例使用合成 lease 和临时 SQLite，不验收真实 PostgreSQL、Redis、确认收据或生产调用方。
+
+2026-11-17 当前树追加目标行为复验：先核对 Core/Host 实现、定向用例和确认存储文件的 devserver SHA-256 与工作区一致，再在 devserver 重建 Core。Core 日历创建/更新/删除、画布批量编辑和确认 **5 文件、54/54 通过**；Host 提醒目标、日历写端口、画布写端口与可信意图/提示 **6 通过、2 跳过、0 失败**，两项跳过均需隔离 PostgreSQL。覆盖实际日历注册器 dispatch 的事件/提醒创建更新、撤权拒绝，及无确认端口时危险画布工具不注册；合成 SQLite/lease/投递能力不证明 PostgreSQL claim。此前运行中失败的终态投影用例恢复真实 Host 投影后通过。Python 本轮未重跑；既有旧 Python 基准见上方记录。`main.ts` 仍无 Agent Chat/Reconstructor/dispatch caller，Node Web Host service 未部署运行，Node 与 Python 提醒消费者共享数据库也未验证，故七项仍不是生产 Run 已接入。
 
 ### Prompt Skill Markdown 资源目录约定（2026-11-17）
 
 此项是 `backend/agent/skills/*.md` 的 Prompt Skill 资源加载，不属于 `backend/agent/tools/` 的 `BaseSkill` 工具组盘点。Core Markdown 放在 `packages/core/resources/skills/*.md`；`scripts/build-skills.mjs` 自动扫描该目录的 `.md` 文件，跳过 `README.md`，通过 frontmatter 的 `id` 和元数据生成 bundled 文档及注册项，不读取 `manifest.json`。源码与资源目录统一使用 `skills` 命名。devserver `builtin.test.ts` **8/8 通过**，覆盖无清单自动发现、头部注册、重复 ID 拒绝和正文按需重读。该回归不代表 Python BaseSkill 工具迁移或生产 Agent Run 接线完成。
 
 2026-11-17 Host Skills 模块命名收口：Web Host 相关源码和测试统一放在 `modules/skills/`、`tests/skills/`；目录工厂统一为 `createSkillToolCatalog`，路由/API 行为不变。devserver Node 26.13 对 4 个相关行为测试文件运行，**3 项通过、1 个文件加载失败**；失败文件 `user-list.test.ts` 在导入 `app.ts` 时因 devserver 缺少 `@modelcontextprotocol/client` 依赖未执行，不计通过。其他并行 Mutagen 冲突未处理。
-| `web.py` | `http_get` | 无 | 否 | 部分实现（Core契约；安全网络端口、HTML/PDF提取及生产接入缺失；Python基准见 `agent/test_tool_schema_security_contract.py`、`agent/test_tool_schema_validation.py`、`platform/test_io_retry_contract.py`） |
-| `web.py` | `web_download` | url | 否 | 依赖阻塞 |
-| `workspaces.py` | `delete_workspace_directory` | directory_id | 是 | 依赖阻塞 |
-| `workspaces.py` | `list_workspaces` | 无 | 否 | 已实现待接入 |
-| `workspaces.py` | `get_workspace` | workspace_id | 否 | 已实现待接入 |
-| `workspaces.py` | `create_workspace` | workspace_name, kind | 否 | 依赖阻塞 |
-| `workspaces.py` | `update_workspace` | workspace_id | 否 | 已实现待接入 |
-| `workspaces.py` | `unlink_workspace` | workspace_id | 是 | 依赖阻塞 |
 
 ## 领域依赖、既有实现与 Python 回归入口
 
-以下为最相关入口而非全部传递依赖。pytest 路径相对 `backend/tests/`；本次盘点未执行任何 Node 或 Python 测试。父任务完成切片后应单列运行结果及替身范围。
+以下为最相关入口而非全部传递依赖。pytest 路径相对 `backend/tests/`；各工具的实际回归结果按对应切片记录，不由共享服务/端口存在推定通过。
 
 | 工具领域 | 现有 Node 入口与剩余依赖 | Python 基准/重点回归 |
 | --- | --- | --- |
 | 时间 | 可直接注入时钟和可信请求时区；需真实 ToolPort 参数/权限/结果调用回归 | `agent/test_time_tool.py`：日期、星期、时分秒；补时区跨日/DST/非法时区行为 |
 | 联系人 | `apps/web-host/src/domains/agent-sessions/tools/agent-client-tool.ts` 有 create/update；registry 仅接 list/create；复用 Core `data.clients`，删除需确认端口，更新需错误与候选解析验收 | `agent/test_tool_schema_validation.py`、`agent/test_tool_isolation.py`、`agent/test_agent_delete_undo.py`；Core/Data 相关项目桥接测试 |
-| 项目/阶段 | `agent-project-tool.ts`、`agent-project-update-tool.ts` 有独立 adapter；create 已接独立 registry，update 未接；共享项目应用服务、幂等 toolCallId、Undo/事件和阶段规则需逐项接线 | `projects/test_project_tools.py`、`projects/test_projects_core.py`、`projects/test_undo_phase4.py`、`projects/test_project_trash.py`；防阶段/todo 丢失、模糊匹配错误、重放重复创建 |
+| 项目/阶段 | Core `projects.ts`、`projects/creation-port.ts`、`projects/mutation-port.ts` 承载工具契约和共享项目规则；Web Host 注入可信 PG/Kysely、文件操作及持久收据。未注册、仅供测试调用的旧 `agent-project-update-tool.ts` 已退役，替代行为由 Core 项目与 mutation 回归覆盖；`agent-project-tool.ts` 只保留生产注册器仍调用的 dispatch 幂等键编码 | `projects/test_project_tools.py`、`projects/test_projects_core.py`、`projects/test_undo_phase4.py`、`projects/test_project_trash.py`；Node 替代回归 `packages/core/tests/agent/tools/projects.test.ts`、`project-mutations.test.ts`、`project-durable.test.ts`，验证 owner/歧义/阶段待办/CAS/取消/确认/持久收据 |
 | 日历/概览 | `domains/calendar`、项目共享服务存在；Agent 参数映射、用户时区、日历联系人/提醒、Undo 事务需复用，不能复制 SQL | `scheduling/calendar/test_calendar_tools.py`、`test_regressions_datetime_and_version.py`、`test_tz_dateattribution.py`、`test_calendar_reminders.py` |
 | 文件读写/grep/目录 | `packages/fs`、`domains/files` 与授权服务；需 owner/session 可信定位端口、个人/项目/工作区范围、读媒体结果、安全写入、Undo 与冲突语义。单纯文件句柄不代表 read_file 全语义 | `platform/security/test_phase3_filesystem_policy.py`、`test_phase4_filesystem_authorization.py`、`agent/knowledge/test_grep_tool.py`、`storage/files/test_create_file_workspace_space.py`、`test_folder_workspace_write_access.py`、`test_undo_files.py` |
 | 文件压缩/解压/发送/附件 | `domains/files` 有归档/下载服务，渠道发送与授权附件查询/媒体投影仍需端口；路径穿越、压缩炸弹/配额、取消及部分成功需验收 | `agent/test_tools_archive.py`、`agent/test_tool_video_media_dispatch.py`、`agent/context/test_tool_media_projection.py` |
@@ -1003,7 +1012,7 @@ Core 交互协调器测试 18 项、Host 注册器与交互描述 16 项通过�
 
 隔离 PostgreSQL 随机 schema 的工具调用测试 1 项通过，覆盖真实授权查询、空会话、最近顺序、JSON null、截断、跨用户、非法上限、撤权、组禁用与取消。Core Agent 运行测试 63 项通过，新增用例将工具结果送入模型下一轮（历史读取为明确替身）；Host 注册器 14 项通过；Python 对应 owner/跨用户测试 2 项通过。Core 构建和 Host 类型检查通过。第一次新增 PG 测试误将注册器追加的错误提示当成业务不一致，修正测试以检查原始错误字段后重跑通过，未放宽旧断言。真实 Redis、生产运行、桌面 SQLite 和 RAG 未验收。
 
-历史正文读取共享用例补充：将 owner、最近条数、结构化记录过滤及 1200 码点截断收敛至 Core 会话领域的 PostgreSQL/SQLite 共用查询，Web Host 复用该服务。正式临时 SQLite 和隔离 PostgreSQL 均经真实工具注册器验证；Core 历史及 Agent 运行测试 74 项、PG 测试 1 项、Python owner/越权测试 2 项通过。Core 构建通过；SQLite 桌面 Host 与生产 Run 仍需显式装配，RAG 历史搜索未因此完成。
+历史正文读取共享用例补充：将 owner、最近条数、结构化记录过滤及 1200 码点截断收敛至 Core 会话领域的 PostgreSQL/SQLite 共用查询，Web Host 复用该服务。正式临时 SQLite 和隔离 PostgreSQL 均经真实工具注册器验证；Core 历史及 Agent 运行测试 74 项、PG 测试 1 项、Python owner/越权测试 2 项通过。Core 构建通过；Web Host 现已按 lease 装配正文读取端口，桌面 SQLite Host 尚未装配，RAG 历史搜索另按独立行为验收。
 
 旧版行为补充对照：Python、正式 SQLite 和隔离 PostgreSQL 均验证先按最近普通消息限量、再过滤空正文，以及 1200 Unicode 码点截断；Python 与 Node 注册器另验证带 `#` 的全角数字 ID 和字符串 limit 按原契约归一。Python 行为/owner 测试 4 项、SQLite 测试 11 项、PG 工具测试 1 项通过。另一次 Core 默认 Vitest 启动因并行会话新增测试尚未登记而失败；在临时配置中仅运行本次已有测试文件后 11 项通过，没有修改对方测试或分类清单。该证据仅覆盖历史对话读取，不代表其余所有工具均已完成逐项等价验收。
 
@@ -1432,15 +1441,383 @@ Host claim 服务和写端口组合器尚未接到七项工具的生产 `main.ts
 
 ### Agent Runtime 组合迁入 Core（2026-11-17）
 
-将原 Web Host `agent-runtime.ts` 中 Provider 与 Canonical Runner 的可复用组合迁至 `packages/core/src/agent/runtime.ts`，由 `@gugu/core/agent` 公共出口提供 `createAgentRuntime` 和 `AgentRuntimeOptions`。Agent Run 循环、上下文准备、工具调度仍由 Core Runner 执行；Web Host 的 `agent-persistent-runtime.ts` 只组合 PostgreSQL Run Store/lease/启动状态、Redis 取消与事件订阅，并从 Core 引用通用 Runtime。原 Host Runtime 文件已删除，无兼容转发层。身份、权限、Provider binding、数据库和 Redis 能力仍由 Host 端口提供；Core 导出及合成测试不代表 Web `main.ts` 已完成生产装配。
+将原 Web Host `agent-runtime.ts` 中 Provider 与 Canonical Runner 的可复用组合迁至 `packages/core/src/agent/runtime.ts`，由 `@gugu/core/agent` 公共出口提供 `createAgentRuntime` 和 `AgentRuntimeOptions`。Agent Run 循环、上下文准备、工具调度仍由 Core Runner 执行；Web Host 的 `agent-persistent-runtime.ts` 只组合 PostgreSQL Run Store/lease/启动状态、Redis 取消与事件订阅，并从 Core 引用通用 Runtime。原 Host Runtime 文件已删除，无兼容转发层。身份、权限、Provider binding、数据库、Redis 和 Node HTTP Provider transport 由 Host 端口提供；Core 不再隐式创建平台网络 transport，缺少 transport 时按不支持失败关闭。Core 导出及合成测试不代表 Web `main.ts` 已完成生产装配。
 
 devserver Core build 通过；Node `agent-runtime.test.ts`、`conversation-tools-runtime-sqlite.test.ts`、`use-skill-runtime.test.ts` 共 **7/7 通过**，覆盖 Provider 输出与终态持久化、真实注册器下 owner 限定 `search_conversations` 工具结果续轮，以及按需 Markdown Skill 加载和发现后撤权拒绝。测试使用合成 Provider/Run Store 和隔离 SQLite，不连接 PostgreSQL、Redis 或生产模型。Host production TypeScript 检查首次运行时使用了过期 Core dist，并报 `formatAgentProjects` 未导出；重建 Core 后重新检查 **通过**。Agent Runtime 本身没有 Python 对照测试；日历/画布旧 Python 工具行为回归见同日 110/110 pytest 记录。PG/Redis 持久化、生产身份/权限来源及 `main.ts` Agent Chat/Run 接入仍待验收。
 
+### 定时任务文件授权撤销（2026-11-18）
+
+`update_scheduled_task` 支持单项撤销、批量撤销和停用时撤销。Core 先校验全部目标归属并按 ID 锁定独立任务，再复用现有授权撤销、审计和调用收据事务。批量结果返回排序后的 ID 和实际撤销数，重放只读原收据。Web Host 注入生产确认码清理与审计指纹，本轮撤权回归使用合成的确认码清理端口。发放文件授权仍需定时任务可信确认和工作区执行能力。
+
+devserver Core 定时写入和依赖边界 **4/4**，旧 Python `tests/scheduling/tasks/test_scheduled_task_workspace.py` **10/10**。隔离 PostgreSQL/Redis Host 合批最终 **4 通过、1 失败、0 跳过**。撤权、一次性及周期任务投递、周期触发防重均通过。首轮发现周期测试夹具缺少 `event_id`，改用共享 schema 后通过。生产 Host 立即运行测试首轮通过，后两轮在微信附件断言失败，合成微信服务未收到预期的两次附件票据请求，文字送达断言通过。生产类型检查、Core 构建及 `git diff --check` 通过；外部渠道和实际部署仍未验收。
+
+### 定时任务删除的持久确认（2026-11-18）
+
+`agent-persistent-runtime.integration.test.ts` 使用隔离 PostgreSQL、Redis 和真正的 Web 交互响应服务签发、兑换并处理确认。批准批量删除前目标仍在，其他 owner 无法兑换，取消保留目标。批准后 Core 删除、RAG 墓碑入队和调用收据一起持久化，合成 Provider 下一轮收到原调用结果，重复兑换不会再次发布删除通知。真实外部模型、通知服务与部署未验收。
+
+devserver Core **4/4**，旧 Python `tests/agent/test_confirm_gate.py` 与 `tests/scheduling/tasks/test_scheduled_task_workspace.py` **51/51**。Python 首轮隔离快照遗漏守卫脚本，补入脚本后全组通过。Web Host 合批最终 **6 通过、1 失败、0 跳过**，新增删除持久确认用例通过。前一快照的定时任务合批 **5/5**。最终快照的生产入口测试已通过微信附件对应断言，之后新增的远程图片邮件断言失败，合成 SMTP 收到的邮件缺少预期附件。Core 构建、Web Host 生产类型检查与 `git diff --check` 通过。
+
+### Web 邮件持久确认（2026-11-18）
+
+`agent-persistent-runtime.integration.test.ts` 经真实 Redis 签发与兑换确认码、PostgreSQL 持久交互响应及 Core 执行 `send_email`。确认前不调用发送端口，异主确认被拒，取消只结束等待。批准后合成 SMTP 端口仅调用一次，原工具结果进入合成 Provider 续轮。公开确认投影与持久邮件收据均不含收件人完整地址、正文或 SMTP 凭据。定时预授权邮件继续由另一个生产 Host 用例覆盖环回 SMTP。
+
+旧 Python `tests/platform/email/test_email_tool.py`、`test_email_attachments.py` **27/27**。Core 邮件、远程图片和任务写入定向 **12/12**。当轮默认测试发现起初因新增图片用例尚未登记而拒绝启动，定向回归使用隔离快照内的临时配置，快照退出后清理。生产外部 SMTP、真实 Provider 和部署服务未验收。
+
+Web Host 最终合批 **9/9**，Core 构建与 Host 生产类型检查通过。生产 Host 定时入口经安全出站合成代理获取远程图片并投递到环回 SMTP，也验证私网跳转及下载期间任务被停用时不暂存。夹具的合成 Provider 只依据本轮定时用户消息选择场景，支持纯文本和文本块，避免误匹配同账号其他任务的摘要。此前微信附件和远程邮件附件失败路径在最终同一快照中均已通过。
+
+### 知识删除的持久确认（2026-11-18）
+
+`agent-persistent-runtime.integration.test.ts` 经隔离 Redis 确认码、Web 响应服务和 PostgreSQL 持久恢复调用 `delete_knowledge`。批准前文件保持原样，跨 owner 确认被拒，取消保留文件和索引。批准后仅将当前 owner 的 Markdown 标为停用并移除对应索引，同名异主条目及同账号其他条目均保留。计划和结果各持久化一次，合成 Provider 续轮收到 `{ success: true, knowledge_id }`，重复兑换不再执行。
+
+devserver Core **13/13**、Web Host **6/6**，Core 构建和 Host 生产类型检查通过。旧 Python `tests/agent/knowledge/test_knowledge.py`、`tests/agent/rag/test_rag_knowledge_delta_index.py` **42/42**，覆盖删除墓碑、历史保留和精确移除旧向量分块。Node 合批还包含文件发布后提交失败、索引恢复和旧索引 Worker 围栏用例。测试使用临时授权目录、隔离 PostgreSQL/Redis 和合成 Provider，实际部署与外部模型未验收。
+
+### MCP 配置删除的持久确认（2026-11-18）
+
+`manage_mcp_servers(remove)` 经隔离 Redis 确认码、Web 响应服务和 PostgreSQL 持久 Run 恢复。直接提交异主或系统配置 UUID 时不生成确认；取消保留目标；批准后只删除当前 owner 的目标及其工具快照。异主快照和同名系统配置均保留。删除不解密凭据，也不向远端连接；确认投影和收据不暴露合成密文。重复兑换没有再次删除或失效运行时，合成 Provider 的续轮收到目标 UUID 和成功结果。
+
+devserver Core **6/6**、Web Host **5/5**、旧 Python `tests/agent/mcp/test_mcp_settings_api.py` 与 `tests/agent/mcp/test_mcp_user_tools_e2e.py` **42/42**。Node 合批包含真实 PostgreSQL 配置创建、修改和删除。Core 构建、Web Host 生产类型检查和 `git diff --check` 通过。运行时失效通知与 Provider 为合成端口；新增和修改的私密凭据交互全链、真实外部连接及部署仍待验收。
+
+### MCP 新增的私密凭据与恢复（2026-11-18）
+
+`manage_mcp_servers(add)` 带 Header 槽位时，经隔离 Redis 兑换确认、PostgreSQL 持久 Run 恢复，生成当前账号和配置版本限定的表单。认证提交端拒绝异主，配置有变返回 HTTP 409 且不写凭据。原版本提交成功后，实际信封加密写入 PostgreSQL，重复提交拒绝。公开表单、事件和 Run 检查点均不含明文，合成 Provider 只收到完成状态。此前 Web 路由错误地把这个已知的配置版本冲突映射成 500，本轮补齐受控错误映射。
+
+devserver Core **6/6**、Web Host **9/9**、旧 Python `tests/agent/mcp/test_mcp_settings_api.py` 与 `tests/agent/mcp/test_mcp_user_tools_e2e.py` **42/42**。Core 构建、Web Host 生产类型检查及 `git diff --check` 通过。新用例使用真实加密、隔离 PostgreSQL/Redis 和合成 Provider，无外部 MCP 连接及部署验收。
+
+### MCP 凭据轮换（2026-11-18）
+
+扩展持久确认集成用例，新增账号有旧凭据时取消、批准轮换、用新表单提交及恢复 Run。用例检查取消保留原配置和密文，批准后旧密文清除且仅失效一次运行时缓存，版本变化返回 409，恢复匹配配置后新凭据加密写入。续轮与操作收据不得包含私密值。devserver Core MCP/可移植边界 **6/6**，Host 隔离 PostgreSQL/Redis、凭据路由和认证回归 **9/9**，旧 Python MCP 配置 API/用户工具基准 **42/42**；Core build 与 Web Host production typecheck 通过。Node 集成确认取消保留原密文、批准后单次失效缓存、新表单加密写入、版本漂移拒绝及续轮/收据不泄密。测试未连接外部 MCP 或生产部署。
+
+### 定时任务邮件工具预授权（2026-11-18）
+
+创建或更新时请求 `authorized_tools=[send_email]`，由当前 Web 租约的持久确认绑定输入及更新目标版本。事务内认领确认后才写任务和收据，无 SMTP 能力时拒绝写入。显式清除授权沿用普通写入，实际发送仍由定时消费者按当次任务、owner 和租约复核。新增测试覆盖确认前无写入、篡改参数、目标漂移、清除授权和提交重放；Redis 确认、PostgreSQL 恢复与消费者授权读取也有集成回归。devserver Core **7/7**、Host 隔离 PostgreSQL/Redis **8/8**、旧 Python 定时任务/邮件基准 **30/30**，Core build 与 Web Host production typecheck 通过。验证覆盖确认绑定、撤权、任务执行授权和重放；外部 SMTP 与生产部署仍待验收。
+
+### Agent Runtime 固定请求前缀恢复（2026-11-18）
+
+检查点恢复从 Web Reconstructor 移入 Core `agent/run/reconstruct.ts`，新运行和恢复共用 `agent/context/assemble.ts` 的固定前缀组装规则。Core 校验 Run 与会话快照归属、访问范围、消息数及请求指纹，检测正文变化后拒绝继续恢复。Web Host 传入已验证租约、会话快照、请求 builder 和摘要函数，并继续持有 PostgreSQL、Redis、模型配置及 HTTP 适配。现有 `main.ts` 的生产 Chat 组合入口通过这个 Web 适配器调用 Core。
+
+devserver 定向回归：Core 重建、调度、上下文和可移植边界 **41/41**，Web Host 持久运行、重建、调度和 RAG 工厂 **7/7**，无跳过。隔离 PostgreSQL、Redis 与合成 Provider 验证了重启式重建、前缀变更拒绝、取消和事件重放。Core 构建与 Web Host production TypeScript 检查通过。旧 Python `tests/agent/test_run_lifecycle.py`、`tests/agent/test_run_finalize.py`、`tests/agent/test_tool_history_request_boundary.py` **26/26**，用于对照运行生命周期、收尾和工具历史请求边界。未改 Python 实现或断言。真实外部模型、已部署 Web 服务和 Desktop Agent 入口未验收，本切片不新增工具注册项。
+
+### Agent Runtime 的 Core/Host 边界复核（2026-11-17）
+
+Core `createAgentRuntime` 只组合 Provider Harness、Canonical Runner 与可信 Host 端口；Node transport 的默认选择改由 Web Host 持久运行时注入。新增 Runtime 行为断言：Core 调用缺少 transport 时返回 `unsupported`，显式注入 transport 后 Provider Run 仍可完成；devserver Core build、Web Host production TypeScript 检查通过，Agent Runtime 测试 **1/1 通过**。测试前核对四个被测/记录文件 SHA-256 一致；Mutagen `gugu2-0` 有 3 项其他冲突，未 flush。生产 `main.ts` 是否装配 Agent Chat/Run、可信身份来源与真实 PostgreSQL/Redis 仍按上文单独验收，不能由此测试推定已接通。
+
+同日把原 Host `agent-chat-service.ts` 中与平台无关的 start/resume/cancel、身份匹配、事件订阅和 dispatch 生命周期用例迁至 `packages/core/src/agent/chat-service.ts` 并从 `@gugu/core/agent` 导出。Core 仅依赖显式 Harness、持久事件、取消、dispatch 和事件投影端口；Web 事件投影、Fastify/SSE、PG/Redis 适配仍留 Host，旧 Host service 文件删除。devserver Core build 通过；Host Chat service 与持久 Runtime 定向测试 **8 通过、1 跳过、0 失败**，跳过项需显式隔离 PostgreSQL/Redis；Web Host production build 通过。首轮回归发现测试 callback 未保留失败终态 `error` 投影，恢复使用真实 Host `projectAgentRunEvent` 后重跑通过。生产 `main.ts` 仍未装配 Agent Chat/Run，本次测试不代表生产入口、真实 PostgreSQL/Redis 或 Provider 已验收。
+
+后续边界修正：Agent 的稳定快照/请求拼装、内部上下文不可复述策略、Web context owner-scope 投影和时区提醒正文从 Host context builder 移入 `packages/core/src/agent/context/builder.ts`。Host 只保留数据源与配置端口装配；Core 行为回归迁入 `packages/core/tests/agent/context/context-builder.test.ts`，覆盖稳定前缀与动态时间分离、owner scope 收缩和 memory 开关下无字段泄露。当前树相关源码、测试、suites 与记录文件 SHA-256 和 devserver 一致后，devserver Core build 通过，迁入的 context builder **3/3 通过**，Web Host production build 通过。测试使用合成上下文，不连接 PostgreSQL、Redis 或模型；不代表 `main.ts` Agent Run 生产装配完成。
+
+补充将通用 Agent 摘要 Provider 绑定从 Web Host `context/agent-compaction.ts` 移入 Core `agent/context/compaction-runtime.ts`，由 `@gugu/core/agent` 导出。Core 负责绑定当前 Run 的模型端口、摘要提示默认值、预算门控、投影惰性创建及可取消重试；Host 只读取 Web 的 `compress_conv.md` 并注入可信模型/Run 配置。Host 摘要实现文件及旧名称已删除，全仓搜索无剩余引用。Core 压缩/上下文回归 **68/68**，Web Host Runtime 与 Provider 配置回归 **2/2**，均在 devserver 通过；Core build 同步通过。测试使用合成 Provider 和配置，不连接真实 Provider、PostgreSQL/Redis；生产身份/权限来源及 `main.ts` Run 装配仍未验收。
+
+随后将 Run 工具注册器绑定、配置快照过滤及发现/分派/收据恢复时的身份边界从 Web Reconstructor 移入 Core `agent/run/tool-ports.ts`。Core 固定可信 owner/session/run 并拒绝身份或配置主体漂移；Host 仅额外检查 `source=web`、session 主体和 MCP/dispatch lease 的平台授权。Core compaction/Run tool ports 定向行为回归 **69/69**，Web Run/RAG/MCP 授权与工具绑定回归 **17/17**，均在 devserver 通过；Web Host production `tsc -p tsconfig.build.json --noEmit` 通过。Core 因工作树内另有未登记测试文件触发分类扫描失败，本轮使用仅包含两个目标文件的临时 Vitest 配置执行；全量 Core `typecheck:tests` 仍被多个既有测试类型错误阻断，新增测试文件及本切片源码不在报错中。测试不连接真实 PostgreSQL/Redis/外部 Provider。生产 `main.ts` 未装配 Run，测试替身不代表生产可用。
+
+补充将 Host `agent-dispatch-worker.ts` 中与平台无关的持久 Run 执行编排迁入 Core `agent/run/dispatch-worker.ts`，并将版本冲突错误作为 Core 契约导出。Core 负责持久队列端口调用顺序、重建版本拒绝、取消转发、Harness start/resume 选择、资源释放、失败启动收据委托和同会话唤醒合并；Host 保留 PostgreSQL dispatch/lease、Redis 取消与事件适配、Web 重建器。后续又将无平台依赖的 ready 扫描、并发限制、订阅故障重试和 supervisor 停止/排空编排迁入 Core `agent/run/dispatch-supervisor.ts`；Host 保留真实 Redis 订阅、PG ready 查询端口和进程生命周期。原 Host worker/supervisor 与无调用方的转发文件删除，Host 集成测试改从公开 Core 入口消费。devserver Core build 通过；dispatch-worker 与 dispatch-supervisor **8/8** 通过；Web Host production `tsc -p tsconfig.build.json --noEmit` 通过。测试使用合成 lease、Harness、订阅和持久端口，不连接 PostgreSQL 或 Redis；不代表生产 `main.ts` Agent Run 接入。
+
+2026-11-17 交互恢复 worker 边界补齐：将 Host `agent-interaction-worker.ts` 内的平台无关认领恢复顺序、已消费收据防重放、终态处理、Run 身份校验及可停止轮询移入 Core `agent/interactions/recovery-worker.ts` 并由 `@gugu/core/agent` 导出；Host runtime wrapper 只提供 PostgreSQL 队列、Run Store、Harness、凭据失效与诊断端口。原 Host worker 单测迁入 Core，新增身份不匹配时拒绝完成且释放认领的回归。devserver Core build 通过，恢复 worker 单测 **4/4 通过**；dispatch worker/supervisor、交互恢复与上下文 builder 相关 Core 回归合跑 **4 文件、15/15 通过**；Web Host production TypeScript 检查通过。Host PostgreSQL interaction 测试因未设置隔离数据库 URL 跳过。未运行 Python pytest（此 Runtime 编排没有独立 Python pytest 对照）；实际恢复 Worker/Chat 仍未由 `main.ts` 装配，不能记为生产接入。
+
+`main.ts` 中仅用于技能选择目录及 MCP 工具名去重的 `skillToolRegistry` 原先使用 `authorize: async () => true` 读取 `capabilities`。现改用只读 `catalog()`，该目录注册器的 dispatch 授权固定拒绝；`tool-catalog.test.ts` **1/1 通过**，覆盖停用项隐藏且目录查询不调用授权能力接口。Web Host production `tsconfig.build.json --noEmit` 通过，`apps/web-host/src` 中已无生产 `authorize: async () => true`。此目录能力不构成 Agent Chat/Run 接入。
+
+`main.ts` 中仅用于技能选择目录及 MCP 工具名去重的 `skillToolRegistry` 原先使用 `authorize: async () => true` 读取 `capabilities`。现改用只读 `catalog()`，目录注册器的 dispatch 授权固定拒绝；`tool-catalog.test.ts` **1/1 通过**，覆盖停用项隐藏且目录查询不调用授权能力接口。`apps/web-host/src` 生产代码中已无 `authorize: async () => true`。该目录能力不构成 Agent Chat/Run 接入。
+
 同日 Python 旧行为基准复验：在 devserver `/tmp` 独立 venv 安装项目及测试依赖后，串行运行日历工具/更新/提醒、画布缺口/工具/Undo、Agent 删除撤销、确认门和创建幂等 **9 个 pytest 文件，110/110 通过**。`conftest.py` 使用每测试全新内存 SQLite、临时配置和 storage、fakeredis；未设置真实 Redis 或 PostgreSQL URL，不访问用户运行数据。安装过程未修改 Python 源码、pytest 断言或仓库环境。该结果补足旧 Python 行为回归，不证明 Node PostgreSQL/生产 Host 接入。
+
+2026-11-17 当前树复验：先确认目标源码、Node 行为测试和本清单在 devserver 的 SHA-256 与工作区一致，Mutagen `gugu2-0` 有 3 项冲突，因此未 flush。devserver Core build 通过；Core 日历创建/更新/删除、画布批量编辑和确认回归 **54/54 通过**；Host 日历提醒目标、日历写端口、画布危险端口、Core Runtime、RAG/Run 授权和可信意图集合 **14 通过、3 跳过、0 失败**；Web Host 生产 TypeScript build 通过。跳过为需显式隔离 PostgreSQL/Redis 的 Runtime 集成和可信确认 claim/目标测试。首次 Host 扩大运行遇到 `agent-run-store-postgres.ts` 解析错误；在该共享文件当前哈希与工作区一致后复跑，Host 集合通过。该共享文件由并行工作修改，本轮未改写。测试使用隔离 SQLite、合成 lease/Provider/授权和 fake Pool；未连接真实 PostgreSQL、Redis、Provider。旧 Python 基准见上方 110/110 记录，本轮未重跑。
+
+该复验没有改变生产接入状态：`main.ts` 仍未组装 `createAgentChatService`、`createWebAgentReconstructor` 或 dispatch worker/supervisor；确认 store/write-port 也没有生产 caller。随后只读检查 devserver systemd 当前只有 `gugu-worker` 与 `gugu-gateway` 为 active/running，没有 Node Web Host 服务。日历写入后由哪一个已部署提醒消费者读取、Node/Python 是否共享同一生产数据库均未验证。七项日历/画布工具继续保持未接入生产 Agent Run；不能将本次合成端口回归或已运行的 Python worker 记成生产接通。
+
 ### Node IM 记忆维护的 RAG freshness（2026-11-17）
 
 Admin IM 记忆维护 apply 现在通过 Host 注入的 RAG mutation 端口处理 group/member 文件变更：首次写入前先撤回 owner 的旧 memory 投影并 fence 旧 generation；文件写入后按 owner/platform/bot/scope type/scope ID 推进 `memory_reflection_cursors.scope_version`，再排入完整 `memory` 来源重建。这样使 Worker 的 scope 缓存随 revision 变化，并避免索引更新前继续返回旧文档。写入中途失败时仍为已触碰的文件刷新 revision/队列，旧投影保持隐藏。
 
-Node 定向测试 **14/14 通过**：IM maintenance apply 行为 **5/5**，RAG worker/source 生命周期 **9/9**。新共享用例使用临时 SQLite 与隔离 FS，经实际 mutation adapter 验证旧索引先不可见、scope revision 变化、持久 Worker 重建后只返回新 group 文档；覆盖跨 owner/tombstone scope 的既有边界。Core、FS build 和 Web Host production `tsc --noEmit` 通过。测试不连接真实 PostgreSQL、Redis、embedding Provider；本轮 Python pytest 未运行。首次新用例的等待窗口短于隔离 Worker 的 1 秒轮询间隔，调整该用例间隔到 10ms 后复验通过。
+devserver 本轮复验：定向 Node **14/14 通过**（IM maintenance apply **5/5**，RAG worker/source **9/9**），已包含“重建队列更新失败时 scope revision 回滚”及“已墓碑 scope 不推进 revision”断言；临时 SQLite/隔离 FS 经真实 mutation adapter 与持久 Worker 验证旧索引隐藏、revision/job 原子性和更新文档重建。Core 与 FS build、Web Host production `tsconfig.build.json --noEmit` 通过。全量 Web Host `pnpm typecheck` 失败，共 **96 个诊断，96 个在 `tests/`、0 个在 `src/`**；production 检查单独通过。对应 Python `tests/im/test_im_memory_admin.py` 未运行成功：devserver `python3` 无 pytest 模块。测试不连接真实 PostgreSQL、Redis 或 embedding Provider；Mutagen 仍有 3 处旧目录构建产物/依赖冲突，源码哈希与本轮验证文件一致。首次 freshness 用例的等待窗口短于隔离 Worker 的 1 秒轮询间隔，调整该用例间隔到 10ms 后复验通过。
 
 此项只接通 Node Admin IM 记忆维护文件写入者，不代表普通 owner memory/reflection producer 已迁入 Node。Node RAG Worker 仍需显式配置为唯一消费者，生产 PostgreSQL/Redis 尚未验收；生产 `main.ts` Agent Chat/Run 仍未装配 RAG tool registry。
+
+2026-11-17 Web RAG resources 工厂调用回归：`createWebAgentRagResources` 在 source 未显式提供 memory 向量搜索时，会从同一 Run RAG 的可信 embedding resolver/transport 创建 owner-bound prompt-memory 向量服务；显式 Host source 注入仍优先。`agent-web-rag-resources.test.ts` 用隔离 FS 写入 51 条 pattern 及版本匹配向量，再从工厂返回的真实 ContextData loader 验证超额相关条目依向量选择，并通过实际注册器 dispatch 查询 owner 会话。首次用例因 fixture 未超过 Python 的 50 条触发阈值而失败；修正 fixture 后 devserver 本组 **18 通过、1 跳过、0 失败**，跳过是需 PostgreSQL/Redis 的 Reconstructor 集成。测试使用合成 lease Pool 和 mock embedding transport；未调用真实 Provider、Redis 或 PostgreSQL。资源 factory 到工具边界已验证，生产 `main.ts` caller 仍缺失。
+
+2026-11-17 Web RAG 压缩授权时序回归：重建器在 `Harness.start` 前绑定 Provider；有效预算下，压缩配置和工具 schema 延迟到压缩被调用后读取，避免 pre-start 阶段查询尚未激活的 dispatch lease；无效预算沿用本地回退且不查询工具授权。资源工厂行为测试覆盖绑定时零查询、有效预算延后到执行期查询、无效预算不查询，Node 本地定向测试 **1/1 通过**；Web Host production `tsconfig.build.json --noEmit` 通过。测试使用临时 SQLite/FS、合成 lease/Pool 和 Provider，不触达真实 PostgreSQL、Redis 或 Provider。当前 Mutagen `gugu2-0` 有 3 项冲突，未 flush；本机全量 `typecheck` 被其他测试文件类型诊断阻断，单独 production 检查无诊断。生产 `main.ts` Agent Chat/Run caller 仍未完成，此项只修正 Reconstructor 生命周期边界。
+
+2026-11-17 Agent Run 接线继续：Core Web context builder 现在把 owner 数据源读取的 `userTimezone` 传给静态提示词构造器，并在 snapshot 重建时继续使用同一时区，避免生产 Host 只能捕获固定时区。Core builder 行为回归 **3/3**；Core build 通过。Web Host production TypeScript 检查通过；RAG 9 个 Core 测试文件 **69/69**，RAG resource/授权/Worker Host 测试 **17/17**，resource 调用仍经实际 `search_conversations` registry dispatch。另补齐 Web ToolPort MCP configured 回调的完整 Run 身份校验，并新增 `agent-web-run-lifecycle.ts` 组合 PG dispatch、Core worker/supervisor、Redis cancellation/outbox、Chat preparation 与 AgentChatService。上述行为使用合成上下文/SQLite/Pool/Provider；未连接真实 PG、Redis 或 Provider，也没有在 `main.ts` 创建该生命周期或生产 Reconstructor，因此不能计为生产 Agent Run 已接通。Python pytest 本轮未运行；本地缺少 `backend/.venv/bin/pytest`。
+
+2026-11-17 当前工作区复验：Core RAG 目录与 mind RAG freshness 共 **10 文件、74/74 通过**（使用临时 Vitest 配置，默认配置仍被共享 `tests/suites.json` 漂移阻断）；Host RAG resources、tool ports 与持久索引 worker **17/17 通过**；Web Host production TypeScript `tsc --noEmit` 通过。Python pytest 在当前本地环境因缺少 pytest 模块未能启动。生命周期 helper 已存在，但生产 `main.ts` 仍未提供其真实 Reconstructor/Context resources，也未把 service 传入 `createApp(agentChat)`；所以这些通过只覆盖 RAG Host 端口、worker 与 Core 行为，不代表生产 Web Agent Run 已接通。真实 PG/Redis、BYOK embedding/Provider 与生产 Context 收尾仍未验收。
+
+2026-11-17 Agent Runtime Core 边界补齐：Web Reconstructor 中通用摘要端口的惰性初始化、并发首次绑定复用及绑定失败重试已移入 Core `createLazyAgentCompactionPort`。Host 保留 Web 授权配置读取、按当前 Run 过滤工具 schema 和可信 Provider 绑定；无效预算不访问 RAG 授权，摘要执行失败不会错误地重复绑定。devserver Core build 与 compaction/context **69/69**、Web RAG resource/compaction **1/1** 通过。Web Host production TypeScript 检查本轮失败于共享 `main.ts:1188` 的类型错误（`networkProfile` 推断为 `string`，不符合 `'none' | 'egress'`）；本切片未改该文件。回归使用合成 Provider、临时 SQLite/FS 与隔离 owner，不访问真实 PostgreSQL、Redis 或模型。该迁移不代表生产 `main.ts` 已装配 Agent Run。
+
+2026-11-17 七项日历/画布 Python 行为基准复跑：devserver 临时 venv 安装 pytest、pytest-asyncio、aiosqlite、fakeredis、uuid6、APScheduler，并 editable 安装仓库 `compat/core-python`；在 `PYTHONPATH=.:../compat/core-python/src` 下串行执行 `test_calendar_tools.py`、`test_create_idempotency.py`、`test_event_atomic_update.py`、`test_event_update_reminders.py`、`test_mind_canvas_gaps.py`、`test_mind_canvas_tools.py`、`test_agent_delete_undo.py`，**66 passed、0 failed**。首次 collection 所缺依赖在同一个 `/tmp` venv 补齐；临时环境由命令退出清理，未修改 Python 参考实现、仓库 venv 或运行数据。基准通过不改变生产接入状态：七项工具仍无 `main.ts` Agent Run caller，真实确认授权与提醒消费者仍未验收。
+
+2026-11-17 日历/画布 Node 目标回归复验：devserver Core build 通过；Core `calendar-create.test.ts`、`calendar-update.test.ts`、`calendar-delete.test.ts`、`canvas-edits.test.ts`、`confirmation.test.ts` **54/54 通过**；Web Host `agent-calendar-write-ports.test.ts`、`agent-canvas-write-ports.test.ts` 与 `agent-tool-registry.test.ts` **27/27 通过**。这些测试覆盖 SQLite 事务端口、撤权拒绝及缺持久确认时危险画布/删除工具不注册；Host 删除确认使用合成 gate/claim，不证明真实 PostgreSQL 意图、交互恢复或事务 claim。Node 与 Python 合成行为回归通过仍不代表生产 Run 接线。
+
+2026-11-17 Web Agent 反思队列桥接：新增 Node 收尾适配器，沿用 Python 消费端的 owner/session Redis key、owner 锁、idle ZSET、阈值调度和 trivial-turn 过滤；用户正文只写入既有私有 Redis 队列，读取反思输入时重新校验已持久化的当前用户消息归属，并使用 Host 用户显示名。受限上下文不入队；Redis 故障只产生无参数诊断，不回滚已完成 Run。定向行为回归 **5/5 通过**，覆盖队列 payload/阈值、idle/trivial 筛选、Python 持锁、持久 owner anchor 和失败隔离；同批 RAG tools/resources/Worker 行为回归 **22/22 通过**。测试用合成 Redis 命令与 Pool，不连接真实 Redis/PostgreSQL，也没有启动 Python reflection Worker。该桥接仍由资源工厂持有，`main.ts` 尚无 Agent Run/Reconstructor 调用点，不能算生产接入或 Node 反思算法迁移。当前 `python3 -m pytest --version` 因环境缺少 pytest 模块而未能运行 Python 基准。
+
+2026-11-17 Web RAG Agent 主链装配：`main.ts` 现在在 Redis 可用时构造配置化 Provider binding、可信 owner Web context source、`createWebAgentRagResources`、持久 `createWebAgentReconstructor` 与 PG/Redis `createWebAgentRunLifecycle`，并将其 ChatService 交给 `createApp`；启动/关闭会启动并 drain dispatch supervisor。此 Host 切片只发现和注册真实 `search_conversations`、`search_memory`；Shell/Executor、交互和附件媒体没有授权实现时保持拒绝或报明确不支持，未回退宿主执行。RAG+反思队列定向 Node 行为 **22/22 通过**，Chat Host/route/Reconstructor **5 通过、1 跳过**（PG/Redis 集成需隔离连接），Web Host production TypeScript 检查通过。组件测试使用临时 SQLite/FS、合成 lease/Pool/Redis、mock embedding 和合成 Provider；未连接真实 PostgreSQL、Redis 或外部 Provider，旧 Python pytest 本轮因本机缺少 pytest 模块未运行。代码现已接线，但真实服务生产验收、dispatch schema/索引迁移、Python 旧工具回归和 Node Worker 唯一消费者切换仍未证明；不把合成调用测试计作真实 PG/Redis/Provider 验收。
+
+2026-11-17 日历 Agent Run 接线增量：`createWebAgentRagResources` 接受按可信 lease 创建的 Host 写端口，并只把已提供端口对应的工具名加入 Web Run 配置；`main.ts` 为 `create_event`/`update_event` 注入 Core Kysely 写端口、现有日历变更发布器和 owner 受限提醒目标解析，configured-tool 过滤同步允许这两项。日历删除和画布危险工具未开放，确认/交互链保持独立门控。devserver Core build 通过；Host 日历端口、RAG resource factory、RAG lease 授权及工具 registry **34/34 通过**；Web Host production `tsc -p tsconfig.build.json --noEmit` 通过。Node 回归使用隔离 SQLite/FS、合成 lease/Pool 与端口，未连接真实 PostgreSQL、Redis 或 Provider；Python 对照本增量未重跑，最近一次七项相关基准 **66/66** 见上方记录。devserver 的后台 Worker systemd 单元只读状态为 active，尚未用合成事件验证提醒实际投递。故 `create_event`/`update_event` 有生产 Run 调用路径但仍列“已实现待接入”，真实 PG、提醒投递和 Provider 后续轮未验收。
+
+2026-11-17 Web RAG Agent 主链当前树复验：production `tsconfig.build.json --noEmit` 通过；合并运行 RAG/反思队列、Host Chat/route、Reconstructor 与 RAG index Worker **28 项：27 通过、1 跳过、0 失败**。跳过项是需隔离 PostgreSQL/Redis 的 Reconstructor 重启恢复集成。行为覆盖包括实际 `search_conversations` registry dispatch、RAG 来源授权与活动 lease 复验、owner memory 向量端口、反思队列 Python 兼容语义、Host Chat SSE 认证/断连和持久索引 Worker；依赖为临时 SQLite/FS、合成 lease/Pool/Redis、模拟 embedding/Provider。Python pytest 在本机因缺少 pytest 模块未能启动；`gugu2-0` Mutagen 同步存在 3 项冲突，本轮未 flush。生产 Run 代码已通过 `main.ts → createApp(agentChat) → AgentChatService → dispatch worker → Reconstructor → RAG registry` 装配，但没有用真实 PostgreSQL、Redis、Provider 或 Python pytest 验收；因此生产部署恢复、dispatch schema、Python 基准及 Node RAG Worker 唯一消费者切换仍列为待验收。
+
+2026-11-17 主链当前工具范围补记：生产 `main.ts` 的 lease-bound resources 除 `search_conversations`、`search_memory` 外，还通过共享 Core 日历服务提供 `create_event`、`update_event`。devserver 重跑 Host calendar ports、RAG resources、lease authorization 与 registry **34/34 通过**，覆盖创建/更新撤权、缺能力时不注册、危险操作确认门与生产注册器分组启停；使用隔离 SQLite/FS、合成 PG/lease/授权及端口，真实 PostgreSQL、提醒投递与外部 Provider 未验收。日历删除、画布危险操作、Shell、交互和不支持的附件/媒体输入仍不可用或被拒绝；此补记修正前一段“只发现两项 RAG 工具”的范围描述。
+
+2026-11-17 Python RAG 行为基准复验：先确认 12 个相关 pytest 文件与当前工作区哈希一致，再于 devserver `/tmp` 临时 venv 串行运行 Cython rank/tokenizer、Tokenizer golden、固定相关性语料、旧 `search_conversations`、工具 schema 安全、memory service/unified query、group owner、向量缓存、retriever 与 hybrid，**118/118 通过**。环境使用仓库 requirements 和临时 editable `compat/core-python`，`GUGU_ENV_FILE`/override 指向不存在的临时路径，pytest cache 禁用、bytecode 关闭；Cython 临时构建与 venv 在退出时清理。唯一警告为既有 pytest-asyncio fixture loop scope 与 Sudachi 弃用提示；未访问真实数据库、Redis、用户文件或 Provider。它补回本机缺 pytest 的缺口，但不覆盖 PostgreSQL/Redis integration、production Agent Run 或消费者切换。
+
+2026-11-17 RAG Run 工具范围更正：在既有 lease-bound Agent Run registry 中增加 `read_knowledge`，由 Host 按当前 lease 注入 owner-only FS/时区和持久知识索引读取端口；`read_knowledge` ID 查询读取完整 Markdown，关键词查询固定走 Python 一致的 BM25，不读取向量、不调用 embedding。Host 授权默认关闭该工具，仅在真实 knowledge port 存在时允许配置和注册；测试覆盖实际 registry dispatch、参数错误、撤权、异主/越权 scope 拒绝、BM25 结果及取消/结果边界。devserver Host RAG resources、授权、knowledge adapter 和工具 registry **34/34 通过**；生产 TypeScript 检查通过。当前 Run 已接入 `search_conversations`、`search_memory`、`read_knowledge`、`create_event`、`update_event`。使用临时 SQLite/FS、合成 lease/Pool/Redis、mock embedding/Provider；未验收真实 PostgreSQL、Redis、外部 Provider、提醒投递或进程恢复，RAG Worker 默认消费者仍为 Python。`save_knowledge`/`update_knowledge`、知识写入生产 Run、其他工具组仍待接入。
+
+2026-11-17 知识写工具进入生产 Run：Web Host 按可信 lease 装配 owner-bound Markdown 写端口；`save_knowledge`/`update_knowledge` 仅当该端口存在时进入工具 schema 和授权集合，每次调用仍复验当前 dispatch lease。工具复用 Python 兼容字段/版本逻辑、旧时间戳迁移、owner FS 原子写以及先撤回索引并推进 generation、后写文件和排持久 freshness job 的既有端口；删除工具保持关闭。新增 `agent-web-rag-resources.test.ts` 实际工具 registry dispatch 写入、更新并回读文件，并扩展 authorization 测试检查写权限跟随 lease 撤销。此切片尚未在 devserver 执行（Mutagen 存在远端目录冲突，未 flush），所以回归与 production TypeScript 检查待验收；此前知识写工具 Core **7/7** 和 Host 写入→Worker→索引 **20/20** 只覆盖各自边界，不等同于新生产 Run 调用链通过。
+
+2026-11-17 Agent Runtime 业务编排归属 Core 复核：跨端 Chat Run 生命周期、上下文 snapshot/request builder、dispatch worker/supervisor 与 interaction recovery 的实现位于 `packages/core/src/agent/{chat-service.ts,context/builder.ts,run/,interactions/recovery-worker.ts}`，由 `@gugu/core/agent` 显式导出；原 Host 重复实现及旧测试路径已删除，Host 只保留基于可信 owner/lease 的 PostgreSQL、Redis、HTTP、Provider/配置和生命周期组合适配。复核确认 Core 运行模块不导入 Host、Fastify、PG 或 Redis。devserver Core build 通过；四个 Core 行为测试文件 **15/15 通过**；Host Chat、Context Assembly、dispatch、Runtime 与 Reconstructor **13 通过、4 跳过、0 失败**，跳过均需显式隔离 PG/Redis；Host production `tsc -p tsconfig.build.json --noEmit` 通过。Core 默认 Vitest 入口仍被共享 suite 发现/分类清单不一致阻断，本轮使用 `/tmp` 范围内的临时 Vitest 配置仅运行上述目标文件，未改共享清单。组件回归使用合成端口；真实 PG/Redis claim/lease、跨进程重启恢复和部署服务未验收，Run/Job 总体仍未完成。
+
+2026-11-17 七项日历/画布当前树复验与状态修正：Core build 后，日历 create/update/delete、画布编辑、确认及 Agent Runtime 行为测试 **9 文件、69/69 通过**；Host 日历/画布端口、registry、Reconstructor resources 与交互消费相关测试 **35 通过、5 跳过、0 失败**，跳过项均需隔离 PostgreSQL。Host production `tsc -p tsconfig.build.json --noEmit` 通过；初次检查因 devserver 未链接工作区 `@gugu/sandbox` 失败，按冻结锁文件对 Host 做离线筛选安装后复验通过，未改依赖清单。当前 `main.ts` 确实将 `create_event`/`update_event` 端口注入生产 Run 资源工厂，因此状态从“待接入”调整为“部分实现”；真实 PostgreSQL、提醒投递消费者及 Provider 后续轮未验收。`delete_event`、`canvas_delete`、`canvas_delete_note`、`canvas_disconnect` 与含删除的 `canvas_batch` 仍未注入确认端口；Host interaction activation/projector fail closed，PG dispatch worker 拒绝 `waiting` checkpoint，恢复队列尚未取得并续租可重建 Run 的 dispatch lease。Core/Host 合成回归与配置清单不能代替真实 PG/Redis claim、并发和恢复验收。本轮没有改 Python 代码，Python pytest沿用此前 **63/63** 记录，未重跑。
+
+2026-11-17 Core dispatch 收据传递契约：`AgentDispatchRuntimeLease` 现在允许可信 Host 在完成持久 owner/单次消费校验后附带 `InteractionResolution`；Core dispatch worker 仅在 `mode='resume'` 时将其交给 Harness，Harness 继续核对 pending interaction ID 与收据绑定；`mode='start'` 租约附带 resolution 会被阻断并标为版本冲突。Core dispatch worker 行为回归 **9/9 通过**。这让跨端恢复编排留在 Core，但不表示 Host 已实现安全认领：当前 PostgreSQL dispatch `claim()` 仍拒绝 `waiting` checkpoint，Host interaction resume queue 也未与带 fencing 的 dispatch lease 合并。因此确认写工具仍保持关闭，需继续完成 Host 原子认领/续租/结算、跨进程恢复以及真实隔离 PG/Redis 验收后再开放。
+
+2026-11-17 `use_skill` per-lease 接线复核：生产 `main.ts` 从 `packages/core/resources/skills/*.md` 的自动嵌入文档读取 frontmatter，由 Core `createBuiltinSkillDefinitions` 按 head 注册，并为每个 Web Run 装配 owner scoped 用户 Skill loader；`related_tools` 仍只是描述元数据。新 Host 回归经实际 Core ToolRegistry dispatch 验证 bundled Markdown 正文、用户 Skill owner 隔离和发现后的停用拒绝。devserver Core build 与 Skill production ports、RAG resources、`use_skill` ToolPort 三个 Node 文件 **3/3 通过**。Node 实测使用隔离 SQLite、真实打包 Markdown 和合成用户 Skill 数据/授权；PostgreSQL 与 Provider 使用真实生产组合的端到端 Run 未运行。对应 Python 基准 `backend/tests/agent/test_user_skills.py::test_use_skill_loads_owned_body_and_refreshes_digest` 本轮因 devserver 未安装 pytest 未运行。状态据 main 生产调用路径从“已实现待接入”改为“部分实现”，不计生产完成。
+
+2026-11-17 `list_skills` per-lease 接线复核：生产 `main.ts` 将 Core `createSkillMetadataReader` 注入当次 Agent registry，Run 配置只开放只读 `list_skills`；`related_tools` 不影响授权。Python 基准为 `backend/tests/agent/test_user_skills.py::test_list_skills_returns_only_current_users_metadata_without_bodies` 与 `test_list_skills_requires_account_context`。RAG/resource/registry 组合回归覆盖实际 ToolPort dispatch，Skill 相关 Node Host 测试合计 **10/10 通过**。Node 端使用隔离 SQLite 和合成 owner/技能 metadata；生产 PostgreSQL 与 Provider Run 未验收，Python pytest 本轮未运行。`list_skills` 从“已实现待接入”改为“部分实现”；管理写工具保持未开放。
+
+2026-11-17 Agent Runtime Core 当前树复验：先确认 Core Runtime 源码、对应测试与 devserver 哈希一致，再于 devserver 重建 Core；Core 上下文 builder、dispatch worker/supervisor、interaction recovery **4 个测试文件、17/17 通过**。Host Chat service、Context Assembly、Runtime、Reconstructor 与 dispatch Harness **15 项：13 通过、2 跳过、0 失败**，跳过需隔离 PostgreSQL/Redis。首次直接 Vitest 调用被共享 `tests/suites.json` 发现/分类不一致阻断，随后使用 `/tmp` 临时 Vitest 配置仅选择四个 Runtime Core 文件通过；临时配置已清理。没有改动 suite 清单。Core 与 devserver 源码哈希匹配；本轮未跑 Host production typecheck。验证覆盖合成端口与 `main.ts → createApp(agentChat) → Core AgentChatService → dispatch worker → Reconstructor` 装配，不代表真实 PostgreSQL/Redis claim、Provider、跨进程恢复或部署服务验收。
+
+2026-11-17 Agent Runtime Core 唤醒契约：交互恢复后的 owner/session dispatch 唤醒现由 `packages/core/src/agent/chat-service.ts` 的 `AgentChatService.wake()` 统一校验活动 Run 并发出通知/Worker kick；Host 响应适配器只在持久交互提交后传递已认证 owner 和 session。Core build 通过；devserver `agent-chat-service.test.ts`、`agent-interaction-respond.test.ts` **11 通过、2 跳过、0 失败**，跳过为需隔离 PostgreSQL 的事务用例。相关源码与测试运行前哈希一致。Host production typecheck 首次因 main.ts 与 devserver 尚未同步的旧画布回调诊断失败；确认文件哈希一致后重跑通过。此接口尚未在 `main.ts` 创建/注入交互响应服务，因此危险工具仍保持禁用；不能视作生产交互接入或 PostgreSQL 恢复验收。
+
+2026-11-18 Agent Runtime / 七项危险工具 Host 接线：Core 新增公开 `AgentChatService<I>` 跨端契约，Web HTTP route 复用该 Core 类型；Core 持有 Chat lifecycle 和 owner/session wake，Host 只组合 PostgreSQL、Redis、Fastify 与既有事件投影。`main.ts` 已注入 PostgreSQL 可信交互激活、事件投影、持久响应/恢复入队与 Core wake；无新增 HTTP route。七工具中 `delete_event`、`canvas_delete`、`canvas_delete_note`、`canvas_disconnect` 和含删除的 `canvas_batch` 仅在当前主密钥可用时进入 per-lease registry，各 action 使用独立确认 gate；owner/session/run、账号安全版本、Provider access version 与当期 lease 在准备及写事务中校验。发现 fence 会在确认恢复时递增，因此确认 epoch 只由权限版本构成，执行时仍要求当前 fence/token 有效，避免把旧 lease 权限误当长期确认。Core build 在 devserver 通过；Host 六文件 Node 回归 **56 通过、2 个需 PostgreSQL 的用例跳过、0 失败**；Python 日历/提醒/画布/删除撤销/幂等基准 **66/66 通过**。Web Host production tsc 仍被并行终端文件 `modules/terminals/websocket.ts` 的缺失 `ws` 类型声明及两个隐式 any 阻断，本轮改动文件无诊断。真实 PG/Redis 确认 claim、Provider Run、提醒消费者、跨进程恢复和部署 Host 未验收。Mutagen `gugu2-0` 仍有三处冲突，未 flush。
+
+2026-11-17 知识写工具 Run 回归验收跟进：本地与 devserver 对本次 8 个 TS 源码/测试文件哈希一致，无需 flush 即运行 devserver。Core `knowledge.test.ts` **7/7**、Core typecheck 通过；Host `agent-rag-tool-ports.test.ts` 与 `agent-web-rag-resources.test.ts` **8/8**，后者经实际 resource factory registry dispatch 保存、更新并从 owner FS 回读。Web Host production `tsc -p tsconfig.build.json --noEmit` 有 **2 项诊断**，均在未改动的 `sandbox-egress.ts`，为推断配置类型缺少 `network_profile`；本切片文件未报诊断。Python `test_knowledge.py`、`test_read_knowledge_tool.py`、`test_tool_schema_validation.py` **142/142**；首次运行一项因临时 venv 未构建 Cython 扩展失败，随后将两个扩展编入 `/tmp` 并重跑全组通过。Python 源码和三项 pytest 哈希均与 devserver 一致。使用临时 SQLite/FS、合成 lease/PG authorization 与 Provider/embedding；Cython/venv/temp 配置退出时清理，未触及真实服务。
+
+2026-11-17 `read_conversation` Web Run 接线：`main.ts` 现在按 dispatch lease 注入 `createAgentConversationReadPort(pool)`；Reconstructor 仅当存在该 owner-bound 端口时将 `read_conversation` 加入可信配置，配置过滤器同步允许它，发现及执行仍复验同一 lease。Node 回归经真实 Core production RAG 组合器、工具 registry 和 ToolPort dispatch 验证仅有端口时可发现并读取合成正文；旧隔离 PostgreSQL host adapter 测试本轮因未配置专用 PG 跳过。devserver Core build、Host RAG/历史读取测试 **9 通过、2 个 PG 用例跳过、0 失败**，Web Host production `tsc -p tsconfig.build.json --noEmit` 通过。Python 基准为 `backend/tests/agent/test_conversation_read_parity.py` 与 `backend/tests/agent/test_tool_isolation.py::test_read_conversation_cross_user/test_read_conversation_owner_ok`；本轮未运行 Python pytest。真实 PostgreSQL、Provider Run、桌面 SQLite Host 未验收，故工具仍为“部分实现”。
+
+2026-11-17 `get_current_time` Web Run 接线：`main.ts` 按可信 lease 注入 Host 时钟和 Core ContextData 的 owner 时区读取端口，Reconstructor 只在时钟端口存在时开放授权；模型参数不能覆盖时区，tool result 保留旧字段和 registry 的忽略字段说明。与 `read_conversation` 合并后 devserver Core build、RAG/历史读取/时间 Node 测试 **9 通过、2 个隔离 PostgreSQL 用例跳过、0 失败**，Web Host production typecheck 通过。Node 新组合回归使用隔离 SQLite 和合成 owner/timezone/lease；Python `backend/tests/agent/test_time_tool.py` 本轮未重跑，先前单测通过记录不作为本轮结果。真实 Provider Run 和 PostgreSQL 时区读取未验收，状态为部分实现。
+
+2026-11-17 RAG/会话工具当前树复验与历史记录更正：保持 `gugu2-0` 同步冲突未 flush；本轮所涉 Host/Core 源码和测试哈希与 devserver 一致。Core build 通过；`agent-rag-tool-ports.test.ts`、`agent-web-rag-resources.test.ts`、`conversation-tools-runtime-sqlite.test.ts` 经实际工具注册器、Core SQL reader 和隔离 SQLite 执行 **14/14 通过**；Web Host production `tsc -p tsconfig.build.json --noEmit` 通过。新增读取断言先因 fixture 的 `limit` 窗口预期错误而失败，核对 Python `list_messages` 后按“结构化消息先被 SQL 排除，再取最近 N 条普通消息”修正测试数据预期，未改变生产逻辑。Python 基准沿用本轮前已通过的 `test_conversation_read_parity.py`/`test_tool_isolation.py` 定向结果 **4 通过、62 deselected**；本次未重跑 pytest。工具表和本 README 已更新：`search_conversations`、`read_conversation`、`search_memory` 及知识读写现接入生产 Web Run。所有 Node 工具链验证使用临时 SQLite/FS、合成 lease/Provider/Redis 与 mock embedding；真实 PostgreSQL、Redis、Provider、桌面 Host 和进程恢复仍未验收。较早记录中的“主链尚未接线”“知识写端口尚未验收”保留作历史记录，不代表当前状态。
+
+2026-11-17 `global_search` Web Run 接线：复用 Host 已有 `createGlobalSearchOperations(createPostgresGlobalSearchSources(pool))`，由每个 lease 的 RAG resource factory 注入现有 Core 工具注册器；只有端口存在才加入配置和授权，仍逐次重验同一个 dispatch lease。模型提交的 `owner_id`、`per_type` 不改变可信 owner/每类 20 条上限；工具缺少指定来源明确报不可用。Core 注册器/SQLite 工具回归 **5/5**、Host RAG/工具/历史调用链 **15/15**、Web Host production typecheck 通过；Python `test_global_search.py` 与 `test_search_scenarios.py` **27/27**。Python 通过临时 venv、fakeredis 与隔离 SQLite 执行；Node 使用隔离 SQLite/合成 lease，未连接真实 PG、Redis、Provider。首次 Core suite 入口因共享 `tests/suites.json` 漂移拒绝加载，未改清单，随后用自动清理的 `/tmp` Vitest 配置只选择目标测试通过。此次生产代码接线依赖 Host 已有 PostgreSQL 共享搜索来源，但没有真实 PostgreSQL 或 Provider Chat 端到端验收。
+
+2026-11-17 RAG/知识工具当前 Run 回归复验：devserver Core build 后，`agent-rag-tool-ports.test.ts`、`agent-web-rag-resources.test.ts`、`conversation-tools-runtime-postgres.test.ts` 合并 **12 项：10 通过、2 个需隔离 PostgreSQL 的用例跳过、0 失败**；Web Host production `tsc -p tsconfig.build.json --noEmit` 通过。Node 行为覆盖 owner memory 检索、trusted lease 授权、read_knowledge、save/update knowledge 经实际 resource factory/registry 写入和回读、conversation owner port 条件暴露以及 Host 时区覆盖模型参数。使用隔离 SQLite/FS、合成 Pool/lease/Provider 与 owner 数据；未连接真实 PG、Redis、embedding Provider 或生产 Run 服务。Python RAG/knowledge 基准沿用此前 devserver 118/118、142/142 记录，本轮未重跑。`search_memory`、`read_knowledge`、`save_knowledge`、`update_knowledge` 状态从待接入/依赖阻塞归为部分实现；Worker 唯一消费者与真实后端仍待验收。
+
+2026-11-17 `list_events` / `get_upcoming` Web Run 接线：Core 工具使用 owner-scoped 日历活动+提醒读端口、项目 Core 服务、可信 Host 时钟/时区；main per-lease 资源提供 Kysely 端口，Reconstructor 仅按端口存在条件启用，并由当前 dispatch lease 授权。Node `agent-calendar-write-ports.test.ts`、`agent-rag-tool-ports.test.ts` **10/10 通过**，Core build 与 Web Host production typecheck 通过；Python `test_readonly_tool_migration.py::test_registered_upcoming_uses_context_day_and_scoped_live_resources` 和 `::test_registered_calendar_preserves_reminders_filters_and_owner` **2/2 通过**。测试源码/用例哈希在运行前与 devserver 一致；Python 测试使用临时 venv 和合成 SQLite/owner 数据。真实 PostgreSQL、Provider Run 和部署服务未验收，故两工具保持部分实现。
+
+2026-11-17 `list_clients` / `list_projects` Web Run 接线：两者复用总是随 Core SqlDataRuntime 注册的 owner-scoped 只读工具；Host 仅允许这两个只读名称进入配置，并按同一 dispatch lease 复核执行。Node `agent-rag-tool-ports.test.ts`、`agent-calendar-write-ports.test.ts` **11/11 通过**，覆盖当前 owner 结果、异主数据隔离、Schema/registry 发现和失效 lease 拒绝；Core build、Web Host production typecheck 通过。Python `test_project_tools.py::test_list_projects_filters_status_and_archived`、`test_core_data_bridge.py::test_web_contact_compatibility_uses_shared_storage_and_owner`、`test_parallel_tool_policy.py::test_phase2_project_and_calendar_reads_preserve_user_scope` **3/3 通过**。Python 联系人覆盖源于 Core 共享服务/owner 基准，仓库未发现独立 list_clients Agent dispatch pytest。使用临时 venv、隔离 SQLite 和合成 owner；真实 PostgreSQL/Provider Run 待验收。
+
+2026-11-17 `get_dashboard_stats` Web Run 接线：main per-lease resources 注入 Core `createKyselyDashboardCounter` 和可信 Host 时钟，Reconstructor 仅在两个端口均存在时加入配置，执行授权仍绑定当前 dispatch lease；统计 owner、软删和未来活动筛选复用 Core 端口。Node `agent-rag-tool-ports.test.ts` 在临时 SQLite 上显式创建最小 Host `files` 表，验证真实 registry dispatch、异主客户端/项目/文件排除、软删排除、未来日历计数和忽略模型 `owner_id`；合并 Node **11/11** 通过，Core build、Host production typecheck 通过。Python `test_readonly_tool_migration.py::test_registered_dashboard_counts_all_live_files_and_unbounded_future` 与本组日历/项目/联系人相关 pytest 共 **6/6** 通过。生产 PostgreSQL 与 Provider Run 未验收，状态为部分实现。
+
+2026-11-17 `list_workspaces` / `get_workspace` Web Run 接线：main per-lease 注入 Core `createAgentWorkspaceQueries(createKyselyAgentWorkspaceReader(...))`；只有工作区读端口存在时，Reconstructor 才配置和授权两个只读名称。Node 合并实际注册器/dispatch 回归 **11/11**，覆盖停用工作区、项目关联名、异主列表过滤、异主详情不存在语义；Core build 和 Web Host production typecheck 通过。Python `test_readonly_tool_migration.py::test_registered_workspaces_keep_disabled_order_and_safe_related_names` 与 dashboard/calendar/project/client owner 基准共 **7/7** 通过。临时 SQLite 为 Host 工作区/文件表创建显式最小契约表；真实 PostgreSQL/Provider Run 未验收。
+
+2026-11-17 `get_project` Web Run 接线：main 按 lease 注入 owner-scoped 文件概览端口，Reconstructor 仅在端口存在时加入工具发现与授权；项目查询复用 Core 共享数据服务，文件计数委托 Host `readProjectFileOverview`。真实注册器 dispatch 回归通过，并验证 Host 端口拿到可信 owner、Core 返回当前 owner 项目及文件概览结果。Linux devserver `agent-rag-tool-ports.test.ts` 定向 **2/2**、`agent-web-rag-resources.test.ts` **1/1**；Core `domain-reads.test.ts` **5/5**。本机 macOS 的同一 Host FS 集成测试因 `packages/fs` 生产原子写明确拒绝非 Linux 平台而失败；代码/测试哈希一致后在 Linux 重跑通过。Python 项目详情基准既有 **7/7**，本轮因两端无 pytest 未重跑。Host production build typecheck 通过；全测试 tsc 尚被其它测试类型错误阻断。真实 PostgreSQL、Provider Run 未验收；逐工具状态更新为部分实现，静态工具分类更新为待接入35/部分实现24。
+
+2026-11-17 `list_scheduled_tasks` Web Run 接线：main 按 lease 注入 Core `createScheduledTaskQueries.agent`，任务行先经 owner 与 `event_id IS NULL` 查询，再用 Host workspace/filesystem 授权能力投影；不包含日历提醒，不接受模型传入的 owner。Reconstructor 仅在真实端口存在时加入配置/授权，dispatch 重查当前 lease。隔离 SQLite 上实际 registry dispatch 覆盖自有独立任务、排除活动提醒和异主任务、返回指令并忽略伪造 owner；Core Host 定向回归 **2/2**。此前独立 Host Runtime/PG 契约用例已有覆盖；Python `_list_scheduled_tasks`/`_to_dict` 行为已逐项对照，但本轮两端均无 pytest，且本工具未发现专属旧 Python pytest。生产 PostgreSQL/Provider Run 未验收，状态为部分实现；分类更新为待接入32/部分实现27。
+
+2026-11-17 `list_trash` Web Run 接线复核：Host `main.ts` per-lease 提供真实 PG 回收站查询 adapter；缺少端口时不注册，工具发现与执行都复验 lease。隔离 SQLite/合成只读端口的 Core registry dispatch 覆盖 owner 绑定、模型伪造 owner 被忽略、时间倒序、文件/目录合并限额和满额提示，工具不产生写副作用。Linux devserver RAG/lease Host 定向 **3/3** 通过，含此工具调用；另一个生产知识 FS 行为用例 **1/1** 通过。Host 的真实回收站 SQL PG 用例本轮未运行；Python list_trash 基准本轮未运行（本机和 devserver 均无 pytest）。Host production build typecheck 通过；真实 PostgreSQL/Provider Run 仍待验收。当前总数待接入31、部分实现28。
+
+2026-11-17 `restore_file` / `restore_folder` Web Run 接线：`main.ts` 按可信 dispatch lease 装配现有 `createAgentTrashRestorePort(core, fileRestores)`，复用 PostgreSQL owner-scoped 文件恢复服务和 Core 持久调用收据；Reconstructor 只有在 Host 提供端口时才允许配置，并在每次发现/执行时校验同一 lease。Node 合成 Host 组合用例经授权器、生产 RAG registry 和真实工具 dispatch 验证两工具仅随端口出现、lease 撤销后权限关闭、文件恢复结果从专用端口返回；不触发真实磁盘写入。已有隔离 PG/临时 FS 端到端测试覆盖文件/文件夹副作用、父目录回收站边界、异主隔离、重复调用/并发/提交应答丢失，当前环境需配置专用 PG 才能执行，本轮未运行；Python pytest 当前不可用，基准未重跑。该切片状态调整为部分实现，不代表真实生产 PostgreSQL 或 Provider Run 已验收；总数待接入29/部分实现30。
+
+同日当前树复验：与 devserver SHA-256 一致后先构建 Core，再运行 RAG 授权/资源、索引 Worker、知识 FS 和文件恢复相关 Host 回归，**26 通过、4 个需隔离 PostgreSQL 的用例跳过、0 失败**；Core RAG **9 文件、69/69**，Host production typecheck 通过。四个 PG 跳过项包括恢复提交收据/并发及文件恢复数据库集成；没有真实 DB 验收。Python pytest 在 devserver 不可用（`python3 -m pytest --version` 显示未安装），本轮未运行。Mutagen 三项冲突未 flush，临时 Vitest 配置已移除；工作区其他未提交修改保持原状。
+
+同日 Local/Ollama embedding transport 复验：先确认 `agent-rag-transport.ts`、`query-embedding.ts`、Node Provider 网络限制实现和两个对应测试文件的 SHA-256 与 devserver 一致，再运行 Host 本机 transport 与 memory tools **7/7 通过**。用例通过合成 loopback HTTP 服务验证只有 trusted Local/Ollama query 能访问本机，云端 Provider 指向相同地址仍被拒绝；未调用真实 Provider。配置默认禁用，仅 BYOK resolver 为显式 Local/Ollama 返回 `allowLocal=true`，每请求再次由 `embedRagQuery` 限定标记。README 旧记录称生产 transport 固定关闭本地访问，已更正为 transport 能力上限与请求标记双门。
+
+2026-11-17 `list_trash` 当前树复验：Core 工具通过生产 Web RAG resource factory、可信 lease 授权和实际 registry dispatch；Host `main.ts` per-lease 注入既有 PostgreSQL 回收站 reader。Node `agent-rag-tool-ports.test.ts` **10/10** 通过，验证伪造 owner 被忽略、Unicode 数字 limit 规范化、混合文件/顶层目录排序与限额、微秒时间保留、满额提示和无写副作用；Core build 与 Web Host production typecheck 通过。Python `test_readonly_tool_migration.py::test_registered_trash_keeps_top_level_microseconds_and_limit_warning` 在 devserver 临时 venv **1/1** 通过，配置文件路径与 pytest 缓存均隔离；旧参考实现未改。Mutagen 冲突未 flush，测试前对应文件 SHA-256 一致。当前详细表复核为已实现待接入 **29**、部分实现 **30**、依赖阻塞 **49**、退役/重设计 **1**，共 **109**；真实 PostgreSQL reader 与 Provider Run 未验收，故 `list_trash` 保持部分实现。
+
+2026-11-18 `canvas_create_note` / `canvas_add_node` / `canvas_update_node` / `canvas_remove_node` / `canvas_update_note` / `canvas_update_anchor` / `canvas_connect` / `note_delete` / `note_restore` / `note_undo` Web Run 接线：新增工具组级 per-lease `createWebAgentCanvasMutationPorts`，复用 Core Mind 放置、布局/便签/关系编辑、普通笔记软删/恢复/Undo 服务、事务收据和发布适配；Reconstructor 仅在端口存在时注册，并通过同一 dispatch lease 授权。Host `agent-rag-tool-ports.test.ts` **11/11** 通过，真实 registry dispatch 覆盖画布便签创建/更新、引用放置、关系连接/端点更新、视图移除但保留来源节点、布局更新、note 删除/恢复/Undo、缺端口不可见、异主拒绝和 lease 撤销。Core 放置/编辑/笔记生命周期行为 **31/31**、devserver Core build 和 Web Host production typecheck 通过。首次测试使用旧 Core dist 缺模块，重建 Core 后通过；一次回归断言受新写入顺序影响，已调整为保留原分页行为后重跑通过。测试使用临时 SQLite、合成 lease/Pool、文件行和发布回调；Python mind/canvas pytest、真实 PostgreSQL、Redis、Provider Run 与生产发布未验收。当前 109 项：已实现待接入 **10**、部分实现 **49**、依赖阻塞 **49**、退役/重设计 **1**，没有工具记为完整生产验收。
+
+2026-11-18 `create_project` / `update_project` / `set_color` / `archive_project` / 五个项目阶段工具及 `get_tool_schema` Web Run 接线：`main.ts` per-lease 暴露共享 Core PostgreSQL 项目创建事务和 `createDurableProjectMutationPort`；项目更新/阶段复用现有 Host `createPostgresProjectUpdateRuntime`，不另写 SQL 业务；授权配置仅在对应端口出现时增加项目写工具，`get_tool_schema` 仅读取当前租约注册器能力。Host `agent-rag-tool-ports.test.ts` **12/12** 通过，实际 dispatch 覆盖 Schema 查询、项目创建并回读、状态/优先级更新、颜色、归档/取消归档、阶段新增/重命名/待办更新/整体设置/删除及 lease 撤销。Core project create/durable mutation/stage/read/registry 五套测试 **100/100**。Host 项目工具测试使用临时 SQLite；项目更新 runtime 的目录重命名/file count/发布回调为合成端口，Core durable 行为测试另以临时目录验证持久回执、真实目录改名补偿、并发和重建重放。Python pytest 在 devserver 未安装；真实 PostgreSQL、Redis、Provider Run 与生产目录副作用未验收。Web Host production typecheck 本轮被 `main.ts:1720` 的 `AgentChatService.wake` 缺失，以及 terminals 子模块导出/`ws` 类型错误阻断；没有项目工具接线文件诊断。109 个静态工具当前：已实现待接入 **0**、部分实现 **59**、依赖阻塞 **49**、退役/重设计 **1**，完整验收 **0**。
+2026-11-18 TS RAG 当前树验收：`main.ts → createApp(agentChat) → Web Run lifecycle → Reconstructor → createWebAgentRagResources → lease-bound RAG registry/context` 已形成生产装配；启动仍要求 Redis、正式 RAG schema migration，Node Worker 只有显式设为唯一消费者才运行。Core `tests/agent/rag` **9 文件、69/69**；Host RAG/Run/Worker/Jieba/向量/共享语料 **35 通过、1 跳过、0 失败**；Core `tsc --noEmit` 与 Web Host production `tsc --noEmit -p tsconfig.build.json` 通过。Core 当前 dist 的 RAG、knowledge、meta 产物与本轮 TypeScript 临时构建一致；Host 使用临时 SQLite/FS、合成 lease/Pool/Redis/授权及 mock embedding/Provider。唯一跳过是生产知识写入资源工厂集成，因 owner FS 原子写要求 Linux；同时修正了 `get_tool_schema` 加入后的工具目录期望。Python pytest 本机未安装，本轮未运行；最近一次隔离 Python/Cython RAG、旧工具与共享语料基准为 **118/118**（11-17）。真实 PostgreSQL/Redis、Provider、部署恢复与 Node Worker 唯一消费者切换尚未验收；普通 owner memory 文件更新与反思 producer 仍由 Python 生产，Node 侧提供持久索引投影、scope 授权状态、刷新队列与 Web owner `search_memory`。
+补充 Reconstructor 集成回归：`agent-web-reconstructor.integration.test.ts` 与 `agent-persistent-runtime.integration.test.ts` **2 通过、2 个需隔离 PostgreSQL/Redis 的用例跳过、0 失败**；覆盖可信 Web owner/session memory 边界、取消、checkpoint scope 与恢复授权。需 PG/Redis 的生产 dispatch、重启恢复用例未在本机运行。
+
+2026-11-18 Agent Runtime 2.0 边界复核：跨端的 Chat start/resume/cancel 编排、dispatch worker/supervisor、上下文 builder、交互恢复协调、prompt 描述规则和 Provider/Harness Runtime 均由 `packages/core/src/agent/` 提供；Web Host 保留 Fastify 路由适配、PG/Redis 持久队列与可信身份/权限/凭据/平台端口装配，没有重复的 Host Runtime 实现或 Core→Host 依赖。Core build 通过；Context/Provider Runtime 与 dispatch/recovery 六个 Core 测试文件 **96/96**，prompt-description **2/2**；Host Runtime、Chat 与 reconstructor 六个用例文件 **12 通过、4 个需隔离 PG/Redis 的用例跳过、0 失败**；Core prompt-description 加 Host wiring、权限/确认与 registry 合并七个文件 **41 通过、3 个需隔离 PostgreSQL 的用例跳过、0 失败**。Host production typecheck 仍被与本次 Agent Runtime 无关的 `terminals/websocket.ts` 缺少 `ws` 声明及其两个隐式 any 诊断阻断。真实 PostgreSQL、Redis、Provider Run、重启恢复与生产部署尚未验收；Host 测试端口不代表生产接入。
+
+2026-11-18 七项日历/画布工具增量回归：devserver 源码哈希一致后，Host 提醒目标解析、日历/画布写端口、确认身份与 RAG 组合 registry **21/21**；Core `calendar-create`、`calendar-update`、`calendar-delete`、`canvas-edits`、`confirmation` **54/54**；旧 Python 日历/提醒、事件更新/删除、画布确认/批处理、Undo 与幂等 pytest **66/66**（串行，临时/合成数据）。Node Host 使用 Core SQLite 和合成 Pool/lease/投递 resolver；回归验证了当前 owner 与 lease、取消、提醒落库与撤权、确认缺失时危险工具不可发现、确认目标身份和实际 registry dispatch。旧 Python 实现未改。devserver 未配置隔离 PostgreSQL 测试 URL，且 PostgreSQL 服务未运行；真实 PG 确认 claim/并发/回滚、真实提醒投递消费者、Redis 持久恢复，以及生产 Provider 后续轮仍未验收。故七项均保留“部分实现”，不将本轮 SQLite/合成端口测试当作生产 Agent Run 验收。
+
+2026-11-18 Agent Runtime 日历/画布续轮回归：Core build 通过；Core 日历创建/更新/删除、画布编辑和确认 **5 文件、54/54**；Host 日历/画布端口、确认、registry、Reconstructor 与 persistent runtime **6 文件、34 通过、2 个需隔离 PG/Redis 的用例跳过、0 失败**。devserver 运行前已比对相关 Core 与 Host 源码/测试哈希。Web Host production typecheck 未通过：出现并行改动 `agent-interaction-command-effects.ts` 的 14 个隐式 any，以及 `modules/terminals/websocket.ts` 缺少 `ws` 类型和 2 个隐式 any；本次触及的 Core/Host 工具文件无诊断。用例经 Core `createAgentRuntime`、Core ToolRegistry 和 Host 写端口依次调用七项工具：`create_event`、`update_event`、`delete_event`、`canvas_batch`、`canvas_delete_note`、`canvas_disconnect`、`canvas_delete`；Provider 后续请求读取前序结果并作用于同一活动、便签、关系和画布。五项危险操作都验证确认前无副作用、Runtime 进入 waiting、恢复确认后成功；校验日历提醒共享 Worker 任务契约、删除后停用，画布便签与视图同步软删、关系软删、级联删除保留来源节点，并检查适用操作的 Undo 收据。Provider transport、lease 状态查询、确认 gate/receipt/事务 claim 和提醒 resolver 为合成依赖；这些回归证明 Core Runtime→ToolPort→SQLite→Provider adapter 的续轮与确认恢复，不证明真实 PostgreSQL、Redis、持久确认、真实提醒投递或外部 Provider 已验收。devserver 临时目录已清理，未改动同步工作树；Python 参考实现未改，本轮未重跑 pytest：devserver 虚拟环境缺少 pytest，系统 Python 也未安装 pytest。当前 PG/Redis 服务未运行且隔离测试 URL 未配置。七项工具仍为“部分实现”，生产 PG 并发与 Redis 重启恢复仍未验收。
+
+2026-11-18 `ask_user` 普通澄清工具接入：修复了工具实现与生产配置之间的断点。Main 的 per-lease 工厂显式开启 `askUser`，配置过滤允许其进入当前 Run；授权工厂只有收到该能力开关才发现，并在每次 dispatch 复验 owner/session/run 与选中 lease。普通 `choice`/`question` 仍通过 Core 交互协调器，Host 以现有 PostgreSQL prompt/action/binding、回答消费与 Run resume 队列持久化；没有新增执行器或旁路交互协议。Web Host `agent-rag-tool-ports.test.ts` **13/13** 通过，新增用例验证能力关闭时不可发现、打开时真实 registry dispatch 进入 waiting、lease 撤销后拒绝；Core prompt-description **2/2**、Core 与 Host production TypeScript 检查通过。Python pytest 本轮未运行；没有真实 PostgreSQL/Redis/Provider 或进程重启验收。按契约继续限制 `form` 与 `authorization=user_sandbox`，不开放半成品表单或沙盒授权；因此工具仍列“部分实现”。
+
+2026-11-18 `read_file` 普通文本读取 Web Run 接入：新增 per-lease Host 文件端口，只接受模型给出的正整数 `file_id`，使用 PostgreSQL `files` 表同时限定当前 owner 和未删除记录，校验 storage key 属于该 owner 后调用 `packages/fs.openLocalFile(storageRoot, storage_key)`；无物理路径参数、无宿主路径回退。Core 已有工具保持原始物理行号、32 MiB 上限、UTF-8/无后缀差异与取消关闭句柄行为。Host `agent-file-read.test.ts` 的真实生产 registry dispatch **1/1** 通过，使用真实临时 FS、合成 Pool/lease；Core files 工具行为 **49/49**。本轮合并 Host RAG/file/registry **39/39**、Core files/registration **81/81**、Web Host production typecheck 与 `git diff --check` 通过。Python pytest 本轮不可用，真实 PostgreSQL 未验收；PDF/Office 提取、图片/音频/视频、历史附件、URL、批量、逻辑路径及 system scope 仍未实现，工具仍列“部分实现”。
+
+2026-11-18 日历提醒消费者路径核验：Core `calendar` 创建器把提醒写入共享 `scheduled_tasks` 表，记录 `schedule_kind='once'`、`@once:` 触发时间、提醒 payload、lead、channels 与 Host 解析的 `delivery_targets`；Core Runtime 行为回归验证了这些共享行字段及删除后的停用状态。旧 Worker 的 `app.scheduled_tasks.reconcile()` 从该表重建启用任务，`execute_task()` 调用现有 Agent 执行及 `deliver_to_channels()`。本次只读检查观察到 devserver `gugu-worker` 处于 active，说明该环境存在既有消费者路径；未创建或投递合成提醒，也未验证其生产数据库连接/实际渠道投递。当前 devserver 缺少 `backend/.venv/bin/pytest` 且系统 Python 无 pytest，本次计划重跑的提醒/任务消费者 pytest 未启动；此前记录的日历/提醒与画布 Python 回归 **66/66** 仍是最近一次实际通过结果，不把本次未启动计为通过。
+
+2026-11-18 `send_link_buttons` Web Run 接线：复用 Core 的 Python 对齐 URL/按钮校验和 Web artifact 投递端口；Main 每个 lease 注入仅匹配同一 owner/session/run 的 Web 端口，配置、发现及 dispatch 授权均要求该端口且复核活动 PostgreSQL dispatch lease。生产 RAG registry dispatch 回归覆盖安全按钮 artifact 进入结果，以及租约撤销后拒绝调用。该切片只覆盖 Python `_send_link_buttons` 的 Web `_artifact` 分支；QQ/飞书/微信真实网关、可信 IM 收件人/凭据和持久投递回执未接入，因此工具从依赖阻塞调整为部分实现，不能宣称全平台完成。测试使用临时 SQLite、合成 Pool/lease；真实 PostgreSQL、Redis、Provider 和浏览器渲染尚未验收。
+
+2026-11-18 Web Run provider 工具白名单补齐：检查 Main 的静态过滤集合与 Web lease authorization 工具集合，修复联系人写入、项目创建/修改/阶段、工作区更新、`global_search` 以及此前遗漏的 Canvas/Note 工具在 provider binding 阶段被提前剔除的问题。`delete_client` 接入后 64 个 authorization 工具名均可通过配置过滤；最终工具发现和每次 dispatch 仍由当前 lease、授权及真实 Host 端口决定，白名单本身不会开放缺少后端的工具。Node `agent-tool-registry.test.ts` 行为用例覆盖各受影响工具组名称并拒绝未知名称；`agent-rag-tool-ports.test.ts` 保留真实 Mind/项目/联系人/搜索 registry 调用覆盖。真实 PostgreSQL、Provider Run 和 Python pytest 未验收。
+
+2026-11-18 `delete_client` 调用链增量：Core 客户工具组新增 owner-scoped 单/批量删除，确认快照绑定目标行，业务事务内 claim、锁定并复核目标后删除且写操作收据；Host 没有持久确认与一次性 claim 能力时不注册。Core clients suite **20/20**、Host RAG/registry **41/41**；Host 新增真实 Core SQLite 注册器经 lease 授权→确认等待→恢复删除，以及租约撤销后拒绝调用的实际工具链。其他行为覆盖确认前无副作用、owner 隔离、目标并发变更回滚、批量结果与 claim 拒绝，并按 Python 边界验证批量缺失 ID 错误和 `client_id=0` 回退联系人名。旧 Python `test_confirm_gate.py -k "delete_client or batch_delete_grant"` **4 通过、37 deselected**；临时 site-packages、fake Redis、内存 SQLite、临时存储及不存在的 env 文件路径，未连接真实服务。Node 测试使用临时 SQLite、合成确认/claim 与合成 PostgreSQL lease 查询。production TypeScript 检查被工作区其他文件 `agent-interaction-command-effects.ts` 的隐式 any 和 `terminals/websocket.ts` 的 `ws` 类型缺失阻断；当前切片文件未报诊断。真实 PostgreSQL、Provider Run 和跨进程确认恢复未验收，故仍为部分实现。
+
+2026-11-18 TS RAG 当前树复验：Core RAG **9 个文件、69/69**；Host RAG registry/资源、Reconstructor、持久 Worker/索引损坏恢复、owner memory store、Jieba 固定语料和 embedding transport 合批 **34 通过、2 跳过、0 失败**。跳过项分别依赖隔离 PostgreSQL/Redis 重启环境和 Linux 安全原子写。Web Host production TypeScript 检查通过。修复了生产 RAG 检索将可关闭 Node Provider transport 当作共享实例复用的问题：索引重建保留独立生命周期，检索每次 embedding 创建新 transport；新增 loopback HTTP 回归验证第一次查询关闭实例后第二次仍能取到真实向量（Host RAG 合批现为 34 通过）。Python pytest 本机不可用，最近隔离 Python/Cython RAG 基准为 **118/118**（11-17），本次未重跑。Node 用例用临时 SQLite/FS、合成 lease/Pool/Redis 与 mock embedding/Provider；真实 PostgreSQL、Redis、Provider、部署恢复和 Node Worker 唯一消费者切换未验收。普通 owner memory 更新与反思 producer 仍由 Python 执行。
+
+2026-11-18 隔离服务复验补充。devserver 使用临时 PostgreSQL 和 Redis，持久调度、取消、outbox 重放和 Web Reconstructor 回归 **5/5**，其中 `search_conversations` 经生产注册器分派并进入合成 Provider 的下一轮。Reconstructor 的历史语料与索引位于独立 SQLite。RAG Worker 与会话工具组合使用临时 SQLite **15/15**，PostgreSQL 的持久队列与索引迁移 **6/6**。新增回归证明两笔 PostgreSQL 事务抢写同一 owner/来源时，首次扫描不会覆盖先提交的待处理任务，并能继续为其他来源入队。旧 Python 队列 pytest **3/3**，验证合并重试以及 Node 为消费者时 Python 仍可持久化事件。真实 Provider、部署切换与当前缺失的工具端口仍按清单验收。
+
+2026-11-18 `search_conversations` 的 Reconstructor 恢复用例已使用正式 PostgreSQL 索引。两名用户的事实数据经 Host 入队，由 Core Worker 投影到迁移后的索引表。Registry 调用和自动 RAG 均使用同一 PostgreSQL 和可信 lease，验证正确历史进入 Provider 续轮且异主正文不进入任何请求。与 PostgreSQL 队列、迁移、Redis 持久调度及恢复合跑 **11/11**。Provider transport 为合成依赖，未在真实外部模型或部署服务运行。
+
+同轮旧 Python 会话检索 pytest **4 通过、4 个非会话用例未选中**，覆盖压缩水位之前的历史、owner 隔离、多关键词和旧消息 ID 的会话归属。测试使用内存 SQLite 和 fake Redis。
+
+2026-11-18 记忆向量重建与 Web Run 复验。Core **4/4** 覆盖分块、缓存清空及索引失败状态；Web Host **16/16** 覆盖生产 owner 锁、两种源档案的并发更新、损坏主档案不回填旧 facts、`remember` 收据恢复、会话持久索引和 Redis 重启恢复。实际使用临时 PostgreSQL、Redis 和 Local 文件，Provider、embedding 与部分索引通知使用合成依赖。旧 Python 的记忆存储、迁移、批量重建和 BYOK **55/55**，验证旧档案规则、分块与 owner 切换。最终无失败或跳过。Python 与 Node 的跨进程写入尚未共用同一锁，`remember` 保持未注册。
+
+同日补齐查询向量隔离和 `remember` 增量向量回归。新增用例先复现两个用户同句查询命中同一缓存，修复后 Core **13/13** 验证 owner、端点、凭据变化以及拒绝覆盖较新向量缓存。Web Host **7/7**，其中回环 HTTP 验证同 owner 可复用、异主必须实际发送各自请求；隔离 PostgreSQL 和临时文件验证 `remember` 恢复后只生成缺失向量、重复调用不再生成、保留已有向量及正式索引入队。旧 Python `remember`、记忆存储与查询 embedding **55/55**。Node 查询缓存比旧 Python 的模型加查询缓存键更严格。Provider 和凭据使用合成数据，未调用外部服务。
+
+2026-11-18 迁移方向收口到 Node。上轮 Python 共享写锁改动已撤回，当前回归使用 Node 独立的授权、共享 PostgreSQL 用户锁、档案任务状态和持久收据。 Node Host 最终合批 **43/43**，无失败或跳过。临时 PostgreSQL、Redis 和文件目录中的 Run 由合成 Provider 同轮调用 `search_conversations` 与 `remember`，实际 ToolRegistry 校验租约，档案与两阶段收据正确落地，下一轮收到工具结果。其余回归覆盖八类正式索引来源、队列补建与恢复、旧计划拒绝重放和档案任务期间的写入门禁。Core 构建与 Host 生产类型检查通过。
+
+同轮 Node Core **14/14** 与 Web Host **10/10**，覆盖全量重建拒绝覆盖同源新缓存、记忆清理与索引墓碑、持久收据恢复及 Local 向量文件并发。使用临时 PostgreSQL、SQLite 与 Local 文件。Web Host 生产类型检查通过；Core 全量构建当前报 MCP 管理类型错误，定向测试使用本轮已生成的 Core 产物。无测试失败或跳过。
+
+同轮索引队列回归 **Node 25 通过、0 跳过，Python 7 通过、9 未选中**。隔离 PostgreSQL 验证日历、笔记、项目在全量任务运行期间收到增量写入时会保留全量范围、撤销旧租约，重建完成后可以重新排入单实体任务。隔离 SQLite 验证日历和笔记的排队分支。Python 验证持久队列合并和配置读取失败时的消费者边界。提交后通知依赖使用合成回调。
+
+2026-11-18 来源补建复验。隔离 PostgreSQL 的生产 Worker 消费两名用户的 16 条补建任务，八类来源全部写入正式索引。覆盖跨用户读取、群记忆墓碑、空知识目录以及非空旧目录缺标记时保留原索引。Host 合批 **23/23**，Core 知识来源定向 **1/1**，Python 知识时间迁移、owner 与增量基准 **7 通过、35 未选中**。Host 使用临时 PostgreSQL、Redis、SQLite、授权文件目录与合成 Provider。
+
+## 指定 21 项迁移进度
+
+按上方逐工具状态统计，本范围有 **2 项已完成并接入、17 项部分实现、2 项已实现待接入**。`call_tool` 和 `send_email` 已完成；后两项 `react`、`bind_web_session` 依赖实时 Node IM Gateway 提供可信消息或私聊会话上下文。
+
+Web Run 通过 Main 每租约资源工厂、Web Reconstructor、Core Run ToolPort 与领域工具注册器装配。下表中生产接线表示源码调用链可达，实际注册仍取决于当前租约、配置、能力与确认端口。隔离 PostgreSQL/Redis 通过已有 Host 生命周期与部分领域链路回归。实际部署、真实渠道和付费 Provider 尚未验收。
+
+| 工具 | Node 位置及进度 | Python 基准与剩余验收 |
+| --- | --- | --- |
+| `web_search` | Core `tools/search.ts`，Web `main.ts` 按 lease 经 `agent-search.ts` 绑定 Provider 配置和安全出站端口后交给 Agent ToolRegistry | Python `test_provider_web_search.py` 本轮 **33/33**（此前与项目删除确认用例合批 **35/35**）；Core Provider/工具测试 **66/66**，Host `agent-search.test.ts` **4 通过、1 跳过**（隔离 PG URL 未配置）。本轮新增 Core Harness→Host 搜索端口→Provider 续轮行为测试；Node 传输替身覆盖原生 Provider 参数、结果限制、权限撤销与安全传输。`main.ts` 的 `startServer` 生产装配搜索续轮、PG/Redis 和部署仍未验收 |
+| `similar_image_search` | `tools/search.ts` 与 Web 搜索端口；可信附件或受限 URL、图片检查、上传前租约复核、独立日额度与持久收据 | devserver `test_similar_image_search.py`、`test_deep_research_providers.py`、`test_search_limits.py` 合批 **21/21**；隔离 PostgreSQL 验证独立额度、撤权和已知/未知结果恢复。外部付费 Provider、代理和实际部署待验收 |
+| `deep_research` | `tools/search.ts` 与 Web 搜索端口按用户或平台凭据接入同步 Provider；外呼前持久认领并预留额度，成功结果与用量同事务提交 | Python provider/搜索结果限额对照同上 **21/21**；隔离 PostgreSQL 验证并发配额和结果恢复。外部付费 Provider、代理和实际部署待验收 |
+| `web_download` | 生产 Web 按租约使用安全出站和共享 Local 上传。Core 解析个人、项目、绑定或默认工作区；Host 在写入事务中复核当前会话落点、容量及租约，并写入文件、配额事件和收据。提交断连后按收据、文件登记及硬链接归属核对。结果 URL 省略查询参数 | 隔离 PostgreSQL 和真实文件验证默认/显式工作区、跨目录拒绝、绑定变化、取消、失租、超限、已提交重放及确认回滚后的清理。公网正文使用替身。恢复数据库不可用或进程退出时保留待核对文件，跨进程自动清理、实际公网和生产部署待验收 |
+| `react` | Core `tools/im.ts` 和 `im/feishu-bot-api.ts`，可复用 Host 在 `tools/agent-im.ts` 按可信消息和已启用 Bot 安装工具，发送成功后回调平台回应标记 | Python `test_feishu_gateway_guards.py`；实时 Node Gateway 仍需提供可信消息上下文及标记写入。真实飞书送达待验收 |
+| `group_context_search` | `tools/im.ts`、`sessions/im-tools.ts`，由 Web Host 定时群任务的可信任务与 Bot 归属装配，发现和执行复核当前范围 | 当前 Python agent 源码快照上的 `test_telegram_im_policy.py`、`test_scheduled_group_imctx.py`、`test_im_members.py`、`test_im_identity.py` **69/69**；隔离 PG/Redis 的生产定时入口验证工具结果续轮与撤权。实时 Node IM Gateway 尚未接入 |
+| `send_email` | 已完成：Core `tools/email.ts` 接 Agent ToolPort；Host `main.ts` 按 Run 装配 `agent-email.ts` 与受控 SMTP 适配。Web 对话持久确认/取消，定时任务校验预授权与租约 | 本轮 devserver Python `test_email_tool.py`、`test_email_attachments.py` **27/27**；Node Core **4/4**，Host SQLite **1 通过**，PG/Redis 条件测试 **2 跳过**（URL 未配置）。同一源码历史隔离 PG/Redis 持久 Run 确认/取消 **8/8** 与定时生产入口环回 SMTP **3/3** 通过；真实外部 SMTP 和部署未验收 |
+| `bind_web_session` | Core `tools/im.ts`、`sessions/im-tools.ts` 与可复用 Host `tools/agent-im.ts` 支持可信私聊绑定。与定时 IM 历史共用 Bot 隔离的 12 小时 Redis 键 | 隔离 PostgreSQL/Redis 验证目标归属、撤权、切换、重放及定时历史读取。旧 `test_im_owner_session.py` 通过。实时 Node Gateway 尚未装配此端口 |
+| `delete_knowledge` | 生产 Host 按 lease 绑定知识 ID、owner 及文件字节版本；计划收据与加密意图认领及目标索引撤回同事务，恢复复核原文件或墓碑版本 | Node 隔离 PostgreSQL/真实授权文件目录回归覆盖确认失败恢复、文件发布后提交失败及重放、历史保留和精确索引撤回；另覆盖 Redis 确认、PostgreSQL 恢复、确认前无副作用、取消、异主和重放。Python 参考为 `backend/agent/tools/knowledge.py::_delete_knowledge`；当前 `backend/tests/` 无专属删除 pytest。真实 Provider 和部署待验收 |
+| `remember` | 已接入 Node Web Run。在 Linux、PostgreSQL 收据和 Node RAG Worker 就绪时注册。复用 owner 档案、文件版本检查、持久收据、向量增量刷新及正式 RAG 入队 | 当前 Python agent 源码快照上的 `test_remember_tool.py` **21/21**；Node 验证写入恢复、重复执行、档案导入和回滚期间拒绝写入、过期计划核对、并发、越权和符号链接。生产部署及真实 Provider 待验收 |
+| `call_tool` | Core `tools/call-adapter.ts`、`run/tool-ports.ts`；Host 只注入当前 Run 授权及目标执行端口。Harness 在计划前有限解析目标，在计划、分派及确认恢复时复核入口和目标，转发来源随新检查点保存 | Node Core `tool-ports.test.ts`、`input-feedback.test.ts` 本轮 **21/21**；正式 `startServer` HTTP/SSE 集成在隔离 PostgreSQL/Redis 上实际调用嵌套工具并验证持久副作用、拒绝和原调用 ID 续轮（历史 **1/1**）。Python `test_tool_schema_security_contract.py -k call_tool` 本轮 **2/2**。使用环回合成 Provider；真实外部 Provider 与部署待验收 |
+| `manage_mcp_servers` | `tools/mcp-management.ts`，Web 接入 owner 限定的 `list`、`test_connection`、`enable`、`disable`、`remove`、`add` 和 `update`。可信持久确认与私密交互就绪时，支持新增、更换和清空 Header 凭据槽位 | Python `test_mcp_settings_api.py`、`test_mcp_user_tools_e2e.py` **42/42**；Node Core **6/6**、Host 隔离 PostgreSQL/Redis **9/9**。覆盖删除、新增、凭据轮换、确认取消/批准、认证私密表单、配置版本漂移拒绝、密文保存、缓存失效和持久 Run 续接；续轮与操作收据不含凭据。Web 保持 HTTP 出站边界，查询参数凭据与 stdio 不开放。真实外部 MCP 连接及生产部署待验收 |
+| `create_skill` / `update_skill` | `tools/skill-management.ts` 借用共享管理器事务，生产按可信租约接线。写入与当前 Run 收据共同提交 | `test_user_skills.py` 23/23。隔离 PostgreSQL 与 SQLite 覆盖并发创建、ID 和结果形状、重放、越权、撤权回滚及部分字段更新。实际部署、外部 MCP 和真实 Provider 续轮待验收 |
+| `delete_skill` | 同一模块，Web 每租约持久确认、精确版本和事务 claim，所有管理来源均确认 | `test_user_skills.py` 23/23。隔离 PostgreSQL 和 Redis 从确认码兑换到 Core Run 恢复，验证取消、异主和防重放。实际部署与真实 Provider 待验收 |
+| `note_create` / `note_update` | `tools/note.ts`，复用 Mind 事务、Undo、调用收据和 RAG，Web 注入可信时区及发布器 | `test_mind_agent_tools.py` 定向 6/6；SQLite 和隔离 PostgreSQL 行为通过，外部 Provider 未验收 |
+| `delete_project` | 按可信租约注入共享软删、依赖确认、文件移动日志和后台恢复；项目、日历与提醒索引入队和调用收据共用删除事务 | Node 隔离 PostgreSQL/Local 文件覆盖注册器调用、回收站文件、回滚、索引入队和重放；Python `projects/test_project_tools.py::test_delete_project_requires_confirmation_before_trash` 与 `agent/test_confirm_gate.py::test_delete_project_requires_confirm` 已通过（与 `test_provider_web_search.py` 合批 **35/35**）。用户确认与 Provider 为未外呼的合成依赖 |
+| `create_scheduled_task` / `update_scheduled_task` | Core 工具复用 PostgreSQL 共享写入，经 Web 每租约注册；仅在装配 Node 消费者时开放，按任务类型校验一次性或周期 Worker。支持 Web 通知、owner 邮箱和已验证归属的 QQ/飞书私聊目标 | 隔离 PostgreSQL 验证实际授权端口、未启用消费者拒绝、私聊重绑、启停、RAG 与收据回滚及重放。生产 Host 启动回归使用隔离 PostgreSQL/Redis、合成 Provider 和实际站内通知。任务运行已支持预授权邮件。更新可逐项或批量撤销已有文件授权，停用也会撤权，复用事务审计与调用收据。Agent 设置邮件预授权新增 Node Core **7/7**、Host **8/8** 与 Python **30/30** 回归，覆盖确认、目标漂移、撤权、消费者读取及重放；外部 SMTP 和生产部署待验收。发放文件授权、群投递目标、工作区执行和外部渠道待接入或验收 |
+| `delete_scheduled_task` | `tools/scheduled-tasks.ts`，复用定时任务删除、索引与事务 claim，生产按确认端口接线 | 隔离 PostgreSQL 和 Redis 验证真实确认码、跨 owner 拒绝、取消、批量删除、索引入队、收据和结果续轮。旧 `test_confirm_gate.py` 与任务工作区回归合批 51/51。Provider 与通知回调为合成端口，实际部署待验收 |
+
+Skill 关联 Schema 通过同一可信 Run 注册器按需发现。动态 MCP 名称须来自当前 owner 的目录，且同时通过当前租约的配置和授权。Skill 正文或 `related_tools` 不授予执行权限。
+
+定时 `send_email` 生产入口复验 **Host 3/3、旧 Python 27/27**。临时 PostgreSQL 保存任务预授权和持久邮件尝试/结果，临时 Redis 提供任务租约。已授权任务将邮件投递至环回 SMTP 的合成收件人，撤权后模型续轮收到拒绝，异主运行返回 404。定时 Worker 和手动 Run 均由生产入口装配。Web 对话单测仍使用合成确认投影。公网未连接，运行入口夹具没有装配全量 Agent 扫描和 RAG 迁移。
+
+`delete_skill` 回归使用真实 Redis 确认码、加密意图、PostgreSQL 提示/动作及 Core waiting checkpoint。经现有 Web 响应服务兑换确认后，恢复实际 Core 工具执行，删除与业务收据同事务，然后进入合成 Provider 续轮。确认前及异主动作不删，取消不再请求 Provider，也不产生删除收据，重复提交确认令牌不会二次执行。devserver **Core 4/4、Host 5/5、旧 Python 23/23**。Core 构建、Host 生产类型检查和 `git diff --check` 通过。夹具使用合成 Provider、可信摘要和隔离数据库，直接调用 Web 响应服务。HTTP 生产部署待验收。
+
+`react` 与定时飞书投递共用 Core 固定端点、访问凭据请求和有界响应读取。Host 从可信 Run 获取入站消息，按 owner 和 Bot 查询启用状态，并在取得 Token 后复核消息、Bot 和凭据版本。仅飞书明确接受后调用回应标记端口。飞书明确拒绝返回失败，出站断连保留未知结果，恢复不重发。隔离 PostgreSQL 与合成飞书传输验证伪造消息字段、异主、取 Token 后撤权和取消、成功标记及响应未知。devserver **Core 5/5、Host 21/21、旧 Python IM 18/18**，Core 构建、Host 生产类型检查和 `git diff --check` 均通过。实时 Node Gateway 尚未接通，外部飞书送达和生产部署仍待验收。
+
+`bind_web_session` 的可复用 Host 端口只为可信 owner 私聊生成工具。事务持有 Web 会话的共享行锁，复核当前 Run 和平台身份后覆盖对应 Redis 键。Core 路由读取会复核 Web 会话归属。旧 Python 工具使用无 Bot 后缀的键，实际私聊路由在已知 Bot 时使用带后缀的键。Node 让同一可信 Bot 的写入和读取一致，未指定 Bot 的调用沿用无后缀协议。定时 IM 历史写入复用相同键并经实际 PostgreSQL 和 Redis 测试将结果写入新绑定的 Web 会话。未验收实时 Gateway 入站和真实外部送达。devserver **Core 5/5、Host 11/11、旧 Python IM 18/18**，Core 构建、Web Host 生产类型检查和 `git diff --check` 通过。首轮可移植入口检查发现定时 IM 历史通过 Agent 根入口加载 Kysely，改由现有 sessions 子入口导出后通过。
+
+`web_download` 与终端复用 Core 工作区目标查询。目标全省略时按会话绑定、用户默认目录顺序解析；显式 `workspace` 只使用当前可信目录，项目或文件夹绑定时返回旧版的目标提示。显式个人或项目目标仍由文件库 owner 校验。下载阶段不持有会话读锁，写入事务借用同一连接复核绑定。隔离 PostgreSQL 回归覆盖下载期间重新绑定后两个目录均无落盘且没有成功收据。旧 Python 回归运行 `storage/files/test_web_download.py`、`test_create_file_workspace_space.py` 和 `test_folder_workspace_write_access.py` 共 **12/12**。Node 最终 **Core 22/22、Host 16/16**，Core 构建、Host 生产类型检查和 `git diff --check` 通过。首次 Core 工作区用例的 SQLite 初始化超时，最终复跑为 devserver 临时提高测试钩子等待时间。未连接真实公网。
+
+`web_download` 提交断连后由同一 Host 进程用新连接按相同顺序获取操作和 owner 上传锁。原文件已有收据或该路径已有文件记录时保留正文。确认无记录且目标仍与本次暂存文件指向同一 inode 时才清理正文。路径已被替换时保留替换文件，恢复查询错误时保留正文和暂存证据。工具继续通过原收据恢复已提交结果，回滚不写配额事件、成功收据或变更通知。devserver **Core 22/22、Host 18/18、旧 Python 12/12**，Core 构建、Host 生产类型检查和 `git diff --check` 通过。隔离 PostgreSQL、真实临时文件及合成 COMMIT 故障覆盖提交成功响应丢失、回滚、路径替换和恢复读失败。没有跨重启清理器，未连接真实公网。
+
+Skill 创建和更新按 owner、会话、Run、轮次及工具调用 ID 生成收据，收据仅保存工具结果。同一调用并发只分配一次 ID，更新从事务锁定的当前记录合并，失去授权时正文、序列和收据一起回滚。重建只读收据，改变输入拒绝重放。devserver Core 构建及定向 **41/41**，Web Host **21 通过、1 项 Python 对照跳过**，显式注入隔离 Python 后补跑通过。旧 Python `test_user_skills.py` **23/23**。`git diff --check` 通过。Web Host 生产类型检查仍受并行新增的 `agent-owner-reflection-model.ts` 缺 `BranchPorts.nextId` 阻塞，未改动该文件。
+
+`deep_research` 的 Tavily、You.com 和百度接口与旧 Python 一样在单次请求返回最终结果。Core 通过现有操作收据在外呼前认领该调用，Web 在同一事务复核 Run 权限及账号日额度。成功用量与受限报告共同提交；已知失败释放预留；结果未知的尝试在额度窗口内保留预留，恢复只读收据。隔离 PostgreSQL 验证同一账号并发仅一次外呼、已提交结果可重放、改变参数拒绝、断线防重发、真实租约撤权，以及已知失败后额度仍可用。合成上游覆盖截断后的报告继续带截断说明。devserver Core **493/493**、Web Host **31/31**、旧 Python **10/10**，Core 构建、Web Host 生产类型检查和 `git diff --check` 通过。首轮新集成比较了 JSON 记录的进程内原型，改用可观察的序列化结果后通过。真实付费 Provider、代理与部署尚未验收。
+
+`similar_image_search` 与 `deep_research` 共用按账号持久认领，但相似图只统计相似图调用。深度研究沿用总搜索计数，纳入在途相似图预留。公网图片下载完毕后在付费上传前再复核租约。已知失败释放额度，未知结果不重新上传，重复调用读回持久结果。隔离 PostgreSQL 与合成上游回归覆盖计数、图片归属、下载后撤权、结果截断和断线恢复。devserver Core **494/494**、Web Host **31/31**、旧 Python **21/21**，Core 构建及 Web Host 生产类型检查通过。真实付费 Provider、代理及部署待验收。
+
+`call_tool` 在预计划、分派和确认恢复时均复核入口及目标的最新授权。新检查点通过可信字段保存转发来源，回执解码器验证其与原调用匹配；旧检查点仍可读，只有携带转发来源的新调用执行入口级复核，旧调用仍由目标工具的既有授权处理。Web 隔离 PostgreSQL/Redis Run 经实际重建和注册器验证嵌套别名读取所属会话、写入 owner 记忆、拒绝配置隐藏工具，并按外层 ID 返回结果。Provider 使用合成传输。devserver Core **139/139**、Web Host **51/51**、旧 Python 定向 **35 通过、160 项未选中**，构建、Web Host 生产类型检查和 `git diff --check` 通过。首轮 Host 复跑发现回执编码器未接受新可信字段，修正后通过。
+
+定时群任务的 `group_context_search` 复用共享群历史和成员读取。发现 Schema、直接工具调用及关联工具发现都复核任务的有效 Bot、owner、平台与群目标；查询前后再核对绑定。生产 `main.ts` 测试经隔离 PostgreSQL/Redis 和合成 HTTP Provider 验证只将当前群消息送入续轮，并覆盖模型首轮后 Bot 停用的拒绝。独立定时运行用例也验证停用 Bot 或移除投递渠道后隐藏 Schema。devserver Core **26/26**、Web Host **8/8**、旧 Python IM **102/102**，Core 构建、Web Host 生产类型检查和 `git diff --check` 通过。Python 首次收集缺少隔离副本的 `worker.py`，补齐后复跑通过。实时 `react` 和 `bind_web_session` 仍无 Node Gateway 调用方，分别需要飞书可信当前消息与对应 Bot 投递、可信 owner 私聊身份与 Redis 绑定写入装配。生产定时测试禁用 QQ 外部投递，实际 IM 渠道及部署未验收。
+
+2026-11-18 Runtime 收敛：Web 主入口经过 `createWebAgentReconstructor` 使用 Core `agent/run/reconstruct.ts`，由 Core 校验检查点、授权版本与 Provider 作用域，并负责运行释放。`agent/run/event-stream.ts` 负责提交后事件重放与断线续读，`agent/interactions/consume-action.ts` 负责一次性动作、取消、过期及可信事件重放。Web Host 提供 owner 限定锚点、持久状态、PostgreSQL 事务、确认码兑换、Redis 唤醒和 Provider 绑定。共享上下文 builder 接受构建出的快照，定时任务可复用此契约而无需 Web 会话持久化记录。此改动覆盖共用运行链，工具可用性仍按上表的能力与授权确定。
+
+2026-11-18 Runtime Core 行为复核：`runtime.ts`、`chat-service.ts`、`run/dispatch-{worker,supervisor}.ts`、`run/reconstruct.ts`、`run/event-stream.ts` 和 `interactions/` 承载共用 Harness/Chat/Run、队列恢复、身份/版本校验、事件重放及交互编排；Web Host 仅装配认证 owner、PG/Redis、Provider/工具资源、HTTP/SSE 和启停。新增 `packages/core/tests/agent/chat-service.test.ts` 覆盖启动投影、idle resume、异主拒绝和取消租约；`portable-boundary.test.ts` 现在直接把六个 Runtime 模块作为依赖闭包入口，防止共用编排回退到 Host 或引入平台依赖。devserver 标准 Core unit 配置下 Run、Interaction、Provider Runtime 与可移植依赖边界 **8 个文件 77/77**。生产 Web Chat/Run 与 HTTP Interaction Respond/Resume 已接入 dispatch 生命周期；真实 PG/Redis 重启、桌面持久端口、Provider 与部署未验收。
+
+Runtime devserver 回归共通过 Core 43 文件 558 项、Host 31 项、Python 94 项。Host 使用隔离 PostgreSQL/Redis、合成 Provider 和合成用户，覆盖运行重建、交互单次消费、等待恢复、取消和事件重放。Python 执行 `test_run_cancellation.py`、`test_run_lifecycle.py`、`test_run_finalize.py`、`test_user_skills.py`、`test_skill_id_migration.py`、`test_interaction_protocol.py`、`test_interaction_phase5_7.py`、`test_interaction_retention.py`。Core 构建与 Web Host 生产源码类型检查通过。全量 Core 测试源码类型检查仍报告其他套件的类型错误。桌面 Host、真实 Provider 及实际部署待验收。
+
+持久 Chat、dispatch Worker 与恢复扫描的组合现由 Core `agent/runtime.ts` 负责。Web 主入口仍以既有 Host 工厂装配 PostgreSQL、Redis、可信消息准备和 SSE 投影，并管理进程启停。Web 持久执行与 SSE 共用 Core `agent/run/event-stream.ts` 的 checkpoint 状态规则。devserver 冻结副本通过 Core **178/178**、Web Host **24/24**、Core 构建及 Web Host 生产类型检查。集成用例经共享调度入口，使用隔离 PostgreSQL、Redis 和合成 Provider 验证重启后扫描、取消首轮及执行后续 Run。Skill 回归同时验证 Core 的 `resources/skills/` 中 10 份 Markdown 通过文件头自动注册，查看正文及关联工具仍经过当前 Run 授权。本轮 Runtime 迁移未重复运行 Python。桌面接线、真实 Provider 和部署待验收。
+
+Agent Runtime 入口依赖复核发现 `@gugu/core/agent` 会间接加载 Kysely、Node 加密与持久数据模块。RAG、知识、记忆写入和持久交互用例现由各自的 Core 子路径导出，Host 调用方同步切换。`call_tool` 继续沿用兼容 Python 的工具名去空白规则，共用参数辅助函数改为只加载错误契约。摘要预算和初始化由 Core 处理，无效预算不调用 Host 授权端口，并发首次摘要共享同一 Run 投影。Chat 和定时任务共用 Core 多轮工具用量汇总。Web 保留认证、当前 Run 授权、PostgreSQL/Redis、网络、凭据及 SSE 投影。移除了无调用方的 Web 交互 Worker 包装器，生产恢复仍经 Core dispatch。
+
+devserver Core **65 文件、704/704**，含 Runtime 可移植入口的依赖闭包、摘要和 Skill 目录。Web Host **63/63**，含隔离 PostgreSQL/Redis 上的 Run 重建、取消、交互和事件重放，以及合成 Provider 续轮。Host 首轮 **62 通过、1 项重建超时**，相同源码复跑仅关闭临时 PostgreSQL 的 fsync，全部通过。旧 Python `context/test_compaction.py`、`test_run_lifecycle.py`、`test_run_finalize.py` **90/90**。Core 构建、Web Host 生产类型检查和 `git diff --check` 通过。桌面 Host、真实 Provider 和实际部署尚未验收。
+
+MCP Agent 连接检测：可信 Run 只能以 UUID 或名称解析当前 owner 的已保存配置，再由生产 Host 刷新实际运行时。握手成功返回已通过 Schema 校验和白名单过滤的工具名，失败只投影类型化的安全诊断。查询动作不计为写入，取消后不发布成功回执。已开始的共享握手仍由运行时限时管理。全局或单项停用时不外连，Web Host 继续禁用 stdio 与 URL 凭据。devserver 定向 Core 28/28、Host 35/35、Python 6/6，Core 构建和 Web Host 生产源码类型检查通过。隔离 SQLite 与合成 SDK/传输覆盖归属、重新发现、取消和脱敏，外部 MCP 服务及实际部署待验收。
+
+MCP Agent 启停：复用 `mcp/server-mutations.ts` 的 owner 限定配置写入，只更新启用标志及时间。事务内核对活动 Run、dispatch fencing、账号状态和访问版本，并原子清除该账号的持久工具快照及提交收据。提交后失效进程内连接，启用时尝试装载。装载失败保留已提交的启用状态并报告连接问题，取消和回执重放保留持久业务结果，无重复装载。devserver 最终 Core 29/29、Web Host 31/31、Python 5/5，Core 构建及 Web Host 生产类型检查通过。Node 覆盖隔离 SQLite 和 PostgreSQL，PostgreSQL 用例经过实际租约查询及工具注册器。握手和 Provider 版本读取使用合成依赖，实际部署和外部 MCP 服务待验收。
+
+MCP Agent 非凭据更新已接入 Web Run，复用共享设置页写入事务。端点、工具白名单及自动确认变更需要可信持久确认，确认绑定具体配置版本和输入。已有凭据或凭据槽位的服务须通过设置页更新连接地址。Web Host 继续只支持受控 HTTP 执行，Agent 地址更新拒绝内嵌凭据、查询参数与片段，回执仅显示地址来源。配置、确认认领、快照失效与操作收据共同提交，失败回滚，提交后失效进程内目录。devserver 通过 Core 30/30、Web Host 31/31、旧 Python 8/8，Core 构建及 Web Host 生产类型检查通过。测试用隔离 PostgreSQL 验证实际租约授权、非凭据更新与重放，以 SQLite 和确认替身覆盖版本漂移、密封失败回滚及单次认领。真实 Redis 确认、外部 MCP 握手和部署待验收。
+
+MCP Agent 添加无需凭据的 HTTP 服务已接入 Web Run。共享 `mcp/server-create.ts` 借用确认认领与操作收据事务，Node 设置页与工具创建按 owner 串行检查同名和配额。确认绑定服务名称、规范化配置及当前 Host 默认超时，回执仅显示端点来源。devserver 通过 Core 30/30、Web Host 35/35、旧 Python 8/8，Core 构建、Web Host 生产类型检查和 `git diff --check` 通过。隔离 PostgreSQL 使用真实租约查询、加密意图、确认认领和收据，验证确认前无业务行、伪造回执与默认值改变拒绝、加密失败回滚、重放及并发配额。测试使用合成 Web 确认投影与端点密封，无外部 MCP 请求。真实 Redis 确认及工具发起的凭据填写仍待验收。
+
+MCP Agent 添加有 Header 凭据槽位的 HTTP 服务已接入 Web Run。配置、确认认领、加密填写意图和收据同事务提交；重放返回同一私密交互。既有私密提交入口在事务内重新核对 owner 和配置版本，凭据只进入密文存储，恢复队列只接收安全结果。devserver Core **34/34**、Web Host **43/43**、旧 Python 定向 **7 通过、29 项未选中**，Core 构建和 Web Host 生产类型检查通过。隔离 PostgreSQL 覆盖私密表单建立、回滚、跨 owner、配置改变和通过现有 HTTP 路由提交并恢复入队；确认投影和 Provider 使用测试替身。真实 Redis 确认、外部 MCP 和实际部署待验收。
+
+MCP Agent 更新 Header 槽位复用共享设置写入、加密意图和现有私密提交入口。确认后清除旧凭据及旧工具目录，更换槽位返回新表单，空数组则清空槽位并完成。隔离 PostgreSQL 通过真实工具注册、租约、事务认领和操作收据验证确认前保留旧凭据、输入篡改拒绝、意图失败回滚、表单幂等重放和私密值重新提交。devserver Core **34/34**、Web Host **43/43**、旧 Python `test_mcp_settings_api.py` 定向 **10 通过、26 项未选中**，Core 构建和 Web Host 生产类型检查通过。确认投影与端点/凭据加密使用合成输入和测试端口，真实 Redis 确认和外部 MCP 未验收。
+
+综合 devserver 回归：Core 14 文件 72 项通过。搜索/Provider 145 项及共享 Linux FS 8 项通过。Host registry/lease 等六文件 49 通过、1 个 PostgreSQL 条件用例跳过。随后临时 PostgreSQL/Redis 的 Host 组合独立通过 16 项，含该 Skill 管理用例；新增实际定时任务三项工具走 PostgreSQL 事务的用例另通过 1 项。Provider、平台投递、部分租约/确认端口使用合成数据或替身。Python 沿用未修改参考实现的临时副本，总计不同批次 **194、185、56、58** 项通过，批次有重叠。较早失败来自隔离副本漏拷入口或测试脚本和 MCP SDK 版本不匹配，已补齐隔离环境后复跑。
+
+补充验收：Core build 与 Web Host production TypeScript 检查通过。devserver 的锁定 `@types/ws` 已缓存，本轮检查临时补上 Host 的依赖链接，结束后移除。最新 Host 邮件、搜索、租约注册及可信确认回归 **51 通过、2 个需 PostgreSQL 的确认用例跳过、0 失败**。Core 邮件回归 **2/2**，包括 SQLite 持久尝试收据及未知结果防重发。MCP UUID 批次 Core **28/28**，验证同名系统配置保留、版本变化拒绝、claim 回滚和重放。邮件 Hook 没有执行真实 SMTP。MCP 外部连接和剩余配置写入尚未验收。
+
+`send_email` HTML 与持久确认复验：Core 构建、Web Host production TypeScript 检查与邮件 Core **3/3** 通过。devserver 临时 PostgreSQL 上，Web Agent 邮件与定时邮件共享端口 **8/8**，覆盖真实 PostgreSQL 加密意图、权限版本和事务内 claim，伪造回执与改变主题均拒绝，重建后读取持久结果且只调用一次 SMTP 替身。确认后的自定义 HTML 保留安全内容，删除事件属性、脚本与远程图片。旧 Python 邮件与附件 **27/27** 通过。新 PostgreSQL 实例仅监听临时 Unix socket，测试完成后清理。Web 交互提交和 SMTP 使用替身，实际部署及外部 SMTP 尚未验收。
+
+定时任务消费者边界复核：现有 Python Worker 启动时和运行期间调用 `app.scheduled_tasks.reconcile()`，从共享表刷新启用任务，并由 `execute_task()` 执行及投递。Web Host 的 Node 周期定时器尚未接入进程生命周期。为接线补齐了 Node 定时器的分段等待、改期后的旧回调失效、快速停启期间的协调隔离，以及停止时等待已启动的协调和执行。devserver 虚拟时钟回归 **3/3**，旧 Python 调度规则与执行 **50/50**。首次 Python 副本缺迁移文件，补齐隔离副本后通过。定时任务创建和更新仍待选定生产消费者、装配真实执行与投递后再注册。未触发实际任务。
+
+后续按实际 Node Worker 接线注册 `create_scheduled_task` 和 `update_scheduled_task`。Web Agent 与设置页共用 PostgreSQL 写入和投递解析；写入前和提交前检查账号、dispatch lease 与访问版本。启用状态的任务必须有对应消费者及可验证投递目标；更新私聊时拒绝旧绑定漂移，显式选择 owner 私聊可按当前绑定刷新。默认关闭的 Worker 开关与 Python 消费者切换沿用迁移任务清单。devserver 定向 Core **4/4**、Web Host **35/35**，包括真实 PostgreSQL/Redis 的生产 Host 启动、一次性和周期站内投递，Provider 为合成 HTTP 服务；旧 Python 计划、工作区、执行与群上下文 **71/71**。Core 构建与 Web Host 生产类型检查通过。扩大 Core 套件首轮发现定时运行的投递可选参数与既有测试断言不符（5 项）、RAG 测试固定时间早于入队墙钟（1 项），另有一个 `node:test` 文件被 Vitest 收集失败；该轮保留为失败记录。真实渠道、部署切换、群来源授权和工作区执行待验收。
+
+补充验证了运行中的消费者。Agent 和 REST 的创建及更新事务提交后主动刷新本进程 Node Worker，避免任务在下一轮定期扫描前到期。新集成用例先启动 Worker，再经真实 Web 租约工具端口创建并更新一次性、周期任务，经隔离 PostgreSQL、Redis 和真实站内存储验证新正文只投递一次、一次性任务删除、周期收据结算；模型结果使用合成端口。生产 Host 启动另以合成 HTTP Provider 验证实际模型协议。全仓查证后删除四个无生产引用的旧 Node 文件，包括实验回看轮询、重复 PostgreSQL 计划与收据实现及 Core 转发。将实库行为测试改接共享仓储和收据，保留停用、版本冲突、竞态及未知结果防重放断言。先前 Core 扩跑的问题已修复，devserver 最终 Core **34/34**、Web Host **45/45**，构建、生产类型检查及 `git diff --check` 均通过。本轮未改 Python，仍引用前轮 **71/71** 对照结果。实际部署切换、跨进程近时通知、外部渠道和持久文件授权待验收。
+2026-11-18 Web Host 资产迁移回归。Node 合批 **29/29**，无失败或跳过。对话和 IM 读取实际打包提示词；Admin 将更新原子写回同一根，后续上下文立即读取新内容。注册引导校验实际 MP3 格式；隔离 PostgreSQL 的播种及定时 Agent 使用临时文件和合成 Provider。Host 编译到独立临时目录后，在没有后端源码的发布布局中运行提示词和新手音频读取。部署镜像未执行。
+
+同日 Web Host 运行路径回归 **46 通过、2 个历史跨语言用例跳过、0 失败**。Core 构建及 Host 编译通过，编译后的运行路径解析器在无 `backend/` 的独立目录读取临时配置，缺少显式 BYOK 密钥时明确拒绝凭据操作。Admin 日志回归验证显式文件优先、未授权拒绝、分页和 SSE。配置锁改成两个 Node 进程后复跑 **6/6**，覆盖并发原子保存、进程退出或崩溃释放以及损坏或缺失的配置拒绝写入。配置、日志与密钥使用临时文件和合成数据。
+
+同日 Node 后台重启回归 **18/18**，无失败或跳过。调度生命周期覆盖停止失败抑制启动、并发重启合并和关机冲突。临时 PostgreSQL/Redis 的实际 Host 管理员路由验证重启后服务来自当前 Node 进程、旧心跳不参与控制、网关明确不可用。RAG 调度回归使用 SQLite 并覆盖任务领取、继续轮询及取消；实际定时 Run 使用合成 HTTP Provider。未向外部进程发信号，未调用真实 Provider。
+
+同日 Node Web 反思队列与 Run **8/8**，无失败或跳过，Host 生产类型检查通过。隔离 Redis 行为回归覆盖同 Run 去重、阈值与闲置触发、按 owner 互斥、模型与访问作用域分批、稳定批次 ID、失租后的接管、过期回执和删除会话。隔离 PostgreSQL/Redis 的 Web Run 回归使用合成 Provider。该验证覆盖队列领取和回执，反思模型与入库消费者仍待接线。
+
+同日 Node owner 反思档案发布与 `remember` 合批 **7/7**。使用隔离 PostgreSQL、Redis 和 Local 文件，并以合成结构化结果模拟反思模型。验证实际领取批次、异主和失租拒绝、文件已落盘但入队失败时的收据恢复、恢复不重新调用模型、状态并发变更后保留新值并重建当前索引，以及日记无重复、保留观察来源和向量失效。可信生产模型与调度在此轮验证范围之外。
+
+接入生产 Host 生命周期后，devserver 反思队列、原模型恢复、档案发布和 `remember` **11 通过、0 失败、0 跳过**，Core 构建与 Host 生产类型检查通过。隔离 PostgreSQL、Redis 和临时文件覆盖回合定位、异主和群聊拒绝、繁忙会话延期、模型版本变化时无出站、实际 Provider 请求构造及用量、记忆发布、重建入队和收据恢复。Provider HTTP 传输使用合成响应，没有访问实际模型。未重跑 Python pytest，也未通过生产部署复验。
+
+跨 Run 批次和恢复增量在 devserver 合批 **17 通过、0 失败、0 跳过**。隔离 PostgreSQL、Redis、临时文件及合成 Provider 验证同一签名范围内的两个 Run 只发一次反思请求，删去一个回合后剩余回合仍写入档案，超预算拆分保留队列顺序，正常停止后立即重新领取相同批次且旧回执失效。随后独立模型恢复 **5/5**，新增原预设删除拒绝及暂时配置故障仍可重试，另外四项与合批重叠。Host 生产类型检查通过，生产部署和真实 Provider 未验收。
+
+单回合超预算恢复复验 **18 通过、0 失败、0 跳过**，Core 构建、Host 生产类型检查通过。隔离 PostgreSQL 与 Redis 的用例经实际 Node 分支请求和持久发布，验证包含换行、转义字符及补充平面字符的原文可按角色和顺序完整拼回、每次出站请求留出模型输出预算、最终只传摘要，且模型即使提议删除已有画像也不会写入删除。各阶段的模型用量均写入隔离 PostgreSQL。模型 HTTP 使用合成响应，生产部署和真实模型摘要质量尚未验收。
+
+Web Agent 正式入口补验在 devserver **5 通过、0 失败、0 跳过**。新用例使用生产 `startServer`、真实 HTTP/SSE、隔离 PostgreSQL 与 Redis 及本地合成 OpenAI 协议对端。索引尚未迁移时普通聊天可完成，应用正式 RAG 迁移并重启后真实执行 `search_conversations`，检索结果进入模型工具续轮，异主会话不可订阅且异主标记不会出现在模型请求中，完成状态与回复已写入数据库。另覆盖持续调度取消后推进下一轮，以及可信重建器恢复。Core Provider 和 checkpoint **128/128**，Core 构建及 Host 生产类型检查通过。Node 测试的业务表为精简合成 schema，未验证全新生产数据库部署、真实外部模型或进程重启后的生产前缀恢复。本轮未改动 Python，未重跑旧 pytest。
+
+Web Run 前缀恢复复验。隔离 PostgreSQL 与 Redis 中，首个 Harness 在持久工具结果提交后停止，另一个 Harness 从同一 Run 的加密 checkpoint 恢复。测试修改会话当前快照，验证模型续轮仍收到原前缀和已提交工具结果。模拟前缀格式漂移时，调度记录版本冲突且不发模型请求，恢复原格式后可继续。Core Provider、checkpoint 和重建 **133/133**，Host HTTP、重建和调度 **5/5**，Core 构建及 Host 生产类型检查通过。模型为合成，未做启动独立进程并强制退出的 HTTP/SSE 恢复验证，也未重跑 Python pytest。
+
+独立 Node Host 强制退出复验 **1 通过、0 失败、0 跳过**。通过真实 HTTP 发起聊天，隔离 PostgreSQL 等到工具结果及空闲阶段提交，用仅存在于测试 schema 的触发器挡住下一次模型请求前的事务，随后强制退出首个 Node 进程。将合成旧租约推进到过期时间并改变会话当前快照，再启动第二个 Node 进程。已认证的 SSE 重连返回同一 Run 的完成事件与一次工具回执，第二次模型请求带有相同的系统前缀及已提交的工具结果。使用隔离 PostgreSQL、Redis 与本地合成 Provider，未连接真实模型，也未验收自然等待完整租约时长或生产部署。Core 构建、Host 生产类型检查通过。
+
+Node Agent 调度正式迁移复验 **3 通过、0 失败、0 跳过**，Core 构建和 Host 生产类型检查通过。隔离 PostgreSQL 在已准备账号、会话、消息和交互提示表的空 schema 中，由 Node 事务创建九张运行表。并发申请只提交一份台账，结构漂移、异主或异会话锚点及异主交互提示会被拒绝。同一会话始终只有一条选中的调度记录，消息或交互提示删除会级联解除相关引用，建表失败不留下部分对象。生产 HTTP/SSE 用例改用正式运行表，覆盖真实工具续轮和独立 Host 进程强制退出恢复。原先的精简 text 字段掩盖了 PostgreSQL varchar 与 text 参数推断冲突，现显式统一阻塞原因参数类型。依赖为隔离 PostgreSQL、Redis 及本地合成 Provider，基础业务表全新部署、旧数据搬迁和生产部署仍待完成。
+
+Node 独立初始化验收。隔离 PostgreSQL 从空 schema 运行 Agent 基础、Agent 调度和 RAG 索引命令，核对待迁移状态及退出码、应用后检查、重复应用与结构拒绝。基础表覆盖账号、偏好、会话、消息及批次、待发送队列、交互提示、附件元数据、用量与 RAG 重建任务。Node 从授权来源重建派生索引，原有未登记索引的数据保持原样。附件认领同时验证附件与目标消息的账号，通过真实 PostgreSQL 拒绝异主目标及已认领附件，并验证冲突时整笔回滚。生产 Host 测试使用正式 Agent 表，常规聊天在索引未应用时先持久化重建任务，应用后经 TypeScript RAG 执行会话搜索、模型续轮和 SSE。强制退出进程后按原 Run 恢复。隔离 PostgreSQL/Redis 的 Host 合批 **33 通过、0 失败、0 跳过**，Core 图片下载限流及重定向回归 **5 通过、0 失败、0 跳过**。迁移 CLI 实测、Core 构建与 Host 生产类型检查通过。合成模型和其他领域的少量表结构作为测试输入。HTTP 恢复用例此前出现一次超时，补充阶段诊断后连续两次通过。本轮使用 Node 验收，旧版 pytest 未重跑。运行环境、外部模型和向量 Provider、旧数据导入及整站空库部署仍待验收。
+
+Node Web 业务初始化复验。新增 `migrate:web-domain:check/apply`，复用 Core 的项目、日历、Mind、定时、通知与 Undo 定义，在同一事务补齐 Web 所需的工作区、文件和配额，以及技能、Bot、记忆范围等表。项目根文件数由 PostgreSQL 在文件变更事务内更新，验证批量写入、移动、软删回滚、删除和同账号约束。迁移检查能发现触发器失效。生产 HTTP/SSE 与八类 RAG 来源用例由空 schema 执行正式 Node 迁移建立业务表，验证 `/health/ready`、普通聊天、会话搜索续轮及强制退出后的恢复。八类来源用例另覆盖文件授权、记忆墓碑与笔记工具写入后索引更新。devserver Host **30 通过、0 失败、0 跳过**，CLI、Core 构建和 Host 生产类型检查通过。使用隔离 PostgreSQL/Redis、临时文件及环回合成模型。本轮无需从 Python 安装数据库结构，未重跑旧 pytest。整站可选域、旧数据导入和真实外部部署单独验收。
+
+首个账号 Node 调用链。空库生产用例改用真实注册签发的 Bearer 凭证，继续验证会话搜索、模型续轮及进程恢复。首次运行捕获了两个会让注册表面成功但引导回滚的契约错误：正式项目表曾拒绝空颜色，文件路径查询曾将项目日期字符串直接传给 PostgreSQL 日期格式化函数。现保留空颜色并在文件路径读取边界解析日期。注册事务独立建立基础配额及初始化事件，失败时与账号、偏好和工作区一起回滚。引导成功则同事务发布项目与日历重建任务，播种失败不会留下临时项目或伪造任务，账号仍可使用基础配额。Vite Cookie、真实 PostgreSQL 事务及合成写入失败用例覆盖上述行为。
+
+本轮已运行的合批为 51 通过、1 失败、0 跳过，Core 构建、迁移 CLI、Host 类型检查通过。生产 HTTP 用例已执行到首个账号播种、普通聊天以及 Node Worker 落盘项目和日历索引，随后在共享工作区的 Admin 状态标签目录断言处失败。状态标签相关源文件同步确认后已启动包含五组文件操作的合批复验，结果仍待采集。旧版 pytest 本轮未重跑，未调用真实邮件或模型服务。
+
+生产 HTTP 取消回归已补入正式迁移的 Web 用例。预期行为包括其他账号取消返回 404、当前账号取消只结束目标 Run、模型 HTTP 流关闭、已生成内容作为中断正文保存，以及同一会话能发起下一轮。该用例仍待隔离 devserver 执行。此前启动的完整复验进程仍在，独立 SSH 探针在握手阶段超时，目前没有新的退出状态或测试计数。
+
+会话删除现在与 RAG 重建队列同事务提交。启用持久索引时同步撤下该账号、该会话的摘要和所有消息版本，并清空正文、标题、摘要、内容指纹和元数据。已领取旧代数的 Worker 提交时会失效。终端和派生索引由 Node Host 分别安装，空库部署可以在未装配这两项能力时删除会话，同时保留重建任务。PostgreSQL 回归已补充挂起旧 Worker、删除后的立即隔离、历史版本与内容指纹清空、队列失败时回滚和可选表缺席。devserver 原复验因磁盘 I/O 长时间无输出后已中断；随后只读哈希发现目标源码尚未同步，Mutagen 仍在扫描/暂存并报告生成目录冲突。本次新增回归尚未运行，不能用远端旧源码验收。
+
+2026-11-18 `list_events` 生产工具调用补验。真实 `startServer` HTTP/SSE → 持久 Run → per-lease 工具 registry → Core 日历 reader → PostgreSQL → Provider 续轮 **1/1 通过**。随机隔离 schema 中验证本 owner 的活动和提醒进入结果、异主活动及异主提醒不泄漏；保留停用提醒、渠道数组、QQ 群投递模式，并确认提醒正文不会暴露。Core `domain-reads.test.ts` **5/5**，Host `agent-calendar-write-ports.test.ts` **2/2**。Python `test_readonly_tool_migration.py::test_registered_calendar_preserves_reminders_filters_and_owner` 此前有通过记录；本轮未运行 pytest（当前环境未安装），故历史结果不是本轮重验。Provider 使用环回合成端点，不涉及真实外部服务。Node 2.0 不引入 Python 桥接或回退。
+
+同一生产调用回归继续验证 `list_clients` 和 `list_projects`：由合成 Provider 在真实 Run 中提出工具调用，可信 Host lease dispatch 到 Core owner-scoped 服务，联系人及项目列表进入模型后续请求，合成异主联系人与项目均被排除。真实隔离 PostgreSQL/Redis、`startServer` HTTP/SSE **1/1 通过**；Core `clients.test.ts` **20/20**、`projects.test.ts` **12/12**。Python `test_core_data_bridge.py::test_web_contact_compatibility_uses_shared_storage_and_owner`、`test_project_tools.py::test_list_projects_filters_status_and_archived` 及项目 owner 基准此前 **3/3**，本轮环境未安装 pytest，未重跑。由此两工具从“部分实现”更新为“已完成并接入 Web”；未因此推定其他项目/联系人写工具完成。合成 Provider 和隔离数据用于测试，生产部署及真实外部模型未验收。
+
+同一真实生产 Run 随后调用 `get_dashboard_stats`、`list_workspaces`、`get_workspace`、`create_client` 和 `update_client`。Dashboard 的可信 owner 时区及 PG 计数进入续轮，联系人计数排除异主行；工作区列表与详情通过 owner workspace ID 读取默认目录；联系人创建和按名称更新均由真实工具调用执行并回读隔离 PostgreSQL 副作用。Host RAG/lease/工具组合 **15/15**，Core `domain-reads.test.ts` **5/5**，Core `clients.test.ts` **20/20**，生产 `startServer`/PG/Redis/合成 Provider 集成 **1/1**。Python 总览、工作区、联系人共享数据和 owner 基准此前有 **7/7** 通过记录，本轮 pytest 不可用而未重跑。上述五项更新为已完成并接入 Web；`delete_client`、`update_workspace` 仍需确认/写入边界及生产 PG/Redis 恢复验收，不随本次状态变化。Provider 为环回合成端点，生产部署未验收。
+
+同一生产 Run 再调用 `create_project`，验证 Node ToolPort 以可信 Run 身份提交共享项目创建事务；隔离 PostgreSQL 回读到 owner 项目、默认 `pending`、`high` 优先级和三项标准阶段，Core 持久化阶段格式正常保留 key/todo 结构。真实 Host 集成 **1/1**、Core 项目工具 **12/12**；Python `test_project_tools.py` 创建默认阶段、优先级归一化、自定义待办及非法阶段回归此前在 **148 项合批**中通过，本轮 pytest 未重跑。该创建工具更新为已完成并接入 Web；同组更新、阶段、颜色、归档及删除仍逐项验收，不能因共享 Port 存在而标记完成。
+
+真实生产 Run 随后在同一 owner 项目上调用 `update_project`、`set_color`、`archive_project`：摘要更新、语义色 `teal` 映射为既有渐变值、归档位变化均通过隔离 PostgreSQL 回读验证；项目更新和归档结果不触及异主项目。当前 Host 主链集成 **1/1**，其中项目工具实际执行覆盖 create/update/color/archive；Node Core 项目创建/修改/阶段测试历史合并 **100/100**，Python 项目工具业务基准此前合批通过，本轮未重跑。三项更新为已完成并接入 Web；待办/阶段独立工具与删除仍单独保留部分实现。已完成工具合计 16，部分实现 68。外部 Provider 未调用，生产部署未验收。
+
+同一正式 Provider Run 继续连续分派项目阶段组五工具：`add_stage` 新增阶段、`rename_stage` 重命名、`update_stage` 新增待办、`set_stages` 按稳定 `s3` key 重排并保留待办、`remove_stage` 移除临时阶段。PostgreSQL 回读确认结果仅作用于 owner 项目、当前阶段随移除目标回退到剩余阶段，待办 id/text/done 保留。Agent Chat 生产集成 **1/1** 完整通过，Core 项目阶段/收据回归沿用历史 **100/100** 通过记录；Python `test_project_tools.py` 21 项项目/阶段基准已有记录，本轮未重跑（pytest 未安装）。五项阶段工具状态更新为已完成并接入 Web，静态清单现为完成 21、待接入 2、部分 63、依赖阻塞 22、退役/重设计 1。Node-only 运行；测试使用隔离 PG/Redis 和环回合成 Provider，无真实外部调用或生产部署。
+
+`get_project` 随后在同一生产 Run 通过 Provider 工具协议读取真实 owner 项目，返回 Core 文件概览和实际文件数；异主 project ID 返回安全“不存在”，且不进入文件计数 reader。隔离 PostgreSQL 的 `get-project-overview-postgres.test.ts` **1/1**，生产 Run 集成 **1/1**。该 PG 合同另外验证软删项目、跨 owner 文件/目录、非 project 文件空间、预取消、撤权，以及查询等待取消时连接最终可复用；Python 项目详情基准此前 **7/7**，本轮未重跑。`get_project` 更新为已完成并接入 Web，静态状态计数为完成 22、待接入 2、部分 62、依赖阻塞 22、退役/重设计 1。真实部署与外部 Provider 未验收。
+
+`get_tool_schema` 生产调用复验：合成模型请求仅查询当前 lease registry 允许的 `list_events`，工具经正式 registry 执行后将 discovery/schema 事件投影进生产 Run SSE。集成用例通过验证事件含目标 schema，且不假定该专用 canonical discovery 结果一定以普通工具消息形状进入 Provider 文本数组。Core `note-reads.test.ts` **6/6**，真实 Host HTTP/SSE **1/1**。Python `test_registered_schema_discovery_does_not_execute_requested_tool` 与此前 schema-selection 近邻回归有通过记录，本轮 pytest 未重跑（环境无 pytest）。因此更新为已完成并接入 Web；静态清单现为完成 23、待接入 2、部分 61、依赖阻塞 22、退役/重设计 1。Provider 为环回合成端点，Node-only，无 Python 回退。
+
+2026-11-18 `note_search` / `note_get` 生产工具调用验收：在隔离 PostgreSQL schema、Redis 和环回合成 Provider 上启动正式 `startServer`，通过 HTTP/SSE 和生产 ToolRegistry 分别搜索/读取笔记。搜索返回己方 note id 与正文、不含异主内容；详情验证 JSON `numbered_content` 保留实际物理行号及换行；异主 node id 返回安全 not-found，不泄露异主标题或正文。Core `note-reads.test.ts` 本轮 **6/6**，生产 Host 集成 **1/1 通过、0 失败、0 跳过**。测试断言最初把 JSON 转义换行当作原始换行，已改为解析结果 JSON 后精确检查 `numbered_content` 并完整复跑。Python pytest 本轮未运行；对应旧 Python 行为以既有合同和共享用例对照，不能据此宣称 Python 基准本轮通过。两项从部分实现更新为已完成并接入 Web；当前109个静态工具：完成25、待接入2、部分59、依赖阻塞22、退役/重设计1。临时 PG/Redis 及合成 Provider，不涉及生产数据或真实外部服务；Node-only，无 Python 兼容层。
+
+
+2026-11-18 Agent Runtime Core 边界与项目工具原型清理复核。Core 保留 Harness、Chat 生命周期、dispatch Worker/Supervisor、恢复校验、事件重放与共享交互编排；Web Host 只装配认证 owner、PG/Redis 持久端口、Provider/工具授权绑定及 HTTP/SSE。Core 定向回归此前在 devserver 隔离快照中 8 文件 77/77 通过；Web Host 的真实持久层、生产部署及桌面接线仍按迁移任务清单标为未完成。删除全仓生产零引用的 `agent-project-update-tool.ts` 与仅测试该适配器的 Host 测试；生产更新工具由 Core `ProjectMutationPort` 注册，完成待办、owner 隔离、名称歧义、空更新、CAS、确认、取消和未知提交行为已有 Core 项目回归覆盖。devserver 隔离快照中 `projects.test.ts`、`project-mutations.test.ts`、`project-durable.test.ts` 50/50 通过。标准 Vitest 配置因当前共享树的 `tests/suites.json` 与测试发现集合不一致未能启动；改用隔离快照里的临时显式文件配置，未修改该清单或触碰冲突同步。
+
+2026-11-18 `note_create` / `note_update` Python 基线补验。devserver 源码隔离快照运行 `tests/mind/test_mind_agent_tools.py` 与 `tests/agent/test_tool_schema_validation.py -k note`，30 通过、84 未选；Core `note-writes.test.ts` 与 `note-lifecycle.test.ts` 7/7 通过。既有 Host 隔离 PostgreSQL 回归覆盖真实写入、Undo、收据、索引刷新、撤权和行编辑；本轮未运行该 Host 测试，因为 devserver shell 未提供 `GUGU_WEBUI_TEST_DATABASE_URL`。生产 `startServer` Provider 续轮尚无 note 写工具实跑证据，因此两项仍为部分实现，不因底层 Host dispatch/测试 Provider 覆盖而升级状态。
+
+2026-11-18 搜索与下载 Core 回归复验。devserver 源码隔离快照运行 `providers/ollama.test.ts` 和 `tools/web.test.ts`，**66/66 通过**：覆盖 MiniMax、Qwen、GLM、DeepSeek、Mimo、Ollama 原生协议、凭据与目标主机限制、重试/重定向、输出预算、取消及 `web_search`、`deep_research`、图片结果和下载契约。Python `test_provider_web_search.py` 与项目删除确认基准此前 **35/35**、深度研究/相似图/限额此前 **21/21**；本轮未重跑 pytest。Host `agent-search.test.ts` 的持久配额与凭据接线需要独立 PostgreSQL URL，本轮未运行；未调用付费 Provider 或公网服务。搜索工具继续标记部分实现，Host DB 配额回归和生产 Run 续轮仍待验收。
+
+2026-11-18 IM 工具与 Gateway 接线复核。Core `tests/agent/tools/im.test.ts` 在 devserver 隔离快照 **4/4 通过**；Python `tests/im/test_im_owner_session.py` 与 `tests/im/feishu/test_feishu_gateway_guards.py` **18/18 通过**。源码全仓调用检查确认 `createWebAgentImOwnerSessions` 和 `createWebAgentFeishuReaction` 目前只在 Host 工厂及测试出现，`main.ts` 无生产注册调用；前者缺 Gateway 当前 owner 私聊解析，后者缺 Gateway 当前飞书消息/回应标记回调。`apps/web-host/tests/agent/agent-im.test.ts` 要求隔离 PostgreSQL 与 Redis；devserver 当前 shell 两个测试 URL 均未配置，因此未运行该 Host 集成，也未将 Core 工厂或 fake 当作生产接入。两个工具继续标记为待实时 Gateway 接入。
+
+2026-11-18 `canvas_list` / `canvas_get` / `canvas_search` / `canvas_focus_node` 生产工具调用验收。通过正式 `startServer` HTTP/SSE、ToolRegistry 和真实隔离 PostgreSQL/Redis 执行四个读工具。画布列表校验己方列表、活动项计数和视图投影且排除异主画布；详情返回 owner 节点正文；搜索返回真实匹配；焦点工具生成正确 `gugu://focus-canvas/...` 链接；异主画布详情返回 not-found 且不泄漏标题。Core 画布详情/布局/Agent 读取/焦点及工具用例 **5 文件 12/12 通过**，生产 Host 集成 **1/1 通过、0 失败、0 跳过**。一次夹具视图嵌套和一次测试对 content 字段的假设经失败输出修正，按真实共享投影 `view.camera.x`、`content_md/content_plain` 重跑通过。Python pytest 本轮未运行。四工具从部分实现更新为已完成并接入 Web；109 个静态工具：完成29、待接入2、部分55、依赖阻塞22、退役/重设计1。只使用临时隔离存储与环回合成 Provider，无真实外部调用；Node-only，无 Python 兼容层。
+
+2026-11-18 `canvas_search_placeable` 生产调用补验。相同隔离 Host Run 经 ToolRegistry 实际检索项目，并确认当前 owner 的 `工具创建项目` 命中，而同词的异主 `异主合成项目` 未返回。生产集成 **1/1 通过、0 失败、0 跳过**；Core 画布组 **5 文件 12/12** 与同一生产用例一起通过。此项与前一批四个画布只读工具合并更新为已完成，当前109项：完成 **30**、待接入 **2**、部分 **54**、依赖阻塞 **22**、退役/重设计 **1**。Python pytest本轮未运行；真实生产外部服务未调用，Node-only。
+
+2026-11-18 画布创建和编辑工具生产调用补验：正式 Web Run 实际调用 `canvas_create`、`canvas_create_note`、`canvas_add_node`、`canvas_update_node`、`canvas_update_note`、`canvas_connect`、`canvas_update_anchor`。隔离 PostgreSQL 回读确认画布/便签/业务引用 owner 与关联、节点坐标、便签正文及版本、同画布关系行与端点字段；Core 画布组定向 **5 文件 12/12**，生产 Host HTTP/SSE/PG/Redis 集成 **1/1 通过、0 失败、0 跳过**。Python pytest 本轮未运行。七工具由部分实现更新为已完成；静态工具状态：完成 **37**、待接入 **2**、部分 **47**、依赖阻塞 **22**、退役/重设计 **1**。临时隔离数据与合成 Provider；未调用真实外部服务，Node-only。
+
+2026-11-18 `call_tool` 行为与生产接线补记。devserver 上 Python `test_tool_schema_security_contract.py -k call_tool` **2/2**、Core `tool-ports.test.ts` 与 `input-feedback.test.ts` **21/21** 通过；既有正式 `startServer` HTTP/SSE 隔离 PostgreSQL/Redis 集成经真实 ToolRegistry 调用嵌套工具，验证持久副作用、目标授权拒绝和原调用 ID 续轮。结合 Core 对计划前解析、计划/分派/确认恢复重新鉴权及可信来源检查点绑定的行为覆盖，`call_tool` 更新为已完成并接入 Web。当前109项：完成 **38**、待接入 **2**、部分 **46**、依赖阻塞 **22**、退役/重设计 **1**。Provider 为环回合成服务；真实外部 Provider 和部署未验收。
+
+2026-11-18 搜索 Provider 与工具回归复跑：devserver 源码快照中 `providers/ollama.test.ts` + `tools/web.test.ts` **66/66 通过**；Host `agent-search.test.ts` 现 **4 通过、0 失败、1 跳过**，唯一跳过项要求未配置的隔离 PostgreSQL URL。新增行为用例由实际 Core Harness 发出 `web_search` 调用，经 Host 搜索 factory 和 ToolRegistry 执行合成出站请求，并断言结果进入下一轮 Provider 上下文。Python `test_provider_web_search.py` **33/33**；上述源码和测试哈希与当前工作树一致。`web_search` 仍为部分实现：`main.ts` 的 `startServer` 生产装配搜索续轮及隔离 PG/Redis 未验收；未调用真实 Provider 或公网服务。
+
+2026-11-18 `send_email` 基线及 Host 回归复核。devserver 上 Python `test_email_tool.py`、`test_email_attachments.py` **27/27** 通过；Core `agent/tools/email.test.ts` **4/4**，Host `agent-email.test.ts` **1 通过、0 失败、1 跳过**，持久 Run 集成 **1 跳过**，两项均因当前 shell 未配置隔离 PostgreSQL/Redis URL。参考源码与 pytest 哈希、Node Core/Host 源码及测试哈希均与当前工作树一致；先前相同源码的隔离 PG/Redis 持久 Run 确认/取消 **8/8** 和定时生产入口环回 SMTP **3/3** 记录仍适用。持久确认、SMTP 认领和预授权定时发送均已接入，`send_email` 更新为已完成并接入 Web；真实外部 SMTP 和部署仍未验收。
+
+2026-11-18 Skill 来源与关联 Schema 回归复跑。devserver 上 Python `test_user_skills.py` **23/23**、Core `use-skill.test.ts` **6/6**、Host `agent-skill-tool-runtime.test.ts` **1/1** 通过，参考源和测试哈希均与当前工作树一致。Core 行为测试确认 `related_tools` 只筛选当前 Run 注册器发现的已授权 Schema，撤权后不再注入；Host SQLite 测试确认 Markdown frontmatter 内置技能、owner 用户 Skill 读取、异主拒绝和停用撤权。该切片只验证 Prompt Skill 行为和关联 Schema 安全边界；指定的 `create_skill`/`update_skill` 生产 Run 与 PostgreSQL 持久接入仍未验收，不升级状态。
+
+2026-11-18 `list_scheduled_tasks` 与 `update_workspace` 生产工具验收。正式 Node `startServer` 在随机 PostgreSQL schema、临时 Redis、临时文件存储和环回合成 Provider 下经 HTTP/SSE/dispatch/ToolRegistry 调用两项工具。定时任务结果只返回 owner 独立任务，排除日历提醒与异主任务；工作区更新同步声明名与目录显示名并保持物理目录键不变。生产集成 **1/1**，Core 定时任务/工具批次 **3 文件 7/7**；初始默认系统目录因安全规则不可重命名，夹具改用非系统 owner 目录后验收通过。Python pytest 本轮未运行。两工具更新为已完成并接入 Web；109 项状态：完成 **41**、待接入 **2**、部分 **43**、依赖阻塞 **22**、退役/重设计 **1**。无 Python bridge、回退或双运行时；无真实外部 Provider、平台投递或生产部署验收。
+
+2026-11-18 `list_trash` 真实 Web Agent 调用验收。隔离 PostgreSQL schema 中写入 owner 与异主的软删除文件，经正式 Node `startServer`、HTTP/SSE、生产 dispatch/ToolRegistry 和环回合成 Provider 查询；结果只包含 owner 文件且保留 PostgreSQL 微秒时间戳。Core `trash.test.ts` **4/4**，生产 Host 集成 **1/1**。Python 回收站 pytest 曾在隔离临时环境 **1/1** 通过，本轮未重跑（当前环境未安装 pytest/后端依赖）。`list_trash` 更新为已完成并接入 Web；109 项状态：完成 **43**、待接入 **2**、部分 **41**、依赖阻塞 **22**、退役/重设计 **1**。只用临时隔离服务及合成 Provider，无 Python 执行桥或真实外部服务调用。

@@ -77,7 +77,7 @@ async function projectSegments(
   projectId: number | string,
 ): Promise<string[] | null> {
   const result = await client.query<{ name: string; start_date: string | null; created_at: Date | string }>(
-    `SELECT name,to_char(start_date,'YYYY-MM-DD') AS start_date,created_at FROM projects
+    `SELECT name,to_char(NULLIF(start_date::text,'')::date,'YYYY-MM-DD') AS start_date,created_at FROM projects
      WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL`, [projectId, ownerId],
   )
   const project = result.rows[0]

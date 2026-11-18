@@ -2,7 +2,7 @@
   <div class="layout">
     <AppSidebar />
     <main class="layout-main" :class="{ 'full-bleed': fullBleed, 'canvas-workspace': isCanvasWorkspace }">
-      <!-- 顶栏（fullBleed 页隐藏：思维面板等「工作台」视图自己管头部，见 router meta） -->
+      <!-- 全幅页面自行管理头部，见路由 meta。 -->
       <header v-if="!fullBleed" class="topbar glass-card" :class="{ 'locale-ja': locale === 'ja-JP' }">
         <div class="topbar-title">
           <h1>{{ currentTitle }}</h1>
@@ -194,7 +194,7 @@ const todayStr = computed(() => {
 
 .topbar {
   position: absolute;
-  top: 20px;
+  top: var(--web-workspace-top-inset);
   left: 20px;
   right: 24px;
   z-index: 40;
@@ -229,7 +229,7 @@ const todayStr = computed(() => {
   color: var(--text-secondary);
   background: rgba(255, 255, 255, 0.52);
   border: 1px solid rgba(255, 255, 255, 0.75);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   padding: 8px 12px;
   cursor: text;
 }
@@ -265,13 +265,15 @@ const todayStr = computed(() => {
 .topbar-actions .topbar-upload-button {
   --action-secondary-bg: var(--surface-raised);
   --action-secondary-bg-hover: var(--surface-raised);
-  --action-secondary-border: color-mix(in srgb, var(--action-outline) 70%, transparent);
-  --action-secondary-border-hover: color-mix(in srgb, var(--input-border-hover) 82%, transparent);
   width: 100px;
   min-width: 100px;
   flex-basis: 100px;
   height: var(--control-height-md);
   min-height: var(--control-height-md);
+}
+html[data-theme='dark'] .topbar-actions .topbar-upload-button {
+  --action-secondary-border: color-mix(in srgb, var(--action-outline) 70%, transparent);
+  --action-secondary-border-hover: color-mix(in srgb, var(--input-border-hover) 82%, transparent);
 }
 .topbar.locale-ja .topbar-upload-button {
   width: 120px;
@@ -292,17 +294,11 @@ const todayStr = computed(() => {
   box-sizing: border-box;
 }
 
-/* ── fullBleed（思维面板等工作台视图）──
-   没有 topbar：顶部渐变遮罩（为"内容溶进 topbar"设计）一并去掉；padding-top 从 128px
-   收到 18px；滚动交给页面自己管（笔记页要在内部做便签流滚动 + 底部停靠捕捉条）。 */
+/* 全幅页面自行管理顶部间距与滚动，隐藏顶栏时也去掉其渐变遮罩。 */
 .layout-main.full-bleed::after { display: none; }
-/* fullBleed 放开左裁：默认 layout-main overflow:hidden 会在侧栏右缘(x=侧栏宽)截断，
-   笔记页横向列滚动区要钻到侧栏底下就不能被这里截。外层 .layout overflow:hidden 仍兜住
-   视口边界，不会真溢出浏览器。 */
+/* 全幅画布可以延伸到侧栏后方，外层布局仍限制在视口内。 */
 .layout-main.full-bleed { overflow: visible; }
-/* 工作台的内容盒必须从导航栏右缘、视口顶端开始，不能再残留普通页面的内边距；否则笔记流
-   要靠负 margin 抵左、右侧却没有对称补偿，最终各区域会落进不同坐标系。顶部胶囊等视觉
-   留白由 Mind/index.vue 自己承担，画布固定层也不再受此处影响。 */
+/* 工作台内容盒从导航栏右缘和视口顶端开始，由各工作台设置自己的内边距。 */
 .layout-main.full-bleed .page-content {
   overflow: visible;
   padding: 0;
@@ -312,6 +308,5 @@ const todayStr = computed(() => {
    约束、天然铺满整个浏览器（含侧栏背后那一段——无限画布的点阵/世界坐标不该在那儿截断，
    只是被侧栏更高的 z-index 盖住看不见）；画布自己浮层的 UI（切换面板/底部工具条）z-index
    与侧栏同属 UI 层，高于拖拽克隆，各自在定位里加了侧栏宽度的偏移量避免落进侧栏底下，不靠收窄画布整体范围解决，
-   见 CanvasSidebar.vue / CanvasToolbar.vue。顶部"笔记/画布"胶囊的边距由 Mind/index.vue
-   自己维护，和笔记页使用同一坐标系。 */
+   见 CanvasSidebar.vue / CanvasToolbar.vue。 */
 </style>

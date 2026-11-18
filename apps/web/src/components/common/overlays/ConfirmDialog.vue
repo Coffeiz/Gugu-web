@@ -43,7 +43,7 @@ const { active, settle } = useConfirmDialog()
 .confirm-dialog-icon {
   width: var(--confirm-dialog-icon-size); height: var(--confirm-dialog-icon-size);
   display: grid; place-items: center; flex: 0 0 auto;
-  border-radius: var(--radius-sm); color: var(--confirm-dialog-icon-fg);
+  border-radius: var(--radius-xs); color: var(--confirm-dialog-icon-fg);
   background: var(--confirm-dialog-icon-bg);
 }
 .confirm-dialog.is-danger .confirm-dialog-icon { color: var(--confirm-dialog-danger-icon-fg); background: var(--confirm-dialog-danger-icon-bg); }
@@ -51,7 +51,7 @@ const { active, settle } = useConfirmDialog()
 .confirm-dialog-copy h2 { color: var(--confirm-dialog-title-fg); font: var(--font-weight-semibold) var(--font-size-md)/var(--line-height-ui) var(--font-sans); }
 .confirm-dialog-copy p { color: var(--confirm-dialog-body-fg); font: var(--font-weight-regular) var(--font-size-sm)/var(--line-height-body) var(--font-sans); white-space: pre-line; }
 .confirm-dialog-actions { display: flex; justify-content: flex-end; gap: var(--confirm-dialog-action-gap); }
-.confirm-dialog-actions button { min-width: var(--confirm-dialog-button-min-width); height: var(--confirm-dialog-button-height); padding: 0 var(--space-md); border-radius: var(--radius-sm); font: var(--font-weight-medium) var(--font-size-sm) var(--font-sans); cursor: pointer; transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard); }
+.confirm-dialog-actions button { min-width: var(--confirm-dialog-button-min-width); height: var(--confirm-dialog-button-height); padding: 0 var(--space-md); border-radius: var(--radius-xs); font: var(--font-weight-medium) var(--font-size-sm) var(--font-sans); cursor: pointer; transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard); }
 .confirm-dialog-cancel { color: var(--confirm-dialog-cancel-fg); background: var(--confirm-dialog-cancel-bg); border: 1px solid var(--confirm-dialog-cancel-border); }
 .confirm-dialog-cancel:hover { color: var(--confirm-dialog-cancel-fg-hover); background: var(--confirm-dialog-cancel-bg-hover); border-color: var(--confirm-dialog-cancel-border-hover); }
 .confirm-dialog-confirm { color: var(--confirm-dialog-confirm-fg); background: var(--confirm-dialog-confirm-bg); border: 1px solid var(--confirm-dialog-confirm-border); }

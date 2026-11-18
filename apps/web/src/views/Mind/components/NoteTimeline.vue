@@ -186,8 +186,8 @@ defineExpose({
   --glass-card-blur: var(--glass-blur);
   --surface-glass: rgba(255,255,255,0.25);
   isolation: isolate;
-  border-radius: 40px;
-  corner-shape: squircle;
+  border-radius: var(--card-radius);
+  corner-shape: round;
   width: 440px; flex-shrink: 0; box-sizing: border-box;
   display: flex; flex-direction: column; min-height: 0; position: relative;
   padding: 14px 12px 10px;

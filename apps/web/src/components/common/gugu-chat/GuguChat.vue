@@ -996,7 +996,7 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
   box-shadow: var(--card-shadow-hover); transform: translateY(-1px);
 }
 :deep(.msg-bubble.md-body a.chat-object-card:active) { transform: translateY(1px); opacity: 0.93; }
-:deep(.chat-object-card-icon) { display: grid; place-items: center; flex: 0 0 27px; width: 27px; height: 27px; border-radius: var(--radius-sm); background: var(--surface-soft-hover); color: var(--action-primary); }
+:deep(.chat-object-card-icon) { display: grid; place-items: center; flex: 0 0 27px; width: 27px; height: 27px; border-radius: var(--radius-xs); background: var(--surface-soft-hover); color: var(--action-primary); }
 :deep(.chat-object-card-icon-svg) { display: block; width: 16px; height: 16px; fill: currentColor; }
 :deep(.chat-object-card-body) { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
 :deep(.chat-object-card-body strong) { overflow: hidden; font-size: 12.5px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }

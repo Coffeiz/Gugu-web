@@ -105,24 +105,24 @@ export function loadConfig(env: NodeJS.ProcessEnv, configOverridePath: string | 
   const smtpOverride = section(override, 'smtp')
   let envDatabasePassword = ''
   try {
-    const envDatabaseUrl = env.GUGU_WEBUI_DATABASE_URL?.trim()?.replace(/^postgresql\+asyncpg:/i, 'postgresql:')
-    if (envDatabaseUrl) envDatabasePassword = decodeURIComponent(new URL(envDatabaseUrl).password)
+    const envDatabaseUrl = env.GUGU_WEBUI_DATABASE_URL?.trim()
+    if (envDatabaseUrl && /^postgres(?:ql)?:\/\//i.test(envDatabaseUrl))
+      envDatabasePassword = decodeURIComponent(new URL(envDatabaseUrl).password)
   } catch { /* The main validation below reports malformed database URLs without exposing credentials. */ }
-  const rawDatabaseUrl = typeof dbOverride.host === 'string'
+  const databaseUrl = typeof dbOverride.host === 'string'
     ? `postgresql://${encodeURIComponent(String(dbOverride.user ?? 'gugu'))}:${encodeURIComponent(String(dbOverride.password || envDatabasePassword))}@${String(dbOverride.host)}:${Number(dbOverride.port ?? 5432)}/${encodeURIComponent(String(dbOverride.name ?? 'gugu_web'))}`
     : env.GUGU_WEBUI_DATABASE_URL?.trim()
-  if (!rawDatabaseUrl) throw new Error('必须配置 GUGU_WEBUI_DATABASE_URL 或 config.override.json 数据库地址')
+  if (!databaseUrl) throw new Error('必须配置 GUGU_WEBUI_DATABASE_URL 或 config.override.json 数据库地址')
   const secretKey = env.GUGU_WEBUI_SECRET_KEY?.trim() || env.SECRET_KEY?.trim()
   if (!secretKey) throw new Error('必须配置 GUGU_WEBUI_SECRET_KEY 或 SECRET_KEY')
 
-  const databaseUrl = rawDatabaseUrl.replace(/^postgresql\+asyncpg:/i, 'postgresql:')
   let protocol: string
   try {
     protocol = new URL(databaseUrl).protocol
   } catch {
     throw new Error('GUGU_WEBUI_DATABASE_URL 必须是有效的 PostgreSQL 连接地址')
   }
-  if (protocol !== 'postgres:' && protocol !== 'postgresql:')
+  if ((protocol !== 'postgres:' && protocol !== 'postgresql:') || !/^postgres(?:ql)?:\/\//i.test(databaseUrl))
     throw new Error('GUGU_WEBUI_DATABASE_URL 必须使用 PostgreSQL')
 
   const redisOverride = section(override, 'redis')

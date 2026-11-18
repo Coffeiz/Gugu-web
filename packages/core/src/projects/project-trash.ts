@@ -248,94 +248,138 @@ async function rollbackStorageMoves(moves: Array<() => Promise<void>>, originalE
   throw originalError
 }
 
+export interface ProjectTrashTarget {
+  project: ProjectRecord
+  resources: ProjectTrashResources
+}
+
+/** 锁定的项目与级联清单由同一领域事务读取，后续执行使用这份清单。 */
+export async function readProjectTrashTargets(tx: ProjectTrashTransaction, ownerId: string, ids: readonly number[]): Promise<ProjectTrashTarget[]> {
+  const projects: ProjectRecord[] = []
+  for (const id of [...ids].sort((a, b) => a - b)) {
+    if (!Number.isSafeInteger(id)) throw new CoreError('not_found', '项目不存在')
+    const project = await tx.getOwnedProject(ownerId, id)
+    if (!project || project.deleted_at !== null) throw new CoreError('not_found', ids.length === 1 ? '项目不存在' : `项目 ${id} 不存在`)
+    projects.push(project)
+  }
+  const targets: ProjectTrashTarget[] = []
+  for (const project of projects) targets.push({ project, resources: await tx.listProjectResources(ownerId, project.id) })
+  return targets
+}
+
+function projectTrashSnapshots(targets: readonly ProjectTrashTarget[]) {
+  const snapshots: Record<string, Record<string, unknown>> = {}
+  for (const { project, resources } of targets) {
+    Object.assign(snapshots, refs(resources, project.id))
+    snapshots[`project:${project.id}`] = projectSnapshot(project)
+  }
+  return snapshots
+}
+
+export function projectTrashConfirmationData(targets: readonly ProjectTrashTarget[]) {
+  const versions = projectTrashSnapshots(targets)
+  const ids: Record<string, number[]> = {}
+  for (const { kind, id } of targetRefs(versions)) (ids[kind + '_id'] ??= []).push(id)
+  for (const values of Object.values(ids)) values.sort((a, b) => a - b)
+  return { ids, versions }
+}
+
+/** SQL、Undo 与层外调用收据共用事务。文件补偿和提交后的通知由事务拥有者处理。 */
+export async function applyProjectTrashTargets(
+  tx: ProjectTrashTransaction,
+  storage: Pick<ProjectTrashStorage, 'moveToTrash'>,
+  ownerId: string,
+  targets: readonly ProjectTrashTarget[],
+  metadata: ProjectTrashMetadata,
+  ports: {
+    addRollback(rollback: () => Promise<void>): void
+    beforeMove?(fileId: number, from: string, to: string): Promise<void>
+    signal?: AbortSignal
+    now?(): Date
+  },
+) {
+  const before = projectTrashSnapshots(targets)
+  const afterTargets: ProjectTrashTarget[] = []
+  const stamp = (ports.now?.() ?? new Date()).toISOString()
+  const events: ProjectTrashResourceChangedEvent[] = []
+  const publishedOrigin = metadata.clientId?.trim() || null
+  const visited = new Set<string>()
+  const results: Array<{ success: true; deleted_project_id: number; name: string; file_count: number }> = []
+  for (const target of targets) {
+    ports.signal?.throwIfAborted()
+    const { project, resources } = structuredClone(target)
+    const projectId = project.id
+    for (const file of resources.files) {
+      ports.signal?.throwIfAborted()
+      if (visited.has(`file:${file.id}`)) continue
+      visited.add(`file:${file.id}`)
+      try {
+        const moved = await storage.moveToTrash(ownerId, file, ports.beforeMove
+          ? (from, to) => ports.beforeMove!(file.id, from, to) : undefined)
+        file.storage_key = moved.storageKey
+        if (moved.rollback) ports.addRollback(moved.rollback)
+      } catch (error) {
+        if (ports.beforeMove || error instanceof ProjectTrashStoragePathError) throw error
+        /* 原 Web 路径保持旧版允许普通物理重命名失败时数据库软删的语义。 */
+      }
+      file.deleted_at = stamp
+      file.version = Number(file.version || 1) + 1
+      await tx.updateFile(ownerId, file)
+    }
+    for (const folder of resources.folders) {
+      folder.deleted_at = stamp
+      folder.version = Number(folder.version || 1) + 1
+      await tx.updateFolder(ownerId, folder)
+    }
+    for (const event of resources.events) {
+      event.deleted_at = stamp
+      event.version = Number(event.version || 1) + 1
+      await tx.updateEvent(ownerId, event)
+    }
+    for (const task of resources.tasks) {
+      task.enabled = false
+      await tx.updateTask(ownerId, task)
+    }
+    const updated = await tx.updateProject(ownerId, projectId, {
+      deleted_at: stamp, version: Number(project.version || 1) + 1,
+    })
+    // 同一文件可能同时按 project_id 和其他项目的 folder_id 命中。
+    resources.files = resources.files.filter(file => file.deleted_at === stamp)
+    afterTargets.push({ project: updated, resources })
+    results.push({ success: true, deleted_project_id: projectId, name: project.name, file_count: resources.files.length })
+    events.push({ userId: ownerId, resource: 'projects', origin: publishedOrigin, operation: 'delete', entityId: projectId })
+    if (resources.files.length || resources.folders.length) events.push({
+      userId: ownerId, resource: 'files', origin: publishedOrigin, operation: 'delete',
+      entityIds: [...resources.files.map(row => row.id), ...resources.folders.map(row => row.id)],
+    })
+    if (resources.events.length) events.push({
+      userId: ownerId, resource: 'calendar', origin: publishedOrigin, operation: 'delete', entityIds: resources.events.map(row => row.id),
+    })
+    if (resources.tasks.length) events.push({
+      userId: ownerId, resource: 'scheduled_tasks', origin: publishedOrigin, operation: 'update', entityIds: resources.tasks.map(row => row.id),
+    })
+  }
+  const after = projectTrashSnapshots(afterTargets)
+  const contextId = metadata.undoContextId?.trim().slice(0, 128)
+  if (contextId) await tx.recordUndo({
+    userId: ownerId, contextId, resource: 'projects', action: 'delete',
+    targetRefs: targetRefs(after), beforeState: state(before), afterState: state(after),
+    baseVersions: Object.fromEntries(Object.entries(before).map(([ref, value]) => [ref, { version: Number(value.version ?? 0) }])),
+  })
+  ports.signal?.throwIfAborted()
+  return { results, events }
+}
+
 export function createProjectTrashService(runtime: ProjectTrashRuntime, storage: ProjectTrashStorage) {
   return {
     async deleteProject(owner: string, id: number, metadata: ProjectTrashMetadata = {}): Promise<void> {
       const ownerId = dataContext(owner).ownerId
-      if (!Number.isSafeInteger(id)) throw new CoreError('not_found', '项目不存在')
       const storageMoves: Array<() => Promise<void>> = []
-      const result = await (async () => {
-        try {
-          return await runtime.transaction(async (tx) => {
-        const project = await tx.getOwnedProject(ownerId, id)
-        if (!project || project.deleted_at !== null) throw new CoreError('not_found', '项目不存在')
-        const related = await tx.listProjectResources(ownerId, id)
-        const before = refs(related, id)
-        before[`project:${id}`] = projectSnapshot(project)
-        const stamp = new Date().toISOString()
-
-        for (const file of related.files) {
-          try {
-            const moved = await storage.moveToTrash(ownerId, file)
-            file.storage_key = moved.storageKey
-            if (moved.rollback) storageMoves.push(moved.rollback)
-          } catch (error) {
-            if (error instanceof ProjectTrashStoragePathError) throw error
-            /* Python 的物理重命名失败不阻止数据库软删；不安全路径必须中止。 */
-          }
-          file.deleted_at = stamp
-          file.version = Number(file.version || 1) + 1
-          await tx.updateFile(ownerId, file)
-        }
-        for (const folder of related.folders) {
-          folder.deleted_at = stamp
-          folder.version = Number(folder.version || 1) + 1
-          await tx.updateFolder(ownerId, folder)
-        }
-        for (const event of related.events) {
-          event.deleted_at = stamp
-          event.version = Number(event.version || 1) + 1
-          await tx.updateEvent(ownerId, event)
-        }
-        for (const task of related.tasks) {
-          task.enabled = false
-          await tx.updateTask(ownerId, task)
-        }
-        const updated = await tx.updateProject(ownerId, id, {
-          deleted_at: stamp,
-          version: Number(project.version || 1) + 1,
-        })
-
-        const afterResources = { ...related, files: related.files, folders: related.folders, events: related.events, tasks: related.tasks }
-        const after = refs(afterResources, id)
-        after[`project:${id}`] = projectSnapshot(updated)
-        const contextId = metadata.undoContextId?.trim().slice(0, 128)
-        if (contextId) {
-          await tx.recordUndo({
-            userId: ownerId,
-            contextId,
-            resource: 'projects',
-            action: 'delete',
-            targetRefs: targetRefs(after),
-            beforeState: state(before),
-            afterState: state(after),
-            baseVersions: Object.fromEntries(Object.entries(before).map(([ref, snapshot]) => [ref, { version: Number(snapshot.version ?? 0) }])),
-          })
-        }
-            return { project: updated, resources: related }
-          })
-        } catch (error) {
-          return rollbackStorageMoves(storageMoves, error)
-        }
-      })()
-
-      const origin = metadata.clientId?.trim() || null
-      const events: ProjectTrashResourceChangedEvent[] = [{
-        userId: ownerId, resource: 'projects', origin, operation: 'delete', entityId: id,
-      }]
-      if (result.resources.files.length || result.resources.folders.length) events.push({
-        userId: ownerId, resource: 'files', origin, operation: 'delete',
-        entityIds: [...result.resources.files.map((row) => row.id), ...result.resources.folders.map((row) => row.id)],
-      })
-      if (result.resources.events.length) events.push({
-        userId: ownerId, resource: 'calendar', origin, operation: 'delete',
-        entityIds: result.resources.events.map((row) => row.id),
-      })
-      if (result.resources.tasks.length) events.push({
-        userId: ownerId, resource: 'scheduled_tasks', origin, operation: 'update',
-        entityIds: result.resources.tasks.map((row) => row.id),
-      })
-      await publishBestEffort(runtime, events)
+      const result = await runtime.transaction(async tx => applyProjectTrashTargets(
+        tx, storage, ownerId, await readProjectTrashTargets(tx, ownerId, [id]), metadata,
+        { addRollback: rollback => storageMoves.push(rollback) },
+      )).catch(error => rollbackStorageMoves(storageMoves, error))
+      await publishBestEffort(runtime, result.events)
     },
 
     async restoreProject(owner: string, id: number, metadata: ProjectTrashMetadata = {}): Promise<Record<string, unknown>> {

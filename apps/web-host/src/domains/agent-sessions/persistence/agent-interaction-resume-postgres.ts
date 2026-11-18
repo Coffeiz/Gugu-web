@@ -1,11 +1,59 @@
 import type { Pool, PoolClient } from 'pg'
 import { randomUUID } from 'node:crypto'
+import type { InteractionActionRecord, InteractionPromptRecord } from '@gugu/core/agent/interactions/consume-action'
 import type { InteractionResolution, RunCheckpoint, RunEvent, RunIdentity } from '@gugu/core/agent'
-import type { InteractionActionRecord, InteractionPromptRecord } from '../application/agent-interaction-consume.js'
 
 interface CheckpointReader<C> { readForUpdate(client: PoolClient, identity: RunIdentity): Promise<RunCheckpoint<C> | null> }
 interface ResumeRow { user_id: string; session_id: number; run_id: string; prompt_id: number; interaction_id: string; receipt: string; schema_json: unknown; kind: string; claim_token?: string }
 function record(value: unknown): Record<string, unknown> { return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {} }
+
+export interface AgentInteractionResumeClaim {
+  identity: RunIdentity
+  promptId: number
+  claimToken: string
+  receipt: string
+  resolution: InteractionResolution
+}
+
+/** dispatch 已持有 owner/session 锁时，才可为 waiting checkpoint 认领已解析的 prompt。 */
+export async function claimInteractionResumeLocked(client: PoolClient, identity: RunIdentity, leaseSeconds = 30): Promise<AgentInteractionResumeClaim | null> {
+  if (!identity.ownerId || !/^[1-9]\d*$/.test(identity.sessionId) || !identity.runId || identity.runId.length > 128
+    || !Number.isSafeInteger(leaseSeconds) || leaseSeconds < 1 || leaseSeconds > 300) throw new TypeError('交互恢复 claim 参数无效')
+  const sessionId = Number(identity.sessionId)
+  await client.query(`UPDATE agent_interaction_resumes r SET completed_at=COALESCE(r.completed_at,clock_timestamp()),claim_token=NULL,claim_expires_at=NULL
+    WHERE r.user_id=$1 AND r.session_id=$2 AND r.run_id=$3 AND r.completed_at IS NULL
+      AND EXISTS (SELECT 1 FROM agent_run_interaction_receipts x WHERE x.user_id=r.user_id AND x.session_id=r.session_id AND x.run_id=r.run_id AND x.receipt=r.receipt)`,
+  [identity.ownerId, sessionId, identity.runId])
+  const token = randomUUID()
+  const result = await client.query<ResumeRow>(`WITH candidate AS (
+      SELECT r.user_id,r.session_id,r.run_id,r.prompt_id FROM agent_interaction_resumes r
+      JOIN interaction_prompts p ON p.id=r.prompt_id AND p.user_id=r.user_id AND p.session_id=r.session_id
+      WHERE r.user_id=$1 AND r.session_id=$2 AND r.run_id=$3 AND r.completed_at IS NULL
+        AND p.status='resolved' AND (r.claim_expires_at IS NULL OR r.claim_expires_at<=clock_timestamp())
+      ORDER BY r.created_at,r.prompt_id FOR UPDATE OF r SKIP LOCKED LIMIT 1
+    ), claimed AS (
+      UPDATE agent_interaction_resumes r SET claim_token=$4,claim_expires_at=clock_timestamp()+($5*interval '1 second')
+      FROM candidate c WHERE r.user_id=c.user_id AND r.session_id=c.session_id AND r.run_id=c.run_id AND r.prompt_id=c.prompt_id
+      RETURNING r.*
+    ) SELECT r.user_id,r.session_id,r.run_id,r.prompt_id,r.interaction_id,r.receipt,r.claim_token,p.schema_json,p.kind
+      FROM claimed r JOIN interaction_prompts p ON p.id=r.prompt_id AND p.user_id=r.user_id AND p.session_id=r.session_id AND p.status='resolved'`,
+  [identity.ownerId, sessionId, identity.runId, token, leaseSeconds])
+  const row = result.rows[0]
+  if (!row) return null
+  const schema = record(row.schema_json), answer = record(schema.resolved_result)
+  // HTTP 保留选项回执 selected，Core 使用 answered 恢复选择和问答。
+  const status = answer.status === 'selected' && (row.kind === 'choice' || row.kind === 'question')
+    ? 'answered' : answer.status
+  if (status !== 'confirmed' && status !== 'cancelled' && status !== 'answered') throw new Error('交互恢复结果无效')
+  return {
+    identity: { ownerId: row.user_id, sessionId: String(row.session_id), runId: row.run_id },
+    promptId: row.prompt_id,
+    claimToken: row.claim_token ?? token,
+    receipt: row.receipt,
+    resolution: { interactionId: row.interaction_id, receiptId: row.receipt, status,
+      value: row.kind === 'confirm' ? null : answer },
+  }
+}
 
 /** 交互激活器在创建 prompt 的同一事务调用；无绑定的旧 prompt 不允许恢复。 */
 export async function bindInteractionPrompt(client: PoolClient, identity: RunIdentity, promptId: number, interactionId: string, toolCallId: string): Promise<void> {

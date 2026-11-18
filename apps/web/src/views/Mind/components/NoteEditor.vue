@@ -507,7 +507,7 @@ onBeforeUnmount(() => {
    规则谁写在后面。 */
 .ne-toolbar.ne-toolbar-floating {
   position: fixed; z-index: 2000; transform: translateX(-50%);
-  padding: 5px 6px; border-radius: 10px;
+  padding: 5px 6px; border-radius: var(--card-radius);
   background: rgba(255,255,255,0.96);
   border: 1px solid rgba(255,255,255,0.9);
   box-shadow: 0 8px 26px rgba(60,70,100,0.18);

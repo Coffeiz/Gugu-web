@@ -120,7 +120,7 @@ const groups = computed(() => {
 .reference-picker {
   position: fixed; z-index: 3000; max-height: min(280px, calc(100vh - 16px));
   overflow-y: auto; padding: 5px;
-  border: 1px solid var(--border-subtle); border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
   background: var(--popup-surface-bg); box-shadow: var(--elevation-popup);
   backdrop-filter: var(--popup-surface-blur); -webkit-backdrop-filter: var(--popup-surface-blur);
 }
@@ -134,7 +134,7 @@ const groups = computed(() => {
 .chat-command-pop-leave-to { opacity: 0; transform: translateY(6px) scale(.97); }
 .reference-pick-empty { padding: 10px 12px; color: var(--content-secondary); font-size: 12px; }
 .reference-pick-group-label { display: flex; align-items: center; gap: 5px; padding: 7px 8px 4px; color: var(--content-tertiary); font-size: 11px; font-weight: 650; }
-.reference-pick-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 8px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--content-primary); text-align: left; cursor: pointer; }
+.reference-pick-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 8px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--content-primary); text-align: left; cursor: pointer; }
 .reference-pick-item:hover, .reference-pick-item.on { background: var(--popup-item-bg-hover); }
 .reference-pick-icon { flex: 0 0 auto; color: var(--action-primary); }
 .reference-pick-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; /* 行高给足：Gugu Noto Sans SC 的下伸部（g/y）超出 em 框，行高不足时被 overflow 裁掉底部 */ line-height: 18px; }

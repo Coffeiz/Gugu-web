@@ -47,7 +47,8 @@ function parsePresentedFileResult(result: unknown): PresentedFile | null {
   }
 }
 
-function localizedToolStatusLabel(event: { name?: string; label?: string; input?: unknown }): string {
+function localizedToolStatusLabel(event: { name?: string; label?: string; custom?: string; input?: unknown }): string {
+  if (typeof event.custom === 'string' && event.custom.trim()) return event.custom.trim()
   let toolName = event.name || ''
   // call_tool 是固定 Adapter，实际工具名在 input.name 中，和完成后的工具卡片保持一致。
   if (toolName === 'call_tool' && event.input && typeof event.input === 'object') {
@@ -595,7 +596,9 @@ export function useChatStream(options: {
             if (item.kind === 'tool') {
               usedTools.add(item.toolName)
               options.setStatus(item.toolStatus === 'running' || item.toolStatus === 'queued'
-                ? { kind: 'text', label: localizedToolStatusLabel({ name: item.toolName, label: item.toolLabel }) }
+                ? { kind: 'text', label: localizedToolStatusLabel({
+                    name: item.toolName, label: item.toolLabel, custom: item.toolLabelOverride,
+                  }) }
                 : options.thinkingItem())
             } else {
               receivedAssistantContent = true

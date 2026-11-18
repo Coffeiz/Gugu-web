@@ -173,13 +173,16 @@ test('重启恢复只把超过锁宽限且没有活跃租约的一次性任务�
   assert.equal((await repository.getOnce('active'))?.lastRunFailed, false)
 })
 
-test('获锁后立即开始续租，单次续租异常后继续重试且提交完成后再通知', async () => {
+test('获锁后立即开始续租，单次续租异常后继续重试且提交完成后再通知', { timeout: 5_000 }, async context => {
   const repository = new MemoryTaskRepository()
   const lease = new MemoryLease()
   repository.tasks.set('once-1', onceTask())
   const waitForTaskRead = repository.getOnce.bind(repository)
+  let releaseRead!: () => void
+  const secondRenewal = new Promise<void>(resolve => { releaseRead = resolve })
+  context.signal.addEventListener('abort', releaseRead, { once: true })
   repository.getOnce = async taskId => {
-    await new Promise(resolve => setTimeout(resolve, 30))
+    await secondRenewal
     return waitForTaskRead(taskId)
   }
   let renewCalls = 0
@@ -187,6 +190,7 @@ test('获锁后立即开始续租，单次续租异常后继续重试且提交�
   lease.renew = async (taskId, owner) => {
     renewCalls++
     if (renewCalls === 1) throw new Error('合成 Redis 短暂故障')
+    releaseRead()
     return lease.owners.get(taskId) === owner
   }
   const runner = new ScheduledTaskRunner({

@@ -138,7 +138,9 @@ export async function savePreparedContext(prepared: PreparedContext, identity: H
   MessageArea.restore(prepared.area.services, rebuilt)
   const state = {
     ...identity, schemaVersion: 1 as const, area: rebuilt,
-    protectedHistoryStart: prepared.area.protectedHistoryStart, requestPrefixSize: prepared.area.fixedPrefixSize, stanceToPersist: prepared.stanceToPersist
+    protectedHistoryStart: prepared.area.protectedHistoryStart, requestPrefixSize: prepared.area.fixedPrefixSize,
+    requestDigest: prepared.area.services.digest({ prefix: prepared.area.requestPrefix, dynamicTail: prepared.area.dynamicTail }),
+    stanceToPersist: prepared.stanceToPersist
   }
   return { ...state, digest: prepared.area.services.digest(state) }
 }
@@ -212,7 +214,7 @@ export function normalizeScope(scope: ToolResultCheckpointScope, services: Diges
     throw new Error('工具结果检查点身份无效')
   if (!Number.isSafeInteger(scope.round) || scope.round < 1)
     throw new Error('工具结果检查点轮次无效')
-  const rawCall = object(scope.call, ['id', 'name', 'input', 'rawArguments', 'responsesItemId', 'parseError'], ['rawArguments', 'responsesItemId', 'parseError'])
+  const rawCall = object(scope.call, ['id', 'name', 'input', 'rawArguments', 'responsesItemId', 'parseError', 'adapter'], ['rawArguments', 'responsesItemId', 'parseError', 'adapter'])
   const call = snapshotToolCall(rawCall as unknown as ToolCall)
   return {
     marker: {
@@ -236,7 +238,7 @@ export function normalizeResult(result: ToolResult, call: ToolCall): ToolResult 
     if (typeof pending.id !== 'string' || !pending.id || !['question', 'confirmation', 'credential'].includes(String(pending.kind))
       || pending.afterConfirmation !== undefined && typeof pending.afterConfirmation !== 'boolean')
       throw new Error('等待交互控制字段无效')
-    const pendingCall = object(pending.toolCall, ['id', 'name', 'input', 'rawArguments', 'responsesItemId', 'parseError'], ['rawArguments', 'responsesItemId', 'parseError'])
+    const pendingCall = object(pending.toolCall, ['id', 'name', 'input', 'rawArguments', 'responsesItemId', 'parseError', 'adapter'], ['rawArguments', 'responsesItemId', 'parseError', 'adapter'])
     if (stableJson(snapshotToolCall(pendingCall as unknown as ToolCall)) !== stableJson(call))
       throw new Error('等待交互不属于原工具调用')
     return {

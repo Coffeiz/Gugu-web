@@ -358,7 +358,7 @@ defineExpose({
   pointer-events: none;   /* 让拖拽事件穿透到 .chat-window，drop/dragleave 才能正常触发 */
   background: color-mix(in srgb, var(--action-primary) 16%, transparent);
   backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
-  border: 2px dashed color-mix(in srgb, var(--action-primary) 60%, transparent); border-radius: 20px;
+  border: 2px dashed color-mix(in srgb, var(--action-primary) 60%, transparent); border-radius: var(--card-radius);
   color: var(--color-primary); font-size: 14px; font-weight: 600;
 }
 .chat-drop-fade-enter-active, .chat-drop-fade-leave-active { transition: opacity 0.15s ease; }

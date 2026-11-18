@@ -19,7 +19,7 @@ const props = defineProps({
   popupClass: { type: String, default: '' },
   transparent: { type: Boolean, default: false },
   animatedBlur: { type: Boolean, default: false },
-  placement: { type: String as PropType<'bottom' | 'top'>, default: 'bottom' },
+  placement: { type: String as PropType<'bottom' | 'top' | 'auto'>, default: 'bottom' },
   position: { type: Object as PropType<{ x: number; y: number } | null>, default: null },
   style: { type: Object as PropType<Record<string, string | number | undefined>>, default: () => ({}) },
 })
@@ -58,10 +58,13 @@ function position() {
   if (!rect) return
   const popupWidth = popupRef.value?.offsetWidth || rect.width
   const popupHeight = popupRef.value?.offsetHeight || 0
-  const rawLeft = props.placement === 'top'
+  const rawLeft = props.placement !== 'bottom'
     ? rect.left + (rect.width - popupWidth) / 2
     : rect.left
-  const rawTop = props.placement === 'top'
+  const placeAbove = props.placement === 'top' || (
+    props.placement === 'auto' && rect.bottom + 5 + popupHeight > window.innerHeight - 6
+  )
+  const rawTop = placeAbove
     ? rect.top - popupHeight - 8
     : rect.bottom + 5
   const left = Math.max(6, Math.min(rawLeft, window.innerWidth - popupWidth - 6))
@@ -87,6 +90,9 @@ watch(() => props.style, value => {
   }
   popupStyle.value = next
 }, { deep: true })
+watch(() => [props.anchor, props.position, props.placement], () => {
+  if (props.show) refresh()
+})
 watch(() => props.show, value => {
   unregister?.(); unregister = value ? registerPopover(setPopupZ) : null
   if (value) {

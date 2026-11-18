@@ -20,7 +20,9 @@ test('Web 画布事务端口只复用 Core 写服务，确认端口缺失时危�
     const publishers = { async publishBatchAndNotes() {}, async publishDisconnect() {}, async publishDelete() {} }
     const withoutConfirmation = createWebAgentCanvasWritePorts({ core: runtime, ...publishers })
     const confirmation = { gate: {} as CanvasBatchConfirmationPort['gate'], async claim() { return false } }
-    const withConfirmation = createWebAgentCanvasWritePorts({ core: runtime, ...publishers, confirmation })
+    const withConfirmation = createWebAgentCanvasWritePorts({ core: runtime, ...publishers,
+      batchConfirmation: confirmation, deleteNoteConfirmation: confirmation,
+      disconnectConfirmation: confirmation, deleteConfirmation: confirmation })
     const names = async (ports: ReturnType<typeof createWebAgentCanvasWritePorts>) => {
       const registry = createAgentToolRegistry({ core: runtime!, ...ports, authorize: async candidate => candidate.ownerId === identity.ownerId })
       return (await registry.capabilities(identity)).map(tool => tool.name)

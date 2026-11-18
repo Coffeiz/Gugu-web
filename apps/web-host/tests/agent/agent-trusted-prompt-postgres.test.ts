@@ -73,7 +73,14 @@ test('确认 claim 在业务事务内一次性消费，并在回滚时恢复', {
     assert.equal(await database.transaction().execute(tx => store.claimApprovedOperation(tx, reference, new AbortController().signal, async () => true)), true)
     assert.equal(await database.transaction().execute(tx => store.claimApprovedOperation(tx, reference, new AbortController().signal, async () => true)), false)
     assert.equal(Number((await pool.query('SELECT count(*) AS n FROM agent_interaction_intents')).rows[0]!.n), 0)
-  } finally { await database.destroy(); await pool.end(); await admin.query(`DROP SCHEMA "${schema}" CASCADE`); await admin.end() }
+  } finally {
+    try {
+      await database.destroy()
+      await admin.query(`DROP SCHEMA "${schema}" CASCADE`)
+    } finally {
+      await admin.end()
+    }
+  }
 })
 
 test('空提醒集合仍生成目标确认，且目标与版本摘要参与确认身份', async () => {
@@ -159,4 +166,43 @@ test('可信确认使用目标身份签发，MCP 凭据目标受 owner 限制', 
       await client.query('ROLLBACK')
     } finally { client.release() }
   } finally { await pool.end(); await admin.query(`DROP SCHEMA "${schema}" CASCADE`); await admin.end() }
+})
+
+test('MCP UUID 目标经过加密意图和 Web 确认标识保持不变，目标冲突时拒绝写入', async () => {
+  const identity = { ownerId: 'owner-a', sessionId: '1', runId: 'run-a' }
+  const server = '00000000-0000-4000-8000-000000000011'
+  const name = 'manage_mcp_servers'
+  const request = { id: 'interaction-mcp', kind: 'confirmation' as const, toolCall: { id: 'call', name, input: {} } }
+  const expiresAt = Date.now() + 60_000
+  const binding = { ...identity, roundId: 'round', toolCallId: 'call', toolName: name, normalizedInputDigest: 'input' }
+  const snapshot = { targetsDigest: 'target', versionsDigest: 'version', targetRefs: { mcp_server: [server] } }
+  const intent = { schemaVersion: 2 as const, binding, intentId: 'intent', interactionId: request.id, operationId: 'operation',
+    purpose: 'action' as const, action: 'remove_mcp_server', targetsDigest: snapshot.targetsDigest,
+    versionsDigest: snapshot.versionsDigest, authorizationEpoch: 'epoch', expiresAt }
+  const value = { kind: 'confirmation' as const, summary: '删除合成 MCP', action: intent.action,
+    targets: { mcp_server: [server] }, ttlMinutes: 1, operation: { intent, snapshot } }
+  let row: Record<string, unknown> | undefined, targetIdentity = ''
+  const client = { async query(sql: string, args: unknown[]) {
+    if (sql.includes('INSERT INTO agent_interaction_intents')) {
+      row = { tool_call_id: args[4], ciphertext: args[5], nonce: args[6], encrypted_data_key: args[7], key_version: args[8], expires_at: args[9] }
+      return { rowCount: 1, rows: [] }
+    }
+    return { rowCount: row ? 1 : 0, rows: row ? [row] : [] }
+  } } as never
+  const store = createPostgresTrustedIntentStore(() => 'synthetic-master', 1)
+  await assert.rejects(store.saveIntent(client, identity, request, {
+    ...value, operation: { intent, snapshot: { ...snapshot, targetIds: { mcp_server: [1] } } },
+  }, new Date(expiresAt)), /可信确认意图无效/)
+  await assert.rejects(store.saveIntent(client, identity, request, {
+    ...value, targets: { mcp_server: [server + '-other'] },
+  }, new Date(expiresAt)), /可信确认意图绑定无效/)
+  await store.saveIntent(client, identity, request, value, new Date(expiresAt))
+  assert.deepEqual(await store.loadOperation(client, binding, request.id), value.operation)
+  const descriptions = createTrustedPromptDescriptions({
+    loadIntent: store.loadIntent,
+    async createConfirmation(_owner, _title, reference) { targetIdentity = reference; return 'synthetic-code' },
+  })
+  await descriptions.confirmation(client, identity, request)
+  assert.equal(targetIdentity, targetConfirmationIdentity(intent.action, value.targets, { targets_digest: 'target', versions_digest: 'version' }))
+  assert.doesNotMatch(JSON.stringify(row), new RegExp(server))
 })

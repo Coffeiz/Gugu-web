@@ -46,7 +46,7 @@ export function projectOllamaHistory(messages: readonly CanonicalMessage[], conf
       if (toolCalls.some(call => call.id === id)) throw new ProviderError('protocol')
       pending.set(id, { name: text(fn.name), call: projected }); toolCalls.push(projected)
     }
-    const toolResults: { id: string; content: unknown; name?: string }[] = []
+    const toolResults: { id: string; content: unknown }[] = []
     for (const block of blocks) {
       const type = text(block.type)
       if (type === 'text') { if (text(block.text)) parts.push(text(block.text)); continue }
@@ -58,7 +58,7 @@ export function projectOllamaHistory(messages: readonly CanonicalMessage[], conf
         pending.set(id, { name, call: projected }); toolCalls.push(projected)
         continue
       }
-      if (type === 'tool_result') { toolResults.push({ id: text(block.tool_call_id || block.tool_use_id), content: block.content, name: text(block.tool_name) }); continue }
+      if (type === 'tool_result') { toolResults.push({ id: text(block.tool_call_id || block.tool_use_id), content: block.content }); continue }
       if (type === 'image' || type === 'image_url') {
         if (!(config.capability_overrides?.image ?? config.image)) throw new ProviderError('unsupported')
         const source = record(block.source), url = text(record(block.image_url).url)
@@ -71,7 +71,7 @@ export function projectOllamaHistory(messages: readonly CanonicalMessage[], conf
       if (['input_audio', 'audio', 'video', 'video_url'].includes(type)) throw new ProviderError('unsupported')
       parts.push(JSON.stringify(block))
     }
-    if (role === 'tool' && !toolResults.length) toolResults.push({ id: text(message.tool_call_id), content, name: text(message.tool_name) })
+    if (role === 'tool' && !toolResults.length) toolResults.push({ id: text(message.tool_call_id), content })
     if (parts.length || images.length || toolCalls.length) {
       const projected: JsonObject = { role, content: parts.join('\n') }
       if (images.length) projected.images = images
@@ -85,7 +85,8 @@ export function projectOllamaHistory(messages: readonly CanonicalMessage[], conf
       const match = pending.get(toolResult.id)
       if (!toolResult.id || !match) continue
       pairedCalls.add(match.call); pending.delete(toolResult.id)
-      result.push({ role: 'tool', tool_name: toolResult.name || match.name, tool_call_id: toolResult.id, content: resultText(toolResult.content) })
+      // 原生 wire 按请求里的工具名配对；canonical 回执可保留实际业务工具名。
+      result.push({ role: 'tool', tool_name: match.name, tool_call_id: toolResult.id, content: resultText(toolResult.content) })
     }
   }
   // 等待确认时只投影已经有回执的调用；不让未派发并行兄弟成为孤儿。

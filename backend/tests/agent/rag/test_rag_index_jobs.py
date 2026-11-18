@@ -97,6 +97,28 @@ async def test_memory_update_persists_node_consumable_source_rebuild(db, user_a,
 
 
 @pytest.mark.asyncio
+async def test_node_consumer_keeps_python_incremental_write_inside_pending_full_rebuild(db, user_a, monkeypatch):
+    from agent.events.types import RagIndexUpdated
+    from agent.rag import index_jobs
+    from app.models import RagIndexJob
+
+    monkeypatch.setattr(index_jobs, "_is_ephemeral_sqlite", lambda _session_factory: False)
+    full = RagIndexUpdated(user_id=user_a.id, source_type="project", source_id="")
+    leaf = RagIndexUpdated(user_id=user_a.id, source_type="project", source_id="71")
+    assert await index_jobs.persist_event(full, preserve_full_rebuild=True) == 1
+    assert await index_jobs.mark_running(full) == 1
+    assert await index_jobs.persist_event(leaf, preserve_full_rebuild=True) == 2
+
+    row = (await db.execute(select(RagIndexJob))).scalar_one()
+    assert (row.source_id, row.pending_source_ids, row.status, row.lease_until) == ("", [], "queued", None)
+    assert await index_jobs.mark_running(full) == 2
+    assert await index_jobs.mark_result(full, 2, success=True) == 0
+    assert await index_jobs.persist_event(leaf, preserve_full_rebuild=True) == 3
+    await db.refresh(row)
+    assert (row.source_id, row.pending_source_ids, row.status) == ("71", ["71"], "queued")
+
+
+@pytest.mark.asyncio
 async def test_node_worker_owner_keeps_python_memory_event_as_producer_only(monkeypatch):
     """Node 为唯一消费者时，Python 仍持久化事件但不得启动本地 Worker。"""
     from agent.events import bus

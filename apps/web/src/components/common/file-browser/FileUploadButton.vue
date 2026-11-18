@@ -55,7 +55,7 @@ const { t } = useI18n()
   display: grid; grid-template-columns: 2fr 90px 1.2fr 80px 72px 56px;
   column-gap: 8px; align-items: center; padding: 9px 14px;
   min-height: 42px; box-sizing: border-box;
-  font-size: 12px; border-radius: var(--radius-sm);
+  font-size: 12px; border-radius: var(--radius-xs);
   border: 1px dashed transparent; transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
 .fub.list .fub-name-cell { display: flex; align-items: center; gap: 7px; min-width: 0; }

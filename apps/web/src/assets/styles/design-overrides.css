@@ -21,6 +21,10 @@ html[data-theme][data-family] .design-page .design-hero {
   box-shadow: var(--topbar-shadow);
 }
 
+html[data-theme='dark'][data-family] .design-page .design-hero {
+  background-color: var(--glass-card-background);
+}
+
 html[data-theme][data-family] .design-page .hero-title-row { display:block; }
 html[data-theme][data-family] .design-page .hero-title-row .eyebrow {
   display:block;
@@ -115,8 +119,8 @@ html[data-theme][data-family] .design-page .add-project {
   justify-content:center;
   gap:var(--space-sm);
   border:1.5px dashed var(--inline-action-border);
-  border-radius:var(--radius-md);
-  corner-shape:squircle;
+  border-radius:var(--radius-sm);
+  corner-shape:round;
   color:var(--inline-action-fg);
   background:var(--inline-action-bg);
   box-shadow:none;

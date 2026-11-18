@@ -175,7 +175,7 @@ onUnmounted(() => {
   transform: translateZ(0);   /* 提升为稳定合成层：固定容器背后页面滚动时，子项 backdrop-filter 不再反复重绘闪烁 */
 }
 
-/* 气泡风与 GuguChat 小窗/播放器一致：玻璃面板 + blur(28) + 20 圆角 */
+/* 气泡风与 GuguChat 小窗/播放器一致：玻璃面板 + blur(28) + 共用卡片圆角 */
 .nb-item {
   --nb-border: rgba(255,255,255,0.65);
   --nb-highlight-top: rgba(255,255,255,0.9);
@@ -190,7 +190,7 @@ onUnmounted(() => {
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
   border: 1px solid var(--nb-border);
-  border-radius: 20px;
+  border-radius: var(--card-radius);
   box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight);
   pointer-events: auto;
   position: relative;

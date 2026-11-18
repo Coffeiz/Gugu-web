@@ -1,8 +1,8 @@
-import { link, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { link, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, expect, it } from 'vitest'
-import { finishStagedLocalFile, openLocalFile, removeLocalTree, stageLocalFile, UnsafeLocalPathError, writeLocalFile } from '../src/node.js'
+import { finishStagedLocalFile, importLocalFile, openLocalFile, removeLocalTree, stageLocalFile, UnsafeLocalPathError, writeLocalFile } from '../src/node.js'
 
 const root = await mkdtemp(path.join(tmpdir(), 'gugu-fs-'))
 afterEach(async () => { await rm(root, { recursive: true, force: true }) })
@@ -84,5 +84,46 @@ it.skipIf(process.platform !== 'linux')('原子写入授权根内的嵌套文件
     await symlink(outside, path.join(root, 'linked'))
     await expect(writeLocalFile(root, 'linked/data.json', '越界')).rejects.toBeInstanceOf(UnsafeLocalPathError)
     await expect(readFile(path.join(outside, 'data.json'))).rejects.toThrow()
+  } finally { await rm(outside, { recursive: true, force: true }) }
+})
+
+
+it.skipIf(process.platform !== 'linux')('流式导入完整后才发布，并发同名不覆盖，失败仅清理暂存内容', async () => {
+  await mkdir(root, { recursive: true })
+  await mkdir(path.join(root, 'imports'))
+  const controller = new AbortController()
+  const destination = path.join(root, 'imports', 'source.txt')
+  async function* data() {
+    yield Buffer.from('第一段')
+    await expect(readFile(destination)).rejects.toMatchObject({ code: 'ENOENT' })
+    yield Buffer.from('第二段')
+  }
+  await importLocalFile(root, 'imports/source.txt', data(), controller.signal)
+  expect(await readFile(destination, 'utf8')).toBe('第一段第二段')
+  async function* collision() {
+    yield Buffer.from('不得覆盖')
+    await writeFile(path.join(root, 'imports', 'collision.txt'), '并发创建')
+  }
+  await expect(importLocalFile(root, 'imports/collision.txt', collision(), controller.signal)).rejects.toMatchObject({ code: 'EEXIST' })
+  expect(await readFile(path.join(root, 'imports', 'collision.txt'), 'utf8')).toBe('并发创建')
+  async function* interrupted() {
+    yield Buffer.from('不完整正文')
+    controller.abort()
+    yield Buffer.from('不得发布')
+  }
+  await expect(importLocalFile(root, 'imports/cancelled.txt', interrupted(), controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
+  expect((await readdir(path.join(root, 'imports'))).sort()).toEqual(['collision.txt', 'source.txt'])
+})
+
+it.skipIf(process.platform !== 'linux')('流式导入拒绝不存在的目标目录和符号链接父目录', async () => {
+  await mkdir(root, { recursive: true })
+  const outside = await mkdtemp(path.join(tmpdir(), 'gugu-fs-outside-'))
+  try {
+    await symlink(outside, path.join(root, 'escape'))
+    const body = async function* () { yield Buffer.from('正文') }
+    const { signal } = new AbortController()
+    await expect(importLocalFile(root, 'escape/file', body(), signal)).rejects.toBeInstanceOf(UnsafeLocalPathError)
+    await expect(importLocalFile(root, 'missing/file', body(), signal)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readdir(outside)).toEqual([])
   } finally { await rm(outside, { recursive: true, force: true }) }
 })

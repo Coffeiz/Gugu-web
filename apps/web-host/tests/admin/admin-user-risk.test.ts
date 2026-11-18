@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { registerAdminUserRiskRoute } from '../../src/domains/admin/admin-user-risk.js'
+import { registerAdminUserRiskRoute } from '../../src/modules/admin/users.js'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
 
 function setup(rowsOverride?: Record<string, unknown>[]) {
-  const calls: { sql: string; values: unknown[] }[] = []
+  const calls: number[] = []
   const rows: Record<string, unknown>[] = rowsOverride ?? [
     {
       id: '00000000-0000-4000-8000-000000000001', username: '合成账号甲', email: 'synthetic@example.invalid',
@@ -33,10 +33,15 @@ function setup(rowsOverride?: Record<string, unknown>[]) {
     requireAdmin: async (request, reply) => {
       if (request.headers.authorization !== 'admin') return reply.code(401).send({ error: 'unauthorized' })
     },
-    query: async (sql, values) => {
-      calls.push({ sql, values })
+    read: async (windowMinutes = 1440) => {
+      calls.push(windowMinutes)
       if (queryError) throw queryError
-      return rows
+      return { items: rows.map(row => {
+        const count = Number(row.recent_event_count ?? 0)
+        const time = row.last_event_at
+        return { ...row, last_event_at: typeof time === 'string' ? time.replace(/Z$/, '+00:00') : time,
+          risk_action: count >= 10 ? 'suspended' : count >= 5 ? 'throttled' : 'logged' }
+      }), total: rows.length, window_minutes: windowMinutes, policy_window_minutes: 5 }
     },
     now: () => new Date('2026-11-13T12:34:56.000Z'),
   })
@@ -67,13 +72,7 @@ test('风险列表按展示窗口聚合、保留已冻结用户并应用五分�
     assert.equal(body.items[0].last_event_at, '2026-11-13T12:30:00.000+00:00')
     assert.equal(body.items[1].account_status, 'suspended')
     assert.equal(body.items[1].visible_event_count, 0)
-    assert.deepEqual(ctx.calls[0]!.values, [
-      new Date('2026-11-13T11:34:56.000Z').toISOString(),
-      new Date('2026-11-13T12:29:56.000Z').toISOString(),
-    ])
-    assert.match(ctx.calls[0]!.sql, /security_events/)
-    assert.match(ctx.calls[0]!.sql, /WHERE u\.account_status <> 'active' OR visible_events\.user_id IS NOT NULL/)
-    assert.match(ctx.calls[0]!.sql, /ORDER BY u\.created_at DESC/)
+    assert.equal(ctx.calls[0], 60)
   } finally { await ctx.cleanup() }
 })
 
@@ -89,10 +88,7 @@ test('展示窗口接受Python的上下界；没有分页参数时即使带limit
       assert.equal(response.json().window_minutes, windowMinutes)
       assert.equal(response.json().total, 3)
       const call = ctx.calls.at(-1)!
-      assert.deepEqual(call.values, [
-        new Date(new Date('2026-11-13T12:34:56.000Z').getTime() - windowMinutes * 60_000).toISOString(),
-        new Date('2026-11-13T12:29:56.000Z').toISOString(),
-      ])
+      assert.equal(call, windowMinutes)
     }
   } finally { await ctx.cleanup() }
 })
@@ -112,7 +108,7 @@ test('默认窗口为一天，非法窗口在查询前拒绝，查询错误不�
     const response = await ctx.app.inject({ url: '/api/v1/admin/users/risk', headers: { authorization: 'admin' } })
     assert.equal(response.statusCode, 200)
     assert.equal(response.json().window_minutes, 1440)
-    assert.equal(ctx.calls[0]!.values[0], new Date('2026-11-12T12:34:56.000Z').toISOString())
+    assert.equal(ctx.calls[0], 1440)
     for (const value of ['0', '43201']) {
       const invalid = await ctx.app.inject({ url: `/api/v1/admin/users/risk?window_minutes=${value}`, headers: { authorization: 'admin' } })
       assert.equal(invalid.statusCode, 422)

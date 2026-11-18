@@ -1,5 +1,6 @@
 <template>
   <div class="projects-page">
+    <slot name="toolbar" :open-archived="openArchived" :open-deleted="openDeleted" />
     <div class="kanban">
       <KanbanColumn
         v-for="col in nonDoneColumns"
@@ -15,8 +16,9 @@
         :ownership-version-for="ownershipVersion"
         :is-project-detached="isProjectDetached"
         @card-click="projectStore.openModal"
-        @open-archived="showArchived = true"
-        @open-deleted="showDeleted = true"
+        :show-collection-actions="!$slots.toolbar"
+        @open-archived="openArchived"
+        @open-deleted="openDeleted"
       />
     </div>
 
@@ -49,6 +51,14 @@ const { showArchived, showDeleted } = useProjectCollectionModals({
   loadArchived: projectStore.fetchArchivedProjects,
   loadDeleted: projectStore.fetchDeletedProjects,
 })
+
+function openArchived() {
+  showArchived.value = true
+}
+
+function openDeleted() {
+  showDeleted.value = true
+}
 const { counts: liveFileCounts, refresh: refreshProjectFileCounts } = useProjectFileCounts(
   computed(() => liveStore.rev.files),
 )

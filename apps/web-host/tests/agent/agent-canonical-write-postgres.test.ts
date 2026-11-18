@@ -4,7 +4,7 @@ import test from 'node:test'
 import { Pool } from 'pg'
 import { MessageArea, stableJson, formatCompactedSummary } from '@gugu/core/agent'
 import type { CanonicalRunContext, RunCheckpoint } from '@gugu/core/agent'
-import { createCanonicalHistoryWriter, canonicalToolsUsed, canonicalBaselineHash } from '../../src/domains/agent-sessions/persistence/agent-canonical-write-postgres.js'
+import { createCanonicalHistoryWriter, canonicalBaselineHash } from '../../src/domains/agent-sessions/persistence/agent-canonical-write-postgres.js'
 
 const digest = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
@@ -99,16 +99,6 @@ test('压缩候选发现基线并发变化时拒绝并且不写摘要或账本',
   const writer = createCanonicalHistoryWriter(async () => ({ defaultLimit6h: null, byokEnabled: false, localDeployment: false, model: 'model', provider: 'provider', isByok: false }))
   await assert.rejects(writer(client, identity, { outcome: 'success', context, text: '' }, { identity } as RunCheckpoint<CanonicalRunContext>), /基线已变化/)
   assert.equal(queries.some(sql => /^\s*(INSERT|UPDATE|DELETE)/.test(sql)), false)
-})
-
-
-test('多轮工具用量来自时间线与持久化工具轮，去重并排除静默选择', () => {
-  const checkpoint = { displayTimeline: [
-    { kind: 'tool', toolName: '查询' }, { kind: 'tool', toolName: '写入' },
-    { kind: 'tool', toolName: '查询' }, { kind: 'tool', toolName: 'choose_no_reply' },
-  ], calls: [] } as unknown as RunCheckpoint<CanonicalRunContext>
-  const entries = [{ source: 'tool_round', message: { role: 'assistant', content: [{ type: 'tool_call', name: '_内部工具' }] } }] as unknown as import('@gugu/core/agent').MessageEntry[]
-  assert.deepEqual(canonicalToolsUsed(checkpoint, entries), ['查询', '写入', '_内部工具'])
 })
 
 

@@ -4,13 +4,13 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { SqlDataRuntime } from '@gugu/core/data'
-import type { AgentKnowledgeEntry } from '@gugu/core/agent'
+import type { AgentKnowledgeEntry } from '@gugu/core/agent/knowledge/entry'
 import { createGlobalSearchOperations, type GlobalSearchOperations } from '@gugu/core'
 import type { ProjectCreateRuntime } from '@gugu/core/project-create'
 import { createBuiltinSkillDefinitions, createSkillRegistry } from '@gugu/core/skills'
-import type { CalendarDeleteConfirmationPort, CalendarDeletePort, CalendarEventCreateToolPort, CalendarEventUpdateToolPort, CanvasBatchConfirmationPort, CanvasBatchPort, CanvasDeleteNotePort, CanvasDisconnectPort, CanvasDeletePort, KnowledgeWritePort, ScheduledTaskListPort, UseSkillPorts } from '@gugu/core/tools'
+import type { ClientDeleteConfirmationPort, ClientDeletePort, CalendarDeleteConfirmationPort, CalendarDeletePort, CalendarEventCreateToolPort, CalendarEventUpdateToolPort, CanvasBatchConfirmationPort, CanvasBatchPort, CanvasDeleteNotePort, CanvasDisconnectPort, CanvasDeletePort, KnowledgeWritePort, ScheduledTaskListPort, UseSkillPorts } from '@gugu/core/tools'
 import { createWebLinkButtonDeliveryPort } from '@gugu/core/tools'
-import { createAgentToolRegistry, type AgentToolRegistryOptions } from '../../src/domains/agent-sessions/tools/agent-tool-registry.js'
+import { createAgentToolRegistry, filterConfiguredWebAgentTools, type AgentToolRegistryOptions } from '../../src/domains/agent-sessions/tools/agent-tool-registry.js'
 
 const identity = { ownerId: '00000000-0000-4000-8000-000000000001', sessionId: '1', runId: 'run' }
 function fixture(includeTime = false, includeOverview = false, includeProjects = true, skills?: UseSkillPorts, scheduledTasks?: ScheduledTaskListPort, search?: GlobalSearchOperations, extra: Pick<AgentToolRegistryOptions, 'events' | 'calendarCreate' | 'calendarUpdate' | 'calendarDelete' | 'trash' | 'httpGet'> = {}) {
@@ -37,6 +37,18 @@ function fixture(includeTime = false, includeOverview = false, includeProjects =
     ...(includeOverview ? { fileOverview: async () => ({ total_file_count: 0, root_file_count: 0, total_folder_count: 0 }) } : {}) })
   return { ...registry, records, grant: (name: string) => { enabled.add(name) }, revoke: (name: string) => { enabled.delete(name) }, fail: () => { failed = true }, failRead: () => { readFailed = true } }
 }
+
+test('Main 工具白名单保留已接入的业务工具组名称，并过滤未知工具', () => {
+  const configured = [
+    'create_client', 'update_client', 'delete_client', 'create_project', 'update_project', 'set_color', 'archive_project', 'add_stage',
+    'remove_stage', 'rename_stage', 'set_stages', 'update_stage', 'update_workspace', 'global_search',
+    'canvas_list', 'canvas_focus_node', 'canvas_search_placeable', 'canvas_create_note', 'canvas_delete', 'note_undo', 'call_tool', 'create_skill', 'update_skill', 'delete_skill',
+    'note_create', 'note_update', 'delete_scheduled_task', 'web_search', 'similar_image_search', 'deep_research',
+    'mcp_demo_lookup', 'untrusted_tool', 'mcp_demo_../lookup',
+  ]
+  assert.deepEqual(filterConfiguredWebAgentTools(configured), configured.slice(0, -2))
+})
+
 test('缺少项目创建后端时不开放写工具，已授权只读工具仍可用', async () => {
   const f = fixture(true, false, false)
   const names = (await f.capabilities(identity)).map(item => item.name)
@@ -49,6 +61,19 @@ test('缺少项目创建后端时不开放写工具，已授权只读工具仍�
   const listed = await f.tools.dispatch({ id: 'list', name: 'list_clients', input: {} }, scope())
   assert.equal(listed.kind, 'completed')
   if (listed.kind === 'completed') { assert.equal(listed.successful, true); assert.deepEqual(listed.value, []) }
+})
+
+test('delete_client 只有可信确认及一次性事务 claim 端口存在时才进入工具 schema', async () => {
+  const options = { core: {} as SqlDataRuntime, authorize: async (_identity: typeof identity, name: string) => name === 'delete_client' }
+  const absent = createAgentToolRegistry(options)
+  assert.equal((await absent.capabilities(identity)).some(item => item.name === 'delete_client'), false)
+  const clientDelete: ClientDeletePort = {
+    confirmation: { gate: {} as ClientDeleteConfirmationPort['gate'], async claim() { return false } },
+    async apply() { return { kind: 'completed', successful: false, mutated: false, value: { error: '未执行' } } },
+    async reconcile() { return { kind: 'unknown' } },
+  }
+  const ready = createAgentToolRegistry({ ...options, clientDelete })
+  assert.equal((await ready.capabilities(identity)).some(item => item.name === 'delete_client'), true)
 })
 
 test('知识写工具由 Host 注册器显式启用并继续使用可信 owner 身份', async () => {

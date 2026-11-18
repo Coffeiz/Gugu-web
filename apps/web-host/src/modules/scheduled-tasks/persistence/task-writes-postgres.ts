@@ -1,4 +1,6 @@
 import type { Pool, PoolClient } from 'pg'
+import { CompiledQuery, type Transaction } from 'kysely'
+import type { Database } from '@gugu/core/data'
 import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
 import { normalizeOwnerId } from '../../../adapters/owner-context.js'
 import { isPostgresUniqueViolation } from '../../../adapters/postgres-errors.js'
@@ -18,6 +20,7 @@ import { scheduledTaskUndoSnapshot } from '@gugu/core/calendar'
 import { validateTaskReferences } from './task-resolver-postgres.js'
 import { enqueueScheduledTaskRagRebuild } from './task-rag-job-postgres.js'
 
+type TaskWriteQuery = Pick<PoolClient, 'query'>
 type Row = Record<string, any> & { schedule_kind: string; end_at: Date | null; enabled: boolean }
 export interface ResolvedTaskFields {
   workspace_id: number | null; delivery_targets: unknown; email_attachment_file_ids: number[]; reminder_lead_minutes: number | null
@@ -25,11 +28,11 @@ export interface ResolvedTaskFields {
 export interface TaskWriteOptions {
   validateCron(cron: string): void
   /** 在事务中校验工作区、附件和投递目标的 owner，解析提醒提前量和权限撤销。 */
-  resolve(client: PoolClient, owner: string, input: Record<string, unknown>, schedule: ScheduleSpec, previous: Row | null): Promise<ResolvedTaskFields>
+  resolve(client: TaskWriteQuery, owner: string, input: Record<string, unknown>, schedule: ScheduleSpec, previous: Row | null): Promise<ResolvedTaskFields>
   filesystemAuthorizationEnabled(): boolean
   publish(owner: string, operation: 'create' | 'update', task: unknown, origin: string | null): Promise<void>
 }
-async function attachReminder(client: PoolClient, owner: string, contextId: string | null, eventId: number, task: Row): Promise<void> {
+async function attachReminder(client: TaskWriteQuery, owner: string, contextId: string | null, eventId: number, task: Row): Promise<void> {
   const ctx = normalizeScheduledTaskContext(contextId)
   if (!ctx) return
   const found = await client.query<Row>(`SELECT id,after_state,target_refs,base_versions FROM undo_operations WHERE user_id=$1 AND undo_context_id=$2 AND actor_type='web' AND resource='calendar' AND action='create' AND status='active' ORDER BY created_at DESC LIMIT 1 FOR UPDATE`, [owner, ctx])
@@ -41,19 +44,21 @@ async function attachReminder(client: PoolClient, owner: string, contextId: stri
   await client.query(`UPDATE undo_operations SET after_state=$2::json,target_refs=$3::json,base_versions=$4::json WHERE id=$1`, [operation.id, JSON.stringify({ ...state, items }), JSON.stringify([...(operation.target_refs ?? []), { kind: 'task', id: task.id }]), JSON.stringify({ ...(operation.base_versions ?? {}), [`task:${task.id}`]: { version: 0 } })])
 }
 
-/** CRUD 使用事务持锁；外部能力不可用时 resolve 必须抛错。 */
-export function createPostgresTaskWrites(pool: Pool, options: TaskWriteOptions) {
+type TaskWriteTransaction = <T>(work: (query: TaskWriteQuery) => Promise<T>) => Promise<T>
+
+function taskWrites(transact: TaskWriteTransaction, options: TaskWriteOptions, conflicts?: TaskWriteQuery) {
+  const independent = !conflicts
   return {
     create(rawOwner: string, input: ScheduledTaskCreateInput, contextId: string | null, origin: string | null) {
       return createScheduledTask({
         validateCron: options.validateCron,
         persist: async (rawId, input, spec, undoContextId) => {
       const owner = normalizeOwnerId(rawId)
-      const findExisting = async () => (await pool.query<Row>(`SELECT *,${taskPreciseColumns} FROM scheduled_tasks WHERE user_id=$1 AND event_id=$2 AND cron=$3`, [owner, input.event_id, spec.cron])).rows[0]
+      if (independent && input.event_id != null) throw new TypeError('日历活动提醒由日历工具修改')
       let created = false
       let row: Row
       try {
-        row = await withPostgresTransaction(pool, async client => {
+        row = await transact(async client => {
           await validateTaskReferences(client, owner, input.workspace_id ?? null, input.email_attachment_file_ids ?? [])
           if (input.event_id != null) {
             const event = await client.query('SELECT id FROM calendar_events WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL FOR SHARE', [input.event_id, owner])
@@ -70,8 +75,9 @@ export function createPostgresTaskWrites(pool: Pool, options: TaskWriteOptions) 
           return task
         })
       } catch (error) {
-        if (!isPostgresUniqueViolation(error) || input.event_id == null) throw error
-        const existing = await findExisting()
+        if (!conflicts || !isPostgresUniqueViolation(error) || input.event_id == null) throw error
+        const existing = (await conflicts.query<Row>(`SELECT *,${taskPreciseColumns} FROM scheduled_tasks
+          WHERE user_id=$1 AND event_id=$2 AND cron=$3`, [owner, input.event_id, spec.cron])).rows[0]
         if (!existing) throw error
         row = existing
       }
@@ -86,8 +92,8 @@ export function createPostgresTaskWrites(pool: Pool, options: TaskWriteOptions) 
         validateCron: options.validateCron,
         persist: async (rawId, taskId, values, prepare) => {
       const owner = normalizeOwnerId(rawId)
-      const row = await withPostgresTransaction(pool, async client => {
-        const found = await client.query<Row>(`SELECT *,to_char(start_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS precise_start,to_char(end_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS precise_end FROM scheduled_tasks WHERE id=$1 AND user_id=$2 FOR UPDATE`, [taskId, owner])
+      const row = await transact(async client => {
+        const found = await client.query<Row>(`SELECT *,to_char(start_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS precise_start,to_char(end_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS precise_end FROM scheduled_tasks WHERE id=$1 AND user_id=$2 ${independent ? 'AND event_id IS NULL' : ''} FOR UPDATE`, [taskId, owner])
         const current = found.rows[0]
         if (!current) throw Object.assign(new Error('任务不存在'), { statusCode: 404 })
         const has = (key: string) => Object.prototype.hasOwnProperty.call(values, key)
@@ -99,12 +105,14 @@ export function createPostgresTaskWrites(pool: Pool, options: TaskWriteOptions) 
           start_at: current.precise_start as string | null, end_at: current.precise_end as string | null,
           event_id: current.event_id == null ? null : Number(current.event_id),
         }
+        const retainedSchedule: ScheduleSpec = {
+          schedule_kind: current.schedule_kind, cron: current.cron, interval_minutes: current.interval_minutes,
+          start_at: current.start_at == null ? null : new Date(current.start_at),
+          end_at: current.end_at == null ? null : new Date(current.end_at),
+        }
         let resolved: ResolvedTaskFields | undefined
         const prepared: ScheduledTaskPreparedUpdate = await prepare(coreCurrent, async (_task, nextPatch, schedule) => {
-          const spec: ScheduleSpec = schedule ?? {
-            schedule_kind: current.schedule_kind, cron: current.cron,
-            interval_minutes: current.interval_minutes, start_at: current.start_at, end_at: current.end_at,
-          }
+          const spec: ScheduleSpec = schedule ?? retainedSchedule
           if (scheduleChanged && current.event_id != null && schedule) {
             const event = await client.query('SELECT id FROM calendar_events WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL FOR SHARE', [current.event_id, owner])
             if (!event.rowCount) throw new TypeError('绑定的日历事件不存在')
@@ -113,10 +121,7 @@ export function createPostgresTaskWrites(pool: Pool, options: TaskWriteOptions) 
           }
           resolved = await options.resolve(client, owner, nextPatch, spec, current)
         })
-        const spec = prepared.schedule ?? {
-          schedule_kind: current.schedule_kind, cron: current.cron,
-          interval_minutes: current.interval_minutes, start_at: current.start_at, end_at: current.end_at,
-        }
+        const spec = prepared.schedule ?? retainedSchedule
         const normalizedPatch = prepared.patch
         const resolvedFields = resolved!
         const nextChannels = has('channels') && normalizedPatch.channels != null ? normalizeScheduledTaskChannels(normalizedPatch.channels) : current.channels
@@ -133,4 +138,19 @@ export function createPostgresTaskWrites(pool: Pool, options: TaskWriteOptions) 
       }, rawOwner, id, patch, origin)
     },
   }
+}
+
+/** Web REST 拥有事务，提交后发布；活动提醒去重保留原语义。 */
+export function createPostgresTaskWrites(pool: Pool, options: TaskWriteOptions) {
+  return taskWrites(work => withPostgresTransaction(pool, work), options, pool)
+}
+
+/** Agent 只修改独立任务，调度校验及写入借用外层确认和调用收据事务。 */
+export function createBorrowedPostgresTaskWrites(tx: Transaction<Database>, options: Omit<TaskWriteOptions, 'publish'>) {
+  const query = async <Row>(text: string, parameters: unknown[] = []) => {
+    const result = await tx.getExecutor().executeQuery<Row>(CompiledQuery.raw(text, parameters))
+    return { rows: result.rows, rowCount: Number(result.numAffectedRows ?? result.rows.length) }
+  }
+  // 本方法只承诺写入外层事务；调用者在提交成功后按领域回执通知。
+  return taskWrites(work => work({ query: query as PoolClient['query'] }), { ...options, async publish() {} })
 }

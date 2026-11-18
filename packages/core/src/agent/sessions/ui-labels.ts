@@ -13,13 +13,23 @@ export interface AgentUiLabelsSource {
   defaultStateLabels: Readonly<Record<string, string>>
 }
 
+const labelCandidates = (raw: string | undefined) => (raw ?? '').split(/[|\n]/u).map(strip).filter(Boolean)
+
+export function createAgentToolLabelPicker(readOverrides: AgentUiLabelsSource['stateLabelOverrides']) {
+  return (name: string): string | undefined => {
+    const overrides = readOverrides()
+    if (!Object.hasOwn(overrides, name)) return undefined
+    const choices = labelCandidates(overrides[name])
+    return choices[Math.floor(Math.random() * choices.length)]
+  }
+}
+
 /** 特殊标签允许非空覆盖；多个展示候选按竖线和换行分隔。 */
 export function createAgentUiLabels(source: AgentUiLabelsSource) {
   return () => {
     const overrides = Object.fromEntries(Object.entries(source.stateLabelOverrides())
       .filter(([key, value]) => key.startsWith('_') && Boolean(value)))
     const labels = { ...source.defaultStateLabels, ...overrides }
-    const split = (raw: string | undefined) => (raw ?? '').split(/[|\n]/).map(strip).filter(Boolean)
-    return { thinking: split(labels._thinking), contextCompacting: split(labels._context_compaction) }
+    return { thinking: labelCandidates(labels._thinking), contextCompacting: labelCandidates(labels._context_compaction) }
   }
 }

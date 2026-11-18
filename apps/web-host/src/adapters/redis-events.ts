@@ -1,3 +1,4 @@
+import { clearRedisAgentReflectionSession } from '../domains/agent-sessions/persistence/agent-reflection-queue-redis.js'
 import { randomUUID } from 'node:crypto'
 import { connect as connectTcp, type Socket } from 'node:net'
 import { connect as connectTls, type TLSSocket } from 'node:tls'
@@ -12,12 +13,12 @@ type RedisReply = string | null
 type RedisCommand = (...parts: string[]) => Promise<RedisReply>
 
 /** 定时任务租约与 Python Worker 共用 Redis 锁。 */
-export function createRedisScheduledTaskCommands(redisUrl: string): ScheduledTaskRedisCommands {
+export function createRedisScheduledTaskCommands(redisUrl: string) {
   return {
     set: (key, value, ...options) => withRedis(redisUrl, command => command('SET', key, value, ...options)),
     eval: (script, keyCount, ...args) => withRedis(redisUrl, command => command('EVAL', script, String(keyCount), ...args)),
     exists: key => withRedis(redisUrl, command => command('EXISTS', key)),
-  }
+  } satisfies ScheduledTaskRedisCommands
 }
 
 export interface ResourceChangedInput {
@@ -233,20 +234,11 @@ export function createRedisLegacyChatAttachmentCleaner(redisUrl: string) {
   }
 }
 
-/** 删除会话后清理 Python Worker 共用的 owner/group 反思缓冲与 idle 索引。 */
+/** 删除会话后清理 Node owner 反思缓冲。 */
 export function createRedisAgentSessionReflectionCleaner(redisUrl: string) {
-  return async (ownerId: string, sessionId: number): Promise<void> => {
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ownerId)
-      || !Number.isSafeInteger(sessionId) || sessionId < 1)
-      throw new Error('Agent session reflection identity invalid')
-    const member = `${ownerId}:${sessionId}`
-    await withRedis(redisUrl, async command => {
-      await command('DEL', `memory:owner-reflection:${ownerId}:${sessionId}`)
-      await command('DEL', `memory:owner-group-reflection:${ownerId}:${sessionId}`)
-      await command('ZREM', 'memory:owner-reflection-idle', member)
-      await command('ZREM', 'memory:owner-group-reflection-idle', member)
-    })
-  }
+  const commands = createRedisScheduledTaskCommands(redisUrl)
+  return (ownerId: string, sessionId: number) =>
+    clearRedisAgentReflectionSession(commands, ownerId, String(sessionId))
 }
 
 /** Agent run 取消适配器使用的 Redis 命令；写入标记与发布通知分别执行。 */
@@ -633,6 +625,19 @@ export function createRedisExpiringValueStore(redisUrl:string) {
   saveIfAbsent:async(key:string,value:string,seconds:number)=>await withRedis(redisUrl,command=>command('SET',key,value,'EX',String(seconds),'NX'))==='OK',
   delete:async(key:string)=>{await withRedis(redisUrl,command=>command('DEL',key))},
  }
+}
+
+/** IM owner 私聊可显式更换会话，Redis 按同一键原子覆盖并刷新有效期。 */
+export function createRedisImOwnerSessionBindings(redisUrl: string) {
+  return {
+    getBinding: createRedisValueReader(redisUrl),
+    async setBinding(key: string, value: string, ttlSeconds: number, signal: AbortSignal) {
+      return withRedis(redisUrl, async command => {
+        signal.throwIfAborted()
+        return (await command('SET', key, value, 'EX', String(ttlSeconds))) === 'OK' ? 'bound' as const : 'unknown' as const
+      })
+    },
+  }
 }
 
 /** 飞书绑定产生的可触达地址，沿用Python两个90天协议键，不记录凭据。 */

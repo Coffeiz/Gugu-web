@@ -50,15 +50,16 @@ function safeFileName(value: string): string { return (value.split(/[\\/]/).at(-
 /** 分块multipart不会把大型原视频复制成整份bytes；取消会关闭源迭代器。 */
 export function multipartBody(fields: Readonly<Record<string, string>>, file: {
   name: string; mime: string; source: AsyncIterable<Uint8Array>
-}, boundary: string, signal: AbortSignal): AsyncIterable<Uint8Array> {
+}, boundary: string, signal: AbortSignal, fieldName = 'file'): AsyncIterable<Uint8Array> {
   if (!/^[A-Za-z0-9_-]{1,70}$/.test(boundary) || /[\r\n]/.test(file.mime)) throw new ProviderError('input_rejected')
+  if (!/^[A-Za-z0-9_-]+$/.test(fieldName)) throw new ProviderError('input_rejected')
   return (async function* () {
     for (const [name, value] of Object.entries(fields)) {
       throwIfCancelled(signal)
       if (!/^[A-Za-z0-9_-]+$/.test(name)) throw new ProviderError('input_rejected')
       yield encoder.encode(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`)
     }
-    yield encoder.encode(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${safeFileName(file.name)}"\r\nContent-Type: ${file.mime}\r\n\r\n`)
+    yield encoder.encode(`--${boundary}\r\nContent-Disposition: form-data; name="${fieldName}"; filename="${safeFileName(file.name)}"\r\nContent-Type: ${file.mime}\r\n\r\n`)
     for await (const part of file.source) { throwIfCancelled(signal); yield part }
     throwIfCancelled(signal)
     yield encoder.encode(`\r\n--${boundary}--\r\n`)

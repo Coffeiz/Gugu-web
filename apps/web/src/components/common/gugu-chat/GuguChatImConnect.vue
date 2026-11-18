@@ -91,7 +91,7 @@ defineExpose({ imGroupEl: computed(() => rootRef.value) })
 </script>
 
 <style scoped>
-.im-plat-group { display:flex; flex-direction:column; gap:2px; border-radius:var(--radius-sm); }
+.im-plat-group { display:flex; flex-direction:column; gap:2px; border-radius:var(--radius-xs); }
 .im-plat-group.im-flash { animation: imFlash 2.4s ease-out 1; }
 @keyframes imFlash {
   0%,100% { box-shadow:0 0 0 0 color-mix(in srgb,var(--action-primary) 0%,transparent); }
@@ -106,7 +106,7 @@ defineExpose({ imGroupEl: computed(() => rootRef.value) })
   gap:var(--space-sm);
   padding:var(--space-sm);
   border:1px solid transparent;
-  border-radius:var(--radius-sm);
+  border-radius:var(--radius-xs);
   background:transparent;
   color:var(--content-secondary);
   cursor:pointer;
@@ -122,7 +122,7 @@ defineExpose({ imGroupEl: computed(() => rootRef.value) })
 .im-plat-badge {
   flex-shrink:0;
   padding:2px var(--space-xs);
-  border-radius:var(--radius-xs);
+  border-radius:var(--radius-compact);
   color:var(--content-tertiary);
   background:var(--surface-soft-hover);
   font-size:var(--font-size-xs);
@@ -139,7 +139,7 @@ defineExpose({ imGroupEl: computed(() => rootRef.value) })
   align-items:center;
   justify-content:center;
   border:1px solid var(--border-default);
-  border-radius:var(--radius-sm);
+  border-radius:var(--radius-xs);
   color:var(--action-primary);
   background:var(--surface-raised);
   font:var(--font-weight-semibold) var(--font-size-sm) var(--font-sans);
@@ -150,9 +150,9 @@ defineExpose({ imGroupEl: computed(() => rootRef.value) })
 .im-connect-btn:active:not(:disabled) { transform:translateY(1px); }
 .im-connect-btn:disabled { opacity:.6; cursor:default; }
 .im-qr-box { display:flex; flex-direction:column; align-items:center; gap:var(--space-sm); padding:var(--space-md) var(--space-sm); }
-.im-qr-canvas { width:160px; height:160px; border-radius:var(--radius-sm); background:#fff; padding:var(--space-xs); box-sizing:border-box; box-shadow:var(--elevation-card); }
+.im-qr-canvas { width:160px; height:160px; border-radius:var(--radius-xs); background:#fff; padding:var(--space-xs); box-sizing:border-box; box-shadow:var(--elevation-card); }
 .im-qr-hint { font-size:var(--font-size-xs); color:var(--content-secondary); text-align:center; line-height:var(--line-height-body); }
 .im-qr-err { font-size:var(--font-size-xs); color:var(--status-danger); padding:var(--space-xs) 0; }
-.im-qr-cancel { font-size:var(--font-size-xs); color:var(--content-secondary); background:none; border:none; cursor:pointer; padding:var(--space-xs) var(--space-sm); border-radius:var(--radius-xs); }
+.im-qr-cancel { font-size:var(--font-size-xs); color:var(--content-secondary); background:none; border:none; cursor:pointer; padding:var(--space-xs) var(--space-sm); border-radius:var(--radius-compact); }
 .im-qr-cancel:hover { background:var(--surface-soft-hover); color:var(--content-primary); }
 </style>

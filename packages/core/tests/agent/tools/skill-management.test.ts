@@ -1,9 +1,17 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { sql } from 'kysely'
+import { initializeSqlite, openSqliteRuntime } from '../../../src/data/sqlite.js'
+import type { ClientDeleteConfirmationPort } from '../../../src/agent/tools/clients.js'
+import type { ConfirmationTargetSnapshot } from '../../../src/agent/tools/confirmation.js'
+import type { ToolCall } from '../../../src/agent/models.js'
 import { it,expect } from 'vitest'
 import SQLite from 'better-sqlite3'
 import { Kysely,SqliteDialect } from 'kysely'
 import { createBuiltinSkillDefinitions } from '../../../src/agent/skills/builtin.js'
 import { createSkillMetadataReader } from '../../../src/agent/skills/user-read.js'
-import { createSkillManagementReadTools, createSkillManagementWriteTools, type SkillManagementOperations } from '../../../src/agent/tools/skill-management.js'
+import { createSkillManagementReadTools, createSkillDeleteTool } from '../../../src/agent/tools/skill-management.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 
 it('Markdown head和真实用户目录共同列出元数据，包含停用项但不泄漏正文/跨owner',async()=>{
@@ -35,20 +43,53 @@ it('Markdown head和真实用户目录共同列出元数据，包含停用项但
  }finally{await db.destroy()}
 })
 
-it('Skill管理工具按Python契约创建和局部更新当前owner技能',async()=>{
- const calls:unknown[]=[]
- const operations:SkillManagementOperations={
-  async create(owner,input){calls.push(['create',owner,input]);return {id:'U1',name:input.name,description_short:input.description_short,related_tools:input.related_tools,enabled:true,managed_by:input.managed_by??'user',content_digest:'digest'}},
-  async update(owner,id,input){calls.push(['update',owner,id,input]);return {id,name:'夜间复盘',description_short:'整理当天事项',related_tools:[],enabled:false,managed_by:'assistant',content_digest:'new-digest'}},
- }
- const tools=createSkillManagementWriteTools(operations)
- const registry=createToolRegistry({groups:[{id:'skill_management',name:'技能管理',tools}],authorize:async()=>true})
- const scope={identity:{ownerId:'00000000-0000-4000-8000-000000000001',sessionId:'1',runId:'skills'},roundId:'1',signal:new AbortController().signal,resolution:null,execute:async()=>{throw new Error('不执行进程')}}
- const created=await registry.tools.dispatch({id:'create',name:'create_skill',input:{skill_name:'夜间复盘',description_short:'整理当天事项',body:'先总结完成项，再列阻塞和下一步。',related_tools:[],managed_by:'assistant'}},scope)
- expect(created).toMatchObject({kind:'completed',successful:true,mutated:true,value:{success:true,skill:{id:'U1',managed_by:'assistant'},message:'已创建这个咕咕技能，后续会在需要时按需加载。'}})
- expect(calls[0]).toEqual(['create',scope.identity.ownerId,{name:'夜间复盘',description_short:'整理当天事项',description_long:null,category:'personal',body:'先总结完成项，再列阻塞和下一步。',related_tools:[],managed_by:'assistant'}])
- const updated=await registry.tools.dispatch({id:'update',name:'update_skill',input:{id:'U1',enabled:false}},scope)
- expect(updated).toMatchObject({kind:'completed',successful:true,mutated:true,value:{success:true,skill:{id:'U1',enabled:false,content_digest:'new-digest'},message:'已更新这个咕咕技能。'}})
- expect(calls[1]).toEqual(['update',scope.identity.ownerId,'U1',{enabled:false}])
- expect(await registry.tools.dispatch({id:'bad',name:'create_skill',input:{skill_name:'x'}},scope)).toMatchObject({successful:false,executed:false})
+it('技能删除绑定目标版本，确认后与收据提交，重放不重复删除和通知', async () => {
+  const folder = await mkdtemp(join(tmpdir(), 'gugu-skill-delete-'))
+  const path = join(folder, 'core.db')
+  await initializeSqlite(path)
+  const { runtime, ownerId } = await openSqliteRuntime(path)
+  let snapshot: ConfirmationTargetSnapshot | undefined, claims = 0
+  const published: string[] = []
+  const confirmation: ClientDeleteConfirmationPort = {
+    gate: {
+      async prepare(toolCall: ToolCall, _scope: unknown, _digest: string, target: ConfirmationTargetSnapshot) {
+        snapshot = target
+        return { ok: true, value: { id: 'interaction', kind: 'confirmation', toolCall } }
+      },
+      async verify(_call: unknown, _scope: unknown, _digest: string, target: ConfirmationTargetSnapshot) {
+        return target.versionsDigest === snapshot?.versionsDigest ? { ok: true, value: {} } : { ok: false }
+      },
+    } as unknown as ClientDeleteConfirmationPort['gate'],
+    async claim() { claims++; return true },
+  }
+  const registry = createToolRegistry({ authorize: async () => true,
+    tools: [createSkillDeleteTool(runtime, confirmation, async owner => { published.push(owner) })] })
+  const call = { id: 'delete', name: 'delete_skill', input: { id: 'U1' } }
+  const scope = { identity: { ownerId, runId: 'skills', sessionId: '1' }, roundId: 'skills:1',
+    signal: new AbortController().signal, resolution: null, execute: async () => { throw new Error('不执行进程') } }
+  const resolution = { interactionId: 'interaction', receiptId: 'receipt', status: 'confirmed' as const, value: null }
+  const read = async () => (await sql`SELECT id FROM user_skills ORDER BY id`.execute(runtime.db)).rows
+  try {
+    // Core Agent 仍使用 Host 迁移的 Skill 表；SQLite 夹具覆盖领域操作与真实 Core 收据。
+    await sql`CREATE TABLE user_skills (id INTEGER PRIMARY KEY,owner_id TEXT,skill_id TEXT,name TEXT,
+      description_short TEXT,description_long TEXT,category TEXT,body TEXT,related_tools TEXT,
+      source TEXT,managed_by TEXT,enabled INTEGER,content_digest TEXT,updated_at TEXT)`.execute(runtime.db)
+    await sql`INSERT INTO user_skills VALUES
+      (1,${ownerId.replaceAll('-', '')},'U1','小北的技能','简述',NULL,'personal','正文','[]','user','assistant',1,'v1','2026-01-01'),
+      (2,'other','U1','他人技能','简述',NULL,'personal','正文','[]','user','user',1,'v1','2026-01-01')`.execute(runtime.db)
+    expect(await registry.tools.dispatch(call, scope)).toMatchObject({ kind: 'waiting' })
+    expect(await read()).toEqual([{ id: 1 }, { id: 2 }])
+    await sql`UPDATE user_skills SET body='修改正文' WHERE id=1`.execute(runtime.db)
+    expect(await registry.tools.dispatch(call, { ...scope, resolution })).toMatchObject({ successful: false })
+    expect(claims).toBe(0)
+    expect(await registry.tools.dispatch(call, scope)).toMatchObject({ kind: 'waiting' })
+    expect(await registry.tools.dispatch(call, { ...scope, resolution })).toMatchObject({ successful: true, mutated: true, value: { success: true, id: 'U1' } })
+    expect(await registry.tools.dispatch(call, { ...scope, resolution })).toMatchObject({ successful: true, mutated: false })
+    expect(await read()).toEqual([{ id: 2 }])
+    expect(published).toEqual([ownerId])
+    expect(claims).toBe(1)
+  } finally {
+    await runtime.close()
+    await rm(folder, { recursive: true, force: true })
+  }
 })

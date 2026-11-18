@@ -1,12 +1,13 @@
 import { randomBytes } from 'node:crypto'
+import type { Kysely } from 'kysely'
 import { createTerminalCommandService, type TerminalCommandInput, type TerminalCommandPorts } from '@gugu/core/terminals/command'
 import { createTerminalEventAppender } from '@gugu/core/terminals/append'
 import type { TerminalListItem } from '@gugu/core/terminals/list'
 import type { RedisEventPublisher } from '../../adapters/redis-events.js'
 
 /** 终端状态与事件提交后通知；执行端与逐次授权由同一 Host 显式提供。 */
-export function createHostTerminalCommandService(options: {
-  db: Parameters<typeof createTerminalEventAppender>[0]
+export function createHostTerminalCommandService<DB>(options: {
+  db: Kysely<DB>
   publisher: Pick<RedisEventPublisher, 'publishResourceChanged'>
   authorize(owner: string, terminal: string): Promise<void>
   read(owner: string, terminal: string): Promise<TerminalListItem>

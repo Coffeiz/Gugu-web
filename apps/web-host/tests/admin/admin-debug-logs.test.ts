@@ -2,13 +2,15 @@ import assert from 'node:assert/strict'
 import { appendFile, mkdtemp, readFile, rm, writeFile, utimes } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { registerAdminDebugLogRoutes } from '../../src/domains/admin/admin-debug-logs.js'
+import { registerAdminDebugLogRoutes, resolveAdminDebugLogFiles } from '../../src/domains/admin/admin-debug-logs.js'
 
-async function setup() {
+async function setup(resolveFiles?: (root: string) => ReturnType<typeof resolveAdminDebugLogFiles>) {
   const root = await mkdtemp(join(tmpdir(), 'gugu-admin-debug-'))
-  const paths = { web: join(root, 'web.log'), worker: join(root, 'worker.log'), gateway: join(root, 'gateway.log') }
+  const defaultPaths = { web: join(root, 'web.log'), worker: join(root, 'worker.log'), gateway: join(root, 'gateway.log') }
+  const { paths, webCandidates } = resolveFiles?.(root) ?? { paths: defaultPaths, webCandidates: [join(root, 'web-dev.log'), defaultPaths.web] }
   let resolveCount = 0
   const guardedPaths = new Proxy(paths, { get(target, key: string) { resolveCount += 1; return target[key as keyof typeof target] } })
   const app = Fastify()
@@ -18,7 +20,7 @@ async function setup() {
     },
     verifyAdmin: async () => true,
     paths: guardedPaths,
-    webCandidates: [join(root, 'web-dev.log'), paths.web],
+    webCandidates,
   })
   return {
     app, root, paths,
@@ -26,6 +28,19 @@ async function setup() {
     cleanup: async () => { await app.close(); await rm(root, { recursive: true, force: true }) },
   }
 }
+
+test('默认日志归 Web Host，显式日志文件由管理员端按配置读取', async () => {
+  const defaultDirectory = fileURLToPath(new URL('../../logs/', import.meta.url))
+  assert.equal(resolveAdminDebugLogFiles(null).paths.web, join(defaultDirectory, 'gugu.log'))
+  const ctx = await setup(root => resolveAdminDebugLogFiles(join(root, 'explicit.log')))
+  try {
+    await writeFile(ctx.paths.web, '11-12 10:00:00 configured Node log\n')
+    await writeFile(join(ctx.root, 'gugu-web-dev.log'), '11-12 10:01:00 unrelated candidate\n')
+    const response = await ctx.app.inject({ url: '/api/v1/admin/debug/logs/tail?source=web', headers: { authorization: 'admin' } })
+    assert.equal(response.statusCode, 200)
+    assert.deepEqual(response.json().lines.map((row: { line: string }) => row.line), ['11-12 10:00:00 configured Node log'])
+  } finally { await ctx.cleanup() }
+})
 
 test('未授权请求在任何日志路径解析前被拒绝', async () => {
   const ctx = await setup()

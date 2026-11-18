@@ -16,8 +16,8 @@ html[data-family='mono'] .mind-tabs .seg-pill {
   border: 1px solid var(--border-strong);
   box-sizing: border-box;
 }
-/* 三栏笔记的新建按钮使用共享 ActionButton 次要变体；仅在此入口覆盖它的边框令牌。 */
-html[data-family='mono'] .ntp-new {
+/* 暗色 Mono 的笔记新建按钮使用更强的边框。 */
+html[data-theme='dark'][data-family='mono'] .ntp-new {
   --action-secondary-border: var(--border-strong);
   --action-secondary-border-hover: var(--border-strong);
 }

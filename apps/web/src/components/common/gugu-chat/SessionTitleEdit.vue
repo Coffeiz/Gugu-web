@@ -182,7 +182,7 @@ function resetHeaderText() {
 }
 /* 重命名按钮：跟删除按钮一样，无背景无阴影，hover 时轻微背景 */
 .exp-session-rename-btn {
-  width: 22px; height: 22px; border-radius: var(--radius-xs); border: none;
+  width: 22px; height: 22px; border-radius: var(--radius-compact); border: none;
   background: none; color: var(--text-secondary);
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; opacity: 0; line-height: 1;

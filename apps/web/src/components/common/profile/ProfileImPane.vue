@@ -365,7 +365,7 @@ onBeforeUnmount(() => { if (bindingCountdown) clearInterval(bindingCountdown); i
   margin: 8px 0 4px;
   padding: 12px;
   border: 1px solid var(--subpanel-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: var(--subpanel-bg);
 }
 
@@ -392,7 +392,7 @@ onBeforeUnmount(() => { if (bindingCountdown) clearInterval(bindingCountdown); i
   gap: 8px;
   padding: 3px 4px 3px 10px;
   border: 1px solid var(--input-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: var(--surface-raised);
 }
 
@@ -433,7 +433,7 @@ onBeforeUnmount(() => { if (bindingCountdown) clearInterval(bindingCountdown); i
   gap: 4px;
   padding: 0 8px;
   border: 1px solid var(--control-border);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-compact);
   background: var(--control-bg);
   color: var(--control-fg);
   font: 600 11px var(--font-sans);

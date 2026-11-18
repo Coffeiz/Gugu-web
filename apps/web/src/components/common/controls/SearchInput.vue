@@ -62,6 +62,6 @@ defineExpose({ focus: () => inputEl.value?.focus() })
 }
 .search-input-field::-webkit-search-cancel-button { display:none; }
 .search-input-field::placeholder { color:var(--content-tertiary); opacity:1; }
-.search-input-clear { display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; width:20px; height:20px; padding:0; border:0; border-radius:var(--radius-xs); background:transparent; color:var(--content-secondary); cursor:pointer; }
+.search-input-clear { display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; width:20px; height:20px; padding:0; border:0; border-radius:var(--radius-compact); background:transparent; color:var(--content-secondary); cursor:pointer; }
 .search-input-clear:hover { background:var(--action-soft); color:var(--action-primary); }
 </style>

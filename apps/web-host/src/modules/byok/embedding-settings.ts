@@ -1,4 +1,4 @@
-import type { RagQueryEmbeddingSettings } from '@gugu/core/agent'
+import type { RagQueryEmbeddingSettings } from '@gugu/core/agent/rag'
 import type { Pool } from 'pg'
 import { normalizeOwnerId } from '../../adapters/owner-context.js'
 

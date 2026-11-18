@@ -16,12 +16,13 @@ export interface UserMemoryVectorRebuildPorts {
   readMemory(ownerId: string): Promise<string | null>
   readVectors(ownerId: string, kind: UserMemoryVectorKind): Promise<unknown>
   writeVectors(ownerId: string, kind: UserMemoryVectorKind, vectors: Record<string, StoredMemoryVector>): Promise<void>
+  /** Host 用档案写入锁保护快照读取和最终写入。生成向量在锁外执行。 */
+  withSourceLock?<T>(ownerId: string, operation: () => Promise<T>): Promise<T>
   embed(ownerId: string, text: string, signal: AbortSignal): Promise<readonly number[] | null>
   rebuildMemoryIndex(ownerId: string, signal: AbortSignal): Promise<void>
 }
 
 const CHUNK_MAX = 400
-const emptyVectors = (): Record<string, StoredMemoryVector> => ({})
 
 function object(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
@@ -95,16 +96,104 @@ export function splitUserMemoryVectorChunks(memoryText: string): string[] {
   return output.filter(Boolean)
 }
 
-function chunkKey(text: string): string {
+export function userMemoryVectorChunkKey(text: string): string {
   return createHash('md5').update(text.trim(), 'utf8').digest('hex').slice(0, 12)
 }
 
-async function requireVector(ports: UserMemoryVectorRebuildPorts, ownerId: string, text: string, signal: AbortSignal): Promise<number[]> {
+type LongMemoryVectorRefreshPorts = Pick<UserMemoryVectorRebuildPorts, 'readMemory' | 'readVectors' | 'writeVectors' | 'embed'>
+  & Required<Pick<UserMemoryVectorRebuildPorts, 'withSourceLock'>>
+
+/** 沿用旧版块键，只补当前模型缺失的长期记忆向量。 */
+export function createUserLongMemoryVectorRefresher(ports: LongMemoryVectorRefreshPorts) {
+  return async (rawOwnerId: string, modelTag: string, signal: AbortSignal): Promise<void> => {
+    const owner = dataContext(rawOwnerId).ownerId
+    if (!modelTag.trim()) throw new Error('Embedding 模型标记无效')
+    const read = async () => {
+      signal.throwIfAborted()
+      return { memory: await ports.readMemory(owner), vectors: object(await ports.readVectors(owner, 'memory')) ?? {} }
+    }
+    const snapshot = await ports.withSourceLock(owner, read)
+    const expected = JSON.stringify(snapshot)
+    const chunks = new Map(splitUserMemoryVectorChunks(snapshot.memory ?? '').map(text => [userMemoryVectorChunkKey(text), text]))
+    const next: Record<string, StoredMemoryVector> = {}
+    for (const [key, text] of chunks) {
+      const cached = object(snapshot.vectors[key])
+      const values = cached?.v
+      const previous = typeof cached?.t === 'string' && Array.isArray(values) && values.length && values.every(Number.isFinite)
+        ? { v: values as number[], t: cached.t } : undefined
+      if (previous?.t === modelTag) {
+        next[key] = previous
+        continue
+      }
+      const vector = await generateVector(ports, owner, text, signal)
+      if (vector) next[key] = { v: vector, t: modelTag }
+      else if (previous) next[key] = previous
+    }
+    if (JSON.stringify(next) === JSON.stringify(snapshot.vectors)) return
+    await ports.withSourceLock(owner, async () => {
+      if (JSON.stringify(await read()) !== expected) return
+      signal.throwIfAborted()
+      await ports.writeVectors(owner, 'memory', next)
+    })
+  }
+}
+
+async function generateVector(ports: Pick<UserMemoryVectorRebuildPorts, 'embed'>, ownerId: string, text: string, signal: AbortSignal): Promise<number[] | null> {
   signal.throwIfAborted()
   const vector = await ports.embed(ownerId, text, signal)
   signal.throwIfAborted()
-  if (!vector?.length || vector.some(value => !Number.isFinite(value))) throw new Error('Embedding 向量生成失败')
+  if (!vector?.length || vector.some(value => !Number.isFinite(value))) return null
   return [...vector]
+}
+
+async function requireVector(ports: Pick<UserMemoryVectorRebuildPorts, 'embed'>, ownerId: string, text: string, signal: AbortSignal): Promise<number[]> {
+  const vector = await generateVector(ports, ownerId, text, signal)
+  if (!vector) throw new Error('Embedding 向量生成失败')
+  return vector
+}
+
+type PatternVectorRefreshPorts = Pick<UserMemoryVectorRebuildPorts, 'readPatterns' | 'readVectors' | 'writeVectors' | 'embed'>
+  & Required<Pick<UserMemoryVectorRebuildPorts, 'withSourceLock'>>
+
+/** 对应 Python sync_pattern_vecs 的增量补齐。发布前复核档案和缓存，避免覆盖管理重建。 */
+export function createUserPatternVectorRefresher(ports: PatternVectorRefreshPorts) {
+  return async (rawOwnerId: string, modelTag: string, signal: AbortSignal): Promise<void> => {
+    const ownerId = dataContext(rawOwnerId).ownerId
+    if (!modelTag.trim()) throw new Error('Embedding 模型标记无效')
+    async function readCurrent() {
+      signal.throwIfAborted()
+      const patterns = patternsFrom(await ports.readPatterns(ownerId))
+      const vectors = object(await ports.readVectors(ownerId, 'pattern')) ?? {}
+      return { patterns, vectors }
+    }
+
+    const snapshot = await ports.withSourceLock(ownerId, readCurrent)
+    const liveIds = new Set(snapshot.patterns.map(pattern => pattern.id))
+    const retained = new Map<string, StoredMemoryVector>()
+    for (const [id, cached] of Object.entries(snapshot.vectors)) {
+      const row = object(cached)
+      const value = row?.v
+      if (liveIds.has(id) && typeof row?.t === 'string' && Array.isArray(value) && value.length && value.every(Number.isFinite))
+        retained.set(id, { v: value, t: row.t })
+    }
+    let changed = retained.size !== Object.keys(snapshot.vectors).length
+    for (const { id, text } of snapshot.patterns) {
+      if (retained.get(id)?.t === modelTag) continue
+      const vector = await generateVector(ports, ownerId, text, signal)
+      if (vector) {
+        retained.set(id, { v: vector, t: modelTag })
+        changed = true
+      }
+    }
+    if (!changed) return
+
+    await ports.withSourceLock(ownerId, async () => {
+      const current = await readCurrent()
+      signal.throwIfAborted()
+      if (JSON.stringify(current) !== JSON.stringify(snapshot)) return
+      await ports.writeVectors(ownerId, 'pattern', Object.fromEntries(retained))
+    })
+  }
 }
 
 /** 重建当前 owner 的旧格式向量缓存；规则/完整用例在 Core，文件与出站由 Host 提供。 */
@@ -116,33 +205,54 @@ export function createUserMemoryVectorRebuilder(ports: UserMemoryVectorRebuildPo
     let withPatterns = 0
     let failedUsers = 0
     let ragIndexFailed = false
+    const withLock = <T>(operation: () => Promise<T>) =>
+      ports.withSourceLock ? ports.withSourceLock(ownerId, operation) : operation()
+    const readPatterns = async () => {
+      signal.throwIfAborted()
+      return patternsFrom(await ports.readPatterns(ownerId))
+    }
+    const readMemory = async () => (await ports.readMemory(ownerId) || '').trim()
+
+    async function publish(kind: UserMemoryVectorKind, expected: string, readSource: () => Promise<string>,
+      previous: Record<string, unknown> | null, vectors: Record<string, StoredMemoryVector>) {
+      await withLock(async () => {
+        signal.throwIfAborted()
+        if (await readSource() !== expected) throw new Error('生成向量期间记忆档案已更新')
+        if (JSON.stringify(object(await ports.readVectors(ownerId, kind))) !== JSON.stringify(previous))
+          throw new Error('生成向量期间记忆向量缓存已更新')
+        signal.throwIfAborted()
+        await ports.writeVectors(ownerId, kind, vectors)
+      })
+    }
+
     try {
-      const previousPatterns = object(await ports.readVectors(ownerId, 'pattern'))
-      const patterns = patternsFrom(await ports.readPatterns(ownerId))
+      signal.throwIfAborted()
+      const { previousPatterns, patterns } = await withLock(async () => ({
+        patterns: await readPatterns(),
+        previousPatterns: object(await ports.readVectors(ownerId, 'pattern')),
+      }))
       withPatterns = patterns.length ? 1 : 0
-      if (patterns.length) {
+      if (patterns.length || (previousPatterns && Object.keys(previousPatterns).length)) {
         const vectors: Record<string, StoredMemoryVector> = {}
         for (const pattern of patterns) {
           vectors[pattern.id] = { v: await requireVector(ports, ownerId, pattern.text, signal), t: modelTag }
           counts.patternVectors += 1
         }
-        await ports.writeVectors(ownerId, 'pattern', vectors)
-      } else if (previousPatterns && Object.keys(previousPatterns).length) {
-        await ports.writeVectors(ownerId, 'pattern', emptyVectors())
+        await publish('pattern', JSON.stringify(patterns), async () => JSON.stringify(await readPatterns()), previousPatterns, vectors)
       }
 
-      const previousMemory = object(await ports.readVectors(ownerId, 'memory'))
-      const memory = (await ports.readMemory(ownerId) || '').trim()
+      const { previousMemory, memory } = await withLock(async () => ({
+        memory: await readMemory(),
+        previousMemory: object(await ports.readVectors(ownerId, 'memory')),
+      }))
       const chunks = splitUserMemoryVectorChunks(memory)
-      if (chunks.length) {
+      if (chunks.length || (previousMemory && Object.keys(previousMemory).length)) {
         const vectors: Record<string, StoredMemoryVector> = {}
         for (const chunk of chunks) {
-          vectors[chunkKey(chunk)] = { v: await requireVector(ports, ownerId, chunk, signal), t: modelTag }
+          vectors[userMemoryVectorChunkKey(chunk)] = { v: await requireVector(ports, ownerId, chunk, signal), t: modelTag }
           counts.memoryVectors += 1
         }
-        await ports.writeVectors(ownerId, 'memory', vectors)
-      } else if (previousMemory && Object.keys(previousMemory).length) {
-        await ports.writeVectors(ownerId, 'memory', emptyVectors())
+        await publish('memory', memory, readMemory, previousMemory, vectors)
       }
     } catch {
       signal.throwIfAborted()

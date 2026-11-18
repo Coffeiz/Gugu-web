@@ -279,6 +279,14 @@
     "keyBehavior": "维护状态读取与并发标记",
     "ci": "node-webui"
   },
+  "apps/web-host/tests/admin/account-memory-cleanup-publication.test.ts": {
+    "domain": "admin",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/admin/account-memory-cleanup.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "只读预览、单次确认、并发编辑保护、Local 中断恢复、实际 RAG 消费及 Embedding 增量补算和故障隔离",
+    "ci": "node-webui"
+  },
   "apps/web-host/tests/admin/service-status.test.ts": {
     "domain": "api",
     "layer": "L2",

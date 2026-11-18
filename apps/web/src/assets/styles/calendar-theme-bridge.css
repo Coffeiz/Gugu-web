@@ -15,7 +15,12 @@ html[data-theme='dark'][data-family] .overflow-popup .overflow-tag {
   color: var(--selection-fg);
   background: var(--selection-bg);
 }
-html[data-theme='dark'][data-family] .overflow-popup .overflow-tag-ev {
+html[data-theme='dark'][data-family] :is(
+  .overflow-popup .overflow-tag-ev,
+  .cal-chip .chip-ev-tag,
+  .cal-sidebar .ev-event-badge,
+  .cal-sidebar .cap-tag-ev
+) {
   color: var(--status-warning);
   background: var(--status-warning-bg);
 }
@@ -25,8 +30,7 @@ html[data-theme][data-family] .cal-ctx-menu .popup-menu-item {
 }
 html[data-theme][data-family] .cal-ctx-menu .popup-menu-item:hover { background: var(--action-soft); }
 
-/* 侧栏 tag/badge 染色同 component-theme-refinements 的胶囊 tag：仅暗色生效，
-   亮色保留 CalendarSidebar scoped 的浅色徽标设计。 */
+/* 暗色活动标签沿用近期节点的配色。亮色保留组件原有徽标设计。 */
 html[data-theme='dark'][data-family] .cal-sidebar .ev-proj-badge,
 html[data-theme='dark'][data-family] .cal-sidebar .cap-tag-proj {
   color: var(--selection-fg) !important;
@@ -35,16 +39,23 @@ html[data-theme='dark'][data-family] .cal-sidebar .cap-tag-proj {
 }
 html[data-theme='dark'][data-family] .cal-sidebar .ev-event-badge,
 html[data-theme='dark'][data-family] .cal-sidebar .cap-tag-ev {
-  color: var(--status-warning);
-  background: var(--status-warning-bg);
   border-color: color-mix(in srgb,var(--status-warning) 34%,transparent);
 }
 html[data-theme][data-family] .cal-sidebar .cap-days { color: var(--content-secondary); }
 html[data-theme][data-family] .cal-sidebar .cap-days.urgent { color: var(--status-warning); }
 
-html[data-theme='dark'][data-family] .cal-page .chip-proj-tag,
-html[data-theme='dark'][data-family] .cal-page .bar-proj-tag,
-html[data-theme='dark'][data-family] .cal-page .wv-ev-t,
-html[data-theme='dark'][data-family] .cal-page .wv-ev-d {
-  color: var(--content-secondary) !important;
+/* 月历、周历和近期节点共用标题色，覆盖按活动色计算的内联前景。 */
+html[data-theme='dark'][data-family] :is(
+  .cal-chip:is(.event-chip, .project-bar, .wv-pbar, .wv-allday-ev, .wv-ev),
+  .cal-sidebar .sidebar-ev-name,
+  .cal-sidebar .cap-name
+) {
+  color: var(--content-primary) !important;
+}
+html[data-theme='dark'][data-family] .cal-chip :is(.chip-proj-tag:not(.chip-ev-tag), .bar-proj-tag) {
+  color: var(--content-secondary);
+  background: var(--selection-bg);
+}
+html[data-theme='dark'][data-family] .wv-ev :is(.wv-ev-t, .wv-ev-d) {
+  color: var(--content-secondary);
 }

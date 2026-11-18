@@ -491,7 +491,7 @@ async function handleUpload() {
 .modal-body { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 18px; }
 
 .drop-zone {
-  min-height: 148px; padding: 20px; border-radius: var(--radius-md);
+  min-height: 148px; padding: 20px; border-radius: var(--radius-sm);
   border: 1.5px dashed var(--file-dialog-drop-border); background: var(--file-dialog-drop-bg);
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; cursor: pointer;
   transition: border-color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard);
@@ -507,13 +507,13 @@ async function handleUpload() {
 
 .file-stack, .upload-progress { display: flex; flex-direction: column; gap: 4px; width: 100%; }
 .file-row, .up-file-row {
-  display: flex; align-items: center; gap: 9px; padding: 8px 10px; border-radius: var(--radius-sm);
+  display: flex; align-items: center; gap: 9px; padding: 8px 10px; border-radius: var(--radius-xs);
   background: var(--file-dialog-item-bg); border: 1px solid var(--file-dialog-item-border); box-shadow: var(--file-dialog-item-shadow);
 }
 .up-file-row { position: relative; overflow: hidden; }
 .file-ext {
   font-size: 9px; font-weight: 800; letter-spacing: .04em; color: var(--action-primary);
-  background: var(--action-soft); border-radius: var(--radius-xs); padding: 2px 6px; flex-shrink: 0;
+  background: var(--action-soft); border-radius: var(--radius-compact); padding: 2px 6px; flex-shrink: 0;
 }
 .file-name, .up-file-name {
   flex: 1; min-width: 0; font-size: 12px; font-weight: 500; color: var(--content-primary);
@@ -522,7 +522,7 @@ async function handleUpload() {
 .up-file-name { position: relative; }
 .file-size { font-size: 11px; color: var(--content-secondary); flex-shrink: 0; }
 .file-remove {
-  width: 20px; height: 20px; border-radius: var(--radius-xs); flex-shrink: 0;
+  width: 20px; height: 20px; border-radius: var(--radius-compact); flex-shrink: 0;
   background: none; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center;
   color: var(--content-tertiary); opacity: .55;
   transition: opacity var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard);
@@ -530,7 +530,7 @@ async function handleUpload() {
 .file-remove:hover { background: var(--danger-button-bg); color: var(--danger-button-fg); opacity: 1; }
 .add-more-btn {
   display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; padding: 7px;
-  border: 1.5px dashed var(--file-dialog-drop-border); border-radius: var(--radius-sm); background: transparent;
+  border: 1.5px dashed var(--file-dialog-drop-border); border-radius: var(--radius-xs); background: transparent;
   font: 600 11px var(--font-sans); color: var(--content-secondary); cursor: pointer; flex-shrink: 0;
   transition: color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard);
 }
@@ -564,9 +564,9 @@ label {
   color: var(--content-secondary); cursor: pointer; font-family: var(--font-sans); text-align: left;
   transition: background-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard);
 }
-.status-toggle { padding: 4px 6px; border-radius: var(--radius-xs); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
-.year-row { padding: 3px 6px; border-radius: var(--radius-xs); }
-.month-row { padding: 3px 8px; border-radius: var(--radius-xs); }
+.status-toggle { padding: 4px 6px; border-radius: var(--radius-compact); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.year-row { padding: 3px 6px; border-radius: var(--radius-compact); }
+.month-row { padding: 3px 8px; border-radius: var(--radius-compact); }
 .status-toggle:hover, .year-row:hover, .month-row:hover { background: var(--surface-soft-hover); color: var(--content-primary); }
 .status-cnt { font-size: 10px; color: var(--content-tertiary); font-weight: 400; letter-spacing: 0; text-transform: none; }
 .toggle-chev, .year-chev, .month-chev { color: var(--content-tertiary); flex-shrink: 0; transform:rotate(-90deg); transition: transform var(--motion-hover-control) var(--motion-ease-emphasis); }
@@ -611,13 +611,13 @@ label {
 
 .modal-footer { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 24px; border-top: 1px solid var(--file-dialog-divider); flex-shrink: 0; }
 .btn-cancel {
-  padding: 8px 18px; border-radius: var(--radius-sm); border: 1px solid var(--file-dialog-control-border);
+  padding: 8px 18px; border-radius: var(--radius-xs); border: 1px solid var(--file-dialog-control-border);
   background: var(--file-dialog-control-bg); color: var(--control-fg); font: 13px var(--font-sans); cursor: pointer;
   transition: color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard);
 }
 .btn-cancel:hover { background: var(--file-dialog-control-bg-hover); border-color: var(--control-border-hover); color: var(--control-fg-strong); }
 .btn-upload {
-  padding: 8px 22px; border-radius: var(--radius-sm); border: none;
+  padding: 8px 22px; border-radius: var(--radius-xs); border: none;
   background: var(--action-primary-bg); color: var(--content-on-accent); box-shadow: none;
   font: 600 13px var(--font-sans); cursor: pointer;
   transition: opacity var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard);

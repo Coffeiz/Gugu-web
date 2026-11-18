@@ -51,7 +51,7 @@ def _merge_pending_ids(existing: Optional[list], source_id: str) -> list[str]:
     return merged
 
 
-async def persist_event(event: RagIndexUpdated) -> Optional[int]:
+async def persist_event(event: RagIndexUpdated, *, preserve_full_rebuild: bool = False) -> Optional[int]:
     """合并一条最新事件并返回当前 generation。
 
     文档级事件（带 source_id）把 ID 并入 pending_source_ids——同源多文档
@@ -95,8 +95,12 @@ async def persist_event(event: RagIndexUpdated) -> Optional[int]:
                     )
                     db.add(job)
                 else:
-                    job.source_id = source_id
-                    if source_id:
+                    keep_full = (
+                        preserve_full_rebuild and not job.source_id
+                        and job.status in {"queued", "running", "retrying"}
+                    )
+                    job.source_id = "" if keep_full else source_id
+                    if job.source_id:
                         job.pending_source_ids = _merge_pending_ids(
                             job.pending_source_ids, source_id,
                         )

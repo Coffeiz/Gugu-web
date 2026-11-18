@@ -1,8 +1,44 @@
 import type { Pool } from 'pg'
-import { normalizeThemePalette } from '@gugu/core'
-import { renderSmtpDraftMessage, SmtpDeliveryFailure, type SmtpTestDelivery } from '@gugu/core/email/smtp-test'
+import { CoreError, normalizeThemePalette } from '@gugu/core'
+import { createEmailAttachmentResolver, EmailAttachmentError, renderSmtpDraftMessage, SmtpDeliveryFailure,
+  type EmailAttachmentReferences, type SmtpTestDelivery } from '@gugu/core/email/smtp-test'
+import { openLocalFile } from '@gugu/fs/node'
+import { lookup as lookupMimeType } from 'mime-types'
+import type { FileHandle } from 'node:fs/promises'
 import type { ScheduledTaskTestNotificationPlan } from '@gugu/core/scheduled-task-test-notify'
 import { decryptEncryptedString } from '../../adapters/encrypted-string.js'
+import { isOwnedFileStorageKey } from '../../domains/files/file-owner.js'
+
+type OpenFile = { handle: FileHandle; size: number }
+type GeneratedFile = OpenFile & { fileName: string; mimeType: string }
+type FileRow = {
+  id: number
+  storage_key: string
+  storage_backend: string
+  size_bytes: string | number | null
+  display_name: string
+  ext: string
+  mime_type: string | null
+}
+
+function attachmentSource(file: OpenFile) {
+  return {
+    size: file.size,
+    async read(limit: number) {
+      const chunks: Buffer[] = []
+      let offset = 0
+      while (offset < limit) {
+        const chunk = Buffer.allocUnsafe(Math.min(limit - offset, 64 * 1024))
+        const { bytesRead } = await file.handle.read(chunk, 0, chunk.length, offset)
+        if (!bytesRead) break
+        chunks.push(chunk.subarray(0, bytesRead))
+        offset += bytesRead
+      }
+      return Buffer.concat(chunks, offset)
+    },
+    close: () => file.handle.close(),
+  }
+}
 
 interface EmailRow {
   preferences: unknown
@@ -14,7 +50,7 @@ interface EmailRow {
   smtp_use_ssl: boolean | null
 }
 
-interface SmtpFallback {
+export interface SmtpFallback {
   host: string
   port: number
   user: string
@@ -28,7 +64,7 @@ interface EmailProfile extends EmailRow {
   readonly ownerEmail: string | null
 }
 
-async function readEmailProfile(pool: Pick<Pool, 'query'>, ownerId: string): Promise<EmailProfile | undefined> {
+export async function readEmailProfile(pool: Pick<Pool, 'query'>, ownerId: string): Promise<EmailProfile | undefined> {
   const result = await pool.query<EmailRow>(
     `SELECT u.email AS owner_email,p.data AS preferences,s.host AS smtp_host,s.port AS smtp_port,
             s."user" AS smtp_user,s.password AS smtp_password,s.from_addr AS smtp_from_addr,
@@ -43,19 +79,19 @@ async function readEmailProfile(pool: Pick<Pool, 'query'>, ownerId: string): Pro
   return row ? { ...row, ownerEmail: row.owner_email ?? null } : undefined
 }
 
-function preferences(value: unknown): Record<string, unknown> {
+export function preferences(value: unknown): Record<string, unknown> {
   if (typeof value === 'string') {
     try { value = JSON.parse(value) } catch { return {} }
   }
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
 
-function sender(from: string, user: string): { fromName: string; fromAddress: string } {
+export function sender(from: string, user: string): { fromName: string; fromAddress: string } {
   if (from.includes('@')) return { fromName: '咕咕', fromAddress: from }
   return { fromName: from || '咕咕', fromAddress: user }
 }
 
-function smtpSettings(row: EmailProfile, fallback: SmtpFallback, secretKey: string) {
+export function smtpSettings(row: EmailProfile, fallback: SmtpFallback, secretKey: string) {
   if (row.smtp_host !== null) {
     return {
       host: row.smtp_host,
@@ -92,6 +128,36 @@ function reminderMessage(plan: ScheduledTaskTestNotificationPlan, value: unknown
   return message
 }
 
+export function createPostgresEmailAttachmentResolver(
+  pool: Pick<Pool, 'query'>,
+  options: { storageRoot?: string; downloadGenerated?(ownerId: string, id: string): Promise<GeneratedFile> },
+): ReturnType<typeof createEmailAttachmentResolver> {
+  return createEmailAttachmentResolver({
+    async files(ownerId, ids) {
+      const { rows } = await pool.query<FileRow>(
+        `SELECT id,storage_key,storage_backend,size_bytes,display_name,ext,mime_type
+         FROM files WHERE user_id=$1 AND id=ANY($2::int[]) AND deleted_at IS NULL`, [ownerId, ids])
+      return rows.map(row => ({ id: row.id, storageKey: row.storage_backend === 'local' ? row.storage_key : '',
+        size: Number(row.size_bytes ?? 0), name: row.display_name, ext: row.ext, mimeType: row.mime_type }))
+    },
+    async openFile(ownerId, file) {
+      if (!options.storageRoot || !isOwnedFileStorageKey(ownerId, file.storageKey)) return null
+      const opened = await openLocalFile(options.storageRoot, file.storageKey)
+      return opened ? attachmentSource(opened) : null
+    },
+    async openGenerated(ownerId, id) {
+      try {
+        const file = await options.downloadGenerated?.(ownerId, id)
+        return file ? { ...attachmentSource(file), filename: file.fileName, mimeType: file.mimeType } : null
+      } catch (error) {
+        if (error instanceof CoreError && error.code === 'not_found') return null
+        throw error
+      }
+    },
+    guessMimeType: lookupMimeType,
+  })
+}
+
 /** 使用 owner 的注册邮箱和启用的 SMTP 配置投递提醒测试邮件。 */
 export function createPostgresScheduledTaskTestEmailDelivery(
   pool: Pick<Pool, 'query'>,
@@ -99,12 +165,17 @@ export function createPostgresScheduledTaskTestEmailDelivery(
     secretKey: string
     globalSmtp: SmtpFallback
     send(delivery: SmtpTestDelivery): Promise<void>
+    storageRoot?: string
+    downloadGenerated?(ownerId: string, id: string): Promise<GeneratedFile>
   },
 ) {
-  return async (plan: ScheduledTaskTestNotificationPlan): Promise<Record<string, string>> => {
+  const resolveAttachments = createPostgresEmailAttachmentResolver(pool, options)
+  return async (plan: ScheduledTaskTestNotificationPlan, references?: EmailAttachmentReferences, recipient?: string | null): Promise<Record<string, string>> => {
     try {
       const row = await readEmailProfile(pool, plan.ownerId)
-      if (!row?.ownerEmail) return { '邮件': '收件人邮箱不存在' }
+      const toAddress = recipient === undefined ? row?.ownerEmail : recipient
+      if (!row || !toAddress) return { '邮件': '收件人邮箱不存在' }
+      const attachments = references ? await resolveAttachments(plan.ownerId, references) : []
       const smtp = smtpSettings(row, options.globalSmtp, options.secretKey)
       if (!smtp.host) return { '邮件': '发送失败（smtp_not_configured）' }
       await options.send({
@@ -113,12 +184,14 @@ export function createPostgresScheduledTaskTestEmailDelivery(
         user: smtp.user,
         password: smtp.password,
         ...sender(smtp.from, smtp.user),
-        toAddress: row.ownerEmail,
+        toAddress,
         secure: smtp.secure,
         message: reminderMessage(plan, row.preferences),
+        ...(attachments.length ? { attachments } : {}),
       })
       return { '邮件': '已发送' }
     } catch (error) {
+      if (error instanceof EmailAttachmentError) return { '邮件': `附件不可用（${error.message}）` }
       const reason = error instanceof SmtpDeliveryFailure ? error.reason : 'delivery'
       const code = reason === 'tls_mismatch' ? 'smtp_tls_mismatch' : reason === 'tls' ? 'smtp_tls_error' : 'smtp_delivery_error'
       return { '邮件': `发送失败（${code}）` }

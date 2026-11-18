@@ -1,6 +1,8 @@
 # Node Agent 危险操作确认端口契约
 
-日期：2026-11-14。本文为实现前设计与验收清单，不是功能完成记录。本次只读审查并新增本文；未修改实现、运行外部服务或开放危险工具。当前 Core `createToolRegistry` 仍在发现和 dispatch 两处拒绝 `destructive` 工具，也拒绝所有交互 resolution；下列契约闭合前维持该状态。
+日期：2026-11-14，后续状态增量记录于文末。本文为实现与验收契约，不是功能完成记录。Core confirmation gate 负责核验可信意图和 resolution；Host 仅在 per-lease 确认端口齐备时注册危险工具。真实 PG/Redis 单次 claim 与跨进程恢复未验收，因此这些工具目前只是部分实现。
+
+2026-11-18 当前状态：七项日历/画布工具已进入 Core ToolPort 与 Web per-lease 装配路径；危险项仅在可信密钥和各自 confirmation gate 可用时注册。Host 已接入既有交互激活、投影、响应与恢复队列，不新增 HTTP route。工具仍标为部分实现：真实 PostgreSQL/Redis claim、跨进程恢复、Provider Run 与发布/提醒消费者未验收。后文早期“仍关闭/未接线”描述保留为历史记录，以本段和 [node-agent-tools-parity.md](node-agent-tools-parity.md) 当前状态为准。
 
 ## 已存在的边界，必须复用
 
@@ -8,10 +10,10 @@
 | --- | --- | --- |
 | `backend/agent/interactions/confirmations.py` | Python 确认载荷、ACTION/AUTHORIZATION 区分、目标身份、短码兑换、Redis TTL、可选原子单次授权消费、服务不可用时关闭 | 旧 grant 主要绑定 owner/摘要/目标身份，并不自动包含 Node 的 run/call/版本；不能直接作为完整新授权 |
 | `apps/web-host/src/domains/agent-sessions/tools/confirmation-identity.ts` | `targetConfirmationIdentity` 兼容 Python 确定性编码：操作、资源类型、上下文、完整目标集合；目标顺序无关，数字与字符串身份不同，重复 ID 拒绝 | 这是身份编码，不是签名/授权凭据；不自行绑定 owner/session/run/call、记录版本、时效或持久消费 |
-| `.../persistence/agent-trusted-intent-postgres.ts` | `createPostgresTrustedIntentStore` 加密保存可信意图，按 owner/session/run/interaction/call 读写；拒绝冲突并检查过期 | `TrustedPromptIntent` 当前没有必需的 round、版本快照或完整执行输入摘要，也没有领域操作收据/原子执行接口 |
+| `.../persistence/agent-trusted-intent-postgres.ts` | `createPostgresTrustedIntentStore` 加密保存可信意图，按 owner/session/run/interaction/call 读写；校验完整 binding、目标/版本 digest、收据与有效期，并在事务 claim 时回调当前权限复核 | 合成 Pool 回归不证明真实 PG 并发、Redis 确认兑换与领域收据故障恢复已验收 |
 | `.../persistence/agent-trusted-prompt-descriptions.ts` | 从可信 store 读取 confirmation intent，以已有 target identity 和创建确认码端口构造固定确认/取消按钮；凭据交互另有 owner-scoped 查询 | `createConfirmation` 是注入端口；确认码成功创建不证明授权检查、危险业务执行或版本验证已接通 |
 | `.../persistence/agent-interaction-activate-postgres.ts` | 同事务绑定 prompt/action 与 Run，确认交互禁止自定义文本；重复激活校验旧绑定；按队列轮到前台后激活 | 交互 prompt 不是领域资源锁；不能在用户等待期间一直持有业务事务或将原模型参数当可信意图 |
-| `.../application/agent-interaction-consume.ts`、`.../persistence/agent-interaction-consume-postgres.ts` | owner/prompt 限定、action 行锁、过期/取消处理、一次性动作消费、确认码兑换注入；现有命令动作只支持工作区删除/文件系统授权 | 通用危险 Agent 工具不能塞入现有 `command_action` 分支绕过 Tools；PG 与注入的 Redis 兑换不天然属于同一原子事务 |
+| Core `agent/interactions/consume-action.ts`、Web Host `persistence/agent-interaction-consume-postgres.ts` | Core 处理过期、取消、一次性消费与重放；Host 提供 owner/prompt 限定、action 行锁及确认码兑换。现有命令动作只支持工作区删除与文件系统授权 | 通用危险 Agent 工具不能塞入现有 `command_action` 分支绕过 Tools；PG 与注入的 Redis 兑换不天然属于同一原子事务 |
 | `packages/core/src/agent/interactions/coordinator.ts` | 可信 resolution 绑定 pending interaction、校验类型、原子 checkpoint 消费 receipt；确认成功直接继续原调用，取消/过期收尾不再调用业务；秘密值不进 Canonical | Harness 只验证交互编排，Tools 仍须核验意图、授权和实际资源；`status=confirmed` 本身不是可执行授权 |
 | `.../persistence/agent-interaction-resume-postgres.ts` | 持久恢复队列和 Run interaction receipt 查询 | 这是交互回答消费收据，不是危险业务已经提交的凭证 |
 
@@ -21,7 +23,7 @@
 
 工具先通过标准参数验证和最新权限检查，再用共享领域服务在 owner 范围内解析真实资源。模型给的是业务选择条件；实际目标 ID、资源类型、级联范围和版本必须由可信 handler 生成。不得让模型提交 `targets`、`confirmed`、`confirm=true`、授权根、版本断言或 receipt 来建立授权。
 
-待确认记录需要以下字段。除已存在字段外，其余是待实现的要求，不代表现有 schema 已支持：
+待确认记录需要以下字段。下表定义设计约束；当前 Core/Host 已保存并校验其中的可信绑定与摘要，真实 PG/Redis 并发与故障恢复仍待验收：
 
 | 字段 | 来源与约束 |
 | --- | --- |
@@ -34,7 +36,7 @@
 | summary、expiresAt、authorizationEpoch | 可信影响摘要、明确有效期和可重新验证的授权版本；摘要用于展示而非作为唯一授权身份 |
 | state | pending → answered/approved → executing → committed/denied/expired/cancelled/unknown；精确状态及 CAS 由复用存储的实现定义，不添加独立 Agent 状态机 |
 
-现有 `TrustedPromptIntent.context` 仅允许标量。实现可将版本集合规范化摘要放入 context，完整版本快照保存在加密 intent 内；必须显式扩展并校验可信意图契约，不能把版本伪装成模型可传的字段。身份编码可复用原算法，但完整绑定对象应包含 Run scope 和执行输入摘要，不复用仅 owner+summary 的旧 grant 为其他调用授权。
+`TrustedPromptIntent.context` 仅允许标量；当前实现将规范化摘要保存在 context，并把完整目标 ID/版本 digest 与确认操作快照保存在加密 intent 内。旧 grant 不绑定完整 Run scope 和执行输入摘要，不能复用为 Node 工具授权。
 
 ## 沿现有 ToolPort 的三段流程
 
@@ -87,7 +89,7 @@ Redis 短码兑换与 PostgreSQL 消费失败之间存在跨存储边界。不�
 | 已提交后才取消 | 真实成功与收据保留，不能返回未执行或再次执行 |
 | 可见错误/事件/Canonical/日志 | 无凭据、原始异常、原始参数、确认码和私有意图内容 |
 
-Python 重点基准：`backend/tests/agent/test_confirm_gate.py`（伪 confirm、目标集合、Redis 不可用、并发单次消费、自动模式）、`test_interaction_protocol.py`、`test_interaction_phase5_7.py`、`test_interaction_retention.py`，以及项目/日历/联系人/回收站对应删除测试。Node 现有入口：Core `tests/agent/interactions/coordinator.test.ts`；Host `tests/agent/agent-confirmation-identity.test.ts`、`agent-interaction-description.test.ts`、`agent-interaction-consume.test.ts`、`agent-interaction-consume-postgres.test.ts`、`agent-interaction-worker.test.ts`。它们是后续应复用的套件，不代表本设计全部已有运行覆盖。
+Python 重点基准包括 `backend/tests/agent/test_confirm_gate.py`、`test_interaction_protocol.py`、`test_interaction_phase5_7.py`、`test_interaction_retention.py`，以及项目、日历、联系人和回收站删除测试。Node 回归入口包括 Core `tests/agent/interactions/` 下的 `coordinator.test.ts`、`consume-action.test.ts`、`prompt-description.test.ts`、`recovery-worker.test.ts`，以及 Host `tests/agent/` 下的 `agent-confirmation-identity.test.ts`、`agent-interaction-consume-postgres.test.ts`。
 
 ## 允许开放首个危险工具前的缺口
 
@@ -96,12 +98,16 @@ Python 重点基准：`backend/tests/agent/test_confirm_gate.py`（伪 confirm�
 - 首个危险工具必须选已经有共享领域事务/幂等/Undo 的业务切片；不要用原生 Shell 验收代替数据库工具，也不要反向扩大 Linux MXC 能力声明。
 - 同库原子 mutation/receipt、跨 PG/Redis 故障、跨进程双 resume、提交未知 reconcile 均须真实隔离依赖验收。仅 mock store 或 UI 确认按钮测试通过不能开放。
 
-## Core 核验边界实现
+## Core 核验边界实现（2026-11-14 状态）
 
 `packages/core/src/agent/tools/confirmation.ts` 新增 `createConfirmationGate`。该实现仅准备/核验可信持久意图，返回受限的 intentId/operationId 引用，不消费授权 claim、不执行 mutation，也不会使注册器开放危险工具。
 
 Host须提供可信时钟、最新授权epoch、prepare/load/inspect端口。意图与收据要求schemaVersion=2，包含完整owner/session/run/round/call/tool与规范化输入摘要绑定、purpose/action、目标/版本摘要、有效期。prepare必须先通过共享领域服务解析目标，再可靠保存；load须通过现有服务核验receipt，不信任resolution.value。inspect按原意图的固定目标复查当前归属、版本和级联集合。输入摘要必须由可信规范化层生成，不能直接读取模型的digest/confirm/targets字段作为授权。
 
-旧Host intent缺这些字段时明确拒绝，不能自动补空值升级。正式Host仍需扩展现有加密意图存储及receipt投影，实际危险mutation还须在领域事务原子核验claim和操作收据；当前独立边界测试不证明这些真实依赖已完成。
+旧 Host intent 缺少 operation/schema 绑定时明确拒绝或按旧兼容描述处理，不能自动补空值升级。当前 Host 已实现加密意图 schema、确认 receipt 查询及领域事务内 claim；真实 PostgreSQL/Redis 并发与恢复尚待隔离服务验收，不能将端口测试视作生产通过。
 
 本轮运行：Core核验边界23/23，工具/技能整合105/105；Python确认基准41/41，均无失败/跳过。存储、授权epoch与目标版本复查使用明确端口替身，不证明单次领域claim或真实PG/Redis已完成。测试源码类型检查当时受并行Harness测试TS2722影响，已协调，未据此宣称全仓通过。
+
+2026-11-17 Core Runtime 边界增量：dispatch lease 可携带 Host 已持久验证的 `InteractionResolution`，Core dispatch worker 在恢复模式下将其交由 Harness，再由 Core 校验 receipt 与 pending interaction 绑定；新启动租约带 resolution 时会被拒绝。行为回归 **9/9 通过**。Host PG `claim()` 仍拒绝 `waiting` checkpoint，interaction resume queue 尚未与 dispatch fencing lease 原子组合；因此此契约暂未被生产确认流程调用，不开放危险工具，也不代表持久确认验收完成。
+
+2026-11-18 接线增量：Core `AgentChatService<I>` 是 HTTP-independent 的跨端 Chat 合约，提供 owner/session wake；Web route 复用 Core 类型。可信 Host 意图加密保存在 `agent_interaction_intents`，绑定 owner/session/run/round/call/tool/input digest/target+version digests/权限 epoch；当前 fence/token 在工具准备和领域事务中各自复核。确认恢复会获得新 fence，故权限 epoch 不再包含一次性 fence；授权 epoch 由账号安全版本及 Provider access version 组成，仍需有效当前 lease。`main.ts` 仅当当前主密钥可读取时注入 `delete_event`、`canvas_delete`、`canvas_delete_note`、`canvas_disconnect`、`canvas_batch` 确认端口，五种 action 使用不同 gate。devserver Core build 通过；Host 确认/画布/registry/Chat wake/交互响应与消费 **56 通过、2 个 PostgreSQL 用例跳过、0 失败**；Python 日历/提醒/画布/撤销/幂等回归 **66/66 通过**。Web Host production typecheck 因并行终端 `ws` 类型声明问题失败，本轮修改文件无诊断。真实 PG/Redis、Provider、提醒消费者和重启恢复尚未验收，危险工具尚未达到“已完成并接入”。

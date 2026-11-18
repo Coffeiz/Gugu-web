@@ -7,7 +7,9 @@ export type ToolScope = Parameters<ToolPort['dispatch']>[1]
 export interface ToolDefinition {
   readonly definition: PreparedToolDefinition
   readonly effect: 'read' | 'write'
-  /** 当前注册器尚未接入持久确认凭证，危险工具一律不开放。 */
+  /** 复合工具可按已验证动作区分查询取消与写入结果未知。 */
+  effectForInput?(input: unknown): 'read' | 'write'
+  /** 危险工具默认关闭，须由可信组合根接入确认门。 */
   readonly destructive?: boolean
   /** 仅作调度分流，不能替代 handler 内的可信交互/确认门。 */
   readonly requiresInteraction?: boolean
@@ -38,6 +40,8 @@ export interface ToolRegistryOptions {
   readonly groups?: readonly ToolGroupDefinition[]
   readonly configuration?: ToolRegistryConfiguration
   readonly maxConcurrency?: number
+  /** 定时执行等已预先确认的工具，执行器必须在持久认领时再次校验授权。 */
+  readonly preauthorizedDestructiveTool?: ToolDefinition
   /** 仅用于缺年份的旧日期输入；未提供时不猜测年份。 */
   normalizationYear?(identity: RunIdentity): number
   /** 每次发现与执行重新判权；可结合平台能力及最新授权状态。 */

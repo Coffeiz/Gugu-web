@@ -225,7 +225,8 @@ async def test_event_persists_for_shared_consumer_without_python_double_processi
     persisted = []
     workers = []
 
-    async def persist(value):
+    async def persist(value, *, preserve_full_rebuild):
+        assert preserve_full_rebuild is not should_start_local_worker
         persisted.append(value)
         return 1
 

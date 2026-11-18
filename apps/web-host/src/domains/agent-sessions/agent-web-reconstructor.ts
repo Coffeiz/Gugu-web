@@ -1,26 +1,26 @@
-import { contextAccessScopeHash } from '@gugu/core/agent'
-import type { CanonicalContextPorts, CanonicalRunContext, CanonicalRunPreparationPorts, ContextSourcePorts, ContextSourceSelection, CurrentTurnSources, RunIdentity, HistoryIdentity, ToolPort, ToolResult } from '@gugu/core/agent'
+import { AgentRunReconstructionVersionError as AgentReconstructionVersionError, createAgentCompactionPort, createAgentRunReconstructor, createAgentRunToolPorts, createLazyAgentCompactionPort, restoreAgentRequestPrefix } from '@gugu/core/agent'
+import type { AgentProviderAuxiliaryPorts, AgentRunBinding, CanonicalContextPorts, CanonicalRunContext, CanonicalRunPreparationPorts, ContextDataPorts, ContextSourcePorts, CurrentTurnSources, RunIdentity, HistoryIdentity } from '@gugu/core/agent'
 import type { ProviderRuntimeOptions } from '@gugu/core/providers'
 import type { OwnedCurrentMessage } from './context/agent-context-source.js'
 import { createPostgresCurrentTurnReader, createWebAgentSourceLoader } from './context/agent-context-source.js'
 import { createPersistentAgentRuntime, type PersistentAgentRuntimeOptions } from './agent-persistent-runtime.js'
 import { createPostgresAgentRunStore } from './persistence/agent-run-store-postgres.js'
-import type { AgentDispatchLease } from './persistence/agent-run-dispatch-postgres.js'
+import { acceptsWebAgentDispatchInput, type AgentDispatchLease } from './persistence/agent-run-dispatch-postgres.js'
 import type { AgentUsageConfig } from './persistence/agent-usage-postgres.js'
 import { createCanonicalHistoryWriter } from './persistence/agent-canonical-write-postgres.js'
-import type { createAgentToolRegistry } from './tools/agent-tool-registry.js'
+import type { AgentToolRegistryOptions, createAgentToolRegistry } from './tools/agent-tool-registry.js'
 import { createMcpAgentToolPorts, type AgentMcpToolPortsOptions } from './tools/agent-mcp-tool-ports.js'
 import { createAgentContextSources, type AgentContextAssemblyOptions } from './context/agent-context-assembly.js'
 import { createAuthorizedWebAgentProductionRagRunPorts } from './tools/agent-rag-production-ports.js'
+import { createWebAgentMcpRunPreparation } from './tools/agent-mcp-run-preparation.js'
+import { createWebAgentMcpRunAuthorization } from './tools/agent-mcp-run-authorization.js'
+import { createAgentMemoryVectorSearchFactory } from '../../modules/agent-sessions/memory-vector-search.js'
+import { createRedisAgentReflectionQueue, createWebAgentReflectionFinalizer } from './persistence/agent-reflection-queue-redis.js'
 
 /** 不含密钥、配置版本或底层异常的可公开错误类型。 */
-export class AgentReconstructionVersionError extends Error {}
-
-export interface WebAgentBinding {
-  selection: ContextSourceSelection
-  resolve: ProviderRuntimeOptions['resolve']
+export interface WebAgentBinding extends AgentRunBinding {
+  compactionInstruction?: string
   usageConfig: AgentUsageConfig
-  release(): void
 }
 
 /** 从与 Provider 相同的原子绑定中取非密钥用量配置，禁止按模型身份字符串推断。 */
@@ -50,6 +50,8 @@ export interface WebAgentReconstructionResources {
   runtime: Omit<PersistentAgentRuntimeOptions['runtime'], 'tools'>
   executor: PersistentAgentRuntimeOptions['executor']
   provider: Omit<PersistentAgentRuntimeOptions['provider'], 'resolve'>
+  /** Context compaction/reflection ports bind to this Run's exact ProviderRuntime after construction. */
+  bindProvider?(provider: AgentProviderAuxiliaryPorts, selected: Awaited<ReturnType<ProviderRuntimeOptions['resolve']>>): void | Promise<void>
   interactionActivation?: PersistentAgentRuntimeOptions['interactionActivation']
 }
 
@@ -77,39 +79,13 @@ export function createWebAgentToolPorts(
         && (!mcp.configured || await mcp.configured(candidate, name, signal))
     },
   }) : registry
-  const plan = boundRegistry.tools.plan
-  const tools: ToolPort = {
-    ...(plan ? { async plan(calls, candidate) {
-      if (!matchesLease(candidate)) throw new AgentReconstructionVersionError('工具运行身份不匹配')
-      return plan(calls, candidate)
-    } } : {}),
-    async dispatch(call, scope) {
-      scope.signal.throwIfAborted()
-      if (!matchesLease(scope.identity)) return {
-        kind: 'completed', value: { error: '工具运行身份不匹配' }, successful: false, mutated: false, executed: false,
-      } satisfies ToolResult
-      return boundRegistry.tools.dispatch(call, scope)
+  return createAgentRunToolPorts({
+    identity, registry: boundRegistry, preparation,
+    configurationMatches(configuration) {
+      return configuration.source === 'web' && configuration.identity.subject.kind === 'session'
+        && configuration.identity.subject.id === identity.sessionId
     },
-    async reconcile(call, candidate) {
-      if (!matchesLease(candidate)) return { kind: 'unknown' }
-      return boundRegistry.tools.reconcile(call, candidate)
-    },
-  }
-  return {
-    tools,
-    preparation: {
-      ...preparation,
-      async discover(input, signal) {
-        signal.throwIfAborted()
-        if (input.identity.ownerId !== identity.ownerId || input.identity.subject.kind !== 'session'
-          || input.identity.subject.id !== identity.sessionId) throw new AgentReconstructionVersionError('工具运行身份不匹配')
-        const configured = new Set(input.toolNames)
-        const definitions = await boundRegistry.capabilities(identity)
-        signal.throwIfAborted()
-        return definitions.filter(definition => configured.has(definition.name))
-      },
-    },
-  }
+  })
 }
 export interface WebAgentReconstructorOptions {
   pool: PersistentAgentRuntimeOptions['pool']
@@ -127,22 +103,119 @@ export interface WebAgentReconstructorOptions {
 /** 将已配置的 Host 资源与当前租约的上下文、RAG 授权及注册器组合。 */
 export function createWebAgentRagResources(options: {
   source: Omit<AgentContextAssemblyOptions, 'digest' | 'nextId' | 'select' | 'currentTurn'>
-  rag: Omit<Parameters<typeof createAuthorizedWebAgentProductionRagRunPorts>[0], 'lease' | 'selection'>
+  rag: Omit<Parameters<typeof createAuthorizedWebAgentProductionRagRunPorts>[0], 'lease' | 'selection'> & {
+    /** 每个可信 lease 单独创建写端口；只有实际提供的端口才进入授权配置。 */
+    toolPorts?(lease: AgentDispatchLease, binding: WebAgentBinding, context: Pick<ContextDataPorts, 'loadTimezone'>): Promise<Partial<Pick<AgentToolRegistryOptions,
+      'conversations' | 'time' | 'knowledge' | 'remember' | 'knowledgeWrites' | 'knowledgeDelete' | 'search' | 'events' | 'calendar' | 'dashboard' | 'fileOverview' | 'workspaces' | 'workspaceMutations' | 'scheduledTasks' | 'scheduledTaskWrites' | 'scheduledTaskDelete' | 'trash' | 'trashRestore' | 'canvases' | 'canvasPlaceableSearch' | 'canvasCreation' | 'canvasEdits' | 'canvasPlacements' | 'canvasRelations' | 'noteLifecycle' | 'noteWrites' | 'notes' | 'projects' | 'projectMutations' | 'projectDelete' | 'calendarCreate' | 'calendarUpdate' | 'calendarDelete' | 'canvasBatch' | 'canvasDeleteNote' | 'canvasDisconnect' | 'canvasDelete' | 'clientDelete' | 'skills' | 'skillMetadata' | 'skillManagement' | 'skillDelete' | 'callTool' | 'mcpManagement' | 'webSearch' | 'webDownload' | 'similarImageSearch' | 'deepResearch' | 'askUser' | 'readFile' | 'linkButtons' | 'sendEmail'>>>
+  }
+  compactionInstruction?: string
+  /** Web 私聊反思与 Host Node 消费者共享签名模型范围。 */
+  reflection?: Parameters<typeof createRedisAgentReflectionQueue>[0] & { enabled?(): boolean; threshold(): number; diagnose(): void }
   remaining: Omit<WebAgentReconstructionResources, 'source' | 'ragContext' | 'toolRegistry' | 'preparation'> & {
     preparation: Omit<WebAgentReconstructionResources['preparation'], 'configuration'>
   }
 }) {
-  const source = createAgentContextSources(options.source)
+  const memoryVectorSearch = options.source.memoryVectorSearch ?? (options.rag.embedding
+    ? createAgentMemoryVectorSearchFactory({ storageRoot: options.source.memoryStorageRoot, embedding: options.rag.embedding })
+    : undefined)
+  const source = createAgentContextSources({ ...options.source, ...(memoryVectorSearch ? { memoryVectorSearch } : {}) })
+  const reflectionFinalizer = options.reflection ? createWebAgentReflectionFinalizer({
+    pool: options.rag.pool,
+    enqueue: createRedisAgentReflectionQueue(options.reflection),
+    threshold: options.reflection.threshold,
+    diagnose: options.reflection.diagnose,
+  }) : null
   return async (lease: AgentDispatchLease, binding: WebAgentBinding): Promise<WebAgentReconstructionResources> => {
-    const rag = createAuthorizedWebAgentProductionRagRunPorts({ ...options.rag, lease, selection: binding.selection })
-    return { ...options.remaining, source, ragContext: rag.ragContext, toolRegistry: rag.toolRegistry,
-      preparation: { ...options.remaining.preparation, configuration: rag.configuration } }
+    const { toolPorts: createToolPorts, ...ragOptions } = options.rag
+    const toolPorts = await createToolPorts?.(lease, binding, { loadTimezone: source.data.loadTimezone }) ?? {}
+    const enabledCalendarCanvasTools = [
+      ...(toolPorts.calendarCreate ? ['create_event' as const] : []),
+      ...(toolPorts.calendarUpdate ? ['update_event' as const] : []),
+      ...(toolPorts.calendarDelete ? ['delete_event' as const] : []),
+      ...(toolPorts.canvasDelete ? ['canvas_delete' as const] : []),
+      ...(toolPorts.canvasDeleteNote ? ['canvas_delete_note' as const] : []),
+      ...(toolPorts.canvasDisconnect ? ['canvas_disconnect' as const] : []),
+      ...(toolPorts.canvasBatch ? ['canvas_batch' as const] : []),
+    ]
+    const rag = createAuthorizedWebAgentProductionRagRunPorts({ ...ragOptions, ...toolPorts,
+      enabledConversationRead: Boolean(toolPorts.conversations), enabledTime: Boolean(toolPorts.time),
+      enabledCalendarRead: Boolean(toolPorts.calendar), enabledUpcoming: Boolean(toolPorts.events && toolPorts.time),
+      enabledDashboard: Boolean(toolPorts.dashboard && toolPorts.time), enabledCalendarCanvasTools,
+      enabledWorkspaces: Boolean(toolPorts.workspaces),
+      enabledWorkspaceMutations: Boolean(toolPorts.workspaceMutations),
+      enabledTrashList: Boolean(toolPorts.trash),
+      enabledTrashRestore: Boolean(toolPorts.trashRestore),
+      enabledCanvasReads: Boolean(toolPorts.canvases),
+      enabledCanvasPlaceableSearch: Boolean(toolPorts.canvasPlaceableSearch),
+      enabledCanvasCreate: Boolean(toolPorts.canvasCreation),
+      enabledCanvasMutations: Boolean(toolPorts.canvasEdits || toolPorts.canvasPlacements || toolPorts.canvasRelations),
+      enabledNoteLifecycle: Boolean(toolPorts.noteLifecycle),
+      enabledProjectCreation: Boolean(toolPorts.projects),
+      enabledProjectMutations: Boolean(toolPorts.projectMutations),
+      enabledNoteReads: Boolean(toolPorts.notes),
+      enabledProjectOverview: Boolean(toolPorts.fileOverview),
+      enabledScheduledTasks: Boolean(toolPorts.scheduledTasks),
+      enabledKnowledgeRead: Boolean(toolPorts.knowledge), enabledKnowledgeWrites: Boolean(toolPorts.knowledgeWrites),
+      enabledGlobalSearch: Boolean(toolPorts.search),
+      enabledAskUser: Boolean(toolPorts.askUser),
+      enabledLinkButtons: Boolean(toolPorts.linkButtons),
+      enabledFileRead: Boolean(toolPorts.readFile),
+      enabledClientTools: Boolean(ragOptions.core),
+      enabledClientDelete: Boolean(toolPorts.clientDelete?.confirmation),
+      lease, selection: binding.selection })
+    const mcpAuthorization = createWebAgentMcpRunAuthorization(options.rag.pool, lease)
+    const mcp = options.remaining.mcp ? {
+      ...options.remaining.mcp,
+      async authorize(identity: RunIdentity, name: string, signal?: AbortSignal) {
+        if (!await mcpAuthorization.authorize(identity, name, signal)) return false
+        return options.remaining.mcp!.authorize(identity, name, signal)
+      },
+    } : undefined
+    const configuration = createWebAgentMcpRunPreparation(rag, mcp)
+    const compactionInstruction = binding.compactionInstruction ?? options.compactionInstruction ?? ''
+    let providerBinding: {
+      provider: AgentProviderAuxiliaryPorts
+      selected: Awaited<ReturnType<ProviderRuntimeOptions['resolve']>>
+    } | null = null
+    const compactionPort = createLazyAgentCompactionPort(async () => {
+      if (!providerBinding) throw new Error('Web Agent Provider 压缩端口尚未绑定')
+      const identity = lease.identity
+      // 工具授权会验证活动 dispatch lease；等 Harness.start 获取租约后再读取配置。
+      const selected = providerBinding.selected
+      return createAgentCompactionPort({ provider: providerBinding.provider, identity, modelIdentity: binding.selection.modelIdentity!,
+        stableSystem: selected.systemPrompt, scope: selected.accessScopeHash,
+        scopeRevision: binding.selection.contextScopeKey ?? null, contextTokens: binding.selection.contextWindow,
+        maxOutputTokens: selected.config.max_tokens ?? 0, instruction: compactionInstruction,
+        async loadTools(signal) {
+          const runConfiguration = await configuration(identity, signal ?? new AbortController().signal)
+          const configured = new Set(runConfiguration.toolNames)
+          return (await rag.toolRegistry.capabilities(identity)).filter(definition => configured.has(definition.name)).map(definition => definition.schema)
+        },
+        digest: context.digest, nextId: context.nextId,
+        // 将异常交回 Core compactContext，由它按本次上下文预算调用脱敏诊断并执行旧版确定性回退。
+        diagnostic: error => { throw error } })
+    })
+    const context: WebAgentReconstructionResources['context'] = {
+      ...options.remaining.context,
+      finalization: { async complete(input) {
+        await options.remaining.context.finalization.complete(input)
+        await reflectionFinalizer?.(input, (options.reflection?.enabled?.() ?? true)
+          && binding.selection.contextPolicy.loadOwnerContext && binding.selection.contextPolicy.memoryEnabled)
+      } },
+      compaction: compactionPort,
+    }
+    return { ...options.remaining, ...(mcp ? { mcp } : {}), context, source, ragContext: rag.ragContext, toolRegistry: rag.toolRegistry,
+      preparation: { ...options.remaining.preparation, configuration },
+      async bindProvider(provider, selected) {
+        providerBinding = { provider, selected }
+        await options.remaining.bindProvider?.(provider, selected)
+      } }
   }
 }
 
 /** Web gateway 的请求来源已由调度载荷验证；历史会话来源不影响本次请求。 */
 export function createWebImMemoryLoader(lease: AgentDispatchLease) {
-  if (lease.input.v !== 2 || lease.input.source !== 'web') throw new AgentReconstructionVersionError('运行来源无法验证')
+  if (!acceptsWebAgentDispatchInput(lease.input)) throw new AgentReconstructionVersionError('运行来源无法验证')
   const { ownerId, sessionId } = lease.identity
   return async (identity: HistoryIdentity, signal?: AbortSignal) => {
     signal?.throwIfAborted()
@@ -151,40 +224,36 @@ export function createWebImMemoryLoader(lease: AgentDispatchLease) {
   }
 }
 
-/** 恢复只装配可信版本匹配的真实端口；缺失时保留排队，不重新选择不兼容模型。 */
+/** 为 Core 重建用例装配 Web 的 PostgreSQL、Redis、当前消息与授权资源。 */
 export function createWebAgentReconstructor(options: WebAgentReconstructorOptions) {
   const store = createPostgresAgentRunStore<CanonicalRunContext>(options.pool, options.secretKey, options.history)
-  return async (lease: AgentDispatchLease) => {
-    const id = lease.identity
-    if (lease.input.v !== 2 || lease.input.source !== 'web') throw new AgentReconstructionVersionError('运行来源无法验证')
-    const anchor = await options.pool.query(`SELECT 1 FROM conversation_messages m JOIN conversation_sessions s ON s.id=m.session_id
-      WHERE s.user_id=$1 AND s.id=$2 AND m.id=$3 AND m.role='user'`, [id.ownerId, id.sessionId, lease.input.userMessageId])
-    if (anchor.rowCount !== 1) throw new Error('运行消息锚点不存在')
-    const checkpoint = await store.read(id)
-    if ((lease.mode === 'resume') !== Boolean(checkpoint)) throw new Error('运行恢复状态不匹配')
-    const binding = await options.bind(lease, checkpoint?.context ?? null)
-    if (!binding) return null
-    try {
+  return createAgentRunReconstructor<AgentDispatchLease, WebAgentBinding, WebAgentReconstructionResources>({
+    acceptsInput: acceptsWebAgentDispatchInput,
+    async hasAnchor(identity, userMessageId) {
+      const anchor = await options.pool.query(`SELECT 1 FROM conversation_messages m JOIN conversation_sessions s ON s.id=m.session_id
+        WHERE s.user_id=$1 AND s.id=$2 AND m.id=$3 AND m.role='user'`, [identity.ownerId, identity.sessionId, userMessageId])
+      return anchor.rowCount === 1
+    },
+    readCheckpoint: store.read,
+    bind: options.bind,
+    resources: options.resources,
+    createRuntime(lease, binding, resources, checkpoint) {
+      const id = lease.identity
       const selection = binding.selection
-      if (selection.contextScopeKey !== lease.input.accessVersion || !selection.modelIdentity || (lease.input.locale && selection.locale !== lease.input.locale)) throw new AgentReconstructionVersionError('运行授权或语言版本不匹配')
-      if (checkpoint?.context && checkpoint.context.modelIdentity !== selection.modelIdentity) throw new AgentReconstructionVersionError('运行模型身份不匹配')
-      const resources = await options.resources(lease, binding)
-      if (!resources) { binding.release(); return null }
-      const expected = contextAccessScopeHash(id, selection, resources.context.digest)
-      if (checkpoint?.context && checkpoint.context.accessScopeHash !== expected) throw new AgentReconstructionVersionError('运行访问范围不匹配')
-      const selected = await binding.resolve(id, selection.modelIdentity, new AbortController().signal)
-      if (selected.modelIdentity !== selection.modelIdentity || selected.accessScopeHash !== expected) throw new AgentReconstructionVersionError('Provider 访问范围不匹配')
       const source = createWebAgentSourceLoader(options.pool, { ...resources.source, data: { ...resources.source.data, loadImMemory: createWebImMemoryLoader(lease) }, digest: resources.context.digest, nextId: resources.context.nextId,
         select: async () => selection, currentTurn: createPostgresCurrentTurnReader(options.pool, String(lease.input.userMessageId), resources.materialize) })
       const toolPorts = createWebAgentToolPorts(lease, resources.toolRegistry, resources.preparation, resources.mcp)
       const history = options.historyForBinding?.(lease, binding) ?? createWebAgentBindingHistory(lease, binding)
-      const instance = createPersistentAgentRuntime({ pool: options.pool, secretKey: options.secretKey, redis: options.redis, subscribe: options.subscribe, history,
-        context: { ...resources.context, preparation: { ...resources.context.preparation, buildRag: resources.ragContext }, load: source.load }, runPreparation: toolPorts.preparation,
+      return createPersistentAgentRuntime({ pool: options.pool, secretKey: options.secretKey, redis: options.redis, subscribe: options.subscribe, history,
+        context: { ...resources.context,
+          ...(checkpoint ? { prepareRequest: restoreAgentRequestPrefix(id, checkpoint, selection, {
+            digest: resources.context.digest,
+            builder: resources.source.builder,
+          }) } : {}),
+          preparation: { ...resources.context.preparation, buildRag: resources.ragContext }, load: source.load }, runPreparation: toolPorts.preparation,
         runtime: { ...resources.runtime, tools: toolPorts.tools }, executor: resources.executor,
         provider: { ...resources.provider, resolve: binding.resolve }, interactionActivation: resources.interactionActivation,
         scheduling: { mode: 'dispatch', readReconstructionStatus: options.readReconstructionStatus, leaseFor: target => target.ownerId === id.ownerId && target.sessionId === id.sessionId && target.runId === id.runId ? lease : null } })
-      let closed = false
-      return { harness: instance.harness, cancellation: instance.cancellation, async close() { if (closed) return; closed = true; try { await instance.close() } finally { binding.release() } } }
-    } catch (error) { binding.release(); throw error }
-  }
+    },
+  })
 }

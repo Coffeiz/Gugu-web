@@ -1,5 +1,6 @@
 import { Readable } from 'node:stream'
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
+import type { AgentChatService as CoreAgentChatService } from '@gugu/core/agent'
 import { z } from 'zod'
 import { parsePythonInteger } from '../../http/request.js'
 
@@ -22,13 +23,8 @@ const chatBody = z.object({
 export type AgentChatInput = z.infer<typeof chatBody>
 export type AgentChatEvent = { type: string; [key: string]: unknown }
 
-/** 实现负责身份隔离、后台执行以及断开订阅后继续运行。 */
-export interface AgentChatService {
-  start(ownerId: string, input: AgentChatInput, origin: string | undefined, signal?: AbortSignal): Promise<AsyncIterable<AgentChatEvent>>
-  resume(ownerId: string, sessionId: number, signal?: AbortSignal): Promise<AsyncIterable<AgentChatEvent> | null>
-  cancel(ownerId: string, sessionId: number): Promise<Record<string, unknown> | null>
-  retryReconstruction?(ownerId: string, sessionId: number): Promise<Record<string, unknown> | null>
-}
+/** Core 定义生命周期契约；HTTP route 仅提供认证后的输入适配。 */
+export type AgentChatService = CoreAgentChatService<AgentChatInput>
 
 export interface AgentChatRouteOptions {
   requireUser: preHandlerHookHandler

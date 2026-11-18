@@ -190,6 +190,7 @@ watch(() => props.showNewFolder, value => {
 /* 共享工具栏只负责内部布局。外框高度属于宿主：文件库保持 v0.20.4 的 52px，
    项目编辑卡在自己的 toolbar host 中声明同样的高度。control paint/尺寸继续由
    file-toolbar-theme-refinements.css 唯一负责。 */
+.file-browser-toolbar.glass-card { --gb-tint: var(--glass-card-background); }
 .file-browser-toolbar {
   display: flex;
   align-items: center;

@@ -1,6 +1,7 @@
 import type { ProviderConfig } from '@gugu/core/providers'
 
 export interface ModelPreset extends ProviderConfig { readonly id: string; readonly in_pool?: boolean }
+export class ModelPresetUnavailable extends Error {}
 export interface ModelSettingsSnapshot {
   readonly ai: ProviderConfig
   readonly ai_presets?: { readonly strategy?: string; readonly pool_mode?: string; readonly items?: readonly ModelPreset[] }
@@ -24,9 +25,9 @@ export function createModelStrategy(read: (ownerId: string, signal: AbortSignal)
     let model: ProviderConfig = settings.ai, reserved: string | null = null, modelRef = 'active'
     if (ref !== undefined) {
       if (ref !== 'active') {
-        if (!ref.startsWith('preset:')) throw new Error('模型预设不存在')
+        if (!ref.startsWith('preset:')) throw new ModelPresetUnavailable('模型预设不存在')
         const preset = settings.ai_presets?.items?.find(item => item.id === ref.slice(7))
-        if (!preset) throw new Error('模型预设不存在')
+        if (!preset) throw new ModelPresetUnavailable('模型预设不存在')
         model = preset; modelRef = ref
         if (settings.ai_presets?.strategy === 'pool' && mode === 'least_loaded') { reserved = preset.id; inflight.set(preset.id, (inflight.get(preset.id) ?? 0) + 1) }
       }

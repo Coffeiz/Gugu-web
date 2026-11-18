@@ -1,4 +1,6 @@
-import { createAgentKnowledgeOverview, createScopedRagSearch, createSqlRagPersistentIndexReader, parseAgentKnowledgeRecord, type AgentKnowledgeReadStore, type ContextDataPorts, type Json, type RagSearchScope, type RunIdentity } from '@gugu/core/agent'
+import { createAgentKnowledgeOverview, type AgentKnowledgeReadStore } from '@gugu/core/agent/knowledge/overview'
+import { createScopedRagSearch, createSqlRagPersistentIndexReader, parseAgentKnowledgeRecord, type RagSearchScope } from '@gugu/core/agent/rag'
+import { type ContextDataPorts, type Json, type RunIdentity } from '@gugu/core/agent'
 import type { SqlDataRuntime } from '@gugu/core/data'
 import type { KnowledgeReadPort, KnowledgeSearchHit } from '@gugu/core/tools'
 import { dataContext } from '@gugu/core/contracts'
@@ -44,7 +46,7 @@ function localIso(value: string, timezone: string): string {
 /** 生产 Host 适配：正文经 owner FS 直读；关键词只查正式索引和可信 scope。 */
 export function createAgentKnowledgeReadPort(core: Pick<SqlDataRuntime, 'db' | 'backend'>,
   store: AgentKnowledgeReadStore, options: {
-    timezone(identity: RunIdentity): Promise<string>
+    timezone(identity: RunIdentity, signal?: AbortSignal): Promise<string>
     resolveScope(identity: RunIdentity, requested: string, signal: AbortSignal): Promise<RagSearchScope | null>
     authorize(identity: RunIdentity, scope: RagSearchScope, signal: AbortSignal): Promise<boolean>
   }): KnowledgeReadPort {
@@ -65,7 +67,7 @@ export function createAgentKnowledgeReadPort(core: Pick<SqlDataRuntime, 'db' | '
       const record = parseAgentKnowledgeRecord(await store.read(key))
       signal.throwIfAborted()
       if (record.id !== id || record.owner.toLowerCase() !== owner.toLowerCase() || !record.active) return null
-      const timezone = await options.timezone(identity)
+      const timezone = await options.timezone(identity, signal)
       signal.throwIfAborted()
       const metadata = record.metadata
       return {
@@ -117,7 +119,7 @@ export function createAgentKnowledgeReadPort(core: Pick<SqlDataRuntime, 'db' | '
 /** Web Run 有 owner 身份、没有可信 IM 群上下文时，只启用 Python 默认 owner scope。 */
 export function createWebOwnerAgentKnowledgeReadPort(core: Pick<SqlDataRuntime, 'db' | 'backend'>,
   store: AgentKnowledgeReadStore, options: {
-    timezone(identity: RunIdentity): Promise<string>
+    timezone(identity: RunIdentity, signal?: AbortSignal): Promise<string>
   }): KnowledgeReadPort {
   return createAgentKnowledgeReadPort(core, store, {
     timezone: options.timezone,

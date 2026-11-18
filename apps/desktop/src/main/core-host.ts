@@ -252,7 +252,9 @@ export class CoreHost {
       return Promise.reject(new DesktopError('invalid_request', '当前 Core 未提供撤销能力'))
     if (!(DESKTOP_METHODS as readonly string[]).includes(method) && !undoMethod && !calendarMethod && !notesMethod && !canvasesMethod)
       return Promise.reject(new DesktopError('invalid_request', '此桌面能力不可用'))
-    if ((undoWrite && !operationSchema.safeParse(callerOperationId).success) || (!undoWrite && callerOperationId !== undefined))
+    const acceptsOperationId = undoWrite || method === 'projects.board.create'
+    if ((undoWrite || callerOperationId !== undefined) &&
+        (!acceptsOperationId || !operationSchema.safeParse(callerOperationId).success))
       return Promise.reject(new DesktopError('invalid_request', '操作标识无效'))
     if (
       !params ||
@@ -278,7 +280,7 @@ export class CoreHost {
       .then(async () => {
         if (!this.healthy) throw new DesktopError('closed', 'Core 已停止，请重新启动应用')
         const id = ++this.sequence,
-          operationId = undoWrite ? callerOperationId : DESKTOP_MUTATIONS.includes(method) ? randomUUID() : undefined
+          operationId = callerOperationId ?? (DESKTOP_MUTATIONS.includes(method) || undoWrite ? randomUUID() : undefined)
         const request =
           JSON.stringify({
             v: 2,
@@ -395,6 +397,14 @@ export function desktopHandlers(
       host.request('projects.create', { name }),
     [DESKTOP_CHANNELS.renameProject]: (id: unknown, version: unknown, name: unknown) =>
       host.request('projects.rename', { id, version, name }),
+    [DESKTOP_CHANNELS.projectBoard]: (collection, offset) => host.request('projects.board.list', { collection, offset }),
+    [DESKTOP_CHANNELS.projectDetails]: id => host.request('projects.board.get', { id }),
+    [DESKTOP_CHANNELS.createBoardProject]: (fields, operationId) =>
+      host.request('projects.board.create', { fields }, operationId as string | undefined),
+    [DESKTOP_CHANNELS.updateBoardProject]: (id, version, fields) =>
+      host.request('projects.board.update', { id, version, fields }),
+    [DESKTOP_CHANNELS.deleteBoardProject]: id => host.request('projects.board.delete', { id }),
+    [DESKTOP_CHANNELS.restoreBoardProject]: id => host.request('projects.board.restore', { id }),
     [DESKTOP_CHANNELS.clients]: () => host.request('clients.list'),
     [DESKTOP_CHANNELS.createClient]: (name: unknown) =>
       host.request('clients.create', { name }),

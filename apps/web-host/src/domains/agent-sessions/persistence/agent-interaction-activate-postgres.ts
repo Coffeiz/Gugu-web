@@ -5,21 +5,9 @@ import { normalizeSecretFields } from '@gugu/core/agent'
 import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
 import { lockAgentRunSession } from './agent-run-startup-postgres.js'
 import { bindInteractionPrompt } from './agent-interaction-resume-postgres.js'
+import type { AgentPromptDescriptionPorts, AgentPromptSpec } from '@gugu/core/agent'
 
-export interface AgentPromptSpec {
-  kind: 'choice' | 'question' | 'form' | 'confirm'
-  title: string
-  body: string
-  options: Array<{ id: string; label: string; actionType: string }>
-  context: Record<string, unknown>
-  secretFields?: Array<{ name: string; label: string; type: 'secret' }>
-  allowTextInput?: boolean
-  expiresMinutes?: number
-}
-export interface AgentPromptActivationPorts {
-  /** 仅从可信工具结果和授权服务构造，不能从模型自行声明授权或凭据目标。 */
-  describe(client: PoolClient, identity: RunIdentity, request: PendingInteraction): Promise<AgentPromptSpec>
-}
+export type AgentPromptActivationPorts = AgentPromptDescriptionPorts<PoolClient>
 function validate(spec: AgentPromptSpec, request: PendingInteraction): Array<{ name: string; label: string; type: 'secret' }> {
   if (!['choice', 'question', 'form', 'confirm'].includes(spec.kind) || typeof spec.title !== 'string' || typeof spec.body !== 'string' || !Array.isArray(spec.options) || spec.options.length > 8) throw new Error('交互内容无效')
   if (spec.options.some(option => !option.id || option.id.length > 64 || !option.label || option.label.length > 120 || !option.actionType)) throw new Error('交互选项无效')
@@ -70,6 +58,14 @@ export function createPostgresInteractionActivator(pool: Pick<Pool, 'connect'>, 
           VALUES ($1,$2,$3,$4,$5,'pending',$6,clock_timestamp())`, [promptId, tokenHash, option.actionType, option.id, JSON.stringify(context), expiry])
       }
       await bindInteractionPrompt(client, identity, promptId, request.id, request.toolCall.id)
+      const target = spec.context.secret_target as Record<string, unknown> | undefined
+      if (secret && typeof target?.configuration_version === 'string') {
+        // 版本已写入 owner 限定的表单。重复激活走既有绑定，配置意图无需再保留。
+        const released = await client.query(`DELETE FROM agent_interaction_intents
+          WHERE user_id=$1 AND session_id=$2 AND run_id=$3 AND interaction_id=$4 AND tool_call_id=$5`,
+        [identity.ownerId, identity.sessionId, identity.runId, request.id, request.toolCall.id])
+        if (released.rowCount !== 1) throw new Error('MCP 凭据交互意图已失效')
+      }
       return request
     })
   } }

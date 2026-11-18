@@ -1,8 +1,9 @@
 <template>
-  <PopupMenu ref="popup" :show="open" :style="style" popup-class="overflow-popup">
+  <PopupMenu ref="popup" :show="open" :style="style" :anchor="anchor" placement="auto" popup-class="overflow-popup">
         <div class="overflow-popup-title">{{ dateLabel }}</div>
         <div class="overflow-list">
           <div v-for="item in items" :key="item.id" class="overflow-item cal-chip"
+               :data-calendar-edit-event="item.calendarType === 'event' ? item.id : undefined"
                :class="{ 'overflow-clickable': !!item.calendarType, 'cal-done': item.calendarType === 'project' && item.status === 'done' }"
                :style="{ background: item.calendarType === 'project' ? capBg(item.accent, item.progress) : item.accent + '28', borderColor: item.accent + '70', color: darkenHex(item.accent), cursor: item.calendarType === 'project' && item.status === 'done' ? 'pointer' : (item.calendarType ? 'grab' : 'default') }"
                @click.stop="item.calendarType === 'project' ? $emit('open-project', item) : (item.calendarType === 'event' && $emit('edit-event', { item, event: $event }))"
@@ -27,6 +28,7 @@ defineProps<{
   items: CalendarRenderItem[]
   dateLabel: string
   style: Record<string, string | number | undefined>
+  anchor?: HTMLElement | null
 }>()
 
 defineEmits<{

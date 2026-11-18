@@ -77,8 +77,8 @@
   --action-secondary-fill-hover: rgba(255,255,255,.82);
   --action-secondary-bg: var(--action-secondary-fill);
   --action-secondary-bg-hover: var(--action-secondary-fill-hover);
-  --action-secondary-border: rgba(255,255,255,.78);
-  --action-secondary-border-hover: rgba(255,255,255,.88);
+  --action-secondary-border: var(--input-border);
+  --action-secondary-border-hover: var(--input-border-hover);
   --action-secondary-fg: var(--content-secondary);
   --action-secondary-fg-hover: var(--content-primary);
   --selection-bg: var(--theme-selection);

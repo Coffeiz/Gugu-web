@@ -11,6 +11,7 @@ import { cancellable,checkCancellationForRun,requestRunCancellation,stoppedResul
 import { closeToolsForRun,finishForRun } from './run/finalization.js'
 import { assertRunCheckpoint,assertRunIdentity,assertRunTransition,decideReply,decideReplyGate,emptyRunUsage,goalCompleted,initialReplyState,readRunCheckpoint,runIdentityKey,stripGoalMarker,terminalRunStates,toolReplyProgress } from './run/lifecycle.js'
 import { parallelBatchForRun,providerStreamLifetime,publishRunEvent,replayRunEvents } from './run/streaming.js'
+import { rejectAdapterCall } from './tools/call-adapter.js'
 
 
 
@@ -69,8 +70,19 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
         }
       }
       else if (type === 'tool_call' || type === 'tool_done' || type === 'interaction_required') {
-        displayTimeline = updateDisplayItem(displayTimeline, { kind: 'tool', runId: identity.runId, roundId, toolCallId: String(payload.toolCallId ?? ''), ...(payload.name ? { toolName: String(payload.name) } : {}), toolStatus: type === 'interaction_required' ? 'waiting' : String(payload.status ?? 'running'), ...(payload.result === undefined ? {} : { toolResult: payload.result }) }, { anchorMessageId: state.anchorMessageId, now })
-        changed = displayTimeline.find((item) => item.kind === 'tool' && item.runId === identity.runId && item.roundId === roundId && item.toolCallId === payload.toolCallId)
+        const toolCallId = String(payload.toolCallId ?? '')
+        const toolName = typeof payload.name === 'string' ? payload.name : undefined
+        const matches = (item: DisplayItem) => item.kind === 'tool' && item.runId === identity.runId
+          && item.roundId === roundId && item.toolCallId === toolCallId
+        const toolLabelOverride = toolName && !displayTimeline.some(matches) ? ports.toolLabelOverride?.(toolName) : undefined
+        displayTimeline = updateDisplayItem(displayTimeline, {
+          kind: 'tool', runId: identity.runId, roundId, toolCallId,
+          ...(toolName ? { toolName } : {}),
+          ...(toolLabelOverride ? { toolLabelOverride } : {}),
+          toolStatus: type === 'interaction_required' ? 'waiting' : String(payload.status ?? 'running'),
+          ...(payload.result === undefined ? {} : { toolResult: payload.result }),
+        }, { anchorMessageId: state.anchorMessageId, now })
+        changed = displayTimeline.find(matches)
       }
       else if (type === 'final')
         displayTimeline = sealDisplayTimeline(displayTimeline, now)
@@ -649,13 +661,21 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
                 yield await finish('failed', 'provider_incomplete', item.calls.length ? '模型响应不完整，未执行其中的工具调用。请缩短请求或调高输出 Token 预算后重试。' : '模型输出未完整结束；当前内容可能被截断，请继续追问或调高输出 Token 预算。')
                 return state
               }
-              const calls = Object.freeze(item.calls.map(snapshotToolCall))
+              const wireCalls = Object.freeze(item.calls.map(snapshotToolCall))
               const ids = new Set<string>()
-              for (const call of calls) {
+              for (const call of wireCalls) {
                 if (!call.id || !call.name || ids.has(call.id))
                   throw new AgentRunError('invalid_state', '工具调用身份无效')
                 ids.add(call.id)
               }
+              const adapterResults: { callId: string; result: ToolResult }[] = []
+              const calls = Object.freeze(await Promise.all(wireCalls.map(async call => {
+                if (call.name !== 'call_tool' || !ports.tools.resolveCall) return call
+                const target = await ports.tools.resolveCall(call, identity, controller.signal)
+                if ('call' in target) return snapshotToolCall(target.call)
+                adapterResults.push({ callId: call.id, result: rejectAdapterCall(target.error) })
+                return call
+              })))
               const tail = sanitizer.flush()
               sanitizerFlushed = true
               if (tail) {
@@ -675,8 +695,9 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
                   throw new AgentRunError('invalid_state', '群回复门调用分类无效')
                 gate = decideReplyGate(state.replyChoice, text, gateCalls)
               }
-              const context = await ports.context.afterRound(state.context, { text, calls, contextInput: state.usage.contextInput, ...(item.continuation === undefined ? {} : { continuation: item.continuation }), ...(item.cacheAnchor === undefined ? {} : { cacheAnchor: portableSnapshot(item.cacheAnchor) }), ...(item.consumedInitialMedia === undefined ? {} : { consumedInitialMedia: portableSnapshot(item.consumedInitialMedia) as unknown as typeof item.consumedInitialMedia }) }, state.round)
-              let plan: ToolPlan = calls.length && ports.tools.plan && gate.choice !== 'silent' ? await ports.tools.plan(calls, identity) : { mode: 'serial' }
+              const context = await ports.context.afterRound(state.context, { text, calls: wireCalls, contextInput: state.usage.contextInput, ...(item.continuation === undefined ? {} : { continuation: item.continuation }), ...(item.cacheAnchor === undefined ? {} : { cacheAnchor: portableSnapshot(item.cacheAnchor) }), ...(item.consumedInitialMedia === undefined ? {} : { consumedInitialMedia: portableSnapshot(item.consumedInitialMedia) as unknown as typeof item.consumedInitialMedia }) }, state.round)
+              const plannable = calls.filter(call => !adapterResults.some(item => item.callId === call.id))
+              let plan: ToolPlan = plannable.length && ports.tools.plan && gate.choice !== 'silent' ? await ports.tools.plan(plannable, identity) : { mode: 'serial' }
               const gateResults = calls.flatMap<{ callId: string; result: ToolResult }>((call) => {
                 const blocked = gate.blocked.find((item) => item.id === call.id)
                 if (blocked)
@@ -689,6 +710,8 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
               })
               if (gateResults.length)
                 plan = { ...plan, isolatedResults: [...(plan.isolatedResults ?? []).filter((item) => !gateResults.some((gate) => gate.callId === item.callId)), ...gateResults], ...(plan.mode === 'parallel' ? { serialCallIds: (plan.serialCallIds ?? []).filter((id) => !gateResults.some((gate) => gate.callId === id)) } : {}) }
+              if (adapterResults.length)
+                plan = { ...plan, isolatedResults: [...(plan.isolatedResults ?? []), ...adapterResults.filter(item => !gateResults.some(gate => gate.callId === item.callId))] }
               const partition = partitionToolPlan(calls, plan)
               for (let index = 0;index < partition.toolResults.length;index++) {
                 const item = partition.toolResults[index]!

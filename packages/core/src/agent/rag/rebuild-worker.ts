@@ -1,4 +1,4 @@
-import { sql, type Kysely } from 'kysely'
+import { sql, type Kysely, type Transaction } from 'kysely'
 import { dataContext } from '../../contracts/index.js'
 import { createSqlRagPersistentIndexWriter } from './persistent-writer.js'
 import type { RagDocument } from './contracts.js'
@@ -21,10 +21,11 @@ export function createSqlRagRebuildWorker(db:Kysely<any>,backend:'postgres'|'sql
   signal?.throwIfAborted()
   if(!allowed.length)return 'idle'
   const now=clock(),started=stamp(now),lease=stamp(new Date(now.getTime()+600_000))
+  const dueAt=backend==='postgres'?sql`CURRENT_TIMESTAMP`:sql`${started}`
   const job=await db.transaction().execute(async tx=>{
    const lock=backend==='postgres'?sql`FOR UPDATE SKIP LOCKED`:sql``
    const found=await sql<Job>`SELECT id,user_id,source_type,source_id,pending_source_ids,generation,attempts,lease_until FROM rag_index_jobs
-    WHERE source_type IN (${sql.join(allowed)}) AND ((status IN ('queued','retrying') AND next_attempt_at<=${started}) OR (status='running' AND lease_until<=${started}))
+    WHERE source_type IN (${sql.join(allowed)}) AND ((status IN ('queued','retrying') AND next_attempt_at<=${dueAt}) OR (status='running' AND lease_until<=${started}))
     ORDER BY next_attempt_at,id LIMIT 1 ${lock}`.execute(tx)
    const row=found.rows[0]
    if(!row)return null
@@ -70,7 +71,7 @@ export function createSqlRagRebuildWorker(db:Kysely<any>,backend:'postgres'|'sql
 /**
  * 队列为空的老 owner 也需要首次建立当前支持来源的持久索引。只为既无
  * 索引行也无队列行的来源入队；空 source_id 在 Worker 边界表示全来源重建，
- * 已有的增量任务与正在更新的索引均不会被启动扫描覆盖。
+ * 业务写入或其他实例并发入队时，保留先落库的任务。
  */
 export async function enqueueMissingAgentRagBaselines(db:Kysely<any>,backend:'postgres'|'sqlite',sourceTypes:readonly string[]):Promise<number> {
  let queued=0
@@ -88,6 +89,7 @@ export async function enqueueMissingAgentRagBaselines(db:Kysely<any>,backend:'po
    FROM (${owners}) u
    WHERE NOT EXISTS (SELECT 1 FROM rag_index_jobs j WHERE j.user_id=u.id AND j.source_type=${sourceType})
     AND NOT EXISTS (SELECT 1 FROM knowledge_index_entries i WHERE i.owner_user_id=u.id AND i.source_type=${sourceType})
+   ON CONFLICT (user_id,source_type) DO NOTHING
   `.execute(db)
   queued+=Number(result.numAffectedRows??0)
  }
@@ -97,23 +99,49 @@ export async function enqueueMissingAgentRagBaselines(db:Kysely<any>,backend:'po
 /** 来源文件在 Host 成功变更后，排入该 owner 的完整来源重建。 */
 const REBUILDABLE_AGENT_RAG_SOURCES=new Set(['project','calendar','note','scheduled_task','conversation','canvas','knowledge','memory'])
 export async function enqueueAgentRagRebuild(db:Kysely<any>,backend:'postgres'|'sqlite',rawOwner:string,sourceType:string):Promise<void> {
+ await db.transaction().execute(tx=>enqueueAgentRagRebuildInTransaction(tx,backend,rawOwner,sourceType))
+}
+
+export async function enqueueAgentRagRebuildInTransaction(db:Transaction<any>,backend:'postgres'|'sqlite',rawOwner:string,sourceType:string):Promise<void> {
  const normalized=dataContext(rawOwner).ownerId
  const owner=backend==='sqlite'?normalized.replaceAll('-',''):normalized
  if(!REBUILDABLE_AGENT_RAG_SOURCES.has(sourceType))throw new Error('RAG 索引来源无效')
+ await enqueueAgentRagRebuildTx(db,owner,sourceType)
+}
+
+async function enqueueAgentRagRebuildTx(db:Kysely<any>,owner:string,sourceType:string):Promise<void> {
  const pending=JSON.stringify([])
- await db.transaction().execute(async tx=>{
-  await sql`INSERT INTO rag_index_jobs (
+ await sql`INSERT INTO rag_index_jobs (
    user_id,source_type,source_id,pending_source_ids,version,operation,status,generation,completed_generation,attempts,
    next_attempt_at,lease_until,last_error_code,last_started_at,last_succeeded_at,created_at,updated_at
   ) VALUES (${owner},${sourceType},'',${pending},'','refresh','queued',1,0,0,CURRENT_TIMESTAMP,NULL,NULL,NULL,NULL,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
   ON CONFLICT (user_id,source_type) DO UPDATE SET
    source_id='',pending_source_ids=${pending},version='',operation='refresh',status='queued',
    generation=rag_index_jobs.generation+1,next_attempt_at=CURRENT_TIMESTAMP,lease_until=NULL,
-   last_error_code=NULL,updated_at=CURRENT_TIMESTAMP`.execute(tx)
-  // Memory removal is security-sensitive: hide the previous projection immediately,
-  // rather than keeping it searchable until the asynchronous rebuild is claimed.
-  if(sourceType==='memory')await sql`UPDATE knowledge_index_entries SET deleted_at=CURRENT_TIMESTAMP,indexed_at=CURRENT_TIMESTAMP
-   WHERE owner_user_id=${owner} AND source_type='memory' AND deleted_at IS NULL`.execute(tx)
+   last_error_code=NULL,updated_at=CURRENT_TIMESTAMP`.execute(db)
+ // Memory removal is security-sensitive: hide the previous projection immediately,
+ // rather than keeping it searchable until the asynchronous rebuild is claimed.
+ if(sourceType==='memory')await sql`UPDATE knowledge_index_entries SET deleted_at=CURRENT_TIMESTAMP,indexed_at=CURRENT_TIMESTAMP
+   WHERE owner_user_id=${owner} AND source_type='memory' AND deleted_at IS NULL`.execute(db)
+}
+
+/** 推进可信 memory scope revision 并排入完整来源重建；两者必须原子提交。 */
+export async function changeAgentMemoryScopeAndEnqueue(db:Kysely<any>,backend:'postgres'|'sqlite',rawOwner:string,scope:{
+ platform:string;botId:string;scopeType:'group'|'platform-user';scopeId:string
+}):Promise<void> {
+ const normalized=dataContext(rawOwner).ownerId
+ const owner=backend==='sqlite'?normalized.replaceAll('-',''):normalized
+ if(!scope.platform.trim()||!scope.botId.trim()||!scope.scopeId.trim())throw new TypeError('IM 记忆 scope 身份无效')
+ await db.transaction().execute(async tx=>{
+  const updated=await sql<{id:number}>`UPDATE memory_reflection_cursors
+   SET scope_version=scope_version+1,updated_at=CURRENT_TIMESTAMP
+   WHERE owner_user_id=${normalized} AND platform=${scope.platform} AND bot_id=${scope.botId}
+    AND scope_type=${scope.scopeType} AND scope_id=${scope.scopeId} AND scope_version<2147483647
+    AND NOT EXISTS (SELECT 1 FROM memory_scope_tombstones t WHERE t.owner_user_id=${normalized}
+     AND t.platform=${scope.platform} AND t.bot_id=${scope.botId} AND t.scope_type=${scope.scopeType} AND t.scope_id=${scope.scopeId})
+   RETURNING id`.execute(tx)
+  if(updated.rows.length!==1)throw new Error('IM 记忆 scope 已失效或不存在')
+  await enqueueAgentRagRebuildTx(tx,owner,'memory')
  })
 }
 
@@ -123,11 +151,14 @@ export async function enqueueAgentRagRebuild(db:Kysely<any>,backend:'postgres'|'
  * file removal, enqueueAgentRagRebuild creates the actual rebuild generation.
  */
 export async function invalidateAgentMemoryRag(db:Kysely<any>,backend:'postgres'|'sqlite',rawOwner:string):Promise<void> {
+ await db.transaction().execute(tx=>invalidateAgentMemoryRagInTransaction(tx,backend,rawOwner))
+}
+
+export async function invalidateAgentMemoryRagInTransaction(tx:Transaction<any>,backend:'postgres'|'sqlite',rawOwner:string,target?:'profile'|'pattern'):Promise<void> {
  const normalized=dataContext(rawOwner).ownerId
  const owner=backend==='sqlite'?normalized.replaceAll('-',''):normalized
  const empty=JSON.stringify([])
- await db.transaction().execute(async tx=>{
-  await sql`INSERT INTO rag_index_jobs (
+ await sql`INSERT INTO rag_index_jobs (
    user_id,source_type,source_id,pending_source_ids,version,operation,status,generation,completed_generation,attempts,
    next_attempt_at,lease_until,last_error_code,last_started_at,last_succeeded_at,created_at,updated_at
   ) VALUES (${owner},'memory','',${empty},'','refresh','ready',1,1,0,NULL,NULL,NULL,NULL,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
@@ -135,18 +166,21 @@ export async function invalidateAgentMemoryRag(db:Kysely<any>,backend:'postgres'
    source_id='',pending_source_ids=${empty},version='',operation='refresh',status='ready',
    generation=rag_index_jobs.generation+1,completed_generation=rag_index_jobs.generation+1,
    next_attempt_at=NULL,lease_until=NULL,last_error_code=NULL,updated_at=CURRENT_TIMESTAMP`.execute(tx)
+  const scope=target===undefined?sql``:sql`AND scope_type='owner' AND (source_id=${target} OR source_id LIKE ${'%:'+target})`
   await sql`UPDATE knowledge_index_entries SET deleted_at=CURRENT_TIMESTAMP,indexed_at=CURRENT_TIMESTAMP
-   WHERE owner_user_id=${owner} AND source_type='memory' AND deleted_at IS NULL`.execute(tx)
- })
+   WHERE owner_user_id=${owner} AND source_type='memory' AND deleted_at IS NULL ${scope}`.execute(tx)
 }
 
 /** 知识主文件变化前撤回旧投影并围栏正在运行的重建。 */
 export async function invalidateAgentKnowledgeRag(db:Kysely<any>,backend:'postgres'|'sqlite',rawOwner:string):Promise<void> {
+ await db.transaction().execute(tx=>invalidateAgentKnowledgeRagInTransaction(tx,backend,rawOwner))
+}
+
+export async function invalidateAgentKnowledgeRagInTransaction(tx:Transaction<any>,backend:'postgres'|'sqlite',rawOwner:string,sourceId?:string):Promise<void> {
  const normalized=dataContext(rawOwner).ownerId
  const owner=backend==='sqlite'?normalized.replaceAll('-',''):normalized
  const empty=JSON.stringify([])
- await db.transaction().execute(async tx=>{
-  await sql`INSERT INTO rag_index_jobs (
+ await sql`INSERT INTO rag_index_jobs (
    user_id,source_type,source_id,pending_source_ids,version,operation,status,generation,completed_generation,attempts,
    next_attempt_at,lease_until,last_error_code,last_started_at,last_succeeded_at,created_at,updated_at
   ) VALUES (${owner},'knowledge','',${empty},'','refresh','ready',1,1,0,NULL,NULL,NULL,NULL,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
@@ -154,9 +188,9 @@ export async function invalidateAgentKnowledgeRag(db:Kysely<any>,backend:'postgr
    source_id='',pending_source_ids=${empty},version='',operation='refresh',status='ready',
    generation=rag_index_jobs.generation+1,completed_generation=rag_index_jobs.generation+1,
    next_attempt_at=NULL,lease_until=NULL,last_error_code=NULL,updated_at=CURRENT_TIMESTAMP`.execute(tx)
-  await sql`UPDATE knowledge_index_entries SET deleted_at=CURRENT_TIMESTAMP,indexed_at=CURRENT_TIMESTAMP
-   WHERE owner_user_id=${owner} AND source_type='knowledge' AND deleted_at IS NULL`.execute(tx)
- })
+ const target=sourceId===undefined?sql``:sql`AND source_id=${sourceId}`
+ await sql`UPDATE knowledge_index_entries SET deleted_at=CURRENT_TIMESTAMP,indexed_at=CURRENT_TIMESTAMP
+   WHERE owner_user_id=${owner} AND source_type='knowledge' AND deleted_at IS NULL ${target}`.execute(tx)
 }
 
 export async function readAgentRagRebuildProgress(db:Kysely<any>,backend:'postgres'|'sqlite',rawOwner:string,sourceType:string):Promise<{generation:number;completedGeneration:number;status:string}|null>{

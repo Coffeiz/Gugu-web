@@ -1,4 +1,4 @@
-import type { AuthorizedMemoryScope } from '@gugu/core/agent'
+import type { AuthorizedMemoryScope } from '@gugu/core/agent/rag'
 import type { SqlDataRuntime } from '@gugu/core/data'
 import { normalizeOwnerId } from '../../../adapters/owner-context.js'
 

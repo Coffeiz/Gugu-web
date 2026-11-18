@@ -311,3 +311,13 @@ describe('六厂商联网搜索保留原生协议并限制外部输入输出', (
     expect(closed).toBe(true)
   })
 })
+
+it('原生 Ollama 把转发回执配对到 Provider 的外层工具名', () => {
+  const messages: CanonicalMessage[] = [
+    { role: 'assistant', content: [{ type: 'tool_call', id: 'adapter', name: 'call_tool', arguments: { tool_name: 'lookup', arguments: {} } }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_call_id: 'adapter', tool_name: 'lookup', content: '合成结果' }] },
+  ]
+  const projected = projectOllamaHistory(messages, { model: 'qwen3:8b' })
+  expect(projected).toHaveLength(2)
+  expect(projected[1]).toEqual({ role: 'tool', tool_name: 'call_tool', content: '合成结果' })
+})

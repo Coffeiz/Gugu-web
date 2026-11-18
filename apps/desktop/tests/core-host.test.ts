@@ -5,7 +5,7 @@ import { join, dirname, resolve } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { LocalRuntime } from '@gugu/core/local'
-import { CORE_SCHEMA_VERSION } from '@gugu/core/desktop'
+import { CORE_SCHEMA_VERSION, DESKTOP_CHANNELS } from '@gugu/core/desktop'
 import { pathToFileURL } from 'node:url'
 import {
   CoreHost,
@@ -14,6 +14,7 @@ import {
   desktopReply,
   desktopHandlers,
 } from '../src/main/core-host.js'
+import { DesktopLifecycle } from '../src/main/lifecycle.js'
 
 const folders: string[] = []
 function directory() {
@@ -89,30 +90,95 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
     try { expect(await desktopHandlers(host, async () => null)['gugu:projects:list']!()).toEqual(expect.arrayContaining([expect.objectContaining({ name: '新项目', version: 2 })])) }
     finally { await host.close() }
   })
+  it('项目看板经具名 IPC 持久化阶段、版本、归档和回收站恢复', async () => {
+    const database = join(directory(), 'core.db')
+    const runtime = await LocalRuntime.initialize(database)
+    await runtime.close()
+    const entry = resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js')
+    let host = await CoreHost.launch(process.execPath, entry, database)
+    let projectId = 0
+    try {
+      const ipc = desktopHandlers(host, async () => null)
+      const operationId = randomUUID()
+      const fields = {
+        name: '本地项目',
+        client: '小北',
+        status: 'active',
+        startDate: '2026-11-18',
+        currentStage: 's0',
+        stages: [{ key: 's0', label: '制作', todos: [{ id: 't1', text: '整理', done: false }] }],
+      }
+      const project = await ipc['gugu:projects:board:create']!(fields, operationId) as { id: number; version: number }
+      projectId = project.id
+      expect(await ipc['gugu:projects:board:create']!(fields, operationId)).toEqual(project)
+      expect(await ipc['gugu:projects:board:list']!('active', 0)).toMatchObject({
+        items: [{ ...fields, id: projectId, version: project.version }], nextOffset: null,
+      })
+      await expect(ipc['gugu:projects:board:update']!(projectId, project.version, {
+        status: 'done', progress: 100,
+      })).resolves.toMatchObject({ status: 'done', progress: 100, version: project.version + 1 })
+      await expect(ipc['gugu:projects:board:update']!(projectId, project.version, { name: '旧版本' }))
+        .rejects.toMatchObject({ code: 'conflict' })
+      await expect(ipc['gugu:projects:board:update']!(projectId, project.version + 1, { archived: true }))
+        .resolves.toMatchObject({ archived: true, version: project.version + 2 })
+      expect(await ipc['gugu:projects:board:list']!('active', 0)).toMatchObject({ items: [] })
+      expect(await ipc['gugu:projects:board:list']!('archived', 0)).toMatchObject({ items: [{ id: projectId }] })
+      const event = await ipc['gugu:calendar:create']!('关联活动', '2026-11-18') as { id: number; version: number }
+      await ipc['gugu:calendar:update']!(event.id, { version: event.version, projectId })
+      await ipc['gugu:projects:board:delete']!(projectId)
+      expect(await ipc['gugu:projects:board:list']!('archived', 0)).toMatchObject({ items: [] })
+      await expect(ipc['gugu:projects:board:get']!(projectId)).rejects.toMatchObject({ code: 'not_found' })
+      expect(await ipc['gugu:calendar:list']!()).toEqual([])
+    } finally { await host.close() }
+    host = await CoreHost.launch(process.execPath, entry, database)
+    try {
+      const ipc = desktopHandlers(host, async () => null)
+      expect(await ipc['gugu:projects:board:list']!('deleted', 0)).toMatchObject({
+        items: [{ id: projectId, deletedAt: expect.any(String) }],
+      })
+      const restored = await ipc['gugu:projects:board:restore']!(projectId) as { version: number }
+      expect(restored).toMatchObject({ id: projectId, archived: true, deletedAt: null, status: 'done' })
+      expect(await ipc['gugu:calendar:list']!()).toMatchObject([{ title: '关联活动', projectId }])
+      await ipc['gugu:projects:board:update']!(projectId, restored.version, { archived: false })
+      expect(await ipc['gugu:projects:board:list']!('active', 0)).toMatchObject({ items: [{ id: projectId, archived: false }] })
+      expect(await ipc['gugu:projects:board:list']!('deleted', 0)).toMatchObject({ items: [] })
+    } finally { await host.close() }
+  })
   it('日历经具名 IPC 编辑、软删除、Undo/Redo 并通过正式 SQLite 持久化', async () => {
     const root = directory(), database = join(root, 'core.db')
     const entry = resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js')
-    let host = await CoreHost.launch(process.execPath, entry, database)
+    const start = async () => {
+      const lifecycle = new DesktopLifecycle(() => CoreHost.launch(process.execPath, entry, database))
+      await lifecycle.start()
+      return lifecycle
+    }
+    let host = await start()
     let event: { id: number; title: string; date: string; version: number }
     try {
       const handlers = desktopHandlers(host, async () => null)
-      event = await handlers['gugu:calendar:create']!('桌面日历回归', '2026-11-16') as typeof event
-      expect(event).toMatchObject({ title: '桌面日历回归', date: '2026-11-16', version: 1 })
-      event = await handlers['gugu:calendar:update']!(event.id, { version: event.version, title: '更新的桌面日程', date: '2026-11-17' }) as typeof event
-      expect(event).toMatchObject({ title: '更新的桌面日程', date: '2026-11-17', version: 2 })
+      const details = { time: '09:30', endTime: '10:45', description: '合成说明' }
+      event = await handlers['gugu:calendar:create']!('桌面日历回归', '2026-11-16', details) as typeof event
+      expect(event).toMatchObject({ title: '桌面日历回归', date: '2026-11-16', version: 1, ...details })
+      event = await handlers['gugu:calendar:update']!(event.id, {
+        version: event.version, title: '更新的桌面日程', date: '2026-11-17', time: null, endTime: null,
+      }) as typeof event
+      expect(event).toMatchObject({ title: '更新的桌面日程', date: '2026-11-17', version: 2, time: null, endTime: null, description: details.description })
       await expect(handlers['gugu:calendar:update']!(event.id, { version: 1, title: '旧版本' })).rejects.toMatchObject({ code: 'conflict' })
       await handlers['gugu:calendar:delete']!(event.id, event.version)
       expect(await handlers['gugu:calendar:list']!()).toEqual([])
       const preview = await handlers['gugu:undo:preview']!('desktop-calendar') as { undo: { operation_id: string; can_undo: boolean } }
       expect(preview.undo).toMatchObject({ can_undo: true })
     } finally { await host.close() }
-    host = await CoreHost.launch(process.execPath, entry, database)
+    host = await start()
     try {
       const handlers = desktopHandlers(host, async () => null)
-      await handlers['gugu:undo:apply']!('desktop-calendar', (await handlers['gugu:undo:preview']!('desktop-calendar') as { undo: { operation_id: string } }).undo.operation_id, randomUUID())
+      const undo = await handlers['gugu:undo:preview']!('desktop-calendar') as { undo: { operation_id: string } }
+      const requestId = randomUUID()
+      await handlers['gugu:undo:apply']!('desktop-calendar', undo.undo.operation_id, requestId)
+      expect(await handlers['gugu:operations:get']!(requestId)).toMatchObject({ method: 'undo.apply' })
       const events = await handlers['gugu:calendar:list']!() as typeof event[]
       event = events[0]!
-      expect(event).toMatchObject({ id: event.id, title: '更新的桌面日程', date: '2026-11-17', version: 4 })
+      expect(event).toMatchObject({ title: '更新的桌面日程', date: '2026-11-17', version: 4, time: null, endTime: null, description: '合成说明' })
       const preview = await handlers['gugu:undo:preview']!('desktop-calendar') as { redo: { operation_id: string; can_redo: boolean } }
       expect(preview.redo).toMatchObject({ can_redo: true })
       await handlers['gugu:undo:redo']!('desktop-calendar', preview.redo.operation_id, randomUUID())
@@ -612,7 +678,7 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
           { request: async () => null } as unknown as CoreHost,
           async () => null,
         ),
-      ),
-      ).toHaveLength(32)
+      ).sort(),
+    ).toEqual(Object.values(DESKTOP_CHANNELS).sort())
   })
 })

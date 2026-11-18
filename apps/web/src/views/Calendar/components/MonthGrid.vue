@@ -39,6 +39,7 @@
             <div
               v-for="ev in lay.visibleChips" :key="ev.id"
               class="event-chip cal-chip"
+              :data-calendar-edit-event="ev.calendarType === 'event' ? ev.id : undefined"
               :class="{ 'chip-proj': ev.calendarType === 'project', 'chip-ev-click': ev.calendarType === 'event', 'cal-done': ev.calendarType === 'project' && ev.status === 'done' }"
               :style="{ background: ev.accent + '28', color: darkenHex(ev.accent), borderColor: ev.accent + '70', cursor: ev.calendarType === 'project' && ev.status === 'done' ? 'pointer' : (ev.calendarType ? 'grab' : 'default') }"
               @click.left.stop="ev.calendarType === 'project' ? emit('open-project', ev) : (ev.calendarType === 'event' && emit('edit-event', ev, $event))"

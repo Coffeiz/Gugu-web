@@ -26,7 +26,10 @@ export async function claimOwnedChatAttachments(client: PoolClient, owner: strin
   if (!owner || !Number.isSafeInteger(messageId) || messageId < 1) throw new TypeError('附件认领身份无效')
   for (const id of new Set(ids.filter(Boolean))) {
     const result = await client.query(`UPDATE chat_attachments SET state='attached',message_id=$3,attached_at=clock_timestamp()
-      WHERE user_id=$1 AND attach_id=$2 AND state='draft'`, [owner, id, messageId])
+      FROM conversation_messages AS message
+      JOIN conversation_sessions AS session ON session.id=message.session_id
+      WHERE chat_attachments.user_id=$1 AND chat_attachments.attach_id=$2 AND chat_attachments.state='draft'
+        AND message.id=$3 AND session.user_id=$1`, [owner, id, messageId])
     if (result.rowCount !== 1) throw new AgentAttachmentClaimError()
   }
 }

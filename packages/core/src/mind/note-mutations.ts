@@ -17,6 +17,7 @@ export interface MindNoteUpdateInput {
   title?: string | null
   color?: string | null
   capturedAt?: Date
+  preciseCapturedAt?: string
 }
 
 export interface MindNoteMutationMetadata {

@@ -66,6 +66,7 @@ import FlipChevron from '@/components/common/controls/FlipChevron.vue'
 import BaseModal from '@/components/common/overlays/BaseModal.vue'
 import { runtime } from '@/interaction/runtime'
 import { useProjectStore } from '@/stores/projects'
+import { showAppError } from '@/composables/core/useAppToast'
 import type { Project } from '@/types/project'
 import { naturalCompare } from '@/utils/textSort'
 import { useI18n } from 'vue-i18n'
@@ -178,6 +179,8 @@ async function restore(id: number) {
   try {
     if (isDeleted.value) await projectStore.restoreDeletedProject(id)
     else await projectStore.unarchiveProject(id)
+  } catch (error) {
+    showAppError(error instanceof Error ? error.message : String(error))
   } finally {
     restoringId.value = null
   }

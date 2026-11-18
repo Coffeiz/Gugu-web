@@ -40,7 +40,7 @@ const { t } = useI18n()
   max-width: min(440px, calc(100vw - 32px));
   padding: 9px 10px 9px 13px;
   border: 1px solid rgba(190, 95, 75, 0.3);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: rgba(255, 249, 247, 0.96);
   box-shadow: 0 8px 24px rgba(80, 50, 40, 0.14);
   color: #9a4739;

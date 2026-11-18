@@ -70,7 +70,7 @@ async function findOwnedSession(
   return result.rows[0] ?? null
 }
 
-async function activeGrant(
+export async function readActiveSessionFilesystemGrant(
   queryable: Pick<Pool, 'query'> | PoolClient,
   ownerId: string,
   sessionId: number,
@@ -112,7 +112,7 @@ async function appendSecurityEvent(
        client_fingerprint, ip_fingerprint, user_agent_fingerprint, action, reason_code,
        metadata_json, occurred_at, expires_at
      ) VALUES ($1, 'filesystem.authorization', 'filesystem:session', $2, NULL,
-               NULL, NULL, NULL, 'logged', $3, $4::jsonb, $5::timestamptz,
+               NULL, NULL, NULL, 'logged', $3, $4::json, $5::timestamptz,
                $5::timestamptz + interval '90 days')`,
     [ownerId, fingerprint(String(sessionId), runtime.secretKey), outcome, JSON.stringify(metadata), occurredAt],
   )
@@ -139,7 +139,7 @@ export function createAgentSessionFilesystemAuthorization(
       if (!session) throw notFound()
       ensureEnabled(runtime)
       const now = runtime.now?.() ?? new Date()
-      if (await activeGrant(pool, ownerId, sessionId, now))
+      if (await readActiveSessionFilesystemGrant(pool, ownerId, sessionId, now))
         return { status: 'authorized', session_id: sessionId }
 
       const summary = sessionSummary(session)
@@ -182,7 +182,7 @@ export function createAgentSessionFilesystemAuthorization(
         const owned = await findOwnedSession(client, ownerId, sessionId, true)
         if (!owned) throw notFound()
         const current = runtime.now?.() ?? new Date()
-        const existing = await activeGrant(client, ownerId, sessionId, current, true)
+        const existing = await readActiveSessionFilesystemGrant(client, ownerId, sessionId, current, true)
         if (existing)
           return { status: 'authorized', session_id: sessionId, grant_id: existing.id }
         const inserted = await client.query<GrantRow>(
@@ -210,7 +210,7 @@ export function createAgentSessionFilesystemAuthorization(
         const owned = await findOwnedSession(client, ownerId, sessionId, true)
         if (!owned) throw notFound()
         const now = runtime.now?.() ?? new Date()
-        const grant = await activeGrant(client, ownerId, sessionId, now, true)
+        const grant = await readActiveSessionFilesystemGrant(client, ownerId, sessionId, now, true)
         if (!grant) return false
         const terminals = await client.query<{ id: string } & QueryResultRow>(
           `SELECT id::text AS id FROM terminal_sessions

@@ -495,7 +495,7 @@ function openProject(e: any) {
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   border: 1px solid rgba(255,255,255,0.85);
-  border-radius: 16px;
+  border-radius: var(--card-radius);
   box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight);
   padding: 14px;
 }
@@ -535,7 +535,7 @@ function openProject(e: any) {
 
 .dash-edit-popup {
   background: rgba(255,255,255,0.66); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
-  border: 1px solid rgba(255,255,255,0.88); border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.88); border-radius: var(--card-radius);
   box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight);
   padding: 16px; display: flex; flex-direction: column; gap: 9px;
 }

@@ -84,6 +84,13 @@ export function createToolRegistry(options: ToolRegistryOptions): {
   }
   for (const tool of options.tools ?? []) register(tool)
   for (const group of options.groups ?? []) registerGroup(group)
+  const preauthorized = options.preauthorizedDestructiveTool
+  if (preauthorized) {
+    if (!preauthorized.destructive || preauthorized.effect !== 'write') throw new Error('预授权工具定义无效')
+    register(preauthorized)
+  }
+  const preauthorizedEntry = preauthorized && entries.get(preauthorized.definition.name)
+  const blocked = (tool: ToolDefinition) => tool.destructive && tool !== preauthorizedEntry
   configure(options.configuration ?? {})
   async function authorized(identity: RunIdentity, name: string): Promise<boolean> {
     try { return await options.authorize(identity, name) === true } catch { return false }
@@ -108,7 +115,7 @@ export function createToolRegistry(options: ToolRegistryOptions): {
       catch { invalidSnapshot = true; call = Object.freeze({ ...call, input: null }) }
       scope.signal.throwIfAborted()
       const tool = entries.get(call.name)
-      if (!tool || tool.destructive || !enabled(call.name)) return rejected('工具不存在或未开放')
+      if (!tool || blocked(tool) || !enabled(call.name)) return rejected('工具不存在或未开放')
       if (!await authorized(scope.identity, call.name)) return rejected('没有权限使用此工具')
       scope.signal.throwIfAborted()
       if (!enabled(call.name)) return rejected('工具不存在或未开放')
@@ -127,22 +134,23 @@ export function createToolRegistry(options: ToolRegistryOptions): {
       // Python在成功回执中补这项业务事实；数组名字本身仍交给项目领域服务处理。
       if (['create_project','set_stages'].includes(call.name) && record(normalized) && Array.isArray(normalized.stages)
         && normalized.stages.some(stage => typeof stage === 'string')) adaptations.push('stages:stage_names_to_objects')
+      const effect = tool.effectForInput?.(parsed.data) ?? tool.effect
       try {
         const result = await tool.execute(parsed.data, scope, call)
         // 写入完成后即使收到取消，也必须保留真实结果，不能伪装未执行。
-        if (tool.effect === 'read') scope.signal.throwIfAborted()
+        if (effect === 'read') scope.signal.throwIfAborted()
         return result.kind === 'completed'
           ? withInputAdaptations({ ...result, value: enrichToolError(call.name, result.value) }, adaptations, tool.definition, normalized) : result
       } catch {
         // 写入后提交状态可能未知，禁止通过普通错误诱发自动重试。
-        if (tool.effect === 'write') return { kind: 'unknown' }
+        if (effect === 'write') return { kind: 'unknown' }
         scope.signal.throwIfAborted()
         return rejected('工具执行失败', true)
       }
     },
     async reconcile(call, identity) {
       const tool = entries.get(call.name)
-      if (!tool?.reconcile || tool.destructive || !enabled(call.name)) return { kind: 'unknown' }
+      if (!tool?.reconcile || blocked(tool) || !enabled(call.name)) return { kind: 'unknown' }
       identity = Object.freeze({ ...identity })
       if (!await authorized(identity, call.name) || !enabled(call.name)) return rejected('没有权限使用此工具')
       try {
@@ -172,7 +180,7 @@ export function createToolRegistry(options: ToolRegistryOptions): {
     identity = Object.freeze({ ...identity })
     const definitions: PreparedToolDefinition[] = []
     for (const [name, tool] of entries) {
-      if (!tool.destructive && enabled(name) && await authorized(identity, name) && enabled(name)) definitions.push(structuredClone(tool.definition))
+      if (!blocked(tool) && enabled(name) && await authorized(identity, name) && enabled(name)) definitions.push(structuredClone(tool.definition))
     }
     return definitions.filter(definition => enabled(definition.name))
   } }

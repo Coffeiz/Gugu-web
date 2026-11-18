@@ -1,14 +1,24 @@
+import { createHash } from 'node:crypto'
+import type { Transaction } from 'kysely'
+import type { Database } from '../../data/schema.js'
+import {
+  applyProjectTrashTargets, projectTrashConfirmationData, readProjectTrashTargets,
+  type ProjectTrashResourceChangedEvent, type ProjectTrashStorage, type ProjectTrashTransaction,
+} from '../../projects/project-trash.js'
+import { stableJson } from '../context/history/canonical-history.js'
+import type { ConfirmationClaimReference, createConfirmationGate } from './confirmation.js'
 import { z } from 'zod'
 import { dataContext, type ProjectRecord, type Stage, type Json } from '../../contracts/index.js'
 import type { SqlDataRuntime } from '../../data/runtime.js'
 import { PROJECT_COLOR_KEYS, projectColorKey } from '../../projects/colors.js'
-import type { RunIdentity } from '../models.js'
-import type { ToolDefinition } from './contracts.js'
+import type { RunIdentity, ToolCall, ToolResult } from '../models.js'
+import type { ToolDefinition, ToolScope } from './contracts.js'
 import { resolveProject, type ProjectSelector } from './projects/selector.js'
 import { length } from '../../shared/values.js'
 import { redactToolError } from '../core.js'
 import { enrichToolError } from './input-errors.js'
 import type { ProjectStageOperation } from '../../projects/stages.js'
+import { enqueueAgentRagRebuildInTransaction } from '../rag/rebuild-worker.js'
 
 const listInput = z.object({
   status: z.enum(['pending', 'active', 'done']).optional(),
@@ -313,4 +323,170 @@ export function createProjectStageTools(port:ProjectMutationPort):ToolDefinition
         operation:{...args,action:name} as ProjectStageOperation}
     }),
   }))
+}
+
+const projectDeleteInput = z.object({
+  project_id: z.number().int().safe().optional(), project: z.string().optional(),
+  project_ids: z.array(z.number().int().safe()).max(20).optional(),
+}).refine(input => !input.project_ids || new Set(input.project_ids).size === input.project_ids.length)
+type ProjectDeleteInput = z.infer<typeof projectDeleteInput>
+type ProjectDeleteRequest = { args: ProjectDeleteInput; identity: RunIdentity; roundId: string; toolCallId: string }
+
+export interface ProjectDeleteFileJournal {
+  record(fileId: number, from: string, to: string): Promise<void>
+  finish(): Promise<void>
+}
+
+export interface ProjectDeleteRuntime {
+  transactionPort(tx: Transaction<Database>): ProjectTrashTransaction
+  storage: Pick<ProjectTrashStorage, 'moveToTrash'>
+  /** Host 须在移动前持久化校验和恢复所需的路径日志，以调用收据作为完成依据。 */
+  withJournal<T>(ownerId: string, operationId: string, work: (journal: ProjectDeleteFileJournal) => Promise<T>): Promise<T>
+  recoverJournal(ownerId: string, operationId: string): Promise<void>
+  publish(event: ProjectTrashResourceChangedEvent): Promise<void>
+}
+
+type ProjectDeleteConfirmation = {
+  gate: ReturnType<typeof createConfirmationGate>
+  claim(tx: Transaction<Database>, reference: ConfirmationClaimReference, signal: AbortSignal): Promise<boolean>
+}
+class ProjectDeleteChanged extends Error {}
+
+function projectDeleteDigest(value: unknown): string {
+  return createHash('sha256').update(stableJson(value)).digest('hex')
+}
+function projectDeleteKey(request: ProjectDeleteRequest) {
+  const { identity, toolCallId, roundId } = request
+  const context = dataContext(identity.ownerId)
+  const hex = projectDeleteDigest(['agent.project.delete', context.ownerId, identity.sessionId, identity.runId, roundId, toolCallId])
+  return { context, operationId: `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}` }
+}
+function projectDeleteSnapshot(targets: Awaited<ReturnType<typeof readProjectTrashTargets>>) {
+  const { ids, versions } = projectTrashConfirmationData(targets)
+  return { targetIds: ids, targetsDigest: projectDeleteDigest(ids), versionsDigest: projectDeleteDigest(versions) }
+}
+
+/** 批量软删把文件、文件夹、日程、提醒与调用收据放进同一确认边界。 */
+export function createProjectDeleteTool(core: SqlDataRuntime, runtime: ProjectDeleteRuntime, confirmation: ProjectDeleteConfirmation): ToolDefinition {
+  if (!core.receipts) throw new Error('项目删除收据未装配')
+  const name = 'delete_project'
+  const method = 'agent.project.delete'
+  const absent = new Error('项目删除调用收据不存在')
+  const fail = (value: string | { error: string }): ToolResult => ({
+    kind: 'completed', successful: false, mutated: false, value: typeof value === 'string' ? { error: value } : value,
+  })
+
+  async function reconcile(request: ProjectDeleteRequest, recover = true): Promise<ToolResult> {
+    try {
+      const { context, operationId } = projectDeleteKey(request)
+      if (recover) await runtime.recoverJournal(context.ownerId, operationId)
+      const receipt = await core.operationWithTransaction(context, operationId, method, request.args, async () => { throw absent })
+      return { kind: 'completed', successful: true, mutated: false, value: receipt.result }
+    } catch { return { kind: 'unknown' } }
+  }
+  async function apply(request: ProjectDeleteRequest, scope: ToolScope, call: ToolCall): Promise<ToolResult> {
+    const { signal } = scope
+    signal.throwIfAborted()
+    const { context, operationId } = projectDeleteKey(request)
+    const owner = context.ownerId
+    const args = request.args
+    if (scope.resolution?.status === 'confirmed') {
+      const stored = await reconcile(request)
+      if (stored.kind === 'completed') return stored
+    }
+    let ids = args.project_ids
+    if (ids && !ids.length) return fail('project_ids 必须是 1-20 个项目 id')
+    if (!ids) {
+      const result = await core.transaction(context, data => resolveProject(data, args), { signal })
+      if ('error' in result) return fail(result)
+      ids = [result.id]
+    }
+
+    let expected: ReturnType<typeof projectDeleteSnapshot>
+    try {
+      expected = await core.db.transaction().execute(async tx =>
+        projectDeleteSnapshot(await readProjectTrashTargets(runtime.transactionPort(tx), owner, ids)))
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'not_found') return fail(error.message)
+      throw error
+    }
+    signal.throwIfAborted()
+    const argsDigest = projectDeleteDigest(args)
+    if (scope.resolution === null) {
+      const prepared = await confirmation.gate.prepare(call, scope, argsDigest, expected)
+      return prepared.ok ? { kind: 'waiting', interaction: prepared.value } : fail('项目删除确认无效或已过期')
+    }
+    const verified = await confirmation.gate.verify(call, scope, argsDigest, expected)
+    if (!verified.ok) return fail('项目删除确认无效或已过期')
+
+    let events: ProjectTrashResourceChangedEvent[] = []
+    try {
+      const outcome = await runtime.withJournal<ToolResult>(owner, operationId, async journal => {
+        const compensation: Array<() => Promise<void>> = []
+        let callbackError: unknown
+        try {
+          const receipt = await core.operationWithTransaction(context, operationId, method, args, async tx => {
+            try {
+              signal.throwIfAborted()
+              if (!await confirmation.claim(tx, verified.value, signal)) throw new ProjectDeleteChanged()
+              const transaction = runtime.transactionPort(tx)
+              let current: Awaited<ReturnType<typeof readProjectTrashTargets>>
+              try { current = await readProjectTrashTargets(transaction, owner, ids) }
+              catch (error) {
+                if (error instanceof Error && 'code' in error && error.code === 'not_found') throw new ProjectDeleteChanged()
+                throw error
+              }
+              const actual = projectDeleteSnapshot(current)
+              if (actual.targetsDigest !== expected.targetsDigest || actual.versionsDigest !== expected.versionsDigest) throw new ProjectDeleteChanged()
+              const result = await applyProjectTrashTargets(transaction, runtime.storage, owner, current,
+                { undoContextId: request.identity.sessionId }, {
+                  signal,
+                  addRollback: undo => compensation.push(undo),
+                  beforeMove: (fileId, from, to) => journal.record(fileId, from, to),
+                })
+              events = result.events
+              await enqueueAgentRagRebuildInTransaction(tx, core.backend, owner, 'project')
+              if (events.some(event => event.resource === 'calendar'))
+                await enqueueAgentRagRebuildInTransaction(tx, core.backend, owner, 'calendar')
+              return args.project_ids ? { success: true, deleted_count: result.results.length, results: result.results } : result.results[0]!
+            } catch (error) { callbackError = error; throw error }
+          }, { signal })
+          if (!receipt.replayed) try { await journal.finish() } catch { /* 日志留供恢复。 */ }
+          return { kind: 'completed', successful: true, mutated: !receipt.replayed, value: receipt.result }
+        } catch (error) {
+          // 只有确定事务回滚时补偿文件。提交未知时保留日志，由 Host 查收据并恢复。
+          if (error === callbackError) {
+            try {
+              for (const undo of compensation.reverse()) await undo()
+              await journal.finish()
+            } catch { return { kind: 'unknown' } }
+            if (error instanceof ProjectDeleteChanged) return fail('项目删除确认已使用或目标已变化')
+            if (signal.aborted) throw error
+          }
+          return reconcile(request, false)
+        }
+      })
+      if (outcome.kind === 'completed' && outcome.successful && outcome.mutated)
+        for (const event of events) { try { await runtime.publish(event) } catch { /* 已提交。 */ } }
+      return outcome
+    } catch {
+      signal.throwIfAborted()
+      return { kind: 'unknown' }
+    }
+  }
+
+  return { definition: { name, schema: { type: 'function', function: {
+    name, description: '确认后将一个或多个项目及其文件移入回收站。单项传 project_id 或 project，批量传 project_ids。',
+    parameters: { type: 'object', properties: {
+      project_id: { type: 'integer' }, project: { type: 'string' },
+      project_ids: { type: 'array', items: { type: 'integer' }, uniqueItems: true, maxItems: 20 },
+    } },
+  } } }, effect: 'write', requiresInteraction: true, confirmationReplay: true,
+  validate: input => projectDeleteInput.safeParse(input),
+  execute: (input, scope, call) => apply({
+    args: input as ProjectDeleteInput, identity: scope.identity, roundId: scope.roundId, toolCallId: call.id,
+  }, scope, call),
+  reconcile: (input, identity, call) => reconcile({
+    args: input as ProjectDeleteInput, identity, roundId: identity.roundId, toolCallId: call.id,
+  }) }
 }

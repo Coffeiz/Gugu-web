@@ -509,7 +509,7 @@ describe('主题 CSS 回归契约', () => {
 
     // 暗色沿用同一状态结构，只映射 surface / edge / overlay 令牌。
     const darkTokens = cssBlock(componentSurfacesCss, "html[data-theme='dark'][data-family]")
-    expect(darkTokens).toContain('--file-card-bg: var(--surface-card-solid);')
+    expect(darkTokens).toContain('--folder-card-bg-base: var(--file-card-bg);')
     expect(darkTokens).toContain('--file-card-border-selected: var(--action-outline);')
     expect(darkTokens).toContain('--file-card-selection-overlay: color-mix(in srgb,var(--action-primary) 8%,transparent);')
     expect(darkTokens).toContain('--file-card-selection-thumb-overlay: color-mix(in srgb,var(--action-primary) 28%,transparent);')
@@ -530,7 +530,7 @@ describe('主题 CSS 回归契约', () => {
     expect(paletteSelection).not.toMatch(/rgba\(123,\s*127,\s*178/)
   })
 
-  it('常驻内容面板默认无 blur，导航栏和笔记 glass 显式保留 blur', () => {
+  it('笔记主面板复用常驻 Glass，导航栏和画布控件保留各自的模糊契约', () => {
     expect(componentCss).toContain('--glass-card-blur: none;')
     expect(globalCss).toContain('backdrop-filter: var(--glass-card-blur)')
     expect(productCss).not.toContain('.glass-card:not(.topbar)')
@@ -541,10 +541,11 @@ describe('主题 CSS 回归契约', () => {
     const adminLayoutVue = load('../../layouts/AdminLayout.vue')
     expect(adminLayoutVue).toContain('backdrop-filter: var(--popup-blur);')
 
-    const mindToolbarVue = load('../../views/Mind/components/MindToolbar.vue')
-    const mindTabs = cssBlock(mindToolbarVue, '.mind-tabs {')
-    expect(mindTabs).toContain('backdrop-filter: var(--glass-blur)')
-    expect(mindTabs).toContain('-webkit-backdrop-filter: var(--glass-blur)')
+    const notes = load('../../views/Mind/NotesThreePaneView.vue')
+    for (const pane of ['ntp-list-surface', 'ntp-detail']) {
+      expect(notes).toContain(`class="${pane} glass-card"`)
+      expect(cssBlock(notes, `.${pane} {`)).not.toContain('backdrop-filter')
+    }
 
     const noteTimelineVue = load('../../views/Mind/components/NoteTimeline.vue')
     expect(cssBlock(noteTimelineVue, '.tl-col {')).toContain('--glass-card-blur: var(--glass-blur)')
@@ -616,9 +617,9 @@ describe('主题 CSS 回归契约', () => {
     expect(designPageVue).toContain('background:var(--design-card-bg);border:1px solid var(--design-card-border)')
     expect(designPageVue).not.toContain('--gb-tint:')
     expect(designPageVue).not.toContain('.sample-main > .sample-topbar:hover')
-    expect(designPageVue).toContain('.project-column.glass-card { --glass-card-background: var(--column-bg); --glass-card-background-hover: var(--column-bg); }')
-    expect(designPageVue).not.toContain('border: 1px solid transparent;border-radius:var(--radius-md)')
-    expect(designPageVue).not.toContain('border:1px solid var(--border-hairline);border-radius:var(--radius-md);background:var(--column-bg)')
+    expect(designPageVue).not.toContain('--glass-card-background: var(--column-bg)')
+    expect(designPageVue).not.toContain('border: 1px solid transparent;border-radius:var(--radius-sm)')
+    expect(designPageVue).not.toContain('border:1px solid var(--border-hairline);border-radius:var(--radius-sm);background:var(--column-bg)')
     expect(designOverridesCss).not.toContain('.design-page .sample-topbar')
     expect(designOverridesCss).not.toContain("html[data-family='mono'] .design-page .product-frame")
     expect(designOverridesCss).not.toContain("html[data-family='mono'] .design-page .sample-main > .sample-topbar")
@@ -626,9 +627,9 @@ describe('主题 CSS 回归契约', () => {
 
   it('日历工具栏和终端顶部不重复绘制玻璃边界', () => {
     expect(globalCss).not.toContain('.glass-card:hover')
-    const componentCss = load('./component-theme-refinements.css')
-    expect(componentCss).toContain('--gb-highlight-strong: transparent')
-    expect(componentCss).toContain('--gb-highlight-side: transparent')
+    const pageToolbarVue = load('../../components/common/layout/PageToolbar.vue')
+    expect(pageToolbarVue).toContain('class="page-toolbar glass-card"')
+    expect(pageToolbarVue).not.toContain('<GlassBg')
 
     const productCss = load('./tokens/product.css')
     const topbarBlock = cssBlock(productCss, 'html[data-theme][data-family] .topbar')
@@ -642,11 +643,10 @@ describe('主题 CSS 回归契约', () => {
     expect(productCss).not.toContain('.topbar:hover')
     // terminal-main-head 的 glass token 特例已清理：终端页与其他面板共用标准契约
     expect(productCss).not.toContain('.terminal-main-head.glass-card')
-    // 终端面板已整体脱离 design-section 样式，与技能页共用标准 glass-card + column-bg
+    // 终端面板与其他页面共用标准 glass-card 材质。
     const terminalsVue = load('../../views/Terminals/index.vue')
     expect(terminalsVue).not.toContain('design-section')
-    expect(terminalsVue).toContain('--glass-card-background:var(--column-bg)')
-    expect(terminalsVue).toContain('--glass-card-background-hover:var(--column-bg)')
+    expect(terminalsVue).not.toContain('--column-bg')
   })
 
   it('咕咕聊天窗口不重复绘制外壳和输入区高光', () => {

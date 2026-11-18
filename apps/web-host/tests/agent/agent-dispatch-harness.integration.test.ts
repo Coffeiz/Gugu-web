@@ -2,13 +2,12 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { Pool } from 'pg'
-import { createAgentRunner, type AgentRunnerPorts } from '@gugu/core/agent'
+import { createAgentDispatchRuntime, createAgentRunner, type AgentRunnerPorts } from '@gugu/core/agent'
 import { createRedisAgentCancellationCommands } from '../../src/adapters/redis-events.js'
 import { createRedisLiveSubscription } from '../../src/adapters/redis-live-subscription.js'
 import { withPostgresTransaction } from '../../src/adapters/postgres-transaction.js'
-import { createAgentDispatchWorker } from '../../src/domains/agent-sessions/agent-dispatch-worker.js'
-import { createAgentDispatchSupervisor } from '../../src/domains/agent-sessions/agent-dispatch-supervisor.js'
-import { createPostgresAgentDispatch, enqueueAgentRunLocked } from '../../src/domains/agent-sessions/persistence/agent-run-dispatch-postgres.js'
+import { createAgentRunEventStream } from '../../src/domains/agent-sessions/agent-run-event-stream.js'
+import { createPostgresAgentDispatch, enqueueAgentRunLocked, type AgentDispatchLease } from '../../src/domains/agent-sessions/persistence/agent-run-dispatch-postgres.js'
 import { lockAgentRunSession } from '../../src/domains/agent-sessions/persistence/agent-run-startup-postgres.js'
 import { createPostgresAgentRunLeasePort } from '../../src/domains/agent-sessions/persistence/agent-run-lease-postgres.js'
 import { createPostgresAgentRunStore } from '../../src/domains/agent-sessions/persistence/agent-run-store-postgres.js'
@@ -27,6 +26,8 @@ test('持久调度经真实 PG、Redis 与 Harness 按顺序取消首轮并执�
       CREATE TABLE agent_run_checkpoints(user_id uuid,session_id integer,run_id text,version bigint,sequence bigint,status text,phase text,nonce bytea,payload bytea,created_at timestamptz,updated_at timestamptz,PRIMARY KEY(user_id,session_id,run_id));
       CREATE TABLE agent_run_events(user_id uuid,session_id integer,run_id text,event_id text,sequence bigint,nonce bytea,payload bytea,created_at timestamptz,acknowledged_at timestamptz,PRIMARY KEY(user_id,session_id,run_id,event_id));
       CREATE TABLE agent_run_interaction_receipts(user_id uuid,session_id integer,run_id text,receipt text,created_at timestamptz);
+      CREATE TABLE interaction_prompts(id integer PRIMARY KEY,user_id uuid,session_id integer,status text);
+      CREATE TABLE agent_interaction_resumes(user_id uuid,session_id integer,run_id text,prompt_id integer,receipt text,completed_at timestamptz,claim_expires_at timestamptz);
       CREATE TABLE agent_run_dispatch(sequence bigserial PRIMARY KEY,user_id uuid,session_id integer,run_id text,state text,message_id integer,nonce bytea,payload bytea,request_expires_at timestamptz,token text,fence bigint NOT NULL DEFAULT 0,lease_expires_at timestamptz,cancel_requested boolean NOT NULL DEFAULT false,blocked_reason text,UNIQUE(user_id,session_id,run_id));
       CREATE UNIQUE INDEX selected ON agent_run_dispatch(user_id,session_id) WHERE state='selected';`)
     await pool.query('INSERT INTO conversation_sessions(id,user_id) VALUES (1,$1)', [owner])
@@ -37,10 +38,12 @@ test('持久调度经真实 PG、Redis 与 Harness 按顺序取消首轮并执�
     }
     const dispatch = createPostgresAgentDispatch(pool, 'synthetic-secret', 30000)
     const selected = await dispatch.requestCancel(owner, '1'); assert.equal(selected?.runId, 'first')
-    const cancellation = createRedisAgentRunCancellationPort(createRedisAgentCancellationCommands(redis!), createRedisLiveSubscription(redis!))
+    const commands = createRedisAgentCancellationCommands(redis!)
+    const subscribe = createRedisLiveSubscription(redis!)
+    const cancellation = createRedisAgentRunCancellationPort(commands, subscribe)
     const store = createPostgresAgentRunStore<string[]>(pool, 'synthetic-secret', { async writeHistory() {} })
     let providerCalls = 0
-    const worker = createAgentDispatchWorker<string[]>({ dispatch, async failStart() { return false }, async reconstruct(lease) {
+    async function reconstruct(lease: AgentDispatchLease) {
       const ports: AgentRunnerPorts<string[]> = {
         clock: { now: () => new Date().toISOString() }, store, leases: createPostgresAgentRunLeasePort(pool, { dispatchLease: () => lease }), cancellation,
         provider: { async *stream() { providerCalls++; yield { type: 'token', text: '合成回复' }; yield { type: 'complete', text: '合成回复', calls: [] } } },
@@ -51,17 +54,34 @@ test('持久调度经真实 PG、Redis 与 Harness 按顺序取消首轮并执�
         async publish() {}, diagnose() {},
       }
       return { harness: createAgentRunner(ports), cancellation, async close() {} }
-    } })
+    }
     let resolved!: () => void
     const finished = new Promise<void>(resolve => { resolved = resolve })
-    const commands = createRedisAgentCancellationCommands(redis!)
-    const supervisor = createAgentDispatchSupervisor({ listReady: dispatch.listReady, async kick(o, s) { await worker.kick(o, s); resolved() }, publish: commands.publish, subscribe: createRedisLiveSubscription(redis!), diagnose: () => {}, recoveryIntervalMs: 1000 })
+    const runtime = createAgentDispatchRuntime({
+      dispatch: {
+        ...dispatch,
+        async finish(lease) {
+          const settled = await dispatch.finish(lease)
+          if (settled && lease.identity.runId === 'second') resolved()
+          return settled
+        },
+      },
+      worker: { reconstruct },
+      supervisor: { publish: commands.publish, subscribe, diagnose: () => {}, recoveryIntervalMs: 1000 },
+      chat: {
+        cancellation,
+        async prepare() { throw new Error('测试直接从持久队列恢复') },
+        events: createAgentRunEventStream({ readEventsAfter: store.readEventsAfter, readState: store.read }, commands, subscribe),
+        async project(event) { return [{ type: event.type }] },
+        async failStart() { throw new Error('持久调度不应经直接模式结算启动') },
+      },
+    })
     // 入队后才启动调度器，验证进程重启时从持久记录扫描恢复。
-    const running = await supervisor.start()
+    await runtime.start()
     const streamTimeout = new AbortController()
     const timeout = setTimeout(() => { streamTimeout.abort() }, 10000)
     try { await Promise.race([finished, new Promise<never>((_, reject) => streamTimeout.signal.addEventListener('abort', () => reject(new Error('调度超时')), { once: true }))]) }
-    finally { clearTimeout(timeout); await running.stop(); await running.drain() }
+    finally { clearTimeout(timeout); await runtime.close() }
     assert.equal((await store.read({ ownerId: owner, sessionId: '1', runId: 'first' }))?.status, 'cancelled')
     assert.equal((await store.read({ ownerId: owner, sessionId: '1', runId: 'second' }))?.status, 'completed')
     assert.equal(providerCalls, 1)

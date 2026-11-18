@@ -3,11 +3,13 @@ import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import bcrypt from 'bcryptjs'
 import { Pool, type PoolClient } from 'pg'
 import test from 'node:test'
 import { RegistrationRequestError } from '../../src/domains/auth/routes/auth-register.js'
 import { createPostgresRegistrationOperations } from '../../src/domains/auth/persistence/registration.js'
+
+import { applyAgentBaseMigration } from '../../src/migrations/agent-base-migrate.js'
+import { applyWebDomainMigration } from '../../src/migrations/web-domain-migrate.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
@@ -21,40 +23,14 @@ async function createFixture(options: {
   await adminPool.query(`CREATE SCHEMA "${schema}"`)
   const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema}`, max: 2 })
   const root = await mkdtemp(join(tmpdir(), 'gugu-register-'))
-  await pool.query(`CREATE TABLE users (
-    id uuid PRIMARY KEY, username varchar(100) NOT NULL UNIQUE, email varchar(300) NOT NULL UNIQUE,
-    hashed_password varchar(200) NOT NULL, display_name varchar(100), is_active boolean NOT NULL,
-    account_status varchar(16) NOT NULL, security_version integer NOT NULL, avatar varchar(500),
-    is_developer boolean NOT NULL,
-    created_at timestamptz NOT NULL, timezone varchar(64), email_subscribed boolean NOT NULL
-  )`)
-  await pool.query(`CREATE TABLE user_preferences (
-    id serial PRIMARY KEY, user_id uuid NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-    data_json text NOT NULL, updated_at timestamptz NOT NULL
-  )`)
-  await pool.query(`CREATE TABLE workspace_directories (
-    id serial PRIMARY KEY, user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    name varchar(200) NOT NULL, directory_name varchar(200) NOT NULL,
-    is_default boolean NOT NULL DEFAULT false, is_system boolean NOT NULL DEFAULT false,
-    deleted_at timestamptz, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL
-  )`)
-  await pool.query(`CREATE UNIQUE INDEX uq_test_workspace_directory_name
-    ON workspace_directories(user_id, directory_name) WHERE deleted_at IS NULL`)
-  await pool.query(`CREATE UNIQUE INDEX uq_test_workspace_directory_display_name
-    ON workspace_directories(user_id, name) WHERE deleted_at IS NULL`)
-  await pool.query(`CREATE TABLE workspaces (
-    id serial PRIMARY KEY, user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    name varchar(200) NOT NULL, kind varchar(20) NOT NULL, folder_id integer,
-    project_id integer, directory_id integer REFERENCES workspace_directories(id) ON DELETE SET NULL,
-    enabled boolean NOT NULL, is_default boolean NOT NULL,
-    created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL,
-    UNIQUE(user_id, directory_id)
-  )`)
+  await applyAgentBaseMigration(pool)
+  await applyWebDomainMigration(pool)
 
   const calls: string[] = []
   const restorationTtls: number[] = []
   const failedPool = options.failCommit ? wrapFailingCommit(pool) : pool
   const operations = createPostgresRegistrationOperations(failedPool, {
+    defaultStorageLimitBytes: 4096,
     workspaceShellSupported: () => true,
     async prepareDefaultWorkspaceRoot(userId, directoryName) {
       calls.push('prepareWorkspaceRoot')
@@ -82,7 +58,8 @@ async function createFixture(options: {
 
   return {
     schema, pool, adminPool, root, calls, restorationTtls, operations,
-    async qualifiedCount(table: 'users' | 'user_preferences' | 'workspace_directories' | 'workspaces') {
+    async qualifiedCount(table: 'users' | 'user_preferences' | 'workspace_directories' | 'workspaces'
+      | 'storage_quota_ledgers' | 'storage_quota_events') {
       const result = await adminPool.query<{ count: string }>(`SELECT count(*)::text AS count FROM "${schema}"."${table}"`)
       return Number(result.rows[0]?.count ?? 0)
     },
@@ -170,6 +147,13 @@ test('PostgreSQL registration atomically creates user, locale preference and def
     assert.equal(await fixture.qualifiedCount('workspace_directories'), 1)
     assert.equal(await fixture.qualifiedCount('workspaces'), 1)
 
+    assert.deepEqual((await fixture.pool.query(`SELECT category,limit_bytes::integer,used_bytes::integer
+      FROM storage_quota_ledgers WHERE user_id=$1`, [user.id])).rows, [
+      { category: 'file_library', limit_bytes: 4096, used_bytes: 0 },
+    ])
+    assert.deepEqual((await fixture.pool.query(`SELECT operation,delta_bytes::integer
+      FROM storage_quota_events WHERE user_id=$1`, [user.id])).rows, [{ operation: 'initialize', delta_bytes: 0 }])
+
     const prefs = await fixture.pool.query<{ data_json: string }>(
       'SELECT data_json FROM user_preferences WHERE user_id = $1', [user.id],
     )
@@ -205,6 +189,8 @@ test('registration root-preparation failure rolls back all PostgreSQL registrati
     assert.equal(await fixture.qualifiedCount('user_preferences'), 0)
     assert.equal(await fixture.qualifiedCount('workspace_directories'), 0)
     assert.equal(await fixture.qualifiedCount('workspaces'), 0)
+    assert.equal(await fixture.qualifiedCount('storage_quota_ledgers'), 0)
+    assert.equal(await fixture.qualifiedCount('storage_quota_events'), 0)
   } finally {
     await fixture.close()
   }
@@ -224,6 +210,8 @@ test('a concurrent or replaced verification code aborts the PostgreSQL registrat
     assert.equal(await fixture.qualifiedCount('user_preferences'), 0)
     assert.equal(await fixture.qualifiedCount('workspace_directories'), 0)
     assert.equal(await fixture.qualifiedCount('workspaces'), 0)
+    assert.equal(await fixture.qualifiedCount('storage_quota_ledgers'), 0)
+    assert.equal(await fixture.qualifiedCount('storage_quota_events'), 0)
   } finally {
     await fixture.close()
   }
@@ -242,6 +230,8 @@ test('a PostgreSQL commit failure rolls back rows and restores only the remainin
     assert.equal(await fixture.qualifiedCount('user_preferences'), 0)
     assert.equal(await fixture.qualifiedCount('workspace_directories'), 0)
     assert.equal(await fixture.qualifiedCount('workspaces'), 0)
+    assert.equal(await fixture.qualifiedCount('storage_quota_ledgers'), 0)
+    assert.equal(await fixture.qualifiedCount('storage_quota_events'), 0)
     assert.equal(fixture.restorationTtls.length, 1)
     assert.ok(fixture.restorationTtls[0]! > 0 && fixture.restorationTtls[0]! <= 60_000)
     assert.deepEqual(fixture.calls.slice(0, 2), ['prepareWorkspaceRoot', `ttl:${input.email}`])

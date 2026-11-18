@@ -47,6 +47,22 @@
     "keyBehavior": "引用与代码屏蔽和Unicode偏移",
     "ci": "node-webui"
   },
+  "packages/core/tests/im/telegram-connect.test.ts": {
+    "domain": "api",
+    "layer": "L1",
+    "owner": "packages/core/src/im/telegram-connect.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "Telegram Token 加密持久化、owner/平台冲突、原子替换、固定 HTTPS 请求及有界照片/文件 multipart 协议及仅 400 回退规则",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/im/telegram-connect-route.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/im/telegram-connect.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "Telegram 接入认证、DTO、公开响应和错误脱敏",
+    "ci": "node-webui"
+  },
   "apps/web-host/tests/im/wechat-connect.test.ts": {
     "domain": "api",
     "layer": "L2",

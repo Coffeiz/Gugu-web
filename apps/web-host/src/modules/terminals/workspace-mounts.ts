@@ -1,10 +1,11 @@
 import type { Pool } from 'pg'
+import type { Kysely } from 'kysely'
 import { createDefaultWorkspaceShellTargetReader, createWorkspaceShellDirectoryReader, createWorkspaceShellTargetReader } from '@gugu/core/workspaces/shell-target'
 import { readPostgresFolderPathMirrorKey, readPostgresProjectPathMirrorKey } from '../../domains/files/folder-path-planner.js'
 import { prepareTerminalMounts } from './mounts.js'
 
 /** 挂载来源来自 owner 限定的数据查询，不接受 HTTP 路径作为授权事实。 */
-export function createTerminalWorkspaceMounts(pool: Pick<Pool, 'connect'>, db: Parameters<typeof createWorkspaceShellTargetReader>[0], storageRoot: string) {
+export function createTerminalWorkspaceMounts<DB>(pool: Pick<Pool, 'connect'>, db: Kysely<DB>, storageRoot: string) {
   const target = createWorkspaceShellTargetReader(db, 'postgres')
   const defaultTarget = createDefaultWorkspaceShellTargetReader(db, 'postgres')
   const directories = createWorkspaceShellDirectoryReader(db, 'postgres')

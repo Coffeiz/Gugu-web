@@ -18,6 +18,7 @@ export function useProjectFileProjectSync(options: {
   resetNavigation: () => void
   showNewFolder: Ref<boolean>
   resetDraft: (project: Project | null) => void
+  filesAvailable?: boolean
   sortBy?: () => 'name' | 'type' | 'stage' | 'createdAt' | 'size' | 'id'
   sortOrder?: () => 'asc' | 'desc'
   fileCacheStore: FileCacheLike
@@ -37,6 +38,7 @@ export function useProjectFileProjectSync(options: {
     `${projectId}:${folderId ?? 'root'}:${sortBy()}:${sortOrder()}`
 
   function ensureDirectoryLoaded(projectId: number, folderId: number | null = null): Promise<void> {
+    if (options.filesAvailable === false) return Promise.resolve()
     const key = directoryKey(projectId, folderId)
     if (loadedDirectories.has(key)) return Promise.resolve()
     const scope: DirectorySnapshotScope = {

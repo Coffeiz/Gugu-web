@@ -32,6 +32,11 @@ apps/web-host/dist/
 apps/web-host/.env
 apps/web-host/.env.local
 apps/web-host/.env.*.local
+/apps/web-host/config.override.json
+/apps/web-host/config.override.json.*.tmp
+/apps/web-host/config.override.json.bak-*
+/apps/web-host/.config.override.json.lock
+/apps/web-host/logs/
 apps/desktop/resources/
 apps/desktop/release/
 apps/desktop/python/*.egg-info/

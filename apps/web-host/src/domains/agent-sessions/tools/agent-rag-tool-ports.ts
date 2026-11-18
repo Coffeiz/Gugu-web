@@ -1,5 +1,6 @@
 import type { SqlDataRuntime } from '@gugu/core/data'
-import type { RunIdentity, AuthorizedMemoryScope, MemorySearchSnapshot, RagQueryEmbeddingSettings } from '@gugu/core/agent'
+import type { RunIdentity } from '@gugu/core/agent'
+import type { AuthorizedMemoryScope, MemorySearchSnapshot, RagQueryEmbeddingSettings } from '@gugu/core/agent/rag'
 import type { ProviderTransport } from '@gugu/core/providers'
 import type { ConversationSearchPort, MemorySearchPort } from '@gugu/core/tools'
 import { createWebOwnerMemorySearchPort } from './agent-memory-search.js'

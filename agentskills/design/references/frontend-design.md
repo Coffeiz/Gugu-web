@@ -4,7 +4,7 @@
 
 ## 概述
 
-这是咕咕前台（用户侧 Web 应用）的设计规范手册，给写代码的人（含未来改代码的 AI）对照用——不是产品介绍。设计语言是**冷淡紫灰色调的轻玻璃视觉**：浅灰到冷灰蓝的渐变背景上叠加半透明表面、细边框和阴影；常驻内容面板默认不模糊背景，导航侧栏和 Mind 笔记 glass 保留 blur，弹窗/菜单等临时浮层也可按需使用真实 `backdrop-filter`。全文按「产品定位 → 技术选型 → 文件架构 → UI 设计规范（色彩/字重/交互等具体规则）→ 核心页面与组件 → 功能清单 → 文案规范 → 设计文件」组织，越往后越具体到像素值和 CSS 属性，改代码时直接定位对应章节查数值即可。
+这是咕咕前台（用户侧 Web 应用）的设计规范手册，给写代码的人（含未来改代码的 AI）对照用——不是产品介绍。设计语言是**冷淡紫灰色调的轻玻璃视觉**：浅灰到冷灰蓝的渐变背景上叠加半透明表面、细边框和阴影；常驻内容面板默认不模糊背景，导航侧栏保留 blur，弹窗/菜单等临时浮层也可按需使用真实 `backdrop-filter`。全文按「产品定位 → 技术选型 → 文件架构 → UI 设计规范（色彩/字重/交互等具体规则）→ 核心页面与组件 → 功能清单 → 文案规范 → 设计文件」组织，越往后越具体到像素值和 CSS 属性，改代码时直接定位对应章节查数值即可。
 
 ---
 
@@ -88,20 +88,19 @@ backend/
 - **卡片**：半透明 tint、边框高光 + 轻阴影构成层次感；常驻卡片不使用 `backdrop-filter`，hover 时背景/阴影以 `0.25s ease` 淡入淡出，不立即亮起
 - **边缘高光**：`inset 0 1px 0 rgba(255,255,255,0.95)` 顶边亮线模拟玻璃切割倒角
 - **阴影**：轻阴影 `0 4px 16px rgba(80,90,110,0.08)`，扁平化，不堆叠
-- **圆角**：面板 `18px`，小元素 `10–12px`
+- **圆角**：玻璃表面（含桌面 L3）和内容卡片使用 `sm`（14px），常规控件使用 `xs`（10px），紧凑控件使用 `compact`（6px），桌面 L2 使用 `md`（20px）。
 
-**圆角形状分层约定**：
-- `.glass-card` 面板统一 `border-radius: var(--radius-lg)` + `corner-shape: squircle`
+**圆角形状约定**
+- 面板和控件统一使用普通圆角（`corner-shape: round`），按组件规格设置半径。`.glass-card` 面板使用 `border-radius: var(--radius-md)`。
 - 顶栏直接用 `.glass-card` 的静态 tint，不挂载独立 `GlassBg`；宿主保持 `overflow: visible`，避免顶栏按钮的外发阴影被裁掉
 - 其他明确采用 `GlassBg` 的工具栏，仍由 `GlassBg` 自己负责圆角裁切（`overflow: hidden` 放在背景层，不放在宿主）
-- 小按钮、输入框、chip、页内工具条按钮一律用普通圆角，不跟 squircle 混用
 
 **Surface blur 约定（全走 CSS 变量，明确哪些 surface 需要背景采样）：**
 
 | 档 | 变量/落点 | 值 | 用途 |
 |---|---|---|---|
 | 常驻面板 | `--glass-card-blur` | `none` | 页面内容卡、顶栏和 Admin 内容卡；用 tint、边框和阴影建立层次 |
-| 导航与笔记 glass | `--popup-blur` / `--glass-blur` | 主题 token | 应用/Admin 侧边导航；Mind 模式标签、画布工具 chrome、每日笔记玻璃底板及实体贴纸 |
+| 导航与画布控件 | `--popup-blur` / `--glass-blur` | 主题 token | 应用/Admin 侧边导航；画布工具栏、抽屉及实体贴纸 |
 | 临时浮层 | `--popup-surface-blur` / `--glass-blur` | 主题 token | `.popup-menu`、日期选择器、搜索下拉、弹窗卡片、聊天/媒体预览等浮在页面内容上的 surface |
 | 拖拽代理 | Interaction Runtime 代理视觉 | 由 runtime 与卡片组件共同管理 | 独立的短暂交互材质，不改变常驻面板默认无 blur 的契约 |
 
@@ -116,7 +115,7 @@ backend/
 | 现例 | 技能页、终端页、文件库主面板和顶栏 | 日历工具栏、文件工具栏；顶栏不使用 GlassBg |
 | hover | global.css `.glass-card:hover`，token `--glass-card-background-hover` | component-theme-refinements.css 契约规则 `.glass-card:hover .gb-tint` 切 `--surface-glass-hover`（带 0.25s 过渡） |
 
-除导航与笔记 glass 的明确例外外，常驻面板即使叠在可滚动/可交互内容上，也通过 tint、边框和阴影区分，不按内容是否可编辑来决定 blur。
+笔记列表和阅读面板沿用常驻 Glass，通过底色、边框和阴影建立层次。
 
 实现红线（多次踩坑）：
 - 仿玻璃的 hover tint 规则**必须放全局样式表**（component-theme-refinements.css 的 `.glass-card:hover .gb-tint`）；写在 GlassBg.vue 或宿主的 scoped style 里（含 `:global` 写法）会被编译器丢弃 `.gb-tint` 后代部分而静默失效。

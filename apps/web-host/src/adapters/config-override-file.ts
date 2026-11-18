@@ -6,8 +6,8 @@ import { fileURLToPath } from 'node:url'
 export type ConfigDocument = Record<string, unknown>
 
 export function resolveConfigOverridePath(env: NodeJS.ProcessEnv): string {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../')
-  return resolve(env.GUGU_CONFIG_OVERRIDE_FILE?.trim() || `${root}/backend/config.override.json`)
+  const configured = env.GUGU_CONFIG_OVERRIDE_FILE?.trim()
+  return configured ? resolve(configured) : fileURLToPath(new URL('../../config.override.json', import.meta.url))
 }
 
 export function readConfigOverride(path: string): ConfigDocument {
@@ -37,7 +37,7 @@ export interface ConfigOverrideLock {
   withExclusive<T>(path: string, work: () => Promise<T>): Promise<T>
 }
 
-/** 与 Python _override_file_lock 使用同一锁文件，锁覆盖完整读改写。 */
+/** 文件锁覆盖完整读改写，防止多个 Host 进程相互覆盖配置。 */
 export async function updateConfigOverride(path: string, patch: ConfigDocument, lock: ConfigOverrideLock): Promise<ConfigDocument> {
   if (!lock || typeof lock.withExclusive !== 'function') throw new Error('配置跨进程锁不可用')
   return lock.withExclusive(join(dirname(path), `.${basename(path)}.lock`), async () => {
@@ -69,7 +69,7 @@ function writeConfigOverrideLocked(path: string, patch: ConfigDocument, replaceD
   return document
 }
 
-/** 数组资源的读、业务校验与原子发布共用Python同一把锁，拒绝缺失/损坏文件。 */
+/** 数组资源的读取、业务校验及原子发布在同一文件锁内完成。 */
 export async function mutateConfigOverride<T>(path:string,mutate:(document:ConfigDocument)=>T,lock:ConfigOverrideLock):Promise<T> {
   if(!lock || typeof lock.withExclusive!=='function')throw new Error('配置跨进程锁不可用')
   return lock.withExclusive(join(dirname(path),`.${basename(path)}.lock`),async()=>{

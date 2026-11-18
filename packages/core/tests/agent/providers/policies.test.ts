@@ -39,6 +39,15 @@ describe('BYOK深度研究 Provider 请求和统一投影', () => {
     expect(f.requests[0]?.headers.Authorization).toBeUndefined()
     expect(result).toEqual({ query: '问题', answer: '答案', results: [{ title: '来源', url: 'https://source.example.test', content: '正文' }] })
   })
+  it.each(['tavily', 'you', 'baidu'])('%s 的错误响应不会被投影成空的成功结果', async provider => {
+    const response = fakeResponse({ error: '不公开的上游信息' }, { status: 503 })
+    const f = fakeDependencies([response])
+    const value = await deepResearchProbe(provider, 'synthetic-key', '问题', 5, 'basic', f.dependencies, new AbortController().signal)
+    expect(value.error).toContain('HTTP 503')
+    expect(value).not.toHaveProperty('results')
+    expect(JSON.stringify(value)).not.toContain('不公开的上游信息')
+    expect(response.closed).toBe(true)
+  })
   it('You.com映射advanced为deep并从output.sources读取摘要', async () => {
     const f = fakeDependencies([fakeResponse({ output: { content: '研究结论', sources: [{ title: '来源', url: 'https://source.example.test', snippets: ['摘录'] }] } })])
     const result = await deepResearchProbe('you', 'synthetic-key', '问题', 5, 'advanced', f.dependencies, new AbortController().signal)

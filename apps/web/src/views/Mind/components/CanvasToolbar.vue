@@ -142,9 +142,7 @@ function refTypeLabel(type: CanvasRefItem['type']) {
   position: absolute; left: calc(50% + var(--sidebar-width) / 2); bottom: var(--floating-edge); z-index: 40;
   transform: translateX(-50%);
 }
-/* 真正的药丸：corner-shape 显式覆盖成 round——.glass-card 全局默认是 squircle（连续曲率），
-   在这种高度矮、圆角占满整条边的胶囊上，squircle 的数学反而把两端"挤"成圆角矩形，不是纯圆头。 */
-.canvas-toolbar { position: relative; display: flex; align-items: center; height: var(--canvas-toolbar-height); padding: 0 7px; border-radius: 999px; corner-shape: round; }
+.canvas-toolbar { position: relative; display: flex; align-items: center; height: var(--canvas-toolbar-height); padding: 0 7px; border-radius: var(--radius-pill); corner-shape: round; }
 .canvas-toolbar button { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: 0; border-radius: 999px; background: none; color: var(--text-secondary); cursor: pointer; }
 .canvas-toolbar button:hover { color: var(--color-primary); background: color-mix(in srgb, var(--action-primary) 11%, transparent); }
 .canvas-toolbar button.active { background: color-mix(in srgb, var(--action-primary) 15%, transparent); color: var(--color-primary); }

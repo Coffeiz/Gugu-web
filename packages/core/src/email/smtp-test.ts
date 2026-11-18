@@ -1,3 +1,5 @@
+import type { EmailAttachment } from './attachments.js'
+export { createEmailAttachmentResolver, EmailAttachmentError, type EmailAttachmentReferences } from './attachments.js'
 import {strip} from '../shared/values.js'
 import {renderEmailPreview,type EmailPreviewDraft} from './preview.js'
 
@@ -25,7 +27,7 @@ export class SmtpDeliveryFailure extends Error {
 }
 export interface SmtpTestSettings {host:string;port:number;user:string;password:string;from_addr:string;to_addr:string;test_to_addr:string}
 export interface SmtpTestInput {host:string;port:number;user:string;password?:string;from_addr?:string;to_addr:string;use_ssl?:boolean}
-export interface SmtpTestDelivery {host:string;port:number;user:string;password:string;fromName:string;fromAddress:string;toAddress:string;secure:boolean;message:SmtpTestMessage}
+export interface SmtpTestDelivery {host:string;port:number;user:string;password:string;fromName:string;fromAddress:string;toAddress:string;secure:boolean;message:SmtpTestMessage;attachments?:readonly EmailAttachment[]}
 export async function testSmtp(input:SmtpTestInput,settings:SmtpTestSettings,send:(delivery:SmtpTestDelivery)=>Promise<void>):Promise<{ok:boolean;message:string}> {
  const host=input.host||settings.host,toAddress=input.to_addr||settings.test_to_addr||settings.to_addr,user=input.user||settings.user,from=input.from_addr||settings.from_addr||user
  if(!host)return {ok:false,message:'SMTP 服务器未配置'}
@@ -36,3 +38,5 @@ export async function testSmtp(input:SmtpTestInput,settings:SmtpTestSettings,sen
   return {ok:true,message:`测试邮件已发送至 ${toAddress}`}
  }catch{return {ok:false,message:'SMTP 测试失败，请检查服务器、TLS 和认证配置'}}
 }
+
+export { sanitizeEmailHtml } from './html.js'

@@ -1,12 +1,27 @@
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes, randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
-import type { RunIdentity } from '@gugu/core/agent'
+import type { InteractionResolution, RunIdentity } from '@gugu/core/agent'
 import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
 import { lockAgentRunSession } from './agent-run-startup-postgres.js'
+import { claimInteractionResumeLocked } from './agent-interaction-resume-postgres.js'
 
 /** 只保存重建必要的非凭据元数据；正文、附件及引用以用户消息为真源。 */
 export interface AgentDispatchInput { userMessageId: number; locale: 'zh-CN' | 'ja-JP' | 'en-US' | null; origin: string | null; accessVersion: string; v?: 2; source?: 'web' }
-export interface AgentDispatchLease { identity: RunIdentity; token: string; fence: number; input: AgentDispatchInput; mode: 'start' | 'resume'; cancelRequested: boolean }
+export interface AgentDispatchLease {
+  identity: RunIdentity
+  token: string
+  fence: number
+  input: AgentDispatchInput
+  mode: 'start' | 'resume'
+  cancelRequested: boolean
+  resolution?: InteractionResolution
+  interactionResume?: { promptId: number; claimToken: string; receipt: string }
+}
+/** 旧载荷保留用于诊断和恢复，不按当前 Web 来源执行。 */
+export function acceptsWebAgentDispatchInput(input: AgentDispatchInput): boolean {
+  return input.v === 2 && input.source === 'web'
+}
+
 function aad(identity: RunIdentity): Buffer { return Buffer.from(JSON.stringify([identity.ownerId, identity.sessionId, identity.runId])) }
 function key(secret: string): Buffer { if (!secret) throw new TypeError('调度密钥不能为空'); return Buffer.from(hkdfSync('sha256', Buffer.from(secret), Buffer.alloc(0), Buffer.from('gugu-agent-dispatch-v1'), 32)) }
 function validateInput(input: AgentDispatchInput): void {
@@ -60,6 +75,7 @@ export function createPostgresAgentDispatch(pool: Pick<Pool, 'connect' | 'query'
   key(secret)
   if (!Number.isSafeInteger(leaseMs) || leaseMs < 1000) throw new RangeError('调度租约无效')
   return {
+    acceptsInput: acceptsWebAgentDispatchInput,
     /** 查询认证 owner 的当前运行；没有选中项时保留等待交互的最近运行。 */
     async active(ownerId: string, sessionId: number): Promise<{ identity: RunIdentity | null } | null> {
       if (!ownerId || !Number.isSafeInteger(sessionId) || sessionId < 1) throw new TypeError('Agent 会话身份无效')
@@ -79,7 +95,13 @@ export function createPostgresAgentDispatch(pool: Pick<Pool, 'connect' | 'query'
         FROM agent_run_dispatch d JOIN conversation_sessions s ON s.user_id=d.user_id AND s.id=d.session_id
         WHERE s.execution_state <> 'baseline_updating'
           AND NOT EXISTS (SELECT 1 FROM agent_run_leases l WHERE l.user_id=d.user_id AND l.session_id=d.session_id AND l.expires_at>clock_timestamp())
-          AND ((d.state='selected' AND d.blocked_reason IS DISTINCT FROM 'version_conflict' AND (d.lease_expires_at IS NULL OR d.lease_expires_at<=clock_timestamp()))
+          AND ((d.state='selected' AND d.blocked_reason IS DISTINCT FROM 'version_conflict' AND (d.lease_expires_at IS NULL OR d.lease_expires_at<=clock_timestamp())
+              AND (d.cancel_requested
+                OR NOT EXISTS (SELECT 1 FROM agent_run_checkpoints c WHERE c.user_id=d.user_id AND c.session_id=d.session_id AND c.run_id=d.run_id AND c.status='waiting')
+                OR EXISTS (SELECT 1 FROM agent_interaction_resumes r JOIN interaction_prompts p ON p.id=r.prompt_id AND p.user_id=r.user_id AND p.session_id=r.session_id
+                  WHERE r.user_id=d.user_id AND r.session_id=d.session_id AND r.run_id=d.run_id AND r.completed_at IS NULL AND p.status='resolved'
+                    AND (r.claim_expires_at IS NULL OR r.claim_expires_at<=clock_timestamp())
+                    AND NOT EXISTS (SELECT 1 FROM agent_run_interaction_receipts x WHERE x.user_id=r.user_id AND x.session_id=r.session_id AND x.run_id=r.run_id AND x.receipt=r.receipt))))
             OR (d.state='queued' AND NOT EXISTS (SELECT 1 FROM agent_run_dispatch selected WHERE selected.user_id=d.user_id AND selected.session_id=d.session_id AND selected.state='selected'))
             OR (d.state='done' AND d.request_expires_at<=clock_timestamp() AND octet_length(d.payload)>0
               AND (EXISTS (SELECT 1 FROM agent_run_checkpoints c WHERE c.user_id=d.user_id AND c.session_id=d.session_id AND c.run_id=d.run_id AND c.status IN ('completed','cancelled','failed'))
@@ -107,28 +129,41 @@ export function createPostgresAgentDispatch(pool: Pick<Pool, 'connect' | 'query'
         const identity = { ownerId, sessionId, runId: row.run_id }
         const checkpoint = await client.query<{ status: string }>('SELECT status FROM agent_run_checkpoints WHERE user_id=$1 AND session_id=$2 AND run_id=$3', [ownerId, sessionId, row.run_id])
         const status = checkpoint.rows[0]?.status
-        if (status && !['preparing', 'running'].includes(status)) return null
+        if (status && !['preparing', 'running', 'waiting'].includes(status)) return null
         const active = await client.query('SELECT 1 FROM agent_run_leases WHERE user_id=$1 AND session_id=$2 AND expires_at>clock_timestamp()', [ownerId, sessionId])
         if (active.rowCount) return null
         const input = decrypt(secret, identity, row.nonce, row.payload)
-        if (input.v !== 2 || input.source !== 'web') {
+        if (!acceptsWebAgentDispatchInput(input)) {
           await client.query("UPDATE agent_run_dispatch SET state='selected',blocked_reason='version_conflict',token=NULL,lease_expires_at=NULL WHERE user_id=$1 AND session_id=$2 AND run_id=$3", [ownerId, sessionId, row.run_id])
           await updatePending(client, identity)
           return null
         }
         if (row.expired && !status) throw new Error('调度材料已过期，需要人工恢复')
+        const interactionResume = status === 'waiting' && !row.cancel_requested
+          ? await claimInteractionResumeLocked(client, identity) : null
+        if (status === 'waiting' && !row.cancel_requested && !interactionResume) return null
         const token = randomUUID()
         const result = await client.query<{ fence: string | number }>(`UPDATE agent_run_dispatch SET state='selected',token=$4,fence=fence+1,lease_expires_at=clock_timestamp()+($5*interval '1 millisecond')
           WHERE user_id=$1 AND session_id=$2 AND run_id=$3 RETURNING fence`, [ownerId, sessionId, row.run_id, token, leaseMs])
         await updatePending(client, identity)
         const fence = Number(result.rows[0]?.fence)
         if (!Number.isSafeInteger(fence) || fence < 1) throw new Error('调度 fencing 无效')
-        return { identity, token, fence, input, mode: status ? 'resume' as const : 'start' as const, cancelRequested: row.cancel_requested }
+        return { identity, token, fence, input, mode: status ? 'resume' as const : 'start' as const,
+          cancelRequested: row.cancel_requested,
+          ...(interactionResume ? { resolution: interactionResume.resolution,
+            interactionResume: { promptId: interactionResume.promptId, claimToken: interactionResume.claimToken, receipt: interactionResume.receipt } } : {}) }
       })
     },
     async renew(lease: AgentDispatchLease): Promise<boolean> {
       return withPostgresTransaction(pool, async client => {
         if (!await lockAgentRunSession(client, lease.identity)) return false
+        if (lease.interactionResume) {
+          const claim = await client.query(`UPDATE agent_interaction_resumes SET claim_expires_at=clock_timestamp()+interval '30 seconds'
+            WHERE user_id=$1 AND session_id=$2 AND run_id=$3 AND prompt_id=$4 AND claim_token=$5 AND completed_at IS NULL
+              AND claim_expires_at>clock_timestamp()`, [lease.identity.ownerId, lease.identity.sessionId, lease.identity.runId,
+            lease.interactionResume.promptId, lease.interactionResume.claimToken])
+          if (claim.rowCount !== 1) return false
+        }
         const result = await client.query(`UPDATE agent_run_dispatch SET lease_expires_at=clock_timestamp()+($6*interval '1 millisecond')
           WHERE user_id=$1 AND session_id=$2 AND run_id=$3 AND state='selected' AND token=$4 AND fence=$5 AND lease_expires_at>clock_timestamp()`, [lease.identity.ownerId, lease.identity.sessionId, lease.identity.runId, lease.token, lease.fence, leaseMs])
         return result.rowCount === 1
@@ -138,10 +173,13 @@ export function createPostgresAgentDispatch(pool: Pick<Pool, 'connect' | 'query'
       return withPostgresTransaction(pool, async client => {
         const id = lease.identity
         if (!await lockAgentRunSession(client, id)) return false
-        const result = await client.query(`UPDATE agent_run_dispatch SET blocked_reason=$6,
+        const result = await client.query(`UPDATE agent_run_dispatch SET blocked_reason=$6::text,
           token=CASE WHEN $6::text IS NULL THEN token ELSE NULL END,
           lease_expires_at=CASE WHEN $6::text IS NULL THEN lease_expires_at ELSE clock_timestamp()+interval '30 seconds' END
           WHERE user_id=$1 AND session_id=$2 AND run_id=$3 AND state='selected' AND token=$4 AND fence=$5 AND lease_expires_at>clock_timestamp()`, [id.ownerId,id.sessionId,id.runId,lease.token,lease.fence,reason])
+        if (result.rowCount === 1 && reason !== null && lease.interactionResume) await client.query(`UPDATE agent_interaction_resumes
+          SET claim_token=NULL,claim_expires_at=NULL WHERE user_id=$1 AND session_id=$2 AND run_id=$3 AND prompt_id=$4 AND claim_token=$5 AND completed_at IS NULL`,
+        [id.ownerId,id.sessionId,id.runId,lease.interactionResume.promptId,lease.interactionResume.claimToken])
         return result.rowCount === 1
       })
     },
@@ -197,13 +235,34 @@ export function createPostgresAgentDispatch(pool: Pick<Pool, 'connect' | 'query'
       return withPostgresTransaction(pool, async client => {
         const id = lease.identity
         if (!await lockAgentRunSession(client, id)) return false
-        const result = await client.query(`UPDATE agent_run_dispatch d SET state='done',token=NULL,lease_expires_at=NULL
+        const receipt = lease.interactionResume?.receipt ?? null
+        const result = await client.query<{ state: string }>(`UPDATE agent_run_dispatch d SET state=CASE
+            WHEN EXISTS (SELECT 1 FROM agent_run_checkpoints c WHERE c.user_id=$1 AND c.session_id=$2 AND c.run_id=$3 AND c.status IN ('completed','cancelled','failed','unknown'))
+              OR EXISTS (SELECT 1 FROM agent_run_startups s WHERE s.user_id=$1 AND s.session_id=$2 AND s.run_id=$3 AND s.status='failed') THEN 'done'
+            ELSE 'selected' END,
+          token=NULL,
+          lease_expires_at=CASE WHEN (EXISTS (SELECT 1 FROM agent_run_checkpoints c WHERE c.user_id=$1 AND c.session_id=$2 AND c.run_id=$3 AND c.status='waiting')
+                AND (($6::text IS NOT NULL AND NOT EXISTS (SELECT 1 FROM agent_run_interaction_receipts x WHERE x.user_id=$1 AND x.session_id=$2 AND x.run_id=$3 AND x.receipt=$6)) OR ($7::boolean AND NOT EXISTS (SELECT 1 FROM agent_run_checkpoints c WHERE c.user_id=$1 AND c.session_id=$2 AND c.run_id=$3 AND c.status IN ('completed','cancelled','failed','unknown')))))
+            THEN clock_timestamp()+interval '30 seconds' ELSE NULL END,
+          blocked_reason=CASE WHEN (EXISTS (SELECT 1 FROM agent_run_checkpoints c WHERE c.user_id=$1 AND c.session_id=$2 AND c.run_id=$3 AND c.status='waiting')
+                AND (($6::text IS NOT NULL AND NOT EXISTS (SELECT 1 FROM agent_run_interaction_receipts x WHERE x.user_id=$1 AND x.session_id=$2 AND x.run_id=$3 AND x.receipt=$6)) OR ($7::boolean AND NOT EXISTS (SELECT 1 FROM agent_run_checkpoints c WHERE c.user_id=$1 AND c.session_id=$2 AND c.run_id=$3 AND c.status IN ('completed','cancelled','failed','unknown')))))
+            THEN 'unavailable' ELSE NULL END
           WHERE d.user_id=$1 AND d.session_id=$2 AND d.run_id=$3 AND d.state='selected' AND d.token=$4 AND d.fence=$5 AND d.lease_expires_at>clock_timestamp()
           AND NOT EXISTS (SELECT 1 FROM agent_run_leases l WHERE l.user_id=$1 AND l.session_id=$2 AND l.expires_at>clock_timestamp())
           AND (EXISTS (SELECT 1 FROM agent_run_checkpoints c WHERE c.user_id=$1 AND c.session_id=$2 AND c.run_id=$3 AND c.status IN ('waiting','completed','cancelled','failed','unknown'))
-               OR EXISTS (SELECT 1 FROM agent_run_startups s WHERE s.user_id=$1 AND s.session_id=$2 AND s.run_id=$3 AND s.status='failed'))`, [id.ownerId,id.sessionId,id.runId,lease.token,lease.fence])
+               OR EXISTS (SELECT 1 FROM agent_run_startups s WHERE s.user_id=$1 AND s.session_id=$2 AND s.run_id=$3 AND s.status='failed'))
+          RETURNING state`, [id.ownerId,id.sessionId,id.runId,lease.token,lease.fence,receipt,lease.cancelRequested])
         if (result.rowCount !== 1) return false
-        await promoteNext(client, id)
+        if (lease.interactionResume) await client.query(`UPDATE agent_interaction_resumes r SET completed_at=clock_timestamp(),claim_token=NULL,claim_expires_at=NULL
+          WHERE r.user_id=$1 AND r.session_id=$2 AND r.run_id=$3 AND r.prompt_id=$4 AND r.claim_token=$5 AND r.completed_at IS NULL
+            AND (EXISTS (SELECT 1 FROM agent_run_interaction_receipts x WHERE x.user_id=r.user_id AND x.session_id=r.session_id AND x.run_id=r.run_id AND x.receipt=r.receipt)
+              OR EXISTS (SELECT 1 FROM agent_run_checkpoints c WHERE c.user_id=r.user_id AND c.session_id=r.session_id AND c.run_id=r.run_id AND c.status IN ('completed','cancelled','failed','unknown')))`,
+        [id.ownerId,id.sessionId,id.runId,lease.interactionResume.promptId,lease.interactionResume.claimToken])
+        if (lease.interactionResume) await client.query(`UPDATE agent_interaction_resumes SET claim_token=NULL,claim_expires_at=NULL
+          WHERE user_id=$1 AND session_id=$2 AND run_id=$3 AND prompt_id=$4 AND claim_token=$5 AND completed_at IS NULL`,
+        [id.ownerId,id.sessionId,id.runId,lease.interactionResume.promptId,lease.interactionResume.claimToken])
+        if (result.rows[0]?.state === 'done') await promoteNext(client, id)
+        else await updatePending(client, id)
         return true
       })
     },
@@ -221,7 +280,7 @@ export function createPostgresAgentDispatch(pool: Pick<Pool, 'connect' | 'query'
         const result = await client.query(`UPDATE agent_run_dispatch d SET state='done',token=NULL,lease_expires_at=NULL
           WHERE d.user_id=$1 AND d.session_id=$2 AND d.state='selected' AND (d.lease_expires_at IS NULL OR d.lease_expires_at<=clock_timestamp())
           AND NOT EXISTS (SELECT 1 FROM agent_run_leases l WHERE l.user_id=$1 AND l.session_id=$2 AND l.expires_at>clock_timestamp())
-          AND (EXISTS (SELECT 1 FROM agent_run_checkpoints c WHERE c.user_id=d.user_id AND c.session_id=d.session_id AND c.run_id=d.run_id AND c.status IN ('waiting','completed','cancelled','failed','unknown'))
+          AND (EXISTS (SELECT 1 FROM agent_run_checkpoints c WHERE c.user_id=d.user_id AND c.session_id=d.session_id AND c.run_id=d.run_id AND c.status IN ('completed','cancelled','failed','unknown'))
                OR EXISTS (SELECT 1 FROM agent_run_startups s WHERE s.user_id=d.user_id AND s.session_id=d.session_id AND s.run_id=d.run_id AND s.status='failed'))`, [ownerId,sessionId])
         if (result.rowCount === 1) { await promoteNext(client, scope); return true }
         const active = await client.query('SELECT 1 FROM agent_run_leases WHERE user_id=$1 AND session_id=$2 AND expires_at>clock_timestamp()', [ownerId, sessionId])

@@ -6,6 +6,11 @@ import { Pool } from 'pg'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
 import { createUserToken } from '../../src/domains/auth/auth.js'
+import { applyAgentBaseMigration } from '../../src/migrations/agent-base-migrate.js'
+import { applyFilesystemAuthorizationMigration } from '../../src/migrations/filesystem-authorization-migrate.js'
+import { applySecurityEventsMigration, checkSecurityEventsMigration } from '../../src/migrations/security-events-migrate.js'
+import { applyTerminalSessionsMigration, checkTerminalSessionsMigration } from '../../src/migrations/terminal-sessions-migrate.js'
+import { applyWebDomainMigration } from '../../src/migrations/web-domain-migrate.js'
 import {
   createAgentSessionFilesystemAuthorization,
   type FilesystemAuthorizationConfirmationPort,
@@ -58,31 +63,26 @@ test('Vite→Node Host→隔离 PostgreSQL 完成会话授权申请、确认、�
   const previousProxyTarget = process.env.VITE_API_PROXY_TARGET
 
   try {
-    await pool.query(`
-      CREATE TABLE conversation_sessions (id integer PRIMARY KEY, user_id uuid NOT NULL, title varchar(300));
-      CREATE TABLE filesystem_authorization_grants (
-        id serial PRIMARY KEY, user_id uuid NOT NULL, subject_type varchar(24) NOT NULL,
-        subject_id varchar(64) NOT NULL, scope varchar(32) NOT NULL, permission varchar(32) NOT NULL,
-        granted_by varchar(16) NOT NULL, granted_at timestamptz NOT NULL, expires_at timestamptz,
-        revoked_at timestamptz, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL
-      );
-      CREATE TABLE security_events (
-        id serial PRIMARY KEY, user_id uuid NOT NULL, event_type varchar(80) NOT NULL,
-        resource_type varchar(120) NOT NULL, resource_fingerprint varchar(64) NOT NULL,
-        owner_fingerprint varchar(64), client_fingerprint varchar(64), ip_fingerprint varchar(64),
-        user_agent_fingerprint varchar(64), action varchar(32) NOT NULL, reason_code varchar(80) NOT NULL,
-        metadata_json jsonb NOT NULL, occurred_at timestamptz NOT NULL, expires_at timestamptz NOT NULL
-      );
-      CREATE TABLE terminal_sessions (
-        id serial PRIMARY KEY, owner_id uuid NOT NULL, session_id integer NOT NULL, mode varchar(32) NOT NULL,
-        status varchar(32) NOT NULL, pty_pid integer, pty_sandbox_id varchar(128), pty_cols integer,
-        pty_rows integer, closed_at timestamptz, updated_at timestamptz NOT NULL
-      );
-    `)
-    await pool.query(
-      `INSERT INTO conversation_sessions (id,user_id,title) VALUES (42,$1,'我的授权会话'),(43,$2,'他人会话')`,
+    await applyAgentBaseMigration(pool)
+    await applyWebDomainMigration(pool)
+    await applyFilesystemAuthorizationMigration(pool)
+    assert.equal(await checkSecurityEventsMigration(pool), 'pending')
+    assert.equal(await checkTerminalSessionsMigration(pool), 'pending')
+    assert.equal(await applySecurityEventsMigration(pool), 'applied')
+    assert.equal(await applySecurityEventsMigration(pool), 'unchanged')
+    assert.deepEqual((await Promise.all([applyTerminalSessionsMigration(pool), applyTerminalSessionsMigration(pool)])).sort(),
+      ['applied', 'unchanged'])
+    assert.equal(await checkSecurityEventsMigration(pool), 'applied')
+    assert.equal(await checkTerminalSessionsMigration(pool), 'applied')
+    await pool.query(`INSERT INTO users(id,username,email,hashed_password)
+      VALUES($1,'sample','sample@example.invalid','synthetic'),($2,'foreign','foreign@example.invalid','synthetic')`,
+    [ownerId, foreignOwnerId])
+    const { rows: sessions } = await pool.query<{ id: number }>(
+      `INSERT INTO conversation_sessions(user_id,source,title) VALUES($1,'web','我的授权会话'),($2,'web','他人会话') RETURNING id`,
       [ownerId, foreignOwnerId],
     )
+    const [session, foreignSession] = sessions
+    assert.ok(session && foreignSession)
     app = createApp({
       appName: '合成会话授权 Host',
       isReady: async () => true,
@@ -135,11 +135,11 @@ test('Vite→Node Host→隔离 PostgreSQL 完成会话授权申请、确认、�
       'content-type': 'application/json',
     }
 
-    const foreign = await fetch(`${base}/api/v1/agent/sessions/43/filesystem-authorization/request`, {
+    const foreign = await fetch(`${base}/api/v1/agent/sessions/${foreignSession.id}/filesystem-authorization/request`, {
       method: 'POST', headers,
     })
     assert.equal(foreign.status, 404)
-    const request = await fetch(`${base}/api/v1/agent/sessions/42/filesystem-authorization/request`, {
+    const request = await fetch(`${base}/api/v1/agent/sessions/${session.id}/filesystem-authorization/request`, {
       method: 'POST', headers,
     })
     assert.equal(request.status, 200)
@@ -149,29 +149,29 @@ test('Vite→Node Host→隔离 PostgreSQL 完成会话授权申请、确认、�
     assert.equal(pending.authorization_ttl_minutes, 10)
     assert.equal((await pool.query('SELECT id FROM filesystem_authorization_grants')).rowCount, 0)
 
-    const invalid = await fetch(`${base}/api/v1/agent/sessions/42/filesystem-authorization`, {
+    const invalid = await fetch(`${base}/api/v1/agent/sessions/${session.id}/filesystem-authorization`, {
       method: 'POST', headers, body: JSON.stringify({ confirm_code: 'invalid' }),
     })
     assert.equal(invalid.status, 400)
-    const confirm = await fetch(`${base}/api/v1/agent/sessions/42/filesystem-authorization`, {
+    const confirm = await fetch(`${base}/api/v1/agent/sessions/${session.id}/filesystem-authorization`, {
       method: 'POST', headers, body: JSON.stringify({ confirm_code: pending.confirm_code }),
     })
     assert.equal(confirm.status, 200)
     const granted = await confirm.json() as Record<string, unknown>
     assert.equal(granted.status, 'authorized')
-    assert.equal(granted.session_id, 42)
+    assert.equal(granted.session_id, session.id)
     assert.equal((await pool.query('SELECT id FROM filesystem_authorization_grants WHERE user_id=$1', [ownerId])).rowCount, 1)
 
     await pool.query(
-      `INSERT INTO terminal_sessions (owner_id,session_id,mode,status,pty_pid,pty_sandbox_id,pty_cols,pty_rows,updated_at)
-       VALUES ($1,42,'interactive-pty','running',12,'synthetic-container',80,24,now())`, [ownerId],
+      `INSERT INTO terminal_sessions (id,owner_id,session_id,mode,status,pty_pid,pty_sandbox_id,pty_cols,pty_rows,created_at,updated_at)
+       VALUES ('synthetic-pty',$1,$2,'interactive-pty','running',12,'synthetic-container',80,24,now(),now())`, [ownerId, session.id],
     )
-    const revoke = await fetch(`${base}/api/v1/agent/sessions/42/filesystem-authorization`, {
+    const revoke = await fetch(`${base}/api/v1/agent/sessions/${session.id}/filesystem-authorization`, {
       method: 'DELETE', headers,
     })
     assert.equal(revoke.status, 200)
-    assert.deepEqual(await revoke.json(), { status: 'revoked', session_id: 42, revoked: true })
-    assert.deepEqual(terminated, ['1'])
+    assert.deepEqual(await revoke.json(), { status: 'revoked', session_id: session.id, revoked: true })
+    assert.deepEqual(terminated, ['synthetic-pty'])
     assert.equal((await pool.query("SELECT id FROM security_events WHERE reason_code='requested'")).rowCount, 1)
     assert.equal((await pool.query("SELECT id FROM security_events WHERE reason_code='granted'")).rowCount, 1)
     assert.equal((await pool.query("SELECT id FROM security_events WHERE reason_code='revoked'")).rowCount, 1)

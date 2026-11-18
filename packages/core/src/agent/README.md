@@ -6,14 +6,15 @@
 
 | 位置 | Python 职责参照 | 当前实现 |
 | --- | --- | --- |
-| `runtime.ts` | Runner 与 Provider Runtime 组合 | 可复用 Agent Runtime 入口；Host 注入身份关联的上下文、Provider binding、授权、持久化、取消和执行端口。 |
+| `runtime.ts` | Runner 与 Provider Runtime 组合；持久 Chat、调度 Worker 与恢复扫描组合 | Host 注入身份关联的上下文、Provider binding、授权、持久化、取消、通知及执行端口，并显式启停。摘要和反思可复用同一 Provider 绑定。 |
+| `chat-service.ts` | Chat Run 生命周期用例 | 跨端 start/resume/cancel/reconstruction 编排；事件投影、认证 owner、持久事件和 dispatch 由 Host 注入。 |
 | `runner.ts` | `runner.py` | 组合可信运行准备、上下文、执行器和回复策略。 |
 | `core.ts` | `core.py` / 模型循环 | Provider 轮次、工具派发、运行推进和事件提交。 |
 | `models.ts`、`ports.ts` | 模型与依赖契约 | 运行状态、事件和显式注入的领域端口。 |
-| `context/` | `context/` | 上下文来源、能力快照、组装、预算和压缩。 |
+| `context/` | `context/` | 上下文来源、能力快照、可信快照/提示词组装、预算和压缩；`compaction-runtime.ts` 管理同一 Run 的 Provider 摘要能力、惰性初始化与失败重试；Host 只注入已授权数据、模型绑定和工具 schema。 |
 | `context/history/`、`context/messages/` | 历史与消息处理 | Canonical 历史、排序、图片读取适配、媒体清理与提及；附件快照编码位于 `context/snapshot-codec.ts`。 |
-| `run/` | `run/` 与运行收口 | 生命周期、取消、终结、流消费、背压及 Run 加密编码。 |
-| `interactions/` | `interactions/` | 提示与动作 schema、等待队列、确认回执消费及恢复协调。 |
+| `run/` | `run/` 与运行收口 | 生命周期、取消、终结、流消费、背压、可信 Run 工具绑定和加密编码。调度执行依赖 Host 队列、来源校验和租约。`reconstruct.ts` 核对检查点、授权版本和 Provider 作用域，按持久会话快照重建固定请求前缀并校验指纹，管理运行资源释放。`event-stream.ts` 从提交序号有序重放并响应 Host 唤醒。Host 持久校验交互收据后随恢复租约提供 resolution，Harness 核对 pending interaction 绑定。 |
+| `interactions/` | `interactions/` | 提示与动作 schema、等待队列、动作/文本/凭据消费及恢复协调。事务、权限查询、命令副作用与一次性确认码兑换经可信 Host 端口执行。 |
 | `memory/` | `memory/`、反思 | 反思快照、反思输入和记忆能力。 |
 | `providers/` | `providers/` | Provider 注册、协议、媒体与调用适配。 |
 | `tools/` | `tools/` | 工具注册、参数校验、权限、确认和可复用工具实现。 |
@@ -25,7 +26,7 @@
 
 标题、摘要和后台会话生命周期应按 Python `conversation/` 的职责独立实现。当前没有为尚未迁入的生命周期业务创建空目录或占位实现。`knowledge/` 等领域能力继续保留独立边界。
 
-Web/SSE、IM 平台入口、身份、凭据、数据库连接及实际执行后端由 Host 装配。Core 不反向依赖 Host，不以目录整理为由引入平台或数据库依赖。
+Web/SSE、IM 平台入口、身份、凭据、数据库连接及实际执行后端由 Host 装配。可移植的 `@gugu/core/agent` 入口加载 Run、Provider 编排与上下文规则。需要 Node、Kysely 或存储契约的 RAG、知识、记忆和持久交互用例由 Host 通过各自的 Core 子路径显式装配。摘要工具 schema 由当前 Run 的可信 Host 读取，Core 管理预算门控、初始化复用和失败重试。Chat 和定时任务共用 Core 的运行用量汇总。
 
 测试按职责位于 `tests/agent/{context,core,run,interactions}/`，反思行为仍由对应上下文行为用例保护。目录移动保持原业务断言，同步更新 suite、测试元数据及 Python 行为映射；不将重整计为新增工具迁移或平台验收。
 

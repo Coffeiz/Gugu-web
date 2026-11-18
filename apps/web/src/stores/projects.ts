@@ -142,12 +142,14 @@ export const useProjectStore = defineStore('projects', () => {
   }
 
   async function deleteProject(id: number) {
+    await flushProjectUpdates(id)
     await projectsApi.delete(id)
     projects.value = projects.value.filter(p => p.id !== id)
     if (deletedLoaded.value) void fetchDeletedProjects()
   }
 
   async function archiveProject(id: number) {
+    await flushProjectUpdates(id)
     const p = projects.value.find(p => p.id === id)
     await projectsApi.update(id, { archived: true, version: p?.version })
     projects.value = projects.value.filter(p => p.id !== id)
@@ -345,6 +347,16 @@ export const useProjectStore = defineStore('projects', () => {
       void _patchProject(id, next.fields)
     }, delay)
     delayedProjectUpdates.set(id, next)
+  }
+
+  async function flushProjectUpdates(id: number) {
+    const pending = delayedProjectUpdates.get(id)
+    if (pending) {
+      if (pending.timer) clearTimeout(pending.timer)
+      delayedProjectUpdates.delete(id)
+      await _patchProject(id, pending.fields)
+    }
+    await projectWrites.get(id)
   }
 
   const modalProjectId = ref<number | null>(null)

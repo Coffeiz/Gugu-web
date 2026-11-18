@@ -3,6 +3,14 @@ import { resolve } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { loadConfig } from '../../src/config.js'
+import { resolveConfigOverridePath } from '../../src/adapters/config-override-file.js'
+
+test('运行配置默认位于 Web Host 自身目录，显式路径仍优先', () => {
+  const expected = fileURLToPath(new URL('../../config.override.json', import.meta.url))
+  assert.equal(resolveConfigOverridePath({}), expected)
+  assert.equal(resolveConfigOverridePath({ GUGU_CONFIG_OVERRIDE_FILE: '  ' }), expected)
+  assert.equal(resolveConfigOverridePath({ GUGU_CONFIG_OVERRIDE_FILE: '  test-runtime/host.json  ' }), resolve('test-runtime/host.json'))
+})
 
 test('loadConfig supplies stable local defaults and keeps the database URL private', () => {
   const config = loadConfig({
@@ -218,15 +226,15 @@ test('loadConfig rejects malformed public email feature switches', () => {
   }), /SMTP__ENABLED 配置无效/)
 })
 
-test('loadConfig accepts the current SQLAlchemy PostgreSQL URL form for Node pg', () => {
-  const config = loadConfig({
-    GUGU_WEBUI_DATABASE_URL:
-      'postgresql+asyncpg://synthetic%40user:synthetic%2Fpass@db.invalid/gugu_test',
-    SECRET_KEY: 'synthetic-secret',
-  })
-
-  assert.equal(config.databaseUrl, 'postgresql://synthetic%40user:synthetic%2Fpass@db.invalid/gugu_test')
+test('loadConfig accepts native PostgreSQL URIs, keeps credentials private and rejects driver-specific schemes', () => {
+  const url = 'postgresql://synthetic%40user:synthetic%2Fpass@db.invalid/gugu_test'
+  const env = { GUGU_WEBUI_DATABASE_URL: url, SECRET_KEY: 'synthetic-secret' }
+  const config = loadConfig(env)
+  assert.equal(config.databaseUrl, url)
   assert.equal(JSON.stringify(config).includes('synthetic'), false)
+  assert.throws(() => loadConfig({
+    ...env, GUGU_WEBUI_DATABASE_URL: url.replace('postgresql:', 'postgresql+asyncpg:'),
+  }), { message: 'GUGU_WEBUI_DATABASE_URL 必须使用 PostgreSQL' })
 })
 
 test('loadConfig keeps the optional Redis URL private and rejects unsupported protocols', () => {

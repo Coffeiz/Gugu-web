@@ -2,13 +2,79 @@ import { createHash } from 'node:crypto'
 import { describe,expect,it } from 'vitest'
 import type { CanonicalMessage,ContextServices,Json,OpaqueProviderProjection,ReflectionProjectionPort,SummaryGenerationPorts } from "../../../src/agent/index.js"
 import {
-MessageArea,ReflectionSnapshots,appendReflectionHistory,applyCompaction,compactContext,createCompactionSummarizer,deterministicSummary,enforceProviderOverflow,formatCompactedSummary,isContextOverflowError,
+MessageArea,ReflectionSnapshots,appendReflectionHistory,applyCompaction,compactContext,createAgentCompactionPort,createLazyAgentCompactionPort,createCompactionSummarizer,deterministicSummary,enforceProviderOverflow,formatCompactedSummary,isContextOverflowError,
 matchedAtomicUnits,providerInputTokens,reflectionRecoveryPolicy,resolveCompactionLimits,shouldCompact,stableJson,stripToolCallInputs,summaryOutputExhausted,toolCallIds,toolResultIds,trimOldestHistory,validateCompactSummary
 } from "../../../src/agent/index.js"
+import type { AgentProviderAuxiliaryPorts } from "../../../src/agent/index.js"
 function services(): ContextServices {
   let id = 0
   return { nextId: () => `id-${++id}`, digest: value => createHash('sha256').update(stableJson(value)).digest('hex').slice(0, 16) }
 }
+
+describe('Agent compaction runtime', () => {
+  it('延迟绑定并发共享初始化，绑定失败后可重试，摘要失败不重复绑定', async () => {
+    let bindings = 0, summaries = 0
+    let rejectFirst!: () => void
+    const firstBinding = new Promise<void>(resolve => { rejectFirst = resolve })
+    const port = createLazyAgentCompactionPort(async () => {
+      bindings++
+      if (bindings === 1) { await firstBinding; throw new Error('可信 Provider 尚未绑定') }
+      return { async summarize() { summaries++; if (summaries === 1) throw new Error('摘要失败'); return '摘要' } }
+    })
+    const input = { history: [], compressible: [], previousSummary: null, projection: null, preserveLatestUser: false }
+    expect(bindings).toBe(0)
+    const concurrent = [port.summarize(input), port.summarize(input)]
+    await Promise.resolve()
+    expect(bindings).toBe(1)
+    rejectFirst()
+    const rejected = await Promise.allSettled(concurrent)
+    expect(rejected.map(result => result.status)).toEqual(['rejected', 'rejected'])
+    expect(rejected.map(result => result.status === 'rejected' ? String(result.reason) : '')).toEqual([
+      expect.stringContaining('可信 Provider 尚未绑定'), expect.stringContaining('可信 Provider 尚未绑定'),
+    ])
+    await expect(port.summarize(input)).rejects.toThrow('摘要失败')
+    expect(await port.summarize(input)).toBe('摘要')
+    expect(bindings).toBe(2)
+    expect(summaries).toBe(2)
+  })
+  it('仅在有效预算下读取 Run 的授权工具，首次并发摘要共用同一模型投影', async () => {
+    const calls: Array<{ modelIdentity: string; scenario: string }> = []
+    let projectionRequests = 0
+    let toolReads = 0
+    const provider = {
+      branchProvider(modelIdentity: string) {
+        return { complete: async (input: { scenario: string }) => {
+          calls.push({ modelIdentity, scenario: input.scenario })
+          return { ok: true as const, output: '合成状态摘要', usage: { finish_reason: 'stop', output: 8 } }
+        } }
+      },
+      summaryProjection: async () => {
+        projectionRequests++
+        return { transformProjection: (projection: never) => ({ projection, changedMessages: 0 }) }
+      },
+    } as unknown as AgentProviderAuxiliaryPorts
+    const base = {
+      provider, identity: { ownerId: 'owner-synthetic', sessionId: 'session-synthetic', runId: 'run-synthetic' },
+      modelIdentity: 'model-bound', stableSystem: '可信稳定系统提示', scope: 'scope-bound', scopeRevision: 'revision-1',
+      async loadTools() { toolReads++; return [] },
+      contextTokens: 4096, instruction: '', digest: (value: unknown) => stableJson(value), nextId: () => 'summary-synthetic', diagnostic: () => {},
+    }
+    const invalid = createAgentCompactionPort({ ...base, maxOutputTokens: 0 })
+    expect(await invalid.summarize({ history: [], compressible: [], previousSummary: null, projection: null, preserveLatestUser: false })).toBe('')
+    expect(projectionRequests).toBe(0)
+    expect(toolReads).toBe(0)
+    expect(calls).toHaveLength(0)
+
+    const valid = createAgentCompactionPort({ ...base, maxOutputTokens: 128 })
+    expect(toolReads).toBe(0)
+    const history = [{ role: 'user' as const, content: '旧对话' }]
+    const input = { history, compressible: history, previousSummary: null, projection: null, preserveLatestUser: false }
+    expect(await Promise.all([valid.summarize(input), valid.summarize(input)])).toEqual(['合成状态摘要', '合成状态摘要'])
+    expect(toolReads).toBe(1)
+    expect(projectionRequests).toBe(1)
+    expect(calls).toEqual(Array(2).fill({ modelIdentity: 'model-bound', scenario: 'compaction' }))
+  })
+})
 const user = (content: string): CanonicalMessage => ({ role: 'user', content })
 const accessScopeHash = 'scope-owner'
 const history = (size: number): CanonicalMessage[] => Array.from({ length: size }, (_, index) => ({ ...user(`消息${index}`), _history_id: String(index + 1) }))

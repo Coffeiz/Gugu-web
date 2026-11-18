@@ -1,7 +1,7 @@
 import { lstat, readdir, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { openLocalFile, UnsafeLocalPathError } from '@gugu/fs/node'
-import type { AgentKnowledgeReadStore } from '@gugu/core/agent'
+import type { AgentKnowledgeReadStore } from '@gugu/core/agent/knowledge/overview'
 
 const OWNER = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 const ENTRY_ID = '[A-Za-z0-9_-]{1,128}'

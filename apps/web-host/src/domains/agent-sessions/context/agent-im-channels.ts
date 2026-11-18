@@ -1,5 +1,6 @@
 import type { ContextDataPorts } from '@gugu/core/agent'
 import type { Pool } from 'pg'
+import { agentContextSubject } from './agent-context-subject.js'
 import { normalizeOwnerId } from '../../../adapters/owner-context.js'
 
 export const AGENT_IM_PLATFORMS = ['feishu', 'qq', 'wechat', 'telegram'] as const
@@ -13,18 +14,19 @@ function parseReach(raw: string): unknown {
 export function createAgentImChannelLoader(options: {
   pool: Pick<Pool, 'query'>
   redis: { get(key: string): Promise<string | null> }
+  subject?: 'chat' | 'scheduled_task'
   enabled(platform: AgentImPlatform): boolean | Promise<boolean>
 }): ContextDataPorts['loadImChannels'] {
   if (typeof options.enabled !== 'function') throw new TypeError('缺少 IM 平台策略')
   return async (identity, signal) => {
     signal?.throwIfAborted()
     const owner = normalizeOwnerId(identity.ownerId)
-    if (!/^[1-9]\d*$/.test(identity.sessionId) || !Number.isSafeInteger(Number(identity.sessionId))) throw new TypeError('会话 ID 无效')
-    const result = await options.pool.query<{ platform: string | null }>(`SELECT b.platform FROM conversation_sessions s
+    const subject = agentContextSubject(options.subject ?? 'chat', identity)
+    const result = await options.pool.query<{ platform: string | null }>(`SELECT b.platform FROM ${subject.from} s
       LEFT JOIN user_bots b ON b.user_id=s.user_id AND b.enabled=true AND b.platform=ANY($3::text[])
-      WHERE s.user_id=$1 AND s.id=$2`, [owner, identity.sessionId, [...AGENT_IM_PLATFORMS]])
+      WHERE s.user_id=$1 AND s.id=$2`, [owner, subject.id, [...AGENT_IM_PLATFORMS]])
     signal?.throwIfAborted()
-    if (!result.rows.length) throw new Error('会话不存在')
+    if (!result.rows.length) throw new Error(subject.missing)
     const bots = new Set(result.rows.map(row => row.platform))
     const channels: Record<string, boolean> = {}
     for (const platform of AGENT_IM_PLATFORMS) {

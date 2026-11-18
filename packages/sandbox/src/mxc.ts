@@ -18,6 +18,7 @@ export type NativeSpawn = (request: {
   network: {
     egress: { default: 'deny' }
     ingress: { default: 'deny'; hostLoopback: 'deny' }
+    runtimeConfig?: { networkProxy: string }
   }
   ui: { disable: true; clipboard: 'none'; injection: false }
   environment: Record<string, string>
@@ -33,7 +34,19 @@ export class MxcExecutor implements ExecutionBackend {
     timeout: true,
     cancellation: true,
   })
-  constructor(private spawn: NativeSpawn, private containment: 'process' | 'bubblewrap' = 'process') {}
+  private networkProxy?: string
+  constructor(private spawn: NativeSpawn, private containment: 'process' | 'bubblewrap' = 'process', networkProxy?: string) {
+    if (networkProxy !== undefined) {
+      let proxy: URL
+      try { proxy = new URL(networkProxy) } catch { throw new ExecutionError('denied', 'MXC 回环代理地址无效') }
+      const port = proxy.port || (proxy.protocol === 'https:' ? '443' : '80')
+      if (!['http:', 'https:'].includes(proxy.protocol) || proxy.username || proxy.password || proxy.search || proxy.hash
+        || proxy.pathname !== '/' || !['localhost', '127.0.0.1'].includes(proxy.hostname.toLowerCase())
+        || Number(port) < 1 || Number(port) > 65535)
+        throw new ExecutionError('denied', 'MXC 只接受本机回环 HTTP/S 代理')
+      this.networkProxy = `${proxy.protocol}//${proxy.hostname.toLowerCase()}:${port}`
+    }
+  }
   async execute(policy: ExecutionPolicy, signal?: AbortSignal, onOutput?: (stream: 'stdout' | 'stderr', chunk: Uint8Array) => void): Promise<ExecutionResult> {
     if (signal?.aborted) throw new ExecutionError('cancelled', '执行已取消')
     let child: NativeProcess | undefined
@@ -79,6 +92,7 @@ export class MxcExecutor implements ExecutionBackend {
         network: {
           egress: { default: 'deny' },
           ingress: { default: 'deny', hostLoopback: 'deny' },
+          ...(this.networkProxy ? { runtimeConfig: { networkProxy: this.networkProxy } } : {}),
         },
         ui: { disable: true, clipboard: 'none', injection: false },
         environment: { ...policy.environment },

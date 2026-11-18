@@ -1,28 +1,9 @@
 import { z } from 'zod'
+import { CoreError } from './error.js'
+export { CoreError, type ErrorCode } from './error.js'
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
 export type Fields = Record<string, unknown>
-export type ErrorCode =
-  | 'invalid_request'
-  | 'not_found'
-  | 'conflict'
-  | 'storage_error'
-  | 'schema_upgrade_required'
-  | 'closed'
-  | 'cancelled'
-  | 'busy'
-  | 'database_in_use'
-
-export class CoreError extends Error {
-  constructor(
-    readonly code: ErrorCode,
-    message: string,
-  ) {
-    super(message)
-    this.name = 'CoreError'
-  }
-}
-
 export const ownerSchema = z
   .string()
   .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)

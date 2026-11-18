@@ -78,8 +78,8 @@ onBeforeUnmount(() => unregEsc?.())
 .bm-overlay {
   position: fixed; inset: 0;
   background: rgba(20, 22, 30, 0.3);
-  backdrop-filter: var(--modal-overlay-blur, blur(6px));
-  -webkit-backdrop-filter: var(--modal-overlay-blur, blur(6px));
+  backdrop-filter: blur(var(--modal-overlay-blur-radius, 6px)) var(--desktop-backdrop-alpha, );
+  -webkit-backdrop-filter: blur(var(--modal-overlay-blur-radius, 6px)) var(--desktop-backdrop-alpha, );
 }
 
 /* ── 居中容器：不拦截指针（下面的窗口照点），只有卡片本体可交互 ── */
@@ -101,7 +101,7 @@ onBeforeUnmount(() => unregEsc?.())
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
   border: 1px solid rgba(255, 255, 255, 0.72);
-  border-radius: 20px;
+  border-radius: var(--card-radius);
   box-shadow: var(--modal-card-shadow),
               inset 0 1px 0 var(--border-highlight),
               inset 1px 0 0 var(--aero-glass-highlight-side);
@@ -121,14 +121,12 @@ onBeforeUnmount(() => unregEsc?.())
    离场保留 opacity 淡出：关闭瞬间模糊失效会被同步的淡出盖住，肉眼基本不可察。 */
 .bm-ov-enter-active {
   transition: background-color var(--modal-enter-duration) var(--modal-enter-easing),
-              backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing),
-              -webkit-backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing);
+              --modal-overlay-blur-radius var(--modal-enter-duration) var(--modal-enter-easing);
 }
 .bm-ov-leave-active { transition: opacity var(--modal-leave-duration) var(--modal-leave-easing); }
 .bm-ov-enter-from {
   background-color: rgba(20, 22, 30, 0);
-  backdrop-filter: blur(0px);
-  -webkit-backdrop-filter: blur(0px);
+  --modal-overlay-blur-radius: 0px;
 }
 .bm-ov-leave-to { opacity: 0; }
 

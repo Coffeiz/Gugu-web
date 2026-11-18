@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import SQLite from 'better-sqlite3'
 import { Kysely, SqliteDialect, sql } from 'kysely'
-import { createCanvasRagSource, createNoteRagSource, createSqlRagRebuildWorker, createSqlRagPersistentIndexReader } from '../../src/agent/index.js'
+import { createCanvasRagSource, createNoteRagSource, createSqlRagRebuildWorker, createSqlRagPersistentIndexReader } from '../../src/agent/rag/index.js'
 import { enqueueMindRagIndex } from '../../src/mind/rag-index-job.js'
 import { createSqlMindCanvasReader } from '../../src/mind/canvas-read.js'
 import { createSqlMindNoteMutator } from '../../src/mind/note-mutations-sql.js'

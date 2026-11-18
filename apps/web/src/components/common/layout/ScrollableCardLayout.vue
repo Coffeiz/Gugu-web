@@ -1,6 +1,6 @@
 <template>
   <div class="scrollable-card-layout">
-    <div class="scrollable-card-layout__viewport scroll-surface scroll-surface--compact scroll-surface--glass-edges">
+    <div class="scrollable-card-layout__viewport scroll-surface scroll-surface--compact">
       <div v-if="slots.actions" class="scrollable-card-layout__actions">
         <slot name="actions" />
       </div>

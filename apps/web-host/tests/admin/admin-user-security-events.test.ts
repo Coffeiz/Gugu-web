@@ -16,7 +16,7 @@ const eventRows = [{
 }]
 
 function setup({ exists = true }: { exists?: boolean } = {}) {
-  const calls: { sql: string; values: unknown[] }[] = []
+  const calls: { userId: string; limit: number }[] = []
   let queryError: Error | undefined
   const app = Fastify()
   installHttpErrorHandler(app)
@@ -24,11 +24,17 @@ function setup({ exists = true }: { exists?: boolean } = {}) {
     requireAdmin: async (request, reply) => {
       if (request.headers.authorization !== 'admin') return reply.code(401).send({ error: 'unauthorized' })
     },
-    query: async (sql, values) => {
-      calls.push({ sql, values })
+    read: async (userId, limit) => {
+      calls.push({ userId, limit })
       if (queryError) throw queryError
-      if (sql.includes('FROM users')) return exists ? [{ id: userId }] : []
-      return eventRows
+      if (!exists) return null
+      return { items: eventRows.slice(0, limit).map(row => ({
+        id: Number(row.id), event_type: String(row.event_type), resource_type: String(row.resource_type),
+        resource_fingerprint: String(row.resource_fingerprint), owner_fingerprint: row.owner_fingerprint as string | null,
+        client_fingerprint: row.client_fingerprint as string | null, ip_fingerprint: row.ip_fingerprint as string | null,
+        action: String(row.action), reason_code: String(row.reason_code),
+        occurred_at: new Date(String(row.occurred_at)).toISOString().replace(/Z$/, '+00:00'),
+      })) }
     },
   })
   return { app, calls, set queryError(error: Error | undefined) { queryError = error }, cleanup: () => app.close() }
@@ -48,10 +54,8 @@ test('按用户存在性先查404，结果按时间倒序分页且仅返回指�
   try {
     const response = await ctx.app.inject({ url: `/api/v1/admin/users/${userId}/security-events?limit=1`, headers: { authorization: 'admin' } })
     assert.equal(response.statusCode, 200)
-    assert.equal(ctx.calls.length, 2)
-    assert.deepEqual(ctx.calls[0]!.values, [userId])
-    assert.deepEqual(ctx.calls[1]!.values, [userId, 1])
-    assert.match(ctx.calls[1]!.sql, /ORDER BY occurred_at DESC\s+LIMIT \$2/)
+    assert.equal(ctx.calls.length, 1)
+    assert.deepEqual(ctx.calls, [{ userId, limit: 1 }])
     const body = response.json()
     assert.deepEqual(body.items, [{
       id: 17, event_type: 'ownership.denied', resource_type: 'File',
@@ -70,7 +74,7 @@ test('用户不存在返回404且不查询事件，UUID和limit边界在查询�
   try {
     const response = await missing.app.inject({ url: `/api/v1/admin/users/${userId}/security-events`, headers: { authorization: 'admin' } })
     assert.equal(response.statusCode, 404)
-    assert.equal(missing.calls.length, 1)
+    assert.deepEqual(missing.calls, [{ userId, limit: 100 }])
   } finally { await missing.cleanup() }
 
   const ctx = setup()

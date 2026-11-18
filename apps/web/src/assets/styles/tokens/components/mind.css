@@ -14,6 +14,7 @@
   --mind-toolbar-bg: var(--glass-card-background);
   --mind-toolbar-border: var(--glass-card-border);
   --mind-system-card-blur: var(--glass-blur);
+  --mind-notes-list-card-bg: var(--surface-card-solid);
 
   /* Notes page calendar trigger: preserve the exact legacy light appearance while giving dark
      mode its own token mapping below. The page component only owns the circular geometry. */
@@ -62,7 +63,7 @@
 
   /* Canvas connection affordances. All canvas cards intentionally share radius-md; the outside
      dashed outline adds its offset to that radius so the expanded curve stays concentric. */
-  --mind-canvas-card-radius: var(--radius-md);
+  --mind-canvas-card-radius: var(--radius-sm);
   --mind-connection-outline-offset: 4px;
   --mind-connection-outline-width: 2px;
   --mind-connection-outline: color-mix(in srgb,var(--action-primary) 60%,transparent);
@@ -96,6 +97,10 @@ html[data-family='mono'] {
 }
 
 html[data-theme='dark'][data-family] {
+  --mind-canvas-bg: var(--palette-page-mid);
+  --mind-canvas-dot: color-mix(in srgb, var(--content-secondary) 26%, transparent);
+  --mind-notes-list-card-bg: var(--palette-surface-strong);
+  --mind-notes-meta-opacity: 1;
   /* 暗色下的日期触发器跟随输入控件表面，避免沿用亮色主题的半透明白底。 */
   --mind-calendar-trigger-bg: var(--input-bg);
   --mind-calendar-trigger-border: var(--input-border);
@@ -129,7 +134,7 @@ html[data-theme='dark'][data-family] {
   --mind-connection-dot-ring: color-mix(in srgb,var(--action-primary) 34%,transparent);
   --mind-connection-dot-muted-opacity: .58;
 
-  --mind-relation-line: color-mix(in srgb,var(--content-secondary) 42%,transparent);
-  --mind-relation-line-draft: color-mix(in srgb,var(--action-primary) 56%,transparent);
+  --mind-relation-line: color-mix(in srgb,var(--content-secondary) 52%,transparent);
+  --mind-relation-line-draft: color-mix(in srgb,var(--action-primary) 72%,transparent);
   --mind-relation-line-danger: color-mix(in srgb,var(--status-danger) 72%,var(--content-secondary));
 }

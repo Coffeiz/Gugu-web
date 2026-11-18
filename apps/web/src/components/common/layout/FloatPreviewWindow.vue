@@ -838,7 +838,7 @@ onUnmounted(() => {
   position: fixed;
   display: flex;
   flex-direction: column;
-  border-radius: 12px;
+  border-radius: var(--card-radius);
   overflow: visible;
   background: rgba(242, 243, 248, 0.96);
   backdrop-filter: blur(20px);
@@ -867,7 +867,7 @@ onUnmounted(() => {
   padding: 9px 10px 9px 12px;
   background: rgba(255, 255, 255, 0.55);
   border-bottom: 1px solid rgba(0, 0, 0, 0.07);
-  border-radius: 12px 12px 0 0;
+  border-radius: var(--card-radius) var(--card-radius) 0 0;
   cursor: grab;
   flex-shrink: 0;
   min-width: 0;
@@ -933,7 +933,7 @@ onUnmounted(() => {
   position: relative;
   overflow: hidden;
   background: rgba(220, 222, 232, 0.5);
-  border-radius: 0 0 12px 12px;
+  border-radius: 0 0 var(--card-radius) var(--card-radius);
 }
 .fpw-body:has(.tv-wrap) {
   background: #fff;

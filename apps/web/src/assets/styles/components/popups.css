@@ -4,7 +4,7 @@
   background: var(--popup-background);
   backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur);
   border: 1px solid var(--popup-border);
-  border-radius: 10px;
+  border-radius: var(--popup-radius);
   box-shadow: var(--popup-shadow);
   padding: 4px;
   user-select: none;
@@ -42,7 +42,7 @@
   background: var(--popup-surface-bg);
   backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur);
   border: 1px solid var(--popup-surface-border);
-  border-radius: 10px;
+  border-radius: var(--popup-radius);
   box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight);
   padding: 4px;
   user-select: none;

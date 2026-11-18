@@ -3,12 +3,21 @@ import type { Block,CanonicalRunContext,CanonicalMessage,CompactionResult,Curren
 import { AgentRunError,isEarlyExit } from '../models.js'
 import { collapseConsumedImage,createToolResultCheckpoint,hasInitialInlineImage,restorePreparedContext,savePreparedContext } from './history/attachment-refs.js'
 import { appendCanonicalEvents,blocks,canonicalizeMessage,canonicalToolRound,copy,mediaTypes,MessageArea,portableSnapshot,redactToolRequestHeaders,refreshCanonicalToolSchemas } from './history/canonical-history.js'
+import { resolveCallTool } from '../tools/call-adapter.js'
 import { hasOnlyLegacyTimeContext,isInternalUserMessage,lastUserIndex,protectedMessageIds,restoreHistoryForRequest,userTextFromMessage,validateHistoryRows } from './history/ordering.js'
 import type { CanonicalContextPorts,ContextPort,ContextServices,PreparationPorts } from '../ports.js'
 import { enforceProviderOverflow,shouldCompact } from './budget.js'
 import { applyCompaction,compactContext } from './compaction.js'
 import { assertRunCapabilities } from './prepare.js'
 import { loadedSkills } from './loaded-skills.js'
+
+/** 新运行和检查点恢复按同一顺序生成固定请求前缀。 */
+export function buildFixedRequestPrefix(input: Pick<PrepareContextInput, 'fixedPrefix' | 'systemInMessages' | 'systemPrompt'>): CanonicalMessage[] {
+  const prefix = copy([...input.fixedPrefix])
+  if (input.systemInMessages && input.systemPrompt)
+    prefix.unshift({ role: 'system', content: input.systemPrompt })
+  return prefix
+}
 
 export function rawUserText(user: CurrentUser): string {
   if (user.message.role !== 'user' || isInternalUserMessage(user.message))
@@ -110,9 +119,7 @@ export async function prepareContext(input: PrepareContextInput, ports: Preparat
     message: CanonicalMessage
   } => entry.message != null)
   const area = new MessageArea(ports, restored.map(entry => entry.message))
-  const prefix = copy([...input.fixedPrefix])
-  if (input.systemInMessages && input.systemPrompt)
-    prefix.unshift({ role: 'system', content: input.systemPrompt })
+  const prefix = buildFixedRequestPrefix(input)
   area.configureRequest(prefix)
   const protectedIds = protectedMessageIds(history)
   const start = restored.findIndex(entry => protectedIds.has(entry.row.id))
@@ -229,8 +236,10 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
   async function toolResult(state: CanonicalRunContext, call: ToolCall, value: Json, round?: number, isError?: boolean): Promise<CanonicalRunContext> {
     const prepared = await restore(state)
     const pending = state.pendingRound
+    const original = pending?.calls.find(item => item.id === call.id)
+    const resolved = original ? resolveCallTool(original) : null
     if (!pending || round !== undefined && pending.round !== round
-      || !pending.calls.some((item) => item.id === call.id && item.name === call.name))
+      || !original || (original.name !== call.name && !(resolved && 'call' in resolved && resolved.call.name === call.name)))
       throw new Error('工具回执与本轮调用声明不匹配')
     const results = pending.dispatched.filter((item) => item.callId !== call.id)
     results.push({ callId: call.id, toolName: call.name, content: JSON.stringify(value), ...(isError ? { isError: true } : {}) })
@@ -290,7 +299,9 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
       if (typeof userRequest !== 'string' || typeof locale !== 'string')
         throw new Error('回复策略来源必须是明确的当前用户正文与语言')
       const prepared = await prepareContext(loaded.input, { ...ports.preparation, digest: ports.digest, nextId: ports.nextId }, signal)
-      requests.set(key(identity), Promise.resolve({ prefix: prepared.area.requestPrefix, dynamicTail: prepared.area.dynamicTail }))
+      const request = { prefix: prepared.area.requestPrefix, dynamicTail: prepared.area.dynamicTail }
+      requests.set(key(identity), Promise.resolve(request))
+      ports.rememberPreparedRequest?.(identity, request)
       return {
         identity: copy(identity), modelIdentity: loaded.modelIdentity, accessScopeHash, contextWindow: loaded.contextWindow,
         capabilities: loaded.capabilities ? copy(loaded.capabilities) : null,

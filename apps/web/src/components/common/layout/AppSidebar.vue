@@ -41,7 +41,10 @@
     </nav>
 
     <div ref="userCardRef" class="user-card" :class="{ open: settingsOpen }" @click.stop="toggleSettings">
-      <div class="avatar"><img v-if="authStore.user?.avatarUrl" :src="authStore.user.avatarUrl" class="avatar-img" /><template v-else>{{ userInitial }}</template></div>
+      <div class="avatar" :class="{ 'avatar--fallback': !authStore.user?.avatarUrl }">
+        <img v-if="authStore.user?.avatarUrl" :src="authStore.user.avatarUrl" class="avatar-img" />
+        <template v-else>{{ userInitial }}</template>
+      </div>
       <div class="user-info"><div class="user-name">{{ userLabel }}</div></div>
       <div class="theme-mode-quick" role="group" :aria-label="t('layout.themeMode')" @click.stop>
         <button
@@ -280,21 +283,22 @@ onUnmounted(() => {
 .nav-divider { height:1px; background:var(--divider-line); margin:6px 4px; flex-shrink:0; }
 .nav-label { font-size:10px; font-weight:600; color:#6e7289; text-transform:uppercase; letter-spacing:.08em; padding:0 10px; margin-bottom:4px; }
 .notif-anchor { position:relative; }
-.notif-btn { width:100%; display:flex; align-items:center; gap:9px; padding:10px 12px; border-radius:var(--radius-sm); font-size:14px; font-family:var(--font-sans); color:#767980; background:none; border:1px solid transparent; cursor:pointer; text-align:left; transition:all .15s; }
+.notif-btn { width:100%; display:flex; align-items:center; gap:9px; padding:10px 12px; border-radius:var(--radius-xs); font-size:14px; font-family:var(--font-sans); color:#767980; background:none; border:1px solid transparent; cursor:pointer; text-align:left; transition:all .15s; }
 .notif-btn:hover { background:color-mix(in srgb, var(--action-primary) 8%, transparent); color:var(--text-primary); }
 .nav-icon { flex-shrink:0; }.nav-label-text { flex:1; }.badge { background:color-mix(in srgb, var(--action-primary) 42%, transparent); color:white; font-size:10px; font-weight:700; padding:1px 6px; border-radius:20px; min-width:18px; text-align:center; }
-.user-card { position:relative; display:flex; align-items:center; gap:8px; padding:8px; border-radius:var(--radius-md); background:rgba(255,255,255,.44); border:1px solid rgba(255,255,255,.72); box-shadow:inset 0 1px 0 rgba(255,255,255,.95); cursor:pointer; transition:background .15s; margin-top:auto; }
+.user-card { position:relative; display:flex; align-items:center; gap:8px; padding:8px; border-radius:var(--radius-sm); background:rgba(255,255,255,.44); border:1px solid rgba(255,255,255,.72); box-shadow:inset 0 1px 0 rgba(255,255,255,.95); cursor:pointer; transition:background .15s; margin-top:auto; }
 .user-card:hover { background:rgba(255,255,255,.38); }
-.avatar { width:32px; height:32px; border-radius:50%; background:var(--action-primary); display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:700; color:var(--content-on-accent); flex-shrink:0; overflow:hidden; box-shadow:0 2px 6px color-mix(in srgb, var(--action-primary) 20%, transparent); }
+.avatar { --sidebar-avatar-bg:var(--action-primary); width:32px; height:32px; border-radius:50%; background:var(--sidebar-avatar-bg); display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:700; color:var(--content-on-accent); flex-shrink:0; overflow:hidden; box-shadow:0 2px 6px color-mix(in srgb, var(--sidebar-avatar-bg) 20%, transparent); }
+.avatar--fallback { --sidebar-avatar-bg:var(--avatar-fallback-bg); }
 .avatar-img { width:100%; height:100%; object-fit:cover; border-radius:50%; }.user-info { flex:1; min-width:0; overflow:hidden; }.user-name { font-size:13px; font-weight:600; line-height:1.5; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.theme-mode-quick { flex-shrink:0; display:flex; gap:2px; padding:2px; border:1px solid var(--border-subtle); border-radius:var(--radius-sm); background:var(--surface-soft); }
-.theme-mode-quick button { width:22px; height:22px; display:grid; place-items:center; border:0; border-radius:var(--radius-xs); color:var(--content-tertiary); background:transparent; cursor:pointer; transition:color var(--motion-hover-control) var(--motion-ease-standard),background-color var(--motion-hover-control) var(--motion-ease-standard),box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
+.theme-mode-quick { flex-shrink:0; display:flex; gap:2px; padding:2px; border:1px solid var(--border-subtle); border-radius:var(--radius-xs); background:var(--surface-soft); }
+.theme-mode-quick button { width:22px; height:22px; display:grid; place-items:center; border:0; border-radius:var(--radius-compact); color:var(--content-tertiary); background:transparent; cursor:pointer; transition:color var(--motion-hover-control) var(--motion-ease-standard),background-color var(--motion-hover-control) var(--motion-ease-standard),box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
 .theme-mode-quick button:hover { color:var(--content-primary); background:var(--surface-soft-hover); }
 .theme-mode-quick button.current { color:var(--selection-fg); }
 .theme-mode-quick button.active { color:var(--selection-fg); background:var(--surface-raised); box-shadow:none; }
 /* settings-popup 保留原来的纯 translateY 淡入淡出；不要交给通用 popup scale cadence。 */
 .popup-enter-active,.popup-leave-active { transition:opacity .15s,transform .15s; }.popup-enter-from,.popup-leave-to { opacity:0; transform:translateY(6px); }
-.soon-item { width:100%; display:flex; align-items:center; gap:9px; padding:9px 4px 9px 10px; border-radius:var(--radius-sm); font-size:13px; font-family:var(--font-sans); color:rgba(30,32,40,.28); border:1px solid transparent; cursor:default; pointer-events:none; }.soon-badge { width:max-content; min-width:0; box-sizing:border-box; margin-left:auto; margin-right:0; font-size:9px; font-weight:600; letter-spacing:.04em; color:rgba(30,32,40,.22); background:rgba(0,0,0,.06); padding:2px 7px; border-radius:20px; flex-shrink:0; text-align:center; white-space:nowrap; }
+.soon-item { width:100%; display:flex; align-items:center; gap:9px; padding:9px 4px 9px 10px; border-radius:var(--radius-xs); font-size:13px; font-family:var(--font-sans); color:rgba(30,32,40,.28); border:1px solid transparent; cursor:default; pointer-events:none; }.soon-badge { width:max-content; min-width:0; box-sizing:border-box; margin-left:auto; margin-right:0; font-size:9px; font-weight:600; letter-spacing:.04em; color:rgba(30,32,40,.22); background:rgba(0,0,0,.06); padding:2px 7px; border-radius:20px; flex-shrink:0; text-align:center; white-space:nowrap; }
 </style>
 
 <style>
@@ -304,7 +308,7 @@ onUnmounted(() => {
   position:fixed; overflow:hidden; box-sizing:border-box;
   background:var(--settings-popup-bg,rgba(255,255,255,.44));
   border:1px solid var(--settings-popup-border,rgba(255,255,255,.72));
-  border-radius:var(--radius-md);
+  border-radius:var(--radius-sm);
   box-shadow:var(--settings-popup-shadow,inset 0 1px 0 rgba(255,255,255,.95),0 4px 16px rgba(0,0,0,.08));
   backdrop-filter:var(--popup-surface-blur); -webkit-backdrop-filter:var(--popup-surface-blur);
   user-select:none;

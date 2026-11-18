@@ -1,6 +1,9 @@
 import { expect, it, vi } from 'vitest'
-import { createHttpGetTool, type HttpGetPort } from '../../../src/agent/tools/web.js'
+import { createHttpGetTool, createWebDownloadTool, type HttpGetPort } from '../../../src/agent/tools/web.js'
+import { createDeepResearchTool, createWebSearchTool } from '../../../src/agent/tools/search.js'
+import { fakeDependencies, fakeResponse } from '../providers/fixtures.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
+import { similarImageProbe } from '../../../src/agent/providers/similar-image.js'
 
 function mount(port: HttpGetPort, authorize: (name: string) => Promise<boolean> = async () => true) {
   const registry = createToolRegistry({ tools: [createHttpGetTool(port)], authorize: (_identity, name) => authorize(name) })
@@ -88,4 +91,100 @@ it('http_get 取消后不把晚到响应返回给工具调用方', async () => {
   controller.abort()
   finish({ status: 200, body: '不得进入上下文' })
   await expect(pending).rejects.toThrow()
+})
+
+it('web_search 固定本轮厂商参数和凭据，权限撤销后不再请求', async () => {
+  const { scope } = mount({ async get() { return {} } })
+  const { dependencies, requests } = fakeDependencies([fakeResponse({ results: [{ title: '检索结果' }] })])
+  const config = { provider: 'ollama', model: 'synthetic', base_url: 'https://ollama.com', api_key: 'synthetic-key', web_search_enabled: true }
+  const transport = {
+    digest: dependencies.digest,
+    async withTransport<T>(_signal: AbortSignal, execute: (t: typeof dependencies.transport) => Promise<T>) {
+      return execute(dependencies.transport)
+    },
+  }
+  const tool = createWebSearchTool(config, transport)
+  expect(createWebSearchTool({ ...config, web_search_enabled: false }, transport)).toBeUndefined()
+  expect(createWebSearchTool({ ...config, api_key: '' }, transport)).toBeUndefined()
+  expect(createWebSearchTool({ ...config, base_url: 'https://foreign.example.test' }, transport)).toBeUndefined()
+  let allowed = true
+  const registry = createToolRegistry({ tools: [tool!], authorize: async id => allowed && id.ownerId === scope().identity.ownerId })
+  const dispatch = (input: unknown) => registry.tools.dispatch({ id: 'search', name: 'web_search', input }, scope())
+  expect(await dispatch({ query: '搜索词', count: 5 })).toMatchObject({ successful: false, executed: false })
+  expect(await dispatch({ query: '搜索词', max_results: 5 })).toMatchObject({ successful: true, value: { results: [{ title: '检索结果' }] } })
+  expect(requests).toHaveLength(1)
+  expect(requests[0]).toMatchObject({ url: 'https://ollama.com/api/web_search', body: { query: '搜索词', max_results: 5 } })
+  allowed = false
+  expect(await dispatch({ query: '搜索词' })).toMatchObject({ successful: false, executed: false })
+  expect(requests).toHaveLength(1)
+})
+
+it('deep_research 使用可信运行身份、默认深度并保留完成和失败结果', async () => {
+  const { scope } = mount({ async get() { return {} } })
+  const research = vi.fn(async (input, context) => {
+    expect(input).toEqual({ query: '研究题目', maxResults: undefined, depth: 'basic' })
+    expect(context.identity).toEqual(scope().identity)
+    return { kind: 'completed' as const, successful: true, mutated: true, value: { query: input.query, answer: null, results: [] } }
+  })
+  const registry = createToolRegistry({ tools: [createDeepResearchTool({ search: research })], authorize: async () => true })
+  const dispatch = (input: unknown) => registry.tools.dispatch({ id: 'research', name: 'deep_research', input }, scope())
+  expect(await dispatch({ query: '  ', max_results: 5 })).toMatchObject({ successful: false, mutated: false })
+  expect(await dispatch({ query: '研究题目', max_results: 21 })).toMatchObject({ successful: false, executed: false })
+  expect(await dispatch({ query: '  研究题目  ' })).toMatchObject({ successful: true, mutated: true, value: { query: '研究题目', answer: null, results: [] } })
+  expect(research).toHaveBeenCalledTimes(1)
+})
+
+it('相似图结果超出预算时省略长链接，保留完整候选链接和截断说明', async () => {
+  const { dependencies } = fakeDependencies([fakeResponse({
+    requestId: 'synthetic-request',
+    res_data: { res_items: [
+      { title: '过长地址', objurl: 'https://example.invalid/image?' + 'q'.repeat(70_000) },
+      { title: '完整地址', objurl: 'https://example.invalid/image.png' },
+    ] },
+  })])
+  const report = await similarImageProbe('synthetic-key', Uint8Array.of(1), 2, dependencies, new AbortController().signal)
+  expect(report).toMatchObject({
+    request_id: 'synthetic-request', count: 2,
+    results: [{ image_url: null }, { image_url: 'https://example.invalid/image.png' }],
+    _gugu_search_limits: { truncated: true },
+  })
+})
+
+
+it('web_download 可信目标预检优先于网络，推导文件名并流式限制容量', async () => {
+  const { scope } = mount({ async get() { return {} } })
+  const encoder = new TextEncoder()
+  const downloaded = fakeResponse(null, { headers: {
+    'content-type': 'image/png; charset=UTF-8',
+    'content-disposition': "attachment; filename*=UTF-8''..%2Fphoto",
+  }, chunks: [encoder.encode('123'), encoder.encode('456')] })
+  let capacity = 6
+  const open = vi.fn(async (_url: string) => downloaded)
+  const store = vi.fn(async ({ name, mimeType, data }) => {
+    const bytes: number[] = []
+    for await (const chunk of data) bytes.push(...chunk)
+    expect(bytes).toHaveLength(6)
+    expect(name).toBe('photo.png')
+    expect(mimeType).toBe('image/png')
+    return { kind: 'completed' as const, successful: true, mutated: true, value: { file_id: 7 } }
+  })
+  const prepare = vi.fn(async (location, context) => {
+    expect(location).toEqual({ space: null, projectId: null, folderId: null })
+    expect(context.identity).toEqual(scope().identity)
+    return { capacity, store }
+  })
+  const registry = createToolRegistry({ tools: [createWebDownloadTool({
+    prepare, open, extension: type => type === 'image/png' ? 'png' : null,
+  })], authorize: async () => true })
+  const dispatch = (input: unknown) => registry.tools.dispatch({ id: 'download', name: 'web_download', input }, scope())
+  await expect(dispatch({ url: 'example.test', space: 'personal', project_id: 3 })).resolves.toMatchObject({ value: { error: 'space=personal 不能提供 project_id' } })
+  expect(open).not.toHaveBeenCalled()
+  await expect(dispatch({ url: 'example.test/file' })).resolves.toMatchObject({ successful: true, value: { file_id: 7 } })
+  expect(open.mock.calls[0]?.[0]).toBe('https://example.test/file')
+  expect(downloaded.closed).toBe(true)
+  capacity = 5
+  const overflow = fakeResponse(null, { chunks: [encoder.encode('123'), encoder.encode('456')] })
+  open.mockResolvedValueOnce(overflow)
+  await expect(dispatch({ url: 'example.test/file' })).resolves.toMatchObject({ successful: false, mutated: false, value: { error: '下载内容超过当前用户可用存储空间' } })
+  expect(overflow.closed).toBe(true)
 })

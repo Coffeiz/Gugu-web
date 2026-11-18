@@ -1,7 +1,9 @@
 import type { Json, JsonObject, ProviderDriverDependencies, ProviderHttpRequest } from './contracts.js'
+import { ProviderError } from './errors.js'
 import { normalizedApiKey } from './diagnostics.js'
 import { object } from './values.js'
 import { readSearchResponse } from './search/http.js'
+import { limitSearchResult } from './search/limits.js'
 
 function preferred(value: Json | undefined, fallback: Json | undefined): Json {
   return value || fallback || null
@@ -23,7 +25,8 @@ function base64(bytes: Uint8Array): string {
 /** BYOK 百度相似图探测复用生产 Provider Transport，不跟随重定向并限制响应体积。 */
 export async function similarImageProbe(
   rawApiKey: string, image: Uint8Array, count: number,
-  dependencies: ProviderDriverDependencies, signal: AbortSignal,
+  dependencies: ProviderDriverDependencies, signal: AbortSignal, timeoutMs = 30_000,
+  options: { preserveUnknownOutcome?: boolean } = {},
 ): Promise<JsonObject> {
   let apiKey: string
   try { apiKey = normalizedApiKey(rawApiKey) }
@@ -32,13 +35,17 @@ export async function similarImageProbe(
 
   const request: ProviderHttpRequest = {
     url: 'https://qianfan.baidubce.com/v2/tools/image_similar_info',
-    method: 'POST', timeoutMs: 30_000,
+    method: 'POST', timeoutMs,
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: { image: base64(image), count },
   }
   let response
   try { response = await dependencies.transport.request(request, signal) }
-  catch { return { error_code: 'upstream_error' } }
+  catch (error) {
+    signal.throwIfAborted()
+    if (options.preserveUnknownOutcome && (!(error instanceof ProviderError) || error.options.requestStarted !== false)) throw error
+    return { error_code: error instanceof ProviderError && error.code === 'timeout' ? 'upstream_timeout' : 'upstream_error' }
+  }
 
   if (response.status !== 200) {
     await response.cancel()
@@ -71,5 +78,9 @@ export async function similarImageProbe(
       height: item.height ?? null,
     }]
   })
-  return { results, request_id: data.requestId || resultData.requestId || null, count: results.length }
+  const report = limitSearchResult({ request_id: data.requestId || resultData.requestId || null, count: results.length, results,
+    ...(data._gugu_search_limits ? { _gugu_search_limits: data._gugu_search_limits } : {}),
+  })
+  report.count = Array.isArray(report.results) ? report.results.length : 0
+  return report
 }

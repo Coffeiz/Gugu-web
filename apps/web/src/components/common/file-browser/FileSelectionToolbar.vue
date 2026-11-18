@@ -91,7 +91,7 @@ const { t } = useI18n()
   gap: 7px;
   padding: 10px 16px;
   border: 1px solid var(--popup-surface-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: var(--popup-surface-bg);
   box-shadow: inset 0 1px 0 var(--popup-surface-highlight), var(--popup-surface-shadow);
   color: var(--content-primary);
@@ -103,7 +103,7 @@ const { t } = useI18n()
   bottom: 11px;
   padding: 8px 14px;
   gap: 8px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
 }
 .file-selection-count {
   margin-right: 3px;

@@ -149,10 +149,8 @@ async function save() {
   position: relative;
   width: 480px; max-width: 100%; margin: 0 auto;
   height: 50px;
-  border-radius: 25px;   /* =收起高 50/2，收起态是纯圆药丸 */
-  corner-shape: round;   /* 收起展开全程用同一种 corner-shape：corner-shape 不能过渡，切换瞬间
-                             会跳变；squircle 又不像 round 那样按盒子尺寸自动收窄半径，两者在高度
-                             动画途中切换就会看起来"先缩小再放大"，所以两态都固定用 round */
+  border-radius: var(--card-radius);   /* =收起高 50/2，收起态是纯圆药丸 */
+  corner-shape: round;   /* 收起和展开共用普通圆角。 */
   background: rgba(255,255,255,0.6);
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
   border: 1px solid rgba(255,255,255,0.78);
@@ -247,7 +245,7 @@ async function save() {
 
 .cb-save {
   flex-shrink: 0;
-  padding: 6px 16px; border: none; border-radius: var(--radius-sm);
+  padding: 6px 16px; border: none; border-radius: var(--radius-xs);
   background: linear-gradient(135deg, var(--action-primary), var(--action-primary-hover));
   color: rgba(255,255,255,0.95);
   font-size: 12.5px; font-weight: 600; cursor: pointer;

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
-import { configureRagJieba, createScopedRagSearch, createSqlRagPersistentIndexReader } from '@gugu/core/agent'
-import type { CanonicalMessage, HistoryIdentity, RagSearchScope, RunIdentity } from '@gugu/core/agent'
+import { configureRagJieba, createScopedRagSearch, createSqlRagPersistentIndexReader } from '@gugu/core/agent/rag'
+import type { CanonicalMessage, HistoryIdentity, RunIdentity } from '@gugu/core/agent'
+import type { RagSearchScope } from '@gugu/core/agent/rag'
 import type { SqlDataRuntime } from '@gugu/core/data'
 import type { AgentDispatchLease } from '../persistence/agent-run-dispatch-postgres.js'
 import { getAgentRagJieba } from './agent-rag-jieba.js'
@@ -45,7 +46,7 @@ export function createWebAgentRagContextBuilder(options: {
   authorize(lease: AgentDispatchLease, scope: RagSearchScope, signal?: AbortSignal): Promise<boolean>
   vectors?(ownerId: string, signal?: AbortSignal): Promise<{
     version: string
-    source(ownerId: string, signal?: AbortSignal): Promise<import('@gugu/core/agent').RagVectorSource>
+    source(ownerId: string, signal?: AbortSignal): Promise<import('@gugu/core/agent/rag').RagVectorSource>
     embed(ownerId: string, query: string, signal?: AbortSignal): Promise<readonly number[]>
   } | null>
   conversationMessageTime?(identity: HistoryIdentity, timestamp: string, signal?: AbortSignal): Promise<string>

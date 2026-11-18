@@ -37,7 +37,7 @@ function openLock(path: string): number {
 function unlock(fd: number): void {
   try { if (flock(fd, LOCK_UN) !== 0) throw new Error('配置锁释放失败') } finally { closeSync(fd) }
 }
-/** 与 Python flock 兼容；同步操作不等待锁，避免在事件循环中阻塞其他持锁任务。 */
+/** 同步操作立即尝试 flock，避免在事件循环中阻塞其他持锁任务。 */
 export function createPosixConfigFileLock(timeoutMs = 10000, retryMs = 25) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || !Number.isSafeInteger(retryMs) || retryMs < 1) throw new RangeError('配置锁等待时间无效')
   assertPosixConfigLockAvailable()

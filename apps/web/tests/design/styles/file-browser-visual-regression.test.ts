@@ -324,14 +324,14 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
 
   it('画布文件卡静止态使用不透明卡片底色，不透出画布渐变', () => {
     const canvasMode = cssBlock(fileCard, '.fc-card.canvas-mode')
-    expect(canvasMode).toContain('background: var(--surface-canvas-card);')
+    expect(canvasMode).toContain('background: var(--file-card-canvas-bg, var(--surface-canvas-card));')
     expect(canvasMode).not.toContain('background: var(--file-card-bg);')
     expect(load('./tokens/semantic.css')).toContain('--surface-canvas-card: var(--theme-chat-main-bg);')
   })
 
   it('画布文件卡 hover 保持不透明底色，同时沿用共享 hover 边框与阴影', () => {
     const canvasHover = cssBlock(fileCard, '.fc-card.canvas-mode:hover:not(.selected):not(.pre-selected)')
-    expect(canvasHover).toContain('background: var(--surface-canvas-card);')
+    expect(canvasHover).toContain('background: var(--file-card-canvas-bg, var(--surface-canvas-card));')
     expect(canvasHover).not.toContain('border-color:')
     expect(canvasHover).not.toContain('box-shadow:')
   })

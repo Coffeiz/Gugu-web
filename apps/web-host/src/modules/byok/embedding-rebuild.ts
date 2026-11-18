@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
 import { redactToolError } from '@gugu/core/agent'
 import { dataContext } from '@gugu/core/contracts'
-import type { RagQueryEmbeddingSettings } from '@gugu/core/agent'
+import type { RagQueryEmbeddingSettings } from '@gugu/core/agent/rag'
 import type { UserMemoryVectorRebuildResult } from '@gugu/core/byok/vector-rebuild'
 import type { ScheduledTaskRedisCommands } from '../scheduled-tasks/persistence/redis-lease.js'
 

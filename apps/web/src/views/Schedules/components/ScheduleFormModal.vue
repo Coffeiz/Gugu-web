@@ -439,7 +439,7 @@ function submit() {
 .sched-prompt-column { display: flex; flex-direction: column; }
 .divider { height: 1px; background: var(--divider-line); margin: 2px 0 10px; }
 .divider-full { margin-left: 0; margin-right: 0; }
-.title-input { width: 100%; box-sizing: border-box; outline: none; font-size: 16px; font-weight: 700; color: var(--text-primary); font-family: var(--font-sans); padding: 6px 11px; margin-bottom: 10px; border: 1px solid var(--input-border); border-radius: var(--radius-sm); background: var(--input-bg); transition: border-color 0.15s, box-shadow 0.15s; }
+.title-input { width: 100%; box-sizing: border-box; outline: none; font-size: 16px; font-weight: 700; color: var(--text-primary); font-family: var(--font-sans); padding: 6px 11px; margin-bottom: 10px; border: 1px solid var(--input-border); border-radius: var(--radius-xs); background: var(--input-bg); transition: border-color 0.15s, box-shadow 0.15s; }
 .title-input::placeholder { color: var(--input-placeholder); font-weight: 700; }
 .title-input:focus { border-color: var(--input-border-focus); box-shadow: var(--input-focus-shadow); }
 .field { display: block; margin-bottom: 11px; }
@@ -450,7 +450,7 @@ function submit() {
 .workspace-select { display: block; width: 100%; margin-bottom: 7px; }
 .workspace-select :deep(.asel-trigger) { width: 100%; box-sizing: border-box; }
 .authorization-field > small { display: block; margin-top: 5px; color: var(--content-tertiary); font-size: 11px; line-height: 1.45; }
-.authorization-field { padding: 9px 10px; border: 1px solid var(--option-border); border-radius: var(--radius-sm); background: var(--option-bg); }
+.authorization-field { padding: 9px 10px; border: 1px solid var(--option-border); border-radius: var(--radius-xs); background: var(--option-bg); }
 .authorization-field :deep(.app-checkbox) { margin: 0; }
 .once-controls { display: grid; grid-template-columns: minmax(0, 1fr) 82px 24px; align-items: center; gap: 6px; }
 .once-controls :deep(.dp-wrap), .once-controls :deep(.time-input) { min-width: 0; }
@@ -470,19 +470,19 @@ function submit() {
    都对不齐。 */
 .boundary-clear { width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: var(--option-bg); color: var(--content-secondary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: color var(--hover-motion-control), background-color var(--hover-motion-control); }
 .boundary-clear:hover { background: var(--option-bg-hover); color: var(--content-primary); }
-.field input[type=text], .field input:not([type]), .field textarea, .field select, .field input[type=number] { width: 100%; box-sizing: border-box; padding: 8px 11px; border: 1px solid var(--input-border); border-radius: var(--radius-sm); background: var(--input-bg); font-size: 13px; font-family: var(--font-sans); color: var(--text-primary); outline: none; transition: border-color 0.15s, box-shadow 0.15s; }
+.field input[type=text], .field input:not([type]), .field textarea, .field select, .field input[type=number] { width: 100%; box-sizing: border-box; padding: 8px 11px; border: 1px solid var(--input-border); border-radius: var(--radius-xs); background: var(--input-bg); font-size: 13px; font-family: var(--font-sans); color: var(--text-primary); outline: none; transition: border-color 0.15s, box-shadow 0.15s; }
 .field input:focus, .field textarea:focus, .field select:focus { border-color: var(--input-border-focus); box-shadow: var(--input-focus-shadow); }
 .reminder-field { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
 .reminder-field textarea { flex: 1 1 auto; min-height: 96px; max-height: none; resize: none; line-height: 1.6; overflow-y: hidden; }
 .repeat-tabs { display: flex; gap: 6px; }
-.repeat-tab { flex: 1; height: 34px; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-sm); border: 1px solid var(--option-border); background: var(--option-bg); font-size: 13px; font-family: var(--font-sans); color: var(--option-fg); cursor: pointer; transition: all 0.15s; text-align: center; }
+.repeat-tab { flex: 1; height: 34px; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-xs); border: 1px solid var(--option-border); background: var(--option-bg); font-size: 13px; font-family: var(--font-sans); color: var(--option-fg); cursor: pointer; transition: all 0.15s; text-align: center; }
 .repeat-tab:hover { border-color: var(--option-border-hover); }
 .repeat-tab.on { background: var(--action-primary-bg); color: var(--content-on-accent); border-color: transparent; }
 .weekly-days { display: flex; gap: 6px; margin-top: 8px; }
 .weekly-days .repeat-tab { height: 30px; font-size: 12px; }
 .time-field input { height: 34px; padding-top: 8px; padding-bottom: 8px; text-align: center; line-height: normal; font-size: 13px; }
 .interval-presets { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
-.interval-preset { width: 100%; min-width: 0; height: 34px; padding: 0; border-radius: var(--radius-sm); border: 1px solid var(--option-border); background: var(--option-bg); color: var(--option-fg); font-size: 12px; font-family: var(--font-sans); cursor: pointer; transition: all 0.15s; }
+.interval-preset { width: 100%; min-width: 0; height: 34px; padding: 0; border-radius: var(--radius-xs); border: 1px solid var(--option-border); background: var(--option-bg); color: var(--option-fg); font-size: 12px; font-family: var(--font-sans); cursor: pointer; transition: all 0.15s; }
 .interval-preset:hover { border-color: var(--option-border-hover); }
 .interval-preset.on { color: var(--content-on-accent); border-color: transparent; background: var(--action-primary-bg); }
 .chans { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }

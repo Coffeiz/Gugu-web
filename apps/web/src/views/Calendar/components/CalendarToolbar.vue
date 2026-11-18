@@ -39,7 +39,7 @@ const { t } = useI18n()
 </script>
 
 <style>
-.cal-toolbar { --gb-tint: var(--glass-bg); height: 52px; padding: 0 18px; }
+.cal-toolbar { height: 52px; padding: 0 18px; }
 .cal-toolbar .toolbar-left { display: flex; align-items: center; gap: 4px; }
 .cal-toolbar .nav-btn { width: 30px; height: 30px; border-radius: 8px; border: none; background: none; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text-secondary); transition: background 0.15s; }
 .cal-toolbar .nav-btn:hover { background: rgba(0,0,0,0.06); }

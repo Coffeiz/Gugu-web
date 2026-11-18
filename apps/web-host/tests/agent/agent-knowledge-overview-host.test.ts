@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import type { AgentKnowledgeReadStore } from '@gugu/core/agent'
+import type { AgentKnowledgeReadStore } from '@gugu/core/agent/knowledge/overview'
 import { createAgentKnowledgeOverviewLoader } from '../../src/domains/agent-sessions/tools/agent-knowledge.js'
 
 const owner = '00000000-0000-4000-8000-000000000011'

@@ -53,11 +53,12 @@ describe('1.7.7 RAG query embedding transport boundary', () => {
       return response(200, jsonBody({ data: [{ embedding: [0.25, -0.5] }] }))
     } }
     const query = `synthetic cache query ${randomUUID()}`
-    const first = await embedRagQuery(settings(), query, transport, new AbortController().signal)
+    const ownerId = randomUUID()
+    const first = await embedRagQuery(settings(), query, transport, new AbortController().signal, ownerId)
     first.vector[0] = 99
 
     const cachedTransport: ProviderTransport = { async request() { throw new Error('cache hit must not call transport') } }
-    const second = await embedRagQuery(settings(), ` ${query} `, cachedTransport, new AbortController().signal)
+    const second = await embedRagQuery(settings(), ` ${query} `, cachedTransport, new AbortController().signal, ownerId)
 
     expect(first.outcome).toBe('success')
     expect(second).toMatchObject({ vector: [0.25, -0.5], outcome: 'success' })
@@ -73,13 +74,32 @@ describe('1.7.7 RAG query embedding transport boundary', () => {
       return response(200, jsonBody({ data: [{ embedding: vector }] }))
     } }
     const query = `synthetic model cache query ${randomUUID()}`
+    const ownerId = randomUUID()
 
-    expect((await embedRagQuery(settings(), query, transport, new AbortController().signal)).vector)
+    expect((await embedRagQuery(settings(), query, transport, new AbortController().signal, ownerId)).vector)
       .toEqual([0.25, -0.5])
     expect((await embedRagQuery(settings({ model: 'embed-v2', dimensions: 3 }), query, transport,
-      new AbortController().signal)).vector).toEqual([0.75, -1, 0.5])
+      new AbortController().signal, ownerId)).vector).toEqual([0.75, -1, 0.5])
 
     expect(requests).toEqual(['embed-v1:2', 'embed-v2:3'])
+  })
+
+  it('isolates the same text by owner, endpoint, and credential and skips cache without a trusted owner', async () => {
+    let requests = 0
+    const transport: ProviderTransport = { async request() {
+      requests += 1
+      return response(200, jsonBody({ data: [{ embedding: [requests, 1] }] }))
+    } }
+    const ownerId = randomUUID()
+    const query = `合成权限回归 ${randomUUID()}`
+    const signal = new AbortController().signal
+    expect((await embedRagQuery(settings(), query, transport, signal, ownerId)).vector).toEqual([1, 1])
+    expect((await embedRagQuery(settings(), query, transport, signal, randomUUID())).vector).toEqual([2, 1])
+    expect((await embedRagQuery(settings({ baseUrl: 'https://other-embedding.example/v1' }), query, transport, signal, ownerId)).vector).toEqual([3, 1])
+    expect((await embedRagQuery(settings({ apiKey: 'synthetic-rotated' }), query, transport, signal, ownerId)).vector).toEqual([4, 1])
+    expect((await embedRagQuery(settings(), query, transport, signal)).vector).toEqual([5, 1])
+    expect((await embedRagQuery(settings(), query, transport, signal)).vector).toEqual([6, 1])
+    expect((await embedRagQuery(settings(), query, transport, signal, ownerId)).vector).toEqual([1, 1])
   })
 
   it('does not cache failed responses', async () => {
@@ -91,10 +111,11 @@ describe('1.7.7 RAG query embedding transport boundary', () => {
         : response(200, jsonBody({ data: [{ embedding: [0.25, -0.5] }] }))
     } }
     const query = `synthetic retry cache query ${randomUUID()}`
+    const ownerId = randomUUID()
 
-    expect(await embedRagQuery(settings(), query, transport, new AbortController().signal))
+    expect(await embedRagQuery(settings(), query, transport, new AbortController().signal, ownerId))
       .toMatchObject({ vector: [], outcome: 'http_error', httpStatus: 503 })
-    expect(await embedRagQuery(settings(), query, transport, new AbortController().signal))
+    expect(await embedRagQuery(settings(), query, transport, new AbortController().signal, ownerId))
       .toMatchObject({ vector: [0.25, -0.5], outcome: 'success', httpStatus: 200 })
     expect(requests).toBe(2)
   })

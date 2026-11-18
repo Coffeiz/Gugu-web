@@ -1,6 +1,6 @@
 :root {
   /* Generic cards / popups */
-  --card-radius: var(--radius-md);
+  --card-radius: var(--radius-sm);
   --card-close-inset: var(--space-md);
   --card-close-safe-area: calc(var(--card-close-inset) + var(--control-height-sm) + var(--space-md));
   --card-close-compact-safe-area: calc(var(--card-close-inset) + var(--control-height-xs) + var(--space-md));
@@ -15,14 +15,15 @@
   --card-hover-overlay: var(--surface-hover-tint);
   --card-surface-bg-hover: var(--surface-raised);
   --card-surface-border-hover: var(--border-hover);
-  --glass-card-background: var(--surface-glass);
-  --glass-card-background-hover: var(--surface-glass-hover);
+  /* 沿用主题玻璃色相，不让页面背景透进常驻面板。 */
+  --glass-card-background: rgb(from var(--surface-glass) r g b / 1);
+  --glass-card-background-hover: var(--glass-card-background);
   --glass-card-border: var(--border-strong);
   --glass-card-border-hover: var(--border-hover);
   --glass-card-shadow: var(--elevation-card);
   /* 面板 hover 只反馈颜色，不叠加黑色外部阴影；Aero/Mono 的静态材质阴影保持不变。 */
   --glass-card-shadow-hover: var(--glass-card-shadow);
-  /* 内容卡片只保留半透明 tint；真实背景模糊仅由明确的浮层材质选择启用。 */
+  /* 常驻面板使用实色底，明确选择玻璃材质的浮层可单独启用背景模糊。 */
   --glass-card-blur: none;
   --glass-card-transition: var(--motion-default) var(--motion-ease-standard);
   /* Calendar/Chat 在切换调色板时仍沿用 Aero 的玻璃白边。 */
@@ -31,7 +32,7 @@
   --aero-glass-highlight-side: rgba(255,255,255,.55);
   --popup-background: var(--surface-popup);
   --popup-border: var(--border-strong);
-  --popup-radius: var(--radius-md);
+  --popup-radius: var(--radius-sm);
   --popup-shadow: var(--elevation-popup);
 
   /* Controls */
@@ -45,7 +46,7 @@
   --control-fg-strong: var(--content-primary);
   --control-border: var(--border-default);
   --control-border-hover: var(--border-hover);
-  --control-radius: var(--radius-sm);
+  --control-radius: var(--radius-xs);
   --control-resizer-bg: linear-gradient(135deg, transparent 0 50%, var(--input-border) 51% 58%, transparent 59% 100%);
   --control-checkbox-size: 16px;
   --control-checkbox-radius: 5px;
@@ -90,9 +91,11 @@
   --sidebar-item-active-fg: var(--theme-sidebar-active-fg);
   --sidebar-item-active-border: var(--theme-sidebar-active-border);
   --sidebar-item-active-shadow: inset 0 1px 0 var(--theme-sidebar-active-highlight);
+  --sidebar-item-selected-shadow: var(--sidebar-item-active-shadow), 0 2px 4px -2px rgb(0 0 0 / 18%);
   --sidebar-user-bg: color-mix(in srgb,var(--surface-glass) 78%,transparent);
   --sidebar-user-bg-hover: var(--surface-glass);
   --sidebar-user-border: var(--border-strong);
+  --avatar-fallback-bg: var(--action-primary);
 
   /* Topbar uses its own static tint; no separately composited glass background layer. */
   --topbar-bg: var(--theme-topbar-bg);
@@ -103,6 +106,7 @@
   --topbar-title-size: var(--font-size-xl);
   --topbar-meta-size: var(--font-size-sm);
   --topbar-height: 52px;
+  --web-workspace-top-inset: 20px;
   --topbar-search-result-icon: var(--content-secondary);
   --topbar-search-result-fg: var(--content-secondary);
   --topbar-search-result-muted: var(--content-tertiary);
@@ -132,7 +136,7 @@
   --project-card-highlight-rest: var(--theme-project-highlight-rest);
   --project-card-sheen-hover: linear-gradient(to bottom,var(--theme-project-sheen-hover) 0%,var(--theme-project-sheen-hover-mid) 45%,transparent 100%);
   --project-card-highlight-hover: var(--theme-project-highlight-hover);
-  --project-card-radius: var(--radius-md);
+  --project-card-radius: var(--radius-sm);
   --project-card-motion: var(--card-motion), box-shadow var(--motion-hover-card) ease;
   --done-group-border: var(--card-advance-border);
   --card-advance-border: color-mix(in srgb,var(--content-muted) 25%,transparent);
@@ -181,7 +185,7 @@
   --gugu-chat-sidebar-bg: var(--surface-sidebar);
   --gugu-chat-border: var(--border-strong);
   --gugu-chat-highlight: var(--border-highlight);
-  --gugu-chat-radius: var(--radius-lg);
+  --gugu-chat-radius: var(--card-radius);
   --gugu-chat-shadow: var(--elevation-window);
   --gugu-chat-header-border: color-mix(in srgb,var(--content-primary) 12%,transparent);
   --gugu-chat-sidebar-border: var(--border-subtle);
@@ -210,9 +214,24 @@
   --design-section-bg: color-mix(in srgb,var(--surface-glass) 84%,transparent);
   --design-section-border: var(--border-strong);
   --design-section-highlight: var(--border-highlight);
-  --design-section-radius: var(--radius-lg);
+  --design-section-radius: var(--card-radius);
   --design-section-shadow: var(--elevation-card);
   --design-card-bg: color-mix(in srgb,var(--surface-card-solid) 68%,transparent);
   --design-card-border: var(--border-subtle);
-  --design-card-radius: var(--radius-md);
+  --design-card-radius: var(--radius-sm);
+}
+
+html[data-theme='dark'][data-family] {
+  /* 默认头像保留配色色相，使用实色底与深色容器拉开层次。 */
+  --avatar-fallback-bg: color-mix(in srgb, var(--action-primary) 48%, rgb(from var(--surface-card-solid) r g b));
+  --sidebar-bg: color-mix(in srgb, var(--palette-surface) 42%, var(--palette-page-end));
+  /* 给大块面板保留中性灰层次，用柔和的外框避免亮边抢眼。 */
+  --glass-card-background: color-mix(in srgb, var(--palette-surface) 60%, var(--palette-page-end));
+  --glass-card-border: color-mix(in srgb, var(--border-default) 75%, var(--border-subtle));
+  --gugu-chat-main-bg: var(--glass-card-background);
+  --design-section-bg: var(--glass-card-background);
+  --design-section-border: var(--glass-card-border);
+  --design-card-bg: var(--glass-card-background);
+  --sidebar-item-fg: var(--content-primary);
+  --sidebar-item-active: var(--surface-raised);
 }

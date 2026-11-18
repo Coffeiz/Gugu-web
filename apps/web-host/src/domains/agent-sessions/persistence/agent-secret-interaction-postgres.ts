@@ -1,61 +1,99 @@
 import type { Pool, PoolClient } from 'pg'
+import { CoreError } from '@gugu/core'
+import { createSecretInteractionConsumer, type SecretInteractionTransaction } from '@gugu/core/agent/interactions/consume-secret'
+import { type InteractionActionRecord, type InteractionPromptRecord } from '@gugu/core/agent/interactions/consume-action'
 import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
-import type { InteractionActionRecord, InteractionPromptRecord } from '../application/agent-interaction-consume.js'
-import { resolvedSecretPromptResult, validateSecretValues } from '@gugu/core/agent'
+import { mcpCredentialConfigurationVersionSql } from './agent-trusted-prompt-descriptions.js'
 
 interface SecretEnvelope { ciphertext: string; nonce: string; encryptedDataKey: string; keyVersion: number }
 export interface SecretInteractionPorts {
-  encrypt(values: Record<string, string>): SecretEnvelope
+  encrypt(values: Record<string, string>): SecretEnvelope | Promise<SecretEnvelope>
   enqueue(client: PoolClient, prompt: InteractionPromptRecord, action: InteractionActionRecord): Promise<void>
-  /** 与凭据更新同事务持久记录跨进程缓存失效，不得使用普通通知代替。 */
+  /** 持久清除共享工具快照，与凭据替换同事务提交。 */
   invalidate(client: PoolClient, ownerId: string, serverId: string): Promise<void>
 }
-function object(value: unknown): Record<string, unknown> { return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {} }
+
 export class SecretInteractionError extends Error {
   constructor(readonly status: 400 | 404 | 409, message: string) { super(message); this.name = 'SecretInteractionError' }
 }
-function invalid(status: 400 | 404 | 409, message: string): never { throw new SecretInteractionError(status, message) }
-/** 凭据只写业务加密槽位，完成标记与恢复引用同事务，不写 prompt、outbox 或日志。 */
+
+function record(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+
+function errorStatus(error: CoreError): 400 | 404 | 409 {
+  return error.code === 'not_found' ? 404 : error.code === 'conflict' ? 409 : 400
+}
+
+/** PostgreSQL 只提供锁与事务；owner、凭据槽位、敏感值及终态规则由共享 Core 用例执行。 */
 export function createPostgresSecretInteraction(pool: Pick<Pool, 'connect'>, ports: SecretInteractionPorts) {
   if (!ports || typeof ports.encrypt !== 'function' || typeof ports.enqueue !== 'function' || typeof ports.invalidate !== 'function') throw new TypeError('凭据交互服务未完整配置')
-  return async (ownerId: string, promptId: number, values: Record<string, string> | null) => withPostgresTransaction(pool, async client => {
-    const result = await client.query('SELECT id, user_id, session_id, kind, status, expires_at, schema_json FROM interaction_prompts WHERE id = $1 AND user_id = $2 FOR UPDATE', [promptId, ownerId])
-    const row = result.rows[0]
-    if (!row) invalid(404, values === null ? '凭据输入不存在' : '敏感信息输入不存在')
-    const schema = object(row.schema_json), context = object(schema.context), target = object(context.secret_target)
-    if (target.kind !== 'mcp_credentials') invalid(400, values === null ? '当前交互不支持凭据取消' : '当前敏感信息交互没有可用的业务处理器')
-    if (!Array.isArray(schema.secret_fields) || schema.secret_fields.length === 0 || row.status !== 'active' || new Date(row.expires_at).getTime() <= Date.now()) {
-      if (values === null && (!Array.isArray(schema.secret_fields) || !schema.secret_fields.length)) invalid(400, '当前交互不支持凭据取消')
-      invalid(409, values === null ? '凭据输入已结束' : '敏感信息输入已过期')
+
+  const store = {
+    transaction<T>(run: (tx: SecretInteractionTransaction) => Promise<T>) {
+      return withPostgresTransaction(pool, async client => run({
+        async getOwnedPrompt(ownerId, promptId) {
+          const result = await client.query<Record<string, unknown>>(
+            'SELECT id,user_id,session_id,kind,status,expires_at,schema_json FROM interaction_prompts WHERE id=$1 AND user_id=$2 FOR UPDATE',
+            [promptId, ownerId],
+          )
+          const row = result.rows[0]
+          if (!row) return null
+          return {
+            id: Number(row.id), ownerId: String(row.user_id), sessionId: Number(row.session_id),
+            kind: String(row.kind), status: String(row.status), expiresAt: new Date(row.expires_at as string | number | Date),
+            schema: record(row.schema_json),
+          }
+        },
+        async getOwnedMcpServer(ownerId, serverId) {
+          const result = await client.query<Record<string, unknown>>(
+            `SELECT id,scope,credential_slots,${mcpCredentialConfigurationVersionSql} AS configuration_version
+              FROM user_mcp_servers server WHERE id=$1 AND user_id=$2 FOR UPDATE`,
+            [serverId, ownerId],
+          )
+          const row = result.rows[0]
+          if (!row) return null
+          const slots = Array.isArray(row.credential_slots) ? row.credential_slots.map(record) : []
+          return { id: String(row.id), scope: String(row.scope), credentialSlots: slots, configurationVersion: String(row.configuration_version) }
+        },
+        async updateCredentials(ownerId, serverId, envelope) {
+          await client.query(
+            'UPDATE user_mcp_servers SET encrypted_credentials=$3,credentials_nonce=$4,encrypted_credentials_key=$5,credentials_key_version=$6 WHERE id=$1 AND user_id=$2',
+            [serverId, ownerId, envelope.ciphertext, envelope.nonce, envelope.encryptedDataKey, envelope.keyVersion],
+          )
+        },
+        invalidateToolSnapshot: (ownerId, serverId) => ports.invalidate(client, ownerId, serverId),
+        async resolvePrompt(prompt, schema, resolvedAt) {
+          await client.query(
+            'UPDATE interaction_prompts SET status=$3,resolved_at=$4,schema_json=$5 WHERE id=$1 AND user_id=$2',
+            [prompt.id, prompt.ownerId, 'resolved', resolvedAt, JSON.stringify(schema)],
+          )
+        },
+        async clearSecretStaging(ownerId, promptId, status) {
+          await client.query(
+            'UPDATE mcp_secret_inputs SET status=$3,encrypted_payload=\'\',payload_nonce=\'\',encrypted_data_key=\'\' WHERE prompt_id=$1 AND user_id=$2',
+            [promptId, ownerId, status],
+          )
+        },
+        async enqueueResume(prompt, action, resolvedAt) {
+          const resolvedPrompt: InteractionPromptRecord = { ...prompt, status: 'resolved', resolvedAt }
+          const resumeAction: InteractionActionRecord = {
+            id: 0, promptId: prompt.id, tokenHash: '', actionType: action.actionType,
+            optionId: action.actionType === 'cancel' ? 'cancel' : '', context: action.context,
+            status: 'consumed', expiresAt: prompt.expiresAt, consumedAt: resolvedAt, consumedEventId: null,
+          }
+          await ports.enqueue(client, resolvedPrompt, resumeAction)
+        },
+      }))
+    },
+  }
+
+  const consume = createSecretInteractionConsumer({ store, encrypt: ports.encrypt })
+  return async (ownerId: string, promptId: number, values: Record<string, string> | null) => {
+    try { return await consume({ ownerId, promptId, values }) }
+    catch (error) {
+      if (error instanceof CoreError) throw new SecretInteractionError(errorStatus(error), error.message)
+      throw error
     }
-    if (values !== null) {
-      const fields = schema.secret_fields.map(object), keys = Object.keys(values)
-      if (fields.length > 16 || fields.some(field => !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(String(field.name ?? ''))) || new Set(fields.map(field => String(field.name ?? ''))).size !== fields.length) invalid(400, '敏感字段不匹配')
-      let normalized: Record<string, string>
-      try { normalized = validateSecretValues(fields, values) }
-      catch (error) { invalid(400, error instanceof Error && error.message === '敏感字段不能为空或过长' ? error.message : '敏感字段不匹配') }
-      if (typeof target.server_id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(target.server_id)) invalid(409, '敏感信息目标已失效')
-      const servers = await client.query('SELECT credential_slots FROM user_mcp_servers WHERE id = $1 AND user_id = $2 AND scope = $3 FOR UPDATE', [target.server_id, ownerId, 'user'])
-      const server = servers.rows[0]; if (!server) invalid(404, 'MCP server 不存在')
-      const slots = Array.isArray(server.credential_slots) ? server.credential_slots.map(object) : []
-      if (!slots.length || slots.length !== keys.length || slots.some((slot: Record<string, unknown>) => typeof slot.id !== 'string' || !keys.includes(slot.id))) invalid(400, '凭据槽位不匹配')
-      for (const slot of slots) if (slot.target === 'header') {
-        const value = String(slot.prefix ?? '') + normalized[String(slot.id)]
-        if (/[^\x00-\x7f]/.test(value)) invalid(400, 'HTTP Header 凭据只能使用 ASCII 字符；请检查密钥值和前缀')
-        if (/[\x00-\x1f\x7f]/.test(value)) invalid(400, 'HTTP Header 凭据不能包含换行或控制字符')
-      }
-      const sealed = ports.encrypt(normalized)
-      await client.query('UPDATE user_mcp_servers SET encrypted_credentials = $3, credentials_nonce = $4, encrypted_credentials_key = $5, credentials_key_version = $6 WHERE id = $1 AND user_id = $2', [target.server_id, ownerId, sealed.ciphertext, sealed.nonce, sealed.encryptedDataKey, sealed.keyVersion])
-      await ports.invalidate(client, ownerId, target.server_id)
-    }
-    const resolved = values === null
-      ? { kind: row.kind, status: 'cancelled', prompt_id: promptId, option_id: 'cancel', value: null, text: '已取消凭据输入' }
-      : resolvedSecretPromptResult(promptId)
-    const prompt: InteractionPromptRecord = { id: row.id, ownerId, sessionId: row.session_id, kind: row.kind, status: 'resolved', expiresAt: new Date(row.expires_at), resolvedAt: new Date(), schema: { ...schema, resolved_result: resolved } }
-    await client.query('UPDATE interaction_prompts SET status = $3, resolved_at = $4, schema_json = $5 WHERE id = $1 AND user_id = $2', [promptId, ownerId, 'resolved', prompt.resolvedAt, JSON.stringify(prompt.schema)])
-    await client.query(`UPDATE mcp_secret_inputs SET status = $3, encrypted_payload = '', payload_nonce = '', encrypted_data_key = ''
-      WHERE prompt_id = $1 AND user_id = $2 ${values === null ? "AND status IN ('pending_choice','awaiting_secret')" : ''}`, [promptId, ownerId, values === null ? 'cancelled' : 'completed'])
-    if (typeof context.tool_call_id === 'string' && context.tool_call_id) await ports.enqueue(client, prompt, { id: 0, promptId, tokenHash: '', actionType: 'secret', optionId: '', context, status: 'consumed', expiresAt: prompt.expiresAt, consumedAt: prompt.resolvedAt, consumedEventId: null })
-    return values === null ? { ok: true, prompt_id: promptId, status: 'cancelled' } : { ok: true, prompt_id: promptId }
-  })
+  }
 }

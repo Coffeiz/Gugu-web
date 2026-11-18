@@ -351,7 +351,7 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
   width: 60vw;
   background: var(--modal-card-bg);
   border-left: 1px solid var(--modal-card-border);
-  border-radius: 20px 0 0 20px;
+  border-radius: var(--card-radius) 0 0 var(--card-radius);
   box-shadow: var(--modal-card-shadow), inset 1px 0 0 var(--modal-card-highlight);
   display: flex;
   flex-direction: column;

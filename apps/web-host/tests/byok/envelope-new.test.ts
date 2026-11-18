@@ -25,7 +25,7 @@ test('隔离主密钥跨语言加解密、版本轮换和并发首次创建',{sk
  }finally{await rm(dir,{recursive:true,force:true})}
 })
 
-test('显式主密钥与上一版本解析不创建文件，空文件不覆盖',async()=>{
+test('显式主密钥与上一版本解析不创建文件，空文件不覆盖',{skip:process.platform!=='linux'&&'需要 Linux 目录句柄'},async()=>{
  const dir=await mkdtemp(join(tmpdir(),'byok-config-'))
  try{
   const {writeFile,readFile,stat,chmod}=await import('node:fs/promises'),path=join(dir,'key')
@@ -44,7 +44,7 @@ test('显式主密钥与上一版本解析不创建文件，空文件不覆盖',
  }finally{await rm(dir,{recursive:true,force:true})}
 })
 
-test('模型版本材料只读解析当前与上一密钥，不创建缺失密钥文件',async()=>{
+test('模型版本材料只读解析当前与上一密钥，不创建缺失密钥文件',{skip:process.platform!=='linux'&&'需要 Linux 目录句柄'},async()=>{
  const dir=await mkdtemp(join(tmpdir(),'byok-version-material-'))
  try{
   const {writeFile,stat}=await import('node:fs/promises'),path=join(dir,'key')
@@ -63,7 +63,7 @@ test('模型版本材料只读解析当前与上一密钥，不创建缺失密�
  }finally{await rm(dir,{recursive:true,force:true})}
 })
 
-test('持久主密钥文件变更后当前进程读取最新内容',async()=>{
+test('持久主密钥文件变更后当前进程读取最新内容',{skip:process.platform!=='linux'&&'需要 Linux 目录句柄'},async()=>{
  const dir=await mkdtemp(join(tmpdir(),'byok-refresh-'))
  try{
   const {writeFile}=await import('node:fs/promises'),path=join(dir,'key')
@@ -95,11 +95,29 @@ test('外部目录别名指向工作区时不得写入主密钥',async()=>{
  }finally{await rm(dir,{recursive:true,force:true})}
 })
 
-test('默认密钥文件路径与 Python 模块所在 data 根一致', {skip:!process.env.GUGU_CORE_GOLDEN_PYTHON},()=>{
- const script='from pathlib import Path\nimport app.byok.crypto as c\nprint(Path(c.__file__).resolve().parents[2] / \"data\" / \".byok-master-key\")'
- const env={...process.env,GUGU_ENV_FILE:'/dev/null',GUGU_CONFIG_OVERRIDE_FILE:'/tmp/gugu-n2-byok-nonexistent',PYTHONPATH:'.'}
- const expected=execFileSync(process.env.GUGU_CORE_GOLDEN_PYTHON!,['-c',script],{cwd:'../../backend',env,encoding:'utf8'}).trim()
- assert.equal(resolveByokKeyFile({}),expected)
+test('缺少显式主密钥时拒绝凭据操作，环境密钥可以独立使用', async()=>{
+ assert.equal(resolveByokKeyFile({}),null)
+ assert.equal(resolveByokKeyFile({CREDENTIALS_MASTER_KEY_FILE:' '}),null)
+ assert.deepEqual(await readConfiguredByokMasterKeys({}),{})
+ const configured=createConfiguredByokEnvelope({CREDENTIALS_MASTER_KEY:'synthetic-host-master'})
+ const row=await configured.encrypt('synthetic')
+ assert.equal(await configured.decrypt(row),'synthetic')
+ const unconfigured=createConfiguredByokEnvelope({})
+ await assert.rejects(unconfigured.encrypt('synthetic'),/未配置凭据主密钥/)
+ await assert.rejects(unconfigured.decrypt(row),/未配置凭据主密钥/)
+})
+
+test('多个 Node 调用并发写入时只初始化显式主密钥文件', {skip:process.platform!=='linux'&&'需要 Linux 目录句柄'}, async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'byok-node-init-'))
+ try{
+  const {stat}=await import('node:fs/promises'),path=join(dir,'key')
+  const env={CREDENTIALS_MASTER_KEY_FILE:path}
+  assert.deepEqual(await readConfiguredByokMasterKeys(env),{})
+  const rows=await Promise.all(Array.from({length:4},()=>createConfiguredByokEnvelope(env).encrypt('synthetic')))
+  assert.equal((await stat(path)).mode&0o777,0o600)
+  const codec=createConfiguredByokEnvelope(env)
+  assert.deepEqual(await Promise.all(rows.map(row=>codec.decrypt(row))),Array(4).fill('synthetic'))
+ }finally{await rm(dir,{recursive:true,force:true})}
 })
 
 test('密钥文件自身为符号链接时拒绝读取和改权限',async()=>{

@@ -16,7 +16,7 @@ test('删除技能限定owner，提交后通知；重复删除404且不发布，
   const first='00000000-0000-4000-8000-000000000061',second='00000000-0000-4000-8000-000000000062'
   const published:string[]=[]
   try {
-    await pool.query('CREATE TABLE user_skills(id serial PRIMARY KEY,owner_id uuid NOT NULL,skill_id varchar(16) NOT NULL, UNIQUE(owner_id,skill_id))')
+    await pool.query("CREATE TABLE user_skills(id serial PRIMARY KEY,owner_id uuid NOT NULL,skill_id varchar(16) NOT NULL, source text NOT NULL DEFAULT 'user', UNIQUE(owner_id,skill_id))")
     await pool.query("INSERT INTO user_skills(owner_id,skill_id) VALUES($1,'U1'),($2,'U1'),($1,'U2')",[first,second])
     const remove=createUserSkillDeletion(runtime.db,'postgres',async(owner)=>{
       assert.equal((await pool.query('SELECT count(*)::integer AS count FROM user_skills WHERE owner_id=$1 AND skill_id=$2',[owner,'U1'])).rows[0].count,0)

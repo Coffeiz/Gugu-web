@@ -66,7 +66,10 @@
           </div><!-- /left-content -->
         </div>
 
-        <ProjectFilesPanel :context="filePanelContext" />
+        <ProjectFilesPanel v-if="!desktop" :context="filePanelContext" />
+        <div v-else class="desktop-project-files panel-right">
+          <p>{{ t('projects.desktopFilesUnavailable') }}</p>
+        </div>
   </ProjectModalShell>
 
   <ArchiveOperationDialog
@@ -111,6 +114,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, toRef, onUnmounted, type PropType } from 'vue'
+import { isDesktopRenderer } from '@/desktop/bridge'
 import { useI18n } from 'vue-i18n'
 import { runtime } from '@/interaction/runtime'
 import { useRuntimeAction } from '@/interaction/runtime/vue'
@@ -188,10 +192,11 @@ const uiStore          = useUiStore()
 const workspaceSupported = ref(false)
 const projectWorkspace = ref<{ id: number } | null>(null)
 const workspaceLoading = ref(false)
+const desktop = isDesktopRenderer()
 
 async function refreshProjectWorkspace() {
   const projectId = props.project?.id
-  if (!projectId) {
+  if (desktop || !projectId) {
     workspaceSupported.value = false
     projectWorkspace.value = null
     return
@@ -551,6 +556,7 @@ async function deleteFolderCard(folder: FolderMeta) {
 const { initializing, ensureDirectoryLoaded, isDirectoryLoaded, invalidateProjectDirectories,
   loadMoreDirectory, directoryHasMore, directoryLimitReached, loadingMore: projectFilesLoadingMore } = useProjectFileProjectSync({
   project: () => props.project,
+  filesAvailable: !desktop,
   openFolders,
   folderStack,
   resetNavigation: resetPmNavigation,
@@ -835,6 +841,10 @@ const filePanelContext = {
   overflow: hidden;
 }
 .modal button { outline: none; }
+.desktop-project-files {
+  flex: 1; min-width: 0; display: grid; place-items: center; padding: var(--space-md);
+  color: var(--content-secondary); text-align: center; background: var(--surface-panel);
+}
 
 /* ── 左栏 ── */
 .modal-left {
@@ -901,7 +911,7 @@ const filePanelContext = {
   font-size: 17px; font-weight: 700; color: var(--text-primary);
   font-family: var(--font-sans); line-height: 1.2; outline: none;
   padding: 7px 11px; margin: 0 -11px 0 0;
-  border: 1px solid transparent; border-radius: 10px; corner-shape: squircle;
+  border: 1px solid transparent; border-radius: 10px; corner-shape: round;
   background: transparent; caret-color: var(--input-caret-color);
   transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
 }

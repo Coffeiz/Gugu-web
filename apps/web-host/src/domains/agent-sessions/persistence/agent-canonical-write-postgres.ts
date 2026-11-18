@@ -1,12 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { PoolClient } from 'pg'
-import { MessageArea, stableJson, isCompactedSummaryMessage, unwrapCompactedSummary, validateCompactSummary, updateBaselineSnapshot } from '@gugu/core/agent'
-import type { CanonicalRunContext, RunCheckpoint, RunIdentity, MessageEntry } from '@gugu/core/agent'
+import { MessageArea, canonicalToolsUsed, stableJson, isCompactedSummaryMessage, unwrapCompactedSummary, validateCompactSummary, updateBaselineSnapshot } from '@gugu/core/agent'
+import type { CanonicalRunContext, RunCheckpoint, RunIdentity } from '@gugu/core/agent'
 import { sanitizeMediaPayload } from '@gugu/core/agent/context/messages'
 import { recordAgentUsage, type AgentUsageConfig } from './agent-usage-postgres.js'
 import { lockCanonicalHistoryBaseline } from './agent-history-baseline-postgres.js'
 import type { AgentRunHistoryWrite } from './agent-run-store-postgres.js'
-import { enqueueConversationRagRebuild } from './conversation-rag-job-postgres.js'
+import { enqueuePostgresAgentRagRebuild } from './agent-rag-job-postgres.js'
 
 const digest = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')
 const shortDigest = (value: unknown) => digest(value).slice(0, 16)
@@ -14,19 +14,6 @@ const shortDigest = (value: unknown) => digest(value).slice(0, 16)
 /** 与 Python session_snapshot.baseline_hash 的完整 SHA-256 格式互通。 */
 export function canonicalBaselineHash(rows: readonly { id: string; role: string; content: string; content_json: unknown }[]): string {
   return digest(rows.map(row => ({ id: Number(row.id), role: row.role, content: row.content_json ?? row.content ?? '' })))
-}
-
-/** 汇总已派发的多轮工具名称；保留首次出现顺序，排除静默选择工具。 */
-export function canonicalToolsUsed(checkpoint: RunCheckpoint<CanonicalRunContext>, entries: readonly MessageEntry[]): string[] {
-  const names: string[] = []
-  const add = (value: unknown) => {
-    if (typeof value === 'string' && value && value !== 'choose_no_reply' && !names.includes(value)) names.push(value)
-  }
-  for (const item of checkpoint.displayTimeline) if (item.kind === 'tool') add(item.toolName)
-  for (const entry of entries) if (entry.source === 'tool_round' && Array.isArray(entry.message.content))
-    for (const block of entry.message.content)
-      if (block && typeof block === 'object' && !Array.isArray(block) && block.type === 'tool_call') add(block.name)
-  return names
 }
 
 /** 由可信模型选择服务注入账本配置；与 RunStore 的终态提交共用事务。 */
@@ -145,7 +132,7 @@ export function createCanonicalHistoryWriter(resolveConfig: (identity: RunIdenti
     }
     if (context.providerCacheAnchor) await client.query(`UPDATE conversation_sessions SET session_context = jsonb_set(coalesce(session_context::jsonb,'{}'::jsonb), '{provider_cache_anchor}', $3::jsonb)
       WHERE id = $1 AND user_id = $2`, [identity.sessionId, identity.ownerId, JSON.stringify(context.providerCacheAnchor.anchor)])
-    if (total > 0) await enqueueConversationRagRebuild(client, identity.ownerId)
+    if (total > 0) await enqueuePostgresAgentRagRebuild(client, identity.ownerId, 'conversation')
     await recordAgentUsage(client, identity, checkpoint.totalUsage, config, checkpoint.providerRounds, canonicalToolsUsed(checkpoint, delta.entries))
   }
 }

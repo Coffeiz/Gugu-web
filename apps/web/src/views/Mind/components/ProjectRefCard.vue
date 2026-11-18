@@ -2,7 +2,7 @@
   <!-- 画布项目引用卡不再嵌 ProjectCard.vue 本体——看板项目卡承载了大量看板专属交互（优先级
        星级、推进阶段按钮、点阶段名弹待办列表、文件拖拽上传），画布这边只需要一份只读展示 +
        拖拽/建立关联，共享整个交互组件换来的是"看板改需求容易带崩画布、画布改样式容易带崩
-       看板"（这次 squircle 圆角+加宽的误伤就是实例）。这里只共享没有 DOM 的纯展示逻辑
+       看板"。这里只共享没有 DOM 的纯展示逻辑
        （useProjectCardBasics：名字底色、阶段文案、进度、截止日期文案），显示层各写各的。 -->
   <div
     v-if="project"
@@ -202,8 +202,7 @@ function onOpen() {
    块级元素在正常流里会跟其它同样 position:relative 的兄弟节点垂直堆叠——这份「正常流基准
    位置」会随画布上其它项目卡片的数量/高度变化，item.y 的偏移量就是加在一个不固定的基准上，
    越往后建的项目卡片、前面项目卡片越多/越高，累积偏差就越大。
-   圆角只用 border-radius，不叠 corner-shape:squircle——文件卡/便签/活动贴纸这几种画布卡片
-   都是普通圆角，项目卡跟着统一，不再各转各的曲线。overflow:visible 是因为连接点的判定区
+   项目卡和其他画布卡片一样使用普通圆角。overflow:visible 是因为连接点的判定区
    摆在卡片边缘外侧（见 CardAffordances.vue 的 .conn-dot-left/right），overflow:hidden 会把它们
    裁掉一半；背景渐变本身不需要 overflow:hidden 也会被自己的 border-radius 裁成圆角（元素
    自身背景永远贴合自己的盒子形状，overflow 管的是会溢出盒子的子元素/内容，不影响这点）。

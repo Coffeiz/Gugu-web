@@ -1,13 +1,21 @@
 import { z } from 'zod'
+import { createHash } from 'node:crypto'
 import { strip } from '../../shared/values.js'
 import { CoreError, dataContext } from '../../contracts/index.js'
 import { ClientValidationError } from '../../clients/service.js'
 import type { ClientRecord, Fields, Json } from '../../contracts/index.js'
 import type { SqlDataRuntime } from '../../data/runtime.js'
+import { services } from '../../data/repositories.js'
+import type { DataServices } from '../../data/services.js'
+import { nowUtc } from '../../data/codec.js'
 import type { ToolResult } from '../models.js'
 import type { ToolDefinition } from './contracts.js'
+import type { RunIdentity, ToolCall } from '../models.js'
 import { redactToolError } from '../core.js'
 import { enrichToolError } from './input-errors.js'
+import { createConfirmationGate, type ConfirmationClaimReference, type ConfirmationTargetSnapshot } from './confirmation.js'
+import type { Database } from '../../data/schema.js'
+import type { Transaction } from 'kysely'
 
 const fields = { client_name: z.string().optional(), contact: z.string().optional(), email: z.string().optional(), phone: z.string().optional(), notes: z.string().optional() }
 const validators = {
@@ -73,4 +81,162 @@ export function createClientTools(runtime: SqlDataRuntime): ToolDefinition[] {
       }
     },
   }))
+}
+
+export interface ClientDeleteConfirmationPort {
+  gate: ReturnType<typeof createConfirmationGate>
+  /** 联系人删除与一次性确认 claim 必须处于同一事务。 */
+  claim(tx: Transaction<Database>, reference: ConfirmationClaimReference, signal: AbortSignal): Promise<boolean>
+}
+
+export interface ClientDeleteRequest {
+  identity: RunIdentity
+  roundId: string
+  toolCallId: string
+  args: { client_id?: number; client?: string; client_ids?: number[] }
+}
+
+export interface ClientDeletePort {
+  confirmation?: ClientDeleteConfirmationPort
+  apply(input: ClientDeleteRequest & { signal: AbortSignal; call: ToolCall; scope: import('./contracts.js').ToolScope }): Promise<ToolResult>
+  reconcile(input: ClientDeleteRequest): Promise<ToolResult>
+}
+
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
+  if (value !== null && typeof value === 'object') return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+    .map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`
+  return JSON.stringify(value) ?? 'null'
+}
+function digest(value: unknown): string { return createHash('sha256').update(canonical(value)).digest('hex') }
+function clientDeleteCoordinate(input: ClientDeleteRequest) {
+  const context = dataContext(input.identity.ownerId)
+  const parts = ['client.delete', context.ownerId, input.identity.sessionId, input.identity.runId, input.roundId, input.toolCallId]
+  if (parts.some(value => typeof value !== 'string' || !value.trim())) throw new CoreError('invalid_request', '工具运行身份无效')
+  const hex = createHash('sha256').update(JSON.stringify(parts)).digest('hex')
+  const raw = `${hex.slice(0, 12)}5${hex.slice(13, 16)}8${hex.slice(17, 32)}`
+  return { context, operationId: `${raw.slice(0, 8)}-${raw.slice(8, 12)}-${raw.slice(12, 16)}-${raw.slice(16, 20)}-${raw.slice(20)}` }
+}
+
+async function resolveClientDeleteRows(data: DataServices, args: ClientDeleteRequest['args'], signal: AbortSignal) {
+  const submitted = args.client_ids ?? (args.client_id ? [args.client_id] : null)
+  if (args.client_ids !== undefined && (!Array.isArray(args.client_ids) || args.client_ids.length < 1 || args.client_ids.length > 50))
+    return { rows: [], snapshot: { targetsDigest: '', versionsDigest: '' }, error: 'client_ids 必须是 1-50 个联系人 id' } as const
+  let rows: ClientRecord[]
+  if (submitted !== null) {
+    const ids = [...new Set(submitted)].sort((a, b) => a - b)
+    rows = []
+    for (const id of ids) {
+      signal.throwIfAborted()
+      const client = await data.clients.repository.get(id)
+      if (!client) return { rows: [], snapshot: { targetsDigest: '', versionsDigest: '' },
+        error: args.client_ids === undefined ? '联系人不存在' : `联系人 ${id} 不存在` } as const
+      rows.push(client)
+    }
+    if (rows.length !== ids.length) return { rows: [], snapshot: { targetsDigest: '', versionsDigest: '' }, error: '联系人不存在' } as const
+  } else {
+    if (typeof args.client !== 'string' || !args.client.trim())
+      return { rows: [], snapshot: { targetsDigest: '', versionsDigest: '' }, error: '需提供 client_id 或联系人名 client' } as const
+    const query = strip(args.client)
+    const candidates = await data.clients.findByName(query)
+    signal.throwIfAborted()
+    if (!candidates.length) return { rows: [], snapshot: { targetsDigest: '', versionsDigest: '' }, error: `未找到联系人「${query}」` } as const
+    if (candidates.length > 1) return { rows: [], snapshot: { targetsDigest: '', versionsDigest: '' }, error: `有多个匹配「${query}」的联系人，请指明`, candidates: candidates.slice(0, 10).map(item => ({ id: item.id, name: item.name })) } as const
+    rows = candidates
+  }
+  rows.sort((a, b) => a.id - b.id)
+  const targetIds = rows.map(row => row.id)
+  const snapshot: ConfirmationTargetSnapshot = {
+    targetIds: { client_id: targetIds },
+    targetsDigest: digest({ clientIds: targetIds }),
+    versionsDigest: digest(rows.map(row => ({ id: row.id, name: row.name, contact: row.contact, email: row.email, phone: row.phone, notes: row.notes, created_at: row.created_at }))),
+  }
+  return { rows, snapshot } as const
+}
+
+async function resolveClientDeleteTargets(runtime: SqlDataRuntime, ownerId: string, args: ClientDeleteRequest['args'], signal: AbortSignal) {
+  return runtime.transaction(dataContext(ownerId), data => resolveClientDeleteRows(data, args, signal), { signal })
+}
+
+/** 旧版单项/批量联系人删除语义；精确目标、确认 claim 与 Core 操作收据原子绑定。 */
+export function createClientDeletePort(runtime: SqlDataRuntime, confirmation?: ClientDeleteConfirmationPort): ClientDeletePort {
+  if (!runtime.receipts) throw new Error('联系人删除需要持久操作收据')
+  const absent = new Error('联系人删除收据不存在')
+  async function reconcile(input: ClientDeleteRequest): Promise<ToolResult> {
+    try {
+      const key = clientDeleteCoordinate(input)
+      const receipt = await runtime.operationWithTransaction(key.context, key.operationId, 'agent.client.delete', { args: input.args }, async () => { throw absent })
+      return { kind: 'completed', successful: true, mutated: false, value: receipt.result }
+    } catch { return { kind: 'unknown' } }
+  }
+  return { confirmation, reconcile, async apply(input) {
+    input.signal.throwIfAborted()
+    if (input.scope.resolution?.status === 'confirmed') {
+      const previous = await reconcile(input)
+      if (previous.kind === 'completed') return previous
+    }
+    if (input.args.client_ids !== undefined && (!input.args.client_ids.length || input.args.client_ids.length > 50))
+      return { kind: 'completed', successful: false, mutated: false, value: { error: 'client_ids 必须是 1-50 个联系人 id' } }
+    const batch = input.args.client_ids !== undefined
+    const targets = await resolveClientDeleteTargets(runtime, input.identity.ownerId, input.args, input.signal)
+    input.signal.throwIfAborted()
+    if ('error' in targets) return { kind: 'completed', successful: false, mutated: false, value: { error: targets.error, ...('candidates' in targets ? { candidates: targets.candidates } : {}) } }
+    if (!confirmation) return { kind: 'completed', successful: false, mutated: false, value: { error: '联系人删除需要可信确认能力' } }
+    const params = { args: input.args }, inputDigest = digest(params)
+    if (input.scope.resolution === null) {
+      const prepared = await confirmation.gate.prepare(input.call, input.scope, inputDigest, targets.snapshot)
+      return prepared.ok ? { kind: 'waiting', interaction: prepared.value }
+        : { kind: 'completed', successful: false, mutated: false, value: { error: '联系人删除确认无效或已过期' } }
+    }
+    const verified = await confirmation.gate.verify(input.call, input.scope, inputDigest, targets.snapshot)
+    if (!verified.ok) return { kind: 'completed', successful: false, mutated: false, value: { error: '联系人删除确认无效或已过期' } }
+    const key = clientDeleteCoordinate(input)
+    let callbackError: unknown
+    try {
+      const receipt = await runtime.operationWithTransaction(key.context, key.operationId, 'agent.client.delete', params, async (tx, owner) => {
+        try {
+          input.signal.throwIfAborted()
+          if (!await confirmation.claim(tx, verified.value, input.signal)) throw new Error('联系人删除确认已使用或目标已变化')
+          if (runtime.backend === 'postgres') {
+            await tx.selectFrom('clients').select('id').where('user_id', '=', owner)
+              .where('id', 'in', targets.rows.map(row => row.id)).forUpdate().execute()
+            input.signal.throwIfAborted()
+          }
+          const data = services(tx, owner, runtime.backend, nowUtc)
+          const current = await resolveClientDeleteRows(data, { client_ids: targets.rows.map(row => row.id) }, input.signal)
+          if ('error' in current || current.snapshot.targetsDigest !== targets.snapshot.targetsDigest || current.snapshot.versionsDigest !== targets.snapshot.versionsDigest)
+            throw new Error('联系人删除确认已使用或目标已变化')
+          const results = []
+          for (const row of current.rows) {
+            input.signal.throwIfAborted()
+            await data.clients.delete(row.id)
+            results.push({ deleted_client_id: row.id, name: row.name })
+          }
+          input.signal.throwIfAborted()
+          return batch
+            ? { success: true, deleted_count: results.length, results }
+            : { success: true, ...results[0] }
+        } catch (error) { callbackError = error; throw error }
+      }, { signal: input.signal })
+      return { kind: 'completed', successful: true, mutated: !receipt.replayed, value: receipt.result }
+    } catch (error) {
+      if (error instanceof CoreError && error.code === 'conflict') return { kind: 'completed', successful: false, mutated: false, value: { error: '操作标识已用于不同内容' } }
+      if (input.signal.aborted && error === callbackError) throw error
+      if (error === callbackError && error instanceof Error) return { kind: 'completed', successful: false, mutated: false, value: { error: error.message } }
+      return reconcile(input)
+    }
+  } }
+}
+
+export function createClientDeleteTool(port: ClientDeletePort): ToolDefinition {
+  const id = z.number().int().safe()
+  const schema = z.object({ client_id: id.optional(), client: z.string().optional(), client_ids: z.array(id).max(50).refine(ids => new Set(ids).size === ids.length).optional() }).passthrough()
+  const request = (args: z.infer<typeof schema>, identity: RunIdentity, roundId: string, toolCallId: string): ClientDeleteRequest => ({ identity, roundId, toolCallId, args })
+  return {
+    definition: { name: 'delete_client', schema: { type: 'function', function: { name: 'delete_client', description: '删除一个或多个联系人（不可恢复）。单项传 client_id 或联系人名 client，批量传 client_ids；执行前必须确认。', parameters: z.toJSONSchema(schema) as Record<string, Json> } } },
+    effect: 'write', requiresInteraction: true, confirmationReplay: true, validate: input => schema.safeParse(input),
+    execute(input, scope, call) { return port.apply({ ...request(input as z.infer<typeof schema>, scope.identity, scope.roundId, call.id), signal: scope.signal, call, scope }) },
+    reconcile(input, identity, call) { return port.reconcile(request(input as z.infer<typeof schema>, identity, identity.roundId, call.id)) },
+  }
 }

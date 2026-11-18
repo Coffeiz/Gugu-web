@@ -60,7 +60,7 @@ const emit = defineEmits<{
 .popup-title { font-size: 13px; font-weight: 700; color: var(--content-primary); }
 .popup-close-btn {
   display: flex; align-items: center; justify-content: center;
-  width: 22px; height: 22px; border: none; border-radius: var(--radius-xs);
+  width: 22px; height: 22px; border: none; border-radius: var(--radius-compact);
   background: transparent; color: var(--content-secondary); cursor: pointer;
   transition: background-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard);
 }
@@ -75,7 +75,7 @@ const emit = defineEmits<{
 }
 .popup-delete:hover { background: var(--danger-button-bg-hover); border-color: var(--danger-button-border-hover); }
 .popup-save {
-  padding: 5px 14px; border-radius: var(--radius-sm); border: none;
+  padding: 5px 14px; border-radius: var(--radius-xs); border: none;
   background: var(--action-primary-bg); color: var(--content-on-accent);
   font-size: 12px; font-weight: 600; cursor: pointer; font-family: var(--font-sans);
   transition: opacity var(--motion-hover-control) var(--motion-ease-standard); box-shadow: var(--elevation-card);

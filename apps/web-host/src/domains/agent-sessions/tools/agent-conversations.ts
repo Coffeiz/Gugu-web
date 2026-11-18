@@ -3,7 +3,7 @@ import type { ConversationReadPort,ConversationSearchPort,ConversationSearchHit 
 import type { RunIdentity } from '@gugu/core/agent'
 import type { SqlDataRuntime } from '@gugu/core/data'
 import { createPostgresAgentConversationTextReader,createSqlAgentConversationSearchSources } from '@gugu/core/agent-sessions'
-import { configureRagJieba,createSqlRagConversationSearch,type RagJieba } from '@gugu/core/agent'
+import { configureRagJieba,createSqlRagConversationSearch,type RagJieba } from '@gugu/core/agent/rag'
 import { getAgentRagJieba } from './agent-rag-jieba.js'
 
 /** 复用会话历史读取服务；owner 仅来自可信运行身份。 */

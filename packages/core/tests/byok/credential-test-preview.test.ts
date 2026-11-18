@@ -33,9 +33,9 @@ async function reset() {
     .execute()
 }
 
-async function insertCredential(input: { id: number; user: string; baseUrl?: string; capability?: string; provider?: string }) {
+async function insertCredential(input: { id: number; user: string; baseUrl?: string; capability?: string; provider?: string; apiFormat?: string }) {
   await db.insertInto('user_provider_credentials').values({
-    id: input.id, user_id: input.user, provider: input.provider ?? 'deepseek', api_format: 'openai',
+    id: input.id, user_id: input.user, provider: input.provider ?? 'deepseek', api_format: input.apiFormat ?? 'openai',
     base_url: input.baseUrl ?? 'https://api.deepseek.example/v1', model: 'deepseek-v4', capability: input.capability ?? 'llm', dimensions: null,
     encrypted_value: 'cipher', nonce: 'nonce', encrypted_data_key: 'wrapped', key_version: 1,
   }).execute()
@@ -50,6 +50,23 @@ beforeAll(reset)
 afterAll(async () => { await db.destroy() })
 
 describe('BYOK draft connection preview', () => {
+  it('草稿和已保存试呼保留 MiniMax 原生语音的成功及格式错误回执', async () => {
+    await insertCredential({ id: 8, user: owner, capability: 'speech_to_text', provider: 'minimax', apiFormat: 'minimax-asr' })
+    const options = {
+      enabled: () => true,
+      decrypt: async () => 'synthetic-key',
+      probe: async ({ apiFormat }: { apiFormat: string }) => apiFormat === 'minimax-asr'
+        ? { ok: true, status: 200, detail: '', message: 'MiniMax ASR 连接正常' }
+        : { ok: false, status: 0, detail: '', message: 'MiniMax 语音识别需要选择 MiniMax ASR 接口格式' },
+    }
+    const draft = createCredentialTestPreview(db, options)
+    const saved = createCredentialSavedTest(db, options)
+    const input = { capability: 'speech_to_text' as const, provider: 'minimax', value: 'synthetic-key' }
+    await expect(draft(owner, { ...input, api_format: 'openai' }))
+      .resolves.toEqual({ ok: false, status: 0, message: 'MiniMax 语音识别需要选择 MiniMax ASR 接口格式' })
+    await expect(saved(owner, 8)).resolves.toEqual({ ok: true, status: 200, message: 'MiniMax ASR 连接正常' })
+  })
+
   it('拒绝跨 owner 凭据，不解密、不探测，也不改动持久化数据', async () => {
     await insertCredential({ id: 1, user: foreign })
     const preview = createCredentialTestPreview(db, {

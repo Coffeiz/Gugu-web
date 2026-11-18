@@ -252,7 +252,7 @@ onMounted(loadHistory)
   background: rgba(255,255,255,0.9);
   backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px);
   border: 1px solid rgba(255,255,255,0.65);
-  border-radius: 20px; position: relative; overflow: hidden; margin-bottom: 18px;
+  border-radius: var(--card-radius); position: relative; overflow: hidden; margin-bottom: 18px;
   box-shadow: 0 10px 30px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.9);
 }
 .pv-close {
