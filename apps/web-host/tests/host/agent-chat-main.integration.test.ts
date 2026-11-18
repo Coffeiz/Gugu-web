@@ -440,7 +440,7 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     await writeFile(restoreSource, '合成文件恢复正文')
     const standaloneRestoreFile = await pool.query<{ id: number }>(`INSERT INTO files(user_id,display_name,ext,space,
       storage_key,deleted_at,created_at,updated_at)
-      VALUES($1,'单文件恢复样本','txt','personal',$2,'2026-11-17 10:00:00+00',now(),now()) RETURNING id`,
+      VALUES($1,'单文件恢复样本','txt','personal',$2,'2026-11-17 09:30:00+00',now(),now()) RETURNING id`,
     [owner, `${owner}/trash/单文件恢复样本.txt`])
     restoreFileId = standaloneRestoreFile.rows[0]!.id
     await mkdir(join(root, 'storage', owner, 'trash'), { recursive: true })
@@ -737,7 +737,8 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     assert.equal(typeof trashText, 'string')
     const trash = JSON.parse(trashText as string) as Array<{ name: string; kind: string; deleted_at: string }>
     assert.deepEqual(trash.map(({ name, kind }) => ({ name, kind })), [
-      { name: '回收站合成文件.txt', kind: 'file' }, { name: '合成资料目录', kind: 'folder' },
+      { name: '回收站合成文件.txt', kind: 'file' }, { name: '单文件恢复样本.txt', kind: 'file' },
+      { name: '合成资料目录', kind: 'folder' },
     ])
     assert.match(trash[0]!.deleted_at, /2026-11-17T10:00:00(?:\.000000)?\+00:00/u)
     const restoreFileResponse = await chat('恢复合成回收站文件。', 4)

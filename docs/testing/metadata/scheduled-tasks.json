@@ -7,6 +7,14 @@
     "keyBehavior": "按任务 owner 与运行身份读取业务上下文，沿用共享快照 builder，拒绝身份漂移与取消并按配置省略记忆",
     "ci": "core-node"
   },
+  "packages/core/tests/scheduled-tasks/run-now.test.ts": {
+    "domain": "scheduled-tasks",
+    "layer": "L1",
+    "owner": "packages/core/src/scheduled-tasks/execute.ts",
+    "productionEntry": "apps/web-host/src/main.ts 定时 Agent 工具准备",
+    "keyBehavior": "仅可接收结果附件的渠道开放 send_file；Telegram 单独选择时仍可生成并投递附件",
+    "ci": "core-node"
+  },
   "apps/web-host/tests/host/scheduled-run-now-main.integration.test.ts": {
     "domain": "scheduled-tasks",
     "layer": "L2",
