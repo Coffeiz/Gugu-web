@@ -74,35 +74,16 @@
 
 这是一轮自动语义裁判，裁判与答题使用同一模型；每批其他问题同时可见，且未进行盲评、重复评分或对全部判定的人审。7 条 `unknown` 校正只覆盖明确可验证的错误，不代表其余判定均已验证。这不是官方排行榜成绩，也不是对事实真实性的全面核验。词级 F1 与语义正确率指标不同，不应将数值差异解释为性能提升。
 
-评分使用[语义裁判脚本](../../backend/scripts/benchmarks/locomo/bench_locomo_semantic_judge.py)，真实调用 Provider 并串行写入测试目录：
-
-```bash
-cd <devserver仓库根目录>/backend
-PYTHONPATH=. .venv/bin/python scripts/benchmarks/locomo/bench_locomo_semantic_judge.py \
-  --allow-real-llm --user-id <测试账号UUID> \
-  --root <BM25全量结果目录>
-```
+语义裁判调用真实 Provider，结果串行写入独立评测目录。
 
 [脱敏评分汇总及修正编号](./results/locomo-20261115/bm25-semantic-judge-metrics.json)保留原始计数与修正规则；逐题裁判结果仍保存在 devserver 的 `/tmp/gugu-locomo-bm25-full-20261115/semantic-judge.json`，尚未清理。该临时文件不保证长期保存。未统计实际费用。
 
-## 8. 测试脚本与产物
+## 8. 评测产物
 
-- 使用[已归档的 BM25 脚本](../../backend/scripts/benchmarks/locomo/bench_locomo_sim.py)。实际完整调度器仅按顺序为其提供各段单元素数据文件，不修改算法或提示。
+- 每段对话作为独立样本按顺序评测，使用相同的检索算法和提示。
 - [全量脱敏统计](./results/locomo-20261115/bm25-full-metrics.json)。
 - 每段原始状态保存在 devserver 的 `/tmp/gugu-locomo-bm25-full-20261115/sample-XX/state.json`；尚未清理，临时目录不保证长期保存。
 - 读取后台配置及测试账号记录、调用真实 Provider；仅写入隔离评测文件，不写真实用户记忆、不改运行配置。
-
-复现时把官方数据逐段拆成单元素 JSON 数组，分别使用独立输出目录，串行执行：
-
-```bash
-cd <devserver仓库根目录>/backend
-PYTHONPATH=. .venv/bin/python scripts/benchmarks/locomo/bench_locomo_sim.py \
-  --allow-real-llm --user-id <测试账号UUID> \
-  --dataset <评测目录>/sample-XX/dataset.json \
-  --output <评测目录>/sample-XX
-```
-
-该脚本仍按名称选择 deepseek 预设，非通用评测框架；不要把不同模型或数据写进同一已有结果目录。若需要严格复现，从空目录重建全部记忆与答案，并固定模型与上游数据版本。
 
 ## 9. 尚未覆盖
 

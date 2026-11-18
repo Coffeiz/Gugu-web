@@ -161,33 +161,9 @@
 
 前期正式反思尝试与最终模拟评测产物分目录保存；hybrid 复制基线事实后清空的只是新评测目录中的答案列表。原始失败产物仍保留，未混入最终分数。
 
-## 8. 测试脚本与复现
+## 8. 评测产物
 
-本次执行脚本已作为实验快照归档：
-
-- [模拟记忆及 BM25 基线](../../backend/scripts/benchmarks/locomo/bench_locomo_sim.py)
-- [向量索引及混合重排](../../backend/scripts/benchmarks/locomo/bench_locomo_hybrid.py)
-- [脱敏汇总指标](./results/locomo-20261115/metrics.json)
-
-脚本目前固定读取第一段对话，并按名称选择后台 `deepseek` 预设。需要已存在、用户名以 `benchmark-locomo-` 开头的测试账号。它们是本次评测快照，尚非通用 benchmark 框架。
-
-在 `<devserver仓库根目录>/backend` 执行，数据、状态目录使用仓库外路径：
-
-```bash
-PYTHONPATH=. .venv/bin/python scripts/benchmarks/locomo/bench_locomo_sim.py \
-  --allow-real-llm --user-id <测试账号UUID> \
-  --dataset <评测目录>/locomo10.json --output <BM25结果目录>
-```
-
-混合组先把基线 `state.json` 复制到新的结果目录，只将其中 `answers` 字段置为空对象，保留 `memories` 原值，再运行：
-
-```bash
-PYTHONPATH=. .venv/bin/python scripts/benchmarks/locomo/bench_locomo_hybrid.py \
-  --allow-real-llm --user-id <测试账号UUID> \
-  --dataset <评测目录>/locomo10.json --output <Hybrid结果目录>
-```
-
-脚本需要真实模型授权开关，读取测试账号所在数据库；写入仅限显式输出目录。重跑前应检查模型与数据身份；基线脚本对已有状态的身份校验尚不完整，不应把不同模型或数据集的输出混入同一目录。没有测试账号时会拒绝运行，不自动创建账号。
+评测使用独立的临时脚本，仓库保留[脱敏汇总指标](./results/locomo-20261115/metrics.json)。BM25 与混合组复用同一批模拟事实，分别生成答案并写入独立目录。
 
 原始结果仍位于 devserver 临时目录 `/tmp/gugu-locomo-deepseek-20261115/` 与 `/tmp/gugu-locomo-hybrid-20261115/`，尚未清理；临时目录不保证长期保存。逐题语义审阅与评分中间产物保存在本地受控评测目录，未把数据集正文与逐题答案提交进仓库。当前归档指标用于长期查阅，完整重现还需要官方数据、Provider 配置和评分依赖。
 
