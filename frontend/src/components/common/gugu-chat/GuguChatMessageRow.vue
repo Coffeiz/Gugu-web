@@ -30,8 +30,8 @@
   <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body" @click="onBodyClick"><MarkdownView :html="msg.streaming ? renderMdStream(msg.text) : (msg.html ?? renderChatMd(msg.text, msg.references))" :text="msg.text" chat :render-math="!msg.streaming" /></div>
   <!-- 用户消息也走 MD 渲染（sanitize 后），和 AI 气泡同一条链路；样式差异由
        .user-md 在 GuguChat.vue 里按紫底气泡重映射。输入框侧保持纯文本不渲染。 -->
+  <div v-else-if="(msg.role === 'user' || msg.role === 'member') && msg.mentionOnly && !msg.text?.trim()" class="msg-bubble mention-only-bubble" :class="{ 'user-md': msg.role === 'user' }">{{ t('chatUi.mentionOnly') }}</div>
   <div v-else-if="msg.text" class="msg-bubble user-md" @click="onBodyClick"><MarkdownView :html="msg.html ?? renderChatMd(displayQQFaces(msg.text), msg.references)" :text="msg.text" chat render-math /></div>
-  <div v-else-if="msg.role === 'user' && msg.mentionOnly" class="msg-bubble user-md mention-only-bubble">{{ t('chatUi.mentionOnly') }}</div>
   <div v-if="msg.role === 'user' && msg.runOutcome" class="msg-run-outcome" role="status">
     <span class="msg-run-outcome-label">
       {{ t(msg.runOutcome.status === 'interrupted' ? 'chatUi.runInterrupted' : 'chatUi.runFailed') }}

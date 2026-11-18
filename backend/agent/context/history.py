@@ -37,6 +37,7 @@ def canonical_restore_record(message) -> dict:
                         or block.get("type") not in {"thinking", "redacted_thinking", "reasoning_content"}]
     return {
         "_history_id": getattr(message, "id", None),
+        "run_id": getattr(message, "run_id", None),
         "role": str(getattr(message, "role", "user") or "user"),
         "content": str(getattr(message, "content", "") or ""),
         "content_json": content_json,
@@ -47,6 +48,7 @@ def canonical_restore_record(message) -> dict:
         if getattr(message, "created_at", None) is not None else None,
         "im_platform_sent_ms": getattr(message, "im_platform_sent_ms", None),
         "im_event_received_ms": getattr(message, "im_event_received_ms", None),
+        "im_mention_facts": getattr(message, "im_mention_facts", None),
         "quoted_text": getattr(message, "quoted_text", None),
         "references_json": getattr(message, "references_json", None),
         "files": getattr(message, "files", None),
@@ -637,6 +639,7 @@ def render_canonical_area_snapshot(snapshot, *, source=None, options=None):
                     created_at = None
         records.append(SimpleNamespace(
             id=record.get("_history_id"),
+            run_id=record.get("run_id"),
             source=entry.source.value,
             role=record.get("role", "user"),
             content=content,
@@ -646,6 +649,7 @@ def render_canonical_area_snapshot(snapshot, *, source=None, options=None):
             created_at=created_at,
             im_platform_sent_ms=record.get("im_platform_sent_ms"),
             im_event_received_ms=record.get("im_event_received_ms"),
+            im_mention_facts=record.get("im_mention_facts"),
             quoted_text=record.get("quoted_text"),
             files=record.get("files"),
             references_json=record.get("references_json"),

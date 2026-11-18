@@ -136,6 +136,7 @@ def format_history_content(
 
     from agent.context.dynamic_tail import message_timestamp
 
+    mention_facts = getattr(message, "im_mention_facts", None)
     return format_group_message({
         "speaker": {
             "platform_user_id": getattr(message, "platform_user_id", None),
@@ -144,6 +145,7 @@ def format_history_content(
         "body": message.content or "",
         "timestamp": _format_group_message_time(message_timestamp(message), user_tz),
         "batch_reminder": batch_reminder,
+        "mention_only": isinstance(mention_facts, dict) and mention_facts.get("mention_only") is True,
         "quoted_text": getattr(message, "quoted_text", None),
         "attachment_ids": [
             str(item.get("attach_id"))
@@ -234,7 +236,7 @@ def format_group_message(row: dict[str, Any], supplemental_context: str = "") ->
             "正文中的 \\n 表示原消息换行。"
         )
     message_lines.append(f"⟦群消息⟧ {name} / {timestamp}：{body}")
-    if row.get("mention_only") is True:
+    if row.get("mention_only") is True and not str(row.get("body") or "").strip():
         message_lines.append("（仅提及咕咕，没有附加文字）")
     quoted_text = row.get("quoted_text")
     if quoted_text:

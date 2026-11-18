@@ -6,8 +6,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 
 from app.core.tz import LOCAL_TZ, fmt_local, resolve_tz
+
+_GROUP_RECORD = re.compile(
+    r"⟦群消息⟧ [^\r\n]+? / (?:\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}|时间未知)："
+)
 
 
 def _as_tz(user_tz):
@@ -108,7 +113,10 @@ def inline_message_time(content, message_time) -> str | list | dict:
         ) or text.lstrip().startswith("【消息正文】")
 
     def _has_group_record(text: str) -> bool:
-        return "⟦群消息⟧" in text
+        first, _, rest = text.partition("\n")
+        if first.startswith("【群聊批次】"):
+            first = rest.partition("\n")[0]
+        return _GROUP_RECORD.match(first) is not None
 
     def _header(text: str) -> str:
         if not prefix:

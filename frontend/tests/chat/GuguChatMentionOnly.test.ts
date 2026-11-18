@@ -50,3 +50,11 @@ it('普通空用户消息仍不显示空气泡', () => {
   expect(host.querySelector('.mention-only-bubble')).toBeNull()
   expect(host.querySelector('.user-md')).toBeNull()
 })
+
+it('显示群成员的空提及，保留成员姓名和气泡样式', () => {
+  const host = mountRow({ id: 3, role: 'member', speakerLabel: '小北', text: '', mentionOnly: true, time: '14:25' })
+
+  expect(host.querySelector('.mention-only-bubble')?.textContent).toBe('chatUi.mentionOnly')
+  expect(host.querySelector('.msg-speaker')?.textContent).toBe('小北')
+  expect(host.querySelector('.mention-only-bubble.user-md')).toBeNull()
+})
