@@ -34,7 +34,7 @@ runs:
         proxy_archive="/tmp/gugu-egress-proxy-${GITHUB_RUN_ID}.tar"
         proxy_context="$(mktemp -d)"
         trap 'rm -rf "$proxy_context"' EXIT
-        printf 'FROM ubuntu/squid@%s\nRUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && rm -rf /var/lib/apt/lists/*\n' "$proxy_digest" \
+        printf 'FROM ubuntu/squid@%s\nRUN set -eu; for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do [ -f "$source" ] || continue; sed -i "s|http://|https://|g" "$source"; done; apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && rm -rf /var/lib/apt/lists/*\n' "$proxy_digest" \
           > "$proxy_context/Dockerfile"
         docker buildx build \
           --platform linux/amd64 \
