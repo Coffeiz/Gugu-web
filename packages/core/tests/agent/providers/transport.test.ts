@@ -33,6 +33,29 @@ async function listen(value: Server) {
 async function close(value: Server) { value.closeAllConnections(); await new Promise<void>((resolve, reject) => value.close(error => error ? reject(error) : resolve())) }
 const deps = (transport: ProviderDriverDependencies['transport']): ProviderDriverDependencies => ({ transport, digest: () => 'synthetic-network-digest' })
 
+it('飞书卡片所需PUT与PATCH经过同一固定目标传输并保留正文，不绕过网络授权', async () => {
+  const received: { method: string; body: string }[] = []
+  const { value, base } = await server((request, response) => {
+    let body = ''
+    request.setEncoding('utf8')
+    request.on('data', chunk => { body += chunk })
+    request.on('end', () => { received.push({ method: request.method!, body }); response.end('{"ok":true}') })
+  })
+  const transport = createNodeProviderTransport({ allowLocal: true, trustEnvironment: false,
+    resolve: async () => [{ address: '127.0.0.1', family: 4 }] })
+  try {
+    for (const method of ['PUT', 'PATCH'] as const) {
+      const response = await transport.request({ method, url: `${base}/card`, headers: { 'content-type': 'application/json' },
+        body: new TextEncoder().encode('{"合成":"卡片"}'), allowLocal: true }, new AbortController().signal)
+      for await (const _chunk of response.body) { /* 完整消费响应后释放连接。 */ }
+      await response.cancel()
+    }
+    expect(received).toEqual([{ method: 'PUT', body: '{"合成":"卡片"}' }, { method: 'PATCH', body: '{"合成":"卡片"}' }])
+    await expect(transport.request({ method: 'PUT', url: `${base}/card`, headers: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'input_rejected' })
+    expect(received).toHaveLength(2)
+  } finally { await transport.close?.(); await close(value) }
+})
+
 it('RAG 查询 embedding 经真实受控传输读取向量且不跟随重定向',async()=>{
  let calls=0,redirect=false,authorization='',encoding='',accept='',body=''
  const {value,base}=await server((request,response)=>{
@@ -88,6 +111,23 @@ describe('外连地址与DNS固定', () => {
 })
 
 describe('真实Node HTTP与分片、取消和响应体', () => {
+  it.each(['buffer', 'stream'] as const)('服务端读完%s请求后断连仍标记可能已发送，禁止当作未发送安全重试', async kind => {
+    let received = ''
+    const test = await server((request, _response) => {
+      request.setEncoding('utf8')
+      request.on('data', chunk => { received += chunk })
+      request.on('end', () => request.socket.destroy())
+    })
+    const transport = createNodeProviderTransport({ trustEnvironment: false, allowLocal: true,
+      resolve: async () => [{ address: '127.0.0.1', family: 4 }] })
+    const bytes = new TextEncoder().encode('合成请求')
+    const body = kind === 'buffer' ? bytes : (async function* () { yield bytes.subarray(0, 3); yield bytes.subarray(3) })()
+    try {
+      await expect(transport.request({ url: test.base, method: 'POST', headers: {}, body, allowLocal: true },
+        new AbortController().signal)).rejects.toMatchObject({ options: { requestStarted: true } })
+      expect(received).toBe('合成请求')
+    } finally { await transport.close(); await close(test.value) }
+  })
   it('Runtime池身份来自实际环境快照，环境改变后新建真实client且未变化时复用', async () => {
     const test = await server((_request, response) => response.end('{"choices":[{"message":{"content":"完成"},"finish_reason":"stop"}]}'))
     let environment = { NO_PROXY: 'first.example' }, serial = 0, created = 0

@@ -1,3 +1,6 @@
+import { stableJson } from '@gugu/core/agent'
+import type { ImPlatform, ImChatType } from '@gugu/core/im/access'
+import { parseImAttentionRecord, type ImAttentionRecord } from '@gugu/core/im/attention/directive'
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes, randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import type { InteractionResolution, RunIdentity } from '@gugu/core/agent'
@@ -6,7 +9,15 @@ import { lockAgentRunSession } from './agent-run-startup-postgres.js'
 import { claimInteractionResumeLocked } from './agent-interaction-resume-postgres.js'
 
 /** 只保存重建必要的非凭据元数据；正文、附件及引用以用户消息为真源。 */
-export interface AgentDispatchInput { userMessageId: number; locale: 'zh-CN' | 'ja-JP' | 'en-US' | null; origin: string | null; accessVersion: string; v?: 2; source?: 'web' }
+interface AgentDispatchBase { userMessageId: number; locale: 'zh-CN' | 'ja-JP' | 'en-US' | null; origin: string | null; accessVersion: string }
+export interface ImAgentDispatchInput extends AgentDispatchBase {
+  v: 3; source: 'im'; origin: null
+  /** 仅含可信路由身份；context token和媒体凭据留在独立加密入站收据中。 */
+  im: { platform: ImPlatform; botId: string; chatType: ImChatType; chatId: string | null; platformUserId: string;
+    batch?: { batchKey: string; segmentKey: string; messageIds: number[] }; attention?: ImAttentionRecord }
+}
+export type AgentDispatchInput = (AgentDispatchBase & { v?: 2; source?: 'web' }) | ImAgentDispatchInput
+export type AgentDispatchSource = 'web' | 'im'
 export interface AgentDispatchLease {
   identity: RunIdentity
   token: string
@@ -14,6 +25,7 @@ export interface AgentDispatchLease {
   input: AgentDispatchInput
   mode: 'start' | 'resume'
   cancelRequested: boolean
+  replyChoice?: 'pending' | 'reply'
   resolution?: InteractionResolution
   interactionResume?: { promptId: number; claimToken: string; receipt: string }
 }
@@ -25,7 +37,34 @@ export function acceptsWebAgentDispatchInput(input: AgentDispatchInput): boolean
 function aad(identity: RunIdentity): Buffer { return Buffer.from(JSON.stringify([identity.ownerId, identity.sessionId, identity.runId])) }
 function key(secret: string): Buffer { if (!secret) throw new TypeError('调度密钥不能为空'); return Buffer.from(hkdfSync('sha256', Buffer.from(secret), Buffer.alloc(0), Buffer.from('gugu-agent-dispatch-v1'), 32)) }
 function validateInput(input: AgentDispatchInput): void {
-  if (!Number.isSafeInteger(input.userMessageId) || input.userMessageId < 1 || ![null, 'zh-CN', 'ja-JP', 'en-US'].includes(input.locale) || (input.origin !== null && (typeof input.origin !== 'string' || input.origin.length > 128)) || !/^[a-f0-9]{64}$/.test(input.accessVersion) || !((input.v === undefined && input.source === undefined) || (input.v === 2 && input.source === 'web')) || Object.keys(input).some(k => !['userMessageId', 'locale', 'origin', 'accessVersion', 'v', 'source'].includes(k))) throw new TypeError('调度输入无效')
+  const im = input.v === 3 && input.source === 'im'
+  if (!Number.isSafeInteger(input.userMessageId) || input.userMessageId < 1 || ![null, 'zh-CN', 'ja-JP', 'en-US'].includes(input.locale) || (input.origin !== null && (typeof input.origin !== 'string' || input.origin.length > 128)) || !/^[a-f0-9]{64}$/.test(input.accessVersion) || !((input.v === undefined && input.source === undefined) || (input.v === 2 && input.source === 'web') || im) || Object.keys(input).some(k => !['userMessageId', 'locale', 'origin', 'accessVersion', 'v', 'source', ...(im ? ['im'] : [])].includes(k))) throw new TypeError('调度输入无效')
+  if (im) {
+    const route = input.im
+    const id = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 8192 && !/[\x00-\x1f\x7f]/.test(value)
+    if (input.origin !== null || !route || typeof route !== 'object' || Array.isArray(route)
+      || Object.keys(route).some(k => !['platform', 'botId', 'chatType', 'chatId', 'platformUserId', 'batch', 'attention'].includes(k))
+      || !['feishu', 'qq', 'wechat', 'telegram'].includes(route.platform) || !/^[1-9]\d*$/.test(route.botId)
+      || !id(route.platformUserId) || !['group', 'c2c'].includes(route.chatType)
+      || (route.chatType === 'group' ? !id(route.chatId) : route.chatId !== null)) throw new TypeError('IM 调度作用域无效')
+    if (route.attention !== undefined && (parseImAttentionRecord(route.attention).disposition !== 'run'
+      || route.chatType !== 'group' || route.platform === 'wechat')) throw new TypeError('IM 调度注意力事实无效')
+    if (route.batch !== undefined) {
+      const batch = route.batch
+      if (!batch || typeof batch !== 'object' || Array.isArray(batch)
+        || Object.keys(batch).some(k => !['batchKey', 'segmentKey', 'messageIds'].includes(k))
+        || !/^[a-f0-9]{64}$/.test(batch.batchKey) || !/^[a-f0-9]{64}$/.test(batch.segmentKey)
+        || !Array.isArray(batch.messageIds) || !batch.messageIds.length || batch.messageIds.length > 128
+        || batch.messageIds.some(value => !Number.isSafeInteger(value) || value < 1 || value > 2147483647)
+        || new Set(batch.messageIds).size !== batch.messageIds.length || batch.messageIds.at(-1) !== input.userMessageId)
+        throw new TypeError('IM 调度批次无效')
+    }
+  }
+}
+/** 版本与完整载荷一起验证，不能仅凭source字符串放行恢复。 */
+export function agentDispatchSource(input: AgentDispatchInput): AgentDispatchSource | null {
+  try { validateInput(input) } catch { return null }
+  return input.v === 2 && input.source === 'web' ? 'web' : input.v === 3 && input.source === 'im' ? 'im' : null
 }
 function encrypt(secret: string, identity: RunIdentity, input: AgentDispatchInput) {
   validateInput(input)
@@ -50,6 +89,8 @@ async function promoteNext(client: PoolClient, identity: RunIdentity) {
 }
 
 /** 入队应由消息创建事务调用；必须已经持有同一 owner/session 行锁。 */
+export { decrypt as decryptAgentDispatchInput }
+
 export async function enqueueAgentRunLocked(client: PoolClient, secret: string, identity: RunIdentity, input: AgentDispatchInput, ttlSeconds: number): Promise<void> {
   if (!identity.ownerId || !identity.runId || identity.runId.length > 128 || !/^[1-9]\d*$/.test(identity.sessionId)) throw new TypeError('运行身份无效')
   if (!Number.isSafeInteger(ttlSeconds) || ttlSeconds < 1 || ttlSeconds > 604800) throw new RangeError('调度保存期限无效')
@@ -65,7 +106,7 @@ export async function enqueueAgentRunLocked(client: PoolClient, secret: string, 
     const row = existing.rows[0]
     if (!row || row.expired) throw new Error('调度登记已过期')
     const previous = decrypt(secret, identity, row.nonce, row.payload)
-    if (previous.userMessageId !== input.userMessageId || previous.locale !== input.locale || previous.origin !== input.origin || previous.accessVersion !== input.accessVersion || previous.v !== input.v || previous.source !== input.source) throw new Error('调度身份冲突')
+    if (stableJson(previous) !== stableJson(input)) throw new Error('调度身份冲突')
   }
   await updatePending(client, identity)
 }
@@ -88,11 +129,18 @@ export function createPostgresAgentActiveStatusReader(pool: Pick<Pool, 'query'>)
 }
 
 /** 选中项只可在自身租约过期后被接管；无法重建时调用方不得完成或丢弃。 */
-export function createPostgresAgentDispatch(pool: Pick<Pool, 'connect' | 'query'>, secret: string, leaseMs = 30000) {
+export function createPostgresAgentDispatch(pool: Pick<Pool, 'connect' | 'query'>, secret: string, leaseMs = 30000,
+  sources: readonly AgentDispatchSource[] = ['web'],
+  options: { beforeClaim?(client: PoolClient, identity: RunIdentity, input: AgentDispatchInput): Promise<boolean> } = {},
+) {
+  const supports = (input: AgentDispatchInput) => {
+    const source = agentDispatchSource(input)
+    return source !== null && sources.includes(source)
+  }
   key(secret)
   if (!Number.isSafeInteger(leaseMs) || leaseMs < 1000) throw new RangeError('调度租约无效')
   return {
-    acceptsInput: acceptsWebAgentDispatchInput,
+    acceptsInput: supports,
     /** 确认事务已提交、Worker 尚未续跑时，流需要继续等同一 Run 的事件。 */
     async readStreamCheckpoint(identity: RunIdentity): Promise<{ status: string; sequence: number } | null> {
       const result = await pool.query<{ status: string; sequence: string }>(`
@@ -168,11 +216,16 @@ export function createPostgresAgentDispatch(pool: Pick<Pool, 'connect' | 'query'
         const active = await client.query('SELECT 1 FROM agent_run_leases WHERE user_id=$1 AND session_id=$2 AND expires_at>clock_timestamp()', [ownerId, sessionId])
         if (active.rowCount) return null
         const input = decrypt(secret, identity, row.nonce, row.payload)
-        if (!acceptsWebAgentDispatchInput(input)) {
+        const source = agentDispatchSource(input)
+        if (source && !supports(input)) return null
+        // IM 等待态由带入站收据的专用恢复器认领。
+        if (source === 'im' && status === 'waiting') return null
+        if (!supports(input)) {
           await client.query("UPDATE agent_run_dispatch SET state='selected',blocked_reason='version_conflict',token=NULL,lease_expires_at=NULL WHERE user_id=$1 AND session_id=$2 AND run_id=$3", [ownerId, sessionId, row.run_id])
           await updatePending(client, identity)
           return null
         }
+        if (options.beforeClaim && !await options.beforeClaim(client, identity, input)) return null
         if (row.expired && !status) throw new Error('调度材料已过期，需要人工恢复')
         const interactionResume = status === 'waiting' && !row.cancel_requested
           ? await claimInteractionResumeLocked(client, identity) : null
@@ -185,6 +238,7 @@ export function createPostgresAgentDispatch(pool: Pick<Pool, 'connect' | 'query'
         if (!Number.isSafeInteger(fence) || fence < 1) throw new Error('调度 fencing 无效')
         return { identity, token, fence, input, mode: status ? 'resume' as const : 'start' as const,
           cancelRequested: row.cancel_requested,
+          ...(input.v === 3 && input.im.attention ? { replyChoice: input.im.attention.replyChoice } : {}),
           ...(interactionResume ? { resolution: interactionResume.resolution,
             interactionResume: { promptId: interactionResume.promptId, claimToken: interactionResume.claimToken, receipt: interactionResume.receipt } } : {}) }
       })
@@ -347,7 +401,8 @@ export function createPostgresAgentDispatch(pool: Pick<Pool, 'connect' | 'query'
         if (!row) return false
         const identity = { ownerId, sessionId, runId: row.run_id }, input = decrypt(secret, identity, row.nonce, row.payload)
         if (input.userMessageId !== row.message_id) throw new Error('调度消息身份不匹配')
-        if (input.v !== 2 || input.source !== 'web') {
+        if (agentDispatchSource(input) && !supports(input)) return false
+        if (!supports(input)) {
           await client.query("UPDATE agent_run_dispatch SET blocked_reason='version_conflict',token=NULL,lease_expires_at=NULL WHERE user_id=$1 AND session_id=$2 AND run_id=$3", [ownerId, sessionId, row.run_id])
           return false
         }

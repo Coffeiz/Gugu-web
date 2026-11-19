@@ -79,3 +79,8 @@ export { createRememberTool, type RememberMemoryPort } from './memory.js'
 export type { MemoryRow, RememberInput } from '../memory/remember.js'
 export { PROFILE_TYPES } from '../memory/remember.js'
 export { createProjectDeleteTool, type ProjectDeleteRuntime } from './projects.js'
+
+export { createImOwnerSessionBindTool, type ImOwnerSessionBindPort, type ImOwnerSessionBindInput } from './conversations.js'
+export { createGroupContextSearchTool, resolveGroupSpeaker, type GroupContextSearchPort, type GroupContextSearchRequest, type GroupSpeakerRow, type GroupMember, type GroupSpeakerResolution } from './group-context.js'
+export { createChooseNoReplyTool } from './meta.js'
+export { createImSendFileTool, type ImSendFilePort, type ImSendFileInput } from './send-file.js'

@@ -243,6 +243,8 @@ export interface PreparedContext {
 /** 可序列化的运行状态；Provider wire/私有推理只经独立端口保存。 */
 export interface CanonicalRunContext {
   readonly identity: RunIdentity
+  /** 真实来源/能力准备链冻结的静态system；旧checkpoint缺失时使用可信Provider绑定的默认值。 */
+  readonly providerSystemPrompt?: string
   readonly modelIdentity: string
   readonly accessScopeHash: string
   /** 标准准备链冻结的公开能力；低层自定义load自行承担同等准备契约。 */

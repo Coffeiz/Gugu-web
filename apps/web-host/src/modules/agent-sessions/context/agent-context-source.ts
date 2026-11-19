@@ -43,7 +43,10 @@ export function createPostgresCurrentTurnReader(pool: Pick<Pool, 'query'>, messa
     const row = result.rows[0]
     if (!row) throw new Error('用户消息不存在')
     const current = await materialize(identity, { id: row.id, content: row.content, contentJson: row.content_json, files: row.files, references: row.references_json }, signal)
-    if (current.currentUser?.persistedMessageId !== messageId) throw new Error('用户消息锚点不一致')
+    const users = current.currentUsers?.length ? current.currentUsers : current.currentUser ? [current.currentUser] : []
+    if (current.currentUser && current.currentUsers?.length || !users.length || users.at(-1)?.persistedMessageId !== messageId
+      || users.some(user => !user.persistedMessageId) || new Set(users.map(user => user.persistedMessageId)).size !== users.length)
+      throw new Error('用户消息锚点不一致')
     return current
   }
 }

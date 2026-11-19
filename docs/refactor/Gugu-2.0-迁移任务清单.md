@@ -1258,3 +1258,7 @@ devserver 上 Web Host 生产 TypeScript 检查（`tsc -p tsconfig.build.json --
 Agent 工具串行回归 47 通过、1 失败。失败发生在批量 `rename_file` 请求校验。远端 Core 源码摘要与本地一致，含批量处理；远端构建产物早于源码更新且缺少批量实现。已启动 Core 重建，待用新产物复测。原批量改名行为断言保持原样。
 
 旧目录去向按当前 Git 基线复核：Admin、Agent 会话、认证、文件、Mind、偏好、项目、终端、Undo 和工作区分别归入同名 `modules/`，原 `agent-config` 的 Web 模型配置适配归入 `modules/agent/model-config/`，共享 BYOK 规则位于 Core 的 `agent/config/`。当前生产源码、测试与脚本的旧路径扫描无命中，Node WebUI 技能中的现行入口也已改为新位置。
+
+IM Gateway 的逐平台范围、共享链路与分层验收见 [IM Gateway 迁移清单](Gugu-2.0-IM-Gateway迁移清单.md)。`main.ts` 已接生产资源、Gateway、IM Worker、调度和恢复扫描；默认未启用 Node 消费，归属仍由 Python 持有。隔离 PG/Redis 与平台/Provider 网络替身回归和真实平台/部署验收分别记录。
+
+IM增量已接QQ可信私聊流、Telegram持久draft/图文/保活、即时反馈与platform-user成员checkpoint恢复，隔离PG/Redis整链路证据见专用清单。另已接owner私聊Web会话绑定、跨会话同 peer 调度顺序、`/compact` 当前模型摘要、引用语音双证明和受限 Node/WASM SILK 解码。生产资源还包含真实视频、MiniMax 上传加密缓存、BMP/TIFF 副本、Responses 私有持久恢复及拒绝失效。Node IM 自动保留已接50会话替换、2000条覆盖历史/500分批、永久消费墓碑与持久附件回收，实际生产 Run/Redis丢失重放已验；具体回归及安全差异见专用清单。显式删除已接同事务墓碑/持久GC和真实Provider取消，原生音频附加ASR字幕与sessions卡片更新已验收。撤权活跃Run的Web owner取消授权已验收，出站权限保持严格。HEIC按旧默认入口同样拒绝，实际插件未注册，不能把依赖声明当作已存在能力。被动群50条、主动完成起算且被动不重置的idle窗口、可信尾部追加及恢复扫描已接；群daily100条与owner daily50条自动沉淀、owner词法参考及逐响应记账/持久恢复已接；profile/pattern周期维护已接独立门限、逐响应用量与持久恢复；Node Web创建已共享IM的owner事务锁并经真实PG竞争验证；Anthropic/Responses跨Run及四协议当前Run私有持久恢复已接；Python同写域单写者部署边界、真实平台/部署仍须独立验收，不标记整个 Gateway 迁移完成。

@@ -27,6 +27,27 @@ function setup(embed: (owner: string, query: string, signal?: AbortSignal) => Pr
 }
 
 describe('scoped RAG embedding fallback', () => {
+  it('多个可信scope在同一语料排名与预算，逐scope前后授权且事实过滤先于候选投影', async () => {
+    const group = { scope_type: 'group', scope_id: 'room', platform: 'qq', bot_id: '1', group_id: 'room' }
+    const member = { ...group, scope_type: 'member', scope_id: 'room:member' }
+    const groupDoc = { ...document, id: 'group', source_id: 'group', ...group, content: '项目进度已经更新', text: '项目进度\n项目进度已经更新' }
+    const memberDoc = { ...document, id: 'member', source_id: 'member', ...member, content: '项目进度说明', text: '项目进度\n项目进度说明' }
+    const authorize = vi.fn(async () => true), filterDocuments = vi.fn(async (docs: readonly RagDocument[]) => docs.filter(doc => doc.id === 'member'))
+    const index = { snapshotForScope: vi.fn(async (_owner, scope) => ({ revision: scope.scope_type, documents: scope.scope_type === 'group' ? [groupDoc] : [memberDoc, groupDoc], watermark: null })) } as unknown as Parameters<typeof createScopedRagSearch>[0]['index']
+    const result = await createScopedRagSearch({ index, authorize, filterDocuments })('owner-a', [group, member], '项目进度', { sourceTypes: ['memory'], limit: 5 })
+    expect(result.results.map(item => item.id)).toEqual(['member'])
+    expect(filterDocuments).toHaveBeenCalledTimes(1)
+    expect(authorize.mock.calls).toHaveLength(4)
+  })
+
+  it('并集中的任一scope撤权即拒绝，过滤端口也不能添加未授权owner文档', async () => {
+    const group = { scope_type: 'group', scope_id: 'room', platform: 'qq', bot_id: '1', group_id: 'room' }
+    const index = { snapshotForScope: vi.fn(async () => ({ revision: '1', documents: [], watermark: null })) } as unknown as Parameters<typeof createScopedRagSearch>[0]['index']
+    const search = createScopedRagSearch({ index, authorize: async () => true, filterDocuments: async () => [document] })
+    expect((await search('owner-a', [group], '项目进度', { sourceTypes: ['memory'], limit: 5 })).results).toEqual([])
+    const denied = createScopedRagSearch({ index, authorize: async (_owner, scope) => scope.scope_type !== 'owner' })
+    await expect(denied('owner-a', [group, { scope_type: 'owner', scope_id: '' }], '项目进度', { sourceTypes: ['memory'], limit: 5 })).rejects.toThrow('未授权')
+  })
   it('supports automatic confidence filtering and excludes context hashes already in history', async () => {
     const duplicate = { ...document, id: 'memory:duplicate:0', source_id: 'duplicate', parent_id: 'duplicate' }
     const ports = setup(async () => [], [document, duplicate])

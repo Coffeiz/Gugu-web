@@ -1,7 +1,7 @@
 import { sql, type Kysely } from 'kysely'
 import { z } from 'zod'
 import { dataContext } from '../../contracts/index.js'
-import type { RunIdentity } from '../models.js'
+import type { RunIdentity, ToolResult } from '../models.js'
 import type { ToolDefinition } from './contracts.js'
 import { downloadSendFileImage, type RemoteSendFileImage } from './send-file-image.js'
 
@@ -84,5 +84,29 @@ export function createPostgresSendFileLookup<DB>(db: Kysely<DB>) {
     if (exact.length) return exact
     const pattern = '%' + name.replace(/[\\%_]/gu, character => '\\' + character) + '%'
     return (await sql<Row>`${base} AND display_name ILIKE ${pattern} ORDER BY id LIMIT 10`.execute(db)).rows
+  }
+}
+
+export interface ImSendFileInput { identity: RunIdentity; roundId: string; toolCallId: string; fileId?: number; attachId?: string }
+export interface ImSendFilePort {
+  /** 只对已授权owner私聊开放文件库ID；附件仍需Host逐次核对完整IM scope。 */
+  readonly allowFileId: boolean
+  send(input: ImSendFileInput & {signal:AbortSignal}): Promise<'sent'|'failed'|'unknown'>
+  recover(input: ImSendFileInput): Promise<'sent'|'failed'|'unknown'>
+}
+const output=(status:'sent'|'failed'|'unknown'):ToolResult=>status==='unknown'?{kind:'unknown'}:{kind:'completed',successful:status==='sent',mutated:status==='sent',
+  value:{delivery_status:status,message:status==='sent'?'平台已接受文件发送':'文件未能发送'}}
+
+/** 最小已接线来源；URL、文件名和Shell逻辑路径尚无正式授权端口，不向模型宣称支持。 */
+export function createImSendFileTool(port:ImSendFilePort):ToolDefinition {
+  const attach=z.string().min(1).max(256).refine(v=>!/[\x00-\x1f\x7f]/u.test(v))
+  const schema=port.allowFileId?z.union([z.object({file_id:z.number().int().positive().safe()}).strict(),z.object({attach_id:attach}).strict()]):z.object({attach_id:attach}).strict()
+  const args=(raw:unknown)=>{const v=schema.parse(raw);return 'file_id' in v?{fileId:v.file_id}:{attachId:v.attach_id}}
+  return {definition:{name:'send_file',schema:{type:'function',function:{name:'send_file',description:'仅在用户明确要求时发送已授权文件或本会话附件；平台结果不明确时不会重发。',parameters:{type:'object',
+    properties:{...(port.allowFileId?{file_id:{type:'integer',minimum:1}}:{}),attach_id:{type:'string',minLength:1,maxLength:256}},additionalProperties:false,
+    ...(port.allowFileId?{oneOf:[{required:['file_id']},{required:['attach_id']}]}:{required:['attach_id']})}}}},effect:'write',
+    validate:input=>schema.safeParse(input),
+    async execute(input,scope,call){scope.signal.throwIfAborted();return output(await port.send({identity:scope.identity,roundId:scope.roundId,toolCallId:call.id,...args(input),signal:scope.signal}))},
+    async reconcile(input,identity,call){return output(await port.recover({identity,roundId:identity.roundId,toolCallId:call.id,...args(input)}))},
   }
 }

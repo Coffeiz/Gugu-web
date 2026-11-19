@@ -28,6 +28,10 @@ export type AgentChatScheduling = { mode: 'direct' } | {
 
 /** Python ORM 的客户端默认值须显式写入，不能依赖数据库具有相同的默认值。 */
 export async function createPostgresWebChatSession(client: PoolClient, ownerId: string, title: string): Promise<number> {
+  // IM保留在同一owner行锁内计数和替换；Web也必须参与，避免尚未提交的新会话漏入计数。
+  // 调用方可能已持Session锁，NOWAIT避免与IM淘汰候选形成反序等待；失败由外层事务回滚。
+  const owner = await client.query('SELECT id FROM users WHERE id=$1::uuid FOR NO KEY UPDATE NOWAIT', [ownerId])
+  if (owner.rows.length !== 1) throw new Error('会话创建身份无效')
   const result = await client.query<{ id: number }>(
     `INSERT INTO conversation_sessions (user_id, title, title_locked, summary, source, context_epoch,
        baseline_message_seq, last_message_seq, execution_state, pending_message_count, created_at, updated_at)

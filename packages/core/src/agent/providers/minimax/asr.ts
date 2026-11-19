@@ -1,4 +1,5 @@
 import { observe, record } from '../values.js'
+import { strip } from '../../../shared/values.js'
 import { throwIfCancelled } from '../errors.js'
 import type { ProviderConfig } from '../contracts.js'
 import { ProviderError } from '../errors.js'
@@ -67,7 +68,7 @@ export async function transcribeMiniMax(media: readonly AsrMedia[], config: Prov
       const base = record(payload.base_resp)
       if (base.status_code != null && !['', '0'].includes(String(base.status_code))) throw new ProviderError('upstream')
       if (typeof payload.text !== 'string') throw new ProviderError('protocol')
-      transcripts.push(payload.text.trim())
+      transcripts.push(strip(payload.text))
     } catch (error) {
       throwIfCancelled(signal)
       observe(() => dependencies.diagnose?.('minimax_asr_failed', error))

@@ -21,6 +21,18 @@ export function createRedisScheduledTaskCommands(redisUrl: string) {
   } satisfies ScheduledTaskRedisCommands
 }
 
+/** Gateway入站只使用GET和返回标量的EVAL；不冒充支持Streams数组回复的通用客户端。 */
+export function createRedisGatewayIngressCommands(redisUrl: string) {
+  return {
+    async sendCommand(parts: string[]): Promise<string | null> {
+      if (!(parts[0] === 'GET' && parts.length === 2) && !(parts[0] === 'EVAL' && parts.length >= 4))
+        throw new Error('Gateway Redis命令无效')
+      try { return await withRedis(redisUrl, command => command(...parts)) }
+      catch { throw new Error('Gateway Redis入站操作失败') }
+    },
+  }
+}
+
 export interface ResourceChangedInput {
   ownerId: string
   resource: string

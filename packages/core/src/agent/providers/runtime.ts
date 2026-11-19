@@ -1,7 +1,9 @@
+import { stableJson } from '../context/history/canonical-history.js'
 import { throwIfCancelled } from './errors.js'
 import type { BranchProviderPort, CanonicalContextPorts, ContextReferenceCodec, ContextServices, ProviderPort, ReflectionProjectionPort, SummaryGenerationPorts } from '../ports.js'
 import type { BranchInput, CanonicalRunContext, FrozenProviderRequest, Json, ProviderEvent, ProviderRequest, RunIdentity } from '../models.js'
 import { hasInitialInlineImage,restorePreparedContext } from '../context/history/attachment-refs.js'
+import { buildRebuiltReflectionSnapshot } from '../memory/reflection.js'
 import type { HistorySanitization, JsonObject, ProviderCompletion, ProviderConfig, ProviderDriverDependencies, ProviderInvocation, ProviderProjection, ProviderTransport, ProviderTransportFactory, ProviderWire } from './contracts.js'
 import { providerSelection } from './registry.js'
 import { ProviderError, classifyProviderError } from './errors.js'
@@ -41,6 +43,8 @@ export interface ProviderRuntimeOptions extends ContextServices {
   readonly maxContinuationBytes?: number
   readonly maxContinuationTotalBytes?: number
   readonly continuationStore?: ProviderContinuationStore
+  readonly invalidateContinuation?: (context: CanonicalRunContext, signal: AbortSignal) => Promise<void>
+  readonly ensureContinuation?: (context: CanonicalRunContext, signal: AbortSignal) => Promise<void>
 }
 interface PrivateContinuation { identity: RunIdentity; modelIdentity: string; accessScopeHash: string; round: number; areaDigest: string; value: unknown; expiresAt: number; bytes: number }
 type ContinuationScope = Pick<PrivateContinuation, 'identity' | 'modelIdentity' | 'accessScopeHash'>
@@ -88,11 +92,11 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
     if (stored) { this.#continuationBytes -= stored.bytes; this.#continuations.delete(reference) }
   }
   #pruneContinuations(): void { for (const [reference, stored] of this.#continuations) if (stored.expiresAt <= this.#now()) this.#dropContinuation(reference) }
-  readonly prepareRequest: CanonicalContextPorts['prepareRequest'] = (identity, signal) => {
+  readonly prepareRequest: CanonicalContextPorts['prepareRequest'] = (identity, signal, context) => {
     const key = this.#key(identity)
     let pending = this.#prefixes.get(key)
     if (!pending) {
-      pending = this.options.prepareRequest(identity, signal).then(clone)
+      pending = this.options.prepareRequest(identity, signal, context).then(clone)
       this.#prefixes.set(key, pending)
       void pending.catch(() => this.#prefixes.delete(key))
     }
@@ -175,6 +179,27 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
     this.#continuationBytes += bytes
     return reference
   }
+  /** 只由可信持久化Host恢复原引用；不会分配新引用或修改Canonical。 */
+  restoreContinuation(input: { reference:string; identity:RunIdentity; modelIdentity:string; accessScopeHash:string; round:number; areaDigest:string; value:unknown }): void {
+    if (!/^[A-Za-z0-9:._-]{1,256}$/.test(input.reference) || !Number.isSafeInteger(input.round) || input.round < 0
+      || !input.areaDigest || !input.modelIdentity || !input.accessScopeHash) throw new ProviderError('input_rejected')
+    let encoded:string
+    try { encoded=JSON.stringify(input.value) } catch { throw new ProviderError('protocol') }
+    if(typeof encoded!=='string')throw new ProviderError('protocol')
+    const bytes=new TextEncoder().encode(encoded).byteLength
+    if(bytes>(this.options.maxContinuationBytes??16*1024*1024)||bytes>(this.options.maxContinuationTotalBytes??64*1024*1024))throw new ProviderError('input_rejected')
+    this.#pruneContinuations()
+    const prior=this.#continuations.get(input.reference)
+    if(prior&&(this.#key(prior.identity)!==this.#key(input.identity)||prior.modelIdentity!==input.modelIdentity||prior.accessScopeHash!==input.accessScopeHash
+      ||prior.round!==input.round||prior.areaDigest!==input.areaDigest||stableJson(prior.value)!==stableJson(input.value)))throw new ProviderError('input_rejected')
+    if(prior)return
+    for(const[ref,stored]of this.#continuations)if(this.#key(stored.identity)===this.#key(input.identity))this.#dropContinuation(ref)
+    while(this.#continuations.size>=(this.options.maxContinuationEntries??256)||this.#continuationBytes+bytes>(this.options.maxContinuationTotalBytes??64*1024*1024))
+      this.#dropContinuation(this.#continuations.keys().next().value!)
+    this.#continuations.set(input.reference,{identity:clone(input.identity),modelIdentity:input.modelIdentity,accessScopeHash:input.accessScopeHash,
+      round:input.round,areaDigest:input.areaDigest,value:clone(input.value),bytes,expiresAt:this.#now()+(this.options.continuationTtlMs??15*60_000)})
+    this.#continuationBytes+=bytes
+  }
   /** 仅供 Host 事务回调访问私有值；失败不消费暂存记录，不能把结果写入 checkpoint。 */
   async withStagedContinuation<T>(context: CanonicalRunContext, callback: (input: {
     value: unknown; round: number; areaDigest: string
@@ -191,9 +216,12 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
   async *stream(request: ProviderRequest<CanonicalRunContext>): AsyncGenerator<ProviderEvent> {
     const { context, identity, signal } = request
     if (this.#key(context.identity) !== this.#key(identity)) throw new ProviderError('input_rejected')
-    const { config, policy, driver, systemPrompt, accessScopeHash } = await this.#selection(identity, context.modelIdentity, signal)
+    const { config, policy, driver, systemPrompt: boundSystem, accessScopeHash } = await this.#selection(identity, context.modelIdentity, signal)
     if (accessScopeHash !== context.accessScopeHash) throw new ProviderError('input_rejected')
-    const prepared = await restorePreparedContext(context.prepared, identity, { digest: this.options.digest, nextId: this.options.nextId, prepareRequest: this.prepareRequest }, this.options.references, signal)
+    const systemPrompt = context.providerSystemPrompt ?? boundSystem
+    if (context.continuationRef) await this.options.ensureContinuation?.(context, signal)
+    throwIfCancelled(signal)
+    const prepared = await restorePreparedContext(context.prepared, identity, { digest: this.options.digest, nextId: this.options.nextId, prepareRequest: (target, currentSignal) => this.prepareRequest({ ...identity, ...target }, currentSignal, context) }, this.options.references, signal)
     const area = prepared.area, continuation = clone((await this.#readContinuation(context))?.value)
     const initialImages = request.round === 1 ? area.entries.filter(entry => Array.isArray(entry.message.content) && hasInitialInlineImage(entry.message.content)).map(entry => entry.entryId) : []
     const stableMessages = [...area.requestPrefix, ...area.messages]
@@ -286,7 +314,15 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
     } catch (raw) {
       const error = signal.aborted ? new ProviderError('cancelled') : classifyProviderError(raw)
       probe.current?.fail(error)
-      if (error.options.protocolIncompatible) for (const [ref, stored] of this.#continuations) if (this.#key(stored.identity) === this.#key(identity)) this.#dropContinuation(ref)
+      if (error.options.protocolIncompatible) {
+        try { await this.options.invalidateContinuation?.(context,signal) }
+        catch(raw) {
+          this.#diagnose('provider_continuation_invalidation_failed',raw)
+          yield{type:'error',error:new ProviderError('upstream',{retryable:false,requestStarted:true}),contextOverflow:false}
+          return
+        }
+        for (const [ref, stored] of this.#continuations) if (this.#key(stored.identity) === this.#key(identity)) this.#dropContinuation(ref)
+      }
       yield { type: 'error', error, contextOverflow: error.code === 'context_overflow' && !error.options.outputStarted }
     }
   }
@@ -379,6 +415,39 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
       },
     }
   }
+  /** 仅供Host已验证owner/idle/租约的显式恢复；从正式checkpoint与相同协议重建，不发模型请求。 */
+  async rebuildReflectionSnapshot(identity: RunIdentity, context: CanonicalRunContext, signal = new AbortController().signal) {
+    if (this.#key(identity) !== this.#key(context.identity)) throw new ProviderError('input_rejected')
+    const { config, policy, driver, systemPrompt: boundSystem, accessScopeHash } = await this.#selection(identity, context.modelIdentity, signal)
+    const systemPrompt = context.providerSystemPrompt ?? boundSystem
+    if (accessScopeHash !== context.accessScopeHash) throw new ProviderError('input_rejected')
+    const prepared = await restorePreparedContext(context.prepared, identity,
+      { digest: this.options.digest, nextId: this.options.nextId,
+        prepareRequest: (target, currentSignal) => this.prepareRequest({ ...identity, ...target }, currentSignal, context) }, this.options.references, signal)
+    const area = prepared.area
+    const project = (messages: readonly import('../models.js').CanonicalMessage[]) => driver.project(messages, config, policy,
+      { digest: this.options.digest, preserveNativeThinking: true, dynamicTailSize: 0 })
+    const history = project([...area.requestPrefix, ...area.messages])
+    const dependencies: ProviderDriverDependencies = { digest: this.options.digest, diagnose: this.#diagnose, transport: this.#transport(identity, config, policy) }
+    const input: ProviderInvocation = { config, policy, history, system: systemPrompt,
+      tools: context.capabilities?.tools.map(tool => clone(tool.schema)) ?? [], signal,
+      scope: { ...identity, modelIdentity: context.modelIdentity, accessScopeHash, round: 0 }, purpose: 'chat', stableHistoryCount: history.length }
+    const body = record(driver.buildRequest(input, dependencies, true).body), rows = body.messages ?? body.input
+    if (!Array.isArray(rows)) throw new ProviderError('input_rejected')
+    const prefix = project(area.requestPrefix)
+    const prefixRows = driver.protocol === 'responses' ? prefix.filter(row => row.role !== 'system')
+      : record(driver.buildRequest({ ...input, history: prefix, stableHistoryCount: prefix.length }, dependencies, true).body).messages
+    const protectedPrefixRowCount = Array.isArray(prefixRows)
+      && this.options.digest(comparableWire(rows.slice(0, prefixRows.length) as Json)) === this.options.digest(comparableWire(prefixRows as Json)) ? prefixRows.length : undefined
+    const system = body.system ?? body.instructions
+    const projection: ProviderProjection = { ...area.identity(context.modelIdentity), dynamicTailSize: 0,
+      wire: { protocol: driver.protocol, provider: policy.name, identity: { ownerId: identity.ownerId, sessionId: identity.sessionId },
+        accessScopeHash, messages: clone(rows) as JsonObject[], stableRowCount: rows.length,
+        ...(protectedPrefixRowCount === undefined ? {} : { protectedPrefixRowCount }), ...(system === undefined ? {} : { system: clone(system) as Json }) } }
+    return buildRebuiltReflectionSnapshot({ ...identity, modelIdentity: context.modelIdentity, accessScopeHash,
+      systemPrompt, area, projection, tools: clone(Array.isArray(body.tools) ? body.tools : input.tools) as Json[] },
+    await this.reflectionProjection(identity, context.modelIdentity, signal), this.options, Date.now())
+  }
   async reflectionProjection(identity: RunIdentity, modelIdentity: string, signal = new AbortController().signal): Promise<ReflectionProjectionPort<ProviderWire>> {
     const { config, policy, driver, accessScopeHash } = await this.#selection(identity, modelIdentity, signal)
     return { append: (projection, tail) => {
@@ -390,6 +459,30 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
       if (!Number.isSafeInteger(count) || count < 0 || count > wire.messages.length) throw new ProviderError('input_rejected')
       const messages = [...clone(wire.messages.slice(0, count)), ...driver.project(tail, config, policy, { digest: this.options.digest, preserveNativeThinking: true })]
       return { ...clone(projection), dynamicTailSize: 0, wire: { ...clone(wire), messages, stableRowCount: messages.length } }
+    } }
+  }
+  /** IM反思沿用原wire结构，但不再次发送主会话媒体；不修改进程内原快照。 */
+  async reflectionMediaProjection(identity: RunIdentity, modelIdentity: string, signal = new AbortController().signal): Promise<ReflectionProjectionPort<ProviderWire>> {
+    const original = await this.reflectionProjection(identity, modelIdentity, signal)
+    return { append(projection, tail) {
+      const result = original.append(projection, tail), responses = result.wire.protocol === 'responses'
+      const media: Record<string, string> = { image: '[图片已省略]', image_url: '[图片已省略]', input_image: '[图片已省略]',
+        audio: '[音频已省略]', input_audio: '[音频已省略]', video: '[视频已省略]', video_url: '[视频已省略]', input_video: '[视频已省略]' }
+      const content = (value: Json): Json => {
+        if (Array.isArray(value)) return value.map(content)
+        if (!value || typeof value !== 'object') return value
+        if (typeof value.type === 'string' && media[value.type]) return { type: responses ? 'input_text' : 'text', text: media[value.type]! }
+        // 工具结构和native reasoning保持原样，只处理其实际content容器中的媒体。
+        return Object.hasOwn(value, 'content') ? { ...value, content: content(value.content!) } : value
+      }
+      return { ...result, wire: { ...result.wire, messages: result.wire.messages.map(row => {
+        const clean = content(row) as JsonObject
+        if (Array.isArray(clean.images) && clean.images.length) {
+          const { images: _images, ...rest } = clean
+          return { ...rest, content: typeof clean.content === 'string' ? `${clean.content}\n[图片已省略]` : content(clean.content ?? []) }
+        }
+        return clean
+      }) } }
     } }
   }
   async summaryProjection(identity: RunIdentity, modelIdentity: string, signal = new AbortController().signal): Promise<Pick<SummaryGenerationPorts<ProviderWire>, 'transformProjection'>> {
@@ -427,9 +520,42 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
 }
 
 /** 复用现有Canonical Context各业务端口，只替换已经真实实现的Provider接线。 */
-export function connectProviderHarness(context: CanonicalContextPorts, options: Omit<ProviderRuntimeOptions, 'references' | 'prepareRequest' | keyof ContextServices>) {
-  const runtime = new ProviderRuntime({ ...options, digest: context.digest, nextId: context.nextId, references: context.references, prepareRequest: context.prepareRequest })
+export type ProviderFactoryContext = Omit<CanonicalContextPorts, 'currentRequest' | 'stageContinuation' | 'releaseContinuations'>
+function connectedContext(context: ProviderFactoryContext, runtime: ProviderRuntime) {
   return { provider: runtime, context: { ...context, prepareRequest: runtime.prepareRequest, rememberPreparedRequest: runtime.rememberPreparedRequest, currentRequest: runtime.currentRequest, stageContinuation: runtime.stageContinuation, releaseContinuations: runtime.releaseContinuations,
     finalization: { async complete(input) { await context.finalization.complete(input); runtime.finishRun(input.identity) } },
   } satisfies CanonicalContextPorts }
+}
+
+/** 复用现有Canonical Context各业务端口，只替换已经真实实现的Provider接线。 */
+export function connectProviderHarness(context: CanonicalContextPorts, options: Omit<ProviderRuntimeOptions, 'references' | 'prepareRequest' | keyof ContextServices>) {
+  return connectedContext(context, new ProviderRuntime({ ...options, digest: context.digest, nextId: context.nextId, references: context.references, prepareRequest: context.prepareRequest }))
+}
+
+export interface ProviderContextFactoryInput {
+  /** Provider与完整Context必须共用这些实际端口，不能在工厂中替换身份指纹或引用授权。 */
+  services: Pick<CanonicalContextPorts, 'digest' | 'nextId' | 'references' | 'prepareRequest'>
+  createContext(runtime: ProviderRuntime): ProviderFactoryContext | Promise<ProviderFactoryContext>
+}
+
+/** 先创建唯一Provider，再装配依赖它的压缩/反思资源；不要求调用方提供占位端口。 */
+export async function connectProviderHarnessWithContextFactory(input: ProviderContextFactoryInput,
+  options: Omit<ProviderRuntimeOptions, 'references' | 'prepareRequest' | keyof ContextServices>) {
+  const services = input?.services && { digest: input.services.digest, nextId: input.services.nextId,
+    references: input.services.references, prepareRequest: input.services.prepareRequest }
+  if (!services || [services.digest, services.nextId, services.prepareRequest].some(method => typeof method !== 'function')
+    || !services.references || typeof services.references.hydrate !== 'function' || typeof services.references.dehydrate !== 'function')
+    throw new ProviderError('input_rejected')
+  const runtime = new ProviderRuntime({ ...options, ...services })
+  try {
+    const context = await input.createContext(runtime)
+    if (!context || (['digest', 'nextId', 'references', 'prepareRequest'] as const).some(key => context[key] !== services[key])
+      || [context.load, context.diagnoseCompactionFailure].some(method => typeof method !== 'function')
+      || typeof context.preparation?.buildRag !== 'function' || typeof context.compaction?.summarize !== 'function' || typeof context.finalization?.complete !== 'function')
+      throw new ProviderError('input_rejected')
+    return connectedContext(context, runtime)
+  } catch {
+    try { await runtime.close() } catch (error) { observe(() => options.diagnose?.('context_factory_close', error)) }
+    throw new ProviderError('input_rejected')
+  }
 }

@@ -1,4 +1,68 @@
 {
+  "packages/core/tests/agent/memory/owner-periodic.test.ts": {
+    "domain": "agent-memory",
+    "layer": "L1",
+    "owner": "packages/core/src/memory/owner-periodic.ts",
+    "productionEntry": "活跃owner反思→profile/pattern低频维护准入和结构校验",
+    "keyBehavior": "100阈值、整理后+30、7天冷却/失败1小时和两field独立水位；原始列表兼容规范化与严格模型schema分离，70条上限、pattern来源ID/去重/kind/裁剪排序，错误只返回安全reason/index/count，非finite拒绝",
+    "ci": "core-vitest"
+  },
+  "packages/core/tests/agent/memory/owner-daily-compaction.test.ts": {
+    "domain": "agent-memory",
+    "layer": "L1",
+    "owner": "packages/core/src/memory/owner-daily-compaction.ts",
+    "productionEntry": "owner daily持久维护→严格分组解析/50条触发/最旧100条批次/历史参考规则",
+    "keyBehavior": "49/50边界、250条全部处理、冻结尾部及并发新头保护；owner仅需任一可靠日期，查询和参考分别限2000/6000码点、10条去重，旧单行格式不作为生产数据兼容",
+    "ci": "core-vitest"
+  },
+  "apps/web-host/tests/agent/agent-reasoning-persistence.test.ts": {
+    "domain": "agent-private-reasoning",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/agent-sessions/persistence/agent-reasoning-persistence.ts",
+    "productionEntry": "Responses Provider → RunStore checkpoint事务 → 私有状态恢复/成功历史事务",
+    "keyBehavior": "真实PG及Responses事件验证精确ref/round/area恢复、密文身份与上下文绑定、原子回滚、授权撤销、off/工具Schema变化/协议拒绝失效；冻结版本防止旧Run清除新状态，网络使用替身；Anthropic/OpenAI Chat/Ollama在off及continuation下当前Run精确恢复（完整响应块含小数工具参数），错协议拒绝；仅Anthropic发布Python同形签名映射并为新Run重绑可信身份，不把活动完整响应块发布为跨Run状态",
+    "ci": "web-host-node"
+  },
+  "packages/core/tests/agent/tools/owner-session.test.ts": {
+    "domain": "agent",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools/conversations.ts",
+    "productionEntry": "IM owner私聊生产ToolRegistry→bind_web_session→Host可信绑定端口",
+    "keyBehavior": "实际注册器传递可信Run/round/call，拒绝模型指定owner和额外权限字段；bound/denied/unknown与只读恢复保持，取消不执行；Web/群/成员/未知平台即使白名单包含仍拒绝",
+    "ci": "core-vitest"
+  },
+  "apps/web-host/tests/agent/agent-context-source-postgres.test.ts": {
+    "domain": "agent",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/agent-sessions/context/agent-context-source.ts",
+    "productionEntry": "Web/IM正式source loader的owned快照与当前消息锚点读取",
+    "keyBehavior": "隔离PG验证owner查询边界，单条与多条currentUsers的末条锚点一致，重复锚点、乱序末条、混用两种当前输入契约拒绝；批次内每个消息的完整IM权限由真实materializer验证",
+    "ci": "web-host-node"
+  },
+  "packages/core/tests/agent/owner-reflection.test.ts": {
+    "domain": "agent-memory",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/memory/owner-reflection.ts",
+    "productionEntry": "Host反思worker复用Core owner增量规则",
+    "keyBehavior": "owner profile/pattern相似增删与印证置信、阶段画像转daily、空summary不清空、lens复现后晋升及输入不可变；Host授权/事务/本地文件恢复另验",
+    "ci": "core-vitest"
+  },
+  "packages/core/tests/agent/tools/send-file.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools/send-file.ts",
+    "productionEntry": "正式ToolRegistry→最小IM发送文件工具→可信Host持久投递端口",
+    "keyBehavior": "owner私聊才开放file_id、成员只含attach_id、单来源参数、真实调用坐标、unknown不假成功、恢复只读收据且即时成功不再产生final重复附件；端口为显式替身",
+    "ci": "core-node"
+  },
+  "packages/core/tests/agent/tools/group-context.test.ts": {
+    "domain": "agent-tools",
+    "layer": "L1",
+    "owner": "packages/core/src/agent/tools/group-context.ts",
+    "productionEntry": "packages/core/src/agent/tools/group-context.ts",
+    "keyBehavior": "当前群上下文工具拒绝模型指定作用域，speaker的pid精确优先且合并实时名与别名强匹配后才模糊，歧义候选有界排序并保护发现后撤权",
+    "ci": "core-node"
+  },
   "apps/web-host/tests/agent/agent-persistent-runtime.integration.test.ts": {
     "domain": "agent-runtime",
     "layer": "L2",

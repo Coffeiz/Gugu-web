@@ -166,6 +166,7 @@ export function createPostgresAgentAttachmentUploadOperations(pool: Pick<Pool, '
 export function createPostgresChatAttachmentDraftDeletePorts(
   pool: Pick<Pool, 'connect'>,
   storageRoot: string,
+  options: { strictCleanup?: boolean } = {},
 ): ChatAttachmentDraftDeletePorts & Pick<ChatAttachmentDraftClearPorts, 'deleteDraftRows'> {
   return {
     async deleteDraftRows(ownerId) {
@@ -222,7 +223,10 @@ export function createPostgresChatAttachmentDraftDeletePorts(
           WHERE user_id=$1 AND storage_key=$2 LIMIT 1`, [owner, storageKey])
         const unreferenced = !referenced.rowCount
         if (unreferenced) {
-          try { await removeLocalTree(storageRoot, storageKey) } catch { /* 与 Python 一致：数据库删除成功后物理清理失败可重试修复。 */ }
+          try { await removeLocalTree(storageRoot, storageKey) } catch {
+            // 持久回收队列必须感知失败才能保留重试；既有交互删除仍保持best-effort。
+            if(options.strictCleanup)throw new Error('聊天附件物理清理未完成')
+          }
         }
         await client.query('COMMIT')
         return unreferenced

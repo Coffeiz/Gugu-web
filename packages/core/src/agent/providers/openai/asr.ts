@@ -1,4 +1,5 @@
 import { classifyProviderError, ProviderError, throwIfCancelled } from '../errors.js'
+import { strip } from '../../../shared/values.js'
 import type { ProviderConfig } from '../contracts.js'
 import { endpoint, requestJson } from '../http.js'
 import { adapterFor } from '../registry.js'
@@ -37,6 +38,6 @@ export async function transcribeOpenAiAsr(
     if (!choices.length || !Object.keys(message).length) throw new ProviderError('protocol')
     if (message.content == null) return ''
     if (typeof message.content !== 'string') throw new ProviderError('protocol')
-    return message.content.trim()
+    return strip(message.content)
   })
 }

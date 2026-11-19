@@ -34,7 +34,10 @@ export function createPostgresInteractionConsumeStore(pool: Pick<Pool, 'connect'
           if (committed) throw new Error('交互事务已提交')
           if (prompt && action && prompt.status === 'resolved' && action.status === 'consumed') await effects.beforeCommit?.(client, prompt, action)
           if (prompt) await client.query('UPDATE interaction_prompts SET status = $3, resolved_at = $4, schema_json = $5 WHERE id = $1 AND user_id = $2', [prompt.id, prompt.ownerId, prompt.status, prompt.resolvedAt, JSON.stringify(prompt.schema)])
-          if (action) await client.query('UPDATE interaction_actions SET status = $3, consumed_at = $4, consumed_event_id = $5 WHERE id = $1 AND prompt_id = $2', [action.id, action.promptId, action.status, action.consumedAt, action.consumedEventId])
+          // 自定义输入阶段与Gateway准入使用同一DB时钟，不能以Node时钟偏差让旧文本跨阶段。
+          if (action) await client.query(`UPDATE interaction_actions SET status = $3,
+            consumed_at = CASE WHEN (option_id='__custom_reply__' OR action_type='custom_reply') AND status='pending' AND $3='consumed'
+              THEN clock_timestamp() ELSE $4 END, consumed_event_id = $5 WHERE id = $1 AND prompt_id = $2`, [action.id, action.promptId, action.status, action.consumedAt, action.consumedEventId])
           await client.query('COMMIT'); committed = true
         },
       }
@@ -68,6 +71,8 @@ export function createPostgresInteractionTextStore(
         },
         async enqueueResume(current: InteractionTextPrompt, eventId?: string) {
           if (!prompt || current.id !== prompt.id || current.ownerId !== prompt.ownerId) throw new Error('交互恢复绑定无效')
+          // 与文本结果及恢复引用同事务保存事件收据；不包含正文，公开result保持原契约。
+          if (eventId) prompt.schema = { ...prompt.schema, node_text_consumed_event_id: eventId }
           await enqueue(client, prompt, eventId)
         },
         async commit() {

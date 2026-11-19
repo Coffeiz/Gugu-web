@@ -3,7 +3,7 @@ import type { PoolClient } from 'pg'
 import { MessageArea, canonicalToolsUsed, stableJson, isCompactedSummaryMessage, unwrapCompactedSummary, validateCompactSummary, updateBaselineSnapshot } from '@gugu/core/agent'
 import type { CanonicalRunContext, RunCheckpoint, RunIdentity } from '@gugu/core/agent'
 import { sanitizeMediaPayload } from '@gugu/core/agent/context/messages'
-import { recordAgentUsage, type AgentUsageConfig } from './agent-usage-postgres.js'
+import { recordAgentUsage, type AgentUsageConfig, type AgentUsageLabels } from './agent-usage-postgres.js'
 import { lockCanonicalHistoryBaseline } from './agent-history-baseline-postgres.js'
 import type { AgentRunHistoryWrite } from './agent-run-store-postgres.js'
 import { enqueuePostgresAgentRagRebuild } from './agent-rag-job-postgres.js'
@@ -17,14 +17,19 @@ export function canonicalBaselineHash(rows: readonly { id: string; role: string;
 }
 
 /** 由可信模型选择服务注入账本配置；与 RunStore 的终态提交共用事务。 */
-export function createCanonicalHistoryWriter(resolveConfig: (identity: RunIdentity, modelIdentity: string) => Promise<AgentUsageConfig>) {
+export function createCanonicalHistoryWriter(resolveConfig: (identity: RunIdentity, modelIdentity: string, client: PoolClient) => Promise<AgentUsageConfig>, options?: {
+  usageSource?: AgentUsageLabels['source'] | ((identity: RunIdentity, client: PoolClient) => Promise<AgentUsageLabels['source']>)
+  commitContinuation?(client: PoolClient, identity: RunIdentity, context: CanonicalRunContext): Promise<void>
+  afterSuccess?(client: PoolClient, identity: RunIdentity, history: AgentRunHistoryWrite<CanonicalRunContext>, checkpoint: RunCheckpoint<CanonicalRunContext>): Promise<void>
+}) {
   return async (client: PoolClient, identity: RunIdentity, history: AgentRunHistoryWrite<CanonicalRunContext>, checkpoint: RunCheckpoint<CanonicalRunContext>): Promise<void> => {
     const context = history.context
     if (context.identity.ownerId !== identity.ownerId || context.identity.sessionId !== identity.sessionId || context.identity.runId !== identity.runId
       || checkpoint.identity.ownerId !== identity.ownerId || checkpoint.identity.sessionId !== identity.sessionId || checkpoint.identity.runId !== identity.runId)
       throw new Error('Agent 历史身份不匹配')
     // 原生续接引用属于本次运行，由 Provider 管理，聊天历史仅提交可持久化的消息。
-    const config = await resolveConfig(identity, context.modelIdentity)
+    const config = await resolveConfig(identity, context.modelIdentity, client)
+    if (context.continuationRef && history.outcome === 'success') await options?.commitContinuation?.(client, identity, context)
     const session = await client.query<{ last_message_seq: string }>(
       `SELECT last_message_seq::text FROM conversation_sessions WHERE id = $1 AND user_id = $2 FOR UPDATE`, [identity.sessionId, identity.ownerId])
     if (!session.rows[0]) throw new Error('Agent 会话不存在')
@@ -133,6 +138,8 @@ export function createCanonicalHistoryWriter(resolveConfig: (identity: RunIdenti
     if (context.providerCacheAnchor) await client.query(`UPDATE conversation_sessions SET session_context = jsonb_set(coalesce(session_context::jsonb,'{}'::jsonb), '{provider_cache_anchor}', $3::jsonb)
       WHERE id = $1 AND user_id = $2`, [identity.sessionId, identity.ownerId, JSON.stringify(context.providerCacheAnchor.anchor)])
     if (total > 0) await enqueuePostgresAgentRagRebuild(client, identity.ownerId, 'conversation')
-    await recordAgentUsage(client, identity, checkpoint.totalUsage, config, checkpoint.providerRounds, canonicalToolsUsed(checkpoint, delta.entries))
+    const source = typeof options?.usageSource === 'function' ? await options.usageSource(identity, client) : options?.usageSource ?? 'web'
+    await recordAgentUsage(client, identity, checkpoint.totalUsage, config, checkpoint.providerRounds, canonicalToolsUsed(checkpoint, delta.entries), { scenario: 'chat', source })
+    if (history.outcome === 'success') await options?.afterSuccess?.(client, identity, history, checkpoint)
   }
 }

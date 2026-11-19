@@ -1,4 +1,4 @@
-import type { Json } from '../models.js'
+import type { ContextData, ContextLoadPolicy, Json } from '../models.js'
 
 /** 提示词字段由可信 Host 提供，不从用户正文推导工具权限。 */
 export interface AgentStaticPromptInput {
@@ -160,4 +160,39 @@ export function agentCurrentTimeReminder(now: Date, timezone: string): { role: '
 export function asAgentContextRecord(value: Json, label: string): Record<string, Json> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${label}格式无效`)
   return value as Record<string, Json>
+}
+
+function contextRows(value: Json, label: string): Record<string, Json>[] {
+  if (!Array.isArray(value) || value.some(item => !item || typeof item !== 'object' || Array.isArray(item)))
+    throw new TypeError(`${label}格式无效`)
+  return value as Record<string, Json>[]
+}
+
+/** 已授权JSON资料的正式快照投影；来源和时钟由Host显式传入，不读取数据或推导权限。 */
+export function formatAgentDynamicSnapshotInput(data: ContextData, policy: ContextLoadPolicy, source: string | null, nowMs: number): AgentDynamicSnapshotInput {
+  const visibility = policy.loadOwnerContext
+  const channels = visibility ? asAgentContextRecord(data.imChannels, 'IM 渠道状态') : {}
+  const files = visibility ? asAgentContextRecord(data.filesOverview, '文件概览') : {}
+  const memory = visibility && policy.memoryEnabled ? asAgentContextRecord(data.memory, '记忆快照') as AgentMemorySnapshot : {}
+  const fileRows = (key: 'folders' | 'files') => {
+    const value = files[key]
+    if (value === undefined) return []
+    return contextRows(value, '文件概览').map(item => key === 'folders'
+      ? { name: String(item.name ?? ''), path: item.path == null ? undefined : String(item.path), file_count: Number(item.file_count ?? 0) }
+      : { name: String(item.name ?? ''), folder: item.folder == null ? null : String(item.folder) })
+  }
+  const total = files.total == null ? 0 : Number(files.total)
+  const trash = files.trash == null ? 0 : Number(files.trash)
+  if (!Number.isSafeInteger(total) || total < 0 || !Number.isSafeInteger(trash) || trash < 0)
+    throw new TypeError('文件概览计数无效')
+  return {
+    memoryBlock: formatAgentMemory(memory, nowMs),
+    projectBlock: visibility ? formatAgentProjects(data.projects) : '（本次任务不加载 owner 项目上下文）',
+    sourceBlock: formatAgentSource(source, Object.fromEntries(['feishu', 'qq', 'wechat', 'telegram'].map(name => [name, channels[name] === true]))),
+    events: visibility ? contextRows(data.events, '日历概览').map(item => ({ date: String(item.date ?? ''), title: String(item.title ?? '') })) : [],
+    notes: visibility ? contextRows(data.notes, '笔记概览').map(item => ({ title: item.title == null ? null : String(item.title), content: item.content == null ? null : String(item.content), capturedAt: item.capturedAt == null ? null : String(item.capturedAt) })) : [],
+    files: visibility ? { total, trash, folders: fileRows('folders'), files: fileRows('files') } : null,
+    knowledge: visibility ? contextRows(data.knowledge, '知识概览') : [],
+    includeProjects: visibility, includeCalendar: visibility, includeFiles: visibility, includeKnowledge: visibility,
+  }
 }

@@ -5,7 +5,7 @@ import { type InteractionActionRecord, type InteractionPromptRecord } from '@gug
 import { withPostgresTransaction } from '../../../adapters/database/postgres-transaction.js'
 import { mcpCredentialConfigurationVersionSql } from './agent-trusted-prompt-descriptions.js'
 
-interface SecretEnvelope { ciphertext: string; nonce: string; encryptedDataKey: string; keyVersion: number }
+export interface SecretEnvelope { ciphertext: string; nonce: string; encryptedDataKey: string; keyVersion: number }
 export interface SecretInteractionPorts {
   encrypt(values: Record<string, string>): SecretEnvelope | Promise<SecretEnvelope>
   enqueue(client: PoolClient, prompt: InteractionPromptRecord, action: InteractionActionRecord): Promise<void>
@@ -27,11 +27,16 @@ function errorStatus(error: CoreError): 400 | 404 | 409 {
 
 /** PostgreSQL 只提供锁与事务；owner、凭据槽位、敏感值及终态规则由共享 Core 用例执行。 */
 export function createPostgresSecretInteraction(pool: Pick<Pool, 'connect'>, ports: SecretInteractionPorts) {
+  return (ownerId: string, promptId: number, values: Record<string, string> | null) =>
+    withPostgresTransaction(pool, client => consumeSecretInteractionLocked(client, ports, ownerId, promptId, values))
+}
+
+export async function consumeSecretInteractionLocked(client: PoolClient, ports: SecretInteractionPorts, ownerId: string, promptId: number, values: Record<string, string> | null) {
   if (!ports || typeof ports.encrypt !== 'function' || typeof ports.enqueue !== 'function' || typeof ports.invalidate !== 'function') throw new TypeError('凭据交互服务未完整配置')
 
   const store = {
     transaction<T>(run: (tx: SecretInteractionTransaction) => Promise<T>) {
-      return withPostgresTransaction(pool, async client => run({
+      return run({
         async getOwnedPrompt(ownerId, promptId) {
           const result = await client.query<Record<string, unknown>>(
             'SELECT id,user_id,session_id,kind,status,expires_at,schema_json FROM interaction_prompts WHERE id=$1 AND user_id=$2 FOR UPDATE',
@@ -84,16 +89,14 @@ export function createPostgresSecretInteraction(pool: Pick<Pool, 'connect'>, por
           }
           await ports.enqueue(client, resolvedPrompt, resumeAction)
         },
-      }))
+      })
     },
   }
 
   const consume = createSecretInteractionConsumer({ store, encrypt: ports.encrypt })
-  return async (ownerId: string, promptId: number, values: Record<string, string> | null) => {
-    try { return await consume({ ownerId, promptId, values }) }
-    catch (error) {
-      if (error instanceof CoreError) throw new SecretInteractionError(errorStatus(error), error.message)
-      throw error
-    }
+  try { return await consume({ ownerId, promptId, values }) }
+  catch (error) {
+    if (error instanceof CoreError) throw new SecretInteractionError(errorStatus(error), error.message)
+    throw error
   }
 }

@@ -478,6 +478,22 @@ describe('统一当前轮组装', () => {
       ids: 'resumeInteraction' in mode || 'currentUsersInHistory' in mode ? ['1', '3'] : ['1'], snapshot: '真实快照'
     }])
   })
+  it('批次当前锚点全部由实际currentUsers替换，保留业务顺序且RAG不得召回本批任一消息', async () => {
+    const port = ports(), seen: unknown[] = []
+    port.buildRag = async request => { seen.push({ before: request.beforeMessageId, ids: request.history.map(item => item.id) }); return { tail: [] } }
+    const prepared = await prepareContext({ ...identity, fixedPrefix: [],
+      history: [row(1), row(3, { content: '旧渲染A' }), row(4, { content: '期间被动上下文' }), row(6, { content: '旧渲染B' })],
+      currentUser: { persistedMessageId: '6', message: user('不应另拼最后一条') },
+      // 真实平台时间可能与早落库ID顺序不同，不能按ID重排输入。
+      currentUsers: [{ persistedMessageId: '6', message: user('批次B') }, { persistedMessageId: '3', message: user('批次A') }],
+      currentUsersInHistory: false,
+    }, port)
+    expect(seen).toEqual([{ before: '3', ids: ['1', '4'] }])
+    const texts = prepared.area.messages.map(message => String(message.content))
+    expect(texts.filter(text => text.includes('批次'))).toEqual(['【消息正文】\n批次B', '【消息正文】\n批次A'])
+    expect(texts.join('\n')).not.toMatch(/旧渲染|不应另拼/)
+    expect(prepared.area.persistenceDelta('success').entries).toEqual([])
+  })
   it('共享RAG入口在外部IO前验证历史归属，preparedRag复用也不能绕过归属或取消', async () => {
     const port = ports(); let calls = 0
     port.buildRag = async () => { calls++; return { tail: [] } }

@@ -30,6 +30,7 @@ export function canUseTool(name: string, context: ToolPermissionContext): boolea
       && typeof context.currentIm.groupAutoReply === 'boolean'))) throw new TypeError('工具权限上下文无效')
   if (name === 'choose_no_reply') return context.currentIm?.chatType === 'group' && context.currentIm.groupAutoReply === true
   if (name === 'present_file' && context.platform) return false
+  if (name === 'bind_web_session' && (context.imRole !== 'owner' || context.chatType !== 'c2c' || context.platform === null || !publicPlatforms.has(context.platform))) return false
   if (name === 'send_link_buttons' && context.chatType === 'group' && context.platform !== null && publicPlatforms.has(context.platform)) return true
   if (skillManagement.has(name)) return context.imRole === null || context.imRole === 'owner'
   return safe.has(name) || fixed.has(name) || context.allowedToolNames === null || context.allowedToolNames.includes(name)

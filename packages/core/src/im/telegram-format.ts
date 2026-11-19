@@ -128,6 +128,7 @@ function plainChunks(text: string, limit: number): string[] {
 }
 
 export function splitMarkdownV2(text: unknown, limit = 4096): string[] {
+  if (!Number.isSafeInteger(limit) || limit < 2) throw new RangeError('Telegram 消息长度限制无效')
   const raw = String(text ?? '')
   if (utf16Length(markdownV2(raw)) <= limit) return [markdownV2(raw)]
   const blocks = fencedCodeBlocks(raw)

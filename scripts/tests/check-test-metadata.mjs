@@ -1,5 +1,5 @@
-import { loadMetadata } from './test-metadata.mjs'
 #!/usr/bin/env node
+import { loadMetadata } from './test-metadata.mjs'
 
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -10,7 +10,7 @@ const metadata = loadMetadata()
 const testPattern = /(^|\/)(test_[^/]+\.py|[^/]+_test\.py|[^/]+\.(test|spec)\.(ts|js))$/
 
 function git(args) {
-  return execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
+  return execFileSync('git', args, { cwd: root, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 }).trim()
 }
 
 let base = process.env.GITHUB_BASE_SHA?.trim()
@@ -48,7 +48,11 @@ const trackedTests = [...tracked].filter(file => testPattern.test(file))
 const deletedFrontendTests = trackedTests.filter(file =>
   /^frontend\/(?:src|test)\//.test(file) && !fs.existsSync(path.join(root, file)),
 )
-const untrackedTests = git(['ls-files', '-o', '--exclude-standard']).split('\n')
+// 只让Git返回测试候选，避免旧构建产物/字体清单耗尽子进程输出缓冲区。
+const untrackedTests = git(['ls-files', '-o', '--exclude-standard', '--',
+  ':(glob)**/test_*.py', ':(glob)**/*_test.py', ':(glob)**/*.test.ts', ':(glob)**/*.test.js',
+  ':(glob)**/*.spec.ts', ':(glob)**/*.spec.js', ':(glob,exclude)**/node_modules/**',
+  ':(glob,exclude)**/.tools/**', ':(glob,exclude)**/.venv/**', ':(glob,exclude)**/site-packages/**']).split('\n')
   .filter(file => testPattern.test(file) && !tracked.has(file))
 
 // 本地搬迁尚未暂存时，Git 会把新路径列为 untracked、旧路径列为 deleted。

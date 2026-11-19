@@ -1,6 +1,24 @@
 import { z } from 'zod'
-import type { RunIdentity } from '../models.js'
+import type { RunIdentity, ToolResult } from '../models.js'
 import type { ToolDefinition } from './contracts.js'
+
+export interface ImOwnerSessionBindInput { identity: RunIdentity; roundId: string; toolCallId: string; sessionId: number }
+export interface ImOwnerSessionBindPort {
+ bind(input: ImOwnerSessionBindInput, signal: AbortSignal): Promise<'bound' | 'denied' | 'unknown'>
+ recover(input: ImOwnerSessionBindInput): Promise<'bound' | 'denied' | 'unknown'>
+}
+/** 仅由可信Host在owner私聊装配；不接受平台身份、owner或宿主路径参数。 */
+export function createImOwnerSessionBindTool(port: ImOwnerSessionBindPort): ToolDefinition {
+ const schema=z.object({session_id:z.number().int().positive().max(2147483647)}).strict()
+ const output=(status:'bound'|'denied'|'unknown',sessionId:number):ToolResult=>status==='unknown'?{kind:'unknown'}:
+  status==='bound'?{kind:'completed',successful:true,mutated:true,value:{bound:true,session_id:sessionId,message:'已绑定，之后可以在这里继续这段网页对话'}}:
+  {kind:'completed',successful:false,mutated:false,value:{error:'网页会话不存在、不属于你，或当前私聊无权绑定'}}
+ return {definition:{name:'bind_web_session',schema:{type:'function',function:{name:'bind_web_session',description:'将当前账号的私聊绑定到本人已有网页会话，之后在此私聊继续该对话。',parameters:{type:'object',properties:{session_id:{type:'integer',minimum:1,maximum:2147483647}},required:['session_id'],additionalProperties:false}}}},effect:'write',
+  validate:input=>schema.safeParse(input),
+  async execute(input,scope,call){const {session_id}=schema.parse(input);scope.signal.throwIfAborted();return output(await port.bind({identity:scope.identity,roundId:scope.roundId,toolCallId:call.id,sessionId:session_id},scope.signal),session_id)},
+  async reconcile(input,identity,call){const {session_id}=schema.parse(input);return output(await port.recover({identity,roundId:identity.roundId,toolCallId:call.id,sessionId:session_id}),session_id)},
+ }
+}
 
 export interface ConversationReadPort {
   read(identity:RunIdentity,sessionId:number,limit:number,signal:AbortSignal):Promise<{

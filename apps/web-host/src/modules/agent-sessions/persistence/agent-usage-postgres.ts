@@ -31,12 +31,19 @@ function roundStats(rounds: readonly Readonly<Record<string, string | number | n
     ? { cold_calls: cold, warm_input: warmInput, warm_read: warmRead } : null
 }
 
+export interface AgentUsageLabels {
+  scenario: 'chat' | 'reflection' | 'compaction'
+  source: 'web' | 'feishu' | 'qq' | 'wechat' | 'telegram'
+}
+
 /** 调用方负责与终态 checkpoint 和历史写入同事务提交，并通过 RunStore CAS 防重放。 */
 export async function recordAgentUsage(
   client: PoolClient, identity: RunIdentity, usage: Usage, config: AgentUsageConfig,
   rounds: readonly Readonly<Record<string, string | number | null>>[], toolsUsed: readonly string[],
-  scenario: 'chat' | 'scheduled' | 'reflection' = 'chat',
+  labels: 'chat' | 'scheduled' | 'reflection' | AgentUsageLabels = 'chat',
 ): Promise<{ input: number; output: number }> {
+  const scenario = typeof labels === 'string' ? labels : labels.scenario
+  const source = typeof labels === 'string' ? (scenario === 'scheduled' ? null : 'web') : labels.source
   let input = count(usage.input), output = count(usage.output)
   const read = count(usage.cacheRead), write = count(usage.cacheWrite)
   if (config.defaultLimit6h !== null) count(config.defaultLimit6h)
@@ -80,6 +87,6 @@ export async function recordAgentUsage(
     VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,$12,$13,clock_timestamp())`,
   [identity.ownerId, scenario === 'scheduled' ? null : identity.sessionId, input, output, read, write, stats ? JSON.stringify(stats) : null,
     config.model, config.provider, config.isByok, toolsUsed.length ? JSON.stringify(toolsUsed) : null,
-    scenario, scenario === 'scheduled' ? null : 'web'])
+    scenario, source])
   return { input, output }
 }

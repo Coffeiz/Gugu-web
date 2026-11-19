@@ -126,3 +126,8 @@ export async function withBorrowedPostgresQuery<T>(client: PoolClient, work: (qu
 export async function withBorrowedMindPostgres<T>(client: PoolClient, work: (db: Kysely<Database>) => Promise<T>): Promise<T> {
   return borrow(client, true, work)
 }
+
+/** 会话删除借用同一 PostgreSQL 事务，不允许控制外层事务。 */
+export function withBorrowedAgentPostgres<T>(client: PoolClient, work: (db: Kysely<Database>) => Promise<T>): Promise<T> {
+  return borrow(client, false, work)
+}

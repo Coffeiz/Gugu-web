@@ -1,8 +1,4 @@
-import { connect as connectTcp, type Socket } from 'node:net'
-import { connect as connectTls, type TLSSocket } from 'node:tls'
-
-type RedisSocket = Socket | TLSSocket
-type RespValue = string | number | null | RespValue[]
+import { connectRedisSocket, encodeCommand, parseResp, redisEndpoint, type RespValue, type RedisSocket } from './redis-protocol.js'
 
 export interface LiveSubscriptionMessage {
   channel: string
@@ -24,56 +20,6 @@ export class RedisLiveSubscriptionError extends Error {
   }
 }
 
-function parseResp(buffer: Buffer, offset = 0): { value: RespValue; bytes: number } | null {
-  if (offset >= buffer.length) return null
-  const marker = buffer[offset]
-  const lineEnd = buffer.indexOf('\r\n', offset)
-  if (lineEnd < 0) return null
-  const header = buffer.toString('utf8', offset + 1, lineEnd)
-  const headerBytes = lineEnd + 2 - offset
-
-  if (marker === 43) return { value: header, bytes: headerBytes }
-  if (marker === 45) throw new RedisLiveSubscriptionError()
-  if (marker === 58) {
-    const number = Number(header)
-    if (!Number.isSafeInteger(number)) throw new RedisLiveSubscriptionError()
-    return { value: number, bytes: headerBytes }
-  }
-  if (marker === 36) {
-    if (!/^-?\d+$/.test(header)) throw new RedisLiveSubscriptionError()
-    const length = Number(header)
-    if (length === -1) return { value: null, bytes: headerBytes }
-    if (!Number.isSafeInteger(length) || length < 0) throw new RedisLiveSubscriptionError()
-    const bodyStart = lineEnd + 2
-    const bodyEnd = bodyStart + length
-    if (buffer.length < bodyEnd + 2) return null
-    if (buffer[bodyEnd] !== 13 || buffer[bodyEnd + 1] !== 10)
-      throw new RedisLiveSubscriptionError()
-    return { value: buffer.toString('utf8', bodyStart, bodyEnd), bytes: bodyEnd + 2 - offset }
-  }
-  if (marker === 42) {
-    if (!/^\d+$/.test(header)) throw new RedisLiveSubscriptionError()
-    const count = Number(header)
-    if (!Number.isSafeInteger(count) || count < 0) throw new RedisLiveSubscriptionError()
-    const values: RespValue[] = []
-    let cursor = lineEnd + 2
-    for (let index = 0; index < count; index += 1) {
-      const parsed = parseResp(buffer, cursor)
-      if (!parsed) return null
-      values.push(parsed.value)
-      cursor += parsed.bytes
-    }
-    return { value: values, bytes: cursor - offset }
-  }
-  throw new RedisLiveSubscriptionError()
-}
-
-function encodeCommand(parts: readonly string[]): Buffer {
-  const lines = [`*${parts.length}`]
-  for (const part of parts) lines.push(`$${Buffer.byteLength(part)}`, part)
-  return Buffer.from(`${lines.join('\r\n')}\r\n`, 'utf8')
-}
-
 function abortError(): Error {
   const error = new Error('Live subscription aborted')
   error.name = 'AbortError'
@@ -81,22 +27,11 @@ function abortError(): Error {
 }
 
 function createConnection(redisUrl: string, channels: readonly string[]): Promise<LiveSubscription> {
-  let url: URL
-  try {
-    url = new URL(redisUrl)
-  } catch {
-    throw new RedisLiveSubscriptionError()
-  }
-  if (!['redis:', 'rediss:'].includes(url.protocol) || !url.hostname || url.search || url.hash)
-    throw new RedisLiveSubscriptionError()
-
-  const port = Number(url.port || (url.protocol === 'rediss:' ? 6380 : 6379))
-  const host = url.hostname.replace(/^\[|\]$/g, '')
+  let endpoint: ReturnType<typeof redisEndpoint>
   let socket: RedisSocket
   try {
-    socket = url.protocol === 'rediss:'
-      ? connectTls({ host, port, servername: host })
-      : connectTcp({ host, port })
+    endpoint = redisEndpoint(redisUrl)
+    socket = connectRedisSocket(endpoint)
   } catch {
     throw new RedisLiveSubscriptionError()
   }
@@ -182,18 +117,18 @@ function createConnection(redisUrl: string, channels: readonly string[]): Promis
     const initialize = async () => {
       try {
         const connected = new Promise<void>((connectedResolve, connectedReject) => {
-          const event = url.protocol === 'rediss:' ? 'secureConnect' : 'connect'
+          const event = endpoint.tls ? 'secureConnect' : 'connect'
           socket.once(event, connectedResolve)
           socket.once('error', connectedReject)
         })
         await connected
-        const username = decodeURIComponent(url.username)
-        const password = decodeURIComponent(url.password)
+        const username = endpoint.username
+        const password = endpoint.password
         if (password) {
           const auth = username ? await command('AUTH', username, password) : await command('AUTH', password)
           if (auth !== 'OK') throw new RedisLiveSubscriptionError()
         }
-        const database = url.pathname.replace(/^\//, '')
+        const database = endpoint.database
         if (database && !/^\d+$/.test(database)) throw new RedisLiveSubscriptionError()
         if (database && Number(database) !== 0) {
           if (await command('SELECT', database) !== 'OK') throw new RedisLiveSubscriptionError()

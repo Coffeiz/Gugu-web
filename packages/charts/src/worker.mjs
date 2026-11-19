@@ -1,9 +1,9 @@
 import { existsSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { createRequire } from 'node:module'
 import { Resvg } from '@resvg/resvg-js'
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom'
 import { createHTMLWindow } from 'svgdom'
-import MathJax from 'mathjax'
 import { normalizeMermaidEdgeLabelBounds, normalizeMermaidEdgeStyles, normalizeMermaidKanbanSectionColors, normalizeMermaidKanbanSectionTitles, normalizeMermaidMindmapRootLabel, normalizeMermaidNodeCorners, normalizeMermaidRasterColors, normalizeMermaidRasterText, normalizeMermaidRasterTextContrast, normalizeMermaidStateDiagramLabelAlignment, normalizeMermaidTimelineSectionColors } from './svg-style.mjs'
 import { calculateMathRasterDimensions, calculateMermaidRasterDimensions } from './raster-dimensions.mjs'
 import { prepareMermaidDiagramSource, restoreMermaidDiagramLabels } from './diagram-source.mjs'
@@ -48,11 +48,19 @@ if (
 
 let mathJaxPromise
 if (charts.some((chart) => chart.type === 'math')) {
+  const mathJaxRequire = createRequire(import.meta.resolve('mathjax'))
   // 初始化时还没有安装 Mermaid 所需的 svgdom 全局 window/document。MathJax
   // 在 Node 环境应使用自己的 lite adaptor，避免误选浏览器启动路径。
   mathJaxPromise = (async () => {
+    const { default: MathJax } = await import('mathjax')
     await MathJax.init({
-      loader: { load: ['input/tex', 'output/svg'] },
+      loader: {
+        load: ['input/tex', 'output/svg'],
+        // Windows盘符不是ESM URL；转换本地绝对路径，保留包名/file:的正常解析。
+        require: (file) => import(file.startsWith('file:') ? file : pathToFileURL(mathJaxRequire.resolve(file)).href),
+        // stdout仅允许长度前缀PNG帧，不能让MathJax默认日志泄露路径或污染协议。
+        failed: () => { throw new Error('mathjax_initialization_failed') },
+      },
       startup: { typeset: false },
       tex: { packages: ['base', 'ams'], maxBuffer: MAX_SOURCE_CHARS, maxMacros: 500 },
       svg: { fontCache: 'none' },
@@ -244,11 +252,15 @@ globalThis.requestAnimationFrame = (callback) => setTimeout(callback, 0)
 globalThis.cancelAnimationFrame = (handle) => clearTimeout(handle)
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} }
 
-const [{ default: mermaid }, { default: zenuml }] = await Promise.all([
-  import('mermaid'),
-  import('@mermaid-js/mermaid-zenuml'),
-])
-await mermaid.registerExternalDiagrams([zenuml])
+// 单公式请求不应加载整套Mermaid/布局引擎；单图表请求也不初始化MathJax。
+// 仍使用同一个受限进程、原时限与逐图安全校验，不缓存跨用户的源码或渲染状态。
+let mermaid
+if (charts.some(chart => chart.type === 'mermaid')) {
+mermaid = (await import('mermaid')).default
+if (charts.some(chart => chart.type === 'mermaid' && /^\s*zenuml\b/im.test(chart.source))) {
+  const { default: zenuml } = await import('@mermaid-js/mermaid-zenuml')
+  await mermaid.registerExternalDiagrams([zenuml])
+}
 mermaid.initialize({
   startOnLoad: false,
   // 输出只会进入 Resvg，不会作为 SVG 回传浏览器；对 Mermaid loose 模式产生的
@@ -277,6 +289,7 @@ mermaid.initialize({
   ],
   ...createMermaidThemeConfig(colors, '"Noto Sans SC", sans-serif'),
 })
+}
 
 function diagramType(source) {
   const body = source.replace(/^\s*---\s*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/, '')

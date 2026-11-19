@@ -2,6 +2,7 @@
 import type { ExecutionRequest,ExecutionResult } from './executor/contracts.js'
 import type { AgentObservationPort } from './observation.js'
 import type { ReflectionSnapshots } from './memory/reflection.js'
+import type { CanonicalRunContext } from './models.js'
 import type { Block,BranchInput,BranchName,CanonicalAreaSnapshot,CanonicalCompletionInput,CanonicalMessage,CanonicalSourceEffects,CapabilityCatalog,CompactionSummaryInput,ContextData,ContextSourceSelection,CurrentTurnSources,DispatchOutcome,DisplayItem,EarlyExit,FrozenProviderRequest,HistoryIdentity,InteractionResolution,Json,Lease,MessageEntry,NormalizedProviderRecovery,OpaqueProviderProjection,PendingInteraction,PersistedHistoryRow,PreparationIdentity,PrepareContextInput,PreparedContext,PreparedToolDefinition,ProviderEvent,ProviderRecoveryBoundary,ProviderRequest,RagContext,ReflectionSnapshot,ReplyFacts,ReplyGateCall,RunCapabilities,RunCheckpoint,RunEvent,RunIdentity,SanitizerCheckpoint,SessionSnapshotState,SnapshotPayload,ToolCall,ToolPlan,ToolResult,Usage } from './models.js'
 
 export interface ProviderProjectionPort<Wire> {
@@ -69,7 +70,7 @@ export interface CanonicalContextPorts extends ContextServices {
     capabilities?: RunCapabilities
   } | EarlyExit>
   readonly preparation: Omit<PreparationPorts, keyof ContextServices>
-  prepareRequest(identity: RunIdentity, signal?: AbortSignal): Promise<{
+  prepareRequest(identity: RunIdentity, signal?: AbortSignal, context?: CanonicalRunContext): Promise<{
     prefix: CanonicalMessage[]
     dynamicTail: CanonicalMessage[]
   }>
@@ -93,6 +94,8 @@ export interface CanonicalContextPorts extends ContextServices {
     areaDigest: string
     value: unknown
   }): Promise<string>
+  /** 初始Canonical已建立后加载成功Run的私有续接；返回值仅为非敏感引用。 */
+  initializeContinuation?(context: CanonicalRunContext, signal: AbortSignal, areaDigest: string): Promise<string | null>
   /** 释放本Run未提交的进程内私有材料；已由history事务接收的加密记录不在此删除。 */
   releaseContinuations(identity: RunIdentity): Promise<void>
   /** 受限诊断端口；原始摘要失败不得进入checkpoint、公开事件或日志。 */

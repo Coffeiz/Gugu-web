@@ -1,3 +1,4 @@
+import { stageImSecretPromptLocked } from './agent-im-secret-input-postgres.js'
 import { createHash, randomBytes } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import type { PendingInteraction, RunIdentity } from '@gugu/core/agent'
@@ -69,6 +70,7 @@ export function createPostgresInteractionActivator(pool: Pick<Pool, 'connect'>, 
         [identity.ownerId, identity.sessionId, identity.runId, request.id, request.toolCall.id])
         if (released.rowCount !== 1) throw new Error('MCP 凭据交互意图已失效')
       }
+      if (secret && typeof target?.server_id === 'string') await stageImSecretPromptLocked(client, identity, promptId, target.server_id)
       return request
     })
   } }

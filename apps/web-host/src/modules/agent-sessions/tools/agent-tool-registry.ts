@@ -1,3 +1,5 @@
+import { createGroupContextSearchTool, createImOwnerSessionBindTool, type GroupContextSearchPort, type ImOwnerSessionBindPort } from '@gugu/core/tools'
+import { createImReactionTools, type ImReactionPort } from '@gugu/core/im/reaction-tool'
 import { createNoteLifecycleTools, createNoteWriteTools, type NoteLifecyclePort, type createNoteWritePort, type ToolDefinition } from '@gugu/core/tools'
 import { createLinkButtonsTools, type LinkButtonDeliveryPort } from '@gugu/core/tools'
 import { createAskUserTool, createCallToolAdapter, type AskUserAuthorizationPort } from '@gugu/core/tools'
@@ -45,6 +47,9 @@ export function filterConfiguredWebAgentTools(names: readonly string[]): string[
 }
 
 export interface AgentToolRegistryOptions {
+  groupContext?: GroupContextSearchPort
+  imOwnerSession?: ImOwnerSessionBindPort
+  imReaction?: { platform: 'feishu'; port: ImReactionPort }
   core: SqlDataRuntime
   /** 没有可信项目创建后端时，不开放创建工具。 */
   projects?: ProjectCreateRuntime
@@ -255,6 +260,9 @@ export function createAgentToolRegistry(options: AgentToolRegistryOptions) {
       ...(options.trash || options.trashRestore || options.trashPurge ? [{ id: 'trash', name: '回收站', tools: [...(options.trash?[createListTrashTool(options.trash)]:[]),...(options.trashRestore?createTrashRestoreTools(options.trashRestore):[]),...(options.trashPurge?[options.trashPurge]:[])] }] : []),
       ...(options.search ? [{ id: 'global_search', name: '站内搜索', tools: [createGlobalSearchTool(options.search)] }] : []),
       ...(options.time ? [{ id: 'time', name: '时间', tools: [createTimeTool(options.time)] }] : []),
+      ...(options.imOwnerSession ? [{ id: 'im_owner_session', name: '私聊会话绑定', tools: [createImOwnerSessionBindTool(options.imOwnerSession)] }] : []),
+      ...(options.imReaction ? [{ id: 'im_reaction', name: '表情回应', tools: createImReactionTools('feishu', options.imReaction.port) }] : []),
+      ...(options.groupContext ? [{ id: 'group_context', name: '当前群上下文', tools: [createGroupContextSearchTool(options.groupContext)] }] : []),
       { id: 'meta', name: '元工具', tools: [createGetToolSchemaTool(identity=>registry.capabilities(identity)),...(options.skills?[createUseSkillTool(options.skills)]:[]),...(options.askUser?[createAskUserTool(options.askUser)]:[]),...(options.callTool?[createCallToolAdapter()]:[])] },
       ...(options.notes || options.noteLifecycle || options.noteWrites ? [{id:'mind',name:'思维笔记',tools:[...(options.notes?createNoteReadTools(options.notes):[]),...(options.noteLifecycle?createNoteLifecycleTools(options.noteLifecycle):[]),...(options.noteWrites?createNoteWriteTools(options.noteWrites):[])]}] : []),
       ...(options.sendEmail ? [{ id: 'email', name: '邮件', tools: [options.sendEmail] }] : []),
