@@ -3,7 +3,7 @@ import test from 'node:test'
 import type { PoolClient } from 'pg'
 import type { CanonicalRunContext } from '@gugu/core/agent'
 import type { ProviderRuntime } from '@gugu/core/providers'
-import { commitStagedResponsesReasoning, type ResponsesReasoningBinding } from '../../src/modules/agent-sessions/persistence/agent-reasoning-bridge.js'
+import { commitStagedResponsesReasoning, type ResponsesReasoningBinding } from '../../src/modules/agent/run/reasoning/bridge.js'
 
 const identity = { ownerId: 'owner', sessionId: '1', runId: 'run' }
 const binding: ResponsesReasoningBinding = { identity: { ownerId: 'owner', sessionId: '1', provider: 'openai', apiFormat: 'responses', model: 'model', configDigest: 'a'.repeat(64), reasoningConfigDigest: 'b'.repeat(64) }, runId: 'run', modelIdentity: 'selection', accessScopeHash: 'scope', expectedVersion: 0 }
@@ -34,8 +34,8 @@ test('隔离 PostgreSQL 上 Responses 桥接与历史事务回滚、版本冲突
   const { Pool } = await import('pg')
   const { ProviderRuntime } = await import('@gugu/core/providers')
   const { stableJson } = await import('@gugu/core/agent')
-  const { stageLoadedResponsesReasoning } = await import('../../src/modules/agent-sessions/persistence/agent-reasoning-bridge.js')
-  const { invalidateReasoningState } = await import('../../src/modules/agent-sessions/persistence/agent-reasoning-state-postgres.js')
+  const { stageLoadedResponsesReasoning } = await import('../../src/modules/agent/run/reasoning/bridge.js')
+  const { invalidateReasoningState } = await import('../../src/modules/agent/run/reasoning/state.js')
   const schema = `gugu_bridge_${randomUUID().replaceAll('-', '')}`
   const admin = new Pool({ connectionString: process.env.GUGU_WEBUI_TEST_DATABASE_URL })
   await admin.query(`CREATE SCHEMA "${schema}"`)

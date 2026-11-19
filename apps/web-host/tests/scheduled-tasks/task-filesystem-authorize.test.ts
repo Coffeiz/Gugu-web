@@ -5,7 +5,7 @@ import {setTimeout as delay} from 'node:timers/promises'
 import {Pool} from 'pg'
 import {createPostgresRuntime} from '@gugu/core/data'
 import {createTaskFilesystemAuthorization} from '@gugu/core/scheduled-task-filesystem-authorize'
-import {createFilesystemAuthorizationConfirmationStore} from '../../src/modules/agent-sessions/filesystem-authorization-confirmations.js'
+import {createFilesystemAuthorizationConfirmationStore} from '../../src/modules/agent/sandbox/confirmations.js'
 import {createRedisFilesystemAuthorizationCommands} from '../../src/adapters/cache/redis-events.js'
 const databaseUrl=process.env.GUGU_WEBUI_TEST_DATABASE_URL,redisUrl=process.env.GUGU_WEBUI_TEST_REDIS_URL
 
@@ -76,7 +76,7 @@ import Fastify from 'fastify'
 import {mkdtemp,writeFile,rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
-import {registerTaskFilesystemAuthorizationRoutes,createTaskAuthorizationEnabledReader} from '../../src/modules/scheduled-tasks/task-filesystem-authorize.js'
+import {registerTaskFilesystemAuthorizationRoutes,createTaskAuthorizationEnabledReader} from '../../src/modules/scheduled-tasks/access.js'
 import {installHttpErrorHandler} from '../../src/http/errors.js'
 
 test('任务授权HTTP认证、确认码DTO以及配置热策略优先级',async()=>{

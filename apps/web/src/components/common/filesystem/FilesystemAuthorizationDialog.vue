@@ -6,7 +6,7 @@
           <h2>{{ t('common.filesystemAuthTitle') }}</h2>
           <p v-if="props.subjectName">{{ props.subjectName }}</p>
         </div>
-        <button type="button" class="close-button" :disabled="props.busy" @click="emit('close')">×</button>
+        <CloseButton :title="t('common.actions.close')" :disabled="props.busy" @click="emit('close')" />
       </div>
       <p class="dialog-message">{{ t(props.subjectType === 'session' ? 'common.filesystemAuthSessionMessage' : 'common.filesystemAuthMessage') }}</p>
       <div class="scope-box">
@@ -28,6 +28,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import BaseModal from '@/components/common/overlays/BaseModal.vue'
+import CloseButton from '@/components/common/overlays/CloseButton.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 
 const props = defineProps<{
@@ -48,8 +49,6 @@ const { t } = useI18n()
 .dialog-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 h2 { margin: 0; color: var(--content-primary); font: 700 18px/1.35 var(--font-sans); }
 .dialog-heading p { margin: 5px 0 0; color: var(--content-secondary); font-size: 12px; }
-.close-button { width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: var(--option-bg); color: var(--content-secondary); font-size: 20px; line-height: 1; cursor: pointer; }
-.close-button:hover:not(:disabled) { background: var(--option-bg-hover); color: var(--content-primary); }
 .dialog-message { margin: 18px 0 12px; color: var(--content-primary); font-size: 13px; line-height: 1.6; }
 .scope-box { display: flex; flex-direction: column; gap: 5px; padding: 12px; border: 1px solid var(--option-border); border-radius: var(--radius-xs); background: var(--option-bg); color: var(--content-secondary); font-size: 12px; }
 .scope-box strong { color: var(--content-primary); }

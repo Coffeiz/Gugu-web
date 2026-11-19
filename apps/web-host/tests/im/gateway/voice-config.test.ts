@@ -1,10 +1,10 @@
+import { encryptByokEnvelope } from '../../../src/modules/byok/crypto.js'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import type { Pool } from 'pg'
 import { transcribeCompatibleAsr } from '@gugu/core/providers'
-import { createImVoiceSelection,resolveImVoiceSettings } from '../../../src/modules/im/gateway/voice-config.js'
-import { encryptByokEnvelope } from '../../../src/modules/agent/model-config/byok.js'
+import { createImVoiceSelection,resolveImVoiceSettings } from '../../../src/modules/im/gateway/media/config.js'
 
 const owner='00000000-0000-4000-8000-000000000041',other='00000000-0000-4000-8000-000000000042'
 const item={id:'voice-a',name:'合成识别模型',provider:'qwen',model:'asr-synthetic',api_format:'openai',base_url:'https://platform-asr.example/v1',api_key:'synthetic-platform-key'}

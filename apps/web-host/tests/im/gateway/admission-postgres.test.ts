@@ -1,10 +1,10 @@
+import { imGatewaySql } from '@gugu/database/postgres/migrations/0013_im_gateway'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import type { Pool, PoolClient } from 'pg'
 import type { ImPreflightScope } from '@gugu/core/im/inbound-preflight'
-import { createPostgresImGatewayAdmission, ImGatewayAdmissionError } from '../../../src/modules/im/gateway/admission-postgres.js'
+import { createPostgresImGatewayAdmission, ImGatewayAdmissionError } from '../../../src/modules/im/gateway/inbound/admission.js'
 
 const owner = '00000000-0000-4000-8000-000000000093', other = '00000000-0000-4000-8000-000000000094'
 const scope: ImPreflightScope = { ownerId: owner, platform: 'wechat', botId: '93', chatType: 'c2c', chatId: null,
@@ -118,7 +118,7 @@ test('隔离PG准入：真实唯一冲突、微秒cutoff、状态恢复和Bot停
     await pool.query(`CREATE TABLE users(id uuid PRIMARY KEY,is_active boolean NOT NULL,account_status text);
       CREATE TABLE user_bots(id integer PRIMARY KEY,user_id uuid NOT NULL REFERENCES users(id),platform text NOT NULL,enabled boolean NOT NULL,group_chat_enabled boolean,feishu_group_chat_enabled boolean)`)
     await pool.query("INSERT INTO users VALUES($1,true,'active')", [owner]); await pool.query("INSERT INTO user_bots VALUES(93,$1,'wechat',true,true,NULL)", [owner])
-    await pool.query(await readFile(new URL('../../../src/modules/im/gateway/admission-schema.sql', import.meta.url), 'utf8'))
+    await pool.query(imGatewaySql.admission)
     const store = createPostgresImGatewayAdmission({ pool, secretKey: 'synthetic-admission-key', supportedPlatforms: () => ['wechat'] })
     const attempts = await Promise.allSettled([store.begin(input()), store.begin(input())])
     const first = attempts.find(attempt => attempt.status === 'fulfilled')

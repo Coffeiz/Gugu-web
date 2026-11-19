@@ -51,3 +51,18 @@ pnpm --dir apps/desktop smoke:mxc
 原生主动验证只操作新建合成资料，覆盖授权写入、只读/越界/网络拒绝、超时和进程终止。严格禁 UI 时 Node 初始化缺口仍存在，未放宽策略；macOS 执行 Adapter、MCP/PTY 和完整 Agent 工具链仍待后续验收。
 
 更新状态机支持检查、下载校验、取消安装及确认后的停写退出；验证制品未配置生产更新通道。Windows 未配置正式签名，macOS 为 ad-hoc 验证签名。macOS 预览构建保留 Core 资源字节以维护摘要；正式签名/公证需统一嵌套代码签名与清单生成顺序。最低 OS 实机、Windows ARM64、干净安装/升级回滚与商业发行另行验收。最终 CI 与合并状态以 [PR #118](https://github.com/Coffeiz/Gugu-web/pull/118) 的精确提交记录为准。
+
+
+## 远程账号
+
+在桌面侧栏打开「远程账号」，填入自部署 Web Host 的根地址和账号密码。服务器需提供 HTTPS，本机回环地址可使用 HTTP。
+
+应用保留一个当前远程会话。Electron 主进程通过系统安全存储加密令牌，重新打开远程账号页时通过服务器验证会话。选择「退出此设备」会删除桌面保存的会话。远程身份与本地工作台 SQLite 的身份分别管理。官方 SaaS 已预留登录方式，当前启用自部署登录。
+
+### Telegram Gateway
+
+桌面 Node 制品中的 `host/gateway/telegram.mjs` 导出 `startDesktopTelegram`。可信的 Node 调用方负责提供 Bot 凭据、入站授权、交互回调、附件暂存策略，以及位于应用私有目录的 SQLite 路径。接口通过 `peek()` 读取未消费事件，处理成功后调用 `acknowledge(updateId)`，并通过 `sender` 发送回复。接收端原子保存消息和游标，进程重启后会重新交付未确认消息。
+
+Desktop 的本地 Agent 日志适配器和 Web Host 共用 `@gugu/log`。运行时传入适配器的 `log` 和 `diagnose` 端口后，日志写入 `userData/logs/`，常规日志按 5 MiB 轮转并保留 5 份，诊断日志按 2 MiB 轮转并保留 3 份。当前 Desktop 尚未启用本地聊天 Agent，远程 Run 的日志由执行它的 Web Host 保存。
+
+桌面启动时默认不连接 Telegram。本地聊天 Agent 接入后，由宿主显式启动网关，并在停止时等待 `stop()`。同一个 Bot 在任一时刻只能由一个宿主长轮询，从 Web Host 切换前须先停止其旧连接。

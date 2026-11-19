@@ -6,9 +6,9 @@ import test from 'node:test'
 import { randomUUID } from 'node:crypto'
 import { initializeSqlite, openSqliteRuntime } from '@gugu/core/data'
 import type { WorkspaceDirectoryDeleteRequest, WorkspaceUnlinkConfirmation } from '@gugu/core/tools'
-import { createWebAgentWorkspaceDirectoryDeletePort } from '../../src/modules/agent-sessions/tools/agent-workspace-directory-delete.js'
-import type { AgentDispatchLease } from '../../src/modules/agent-sessions/persistence/agent-run-dispatch-postgres.js'
-import type { WorkspaceDirectoryOperations } from '../../src/modules/workspaces/workspace-directories.js'
+import { createWebAgentWorkspaceDirectoryDeletePort } from '../../src/modules/agent/tools/workspaces/delete.js'
+import type { AgentDispatchLease } from '../../src/modules/agent/run/dispatch.js'
+import type { WorkspaceDirectoryOperations } from '../../src/modules/workspaces/routes.js'
 
 test('工作区物理删除在同一Web lease下只执行一次，收据可恢复且不重复移除目录', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gugu-agent-workspace-directory-delete-'))

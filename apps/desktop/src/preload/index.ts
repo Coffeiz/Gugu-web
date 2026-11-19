@@ -9,6 +9,10 @@ type CanvasRelationBody = Parameters<DesktopBridge['createCanvasRelation']>[0]
 type CanvasNoteBody = Parameters<DesktopBridge['createCanvasNote']>[1]
 
 const bridge: DesktopBridge = Object.freeze({
+  remoteByok: (...args: Parameters<DesktopBridge['remoteByok']>) => ipcRenderer.invoke(DESKTOP_CHANNELS.remoteByok, ...args),
+  remoteAccount: () => ipcRenderer.invoke(DESKTOP_CHANNELS.remoteAccount),
+  remoteLogin: (input: Parameters<DesktopBridge['remoteLogin']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.remoteLogin, input),
+  remoteLogout: () => ipcRenderer.invoke(DESKTOP_CHANNELS.remoteLogout),
   appearance: () => ipcRenderer.invoke(DESKTOP_CHANNELS.appearance),
   updateAppearance: (patch: Partial<DesktopAppearancePreferences>) => ipcRenderer.invoke(DESKTOP_CHANNELS.updateAppearance, patch),
   onboarding: () => ipcRenderer.invoke(DESKTOP_CHANNELS.onboarding),

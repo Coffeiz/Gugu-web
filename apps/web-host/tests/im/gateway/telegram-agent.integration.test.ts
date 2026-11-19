@@ -8,11 +8,11 @@ import { ProviderStreamSanitizer, stripThinking } from '../../../../../packages/
 import { resolveImAccess, resolveImActor, imContextPolicy } from '../../../../../packages/core/src/im/access.js'
 import { normalizeTelegramMessage } from '../../../../../packages/core/src/im/telegram-message.js'
 import { createImRunDelivery } from '../../../../../packages/core/src/im/run-delivery.js'
-import { createTelegramBotApi } from '../../../src/modules/im/gateway/telegram-api.js'
-import { createTelegramSender } from '../../../src/modules/im/gateway/telegram-sender.js'
-import { createImAgentContextBuilder } from '../../../src/modules/im/gateway/context-builder.js'
-import { agentContextAccessScope } from '../../../src/modules/agent/model-config/access-scope.js'
-import { bindProviderSelection } from '../../../src/modules/agent/model-config/provider-resolver.js'
+import { createTelegramBotApi } from '@gugu/gateway/telegram'
+import { createTelegramSender } from '@gugu/gateway/telegram'
+import { createImAgentContextBuilder } from '../../../src/modules/im/gateway/agent/context.js'
+import { agentContextAccessScope } from '../../../src/modules/agent/llm/access.js'
+import { bindProviderSelection } from '../../../src/modules/agent/llm/bind.js'
 
 const digest = (value: unknown): string => createHash('sha256').update(stableJson(value)).digest('hex')
 const keyOf = (identity: RunIdentity): string => digest([identity.ownerId, identity.sessionId, identity.runId])

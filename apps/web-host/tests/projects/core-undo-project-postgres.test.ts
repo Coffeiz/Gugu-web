@@ -6,12 +6,12 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Pool } from 'pg'
 import { projectResponse, type ProjectRecord } from '@gugu/core'
-import { createHostCoreUndoOperations } from '../../src/modules/undo/persistence/core-operations.js'
+import { createHostCoreUndoOperations } from '../../src/modules/undo/service.js'
 import { createPostgresRuntime } from '@gugu/core/data'
 import { createRuntimeUndoTransactionPort } from '@gugu/core/undo'
 import { directoryPort } from './fixtures/directory-port.js'
-import { createLocalProjectTrashStorage } from '../../src/modules/projects/persistence/project-trash-storage.js'
-import { recoverProjectUndoJournal } from '../../src/modules/undo/persistence/project-journal.js'
+import { createLocalProjectTrashStorage } from '../../src/modules/projects/lifecycle/storage.js'
+import { recoverProjectUndoJournal } from '../../src/modules/undo/journal.js'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 test('Core PG 引擎与显式目录端口协调改名、锁和未知提交 journal', { skip: !url }, async () => {

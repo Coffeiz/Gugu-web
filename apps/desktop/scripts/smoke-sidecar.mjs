@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process'
 import { cpSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const rootIndex = process.argv.indexOf('--root')
 const root =
@@ -26,6 +26,13 @@ const directory = mkdtempSync(join(tmpdir(), 'gugu-sidecar-check-')),
 try {
   const isolated = join(directory, 'runtime')
   cpSync(root, isolated, { recursive: true, dereference: true })
+  const gatewayUrl = pathToFileURL(join(isolated, 'host/gateway/telegram.mjs')).href
+  const gateway = spawnSync(
+    join(isolated, manifest.executable),
+    ['--input-type=module', '-e', `import { startDesktopTelegram } from ${JSON.stringify(gatewayUrl)}; if (typeof startDesktopTelegram !== 'function') process.exit(1)`],
+    { cwd: directory, encoding: 'utf8', timeout: 20_000, env: { ...process.env, NODE_PATH: '', NODE_OPTIONS: '' } },
+  )
+  assert.equal(gateway.status, 0, gateway.stderr)
   const run = (frames) => {
     const result = spawnSync(
       join(isolated, manifest.executable),
@@ -71,7 +78,7 @@ try {
       status: 'passed',
       platform: process.platform,
       arch: process.arch,
-      checks: ['integrity', 'isolated-start', 'sqlite-write', 'restart-receipt'],
+      checks: ['integrity', 'isolated-start', 'sqlite-write', 'restart-receipt', 'gateway-import'],
     }),
   )
 } finally {

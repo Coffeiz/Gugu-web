@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { requiresDataReplacementWriteGate } from '@gugu/core/data-portability/write-gate'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/modules/auth/auth.js'
+import { createUserToken } from '../../src/modules/auth/session/token.js'
 
 const owner='00000000-0000-4000-8000-000000000041'
 const secret='synthetic-data-replacement-gate-secret'

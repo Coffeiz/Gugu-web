@@ -4,7 +4,7 @@ import type { Pool, PoolClient, QueryResultRow } from 'pg'
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { createPostgresRegistrationSeedOperations } from '../../src/modules/onboarding/persistence/registration-seed-postgres.js'
+import { createPostgresRegistrationSeedOperations } from '../../src/modules/onboarding/seed.js'
 import { createRegistrationSeeder, type RegistrationSeedPlan } from '@gugu/core/onboarding'
 
 function plan(): RegistrationSeedPlan {

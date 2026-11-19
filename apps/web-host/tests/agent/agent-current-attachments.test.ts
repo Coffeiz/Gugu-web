@@ -4,8 +4,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import type { Pool } from 'pg'
-import { createWebCurrentMessageMaterializer } from '../../src/modules/agent-sessions/context/agent-current-message.js'
-import { createCurrentMessageAttachmentReader } from '../../src/modules/agent-sessions/context/agent-current-attachments.js'
+import { createWebCurrentMessageMaterializer } from '../../src/modules/agent/context/message.js'
+import { createCurrentMessageAttachmentReader } from '../../src/modules/agent/context/attachments.js'
 
 function poolFor(owner: string, messageId: number, row: Record<string, unknown>) {
   const calls: Array<{ values: unknown[] }> = []

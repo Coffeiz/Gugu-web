@@ -18,7 +18,7 @@
   "apps/web-host/tests/agent/agent-reasoning-persistence.test.ts": {
     "domain": "agent-private-reasoning",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/persistence/agent-reasoning-persistence.ts",
+    "owner": "apps/web-host/src/modules/agent/run/reasoning/active.ts",
     "productionEntry": "Responses Provider → RunStore checkpoint事务 → 私有状态恢复/成功历史事务",
     "keyBehavior": "真实PG及Responses事件验证精确ref/round/area恢复、密文身份与上下文绑定、原子回滚、授权撤销、off/工具Schema变化/协议拒绝失效；冻结版本防止旧Run清除新状态，网络使用替身；Anthropic/OpenAI Chat/Ollama在off及continuation下当前Run精确恢复（完整响应块含小数工具参数），错协议拒绝；仅Anthropic发布Python同形签名映射并为新Run重绑可信身份，不把活动完整响应块发布为跨Run状态",
     "ci": "web-host-node"
@@ -34,7 +34,7 @@
   "apps/web-host/tests/agent/agent-context-source-postgres.test.ts": {
     "domain": "agent",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/context/agent-context-source.ts",
+    "owner": "apps/web-host/src/modules/agent/context/source.ts",
     "productionEntry": "Web/IM正式source loader的owned快照与当前消息锚点读取",
     "keyBehavior": "隔离PG验证owner查询边界，单条与多条currentUsers的末条锚点一致，重复锚点、乱序末条、混用两种当前输入契约拒绝；批次内每个消息的完整IM权限由真实materializer验证",
     "ci": "web-host-node"
@@ -138,7 +138,7 @@
   "apps/web-host/tests/agent/agent-run-recovery.test.ts": {
     "domain": "agent",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/persistence/agent-run-recovery.ts",
+    "owner": "apps/web-host/src/modules/agent/run/recovery.ts",
     "productionEntry": "apps/web-host/src/main.ts",
     "keyBehavior": "恢复时PG与Redis租约交错防误清",
     "ci": "node-webui"
@@ -146,7 +146,7 @@
   "apps/web-host/tests/agent/agent-recovery-redis.integration.test.ts": {
     "domain": "agent",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/persistence/agent-run-lease-postgres.ts",
+    "owner": "apps/web-host/src/modules/agent/run/lease.ts",
     "productionEntry": "apps/web-host/src/main.ts",
     "keyBehavior": "Redis原子比较清理保护新运行租约",
     "ci": "node-webui"
@@ -162,7 +162,7 @@
   "apps/web-host/tests/agent/attachment-upload.test.ts": {
     "domain": "agent-attachments",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent/attachment-upload.ts",
+    "owner": "apps/web-host/src/modules/agent/attachments/upload.ts",
     "productionEntry": "apps/web-host/src/main.ts → createApp authenticated owner route",
     "keyBehavior": "multipart 文件先于 voice 字段、上传容量流式限制、Python 响应 DTO 与 owner 认证",
     "ci": "node-webui"
@@ -170,7 +170,7 @@
   "apps/web-host/tests/agent/attachment-delete.test.ts": {
     "domain": "agent-attachments",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent/attachment-delete.ts",
+    "owner": "apps/web-host/src/modules/agent/attachments/delete.ts",
     "productionEntry": "apps/web-host/src/main.ts → Core delete use case → PostgreSQL/Local adapter",
     "keyBehavior": "认证 owner、Python 200/404/409 回执映射及 attached 附件拒删",
     "ci": "node-webui"
@@ -178,7 +178,7 @@
   "apps/web-host/tests/agent/attachment-clear.test.ts": {
     "domain": "agent-attachments",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent/attachment-clear.ts",
+    "owner": "apps/web-host/src/modules/agent/attachments/clear.ts",
     "productionEntry": "apps/web-host/src/main.ts → Core clear use case → PostgreSQL/Local and optional Redis legacy adapter",
     "keyBehavior": "认证 owner、批量删除回执及旧 Redis 清理装配",
     "ci": "node-webui"
@@ -194,7 +194,7 @@
   "apps/web-host/tests/agent/attachment-delete-postgres.test.ts": {
     "domain": "agent-attachments",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent/attachment-staging-postgres.ts",
+    "owner": "apps/web-host/src/modules/agent/attachments/persistence.ts",
     "productionEntry": "PostgreSQL draft row and shared-storage cleanup adapter with Local FS",
     "keyBehavior": "draft 行锁删除、attached 状态保护、共享 storage_key 引用检查；Pool 为合成替身",
     "ci": "node-webui"
@@ -202,7 +202,7 @@
   "apps/web-host/tests/agent/attachment-staging-postgres.test.ts": {
     "domain": "agent-attachments",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent/attachment-staging-postgres.ts",
+    "owner": "apps/web-host/src/modules/agent/attachments/persistence.ts",
     "productionEntry": "apps/web-host/src/main.ts PostgreSQL staging adapter with Local storage",
     "keyBehavior": "owner 锁定容量复核、草稿 DTO/字节持久化及写入失败后的孤儿文件清理；Pool 为合成替身",
     "ci": "node-webui"
@@ -235,7 +235,7 @@
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/files/read.ts:planAttachmentThumbnail",
-    "productionEntry": "apps/web-host/src/modules/agent/attachment-thumbnail.ts",
+    "productionEntry": "apps/web-host/src/modules/agent/attachments/thumbnail.ts",
     "keyBehavior": "附件缩略图 owner 隔离、图片格式、动画原图与安全缓存响应",
     "ci": "node-webui"
   },
@@ -250,7 +250,7 @@
   "apps/web-host/tests/agent/scheduled-tasks-runtime-postgres.test.ts": {
     "domain": "agent-tools",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/tools/agent-tool-registry.ts",
+    "owner": "apps/web-host/src/modules/agent/tools/registry.ts",
     "productionEntry": "packages/core/src/agent/runtime.ts",
     "keyBehavior": "Host Runtime经共享只读查询及隔离PG验证任务owner、提醒过滤、平台能力、撤权和Provider续轮",
     "ci": "node-webui"
@@ -266,7 +266,7 @@
   "apps/web-host/tests/agent/create-project-runtime-postgres.test.ts": {
     "domain": "agent-tools",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/tools/agent-tool-registry.ts",
+    "owner": "apps/web-host/src/modules/agent/tools/registry.ts",
     "productionEntry": "packages/core/src/agent/runtime.ts",
     "keyBehavior": "Host Runtime经隔离PG创建项目并向Provider投影字段及幂等冲突，验证重放顺序和owner隔离",
     "ci": "node-webui"
@@ -282,7 +282,7 @@
   "apps/web-host/tests/agent/client-tools-runtime-postgres.test.ts": {
     "domain": "agent-tools",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/tools/agent-tool-registry.ts",
+    "owner": "apps/web-host/src/modules/agent/tools/registry.ts",
     "productionEntry": "packages/core/src/agent/runtime.ts",
     "keyBehavior": "真实Host Runtime经隔离PG创建更新联系人，验证跨owner写入拒绝及撤权后数据库不变",
     "ci": "node-webui"
@@ -290,7 +290,7 @@
   "apps/web-host/tests/agent/use-skill-runtime.test.ts": {
     "domain": "agent-tools",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/tools/agent-tool-registry.ts",
+    "owner": "apps/web-host/src/modules/agent/tools/registry.ts",
     "productionEntry": "packages/core/src/agent/runtime.ts",
     "keyBehavior": "真实Host Runtime经Markdown技能注册器进入Provider续轮，重复加载去重及发现后撤权不泄露正文",
     "ci": "node-webui"
@@ -298,7 +298,7 @@
   "apps/web-host/tests/agent/read-tools-runtime-postgres.test.ts": {
     "domain": "agent-tools",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/tools/agent-tool-registry.ts",
+    "owner": "apps/web-host/src/modules/agent/tools/registry.ts",
     "productionEntry": "packages/core/src/agent/runtime.ts",
     "keyBehavior": "真实Host Runtime与注册器经隔离PG续轮验证读取owner、项目及阶段修改收据恢复、笔记关系/正文引用与Schema发现、工作区更新/画布详情搜索定位及真实目录副作用与并发去重",
     "ci": "node-webui"
@@ -306,8 +306,8 @@
   "apps/web-host/tests/agent/get-project-overview-postgres.test.ts": {
     "domain": "agent-tools",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/tools/project-file-overview-port.ts",
-    "productionEntry": "apps/web-host/src/modules/agent-sessions/tools/agent-tool-registry.ts",
+    "owner": "apps/web-host/src/modules/agent/tools/overview.ts",
+    "productionEntry": "apps/web-host/src/modules/agent/tools/registry.ts",
     "keyBehavior": "真实注册器与隔离PG验证项目概览计数、owner权限、SQL错误脱敏和取消等待清理",
     "ci": "node-webui"
   },
@@ -1106,7 +1106,7 @@
   "apps/web-host/tests/agent/agent-email.test.ts": {
     "domain": "agent-email",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/tools/agent-email.ts",
+    "owner": "apps/web-host/src/modules/agent/tools/email.ts",
     "productionEntry": "Web Agent 邮件准备端口，待确认展示和 HTML 安全装配",
     "keyBehavior": "缺能力时拒绝 HTML，附件 owner 校验，未确认时不执行 SMTP",
     "ci": "node-webui"
@@ -1114,7 +1114,7 @@
   "apps/web-host/tests/agent/agent-bubblewrap.integration.test.ts": {
     "domain": "agent-tools",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/tools/agent-shell.ts",
+    "owner": "apps/web-host/src/modules/agent/tools/shell/sandbox.ts",
     "productionEntry": "Web Agent 工具注册器和持久确认端口",
     "keyBehavior": "真实 Linux 和隔离 PostgreSQL 中验证 Shell 的属主限制、确认前只读、持久确认防篡改和一次性写入",
     "ci": "manual"
@@ -1387,7 +1387,7 @@
     "domain": "agent-interactions",
     "layer": "L1",
     "owner": "packages/core/src/agent/interactions",
-    "productionEntry": "packages/core/src/agent/interactions/schema.ts",
+    "productionEntry": "packages/database/src/sqlite/interaction-prompts.ts",
     "keyBehavior": "提示表 owner、会话外键、JSON 和级联校验",
     "ci": "core-node"
   },
@@ -1395,7 +1395,7 @@
     "domain": "agent-interactions",
     "layer": "L1",
     "owner": "packages/core/src/agent/interactions",
-    "productionEntry": "packages/core/src/agent/interactions/action-schema.ts",
+    "productionEntry": "packages/database/src/sqlite/interaction-actions.ts",
     "keyBehavior": "动作哈希存储、提示外键、JSON、UTC 微秒及删除级联",
     "ci": "core-node"
   },
@@ -1410,8 +1410,8 @@
   "apps/web-host/tests/agent/agent-tool-registry.test.ts": {
     "domain": "agent-tools",
     "layer": "L1",
-    "owner": "apps/web-host/src/modules/agent-sessions/tools",
-    "productionEntry": "apps/web-host/src/modules/agent-sessions/tools/agent-tool-registry.ts",
+    "owner": "apps/web-host/src/modules/agent/tools",
+    "productionEntry": "apps/web-host/src/modules/agent/tools/registry.ts",
     "keyBehavior": "可信Host按实际服务与逐调用授权启用工具，验证搜索与任务缺端口拒绝、Memory 工具显式注入/授权后派发、日历创建和更新缺Core端口拒绝、撤权隔离及真实注册器派发",
     "ci": "node-webui"
   },
@@ -1437,7 +1437,7 @@
     "markers": [
       "external_service"
     ],
-    "owner": "apps/web-host/src/modules/agent-sessions/tools",
+    "owner": "apps/web-host/src/modules/agent/tools",
     "productionEntry": "createAgentToolRegistry → createAgentTrashListPort → createPostgresAgentTrashReader",
     "keyBehavior": "隔离PG验证回收站owner、顶层资源过滤、微秒排序、整组启停和只读副作用",
     "ci": "node-webui"
@@ -1613,7 +1613,7 @@
   "apps/web-host/tests/agent/conversation-tools-runtime-sqlite.test.ts": {
     "domain": "agent-tools",
     "layer": "L1",
-    "owner": "apps/web-host/src/modules/agent-sessions/tools/agent-conversations.ts",
+    "owner": "apps/web-host/src/modules/agent/tools/conversations.ts",
     "productionEntry": "临时 SQLite Host 搜索适配器 + 真实 Jieba + 工具注册器 dispatch（Agent Run 尚未接入）",
     "keyBehavior": "临时 SQLite 会话事实表验证 Host 权限拒绝不泄露正文、模型伪传 owner 无效、群聊/工具角色过滤、baseline前历史检索、LIKE元字符字面匹配、多关键词、空结果、Python 结果投影与真实 Jieba 分词、ISO 时区偏移归一化按 fromisoformat 保持",
     "ci": "node-webui"
@@ -1621,7 +1621,7 @@
   "apps/web-host/tests/agent/agent-calendar-reminder-targets.test.ts": {
     "domain": "agent-calendar",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/tools/agent-calendar-reminder-targets.ts",
+    "owner": "apps/web-host/src/modules/agent/tools/calendar.ts",
     "productionEntry": "Web dispatch lease → 日历提醒目标解析端口（待生产装配）",
     "keyBehavior": "按有效租约解析 owner 私聊目标，拒绝跨用户、当前群和失效租约；使用合成数据库与投递端口",
     "ci": "node-webui"
@@ -1629,7 +1629,7 @@
   "apps/web-host/tests/agent/agent-search.test.ts": {
     "domain": "agent-search",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/tools/agent-search.ts",
+    "owner": "apps/web-host/src/modules/agent/tools/search.ts",
     "productionEntry": "Web Run 模型绑定与可信搜索端口",
     "keyBehavior": "可信搜索端口按模型与配置启用；隔离 PostgreSQL 验证深度研究和相似图的并发预留、不同计数范围、单次外呼、未知结果、结果截断及上传前撤权；相似图验证格式、附件归属与私有地址拒绝",
     "ci": "node-webui"
@@ -1637,7 +1637,7 @@
   "apps/web-host/tests/agent/agent-calendar-write-ports.test.ts": {
     "domain": "agent-calendar",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/tools/agent-calendar-write-ports.ts",
+    "owner": "apps/web-host/src/modules/agent/tools/calendar.ts",
     "productionEntry": "main.ts → per-lease 日历端口 → Reconstructor → Core ToolRegistry",
     "keyBehavior": "临时 SQLite 验证日历列表与近期安排的 owner 隔离、提醒投影、可信时区、dispatch 授权及日历写入撤权；通过实际 Core Agent Runtime 与 Provider 适配器续轮，依次验证 create_event、update_event、delete_event、canvas_batch、canvas_delete_note、canvas_disconnect 和 canvas_delete；五项危险操作分别等待并恢复可信交互，确认前无副作用，确认后核对活动/便签/关系/画布删除、提醒停用、画布项变化、来源便签保留及适用操作的 Undo 收据；核对 Worker 契约中的提醒名、正文、once 触发时刻、渠道、固定目标与 lead；确认 gate/receipt/claim、lease、Provider transport 和投递目标均为合成依赖",
     "ci": "node-webui"
@@ -1645,7 +1645,7 @@
   "apps/web-host/tests/agent/agent-workspace-create.test.ts": {
     "domain": "agent-tools",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/tools/agent-workspace-create.ts",
+    "owner": "apps/web-host/src/modules/agent/tools/workspaces/create.ts",
     "productionEntry": "main.ts → per-lease workspace creator → Core ToolRegistry → durable receipt runtime",
     "keyBehavior": "真实注册器分派三类工作区创建；临时 SQLite 验证 reservation/result 收据、完整结果恢复、改参和未知结果不重做、并发去重、lease 撤销前置拒绝；Pool/lease/领域服务为合成依赖",
     "ci": "node-webui"
@@ -1653,7 +1653,7 @@
   "apps/web-host/tests/agent/agent-rag-tool-ports.test.ts": {
     "domain": "agent-rag",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/tools/agent-rag-production-ports.ts + agent-rag-run-authorization.ts + apps/web-host/src/modules/agent-sessions/tools/agent-rag-context.ts",
+    "owner": "apps/web-host/src/modules/agent/rag/production.ts + agent-rag-run-authorization.ts + apps/web-host/src/modules/agent/rag/context.ts",
     "productionEntry": "Web dispatch lease → Core Run preparation → RAG registry 与 owner 历史正文端口",
     "keyBehavior": "真实 registry dispatch 验证 owner RAG 召回、会话快照去重、租约绑定、Run 替换拒绝和 search_memory 撤权；自动 RAG 经 Core buildRunRagContext 调用正式 SQLite 持久索引，按 lease owner 授权并排除历史已注入正文；read_conversation 仅在 Host 提供正文端口并显式启用时发现，get_current_time 使用 Host 注入时钟/owner 时区且忽略模型时区参数；list_events/get_upcoming 按 Host per-lease 日历端口显式发现并复验 dispatch lease；get_dashboard_stats 复用 Core Kysely 聚合且需 Host 时钟；list_workspaces/get_workspace 复用 Core owner-scoped 查询且需 Host workspace 端口；list_clients/list_projects 只读工具按 owner 数据服务及 Web lease 授权发现；list_trash 仅在 Host 提供可信回收站端口时发现，忽略模型 owner、规范化 limit 并验证混合资源排序/限额/微秒/满额提示；关闭开关不访问索引、授权期间取消向上传播；使用临时 SQLite/FS 与合成 PG/auth/config 端口",
     "ci": "node-webui"
@@ -1661,7 +1661,7 @@
   "apps/web-host/tests/agent/agent-mcp-run-authorization.test.ts": {
     "domain": "agent-mcp",
     "layer": "L1",
-    "owner": "apps/web-host/src/modules/agent-sessions/tools/agent-mcp-run-authorization.ts",
+    "owner": "apps/web-host/src/modules/agent/tools/mcp/authorize.ts",
     "productionEntry": "Web reconstruction resource factory; main.ts consumer pending",
     "keyBehavior": "Reject MCP dispatch for another owner, a non-MCP tool, a non-Web run, or an expired/replaced PostgreSQL lease before external invocation",
     "ci": "node-webui"
@@ -1669,7 +1669,7 @@
   "apps/web-host/tests/agent/agent-conversation-owner-bound.test.ts": {
     "domain": "agent-rag",
     "layer": "L1",
-    "owner": "apps/web-host/src/modules/agent-sessions/tools/agent-conversations.ts",
+    "owner": "apps/web-host/src/modules/agent/tools/conversations.ts",
     "productionEntry": "Web lease-bound conversation search port",
     "keyBehavior": "跨 owner 的 recent/search/resolve 在访问会话数据源前拒绝；取消优先传播；同 owner 大小写归一后继续委托原查询端口",
     "ci": "node-webui"
@@ -1677,7 +1677,7 @@
   "apps/web-host/tests/agent/agent-web-tool-port-identity.test.ts": {
     "domain": "agent-tools",
     "layer": "L1",
-    "owner": "apps/web-host/src/modules/agent-sessions/agent-web-reconstructor.ts",
+    "owner": "apps/web-host/src/modules/agent/run/reconstruct.ts",
     "productionEntry": "Web dispatch lease → Harness ToolPort plan/dispatch/reconcile",
     "keyBehavior": "ToolPort 对 owner/session/run 完整身份绑定；错身份 dispatch 不触达 registry 且返回失败，reconcile fail closed，plan 拒绝；取消优先传播；正确 lease 正常委托",
     "ci": "node-webui"
@@ -1685,7 +1685,7 @@
   "apps/web-host/tests/agent/agent-web-mcp-authorization.test.ts": {
     "domain": "agent-tools",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/agent-web-reconstructor.ts + apps/web-host/src/modules/agent-sessions/tools/agent-mcp-tool-ports.ts",
+    "owner": "apps/web-host/src/modules/agent/run/reconstruct.ts + apps/web-host/src/modules/agent/tools/mcp/ports.ts",
     "productionEntry": "Web dispatch lease → current session tool configuration → MCP authorization → owner runtime dispatch",
     "keyBehavior": "MCP 调用前重读当前 Web 会话工具配置；已撤销或未配置的 MCP tool 不触达远端，已配置且授权工具正常执行",
     "ci": "node-webui"
@@ -1693,7 +1693,7 @@
   "apps/web-host/tests/agent/agent-rag-run-context.test.ts": {
     "domain": "agent-rag",
     "layer": "L1",
-    "owner": "apps/web-host/src/modules/agent-sessions/tools/agent-rag-run-context.ts",
+    "owner": "apps/web-host/src/modules/agent/rag/run.ts",
     "productionEntry": "Web dispatch lease → owner/session/run memory authorization and persisted snapshot reader",
     "keyBehavior": "每次校验当前 active Run、配置工具名、Registry grant 与 owner scope；快照只接受 owner/session/active_run 一致、版本有效的记录，损坏和取消显式失败",
     "ci": "node-webui"
@@ -1701,7 +1701,7 @@
   "apps/web-host/tests/agent/rag-index-worker.test.ts": {
     "domain": "agent-rag",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/rag-rebuild.ts",
+    "owner": "apps/web-host/src/modules/agent/rag/rebuild.ts",
     "productionEntry": "main.ts 迁移门控 + Host 来源组工厂 + 调度器 + Core 持久 Worker",
     "keyBehavior": "临时 SQLite 真实 Core 项目、owner FS knowledge 与队列经七类来源 Worker 写入正式索引表；Node 消费 Python MemoryUpdated 产生的 source_id/pending_source_ids 任务形状并全量重建 memory；未就绪任务保持 queued；验证首次基线、幂等、排空、串行、错误、取消停止及禁用边界",
     "ci": "node-webui"
@@ -1725,7 +1725,7 @@
   "apps/web-host/tests/agent/conversation-rag-job-postgres.test.ts": {
     "domain": "agent-rag",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/persistence/agent-rag-job-postgres.ts",
+    "owner": "apps/web-host/src/modules/agent/rag/jobs.ts",
     "productionEntry": "Web 用户消息准备与 Canonical 历史写入事务 → owner 级 conversation RAG 持久任务",
     "keyBehavior": "隔离 PostgreSQL 验证全来源重建合并、generation 使旧租约失效，以及队列与会话事务一同回滚",
     "ci": "node-webui"
@@ -1733,7 +1733,7 @@
   "apps/web-host/tests/agent/rag-jieba.test.ts": {
     "domain": "agent-rag",
     "layer": "L1",
-    "owner": "apps/web-host/src/modules/agent-sessions/tools/agent-rag-jieba.ts + packages/core/src/agent/rag/tokenizer.ts",
+    "owner": "apps/web-host/src/modules/agent/rag/jieba.ts + packages/core/src/agent/rag/tokenizer.ts",
     "productionEntry": "Host 1.7.7 Jieba → Core tokenizer",
     "keyBehavior": "实际 Host Jieba 经 Core tokenizer 对照固定 golden 语料，保护词典、HMM=false、ASCII实体和中文切词不漂移",
     "ci": "node-webui"
@@ -1741,7 +1741,7 @@
   "apps/web-host/tests/agent/agent-rag-memory-store.test.ts": {
     "domain": "agent-rag",
     "layer": "L1",
-    "owner": "apps/web-host/src/modules/agent-sessions/tools/agent-rag-memory-store.ts",
+    "owner": "apps/web-host/src/modules/agent/rag/memory.ts",
     "productionEntry": "Host owner-bound memory RAG 文件读取适配器",
     "keyBehavior": "限制 owner namespace 和 RAG 文件白名单，执行字符/字节上限并拒绝跨 owner、路径穿越、未知文件和符号链接",
     "ci": "node-webui"
@@ -1821,7 +1821,7 @@
   "apps/web-host/tests/agent/memory-tools-runtime-sqlite.test.ts": {
     "domain": "agent-rag",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/tools/agent-memory-search.ts + agent-memory-scopes.ts",
+    "owner": "apps/web-host/src/modules/agent/tools/memory/search.ts + agent-memory-scopes.ts",
     "productionEntry": "Web owner/可信 IM scope Host 适配器 + 受限本地 memory FS + Core RAG + 实际工具注册器",
     "keyBehavior": "临时 owner 与 IM scope 文件经真实 Host registry dispatch 命中；owner reflection cursor 限定跨群，成员范围只返回本人，群聊不得读取 owner 私人记忆；同名来源键在多个已授权 scope 下均保留；跨 owner 文档不返回、授权撤销不泄露正文、BYOK gate 关闭时不查询或发送凭据",
     "ci": "node-webui"
@@ -1829,7 +1829,7 @@
   "apps/web-host/tests/agent/voice-availability.test.ts": {
     "domain": "byok",
     "layer": "L1",
-    "owner": "packages/core/src/agent/config/voice-availability.ts + apps/web-host/src/modules/agent/voice-availability.ts",
+    "owner": "packages/core/src/agent/config/voice-availability.ts + apps/web-host/src/modules/agent/voice.ts",
     "productionEntry": "startServer → authenticated Fastify route → owner-scoped PostgreSQL credential → configured envelope decrypt → Core voice support rule",
     "keyBehavior": "公开配置与有效用户 BYOK 按旧 Python 规则选择语音识别能力；拒绝未支持格式且不暴露凭据",
     "ci": "node-webui"
@@ -1837,7 +1837,7 @@
   "apps/web-host/tests/agent/memory-clear.test.ts": {
     "domain": "agent-memory",
     "layer": "L2",
-    "owner": "packages/core/src/agent/memory-clear.ts + packages/core/src/agent/rag/rebuild-worker.ts + apps/web-host/src/modules/agent/memory-clear.ts",
+    "owner": "packages/core/src/agent/memory-clear.ts + packages/core/src/agent/rag/rebuild-worker.ts + apps/web-host/src/modules/agent/memory.ts",
     "productionEntry": "startServer → authenticated route → Core clearer → Local storage delete → transactionally tombstone old memory projection and enqueue rebuild → context revision publisher → Core worker rebuild",
     "keyBehavior": "临时目录和 SQLite 验证 DELETE 只清认证 owner、generation 更新，旧正文立即隐藏、重建后仍不可见；不支持的来源拒绝入队，墓碑写失败时队列与索引变更一起回滚；清理失败不入队或递增上下文版本",
     "ci": "node-webui"
@@ -1853,7 +1853,7 @@
   "apps/web-host/tests/agent/session-delete.test.ts": {
     "domain": "agent-sessions",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent/session-delete.ts + apps/web-host/src/app.ts",
+    "owner": "apps/web-host/src/modules/agent/sessions/delete.ts + apps/web-host/src/app.ts",
     "productionEntry": "startServer → authenticated Fastify route → Core PostgreSQL transaction → storage/Redis cleanup",
     "keyBehavior": "认证 owner、204 删除、404 owner 隔离、422 参数语义",
     "ci": "node-webui"
@@ -1861,7 +1861,7 @@
   "apps/web-host/tests/agent/chart-renderer.test.ts": {
     "domain": "chart-rendering",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent/chart-renderer.ts",
+    "owner": "apps/web-host/src/modules/agent/charts.ts",
     "productionEntry": "Node Host chart renderer service → @gugu/charts worker",
     "keyBehavior": "Node Host 通过 workspace 包边界渲染 Mermaid/Math PNG、保持数量限制并传播取消",
     "ci": "web-host-node"
@@ -1893,7 +1893,7 @@
   "apps/web-host/tests/agent/agent-misc.test.ts": {
     "domain": "agent-greeting",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/agent-misc.ts + apps/web-host/src/app.ts",
+    "owner": "apps/web-host/src/modules/agent/misc.ts + apps/web-host/src/app.ts",
     "productionEntry": "createApp 认证上下文 → Core GreetingGenerator",
     "keyBehavior": "问候路由鉴权后采用认证 owner，支持三种 locale、保持旧响应形状并拒绝无效语言",
     "ci": "web-host-node"
@@ -1901,7 +1901,7 @@
   "apps/web-host/tests/agent/greeting-context.test.ts": {
     "domain": "agent-greeting",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/greeting.ts",
+    "owner": "apps/web-host/src/modules/agent/chat/greeting.ts",
     "productionEntry": "PostgreSQL owner 查询 + Local 安全文件读取 + Redis 原子锁适配",
     "keyBehavior": "项目、最近消息和 .agent 记忆均限定 owner；互斥锁以 SET NX 和 token 比对释放",
     "ci": "web-host-node"
@@ -1933,7 +1933,7 @@
   "apps/web-host/tests/agent/agent-current-attachments.test.ts": {
     "domain": "agent-attachments",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/context/agent-current-attachments.ts + apps/web-host/src/modules/agent-sessions/context/agent-current-message.ts",
+    "owner": "apps/web-host/src/modules/agent/context/attachments.ts + apps/web-host/src/modules/agent/context/message.ts",
     "productionEntry": "Web Run 当前消息物化器 → owner/message 限定 PostgreSQL 元数据 → Local 安全文件读取器 → Core 文本附件投影（生产 Chat resources 尚未接线）",
     "keyBehavior": "临时 Local 文件与合成 PG 适配器验证 owner 和消息绑定、文件大小门及当前消息正文注入；明确记录生产 Agent Chat 未装配",
     "ci": "web-host-node"
@@ -1941,7 +1941,7 @@
   "apps/web-host/tests/agent/agent-web-chat-preparation.test.ts": {
     "domain": "agent-sessions",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/persistence/agent-web-chat-preparation.ts + context/agent-references.ts",
+    "owner": "apps/web-host/src/modules/agent/chat/web.ts + context/agent-references.ts",
     "productionEntry": "Web PostgreSQL 聊天事务准备 factory → owner/platform 引用和附件 → 消息、队列与持久 dispatch",
     "keyBehavior": "经实际准备函数验证附件私有 storage key 不进入消息、claim 失败回滚、业务/MCP 引用按 owner 或 platform scope 解析，且 endpoint/凭据不进入 canonical context；PostgreSQL Pool 为合成适配器",
     "ci": "web-host-node"
@@ -1957,7 +1957,7 @@
   "apps/web-host/tests/agent/agent-run-event-stream.test.ts": {
     "domain": "agent-runtime",
     "layer": "L2",
-    "owner": "packages/core/src/agent/run/event-stream.ts + apps/web-host/src/modules/agent-sessions/agent-run-event-stream.ts",
+    "owner": "packages/core/src/agent/run/event-stream.ts + apps/web-host/src/modules/agent/run/stream.ts",
     "productionEntry": "Web Host Run 事件读取",
     "keyBehavior": "从持久序号重放并跨页读取，拒绝异主事件，丢失通知后再次读取，暂态重建提示保留持久序号",
     "ci": "web-host-node"
@@ -1965,7 +1965,7 @@
   "apps/web-host/tests/agent/agent-confirmation.test.ts": {
     "domain": "agent-runtime",
     "layer": "L1",
-    "owner": "apps/web-host/src/modules/agent-sessions/tools/agent-confirmation.ts",
+    "owner": "apps/web-host/src/modules/agent/tools/confirm.ts",
     "productionEntry": "Trusted Web dispatch lease → account/session/dispatch/execution lease recheck → Core confirmation gate",
     "keyBehavior": "确认授权拒绝异主、停用账号和撤销会话；恢复时 fence 递增但权限 epoch 稳定，当前执行 token/fence 仍须有效，并尊重取消信号",
     "ci": "web-host-node"
@@ -1973,7 +1973,7 @@
   "apps/web-host/tests/agent/agent-chat-route.test.ts": {
     "domain": "agent-sessions",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/agent-chat-route.ts",
+    "owner": "apps/web-host/src/modules/agent/chat/routes.ts",
     "productionEntry": "Fastify Agent Chat HTTP/SSE route",
     "keyBehavior": "真实 loopback HTTP 断连清理事件订阅且不取消后台 Run，保持路由认证/错误边界",
     "ci": "web-host-node"
@@ -1981,7 +1981,7 @@
   "apps/web-host/tests/agent/agent-chat-preparation.test.ts": {
     "domain": "agent-sessions",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/persistence/agent-chat-preparation.ts",
+    "owner": "apps/web-host/src/modules/agent/chat/prepare.ts",
     "productionEntry": "PostgreSQL Web Chat 准备事务 → trusted access version resolver → persistent dispatch",
     "keyBehavior": "最终 owner/session/run 解析访问版本；无效版本不得入队且消息/附件事务回滚",
     "ci": "web-host-node"
@@ -1989,7 +1989,7 @@
   "apps/web-host/tests/agent/agent-run-dispatch-postgres.test.ts": {
     "domain": "agent-runtime",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/persistence/agent-run-dispatch-postgres.ts",
+    "owner": "apps/web-host/src/modules/agent/run/dispatch.ts",
     "productionEntry": "Core dispatch worker → PostgreSQL owner/session/run fencing lease → Core Harness resume",
     "keyBehavior": "刷新恢复与 SSE 使用同一 owner 的活跃 Run；已解析交互只随同一 owner/run fencing lease 恢复，claim 与 dispatch 同步续租；Core 收据消费或 Run 终态前不释放 FIFO 后续消息",
     "ci": "web-host-node"
@@ -2061,7 +2061,7 @@
   "apps/web-host/tests/agent/agent-web-reconstructor.integration.test.ts": {
     "domain": "agent-sessions",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/agent-web-reconstructor.ts",
+    "owner": "apps/web-host/src/modules/agent/run/reconstruct.ts",
     "productionEntry": "持久 Web dispatch lease → 恢复模型绑定 → Core checkpoint scope/RAG preparation → Harness 组装",
     "keyBehavior": "隔离 PostgreSQL/Redis 验证实际重建、Run 作用域、嵌套转发搜索和档案写入，以及隐藏工具的错误按原 Provider 调用 ID 续轮",
     "ci": "web-host-node"

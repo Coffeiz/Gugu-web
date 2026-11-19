@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ProviderHttpRequest, ProviderTransport } from '@gugu/core/providers';
-import { createFeishuClient, FeishuApiError } from '../../../src/modules/im/gateway/feishu/client.js';
+import { createFeishuClient, FeishuApiError } from '../../../src/modules/im/gateway/platforms/feishu/client.js';
 
 function fixture() {
   let now = 0; let tokenCount = 0; let apiStatus = 200;

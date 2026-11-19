@@ -7,9 +7,9 @@ import {test} from 'node:test'
 import {stableJson} from '@gugu/core/agent'
 import {ProviderRuntime,type ProviderHttpRequest} from '@gugu/core/providers'
 import {parseGroupDailyEntries,renderGroupDailyEntries} from '@gugu/core/im-group-daily-compaction'
-import {prepareImGroupDailyPlan,ImGroupDailyCompactionError} from '../../../src/modules/im/gateway/reflection-daily.js'
-import {createImReflectionFiles,reflectionFileKey} from '../../../src/modules/im/gateway/reflection-files.js'
-import type {ImReflectionJob,ImReflectionRuntime} from '../../../src/modules/im/gateway/reflection-contracts.js'
+import {prepareImGroupDailyPlan,ImGroupDailyCompactionError} from '../../../src/modules/im/gateway/memory/daily.js'
+import {createImReflectionFiles,reflectionFileKey} from '../../../src/modules/im/gateway/memory/files.js'
+import type {ImReflectionJob,ImReflectionRuntime} from '../../../src/modules/im/gateway/memory/contracts.js'
 import {context} from './run-sender.fixtures.js'
 
 const entries=(count:number):[string,string][]=>Array.from({length:count},(_,n)=>[`2026-11-${String(18-Math.floor(n/40)).padStart(2,'0')}`,`合成群事件${n}`])

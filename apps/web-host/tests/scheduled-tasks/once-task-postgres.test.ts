@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { Pool } from 'pg'
-import { createPostgresOnceTaskRepository } from '../../src/modules/scheduled-tasks/persistence/once-task-postgres.js'
+import { createPostgresOnceTaskRepository } from '../../src/modules/scheduled-tasks/schedule/once.js'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

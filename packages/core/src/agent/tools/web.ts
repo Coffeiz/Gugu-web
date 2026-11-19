@@ -254,6 +254,7 @@ export async function resolveWebDownloadLocation(location: DownloadLocation, sou
 }
 
 export interface WebDownloadPort {
+  fixedDestination?: boolean
   /** 仅按 Host 批准的 owner、工作区授权和领域资源定位，结束读取事务再返回。 */
   prepare(location: DownloadLocation, scope: ToolScope): Promise<{
     capacity: number | null
@@ -298,13 +299,15 @@ export function createWebDownloadTool(port: WebDownloadPort): ToolDefinition {
   return {
     definition: { name: 'web_download', schema: { type: 'function', function: {
       name: 'web_download',
-      description: '下载公网 URL 到个人、项目或当前工作区文件目录。',
+      description: port.fixedDestination ? '下载公网 URL 到个人文件的下载目录。' : '下载公网 URL 到个人、项目或当前工作区文件目录。',
       parameters: { type: 'object', additionalProperties: false, required: ['url'], properties: {
         url: { type: 'string', minLength: 1 },
         file_name: { type: ['string', 'null'] },
+        ...(!port.fixedDestination ? {
         space: { type: ['string', 'null'], enum: ['personal', 'project', 'workspace', null] },
         project_id: { type: ['integer', 'null'] },
         folder_id: { type: ['integer', 'null'] },
+        } : {}),
       } },
     } } },
     effect: 'write',
@@ -312,6 +315,8 @@ export function createWebDownloadTool(port: WebDownloadPort): ToolDefinition {
     ...(port.reconcile ? { reconcile: (_input, identity, call) => port.reconcile!(identity, call) } : {}),
     async execute(input, scope, call) {
       const args = input as z.infer<typeof downloadSchema>
+      if (port.fixedDestination && (args.space != null || args.project_id != null || args.folder_id != null))
+        return downloadFailure('文件只能保存到下载目录')
       const candidate = args.url.trim()
       if (/^[a-z][a-z0-9+.-]*:\/\//iu.test(candidate) && !/^https?:\/\//iu.test(candidate)) return downloadFailure('非法 url')
       const normalized = normalizeUrl(candidate)

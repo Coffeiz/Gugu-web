@@ -76,6 +76,7 @@ export interface ChatMessage {
     submitting?: boolean
     resolved?: boolean
     selectedOptionId?: string | null
+    submissionRejected?: boolean
     responseText?: string | null
     expiresAt?: string
     expired?: boolean

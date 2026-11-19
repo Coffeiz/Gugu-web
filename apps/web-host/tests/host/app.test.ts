@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/modules/auth/auth.js'
+import { createUserToken } from '../../src/modules/auth/session/token.js'
 
 const apps: Array<{ close(): Promise<void> }> = []
 

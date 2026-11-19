@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { registerAgentMiscRoutes } from '../../src/modules/agent-sessions/agent-misc.js'
+import { registerAgentMiscRoutes } from '../../src/modules/agent/misc.js'
 import { agentCommandMenu } from '@gugu/core/agent/commands/menu'
 
 test('Agent 斜杠命令路由先鉴权，并返回共享命令菜单', async () => {

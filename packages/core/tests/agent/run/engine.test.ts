@@ -14,6 +14,50 @@ import type { Context } from './fixtures.js'
 import { collect,deferred,fixture,identity,replyFacts,stream,toolCall,usage } from './fixtures.js'
 
 describe('Harness Run生命周期与持久化边界', () => {
+  it('为上下文准备和用量压缩记录带耗时的LoopScope阶段事件', async () => {
+    const f = fixture()
+    const observations: import('../../../src/agent/observation.js').AgentObservation[] = []
+    f.ports.observation = { record: event => observations.push(event) }
+    f.ports.context.afterUsage = vi.fn(async context => ({ context, applied: false }))
+    await collect(f.harness.start(identity))
+    const phases = observations.filter(event => event.name === 'Agent context prepared' || event.name === 'Usage based context compaction')
+    expect(phases.map(event => [event.name, event.status])).toEqual([
+      ['Agent context prepared', 'success'],
+      ['Usage based context compaction', 'skipped'],
+    ])
+    expect(phases.every(event => typeof event.durationMs === 'number' && event.durationMs >= 0 && event.startedAt! <= event.endedAt!)).toBe(true)
+  })
+  it('并行工具批次记录汇总耗时和失败调用诊断，不包含异常原文', async () => {
+    const f = fixture([[{ type: 'complete', text: '', calls: [
+      { id: 'call-a', name: 'read_alpha', input: { privateValue: '合成敏感值' } },
+      { id: 'call-b', name: 'read_beta', input: {} },
+    ] }], [{ type: 'complete', text: '已完成', calls: [] }]])
+    const observations: import('../../../src/agent/observation.js').AgentObservation[] = []
+    f.ports.observation = { record: event => observations.push(event) }
+    f.ports.tools.plan = vi.fn(async () => ({ mode: 'parallel' as const, maxConcurrency: 2 }))
+    f.ports.tools.dispatch = vi.fn(async call => call.name === 'read_alpha'
+      ? Promise.reject(new Error('合成异常正文'))
+      : { kind: 'completed' as const, value: { result: 'ok' }, successful: true, mutated: false })
+    await collect(f.harness.start(identity))
+    const batch = observations.find(event => event.name === 'Parallel tool batch')
+    expect(batch).toMatchObject({ status: 'error', attributes: { calls: 2, succeeded: 1, failed: 1, cancelled: 0, deferred: 0, waiting: 0, unknown: 0 } })
+    expect(typeof batch?.durationMs).toBe('number')
+    expect(observations.find(event => event.attributes?.errorCode)).toMatchObject({ status: 'error', attributes: { errorCode: 'upstream_failed' } })
+    expect(JSON.stringify(observations)).not.toContain('合成异常正文')
+  })
+  it('不完整 Provider 轮将实际输出写入 LoopScope，并只写安全结构日志', async () => {
+    const f = fixture([[{ type: 'complete', text: '合成截断输出', calls: [], finishReason: 'incomplete', incompleteReason: 'max_output_tokens' }]])
+    const observations: import('../../../src/agent/observation.js').AgentObservation[] = []
+    const logs: import('../../../src/agent/logging.js').AgentRunLogEvent[] = []
+    f.ports.observation = { record: event => observations.push(event) }
+    f.ports.log = { write: event => logs.push(event) }
+    await collect(f.harness.start(identity))
+    expect(observations.find(event => event.kind === 'provider' && event.name === 'complete')).toMatchObject({
+      status: 'incomplete', output: '合成截断输出', attributes: { finish_reason: 'incomplete', incomplete_reason: 'max_output_tokens', has_text: true, tool_call_count: 0 },
+    })
+    expect(logs).toMatchObject([{ event: 'agent.provider.incomplete', level: 'warn', attributes: { finishReason: 'incomplete', incompleteReason: 'max_output_tokens' } }])
+    expect(JSON.stringify(logs)).not.toContain('合成截断输出')
+  })
   it('串行三个不同工具按模型顺序交错提交call与done，不能先发完所有call', async () => {
     const calls = ['alpha', 'beta', 'gamma'].map(name => ({ id: `call-${name}`, name: `read_${name}`, input: {} }))
     const f = fixture([[{ type: 'complete', text: '', calls }], [{ type: 'complete', text: '读取完成', calls: [] }]])

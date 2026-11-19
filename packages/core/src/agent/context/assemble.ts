@@ -445,9 +445,9 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
     },
     async afterUsage(state, usage, signal) {
       if (!shouldCompact(usage.contextInput, state.contextWindow))
-        return { context: state, applied: false }
+        return { context: state, applied: false, reason: 'below_threshold' }
       if (state.failedCompactionInput !== null && usage.contextInput! < state.failedCompactionInput + 8000)
-        return { context: state, applied: false }
+        return { context: state, applied: false, reason: 'retry_deferred' }
       const prepared = await restore(state, signal)
       const entries = prepared.area.entries
       const anchor = entries.findLastIndex((entry) => ['user', 'reference', 'attachment'].includes(entry.source))
@@ -479,10 +479,10 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
           }, error)
         }
         catch { /* 诊断故障不改变原始压缩失败状态。 */ }
-        return { context: { ...state, failedCompactionInput: usage.contextInput }, applied: false }
+        return { context: { ...state, failedCompactionInput: usage.contextInput }, applied: false, reason: 'failed' }
       }
       if (!result.changed)
-        return { context: { ...state, failedCompactionInput: usage.contextInput }, applied: false }
+        return { context: { ...state, failedCompactionInput: usage.contextInput }, applied: false, reason: 'no_change' }
       applyCompaction(prepared.area, result)
       const context = await save(state, prepared, signal)
       return {
@@ -491,7 +491,7 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
             id: `${state.identity.runId}:${context.prepared.area.revision}`,
             result: { ...result, messages: context.prepared.area.entries.map((entry) => copy(entry.message)) },
           }]
-        }, applied: true
+        }, applied: true, reason: 'applied'
       }
     },
     async afterFinal(identity, state, outcome) {

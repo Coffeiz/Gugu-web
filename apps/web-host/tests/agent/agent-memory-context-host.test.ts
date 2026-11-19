@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
-import { createAgentMemoryContextLoader } from '../../src/modules/agent-sessions/memory-context.js'
+import { createAgentMemoryContextLoader } from '../../src/modules/agent/memory/context.js'
 
 test('Host memory context loader reads only the authenticated owner memory root', async () => {
   const root = await mkdtemp(join(tmpdir(), 'gugu-agent-memory-context-'))

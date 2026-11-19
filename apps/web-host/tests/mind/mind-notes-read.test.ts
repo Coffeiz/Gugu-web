@@ -4,7 +4,7 @@ import Fastify from 'fastify'
 import {
   registerMindNoteReadRoutes,
   type MindNoteReadResponse,
-} from '../../src/modules/mind/mind-notes-read.js'
+} from '../../src/modules/mind/notes.js'
 
 const ownerId = 'owner-mind-read'
 

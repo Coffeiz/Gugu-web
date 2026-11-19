@@ -35,7 +35,7 @@ test('删除技能限定owner，提交后通知；重复删除404且不发布，
 })
 
 import Fastify from 'fastify'
-import {registerUserSkillDeleteRoute} from '../../src/modules/skills/user-delete.js'
+import {registerUserSkillDeleteRoute} from '../../src/modules/skills/routes.js'
 import {installHttpErrorHandler} from '../../src/http/errors.js'
 import {CoreError} from '@gugu/core'
 

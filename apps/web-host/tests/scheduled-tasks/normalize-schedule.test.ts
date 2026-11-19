@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { normalizeSchedule } from '@gugu/core/scheduled-task-schedule'
-import { validateTaskCron } from '../../src/modules/scheduled-tasks/validate-cron.js'
+import { validateTaskCron } from '../../src/modules/scheduled-tasks/schedule/cron.js'
 
 test('一次性时间按上海时区解析，并拒绝过去时间和冲突字段', () => {
   const once = normalizeSchedule({ schedule_kind: 'once', start_at: '2026-01-02T08:00:00' }, () => {}, Date.parse('2026-01-01Z'))

@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { Pool } from 'pg'
-import { createScheduledTaskRedisLease } from '../../src/modules/scheduled-tasks/persistence/redis-lease.js'
+import { createScheduledTaskRedisLease } from '../../src/modules/scheduled-tasks/run/lease.js'
 import { createPostgresRuntime } from '@gugu/core/data'
 import { createKyselyScheduledTaskReader, createScheduledTaskQueries } from '@gugu/core/scheduled-task-list'
 

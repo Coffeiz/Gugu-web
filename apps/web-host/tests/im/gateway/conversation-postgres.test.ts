@@ -1,20 +1,21 @@
+import { imGatewaySql } from '@gugu/database/postgres/migrations/0013_im_gateway'
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import type { Pool, PoolClient } from 'pg';
-import { createPostgresImConversationStore, ImConversationError } from '../../../src/modules/im/gateway/conversation-postgres.js';
-import type { ImConversationAnchor, ImConversationAttachments } from '../../../src/modules/im/gateway/conversation-postgres.js';
-import { createPostgresImIngress } from '../../../src/modules/im/gateway/ingress.js';
-import { createImInboundEnvelope } from '../../../src/modules/im/gateway/inbound-envelope.js';
+import { createPostgresImConversationStore, ImConversationError } from '../../../src/modules/im/gateway/agent/conversations.js';
+import type { ImConversationAnchor, ImConversationAttachments } from '../../../src/modules/im/gateway/agent/conversations.js';
+import { createPostgresImIngress } from '../../../src/modules/im/gateway/inbound/ingress.js';
+import { createImInboundEnvelope } from '../../../src/modules/im/gateway/inbound/envelope.js';
 import type { ImAttentionRecord } from '@gugu/core/im/attention/directive';
 import { createRedisStreamCommands } from '../../../src/adapters/cache/redis-stream-commands.js';
-import { createPostgresImAttentionRuntime } from '../../../src/modules/im/gateway/attention-runtime.js';
-import { createPostgresRedisImAttentionSnapshot } from '../../../src/modules/im/gateway/attention-snapshot.js';
-import { createPostgresImAcceptedFactsReader } from '../../../src/modules/im/gateway/attention-ledger.js';
-import { createRedisImPendingAskStore } from '../../../src/modules/im/gateway/pending-ask.js';
-import { nodeImAttentionKeys } from '../../../src/modules/im/gateway/inbox.js';
-import { decryptAgentDispatchInput } from '../../../src/modules/agent-sessions/persistence/agent-run-dispatch-postgres.js';
+import { createPostgresImAttentionRuntime } from '../../../src/modules/im/gateway/attention/runtime.js';
+import { createPostgresRedisImAttentionSnapshot } from '../../../src/modules/im/gateway/attention/snapshot.js';
+import { createPostgresImAcceptedFactsReader } from '../../../src/modules/im/gateway/attention/ledger.js';
+import { createRedisImPendingAskStore } from '../../../src/modules/im/gateway/interactions/ask.js';
+import { nodeImAttentionKeys } from '../../../src/modules/im/gateway/inbound/inbox.js';
+import { decryptAgentDispatchInput } from '../../../src/modules/agent/run/dispatch.js';
 
 const owner = '00000000-0000-4000-8000-000000000071';
 const binding = { ownerId: owner, platform: 'telegram' as const, botId: '71' };
@@ -425,7 +426,7 @@ test('隔离PG：注意力门的持久被动/等待、重放与事务复核', { 
       CREATE TABLE conversation_sessions(id serial PRIMARY KEY,user_id uuid NOT NULL REFERENCES users(id),title text,title_locked boolean,summary text,source text,bot_id varchar(128),chat_id text,platform_user_id text,chat_type text,context_epoch integer,baseline_message_seq bigint,last_message_seq bigint,execution_state text,pending_message_count integer,created_at timestamptz,updated_at timestamptz);
       CREATE TABLE conversation_messages(id serial PRIMARY KEY,session_id integer REFERENCES conversation_sessions(id),conversation_seq bigint,role text,content text,client_message_id varchar(64),files jsonb,quoted_text text,platform_user_id text,platform_user_name text,platform_bot_user_id text,chat_type text,im_platform_message_id text,im_reply_to_message_id text,im_reply_target_sender_id text,im_reply_target_is_bot boolean,im_sender_is_bot boolean,im_event_received_ms bigint,im_platform_sent_ms bigint,run_id text,created_at timestamptz,sent_at timestamptz,UNIQUE(session_id,conversation_seq),UNIQUE(session_id,client_message_id));
       CREATE TABLE dispatches(run_id text PRIMARY KEY,message_id integer)`);
-    await pool.query(await readFile(new URL('../../../src/modules/im/gateway/conversation-schema.sql', import.meta.url), 'utf8'));
+    await pool.query(imGatewaySql.conversation);
     const db = pool, envelope = createImInboundEnvelope(secretKey);
     async function reset() {
       await db.query('TRUNCATE dispatches,gugu_im_inbound_batch_members,gugu_im_inbound_segments,gugu_im_inbound_receipts,conversation_messages,conversation_sessions,user_bots,users CASCADE');
@@ -524,8 +525,8 @@ test('隔离PG：注意力门的持久被动/等待、重放与事务复核', { 
           ADD group_attention_config_version integer DEFAULT 3,ADD name text DEFAULT '合成咕咕';
         CREATE TABLE agent_run_startups(user_id uuid,session_id integer,run_id text,status text,created_at timestamptz,updated_at timestamptz,PRIMARY KEY(user_id,session_id,run_id));
         CREATE TABLE agent_run_dispatch(sequence bigserial PRIMARY KEY,user_id uuid,session_id integer,run_id text,state text,nonce bytea,payload bytea,request_expires_at timestamptz,message_id integer,UNIQUE(user_id,session_id,run_id));`);
-      await db.query(await readFile(new URL('../../../src/modules/im/gateway/delivery-schema.sql', import.meta.url), 'utf8'));
-      await db.query(await readFile(new URL('../../../src/modules/im/gateway/attention-ledger-schema.sql', import.meta.url), 'utf8'));
+      await db.query(imGatewaySql.delivery);
+      await db.query(imGatewaySql.attentionLedger);
       const commands = createRedisStreamCommands(process.env.GUGU_IM_GATEWAY_TEST_REDIS_URL!), touched = new Set<string>(), index = 'im:node:{pending-ask}:due:v1';
       const redis = { async sendCommand(parts: string[]) {
         if (parts[0] === 'EVAL') for (const key of parts.slice(3, 3 + Number(parts[2]))) if (key !== index) touched.add(key);
@@ -595,7 +596,7 @@ test('隔离PG：真实并发路由锁、事务回滚、历史去重和密封rou
       CREATE TABLE conversation_sessions(id serial PRIMARY KEY,user_id uuid NOT NULL REFERENCES users(id),title text,title_locked boolean,summary text,source text,bot_id text,chat_id text,platform_user_id text,chat_type text,context_epoch integer,baseline_message_seq bigint,last_message_seq bigint,execution_state text,pending_message_count integer,created_at timestamptz,updated_at timestamptz);
       CREATE TABLE conversation_messages(id serial PRIMARY KEY,session_id integer REFERENCES conversation_sessions(id),conversation_seq bigint,role text,content text,client_message_id varchar(64),files jsonb,quoted_text text,platform_user_id text,platform_user_name text,platform_bot_user_id text,chat_type text,im_platform_message_id text,im_reply_to_message_id text,im_reply_target_sender_id text,im_reply_target_is_bot boolean,im_sender_is_bot boolean,im_event_received_ms bigint,im_platform_sent_ms bigint,run_id text,created_at timestamptz,sent_at timestamptz,UNIQUE(session_id,conversation_seq),UNIQUE(session_id,client_message_id));`);
     await pool.query('INSERT INTO users VALUES($1)', [owner]); await pool.query("INSERT INTO user_bots VALUES(71,$1,'telegram',true)", [owner]);
-    await pool.query(await readFile(new URL('../../../src/modules/im/gateway/conversation-schema.sql', import.meta.url), 'utf8'));
+    await pool.query(imGatewaySql.conversation);
     let dispatched = 0;
     const store = createPostgresImConversationStore({ pool, secretKey, attachments: { mode: 'text-only' }, authorize: async (client, b) => (await client.query('SELECT 1 FROM user_bots WHERE id=$1 AND user_id=$2 AND enabled IS TRUE', [Number(b.botId), b.ownerId])).rowCount === 1, classify: async () => 'reply' });
     const dispatch = async (_client: PoolClient, anchor: ImConversationAnchor) => { dispatched++; return `run-${anchor.messageId}`; };
@@ -667,7 +668,7 @@ test('隔离PG：真实并发路由锁、事务回滚、历史去重和密封rou
     const passiveRows = (await pool.query(`SELECT m.id,m.run_id,r.state,r.sealed_payload FROM conversation_messages m
       JOIN gugu_im_inbound_receipts r ON r.message_id=m.id JOIN conversation_sessions s ON s.id=m.session_id WHERE s.chat_id='synthetic-passive-room'`)).rows;
     assert.equal(passiveRows.length, 1); assert.equal(passiveRows[0].run_id, null); assert.equal(passiveRows[0].state, 'passive');
-    const { createImInboundEnvelope } = await import('../../../src/modules/im/gateway/inbound-envelope.js');
+    const { createImInboundEnvelope } = await import('../../../src/modules/im/gateway/inbound/envelope.js');
     assert.equal(createImInboundEnvelope(secretKey).open(binding, passiveRows[0].sealed_payload)._node_stream_event_id, '1700000000001-0');
     assert.equal(await ingress.prepareAdmitted(binding, { ...passive, message_id: 'fresh-native', platform_message_id: 'fresh-native' }, '1700000000004-0', new AbortController().signal), true);
     assert.equal(modelCalls, 0);

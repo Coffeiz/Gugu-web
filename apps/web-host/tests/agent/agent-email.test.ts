@@ -8,10 +8,10 @@ import { Pool } from 'pg'
 import { createPostgresRuntime, initializeSqlite, openSqliteRuntime, tablesSql } from '@gugu/core/data'
 import { sanitizeEmailHtml } from '@gugu/core/email/smtp-test'
 import { createConfirmationGate, createToolRegistry } from '@gugu/core/tools'
-import { createWebAgentEmailTool } from '../../src/modules/agent-sessions/tools/agent-email.js'
-import { createAuthorizedWebAgentProductionRagRunPorts } from '../../src/modules/agent-sessions/tools/agent-rag-production-ports.js'
-import { createWebAgentConfirmationAuthorization, createWebAgentToolConfirmation } from '../../src/modules/agent-sessions/tools/agent-confirmation.js'
-import { createPostgresTrustedIntentStore } from '../../src/modules/agent-sessions/persistence/agent-trusted-intent-postgres.js'
+import { createWebAgentEmailTool } from '../../src/modules/agent/tools/email.js'
+import { createAuthorizedWebAgentProductionRagRunPorts } from '../../src/modules/agent/rag/production.js'
+import { createWebAgentConfirmationAuthorization, createWebAgentToolConfirmation } from '../../src/modules/agent/tools/confirm.js'
+import { createPostgresTrustedIntentStore } from '../../src/modules/agent/interactions/intents.js'
 
 test('Web 邮件前置校验使用当前 owner 的地址和附件，缺自定义 HTML 能力时拒绝', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gugu-agent-email-host-'))

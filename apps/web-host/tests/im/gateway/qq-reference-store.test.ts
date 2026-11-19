@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { createRedisStreamCommands } from '../../../src/adapters/cache/redis-stream-commands.js'
-import { createQqReferenceStore, QQ_FACE_PENDING_MS, QQ_REFERENCE_TTL_SECONDS, QQ_REFERENCE_MAX_ENTRIES } from '../../../src/modules/im/gateway/qq/reference-store.js'
+import { createQqReferenceStore, QQ_FACE_PENDING_MS, QQ_REFERENCE_TTL_SECONDS, QQ_REFERENCE_MAX_ENTRIES } from '../../../src/modules/im/gateway/platforms/qq/reference-store.js'
 import { qqRedisDouble } from './helpers/qq-redis-double.js'
 
 const signal = new AbortController().signal

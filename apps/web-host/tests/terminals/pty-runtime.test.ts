@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { TerminalListItem } from '@gugu/core/terminals/list'
 import type { MxcPtyLaunchSpec } from '@gugu/sandbox/pty'
-import { createTerminalPtyRuntime } from '../../src/modules/terminals/pty-runtime.js'
+import { createTerminalPtyRuntime } from '../../src/modules/terminals/pty/runtime.js'
 
 function terminal(overrides: Partial<TerminalListItem> = {}): TerminalListItem {
   return {
@@ -51,7 +51,7 @@ function setup(overrides: {
   return { runtime, calls, released: () => released }
 }
 
-test('PTY runtime derives its MXC launch scope from owner authorization and pinned workspace mounts', async () => {
+test('交互终端将已授权工作区挂为只读，文件删除需走命令确认入口', async () => {
   const { runtime, calls } = setup({ networkProfile: 'egress', egressProxyUrl: 'http://127.0.0.1:4321' })
   const result = await runtime.startWithSubscription('owner-a', 'term-1')
   assert.equal(result.session.handle.pid, 33)
@@ -66,7 +66,7 @@ test('PTY runtime derives its MXC launch scope from owner authorization and pinn
   assert.equal(typeof release, 'function')
   assert.deepEqual(launchInput, {
     terminalId: 'term-1', root: '/proc/self/fd/11',
-    readwritePaths: ['/proc/self/fd/11'], readonlyPaths: ['/proc/self/fd/12'],
+    readwritePaths: [], readonlyPaths: ['/proc/self/fd/12', '/proc/self/fd/11'],
     environment: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8' },
     networkProfile: 'egress', egressProxyUrl: 'http://127.0.0.1:4321', cols: 120, rows: 32,
   })

@@ -58,12 +58,10 @@ try {
   const config = workerData as {
     database: string
     initialize: boolean
-    allowLegacySchema: boolean
     exclusive: boolean
   }
   if (config.initialize) await initializeSqlite(config.database)
   const { runtime, ownerId, schemaVersion } = await openSqliteRuntime(config.database, {
-    allowLegacySchema: config.allowLegacySchema,
     exclusive: config.exclusive,
   })
   const context = dataContext(ownerId)

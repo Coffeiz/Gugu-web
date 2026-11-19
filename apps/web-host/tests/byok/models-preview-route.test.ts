@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import Fastify from 'fastify'
 import { afterEach, test } from 'node:test'
-import { registerCredentialModelsPreviewRoute } from '../../src/modules/byok/models-preview.js'
+import { registerCredentialModelsPreviewRoute } from '../../src/modules/byok/routes.js'
 
 const ownerId = '00000000-0000-4000-8000-000000000161'
 const apps: Array<ReturnType<typeof Fastify>> = []

@@ -9,7 +9,7 @@ import {
   createPostgresFolderPathMirrorPlanner,
   readPostgresFolderPathMirrorKey,
   readPostgresProjectPathMirrorKey,
-} from '../../src/modules/files/folder-path-planner.js'
+} from '../../src/modules/files/folders/paths.js'
 
 const owner = '00000000-0000-4000-8000-000000000014'
 

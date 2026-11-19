@@ -2,9 +2,9 @@ import {test} from 'node:test'
 import assert from 'node:assert/strict'
 import {resolveImActor} from '@gugu/core/im/access'
 import {createImProductionFixture} from './production.fixtures.js'
-import {createImInboundEnvelope} from '../../../src/modules/im/gateway/inbound-envelope.js'
-import {imConversationDigest,imConversationFingerprint,imConversationScopeHash} from '../../../src/modules/im/gateway/conversation-identity.js'
-import {loadImReflectionPassiveTail,ImReflectionTailError,type ImReflectionPassiveTailInput} from '../../../src/modules/im/gateway/reflection-tail.js'
+import {createImInboundEnvelope} from '../../../src/modules/im/gateway/inbound/envelope.js'
+import {imConversationDigest,imConversationFingerprint,imConversationScopeHash} from '../../../src/modules/im/gateway/agent/identity.js'
+import {loadImReflectionPassiveTail,ImReflectionTailError,type ImReflectionPassiveTailInput} from '../../../src/modules/im/gateway/memory/tail.js'
 
 test('无群scope/真实快照锚点的反思尾段在任何数据库读取前拒绝',async()=>{
  const input={pool:{query:async()=>assert.fail('无效身份不可查库')},secretKey:'synthetic-secret',identity:{ownerId:'synthetic',sessionId:'1',runId:'synthetic'},

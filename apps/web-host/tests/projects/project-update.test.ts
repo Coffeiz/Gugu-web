@@ -9,7 +9,7 @@ import type {
   ProjectUpdateRuntime,
   ProjectUpdateTransaction,
 } from '@gugu/core/project-update'
-import { createLocalProjectDirectoryRenamer } from '../../src/modules/projects/persistence/project-directory-storage.js'
+import { createLocalProjectDirectoryRenamer } from '../../src/modules/projects/update.js'
 
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
 const stages = [

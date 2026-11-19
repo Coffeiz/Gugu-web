@@ -11,7 +11,7 @@ import {
 import {
   AgentSessionNotFoundError,
   createAgentMessageHistory,
-} from '../../src/modules/agent-sessions/persistence/agent-message-history.js'
+} from '../../src/modules/agent/chat/read.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

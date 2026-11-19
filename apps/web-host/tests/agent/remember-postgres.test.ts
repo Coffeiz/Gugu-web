@@ -6,10 +6,10 @@ import path from 'node:path'
 import test from 'node:test'
 import { Pool } from 'pg'
 import { createPostgresRuntime, tablesSql } from '@gugu/core/data'
-import { createLocalAgentRememberPort } from '../../src/modules/agent-sessions/tools/agent-memory-write.js'
-import { createAgentToolRegistry, filterConfiguredWebAgentTools } from '../../src/modules/agent-sessions/tools/agent-tool-registry.js'
-import { createAgentRagRebuildWorker } from '../../src/modules/agent-sessions/rag-rebuild.js'
-import { applyRagIndexMigration } from '../../src/migrations/rag-index-migrate.js'
+import { createLocalAgentRememberPort } from '../../src/modules/agent/tools/memory/write.js'
+import { createAgentToolRegistry, filterConfiguredWebAgentTools } from '../../src/modules/agent/tools/registry.js'
+import { createAgentRagRebuildWorker } from '../../src/modules/agent/rag/rebuild.js'
+import { applyRagIndexMigration } from '@gugu/database/postgres/migrations/0011_rag_index'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 test('remember 读写真实档案，提交失败后恢复同一写入、向量失效和索引队列', { skip: !url }, async () => {

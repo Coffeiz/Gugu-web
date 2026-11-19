@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import type { FileLibraryNavigationTarget } from '@/utils/filesNav'
+import type { PathFileRef } from '@/services/api'
 import { ref, computed } from 'vue'
 import { playGuguSfx } from '@/services/sfx'
 
@@ -44,6 +45,7 @@ export const useUiStore = defineStore('ui', () => {
   let chatNavigationSequence = 0
   const pendingChatPrefill   = ref<string | null>(null)
   const pendingFileTarget    = ref<FileLibraryNavigationTarget | null>(null)
+  const workspaceUploadTarget = ref<PathFileRef | null>(null)
   const pendingCalendarEvent = ref<{ id: number; date?: string } | null>(null)   // { id, date } 日程搜索跳转
   const pendingNoteId = ref<number | null>(null)   // 思维笔记搜索跳转后打开对应便签的编辑态
   const pendingCanvasTarget = ref<{ canvasId: number; nodeId: number } | null>(null)
@@ -161,6 +163,7 @@ export const useUiStore = defineStore('ui', () => {
     cancelChatNavigation()
     pendingChatPrefill.value = null
     pendingFileTarget.value = null
+    workspaceUploadTarget.value = null
     pendingCalendarEvent.value = null
     pendingNoteId.value = null
     pendingCanvasTarget.value = null
@@ -197,7 +200,7 @@ export const useUiStore = defineStore('ui', () => {
     openNewProject, newProjectInitStatus, openProfile, profileInitialNav, sidebarCollapsed, newProjectRange,
     calendarActiveRange, pendingChatNavigation, beginChatNavigation, publishChatNavigation,
     requestChatNavigation, isCurrentChatNavigation, clearChatNavigation, cancelChatNavigation,
-    pendingChatPrefill, pendingFileTarget, chatNotifyAnchor, chatNotifyOrigin,
+    pendingChatPrefill, pendingFileTarget, workspaceUploadTarget, chatNotifyAnchor, chatNotifyOrigin,
     pendingCalendarEvent, pendingCalendarDate, pendingProjectHighlight, pendingProjectHighlightMs,
     pendingNoteId,
     pendingCanvasTarget,

@@ -6,7 +6,7 @@ import Fastify from 'fastify'
 import {
   createPostgresAgentSessionRenamer,
   registerAgentSessionRenameRoute,
-} from '../../src/modules/agent-sessions/agent-session-rename.js'
+} from '../../src/modules/agent/sessions/update.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

@@ -10,7 +10,6 @@ vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key, locale: 
 vi.mock('@/stores/live', () => ({ useLiveStore: () => ({ resourceEvent: null }) }))
 vi.mock('@/composables/core/useConfirmDialog', () => ({ confirmDialog: vi.fn() }))
 vi.mock('@/views/Terminals/components/InteractivePtyTerminal', () => ({ default: { render: () => null } }))
-vi.mock('@/components/common/controls/ActionButton.vue', () => ({ default: { render: () => null } }))
 vi.mock('@/components/common/icons/Icon.vue', () => ({ default: { render: () => null } }))
 
 let cleanup: (() => void) | undefined

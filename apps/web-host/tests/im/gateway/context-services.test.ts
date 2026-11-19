@@ -6,7 +6,7 @@ import test from 'node:test'
 import type { Pool } from 'pg'
 import type { ContextSourceSelection, Json } from '@gugu/core/agent'
 import { resolveImActor } from '@gugu/core/im/access'
-import { createImAgentContextServices, ImContextServicesError } from '../../../src/modules/im/gateway/context-services.js'
+import { createImAgentContextServices, ImContextServicesError } from '../../../src/modules/im/gateway/agent/services.js'
 
 const owner = '00000000-0000-4000-8000-000000000091'
 const identity = { ownerId: owner, sessionId: '91', runId: 'synthetic-run' }

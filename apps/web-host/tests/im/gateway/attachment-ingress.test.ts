@@ -5,7 +5,7 @@ import path from 'node:path'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
 import type { Pool, PoolClient } from 'pg'
-import { createPostgresImAttachmentIngress, ImAttachmentIngressError, type ImAttachmentScope } from '../../../src/modules/im/gateway/attachment-ingress.js'
+import { createPostgresImAttachmentIngress, ImAttachmentIngressError, type ImAttachmentScope } from '../../../src/modules/im/gateway/inbound/attachments.js'
 
 const owner = '00000000-0000-4000-8000-000000000111'
 const scope: ImAttachmentScope = { ownerId: owner, botId: '111', platform: 'telegram', chatType: 'group', chatId: 'synthetic-group', platformUserId: '1111' }

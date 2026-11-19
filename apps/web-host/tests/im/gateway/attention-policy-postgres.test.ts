@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import type { Pool } from 'pg'
 import type { ImActorInput } from '@gugu/core/im/access'
-import { createPostgresImAttentionPolicyGuard } from '../../../src/modules/im/gateway/attention-policy-postgres.js'
+import { createPostgresImAttentionPolicyGuard } from '../../../src/modules/im/gateway/attention/policy.js'
 
 const ownerId='00000000-0000-4000-8000-000000000011'
 const identity={ownerId,sessionId:'21',runId:'synthetic-run'}

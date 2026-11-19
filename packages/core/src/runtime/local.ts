@@ -66,14 +66,12 @@ export class LocalRuntime {
   private static async start(
     database: string,
     initialize: boolean,
-    allowLegacySchema = false,
     exclusive = false,
   ): Promise<LocalRuntime> {
     const worker = new Worker(new URL('./worker.js', import.meta.url), {
       workerData: {
         database: resolve(database),
         initialize,
-        allowLegacySchema,
         exclusive,
       },
     })
@@ -117,16 +115,15 @@ export class LocalRuntime {
     database: string,
     options: { exclusive?: boolean } = {},
   ): Promise<LocalRuntime> {
-    return this.start(database, true, false, options.exclusive ?? false)
+    return this.start(database, true, options.exclusive ?? false)
   }
   static open(
     database: string,
-    options: { allowLegacySchema?: boolean; exclusive?: boolean } = {},
+    options: { exclusive?: boolean } = {},
   ): Promise<LocalRuntime> {
     return this.start(
       database,
       false,
-      options.allowLegacySchema ?? false,
       options.exclusive ?? false,
     )
   }

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { ProviderHttpRequest, ProviderTransport } from '@gugu/core/providers'
-import { createTelegramBotApi } from '../../../src/modules/im/gateway/telegram-api.js'
-import { createTelegramMediaIngress, TELEGRAM_INGRESS_MAX_BYTES, TelegramMediaIngressError } from '../../../src/modules/im/gateway/telegram-media.js'
-import type { TelegramMediaStageInput, TelegramMediaStorage } from '../../../src/modules/im/gateway/telegram-media.js'
+import { createTelegramBotApi } from '@gugu/gateway/telegram'
+import { createTelegramMediaIngress, TELEGRAM_INGRESS_MAX_BYTES, TelegramMediaIngressError } from '../../../src/modules/im/gateway/platforms/telegram/media.js'
+import type { TelegramMediaStageInput, TelegramMediaStorage } from '../../../src/modules/im/gateway/platforms/telegram/media.js'
 
 const ownerId = 'owner-synthetic', botId = '41', token = '123456:synthetic_Telegram_Token_0000'
 const base = { ownerId, botId, platformMessageId: '41:-1007002:55', attachments: [{ file_id: 'synthetic-file', file_size: 4, file_name: 'sample.txt', mime_type: 'text/plain', media_type: 'document' }], quotedAttachments: [] }

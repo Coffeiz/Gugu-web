@@ -1,4 +1,4 @@
-import { foldersApi, filesApi, type ApiFolderResponse } from '@/services/api'
+import { foldersApi, filesApi, uploadWithProgress, pathFilesApi, type ApiFolderResponse, type PathFileRef } from '@/services/api'
 import { pLimit, UPLOAD_CONCURRENCY } from '@/utils/concurrency'
 
 /** 一个待上传项：文件本体 + 相对路径（无子文件夹时就是文件名本身）。 */
@@ -7,11 +7,54 @@ export interface UploadItem {
   relativePath: string
 }
 
+export async function uploadWorkspaceFile(target: PathFileRef, item: UploadItem, onProgress: (progress: number) => void) {
+  const parts = item.relativePath.split('/')
+  const name = parts.pop()!
+  let parent = target.relativePath
+  for (const part of parts) {
+    const relativePath = [parent, part].filter(Boolean).join('/')
+    try {
+      await pathFilesApi.createFolder({ directoryId: target.directoryId, relativePath })
+    } catch (error) {
+      if ((error as { status?: number })?.status !== 409) throw error
+      const entries = await pathFilesApi.entries(target.directoryId, parent)
+      if (!entries.some(entry => entry.kind === 'directory' && entry.name === part)) throw error
+    }
+    parent = relativePath
+  }
+  return pathFilesApi.upload({
+    directoryId: target.directoryId, relativePath: [parent, name].filter(Boolean).join('/'),
+  }, item.file, onProgress)
+}
+
 /** 解析后的上传项：多了「应该落在哪个 folder_id」（null = 落在 baseFolderId/项目·个人根）。 */
 export interface ResolvedUploadItem {
   file: File
   relativePath: string
   folderId: number | null
+}
+
+export function uploadFileWithProgress(file: File, target: {
+  space: string
+  projectId?: number | null
+  folderId?: number | null
+  workspaceDirectoryId?: number | null
+  stageName?: string
+  overwriteId?: number | null
+}, onProgress: (progress: number) => void) {
+  const form = new FormData()
+  form.append('space', target.space)
+  if (target.projectId != null) form.append('project_id', String(target.projectId))
+  if (target.folderId != null) form.append('folder_id', String(target.folderId))
+  if (target.workspaceDirectoryId != null) form.append('workspace_directory_id', String(target.workspaceDirectoryId))
+  if (target.stageName != null) form.append('stage_name', target.stageName)
+  if (target.overwriteId != null) {
+    form.append('on_conflict', 'overwrite')
+    form.append('overwrite_file_id', String(target.overwriteId))
+  }
+  // 服务端先读目标和覆盖信息，再按剩余额度流式接收文件。
+  form.append('file', file)
+  return uploadWithProgress('/files', form, onProgress)
 }
 
 // ── 拖放解析：把 DataTransfer 展开成扁平的 {file, relativePath}[] ─────────────

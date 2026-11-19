@@ -6,8 +6,8 @@ import { join } from 'node:path'
 import { createToolRegistry, createWorkspaceTool } from '@gugu/core/tools'
 import { initializeSqlite, openSqliteRuntime } from '@gugu/core/data'
 import type { SqlDataRuntime } from '@gugu/core/data'
-import type { AgentDispatchLease } from '../../src/modules/agent-sessions/persistence/agent-run-dispatch-postgres.js'
-import { createWebAgentWorkspaceCreatePort } from '../../src/modules/agent-sessions/tools/agent-workspace-create.js'
+import type { AgentDispatchLease } from '../../src/modules/agent/run/dispatch.js'
+import { createWebAgentWorkspaceCreatePort } from '../../src/modules/agent/tools/workspaces/create.js'
 
 const identity = { ownerId: '00000000-0000-4000-8000-000000000001', sessionId: '22', runId: 'workspace-create-run' }
 const lease = { identity, token: 'lease', fence: 1, input: { v: 2, source: 'web' }, mode: 'start', cancelRequested: false } as AgentDispatchLease

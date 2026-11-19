@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
 import { createAgentProjectUpdater, createProjectUpdater } from '@gugu/core/project-update'
-import { createPostgresProjectUpdateRuntime } from '../../src/modules/projects/persistence/project-update-postgres.js'
+import { createPostgresProjectUpdateRuntime } from '../../src/modules/projects/update.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'

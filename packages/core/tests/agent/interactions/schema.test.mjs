@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { expect, test } from 'vitest'
 
-import { SQLITE_INTERACTION_PROMPTS_SCHEMA as ddl, validateSqliteInteractionPrompts as validate } from '../../../src/agent/interactions/schema.ts'
+import { SQLITE_INTERACTION_PROMPTS_SCHEMA as ddl, validateSqliteInteractionPrompts as validate } from '@gugu/database/sqlite/interaction-prompts'
 const rawOwner = 'ABCDEF12-3456-7890-ABCD-EF1234567890'
 const owner = rawOwner.replaceAll('-', '').toLowerCase()
 function legacy(db) {

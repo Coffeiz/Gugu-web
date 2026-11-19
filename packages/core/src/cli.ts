@@ -1,8 +1,19 @@
 import { randomUUID } from 'node:crypto'
+import { DatabaseError } from '@gugu/database/error'
 import { CoreError } from './contracts/index.js'
 import { initializeSqlite, migrateSqlite } from './data/sqlite.js'
+import { parseMigrationAction, reportMigration } from '@gugu/database/command'
 import { SCHEMA_VERSION } from './data/schema.js'
 import { LocalRuntime } from './runtime/local.js'
+
+async function runSqliteMigration(database: string, args: readonly string[]): Promise<void> {
+  try {
+    reportMigration(await migrateSqlite(database, parseMigrationAction(args)))
+  } catch (error) {
+    console.error(error instanceof CoreError || error instanceof DatabaseError ? error.message : 'SQLite 数据库迁移失败')
+    process.exitCode = 1
+  }
+}
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2),
@@ -20,11 +31,7 @@ async function main(): Promise<void> {
     console.log(JSON.stringify({ initialized: true, schema: Number(SCHEMA_VERSION) }))
     return
   }
-  if (command === 'migrate') {
-    const backup = await migrateSqlite(database)
-    console.log(JSON.stringify({ migrated: true, backup }))
-    return
-  }
+  if (command === 'migrate') return runSqliteMigration(database, args)
   const runtime = await LocalRuntime.open(database)
   try {
     let result: unknown
@@ -61,5 +68,5 @@ try {
   console.error(
     error instanceof CoreError ? error.message : 'Core 数据操作失败，请检查数据库与匹配的运行时',
   )
-  process.exitCode = 2
+  process.exitCode = process.argv[2] === 'migrate' ? 1 : 2
 }

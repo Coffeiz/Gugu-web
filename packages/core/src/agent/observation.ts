@@ -3,7 +3,7 @@ import type { RunIdentity, Usage } from './models.js'
 /** 跨 Host 的 Agent 真实执行观测；接收实现必须尽力处理且不得阻塞。 */
 export interface AgentObservation {
   readonly identity: RunIdentity
-  readonly kind: 'run' | 'round' | 'provider' | 'tool' | 'context'
+  readonly kind: 'run' | 'round' | 'provider' | 'tool' | 'context' | 'output' | 'history' | 'guard' | 'state'
   readonly name: string
   readonly at: number
   readonly round?: number

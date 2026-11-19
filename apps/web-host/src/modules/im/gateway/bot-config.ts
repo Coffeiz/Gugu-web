@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { decryptEncryptedString } from '../../../adapters/security/encrypted-string.js';
-import type { GatewayBotSpec, GatewaySubscription } from './supervisor.js';
+import type { GatewayBotSpec, GatewaySubscription } from '@gugu/gateway';
 
 export type GatewayPlatform = 'feishu' | 'qq' | 'wechat' | 'telegram';
 export interface TrustedGatewayBot extends GatewayBotSpec {

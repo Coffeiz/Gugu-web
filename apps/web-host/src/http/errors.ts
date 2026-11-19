@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import { CoreError } from '@gugu/core'
+import { diagLog } from '../shared/log-files.js'
 
 const INTERNAL_ERROR_DETAIL = '服务器内部错误，请稍后重试'
 
@@ -19,8 +20,10 @@ function sendDetail(reply: FastifyReply, statusCode: number, detail: string) {
 /** 将 Fastify 错误响应统一为既有 FastAPI 的 detail 格式，并隐藏内部异常。 */
 export function installHttpErrorHandler(app: FastifyInstance): void {
   app.setErrorHandler((error, request, reply) => {
+    const route = request.routeOptions.url ?? 'unknown'
     if (error instanceof CoreError) {
       const statusCode = coreErrorStatus(error)
+      if (statusCode === null) diagLog(`http.${request.method} ${route}`, error)
       return sendDetail(reply, statusCode ?? 500, statusCode === null ? INTERNAL_ERROR_DETAIL : error.message)
     }
 
@@ -44,7 +47,7 @@ export function installHttpErrorHandler(app: FastifyInstance): void {
       : 'none'
     const databaseTable = 'table' in fastifyError ? safeDatabaseField(fastifyError.table) : 'unknown'
     const databaseColumn = 'column' in fastifyError ? safeDatabaseField(fastifyError.column) : 'unknown'
-    const route = request.routeOptions.url ?? 'unknown'
+    diagLog(`http.${request.method} ${route}`, error)
     console.error(`gugu-webui request failed method=${request.method} route=${route} error=${error.name} code=${databaseCode} table=${databaseTable} column=${databaseColumn}`)
 
     return sendDetail(reply, 500, INTERNAL_ERROR_DETAIL)

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
 import { loadSessionHistory } from '@gugu/core/agent'
-import { createPostgresCanonicalHistoryReader } from '../../src/modules/agent-sessions/persistence/agent-canonical-history-postgres.js'
+import { createPostgresCanonicalHistoryReader } from '../../src/modules/agent/chat/canonical.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

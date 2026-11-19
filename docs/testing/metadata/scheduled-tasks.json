@@ -26,7 +26,7 @@
   "apps/web-host/tests/scheduled-tasks/task-writes-postgres.test.ts": {
     "domain": "scheduled-tasks",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/tools/agent-scheduled-task-writes.ts",
+    "owner": "apps/web-host/src/modules/agent/tools/schedule.ts",
     "productionEntry": "Web Agent 持久租约 → Core 定时工具 → 共享 PostgreSQL 写入",
     "keyBehavior": "按已启用消费者开放写入；事务内核对账号、渠道和归属；单项、批量及停用时撤销文件授权；邮件预授权按目标和参数绑定确认及收据；真实 Worker 执行新增及改期任务并投递站内通知",
     "ci": "node-webui"

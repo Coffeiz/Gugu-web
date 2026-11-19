@@ -46,6 +46,7 @@ export interface TokenUsage {
   cache_read?: number
   cache_write?: number
   fresh_input?: number
+  context_input?: number
   total?: number
   cache_ratio?: number
 }

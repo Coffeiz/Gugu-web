@@ -1,9 +1,10 @@
+import { tablesSql } from '@gugu/core/data'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import { createApp } from '../../src/app.js'
-import { createHostCoreUndoOperations } from '../../src/modules/undo/persistence/core-operations.js'
+import { createHostCoreUndoOperations } from '../../src/modules/undo/service.js'
 import { createPostgresRuntime } from '@gugu/core/data'
 import { createRuntimeUndoTransactionPort } from '@gugu/core/undo'
 import { signedUserToken } from '../helpers/auth.js'
@@ -20,6 +21,7 @@ test('认证 Host 对便签提供预览、撤销和重做并隔离其他用户',
   const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema}` })
   const runtime = await createPostgresRuntime({ url: databaseUrl!, schema })
   try {
+    await pool.query(tablesSql('postgres').ragJobs)
     await pool.query(`CREATE TABLE mind_nodes (id integer PRIMARY KEY, user_id uuid NOT NULL, kind text, title text, content_md text, content_plain text, color text, captured_at timestamptz, deleted_at timestamptz, version integer, ref_snapshot json, updated_at timestamptz)`)
     await pool.query(`CREATE TABLE undo_operations (id text PRIMARY KEY, user_id uuid, undo_context_id text, group_id text, resource text, action text, target_refs json, before_state json, after_state json, actor_type text, status varchar(16), created_at timestamptz, expires_at timestamptz, undone_at timestamptz, failure_code text)`)
     const snapshot = { id: 1, kind: 'note', title: null, content_md: '正文', content_plain: '正文', color: null, captured_at: '2026-01-01T00:00:00.000Z', deleted_at: null, version: 1 }

@@ -5,8 +5,8 @@ import {mkdir,writeFile,readFile} from 'node:fs/promises'
 import {join,dirname} from 'node:path'
 import type {PoolClient} from 'pg'
 import {createImProductionFixture} from './production.fixtures.js'
-import {createImSessionRetention,ImSessionRetentionError} from '../../../src/modules/im/gateway/session-retention.js'
-import {createPostgresWebChatSession} from '../../../src/modules/agent-sessions/persistence/agent-chat-preparation.js'
+import {createImSessionRetention,ImSessionRetentionError} from '../../../src/modules/im/gateway/memory/retention.js'
+import {createPostgresWebChatSession} from '../../../src/modules/agent/chat/prepare.js'
 
 const ready=!!process.env.GUGU_IM_GATEWAY_TEST_DATABASE_URL&&!!process.env.GUGU_IM_FIXTURE_PYTHON
 test('真实PG会话限额：同事务回滚/终端与附件原子性、全部活跃边界、owner竞争与SKIPLOCKED',{

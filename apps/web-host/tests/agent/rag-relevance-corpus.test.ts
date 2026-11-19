@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import type { RagDocument } from '@gugu/core/agent/rag'
 import { createRagLexicalIndex } from '../../../../packages/core/src/agent/rag/lexical-index.js'
 import { configureRagJieba } from '../../../../packages/core/src/agent/rag/tokenizer.js'
-import { getAgentRagJieba } from '../../src/modules/agent-sessions/tools/agent-rag-jieba.js'
+import { getAgentRagJieba } from '../../src/modules/agent/rag/jieba.js'
 
 type Corpus = {
   owner_id: string

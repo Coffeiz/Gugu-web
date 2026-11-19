@@ -1,13 +1,13 @@
+import { agentReasoningSql } from '@gugu/database/postgres/migrations/0012_agent_reasoning'
 import assert from 'node:assert/strict'
 import {createHash,randomUUID} from 'node:crypto'
-import {readFile} from 'node:fs/promises'
 import {test} from 'node:test'
 import type {Pool} from 'pg'
 import {prepareContext,savePreparedContext,stableJson,type CanonicalRunContext,type RunCheckpoint,type RunIdentity,type Lease,type ProviderEvent,type RunCapabilities} from '@gugu/core/agent'
 import {ProviderRuntime,type ProviderHttpRequest} from '@gugu/core/providers'
-import {createProviderReasoningPersistence,AgentReasoningUnavailableError} from '../../src/modules/agent-sessions/persistence/agent-reasoning-persistence.js'
-import {createPostgresAgentRunStore} from '../../src/modules/agent-sessions/persistence/agent-run-store-postgres.js'
-import type {ResponsesReasoningBinding} from '../../src/modules/agent-sessions/persistence/agent-reasoning-bridge.js'
+import {createProviderReasoningPersistence,AgentReasoningUnavailableError} from '../../src/modules/agent/run/reasoning/active.js'
+import {createPostgresAgentRunStore} from '../../src/modules/agent/run/store.js'
+import type {ResponsesReasoningBinding} from '../../src/modules/agent/run/reasoning/bridge.js'
 
 const digest=(v:unknown)=>createHash('sha256').update(stableJson(v)).digest('hex')
 const owner='00000000-0000-4000-8000-000000000501',other='00000000-0000-4000-8000-000000000502'
@@ -52,7 +52,7 @@ test('隔离PG：真实Provider私有状态与checkpoint原子保存、重启精
    CREATE TABLE provider_reasoning_states(user_id uuid,session_id integer UNIQUE,version integer,state_version integer,status text,provider text,api_format text,model_id text,
     reasoning_persistence text,config_digest text,reasoning_config_digest text,source_run_id text,source_round_id text,sequence integer,state_kind text,encrypted_payload text,payload_nonce text,
     encrypted_data_key text,key_version integer,payload_digest text,payload_size integer,state_summary jsonb,invalidated_reason text,invalidated_at timestamptz,created_at timestamptz,last_used_at timestamptz,expires_at timestamptz,updated_at timestamptz)`)
-  await db.query(await readFile(new URL('../../src/modules/agent-sessions/persistence/agent-reasoning-active-schema.sql',import.meta.url),'utf8'))
+  await db.query(agentReasoningSql.agentReasoningActive)
   await db.query('INSERT INTO users VALUES($1,true),($2,true);',[owner,other]);await db.query('INSERT INTO conversation_sessions VALUES(1,$1),(2,$2)',[owner,other])
   await db.query("INSERT INTO agent_run_leases VALUES($1,1,$2,$3,1,clock_timestamp()+interval '1 hour')",[owner,identity.runId,lease.token])
   const binding=(id=identity):ResponsesReasoningBinding=>({identity:{ownerId:id.ownerId,sessionId:id.sessionId,provider:'openai',apiFormat:'responses',model:'synthetic-model',configDigest:'a'.repeat(64),reasoningConfigDigest:'b'.repeat(64)},

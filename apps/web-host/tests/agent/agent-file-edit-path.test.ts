@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { createEditFileTool, createToolRegistry } from '@gugu/core/tools'
-import { createWebAgentFileEditPort } from '../../src/modules/agent-sessions/tools/agent-file-edit.js'
+import { createWebAgentFileEditPort } from '../../src/modules/agent/tools/files/edit.js'
 
 test('edit_file 经 per-lease Host 逻辑路径解析、owner 查询和文件内容事务执行行修改', async () => {
   const root = await mkdtemp(join(tmpdir(), 'gugu-agent-file-edit-'))

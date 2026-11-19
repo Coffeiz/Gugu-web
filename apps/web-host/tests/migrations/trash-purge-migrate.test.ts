@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { Pool } from 'pg'
-import { applyAgentBaseMigration } from '../../src/migrations/agent-base-migrate.js'
-import { applyTrashPurgeMigration, checkTrashPurgeMigration } from '../../src/migrations/trash-purge-migrate.js'
+import { applyAgentBaseMigration } from '@gugu/database/postgres/migrations/0001_initialize'
+import { applyTrashPurgeMigration, checkTrashPurgeMigration } from '@gugu/database/postgres/migrations/0009_trash_purge'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

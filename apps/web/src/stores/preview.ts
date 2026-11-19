@@ -3,9 +3,17 @@ import { ref } from 'vue'
 import { nextZ } from '@/composables/core/windowz'
 import type { FileMeta } from '@/stores/filesCache'
 import type { LiveEventPayload } from '@/types/live-events'
+import type { PathFileRef } from '@/services/api'
 
 // 预览窗口也承载聊天附件等非库文件，故用 Partial<FileMeta>（只需 id/ext，其余按需）
-type PreviewFile = Partial<FileMeta>
+export type PreviewFile = Partial<FileMeta> & { workspaceFile?: PathFileRef }
+
+function samePreviewFile(left: PreviewFile, right: PreviewFile): boolean {
+  if (left.workspaceFile || right.workspaceFile)
+    return left.workspaceFile?.directoryId === right.workspaceFile?.directoryId
+      && left.workspaceFile?.relativePath === right.workspaceFile?.relativePath
+  return left.id === right.id
+}
 
 export interface PreviewWindow {
   id: number
@@ -162,7 +170,7 @@ export const usePreviewStore = defineStore('preview', () => {
   function open(f: PreviewFile, siblings: PreviewFile[] | null = null, forceRefresh = false, streamUrl?: string) {
     // Office（前端 HTML 渲染）与图片/视频/文本一样走浮动窗口；抽屉留给 PDF。
     if (isOfficeExt(f.ext)) {
-      const existing = windows.value.find(w => w.file.id === f.id)
+      const existing = windows.value.find(w => samePreviewFile(w.file, f))
       if (existing) {
         existing.file = f
         if (streamUrl) existing.streamUrl = streamUrl
@@ -190,7 +198,7 @@ export const usePreviewStore = defineStore('preview', () => {
       return
     }
     if (isImageExt(f.ext) || isSvgMime(f.mimeType) || isVideoExt(f.ext) || isTextExt(f.ext, f.mimeType) || isTextFallbackCandidate(f.ext, f.mimeType)) {
-      const existing = windows.value.find(w => w.file.id === f.id)
+      const existing = windows.value.find(w => samePreviewFile(w.file, f))
       if (existing) {
         existing.file = f
         if (streamUrl) existing.streamUrl = streamUrl

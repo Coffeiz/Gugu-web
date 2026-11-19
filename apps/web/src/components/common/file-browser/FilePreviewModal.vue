@@ -37,7 +37,7 @@
             <template v-else-if="blobUrl || videoSrc">
               <PdfViewer v-if="isPdf" :blobUrl="blobUrl ?? undefined" />
               <ImageViewer v-else-if="isImage"      :blobUrl="blobUrl ?? undefined" :upscale="isVectorImage" />
-              <TextViewer  v-else-if="isText"       :blobUrl="blobUrl ?? undefined" :ext="file?.ext" :fileKey="file?.id ?? file?.attach_id ?? undefined" :fileContext="file ?? null" @refresh="refreshTextPreview" />
+              <TextViewer  v-else-if="isText"       :blobUrl="blobUrl ?? undefined" :ext="file?.ext" :fileKey="file?.id ?? file?.attach_id ?? undefined" :fileContext="file ?? null" :read-only="!!file?.workspaceFile" @refresh="refreshTextPreview" />
               <VideoViewer v-else-if="isVideo"      :src="videoSrc ?? undefined" :refresh-src="refreshVideoSource" />
 
             </template>
@@ -62,9 +62,9 @@ import { useLiveStore } from '@/stores/live'
 import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
 import PdfViewer   from '@/components/common/viewers/PdfViewer.vue'
 
-import { CLIENT_ID, filesApi } from '@/services/api'
+import { CLIENT_ID, filesApi, pathFilesApi } from '@/services/api'
 import { isUnauthorizedResponse } from '@/services/authSession'
-import { isImageExt, isTextExt, isVideoExt, isPreviewAffectedByFileEvent } from '@/stores/preview'
+import { isImageExt, isTextExt, isVideoExt, isPreviewAffectedByFileEvent, type PreviewFile } from '@/stores/preview'
 import { nextZ, registerEsc } from '@/composables/core/windowz'
 import { usePreviewBlobCache, withPreviewCacheBust as withCacheBust } from '@/composables/shared/usePreviewBlobCache'
 import { useI18n } from 'vue-i18n'
@@ -73,7 +73,7 @@ import { useUiStore } from '@/stores/ui'
 
 const props = defineProps({
   show: Boolean,
-  file: { type: Object as PropType<Partial<FileMeta>>, default: undefined },
+  file: { type: Object as PropType<PreviewFile>, default: undefined },
 })
 const { t } = useI18n()
 const router = useRouter()
@@ -156,6 +156,8 @@ function revoke() {
 
 let loadSequence = 0
 async function refreshVideoSource(): Promise<string> {
+  const workspaceFile = props.file?.workspaceFile
+  if (workspaceFile) return pathFilesApi.contentUrl(workspaceFile)
   const id = props.file?.id
   if (typeof id !== 'number') throw new Error('无法刷新视频地址')
   const { url } = await filesApi.getStreamUrl(id)
@@ -169,7 +171,7 @@ watch(accountBoundaryEpoch, () => {
   loading.value = false
   error.value = null
 }, { flush: 'sync' })
-async function load(file: Partial<FileMeta>, refresh = false) {
+async function load(file: PreviewFile, refresh = false) {
   const sequence = ++loadSequence
   const accountEpoch = getAccountBoundaryEpoch()
   revoke()
@@ -194,7 +196,7 @@ async function load(file: Partial<FileMeta>, refresh = false) {
         const cached = previewBlobCache.get(key)
         if (cached) { blobUrl.value = cached; return }
       }
-      const dlUrl = (file.attach_id
+      const dlUrl = file.workspaceFile ? pathFilesApi.contentUrl(file.workspaceFile) : (file.attach_id
         ? `${BASE_URL}/agent/attachment/${file.attach_id}/download`
         : `${BASE_URL}/files/${file.id!}/download`) + bust
       const res = await fetch(dlUrl, { headers, credentials: 'include', cache: 'no-cache' })
@@ -214,7 +216,7 @@ async function load(file: Partial<FileMeta>, refresh = false) {
       }
       blobUrl.value = url
       // 强制刷新也要替换同一 key 的旧 blob，避免关闭后再次打开回到旧内容。
-      previewBlobCache.put(key, url, accountEpoch)
+      if (key) previewBlobCache.put(key, url, accountEpoch)
       currentCacheKey.value = key
     }
   } catch (e) {
@@ -262,7 +264,9 @@ async function handleDownload() {
   try {
     const file = props.file
     const filename = `${file.displayName}.${file.ext?.toLowerCase()}`
-    if (file.attach_id) {
+    if (file.workspaceFile) {
+      pathFilesApi.download(file.workspaceFile)
+    } else if (file.attach_id) {
       const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
       const res = await fetch(`${BASE_URL}/agent/attachment/${file.attach_id}/download`, {
         credentials: 'include',

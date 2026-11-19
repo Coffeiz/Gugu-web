@@ -4,9 +4,9 @@ import { WorkerConsumer } from '../../../workers/consumer.js'
 import { RedisStreamQueue } from '../../../workers/redis-stream-queue.js'
 import { RedisMessageLeaseStore } from '../../../workers/redis-message-lease.js'
 import { createRedisStreamCommands, RedisStreamCommandError } from '../../../adapters/cache/redis-stream-commands.js'
-import { createImInboundEnvelope } from './inbound-envelope.js'
-import { NODE_IM_INBOUND_STREAM, type NodeImBotBinding } from './inbox.js'
-import type { createPostgresImIngress } from './ingress.js'
+import { createImInboundEnvelope } from './inbound/envelope.js'
+import { NODE_IM_INBOUND_STREAM, type NodeImBotBinding } from './inbound/inbox.js'
+import type { createPostgresImIngress } from './inbound/ingress.js'
 
 type Commands = ReturnType<typeof createRedisStreamCommands>
 const group = 'gugu-node-im-v1'

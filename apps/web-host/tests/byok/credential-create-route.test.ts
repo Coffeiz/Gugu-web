@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import Fastify from 'fastify'
-import {registerCredentialCreateRoute} from '../../src/modules/byok/credential-create.js'
+import { registerCredentialCreateRoute } from '../../src/modules/byok/routes.js'
 test('创建凭据解析与 Pydantic 布尔、整数规则一致并要求认证',async()=>{
  const app=Fastify();let body:any
  registerCredentialCreateRoute(app,{requireUser:async(req,reply)=>{if(!req.headers.authorization)return reply.code(401).send()},ownerIdFromRequest:()=> '00000000-0000-4000-8000-000000000071',create:async(_owner,input)=>{body=input;return {id:1} as never}})

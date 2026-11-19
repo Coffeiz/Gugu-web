@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { createLocalUndoRetentionStorage } from '../../src/modules/files/undo-retention-storage.js'
+import { createLocalUndoRetentionStorage } from '../../src/modules/files/storage/undo.js'
 
 const owner = '11111111-1111-4111-8111-111111111111'
 

@@ -8,7 +8,7 @@ import {
   AgentToolEventSessionNotFoundError,
   createPostgresAgentToolEventDetails,
   registerAgentToolEventDetailsRoute,
-} from '../../src/modules/agent-sessions/agent-tool-event-details.js'
+} from '../../src/modules/agent/chat/tools.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

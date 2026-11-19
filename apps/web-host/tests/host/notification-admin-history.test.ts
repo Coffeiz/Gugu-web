@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { registerNotificationAdminHistoryRoutes } from '../../src/modules/notifications/routes/admin-history.js'
+import { registerNotificationAdminHistoryRoutes } from '../../src/modules/notifications/admin.js'
 
 test('管理员历史先鉴权，解析参数且保持删除幂等响应', async () => {
   const calls: unknown[] = []

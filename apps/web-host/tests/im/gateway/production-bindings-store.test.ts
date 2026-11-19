@@ -1,8 +1,8 @@
+import { imGatewaySql } from '@gugu/database/postgres/migrations/0013_im_gateway'
 import assert from 'node:assert/strict'
 import {randomUUID} from 'node:crypto'
-import {readFile} from 'node:fs/promises'
 import {test} from 'node:test'
-import {createImRuntimeBindingStore} from '../../../src/modules/im/gateway/production-bindings-store.js'
+import {createImRuntimeBindingStore} from '../../../src/modules/im/gateway/agent/store.js'
 
 const url=process.env.GUGU_IM_GATEWAY_TEST_DATABASE_URL
 test('真实PG：模型usage加密冻结/并发重放不覆写，冲突/跨scope/错密钥/密文篡改均拒绝，持锁client读取不争池或死锁',{skip:!url&&'需要显式隔离PG'},async()=>{
@@ -13,7 +13,7 @@ test('真实PG：模型usage加密冻结/并发重放不覆写，冲突/跨scope
   await admin.query(`CREATE SCHEMA "${schema}"`)
   await pool.query('CREATE TABLE users(id uuid PRIMARY KEY);CREATE TABLE conversation_sessions(id integer PRIMARY KEY,user_id uuid)')
   await pool.query('INSERT INTO users VALUES($1),($2)',[owner,other]);await pool.query('INSERT INTO conversation_sessions VALUES(1,$1),(2,$1),(3,$2)',[owner,other])
-  await pool.query(await readFile(new URL('../../../src/modules/im/gateway/production-schema.sql',import.meta.url),'utf8'))
+  await pool.query(imGatewaySql.production)
   const store=createImRuntimeBindingStore(pool,secret)
   await Promise.all([store.freeze(identity,binding),store.freeze(identity,structuredClone(binding))])
   assert.deepEqual(await store.read(identity),{v:1,...binding})

@@ -72,7 +72,6 @@ watch([visibleFolders, visibleFiles], () => {
 </script>
 
 <style scoped>
-.file-browser-grid.file-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(158px,1fr)); gap:10px; align-content:start; }
 .fc-thumb-tiny,.fc-thumb-full { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; }
 .fc-thumb-tiny { filter:blur(10px); transform:scale(1.06); opacity:.7; }
 .fc-thumb-full { opacity:0; transition:opacity .2s; }

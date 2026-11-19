@@ -3,7 +3,7 @@ import test from 'node:test'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { createOnboardingSurpriseMp3Reader } from '../../src/modules/onboarding/surprise-asset.js'
+import { createOnboardingSurpriseMp3Reader } from '../../src/modules/onboarding/assets.js'
 
 test('选择文件名排序后的首个 MP3 并返回无扩展名文件名', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'gugu-onboarding-assets-test-'))

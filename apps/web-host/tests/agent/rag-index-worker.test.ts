@@ -13,10 +13,10 @@ import { createSqlRagRebuildWorker } from '../../../../packages/core/src/agent/r
 import { enqueueMissingAgentRagBaselines, readAgentRagRebuildProgress } from '../../../../packages/core/src/agent/rag/rebuild-worker.js'
 import { enqueueCalendarRagIndex } from '../../../../packages/core/src/calendar/create-store.js'
 import { enqueueMindRagIndex } from '../../../../packages/core/src/mind/rag-index-job.js'
-import { startAgentRagIndexWorker } from '../../src/modules/agent-sessions/rag-rebuild.js'
-import { startRagIndexWorker } from '../../src/modules/agent-sessions/rag-index-worker.js'
-import { createLocalAgentKnowledgeReadStore } from '../../src/modules/agent-sessions/tools/agent-rag-knowledge-store.js'
-import { createAgentImMemoryRagMutationPorts } from '../../src/modules/agent-sessions/persistence/agent-im-memory-rag-mutations.js'
+import { startAgentRagIndexWorker } from '../../src/modules/agent/rag/rebuild.js'
+import { startRagIndexWorker } from '../../src/modules/agent/rag/worker.js'
+import { createLocalAgentKnowledgeReadStore } from '../../src/modules/agent/rag/knowledge.js'
+import { createAgentImMemoryRagMutationPorts } from '../../src/modules/agent/memory/invalidate.js'
 
 const tick = async (count = 1) => {
   for (let i = 0; i < count; i++) await new Promise(resolve => setImmediate(resolve))

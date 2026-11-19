@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import type { SqlDataRuntime } from '@gugu/core/data'
-import { createAgentToolRegistry } from '../../src/modules/agent-sessions/tools/agent-tool-registry.js'
-import { createWebAgentFileGrepPort } from '../../src/modules/agent-sessions/tools/agent-file-grep.js'
+import { createAgentToolRegistry } from '../../src/modules/agent/tools/registry.js'
+import { createWebAgentFileGrepPort } from '../../src/modules/agent/tools/files/grep.js'
 
 const identity = { ownerId: '00000000-0000-4000-8000-000000000001', sessionId: '71', runId: 'grep-synthetic' }
 const lease = { identity, token: 'lease-synthetic', fence: 5, mode: 'start', cancelRequested: false,

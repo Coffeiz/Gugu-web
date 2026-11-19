@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 import { Kysely, SqliteDialect } from 'kysely'
 import { afterAll, afterEach, describe, expect, it } from 'vitest'
-import { createByokMediaCapabilityProbe } from '../../src/byok/media-capability-probe.js'
+import { createByokMediaCapabilityProbe } from '../../../../apps/web-host/src/modules/byok/checks/capabilities.js'
 
 interface TestDb {
   user_provider_credentials: {

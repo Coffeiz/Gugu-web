@@ -31,6 +31,12 @@ importers:
       '@gugu/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@gugu/gateway':
+        specifier: workspace:*
+        version: link:../../packages/gateway
+      '@gugu/log':
+        specifier: workspace:*
+        version: link:../../packages/log
       '@microsoft/mxc-sdk':
         specifier: 1.0.1
         version: 1.0.1
@@ -308,9 +314,18 @@ importers:
       '@gugu/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@gugu/database':
+        specifier: workspace:*
+        version: link:../../packages/database
       '@gugu/fs':
         specifier: workspace:*
         version: link:../../packages/fs
+      '@gugu/gateway':
+        specifier: workspace:*
+        version: link:../../packages/gateway
+      '@gugu/log':
+        specifier: workspace:*
+        version: link:../../packages/log
       '@gugu/loopscope':
         specifier: workspace:*
         version: link:../../packages/loopscope
@@ -552,6 +567,9 @@ importers:
 
   packages/core:
     dependencies:
+      '@gugu/database':
+        specifier: workspace:*
+        version: link:../database
       '@gugu/sandbox':
         specifier: workspace:*
         version: link:../sandbox
@@ -603,6 +621,29 @@ importers:
         specifier: 8.23.1
         version: 8.23.1
 
+  packages/database:
+    dependencies:
+      kysely:
+        specifier: 0.29.8
+        version: 0.29.8
+    devDependencies:
+      '@types/better-sqlite3':
+        specifier: 9.6.0
+        version: 9.6.0
+      '@types/node':
+        specifier: 26.6.6
+        version: 26.6.6
+      '@types/pg':
+        specifier: 8.23.1
+        version: 8.23.1
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+    optionalDependencies:
+      better-sqlite3:
+        specifier: 13.2.0
+        version: 13.2.0
+
   packages/fs:
     devDependencies:
       '@types/node':
@@ -614,6 +655,21 @@ importers:
       vitest:
         specifier: 4.1.12
         version: 4.1.12(@types/node@26.6.6)(@vitest/coverage-v8@4.1.12)(happy-dom@21.0.1)(jsdom@29.1.1(@noble/hashes@1.8.0))(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
+
+  packages/gateway:
+    dependencies:
+      '@gugu/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: 26.6.6
+        version: 26.6.6
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
+  packages/log: {}
 
   packages/loopscope: {}
 
@@ -4427,11 +4483,11 @@ packages:
   lodash@4.18.1:
     resolution: {integrity: sha512-dMInicTPVE8d1e5otfwmmjlxkZoUpiVLwyeTdUsi/Caj/gfzzblBcCE5sRHV/AsjuCmxWrte2TNGSYuCeCq+0Q==}
 
-  lop@0.4.2:
-    resolution: {integrity: sha512-RefILVDQ4DKoRZsJ4Pj22TxE3omDO47yFpkIBoDKzkqPRISs5U1cnAdg/5583YPkWPaLIYHOKRMQSvjFsO26cw==}
-
   long@5.3.2:
     resolution: {integrity: sha512-mNAgZ1GmyNhD7AuqnTG3/VQ26o760+ZYBPKjPvugO8+nLbYfX6TVpJPseBvopbdY+qpZ/lKUnmEc1LeZYS3QAA==}
+
+  lop@0.4.2:
+    resolution: {integrity: sha512-RefILVDQ4DKoRZsJ4Pj22TxE3omDO47yFpkIBoDKzkqPRISs5U1cnAdg/5583YPkWPaLIYHOKRMQSvjFsO26cw==}
 
   lowercase-keys@2.0.0:
     resolution: {integrity: sha512-tqNXrS78oMOE73NMxK4EMLQsQowWf8jKooH9g7xPavRT706R6bkQJ6DY2Te7QukaZsulxa30wQ7bk0pm4XiHmA==}
@@ -9840,13 +9896,13 @@ snapshots:
 
   lodash@4.18.1: {}
 
+  long@5.3.2: {}
+
   lop@0.4.2:
     dependencies:
       duck: 0.1.12
       option: 0.2.4
       underscore: 1.13.8
-
-  long@5.3.2: {}
 
   lowercase-keys@2.0.0: {}
 

@@ -26,6 +26,8 @@ test('SMTP environment settings stay private while enabling password recovery', 
     user: 'sender@example.test',
     password: 'synthetic-smtp-password',
     fromAddress: '咕咕',
+    toAddress: '',
+    feedbackEnabled: true,
     enabled: true,
     useSsl: false,
   })

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { PoolClient } from 'pg'
 import type { CanonicalRunContext } from '@gugu/core/agent'
-import { applyCanonicalSnapshotEffects } from '../../src/modules/agent-sessions/persistence/agent-snapshot-effects-postgres.js'
+import { applyCanonicalSnapshotEffects } from '../../src/modules/agent/context/effects.js'
 
 const identity = { ownerId: 'owner', sessionId: '1', runId: 'run' }
 const context = { identity, historyBaseline: { baselineSeq: 3, baselineHash: 'baseline', snapshotHash: 'before' }, sourceEffects: {

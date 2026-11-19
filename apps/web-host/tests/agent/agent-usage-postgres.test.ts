@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { PoolClient } from 'pg'
-import { recordAgentUsage, type AgentUsageConfig } from '../../src/modules/agent-sessions/persistence/agent-usage-postgres.js'
+import { recordAgentUsage, type AgentUsageConfig } from '../../src/modules/agent/run/usage.js'
 
 const identity = { ownerId: 'synthetic', sessionId: '7', runId: 'run' }
 const usage = { input: 8, output: 4, cacheRead: 0, cacheWrite: 0, contextInput: null }

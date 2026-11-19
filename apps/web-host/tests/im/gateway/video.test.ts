@@ -5,7 +5,7 @@ import {promisify} from 'node:util'
 import {mkdtemp,readFile,readdir,rm,writeFile} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
-import {createImVideoProcessor,ImVideoCleanupError,parseImVideoProbe} from '../../../src/modules/im/gateway/video.js'
+import {createImVideoProcessor,ImVideoCleanupError,parseImVideoProbe} from '../../../src/modules/im/gateway/media/video.js'
 
 const run=promisify(execFile),signal=()=>new AbortController().signal
 async function fixture(fn:(root:string)=>Promise<void>){const root=await mkdtemp(join(tmpdir(),'gugu-video-test-'));try{await fn(root)}finally{await rm(root,{recursive:true,force:true})}}

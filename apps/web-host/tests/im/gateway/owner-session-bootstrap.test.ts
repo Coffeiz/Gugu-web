@@ -4,12 +4,12 @@ import {test} from 'node:test'
 import type {ProviderTransport} from '@gugu/core/providers'
 import {createNodeImHostRuntime} from '../../../src/modules/im/gateway/bootstrap.js'
 import {createRedisStreamCommands} from '../../../src/adapters/cache/redis-stream-commands.js'
-import {createImOwnerSessions} from '../../../src/modules/im/gateway/owner-session.js'
+import {createImOwnerSessions} from '../../../src/modules/im/gateway/agent/owner.js'
 import {createImProductionFixture} from './production.fixtures.js'
-import {createPostgresImAccess} from '../../../src/modules/im/gateway/access-postgres.js'
+import {createPostgresImAccess} from '../../../src/modules/im/gateway/inbound/access.js'
 import {imActorInputFromPayload} from '@gugu/core/im/access'
-import {createImInboundEnvelope} from '../../../src/modules/im/gateway/inbound-envelope.js'
-import {decryptAgentDispatchInput} from '../../../src/modules/agent-sessions/persistence/agent-run-dispatch-postgres.js'
+import {createImInboundEnvelope} from '../../../src/modules/im/gateway/inbound/envelope.js'
+import {decryptAgentDispatchInput} from '../../../src/modules/agent/run/dispatch.js'
 
 const databaseUrl=process.env.GUGU_IM_GATEWAY_TEST_DATABASE_URL,redisUrl=process.env.GUGU_IM_BOOTSTRAP_TEST_REDIS_URL,python=process.env.GUGU_IM_FIXTURE_PYTHON
 const response=(value:unknown)=>({status:200,headers:{},body:(async function*(){yield Buffer.from(typeof value==='string'?value:JSON.stringify(value))})(),cancel(){}})

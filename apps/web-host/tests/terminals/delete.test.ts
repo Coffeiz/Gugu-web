@@ -43,7 +43,7 @@ test('终端视图删除限定owner及关联会话，原子删除事件，并发
 })
 
 import Fastify from 'fastify'
-import {registerTerminalDeleteRoute} from '../../src/modules/terminals/delete.js'
+import {registerTerminalDeleteRoute} from '../../src/modules/terminals/routes.js'
 import {installHttpErrorHandler} from '../../src/http/errors.js'
 import {CoreError} from '@gugu/core'
 

@@ -1,13 +1,13 @@
+import { imGatewaySql } from '@gugu/database/postgres/migrations/0013_im_gateway'
 import assert from 'node:assert/strict'
 import {randomUUID} from 'node:crypto'
-import {readFile} from 'node:fs/promises'
 import {test} from 'node:test'
 import type {Pool} from 'pg'
 import type {RunEvent} from '@gugu/core/agent'
-import {createQqClient} from '../../../src/modules/im/gateway/qq/client.js'
-import {createQqSender} from '../../../src/modules/im/gateway/qq/sender.js'
-import {createPersistentQqProjection} from '../../../src/modules/im/gateway/qq/persistent.js'
-import {withPostgresImDeliveryStore,type ImDeliverySession} from '../../../src/modules/im/gateway/delivery-store.js'
+import {createQqClient} from '../../../src/modules/im/gateway/platforms/qq/client.js'
+import {createQqSender} from '../../../src/modules/im/gateway/platforms/qq/sender.js'
+import {createPersistentQqProjection} from '../../../src/modules/im/gateway/platforms/qq/persistent.js'
+import {withPostgresImDeliveryStore,type ImDeliverySession} from '../../../src/modules/im/gateway/delivery/store.js'
 
 const identity={ownerId:'11111111-1111-4111-8111-111111111111',sessionId:'1',runId:'synthetic-qq-projection'},secretKey='synthetic-projection-key'
 const target={id:'synthetic-peer',chatType:'c2c' as const,messageFormat:'markdown' as const,messageId:'synthetic-inbound'}
@@ -205,7 +205,7 @@ test('真实PG加密projection+真实QQ HTTP适配：重建保持stream/index/se
  try{
   await admin.query(`CREATE SCHEMA "${schema}"`);await pool.query('CREATE TABLE users(id uuid PRIMARY KEY);CREATE TABLE conversation_sessions(id integer PRIMARY KEY,user_id uuid)')
   await pool.query('INSERT INTO users VALUES($1)',[identity.ownerId]);await pool.query('INSERT INTO conversation_sessions VALUES(1,$1)',[identity.ownerId])
-  await pool.query(await readFile(new URL('../../../src/modules/im/gateway/delivery-schema.sql',import.meta.url),'utf8'))
+  await pool.query(imGatewaySql.delivery)
   const send=(e:RunEvent)=>withPostgresImDeliveryStore(pool,identity,async receipts=>createPersistentQqProjection({identity,target,policyVersion:'v1',receipts,sender:p.sender,authorize:p.authorize,now:()=>time,
    acceptedEvidence:{scope:{ownerId:identity.ownerId,platform:'qq',botId:'7',chatType:'c2c',chatId:null,platformUserId:target.id},recipient:target.id,async source(){return{sourceEventIds:['100-1'],sourceMessageIds:['inbound'],sourceEventIdsComplete:true}}}}).project({identity,event:e,deliveryId:`d${e.sequence}`}),{secretKey,platform:'qq'})
   await send(event(1,'token',{text:'第一行\n'}));time=1200;await send(event(2,'token',{text:'第二行'}));

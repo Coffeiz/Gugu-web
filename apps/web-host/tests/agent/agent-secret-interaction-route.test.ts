@@ -1,11 +1,11 @@
+import { encryptByokEnvelope } from '../../src/modules/byok/crypto.js'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 import Fastify from 'fastify'
 import { Pool } from 'pg'
-import { createAgentSecretInteractionService, registerAgentSecretInteractionRoutes } from '../../src/modules/agent-sessions/agent-secret-interaction-route.js'
-import { createPostgresSecretInteraction, SecretInteractionError } from '../../src/modules/agent-sessions/persistence/agent-secret-interaction-postgres.js'
-import { encryptByokEnvelope } from '../../src/modules/agent/model-config/byok.js'
+import { createAgentSecretInteractionService, registerAgentSecretInteractionRoutes } from '../../src/modules/agent/interactions/secret.js'
+import { createPostgresSecretInteraction, SecretInteractionError } from '../../src/modules/agent/interactions/secrets.js'
 
 test('凭据路由认证、拒绝泄露与受控状态码', async () => {
   const app = Fastify(); let count = 0

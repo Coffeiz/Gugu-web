@@ -3,7 +3,7 @@ import { lstat, mkdtemp, mkdir, readFile, rm, symlink, utimes, writeFile } from 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { cleanupStaleWebDownloadStaging } from '../../src/modules/agent-sessions/tools/agent-web-download.js'
+import { cleanupStaleWebDownloadStaging } from '../../src/modules/agent/tools/files/download.js'
 
 test('Web 下载启动时只清理过期工具暂存，不碰新目录或符号链接目标', async () => {
   const root = await mkdtemp(join(tmpdir(), 'gugu-web-download-cleanup-test-'))

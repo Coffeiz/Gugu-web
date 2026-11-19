@@ -26,7 +26,7 @@ import { openLocalFile,removeLocalTree,writeLocalFile } from '@gugu/fs/node'
 
 import { lockOwnerMemory,type createOwnerMemoryLock } from '../../shared/owner-memory-lock.js'
 
-import type { createLocalUserMemoryVectorStore } from '../byok/memory-vector-store.js'
+import type { createLocalUserMemoryVectorStore } from '../agent/memory/store.js'
 
 const maxMemoryBytes = 50_000_000
 const maxPublicationBytes = 6 * maxMemoryBytes

@@ -6,9 +6,9 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { Kysely, PostgresDialect } from 'kysely'
 import type { SqlDataRuntime } from '@gugu/core/data'
-import type { FileUploadOperations } from '../../src/modules/files/file-upload.js'
-import { createWebAgentSaveUploadedFilePort } from '../../src/modules/agent-sessions/tools/agent-file-save-attachment.js'
-import { createAgentToolRegistry } from '../../src/modules/agent-sessions/tools/agent-tool-registry.js'
+import type { FileUploadOperations } from '../../src/modules/files/upload.js'
+import { createWebAgentSaveUploadedFilePort } from '../../src/modules/agent/tools/files/save.js'
+import { createAgentToolRegistry } from '../../src/modules/agent/tools/registry.js'
 
 test('save_uploaded_file 经 Host adapter 暂存真实附件字节、绑定租约并按收据恢复', async () => {
   const root = await mkdtemp(join(tmpdir(), 'gugu-agent-save-attachment-'))

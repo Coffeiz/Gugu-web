@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict'
 import {randomUUID} from 'node:crypto'
 import {test} from 'node:test'
-import {createPostgresImConversationStore} from '../../../src/modules/im/gateway/conversation-postgres.js'
-import {createPostgresImAccess} from '../../../src/modules/im/gateway/access-postgres.js'
+import {createPostgresImConversationStore} from '../../../src/modules/im/gateway/agent/conversations.js'
+import {createPostgresImAccess} from '../../../src/modules/im/gateway/inbound/access.js'
 import {imActorInputFromPayload} from '@gugu/core/im/access'
-import {createImDispatchOrder} from '../../../src/modules/im/gateway/im-dispatch-order.js'
-import {createPostgresAgentDispatch,enqueueAgentRunLocked,type AgentDispatchInput} from '../../../src/modules/agent-sessions/persistence/agent-run-dispatch-postgres.js'
-import {registerAgentRunStartupLocked} from '../../../src/modules/agent-sessions/persistence/agent-run-startup-postgres.js'
+import {createImDispatchOrder} from '../../../src/modules/im/gateway/inbound/order.js'
+import {createPostgresAgentDispatch,enqueueAgentRunLocked,type AgentDispatchInput} from '../../../src/modules/agent/run/dispatch.js'
+import {registerAgentRunStartupLocked} from '../../../src/modules/agent/run/start.js'
 import {createImProductionFixture} from './production.fixtures.js'
 const databaseUrl=process.env.GUGU_IM_GATEWAY_TEST_DATABASE_URL,python=process.env.GUGU_IM_FIXTURE_PYTHON
 test('真实PG跨会话IM顺序：同peer先入队先领取，其他Bot/群/peer隔离，完整密封证明和逆序early锚点保留',{

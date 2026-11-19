@@ -10,9 +10,9 @@ import { createCanonicalSourceLoader, stableJson } from '@gugu/core/agent'
 import type { CanonicalContextPorts, CanonicalRunContext, AgentRunnerPorts, RunCheckpoint, RunEvent } from '@gugu/core/agent'
 import { ProviderStreamSanitizer, stripThinking } from '@gugu/core/providers'
 import { createAgentRuntime } from '@gugu/core/agent'
-import { createAgentToolRegistry } from '../../src/modules/agent-sessions/tools/agent-tool-registry.js'
-import { agentContextAccessScope } from '../../src/modules/agent/model-config/access-scope.js'
-import { bindProviderSelection } from '../../src/modules/agent/model-config/provider-resolver.js'
+import { createAgentToolRegistry } from '../../src/modules/agent/tools/registry.js'
+import { agentContextAccessScope } from '../../src/modules/agent/llm/access.js'
+import { bindProviderSelection } from '../../src/modules/agent/llm/bind.js'
 
 const digest = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')
 type RuntimePorts = Omit<AgentRunnerPorts<CanonicalRunContext>, 'context' | 'execution' | 'reply' | 'provider'>

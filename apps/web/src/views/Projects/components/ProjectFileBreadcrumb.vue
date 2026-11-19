@@ -10,7 +10,7 @@
       data-bc-idx="-1" @click="emit('navigate', -1)">
       <span class="bc-label">{{ t('sharedUi.projectFiles') }}</span>
     </button>
-    <RuntimeBreadcrumbTarget v-else class="bc-seg" target-id="bc:-1"
+    <RuntimeBreadcrumbTarget v-else class="bc-seg" :target-id="breadcrumbSurfaceId(runtimeScope, -1)"
       :surface-id="breadcrumbSurfaceId(runtimeScope, -1)"
       data-bc-idx="-1" @click="emit('navigate', -1)">
         <span class="bc-label">{{ t('sharedUi.projectFiles') }}</span>
@@ -18,7 +18,7 @@
     <template v-for="(segment, index) in folderStack" :key="segment.id">
       <Icon name="action.next" :size="10" class="bc-sep" />
       <RuntimeBreadcrumbTarget v-if="index < folderStack.length - 1" class="bc-seg"
-        :target-id="`bc:${index}`"
+        :target-id="breadcrumbSurfaceId(runtimeScope, index)"
         :surface-id="breadcrumbSurfaceId(runtimeScope, index)"
         :data-bc-idx="index"
         @click="emit('navigate', index)">
@@ -33,7 +33,6 @@
 import Icon from '@/components/common/icons/Icon.vue'
 import type { PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { FolderMeta } from '@/stores/filesCache'
 import FileBrowserBreadcrumb from '@/components/common/file-browser/FileBrowserBreadcrumb.vue'
 import RuntimeBreadcrumbTarget from '@/components/common/file-browser/RuntimeBreadcrumbTarget.vue'
 import { breadcrumbSurfaceId } from '@/interaction/runtime/adapters/file/fileRuntimeAdapter'
@@ -42,7 +41,7 @@ const { t } = useI18n()
 defineProps({
   canGoBack: Boolean,
   canGoForward: Boolean,
-  folderStack: { type: Array as PropType<FolderMeta[]>, required: true },
+  folderStack: { type: Array as PropType<Array<{ id: number | string; name: string }>>, required: true },
   runtimeScope: { type: String, required: true },
 })
 const emit = defineEmits<{

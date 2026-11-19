@@ -9,56 +9,57 @@ import { createImRunDeliveryRecovery } from '@gugu/core/im/run-delivery'
 import { createRedisAgentCancellationCommands, createRedisEventPublisher } from '../../../adapters/cache/redis-events.js'
 import { createRedisLiveSubscription } from '../../../adapters/cache/redis-live-subscription.js'
 import { createRedisStreamCommands } from '../../../adapters/cache/redis-stream-commands.js'
-import { createByokEnvelope, readConfiguredByokMasterKeys } from '../../../adapters/security/byok-envelope.js'
+import { createByokEnvelope, readConfiguredByokMasterKeys } from '../../byok/crypto.js'
 import { normalizeOwnerId } from '../../../shared/owner-context.js'
-import { createRedisAgentRunCancellationPort } from '../../agent-sessions/persistence/agent-run-cancellation-redis.js'
-import { createPostgresAgentRunStore } from '../../agent-sessions/persistence/agent-run-store-postgres.js'
-import { createPostgresAgentDispatch } from '../../agent-sessions/persistence/agent-run-dispatch-postgres.js'
+import { createRedisAgentRunCancellationPort } from '../../agent/run/cancel.js'
+import { createPostgresAgentRunStore } from '../../agent/run/store.js'
+import { createPostgresAgentDispatch } from '../../agent/run/dispatch.js'
 import { createAgentDispatchWorker } from '@gugu/core/agent'
-import { createFilesystemAuthorizationConfirmationStore } from '../../agent-sessions/filesystem-authorization-confirmations.js'
-import { createImPlatformSettingsReader } from '../platform-settings.js'
+import { createFilesystemAuthorizationConfirmationStore } from '../../agent/sandbox/confirmations.js'
+import { createImPlatformSettingsReader } from '../settings.js'
 import type { createMcpRuntime } from '../../mcp/runtime.js'
 import { createImHostLifecycle, acquireImHostOwnership, readImRuntimeOwnership, ImHostAssemblyCleanupError, type ImRuntimeOwnership } from './host-runtime.js'
 import { assertImHostSchema, createImRuntimeSettings } from './host-settings.js'
 import { createImHostScans } from './host-scans.js'
-import { createImInteractionRecovery } from './interaction-recovery.js'
+import { createImInteractionRecovery } from './interactions/recover.js'
 import { createGatewayBotConfig, createGatewayConfigChangePublisher, type TrustedGatewayBot } from './bot-config.js'
-import { createGatewaySupervisor } from './supervisor.js'
+import { createGatewaySupervisor } from '@gugu/gateway'
 import { createPlatformConnections } from './platform-connections.js'
-import { createQqSocketFactory } from './qq/socket.js'
-import { createQqMessagePreparer } from './qq/prepare.js'
-import { readTrustedQqMessageFormat } from './qq/format.js'
-import { createFeishuWsNetwork } from './feishu/ws-network.js'
-import { createPostgresImAttachmentIngress } from './attachment-ingress.js'
-import { createPostgresImGatewayAdmission } from './admission-postgres.js'
-import { createPostgresImControls } from './controls-postgres.js'
-import { createPostgresImNativeInteractions } from './native-interactions-postgres.js'
-import { createPostgresImAccess } from './access-postgres.js'
-import { createConfiguredImAgentProviderBinding } from './provider-binding.js'
-import { createPostgresImIngress } from './ingress.js'
-import { createImAgentReconstructor, imActorInputForDispatch } from './agent-reconstructor.js'
+import { createQqSocketFactory } from './platforms/qq/socket.js'
+import { createQqMessagePreparer } from './platforms/qq/prepare.js'
+import { readTrustedQqMessageFormat } from './platforms/qq/format.js'
+import { createFeishuWsNetwork } from './platforms/feishu/ws-network.js'
+import { createPostgresImAttachmentIngress } from './inbound/attachments.js'
+import { createPostgresImGatewayAdmission } from './inbound/admission.js'
+import { createPostgresImControls } from './attention/controls.js'
+import { createPostgresImNativeInteractions } from './interactions/store.js'
+import { createPostgresImAccess } from './inbound/access.js'
+import { createConfiguredImAgentProviderBinding } from './agent/provider.js'
+import { createPostgresImIngress } from './inbound/ingress.js'
+import { createImAgentReconstructor, imActorInputForDispatch } from './agent/reconstruct.js'
 import { createNodeImWorker } from './worker.js'
-import { createRedisImPendingAskStore } from './pending-ask.js'
-import { createPostgresRedisImAttentionSnapshot } from './attention-snapshot.js'
-import { createPostgresImAttentionRuntime } from './attention-runtime.js'
-import { createPostgresImAcceptedFactsReader } from './attention-ledger.js'
-import { withPostgresImDeliveryStore } from './delivery-store.js'
-import { createImReflectionService } from './reflection-postgres.js'
-import { createImVoiceSelection } from './voice-config.js'
-import { createImOwnerSessions } from './owner-session.js'
-import { createImProductionCompact } from './production-compaction.js'
-import { createImDispatchOrder } from './im-dispatch-order.js'
-import { createImRetiredInbound } from './retired-inbound.js'
-import { createImSessionRetention,ImSessionRetentionError } from './session-retention.js'
-import {createImSessionDelete,ImSessionDeleteUnavailable} from './session-delete.js'
-import { createImHistoryRetention } from './history-retention.js'
-import { createPostgresChatAttachmentDraftDeletePorts } from '../../agent/attachment-staging-postgres.js'
-import { createImVoiceCache, ImVoiceCacheError } from './voice-cache.js'
-import { createImAttentionVoiceSource } from './voice-attention-source.js'
-import { createImVoiceTranscriber } from './voice-runtime.js'
+import { createRedisImPendingAskStore } from './interactions/ask.js'
+import { createPostgresRedisImAttentionSnapshot } from './attention/snapshot.js'
+import { createPostgresImAttentionRuntime } from './attention/runtime.js'
+import { createPostgresImAcceptedFactsReader } from './attention/ledger.js'
+import { withPostgresImDeliveryStore } from './delivery/store.js'
+import { createImReflectionService } from './memory/jobs.js'
+import { createImVoiceSelection } from './media/config.js'
+import { createImOwnerSessions } from './agent/owner.js'
+import { createImProductionCompact } from './memory/compact.js'
+import { createImDispatchOrder } from './inbound/order.js'
+import { createImRetiredInbound } from './inbound/retired.js'
+import { createImSessionRetention,ImSessionRetentionError } from './memory/retention.js'
+import {createImSessionDelete,ImSessionDeleteUnavailable} from './agent/delete.js'
+import { createImHistoryRetention } from './memory/history.js'
+import { createPostgresChatAttachmentDraftDeletePorts } from '../../agent/attachments/persistence.js'
+import { createImVoiceCache, ImVoiceCacheError } from './media/cache.js'
+import { createImAttentionVoiceSource } from './attention/transcript.js'
+import { createImVoiceTranscriber } from './media/voice.js'
 import { readConfigOverride } from '../../../adapters/config/config-override-file.js'
-import type { ImReflectionService } from './reflection-contracts.js'
-import { createImProductionResources, createImProductionDelivery, createImProductionHistory, createImProductionReflectionBindings, imProductionProvider, type ImProductionResourcesOptions } from './production-resources.js'
+import type { ImReflectionService } from './memory/contracts.js'
+import { createImProductionResources, createImProductionDelivery, createImProductionHistory, createImProductionReflectionBindings, imProductionProvider, type ImProductionResourcesOptions } from './agent/resources.js'
+import type { AgentObservationPort, AgentRunLogPort } from '@gugu/core/agent'
 
 export interface NodeImHostOptions {
   pool: Pool; deliveryPool: Pool; core: SqlDataRuntime; secretKey: string; redisUrl: string | null
@@ -67,7 +68,9 @@ export interface NodeImHostOptions {
   /** 与Web API实际消费的同一MCP runtime；不注册尚未装配的MCP工具。 */
   mcpRuntime?: Pick<ReturnType<typeof createMcpRuntime>, 'invalidate'>
   onReflection?(service: ImReflectionService): void
-  diagnose(code: string): void
+  observation?: AgentObservationPort
+  log?: AgentRunLogPort
+  diagnose(code: string, error?: unknown): void
   /** 隔离整链路测试只替换平台/Provider网络，不替换业务resources、权限或持久化。 */
   testing?: { platform?: Pick<Parameters<typeof createPlatformConnections>[0], 'transport' | 'resolve' | 'qqSocket' | 'feishuNetwork' | 'createFeishuSdk'>
     provider?: ImProductionResourcesOptions['provider']; intervalMs?: number }
@@ -77,7 +80,7 @@ export interface NodeImHostOptions {
 export function createNodeImHostRuntime(options: NodeImHostOptions) {
   let reflection: ImReflectionService | undefined, lastIssue: string | null = null
   let sessionDelete:ReturnType<typeof createImSessionDelete>|undefined
-  const report = (code: string) => { lastIssue = code; try { options.diagnose(code) } catch { /* 诊断不能改变持久消息语义。 */ } }
+  const report = (code: string, error?: unknown) => { lastIssue = code; try { options.diagnose(code, error) } catch { /* 诊断不能改变持久消息语义。 */ } }
   const runtime = createImHostLifecycle({ ownership: options.ownership ?? readImRuntimeOwnership(options.environment),
     acquire: () => {
       // 两条常驻PG连接之外，入站事务与Provider配置快照需要独立借用连接。
@@ -262,7 +265,7 @@ export function createNodeImHostRuntime(options: NodeImHostOptions) {
         {beforeClaim:createImDispatchOrder({secretKey:options.secretKey,diagnose:report}).beforeClaim})
       const reconstruct = createImAgentReconstructor({ pool: options.pool, deliveryPool: options.deliveryPool, secretKey: options.secretKey, redis, subscribe,
         access, readRoute, readReconstructionStatus: dispatch.readReconstructionStatus, history, resources: createImProductionResources({ ...production, reflection }),
-        verifyPendingAsk: ingress.verifyPendingAskRun,
+        verifyPendingAsk: ingress.verifyPendingAskRun, observation: options.observation, log: options.log,
         async bind(lease, actor, checkpoint) {
           const bot = await access.readBot(actor); if (!bot) return null
           return model.bindRun(lease.identity, actor, bot, await memoryEnabled(), lease.input.locale,

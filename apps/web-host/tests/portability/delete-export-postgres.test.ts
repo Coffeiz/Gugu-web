@@ -5,7 +5,7 @@ import {mkdir,mkdtemp,readFile,rm,rmdir,writeFile,symlink} from 'node:fs/promise
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {Pool} from 'pg'
-import {createPostgresDataExportDeleter} from '../../src/modules/data-portability/delete-export-postgres.js'
+import { createPostgresDataExportDeleter } from '../../src/modules/data-portability/store.js'
 
 const databaseUrl=process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

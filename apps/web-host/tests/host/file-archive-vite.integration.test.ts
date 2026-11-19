@@ -8,8 +8,8 @@ import JSZip from 'jszip'
 import { Pool } from 'pg'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/modules/auth/auth.js'
-import { createPostgresFileArchiveOperations } from '../../src/modules/files/file-archive-postgres.js'
+import { createUserToken } from '../../src/modules/auth/session/token.js'
+import { createPostgresFileArchiveOperations } from '../../src/modules/files/archive/service.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const secret = 'synthetic-file-archive-vite-secret'

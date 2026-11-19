@@ -6,9 +6,9 @@ import {tmpdir} from 'node:os'
 import {test} from 'node:test'
 import {stableJson} from '@gugu/core/agent'
 import {ProviderRuntime,type ProviderHttpRequest} from '@gugu/core/providers'
-import {prepareImOwnerPeriodicPlan,ImOwnerPeriodicError} from '../../../src/modules/im/gateway/reflection-owner-periodic.js'
-import {createImReflectionFiles,reflectionFileKey} from '../../../src/modules/im/gateway/reflection-files.js'
-import type {ImReflectionJob,ImReflectionRuntime} from '../../../src/modules/im/gateway/reflection-contracts.js'
+import {prepareImOwnerPeriodicPlan,ImOwnerPeriodicError} from '../../../src/modules/im/gateway/memory/periodic.js'
+import {createImReflectionFiles,reflectionFileKey} from '../../../src/modules/im/gateway/memory/files.js'
+import type {ImReflectionJob,ImReflectionRuntime} from '../../../src/modules/im/gateway/memory/contracts.js'
 import {context} from './run-sender.fixtures.js'
 
 const entries=(count:number):[string,string][]=>Array.from({length:count},(_,n)=>[`2026-11-${String(18-Math.floor(n/40)).padStart(2,'0')}`,`合成owner事件${n}`])

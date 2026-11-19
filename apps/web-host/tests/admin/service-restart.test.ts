@@ -4,7 +4,7 @@ import test from 'node:test'
 import { createApp } from '../../src/app.js'
 import { createServiceRestarter, registerServiceRestartRoute } from '../../src/modules/admin/runtime.js'
 
-import { createBackgroundWorkerLifecycle } from '../../src/maintenance/background-workers.js'
+import { createBackgroundWorkerLifecycle } from '../../src/workers/lifecycle.js'
 
 test('只重启 Node 后台任务，缺少 Node 网关能力时明确不可用', async () => {
   let calls = 0

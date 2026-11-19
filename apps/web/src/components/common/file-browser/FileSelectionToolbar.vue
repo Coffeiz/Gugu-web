@@ -8,6 +8,7 @@ defineProps({
   archiving: { type: Boolean, default: false },
   archiveDisabled: { type: Boolean, default: false },
   canExtractArchive: { type: Boolean, default: false },
+  pathActions: { type: Boolean, default: false },
   trash: { type: Boolean, default: false },
   compact: { type: Boolean, default: false },
 })
@@ -42,22 +43,26 @@ const { t } = useI18n()
     </template>
 
     <template v-else>
-      <button class="file-selection-btn" :disabled="downloading" @click="emit('download')">
-        <Icon name="action.download" v-if="!downloading" :size="compact ? 11 : 12" />
-        <span v-else class="file-selection-spinner" />
-        {{ downloading ? t('common.status.processing') : t('common.actions.download') }}
-      </button>
-      <span class="file-selection-divider" />
-      <button v-if="canExtractArchive" class="file-selection-btn" :disabled="archiving" data-testid="selection-extract-archive" @click="emit('extract')">
-        <Icon name="action.archive" :size="compact ? 11 : 12" />
-        {{ t('filesUi.extract') }}
-      </button>
-      <button class="file-selection-btn" :disabled="archiveDisabled || archiving" data-testid="selection-compress" @click="emit('archive')">
-        <Icon v-if="!archiving" name="action.archive" :size="compact ? 11 : 12" />
-        <span v-else class="file-selection-spinner" />
-        {{ archiving ? t('common.status.processing') : t('filesUi.compress') }}
-      </button>
-      <span class="file-selection-divider" />
+      <template v-if="!pathActions || folderCount === 0">
+        <button class="file-selection-btn" :disabled="downloading" @click="emit('download')">
+          <Icon name="action.download" v-if="!downloading" :size="compact ? 11 : 12" />
+          <span v-else class="file-selection-spinner" />
+          {{ downloading ? t('common.status.processing') : t('common.actions.download') }}
+        </button>
+        <span class="file-selection-divider" />
+      </template>
+      <template v-if="!pathActions">
+        <button v-if="canExtractArchive" class="file-selection-btn" :disabled="archiving" data-testid="selection-extract-archive" @click="emit('extract')">
+          <Icon name="action.archive" :size="compact ? 11 : 12" />
+          {{ t('filesUi.extract') }}
+        </button>
+        <button class="file-selection-btn" :disabled="archiveDisabled || archiving" data-testid="selection-compress" @click="emit('archive')">
+          <Icon v-if="!archiving" name="action.archive" :size="compact ? 11 : 12" />
+          <span v-else class="file-selection-spinner" />
+          {{ archiving ? t('common.status.processing') : t('filesUi.compress') }}
+        </button>
+        <span class="file-selection-divider" />
+      </template>
       <button class="file-selection-btn" @click="emit('cut')">
         <Icon name="action.cut" :size="compact ? 11 : 12" />
         {{ t('common.actions.cut') }}

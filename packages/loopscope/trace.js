@@ -25,10 +25,36 @@ const localSpanId = (run, event, value) => {
   return `${run.id}${suffix}`
 }
 const textOf = value => typeof value === 'string' ? value : value == null ? '' : JSON.stringify(value)
+const stableText = value => Array.isArray(value) ? `[${value.map(stableText).join(',')}]`
+  : isRecord(value) ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableText(value[key])}`).join(',')}}`
+    : JSON.stringify(value)
+const contentText = value => typeof value === 'string' ? value
+  : Array.isArray(value) ? value.map(item => isRecord(item) && typeof item.text === 'string' ? item.text : '').filter(Boolean).join('\n')
+    : isRecord(value) && typeof value.text === 'string' ? value.text : textOf(value)
 const usageShape = usage => {
   if (!isRecord(usage)) return {}
-  const pairs = [['input','input'],['output','output'],['cacheRead','cache_read'],['cacheWrite','cache_write'],['freshInput','fresh_input'],['total','total'],['cacheRatio','cache_ratio'],['contextInput','context_input']]
-  return Object.fromEntries(pairs.filter(([key]) => typeof usage[key] === 'number' && Number.isFinite(usage[key])).map(([key, target]) => [target, usage[key]]))
+  const read = Number.isFinite(usage.cacheRead) ? usage.cacheRead : Number.isFinite(usage.cache_read) ? usage.cache_read : 0
+  const write = Number.isFinite(usage.cacheWrite) ? usage.cacheWrite : Number.isFinite(usage.cache_write) ? usage.cache_write : 0
+  const fresh = Number.isFinite(usage.freshInput) ? usage.freshInput
+    : Number.isFinite(usage.fresh_input) ? usage.fresh_input
+      : Number.isFinite(usage.input) ? usage.input : 0
+  const input = Number.isFinite(usage.fresh_input) && Number.isFinite(usage.input)
+    ? usage.input : fresh + read + write
+  const output = Number.isFinite(usage.output) ? usage.output : 0
+  return {
+    input, output, cache_read: read, cache_write: write, fresh_input: fresh,
+    total: input + output, cache_ratio: input ? read / input : 0,
+  }
+}
+const addUsage = (current, next) => {
+  const total = { ...current }
+  for (const key of ['input', 'output', 'cache_read', 'cache_write', 'fresh_input']) {
+    const value = next[key]
+    if (Number.isFinite(value)) total[key] = (Number.isFinite(total[key]) ? total[key] : 0) + value
+  }
+  total.total = (total.input ?? 0) + (total.output ?? 0)
+  total.cache_ratio = total.input ? (total.cache_read ?? 0) / total.input : 0
+  return total
 }
 const providerRows = body => Array.isArray(body?.messages) ? body.messages : Array.isArray(body?.input) ? body.input : []
 const userMessage = body => {
@@ -38,7 +64,7 @@ const userMessage = body => {
 }
 const systemText = body => {
   const value = body?.system ?? body?.instructions ?? providerRows(body).find(row => isRecord(row) && row.role === 'system')?.content
-  return textOf(value)
+  return contentText(value)
 }
 
 function createRun(event, source, maxSpans) {
@@ -50,6 +76,7 @@ function createRun(event, source, maxSpans) {
     external_session_id: String(identity.sessionId), source, status: 'running', started_at: startedAt,
     ended_at: null, duration_ms: null, input: {}, output: {}, attributes: {}, usage: {}, spans: [],
     _spans: new Map(), _startedAtMs: event.at, _output: '', _lastRequest: null, _maxSpans: maxSpans,
+    _adapterRequests: new Set(), _adapterResults: new Set(),
   }
 }
 
@@ -88,58 +115,110 @@ function updateRun(run, event) {
   const spanId = event.spanId ? localSpanId(run, event, event.spanId) : `${roundId}:${safeId(event.name)}`
   if (event.kind === 'provider' && event.name === 'request') {
     const body = isRecord(event.input) ? cloneSafe(event.input) : {}
-    if (event.attributes?.purpose === 'branch') {
+    const isBranch = event.attributes?.purpose === 'branch'
+    if (isBranch) {
       const round = spanFor(run, { ...event, kind: 'round', name: 'started' }, roundId, `Round ${event.round ?? 0}`, 'round', run.id)
       round.status = 'running'
     }
-    const span = spanFor(run, event, spanId, 'Provider request', 'provider', roundId)
-    span.input = body
-    span.attributes = cloneSafe(event.attributes ?? {})
+    const modelSpanId = isBranch ? spanId : roundId
+    const span = spanFor(run, event, modelSpanId, isBranch ? 'Provider request' : `LLM round ${event.round ?? 0}`,
+      isBranch ? 'provider' : 'llm', isBranch ? roundId : run.id)
+    const rows = providerRows(body)
+    const system = body.system ?? body.instructions ?? rows.find(row => isRecord(row) && row.role === 'system')?.content
+    const systemPrompt = contentText(system)
+    const snapshotMessage = rows.find(row => isRecord(row) && contentText(row.content).startsWith('[system-reminder]'))
+    const messages = rows.filter(row => !(isRecord(row) && row.role === 'system')
+      && !(row === snapshotMessage))
+    const cache = isRecord(event.attributes?.cache_diagnostics) ? cloneSafe(event.attributes.cache_diagnostics) : null
+    const previous = run.attributes.cache_rounds?.at(-1)
+    const previousRows = providerRows(isRecord(run._lastRequest) ? run._lastRequest : {})
+    const previousBoundary = Number(previous?.stable_message_count ?? 0)
+    const prefixStable = previous && previousBoundary <= previousRows.length && previousBoundary <= rows.length
+      ? stableText(previousRows.slice(0, previousBoundary)) === stableText(rows.slice(0, previousBoundary)) : null
+    const canonical = isRecord(run.attributes.canonical_events) ? cloneSafe(run.attributes.canonical_events) : null
+    const assembly = {
+      system: { location: body.system != null ? 'system' : body.instructions != null ? 'instructions' : 'messages[0]', reused: (event.round ?? 0) > 1, source_round: 1 },
+      messages: { count: rows.length, round: event.round ?? 0 },
+      ...(cache ? { cache: { ...cache, prefix_unchanged: prefixStable } } : {}),
+      ...(canonical ? { canonical_events: canonical } : {}),
+      provider_history_sanitization: cloneSafe(event.attributes?.history_sanitization ?? null),
+      adapter: { provider: event.attributes?.provider, api_format: event.attributes?.protocol },
+      canonical_context: {
+        phase: 'provider-input', provider_message_count: rows.length,
+        provider_sequence_fingerprint: event.attributes?.provider_sequence_fingerprint ?? null,
+        prefix_integrity: { stable: prefixStable,
+          basis: 'stable_prefix_digest' },
+      },
+    }
+    span.input = {
+      system_prompt: systemPrompt,
+      ...(snapshotMessage ? { snapshot: { content: contentText(snapshotMessage.content), message_count: 1 } } : {}),
+      messages, assembly,
+    }
+    span.attributes = { ...span.attributes, ...cloneSafe(event.attributes ?? {}), round: event.round ?? 0 }
     span.status = 'running'
     run._lastRequest = body
     run.input = { user_message: userMessage(body), system_prompt: systemText(body) }
-    const contextId = `${spanId}:context`
-    const context = spanFor(run, event, contextId, 'Provider context', 'context', spanId)
+    const contextId = `${modelSpanId}:context`
+    const context = spanFor(run, event, contextId, 'Provider context', 'context', modelSpanId)
     context.input = { protocol: event.attributes?.protocol }
     context.output = body
     context.attributes = { context_source: 'provider_request', provider: event.attributes?.provider, model: event.attributes?.model }
     context.status = 'success'; context.ended_at = event.at / 1000; context.duration_ms = 0
-    const cache = isRecord(event.attributes?.cache_diagnostics) ? cloneSafe(event.attributes.cache_diagnostics) : null
     if (cache) {
-      const previous = run.attributes.cache_rounds?.at(-1)
       const cacheRound = { at: event.at / 1000, provider: event.attributes?.provider, model: event.attributes?.model,
         api_format: event.attributes?.protocol, ...cache,
-        prefix_unchanged: previous && typeof cache.stable_prefix_digest === 'string'
-          ? previous.stable_prefix_digest === cache.stable_prefix_digest : null }
+        prefix_unchanged: prefixStable }
       run.attributes.cache_rounds ??= []
       run.attributes.cache_rounds.push(cacheRound)
       run.attributes.cache_rounds.splice(12)
-      const cacheSpan = spanFor(run, event, `${spanId}:cache`, 'Provider cache boundary', 'cache', spanId)
+      const cacheSpan = spanFor(run, event, `${modelSpanId}:cache`, 'Provider cache boundary', 'cache', modelSpanId)
       cacheSpan.input = { stable_message_count: cache.stable_message_count, cache_anchor_indices: cache.cache_anchor_indices }
       cacheSpan.output = cacheRound
       cacheSpan.status = 'success'; cacheSpan.ended_at = event.at / 1000; cacheSpan.duration_ms = 0
     }
     if (event.attributes?.history_sanitization) run.attributes.history_sanitization = cloneSafe(event.attributes.history_sanitization)
+    if (!isBranch && !run._adapterRequests.has(spanId)) {
+      run._adapterRequests.add(spanId)
+      const calls = run.attributes.adapter_calls ??= { count: 0, success: 0, errors: 0, canonical_render_calls: 0, by_provider: {}, by_api_format: {} }
+      calls.count += 1
+      if (canonical?.count) calls.canonical_render_calls += 1
+      const provider = String(event.attributes?.provider ?? 'unknown')
+      const format = String(event.attributes?.protocol ?? 'unknown')
+      calls.by_provider[provider] = (calls.by_provider[provider] ?? 0) + 1
+      calls.by_api_format[format] = (calls.by_api_format[format] ?? 0) + 1
+    }
     return
   }
   if (event.kind === 'provider' && event.name === 'usage') {
-    if (event.attributes?.purpose !== 'branch') run.usage = usageShape(event.usage)
-    const span = run._spans.get(localSpanId(run, event, event.spanId ?? `${event.identity.runId}:round:${event.round}:provider`))
+    const shapedUsage = usageShape(event.usage)
+    if (event.attributes?.purpose !== 'branch') run.usage = addUsage(run.usage, shapedUsage)
+    const requestId = localSpanId(run, event, event.spanId ?? `${event.identity.runId}:round:${event.round}:provider`)
+    const spanId = event.attributes?.purpose === 'branch' ? requestId : `${run.id}:round:${event.round ?? 0}`
+    const span = run._spans.get(spanId)
     if (span) {
-      span.usage = usageShape(event.usage); span.status = 'success'; span.ended_at = event.at / 1000
-      span.duration_ms = Math.max(0, (span.ended_at - span.started_at) * 1000)
+      span.usage = shapedUsage
+      if (shapedUsage.input > 0) span.token_impact = { prompt_tokens_actual: shapedUsage.input, prompt_tokens_source: 'provider' }
     }
     return
   }
   if (event.kind === 'provider' && event.name === 'complete') {
-    const span = run._spans.get(localSpanId(run, event, event.spanId ?? `${event.identity.runId}:round:${event.round}:provider`))
+    const requestId = localSpanId(run, event, event.spanId ?? `${event.identity.runId}:round:${event.round}:provider`)
+    const isBranch = event.attributes?.purpose === 'branch'
+    const spanId = isBranch ? requestId : `${run.id}:round:${event.round ?? 0}`
+    const span = run._spans.get(spanId)
     if (span) {
       if (event.output !== undefined) span.output = cloneSafe(event.output)
       span.attributes = { ...span.attributes, ...cloneSafe(event.attributes ?? {}) }
       span.status = event.status ?? 'success'; span.ended_at = event.at / 1000
       span.duration_ms = Math.max(0, (span.ended_at - span.started_at) * 1000)
     }
-    if (event.attributes?.purpose === 'branch') {
+    if (!isBranch && run._adapterRequests.has(requestId) && !run._adapterResults.has(requestId)) {
+      run._adapterResults.add(requestId)
+      const calls = run.attributes.adapter_calls
+      if (calls) calls[event.status === 'success' ? 'success' : 'errors'] += 1
+    }
+    if (isBranch) {
       const round = run._spans.get(roundId)
       if (round) {
         round.output = cloneSafe(event.output ?? '')
@@ -162,27 +241,50 @@ function updateRun(run, event) {
     }
     return
   }
+  if (['output', 'history', 'guard', 'state'].includes(event.kind)) {
+    const span = spanFor(run, event, spanId, event.name, event.kind,
+      event.parentSpanId ? localSpanId(run, event, event.parentSpanId) : run.id)
+    if (event.input !== undefined) span.input = cloneSafe(event.input)
+    if (event.output !== undefined) span.output = cloneSafe(event.output)
+    span.attributes = { ...span.attributes, ...cloneSafe(event.attributes ?? {}) }
+    if (Number.isFinite(event.startedAt)) span.started_at = event.startedAt / 1000
+    span.status = event.status ?? 'success'
+    span.ended_at = (Number.isFinite(event.endedAt) ? event.endedAt : event.at) / 1000
+    span.duration_ms = Number.isFinite(event.durationMs)
+      ? Math.max(0, event.durationMs)
+      : Math.max(0, (span.ended_at - span.started_at) * 1000)
+    return
+  }
   if (event.kind === 'context') {
     const span = spanFor(run, event, spanId, event.name, 'context', event.parentSpanId ? localSpanId(run, event, event.parentSpanId) : run.id)
     if (event.input !== undefined) span.input = cloneSafe(event.input)
     if (event.output !== undefined) span.output = cloneSafe(event.output)
     span.attributes = { ...span.attributes, ...cloneSafe(event.attributes ?? {}) }
-    span.status = event.status ?? 'success'; span.ended_at = event.at / 1000; span.duration_ms = 0
+    if (Number.isFinite(event.startedAt)) span.started_at = event.startedAt / 1000
+    span.status = event.status ?? 'success'; span.ended_at = (Number.isFinite(event.endedAt) ? event.endedAt : event.at) / 1000
+    span.duration_ms = Number.isFinite(event.durationMs)
+      ? Math.max(0, event.durationMs)
+      : Math.max(0, (span.ended_at - span.started_at) * 1000)
+    if (event.attributes?.context_source === 'canonical_events' && isRecord(event.output)) {
+      run.attributes.canonical_events = cloneSafe(event.output)
+    }
+    if (event.attributes?.context_source === 'provider-input' && isRecord(event.output)) {
+      const round = Number(event.round ?? 0)
+      const model = run._spans.get(`${run.id}:round:${round}`)
+      if (model && isRecord(model.input) && isRecord(model.input.assembly)) {
+        model.input.assembly.canonical_context = cloneSafe(event.output)
+      }
+    }
     return
   }
   if (event.kind === 'round') {
-    const span = spanFor(run, event, `${run.id}:round:${event.round ?? 0}`, `Round ${event.round ?? 0}`, 'round', run.id)
+    const span = spanFor(run, event, `${run.id}:round:${event.round ?? 0}`, `LLM round ${event.round ?? 0}`, 'llm', run.id)
     if (event.name === 'started') { span.status = 'running'; return }
     if (event.name === 'output_delta') { if (typeof event.output === 'string') run._output += event.output; return }
     if (event.name === 'completed') {
       span.output = cloneSafe(event.output ?? run._output)
       span.status = event.status ?? 'success'; span.ended_at = event.at / 1000
       span.duration_ms = Math.max(0, (span.ended_at - span.started_at) * 1000)
-      const provider = run._spans.get(`${run.id}:round:${event.round ?? 0}:provider`)
-      if (provider && provider.status === 'running') {
-        provider.status = 'success'; provider.ended_at = event.at / 1000
-        provider.duration_ms = Math.max(0, (provider.ended_at - provider.started_at) * 1000)
-      }
       run._output = ''
     }
     return
@@ -195,7 +297,7 @@ function updateRun(run, event) {
     if (event.usage) run.usage = usageShape(event.usage)
     const span = run._spans.get(run.id)
     if (span) { span.status = run.status; span.ended_at = run.ended_at; span.duration_ms = run.duration_ms; span.output = cloneSafe(run.output) }
-    for (const provider of run._spans.values()) if (provider.kind === 'provider' && provider.status === 'running') {
+    for (const provider of run._spans.values()) if (['provider', 'llm'].includes(provider.kind) && provider.status === 'running') {
       provider.status = run.status
       provider.ended_at = run.ended_at; provider.duration_ms = Math.max(0, (provider.ended_at - provider.started_at) * 1000)
     }
@@ -203,7 +305,7 @@ function updateRun(run, event) {
 }
 
 function snapshot(run) {
-  const { _spans, _startedAtMs, _output, _lastRequest, _maxSpans, _traceDisabled, ...payload } = run
+  const { _spans, _startedAtMs, _output, _lastRequest, _maxSpans, _traceDisabled, _adapterRequests, _adapterResults, ...payload } = run
   payload.spans = [..._spans.values()].map(span => ({ ...span }))
   return cloneSafe(payload)
 }

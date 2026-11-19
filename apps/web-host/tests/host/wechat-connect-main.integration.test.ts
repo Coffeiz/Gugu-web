@@ -11,7 +11,7 @@ import {Pool} from 'pg'
 import {startServer} from '../../src/main.js'
 import {signedUserToken} from '../helpers/auth.js'
 import {createRedisExpiringValueStore} from '../../src/adapters/cache/redis-events.js'
-import {createWechatConnectHostOptions} from '../../src/modules/im/wechat-connect.js'
+import {createWechatConnectHostOptions} from '../../src/modules/im/connect/wechat.js'
 async function freePort(){const socket=createSocket();await new Promise<void>(done=>socket.listen(0,'127.0.0.1',done));const address=socket.address();assert.ok(address&&typeof address!=='string');await new Promise<void>(done=>socket.close(()=>done()));return address.port}
 
 test('生产微信固定官方目标：真实认证/owner/过期/平台热开关及无Redis，禁止外发授权请求',async()=>{

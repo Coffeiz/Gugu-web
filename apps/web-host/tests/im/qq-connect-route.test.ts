@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import {registerQqConnectRoutes} from '../../src/modules/im/qq-connect.js'
+import {registerQqConnectRoutes} from '../../src/modules/im/connect/qq.js'
 test('QQ扫码HTTP认证优先，可信owner及异常脱敏',async()=>{
  const app=Fastify(),calls:string[][]=[]
  registerQqConnectRoutes(app,{requireUser:async(req,reply)=>{if(req.headers.authorization!=='user')await reply.code(401).send({detail:'需要认证'})},ownerIdFromRequest:()=> 'trusted-owner',connect:{start:async owner=>{calls.push(['start',owner]);return {task_id:'synthetic-task',scan_url:'https://example.test/qqbot/openclaw/connect.html'}},poll:async(owner,task)=>{calls.push(['poll',owner,task]);if(task==='unavailable')throw Object.assign(Error('synthetic-secret'),{name:'QqConnectionError',statusCode:503});return {status:'waiting'}}}})

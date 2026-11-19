@@ -1,17 +1,34 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest'
-import { resolveFolderTree, uploadFilesWithFolders } from '@/composables/files/useFileUploadCore'
+import { resolveFolderTree, uploadFilesWithFolders, uploadFileWithProgress } from '@/composables/files/useFileUploadCore'
 import { getTopLevelUploadGroups, prepareUploadBatch } from '@/composables/files/useFileUploadController'
-import { filesApi, foldersApi } from '@/services/api'
+import { filesApi, foldersApi, uploadWithProgress } from '@/services/api'
 
 vi.mock('@/services/api', () => ({
   filesApi: { checkConflicts: vi.fn() },
   foldersApi: { list: vi.fn(), resolvePaths: vi.fn(), create: vi.fn() },
+  uploadWithProgress: vi.fn(),
 }))
 
 vi.mock('@/composables/files/useFileUploadCore', async importOriginal => {
   const actual = await importOriginal<typeof import('@/composables/files/useFileUploadCore')>()
   return { ...actual, uploadFilesWithFolders: vi.fn() }
+})
+
+it('上传先发送位置和覆盖字段，最后才发送文件内容', async () => {
+  const file = new File(['body'], 'note.txt')
+  const onProgress = vi.fn()
+  await uploadFileWithProgress(file, {
+    space: 'project', projectId: 42, folderId: 7, stageName: '初稿', overwriteId: 16,
+  }, onProgress)
+
+  const [path, body, progress] = vi.mocked(uploadWithProgress).mock.lastCall!
+  expect(path).toBe('/files')
+  expect([...body.entries()]).toEqual([
+    ['space', 'project'], ['project_id', '42'], ['folder_id', '7'],
+    ['stage_name', '初稿'], ['on_conflict', 'overwrite'], ['overwrite_file_id', '16'], ['file', file],
+  ])
+  expect(progress).toBe(onProgress)
 })
 
 describe('getTopLevelUploadGroups', () => {

@@ -7,7 +7,7 @@ import type { Pool, PoolClient } from 'pg'
 import type { ProviderConfig } from '@gugu/core/providers'
 import { updateConfigOverride } from '../../src/adapters/config/config-override-file.js'
 import { createPosixConfigFileLock } from '../../src/adapters/config/posix-config-lock.js'
-import { createWebAgentProviderBinding } from '../../src/modules/agent/model-config/web-provider-binding.js'
+import { createWebAgentProviderBinding } from '../../src/modules/agent/llm/web.js'
 
 function fakePool() {
   const statements: string[] = []
@@ -62,7 +62,7 @@ test('Web provider binding snapshots synthetic config and credential versions an
     assert.equal(await provider.accessVersion(identity), first.contextScopeKey)
     assert.match(first.modelIdentity, /^gugu-model-v1\./)
     assert.ok(statements.some(sql => sql === 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY'))
-    assert.ok(statements.some(sql => sql.includes('FROM user_provider_credentials')))
+    assert.ok(statements.some(sql => sql.includes('FROM user_provider_bindings')))
     assert.ok(statements.includes('COMMIT'))
     assert.doesNotMatch(JSON.stringify([first.modelIdentity, first.accessScopeHash]), /synthetic-platform-key|synthetic-master-key|synthetic-environment-key/)
 

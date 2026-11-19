@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import Fastify from 'fastify'
 import test from 'node:test'
-import { registerTrashRoutes, TrashCooldownError, TrashPurgeUnavailableError, type TrashOperations, type TrashPurgeJob } from '../../src/modules/files/trash.js'
+import { registerTrashRoutes, TrashCooldownError, TrashPurgeUnavailableError, type TrashOperations, type TrashPurgeJob } from '../../src/modules/files/trash/service.js'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
 
 const ownerId = '11111111-1111-4111-8111-111111111111'

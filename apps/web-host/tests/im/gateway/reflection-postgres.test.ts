@@ -1,3 +1,4 @@
+import { imReflectionSql } from '@gugu/database/postgres/migrations/0014_im_reflection'
 import assert from 'node:assert/strict'
 import { createHash,randomUUID } from 'node:crypto'
 import { mkdir,mkdtemp,readFile,rm,writeFile } from 'node:fs/promises'
@@ -8,19 +9,19 @@ import type { Pool,PoolClient } from 'pg'
 import { stableJson,type CanonicalContextPorts,type CanonicalRunContext,type RunIdentity } from '@gugu/core/agent'
 import { ProviderRuntime,ProviderStreamSanitizer,stripThinking,type ProviderRuntimeOptions } from '@gugu/core/providers'
 import { removeLocalTree } from '@gugu/fs/node'
-import { createPersistentAgentRuntimeWithContextFactory } from '../../../src/modules/agent-sessions/agent-persistent-runtime.js'
-import { createCanonicalHistoryWriter } from '../../../src/modules/agent-sessions/persistence/agent-canonical-write-postgres.js'
-import { createPostgresAgentRunStore } from '../../../src/modules/agent-sessions/persistence/agent-run-store-postgres.js'
-import { enqueueAgentRunLocked } from '../../../src/modules/agent-sessions/persistence/agent-run-dispatch-postgres.js'
+import { createPersistentAgentRuntimeWithContextFactory } from '../../../src/modules/agent/run/runtime.js'
+import { createCanonicalHistoryWriter } from '../../../src/modules/agent/chat/write.js'
+import { createPostgresAgentRunStore } from '../../../src/modules/agent/run/store.js'
+import { enqueueAgentRunLocked } from '../../../src/modules/agent/run/dispatch.js'
 import { createRedisAgentCancellationCommands } from '../../../src/adapters/cache/redis-events.js'
 import { createRedisLiveSubscription } from '../../../src/adapters/cache/redis-live-subscription.js'
-import { createImReflectionService } from '../../../src/modules/im/gateway/reflection-postgres.js'
-import type { ImReflectionServiceOptions } from '../../../src/modules/im/gateway/reflection-contracts.js'
-import { createImInboundEnvelope } from '../../../src/modules/im/gateway/inbound-envelope.js'
-import {createImReflectionCodec} from '../../../src/modules/im/gateway/reflection-codec.js'
-import type {ImReflectionJob} from '../../../src/modules/im/gateway/reflection-contracts.js'
+import { createImReflectionService } from '../../../src/modules/im/gateway/memory/jobs.js'
+import type { ImReflectionServiceOptions } from '../../../src/modules/im/gateway/memory/contracts.js'
+import { createImInboundEnvelope } from '../../../src/modules/im/gateway/inbound/envelope.js'
+import {createImReflectionCodec} from '../../../src/modules/im/gateway/memory/codec.js'
+import type {ImReflectionJob} from '../../../src/modules/im/gateway/memory/contracts.js'
 import { context as sourceContext } from './run-sender.fixtures.js'
-import { imConversationScopeHash,imConversationDigest,imConversationFingerprint } from '../../../src/modules/im/gateway/conversation-identity.js'
+import { imConversationScopeHash,imConversationDigest,imConversationFingerprint } from '../../../src/modules/im/gateway/agent/identity.js'
 
 const pgUrl=process.env.GUGU_IM_GATEWAY_TEST_DATABASE_URL,redisUrl=process.env.GUGU_WEBUI_TEST_REDIS_URL
 const digest=(v:unknown)=>createHash('sha256').update(stableJson(v)).digest('hex')
@@ -61,8 +62,8 @@ test('真实PG/Redis/Linux FS：Canonical成功事务登记→独立Provider反�
         pending_source_ids json,created_at timestamptz,updated_at timestamptz,UNIQUE(user_id,source_type));
       CREATE TABLE agent_usage(user_id uuid,session_id integer,tokens_in integer,tokens_out integer,cache_read integer,cache_write integer,cache_round_stats jsonb,
         model text,provider text,is_byok boolean,tools_used jsonb,scenario text,input_source text,created_at timestamptz)`)
-    await pool.query(await readFile(new URL('../../../src/modules/im/gateway/reflection-schema.sql',import.meta.url),'utf8'))
-    await pool.query(await readFile(new URL('../../../src/modules/im/gateway/reflection-trigger-schema.sql',import.meta.url),'utf8'))
+    await pool.query(imReflectionSql.reflection)
+    await pool.query(imReflectionSql.reflectionTrigger)
     await pool.query("INSERT INTO users(id,is_active,account_status) VALUES($1,true,'active');",[owner])
     await pool.query("INSERT INTO user_bots VALUES(91,$1,'telegram',true,'202','[]',false,true,NULL,true,true)",[owner])
     const db=pool,envelope=createImInboundEnvelope(secret),diagnostics:string[]=[]

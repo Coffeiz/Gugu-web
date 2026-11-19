@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
-import {createImProductionCompact} from '../../../src/modules/im/gateway/production-compaction.js'
-import {createConfiguredImAgentProviderBinding} from '../../../src/modules/im/gateway/provider-binding.js'
-import {createPostgresImAccess} from '../../../src/modules/im/gateway/access-postgres.js'
+import {createImProductionCompact} from '../../../src/modules/im/gateway/memory/compact.js'
+import {createConfiguredImAgentProviderBinding} from '../../../src/modules/im/gateway/agent/provider.js'
+import {createPostgresImAccess} from '../../../src/modules/im/gateway/inbound/access.js'
 import {createImProductionFixture} from './production.fixtures.js'
 
 const databaseUrl=process.env.GUGU_IM_GATEWAY_TEST_DATABASE_URL,python=process.env.GUGU_IM_FIXTURE_PYTHON,redisUrl=process.env.GUGU_WEBUI_TEST_REDIS_URL

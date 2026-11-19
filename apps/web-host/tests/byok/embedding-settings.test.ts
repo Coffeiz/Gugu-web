@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createPostgresAgentEmbeddingSettingsResolver } from '../../src/modules/byok/embedding-settings.js'
+import { createPostgresAgentEmbeddingSettingsResolver } from '../../src/modules/byok/store.js'
 
 test('embedding BYOK 仅对明确的 local/ollama provider 返回本地访问标记', async () => {
   let provider = 'openai'

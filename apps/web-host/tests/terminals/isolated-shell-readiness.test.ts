@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { isolatedShellReadiness, resolveBubblewrapRootfs } from '../../src/modules/terminals/isolated-shell-readiness.js'
-import { createTerminalShellExecution } from '../../src/modules/terminals/shell-execution.js'
-import { createTerminalPtyRuntime } from '../../src/modules/terminals/pty-runtime.js'
+import { isolatedShellReadiness, resolveBubblewrapRootfs } from '../../src/modules/terminals/settings.js'
+import { createTerminalShellExecution } from '../../src/modules/terminals/shell/command.js'
+import { createTerminalPtyRuntime } from '../../src/modules/terminals/pty/runtime.js'
 
 test('Linux 默认探测标准运行根，自定义路径和显式关闭优先', () => {
   assert.equal(resolveBubblewrapRootfs({}), process.platform === 'linux' ? '/var/lib/gugu-sandbox/rootfs' : undefined)

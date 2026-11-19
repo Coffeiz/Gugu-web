@@ -4,7 +4,7 @@ import test from 'node:test'
 import { Pool } from 'pg'
 import { MessageArea, stableJson, formatCompactedSummary } from '@gugu/core/agent'
 import type { CanonicalRunContext, RunCheckpoint } from '@gugu/core/agent'
-import { createCanonicalHistoryWriter, canonicalBaselineHash } from '../../src/modules/agent-sessions/persistence/agent-canonical-write-postgres.js'
+import { createCanonicalHistoryWriter, canonicalBaselineHash } from '../../src/modules/agent/chat/write.js'
 
 const digest = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL

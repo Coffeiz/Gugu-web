@@ -1,11 +1,11 @@
+import { imGatewaySql } from '@gugu/database/postgres/migrations/0013_im_gateway'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 import type { Pool, PoolClient } from 'pg'
-import { ImDeliveryStoreError, withPostgresImDeliveryStore } from '../../../src/modules/im/gateway/delivery-store.js'
-import type { ImDeliveryReceipts } from '../../../src/modules/im/gateway/delivery-store.js'
+import { ImDeliveryStoreError, withPostgresImDeliveryStore } from '../../../src/modules/im/gateway/delivery/store.js'
+import type { ImDeliveryReceipts } from '../../../src/modules/im/gateway/delivery/store.js'
 
 const identity = { ownerId: '00000000-0000-4000-8000-000000000021', sessionId: '21', runId: 'synthetic-run' }
 const fingerprint = 'a'.repeat(64)
@@ -173,7 +173,7 @@ test('隔离PostgreSQL：真实锁互斥、重启恢复、attempt和scope隔离'
     await pool.query('CREATE TABLE users(id uuid PRIMARY KEY); CREATE TABLE conversation_sessions(id integer PRIMARY KEY,user_id uuid NOT NULL REFERENCES users(id))')
     await pool.query('INSERT INTO users(id) VALUES($1),($2)', [identity.ownerId, '00000000-0000-4000-8000-000000000022'])
     await pool.query('INSERT INTO conversation_sessions(id,user_id) VALUES(21,$1),(22,$2)', [identity.ownerId, '00000000-0000-4000-8000-000000000022'])
-    await pool.query(await readFile(new URL('../../../src/modules/im/gateway/delivery-schema.sql', import.meta.url), 'utf8'))
+    await pool.query(imGatewaySql.delivery)
     const database = pool
     await withPostgresImDeliveryStore(database, identity, async receipts => {
       await assert.rejects(withPostgresImDeliveryStore(database, identity, async () => {}), error => error instanceof ImDeliveryStoreError && error.code === 'busy')

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick, ref } from 'vue'
 import type { FileMeta, FolderMeta } from '@/stores/filesCache'
-import { filesApi, foldersApi, trashApi, type CursorPage } from '@/services/api'
+import { filesApi, foldersApi, pathFilesApi, trashApi, type CursorPage } from '@/services/api'
 import { useFileLibraryDirectory } from '@/composables/files/useFileLibraryDirectory'
 import type { NavSeg } from '@/utils/filesNav'
 import { beginAccountBoundary } from '@/utils/accountBoundary'
@@ -9,6 +9,8 @@ import { beginAccountBoundary } from '@/utils/accountBoundary'
 vi.mock('@/services/api', () => ({
   filesApi: { page: vi.fn() },
   foldersApi: { page: vi.fn() },
+  pathFilesApi: { entries: vi.fn() },
+  diskTrashApi: { list: vi.fn().mockResolvedValue([]) },
   trashApi: { page: vi.fn(), foldersPage: vi.fn() },
 }))
 
@@ -27,6 +29,7 @@ describe('文件库目录按需分页', () => {
     vi.clearAllMocks()
     vi.mocked(filesApi.page).mockResolvedValue(page([file], 'file-next', true) as never)
     vi.mocked(foldersApi.page).mockResolvedValue(page([folder]) as never)
+    vi.mocked(pathFilesApi.entries).mockResolvedValue([])
     vi.mocked(trashApi.page).mockResolvedValue(page([file], 'trash-next', true) as never)
     vi.mocked(trashApi.foldersPage).mockResolvedValue(page([], null, false) as never)
   })
@@ -85,10 +88,18 @@ describe('文件库目录按需分页', () => {
     )
   })
 
-  it('根页面不触发全局文件或回收站计数扫描', async () => {
+  it('个人文件入口按磁盘首层统计，无需全局文件分页', async () => {
+    vi.mocked(pathFilesApi.entries).mockResolvedValue([
+      { name: 'shell.txt', relativePath: 'shell.txt', kind: 'file', size: 12, mimeType: 'text/plain' },
+      { name: '子目录', relativePath: '子目录', kind: 'directory', size: 0, mimeType: null },
+    ])
     const pageState = setup('root', null)
     pageState.loadContents()
-    expect(pageState.contents.value.folders.find(item => item.id === 'personal')?.count).toBeNull()
+    await vi.waitFor(() => expect(pageState.contents.value.folders.find(item => item.id === 'personal'))
+      .toMatchObject({ fileCount: 1, folderCount: 1 }))
+    expect(pathFilesApi.entries).toHaveBeenCalledWith('personal')
+    expect(filesApi.page).not.toHaveBeenCalled()
+    expect(trashApi.page).not.toHaveBeenCalled()
   })
 
   it('Workspace 子目录分页请求同时限定 Workspace 和父目录', async () => {

@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { initializeSqlite, migrateSqlite, openSqliteRuntime } from '../../src/data/sqlite.js'
+import { initializeSqlite, openSqliteRuntime } from '../../src/data/sqlite.js'
 import { createFeedbackService, createKyselyFeedbackOperations, FeedbackValidationError } from '../../src/feedback/feedback.js'
 
 const url = process.env.GUGU_CORE_TEST_POSTGRES_URL
@@ -48,15 +48,11 @@ describe.each(['sqlite', 'postgres'] as const)('反馈仓储 %s', (backend) => {
   })
 })
 
-it('正式 SQLite 从版本 14 安全升级并限制反馈 owner', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'gugu-feedback-upgrade-'))
+it('正式 SQLite 基线限制反馈 owner', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'gugu-feedback-baseline-'))
   const path = join(dir, 'data.db')
   try {
     await initializeSqlite(path)
-    const legacy = new Database(path)
-    legacy.exec("DROP TABLE user_preferences; DROP TABLE feedbacks; UPDATE core_runtime_meta SET value='14' WHERE key='schema_version'")
-    legacy.close()
-    await migrateSqlite(path)
     const opened = await openSqliteRuntime(path)
     try {
       expect(opened.schemaVersion).toBe('18')

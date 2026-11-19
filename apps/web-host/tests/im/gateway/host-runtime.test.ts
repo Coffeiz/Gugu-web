@@ -3,7 +3,7 @@ import {spawn} from 'node:child_process'
 import {fileURLToPath} from 'node:url'
 import test from 'node:test'
 import { acquireImHostOwnership, createImHostLifecycle, readImRuntimeOwnership, ImHostAssemblyCleanupError, type ImHostComponents, type ImHostOwnershipLease } from '../../../src/modules/im/gateway/host-runtime.js'
-import { createGatewaySupervisor, GatewayConnectionCleanupError } from '../../../src/modules/im/gateway/supervisor.js'
+import { createGatewaySupervisor, GatewayConnectionCleanupError } from '@gugu/gateway'
 
 function fixture(change?: (components: ImHostComponents) => void) {
   const calls: string[] = [], diagnostics: string[] = []

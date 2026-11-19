@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import Fastify from 'fastify'
 import test from 'node:test'
-import { registerFileContentRoutes } from '../../src/modules/files/file-content.js'
+import { registerFileContentRoutes } from '../../src/modules/files/content.js'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
 
 test('正文写入路由验证正文与版本、传递撤销上下文，并允许完整的 1 MiB 正文', async () => {

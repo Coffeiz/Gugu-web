@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/modules/auth/auth.js'
+import { createUserToken } from '../../src/modules/auth/session/token.js'
 
 test('生产 App 通过 bearer 身份 owner-scoped 读取 Agent 会话状态', async () => {
   const ownerId = '00000000-0000-4000-8000-000000000099'

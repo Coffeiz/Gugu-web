@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { initializeSqlite, openSqliteRuntime } from '@gugu/core/data'
 import type { CanvasBatchConfirmationPort } from '@gugu/core/tools'
-import { createAgentToolRegistry } from '../../src/modules/agent-sessions/tools/agent-tool-registry.js'
-import { createWebAgentCanvasWritePorts } from '../../src/modules/agent-sessions/tools/agent-canvas-write-ports.js'
+import { createAgentToolRegistry } from '../../src/modules/agent/tools/registry.js'
+import { createWebAgentCanvasWritePorts } from '../../src/modules/agent/tools/canvas.js'
 
 test('Web 画布事务端口只复用 Core 写服务，确认端口缺失时危险工具不可见', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gugu-agent-canvas-'))

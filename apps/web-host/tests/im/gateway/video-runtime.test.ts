@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import {createHash} from 'node:crypto'
 import {test} from 'node:test'
-import {createImVideoRuntime} from '../../../src/modules/im/gateway/video-runtime.js'
-import {ImVideoCleanupError} from '../../../src/modules/im/gateway/video.js'
+import {createImVideoRuntime} from '../../../src/modules/im/gateway/media/video-runtime.js'
+import {ImVideoCleanupError} from '../../../src/modules/im/gateway/media/video.js'
 import type {ProviderConfig,ProviderTransport} from '@gugu/core/providers'
-import type {ImVideoInput} from '../../../src/modules/im/gateway/message-materializer.js'
+import type {ImVideoInput} from '../../../src/modules/im/gateway/inbound/message.js'
 const config:ProviderConfig={provider:'minimax',model:'MiniMax-M3',api_format:'anthropic',video:true,api_key:'synthetic-key',base_url:'https://video.example.test/anthropic'}
 const probe={duration:10,width:16,height:16,bitRate:1,codec:'h264',fps:10}
 const processor={async probe(){return probe},async probeVideo(){return{duration:10}},async transcode(){return null}}

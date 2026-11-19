@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { formatAgentHistoryMessageTime } from '../../src/modules/agent-sessions/context/message-time.js'
+import { formatAgentHistoryMessageTime } from '../../src/modules/agent/context/time.js'
 
 test('历史消息时间按可信用户时区格式化，分钟精度与 Python 基准一致', () => {
   assert.equal(formatAgentHistoryMessageTime('2026-11-17T23:26:00Z', 'Asia/Shanghai'), '2026-11-18 07:26')

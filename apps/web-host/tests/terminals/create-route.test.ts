@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import Fastify from 'fastify'
 import test from 'node:test'
 import { CoreError } from '@gugu/core'
-import { registerTerminalCreateRoute } from '../../src/modules/terminals/create-route.js'
+import { registerTerminalCreateRoute } from '../../src/modules/terminals/routes.js'
 
 test('认证终端创建将 Python DTO 与客户端 origin 交给 Core 并返回 201', async () => {
   const app = Fastify()

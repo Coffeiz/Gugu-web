@@ -1,5 +1,4 @@
 import { dataContext } from '../../contracts/index.js'
-import type { Pool } from 'pg'
 
 export interface ByokEnvelope { readonly encrypted_value: string; readonly nonce: string; readonly encrypted_data_key: string; readonly key_version: number }
 export interface ByokListRow {
@@ -36,19 +35,5 @@ export function createByokListService(ports: {
       image: row.image, video: row.video, audio: row.audio, image_detail: row.image_detail, enabled: row.enabled,
       has_value: Boolean(row.encrypted_value), last_verified_at: row.last_verified_at, created_at: row.created_at, updated_at: row.updated_at,
     })) }
-  }
-}
-
-/** 只读取当前 owner；密文仅供请求内状态校验，绝不作为响应返回。 */
-export function createPostgresByokListReader(pool: Pick<Pool, 'query'>) {
-  return async (ownerId: string): Promise<readonly ByokListRow[]> => {
-    const owner = dataContext(ownerId).ownerId
-    const result = await pool.query<ByokListRow>(`SELECT id,provider,api_format,capability,base_url,model,max_tokens,dimensions,context_tokens,
-      thinking,reasoning_effort,reasoning_persistence,web_search_enabled,image,video,audio,image_detail,enabled,
-      to_char(last_verified_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US') || '+00:00' AS last_verified_at,
-      to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US') || '+00:00' AS created_at,
-      to_char(updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US') || '+00:00' AS updated_at,
-      encrypted_value,nonce,encrypted_data_key,key_version FROM user_provider_credentials WHERE user_id=$1 ORDER BY id`, [owner])
-    return result.rows
   }
 }

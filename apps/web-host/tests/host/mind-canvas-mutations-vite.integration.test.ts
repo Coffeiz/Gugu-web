@@ -5,7 +5,7 @@ import { resolve } from 'node:path'
 import { Pool } from 'pg'
 import { after, test } from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/modules/auth/auth.js'
+import { createUserToken } from '../../src/modules/auth/session/token.js'
 import { createPostgresRuntime, type SqlDataRuntime } from '@gugu/core/data'
 import { createMindCanvasNoteMutations, createMindCanvasCreation, createMindCanvasUpdate, createMindCanvasDelete, createSqlMindCanvasCreateRuntime, createSqlMindCanvasUpdateRuntime, createSqlMindCanvasDeleteRuntime, createSqlMindCanvasNoteRuntime, createMindCanvasItemAdd, createMindCanvasItemUpdate, createMindCanvasItemRemove, createSqlMindCanvasItemAddRuntime, createSqlMindCanvasItemUpdateRuntime, createSqlMindCanvasItemRemoveRuntime, createSqlMindCanvasReader, createSqlMindNoteReader } from '@gugu/core/mind'
 

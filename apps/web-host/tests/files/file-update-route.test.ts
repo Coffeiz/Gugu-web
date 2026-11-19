@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/modules/auth/auth.js'
+import { createUserToken } from '../../src/modules/auth/session/token.js'
 
 test('Node Host 对文件 PATCH 执行认证并传递字段存在性与撤销上下文',async()=>{
   const userId='00000000-0000-4000-8000-000000000061',secret='synthetic-file-update-host-secret',calls:unknown[][]=[]

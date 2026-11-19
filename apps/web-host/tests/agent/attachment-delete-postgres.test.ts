@@ -5,7 +5,7 @@ import path from 'node:path'
 import { tmpdir } from 'node:os'
 import type { Pool } from 'pg'
 import { createChatAttachmentDraftDeleter } from '@gugu/core/agent/attachments/delete-draft'
-import { createPostgresChatAttachmentDraftDeletePorts } from '../../src/modules/agent/attachment-staging-postgres.js'
+import { createPostgresChatAttachmentDraftDeletePorts } from '../../src/modules/agent/attachments/persistence.js'
 
 const owner = '11111111-1111-4111-8111-111111111111'
 const key = `${owner}/.chat_staging/attachment.txt`

@@ -5,10 +5,10 @@ import {Pool} from 'pg'
 import {createPostgresRuntime,tablesSql} from '@gugu/core/data'
 import {createSkillDeleteTool} from '../../../../packages/core/src/agent/tools/skill-management.js'
 import type {ClientDeleteConfirmationPort} from '@gugu/core/tools'
-import {createAuthorizedWebAgentProductionRagRunPorts} from '../../src/modules/agent-sessions/tools/agent-rag-production-ports.js'
+import {createAuthorizedWebAgentProductionRagRunPorts} from '../../src/modules/agent/rag/production.js'
 import {createUserSkillManager} from '../../../../packages/core/src/agent/skills/user-management.js'
 import {createSkillManagementWriteTools} from '@gugu/core/tools'
-import {createWebAgentConfirmationAuthorization} from '../../src/modules/agent-sessions/tools/agent-confirmation.js'
+import {createWebAgentConfirmationAuthorization} from '../../src/modules/agent/tools/confirm.js'
 const url=process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const a='00000000-0000-4000-8000-000000000061',b='00000000-0000-4000-8000-000000000062'
 test('用户技能持久创建、owner隔离、序列并发和失败回滚',{skip:!url&&'需要隔离 PostgreSQL'},async()=>{

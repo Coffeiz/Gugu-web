@@ -7,9 +7,9 @@ import { dirname, join } from 'node:path'
 import test from 'node:test'
 import { buildRunRagContext, prepareContext, stableJson, type ContextSourceSelection, type PersistedHistoryRow, type PreparationPorts } from '@gugu/core/agent'
 import { imContextPolicy, type ImActor } from '@gugu/core/im/access'
-import type { AgentDispatchLease } from '../../../src/modules/agent-sessions/persistence/agent-run-dispatch-postgres.js'
-import { createPostgresImAccess } from '../../../src/modules/im/gateway/access-postgres.js'
-import { createPostgresImRagContextBuilder } from '../../../src/modules/im/gateway/rag-context.js'
+import type { AgentDispatchLease } from '../../../src/modules/agent/run/dispatch.js'
+import { createPostgresImAccess } from '../../../src/modules/im/gateway/inbound/access.js'
+import { createPostgresImRagContextBuilder } from '../../../src/modules/im/gateway/agent/rag.js'
 
 const url = process.env.GUGU_IM_GATEWAY_TEST_DATABASE_URL
 const sha = (value: string) => createHash('sha256').update(value.trim()).digest('hex')

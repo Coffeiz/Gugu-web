@@ -5,7 +5,7 @@ import { createPostgresRuntime } from '@gugu/core/data'
 import { createKyselyPreferenceDocumentStore } from '@gugu/core'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createUserToken, type PublicUserRecord } from '../../src/modules/auth/auth.js'
+import { createUserToken, type PublicUserRecord } from '../../src/modules/auth/session/token.js'
 import { createPostgresPreferencesStore } from '../../src/modules/preferences/persistence/postgres.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL

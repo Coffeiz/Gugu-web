@@ -1,7 +1,8 @@
+import { createPostgresByokListReader } from '../../../../../apps/web-host/src/modules/byok/store.js'
 import { randomUUID, createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 import pg from 'pg'
 import { expect, it } from 'vitest'
-import { createByokListService, createPostgresByokListReader } from '../../../src/agent/config/byok.js'
+import { createByokListService } from '../../../src/agent/config/byok.js'
 const url = process.env.GUGU_CORE_TEST_POSTGRES_URL
 if (!url) throw new Error('必须提供隔离 PG 测试地址')
 it('PG BYOK 列表仅属于当前 owner，校验合成信封且不泄露密文', async () => {
@@ -18,6 +19,8 @@ it('PG BYOK 列表仅属于当前 owner，校验合成信封且不泄露密文',
       (2,$1,'local','openai','embedding','','m',NULL,1024,NULL,NULL,NULL,'off',false,false,false,false,'auto',false,NULL,'2026-01-01 00:00:00.123456Z','2026-01-01Z',$3,$4,'synthetic-wrap',1),
       (1,$1,'other','openai','llm','','m',NULL,NULL,NULL,NULL,NULL,'off',false,false,false,false,'auto',true,NULL,'2026-01-01Z','2026-01-01Z',NULL,'','',1),
       (3,$2,'foreign','openai','llm','','m',NULL,NULL,NULL,NULL,NULL,'off',false,false,false,false,'auto',true,NULL,'2026-01-01Z','2026-01-01Z','bad','bad','bad',1)`,[owner,other,ciphertext,nonce.toString('base64')])
+    await pool.query(`CREATE TABLE user_provider_bindings AS
+      SELECT user_id, capability, id AS credential_id FROM user_provider_credentials WHERE enabled`)
     const list = createByokListService({enabled:()=>true,readOwned:createPostgresByokListReader(pool),verifyEnvelope: envelope => {
       const bytes = Buffer.from(envelope.encrypted_value,'base64'), decipher = createDecipheriv('aes-256-gcm',key,Buffer.from(envelope.nonce,'base64'))
       decipher.setAuthTag(bytes.subarray(-16)); decipher.update(bytes.subarray(0,-16)); decipher.final()

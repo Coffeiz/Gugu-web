@@ -4,8 +4,8 @@ import test from 'node:test'
 import {
   createFilesystemAuthorizationConfirmationStore,
   type FilesystemAuthorizationRedisCommands,
-} from '../../src/modules/agent-sessions/filesystem-authorization-confirmations.js'
-import { createTerminalConfirmationGate } from '../../src/modules/terminals/confirmation.js'
+} from '../../src/modules/agent/sandbox/confirmations.js'
+import { createTerminalConfirmationGate } from '../../src/modules/terminals/shell/confirm.js'
 
 class MemoryConfirmationRedis implements FilesystemAuthorizationRedisCommands {
   readonly values = new Map<string, string>()

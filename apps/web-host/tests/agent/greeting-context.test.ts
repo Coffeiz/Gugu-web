@@ -1,10 +1,11 @@
+import { encryptByokEnvelope } from '../../src/modules/byok/crypto.js'
+import { type ByokCredential } from '../../src/modules/byok/store.js'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createPostgresGreetingContextReader, createRedisGreetingCache, createStandaloneGreetingCompleter } from '../../src/modules/agent-sessions/greeting.js'
-import { encryptByokEnvelope, type ByokCredential } from '../../src/modules/agent/model-config/byok.js'
+import { createPostgresGreetingContextReader, createRedisGreetingCache, createStandaloneGreetingCompleter } from '../../src/modules/agent/chat/greeting.js'
 
 const owner = '11111111-1111-4111-8111-111111111111'
 

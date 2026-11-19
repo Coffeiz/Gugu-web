@@ -1,11 +1,11 @@
 <template>
   <article class="span-card ls-card" :class="{ child: depth > 0 }">
     <header class="span-head">
-      <span class="kind-rail" :data-kind="span.kind"></span>
+      <span class="kind-rail" :data-kind="displayKind"></span>
       <div class="span-title">
         <div class="title-line">
-          <span class="kind" :data-kind="span.kind">{{ span.kind }}</span>
-          <strong>{{ span.name }}</strong>
+          <span class="kind" :data-kind="displayKind">{{ displayKind }}</span>
+          <strong>{{ displayName }}</strong>
           <span v-if="contextLabel" class="context-label">{{ contextLabel }}</span>
           <span v-if="mcpDetails" class="mcp-label">MCP · {{ mcpDetails.server }} / {{ mcpDetails.tool }}</span>
           <span class="status" :data-status="span.status">{{ span.status }}</span>
@@ -174,6 +174,12 @@ const props = withDefaults(defineProps<{ span: TraceSpan; previousSpan?: TraceSp
 const open = reactive<Record<string, boolean>>({ content: false, assembly: false, diagnostics: false, schema: false, input: false, output: false, source: false, attributes: false })
 const inputMessageList = ref<HTMLElement | null>(null)
 const comparisonOpen = ref(false)
+const legacyChatProvider = computed(() => props.span.kind === 'provider'
+  && props.span.attributes?.purpose !== 'branch'
+  && (props.span.name === 'Provider request' || props.span.attributes?.round !== undefined))
+const displayKind = computed(() => legacyChatProvider.value ? 'llm' : props.span.kind)
+const displayName = computed(() => legacyChatProvider.value
+  ? `LLM round ${props.span.attributes?.round ?? props.span.id.match(/:round:(\d+)(?::provider)?$/)?.[1] ?? 1}` : props.span.name)
 
 function toggle(key: string) {
   open[key] = !open[key]
@@ -207,17 +213,29 @@ const sourceContent = computed(() => {
 const systemPrompt = computed(() => {
   const input = props.span.input
   if (!input || typeof input !== 'object') return ''
-  const value = (input as Record<string, unknown>).system_prompt
-  return typeof value === 'string' ? value : ''
+  const record = input as Record<string, unknown>
+  const body = record.input && typeof record.input === 'object' && !Array.isArray(record.input)
+    ? record.input as Record<string, unknown> : record
+  const value = record.system_prompt ?? body.system ?? body.instructions ?? body.messages
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) {
+    const system = value.find((message: any) => message?.role === 'system')
+    return system ? messageText(system.content) : value.map(messageText).filter(Boolean).join('\n\n')
+  }
+  if (value && typeof value === 'object' && 'content' in value)
+    return messageText((value as Record<string, unknown>).content)
+  return ''
 })
 const snapshotContent = computed(() => {
   const input = props.span.input
   if (!input || typeof input !== 'object') return ''
   const snapshot = (input as Record<string, unknown>).snapshot
   if (typeof snapshot === 'string') return snapshot
-  if (!snapshot || typeof snapshot !== 'object') return ''
-  const content = (snapshot as Record<string, unknown>).content
-  return typeof content === 'string' ? content : ''
+  if (snapshot && typeof snapshot === 'object') {
+    const content = (snapshot as Record<string, unknown>).content
+    if (typeof content === 'string') return content
+  }
+  return rawMessagesFrom(props.span).map((message: any) => messageText(message?.content)).find(content => content.startsWith('[system-reminder]')) ?? ''
 })
 const assembly = computed(() => {
   const input = props.span.input as any
@@ -284,10 +302,25 @@ const diffReasonLabel = computed(() => {
 const inputMessages = computed(() => messagesFrom(props.span))
 const previousInputMessages = computed(() => messagesFrom(props.previousSpan))
 function messagesFrom(span?: TraceSpan) {
+  const messages = rawMessagesFrom(span)
+  const snapshotIndex = messages.findIndex((message: any) => message?.role !== 'system'
+    && messageText(message?.content).startsWith('[system-reminder]'))
+  return messages.filter((message: any, index) => message?.role !== 'system' && index !== snapshotIndex)
+}
+function rawMessagesFrom(span?: TraceSpan) {
   const input = span?.input
   if (!input || typeof input !== 'object') return []
   const messages = (input as Record<string, unknown>).messages
-  return Array.isArray(messages) ? messages : []
+  const body = (input as Record<string, unknown>).input
+  const nested = body && typeof body === 'object' && !Array.isArray(body)
+    ? (body as Record<string, unknown>).messages ?? (body as Record<string, unknown>).input : undefined
+  return Array.isArray(messages) ? messages : Array.isArray(nested) ? nested : []
+}
+function messageText(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) return value.map((part: any) => typeof part?.text === 'string' ? part.text : '').filter(Boolean).join('\n')
+  return value && typeof value === 'object' && typeof (value as Record<string, unknown>).text === 'string'
+    ? String((value as Record<string, unknown>).text) : ''
 }
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
@@ -319,7 +352,7 @@ const inputForDisplay = computed(() => {
 const inputWithoutSystemPrompt = computed(() => {
   const input = inputForDisplay.value
   if (!systemPrompt.value || !input || typeof input !== 'object' || Array.isArray(input)) return input
-  const { system_prompt: _systemPrompt, snapshot: _snapshot, ...rest } = input as Record<string, unknown>
+  const { system_prompt: _systemPrompt, snapshot: _snapshot, system: _system, instructions: _instructions, messages: _messages, ...rest } = input as Record<string, unknown>
   return rest
 })
 const hasSource = computed(() => !!(props.span.code?.file || props.span.code?.function || props.span.attributes?.path))
@@ -350,9 +383,17 @@ const tokenChips = computed(() => {
   const u = props.span.usage ?? {}
   const t = props.span.token_impact ?? {}
   const chips: string[] = []
-  if (u.input) chips.push(`in ${fmtTokens(u.input)}`)
+  const input = Number(u.input ?? 0)
+  const cacheRead = Number(u.cache_read ?? 0)
+  const cacheWrite = Number(u.cache_write ?? 0)
+  const legacyNodeUsage = u.context_input !== undefined || input < cacheRead + cacheWrite
+  const totalInput = legacyNodeUsage ? Number(u.fresh_input ?? input) + cacheRead + cacheWrite : input
+  const fresh = u.fresh_input !== undefined ? Number(u.fresh_input) : Math.max(totalInput - cacheRead - cacheWrite, 0)
+  if (totalInput) chips.push(`in ${fmtTokens(totalInput)}`)
   if (u.output) chips.push(`out ${fmtTokens(u.output)}`)
-  if (u.cache_read) chips.push(`cache hit ${fmtTokens(u.cache_read)}`)
+  if (cacheRead) chips.push(`cache hit ${fmtTokens(cacheRead)}`)
+  if (cacheWrite) chips.push(`cache write ${fmtTokens(cacheWrite)}`)
+  if (fresh && totalInput && fresh !== totalInput) chips.push(`fresh ${fmtTokens(fresh)}`)
   if (t.prompt_tokens_actual && t.prompt_tokens_source === 'provider') chips.push(`prompt ${fmtTokens(t.prompt_tokens_actual)}`)
   return chips.slice(0, 4)
 })
@@ -363,7 +404,7 @@ const tokenChips = computed(() => {
 .span-card.child { margin-left:20px; box-shadow:none; background:color-mix(in srgb,var(--surface-card) 82%,transparent); }
 .span-head { display:grid; grid-template-columns:4px minmax(0,1fr) auto; gap:11px; align-items:stretch; min-height:58px; }
 .kind-rail { background:var(--trace-context); }
-.kind-rail[data-kind="llm"]{background:var(--trace-llm)}
+.kind-rail[data-kind="llm"],.kind-rail[data-kind="provider"]{background:var(--trace-llm)}
 .kind-rail[data-kind="tool"]{background:var(--trace-tool)}
 .kind-rail[data-kind="guard"]{background:var(--trace-guard)}
 .kind-rail[data-kind="output"]{background:var(--trace-output)}

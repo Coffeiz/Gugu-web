@@ -1,6 +1,7 @@
-import type { PublicUserRecord } from './auth.js'
+import type { RemoteUser } from '@gugu/core/auth/contracts'
+import type { PublicUserRecord } from './session/token.js'
 
-export function userResponse(user: PublicUserRecord) {
+export function userResponse(user: PublicUserRecord): RemoteUser {
   const createdAt = user.createdAt instanceof Date
     ? user.createdAt.toISOString().slice(0, 10)
     : user.createdAt?.slice(0, 10) ?? ''

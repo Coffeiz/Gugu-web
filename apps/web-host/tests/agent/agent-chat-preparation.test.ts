@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { Pool, PoolClient } from 'pg'
-import { createPostgresAgentChatPreparation, type AgentChatPreparationPorts } from '../../src/modules/agent-sessions/persistence/agent-chat-preparation.js'
+import { createPostgresAgentChatPreparation, type AgentChatPreparationPorts } from '../../src/modules/agent/chat/prepare.js'
 function fixture(failure?: string) {
   const calls: string[] = []
   const dispatchInputs: Array<{ owner: string; session: string; run: string; accessVersion: string }> = []

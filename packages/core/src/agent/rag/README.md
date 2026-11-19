@@ -58,7 +58,7 @@ memory RAG 查询的取消信号会沿工具 dispatch 传到 owner/IM scope 文�
 
 2026-11-16 回归补齐：统一 `createScopedRagSearch` 在 query embedding transport 抛错时保留已授权范围内的 BM25 结果；如果调用信号已取消，则仍传播取消错误，不把取消伪装成成功。版本匹配的 owner 向量也经过该搜索边界实际读取并参与 hybrid 排名。测试用确定性 Jieba、合成索引与模拟向量端口，未调用 Provider。
 
-`knowledge_index_entries` 已进入 Core schema 17 的 SQLite/PostgreSQL DDL。SQLite v1-v16 通过显式备份迁移升级。Web Host 提供 `migrate:rag-index:check` 与 `migrate:rag-index:apply` 显式 PostgreSQL 迁移命令；迁移校验列、唯一键、owner 外键及 schema 定义的全部检索索引，并允许认领结构兼容的旧 Python 表。已登记迁移若缺少索引、索引列不符或索引未就绪会被拒绝启动；认领旧表时会补建缺失索引。命令尚未作为部署步骤运行。迁移回归已写入，但 devserver 缺少 `GUGU_WEBUI_TEST_DATABASE_URL`，本轮两个 PostgreSQL 场景均跳过，因此不能声称生产数据库已升级。
+两端的编号迁移都创建 `knowledge_index_entries`。Web Host 使用 `migrate check` 和 `migrate apply`，检查会校验索引、外键和表结构。Desktop 随 SQLite 基线创建。后台 Worker 从授权来源补建派生索引。
 
 2026-11-16 PostgreSQL 迁移结构校验补齐：已登记表现在必须包含 schema 中定义的全部 RAG 索引，且每个索引列序、`indisvalid` 和 `indisready` 均符合预期；旧 Python 表认领通过同一 DDL 补齐索引。Host migration typecheck 通过。两个隔离 PostgreSQL 集成场景因未配置 `GUGU_WEBUI_TEST_DATABASE_URL` 跳过，实际 PostgreSQL 结构仍未验收。
 
@@ -212,6 +212,5 @@ Core `createKnowledgeWriteTools` 现经同一注册器提供 `save_knowledge`、
 
 ### PostgreSQL 首次切换到 Node Worker
 
-应用 RAG schema 迁移并结束旧索引消费者。在目标 PostgreSQL schema 上运行 Web Host 的 `migrate:rag-index:queue-baseline` 补建既有数据。Web Host 在迁移就绪后启动 Node 消费者。
 
 补建命令为现有用户的八种来源排入整来源重建，涵盖已有增量任务和旧索引的用户。任务与一次性迁移记录在同一事务提交。重复执行返回 `unchanged`。命令返回 `queued` 只表示任务已持久化，切换验收还需确认 Worker 消费结果。补建异常时事务回滚，可以重试。

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { SqlDataRuntime } from '@gugu/core/data'
-import { createAgentToolRegistry } from '../../src/modules/agent-sessions/tools/agent-tool-registry.js'
-import { createWebAgentRecentAttachmentsPort } from '../../src/modules/agent-sessions/tools/agent-file-recent-attachments.js'
+import { createAgentToolRegistry } from '../../src/modules/agent/tools/registry.js'
+import { createWebAgentRecentAttachmentsPort } from '../../src/modules/agent/tools/files/recent.js'
 
 const identity = { ownerId: 'owner-synthetic', sessionId: '41', runId: 'recent-attachments-synthetic' }
 const lease = { identity, token: 'lease-synthetic', fence: 3, mode: 'start', cancelRequested: false,

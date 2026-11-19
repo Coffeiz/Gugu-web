@@ -95,3 +95,28 @@ Python 最近邻串行基准：`test_capability_registry.py`、`test_skill_id_mi
 `requiresInteraction`仅为调度声明，不授予交互或确认权限。目前危险工具仍不开放并保守分流串行，不能据此声称已等价支持Python可用危险工具的并发资格。实际执行继续逐项重新授权、校验配置和参数；取消等待handler清理，写入状态不明继续返回unknown而不自动重放。技能加载和工具调度均复用Harness已有上下文边界，不新增跨用户共享的加载状态。
 
 `ToolDefinition.strictArrayFields`由可信注册代码声明，按叶字段名限制数组的item/block包装和顶层拍平修复；注册器保存冻结副本，模型参数和外部数组后续修改不能解除限制。JSON数组文本仍按既有规则解析并进入原validator。该策略是参数兼容边界，不是工具启用配置，也不提供任何权限。
+
+## 文件工具下线后的内置清单
+
+Web 配置白名单共 84 个名称。实际会话按渠道、租约授权、后端和 Provider 配置开放。
+
+| 分组 | 工具 |
+| --- | --- |
+| 执行与联网 | `shell`, `web_search`, `web_download`, `http_get`, `similar_image_search`, `deep_research`, `global_search` |
+| 历史对话与记忆 | `search_conversations`, `read_conversation`, `search_memory`, `remember` |
+| 时间与总览 | `get_current_time`, `get_upcoming`, `get_dashboard_stats` |
+| 联系人 | `list_clients`, `create_client`, `update_client`, `delete_client` |
+| 项目 | `list_projects`, `get_project`, `create_project`, `update_project`, `delete_project`, `set_color`, `archive_project`, `add_stage`, `remove_stage`, `rename_stage`, `set_stages`, `update_stage` |
+| 日历 | `list_events`, `create_event`, `update_event`, `delete_event` |
+| 定时任务 | `list_scheduled_tasks`, `create_scheduled_task`, `update_scheduled_task`, `delete_scheduled_task` |
+| 工作区 | `list_workspaces`, `get_workspace`, `create_workspace`, `update_workspace`, `unlink_workspace`, `delete_workspace_directory` |
+| 画布 | `canvas_list`, `canvas_get`, `canvas_search`, `canvas_focus_node`, `canvas_search_placeable`, `canvas_create`, `canvas_create_note`, `canvas_add_node`, `canvas_update_node`, `canvas_remove_node`, `canvas_update_note`, `canvas_update_anchor`, `canvas_connect`, `canvas_delete`, `canvas_delete_note`, `canvas_disconnect`, `canvas_batch` |
+| 笔记 | `note_search`, `note_get`, `note_delete`, `note_restore`, `note_undo`, `note_create`, `note_update` |
+| 知识 | `read_knowledge`, `save_knowledge`, `update_knowledge`, `delete_knowledge` |
+| 技能 | `use_skill`, `list_skills`, `create_skill`, `update_skill`, `delete_skill` |
+| 邮件与交互 | `send_email`, `send_link_buttons`, `ask_user` |
+| 工具管理与撤销 | `get_tool_schema`, `call_tool`, `manage_mcp_servers`, `undo_last_action` |
+
+IM 特有工具另有 `save_im_attachment`、`group_context_search`、`bind_web_session` 和飞书的 `react`。定时任务使用其中已授权的只读工具、邮件及已授权的 MCP。外部 MCP 工具由账号配置动态加载。
+
+网页下载和 IM 私聊主动保存均写入「个人文件 / 下载」，直接落盘。IM 保存仅允许账号所有者保存当前消息中指定的附件，普通聊天附件继续按原生命周期处理。单文件上限为 64 MiB。

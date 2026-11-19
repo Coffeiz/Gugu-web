@@ -7,7 +7,7 @@ import {Pool} from 'pg'
 import Fastify from 'fastify'
 import {createPostgresRuntime} from '@gugu/core/data'
 import {createSecretPromptCancellation} from '@gugu/core/agent-secret-cancel'
-import {registerSecretPromptCancelRoute} from '../../src/modules/agent-sessions/secret-cancel.js'
+import {registerSecretPromptCancelRoute} from '../../src/modules/agent/interactions/secret-cancel.js'
 import {installHttpErrorHandler} from '../../src/http/errors.js'
 const databaseUrl=process.env.GUGU_WEBUI_TEST_DATABASE_URL,python=process.env.GUGU_WEBUI_TEST_PYTHON
 

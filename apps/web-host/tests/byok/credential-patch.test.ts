@@ -3,7 +3,7 @@ import test from 'node:test'
 import {randomUUID} from 'node:crypto'
 import {Pool} from 'pg'
 import {createPostgresRuntime} from '@gugu/core/data'
-import {createCredentialPatch} from '@gugu/core/byok/credential-patch'
+import { createCredentialPatch } from '../../src/modules/byok/store.js'
 
 const databaseUrl=process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
@@ -23,6 +23,8 @@ test('BYOK patch按owner限制凭据，拒绝跨目的地复用密钥且无副�
    reasoning_persistence text NOT NULL,web_search_enabled boolean NOT NULL,image boolean NOT NULL,video boolean NOT NULL,
    audio boolean NOT NULL,image_detail text NOT NULL,dimensions integer,enabled boolean NOT NULL,last_verified_at timestamptz,
    created_at timestamptz NOT NULL,updated_at timestamptz NOT NULL)`)
+  await pool.query(`CREATE TABLE user_provider_bindings(user_id uuid, capability text, credential_id int
+    REFERENCES user_provider_credentials(id) ON DELETE CASCADE, PRIMARY KEY(user_id,capability))`)
   await pool.query(`CREATE TABLE provider_reasoning_states(user_id uuid,status text,invalidated_reason text,invalidated_at timestamptz,
    encrypted_payload text,payload_nonce text,encrypted_data_key text,payload_size integer,version integer,updated_at timestamptz)`)
   await pool.query(`INSERT INTO user_provider_credentials(id,user_id,provider,api_format,capability,encrypted_value,nonce,encrypted_data_key,key_version,base_url,model,reasoning_persistence,web_search_enabled,image,video,audio,image_detail,enabled,created_at,updated_at)
@@ -43,5 +45,9 @@ test('BYOK patch按owner限制凭据，拒绝跨目的地复用密钥且无副�
   assert.equal((await pool.query('SELECT encrypted_value,key_version FROM user_provider_credentials WHERE id=1')).rows[0].encrypted_value,'encrypted:new-secret')
   assert.equal((await pool.query('SELECT enabled FROM user_provider_credentials WHERE id=2')).rows[0].enabled,true)
   assert.equal((await pool.query('SELECT enabled FROM user_provider_credentials WHERE id=3')).rows[0].enabled,false)
+  const binding = await pool.query('SELECT credential_id FROM user_provider_bindings WHERE user_id=$1 AND capability=$2',[owner,'llm'])
+  assert.equal(binding.rows[0].credential_id,1)
+  await patch(owner,1,{enabled:false})
+  assert.equal((await pool.query('SELECT credential_id FROM user_provider_bindings WHERE user_id=$1',[owner])).rowCount,0)
  }finally{await runtime.close();await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end()}
 })

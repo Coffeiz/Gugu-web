@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import {registerWechatConnectRoutes,createWechatConnectHostOptions} from '../../src/modules/im/wechat-connect.js'
+import {registerWechatConnectRoutes,createWechatConnectHostOptions} from '../../src/modules/im/connect/wechat.js'
 import {WechatConnectionError} from '../../../../packages/core/src/im/wechat-connect.js'
 import {installHttpErrorHandler} from '../../src/http/errors.js'
 

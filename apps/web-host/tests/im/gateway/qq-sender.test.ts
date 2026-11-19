@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { ProviderHttpRequest } from '@gugu/core/providers'
-import { createQqClient, QqApiError } from '../../../src/modules/im/gateway/qq/client.js'
-import { buildQqKeyboard, formatQqInteractionFallback, createQqSender, splitQqGroupMentions, type QqSequencePort } from '../../../src/modules/im/gateway/qq/sender.js'
+import { createQqClient, QqApiError } from '../../../src/modules/im/gateway/platforms/qq/client.js'
+import { buildQqKeyboard, formatQqInteractionFallback, createQqSender, splitQqGroupMentions, type QqSequencePort } from '../../../src/modules/im/gateway/platforms/qq/sender.js'
 
 function fixture() {
   const calls: { path: string; body: Record<string, unknown> }[] = [], counters = new Map<string, number>(), sequenceCalls: unknown[] = [], waits: number[] = []

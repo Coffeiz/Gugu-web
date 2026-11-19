@@ -5,8 +5,14 @@ import { createRequire } from 'node:module'
 import { coreRoot } from './test-suites.mjs'
 
 const require = createRequire(import.meta.url)
-const sandboxBuild = spawnSync(process.execPath, [require.resolve('typescript/bin/tsc'), '-p', resolve(coreRoot, '../sandbox/tsconfig.json')], { stdio: 'inherit' })
-if (sandboxBuild.status !== 0) process.exit(sandboxBuild.status ?? 1)
+for (const name of ['sandbox', 'database']) {
+  const dependency = spawnSync(
+    process.execPath,
+    [require.resolve('typescript/bin/tsc'), '-p', resolve(coreRoot, `../${name}/tsconfig.json`)],
+    { stdio: 'inherit' },
+  )
+  if (dependency.status !== 0) process.exit(dependency.status ?? 1)
+}
 
 const output = resolve(coreRoot, 'dist')
 if (

@@ -1,8 +1,7 @@
 import { computed, ref, type Ref } from 'vue'
-import { uploadWithProgress } from '@/services/api'
 import type { FileMeta, FolderMeta } from '@/stores/filesCache'
 import { clearThumbCache } from '@/composables/shared/useThumbCache'
-import { filesToItems, readDroppedEntries, type UploadItem } from '@/composables/files/useFileUploadCore'
+import { filesToItems, readDroppedEntries, uploadFileWithProgress, type UploadItem } from '@/composables/files/useFileUploadCore'
 import { useUploadQueue } from '@/composables/shared/useUploadQueue'
 import type { ConflictDecision, ConflictItem } from '@/components/common/overlays/UploadConflictDialog.vue'
 import { executeUploadLifecycle, prepareUploadBatch, type UploadConflictContext } from './useFileUploadController'
@@ -66,19 +65,11 @@ export function useFileUpload(options: FileUploadOptions) {
         pendingTopFolders.delete(name)
       },
       uploadOne: async (file, resolvedFolderId, _relativePath, decision, onProgress) => {
-        const form = new FormData()
-        form.append('space', context.space)
-        if (context.projectId != null) form.append('project_id', String(context.projectId))
-        if (resolvedFolderId != null) form.append('folder_id', String(resolvedFolderId))
-        if (context.workspaceDirectoryId != null) form.append('workspace_directory_id', String(context.workspaceDirectoryId))
         const overwriteId = decision?.action === 'overwrite' ? decision.existingFileId : null
-        if (overwriteId != null) {
-          form.append('on_conflict', 'overwrite')
-          form.append('overwrite_file_id', String(overwriteId))
-        }
-        // Node Host 需要先读取目标空间与覆盖信息，才能按用户剩余额度限制流式暂存。
-        form.append('file', file)
-        const created = await uploadWithProgress('/files', form, onProgress)
+        const created = await uploadFileWithProgress(file, {
+          space: context.space, projectId: context.projectId, folderId: resolvedFolderId,
+          workspaceDirectoryId: context.workspaceDirectoryId, overwriteId,
+        }, onProgress)
         if (overwriteId != null) {
           options.fileCacheStore.updateFile(overwriteId, { ...created, thumbRevision: Date.now() })
           clearThumbCache(overwriteId)

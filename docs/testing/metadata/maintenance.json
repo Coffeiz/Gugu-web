@@ -3,7 +3,7 @@
     "domain": "maintenance",
     "layer": "L2",
     "owner": "apps/web-host/src/maintenance",
-    "productionEntry": "apps/web-host/src/maintenance/security-retention.ts",
+    "productionEntry": "apps/web-host/src/modules/security-events/cleanup.ts",
     "keyBehavior": "安全事件过期边界、SQL 故障恢复和关闭排空",
     "ci": "web-host-node"
   }

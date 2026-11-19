@@ -3,9 +3,9 @@ import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { Pool } from 'pg'
 import { withPostgresTransaction } from '../../src/adapters/database/postgres-transaction.js'
-import { lockAgentRunSession } from '../../src/modules/agent-sessions/persistence/agent-run-startup-postgres.js'
-import { createPostgresAgentActiveStatusReader, createPostgresAgentDispatch, enqueueAgentRunLocked } from '../../src/modules/agent-sessions/persistence/agent-run-dispatch-postgres.js'
-import { createPostgresAgentRunLeasePort } from '../../src/modules/agent-sessions/persistence/agent-run-lease-postgres.js'
+import { lockAgentRunSession } from '../../src/modules/agent/run/start.js'
+import { createPostgresAgentActiveStatusReader, createPostgresAgentDispatch, enqueueAgentRunLocked } from '../../src/modules/agent/run/dispatch.js'
+import { createPostgresAgentRunLeasePort } from '../../src/modules/agent/run/lease.js'
 
 test('聊天运行定位限定 owner，区分不存在、空闲及运行中会话', async () => {
   let rows: Array<{ run_id: string | null }> = []

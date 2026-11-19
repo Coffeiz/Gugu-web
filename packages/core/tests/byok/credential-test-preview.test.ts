@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 import { Kysely, SqliteDialect } from 'kysely'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { createCredentialSavedTest, createCredentialTestPreview } from '../../src/byok/credential-test-preview.js'
+import { createCredentialSavedTest, createCredentialTestPreview } from '../../../../apps/web-host/src/modules/byok/checks/connection.js'
 
 interface TestDb {
   user_provider_credentials: {

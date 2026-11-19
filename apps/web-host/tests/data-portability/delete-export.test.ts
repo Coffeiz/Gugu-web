@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
 import {createDataExportDeleter} from '@gugu/core/data-portability/delete-export'
-import { registerDataExportDeleteRoute } from '../../src/modules/data-portability/delete-export.js'
+import { registerDataExportDeleteRoute } from '../../src/modules/data-portability/exports.js'
 
 test('导出删除认证后按 owner 删除，活动任务拒绝，归档失败保留任务', async () => {
   const app = Fastify()

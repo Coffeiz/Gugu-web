@@ -1,9 +1,10 @@
+import { tablesSql } from '@gugu/core/data'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { Pool, type PoolClient } from 'pg'
-import { applyMindUndoCore } from '../../src/modules/undo/persistence/mind-core.js'
-import { MindUndoConflict } from '../../src/modules/undo/persistence/mind.js'
+import { applyMindUndoCore } from '../../src/modules/undo/adapters/mind.js'
+import { MindUndoConflict } from '../../src/modules/undo/errors.js'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const owner = '11111111-1111-4111-8111-111111111111'
@@ -12,7 +13,7 @@ async function inSchema(work: (client: PoolClient) => Promise<void>) {
   await admin.query(`CREATE SCHEMA "${schema}"`)
   const pool = new Pool({ connectionString: url, options: `-c search_path=${schema} -c timezone=UTC` })
   const client = await pool.connect()
-  try { await work(client) } finally { client.release(); await pool.end(); await admin.query(`DROP SCHEMA "${schema}" CASCADE`); await admin.end() }
+  try { await client.query(tablesSql('postgres').ragJobs); await work(client) } finally { client.release(); await pool.end(); await admin.query(`DROP SCHEMA "${schema}" CASCADE`); await admin.end() }
 }
 
 test('便签创建撤销后递增版本，重做需要匹配撤销版本', { skip: !url }, async () => inSchema(async client => {

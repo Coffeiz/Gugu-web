@@ -5,11 +5,11 @@ import {dirname,join} from 'node:path'
 import {test} from 'node:test'
 import type {PoolClient} from 'pg'
 import {createImProductionFixture} from './production.fixtures.js'
-import {createImHistoryRetention,enqueueCleanupLocked,ImHistoryRetentionError} from '../../../src/modules/im/gateway/history-retention.js'
-import {createImRetiredInbound} from '../../../src/modules/im/gateway/retired-inbound.js'
-import {createPostgresChatAttachmentDraftDeletePorts} from '../../../src/modules/agent/attachment-staging-postgres.js'
-import {createImInboundEnvelope} from '../../../src/modules/im/gateway/inbound-envelope.js'
-import {imConversationDigest,imConversationFingerprint,imConversationScopeHash} from '../../../src/modules/im/gateway/conversation-identity.js'
+import {createImHistoryRetention,enqueueCleanupLocked,ImHistoryRetentionError} from '../../../src/modules/im/gateway/memory/history.js'
+import {createImRetiredInbound} from '../../../src/modules/im/gateway/inbound/retired.js'
+import {createPostgresChatAttachmentDraftDeletePorts} from '../../../src/modules/agent/attachments/persistence.js'
+import {createImInboundEnvelope} from '../../../src/modules/im/gateway/inbound/envelope.js'
+import {imConversationDigest,imConversationFingerprint,imConversationScopeHash} from '../../../src/modules/im/gateway/agent/identity.js'
 
 const url=process.env.GUGU_IM_GATEWAY_TEST_DATABASE_URL,python=process.env.GUGU_IM_FIXTURE_PYTHON
 test('非法owner/key/构造错误固定，未授权路径不进入FS或SQL',async()=>{

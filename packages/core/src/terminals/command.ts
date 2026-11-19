@@ -8,7 +8,7 @@ export interface TerminalCommandPorts {
   execute(owner: string, terminal: string, requestId: string, input: TerminalCommandInput, signal: AbortSignal): Promise<{ stdout: string; stderr: string; exitCode: number | null; ok: boolean }>
   publish(owner: string, terminal: string, event: TerminalEventItem & { terminalSnapshot?: TerminalListItem }, origin?: string): Promise<void>
   nextId(): string
-  diagnose(): void
+  diagnose(error?: unknown): void
   lease?: { acquire(owner: string, terminal: string, request: string): Promise<string | null>; renew(owner: string, terminal: string, request: string, token: string): Promise<boolean>; release(owner: string, terminal: string, request: string, token: string): Promise<boolean>; cancel(owner: string, terminal: string, request: string): Promise<boolean> }
 }
 
@@ -19,9 +19,9 @@ export function createTerminalCommandService(ports: TerminalCommandPorts) {
   let closing = false
   let starting = 0
   const startWaiters = new Set<() => void>()
-  function diagnose() { try { ports.diagnose() } catch { /* 诊断失败不能中断命令生命周期。 */ } }
+  function diagnose(error?: unknown) { try { ports.diagnose(error) } catch { /* 诊断失败不能中断命令生命周期。 */ } }
   async function publish(owner: string, terminal: string, event: TerminalEventItem & { terminalSnapshot?: TerminalListItem }, origin?: string) {
-    try { await ports.publish(owner, terminal, event, origin) } catch { diagnose() }
+    try { await ports.publish(owner, terminal, event, origin) } catch (error) { diagnose(error) }
   }
   return {
     async start(owner: string, terminal: string, input: TerminalCommandInput, origin?: string) {
@@ -59,11 +59,14 @@ export function createTerminalCommandService(ports: TerminalCommandPorts) {
           result = await ports.execute(owner, terminal, requestId, input, controller.signal)
           if (controller.signal.aborted) result = { stdout: '', stderr: '命令已取消', exitCode: null, ok: false }
         }
-        catch { result = { stdout: '', stderr: controller.signal.aborted ? '命令已取消' : '命令执行失败', exitCode: controller.signal.aborted ? null : 1, ok: false } }
+        catch (error) {
+          if (!controller.signal.aborted) diagnose(error)
+          result = { stdout: '', stderr: controller.signal.aborted ? '命令已取消' : '命令执行失败', exitCode: controller.signal.aborted ? null : 1, ok: false }
+        }
         try {
           const completed = await ports.append(owner, terminal, { kind: 'result', command: input.command, runId: requestId, ...result })
           if (completed) await publish(owner, terminal, completed)
-        } catch { diagnose() }
+        } catch (error) { diagnose(error) }
         finally { if (timer) clearInterval(timer); if (token) await ports.lease!.release(owner, terminal, requestId, token).catch(diagnose); tasks.delete(requestId); reserved.delete(requestId); finish() }
       })()
       return { requestId, event }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createProjectPostCommitPublisher } from '../../src/modules/projects/persistence/project-post-commit-postgres.js'
+import { createProjectPostCommitPublisher } from '../../src/modules/projects/update.js'
 
 test('项目变更提交后 bump 对应资源、入队实体 RAG，再只发布一次 live event', async () => {
   const calls: Array<{ type: string; value?: unknown }> = []

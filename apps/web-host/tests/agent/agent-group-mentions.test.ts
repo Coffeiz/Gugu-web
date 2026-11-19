@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
-import { loadGroupMentionNames } from '../../src/modules/agent-sessions/persistence/agent-group-mentions.js'
+import { loadGroupMentionNames } from '../../src/modules/agent/chat/mentions.js'
 import { extractPlatformMentionIds, replacePlatformMentionIds } from '@gugu/core/agent/context/messages'
 
 test('only extracts explicit platform mentions and replaces known IDs in both wire forms', () => {

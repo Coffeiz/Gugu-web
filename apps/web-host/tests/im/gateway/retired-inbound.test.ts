@@ -4,13 +4,13 @@ import {mkdir,writeFile,readFile,stat} from 'node:fs/promises'
 import {join,dirname} from 'node:path'
 import {randomUUID} from 'node:crypto'
 import {deleteAgentSessionLocked} from '@gugu/core/agent-sessions'
-import {createPostgresImConversationStore} from '../../../src/modules/im/gateway/conversation-postgres.js'
-import {createPostgresImAccess} from '../../../src/modules/im/gateway/access-postgres.js'
+import {createPostgresImConversationStore} from '../../../src/modules/im/gateway/agent/conversations.js'
+import {createPostgresImAccess} from '../../../src/modules/im/gateway/inbound/access.js'
 import {imActorInputFromPayload} from '@gugu/core/im/access'
-import {createImRetiredInbound} from '../../../src/modules/im/gateway/retired-inbound.js'
+import {createImRetiredInbound} from '../../../src/modules/im/gateway/inbound/retired.js'
 import {createImProductionFixture} from './production.fixtures.js'
-import {createImHistoryRetention} from '../../../src/modules/im/gateway/history-retention.js'
-import {createPostgresChatAttachmentDraftDeletePorts} from '../../../src/modules/agent/attachment-staging-postgres.js'
+import {createImHistoryRetention} from '../../../src/modules/im/gateway/memory/history.js'
+import {createPostgresChatAttachmentDraftDeletePorts} from '../../../src/modules/agent/attachments/persistence.js'
 const databaseUrl=process.env.GUGU_IM_GATEWAY_TEST_DATABASE_URL,python=process.env.GUGU_IM_FIXTURE_PYTHON
 test('真实PG历史消费墓碑：删除/回滚/并发与当前授权，不因原收据级联消失重复入站',{
  skip:!(databaseUrl&&python)&&'需专用隔离PG及离线ORM解释器',timeout:120000,

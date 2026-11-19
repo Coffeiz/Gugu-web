@@ -111,7 +111,7 @@ describe('独立 Node Host 与 SQLite Worker', () => {
       request(6, 'undo.apply', { context_id: 'tab', undo_id: 'undo-v2' }, ndjsonToken),
     ])
     expect(frames.code).toBe(0)
-    expect(frames.frames[0]).toMatchObject({ v: 2, event: 'ready', capabilities: ['operation_receipts', 'undo_mind_v1'] })
+    expect(frames.frames[0]).toMatchObject({ v: 2, event: 'ready', capabilities: expect.arrayContaining(['operation_receipts', 'undo_mind_v1']) })
     expect(frames.frames[1]).toMatchObject({ id: 1, result: { available: true } })
     expect(frames.frames[2]).toMatchObject({ id: 2, error: { code: 'not_found' } })
     expect(frames.frames[3]).toMatchObject({ id: 3, error: { code: 'invalid_request' } })

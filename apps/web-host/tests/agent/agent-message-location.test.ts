@@ -6,7 +6,7 @@ import Fastify from 'fastify'
 import {
   createPostgresAgentMessageLocator,
   registerAgentMessageLocationRoute,
-} from '../../src/modules/agent-sessions/agent-message-location.js'
+} from '../../src/modules/agent/chat/history.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

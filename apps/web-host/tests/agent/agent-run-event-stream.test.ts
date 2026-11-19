@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createAgentRunEventStream } from '../../src/modules/agent-sessions/agent-run-event-stream.js'
-import { projectAgentRunEvent } from '../../src/modules/agent-sessions/agent-run-events.js'
+import { createAgentRunEventStream } from '../../src/modules/agent/run/stream.js'
+import { projectAgentRunEvent } from '../../src/modules/agent/run/events.js'
 import type { RunEvent } from '@gugu/core/agent'
 const identity = { ownerId: 'owner-a', sessionId: '1', runId: 'run-a' }
 function event(sequence: number, type: RunEvent['type']): RunEvent { return { identity, id: `e${sequence}`, sequence, type, round: 0, payload: {} } }

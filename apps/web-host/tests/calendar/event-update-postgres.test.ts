@@ -1,3 +1,4 @@
+import { tablesSql } from '@gugu/core/data'
 import { createPostgresRuntime } from '@gugu/core/data'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
@@ -20,6 +21,7 @@ async function withDatabase(work: (pool: Pool, coreRuntime: Awaited<ReturnType<t
     max: 6,
   })
   try {
+    await pool.query(tablesSql('postgres').ragJobs)
     await pool.query(`
       CREATE TABLE projects (
         id serial PRIMARY KEY,

@@ -1,8 +1,17 @@
-import { createHash, randomBytes } from 'node:crypto'
+import { createHash, createHmac, randomBytes } from 'node:crypto'
 import { Kysely, PostgresDialect, sql } from 'kysely'
 import type { Pool } from 'pg'
 import { CoreError, dataContext } from '../../contracts/index.js'
 import { databaseTime, utc } from '../../data/codec.js'
+
+const processInteractionKey = randomBytes(32)
+
+/** 同一动作在历史和实时投影中使用相同令牌，数据库仍只保存摘要。 */
+export function deriveInteractionActionToken(ownerId: string, promptId: number, actionId: number, secretKey?: string) {
+  return createHmac('sha256', secretKey || processInteractionKey)
+    .update(JSON.stringify(['gugu-interaction-action-v1', dataContext(ownerId).ownerId, promptId, actionId]))
+    .digest().subarray(0, 24).toString('base64url')
+}
 
 export interface AgentInteractionHistoryWindow {
   readonly restoreActive: boolean
@@ -80,7 +89,7 @@ function label(schema: Record<string, unknown>, id: string): string {
 class PromptLockBusy extends Error {}
 
 /** Kysely 事务提交后才返回可用 token；不管理 Host 的事件通知。 */
-export function createSqlAgentInteractionHistory(db: Kysely<any>, backend: 'postgres' | 'sqlite', clock: () => Date = () => new Date()) {
+export function createSqlAgentInteractionHistory(db: Kysely<any>, backend: 'postgres' | 'sqlite', clock: () => Date = () => new Date(), secretKey?: string) {
   return async (ownerId: string, sessionId: number, window: AgentInteractionHistoryWindow) => {
     const canonical = dataContext(ownerId).ownerId
     if (!Number.isSafeInteger(sessionId) || sessionId < 1) throw new TypeError('会话身份无效')
@@ -147,7 +156,7 @@ export function createSqlAgentInteractionHistory(db: Kysely<any>, backend: 'post
           if (action.status === 'consumed') { selected = action.option_id; continue }
           const usable = backend === 'sqlite' ? sqliteTime(action.expires_at) > now : true
           if (!row.active || action.status !== 'pending' || !usable) continue
-          const token = randomBytes(24).toString('base64url'), hash = createHash('sha256').update(token).digest('hex')
+          const token = deriveInteractionActionToken(canonical, row.id, action.id, secretKey), hash = createHash('sha256').update(token).digest('hex')
           const expiryGuard = backend === 'sqlite' ? sql`expires_at=${action.expires_at}` : sql`expires_at>${now}`
           const updated = await sql`UPDATE interaction_actions SET token_hash=${hash} WHERE id=${action.id} AND prompt_id=${row.id} AND status='pending' AND ${expiryGuard} RETURNING id`.execute(tx)
           if (updated.rows.length) options.push({ id: action.option_id, label: label(schema, action.option_id), token })
@@ -174,6 +183,6 @@ export function createSqlAgentInteractionHistory(db: Kysely<any>, backend: 'post
 }
 
 /** 连接池由调用方持有和关闭。 */
-export function createPostgresAgentInteractionHistory(pool: Pool, clock?: () => Date) {
-  return createSqlAgentInteractionHistory(new Kysely<any>({ dialect: new PostgresDialect({ pool }) }), 'postgres', clock)
+export function createPostgresAgentInteractionHistory(pool: Pool, clock?: () => Date, secretKey?: string) {
+  return createSqlAgentInteractionHistory(new Kysely<any>({ dialect: new PostgresDialect({ pool }) }), 'postgres', clock, secretKey)
 }

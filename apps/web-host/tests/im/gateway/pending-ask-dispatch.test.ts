@@ -1,18 +1,18 @@
+import { imGatewaySql } from '@gugu/database/postgres/migrations/0013_im_gateway'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 import { attentionSourceKind, parseImAttentionRecord } from '@gugu/core/im/attention/directive'
 import { createRedisStreamCommands } from '../../../src/adapters/cache/redis-stream-commands.js'
-import { createPostgresImAttentionRuntime } from '../../../src/modules/im/gateway/attention-runtime.js'
-import { createPostgresRedisImAttentionSnapshot } from '../../../src/modules/im/gateway/attention-snapshot.js'
-import { createRedisImPendingAskStore } from '../../../src/modules/im/gateway/pending-ask.js'
-import { createPostgresImPendingAskDispatcher } from '../../../src/modules/im/gateway/pending-ask-dispatch.js'
-import { createPostgresImConversationStore } from '../../../src/modules/im/gateway/conversation-postgres.js'
-import { createPostgresImAccess } from '../../../src/modules/im/gateway/access-postgres.js'
-import { createImInboundEnvelope } from '../../../src/modules/im/gateway/inbound-envelope.js'
-import { registerAgentRunStartupLocked } from '../../../src/modules/agent-sessions/persistence/agent-run-startup-postgres.js'
-import { enqueueAgentRunLocked, decryptAgentDispatchInput } from '../../../src/modules/agent-sessions/persistence/agent-run-dispatch-postgres.js'
+import { createPostgresImAttentionRuntime } from '../../../src/modules/im/gateway/attention/runtime.js'
+import { createPostgresRedisImAttentionSnapshot } from '../../../src/modules/im/gateway/attention/snapshot.js'
+import { createRedisImPendingAskStore } from '../../../src/modules/im/gateway/interactions/ask.js'
+import { createPostgresImPendingAskDispatcher } from '../../../src/modules/im/gateway/interactions/dispatch.js'
+import { createPostgresImConversationStore } from '../../../src/modules/im/gateway/agent/conversations.js'
+import { createPostgresImAccess } from '../../../src/modules/im/gateway/inbound/access.js'
+import { createImInboundEnvelope } from '../../../src/modules/im/gateway/inbound/envelope.js'
+import { registerAgentRunStartupLocked } from '../../../src/modules/agent/run/start.js'
+import { enqueueAgentRunLocked, decryptAgentDispatchInput } from '../../../src/modules/agent/run/dispatch.js'
 
 const pgUrl = process.env.GUGU_IM_GATEWAY_TEST_DATABASE_URL, redisUrl = process.env.GUGU_WEBUI_TEST_REDIS_URL
 test('真实PG/Redis：正式attention被动ASK→内部唤醒→同事务startup/v3密封Run；并发重放一次、原被动段不升级、伪唤醒/撤权拒绝', {
@@ -38,8 +38,8 @@ test('真实PG/Redis：正式attention被动ASK→内部唤醒→同事务startu
       CREATE TABLE conversation_messages(id serial PRIMARY KEY,session_id integer REFERENCES conversation_sessions(id),conversation_seq bigint,role text,content text,client_message_id varchar(64),files jsonb,quoted_text text,platform_user_id text,platform_user_name text,platform_bot_user_id text,chat_type text,im_platform_message_id text,im_reply_to_message_id text,im_reply_target_sender_id text,im_reply_target_is_bot boolean,im_sender_is_bot boolean,im_event_received_ms bigint,im_platform_sent_ms bigint,run_id text,created_at timestamptz,sent_at timestamptz,UNIQUE(session_id,conversation_seq),UNIQUE(session_id,client_message_id));
       CREATE TABLE agent_run_startups(user_id uuid,session_id integer,run_id text,status text,created_at timestamptz,updated_at timestamptz,PRIMARY KEY(user_id,session_id,run_id));
       CREATE TABLE agent_run_dispatch(sequence bigint GENERATED ALWAYS AS IDENTITY,user_id uuid,session_id integer,run_id text,state text,nonce bytea,payload bytea,request_expires_at timestamptz,message_id integer,PRIMARY KEY(user_id,session_id,run_id));`)
-    await pool.query(await readFile(new URL('../../../src/modules/im/gateway/conversation-schema.sql', import.meta.url), 'utf8'))
-    await pool.query(await readFile(new URL('../../../src/modules/im/gateway/pending-ask-schema.sql', import.meta.url), 'utf8'))
+    await pool.query(imGatewaySql.conversation)
+    await pool.query(imGatewaySql.pendingAsk)
     await pool.query(`INSERT INTO users VALUES($1,true,'active')`, [ownerId])
     await pool.query(`INSERT INTO user_bots VALUES(42,$1,'qq',true,true,NULL,false,false,'natural',0,'合成咕咕','owner-user','[]',false)`, [ownerId])
     const pending = createRedisImPendingAskStore({ redis, secretKey, now: () => now })

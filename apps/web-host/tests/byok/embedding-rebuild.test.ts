@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { registerEmbeddingRebuildRoute, createUserEmbeddingRebuildRuntime, createRedisUserEmbeddingRebuildState } from '../../src/modules/byok/embedding-rebuild.js'
-import type { ScheduledTaskRedisCommands } from '../../src/modules/scheduled-tasks/persistence/redis-lease.js'
+import { registerEmbeddingRebuildRoute, createUserEmbeddingRebuildRuntime, createRedisUserEmbeddingRebuildState } from '../../src/modules/agent/memory/rebuild.js'
+import type { ScheduledTaskRedisCommands } from '../../src/modules/scheduled-tasks/run/lease.js'
 
 const owner = '00000000-0000-4000-8000-000000000101'
 const foreignOwner = '00000000-0000-4000-8000-000000000103'

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { Pool } from 'pg'
-import { createPostgresPurgeLeaseStore } from '../../src/modules/files/trash-purge-worker-postgres.js'
+import { createPostgresPurgeLeaseStore } from '../../src/modules/files/trash/purge.js'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 test('回收站租约全局互斥、失租接管与 owner 条件进度', { skip: !url && '需要隔离 PostgreSQL' }, async () => {

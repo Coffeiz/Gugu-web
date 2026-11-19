@@ -6,7 +6,7 @@ import {
   AgentFilesystemAuthorizationError,
   createAgentSessionFilesystemAuthorization,
   type FilesystemAuthorizationConfirmationPort,
-} from '../../src/modules/agent-sessions/agent-filesystem-authorization.js'
+} from '../../src/modules/agent/sandbox/authorization.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

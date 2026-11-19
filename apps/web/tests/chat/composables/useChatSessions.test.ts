@@ -2,6 +2,7 @@ import { effectScope, ref } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useChatSessions } from '@/components/common/gugu-chat/composables/useChatSessions'
 import { agentApi } from '@/services/api'
+import type { SessionScrollAnchor } from '@/components/common/gugu-chat/composables/sessionScrollLayout'
 import type { ChatMessage, ChatSession } from '@/components/common/gugu-chat/chatTypes'
 
 vi.mock('@/services/api', () => ({
@@ -21,7 +22,10 @@ function createSessionManager() {
   const messages = ref<ChatMessage[]>([])
   const sessionList = ref<ChatSession[]>([])
   const streaming = ref(false)
+  const sessionSettling = ref(false)
   const resumeStream = vi.fn(async () => {})
+  const restoreScrollPosition = vi.fn(async (_anchor: SessionScrollAnchor | null) => {})
+  const captureScrollAnchor = vi.fn<() => SessionScrollAnchor | null>()
   const scope = effectScope()
   const sessions = scope.run(() => {
     let generation = 0
@@ -45,22 +49,67 @@ function createSessionManager() {
       drainPendingQueue: async () => {},
       clearStatus: () => {},
       setStatus: () => {},
+      thinkingItem: () => ({ kind: 'dots' as const }),
       contextCompactingItem: () => ({ kind: 'hide' as const }),
       onContentReset: () => {},
       onCaptureBaseScrollH: () => {},
       scrollBottom: async () => {},
-      waitForStableScrollLayout: async () => {},
+      captureScrollAnchor, restoreScrollPosition,
       waitForSessionSettlement: async () => {},
       shouldFollowBottom: () => false,
-      setCachedHistoryVisible: () => {},
-      setSessionSettling: () => {},
+      setSessionSettling: (value) => { sessionSettling.value = value },
     })
   })!
-  return { scope, sessionId, messages, sessions, sessionList, streaming, resumeStream }
+  return { scope, sessionId, messages, sessions, sessionList, streaming, resumeStream, captureScrollAnchor, restoreScrollPosition, sessionSettling }
 }
 
 describe('会话加载代次', () => {
   afterEach(() => vi.resetAllMocks())
+
+  it('切回缓存会话时，合并历史并校准位置后才展示消息', async () => {
+    const { scope, sessions, messages, sessionSettling, captureScrollAnchor, restoreScrollPosition } = createSessionManager()
+    const response = (id: number, content: string): Awaited<ReturnType<typeof agentApi.getMessages>> => ({
+      messages: [{ id, role: 'user', content, createdAt: '2026-10-15T00:00:00Z' }],
+      timelineEvents: [], pagination: { newestId: id }, active: false,
+    })
+    vi.mocked(agentApi.getMessages).mockImplementation(async (id) => response(Number(id), '缓存消息'))
+    try {
+      await sessions.loadSession(101)
+      expect(restoreScrollPosition).toHaveBeenLastCalledWith(null)
+      const anchor = { messageKey: 'message:101', offset: 128 }
+      captureScrollAnchor.mockReturnValueOnce(anchor)
+      await sessions.loadSession(202)
+      const history = deferred<ReturnType<typeof response>>()
+      const layout = deferred<void>()
+      vi.mocked(agentApi.getMessages).mockReturnValueOnce(history.promise)
+      restoreScrollPosition.mockClear()
+      restoreScrollPosition.mockReturnValueOnce(layout.promise)
+      const loading = sessions.loadSession(101)
+      try {
+        expect(sessionSettling.value).toBe(true)
+        expect(messages.value).toEqual([])
+        expect(restoreScrollPosition).not.toHaveBeenCalled()
+
+        history.resolve(response(103, '新消息'))
+        await vi.waitFor(() => expect(restoreScrollPosition).toHaveBeenCalledOnce())
+        expect(sessionSettling.value).toBe(true)
+        expect(restoreScrollPosition).toHaveBeenCalledWith(anchor)
+        expect(messages.value.map((message) => message.text)).toEqual(['缓存消息', '新消息'])
+      } finally {
+        history.resolve(response(103, '新消息'))
+        layout.resolve(undefined)
+        await loading
+      }
+      expect(sessionSettling.value).toBe(false)
+
+      captureScrollAnchor.mockReturnValueOnce(null)
+      await sessions.loadSession(202)
+      await sessions.loadSession(101)
+      expect(restoreScrollPosition).toHaveBeenLastCalledWith(null)
+    } finally {
+      scope.stop()
+    }
+  })
 
   it('A 的消息与交互同页在途时切到 B，迟到页不能覆盖 B', async () => {
     const response = (content: string) => ({
@@ -118,7 +167,7 @@ describe('会话加载代次', () => {
   })
 
   it('切回时以服务端终态覆盖缓存运行态，不续接已结束会话也不保留动画', async () => {
-    const { scope, sessionId, messages, sessions, sessionList, streaming, resumeStream } = createSessionManager()
+    const { scope, sessionId, messages, sessions, sessionList, streaming, resumeStream, restoreScrollPosition } = createSessionManager()
     sessionList.value = [
       { id: 101, title: '运行中的缓存会话', isRunning: true },
       { id: 202, title: '另一个会话', isRunning: false },
@@ -134,12 +183,14 @@ describe('会话加载代次', () => {
     await sessions.loadSession(202)
     streaming.value = false
     resumeStream.mockClear()
+    restoreScrollPosition.mockClear()
 
     // 会话 101 的内存快照仍记着曾在运行；服务器已返回 active=false。
-    await sessions.loadSession(101)
+    await expect(sessions.loadSession(101)).resolves.toBe('loaded')
 
     expect(sessionList.value.find(session => session.id === 101)?.isRunning).toBe(false)
     expect(resumeStream).toHaveBeenCalledTimes(0)
+    expect(restoreScrollPosition).toHaveBeenCalledOnce()
     scope.stop()
   })
 })

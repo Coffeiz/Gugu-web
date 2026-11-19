@@ -33,7 +33,7 @@ test('重置仅清空当前owner引导进度并保留播种和扩展状态', { s
 })
 
 import Fastify from 'fastify'
-import { registerOnboardingResetGuideRoute } from '../../src/modules/onboarding/reset-guide.js'
+import { registerOnboardingResetGuideRoute } from '../../src/modules/onboarding/routes.js'
 
 test('引导重置HTTP未认证不调用用例，认证后只采用可信owner', async () => {
   const app = Fastify()

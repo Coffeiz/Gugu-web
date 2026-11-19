@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { createRemoteAuthClient } from '@gugu/core/auth/client'
 import { createApp } from '../../src/app.js'
-import { verifyUserToken, type PublicUserRecord } from '../../src/modules/auth/auth.js'
+import { verifyUserToken, type PublicUserRecord } from '../../src/modules/auth/session/token.js'
 import { createRedisRateLimiter, type RedisRateLimitCommands } from '../../src/modules/auth/rate-limit.js'
 import type { RateLimitHandler } from '../../src/modules/auth/rate-limit.js'
 
@@ -13,6 +14,7 @@ function makeApp(options: {
   user?: Partial<PublicUserRecord>
   rateLimit?: RateLimitHandler
   tokenExpiresMinutes?: number
+  lookupUser?: () => Promise<PublicUserRecord | null>
 } = {}) {
   const calls: unknown[][] = []
   const app = createApp({
@@ -21,7 +23,7 @@ function makeApp(options: {
     userAuth: {
       secret,
       tokenExpiresMinutes: options.tokenExpiresMinutes,
-      lookupUser: async () => null,
+      lookupUser: options.lookupUser ?? (async () => null),
       authenticateCredentials: async (username, password) => {
         calls.push(['authenticateCredentials', username, password])
         return username === 'synthetic-user' && password === 'valid-password'
@@ -170,4 +172,26 @@ test('login blocks the eleventh attempt for the same forwarded peer and account'
   } finally {
     await app.close()
   }
+})
+
+
+test('桌面认证客户端用真实 Web Host 登录并验证会话撤销', async () => {
+  const user = {
+    id: userId, username: 'synthetic-user', displayName: '合成用户',
+    email: 'synthetic@example.test', isActive: true, securityVersion: 3,
+    avatarUrl: null, createdAt: null, timezone: null, emailSubscribed: false, imChannels: [],
+  }
+  const { app } = makeApp({ lookupUser: async () => user })
+  try {
+    const server = await app.listen({ host: '127.0.0.1', port: 0 })
+    const client = createRemoteAuthClient()
+    const input = { provider: 'self-hosted' as const, server, username: 'synthetic-user', password: 'valid-password' }
+    await assert.rejects(client.login({ ...input, password: 'invalid' }), { code: 'invalid_credentials' })
+    const account = await client.login(input)
+    assert.equal(account.user.displayName, '合成用户')
+    assert.equal(account.session.origin, server)
+    assert.deepEqual(await client.restore(account.session), account.user)
+    user.securityVersion++
+    await assert.rejects(client.restore(account.session), { code: 'session_expired' })
+  } finally { await app.close() }
 })

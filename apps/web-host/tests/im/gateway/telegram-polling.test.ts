@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { connectTelegramPolling, type TelegramPollingOptions } from '../../../src/modules/im/gateway/telegram-polling.js'
+import { connectTelegramPolling, type TelegramPollingOptions } from '@gugu/gateway/telegram'
 
 const message = (id: number, extra: Record<string, unknown> = {}) => ({ update_id: id,
   message: { message_id: id, date: 100, chat: { id: 9, type: 'private' }, from: { id: 9, first_name: '小北' }, text: '合成消息', ...extra } })

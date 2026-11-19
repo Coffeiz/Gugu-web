@@ -104,8 +104,10 @@ describe('真实Provider到Canonical Harness组合', () => {
     const result = await collect(value.harness.start(identity))
     expect(result.state.status).toBe('completed')
     expect(observations.map(event => `${event.kind}:${event.name}`)).toEqual(expect.arrayContaining([
-      'run:started', 'round:started', 'provider:request', 'provider:usage', 'tool:lookup', 'round:completed', 'run:finished',
+      'run:started', 'round:started', 'context:Provider client and schemas prepared', 'provider:request', 'provider:usage', 'tool:lookup', 'round:completed', 'run:finished',
     ]))
+    const preparation = observations.find(event => event.kind === 'context' && event.name === 'Provider client and schemas prepared')
+    expect(preparation).toMatchObject({ status: 'success', startedAt: 0, endedAt: 0, durationMs: 0, attributes: { toolCount: 1 } })
     expect(observations.filter(event => event.kind === 'tool').map(event => event.status)).toEqual(['running', 'success'])
     const requests = observations.filter(event => event.kind === 'provider' && event.name === 'request')
     const request = requests[0]!

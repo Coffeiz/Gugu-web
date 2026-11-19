@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { parseQqMessage } from '@gugu/core/im/qq-message'
-import { createPlatformMedia, type PlatformAttachmentStore } from '../../../src/modules/im/gateway/platform-media.js'
+import { createPlatformMedia, type PlatformAttachmentStore } from '../../../src/modules/im/gateway/media/platform.js'
 import type { ProviderTransport } from '@gugu/core/providers'
-import { createTelegramBotApi } from '../../../src/modules/im/gateway/telegram-api.js'
+import { createTelegramBotApi } from '@gugu/gateway/telegram'
 import { normalizeTelegramMessage } from '@gugu/core/im/telegram-message'
 
 const scope = { ownerId: '11111111-1111-4111-8111-111111111111', botId: '4', platform: 'qq' as const, chatType: 'c2c' as const, chatId: null, platformUserId: 'member-a' }

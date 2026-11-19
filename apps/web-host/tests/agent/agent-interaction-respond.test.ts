@@ -5,8 +5,8 @@ import Fastify from 'fastify'
 import { Pool } from 'pg'
 import { consumeInteractionText } from '@gugu/core/agent'
 import { InteractionConsumeError } from '@gugu/core/agent/interactions/consume-action'
-import { registerAgentInteractionRespondRoute, createAgentInteractionRespondService } from '../../src/modules/agent-sessions/agent-interaction-respond.js'
-import { createPostgresInteractionTextStore } from '../../src/modules/agent-sessions/persistence/agent-interaction-consume-postgres.js'
+import { registerAgentInteractionRespondRoute, createAgentInteractionRespondService } from '../../src/modules/agent/interactions/respond.js'
+import { createPostgresInteractionTextStore } from '../../src/modules/agent/interactions/consume.js'
 
 test('路由认证、可信 owner、参数与错误脱敏', async () => {
   const app = Fastify(); let calls = 0

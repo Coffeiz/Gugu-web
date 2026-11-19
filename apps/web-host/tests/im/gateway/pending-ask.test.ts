@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { createRedisStreamCommands } from '../../../src/adapters/cache/redis-stream-commands.js'
-import { createRedisImPendingAskStore, pumpImPendingAsks, PENDING_ASK_RUN_PROOF_TTL_SECONDS } from '../../../src/modules/im/gateway/pending-ask.js'
+import { createRedisImPendingAskStore, pumpImPendingAsks, PENDING_ASK_RUN_PROOF_TTL_SECONDS } from '../../../src/modules/im/gateway/interactions/ask.js'
 
 const signal = new AbortController().signal
 const scope = { ownerId: randomUUID(), botId: '42', platform: 'qq' as const, groupId: 'synthetic-group' }

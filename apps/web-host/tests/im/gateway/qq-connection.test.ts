@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createQqConnection } from '../../../src/modules/im/gateway/qq-connection.js';
-import type { QqMessageEvent, QqSocket } from '../../../src/modules/im/gateway/qq-connection.js';
-import type { GatewayClock } from '../../../src/modules/im/gateway/supervisor.js';
+import { createQqConnection } from '../../../src/modules/im/gateway/platforms/qq/connection.js';
+import type { QqMessageEvent, QqSocket } from '../../../src/modules/im/gateway/platforms/qq/connection.js';
+import type { GatewayClock } from '@gugu/gateway';
 
 const flush = async () => { for (let index = 0; index < 40; index++) await Promise.resolve(); };
 function socket() {

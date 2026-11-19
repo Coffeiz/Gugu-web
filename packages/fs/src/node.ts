@@ -2,6 +2,8 @@ import { constants } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { link, lstat, mkdir, open, readdir, realpath, rename, rmdir, unlink } from 'node:fs/promises'
 import path from 'node:path'
+import { createRequire } from 'node:module'
+import { getSystemErrorName } from 'node:util'
 
 /** 不可信路径不能用于访问授权根之外的内容。 */
 export class UnsafeLocalPathError extends Error {}
@@ -75,22 +77,7 @@ async function publishLocalFile(
   let temporaryPath: string | undefined
   try {
     for (const segment of segments.slice(0, -1)) {
-      const nextPath = `${parent}/${segment}`
-      let next
-      try { next = await open(nextPath, constants.O_RDONLY | constants.O_DIRECTORY | (constants.O_NOFOLLOW ?? 0)) }
-      catch (error) {
-        const code = (error as NodeJS.ErrnoException).code
-        if (code === 'ELOOP' || code === 'ENOTDIR') throw new UnsafeLocalPathError()
-        if (code !== 'ENOENT' || !options.replace && !options.createParents) throw error
-        try { await mkdir(nextPath, { mode: 0o700 }) }
-        catch (mkdirError) { if ((mkdirError as NodeJS.ErrnoException).code !== 'EEXIST') throw mkdirError }
-        try { next = await open(nextPath, constants.O_RDONLY | constants.O_DIRECTORY | (constants.O_NOFOLLOW ?? 0)) }
-        catch (openError) {
-          const openCode = (openError as NodeJS.ErrnoException).code
-          if (openCode === 'ELOOP' || openCode === 'ENOTDIR') throw new UnsafeLocalPathError()
-          throw openError
-        }
-      }
+      const next = await openChildDirectory(parent, segment, options.replace || options.createParents === true)
       parents.push(next)
       parent = `/proc/self/fd/${next.fd}`
     }
@@ -219,7 +206,25 @@ async function removeLocalPath(rootPath: string, relativePath: string, fileOnly:
   }
 }
 
-async function openAnchoredParent(rootPath: string, relativePath: string) {
+async function openChildDirectory(parent: string, name: string, create: boolean) {
+  const target = path.join(parent, name)
+  const flags = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW
+  try {
+    return await open(target, flags)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ELOOP' || code === 'ENOTDIR') throw new UnsafeLocalPathError()
+    if (code !== 'ENOENT' || !create) throw error
+  }
+  try {
+    await mkdir(target, { mode: 0o700 })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+  }
+  return openChildDirectory(parent, name, false)
+}
+
+async function openAnchoredParent(rootPath: string, relativePath: string, createParents = false) {
   const segments = relativePath.split('/')
   if (process.platform !== 'linux' || segments.some(segment =>
     !segment || segment === '.' || segment === '..' || segment.includes('\\') || segment.includes('\0')))
@@ -243,7 +248,7 @@ async function openAnchoredParent(rootPath: string, relativePath: string) {
     let parent = `/proc/self/fd/${handle.fd}`
     for (const segment of segments.slice(0, -1)) {
       let next
-      try { next = await open(path.join(parent, segment), constants.O_RDONLY | constants.O_DIRECTORY | (constants.O_NOFOLLOW ?? 0)) }
+      try { next = await openChildDirectory(parent, segment, createParents) }
       catch (error) {
         const code = (error as NodeJS.ErrnoException).code
         if (code === 'ENOENT') {
@@ -259,6 +264,7 @@ async function openAnchoredParent(rootPath: string, relativePath: string) {
     }
     return {
       parent,
+      fd: (ancestors.at(-1) ?? handle).fd,
       name: segments.at(-1)!,
       path: path.join(root, ...segments),
       close: async () => {
@@ -270,6 +276,208 @@ async function openAnchoredParent(rootPath: string, relativePath: string) {
     for (const ancestor of ancestors.reverse()) await ancestor.close()
     await handle.close()
     throw error
+  }
+}
+
+export async function createLocalDirectory(root: string, relativePath: string): Promise<boolean> {
+  const parent = await openAnchoredParent(root, relativePath)
+  if (!parent) return false
+  try {
+    await mkdir(path.join(parent.parent, parent.name), { mode: 0o700 })
+    return true
+  } finally {
+    await parent.close()
+  }
+}
+
+const require = createRequire(import.meta.url)
+type LinuxFfi = typeof import('node:ffi')
+let renameFunctions: { renameat2: (from: number, source: Buffer, to: number, destination: Buffer, flags: number) => number; __errno_location: () => bigint } | undefined
+
+/** 源和目标都相对于打开的目录句柄；内核保证移动与拒绝覆盖在同一步完成。 */
+export async function moveLocalEntry(root: string, fromPath: string, toPath: string): Promise<boolean> {
+  const from = await openAnchoredParent(root, fromPath)
+  if (!from) return false
+  try {
+    const to = await openAnchoredParent(root, toPath)
+    if (!to) return false
+    try {
+      const info = await lstat(path.join(from.parent, from.name)).catch(error => {
+        if (error.code === 'ENOENT') return null
+        throw error
+      })
+      if (!info) return false
+      if (!info.isFile() && !info.isDirectory()) throw new UnsafeLocalPathError()
+      const ffi = require('node:ffi') as LinuxFfi
+      renameFunctions ??= ffi.dlopen(null, {
+        renameat2: { arguments: ['i32', 'pointer', 'i32', 'pointer', 'u32'], return: 'i32' },
+        __errno_location: { arguments: [], return: 'pointer' },
+      }).functions
+      const errno = renameFunctions.__errno_location()
+      const RENAME_NOREPLACE = 1
+      if (renameFunctions.renameat2(from.fd, Buffer.from(`${from.name}\0`), to.fd, Buffer.from(`${to.name}\0`), RENAME_NOREPLACE) === 0)
+        return true
+      const number = ffi.getInt32(errno)
+      const code = number > 0 ? getSystemErrorName(-number) : 'UNKNOWN'
+      if (code === 'ENOENT') return false
+      throw Object.assign(new Error('无法移动文件或目录'), { code })
+    } finally {
+      await to.close()
+    }
+  } finally {
+    await from.close()
+  }
+}
+
+/** 读取用户可修改的目录树时，逐段固定目录句柄，拒绝符号链接。 */
+export async function openAnchoredLocalFile(root: string, relativePath: string) {
+  const parent = await openAnchoredParent(root, relativePath)
+  if (!parent) return null
+  try {
+    const handle = await open(path.join(parent.parent, parent.name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    try {
+      const info = await handle.stat()
+      if (!info.isFile()) throw new UnsafeLocalPathError()
+      return { handle, size: info.size }
+    } catch (error) {
+      await handle.close()
+      throw error
+    }
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT') return null
+    if (code === 'ELOOP') throw new UnsafeLocalPathError()
+    throw error
+  } finally {
+    await parent.close()
+  }
+}
+
+export async function listLocalDirectory(root: string, relativePath: string) {
+  const parent = await openAnchoredParent(root, relativePath)
+  if (!parent) return null
+  try {
+    const handle = await open(path.join(parent.parent, parent.name), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
+    try {
+      const directory = `/proc/self/fd/${handle.fd}`
+      const entries: Array<{ name: string; kind: 'directory' | 'file'; size: number }> = []
+      for (const name of await readdir(directory)) {
+        if (name.startsWith('.gugu-') || name.includes('\\')) continue
+        const info = await lstat(path.join(directory, name)).catch(error => {
+          if (error.code === 'ENOENT') return null
+          throw error
+        })
+        if (info?.isDirectory()) entries.push({ name, kind: 'directory', size: 0 })
+        if (info?.isFile()) entries.push({ name, kind: 'file', size: info.size })
+      }
+      return entries
+    } finally {
+      await handle.close()
+    }
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT') return null
+    if (code === 'ELOOP' || code === 'ENOTDIR') throw new UnsafeLocalPathError()
+    throw error
+  } finally {
+    await parent.close()
+  }
+}
+
+/** 宿主提供可信目录键，调用者只传相对于该目录的路径。 */
+export async function localEntryKind(root: string, key: string) {
+  const parent = await openAnchoredParent(root, key)
+  if (!parent) return null
+  try {
+    const info = await lstat(path.join(parent.parent, parent.name)).catch(error => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    })
+    if (!info) return null
+    if (info.isDirectory()) return 'directory' as const
+    if (info.isFile()) return 'file' as const
+    throw new UnsafeLocalPathError()
+  } finally {
+    await parent.close()
+  }
+}
+
+/** 先复制到目标目录下的暂存项，再原子发布完整文件或目录。 */
+async function copyLocalEntry(root: string, source: string, destination: string, signal: AbortSignal): Promise<boolean> {
+  if (source === destination || destination.startsWith(`${source}/`))
+    throw Object.assign(new Error('不能复制到自身或子目录'), { code: 'EINVAL' })
+  const staging = path.posix.join(path.posix.dirname(destination), `.gugu-copy-${randomUUID()}`)
+
+  async function copy(from: string, to: string): Promise<boolean> {
+    signal.throwIfAborted()
+    const kind = await localEntryKind(root, from)
+    if (kind === null) return false
+    if (kind === 'directory') {
+      if (!await createLocalDirectory(root, to)) return false
+      const entries = await listLocalDirectory(root, from)
+      if (!entries) return false
+      for (const entry of entries) {
+        if (!await copy(`${from}/${entry.name}`, `${to}/${entry.name}`)) return false
+      }
+      return true
+    }
+    const entry = await openAnchoredLocalFile(root, from)
+    if (!entry) return false
+    try {
+      await importLocalFile(root, to, entry.handle.createReadStream({ autoClose: false }), signal)
+    } finally {
+      await entry.handle.close()
+    }
+    return true
+  }
+  try {
+    if (!await copy(source, staging)) return false
+    signal.throwIfAborted()
+    return await moveLocalEntry(root, staging, destination)
+  } finally {
+    await removeLocalTree(root, staging)
+  }
+}
+
+export function createLocalFileTree(storageRoot: string, rootKey: string) {
+  function key(relativePath: string, allowRoot = false) {
+    if (relativePath === '' && allowRoot) return rootKey
+    if (relativePath.length > 4096 || relativePath.split('/').some(segment =>
+      !segment || segment === '.' || segment === '..' || segment.includes('\\')
+      || segment.includes('\0') || segment.startsWith('.gugu-')))
+      throw new UnsafeLocalPathError()
+    return `${rootKey}/${relativePath}`
+  }
+
+  return {
+    storageKey: key,
+    copy: (relativePath: string, destination: string, signal: AbortSignal) =>
+      copyLocalEntry(storageRoot, key(relativePath), key(destination), signal),
+    async ensureRoot() {
+      // 只创建宿主提供的根目录层级，末段仅用于打开父目录句柄。
+      const root = await openAnchoredParent(storageRoot, `${rootKey}/.gugu-root`, true)
+      if (!root) return false
+      await root.close()
+      return true
+    },
+    async list(relativePath: string) {
+      const entries = await listLocalDirectory(storageRoot, key(relativePath, true))
+      return entries?.map(entry => ({
+        ...entry,
+        relativePath: relativePath ? `${relativePath}/${entry.name}` : entry.name,
+      })) ?? null
+    },
+    open: (relativePath: string) => openAnchoredLocalFile(storageRoot, key(relativePath)),
+    mkdir: (relativePath: string) => createLocalDirectory(storageRoot, key(relativePath)),
+    upload: (relativePath: string, content: AsyncIterable<Uint8Array>, signal: AbortSignal) =>
+      importLocalFile(storageRoot, key(relativePath), content, signal),
+    async move(relativePath: string, destination: string) {
+      const from = key(relativePath)
+      const to = key(destination)
+      if (to.startsWith(`${from}/`))
+        throw Object.assign(new Error('不能移动到自身的子目录'), { code: 'EINVAL' })
+      return moveLocalEntry(storageRoot, from, to)
+    },
   }
 }
 

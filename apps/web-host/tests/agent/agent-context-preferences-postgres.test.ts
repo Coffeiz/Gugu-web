@@ -6,7 +6,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { Pool } from 'pg'
 import { createLocalPreferenceTextFiles } from '../../src/modules/preferences/persistence/personality-files.js'
-import { createAgentPreferenceContextSources } from '../../src/modules/agent-sessions/context/agent-context-preferences.js'
+import { createAgentPreferenceContextSources } from '../../src/modules/agent/context/preferences.js'
 import { ensureSessionSnapshot, stableJson } from '@gugu/core/agent'
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

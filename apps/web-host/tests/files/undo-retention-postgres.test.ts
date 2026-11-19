@@ -6,8 +6,8 @@ import path from 'node:path'
 import { Pool } from 'pg'
 import type { PoolClient } from 'pg'
 import test from 'node:test'
-import { cleanupExpiredUndoArtifacts } from '../../src/maintenance/undo-retention.js'
-import { createLocalUndoRetentionStorage } from '../../src/modules/files/undo-retention-storage.js'
+import { cleanupExpiredUndoArtifacts } from '../../src/modules/undo/retention.js'
+import { createLocalUndoRetentionStorage } from '../../src/modules/files/storage/undo.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '11111111-1111-4111-8111-111111111111'
@@ -60,8 +60,8 @@ test('Undo 保留清理删除到期正文与旧错位目录，并保留未到期
     assert.deepEqual(rows.rows, [
       { id: oldOperationId, status: 'expired', failure_code: 'retention_expired', artifact_refs: {} },
       { id: 'redo-expired', status: 'expired', failure_code: 'redo_artifacts_cleaned', artifact_refs: {} },
-      { id: 'undo-expired', status: 'expired', failure_code: 'retention_expired', artifact_refs: {} },
       { id: 'still-live', status: 'active', failure_code: null, artifact_refs: {} },
+      { id: 'undo-expired', status: 'expired', failure_code: 'retention_expired', artifact_refs: {} },
     ])
 
     const retryId = `op-${'c'.repeat(32)}`

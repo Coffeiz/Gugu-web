@@ -13,6 +13,8 @@ packages/core/.venv/
 packages/core/build/
 packages/core/dist/
 packages/core/node_modules/
+packages/database/node_modules/
+packages/database/dist/
 packages/fs/node_modules/
 packages/fs/dist/
 packages/sandbox/node_modules/

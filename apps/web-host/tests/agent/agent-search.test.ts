@@ -9,11 +9,11 @@ import { Pool } from 'pg'
 import { createPostgresRuntime, tablesSql } from '@gugu/core/data'
 import type { ProviderHttpRequest, ProviderTransport } from '@gugu/core/providers'
 import { createAgentRunner, type AgentRunnerPorts, type RunCheckpoint } from '@gugu/core/agent'
-import { createWebAgentConfirmationAuthorization } from '../../src/modules/agent-sessions/tools/agent-confirmation.js'
+import { createWebAgentConfirmationAuthorization } from '../../src/modules/agent/tools/confirm.js'
 import type { ContextSourceSelection } from '@gugu/core/agent'
 import { createHttpGetTool, createToolRegistry } from '@gugu/core/tools'
 import { createPublicAgentEgress } from '../../src/adapters/network/safe-egress-proxy.js'
-import { createWebAgentSearchPorts, verifySearchImage } from '../../src/modules/agent-sessions/tools/agent-search.js'
+import { createWebAgentSearchPorts, verifySearchImage } from '../../src/modules/agent/tools/search.js'
 
 const identity = { ownerId: 'owner-search', sessionId: '5', runId: 'run-search' }
 const scope = {

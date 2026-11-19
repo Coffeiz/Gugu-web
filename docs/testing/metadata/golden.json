@@ -4,7 +4,7 @@
     "layer": "L2",
     "owner": "packages/core/src/domain",
     "productionEntry": "backend/tests/core/fixtures/node_golden.py",
-    "keyBehavior": "同一合成规则语料跨语言一致，Python v2 与 Node 双向读写、显式 v3 升级备份保留身份和数据",
+    "keyBehavior": "同一合成规则语料跨语言比较字段、阶段身份与错误类别",
     "ci": "core-node"
   },
   "packages/core/tests/golden/service-sequence.test.ts": {

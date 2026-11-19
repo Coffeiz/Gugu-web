@@ -11,7 +11,7 @@ import {
   safeArchivePath,
   splitArchiveFilename,
   supportedArchiveFormat,
-} from '../../src/modules/files/file-archive-rules.js'
+} from '../../src/modules/files/archive/rules.js'
 
 test('归档路径兼容分隔符并拒绝绝对路径、盘符和穿越段', () => {
   assert.equal(safeArchivePath('目录\\子目录\\文件.txt'), '目录/子目录/文件.txt')

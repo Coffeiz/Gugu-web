@@ -2,10 +2,10 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { ProviderError } from '@gugu/core/providers'
 import type { ProviderHttpRequest, ProviderTransport } from '@gugu/core/providers'
-import { createILinkClient, ILinkApiError } from '../../../src/modules/im/gateway/wechat/client.js'
-import { decryptAesEcb } from '../../../src/modules/im/gateway/wechat/media-crypto.js'
-import { createWechatMedia, WechatMediaError } from '../../../src/modules/im/gateway/wechat/media.js'
-import { createWechatSender } from '../../../src/modules/im/gateway/wechat/sender.js'
+import { createILinkClient, ILinkApiError } from '../../../src/modules/im/gateway/platforms/wechat/client.js'
+import { decryptAesEcb } from '../../../src/modules/im/gateway/platforms/wechat/media-crypto.js'
+import { createWechatMedia, WechatMediaError } from '../../../src/modules/im/gateway/platforms/wechat/media.js'
+import { createWechatSender } from '../../../src/modules/im/gateway/platforms/wechat/sender.js'
 
 const target = { userId: 'sender-synthetic', contextToken: 'synthetic-context' }
 function realAdapters() {

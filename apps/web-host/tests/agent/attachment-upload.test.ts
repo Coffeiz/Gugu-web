@@ -4,8 +4,8 @@ import test from 'node:test'
 import Fastify from 'fastify'
 import { createApp } from '../../src/app.js'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
-import { installFileUploadSupport } from '../../src/modules/files/file-upload.js'
-import { registerAgentAttachmentUploadRoute } from '../../src/modules/agent/attachment-upload.js'
+import { installFileUploadSupport } from '../../src/modules/files/upload.js'
+import { registerAgentAttachmentUploadRoute } from '../../src/modules/agent/attachments/upload.js'
 import { signedUserToken } from '../helpers/auth.js'
 
 function multipart(filename: string, content: string, voice = false) {

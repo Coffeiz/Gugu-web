@@ -17,14 +17,14 @@ import { createAgentCalendarReader, createKyselyCalendarAgentReadPort } from '@g
 import { mkdtemp, mkdir, rename, rm, writeFile, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
-import { createPostgresProjectUpdateRuntime } from '../../src/modules/projects/persistence/project-update-postgres.js'
+import { createPostgresProjectUpdateRuntime } from '../../src/modules/projects/update.js'
 import { ProviderStreamSanitizer, stripThinking } from '@gugu/core/providers'
 import { createAgentMindReader, createSqlMindCanvasReader } from '@gugu/core/mind'
 import { tablesSql } from '../../../../packages/core/src/data/schema.js'
 import { createAgentRuntime } from '@gugu/core/agent'
-import { createAgentToolRegistry } from '../../src/modules/agent-sessions/tools/agent-tool-registry.js'
-import { agentContextAccessScope } from '../../src/modules/agent/model-config/access-scope.js'
-import { bindProviderSelection } from '../../src/modules/agent/model-config/provider-resolver.js'
+import { createAgentToolRegistry } from '../../src/modules/agent/tools/registry.js'
+import { agentContextAccessScope } from '../../src/modules/agent/llm/access.js'
+import { bindProviderSelection } from '../../src/modules/agent/llm/bind.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const digest = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')

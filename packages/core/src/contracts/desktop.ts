@@ -1,3 +1,6 @@
+import type { ByokCommand, ByokResult, ByokTarget } from '../byok/contracts.js'
+import type { RemoteAccountState, RemoteLoginInput } from '../auth/contracts.js'
+
 // 仅共享桌面 DTO 和固定能力名称；不依赖 Electron 或 Node。
 export { CORE_SCHEMA_VERSION } from './schema.js'
 export const MAX_FRAME = 65_536
@@ -71,6 +74,10 @@ export const DESKTOP_MUTATIONS: readonly string[] = [
   'mind.ref.create',
 ]
 export const DESKTOP_CHANNELS = {
+  remoteByok: 'gugu:remote-byok',
+  remoteAccount: 'gugu:remote-account:status',
+  remoteLogin: 'gugu:remote-account:login',
+  remoteLogout: 'gugu:remote-account:logout',
   projects: 'gugu:projects:list',
   createProject: 'gugu:projects:create',
   renameProject: 'gugu:projects:rename',
@@ -203,6 +210,10 @@ export type DesktopReply<T> =
       error: { code: string; message: string; operationId?: string }
     }
 export interface DesktopBridge {
+  remoteByok(target: ByokTarget, command: ByokCommand): Promise<DesktopReply<ByokResult>>
+  remoteAccount(): Promise<DesktopReply<RemoteAccountState>>
+  remoteLogin(input: RemoteLoginInput): Promise<DesktopReply<RemoteAccountState>>
+  remoteLogout(): Promise<DesktopReply<RemoteAccountState>>
   appearance(): Promise<DesktopReply<DesktopAppearancePreferences>>
   updateAppearance(patch: Partial<DesktopAppearancePreferences>): Promise<DesktopReply<DesktopAppearancePreferences>>
   onboarding(): Promise<DesktopReply<DesktopOnboardingState>>

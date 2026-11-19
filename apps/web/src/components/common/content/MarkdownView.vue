@@ -8,6 +8,7 @@ import { useI18n } from 'vue-i18n'
 import { renderMarkdown, sanitizeHtml, sanitizeChatHtml } from '@/utils/markdown'
 import { renderMarkdownMath } from '@/utils/chart/math'
 import { cleanupMarkdownMermaid, createMermaidRenderLabels, renderMarkdownMermaid } from '@/utils/chart/mermaidRenderer'
+import { createMarkdownStreamMotion } from './markdownStreamMotion'
 import type { MarkdownMathLabels } from '@/utils/chart/math'
 
 // 全站通用的 markdown 展示组件，统一 GuguChat 聊天 / 通知气泡 / 侧边栏通知中心的 md 输出样式。
@@ -21,6 +22,7 @@ const props = defineProps({
   chat: { type: Boolean, default: false },
   // 仅聊天消息显式开启，避免在全站通知和侧栏 Markdown 中改变渲染范围。
   renderMath: { type: Boolean, default: false },
+  streamMotion: { type: Boolean, default: false },
 })
 const root = ref<HTMLElement | null>(null)
 const mermaidReady = ref(false)
@@ -63,12 +65,21 @@ const rendered = computed(() =>
     ? (props.chat ? sanitizeChatHtml(props.html) : sanitizeHtml(props.html))
     : renderMarkdown(props.text))
 
+const updateStreamMotion = createMarkdownStreamMotion()
+watch(rendered, () => {
+  if (props.streamMotion && root.value) updateStreamMotion(root.value, true)
+}, { flush: 'post' })
+watch(() => props.streamMotion, (active) => {
+  if (!active && root.value) updateStreamMotion(root.value, false)
+}, { flush: 'post' })
+
 watch([rendered, locale, () => props.renderMath], async () => {
   if (props.renderMath) await renderMarkdownMath(root.value, createMathLabels())
   await renderMermaidBlocks()
 }, { flush: 'post' })
 
 onMounted(() => {
+  if (props.streamMotion && root.value) updateStreamMotion(root.value, false)
   if (props.renderMath) renderMarkdownMath(root.value, createMathLabels())
   renderMermaidBlocks()
   themeObserver = new MutationObserver(() => renderMermaidBlocks())

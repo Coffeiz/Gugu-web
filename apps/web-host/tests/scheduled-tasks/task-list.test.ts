@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { registerScheduledTaskList } from '../../src/modules/scheduled-tasks/task-list.js'
+import { registerScheduledTaskList } from '../../src/modules/scheduled-tasks/routes.js'
 import Fastify from 'fastify'
 import type { UserFromRequest } from '../../src/app.js'
 

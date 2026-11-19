@@ -1,6 +1,8 @@
-import { open,stat } from 'node:fs/promises'
+import { lstat } from 'node:fs/promises'
+import { ansi, epoch, fileIdentity, formatTime, lineDate, openLog, readLogHistory, type HistoryPosition } from '@gugu/log/file/read'
+import { webLogFile } from '../../shared/log-files.js'
 
-import { dirname,join } from 'node:path'
+import { basename,dirname,join } from 'node:path'
 
 import { fileURLToPath } from 'node:url'
 
@@ -22,7 +24,7 @@ export interface AdminDebugLogOptions {
 
 export function resolveAdminDebugLogFiles(logFile: string | null): Pick<AdminDebugLogOptions, 'paths' | 'webCandidates'> {
   const directory = logFile ? dirname(logFile) : fileURLToPath(new URL('../../../logs/', import.meta.url))
-  const web = logFile ?? join(directory, 'gugu.log')
+  const web = webLogFile(logFile)
   return {
     paths: { web, worker: join(directory, 'gugu-worker.log'), gateway: join(directory, 'gugu-gateway.log') },
     webCandidates: logFile ? [web] : [join(directory, 'gugu-web-dev.log'), web],
@@ -30,22 +32,26 @@ export function resolveAdminDebugLogFiles(logFile: string | null): Pick<AdminDeb
 }
 
 type Cursor = Partial<Record<AdminDebugLogSource, number>>
-type LogPage = { lines: string[]; start: number; carried: Date }
+type HistoryCursor = Partial<Record<AdminDebugLogSource, HistoryPosition | number | null>>
 const sources: AdminDebugLogSource[] = ['web', 'worker', 'gateway']
-const epoch = new Date(0)
-const timestamp = /^(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})/
-const ansi = /\x1b\[[0-9;]*[mK]/g
-const chunkSize = 64 * 1024
 
-function decodeCursor(raw?: string): Cursor {
+function decodeCursor(raw?: string): HistoryCursor {
   if (!raw) return {}
   try {
     const decoded = Buffer.from(raw, 'base64url').toString('utf8')
     const payload: unknown = JSON.parse(decoded)
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return {}
-    const result: Cursor = {}
+    const result: HistoryCursor = {}
     for (const [name, value] of Object.entries(payload)) {
-      if (!sources.includes(name as AdminDebugLogSource) || !['number', 'string'].includes(typeof value)) continue
+      const source = name as AdminDebugLogSource
+      if (!sources.includes(source)) continue
+      if (value === null) { result[source] = null; continue }
+      if (typeof value === 'object' && /^\d+:\d+$/.test(value.file)
+        && Number.isSafeInteger(value.end) && value.end > 0) {
+        result[source] = { file: value.file, end: value.end }
+        continue
+      }
+      if (!['number', 'string'].includes(typeof value)) continue
       const position = typeof value === 'number' ? Math.trunc(value) : Number.parseInt(value, 10)
       if (!Number.isFinite(position)) return {}
       result[name as AdminDebugLogSource] = Math.max(0, position)
@@ -54,105 +60,19 @@ function decodeCursor(raw?: string): Cursor {
   } catch { return {} }
 }
 
-function encodeCursor(positions: Cursor): string | null {
+function encodeCursor(positions: HistoryCursor): string | null {
   const entries = Object.entries(positions).filter(([name]) => sources.includes(name as AdminDebugLogSource))
-  if (!entries.length || !entries.some(([, position]) => (position ?? 0) > 0)) return null
+  if (!entries.length || !entries.some(([, position]) => position !== null)) return null
   const sorted = Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)))
   return Buffer.from(JSON.stringify(sorted), 'utf8').toString('base64url')
-}
-
-function lineDate(line: string, carried: Date): Date {
-  const match = timestamp.exec(line)
-  if (!match) return carried
-  const [, month, day, hour, minute, second] = match
-  const parsed = new Date(Date.UTC(new Date().getUTCFullYear(), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second)))
-  return parsed.getUTCMonth() === Number(month) - 1 && parsed.getUTCDate() === Number(day) ? parsed : carried
-}
-
-function formatTime(date: Date): string {
-  if (date.getTime() <= epoch.getTime()) return ''
-  const pad = (value: number) => String(value).padStart(2, '0')
-  return `${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`
-}
-
-function splitLines(raw: Buffer): Buffer[] {
-  const lines: Buffer[] = []
-  let start = 0
-  for (let index = 0; index < raw.length; index += 1) {
-    if (raw[index] === 10) {
-      lines.push(raw.subarray(start, index))
-      start = index + 1
-    }
-  }
-  lines.push(raw.subarray(start))
-  return lines
-}
-
-async function findPreviousTimestamp(path: string, offset: number): Promise<Date> {
-  let cursor = Math.max(0, offset)
-  try {
-    while (cursor > 0) {
-      const start = Math.max(0, cursor - chunkSize)
-      const handle = await open(path, 'r')
-      let raw: Buffer
-      try { raw = Buffer.alloc(cursor - start); await handle.read(raw, 0, raw.length, start) }
-      finally { await handle.close() }
-      for (const line of raw.toString('utf8').split('\n').reverse()) {
-        const carried = lineDate(line, epoch)
-        if (carried > epoch) return carried
-      }
-      cursor = start
-    }
-  } catch { return epoch }
-  return epoch
-}
-
-async function readLogPage(path: string, end: number | undefined, count: number): Promise<LogPage> {
-  try {
-    const size = (await stat(path)).size
-    const upper = Math.min(size, Math.max(0, end ?? size))
-    if (upper <= 0) return { lines: [], start: 0, carried: epoch }
-    let cursor = upper
-    let raw = Buffer.alloc(0)
-    while (cursor > 0) {
-      const start = Math.max(0, cursor - chunkSize)
-      const handle = await open(path, 'r')
-      let part: Buffer
-      try { part = Buffer.alloc(cursor - start); await handle.read(part, 0, part.length, start) }
-      finally { await handle.close() }
-      raw = Buffer.concat([part, raw])
-      cursor = start
-      const newlineCount = raw.reduce((sum, byte) => sum + (byte === 10 ? 1 : 0), 0)
-      if (newlineCount + (cursor === 0 ? 1 : 0) >= count || cursor === 0) break
-    }
-    let lines = splitLines(raw)
-    const discardedPrefix = cursor > 0 && lines.length ? lines[0]!.length + 1 : 0
-    if (cursor > 0 && lines.length) lines = lines.slice(1)
-    if (lines.at(-1)?.length === 0) lines.pop()
-    if (!lines.length) return { lines: [], start: cursor, carried: epoch }
-    const selected = lines.slice(-count)
-    const prefixLines = lines.slice(0, lines.length - selected.length)
-    const prefixLength = prefixLines.reduce((sum, line) => sum + line.length + 1, 0)
-    const pageStart = cursor + discardedPrefix + prefixLength
-    let carried = epoch
-    for (const line of prefixLines.reverse()) {
-      carried = lineDate(line.toString('utf8'), epoch)
-      if (carried > epoch) break
-    }
-    if (carried === epoch && pageStart > 0) carried = await findPreviousTimestamp(path, pageStart)
-    return {
-      lines: selected.map((line) => line.toString('utf8').replace(ansi, '')).filter((line) => line.trim().length > 0),
-      start: pageStart,
-      carried,
-    }
-  } catch { return { lines: [], start: 0, carried: epoch } }
 }
 
 async function resolveWebPath(options: AdminDebugLogOptions): Promise<string> {
   let newest: { path: string; mtime: number } | undefined
   for (const path of options.webCandidates) {
     try {
-      const info = await stat(path)
+      const info = await lstat(path)
+      if (!info.isFile() || basename(path) === 'gugu-diag.log') continue
       if (!newest || info.mtimeMs > newest.mtime) newest = { path, mtime: info.mtimeMs }
     } catch { /* 缺少某个候选日志时继续检查其他候选。 */ }
   }
@@ -176,9 +96,14 @@ async function streamLogs(
   for (const item of selectedSources) paths[item] = item === 'web' ? await resolveWebPath(options) : options.paths[item]
 
   const positions: Cursor = {}
+  const identities: Partial<Record<AdminDebugLogSource, string>> = {}
   const carried: Partial<Record<AdminDebugLogSource, Date>> = {}
   for (const item of selectedSources) {
-    try { positions[item] = (await stat(paths[item]!)).size }
+    try {
+      const info = await lstat(paths[item]!)
+      positions[item] = info.size
+      identities[item] = fileIdentity(info)
+    }
     catch { positions[item] = 0 }
     carried[item] = epoch
   }
@@ -205,10 +130,17 @@ async function streamLogs(
         if (disconnected(request, reply)) break
         const path = paths[item]!
         try {
-          const size = (await stat(path)).size
-          const position = positions[item] ?? size
+          if (basename(path) === 'gugu-diag.log') continue
+          const info = await lstat(path)
+          if (!info.isFile()) continue
+          const size = info.size
+          const identity = fileIdentity(info)
+          const previous = positions[item] ?? 0
+          const position = identities[item] === identity && previous <= size ? previous : 0
+          identities[item] = identity
+          positions[item] = position
           if (size <= position) continue
-          const handle = await open(path, 'r')
+          const handle = await openLog(path)
           let bytes: Buffer
           try {
             bytes = Buffer.alloc(size - position)
@@ -256,32 +188,20 @@ export function registerAdminDebugLogRoutes(app: FastifyInstance, options: Admin
         ? [source as AdminDebugLogSource]
         : sources
       const previous = decodeCursor(cursor)
-      const positions: Cursor = {}
+      const positions: HistoryCursor = {}
       const rows: { time: Date; source: AdminDebugLogSource; index: number; line: string }[] = []
-      const needle = query?.trim().toLocaleLowerCase() ?? ''
       for (const item of selectedSources) {
+        if (previous[item] === null) { positions[item] = null; continue }
         const path = item === 'web' ? await resolveWebPath(options) : options.paths[item]
-        let end = previous[item]
-        let matched = 0
-        while (true) {
-          const page = await readLogPage(path, end, lines)
-          positions[item] = page.start
-          let carried = page.carried
-          page.lines.forEach((line, index) => {
-            carried = lineDate(line, carried)
-            if (needle && !line.toLocaleLowerCase().includes(needle)) return
-            rows.push({ time: carried, source: item, index, line })
-            matched += 1
-          })
-          if (!needle || matched >= lines || page.start <= 0 || page.lines.length === 0) break
-          end = page.start
-        }
+        const page = await readLogHistory(path, { cursor: previous[item], lines, query })
+        positions[item] = page.next
+        page.lines.forEach((row, index) => rows.push({ ...row, source: item, index }))
       }
       rows.sort((a, b) => a.time.getTime() - b.time.getTime() || a.source.localeCompare(b.source) || a.index - b.index)
       return {
         lines: rows.map(({ time, source: item, line }) => ({ source: item, line, time: formatTime(time) })),
         next_cursor: encodeCursor(positions),
-        has_more: Object.values(positions).some((position) => (position ?? 0) > 0),
+        has_more: Object.values(positions).some(position => position !== null),
       }
     },
   )

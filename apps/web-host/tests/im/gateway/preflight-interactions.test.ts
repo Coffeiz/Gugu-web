@@ -3,10 +3,10 @@ import { test } from 'node:test'
 import { createHash } from 'node:crypto'
 import { consumeInteractionText } from '@gugu/core/agent'
 import type { ImPreflightScope } from '@gugu/core/im/inbound-preflight'
-import { createImTextChoiceConsumer, type ScopedImTextPrompt } from '../../../src/modules/im/gateway/preflight-interactions.js'
+import { createImTextChoiceConsumer, type ScopedImTextPrompt } from '../../../src/modules/im/gateway/interactions/preflight.js'
 import { consumeInteractionAction, type InteractionPromptRecord, type InteractionActionRecord,
   type InteractionConsumeTransaction } from '@gugu/core/agent/interactions/consume-action'
-import type { AgentInteractionRespondService } from '../../../src/modules/agent-sessions/agent-interaction-respond.js'
+import type { AgentInteractionRespondService } from '../../../src/modules/agent/interactions/respond.js'
 
 const scope: ImPreflightScope = { ownerId: 'owner-a', botId: '4', platform: 'telegram', chatType: 'group', chatId: 'group-a', platformUserId: 'member-a', eventId: 'event-a' }
 const signal = new AbortController().signal

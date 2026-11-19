@@ -3,9 +3,9 @@ import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
 import { CoreError, createWorkspaceDeleter } from '@gugu/core'
-import { createPostgresRuntime } from '@gugu/core/data'
+import { createPostgresRuntime, tablesSql } from '@gugu/core/data'
 import { createKyselyWorkspaceDeletionRuntime } from '@gugu/core/workspaces'
-import { createPostgresWorkspaceDeleter } from '../../src/modules/workspaces/persistence/workspace-delete.js'
+import { createPostgresWorkspaceDeleter } from '../../src/modules/workspaces/store.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
@@ -69,6 +69,7 @@ async function withWorkspaceFixture(mode: Mode, work: (context: {
         workspace_id integer REFERENCES workspaces(id) ON DELETE SET NULL
       )
     `)
+    await pool.query(tablesSql('postgres').ragJobs)
     await pool.query('CREATE TABLE projects (id integer PRIMARY KEY, user_id uuid NOT NULL, name text NOT NULL)')
     await pool.query(
       "INSERT INTO workspaces (id, user_id, name, kind, project_id) VALUES (41, $1, '工作区', 'project', 9)",

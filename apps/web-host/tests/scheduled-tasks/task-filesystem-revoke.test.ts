@@ -40,7 +40,7 @@ test('任务撤权限定owner及普通任务，幂等清授权并同事务审计
 })
 
 import Fastify from 'fastify'
-import {registerTaskFilesystemRevokeRoute} from '../../src/modules/scheduled-tasks/task-filesystem-revoke.js'
+import {registerTaskFilesystemRevokeRoute} from '../../src/modules/scheduled-tasks/access.js'
 import {installHttpErrorHandler} from '../../src/http/errors.js'
 import {CoreError} from '@gugu/core'
 

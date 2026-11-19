@@ -9,7 +9,7 @@ import {
   createLocalProjectTrashStorage,
   createProjectTrashOriginalStorageKeyResolver,
   projectFileTrashKey,
-} from '../../src/modules/projects/persistence/project-trash-storage.js'
+} from '../../src/modules/projects/lifecycle/storage.js'
 
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
 const originalKey = `${ownerId}/项目文件/2026/11/计划 #17/文档/计划.md`

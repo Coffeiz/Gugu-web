@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createTelegramBotApi, TelegramApiError } from '../../../src/modules/im/gateway/telegram-api.js'
-import { createTelegramSender } from '../../../src/modules/im/gateway/telegram-sender.js'
-import type { TelegramCallOptions } from '../../../src/modules/im/gateway/telegram-api.js'
+import { createTelegramBotApi, TelegramApiError } from '@gugu/gateway/telegram'
+import { createTelegramSender } from '@gugu/gateway/telegram'
+import type { TelegramCallOptions } from '@gugu/gateway/telegram'
 
 function fixture(results: (unknown | Error)[] = []) {
   let now = 0

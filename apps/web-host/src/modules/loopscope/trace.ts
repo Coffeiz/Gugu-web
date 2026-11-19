@@ -4,6 +4,7 @@ import type { ProviderHttpRequest, ProviderTransport } from '@gugu/core/provider
 
 export interface WebLoopScopeTrace {
   observation: AgentObservationPort
+  forSource(source: 'web' | 'im' | 'scheduled'): AgentObservationPort
   close(): Promise<void>
 }
 
@@ -14,15 +15,29 @@ export function createWebLoopScopeTrace(options: {
   transport: ProviderTransport
 }): WebLoopScopeTrace | undefined {
   if (!loopScopeTraceEnabled(options.enabled)) return undefined
-  const collector = createLoopScopeTrace({
-    endpoint: options.endpoint || defaultLoopScopeEndpoint,
-    source: 'web',
-    transport: {
-      request: (request, signal) => options.transport.request(request as ProviderHttpRequest, signal),
-    },
-  })
+  const collectors = new Map<string, ReturnType<typeof createLoopScopeTrace>>()
+  const collectorFor = (source: 'web' | 'im' | 'scheduled') => {
+    let collector = collectors.get(source)
+    if (!collector) {
+      collector = createLoopScopeTrace({
+        endpoint: options.endpoint || defaultLoopScopeEndpoint,
+        source,
+        transport: {
+          request: (request, signal) => options.transport.request(request as ProviderHttpRequest, signal),
+        },
+      })
+      collectors.set(source, collector)
+    }
+    return collector
+  }
+  const portFor = (source: 'web' | 'im' | 'scheduled'): AgentObservationPort => {
+    const collector = collectorFor(source)
+    return { record: (event: AgentObservation) => collector.record(event as Parameters<typeof collector.record>[0]) }
+  }
+  const observation = portFor('web')
   return {
-    observation: { record: (event: AgentObservation) => collector.record(event as Parameters<typeof collector.record>[0]) },
-    close: () => collector.close(),
+    observation,
+    forSource: portFor,
+    async close() { await Promise.all([...collectors.values()].map(collector => collector.close())) },
   }
 }

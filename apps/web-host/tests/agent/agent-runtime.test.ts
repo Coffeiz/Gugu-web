@@ -5,8 +5,8 @@ import type { CanonicalContextPorts, CanonicalRunContext, AgentRunnerPorts, RunC
 import { createCanonicalSourceLoader, stableJson } from '@gugu/core/agent'
 import { ProviderError, ProviderStreamSanitizer, stripThinking } from '@gugu/core/providers'
 import { createAgentRuntime } from '@gugu/core/agent'
-import { agentContextAccessScope } from '../../src/modules/agent/model-config/access-scope.js'
-import { bindProviderSelection } from '../../src/modules/agent/model-config/provider-resolver.js'
+import { agentContextAccessScope } from '../../src/modules/agent/llm/access.js'
+import { bindProviderSelection } from '../../src/modules/agent/llm/bind.js'
 import { createAgentCompactionPort } from '@gugu/core/agent'
 
 const identity = { ownerId: 'owner-synthetic', sessionId: '1', runId: 'run-synthetic' }

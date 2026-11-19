@@ -6,7 +6,7 @@ import { createPostgresAgentInteractionHistory } from '@gugu/core/agent-sessions
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
-test('interaction history owner-scopes prompts, rotates only active action tokens and restores the Python DTO', {
+test('interaction history owner-scopes prompts, keeps projected tokens stable for active actions and restores the Python DTO', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
 }, async () => {
   const schema = `gugu_interaction_history_${randomUUID().replaceAll('-', '')}`
@@ -73,6 +73,8 @@ test('interaction history owner-scopes prompts, rotates only active action token
     assert.equal(activePrompt.options[0].id, 'approve')
     assert.equal(activePrompt.options[0].label, '允许')
     assert.equal(activePrompt.options[0].token.length, 32)
+    const refreshed = await history(ownerId, 7, { restoreActive: true })
+    assert.deepEqual(refreshed.find(item => item.id === active.id)?.options, activePrompt.options)
     assert.equal(activePrompt.tool_call_id, 'tool-active')
     assert.deepEqual(activePrompt.secret_fields, ['password'])
     assert.equal(JSON.stringify(activePrompt).includes('must-not-return'), false)

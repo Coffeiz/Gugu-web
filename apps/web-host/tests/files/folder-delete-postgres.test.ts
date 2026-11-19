@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { Pool, type QueryResultRow } from 'pg'
-import { createPostgresFolderDeleteOperations } from '../../src/modules/files/folder-delete-postgres.js'
+import { createPostgresFolderDeleteOperations } from '../../src/modules/files/folders/delete.js'
 
 const ownerId = '11111111-1111-4111-8111-111111111111'
 const foreignOwnerId = '22222222-2222-4222-8222-222222222222'

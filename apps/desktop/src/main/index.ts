@@ -1,3 +1,4 @@
+import { createDesktopRuntimeLog } from './log/index.js'
 import {
   app,
   BrowserWindow,
@@ -7,6 +8,7 @@ import {
   dialog,
   protocol,
   net,
+  safeStorage,
 } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs'
@@ -20,6 +22,9 @@ import {
   DesktopError,
 } from './core-host.js'
 import { desktopHandlers } from './ipc/index.js'
+import type { IpcHandlers } from './ipc/types.js'
+import { createRemoteSessionStore } from './auth/store.js'
+import { createRemoteAccountHandlers } from './auth/session.js'
 import { DesktopLifecycle } from './lifecycle.js'
 import {
   secureWindow,
@@ -62,12 +67,13 @@ mkdirSync(dataDirectory, { recursive: true })
 app.setPath('userData', dataDirectory)
 if (!app.requestSingleInstanceLock()) app.quit()
 else {
+  const report = createDesktopRuntimeLog(dataDirectory)
   let lifecycle: DesktopLifecycle | undefined,
     quitting = false
   app.on('before-quit', (event) => {
     if (quitting || !lifecycle) return
     event.preventDefault()
-    void lifecycle.close().finally(() => {
+    void lifecycle.close().then(() => report('host.stopped'), error => report('host.stop_failed', { error })).finally(() => {
       quitting = true
       app.quit()
     })
@@ -134,9 +140,11 @@ else {
         await window.loadURL(devUiUrl ?? uiUrl)
         return window
       }
-      for (const [channel, action] of Object.entries(
-        desktopHandlers(host, () => sandboxDiagnostics(host)),
-      ))
+      const handlers: IpcHandlers = {
+        ...desktopHandlers(host, () => sandboxDiagnostics(host, report)),
+        ...createRemoteAccountHandlers(createRemoteSessionStore(dataDirectory, safeStorage)),
+      }
+      for (const [channel, action] of Object.entries(handlers))
         ipcMain.handle(channel, (event, ...args: unknown[]) =>
           desktopReply(trustedCaller(event, BrowserWindow.getAllWindows(), trustedUiUrl), () =>
             action(...args),
@@ -222,18 +230,20 @@ else {
         ]),
       )
       powerMonitor.on('suspend', () => {
-        void host.pause().catch(() => undefined)
+        void host.pause().catch(error => report('host.stop_failed', { error }))
       })
       powerMonitor.on('resume', () => {
-        void host.start().catch(() => undefined)
+        void host.start().catch(error => report('host.start_failed', { error }))
       })
       app.on('activate', () => {
         if (!quitting && !BrowserWindow.getAllWindows().length) void createWindow()
       })
       await createWindow()
+      report('host.started')
     })
     .catch(async (error) => {
-      await lifecycle?.close()
+      report('host.start_failed', { error })
+      await lifecycle?.close().catch(closeError => report('host.stop_failed', { error: closeError }))
       if (!smoke)
         await dialog.showMessageBox({
           type: 'error',

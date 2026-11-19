@@ -1,11 +1,11 @@
+import { decryptByokCredential, encryptByokEnvelope } from '../../../src/modules/byok/crypto.js'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { Pool, type PoolClient } from 'pg'
 import type { ImPreflightScope, ImSecretAction } from '@gugu/core/im/inbound-preflight'
-import { createPostgresImSecretInput, ImSecretInputError, stageImSecretPromptLocked, type ImSecretInputPorts } from '../../../src/modules/agent-sessions/persistence/agent-im-secret-input-postgres.js'
-import { createPostgresInteractionActivator } from '../../../src/modules/agent-sessions/persistence/agent-interaction-activate-postgres.js'
-import { decryptByokCredential, encryptByokEnvelope } from '../../../src/modules/agent/model-config/byok.js'
+import { createPostgresImSecretInput, ImSecretInputError, stageImSecretPromptLocked, type ImSecretInputPorts } from '../../../src/modules/agent/interactions/im-secret.js'
+import { createPostgresInteractionActivator } from '../../../src/modules/agent/interactions/activate.js'
 
 const owner = '11111111-1111-4111-8111-111111111111', server = '22222222-2222-4222-8222-222222222222'
 const scope: ImPreflightScope = { ownerId: owner, botId: '4', platform: 'telegram', chatType: 'c2c', chatId: null, platformUserId: 'member-a', eventId: 'start-a' }

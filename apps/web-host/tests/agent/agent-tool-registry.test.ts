@@ -10,8 +10,8 @@ import type { ProjectCreateRuntime } from '@gugu/core/project-create'
 import { createBuiltinSkillDefinitions, createSkillRegistry } from '@gugu/core/skills'
 import type { ClientDeleteConfirmationPort, ClientDeletePort, CalendarDeleteConfirmationPort, CalendarDeletePort, CalendarEventCreateToolPort, CalendarEventUpdateToolPort, CanvasBatchConfirmationPort, CanvasBatchPort, CanvasDeleteNotePort, CanvasDisconnectPort, CanvasDeletePort, FileArchivePort, KnowledgeWritePort, ScheduledTaskListPort, UseSkillPorts } from '@gugu/core/tools'
 import { createScheduledSendFileTool, createWebLinkButtonDeliveryPort, createUndoLastActionTool } from '@gugu/core/tools'
-import { createAgentToolRegistry, filterConfiguredWebAgentTools, type AgentToolRegistryOptions } from '../../src/modules/agent-sessions/tools/agent-tool-registry.js'
-import { createWebAgentShell } from '../../src/modules/agent-sessions/tools/agent-shell.js'
+import { createAgentToolRegistry, filterConfiguredWebAgentTools, type AgentToolRegistryOptions } from '../../src/modules/agent/tools/registry.js'
+import { createWebAgentShell } from '../../src/modules/agent/tools/shell/sandbox.js'
 
 const identity = { ownerId: '00000000-0000-4000-8000-000000000001', sessionId: '1', runId: 'run' }
 function fixture(includeTime = false, includeOverview = false, includeProjects = true, skills?: UseSkillPorts, scheduledTasks?: ScheduledTaskListPort, search?: GlobalSearchOperations, extra: Pick<AgentToolRegistryOptions, 'events' | 'calendarCreate' | 'calendarUpdate' | 'calendarDelete' | 'trash' | 'httpGet'> = {}) {

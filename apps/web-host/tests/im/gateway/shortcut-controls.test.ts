@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createImInboundPreflight } from '@gugu/core/im/inbound-preflight'
 import type { ImPreflightPorts, ImPreflightScope } from '@gugu/core/im/inbound-preflight'
-import { createImShortcutControls } from '../../../src/modules/im/gateway/shortcut-controls.js'
-import { ImShortcutUnavailable } from '../../../src/modules/im/gateway/shortcut-postgres.js'
+import { createImShortcutControls } from '../../../src/modules/im/gateway/attention/shortcuts.js'
+import { ImShortcutUnavailable } from '../../../src/modules/im/gateway/attention/receipts.js'
 
 const scope: ImPreflightScope = { ownerId: 'owner-a', botId: '7', platform: 'telegram', chatType: 'group', chatId: 'group-a',
   platformUserId: 'sender-a', eventId: 'event-a', admissionCutoff: '2026-01-01 00:00:00.123456+00' }

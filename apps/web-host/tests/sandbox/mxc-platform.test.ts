@@ -4,7 +4,7 @@ import { PassThrough, Readable } from 'node:stream'
 import { mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { pinTerminalDirectory } from '../../src/modules/terminals/pinned-directory.js'
+import { pinTerminalDirectory } from '../../src/modules/terminals/sandbox/mounts.js'
 import { MxcExecutor } from '@gugu/sandbox/mxc'
 
 test('终端目录句柄固定目录并拒绝符号链接', { skip: process.platform !== 'linux' }, async () => {

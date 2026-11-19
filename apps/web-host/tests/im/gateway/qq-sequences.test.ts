@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createQqReplySequences } from '../../../src/modules/im/gateway/qq/sequences.js'
+import { createQqReplySequences } from '../../../src/modules/im/gateway/platforms/qq/sequences.js'
 
 test('QQ文本媒体stream首帧共用原子序号命令与70分钟首次TTL，owner/Bot/事件隔离', async () => {
   const calls: string[][] = []

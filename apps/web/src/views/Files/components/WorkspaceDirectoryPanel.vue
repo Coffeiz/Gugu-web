@@ -10,7 +10,7 @@
     <div v-if="loading && !items.length" class="workspace-state">{{ t('workspaceUi.loadingWorkspaces') }}</div>
     <div v-else-if="error" class="workspace-state is-error">
       <span>{{ t('workspaceUi.workspaceLoadFailed') }}</span>
-      <ActionButton variant="secondary" fit @click="refresh">{{ t('common.actions.retry') }}</ActionButton>
+      <ActionButton variant="secondary" fit @click="refreshPanel">{{ t('common.actions.retry') }}</ActionButton>
     </div>
     <div v-else-if="!items.length" class="workspace-state">{{ t('workspaceUi.noWorkspaces') }}</div>
     <div v-else class="workspace-grid">
@@ -18,7 +18,7 @@
         v-for="item in sortedItems"
         :key="item.id"
         :display-name="item.name"
-        :count-label="t('filesViewUi.folderContents', { files: item.fileCount, folders: item.folderCount })"
+        :count-label="countLabel(item)"
         accent-color="var(--accent-primary)"
         role="button"
         tabindex="0"
@@ -64,10 +64,10 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onMounted, ref, watch } from 'vue'
+import { nextTick, onActivated, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
-import { workspaceDirectoriesApi } from '@/services/api'
+import { pathFilesApi, workspaceDirectoriesApi } from '@/services/api'
 import { useWorkspaceDirectories } from '@/composables/files/useWorkspaceDirectories'
 import type { WorkspaceDirectory } from '@/services/api'
 import BaseModal from '@/components/common/overlays/BaseModal.vue'
@@ -93,7 +93,28 @@ function openCreate() {
 
 defineExpose({ openCreate })
 
-onMounted(refresh)
+const defaultCount = ref<{ id: number; files: number; folders: number } | null>(null)
+let countRequest = 0
+
+async function refreshPanel() {
+  const request = ++countRequest
+  await refresh()
+  const workspace = items.value.find(item => item.isDefault)
+  if (!workspace || request !== countRequest) return
+  try {
+    const entries = await pathFilesApi.entries(workspace.id)
+    const folders = entries.filter(entry => entry.kind === 'directory').length
+    if (request === countRequest) defaultCount.value = { id: workspace.id, files: entries.length - folders, folders }
+  } catch {
+    if (request === countRequest) defaultCount.value = null
+  }
+}
+function countLabel(item: WorkspaceDirectory) {
+  const count = item.isDefault ? defaultCount.value : { id: item.id, files: item.fileCount, folders: item.folderCount }
+  return count?.id === item.id ? t('filesViewUi.folderContents', { files: count.files, folders: count.folders }) : undefined
+}
+
+onActivated(refreshPanel)
 watch(showCreate, value => { if (value) nextTick(() => createInput.value?.focus()) })
 
 function closeCreate() { showCreate.value = false; createName.value = ''; formError.value = '' }

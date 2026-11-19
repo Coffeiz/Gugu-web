@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { test } from 'node:test'
-import { createScheduledTaskRedisLease } from '../../src/modules/scheduled-tasks/persistence/redis-lease.js'
+import { createScheduledTaskRedisLease } from '../../src/modules/scheduled-tasks/run/lease.js'
 import { createRedisScheduledTaskCommands } from '../../src/adapters/cache/redis-events.js'
 import { randomInt } from 'node:crypto'
 const run = promisify(execFile)

@@ -3,7 +3,7 @@ import Fastify from 'fastify'
 import test from 'node:test'
 import { CoreError } from '@gugu/core'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
-import { registerFileBrowserRoutes } from '../../src/modules/files/browser.js'
+import { registerFileBrowserRoutes } from '../../src/modules/files/browse.js'
 
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
 

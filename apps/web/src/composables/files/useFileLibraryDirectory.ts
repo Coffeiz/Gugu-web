@@ -1,6 +1,6 @@
 import { computed, getCurrentScope, onScopeDispose, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { filesApi, foldersApi, trashApi, type CursorPage, type TrashFolderContentsSnapshot, type TrashFolderMeta } from '@/services/api'
+import { diskTrashApi, filesApi, foldersApi, pathFilesApi, trashApi, type CursorPage, type TrashFolderContentsSnapshot, type TrashFolderMeta } from '@/services/api'
 import type { DirectorySnapshotScope, FileMeta, FolderMeta } from '@/stores/filesCache'
 import type { Project } from '@/types/project'
 import { doneYear, doneMonth } from '@/utils/fileParse'
@@ -220,6 +220,11 @@ export function useFileLibraryDirectory(options: DirectoryOptions) {
       trashFolderCursors.value = {}
     }
 
+    if (type === 'disk-workspace') {
+      contents.value = { folders: [], files: [] }
+      return
+    }
+
     if (type === 'root') {
       contents.value = {
         folders: [
@@ -229,6 +234,30 @@ export function useFileLibraryDirectory(options: DirectoryOptions) {
         ],
         files: [],
       }
+      void pathFilesApi.entries('personal').then(entries => {
+        if (!isCurrent()) return
+        const folderCount = entries.filter(entry => entry.kind === 'directory').length
+        contents.value = {
+          ...contents.value,
+          folders: contents.value.folders.map(folder => folder.id === 'personal'
+            ? { ...folder, folderCount, fileCount: entries.length - folderCount }
+            : folder),
+        }
+      }).catch(() => {
+        // 统计依赖磁盘目录快照，失败时保持未知。
+      })
+      void diskTrashApi.list().then(entries => {
+        if (!isCurrent()) return
+        const folderCount = entries.filter(entry => entry.kind === 'directory').length
+        contents.value = {
+          ...contents.value,
+          folders: contents.value.folders.map(folder => folder.id === 'trash'
+            ? { ...folder, folderCount, fileCount: entries.length - folderCount }
+            : folder),
+        }
+      }).catch(() => {
+        // 回收站暂时不可读时，保留未知数量。
+      })
       const loadLibraryCounts = filesApi.libraryCounts
       if (loadLibraryCounts) {
         void loadLibraryCounts().then(counts => {
@@ -237,9 +266,7 @@ export function useFileLibraryDirectory(options: DirectoryOptions) {
             ...contents.value,
             folders: contents.value.folders.map(folder => ({
               ...folder,
-              ...(folder.id === 'personal' ? { fileCount: counts.personalFileCount, folderCount: counts.personalFolderCount } : {}),
               ...(folder.id === 'projects' ? { fileCount: counts.projectFileCount, folderCount: counts.projectFolderCount } : {}),
-              ...(folder.id === 'trash' ? { fileCount: counts.trashFileCount, folderCount: counts.trashFolderCount } : {}),
             })),
           }
         }).catch(() => {

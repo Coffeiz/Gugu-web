@@ -31,9 +31,9 @@ import { ensureLlmPresets } from '@gugu/core/agent/config/llm-strategy'
 
 
 
-import type { ByokMediaDimension } from '@gugu/core/byok/media-capability-probe'
+import type { ByokMediaDimension } from '../byok/checks/capabilities.js'
 
-import { createByokMediaCapabilityProbeRunner } from '../byok/media-capability-probe.js'
+import { createByokMediaCapabilityProbeRunner } from '../byok/checks/capabilities.js'
 
 const previewSchema = z.object({
   provider: z.string().min(1).max(64),

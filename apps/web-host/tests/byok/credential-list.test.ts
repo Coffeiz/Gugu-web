@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import {registerCredentialListRoute} from '../../src/modules/byok/credential-list.js'
+import { registerCredentialListRoute } from '../../src/modules/byok/routes.js'
 
 test('BYOK 列表要求认证并只返回 owner 元数据和密钥可用状态',async()=>{
  const app=Fastify(),owners:string[]=[]

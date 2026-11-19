@@ -1,4 +1,4 @@
-import { createPublicSiteConfig, type PublicSiteConfig } from './modules/site/site-config.js'
+import { createPublicSiteConfig, type PublicSiteConfig } from './modules/site/config.js'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readConfigOverride, type ConfigDocument } from './adapters/config/config-override-file.js'

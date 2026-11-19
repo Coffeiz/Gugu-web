@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createTelegramInbox, NODE_IM_INBOUND_STREAM } from '../../../src/modules/im/gateway/telegram-inbox.js'
-import { createImInboundEnvelope } from '../../../src/modules/im/gateway/inbound-envelope.js'
+import { createTelegramInbox, NODE_IM_INBOUND_STREAM } from '../../../src/modules/im/gateway/platforms/telegram/inbox.js'
+import { createImInboundEnvelope } from '../../../src/modules/im/gateway/inbound/envelope.js'
 
 test('Telegram 入站将事件、去重键及游标交给同一原子命令，忽略事件仍推进游标', async () => {
   const calls: string[][] = []

@@ -38,6 +38,9 @@ const emit = defineEmits<{
         <span class="nav-group-label">通知</span>
         <button type="button" class="nav-item nav-item-disabled" :class="{ active: activeSection === 'notifications' }" aria-label="通知" @click="emit('navigate', 'notifications')"><Icon name="admin.bell" size="sm" /><span class="nav-label">通知</span></button>
       </div>
+      <div class="nav-group">
+        <button type="button" class="nav-item" :class="{ active: activeSection === 'account' }" aria-label="远程账号" @click="emit('navigate', 'account')"><Icon name="user.default" size="sm" /><span class="nav-label">远程账号</span></button>
+      </div>
       <div class="nav-group dev-nav-group">
         <span class="nav-group-label">开发测试</span>
         <button type="button" class="nav-item" :class="{ active: activeSection === 'home' }" aria-label="工作台（开发测试）" @click="emit('navigate', 'home')"><Icon name="navigation.grid" size="sm" /><span class="nav-label">工作台</span></button>

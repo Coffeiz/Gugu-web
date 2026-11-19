@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import Fastify from 'fastify'
 import test from 'node:test'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
-import { registerFileArchiveRoutes } from '../../src/modules/files/file-archive.js'
+import { registerFileArchiveRoutes } from '../../src/modules/files/archive/service.js'
 
 const ownerId = '00000000-0000-4000-8000-000000000091'
 

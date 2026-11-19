@@ -5,16 +5,16 @@ import { resolve } from 'node:path'
 import { Pool } from 'pg'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/modules/auth/auth.js'
-import { applyAgentBaseMigration } from '../../src/migrations/agent-base-migrate.js'
-import { applyFilesystemAuthorizationMigration } from '../../src/migrations/filesystem-authorization-migrate.js'
-import { applySecurityEventsMigration, checkSecurityEventsMigration } from '../../src/migrations/security-events-migrate.js'
-import { applyTerminalSessionsMigration, checkTerminalSessionsMigration } from '../../src/migrations/terminal-sessions-migrate.js'
-import { applyWebDomainMigration } from '../../src/migrations/web-domain-migrate.js'
+import { createUserToken } from '../../src/modules/auth/session/token.js'
+import { applyAgentBaseMigration } from '@gugu/database/postgres/migrations/0001_initialize'
+import { applyFilesystemAuthorizationMigration } from '@gugu/database/postgres/migrations/0005_filesystem_authorization'
+import { applySecurityEventsMigration, checkSecurityEventsMigration } from '@gugu/database/postgres/migrations/0006_security_events'
+import { applyTerminalSessionsMigration, checkTerminalSessionsMigration } from '@gugu/database/postgres/migrations/0007_terminal_sessions'
+import { applyWebDomainMigration } from '@gugu/database/postgres/migrations/0002_web_domain'
 import {
   createAgentSessionFilesystemAuthorization,
   type FilesystemAuthorizationConfirmationPort,
-} from '../../src/modules/agent-sessions/agent-filesystem-authorization.js'
+} from '../../src/modules/agent/sandbox/authorization.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const secret = 'synthetic-filesystem-vite-secret'

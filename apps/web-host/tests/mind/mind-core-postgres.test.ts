@@ -1,9 +1,10 @@
+import { tablesSql } from '@gugu/core/data'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { randomUUID } from 'node:crypto'
 import { Pool, type PoolClient } from 'pg'
-import { applyMindUndoCore } from '../../src/modules/undo/persistence/mind-core.js'
-import { MindUndoConflict, MindUndoUnsupported } from '../../src/modules/undo/persistence/mind.js'
+import { applyMindUndoCore } from '../../src/modules/undo/adapters/mind.js'
+import { MindUndoConflict, MindUndoUnsupported } from '../../src/modules/undo/errors.js'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const owner = '11111111-1111-4111-8111-111111111111'
@@ -13,6 +14,7 @@ test('借用 PG 连接保留外层事务及错误类型', { skip: !url }, async 
   const pool = new Pool({ connectionString: url, options: `-c search_path=${schema} -c timezone=UTC`, max: 2 })
   const client = await pool.connect()
   try {
+    await client.query(tablesSql('postgres').ragJobs)
     await client.query(`CREATE TABLE mind_nodes (id integer PRIMARY KEY,user_id uuid NOT NULL,kind text NOT NULL,title text,content_md text,content_plain text,color text,captured_at timestamptz,deleted_at timestamptz,version int NOT NULL,ref_snapshot json,updated_at timestamptz)`)
     await client.query(`INSERT INTO mind_nodes VALUES (1,$1,'note',NULL,'正文','正文',NULL,'2020-01-01T00:00:00Z',NULL,1,NULL,CURRENT_TIMESTAMP)`, [owner])
     const snapshot = { id: 1, kind: 'note', title: null, content_md: '正文', content_plain: '正文', color: null, captured_at: '2020-01-01T00:00:00.000+00:00', deleted_at: null, version: 1 }

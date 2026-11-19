@@ -1,14 +1,14 @@
+import { imGatewaySql } from '@gugu/database/postgres/migrations/0013_im_gateway'
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import type { Pool } from 'pg'
 import type { RunEvent } from '@gugu/core/agent'
 import { createImRunDeliveryRecovery } from '@gugu/core/im/run-delivery'
-import { createTelegramBotApi } from '../../../src/modules/im/gateway/telegram-api.js'
-import { createTelegramSender } from '../../../src/modules/im/gateway/telegram-sender.js'
-import { createPersistentTelegramProjection } from '../../../src/modules/im/gateway/telegram-persistent.js'
-import { withPostgresImDeliveryStore, type ImDeliverySession } from '../../../src/modules/im/gateway/delivery-store.js'
+import { createTelegramBotApi } from '@gugu/gateway/telegram'
+import { createTelegramSender } from '@gugu/gateway/telegram'
+import { createPersistentTelegramProjection } from '../../../src/modules/im/gateway/platforms/telegram/persistent.js'
+import { withPostgresImDeliveryStore, type ImDeliverySession } from '../../../src/modules/im/gateway/delivery/store.js'
 
 const identity = { ownerId: '00000000-0000-4000-8000-000000000094', sessionId: '1', runId: 'synthetic-telegram-stream' }
 const target = { chatId: '12345', chatType: 'c2c' as const, replyToMessageId: '9' }
@@ -209,7 +209,7 @@ test('草稿429限流等待中撤权不再HTTP，预览结果不替代正式投�
   const m = memory(), p = platform()
   let calls = 0, allowed = true
   const sender = createTelegramSender({ token: 'synthetic', now: p.now, sleep: async () => { allowed = false }, api: {
-    async call() { calls++; const { TelegramApiError } = await import('../../../src/modules/im/gateway/telegram-api.js'); throw new TelegramApiError('sendMessageDraft', 429, 429, 1) },
+    async call() { calls++; const { TelegramApiError } = await import('@gugu/gateway/telegram'); throw new TelegramApiError('sendMessageDraft', 429, 429, 1) },
   } })
   const stream = create(m, p, { sender, authorize: async () => allowed })
   try {
@@ -266,7 +266,7 @@ async function database(work: (pool: Pool) => Promise<void>) {
     await admin.query(`CREATE SCHEMA "${schema}"`)
     await pool.query('CREATE TABLE users(id uuid PRIMARY KEY);CREATE TABLE conversation_sessions(id integer PRIMARY KEY,user_id uuid)')
     await pool.query('INSERT INTO users VALUES($1)', [identity.ownerId]); await pool.query('INSERT INTO conversation_sessions VALUES(1,$1)', [identity.ownerId])
-    await pool.query(await readFile(new URL('../../../src/modules/im/gateway/delivery-schema.sql', import.meta.url), 'utf8'))
+    await pool.query(imGatewaySql.delivery)
     await work(pool)
   } finally { await pool.end(); await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`); await admin.end() }
 }

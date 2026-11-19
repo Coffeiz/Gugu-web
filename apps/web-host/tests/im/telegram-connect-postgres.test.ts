@@ -5,7 +5,7 @@ import test from 'node:test'
 import { createPostgresRuntime } from '@gugu/core/data'
 import { createTelegramConnector } from '@gugu/core/im/telegram-connect'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/modules/auth/auth.js'
+import { createUserToken } from '../../src/modules/auth/session/token.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerA = '11111111-1111-4111-8111-111111111111'

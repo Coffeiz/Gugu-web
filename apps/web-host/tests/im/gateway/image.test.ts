@@ -6,7 +6,7 @@ import {promisify} from 'node:util'
 import {mkdtemp,readFile,readdir,rm,writeFile} from 'node:fs/promises'
 import {join} from 'node:path'
 import {tmpdir} from 'node:os'
-import {createImImageProcessor} from '../../../src/modules/im/gateway/image.js'
+import {createImImageProcessor} from '../../../src/modules/im/gateway/media/image.js'
 
 const {createCanvas,loadImage}=createRequire(import.meta.url)('@napi-rs/canvas') as typeof import('@napi-rs/canvas')
 const run=promisify(execFile),signal=()=>new AbortController().signal

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { createRedisFilesystemAuthorizationCommands } from '../../src/adapters/cache/redis-events.js'
-import { createFilesystemAuthorizationConfirmationStore } from '../../src/modules/agent-sessions/filesystem-authorization-confirmations.js'
+import { createFilesystemAuthorizationConfirmationStore } from '../../src/modules/agent/sandbox/confirmations.js'
 
 const redisUrl = process.env.GUGU_WEBUI_TEST_REDIS_URL
 

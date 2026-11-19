@@ -67,7 +67,7 @@
             </div>
           </div>
 
-          <div class="field project-field" v-if="!lockedProjectId">
+          <div v-if="!workspaceTarget && !lockedProjectId" class="field project-field">
             <label>
               {{ t('filesUi.putInProject') }}
               <span class="label-hint">{{ t('filesUi.optional') }}</span>
@@ -214,8 +214,10 @@
 <script setup lang="ts">
 import CloseButton from '@/components/common/overlays/CloseButton.vue'
 import { ref, computed, watch, type PropType } from 'vue'
-import { uploadWithProgress, uploadDirectWithProgress, filesApi, foldersApi } from '@/services/api'
-import { readDroppedEntries, filesToItems, resolveFolderTree } from '@/composables/files/useFileUploadCore'
+import { uploadDirectWithProgress, filesApi, foldersApi, type PathFileRef } from '@/services/api'
+import { readDroppedEntries, filesToItems, resolveFolderTree, uploadFileWithProgress, uploadWorkspaceFile } from '@/composables/files/useFileUploadCore'
+import { errorMessage, showAppError } from '@/composables/core/useAppToast'
+import { getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 import BaseModal from '@/components/common/overlays/BaseModal.vue'
 import { useI18n } from 'vue-i18n'
 
@@ -229,8 +231,9 @@ const props = defineProps({
   lockedColor:       { type: String, default: '' },
   lockedFolderId:    { type: Number, default: null },
   initialFiles:      { type: Array as PropType<File[]>, default: () => [] },
+  workspaceTarget:   { type: Object as PropType<PathFileRef | null>, default: null },
 })
-const emit = defineEmits(['close', 'uploaded'])
+const emit = defineEmits(['close', 'uploaded', 'workspace-changed'])
 
 const fileInputRef    = ref<HTMLInputElement | null>(null)
 const pendingFiles    = ref<any[]>([])
@@ -422,6 +425,24 @@ async function handleUpload() {
 
   try {
     const items = pendingFiles.value.map((file, i) => ({ file, relativePath: pendingPaths.value[i] }))
+    if (props.workspaceTarget) {
+      const target = props.workspaceTarget
+      const account = getAccountBoundaryEpoch()
+      while (items.length) {
+        const item = items[0]
+        if (account !== getAccountBoundaryEpoch()) return
+        await uploadWorkspaceFile(target, item, progress => { fileProgresses.value[0] = progress })
+        if (account !== getAccountBoundaryEpoch()) return
+        emit('workspace-changed')
+        items.shift()
+        pendingFiles.value.shift()
+        pendingPaths.value.shift()
+        fileProgresses.value.shift()
+      }
+      emit('uploaded', [])
+      emit('close')
+      return
+    }
     const resolved = await resolveFolderTree(items, { projectId, baseFolderId })
 
     for (let i = 0; i < pendingFiles.value.length; i++) {
@@ -456,13 +477,7 @@ async function handleUpload() {
           stage_name: selectedStage.value,
         })
       } else {
-        const form = new FormData()
-        form.append('file', f)
-        form.append('space', space)
-        if (projectId != null) form.append('project_id', String(projectId))
-        if (folderId != null) form.append('folder_id', String(folderId))
-        form.append('stage_name', selectedStage.value)
-        created = await uploadWithProgress('/files', form, (pct) => {
+        created = await uploadFileWithProgress(f, { space, projectId, folderId, stageName: selectedStage.value }, (pct) => {
           const next = [...fileProgresses.value]
           next[i] = pct
           fileProgresses.value = next
@@ -475,7 +490,7 @@ async function handleUpload() {
     emit('uploaded', uploaded)
     setTimeout(() => emit('close'), 500)
   } catch (err) {
-    console.error('[UploadModal] 上传失败:', err)
+    showAppError(errorMessage(err))
     uploading.value = false
   }
 }

@@ -11,7 +11,7 @@ import {
   createPostgresAgentPendingQueueReplace,
   registerAgentPendingQueuePatchRoute,
   registerAgentPendingQueueReplaceRoute,
-} from '../../src/modules/agent-sessions/agent-pending-queue-patch.js'
+} from '../../src/modules/agent/chat/patch.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

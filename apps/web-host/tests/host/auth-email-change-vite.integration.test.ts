@@ -4,7 +4,7 @@ import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createCsrfToken, createUserToken, type PublicUserRecord } from '../../src/modules/auth/auth.js'
+import { createCsrfToken, createUserToken, type PublicUserRecord } from '../../src/modules/auth/session/token.js'
 import { hashEmailChangeToken, type EmailChangeStore, type EmailChangeUser } from '../../src/modules/auth/email-change.js'
 
 const ownerId = '3c392b91-07b0-4c36-8f7f-1a2c611f7480'

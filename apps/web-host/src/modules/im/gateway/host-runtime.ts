@@ -61,7 +61,7 @@ export function createImHostLifecycle(options: {
   acquire(): Promise<ImHostOwnershipLease>
   components(): Promise<ImHostComponents>
   intervalMs?: number
-  diagnose(code: 'ownership_lost' | 'dispatch_unavailable' | 'delivery_unavailable' | 'pending_unavailable' | 'interaction_unavailable' | 'maintenance_unavailable' | 'cleanup_failed'): void
+  diagnose(code: 'ownership_lost' | 'dispatch_unavailable' | 'delivery_unavailable' | 'pending_unavailable' | 'interaction_unavailable' | 'maintenance_unavailable' | 'cleanup_failed', error?: unknown): void
 }) {
   const interval = options.intervalMs ?? 10000
   if (!Number.isSafeInteger(interval) || interval < 10 || interval > 300000) throw new Error('IM 后台扫描间隔无效')
@@ -72,12 +72,12 @@ export function createImHostLifecycle(options: {
   let assemblyCleanupUnknown = false
   const health: Partial<Record<LoopName, 'stopped' | 'running' | 'degraded'>> = { dispatch: 'stopped', delivery: 'stopped', pending: 'stopped', interaction: 'stopped' }
   const pendingWake = new Set<LoopName>(), waiting = new Map<LoopName, () => void>()
-  const report = (code: Parameters<typeof options.diagnose>[0]) => { try { options.diagnose(code) } catch { /* 固定诊断失败不能释放消费归属。 */ } }
+  const report = (code: Parameters<typeof options.diagnose>[0], error?: unknown) => { try { options.diagnose(code, error) } catch { /* 固定诊断失败不能释放消费归属。 */ } }
   function loop(name: LoopName, run: (signal: AbortSignal) => Promise<void>) {
     tasks.push((async () => {
       while (!controller.signal.aborted) {
         try { await run(controller.signal); health[name] = 'running' }
-        catch { if (!controller.signal.aborted) { health[name] = 'degraded'; report(`${name}_unavailable`) } }
+        catch (error) { if (!controller.signal.aborted) { health[name] = 'degraded'; report(`${name}_unavailable`, error) } }
         if (pendingWake.delete(name)) continue
         if (!controller.signal.aborted) await new Promise<void>(resolve => {
           const done = () => { clearTimeout(timer); controller.signal.removeEventListener('abort', done); waiting.delete(name); pendingWake.delete(name); resolve() }

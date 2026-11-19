@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createDecipheriv, createHash } from 'node:crypto'
 import test from 'node:test'
 import type { Pool } from 'pg'
-import { createPostgresTrashReadOperations } from '../../src/modules/files/persistence/trash-postgres.js'
+import { createPostgresTrashReadOperations } from '../../src/modules/files/trash/store.js'
 
 const ownerId = '11111111-1111-4111-8111-111111111111'
 const secret = 'synthetic-trash-cursor-secret'

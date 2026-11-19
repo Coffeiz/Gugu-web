@@ -12,7 +12,7 @@ export function classifyImGroupInbound(input: { platform: ImPlatform; chatType: 
   if (typeof settings.readOnly !== 'boolean' || typeof settings.requiresAt !== 'boolean') throw new TypeError('IM 群回应策略无效')
   return settings.readOnly || !input.groupMentioned && (settings.requiresAt || input.mentionsOtherBot) ? 'passive' : 'reply'
 }
-export const defaultImTools: readonly string[] = Object.freeze(['web_search', 'http_get', 'similar_image_search', 'read_file', 'send_file'])
+export const defaultImTools: readonly string[] = Object.freeze(['web_search', 'http_get', 'similar_image_search', 'save_im_attachment'])
 
 /** 只能由 Host 从可信 Bot 存储读取；平台消息不得自行提供绑定和权限。 */
 export interface ImBotAccess {
@@ -155,6 +155,7 @@ export function imContextPolicy(actor: ImActor, bot: ImBotAccess | null, memoryE
 
 /** 复用现有发现/派发规则；平台不支持的工具在两个入口均不可见和不可执行。 */
 export function imCanUseTool(actor: ImActor, name: string, groupAutoReply = false): boolean {
+  if (name === 'save_im_attachment' && (actor.role !== 'owner' || actor.chatType !== 'c2c')) return false
   if (name === 'react' && actor.platform !== 'feishu') return false
   return canUseTool(name, { allowedToolNames: actor.allowedToolNames, imRole: actor.role, platform: actor.platform,
     chatType: actor.chatType, currentIm: { chatType: actor.chatType, groupAutoReply } })

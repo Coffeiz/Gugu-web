@@ -9,9 +9,16 @@ export interface GlobalSearchRouteOptions {
 }
 
 export function registerGlobalSearchRoute(app: FastifyInstance, options: GlobalSearchRouteOptions): void {
-  app.get('/api/v1/search', { preHandler: options.requireUser }, async (request) =>
-    options.operations.search(
-      options.ownerIdFromRequest(request),
-      parseGlobalSearchQuery(request.query),
-    ))
+  app.get('/api/v1/search', { preHandler: options.requireUser }, async (request, reply) => {
+    const controller = new AbortController()
+    const onClose = () => { if (!reply.raw.writableEnded) controller.abort() }
+    reply.raw.once('close', onClose)
+    try {
+      return await options.operations.search(
+        options.ownerIdFromRequest(request), parseGlobalSearchQuery(request.query), { signal: controller.signal },
+      )
+    } finally {
+      reply.raw.off('close', onClose)
+    }
+  })
 }

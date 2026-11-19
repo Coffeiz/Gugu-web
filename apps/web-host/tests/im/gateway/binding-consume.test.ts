@@ -1,11 +1,11 @@
+import { imGatewaySql } from '@gugu/database/postgres/migrations/0013_im_gateway'
 import assert from 'node:assert/strict'
 import { createHash, createHmac, randomInt, randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import type { Pool, PoolClient } from 'pg'
 import { createUserBotBindingCodeIssuer } from '@gugu/core/im/binding-code'
 import type { ImPreflightScope } from '@gugu/core/im/inbound-preflight'
-import { createPostgresRedisBindingConsumer, IM_BINDING_CLEANUP_SCRIPT, IM_BINDING_VALIDATE_SCRIPT, ImBindingUnavailable } from '../../../src/modules/im/gateway/binding-consume.js'
+import { createPostgresRedisBindingConsumer, IM_BINDING_CLEANUP_SCRIPT, IM_BINDING_VALIDATE_SCRIPT, ImBindingUnavailable } from '../../../src/modules/im/gateway/inbound/binding.js'
 
 const owner = '00000000-0000-4000-8000-000000000081'
 const other = '00000000-0000-4000-8000-000000000082'
@@ -202,7 +202,7 @@ test('隔离PG与Redis：真实Lua预算、DB回滚保码、并发绑定及旧�
     await pool.query(`CREATE TABLE users(id uuid PRIMARY KEY,is_active boolean,account_status varchar(16));
       CREATE TABLE user_bots(id integer PRIMARY KEY,user_id uuid REFERENCES users(id),platform varchar(20),enabled boolean,
       owner_platform_user_id varchar(128),owner_bound_at timestamptz)`)
-    await pool.query(await readFile(new URL('../../../src/modules/im/gateway/binding-consume-schema.sql', import.meta.url), 'utf8'))
+    await pool.query(imGatewaySql.bindingConsume)
     await pool.query("INSERT INTO users VALUES($1,true,'active')", [userId])
     await pool.query("INSERT INTO user_bots VALUES($1,$2,'telegram',true,NULL,NULL)", [botId, userId])
     const codeHash = createHmac('sha256', secret).update(`telegram:${botId}:${userId}:123456`).digest('hex')

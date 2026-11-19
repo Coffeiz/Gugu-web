@@ -1,4 +1,12 @@
 {
+  "apps/desktop/tests/remote-account.test.ts": {
+    "domain": "desktop-auth",
+    "layer": "L2",
+    "owner": "apps/desktop/src/main/auth",
+    "productionEntry": "createRemoteAccountHandlers",
+    "keyBehavior": "跨重启恢复加密会话，断网保留，失效和退出清除，令牌按服务器来源隔离",
+    "ci": "desktop-vitest"
+  },
   "apps/web/tests/desktop/DesktopWorkbench.test.ts": {
     "domain": "desktop-core-ipc",
     "layer": "L1",

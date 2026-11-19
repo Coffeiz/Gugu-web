@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createWebCalendarReminderTargets } from '../../src/modules/agent-sessions/tools/agent-calendar-reminder-targets.js'
+import { createWebCalendarReminderTargets } from '../../src/modules/agent/tools/calendar.js'
 
 test('Web 日历提醒按有效 lease 解析 owner 私聊，并拒绝错身份、群目标和失效租约', async () => {
   const identity = { ownerId: 'owner-a', sessionId: '7', runId: 'run-a' }

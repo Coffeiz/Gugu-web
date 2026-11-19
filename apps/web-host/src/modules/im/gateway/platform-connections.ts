@@ -1,3 +1,4 @@
+import { createTelegramAdapter, type createTelegramSender } from '@gugu/gateway/telegram'
 import type { ProviderTransport } from '@gugu/core/providers'
 import type { AddressResolver } from '@gugu/core/providers/node'
 import { createImInboundPreflight, type ImPreflightPorts, type ImPreflightScope } from '@gugu/core/im/inbound-preflight'
@@ -5,29 +6,25 @@ import { parseFeishuEvent } from '@gugu/core/im/feishu-message'
 import { parseQqMessage, type ParsedQqMessage } from '@gugu/core/im/qq-message'
 import type { RedisCommandClient } from '../../../workers/redis-stream-queue.js'
 import type { TrustedGatewayBot } from './bot-config.js'
-import { createNodeImInbox, type NodeImBotBinding } from './inbox.js'
-import { createImInboundEnvelope } from './inbound-envelope.js'
-import { createTelegramInbox } from './telegram-inbox.js'
-import { connectTelegramPolling } from './telegram-polling.js'
-import { createTelegramBotApi } from './telegram-api.js'
-import { createTelegramSender } from './telegram-sender.js'
-import { createFeishuClient } from './feishu/client.js'
-import { createFeishuConnection, type FeishuConnectionOptions } from './feishu/connection.js'
-import { createFeishuSender } from './feishu/sender.js'
-import { createFeishuStreamingSender } from './feishu/streaming.js'
-import { createQqClient } from './qq/client.js'
-import { createQqConnection, type QqSocket } from './qq-connection.js'
-import { createQqSender } from './qq/sender.js'
-import { createQqMediaUploader } from './qq/media-upload.js'
-import { createQqReplySequences } from './qq/sequences.js'
-import { createILinkClient } from './wechat/client.js'
-import { createWechatMedia } from './wechat/media.js'
-import { createWechatSender } from './wechat/sender.js'
-import { connectWechatPolling } from './wechat/polling.js'
-import { createPlatformMedia, type PlatformAttachmentStore } from './platform-media.js'
-import type { GatewayClock, GatewayConnection } from './supervisor.js'
-import { GatewayConnectionCleanupError } from './supervisor.js'
-import { ImGatewayAdmissionError, type ImGatewayAdmissionPort } from './admission-postgres.js'
+import { createNodeImInbox, type NodeImBotBinding } from './inbound/inbox.js'
+import { createImInboundEnvelope } from './inbound/envelope.js'
+import { createTelegramInbox } from './platforms/telegram/inbox.js'
+import { createFeishuClient } from './platforms/feishu/client.js'
+import { createFeishuConnection, type FeishuConnectionOptions } from './platforms/feishu/connection.js'
+import { createFeishuSender } from './platforms/feishu/sender.js'
+import { createFeishuStreamingSender } from './platforms/feishu/streaming.js'
+import { createQqClient } from './platforms/qq/client.js'
+import { createQqConnection, type QqSocket } from './platforms/qq/connection.js'
+import { createQqSender } from './platforms/qq/sender.js'
+import { createQqMediaUploader } from './platforms/qq/media-upload.js'
+import { createQqReplySequences } from './platforms/qq/sequences.js'
+import { createILinkClient } from './platforms/wechat/client.js'
+import { createWechatMedia } from './platforms/wechat/media.js'
+import { createWechatSender } from './platforms/wechat/sender.js'
+import { connectWechatPolling } from './platforms/wechat/polling.js'
+import { createPlatformMedia, type PlatformAttachmentStore } from './media/platform.js'
+import { GatewayConnectionCleanupError, type GatewayClock, type GatewayConnection } from '@gugu/gateway'
+import { ImGatewayAdmissionError, type ImGatewayAdmissionPort } from './inbound/admission.js'
 import { chooseImInstantReactionEmoji } from '@gugu/core/im/shortcut'
 
 type Payload = Record<string, unknown>
@@ -162,15 +159,14 @@ export function createPlatformConnections(options: {
     try {
       signal.throwIfAborted()
       if (spec.platform === 'telegram') {
-        const api = createTelegramBotApi({ transport: options.transport?.(spec, 'api') })
-        const out = createTelegramSender({ token: spec.credentials.appSecret, api })
+        const { api, sender: out, connect } = createTelegramAdapter({ token: spec.credentials.appSecret, transport: options.transport?.(spec, 'api') })
         sender = { platform: 'telegram', sender: out }
         text = async (p, value, quote, signal, authorize) => { if (typeof authorize !== 'function') throw invalid()
           const result = await out.text({ chatId: String(p.chat_id || p.platform_user_id), chatType: p.chat_type as Scope['chatType'],
           ...(quote ? { replyToMessageId: String(p.message_id) } : {}) }, value, { signal, authorize }); if (result.outcome !== 'accepted') throw invalid() }
         // 长轮询逐消息串行；仅保存当前事件路由和可信收据guard，不保存正文或平台媒体材料。
         let mediaFeedback: { route: Payload; authorize(): Promise<boolean> } | undefined
-        connection = await connectTelegramPolling({ botId: spec.id, ownerId: spec.owner, token: spec.credentials.appSecret, api,
+        connection = await connect({ botId: spec.id, ownerId: spec.owner,
           inbox: createTelegramInbox(options.redis, spec.id, spec.owner, options.secretKey), signal,
           sleep: options.clock ? (ms, signal) => options.clock!.sleep(ms, signal) : undefined,
           preflight: (p, signal) => { mediaFeedback = undefined

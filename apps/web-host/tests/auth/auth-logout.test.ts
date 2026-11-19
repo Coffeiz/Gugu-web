@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify'
-import { createUserToken, verifyUserToken } from '../../src/modules/auth/auth.js'
-import { registerLogoutRoute } from '../../src/modules/auth/routes/auth-logout.js'
+import { createUserToken, verifyUserToken } from '../../src/modules/auth/session/token.js'
+import { registerLogoutRoute } from '../../src/modules/auth/session/routes.js'
 
 const secret = 'synthetic-logout-secret-with-enough-entropy'
 const userId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'

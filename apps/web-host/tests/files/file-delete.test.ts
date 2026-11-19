@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { registerFileDeleteRoutes } from '../../src/modules/files/file-delete.js'
+import { registerFileDeleteRoutes } from '../../src/modules/files/trash/service.js'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
 
 test('文件删除使用 Host owner 和撤销上下文，并保留 204 响应', async () => {

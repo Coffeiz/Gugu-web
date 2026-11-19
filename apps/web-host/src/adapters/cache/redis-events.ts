@@ -1,12 +1,12 @@
-import { clearRedisAgentReflectionSession } from '../../modules/agent-sessions/persistence/agent-reflection-queue-redis.js'
+import { clearRedisAgentReflectionSession } from '../../modules/agent/memory/reflection/queue.js'
 import { randomUUID } from 'node:crypto'
 import { connect as connectTcp, type Socket } from 'node:net'
 import { connect as connectTls, type TLSSocket } from 'node:tls'
 import type { RedisRateLimitCommands } from '../../modules/auth/rate-limit.js'
-import type { RegistrationCodeRedisCommands } from '../../modules/auth/persistence/registration-codes.js'
+import type { RegistrationCodeRedisCommands } from '../../modules/auth/registration/codes.js'
 import type { PasswordResetRedisCommands } from '../../modules/auth/password-reset.js'
-import type { FilesystemAuthorizationRedisCommands } from '../../modules/agent-sessions/filesystem-authorization-confirmations.js'
-import type { ScheduledTaskRedisCommands } from '../../modules/scheduled-tasks/persistence/redis-lease.js'
+import type { FilesystemAuthorizationRedisCommands } from '../../modules/agent/sandbox/confirmations.js'
+import type { ScheduledTaskRedisCommands } from '../../modules/scheduled-tasks/run/lease.js'
 
 type RedisConnection = Socket | TLSSocket
 type RedisReply = string | null

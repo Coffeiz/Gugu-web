@@ -1,13 +1,13 @@
+import { encryptByokEnvelope, decryptByokCredential } from '../../src/modules/byok/crypto.js'
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { Pool } from 'pg'
-import { encryptByokEnvelope, decryptByokCredential } from '../../src/modules/agent/model-config/byok.js'
 import { consumeInteractionAction } from '@gugu/core/agent/interactions/consume-action'
 import { processOneInteraction } from '@gugu/core/agent'
-import { createPostgresSecretInteraction } from '../../src/modules/agent-sessions/persistence/agent-secret-interaction-postgres.js'
-import { createPostgresInteractionConsumeStore } from '../../src/modules/agent-sessions/persistence/agent-interaction-consume-postgres.js'
-import { createInteractionResumeEnqueuer, createPostgresInteractionResumeQueue, deliverInteractionResume } from '../../src/modules/agent-sessions/persistence/agent-interaction-resume-postgres.js'
+import { createPostgresSecretInteraction } from '../../src/modules/agent/interactions/secrets.js'
+import { createPostgresInteractionConsumeStore } from '../../src/modules/agent/interactions/consume.js'
+import { createInteractionResumeEnqueuer, createPostgresInteractionResumeQueue, deliverInteractionResume } from '../../src/modules/agent/interactions/resume.js'
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
 test('交互消费按 owner 和 token 限制，竞争只提交一次并保护副作用', { skip: !url && '需要隔离 PostgreSQL' }, async () => {

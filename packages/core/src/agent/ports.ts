@@ -1,6 +1,7 @@
 
 import type { ExecutionRequest,ExecutionResult } from './executor/contracts.js'
 import type { AgentObservationPort } from './observation.js'
+import type { AgentRunLogPort } from './logging.js'
 import type { ReflectionSnapshots } from './memory/reflection.js'
 import type { CanonicalRunContext } from './models.js'
 import type { Block,BranchInput,BranchName,CanonicalAreaSnapshot,CanonicalCompletionInput,CanonicalMessage,CanonicalSourceEffects,CapabilityCatalog,CompactionSummaryInput,ContextData,ContextSourceSelection,CurrentTurnSources,DispatchOutcome,DisplayItem,EarlyExit,FrozenProviderRequest,HistoryIdentity,InteractionResolution,Json,Lease,MessageEntry,NormalizedProviderRecovery,OpaqueProviderProjection,PendingInteraction,PersistedHistoryRow,PreparationIdentity,PrepareContextInput,PreparedContext,PreparedToolDefinition,ProviderEvent,ProviderRecoveryBoundary,ProviderRequest,RagContext,ReflectionSnapshot,ReplyFacts,ReplyGateCall,RunCapabilities,RunCheckpoint,RunEvent,RunIdentity,SanitizerCheckpoint,SessionSnapshotState,SnapshotPayload,ToolCall,ToolPlan,ToolResult,Usage } from './models.js'
@@ -384,6 +385,7 @@ export interface ContextPort<C> {
   afterUsage(context: C, usage: Usage, signal: AbortSignal): Promise<{
     readonly context: C
     readonly applied: boolean
+    readonly reason?: 'below_threshold' | 'retry_deferred' | 'failed' | 'no_change' | 'applied' | 'not_applied'
   }>
   appendReminder?(context: C, prompt: string): Promise<C>
   release?(identity: RunIdentity): Promise<void>
@@ -445,6 +447,8 @@ export interface ReplyPolicy<C> {
 export interface AgentRunnerPorts<C> {
   /** 可选的跨 Host 尽力观测，不参与业务状态或授权。 */
   readonly observation?: AgentObservationPort
+  /** 可选普通结构日志；禁止写入正文、工具参数和异常原文。 */
+  readonly log?: AgentRunLogPort
   readonly clock: {
     now(): string
   }

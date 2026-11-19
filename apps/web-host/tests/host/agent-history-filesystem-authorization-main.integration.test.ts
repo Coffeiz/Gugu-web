@@ -8,9 +8,9 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { Pool } from 'pg'
 import { startServer } from '../../src/main.js'
-import { applyAgentBaseMigration } from '../../src/migrations/agent-base-migrate.js'
-import { applyFilesystemAuthorizationMigration, checkFilesystemAuthorizationMigration } from '../../src/migrations/filesystem-authorization-migrate.js'
-import { applyWebDomainMigration } from '../../src/migrations/web-domain-migrate.js'
+import { applyAgentBaseMigration } from '@gugu/database/postgres/migrations/0001_initialize'
+import { applyFilesystemAuthorizationMigration, checkFilesystemAuthorizationMigration } from '@gugu/database/postgres/migrations/0005_filesystem_authorization'
+import { applyWebDomainMigration } from '@gugu/database/postgres/migrations/0002_web_domain'
 import { signedUserToken } from '../helpers/auth.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL

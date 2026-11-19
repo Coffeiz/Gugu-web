@@ -3,8 +3,8 @@ import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { Pool } from 'pg'
 import { loadSessionHistory, restoreHistoryForRequest, type HistoryReaderPort } from '@gugu/core/agent'
-import { withAgentHistoryReferences } from '../../src/modules/agent-sessions/context/agent-history-references.js'
-import { resolveAgentChatReferences } from '../../src/modules/agent-sessions/context/agent-references.js'
+import { withAgentHistoryReferences } from '../../src/modules/agent/context/history.js'
+import { resolveAgentChatReferences } from '../../src/modules/agent/context/references.js'
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
 test('旧历史引用按 owner 水合且不写回，删除对象后不泄漏并保留正文顺序', { skip: !url && '需要隔离 PostgreSQL' }, async () => {

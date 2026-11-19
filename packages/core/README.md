@@ -23,6 +23,8 @@ IPC 仅暴露明确声明的业务命令，不允许渲染进程指定任意 own
 
 2.0 目标以授权本地 FS 为文件事实源，按授权根下路径定位；不重新引入文件正文与数据库副本的 watcher 对账。通用 Agent 文件 CRUD 目标收敛到受授权 Shell，删除现有工具须先验证隔离、确认门和用户可观察行为；没有 Shell 的端不能假定具备任意命令能力。
 
+工作区、个人文件和项目文件的磁盘操作由 `@gugu/fs/node` 提供，Host 将可信存储根和目录键绑定到文件操作实例。Core 保留工作区绑定、项目归属和文件引用等共享业务；回收站和附件引用按领域逐步迁移。
+
 上述是目标职责，不代表现有业务均已完成共享化、双库适配或端到端验收。新增跨端能力直接遵循该边界；存量按完整业务切片迁移，保留旧 Python 的用户可观察行为与回归作为基准。更详细设计见[架构说明](../../docs/refactor/Gugu-2.0-架构说明.md)。
 
 ## 开发与验证
@@ -55,20 +57,19 @@ try {
 
 服务端使用 `createPostgresRuntime({ url, schema, maxConnections })` 和 `dataContext(ownerUUID)`；连接 URL 来自宿主安全配置，Core 不自动读取环境文件或建表，不提供任意用户 HTTP 入口。一个事务只用同一连接，所有查询和写入带 owner 条件。
 
-## 旧库、收据与升级
+## SQLite 初始化与操作收据
 
-新库 schema 为 16，包含用户偏好文档、反馈、操作收据、Undo、Mind、日历与 RAG、定时任务、通知、SMTP 设置、引导状态及 Agent 会话和交互提示/动作表；持久收据与业务写入同事务提交。相同操作 ID、相同方法与参数返回原结果；不同内容冲突。进程超时可能已提交，应凭操作 ID 查询或读取权威数据，不自动重试修改。
-
-v2 文件可通过显式 `allowLegacySchema` 用于差分验证，字段编码保持可被旧 Python 包重读；该模式没有持久收据。正式桌面协议 v2 要求 schema 17，遇到旧库拒绝隐式迁移。停止相关运行时后显式执行：
+Desktop 首次启动会以 `0001_initialize` 基线创建 SQLite。也可以用统一的 `migrate check|apply` 命令显式检查与初始化：
 
 ```bash
 pnpm --filter @gugu/core build
-pnpm --filter @gugu/core cli --database <本地数据库文件> migrate
+pnpm --filter @gugu/core migrate apply --database "<本地数据库文件>"
+pnpm --filter @gugu/core migrate check --database "<本地数据库文件>"
 ```
 
-v1 至 v15 升级先锁定写入、生成并校验独立备份，再事务性升级。失败回滚 DDL 与版本。新库初始化先构建完整临时文件，再以不覆盖目标的方式发布；不会把失败的半初始化库当成有效文件。
+新库先在临时文件中完成建表和校验，再原子发布。已有文件必须带当前基线记录并通过校验，旧格式请使用新的文件路径。数据库记录的迁移编号和 Desktop IPC 使用的 schema 版本是独立字段。目录和行为见 [数据库迁移](../database/README.md)。
 
-旧 Python 不能打开 v16。回滚需停止新版、恢复升级前备份并配套旧代码，不让旧进程直接写新 schema。用户 Web `.env` 和 `config.override.json` 不参与迁移。引导状态、反馈及偏好文档已具备 SQLite 仓储；桌面实际调用尚未验收。
+持久收据与业务写入同事务提交。相同操作 ID、方法与参数返回原结果，内容不同则报冲突。进程超时后，可凭操作 ID 查询是否已经提交。
 
 ## 分层、差分与真实数据库
 

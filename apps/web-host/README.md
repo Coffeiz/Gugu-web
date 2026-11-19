@@ -10,11 +10,15 @@
 
 有咕咕 Shell 或网页终端需求的 Linux/NAS 部署使用原生 Web Host。管理员运行一次 [Bubblewrap 安装器](deploy/bubblewrap/README.md) 后，Web Host 自动探测标准运行根。默认使用断网沙盒，用户终端策略为「自动」。
 
+咕咕聊天和命令式终端执行单条 `rm` 时，使用现有危险命令权限和一次性确认，将授权路径移入磁盘回收站。支持字面量文件路径、`--` 与短选项 `-r`、`-R`、`-f`，回收项可恢复并沿用 30 天保留期。请用文件库回收站执行永久删除。
+
+脚本、解释器和无法识别为普通写入的组合命令使用只读挂载。可识别的普通写入（如 `mkdir`、`touch` 和工作目录内的重定向）仍可写入授权目录。交互式终端中的受管目录为只读。显式启用的系统 Shell 继续使用独立权限和确认流程。
+
 ## Docker Compose
 
 Web Host 发布时包含同级的 `dist/` 和 `assets/`。对话、定时任务、管理员提示词编辑及 IM 维护共用 `assets/agent-prompts/`。运行服务账号需要对此目录有写权限，管理员保存的文本会用于后续运行。注册引导音频位于 `assets/onboarding/`。
 
-运行配置默认位于 Web Host 包目录的 `config.override.json`，可用 `GUGU_CONFIG_OVERRIDE_FILE` 指定。Compose 使用持久卷中的文件。管理员保存需要部署预先提供合法的配置文件，首次配置可从空 JSON 对象开始。管理员日志默认从包目录的 `logs/` 读取，也可用 `GUGU_LOG_FILE` 指定 Web 日志。使用 BYOK 时，通过 `CREDENTIALS_MASTER_KEY` 或工作区外的 `CREDENTIALS_MASTER_KEY_FILE` 提供主密钥。已有加密凭据继续使用对应的原密钥。
+运行配置默认位于 Web Host 包目录的 `config.override.json`，可用 `GUGU_CONFIG_OVERRIDE_FILE` 指定。Compose 使用持久卷中的文件。管理员保存需要部署预先提供合法的配置文件，首次配置可从空 JSON 对象开始。Web Host 默认追加写入包目录的 `logs/gugu.log`，部署可用 `GUGU_LOG_FILE` 指定固定路径。Compose 将日志放在持久卷的 `/data/logs/`。常规日志与同目录下仅供服务器运维查看的 `gugu-diag.log` 各按 10 MiB 轮转并保留最近 10 份归档。Debug 页可以分页和搜索常规归档。Agent Run 与 Desktop 共用 `@gugu/log` 的 JSONL 事件、字段白名单和诊断格式。Run 失败时，常规和诊断记录通过同一 Run 指纹关联。迁移时可将旧日志复制到同目录，以 `gugu.log.history-<13 位毫秒时间戳>-<64 位十六进制唯一标识>` 命名，自动轮转会保留这些迁移归档。使用 BYOK 时，通过 `CREDENTIALS_MASTER_KEY` 或工作区外的 `CREDENTIALS_MASTER_KEY_FILE` 提供主密钥。已有加密凭据继续使用对应的原密钥。
 
 在仓库根目录执行：
 
@@ -51,31 +55,30 @@ corepack pnpm --filter @gugu/webui start
 
 本地运行必须设置 `SECRET_KEY` 和 Admin 登录密码。数据库连接可先设置 `GUGU_WEBUI_DATABASE_URL`，也可在 Admin 配置页首次录入；连接串使用标准 `postgresql://` 或 `postgres://` URI。
 
+### 服务端目录
+
+- `src/main.ts` 处理进程启动和退出信号，`src/startup/server.ts` 负责服务启动、就绪检查与资源关闭顺序。
+- `src/app.ts` 创建 Fastify 应用并注册公共 HTTP 能力。用户路由由 `src/http/routes.ts` 装配，附件、会话、文件和管理端分别在所属模块注册。
+- `src/modules/agent/` 按职责组织。会话在 `sessions/`，消息和队列在 `chat/`，运行与恢复在 `run/`，交互在 `interactions/`。附件、LLM、上下文、记忆、检索和工具各有目录。
+- `src/modules/auth/` 按会话、注册、账号管理和用量拆为 `session/`、`registration/`、`account/`、`quota/`。路由和存储实现随业务归位。
+- `src/startup/` 组合进程级依赖，包括登录、Agent 运行时、Mind 服务和后台任务。共享业务规则位于 Core。
+
 ### 开发监听
 
-日常开发执行 `corepack pnpm --filter @gugu/webui dev`。该命令监听 Web Host 源码，以及 Core、FS、Sandbox 的增量编译产物，并在变化后重启 Host；重启会中断正在执行的请求。首次缺少依赖制品时按命令提示初始化。启动时沿用进程已有环境变量，运行配置由开发者通过既有安全方式提供，不会改写配置文件。
+日常开发执行 `corepack pnpm --filter @gugu/webui dev`。该命令监听 Web Host 源码，以及 Core、Database、FS、Sandbox 的增量编译产物，并在变化后重启 Host；重启会中断正在执行的请求。首次缺少依赖制品时按命令提示初始化。启动时沿用进程已有环境变量，运行配置由开发者通过既有安全方式提供，不会改写配置文件。
 
 共享包编译失败时先修复错误，旧制品不代表新代码；内置技能 Markdown 资源修改后需运行 Core 的资源构建脚本。部署和生产验收仍使用完整构建。
 
 ### Node Web Host 数据库迁移
 
-使用 PostgreSQL 15 或更新版本。构建 Web Host 后，将 `GUGU_WEBUI_DATABASE_URL` 设为目标 schema 的标准 PostgreSQL URI，并按顺序初始化账号与偏好、会话与消息、待发送队列、交互提示、附件元数据、用量、RAG 重建队列，项目、日历、Mind、定时任务、工作区、文件与配额等 Web 就绪表，以及九张运行调度表和 RAG 派生索引。启动 Host 时使用相同的 schema。
+使用 PostgreSQL 15 或更新版本。构建 Web Host 后，将 `GUGU_WEBUI_DATABASE_URL` 指向新数据库或新 schema。启动 Host 时使用同一个目标库和 schema。
 
 ```sh
-corepack pnpm --filter @gugu/webui migrate:agent-base:apply
-corepack pnpm --filter @gugu/webui migrate:web-domain:apply
-corepack pnpm --filter @gugu/webui migrate:filesystem-authorization:apply
-corepack pnpm --filter @gugu/webui migrate:security-events:apply
-corepack pnpm --filter @gugu/webui migrate:terminal-sessions:apply
-corepack pnpm --filter @gugu/webui migrate:agent-run:apply
-corepack pnpm --filter @gugu/webui migrate:rag-index:apply
+corepack pnpm --filter @gugu/webui migrate apply
+corepack pnpm --filter @gugu/webui migrate check
 ```
 
-各组均提供 `check` 命令。检查只读，待迁移时输出 `pending` 并退出 2，结构损坏或出现未登记的同名表时退出 1。迁移在事务内完成，重复执行返回 `unchanged`。旧版业务数据在备份后通过显式导入进入 Node schema，RAG 派生索引由 Node 从授权来源重建。Web 业务迁移覆盖 `/health/ready`、首个账号注册与引导，以及当前 RAG 八类来源所需的 PostgreSQL 表。整站各可选功能的存储和部署另行验收。
-
-默认启用的会话沙箱授权依赖授权表、安全审计表和完整终端会话表。已有 Node schema 可分别应用 `migrate:filesystem-authorization:apply`、`migrate:security-events:apply` 与 `migrate:terminal-sessions:apply`，无需重新初始化基础迁移。终端迁移要求账号、会话和工作区表已就绪；三组结构均按对应旧 Python Alembic 表定义创建，不导入旧数据。
-
-Agent 附件快照使用独立 Node 迁移。构建 Host 后，可用 `migrate:agent-snapshot:check` 检查，再以 `migrate:agent-snapshot:apply` 显式应用。当前已有隔离数据库结构验证，快照业务读写、密钥轮换和部署恢复需单独验收。
+`check` 只读，待迁移时输出 `pending` 并退出 2。`apply` 按编号在同一事务执行，重复执行返回 `unchanged`。缺少登记的业务表、迁移记录异常或结构漂移会报错。已有开发库需要保留时，给 2.0 使用新的数据库或 schema。完整目录和扩展约定见 [数据库迁移](../../packages/database/README.md)。
 
 ## 回归测试
 

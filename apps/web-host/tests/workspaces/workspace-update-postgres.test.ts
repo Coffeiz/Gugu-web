@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
-import { createPostgresWorkspaceUpdater } from '../../src/modules/workspaces/persistence/workspace-update.js'
+import { createPostgresWorkspaceUpdater } from '../../src/modules/workspaces/store.js'
 import { WorkspaceUpdateError } from '@gugu/core/workspace-declarations'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL

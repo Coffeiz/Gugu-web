@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import type { WorkspaceDirectoryOperations } from '../../src/modules/workspaces/workspace-directories.js'
+import type { WorkspaceDirectoryOperations } from '../../src/modules/workspaces/routes.js'
 import { signedUserToken } from '../helpers/auth.js'
 
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'

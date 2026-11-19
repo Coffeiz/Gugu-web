@@ -1,12 +1,17 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import Fastify from 'fastify'
 import { CoreError } from '@gugu/core'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
+import { createWorkspaceFileReads } from '../../src/modules/workspaces/files.js'
+import { installFileUploadSupport } from '../../src/modules/files/upload.js'
 import {
   registerWorkspaceDirectoryRoutes,
   type WorkspaceDirectoryOperations,
-} from '../../src/modules/workspaces/workspace-directories.js'
+} from '../../src/modules/workspaces/routes.js'
 
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
 const row = {
@@ -35,6 +40,7 @@ const rowResponse = {
 function setup(overrides: Partial<WorkspaceDirectoryOperations> = {}) {
   const calls: unknown[][] = []
   const app = Fastify({ logger: false })
+  installFileUploadSupport(app)
   installHttpErrorHandler(app)
   const operations: WorkspaceDirectoryOperations = {
     list: async (id) => { calls.push(['list', id]); return [row] },
@@ -52,6 +58,121 @@ function setup(overrides: Partial<WorkspaceDirectoryOperations> = {}) {
     operations,
   })
   return { app, calls, close: () => app.close() }
+}
+
+for (const [name, storagePath, url] of [
+  ['默认工作区', 'workspace/default', '/api/v1/workspace-directories/7'],
+  ['个人文件', '个人文件', '/api/v1/files/personal'],
+  ['项目文件', '项目文件/2026/01/设计 #9', '/api/v1/files/projects/9'],
+]) {
+  test(`${name}直接读写磁盘，隔离其他用户、保留已有文件和拒绝越界`, {
+    skip: process.platform !== 'linux',
+  }, async () => {
+    const root = await mkdtemp(join(tmpdir(), 'gugu-workspace-files-'))
+    const otherOwner = '9e51a4bf-07e1-4db8-9050-54a8c7356e8e'
+    const workspace = join(root, ownerId, storagePath)
+    const otherWorkspace = join(root, otherOwner, storagePath)
+    const ctx = setup({ files: createWorkspaceFileReads({
+      async query(sql: string, args: unknown[]) {
+        if (sql.startsWith('SELECT 1 FROM files')) {
+          assert.equal(args[0], ownerId)
+          return { rows: Array.isArray(args[1]) && args[1].includes(`${ownerId}/${storagePath}/legacy.txt`) ? [{}] : [] }
+        }
+        assert.equal(args[1], ownerId)
+        if (name === '项目文件') {
+          assert.match(sql, /FROM projects/)
+          return { rows: args[0] === 9 ? [{ name: '设计', start_date: '2026-01-04', created_at: '2026-01-04' }] : [] }
+        }
+        return { rows: args[0] === 7 ? [{ directory_name: 'default' }] : [] }
+      },
+    } as unknown as Parameters<typeof createWorkspaceFileReads>[0], root) })
+    const request = (path: string, headers = {}) =>
+      ctx.app.inject({ url: path, headers: { authorization: 'user', ...headers } })
+    try {
+      if (name !== '默认工作区') {
+        assert.equal((await ctx.app.inject({ url: `${url}/entries` })).statusCode, 401)
+        assert.deepEqual((await request(`${url}/entries`)).json(), [])
+        const folder = await ctx.app.inject({ method: 'POST', url: `${url}/folders?path=docs`, headers: { authorization: 'user' } })
+        assert.equal(folder.statusCode, 201)
+      } else {
+        await mkdir(join(workspace, 'docs'), { recursive: true })
+      }
+      await mkdir(otherWorkspace, { recursive: true })
+      await writeFile(join(workspace, 'docs/t.txt'), 'line1\nline2\n')
+      await writeFile(join(otherWorkspace, 'private.txt'), 'private')
+      await symlink(otherWorkspace, join(workspace, 'other'))
+      const listing = await request(`${url}/entries`)
+      assert.equal(listing.statusCode, 200)
+      assert.deepEqual(listing.json().map((entry: { name: string }) => entry.name), ['docs'])
+      const file = await request(`${url}/content?path=docs%2Ft.txt&download=1`)
+      assert.equal(file.statusCode, 200)
+      assert.equal(file.body, 'line1\nline2\n')
+      assert.match(String(file.headers['content-disposition']), /^attachment/)
+      const range = await request(`${url}/content?path=docs%2Ft.txt`, { range: 'bytes=0-4' })
+      assert.equal(range.statusCode, 206)
+      assert.equal(range.body, 'line1')
+      if (name === '默认工作区') assert.equal((await request('/api/v1/workspace-directories/8/entries')).statusCode, 404)
+      if (name === '项目文件') {
+        await mkdir(join(root, ownerId, '项目文件/2026/01/其他项目 #10'), { recursive: true })
+        assert.equal((await request('/api/v1/files/projects/10/entries')).statusCode, 404)
+        assert.equal((await request('/api/v1/files/projects/10/content?path=docs/t.txt')).statusCode, 404)
+      }
+      assert.equal((await request(`${url}/content?path=..%2Fprivate.txt`)).statusCode, 404)
+      assert.equal((await request(`${url}/content?path=other%2Fprivate.txt`)).statusCode, 404)
+      assert.equal((await request(`${url}/entries?path=other`)).statusCode, 404)
+
+      const mutation = (method: 'POST' | 'PATCH', path: string, payload?: Record<string, unknown>) =>
+        ctx.app.inject({ method, url: path, headers: { authorization: 'user' }, payload })
+      if (name !== '默认工作区') {
+        await writeFile(join(workspace, 'legacy.txt'), '旧文件')
+        assert.equal((await mutation('PATCH', `${url}/entries?path=legacy.txt`, { destination: 'renamed.txt' })).statusCode, 409)
+        assert.equal((await request(`${url}/content?path=legacy.txt`)).body, '旧文件')
+      }
+      assert.equal((await mutation('POST', `${url}/folders?path=target`)).statusCode, 201)
+      assert.equal((await mutation('POST', `${url}/folders?path=target`)).statusCode, 409)
+      const form = new FormData()
+      form.append('file', new Blob(['uploaded bytes']), 'upload.txt')
+      const body = new Request('http://localhost', { method: 'POST', body: form })
+      const upload = await ctx.app.inject({ method: 'POST', url: `${url}/content?path=upload.txt`,
+        headers: { authorization: 'user', 'content-type': body.headers.get('content-type')! },
+        payload: Buffer.from(await body.arrayBuffer()),
+      })
+      assert.equal(upload.statusCode, 201)
+      assert.equal((await mutation('PATCH', `${url}/entries?path=upload.txt`, { destination: 'renamed.txt' })).statusCode, 200)
+      assert.equal((await mutation('PATCH', `${url}/entries?path=renamed.txt`, { destination: 'target/t.txt' })).statusCode, 200)
+      assert.equal((await mutation('PATCH', `${url}/entries?path=docs/t.txt`, { destination: 'target/t.txt' })).statusCode, 409)
+      assert.equal((await mutation('PATCH', `${url}/entries?path=docs/t.txt`, { destination: 'other/private.txt' })).statusCode, 404)
+      assert.equal((await mutation('PATCH', `${url}/entries?path=docs/t.txt`, { destination: '../outside.txt' })).statusCode, 404)
+      assert.equal((await mutation('PATCH', `${url}/entries?path=target`, { destination: 'target/subfolder' })).statusCode, 422)
+      assert.equal((await request(`${url}/content?path=target/t.txt`)).body, 'uploaded bytes')
+      assert.equal((await request(`${url}/content?path=docs/t.txt`)).body, 'line1\nline2\n')
+      const copy = await mutation('POST', `${url}/copy?path=docs`, { destination: 'docs-copy' })
+      assert.equal(copy.statusCode, 200)
+      assert.equal((await request(`${url}/content?path=docs-copy/t.txt`)).body, 'line1\nline2\n')
+      assert.equal((await mutation('POST', `${url}/copy?path=docs`, { destination: 'docs-copy' })).statusCode, 409)
+      const remove = await ctx.app.inject({ method: 'DELETE', url: `${url}/entries?path=docs-copy`, headers: { authorization: 'user' } })
+      assert.equal(remove.statusCode, 200)
+      assert.equal((await request(`${url}/entries?path=docs-copy`)).statusCode, 404)
+      const deleted = (await request('/api/v1/files/disk-trash')).json()
+      assert.equal(deleted.length, 1)
+      assert.deepEqual([deleted[0].name, deleted[0].kind], ['docs-copy', 'directory'])
+      const restoreUrl = `/api/v1/files/disk-trash/${deleted[0].id}/restore`
+      assert.equal((await mutation('POST', `${url}/folders?path=docs-copy`)).statusCode, 201)
+      assert.equal((await mutation('POST', restoreUrl)).statusCode, 409)
+      assert.equal((await request('/api/v1/files/disk-trash')).json().length, 1)
+      assert.equal((await ctx.app.inject({ method: 'DELETE', url: `${url}/entries?path=docs-copy`, headers: { authorization: 'user' } })).statusCode, 200)
+      assert.equal((await mutation('POST', restoreUrl)).statusCode, 200)
+      assert.equal((await request(`${url}/content?path=docs-copy/t.txt`)).body, 'line1\nline2\n')
+      assert.equal((await request('/api/v1/files/disk-trash')).json().length, 1)
+      const remaining = (await request('/api/v1/files/disk-trash')).json()[0]
+      assert.equal((await ctx.app.inject({ method: 'DELETE', url: `/api/v1/files/disk-trash/${remaining.id}`, headers: { authorization: 'user' } })).statusCode, 200)
+      assert.equal((await request('/api/v1/files/disk-trash')).json().length, 0)
+
+    } finally {
+      await ctx.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
 }
 
 test('未认证的 Workspace Directory 请求在访问用户身份和数据前被拒绝', async () => {

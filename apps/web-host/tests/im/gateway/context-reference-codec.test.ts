@@ -6,9 +6,9 @@ import { dirname, join } from 'node:path'
 import test from 'node:test'
 import type { Pool } from 'pg'
 import { assertDurableCanonical, type CanonicalMessage, type MessageEntry } from '@gugu/core/agent'
-import { createImContextReferenceCodec, ImContextReferenceError } from '../../../src/modules/im/gateway/context-reference-codec.js'
-import { createImMessageMaterializer } from '../../../src/modules/im/gateway/message-materializer.js'
-import { imAttachmentScopeKey, type ImAttachmentScope } from '../../../src/modules/im/gateway/attachment-ingress.js'
+import { createImContextReferenceCodec, ImContextReferenceError } from '../../../src/modules/im/gateway/agent/references.js'
+import { createImMessageMaterializer } from '../../../src/modules/im/gateway/inbound/message.js'
+import { imAttachmentScopeKey, type ImAttachmentScope } from '../../../src/modules/im/gateway/inbound/attachments.js'
 
 const owner = '00000000-0000-4000-8000-000000000091'
 const identity = { ownerId: owner, sessionId: '91', runId: 'synthetic-run' }

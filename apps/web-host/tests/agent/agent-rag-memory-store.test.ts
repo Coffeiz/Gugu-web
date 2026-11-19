@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { UnsafeLocalPathError } from '@gugu/fs/node'
-import { createLocalAgentMemoryRagStore } from '../../src/modules/agent-sessions/tools/agent-rag-memory-store.js'
+import { createLocalAgentMemoryRagStore } from '../../src/modules/agent/rag/memory.js'
 
 test('owner-bound memory RAG reader only exposes known memory paths and refuses traversal or symlinks', async () => {
   const root = await mkdtemp(join(tmpdir(), 'gugu-agent-rag-memory-'))

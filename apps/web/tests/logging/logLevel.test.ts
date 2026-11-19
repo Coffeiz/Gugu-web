@@ -16,4 +16,9 @@ describe('classifyLogLevel', () => {
     expect(classifyLogLevel('web 09-02 15:59:11 ERROR request failed')).toBe('error')
     expect(classifyLogLevel('worker 09-02 15:59:11 WARNING retrying')).toBe('warning')
   })
+  it('按 JSONL 的顶层级别筛选 Agent Run 日志', () => {
+    expect(classifyLogLevel('{"level":"error","event":"agent.run.failure"}')).toBe('error')
+    expect(classifyLogLevel('{"level":"warn","event":"agent.provider.retry"}')).toBe('warning')
+    expect(classifyLogLevel('{"attributes":{"level":"error"}}')).toBe('')
+  })
 })

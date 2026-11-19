@@ -2,7 +2,8 @@ import { ref, type Ref } from 'vue'
 import type { FolderCard as FolderCardMeta, NavSeg } from '@/utils/filesNav'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useFileActions } from '@/composables/files/useFileActions'
-import { showAppError } from '@/composables/core/useAppToast'
+import { errorMessage, showAppError } from '@/composables/core/useAppToast'
+import { pathFilesApi, type PathFileRef } from '@/services/api'
 import { confirmFileDeletion } from './useFileDeleteConfirm'
 import { useI18n } from 'vue-i18n'
 
@@ -14,6 +15,8 @@ interface FolderActionsOptions {
   fileActions: ReturnType<typeof useFileActions>
   loadContents: () => void
   fetchStorage: () => void | Promise<void>
+  pathTarget?: Readonly<Ref<PathFileRef | null>>
+  reloadWorkspace?: () => void
   pruneHistoryForFolders: (folderIds: Array<number | string>) => void
 }
 
@@ -27,9 +30,28 @@ export function useFileLibraryFolderActions(options: FolderActionsOptions) {
 
   async function createFolder() {
     const name = newFolderName.value.trim()
-    if (!name) return
+    if (!name || newFolderLoading.value) return
     const type = currentType.value
     const seg = currentSeg.value
+    const target = options.pathTarget?.value
+    if (target) {
+      newFolderLoading.value = true
+      try {
+        if (/[\/\\]/.test(name)) throw new Error(t('projects.invalidName'))
+        await pathFilesApi.createFolder({
+          directoryId: target.directoryId,
+          relativePath: [target.relativePath, name].filter(Boolean).join('/'),
+        })
+        newFolderName.value = ''
+        showNewFolderInput.value = false
+        options.reloadWorkspace?.()
+      } catch (error) {
+        showAppError(errorMessage(error))
+      } finally {
+        newFolderLoading.value = false
+      }
+      return
+    }
     const projectId = (type === 'project' || type === 'folder')
       ? (projectSeg.value?.id ?? seg?.projectId ?? null)
       : null

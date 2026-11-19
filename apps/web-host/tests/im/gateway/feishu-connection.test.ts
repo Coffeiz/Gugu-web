@@ -3,8 +3,8 @@ import { Agent } from 'node:https';
 import { test } from 'node:test';
 import { EventDispatcher, WSClient } from '@larksuiteoapi/node-sdk';
 import type { ProviderHttpRequest, ProviderTransport } from '@gugu/core/providers';
-import { createFeishuConnection } from '../../../src/modules/im/gateway/feishu/connection.js';
-import {GatewayConnectionCleanupError} from '../../../src/modules/im/gateway/supervisor.js';
+import { createFeishuConnection } from '../../../src/modules/im/gateway/platforms/feishu/connection.js';
+import {GatewayConnectionCleanupError} from '@gugu/gateway';
 
 const appId = 'cli_0123456789abcdef';
 const appSecret = 'synthetic-secret';

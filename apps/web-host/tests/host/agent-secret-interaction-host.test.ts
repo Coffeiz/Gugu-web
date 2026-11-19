@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/modules/auth/auth.js'
-import { createAgentSecretInteractionService } from '../../src/modules/agent-sessions/agent-secret-interaction-route.js'
+import { createUserToken } from '../../src/modules/auth/session/token.js'
+import { createAgentSecretInteractionService } from '../../src/modules/agent/interactions/secret.js'
 
 test('createApp 将敏感交互提交和取消置于认证域，提交后以可信 owner 唤醒原 Run', async () => {
   const owner = '00000000-0000-4000-8000-000000000001', secret = 'synthetic-secret'

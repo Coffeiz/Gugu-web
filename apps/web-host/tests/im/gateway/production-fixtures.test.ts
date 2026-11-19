@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
-import {readFile} from 'node:fs/promises'
 import {createImProductionFixture} from './production.fixtures.js'
 import {assertImHostSchema} from '../../../src/modules/im/gateway/host-settings.js'
 import {createGatewayBotConfig} from '../../../src/modules/im/gateway/bot-config.js'
@@ -14,9 +13,6 @@ test('真实Python ORM离线DDL+Node显式schema可供正式Core PG/可信Bot读
   await assertImHostSchema(fixture.pool)
   await fixture.pool.query("ALTER TABLE gugu_im_platform_projection DROP CONSTRAINT gugu_im_platform_projection_platform_check; ALTER TABLE gugu_im_platform_projection ADD CONSTRAINT gugu_im_platform_projection_platform_check CHECK (platform='feishu')")
   await assert.rejects(assertImHostSchema(fixture.pool),{message:'Node IM 数据库迁移尚未就绪'})
-  const upgrade=await readFile(new URL('../../../src/modules/im/gateway/projection-platform-upgrade.sql',import.meta.url),'utf8')
-  await fixture.pool.query(upgrade);await fixture.pool.query(upgrade)
-  await assertImHostSchema(fixture.pool)
   const types=(await fixture.pool.query("SELECT data_type FROM information_schema.columns WHERE table_schema=$1 AND table_name='conversation_sessions' AND column_name='bot_id'",[fixture.schema])).rows
   assert.equal(types[0]?.data_type,'character varying')
   const reader=createGatewayBotConfig({pool:fixture.pool,secretKey:fixture.secretKey,normalizeOwner:id=>id,supportedPlatforms:()=>['telegram']})

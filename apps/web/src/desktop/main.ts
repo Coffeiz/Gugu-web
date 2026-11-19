@@ -14,7 +14,7 @@ const router = createRouter({
   routes: [
     // 普通页面由桌面壳层渲染；笔记和画布在路由提交前解析异步组件。
     { path: '/', name: 'home', components: {} },
-    ...['projects', 'calendar', 'schedules', 'files', 'terminals', 'skills', 'mcp', 'contacts', 'team', 'notifications']
+    ...['projects', 'calendar', 'schedules', 'files', 'terminals', 'skills', 'mcp', 'contacts', 'team', 'notifications', 'account']
       .map(section => ({ path: `/${section}`, name: section, components: {} })),
     { path: '/notes', name: 'notes', component: () => import('@/views/Mind/NotesThreePaneView.vue') },
     { path: '/canvases', name: 'canvases', component: () => import('@/views/Mind/CanvasView.vue') },

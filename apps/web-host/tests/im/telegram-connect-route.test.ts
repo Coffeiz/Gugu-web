@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { registerTelegramConnectRoutes } from '../../src/modules/im/telegram-connect.js'
+import { registerTelegramConnectRoutes } from '../../src/modules/im/connect/telegram.js'
 
 test('Telegram connect routes require auth, bind trusted owner, validate DTOs and map safe errors', async () => {
   const app = Fastify()

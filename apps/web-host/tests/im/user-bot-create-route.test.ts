@@ -3,7 +3,7 @@ import test from 'node:test'
 import {execFileSync} from 'node:child_process'
 import {resolve} from 'node:path'
 import Fastify from 'fastify'
-import {registerUserBotCreateRoute} from '../../src/modules/im/user-bot-create.js'
+import {registerUserBotCreateRoute} from '../../src/modules/im/routes.js'
 import {QqBotCreationError} from '../../../../packages/core/src/im/user-bot-create.js'
 
 test('创建仅取认证owner，BotIn DTO与Python一致，业务错误完整映射',async()=>{

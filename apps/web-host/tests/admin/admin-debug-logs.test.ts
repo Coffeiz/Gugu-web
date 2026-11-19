@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
-import { appendFile, mkdtemp, readFile, rm, writeFile, utimes } from 'node:fs/promises'
+import { appendFile, mkdtemp, readFile, readdir, rm, symlink, writeFile, utimes } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import Fastify from 'fastify'
+import { configureDiagnosticLog, createLogWriter, diagLog } from '../../src/shared/log-files.js'
 import { registerAdminDebugLogRoutes, resolveAdminDebugLogFiles } from '../../src/modules/admin/logs.js'
 
 async function setup(resolveFiles?: (root: string) => ReturnType<typeof resolveAdminDebugLogFiles>) {
@@ -223,4 +224,39 @@ test('SSE在管理员身份失效后停止轮询并结束流', async () => {
     assert.equal(verifyCalls, 2)
     assert.equal((await reader.read()).done, true)
   } finally { await app.close(); await rm(root, { recursive: true, force: true }) }
+})
+
+test('轮转后游标继续读取旧文件，重启追加并保留导入历史，诊断日志不会出现在 Debug 页', async () => {
+  const ctx = await setup(root => resolveAdminDebugLogFiles(join(root, 'gugu.log')))
+  try {
+    const path = ctx.paths.web
+    const imported = `${path}.history-1000000000000-${'a'.repeat(64)}`
+    await writeFile(imported, 'imported\n')
+    const write = createLogWriter(path, 17, 1)
+    write('first\n')
+    write('second\n')
+    const query = (cursor?: string, lines = 1, keyword?: string) => ctx.app.inject({
+      url: `/api/v1/admin/debug/logs/tail?source=web&lines=${lines}${cursor ? `&cursor=${cursor}` : ''}${keyword ? `&query=${keyword}` : ''}`,
+      headers: { authorization: 'admin' },
+    })
+    const latest = (await query()).json()
+    assert.deepEqual(latest.lines.map((row: { line: string }) => row.line), ['second'])
+    write('rotated\n')
+    assert.deepEqual((await query(latest.next_cursor)).json().lines.map((row: { line: string }) => row.line), ['first'])
+    createLogWriter(path, 17, 1)('after\n')
+    configureDiagnosticLog(path)
+    diagLog('test', new Error('synthetic-diagnostic-only'))
+    const diagnostic = join(ctx.root, 'gugu-diag.log')
+    assert.match(await readFile(diagnostic, 'utf8'), /synthetic-diagnostic-only/)
+    await symlink(diagnostic, `${path}.history-1000000000001-${'b'.repeat(64)}`)
+    const all = (await query(undefined, 10)).json()
+    assert.deepEqual(all.lines.map((row: { line: string }) => row.line), ['imported', 'first', 'second', 'rotated', 'after'])
+    assert.equal(all.has_more, false)
+    const searched = (await query(undefined, 10, 'IMPORTED')).json()
+    assert.deepEqual(searched.lines.map((row: { line: string }) => row.line), ['imported'])
+    assert.equal(searched.has_more, false)
+    write('next-rotation\n')
+    assert.equal((await readdir(ctx.root)).filter(name => name.startsWith('gugu.log.rotate-')).length, 1)
+    assert.equal(await readFile(imported, 'utf8'), 'imported\n')
+  } finally { await ctx.cleanup() }
 })

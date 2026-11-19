@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { PoolClient } from 'pg'
-import { createPostgresTaskResolver } from '../../src/modules/scheduled-tasks/persistence/task-resolver-postgres.js'
+import { createPostgresTaskResolver } from '../../src/modules/scheduled-tasks/store.js'
 
 test('提醒提前量按上海墙上时间计算，跨夏令时切换与 Python 一致', async () => {
   const cases = [

@@ -3,7 +3,7 @@ import test from 'node:test'
 import {randomUUID} from 'node:crypto'
 import Fastify from 'fastify'
 import {createEmbeddingRebuildStatusReader} from '@gugu/core/byok/embedding-rebuild-status'
-import {registerEmbeddingRebuildStatusRoute} from '../../src/modules/byok/embedding-rebuild-status.js'
+import { registerEmbeddingRebuildStatusRoute } from '../../src/modules/agent/memory/rebuild.js'
 import {createRedisAgentCancellationCommands,createRedisFilesystemAuthorizationCommands} from '../../src/adapters/cache/redis-events.js'
 import {installHttpErrorHandler} from '../../src/http/errors.js'
 

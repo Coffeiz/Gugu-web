@@ -2,14 +2,14 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { CoreError } from '@gugu/core'
 import type { Pool, PoolClient } from 'pg'
-import type { FileArchiveOperations } from '../../src/modules/files/file-archive.js'
-import { createWebAgentFileArchivePort } from '../../src/modules/agent-sessions/tools/agent-file-archive.js'
-import { createWebAgentRagRunAuthorization } from '../../src/modules/agent-sessions/tools/agent-rag-run-authorization.js'
+import type { FileArchiveOperations } from '../../src/modules/files/archive/service.js'
+import { createWebAgentFileArchivePort } from '../../src/modules/agent/tools/files/archive.js'
+import { createWebAgentRagRunAuthorization } from '../../src/modules/agent/rag/authorize.js'
 
 const identity = { ownerId: '00000000-0000-4000-8000-000000000001', sessionId: '17', runId: 'run-archive' }
 const lease = {
   identity, input: { v: 2, source: 'web' }, token: 'dispatch-token', fence: 3,
-} as unknown as import('../../src/modules/agent-sessions/persistence/agent-run-dispatch-postgres.js').AgentDispatchLease
+} as unknown as import('../../src/modules/agent/run/dispatch.js').AgentDispatchLease
 
 function harness(active = true) {
   const statements: string[] = []

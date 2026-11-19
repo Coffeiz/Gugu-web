@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { RunEvent } from '@gugu/core/agent'
-import { projectAgentRunEvent } from '../../src/modules/agent-sessions/agent-run-events.js'
+import { projectAgentRunEvent } from '../../src/modules/agent/run/events.js'
 
 const identity = { ownerId: 'synthetic-owner', sessionId: '1', runId: 'run-1' }
 function event(type: RunEvent['type'], payload: Record<string, unknown>): RunEvent {

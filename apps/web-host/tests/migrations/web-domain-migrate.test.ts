@@ -3,8 +3,8 @@ import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { Pool } from 'pg'
 import { checkDatabaseReadiness } from '../../src/database.js'
-import { applyAgentBaseMigration } from '../../src/migrations/agent-base-migrate.js'
-import { applyWebDomainMigration, checkWebDomainMigration } from '../../src/migrations/web-domain-migrate.js'
+import { applyAgentBaseMigration } from '@gugu/database/postgres/migrations/0001_initialize'
+import { applyWebDomainMigration, checkWebDomainMigration } from '@gugu/database/postgres/migrations/0002_web_domain'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

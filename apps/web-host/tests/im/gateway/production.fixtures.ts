@@ -1,3 +1,6 @@
+import { agentReasoningSql } from '@gugu/database/postgres/migrations/0012_agent_reasoning'
+import { imGatewaySql } from '@gugu/database/postgres/migrations/0013_im_gateway'
+import { imReflectionSql } from '@gugu/database/postgres/migrations/0014_im_reflection'
 import {execFile} from 'node:child_process'
 import {promisify} from 'node:util'
 import {randomUUID} from 'node:crypto'
@@ -64,12 +67,12 @@ export async function createImProductionFixture(options:{python:string;databaseU
    const name=/CREATE TABLE(?: IF NOT EXISTS)? ([a-z_]+)/u.exec(statement)?.[1]
    if(name&&!(await pool.query('SELECT to_regclass($1) AS name',[name])).rows[0]?.name)await pool.query(statement)
   }
-  const gateway=['admission-schema.sql','conversation-schema.sql','delivery-schema.sql','attention-ledger-schema.sql','binding-consume-schema.sql','shortcut-schema.sql','native-interaction-schema.sql','pending-ask-schema.sql','reaction-schema.sql','reflection-schema.sql','production-schema.sql','file-tools-schema.sql','voice-cache-schema.sql','owner-session-schema.sql','compact-schema.sql']
-  for(const file of gateway)await pool.query(await readFile(new URL(`../../../src/modules/im/gateway/${file}`,import.meta.url),'utf8'))
-  await pool.query(await readFile(new URL('../../../src/modules/im/gateway/reflection-trigger-schema.sql',import.meta.url),'utf8'))
-  await pool.query(await readFile(new URL('../../../src/modules/im/gateway/retired-inbound-schema.sql',import.meta.url),'utf8'))
-  await pool.query(await readFile(new URL('../../../src/modules/im/gateway/history-retention-schema.sql',import.meta.url),'utf8'))
-  await pool.query(await readFile(new URL('../../../src/modules/agent-sessions/persistence/agent-reasoning-active-schema.sql',import.meta.url),'utf8'))
+  const gateway=['admission','conversation','delivery','attentionLedger','bindingConsume','shortcut','nativeInteraction','pendingAsk','reaction','reflection','production','fileTools','voiceCache','ownerSession','compact'] as const
+  for(const file of gateway)await pool.query(imGatewaySql[file])
+  await pool.query(imReflectionSql.reflectionTrigger)
+  await pool.query(imGatewaySql.retiredInbound)
+  await pool.query(imGatewaySql.historyRetention)
+  await pool.query(agentReasoningSql.agentReasoningActive)
   core=await createPostgresRuntime({url:databaseUrl,schema,maxConnections:6})
   async function insert(table:string,overrides:Record<string,unknown>){
    const meta=source.metadata[table]

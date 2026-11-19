@@ -1,3 +1,5 @@
+import { encryptByokEnvelope } from '../../../src/modules/byok/crypto.js'
+import { type ByokCredential } from '../../../src/modules/byok/store.js'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
@@ -7,10 +9,9 @@ import test from 'node:test'
 import type { Pool } from 'pg'
 import { contextAccessScopeHash, stableJson } from '@gugu/core/agent'
 import { resolveImAccess, resolveImActor, type ImActor, type ImBotAccess } from '@gugu/core/im/access'
-import { agentContextAccessScope } from '../../../src/modules/agent/model-config/access-scope.js'
-import { encryptByokEnvelope, type ByokCredential } from '../../../src/modules/agent/model-config/byok.js'
-import { readConfiguredAgentProviderSettings } from '../../../src/modules/agent/model-config/configured-provider-settings.js'
-import { createConfiguredImAgentProviderBinding, freezeImAgentProviderScope } from '../../../src/modules/im/gateway/provider-binding.js'
+import { agentContextAccessScope } from '../../../src/modules/agent/llm/access.js'
+import { readConfiguredAgentProviderSettings } from '../../../src/modules/agent/llm/settings.js'
+import { createConfiguredImAgentProviderBinding, freezeImAgentProviderScope } from '../../../src/modules/im/gateway/agent/provider.js'
 
 const owner = '00000000-0000-4000-8000-000000000091'
 const identity = { ownerId: owner, sessionId: '1', runId: 'synthetic-run' }
@@ -84,6 +85,7 @@ function credential(): ByokCredential {
 function database(row: ByokCredential | null = null) {
   const statements: string[] = [], owners: unknown[] = []
   const client = { async query(sql: string, params?: unknown[]) { statements.push(sql)
+    if (sql.includes('FROM user_provider_bindings')) return { rows: row ? [{ credential_id: 1 }] : [] }
     if (sql.includes('FROM user_provider_credentials')) { owners.push(params?.[0]); return { rows: row ? [{ id: 1, ...row }] : [], rowCount: row ? 1 : 0 } }
     return { rows: [], rowCount: 0 }
   }, release() {} }

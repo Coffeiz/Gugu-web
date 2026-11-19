@@ -12,8 +12,8 @@ import { createPostgresRuntime, tablesSql } from '@gugu/core/data'
 import { planAccountMemoryCleanup } from '@gugu/core/memory/account-cleanup-preview'
 import { createAccountMemoryCleanupStorage } from '../../src/modules/admin/memory-store.js'
 import { startServer } from '../../src/main.js'
-import { applyRagIndexMigration } from '../../src/migrations/rag-index-migrate.js'
-import { createConfiguredByokEnvelope } from '../../src/adapters/security/byok-envelope.js'
+import { applyRagIndexMigration } from '@gugu/database/postgres/migrations/0011_rag_index'
+import { createConfiguredByokEnvelope } from '../../src/modules/byok/crypto.js'
 
 const pgUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const redisUrl = process.env.GUGU_WEBUI_TEST_REDIS_URL

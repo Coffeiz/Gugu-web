@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createPresentFileTool, createToolRegistry, type FileGrepCandidate } from '@gugu/core/tools'
-import { createWebAgentFilePresentPort } from '../../src/modules/agent-sessions/tools/agent-file-present.js'
+import { createWebAgentFilePresentPort } from '../../src/modules/agent/tools/files/present.js'
 
 test('present_file 经 Web lease 与 Core Registry 只返回 owner 文件预览指令', async () => {
   const ownerId = '00000000-0000-4000-8000-000000000001'

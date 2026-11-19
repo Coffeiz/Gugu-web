@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { initializeSqlite, migrateSqlite, openSqliteRuntime } from '../../src/data/sqlite.js'
+import { initializeSqlite, openSqliteRuntime } from '../../src/data/sqlite.js'
 import { createKyselyOnboardingStore } from '../../src/onboarding/store.js'
 import { createOnboardingService } from '../../src/onboarding/service.js'
 
@@ -42,15 +42,11 @@ describe.each(['sqlite', 'postgres'] as const)('引导状态仓储 %s', (backend
   })
 })
 
-it('正式 SQLite 版本 13 升级保留数据并约束引导状态 owner', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'gugu-onboarding-upgrade-'))
+it('正式 SQLite 基线约束引导状态 owner', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'gugu-onboarding-baseline-'))
   const path = join(dir, 'data.db')
   try {
     await initializeSqlite(path)
-    const legacy = new Database(path)
-    legacy.exec("DROP TABLE user_preferences; DROP TABLE feedbacks; DROP TABLE onboarding_state; UPDATE core_runtime_meta SET value='13' WHERE key='schema_version'")
-    legacy.close()
-    await migrateSqlite(path)
     const opened = await openSqliteRuntime(path)
     try {
       expect(opened.schemaVersion).toBe('18')
@@ -63,15 +59,11 @@ it('正式 SQLite 版本 13 升级保留数据并约束引导状态 owner', asyn
   } finally { await rm(dir, { recursive: true, force: true }) }
 })
 
-it('正式 SQLite 版本 12 连续升级创建 SMTP 和引导状态', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'gugu-onboarding-upgrade-'))
+it('正式 SQLite 基线提供 SMTP 和引导状态', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'gugu-onboarding-baseline-'))
   const path = join(dir, 'data.db')
   try {
     await initializeSqlite(path)
-    const legacy = new Database(path)
-    legacy.exec("DROP TABLE user_preferences; DROP TABLE feedbacks; DROP TABLE onboarding_state; DROP TABLE user_smtp_configs; UPDATE core_runtime_meta SET value='12' WHERE key='schema_version'")
-    legacy.close()
-    await migrateSqlite(path)
     const opened = await openSqliteRuntime(path)
     try {
       expect(opened.schemaVersion).toBe('18')
@@ -79,22 +71,5 @@ it('正式 SQLite 版本 12 连续升级创建 SMTP 和引导状态', async () =
       expect((await store.getState(opened.ownerId)).seed).toMatchObject({ seeded: false })
       expect((await sql`SELECT count(*) AS total FROM user_smtp_configs`.execute(opened.runtime.db)).rows).toHaveLength(1)
     } finally { await opened.runtime.close() }
-  } finally { await rm(dir, { recursive: true, force: true }) }
-})
-
-it('版本 13 已有冲突表时拒绝升级并保留原内容', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'gugu-onboarding-conflict-'))
-  const path = join(dir, 'data.db')
-  try {
-    await initializeSqlite(path)
-    const legacy = new Database(path)
-    legacy.exec("DROP TABLE user_preferences; DROP TABLE feedbacks; DROP TABLE onboarding_state; CREATE TABLE onboarding_state(old_value TEXT); INSERT INTO onboarding_state VALUES ('保留'); UPDATE core_runtime_meta SET value='13' WHERE key='schema_version'")
-    legacy.close()
-    await expect(migrateSqlite(path)).rejects.toThrow()
-    const result = new Database(path, { readonly: true })
-    try {
-      expect(result.prepare('SELECT old_value FROM onboarding_state').pluck().get()).toBe('保留')
-      expect(result.prepare("SELECT value FROM core_runtime_meta WHERE key='schema_version'").pluck().get()).toBe('13')
-    } finally { result.close() }
   } finally { await rm(dir, { recursive: true, force: true }) }
 })

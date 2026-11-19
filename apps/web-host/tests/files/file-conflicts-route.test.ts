@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/modules/auth/auth.js'
+import { createUserToken } from '../../src/modules/auth/session/token.js'
 
 test('文件冲突探测路由认证用户、保持请求顺序并规范默认目标空间', async () => {
   const user = '00000000-0000-4000-8000-000000000071'

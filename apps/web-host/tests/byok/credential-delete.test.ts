@@ -3,7 +3,7 @@ import test from 'node:test'
 import {randomUUID} from 'node:crypto'
 import {Pool} from 'pg'
 import {createPostgresRuntime} from '@gugu/core/data'
-import {createCredentialDeletion} from '@gugu/core/byok/credential-delete'
+import { createCredentialDeletion } from '../../src/modules/byok/store.js'
 const databaseUrl=process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
 test('BYOK删除受开关及owner限制，LLM同事务清空active推理状态，失败则回滚凭据', {skip:!databaseUrl&&'需要隔离PostgreSQL'},async()=>{
@@ -13,9 +13,11 @@ test('BYOK删除受开关及owner限制，LLM同事务清空active推理状态�
  const runtime=await createPostgresRuntime({url:databaseUrl!,schema})
  const owner='00000000-0000-4000-8000-000000000071',foreign='00000000-0000-4000-8000-000000000072'
  try{
-  await pool.query('CREATE TABLE user_provider_credentials(id integer PRIMARY KEY,user_id uuid,capability text)')
+  await pool.query('CREATE TABLE users(id uuid PRIMARY KEY)')
+  await pool.query('INSERT INTO users VALUES($1),($2)', [owner,foreign])
+  await pool.query('CREATE TABLE user_provider_credentials(id integer PRIMARY KEY,user_id uuid,capability text,enabled boolean DEFAULT true)')
   await pool.query('CREATE TABLE provider_reasoning_states(id integer PRIMARY KEY,user_id uuid,status text,invalidated_reason text,invalidated_at timestamptz,encrypted_payload text,payload_nonce text,encrypted_data_key text,payload_size integer,version integer,updated_at timestamptz)')
-  await pool.query("INSERT INTO user_provider_credentials VALUES(1,$1,'llm'),(2,$2,'llm'),(3,$1,'embedding'),(4,$1,'llm')",[owner,foreign])
+  await pool.query("INSERT INTO user_provider_credentials(id,user_id,capability) VALUES(1,$1,'llm'),(2,$2,'llm'),(3,$1,'embedding'),(4,$1,'llm')",[owner,foreign])
   await pool.query("INSERT INTO provider_reasoning_states(id,user_id,status,encrypted_payload,payload_nonce,encrypted_data_key,payload_size,version) VALUES(1,$1,'active','cipher','nonce','wrapped',6,3),(2,$2,'active','cipher','nonce','wrapped',6,3),(3,$1,'invalidated','','','',0,5)",[owner,foreign])
   let enabled=false
   const remove=createCredentialDeletion(runtime.db,()=>enabled)
@@ -37,7 +39,7 @@ test('BYOK删除受开关及owner限制，LLM同事务清空active推理状态�
 })
 
 import Fastify from 'fastify'
-import {registerCredentialDeleteRoute} from '../../src/modules/byok/credential-delete.js'
+import { registerCredentialDeleteRoute } from '../../src/modules/byok/routes.js'
 import {installHttpErrorHandler} from '../../src/http/errors.js'
 import {CoreError} from '@gugu/core'
 

@@ -3,7 +3,7 @@ import test from 'node:test'
 import {mkdtemp,writeFile,rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
-import {createByokGateReader} from '../../src/modules/byok/gate.js'
+import { createByokGateReader } from '../../src/modules/byok/policy.js'
 
 test('BYOK gate默认、环境JSON、嵌套环境和override优先级及热更新保持Python行为',async()=>{
  const root=await mkdtemp(join(tmpdir(),'gugu-byok-gate-')),path=join(root,'config.json')

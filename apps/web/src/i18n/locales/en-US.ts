@@ -1,4 +1,5 @@
 export const enUS = {
+  desktopByok: { deleteTitle: 'Delete credential', deleteMessage: 'Delete this credential from the server? Configurations that use it may stop working.', replaceTitle: 'Change server default', replaceMessage: 'New tasks on this server will use the selected credential.' },
   agentParallelUi: { label: 'Parallel tool calls (debug)', hint: 'When enabled, web search, HTTP GET, and Shell calls that do not require confirmation can run concurrently within one round. The limit is configurable; confirmation-required commands stay serial.', limit: 'Per-round concurrency limit' },
   projectsDeleted: { deleted: 'Deleted projects', deletedShort: 'Deleted', noDeleted: 'No deleted projects', deletedView: 'View deleted projects', deletedRetention: 'Kept for 30 days', deletedAt: 'Deleted {date}', restoreDeleted: 'Restore project', unknownDate: 'Unknown date' },
   storageAudit: { subtitle: 'Storage ↔ DB consistency check across file and directory layers; scans are read-only.', fileAudit: 'File reconciliation', fileAuditHint: 'Scan physical objects against the File table', scanning: 'Reconciling…', scan: 'Scan' },

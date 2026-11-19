@@ -9,12 +9,12 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { Pool } from 'pg'
 import { startServer } from '../../src/main.js'
-import { applyAgentBaseMigration } from '../../src/migrations/agent-base-migrate.js'
-import { applyAgentRunMigration } from '../../src/migrations/agent-run-migrate.js'
-import { applyWebDomainMigration } from '../../src/migrations/web-domain-migrate.js'
-import { applyRagIndexMigration } from '../../src/migrations/rag-index-migrate.js'
-import { applyTrashPurgeMigration } from '../../src/migrations/trash-purge-migrate.js'
-import { applyFilesystemAuthorizationMigration } from '../../src/migrations/filesystem-authorization-migrate.js'
+import { applyAgentBaseMigration } from '@gugu/database/postgres/migrations/0001_initialize'
+import { applyAgentRunMigration } from '@gugu/database/postgres/migrations/0003_agent_run'
+import { applyWebDomainMigration } from '@gugu/database/postgres/migrations/0002_web_domain'
+import { applyRagIndexMigration } from '@gugu/database/postgres/migrations/0011_rag_index'
+import { applyTrashPurgeMigration } from '@gugu/database/postgres/migrations/0009_trash_purge'
+import { applyFilesystemAuthorizationMigration } from '@gugu/database/postgres/migrations/0005_filesystem_authorization'
 
 const pgUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const redisUrl = process.env.GUGU_WEBUI_TEST_REDIS_URL

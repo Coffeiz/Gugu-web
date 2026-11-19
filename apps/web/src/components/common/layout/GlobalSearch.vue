@@ -86,6 +86,7 @@ interface SearchItem {
   enabled?: boolean
   workspace_directory_id?: number
   workspace_directory_name?: string
+  path_file?: FileLibraryNavigationTarget['pathFile']
   folder_path?: Array<{ id: number; name: string }>
 }
 interface SearchGroup { type: 'project' | 'file' | 'folder' | 'event' | 'client' | 'conversation' | 'note' | 'canvas_note' | 'skill' | 'mcp' | 'scheduled_task'; label: string; items: SearchItem[] }
@@ -166,7 +167,9 @@ function go(type: string, it: SearchItem) {
     uiStore.pendingProjectHighlight = numericId   // 跳转后高亮项目卡，不打开编辑弹窗
     router.push('/projects')
   } else if (type === 'file' || type === 'folder') {
-    const target: FileLibraryNavigationTarget = { kind: type, id: numericId }
+    const target: FileLibraryNavigationTarget = it.path_file
+      ? { kind: type, id: 0, pathFile: it.path_file }
+      : { kind: type, id: numericId }
     if (Number.isSafeInteger(it.workspace_directory_id) && it.workspace_directory_id! > 0) {
       target.workspaceDirectoryId = it.workspace_directory_id
       target.workspaceDirectoryName = it.workspace_directory_name || '工作区'

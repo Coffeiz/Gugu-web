@@ -6,9 +6,9 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { initializeSqlite, openSqliteRuntime } from '@gugu/core/data'
 import { createToolRegistry, createUndoLastActionTool } from '@gugu/core/tools'
-import type { AgentDispatchLease } from '../../src/modules/agent-sessions/persistence/agent-run-dispatch-postgres.js'
-import { createWebAgentUndoLastActionPort } from '../../src/modules/agent-sessions/tools/agent-undo-last-action.js'
-import type { createHostCoreUndoOperations } from '../../src/modules/undo/persistence/core-operations.js'
+import type { AgentDispatchLease } from '../../src/modules/agent/run/dispatch.js'
+import { createWebAgentUndoLastActionPort } from '../../src/modules/agent/tools/undo.js'
+import type { createHostCoreUndoOperations } from '../../src/modules/undo/service.js'
 
 test('undo_last_action 固定本次撤销目标，收据重放不重选下一条操作', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gugu-agent-undo-last-action-'))

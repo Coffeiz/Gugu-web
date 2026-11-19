@@ -6,7 +6,8 @@ import path from 'node:path'
 import { Pool } from 'pg'
 import test from 'node:test'
 import type { Pool as PoolType, PoolClient } from 'pg'
-import { createPostgresTrashMutationOperations, removeLocalFile } from '../../src/modules/files/persistence/trash-mutations-postgres.js'
+import { removeLocalFile } from '../../src/modules/files/storage/removal.js'
+import { createPostgresTrashMutationOperations } from '../../src/modules/files/trash/store.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '11111111-1111-4111-8111-111111111111'

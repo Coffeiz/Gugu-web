@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { ProviderHttpRequest } from '@gugu/core/providers'
-import { createFeishuClient, FeishuApiError } from '../../../src/modules/im/gateway/feishu/client.js'
-import { buildFeishuCardElements, createFeishuSender, feishuFileType } from '../../../src/modules/im/gateway/feishu/sender.js'
+import { createFeishuClient, FeishuApiError } from '../../../src/modules/im/gateway/platforms/feishu/client.js'
+import { buildFeishuCardElements, createFeishuSender, feishuFileType } from '../../../src/modules/im/gateway/platforms/feishu/sender.js'
 
 function fixture() {
   const calls: { path: string; body?: Record<string, unknown>; files?: Record<string, unknown> }[] = []

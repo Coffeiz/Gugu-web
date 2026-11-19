@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { mkdir, stat } from 'node:fs/promises'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Pool } from 'pg'
 import test from 'node:test'
 import { CoreError } from '@gugu/core'
-import { createPostgresWorkspaceDirectoryOperations } from '../../src/modules/workspaces/persistence/workspace-directories.js'
+import { tablesSql } from '@gugu/core/data'
+import { createPostgresWorkspaceDirectoryOperations } from '../../src/modules/workspaces/directories.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const userId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
@@ -18,7 +19,7 @@ test('PostgreSQL Workspace Directory CRUD 保持归属、计数、绑定和删�
 }, async () => {
   const schema = `gugu_workspace_directories_${randomUUID().replaceAll('-', '')}`
   const admin = new Pool({ connectionString: databaseUrl, max: 1 })
-  const root = mkdtempSync(join(tmpdir(), 'gugu-workspace-directory-'))
+  const root = mkdtempSync(join(realpathSync(tmpdir()), 'gugu-workspace-directory-'))
   let pool: Pool | undefined
   try {
     await admin.query(`CREATE SCHEMA "${schema}"`)
@@ -120,6 +121,7 @@ test('PostgreSQL Workspace Directory CRUD 保持归属、计数、绑定和删�
       error instanceof CoreError && error.code === 'conflict',
     )
 
+    await pool.query(tablesSql('postgres').ragJobs)
     const physicalRoot = join(root, userId, 'workspace', created.directory_name)
     assert.ok(prepared.includes(physicalRoot))
     failTermination = true

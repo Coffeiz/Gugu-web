@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { Pool } from 'pg'
-import { createPostgresWorkspaceLister } from '../../src/modules/workspaces/persistence/workspace-list.js'
+import { createPostgresWorkspaceLister } from '../../src/modules/workspaces/store.js'
 
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
 

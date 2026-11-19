@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import Fastify from 'fastify'
 import { afterEach, test } from 'node:test'
-import { createByokMediaCapabilityProbeRunner, registerByokMediaCapabilityProbeRoute } from '../../src/modules/byok/media-capability-probe.js'
+import { createByokMediaCapabilityProbeRunner } from '../../src/modules/byok/checks/capabilities.js'
+import { registerByokMediaCapabilityProbeRoute } from '../../src/modules/byok/routes.js'
 
 const ownerId = '00000000-0000-4000-8000-000000000111'
 const apps: Array<ReturnType<typeof Fastify>> = []

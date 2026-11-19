@@ -8,9 +8,9 @@ import {stableJson} from '@gugu/core/agent'
 import {ProviderRuntime,type ProviderHttpRequest} from '@gugu/core/providers'
 import {parseOwnerDailyEntries} from '@gugu/core/owner-daily-compaction'
 import {renderGroupDailyEntries} from '@gugu/core/im-group-daily-compaction'
-import {prepareImOwnerDailyPlan,ImOwnerDailyCompactionError} from '../../../src/modules/im/gateway/reflection-owner-daily.js'
-import {createImReflectionFiles,reflectionFileKey} from '../../../src/modules/im/gateway/reflection-files.js'
-import type {ImReflectionJob,ImReflectionRuntime} from '../../../src/modules/im/gateway/reflection-contracts.js'
+import {prepareImOwnerDailyPlan,ImOwnerDailyCompactionError} from '../../../src/modules/im/gateway/memory/owner.js'
+import {createImReflectionFiles,reflectionFileKey} from '../../../src/modules/im/gateway/memory/files.js'
+import type {ImReflectionJob,ImReflectionRuntime} from '../../../src/modules/im/gateway/memory/contracts.js'
 import {context} from './run-sender.fixtures.js'
 
 const entries=(count:number):[string,string][]=>Array.from({length:count},(_,n)=>[`2026-11-${String(18-Math.floor(n/40)).padStart(2,'0')}`,`合成owner事件${n}`])

@@ -3,6 +3,7 @@ import { mergeUsage } from '../context/budget.js'
 import type { MessageEntry, RunCheckpoint, RunEvent } from '../models.js'
 import { AgentRunError } from '../models.js'
 import type { RunCoordination } from '../ports.js'
+import { recordAgentRunLog } from '../logging.js'
 
 /** 汇总已派发的多轮工具名称，保留首次出现顺序并排除静默选择工具。 */
 export function canonicalToolsUsed(checkpoint: Pick<RunCheckpoint<unknown>, 'displayTimeline'>, entries: readonly MessageEntry[]): string[] {
@@ -33,6 +34,10 @@ export async function finishForRun<C>(scope: RunCoordination<C>, status: 'comple
     }
     catch {
       // 持久化已经成功，Job发布异常不能改写终态或重放本轮业务。
+      const at = Date.parse(scope.ports.clock.now()) || Date.now()
+      recordAgentRunLog(scope.ports.log, {
+        identity: scope.identity, at, level: 'warn', event: 'agent.run.finalization_failed',
+      })
       scope.ports.diagnose('finalization_hook_failed')
     }
   }

@@ -635,7 +635,7 @@
   "apps/web-host/tests/im/gateway/secret-input.test.ts": {
     "domain": "im",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-sessions/persistence/agent-im-secret-input-postgres.ts",
+    "owner": "apps/web-host/src/modules/agent/interactions/im-secret.ts",
     "productionEntry": "统一prompt激活→IM私聊secret stage→既有secret提交和恢复事务",
     "keyBehavior": "完整scope私聊逐字段加密、旧事件幂等、取消和终态不复活、秘密不进入普通历史",
     "ci": "web-host-node"
@@ -1702,14 +1702,6 @@
     "owner": "apps/web-host/src/modules/im/gateway/bootstrap.ts",
     "productionEntry": "真实TG→IM Worker→真实Run→被动阈值/idle窗口→原前缀+真实尾段→反思Provider与本地记忆",
     "keyBehavior": "真实PG/Redis/FS及Harness验证49不触发/50分scope、同Run多窗口、idle清余数、重启缺快照等待新真实Run、纯被动不伪造Run、关闭/观察故障恢复及停用群不阻塞；仅平台/Provider网络替身",
-    "ci": "web-host-node"
-  },
-  "apps/web-host/tests/im/gateway/reflection-trigger-upgrade.test.ts": {
-    "domain": "im-reflection",
-    "layer": "L2",
-    "owner": "apps/web-host/src/modules/im/gateway/reflection-trigger-upgrade.sql",
-    "productionEntry": "显式审查后的旧Node反思表升级→同Run多窗口契约",
-    "keyBehavior": "随机PG schema模拟旧唯一键，真实升级两次保留原任务nonce/payload，允许同Run不同窗口；旧Run不回填当前权限，旧窗口缺原scope冻结只能取消归档",
     "ci": "web-host-node"
   },
   "apps/web-host/tests/im/gateway/reflection-daily.test.ts": {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { withUndoTransactionClient } from '../../src/modules/undo/persistence/core-operations.js'
+import { withUndoTransactionClient } from '../../src/modules/undo/service.js'
 import type { UndoAdapterContext } from '@gugu/core/undo'
 
 test('借用事务查询只允许限定语句且不能在作用域外使用', async () => {

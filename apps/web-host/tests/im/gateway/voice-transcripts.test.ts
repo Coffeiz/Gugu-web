@@ -3,9 +3,9 @@ import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import type { Pool,PoolClient } from 'pg'
 import { imActorInputFromPayload,resolveImActor } from '@gugu/core/im/access'
-import { createImVoiceTranscriptStore,ImVoiceTranscriptError } from '../../../src/modules/im/gateway/voice-transcripts.js'
-import { createImVoiceRuntime } from '../../../src/modules/im/gateway/voice-runtime.js'
-import { createImVoiceSelection } from '../../../src/modules/im/gateway/voice-config.js'
+import { createImVoiceTranscriptStore,ImVoiceTranscriptError } from '../../../src/modules/im/gateway/media/transcripts.js'
+import { createImVoiceRuntime } from '../../../src/modules/im/gateway/media/voice.js'
+import { createImVoiceSelection } from '../../../src/modules/im/gateway/media/config.js'
 import { context,receipt,owner,other } from './run-sender.fixtures.js'
 
 test('转写目标必须属于冻结messageIds且状态/类型有效，不借卡片中的引用ID扩权',async()=>{

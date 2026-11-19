@@ -10,15 +10,15 @@ import type { CanonicalContextPorts, CanonicalRunContext, AgentRunnerPorts, RunC
 import { ProviderStreamSanitizer, stripThinking } from '@gugu/core/providers'
 import { tablesSql } from '../../../../packages/core/src/data/schema.js'
 import { createAgentRuntime } from '@gugu/core/agent'
-import { createAgentToolRegistry } from '../../src/modules/agent-sessions/tools/agent-tool-registry.js'
-import { agentContextAccessScope } from '../../src/modules/agent/model-config/access-scope.js'
-import { bindProviderSelection } from '../../src/modules/agent/model-config/provider-resolver.js'
+import { createAgentToolRegistry } from '../../src/modules/agent/tools/registry.js'
+import { agentContextAccessScope } from '../../src/modules/agent/llm/access.js'
+import { bindProviderSelection } from '../../src/modules/agent/llm/bind.js'
 import { createScheduledTaskDeleteTool } from '../../../../packages/core/src/agent/tools/scheduled-tasks.js'
-import { createAgentRagRebuildWorker } from '../../src/modules/agent-sessions/rag-rebuild.js'
-import { createWebAgentConfirmationAuthorization, createWebAgentToolConfirmation } from '../../src/modules/agent-sessions/tools/agent-confirmation.js'
-import { createPostgresTrustedIntentStore } from '../../src/modules/agent-sessions/persistence/agent-trusted-intent-postgres.js'
-import { createAuthorizedWebAgentProductionRagRunPorts } from '../../src/modules/agent-sessions/tools/agent-rag-production-ports.js'
-import { applyRagIndexMigration } from '../../src/migrations/rag-index-migrate.js'
+import { createAgentRagRebuildWorker } from '../../src/modules/agent/rag/rebuild.js'
+import { createWebAgentConfirmationAuthorization, createWebAgentToolConfirmation } from '../../src/modules/agent/tools/confirm.js'
+import { createPostgresTrustedIntentStore } from '../../src/modules/agent/interactions/intents.js'
+import { createAuthorizedWebAgentProductionRagRunPorts } from '../../src/modules/agent/rag/production.js'
+import { applyRagIndexMigration } from '@gugu/database/postgres/migrations/0011_rag_index'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

@@ -6,9 +6,9 @@ import { createHash, randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { initializeSqlite, openSqliteRuntime } from '@gugu/core/data'
 import type { TrashPurgeConfirmation } from '@gugu/core/tools'
-import { createAgentTrashPurgePort } from '../../src/modules/agent-sessions/tools/agent-trash-tool.js'
-import type { AgentDispatchLease } from '../../src/modules/agent-sessions/persistence/agent-run-dispatch-postgres.js'
-import type { AgentTrashPurgeOperations } from '../../src/modules/files/trash.js'
+import { createAgentTrashPurgePort } from '../../src/modules/agent/tools/trash/purge.js'
+import type { AgentDispatchLease } from '../../src/modules/agent/run/dispatch.js'
+import type { AgentTrashPurgeOperations } from '../../src/modules/files/trash/service.js'
 
 test('Agent permanent_delete 复核 owner lease 与目标快照，确认后只创建一次持久 Node purge job', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gugu-agent-trash-purge-'))

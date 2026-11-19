@@ -176,7 +176,8 @@ import { errorMessage, showAppError } from '@/composables/core/useAppToast'
 import Icon from '@/components/common/icons/Icon.vue'
 import CloseButton from '@/components/common/overlays/CloseButton.vue'
 import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
-import { filesApi, uploadWithProgress, uploadDirectWithProgress } from '@/services/api'
+import { filesApi, uploadDirectWithProgress } from '@/services/api'
+import { uploadFileWithProgress } from '@/composables/files/useFileUploadCore'
 import SegBar from '@/components/common/controls/SegBar.vue'
 import { cloneProjectStages, firstIncompleteStageIdx } from '@/utils/projectStages'
 import { projectProgress } from '@/utils/projectProgress'
@@ -434,10 +435,7 @@ async function onFileDrop(e: DragEvent) {
           folder_id: null, stage_name: '',
         })
       } else {
-        const form = new FormData()
-        form.append('file', f); form.append('space', 'project')
-        form.append('project_id', String(props.project.id))
-        uploaded = await uploadWithProgress('/files', form, onPct)
+        uploaded = await uploadFileWithProgress(f, { space: 'project', projectId: props.project.id }, onPct)
       }
       if (uploaded) cacheStore.addFile(uploaded)
     }

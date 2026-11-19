@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { LiveSubscription, LiveSubscriptionFactory, LiveSubscriptionMessage } from '../../src/adapters/cache/redis-live-subscription.js'
-import { createRedisAgentRunCancellationPort } from '../../src/modules/agent-sessions/persistence/agent-run-cancellation-redis.js'
+import { createRedisAgentRunCancellationPort } from '../../src/modules/agent/run/cancel.js'
 
 const identity = { ownerId: 'owner-1', sessionId: '17', runId: 'run-1' }
 

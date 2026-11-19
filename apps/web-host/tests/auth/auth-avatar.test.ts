@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createUserToken, type PublicUserRecord } from '../../src/modules/auth/auth.js'
-import type { UserAvatarOperations } from '../../src/modules/auth/avatar.js'
+import { createUserToken, type PublicUserRecord } from '../../src/modules/auth/session/token.js'
+import type { UserAvatarOperations } from '../../src/modules/auth/account/avatar.js'
 
 const ownerId = '00000000-0000-4000-8000-000000000011'
 const secret = 'synthetic-test-secret-for-user-avatar'

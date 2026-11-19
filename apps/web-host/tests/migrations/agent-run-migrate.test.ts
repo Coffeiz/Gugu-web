@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { Pool } from 'pg'
-import { AgentRunMigrationError, applyAgentRunMigration, checkAgentRunMigration } from '../../src/migrations/agent-run-migrate.js'
+import { AgentRunMigrationError, applyAgentRunMigration, checkAgentRunMigration } from '@gugu/database/postgres/migrations/0003_agent_run'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const integration = { skip: !url && '需要隔离 PostgreSQL' }
@@ -28,7 +28,7 @@ async function withSchema(run: (pool: Pool) => Promise<void>) {
 
 test('Node 调度迁移串行初始化并检查结构，阻止异主或异会话调度', integration, async () => withSchema(async pool => {
   assert.equal(await checkAgentRunMigration(pool), 'pending')
-  assert.equal((await pool.query("SELECT to_regclass('gugu_node_agent_run_migrations') AS ledger")).rows[0].ledger, null)
+  assert.equal((await pool.query("SELECT to_regclass('gugu_schema_migrations') AS ledger")).rows[0].ledger, null)
   assert.deepEqual((await Promise.all([applyAgentRunMigration(pool), applyAgentRunMigration(pool)])).sort(), ['applied', 'unchanged'])
   assert.equal(await checkAgentRunMigration(pool), 'applied')
   const owner = randomUUID(), other = randomUUID()
@@ -69,6 +69,6 @@ test('未登记表会阻止迁移，建表失败时回滚已经创建的对象',
   await pool.query('ALTER TABLE interaction_prompts DROP COLUMN session_id')
   await assert.rejects(applyAgentRunMigration(pool), AgentRunMigrationError)
   const { rows } = await pool.query(`SELECT to_regclass('gugu_agent_session_owner') AS owner_index,
-    to_regclass('gugu_node_agent_run_migrations') AS ledger,to_regclass('agent_run_startups') AS startup`)
+    to_regclass('gugu_schema_migrations') AS ledger,to_regclass('agent_run_startups') AS startup`)
   assert.deepEqual(rows, [{ owner_index: null, ledger: null, startup: null }])
 }))

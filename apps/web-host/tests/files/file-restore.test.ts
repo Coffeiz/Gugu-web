@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import Fastify from 'fastify'
 import test from 'node:test'
-import { registerFileRestoreRoutes } from '../../src/modules/files/file-restore.js'
+import { registerFileRestoreRoutes } from '../../src/modules/files/trash/service.js'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
 
 test('文件恢复路由传递 Host owner 与变化来源并保持 204 响应', async () => {

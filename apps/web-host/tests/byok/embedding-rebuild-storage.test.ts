@@ -6,7 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { createUserMemoryVectorRebuilder } from '@gugu/core/byok/vector-rebuild'
 import { createPostgresRuntime } from '@gugu/core/data'
-import { createLocalUserMemoryVectorStore } from '../../src/modules/byok/memory-vector-store.js'
+import { createLocalUserMemoryVectorStore } from '../../src/modules/agent/memory/store.js'
 import { createOwnerMemoryLock } from '../../src/shared/owner-memory-lock.js'
 
 test('Core 向量重建经 owner 绑定 Local 文件适配器持久化新向量并清除旧缓存', { skip: process.platform !== 'linux' && '生产安全写入适配器要求 Linux' }, async () => {

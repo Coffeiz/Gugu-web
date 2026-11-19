@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import type { ProviderHttpRequest, ProviderTransport } from '@gugu/core/providers';
-import { createQqClient } from '../../../src/modules/im/gateway/qq/client.js';
-import { createQqMediaUploader, QqMediaUploadError, QQ_ATTACHMENT_MAX_BYTES } from '../../../src/modules/im/gateway/qq/media-upload.js';
+import { createQqClient } from '../../../src/modules/im/gateway/platforms/qq/client.js';
+import { createQqMediaUploader, QqMediaUploadError, QQ_ATTACHMENT_MAX_BYTES } from '../../../src/modules/im/gateway/platforms/qq/media-upload.js';
 
 const hash = (kind: string, data: Uint8Array) => createHash(kind).update(data).digest('hex');
 const input = { target: 'groups' as const, openid: 'synthetic_group', fileType: 4 as const, data: Buffer.from('12345'), fileName: '合成报告.pdf' };

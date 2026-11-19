@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { stat } from 'node:fs/promises'
 import test, { type TestContext } from 'node:test'
-import { createLocalProjectDirectoryRenamer, renameLocalProjectDirectory } from '../../src/modules/projects/persistence/project-directory-storage.js'
+import { createLocalProjectDirectoryRenamer, renameLocalProjectDirectory } from '../../src/modules/projects/update.js'
 
 async function temporaryRoot(t: TestContext) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'gugu-project-storage-'))

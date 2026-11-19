@@ -6,7 +6,7 @@ import path from 'node:path'
 import { mkdtemp } from 'node:fs/promises'
 import { Pool } from 'pg'
 import test from 'node:test'
-import { createPostgresFolderCopyOperations } from '../../src/modules/files/folder-copy-postgres.js'
+import { createPostgresFolderCopyOperations } from '../../src/modules/files/folders/copy.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const owner = '11111111-1111-4111-8111-111111111111'

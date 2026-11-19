@@ -3,9 +3,9 @@ import { createHash, randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { MessageArea, stableJson } from '@gugu/core/agent'
 import type { CanonicalRunContext, RunCheckpoint } from '@gugu/core/agent'
-import type { AgentDispatchLease } from '../../src/modules/agent-sessions/persistence/agent-run-dispatch-postgres.js'
-import type { AgentRunHistoryWrite } from '../../src/modules/agent-sessions/persistence/agent-run-store-postgres.js'
-import { createWebAgentBindingHistory, type WebAgentBinding } from '../../src/modules/agent-sessions/agent-web-reconstructor.js'
+import type { AgentDispatchLease } from '../../src/modules/agent/run/dispatch.js'
+import type { AgentRunHistoryWrite } from '../../src/modules/agent/run/store.js'
+import { createWebAgentBindingHistory, type WebAgentBinding } from '../../src/modules/agent/run/reconstruct.js'
 
 const digest = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')
 

@@ -1,3 +1,4 @@
+import { enqueueMissingAgentRagBaselines } from '@gugu/core/agent/rag'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
@@ -10,13 +11,13 @@ import { dataContext } from '@gugu/core/contracts'
 import { createNoteWritePort } from '@gugu/core/tools'
 import { createSqlRagPersistentIndexReader } from '../../../../packages/core/src/agent/rag/persistent-index.js'
 import { enqueueAgentRagRebuild } from '../../../../packages/core/src/agent/rag/rebuild-worker.js'
-import { createAgentRagRebuildWorker } from '../../src/modules/agent-sessions/rag-rebuild.js'
-import { createAuthorizedWebAgentProductionRagRunPorts } from '../../src/modules/agent-sessions/tools/agent-rag-production-ports.js'
-import { createLocalAgentKnowledgeReadStore } from '../../src/modules/agent-sessions/tools/agent-rag-knowledge-store.js'
-import { applyAgentBaseMigration } from '../../src/migrations/agent-base-migrate.js'
-import { applyAgentRunMigration } from '../../src/migrations/agent-run-migrate.js'
-import { applyWebDomainMigration } from '../../src/migrations/web-domain-migrate.js'
-import { applyRagIndexMigration, queueNodeRagCutoverBaseline } from '../../src/migrations/rag-index-migrate.js'
+import { createAgentRagRebuildWorker } from '../../src/modules/agent/rag/rebuild.js'
+import { createAuthorizedWebAgentProductionRagRunPorts } from '../../src/modules/agent/rag/production.js'
+import { createLocalAgentKnowledgeReadStore } from '../../src/modules/agent/rag/knowledge.js'
+import { applyAgentBaseMigration } from '@gugu/database/postgres/migrations/0001_initialize'
+import { applyAgentRunMigration } from '@gugu/database/postgres/migrations/0003_agent_run'
+import { applyWebDomainMigration } from '@gugu/database/postgres/migrations/0002_web_domain'
+import { applyRagIndexMigration } from '@gugu/database/postgres/migrations/0011_rag_index'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
@@ -88,7 +89,7 @@ test('生产 RAG Worker 从事实表和授权文件重建 PostgreSQL 的八类�
     const { work } = createAgentRagRebuildWorker(runtime, {
       knowledgeStore: createLocalAgentKnowledgeReadStore(directory), memoryStorageRoot: directory,
     })
-    assert.deepEqual(await queueNodeRagCutoverBaseline(pool), { status: 'queued', jobs: 16 })
+    await enqueueMissingAgentRagBaselines(runtime.db, 'postgres', ['calendar', 'canvas', 'conversation', 'knowledge', 'memory', 'note', 'project', 'scheduled_task'])
     for (let count = 0; count < 16; count++) {
       const outcome = await work()
       if (outcome !== 'ready') {

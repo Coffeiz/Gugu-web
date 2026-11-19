@@ -59,7 +59,7 @@
     <div v-else-if="resolved && isPausedConfirmation && msg.interaction?.selectedOptionId === 'cancel'" class="interaction-resolved">
       {{ t('chatUi.confirmationCancelled') }}
     </div>
-    <div v-else-if="resolved" class="interaction-resolved">{{ t('chatUi.submitted') }}</div>
+    <div v-else-if="resolved && !msg.interaction?.submissionRejected" class="interaction-resolved">{{ t('chatUi.submitted') }}</div>
   </div>
 </template>
 

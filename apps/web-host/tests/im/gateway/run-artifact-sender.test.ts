@@ -7,9 +7,9 @@ import type { Pool } from 'pg'
 import { resolveImActor } from '@gugu/core/im/access'
 import type { PortableValue } from '@gugu/core/agent'
 import { aggregateImInboundPayloads } from '@gugu/core/im/inbound-batch'
-import { createPostgresFileReadOperations } from '../../../src/modules/files/file-reads-postgres.js'
-import { createImRunArtifactSender } from '../../../src/modules/im/gateway/run-artifact-sender.js'
-import { imAttachmentScopeKey, type ImAttachmentScope } from '../../../src/modules/im/gateway/attachment-ingress.js'
+import { createPostgresFileReadOperations } from '../../../src/modules/files/browse.js'
+import { createImRunArtifactSender } from '../../../src/modules/im/gateway/delivery/artifacts.js'
+import { imAttachmentScopeKey, type ImAttachmentScope } from '../../../src/modules/im/gateway/inbound/attachments.js'
 import { context, receipt, platform, temporary, fakeDatabase, deliveryOutcome, owner, other, data, stored } from './run-sender.fixtures.js'
 test('真实本地附件→真实Telegram上传，拒绝root路径/歧义引用/跨Run并忽略模型伪造文件名', async () => temporary(async root => {
   const db = fakeDatabase(), p = platform('telegram'), c = context()

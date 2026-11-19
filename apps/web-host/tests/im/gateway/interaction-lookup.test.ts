@@ -3,10 +3,10 @@ import { createHash, randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { Pool, type PoolClient } from 'pg'
 import type { ImPreflightScope } from '@gugu/core/im/inbound-preflight'
-import { createAgentInteractionRespondService } from '../../../src/modules/agent-sessions/agent-interaction-respond.js'
+import { createAgentInteractionRespondService } from '../../../src/modules/agent/interactions/respond.js'
 import { consumeInteractionAction } from '@gugu/core/agent/interactions/consume-action'
-import { createPostgresInteractionConsumeStore } from '../../../src/modules/agent-sessions/persistence/agent-interaction-consume-postgres.js'
-import { createPostgresImTextChoiceConsumer, ImInteractionLookupError, type ImInteractionTarget } from '../../../src/modules/im/gateway/interaction-lookup.js'
+import { createPostgresInteractionConsumeStore } from '../../../src/modules/agent/interactions/consume.js'
+import { createPostgresImTextChoiceConsumer, ImInteractionLookupError, type ImInteractionTarget } from '../../../src/modules/im/gateway/interactions/lookup.js'
 
 const owner = '11111111-1111-4111-8111-111111111111'
 const scope: ImPreflightScope = { ownerId: owner, botId: '4', platform: 'telegram', chatType: 'group', chatId: 'group-a', platformUserId: 'member-a', eventId: 'event-a' }

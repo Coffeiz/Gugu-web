@@ -3,7 +3,7 @@ import test from 'node:test'
 import {randomUUID} from 'node:crypto'
 import {Pool} from 'pg'
 import {createPostgresRuntime} from '@gugu/core/data'
-import {createCredentialModelsPreview} from '@gugu/core/byok/credential-models-preview'
+import { createCredentialModelsPreview } from '../../src/modules/byok/checks/models.js'
 
 const databaseUrl=process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

@@ -2,9 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { Pool } from 'pg'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/modules/auth/auth.js'
-import { createPostgresUserQuotaReader } from '../../src/modules/auth/persistence/quota.js'
-import type { UserQuotaReader } from '../../src/modules/auth/quota.js'
+import { createUserToken } from '../../src/modules/auth/session/token.js'
+import { createPostgresUserQuotaReader } from '../../src/modules/auth/quota/read.js'
+import type { UserQuotaReader } from '../../src/modules/auth/quota/routes.js'
 
 interface QueryCall { sql: string; params: unknown[] }
 

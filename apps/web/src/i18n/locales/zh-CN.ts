@@ -1,4 +1,5 @@
 export const zhCN = {
+  desktopByok: { deleteTitle: '删除凭据', deleteMessage: '确定删除服务器上的凭据？依赖该凭据的配置可能失效。', replaceTitle: '切换服务器默认凭据', replaceMessage: '此服务器上的新任务将使用所选凭据。' },
   agentParallelUi: { label: '并行工具调用（调试）', hint: '开启后同一轮中的联网搜索、HTTP GET 和符合确认策略的 Shell 调用可并行；上限按右侧设置。危险命令需确认时仍按串行处理。', limit: '每轮并发上限' },
   projectsDeleted: { deleted: '已删除项目', deletedShort: '已删除', noDeleted: '暂无已删除项目', deletedView: '查看已删除项目', deletedRetention: '保留 30 天', deletedAt: '删除于 {date}', restoreDeleted: '恢复项目', unknownDate: '未知日期' },
   storageAudit: { subtitle: '存储 ↔ DB 一致性核查：文件层与目录层；扫描只读，修复需显式操作。', fileAudit: '文件对账', fileAuditHint: '扫描物理对象与 File 表：幽灵记录与孤儿文件', scanning: '对账中…', scan: '扫描' },

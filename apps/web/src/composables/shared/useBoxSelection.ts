@@ -3,25 +3,25 @@ import { ref, shallowRef, computed, type Ref } from 'vue'
 type Id = number | string
 interface Pt { x: number; y: number }
 
-export function useBoxSelection<F extends Id = Id>(containerRef: Ref<HTMLElement | null>, {
+export function useBoxSelection<F extends Id = Id, I extends Id = number>(containerRef: Ref<HTMLElement | null>, {
   fileAttr        = 'data-file-id',
   folderAttr      = 'data-folder-key',
   extraFolderAttrs = [],
   excludeSelector = 'button, .fc-card, .folder-card, .fc-upload, .list-row',
-  parseFileId     = Number,
+  parseFileId     = ((value: string) => Number(value) as I),
   parseFolderId   = ((v: string) => v as F),
   onBoxSelect     = null,
   onClear         = null,
   getItemsInBox,
 }: {
   fileAttr?: string
-  getItemsInBox?: (box: { left: number; top: number; width: number; height: number }) => { fileIds: Set<number>; folderIds: Set<F> } | null
+  getItemsInBox?: (box: { left: number; top: number; width: number; height: number }) => { fileIds: Set<I>; folderIds: Set<F> } | null
   folderAttr?: string
   extraFolderAttrs?: string[]
   excludeSelector?: string
-  parseFileId?: (v: string) => number
+  parseFileId?: (v: string) => I
   parseFolderId?: (v: string) => F
-  onBoxSelect?: ((sel: { fileIds: Set<number>; folderIds: Set<F> }, e: MouseEvent) => void) | null
+  onBoxSelect?: ((sel: { fileIds: Set<I>; folderIds: Set<F> }, e: MouseEvent) => void) | null
   // 点击空白区域（非拖框选、非 ctrl/shift）时的兜底清空只知道本组合式函数自己管的
   // selectedFileIds/selectedFolderIds；调用方如果在组合式函数之外还维护了别的选择态
   // （比如 Files/index.vue 的回收站文件夹用独立的 selectedTrashFolderIds，box 拖选时靠
@@ -29,14 +29,14 @@ export function useBoxSelection<F extends Id = Id>(containerRef: Ref<HTMLElement
   // 钩子——2026-07-17 复现：回收站多选文件+文件夹后点空白，文件夹选中态没跟着清掉。
   onClear?: (() => void) | null
 } = {}) {
-  const selectedFileIds   = shallowRef(new Set<number>())
+  const selectedFileIds   = shallowRef(new Set<I>())
   const selectedFolderIds = shallowRef(new Set<F>())
-  const previewFileIds    = shallowRef(new Set<number>())
+  const previewFileIds    = shallowRef(new Set<I>())
   const previewFolderIds  = shallowRef(new Set<F>())
   const boxStart          = ref<Pt | null>(null)
   const boxEnd            = ref<Pt | null>(null)
   let   _cRect: DOMRect | null = null
-  let   _latestPreview: { fileIds: Set<number>; folderIds: Set<F> } = { fileIds: new Set(), folderIds: new Set() }
+  let   _latestPreview: { fileIds: Set<I>; folderIds: Set<F> } = { fileIds: new Set(), folderIds: new Set() }
 
   const selectionRect = computed(() => {
     if (!boxStart.value || !boxEnd.value) return null
@@ -56,12 +56,12 @@ export function useBoxSelection<F extends Id = Id>(containerRef: Ref<HTMLElement
 
   function _getItemsInBox() {
     const rect = selectionRect.value
-    if (!rect || !containerRef.value) return { fileIds: new Set<number>(), folderIds: new Set<F>() }
+    if (!rect || !containerRef.value) return { fileIds: new Set<I>(), folderIds: new Set<F>() }
     const virtualItems = getItemsInBox?.(rect)
     if (virtualItems) return virtualItems
     const cRect     = containerRef.value.getBoundingClientRect()
     const st        = containerRef.value.scrollTop
-    const fileIds   = new Set<number>()
+    const fileIds   = new Set<I>()
     const folderIds = new Set<F>()
     const folderSelectors = [folderAttr, ...extraFolderAttrs].map(attr => `[${attr}]`).join(', ')
     containerRef.value.querySelectorAll(`[${fileAttr}], ${folderSelectors}`).forEach(el => {

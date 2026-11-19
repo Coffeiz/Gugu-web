@@ -5,7 +5,7 @@ WORKDIR /workspace
 RUN npm install --global pnpm@10.15.0
 COPY . .
 RUN --mount=type=cache,id=gugu2-pnpm-store,target=/root/.local/share/pnpm/store \
-    pnpm install --filter @gugu/webui --filter @gugu/core --filter gugu-web --frozen-lockfile \
+    pnpm install --filter @gugu/webui --filter @gugu/database --filter @gugu/core --filter gugu-web --frozen-lockfile \
     && pnpm --filter @gugu/fs build \
     && pnpm --filter @gugu/core build \
     && pnpm --filter gugu-web build \
@@ -28,10 +28,17 @@ COPY --from=build --chown=node:node /workspace/apps/web-host/dist ./apps/web-hos
 COPY --from=build --chown=node:node /workspace/apps/web-host/assets ./apps/web-host/assets
 COPY --from=build --chown=node:node /workspace/packages/core/package.json ./packages/core/package.json
 COPY --from=build --chown=node:node /workspace/packages/core/dist ./packages/core/dist
+COPY --from=build --chown=node:node /workspace/packages/database/node_modules ./packages/database/node_modules
+COPY --from=build --chown=node:node /workspace/packages/database/package.json ./packages/database/package.json
+COPY --from=build --chown=node:node /workspace/packages/database/dist ./packages/database/dist
 COPY --from=build --chown=node:node /workspace/packages/sandbox/package.json ./packages/sandbox/package.json
 COPY --from=build --chown=node:node /workspace/packages/sandbox/dist ./packages/sandbox/dist
+COPY --from=build --chown=node:node /workspace/packages/gateway/package.json ./packages/gateway/package.json
+COPY --from=build --chown=node:node /workspace/packages/gateway/dist ./packages/gateway/dist
+COPY --from=build --chown=node:node /workspace/packages/gateway/node_modules ./packages/gateway/node_modules
 COPY --from=build --chown=node:node /workspace/packages/fs/package.json ./packages/fs/package.json
 COPY --from=build --chown=node:node /workspace/packages/fs/dist ./packages/fs/dist
+COPY --from=build --chown=node:node /workspace/packages/log/ ./packages/log/
 COPY --from=build --chown=node:node /workspace/packages/loopscope/ ./packages/loopscope/
 COPY --from=build --chown=node:node /workspace/apps/web/dist ./apps/web/dist
 RUN mkdir -p /data && chown node:node /data

@@ -8,8 +8,8 @@ import { tmpdir } from 'node:os'
 import test from 'node:test'
 import { Pool } from 'pg'
 import type { ProviderConfig } from '@gugu/core/providers'
-import { createFileModelSnapshotBoundary } from '../../src/modules/agent/model-config/file-model-snapshot-boundary.js'
-import { createAtomicAgentModelSnapshot } from '../../src/modules/agent/model-config/atomic-model-snapshot.js'
+import { createFileModelSnapshotBoundary } from '../../src/modules/agent/llm/files.js'
+import { createAtomicAgentModelSnapshot } from '../../src/modules/agent/llm/snapshot.js'
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const skip = !(url && ['darwin', 'linux'].includes(process.platform) && Number(process.versions.node.split('.')[0]) >= 26)
 
@@ -19,8 +19,11 @@ test('锁内读取完整配置与 PG owner 快照，内容和实际密钥变化�
   await admin.query(`CREATE SCHEMA "${schema}"`)
   const pool = new Pool({ connectionString: url, options: `-c search_path=${schema}`, max: 3 })
   try {
-    await pool.query(`CREATE TABLE user_provider_credentials (id integer PRIMARY KEY, user_id text, capability text, enabled boolean, provider text, api_format text, base_url text, model text, encrypted_value text, nonce text, encrypted_data_key text, key_version integer, max_tokens integer, context_tokens integer, thinking text, reasoning_effort text, reasoning_persistence text, image boolean, video boolean, audio boolean, image_detail text, web_search_enabled boolean)`)
+    await pool.query(`CREATE TABLE user_provider_credentials (id integer PRIMARY KEY, user_id text, capability text, enabled boolean, provider text, api_format text, base_url text, model text, encrypted_value text, nonce text, encrypted_data_key text, key_version integer, max_tokens integer, context_tokens integer, thinking text, reasoning_effort text, reasoning_persistence text, image boolean, video boolean, audio boolean, image_detail text, web_search_enabled boolean, updated_at timestamptz DEFAULT now())`)
     await pool.query("INSERT INTO user_provider_credentials VALUES (1,'owner-a','llm',true,'openai','','https://example.test','user-model','synthetic-cipher','nonce','wrapped',1,NULL,NULL,NULL,NULL,'off',false,false,false,'auto',false)")
+    await pool.query(`CREATE TABLE user_provider_bindings AS
+      SELECT user_id, capability, id AS credential_id FROM user_provider_credentials WHERE enabled`)
+
     const base = { ai: { provider: 'openai', model: 'model-a', api_key: 'synthetic-platform-key' } }
     await writeFile(path, JSON.stringify(base))
     let masterKey = 'synthetic-master-1', envKey = 'synthetic-env-1', permission = 'permission-1', incomplete = false

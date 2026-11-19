@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createUserSkillToolNameReader } from '../../src/modules/skills/tool-names.js'
+import { createUserSkillToolNameReader } from '../../src/modules/skills/tools.js'
 
 test('Skill 保存校验接受当前 owner 已发现的 MCP 工具并保持 owner 隔离', async () => {
   const owners: string[] = []

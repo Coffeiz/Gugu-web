@@ -7,8 +7,8 @@ import JSZip from 'jszip'
 import {Pool} from 'pg'
 import test from 'node:test'
 import {createApp} from '../../src/app.js'
-import {createUserToken} from '../../src/modules/auth/auth.js'
-import {createPostgresFileBatchDownloadOperations} from '../../src/modules/files/file-batch-download-postgres.js'
+import {createUserToken} from '../../src/modules/auth/session/token.js'
+import {createPostgresFileBatchDownloadOperations} from '../../src/modules/files/download.js'
 const databaseUrl=process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const owner='11111111-1111-4111-8111-111111111111',secret='synthetic-download-secret'
 test('批量下载重名与后缀冲突保留全部正文',{skip:!databaseUrl&&'需要隔离 PostgreSQL'},async()=>{

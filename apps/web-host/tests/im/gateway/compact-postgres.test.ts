@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import {randomUUID} from 'node:crypto'
 import {test} from 'node:test'
-import {createPostgresImCompact,ImCompactError} from '../../../src/modules/im/gateway/compact-postgres.js'
-import {createPostgresAgentRunLeasePort} from '../../../src/modules/agent-sessions/persistence/agent-run-lease-postgres.js'
-import {enqueueAgentRunLocked} from '../../../src/modules/agent-sessions/persistence/agent-run-dispatch-postgres.js'
+import {createPostgresImCompact,ImCompactError} from '../../../src/modules/im/gateway/memory/store.js'
+import {createPostgresAgentRunLeasePort} from '../../../src/modules/agent/run/lease.js'
+import {enqueueAgentRunLocked} from '../../../src/modules/agent/run/dispatch.js'
 import {createImProductionFixture} from './production.fixtures.js'
 
 const databaseUrl=process.env.GUGU_IM_GATEWAY_TEST_DATABASE_URL,python=process.env.GUGU_IM_FIXTURE_PYTHON

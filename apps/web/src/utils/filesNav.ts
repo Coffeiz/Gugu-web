@@ -1,3 +1,5 @@
+import type { PathFileRef } from '@/services/api'
+
 /**
  * 文件库导航「路径投影规则」——纯函数：从点中的文件夹卡片 + 当前面包屑，算出新面包屑。
  *
@@ -18,6 +20,7 @@ export interface NavSeg {
   projectId?: number | null
   space?: string
   workspaceDirectoryId?: number | null
+  relativePath?: string
 }
 
 export interface FileLibraryNavigationTarget {
@@ -25,6 +28,7 @@ export interface FileLibraryNavigationTarget {
   id: number
   workspaceDirectoryId?: number
   workspaceDirectoryName?: string
+  pathFile?: PathFileRef & { directoryName: string }
   /** 从工作区根到目标所在目录；文件夹搜索目标不包含目标文件夹本身。 */
   folderPath?: Array<{ id: number; name: string }>
 }
@@ -44,6 +48,7 @@ export interface FolderCard {
   projectId?: number | null
   workspaceDirectoryId?: number
   status?: string
+  relativePath?: string
   year?: string | number
   month?: string
 }
@@ -65,6 +70,10 @@ export function navPathFor(folder: FolderCard, currentPath: NavSeg[]): NavSeg[] 
   }
   if (folder.type === 'workspace') {
     return [{ type: 'workspace', name: folder.displayName, color: null, space: 'workspace', workspaceDirectoryId: folder.workspaceDirectoryId }]
+  }
+  if (folder.type === 'disk-workspace' || folder.type === 'disk-personal' || folder.type === 'disk-project') {
+    const segment = { type: folder.type, name: folder.displayName, workspaceDirectoryId: folder.workspaceDirectoryId, relativePath: folder.relativePath ?? '' }
+    return folder.relativePath ? [...currentPath, segment] : [segment]
   }
   if (folder.type === 'status') {
     return [

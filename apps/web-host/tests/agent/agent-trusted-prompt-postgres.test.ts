@@ -4,9 +4,9 @@ import test from 'node:test'
 import { Pool } from 'pg'
 import { Kysely, PostgresDialect } from 'kysely'
 import type { Database } from '@gugu/core/data'
-import { createPostgresTrustedIntentStore } from '../../src/modules/agent-sessions/persistence/agent-trusted-intent-postgres.js'
-import { createTrustedPromptDescriptions } from '../../src/modules/agent-sessions/persistence/agent-trusted-prompt-descriptions.js'
-import { targetConfirmationIdentity } from '../../src/modules/agent-sessions/tools/confirmation-identity.js'
+import { createPostgresTrustedIntentStore } from '../../src/modules/agent/interactions/intents.js'
+import { createTrustedPromptDescriptions } from '../../src/modules/agent/interactions/prompts.js'
+import { targetConfirmationIdentity } from '../../src/modules/agent/tools/identity.js'
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
 test('加密意图读取拒绝交互类型混用和异轮次恢复', async () => {

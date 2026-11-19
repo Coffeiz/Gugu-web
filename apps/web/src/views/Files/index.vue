@@ -1,12 +1,12 @@
 <template>
   <FileBrowserPanel
     class="files-page"
-    :can-paste="cbStore.hasContent() && currentType !== 'root' && currentType !== 'trash'"
-    :paste-count="cbStore.fileIds.length + cbStore.folderIds.length"
-    :selection-mode="inSelectionMode"
+    :can-paste="workspaceTarget ? pathCanPaste : cbStore.hasContent() && currentType !== 'root' && currentType !== 'trash'"
+    :paste-count="workspaceTarget ? pathPasteCount : cbStore.fileIds.length + cbStore.folderIds.length"
+    :selection-mode="currentType === 'trash' ? diskTrash.selectionMode.value : workspaceTarget ? pathSelectionMode : inSelectionMode"
     :show-selection="currentType !== 'root'"
     :show-view-toggle="currentType !== 'trash'"
-    :show-new-folder-button="currentType === 'personal' || currentType === 'project' || currentType === 'folder' || currentType === 'workspace'"
+    :show-new-folder-button="canUpload || !!workspaceTarget"
     :show-new-workspace-button="preferencesStore.shellEnabled && currentType === 'folder' && currentSeg?.folderId != null && workspaceFoldersLoaded"
     :workspace-exists="Boolean(currentWorkspace)"
     :show-sort="currentType !== 'root'"
@@ -14,18 +14,18 @@
     :show-new-folder="showNewFolderInput"
     :new-folder-name="newFolderName"
     :folder-loading="newFolderLoading"
-    :sort-options="SORT_OPTIONS"
-    :sort-key="sortKey"
-    :sort-dir="sortDir"
+    :sort-options="currentType === 'trash' ? trashSortOptions : workspaceTarget ? workspaceSortOptions : SORT_OPTIONS"
+    :sort-key="currentType === 'trash' ? trashSortKey : workspaceTarget ? workspaceSortKey : sortKey"
+    :sort-dir="currentType === 'trash' ? trashSortDir : workspaceTarget ? workspaceSortDir : sortDir"
     @click="onPageClick"
     @paste="ctxPaste"
-    @toggle-selection="toggleSelectMode"
+    @toggle-selection="currentType === 'trash' ? diskTrash.toggleSelection() : workspaceTarget ? pathSelection.toggleSelection() : toggleSelectMode()"
     @update:view-mode="viewMode = $event"
     @update:show-new-folder="showNewFolderInput = $event"
     @update:new-folder-name="newFolderName = $event"
     @create-folder="createFolder"
     @create-workspace="createWorkspace"
-    @sort-select="onSortSelect"
+    @sort-select="currentType === 'trash' ? selectTrashSort($event) : workspaceTarget ? selectWorkspaceSort($event) : onSortSelect($event)"
   >
 
     <template #breadcrumb>
@@ -71,12 +71,12 @@
         <Icon name="admin.stack" :size="13" />{{ t('workspaceUi.createWorkspace') }}
       </ActionButton>
       <FileTrashToolbarActions v-if="currentType === 'trash'"
-        :has-items="Boolean(contents.files.length || trashFolders.length)"
-        :all-selected="allTrashSelected"
-        :empty-busy="trashActions.emptyTrashBusy.value"
-        :empty-progress="trashActions.emptyTrashProgress.value"
-        @toggle-select="toggleSelectAllTrash"
-        @empty="confirmEmptyTrash" />
+        :has-items="diskTrash.entries.value.length > 0"
+        :all-selected="diskTrash.allSelected.value"
+        :empty-busy="diskTrash.busy.value"
+        :empty-progress="diskTrash.progress.value"
+        @toggle-select="diskTrash.toggleAll"
+        @empty="diskTrash.empty" />
     </template>
 
     <template #trailing>
@@ -86,34 +86,48 @@
     <!-- 内容区 -->
     <div class="files-body">
       <div class="files-main glass-card scroll-surface" ref="mainRef" @scroll.passive="onMainScroll"
-        :class="{ 'is-selecting': boxStart !== null }"
-        @contextmenu.prevent.self="openCtx('empty', null, $event)"
+        :class="{ 'is-selecting': activeBoxStart !== null }"
+        @contextmenu.prevent.self="!workspaceTarget && openCtx('empty', null, $event)"
         @dragenter.prevent="onDragEnter"
         @dragover.prevent
         @dragleave="onDragLeave"
-        @drop.prevent="handleDrop"
+        @drop.prevent="dropFiles"
         @mousedown="onMainMouseDown"
         style="position:relative"
       >
-        <FileUploadDropOverlay :visible="isDragging" @drop="handleDrop" />
+        <FileUploadDropOverlay :visible="isDragging" @drop="dropFiles" />
 
         <KeepAlive>
           <WorkspaceDirectoryPanel v-if="currentType === 'root'" ref="workspaceDirectoryPanel" @open="openWorkspaceDirectory" />
         </KeepAlive>
 
         <!-- 框选矩形 -->
-        <div v-if="selectionRect" class="selection-rect" :style="{
-          left: selectionRect.left + 'px',
-          top:  selectionRect.top  + 'px',
-          width: selectionRect.width + 'px',
-          height: selectionRect.height + 'px',
+        <div v-if="activeSelectionRect" class="selection-rect" :style="{
+          left: activeSelectionRect.left + 'px',
+          top:  activeSelectionRect.top  + 'px',
+          width: activeSelectionRect.width + 'px',
+          height: activeSelectionRect.height + 'px',
         }"></div>
 
         <!-- 目录切换直接替换当前投影：不保留上一目录 DOM，不做交叉淡化或 Presence 离场。 -->
         <div class="content-body">
 
         <!-- ── 回收站视图 ── -->
-        <FilesTrashView v-if="currentType === 'trash'" :context="trashViewContext" />
+        <PathFiles v-if="workspaceTarget"
+          ref="workspaceFiles" :runtime-surface-id="runtimeBrowserSurfaceId"
+          :directory-id="workspaceTarget.directoryId" :relative-path="workspaceTarget.relativePath"
+          :view-mode="viewMode" :sort-key="workspaceSortKey" :sort-dir="workspaceSortDir" :reload="workspaceReload"
+          :cut-paths="pathCutPaths" :selected-paths="pathSelectedPaths" :preview-paths="pathPreviewPaths"
+          :selection-mode="pathSelectionMode"
+          @sort-select="selectWorkspaceSort"
+          @cut="pathSelection.cutSelected"
+          @select="pathSelection.select"
+          @renamed="pathSelection.clearCut"
+          @open-directory="openDiskDirectory" />
+        <DiskTrashView v-else-if="currentType === 'trash'"
+          :entries="sortedDiskTrash" :loading="diskTrash.loading.value" :error="diskTrash.error.value"
+          :selection-mode="diskTrash.selectionMode.value" :selected="diskTrash.selected.value" :busy="diskTrash.busy.value"
+          @load="diskTrash.load" @select="diskTrash.select" @restore="diskTrash.restore" @purge="diskTrash.purge" />
         <!-- ── 网格视图 ── -->
         <FilesGridView v-else-if="viewMode === 'grid'" :context="gridViewContext" />
         <!-- ── 列表视图 ── -->
@@ -127,9 +141,10 @@
 
     <!-- 批量操作浮动栏 -->
     <FileSelectionToolbar
-      v-if="selectedIds.size > 0 || selectedFolderKeys.size > 0 || selectedTrashFolderIds.size > 0"
-      :file-count="selectedIds.size"
-      :folder-count="selectedFolderKeys.size + selectedTrashFolderIds.size"
+      v-if="selectedFileCount + selectedFolderCount > 0"
+      :file-count="selectedFileCount"
+      :folder-count="selectedFolderCount"
+      :path-actions="!!workspaceTarget"
       :downloading="downloadingZip"
       :archiving="archiveBusy"
       :can-extract-archive="canExtractSelectedArchive"
@@ -140,8 +155,8 @@
       @cut="selCut"
       @copy="selCopy"
       @delete="deleteSelected"
-      @restore="restoreSelected"
-      @permanent-delete="hardDeleteSelected"
+      @restore="diskTrash.restore()"
+      @permanent-delete="diskTrash.purge()"
       @cancel="clearSelection"
     />
   </FileBrowserPanel>
@@ -189,11 +204,10 @@
 import { ref, shallowRef, provide, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { fileWindowHitTestKey, type WindowHitTest } from '@/composables/files/useFileBrowserWindow'
 import { useI18n } from 'vue-i18n'
-import type { TrashFolderMeta } from '@/services/api'
 import FileUploadDropOverlay from '@/components/common/file-browser/FileUploadDropOverlay.vue'
 import FileStorageUsage from '@/components/common/file-browser/FileStorageUsage.vue'
 import FileTrashToolbarActions from '@/components/common/file-browser/FileTrashToolbarActions.vue'
-import FilesTrashView from '@/views/Files/components/FilesTrashView.vue'
+import DiskTrashView from '@/views/Files/components/DiskTrashView.vue'
 import FilesGridView from '@/views/Files/components/FilesGridView.vue'
 import FilesListView from '@/views/Files/components/FilesListView.vue'
 import FileBrowserBreadcrumb from '@/components/common/file-browser/FileBrowserBreadcrumb.vue'
@@ -225,25 +239,27 @@ import { useFileLibrarySelection } from '@/composables/files/useFileLibrarySelec
 import { useFileLibraryBatchActions } from '@/composables/files/useFileLibraryBatchActions'
 import { useFileArchiveActions } from '@/composables/files/useFileArchiveActions'
 import { canCompressArchiveContext, canExtractArchiveContext, findSelectedExtractableArchive } from '@/composables/files/archive'
-import { useFileLibraryTrashActions } from '@/composables/files/useFileLibraryTrashActions'
+import { useDiskTrash } from '@/composables/files/useDiskTrash'
 import { useFileActions } from '@/composables/files/useFileActions'
 import { useFileLibraryContextActions } from '@/composables/files/useFileLibraryContextActions'
 import { useFileLibraryUpload } from '@/composables/files/useFileLibraryUpload'
 import { useFileLibraryRename } from '@/composables/files/useFileLibraryRename'
-import { showAppError } from '@/composables/core/useAppToast'
+import { errorMessage, showAppError } from '@/composables/core/useAppToast'
 import { useFileStorageUsage } from '@/composables/files/useFileStorageUsage'
 import { useFileLibraryFolderPresentation } from '@/composables/files/useFileLibraryFolderPresentation'
 import { useFileLibraryFolderActions } from '@/composables/files/useFileLibraryFolderActions'
 import { useFileLibraryFileActions } from '@/composables/files/useFileLibraryFileActions'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { confirmFileDeletion } from '@/composables/files/useFileDeleteConfirm'
-import { workspacesApi, type WorkspaceDirectory } from '@/services/api'
+import { workspacesApi, type WorkspaceDirectory, type PathFileEntry, type PathFileRef } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
 import { useFileRuntimeMove } from '@/composables/files/useFileRuntimeMove'
 import { useSorting } from '@/composables/shared/useSorting'
 import { projectStatusLabelKey } from '@/utils/projectStages'
 import UploadConflictDialog from '@/components/common/overlays/UploadConflictDialog.vue'
 import WorkspaceDirectoryPanel from '@/views/Files/components/WorkspaceDirectoryPanel.vue'
+import { usePathFileSelection } from '@/composables/files/usePathFileSelection'
+import PathFiles from '@/views/Files/components/PathFiles.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import { runtime } from '@/interaction/runtime'
@@ -252,6 +268,7 @@ import {
   fileObjectId,
   browserSurfaceId as makeBrowserSurfaceId,
   breadcrumbSurfaceId,
+  parseBreadcrumbSurfaceId,
 } from '@/interaction/runtime/adapters/file/fileRuntimeAdapter'
 
 const projectStore = useProjectStore()
@@ -381,7 +398,7 @@ function enterFolder(folder: FolderCardMeta): void { withDirectNav(() => rawEnte
 function openWorkspaceDirectory(directory: WorkspaceDirectory): void {
   enterFolder({
     id: `workspace:${directory.id}`,
-    type: 'workspace',
+    type: directory.isDefault ? 'disk-workspace' : 'workspace',
     displayName: directory.name,
     count: directory.fileCount + directory.folderCount,
     fileCount: directory.fileCount,
@@ -390,7 +407,49 @@ function openWorkspaceDirectory(directory: WorkspaceDirectory): void {
     workspaceDirectoryId: directory.id,
   })
 }
-function navigateTo(idx: number): void { withDirectNav(() => rawNavigateTo(idx)) }
+function openDiskDirectory(entry: PathFileEntry) {
+  const target = workspaceTarget.value
+  if (!target) return
+  const type = typeof target.directoryId === 'number' ? 'disk-workspace'
+    : target.directoryId === 'personal' ? 'disk-personal' : 'disk-project'
+  enterFolder({ id: entry.relativePath, type, displayName: entry.name,
+    count: null, workspaceDirectoryId: typeof target.directoryId === 'number' ? target.directoryId : undefined, relativePath: entry.relativePath })
+}
+const workspaceReload = ref(0)
+const workspaceFiles = ref<InstanceType<typeof PathFiles> | null>(null)
+const workspaceTarget = computed<PathFileRef | null>(() => {
+  const segment = currentSeg.value
+  if (!segment) return null
+  if (segment.type === 'personal' || segment.type === 'disk-personal')
+    return { directoryId: 'personal', relativePath: segment.relativePath ?? '' }
+  if ((segment.type === 'project' || segment.type === 'disk-project') && projectSeg.value?.id != null)
+    return { directoryId: `project:${projectSeg.value.id}`, relativePath: segment.relativePath ?? '' }
+  if (segment.type === 'disk-workspace' && segment.workspaceDirectoryId != null)
+    return { directoryId: segment.workspaceDirectoryId, relativePath: segment.relativePath ?? '' }
+  return null
+})
+watch(workspaceTarget, target => { uiStore.workspaceUploadTarget = target }, { immediate: true, flush: 'sync' })
+onUnmounted(() => { uiStore.workspaceUploadTarget = null })
+
+const pathSelection = usePathFileSelection({
+  target: workspaceTarget,
+  container: mainRef,
+  getSelectedEntries: () => workspaceFiles.value?.selectedEntries() ?? [],
+  reload: () => { workspaceReload.value++ },
+})
+const {
+  selectionMode: pathSelectionMode, fileCount: pathFileCount, folderCount: pathFolderCount,
+  selectedPaths: pathSelectedPaths, previewPaths: pathPreviewPaths, cutPaths: pathCutPaths,
+  pasteCount: pathPasteCount, canPaste: pathCanPaste,
+} = pathSelection
+
+function navigateTo(idx: number): void {
+  if (workspaceTarget.value && idx === navPath.value.length - 1) {
+    workspaceReload.value++
+    return
+  }
+  withDirectNav(() => rawNavigateTo(idx))
+}
 function goBack(): void { withDirectNav(() => rawGoBack()) }
 function goForward(): void { withDirectNav(() => rawGoForward()) }
 
@@ -407,6 +466,8 @@ const { jumpToTarget, consumePendingTarget } = useFileLibraryNavigation({
 
 // ── 排序 ──
 const { SORT_OPTIONS, sortKey, sortDir, onSortSelect } = useSorting('files')
+const { SORT_OPTIONS: workspaceAllSortOptions, sortKey: workspaceSortKey, sortDir: workspaceSortDir, onSortSelect: selectWorkspaceSort } = useSorting('workspace-files')
+const workspaceSortOptions = computed(() => workspaceAllSortOptions.value.filter(({ key }) => key !== 'stage' && key !== 'createdAt'))
 
 const directory = useFileLibraryDirectory({
   projectStore,
@@ -417,14 +478,19 @@ const directory = useFileLibraryDirectory({
   sortKey,
   sortDir,
 })
-directoryLoader = directory.loadContents
+const diskTrash = useDiskTrash(computed(() => currentType.value === 'trash'))
+const { sortKey: trashSortKey, sortDir: trashSortDir, onSortSelect: selectTrashSort } = useSorting('disk-trash')
+const trashSortOptions = computed(() => [
+  { key: 'name', label: t('filesViewUi.name') },
+  { key: 'createdAt', label: t('filesViewUi.deletedAt') },
+])
+const sortedDiskTrash = computed(() => [...diskTrash.entries.value].sort((a, b) => {
+  const order = trashSortKey.value === 'createdAt' ? a.deletedAt.localeCompare(b.deletedAt) : a.name.localeCompare(b.name, undefined, { numeric: true })
+  return order * (trashSortDir.value === 'asc' ? 1 : -1)
+}))
+directoryLoader = () => { if (!workspaceTarget.value && currentType.value !== 'trash') directory.loadContents() }
 const {
   contents,
-  trashFolders,
-  expandedTrashFolders,
-  trashFolderContents,
-  trashFolderCursors,
-  sortedTrashFolders,
   loadingMore,
   retentionLimitReached,
 } = directory
@@ -433,7 +499,8 @@ const sortedContents = useFileLibrarySorting({ contents, currentType, sortKey, s
 
 function onMainScroll(event: Event) {
   const element = event.currentTarget as HTMLElement
-  if (element.scrollHeight - element.scrollTop - element.clientHeight < 480) void directory.loadMore()
+  if (!workspaceTarget.value && currentType.value !== 'trash'
+    && element.scrollHeight - element.scrollTop - element.clientHeight < 480) void directory.loadMore()
 }
 
 // tiny 已由 v-lazy-src 视口门控（更大 rootMargin 先于 card），不再全量预热——避免屏幕外缩略图挤占并发队列
@@ -457,13 +524,18 @@ watch(() => uiStore.pendingFileTarget, (target) => {
 watch(uploadSignal, () => {
   // 上传链路会更新当前文件；仅重载可见目录，不为一次上传重新拉全库。
   loadContents()
+  if (workspaceTarget.value) workspaceReload.value++
   fetchStorage()
 })
 
 // 目录是服务端按需快照，不依赖 filesCache 的全量刷新事件；外部文件变化时只刷新当前视图。
 const stopWatchingFileRevision = watchDebouncedRevision(
   () => live.rev.files,
-  () => { loadContents() },
+  () => {
+    if (workspaceTarget.value) workspaceReload.value++
+    else if (currentType.value === 'trash') void diskTrash.load()
+    else loadContents()
+  },
   120,
 )
 
@@ -474,7 +546,7 @@ const selection = useFileLibrarySelection({
   currentType,
   getFolders: () => sortedContents.value.folders,
   getFiles: () => sortedContents.value.files,
-  getTrashFolders: () => trashFolders.value,
+  getTrashFolders: () => [],
   enterFolder,
   openPreview: file => openPreview(file),
   isPreviewable,
@@ -485,19 +557,30 @@ const selection = useFileLibrarySelection({
   },
 })
 const {
-  selectedIds, selectedFolderKeys, selectedTrashFolderIds,
+  selectedIds, selectedFolderKeys,
   previewFileIds, previewFolderKeys, boxStart, selectionRect,
   onContainerMouseDown: _boxMouseDown,
   clearSelection: clearSelectionImpl, inSelectionMode,
-  toggleSelectMode, toggleSelectAllTrash, allTrashSelected,
-  handleFolderClick, handleFileClick, handleTrashFileClick, handleTrashFolderClick,
+  toggleSelectMode,
+  handleFolderClick, handleFileClick,
 } = selection
+const selectedFileCount = computed(() => currentType.value === 'trash' ? diskTrash.fileCount.value
+  : workspaceTarget.value ? pathFileCount.value : selectedIds.value.size)
+const selectedFolderCount = computed(() => currentType.value === 'trash' ? diskTrash.folderCount.value
+  : workspaceTarget.value ? pathFolderCount.value : selectedFolderKeys.value.size)
+const activeBoxStart = computed(() => workspaceTarget.value ? pathSelection.boxStart.value : boxStart.value)
+const activeSelectionRect = computed(() => workspaceTarget.value ? pathSelection.selectionRect.value : selectionRect.value)
 let suppressNextSelectionPageClick = false
 
-function clearSelection() { clearSelectionImpl() }
+function clearSelection() {
+  if (workspaceTarget.value) pathSelection.clearSelection()
+  if (currentType.value === 'trash') diskTrash.clearSelection()
+  clearSelectionImpl()
+}
 
 function onMainMouseDown(e: MouseEvent) {
-  if (currentType.value === 'root' || currentType.value === 'projects') return
+  if (workspaceTarget.value) return pathSelection.onContainerMouseDown(e)
+  if (['root', 'projects', 'trash'].includes(currentType.value)) return
   _boxMouseDown(e)
 }
 
@@ -508,17 +591,6 @@ function onPageClick() {
   }
   clearSelection()
   // 排序菜单由 SortMenu 内部的 ContextMenu 监听外部 click 自动关闭，这里不用手动处理
-}
-
-// ── 回收站工具函数 ──
-function daysLeft(deletedAt: string | null | undefined) {
-  if (!deletedAt) return 30
-  const gone = Math.floor((Date.now() - new Date(deletedAt).getTime()) / 86400000)
-  return Math.max(0, 30 - gone)
-}
-
-function formatDate(iso: string | null | undefined) {
-  return iso ? iso.slice(0, 10) : '—'
 }
 
 const conflictDialogRef = ref<InstanceType<typeof UploadConflictDialog> | null>(null)
@@ -532,6 +604,10 @@ const fileUpload = useFileLibraryUpload({
   showConflicts: conflicts => conflictDialogRef.value?.show(conflicts) ?? Promise.resolve(new Map()),
 })
 const { uploadingItems, handleFileInput, onDragEnter, onDragLeave, handleDrop, isDragging } = fileUpload
+function dropFiles(event: DragEvent) {
+  if (workspaceTarget.value) return workspaceFiles.value?.handleDrop(event)
+  return handleDrop(event)
+}
 
 // ── 预览 ──
 const previewStore = usePreviewStore()
@@ -595,43 +671,14 @@ function extractSelectedArchive() {
   if (archive) extractFile(archive)
 }
 const downloadingZip = batchActions.downloading
-const trashActions = useFileLibraryTrashActions({
-  selectedFileIds: selectedIds,
-  selectedTrashFolderIds,
-  expandedTrashFolders,
-  trashFolderContents,
-  trashFolderCursors,
-  loadContents,
-  clearSelection,
-  refreshCache: () => { cacheStore.invalidatePages(); loadContents() },
-  fetchStorage,
-})
-
-const restoreFile = (file: FileMeta) => trashActions.restoreFile(file)
-const restoreTrashFolder = (folder: TrashFolderMeta) => trashActions.restoreFolder(folder)
-const toggleTrashFolder = (folder: TrashFolderMeta) => trashActions.toggleFolder(folder)
-const loadMoreTrashFolderContents = (folderId: number) => trashActions.loadMoreFolderContents(folderId)
-const hardDeleteFile = (file: FileMeta) => trashActions.hardDeleteFile(file)
-const hardDeleteTrashFolder = (folder: TrashFolderMeta) => trashActions.hardDeleteFolder(folder)
-const restoreSelected = () => trashActions.restoreSelected()
-const hardDeleteSelected = () => trashActions.hardDeleteSelected()
-const confirmEmptyTrash = () => trashActions.emptyTrash()
-
-// 页面级回收站视图的依赖集中从入口注入，视图组件不直接读取 stores 或执行 API。
-const trashViewContext = {
-  trashFolders, contents, sortedContents, sortedTrashFolders, expandedTrashFolders, trashFolderContents,
-  trashFolderCursors, loadMoreTrashFolderContents,
-  sortKey, sortDir, onSortSelect, inSelectionMode, selectedTrashFolderIds, selectedIds,
-  previewFolderKeys, previewFileIds, handleTrashFolderClick, toggleTrashFolder,
-  restoreTrashFolder, hardDeleteTrashFolder, handleTrashFileClick, restoreFile,
-  hardDeleteFile, fileListIcon, fileIconColor, formatDate, daysLeft, loading,
-}
 
 function downloadSelected() {
+  if (workspaceTarget.value) return pathSelection.downloadSelected()
   return batchActions.downloadSelected()
 }
 
 function deleteSelected() {
+  if (workspaceTarget.value) return pathSelection.trashSelected()
   return batchActions.deleteSelected()
 }
 
@@ -670,7 +717,20 @@ function isBcDroppable(seg: NavSeg, idx: number) {
   // idx 是当前目录本身这一段（navPath 最后一位）时排除——拖回来不算有效落点，应该直接归位，
   // 不该演一遍飞入动画。
   if (idx === navPath.value.length - 1) return false
+  if (workspaceTarget.value) return diskBreadcrumbPath(seg) !== undefined
   return seg.type === 'folder' || seg.type === 'personal' || seg.type === 'project' || seg.type === 'workspace'
+}
+
+function diskBreadcrumbPath(seg: NavSeg | undefined) {
+  const target = workspaceTarget.value
+  if (!target || !seg) return
+  const scope = target.directoryId
+  const sameScope = typeof scope === 'number'
+    ? seg.type === 'disk-workspace' && seg.workspaceDirectoryId === scope
+    : scope === 'personal'
+      ? seg.type === 'personal' || seg.type === 'disk-personal'
+      : seg.type === 'disk-project' || (seg.type === 'project' && scope === `project:${seg.id}`)
+  if (sameScope) return seg.relativePath ?? ''
 }
 
 function currentWorkspaceDirectoryId(): number | null {
@@ -801,7 +861,13 @@ useRuntimeAction(action => {
   // 只吞掉拖拽结束时浏览器合成的那一次 click；不能让标记跨到用户下一次
   // 点击目标文件夹，否则目标会被选择模式拦截而无法导航。
   window.setTimeout(() => { suppressNextSelectionPageClick = false }, 0)
-  void handleRuntimeMoveAction(action.type === 'move-group' ? action.objectIds : [action.objectId], action.toSurfaceId)
+  const objectIds = action.type === 'move-group' ? action.objectIds : [action.objectId]
+  if (workspaceFiles.value) {
+    const index = parseBreadcrumbSurfaceId(RUNTIME_SCOPE, action.toSurfaceId)
+    const destination = index === null ? undefined : diskBreadcrumbPath(navPath.value[index])
+    return workspaceFiles.value.handleMoveAction(objectIds, action.toSurfaceId, pathSelection.moveInto, destination)
+  }
+  else void handleRuntimeMoveAction(objectIds, action.toSurfaceId)
 })
 
 onUnmounted(() => {
@@ -816,6 +882,8 @@ onUnmounted(() => {
 const folderActions = useFileLibraryFolderActions({
   currentType, currentSeg, projectSeg, cacheStore, fileActions,
   loadContents, fetchStorage, pruneHistoryForFolders,
+  pathTarget: workspaceTarget,
+  reloadWorkspace: () => { workspaceReload.value++ },
 })
 const {
   newFolderName, newFolderLoading, showNewFolderInput,
@@ -894,10 +962,12 @@ const listViewContext = {
 }
 
 function selCut() {
-  batchActions.cutSelected()
+  if (workspaceTarget.value) pathSelection.cutSelected()
+  else batchActions.cutSelected()
 }
 function selCopy() {
-  batchActions.copySelected()
+  if (workspaceTarget.value) pathSelection.copySelected()
+  else batchActions.copySelected()
 }
 
 // ── 文件操作 ──
@@ -1010,13 +1080,20 @@ async function ctxDeleteFolder() {
 
 function ctxPaste() {
   ctx.value.visible = false
+  if (workspaceTarget.value) return pathSelection.paste()
   return batchActions.paste()
 }
 
 // ── 键盘快捷键 ──
 function onKeyDown(e: KeyboardEvent) {
-  if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') return
+  if ((e.target as HTMLElement)?.closest?.('input, textarea, [contenteditable="true"]')) return
   const ctrl = e.ctrlKey || e.metaKey
+  if (workspaceTarget.value) {
+    if (ctrl && e.key === 'c' && pathSelectedPaths.value.size) { e.preventDefault(); pathSelection.copySelected() }
+    if (ctrl && e.key === 'x' && pathSelectedPaths.value.size) { e.preventDefault(); pathSelection.cutSelected() }
+    if (ctrl && e.key === 'v' && pathCanPaste.value) { e.preventDefault(); void pathSelection.paste() }
+    return
+  }
   if (ctrl && e.key === 'x') {
     const fids = [...selectedIds.value]
     const dids = [...selectedFolderKeys.value]

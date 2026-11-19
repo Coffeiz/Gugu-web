@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createDecipheriv, createHash, randomUUID } from 'node:crypto'
+import dns from 'node:dns/promises'
+import { syncBuiltinESMExports } from 'node:module'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { createServer as createHttpsServer } from 'node:https'
@@ -115,7 +117,20 @@ test('生产 Host 立即运行经真实模型协议和任务工具续轮投递�
   let relay: ReturnType<typeof createHttpsServer> | undefined
   let proxy: ReturnType<typeof createServer> | undefined
   let host: Awaited<ReturnType<typeof startServer>> | undefined
+  const originalLookup = dns.lookup
+  const relayHosts = new Set([
+    'ilinkai.weixin.qq.com', 'novac2c.cdn.weixin.qq.com', 'open.feishu.cn',
+    'api.bot.qq.com', 'cos.ap-guangzhou.myqcloud.com', 'cloudflare-dns.com',
+  ])
+  const relayIp = '93.184.215.14'
   try {
+    // 合成平台域名交给本地代理，避免系统 DNS 或假 IP 影响地址校验。
+    dns.lookup = ((host: string, options?: Parameters<typeof originalLookup>[1]) => {
+      if (!relayHosts.has(host)) return originalLookup(host, options)
+      const address = { address: relayIp, family: 4 }
+      return Promise.resolve(typeof options === 'object' && options.all ? [address] : address)
+    }) as typeof originalLookup
+    syncBuiltinESMExports()
     const certificate = join(root, 'cert.pem'), key = join(root, 'key.pem'), opensslConfig = join(root, 'openssl.cnf')
     await writeFile(opensslConfig, '[req]\ndistinguished_name=dn\nx509_extensions=extensions\nprompt=no\n'
       + '[dn]\nCN=localhost\n[extensions]\nsubjectAltName=IP:127.0.0.1,DNS:ilinkai.weixin.qq.com,DNS:novac2c.cdn.weixin.qq.com,DNS:open.feishu.cn,DNS:api.bot.qq.com,DNS:cos.ap-guangzhou.myqcloud.com,DNS:cloudflare-dns.com,DNS:files.example.invalid\n')
@@ -245,7 +260,7 @@ test('生产 Host 立即运行经真实模型协议和任务工具续轮投递�
     // CONNECT 只连接此合成 iLink 对端，所有请求均留在测试进程。
     proxy = createServer((_request, response) => response.writeHead(405).end())
     proxy.on('connect', (request, client, head) => {
-      if (!request.url?.endsWith(':443')) { client.destroy(); return }
+      if (request.url !== `${relayIp}:443` && request.url !== 'cloudflare-dns.com:443') { client.destroy(); return }
       proxyTargets.push(request.url)
       const upstream = connect(relayAddress.port, '127.0.0.1')
       tunnels.add(client)
@@ -278,6 +293,8 @@ test('生产 Host 立即运行经真实模型协议和任务工具续轮投递�
       security_version int,avatar text,created_at timestamptz,timezone text,email_subscribed boolean,last_active_at timestamptz,
       token_limit_6h integer,quota_window_started_at timestamptz);
       CREATE TABLE user_preferences(user_id uuid,data_json text,data jsonb);
+      CREATE TABLE data_import_jobs(id uuid PRIMARY KEY,user_id uuid,status text);
+      CREATE TABLE user_provider_bindings(user_id uuid,capability text,credential_id int,PRIMARY KEY(user_id,capability));
       CREATE TABLE user_smtp_configs(user_id uuid,enabled boolean,host text,port int,"user" text,password text,from_addr text,use_ssl boolean);
       CREATE TABLE user_bots(user_id uuid,platform text,enabled boolean);
       CREATE TABLE user_skills(owner_id uuid,skill_id text,name text,description_short text,category text,related_tools jsonb,
@@ -328,7 +345,7 @@ test('生产 Host 立即运行经真实模型协议和任务工具续轮投递�
       AI__API_KEY: 'synthetic-local-key', AI__CONTEXT_TOKENS: '32768', BYOK__ENABLED: 'false', MCP__ENABLED: 'false', IM__QQ: 'false',
       SMTP__HOST: '127.0.0.1', SMTP__PORT: String(smtpAddress.port), SMTP__FROM_ADDR: 'sender@example.test',
       SMTP__USE_SSL: 'true', SSL_CERT_FILE: certificate,
-      HTTPS_PROXY: `http://127.0.0.1:${proxyAddress.port}`, NO_PROXY: '127.0.0.1', IM__WECHAT: 'true',
+      HTTPS_PROXY: `http://127.0.0.1:${proxyAddress.port}`, NO_PROXY: '127.0.0.1', https_proxy: `http://127.0.0.1:${proxyAddress.port}`, no_proxy: '127.0.0.1', IM__WECHAT: 'true',
     })
     const manualRequests = () => requests.filter(body => !body.includes('合成自动执行') && !body.includes('合成周期'))
     const run = (id: number, user?: string) => fetch(`http://127.0.0.1:${http.port}/api/v1/scheduled-tasks/${id}/run`, {
@@ -489,7 +506,7 @@ test('生产 Host 立即运行经真实模型协议和任务工具续轮投递�
       QQ: '无可触达地址（先给该 bot 发条消息）',
       飞书: '无可触达地址（先给该 bot 发条消息）',
       微信: '无可触达地址（先给该 bot 发条消息）',
-      Telegram: 'Node 服务暂未接入该投递渠道',
+      Telegram: '无可触达地址（先给该 bot 发条消息）',
     })
     assert.equal((await pool.query("SELECT count(*)::int AS n FROM site_notifications WHERE title='兼容渠道' AND target=$1", [owner])).rows[0].n, 1)
     assert.equal((await pool.query('SELECT last_run_failed FROM scheduled_tasks WHERE id=31')).rows[0]?.last_run_failed, true)
@@ -513,7 +530,7 @@ test('生产 Host 立即运行经真实模型协议和任务工具续轮投递�
       email_attachment_file_ids,schedule_kind,start_at,last_run_failed) VALUES
       (32,$1,TRUE,'旧私聊','旧 IM 私聊正文','im,wechat','{}','[]','[]','once',NOW()+interval '1 day',FALSE),
       (33,$1,TRUE,'无效目标','旧 IM 固定目标正文','im','{"wechat":null}','[]','[]','once',NOW()+interval '1 day',FALSE),
-      (34,$1,TRUE,'未接入渠道','合成 Telegram 正文','im,telegram','{}','[]','[]','once',NOW()+interval '1 day',FALSE)`, [owner])
+      (34,$1,TRUE,'未连接的显式渠道','合成 Telegram 正文','im,telegram','{}','[]','[]','once',NOW()+interval '1 day',FALSE)`, [owner])
     const privateRun = await run(32, owner)
     assert.equal(privateRun.status, 200)
     assert.equal((await privateRun.json()).result.微信, '已发送')
@@ -522,7 +539,7 @@ test('生产 Host 立即运行经真实模型协议和任务工具续轮投递�
     assert.equal((await missingFixed.json()).result.微信, '无可触达地址（先给该 bot 发条消息）')
     const unsupported = await run(34, owner)
     assert.equal(unsupported.status, 200)
-    assert.deepEqual((await unsupported.json()).result, { 错误: '定时任务配置的投递渠道暂不可用' })
+    assert.deepEqual((await unsupported.json()).result, { 错误: '任务执行失败' })
     assert.equal(wechatMessages.length, 1)
     assert.partialDeepStrictEqual(wechatMessages[0], {
       to_user_id: 'synthetic-private', context_token: 'synthetic-context',
@@ -778,6 +795,8 @@ test('生产 Host 立即运行经真实模型协议和任务工具续轮投递�
     assert.equal((await pool.query('SELECT count(*)::int AS count FROM chat_attachments WHERE user_id=$1 AND name=$2',
       [owner, 'synthetic-remote-worker'])).rows[0].count, 1)
   } finally {
+    dns.lookup = originalLookup
+    syncBuiltinESMExports()
     setDefaultCACertificates(defaultCAs)
     await host?.close()
     for (const address of reachKeys) await redis.delete(address)

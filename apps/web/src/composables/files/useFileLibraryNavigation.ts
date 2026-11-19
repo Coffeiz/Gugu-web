@@ -31,28 +31,43 @@ interface TargetPathDependencies {
   folderSegment: (folder: FolderMeta) => NavSeg
 }
 
-async function resolveTargetPath(target: FileLibraryNavigationTarget, deps: TargetPathDependencies): Promise<NavSeg[] | null> {
+async function resolveTargetPath(target: FileLibraryNavigationTarget, deps: TargetPathDependencies): Promise<{ path: NavSeg[]; relativePath?: string }> {
+  if (target.pathFile) {
+    const { directoryId, directoryName, relativePath } = target.pathFile
+    const suffix = relativePath.split('/')
+    if (target.kind === 'file') suffix.pop()
+    const type = typeof directoryId === 'number' ? 'disk-workspace' : directoryId === 'personal' ? 'disk-personal' : 'disk-project'
+    const workspaceDirectoryId = typeof directoryId === 'number' ? directoryId : undefined
+    const base = typeof directoryId === 'number'
+      ? [{ type: 'disk-workspace', name: directoryName, workspaceDirectoryId }]
+      : deps.basePath(directoryId === 'personal' ? null : Number(directoryId.slice('project:'.length)))
+    const path = [...base, ...suffix.map((name, index): NavSeg => ({
+      type, name, workspaceDirectoryId, relativePath: suffix.slice(0, index + 1).join('/'),
+    }))]
+    return { path, relativePath }
+  }
   if (target.kind === 'folder') {
     const { folder: rawFolder, ancestors } = await foldersApi.location(target.id)
     const folder = rawFolder as FolderMeta
     const workspaceId = folder.workspaceDirectoryId ?? target.workspaceDirectoryId
     const chain = ancestors as FolderMeta[]
-    if (workspaceId != null) return [
+    if (workspaceId != null) return { path: [
       { type: 'workspace', name: target.workspaceDirectoryName || '工作区', color: null, space: 'workspace', workspaceDirectoryId: workspaceId },
       ...chain.map(item => ({ type: 'folder', folderId: item.id, name: item.name, color: null, space: 'workspace', workspaceDirectoryId: workspaceId })),
-    ]
-    return [...deps.basePath(folder.projectId), ...chain.map(deps.folderSegment)]
+    ] }
+    return { path: [...deps.basePath(folder.projectId), ...chain.map(deps.folderSegment)] }
   }
 
-  const { file: rawFile, folderPath } = await filesApi.location(target.id)
+  const { file: rawFile, folderPath, pathFile } = await filesApi.location(target.id)
+  if (pathFile) return resolveTargetPath({ ...target, pathFile: { ...pathFile, directoryName: '' } }, deps)
   const file = rawFile as FileMeta
   const workspaceId = file.workspaceDirectoryId ?? target.workspaceDirectoryId
   const chain = folderPath as FolderMeta[]
-  if (workspaceId != null) return [
+  if (workspaceId != null) return { path: [
     { type: 'workspace', name: target.workspaceDirectoryName || '工作区', color: null, space: 'workspace', workspaceDirectoryId: workspaceId },
     ...chain.map(item => ({ type: 'folder', folderId: item.id, name: item.name, color: null, space: 'workspace', workspaceDirectoryId: workspaceId })),
-  ]
-  return [...deps.basePath(file.projectId), ...chain.map(deps.folderSegment)]
+  ] }
+  return { path: [...deps.basePath(file.projectId), ...chain.map(deps.folderSegment)] }
 }
 
 export function useFileLibraryNavigation(options: NavigationOptions) {
@@ -110,14 +125,17 @@ export function useFileLibraryNavigation(options: NavigationOptions) {
     activeFlashElement = null
   }
 
-  function flashItem(kind: 'file' | 'folder', id: number) {
+  function flashItem(kind: 'file' | 'folder', id: number, relativePath?: string) {
     const request = ++flashRequest
     clearFlash()
     let attempts = 0
     const findElement = () => {
       if (request !== flashRequest) return
       const attribute = kind === 'file' ? 'data-file-id' : 'data-folder-id'
-      const element = mainRef.value?.querySelector<HTMLElement>(`[${attribute}="${id}"]`)
+      const element = relativePath === undefined
+        ? mainRef.value?.querySelector<HTMLElement>(`[${attribute}="${id}"]`)
+        : Array.from(mainRef.value?.querySelectorAll<HTMLElement>('[data-path-file]') ?? [])
+          .find(card => card.dataset.pathFile === relativePath)
       if (!element) {
         if (attempts++ >= 30) return
         flashTimer = setTimeout(findElement, 50)
@@ -143,20 +161,19 @@ export function useFileLibraryNavigation(options: NavigationOptions) {
 
   async function jumpToTarget(target: NavigationTarget) {
     if (!target) return
-    let path: NavSeg[] | null
+    let resolved: Awaited<ReturnType<typeof resolveTargetPath>>
     try {
-      path = await resolveTargetPath(target, { cacheStore, folderChain, basePath, folderSegment })
+      resolved = await resolveTargetPath(target, { cacheStore, folderChain, basePath, folderSegment })
     } catch {
       return
     }
-    if (!path) return
     clearSelection()
-    navPath.value = path
+    navPath.value = resolved.path
     saveNav()
     loadContents()
-    if (target.kind === 'file' || target.kind === 'folder') {
+    if (!target.pathFile || target.kind === 'file') {
       await nextTick()
-      flashItem(target.kind, target.id)
+      flashItem(target.kind, target.id, resolved.relativePath)
     }
   }
 

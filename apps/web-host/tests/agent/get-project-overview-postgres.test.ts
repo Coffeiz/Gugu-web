@@ -6,8 +6,8 @@ import { dataContext } from '@gugu/core'
 import { createPostgresRuntime } from '@gugu/core/data'
 import { createKyselyProjectCreateRuntime } from '@gugu/core/project-create-data'
 import { tablesSql } from '../../../../packages/core/src/data/schema.js'
-import { createAgentToolRegistry } from '../../src/modules/agent-sessions/tools/agent-tool-registry.js'
-import { createProjectFileOverviewPort } from '../../src/modules/agent-sessions/tools/project-file-overview-port.js'
+import { createAgentToolRegistry } from '../../src/modules/agent/tools/registry.js'
+import { createProjectFileOverviewPort } from '../../src/modules/agent/tools/overview.js'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

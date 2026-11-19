@@ -1,14 +1,14 @@
+import { imGatewaySql } from '@gugu/database/postgres/migrations/0013_im_gateway'
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import type { Pool } from 'pg'
 import { createAgentRunner, projectPersistentToolResult, type AgentRunnerPorts, type InteractionResolution, type RunCheckpoint, type RunEvent } from '@gugu/core/agent'
 import { createImRunDelivery, ImRunDeliveryBlocked } from '@gugu/core/im/run-delivery'
 import type { ImRunDeliveryPorts } from '@gugu/core/im/run-delivery'
-import { createFeishuClient } from '../../../src/modules/im/gateway/feishu/client.js'
-import { createPersistentFeishuProjection } from '../../../src/modules/im/gateway/feishu/persistent.js'
-import { withPostgresImDeliveryStore, type ImDeliverySession } from '../../../src/modules/im/gateway/delivery-store.js'
+import { createFeishuClient } from '../../../src/modules/im/gateway/platforms/feishu/client.js'
+import { createPersistentFeishuProjection } from '../../../src/modules/im/gateway/platforms/feishu/persistent.js'
+import { withPostgresImDeliveryStore, type ImDeliverySession } from '../../../src/modules/im/gateway/delivery/store.js'
 
 const identity = { ownerId: '00000000-0000-4000-8000-000000000096', sessionId: '1', runId: 'synthetic-feishu-run' }
 const secretKey = 'synthetic-feishu-projection-secret'
@@ -24,7 +24,7 @@ async function database(work: (pool: Pool) => Promise<void>) {
     await pool.query('CREATE TABLE users(id uuid PRIMARY KEY); CREATE TABLE conversation_sessions(id integer PRIMARY KEY,user_id uuid)')
     await pool.query('INSERT INTO users VALUES($1)', [identity.ownerId])
     await pool.query('INSERT INTO conversation_sessions VALUES(1,$1),(2,$1)', [identity.ownerId])
-    await pool.query(await readFile(new URL('../../../src/modules/im/gateway/delivery-schema.sql', import.meta.url), 'utf8'))
+    await pool.query(imGatewaySql.delivery)
     await work(pool)
   } finally { await pool.end(); await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`); await admin.end() }
 }
@@ -256,9 +256,6 @@ test('真实PG操作accepted与state CAS同事务，版本/密钥/作用域/大�
 }, async () => database(async pool => {
   const p = platform()
   try {
-    // 模拟已安装旧delivery两表的库，只应用增量projection表DDL，不重跑旧表创建。
-    await pool.query('DROP TABLE gugu_im_platform_projection')
-    await pool.query(await readFile(new URL('../../../src/modules/im/gateway/delivery-projection-schema.sql', import.meta.url), 'utf8'))
     await withPostgresImDeliveryStore(pool, identity, async receipts => {
       assert.equal(await receipts.begin(identity, 'op', digest('body')), 'new')
       assert.equal(await receipts.projection!.accepted('op', 0, { v: 1, synthetic: 'confidential' }), 1)

@@ -9,7 +9,7 @@ import { renderMd } from '../markdown'
 import { SESSION_KEY, LAST_SESSION_KEY } from '../chatConstants'
 import { ensureSessionMessageLoaded } from './sessionMessageSync'
 import { waitForSessionSettlement } from './sessionReadiness'
-import { hasPendingMessageMarkdown } from './sessionScrollLayout'
+import { hasPendingMessageMarkdown, type SessionScrollAnchor } from './sessionScrollLayout'
 import { getSessionPendingQueueId, setPendingQueueRecoveryNeeded } from './chatPendingQueueStorage'
 import { useChatStream } from './useChatStream'
 import { useChatSessions } from './useChatSessions'
@@ -52,7 +52,6 @@ export function useChatConversation(options: {
   const liveStore = useLiveStore()
   const messagesEl = computed(() => options.messageListRef.value?.el ?? null)
   const sessionSettling = ref(false)
-  const cachedHistoryVisible = ref(false)
   // 所有滚动请求共用一个代次与 rAF。切会话、流式 token、工具事件可能同时请求到底部，
   // 旧请求必须失效，否则它会在新消息布局完成后再次改写 scrollTop。
   let scrollRequest = 0
@@ -359,6 +358,8 @@ export function useChatConversation(options: {
   // 由虚拟列表的占位高度撑出来，即使视口外的消息没挂 DOM，这个距离判断依然准确。
   function onMsgScroll() {
     const el = messagesEl.value; if (!el) return
+    // 切换期间的布局纠偏不是用户上翻，也不能触发旧页预取。
+    if (sessionSettling.value) return
     const dist = el.scrollHeight - el.scrollTop - el.clientHeight
     stick.value = dist < 40
     // 跟随虚拟列表的实际范围预取：首个挂载行进入 overscan 区时开始取上一页，
@@ -393,8 +394,27 @@ export function useChatConversation(options: {
   }
 
   // 虚拟列表在切换会话后会先用估算高度绘制，再在可见行挂载后逐帧修正高度。
-  // 在这些修正完成前解除隐藏会造成会话先出现在错误位置、下一帧再跳到底部。
-  async function waitForStableScrollLayout() {
+  // 先在隐藏状态恢复阅读锚点或底部，等测量完成再展示。
+  async function restoreScrollPosition(anchor: SessionScrollAnchor | null) {
+    const generation = getViewGeneration()
+    await nextTick()
+    if (generation !== getViewGeneration()) return
+    const list = options.messageListRef.value
+    const anchorIndex = anchor ? messages.value.findIndex(message => message._syncKey === anchor.messageKey) : -1
+    if (anchor && anchorIndex >= 0) {
+      stick.value = false
+      options.onSyncSmallH()
+      list?.restoreScrollAnchor(anchorIndex, anchor.offset)
+    } else {
+      await scrollBottom(true)
+    }
+    if (generation !== getViewGeneration()) return
+    await waitForStableScrollLayout(anchor, anchorIndex)
+  }
+
+  async function waitForStableScrollLayout(anchor: SessionScrollAnchor | null = null, anchorIndex = -1) {
+    const generation = getViewGeneration()
+    const list = options.messageListRef.value
     let previous = ''
     let stableFrames = 0
     // 首次打开会话时，当前虚拟窗口内的 MarkdownView 会异步解析 Mermaid。
@@ -402,9 +422,20 @@ export function useChatConversation(options: {
     for (let i = 0; i < 180; i += 1) {
       await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
       await nextTick()
+      if (generation !== getViewGeneration() || !sessionSettling.value) return
       const el = messagesEl.value
-      const current = el ? `${el.scrollHeight}:${el.clientHeight}` : ''
-      const markdownPending = el ? hasPendingMessageMarkdown(el) : false
+      if (!el || !el.clientHeight) return
+      const needsCorrection = anchor && anchorIndex >= 0
+        ? list?.restoreScrollAnchor(anchorIndex, anchor.offset)
+        : el.scrollHeight - el.scrollTop - el.clientHeight > 2
+      if (needsCorrection) {
+        if (anchorIndex < 0) scrollToBottom()
+        previous = ''
+        stableFrames = 0
+        continue
+      }
+      const current = `${el.scrollHeight}:${el.clientHeight}:${el.scrollTop}`
+      const markdownPending = hasPendingMessageMarkdown(el)
       if (!markdownPending && current && current === previous) {
         stableFrames += 1
         if (stableFrames >= 2) return
@@ -464,10 +495,10 @@ export function useChatConversation(options: {
     onContentReset: options.onContentReset,
     onCaptureBaseScrollH: options.onCaptureBaseScrollH,
     scrollBottom,
-    waitForStableScrollLayout,
+    captureScrollAnchor: () => sessionSettling.value ? undefined : options.messageListRef.value?.captureScrollAnchor(),
+    restoreScrollPosition,
     waitForSessionSettlement: (id) => waitForSessionSettlement(sessionId, sessionSettling, id),
     shouldFollowBottom: () => stick.value,
-    setCachedHistoryVisible: (value) => { cachedHistoryVisible.value = value },
     setSessionSettling: (value: boolean) => { sessionSettling.value = value },
     onHistoryReset: () => historyPagination.reset(),
     onHistoryLoaded: page => historyPagination.reset(page),
@@ -591,7 +622,7 @@ export function useChatConversation(options: {
   })
 
   return {
-    messages, mkid, now, sessionSettling, cachedHistoryVisible,
+    messages, mkid, now, sessionSettling,
     historyState: historyPagination.state, loadOlderHistory: () => historyPagination.loadOlder(true),
     inputText, inputReferences, thinkingLabels, contextCompactingLabels, streaming, statusKind, statusTyped,
     isTypingText: computed(() => streaming.value && !statusKind.value),

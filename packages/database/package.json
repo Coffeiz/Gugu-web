@@ -1,0 +1,37 @@
+{
+  "name": "@gugu/database",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=26.13.0 <27" },
+  "exports": {
+    "./schema": "./dist/schema.js",
+    "./version": "./dist/version.js",
+    "./command": "./dist/shared/command.js",
+    "./error": "./dist/shared/error.js",
+    "./postgres": "./dist/postgres/migrate.js",
+    "./postgres/migrations/*": "./dist/postgres/migrations/*.js",
+    "./sqlite": "./dist/sqlite/migrate.js",
+    "./sqlite/driver": "./dist/sqlite/driver.js",
+    "./sqlite/validate": "./dist/sqlite/validate.js",
+    "./sqlite/interaction-prompts": "./dist/sqlite/interaction-prompts.js",
+    "./sqlite/interaction-actions": "./dist/sqlite/interaction-actions.js"
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "kysely": "0.29.8"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "13.2.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "26.6.6",
+    "@types/pg": "8.23.1",
+    "typescript": "6.0.3"
+  }
+}

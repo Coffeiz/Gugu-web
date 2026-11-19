@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { initializeSqlite, openSqliteRuntime } from '@gugu/core/data'
-import { createAgentToolRegistry } from '../../src/modules/agent-sessions/tools/agent-tool-registry.js'
-import { createWebScheduledAttachmentResources } from '../../src/modules/scheduled-tasks/send-file.js'
+import { createAgentToolRegistry } from '../../src/modules/agent/tools/registry.js'
+import { createWebScheduledAttachmentResources } from '../../src/modules/scheduled-tasks/delivery/files.js'
 
 test('send_file 实际 Host adapter 读取 owner 文件，阻断越界路径和失效 lease 暂存', async () => {
   const root = await mkdtemp(join(tmpdir(), 'gugu-agent-send-file-'))

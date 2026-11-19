@@ -1,6 +1,6 @@
-import type { PublicUserRecord } from './auth.js'
+import type { PublicUserRecord } from './session/token.js'
 import type { RateLimitHandler } from './rate-limit.js'
-import type { UserQuota } from './quota.js'
+import type { UserQuota } from './quota/routes.js'
 
 export interface UserAuthOptions {
   secret: string

@@ -73,6 +73,11 @@
           <span class="status-dot" aria-hidden="true" /><span class="popup-status-label">{{ presenceText }}</span>
         </span>
         <div class="btn-group">
+          <button v-if="canInterruptDetachedRun" type="button" class="popup-icon-btn"
+            :disabled="interruptPending" :title="t('chatUi.interruptRun')" :aria-label="t('chatUi.interruptRun')"
+            @click="onInterruptDetachedRun">
+            <Icon name="action.stop-fill" :size="14" />
+          </button>
           <button v-if="!expanded" class="popup-icon-btn" @click="onEnterExpanded" :title="t('chat.expand')" :aria-label="t('chat.expand')">
             <Icon name="action.expand" :size="13" />
           </button>
@@ -92,7 +97,6 @@
         :copied-id="copiedId" :voice-playing-id="voicePlayingId" :voice-bars="voiceBars"
         :expanded="expanded" :resizing="resizing" :status-kind="statusKind" :status-typed="statusTyped"
         :session-settling="sessionSettling"
-        :cached-history-visible="cachedHistoryVisible"
         :history-state="historyState" :on-load-history="onLoadHistory"
         @copy="onCopy" @toggle-voice="onToggleVoice"
         @open-file="onOpenFile" @download="onDownload" @action-click="onActionClick"
@@ -194,7 +198,6 @@ const props = defineProps<{
   historyState?: ChatHistoryState
   onLoadHistory?: () => void
   sessionSettling: boolean
-  cachedHistoryVisible: boolean
   // 排队条：生成中发出的消息在输入框上方排队，排水发送时才落入对话
   pendingQueue: QueuedMessage[]
   // 输入框
@@ -215,6 +218,9 @@ const props = defineProps<{
   onPaste: (e: ClipboardEvent) => void
   onSend: () => void
   onStopStreaming: () => void
+  canInterruptDetachedRun?: boolean
+  interruptPending?: boolean
+  onInterruptDetachedRun?: () => void
   onCopy: (msg: ChatMessage) => void
   onToggleVoice: (file: ChatFile) => void
   onOpenFile: (file: ChatFile) => void
@@ -462,7 +468,7 @@ defineExpose({
 :deep(.chat-messages) {
   flex: 1; overflow-y: auto; overflow-x: hidden; position: relative;
 }
-:deep(.chat-messages.is-session-settling:not(.is-cache-visible)) { visibility: hidden; }
+:deep(.chat-messages.is-session-settling) { visibility: hidden; }
 .chat-main.is-expanded :deep(.chat-messages .msg.ai .msg-bubble) { max-width: 90%; font-size: 14px; }
 .chat-main.is-expanded :deep(.chat-messages .msg-quoted) { max-width: 72%; font-size: 13.5px; }
 :deep(.msg-virtual-spacer) { position: relative; width: 100%; }

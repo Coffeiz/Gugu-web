@@ -3,7 +3,7 @@
        内的消息 DOM，其余用下面这段按测量/估算高度撑出来的占位空间代替，滚动条始终代表
        整个会话的真实长度。messagesEl 是真实可滚动容器，虚拟列表只管它内部挂多少 DOM。 -->
   <div class="chat-message-viewport">
-  <div class="chat-messages" :class="{ 'is-session-settling': sessionSettling, 'is-cache-visible': cachedHistoryVisible }" ref="messagesEl" @scroll.passive="updateScrollPosition" @pointerdown.capture="onSelectionPointerDown">
+  <div class="chat-messages" :class="{ 'is-session-settling': sessionSettling }" ref="messagesEl" @scroll.passive="updateScrollPosition" @pointerdown.capture="onSelectionPointerDown">
     <div v-if="historyState?.hasMore && nearHistoryTop && !sessionSettling" class="chat-history-status">
       <button type="button" :disabled="historyState.loading" @click="onLoadHistory?.()">
         {{ t(historyState.loading ? 'chatUi.loadingEarlier' : historyState.error ? 'chatUi.loadEarlierFailed' : 'chatUi.loadEarlier') }}
@@ -73,6 +73,7 @@
  * 通过 defineExpose 暴露 el 和 scrollToIndex，不把这些操作重新实现一遍。
  */
 import type { ChatHistoryState } from './composables/useChatHistoryPagination'
+import type { SessionScrollAnchor } from './composables/sessionScrollLayout'
 import { ref, computed, watch, watchEffect, nextTick, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { defaultRangeExtractor, useVirtualizer } from '@tanstack/vue-virtual'
@@ -96,7 +97,6 @@ const props = defineProps<{
   historyState?: ChatHistoryState
   onLoadHistory?: () => void
   sessionSettling: boolean
-  cachedHistoryVisible: boolean
 }>()
 
 defineEmits<{
@@ -272,8 +272,38 @@ watch(virtualTotalSize, async () => {
   updateScrollPosition()
 }, { flush: 'post' })
 
+function captureScrollAnchor(): SessionScrollAnchor | null {
+  const el = messagesEl.value
+  if (!el || !el.clientHeight || el.scrollHeight - el.scrollTop - el.clientHeight <= 2) return null
+  const row = virtualRows.value.find(({ start, end, index }) =>
+    end > el.scrollTop && start < el.scrollTop + el.clientHeight && props.messages[index]?._syncKey,
+  )
+  const messageKey = row && props.messages[row.index]?._syncKey
+  return row && messageKey ? { messageKey, offset: el.scrollTop - row.start } : null
+}
+
+function restoreScrollAnchor(index: number, offset: number): boolean {
+  const el = messagesEl.value
+  if (!el) return false
+  const row = virtualRows.value.find(item => item.index === index)
+  if (!row) {
+    virtualizer.value.scrollToIndex(index, { align: 'start' })
+    return true
+  }
+  // 消息更新后可能变短，滚动位置仍要留在锚点消息内。
+  const target = Math.min(
+    Math.max(0, row.start + Math.min(offset, Math.max(0, row.size - 1))),
+    Math.max(0, el.scrollHeight - el.clientHeight),
+  )
+  if (Math.abs(target - el.scrollTop) <= 1) return false
+  virtualizer.value.scrollToOffset(target)
+  return true
+}
+
 defineExpose({
   el: computed(() => messagesEl.value),
+  captureScrollAnchor,
+  restoreScrollAnchor,
   getVirtualRangeStart: () => virtualRows.value[0]?.index ?? 0,
   scrollToIndex: (idx: number, opts: Parameters<ReturnType<typeof useVirtualizer>['value']['scrollToIndex']>[1]) =>
     virtualizer.value.scrollToIndex(idx, opts),

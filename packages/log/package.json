@@ -1,0 +1,13 @@
+{
+  "name": "@gugu/log",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/event.js",
+    "./runtime": "./src/runtime.js",
+    "./file": "./src/file/write.js",
+    "./file/read": "./src/file/read.js"
+  },
+  "files": ["src"]
+}

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import type { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg'
-import { createPostgresFileUpdateOperations } from '../../src/modules/files/file-update-postgres.js'
+import { createPostgresFileUpdateOperations } from '../../src/modules/files/store.js'
 
 const owner = '11111111-1111-4111-8111-111111111111'
 const sourceKey = `${owner}/个人文件/笔记.md`
@@ -97,6 +97,7 @@ test('无法核实 COMMIT 结果时保留原路径和目标路径中的文件副
     else if (statement.startsWith('SELECT * FROM files')) rows = pending ? [{ ...pending }] : []
     else if (statement.startsWith('SELECT pg_advisory_xact_lock')) rows = [{}]
     else if (statement.startsWith('SELECT 1 FROM files')) rows = []
+    else if (statement.startsWith('SELECT p.name project_name')) rows = []
     else if (statement.startsWith('UPDATE files SET display_name=')) {
       assert.ok(pending)
       pending = { ...pending, display_name: values[3], ext: values[4], stage_name: values[5],

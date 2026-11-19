@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {isOwnedFileStorageKey} from '../../src/modules/files/file-owner.js'
+import {isOwnedFileStorageKey} from '../../src/modules/files/store.js'
 test('存储 key 限定本用户并兼容旧数据导入目录',()=>{
  const owner='11111111-1111-4111-8111-111111111111',hex=owner.replaceAll('-','')
  assert.equal(isOwnedFileStorageKey(owner,`${owner}/个人文件/a.txt`),true)

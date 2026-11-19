@@ -1,15 +1,17 @@
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, ref, shallowRef } from 'vue'
 import type { FolderMeta } from '@/stores/filesCache'
 
-export interface FolderNavigationOptions {
-  initial?: FolderMeta[]
+type FolderIdentity = { id: number | string }
+
+export interface FolderNavigationOptions<Folder extends FolderIdentity = FolderMeta> {
+  initial?: Folder[]
   onChange?: () => void
 }
 
 /** 文件浏览通用的目录栈与前进/后退历史，不负责加载内容或权限判断。 */
-export function useFolderNavigation(options: FolderNavigationOptions = {}) {
-  const folderStack = ref<FolderMeta[]>([...(options.initial ?? [])])
-  const history = ref<FolderMeta[][]>([[...folderStack.value]])
+export function useFolderNavigation<Folder extends FolderIdentity = FolderMeta>(options: FolderNavigationOptions<Folder> = {}) {
+  const folderStack = shallowRef<Folder[]>([...(options.initial ?? [])])
+  const history = shallowRef<Folder[][]>([[...folderStack.value]])
   const cursor = ref(0)
   let replaying = false
 
@@ -23,7 +25,7 @@ export function useFolderNavigation(options: FolderNavigationOptions = {}) {
     cursor.value = history.value.length - 1
   }
 
-  function enterFolder(folder: FolderMeta) {
+  function enterFolder(folder: Folder) {
     folderStack.value = [...folderStack.value, folder]
     pushHistory()
     options.onChange?.()
@@ -53,7 +55,7 @@ export function useFolderNavigation(options: FolderNavigationOptions = {}) {
     nextTick(() => { replaying = false })
   }
 
-  function pruneHistoryForFolders(folderIds: Iterable<number>) {
+  function pruneHistoryForFolders(folderIds: Iterable<Folder['id']>) {
     const ids = new Set(folderIds)
     const kept = history.value.filter(snapshot => !snapshot.some(folder => ids.has(folder.id)))
     history.value = kept.length ? kept : [[]]

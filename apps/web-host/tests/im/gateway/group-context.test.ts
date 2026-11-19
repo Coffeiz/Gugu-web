@@ -7,9 +7,9 @@ import test from 'node:test'
 import type { ImActor } from '@gugu/core/im/access'
 import type { SqlDataRuntime } from '@gugu/core/data'
 import type { GroupContextSearchRequest } from '@gugu/core/tools'
-import { createPostgresImGroupContextSearch, ImGroupContextError } from '../../../src/modules/im/gateway/group-context.js'
+import { createPostgresImGroupContextSearch, ImGroupContextError } from '../../../src/modules/im/gateway/agent/group.js'
 import { imMemoryMaintenanceScopeFileKey } from '../../../src/modules/admin/memory-apply.js'
-import { createAgentToolRegistry } from '../../../src/modules/agent-sessions/tools/agent-tool-registry.js'
+import { createAgentToolRegistry } from '../../../src/modules/agent/tools/registry.js'
 
 const owner = '00000000-0000-4000-8000-000000000097'
 const identity = { ownerId: owner, sessionId: '1', runId: 'synthetic-run' }

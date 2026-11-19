@@ -1,4 +1,5 @@
 // 将已固定的当前平台 Node 和生产依赖装配为自包含制品；不在用户启动时下载。
+import { build } from 'esbuild'
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import {
@@ -27,6 +28,7 @@ execFileSync(process.execPath, [join(core, 'scripts/build.mjs')], {
   cwd: root,
   stdio: 'inherit',
 })
+execFileSync(process.execPath, [pnpm, '--filter', '@gugu/gateway', 'build'], { cwd: root, stdio: 'inherit' })
 const { CORE_SCHEMA_VERSION } = await import(pathToFileURL(join(core, 'dist/contracts/desktop.js')).href)
 const resourceParent = join(desktop, 'resources'),
   target = join(resourceParent, 'core-sidecar')
@@ -91,6 +93,15 @@ try {
   cpSync(host, expanded, { recursive: true, dereference: true })
   rmSync(owned(host), { recursive: true, force: true })
   renameSync(expanded, host)
+  await build({
+    entryPoints: [join(desktop, 'src/gateway/telegram.ts')],
+    outfile: join(host, 'gateway', 'telegram.mjs'),
+    bundle: true,
+    platform: 'node',
+    target: 'node26',
+    format: 'esm',
+    external: ['@gugu/core/*'],
+  })
   cpSync(join(root, 'LICENSE'), join(host, 'LICENSE'))
   const installed = installedRuntime()
   const embeddedNode = join(stage, executable)

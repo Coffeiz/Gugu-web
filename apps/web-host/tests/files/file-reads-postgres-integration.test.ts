@@ -6,9 +6,9 @@ import path from 'node:path'
 import Fastify from 'fastify'
 import { Pool } from 'pg'
 import test from 'node:test'
-import { registerFileReadRoutes } from '../../src/modules/files/file-reads.js'
-import { createPostgresFileReadOperations } from '../../src/modules/files/file-reads-postgres.js'
-import { registerFileThumbnailRoute } from '../../src/modules/files/thumbnail.js'
+import { registerFileReadRoutes } from '../../src/modules/files/browse.js'
+import { createPostgresFileReadOperations } from '../../src/modules/files/browse.js'
+import { registerFileThumbnailRoute } from '../../src/modules/files/content.js'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
@@ -56,9 +56,7 @@ test('PostgreSQL 文件摘要、分类计数和存储快照按 owner 返回 Pyth
         (1,'${owner}','个人文件','TXT','personal',NULL,'${owner}/个人文件.txt',NULL,'',NULL,NULL,'512 B',512,'text/plain','2026-11-13T10:00:00Z',NULL,NULL,NULL,1),
         (2,'${owner}','项目文件','MD','project',NULL,'${owner}/项目文件.md',7,'阶段一',22,NULL,'768 B',768,'text/markdown','2026-11-13T11:00:00Z',NULL,NULL,NULL,2),
         (3,'${owner}','回收文件','TXT','personal',NULL,'${owner}/回收文件.txt',NULL,'',NULL,NULL,'256 B',256,'text/plain','2026-11-13T12:00:00Z',now(),NULL,NULL,1),
-        (4,'${other}','他人文件','TXT','personal',NULL,'${other}/他人文件.txt',NULL,'',NULL,NULL,'99 B',99,'text/plain','2026-11-13T13:00:00Z',NULL,NULL,NULL,1),
-        (5,'${owner}','合成图片','PNG','personal',NULL,'${owner}/thumbnail.png',NULL,'',NULL,NULL,'1 B',1,'image/png','2026-11-13T14:00:00Z',NULL,1,1,1),
-        (6,'${owner}','丢失图片','PNG','personal',NULL,'${owner}/missing.png',NULL,'',NULL,NULL,'1 B',1,'image/png','2026-11-13T15:00:00Z',NULL,1,1,1);
+        (4,'${other}','他人文件','TXT','personal',NULL,'${other}/他人文件.txt',NULL,'',NULL,NULL,'99 B',99,'text/plain','2026-11-13T13:00:00Z',NULL,NULL,NULL,1);
       INSERT INTO storage_quota_ledgers VALUES ('${owner}','file_library',1280);
     `)
     const image = Buffer.from(
@@ -112,6 +110,9 @@ test('PostgreSQL 文件摘要、分类计数和存储快照按 owner 返回 Pyth
     assert.equal(location.statusCode, 200, location.body)
     assert.deepEqual(location.json<{ folderPath: Array<{ name: string }> }>().folderPath.map((folder) => folder.name), ['项目目录'])
     assert.equal((await app.inject({ url: '/api/v1/files/library-counts' })).statusCode, 401)
+    await pool.query(`INSERT INTO files VALUES
+        (5,'${owner}','合成图片','PNG','personal',NULL,'${owner}/thumbnail.png',NULL,'',NULL,NULL,'1 B',1,'image/png','2026-11-13T14:00:00Z',NULL,1,1,1),
+        (6,'${owner}','丢失图片','PNG','personal',NULL,'${owner}/missing.png',NULL,'',NULL,NULL,'1 B',1,'image/png','2026-11-13T15:00:00Z',NULL,1,1,1)`)
     const fullThumbnail = await app.inject({
       url: '/api/v1/files/5/thumb?size=full',
       headers: { authorization: 'Bearer files-read-test' },

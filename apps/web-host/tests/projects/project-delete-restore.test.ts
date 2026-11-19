@@ -8,8 +8,8 @@ import { createProjectTrashService, ProjectTrashExpiredError } from '@gugu/core/
 import {
   createLocalProjectTrashStorage,
   createProjectTrashOriginalStorageKeyResolver,
-} from '../../src/modules/projects/persistence/project-trash-storage.js'
-import { registerProjectRoutes } from '../../src/modules/projects/routes/projects.js'
+} from '../../src/modules/projects/lifecycle/storage.js'
+import { registerProjectRoutes } from '../../src/modules/projects/routes.js'
 
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
 const otherOwnerId = 'ad0902a0-c899-44ee-b180-d54eb04e4604'

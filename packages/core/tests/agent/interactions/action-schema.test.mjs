@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import Database from 'better-sqlite3'
 import { expect, test } from 'vitest'
-import { SQLITE_INTERACTION_ACTIONS_SCHEMA as ddl, validateSqliteInteractionActions as validate } from '../../../src/agent/interactions/action-schema.ts'
+import { SQLITE_INTERACTION_ACTIONS_SCHEMA as ddl, validateSqliteInteractionActions as validate } from '@gugu/database/sqlite/interaction-actions'
 
 function createDb() {
   const db = new Database(':memory:')

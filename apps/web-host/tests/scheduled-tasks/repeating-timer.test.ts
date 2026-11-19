@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createRepeatingTimer, nextRepeatingFire } from '../../src/modules/scheduled-tasks/repeating-timer.js'
+import { createRepeatingTimer, nextRepeatingFire } from '../../src/modules/scheduled-tasks/schedule/repeat.js'
 type RepeatingSchedule = Parameters<typeof nextRepeatingFire>[0]
 
 const timerLimit = 2 ** 31 - 1

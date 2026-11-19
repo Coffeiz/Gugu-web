@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createGatewaySupervisor, GatewayConnectionCleanupError } from '../../../src/modules/im/gateway/supervisor.js';
-import type { GatewayBotSpec, GatewayClock } from '../../../src/modules/im/gateway/supervisor.js';
+import { createGatewaySupervisor, GatewayConnectionCleanupError } from '@gugu/gateway';
+import type { GatewayBotSpec, GatewayClock } from '@gugu/gateway';
 
 test('连接清理未知时保留旧归属，不启动替代消费者', async () => {
   let notify = () => {};

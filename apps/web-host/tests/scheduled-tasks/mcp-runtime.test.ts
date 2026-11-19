@@ -9,7 +9,7 @@ import { createNodeProviderTransport } from '@gugu/core/providers/node'
 import { createKyselyScheduledTaskExecutionReader } from '@gugu/core/scheduled-task-run-now-read'
 import { createMcpRuntime } from '../../src/modules/mcp/runtime.js'
 import { createMcpSkillToolDirectory } from '../../src/modules/mcp/skill-tool-directory.js'
-import { createWebScheduledTaskToolResources } from '../../src/modules/scheduled-tasks/agent-tools.js'
+import { createWebScheduledTaskToolResources } from '../../src/modules/scheduled-tasks/run/tools.js'
 
 const pgUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

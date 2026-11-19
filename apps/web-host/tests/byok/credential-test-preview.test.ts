@@ -3,8 +3,9 @@ import { createServer } from 'node:http'
 import Fastify from 'fastify'
 import { afterEach, test } from 'node:test'
 import type { ProviderHttpRequest } from '@gugu/core/providers'
-import { createCredentialTestPreview } from '@gugu/core/byok/credential-test-preview'
-import { createByokCredentialTestProbe, registerCredentialTestPreviewRoute } from '../../src/modules/byok/credential-test-preview.js'
+import { createCredentialTestPreview } from '../../src/modules/byok/checks/connection.js'
+import { createByokCredentialTestProbe } from '../../src/modules/byok/checks/connection.js'
+import { registerCredentialTestPreviewRoute } from '../../src/modules/byok/routes.js'
 
 const ownerId = '00000000-0000-4000-8000-000000000141'
 const apps: Array<ReturnType<typeof Fastify>> = []

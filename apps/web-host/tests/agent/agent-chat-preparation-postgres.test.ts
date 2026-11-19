@@ -2,9 +2,9 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { Pool } from 'pg'
-import { registerAgentRunStartupLocked } from '../../src/modules/agent-sessions/persistence/agent-run-startup-postgres.js'
-import { createPostgresAgentChatPreparation, createPostgresWebChatSession, type AgentChatPreparationPorts } from '../../src/modules/agent-sessions/persistence/agent-chat-preparation.js'
-import { enqueueAgentRunLocked } from '../../src/modules/agent-sessions/persistence/agent-run-dispatch-postgres.js'
+import { registerAgentRunStartupLocked } from '../../src/modules/agent/run/start.js'
+import { createPostgresAgentChatPreparation, createPostgresWebChatSession, type AgentChatPreparationPorts } from '../../src/modules/agent/chat/prepare.js'
+import { decryptAgentDispatchInput, enqueueAgentRunLocked } from '../../src/modules/agent/run/dispatch.js'
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
 test('隔离 PG 新会话和问候先于用户消息提交，附件或队列失败回滚所有数据', { skip: !url && '需要隔离 PostgreSQL' }, async () => {
@@ -63,8 +63,20 @@ test('隔离 PG 新会话和问候先于用户消息提交，附件或队列失�
     assert.equal(Number((await pool.query('SELECT count(*) FROM conversation_messages')).rows[0].count), 3)
     assert.equal(Number((await pool.query('SELECT count(*) FROM agent_run_dispatch')).rows[0].count), 0)
     fail = ''
-    const admitted = await prepare(owner, { session_id: result.sessionId, message: '持久入队' }, 'dispatch-success', { mode: 'dispatch', origin: null, accessVersion: 'a'.repeat(64), ttlSeconds: 60 })
+    const model = { modelIdentity: 'gugu-model-v1.synthetic.payload', accessScopeHash: 'b'.repeat(64) }
+    const admitted = await prepare(owner, { session_id: result.sessionId, message: '持久入队', credential_id: 12 }, 'dispatch-success', {
+      mode: 'dispatch', origin: null, accessVersion: 'a'.repeat(64), ttlSeconds: 60,
+      async pin(identity, credentialId) {
+        assert.equal(identity.runId, 'dispatch-success')
+        assert.equal(credentialId, 12)
+        return { ...model, accessVersion: 'c'.repeat(64) }
+      },
+    })
     assert.ok(admitted.userMessageId)
-    assert.equal((await pool.query('SELECT state FROM agent_run_dispatch')).rows[0].state, 'selected')
+    const { state, nonce, payload } = (await pool.query('SELECT state,nonce,payload FROM agent_run_dispatch')).rows[0]
+    assert.equal(state, 'selected')
+    const dispatch = decryptAgentDispatchInput('synthetic-secret', { ownerId: owner, sessionId: String(result.sessionId), runId: 'dispatch-success' }, nonce, payload)
+    assert.equal(dispatch.accessVersion, 'c'.repeat(64))
+    assert.deepEqual(dispatch.source === 'web' && dispatch.model, model)
   } finally { await pool.end(); await admin.query(`DROP SCHEMA "${schema}" CASCADE`); await admin.end() }
 })

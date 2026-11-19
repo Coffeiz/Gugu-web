@@ -146,7 +146,7 @@
   "apps/web-host/tests/files/undo-retention-postgres.test.ts": {
     "domain": "files",
     "layer": "L2",
-    "owner": "apps/web-host/src/maintenance/undo-retention.ts + packages/core/src/undo/state-machine.ts",
+    "owner": "apps/web-host/src/modules/undo/retention.ts + packages/core/src/undo/state-machine.ts",
     "productionEntry": "apps/web-host/src/main.ts → Undo 保留 Worker → PostgreSQL 与 Local artifact storage",
     "keyBehavior": "清理到期和 redo 分支正文，回收历史错位操作目录；存储失败保留引用并允许重试",
     "ci": "node-webui"

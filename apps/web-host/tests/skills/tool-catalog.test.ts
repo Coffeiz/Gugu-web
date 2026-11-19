@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createSkillToolCatalog } from '../../src/modules/skills/tool-catalog.js'
+import { createSkillToolCatalog } from '../../src/modules/skills/tools.js'
 
 test('Skill 工具目录裁剪长描述并排除技能管理和链接按钮工具', async () => {
   const registry = {

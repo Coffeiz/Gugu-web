@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, rm, unlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, realpath, mkdir, rm, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import type { Pool } from 'pg'
-import { createConfiguredWebAgentProviderBinding } from '../../src/modules/agent/model-config/configured-web-provider-binding.js'
+import { createConfiguredWebAgentProviderBinding } from '../../src/modules/agent/llm/configured.js'
 import { DEFAULT_AGENT_COMPACTION_INSTRUCTION } from '@gugu/core/agent'
 
 function pool(): Pick<Pool, 'connect'> {
@@ -13,7 +13,7 @@ function pool(): Pick<Pool, 'connect'> {
 }
 
 test('configured Web provider derives an opaque scope from synthetic Host config and prompt files', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'configured-web-provider-'))
+  const directory = await mkdtemp(join(await realpath(tmpdir()), 'configured-web-provider-'))
   const promptRoot = join(directory, 'prompts')
   const configPath = join(directory, 'missing-config.override.json')
   const identity = { ownerId: 'synthetic-owner', sessionId: '23', runId: 'synthetic-run' }

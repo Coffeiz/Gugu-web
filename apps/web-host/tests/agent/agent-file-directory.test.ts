@@ -3,10 +3,10 @@ import { test } from 'node:test'
 import { createToolRegistry, createListDirectoryTool } from '@gugu/core/tools'
 import type { RunIdentity } from '@gugu/core/agent'
 import type { Pool } from 'pg'
-import { createWebAgentFileDirectoryPort } from '../../src/modules/agent-sessions/tools/agent-file-directory.js'
-import type { AgentDispatchLease } from '../../src/modules/agent-sessions/persistence/agent-run-dispatch-postgres.js'
-import type { FileBrowserOperations } from '../../src/modules/files/browser.js'
-import { createPostgresFileBrowserOperations } from '../../src/modules/files/file-browser-postgres.js'
+import { createWebAgentFileDirectoryPort } from '../../src/modules/agent/tools/files/directory.js'
+import type { AgentDispatchLease } from '../../src/modules/agent/run/dispatch.js'
+import type { FileBrowserOperations } from '../../src/modules/files/browse.js'
+import { createPostgresFileBrowserOperations } from '../../src/modules/files/browse.js'
 
 const identity: RunIdentity = { ownerId: 'owner-test', sessionId: 'session-test', runId: 'run-test' }
 const lease: AgentDispatchLease = {

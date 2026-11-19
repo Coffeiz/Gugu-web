@@ -6,7 +6,7 @@ import { createProjectListing, createProjectGetter, createProjectFileCountListin
 import { createPostgresRuntime } from '@gugu/core/data'
 import { createKyselyProjectFileCountReader } from '@gugu/core/project-read-data'
 import { createApp } from '../../src/app.js'
-import { createProjectListing as hostListing, createProjectGetter as hostGetter, createProjectFileCountListing as hostCounts } from '../../src/modules/projects/persistence/projects.js'
+import { createProjectListing as hostListing, createProjectGetter as hostGetter, createProjectFileCountListing as hostCounts } from '../../src/modules/projects/store.js'
 import { signedUserToken } from '../helpers/auth.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL

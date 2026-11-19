@@ -23,8 +23,9 @@ export interface ShellPolicyDecision {
 }
 
 /** 事实由可信 Host 在每次执行时读取；此函数不授予执行权限。 */
-export function evaluateSandboxShell(command: string, facts: ShellPolicyFacts): ShellPolicyDecision {
-  const risk = classifyShellCommandRisk(command)
+export function evaluateSandboxShell(command: string, facts: ShellPolicyFacts, options?: { isolatedWorkspaceWrite?: boolean }): ShellPolicyDecision {
+  // 仅可信 Host 验证过普通写入语法、且由执行器限制写挂载时，才能传入此标记。
+  const risk = options?.isolatedWorkspaceWrite ? 'write' : classifyShellCommandRisk(command)
   const deny = (reason: string): ShellPolicyDecision => ({ allowed: false, reason, risk, needsConfirmation: false, fullUserSandboxWrite: false })
   if (!facts.adminEnabled) return deny('管理员未开启 Shell 工具')
   if (!facts.sandboxEnabled) return deny('Shell 沙盒未开启')

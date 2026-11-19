@@ -132,7 +132,9 @@ watch(() => [props.show, props.file?.id, accountBoundaryEpoch.value], ([show]) =
       const location = await filesApi.location(fileId)
       if (sequence !== detailLoadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
       detailFile.value = location.file as Partial<FileMeta>
-      folderNames.value = location.folderPath.map(folder => folder.name)
+      folderNames.value = location.pathFile
+        ? location.pathFile.relativePath.split('/').slice(0, -1)
+        : location.folderPath.map(folder => folder.name)
       const workspaceDirectoryId = detailFile.value.workspaceDirectoryId
       if (workspaceDirectoryId != null) {
         const directories = await workspaceDirectoriesApi.list()

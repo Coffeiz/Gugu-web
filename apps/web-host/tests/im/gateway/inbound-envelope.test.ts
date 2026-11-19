@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createImInboundEnvelope } from '../../../src/modules/im/gateway/inbound-envelope.js'
-import { createNodeImInbox } from '../../../src/modules/im/gateway/inbox.js'
+import { createImInboundEnvelope } from '../../../src/modules/im/gateway/inbound/envelope.js'
+import { createNodeImInbox } from '../../../src/modules/im/gateway/inbound/inbox.js'
 
 const binding = { platform: 'wechat' as const, botId: '7', ownerId: 'owner-a' }
 const payload = { platform: 'wechat', bot_id: '7', channel_id: '7', owner_user_id: 'owner-a', chat_type: 'c2c',

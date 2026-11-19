@@ -4,7 +4,7 @@ name: 联网搜索
 description_short: 用户要查资料、新闻、官网事实或核对图片来源时使用。
 description_long: "根据任务选择 Provider 网页搜索、深度研究、已有图片以图搜图或网页阅读。"
 category: search
-related_tools: web_search, similar_image_search, read_file, deep_research, http_get
+related_tools: web_search, similar_image_search, deep_research, http_get
 emoji: 🔎
 ---
 
@@ -18,7 +18,6 @@ emoji: 🔎
 | `deep_research` | 多来源研究、总结、比较和引用；使用管理员配置的研究 Provider，可能有每日额度 |
 | `similar_image_search` | 用已有图片找相似候选，不用于文字关键词搜图 |
 | `http_get` | 阅读已找到的单个网页 |
-| `read_file` | 查看本地文件或选中的图片候选 |
 
 ## 选择路径
 

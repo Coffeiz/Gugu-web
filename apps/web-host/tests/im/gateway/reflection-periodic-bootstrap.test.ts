@@ -6,7 +6,7 @@ import {test} from 'node:test'
 import type {ProviderTransport} from '@gugu/core/providers'
 import {createNodeImHostRuntime} from '../../../src/modules/im/gateway/bootstrap.js'
 import {createRedisStreamCommands} from '../../../src/adapters/cache/redis-stream-commands.js'
-import type {ImReflectionService} from '../../../src/modules/im/gateway/reflection-contracts.js'
+import type {ImReflectionService} from '../../../src/modules/im/gateway/memory/contracts.js'
 import {createImProductionFixture} from './production.fixtures.js'
 
 const databaseUrl=process.env.GUGU_IM_GATEWAY_TEST_DATABASE_URL,redisUrl=process.env.GUGU_IM_BOOTSTRAP_TEST_REDIS_URL,python=process.env.GUGU_IM_FIXTURE_PYTHON

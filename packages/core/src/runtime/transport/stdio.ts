@@ -31,7 +31,6 @@ async function main(): Promise<number> {
   try {
     runtime = await (existsSync(database)
       ? LocalRuntime.open(database, {
-          allowLegacySchema: protocol === 1,
           exclusive: true,
         })
       : LocalRuntime.initialize(database, { exclusive: true }))

@@ -3,7 +3,7 @@ import test from 'node:test'
 import {randomUUID} from 'node:crypto'
 import {Pool} from 'pg'
 import Fastify from 'fastify'
-import {registerUserBotUnbindRoute,createPostgresUserBotUnbinder} from '../../src/modules/im/user-bot-unbind.js'
+import {registerUserBotUnbindRoute,createPostgresUserBotUnbinder} from '../../src/modules/im/connect/unbind.js'
 test('解绑仅当前owner的QQ身份，保留凭据、拒绝越权并在提交后通知',async()=>{
  const connectionString=process.env.GUGU_WEBUI_TEST_DATABASE_URL;assert.ok(connectionString)
  const schema=`bot_unbind_${randomUUID().replaceAll('-','')}`,admin=new Pool({connectionString});await admin.query(`CREATE SCHEMA "${schema}"`)

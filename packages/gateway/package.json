@@ -1,0 +1,15 @@
+{
+  "name": "@gugu/gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=26.13.0 <27" },
+  "exports": { ".": "./dist/index.js", "./telegram": "./dist/telegram/index.js" },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": { "@gugu/core": "workspace:*" },
+  "devDependencies": { "@types/node": "26.6.6", "typescript": "6.0.3" }
+}

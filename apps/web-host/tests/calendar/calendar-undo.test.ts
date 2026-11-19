@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { PoolClient } from 'pg'
-import { applyCalendarUndo } from '../../src/modules/undo/persistence/calendar.js'
+import { applyCalendarUndo } from '../../src/modules/undo/adapters/calendar.js'
 
 test('事件及提醒先完成版本检查，再恢复字段并返回提交后事件', async () => {
   const calls: string[] = []

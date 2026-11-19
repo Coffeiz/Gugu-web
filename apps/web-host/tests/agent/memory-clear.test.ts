@@ -11,7 +11,7 @@ import { buildDocuments } from '../../../../packages/core/src/agent/rag/adapters
 import { createSqlRagPersistentIndexReader } from '../../../../packages/core/src/agent/rag/persistent-index.js'
 import { createSqlRagPersistentIndexWriter } from '../../../../packages/core/src/agent/rag/persistent-writer.js'
 import { createSqlRagRebuildWorker, enqueueAgentRagRebuild, invalidateAgentMemoryRag } from '../../../../packages/core/src/agent/rag/rebuild-worker.js'
-import { registerMemoryClearRoute } from '../../src/modules/agent/memory-clear.js'
+import { registerMemoryClearRoute } from '../../src/modules/agent/memory.js'
 
 test('清除记忆只删除认证 owner 的 .agent 树并递增上下文版本', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'gugu-memory-clear-'))

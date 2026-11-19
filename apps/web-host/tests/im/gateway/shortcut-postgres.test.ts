@@ -1,16 +1,16 @@
+import { imGatewaySql } from '@gugu/database/postgres/migrations/0013_im_gateway'
 import assert from 'node:assert/strict'
 import { createHmac, randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 import type { Pool } from 'pg'
 import { stableJson,createAgentRunner,type AgentRunnerPorts,type RunEvent,type CancellationPort } from '@gugu/core/agent'
 import type { ImPreflightScope } from '@gugu/core/im/inbound-preflight'
 import { withPostgresTransaction } from '../../../src/adapters/database/postgres-transaction.js'
-import { enqueueAgentRunLocked,createPostgresAgentDispatch,type AgentDispatchLease } from '../../../src/modules/agent-sessions/persistence/agent-run-dispatch-postgres.js'
-import { createPostgresAgentRunStore } from '../../../src/modules/agent-sessions/persistence/agent-run-store-postgres.js'
-import { createPostgresAgentRunLeasePort } from '../../../src/modules/agent-sessions/persistence/agent-run-lease-postgres.js'
-import { lockAgentRunSession } from '../../../src/modules/agent-sessions/persistence/agent-run-startup-postgres.js'
-import { createPostgresImShortcut } from '../../../src/modules/im/gateway/shortcut-postgres.js'
+import { enqueueAgentRunLocked,createPostgresAgentDispatch,type AgentDispatchLease } from '../../../src/modules/agent/run/dispatch.js'
+import { createPostgresAgentRunStore } from '../../../src/modules/agent/run/store.js'
+import { createPostgresAgentRunLeasePort } from '../../../src/modules/agent/run/lease.js'
+import { lockAgentRunSession } from '../../../src/modules/agent/run/start.js'
+import { createPostgresImShortcut } from '../../../src/modules/im/gateway/attention/receipts.js'
 
 const owner = '00000000-0000-4000-8000-000000000071', secretKey = 'synthetic-shortcut-secret'
 const scope: ImPreflightScope = { ownerId:owner,platform:'qq',botId:'71',chatType:'group',chatId:'synthetic-room',platformUserId:'synthetic-member',eventId:'control-1',admissionCutoff:'2090-01-01T00:00:00Z' }
@@ -50,7 +50,7 @@ test('隔离PostgreSQL：冻结原Run、完整批次发起者、实时撤权与�
       CREATE TABLE agent_run_dispatch(sequence bigserial PRIMARY KEY,user_id uuid,session_id integer,run_id varchar(128),state text,message_id integer,nonce bytea,payload bytea,request_expires_at timestamptz,token text,fence bigint DEFAULT 0,lease_expires_at timestamptz,cancel_requested boolean DEFAULT false,blocked_reason text,UNIQUE(user_id,session_id,run_id));
       CREATE UNIQUE INDEX selected ON agent_run_dispatch(user_id,session_id) WHERE state='selected';
       CREATE TABLE gugu_im_inbound_receipts(user_id uuid,session_id integer,message_id integer,run_id text,platform text,bot_id text,chat_type text,state text,scope_hash text,event_hash text);`)
-    await pool.query(await readFile(new URL('../../../src/modules/im/gateway/shortcut-schema.sql',import.meta.url),'utf8'))
+    await pool.query(imGatewaySql.shortcut)
     async function reset() {
       await pool.query(`TRUNCATE gugu_im_shortcut_controls,gugu_im_inbound_receipts,agent_run_checkpoints,agent_run_leases,agent_run_events,agent_run_interaction_receipts,agent_run_startups,agent_run_dispatch,conversation_messages,conversation_sessions,user_bots,users CASCADE`)
       await pool.query(`INSERT INTO users VALUES($1,true,'active');`,[owner])
@@ -186,9 +186,9 @@ test('隔离PostgreSQL：冻结原Run、完整批次发起者、实时撤权与�
       assert.equal(await dispatch.claim(owner,'1'),null,'普通waiting不能重复恢复')
       const control=createPostgresImShortcut({pool,secretKey,supportedPlatforms:()=>['qq'],cancellation,wake(){},diagnose(){}})
       const read=await control.read(scope);assert.equal(read.state,'waiting_confirm')
-      const { createImShortcutControls } = await import('../../../src/modules/im/gateway/shortcut-controls.js')
+      const { createImShortcutControls } = await import('../../../src/modules/im/gateway/attention/shortcuts.js')
       const { createImInboundPreflight } = await import('@gugu/core/im/inbound-preflight')
-      const { createPostgresImAccess } = await import('../../../src/modules/im/gateway/access-postgres.js')
+      const { createPostgresImAccess } = await import('../../../src/modules/im/gateway/inbound/access.js')
       const access=createPostgresImAccess({query:(query,args)=>pool.query(query,args),supportedPlatforms:()=>['qq']})
       const replies:string[]=[]
       const inbound = createImInboundPreflight({ ...createImShortcutControls({state:control,diagnose(){}}),

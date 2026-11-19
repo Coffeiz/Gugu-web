@@ -11,7 +11,7 @@ import { createPosixConfigFileLock } from '../../adapters/config/posix-config-lo
 
 
 
-import { normalizeMxcEgressProxyUrl } from '../terminals/egress-proxy-url.js'
+import { normalizeMxcEgressProxyUrl } from '../terminals/sandbox/proxy.js'
 
 
 

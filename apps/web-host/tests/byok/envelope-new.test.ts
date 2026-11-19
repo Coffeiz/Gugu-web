@@ -4,7 +4,7 @@ import {execFileSync} from 'node:child_process'
 import {mkdtemp,rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
-import {createByokEnvelope,createConfiguredByokEnvelope,readConfiguredByokMasterKeys,resolveByokKeyFile} from '../../src/adapters/security/byok-envelope.js'
+import { createByokEnvelope, createConfiguredByokEnvelope, readConfiguredByokMasterKeys, resolveByokKeyFile } from '../../src/modules/byok/crypto.js'
 
 test('隔离主密钥跨语言加解密、版本轮换和并发首次创建',{skip:!process.env.GUGU_CORE_GOLDEN_PYTHON&&'需要隔离 Python'},async()=>{
  const dir=await mkdtemp(join(tmpdir(),'byok-test-'))

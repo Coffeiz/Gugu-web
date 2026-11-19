@@ -1,3 +1,4 @@
+import { byokBindings } from '@gugu/database/postgres/migrations/0021_byok_bindings'
 import assert from 'node:assert/strict'
 import {execFileSync} from 'node:child_process'
 import {randomUUID} from 'node:crypto'
@@ -24,6 +25,7 @@ test('生产入口创建的凭据由正式 PG 模型持久化并由 Python 解�
   const env={...process.env,BYOK_TEST_PG:databaseUrl!.replace(/^postgresql:/,'postgresql+asyncpg:'),BYOK_TEST_SCHEMA:schema,CREDENTIALS_MASTER_KEY:master,CREDENTIALS_MASTER_KEY_FILE:join(root,'master'),GUGU_ENV_FILE:'/dev/null',GUGU_CONFIG_OVERRIDE_FILE:join(root,'config.json'),PYTHONPATH:'.:../compat/core-python/src'}
   await writeFile(env.GUGU_CONFIG_OVERRIDE_FILE,'{}')
   execFileSync(python!,['../apps/web-host/tests/byok/fixtures/create_python.py'],{cwd:'../../backend',env,encoding:'utf8',timeout:60000})
+  await byokBindings.apply(pool)
   const providerRequests:string[]=[],providerBodies:Record<string,unknown>[]=[]
   providerServer=createHttpServer((request,response)=>{
    const chunks:Buffer[]=[]

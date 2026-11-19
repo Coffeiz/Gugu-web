@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
-import { createNodeImInbox, NODE_IM_INBOUND_STREAM, nodeImAttentionKeys, NodeImInboxError } from '../../../src/modules/im/gateway/inbox.js'
-import type { NodeImBotBinding } from '../../../src/modules/im/gateway/inbox.js'
+import { createNodeImInbox, NODE_IM_INBOUND_STREAM, nodeImAttentionKeys, NodeImInboxError } from '../../../src/modules/im/gateway/inbound/inbox.js'
+import type { NodeImBotBinding } from '../../../src/modules/im/gateway/inbound/inbox.js'
 
 const binding: NodeImBotBinding = { platform: 'qq', botId: '7', ownerId: 'owner-synthetic' }
 const payload = { platform: 'qq', channel_id: '7', owner_user_id: 'owner-synthetic', chat_type: 'group', chat_id: 'group-synthetic', platform_user_id: 'sender-synthetic', message_id: 'event-synthetic', text: '合成正文' }

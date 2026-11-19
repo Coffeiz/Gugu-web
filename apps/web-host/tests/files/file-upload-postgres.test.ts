@@ -6,10 +6,10 @@ import path from 'node:path'
 import { Pool } from 'pg'
 import test from 'node:test'
 import { createPostgresRuntime, tablesSql } from '@gugu/core/data'
-import { createPostgresFileUploadOperations } from '../../src/modules/files/file-upload-postgres.js'
-import { createWebAgentDownloadTool } from '../../src/modules/agent-sessions/tools/agent-web-download.js'
-import { createWebAgentFileCreatePort } from '../../src/modules/agent-sessions/tools/agent-file-create.js'
-import { createAuthorizedWebAgentProductionRagRunPorts } from '../../src/modules/agent-sessions/tools/agent-rag-production-ports.js'
+import { createPostgresFileUploadOperations } from '../../src/modules/files/upload.js'
+import { createWebAgentDownloadTool } from '../../src/modules/agent/tools/files/download.js'
+import { createWebAgentFileCreatePort } from '../../src/modules/agent/tools/files/create.js'
+import { createAuthorizedWebAgentProductionRagRunPorts } from '../../src/modules/agent/rag/production.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '11111111-1111-4111-8111-111111111111'
@@ -160,6 +160,7 @@ test('PostgreSQL Local 上传创建文件并覆盖时同步更新物理正文、
     await operations.store(ownerId,{...upload,input:{...input,onConflict:'overwrite',overwriteFileId:imported.rows[0]!.id},originalName:'导入.txt'},{idempotencyKey:null,undoContextId:null,clientId:null})
     assert.equal(await readFile(importedPath,'utf8'),'new contents!')
 
+    await pool.query(tablesSql('postgres').undo)
     await pool.query(`${tablesSql('postgres').receipts};
       CREATE TABLE conversation_sessions(id integer PRIMARY KEY,user_id uuid,active_run_id text,workspace_id integer);
       CREATE TABLE workspaces(id serial PRIMARY KEY,user_id uuid,name text,kind text,folder_id integer,project_id integer,directory_id integer,enabled boolean DEFAULT true);
@@ -311,7 +312,7 @@ test('PostgreSQL Local 上传创建文件并覆盖时同步更新物理正文、
     assert.match(JSON.stringify(moved.value), /文件落点已变化/u)
     await assert.rejects(readFile(path.join(root, ownerId, 'workspace', '合成绑定目录', 'rebound.txt')))
     await assert.rejects(readFile(path.join(root, ownerId, 'workspace', '合成默认目录', 'rebound.txt')))
-    assert.equal((await pool.query('SELECT count(*)::int AS count FROM core_operation_receipts')).rows[0].count, 7)
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM core_operation_receipts')).rows[0].count, 8)
     assert.equal(requests, 12)
     assert.equal(released, requests)
 
@@ -342,7 +343,7 @@ test('PostgreSQL Local 上传创建文件并覆盖时同步更新物理正文、
     assert.ok(retainedDownload)
     assert.equal(await readFile(path.join(path.dirname(destination), retainedDownload, 'content'), 'utf8'), 'download body')
     assert.equal(await readFile(path.join(path.dirname(destination), '等待核对.txt'), 'utf8'), 'download body')
-    assert.equal((await pool.query('SELECT count(*)::int AS count FROM core_operation_receipts')).rows[0].count, 7)
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM core_operation_receipts')).rows[0].count, 8)
     assert.equal((await pool.query("SELECT count(*)::int AS count FROM storage_quota_events WHERE operation='web_download'")).rows[0].count, 7)
     assert.equal(rollbackPublications, 0)
   } finally {

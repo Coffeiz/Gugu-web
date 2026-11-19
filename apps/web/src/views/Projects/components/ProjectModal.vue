@@ -6,7 +6,7 @@
   >
         <!-- 悬浮操作按钮：文件多选模式下让位给 .pm-selection-bar（同在右下角，多选栏内容多时会重叠，
              且两边都有删除按钮离太近容易误触），多选栏自己有取消/删除，先隐藏这组项目级按钮 -->
-        <div v-if="!pmInSelectionMode" class="float-actions">
+        <div v-if="!fileSelectionActive" class="float-actions">
           <button class="save-float-btn" @click="closeProjectModal" :title="`${t('common.actions.save')}并${t('common.actions.close')}`">
             <Icon name="status.success" :size="14" />
           </button>
@@ -66,133 +66,57 @@
           </div><!-- /left-content -->
         </div>
 
-        <ProjectFilesPanel v-if="!desktop" :context="filePanelContext" />
-        <div v-else class="desktop-project-files panel-right">
+        <ProjectDiskFiles v-if="!desktop && project" :key="project.id"
+          :project-id="project.id" :workspace-available="workspaceAvailable"
+          :workspace-exists="Boolean(projectWorkspace)" :stages-expanded="stagesExpanded"
+          @workspace="toggleProjectWorkspace" @close="closeProjectModal" @toggle-stages="togglePmStages"
+          @selection-change="fileSelectionActive = $event" />
+        <div v-else-if="desktop" class="desktop-project-files panel-right">
           <p>{{ t('projects.desktopFilesUnavailable') }}</p>
         </div>
   </ProjectModalShell>
 
-  <ArchiveOperationDialog
-    :show="pmArchiveDialogOpen"
-    teleport-to="body"
-    :mode="pmArchiveMode"
-    :initial-name="pmArchiveInitialName"
-    :busy="pmArchiveBusy"
-    :error="pmArchiveError"
-    :success="pmArchiveSuccess"
-    @close="closePmArchiveDialog"
-    @submit="submitPmArchive"
-  />
-
-  <!-- 右键菜单 -->
-  <FileBrowserContextMenu :show="pmCtx.visible" :x="pmCtx.x" :y="pmCtx.y" @close="pmCtx.visible = false">
-    <FileBrowserContextMenuContent
-      :type="pmCtx.type"
-      :mod-key="modKey"
-      :folder-target-valid="true"
-      :can-copy-folder="false"
-      :delete-separator="true"
-      :can-paste="pmCbStore.hasContent()"
-      :can-extract-archive="pmCanExtractContextArchive"
-      :can-compress-selection="pmCanCompressContextSelection"
-      @action="handlePmCtxMenuAction"
-    />
-  </FileBrowserContextMenu>
-
-  <!-- 文件详细信息弹窗 -->
-  <FileInfoPopup
-    :show="pmInfoPopup.show"
-    :file="pmInfoPopup.file ?? undefined"
-    :x="pmInfoPopup.x"
-    :y="pmInfoPopup.y"
-    @close="pmInfoPopup.show = false"
-  />
-
-  <!-- 上传同名冲突确认 -->
-  <UploadConflictDialog ref="conflictDialogRef" />
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, toRef, onUnmounted, type PropType } from 'vue'
-import { isDesktopRenderer } from '@/desktop/bridge'
+import { ref, computed, watch, toRef, nextTick, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { runtime } from '@/interaction/runtime'
-import { useRuntimeAction } from '@/interaction/runtime/vue'
-import {
-  fileObjectId,
-  browserSurfaceId as makeBrowserSurfaceId,
-} from '@/interaction/runtime/adapters/file/fileRuntimeAdapter'
+import { isDesktopRenderer } from '@/desktop/bridge'
 import { useProjectStore } from '@/stores/projects'
-import { PROJECT_COLOR_PRESETS, extractProjectAccent } from '@/utils/projectColors'
-import { useFilesCacheStore, type FileMeta, type FolderMeta } from '@/stores/filesCache'
-import type { Project } from '@/types/project'
-import { thumbLoadedIds } from '@/composables/shared/useThumbCache'
-import { isImageExt as isPmImageExt, fileIconColor } from '@/utils/fileTypes'
-import { useSorting } from '@/composables/shared/useSorting'
-import ProjectModalShell from '@/views/Projects/components/ProjectModalShell.vue'
-import UploadConflictDialog, { type ConflictItem, type ConflictDecision } from '@/components/common/overlays/UploadConflictDialog.vue'
-import { usePreviewStore, isPreviewable } from '@/stores/preview'
-import Icon from '@/components/common/icons/Icon.vue'
-import FileInfoPopup from '@/components/common/file-browser/FileInfoPopup.vue'
-import FileBrowserContextMenu from '@/components/common/file-browser/FileBrowserContextMenu.vue'
-import FileBrowserContextMenuContent from '@/components/common/file-browser/FileBrowserContextMenuContent.vue'
-import ProjectInfoPanel from '@/views/Projects/components/ProjectInfoPanel.vue'
-import ProjectStagesPanel from '@/views/Projects/components/ProjectStagesPanel.vue'
-import ProjectFilesPanel from '@/views/Projects/components/ProjectFilesPanel.vue'
-import ArchiveOperationDialog from '@/views/Files/components/ArchiveOperationDialog.vue'
-import { useClipboardStore } from '@/stores/clipboard'
 import { usePreferencesStore } from '@/stores/preferences'
 import { useUiStore } from '@/stores/ui'
+import { PROJECT_COLOR_PRESETS } from '@/utils/projectColors'
+import type { Project } from '@/types/project'
+import ProjectModalShell from '@/views/Projects/components/ProjectModalShell.vue'
+import ProjectInfoPanel from '@/views/Projects/components/ProjectInfoPanel.vue'
+import ProjectStagesPanel from '@/views/Projects/components/ProjectStagesPanel.vue'
+import ProjectDiskFiles from '@/views/Projects/components/ProjectDiskFiles.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import { workspacesApi } from '@/services/api'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
-import { showAppError } from '@/composables/core/useAppToast'
-import { useFileSelection } from '@/composables/files/useFileSelection'
-import { useProjectFileWorkspace } from '@/composables/files/useProjectFileWorkspace'
-import { useFileActions } from '@/composables/files/useFileActions'
 import { useProjectDraft } from '@/composables/projects/useProjectDraft'
 import { useProjectStages } from '@/composables/projects/useProjectStages'
 import { projectProgress } from '@/utils/projectProgress'
 import { calculateStageProgress } from '@/composables/projects/useProjectProgress'
 import { useProjectModalActions } from '@/composables/projects/useProjectModalActions'
-import { useProjectFileMutations } from '@/composables/files/useProjectFileMutations'
-import { useProjectFileUpload } from '@/composables/files/useProjectFileUpload'
-import { useFileArchiveActions } from '@/composables/files/useFileArchiveActions'
-import { canCompressArchiveContext, canExtractArchiveContext, findSelectedExtractableArchive, isExtractableArchive } from '@/composables/files/archive'
-import { useProjectFileBatchActions } from '@/composables/files/useProjectFileBatchActions'
-import { useProjectFileContextActions } from '@/composables/files/useProjectFileContextActions'
-import { useProjectFileDragMoves } from '@/composables/files/useProjectFileDragMoves'
-import { useFileRuntimeMove } from '@/composables/files/useFileRuntimeMove'
-import { useProjectFileKeyboard } from '@/composables/files/useProjectFileKeyboard'
-import { useProjectFileSorting } from '@/composables/files/useProjectFileSorting'
-import { useProjectFileRename } from '@/composables/files/useProjectFileRename'
-import { useProjectFileProjectSync } from '@/composables/files/useProjectFileProjectSync'
 import { useProjectModalLayout } from '@/composables/projects/useProjectModalLayout'
 
 const props = defineProps({ project: { type: Object as PropType<Project | null>, default: null } })
 const { t } = useI18n()
 const emit = defineEmits(['close'])
-const sortMenuRef = ref<{ closeMenu: () => void } | null>(null)
-function closeProjectModal() {
-  sortMenuRef.value?.closeMenu()
-  emit('close')
-}
+function closeProjectModal() { emit('close') }
 function onModalClose() { closeProjectModal() }
 
-// e.message 兜底：console.error 里统一格式化未知类型的异常，跟 stores/projects.ts 的 errMsg 同一约定。
-const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
-
-const projectStore     = useProjectStore()
-const fileActions      = useFileActions({
-  scope: 'project',
-  projectId: () => props.project?.id ?? null,
-})
-const fileCacheStore   = useFilesCacheStore()
+const projectStore = useProjectStore()
 const prefsStore       = usePreferencesStore()
 const uiStore          = useUiStore()
 const workspaceSupported = ref(false)
 const projectWorkspace = ref<{ id: number } | null>(null)
 const workspaceLoading = ref(false)
 const desktop = isDesktopRenderer()
+const fileSelectionActive = ref(false)
+const workspaceAvailable = computed(() => prefsStore.shellEnabled && workspaceSupported.value && !workspaceLoading.value)
+watch(() => props.project?.id, () => { fileSelectionActive.value = false })
 
 async function refreshProjectWorkspace() {
   const projectId = props.project?.id
@@ -259,7 +183,6 @@ const {
   reset: resetProjectDraft,
   syncExternal: syncProjectDraft,
 } = useProjectDraft()
-const { SORT_OPTIONS: PM_SORT_OPTIONS, sortKey: pmSortKey, sortDir: pmSortDir, onSortSelect: onPmSortSelect } = useSorting('project-modal')
 const projectStages = useProjectStages({
   stages: localStages,
   currentStage: localCurrentStage,
@@ -277,313 +200,26 @@ const {
   localCurrentStage,
   close: closeProjectModal,
 })
-const {
-  fileViewMode, openFolders, folderStack, pmCanGoBack, pmCanGoForward,
-  pmEnterFolder, pmNavigateTo, pmGoBack, pmGoForward, prunePmHistoryForFolder,
-  resetPmNavigation, currentFolders, currentFiles, currentFolder,
-  pmFolderCount,
-} = useProjectFileWorkspace({
-  projectId: () => props.project?.id ?? null,
-  fileCacheStore,
-  isDirectoryLoaded: (projectId, folderId) => isDirectoryLoaded(projectId, folderId),
-  sortBy: () => pmSortKey.value,
-  sortOrder: () => pmSortDir.value,
-})
-const projectFileMutations = useProjectFileMutations({
-  fileActions,
-  fileCacheStore,
-  projectId: () => props.project?.id ?? null,
-  parentFolderId: () => folderStack.value.length ? folderStack.value[folderStack.value.length - 1].id : null,
-  pruneFolderHistory: prunePmHistoryForFolder,
-})
-// tiny 已由 v-lazy-src 视口门控，不再全量预热
-
-// ── 侧栏两模式：false=文件区宽（现状）；true=左右各 50%、信息区 2 列 ──
-// 外框与内容并行切换：内容全程保持可见，只让列宽与信息区版面同步变化。
-// 初值取自后端记忆（preferences）；若 preferences 晚于本组件加载完成，loaded 变 true 时再同步一次
-const {
-  stagesExpanded,
-  infoExpanded,
-  switching: pmSwitching,
-  toggle: togglePmStages,
-} = useProjectModalLayout({
+const { stagesExpanded, infoExpanded, switching: pmSwitching, toggle: togglePmStages } = useProjectModalLayout({
   loaded: toRef(prefsStore, 'loaded'),
   pmStagesExpanded: toRef(prefsStore, 'pmStagesExpanded'),
   savePmStagesExpanded: prefsStore.savePmStagesExpanded,
 })
 
-// ── 项目文件区选择 ────────────────────────────────────────────────────────────
-let openPmExtractArchive: ((file: FileMeta) => void) | null = null
-const {
-  gridRef: pmGridRef,
-  selectedFileIds: pmSelectedFileIds,
-  selectedFolderIds: pmSelectedFolderIds,
-  previewFileIds: pmPreviewFileIds,
-  previewFolderIds: pmPreviewFolderIds,
-  selectionRect: pmSelectionRect,
-  inSelectionMode: pmInSelectionMode,
-  onContainerMouseDown: onPmGridMouseDown,
-  cancelDrag: _cancelPmBoxDrag,
-  clearSelection: clearPmSelection,
-  onContentClick: onPmContentClickImpl,
-  toggleSelectionMode: togglePmSelectionMode,
-  handleFileClick: pmHandleFileClick,
-  onFolderClick: onPmFolderClick,
-} = useFileSelection({
-  getFolders: () => sortedCurrentFolders.value,
-  getFiles: () => sortedCurrentFiles.value,
-  openPreview: file => openPreview(file),
-  isPreviewable,
-  openDirectFileAction: file => {
-    if (!isExtractableArchive(file) || !openPmExtractArchive) return false
-    openPmExtractArchive(file)
-    return true
-  },
-  enterFolder: folder => pmEnterFolderWrapped(folder),
-})
-
-let suppressNextPmSelectionClick = false
-function onPmContentClick() {
-  if (suppressNextPmSelectionClick) {
-    suppressNextPmSelectionClick = false
-    return
-  }
-  onPmContentClickImpl()
-}
-
-// 当前目录数据合并进 filesCache store（currentFiles/currentFolders/pmFolderCount）。增删改继续走
-// 同一份 store；未访问的目录按需请求，避免项目首开等待全账户文件索引。
-
-// ── 拖动移动 ──────────────────────────────────────────────────────────────────
-const { moveFolders: movePmFoldersInto, moveFiles: movePmFilesInto } = useProjectFileDragMoves({
-  fileActions,
-  fileCacheStore,
-  projectId: () => props.project?.id ?? null,
-})
-
-
-const {
-  sortedFolders: sortedCurrentFolders,
-  sortedFiles: sortedCurrentFiles,
-} = useProjectFileSorting({
-  folders: currentFolders,
-  files: currentFiles,
-  sortKey: pmSortKey,
-  sortDir: pmSortDir,
-})
-
-// ── Runtime Vue API：项目文件区与文件库共用同一套对象/Surface/Target 接入 ──
-// ProjectModal 是全局单例，文件对象 ID 本身全局唯一，因此使用稳定 scope，避免 project
-// prop 切换时让静态 Surface 注册与项目文件 DOM 保持同一生命周期。
-const RUNTIME_SCOPE = 'project-files'
-const pmRuntimeBrowserSurfaceId = makeBrowserSurfaceId(RUNTIME_SCOPE)
-const pmRuntimeBrowserGeneration = runtime.surfaces.register({
-  id: pmRuntimeBrowserSurfaceId,
-  type: 'file-browser',
-  accepts: ['file-item', 'folder-item'],
-  layout: 'grid',
-  element: null,
-})
-const pmRuntimeBrowserRef = ref<HTMLElement | null>(null)
-watch(pmRuntimeBrowserRef, (element, previous) => {
-  const current = runtime.surfaces.get(pmRuntimeBrowserSurfaceId)
-  if (current?.generation !== pmRuntimeBrowserGeneration) return
-  if (element === null && current.element && current.element !== previous) return
-  runtime.surfaces.setElement(pmRuntimeBrowserSurfaceId, element)
-}, { flush: 'post' })
-
-function bindPmGridEl(target: unknown) {
-  const element = target as HTMLElement | null
-  pmGridRef.value = element
-  pmRuntimeBrowserRef.value = element
-}
-onUnmounted(() => {
-  if (runtime.surfaces.get(pmRuntimeBrowserSurfaceId)?.generation === pmRuntimeBrowserGeneration) {
-    runtime.surfaces.unregister(pmRuntimeBrowserSurfaceId, pmRuntimeBrowserGeneration)
-  }
-})
-
-const { handleAction: handleRuntimeMoveAction } = useFileRuntimeMove({
-  scope: RUNTIME_SCOPE,
-  browserSurfaceId: makeBrowserSurfaceId(RUNTIME_SCOPE),
-  resolveBreadcrumbTarget: idx => {
-    if (idx === -1) {
-      if (!folderStack.value.length) return null
-      return { folderId: null, droppedOn: 'breadcrumb' }
-    }
-    const seg = folderStack.value[idx]
-    return seg ? { folderId: seg.id, droppedOn: 'breadcrumb' } : null
-  },
-  moveFolders: movePmFoldersInto,
-  moveFiles: movePmFilesInto,
-  clearSelection: clearPmSelection,
-})
-
-useRuntimeAction(action => {
-  if (action.type !== 'move' && action.type !== 'move-group') return
-  const objectIds = action.type === 'move-group' ? action.objectIds : [action.objectId]
-  if (!objectIds.some(id => id.startsWith(`${RUNTIME_SCOPE}:`))) return
-  suppressNextPmSelectionClick = true
-  void handleRuntimeMoveAction(objectIds, action.toSurfaceId)
-})
-
-// ── 目录导航：与文件库保持同一契约 ──────────────────────────────────────────────
-// Runtime 继续负责真实拖拽 Object/Surface/Target；目录切换只保留“拖拽事务期间禁止销毁卡片”的
-// 守卫，通过后直接改变当前目录状态。不要把目录导航重新接回 runLayoutMutation/Collection Presence，
-// 否则上一目录的卡片会被保留成离场代理并在 file-content surface 外继续淡出。
-function hasActivePmMove(): boolean {
-  const root = pmGridRef.value
-  if (!root) return false
-  const cards = root.querySelectorAll<HTMLElement>('[data-layout-role="card"]')
-  for (const card of cards) {
-    const key = card.dataset.layoutKey
-    if (key && runtime.isControlled(key)) return true
-  }
-  return false
-}
-function withPmDirectNav(mutate: () => void): void {
-  if (hasActivePmMove()) return
-  mutate()
-}
-function loadCurrentProjectDirectory(): void {
-  const projectId = props.project?.id
-  if (projectId == null) return
-  void ensureDirectoryLoaded(projectId, folderStack.value.at(-1)?.id ?? null)
-}
-function pmEnterFolderWrapped(folder: FolderMeta): void {
-  withPmDirectNav(() => pmEnterFolder(folder))
-  loadCurrentProjectDirectory()
-}
-function pmNavigateToWrapped(idx: number): void {
-  withPmDirectNav(() => pmNavigateTo(idx))
-  loadCurrentProjectDirectory()
-}
-function pmGoBackWrapped(): void {
-  withPmDirectNav(() => pmGoBack())
-  loadCurrentProjectDirectory()
-}
-function pmGoForwardWrapped(): void {
-  withPmDirectNav(() => pmGoForward())
-  loadCurrentProjectDirectory()
-}
-
-// collection / layout key 继续供当前目录内的真实 Runtime 拖拽与布局识别使用；它们不再参与目录 Presence。
-const pmLayoutCollection = computed(() => `project-files:${props.project?.id ?? 'none'}`)
-function pmFolderLayoutKey(folder: FolderMeta): string {
-  return fileObjectId(RUNTIME_SCOPE, 'folder', folder.id)
-}
-function pmFileLayoutKey(file: FileMeta): string {
-  return fileObjectId(RUNTIME_SCOPE, 'file', file.id)
-}
-
-// ── 文件夹 ────────────────────────────────────────────────────────────────────
-
-const showNewFolder  = ref(false)
-const newFolderName  = ref('')
-const folderLoading  = ref(false)
-
-async function createFolder() {
-  const name = newFolderName.value.trim()
-  if (!name || !props.project?.id) return
-  folderLoading.value = true
-  try {
-    await projectFileMutations.createFolder(name)
-    newFolderName.value = ''
-    showNewFolder.value = false
-  } catch (e) {
-    console.error('[ProjectModal] 新建文件夹失败:', errMsg(e))
-  } finally {
-    folderLoading.value = false
-  }
-}
-
-// ── 重命名 ────────────────────────────────────────────────────────────────────
-
-const {
-  renamingFileId, renameText, startRename, cancelRename, commitRename,
-  renameExtension,
-  renamingFolderId, folderRenameText, startRenameFolder, cancelFolderRename, commitFolderRename,
-} = useProjectFileRename({
-  renameFile: (id, name, extension) => projectFileMutations.renameFile(id, name, extension).catch(e => console.error('[ProjectModal] 重命名失败:', errMsg(e))),
-  renameFolder: (id, name) => projectFileMutations.renameFolder(id, name).catch(e => console.error('[ProjectModal] 文件夹重命名失败:', errMsg(e))),
-  onInvalidExtension: () => showAppError(t('filesUi.extensionInvalid')),
-})
-
-// ── 删除 ─────────────────────────────────────────────────────────────────────
-
-async function deleteFile(file: FileMeta) {
-  try {
-    await projectFileMutations.deleteFile(file)
-  } catch (e) {
-    console.error('[ProjectModal] 删除失败:', errMsg(e))
-  }
-}
-
-// ── 下载 ─────────────────────────────────────────────────────────────────────
-
-function downloadFile(file: FileMeta) {
-  return projectFileMutations.downloadFile(file)
-}
-
-// ── 预览 ──
-const previewStore = usePreviewStore()
-const openPreview = (f: FileMeta) => previewStore.open(f, sortedCurrentFiles.value)
-
-
-// ── 文件类型辅助 ──────────────────────────────────────────────────────────────
-
-// 文件类型助手（isImageExt→isPmImageExt / fileExtCategory / fileIconColor）与缩略图懒加载指令
-// vLazySrc 已统一到 @/utils/fileTypes 和 @/composables/shared/useLazyThumb，见顶部 import。
-// 注：fileIconColor 改用共享版（pdf/doc 等单列颜色，不再统一灰）；isImageExt 含 svg（svg 现也显缩略图）。
-
-// ── 文件夹操作 ────────────────────────────────────────────────────────────────
-
-function downloadFolderZip(folder: FolderMeta) {
-  return projectFileMutations.downloadFolder(folder).catch(() => {
-    showAppError(t('filesUi.downloadFailed'))
-  })
-}
-
-async function deleteFolderCard(folder: FolderMeta) {
-  try {
-    await projectFileMutations.deleteFolder(folder)
-  } catch (e) {
-    console.error('[ProjectModal] 删除文件夹失败:', errMsg(e))
-  }
-}
+const initializing = ref(false)
+watch(() => props.project?.id, async (_id, _previous, onCleanup) => {
+  let current = true
+  onCleanup(() => { current = false })
+  initializing.value = true
+  resetProjectDraft(props.project)
+  await nextTick()
+  if (current) initializing.value = false
+}, { immediate: true })
 
 // 外部（Agent/IM）修改日期时同步本地状态（project?.id 不变，但日期值变了）
-const { initializing, ensureDirectoryLoaded, isDirectoryLoaded, invalidateProjectDirectories,
-  loadMoreDirectory, directoryHasMore, directoryLimitReached, loadingMore: projectFilesLoadingMore } = useProjectFileProjectSync({
-  project: () => props.project,
-  filesAvailable: !desktop,
-  openFolders,
-  folderStack,
-  resetNavigation: resetPmNavigation,
-  showNewFolder,
-  resetDraft: resetProjectDraft,
-  fileCacheStore,
-  sortBy: () => pmSortKey.value as 'name' | 'type' | 'stage' | 'createdAt' | 'size' | 'id',
-  sortOrder: () => pmSortDir.value,
-})
-
-watch([pmSortKey, pmSortDir], () => {
-  const projectId = props.project?.id
-  if (projectId == null) return
-  invalidateProjectDirectories(projectId)
-  void loadCurrentProjectDirectory()
-})
-
-// 外部（Agent/IM）修改项目时实时同步进打开中的草稿：store 的 live 事件会整体
-// 替换 projects 里的对象，props.project 引用随之更新；按字段合并，用户已编辑的
-// 字段不被覆盖（见 useProjectDraft.syncExternal）。
 watch(() => props.project, (p) => {
   if (p && !initializing.value) syncProjectDraft(p)
 })
-
-
-
-
 
 watch(localClient, v => {
   if (initializing.value) return
@@ -613,10 +249,6 @@ const headerProgress = computed(() => {
   )
 })
 
-// 只在明确切换阶段时调用，拖动重排不触发
-
-const accentColor = computed(() => extractProjectAccent(localColor.value || props.project?.color))
-
 const colorPresets = [...PROJECT_COLOR_PRESETS]
 
 function setStage(key: string) {
@@ -625,211 +257,6 @@ function setStage(key: string) {
   if (props.project) projectStore.setStage(props.project.id, key, transition.progress)
 }
 
-const conflictDialogRef = ref<{ show: (list: ConflictItem[]) => Promise<Map<string, ConflictDecision>> } | null>(null)
-const {
-  uploadingItems,
-  dragging,
-  handleFileInput,
-  handleFileDrop,
-  isDragging: pmIsDragging,
-  onDragEnter: onPmDragEnter,
-  onDragLeave: onPmDragLeave,
-  onDrop: onPmDrop,
-  createExtractionGhost: createPmExtractionGhost,
-} = useProjectFileUpload({
-  projectId: () => props.project?.id ?? null,
-  baseFolderId: () => currentFolder.value?.id ?? null,
-  fileCacheStore,
-  showConflicts: conflicts => conflictDialogRef.value?.show(conflicts)
-    ?? Promise.resolve(new Map<string, ConflictDecision>()),
-})
-const pmArchiveActions = useFileArchiveActions({
-  cacheStore: fileCacheStore,
-  getSelectedFileIds: () => [...pmSelectedFileIds.value],
-  getSelectedFolderKeys: () => [...pmSelectedFolderIds.value],
-  getVisibleFolders: () => sortedCurrentFolders.value.map(folder => ({
-    id: String(folder.id), type: 'folder', displayName: folder.name, count: null, folderId: folder.id,
-  })),
-  getFolderKey: folder => Number(folder.folderId),
-  clearSelection: clearPmSelection,
-  createExtractionGhost: name => createPmExtractionGhost(name, t('filesUi.archiveExtracting')),
-})
-const {
-  dialogOpen: pmArchiveDialogOpen,
-  mode: pmArchiveMode,
-  busy: pmArchiveBusy,
-  error: pmArchiveError,
-  success: pmArchiveSuccess,
-  initialName: pmArchiveInitialName,
-  openCompressSelected: openPmCompressSelected,
-  extractFile: extractPmArchive,
-  submit: submitPmArchive,
-  closeDialog: closePmArchiveDialog,
-} = pmArchiveActions
-openPmExtractArchive = extractPmArchive
-const selectedPmArchive = computed(() => {
-  return findSelectedExtractableArchive(pmSelectedFileIds.value, pmSelectedFolderIds.value, id => fileCacheStore.getFile(id))
-})
-const pmCanExtractSelectedArchive = computed(() => selectedPmArchive.value != null)
-
-function extractSelectedPmArchive() {
-  if (selectedPmArchive.value) extractPmArchive(selectedPmArchive.value)
-}
-
-// ── 剪贴板 & 右键菜单（ProjectModal）──────────────────────────────────────────
-const isMac = navigator.platform.toUpperCase().includes('MAC') || navigator.userAgent.includes('Mac')
-const modKey = isMac ? '⌘' : 'Ctrl'
-const pmCbStore = useClipboardStore()
-const {
-  downloading: pmDownloadingZip,
-  downloadSelected: downloadSelectedPm,
-  deleteSelected: deleteSelectedPm,
-  cutSelected: pmSelCut,
-  copySelected: pmSelCopy,
-} = useProjectFileBatchActions({
-  fileActions,
-  fileCacheStore,
-  clipboardStore: pmCbStore,
-  selectedFileIds: pmSelectedFileIds,
-  selectedFolderIds: pmSelectedFolderIds,
-  getFiles: () => sortedCurrentFiles.value,
-  getFolders: () => sortedCurrentFolders.value,
-  getCurrentFolderName: () => currentFolder.value?.name ?? null,
-  getProjectName: () => props.project?.name ?? '文件',
-  clearSelection: clearPmSelection,
-  pruneFolderHistory: prunePmHistoryForFolder,
-})
-const pmInfoPopup = ref<{ show: boolean; file: FileMeta | null; x: number; y: number }>({ show: false, file: null, x: 0, y: 0 })
-const {
-  state: pmCtx,
-  openContext: openPmCtx,
-  paste: pmCtxPaste,
-  handleAction: handlePmCtxMenuAction,
-} = useProjectFileContextActions({
-  fileActions,
-  fileCacheStore,
-  clipboardStore: pmCbStore,
-  selectedFileIds: pmSelectedFileIds,
-  selectedFolderIds: pmSelectedFolderIds,
-  getFiles: () => sortedCurrentFiles.value,
-  getFolders: () => sortedCurrentFolders.value,
-  getFolderStack: () => folderStack.value,
-  getProjectId: () => props.project?.id ?? null,
-  getProjectName: () => props.project?.name ?? '文件',
-  clearSelection: clearPmSelection,
-  startRenameFile: startRename,
-  startRenameFolder,
-  downloadFolder: downloadFolderZip,
-  deleteFolder: deleteFolderCard,
-  extractArchive: extractPmArchive,
-  compressSelection: openPmCompressSelected,
-  openInfo: (file, x, y) => { pmInfoPopup.value = { show: true, file, x, y } },
-  showNewFolder,
-  showConflicts: conflicts => conflictDialogRef.value?.show(conflicts)
-    ?? Promise.resolve(new Map<string, ConflictDecision>()),
-})
-const pmCanExtractContextArchive = computed(() => {
-  return canExtractArchiveContext(pmCtx.value.type, pmCtx.value.target)
-})
-const pmCanCompressContextSelection = computed(() => {
-  return canCompressArchiveContext(pmCtx.value.type, pmCtx.value.target, pmSelectedFileIds.value, pmSelectedFolderIds.value)
-})
-
-useProjectFileKeyboard({
-  isProjectOpen: () => Boolean(props.project),
-  selectedFileIds: pmSelectedFileIds,
-  selectedFolderIds: pmSelectedFolderIds,
-  clipboardStore: pmCbStore,
-  paste: pmCtxPaste,
-})
-
-const filePanelContext = {
-  stagesExpanded,
-  togglePmStages,
-  pmCanGoBack,
-  pmGoBack: pmGoBackWrapped,
-  pmCanGoForward,
-  pmGoForward: pmGoForwardWrapped,
-  pmNavigateTo: pmNavigateToWrapped,
-  folderStack,
-  pmCbStore,
-  pmCtxPaste,
-  pmInSelectionMode,
-  togglePmSelectionMode,
-  fileViewMode,
-  showNewFolder,
-  newFolderName,
-  folderLoading,
-  createFolder,
-  PM_SORT_OPTIONS,
-  pmSortKey,
-  pmSortDir,
-  onPmSortSelect,
-  closeProjectModal,
-  workspaceAvailable: computed(() => prefsStore.shellEnabled && workspaceSupported.value && !workspaceLoading.value),
-  workspaceExists: computed(() => Boolean(projectWorkspace.value)),
-  toggleWorkspace: toggleProjectWorkspace,
-  pmIsDragging,
-  pmSelectionRect,
-  pmGridRef,
-  bindPmGridEl,
-  onPmGridMouseDown,
-  onPmContentClick,
-  openPmCtx,
-  onPmDragEnter,
-  onPmDragLeave,
-  onPmDrop,
-  sortedCurrentFolders,
-  loadMoreDirectory,
-  directoryHasMore,
-  directoryLimitReached,
-  projectFilesLoadingMore,
-  pmFolderCount,
-  accentColor,
-  folderLayoutKey: pmFolderLayoutKey,
-  fileLayoutKey: pmFileLayoutKey,
-  layoutCollection: pmLayoutCollection,
-  pmSelectedFolderIds,
-  pmPreviewFolderIds,
-  onPmFolderClick,
-  renamingFolderId,
-  commitFolderRename,
-  startRenameFolder,
-  downloadFolderZip,
-  deleteFolderCard,
-  folderRenameText,
-  cancelFolderRename,
-  sortedCurrentFiles,
-  isPmImageExt,
-  pmSelectedFileIds,
-  pmPreviewFileIds,
-  renamingFileId,
-  startRename,
-  commitRename,
-  renameText,
-  renameExtension,
-  cancelRename,
-  thumbLoadedIds,
-  downloadFile,
-  deleteFile,
-  pmHandleFileClick,
-  runtimeScope: RUNTIME_SCOPE,
-  uploadingItems,
-  dragging,
-  handleFileDrop,
-  handleFileInput,
-  fileIconColor,
-  pmDownloadingZip,
-  pmArchiveBusy,
-  pmCanExtractSelectedArchive,
-  openPmCompressSelected,
-  extractSelectedPmArchive,
-  downloadSelectedPm,
-  pmSelCut,
-  pmSelCopy,
-  deleteSelectedPm,
-  clearPmSelection,
-}
 </script>
 
 <style scoped>
@@ -1041,5 +468,4 @@ const filePanelContext = {
   box-shadow: 0 4px 14px color-mix(in srgb, var(--action-primary) 22%, transparent);
 }
 
-/* 右栏文件面板样式已迁移至 ProjectFilesPanel.vue。 */
 </style>

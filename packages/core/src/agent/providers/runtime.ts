@@ -1,4 +1,4 @@
-import { stableJson } from '../context/history/canonical-history.js'
+import { canonicalEventStats, stableJson } from '../context/history/canonical-history.js'
 import { throwIfCancelled } from './errors.js'
 import type { BranchProviderPort, CanonicalContextPorts, ContextReferenceCodec, ContextServices, ProviderPort, ReflectionProjectionPort, SummaryGenerationPorts } from '../ports.js'
 import type { BranchInput, CanonicalRunContext, FrozenProviderRequest, Json, ProviderEvent, ProviderRequest, RunIdentity } from '../models.js'
@@ -17,6 +17,7 @@ import { stripThinking, ProviderStreamSanitizer, sanitizeProviderText } from './
 import { normalizedApiKey } from './diagnostics.js'
 import { RequestProbe, providerCacheDiagnostics } from './cache-probe.js'
 import type { ProviderProbeSink } from './cache-probe.js'
+import { recordProviderBoundaryObservations } from './observation.js'
 import { outputBudget, parseStructuredJson } from './standalone.js'
 import { filterReasoningConfig } from './base.js'
 import { stripCacheControl } from './openai/history.js'
@@ -215,6 +216,8 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
   }
   async *stream(request: ProviderRequest<CanonicalRunContext>): AsyncGenerator<ProviderEvent> {
     const { context, identity, signal } = request
+    const preparationStartedAt = this.#now()
+    let preparationObserved = false
     if (this.#key(context.identity) !== this.#key(identity)) throw new ProviderError('input_rejected')
     const { config, policy, driver, systemPrompt: boundSystem, accessScopeHash } = await this.#selection(identity, context.modelIdentity, signal)
     if (accessScopeHash !== context.accessScopeHash) throw new ProviderError('input_rejected')
@@ -278,15 +281,37 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
             probe.current?.fail(new ProviderError('stream_incomplete'))
             probe.current = this.#probe(body as JsonObject, config, policy, diagnosticStableRows, historySanitization)
           }
+          if (!preparationObserved) {
+            const preparedAt = this.#now()
+            recordAgentObservation(this.options.observation, {
+              identity, kind: 'context', name: 'Provider client and schemas prepared', at: preparedAt,
+              startedAt: preparationStartedAt, endedAt: preparedAt, durationMs: Math.max(0, preparedAt - preparationStartedAt),
+              round: request.round, spanId: `${identity.runId}:round:${request.round}:phase:provider-prepared`,
+              parentSpanId: `${identity.runId}:round:${request.round}`, status: 'success',
+              attributes: { provider: policy.name, protocol: driver.protocol, toolCount: input.tools.length },
+            })
+            preparationObserved = true
+          }
+          const observedAt = this.#now()
+          const roundSpanId = `${identity.runId}:round:${request.round}`
+          const toolDiagnostics = providerCacheDiagnostics(body as JsonObject, this.options.digest, {
+            cacheSupported: policy.capabilities(config).cache_mode === 'active', stableRowCount: diagnosticStableRows,
+          })
+          const canonicalStats = canonicalEventStats(area.messages)
+          recordProviderBoundaryObservations({
+            observation: this.options.observation, identity, round: request.round, at: observedAt,
+            roundSpanId, protocol: driver.protocol, body: body as JsonObject,
+            capabilities: context.capabilities, tools: input.tools,
+            area: { revision: area.revision, digest: area.digest(), entries: area.entries, dynamicTail: area.dynamicTail },
+            historySanitization, digest: this.options.digest, toolDiagnostics, canonicalStats,
+          })
           recordAgentObservation(this.options.observation, {
-            identity, kind: 'provider', name: 'request', at: this.#now(), round: request.round,
-            spanId: `${identity.runId}:round:${request.round}:provider`, parentSpanId: `${identity.runId}:round:${request.round}`,
+            identity, kind: 'provider', name: 'request', at: observedAt, round: request.round,
+            spanId: `${identity.runId}:round:${request.round}:provider`, parentSpanId: roundSpanId,
             status: 'sent', input: clone(body),
             attributes: {
-              protocol: driver.protocol, provider: policy.name, model: context.modelIdentity,
-              cache_diagnostics: providerCacheDiagnostics(body as JsonObject, this.options.digest, {
-                cacheSupported: policy.capabilities(config).cache_mode === 'active', stableRowCount: diagnosticStableRows,
-              }),
+              protocol: driver.protocol, provider: policy.name, model: config.model,
+              cache_diagnostics: toolDiagnostics,
               ...(actualCacheAnchor === undefined ? {} : { cache_anchor: clone(actualCacheAnchor) }),
               ...(historySanitization ? { history_sanitization: clone(historySanitization) } : {}),
             },
@@ -367,7 +392,7 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
           identity: { ownerId: input.ownerId, sessionId: input.sessionId, runId: input.runId },
           kind: 'provider', name: 'request', at: this.#now(), round: 0,
           spanId: `${input.runId}:round:0:provider`, parentSpanId: `${input.runId}:round:0`, status: 'sent', input: clone(body),
-          attributes: { protocol: driver.protocol, provider: policy.name, model: input.modelIdentity, purpose: 'branch',
+          attributes: { protocol: driver.protocol, provider: policy.name, model: config.model, purpose: 'branch',
             cache_diagnostics: providerCacheDiagnostics(body, this.options.digest, { cacheSupported: policy.capabilities(config).cache_mode === 'active', stableRowCount: stableCount }) },
         })
         let result: ProviderCompletion
@@ -381,7 +406,7 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
               kind: 'provider', name: 'complete', at: this.#now(), round: 0,
               spanId: `${input.runId}:round:0:provider`, parentSpanId: `${input.runId}:round:0`,
               status: error.code === 'cancelled' ? 'cancelled' : 'error',
-              attributes: { protocol: driver.protocol, provider: policy.name, model: input.modelIdentity, purpose: 'branch', error_code: error.code },
+              attributes: { protocol: driver.protocol, provider: policy.name, model: config.model, purpose: 'branch', error_code: error.code },
             })
           }
           throw raw
@@ -389,14 +414,14 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
         if (input.runId) recordAgentObservation(this.options.observation, {
           identity: { ownerId: input.ownerId, sessionId: input.sessionId, runId: input.runId },
           kind: 'provider', name: 'usage', at: this.#now(), round: 0, usage: result.usage,
-          attributes: { protocol: driver.protocol, provider: policy.name, model: input.modelIdentity, purpose: 'branch' },
+          attributes: { protocol: driver.protocol, provider: policy.name, model: config.model, purpose: 'branch' },
         })
         if (input.runId) recordAgentObservation(this.options.observation, {
           identity: { ownerId: input.ownerId, sessionId: input.sessionId, runId: input.runId },
           kind: 'provider', name: 'complete', at: this.#now(), round: 0,
           spanId: `${input.runId}:round:0:provider`, parentSpanId: `${input.runId}:round:0`,
           status: 'success', output: result.text,
-          attributes: { protocol: driver.protocol, provider: policy.name, model: input.modelIdentity, purpose: 'branch' },
+          attributes: { protocol: driver.protocol, provider: policy.name, model: config.model, purpose: 'branch' },
         })
         return result
       }

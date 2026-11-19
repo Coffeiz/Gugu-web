@@ -3,7 +3,7 @@
     "domain": "files",
     "layer": "L1",
     "owner": "packages/core/src/files/read.ts:planAttachmentThumbnail",
-    "productionEntry": "apps/web-host/src/modules/agent/attachment-thumbnail.ts",
+    "productionEntry": "apps/web-host/src/modules/agent/attachments/thumbnail.ts",
     "keyBehavior": "附件图片授权分类、SVG和动画原图语义及缩略图尺寸",
     "ci": "core-node"
   },

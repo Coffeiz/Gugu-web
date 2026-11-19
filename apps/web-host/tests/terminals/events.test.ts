@@ -3,8 +3,8 @@ import { test } from 'node:test'
 import { createRequire } from 'node:module'
 import Fastify from 'fastify'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
-import { createPostgresTerminalEventStream } from '../../src/modules/terminals/persistence/events.js'
-import { registerTerminalEventsRoute } from '../../src/modules/terminals/events.js'
+import { createPostgresTerminalEventStream } from '../../src/modules/terminals/store.js'
+import { registerTerminalEventsRoute } from '../../src/modules/terminals/routes.js'
 
 const owner = '00000000-0000-4000-8000-000000000181'
 const coreRequire = createRequire(new URL('../../../../packages/core/package.json', import.meta.url))

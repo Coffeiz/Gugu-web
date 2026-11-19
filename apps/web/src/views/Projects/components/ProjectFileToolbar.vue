@@ -5,8 +5,8 @@
   </button>
 
   <FileBrowserToolbar
-    :can-paste="pmCbStore.hasContent()"
-    :paste-count="pmCbStore.fileIds.length + pmCbStore.folderIds.length"
+    :can-paste="clipboard?.canPaste ?? pmCbStore.hasContent()"
+    :paste-count="clipboard?.count ?? (pmCbStore.fileIds.length + pmCbStore.folderIds.length)"
     :selection-mode="pmInSelectionMode"
     :view-mode="fileViewMode"
     :show-new-folder="showNewFolder"
@@ -27,6 +27,7 @@
     @sort-select="onPmSortSelect"
     @close="closeProjectModal"
   >
+    <template #extra><slot /></template>
     <template #breadcrumb>
       <ProjectFileBreadcrumb
         :can-go-back="pmCanGoBack"
@@ -48,7 +49,10 @@ import { useI18n } from 'vue-i18n'
 import FileBrowserToolbar from '@/components/common/file-browser/FileBrowserToolbar.vue'
 import ProjectFileBreadcrumb from '@/views/Projects/components/ProjectFileBreadcrumb.vue'
 
-const props = defineProps({ context: { type: Object as PropType<Record<string, any>>, required: true } })
+const props = defineProps({
+  context: { type: Object as PropType<Record<string, any>>, required: true },
+  clipboard: { type: Object as PropType<{ canPaste: boolean; count: number }> },
+})
 const { t } = useI18n()
 const {
   stagesExpanded, togglePmStages, pmCanGoBack, pmGoBack, pmCanGoForward, pmGoForward,

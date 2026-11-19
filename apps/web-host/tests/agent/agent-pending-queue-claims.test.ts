@@ -8,7 +8,7 @@ import {
   AgentPendingQueueSessionNotFoundError,
   createPostgresAgentPendingQueueClaims,
   registerAgentPendingQueueClaimRoutes,
-} from '../../src/modules/agent-sessions/agent-pending-queue-claims.js'
+} from '../../src/modules/agent/chat/claims.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

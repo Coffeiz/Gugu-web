@@ -1,7 +1,10 @@
 packages:
   - "packages/core"
+  - "packages/database"
   - "packages/charts"
   - "packages/fs"
+  - "packages/gateway"
+  - "packages/log"
   - "packages/loopscope"
   - "packages/sandbox"
   - "apps/desktop"

@@ -100,6 +100,7 @@ export function createScheduledTaskHarness(options: Omit<AgentRuntimeOptions, 'r
   }, { ...options.context.preparation, digest: options.context.digest, nextId: options.context.nextId }) : loadContext
 
   const runtime = createAgentRuntime({
+    observation: options.observation,
     context: {
       ...options.context,
       async load(candidate, signal) {

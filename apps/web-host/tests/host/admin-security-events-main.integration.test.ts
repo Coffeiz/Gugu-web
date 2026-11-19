@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { Pool } from 'pg'
-import { applySecurityEventsMigration } from '../../src/migrations/security-events-migrate.js'
+import { applySecurityEventsMigration } from '@gugu/database/postgres/migrations/0006_security_events'
 import { createSecurityEventFingerprint } from '../../src/modules/admin/audit.js'
 import { startServer } from '../../src/main.js'
 

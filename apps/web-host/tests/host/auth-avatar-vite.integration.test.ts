@@ -8,9 +8,9 @@ import { resolve } from 'node:path'
 import { Pool } from 'pg'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/modules/auth/auth.js'
-import { createPostgresUserAvatarOperations } from '../../src/modules/auth/persistence/avatar.js'
-import { createUserRepository } from '../../src/modules/auth/persistence/users.js'
+import { createUserToken } from '../../src/modules/auth/session/token.js'
+import { createPostgresUserAvatarOperations } from '../../src/modules/auth/account/avatar-store.js'
+import { createUserRepository } from '../../src/modules/auth/account/store.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const secret = 'synthetic-avatar-vite-secret'

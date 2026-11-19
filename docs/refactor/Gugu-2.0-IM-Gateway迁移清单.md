@@ -1,5 +1,7 @@
 # Gugu 2.0 IM Gateway 迁移清单
 
+> 当前数据库初始化统一使用 [Database 包的编号迁移](../../packages/database/README.md)。下文中的分模块命令、手工 SQL 和升级步骤为改造期间的历史记录。
+
 更新：2026-11-19。基线：远端 `Ningxue/n2-node-webui` 的 `f5a6b91d`；迁移分支：`Ningxue/n2-im-gateway`。Python `backend/agent/gateway/`、`backend/agent/im/` 及 pytest 原样保留。
 
 ## 状态口径

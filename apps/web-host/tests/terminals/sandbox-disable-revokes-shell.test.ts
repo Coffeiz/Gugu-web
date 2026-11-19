@@ -3,8 +3,8 @@ import test from 'node:test'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createTerminalShellExecution } from '../../src/modules/terminals/shell-execution.js'
-import { createTerminalRuntimeSettingsReader } from '../../src/modules/terminals/runtime-settings.js'
+import { createTerminalShellExecution } from '../../src/modules/terminals/shell/command.js'
+import { createTerminalRuntimeSettingsReader } from '../../src/modules/terminals/settings.js'
 import { createSandboxRuntimeUpdater } from '../../src/modules/admin/sandbox.js'
 
 test('原子停用配置经真实运行设置读取后，中止已运行 MXC 命令', async () => {

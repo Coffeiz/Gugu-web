@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { ProviderConfig } from '@gugu/core/providers'
-import { resolveHostEffectiveModelConfiguration } from '../../src/modules/agent/model-config/effective-model-resolver.js'
+import { resolveHostEffectiveModelConfiguration } from '../../src/modules/agent/llm/resolve.js'
 
 const platformModel: ProviderConfig = {
   provider: 'openai', api_format: 'openai', api_key: 'synthetic-platform-key',

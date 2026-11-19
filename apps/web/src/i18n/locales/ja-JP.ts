@@ -1,4 +1,5 @@
 export const jaJP = {
+  desktopByok: { deleteTitle: '認証情報を削除', deleteMessage: 'サーバーからこの認証情報を削除しますか？ この認証情報を使う設定が無効になる場合があります。', replaceTitle: 'サーバーの既定値を変更', replaceMessage: 'このサーバーの新しいタスクには、選択した認証情報が使われます。' },
   agentParallelUi: { label: 'ツール並列呼び出し（デバッグ）', hint: '有効時、同じラウンドのウェブ検索、HTTP GET、確認不要の Shell 呼び出しを並列実行できます。上限は変更可能です。確認が必要なコマンドは逐次実行します。', limit: 'ラウンドごとの並列上限' },
   projectsDeleted: { deleted: '削除済みプロジェクト', deletedShort: '削除済み', noDeleted: '削除済みプロジェクトはありません', deletedView: '削除済みを表示', deletedRetention: '30日間保持', deletedAt: '{date} に削除', restoreDeleted: 'プロジェクトを復元', unknownDate: '不明な日付' },
   storageAudit: { subtitle: 'ストレージ ↔ DB の整合性確認：ファイル層とディレクトリ層。スキャンは読み取り専用です。', fileAudit: 'ファイル照合', fileAuditHint: '物理オブジェクトと File テーブルを確認', scanning: '照合中…', scan: 'スキャン' },

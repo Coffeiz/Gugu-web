@@ -1,4 +1,12 @@
 {
+  "apps/web-host/tests/migrations/postgres.test.ts": {
+    "domain": "host-database",
+    "layer": "L2",
+    "owner": "packages/database/src/postgres",
+    "productionEntry": "migratePostgres",
+    "keyBehavior": "隔离 schema 验证只读检查、整体回滚、并发幂等、Web 与 IM 就绪和结构漂移拒绝",
+    "ci": "web-host-node"
+  },
   "apps/web-host/tests/host/safe-egress-probe-main.integration.test.ts": {
     "domain": "api",
     "layer": "L2",

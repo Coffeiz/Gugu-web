@@ -116,7 +116,12 @@
             <template v-for="span in rootSpans" :key="span.id">
               <TraceSpanCard :span="span" :previous-span="previousRoundSpan(span)" />
               <div v-if="childrenOf(span.id).length" class="child-spans">
-                <TraceSpanCard v-for="child in childrenOf(span.id)" :key="child.id" :span="child" :depth="1" />
+                <template v-for="child in childrenOf(span.id)" :key="child.id">
+                  <TraceSpanCard :span="child" :previous-span="previousRoundSpan(child)" :depth="1" />
+                  <div v-if="childrenOf(child.id).length" class="child-spans grandchild-spans">
+                    <TraceSpanCard v-for="grandchild in childrenOf(child.id)" :key="grandchild.id" :span="grandchild" :previous-span="previousRoundSpan(grandchild)" :depth="2" />
+                  </div>
+                </template>
               </div>
             </template>
           </div>
@@ -132,6 +137,7 @@ import type { AdapterCallStats, CanonicalEventStats, TraceRun, TraceRunSummary, 
 import TraceSpanCard from './TraceSpanCard.vue'
 import { formatCompactNumber } from '../utils/formatNumber'
 import { resolveMonitorSelection } from '../utils/monitorSelection'
+import { isModelSpan } from '../utils/spanKinds'
 import { useLoopScopeI18n } from '../i18n/index'
 
 const { t } = useLoopScopeI18n()
@@ -200,10 +206,10 @@ const adapterCallSummary = computed(() => {
 })
 const modelLabel = computed(() => {
   const a = selected.value?.attributes ?? {}
-  const labels = [[a.provider, a.model]]
+  const labels = [[a.provider, safeModelLabel(a.model)]]
   for (const span of selected.value?.spans ?? []) {
-    if (span.kind !== 'llm') continue
-    labels.push([span.attributes?.provider, span.attributes?.model])
+    if (!isModelSpan(span)) continue
+    labels.push([span.attributes?.provider, safeModelLabel(span.attributes?.model)])
     const input = span.input && typeof span.input === 'object'
       ? span.input as Record<string, any>
       : {}
@@ -214,7 +220,7 @@ const modelLabel = computed(() => {
   }
   const label = labels.map(parts => parts.filter(Boolean).join(' / ')).find(Boolean)
   if (label) return label
-  if (selected.value?.ended_at && !(selected.value.spans ?? []).some(span => span.kind === 'llm')) {
+  if (selected.value?.ended_at && !(selected.value.spans ?? []).some(isModelSpan)) {
     return t('monitor.noModelCall')
   }
   return t('monitor.modelUnknown')
@@ -245,13 +251,17 @@ function injectionSummary(span: any) {
   return `${input.skill ?? span.attributes?.skill ?? 'Skill'} · ${span.attributes?.action === 'reused' ? t('monitor.skillActionReused') : t('monitor.skillActionFirst')}`
 }
 function childrenOf(id: string) { return (selected.value?.spans ?? []).filter(s => s.parent_span_id === id) }
+function spanRound(span: any) {
+  const fromId = String(span.id ?? '').match(/:round:(\d+)(?::provider)?$/)?.[1]
+  return Number(span.attributes?.round ?? fromId ?? 0)
+}
 function previousRoundSpan(span: any) {
-  if (span.kind !== 'llm') return undefined
-  const rounds = rootSpans.value
-    .filter(item => item.kind === 'llm' && item.id !== span.id)
-    .sort((a, b) => (Number(a.attributes?.round ?? 0) - Number(b.attributes?.round ?? 0)) || a.ordinal - b.ordinal)
-  const currentRound = Number(span.attributes?.round ?? 0)
-  const previousInRun = rounds.reverse().find(item => Number(item.attributes?.round ?? 0) < currentRound)
+  if (!isModelSpan(span) || span.attributes?.purpose === 'branch') return undefined
+  const rounds = (selected.value?.spans ?? [])
+    .filter(item => isModelSpan(item) && item.attributes?.purpose !== 'branch' && item.id !== span.id)
+    .sort((a, b) => (spanRound(a) - spanRound(b)) || a.ordinal - b.ordinal)
+  const currentRound = spanRound(span)
+  const previousInRun = rounds.reverse().find(item => spanRound(item) < currentRound)
   if (previousInRun) return previousInRun
   if (currentRound > 1) return undefined
 
@@ -262,8 +272,8 @@ function previousRoundSpan(span: any) {
     .sort((a, b) => b.started_at - a.started_at)[0]
   const previousSpans = previousRun ? props.details?.[previousRun.id]?.spans ?? [] : []
   return previousSpans
-    .filter(item => !item.parent_span_id && item.kind === 'llm')
-    .sort((a, b) => (Number(a.attributes?.round ?? 0) - Number(b.attributes?.round ?? 0)) || a.ordinal - b.ordinal)
+    .filter(item => isModelSpan(item) && item.attributes?.purpose !== 'branch')
+    .sort((a, b) => (spanRound(a) - spanRound(b)) || a.ordinal - b.ordinal)
     .at(-1)
 }
 function selectRun(runId: string) {
@@ -295,7 +305,7 @@ function onRunListScroll(event: Event) {
 function resolveUsage(run: TraceRun | TraceRunSummary | null): TokenUsage {
   if (!run) return {}
   const spans = run.spans ?? []
-  if (!spans.some(span => span.kind === 'llm')) return {}
+  if (!spans.some(isModelSpan)) return {}
   const candidates = [run.usage, run.attributes?.tokens]
   for (const candidate of candidates) {
     const normalized = normalizeUsage(candidate)
@@ -336,22 +346,36 @@ function hasProviderUsage(run: TraceRun | TraceRunSummary | null): boolean {
   if (runInput !== undefined && runInput > 0) return true
   return Boolean((run?.spans ?? []).some(span => {
     const input = number(span.usage?.input)
-    return span.kind === 'llm' && input !== undefined && input > 0
+    return isModelSpan(span) && input !== undefined && input > 0
   }))
+}
+
+function safeModelLabel(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const model = value.trim()
+  if (!model || model.startsWith('gugu-model-v1.') || model.length > 120) return undefined
+  return model
 }
 
 function normalizeUsage(value: Record<string, any> | undefined): TokenUsage {
   if (!value || typeof value !== 'object') return {}
-  const input = number(value.input ?? value.input_tokens ?? value.prompt_tokens)
+  const rawInput = number(value.input ?? value.input_tokens ?? value.prompt_tokens)
   const output = number(value.output ?? value.output_tokens ?? value.completion_tokens)
   const cacheRead = number(value.cache_read ?? value.cache_read_input_tokens ?? value.prompt_cache_hit_tokens)
   const cacheWrite = number(value.cache_write ?? value.cache_write_input_tokens)
   const fresh = number(value.fresh_input)
   const total = number(value.total)
+  // 旧 Node Collector 的 input 是 fresh token；context_input 标记了该口径。
+  // 新 Node 和 Python Collector 的 input 已是总输入，fresh_input 单独展示。
+  const cacheTokens = (cacheRead ?? 0) + (cacheWrite ?? 0)
+  const legacyNodeUsage = value.context_input !== undefined || rawInput !== undefined && rawInput < cacheTokens
+  const input = legacyNodeUsage && rawInput !== undefined
+    ? (fresh ?? rawInput) + cacheTokens
+    : rawInput
   if (![input, output, cacheRead, cacheWrite, fresh, total].some(v => v !== undefined)) return {}
   return {
     input, output, cache_read: cacheRead, cache_write: cacheWrite,
-    fresh_input: fresh ?? (input !== undefined ? Math.max(input - (cacheRead ?? 0), 0) : undefined),
+    fresh_input: fresh ?? (legacyNodeUsage ? rawInput : input !== undefined ? Math.max(input - (cacheRead ?? 0) - (cacheWrite ?? 0), 0) : undefined),
     total: total ?? (input !== undefined || output !== undefined ? (input ?? 0) + (output ?? 0) : undefined),
     cache_ratio: input ? (cacheRead ?? 0) / input : 0,
   }

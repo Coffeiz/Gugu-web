@@ -4,8 +4,8 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { CoreError } from '@gugu/core'
 import { createCreateFileTool, createToolRegistry } from '@gugu/core/tools'
-import type { FileUploadOperations } from '../../src/modules/files/file-upload.js'
-import { createWebAgentFileCreatePort } from '../../src/modules/agent-sessions/tools/agent-file-create.js'
+import type { FileUploadOperations } from '../../src/modules/files/upload.js'
+import { createWebAgentFileCreatePort } from '../../src/modules/agent/tools/files/create.js'
 
 test('批量 create_file 经 Core Registry、Web lease 与 Node 上传端口逐项创建并恢复收据', async () => {
   const ownerId = randomUUID(), identity = { ownerId, sessionId: '12', runId: 'create-batch-run' }

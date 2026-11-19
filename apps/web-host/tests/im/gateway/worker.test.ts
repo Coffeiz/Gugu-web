@@ -4,8 +4,8 @@ import { createImInboundPreflight, type ImPreflightPorts } from '@gugu/core/im/i
 import type { RedisStreamCommands } from '../../../src/adapters/cache/redis-stream-commands.js'
 import { RedisStreamCommandError } from '../../../src/adapters/cache/redis-stream-commands.js'
 import { CLAIM_MESSAGE_SCRIPT, COMPLETE_MESSAGE_SCRIPT, RENEW_MESSAGE_SCRIPT } from '../../../src/workers/redis-message-lease.js'
-import { createImInboundEnvelope } from '../../../src/modules/im/gateway/inbound-envelope.js'
-import { NODE_IM_INBOUND_STREAM } from '../../../src/modules/im/gateway/inbox.js'
+import { createImInboundEnvelope } from '../../../src/modules/im/gateway/inbound/envelope.js'
+import { NODE_IM_INBOUND_STREAM } from '../../../src/modules/im/gateway/inbound/inbox.js'
 import { createNodeImWorker } from '../../../src/modules/im/gateway/worker.js'
 
 function deferred<T = void>() {

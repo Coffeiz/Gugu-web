@@ -4,7 +4,7 @@ import test from 'node:test'
 import { CoreError } from '@gugu/core'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
 import type { UserFromRequest } from '../../src/app.js'
-import { registerWorkspaceRoutes } from '../../src/modules/workspaces/routes/workspaces.js'
+import { registerWorkspaceRoutes } from '../../src/modules/workspaces/routes.js'
 import { WorkspaceUpdateError } from '@gugu/core/workspace-declarations'
 
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'

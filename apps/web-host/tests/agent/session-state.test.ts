@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { registerAgentSessionStateRoute } from '../../src/modules/agent-sessions/state.js'
+import { registerAgentSessionStateRoute } from '../../src/modules/agent/sessions/read.js'
 
 test('会话状态路由先认证，并仅用认证 owner 读取状态', async () => {
   const denied = Fastify()

@@ -56,11 +56,9 @@ defineProps({
 </script>
 
 <style scoped>
-/* FolderCard 只拥有实体结构与状态 selector；Aero/Mono × light/dark 的基线 paint 值全部来自
-   tokens/components/surfaces.css。最终 surface/edge 在卡片本地混入 --fd-color，因为文件夹
-   accent 是逐卡动态值，不能提前在 :root 上求值。 */
+/* 底色与文件卡共享；逐卡的文件夹强调色用于图标和描边。 */
 .folder-card {
-  --folder-card-bg: color-mix(in srgb,var(--fd-color,#8888a0) 6%,var(--folder-card-bg-base));
+  --folder-card-bg: var(--file-card-bg);
   --folder-card-border: color-mix(in srgb,var(--fd-color,#8888a0) var(--folder-card-border-accent,14%),var(--folder-card-border-base));
   --folder-card-bg-hover: var(--file-card-bg-hover);
   --folder-card-border-hover: var(--file-card-border-hover);

@@ -50,7 +50,7 @@
       <ImageViewer v-if="isImg" :blobUrl="blobUrl ?? undefined" :upscale="isVector" @loaded="onImageLoaded" />
       <VideoViewer v-else-if="isVid && videoSrc" :src="videoSrc ?? undefined" :refresh-src="!win.file.attach_id ? refreshVideoSource : undefined" />
       <OfficeViewer v-else-if="isOffice && (!isCsv || !csvTextMode) && (blobUrl || (isXlsx && typeof win.file.id === 'number'))" :blobUrl="blobUrl ?? undefined" :ext="win.file.ext ?? ''" :file-id="typeof win.file.id === 'number' ? win.file.id : undefined" :file-version="win.file.version" @content-size="onOfficeContentSize" @csv-render-failed="onCsvRenderFailed" />
-      <TextViewer  v-else-if="isText && (!isCsv || csvTextMode) && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :read-only="!!win.textFallback" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" @content-saved="onTextContentSaved" @refresh="refreshHtmlPreview" />
+      <TextViewer  v-else-if="isText && (!isCsv || csvTextMode) && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :read-only="!!win.textFallback || !!win.file.workspaceFile" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.workspaceFile?.relativePath ?? win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" @content-saved="onTextContentSaved" @refresh="refreshHtmlPreview" />
       <div v-if="loading && !placeholderReady" class="fpw-status fpw-loading">
         <div class="fpw-spinner"></div>
         <span>{{ t('viewerUi.loading') }}</span>
@@ -112,13 +112,13 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import Icon from '@/components/common/icons/Icon.vue'
 import FileInfoPopup from '@/components/common/file-browser/FileInfoPopup.vue'
-import type { PreviewWindow } from '@/stores/preview'
+import type { PreviewFile, PreviewWindow } from '@/stores/preview'
 import { useFilesCacheStore, type FileMeta } from '@/stores/filesCache'
 import ImageViewer from '@/components/common/viewers/ImageViewer.vue'
 import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
 import TextViewer  from '@/components/common/viewers/TextViewer.vue'
 import OfficeViewer from '@/components/common/viewers/OfficeViewer.vue'
-import { CLIENT_ID, filesApi } from '@/services/api'
+import { CLIENT_ID, filesApi, pathFilesApi } from '@/services/api'
 import { isUnauthorizedResponse } from '@/services/authSession'
 import { isImageExt, isVideoExt, isTextExt, isOfficeExt, isCsvExt, isPreviewReloadRequested, isPreviewAffectedByFileEvent, isTextFallbackCandidate, normalizeTextBlob, usePreviewStore } from '@/stores/preview'
 import { getCachedThumb, getThumb } from '@/composables/shared/useThumbCache'
@@ -230,6 +230,8 @@ let loadSequence = 0
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 async function refreshVideoSource(): Promise<string> {
+  const workspaceFile = props.win.file.workspaceFile
+  if (workspaceFile) return pathFilesApi.contentUrl(workspaceFile)
   const fileId = props.win.file.id
   if (typeof fileId !== 'number') throw new Error('无法刷新视频地址')
   const { url } = await filesApi.getStreamUrl(fileId)
@@ -427,7 +429,7 @@ function onPlaceholderLoad(e: Event) {
   placeholderReady.value = true
 }
 
-async function load(f: Partial<FileMeta>, refresh = false) {
+async function load(f: PreviewFile, refresh = false) {
   const sequence = ++loadSequence
   const accountEpoch = getAccountBoundaryEpoch()
   if (accountEpoch !== mountAccountEpoch) return
@@ -461,6 +463,7 @@ async function load(f: Partial<FileMeta>, refresh = false) {
   let initialStreamUrl = props.win.streamUrl
   props.win.streamUrl = undefined
   const getStreamUrl = async (id: number) => {
+    if (f.workspaceFile) return { url: pathFilesApi.contentUrl(f.workspaceFile) }
     if (initialStreamUrl) {
       const url = initialStreamUrl
       initialStreamUrl = undefined
@@ -578,7 +581,7 @@ async function load(f: Partial<FileMeta>, refresh = false) {
       }
       blobUrl.value = url
       // 强制刷新也要替换同一 key 的旧 blob，避免关闭后再次打开回到旧内容。
-      previewBlobCache.put(key, url, accountEpoch)
+      if (key) previewBlobCache.put(key, url, accountEpoch)
       currentCacheKey.value = key
       if (isDocx.value) {
         ready.value = true
@@ -647,7 +650,7 @@ async function load(f: Partial<FileMeta>, refresh = false) {
         return
       }
       blobUrl.value = url
-      previewBlobCache.put(key, url, accountEpoch)
+      if (key) previewBlobCache.put(key, url, accountEpoch)
       const img = new Image()
       img.onload = () => {
         if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
@@ -734,7 +737,9 @@ async function handleDownload() {
   try {
     const file = props.win.file
     const filename = `${file.displayName}.${file.ext?.toLowerCase()}`
-    if (file.attach_id) {
+    if (file.workspaceFile) {
+      pathFilesApi.download(file.workspaceFile)
+    } else if (file.attach_id) {
       const res = await fetch(`${BASE_URL}/agent/attachment/${file.attach_id}/download`, {
         credentials: 'include',
       })

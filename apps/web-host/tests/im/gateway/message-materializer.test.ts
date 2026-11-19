@@ -7,8 +7,8 @@ import test from 'node:test'
 import type { Pool } from 'pg'
 import { assertDurableCanonical, prepareContext, type ContextReferenceCodec, type Json, type MessageEntry } from '@gugu/core/agent'
 import { transcribeCompatibleAsr } from '@gugu/core/providers'
-import { createImMessageMaterializer, ImMessageMaterializationError, ImVoiceUnavailableError } from '../../../src/modules/im/gateway/message-materializer.js'
-import { createPostgresImAttachmentIngress, imAttachmentScopeKey, type ImAttachmentScope } from '../../../src/modules/im/gateway/attachment-ingress.js'
+import { createImMessageMaterializer, ImMessageMaterializationError, ImVoiceUnavailableError } from '../../../src/modules/im/gateway/inbound/message.js'
+import { createPostgresImAttachmentIngress, imAttachmentScopeKey, type ImAttachmentScope } from '../../../src/modules/im/gateway/inbound/attachments.js'
 
 const owner = '00000000-0000-4000-8000-000000000101'
 const identity = { ownerId: owner, sessionId: '10', runId: 'synthetic-run' }

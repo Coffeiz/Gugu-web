@@ -3,9 +3,9 @@ import { createHash, randomUUID } from 'node:crypto'
 import test from 'node:test'
 import type { Pool } from 'pg'
 import { resolveImActor } from '@gugu/core/im/access'
-import { createPostgresFileReadOperations } from '../../../src/modules/files/file-reads-postgres.js'
-import { createImRunSender } from '../../../src/modules/im/gateway/run-sender.js'
-import { imAcceptedEvidence } from '../../../src/modules/im/gateway/run-evidence.js'
+import { createPostgresFileReadOperations } from '../../../src/modules/files/browse.js'
+import { createImRunSender } from '../../../src/modules/im/gateway/delivery/reply.js'
+import { imAcceptedEvidence } from '../../../src/modules/im/gateway/agent/evidence.js'
 import { context, receipt, platform, temporary, fakeDatabase, deliveryOutcome, owner } from './run-sender.fixtures.js'
 
 // 控制服务替身在这些纯出站用例中不得执行；真实prompt授权组合另由controls-postgres回归覆盖。
@@ -146,12 +146,12 @@ test('真实隔离PG证明→四平台真实文本HTTP，批次按业务顺序�
     await pool.query(`CREATE TABLE conversation_sessions(id integer,user_id uuid,source text,bot_id varchar(128),chat_type text,chat_id text);
       CREATE TABLE conversation_messages(id integer,session_id integer,run_id text,role text,chat_type text,platform_user_id text,conversation_seq integer,im_platform_message_id text);
       CREATE TABLE gugu_im_inbound_receipts(user_id uuid,session_id integer,message_id integer,run_id text,state text,platform text,bot_id text,chat_type text,scope_hash text,event_hash text,fingerprint text,sealed_payload jsonb);
-      CREATE TABLE user_bots(id integer,user_id uuid,platform text,enabled boolean,group_message_format text,private_message_format text)`)
+      CREATE TABLE user_bots(id integer,user_id uuid,platform text,enabled boolean,group_message_format text,private_message_format text,private_streaming_enabled boolean NOT NULL DEFAULT false)`)
     await pool.query("INSERT INTO conversation_sessions VALUES(91,$1,'web',NULL,NULL,NULL)", [owner])
     for (const kind of ['telegram', 'feishu', 'qq', 'wechat'] as const) {
       const c = context(kind), wire = platform(kind, undefined, true), r = receipt(c)
       await pool.query('TRUNCATE conversation_messages,gugu_im_inbound_receipts,user_bots')
-      await pool.query('INSERT INTO user_bots VALUES(91,$1,$2,true,NULL,NULL)', [owner, kind])
+      await pool.query('INSERT INTO user_bots(id,user_id,platform,enabled) VALUES(91,$1,$2,true)', [owner, kind])
       await pool.query("INSERT INTO conversation_messages VALUES(11,91,$1,'user','c2c',$2,3,$3)", [c.identity.runId, c.scope.platformUserId, r.im_platform_message_id])
       await pool.query("INSERT INTO gugu_im_inbound_receipts VALUES($1,91,11,$2,'dispatched',$3,'91','c2c',$4,$5,$6,$7)", [owner, c.identity.runId, kind, r.scope_hash, r.event_hash, r.fingerprint, r.sealed_payload])
       try {

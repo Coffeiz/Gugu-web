@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/modules/auth/auth.js'
+import { createUserToken } from '../../src/modules/auth/session/token.js'
 import { CoreError } from '@gugu/core'
 
 test('生产 App 将 MCP 配置 PATCH/DELETE 限定到认证 owner 并保留更新回执', async () => {

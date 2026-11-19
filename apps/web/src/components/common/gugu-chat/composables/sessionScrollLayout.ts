@@ -7,3 +7,7 @@ export function hasPendingMessageMarkdown(element: HTMLElement): boolean {
     bubble.querySelector<HTMLElement>('.md-view')?.dataset.mermaidReady !== 'true',
   )
 }
+export interface SessionScrollAnchor {
+  messageKey: string
+  offset: number
+}

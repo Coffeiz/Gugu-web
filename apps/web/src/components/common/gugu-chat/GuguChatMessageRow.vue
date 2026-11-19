@@ -27,7 +27,7 @@
       <span v-else class="msg-quoted-file" @click.stop="$emit('openFile', f)">{{ f.name }}{{ f.ext ? `.${f.ext}` : '' }}</span>
     </template>
   </div>
-  <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body" @click="onBodyClick"><MarkdownView :html="msg.streaming ? renderMdStream(msg.text) : (msg.html ?? renderChatMd(msg.text, msg.references))" :text="msg.text" chat :render-math="!msg.streaming" /></div>
+  <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body" @click="onBodyClick"><MarkdownView :html="msg.streaming ? renderMdStream(msg.text) : (msg.html ?? renderChatMd(msg.text, msg.references))" :text="msg.text" chat :stream-motion="msg.streaming" :render-math="!msg.streaming" /></div>
   <!-- 用户消息也走 MD 渲染（sanitize 后），和 AI 气泡同一条链路；样式差异由
        .user-md 在 GuguChat.vue 里按紫底气泡重映射。输入框侧保持纯文本不渲染。 -->
   <div v-else-if="msg.text" class="msg-bubble user-md" @click="onBodyClick"><MarkdownView :html="msg.html ?? renderChatMd(displayQQFaces(msg.text), msg.references)" :text="msg.text" chat render-math /></div>

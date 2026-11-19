@@ -8,7 +8,7 @@ import {test} from 'node:test'
 import {Kysely,PostgresDialect} from 'kysely'
 import {createHarnessExecutor} from '@gugu/core/executor/runtime'
 import {MxcExecutor} from '../../../../../packages/sandbox/dist/mxc.js'
-import {createImHarnessExecutorPorts} from '../../../src/modules/im/gateway/executor.js'
+import {createImHarnessExecutorPorts} from '../../../src/modules/im/gateway/agent/execute.js'
 import {context} from './run-sender.fixtures.js'
 
 const url=process.env.GUGU_IM_GATEWAY_TEST_DATABASE_URL

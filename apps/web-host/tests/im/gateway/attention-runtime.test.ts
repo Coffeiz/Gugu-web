@@ -1,19 +1,19 @@
+import { imGatewaySql } from '@gugu/database/postgres/migrations/0013_im_gateway'
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 import { attentionMessageFromPayload } from '@gugu/core/im/attention/message'
-import { createPostgresRedisImAttentionSnapshot } from '../../../src/modules/im/gateway/attention-snapshot.js'
-import { createPostgresImAttentionRuntime } from '../../../src/modules/im/gateway/attention-runtime.js'
-import { createRedisImPendingAskStore } from '../../../src/modules/im/gateway/pending-ask.js'
+import { createPostgresRedisImAttentionSnapshot } from '../../../src/modules/im/gateway/attention/snapshot.js'
+import { createPostgresImAttentionRuntime } from '../../../src/modules/im/gateway/attention/runtime.js'
+import { createRedisImPendingAskStore } from '../../../src/modules/im/gateway/interactions/ask.js'
 import { createRedisStreamCommands } from '../../../src/adapters/cache/redis-stream-commands.js'
-import { createImInboundEnvelope } from '../../../src/modules/im/gateway/inbound-envelope.js'
-import { nodeImAttentionKeys } from '../../../src/modules/im/gateway/inbox.js'
-import { createPostgresImAcceptedFactsReader } from '../../../src/modules/im/gateway/attention-ledger.js'
-import { withPostgresImDeliveryStore } from '../../../src/modules/im/gateway/delivery-store.js'
-import { imAcceptedEvidence } from '../../../src/modules/im/gateway/run-evidence.js'
+import { createImInboundEnvelope } from '../../../src/modules/im/gateway/inbound/envelope.js'
+import { nodeImAttentionKeys } from '../../../src/modules/im/gateway/inbound/inbox.js'
+import { createPostgresImAcceptedFactsReader } from '../../../src/modules/im/gateway/attention/ledger.js'
+import { withPostgresImDeliveryStore } from '../../../src/modules/im/gateway/delivery/store.js'
+import { imAcceptedEvidence } from '../../../src/modules/im/gateway/agent/evidence.js'
 import { createImRunDelivery } from '@gugu/core/im/run-delivery'
-import type { ImAttentionVoiceReadInput, ImAttentionVoiceResult } from '../../../src/modules/im/gateway/voice-attention-contracts.js'
+import type { ImAttentionVoiceReadInput, ImAttentionVoiceResult } from '../../../src/modules/im/gateway/attention/voice.js'
 
 /** 本组仅替换PG策略/snapshot/prepareVoice端口；实际Host编排与Core算法运行，不冒充持久ASR收据验收。 */
 function voiceHarness(prepare: (input: ImAttentionVoiceReadInput) => Promise<readonly ImAttentionVoiceResult[]>) {
@@ -205,8 +205,8 @@ test('真实当前策略：混批能力请求选实际成员，配置变更/等�
 test('实际共享delivery→PG原子accepted ledger→真实snapshot/attention，只有已确认final激活原成员，迟到成员事实按各候选水位判断', {skip}, async()=>{
   const f=await fixture()
   try{
-    await f.pool.query(await readFile(new URL('../../../src/modules/im/gateway/delivery-schema.sql',import.meta.url),'utf8'))
-    await f.pool.query(await readFile(new URL('../../../src/modules/im/gateway/attention-ledger-schema.sql',import.meta.url),'utf8'))
+    await f.pool.query(imGatewaySql.delivery)
+    await f.pool.query(imGatewaySql.attentionLedger)
     const identity={ownerId:f.scope.ownerId,sessionId:'1',runId:'synthetic-accepted-run'}
     const evidenceScope={ownerId:f.scope.ownerId,botId:f.scope.botId,platform:f.scope.platform,chatType:'group' as const,chatId:f.scope.groupId,platformUserId:'synthetic-member'}
     const finalEvent={id:'synthetic-final',identity,sequence:1,round:1,type:'final' as const,payload:{text:'合成已确认部署结果',status:'completed'}}

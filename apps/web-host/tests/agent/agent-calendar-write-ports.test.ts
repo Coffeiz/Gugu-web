@@ -11,11 +11,11 @@ import type { AgentRunnerPorts, CanonicalContextPorts, CanonicalRunContext, RunC
 import { createConfirmationGate } from '@gugu/core/tools'
 import type { ConfirmationBinding, ConfirmationIntent, ConfirmationTargetSnapshot } from '@gugu/core/tools'
 import { ProviderStreamSanitizer, stripThinking } from '@gugu/core/providers'
-import { agentContextAccessScope } from '../../src/modules/agent/model-config/access-scope.js'
-import { bindProviderSelection } from '../../src/modules/agent/model-config/provider-resolver.js'
-import { createAgentToolRegistry } from '../../src/modules/agent-sessions/tools/agent-tool-registry.js'
-import { createWebAgentCalendarWritePorts } from '../../src/modules/agent-sessions/tools/agent-calendar-write-ports.js'
-import { createWebAgentCanvasWritePorts } from '../../src/modules/agent-sessions/tools/agent-canvas-write-ports.js'
+import { agentContextAccessScope } from '../../src/modules/agent/llm/access.js'
+import { bindProviderSelection } from '../../src/modules/agent/llm/bind.js'
+import { createAgentToolRegistry } from '../../src/modules/agent/tools/registry.js'
+import { createWebAgentCalendarWritePorts } from '../../src/modules/agent/tools/calendar.js'
+import { createWebAgentCanvasWritePorts } from '../../src/modules/agent/tools/canvas.js'
 
 const digest = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')
 type RuntimePorts = Omit<AgentRunnerPorts<CanonicalRunContext>, 'context' | 'execution' | 'reply' | 'provider'>

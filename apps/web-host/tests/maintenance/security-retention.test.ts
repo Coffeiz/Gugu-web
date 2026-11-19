@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { Pool } from 'pg'
-import { cleanupExpiredSecurityEvents, startSecurityRetentionWorker } from '../../src/maintenance/security-retention.js'
+import { cleanupExpiredSecurityEvents, startSecurityRetentionWorker } from '../../src/modules/security-events/cleanup.js'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 test('安全事件清理只删除到期记录并可幂等重试', { skip: !url && '需要隔离 PostgreSQL' }, async () => {

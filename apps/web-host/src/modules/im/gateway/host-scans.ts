@@ -1,6 +1,6 @@
 import type { Pool } from 'pg'
 import type { RunIdentity } from '@gugu/core/agent'
-import { agentDispatchSource, decryptAgentDispatchInput, type ImAgentDispatchInput } from '../../agent-sessions/persistence/agent-run-dispatch-postgres.js'
+import { agentDispatchSource, decryptAgentDispatchInput, type ImAgentDispatchInput } from '../../agent/run/dispatch.js'
 
 /** IM收据仅作为候选索引；真正执行前仍解密验证v3来源，Web任务没有消费资格。 */
 export function createImHostScans(options: { pool: Pick<Pool, 'query'>; secretKey: string; concurrency?: number;

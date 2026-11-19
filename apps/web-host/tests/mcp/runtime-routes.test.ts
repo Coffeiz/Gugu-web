@@ -3,7 +3,7 @@ import test from 'node:test'
 import Fastify from 'fastify'
 import {registerMcpRuntimeRoutes} from '../../src/modules/mcp/runtime-routes.js'
 import {createApp} from '../../src/app.js'
-import {createUserToken} from '../../src/modules/auth/auth.js'
+import {createUserToken} from '../../src/modules/auth/session/token.js'
 
 test('MCP runtime API requires auth, derives owner and forwards load/reconnect/tools',async()=>{
  const app=Fastify(),calls:string[]=[]

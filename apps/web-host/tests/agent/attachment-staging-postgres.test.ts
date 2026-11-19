@@ -5,7 +5,7 @@ import path from 'node:path'
 import { tmpdir } from 'node:os'
 import type { Pool, PoolClient } from 'pg'
 import { encode } from 'silk-wasm'
-import { createPostgresAgentAttachmentUploadOperations } from '../../src/modules/agent/attachment-staging-postgres.js'
+import { createPostgresAgentAttachmentUploadOperations } from '../../src/modules/agent/attachments/persistence.js'
 
 function database(options: { used?: number; failInsert?: boolean } = {}) {
   const calls: Array<{ sql: string; values?: unknown[] }> = []

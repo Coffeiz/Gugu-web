@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
-import { createPostgresOnboardingReseedOperations } from '../../src/modules/onboarding/persistence/reseed-postgres.js'
+import { createPostgresOnboardingReseedOperations } from '../../src/modules/onboarding/reseed.js'
 
 test('重播种删除项目全部文件字节后，配额账本与永久删除事件同时扣减', async () => {
   const ownerId = randomUUID()

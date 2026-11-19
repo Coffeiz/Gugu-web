@@ -1,11 +1,11 @@
+import { imGatewaySql } from '@gugu/database/postgres/migrations/0013_im_gateway'
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 import type { Pool } from 'pg'
 import type { AttentionMessage } from '@gugu/core/im/attention/types'
-import { createImAcceptedEvidenceCodec, createPostgresImAcceptedFactsReader, type ImDeliveryLedgerContext } from '../../../src/modules/im/gateway/attention-ledger.js'
-import { withPostgresImDeliveryStore } from '../../../src/modules/im/gateway/delivery-store.js'
+import { createImAcceptedEvidenceCodec, createPostgresImAcceptedFactsReader, type ImDeliveryLedgerContext } from '../../../src/modules/im/gateway/attention/ledger.js'
+import { withPostgresImDeliveryStore } from '../../../src/modules/im/gateway/delivery/store.js'
 
 const ownerId = '00000000-0000-4000-8000-000000000011'
 const identity = {ownerId,sessionId:'21',runId:'synthetic-run'}
@@ -53,7 +53,7 @@ test('隔离PG：accepted和密文事实同SQL原子；插入故障保留pending
     await pool.query(`INSERT INTO users VALUES($1,true,'active');`,[ownerId])
     await pool.query(`INSERT INTO user_bots VALUES(1,$1,'telegram',true,true,NULL),(2,$1,'telegram',true,true,NULL)`,[ownerId])
     await pool.query(`INSERT INTO conversation_sessions VALUES(21,$1,'telegram','1','group','-12345'),(22,$1,'telegram','2','group','-12345')`,[ownerId])
-    for (const file of ['delivery-schema.sql','attention-ledger-schema.sql']) await pool.query(await readFile(new URL(`../../../src/modules/im/gateway/${file}`,import.meta.url),'utf8'))
+    for (const file of ['delivery','attentionLedger'] as const) await pool.query(imGatewaySql[file])
     const db = pool, options = {secretKey,ledger:context}, scope = {ownerId,botId:'1',platform:'telegram' as const,groupId:'-12345'}
     await db.query(`CREATE FUNCTION reject_fact() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic-private-body'; END $$;
       CREATE TRIGGER reject_fact BEFORE INSERT ON gugu_im_accepted_delivery_facts FOR EACH ROW EXECUTE FUNCTION reject_fact()`)
@@ -124,7 +124,8 @@ test('隔离PG：accepted和密文事实同SQL原子；插入故障保留pending
       await receipts.begin(identity,'round:2:text',hash('legacy'))
       await receipts.settle(identity,'round:2:text','accepted',undefined,fact(3,true))
     },options)
-    await assert.rejects(reader.read(scope,now+1000,[message(now+1000)],new AbortController().signal))
+    const afterLastWrite = Number((await db.query(`SELECT ceil(extract(epoch FROM clock_timestamp())*1000)::text AS t`)).rows[0].t)
+    await assert.rejects(reader.read(scope,afterLastWrite,[message(afterLastWrite)],new AbortController().signal))
   } finally {
     await pool?.end(); await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`); await admin.end()
   }

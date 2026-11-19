@@ -4,7 +4,7 @@ import Fastify from 'fastify'
 import {
   registerMindCanvasReadRoutes,
   type MindCanvasReadOperations,
-} from '../../src/modules/mind/mind-canvas-read.js'
+} from '../../src/modules/mind/canvas.js'
 
 const ownerId = 'owner-mind-canvas'
 test('canvas read routes require a valid id, hide other-owner canvases, and retain Python empty-list contracts', async () => {

@@ -1,5 +1,7 @@
 # Gugu 2.0 迁移任务清单
 
+> 当前数据库初始化统一使用 [Database 包的编号迁移](../../packages/database/README.md)。下文中的分模块命令、手工 SQL 和升级步骤为改造期间的历史记录。
+
 > 更新：2026-11-18。本文维护实施顺序、当前状态、验收证据与未完成任务。目标架构和多端职责见[架构说明](Gugu-2.0-架构说明.md)；依赖替换盘点见[Python → Node 依赖迁移矩阵](Gugu-2.0-Python-to-Node-Dependency-Migration.md)。
 >
 > **当前路线：先完成 Node Web/NAS 后端迁移，再基于稳定的共享 Core 推进桌面产品化。** Web 使用 Node Host + PostgreSQL；桌面使用 Electron + Node Core + 本地 SQLite。两端共享 Core 契约，但拥有不同 Host 和数据生命周期。2.0 的 API、Agent 工具、后台任务与执行入口统一迁入 Node。未完成的功能明确标为不可用；不保留 Python 回退、双写或双运行时兼容层。旧版数据升级、备份与恢复单独验收。

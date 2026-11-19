@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
-import { createPostgresUserQuotaReader } from '../../src/modules/auth/persistence/quota.js'
+import { createPostgresUserQuotaReader } from '../../src/modules/auth/quota/read.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

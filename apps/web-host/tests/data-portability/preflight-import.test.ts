@@ -4,7 +4,7 @@ import test from 'node:test'
 import { createDataImportPreflighter } from '@gugu/core/data-portability/preflight-import'
 import { openPortableArchive } from '../../../../packages/core/src/data-portability/archive-reader-node.js'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/modules/auth/auth.js'
+import { createUserToken } from '../../src/modules/auth/session/token.js'
 
 const ownerA='00000000-0000-4000-8000-000000000011'
 const ownerB='00000000-0000-4000-8000-000000000012'

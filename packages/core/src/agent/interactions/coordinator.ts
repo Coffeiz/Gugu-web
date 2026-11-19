@@ -5,6 +5,7 @@ import { AgentRunError } from '../models.js'
 import { portableSnapshot } from '../context/history/canonical-history.js'
 import type { RunCoordination } from '../ports.js'
 import { terminalRunStates } from '../run/lifecycle.js'
+import { recordAgentRunLog } from '../logging.js'
 
 export async function activateNextInteractionForRun<C>(scope: RunCoordination<C>): Promise<RunEvent | null> {
   if (!scope.state || scope.state.context === null || scope.state.pending)
@@ -24,6 +25,10 @@ export async function activateNextInteractionForRun<C>(scope: RunCoordination<C>
     catch (error) {
       if (scope.controller.signal.aborted || scope.persistenceUncertain)
         throw error
+      const at = Date.parse(scope.ports.clock.now()) || Date.now()
+      recordAgentRunLog(scope.ports.log, {
+        identity: scope.identity, at, level: 'warn', event: 'agent.interaction.activation_failed',
+      })
       return scope.applyTool(request.toolCall, { kind: 'completed', value: { status: 'error', code: 'interaction_unavailable' }, successful: false, mutated: false }, false, request.id)
     }
   }
@@ -83,6 +88,10 @@ export async function* resumeWaitingRun<C>(scope: RunCoordination<C>, resolution
   if (!resolution)
     return true
   if (!scope.state.pending || resolution.interactionId !== scope.state.pending.id || !resolution.receiptId) {
+    const at = Date.parse(scope.ports.clock.now()) || Date.now()
+    recordAgentRunLog(scope.ports.log, {
+      identity: scope.identity, at, level: 'warn', event: 'agent.interaction.result_missing',
+    })
     throw new AgentRunError('conflict', '交互状态已失效')
   }
   if (scope.state.pending.kind === 'confirmation' && !['confirmed', 'cancelled', 'aborted', 'expired'].includes(resolution.status))

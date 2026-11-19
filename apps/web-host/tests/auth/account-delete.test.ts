@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import {registerAccountDeleteRoute} from '../../src/modules/auth/account-delete.js'
+import {registerAccountDeleteRoute} from '../../src/modules/auth/account/delete.js'
 
 const owner='00000000-0000-4000-8000-000000000071'
 

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readSessionSnapshot, type ContextData, type ContextSourceSelection, type SnapshotPayload } from '@gugu/core/agent'
 import { resolveImActor } from '@gugu/core/im/access'
-import { createImAgentContextBuilder } from '../../../src/modules/im/gateway/context-builder.js'
+import { createImAgentContextBuilder } from '../../../src/modules/im/gateway/agent/context.js'
 
 const identity = { ownerId: 'owner-a', sessionId: '1', runId: 'run-a' }
 /** buildRequest消费持久快照投影，不能把尚未写入的SnapshotPayload冒充完整请求契约。 */

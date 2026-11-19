@@ -47,8 +47,10 @@
     <UploadModal
       :show="uploadDialogOpen"
       :projects="uploadProjects"
+      :workspace-target="uploadWorkspaceTarget"
       @close="uploadDialogOpen = false"
       @uploaded="onGlobalUploaded"
+      @workspace-changed="uploadSignal++"
     />
 
     <!-- 文件预览 Modal（PDF / 文本 / 音频） -->
@@ -123,6 +125,7 @@ const { t, locale }  = useI18n()
 
 const uploadDialogOpen = ref(false)
 const uploadProjects   = ref([])
+const uploadWorkspaceTarget = ref<typeof uiStore.workspaceUploadTarget>(null)
 
 function openNewProject() {
   uiStore.newProjectRange = uiStore.calendarActiveRange ?? null
@@ -130,6 +133,11 @@ function openNewProject() {
 }
 
 async function openUpload() {
+  uploadWorkspaceTarget.value = route.path === '/files' ? uiStore.workspaceUploadTarget : null
+  if (uploadWorkspaceTarget.value) {
+    uploadDialogOpen.value = true
+    return
+  }
   // 弹窗内的项目分组会直接影响内容高度。先准备好数据再挂载，避免先按空列表打开、
   // 请求回包后再把整个窗口撑到最终尺寸。
   if (projectStore.projectsLoaded) {

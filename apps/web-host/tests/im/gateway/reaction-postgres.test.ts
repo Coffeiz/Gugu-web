@@ -1,18 +1,18 @@
+import { imGatewaySql } from '@gugu/database/postgres/migrations/0013_im_gateway'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import type { Pool } from 'pg'
 import type { SqlDataRuntime } from '@gugu/core/data'
-import { createAgentToolRegistry } from '../../../src/modules/agent-sessions/tools/agent-tool-registry.js'
-import { enqueueAgentRunLocked, type AgentDispatchLease } from '../../../src/modules/agent-sessions/persistence/agent-run-dispatch-postgres.js'
+import { createAgentToolRegistry } from '../../../src/modules/agent/tools/registry.js'
+import { enqueueAgentRunLocked, type AgentDispatchLease } from '../../../src/modules/agent/run/dispatch.js'
 import { withPostgresTransaction } from '../../../src/adapters/database/postgres-transaction.js'
-import { createPostgresImAccess } from '../../../src/modules/im/gateway/access-postgres.js'
-import { createPostgresImConversationStore } from '../../../src/modules/im/gateway/conversation-postgres.js'
-import { createImInboundEnvelope } from '../../../src/modules/im/gateway/inbound-envelope.js'
-import { createPostgresImReaction } from '../../../src/modules/im/gateway/reaction-postgres.js'
-import { createFeishuClient } from '../../../src/modules/im/gateway/feishu/client.js'
-import { createFeishuSender } from '../../../src/modules/im/gateway/feishu/sender.js'
+import { createPostgresImAccess } from '../../../src/modules/im/gateway/inbound/access.js'
+import { createPostgresImConversationStore } from '../../../src/modules/im/gateway/agent/conversations.js'
+import { createImInboundEnvelope } from '../../../src/modules/im/gateway/inbound/envelope.js'
+import { createPostgresImReaction } from '../../../src/modules/im/gateway/attention/reactions.js'
+import { createFeishuClient } from '../../../src/modules/im/gateway/platforms/feishu/client.js'
+import { createFeishuSender } from '../../../src/modules/im/gateway/platforms/feishu/sender.js'
 import { imActorInputFromPayload } from '@gugu/core/im/access'
 
 const url = process.env.GUGU_IM_GATEWAY_TEST_DATABASE_URL
@@ -37,8 +37,8 @@ async function setup() {
       CREATE TABLE agent_run_dispatch(user_id uuid,session_id integer,run_id text,state text,message_id integer,nonce bytea,payload bytea,
         request_expires_at timestamptz,token text,fence bigint,lease_expires_at timestamptz,cancel_requested boolean DEFAULT false,
         PRIMARY KEY(user_id,session_id,run_id));`)
-    await pool.query(await readFile(new URL('../../../src/modules/im/gateway/conversation-schema.sql', import.meta.url), 'utf8'))
-    await pool.query(await readFile(new URL('../../../src/modules/im/gateway/reaction-schema.sql', import.meta.url), 'utf8'))
+    await pool.query(imGatewaySql.conversation)
+    await pool.query(imGatewaySql.reaction)
     const identity = { ownerId: randomUUID(), sessionId: '1', runId: 'synthetic-react-run' }, secretKey = 'synthetic-reaction-secret'
     const binding = { ownerId: identity.ownerId, platform: 'feishu' as const, botId: '7' }
     const payload = { owner_user_id: identity.ownerId, platform: 'feishu', bot_id: '7', channel_id: '7', chat_type: 'group',

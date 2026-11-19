@@ -3,7 +3,7 @@ import Fastify from 'fastify'
 import test from 'node:test'
 import { registerPreferencesRoutes, type PreferencesStore } from '../../src/modules/preferences/preferences.js'
 import type { PreferenceTextFiles, PreferenceTextKind } from '../../src/modules/preferences/persistence/personality-files.js'
-import { installFileUploadSupport } from '../../src/modules/files/file-upload.js'
+import { installFileUploadSupport } from '../../src/modules/files/upload.js'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
 
 const trustedOwner = '00000000-0000-4000-8000-000000000021'

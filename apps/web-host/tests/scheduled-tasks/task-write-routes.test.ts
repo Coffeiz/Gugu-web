@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
 import type { UserFromRequest } from '../../src/app.js'
-import { registerScheduledTaskWrites } from '../../src/modules/scheduled-tasks/task-write-routes.js'
-import type { createPostgresTaskWrites } from '../../src/modules/scheduled-tasks/persistence/task-writes-postgres.js'
+import { registerScheduledTaskWrites } from '../../src/modules/scheduled-tasks/routes.js'
+import type { createPostgresTaskWrites } from '../../src/modules/scheduled-tasks/store.js'
 
 test('任务路由转换 Python 接受的数字和布尔输入，并拒绝非法日期', async () => {
   const app = Fastify(), seen: unknown[] = []

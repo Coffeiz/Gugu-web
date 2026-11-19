@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { PassThrough } from 'node:stream'
 import test from 'node:test'
-import { createTerminalPtyManager } from '../../src/modules/terminals/pty-manager.js'
+import { createTerminalPtyManager } from '../../src/modules/terminals/pty/manager.js'
 import type { MxcPtyBridge, MxcPtyHandle, MxcPtyLaunchSpec } from '@gugu/sandbox/pty'
 
 function fixture() {

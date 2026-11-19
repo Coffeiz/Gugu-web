@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { Pool } from 'pg'
-import { createPostgresCurrentTurnReader, createPostgresSnapshotReader } from '../../src/modules/agent-sessions/context/agent-context-source.js'
+import { createPostgresCurrentTurnReader, createPostgresSnapshotReader } from '../../src/modules/agent/context/source.js'
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
 test('来源快照与当前消息仅允许 owner 读取并绑定实际消息锚点', { skip: !url && '需要隔离 PostgreSQL' }, async () => {

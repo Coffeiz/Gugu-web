@@ -1,4 +1,4 @@
-import { createUserToken } from '../../src/modules/auth/auth.js'
+import { createUserToken } from '../../src/modules/auth/session/token.js'
 
 export function signedUserToken(
   secret: string,

@@ -4,7 +4,7 @@ import {execFileSync} from 'node:child_process'
 import {resolve} from 'node:path'
 import Fastify from 'fastify'
 import {createProviderCapabilityPreview} from '../../../../packages/core/src/byok/capabilities-preview.js'
-import {registerProviderCapabilityPreviewRoute} from '../../src/modules/byok/capabilities-preview.js'
+import { registerProviderCapabilityPreviewRoute } from '../../src/modules/byok/routes.js'
 import {installHttpErrorHandler} from '../../src/http/errors.js'
 
 const samples=[

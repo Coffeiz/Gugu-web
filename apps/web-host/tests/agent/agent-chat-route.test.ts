@@ -3,7 +3,7 @@ import { request as httpRequest } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { test } from 'node:test'
 import Fastify from 'fastify'
-import { registerAgentChatRoutes, type AgentChatService } from '../../src/modules/agent-sessions/agent-chat-route.js'
+import { registerAgentChatRoutes, type AgentChatService } from '../../src/modules/agent/chat/routes.js'
 
 test('聊天流保持前端事件顺序，异常不泄露原文，续看和取消按认证 owner 查询', async () => {
   const app = Fastify()

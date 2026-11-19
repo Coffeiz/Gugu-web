@@ -3,7 +3,7 @@ import test from 'node:test'
 import Fastify, { type FastifyRequest } from 'fastify'
 import type { Transporter } from 'nodemailer'
 import { createAuthEmailSender, type SmtpEmailSettings } from '../../src/adapters/email/smtp-email.js'
-import { registerRegistrationCodeRoute } from '../../src/modules/auth/routes/auth-registration-code.js'
+import { registerRegistrationCodeRoute } from '../../src/modules/auth/registration/routes.js'
 
 const emailSettings: SmtpEmailSettings = {
   host: 'smtp.example.test',

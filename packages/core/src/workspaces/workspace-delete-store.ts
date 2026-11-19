@@ -1,7 +1,7 @@
 import type { Kysely } from 'kysely'
 import { dataContext } from '../contracts/index.js'
 import { enqueueScheduledTaskRagIndex } from '../scheduled-tasks/rag-index-job.js'
-import type { WorkspaceDeletionRuntime } from '../workspaces/workspace-delete.js'
+import type { WorkspaceDeletionRuntime } from './workspace-delete.js'
 
 /** 声明最小读取面；表结构和外键生命周期由平台schema维护，不在此建表。 */
 export interface WorkspaceDeletionTables {

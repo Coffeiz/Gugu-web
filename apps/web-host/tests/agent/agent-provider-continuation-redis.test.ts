@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createRedisProviderContinuationStore } from '../../src/modules/agent-sessions/persistence/agent-provider-continuation-redis.js'
+import { createRedisProviderContinuationStore } from '../../src/modules/agent/run/continuation.js'
 
 test('重建实例可读取未过期的原生续接，密文绑定原运行、模型和授权范围', async () => {
   const values = new Map<string, string>()

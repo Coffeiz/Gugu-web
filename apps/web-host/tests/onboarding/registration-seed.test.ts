@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createRegistrationSeeder, type RegistrationSeedPlan, type RegistrationSeedPorts } from '@gugu/core/onboarding'
-import { createOnboardingSurpriseMp3Reader } from '../../src/modules/onboarding/surprise-asset.js'
+import { createOnboardingSurpriseMp3Reader } from '../../src/modules/onboarding/assets.js'
 
 function fixture(overrides: Partial<RegistrationSeedPorts> = {}) {
   const applied: Array<{ ownerId: string; plan: RegistrationSeedPlan }> = []

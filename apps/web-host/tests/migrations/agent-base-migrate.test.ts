@@ -2,12 +2,12 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { Pool } from 'pg'
-import { applyAgentBaseMigration, checkAgentBaseMigration } from '../../src/migrations/agent-base-migrate.js'
-import { AgentSchemaMigrationError } from '../../src/migrations/agent-schema-migrate.js'
+import { applyAgentBaseMigration, checkAgentBaseMigration } from '@gugu/database/postgres/migrations/0001_initialize'
+import { PostgresMigrationError } from '@gugu/database/postgres'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const integration = { skip: !url && '需要隔离 PostgreSQL' }
-const incompatible = (error: unknown) => error instanceof AgentSchemaMigrationError && error.code === 'incompatible'
+const incompatible = (error: unknown) => error instanceof PostgresMigrationError && error.code === 'incompatible'
 
 async function withSchema(run: (pool: Pool) => Promise<void>) {
   const admin = new Pool({ connectionString: url })

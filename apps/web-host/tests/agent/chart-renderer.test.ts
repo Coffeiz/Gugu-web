@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { renderAgentCharts } from '../../src/modules/agent/chart-renderer.js'
+import { renderAgentCharts } from '../../src/modules/agent/charts.js'
 
 test('Node Host 经 charts 包渲染 Mermaid 与 Math PNG，保留输入数量限制', async () => {
   const images = await renderAgentCharts({ charts: [

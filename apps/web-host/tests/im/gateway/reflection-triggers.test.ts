@@ -1,14 +1,14 @@
+import { imReflectionSql } from '@gugu/database/postgres/migrations/0014_im_reflection'
 import assert from 'node:assert/strict'
 import {randomUUID} from 'node:crypto'
-import {readFile} from 'node:fs/promises'
 import {test} from 'node:test'
 import type {PoolClient} from 'pg'
 import {createImProductionFixture} from './production.fixtures.js'
-import {createImReflectionTriggers,readImReflectionScopeVersions,ImReflectionTriggerError} from '../../../src/modules/im/gateway/reflection-triggers.js'
-import {reflectionScopeHash} from '../../../src/modules/im/gateway/reflection-codec.js'
-import {createImInboundEnvelope} from '../../../src/modules/im/gateway/inbound-envelope.js'
-import {imConversationDigest,imConversationFingerprint,imConversationScopeHash} from '../../../src/modules/im/gateway/conversation-identity.js'
-import {enqueueAgentRunLocked} from '../../../src/modules/agent-sessions/persistence/agent-run-dispatch-postgres.js'
+import {createImReflectionTriggers,readImReflectionScopeVersions,ImReflectionTriggerError} from '../../../src/modules/im/gateway/memory/triggers.js'
+import {reflectionScopeHash} from '../../../src/modules/im/gateway/memory/codec.js'
+import {createImInboundEnvelope} from '../../../src/modules/im/gateway/inbound/envelope.js'
+import {imConversationDigest,imConversationFingerprint,imConversationScopeHash} from '../../../src/modules/im/gateway/agent/identity.js'
+import {enqueueAgentRunLocked} from '../../../src/modules/agent/run/dispatch.js'
 
 const databaseUrl=process.env.GUGU_IM_GATEWAY_TEST_DATABASE_URL,python=process.env.GUGU_IM_FIXTURE_PYTHON
 test('触发器参数或SQL故障固定脱敏，不返回伪空窗口',async()=>{
@@ -27,7 +27,7 @@ test('真实PG Node反思窗口：被动50条/真实Run闲置180秒、重放、�
 },async t=>{
  const f=await createImProductionFixture({databaseUrl,python:python!}),binding={ownerId:f.ownerId,platform:'telegram' as const,botId:f.botId}
  if(!(await f.pool.query("SELECT to_regclass('gugu_im_reflection_trigger_states') AS name")).rows[0].name)
-  await f.pool.query(await readFile(new URL('../../../src/modules/im/gateway/reflection-trigger-schema.sql',import.meta.url),'utf8'))
+  await f.pool.query(imReflectionSql.reflectionTrigger)
  const triggers=createImReflectionTriggers({pool:f.pool,secretKey:f.secretKey}),envelope=createImInboundEnvelope(f.secretKey)
  async function tx<T>(work:(client:PoolClient)=>Promise<T>){const client=await f.pool.connect();try{await client.query('BEGIN');const result=await work(client);await client.query('COMMIT');return result}catch(error){await client.query('ROLLBACK');throw error}finally{client.release()}}
  async function session(){return f.insert('conversation_sessions',{user_id:f.ownerId,title:'合成反思窗口',source:'telegram',bot_id:f.botId,chat_type:'group',chat_id:`synthetic-trigger-${randomUUID()}`,execution_state:'idle',pending_message_count:0,last_message_seq:0})}

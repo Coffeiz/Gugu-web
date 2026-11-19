@@ -3,7 +3,7 @@ import test from 'node:test'
 import {mkdtemp,writeFile,rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
-import {createImPlatformSettingsReader} from '../../src/modules/im/platform-settings.js'
+import {createImPlatformSettingsReader} from '../../src/modules/im/settings.js'
 test('IM开关按默认、环境与override优先并在每次读取反映热更新',async()=>{
  const root=await mkdtemp(join(tmpdir(),'im-platforms-')),path=join(root,'override.json')
  try{

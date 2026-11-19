@@ -17,7 +17,7 @@ export type AgentShellPort = (input: AgentShellInput, scope: ToolScope, call: To
 export function createAgentShellTool(execute: AgentShellPort): ToolDefinition {
   return {
     definition: { name: 'shell', schema: { type: 'function', function: {
-      name: 'shell', description: '默认在隔离沙盒执行，目录使用沙盒内路径，未确认时用户文件只读。显式 system 使用 Web Host 服务账号权限，需要双侧开启及逐次确认。',
+      name: 'shell', description: '默认在隔离沙盒执行，目录使用沙盒内路径。独立工作目录允许普通写入和输出重定向；写入文件库或真实项目仍受原有权限和确认限制。显式 system 使用 Web Host 服务账号权限，需要双侧开启及逐次确认。',
       parameters: { type: 'object', additionalProperties: false, required: ['command'], properties: {
         command: { type: 'string', minLength: 1, maxLength: 16_384 },
         cwd: { type: 'string', maxLength: 4096, default: '.' },

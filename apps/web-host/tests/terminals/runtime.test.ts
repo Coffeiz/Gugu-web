@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createTerminalRuntime } from '../../src/modules/terminals/runtime.js'
+import { createTerminalRuntime } from '../../src/modules/terminals/service.js'
 
 test('拒绝只配租约或只配取消标记，避免远程取消返回成功但执行仍继续', () => {
   const base = {

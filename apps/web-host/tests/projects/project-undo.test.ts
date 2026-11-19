@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { PoolClient } from 'pg'
-import { applyProjectUndo, type ProjectUndoStorage } from '../../src/modules/undo/persistence/projects.js'
+import { applyProjectUndo, type ProjectUndoStorage } from '../../src/modules/undo/adapters/projects.js'
 
 test('项目摘要更新撤销与重做恢复各自的摘要值', async () => {
   let value: unknown = '新摘要'

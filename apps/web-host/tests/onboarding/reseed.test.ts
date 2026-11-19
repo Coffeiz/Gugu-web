@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/modules/auth/auth.js'
+import { createUserToken } from '../../src/modules/auth/session/token.js'
 
 test('生产 Host 认证后只按 JWT owner 重播种，并对未认证请求拒绝副作用', async () => {
   const ownerId = '00000000-0000-4000-8000-000000000071'

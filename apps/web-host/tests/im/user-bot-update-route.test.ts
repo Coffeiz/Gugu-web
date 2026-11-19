@@ -3,7 +3,7 @@ import test from 'node:test'
 import Fastify from 'fastify'
 import type {createUserBotUpdater,UserBotPatch} from '../../../../packages/core/src/im/user-bot-update.js'
 import {UserBotUpdateError} from '../../../../packages/core/src/im/user-bot-update.js'
-import {registerUserBotUpdateRoute} from '../../src/modules/im/user-bot-update.js'
+import {registerUserBotUpdateRoute} from '../../src/modules/im/routes.js'
 test('Bot PUT HTTP协议保持Python bool/null/整数路径，拒绝数组和错误DTO并忽略owner伪造',async()=>{
  const app=Fastify(),calls:{owner:string;id:number;input:UserBotPatch}[]=[]
  const update=(async(owner:string,id:number,input:UserBotPatch)=>{calls.push({owner,id,input});if(input.group_response_mode==='invalid')throw new UserBotUpdateError('无效的群聊回应方式');return {name:'updated'}}) as unknown as ReturnType<typeof createUserBotUpdater>

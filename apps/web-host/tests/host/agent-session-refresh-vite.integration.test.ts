@@ -5,8 +5,8 @@ import { resolve } from 'node:path'
 import { after, test } from 'node:test'
 import { Pool } from 'pg'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/modules/auth/auth.js'
-import { createPostgresAgentSessionRefresher } from '../../src/modules/agent-sessions/agent-session-refresh.js'
+import { createUserToken } from '../../src/modules/auth/session/token.js'
+import { createPostgresAgentSessionRefresher } from '../../src/modules/agent/sessions/update.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '00000000-0000-4000-8000-000000000101'

@@ -5,11 +5,10 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { Pool, type PoolClient } from 'pg'
 import test from 'node:test'
-import { RegistrationRequestError } from '../../src/modules/auth/routes/auth-register.js'
-import { createPostgresRegistrationOperations } from '../../src/modules/auth/persistence/registration.js'
+import { RegistrationRequestError } from '../../src/modules/auth/registration/routes.js'
+import { createPostgresRegistrationOperations } from '../../src/modules/auth/registration/store.js'
 
-import { applyAgentBaseMigration } from '../../src/migrations/agent-base-migrate.js'
-import { applyWebDomainMigration } from '../../src/migrations/web-domain-migrate.js'
+import { migratePostgres } from '@gugu/database/postgres'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
@@ -23,8 +22,7 @@ async function createFixture(options: {
   await adminPool.query(`CREATE SCHEMA "${schema}"`)
   const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema}`, max: 2 })
   const root = await mkdtemp(join(tmpdir(), 'gugu-register-'))
-  await applyAgentBaseMigration(pool)
-  await applyWebDomainMigration(pool)
+  assert.equal(await migratePostgres(pool, 'apply'), 'applied')
 
   const calls: string[] = []
   const restorationTtls: number[] = []

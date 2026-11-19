@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Pool } from 'pg'
 import test from 'node:test'
-import { createPostgresFileUpdateOperations } from '../../src/modules/files/file-update-postgres.js'
+import { createPostgresFileUpdateOperations } from '../../src/modules/files/store.js'
 
 const databaseUrl=process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const owner='11111111-1111-4111-8111-111111111111'
@@ -64,7 +64,7 @@ test('PostgreSQL Local PATCH 保留省略字段、搬迁文件、写撤销记录
     assert.equal(recovered.displayName,'提交后名称'); assert.equal(recovered.version,4)
     const stored=await pool.query<{storage_key:string}>('SELECT storage_key FROM files WHERE id=1')
     const committedPath=path.join(root,...stored.rows[0]!.storage_key.split('/'))
-    assert.equal(stored.rows[0]!.storage_key,`${owner}/个人文件/提交后名称.md`)
+    assert.equal(stored.rows[0]!.storage_key,`${owner}/项目文件/2026/02/项目甲 #1/提交后名称.md`)
     assert.equal(await readFile(committedPath,'utf8'),'正文')
     await assert.rejects(readFile(movedPath),{code:'ENOENT'})
   }finally{await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();await rm(root,{recursive:true,force:true})}

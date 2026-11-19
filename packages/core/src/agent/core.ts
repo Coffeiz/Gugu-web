@@ -1,6 +1,6 @@
 import type { ExecutionResult } from './executor/contracts.js'
 import { mergeUsage } from './context/budget.js'
-import type { DisplayItem,InteractionResolution,Json,Lease,PortableValue,ProviderCursor,ProviderRecoveryBoundary,ReplyChoice,ReplyGateCall,RunCheckpoint,RunEvent,AgentRunner,RunIdentity,SanitizerCheckpoint,ToolCall,ToolPlan,ToolResult } from './models.js'
+import type { DisplayItem,DispatchOutcome,InteractionResolution,Json,Lease,PortableValue,ProviderCursor,ProviderRecoveryBoundary,ReplyChoice,ReplyGateCall,RunCheckpoint,RunEvent,AgentRunner,RunIdentity,SanitizerCheckpoint,ToolCall,ToolPlan,ToolResult } from './models.js'
 import { AgentRunError,isEarlyExit,RunStoreRejected,ToolResultCheckpointUnavailable } from './models.js'
 import { cacheResultForRun,encodeResultForRun,hydrateResultForRun,normalizePersistentArtifact } from './context/history/attachment-refs.js'
 import { portableSnapshot,snapshotInteraction,snapshotToolCall,snapshotToolResult } from './context/history/canonical-history.js'
@@ -8,6 +8,7 @@ import { stripHistoryMedia } from './context/history/ordering.js'
 import { activateNextInteractionForRun,closeInteractionsForRun,completeResolutionClosureForRun,resumeWaitingRun } from './interactions/coordinator.js'
 import type { AgentRunnerPorts,RunCoordination,StreamSanitizer } from './ports.js'
 import { recordAgentObservation } from './observation.js'
+import { recordAgentRunLog } from './logging.js'
 import { cancellable,checkCancellationForRun,requestRunCancellation,stoppedResultForRun } from './run/cancellation.js'
 import { closeToolsForRun,finishForRun } from './run/finalization.js'
 import { assertRunCheckpoint,assertRunIdentity,assertRunTransition,decideReply,decideReplyGate,emptyRunUsage,goalCompleted,initialReplyState,readRunCheckpoint,runIdentityKey,stripGoalMarker,terminalRunStates,toolReplyProgress } from './run/lifecycle.js'
@@ -27,6 +28,19 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
   const publish = (event: RunEvent, signal?: AbortSignal) => publishRunEvent(ports, event, signal)
   const replay = (identity: RunIdentity, options?: { readonly signal?: AbortSignal }) => replayRunEvents(ports, read, identity, options)
   const observedAt = () => Date.parse(ports.clock.now()) || Date.now()
+  const observePhase = (identity: RunIdentity, name: string, startedAt: number, round: number, status: string, attributes?: Readonly<Record<string, unknown>>) => {
+    const endedAt = observedAt()
+    recordAgentObservation(ports.observation, {
+      identity, kind: 'context', name, at: endedAt, round,
+      spanId: `${identity.runId}:phase:${name}:${startedAt}`,
+      parentSpanId: identity.runId, status, startedAt, endedAt,
+      durationMs: Math.max(0, endedAt - startedAt), attributes,
+    })
+  }
+  const logRun = (identity: RunIdentity, level: 'info' | 'warn' | 'error', event: import('./logging.js').AgentRunLogEventName,
+    round?: number, attributes?: Readonly<Record<string, string | number | boolean | null>>) => recordAgentRunLog(ports.log, {
+    identity, at: observedAt(), level, event, ...(round === undefined ? {} : { round }), ...(attributes ? { attributes } : {}),
+  })
   const observeEvent = (event: RunEvent) => {
     const payload = event.payload
     if (event.type === 'run_started') recordAgentObservation(ports.observation, {
@@ -48,11 +62,24 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
       identity: event.identity, kind: 'round', name: 'output_delta', at: observedAt(), round: event.round,
       spanId: `${event.identity.runId}:round:${event.round}`, output: payload.text,
     })
-    else if (event.type === 'final') recordAgentObservation(ports.observation, {
-      identity: event.identity, kind: 'run', name: 'finished', at: observedAt(), spanId: event.identity.runId,
-      status: String(payload.status ?? 'unknown'), output: payload.text,
-      usage: payload.usage && typeof payload.usage === 'object' ? payload.usage as import('./models.js').Usage : undefined,
-    })
+    else if (event.type === 'final') {
+      const at = observedAt()
+      const status = String(payload.status ?? 'unknown')
+      const text = typeof payload.text === 'string' ? payload.text : ''
+      recordAgentObservation(ports.observation, {
+        identity: event.identity, kind: 'run', name: 'finished', at, spanId: event.identity.runId,
+        status, output: text,
+        usage: payload.usage && typeof payload.usage === 'object' ? payload.usage as import('./models.js').Usage : undefined,
+      })
+      if (status === 'completed' || status === 'failed')
+        recordAgentObservation(ports.observation, {
+          identity: event.identity, kind: 'output', name: status === 'failed' ? 'Agent error' : 'Final response', at,
+          startedAt: at, endedAt: at, durationMs: 0, spanId: `${event.identity.runId}:output`,
+          parentSpanId: event.identity.runId, status: status === 'failed' ? 'error' : 'success',
+          output: { text, ...(typeof payload.errorCode === 'string' ? { code: payload.errorCode } : {}) },
+          attributes: { source: 'agent.run.finalization' },
+        })
+    }
   }
   async function* drive(identity: RunIdentity, fresh: boolean, resolution?: InteractionResolution, scheduled = false, anchorMessageId: string | null = null, goalMode = false, initialReplyChoice: ReplyChoice = 'disabled'): AsyncGenerator<RunEvent, RunCheckpoint<C>> {
     assertRunIdentity(identity)
@@ -178,6 +205,7 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
       if (signal.aborted)
         throw new AgentRunError('cancelled', '当前任务已取消')
       if (call.parseError) {
+        logRun(identity, 'warn', 'agent.tools.dispatch_failed', state!.round, { errorCode: 'invalid_arguments' })
         recordAgentObservation(ports.observation, {
           identity, kind: 'tool', name: call.name, at: observedAt(), round: state!.round,
           spanId: `${identity.runId}:round:${state!.round}:tool:${call.id}`,
@@ -264,8 +292,10 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
     async function applyTool(call: ToolCall, result: ToolResult, advance = true, consumeInteractionId?: string): Promise<RunEvent> {
       if (!state || state.context === null)
         throw new AgentRunError('invalid_state', '运行上下文缺失')
-      if (result.kind === 'unknown')
+      if (result.kind === 'unknown') {
+        logRun(identity, 'error', 'agent.tools.dispatch_failed', state.round, { errorCode: 'result_unknown' })
         return finish('unknown', 'tool_result_unknown', '工具执行结果尚未确认，请查询后再继续。')
+      }
       if (result.kind === 'waiting' && result.interaction.kind === 'confirmation' && state.resolution?.status === 'confirmed') {
         // 已消费的确认不能再次弹同一授权门，也不能把“仍被拦截”伪装成执行成功。
         return applyTool(call, { kind: 'completed', value: { status: 'error', code: 'confirmation_not_applied' }, successful: false, mutated: false }, advance, consumeInteractionId)
@@ -302,6 +332,8 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
       }
       const isButtons = artifact !== undefined && artifact !== null && typeof artifact === 'object' && !Array.isArray(artifact) && 'kind' in artifact && artifact.kind === 'link_buttons'
       const resultStatus = result.value && typeof result.value === 'object' && 'status' in result.value && ['cancelled', 'deferred'].includes(String(result.value.status)) ? String(result.value.status) : result.successful ? 'success' : 'error'
+      if (!result.successful)
+        logRun(identity, 'warn', 'agent.tools.dispatch_failed', state.round, { errorCode: 'tool_failed', executed: result.executed !== false, mutated: result.mutated })
       recordAgentObservation(ports.observation, {
         identity, kind: 'tool', name: call.name, at: observedAt(), round: state.round,
         spanId: `${identity.runId}:round:${state.round}:tool:${call.id}`,
@@ -349,10 +381,53 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
             if (!toolStatuses.has(call.id))
               yield (await commit({}, 'tool_call', { toolCallId: call.id, name: call.name, status: 'queued' }))!
           }
-          const outcomes = yield* parallelBatch(ready, state.parallelLimit!)
+          const batchStartedAt = observedAt()
+          let outcomes: readonly DispatchOutcome<ToolResult>[]
+          try {
+            outcomes = yield* parallelBatch(ready, state.parallelLimit!)
+            const counts = outcomes.reduce((summary, outcome) => {
+              if (outcome.status === 'error') summary.failed++
+              else if (outcome.status === 'cancelled') summary.cancelled++
+              else if (outcome.status === 'deferred') summary.deferred++
+              else if (outcome.value.kind === 'waiting') summary.waiting++
+              else if (outcome.value.kind === 'unknown') summary.unknown++
+              else if (!outcome.value.successful) summary.failed++
+              else summary.succeeded++
+              return summary
+            }, { succeeded: 0, failed: 0, cancelled: 0, deferred: 0, waiting: 0, unknown: 0 })
+            const batchElapsedMs = Math.max(0, observedAt() - batchStartedAt)
+            observePhase(identity, 'Parallel tool batch', batchStartedAt, state.round,
+              counts.failed ? 'error' : counts.unknown ? 'unknown' : counts.cancelled ? 'cancelled' : 'success', {
+              mode: 'parallel', calls: ready.length, isolatedInvalid: state.isolatedCallIds.length,
+              reason: 'same_round_batch', ...counts,
+            })
+            logRun(identity, counts.failed || counts.unknown ? 'warn' : 'info', 'agent.tools.parallel_batch', state.round, {
+              mode: 'parallel', reason: 'same_round_batch', elapsedMs: batchElapsedMs,
+              isolatedInvalid: state.isolatedCallIds.length,
+              calls: ready.length, succeeded: counts.succeeded, failed: counts.failed, cancelled: counts.cancelled,
+              deferred: counts.deferred, waiting: counts.waiting, unknown: counts.unknown,
+            })
+          }
+          catch (error) {
+            observePhase(identity, 'Parallel tool batch', batchStartedAt, state.round,
+              error instanceof AgentRunError && error.code === 'cancelled' ? 'cancelled' : 'error', { calls: ready.length })
+            throw error
+          }
           for (let index = 0;index < ready.length;index++) {
             const call = ready[index]!
             const outcome = outcomes[index]!
+            if (outcome.status === 'error') {
+              const code = ports.presentError(outcome.error).code
+              logRun(identity, 'warn', 'agent.tools.dispatch_failed', state.round, {
+                errorCode: code === 'upstream_failed' ? 'upstream_failed' : 'tool_failed',
+              })
+              recordAgentObservation(ports.observation, {
+                identity, kind: 'tool', name: call.name, at: observedAt(), round: state.round,
+                spanId: `${identity.runId}:round:${state.round}:tool:${call.id}:dispatch-error`,
+                parentSpanId: `${identity.runId}:round:${state.round}:tool:${call.id}`, status: 'error',
+                attributes: { toolCallId: call.id, errorCode: code },
+              })
+            }
             const result: ToolResult = outcome.status === 'completed' ? outcome.value
               : outcome.status === 'error' ? { kind: 'completed', value: { error: ports.presentError(outcome.error).code }, successful: false, mutated: false }
                 : stoppedResult(call, outcome.status)
@@ -483,7 +558,19 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
         else
           await checkCancellation()
         if (state.phase === 'prepare') {
-          const context = await cancellable(ports.context.prepare(identity, controller.signal), controller.signal)
+          const prepareStartedAt = observedAt()
+          let context: Awaited<ReturnType<typeof ports.context.prepare>>
+          try {
+            context = await cancellable(ports.context.prepare(identity, controller.signal), controller.signal)
+            observePhase(identity, 'Agent context prepared', prepareStartedAt, state.round, 'success', {
+              earlyExit: isEarlyExit(context),
+            })
+          }
+          catch (error) {
+            observePhase(identity, 'Agent context prepared', prepareStartedAt, state.round,
+              error instanceof AgentRunError && error.code === 'cancelled' ? 'cancelled' : 'error')
+            throw error
+          }
           if (isEarlyExit(context)) {
             await commit({ earlyExitReason: context.reason })
             const code = context.response.errored ? context.response.errorCode && /^[a-z][a-z0-9_.-]{0,63}$/i.test(context.response.errorCode) ? context.response.errorCode : 'provider_error' : null
@@ -502,8 +589,10 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
             let result: ToolResult
             if (state.replayResultReady) {
               const stored = state.toolResults.find((item) => item.callId === call.id)?.result
-              if (!stored)
+              if (!stored) {
+                logRun(identity, 'error', 'agent.interaction.result_missing', state.round)
                 throw new AgentRunError('invalid_state', '确认工具回执缺失')
+              }
               result = await hydrateResult(call, stored)
             }
             else if (state.inflightCall) {
@@ -519,6 +608,7 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
               catch (error) {
                 if (controller.signal.aborted || (error instanceof AgentRunError && error.code === 'cancelled'))
                   throw error
+                logRun(identity, 'error', 'agent.interaction.confirm_replay_failed', state.round)
                 result = { kind: 'completed', value: { status: 'error', code: ports.presentError(error).code }, successful: false, mutated: false }
               }
               await cacheResult(call, result, true)
@@ -625,6 +715,7 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
         }
         if (state.phase === 'idle') {
           if (state.maxRounds !== null && state.round >= state.maxRounds) {
+            logRun(identity, 'warn', 'agent.run.round_limit', state.round, { used: state.round, limit: state.maxRounds })
             yield await finish('failed', 'round_limit', '定时任务已达到执行轮次上限。')
             return state
           }
@@ -640,22 +731,32 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
         let stream
         let recovering = false
         if (providerRecovery) {
+          const recoveryStartedAt = observedAt()
           const boundary = Object.freeze({
             identity, round: state.round, runSequence: state.sequence, roundText: state.text,
             cursor: state.providerCursor ? snapshotCursor(state.providerCursor) : null, sanitizer: Object.freeze({ ...state.sanitizerCheckpoint }),
           })
           const recoverable = state.sanitizerCheckpoint.kind !== 'unavailable' && (state.sanitizerCheckpoint.kind !== 'reference' || !!sanitizer.restore) && (state.providerCursor !== null || !state.text)
-          const recovery = recoverable && ports.provider.recover ? await cancellable(ports.provider.recover!(request, boundary), controller.signal) : null
-          if (recovery?.boundary && sameRecoveryBoundary(boundary, recovery.boundary)) {
-            if (state.sanitizerCheckpoint.kind === 'reference') {
-              await sanitizer.restore!(state.sanitizerCheckpoint, { identity, round: state.round })
-              sanitizerTouched = true
+          try {
+            const recovery = recoverable && ports.provider.recover ? await cancellable(ports.provider.recover!(request, boundary), controller.signal) : null
+            if (recovery?.boundary && sameRecoveryBoundary(boundary, recovery.boundary)) {
+              if (state.sanitizerCheckpoint.kind === 'reference') {
+                await sanitizer.restore!(state.sanitizerCheckpoint, { identity, round: state.round })
+                sanitizerTouched = true
+              }
+              stream = recovery.stream
+              recovering = true
             }
-            stream = recovery.stream
-            recovering = true
+            else
+              stream = null
+            observePhase(identity, 'Provider round resumed', recoveryStartedAt, state.round,
+              stream ? 'success' : 'unknown', { recovered: !!stream })
           }
-          else
-            stream = null
+          catch (error) {
+            observePhase(identity, 'Provider round resumed', recoveryStartedAt, state.round,
+              error instanceof AgentRunError && error.code === 'cancelled' ? 'cancelled' : 'error')
+            throw error
+          }
           providerRecovery = false
           if (!stream) {
             providerLifetime.abort()
@@ -721,9 +822,22 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
               if (!Number.isSafeInteger(item.attempt) || item.attempt < 1 || !Number.isSafeInteger(item.maxRetries) || item.maxRetries < item.attempt || !Number.isSafeInteger(item.nextRetryMs) || item.nextRetryMs < 0)
                 throw new AgentRunError('invalid_state', '模型重试事件无效')
               const errorCode = ['rate_limited', 'timeout', 'transport', 'upstream_busy'].includes(item.errorCode) ? item.errorCode : 'unknown'
+              logRun(identity, 'info', 'agent.provider.retry', state.round, { attempt: item.attempt, maxRetries: item.maxRetries, nextRetryMs: item.nextRetryMs, errorCode })
               yield (await commit(streamPatch(), 'retry', { attempt: item.attempt, maxRetries: item.maxRetries, nextRetryMs: item.nextRetryMs, errorCode }))!
             }
             else if (item.type === 'error') {
+              const errorCode = ports.presentError(item.error).code
+              recordAgentObservation(ports.observation, {
+                identity, kind: 'provider', name: 'complete', at: observedAt(), round: state.round,
+                spanId: `${identity.runId}:round:${state.round}:provider`,
+                parentSpanId: `${identity.runId}:round:${state.round}`,
+                status: errorCode === 'cancelled' ? 'cancelled' : 'error',
+                attributes: { error_code: /^[a-z][a-z0-9_.-]{0,63}$/i.test(errorCode) ? errorCode : 'provider_error', context_overflow: item.contextOverflow },
+              })
+              logRun(identity, item.contextOverflow || errorCode === 'cancelled' ? 'warn' : 'error', 'agent.provider.error', state.round, {
+                errorCode: /^[a-z][a-z0-9_.-]{0,63}$/i.test(errorCode) ? errorCode : 'provider_error',
+                contextOverflow: item.contextOverflow === true,
+              })
               if (item.contextOverflow && state.overflowRetries < 1) {
                 overflow = true
                 break
@@ -733,12 +847,37 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
             else {
               if (complete)
                 throw new AgentRunError('invalid_state', '模型轮次重复结束')
+              const incomplete = !!(item.incompleteReason ?? '').trim() || ['length', 'max_tokens', 'incomplete'].includes((item.finishReason ?? '').toLowerCase())
+              const finishReason = (item.finishReason ?? '').toLowerCase()
+              const incompleteReason = (item.incompleteReason ?? '').toLowerCase()
+              const safeFinishReason = ['stop', 'end_turn', 'tool_calls', 'tool_use', 'length', 'max_tokens', 'incomplete', 'failed', 'content_filter'].includes(finishReason) ? finishReason : 'unknown'
+              const safeIncompleteReason = ['max_output_tokens', 'content_filter', 'unknown'].includes(incompleteReason) ? incompleteReason : incompleteReason ? 'other' : ''
+              const hasText = !!item.text.trim()
+              const requiresTools = item.requiresTools ?? item.calls.length > 0
+              recordAgentObservation(ports.observation, {
+                identity, kind: 'provider', name: 'complete', at: observedAt(), round: state.round,
+                spanId: `${identity.runId}:round:${state.round}:provider`,
+                parentSpanId: `${identity.runId}:round:${state.round}`, status: incomplete ? 'incomplete' : 'success',
+                output: item.text,
+                attributes: { finish_reason: safeFinishReason, incomplete_reason: safeIncompleteReason, has_text: hasText, tool_call_count: item.calls.length },
+              })
+              logRun(identity, 'info', 'agent.provider.round_result', state.round, {
+                toolCallCount: item.calls.length, hasText, requiresTools, goalMode: state.goalMode,
+                toolCallsUsed: state.completedToolCount, outputTokens: state.usage.output,
+              })
+              if (incomplete)
+                logRun(identity, 'warn', 'agent.provider.incomplete', state.round, {
+                  finishReason: safeFinishReason, incompleteReason: safeIncompleteReason || 'unknown', hasText,
+                  toolCallCount: item.calls.length, outputTokens: state.usage.output,
+                })
+              else if (!hasText && !item.calls.length)
+                logRun(identity, 'warn', 'agent.provider.empty', state.round, { finishReason: safeFinishReason })
               complete = true
               if (state.usageAppliedRound !== state.round)
                 await commit({ totalUsage: mergeUsage(state.totalUsage, state.usage), usageAppliedRound: state.round })
               if (state.overflowRecoveryPending)
                 yield (await commit({ overflowRecoveryPending: false }, 'compaction', { phase: 'completed', reason: 'provider_overflow', applied: true }))!
-              if ((item.incompleteReason ?? '').trim() || ['length', 'max_tokens', 'incomplete'].includes((item.finishReason ?? '').toLowerCase())) {
+              if (incomplete) {
                 yield await finish('failed', 'provider_incomplete', item.calls.length ? '模型响应不完整，未执行其中的工具调用。请缩短请求或调高输出 Token 预算后重试。' : '模型输出未完整结束；当前内容可能被截断，请继续追问或调高输出 Token 预算。')
                 return state
               }
@@ -776,7 +915,21 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
                   throw new AgentRunError('invalid_state', '群回复门调用分类无效')
                 gate = decideReplyGate(state.replyChoice, text, gateCalls)
               }
-              const context = await ports.context.afterRound(state.context, { text, calls: wireCalls, contextInput: state.usage.contextInput, ...(item.continuation === undefined ? {} : { continuation: item.continuation }), ...(item.cacheAnchor === undefined ? {} : { cacheAnchor: portableSnapshot(item.cacheAnchor) }), ...(item.consumedInitialMedia === undefined ? {} : { consumedInitialMedia: portableSnapshot(item.consumedInitialMedia) as unknown as typeof item.consumedInitialMedia }) }, state.round)
+              if (gate.blocked.length)
+                logRun(identity, 'warn', 'agent.reply_gate.blocked', state.round, { count: gate.blocked.length, choice: gate.choice })
+              const roundContextStartedAt = observedAt()
+              let context: C
+              try {
+                context = await ports.context.afterRound(state.context, { text, calls: wireCalls, contextInput: state.usage.contextInput, ...(item.continuation === undefined ? {} : { continuation: item.continuation }), ...(item.cacheAnchor === undefined ? {} : { cacheAnchor: portableSnapshot(item.cacheAnchor) }), ...(item.consumedInitialMedia === undefined ? {} : { consumedInitialMedia: portableSnapshot(item.consumedInitialMedia) as unknown as typeof item.consumedInitialMedia }) }, state.round)
+                observePhase(identity, 'Round context and tool schemas refreshed', roundContextStartedAt, state.round, 'success', {
+                  toolCalls: wireCalls.length,
+                })
+              }
+              catch (error) {
+                observePhase(identity, 'Round context and tool schemas refreshed', roundContextStartedAt, state.round,
+                  error instanceof AgentRunError && error.code === 'cancelled' ? 'cancelled' : 'error', { toolCalls: wireCalls.length })
+                throw error
+              }
               const plannable = calls.filter(call => !adapterResults.some(item => item.callId === call.id))
               let plan: ToolPlan = plannable.length && ports.tools.plan && gate.choice !== 'silent' ? await ports.tools.plan(plannable, identity) : { mode: 'serial' }
               const gateResults = calls.flatMap<{ callId: string; result: ToolResult }>((call) => {
@@ -828,7 +981,20 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
         if (overflow) {
           yield (await commit({ overflowRecoveryPending: true }, 'compaction', { phase: 'started', reason: 'provider_overflow' }))!
           await checkCancellation()
-          const recovered = await ports.context.recoverOverflow(state.context, state.overflowRetries + 1, controller.signal)
+          const compactionStartedAt = observedAt()
+          let recovered: Awaited<ReturnType<typeof ports.context.recoverOverflow>>
+          try {
+            recovered = await ports.context.recoverOverflow(state.context, state.overflowRetries + 1, controller.signal)
+            observePhase(identity, 'Context overflow recovery', compactionStartedAt, state.round,
+              recovered.applied ? 'success' : 'skipped', { applied: recovered.applied, attempt: state.overflowRetries + 1 })
+            logRun(identity, recovered.applied ? 'info' : 'warn', 'agent.context.overflow_recovery', state.round,
+              { applied: recovered.applied, attempt: state.overflowRetries + 1 })
+          }
+          catch (error) {
+            observePhase(identity, 'Context overflow recovery', compactionStartedAt, state.round,
+              error instanceof AgentRunError && error.code === 'cancelled' ? 'cancelled' : 'error', { attempt: state.overflowRetries + 1 })
+            throw error
+          }
           if (!recovered.applied) {
             if (recovered.context !== state.context)
               await commit({ context: recovered.context })
@@ -848,7 +1014,21 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
         }
         // 仅按本次 provider 实际用量决定压缩，不能拿字符或累计token推算。
         if (state.usage.contextInput !== null) {
-          const adjusted = await ports.context.afterUsage(state.context, state.usage, controller.signal)
+          const compactionStartedAt = observedAt()
+          let adjusted: Awaited<ReturnType<typeof ports.context.afterUsage>>
+          try {
+            adjusted = await ports.context.afterUsage(state.context, state.usage, controller.signal)
+            observePhase(identity, 'Usage based context compaction', compactionStartedAt, state.round,
+              adjusted.applied ? 'success' : 'skipped', { applied: adjusted.applied, reason: adjusted.reason ?? 'not_applied' })
+            if (!adjusted.applied)
+              logRun(identity, adjusted.reason === 'failed' ? 'warn' : 'info', 'agent.context.compaction_skipped', state.round,
+                { reason: adjusted.reason ?? 'not_applied' })
+          }
+          catch (error) {
+            observePhase(identity, 'Usage based context compaction', compactionStartedAt, state.round,
+              error instanceof AgentRunError && error.code === 'cancelled' ? 'cancelled' : 'error')
+            throw error
+          }
           if (adjusted.applied)
             yield (await commit({ context: adjusted.context }, 'compaction', { reason: 'usage', applied: true }))!
           else if (adjusted.context !== state.context)

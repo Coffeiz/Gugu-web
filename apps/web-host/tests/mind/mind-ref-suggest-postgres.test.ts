@@ -3,7 +3,7 @@ import test from 'node:test'
 import type { Pool } from 'pg'
 import { GLOBAL_SEARCH_TYPES, type GlobalSearchOperations } from '@gugu/core'
 import { createMindReferenceSuggester } from '../../../../packages/core/src/mind/ref-suggest.js'
-import { createPostgresMindReferenceSuggestionPorts } from '../../src/modules/mind/ref-suggest-postgres.js'
+import { createPostgresMindReferenceSuggestionPorts } from '../../src/modules/mind/references.js'
 
 const ownerId = 'd1e37042-3229-4cbe-a260-a63dcb95e001'
 

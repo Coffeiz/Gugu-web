@@ -313,6 +313,7 @@ export const filesApi = {
   location: (id: number) => get<{
     file: Schemas['FileResponse']
     folderPath: Array<Schemas['FolderResponse']>
+    pathFile?: PathFileRef
   }>(`/files/${id}/location`),
   resolvePaths: (id: number, paths: string[]) => post<Array<{
     path: string
@@ -792,6 +793,68 @@ function workspaceDirectoryPreviewResponse(row: WorkspaceDirectoryPreviewWire): 
     boundSessionCount: row.bound_session_count,
     boundTaskCount: row.bound_task_count,
   }
+}
+
+export interface PathFileEntry {
+  name: string
+  kind: 'directory' | 'file'
+  relativePath: string
+  size: number
+  mimeType: string | null
+}
+
+export type PathDirectory = number | 'personal' | `project:${number}`
+
+export interface PathFileRef {
+  directoryId: PathDirectory
+  relativePath: string
+}
+
+function pathFilePrefix(directory: PathDirectory) {
+  if (typeof directory === 'number') return `/workspace-directories/${directory}`
+  return directory === 'personal' ? '/files/personal' : `/files/projects/${directory.slice('project:'.length)}`
+}
+
+function pathFileEndpoint(file: PathFileRef, resource: string) {
+  return `${pathFilePrefix(file.directoryId)}/${resource}?${new URLSearchParams({ path: file.relativePath })}`
+}
+
+function pathContentUrl(file: PathFileRef, download = false) {
+  return `${BASE_URL}${pathFileEndpoint(file, 'content')}${download ? '&download=1' : ''}`
+}
+
+export const pathFilesApi = {
+  entries: (directoryId: PathDirectory, relativePath = '') =>
+    get<PathFileEntry[]>(pathFileEndpoint({ directoryId, relativePath }, 'entries')),
+  contentUrl: pathContentUrl,
+  createFolder: (file: PathFileRef) => post<{ ok: boolean }>(pathFileEndpoint(file, 'folders')),
+  move: (file: PathFileRef, destination: string) => patch<{ ok: boolean }>(pathFileEndpoint(file, 'entries'), { destination }),
+  copy: (file: PathFileRef, destination: string) => post<{ ok: boolean }>(pathFileEndpoint(file, 'copy'), { destination }),
+  moveToTrash: (file: PathFileRef) => del(pathFileEndpoint(file, 'entries')),
+  upload(file: PathFileRef, content: File, onProgress: (progress: number) => void) {
+    const form = new FormData()
+    form.append('file', content)
+    return uploadWithProgress(pathFileEndpoint(file, 'content'), form, onProgress)
+  },
+  download(file: PathFileRef) {
+    const anchor = document.createElement('a')
+    anchor.href = pathContentUrl(file, true)
+    anchor.click()
+  },
+}
+
+export interface DiskTrashEntry {
+  id: string
+  name: string
+  relativePath: string
+  kind: 'file' | 'directory'
+  deletedAt: string
+}
+
+export const diskTrashApi = {
+  list: () => get<DiskTrashEntry[]>('/files/disk-trash'),
+  restore: (id: string) => post(`/files/disk-trash/${encodeURIComponent(id)}/restore`, {}),
+  purge: (id: string) => del(`/files/disk-trash/${encodeURIComponent(id)}`),
 }
 
 export const workspaceDirectoriesApi = {

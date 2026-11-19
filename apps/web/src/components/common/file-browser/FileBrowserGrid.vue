@@ -14,3 +14,12 @@ defineProps({
 })
 const emit = defineEmits<{ 'empty-context': [event: MouseEvent] }>()
 </script>
+
+<style scoped>
+:where(.file-grid) {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
+  gap: 10px;
+  align-content: start;
+}
+</style>

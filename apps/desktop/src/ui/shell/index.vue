@@ -10,6 +10,7 @@ import { showAppError } from '@/composables/core/useAppToast'
 import ProjectsPage from '../projects/index.vue'
 import WorkbenchPage from '../workbench/index.vue'
 import ContactsPage from '../contacts/index.vue'
+import AccountPage from '../account/index.vue'
 import ComingSoon from '../shared/components/ComingSoon.vue'
 import { useDesktopContacts } from '../contacts/composables/useDesktopContacts'
 import { useDesktopCalendar } from '../calendar/composables/useDesktopCalendar'
@@ -184,6 +185,7 @@ onMounted(() => perform(async () => {
       @recover="perform(recoverPendingOperation)"
       @check-sandbox="checkSandbox"
     />
+    <AccountPage v-if="activeSection === 'account'" />
     <ProjectsPage v-if="activeSection === 'projects'" />
     <ContactsPage
       v-if="activeSection === 'contacts'"

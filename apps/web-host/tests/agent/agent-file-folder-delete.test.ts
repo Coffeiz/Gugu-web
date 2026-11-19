@@ -2,10 +2,10 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { CoreError } from '@gugu/core'
 import { createToolRegistry, createDeleteFileTool, createDeleteFolderTool } from '@gugu/core/tools'
-import type { AgentDispatchLease } from '../../src/modules/agent-sessions/persistence/agent-run-dispatch-postgres.js'
-import type { FolderDeleteOperations } from '../../src/modules/files/folder-delete.js'
-import type { FileDeleteOperations } from '../../src/modules/files/file-delete.js'
-import { createWebAgentFileDeletePort, createWebAgentFileFolderDeletePort } from '../../src/modules/agent-sessions/tools/agent-file-folder-delete.js'
+import type { AgentDispatchLease } from '../../src/modules/agent/run/dispatch.js'
+import type { FolderDeleteOperations } from '../../src/modules/files/folders/delete.js'
+import type { FileDeleteOperations } from '../../src/modules/files/trash/service.js'
+import { createWebAgentFileDeletePort, createWebAgentFileFolderDeletePort } from '../../src/modules/agent/tools/files/delete.js'
 
 const identity = { ownerId: '00000000-0000-4000-8000-000000000001', sessionId: '33', runId: 'folder-delete-run' }
 const lease = { identity, token: 'lease', fence: 1, input: { v: 2, source: 'web' }, mode: 'start', cancelRequested: false } as AgentDispatchLease

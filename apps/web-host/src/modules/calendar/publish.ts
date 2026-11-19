@@ -1,0 +1,144 @@
+import { runBestEffort } from '../../shared/best-effort.js'
+import type { EventCreatePublication, CalendarEventDeletePublication, EventUpdatePublication } from '@gugu/core/calendar'
+import type { Pool } from 'pg'
+
+export interface CalendarCreatePostCommitEffects {
+  /** Bump the user's context snapshot revision after the event transaction commits. */
+  bumpContextRevision(ownerId: string): Promise<unknown>
+  /** Publish the live resource.changed event after the event transaction commits. */
+  publishResourceChanged(input: {
+    ownerId: string
+    resource: 'calendar'
+    operation: 'create'
+    entityId: number
+    origin: string | null
+    payload: EventCreatePublication['eventPayload']
+  }): Promise<unknown>
+}
+
+export type CalendarCreatePostCommitFailureReporter = (operation: string, errorCode?: string, errorMessage?: string) => void
+
+/**
+ * Creates post-commit side effects for a committed calendar create.
+ *
+ * The durable RAG job is committed with the event. This adapter owns only
+ * post-commit context and live-event effects.
+ */
+export function createCalendarEventPostCommitPublisher(
+  effects: CalendarCreatePostCommitEffects,
+  reportFailure: CalendarCreatePostCommitFailureReporter = (operation) => {
+    console.error(`gugu-webui ${operation} failed`)
+  },
+): (publication: EventCreatePublication) => Promise<void> {
+  return async (publication) => {
+    await runBestEffort('calendar context revision', () =>
+      effects.bumpContextRevision(publication.ownerId), reportFailure)
+
+    await runBestEffort('calendar resource notification', () =>
+      effects.publishResourceChanged({
+        ownerId: publication.ownerId,
+        resource: 'calendar',
+        operation: 'create',
+        entityId: publication.entityId,
+        origin: publication.origin,
+        payload: publication.eventPayload,
+      }), reportFailure)
+  }
+}
+
+export type CalendarMutationPublication = EventUpdatePublication | CalendarEventDeletePublication
+
+export interface CalendarMutationPostCommitEffects {
+  bumpContextRevision(ownerId: string): Promise<unknown>
+  /** Delegate exactly once to the Host's existing live-event publisher. */
+  publishResourceChanged(publication: CalendarMutationPublication): Promise<unknown>
+}
+
+export type CalendarMutationPostCommitFailureReporter = (operation: string, errorCode?: string, errorMessage?: string) => void
+
+function ragEvent(publication: CalendarMutationPublication): {
+  sourceType: 'calendar' | 'scheduled_task'
+  sourceIds: string[]
+  operation: 'update' | 'delete'
+} {
+  if (publication.resource === 'calendar') {
+    return {
+      sourceType: 'calendar',
+      sourceIds: [String(publication.entityId)],
+      operation: publication.operation,
+    }
+  }
+  return {
+    sourceType: 'scheduled_task',
+    sourceIds: publication.entityIds.map(String).filter((id) => id.length > 0),
+    operation: publication.operation,
+  }
+}
+
+/**
+ * Decorates the existing post-commit live-event callback for calendar PATCH/DELETE.
+ * It records the durable RAG work before delegating the live event once, matching
+ * app.core.events.publish without taking ownership of its Redis protocol.
+ */
+export function createCalendarMutationPostCommitPublisher(
+  pool: Pool,
+  effects: CalendarMutationPostCommitEffects,
+  reportFailure: CalendarMutationPostCommitFailureReporter = (operation) => {
+    console.error(`gugu-webui ${operation} failed`)
+  },
+): (publication: CalendarMutationPublication) => Promise<void> {
+  return async (publication) => {
+    if (publication.resource === 'calendar') {
+      await runBestEffort('calendar context revision', () =>
+        effects.bumpContextRevision(publication.ownerId), reportFailure)
+    }
+
+    const rag = ragEvent(publication)
+    for (const sourceId of rag.sourceIds) {
+      await runBestEffort('calendar RAG index enqueue', async () => {
+        await pool.query(
+          `INSERT INTO rag_index_jobs (
+             user_id, source_type, source_id, version, operation, status,
+             generation, completed_generation, attempts, next_attempt_at,
+             lease_until, last_started_at, last_succeeded_at, last_error_code,
+             pending_source_ids, created_at, updated_at
+           ) VALUES (
+             $1, $2, $3::varchar, '', $4, 'queued',
+             1, 0, 0, CURRENT_TIMESTAMP,
+             NULL, NULL, NULL, NULL,
+             json_build_array($3::varchar), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+           )
+           ON CONFLICT (user_id, source_type) DO UPDATE SET
+             source_id = CASE WHEN rag_index_jobs.source_id = '' AND rag_index_jobs.status IN ('queued','running','retrying') THEN '' ELSE EXCLUDED.source_id END,
+             version = EXCLUDED.version,
+             operation = EXCLUDED.operation,
+             status = 'queued',
+             generation = rag_index_jobs.generation + 1,
+             next_attempt_at = CURRENT_TIMESTAMP,
+             lease_until = NULL,
+             last_error_code = NULL,
+             pending_source_ids = CASE WHEN rag_index_jobs.source_id = '' AND rag_index_jobs.status IN ('queued','running','retrying') THEN '[]'::json ELSE (
+               SELECT COALESCE(json_agg(ordered.id ORDER BY ordered.first_ordinal), '[]'::json)
+               FROM (
+                 SELECT candidates.id, MIN(candidates.ordinal) AS first_ordinal
+                 FROM (
+                   SELECT value AS id, ordinality AS ordinal
+                   FROM jsonb_array_elements_text(
+                     COALESCE(rag_index_jobs.pending_source_ids::jsonb, '[]'::jsonb)
+                   ) WITH ORDINALITY
+                   UNION ALL
+                   SELECT EXCLUDED.source_id AS id, 2147483647 AS ordinal
+                 ) AS candidates
+                 GROUP BY candidates.id
+               ) AS ordered
+             ) END,
+             updated_at = CURRENT_TIMESTAMP`,
+          [publication.ownerId, rag.sourceType, sourceId, rag.operation],
+        )
+      }, reportFailure)
+    }
+
+    await runBestEffort('calendar resource notification', () =>
+      effects.publishResourceChanged(publication), reportFailure)
+  }
+}

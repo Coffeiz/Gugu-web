@@ -5,12 +5,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { Pool } from 'pg'
-import { applyAgentBaseMigration } from '../../src/migrations/agent-base-migrate.js'
-import { applyWebDomainMigration } from '../../src/migrations/web-domain-migrate.js'
-import { applyTrashPurgeMigration } from '../../src/migrations/trash-purge-migrate.js'
-import { createPostgresTrashMutationOperations } from '../../src/modules/files/persistence/trash-mutations-postgres.js'
-import { createPostgresTrashPurgeOperations } from '../../src/modules/files/persistence/trash-purge-postgres.js'
-import { startTrashPurgeWorker } from '../../src/modules/files/trash-purge-worker.js'
+import { applyAgentBaseMigration } from '@gugu/database/postgres/migrations/0001_initialize'
+import { applyWebDomainMigration } from '@gugu/database/postgres/migrations/0002_web_domain'
+import { applyTrashPurgeMigration } from '@gugu/database/postgres/migrations/0009_trash_purge'
+import { createPostgresTrashMutationOperations } from '../../src/modules/files/trash/store.js'
+import { createPostgresTrashPurgeOperations } from '../../src/modules/files/trash/purge.js'
+import { startTrashPurgeWorker } from '../../src/modules/files/trash/purge.js'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

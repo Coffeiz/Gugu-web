@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import test from 'node:test'
 import type { Pool, PoolClient } from 'pg'
-import { createPostgresTrashPurgeOperations } from '../../src/modules/files/persistence/trash-purge-postgres.js'
-import { TrashCooldownError } from '../../src/modules/files/trash.js'
+import { createPostgresTrashPurgeOperations } from '../../src/modules/files/trash/purge.js'
+import { TrashCooldownError } from '../../src/modules/files/trash/service.js'
 
 const ownerId = '11111111-1111-4111-8111-111111111111'
 

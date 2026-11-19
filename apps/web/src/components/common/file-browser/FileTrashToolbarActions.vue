@@ -1,6 +1,6 @@
 <template>
   <template v-if="hasItems">
-  <button class="select-all-btn" :class="{ on: allSelected }" @click="emit('toggle-select')" :title="allSelected ? t('common.actions.clearSelection') : t('common.actions.selectAll')">
+  <button class="select-all-btn" :class="{ on: allSelected }" @click.stop="emit('toggle-select')" :title="allSelected ? t('common.actions.clearSelection') : t('common.actions.selectAll')">
     {{ allSelected ? t('common.actions.clearSelection') : t('common.actions.selectAll') }}
     </button>
   </template>
@@ -9,7 +9,7 @@
     <span v-if="emptyProgress">{{ t('filesViewUi.emptyTrashProgress', { done: emptyProgress.done, total: emptyProgress.total, failed: emptyProgress.failed }) }}</span>
     <span v-else>{{ t('filesViewUi.emptyTrashStarting') }}</span>
   </div>
-  <button class="empty-trash-btn" :disabled="emptyBusy" @click.stop="emit('empty')"><Icon name="action.delete" :size="12" /> {{ t('common.actions.emptyTrash') }}</button>
+  <button class="empty-trash-btn" :disabled="!hasItems || emptyBusy" @click.stop="emit('empty')"><Icon name="action.delete" :size="12" /> {{ t('common.actions.emptyTrash') }}</button>
 </template>
 
 <script setup lang="ts">

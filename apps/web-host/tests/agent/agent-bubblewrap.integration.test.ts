@@ -1,26 +1,28 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { Pool } from 'pg'
 import { createPostgresRuntime, tablesSql } from '@gugu/core/data'
 import { createAgentInteractionDescription, createAgentRunner, processOneInteraction, type AgentRunnerPorts } from '@gugu/core/agent'
-import { createPostgresTrustedIntentStore } from '../../src/modules/agent-sessions/persistence/agent-trusted-intent-postgres.js'
-import { createWebAgentConfirmationAuthorization, createWebAgentToolConfirmation } from '../../src/modules/agent-sessions/tools/agent-confirmation.js'
-import { createAgentShellSnapshotReader } from '../../src/modules/agent-sessions/tools/agent-shell-snapshot.js'
-import { createWebAgentShell } from '../../src/modules/agent-sessions/tools/agent-shell.js'
-import { createAuthorizedWebAgentProductionRagRunPorts } from '../../src/modules/agent-sessions/tools/agent-rag-production-ports.js'
-import { createTerminalWorkspaceMounts } from '../../src/modules/terminals/workspace-mounts.js'
-import { createPostgresAgentRunStore } from '../../src/modules/agent-sessions/persistence/agent-run-store-postgres.js'
-import { createPostgresAgentRunLeasePort } from '../../src/modules/agent-sessions/persistence/agent-run-lease-postgres.js'
-import { createPostgresInteractionActivator } from '../../src/modules/agent-sessions/persistence/agent-interaction-activate-postgres.js'
-import { createPostgresInteractionProjection } from '../../src/modules/agent-sessions/persistence/agent-interaction-projection-postgres.js'
-import { createInteractionResumeEnqueuer, createPostgresInteractionResumeQueue } from '../../src/modules/agent-sessions/persistence/agent-interaction-resume-postgres.js'
-import { createTrustedPromptDescriptions } from '../../src/modules/agent-sessions/persistence/agent-trusted-prompt-descriptions.js'
-import { createAgentInteractionRespondService } from '../../src/modules/agent-sessions/agent-interaction-respond.js'
-import { createFilesystemAuthorizationConfirmationStore } from '../../src/modules/agent-sessions/filesystem-authorization-confirmations.js'
+import { createPostgresTrustedIntentStore } from '../../src/modules/agent/interactions/intents.js'
+import { createWebAgentConfirmationAuthorization, createWebAgentToolConfirmation } from '../../src/modules/agent/tools/confirm.js'
+import { createAgentShellSnapshotReader } from '../../src/modules/agent/sandbox/snapshot.js'
+import { createWebAgentShell } from '../../src/modules/agent/tools/shell/sandbox.js'
+import { createAuthorizedWebAgentProductionRagRunPorts } from '../../src/modules/agent/rag/production.js'
+import { createWorkspaceFileReads } from '../../src/modules/workspaces/files.js'
+import { executeBubblewrapShell } from '../../src/modules/terminals/sandbox/bubblewrap.js'
+import { createTerminalWorkspaceMounts } from '../../src/modules/terminals/sandbox/mounts.js'
+import { createPostgresAgentRunStore } from '../../src/modules/agent/run/store.js'
+import { createPostgresAgentRunLeasePort } from '../../src/modules/agent/run/lease.js'
+import { createPostgresInteractionActivator } from '../../src/modules/agent/interactions/activate.js'
+import { createPostgresInteractionProjection } from '../../src/modules/agent/interactions/projection.js'
+import { createInteractionResumeEnqueuer, createPostgresInteractionResumeQueue } from '../../src/modules/agent/interactions/resume.js'
+import { createTrustedPromptDescriptions } from '../../src/modules/agent/interactions/prompts.js'
+import { createAgentInteractionRespondService } from '../../src/modules/agent/interactions/respond.js'
+import { createFilesystemAuthorizationConfirmationStore } from '../../src/modules/agent/sandbox/confirmations.js'
 import { createRedisFilesystemAuthorizationCommands } from '../../src/adapters/cache/redis-events.js'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
@@ -108,6 +110,22 @@ test('Web Agent 通过持久确认在真实 Bubblewrap 中写入一次，异主�
     assert.equal((absoluteDirectory.value as { stdout: string }).stdout, '/project\n')
     const untrusted = await dispatch({ id: 'read-other', name: 'shell', input: { command: 'cat notes.txt' } }, { ...scope, identity: { ...identity, ownerId: other } })
     assert.ok(untrusted.kind === 'completed' && !untrusted.successful)
+    const direct = await dispatch({ id: 'workspace-write', name: 'shell', input: {
+      command: "printf 'line1\\nline2\\n' > t.txt; cat t.txt; echo \"exit=$?\"; ls -la; wc -l t.txt; grep -n line2 t.txt",
+    } }, scope)
+    assert.ok(direct.kind === 'completed' && direct.successful, JSON.stringify(direct))
+    assert.match((direct.value as { stdout: string }).stdout, /^line1\nline2\nexit=0\n[\s\S]*2:line2\n$/)
+    assert.equal(await readFile(join(scratch, identity.ownerId, 'workspace/default/t.txt'), 'utf8'), 'line1\nline2\n')
+    const personalFile = join(scratch, identity.ownerId, '个人文件/keep.txt')
+    await writeFile(personalFile, 'keep\n')
+    await symlink('/personal/keep.txt', join(scratch, identity.ownerId, 'workspace/default/personal.txt'))
+    await pool.query(`INSERT INTO filesystem_authorization_grants VALUES (1,$1,'session','1','user_sandbox','read_write',NULL,NULL)`, [identity.ownerId])
+    const protectedWrite = await dispatch({ id: 'protected-write', name: 'shell', input: { command: 'printf other > /personal/keep.txt' } }, scope)
+    assert.equal(protectedWrite.kind, 'waiting')
+    const redirected = await dispatch({ id: 'linked-write', name: 'shell', input: { command: 'printf other > personal.txt' } }, scope)
+    assert.ok(redirected.kind === 'completed' && !redirected.successful)
+    assert.equal(await readFile(personalFile, 'utf8'), 'keep\n')
+    await pool.query('DELETE FROM filesystem_authorization_grants WHERE id=1')
     const systemProbe = { id: 'system-gates', name: 'shell', input: { command: 'pwd', scope: 'system' } }
     const assertSystemDenied = async () => {
       const denied = await dispatch(systemProbe, scope)
@@ -120,7 +138,7 @@ test('Web Agent 通过持久确认在真实 Bubblewrap 中写入一次，异主�
     adminSystemEnabled = false
     await pool.query("INSERT INTO user_preferences VALUES ($1, '{\"shell_system_enabled\":true}')", [identity.ownerId])
     await assertSystemDenied()
-    const call = { id: 'shell-write', name: 'shell', input: { command: 'printf "confirmed\\n" >> notes.txt' } }
+    const call = { id: 'shell-write', name: 'shell', input: { command: 'printf "confirmed\\n" >> notes.txt 2>/dev/null' } }
     const waiting = await dispatch(call, scope)
     assert.ok(waiting.kind === 'waiting', JSON.stringify(waiting))
     assert.equal(await readFile(content, 'utf8'), 'owner\n')
@@ -142,6 +160,25 @@ test('Web Agent 通过持久确认在真实 Bubblewrap 中写入一次，异主�
     assert.ok(replay.kind === 'completed' && !replay.successful)
     assert.equal(await readFile(content, 'utf8'), 'owner\nconfirmed\n')
     assert.equal(await readFile(neighbor, 'utf8'), 'other\n')
+    await t.test('确认后的 rm 回收真实磁盘文件，复用文件库恢复，脚本不能绕过', async () => {
+      const mounts = createTerminalWorkspaceMounts(pool, core.db, scratch)
+      const execute = async (command: string) => executeBubblewrapShell(rootfs!,
+        await mounts(identity.ownerId, 1, false, '.'), { command, timeout: 5, maxOutputChars: 1000 }, true, signal)
+      const file = join(scratch, identity.ownerId, 'workspace/default/t.txt')
+      assert.equal((await execute("sh -c 'rm t.txt'")).ok, false)
+      assert.equal(await readFile(file, 'utf8'), 'line1\nline2\n')
+      assert.equal((await execute('rm -rf /workspace/default')).ok, false)
+      assert.equal((await execute('rm /personal/keep.txt')).ok, false)
+      assert.equal((await execute('rm personal.txt')).ok, false)
+      assert.equal(await readFile(personalFile, 'utf8'), 'keep\n')
+      assert.equal((await execute('rm -rf t.txt')).ok, true)
+      await assert.rejects(readFile(file), { code: 'ENOENT' })
+      const files = createWorkspaceFileReads(pool, scratch)
+      const [entry] = await files.listDiskTrash(identity.ownerId)
+      assert.equal(entry?.relativePath, 't.txt')
+      await files.restoreDiskTrash(identity.ownerId, entry!.id)
+      assert.equal(await readFile(file, 'utf8'), 'line1\nline2\n')
+    })
     await pool.query('UPDATE users SET is_active=FALSE WHERE id=$1', [identity.ownerId])
     const revoked = await dispatch({ id: 'revoked', name: 'shell', input: { command: 'pwd' } }, scope)
     assert.ok(revoked.kind === 'completed' && !revoked.successful)

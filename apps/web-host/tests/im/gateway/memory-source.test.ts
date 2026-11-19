@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path'
 import test from 'node:test'
 import type { ImActor } from '@gugu/core/im/access'
 import { imMemoryMaintenanceScopeFileKey } from '../../../src/modules/admin/memory-apply.js'
-import { createLocalImMemorySource, ImMemorySourceError, type ImMemoryReadAuthorization, type ImMemoryReadScope } from '../../../src/modules/im/gateway/memory-source.js'
+import { createLocalImMemorySource, ImMemorySourceError, type ImMemoryReadAuthorization, type ImMemoryReadScope } from '../../../src/modules/im/gateway/memory/source.js'
 
 const owner = '00000000-0000-4000-8000-000000000092'
 const identity = { ownerId: owner, sessionId: '1', runId: 'synthetic-run' }

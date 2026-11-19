@@ -2,7 +2,7 @@
         <!-- 右栏：文件（两种模式都保持项目文件，仅宽度变化）-->
         <FileBrowserPanel class="modal-right">
           <template #toolbar>
-            <ProjectFileToolbar :context="props.context" />
+            <ProjectFileToolbar :context="props.context"><slot name="toolbar-extra" /></ProjectFileToolbar>
           </template>
 
           <div class="file-content scroll-surface" :ref="bindPmGridEl" style="position:relative" @scroll.passive="onPmScroll" @mousedown="onPmGridMouseDown"

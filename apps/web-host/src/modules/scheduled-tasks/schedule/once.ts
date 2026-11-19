@@ -1,0 +1,90 @@
+import type { ScheduledTaskRunner, OnceTaskRepository, ScheduledTaskRecord } from '@gugu/core/scheduled-task-runner'
+import type { Pool } from 'pg'
+import { enqueueScheduledTaskRagRebuild } from '../store.js'
+
+export interface OnceTaskPollerOptions {
+  runner: ScheduledTaskRunner
+  listDue(now: number): Promise<string[]>
+  execute(taskId: string): Promise<Record<string, string>>
+  onError(error: unknown): void
+  intervalMs?: number
+}
+
+/** 一次性任务轮询器；执行与投递由 Host 显式注入。停止时等待当前轮结束。 */
+export function createOnceTaskPoller(options: OnceTaskPollerOptions) {
+  const interval = options.intervalMs ?? 30_000
+  if (!Number.isSafeInteger(interval) || interval < 1) throw new RangeError('轮询间隔无效')
+  let stopped = true
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let current: Promise<void> = Promise.resolve()
+  const report = (error: unknown) => { try { options.onError(error) } catch { /* 诊断失败不停止后续轮询 */ } }
+  async function tick() {
+    try {
+      await options.runner.recoverAbandoned()
+      for (const id of await options.listDue(Date.now())) {
+        if (stopped) break
+        try { await options.runner.runDue(id, () => options.execute(id)) } catch (error) { report(error) }
+      }
+    } catch (error) { report(error) }
+    if (!stopped) timer = setTimeout(() => { current = tick() }, interval)
+  }
+  return {
+    start() { if (!stopped) return; stopped = false; current = tick() },
+    async stop() { stopped = true; if (timer) clearTimeout(timer); await current },
+  }
+}
+
+type Row = { id: number; user_id: string; enabled: boolean; start_at: Date; last_run_at: Date | null; last_run_failed: boolean | null }
+
+function record(row: Row): ScheduledTaskRecord {
+  return { id: String(row.id), userId: row.user_id, enabled: row.enabled, scheduleKind: 'once',
+    startAt: new Date(row.start_at).getTime(), lastRunAt: row.last_run_at ? new Date(row.last_run_at).getTime() : null,
+    lastRunFailed: Boolean(row.last_run_failed) }
+}
+
+/** 一次性任务状态持久化；调用方必须先持有与 Python 兼容的任务租约。 */
+export function createPostgresOnceTaskRepository(pool: Pick<Pool, 'query' | 'connect'>): OnceTaskRepository {
+  const columns = 'id, user_id::text AS user_id, enabled, start_at, last_run_at, last_run_failed'
+  return {
+    async getOnce(id) {
+      const result = await pool.query<Row>(`SELECT ${columns} FROM scheduled_tasks WHERE id=$1 AND schedule_kind='once' AND user_id IS NOT NULL AND start_at IS NOT NULL`, [id])
+      return result.rows[0] ? record(result.rows[0]) : null
+    },
+    async markStarted(id, at, userId) {
+      const result = await pool.query(`UPDATE scheduled_tasks SET last_run_at=$2, last_run_failed=FALSE WHERE id=$1 AND user_id=$3 AND enabled=TRUE AND schedule_kind='once' AND (last_run_at IS NULL OR last_run_failed=TRUE)`, [id, new Date(at), userId])
+      return result.rowCount === 1
+    },
+    async markFailed(id, userId) {
+      await pool.query(`UPDATE scheduled_tasks SET last_run_failed=TRUE WHERE id=$1 AND user_id=$2 AND schedule_kind='once' AND last_run_at IS NOT NULL`, [id, userId])
+    },
+    async deleteCompleted(id, userId) {
+      const client = await pool.connect()
+      try {
+        await client.query('BEGIN')
+        const removed = await client.query(`DELETE FROM scheduled_tasks WHERE id=$1 AND user_id=$2 AND schedule_kind='once' RETURNING id`, [id, userId])
+        if (removed.rowCount) await enqueueScheduledTaskRagRebuild(client, userId, Number(id))
+        await client.query('COMMIT')
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => undefined)
+        throw error
+      } finally {
+        client.release()
+      }
+    },
+    async findStartedOnceBefore(at) {
+      const result = await pool.query<Row>(`SELECT ${columns} FROM scheduled_tasks WHERE schedule_kind='once' AND user_id IS NOT NULL AND start_at IS NOT NULL AND last_run_at < $1 AND COALESCE(last_run_failed,FALSE)=FALSE`, [new Date(at)])
+      return result.rows.map(record)
+    },
+  }
+}
+
+/** 只选择从未执行且尚处于 Python 120 秒误触发宽限期内的一次性任务。 */
+export function createPostgresDueOnceTasks(pool: Pick<Pool, 'query'>) {
+  return async (now: number): Promise<string[]> => {
+    const result = await pool.query<{ id: number }>(`SELECT id FROM scheduled_tasks
+      WHERE schedule_kind='once' AND enabled=TRUE AND user_id IS NOT NULL
+        AND last_run_at IS NULL AND start_at <= $1 AND start_at >= $2 ORDER BY start_at, id`,
+    [new Date(now), new Date(now - 120_000)])
+    return result.rows.map((row) => String(row.id))
+  }
+}

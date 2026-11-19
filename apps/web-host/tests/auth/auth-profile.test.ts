@@ -5,9 +5,9 @@ import { createProfileUpdater, ProfileUpdateError } from '@gugu/core/auth/profil
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify'
 import { Pool } from 'pg'
 import test from 'node:test'
-import { createUserToken, verifyUserToken } from '../../src/modules/auth/auth.js'
-import { registerProfileRoute, type ProfileUser } from '../../src/modules/auth/routes/auth-profile.js'
-import { createPostgresProfileUpdateStore } from '../../src/modules/auth/profile-update-postgres.js'
+import { createUserToken, verifyUserToken } from '../../src/modules/auth/session/token.js'
+import { registerProfileRoute, type ProfileUser } from '../../src/modules/auth/account/profile.js'
+import { createPostgresProfileUpdateStore } from '../../src/modules/auth/account/profile-store.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const secret = 'synthetic-profile-secret-with-enough-entropy'

@@ -53,7 +53,8 @@
       ref="windowRef"
       :window-style="windowStyle" :expanded="expanded" :resizing="resizing"
       :owner-z="chatZ"
-      :streaming="streaming" :is-chat-dragging="isChatDragging"
+      :streaming="streaming" :can-interrupt-detached-run="canInterruptDetachedRun"
+      :interrupt-pending="interruptPending" :on-interrupt-detached-run="interruptDetachedRun" :is-chat-dragging="isChatDragging"
       :automatic-mode-enabled="preferencesStore.automaticModeEnabled"
       :automatic-mode-available="automaticModeButtonVisible"
       :automatic-mode-saving="automaticModeSaving"
@@ -71,7 +72,6 @@
       :copied-id="copiedId" :voice-playing-id="voicePlayingId" :voice-bars="voiceBars"
       :status-kind="statusKind" :status-typed="statusTyped"
       :session-settling="sessionSettling"
-      :cached-history-visible="cachedHistoryVisible"
       :history-state="historyState" :on-load-history="loadOlderHistory"
       :pending-queue="visiblePendingQueue" @remove-queued="removeQueued"
       v-model:input-text="inputText"
@@ -485,7 +485,7 @@ const conversation = useChatConversation({
   }),
 })
 const {
-  messages, mkid, now, sessionSettling, cachedHistoryVisible, historyState, loadOlderHistory,
+  messages, mkid, now, sessionSettling, historyState, loadOlderHistory,
   inputText, inputReferences, thinkingLabels, contextCompactingLabels, streaming, statusKind, statusTyped, isTypingText,
   sessionId, isGroupSession,
   sessions, webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus,
@@ -516,6 +516,26 @@ watch(() => uiStore.pendingChatPrefill, async (prompt) => {
   // 首次打开时编辑器刚完成挂载，明确把光标放到预填文本末尾。
   composerRef.value?.focusEnd?.()
 }, { immediate: true })
+
+const interruptPending = ref(false)
+const canInterruptDetachedRun = computed(() => !streaming.value && sessions.value.some(session =>
+  session.id === sessionId.value && (!session.source || session.source === 'web') && session.isRunning))
+async function interruptDetachedRun() {
+  const id = sessionId.value
+  if (id == null || !canInterruptDetachedRun.value || interruptPending.value) return
+  interruptPending.value = true
+  try {
+    const result = await agentApi.cancelSession(String(id))
+    if (sessionId.value !== id) return
+    if (result.outcome === 'requested') await resumeStream(id)
+    else await loadSession(id, true)
+    await fetchSessions()
+  } catch {
+    if (sessionId.value === id) showAppError(t('chatUi.cancelFailed'))
+  } finally {
+    interruptPending.value = false
+  }
+}
 
 const visiblePendingQueue = computed(() => pendingQueue.value.filter(item => item.sessionId === sessionId.value))
 
@@ -641,12 +661,12 @@ async function onInteractionSelect(_msg: ChatMessage, option: { id: string; labe
     if (!res.ok) {
       if (_msg.interaction) {
         _msg.interaction.submitting = false
-        // 409/404 表示服务端已经结束或消费了这次交互；此时不能恢复按钮，
-        // 否则前端会让用户重复点击一个后端已不可再次消费的 token。
+        // 服务端拒绝时停止复用旧令牌，不把点击过的选项标成已接受。
         if (res.status === 409 || res.status === 404) {
           const body = await res.json().catch(() => ({})) as { detail?: unknown }
           _msg.interaction.resolved = true
-          _msg.interaction.selectedOptionId = option.id
+          _msg.interaction.selectedOptionId = null
+          _msg.interaction.submissionRejected = true
           _msg.interaction.responseText = typeof body.detail === 'string'
             ? body.detail
             : t('chatUi.interactionSubmitFailed')

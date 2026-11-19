@@ -9,8 +9,8 @@ import { Pool } from 'pg'
 import type { RunIdentity } from '@gugu/core/agent'
 import { databaseTime, initializeSqlite, openSqliteRuntime, SqlDataRuntime, type Database } from '@gugu/core/data'
 import { createRedisScheduledTaskCommands } from '../../src/adapters/cache/redis-events.js'
-import { createWebScheduledTaskToolResources } from '../../src/modules/scheduled-tasks/agent-tools.js'
-import { createScheduledTaskRunNowRuntime } from '../../src/modules/scheduled-tasks/run-now-runtime.js'
+import { createWebScheduledTaskToolResources } from '../../src/modules/scheduled-tasks/run/tools.js'
+import { createScheduledTaskRunNowRuntime } from '../../src/modules/scheduled-tasks/run/now.js'
 
 function fakeRedis() {
   const values = new Map<string, { token: string; expires: number }>()

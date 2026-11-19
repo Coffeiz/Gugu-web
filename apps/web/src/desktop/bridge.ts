@@ -76,6 +76,24 @@ function createPreviewBridge(): DesktopBridge | undefined {
   return previewBridge
 }
 
+export function hasRemoteAccountBridge() {
+  return typeof (window as DesktopWindow).guguDesktop?.remoteAccount === 'function'
+}
+
+export function hasRemoteByokBridge() {
+  return typeof (window as DesktopWindow).guguDesktop?.remoteByok === 'function'
+}
+
+export function desktopRemoteByok(...args: Parameters<DesktopBridge['remoteByok']>) {
+  return call(bridge => bridge.remoteByok(...args))
+}
+
+export const desktopRemoteAccount = {
+  status: () => call(bridge => bridge.remoteAccount()),
+  login: (input: Parameters<DesktopBridge['remoteLogin']>[0]) => call(bridge => bridge.remoteLogin(input)),
+  logout: () => call(bridge => bridge.remoteLogout()),
+}
+
 export const desktopData = {
   appearance: () => call(bridge => bridge.appearance()),
   updateAppearance: (patch: Partial<DesktopAppearancePreferences>) => call(bridge => bridge.updateAppearance(patch)),

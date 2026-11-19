@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { Pool } from 'pg'
-import { startTrashPurgeWorker } from '../../src/modules/files/trash-purge-worker.js'
+import { startTrashPurgeWorker } from '../../src/modules/files/trash/purge.js'
 
 const ownerId = '00000000-0000-4000-8000-000000000007'
 

@@ -6,8 +6,8 @@ import {mkdtemp,readdir,rm,writeFile,readFile} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {fileURLToPath} from 'node:url'
-import {prepareSilk} from '../../../src/modules/im/gateway/silk-format.js'
-import {createImAudioProcessor} from '../../../src/modules/im/gateway/audio.js'
+import {prepareSilk} from '../../../src/modules/im/gateway/media/silk.js'
+import {createImAudioProcessor} from '../../../src/modules/im/gateway/media/audio.js'
 
 const run=promisify(execFile)
 function pcm(seconds=.25,rate=8000){
@@ -41,7 +41,7 @@ test('真实WAV探测保留毫秒精度，转码得到16k单声道PCM且全部�
 test('真实OGG输入经过固定解码器转换为有效WAV',async()=>fixture(async root=>{
  const input=join(root,'synthetic.wav'),output=join(root,'synthetic.ogg')
  await writeFile(input,pcm())
- await run('ffmpeg',['-nostdin','-hide_banner','-loglevel','error','-i',input,'-c:a','libvorbis',output],{windowsHide:true,timeout:30_000})
+ await run('ffmpeg',['-nostdin','-hide_banner','-loglevel','error','-i',input,'-ac','2','-strict','experimental','-c:a','vorbis',output],{windowsHide:true,timeout:30_000})
  const audio=createImAudioProcessor({temporaryRoot:root})
  const converted=await audio.toWav(await readFile(output),signal())
  assert.ok(converted)
@@ -129,7 +129,7 @@ test('真实pilk合成SILK经独立受限WASM解码，与24k PCM参考相符、�
  assert.equal(await audio.probeAudioDuration(actual,'wav',signal()),duration)
  const standard=bytes[0]===2?bytes.subarray(1):bytes
  assert.deepEqual(await audio.toWav(standard,signal()),actual)
- await assert.rejects(run(process.execPath,[fileURLToPath(new URL('../../../src/modules/im/gateway/silk-worker.ts',import.meta.url))],{timeout:5000,windowsHide:true}),
+ await assert.rejects(run(process.execPath,[fileURLToPath(new URL('../../../src/modules/im/gateway/media/silk-worker.ts',import.meta.url))],{timeout:5000,windowsHide:true}),
   error=>!!error&&typeof error==='object'&&'code'in error&&error.code===1)
  assert.equal(await createImAudioProcessor({temporaryRoot:root,transcodeTimeoutMs:1}).toWav(bytes,signal()),null)
  assert.equal(await createImAudioProcessor({temporaryRoot:root,probeTimeoutMs:1}).probeAudioDuration(bytes,'silk',signal()),null)

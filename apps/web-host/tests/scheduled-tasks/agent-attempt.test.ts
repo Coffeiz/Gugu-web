@@ -1,3 +1,4 @@
+import { encryptByokEnvelope } from '../../src/modules/byok/crypto.js'
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
@@ -10,13 +11,12 @@ import { serializeAgentKnowledgeEntry } from '@gugu/core/agent/knowledge/entry'
 import { stableJson, type CanonicalRunPreparationPorts } from '@gugu/core/agent'
 import { createScheduledTaskContextLoader } from '@gugu/core/scheduled-task-run-now'
 import { ProviderStreamSanitizer, stripThinking, type ProviderHttpRequest } from '@gugu/core/providers'
-import { encryptByokEnvelope } from '../../src/modules/agent/model-config/byok.js'
-import { createConfiguredWebAgentProviderBinding } from '../../src/modules/agent/model-config/configured-web-provider-binding.js'
-import { createWebAgentPromptReader } from '../../src/modules/agent-sessions/context/agent-prompt-files.js'
+import { createConfiguredWebAgentProviderBinding } from '../../src/modules/agent/llm/configured.js'
+import { createWebAgentPromptReader } from '../../src/modules/agent/context/prompts.js'
 import { createLocalPreferenceTextFiles } from '../../src/modules/preferences/persistence/personality-files.js'
-import { createWebScheduledTaskContextSources } from '../../src/modules/scheduled-tasks/agent-context.js'
-import { createWebScheduledTaskToolResources } from '../../src/modules/scheduled-tasks/agent-tools.js'
-import { createWebScheduledTaskAgentAttempt } from '../../src/modules/scheduled-tasks/agent-attempt.js'
+import { createWebScheduledTaskContextSources } from '../../src/modules/scheduled-tasks/run/context.js'
+import { createWebScheduledTaskToolResources } from '../../src/modules/scheduled-tasks/run/tools.js'
+import { createWebScheduledTaskAgentAttempt } from '../../src/modules/scheduled-tasks/run/attempt.js'
 
 const pgUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
@@ -34,7 +34,8 @@ test('定时执行按任务 owner 绑定 BYOK，并为每次尝试生成独立�
     await pool.query(`CREATE TABLE user_provider_credentials(id int PRIMARY KEY,user_id uuid,capability text,enabled boolean,
       provider text,api_format text,base_url text,model text,encrypted_value text,nonce text,encrypted_data_key text,key_version integer,
       max_tokens integer,context_tokens integer,thinking text,reasoning_effort text,reasoning_persistence text,image boolean,
-      video boolean,audio boolean,image_detail text,web_search_enabled boolean);
+      video boolean,audio boolean,image_detail text,web_search_enabled boolean,updated_at timestamptz DEFAULT now());
+      CREATE TABLE user_provider_bindings(user_id uuid,capability text,credential_id int,PRIMARY KEY(user_id,capability));
       CREATE TABLE users(id uuid PRIMARY KEY, timezone text, token_limit_6h integer, quota_window_started_at timestamptz);
       CREATE TABLE scheduled_tasks(id int PRIMARY KEY,user_id uuid,enabled boolean,
         schedule_kind text NOT NULL DEFAULT 'cron',end_at timestamptz,last_run_failed boolean);
@@ -74,6 +75,7 @@ test('定时执行按任务 owner 绑定 BYOK，并为每次尝试生成独立�
       (1,$1,'llm',TRUE,'openai','openai','https://user.example.test/v1','synthetic-user-model',$2,$3,$4,1,
       2048,8192,NULL,NULL,'continuation',FALSE,FALSE,FALSE,'auto',FALSE)`,
     [owner, credential.ciphertext, credential.nonce, credential.encryptedDataKey])
+    await pool.query("INSERT INTO user_provider_bindings VALUES ($1,'llm',1)", [owner])
     const promptRoot = join(directory, 'prompts')
     await mkdir(promptRoot)
     for (const name of ['default.md', 'persona.md', 'skills.md', 'policy.md', 'retrieval.md'])
@@ -82,7 +84,7 @@ test('定时执行按任务 owner 绑定 BYOK，并为每次尝试生成独立�
       pool, configPath: join(directory, 'test-config.json'), versionSecret: 'synthetic-version-secret', promptRoot,
       permissionIdentity: 'scheduled-task', contextPolicy: () => ({ memoryEnabled: true, loadOwnerContext: true }), defaultLimit6h: 5,
       environment: { CREDENTIALS_MASTER_KEY: masterKey, BYOK__ENABLED: 'true', AI__MODEL: 'synthetic-platform-model',
-        AI__API_KEY: 'synthetic-platform-key', AI__CONTEXT_TOKENS: '4096' },
+        AI__API_KEY: 'synthetic-platform-key', AI__CONTEXT_TOKENS: '4096', AI__REASONING_PERSISTENCE: 'continuation' },
     })
     const now = () => Date.parse('2026-01-01T08:00:00Z')
     const readPrompts = createWebAgentPromptReader(promptRoot)

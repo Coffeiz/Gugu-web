@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
-import { createPostgresImAccess } from '../../../src/modules/im/gateway/access-postgres.js'
-import { createImProductionSkills } from '../../../src/modules/im/gateway/production-skills.js'
+import { createPostgresImAccess } from '../../../src/modules/im/gateway/inbound/access.js'
+import { createImProductionSkills } from '../../../src/modules/im/gateway/agent/skills.js'
 import { createImProductionFixture } from './production.fixtures.js'
 
 const databaseUrl = process.env.GUGU_IM_GATEWAY_TEST_DATABASE_URL

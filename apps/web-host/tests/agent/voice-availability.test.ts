@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import Fastify from 'fastify'
 import { supportsConfiguredVoiceModel } from '@gugu/core/agent/config/voice-availability'
-import { createPostgresVoiceAvailabilityReader } from '../../src/modules/agent/voice-availability.js'
-import { registerVoiceAvailabilityRoute } from '../../src/modules/agent/voice-availability.js'
+import { createPostgresVoiceAvailabilityReader } from '../../src/modules/agent/voice.js'
+import { registerVoiceAvailabilityRoute } from '../../src/modules/agent/voice.js'
 
 test('语音可用性只按认证 owner 的有效设置返回布尔值', async () => {
   const app = Fastify()

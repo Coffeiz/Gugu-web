@@ -1,14 +1,14 @@
+import { imGatewaySql } from '@gugu/database/postgres/migrations/0013_im_gateway'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 import type { Pool } from 'pg'
-import { createImVoiceCache,ImVoiceCacheError } from '../../../src/modules/im/gateway/voice-cache.js'
-import type { ImVoiceSelection } from '../../../src/modules/im/gateway/voice-config.js'
-import type { ImAttentionVoiceSource,ImVoiceRunProof } from '../../../src/modules/im/gateway/voice-attention-contracts.js'
-import { createImInboundEnvelope } from '../../../src/modules/im/gateway/inbound-envelope.js'
-import { imConversationDigest,imConversationFingerprint,imConversationScopeHash } from '../../../src/modules/im/gateway/conversation-identity.js'
-import { imAttachmentScopeKey } from '../../../src/modules/im/gateway/attachment-ingress.js'
+import { createImVoiceCache,ImVoiceCacheError } from '../../../src/modules/im/gateway/media/cache.js'
+import type { ImVoiceSelection } from '../../../src/modules/im/gateway/media/config.js'
+import type { ImAttentionVoiceSource,ImVoiceRunProof } from '../../../src/modules/im/gateway/attention/voice.js'
+import { createImInboundEnvelope } from '../../../src/modules/im/gateway/inbound/envelope.js'
+import { imConversationDigest,imConversationFingerprint,imConversationScopeHash } from '../../../src/modules/im/gateway/agent/identity.js'
+import { imAttachmentScopeKey } from '../../../src/modules/im/gateway/inbound/attachments.js'
 import { context,owner,other } from './run-sender.fixtures.js'
 
 const pgUrl=process.env.GUGU_IM_GATEWAY_TEST_DATABASE_URL
@@ -29,7 +29,7 @@ test('真实隔离PG：attention ASR原子收据/未知不重发/同事务Run绑
       CREATE TABLE conversation_messages(id integer PRIMARY KEY,session_id integer,run_id text,role text,chat_type text,platform_user_id text,conversation_seq integer,im_platform_message_id text);
       CREATE TABLE gugu_im_inbound_receipts(user_id uuid,session_id integer,message_id integer,run_id text,state text,platform text,bot_id varchar(128),chat_type text,scope_hash text,event_hash text,fingerprint text,sealed_payload jsonb);
       CREATE TABLE chat_attachments(attach_id text,user_id uuid,message_id integer,state text,platform text,extra jsonb)`)
-    await pool.query(await readFile(new URL('../../../src/modules/im/gateway/voice-cache-schema.sql',import.meta.url),'utf8'))
+    await pool.query(imGatewaySql.voiceCache)
     await pool.query('INSERT INTO users VALUES($1),($2)',[owner,other])
     const db=pool,c=context(),payload={...c.payload,attachments:['voice-a'],_node_stream_event_id:'1791000000000-1'}
     const scopeHash=imConversationScopeHash(c.secretKey,{ownerId:owner,platform:c.scope.platform,botId:c.scope.botId},payload)

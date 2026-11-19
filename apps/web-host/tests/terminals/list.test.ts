@@ -3,8 +3,8 @@ import { test } from 'node:test'
 import { createRequire } from 'node:module'
 import Fastify from 'fastify'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
-import { createPostgresTerminalListReader } from '../../src/modules/terminals/persistence/list.js'
-import { registerTerminalListRoute } from '../../src/modules/terminals/list.js'
+import { createPostgresTerminalListReader } from '../../src/modules/terminals/store.js'
+import { registerTerminalListRoute } from '../../src/modules/terminals/routes.js'
 
 const owner = '00000000-0000-4000-8000-000000000121'
 const coreRequire = createRequire(new URL('../../../../packages/core/package.json', import.meta.url))

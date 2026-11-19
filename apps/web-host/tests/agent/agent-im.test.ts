@@ -7,8 +7,8 @@ import { createPostgresRuntime } from '@gugu/core/data'
 import { createToolRegistry } from '@gugu/core/tools'
 import { createRedisScheduledTaskCommands, createRedisValueReader } from '../../src/adapters/cache/redis-events.js'
 import type { ProviderHttpRequest } from '@gugu/core/providers'
-import { createWebAgentFeishuReaction, createWebAgentImOwnerSessions } from '../../src/modules/agent-sessions/tools/agent-im.js'
-import { createScheduledImPushHistory } from '../../src/modules/scheduled-tasks/im-push-history.js'
+import { createWebAgentFeishuReaction, createWebAgentImOwnerSessions } from '../../src/modules/agent/tools/im.js'
+import { createScheduledImPushHistory } from '../../src/modules/scheduled-tasks/delivery/history.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const redisUrl = process.env.GUGU_WEBUI_TEST_REDIS_URL

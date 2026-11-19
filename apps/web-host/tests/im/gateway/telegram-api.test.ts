@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ProviderHttpRequest, ProviderHttpResponse, ProviderTransport } from '@gugu/core/providers';
-import { createTelegramBotApi, TelegramApiError, validateTelegramBotToken } from '../../../src/modules/im/gateway/telegram-api.js';
+import { createTelegramBotApi, TelegramApiError, validateTelegramBotToken } from '@gugu/gateway/telegram';
 
 const token = '123456:synthetic_Telegram_Token_0000';
 function fixture(status = 200, data: unknown = { ok: true, result: { id: 1 } }) {

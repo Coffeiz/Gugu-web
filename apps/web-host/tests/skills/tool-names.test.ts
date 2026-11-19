@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createRegisteredUserSkillToolNameReader, createUserSkillToolNameReader } from '../../src/modules/skills/tool-names.js'
+import { createRegisteredUserSkillToolNameReader, createUserSkillToolNameReader } from '../../src/modules/skills/tools.js'
 
 test('Skill 工具名校验使用注册目录，不把运行时授权拒绝误当成未注册', async () => {
   const calls: string[] = []

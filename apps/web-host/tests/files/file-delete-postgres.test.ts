@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { Pool, type QueryResultRow } from 'pg'
-import { createPostgresFileDeleteOperations } from '../../src/modules/files/file-delete-postgres.js'
-import { lockFileSyncPath } from '../../src/modules/files/persistence/file-sync-canonical-change.js'
+import { createPostgresFileDeleteOperations } from '../../src/modules/files/trash/service.js'
+import { lockFileSyncPath } from '../../src/modules/files/storage/sync.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '11111111-1111-4111-8111-111111111111'

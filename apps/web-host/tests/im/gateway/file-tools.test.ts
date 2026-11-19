@@ -1,11 +1,11 @@
+import { imGatewaySql } from '@gugu/database/postgres/migrations/0013_im_gateway'
 import assert from 'node:assert/strict'
 import {randomUUID} from 'node:crypto'
-import {readFile} from 'node:fs/promises'
 import {test} from 'node:test'
-import {createImFileTools} from '../../../src/modules/im/gateway/file-tools.js'
-import {createPostgresFileReadOperations} from '../../../src/modules/files/file-reads-postgres.js'
+import {createImFileTools} from '../../../src/modules/im/gateway/agent/files.js'
+import {createPostgresFileReadOperations} from '../../../src/modules/files/browse.js'
 import {createReadFileTool,createImSendFileTool,createToolRegistry} from '@gugu/core/tools'
-import {imAttachmentScopeKey} from '../../../src/modules/im/gateway/attachment-ingress.js'
+import {imAttachmentScopeKey} from '../../../src/modules/im/gateway/inbound/attachments.js'
 import {context,receipt,platform,temporary,owner,other,data,stored} from './run-sender.fixtures.js'
 
 const url=process.env.GUGU_IM_GATEWAY_TEST_DATABASE_URL
@@ -21,7 +21,7 @@ async function fixture(work:(f:{pool:import('pg').Pool;root:string;c:ReturnType<
     CREATE TABLE chat_attachments(attach_id text,user_id uuid,message_id integer,state text,platform text,extra jsonb,storage_key text,name text,ext text,mime text,size bigint);
     CREATE TABLE projects(id integer,user_id uuid,name text,color text);CREATE TABLE folders(id integer,user_id uuid,name text);
     CREATE TABLE files(id integer,user_id uuid,display_name text,ext text,space text,workspace_directory_id integer,storage_key text,project_id integer,stage_name text,folder_id integer,mind_map_id integer,size text,size_bytes bigint,mime_type text,created_at timestamptz,deleted_at timestamptz,img_width integer,img_height integer,version integer,storage_backend text);`)
-   await pool.query(await readFile(new URL('../../../src/modules/im/gateway/file-tools-schema.sql',import.meta.url),'utf8'))
+   await pool.query(imGatewaySql.fileTools)
    await pool.query('INSERT INTO users VALUES($1)',[owner]);await pool.query("INSERT INTO conversation_sessions VALUES(91,$1,'web',NULL,NULL,NULL)",[owner])
    const r=receipt(c)
    await pool.query("INSERT INTO conversation_messages VALUES(11,91,$1,'user','c2c',$2,3,'31')",[c.identity.runId,c.scope.platformUserId])
@@ -70,7 +70,7 @@ test('成员/群不注册文件库读取；未知平台结果保持持久unknown
   assert.equal(await ports.sendFile.recover(input),'unknown');assert.equal(p.requests.length,count)
   const member=context('telegram',true)
   const limited=createImFileTools({...member,pool:f.pool,storageRoot:f.root,messageIds:['11'],files:createPostgresFileReadOperations(f.pool,null,f.root),sender:()=>p.sender,authorizeTool:async()=>true})
-  assert.equal(limited.readFile,undefined);assert.equal(limited.sendFile.allowFileId,false)
+  assert.equal(limited.undefined);assert.equal(limited.sendFile.allowFileId,false)
   assert.equal(createImSendFileTool(limited.sendFile).validate({file_id:1}).success,false)
  }finally{await p.close()}
 }))

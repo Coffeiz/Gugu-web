@@ -3,8 +3,8 @@ import { once } from 'node:events'
 import { createServer } from 'node:http'
 import test from 'node:test'
 import { embedRagQuery } from '@gugu/core/agent/rag'
-import { createAgentRagEmbeddingTransport, createAgentRagEmbeddingTransportFactory } from '../../src/modules/byok/agent-rag-transport.js'
-import { createOwnerAgentRagVectorResolver } from '../../src/modules/agent-sessions/tools/agent-rag-vectors.js'
+import { createAgentRagEmbeddingTransport, createAgentRagEmbeddingTransportFactory } from '../../src/modules/agent/rag/transport.js'
+import { createOwnerAgentRagVectorResolver } from '../../src/modules/agent/rag/vectors.js'
 
 test('生产 RAG transport 仅对 local/ollama query 开放本机 embedding 请求', async () => {
   let requests = 0
