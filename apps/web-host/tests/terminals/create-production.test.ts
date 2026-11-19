@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/domains/auth/auth.js'
+import { createUserToken } from '../../src/modules/auth/auth.js'
 import { createPostgresTerminalCreator } from '../../src/modules/terminals/create-operation.js'
 
 const coreRequire = createRequire(new URL('../../../../packages/core/package.json', import.meta.url))
@@ -28,9 +28,10 @@ test('createApp authenticated POST commits the Core terminal record and publishe
     pool: { async query(_query: string, values: string[]) { assert.equal(values[0], owner); return { rows: [{ data_json: { shell_enabled: true } }] } } } as never,
     db: db as never,
     publisher: { async publishResourceChanged(event: unknown) { events.push(event); return true } },
-    workspaceRuntime: { terminalMode: 'auto', shellSystemEnabled: false, fullUserSandboxAuthorizationEnabled: true },
-    async readRuntime() { return { shellEnabled: true, filesystemAuthorizationEnabled: true } },
-    async readSandboxReadiness() { return { ready: true } },
+    async readRuntime() {
+      return { terminalMode: 'auto', shellEnabled: true, shellSystemEnabled: false,
+        fullUserSandboxAuthorizationEnabled: true, sandboxReady: true }
+    },
     now: () => new Date('2026-11-17T12:00:00.000Z'),
   })
   const app = createApp({

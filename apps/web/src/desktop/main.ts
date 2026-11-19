@@ -12,11 +12,15 @@ import { initializeDesktopTheme } from '@/composables/core/useTheme'
 const router = createRouter({
   history: createMemoryHistory(),
   routes: [
-    { path: '/notes', component: () => import('@/views/Mind/NotesThreePaneView.vue') },
-    { path: '/canvases', component: () => import('@/views/Mind/CanvasView.vue') },
+    // 普通页面由桌面壳层渲染；笔记和画布在路由提交前解析异步组件。
+    { path: '/', name: 'home', components: {} },
+    ...['projects', 'calendar', 'schedules', 'files', 'terminals', 'skills', 'mcp', 'contacts', 'team', 'notifications']
+      .map(section => ({ path: `/${section}`, name: section, components: {} })),
+    { path: '/notes', name: 'notes', component: () => import('@/views/Mind/NotesThreePaneView.vue') },
+    { path: '/canvases', name: 'canvases', component: () => import('@/views/Mind/CanvasView.vue') },
     { path: '/mind/notes', redirect: to => ({ path: '/notes', query: to.query, hash: to.hash }) },
     { path: '/mind/canvases', redirect: to => ({ path: '/canvases', query: to.query, hash: to.hash }) },
-    { path: '/:pathMatch(.*)*', component: () => import('../../../desktop/src/ui/workbench/index.vue') },
+    { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })
 

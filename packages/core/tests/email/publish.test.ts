@@ -1,20 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createEmailRecipientLister } from '../../src/admin/email-recipient-list.js'
 import { deliverAdminEmailBulk } from '../../src/email/publish.js'
 
 const draft={subject:'主题',title:'标题',body:'正文',translations:{'ja-JP':{subject:'件名',title:'見出し',body:'本文'}}}
 const settings={host:'smtp.example.test',port:465,user:'sender@example.test',password:'secret',from_addr:'咕咕',to_addr:'',test_to_addr:'',use_ssl:true}
-
-test('发布收件人沿用活跃订阅、有效邮箱和损坏 locale 回退规则',async()=>{
- const list=createEmailRecipientLister(async()=>({rows:[
-  {email:' a@example.test ',data_json:'{"locale":"en-US"}'},
-  {email:'b@example.test',data_json:'{"locale":"ja-JP"}'},
-  {email:'bad',data_json:'{}'},
-  {email:'c@example.test',data_json:'broken'},
- ]}))
- assert.deepEqual(await list(),{'zh-CN':['c@example.test'],'ja-JP':['b@example.test'],'en-US':['a@example.test']})
-})
 
 test('批量发布使用目标语言内容，隔离单封失败并限制并发',async()=>{
  let active=0,maxActive=0

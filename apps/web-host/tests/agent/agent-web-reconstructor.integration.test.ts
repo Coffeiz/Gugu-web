@@ -13,16 +13,16 @@ import { createRedisAgentCancellationCommands } from '../../src/adapters/redis-e
 import { createRedisLiveSubscription } from '../../src/adapters/redis-live-subscription.js'
 import { withPostgresTransaction } from '../../src/adapters/postgres-transaction.js'
 import { createAgentDispatchWorker } from '@gugu/core/agent'
-import { createAgentToolRegistry } from '../../src/domains/agent-sessions/tools/agent-tool-registry.js'
-import { createWebAgentReconstructor, createWebImMemoryLoader, type WebAgentReconstructionResources } from '../../src/domains/agent-sessions/agent-web-reconstructor.js'
-import { createPostgresAgentDispatch, enqueueAgentRunLocked } from '../../src/domains/agent-sessions/persistence/agent-run-dispatch-postgres.js'
-import { lockAgentRunSession } from '../../src/domains/agent-sessions/persistence/agent-run-startup-postgres.js'
+import { createAgentToolRegistry } from '../../src/modules/agent-sessions/tools/agent-tool-registry.js'
+import { createWebAgentReconstructor, createWebImMemoryLoader, type WebAgentReconstructionResources } from '../../src/modules/agent-sessions/agent-web-reconstructor.js'
+import { createPostgresAgentDispatch, enqueueAgentRunLocked } from '../../src/modules/agent-sessions/persistence/agent-run-dispatch-postgres.js'
+import { lockAgentRunSession } from '../../src/modules/agent-sessions/persistence/agent-run-startup-postgres.js'
 import { createConversationRagSource } from '../../../../packages/core/src/agent/rag/conversation-index-source.js'
 import { createSqlRagRebuildWorker } from '../../../../packages/core/src/agent/rag/rebuild-worker.js'
 import { applyRagIndexMigration, queueNodeRagCutoverBaseline } from '../../src/migrations/rag-index-migrate.js'
-import { createLocalAgentRememberPort } from '../../src/domains/agent-sessions/tools/agent-memory-write.js'
-import { createWebAgentConfirmationAuthorization } from '../../src/domains/agent-sessions/tools/agent-confirmation.js'
-import { createAuthorizedWebAgentProductionRagRunPorts } from '../../src/domains/agent-sessions/tools/agent-rag-production-ports.js'
+import { createLocalAgentRememberPort } from '../../src/modules/agent-sessions/tools/agent-memory-write.js'
+import { createWebAgentConfirmationAuthorization } from '../../src/modules/agent-sessions/tools/agent-confirmation.js'
+import { createAuthorizedWebAgentProductionRagRunPorts } from '../../src/modules/agent-sessions/tools/agent-rag-production-ports.js'
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL, redis = process.env.GUGU_WEBUI_TEST_REDIS_URL
 const digest = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')
 
@@ -309,7 +309,7 @@ test('Web 重建器分别校验队列 contextScopeKey 与 Core checkpoint access
           capabilities: { workspaceSupported: false, filterConfigured: async (values: readonly string[]) => values, shellPolicy: async () => ({ allowed: false, needsConfirmation: false }),
             shellState: async () => null, appendShellProtocol: (value: string) => value, catalog: async () => null }, formatPrefix: () => [] },
         toolRegistry: createAgentToolRegistry({ core: {} as SqlDataRuntime, authorize: async () => false }),
-        materialize: async (_id: import('@gugu/core/agent').RunIdentity, message: import('../../src/domains/agent-sessions/context/agent-context-source.js').OwnedCurrentMessage) => ({ currentUser: { persistedMessageId: message.id, message: { role: 'user', content: message.content } } }),
+        materialize: async (_id: import('@gugu/core/agent').RunIdentity, message: import('../../src/modules/agent-sessions/context/agent-context-source.js').OwnedCurrentMessage) => ({ currentUser: { persistedMessageId: message.id, message: { role: 'user', content: message.content } } }),
         executor: { authorize: async () => { throw new Error('不应执行') }, executor: { execute: async () => { throw new Error('不应执行') } } },
         runtime: { clock: { now: () => new Date(0).toISOString() }, interactions: { activate: async (_id: import('@gugu/core/agent').RunIdentity, request: import('@gugu/core/agent').PendingInteraction) => request },
           sanitizeText: stripThinking, createStreamSanitizer: () => new ProviderStreamSanitizer(), presentError: () => ({ code: 'failed', text: '失败' }),

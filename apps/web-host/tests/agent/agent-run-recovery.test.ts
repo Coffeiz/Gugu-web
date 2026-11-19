@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { after, test } from 'node:test'
 import { Pool } from 'pg'
-import { createPostgresAgentOrphanRecovery } from '../../src/domains/agent-sessions/persistence/agent-run-recovery.js'
+import { createPostgresAgentOrphanRecovery } from '../../src/modules/agent-sessions/persistence/agent-run-recovery.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '00000000-0000-4000-8000-000000000091'

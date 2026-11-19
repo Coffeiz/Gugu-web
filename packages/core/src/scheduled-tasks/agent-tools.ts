@@ -57,7 +57,7 @@ export function createScheduledTaskRunToolPorts(options: {
     async authorize(candidate, name) {
       return names.has(name) && await current(candidate)
         && (name !== 'send_email' || await email?.isAuthorized() === true)
-        && (name !== 'group_context_search' || await options.isGroupScopeCurrent?.() === true)
+        && (!['group_context_search', 'search_memory'].includes(name) || await options.isGroupScopeCurrent?.() === true)
     },
   })
   return createAgentRunToolPorts({

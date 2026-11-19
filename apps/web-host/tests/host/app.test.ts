@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/domains/auth/auth.js'
+import { createUserToken } from '../../src/modules/auth/auth.js'
 
 const apps: Array<{ close(): Promise<void> }> = []
 
@@ -814,4 +814,17 @@ test('Agent pending queue routes use Host owner, protect claim tokens, and publi
     ['release', userId, 7, 'session-7', 3, 'claim-token'],
     ['publish', userId, 7, 'client-synthetic'],
   ])
+})
+
+test('退役的文件同步管理接口不再注册', async () => {
+  const app = testApp({ appName: '合成测试应用', isReady: async () => true })
+  for (const [method, url] of [
+    ['GET', '/api/v1/admin/filesync/events'],
+    ['GET', '/api/v1/admin/filesync/runs'],
+    ['POST', '/api/v1/admin/filesync/bindings/1/dry-run'],
+    ['POST', '/api/v1/admin/filesync/watcher-capacity/expand'],
+  ] as const) {
+    const response = await app.inject({ method, url })
+    assert.equal(response.statusCode, 404)
+  }
 })

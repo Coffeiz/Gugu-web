@@ -3,7 +3,7 @@ import { request as httpRequest } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { test } from 'node:test'
 import Fastify from 'fastify'
-import { registerAgentChatRoutes, type AgentChatService } from '../../src/domains/agent-sessions/agent-chat-route.js'
+import { registerAgentChatRoutes, type AgentChatService } from '../../src/modules/agent-sessions/agent-chat-route.js'
 
 test('聊天流保持前端事件顺序，异常不泄露原文，续看和取消按认证 owner 查询', async () => {
   const app = Fastify()
@@ -17,7 +17,10 @@ test('聊天流保持前端事件顺序，异常不泄露原文，续看和取�
         throw new Error('secret-token')
       })()
     },
-    async resume(owner, id) { calls.push([owner, id]); return null },
+    async resume(owner, id, _signal, runId) {
+      calls.push([owner, id, runId])
+      return runId === 'completed-run' ? (async function* () { yield { type: 'done', run_id: runId } })() : null
+    },
     async cancel(owner, id) { calls.push([owner, id]); return { ok: true, outcome: 'requested' } },
   }
   registerAgentChatRoutes(app, {
@@ -31,8 +34,11 @@ test('聊天流保持前端事件顺序，异常不泄露原文，续看和取�
   assert.deepEqual(events.map(event => event.type), ['session_id', 'delta', 'error', 'done'])
   assert.doesNotMatch(response.body, /secret-token/)
   assert.equal((await app.inject({ method: 'GET', url: '/api/v1/agent/sessions/8/stream', headers: { authorization: 'test' } })).statusCode, 404)
+  const replay = await app.inject({ method: 'GET', url: '/api/v1/agent/sessions/8/stream?run_id=completed-run', headers: { authorization: 'test' } })
+  assert.match(replay.body, /"run_id":"completed-run"/)
+  assert.equal((await app.inject({ method: 'GET', url: '/api/v1/agent/sessions/8/stream?run_id=one&run_id=two', headers: { authorization: 'test' } })).statusCode, 422)
   assert.equal((await app.inject({ method: 'POST', url: '/api/v1/agent/sessions/8/cancel', headers: { authorization: 'test' } })).json().outcome, 'requested')
-  assert.deepEqual(calls, [['owner-a', 'hi', 'client'], ['owner-a', 8], ['owner-a', 8]])
+  assert.deepEqual(calls, [['owner-a', 'hi', 'client'], ['owner-a', 8, undefined], ['owner-a', 8, 'completed-run'], ['owner-a', 8]])
   await app.close()
 })
 

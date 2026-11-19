@@ -616,7 +616,8 @@ defineExpose({ rootEl: cardRef })
    平时融进工具栏，只在悬停时才提示"这是个可点的东西"。 */
 .nc-done-btn {
   display: inline-flex; align-items: center; gap: 3px;
-  border: none; background: none; padding: 3px 8px; border-radius: 6px;
+  box-sizing: border-box; height: var(--ne-tool-size);
+  border: none; background: none; padding: 0 8px; border-radius: 6px;
   font-size: 11.5px; font-weight: 600; color: var(--color-primary);
   cursor: pointer; font-family: var(--font-sans); white-space: nowrap;
   transition: background 0.12s;

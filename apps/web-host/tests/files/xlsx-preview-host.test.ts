@@ -6,7 +6,7 @@ import { afterEach, test } from 'node:test'
 import JSZip from 'jszip'
 import type { Pool } from 'pg'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/domains/auth/auth.js'
+import { createUserToken } from '../../src/modules/auth/auth.js'
 import { createPostgresXlsxPreviewOperations } from '../../src/modules/files/xlsx-preview-postgres.js'
 
 const ownerId = '00000000-0000-4000-8000-000000000081'

@@ -90,7 +90,14 @@ export function createToolRegistry(options: ToolRegistryOptions): {
     register(preauthorized)
   }
   const preauthorizedEntry = preauthorized && entries.get(preauthorized.definition.name)
-  const blocked = (tool: ToolDefinition) => tool.destructive && tool !== preauthorizedEntry
+  const confirmationGated = options.confirmationGatedDestructiveTool
+  if (confirmationGated) {
+    if (!confirmationGated.destructive || !confirmationGated.requiresInteraction || !confirmationGated.confirmationReplay
+      || confirmationGated.effect !== 'write') throw new Error('持久确认工具定义无效')
+    register(confirmationGated)
+  }
+  const confirmedEntry = confirmationGated && entries.get(confirmationGated.definition.name)
+  const blocked = (tool: ToolDefinition) => tool.destructive && tool !== preauthorizedEntry && tool !== confirmedEntry
   configure(options.configuration ?? {})
   async function authorized(identity: RunIdentity, name: string): Promise<boolean> {
     try { return await options.authorize(identity, name) === true } catch { return false }

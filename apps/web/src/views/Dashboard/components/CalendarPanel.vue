@@ -546,7 +546,7 @@ function openProject(e: any) {
   font-size: 12px; font-family: var(--font-family-ui); color: #1e2028;
   outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s;
 }
-.dash-popup-input:focus { border-color: color-mix(in srgb, var(--action-primary) 55%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--action-primary) 12%, transparent); background: rgba(255,255,255,0.85); }
+.dash-popup-input:focus { border-color: var(--input-border-focus); background: rgba(255,255,255,0.85); }
 .dash-popup-textarea {
   width: 100%; padding: 7px 10px; border-radius: 9px;
   border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68);
@@ -554,7 +554,7 @@ function openProject(e: any) {
   outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s;
   resize: none; line-height: 1.5;
 }
-.dash-popup-textarea:focus { border-color: color-mix(in srgb, var(--action-primary) 55%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--action-primary) 12%, transparent); background: rgba(255,255,255,0.85); }
+.dash-popup-textarea:focus { border-color: var(--input-border-focus); background: rgba(255,255,255,0.85); }
 .dash-popup-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 2px; }
 .dash-popup-cancel { padding: 5px 12px; border-radius: 8px; border: none; background: none; font-size: 12px; cursor: pointer; color: #8a8fa8; font-family: var(--font-family-ui); transition: background 0.12s; }
 .dash-popup-cancel:hover { background: rgba(0,0,0,0.06); }

@@ -6,8 +6,8 @@ import { Pool } from 'pg'
 import test from 'node:test'
 import bcrypt from 'bcryptjs'
 import { createApp } from '../../src/app.js'
-import { revokeUserSessions } from '../../src/domains/auth/persistence/auth-revocation.js'
-import { createUserRepository } from '../../src/domains/auth/persistence/users.js'
+import { revokeUserSessions } from '../../src/modules/auth/persistence/auth-revocation.js'
+import { createUserRepository } from '../../src/modules/auth/persistence/users.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

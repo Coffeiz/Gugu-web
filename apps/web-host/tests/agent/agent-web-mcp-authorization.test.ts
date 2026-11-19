@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createWebAgentToolPorts } from '../../src/domains/agent-sessions/agent-web-reconstructor.js'
+import { createWebAgentToolPorts } from '../../src/modules/agent-sessions/agent-web-reconstructor.js'
 import type { RunIdentity } from '@gugu/core/agent'
 
 const identity: RunIdentity = { ownerId: 'owner-a', sessionId: '12', runId: 'run-a' }

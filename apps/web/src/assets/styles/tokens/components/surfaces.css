@@ -135,13 +135,11 @@
   --file-card-border-hover: rgba(255,255,255,.90);
   --file-card-shadow-hover: inset 0 1px 0 rgba(255,255,255,.90), 0 6px 18px rgba(80,90,110,.13);
   --file-card-border-selected: color-mix(in srgb,var(--action-primary) 55%,transparent);
-  --file-card-shadow-selected: inset 0 1px 0 rgba(255,255,255,.98), 0 0 0 2px color-mix(in srgb,var(--action-primary) 28%,transparent);
   /* 亮色文件卡 hover 使用白色高光；--card-hover-overlay 会随非 Aero 调色板染成主色，
      在红色等亮色主题上会把卡片压暗。暗色也使用主题中性的高光令牌。 */
   --file-card-hover-overlay: color-mix(in srgb,var(--theme-highlight-hover) 16%,transparent);
   --file-card-preselection-bg: color-mix(in srgb,var(--action-primary) 6%,transparent);
   --file-card-preselection-border: color-mix(in srgb,var(--action-primary) 45%,transparent);
-  --file-card-preselection-shadow: inset 0 1px 0 rgba(255,255,255,.85), 0 0 0 1.5px color-mix(in srgb,var(--action-primary) 15%,transparent);
   --file-card-selection-overlay: color-mix(in srgb,var(--action-primary) 14%,transparent);
   --file-card-selection-thumb-overlay: color-mix(in srgb,var(--action-primary) 28%,transparent);
   --file-card-preselection-thumb-overlay: color-mix(in srgb,var(--action-primary) 16%,transparent);
@@ -157,11 +155,9 @@
   --folder-card-border-base: rgba(255,255,255,.92);
   --folder-card-shadow: inset 0 1px 0 rgba(255,255,255,.98), 0 1px 5px rgba(80,90,110,.06);
   --folder-card-border-selected: color-mix(in srgb,var(--action-primary) 55%,transparent);
-  --folder-card-shadow-selected: inset 0 1px 0 rgba(255,255,255,.98), 0 0 0 2px color-mix(in srgb,var(--action-primary) 28%,transparent);
   --folder-card-selection-overlay: color-mix(in srgb,var(--action-primary) 14%,transparent);
   --folder-card-bg-preselected: color-mix(in srgb,var(--action-primary) 5%,transparent);
   --folder-card-border-preselected: color-mix(in srgb,var(--action-primary) 38%,transparent);
-  --folder-card-shadow-preselected: inset 0 1px 0 rgba(255,255,255,.90), 0 0 0 1.5px color-mix(in srgb,var(--action-primary) 12%,transparent);
   /* Shared menu / calendar / context / sort popover. Geometry can stay component-specific; all
      paint and cadence comes from this one contract. */
   --popup-surface-bg: var(--surface-popup);
@@ -193,7 +189,7 @@
   --input-bg: var(--surface-raised);
   /* 输入框悬停只强调边框；填充色保持静止态，避免控件内部随主题/配色闪变。 */
   --input-bg-hover: var(--input-bg);
-  /* 输入聚焦由边框与焦点环表达，填充色始终沿用静止态底色。 */
+  /* 输入聚焦由高亮描边表达，填充色始终沿用静止态底色。 */
   --input-bg-focus: var(--input-bg);
   --input-fg: var(--content-primary);
   /* 输入光标使用主题强调色，与正文前景区分，并随主题配色自动反转明暗。 */
@@ -203,7 +199,6 @@
   --input-border-hover: var(--action-outline);
   --input-border-focus: var(--border-focus);
   --input-hover-shadow: inset 0 1px 0 var(--highlight-muted);
-  --input-focus-shadow: var(--control-focus-shadow);
   --input-radius: var(--radius-xs);
   /* 单行文本行框覆盖完整控件高度，保证点击上下区域时仍按横坐标定位光标。 */
   --input-control-height: var(--control-height-md);
@@ -307,7 +302,6 @@ html[data-theme='light'][data-family='mono'] {
   --file-card-border-hover: var(--border-hover);
   --file-card-shadow-hover: var(--elevation-card-hover);
   --file-card-border-selected: var(--action-outline);
-  --file-card-shadow-selected: 0 0 0 2px var(--selection-bg), var(--elevation-card);
   --file-card-selection-overlay: var(--selection-bg);
   --file-card-selection-thumb-overlay: color-mix(in srgb,var(--action-primary) 28%,transparent);
   --file-card-preselection-thumb-overlay: color-mix(in srgb,var(--action-primary) 16%,transparent);
@@ -320,31 +314,25 @@ html[data-theme='light'][data-family='mono'] {
   --folder-card-border-base: var(--border-strong);
   --folder-card-shadow: var(--elevation-card);
   --folder-card-border-selected: var(--action-outline);
-  --folder-card-shadow-selected: 0 0 0 2px var(--selection-bg), var(--elevation-card);
   --folder-card-selection-overlay: var(--selection-bg);
   --folder-card-bg-preselected: var(--action-soft);
   --folder-card-border-preselected: var(--action-outline);
-  --folder-card-shadow-preselected: 0 0 0 1px var(--selection-bg), var(--elevation-card);
   --folder-card-border-accent: 0%;
 }
 
 /* Glass 亮色下，文件和文件夹选择态跟随当前完整色板的主色。 */
 html[data-theme='light'][data-family='glass'][data-palette] {
   --file-card-border-selected: var(--action-outline);
-  --file-card-shadow-selected: inset 0 1px 0 var(--highlight-soft), 0 0 0 2px color-mix(in srgb,var(--action-primary) 28%,transparent);
   --file-card-preselection-bg: color-mix(in srgb,var(--action-primary) 6%,var(--file-card-bg));
   --file-card-preselection-border: color-mix(in srgb,var(--action-primary) 45%,transparent);
-  --file-card-preselection-shadow: inset 0 1px 0 var(--highlight-soft), 0 0 0 1.5px color-mix(in srgb,var(--action-primary) 15%,transparent);
   --file-card-selection-overlay: color-mix(in srgb,var(--action-primary) 14%,transparent);
   --file-card-selection-thumb-overlay: color-mix(in srgb,var(--action-primary) 28%,transparent);
   --file-card-preselection-thumb-overlay: color-mix(in srgb,var(--action-primary) 16%,transparent);
 
   --folder-card-border-selected: var(--action-outline);
-  --folder-card-shadow-selected: inset 0 1px 0 var(--highlight-soft), 0 0 0 2px color-mix(in srgb,var(--action-primary) 28%,transparent);
   --folder-card-selection-overlay: color-mix(in srgb,var(--action-primary) 14%,transparent);
   --folder-card-bg-preselected: color-mix(in srgb,var(--action-primary) 5%,var(--folder-card-bg-base));
   --folder-card-border-preselected: color-mix(in srgb,var(--action-primary) 38%,transparent);
-  --folder-card-shadow-preselected: inset 0 1px 0 var(--highlight-soft), 0 0 0 1px color-mix(in srgb,var(--action-primary) 12%,transparent);
 }
 
 html[data-theme='dark'][data-family] {
@@ -409,13 +397,11 @@ html[data-theme='dark'][data-family] {
   --file-card-border-hover: var(--file-card-border);
   --file-card-shadow-hover: inset 0 1px 0 var(--highlight-soft), var(--elevation-card-hover);
   --file-card-border-selected: var(--action-outline);
-  --file-card-shadow-selected: inset 0 1px 0 var(--highlight-soft), 0 0 0 2px var(--selection-bg);
   --file-card-hover-overlay: color-mix(in srgb,var(--theme-highlight-hover) 30%,transparent);
   /* 暗色文件夹悬停只做中性提亮，避免把用户主色叠到卡片上造成偏色。 */
   --folder-card-hover-overlay: var(--file-card-hover-overlay);
   --file-card-preselection-bg: color-mix(in srgb,var(--action-primary) 5%,var(--file-card-bg));
   --file-card-preselection-border: color-mix(in srgb,var(--action-primary) 38%,transparent);
-  --file-card-preselection-shadow: inset 0 1px 0 var(--highlight-soft), 0 0 0 1.5px color-mix(in srgb,var(--action-primary) 12%,transparent);
   --file-card-selection-overlay: color-mix(in srgb,var(--action-primary) 8%,transparent);
   --file-card-selection-thumb-overlay: color-mix(in srgb,var(--action-primary) 28%,transparent);
   --file-card-preselection-thumb-overlay: color-mix(in srgb,var(--action-primary) 16%,transparent);
@@ -428,11 +414,9 @@ html[data-theme='dark'][data-family] {
   --folder-card-border-base: var(--border-strong);
   --folder-card-shadow: inset 0 1px 0 var(--highlight-soft), var(--card-shadow);
   --folder-card-border-selected: var(--action-outline);
-  --folder-card-shadow-selected: inset 0 1px 0 var(--highlight-soft), 0 0 0 2px var(--selection-bg);
   --folder-card-selection-overlay: color-mix(in srgb,var(--action-primary) 8%,transparent);
   --folder-card-bg-preselected: color-mix(in srgb,var(--action-primary) 5%,var(--folder-card-bg-base));
   --folder-card-border-preselected: color-mix(in srgb,var(--action-primary) 38%,transparent);
-  --folder-card-shadow-preselected: inset 0 1px 0 var(--highlight-muted), 0 0 0 1px color-mix(in srgb,var(--action-primary) 12%,transparent);
   --switch-track-bg: color-mix(in srgb,var(--content-primary) 9%,transparent);
   --switch-track-bg-active: color-mix(in srgb,var(--action-primary) 46%,var(--surface-card-solid));
   --switch-thumb-bg: var(--content-on-accent);

@@ -2,9 +2,9 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { Pool } from 'pg'
-import { createPostgresCurrentTurnReader } from '../../src/domains/agent-sessions/context/agent-context-source.js'
-import { createWebCurrentMessageMaterializer, UnsupportedWebAgentMessageError } from '../../src/domains/agent-sessions/context/agent-current-message.js'
-import { resolveAgentChatReferences } from '../../src/domains/agent-sessions/context/agent-references.js'
+import { createPostgresCurrentTurnReader } from '../../src/modules/agent-sessions/context/agent-context-source.js'
+import { createWebCurrentMessageMaterializer, UnsupportedWebAgentMessageError } from '../../src/modules/agent-sessions/context/agent-current-message.js'
+import { resolveAgentChatReferences } from '../../src/modules/agent-sessions/context/agent-references.js'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 test('当前消息使用发送时的所属用户引用快照，并拒绝伪造、越权和不支持的输入', { skip: !url && '需要隔离 PostgreSQL' }, async () => {

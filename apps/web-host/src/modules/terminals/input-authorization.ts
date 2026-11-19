@@ -5,11 +5,11 @@ import type { TerminalListItem } from '@gugu/core/terminals/list'
 export function createTerminalInputAuthorizer(options: {
   read(owner: string, terminal: string): Promise<TerminalListItem>
   snapshot(owner: string, terminal: string): Promise<{ facts: ShellPolicyFacts } | null>
-  ptyEnabled(): boolean
+  ptyEnabled(): boolean | Promise<boolean>
 }) {
   return async (owner: string, terminal: string) => {
     const row = await options.read(owner, terminal)
-    if (row.mode === 'interactive-pty' && !options.ptyEnabled())
+    if (row.mode === 'interactive-pty' && !await options.ptyEnabled())
       throw Object.assign(new Error('交互式 PTY 不可用'), { statusCode: 403 })
     const snapshot = await options.snapshot(owner, terminal)
     if (!snapshot || !evaluateSandboxShell('pwd', snapshot.facts).allowed)

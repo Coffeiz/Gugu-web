@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Fastify from 'fastify'
-import { registerSandboxEgressRoutes, createSandboxEgressConfigUpdater } from '../../src/modules/admin/sandbox-egress.js'
+import { registerSandboxEgressRoutes, createSandboxEgressConfigUpdater } from '../../src/modules/admin/sandbox.js'
 import { createApp } from '../../src/app.js'
 
 test('管理员回环代理保存保留其他配置，清空时关闭 egress 网络配置', async () => {

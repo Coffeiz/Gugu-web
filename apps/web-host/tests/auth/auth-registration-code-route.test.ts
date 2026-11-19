@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify'
-import { RateLimitError } from '../../src/domains/auth/rate-limit.js'
-import { registerRegistrationCodeRoute } from '../../src/domains/auth/routes/auth-registration-code.js'
+import { RateLimitError } from '../../src/modules/auth/rate-limit.js'
+import { registerRegistrationCodeRoute } from '../../src/modules/auth/routes/auth-registration-code.js'
 
 const code = '042731'
 

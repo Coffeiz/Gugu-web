@@ -76,7 +76,7 @@ function computedModel(key: 'client' | 'startDate' | 'deadline') {
 .field-input { width: 100%; height: var(--control-height-md); padding: 0 11px; box-sizing: border-box; border: 1px solid var(--input-border); border-radius: var(--control-radius); background: var(--input-bg); font-size: 13px; line-height: var(--line-height-ui); font-family: var(--font-sans); color: var(--input-fg); outline: none; transition: border-color 0.15s, box-shadow 0.15s, background 0.15s; }
 .field-input::placeholder { color: var(--input-placeholder); opacity: 0.6; }
 .field-input:hover { border-color: var(--input-border-hover); background: var(--input-bg-hover); box-shadow: var(--input-hover-shadow); }
-.field-input:focus { border-color: var(--input-border-focus); background: var(--input-bg-focus); box-shadow: var(--input-focus-shadow); }
+.field-input:focus { border-color: var(--input-border-focus); background: var(--input-bg-focus); }
 .col-divider { border: none; height: 1px; background: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.07) 20%, rgba(0,0,0,0.07) 80%, transparent 100%); margin: 0; }
 .color-grid { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
 .color-chip { width: 22px; height: 22px; border-radius: 6px; border: 2px solid rgba(255,255,255,0.5); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: border-color 0.15s; padding: 0; outline: none; }

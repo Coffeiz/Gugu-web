@@ -76,7 +76,7 @@
     "layer": "L0",
     "owner": "apps/web/components/common/gugu-chat",
     "productionEntry": "apps/web/src/components/common/gugu-chat/composables/useChatSessions.ts",
-    "keyBehavior": "旧会话加载等待交互卡片恢复时发生会话切换，旧响应不得覆盖新会话消息",
+    "keyBehavior": "刷新按服务端活跃态续接原会话；等待交互卡片恢复时切换会话，旧响应不得覆盖新会话消息",
     "ci": "frontend-test"
   },
   "apps/web/tests/chat/composables/useChatHistoryPagination.test.ts": {
@@ -91,8 +91,8 @@
     "domain": "chat-history",
     "layer": "L1",
     "owner": "apps/web/src/components/common/gugu-chat/GuguChatToolBubble.vue",
-    "productionEntry": "工具卡片点击、异步详情加载与展开",
-    "keyBehavior": "详情返回前保持折叠，就绪后只展开一次；缓存不重复请求，取消、失败重试和虚拟滚动卸载不误展开",
+    "productionEntry": "工具卡片运行计时、异步详情加载与展开",
+    "keyBehavior": "运行中实时计时，结束后显示持久耗时；详情返回前保持折叠，就绪后只展开一次；缓存不重复请求，取消、失败重试和虚拟滚动卸载不误展开",
     "ci": "frontend-test"
   }
 }

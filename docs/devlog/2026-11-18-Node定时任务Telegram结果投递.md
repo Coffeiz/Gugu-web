@@ -13,4 +13,4 @@
 
 新增 Host 附件投递回归后，首次运行因适配器没有 `sendAttachment` 而失败；Core API 和 Host 投递接入后定向 Node 测试 **5/5**。覆盖 owner 文件读取及 50,000,000 字节上限、平台停用/Bot 失效后不外连、文本成功但附件失败的结果状态。Core Telegram Bot API 与定时执行 Core 合计 **29/29**，覆盖固定路径、照片/文件 multipart、仅明确 400 时回退、响应回执、附件上限及 Telegram 的 `send_file` 能力。Web Host production TypeScript build 通过。
 
-生产立即运行集成测试被跳过，因为本地没有配置测试用隔离 PostgreSQL 与 Redis；本轮未在 devserver 同步/运行，也未连接真实 Telegram 或代理。Python 基线源码与对应测试已核对，pytest 未运行，因此不声称 Python 实测通过。正式 PG/Redis Worker、推送历史写入、SQLite Worker、真实服务和部署仍未验收。
+生产立即运行集成测试被跳过，因为本地没有配置测试用隔离 PostgreSQL 与 Redis；本轮未在 devserver 同步/运行，也未连接真实 Telegram 或代理。Python 基线源码与对应测试已核对，pytest 未运行，因此不声称 Python 实测通过。当前 `sendMessage` 仍以普通文本发送，未迁移 Python Telegram MarkdownV2 转换和 4096 UTF-16 长度分片；长消息和 Markdown 展示存在兼容差异，后续仍需完成。正式 PG/Redis Worker、推送历史写入、SQLite Worker、真实服务和部署仍未验收。

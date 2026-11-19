@@ -8,7 +8,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { createSafeEgressFileProbe } from '../../src/modules/admin/safe-egress-probe.js'
+import { createSafeEgressFileProbe } from '../../src/modules/admin/network.js'
 import { encryptEncryptedString } from '../../src/adapters/encrypted-string.js'
 
 test('安全出站试测经代理DoH并以公网IP建立固定目标TLS，不跟随跳转', async () => {

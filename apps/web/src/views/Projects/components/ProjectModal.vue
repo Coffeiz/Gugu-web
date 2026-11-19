@@ -957,7 +957,7 @@ const filePanelContext = {
   outline: none; transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
 }
 .field-input:hover { border-color: var(--input-border-hover); background: var(--input-bg-hover); box-shadow: var(--input-hover-shadow); }
-.field-input:focus { border-color: var(--input-border-focus); background: var(--input-bg-focus); box-shadow: var(--input-focus-shadow); }
+.field-input:focus { border-color: var(--input-border-focus); background: var(--input-bg-focus); }
 
 /* 状态 */
 .status-group { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; }

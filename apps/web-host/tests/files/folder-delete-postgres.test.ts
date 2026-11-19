@@ -31,11 +31,22 @@ function fixture() {
   ]
   let failFileUpdate = false
   const undoWrites: unknown[][] = []
+  const receipts = new Map<string, { method: string; fingerprint: string; result_json: string }>()
   const client = {
     async query<Row extends QueryResultRow = QueryResultRow>(query: string, values: unknown[] = []) {
       const sql = query.replace(/\s+/g, ' ').trim().toUpperCase()
       if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return { rows: [], rowCount: 0 }
       if (sql.startsWith('SELECT PG_ADVISORY_XACT_LOCK')) return { rows: [], rowCount: 1 }
+      if (sql.includes('FROM CORE_OPERATION_RECEIPTS')) {
+        const row = receipts.get(`${String(values[0])}:${String(values[1])}`)
+        return { rows: row ? [row] as Row[] : [], rowCount: row ? 1 : 0 }
+      }
+      if (sql.startsWith('INSERT INTO CORE_OPERATION_RECEIPTS')) {
+        receipts.set(`${String(values[0])}:${String(values[1])}`, {
+          method: String(values[2]), fingerprint: String(values[3]), result_json: String(values[4]),
+        })
+        return { rows: [], rowCount: 1 }
+      }
       if (sql.startsWith('SELECT CURRENT_TIMESTAMP')) return { rows: [{ deleted_at: new Date('2026-11-15T04:00:00.123Z') } as Row], rowCount: 1 }
       if (sql.includes('WITH RECURSIVE') && sql.includes('FROM FOLDERS')) {
         const root = folders.find(row => row.id === Number(values[0]) && row.user_id === values[1] && row.deleted_at === null)
@@ -83,7 +94,7 @@ function fixture() {
     },
     release() {},
   }
-  return { folders, files, client, undoWrites, setFailFileUpdate(value: boolean) { failFileUpdate = value } }
+  return { folders, files, client, undoWrites, receipts, setFailFileUpdate(value: boolean) { failFileUpdate = value } }
 }
 
 test('folder delete soft-deletes the live owned subtree, trashes its live files, and preserves older trash rows', async () => {
@@ -133,6 +144,30 @@ test('folder delete leaves storage and events untouched when its database mutati
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
+test('Agent folder delete commits an owner receipt with the subtree mutation and replays without repeating it', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'gugu-folder-delete-receipt-'))
+  const state = fixture(), events: number[] = []
+  const source = path.join(root, ownerId, '个人文件', '资料', '子目录', '笔记.md')
+  await mkdir(path.dirname(source), { recursive: true }); await writeFile(source, '正文')
+  try {
+    const operations = createPostgresFolderDeleteOperations({ connect: async () => state.client } as unknown as Pool, {
+      storageRoot: root,
+      async captureDirectoryKeys(_client, _owner, folderId) { assert.equal(folderId, 10); return [`${ownerId}/个人文件/资料`] },
+      async publishChanged(event) { events.push(event.folderId) },
+    })
+    const operation = { receipt: { operationId: randomUUID(), fingerprint: 'e'.repeat(64), method: 'agent.file.delete_folder' as const },
+      async authorize() {} }
+    const first = await operations.remove(ownerId, 10, { undoContextId: 'agent-session-33', origin: null }, operation)
+    const replay = await operations.remove(ownerId, 10, { undoContextId: 'agent-session-33', origin: null }, operation)
+    assert.deepEqual(replay, first)
+    assert.equal(state.receipts.size, 1)
+    assert.equal(state.folders.find(folder => folder.id === 10)?.version, 3)
+    assert.equal(state.undoWrites.length, 1)
+    assert.deepEqual(events, [10])
+    assert.equal(await readFile(path.join(root, ownerId, 'trash', '资料', '子目录', '笔记.md'), 'utf8'), '正文')
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 test('isolated PostgreSQL folder delete commits subtree, file trash keys, workspace cleanup, and Undo together', {
   skip: !databaseUrl && '需要显式 GUGU_WEBUI_TEST_DATABASE_URL 运行隔离 PostgreSQL 文件夹删除回归',
@@ -155,6 +190,9 @@ test('isolated PostgreSQL folder delete commits subtree, file trash keys, worksp
         resource text,action text,target_refs jsonb,before_state jsonb,after_state jsonb,base_versions jsonb,
         artifact_refs jsonb,actor_type text,status text,created_at timestamptz,expires_at timestamptz,
         undone_at timestamptz,failure_code text);
+      CREATE TABLE core_operation_receipts(owner_id uuid NOT NULL,operation_id varchar(36) NOT NULL,method varchar(100) NOT NULL,
+        fingerprint varchar(64) NOT NULL,result_json text NOT NULL,created_at timestamptz NOT NULL,
+        PRIMARY KEY(owner_id,operation_id));
       INSERT INTO folders VALUES
         (10,'${ownerId}',NULL,NULL,NULL,'资料',2,NULL,CURRENT_TIMESTAMP),
         (11,'${ownerId}',10,NULL,NULL,'子目录',3,NULL,CURRENT_TIMESTAMP),
@@ -174,7 +212,13 @@ test('isolated PostgreSQL folder delete commits subtree, file trash keys, worksp
         published.push(event.folderId)
       },
     })
-    await operations.remove(ownerId, 10, { undoContextId: 'pg-folder-delete', origin: 'synthetic-client' })
+    const operation = { receipt: { operationId: randomUUID(), fingerprint: 'f'.repeat(64), method: 'agent.file.delete_folder' as const },
+      async authorize() {} }
+    const firstResult = await operations.remove(ownerId, 10,
+      { undoContextId: 'pg-folder-delete', origin: 'synthetic-client' }, operation)
+    const replayedResult = await operations.remove(ownerId, 10,
+      { undoContextId: 'pg-folder-delete', origin: 'synthetic-client' }, operation)
+    assert.deepEqual(replayedResult, firstResult)
 
     const rows = await pool.query(`SELECT id,version,deleted_at FROM folders WHERE user_id=$1 ORDER BY id`, [ownerId])
     assert.deepEqual(rows.rows.map(row => [Number(row.id), Number(row.version), row.deleted_at !== null]), [
@@ -188,6 +232,7 @@ test('isolated PostgreSQL folder delete commits subtree, file trash keys, worksp
     assert.equal(new Date(priorTrash.rows[0]?.deleted_at).toISOString(), '2026-01-02T00:00:00.000Z')
     assert.equal((await pool.query('SELECT folder_id FROM workspaces WHERE id=31')).rows[0]?.folder_id, null)
     assert.equal((await pool.query('SELECT action FROM undo_operations WHERE undo_context_id=$1', ['pg-folder-delete'])).rows[0]?.action, 'delete')
+    assert.equal((await pool.query('SELECT count(*)::integer AS count FROM core_operation_receipts WHERE owner_id=$1', [ownerId])).rows[0]?.count, 1)
     assert.equal(await readFile(path.join(root, ownerId, 'trash', '资料', '子目录', '笔记.md'), 'utf8'), '隔离正文')
     await assert.rejects(readFile(source), { code: 'ENOENT' })
     assert.deepEqual(published, [10])

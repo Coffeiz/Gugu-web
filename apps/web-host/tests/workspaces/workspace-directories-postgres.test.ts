@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { Pool } from 'pg'
 import test from 'node:test'
 import { CoreError } from '@gugu/core'
-import { createPostgresWorkspaceDirectoryOperations } from '../../src/domains/workspaces/persistence/workspace-directories.js'
+import { createPostgresWorkspaceDirectoryOperations } from '../../src/modules/workspaces/persistence/workspace-directories.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const userId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'

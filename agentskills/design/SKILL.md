@@ -40,7 +40,7 @@ description: 产品设计规范摘要。Glassmorphism 视觉风格、色板系�
   `danger`）。hover = 文字色转 `--text-primary` + `--action-soft` 药丸底，破坏性操作用
   `--status-danger` / `--status-danger-bg`，`:disabled` 半透明且不hover出药丸底。定时任务卡与
   技能卡共用这一份——发现两张卡片 hover 表现不一致时，先查是不是有人又写了本地 `.link`。
-- 输入框：`--control-bg` 背景，focus 时 `--border-focus` 描边 + `--control-focus-shadow` 光晕
+- 输入框：`--control-bg` 背景，focus 时 `--input-border-focus` 高亮描边
 - 单选下拉：统一使用 `apps/web/src/components/common/controls/SelectPopup.vue`；Admin 普通选项通过 `AdminSelect` 使用，Provider 分组等特殊场景在其基础上扩展，不使用页面专用原生 `<select>` 或重复绘制列表弹窗；保存中或不可用时使用公共组件的 `disabled` 状态。
 - 卡片：`--surface-card-solid` 或静态半透明 tint，圆角 12-16px；常驻内容卡默认不做背景模糊
 - 侧边栏：200px 固定宽度，主站和 Admin 共用 `--sidebar-width`，使用半透明背景、边框与主题 blur

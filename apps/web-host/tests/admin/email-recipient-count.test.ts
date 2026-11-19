@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { Pool } from 'pg'
-import { createEmailRecipientCounter } from '@gugu/core/admin/email-recipient-count'
+import { createEmailRecipientCounter } from '../../src/modules/admin/email.js'
 
 const url=process.env.GUGU_WEBUI_TEST_DATABASE_URL
 test('收件人数只计活跃订阅有效邮箱，locale损坏回到中文且不暴露邮箱', {skip:!url&&'需要隔离PG'},async()=>{

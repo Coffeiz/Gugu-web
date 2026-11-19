@@ -366,7 +366,6 @@ html[data-theme][data-family] .file-browser-toolbar .new-folder-input:hover {
 html[data-theme][data-family] .file-browser-toolbar .new-folder-input:focus {
   border-color: var(--input-border-focus);
   background: var(--input-bg-focus);
-  box-shadow: var(--input-focus-shadow);
 }
 html[data-theme][data-family] .file-browser-toolbar .new-folder-input::placeholder {
   color: var(--input-placeholder);

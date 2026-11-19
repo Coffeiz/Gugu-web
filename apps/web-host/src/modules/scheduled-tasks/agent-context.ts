@@ -1,11 +1,11 @@
 import type { Pool } from 'pg'
 import { createWebAgentContextBuilder, type AgentContextBuilderPorts } from '@gugu/core/agent'
-import { createAgentOverviewSources } from '../../domains/agent-sessions/context/agent-overview-postgres.js'
-import { createAgentPreferenceContextSources } from '../../domains/agent-sessions/context/agent-context-preferences.js'
-import { createAgentImChannelLoader, type AgentImPlatform } from '../../domains/agent-sessions/context/agent-im-channels.js'
-import { createLocalPreferenceTextFiles } from '../../domains/preferences/persistence/personality-files.js'
-import { createLocalAgentKnowledgeReadStore } from '../../domains/agent-sessions/tools/agent-rag-knowledge-store.js'
-import { createAgentKnowledgeOverviewLoader } from '../../domains/agent-sessions/tools/agent-knowledge.js'
+import { createAgentOverviewSources } from '../agent-sessions/context/agent-overview-postgres.js'
+import { createAgentPreferenceContextSources } from '../agent-sessions/context/agent-context-preferences.js'
+import { createAgentImChannelLoader, type AgentImPlatform } from '../agent-sessions/context/agent-im-channels.js'
+import { createLocalPreferenceTextFiles } from '../../modules/preferences/persistence/personality-files.js'
+import { createLocalAgentKnowledgeReadStore } from '../agent-sessions/tools/agent-rag-knowledge-store.js'
+import { createAgentKnowledgeOverviewLoader } from '../agent-sessions/tools/agent-knowledge.js'
 import { createAgentMemoryContextLoader } from '../agent-sessions/memory-context.js'
 
 export function createWebScheduledTaskContextSources(options: {

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { AgentFilesystemAuthorizationError } from '../../src/domains/agent-sessions/agent-filesystem-authorization.js'
-import { registerAgentFilesystemAuthorizationRoutes } from '../../src/domains/agent-sessions/agent-filesystem-authorization-route.js'
+import { AgentFilesystemAuthorizationError } from '../../src/modules/agent-sessions/agent-filesystem-authorization.js'
+import { registerAgentFilesystemAuthorizationRoutes } from '../../src/modules/agent-sessions/agent-filesystem-authorization-route.js'
 
 test('会话授权三条路由认证后只使用可信 owner，并保持旧 API 请求响应形状', async () => {
   const app = Fastify()

@@ -189,9 +189,7 @@ function mountAutoGrow(el: unknown) {
 .lead-select:focus {
   background: var(--input-bg-focus);
   border-color: var(--input-border-focus);
-  /* 保留 hover 内描边，再叠加 focus 光晕，避免点击时从 hover 直接替换成 focus，
-     导致光晕只有失焦淡出、聚焦没有淡入。 */
-  box-shadow: var(--input-hover-shadow), var(--input-focus-shadow);
+  box-shadow: var(--input-hover-shadow);
 }
 .time-box {
   position: relative; display: flex; align-items: center; justify-content: center; gap: 4px;

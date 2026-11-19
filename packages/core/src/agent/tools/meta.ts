@@ -3,18 +3,16 @@ import { createHash } from 'node:crypto'
 import { selectToolSchemas } from './schema-selection.js'
 import { stableJson } from '../context/history/canonical-history.js'
 import type { PreparedToolDefinition, RunIdentity } from '../models.js'
-import type { SkillRegistry } from '../skills/contracts.js'
+import type { AgentSkillRuntimePorts } from '../skills/runtime.js'
 import { SkillRegistryError } from '../skills/registry.js'
 import type { ToolDefinition } from './contracts.js'
 
 const inputSchema = z.object({ id: z.string().regex(/^[SU][1-9][0-9]*$/) }).passthrough()
 
-export interface UseSkillPorts {
-  readonly skills: SkillRegistry
-  /** 来源及指纹由共享技能服务提供，模型参数不能决定。 */
-  origin(identity: RunIdentity, id: string, signal: AbortSignal): Promise<
-    { source: 'builtin' } | { source: 'user'; ownerFingerprint: string }
-  >
+export type UseSkillPorts = AgentSkillRuntimePorts
+
+export interface AskUserAuthorizationPort {
+  authorization(identity: RunIdentity, signal: AbortSignal): Promise<'disabled' | 'already_authorized' | 'available'>
 }
 
 function toolSchemaEvent(tool: PreparedToolDefinition) {
@@ -23,7 +21,7 @@ function toolSchemaEvent(tool: PreparedToolDefinition) {
 }
 
 /** 使用真实技能注册器；usage marker 由 Harness 成功合入上下文后再记录摘要。 */
-export function createUseSkillTool(ports: UseSkillPorts): ToolDefinition {
+export function createUseSkillTool(ports: AgentSkillRuntimePorts): ToolDefinition {
   return {
     definition: { name: 'use_skill', schema: { type: 'function', function: {
       name: 'use_skill', description: '按技能 ID 读取技能正文。', parameters: {
@@ -100,14 +98,19 @@ export function createGetToolSchemaTool(capabilities:(identity:RunIdentity)=>Pro
 }
 
 /** 普通问题进入既有交互协调器；沙盒授权由可信授权流程单独提供。 */
-export function createAskUserTool():ToolDefinition {
+export function createAskUserTool(ports?: AskUserAuthorizationPort):ToolDefinition {
   const option=z.object({id:z.string().min(1).max(64),label:z.string().min(1).max(120)}).strict()
-  const schema=z.object({kind:z.enum(['choice','question','form']),title:z.string().max(120),body:z.string().max(1000),authorization:z.literal('user_sandbox').optional(),options:z.array(option).max(8).optional()}).strict()
+  const schema=z.object({kind:z.enum(['choice','question']),title:z.string().max(120),body:z.string().max(1000),authorization:z.literal('user_sandbox').optional(),options:z.array(option).max(8).optional()}).strict()
   return {definition:{name:'ask_user',schema:{type:'function',function:{name:'ask_user',description:'向用户提出澄清问题，等待回答后继续。权限授权和危险操作使用专门的确认流程。',parameters:z.toJSONSchema(schema) as Record<string,import('../models.js').Json>}}},effect:'read',requiresInteraction:true,strictArrayFields:['options'],validate:input=>schema.safeParse(input),
     async execute(input,scope,call){
       const args=input as z.infer<typeof schema>
-      if(args.authorization)return {kind:'completed',successful:false,mutated:false,value:{error:'当前工具尚不支持完整用户沙箱授权'}}
-      if(args.kind==='form')return {kind:'completed',successful:false,mutated:false,value:{error:'当前交互后端不支持表单'}}
+      if(args.authorization){
+        if(!ports)return {kind:'completed',successful:false,mutated:false,value:{error:'当前 Host 未提供完整用户沙箱授权能力'}}
+        const authorization=await ports.authorization(scope.identity,scope.signal)
+        scope.signal.throwIfAborted()
+        if(authorization==='disabled')return {kind:'completed',successful:false,mutated:false,value:{error:'完整用户沙箱授权功能当前未开启'}}
+        if(authorization==='already_authorized')return {kind:'completed',successful:true,mutated:false,value:{status:'already_authorized',message:'当前会话已获得完整用户沙箱权限。'}}
+      }
       const options=args.options??[],ids=options.map(item=>item.id.trim())
       if(ids.some(id=>!id||id==='__custom_reply__') || new Set(ids).size!==ids.length || options.some(item=>!item.label.trim()))return {kind:'completed',successful:false,mutated:false,value:{error:'交互选项无效'}}
       const id=createHash('sha256').update(JSON.stringify([scope.identity.ownerId,scope.identity.sessionId,scope.identity.runId,scope.roundId,call.id])).digest('hex')

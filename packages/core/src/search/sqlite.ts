@@ -3,9 +3,9 @@ import { dataContext } from '../contracts/index.js'
 import type { GlobalSearchSource } from './global-search.js'
 import { SEARCH_SOURCES } from './sources.js'
 
-/** 正式 SQLite 已有表直接复用共享来源定义；文件、用户 Skill、MCP 等 Host 专属表仍由 Host 提供。 */
+/** 复用正式 SQLite 共享表；文件与用户 Skill 搜索仍需 Host/正式数据层能力。 */
 export function createKyselySqliteGlobalSearchSources<DB>(db: Kysely<DB>): GlobalSearchSource[] {
-  return SEARCH_SOURCES.filter(source => ['project', 'client', 'event', 'scheduled_task', 'note', 'canvas_note'].includes(source.type)).map(source => ({
+  return SEARCH_SOURCES.filter(source => ['project', 'client', 'event', 'mcp', 'scheduled_task', 'note', 'canvas_note'].includes(source.type)).map(source => ({
     type: source.type,
     label: source.label,
     async search(rawOwner, query, signal) {
@@ -13,6 +13,20 @@ export function createKyselySqliteGlobalSearchSources<DB>(db: Kysely<DB>): Globa
       const owner = dataContext(rawOwner).ownerId.replaceAll('-', '')
       const terms = Object.freeze([...query.queries])
       if (!terms.length) return []
+      if (source.type === 'mcp') {
+        const hits = sql`(${sql.join(terms.map(term => sql`CASE WHEN (${sql.join(source.searchable.map(column => sql`lower(COALESCE(${sql.raw(column)}, '')) LIKE lower(${'%' + term + '%'})`), sql` OR `)}) THEN 1 ELSE 0 END`), sql` + `)})`
+        const match = query.mode === 'AND' ? sql`${hits} = ${terms.length}` : sql`${hits} > 0`
+        const rank = sql`CASE WHEN lower(${sql.raw(source.title)}) = lower(${terms[0]}) THEN 0
+          WHEN lower(${sql.raw(source.title)}) LIKE lower(${terms[0]}) || '%' THEN 1 ELSE 2 END`
+        let rows: Record<string, unknown>[]
+        try {
+          const result = await sql<Record<string, unknown>>`SELECT ${sql.raw(source.alias)}.*, ${hits} AS search_hits
+            FROM ${sql.raw(source.table)} WHERE (${sql.raw(source.alias)}.user_id = ${owner} OR ${sql.raw(source.alias)}.scope = 'platform')
+            AND ${match} ORDER BY search_hits DESC, ${rank}, ${sql.raw(source.orderBy ?? 'name ASC')} LIMIT ${query.perType}`.execute(db)
+          rows = result.rows
+        } finally { signal?.throwIfAborted() }
+        return rows.map(row => source.map(row, terms))
+      }
       const extraWhere = source.type === 'scheduled_task'
         ? sql`AND t.enabled = 1 AND (t.end_at IS NULL OR datetime(t.end_at) > datetime('now'))`
         : source.type === 'note'

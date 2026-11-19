@@ -4,8 +4,16 @@
     "layer": "L2",
     "owner": "apps/web-host/src/modules/mcp/runtime.ts",
     "productionEntry": "Web Host MCP 连接运行时及 Agent 连接检测",
-    "keyBehavior": "按 owner 和当前启用配置重新发现工具，保护凭据与错误投影，停用及取消时不启动连接，探测不执行远端工具",
+    "keyBehavior": "按 owner 和当前启用配置重新发现工具，保护凭据与错误投影，停用及取消时不启动连接，探测不执行远端工具；reconnect 成功/失败均返回 Python 兼容的 total_loaded",
     "ci": "web-host-node"
+  },
+  "apps/web-host/tests/mcp/runtime-routes.test.ts": {
+    "domain": "mcp",
+    "layer": "L1",
+    "owner": "apps/web-host/src/modules/mcp/runtime-routes.ts",
+    "productionEntry": "apps/web-host/src/app.ts MCP 认证运行时路由",
+    "keyBehavior": "认证 owner 传递及 reconnect 完整响应结构透传",
+    "ci": "node-webui"
   },
   "apps/web-host/tests/mcp/status.test.ts": {
     "domain": "api",

@@ -7,7 +7,7 @@ import {
   createAgentSessionRefresher,
   createPostgresAgentSessionRefresher,
   registerAgentSessionRefreshRoute,
-} from '../../src/domains/agent-sessions/agent-session-refresh.js'
+} from '../../src/modules/agent-sessions/agent-session-refresh.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

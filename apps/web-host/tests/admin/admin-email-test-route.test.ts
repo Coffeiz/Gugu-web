@@ -6,7 +6,7 @@ import {join,resolve} from 'node:path'
 import test from 'node:test'
 import Fastify from 'fastify'
 import {temporarySmtp} from './fixtures/temporary-smtp.js'
-import {createAdminEmailFileTest,registerAdminEmailTestRoute} from '../../src/modules/admin/email-test.js'
+import {createAdminEmailFileTest,registerAdminEmailTestRoute} from '../../src/modules/admin/email.js'
 test('管理员测试邮件真实SMTP：认证/匿名、locale、动态配置、DTO限额及失败脱敏',async()=>{
  const root=await mkdtemp(join(tmpdir(),'smtp-probe-')),path=join(root,'override.json'),relay=await temporarySmtp(root),python=process.env.GUGU_CORE_GOLDEN_PYTHON;assert.ok(python)
  const settings={host:'127.0.0.1',port:relay.port,user:'sender@example.test',password:'synthetic-secret',from_addr:'测试咕咕',use_ssl:true}

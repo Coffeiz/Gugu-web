@@ -154,6 +154,8 @@ test('定时执行复核工作区、文件系统授权和群聊归属', { skip: 
       CREATE TABLE conversation_messages(id integer PRIMARY KEY,session_id integer,role text,content text,content_json jsonb,
         conversation_seq integer,platform_user_id text,platform_user_name text,created_at timestamptz);
       CREATE TABLE memory_scope_tombstones(owner_user_id uuid,platform text,bot_id text,scope_type text,scope_id text);
+      CREATE TABLE memory_reflection_cursors(id serial PRIMARY KEY,owner_user_id uuid,platform text,bot_id text,scope_type text,
+        scope_id text,scope_version integer,updated_at timestamptz);
       CREATE TABLE user_skills(owner_id uuid,skill_id text,name text,description_short text,category text,related_tools jsonb,
         managed_by text,enabled boolean,source text,body text,content_digest text,PRIMARY KEY(owner_id,skill_id))`)
     await pool.query(`INSERT INTO scheduled_tasks(id,user_id,name,payload,schedule_kind,start_at,channels,enabled,last_run_at,last_run_failed,workspace_id)
@@ -196,11 +198,17 @@ test('定时执行复核工作区、文件系统授权和群聊归属', { skip: 
             const configuration = await preparation.configuration(identity, signal)
             const exposesGroupSearch = async () =>
               (await preparation.discover(configuration, signal)).some(item => item.name === 'group_context_search')
+            const exposesMemorySearch = async () =>
+              (await preparation.discover(configuration, signal)).some(item => item.name === 'search_memory')
             assert.equal(await exposesGroupSearch(), true)
+            assert.equal(await exposesMemorySearch(), true)
             const scope = { identity, signal: new AbortController().signal, roundId: '1', resolution: null,
               async execute(): Promise<never> { throw new Error('群聊搜索不执行进程') } }
             const search = (candidate: RunIdentity = identity) => tools.dispatch({
               id: 'synthetic-group-query', name: 'group_context_search', input: { queries: ['部署', '完成'], mode: 'AND', speaker: '值班同学' },
+            }, { ...scope, identity: candidate })
+            const searchMemory = (input: Record<string, unknown> = { query: '群资料' }, candidate: RunIdentity = identity) => tools.dispatch({
+              id: 'synthetic-memory-query', name: 'search_memory', input,
             }, { ...scope, identity: candidate })
             const useSkill = () => tools.dispatch({ id: 'synthetic-use-skill', name: 'use_skill', input: { id: 'U1' } }, scope)
             const skill = await useSkill()
@@ -217,20 +225,36 @@ test('定时执行复核工作区、文件系统授权和群聊归属', { skip: 
             assert.equal(found.successful, true)
             assert.deepEqual(found.value, { keyword: '', queries: ['部署', '完成'], mode: 'AND', speaker: '值班同学',
               speaker_id: 'member-1', messages: [{ role: '用户', content: '部署完成', platform_user_id: 'member-1', platform_user_name: '小北' }] })
+            const memory = await searchMemory()
+            assert.ok(memory.kind === 'completed' && memory.successful)
+            assert.match(JSON.stringify(memory.value), /本群资料/u)
+            assert.doesNotMatch(JSON.stringify(memory.value), /异主范围|异 Bot 范围|异群范围/u)
+            for (const requestedScope of ['private_memory', 'all_my_groups']) {
+              const deniedMemory = await searchMemory({ query: '群资料', scope: requestedScope })
+              assert.ok(deniedMemory.kind === 'completed' && !deniedMemory.successful)
+            }
             for (const candidate of [{ ...identity, ownerId: other }, { ...identity, runId: 'foreign-run' }]) {
               const denied = await search(candidate)
               assert.ok(denied.kind === 'completed' && !denied.successful)
+              const deniedMemory = await searchMemory({ query: '群资料' }, candidate)
+              assert.ok(deniedMemory.kind === 'completed' && !deniedMemory.successful)
             }
             await pool.query('UPDATE user_bots SET enabled=FALSE WHERE id=5')
             assert.equal(await exposesGroupSearch(), false)
+            assert.equal(await exposesMemorySearch(), false)
             const disabled = await search()
             assert.ok(disabled.kind === 'completed' && !disabled.successful)
+            const disabledMemory = await searchMemory()
+            assert.ok(disabledMemory.kind === 'completed' && !disabledMemory.successful)
             await pool.query('UPDATE user_bots SET enabled=TRUE WHERE id=5')
             assert.equal(await exposesGroupSearch(), true)
+            assert.equal(await exposesMemorySearch(), true)
             await pool.query("UPDATE scheduled_tasks SET channels='web' WHERE id=3")
             assert.equal(await exposesGroupSearch(), false)
             const removed = await search()
             assert.ok(removed.kind === 'completed' && !removed.successful)
+            const removedMemory = await searchMemory()
+            assert.ok(removedMemory.kind === 'completed' && !removedMemory.successful)
             await pool.query("UPDATE scheduled_tasks SET channels='qq' WHERE id=3")
           }
           if (deleteMemoryDuringAttempt) {

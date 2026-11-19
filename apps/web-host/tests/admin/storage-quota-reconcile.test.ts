@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createManualStorageQuotaReconcile, storageQuotaLockKey } from '../../src/modules/admin/storage-quota-reconcile.js'
+import { createManualStorageQuotaReconcile, storageQuotaLockKey } from '../../src/modules/admin/storage.js'
 
 function memoryRedis() {
   let lock: string | null = null

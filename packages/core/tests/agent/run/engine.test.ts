@@ -235,6 +235,50 @@ describe('Harness Run生命周期与持久化边界', () => {
     expect(events.filter((event) => event.type === 'tool_call').map((event) => event.payload.status)).toEqual(['queued', 'queued', 'queued', 'running', 'running', 'running'])
   })
 
+  it.each([false, true])('并行工具在排队后中断可以续跑，兼容旧的整批执行标记 %s', async (legacy) => {
+    const calls = [{ ...toolCall, name: 'use_skill', input: { id: 'U3' } }, { ...toolCall, id: 'call-second' }]
+    const f = fixture([[{ type: 'complete', text: '', calls }], [{ type: 'complete', text: '读取完成', calls: [] }]])
+    f.ports.tools.plan = vi.fn(async () => ({ mode: 'parallel' as const, maxConcurrency: 2 }))
+    const interrupted = f.harness.start(identity)
+    while (true) {
+      const event = await interrupted.next()
+      if (event.done) throw new Error('未进入工具排队阶段')
+      if (event.value.type === 'tool_call' && event.value.payload.status === 'queued') break
+    }
+    await interrupted.return(undefined as never)
+    expect(f.ports.tools.dispatch).not.toHaveBeenCalled()
+    const saved = f.records.get(f.idKey(identity))!
+    expect(saved.inflightCalls).toEqual([])
+    if (legacy) f.records.set(f.idKey(identity), { ...saved, inflightCalls: calls })
+
+    const { state, events } = await collect(createAgentRunner(f.ports).resume(identity))
+    expect(state.status).toBe('completed')
+    expect(f.ports.tools.reconcile).not.toHaveBeenCalled()
+    expect(vi.mocked(f.ports.tools.dispatch).mock.calls.map(([call]) => call.id)).toEqual(calls.map(call => call.id))
+    expect(events.filter(event => event.type === 'tool_call' && event.payload.status === 'queued').map(event => event.payload.toolCallId))
+      .toEqual(['call-second'])
+  })
+
+  it('并行批次恢复时只查已开始的工具回执，仍排队的兄弟工具才继续执行', async () => {
+    const calls = [toolCall, { ...toolCall, id: 'call-second' }]
+    const f = fixture([[{ type: 'complete', text: '', calls }], [{ type: 'complete', text: '处理完成', calls: [] }]])
+    f.ports.tools.plan = vi.fn(async () => ({ mode: 'parallel' as const, maxConcurrency: 1 }))
+    const interrupted = f.harness.start(identity)
+    while (true) {
+      const event = await interrupted.next()
+      if (event.done) throw new Error('未进入工具执行阶段')
+      if (event.value.type === 'tool_call' && event.value.payload.status === 'running') break
+    }
+    await interrupted.return(undefined as never)
+    expect(f.records.get(f.idKey(identity))?.inflightCalls).toEqual([toolCall])
+    f.ports.tools.reconcile = vi.fn(async () => ({ kind: 'completed', value: '已保存的回执', successful: true, mutated: true }))
+
+    const { state } = await collect(createAgentRunner(f.ports).resume(identity))
+    expect(state.status).toBe('completed')
+    expect(f.ports.tools.reconcile).toHaveBeenCalledExactlyOnceWith(toolCall, expect.objectContaining(identity))
+    expect(vi.mocked(f.ports.tools.dispatch).mock.calls.map(([call]) => call.id)).toEqual(['call-second'])
+  })
+
   it('并发共享取消保留已完成工具，等待兄弟清理且未启动项deferred', async () => {
     const calls = [toolCall, { ...toolCall, id: 'call-second' }, { ...toolCall, id: 'call-third' }, { ...toolCall, id: 'call-fourth' }]
     const f = fixture([[{ type: 'complete', text: '', calls }]])
@@ -729,9 +773,12 @@ describe('Harness Run生命周期与持久化边界', () => {
       try { await scope.execute({ id: 'request-synthetic', command: '合成命令', cwd: '/synthetic', timeoutMs: 10, destructive: false }) } catch { /* 模拟Tools误把未知原生失败映射成一般错误。 */ }
       return { kind: 'completed', value: { error: '普通错误' }, successful: false, mutated: false }
     })
-    const { state } = await collect(f.harness.start(identity))
+    const { state, events } = await collect(f.harness.start(identity))
     expect(state.status).toBe('unknown')
     expect(state.remoteStatusUnknown).toBe(true)
+    const stopped = state.displayTimeline.find(item => item.toolCallId === 'first-call')
+    expect(stopped?.toolStatus).toBe('stopped')
+    expect(events.at(-1)?.payload.sealedTools).toContainEqual(stopped)
     expect(effects).toBe(1)
     expect(f.ports.tools.dispatch).toHaveBeenCalledTimes(1)
     expect(f.ports.provider.stream).toHaveBeenCalledTimes(1)

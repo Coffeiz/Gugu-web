@@ -74,6 +74,18 @@ const localRuntimeAliases = process.env.VITE_USE_LOCAL_RUNTIME === '1'
   : []
 
 export default defineConfig({
+  // 编辑器按需加载，提前优化这些依赖以避免首次打开时重建缓存使旧模块地址失效。
+  optimizeDeps: {
+    include: [
+      'vue-codemirror', 'codemirror', '@codemirror/view', '@codemirror/state',
+      '@codemirror/language', '@codemirror/autocomplete', '@lezer/highlight',
+      '@codemirror/lang-markdown', '@codemirror/lang-javascript', '@codemirror/lang-python',
+      '@codemirror/lang-css', '@codemirror/lang-html', '@codemirror/lang-json',
+      '@codemirror/lang-yaml', '@codemirror/lang-xml', '@codemirror/lang-sql',
+      '@codemirror/lang-java', '@codemirror/lang-go', '@codemirror/lang-rust',
+      '@codemirror/lang-cpp', '@codemirror/legacy-modes/mode/shell',
+    ],
+  },
   define: {
     __APP_VERSION__: JSON.stringify(APP_VER),
     __APP_RELEASE__: JSON.stringify(APP_RELEASE),

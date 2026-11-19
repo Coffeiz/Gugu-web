@@ -4,7 +4,7 @@ import { createHash, createHmac } from 'node:crypto'
 import {
   createRedisRegistrationCodeStore,
   type RegistrationCodeRedisCommands,
-} from '../../src/domains/auth/persistence/registration-codes.js'
+} from '../../src/modules/auth/persistence/registration-codes.js'
 
 const secret = 'synthetic-registration-code-secret'
 const email = 'person@example.test'

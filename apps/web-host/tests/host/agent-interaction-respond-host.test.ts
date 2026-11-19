@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/domains/auth/auth.js'
+import { createUserToken } from '../../src/modules/auth/auth.js'
 
 test('Host 交互响应先认证，再将可信 owner 交给服务', async () => {
   const owner = '00000000-0000-4000-8000-000000000001', secret = 'synthetic-secret'

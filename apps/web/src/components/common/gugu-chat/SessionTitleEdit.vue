@@ -170,9 +170,7 @@ function resetHeaderText() {
 }
 .exp-session-title.is-header:hover,
 .exp-session-title.is-header.is-editing {
-  border-color: color-mix(in srgb, var(--action-primary) 35%, transparent); background: rgba(255,255,255,0.75);
-/* 内阴影去 1px 纵向偏移，否则编辑态会把内容下推 1px、跟非编辑态对不齐 */
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.9), 0 0 0 3px color-mix(in srgb, var(--action-primary) 8%, transparent);
+  border-color: var(--input-border-focus); background: var(--input-bg-focus);
 }
 .exp-session-title.is-header:focus { outline: none; }
 /* 侧边栏编辑态：字号与标题一致，占满剩余宽度（覆盖 global.css 的 .rename-sizer） */

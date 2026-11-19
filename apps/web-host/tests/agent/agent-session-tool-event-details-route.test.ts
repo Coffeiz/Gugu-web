@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { registerAgentSessionToolEventDetailsRoute } from '../../src/domains/agent-sessions/agent-session-tool-event-details-route.js'
+import { registerAgentSessionToolEventDetailsRoute } from '../../src/modules/agent-sessions/agent-session-tool-event-details-route.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

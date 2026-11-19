@@ -7,10 +7,10 @@ import type { FolderCopyPlanNode, FolderCopyTreeNode } from '@gugu/core/files/fo
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
 import type { WriteRequestMetadata } from '../../app.js'
 import { isPathWithin } from '../../adapters/path-safety.js'
-import { isOwnedFileStorageKey } from '../../domains/files/file-owner.js'
-import { createPostgresFolderPathMirrorPlanner } from '../../domains/files/folder-path-planner.js'
-import { updateFileStorageQuota } from '../../domains/files/persistence/storage-quota.js'
-import { lockFileSyncPath, recordCanonicalFileChange } from '../../domains/files/persistence/file-sync-canonical-change.js'
+import { isOwnedFileStorageKey } from './file-owner.js'
+import { createPostgresFolderPathMirrorPlanner } from './folder-path-planner.js'
+import { updateFileStorageQuota } from './persistence/storage-quota.js'
+import { lockFileSyncPath, recordCanonicalFileChange } from './persistence/file-sync-canonical-change.js'
 import type { FolderCopyInput, FolderCopyOperations } from './folder-copy.js'
 
 type Row = QueryResultRow & Record<string, any>

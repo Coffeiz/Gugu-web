@@ -11,7 +11,7 @@
 .modal-input::placeholder { color: var(--text-secondary); }
 .modal-input { border-color:var(--input-border); background:var(--input-bg); color:var(--input-fg); box-shadow:var(--input-hover-shadow), 0 0 0 0 transparent; transition:background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard); }
 .modal-input:hover:not(:disabled) { background:var(--input-bg-hover); border-color:var(--input-border-hover); }
-.modal-input:focus:not(:disabled) { background:var(--input-bg-focus); border-color:var(--input-border-focus); box-shadow:var(--input-hover-shadow), var(--input-focus-shadow); }.number-input{width:96px;text-align:center}
+.modal-input:focus:not(:disabled) { background:var(--input-bg-focus); border-color:var(--input-border-focus); box-shadow:var(--input-hover-shadow); }.number-input{width:96px;text-align:center}
 .modal-input::placeholder { color:var(--input-placeholder); opacity:.82; }
 .modal-field label, .modal-label { color: var(--text-secondary); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em; }
 .modal-hint code { color: var(--action-primary); background: var(--action-soft); padding: 1px 5px; border-radius: 4px; font-size: 10.5px; word-break: break-all; }

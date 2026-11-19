@@ -2,9 +2,9 @@ import { CoreError } from '@gugu/core'
 import { planFolderSoftDelete } from '@gugu/core/files/folder-delete'
 import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
-import { createLocalPathMirrorMutation, localPathMirrorEntryExists } from '../../domains/files/local-path-mirror.js'
-import { lockFileSyncPath, lockFileSyncPaths } from '../../domains/files/persistence/file-sync-canonical-change.js'
-import type { FolderDeleteMetadata, FolderDeleteOperations } from './folder-delete.js'
+import { createLocalPathMirrorMutation, localPathMirrorEntryExists } from './local-path-mirror.js'
+import { lockFileSyncPath, lockFileSyncPaths } from './persistence/file-sync-canonical-change.js'
+import type { FolderDeleteMetadata, FolderDeleteOperations, FolderDeleteReceipt } from './folder-delete.js'
 
 interface FolderRow extends QueryResultRow {
   id: number | string
@@ -111,17 +111,29 @@ function errorType(error: unknown): string {
 
 export function createPostgresFolderDeleteOperations(pool: Pool, runtime: FolderDeleteRuntime): FolderDeleteOperations {
   return {
-    async remove(ownerId, folderId, metadata: FolderDeleteMetadata) {
+    async remove(ownerId, folderId, metadata: FolderDeleteMetadata, operation) {
       if (!Number.isSafeInteger(folderId) || folderId < 1) throw new CoreError('invalid_request', '文件夹 ID 无效')
       const client = await pool.connect()
       let mutation: ReturnType<typeof createLocalPathMirrorMutation> | null = null
       let commitAttempted = false
       let committed = false
       let rootAfter: FolderRow | undefined
+      let operationResult: unknown
       try {
         await client.query('BEGIN')
         await client.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext('gugu-folder-tree'))", [ownerId])
         await client.query("SELECT pg_advisory_xact_lock(hashtextextended('file-trash:' || $1, 0))", [ownerId])
+        operation?.signal?.throwIfAborted()
+        await operation?.authorize(client)
+        if (operation) {
+          await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${ownerId}:${operation.receipt.operationId}`])
+          const previous = await readFolderDeleteReceipt(client, ownerId, operation.receipt)
+          if (previous !== null) {
+            await client.query('COMMIT')
+            committed = true
+            return previous
+          }
+        }
         const tree = await client.query<FolderRow>(
           `WITH RECURSIVE tree AS (
              SELECT id,parent_id,ARRAY[id]::integer[] AS visited FROM folders
@@ -204,6 +216,16 @@ export function createPostgresFolderDeleteOperations(pool: Pool, runtime: Folder
         await recordFolderDeleteUndo(client, {
           contextId: metadata.undoContextId, userId: ownerId, before: rootBefore, after: rootAfter,
         })
+        if (operation) {
+          operation.signal?.throwIfAborted()
+          operationResult = { success: true, deleted_folder_id: folderId,
+            note: `文件夹「${rootBefore.name}」已删除，其中的文件已移入回收站（30 天内可恢复）`,
+            _file_op: { op: 'remove', kind: 'folder', id: folderId } }
+          await client.query(`INSERT INTO core_operation_receipts(owner_id,operation_id,method,fingerprint,result_json,created_at)
+            VALUES($1,$2,$3,$4,$5,CURRENT_TIMESTAMP)`, [ownerId, operation.receipt.operationId,
+            operation.receipt.method, operation.receipt.fingerprint, JSON.stringify(operationResult)])
+        }
+        operation?.signal?.throwIfAborted()
         commitAttempted = true
         await client.query('COMMIT')
         committed = true
@@ -216,12 +238,25 @@ export function createPostgresFolderDeleteOperations(pool: Pool, runtime: Folder
         } else {
           console.error('文件夹删除提交结果未知，保留原文件与回收站副本供核查')
         }
+        if (!committed && commitAttempted && operation) throw new CoreError('storage_error', '文件夹删除提交结果未知')
         throw error
       } finally { client.release() }
 
       if (!committed || !rootAfter) return
       if (mutation) await mutation.finalize().catch(error => runtime.onPathCleanupFailure?.(errorType(error)))
       await runtime.publishChanged({ ownerId, folderId, origin: metadata.origin }).catch(() => undefined)
+      return operationResult
     },
   }
+}
+
+async function readFolderDeleteReceipt(client: Pick<PoolClient, 'query'>, owner: string, receipt: FolderDeleteReceipt): Promise<unknown | null> {
+  const result = await client.query<{ method: string; fingerprint: string; result_json: string }>(
+    'SELECT method,fingerprint,result_json FROM core_operation_receipts WHERE owner_id=$1 AND operation_id=$2',
+    [owner, receipt.operationId])
+  const row = result.rows[0]
+  if (!row) return null
+  if (row.method !== receipt.method || row.fingerprint !== receipt.fingerprint)
+    throw new CoreError('conflict', '操作标识已用于不同内容')
+  return JSON.parse(row.result_json)
 }

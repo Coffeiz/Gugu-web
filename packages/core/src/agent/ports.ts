@@ -1,5 +1,6 @@
 
 import type { ExecutionRequest,ExecutionResult } from './executor/contracts.js'
+import type { AgentObservationPort } from './observation.js'
 import type { ReflectionSnapshots } from './memory/reflection.js'
 import type { Block,BranchInput,BranchName,CanonicalAreaSnapshot,CanonicalCompletionInput,CanonicalMessage,CanonicalSourceEffects,CapabilityCatalog,CompactionSummaryInput,ContextData,ContextSourceSelection,CurrentTurnSources,DispatchOutcome,DisplayItem,EarlyExit,FrozenProviderRequest,HistoryIdentity,InteractionResolution,Json,Lease,MessageEntry,NormalizedProviderRecovery,OpaqueProviderProjection,PendingInteraction,PersistedHistoryRow,PreparationIdentity,PrepareContextInput,PreparedContext,PreparedToolDefinition,ProviderEvent,ProviderRecoveryBoundary,ProviderRequest,RagContext,ReflectionSnapshot,ReplyFacts,ReplyGateCall,RunCapabilities,RunCheckpoint,RunEvent,RunIdentity,SanitizerCheckpoint,SessionSnapshotState,SnapshotPayload,ToolCall,ToolPlan,ToolResult,Usage } from './models.js'
 
@@ -439,6 +440,8 @@ export interface ReplyPolicy<C> {
 }
 
 export interface AgentRunnerPorts<C> {
+  /** 可选的跨 Host 尽力观测，不参与业务状态或授权。 */
+  readonly observation?: AgentObservationPort
   readonly clock: {
     now(): string
   }
@@ -447,6 +450,8 @@ export interface AgentRunnerPorts<C> {
   readonly cancellation: CancellationPort
   readonly provider: ProviderPort<C>
   readonly context: ContextPort<C>
+  /** Optional serializable view of a prepared context for controlled diagnostics. */
+  readonly observationSnapshot?: (context: C) => unknown
   readonly tools: ToolPort
   readonly interactions: InteractionPort
   readonly execution: ExecutionPort
@@ -474,7 +479,11 @@ export interface AgentRunnerPorts<C> {
   /** 可信显示配置。每张新工具卡片只读取一次，状态更新沿用首次标签。 */
   readonly toolLabelOverride?: (name: string) => string | undefined
   readonly publish: (event: RunEvent, signal?: AbortSignal) => Promise<void>
-  readonly diagnose: (code: 'publish_failed' | 'release_failed' | 'unsubscribe_failed' | 'context_release_failed' | 'finalization_hook_failed') => void
+  readonly diagnose: (code: 'publish_failed' | 'release_failed' | 'unsubscribe_failed' | 'context_release_failed' | 'finalization_hook_failed' | 'run_failed', failure?: {
+    readonly identity: RunIdentity
+    readonly phase: RunCheckpoint<C>['phase']
+    readonly error: unknown
+  }) => void
 }
 
 /** 单Run模块协作端口；实现仅持有同一份状态、提交器和已启动操作集合。 */

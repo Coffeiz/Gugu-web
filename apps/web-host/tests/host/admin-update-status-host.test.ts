@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { resolveAdminUpdateMode } from '../../src/modules/admin/update-status.js'
+import { resolveAdminUpdateMode } from '../../src/modules/admin/runtime.js'
 
 test('生产 createApp 只读挂载部署状态，Compose 模式不可启动镜像更新', async () => {
   const app = createApp({

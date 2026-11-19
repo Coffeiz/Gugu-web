@@ -3,8 +3,8 @@ import test from 'node:test'
 import {execFileSync} from 'node:child_process'
 import {resolve} from 'node:path'
 import Fastify from 'fastify'
-import {createAdminEmbeddingRebuildStatusReader} from '@gugu/core/admin-embedding-rebuild-status'
-import {registerAdminEmbeddingRebuildStatusRoute} from '../../src/modules/admin/embedding-rebuild-status.js'
+import {createAdminEmbeddingRebuildStatusReader} from '../../src/modules/admin/embedding.js'
+import {registerAdminEmbeddingRebuildStatusRoute} from '../../src/modules/admin/embedding.js'
 import {installHttpErrorHandler} from '../../src/http/errors.js'
 
 test('管理员状态兼容Python原handler的idle/任意JSON/完整进度，错误终态脱敏',()=>{

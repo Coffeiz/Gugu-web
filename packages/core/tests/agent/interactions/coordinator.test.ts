@@ -277,7 +277,7 @@ it('ask_user 拒绝不支持的授权、表单及伪造选项，撤权和取消�
  const scope={identity,roundId:'round',signal:new AbortController().signal,resolution:null,execute:async()=>{throw new Error('不能执行')}}
  const call={id:'ask',name:'ask_user',input:{kind:'choice',title:'选择',body:'正文'}}
  expect(await registry.tools.dispatch({...call,input:{...call.input,authorization:'user_sandbox'}},scope)).toMatchObject({successful:false})
- expect(await registry.tools.dispatch({...call,input:{...call.input,kind:'form'}},scope)).toMatchObject({successful:false})
+ expect(await registry.tools.dispatch({...call,input:{...call.input,kind:'form'}},scope)).toMatchObject({successful:false,executed:false})
  expect(await registry.tools.dispatch({...call,input:{...call.input,options:[{id:'__custom_reply__',label:'伪造'}]}},scope)).toMatchObject({successful:false})
  expect(await registry.tools.dispatch({...call,input:{...call.input,options:[{id:'a',label:'一'},{id:'a',label:'二'}]}},scope)).toMatchObject({successful:false})
  allowed=false;expect(await registry.tools.dispatch(call,scope)).toMatchObject({successful:false,executed:false})

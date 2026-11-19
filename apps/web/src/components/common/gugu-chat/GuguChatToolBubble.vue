@@ -85,10 +85,22 @@ const headerStatusText = computed(() => {
   if (detailsError.value) return `${t('chatUi.loadToolDetailsFailed')} · ${t('chatUi.retryToolDetails')}`
   return statusText.value
 })
+const runningSince = computed(() => props.msg.toolStatus === 'running'
+  ? Date.parse(props.msg.toolStartedAt ?? '')
+  : NaN)
+const durationNow = ref(Date.now())
+watch(runningSince, (since, _previous, onCleanup) => {
+  if (!Number.isFinite(since)) return
+  durationNow.value = Date.now()
+  const timer = window.setInterval(() => { durationNow.value = Date.now() }, 250)
+  onCleanup(() => window.clearInterval(timer))
+}, { immediate: true })
 const durationText = computed(() => {
-  if (props.msg.toolDurationMs == null || props.msg.toolDurationMs < 0) return ''
-  const seconds = props.msg.toolDurationMs / 1000
-  return seconds < 1 ? `${Math.round(props.msg.toolDurationMs)}ms` : `${seconds.toFixed(1)}s`
+  const elapsed = Number.isFinite(runningSince.value)
+    ? (props.msg.toolDurationMs ?? 0) + Math.max(0, durationNow.value - runningSince.value)
+    : props.msg.toolDurationMs
+  if (elapsed == null || !Number.isFinite(elapsed) || elapsed < 0) return ''
+  return elapsed < 1000 ? `${Math.round(elapsed)}ms` : `${(elapsed / 1000).toFixed(1)}s`
 })
 function formatValue(value: unknown) {
   if (typeof value === 'string') return value

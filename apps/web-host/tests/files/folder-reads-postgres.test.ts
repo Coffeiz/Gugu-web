@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { Pool } from 'pg'
-import { createPostgresFolderReadOperations } from '../../src/domains/files/folder-reads-postgres.js'
+import { createPostgresFolderReadOperations } from '../../src/modules/files/folder-reads-postgres.js'
 
 const owner = '00000000-0000-4000-8000-000000000061'
 

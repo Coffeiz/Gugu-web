@@ -1,10 +1,11 @@
+import { createPostgresAdminUserStatusStore } from '../../src/modules/admin/user-status.js'
+import { withPostgresTransaction } from '../../src/adapters/postgres-transaction.js'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
 import {
-  createPostgresAdminUserStatusStore,
   registerAdminUserStatusRoutes,
-} from '../../src/domains/admin/admin-users.js'
+} from '../../src/modules/admin/users.js'
 import { registerAdminUsersRoute } from '../../src/modules/admin/users.js'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
 
@@ -277,7 +278,7 @@ test('PostgreSQL 状态存储在事务中锁定用户、递增 security_version 
     },
     release: () => calls.push({ sql: 'RELEASE' }),
   }
-  const store = createPostgresAdminUserStatusStore({ connect: async () => client } as never)
+  const store = createPostgresAdminUserStatusStore(work => withPostgresTransaction({ connect: async () => client } as never, tx => work(async (sql, values) => tx.query(sql, values))))
   const at = new Date('2026-11-13T12:00:00.000Z')
   const result = await store.suspend(userIdA, 600, '重复越权', at)
   assert.deepEqual(result, suspended)

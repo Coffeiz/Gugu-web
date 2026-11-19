@@ -4,9 +4,9 @@ import Fastify from 'fastify'
 import { Pool } from 'pg'
 import test from 'node:test'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
-import { createPostgresFileBrowserOperations } from '../../src/domains/files/file-browser-postgres.js'
-import { createPostgresFolderReadOperations } from '../../src/domains/files/folder-reads-postgres.js'
-import { registerFileBrowserRoutes } from '../../src/domains/files/browser.js'
+import { createPostgresFileBrowserOperations } from '../../src/modules/files/file-browser-postgres.js'
+import { createPostgresFolderReadOperations } from '../../src/modules/files/folder-reads-postgres.js'
+import { registerFileBrowserRoutes } from '../../src/modules/files/browser.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'

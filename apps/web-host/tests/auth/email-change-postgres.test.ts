@@ -5,7 +5,7 @@ import test from 'node:test'
 import {
   createPostgresEmailChangeStore,
   hashEmailChangeToken,
-} from '../../src/domains/auth/email-change.js'
+} from '../../src/modules/auth/email-change.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

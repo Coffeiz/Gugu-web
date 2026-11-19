@@ -13,7 +13,7 @@
       </ActionButton>
     </div>
 
-    <SandboxRuntimeStatus :status="status" />
+    <SandboxRuntimeStatus :status="status" :offline-only="offlineOnly" />
 
     <section class="sandbox-config-section">
       <div class="sandbox-config-section__head">
@@ -39,21 +39,7 @@
           @update:model-value="saveTerminalMode"
         />
       </div>
-      <div class="config-row config-row-switch">
-        <div class="config-row-copy"><span>{{ t('adminSandbox.egress') }}</span><small>{{ egressHint }}</small></div>
-        <ToggleSwitch :model-value="status.network_profile === 'egress'" :disabled="!status.egress_available || egressSaving" :aria-label="t('adminSandbox.switchEgress')" @update:model-value="toggleEgress" />
-      </div>
-      <div class="egress-editor">
-        <span class="egress-label">{{ t('adminSandbox.proxyAddress') }}</span>
-        <div class="egress-input-row">
-          <input v-model="proxyDraft" class="egress-input" type="url" inputmode="url" placeholder="http://egress-proxy:3128" autocomplete="off" :aria-label="t('adminSandbox.proxyAddress')" />
-          <ActionButton variant="secondary" fit :disabled="egressSaving" @click="saveEgressProxy">{{ egressSaving ? t('adminSandbox.saving') : t('adminSandbox.saveProxy') }}</ActionButton>
-          <ActionButton variant="secondary" fit :disabled="egressTesting || !status.egress_proxy_configured" @click="validateEgressProxy">{{ egressTesting ? t('adminSandbox.check') : t('adminSandbox.validate') }}</ActionButton>
-        </div>
-        <p class="egress-note">{{ t('adminSandbox.proxyHint') }}</p>
-        <p v-if="egressMessage" class="action-message" :class="{ error: egressError }">{{ egressMessage }}</p>
-      </div>
-      <p class="section-note">{{ t('adminSandbox.policyHint') }}</p>
+      <SandboxEgressControls v-if="statusLoaded" :status="status" :offline-only="offlineOnly" :reload-status="loadStatus" />
       <div class="quota-editor">
         <div v-if="configStore.cfg.storage.backend === 'oss'" class="quota-field"><span>{{ t('adminSandbox.persistentMb') }}</span><input v-model.number="quotaDraft.persistentMb" type="number" min="64" step="64" :aria-label="t('adminSandbox.persistentMb')" /></div>
         <div class="quota-field"><span>{{ t('adminSandbox.ephemeralMb') }}</span><input v-model.number="quotaDraft.ephemeralMb" type="number" min="64" step="64" :aria-label="t('adminSandbox.ephemeralMb')" /></div>
@@ -75,33 +61,16 @@ import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import AdminSelect from '@/components/AdminSelect.vue'
 import SandboxRuntimeStatus from './components/SandboxRuntimeStatus.vue'
+import SandboxEgressControls from './components/SandboxEgressControls.vue'
+import { isOfflineOnly, type SandboxStatus } from './sandbox-status'
 import { useI18n } from 'vue-i18n'
-
-type SandboxStatus = {
-  enabled: boolean
-  sandbox_ready: boolean
-  runtime_supported: boolean
-  runtime_methods: string[]
-  readiness_checked: boolean
-  shell_enabled: boolean
-  shell_dangerous_enabled: boolean
-  state: string
-  message: string
-  network_profile: 'none' | 'egress'
-  egress_proxy_configured: boolean
-  egress_proxy_url: string
-  egress_network_ready: boolean
-  egress_config_error: string | null
-  egress_available: boolean
-  egress_enabled: boolean
-}
 
 const adminStore = useAdminStore()
 const { t } = useI18n()
 const configStore = useConfigStore()
 const loading = ref(false)
 const error = ref('')
-const status = reactive<SandboxStatus>({ enabled: true, sandbox_ready: false, runtime_supported: false, runtime_methods: [], readiness_checked: false, shell_enabled: false, shell_dangerous_enabled: false, state: 'unknown', message: '', network_profile: 'egress', egress_proxy_configured: false, egress_proxy_url: '', egress_network_ready: false, egress_config_error: null, egress_available: false, egress_enabled: false })
+const status = reactive<SandboxStatus>({ enabled: true, sandbox_ready: false, runtime_supported: false, runtime_methods: [], readiness_checked: false, shell_enabled: false, shell_dangerous_enabled: false, state: 'unknown', message: '', network_profile: 'none', egress_proxy_configured: false, egress_proxy_url: '', egress_network_ready: false, egress_config_error: null, egress_available: false, egress_enabled: false })
 const quotaDraft = reactive({ persistentMb: 512, ephemeralMb: 1024 })
 const quotaSaving = ref(false)
 const quotaMessage = ref('')
@@ -114,17 +83,8 @@ const terminalModeOptions = computed(() => [
   { value: 'pty_disabled', label: t('adminSandbox.terminalModePtyDisabled') },
   { value: 'entry_disabled', label: t('adminSandbox.terminalModeEntryDisabled') },
 ])
-const egressSaving = ref(false)
-const egressTesting = ref(false)
-const proxyDraft = ref('')
-const egressMessage = ref('')
-const egressError = ref(false)
-const egressHint = computed(() => {
-  if (status.egress_config_error) return status.egress_config_error
-  if (!status.egress_proxy_configured) return t('adminSandbox.proxyNotConfigured')
-  if (!status.egress_network_ready) return t('adminSandbox.networkNotReady')
-  return status.network_profile === 'egress' ? t('adminSandbox.egressEnabled') : t('adminSandbox.egressAvailable')
-})
+const statusLoaded = ref(false)
+const offlineOnly = computed(() => isOfflineOnly(status))
 const canEnable = computed(() => status.runtime_supported && status.sandbox_ready)
 function formatBytes(value: number) {
   if (value >= 1024 * 1024 * 1024) return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`
@@ -146,19 +106,6 @@ async function saveQuotas() {
   } catch (cause) { quotaError.value = true; quotaMessage.value = cause instanceof Error ? cause.message : String(cause) }
   finally { quotaSaving.value = false }
 }
-async function toggleEgress(enabled: boolean) {
-  const previousProfile = status.network_profile
-  status.network_profile = enabled ? 'egress' : 'none'
-  egressSaving.value = true
-  try {
-    await configStore.saveConfig({ sandbox: { network_profile: enabled ? 'egress' : 'none' } })
-    await loadStatus()
-  } catch (cause) {
-    status.network_profile = previousProfile
-    error.value = cause instanceof Error ? cause.message : String(cause)
-  } finally { egressSaving.value = false }
-}
-
 async function toggleFullUserSandboxAuthorization(enabled: boolean) {
   const previousValue = configStore.cfg.sandbox.full_user_sandbox_authorization_enabled
   fullUserSandboxAuthorizationSaving.value = true
@@ -191,51 +138,12 @@ async function saveTerminalMode(value: 'auto' | 'pty_disabled' | 'entry_disabled
   }
 }
 
-async function saveEgressProxy() {
-  egressSaving.value = true
-  egressMessage.value = ''
-  egressError.value = false
-  try {
-    const response = await adminStore.authFetch('/api/v1/admin/sandbox/egress/config', {
-      method: 'POST',
-      body: JSON.stringify({ proxy_url: proxyDraft.value.trim() }),
-    })
-    const body = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(body.detail || `保存代理失败（${response.status}）`)
-    Object.assign(status, body)
-    proxyDraft.value = body.egress_proxy_url || ''
-    egressMessage.value = t('adminSandbox.proxySaved')
-  } catch (cause) {
-    egressError.value = true
-    egressMessage.value = cause instanceof Error ? cause.message : String(cause)
-  } finally {
-    egressSaving.value = false
-  }
-}
-
-async function validateEgressProxy() {
-  egressTesting.value = true
-  egressMessage.value = ''
-  egressError.value = false
-  try {
-    const response = await adminStore.authFetch('/api/v1/admin/sandbox/egress/validate', { method: 'POST' })
-    const body = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(body.detail || `验证代理失败（${response.status}）`)
-    egressMessage.value = body.message || t('adminSandbox.proxyValid')
-  } catch (cause) {
-    egressError.value = true
-    egressMessage.value = cause instanceof Error ? cause.message : String(cause)
-  } finally {
-    egressTesting.value = false
-  }
-}
-
 async function loadStatus() {
   const response = await adminStore.authFetch('/api/v1/admin/sandbox/status')
   if (!response.ok) throw new Error(`读取沙盒状态失败（${response.status}）`)
   Object.assign(status, await response.json())
+  statusLoaded.value = true
   terminalModeDraft.value = configStore.cfg.sandbox.terminal_mode
-  proxyDraft.value = status.egress_proxy_url || ''
 }
 
 async function enableSandbox() {
@@ -282,7 +190,6 @@ onMounted(async () => {
 .sandbox-config-section__label { flex: 0 0 auto; color: var(--content-primary); font-size: 13px; font-weight: 600; }
 .sandbox-config-section__desc { flex: 1 1 280px; min-width: 0; color: var(--content-tertiary); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .panel-card { padding: 22px 24px; border: 1px solid var(--panel-glass-border); border-radius: var(--card-radius); background: var(--panel-glass-bg); box-shadow: var(--elevation-card); color: var(--content-primary); backdrop-filter: var(--panel-glass-blur); -webkit-backdrop-filter: var(--panel-glass-blur); }
-.section-note { margin: 10px 0 0; color: var(--content-tertiary); font-size: 12px; line-height: 1.6; }
 .config-row span { display: block; color: var(--content-tertiary); font-size: 12px; }
 .config-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 0; border-bottom: 1px solid var(--panel-divider); }
 .config-row:last-of-type { border-bottom: 0; }
@@ -293,12 +200,6 @@ onMounted(async () => {
 .config-row-copy { min-width: 0; }
 .config-row-copy small { display: block; margin-top: 4px; color: var(--content-tertiary); font-size: 11px; line-height: 1.4; }
 .config-row code { max-width: 72%; overflow: hidden; color: var(--content-secondary); font-family: var(--font-mono); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.egress-editor { padding: 14px 0 4px; border-bottom: 1px solid var(--panel-divider); }
-.egress-label { display: block; margin-bottom: 8px; color: var(--content-secondary); font-size: 12px; font-weight: 600; }
-.egress-input-row { display: flex; align-items: center; gap: 8px; }
-.egress-input { min-width: 0; flex: 1; box-sizing: border-box; padding: 7px 10px; border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); background: var(--surface-glass); color: var(--content-primary); font-family: var(--font-mono); font-size: 12px; outline: none; }
-.egress-input:focus { border-color: var(--action-primary); box-shadow: var(--control-focus-shadow); }
-.egress-note { margin: 8px 0 0; color: var(--content-tertiary); font-size: 11px; line-height: 1.5; }
 .quota-editor { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--panel-divider); }
 .quota-editor .quota-field { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 0; color: var(--content-secondary); font-size: 12px; }
 .quota-editor input { width: 150px; box-sizing: border-box; padding: 7px 10px; border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); background: var(--surface-glass); color: var(--content-primary); outline: none; }
@@ -309,5 +210,4 @@ onMounted(async () => {
 .error-message { margin: 16px 36px 0; color: var(--status-danger); font-size: 12px; }
 @media (max-width: 760px) { .page-header { padding-left: 20px; padding-right: 20px; } .section-wrap, .sandbox-config-section { padding-left: 20px; padding-right: 20px; } .error-message { margin-left: 20px; margin-right: 20px; } }
 @media (max-width: 520px) { .page-header { flex-direction: column; gap: 12px; } .page-header .app-action-button { align-self: flex-start; } }
-@media (max-width: 620px) { .egress-input-row { align-items: stretch; flex-wrap: wrap; } .egress-input { flex-basis: 100%; } }
 </style>

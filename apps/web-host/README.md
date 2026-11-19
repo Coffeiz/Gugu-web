@@ -6,6 +6,10 @@
 
 配置 Redis 时，Admin 认证版本和登录限流在实例间共享；Redis 认证版本不可用时返回 503。未配置 Redis 时使用单进程内存版本和限流，Host 重启会使旧 Admin token 失效，因此该模式只适用于单实例。Admin 审计写入失败不阻断登录。业务 API 需要 PostgreSQL；数据库不可用时只开放 Admin 配置界面和连接测试。未配置 Redis 时，注册的 fail-closed 限流和验证码能力不可用。
 
+## Shell 沙盒
+
+有咕咕 Shell 或网页终端需求的 Linux/NAS 部署使用原生 Web Host。管理员运行一次 [Bubblewrap 安装器](deploy/bubblewrap/README.md) 后，Web Host 自动探测标准运行根。默认使用断网沙盒，用户终端策略为「自动」。
+
 ## Docker Compose
 
 Web Host 发布时包含同级的 `dist/` 和 `assets/`。对话、定时任务、管理员提示词编辑及 IM 维护共用 `assets/agent-prompts/`。运行服务账号需要对此目录有写权限，管理员保存的文本会用于后续运行。注册引导音频位于 `assets/onboarding/`。
@@ -29,7 +33,7 @@ curl -fsS http://127.0.0.1:9595/health
 curl -fsS http://127.0.0.1:9595/health/ready
 ```
 
-`GUGU_WEBUI_PUBLISHED_PORT` 可改变宿主机端口，容器内服务固定监听 9595。数据库必须允许容器网络连接。
+`GUGU_WEBUI_PUBLISHED_PORT` 可改变宿主机端口，容器内服务固定监听 9595。数据库必须允许容器网络连接。 这份 Compose 模板运行 Web Host 应用，Shell 沙盒还取决于容器环境是否实际提供独立运行根、用户命名空间和 systemd 用户 scope。
 
 ## 本地运行
 
@@ -46,6 +50,12 @@ corepack pnpm --filter @gugu/webui start
 ```
 
 本地运行必须设置 `SECRET_KEY` 和 Admin 登录密码。数据库连接可先设置 `GUGU_WEBUI_DATABASE_URL`，也可在 Admin 配置页首次录入；连接串使用标准 `postgresql://` 或 `postgres://` URI。
+
+### 开发监听
+
+日常开发执行 `corepack pnpm --filter @gugu/webui dev`。该命令监听 Web Host 源码，以及 Core、FS、Sandbox 的增量编译产物，并在变化后重启 Host；重启会中断正在执行的请求。首次缺少依赖制品时按命令提示初始化。启动时沿用进程已有环境变量，运行配置由开发者通过既有安全方式提供，不会改写配置文件。
+
+共享包编译失败时先修复错误，旧制品不代表新代码；内置技能 Markdown 资源修改后需运行 Core 的资源构建脚本。部署和生产验收仍使用完整构建。
 
 ### Node Web Host 数据库迁移
 

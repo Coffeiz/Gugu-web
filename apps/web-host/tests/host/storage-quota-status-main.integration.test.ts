@@ -17,7 +17,7 @@ async function freePort(): Promise<number> {
 }
 
 import {createRedisAgentCancellationCommands,createRedisScheduledTaskCommands} from '../../src/adapters/redis-events.js'
-import {storageQuotaStateKey,storageQuotaLockKey} from '../../src/modules/admin/storage-quota-status.js'
+import {storageQuotaStateKey,storageQuotaLockKey} from '../../src/modules/admin/storage.js'
 test('生产Host读取真实配额状态且未配置Redis返回脱敏503',async()=>{
  const configured=process.env.GUGU_WEBUI_TEST_REDIS_URL;assert.ok(configured);const scopedRedis=new URL(configured);scopedRedis.pathname='/15';const redisUrl=scopedRedis.toString();assert.ok(databaseUrl)
  const root=await mkdtemp(join(tmpdir(),'quota-status-main-')),overridePath=join(root,'config.json'),hosts:Awaited<ReturnType<typeof startServer>>[]=[]

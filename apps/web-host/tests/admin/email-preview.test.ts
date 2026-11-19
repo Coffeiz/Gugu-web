@@ -4,7 +4,7 @@ import {execFileSync} from 'node:child_process'
 import {resolve} from 'node:path'
 import Fastify from 'fastify'
 import {renderEmailPreview} from '@gugu/core/email-preview'
-import {registerAdminEmailPreviewRoute} from '../../src/modules/admin/email-preview.js'
+import {registerAdminEmailPreviewRoute} from '../../src/modules/admin/email.js'
 import {installHttpErrorHandler} from '../../src/http/errors.js'
 
 const python=process.env.GUGU_WEBUI_TEST_PYTHON

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { registerSystemLogRoutes } from '../../src/modules/admin/system-logs.js'
+import { registerSystemLogRoutes } from '../../src/modules/admin/logs.js'
 
 test('系统日志先鉴权再查询，参数错误拒绝，默认和级别保持Python协议', async () => {
   const app = Fastify(), calls: unknown[] = []

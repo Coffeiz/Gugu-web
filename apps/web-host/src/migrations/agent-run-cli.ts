@@ -7,6 +7,10 @@ import { applyWebDomainMigration, checkWebDomainMigration } from './web-domain-m
 import { applyFilesystemAuthorizationMigration, checkFilesystemAuthorizationMigration } from './filesystem-authorization-migrate.js'
 import { applySecurityEventsMigration, checkSecurityEventsMigration } from './security-events-migrate.js'
 import { applyTerminalSessionsMigration, checkTerminalSessionsMigration } from './terminal-sessions-migrate.js'
+import { applyInteractionActionsMigration, checkInteractionActionsMigration } from './interaction-actions-migrate.js'
+import { applyTrashPurgeMigration, checkTrashPurgeMigration } from './trash-purge-migrate.js'
+import { applySearchUsageMigration, checkSearchUsageMigration } from './search-usage-migrate.js'
+import { applyProjectToolsMigration } from './project-tools-migrate.js'
 
 const commands = new Map<string, (pool: Pool) => Promise<'pending' | 'applied' | 'unchanged'>>([
   ['web-check', checkWebDomainMigration],
@@ -19,6 +23,13 @@ const commands = new Map<string, (pool: Pool) => Promise<'pending' | 'applied' |
   ['security-events-apply', applySecurityEventsMigration],
   ['terminal-sessions-check', checkTerminalSessionsMigration],
   ['terminal-sessions-apply', applyTerminalSessionsMigration],
+  ['interaction-actions-check', checkInteractionActionsMigration],
+  ['interaction-actions-apply', applyInteractionActionsMigration],
+  ['trash-purge-check', checkTrashPurgeMigration],
+  ['trash-purge-apply', applyTrashPurgeMigration],
+  ['search-usage-check', checkSearchUsageMigration],
+  ['search-usage-apply', applySearchUsageMigration],
+  ['project-tools-apply', applyProjectToolsMigration],
   ['check', checkAgentRunMigration],
   ['apply', applyAgentRunMigration],
 ])

@@ -1,5 +1,5 @@
 import { constants } from 'node:fs'
-import { chmod, copyFile, lstat, mkdir, mkdtemp, open, realpath, rm, stat } from 'node:fs/promises'
+import { chmod, copyFile, lstat, mkdir, mkdtemp, open, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { execFile as execFileCallback } from 'node:child_process'
 import { promisify } from 'node:util'
 import { randomUUID } from 'node:crypto'
@@ -12,7 +12,7 @@ import { assertChatAttachmentCapacity, CHAT_ATTACHMENT_STAGING_BYTES, classifyCh
 import type { AgentAttachmentUploadOperations, AgentAttachmentUploadInput } from './attachment-upload.js'
 import type { ChatAttachmentDraftDeletePorts } from '@gugu/core/agent/attachments/delete-draft'
 import type { ChatAttachmentDraftClearPorts } from '@gugu/core/agent/attachments/clear-drafts'
-import { normalizeFileOwnerId } from '../../domains/files/file-owner.js'
+import { normalizeFileOwnerId } from '../files/file-owner.js'
 
 const execFile = promisify(execFileCallback)
 const inside = (root: string, candidate: string) => candidate === root || candidate.startsWith(`${root}${path.sep}`)
@@ -63,13 +63,23 @@ async function probeDuration(filePath: string): Promise<number | null> {
   } catch { return null }
 }
 
-async function transcodeAudio(filePath: string, ext: string): Promise<Buffer | null> {
-  // SILK 需要 pilk 解码；Node Host 没有等价依赖时按 Python 的“解码工具缺失则原样暂存”降级。
-  if (['silk', 'sil', 'slk'].includes(ext)) return null
+async function transcodeAudio(filePath: string, ext: string, content: Buffer): Promise<Buffer | null> {
   const directory = await mkdtemp(path.join(tmpdir(), 'gugu-audio-'))
   const output = path.join(directory, 'converted.mp3')
   try {
-    await execFile('ffmpeg', ['-y', '-i', filePath, '-codec:a', 'libmp3lame', '-q:a', '4', output], { timeout: 60_000, maxBuffer: 4 * 1024 * 1024 })
+    const isSilk = ['silk', 'sil', 'slk'].includes(ext)
+    const args = ['-y']
+    if (isSilk) {
+      // Python pilk 与 SILK-WASM 都接受腾讯的 0x02 前缀，解码采样率固定为 24kHz。
+      const decoder = await import('silk-wasm')
+      const pcmPath = path.join(directory, 'decoded.pcm')
+      const decoded = Buffer.from((await decoder.decode(content, 24_000)).data)
+      if (decoded.length === 0 || decoded.length % 2 !== 0) return null
+      await writeFile(pcmPath, decoded, { mode: 0o600 })
+      args.push('-f', 's16le', '-ar', '24000', '-ac', '1', '-i', pcmPath)
+    } else args.push('-i', filePath)
+    args.push('-codec:a', 'libmp3lame', '-q:a', '4', output)
+    await execFile('ffmpeg', args, { timeout: 60_000, maxBuffer: 4 * 1024 * 1024 })
     const info = await stat(output)
     return info.isFile() && info.size > 0 ? await import('node:fs/promises').then(fs => fs.readFile(output)) : null
   } catch { return null }
@@ -111,7 +121,7 @@ export function createPostgresAgentAttachmentUploadOperations(pool: Pick<Pool, '
       if (processing.materialize) {
         content = await import('node:fs/promises').then(fs => fs.readFile(input.path))
         if (processing.transcode) {
-          const converted = await transcodeAudio(input.path, ext)
+          const converted = await transcodeAudio(input.path, ext, content!)
           if (converted) { content = converted; ext = 'mp3'; mime = 'audio/mpeg' }
         }
         size = content!.length

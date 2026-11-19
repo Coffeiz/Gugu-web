@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
-import { createPostgresProjectTrashPathMetadataReader } from '../../src/domains/projects/persistence/project-trash-path-metadata-postgres.js'
+import { createPostgresProjectTrashPathMetadataReader } from '../../src/modules/projects/persistence/project-trash-path-metadata-postgres.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '00000000-0000-4000-8000-000000000041'

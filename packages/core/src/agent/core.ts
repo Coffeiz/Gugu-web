@@ -7,6 +7,7 @@ import { portableSnapshot,snapshotInteraction,snapshotToolCall,snapshotToolResul
 import { stripHistoryMedia } from './context/history/ordering.js'
 import { activateNextInteractionForRun,closeInteractionsForRun,completeResolutionClosureForRun,resumeWaitingRun } from './interactions/coordinator.js'
 import type { AgentRunnerPorts,RunCoordination,StreamSanitizer } from './ports.js'
+import { recordAgentObservation } from './observation.js'
 import { cancellable,checkCancellationForRun,requestRunCancellation,stoppedResultForRun } from './run/cancellation.js'
 import { closeToolsForRun,finishForRun } from './run/finalization.js'
 import { assertRunCheckpoint,assertRunIdentity,assertRunTransition,decideReply,decideReplyGate,emptyRunUsage,goalCompleted,initialReplyState,readRunCheckpoint,runIdentityKey,stripGoalMarker,terminalRunStates,toolReplyProgress } from './run/lifecycle.js'
@@ -25,6 +26,34 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
   const read = (identity: RunIdentity) => readRunCheckpoint(ports, identity)
   const publish = (event: RunEvent, signal?: AbortSignal) => publishRunEvent(ports, event, signal)
   const replay = (identity: RunIdentity, options?: { readonly signal?: AbortSignal }) => replayRunEvents(ports, read, identity, options)
+  const observedAt = () => Date.parse(ports.clock.now()) || Date.now()
+  const observeEvent = (event: RunEvent) => {
+    const payload = event.payload
+    if (event.type === 'run_started') recordAgentObservation(ports.observation, {
+      identity: event.identity, kind: 'run', name: 'started', at: observedAt(), spanId: event.identity.runId, status: 'running',
+    })
+    else if (event.type === 'run_resumed') recordAgentObservation(ports.observation, {
+      identity: event.identity, kind: 'run', name: 'resumed', at: observedAt(), spanId: event.identity.runId, status: 'running',
+    })
+    else if (event.type === 'round_start') recordAgentObservation(ports.observation, {
+      identity: event.identity, kind: 'round', name: 'started', at: observedAt(), round: event.round,
+      spanId: `${event.identity.runId}:round:${event.round}`, parentSpanId: event.identity.runId, status: 'running',
+    })
+    else if (event.type === 'round_end') recordAgentObservation(ports.observation, {
+      identity: event.identity, kind: 'round', name: 'completed', at: observedAt(), round: event.round,
+      spanId: `${event.identity.runId}:round:${event.round}`, parentSpanId: event.identity.runId, status: 'success',
+      output: payload.text,
+    })
+    else if (event.type === 'token') recordAgentObservation(ports.observation, {
+      identity: event.identity, kind: 'round', name: 'output_delta', at: observedAt(), round: event.round,
+      spanId: `${event.identity.runId}:round:${event.round}`, output: payload.text,
+    })
+    else if (event.type === 'final') recordAgentObservation(ports.observation, {
+      identity: event.identity, kind: 'run', name: 'finished', at: observedAt(), spanId: event.identity.runId,
+      status: String(payload.status ?? 'unknown'), output: payload.text,
+      usage: payload.usage && typeof payload.usage === 'object' ? payload.usage as import('./models.js').Usage : undefined,
+    })
+  }
   async function* drive(identity: RunIdentity, fresh: boolean, resolution?: InteractionResolution, scheduled = false, anchorMessageId: string | null = null, goalMode = false, initialReplyChoice: ReplyChoice = 'disabled'): AsyncGenerator<RunEvent, RunCheckpoint<C>> {
     assertRunIdentity(identity)
     if (anchorMessageId !== null && !/^\d+$/.test(anchorMessageId))
@@ -61,6 +90,7 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
       const roundId = `${identity.runId}:${patch.round ?? state.round}`
       let changed
       let artifactDisplay
+      let sealedTools: readonly DisplayItem[] = []
       if (type === 'token' || type === 'round_end') {
         const active = [...displayTimeline].reverse().find((item) => item.kind === 'assistant' && item.runId === identity.runId && item.roundId === roundId)
         const text = type === 'token' ? (active?.text ?? '') + String(payload.text ?? '') : String(payload.text ?? '')
@@ -84,8 +114,11 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
         }, { anchorMessageId: state.anchorMessageId, now })
         changed = displayTimeline.find(matches)
       }
-      else if (type === 'final')
-        displayTimeline = sealDisplayTimeline(displayTimeline, now)
+      else if (type === 'final') {
+        const sealed = sealDisplayTimeline(displayTimeline, now)
+        sealedTools = sealed.filter((item, index) => item !== displayTimeline[index])
+        displayTimeline = sealed
+      }
       if (type === 'tool_done' && payload.artifact !== undefined) {
         const artifact = portableSnapshot(payload.artifact)
         const buttons = artifact !== null && typeof artifact === 'object' && !Array.isArray(artifact) && 'kind' in artifact && artifact.kind === 'link_buttons'
@@ -110,7 +143,8 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
         sequence: next.sequence,
         round: next.round,
         type,
-        payload: Object.freeze({ ...payload, ...(changed ? { display: changed } : {}), ...(artifactDisplay ? { artifactDisplay } : {}) }),
+        payload: Object.freeze({ ...payload, ...(changed ? { display: changed } : {}), ...(artifactDisplay ? { artifactDisplay } : {}),
+          ...(sealedTools.length ? { sealedTools } : {}) }),
       }) : null
       try {
         await ports.store.commit({ identity, expectedVersion: state.version, lease, checkpoint: next, events: event ? [event] : [], history, interactionReceipt })
@@ -125,7 +159,17 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
         controller.abort()
         throw new AgentRunError('persistence_unknown', '运行提交结果未知，请重新查询状态')
       }
+      const previousContext = state.context
       state = next
+      if (patch.context !== undefined && patch.context !== null && patch.context !== previousContext) {
+        const snapshot = ports.observationSnapshot?.(patch.context)
+        if (snapshot !== undefined) recordAgentObservation(ports.observation, {
+          identity, kind: 'context', name: 'Canonical context snapshot', at: observedAt(), round: next.round,
+          spanId: `${identity.runId}:context:${next.version}`, parentSpanId: identity.runId,
+          status: 'success', output: snapshot,
+        })
+      }
+      if (event) observeEvent(event)
       if (event)
         await publish(event, controller.signal)
       return event
@@ -133,10 +177,23 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
     async function executeTool(call: ToolCall, resolving: InteractionResolution | null, signal = controller.signal, waitForCleanup = false): Promise<ToolResult> {
       if (signal.aborted)
         throw new AgentRunError('cancelled', '当前任务已取消')
-      if (call.parseError)
+      if (call.parseError) {
+        recordAgentObservation(ports.observation, {
+          identity, kind: 'tool', name: call.name, at: observedAt(), round: state!.round,
+          spanId: `${identity.runId}:round:${state!.round}:tool:${call.id}`,
+          parentSpanId: `${identity.runId}:round:${state!.round}`, status: 'invalid',
+          attributes: { toolCallId: call.id, parseError: call.parseError },
+        })
         return { kind: 'completed', value: { error: '工具参数不是合法的 JSON 对象，请修正参数后重试', code: call.parseError }, executed: false, successful: false, mutated: false }
+      }
       dispatchedCalls.add(dispatchKey(call))
       const round = state!.round
+      const toolSpanId = `${identity.runId}:round:${round}:tool:${call.id}`
+      recordAgentObservation(ports.observation, {
+        identity, kind: 'tool', name: call.name, at: observedAt(), round, spanId: toolSpanId,
+        parentSpanId: `${identity.runId}:round:${round}`, status: 'running', input: call.input,
+        attributes: { toolCallId: call.id },
+      })
       let closed = false
       let uncertain = false
       let observed: { readonly result: ToolResult } | { readonly error: unknown } | null = null
@@ -214,6 +271,12 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
         return applyTool(call, { kind: 'completed', value: { status: 'error', code: 'confirmation_not_applied' }, successful: false, mutated: false }, advance, consumeInteractionId)
       }
       if (result.kind === 'waiting') {
+        recordAgentObservation(ports.observation, {
+          identity, kind: 'tool', name: call.name, at: observedAt(), round: state.round,
+          spanId: `${identity.runId}:round:${state.round}:tool:${call.id}`,
+          parentSpanId: `${identity.runId}:round:${state.round}`, status: 'waiting',
+          output: { interaction: result.interaction.kind }, attributes: { toolCallId: call.id },
+        })
         if (controller.signal.aborted)
           return applyTool(call, { kind: 'completed', value: { status: 'cancelled' }, successful: false, mutated: false }, advance, consumeInteractionId)
         let request = snapshotInteraction(result.interaction, call)
@@ -239,6 +302,12 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
       }
       const isButtons = artifact !== undefined && artifact !== null && typeof artifact === 'object' && !Array.isArray(artifact) && 'kind' in artifact && artifact.kind === 'link_buttons'
       const resultStatus = result.value && typeof result.value === 'object' && 'status' in result.value && ['cancelled', 'deferred'].includes(String(result.value.status)) ? String(result.value.status) : result.successful ? 'success' : 'error'
+      recordAgentObservation(ports.observation, {
+        identity, kind: 'tool', name: call.name, at: observedAt(), round: state.round,
+        spanId: `${identity.runId}:round:${state.round}:tool:${call.id}`,
+        parentSpanId: `${identity.runId}:round:${state.round}`, status: resultStatus,
+        output: result.value, attributes: { toolCallId: call.id, successful: result.successful, mutated: result.mutated },
+      })
       const presented = projectPersistentToolResult(await ports.presentToolResult(result.value, { identity, round: state.round, call }))
       return (await commit({
         context,
@@ -264,19 +333,25 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
           yield (await commit({}, 'tool_call', { toolCallId: id, name: call.name, status: 'invalid' }))!
       }
       const parallel = state.calls.filter((call) => state!.parallelCallIds.includes(call.id) && !known(call))
-      if (parallel.length) {
-        if (state.inflightCalls.length) {
-          // 崩溃前已经承诺的批次只查询各自收据，不能重新启动任何一个兄弟操作。
-          for (const call of parallel)
-            await cacheResult(call, await ports.tools.reconcile(call, { ...identity, roundId: `${identity.runId}:${state.round}` }))
-        }
-        else {
-          await commit({ inflightCalls: parallel })
-          for (const call of parallel)
-            yield (await commit({}, 'tool_call', { toolCallId: call.id, name: call.name, status: 'queued' }))!
-          const outcomes = yield* parallelBatch(parallel, state.parallelLimit!)
-          for (let index = 0;index < parallel.length;index++) {
-            const call = parallel[index]!
+      const roundId = `${identity.runId}:${state.round}`
+      const toolStatuses = new Map(state.displayTimeline.filter(item => item.kind === 'tool' && item.roundId === roundId)
+        .map(item => [item.toolCallId, item.toolStatus]))
+      const started = new Set(state.inflightCalls.filter(call => toolStatuses.get(call.id) === 'running').map(call => call.id))
+      // 旧 checkpoint 先登记整个批次，再逐个发布开始事件。仍排队的调用从未交给工具端口。
+      for (const call of parallel.filter(call => started.has(call.id)))
+        await cacheResult(call, await ports.tools.reconcile(call, { ...identity, roundId: `${identity.runId}:${state.round}` }))
+      const ready = parallel.filter(call => !started.has(call.id))
+      if (ready.length) {
+        if (state.toolResults.some(item => item.result.kind === 'unknown')) {
+          for (const call of ready) await cacheResult(call, stoppedResult(call, 'deferred'))
+        } else {
+          for (const call of ready) {
+            if (!toolStatuses.has(call.id))
+              yield (await commit({}, 'tool_call', { toolCallId: call.id, name: call.name, status: 'queued' }))!
+          }
+          const outcomes = yield* parallelBatch(ready, state.parallelLimit!)
+          for (let index = 0;index < ready.length;index++) {
+            const call = ready[index]!
             const outcome = outcomes[index]!
             const result: ToolResult = outcome.status === 'completed' ? outcome.value
               : outcome.status === 'error' ? { kind: 'completed', value: { error: ports.presentError(outcome.error).code }, successful: false, mutated: false }
@@ -376,6 +451,7 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
           persistenceUncertain = true
           throw new AgentRunError('persistence_unknown', '运行创建结果未知，请重新查询状态')
         }
+        observeEvent(event)
         await publish(event, controller.signal)
         yield event!
       }
@@ -630,6 +706,11 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
               if (![item.usage.input, item.usage.output, item.usage.cacheRead, item.usage.cacheWrite, ...(item.usage.contextInput === null ? [] : [item.usage.contextInput])].every((value) => Number.isSafeInteger(value) && value >= 0)) {
                 throw new AgentRunError('invalid_state', '模型用量数据无效')
               }
+              recordAgentObservation(ports.observation, {
+                identity, kind: 'provider', name: 'usage', at: observedAt(), round: state.round,
+                spanId: `${identity.runId}:round:${state.round}:provider`,
+                parentSpanId: `${identity.runId}:round:${state.round}`, status: 'success', usage: item.usage,
+              })
               await commit({ ...streamPatch(), usage: item.usage })
             }
             else if (item.type === 'diagnostic') {
@@ -800,6 +881,8 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
         yield await finish('cancelled', null, '')
       }
       else {
+        try { ports.diagnose('run_failed', { identity, phase: state.phase, error }) }
+        catch { /* 诊断失败不得掩盖运行终态。 */ }
         const presented = ports.presentError(error)
         yield await finish('failed', presented.code, ports.sanitizeText(presented.text))
       }
@@ -885,6 +968,18 @@ export function projectProviderDiagnostic(input: unknown): Readonly<Record<strin
 export const finalToolStatuses = new Set(['success', 'error', 'skipped', 'cancelled', 'stopped', 'deferred'])
 
 /** 对展示事件做有身份的upsert：更新状态不能改变原位置、首次时间或anchor。 */
+function updateToolTiming(previous: DisplayItem | undefined, status: string | undefined, now: string): Partial<DisplayItem> {
+  if (status === 'running') return {
+    toolStartedAt: previous?.toolStatus === 'running' ? previous.toolStartedAt ?? previous.updatedAt : now,
+  }
+  if (previous?.toolStatus !== 'running' || status === undefined) return {}
+  const elapsed = Date.parse(now) - Date.parse(previous.toolStartedAt ?? previous.updatedAt)
+  return {
+    toolStartedAt: null,
+    ...(Number.isFinite(elapsed) ? { toolDurationMs: (previous.toolDurationMs ?? 0) + Math.max(0, elapsed) } : {}),
+  }
+}
+
 export function updateDisplayItem(items: readonly DisplayItem[], incoming: Pick<DisplayItem, 'kind' | 'runId' | 'roundId'> & Partial<DisplayItem>, scope: {
   readonly anchorMessageId: string | null
   readonly now: string
@@ -896,7 +991,8 @@ export function updateDisplayItem(items: readonly DisplayItem[], incoming: Pick<
       return items
     const next = [...items]
     next[index] = {
-      ...old, ...incoming, eventId: old.eventId, sequence: old.sequence, anchorMessageId: old.anchorMessageId,
+      ...old, ...incoming, ...(old.kind === 'tool' ? updateToolTiming(old, incoming.toolStatus, scope.now) : {}),
+      eventId: old.eventId, sequence: old.sequence, anchorMessageId: old.anchorMessageId,
       timelineOrder: old.timelineOrder, createdAt: old.createdAt, updatedAt: scope.now,
     }
     return next
@@ -905,6 +1001,7 @@ export function updateDisplayItem(items: readonly DisplayItem[], incoming: Pick<
   const timelineOrder = scope.anchorMessageId === null ? null : (BigInt(scope.anchorMessageId) * 1000000n + BigInt(sequence)).toString()
   return [...items, {
     ...incoming,
+    ...(incoming.kind === 'tool' ? updateToolTiming(undefined, incoming.toolStatus, scope.now) : {}),
     eventId: incoming.eventId ?? `${incoming.runId}:display:${sequence}`,
     sequence, anchorMessageId: scope.anchorMessageId, timelineOrder,
     createdAt: scope.now, updatedAt: scope.now,
@@ -914,7 +1011,7 @@ export function updateDisplayItem(items: readonly DisplayItem[], incoming: Pick<
 /** 封存只关闭仍打开的气泡，不补造身份、时间和顺序，也不改调用方原数组。 */
 export function sealDisplayTimeline(items: readonly DisplayItem[], now: string): readonly DisplayItem[] {
   return items.map((item) => item.kind === 'tool' && ['queued', 'running', 'waiting'].includes(item.toolStatus ?? '')
-    ? { ...item, toolStatus: 'stopped', updatedAt: now }
+    ? { ...item, ...updateToolTiming(item, 'stopped', now), toolStatus: 'stopped', updatedAt: now }
     : item)
 }
 

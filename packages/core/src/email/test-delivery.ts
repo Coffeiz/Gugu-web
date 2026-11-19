@@ -1,6 +1,6 @@
 import {renderSmtpDraftMessage,SmtpDeliveryFailure,type SmtpTestSettings,type SmtpTestDelivery} from './smtp-test.js'
 import {strip} from '../shared/values.js'
-import {validEmail} from '../admin/email-recipient-count.js'
+import {validEmail} from './recipients.js'
 import type {EmailPreviewDraft} from './preview.js'
 export interface AdminEmailTestDraft extends EmailPreviewDraft {
  recipient:string;test_locale?:string;translations?:Record<string,EmailPreviewDraft>

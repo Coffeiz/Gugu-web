@@ -49,6 +49,16 @@ export interface ExecutionService {
     onOutput?: (stream: 'stdout' | 'stderr', chunk: Uint8Array) => void,
   ): Promise<ExecutionResult>
 }
+export interface PtyHandle {
+  readonly pid: number
+  readonly sandboxId: string
+  write(data: Uint8Array): Promise<void>
+  resize(cols: number, rows: number): Promise<void>
+  signal(name: 'SIGINT' | 'SIGTERM' | 'SIGTSTP'): Promise<void>
+  close(): Promise<void>
+  output(): AsyncIterable<Uint8Array>
+}
+
 export class ExecutionError extends Error {
   constructor(
     readonly code:

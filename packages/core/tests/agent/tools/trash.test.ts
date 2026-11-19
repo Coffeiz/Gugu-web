@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { createListTrashTool, type TrashListItem } from '../../../src/agent/tools/trash.js'
+import { createListTrashTool, createPermanentDeleteTool, type TrashListItem, type TrashPurgeConfirmation } from '../../../src/agent/tools/trash.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import { collect, fixture } from '../run/fixtures.js'
 
@@ -56,4 +56,53 @@ it('Agent循环执行只读回收站工具后继续Provider，工具结果进入
   const result = await collect(f.harness.start(identity))
   expect(result.state.status).toBe('completed')
   expect(result.state.context!.join('\n')).toContain('合成文件1.txt')
+})
+
+it('永久清空只接受 all=true，确认前不排队，确认后按快照调用 Node purge 端口', async () => {
+  let applies = 0, previews = 0
+  let prepared: { displaySummary?: string } | undefined
+  const port = {
+    async preview() { previews++; return { file_count: 2, folder_count: 1, digest: 'stable-trash-snapshot' } },
+    async apply(input: { snapshot: { file_count: number; folder_count: number; digest: string } }) {
+      applies++
+      expect(input.snapshot).toEqual({ file_count: 2, folder_count: 1, digest: 'stable-trash-snapshot' })
+      return { kind: 'completed' as const, successful: true, mutated: true, value: { job_id: 8, status: 'queued' } }
+    },
+    async reconcile() { return { kind: 'unknown' as const } },
+  }
+  const confirmation = {
+    gate: {
+      async prepare(_call: unknown, _scope: unknown, _digest: string, targets: { displaySummary?: string }) {
+        prepared = targets
+        return { ok: true as const, value: { id: 'confirmation-8', kind: 'confirmation' as const, toolCall: { id: 'empty', name: 'permanent_delete', input: { all: true } } } }
+      },
+      async verify() { return { ok: true as const, value: { receiptId: 'receipt-8' } } },
+    },
+    async claim() { return true },
+  } as unknown as TrashPurgeConfirmation
+  const registry = createToolRegistry({ tools: [createPermanentDeleteTool(port, confirmation)], authorize: async () => true })
+  const invalid = await registry.tools.dispatch({ id: 'bad', name: 'permanent_delete', input: { all: false } }, scope())
+  expect(invalid).toMatchObject({ successful: false })
+  expect(previews).toBe(0)
+  const waiting = await registry.tools.dispatch({ id: 'empty', name: 'permanent_delete', input: { all: true } }, scope())
+  expect(waiting).toMatchObject({ kind: 'waiting', interaction: { id: 'confirmation-8' } })
+  expect(prepared?.displaySummary).toContain('2 个文件和 1 个文件夹')
+  expect(applies).toBe(0)
+  const confirmedScope = { ...scope(), resolution: { interactionId: 'confirmation-8', receiptId: 'receipt-8', status: 'confirmed' as const, value: null } }
+  const result = await registry.tools.dispatch({ id: 'empty', name: 'permanent_delete', input: { all: true } }, confirmedScope)
+  expect(result).toMatchObject({ successful: true, mutated: true, value: { job_id: 8, status: 'queued' } })
+  expect(applies).toBe(1)
+})
+
+it('空回收站不会创建确认交互或触发清理任务', async () => {
+  let prepared = 0, applied = 0
+  const confirmation = { gate: { async prepare() { prepared++; return { ok: false as const, code: 'confirmation_rejected' as const } }, async verify() { throw new Error('不可达') } }, async claim() { return false } } as unknown as TrashPurgeConfirmation
+  const registry = createToolRegistry({ tools: [createPermanentDeleteTool({
+    async preview() { return { file_count: 0, folder_count: 0, digest: 'empty' } },
+    async apply() { applied++; return { kind: 'completed', successful: true, mutated: true, value: {} } },
+    async reconcile() { return { kind: 'unknown' } },
+  }, confirmation)], authorize: async () => true })
+  expect(await registry.tools.dispatch({ id: 'empty', name: 'permanent_delete', input: { all: true } }, scope())).toMatchObject({ successful: true, mutated: false })
+  expect(prepared).toBe(0)
+  expect(applied).toBe(0)
 })

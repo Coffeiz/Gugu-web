@@ -15,6 +15,7 @@ export interface AgentPromptSpec {
 export interface AgentTrustedPromptDescriptions<Client> {
   confirmation(client: Client, identity: RunIdentity, request: PendingInteraction): Promise<AgentPromptSpec>
   credential(client: Client, identity: RunIdentity, request: PendingInteraction): Promise<AgentPromptSpec>
+  authorization(client: Client, identity: RunIdentity, request: PendingInteraction): Promise<AgentPromptSpec>
 }
 
 export interface AgentPromptDescriptionPorts<Client> {
@@ -37,7 +38,11 @@ export function createAgentInteractionDescription<Client>(
     if (request.kind === 'credential') return trusted.credential(client, identity, request)
     if (request.toolCall.name !== 'ask_user') throw new Error('交互工具不支持')
     const args = object(request.toolCall.input)
-    if (args.authorization || args.secret_target || args.secret_fields) throw new Error('该交互需要可信授权处理器')
+    if (args.authorization !== undefined) {
+      if (args.authorization !== 'user_sandbox') throw new Error('该交互需要可信授权处理器')
+      return trusted.authorization(client, identity, request)
+    }
+    if (args.secret_target || args.secret_fields) throw new Error('该交互需要可信授权处理器')
     const kind = args.kind ?? 'choice'
     if (kind !== 'choice' && kind !== 'question') throw new Error('交互类型无效')
     const raw = args.options === undefined ? [] : args.options

@@ -42,14 +42,14 @@ test('GET /api/v1/auth/me returns the existing public user fields for an active 
     assert.deepEqual(response.json(), {
       id: userId,
       username: 'synthetic-user',
-      display_name: '测试用户',
+      displayName: '测试用户',
       email: 'synthetic@example.test',
-      is_active: true,
-      avatar_url: null,
-      created_at: '2026-11-01',
-      im_channels: ['qq'],
+      isActive: true,
+      avatarUrl: null,
+      createdAt: '2026-11-01',
+      imChannels: ['qq'],
       timezone: 'Asia/Shanghai',
-      email_subscribed: false,
+      emailSubscribed: false,
     })
   } finally {
     await app.close()

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createMcpAgentToolPorts } from '../../src/domains/agent-sessions/tools/agent-mcp-tool-ports.js'
+import { createMcpAgentToolPorts } from '../../src/modules/agent-sessions/tools/agent-mcp-tool-ports.js'
 import type { RunIdentity, ToolCall } from '@gugu/core/agent'
 
 const identity: RunIdentity = { ownerId: 'owner-a', sessionId: '12', runId: 'run-a' }

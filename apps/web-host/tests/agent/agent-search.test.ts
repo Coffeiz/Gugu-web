@@ -9,11 +9,11 @@ import { Pool } from 'pg'
 import { createPostgresRuntime, tablesSql } from '@gugu/core/data'
 import type { ProviderHttpRequest, ProviderTransport } from '@gugu/core/providers'
 import { createAgentRunner, type AgentRunnerPorts, type RunCheckpoint } from '@gugu/core/agent'
-import { createWebAgentConfirmationAuthorization } from '../../src/domains/agent-sessions/tools/agent-confirmation.js'
+import { createWebAgentConfirmationAuthorization } from '../../src/modules/agent-sessions/tools/agent-confirmation.js'
 import type { ContextSourceSelection } from '@gugu/core/agent'
-import { createToolRegistry } from '@gugu/core/tools'
+import { createHttpGetTool, createToolRegistry } from '@gugu/core/tools'
 import { createPublicAgentEgress } from '../../src/adapters/safe-egress-proxy.js'
-import { createWebAgentSearchPorts, verifySearchImage } from '../../src/domains/agent-sessions/tools/agent-search.js'
+import { createWebAgentSearchPorts, verifySearchImage } from '../../src/modules/agent-sessions/tools/agent-search.js'
 
 const identity = { ownerId: 'owner-search', sessionId: '5', runId: 'run-search' }
 const scope = {
@@ -40,10 +40,62 @@ const defaultOptions: Parameters<typeof createWebAgentSearchPorts>[0] = {
 test('可信网络配置无效时保持搜索工具关闭，正常时仅公布模型支持的原生搜索', async () => {
   const valid = await createWebAgentSearchPorts(defaultOptions)
   assert.equal(valid.webSearch?.definition.name, 'web_search')
+  assert.equal(typeof valid.httpGet?.get, 'function')
   assert.equal(valid.deepResearch, undefined)
   assert.deepEqual(await createWebAgentSearchPorts({
     ...defaultOptions, readSafeEgress: () => ({ enabled: true, proxy_auth_secret: '', proxy_url: 'file:///private' }),
   }), {})
+})
+
+test('Node 搜索用量迁移未应用时保留基础搜索并关闭付费搜索能力', async () => {
+  const ports = await createWebAgentSearchPorts({
+    ...defaultOptions,
+    egress: { assertConfigured() {}, async withTransport() { throw new Error('不应发起出站请求') } },
+    research: {
+      schemaApplied: false,
+      pool: { async query() { throw new Error('迁移关闭时不应查询搜索用量表') } } as never,
+      readConfig: () => ({}), environment: {}, keyForVersion: () => '', timezone: 'UTC',
+    },
+  })
+  assert.equal(ports.webSearch?.definition.name, 'web_search')
+  assert.equal(ports.deepResearch, undefined)
+  assert.equal(ports.similarImageSearch, undefined)
+})
+
+test('http_get 通过安全公网传输读取 HTML，保留链接并删除页面脚本和导航', async () => {
+  const requests: ProviderHttpRequest[] = []
+  const html = `<html><body><nav>导航机密噪音</nav><article><h1>合成来源</h1><p>${'可见正文。'.repeat(18)} <a href="https://example.test/source">原文</a></p><script>private-script()</script></article></body></html>`
+  const transport: ProviderTransport = {
+    async request(request) {
+      requests.push(request)
+      return { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: (async function* () {
+        yield new TextEncoder().encode(html)
+      })(), async cancel() {} }
+    },
+    async close() {},
+  }
+  const ports = await createWebAgentSearchPorts({
+    ...defaultOptions,
+    egress: { assertConfigured() {}, async withTransport(_signal, execute) { return execute(transport) } },
+  })
+  assert.ok(ports.httpGet)
+  const registry = createToolRegistry({
+    tools: [createHttpGetTool(ports.httpGet)],
+    authorize: async candidate => candidate.ownerId === identity.ownerId,
+  })
+  const result = await registry.tools.dispatch({ id: 'http-read', name: 'http_get', input: {
+    url: 'https://example.test/page', headers: { 'X-Locale': 'zh-CN' },
+  } }, scope)
+  assert.deepEqual(requests.map(request => ({ url: request.url, method: request.method, headers: request.headers })), [
+    { url: 'https://example.test/page', method: 'GET', headers: { 'user-agent': 'curl/8', 'x-locale': 'zh-CN' } },
+  ])
+  assert.equal(result.kind, 'completed')
+  if (result.kind !== 'completed') return
+  const value = result.value as { body: string; url: string; content_type: string }
+  assert.equal(value.url, 'https://example.test/page')
+  assert.equal(value.content_type, 'text/html')
+  assert.match(value.body, /\[原文\]\(https:\/\/example\.test\/source\)/u)
+  assert.doesNotMatch(value.body, /导航机密噪音|private-script/u)
 })
 
 test('Web 搜索端口经 Core Harness 分派，并把结果带入下一轮 Provider 上下文', async () => {
@@ -185,7 +237,7 @@ test('付费搜索通过持久认领预留额度，结果或未知状态均不�
           return defaultOptions.binding.resolve(identity, modelIdentity, scope.signal)
         } },
         egress: { assertConfigured() {}, async withTransport(_signal, execute) { return execute(transport) } },
-        research: { pool, environment: {}, keyForVersion: () => '', timezone: 'Asia/Shanghai',
+        research: { pool, schemaApplied: true, environment: {}, keyForVersion: () => '', timezone: 'Asia/Shanghai',
           imageStorageRoot: storageRoot,
           readConfig: () => ({ search: { tavily_api_key: 'synthetic', baidu_qianfan_api_key: 'synthetic-baidu', similar_image_limit_daily: 1 }, quota: { default_search_limit_daily: 1 } }),
           durable: { core, async authorize(tx, candidate, signal) {

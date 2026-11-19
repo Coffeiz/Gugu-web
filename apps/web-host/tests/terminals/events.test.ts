@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { createRequire } from 'node:module'
 import Fastify from 'fastify'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
-import { createPostgresTerminalEventStream } from '../../src/domains/terminals/persistence/events.js'
+import { createPostgresTerminalEventStream } from '../../src/modules/terminals/persistence/events.js'
 import { registerTerminalEventsRoute } from '../../src/modules/terminals/events.js'
 
 const owner = '00000000-0000-4000-8000-000000000181'
@@ -27,10 +27,10 @@ function setup() {
   INSERT INTO terminal_sessions VALUES('active','${owner}',NULL,NULL,NULL,'活动终端','agent','agent-events','running','sandbox','none',0,0,NULL,NULL,NULL,NULL,'2026-11-17T00:00:00.000Z','2026-11-17T00:00:01.000Z',NULL);
   INSERT INTO terminal_events VALUES('done',1,'command','agent','run-1','echo 1','一','',0,'2026-11-17T00:00:00.000Z'),('done',2,'command','agent','run-1','echo 2','二','',0,'2026-11-17T00:00:01.000Z');`)
   const pool = { async query() { return { rows: [{ data_json: { shell_enabled: true } }] } } }
-  const stream = createPostgresTerminalEventStream(pool as never, db, {
+  const stream = createPostgresTerminalEventStream(pool as never, db, async () => ({
     terminalMode: 'auto', shellEnabled: true, shellSystemEnabled: false,
-    async readSandboxReadiness() { return { ready: true } },
-  })
+    sandboxReady: true,
+  }))
   const app = Fastify()
   installHttpErrorHandler(app)
   let waits = 0

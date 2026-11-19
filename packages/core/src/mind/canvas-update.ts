@@ -1,4 +1,5 @@
 import { MindCanvasMutationError, type MindCanvasCreateRecord, type MindCanvasResponse } from './canvas-create.js'
+import { parseCanvasData } from './canvas-layout.js'
 
 export interface MindCanvasUpdateUndo {
   userId: string; contextId: string; resource: 'mind'; action: 'update'
@@ -36,6 +37,18 @@ export function createMindCanvasUpdate(runtime: MindCanvasUpdateRuntime) {
     const row = await runtime.transaction(ownerId, async tx => {
       const before = await tx.getOwned(ownerId, canvasId)
       if (!before) throw new MindCanvasMutationError(404, '画布不存在')
+      if (fields.dataJson !== undefined) {
+        const current = parseCanvasData(before.data_json)
+        const next = parseCanvasData(fields.dataJson)
+        // 断线状态由条目移除和显式连线管理。视图快照可能早于这两种操作。
+        if (Array.isArray(current.detachedRelationIds)) {
+          next.detachedRelationIds = current.detachedRelationIds
+          fields.dataJson = JSON.stringify(next)
+        } else if ('detachedRelationIds' in next) {
+          delete next.detachedRelationIds
+          fields.dataJson = JSON.stringify(next)
+        }
+      }
       const after = await tx.update(ownerId, canvasId, fields)
       if (!after) throw new MindCanvasMutationError(404, '画布不存在')
       const contextId = metadata.undoContextId?.trim().slice(0, 128)

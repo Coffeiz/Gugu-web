@@ -3,9 +3,9 @@ import type { Pool } from 'pg'
 import { canonicalToolsUsed, type CanonicalRunContext, type RunIdentity } from '@gugu/core/agent'
 import { createScheduledTaskAgentAttempt, createScheduledTaskHarness,
   type ScheduledTaskExecutionPorts } from '@gugu/core/scheduled-task-run-now'
-import type { createConfiguredWebAgentProviderBinding } from '../../domains/agent-config/configured-web-provider-binding.js'
+import type { createConfiguredWebAgentProviderBinding } from '../agent/model-config/configured-web-provider-binding.js'
 import { withPostgresTransaction } from '../../adapters/postgres-transaction.js'
-import { recordAgentUsage } from '../../domains/agent-sessions/persistence/agent-usage-postgres.js'
+import { recordAgentUsage } from '../../modules/agent-sessions/persistence/agent-usage-postgres.js'
 
 type AttemptInput = Parameters<ScheduledTaskExecutionPorts<unknown>['attempt']>[0]
 type BindProvider = Awaited<ReturnType<typeof createConfiguredWebAgentProviderBinding>>['bind']
@@ -39,7 +39,7 @@ export function createWebScheduledTaskAgentAttempt(options: {
         if (released) throw new Error('定时任务模型绑定已释放')
         const selected = await resolve(candidate, modelIdentity, signal)
         if (released) throw new Error('定时任务模型绑定已释放')
-        return { ...selected, config: { ...selected.config, reasoning_persistence: 'off' } }
+        return selected
       }
       const prepared = await options.prepareHarness({
         ...input,

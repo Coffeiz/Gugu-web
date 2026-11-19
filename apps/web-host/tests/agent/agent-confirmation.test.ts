@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { RunIdentity } from '@gugu/core/agent'
-import type { AgentDispatchLease } from '../../src/domains/agent-sessions/persistence/agent-run-dispatch-postgres.js'
-import { createWebAgentConfirmationAuthorization, createWebAgentToolConfirmation } from '../../src/domains/agent-sessions/tools/agent-confirmation.js'
+import type { AgentDispatchLease } from '../../src/modules/agent-sessions/persistence/agent-run-dispatch-postgres.js'
+import { createWebAgentConfirmationAuthorization, createWebAgentToolConfirmation } from '../../src/modules/agent-sessions/tools/agent-confirmation.js'
 
 const identity: RunIdentity = { ownerId: 'owner-a', sessionId: '7', runId: 'run-a' }
 const lease: AgentDispatchLease = {

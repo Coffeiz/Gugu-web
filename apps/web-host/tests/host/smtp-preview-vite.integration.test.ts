@@ -3,7 +3,7 @@ import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createCsrfToken, createUserToken, type PublicUserRecord } from '../../src/domains/auth/auth.js'
+import { createCsrfToken, createUserToken, type PublicUserRecord } from '../../src/modules/auth/auth.js'
 
 test('Vite forwards authenticated SMTP preview requests to Node Host and serves preview logo assets', async () => {
   const ownerId = '00000000-0000-4000-8000-000000000081'

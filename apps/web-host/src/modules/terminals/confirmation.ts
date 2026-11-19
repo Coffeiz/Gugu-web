@@ -1,4 +1,4 @@
-import { targetConfirmationIdentity } from '../../domains/agent-sessions/tools/confirmation-identity.js'
+import { targetConfirmationIdentity } from '../agent-sessions/tools/confirmation-identity.js'
 
 export interface TerminalConfirmationStore {
   redeem(owner: string, code: string): Promise<boolean>

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createTerminalShellExecution } from '../../src/modules/terminals/shell-execution.js'
 import { createTerminalRuntimeSettingsReader } from '../../src/modules/terminals/runtime-settings.js'
-import { createSandboxRuntimeUpdater } from '../../src/modules/admin/sandbox-enable.js'
+import { createSandboxRuntimeUpdater } from '../../src/modules/admin/sandbox.js'
 
 test('原子停用配置经真实运行设置读取后，中止已运行 MXC 命令', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gugu-shell-revoke-'))

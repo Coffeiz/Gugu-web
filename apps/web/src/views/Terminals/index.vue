@@ -400,7 +400,7 @@ onUnmounted(() => {
 .terminal-input { display:flex; gap:8px; padding:10px 12px; border-top:1px solid var(--divider-line); background:var(--surface-card-solid); }
 .terminal-input input { min-width:0; flex:1; border:1px solid var(--input-border); border-radius:var(--input-radius); outline:none; background:var(--input-bg); color:var(--input-fg); padding:8px 10px; font:12px ui-monospace,SFMono-Regular,Menlo,monospace; transition:background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
 .terminal-rename:focus,
-.terminal-input input:focus { background:var(--input-bg-focus); border-color:var(--input-border-focus); box-shadow:var(--input-focus-shadow); }
+.terminal-input input:focus { background:var(--input-bg-focus); border-color:var(--input-border-focus); }
 .terminal-input input::placeholder { color:var(--input-placeholder); opacity:1; }
 .terminal-rename::selection,
 .terminal-input input::selection { background:var(--selection-bg); color:var(--selection-fg); }
@@ -420,7 +420,7 @@ onUnmounted(() => {
 .terminals-page .terminal-item::after { content:''; position:absolute; inset:0; border-radius:inherit; background:var(--card-hover-overlay); box-shadow:inset 0 1px 0 var(--highlight-soft); opacity:0; pointer-events:none; transition:opacity var(--hover-motion-card); }
 .terminals-page .terminal-item > * { position:relative; z-index:1; }
 .terminals-page .terminal-item:hover { background:var(--surface-raised); border-color:var(--border-hover); box-shadow:var(--elevation-card-hover); }
-.terminals-page .terminal-item.active { background:var(--surface-raised); border-color:var(--action-outline); box-shadow:var(--elevation-card-hover), var(--control-focus-shadow); }
+.terminals-page .terminal-item.active { background:var(--surface-raised); border-color:var(--border-focus); }
 .terminals-page .terminal-item:hover::after,
 .terminals-page .terminal-item.active::after { opacity:1; }
 @media(max-width:700px){.terminals-panel{padding:16px}.terminal-layout{grid-template-columns:1fr}.terminal-list{max-height:170px}.terminal-main{min-height:360px}}

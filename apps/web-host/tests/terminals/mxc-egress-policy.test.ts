@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { PassThrough } from 'node:stream'
 import { test } from 'node:test'
-import { MxcExecutor } from '../../../../packages/sandbox/src/mxc.js'
+import { MxcExecutor } from '@gugu/sandbox/mxc'
 import { executionPolicy } from '../../../../packages/sandbox/src/policy.js'
 
 test('MXC 代理模式保持默认拒绝并只声明经验证的回环代理', async () => {

@@ -46,10 +46,14 @@
               @contextmenu.prevent.stop="ev.calendarType === 'event' && emit('edit-event', ev, $event)"
               @mousedown.stop="ev.calendarType === 'project' ? emit('start-project-chip-drag', ev, $event) : (ev.calendarType === 'event' && emit('start-event-drag', ev, $event))"
             >
+              <template v-if="ev.calendarType === 'project' && canResize(ev)">
+                <div class="bar-rh bar-rh-left" @click.stop @mousedown.left.stop.prevent="emit('start-bar-resize', ev, 'start', $event)"></div>
+                <div class="bar-rh bar-rh-right" @click.stop @mousedown.left.stop.prevent="emit('start-bar-resize', ev, 'end', $event)"></div>
+              </template>
               <span v-if="ev.calendarType === 'project'" class="chip-proj-tag">{{ t('calendar.project') }}</span>
               <span v-else class="chip-proj-tag chip-ev-tag">{{ t('calendar.event') }}</span>
               <span v-if="ev.calendarType === 'project'" class="bar-status-dot" :class="'bsd-' + ev.status"></span>
-              {{ ev.name }}
+              <span class="chip-label">{{ ev.name }}</span>
             </div>
             <button
               v-if="lay.moreCount > 0"
@@ -101,6 +105,7 @@ import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 import type { CalendarDragState } from '@/composables/calendar/useCalendarDrag'
 import type { CalendarMonthDay, CalendarRenderItem } from '../domain/calendarTypes'
+import { canResize } from '../domain/calendarRules'
 import type { DayLayoutResult } from '../utils/calendarLayout'
 import type { CalendarDateRange } from '../domain/calendarContext'
 
@@ -186,6 +191,7 @@ const emit = defineEmits<{
 .cell-chips { display: flex; flex-direction: column; gap: 2px; }
 .event-chip { height: 18px; box-sizing: border-box; font-size: 10px; font-weight: 500; padding: 0 7px; border-radius: 99px; border: 1px solid transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; }
 .event-chip.chip-proj, .event-chip.chip-ev-click { cursor: grab; }
+.event-chip:has(> .bar-rh) { position: relative; padding-inline: 8px; }
 .chip-more-btn { height: 16px; box-sizing: border-box; font-size: 10px; font-weight: 500; padding: 0 7px; border-radius: 99px; border: 1px solid var(--action-outline); background: var(--action-soft); color: var(--action-primary); cursor: pointer; font-family: var(--font-sans); white-space: nowrap; display: flex; align-items: center; }
 .bars-layer { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
 .project-bar { position: absolute; height: 16px; border: 1px solid transparent; display: flex; align-items: center; padding: 0 6px; font-size: 10px; font-weight: 500; white-space: nowrap; overflow: hidden; box-sizing: border-box; pointer-events: auto; cursor: grab; }
@@ -197,8 +203,9 @@ const emit = defineEmits<{
 .bar-rh::after { content: ''; width: 2px; height: 8px; border-radius: 2px; background: currentColor; opacity: 0.7; }
 .bar-rh-left { left: 0; }
 .bar-rh-right { right: 0; }
-.project-bar.bar-hovered .bar-rh { opacity: 1; }
-.bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.project-bar.bar-hovered .bar-rh,
+.event-chip:hover .bar-rh { opacity: 1; }
+.bar-label, .chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 .bar-proj-tag { flex-shrink: 0; font-size: 8px; font-weight: 700; letter-spacing: 0.04em; background: var(--calendar-cap-project-bg); border-radius: 3px; padding: 0 3px; line-height: 11px; margin-right: 2px; }
 .bar-status-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; margin-right: 4px; }
 .bsd-pending { background: var(--status-danger); }

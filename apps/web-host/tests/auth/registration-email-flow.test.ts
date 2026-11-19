@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify, { type FastifyRequest } from 'fastify'
 import type { Transporter } from 'nodemailer'
-import { createAuthEmailSender, type SmtpEmailSettings } from '../../src/domains/auth/smtp-email.js'
-import { registerRegistrationCodeRoute } from '../../src/domains/auth/routes/auth-registration-code.js'
+import { createAuthEmailSender, type SmtpEmailSettings } from '../../src/adapters/smtp-email.js'
+import { registerRegistrationCodeRoute } from '../../src/modules/auth/routes/auth-registration-code.js'
 
 const emailSettings: SmtpEmailSettings = {
   host: 'smtp.example.test',

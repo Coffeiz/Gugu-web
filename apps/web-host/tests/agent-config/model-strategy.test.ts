@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createModelStrategy } from '../../src/domains/agent-config/model-strategy.js'
-import { agentAccessScopeHash } from '../../src/domains/agent-config/access-scope.js'
-import { bindProviderSelection } from '../../src/domains/agent-config/provider-resolver.js'
+import { createModelStrategy } from '../../src/modules/agent/model-config/model-strategy.js'
+import { agentAccessScopeHash } from '../../src/modules/agent/model-config/access-scope.js'
+import { bindProviderSelection } from '../../src/modules/agent/model-config/provider-resolver.js'
 const signal = new AbortController().signal
 const items = [{ id: 'a', model: 'a', in_pool: true }, { id: 'b', model: 'b', in_pool: true }, { id: 'c', model: 'c', in_pool: false }]
 const settings = (mode: string, strategy = 'pool') => ({ ai: { model: 'active', api_key: 'synthetic-secret' }, ai_presets: { strategy, pool_mode: mode, items }, systemPrompt: 'system', contextScopeKey: 'a'.repeat(64), accessScopeHash: 'scope', byokEnabled: false })
@@ -44,7 +44,7 @@ test('凭据解析失败释放最少在途占位，不能改变后续模型选�
 })
 
 test('来源 selection 与 Provider 使用同一范围摘要，版本和可信 actor 变化均隔离', async () => {
-  const { agentContextAccessScope } = await import('../../src/domains/agent-config/access-scope.js')
+  const { agentContextAccessScope } = await import('../../src/modules/agent/model-config/access-scope.js')
   const { contextAccessScopeHash, stableJson } = await import('@gugu/core/agent')
   const { createHash } = await import('node:crypto')
   const digest = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')

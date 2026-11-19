@@ -1,8 +1,8 @@
 import { link, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, expect, it } from 'vitest'
-import { finishStagedLocalFile, importLocalFile, openLocalFile, removeLocalTree, stageLocalFile, UnsafeLocalPathError, writeLocalFile } from '../src/node.js'
+import { afterEach, expect, it, skipIf } from 'vitest'
+import { finishStagedLocalFile, importLocalFile, openLocalFile, removeLocalTree, stageLocalFile, UnsafeLocalPathError, writeLocalFile, writeLocalFileStream } from '../src/node.js'
 
 const root = await mkdtemp(path.join(tmpdir(), 'gugu-fs-'))
 afterEach(async () => { await rm(root, { recursive: true, force: true }) })
@@ -19,7 +19,7 @@ it('只读取授权根内的普通文件，拒绝穿越和符号链接', async (
   await expect(openLocalFile(root, 'owner')).rejects.toBeInstanceOf(UnsafeLocalPathError)
 })
 
-it('暂存和恢复不覆盖已有目标，保留中断后同一 inode 的内容', async () => {
+it.skipIf(process.platform !== 'linux')('暂存和恢复不覆盖已有目标，保留中断后同一 inode 的内容', async () => {
   await mkdir(root, { recursive: true })
   const id = '00000000-0000-4000-8000-000000000001'
   const file = path.join(root, 'a')
@@ -35,7 +35,7 @@ it('暂存和恢复不覆盖已有目标，保留中断后同一 inode 的内容
   await expect(readFile(staged!.stagedPath)).rejects.toThrow()
 })
 
-it('暂存拒绝越界、符号链接和已存在的暂存目标', async () => {
+it.skipIf(process.platform !== 'linux')('暂存拒绝越界、符号链接和已存在的暂存目标', async () => {
   await mkdir(root, { recursive: true })
   const id = '00000000-0000-4000-8000-000000000001'
   await writeFile(path.join(root, 'a'), '正文')
@@ -124,6 +124,21 @@ it.skipIf(process.platform !== 'linux')('流式导入拒绝不存在的目标目
     const { signal } = new AbortController()
     await expect(importLocalFile(root, 'escape/file', body(), signal)).rejects.toBeInstanceOf(UnsafeLocalPathError)
     await expect(importLocalFile(root, 'missing/file', body(), signal)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readdir(outside)).toEqual([])
+  } finally { await rm(outside, { recursive: true, force: true }) }
+})
+
+it.skipIf(process.platform !== 'linux')('流式暂存自动创建安全父目录，不覆盖已有文件或跟随符号链接', async () => {
+  const outside = await mkdtemp(path.join(tmpdir(), 'gugu-fs-outside-'))
+  try {
+    await mkdir(root, { recursive: true })
+    const signal = new AbortController().signal
+    const body = async function* () { yield Buffer.from('encrypted archive') }
+    await writeLocalFileStream(root, 'owner/.data-portability/imports/job.gupi', body(), signal)
+    expect(await readFile(path.join(root, 'owner/.data-portability/imports/job.gupi'), 'utf8')).toBe('encrypted archive')
+    await expect(writeLocalFileStream(root, 'owner/.data-portability/imports/job.gupi', body(), signal)).rejects.toMatchObject({ code: 'EEXIST' })
+    await symlink(outside, path.join(root, 'escape'))
+    await expect(writeLocalFileStream(root, 'escape/job.gupi', body(), signal)).rejects.toBeInstanceOf(UnsafeLocalPathError)
     expect(await readdir(outside)).toEqual([])
   } finally { await rm(outside, { recursive: true, force: true }) }
 })

@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { createRequire } from 'node:module'
 import Fastify from 'fastify'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
-import { createPostgresTerminalRenamer } from '../../src/domains/terminals/persistence/rename.js'
+import { createPostgresTerminalRenamer } from '../../src/modules/terminals/persistence/rename.js'
 import { registerTerminalRenameRoute } from '../../src/modules/terminals/rename.js'
 import { registerTerminalCommandRoutes } from '../../src/modules/terminals/command.js'
 import { createTerminalShellExecution } from '../../src/modules/terminals/shell-execution.js'
@@ -290,10 +290,10 @@ function setup() {
   const changes: unknown[][] = []
   const app = Fastify()
   installHttpErrorHandler(app)
-  const rename = createPostgresTerminalRenamer(pool as never, db, {
+  const rename = createPostgresTerminalRenamer(pool as never, db, async () => ({
     terminalMode: 'auto', shellEnabled: true, shellSystemEnabled: false,
-    async readSandboxReadiness() { return { ready: true } },
-  }, async (...args) => { changes.push(args) })
+    sandboxReady: true,
+  }), async (...args) => { changes.push(args) })
   registerTerminalRenameRoute(app, {
     requireUser: async (request, reply) => { if (request.headers.authorization !== 'synthetic-user') return reply.code(401).send({ detail: '未授权' }) },
     ownerIdFromRequest: () => owner,

@@ -4,7 +4,7 @@ import Fastify from 'fastify'
 import { Pool } from 'pg'
 import { Kysely, PostgresDialect } from 'kysely'
 import test from 'node:test'
-import { createAdminUserListReader } from '@gugu/core/admin/users'
+import { createAdminUserListReader } from '../../src/modules/admin/user-management.js'
 import { registerAdminUsersRoute } from '../../src/modules/admin/users.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL

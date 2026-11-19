@@ -6,8 +6,7 @@
     "node": ">=26.13.0 <27"
   },
   "scripts": {
-    "predev": "corepack pnpm@10.15.0 --filter @gugu/fs build",
-    "dev": "tsx watch src/main.ts",
+    "dev": "node scripts/dev.mjs",
     "prebuild": "corepack pnpm@10.15.0 --filter @gugu/core build && corepack pnpm@10.15.0 --filter @gugu/fs build && corepack pnpm@10.15.0 --filter @gugu/charts build",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
@@ -21,6 +20,13 @@
     "migrate:security-events:apply": "node dist/migrations/agent-run-cli.js security-events-apply",
     "migrate:terminal-sessions:check": "node dist/migrations/agent-run-cli.js terminal-sessions-check",
     "migrate:terminal-sessions:apply": "node dist/migrations/agent-run-cli.js terminal-sessions-apply",
+    "migrate:interaction-actions:check": "node dist/migrations/agent-run-cli.js interaction-actions-check",
+    "migrate:interaction-actions:apply": "node dist/migrations/agent-run-cli.js interaction-actions-apply",
+    "migrate:trash-purge:check": "node dist/migrations/agent-run-cli.js trash-purge-check",
+    "migrate:trash-purge:apply": "node dist/migrations/agent-run-cli.js trash-purge-apply",
+    "migrate:search-usage:check": "node dist/migrations/agent-run-cli.js search-usage-check",
+    "migrate:search-usage:apply": "node dist/migrations/agent-run-cli.js search-usage-apply",
+    "migrate:project-tools:apply": "node dist/migrations/agent-run-cli.js project-tools-apply",
     "migrate:agent-run:check": "node dist/migrations/agent-run-cli.js check",
     "migrate:agent-run:apply": "node dist/migrations/agent-run-cli.js apply",
     "migrate:agent-snapshot:check": "node dist/migrations/agent-snapshot-cli.js check",
@@ -34,11 +40,12 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@gugu/charts": "workspace:*",
     "@fastify/multipart": "10.1.4",
     "@fastify/static": "10.1.5",
+    "@gugu/charts": "workspace:*",
     "@gugu/core": "workspace:*",
     "@gugu/fs": "workspace:*",
+    "@gugu/loopscope": "workspace:*",
     "@gugu/sandbox": "workspace:*",
     "@modelcontextprotocol/client": "2.4.0",
     "@napi-rs/canvas": "1.0.13",
@@ -50,18 +57,21 @@
     "kysely": "0.29.8",
     "mime-types": "2.1.35",
     "nodemailer": "10.5.0",
-    "pinyin-pro": "3.29.5",
     "pg": "8.23.1",
+    "pinyin-pro": "3.29.5",
+    "silk-wasm": "3.7.1",
     "tar": "7.5.23",
     "unzipper": "0.12.5",
     "ws": "8.22.0",
     "zod": "4.6.7"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
     "@types/node": "26.6.6",
     "@types/nodemailer": "8.0.2",
     "@types/pg": "8.23.1",
     "@types/ws": "8.18.2",
+    "better-sqlite3": "13.2.0",
     "tsx": "4.19.4",
     "typescript": "6.0.3"
   }

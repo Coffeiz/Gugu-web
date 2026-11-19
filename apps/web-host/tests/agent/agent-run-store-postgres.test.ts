@@ -4,7 +4,7 @@ import { Pool } from 'pg'
 import test from 'node:test'
 import { RunStoreRejected } from '@gugu/core/agent'
 import type { Lease, RunCheckpoint, RunEvent, RunIdentity } from '@gugu/core/agent'
-import { createPostgresAgentRunStore } from '../../src/domains/agent-sessions/persistence/agent-run-store-postgres.js'
+import { createPostgresAgentRunStore } from '../../src/modules/agent-sessions/persistence/agent-run-store-postgres.js'
 
 const ownerId = '00000000-0000-4000-8000-000000000091'
 const identity: RunIdentity = { ownerId, sessionId: '91', runId: 'run-store-synthetic' }

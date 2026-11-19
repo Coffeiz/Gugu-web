@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { createRequire } from 'node:module'
 import Fastify from 'fastify'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
-import { createPostgresTerminalMetricsReader } from '../../src/domains/terminals/persistence/metrics.js'
+import { createPostgresTerminalMetricsReader } from '../../src/modules/terminals/persistence/metrics.js'
 import { registerTerminalMetricsRoute } from '../../src/modules/terminals/metrics.js'
 
 const owner = '00000000-0000-4000-8000-000000000111'
@@ -18,10 +18,10 @@ function setup(preferences: Record<string, unknown>, ready = true) {
     INSERT INTO terminal_sessions VALUES ('one','${owner}','running',NULL,21),('two','${owner}','idle',NULL,9);`)
   const owners: string[] = []
   const pool = { async query(_sql: string, values: string[]) { owners.push(values[0]!); return { rows: [{ data_json: preferences }] } } }
-  const read = createPostgresTerminalMetricsReader(pool as never, db, {
+  const read = createPostgresTerminalMetricsReader(pool as never, db, async () => ({
     terminalMode: 'auto', shellEnabled: true, shellSystemEnabled: false,
-    async readSandboxReadiness() { return { ready, reason: ready ? undefined : 'MXC Bubblewrap 不可用' } },
-  })
+    sandboxReady: ready, sandboxUnavailableReason: ready ? undefined : 'MXC Bubblewrap 不可用',
+  }))
   const app = Fastify()
   installHttpErrorHandler(app)
   registerTerminalMetricsRoute(app, {

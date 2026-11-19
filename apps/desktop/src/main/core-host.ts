@@ -4,7 +4,6 @@ import { resolve, join, relative, sep, dirname } from 'node:path'
 import { spawn } from 'node:child_process'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import {
-  DESKTOP_CHANNELS,
   DESKTOP_METHODS,
   DESKTOP_MUTATIONS,
   MAX_FRAME,
@@ -383,73 +382,6 @@ export class CoreHost {
 export interface Caller {
   sender: unknown
   senderFrame: unknown
-}
-export function desktopHandlers(
-  host: Pick<CoreHost, 'request'>,
-  diagnostics: () => Promise<unknown>,
-): Record<string, (...args: unknown[]) => Promise<unknown>> {
-  return {
-    [DESKTOP_CHANNELS.appearance]: () => host.request('preferences.desktop.get'),
-    [DESKTOP_CHANNELS.updateAppearance]: (patch: unknown) => host.request('preferences.desktop.update', { patch }),
-    [DESKTOP_CHANNELS.onboarding]: () => host.request('onboarding.desktop.get'),
-    [DESKTOP_CHANNELS.projects]: () => host.request('projects.list'),
-    [DESKTOP_CHANNELS.createProject]: (name: unknown) =>
-      host.request('projects.create', { name }),
-    [DESKTOP_CHANNELS.renameProject]: (id: unknown, version: unknown, name: unknown) =>
-      host.request('projects.rename', { id, version, name }),
-    [DESKTOP_CHANNELS.projectBoard]: (collection, offset) => host.request('projects.board.list', { collection, offset }),
-    [DESKTOP_CHANNELS.projectDetails]: id => host.request('projects.board.get', { id }),
-    [DESKTOP_CHANNELS.createBoardProject]: (fields, operationId) =>
-      host.request('projects.board.create', { fields }, operationId as string | undefined),
-    [DESKTOP_CHANNELS.updateBoardProject]: (id, version, fields) =>
-      host.request('projects.board.update', { id, version, fields }),
-    [DESKTOP_CHANNELS.deleteBoardProject]: id => host.request('projects.board.delete', { id }),
-    [DESKTOP_CHANNELS.restoreBoardProject]: id => host.request('projects.board.restore', { id }),
-    [DESKTOP_CHANNELS.clients]: () => host.request('clients.list'),
-    [DESKTOP_CHANNELS.createClient]: (name: unknown) =>
-      host.request('clients.create', { name }),
-    [DESKTOP_CHANNELS.renameClient]: (id: unknown, name: unknown) =>
-      host.request('clients.update', { id, fields: { name } }),
-    [DESKTOP_CHANNELS.deleteClient]: (id: unknown) =>
-      host.request('clients.delete', { id }),
-    [DESKTOP_CHANNELS.calendar]: () => host.request('calendar.list'),
-    [DESKTOP_CHANNELS.createCalendarEvent]: (title: unknown, date: unknown, details?: unknown) =>
-      host.request('calendar.create', { title, date, ...(details && typeof details === 'object' ? details : {}) }),
-    [DESKTOP_CHANNELS.updateCalendarEvent]: (id: unknown, body: unknown) =>
-      host.request('calendar.update', { id, body }),
-    [DESKTOP_CHANNELS.deleteCalendarEvent]: (id: unknown, version: unknown) =>
-      host.request('calendar.delete', { id, version }),
-    [DESKTOP_CHANNELS.canvases]: () => host.request('mind.canvases.list'),
-    [DESKTOP_CHANNELS.createCanvas]: (title: unknown) => host.request('mind.canvases.create', { title }),
-    [DESKTOP_CHANNELS.updateCanvas]: (id: unknown, body: unknown) => host.request('mind.canvases.update', { id, body }),
-    [DESKTOP_CHANNELS.deleteCanvas]: (id: unknown) => host.request('mind.canvases.delete', { id }),
-    [DESKTOP_CHANNELS.canvasItems]: (canvasId: unknown) => host.request('mind.canvases.items.list', { canvasId }),
-    [DESKTOP_CHANNELS.canvasRelations]: (canvasId: unknown) => host.request('mind.canvases.relations.list', { canvasId }),
-    [DESKTOP_CHANNELS.addCanvasItem]: (canvasId: unknown, body: unknown) => host.request('mind.canvases.items.add', { canvasId, body }),
-    [DESKTOP_CHANNELS.bringCanvasItemToFront]: (canvasId: unknown, id: unknown, body: unknown) => host.request('mind.canvases.items.bring-to-front', { canvasId, id, body }),
-    [DESKTOP_CHANNELS.createCanvasRelation]: (body: unknown) => host.request('mind.canvases.relations.create', { body }),
-    [DESKTOP_CHANNELS.deleteCanvasRelation]: (canvasId: unknown, id: unknown) => host.request('mind.canvases.relations.delete', { canvasId, id }),
-    [DESKTOP_CHANNELS.createRefNode]: (refType: unknown, refId: unknown) => host.request('mind.ref.create', { body: { refType, refId } }),
-    [DESKTOP_CHANNELS.canvasNoteLocation]: (nodeId: unknown) => host.request('mind.canvas-note.location', { nodeId }),
-    [DESKTOP_CHANNELS.createCanvasNote]: (canvasId: unknown, body: unknown) => host.request('mind.canvases.notes.create', { canvasId, body }),
-    [DESKTOP_CHANNELS.updateCanvasNote]: (id: unknown, fields: unknown) => host.request('mind.canvases.notes.update', { id, fields }),
-    [DESKTOP_CHANNELS.updateCanvasItem]: (canvasId: unknown, id: unknown, body: unknown) => host.request('mind.canvases.items.update', { canvasId, id, body }),
-    [DESKTOP_CHANNELS.deleteCanvasItem]: (canvasId: unknown, id: unknown) => host.request('mind.canvases.items.delete', { canvasId, id }),
-    [DESKTOP_CHANNELS.notes]: () => host.request('mind.notes.list'),
-    [DESKTOP_CHANNELS.createNote]: (contentMd: unknown, color: unknown) =>
-      host.request('mind.notes.create', { contentMd, color }),
-    [DESKTOP_CHANNELS.updateNote]: (id: unknown, fields: unknown) => host.request('mind.notes.update', { id, fields }),
-    [DESKTOP_CHANNELS.deleteNote]: (id: unknown) => host.request('mind.notes.delete', { id }),
-    [DESKTOP_CHANNELS.receipt]: (operation: unknown) =>
-      host.request('operations.get', { operation_id: operation }),
-    [DESKTOP_CHANNELS.sandboxStatus]: diagnostics,
-    [DESKTOP_CHANNELS.undoPreview]: (contextId: unknown) =>
-      host.request('undo.preview', { context_id: contextId }),
-    [DESKTOP_CHANNELS.undoApply]: (contextId: unknown, undoId: unknown, operationId: unknown) =>
-      host.request('undo.apply', { context_id: contextId, undo_id: undoId }, operationId as string),
-    [DESKTOP_CHANNELS.undoRedo]: (contextId: unknown, undoId: unknown, operationId: unknown) =>
-      host.request('undo.redo', { context_id: contextId, undo_id: undoId }, operationId as string),
-  }
 }
 export async function desktopReply<T>(
   trusted: boolean,

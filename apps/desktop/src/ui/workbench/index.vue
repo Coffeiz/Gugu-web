@@ -57,6 +57,7 @@ const emit = defineEmits<{
 .desktop-eyebrow, .desktop-state { color: var(--text-secondary); font-size: 13px; }
 h1 { margin: 10px 0; font-size: 30px; font-weight: 600; }
 .desktop-panel { min-width: 0; padding: 22px 24px; margin-bottom: 24px; --glass-card-background-hover: var(--glass-card-background); --glass-card-border-hover: var(--glass-card-border); --glass-card-shadow-hover: var(--glass-card-shadow); }
+.desktop-panel:has(+ .desktop-panel) { margin-bottom: var(--space-md); }
 .desktop-panel > h2 { margin: 0 0 18px; }
 .desktop-panel p { color: var(--text-secondary); line-height: 1.6; }
 .appearance-group { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; }

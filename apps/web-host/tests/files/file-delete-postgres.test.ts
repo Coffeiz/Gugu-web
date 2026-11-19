@@ -5,20 +5,29 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { Pool, type QueryResultRow } from 'pg'
-import { createPostgresFileDeleteOperations } from '../../src/domains/files/file-delete-postgres.js'
-import { lockFileSyncPath } from '../../src/domains/files/persistence/file-sync-canonical-change.js'
+import { createPostgresFileDeleteOperations } from '../../src/modules/files/file-delete-postgres.js'
+import { lockFileSyncPath } from '../../src/modules/files/persistence/file-sync-canonical-change.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '11111111-1111-4111-8111-111111111111'
 const otherOwnerId = '22222222-2222-4222-8222-222222222222'
 
-function fakePool(state: { file: Record<string, unknown>; undoWrites: number; collision: boolean; failUpdate?: boolean; failCommit?: boolean; beforeFailure?: () => Promise<void> }) {
+function fakePool(state: { file: Record<string, unknown>; undoWrites: number; collision: boolean; failUpdate?: boolean; failCommit?: boolean;
+  receipts?: Map<string, { method: string; fingerprint: string; result_json: string }>; beforeFailure?: () => Promise<void> }) {
   const client = {
     async query<Row extends QueryResultRow = QueryResultRow>(sql: string, values: unknown[] = []) {
       const normalized = sql.replace(/\s+/g, ' ').trim().toUpperCase()
       if (normalized === 'COMMIT' && state.failCommit) throw new Error('模拟提交后断连')
       if (normalized === 'BEGIN' || normalized === 'COMMIT' || normalized === 'ROLLBACK') return { rows: [], rowCount: 0 }
       if (normalized.startsWith('SELECT PG_ADVISORY_XACT_LOCK')) return { rows: [], rowCount: 1 }
+      if (normalized.includes('FROM CORE_OPERATION_RECEIPTS')) {
+        const receipt = state.receipts?.get(String(values[1]))
+        return { rows: receipt ? [receipt as Row] : [], rowCount: receipt ? 1 : 0 }
+      }
+      if (normalized.startsWith('INSERT INTO CORE_OPERATION_RECEIPTS')) {
+        state.receipts?.set(String(values[1]), { method: String(values[2]), fingerprint: String(values[3]), result_json: String(values[4]) })
+        return { rows: [], rowCount: 1 }
+      }
       if (normalized.startsWith('SELECT * FROM FILES')) {
         if (String(values[0]) !== String(state.file.id) || values[1] !== state.file.user_id || state.file.deleted_at !== null)
           return { rows: [], rowCount: 0 }
@@ -77,6 +86,54 @@ test('Local 删除将正文移入回收站、递增版本并保存撤销状态',
     assert.equal(state.file.version, 2)
     assert.equal(state.undoWrites, 1)
     assert.deepEqual(events, [7])
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('Agent 文件删除在事务内保存 owner 收据并重放原结果而不重复软删', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'gugu-file-delete-receipt-'))
+  const state = { file: fileRow(), undoWrites: 0, collision: false, receipts: new Map<string, { method: string; fingerprint: string; result_json: string }>() }
+  const events: number[] = []
+  const source = path.join(root, ownerId, '个人文件', 'notes', 'memo.txt')
+  try {
+    await mkdir(path.dirname(source), { recursive: true }); await writeFile(source, 'body')
+    const operations = createPostgresFileDeleteOperations(fakePool(state), {
+      storageRoot: root, async publishChanged(event) { events.push(event.entityId) },
+    })
+    const operation = { receipt: { operationId: randomUUID(), fingerprint: 'd'.repeat(64), method: 'agent.file.delete_file' as const },
+      signal: new AbortController().signal, async authorize() {} }
+    const first = await operations.remove(ownerId, 7, 'agent-session-33', null, operation)
+    const replay = await operations.remove(ownerId, 7, 'agent-session-33', null, operation)
+    assert.deepEqual(replay, { ...first, replayed: true })
+    assert.deepEqual(first, { replayed: false, result: { success: true, file_id: 7, name: 'memo.txt',
+      note: '已移入回收站，30 天内可还原', _file_op: { op: 'remove', kind: 'file', id: 7 } } })
+    assert.equal(state.receipts.size, 1)
+    assert.equal(state.file.version, 2)
+    assert.equal(state.undoWrites, 1)
+    assert.deepEqual(events, [7])
+    assert.equal(await readFile(path.join(root, ownerId, 'trash', 'notes', 'memo.txt'), 'utf8'), 'body')
+    await assert.rejects(readFile(source), { code: 'ENOENT' })
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('Agent 批量软删除遇到 owner 缺失 ID 时在任何磁盘/Undo 副作用前整体失败', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'gugu-file-delete-batch-missing-'))
+  const state = { file: fileRow(), undoWrites: 0, collision: false, receipts: new Map<string, { method: string; fingerprint: string; result_json: string }>() }
+  const events: number[] = []
+  try {
+    const source = path.join(root, ownerId, '个人文件', 'notes', 'memo.txt')
+    await mkdir(path.dirname(source), { recursive: true })
+    await writeFile(source, 'body')
+    const operations = createPostgresFileDeleteOperations(fakePool(state), {
+      storageRoot: root,
+      async publishChanged(event) { events.push(event.entityId) },
+    })
+    const operation = { receipt: { operationId: randomUUID(), fingerprint: 'b'.repeat(64), method: 'agent.file.delete_file' as const },
+      signal: new AbortController().signal, async authorize() {} }
+    await assert.rejects(operations.removeMany!(ownerId, [7, 999], 'undo-context', 'renderer', operation), /文件不存在/)
+    assert.equal(await readFile(source, 'utf8'), 'body')
+    assert.equal(state.file.deleted_at, null)
+    assert.equal(state.undoWrites, 0)
+    assert.deepEqual(events, [])
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
@@ -143,6 +200,11 @@ test('PostgreSQL Local 删除等待 filesync 路径锁，再移动正文、记�
         artifact_refs jsonb, actor_type text, status text, created_at timestamptz, expires_at timestamptz,
         undone_at timestamptz, failure_code text
       );
+      CREATE TABLE core_operation_receipts (
+        owner_id uuid NOT NULL, operation_id varchar(36) NOT NULL, fingerprint varchar(64) NOT NULL,
+        method varchar(100) NOT NULL, result_json text NOT NULL, created_at timestamptz NOT NULL,
+        PRIMARY KEY(owner_id,operation_id)
+      );
       INSERT INTO files (user_id,display_name,ext,space,stage_name,storage_key,version,size,size_bytes,
         mime_type,created_at,updated_at) VALUES
         ('${ownerId}','笔记','md','personal','','${ownerId}/个人文件/资料/笔记.md',4,'6 B',6,
@@ -187,7 +249,11 @@ test('PostgreSQL Local 删除等待 filesync 路径锁，再移动正文、记�
       await lockFileSyncPath(lockHolder, ownerId, sourceKey)
       let settled = false
       let operationError: unknown
-      const removal = operations.remove(ownerId, 1, 'editor-tab', 'renderer').then(() => {
+      const receiptOperation = { receipt: { operationId: randomUUID(), fingerprint: 'a'.repeat(64), method: 'agent.file.delete_file' as const },
+        signal: new AbortController().signal, async authorize() {} }
+      let result: unknown
+      const removal = operations.remove(ownerId, 1, 'editor-tab', 'renderer', receiptOperation).then((value) => {
+        result = value
         settled = true
       }, (error: unknown) => {
         settled = true
@@ -198,6 +264,11 @@ test('PostgreSQL Local 删除等待 filesync 路径锁，再移动正文、记�
       await lockHolder.query('COMMIT')
       await removal
       if (operationError) throw operationError
+      assert.deepEqual(result, { replayed: false, result: { success: true, file_id: 1, name: '笔记.md',
+        note: '已移入回收站，30 天内可还原', _file_op: { op: 'remove', kind: 'file', id: 1 } } })
+      assert.equal((await pool.query('SELECT operation_id FROM core_operation_receipts WHERE owner_id=$1', [ownerId])).rowCount, 1)
+      assert.deepEqual(await operations.remove(ownerId, 1, 'editor-tab', 'renderer', receiptOperation),
+        { replayed: true, result: (result as { result: Record<string, unknown> }).result })
     } finally {
       await lockHolder.query('ROLLBACK').catch(() => undefined)
       lockHolder.release()

@@ -1,7 +1,10 @@
 <template>
   <div class="pty-terminal-shell" :class="{ 'is-disconnected': !connected }">
     <div ref="terminalRef" class="pty-terminal" :aria-label="t('terminalUi.interactiveLabel')"></div>
-    <div v-if="statusText" class="pty-terminal-status" role="status">{{ statusText }}</div>
+    <div v-if="statusText" class="pty-terminal-status" :class="{ 'can-retry': retryAvailable }">
+      <span role="status">{{ statusText }}</span>
+      <ActionButton v-if="retryAvailable" variant="secondary" fit @click="retryConnection">{{ t('terminalUi.retryConnection') }}</ActionButton>
+    </div>
   </div>
 </template>
 
@@ -10,6 +13,7 @@ import { onActivated, onMounted, onUnmounted, onDeactivated, ref, watch } from '
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from 'xterm'
 import 'xterm/css/xterm.css'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
 import { handleUnauthorized } from '@/services/authSession'
 import { useI18n } from 'vue-i18n'
 
@@ -19,6 +23,8 @@ const emit = defineEmits<{ status: [value: { terminalId: string; cols?: number; 
 const terminalRef = ref<HTMLElement | null>(null)
 const connected = ref(false)
 const statusText = ref('')
+const retryAvailable = ref(false)
+const maxReconnectAttempts = 5
 let terminal: Terminal | null = null
 let fitAddon: FitAddon | null = null
 let socket: WebSocket | null = null
@@ -41,20 +47,32 @@ function socketUrl(id: string): string {
     : configured.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:')
   return `${base}/terminals/${encodeURIComponent(id)}/ws`
 }
-function send(value: Record<string, unknown>) { if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(value)) }
+function send(value: Record<string, unknown>) { if (connected.value && socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(value)) }
 function resize() {
   if (!terminal || !fitAddon) return
   fitAddon.fit()
   send({ type: 'resize', cols: terminal.cols, rows: terminal.rows })
 }
+function retryConnection() {
+  intentionalClose = false
+  reconnectAttempt = 0
+  connect(true)
+}
 function scheduleReconnect() {
   if (intentionalClose || reconnectTimer !== null) return
+  if (reconnectAttempt >= maxReconnectAttempts) {
+    statusText.value = t('terminalUi.connectionFailed')
+    retryAvailable.value = true
+    return
+  }
   const delay = Math.min(5000, 300 * 2 ** reconnectAttempt++)
   statusText.value = t('terminalUi.disconnected', { seconds: Math.ceil(delay / 1000) })
   reconnectTimer = window.setTimeout(() => { reconnectTimer = null; connect() }, delay)
 }
 function connect(forcePromptRecovery = false) {
   if (intentionalClose) return
+  connected.value = false
+  retryAvailable.value = false
   statusText.value = t('terminalUi.connecting')
   if (promptRecoveryTimer !== null) { window.clearTimeout(promptRecoveryTimer); promptRecoveryTimer = null }
   const generation = ++socketGeneration
@@ -64,8 +82,8 @@ function connect(forcePromptRecovery = false) {
   const current = new WebSocket(socketUrl(props.terminalId))
   socket = current
   const isCurrent = () => socket === current && socketGeneration === generation
-  current.onopen = () => {
-    if (!isCurrent()) return
+  let startupError: string | undefined
+  function acceptReady() {
     connected.value = true; reconnectAttempt = 0; statusText.value = ''; resize()
     // 首次连接和显式重启允许用 Ctrl-L 兜底重绘提示符。普通断线重连时
     // PTY 仍在运行，后端会从新订阅推送输出，重复重绘会把两个提示符写到一行。
@@ -85,17 +103,23 @@ function connect(forcePromptRecovery = false) {
   current.onmessage = (event) => {
     if (!isCurrent()) return
     try {
-      const message = JSON.parse(event.data) as { type?: string; data?: string; cols?: number; rows?: number; message?: string }
+      const message = JSON.parse(event.data) as { type?: string; data?: string; cols?: number; rows?: number; message?: string; errorCode?: string }
       if (message.type === 'output' && message.data) {
         const bytes = Uint8Array.from(atob(message.data), char => char.charCodeAt(0))
         terminal?.write((outputDecoder ??= new TextDecoder()).decode(bytes, { stream: true }))
-      } else if (message.type === 'ready' || message.type === 'status') emit('status', { terminalId: props.terminalId, cols: message.cols, rows: message.rows })
-      else if (message.type === 'exit') {
+      } else if (message.type === 'ready' || message.type === 'status') {
+        if (message.type === 'ready') acceptReady()
+        emit('status', { terminalId: props.terminalId, cols: message.cols, rows: message.rows })
+      } else if (message.type === 'exit') {
         if (outputDecoder) terminal?.write(outputDecoder.decode())
         outputDecoder = null
         statusText.value = t('terminalUi.exited'); connected.value = false; intentionalClose = true; emit('exit', props.terminalId)
       }
-      else if (message.type === 'error') emit('error', message.message ?? t('terminalUi.connectionFailed'))
+      else if (message.type === 'error') {
+        const detail = message.message ?? t('terminalUi.connectionFailed')
+        if (message.errorCode === 'pty_setup_failed') startupError = detail
+        emit('error', detail)
+      }
     } catch { emit('error', t('terminalUi.invalidOutput')) }
   }
   current.onerror = () => { if (isCurrent()) connected.value = false }
@@ -110,6 +134,11 @@ function connect(forcePromptRecovery = false) {
       statusText.value = t('terminals.unavailable')
       return
     }
+    if (startupError || event.code === 4404) {
+      statusText.value = startupError ?? t('terminalUi.connectionFailed')
+      retryAvailable.value = true
+      return
+    }
     if (!intentionalClose) scheduleReconnect()
   }
 }
@@ -117,7 +146,7 @@ function hasWorkspacePrompt(): boolean {
   if (!terminal) return false
   const buffer = terminal.buffer.active
   for (let index = 0; index < buffer.length; index += 1) {
-    if (buffer.getLine(index)?.translateToString(true).includes('gugu-sandbox:/workspace$')) return true
+    if (/gugu-sandbox:\/(?:workspace|project|personal)(?:\/[^\r\n]*)?[$#]\s*$/u.test(buffer.getLine(index)?.translateToString(true) ?? '')) return true
   }
   return false
 }
@@ -229,6 +258,7 @@ onUnmounted(() => {
 .pty-terminal :deep(.xterm-viewport) { background:var(--terminal-bg,#101319) !important; }
 .pty-terminal :deep(.xterm-screen) { padding:0; }
 .pty-terminal-shell { --terminal-bg:#101319; }
-.pty-terminal-status { position:absolute; z-index:2; inset:0; display:grid; place-items:center; color:#778196; font:12px/1.5 var(--font-sans); pointer-events:none; }
+.pty-terminal-status { position:absolute; z-index:2; inset:0; display:flex; flex-direction:column; justify-content:center; align-items:center; gap:12px; padding:16px; text-align:center; color:#778196; font:12px/1.5 var(--font-sans); pointer-events:none; }
+.pty-terminal-status.can-retry { pointer-events:auto; }
 .pty-terminal-shell:not(.is-disconnected) .pty-terminal-status { display:none; }
 </style>

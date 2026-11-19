@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ScheduledTaskRunner } from '../../src/scheduled-tasks/runner.js'
 import type { OnceTaskRepository, ScheduledTaskExecutionCallback, ScheduledTaskLease } from '../../src/scheduled-tasks/runner.js'
 import { createScheduledTaskAgentAttempt, createScheduledTaskExecution, createScheduledTaskRunNow,
-  scheduledTaskSupportsFileDelivery } from '../../src/scheduled-tasks/run-now.js'
+  scheduledTaskProviderSelection, scheduledTaskSupportsFileDelivery } from '../../src/scheduled-tasks/run-now.js'
 import { fixture, identity, toolCall, usage } from '../agent/run/fixtures.js'
 import type { ProviderEvent } from '../../src/agent/models.js'
 import { ExecutionError } from '../../src/agent/executor/contracts.js'
@@ -11,6 +11,17 @@ const task = {
   id: '42', ownerId: 'owner-a', name: '测试任务', payload: '查看最新计划', channels: ['web', 'chat', 'qq'],
   deliveryTargets: {}, authorizedTools: [], emailAttachmentFileIds: [], workspaceId: null, filesystemGrantId: null,
 }
+
+it('定时运行禁用推理续接并保留Host选中的模型与凭据', () => {
+  const selected = {
+    modelIdentity: 'synthetic-model', accessScopeHash: 'synthetic-scope', systemPrompt: '合成提示词',
+    config: { provider: 'openai', model: 'synthetic-model', api_key: 'synthetic-secret', reasoning_persistence: 'continuation' },
+  }
+  expect(scheduledTaskProviderSelection(selected)).toEqual({
+    ...selected, config: { ...selected.config, reasoning_persistence: 'off' },
+  })
+  expect(selected.config.reasoning_persistence).toBe('continuation')
+})
 
 it('only offers send_file when a selected delivery channel can receive result attachments', () => {
   expect(scheduledTaskSupportsFileDelivery(['telegram'])).toBe(true)

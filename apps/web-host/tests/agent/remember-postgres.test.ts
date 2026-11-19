@@ -6,9 +6,9 @@ import path from 'node:path'
 import test from 'node:test'
 import { Pool } from 'pg'
 import { createPostgresRuntime, tablesSql } from '@gugu/core/data'
-import { createLocalAgentRememberPort } from '../../src/domains/agent-sessions/tools/agent-memory-write.js'
-import { createAgentToolRegistry, filterConfiguredWebAgentTools } from '../../src/domains/agent-sessions/tools/agent-tool-registry.js'
-import { createAgentRagRebuildWorker } from '../../src/domains/agent-sessions/rag-rebuild.js'
+import { createLocalAgentRememberPort } from '../../src/modules/agent-sessions/tools/agent-memory-write.js'
+import { createAgentToolRegistry, filterConfiguredWebAgentTools } from '../../src/modules/agent-sessions/tools/agent-tool-registry.js'
+import { createAgentRagRebuildWorker } from '../../src/modules/agent-sessions/rag-rebuild.js'
 import { applyRagIndexMigration } from '../../src/migrations/rag-index-migrate.js'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL

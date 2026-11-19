@@ -5,7 +5,7 @@ import { databaseTime, nowUtc, utc, type Clock } from '../../data/codec.js'
 
 type Row = { id: number; title: string; source: string | null; chat_type: string | null; workspace_name: string | null; session_context: unknown; updated_at_iso: string; created_at_iso: string }
 export interface AgentSessionListRuntime {
-  activeStatuses(sessionIds: number[]): Promise<Map<number, boolean>>
+  activeStatuses(sessionIds: number[], ownerId: string): Promise<Map<number, boolean>>
   filesystemAuthorizationEnabled(): boolean
   workspaceShellSupported(): boolean
   /** SQLite 授权到期比较使用可信 UTC 时钟；PostgreSQL 使用数据库时钟。 */
@@ -76,7 +76,7 @@ export function createSqlAgentSessionLister(db: Kysely<any>, backend: 'postgres'
     const cutoff = backend === 'sqlite' && enabled ? databaseTime((runtime.clock ?? nowUtc)(), 'sqlite') : null
     const unexpired = backend === 'postgres' ? sql`AND (expires_at IS NULL OR expires_at>CURRENT_TIMESTAMP)` : sql``
     const [running, grantRows, replies] = await Promise.all([
-      runtime.activeStatuses(ids),
+      runtime.activeStatuses(ids, normalized),
       enabled ? sql<{ subject_id: string; expires_at: string | null }>`SELECT subject_id,expires_at FROM filesystem_authorization_grants WHERE user_id=${owner} AND subject_type='session' AND revoked_at IS NULL ${unexpired}`.execute(db).then(result => result.rows) : Promise.resolve([]),
       webIds.length ? sql<{ session_id: number; id: number }>`WITH latest AS (SELECT session_id,max(conversation_seq) AS conversation_seq FROM conversation_messages AS message WHERE session_id IN (${sql.join(webIds)}) AND role='assistant' AND content_json IS NULL AND (content<>'' OR (files IS NOT NULL AND ${files} NOT IN ('[]','null'))) GROUP BY session_id) SELECT message.session_id,message.id FROM conversation_messages message JOIN latest ON latest.session_id=message.session_id AND latest.conversation_seq=message.conversation_seq`.execute(db).then(result => result.rows) : Promise.resolve([]),
     ])

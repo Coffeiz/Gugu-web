@@ -1,8 +1,13 @@
-import type {FastifyInstance,preHandlerHookHandler} from 'fastify'
-import {embeddingDimensions,probeEmbedding,type EmbeddingProbeSettings,type EmbeddingProbeInput} from '@gugu/core/preferences/embedding-probe'
-import {NodeProviderTransport} from '@gugu/core/providers/node'
-import {readConfigOverride} from '../../adapters/config-override-file.js'
-import {pythonQueryBoolean} from '../../http/python-query.js'
+import type { FastifyInstance,preHandlerHookHandler } from 'fastify'
+
+import { embeddingDimensions,probeEmbedding,type EmbeddingProbeInput,type EmbeddingProbeSettings } from '@gugu/core/preferences/embedding-probe'
+
+import { NodeProviderTransport } from '@gugu/core/providers/node'
+
+import { readConfigOverride } from '../../adapters/config-override-file.js'
+
+import { pythonQueryBoolean } from '../../http/python-query.js'
+
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value)
 function parse(body:unknown):EmbeddingProbeInput {
  if(!object(body))throw new Error('参数无效')

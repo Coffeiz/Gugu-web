@@ -18,10 +18,11 @@ MAX_VALIDATION_ISSUES = 5
 _INTEGER_TEXT = re.compile(r"^[+-]?\d+$")
 _NOTE_SCHEMA_HINTS = [
     "普通笔记优先使用 markdown/append_markdown 字符串；只有需要引用或结构化块时才重建 blocks/append_blocks 数组。",
-    "note_create 的 markdown 与 blocks 二选一；note_update 的 append_markdown、append_blocks、line_edits 三选一。",
+    "note_create 的 markdown 与 blocks 二选一；note_update 的 append_markdown、append_blocks、line_edits、find_replace 一次最多传一个。",
     "paragraph/heading 使用 content 数组；bullet_list/ordered_list/task_list 使用 items 数组；blockquote 使用 paragraphs 数组。",
     "列表和待办只支持扁平项：列表项只能是 {content:[{type:text/reference,...}]}，待办项只能是 {checked:boolean,content:[{type:text/reference,...}]}。",
-    "note_update 的 line_edits 使用 {target_lines,expected,content}：数字 target_lines 必须匹配 note_get.numbered_content 的原始物理行，整篇才使用 all；content 为空表示删除指定行；不要与 append_blocks 同时传。",
+    "note_update 的 line_edits 使用 {target_lines,expected,content}：数字 target_lines 必须匹配 note_get.numbered_content 的原始物理行，整篇才使用 all；content 为空表示删除指定行；不要与其他正文更新方式同时传。",
+    "局部替换可传 find_replace 对象，包含 find（从 note_get.content_md 逐字复制的非空原文）和 replace（新文字）。只在唯一匹配时写入。",
     "行内对象必须带 type；不要在列表项内嵌套列表、content 或 paragraphs，也不要把数组包装成 {item:[...]}。",
 ]
 
@@ -771,6 +772,11 @@ def invalid_input_payload(
             payload["next_action"] = (
                 "更新未执行：先从 note_search/note_get 结果取得真实 node_id；目标不明确时询问用户，"
                 "不要猜 ID 或重复提交。"
+            )
+        elif any(item.get("rule") == "not" for item in bounded):
+            payload["next_action"] = (
+                "更新未执行：append_markdown、append_blocks、line_edits、find_replace 互斥。"
+                "本次只传一种；如果还要进行另一种正文编辑，请分开调用。"
             )
         elif invalid_append_blocks:
             payload["next_action"] = (

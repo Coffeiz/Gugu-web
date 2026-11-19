@@ -1,11 +1,11 @@
-import { clearRedisAgentReflectionSession } from '../domains/agent-sessions/persistence/agent-reflection-queue-redis.js'
+import { clearRedisAgentReflectionSession } from '../modules/agent-sessions/persistence/agent-reflection-queue-redis.js'
 import { randomUUID } from 'node:crypto'
 import { connect as connectTcp, type Socket } from 'node:net'
 import { connect as connectTls, type TLSSocket } from 'node:tls'
-import type { RedisRateLimitCommands } from '../domains/auth/rate-limit.js'
-import type { RegistrationCodeRedisCommands } from '../domains/auth/persistence/registration-codes.js'
-import type { PasswordResetRedisCommands } from '../domains/auth/password-reset.js'
-import type { FilesystemAuthorizationRedisCommands } from '../domains/agent-sessions/filesystem-authorization-confirmations.js'
+import type { RedisRateLimitCommands } from '../modules/auth/rate-limit.js'
+import type { RegistrationCodeRedisCommands } from '../modules/auth/persistence/registration-codes.js'
+import type { PasswordResetRedisCommands } from '../modules/auth/password-reset.js'
+import type { FilesystemAuthorizationRedisCommands } from '../modules/agent-sessions/filesystem-authorization-confirmations.js'
 import type { ScheduledTaskRedisCommands } from '../modules/scheduled-tasks/persistence/redis-lease.js'
 
 type RedisConnection = Socket | TLSSocket
@@ -36,6 +36,10 @@ export interface RedisEventPublisher {
   publishAuthStateChanged(userId: string): Promise<boolean>
   bumpContextRevision(userId: string, resource: string): Promise<boolean>
   publishResourceChanged(input: ResourceChangedInput): Promise<boolean>
+  publishTrashPurgeProgress(input: {
+    ownerId: string; jobId: number; status: 'queued' | 'running' | 'completed' | 'failed'
+    progressCurrent: number; progressTotal: number; failedCount: number
+  }): Promise<boolean>
 }
 
 export interface RedisAgentCancellationCommands {
@@ -95,13 +99,6 @@ export function createRedisNotificationPublisher(redisUrl: string) {
     } catch {
       return false
     }
-  }
-}
-
-/** 向已有管理员文件同步事件频道发布提交后的失效通知。 */
-export function createRedisFileSyncPublisher(redisUrl: string) {
-  return async (event: object): Promise<void> => {
-    await withRedis(redisUrl, command => command('PUBLISH', 'events:filesync-admin', JSON.stringify(event)))
   }
 }
 
@@ -612,6 +609,27 @@ export function createRedisEventPublisher(
         return true
       } catch {
         reportFailure('resource notification')
+        return false
+      }
+    },
+
+    async publishTrashPurgeProgress(input) {
+      try {
+        await withRedis(redisUrl, (command) => command('PUBLISH', `events:${input.ownerId}`, JSON.stringify({
+          protocol_version: 'live-event-v1',
+          event_id: eventId(),
+          type: 'task.progress',
+          task_type: 'trash_purge',
+          task_id: input.jobId,
+          status: input.status,
+          progress_current: input.progressCurrent,
+          progress_total: input.progressTotal,
+          failed_count: input.failedCount,
+          created_at: now().toISOString(),
+        })))
+        return true
+      } catch {
+        reportFailure('trash purge progress notification')
         return false
       }
     },

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createCipheriv, createHash, randomBytes } from 'node:crypto'
-import { decryptByokCredential, resolveByokLlm, type ByokCredential } from '../../src/domains/agent-config/byok.js'
+import { decryptByokCredential, resolveByokLlm, type ByokCredential } from '../../src/modules/agent/model-config/byok.js'
 function seal(key: Buffer, nonce: Buffer, value: Buffer, aad: string) {
   const cipher = createCipheriv('aes-256-gcm', key, nonce); cipher.setAAD(Buffer.from(aad))
   return Buffer.concat([cipher.update(value), cipher.final(), cipher.getAuthTag()])
@@ -31,7 +31,7 @@ test('用户凭据仅绑定自身地址，未知目的地不使用用户密钥',
 })
 
 test('问候短文本异步解封BYOK后仍绑定用户目的地并覆盖模型字段', async () => {
-  const { resolveByokLlmAsync } = await import('../../src/domains/agent-config/byok.js')
+  const { resolveByokLlmAsync } = await import('../../src/modules/agent/model-config/byok.js')
   const row = fixture(), base = { provider: 'platform', base_url: 'https://platform.example.test', api_key: 'platform-key', model: 'platform-model' }
   const resolved = await resolveByokLlmAsync(base, row, async value => decryptByokCredential(value, () => 'synthetic-master'), () => 'https://provider.example.test/')
   assert.equal(resolved.provider, 'deepseek')
@@ -41,7 +41,7 @@ test('问候短文本异步解封BYOK后仍绑定用户目的地并覆盖模型�
 })
 
 test('运行绑定仅允许原 owner 和 run 使用，身份不含配置密钥', async () => {
-  const { bindProviderSelection } = await import('../../src/domains/agent-config/provider-resolver.js')
+  const { bindProviderSelection } = await import('../../src/modules/agent/model-config/provider-resolver.js')
   const identity = { ownerId: 'owner-a', sessionId: 'session-a', runId: 'run-a' }, signal = new AbortController().signal
   let requestedOwner = ''
   const binding = await bindProviderSelection(identity, {
@@ -58,7 +58,7 @@ test('运行绑定仅允许原 owner 和 run 使用，身份不含配置密钥',
 
 
 test('异步选择期间固定运行身份，释放池名额只执行一次', async () => {
-  const { bindProviderSelection } = await import('../../src/domains/agent-config/provider-resolver.js')
+  const { bindProviderSelection } = await import('../../src/modules/agent/model-config/provider-resolver.js')
   const identity = { ownerId: 'owner-a', sessionId: 'session-a', runId: 'run-a' }, original = { ...identity }, signal = new AbortController().signal
   let proceed!: () => void, selectedOwner = '', credentialOwner = '', releases = 0
   const gate = new Promise<void>(resolve => { proceed = resolve })

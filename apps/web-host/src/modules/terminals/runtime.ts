@@ -7,7 +7,7 @@ import { createTerminalConfirmationGate, type TerminalConfirmationStore } from '
 import { createHostTerminalCommandService } from './command-service.js'
 import { createTerminalInputAuthorizer } from './input-authorization.js'
 import { createTerminalLiveOutput } from './live-output.js'
-import { createTerminalMxcCommand } from './mxc-command.js'
+import { executeBubblewrapShell } from './bubblewrap-command.js'
 import { createTerminalShellExecution } from './shell-execution.js'
 import { createTerminalShellSnapshotReader } from './shell-snapshot.js'
 import { createTerminalWorkspaceMounts } from './workspace-mounts.js'
@@ -19,9 +19,10 @@ export function createTerminalRuntime<DB>(options: {
   publisher: Pick<RedisEventPublisher, 'publishResourceChanged'>; confirmations: TerminalConfirmationStore
   read(owner: string, terminal: string): Promise<TerminalListItem>
   runtime: Parameters<typeof createTerminalShellSnapshotReader>[2]
-  ptyEnabled(): boolean; diagnose(): void
+  ptyEnabled(): boolean | Promise<boolean>; diagnose(): void
   cancellation: { isRequested(owner: string, terminal: string, request: string): Promise<boolean> }
   lease: NonNullable<TerminalCommandPorts['lease']>
+  sandboxRootfs?: string
 }) {
   if (!options.cancellation || !options.lease) throw new Error('终端取消与活动租约必须同时启用')
   const snapshot = createTerminalShellSnapshotReader(options.db, 'postgres', options.runtime)
@@ -32,8 +33,13 @@ export function createTerminalRuntime<DB>(options: {
     read: snapshot, redeem: options.confirmations.redeem, confirm: gate,
     isCancelled: options.cancellation.isRequested,
     async run(owner, terminal, requestId, input, current, confirmed, signal) {
-      const mxc = createTerminalMxcCommand((_owner, _terminal, cwd) => mounts(owner, current.workspaceId, current.facts.fullUserSandboxWrite, cwd), createTerminalLiveOutput(options.publisher), current.egressProxyUrl)
-      return mxc(owner, terminal, requestId, input, confirmed, signal)
+      if (!options.sandboxRootfs || current.networkProfile !== 'none' || input.network !== 'none')
+        throw new Error('无可用的断网 Bubblewrap 执行环境')
+      const mount = await mounts(owner, current.workspaceId, current.facts.fullUserSandboxWrite, input.cwd)
+      const publish = createTerminalLiveOutput(options.publisher)
+      return executeBubblewrapShell(options.sandboxRootfs, mount, input, confirmed, signal, (stream, chunk) => {
+        void publish(owner, terminal, requestId, input.command, stream, chunk).catch(options.diagnose)
+      })
     },
   })
   return createHostTerminalCommandService({ db: options.db, publisher: options.publisher, authorize, read: options.read, execute, diagnose: options.diagnose, lease: options.lease })

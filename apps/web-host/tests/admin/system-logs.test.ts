@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
-import { createSystemLogReader } from '@gugu/core/admin/system-logs'
+import { createSystemLogReader } from '../../src/modules/admin/logs.js'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 test('管理员系统日志按级别大小写过滤、时间倒序并保留空traceback', { skip: !url && '需要隔离PG' }, async () => {

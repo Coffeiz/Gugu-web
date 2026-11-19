@@ -4,10 +4,9 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { createAgentToolRegistry } from '../../src/domains/agent-sessions/tools/agent-tool-registry.js'
-import { createWebAgentSkillProductionPorts } from '../../src/domains/agent-sessions/tools/agent-skill-production-ports.js'
+import { createAgentToolRegistry } from '../../src/modules/agent-sessions/tools/agent-tool-registry.js'
 import { initializeSqlite, openSqliteRuntime } from '@gugu/core/data'
-import { createBuiltinSkillDefinitions } from '@gugu/core/skills'
+import { createAgentSkillRuntimePorts, createBuiltinSkillDefinitions } from '@gugu/core/skills'
 import { createBundledSkillDocuments } from '@gugu/core/skills/bundled'
 
 test('Web use_skill 经 Markdown head、Core registry 与 owner scoped Skill 端口加载并复验撤权', async () => {
@@ -34,7 +33,7 @@ test('Web use_skill 经 Markdown head、Core registry 与 owner scoped Skill 端
         description_short: '仅用于 owner 隔离回归。', category: 'personal', related_tools: ['search_conversations'],
         enabled: userSkillEnabled, source: 'user' as const }] : [] }
     }
-    const skillPorts = await createWebAgentSkillProductionPorts({
+    const skillPorts = await createAgentSkillRuntimePorts({
       ownerId,
       builtins,
       listUser,

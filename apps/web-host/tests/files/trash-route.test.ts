@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import Fastify from 'fastify'
 import test from 'node:test'
-import { registerTrashRoutes, TrashCooldownError, type TrashOperations, type TrashPurgeJob } from '../../src/domains/files/trash.js'
+import { registerTrashRoutes, TrashCooldownError, TrashPurgeUnavailableError, type TrashOperations, type TrashPurgeJob } from '../../src/modules/files/trash.js'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
 
 const ownerId = '11111111-1111-4111-8111-111111111111'
@@ -90,6 +90,16 @@ test('清空回收站冷却返回 429 与 Retry-After', async () => {
     assert.equal(response.statusCode, 429)
     assert.equal(response.headers['retry-after'], '30')
     assert.deepEqual(response.json(), { detail: '刚完成清空，请稍后再试' })
+  } finally { await app.close() }
+})
+
+test('清空后端未就绪时返回 503 且不伪造任务成功', async () => {
+  const { app, calls } = setup({ startEmpty: async () => { throw new TrashPurgeUnavailableError() } })
+  try {
+    const response = await app.inject({ method: 'POST', url: '/api/v1/trash/empty' })
+    assert.equal(response.statusCode, 503)
+    assert.deepEqual(response.json(), { detail: '回收站清空服务暂不可用' })
+    assert.deepEqual(calls, [])
   } finally { await app.close() }
 })
 

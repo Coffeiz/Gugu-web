@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { createAgentLlmConfigService, createAdminProviderModelFetcher } from '../../src/domains/admin/agent-llm-config-service.js'
+import { createAgentLlmConfigService, createAdminProviderModelFetcher } from '../../src/modules/admin/llm-settings.js'
 
 test('预设修改在注入锁内读取最新配置并原子发布，仅改变 ai 相关字段', () => {
   const dir = mkdtempSync(join(tmpdir(), 'gugu-llm-config-')), path = join(dir, 'config.json')

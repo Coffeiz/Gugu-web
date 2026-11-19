@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import {registerModelDirectoryRoutes} from '../../src/modules/admin/llm-model-directory.js'
+import {registerModelDirectoryRoutes} from '../../src/modules/admin/llm.js'
 import {createAdminModelDirectory} from '../../../../packages/core/src/agent/config/admin-model-directory.js'
 import {installHttpErrorHandler} from '../../src/http/errors.js'
 

@@ -6,7 +6,7 @@ import { installHttpErrorHandler } from '../../src/http/errors.js'
 import {
   registerWorkspaceDirectoryRoutes,
   type WorkspaceDirectoryOperations,
-} from '../../src/domains/workspaces/workspace-directories.js'
+} from '../../src/modules/workspaces/workspace-directories.js'
 
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
 const row = {

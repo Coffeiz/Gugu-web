@@ -653,7 +653,7 @@ onUnmounted(() => {
 </template>
 
 <style>
-.desktop-cal-layout { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 14px; flex: 1; height: auto; min-height: 0; }
+.desktop-cal-layout { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: var(--space-md); flex: 1; height: auto; min-height: 0; }
 .desktop-cal-grid,.desktop-cal-info > .cal-sidebar { min-width: 0; min-height: 0; }
 .desktop-cal-grid { display: flex; flex-direction: column; padding: var(--space-md, 16px); overflow: hidden; }
 .desktop-cal-month { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; user-select: none; -webkit-user-select: none; }

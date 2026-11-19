@@ -13,12 +13,13 @@ Host `domains/search/search.ts`保留 HTTP 路由及认证 owner 注入，生产
 | 来源 | PG实际实现 | 当前SQLite实现 |
 | --- | --- | --- |
 | project、client、event | 已接公共查询 | 正式临时schema真实读取已验收 |
-| file、folder、note、canvas_note、skill、mcp、scheduled_task | 原Web实际查询已共享并通过隔离PG | 尚未接入来源，显式不可用；并不表示这些领域的所有表都不存在 |
+| file、folder、skill | 原Web实际查询已共享并通过隔离PG | 尚未接入来源，显式不可用；并不表示这些领域的所有表都不存在 |
+| note、canvas_note、mcp、scheduled_task | 原Web实际查询已共享并通过隔离PG | 正式临时schema真实读取已验收；MCP按owner私有/平台scope返回脱敏元数据 |
 | conversation | 原标题/消息查询已共享并通过隔离PG | 独立单语句来源及反斜线转义子集已验收，当前未装配；非ASCII匹配、罗马音、Worker/规模仍未完成 |
 
 SQLite会话来源接入前必须在LIMIT前处理全部可能排序记录的时间规范/精度，不能只检查前8条或用毫秒Date排序冒称无损。未经独立真实正式schema验收，不升级该来源能力。
 
-聊天会话交接的`sqlite-conversations.ts`最初通过`db.transaction()`触发BEGIN IMMEDIATE写保留锁。现已改为单条只读SQL：在同一语句快照中校验owner全部会话/消息时间，再按规范文本的完整微秒排序，输出受限标题和最多8条消息。共享纯SQL谓词`data/sqlite-time-sql.ts`检查Gregorian日期、固定六位小数、ASCII格式及NUL，兼容UTF8/UTF16；不修复或改写旧时间。验证仍扫描该owner全部时间，不能声称规模成本已解决。它尚未被`createKyselySqliteGlobalSearchSources`装配，当前可用来源仍为三类；独立端口测试不计入已接通数。
+聊天会话交接的`sqlite-conversations.ts`最初通过`db.transaction()`触发BEGIN IMMEDIATE写保留锁。现已改为单条只读SQL：在同一语句快照中校验owner全部会话/消息时间，再按规范文本的完整微秒排序，输出受限标题和最多8条消息。共享纯SQL谓词`data/sqlite-time-sql.ts`检查Gregorian日期、固定六位小数、ASCII格式及NUL，兼容UTF8/UTF16；不修复或改写旧时间，当前仍未装配到共享全局搜索。验证仍扫描该owner全部时间，不能声称规模成本已解决。
 
 驱动核对：SqliteAdapter声明单连接，RuntimeDriver通过ConnectionMutex串行化acquire/release，DefaultConnectionProvider在finally归还连接，同连接consumer另由SingleConnectionProvider串行化。真实测试验证事务句柄可直接调用来源，另一顶层查询等待持有连接的事务释放后读取已提交值；不能在已占连接回调内await根db重入。现有worker普通读命令仍被runtime.transaction包裹为BEGIN IMMEDIATE，尚无搜索命令，未验收Worker端搜索。未改全局调度或手写BEGIN DEFERRED绕开连接管理。better-sqlite3同步执行不能由AbortSignal在SQL中途打断，只能等待结束清理后传播取消；单语句一致性也不承诺跨来源统一快照。
 
@@ -34,9 +35,9 @@ SQLite会话来源接入前必须在LIMIT前处理全部可能排序记录的时
 
 ## 最新能力边界验收
 
-正式 SQLite 当前仅装配 project、event、client 三种来源；非空默认全来源查询因其余来源缺失而明确失败，调用方需显式选择可用子集。正式 SQLite 搜索回归 12/12、隔离 PostgreSQL 与 SQLite 会话来源对照 3/3、统一构建后的 Web/Host 隔离 PostgreSQL 搜索回归 14/14、Python `test_global_search.py` 对照 19/19 均通过，失败和跳过均为 0。PG 测试验证默认 11 来源真实查询、owner、错误和取消；临时实例与随机 schema 已清理。Core 与 Host 的类型检查和搜索/Mind 定向测试也在能力字段改为必填后通过。下列历史计数保留各轮原始覆盖范围，不替代本轮结果。
+正式 SQLite 当前装配 project、event、client、mcp、scheduled_task、note、canvas_note 七种来源；非空默认全来源查询仍因 file、folder、conversation、skill 缺失而明确失败，调用方需显式选择可用子集。原正式 SQLite 搜索回归 12/12、隔离 PostgreSQL 与 SQLite 会话来源对照 3/3、统一构建后的 Web/Host 隔离 PostgreSQL 搜索回归 14/14、Python `test_global_search.py` 对照 19/19 均通过，失败和跳过均为 0。2026-11-18 MCP 来源补齐新增真实正式 SQLite 行为测试，先因能力未装配而失败，接入后全局搜索相关 Core 回归 55/55；覆盖 owner 私有/平台 scope 名称搜索、排序与 endpoint/凭据不泄露。PG 测试验证默认 11 来源真实查询、owner、错误和取消；临时实例与随机 schema 已清理。Core 与 Host 的类型检查和搜索/Mind 定向测试也在能力字段改为必填后通过。下列历史计数保留各轮原始覆盖范围，不替代本轮结果。
 
-上述证据不代表 SQLite 其他来源、数据库语言匹配、桌面搜索或 Agent 工具搜索已完成。SQLite 与 PostgreSQL 的非 ASCII 匹配和罗马音仍存在后端差异；独立 SQLite conversation 来源尚未装配。桌面尚无搜索命令和能力发现链，Agent `global_search` 的 Node 工具定义和生产 Run 调用尚未验收。
+上述证据不代表 SQLite 其他来源、数据库语言匹配、桌面搜索或 Agent 工具搜索已完成。SQLite 与 PostgreSQL 的非 ASCII 匹配和罗马音仍存在后端差异；独立 SQLite conversation 来源尚未装配。SQLite Core 搜索工厂目前没有生产 Host/Desktop 调用方，桌面尚无搜索命令和能力发现链；Agent `global_search` 的 Node 工具定义和生产 Run 调用仍须按各自实际装配验收。
 
 ## 验收证据（2026-11-14）
 

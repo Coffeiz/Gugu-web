@@ -101,6 +101,22 @@ describe('会话加载代次', () => {
     scope.stop()
   })
 
+  it('页面刷新后以服务端活跃态续接原会话，即使历史里已有助手回复', async () => {
+    const { scope, sessionId, sessions, resumeStream } = createSessionManager()
+    sessionId.value = 101
+    vi.mocked(agentApi.getMessages).mockResolvedValue({
+      messages: [{ id: 1, role: 'assistant', content: '上一轮回复', createdAt: '2026-10-15T00:00:00Z' }],
+      timelineEvents: [], pagination: { newestId: 1 }, active: true,
+    } as Awaited<ReturnType<typeof agentApi.getMessages>>)
+
+    try {
+      await expect(sessions.loadSession(101, true)).resolves.toBe('loaded')
+      expect(resumeStream).toHaveBeenCalledExactlyOnceWith(101)
+    } finally {
+      scope.stop()
+    }
+  })
+
   it('切回时以服务端终态覆盖缓存运行态，不续接已结束会话也不保留动画', async () => {
     const { scope, sessionId, messages, sessions, sessionList, streaming, resumeStream } = createSessionManager()
     sessionList.value = [

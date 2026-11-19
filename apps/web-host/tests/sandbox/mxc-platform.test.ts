@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:f
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pinTerminalDirectory } from '../../src/modules/terminals/pinned-directory.js'
-import { MxcExecutor } from '../../../../packages/sandbox/src/mxc.js'
+import { MxcExecutor } from '@gugu/sandbox/mxc'
 
 test('终端目录句柄固定目录并拒绝符号链接', { skip: process.platform !== 'linux' }, async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'gugu-pin-'))
@@ -19,10 +19,11 @@ test('终端目录句柄固定目录并拒绝符号链接', { skip: process.plat
       await symlink('/tmp', path.join(root, owner, 'workspace', 'one'))
       assert.equal(await readFile(`${pinned.path}/file`, 'utf8'), 'old')
       await assert.rejects(pinTerminalDirectory(root, owner, `${owner}/workspace/one`))
+      await assert.rejects(pinTerminalDirectory(root, owner, `${owner}/workspace/one/new`, true))
     } finally { await pinned.close() }
   } finally { await rm(root, { recursive: true, force: true }) }
 })
-import { decideMxcPlatformSupport } from '../../../../packages/sandbox/src/platform.js'
+import { decideMxcPlatformSupport } from '@gugu/sandbox/platform'
 
 test('Linux execution selects Bubblewrap and never treats LXC availability as the default process backend', () => {
   assert.deepEqual(decideMxcPlatformSupport('linux', {

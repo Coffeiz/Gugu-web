@@ -5,8 +5,8 @@ import {tmpdir} from 'node:os'
 import path from 'node:path'
 import {Pool} from 'pg'
 import test from 'node:test'
-import {createPostgresFolderWriteOperations} from '../../src/domains/files/folder-writes-postgres.js'
-import {createLocalPathMirrorMutation} from '../../src/domains/files/local-path-mirror.js'
+import {createPostgresFolderWriteOperations} from '../../src/modules/files/folder-writes-postgres.js'
+import {createLocalPathMirrorMutation} from '../../src/modules/files/local-path-mirror.js'
 const url=process.env.GUGU_WEBUI_TEST_DATABASE_URL,owner='11111111-1111-4111-8111-111111111111'
 test('文件夹事务 COMMIT 成功但响应丢失时保留数据库引用路径',{skip:!url&&'需要隔离 PostgreSQL'},async()=>{
  const schema=`folder_commit_${randomUUID().replaceAll('-','')}`,admin=new Pool({connectionString:url});await admin.query(`CREATE SCHEMA "${schema}"`)

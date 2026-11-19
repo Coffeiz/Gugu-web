@@ -20,6 +20,7 @@
   background: linear-gradient(to right, var(--project-card-gradient-start) 0%, var(--project-card-gradient-end) 40%), var(--pr-project-color);
   pointer-events: none;
   z-index: 0;
+  opacity: 1;
   transition: opacity 0.25s ease-out;
 }
 
@@ -29,12 +30,16 @@
 }
 
 .mind-project-card.is-grabbed:not([data-runtime-phase="landing"])::before,
-.mind-project-card[data-runtime-phase="grab-start"]::before {
+.mind-project-card[data-runtime-proxy-content="true"]:is([data-runtime-phase="grab-start"], [data-runtime-phase="grabbing"])::before {
   opacity: 0;
 }
 
-.mind-project-card[data-runtime-phase="landing"]::before {
-  opacity: 1;
+/* 只给首次抓取的代理设置起始值。落位交叉淡化会再克隆一份源代理，
+   嵌套的源层应保持抓取底色，渐变随目标层淡入。 */
+@starting-style {
+  .mind-project-card[data-runtime-proxy-content="true"]:is([data-runtime-phase="grab-start"], [data-runtime-phase="grabbing"]):not([data-runtime-proxy-content="true"] *)::before {
+    opacity: 1;
+  }
 }
 
 .mind-project-card:hover {

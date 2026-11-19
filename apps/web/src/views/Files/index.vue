@@ -1037,7 +1037,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 
 <style scoped>
 .files-page {
-  display: flex; flex-direction: column; gap: 14px;
+  display: flex; flex-direction: column; gap: var(--space-md);
   height: 100%; position: relative;
   user-select: none;
 }

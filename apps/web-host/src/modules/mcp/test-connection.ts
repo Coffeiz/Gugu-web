@@ -31,15 +31,28 @@ interface McpConnectionRow {
  tool_allowlist:unknown;timeout_seconds:number;name:string
 }
 export interface McpEnvelopeDecrypt {decrypt(input:{ciphertext:string;nonce:string;encryptedDataKey:string;keyVersion:number}):Promise<string>}
-/** PG 配置读取、密文解包及受控 HTTP 探测；凭据不会进入 endpoint 或错误文本。 */
-export function createPostgresMcpConnectionTester<DB>(database:DB,options:{decrypt:McpEnvelopeDecrypt;transport():ProviderTransport;maxTools:number|(()=>number);client?:(input:Parameters<typeof createMcpHttpClient>[0])=>ReturnType<typeof createMcpHttpClient>}){
+/** PG owner 配置读取、受控 HTTP/stdio 握手与工具发现；凭据不会进入 endpoint 或可见错误。 */
+interface McpStdioTestClient {
+ connect():Promise<void>
+ listTools():Promise<{tools:unknown[]}>
+ close():Promise<void>
+}
+
+export function createPostgresMcpConnectionTester<DB>(database:DB,options:{decrypt:McpEnvelopeDecrypt;transport():ProviderTransport;maxTools:number|(()=>number);client?:(input:Parameters<typeof createMcpHttpClient>[0])=>ReturnType<typeof createMcpHttpClient>;stdioClient?:(input:{owner:string;command:string;timeoutSeconds:number})=>Promise<McpStdioTestClient>}){
  const db=database as {selectFrom:(table:any)=>any}
  return async(owner:string,serverId:string)=>{
   const row=await db.selectFrom('user_mcp_servers').select(['id','name','transport','endpoint','encrypted_endpoint','endpoint_nonce','encrypted_endpoint_key','endpoint_key_version','command','credential_slots','encrypted_credentials','credentials_nonce','encrypted_credentials_key','credentials_key_version','encrypted_headers','headers_nonce','encrypted_headers_key','headers_key_version','encrypted_query_params','query_params_nonce','encrypted_query_params_key','query_params_key_version','tool_allowlist','timeout_seconds']).where('id','=',serverId).where('user_id','=',owner).where('scope','=','user').executeTakeFirst() as McpConnectionRow|undefined
   if(!row)throw Object.assign(new Error('MCP server 不存在'),{statusCode:404})
-  if(row.transport!=='http')return {ok:false as const,error:'Node Web Host 暂不支持 stdio MCP 连接测试',tools:[] as [],error_kind:'configuration',retryable:false,next_action:'请使用 HTTP/HTTPS MCP server。'}
-  let transport:ProviderTransport|undefined,client:ReturnType<typeof createMcpHttpClient>|undefined
+  let transport:ProviderTransport|undefined,client:ReturnType<typeof createMcpHttpClient>|undefined,stdioClient:McpStdioTestClient|undefined
   try{
+   if(row.transport==='stdio'){
+    if(!options.stdioClient)throw new Error('MCP stdio 隔离运行能力不可用')
+    if(!row.command)throw new Error('MCP stdio 启动命令无效')
+    stdioClient=await options.stdioClient({owner,command:row.command,timeoutSeconds:row.timeout_seconds})
+    await stdioClient.connect()
+    const tools=filterMcpConnectionTools((await stdioClient.listTools()).tools,{maxTools:typeof options.maxTools==='function'?options.maxTools():options.maxTools,allowlist:Array.isArray(row.tool_allowlist)?row.tool_allowlist.filter((item):item is string=>typeof item==='string'):[]})
+    return {ok:true as const,tool_count:tools.length,tools:tools.slice(0,64)}
+   }
    const endpoint=row.encrypted_endpoint?await options.decrypt.decrypt({ciphertext:row.encrypted_endpoint,nonce:row.endpoint_nonce,encryptedDataKey:row.encrypted_endpoint_key,keyVersion:row.endpoint_key_version}):row.endpoint
    const slots=normalizeMcpSlots(Array.isArray(row.credential_slots)?row.credential_slots as Array<Record<string,unknown>>:[])
    let values:Record<string,string>={}
@@ -62,10 +75,10 @@ export function createPostgresMcpConnectionTester<DB>(database:DB,options:{decry
   }catch(error){
    const message=(error as {message?:unknown})?.message
    const text=typeof message==='string'?message:''
-   const limit=text.includes('超出单个 server 上限'),credentials=text.startsWith('MCP 凭据不得放入 URL'),missing=text.startsWith('MCP 缺少凭据值'),configuration=credentials||missing,timeout=/timeout|timed out|超时/i.test(text),auth=/\b(401|403)\b/.test(text)
-   const safe=limit?text:credentials?text:missing?text:auth?'MCP server 认证失败，请检查凭据':'无法连接 MCP server，请检查地址与网络'
+   const limit=text.includes('超出单个 server 上限')||text.includes('MCP stdio 会话数已达上限'),credentials=text.startsWith('MCP 凭据不得放入 URL'),missing=text.startsWith('MCP 缺少凭据值'),stdioUnavailable=text.startsWith('MCP stdio 隔离运行能力不可用')||text.startsWith('MCP stdio 启动命令无效'),configuration=credentials||missing||stdioUnavailable,timeout=/timeout|timed out|超时/i.test(text),auth=/\b(401|403)\b/.test(text)
+   const safe=limit?text:credentials?text:missing?text:stdioUnavailable?text:auth?'MCP server 认证失败，请检查凭据':'无法连接 MCP server，请检查地址与网络'
    const kind=limit?'limit':configuration?'configuration':timeout?'timeout':auth?'auth':'network'
-   return {ok:false as const,error:safe,tools:[] as [],error_kind:kind,retryable:['timeout','network'].includes(kind),next_action:limit?'请配置工具白名单后重试。':credentials?'请改用 Header 凭据槽位。':missing?'请填写 MCP server 凭据。':auth?'请检查 MCP server 凭据。':'请检查 MCP server 地址与网络。'}
-  }finally{await client?.close().catch(()=>{});await transport?.close?.().catch(()=>{})}
+   return {ok:false as const,error:safe,tools:[] as [],error_kind:kind,retryable:['timeout','network'].includes(kind),next_action:limit?'请检查工具数量上限或稍后重试。':credentials?'请改用 Header 凭据槽位。':missing?'请填写 MCP server 凭据。':stdioUnavailable?'请检查 MCP stdio 沙盒与启动命令配置。':auth?'请检查 MCP server 凭据。':'请检查 MCP server 地址与网络。'}
+  }finally{await stdioClient?.close().catch(()=>{});await client?.close().catch(()=>{});await transport?.close?.().catch(()=>{})}
  }
 }

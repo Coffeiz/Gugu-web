@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import type { Pool } from 'pg'
-import { createPostgresFileReadOperations } from '../../src/domains/files/file-reads-postgres.js'
+import { createPostgresFileReadOperations } from '../../src/modules/files/file-reads-postgres.js'
 
 const owner = '00000000-0000-4000-8000-000000000041'
 

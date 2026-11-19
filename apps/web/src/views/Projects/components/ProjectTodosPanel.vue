@@ -84,7 +84,7 @@ const emit = defineEmits<{
   border: 1.5px solid transparent; border-radius: var(--radius-compact); outline: none;
   transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard);
 }
-.todo-input:focus { background: var(--input-bg-focus); border-color: var(--input-border-focus); box-shadow: var(--input-focus-shadow); }
+.todo-input:focus { background: var(--input-bg-focus); border-color: var(--input-border-focus); }
 .todo-input::placeholder { color: var(--input-placeholder); }
 .todo-del {
   width: 22px; height: 22px; flex: 0 0 22px;

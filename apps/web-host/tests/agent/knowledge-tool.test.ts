@@ -5,11 +5,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { configureRagJieba } from '@gugu/core/agent/rag'
 import { initializeSqlite, openSqliteRuntime } from '@gugu/core/data'
-import { createWebOwnerAgentKnowledgeReadPort } from '../../src/domains/agent-sessions/tools/agent-knowledge.js'
-import { createLocalAgentKnowledgeReadStore } from '../../src/domains/agent-sessions/tools/agent-rag-knowledge-store.js'
-import { getAgentRagJieba } from '../../src/domains/agent-sessions/tools/agent-rag-jieba.js'
-import { createOwnerRagVectorSource } from '../../src/domains/agent-sessions/tools/agent-rag-vectors.js'
-import { createAgentToolRegistry } from '../../src/domains/agent-sessions/tools/agent-tool-registry.js'
+import { createWebOwnerAgentKnowledgeReadPort } from '../../src/modules/agent-sessions/tools/agent-knowledge.js'
+import { createLocalAgentKnowledgeReadStore } from '../../src/modules/agent-sessions/tools/agent-rag-knowledge-store.js'
+import { getAgentRagJieba } from '../../src/modules/agent-sessions/tools/agent-rag-jieba.js'
+import { createOwnerRagVectorSource } from '../../src/modules/agent-sessions/tools/agent-rag-vectors.js'
+import { createAgentToolRegistry } from '../../src/modules/agent-sessions/tools/agent-tool-registry.js'
 
 test('Host read_knowledge dispatch reads the owner FS and searches the persistent BM25 index', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gugu-knowledge-tool-'))

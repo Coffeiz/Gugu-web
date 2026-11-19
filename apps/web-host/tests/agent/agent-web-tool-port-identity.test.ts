@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { RunIdentity, ToolCall, ToolResult } from '@gugu/core/agent'
-import { createWebAgentToolPorts } from '../../src/domains/agent-sessions/agent-web-reconstructor.js'
+import { createWebAgentToolPorts } from '../../src/modules/agent-sessions/agent-web-reconstructor.js'
 
 const lease = { identity: { ownerId: 'owner-a', sessionId: '17', runId: 'run-a' } }
 const prepIdentity = { ownerId: 'owner-a', subject: { kind: 'session' as const, id: '17' }, workspaceId: null }

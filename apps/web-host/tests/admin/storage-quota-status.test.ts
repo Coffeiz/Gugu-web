@@ -1,7 +1,8 @@
+import { storageQuotaStateKey, storageQuotaLockKey } from '../../src/modules/admin/storage.js'
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {readStorageQuotaStatus} from '@gugu/core/admin/storage-quota-status'
-import {StorageQuotaReconcileUnavailable} from '../../src/modules/admin/storage-quota-reconcile.js'
+import {readStorageQuotaStatus} from '../../src/modules/admin/storage.js'
+import {StorageQuotaReconcileUnavailable} from '../../src/modules/admin/storage.js'
 test('配额状态保留终态、无锁标记中断且不覆盖并发完成',async()=>{
  let raw=JSON.stringify({status:'running',processed:2});const saved:string[]=[]
  const store={read:async()=>raw,lockExists:async()=>false,interruptIfUnchanged:async(expected:string,next:string)=>{if(raw!==expected)return false;raw=next;saved.push(next);return true}}
@@ -11,7 +12,7 @@ test('配额状态保留终态、无锁标记中断且不覆盖并发完成',asy
  raw='broken';assert.deepEqual(await readStorageQuotaStatus(store),{status:'idle'})
 })
 import Fastify from 'fastify'
-import {createRedisStorageQuotaStatusStore,registerStorageQuotaStatusRoute,storageQuotaStateKey,storageQuotaLockKey} from '../../src/modules/admin/storage-quota-status.js'
+import {createRedisStorageQuotaStatusStore,registerStorageQuotaStatusRoute} from '../../src/modules/admin/storage.js'
 import {createRedisAgentCancellationCommands,createRedisScheduledTaskCommands} from '../../src/adapters/redis-events.js'
 test('真实Redis读取状态、锁丢失写回7天TTL且鉴权在读取前拒绝',async()=>{
  const configured=process.env.GUGU_WEBUI_TEST_REDIS_URL;assert.ok(configured);const scopedRedis=new URL(configured);scopedRedis.pathname='/14';const redisUrl=scopedRedis.toString()

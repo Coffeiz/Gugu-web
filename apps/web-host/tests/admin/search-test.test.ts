@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { adminSearchTestSettings, createAdminSearchTest } from '../../../../packages/core/src/admin/search-test.js'
-import { createAdminSearchProbe, registerAdminSearchTestRoute } from '../../src/modules/admin/search-test.js'
+import { adminSearchTestSettings, createAdminSearchTest } from '../../src/modules/admin/search.js'
+import { createAdminSearchProbe, registerAdminSearchTestRoute } from '../../src/modules/admin/search.js'
 import type { ProviderHttpRequest, ProviderTransport } from '@gugu/core/providers'
 
 test('搜索测试配置按 Python 顺序读取环境基础值并由 override 文件覆盖', () => {

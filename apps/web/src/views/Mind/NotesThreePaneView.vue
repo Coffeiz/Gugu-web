@@ -1,5 +1,6 @@
 <template>
   <div class="ntp-layout">
+    <MindToolbar class="ntp-toolbar" />
     <!-- 栏 1：按日期分组的便签列表（竖列）。数据走 useMindStore 的 timeline（filterQ 已在
          store 内生效），与现行 NotesView 共享同一份数据源与筛选状态。 -->
     <section class="ntp-list">
@@ -228,6 +229,7 @@ import { localDateTimeToUtcIso, localDayKey, parseUtc } from '@/utils/dateAttrib
 import type { MindNote } from '@/services/api'
 import { persistMindNoteDraft } from './utils/noteDraft'
 import NoteEditor from './components/NoteEditor.vue'
+import MindToolbar from './components/MindToolbar.vue'
 import DateIndex from './components/DateIndex.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import DatePicker from '@/components/common/controls/DatePicker.vue'
@@ -700,7 +702,9 @@ function dayLabel(date: string) {
 // 日历选择日期 → 列表滚到对应日期分组（DatePicker 的 allowed-dates 已限定只选有记录的日期）
 watch(() => store.jumpTarget, (date) => {
   if (!date || !listRef.value) return
-  if (store.timeline.some(group => group.date === date)) {
+  const group = store.timeline.find(group => group.date === date)
+  if (group) {
+    if (!group.items.some(note => note.id === selectedId.value)) selectNote(group.items[0].id)
     scrollToDate(date, 'smooth')
     return
   }
@@ -774,15 +778,18 @@ function onListScroll() {
 
 <style scoped>
 .ntp-layout {
-  display: flex; gap: 16px;
+  display: grid; grid-template-columns: 316px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--space-md);
   height: 100%; min-height: 0;
   padding: 0 24px 22px;
 }
+.ntp-toolbar { grid-column: 1 / -1; }
 
 /* ── 栏 1：日期分组列表 ── */
 .ntp-list {
   /* Flex 项默认 min-width:auto，会被便签预览中的长无空格字符串撑开，覆盖固定栏宽。 */
-  flex: 0 0 316px; min-width: 0; min-height: 0;
+  min-width: 0; min-height: 0;
   display: flex; flex-direction: column;
 }
 .ntp-list-surface {
@@ -846,10 +853,9 @@ function onListScroll() {
   transition: var(--card-motion), box-shadow var(--motion-hover-card) ease;
 }
 .ntp-item:hover { transform: translateY(-1px); border-color: var(--border-hover); box-shadow: var(--elevation-card-hover); }
-.ntp-item:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.ntp-item:focus-visible { outline: 2px solid var(--border-focus); outline-offset: -2px; }
 .ntp-item.selected {
-  border-color: var(--action-outline);
-  box-shadow: var(--control-focus-shadow), var(--elevation-card-hover);
+  border-color: var(--mind-note-border-selected);
 }
 .ntp-item::after {
   content: '';
@@ -862,8 +868,7 @@ function onListScroll() {
   transition: opacity var(--hover-motion-card);
   pointer-events: none;
 }
-.ntp-item:hover::after,
-.ntp-item.selected::after { opacity: 1; }
+.ntp-item:hover::after { opacity: 1; }
 .ntp-item > * { position: relative; z-index: 1; }
 /* 便签四色 tint 消费主题 token（tokens/components/mind.css 定义亮暗两套值）——
    不能像 NoteCard 旧底稿那样硬编码浅色 rgb，暗色下会变成浅底配浅字不可读 */
@@ -923,7 +928,7 @@ function onListScroll() {
 
 /* ── 栏 2+3：阅读 + 信息同一块玻璃 ── */
 .ntp-detail {
-  flex: 1; min-width: 0; min-height: 0;
+  min-width: 0; min-height: 0;
   display: grid; grid-template-columns: minmax(0, 1fr) 264px;
   overflow: hidden;
 }

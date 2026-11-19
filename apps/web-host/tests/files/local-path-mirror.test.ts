@@ -3,7 +3,7 @@ import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { createLocalPathMirrorMutation } from '../../src/domains/files/local-path-mirror.js'
+import { createLocalPathMirrorMutation } from '../../src/modules/files/local-path-mirror.js'
 
 const owner = '00000000-0000-4000-8000-000000000011'
 

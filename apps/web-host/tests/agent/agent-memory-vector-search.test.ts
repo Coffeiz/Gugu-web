@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { createAgentMemoryContextLoader } from '../../src/modules/agent-sessions/memory-context.js'
 import { createAgentMemoryVectorSearchFactory } from '../../src/modules/agent-sessions/memory-vector-search.js'
-import { createPostgresAgentRagEmbeddingPort } from '../../src/domains/agent-sessions/tools/agent-rag-vectors.js'
+import { createPostgresAgentRagEmbeddingPort } from '../../src/modules/agent-sessions/tools/agent-rag-vectors.js'
 
 test('Agent context uses owner-scoped persisted vectors and the configured embedding model', async () => {
   const root = await mkdtemp(join(tmpdir(), 'gugu-agent-memory-vector-search-'))

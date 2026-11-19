@@ -44,7 +44,7 @@ html[data-theme][data-family] :is(
   background: var(--input-bg);
   border: 1px solid var(--input-border);
   caret-color: var(--input-caret-color);
-  box-shadow: var(--input-hover-shadow), 0 0 0 0 transparent;
+  box-shadow: var(--input-hover-shadow);
   transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard);
 }
 html[data-theme][data-family] :is(
@@ -54,7 +54,7 @@ html[data-theme][data-family] :is(
 ):hover:not(:disabled) {
   background: var(--input-bg-hover);
   border-color: var(--input-border-hover);
-  box-shadow: var(--input-hover-shadow), 0 0 0 0 transparent;
+  box-shadow: var(--input-hover-shadow);
 }
 html[data-theme][data-family] :is(
   .form-input, .title-edit-input, .rename-input-inline, .header-name-input,
@@ -65,7 +65,7 @@ html[data-theme][data-family] :is(
   color: var(--input-fg);
   background: var(--input-bg-focus);
   border-color: var(--input-border-focus);
-  box-shadow: var(--input-hover-shadow), var(--input-focus-shadow);
+  box-shadow: var(--input-hover-shadow);
 }
 html[data-theme][data-family] :is(
   .form-input, .title-edit-input, .rename-input-inline, .header-name-input,
@@ -106,7 +106,6 @@ html[data-theme][data-family] .admin-main :is(
   outline: none;
   background: var(--input-bg-focus);
   border-color: var(--input-border-focus);
-  box-shadow: var(--input-focus-shadow);
 }
 html[data-theme][data-family] .admin-main :is(
   .behavior-input, .conc-input, .modal-input, .field-input, .text-input, .debug-search,
@@ -139,5 +138,5 @@ html[data-theme][data-family] .bm-card textarea:not(.theme-native-control):focus
   background-color: var(--input-bg-focus);
   border-color: var(--input-border-focus);
   /* 保留起始/hover 的 inset 层；inset 与外侧 focus ring 数量、顺序一致才能连续插值。 */
-  box-shadow: var(--input-hover-shadow), var(--input-focus-shadow);
+  box-shadow: var(--input-hover-shadow);
 }

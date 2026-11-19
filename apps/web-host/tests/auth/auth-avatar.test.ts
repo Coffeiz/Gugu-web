@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createUserToken, type PublicUserRecord } from '../../src/domains/auth/auth.js'
-import type { UserAvatarOperations } from '../../src/domains/auth/avatar.js'
+import { createUserToken, type PublicUserRecord } from '../../src/modules/auth/auth.js'
+import type { UserAvatarOperations } from '../../src/modules/auth/avatar.js'
 
 const ownerId = '00000000-0000-4000-8000-000000000011'
 const secret = 'synthetic-test-secret-for-user-avatar'
@@ -95,7 +95,7 @@ test('avatar upload is authenticated, derives owner from Host identity, and retu
 
   assert.equal(denied.statusCode, 401)
   assert.equal(uploaded.statusCode, 200)
-  assert.equal(uploaded.json().avatar_url, owner.avatarUrl)
+  assert.equal(uploaded.json().avatarUrl, owner.avatarUrl)
   assert.deepEqual(calls, [{ ownerId, mediaType: 'image/png', data: Buffer.from('private avatar') }])
 })
 

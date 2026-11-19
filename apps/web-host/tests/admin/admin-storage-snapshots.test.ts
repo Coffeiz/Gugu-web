@@ -13,7 +13,7 @@ import {
   registerAdminStorageSnapshotsRoute,
   STORAGE_SNAPSHOTS_SQL,
   type AdminStorageSnapshotRow,
-} from '../../src/domains/admin/admin-storage-snapshots.js'
+} from '../../src/modules/admin/storage.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

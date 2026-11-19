@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { CoreError } from '@gugu/core'
-import { createAgentProjectTool } from '../../src/domains/agent-sessions/tools/agent-project-tool.js'
+import { createAgentProjectTool } from '../../src/modules/agent-sessions/tools/agent-project-tool.js'
 import type { ProjectCreateRecord } from '@gugu/core/project-create'
 
 const ownerA = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'

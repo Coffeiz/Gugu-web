@@ -362,9 +362,8 @@ html[data-theme='dark'][data-family] .chat-window .msg-bubble.md-body a.chat-obj
 html[data-theme='dark'][data-family] .exp-session-title.is-header:hover,
 html[data-theme='dark'][data-family] .exp-session-title.is-header.is-editing {
   color: var(--content-primary);
-  border-color: var(--border-hover);
-  background: var(--surface-raised);
-  box-shadow: inset 0 0 0 1px var(--border-highlight), 0 0 0 3px var(--focus-ring);
+  border-color: var(--input-border-focus);
+  background: var(--input-bg-focus);
 }
 html[data-theme='dark'][data-family] .chat-window .exp-sidebar {
   border-right-color: var(--gugu-chat-sidebar-border) !important;

@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import {randomUUID} from 'node:crypto'
 import {Pool} from 'pg'
 import test from 'node:test'
-import {createPostgresFileBrowserOperations} from '../../src/domains/files/file-browser-postgres.js'
-import {createPostgresFileReadOperations} from '../../src/domains/files/file-reads-postgres.js'
+import {createPostgresFileBrowserOperations} from '../../src/modules/files/file-browser-postgres.js'
+import {createPostgresFileReadOperations} from '../../src/modules/files/file-reads-postgres.js'
 const url=process.env.GUGU_WEBUI_TEST_DATABASE_URL,owner='11111111-1111-4111-8111-111111111111',other='22222222-2222-4222-8222-222222222222'
 test('损坏的跨用户关联不会泄漏项目和文件夹名称',{skip:!url&&'需要隔离 PostgreSQL'},async()=>{
  const schema=`gugu_foreign_${randomUUID().replaceAll('-','')}`,admin=new Pool({connectionString:url});await admin.query(`CREATE SCHEMA "${schema}"`)

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { Pool } from 'pg'
 import { createApp } from '../../src/app.js'
-import { createAdminAuthAdapter } from '../../src/domains/admin/admin-auth.js'
+import { createAdminAuthAdapter } from '../../src/modules/admin/auth.js'
 import { createAdminHostGuard } from '../../src/http/admin-host-guard.js'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL

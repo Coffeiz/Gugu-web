@@ -5,8 +5,8 @@ import { scopeRevision } from '@gugu/core/im-memory-maintenance-batches'
 import {
   createImMemoryMaintenanceApplier, ImMemoryMaintenanceApplyError,
   IM_MEMORY_MODEL_PREVIEW_KEY, IM_MEMORY_MODEL_PREVIEW_PLAN_KEY,
-  registerImMemoryMaintenanceApplyRoute,
-} from '../../src/modules/admin/im-memory-maintenance-apply.js'
+} from '../../src/modules/admin/memory-apply.js'
+import { registerImMemoryMaintenanceApplyRoute } from '../../src/modules/admin/memory-apply.js'
 
 const current = { profile: {}, summary: {}, daily: '', memory: '', members: {} }
 const scope = (scope_id: string) => ({ owner_user_id: '00000000-0000-0000-0000-000000000001', platform: 'qq', bot_id: 'synthetic-bot', scope_type: 'group' as const, scope_id })

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { Pool } from 'pg'
-import { resolveAgentChatReferences } from '../../src/domains/agent-sessions/context/agent-references.js'
+import { resolveAgentChatReferences } from '../../src/modules/agent-sessions/context/agent-references.js'
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
 test('显式引用只读取 owner 对象，保留目录及消息锚点且不混淆展示输入', { skip: !url && '需要隔离 PostgreSQL' }, async () => {

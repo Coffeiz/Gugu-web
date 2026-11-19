@@ -34,7 +34,8 @@ it('Agent、Provider和共用Executor可移植入口的运行依赖闭包不装�
       const target = resolve(dirname(file), dependency.replace(/\.js$/, '.ts'))
       const within = file.startsWith(sandbox + '/') ? sandbox : source
       expect(relative(within, target).startsWith('..')).toBe(false)
-      if (within === sandbox) expect(['platform.ts', 'mxc.ts']).not.toContain(relative(sandbox, target))
+      if (within === sandbox)
+        expect(relative(sandbox, target).replaceAll('\\', '/')).not.toMatch(/^(linux|mxc)\//)
       expect(relative(source, target).replaceAll('\\', '/')).not.toMatch(/^(data|runtime)\//)
       expect(relative(source, target).replaceAll('\\', '/')).not.toMatch(/^agent\/executor\/(platform|mxc)\.ts$/)
       if (relative(source, file).replaceAll('\\', '/').startsWith('agent/context/history/'))
@@ -52,6 +53,7 @@ it('Agent、Provider和共用Executor可移植入口的运行依赖闭包不装�
     'agent/run/event-stream.ts',
     'agent/providers/index.ts',
     'agent/executor/executor.ts',
+    'agent/skills/runtime.ts',
   ]
   for (const entry of entries) inspect(resolve(source, entry))
   for (const entry of entries.slice(1, 7))

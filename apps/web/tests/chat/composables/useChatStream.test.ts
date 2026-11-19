@@ -78,6 +78,23 @@ describe('useChatStream 展示事件与生命周期', () => {
     expect(options.messages.value).toHaveLength(2)
   })
 
+  it('回复后进入新一轮时重新显示思考状态，直到本轮收到正文', async () => {
+    const options = createOptions([])
+    const stream = useChatStream(options)
+    vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
+      { type: 'display_event', item: item('text-first', 'assistant', 1, { text: '上一轮回复' }) },
+      { type: 'round_start', run_id: 'run-a', round_id: 'r2' },
+      { type: 'display_event', item: item('text-next', 'assistant', 2, { text: '新一轮回复', roundId: 'r2' }) },
+      { type: 'done' },
+    ])))
+    await stream.resumeStream(42)
+    const statusCalls = vi.mocked(options.setStatus).mock.invocationCallOrder
+    const clearCalls = vi.mocked(options.clearStatus).mock.invocationCallOrder
+    expect(statusCalls).toHaveLength(2)
+    expect(statusCalls[1]).toBeGreaterThan(clearCalls[1]!)
+    expect(statusCalls[1]).toBeLessThan(clearCalls[2]!)
+  })
+
   it('收到流终态时刷新会话运行态，修复丢失独立完成通知后的侧栏动画残留', async () => {
     const options = createOptions([])
     vi.stubGlobal('fetch', vi.fn(async () => sseResponse([{ type: 'done' }])))

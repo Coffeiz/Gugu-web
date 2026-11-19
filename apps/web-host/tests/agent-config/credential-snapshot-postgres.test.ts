@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { Pool } from 'pg'
-import { readPostgresLlmCredentialSnapshot } from '../../src/domains/agent-config/credential-snapshot-postgres.js'
-import { createAtomicAgentModelSnapshot } from '../../src/domains/agent-config/atomic-model-snapshot.js'
+import { readPostgresLlmCredentialSnapshot } from '../../src/modules/agent/model-config/credential-snapshot-postgres.js'
+import { createAtomicAgentModelSnapshot } from '../../src/modules/agent/model-config/atomic-model-snapshot.js'
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
 test('PG 快照按 owner 隔离并捕获密文变化，不依赖更新时间', { skip: !url && '需要隔离 PostgreSQL' }, async () => {

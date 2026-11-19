@@ -7,6 +7,10 @@ description: gugu-webui Node.js/Fastify 后端开发、Python API 迁移与实�
 
 适用范围：`apps/web-host/src/` 中的 Fastify Host、领域路由、应用服务、持久化和适配器。前端改动阅读 `frontend` skill，测试设计阅读 `testing` skill；本文件不重复通用安全、Git、环境配置和测试规则。
 
+## 开发监听
+
+日常开发使用 `corepack pnpm --filter @gugu/webui dev`，监听 Web Host、Core、FS 和 Sandbox；不要在每次编辑后执行全量构建。首次缺少共享包制品时按提示初始化；生产构建验证或内置技能资源变更时仍需执行相应构建。监听编译出错时先修复，不以旧制品当作新代码运行。
+
 ## 路由与业务边界
 
 - 按业务域组织 Fastify 路由插件；认证由共用 Hook 建立已验证身份上下文，参数与 DTO 使用项目现有 Schema/Zod 契约，Core 错误通过统一 HTTP 映射返回。
@@ -25,10 +29,10 @@ description: gugu-webui Node.js/Fastify 后端开发、Python API 迁移与实�
 | 路径包含判断、owner ID 规范化、提交后 best-effort | `apps/web-host/src/adapters/path-safety.ts`：`isPathWithin`；`apps/web-host/src/adapters/owner-context.ts`：`normalizeOwnerId`；`apps/web-host/src/adapters/best-effort.ts`：`runBestEffort` |
 | Cookie 解析、请求元数据 | `apps/web-host/src/http/cookies.ts`：`parseCookieHeader`；`apps/web-host/src/http/request.ts`：`writeRequestMetadata`（`limitHeaders` 用于 trim 并限制文件写入头长） |
 | 日期键与 UTC 时间格式化 | `apps/web-host/src/shared/date-time.ts`：`dateKeyInTimeZone`、`addUtcDaysToDateKey`、`startOfDateKeyInTimeZone`、`toUtcIsoWithOffset` |
-| Admin HTTP 错误、通用密钥遮蔽 | `apps/web-host/src/domains/admin/errors.ts`；`@gugu/core/shared/secret-mask`：`maskSecret` |
+| Admin HTTP 错误、通用密钥遮蔽 | `apps/web-host/src/modules/admin/errors.ts`；`@gugu/core/shared/secret-mask`：`maskSecret` |
 | Agent 媒体载荷清理 | `packages/core/src/agent/context/messages/`：`sanitizeMediaPayload` |
 | Agent 持久 Run 与交互 | `@gugu/core/agent` 提供 `createAgentRunReconstructor` 和 `createAgentRunEventStream`，持久动作消费使用 `@gugu/core/agent/interactions/consume-action`。Host 提供可信来源和身份、owner 查询、事务、租约及唤醒端口。 |
-| 文件 owner 校验、正向 Undo 写入、项目查询与时间戳格式化 | `apps/web-host/src/domains/files/file-owner.ts`；`apps/web-host/src/domains/undo/persistence/forward-operation.ts`；`apps/web-host/src/domains/projects/persistence/projects.ts`：`readProjectFileCount`、`projectExistsForOwner`、`projectTimestamp` |
+| 文件 owner 校验、正向 Undo 写入、项目查询与时间戳格式化 | `apps/web-host/src/modules/files/file-owner.ts`；`apps/web-host/src/modules/undo/persistence/forward-operation.ts`；`apps/web-host/src/modules/projects/persistence/projects.ts`：`readProjectFileCount`、`projectExistsForOwner`、`projectTimestamp` |
 | 日历事件投影与持有查询 | `packages/core/src/calendar/event-projection.ts`：数据库行、DTO 与 Undo 快照投影；Core 日历读写端口执行 owner 限定查询 |
 | 项目公开 DTO 与时间投影 | `packages/core/src/projects/project-projection.ts`：`projectResponse`，读写与恢复事件共同复用；`packages/core/src/shared/timestamps.ts`：严格 UTC 微秒解析，`data/codec.ts`保留兼容出口，公开 ISO 与数据库/Undo 编码分开 |
 | 项目文件计数、恢复和 Undo | `packages/core/src/projects/read-store.ts`：借用 Host 池读取投影；`project-trash.ts`：同批恢复、保留期与事务补偿；`file-paths.ts`：逻辑路径和关系元数据规则；`undo.ts`：owner/版本预检、资源顺序及快照。Host 保留物理访问和 PG/旧记录兼容适配，不新增文件对象身份 |
@@ -47,6 +51,6 @@ description: gugu-webui Node.js/Fastify 后端开发、Python API 迁移与实�
 
 ## Python API 迁移
 
-- Python 当前行为是兼容基线。保持认证与 owner 隔离、请求/响应 DTO、HTTP 状态及错误语义、事务顺序和提交后副作用。
+- Python 当前行为只作为迁移前的历史业务行为参考，用于识别应保留的规则和安全边界。2.0 只实现 Node 路径，不保留 Python 运行依赖、兼容桥、fallback 或双运行时；最终目标是删除 Python 后端。保持需保留的认证与 owner 隔离、DTO、错误语义、事务顺序及提交后副作用，但以 2.0 契约和架构决策为准。
 - TDD 不作硬性要求；按切片验证对应 Python pytest 回归与 Node 行为/集成路径，并把结果记录到 Node API 迁移清单。只注册路由或验证未认证请求返回 401，不能单独作为业务迁移完成证据。
 - 修改共享模块前检查工作区和并行会话的编辑范围；发生职责重叠时先协调并保留其他会话的未提交改动。完成通用收敛后通知相关会话复用入口和边界规则。

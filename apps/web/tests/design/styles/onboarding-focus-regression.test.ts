@@ -17,12 +17,13 @@ const folderCard = load('../../components/common/file-browser/FolderCard.vue')
 const forms = load('./adoption/forms.css')
 
 describe('onboarding 与重命名 focus 视觉回归', () => {
-  it('语言选中态使用公共卡片底色，并保留 focus glow', () => {
+  it('语言选中态使用公共卡片底色和高亮描边', () => {
     const start = onboarding.indexOf('.locale-option.selected {')
     const end = onboarding.indexOf('}', start)
     const block = onboarding.slice(start, end)
     expect(block).toContain('background: var(--workspace-card-bg);')
-    expect(block).toContain('box-shadow: var(--control-focus-shadow), var(--workspace-card-shadow);')
+    expect(block).toContain('border-color: var(--border-focus);')
+    expect(block).not.toContain('box-shadow:')
     expect(block).not.toContain('background: var(--action-soft);')
     expect(onboarding).toContain('<RiCheckFill />')
     expect(onboarding).not.toContain('status.check-circle')
@@ -167,13 +168,12 @@ describe('onboarding 与重命名 focus 视觉回归', () => {
     expect(onboarding).not.toContain(':disabled="saving ||')
   })
 
-  it('文件和文件夹重命名输入限制宽度但保留 focus glow', () => {
+  it('文件和文件夹重命名保持名称行宽度', () => {
     expect(fileCard).toContain('.fc-name:has(.rename-sizer) { overflow: visible; text-overflow: clip; }')
     expect(folderCard).toContain('.fd-name:has(.rename-sizer) { overflow: visible; text-overflow: clip; }')
   })
 
-  it('rename input 恢复共享 input-focus-shadow，不再有专属降级覆盖', () => {
-    expect(forms).toContain('box-shadow: var(--input-hover-shadow), var(--input-focus-shadow);')
-    expect(forms).not.toContain('.rename-input-inline:focus:not(:disabled) { box-shadow: var(--input-hover-shadow); }')
+  it('重命名输入使用共享焦点描边', () => {
+    expect(forms).toMatch(/(?:^|\n)[^{}]*\.rename-input-inline[^{}]*:focus[^{}]*\{[^}]*border-color: var\(--input-border-focus\);/)
   })
 })

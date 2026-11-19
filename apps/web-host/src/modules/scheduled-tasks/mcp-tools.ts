@@ -4,7 +4,7 @@ import { createMcpServerConfigLister } from '@gugu/core/mcp/server-list'
 import type { McpDirectoryTool } from '@gugu/core/mcp/tool-directory'
 import { allowsScheduledMcpTool, type createScheduledTaskRunToolPorts } from '@gugu/core/scheduled-task-run-now'
 import { createKyselyScheduledTaskExecutionReader, type ScheduledTaskExecutionPlan } from '@gugu/core/scheduled-task-run-now-read'
-import { createMcpAgentToolPorts } from '../../domains/agent-sessions/tools/agent-mcp-tool-ports.js'
+import { createMcpAgentToolPorts } from '../../modules/agent-sessions/tools/agent-mcp-tool-ports.js'
 import type { createMcpRuntime } from '../mcp/runtime.js'
 
 export interface ScheduledMcpToolsOptions {

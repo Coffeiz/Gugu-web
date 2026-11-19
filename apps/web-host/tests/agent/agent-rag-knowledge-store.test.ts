@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { UnsafeLocalPathError } from '@gugu/fs/node'
-import { createLocalAgentKnowledgeReadStore } from '../../src/domains/agent-sessions/tools/agent-rag-knowledge-store.js'
+import { createLocalAgentKnowledgeReadStore } from '../../src/modules/agent-sessions/tools/agent-rag-knowledge-store.js'
 
 test('owner-bound knowledge FS reader pages Markdown, excludes other files and rejects traversal/symlinks', async () => {
   const root = await mkdtemp(join(tmpdir(), 'gugu-agent-rag-knowledge-'))

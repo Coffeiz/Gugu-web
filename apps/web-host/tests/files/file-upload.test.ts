@@ -9,7 +9,7 @@ import {
   registerFileUploadRoutes,
   type FileUploadInput,
   type StagedUpload,
-} from '../../src/domains/files/file-upload.js'
+} from '../../src/modules/files/file-upload.js'
 
 function multipart(fields: Array<[string, string]>, filename = '资料.txt', content = '正文') {
   const boundary = 'gugu-upload-test-boundary'

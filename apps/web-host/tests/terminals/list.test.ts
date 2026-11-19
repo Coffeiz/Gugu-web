@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { createRequire } from 'node:module'
 import Fastify from 'fastify'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
-import { createPostgresTerminalListReader } from '../../src/domains/terminals/persistence/list.js'
+import { createPostgresTerminalListReader } from '../../src/modules/terminals/persistence/list.js'
 import { registerTerminalListRoute } from '../../src/modules/terminals/list.js'
 
 const owner = '00000000-0000-4000-8000-000000000121'
@@ -26,11 +26,11 @@ test('认证终端列表经过 Host 偏好与 MXC 适配进入 Core，并返回 
   const pool = { async query(_query: string, values: string[]) { preferencesRead.push(values[0]!); return { rows: [{ data_json: { shell_enabled: true } }] } } }
   const app = Fastify()
   installHttpErrorHandler(app)
-  const read = createPostgresTerminalListReader(pool as never, db, {
+  const read = createPostgresTerminalListReader(pool as never, db, async () => ({
     terminalMode: 'auto', shellEnabled: true, shellSystemEnabled: false,
     fullUserSandboxAuthorizationEnabled: true,
-    async readSandboxReadiness() { return { ready: true } },
-  })
+    sandboxReady: true,
+  }))
   registerTerminalListRoute(app, {
     requireUser: async (request, reply) => { if (request.headers.authorization !== 'synthetic-user') return reply.code(401).send({ detail: '未授权' }) },
     ownerIdFromRequest: () => owner,
@@ -56,10 +56,10 @@ test('Host 列表适配保留 Python 的 Shell 403 错误语义', async () => {
   native.exec(`CREATE TABLE terminal_sessions(id TEXT,owner_id TEXT,session_id INTEGER,workspace_id INTEGER,run_id TEXT,name TEXT,source TEXT,mode TEXT,status TEXT,shell_mode TEXT,network_profile TEXT,last_sequence INTEGER,output_chars INTEGER,pty_pid INTEGER,pty_sandbox_id TEXT,pty_cols INTEGER,pty_rows INTEGER,created_at TEXT,updated_at TEXT,closed_at TEXT); CREATE TABLE terminal_events(terminal_id TEXT,sequence INTEGER);`)
   const app = Fastify()
   installHttpErrorHandler(app)
-  const read = createPostgresTerminalListReader({ async query() { return { rows: [{ data_json: { shell_enabled: false } }] } } } as never, db, {
+  const read = createPostgresTerminalListReader({ async query() { return { rows: [{ data_json: { shell_enabled: false } }] } } } as never, db, async () => ({
     terminalMode: 'auto', shellEnabled: true, shellSystemEnabled: false, fullUserSandboxAuthorizationEnabled: true,
-    async readSandboxReadiness() { return { ready: true } },
-  })
+    sandboxReady: true,
+  }))
   registerTerminalListRoute(app, { requireUser: async () => {}, ownerIdFromRequest: () => owner, read })
   try {
     const response = await app.inject({ method: 'GET', url: '/api/v1/terminals' })

@@ -4,12 +4,12 @@ import test from 'node:test'
 import { CoreError } from '@gugu/core'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
 import type { UserFromRequest } from '../../src/app.js'
-import { createProjectTrashService, ProjectTrashExpiredError } from '../../src/domains/projects/application/project-trash.js'
+import { createProjectTrashService, ProjectTrashExpiredError } from '@gugu/core/project-trash'
 import {
   createLocalProjectTrashStorage,
   createProjectTrashOriginalStorageKeyResolver,
-} from '../../src/domains/projects/persistence/project-trash-storage.js'
-import { registerProjectRoutes } from '../../src/domains/projects/routes/projects.js'
+} from '../../src/modules/projects/persistence/project-trash-storage.js'
+import { registerProjectRoutes } from '../../src/modules/projects/routes/projects.js'
 
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
 const otherOwnerId = 'ad0902a0-c899-44ee-b180-d54eb04e4604'

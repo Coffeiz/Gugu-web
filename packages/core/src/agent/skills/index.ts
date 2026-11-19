@@ -1,5 +1,7 @@
 export type { LoadedSkill, SkillConfiguration, SkillDefinition, SkillMetadata, SkillRegistry, SkillRegistryOptions } from './contracts.js'
 export { createSkillRegistry, SkillRegistryError } from './registry.js'
+export { createAgentSkillRuntimePorts } from './runtime.js'
+export type { AgentSkillRuntimeOptions, AgentSkillRuntimePorts } from './runtime.js'
 export { createBuiltinSkillDefinitions } from './builtin.js'
 export type { BuiltinSkillDocument, BuiltinSkillDefinition } from './builtin.js'
 export { createSkillMetadataReader } from './user-read.js'

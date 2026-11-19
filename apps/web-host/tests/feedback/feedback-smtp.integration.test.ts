@@ -4,7 +4,7 @@ import { createServer } from 'node:tls'
 import test from 'node:test'
 import type { Transporter } from 'nodemailer'
 import { createFeedbackNotifier } from '@gugu/core/feedback'
-import { createSmtpTransport } from '../../src/domains/auth/smtp-email.js'
+import { createSmtpTransport } from '../../src/adapters/smtp-email.js'
 
 const certDir = process.env.GUGU_TEST_SMTP_CERT_DIR
 

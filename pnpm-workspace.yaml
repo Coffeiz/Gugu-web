@@ -2,6 +2,7 @@ packages:
   - "packages/core"
   - "packages/charts"
   - "packages/fs"
+  - "packages/loopscope"
   - "packages/sandbox"
   - "apps/desktop"
   - "apps/web-host"

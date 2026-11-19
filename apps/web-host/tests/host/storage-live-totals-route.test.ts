@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { registerStorageLiveTotalsRoute } from '../../src/modules/admin/storage-live-totals.js'
+import { registerStorageLiveTotalsRoute } from '../../src/modules/admin/storage.js'
 
 test('管理员实时存储统计先鉴权，直接返回当前读端结果', async () => {
   const app = Fastify()

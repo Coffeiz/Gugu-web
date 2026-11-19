@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/domains/auth/auth.js'
+import { createUserToken } from '../../src/modules/auth/auth.js'
 
 test('批量下载通过认证 owner 读取文件与文件夹 ID 并返回 ZIP', async () => {
   const user = '00000000-0000-4000-8000-000000000081'

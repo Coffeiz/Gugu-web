@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { RunEvent, RunIdentity } from '@gugu/core/agent'
 import { createAgentChatService } from '@gugu/core/agent'
-import { createAgentRunEventStream } from '../../src/domains/agent-sessions/agent-run-event-stream.js'
-import { projectAgentRunEvent } from '../../src/domains/agent-sessions/agent-run-events.js'
+import { createAgentRunEventStream } from '../../src/modules/agent-sessions/agent-run-event-stream.js'
+import { projectAgentRunEvent } from '../../src/modules/agent-sessions/agent-run-events.js'
 
 const identity: RunIdentity = { ownerId: 'owner-a', sessionId: '7', runId: 'run-a' }
 function event(sequence: number, type: RunEvent['type'], payload: RunEvent['payload'] = {}): RunEvent { return { id: `${sequence}`, identity, sequence, round: 1, type, payload } }

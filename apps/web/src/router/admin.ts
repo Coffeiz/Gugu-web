@@ -97,12 +97,6 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'admin.updates' },
       },
       {
-        path: 'storage-audit',
-        name: 'AdminStorageAudit',
-        component: () => import('@/views/Admin/StorageAudit/index.vue'),
-        meta: { title: 'admin.storageAudit' },
-      },
-      {
         path: 'storage-monitor',
         name: 'AdminStorageMonitor',
         component: () => import('@/views/Admin/Ops/Storage.vue'),

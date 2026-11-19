@@ -7,10 +7,11 @@ import test from 'node:test'
 import { initializeSqlite, openSqliteRuntime } from '@gugu/core/data'
 import { stableJson, type ContextSourceSelection, type RunIdentity } from '@gugu/core/agent'
 import { createSkillMetadataReader, createSkillRegistry } from '@gugu/core/skills'
-import { createWebAgentRagResources } from '../../src/domains/agent-sessions/agent-web-reconstructor.js'
-import { createWebOwnerAgentKnowledgeReadPort } from '../../src/domains/agent-sessions/tools/agent-knowledge.js'
-import { createLocalAgentKnowledgeWritePort } from '../../src/domains/agent-sessions/tools/agent-knowledge-write.js'
-import { createLocalAgentKnowledgeReadStore } from '../../src/domains/agent-sessions/tools/agent-rag-knowledge-store.js'
+import { createWebAgentRagResources } from '../../src/modules/agent-sessions/agent-web-reconstructor.js'
+import { createWebOwnerAgentKnowledgeReadPort } from '../../src/modules/agent-sessions/tools/agent-knowledge.js'
+import { createLocalAgentKnowledgeWritePort } from '../../src/modules/agent-sessions/tools/agent-knowledge-write.js'
+import { createLocalAgentKnowledgeReadStore } from '../../src/modules/agent-sessions/tools/agent-rag-knowledge-store.js'
+import { createSqlRagPersistentIndexWriter } from '../../../../packages/core/src/agent/rag/persistent-writer.js'
 
 const digest = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')
 
@@ -45,7 +46,12 @@ test('Web RAG resource factory 将 search_conversations 与 owner read_knowledge
     }
     let queryCalls = 0
     const pool = {
-      async query() { queryCalls++; return { rowCount: 1, rows: [{}] } },
+      async query(statement: string) {
+        queryCalls++
+        return { rowCount: 1, rows: statement.includes('SELECT u.timezone')
+          ? [{ timezone: 'Asia/Shanghai', data_json: null }]
+          : [{}] }
+      },
     }
     const embeddingOwners: string[] = []
     let knowledgePort: ReturnType<typeof createWebOwnerAgentKnowledgeReadPort> | undefined
@@ -253,6 +259,61 @@ test('Web RAG resource factory 将 search_conversations 与 owner read_knowledge
     const callsBeforeValidCompaction = queryCalls
     await assert.rejects(resourcesWithValidBudget.context.compaction.summarize({ messages: [], context: {} } as never), /达到真实 Provider 投影边界/u)
     assert.ok(queryCalls > callsBeforeValidCompaction, '有效预算压缩在 Run 执行期读取当次工具配置与授权')
+  } finally {
+    await core?.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('Web RAG resource factory formats conversation citations with the trusted owner timezone', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gugu-web-rag-time-'))
+  let core: Awaited<ReturnType<typeof openSqliteRuntime>>['runtime'] | undefined
+  try {
+    await initializeSqlite(join(directory, 'core.db'))
+    const opened = await openSqliteRuntime(join(directory, 'core.db'))
+    core = opened.runtime
+    const ownerId = opened.ownerId
+    const lease = {
+      identity: { ownerId, sessionId: '91', runId: 'rag-time-run' },
+      token: 'synthetic-lease-token', fence: 3, mode: 'start' as const, cancelRequested: false,
+      input: { v: 2 as const, source: 'web' as const, userMessageId: 901, locale: 'zh-CN' as const,
+        origin: null, accessVersion: 'a'.repeat(64) },
+    }
+    const pool = {
+      async query(statement: string) {
+        if (statement.includes('SELECT u.timezone')) return { rowCount: 1, rows: [{ timezone: 'Asia/Shanghai', data_json: null }] }
+        return { rowCount: 1, rows: [{}] }
+      },
+    }
+    await createSqlRagPersistentIndexWriter(core.db, core.backend).replaceSource(ownerId, 'conversation', [{
+      id: 'conversation:902:0', source_id: '902', source_type: 'conversation', scope_type: 'owner', scope_id: '',
+      title: '会议回顾', summary: '部署评审', content: '部署评审决定周五发布。', text: '会议回顾\n部署评审决定周五发布。',
+      parent_id: 'conversation:902', document_version: 'v1', chunk_index: 0, chunk_count: 1,
+      updated_at: '2026-01-02T12:34:56.000Z', metadata: { message_id: '902' },
+    }])
+    const factory = createWebAgentRagResources({
+      source: {
+        pool: pool as never, files: { async read() { return null } }, memoryStorageRoot: directory,
+        redis: { async get() { return null } }, serverTimezone: 'UTC', now: () => 0,
+        external: { async loadImChannels() { return {} }, async loadImMemory() { return {} }, async loadKnowledge() { return [] } },
+        builder: { now: () => 0, staticPrompt: () => ({ base: '', persona: '', skills: '', policy: '', retrieval: '', skillIndex: '', timezone: 'UTC', now: new Date(0) }), sessionInfo: () => ({}), systemInMessages: () => false },
+      },
+      rag: { core, pool: pool as never, storageRoot: directory, enabled: () => true },
+      remaining: {
+        context: { digest, nextId: randomUUID, finalization: { async complete() {} } },
+        preparation: { capabilities: { async filterConfigured() { return [] } } },
+      } as never,
+    })
+    const selection: ContextSourceSelection = {
+      modelIdentity: 'synthetic-model', contextWindow: 10000, locale: 'zh-CN', groupChat: false,
+      workspaceBinding: null, contextPolicy: { loadOwnerContext: true, memoryEnabled: true }, contextScopeKey: lease.input.accessVersion,
+    }
+    const resources = await factory(lease, { selection } as never)
+    const result = await resources.ragContext({
+      ownerId, sessionId: lease.identity.sessionId, query: '部署评审', history: [],
+      beforeMessageId: null, snapshotText: '',
+    } as never, new AbortController().signal)
+    assert.match(JSON.stringify(result), /2026-01-02 20:34/u)
   } finally {
     await core?.close()
     await rm(directory, { recursive: true, force: true })

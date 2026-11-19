@@ -26,24 +26,24 @@
   "apps/web-host/tests/mind/core-undo-host-postgres.test.ts": {
     "domain": "undo",
     "layer": "L2",
-    "owner": "apps/web-host/src/domains/undo",
-    "productionEntry": "apps/web-host/src/domains/undo/persistence/core-operations.ts",
+    "owner": "apps/web-host/src/modules/undo",
+    "productionEntry": "apps/web-host/src/modules/undo/persistence/core-operations.ts",
     "keyBehavior": "Core 撤销 Host 错误映射、用户隔离和幂等通知",
     "ci": "web-host-node"
   },
   "apps/web-host/tests/mind/core-undo-query.test.ts": {
     "domain": "undo",
     "layer": "L1",
-    "owner": "apps/web-host/src/domains/undo",
-    "productionEntry": "apps/web-host/src/domains/undo/persistence/core-operations.ts",
+    "owner": "apps/web-host/src/modules/undo",
+    "productionEntry": "apps/web-host/src/modules/undo/persistence/core-operations.ts",
     "keyBehavior": "撤销事务查询桥的语句限制、并发和借用期",
     "ci": "web-host-node"
   },
   "apps/web-host/tests/mind/mind-core-postgres.test.ts": {
     "domain": "mind",
     "layer": "L2",
-    "owner": "apps/web-host/src/domains/undo",
-    "productionEntry": "apps/web-host/src/domains/undo/persistence/mind-core.ts",
+    "owner": "apps/web-host/src/modules/undo",
+    "productionEntry": "apps/web-host/src/modules/undo/persistence/mind-core.ts",
     "keyBehavior": "Mind 撤销借用同一事务及冲突映射与外层回滚",
     "ci": "web-host-node"
   },

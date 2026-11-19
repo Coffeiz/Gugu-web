@@ -1,4 +1,28 @@
 {
+  "apps/web-host/tests/host/terminal-access-main.integration.test.ts": {
+    "domain": "terminals",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/terminals/runtime-settings.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "真实 Bubblewrap 就绪后自动策略开放终端导航与 PTY，切换策略或关闭沙盒后导航与认证终端 API 同步限制",
+    "ci": "manual"
+  },
+  "apps/web-host/tests/terminals/isolated-shell-readiness.test.ts": {
+    "domain": "terminals",
+    "layer": "L1",
+    "owner": "apps/web-host/src/modules/terminals/isolated-shell-readiness.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "Linux 默认探测标准运行根，自定义或显式关闭优先，沙盒未就绪时拒绝启动命令和 PTY",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/terminals/bubblewrap-websocket.integration.test.ts": {
+    "domain": "terminals",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/terminals/websocket.ts",
+    "productionEntry": "用户终端 WebSocket upgrade",
+    "keyBehavior": "真实 Linux PTY 接收认证客户端输入及尺寸变化，异主不能启动，撤权后退出",
+    "ci": "manual"
+  },
   "apps/web-host/tests/terminals/delete.test.ts": {
     "domain": "terminals",
     "layer": "L2",
@@ -10,7 +34,7 @@
   "apps/web-host/tests/terminals/metrics.test.ts": {
     "domain": "terminals",
     "layer": "L2",
-    "owner": "apps/web-host/src/domains/terminals/persistence/metrics.ts + apps/web-host/src/modules/terminals/metrics.ts",
+    "owner": "apps/web-host/src/modules/terminals/persistence/metrics.ts + apps/web-host/src/modules/terminals/metrics.ts",
     "productionEntry": "认证 Fastify 路由 → PostgreSQL owner preferences/MXC readiness → Core owner metrics query",
     "keyBehavior": "页面 Shell 授权与 MXC readiness 失败为 403；成功时只统计认证 owner，响应字段与 Python 一致",
     "ci": "node-webui"
@@ -18,7 +42,7 @@
   "apps/web-host/tests/terminals/list.test.ts": {
     "domain": "terminals",
     "layer": "L2",
-    "owner": "apps/web-host/src/domains/terminals/persistence/list.ts + apps/web-host/src/modules/terminals/list.ts",
+    "owner": "apps/web-host/src/modules/terminals/persistence/list.ts + apps/web-host/src/modules/terminals/list.ts",
     "productionEntry": "认证 Fastify 路由 → PostgreSQL owner preferences/MXC readiness → Core cleanup/list query",
     "keyBehavior": "owner-scoped 终端 DTO、30 天/Agent cap 清理、Shell 页面 403 与 PTY capability",
     "ci": "node-webui"
@@ -26,7 +50,7 @@
   "apps/web-host/tests/terminals/detail.test.ts": {
     "domain": "terminals",
     "layer": "L2",
-    "owner": "apps/web-host/src/domains/terminals/persistence/detail.ts + apps/web-host/src/modules/terminals/detail.ts",
+    "owner": "apps/web-host/src/modules/terminals/persistence/detail.ts + apps/web-host/src/modules/terminals/detail.ts",
     "productionEntry": "认证 Fastify 路由 → PostgreSQL owner preferences/MXC readiness → Core detail query",
     "keyBehavior": "终端 owner 隔离、关联会话授权、页面 Shell 403 与 Python DTO",
     "ci": "node-webui"
@@ -34,7 +58,7 @@
   "apps/web-host/tests/terminals/rename.test.ts": {
     "domain": "terminals",
     "layer": "L2",
-    "owner": "apps/web-host/src/domains/terminals/persistence/rename.ts + apps/web-host/src/modules/terminals/rename.ts",
+    "owner": "apps/web-host/src/modules/terminals/persistence/rename.ts + apps/web-host/src/modules/terminals/rename.ts",
     "productionEntry": "认证 Fastify 路由 → PostgreSQL owner preferences/MXC readiness → Core rename transaction → terminals update publisher",
     "keyBehavior": "名称 DTO、owner/session/Shell 授权、事务更新和提交后资源通知",
     "ci": "node-webui"
@@ -42,7 +66,7 @@
   "apps/web-host/tests/terminals/events.test.ts": {
     "domain": "terminals",
     "layer": "L2",
-    "owner": "apps/web-host/src/domains/terminals/persistence/events.ts + apps/web-host/src/modules/terminals/events.ts",
+    "owner": "apps/web-host/src/modules/terminals/persistence/events.ts + apps/web-host/src/modules/terminals/events.ts",
     "productionEntry": "认证 Fastify SSE → Core owner-scoped event pages → PostgreSQL terminal_events",
     "keyBehavior": "认证、after 游标、事件 DTO、已关闭结束帧和 owner 隔离",
     "ci": "node-webui"

@@ -650,6 +650,8 @@ export interface DisplayItem {
   readonly toolName?: string
   readonly toolLabelOverride?: string
   readonly toolStatus?: string
+  readonly toolStartedAt?: string | null
+  readonly toolDurationMs?: number
   readonly toolResult?: unknown
 }
 

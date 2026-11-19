@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createWebAgentMcpRunAuthorization } from '../../src/domains/agent-sessions/tools/agent-mcp-run-authorization.js'
-import { createMcpAgentToolPorts } from '../../src/domains/agent-sessions/tools/agent-mcp-tool-ports.js'
-import { createWebAgentRagResources } from '../../src/domains/agent-sessions/agent-web-reconstructor.js'
+import { createWebAgentMcpRunAuthorization } from '../../src/modules/agent-sessions/tools/agent-mcp-run-authorization.js'
+import { createMcpAgentToolPorts } from '../../src/modules/agent-sessions/tools/agent-mcp-tool-ports.js'
+import { createWebAgentRagResources } from '../../src/modules/agent-sessions/agent-web-reconstructor.js'
 
 const lease = {
   identity: { ownerId: 'owner-a', sessionId: '12', runId: 'run-a' },

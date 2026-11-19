@@ -6,7 +6,7 @@ import {
   AdminAuthError,
   createAdminAuthAdapter,
   createInMemoryAdminAuthVersionStore,
-} from '../../src/domains/admin/admin-auth.js'
+} from '../../src/modules/admin/auth.js'
 
 const secret = 'synthetic-admin-auth-secret-with-enough-entropy'
 const fixedNow = 1_800_000_000_000

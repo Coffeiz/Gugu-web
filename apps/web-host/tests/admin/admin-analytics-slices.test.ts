@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {readSessionDepth} from '@gugu/core/admin/analytics'
+import {readSessionDepth} from '../../src/modules/admin/analytics.js'
 test('会话深度按每用户最深会话归档并保留空档位',async()=>{
  const result=await readSessionDepth(async()=>({rows:[{max_turns:1},{max_turns:3},{max_turns:4},{max_turns:30},{max_turns:31}]}),false)
  assert.deepEqual(result,{buckets:[{label:'1',users:1},{label:'2-3',users:1},{label:'4-10',users:1},{label:'11-30',users:1},{label:'30+',users:1}],total_users:5})
 })
 import {Pool} from 'pg'
 import {randomUUID} from 'node:crypto'
-import {readChatFunnel,readToolDistribution,readActiveDimensions} from '@gugu/core/admin/analytics'
+import {readChatFunnel,readToolDistribution,readActiveDimensions} from '../../src/modules/admin/analytics.js'
 test('真实PG按用户去重、开发者/BYOK过滤和最近七天维度聚合',async()=>{
  const connectionString=process.env.GUGU_WEBUI_TEST_DATABASE_URL;assert.ok(connectionString)
  const admin=new Pool({connectionString}),schema=`analytics_${randomUUID().replaceAll('-','')}`
@@ -39,7 +39,7 @@ test('分析四接口均校验管理员身份，支持过滤并拒绝错误布�
   assert.equal((await app.inject({url:'/api/v1/admin/analytics/session-depth?exclude_dev=bad',headers:{authorization:'admin'}})).statusCode,422)
  }finally{await app.close()}
 })
-import {readAnalyticsSummary} from '@gugu/core/admin/analytics-summary'
+import {readAnalyticsSummary} from '../../src/modules/admin/analytics.js'
 test('summary保留Python四位偶数舍入，1/32不向上偏移',async()=>{
  const result=await readAnalyticsSummary(async()=>({rows:[{summary:{users:{total:32},im_bots:{users_with_bot:1},funnel:{cohort_7d:32,retained_7d:1,cohort_30d:0,retained_30d:0}}}]}),new Date(),new Date(),false,false)
  assert.equal(result.im_bots!.adoption_rate,0.0312);assert.equal(result.funnel!.retention_7d,0.0312)

@@ -111,18 +111,10 @@
     "keyBehavior": "真实Python生产者、Redis与管理员读取",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/host/watcher-capacity-main.integration.test.ts": {
-    "domain": "api",
-    "layer": "L2",
-    "owner": "packages/core/src/filesync/watcher-capacity.ts",
-    "productionEntry": "apps/web-host/src/main.ts",
-    "keyBehavior": "生产认证与隔离Python helper算法",
-    "ci": "node-webui"
-  },
   "apps/web-host/tests/host/ops-summary-main.integration.test.ts": {
     "domain": "api",
     "layer": "L2",
-    "owner": "packages/core/src/admin/ops-summary.ts",
+    "owner": "apps/web-host/src/modules/admin/runtime.ts",
     "productionEntry": "apps/web-host/src/main.ts",
     "keyBehavior": "生产管理员认证与真实Redis/Python对照",
     "ci": "node-webui"
@@ -135,18 +127,10 @@
     "keyBehavior": "生产管理员认证与邮件预览",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/host/filesync-dry-run-main.integration.test.ts": {
-    "domain": "api",
-    "layer": "L2",
-    "owner": "packages/core/src/filesync/dry-run.ts",
-    "productionEntry": "apps/web-host/src/main.ts",
-    "keyBehavior": "生产预演、SSE和真实runner无业务副作用",
-    "ci": "node-webui"
-  },
   "apps/web-host/tests/host/admin-user-ban-main.integration.test.ts": {
     "domain": "api",
     "layer": "L2",
-    "owner": "packages/core/src/admin/user-ban.ts",
+    "owner": "apps/web-host/src/modules/admin/user-management.ts",
     "productionEntry": "apps/web-host/src/main.ts",
     "keyBehavior": "生产封禁撤销JWT与SSE",
     "ci": "node-webui"
@@ -234,7 +218,7 @@
   "apps/web-host/tests/host/service-status-main.integration.test.ts": {
     "domain": "api",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/admin/service-status.ts",
+    "owner": "apps/web-host/src/modules/admin/runtime.ts",
     "productionEntry": "apps/web-host/src/main.ts",
     "keyBehavior": "生产Host服务心跳与Redis队列状态",
     "ci": "node-webui"
@@ -266,7 +250,7 @@
   "apps/web-host/tests/host/storage-quota-status-main.integration.test.ts": {
     "domain": "admin",
     "layer": "L2",
-    "owner": "packages/core/src/admin/storage-quota-status.ts",
+    "owner": "apps/web-host/src/modules/admin/storage.ts",
     "productionEntry": "apps/web-host/src/main.ts",
     "keyBehavior": "生产鉴权和Redis对账状态",
     "ci": "node-webui"
@@ -322,7 +306,7 @@
   "apps/web-host/tests/host/storage-live-totals-route.test.ts": {
     "domain": "admin",
     "layer": "L2",
-    "owner": "packages/core/src/admin/storage-live-totals.ts",
+    "owner": "apps/web-host/src/modules/admin/storage.ts",
     "productionEntry": "apps/web-host/src/main.ts",
     "keyBehavior": "管理员认证后读取实时存储分类聚合",
     "ci": "node-webui"
@@ -330,7 +314,7 @@
   "apps/web-host/tests/host/safe-egress-config-reader.test.ts": {
     "domain": "admin",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/admin/safe-egress-settings.ts",
+    "owner": "apps/web-host/src/modules/admin/network.ts",
     "productionEntry": "apps/web-host/src/main.ts",
     "keyBehavior": "安全出站配置覆盖优先级和凭据保护",
     "ci": "node-webui"
@@ -338,7 +322,7 @@
   "apps/web-host/tests/host/admin-analytics-main.integration.test.ts": {
     "domain": "admin",
     "layer": "L2",
-    "owner": "packages/core/src/admin/analytics.ts",
+    "owner": "apps/web-host/src/modules/admin/analytics.ts",
     "productionEntry": "apps/web-host/src/main.ts",
     "keyBehavior": "生产入口管理员分析查询、过滤与趋势合同",
     "ci": "node-webui"
@@ -346,7 +330,7 @@
   "apps/web-host/tests/host/system-logs-route.test.ts": {
     "domain": "admin",
     "layer": "L2",
-    "owner": "packages/core/src/admin/system-logs.ts",
+    "owner": "apps/web-host/src/modules/admin/logs.ts",
     "productionEntry": "apps/web-host/src/main.ts",
     "keyBehavior": "管理员日志协议参数和鉴权",
     "ci": "node-webui"
@@ -410,7 +394,7 @@
   "apps/web-host/tests/host/admin-llm-presets-host.test.ts": {
     "domain": "byok",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/admin/llm-preset-read.ts + apps/web-host/src/main.ts",
+    "owner": "apps/web-host/src/modules/admin/llm.ts + apps/web-host/src/main.ts",
     "productionEntry": "startServer → Admin guard → Core 只读投影 → 运行配置文件",
     "keyBehavior": "认证先于读取，真实 Host list 路由不依赖 CRUD 原型装配",
     "ci": "web-host-node"
@@ -421,6 +405,14 @@
     "owner": "apps/web-host/src/app.ts",
     "productionEntry": "createApp 认证用户 token → owner 上下文 → Agent Misc Greeting route",
     "keyBehavior": "认证失败时不执行问候；伪造 owner query/header 不改变经过认证的 owner",
+    "ci": "web-host-node"
+  },
+  "apps/web-host/tests/host/loopscope-trace.test.ts": {
+    "domain": "loopscope",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/loopscope/trace.ts + packages/loopscope/trace.js",
+    "productionEntry": "main.ts → Web Agent Reconstructor → Core AgentObservationPort",
+    "keyBehavior": "关闭采集不构造写入器；启用时仅将 Core 观测发往受信 Collector，不暴露 owner 标识",
     "ci": "web-host-node"
   }
 }

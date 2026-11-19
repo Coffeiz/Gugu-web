@@ -74,5 +74,5 @@
 
 :root[data-theme='dark'][data-family] {
   --theme-project-overlay-start: rgb(from var(--palette-surface-raised) r g b / .92);
-  --theme-project-overlay-end: rgb(from var(--palette-surface-strong) r g b / .98);
+  --theme-project-overlay-end: rgb(from color-mix(in srgb, var(--palette-surface-strong) 55%, var(--palette-page-end)) r g b / .98);
 }

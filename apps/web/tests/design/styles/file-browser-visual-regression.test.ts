@@ -98,7 +98,7 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(surfacesAdoption).toContain('.rename-input-inline:focus')
     expect(surfacesAdoption).toContain('border-color: var(--input-border-focus);')
     expect(renameHover).toContain('box-shadow: var(--input-hover-shadow);')
-    expect(renameFocus).toContain('box-shadow: var(--input-focus-shadow);')
+    expect(renameFocus).not.toContain('box-shadow:')
     expect(load('./tokens/components/surfaces.css')).not.toContain('--rename-input-line-height:')
     expect(segmentField).toContain('height: 100%;')
     expect(filesCss).not.toContain('.rename-segment-field::after')
@@ -223,7 +223,8 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
 
   it('文件、文件夹、项目卡保留专属反馈，通用 hover 层不接管它们的阴影和过渡', () => {
     expect(fileCard).toContain('.fc-card.selected {')
-    expect(fileCard).toContain('box-shadow: var(--file-card-shadow-selected);')
+    expect(fileCard).toContain('border-color: var(--file-card-border-selected);')
+    expect(fileCard.match(/\.fc-card\.selected \{([^}]*)\}/)?.[1]).not.toContain('box-shadow:')
     expect(filesGridView).not.toContain('class="hover-card-fx"')
     expect(projectFilesPanel).not.toContain('class="hover-card-fx"')
 

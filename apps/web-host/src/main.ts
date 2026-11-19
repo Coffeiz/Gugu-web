@@ -1,17 +1,20 @@
+import { timestampConsole } from './shared/logging.js'
 import bcrypt from 'bcryptjs'
 import { readFile } from 'node:fs/promises'
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { createProfileUpdater } from '@gugu/core/auth/profile-update'
 import { createDataExportCreator } from '@gugu/core/data-portability/create-export'
 import { createDataExportPreviewReader } from '@gugu/core/data-portability/export-preview'
 import { createDataImportResumer } from '@gugu/core/data-portability/resume-import'
+import { createDataImportApplier, createDataImportRecoverer, createDataImportRollbackCreator } from '@gugu/core/data-portability/apply-import'
 import { createImMemorySummaryReader } from '@gugu/core/im-memory-summary'
 import { createImMaintenanceSource } from '@gugu/core/im-memory-maintenance-source'
-import { createAdminUserBanToggle } from '@gugu/core/admin-user-ban'
+import { createAdminUserBanToggle } from './modules/admin/user-management.js'
 import { renderEmailPreview } from '@gugu/core/email-preview'
-import { createSmtpFileProbe, readSmtpFileSettings } from './modules/admin/smtp-probe.js'
-import { createAdminEmailFileTest } from './modules/admin/email-test.js'
-import { createAdminEmailPublishOperations } from './modules/admin/email-publish.js'
-import { createAdminEmailTranslator } from './modules/admin/email-translate.js'
+import { createSmtpFileProbe, readSmtpFileSettings } from './modules/admin/smtp.js'
+import { createAdminEmailFileTest } from './modules/admin/email.js'
+import { createAdminEmailPublishOperations } from './modules/admin/email.js'
+import { createAdminEmailTranslator } from './modules/admin/email.js'
 import { createLlmStrategySetter, invalidateAllProviderReasoningStates } from '@gugu/core/agent/config/llm-strategy'
 import { createLlmPresetSelection } from '@gugu/core/agent/config/llm-preset-selection'
 import { createLlmCapabilityOverrideSetter } from '@gugu/core/agent/config/llm-capability-overrides'
@@ -19,31 +22,32 @@ import { createLlmPresetMutations } from '@gugu/core/agent/config/llm-preset-mut
 import { createLlmModelDirectory } from '@gugu/core/agent/config/llm-model-directory'
 import { createAdminModelDirectory } from '@gugu/core/agent/config/admin-model-directory'
 import { createNodeProviderTransport, createNodeProviderTransportFactory, isPublicAddress } from '@gugu/core/providers/node'
+import { defaultLoopScopeEndpoint } from '@gugu/loopscope'
 import { validateMcpEndpoint } from '@gugu/core/mcp/server-config'
 import type { ProviderConfig } from '@gugu/core/providers'
 import { createLlmStrategyFileMutator } from './modules/admin/llm-strategy.js'
 import { createAdminMisreadReader } from '@gugu/core/perception-recent-misread'
 import { createPerceptionEventExporter } from '@gugu/core/perception-export'
 import { createMisreadMarkdownExporter } from '@gugu/core/perception-misread-export'
-import { createLocalMisreadTextReader } from './modules/admin/perception-misread-export.js'
+import { createLocalMisreadTextReader } from './modules/admin/perception.js'
 import { createPerceptionStatsReader } from '@gugu/core/perception-stats'
 import { createSecretPromptCancellation } from '@gugu/core/agent-secret-cancel'
-import { createFileSyncRunReader } from '@gugu/core/filesync-run-read'
-import { createFileSyncRunCancellation } from '@gugu/core/filesync-run-cancel'
-import { createFileSyncDryRun, createFileSyncInitialize } from '@gugu/core/filesync-dry-run'
-import { createWatcherCapacityRequester } from './adapters/inotify-limit-client.js'
-import { createRedisFileSyncPublisher } from './adapters/redis-events.js'
 import { createRedisHashReader } from './adapters/redis-events.js'
 import { createRedisListReader } from './adapters/redis-events.js'
-import { createAdminEmbeddingRebuildStatusReader } from '@gugu/core/admin-embedding-rebuild-status'
+import { createAdminEmbeddingRebuildStatusReader } from './modules/admin/embedding.js'
 import { createDataExportDownloader, requireExportReadyForTicket } from '@gugu/core/data-portability/download-export'
 import { createPortableArtifactOpener } from './modules/data-portability/artifact-source.js'
 import { createTaskFilesystemAuthorization } from '@gugu/core/scheduled-task-filesystem-authorize'
 import { createTaskAuthorizationEnabledReader } from './modules/scheduled-tasks/task-filesystem-authorize.js'
 import { createRedisFilesystemAuthorizationMetric } from './adapters/redis-events.js'
-import { createVoicePresetFileMutations } from './modules/admin/voice-presets-mutate.js'
+import { createVoicePresetFileMutations } from './modules/admin/voice.js'
 import { createDataExportCanceler } from '@gugu/core/data-portability/cancel-export'
 import { createPostgresDataExportDeleter } from './modules/data-portability/delete-export-postgres.js'
+import { createPostgresDataImportDeleter } from './modules/data-portability/delete-import-postgres.js'
+import { createPostgresDataImportCanceler, createLocalDataImportStagingRemover } from './modules/data-portability/cancel-import-postgres.js'
+import { createDataImportPreflighter } from '@gugu/core/data-portability/preflight-import'
+import { createPostgresDataImportPreflightStore, createLocalDataImportPreflightStorage } from './modules/data-portability/preflight-import-postgres.js'
+import { createPostgresDataReplacementWriteGate } from './modules/data-portability/write-gate-postgres.js'
 import { withPostgresTransaction } from './adapters/postgres-transaction.js'
 import { createTerminalDeletion } from '@gugu/core/terminals/delete'
 import { createPostgresTerminalCreator } from './modules/terminals/create-operation.js'
@@ -53,21 +57,21 @@ import { createTerminalPtyRuntime } from './modules/terminals/pty-runtime.js'
 import { createTerminalInputAuthorizer } from './modules/terminals/input-authorization.js'
 import { createTerminalShellSnapshotReader } from './modules/terminals/shell-snapshot.js'
 import { createTerminalWorkspaceMounts } from './modules/terminals/workspace-mounts.js'
-import { createMxcPtyBridge } from '@gugu/sandbox/pty'
+import { createBubblewrapPtyBridge } from '@gugu/sandbox/linux/pty'
 import { createPostgresTerminalPtyStateOperations } from './modules/terminals/pty-state-operation.js'
 import { createPostgresTerminalLifecycle } from './modules/terminals/lifecycle-operation.js'
-import { mxcDiagnostics } from '@gugu/core/executor/platform'
 import { createTerminalRuntime } from './modules/terminals/runtime.js'
-import { createTerminalRuntimeSettingsReader } from './modules/terminals/runtime-settings.js'
+import { createTerminalAccessReader, createTerminalRuntimeSettingsReader } from './modules/terminals/runtime-settings.js'
+import { createIsolatedShellReadiness, resolveBubblewrapRootfs } from './modules/terminals/isolated-shell-readiness.js'
 import { createTerminalCancellationMarkers } from './modules/terminals/cancellation-redis.js'
 import { createTerminalActiveLease } from './modules/terminals/active-lease.js'
-import { createPostgresTerminalMetricsReader } from './domains/terminals/persistence/metrics.js'
-import { createPostgresTerminalListReader } from './domains/terminals/persistence/list.js'
-import { createPostgresTerminalDetailReader } from './domains/terminals/persistence/detail.js'
-import { createPostgresTerminalRenamer } from './domains/terminals/persistence/rename.js'
-import { createPostgresTerminalEventStream } from './domains/terminals/persistence/events.js'
-import { createVoicePresetsFileReader } from './modules/admin/voice-presets-read.js'
-import { createAdminLlmPresetReader } from './modules/admin/llm-preset-read.js'
+import { createPostgresTerminalMetricsReader } from './modules/terminals/persistence/metrics.js'
+import { createPostgresTerminalListReader } from './modules/terminals/persistence/list.js'
+import { createPostgresTerminalDetailReader } from './modules/terminals/persistence/detail.js'
+import { createPostgresTerminalRenamer } from './modules/terminals/persistence/rename.js'
+import { createPostgresTerminalEventStream } from './modules/terminals/persistence/events.js'
+import { createVoicePresetsFileReader } from './modules/admin/voice.js'
+import { createAdminLlmPresetReader } from './modules/admin/llm.js'
 import { createPostgresVoiceAvailabilityReader } from './modules/agent/voice-availability.js'
 import { createMemoryClearer } from '@gugu/core/agent/memory-clear'
 import { AgentRunError, stableJson } from '@gugu/core/agent'
@@ -75,15 +79,15 @@ import { embedRagQuery, enqueueAgentRagRebuild, invalidateAgentMemoryRag, readAg
 import { ProviderStreamSanitizer, stripThinking } from '@gugu/core/providers'
 import { createUserMemoryVectorRebuilder } from '@gugu/core/byok/vector-rebuild'
 import { activeVoiceTestSettings } from '@gugu/core/agent/config/voice-test'
-import { createAdminVoicePresetTestOperations, createAdminVoiceTestOperations } from './modules/admin/voice-test.js'
-import { createAdminSearchTestOperations } from './modules/admin/search-test.js'
+import { createAdminVoicePresetTestOperations, createAdminVoiceTestOperations } from './modules/admin/voice.js'
+import { createAdminSearchTestOperations } from './modules/admin/search.js'
 import { createAdminMaintenanceStatus } from '@gugu/core/maintenance/admin-status'
-import { createAccountMemoryCleanupRuntime } from './modules/admin/account-memory-cleanup.js'
-import { createAccountMemoryCleanupStorage, createAccountMemoryCleanupVectorRefresh } from './modules/admin/account-memory-cleanup-storage.js'
+import { createAccountMemoryCleanupRuntime } from './modules/admin/memory-cleanup.js'
+import { createAccountMemoryCleanupStorage, createAccountMemoryCleanupVectorRefresh } from './modules/admin/memory-store.js'
 import { createRedisAdminMaintenanceCommands } from './adapters/redis-events.js'
-import { createServiceStatusReader } from './modules/admin/service-status.js'
-import { resolveAdminUpdateMode } from './modules/admin/update-status.js'
-import { createServiceRestarter } from './modules/admin/service-restart.js'
+import { createServiceStatusReader } from './modules/admin/runtime.js'
+import { resolveAdminUpdateMode } from './modules/admin/runtime.js'
+import { createServiceRestarter } from './modules/admin/runtime.js'
 import { createBackgroundWorkerLifecycle } from './maintenance/background-workers.js'
 import { createRedisServiceStatusCommands } from './adapters/redis-events.js'
 import { createAttachmentDownloader } from '@gugu/core/agent/attachments/download'
@@ -100,10 +104,10 @@ import { createPostgresTaskExternal } from './modules/scheduled-tasks/persistenc
 import { validateTaskCron } from './modules/scheduled-tasks/validate-cron.js'
 import { createRedisFilesystemRevokeMetric } from './adapters/redis-events.js'
 import { createRedisEmailDeliveryMetric } from './adapters/redis-events.js'
-import { createRedisStorageQuotaStatusStore } from './modules/admin/storage-quota-status.js'
-import { createManualStorageQuotaReconcile, StorageQuotaReconcileUnavailable } from './modules/admin/storage-quota-reconcile.js'
-import { createPostgresStorageQuotaReconcilePort } from './domains/files/persistence/storage-quota-reconcile-postgres.js'
-import { reconcileAllStorageUsers } from '@gugu/core/admin/storage-quota-reconcile'
+import { createRedisStorageQuotaStatusStore } from './modules/admin/storage.js'
+import { createManualStorageQuotaReconcile, StorageQuotaReconcileUnavailable } from './modules/admin/storage.js'
+import { createPostgresStorageQuotaReconcilePort } from './modules/files/persistence/storage-quota-reconcile-postgres.js'
+import { reconcileAllStorageUsers } from './modules/admin/storage.js'
 import { createNotificationBroadcaster } from '@gugu/core/notifications/broadcast'
 import { createRedisNotificationPublisher } from './adapters/redis-events.js'
 import { createMcpStatusReader } from '@gugu/core/mcp/status'
@@ -120,12 +124,14 @@ import { createMcpStdioClientFactory, resolveMcpWorkspaceRoot } from './modules/
 import { createProductionGreeting, createRedisGreetingCache } from './modules/agent-sessions/greeting.js'
 import { getAttentionDefaults } from '@gugu/core/im/attention/defaults'
 import { createMcpSettingsReader } from './modules/mcp/status.js'
-import { createEmailRecipientCounter } from '@gugu/core/admin/email-recipient-count'
+import { createEmailRecipientCounter } from './modules/admin/email.js'
 import { createEmbeddingRebuildStatusReader } from '@gugu/core/byok/embedding-rebuild-status'
 import { createRedisExpiringValueStore, createRedisValueReader } from './adapters/redis-events.js'
-import { createImMemoryMaintenanceApplier, createLocalImMemoryMaintenanceStorage } from './modules/admin/im-memory-maintenance-apply.js'
-import { createImMemoryMaintenancePreviewStarter, createImMemoryMaintenancePreviewState, createImMemoryMaintenancePreviewWorker, createStandaloneImMemoryModelCaller } from './modules/admin/im-memory-maintenance-preview.js'
-import { createImMemoryGroupDailyCompactor } from './modules/admin/im-memory-group-daily-compaction.js'
+import { createImMemoryMaintenanceApplier } from './modules/admin/memory-apply.js'
+import { createLocalImMemoryMaintenanceStorage } from './modules/admin/memory-apply.js'
+import { createImMemoryMaintenancePreviewStarter, createImMemoryMaintenancePreviewState, createImMemoryMaintenancePreviewWorker } from './modules/admin/memory-preview.js'
+import { createStandaloneImMemoryModelCaller } from './modules/admin/memory-preview.js'
+import { createImMemoryGroupDailyCompactor } from './modules/admin/memory.js'
 import { createPostgresUserBotUnbinder } from './modules/im/user-bot-unbind.js'
 import { createQqBotCreator, invalidateOwnerImSnapshots } from '@gugu/core/im/user-bot-create'
 import { createUserBotDeleter } from '@gugu/core/im/user-bot-delete'
@@ -165,71 +171,72 @@ import { createLocalUserMemoryVectorStore } from './modules/byok/memory-vector-s
 import { createOwnerMemoryLock } from './shared/owner-memory-lock.js'
 import { createPersistentMemoryIndexRebuilder, waitForMemoryIndexRebuild } from './modules/byok/memory-index-rebuild.js'
 import { createRedisUserEmbeddingRebuildState, createUserEmbeddingRebuildRuntime } from './modules/byok/embedding-rebuild.js'
-import { createAdminEmbeddingRebuildRuntime, createRedisAdminEmbeddingRebuildState } from './modules/admin/embedding-rebuild.js'
-import { createAdminIndexRebuildRuntime, createRedisAdminIndexRebuildState } from './modules/admin/index-rebuild.js'
-import { createStorageLiveTotals } from '@gugu/core/admin/storage-live-totals'
+import { createAdminEmbeddingRebuildRuntime } from './modules/admin/embedding.js'
+import { createRedisAdminEmbeddingRebuildState } from './modules/admin/embedding.js'
+import { createAdminIndexRebuildRuntime } from './modules/admin/index-rebuild.js'
+import { createRedisAdminIndexRebuildState } from './modules/admin/index-rebuild.js'
+import { createStorageLiveTotals } from './modules/admin/storage.js'
 import { createUserSkillDeletion } from '@gugu/core/agent/skills/user-delete'
 import { createUserSkillLister } from '@gugu/core/agent/skills/user-list'
 import { createUserSkillManager } from '@gugu/core/agent/skills/user-management'
 import { createUserSkillReader } from '@gugu/core/agent/skills/user-body'
-import { createLocalAgentRememberPort } from './domains/agent-sessions/tools/agent-memory-write.js'
-import { createAgentToolRegistry, filterConfiguredWebAgentTools } from './domains/agent-sessions/tools/agent-tool-registry.js'
+import { createLocalAgentRememberPort } from './modules/agent-sessions/tools/agent-memory-write.js'
+import { createAgentToolRegistry, filterConfiguredWebAgentTools } from './modules/agent-sessions/tools/agent-tool-registry.js'
 import { createCapabilityCatalog } from '@gugu/core/agent/capabilities'
-import { createBuiltinSkillDefinitions } from '@gugu/core/skills'
+import { createAgentSkillRuntimePorts, createBuiltinSkillDefinitions } from '@gugu/core/skills'
 import { createSkillMetadataReader } from '@gugu/core/skills'
 import { createBundledSkillDocuments } from '@gugu/core/skills/bundled'
 import { createSkillToolCatalog } from './modules/skills/tool-catalog.js'
 import { createRegisteredUserSkillToolNameReader } from './modules/skills/tool-names.js'
-import { createSafeEgressSettingsReader } from './modules/admin/safe-egress-settings.js'
-import { createSafeEgressFileUpdater } from './modules/admin/safe-egress-update.js'
-import { createSafeEgressFileProbe } from './modules/admin/safe-egress-probe.js'
-import { createSandboxEgressConfigUpdater } from './modules/admin/sandbox-egress.js'
-import { createSandboxRuntimeUpdater } from './modules/admin/sandbox-enable.js'
+import { createSafeEgressSettingsReader } from './modules/admin/network.js'
+import { createSafeEgressFileUpdater } from './modules/admin/network-update.js'
+import { createSafeEgressFileProbe } from './modules/admin/network.js'
+import { createSandboxEgressConfigUpdater } from './modules/admin/sandbox.js'
+import { createSandboxRuntimeUpdater } from './modules/admin/sandbox.js'
 import { createEmbeddingFileProbe } from './modules/admin/embedding-probe.js'
-import { createAdminMediaProbePreview } from './modules/admin/media-probe-preview.js'
-import { createAdminLlmPresetTest } from './modules/admin/llm-preset-test.js'
-import { createAdminLlmPresetMediaProbe } from './modules/admin/llm-preset-media-probe.js'
-import { createAdminLlmCapabilityProbe } from './modules/admin/llm-capability-probe.js'
-import { createSystemLogReader } from '@gugu/core/admin/system-logs'
+import { createAdminMediaProbePreview } from './modules/admin/llm-probe.js'
+import { createAdminLlmPresetTest } from './modules/admin/llm-probe.js'
+import { createAdminLlmPresetMediaProbe } from './modules/admin/llm-probe.js'
+import { createAdminLlmCapabilityProbe } from './modules/admin/llm-probe.js'
+import { createSystemLogReader } from './modules/admin/logs.js'
 import {
   createAdminAuditLogReader,
   createAdminSecurityEventReader,
   createAdminUserSecurityEventReader,
-} from '@gugu/core/admin-audit-log'
-import { createAdminUserListReader, createAdminUserRiskReader } from '@gugu/core/admin/users'
+} from './modules/admin/audit.js'
+import { createAdminUserListReader, createAdminUserRiskReader } from './modules/admin/user-management.js'
 import { createNotificationAdminHistory } from '@gugu/core/notifications/admin-history'
-import { createPostgresAdminSettingsTransaction } from './modules/admin/user-settings.js'
+import { createPostgresAdminSettingsTransaction } from './modules/admin/users.js'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { dirname, resolve } from 'node:path'
 import { Pool, type PoolClient } from 'pg'
 import { createPostgresRuntime, type SqlDataRuntime } from '@gugu/core/data'
 import { createPostgresGlobalSearchSources } from '@gugu/core/search/postgres'
 import { createAgentWorkspaceQueries, createKyselyAgentWorkspaceReader } from '@gugu/core/workspaces'
-import { createAgentTrashListPort } from './domains/agent-sessions/tools/agent-trash-tool.js'
-import { createAgentTrashRestorePort } from './domains/agent-sessions/tools/agent-trash-restore.js'
+import { createAgentTrashListPort, createAgentTrashPurgePort } from './modules/agent-sessions/tools/agent-trash-tool.js'
+import { createAgentTrashRestorePort } from './modules/agent-sessions/tools/agent-trash-restore.js'
 import { createGlobalSearchOperations, createKyselyDashboardCounter, createKyselyPreferenceDocumentStore, type Fields, type RequestContext } from '@gugu/core'
 import { createApp, type WriteRequestMetadata } from './app.js'
 import type { FastifyRequest } from 'fastify'
-import type { UserAuthOptions } from './domains/auth/contracts.js'
+import type { UserAuthOptions } from './modules/auth/contracts.js'
 import { loadConfig, type WebUiConfig } from './config.js'
 import { readConfigOverride, resolveConfigOverridePath } from './adapters/config-override-file.js'
 import { checkDatabaseReadiness } from './database.js'
-import { createUserRepository } from './domains/auth/persistence/users.js'
+import { createUserRepository } from './modules/auth/persistence/users.js'
 import { createRedisLiveSubscription } from './adapters/redis-live-subscription.js'
-import { createPostgresUserQuotaReader, type UserQuotaSettings } from './domains/auth/persistence/quota.js'
-import { createPostgresUserAvatarOperations } from './domains/auth/persistence/avatar.js'
-import { createPostgresPreferencesStore } from './domains/preferences/persistence/postgres.js'
+import { createPostgresUserQuotaReader, type UserQuotaSettings } from './modules/auth/persistence/quota.js'
+import { createPostgresUserAvatarOperations } from './modules/auth/persistence/avatar.js'
+import { createPostgresPreferencesStore } from './modules/preferences/persistence/postgres.js'
 import { createKyselyOnboardingStore, createOnboardingReseeder, createRegistrationSeeder } from '@gugu/core/onboarding'
 import { createPostgresRegistrationSeedOperations } from './modules/onboarding/persistence/registration-seed-postgres.js'
 import { createPostgresOnboardingReseedOperations } from './modules/onboarding/persistence/reseed-postgres.js'
 import { createOnboardingSurpriseMp3Reader } from './modules/onboarding/surprise-asset.js'
-import { createRedisRegistrationCodeStore } from './domains/auth/persistence/registration-codes.js'
-import { createPostgresRegistrationOperations } from './domains/auth/persistence/registration.js'
-import { createPostgresPasswordResetStore } from './domains/auth/password-reset.js'
-import { createPostgresEmailChangeStore } from './domains/auth/email-change.js'
-import { createAuthEmailSender, createSmtpTransport } from './domains/auth/smtp-email.js'
-import { createProjectFileCountListing, createProjectGetter, createProjectListing } from './domains/projects/persistence/projects.js'
+import { createRedisRegistrationCodeStore } from './modules/auth/persistence/registration-codes.js'
+import { createPostgresRegistrationOperations } from './modules/auth/persistence/registration.js'
+import { createPostgresPasswordResetStore } from './modules/auth/password-reset.js'
+import { createPostgresEmailChangeStore } from './modules/auth/email-change.js'
+import { createAuthEmailSender, createSmtpTransport } from './adapters/smtp-email.js'
+import { createProjectFileCountListing, createProjectGetter, createProjectListing } from './modules/projects/persistence/projects.js'
 import { projectResponse } from '@gugu/core'
 import { createClientOperations } from './modules/clients/persistence/clients.js'
 import { createPostgresMindReferenceSuggestionPorts } from './modules/mind/ref-suggest-postgres.js'
@@ -237,9 +244,9 @@ import { createMindCanvasNoteMutations } from '@gugu/core/mind'
 import { createMindRefNodeCreator, createMindReferenceSuggester } from '@gugu/core/mind'
 import { createMindNoteCreator } from '@gugu/core/mind'
 import { createAgentMindReader, createAgentPlaceableSearch, createMindCanvasCreation, createMindCanvasUpdate, createMindCanvasDelete, createMindCanvasItemAdd, createMindCanvasItemRemove, createMindCanvasItemUpdate, createMindCanvasRelationCreate, createMindCanvasRelationDelete, createMindGlobalRelationDelete, createSqlMindCanvasCreateRuntime, createSqlMindCanvasUpdateRuntime, createSqlMindCanvasDeleteRuntime, createSqlMindCanvasNoteRuntime, createSqlMindCanvasItemAddRuntime, createSqlMindCanvasItemRemoveRuntime, createSqlMindCanvasItemUpdateRuntime, createSqlMindCanvasRelationCreateRuntime, createSqlMindCanvasRelationDeleteRuntime, createSqlMindGlobalRelationDeleteRuntime, createSqlMindRefNodeCreateRuntime, createSqlMindCanvasReader, createSqlMindNoteReader, createSqlMindNoteInserter, createSqlMindNoteMutator } from '@gugu/core/mind'
-import { createKnowledgeDeleteTool, createProjectDeleteTool, createCanvasCreationPort, createClientDeletePort, createNoteWritePort, createSkillDeleteTool, createSkillManagementWriteTools, createMcpManagementTool, createMcpManagementCreateOperations, createMcpManagementRemoveOperations, createMcpManagementEditOperations, createScheduledTaskDeleteTool, createDurableProjectMutationPort, createWebLinkButtonDeliveryPort, createWorkspaceMutationPort } from '@gugu/core/tools'
+import { createKnowledgeDeleteTool, createProjectDeleteTool, createCanvasCreationPort, createClientDeletePort, createNoteWritePort, createSkillDeleteTool, createSkillManagementWriteTools, createMcpManagementTool, createMcpManagementCreateOperations, createMcpManagementRemoveOperations, createMcpManagementEditOperations, createScheduledTaskDeleteTool, createDurableProjectMutationPort, createWebLinkButtonDeliveryPort, createWorkspaceMutationPort, createWorkspaceUnlinkTool, createWorkspaceDirectoryDeleteTool, createUndoLastActionTool, createPermanentDeleteTool } from '@gugu/core/tools'
 import { createMindNoteMutations } from '@gugu/core/mind'
-import { createHostCoreUndoOperations } from './domains/undo/persistence/core-operations.js'
+import { createHostCoreUndoOperations } from './modules/undo/persistence/core-operations.js'
 import { createLocalFileUndoStorage } from './modules/files/undo-storage.js'
 import { createRuntimeUndoTransactionPort } from '@gugu/core/undo'
 import { createScheduledTaskDeleter } from '@gugu/core/scheduled-task-delete'
@@ -262,137 +269,165 @@ import { createScheduledTaskTelegramDelivery } from './modules/scheduled-tasks/t
 import { createPostgresScheduledTaskTestEmailDelivery, readEmailProfile, smtpSettings } from './modules/scheduled-tasks/test-notify-email.js'
 import { sanitizeEmailHtml } from '@gugu/core/email/smtp-test'
 import { createSmtpTestDelivery } from './adapters/smtp-test-delivery.js'
-import { createWebAgentEmailTool } from './domains/agent-sessions/tools/agent-email.js'
+import { createWebAgentEmailTool } from './modules/agent-sessions/tools/agent-email.js'
 import { createKyselyNotificationOperations } from '@gugu/core/notifications'
 import { createKyselySmtpStore, createUserSmtpSettings } from '@gugu/core/smtp'
 import { encryptEncryptedString as encryptSmtpPassword } from './adapters/encrypted-string.js'
 import { startSecurityRetentionWorker } from './maintenance/security-retention.js'
-import { startProjectDeleteRecoveryWorker } from './domains/projects/project-delete-recovery-worker.js'
-import { createPostgresProjectDeleteJournal, hasProjectDeleteJournalSchema } from './domains/undo/persistence/project-journal.js'
-import { createLocalProjectUndoJournalStorage } from './domains/undo/persistence/project-journal-local.js'
+import { startProjectDeleteRecoveryWorker } from './modules/projects/project-delete-recovery-worker.js'
+import { createPostgresProjectDeleteJournal, hasProjectDeleteJournalSchema } from './modules/undo/persistence/project-journal.js'
+import { createLocalProjectUndoJournalStorage } from './modules/undo/persistence/project-journal-local.js'
 import { checkRagIndexMigration, RagIndexMigrationError } from './migrations/rag-index-migrate.js'
-import { startAgentRagIndexWorker } from './domains/agent-sessions/rag-rebuild.js'
-import { startRagIndexWorker } from './domains/agent-sessions/rag-index-worker.js'
-import { createOwnerReflectionExtractor } from './domains/agent-sessions/persistence/agent-owner-reflection-model.js'
-import { createReflectionModelScope } from './domains/agent-config/recoverable-provider.js'
-import { authorizeOwnerReflectionWrite, createPostgresOwnerReflectionSource } from './domains/agent-sessions/persistence/agent-owner-reflection-source.js'
-import { createOwnerReflectionWork } from './domains/agent-sessions/persistence/agent-owner-reflection-work.js'
-import { createLocalOwnerReflectionWriter } from './domains/agent-sessions/persistence/agent-owner-reflection-write.js'
-import { createRedisAgentReflectionInbox } from './domains/agent-sessions/persistence/agent-reflection-queue-redis.js'
-import { createLocalAgentKnowledgeReadStore } from './domains/agent-sessions/tools/agent-rag-knowledge-store.js'
-import { createWebOwnerAgentKnowledgeReadPort } from './domains/agent-sessions/tools/agent-knowledge.js'
-import { createAgentKnowledgeOverviewLoader } from './domains/agent-sessions/tools/agent-knowledge.js'
-import { createLocalAgentKnowledgeDeletePort, createLocalAgentKnowledgeWritePort } from './domains/agent-sessions/tools/agent-knowledge-write.js'
-import { createAgentImChannelLoader } from './domains/agent-sessions/context/agent-im-channels.js'
-import { createLocalPreferenceTextFiles } from './domains/preferences/persistence/personality-files.js'
-import { createWebCurrentMessageMaterializer } from './domains/agent-sessions/context/agent-current-message.js'
-import { formatAgentHistoryMessageTime } from './domains/agent-sessions/context/message-time.js'
-import { createWebAgentReconstructor, createWebAgentRagResources, createWebImMemoryLoader } from './domains/agent-sessions/agent-web-reconstructor.js'
-import { createWebAgentPromptReader, readWebAgentImPrompt, webAgentPromptRoot } from './domains/agent-sessions/context/agent-prompt-files.js'
-import { createWebAgentMcpProductionPorts } from './domains/agent-sessions/tools/agent-mcp-production-ports.js'
-import { createWebAgentSkillProductionPorts } from './domains/agent-sessions/tools/agent-skill-production-ports.js'
-import { createWebAgentRunLifecycle } from './domains/agent-sessions/agent-web-run-lifecycle.js'
-import { createConfiguredWebAgentProviderBinding } from './domains/agent-config/configured-web-provider-binding.js'
-import { createWebAgentSearchPorts } from './domains/agent-sessions/tools/agent-search.js'
-import { createWebAgentCalendarWritePorts } from './domains/agent-sessions/tools/agent-calendar-write-ports.js'
-import { createWebAgentCanvasMutationPorts, createWebAgentCanvasWritePorts } from './domains/agent-sessions/tools/agent-canvas-write-ports.js'
-import { createWebAgentConfirmationAuthorization, createWebAgentToolConfirmation } from './domains/agent-sessions/tools/agent-confirmation.js'
-import { createWebAgentScheduledTaskWrites } from './domains/agent-sessions/tools/agent-scheduled-task-writes.js'
-import { createPostgresTrustedIntentStore } from './domains/agent-sessions/persistence/agent-trusted-intent-postgres.js'
-import { createTrustedPromptDescriptions } from './domains/agent-sessions/persistence/agent-trusted-prompt-descriptions.js'
+import { checkTrashPurgeMigration } from './migrations/trash-purge-migrate.js'
+import { checkSearchUsageMigration } from './migrations/search-usage-migrate.js'
+import { startAgentRagIndexWorker } from './modules/agent-sessions/rag-rebuild.js'
+import { startRagIndexWorker } from './modules/agent-sessions/rag-index-worker.js'
+import { createOwnerReflectionExtractor } from './modules/agent-sessions/persistence/agent-owner-reflection-model.js'
+import { createReflectionModelScope } from './modules/agent/model-config/recoverable-provider.js'
+import { authorizeOwnerReflectionWrite, createPostgresOwnerReflectionSource } from './modules/agent-sessions/persistence/agent-owner-reflection-source.js'
+import { createOwnerReflectionWork } from './modules/agent-sessions/persistence/agent-owner-reflection-work.js'
+import { createLocalOwnerReflectionWriter } from './modules/agent-sessions/persistence/agent-owner-reflection-write.js'
+import { createRedisAgentReflectionInbox } from './modules/agent-sessions/persistence/agent-reflection-queue-redis.js'
+import { createLocalAgentKnowledgeReadStore } from './modules/agent-sessions/tools/agent-rag-knowledge-store.js'
+import { createWebOwnerAgentKnowledgeReadPort } from './modules/agent-sessions/tools/agent-knowledge.js'
+import { createAgentKnowledgeOverviewLoader } from './modules/agent-sessions/tools/agent-knowledge.js'
+import { createLocalAgentKnowledgeDeletePort, createLocalAgentKnowledgeWritePort } from './modules/agent-sessions/tools/agent-knowledge-write.js'
+import { createAgentImChannelLoader } from './modules/agent-sessions/context/agent-im-channels.js'
+import { createLocalPreferenceTextFiles } from './modules/preferences/persistence/personality-files.js'
+import { createWebCurrentMessageMaterializer } from './modules/agent-sessions/context/agent-current-message.js'
+import { formatAgentHistoryMessageTime } from './modules/agent-sessions/context/message-time.js'
+import { createWebAgentReconstructor, createWebAgentRagResources, createWebImMemoryLoader } from './modules/agent-sessions/agent-web-reconstructor.js'
+import { createWebLoopScopeTrace } from './modules/loopscope/trace.js'
+import { createWebAgentPromptReader, readWebAgentImPrompt, webAgentPromptRoot } from './modules/agent-sessions/context/agent-prompt-files.js'
+import { createWebAgentMcpProductionPorts } from './modules/agent-sessions/tools/agent-mcp-production-ports.js'
+import { createWebAgentRunLifecycle } from './modules/agent-sessions/agent-web-run-lifecycle.js'
+import { createConfiguredWebAgentProviderBinding } from './modules/agent/model-config/configured-web-provider-binding.js'
+import { createWebAgentSearchPorts } from './modules/agent-sessions/tools/agent-search.js'
+import { createWebAgentCalendarWritePorts } from './modules/agent-sessions/tools/agent-calendar-write-ports.js'
+import { createWebAgentCanvasMutationPorts, createWebAgentCanvasWritePorts } from './modules/agent-sessions/tools/agent-canvas-write-ports.js'
+import { createWebAgentConfirmationAuthorization, createWebAgentToolConfirmation } from './modules/agent-sessions/tools/agent-confirmation.js'
+import { createWebAgentShell } from './modules/agent-sessions/tools/agent-shell.js'
+import { createAgentShellSnapshotReader } from './modules/agent-sessions/tools/agent-shell-snapshot.js'
+import { createWebAgentScheduledTaskWrites } from './modules/agent-sessions/tools/agent-scheduled-task-writes.js'
+import { createPostgresTrustedIntentStore } from './modules/agent-sessions/persistence/agent-trusted-intent-postgres.js'
+import { createTrustedPromptDescriptions } from './modules/agent-sessions/persistence/agent-trusted-prompt-descriptions.js'
 import { createAgentInteractionDescription } from '@gugu/core/agent'
-import { createPostgresInteractionProjection } from './domains/agent-sessions/persistence/agent-interaction-projection-postgres.js'
-import { createAgentInteractionRespondService } from './domains/agent-sessions/agent-interaction-respond.js'
-import { createPostgresAgentInteractionCommandEffects } from './domains/agent-sessions/persistence/agent-interaction-command-effects.js'
-import { createAgentSecretInteractionService } from './domains/agent-sessions/agent-secret-interaction-route.js'
-import { createInteractionResumeEnqueuer } from './domains/agent-sessions/persistence/agent-interaction-resume-postgres.js'
-import { createPostgresSecretInteraction } from './domains/agent-sessions/persistence/agent-secret-interaction-postgres.js'
-import { createPostgresAgentRunStore } from './domains/agent-sessions/persistence/agent-run-store-postgres.js'
-import { createPostgresAgentDispatch } from './domains/agent-sessions/persistence/agent-run-dispatch-postgres.js'
-import { createAgentConversationReadPort } from './domains/agent-sessions/tools/agent-conversations.js'
-import { createWebAgentFileReadPort } from './domains/agent-sessions/tools/agent-file-read.js'
-import { createProjectFileOverviewPort } from './domains/agent-sessions/tools/project-file-overview-port.js'
-import { projectAgentRunEvent } from './domains/agent-sessions/agent-run-events.js'
+import { createPostgresInteractionProjection } from './modules/agent-sessions/persistence/agent-interaction-projection-postgres.js'
+import { createAgentInteractionRespondService } from './modules/agent-sessions/agent-interaction-respond.js'
+import { createRedisProviderContinuationStore } from './modules/agent-sessions/persistence/agent-provider-continuation-redis.js'
+import { createPostgresAgentInteractionCommandEffects } from './modules/agent-sessions/persistence/agent-interaction-command-effects.js'
+import { createAgentSecretInteractionService } from './modules/agent-sessions/agent-secret-interaction-route.js'
+import { createInteractionResumeEnqueuer } from './modules/agent-sessions/persistence/agent-interaction-resume-postgres.js'
+import { createPostgresSecretInteraction } from './modules/agent-sessions/persistence/agent-secret-interaction-postgres.js'
+import { createPostgresAgentRunStore } from './modules/agent-sessions/persistence/agent-run-store-postgres.js'
+import { createPostgresAgentActiveStatusReader, createPostgresAgentDispatch } from './modules/agent-sessions/persistence/agent-run-dispatch-postgres.js'
+import { createAgentConversationReadPort } from './modules/agent-sessions/tools/agent-conversations.js'
+import { createWebAgentFileReadPort } from './modules/agent-sessions/tools/agent-file-read.js'
+import { createWebAgentFilePresentPort } from './modules/agent-sessions/tools/agent-file-present.js'
+import { createWebAgentFileGrepPort } from './modules/agent-sessions/tools/agent-file-grep.js'
+import { createWebAgentFileEditPort } from './modules/agent-sessions/tools/agent-file-edit.js'
+import { createWebAgentFileRenamePort } from './modules/agent-sessions/tools/agent-file-rename.js'
+import { createWebAgentFileCopyPort } from './modules/agent-sessions/tools/agent-file-copy.js'
+import { createWebAgentFileArchivePort } from './modules/agent-sessions/tools/agent-file-archive.js'
+import { createWebAgentFileCreatePort } from './modules/agent-sessions/tools/agent-file-create.js'
+import { createWebAgentSaveUploadedFilePort } from './modules/agent-sessions/tools/agent-file-save-attachment.js'
+import { createWebAgentRecentAttachmentsPort } from './modules/agent-sessions/tools/agent-file-recent-attachments.js'
+import { createWebAgentFolderCreatePort, createWebAgentFolderRenamePort, createWebAgentMoveItemsPort } from './modules/agent-sessions/tools/agent-file-writes.js'
+import { createWebAgentFileDirectoryPort } from './modules/agent-sessions/tools/agent-file-directory.js'
+import { createWebAgentFileDeletePort, createWebAgentFileFolderDeletePort } from './modules/agent-sessions/tools/agent-file-folder-delete.js'
+import { createProjectFileOverviewPort } from './modules/agent-sessions/tools/project-file-overview-port.js'
+import { projectAgentRunEvent } from './modules/agent-sessions/agent-run-events.js'
 import { createTrackOperations } from './modules/site/persistence/track.js'
 import { createFeedbackNotifier, createFeedbackService, createFeedbackSubmission, createKyselyFeedbackOperations } from '@gugu/core/feedback'
 import { runBestEffort } from './adapters/best-effort.js'
-import { revokeUserSessions } from './domains/auth/persistence/auth-revocation.js'
+import { revokeUserSessions } from './modules/auth/persistence/auth-revocation.js'
 import { createKyselyProjectCreateRuntime } from '@gugu/core/project-create-data'
 import { createProjectCreator } from '@gugu/core/project-create'
-import { createPostgresProjectUpdateRuntime } from './domains/projects/persistence/project-update-postgres.js'
-import { createLocalProjectDirectoryRenamer } from './domains/projects/persistence/project-directory-storage.js'
+import { createPostgresProjectUpdateRuntime } from './modules/projects/persistence/project-update-postgres.js'
+import { createLocalProjectDirectoryRenamer } from './modules/projects/persistence/project-directory-storage.js'
 import { createProjectUpdater } from '@gugu/core/project-update'
-import { createProjectTrashService } from './domains/projects/application/project-trash.js'
-import { createBorrowedPostgresProjectTrashTransaction, createPostgresProjectTrashRuntime } from './domains/projects/persistence/project-trash-postgres.js'
+import { createProjectTrashService } from '@gugu/core/project-trash'
+import { createBorrowedPostgresProjectTrashTransaction, createPostgresProjectTrashRuntime } from './modules/projects/persistence/project-trash-postgres.js'
 import {
   createLocalProjectTrashStorage,
   createProjectTrashOriginalStorageKeyResolver,
-} from './domains/projects/persistence/project-trash-storage.js'
-import { createPostgresProjectTrashPathMetadataReader } from './domains/projects/persistence/project-trash-path-metadata-postgres.js'
-import { createProjectPostCommitPublisher } from './domains/projects/persistence/project-post-commit-postgres.js'
+} from './modules/projects/persistence/project-trash-storage.js'
+import { createPostgresProjectTrashPathMetadataReader } from './modules/projects/persistence/project-trash-path-metadata-postgres.js'
+import { createProjectPostCommitPublisher } from './modules/projects/persistence/project-post-commit-postgres.js'
 import { createCalendarEvent } from '@gugu/core/calendar'
 import { createCalendarEventPostCommitPublisher } from './modules/calendar/persistence/calendar-create-post-commit-postgres.js'
 import { createCalendarEventReader, createKyselyCalendarReadPort, createKyselyCalendarCreateStore, createKyselyCalendarMutationStores } from '@gugu/core/calendar'
 import { deleteCalendarEvent } from '@gugu/core/calendar'
 import { createCalendarMutationPostCommitPublisher } from './modules/calendar/persistence/calendar-mutation-post-commit-postgres.js'
 import { updateCalendarEvent } from '@gugu/core/calendar'
-import { createPostgresWorkspaceCreator } from './domains/workspaces/persistence/workspace-create.js'
-import { createPostgresWorkspaceUpdater } from './domains/workspaces/persistence/workspace-update.js'
-import { createPostgresWorkspaceBindingOperations } from './domains/workspaces/persistence/workspace-bindings.js'
-import { createPostgresWorkspaceLister } from './domains/workspaces/persistence/workspace-list.js'
-import { createPostgresWorkspaceDeleter } from './domains/workspaces/persistence/workspace-delete.js'
-import { createPostgresWorkspaceDirectoryOperations } from './domains/workspaces/persistence/workspace-directories.js'
-import { createAgentSessionLister } from './domains/agent-sessions/agent-sessions.js'
+import { createPostgresWorkspaceCreator } from './modules/workspaces/persistence/workspace-create.js'
+import { createPostgresWorkspaceUpdater } from './modules/workspaces/persistence/workspace-update.js'
+import { createPostgresWorkspaceBindingOperations } from './modules/workspaces/persistence/workspace-bindings.js'
+import { createPostgresWorkspaceLister } from './modules/workspaces/persistence/workspace-list.js'
+import { createPostgresWorkspaceDeleter } from './modules/workspaces/persistence/workspace-delete.js'
+import { createPostgresWorkspaceDirectoryOperations } from './modules/workspaces/persistence/workspace-directories.js'
+import { createWebAgentWorkspaceCreatePort } from './modules/agent-sessions/tools/agent-workspace-create.js'
+import { createWebAgentWorkspaceDirectoryDeletePort } from './modules/agent-sessions/tools/agent-workspace-directory-delete.js'
+import { createWebAgentAskUserAuthorization } from './modules/agent-sessions/tools/agent-ask-user-authorization.js'
+import { createWebAgentUndoLastActionPort } from './modules/agent-sessions/tools/agent-undo-last-action.js'
+import { createAgentSessionLister } from './modules/agent-sessions/agent-sessions.js'
 import {
   createAgentSessionFilesystemAuthorization,
   unavailableFilesystemAuthorizationConfirmations,
-} from './domains/agent-sessions/agent-filesystem-authorization.js'
-import { createFilesystemAuthorizationConfirmationStore } from './domains/agent-sessions/filesystem-authorization-confirmations.js'
-import { createPostgresAgentSessionRefresher } from './domains/agent-sessions/agent-session-refresh.js'
-import { createPostgresAgentSessionRenamer } from './domains/agent-sessions/agent-session-rename.js'
+} from './modules/agent-sessions/agent-filesystem-authorization.js'
+import { createFilesystemAuthorizationConfirmationStore } from './modules/agent-sessions/filesystem-authorization-confirmations.js'
+import { createPostgresAgentSessionRefresher } from './modules/agent-sessions/agent-session-refresh.js'
+import { createPostgresAgentSessionRenamer } from './modules/agent-sessions/agent-session-rename.js'
 import { createPostgresAgentSessionDeleteOperations } from './modules/agent/session-delete.js'
-import { createAgentMessageHistory } from './domains/agent-sessions/persistence/agent-message-history.js'
-import { createPostgresAgentOrphanRecovery } from './domains/agent-sessions/persistence/agent-run-recovery.js'
-import { createAgentImMemoryRagMutationPorts } from './domains/agent-sessions/persistence/agent-im-memory-rag-mutations.js'
+import { createAgentMessageHistory } from './modules/agent-sessions/persistence/agent-message-history.js'
+import { createPostgresAgentOrphanRecovery } from './modules/agent-sessions/persistence/agent-run-recovery.js'
+import { createAgentImMemoryRagMutationPorts } from './modules/agent-sessions/persistence/agent-im-memory-rag-mutations.js'
 import { createPostgresAgentSessionStateReader } from './modules/agent-sessions/state.js'
 import { createPostgresAgentInteractionHistory } from '@gugu/core/agent-sessions'
-import { createInteractionSessionLookup } from './domains/agent-sessions/persistence/agent-interaction-session.js'
-import { createPostgresAgentMessageLocator } from './domains/agent-sessions/agent-message-location.js'
+import { createInteractionSessionLookup } from './modules/agent-sessions/persistence/agent-interaction-session.js'
+import { createPostgresAgentMessageLocator } from './modules/agent-sessions/agent-message-location.js'
 import {
   createPostgresAgentImportedDraftQueueReader,
   createPostgresAgentPendingQueueReader,
-} from './domains/agent-sessions/agent-pending-queues.js'
+} from './modules/agent-sessions/agent-pending-queues.js'
 import {
   createPostgresAgentPendingQueuePatch,
   createPostgresAgentPendingQueueReplace,
-} from './domains/agent-sessions/agent-pending-queue-patch.js'
-import { createPostgresAgentPendingQueueClaims } from './domains/agent-sessions/agent-pending-queue-claims.js'
-import { createPostgresAgentToolEventDetails } from './domains/agent-sessions/agent-tool-event-details.js'
+} from './modules/agent-sessions/agent-pending-queue-patch.js'
+import { createPostgresAgentPendingQueueClaims } from './modules/agent-sessions/agent-pending-queue-claims.js'
+import { createPostgresAgentToolEventDetails } from './modules/agent-sessions/agent-tool-event-details.js'
 import { agentCommandMenu } from '@gugu/core/agent/commands/menu'
 import { BUILTIN_AGENT_TOOL_STATE_LABELS, createAgentToolLabelPicker, DEFAULT_AGENT_STATE_LABELS } from '@gugu/core/agent-sessions'
-import { createAgentStateLabelOverrides } from './domains/agent-sessions/agent-state-label-config.js'
-import { createAgentStateLabelOperations } from './modules/admin/agent-state-labels.js'
-import { createPostgresFileBrowserOperations } from './domains/files/file-browser-postgres.js'
-import { createPostgresFileReadOperations } from './domains/files/file-reads-postgres.js'
+import { createAgentStateLabelOverrides } from './modules/agent-sessions/agent-state-label-config.js'
+import { createAgentStateLabelOperations } from './modules/admin/llm-strategy.js'
+import { createPostgresFileBrowserOperations } from './modules/files/file-browser-postgres.js'
+import { createPostgresFileReadOperations } from './modules/files/file-reads-postgres.js'
 import { createPostgresXlsxPreviewOperations } from './modules/files/xlsx-preview-postgres.js'
-import { createPostgresFileUploadOperations } from './domains/files/file-upload-postgres.js'
-import { createWebAgentDownloadTool } from './domains/agent-sessions/tools/agent-web-download.js'
+import { extractOfficeText } from '@gugu/core/files/office-text'
+import { createPostgresFileUploadOperations } from './modules/files/file-upload-postgres.js'
+import { createWebAgentDownloadTool } from './modules/agent-sessions/tools/agent-web-download.js'
 import { createPublicAgentEgress } from './adapters/safe-egress-proxy.js'
-import { createPostgresFileDeleteOperations } from './domains/files/file-delete-postgres.js'
-import { createPostgresFileRestoreOperations } from './domains/files/file-restore-postgres.js'
-import { createPostgresTrashReadOperations } from './domains/files/persistence/trash-postgres.js'
-import { createPostgresTrashMutationOperations } from './domains/files/persistence/trash-mutations-postgres.js'
-import { createPostgresTrashPurgeOperations } from './domains/files/persistence/trash-purge-postgres.js'
-import { createPostgresFileContentOperations } from './domains/files/file-content-postgres.js'
-import { createPostgresFileUpdateOperations } from './domains/files/file-update-postgres.js'
-import { createPostgresFileCopyOperations } from './domains/files/file-copy-postgres.js'
-import { createPostgresFileConflictOperations } from './domains/files/file-conflicts-postgres.js'
-import { createPostgresFileBatchDownloadOperations } from './domains/files/file-batch-download-postgres.js'
-import { createPostgresFileArchiveOperations } from './domains/files/file-archive-postgres.js'
-import { createPostgresFolderReadOperations } from './domains/files/folder-reads-postgres.js'
-import { capturePostgresFolderPathMirrorDirectoryKeys, createPostgresFolderPathMirrorPlanner } from './domains/files/folder-path-planner.js'
-import { createLocalPathMirrorMutation } from './domains/files/local-path-mirror.js'
-import { createPostgresFolderWriteOperations, type FolderUndoRecord } from './domains/files/folder-writes-postgres.js'
+import { createPostgresFileDeleteOperations } from './modules/files/file-delete-postgres.js'
+import { createPostgresFileRestoreOperations } from './modules/files/file-restore-postgres.js'
+import { createPostgresTrashReadOperations } from './modules/files/persistence/trash-postgres.js'
+import { createPostgresTrashMutationOperations } from './modules/files/persistence/trash-mutations-postgres.js'
+import { createPostgresTrashPurgeOperations } from './modules/files/persistence/trash-purge-postgres.js'
+import { TrashPurgeUnavailableError } from './modules/files/trash.js'
+import { startTrashPurgeWorker } from './modules/files/trash-purge-worker.js'
+import { createLocalUndoRetentionStorage } from './modules/files/undo-retention-storage.js'
+import { startUndoRetentionWorker } from './maintenance/undo-retention.js'
+import { startProjectExpiryWorker } from './modules/projects/project-expiry-worker.js'
+import { hasProjectExpiryJournalSchema } from './modules/projects/persistence/project-expiry-postgres.js'
+import { createPostgresFileContentOperations } from './modules/files/file-content-postgres.js'
+import { createPostgresFileUpdateOperations } from './modules/files/file-update-postgres.js'
+import { createPostgresFileCopyOperations } from './modules/files/file-copy-postgres.js'
+import { createPostgresFileConflictOperations } from './modules/files/file-conflicts-postgres.js'
+import { createPostgresFileBatchDownloadOperations } from './modules/files/file-batch-download-postgres.js'
+import { createPostgresFileArchiveOperations } from './modules/files/file-archive-postgres.js'
+import { createPostgresFolderReadOperations } from './modules/files/folder-reads-postgres.js'
+import { capturePostgresFolderPathMirrorDirectoryKeys, createPostgresFolderPathMirrorPlanner } from './modules/files/folder-path-planner.js'
+import { createLocalPathMirrorMutation } from './modules/files/local-path-mirror.js'
+import { createPostgresFolderWriteOperations, type FolderUndoRecord } from './modules/files/folder-writes-postgres.js'
 import { createPostgresFolderCopyOperations } from './modules/files/folder-copy-postgres.js'
 import { createPostgresFolderDeleteOperations } from './modules/files/folder-delete-postgres.js'
 import { prepareWorkspaceDirectoryAcl } from './adapters/workspace-directory-acl.js'
@@ -416,24 +451,23 @@ import {
   createInMemoryRateLimitCommands,
   createRedisRateLimiter,
   RateLimitError,
-} from './domains/auth/rate-limit.js'
+} from './modules/auth/rate-limit.js'
 import {
   AdminAuthError,
   createAdminAuthAdapter,
   createInMemoryAdminAuthVersionStore,
-} from './domains/admin/admin-auth.js'
+} from './modules/admin/auth.js'
 import {
   createPostgresAdminStorageSnapshotQuery,
   diskUsageForStorage,
-} from './domains/admin/admin-storage-snapshots.js'
-import {
-  createPostgresAdminUserStatusStore,
-} from './domains/admin/admin-users.js'
-import { resolveAdminDebugLogFiles } from './domains/admin/admin-debug-logs.js'
+} from './modules/admin/storage.js'
+import { createPostgresAdminUserStatusStore } from './modules/admin/user-status.js'
+import { resolveAdminDebugLogFiles } from './modules/admin/logs.js'
+import { createWebAgentFailureLogger } from './modules/agent-sessions/agent-failure-log.js'
 import { createAdminHostGuard } from './http/admin-host-guard.js'
 import {
   createSecurityEventFingerprint,
-} from './domains/admin/admin-audit-log.js'
+} from './modules/admin/audit.js'
 
 function createPool(config: WebUiConfig, max = config.postgresPoolMax): Pool {
   return new Pool({
@@ -499,6 +533,7 @@ const noRedisEvents: RedisEventPublisher = {
   async publishAuthStateChanged() { return false },
   async bumpContextRevision() { return false },
   async publishResourceChanged() { return false },
+  async publishTrashPurgeProgress() { return false },
 }
 
 function createUserAuth(
@@ -513,6 +548,7 @@ function createUserAuth(
     secret,
     tokenExpiresMinutes,
     ...createUserRepository(pool),
+    isDataReplacementWriteLocked: createPostgresDataReplacementWriteGate(pool),
     ...(quotaSettings ? { getQuota: createPostgresUserQuotaReader(pool, quotaSettings) } : {}),
     async revokeUserSessions(userId) {
       await revokeUserSessions(pool, userId)
@@ -662,6 +698,8 @@ async function createWebUiApp(
   env: NodeJS.ProcessEnv = process.env,
   canRebuildAgentMemoryIndex: () => boolean = () => false,
   projectJournalPool?: Pool,
+  trashPurgeSchemaApplied = false,
+  searchUsageSchemaApplied = false,
 ): Promise<{ app: ReturnType<typeof createApp>; startWorkers(): Promise<void> }> {
   const publisher = redisEvents ?? noRedisEvents
   const fileUploads = createPostgresFileUploadOperations(pool, {
@@ -676,6 +714,13 @@ async function createWebUiApp(
         origin: event.origin,
         payload: { kind: 'file', entity: event.payload },
       })
+    },
+  })
+  const fileDeletes = createPostgresFileDeleteOperations(pool, {
+    storageRoot: config.storageLocalPath,
+    async publishChanged(event) {
+      await publisher.publishResourceChanged({ ownerId: event.ownerId, resource: 'files', operation: 'delete',
+        entityId: event.entityId, origin: event.origin, payload: { kind: 'file', id: event.entityId } })
     },
   })
   const publishTerminalRefresh = async () => {
@@ -710,6 +755,7 @@ async function createWebUiApp(
   })
   // Collector URL 来自可信部署配置；仍需固定 DNS 目标并拒绝重定向，允许本地地址仅用于该固定内部服务。
   const loopScopeTransport = createNodeProviderTransport({ allowLocal: true, connectTimeoutMs: 5_000, writeTimeoutMs: 10_000, environment: () => env })
+  const loopScopeTrace = createWebLoopScopeTrace({ enabled: env.LOOPSCOPE_ENABLED, endpoint: env.LOOPSCOPE_ENDPOINT, transport: loopScopeTransport })
   const recordEmailDelivery = config.redisUrl ? createRedisEmailDeliveryMetric(config.redisUrl) : undefined
   const readStorageQuotaManualState = config.redisUrl ? createRedisValueReader(config.redisUrl) : null
   const storageQuotaReconcile = config.redisUrl && readStorageQuotaManualState
@@ -744,18 +790,19 @@ async function createWebUiApp(
     maxTools: () => readMcpSettings().max_tools_per_server,
     async builtinNames(_owner) { return new Set(skillToolRegistry.catalog().map(item => item.name)) },
   })
+  const mcpStdioClient = createMcpStdioClientFactory({
+    resolveWorkspaceRoot: owner => resolveMcpWorkspaceRoot(config.storageLocalPath, owner),
+    maxSessions: () => readMcpSettings().stdio_max_sessions,
+    maxSessionsPerOwner: () => readMcpSettings().stdio_max_sessions_per_user,
+    idleSeconds: () => readMcpSettings().stdio_idle_seconds,
+  })
   const mcpRuntime = createMcpRuntime({
     configs: createMcpServerConfigLister(core.db), enabled: () => readMcpSettings().enabled === true,
     decrypt: createConfiguredByokEnvelope(env),
     transport: () => createNodeProviderTransport({ allowLocal: false, connectTimeoutMs: 5_000, writeTimeoutMs: 10_000, environment: () => env }),
     maxTools: () => readMcpSettings().max_tools_per_server,
     async builtinNames(_owner) { return new Set(skillToolRegistry.catalog().map(item => item.name)) },
-    stdioClient: createMcpStdioClientFactory({
-      resolveWorkspaceRoot: owner => resolveMcpWorkspaceRoot(config.storageLocalPath, owner),
-      maxSessions: () => readMcpSettings().stdio_max_sessions,
-      maxSessionsPerOwner: () => readMcpSettings().stdio_max_sessions_per_user,
-      idleSeconds: () => readMcpSettings().stdio_idle_seconds,
-    }),
+    stdioClient: mcpStdioClient,
   })
   const userSkillTools = async (owner: string) => {
     const [builtins, dynamic] = await Promise.all([builtinSkillTools(owner), mcpSkillTools(owner)])
@@ -784,9 +831,6 @@ async function createWebUiApp(
   const scheduledNotifyReach = config.redisUrl ? createRedisValueReader(config.redisUrl) : null
   const wechatConnectOptions = createWechatConnectHostOptions(env, config.redisUrl ?? '')
   const telegramConnectOptions = createTelegramConnectHostOptions(createSafeEgressSettingsReader(env, resolveConfigOverridePath(env)), config.secretKey)
-  const publishFileSyncRun = async ({ runId, bindingId, revision }: { runId: string; bindingId: number; revision: number }) => {
-    if (config.redisUrl) await createRedisFileSyncPublisher(config.redisUrl)({ protocol_version: 'live-event-v1', event_id: `evt-${randomUUID().replaceAll('-', '')}`, type: 'filesync.run.changed', run_id: runId, binding_id: bindingId, revision, created_at: new Date().toISOString() })
-  }
   const createMindNote = createMindNoteCreator({
     insert: createSqlMindNoteInserter(core.db, 'postgres'),
     async publishCreated({ ownerId, note, clientId, mutationId }) {
@@ -1052,17 +1096,25 @@ async function createWebUiApp(
     prepareDirectoryAcl: prepareWorkspaceDirectoryAcl,
     terminateActivePty: createSandboxdWorkspacePtyTerminator(pool, config.sandboxdSocket),
   })
+  const runtimeConfigPath = config.configOverridePath ?? resolveConfigOverridePath(env)
+  const bubblewrapRootfs = resolveBubblewrapRootfs(env)
+  const readBubblewrapReadiness = createIsolatedShellReadiness(bubblewrapRootfs)
+  const readTerminalSettings = createTerminalRuntimeSettingsReader(runtimeConfigPath, env, readBubblewrapReadiness, 'none')
+  const readTerminalAccess = createTerminalAccessReader(readTerminalSettings)
+  const readPtyEnabled = async () => {
+    const settings = await readTerminalAccess()
+    return settings.terminalMode === 'auto' && settings.fullUserSandboxAuthorizationEnabled
+  }
   const workspaceList = createPostgresWorkspaceLister(pool, {
-    readRuntimeSettings: () => ({
-      ...config.workspaceRuntimeSettings,
-      // Node's Host has no sandbox daemon readiness probe yet; keep shell/PTY capability off.
-      sandboxReady: false,
-    }),
+    async readRuntimeSettings() {
+      return { ...await readTerminalAccess(), automaticModeEnabled: config.workspaceRuntimeSettings.automaticModeEnabled }
+    },
   })
+  const readAgentActiveStatuses = config.redisUrl
+    ? createPostgresAgentActiveStatusReader(pool)
+    : async () => new Map<number, boolean>()
   const listAgentSessions = createAgentSessionLister(pool, {
-    activeStatuses: config.redisUrl
-      ? createRedisAgentActiveStatusReader(config.redisUrl)
-      : async () => new Map(),
+    activeStatuses: readAgentActiveStatuses,
     filesystemAuthorizationEnabled: () => config.workspaceRuntimeSettings.fullUserSandboxAuthorizationEnabled,
     // Host 尚未探测 sandboxd 就绪状态；与 workspace list 一样禁用 Shell/PTY 展示。
     workspaceShellSupported: () => false,
@@ -1073,10 +1125,19 @@ async function createWebUiApp(
   const recoverAgentOrphanedSession = agentRunRecoveryState
     ? createPostgresAgentOrphanRecovery(pool, agentRunRecoveryState)
     : undefined
+  const activeRunReader = config.redisUrl ? {
+    dispatch: createPostgresAgentDispatch(pool, config.secretKey),
+    store: createPostgresAgentRunStore(pool, config.secretKey, {
+      async writeHistory() { throw new Error('只读运行快照不接受历史写入') },
+    }),
+  } : null
   const listAgentMessages = createAgentMessageHistory(pool, {
-    activeStatuses: config.redisUrl
-      ? createRedisAgentActiveStatusReader(config.redisUrl)
-      : async () => new Map(),
+    activeStatuses: readAgentActiveStatuses,
+    async readActiveRun(ownerId, sessionId) {
+      if (!activeRunReader) return null
+      const active = await activeRunReader.dispatch.active(ownerId, sessionId)
+      return active?.identity ? await activeRunReader.store.read(active.identity) : null
+    },
     filesystemAuthorizationEnabled: () => config.workspaceRuntimeSettings.fullUserSandboxAuthorizationEnabled,
     // Host 尚未探测 sandboxd 就绪状态；与 workspace list 一样禁用 Shell/PTY 展示。
     workspaceShellSupported: () => false,
@@ -1090,8 +1151,8 @@ async function createWebUiApp(
     : async () => new Map<number, boolean>()
   const readAgentSessionState = createPostgresAgentSessionStateReader(pool, {
     recover: recoverAgentOrphanedSession ?? (async () => false),
-    async isActive(sessionId) {
-      return (await agentQueueStatuses([sessionId])).get(sessionId) ?? false
+    async isActive(sessionId, ownerId) {
+      return (await readAgentActiveStatuses([sessionId], ownerId)).get(sessionId) ?? false
     },
   })
   const filesystemAuthorizationConfirmations = config.redisUrl
@@ -1178,6 +1239,9 @@ async function createWebUiApp(
       })
     },
   })
+  const trashPurgeOperations = createPostgresTrashPurgeOperations(pool, {
+    notifyWorker: config.redisUrl ? createRedisTrashPurgeNotifier(config.redisUrl) : async () => undefined,
+  })
   const trashOperations = {
     ...createPostgresTrashReadOperations(pool, config.secretKey),
     ...createPostgresTrashMutationOperations(pool, {
@@ -1193,9 +1257,11 @@ async function createWebUiApp(
         })
       },
     }),
-    ...createPostgresTrashPurgeOperations(pool, {
-      notifyWorker: config.redisUrl ? createRedisTrashPurgeNotifier(config.redisUrl) : async () => undefined,
-    }),
+    ...trashPurgeOperations,
+    async startEmpty(ownerId: string) {
+      if (!trashPurgeSchemaApplied || process.platform !== 'linux') throw new TrashPurgeUnavailableError()
+      return trashPurgeOperations.startEmpty(ownerId)
+    },
     restoreFolder(ownerId: string, folderId: number, origin: string | null) {
       if (!fileRestores.restoreFolder) throw new Error('Local 文件夹恢复适配器未就绪')
       return fileRestores.restoreFolder(ownerId, folderId, origin)
@@ -1224,7 +1290,8 @@ async function createWebUiApp(
   const withOwnerMemoryLock = createOwnerMemoryLock(core.db)
   const accountMemoryCleanup = config.redisUrl && core.receipts && process.platform === 'linux'
     ? createAccountMemoryCleanupRuntime({
-      redisUrl: config.redisUrl,
+      values: createRedisAdminMaintenanceCommands(config.redisUrl),
+      redis: createRedisScheduledTaskCommands(config.redisUrl),
       storage: createAccountMemoryCleanupStorage({ core, root: config.storageLocalPath }),
       available: canRebuildAgentMemoryIndex,
       model: () => imMaintenanceProviderConfig(env, resolveConfigOverridePath(env)),
@@ -1272,21 +1339,16 @@ async function createWebUiApp(
     now: Date.now,
   })
   const ragIndexReader = createSqlRagPersistentIndexReader(core.db, core.backend)
-  const runtimeConfigPath = config.configOverridePath ?? resolveConfigOverridePath(env)
   const readStateLabelOverrides = createAgentStateLabelOverrides(() => readConfigOverride(runtimeConfigPath))
-  const readTerminalSettings = createTerminalRuntimeSettingsReader(runtimeConfigPath, env, mxcDiagnostics)
+  const readAgentShellSnapshot = createAgentShellSnapshotReader(pool, core.db, readTerminalSettings)
+  const shellMounts = createTerminalWorkspaceMounts(pool, core.db, config.storageLocalPath)
   const updateSandboxRuntime = createSandboxRuntimeUpdater(runtimeConfigPath)
-  const readTerminalDetail = createPostgresTerminalDetailReader(pool, core.db, {
-    ...config.workspaceRuntimeSettings,
-    async readSandboxReadiness() {
-      const diagnostics = await mxcDiagnostics()
-      return { ready: diagnostics.supported, ...(diagnostics.reason ? { reason: diagnostics.reason } : {}) }
-    },
-  })
-  const terminalPtySnapshot = createTerminalShellSnapshotReader(core.db, 'postgres', async () => {
+  const readTerminalDetail = createPostgresTerminalDetailReader(pool, core.db, readTerminalAccess)
+  const readTerminalExecutionSettings = async () => {
     const settings = await readTerminalSettings()
-    return { ...settings, shellEnabled: settings.shellEnabled && config.workspaceRuntimeSettings.terminalMode !== 'entry_disabled' }
-  })
+    return { ...settings, shellEnabled: settings.shellEnabled && settings.terminalMode !== 'entry_disabled' }
+  }
+  const terminalPtySnapshot = createTerminalShellSnapshotReader(core.db, 'postgres', readTerminalExecutionSettings)
   const authorizeTerminalPty = createTerminalInputAuthorizer({
     read: async (owner, terminalId) => {
       const value = await readTerminalDetail(owner, terminalId)
@@ -1294,11 +1356,10 @@ async function createWebUiApp(
       return value
     },
     snapshot: terminalPtySnapshot,
-    ptyEnabled: () => config.workspaceRuntimeSettings.terminalMode !== 'pty_disabled'
-      && config.workspaceRuntimeSettings.fullUserSandboxAuthorizationEnabled,
+    ptyEnabled: readPtyEnabled,
   })
   const terminalPtyManager = createTerminalPtyManager({
-    bridge: createMxcPtyBridge({ command: '/bin/bash' }),
+    bridge: createBubblewrapPtyBridge(bubblewrapRootfs),
   })
   terminalPtyManager.startReaper()
   const terminalPtyRuntime = createTerminalPtyRuntime({
@@ -1314,6 +1375,7 @@ async function createWebUiApp(
   })
   const terminalCommand = config.redisUrl
     ? createTerminalRuntime({
+        sandboxRootfs: bubblewrapRootfs,
         pool,
         db: core.db,
         storageRoot: config.storageLocalPath,
@@ -1324,15 +1386,8 @@ async function createWebUiApp(
           if (!value) throw Object.assign(new Error('终端不存在'), { statusCode: 404 })
           return value
         },
-        runtime: async () => {
-          const settings = await readTerminalSettings()
-          return {
-            ...settings,
-            shellEnabled: settings.shellEnabled && config.workspaceRuntimeSettings.terminalMode !== 'entry_disabled',
-          }
-        },
-        ptyEnabled: () => config.workspaceRuntimeSettings.terminalMode !== 'pty_disabled'
-          && config.workspaceRuntimeSettings.fullUserSandboxAuthorizationEnabled,
+        runtime: readTerminalExecutionSettings,
+        ptyEnabled: readPtyEnabled,
         diagnose: () => console.error('gugu-webui terminal command lifecycle failed'),
         cancellation: createTerminalCancellationMarkers(createRedisAgentCancellationCommands(config.redisUrl)),
         lease: createTerminalActiveLease(createRedisScheduledTaskCommands(config.redisUrl)),
@@ -1363,6 +1418,7 @@ async function createWebUiApp(
   let agentSecretInteraction: ReturnType<typeof createAgentSecretInteractionService> | null = null
   if (config.redisUrl) {
     const agentRedisUrl = config.redisUrl
+    const providerContinuationStore = createRedisProviderContinuationStore(createRedisExpiringValueStore(agentRedisUrl), config.secretKey)
     const overridePath = config.configOverridePath ?? resolveConfigOverridePath(env)
     const override = readConfigOverride(overridePath)
     const agentSettings = objectSetting(override.agent)
@@ -1408,14 +1464,25 @@ async function createWebUiApp(
         : Promise.resolve(null),
       createConfirmation: (ownerId, summary, identity, ttlMinutes) => filesystemAuthorizationConfirmations
         .createPending(ownerId, summary, identity, ttlMinutes),
+      filesystemAuthorizationEnabled: () => config.workspaceRuntimeSettings.fullUserSandboxAuthorizationEnabled,
     })
-    const interactionActivation = createAgentInteractionDescription(trustedPrompts)
-    const makeConfirmation = (lease: import('./domains/agent-sessions/persistence/agent-run-dispatch-postgres.js').AgentDispatchLease, action: string) => {
+    const interactionActivation = {
+      ...createAgentInteractionDescription(trustedPrompts),
+      ...(readMcpSettings().enabled === true ? {
+        async cancelPendingSecrets(client: PoolClient, identity: import('@gugu/core/agent').RunIdentity) {
+          await client.query(`UPDATE mcp_secret_inputs SET status='cancelled', encrypted_payload='', payload_nonce='', encrypted_data_key=''
+            WHERE user_id=$1 AND session_id=$2 AND status IN ('pending_choice','awaiting_secret')`, [identity.ownerId, identity.sessionId])
+        },
+      } : {}),
+    }
+    const makeConfirmation = (lease: import('./modules/agent-sessions/persistence/agent-run-dispatch-postgres.js').AgentDispatchLease, action: string) => {
       if (!trustedIntents) return undefined
       const authorization = createWebAgentConfirmationAuthorization({
         pool, lease, accessVersion: providerBinding.accessVersion,
       })
       const labels: Record<string, string> = {
+        unlink_workspace: '解除工作区的 Shell 与会话绑定，不删除目标资源',
+        delete_workspace_directory: '永久删除顶层物理工作区目录及其中内容',
         delete_event: '软删除日历事件及其提醒，可在当前会话撤销',
         delete_client: '删除联系人，此操作不可恢复',
         canvas_delete: '删除画布及其内容',
@@ -1429,7 +1496,8 @@ async function createWebUiApp(
         authorizeInTransaction: authorization.authorizeInTransaction,
         async describe(_binding, snapshot) {
           if (action === 'send_email' || action === 'delete_knowledge' || action === 'update_mcp_server' || action === 'add_mcp_server'
-            || action === 'create_scheduled_task' || action === 'update_scheduled_task') {
+            || action === 'delete_workspace_directory' || action === 'permanent_delete'
+            || action === 'create_scheduled_task' || action === 'update_scheduled_task' || action === 'shell') {
             if (!snapshot.displaySummary) throw new Error('操作确认摘要不可用')
             return { summary: snapshot.displaySummary }
           }
@@ -1456,6 +1524,17 @@ async function createWebUiApp(
             const names = result.rows.map(row => row.name)
             const visible = names.slice(0, 10).join('、') + (names.length > 10 ? `等 ${names.length} 个` : '')
             return { summary: `将删除联系人：${visible}，共 ${names.length} 个，此操作不可恢复` }
+          }
+          if (action === 'unlink_workspace') {
+            const ids = snapshot.targetIds?.workspace_id
+            if (ids?.length !== 1) throw new Error('工作区解除绑定确认目标无效')
+            const result = await pool.query<{ name: string }>(
+              'SELECT name FROM workspaces WHERE user_id=$1 AND id=$2', [_binding.ownerId, ids[0]],
+            )
+            const workspace = result.rows[0]
+            if (!workspace) throw new Error('工作区解除绑定确认目标已变化')
+            const name = Array.from(workspace.name.replace(/[\p{Cc}\p{Cf}]/gu, ' ')).slice(0, 200).join('')
+            return { summary: `解除工作区「${name}」的 Shell 与会话绑定，不删除项目、文件夹或文件` }
           }
           if (action === 'delete_skill') {
             const ids = snapshot.targetIds?.skill_row_id
@@ -1538,6 +1617,7 @@ async function createWebUiApp(
         diagnose: () => console.error('Web Agent 反思批次未完成'),
       })
     }
+    const logRunFailure = createWebAgentFailureLogger(config.logFile, createSecurityEventFingerprint(config.secretKey))
     const runtime = {
       clock: { now: () => new Date().toISOString() },
       interactions: { async activate() { throw new Error('Web Agent 交互能力未启用') } },
@@ -1550,7 +1630,7 @@ async function createWebUiApp(
       },
       async presentToolResult(value: unknown) { return value },
       async publish() {},
-      diagnose() { console.error('Web Agent 运行端口失败') },
+      diagnose: logRunFailure,
     }
     const source = {
       pool,
@@ -1631,12 +1711,31 @@ async function createWebUiApp(
         }
       },
     })
+    const agentUndoOperations = createHostCoreUndoOperations(pool, createRuntimeUndoTransactionPort(core), async (ownerId, event) => {
+      await publisher.publishResourceChanged({
+        ownerId, resource: String(event.resource), operation: String(event.operation),
+        origin: String(event.origin), entityIds: event.entity_ids as number[],
+      })
+    }, { trash: projectTrashStorage, renameDirectory: projectDirectoryRenamer }, createLocalFileUndoStorage(config.storageLocalPath))
     const resourceFactory = createWebAgentRagResources({
       source,
       rag: {
         core, pool, storageRoot: config.storageLocalPath,
         enabled: () => ragEnabled && canRebuildAgentMemoryIndex(),
         async toolPorts(lease, _binding, context) {
+          const shellConfirmation = bubblewrapRootfs ? makeConfirmation(lease, 'shell') : undefined
+          const shell = shellConfirmation && bubblewrapRootfs ? createWebAgentShell({
+            rootfs: bubblewrapRootfs, mounts: shellMounts, confirmation: shellConfirmation,
+            async read(identity, signal) {
+              signal.throwIfAborted()
+              if (identity.ownerId !== lease.identity.ownerId || identity.sessionId !== lease.identity.sessionId
+                || identity.runId !== lease.identity.runId || !await dispatch.isCurrent(lease)) return null
+              return readAgentShellSnapshot(identity.ownerId, identity.sessionId)
+            },
+            claim: (reference, signal) => core.db.transaction().execute(tx => shellConfirmation.claim(tx, reference, signal)),
+          }) : undefined
+          const agentWorkspaces = createAgentWorkspaceQueries(createKyselyAgentWorkspaceReader(core.db, 'postgres'))
+          const fileGrep = createWebAgentFileGrepPort(pool, config.storageLocalPath, lease)
           const mcpRemoveConfirmation = makeConfirmation(lease, 'remove_mcp_server')
           const mcpUpdateConfirmation = makeConfirmation(lease, 'update_mcp_server')
           const mcpCreateConfirmation = makeConfirmation(lease, 'add_mcp_server')
@@ -1660,6 +1759,10 @@ async function createWebUiApp(
           const skillDeleteConfirmation = makeConfirmation(lease, 'delete_skill')
           const clientDeleteConfirmation = makeConfirmation(lease, 'delete_client')
           const projectDeleteConfirmation = projectDeleteJournal ? makeConfirmation(lease, 'delete_project') : undefined
+          const workspaceUnlinkConfirmation = core.receipts ? makeConfirmation(lease, 'unlink_workspace') : undefined
+          const workspaceDirectoryDeleteConfirmation = core.receipts ? makeConfirmation(lease, 'delete_workspace_directory') : undefined
+          const trashPurgeConfirmation = core.receipts && trashPurgeSchemaApplied && process.platform === 'linux'
+            ? makeConfirmation(lease, 'permanent_delete') : undefined
           const downloadEgress = createPublicAgentEgress(createSafeEgressSettingsReader(env, overridePath), config.secretKey)
           let webDownload: ReturnType<typeof createWebAgentDownloadTool> | undefined
           if (core.receipts) {
@@ -1689,7 +1792,10 @@ async function createWebUiApp(
             },
           })
           return {
-            askUser: true,
+            askUser: createWebAgentAskUserAuthorization({
+              pool, lease,
+              enabled: () => config.workspaceRuntimeSettings.fullUserSandboxAuthorizationEnabled,
+            }),
             callTool: true,
             mcpManagement: createMcpManagementTool({
               list: createMcpServerConfigLister(core.db),
@@ -1726,13 +1832,100 @@ async function createWebUiApp(
               readSafeEgress: createSafeEgressSettingsReader(env, overridePath), secretKey: config.secretKey, digest,
               research: {
                 pool, readConfig: () => readConfigOverride(overridePath), environment: env, timezone: serverTimezone,
+                schemaApplied: searchUsageSchemaApplied,
                 durable: { core, authorize: authorizeRunWrite },
                 imageStorageRoot: config.storageLocalPath,
                 keyForVersion: version => confirmationKeys[String(version)] ?? '',
               },
             }),
             ...(clientDeleteConfirmation ? { clientDelete: createClientDeletePort(core, clientDeleteConfirmation) } : {}),
-            readFile: createWebAgentFileReadPort(pool, config.storageLocalPath, lease),
+            ...(shell ? { shell } : {}),
+            fileDirectory: createWebAgentFileDirectoryPort(createPostgresFileBrowserOperations(pool, config.secretKey), lease, pool),
+            fileFolderDelete: createWebAgentFileFolderDeletePort(pool, folderDelete, lease),
+            fileDelete: createWebAgentFileDeletePort(pool, fileDeletes, lease, fileGrep),
+            sendFile: scheduledAttachments.toolForRun(() => dispatch.isCurrent(lease)),
+            saveUploadedFile: createWebAgentSaveUploadedFilePort({ pool, db: core.db, upload: fileUploads, downloadAttachment, lease }),
+            recentAttachments: createWebAgentRecentAttachmentsPort(pool, lease),
+            readFile: createWebAgentFileReadPort(pool, config.storageLocalPath, lease,
+              fileGrep),
+            fileGrep,
+            presentFile: createWebAgentFilePresentPort({ pool, ownerId: lease.identity.ownerId, lease,
+              files: fileGrep }),
+            fileEdit: createWebAgentFileEditPort(pool, config.storageLocalPath, createPostgresFileContentOperations(pool, {
+              storageRoot: config.storageLocalPath,
+              fileSyncEnabled: config.filesyncEnabled,
+              async publishChanged(event) {
+                await publisher.publishResourceChanged({
+                  ownerId: event.ownerId,
+                  resource: 'files',
+                  operation: 'update',
+                  entityId: event.entityId,
+                  origin: event.origin,
+                  payload: { kind: 'file', entity: event.payload },
+                })
+              },
+            }), lease, createWebAgentFileGrepPort(pool, config.storageLocalPath, lease)),
+            fileRename: createWebAgentFileRenamePort(pool, createPostgresFileUpdateOperations(pool, {
+              storageRoot: config.storageLocalPath,
+              async publishChanged(event) {
+                await publisher.publishResourceChanged({
+                  ownerId: event.ownerId,
+                  resource: 'files',
+                  operation: 'update',
+                  entityId: event.entityId,
+                  origin: event.origin,
+                  payload: { kind: 'file', entity: event.payload },
+                })
+              },
+            }), lease, fileGrep),
+            fileCopy: createWebAgentFileCopyPort(pool, createPostgresFileCopyOperations(pool, {
+              storageRoot: config.storageLocalPath,
+              fileSyncEnabled: config.filesyncEnabled,
+              async publishChanged(event) {
+                await publisher.publishResourceChanged({
+                  ownerId: event.ownerId,
+                  resource: 'files',
+                  operation: 'create',
+                  entityId: event.entityId,
+                  origin: event.origin,
+                  payload: { kind: 'file', entity: event.payload },
+                })
+              },
+            }), lease, fileGrep),
+            fileArchive: createWebAgentFileArchivePort(pool, createPostgresFileArchiveOperations(pool, {
+              storageRoot: config.storageLocalPath,
+              fileSyncEnabled: config.filesyncEnabled,
+              defaultLimitBytes: config.storageDefaultLimitBytes,
+              async publishCreatedFile(event) {
+                await publisher.publishResourceChanged({
+                  ownerId: event.ownerId,
+                  resource: 'files',
+                  operation: 'create',
+                  entityId: event.entityId,
+                  origin: event.origin,
+                  payload: { kind: 'file', entity: event.payload },
+                })
+              },
+              async publishCreatedBatch(ownerId, origin) {
+                await publisher.publishResourceChanged({ ownerId, resource: 'files', operation: 'create', origin })
+              },
+            }), lease),
+            fileCreate: createWebAgentFileCreatePort({ pool, db: core.db, upload: fileUploads, lease }),
+            folderCreate: createWebAgentFolderCreatePort({ core, pool, operations: folderWrites, lease }),
+            folderRename: createWebAgentFolderRenamePort({ core, pool, operations: folderWrites, lease }),
+            fileMoveItems: createWebAgentMoveItemsPort(pool, createPostgresFileUpdateOperations(pool, {
+              storageRoot: config.storageLocalPath,
+              async publishChanged(event) {
+                await publisher.publishResourceChanged({
+                  ownerId: event.ownerId,
+                  resource: 'files',
+                  operation: 'update',
+                  entityId: event.entityId,
+                  origin: event.origin,
+                  payload: { kind: 'file', entity: event.payload },
+                })
+              },
+            }), folderWrites, lease, fileGrep),
             projects: projectCreateRuntime,
             ...(projectDeleteJournal && projectDeleteConfirmation ? {
               projectDelete: createProjectDeleteTool(core, {
@@ -1852,13 +2045,48 @@ async function createWebUiApp(
             },
             time: { now: () => new Date(), timezone: (identity: import('@gugu/core/agent').RunIdentity) => context.loadTimezone(identity) },
             dashboard: createKyselyDashboardCounter(core.db, 'postgres'),
-            workspaces: createAgentWorkspaceQueries(createKyselyAgentWorkspaceReader(core.db, 'postgres')),
+            workspaces: agentWorkspaces,
             workspaceMutations: createWorkspaceMutationPort(core),
+            workspaceCreation: createWebAgentWorkspaceCreatePort({
+              core,
+              pool,
+              lease,
+              createDeclaration: (ownerId, input) => workspaceCreate(ownerId, input),
+              createDirectory: (ownerId, name) => workspaceDirectories.create(ownerId, name),
+              async readWorkspace(ownerId, workspaceId, signal) {
+                const row = await agentWorkspaces.get(ownerId, workspaceId, signal)
+                return row ? { ...row } : null
+              },
+              async listWorkspaces(ownerId, signal) {
+                return (await agentWorkspaces.list(ownerId, signal)).map(row => ({ ...row }))
+              },
+            }),
+            ...(workspaceUnlinkConfirmation ? {
+              workspaceUnlink: {
+                gate: workspaceUnlinkConfirmation.gate,
+                claim: workspaceUnlinkConfirmation.claim,
+              },
+            } : {}),
+            ...(workspaceDirectoryDeleteConfirmation ? {
+              workspaceDirectoryDelete: createWorkspaceDirectoryDeleteTool(
+                createWebAgentWorkspaceDirectoryDeletePort({ core, pool, lease, operations: workspaceDirectories,
+                  confirmation: { gate: workspaceDirectoryDeleteConfirmation.gate, claim: workspaceDirectoryDeleteConfirmation.claim } }),
+                { gate: workspaceDirectoryDeleteConfirmation.gate, claim: workspaceDirectoryDeleteConfirmation.claim },
+              ),
+            } : {}),
+            ...(core.receipts ? { undoLastAction: createUndoLastActionTool(
+              createWebAgentUndoLastActionPort({ core, pool, lease, operations: agentUndoOperations }),
+            ) } : {}),
             trash: createAgentTrashListPort(pool, config.secretKey),
             trashRestore: createAgentTrashRestorePort(core, fileRestores),
+            ...(trashPurgeConfirmation && core.receipts ? { trashPurge: createPermanentDeleteTool(
+              createAgentTrashPurgePort({ core, pool, lease, operations: trashOperations,
+                confirmation: { gate: trashPurgeConfirmation.gate, claim: trashPurgeConfirmation.claim } }),
+              { gate: trashPurgeConfirmation.gate, claim: trashPurgeConfirmation.claim },
+            ) } : {}),
             linkButtons: createWebLinkButtonDeliveryPort(async candidate => candidate.ownerId === lease.identity.ownerId
               && candidate.sessionId === lease.identity.sessionId && candidate.runId === lease.identity.runId),
-            skills: await createWebAgentSkillProductionPorts({
+            skills: await createAgentSkillRuntimePorts({
               ownerId: lease.identity.ownerId,
               builtins: builtinSkillDefinitions,
               listUser: skillMetadata,
@@ -1881,7 +2109,9 @@ async function createWebUiApp(
                 embedding: { resolve: resolveEmbeddingSettings, createTransport: createEmbeddingTransport },
               }),
             } : {}),
-            knowledgeWrites: createLocalAgentKnowledgeWritePort(core, config.storageLocalPath, knowledgeStore),
+            ...(process.platform === 'linux' ? {
+              knowledgeWrites: createLocalAgentKnowledgeWritePort(core, config.storageLocalPath, knowledgeStore),
+            } : {}),
             ...(knowledgeDeleteConfirmation ? { knowledgeDelete: createKnowledgeDeleteTool(createLocalAgentKnowledgeDeletePort(
               core, config.storageLocalPath, knowledgeStore, knowledgeDeleteConfirmation,
             )) } : {}),
@@ -1960,24 +2190,32 @@ async function createWebUiApp(
           capabilities: {
             workspaceSupported: false,
             async filterConfigured(names) { return filterConfiguredWebAgentTools(names) },
-            async shellPolicy() { return { allowed: false, needsConfirmation: false } },
-            async shellState() { return null },
+            async shellPolicy(identity) {
+              const snapshot = identity.subject.kind === 'session'
+                ? await readAgentShellSnapshot(identity.ownerId, identity.subject.id) : null
+              return { allowed: snapshot?.facts.userEnabled === true, needsConfirmation: false }
+            },
+            async shellState() { return 'Shell 使用沙盒内的工作区路径，默认目录由会话工作区决定。' },
             appendShellProtocol(system: string) { return system },
             async catalog() { return null },
           },
           formatPrefix({ original }: { original: import('@gugu/core/agent').PrepareContextInput }) { return original.fixedPrefix },
         },
-        materialize: createWebCurrentMessageMaterializer(pool),
+        materialize: createWebCurrentMessageMaterializer(pool, {
+          storageRoot: config.storageLocalPath,
+          extractDocumentText: extractOfficeText,
+        }),
         runtime,
         interactionActivation,
         executor: noUnisolatedExecution,
-        provider: { diagnose() { console.error('Web Agent Provider 调用失败') } },
+        provider: { continuationStore: providerContinuationStore, continuationTtlMs: 35 * 60_000, diagnose() { console.error('Web Agent Provider 调用失败') } },
         mcp: createWebAgentMcpProductionPorts({ directory: mcpSkillTools, runtime: mcpRuntime }),
       },
     })
     const dispatch = createPostgresAgentDispatch(pool, config.secretKey)
     const reconstruct = createWebAgentReconstructor({
       pool, secretKey: config.secretKey,
+      observation: loopScopeTrace?.observation,
       redis: createRedisAgentCancellationCommands(agentRedisUrl),
       subscribe: createRedisLiveSubscription(agentRedisUrl),
       history: { async writeHistory() { throw new Error('只读 Agent event store 不接受历史写入') } },
@@ -2012,6 +2250,7 @@ async function createWebUiApp(
     const interactionRunStore = createPostgresAgentRunStore<import('@gugu/core/agent').CanonicalRunContext>(pool, config.secretKey, {
       async writeHistory() { throw new Error('只读交互恢复 store 不接受历史写入') },
     })
+    const enqueueInteractionResume = createInteractionResumeEnqueuer(interactionRunStore)
     agentInteractionRespond = createAgentInteractionRespondService({
       pool,
       effects: {
@@ -2021,7 +2260,7 @@ async function createWebUiApp(
         }),
         redeemConfirmation: (_client, ownerId, code) => filesystemAuthorizationConfirmations.redeem(ownerId, code),
       },
-      enqueue: createInteractionResumeEnqueuer(interactionRunStore),
+      enqueue: enqueueInteractionResume,
       wake: (ownerId, sessionId) => agentRunLifecycle!.service.wake(ownerId, sessionId),
       diagnose: () => console.error('Web Agent 交互恢复唤醒失败'),
     })
@@ -2030,7 +2269,7 @@ async function createWebUiApp(
         const envelope = await createConfiguredByokEnvelope(env).encrypt(JSON.stringify(values), false)
         return { ciphertext: envelope.ciphertext, nonce: envelope.nonce, encryptedDataKey: envelope.encryptedDataKey, keyVersion: envelope.keyVersion }
       },
-      enqueue: createInteractionResumeEnqueuer(interactionRunStore),
+      enqueue: enqueueInteractionResume,
       async invalidate(client, ownerId) {
         await client.query('DELETE FROM user_mcp_tool_schema_snapshots WHERE user_id=$1', [ownerId])
       },
@@ -2159,11 +2398,27 @@ async function createWebUiApp(
   const repeatingWorkerEnabled = booleanSetting(env.GUGU_WEBUI_REPEATING_TASK_WORKER_ENABLED, undefined, false)
   if (repeatingWorkerEnabled && !scheduledRunNow) throw new Error('周期任务 Worker 需要 Redis')
   const scheduledRepeatingWorker = repeatingWorkerEnabled ? scheduledRunNow?.createRepeatingWorker() : undefined
+  const projectExpiryWorkerEnabled = booleanSetting(env.GUGU_WEBUI_PROJECT_EXPIRY_WORKER_ENABLED, undefined, false)
+  if (projectExpiryWorkerEnabled && !projectJournalPool) throw new Error('项目过期清理 Worker 需要已迁移的 PostgreSQL 项目日志结构')
   const backgroundWorkers = createBackgroundWorkerLifecycle([
     () => startSecurityRetentionWorker({ pool, onError: () => { console.error('安全事件过期清理失败') } }),
+    () => trashPurgeSchemaApplied && process.platform === 'linux' ? startTrashPurgeWorker({
+      pool, deletes: trashOperations, publisher,
+      ...(config.redisUrl ? { subscribe: createRedisLiveSubscription(config.redisUrl) } : {}),
+      onError: () => { console.error('回收站清空任务执行失败') },
+    }) : null,
+    () => startUndoRetentionWorker({
+      pool, storage: createLocalUndoRetentionStorage(config.storageLocalPath),
+      onError: () => { console.error('撤销操作正文过期清理失败') },
+    }),
     () => projectJournalPool ? startProjectDeleteRecoveryWorker({
       pool: projectJournalPool, storageRoot: config.storageLocalPath,
       onError: () => { console.error('项目删除文件日志恢复未完成') },
+    }) : null,
+    () => projectExpiryWorkerEnabled && projectJournalPool ? startProjectExpiryWorker({
+      enabled: true, pool: projectJournalPool, storageRoot: config.storageLocalPath,
+      defaultLimitBytes: config.storageDefaultLimitBytes,
+      onError: () => { console.error('过期项目清理失败') },
     }) : null,
     () => canRebuildAgentMemoryIndex() ? startAgentRagIndexWorker(core, {
       enabled: true, knowledgeStore: createLocalAgentKnowledgeReadStore(config.storageLocalPath),
@@ -2382,7 +2637,7 @@ async function createWebUiApp(
         ownerId, resource: String(event.resource), operation: String(event.operation),
         origin: String(event.origin), entityIds: event.entity_ids as number[],
       })
-    }, undefined, createLocalFileUndoStorage(config.storageLocalPath)),
+    }, { trash: projectTrashStorage, renameDirectory: projectDirectoryRenamer }, createLocalFileUndoStorage(config.storageLocalPath)),
     deleteScheduledTask: createScheduledTaskDeleter(createKyselyScheduledTaskDeleteRuntime(core.db, 'postgres', async (ownerId, id, origin) => {
       await publisher.publishResourceChanged({ ownerId, resource: 'scheduled_tasks', operation: 'delete', entityId: id, origin })
     })),
@@ -2555,19 +2810,7 @@ async function createWebUiApp(
       ...createPostgresXlsxPreviewOperations(pool, config.storageLocalPath),
     },
     fileUploads,
-    fileDeletes: createPostgresFileDeleteOperations(pool, {
-      storageRoot: config.storageLocalPath,
-      async publishChanged(event) {
-        await publisher.publishResourceChanged({
-          ownerId: event.ownerId,
-          resource: 'files',
-          operation: 'delete',
-          entityId: event.entityId,
-          origin: event.origin,
-          payload: { kind: 'file', id: event.entityId },
-        })
-      },
-    }),
+    fileDeletes,
     fileRestores,
     trash: trashOperations,
     fileContents: createPostgresFileContentOperations(pool, {
@@ -2733,13 +2976,7 @@ async function createWebUiApp(
     adminMisreadExport: { read: createMisreadMarkdownExporter(createLocalMisreadTextReader(config.storageLocalPath)) },
     adminPerceptionStats: { available: () => Boolean(config.redisUrl), read: createPerceptionStatsReader(core.db, createRedisListReader(config.redisUrl ?? '')) },
     adminOpsSummary: { hgetall: createRedisHashReader(config.redisUrl ?? '') },
-    adminFileSyncRunRead: { reader: createFileSyncRunReader(core.db) },
-    adminFileSyncRunCancel: { cancel: createFileSyncRunCancellation(core.db, publishFileSyncRun) },
-    adminFileSyncDryRun: { create: createFileSyncDryRun(core.db, randomUUID, publishFileSyncRun) },
-    adminFileSyncInitialize: { create: createFileSyncInitialize(core.db, randomUUID, publishFileSyncRun) },
-    watcherCapacity: { request: createWatcherCapacityRequester(env) },
     secretPromptCancel: { cancel: createSecretPromptCancellation(core.db) },
-    adminFileSyncEvents: { subscribe: createRedisLiveSubscription(config.redisUrl) },
     adminEmbeddingProbe: { probe: createEmbeddingFileProbe(env, resolveConfigOverridePath(env)) },
     adminMediaProbePreview: { probe: createAdminMediaProbePreview(env) },
     adminLlmPresetTest: { test: createAdminLlmPresetTest({ readDocument: () => readConfigOverride(resolveConfigOverridePath(env)), environment: env }) },
@@ -2770,23 +3007,23 @@ async function createWebUiApp(
     sandboxEgress: {
       updateProxy: createSandboxEgressConfigUpdater(config.configOverridePath ?? resolveConfigOverridePath(env)),
       readSettings: readTerminalSettings,
-      readiness: mxcDiagnostics,
+      readiness: readBubblewrapReadiness,
     },
     sandboxStatus: {
       readSettings: readTerminalSettings,
-      readiness: mxcDiagnostics,
+      readiness: readBubblewrapReadiness,
     },
     sandboxEnable: {
       updateEnabled: enabled => updateSandboxRuntime(enabled),
       publishTerminalRefresh,
       readSettings: readTerminalSettings,
-      readiness: mxcDiagnostics,
+      readiness: readBubblewrapReadiness,
     },
     sandboxDisable: {
       updateDisabled: () => updateSandboxRuntime(false),
       publishTerminalRefresh,
       readSettings: readTerminalSettings,
-      readiness: mxcDiagnostics,
+      readiness: readBubblewrapReadiness,
     },
     voicePresetsMutate: { operations: createVoicePresetFileMutations(resolveConfigOverridePath(env)) },
     voicePresetsRead: { read: createVoicePresetsFileReader(resolveConfigOverridePath(env)) },
@@ -2817,7 +3054,7 @@ async function createWebUiApp(
       query: (sql, params) => pool.query(sql, params),
     },
     adminUserStatus: {
-      store: createPostgresAdminUserStatusStore(pool),
+      store: createPostgresAdminUserStatusStore(work => withPostgresTransaction(pool, client => work(async (sql, values) => client.query(sql, values)))),
       publishAuthStateChanged: (userId) => publisher.publishAuthStateChanged(userId),
       adminUsername: (request) => request.adminIdentity?.username ?? 'admin',
       async writeAuditLog(username, action, description, request) {
@@ -2841,9 +3078,35 @@ async function createWebUiApp(
     createDataExport: createDataExportCreator(work => withPostgresTransaction(pool, client => work((sql, values) => client.query(sql, values))), (sql, values) => pool.query(sql, values), { now: () => new Date(), uuid: () => randomUUID() }),
     dataExportPreview: { read: createDataExportPreviewReader(core.db) },
     resumeDataImport: createDataImportResumer(work => withPostgresTransaction(pool, client => work((sql, values) => client.query(sql, values))), (sql, values) => pool.query(sql, values), { token: () => randomBytes(32).toString('base64url'), hash: token => createHash('sha256').update(token).digest('hex') }),
+    applyDataImport: createDataImportApplier(
+      work => withPostgresTransaction(pool, client => work((sql, values) => client.query(sql, values))),
+      (sql, values) => pool.query(sql, values),
+      { verify(token, expectedHash) {
+        const actualHash = createHash('sha256').update(token, 'utf8').digest('hex')
+        return /^[0-9a-f]{64}$/u.test(expectedHash)
+          && timingSafeEqual(Buffer.from(actualHash, 'hex'), Buffer.from(expectedHash, 'hex'))
+      } },
+    ),
+    rollbackDataImport: createDataImportRollbackCreator(
+      work => withPostgresTransaction(pool, client => work((sql, values) => client.query(sql, values))),
+      (sql, values) => pool.query(sql, values),
+      { uuid: () => randomUUID() },
+    ),
+    recoverDataImport: createDataImportRecoverer(
+      work => withPostgresTransaction(pool, client => work((sql, values) => client.query(sql, values))),
+      (sql, values) => pool.query(sql, values),
+    ),
     dataExportDownload: { secretKey: config.secretKey, download: createDataExportDownloader((sql, values) => pool.query(sql, values), createPortableArtifactOpener(config.storageLocalPath), config.secretKey), requireReady: (owner, job) => requireExportReadyForTicket((sql, values) => pool.query(sql, values), owner, job) },
     cancelDataExport: createDataExportCanceler(work => withPostgresTransaction(pool, client => work((sql, values) => client.query(sql, values))), (sql, values) => pool.query(sql, values)),
     deleteDataExport: createPostgresDataExportDeleter(pool, config.storageLocalPath),
+    deleteDataImport: createPostgresDataImportDeleter(pool, config.storageLocalPath),
+    cancelDataImport: createPostgresDataImportCanceler(pool),
+    cleanupDataImportStaging: createLocalDataImportStagingRemover(config.storageLocalPath),
+    preflightDataImport: createDataImportPreflighter(
+      createPostgresDataImportPreflightStore(pool),
+      createLocalDataImportPreflightStorage(config.storageLocalPath),
+      { secretKey: config.secretKey },
+    ),
     portabilityJobs: createPortabilityJobReader((sql, values) => pool.query(sql, values)),
     userBotBindingCode: { issue: createPostgresRedisBindingCodeIssuer(pool, config.redisUrl ?? '', config.secretKey) },
     userBotUnbind: { unbind: createPostgresUserBotUnbinder(pool, async ownerId => {
@@ -2903,9 +3166,10 @@ async function createWebUiApp(
       decrypt: createConfiguredByokEnvelope(env),
       transport: () => createNodeProviderTransport({ allowLocal: false, connectTimeoutMs: 5_000, writeTimeoutMs: 10_000, environment: () => env }),
       maxTools: () => readMcpSettings().max_tools_per_server,
+      stdioClient: mcpStdioClient,
     }) },
     attentionDefaults: { read: getAttentionDefaults },
-    loopScopeProxy: { endpoint: env.LOOPSCOPE_ENDPOINT || 'http://127.0.0.1:4320', transport: loopScopeTransport },
+    loopScopeProxy: { endpoint: env.LOOPSCOPE_ENDPOINT || defaultLoopScopeEndpoint, transport: loopScopeTransport },
     attachmentDownload: { download: downloadAttachment },
     attachmentUpload: { operations: attachmentUpload },
     attachmentDelete: { remove: createChatAttachmentDraftDeleter(
@@ -2934,59 +3198,19 @@ async function createWebUiApp(
     })(),
     terminalDelete: { remove: createTerminalDeletion(core.db, async (ownerId, terminalId, origin) => { await publisher.publishResourceChanged({ ownerId, resource: 'terminals', operation: 'delete', entityId: terminalId, origin }) }) },
     terminalCreate: { create: createPostgresTerminalCreator({
-      pool, db: core.db, publisher, workspaceRuntime: config.workspaceRuntimeSettings,
-      readRuntime: readTerminalSettings,
-      async readSandboxReadiness() {
-        const diagnostics = await mxcDiagnostics()
-        return { ready: diagnostics.supported, ...(diagnostics.reason ? { reason: diagnostics.reason } : {}) }
-      },
+      pool, db: core.db, publisher, readRuntime: readTerminalAccess,
     }) },
     terminalReopen: { reopen: createPostgresTerminalReopener({
-      pool, db: core.db, publisher, workspaceRuntime: config.workspaceRuntimeSettings,
-      readRuntime: readTerminalSettings,
-      async readSandboxReadiness() {
-        const diagnostics = await mxcDiagnostics()
-        return { ready: diagnostics.supported, ...(diagnostics.reason ? { reason: diagnostics.reason } : {}) }
-      },
+      pool, db: core.db, publisher, readRuntime: readTerminalAccess,
     }) },
     terminalLifecycle: createPostgresTerminalLifecycle({ db: core.db, manager: terminalPtyManager, publisher }),
-    terminalMetrics: { read: createPostgresTerminalMetricsReader(pool, core.db, {
-      ...config.workspaceRuntimeSettings,
-      async readSandboxReadiness() {
-        const diagnostics = await mxcDiagnostics()
-        return { ready: diagnostics.supported, ...(diagnostics.reason ? { reason: diagnostics.reason } : {}) }
-      },
-    }) },
-    terminalList: { read: createPostgresTerminalListReader(pool, core.db, {
-      ...config.workspaceRuntimeSettings,
-      async readSandboxReadiness() {
-        const diagnostics = await mxcDiagnostics()
-        return { ready: diagnostics.supported, ...(diagnostics.reason ? { reason: diagnostics.reason } : {}) }
-      },
-    }) },
-    terminalDetail: { read: createPostgresTerminalDetailReader(pool, core.db, {
-      ...config.workspaceRuntimeSettings,
-      async readSandboxReadiness() {
-        const diagnostics = await mxcDiagnostics()
-        return { ready: diagnostics.supported, ...(diagnostics.reason ? { reason: diagnostics.reason } : {}) }
-      },
-    }) },
-    terminalRename: { rename: createPostgresTerminalRenamer(pool, core.db, {
-      ...config.workspaceRuntimeSettings,
-      async readSandboxReadiness() {
-        const diagnostics = await mxcDiagnostics()
-        return { ready: diagnostics.supported, ...(diagnostics.reason ? { reason: diagnostics.reason } : {}) }
-      },
-    }, async (ownerId, terminalId, origin) => {
+    terminalMetrics: { read: createPostgresTerminalMetricsReader(pool, core.db, readTerminalAccess) },
+    terminalList: { read: createPostgresTerminalListReader(pool, core.db, readTerminalAccess) },
+    terminalDetail: { read: readTerminalDetail },
+    terminalRename: { rename: createPostgresTerminalRenamer(pool, core.db, readTerminalAccess, async (ownerId, terminalId, origin) => {
       await publisher.publishResourceChanged({ ownerId, resource: 'terminals', operation: 'update', entityId: terminalId, origin })
     }) },
-    terminalEvents: createPostgresTerminalEventStream(pool, core.db, {
-      ...config.workspaceRuntimeSettings,
-      async readSandboxReadiness() {
-        const diagnostics = await mxcDiagnostics()
-        return { ready: diagnostics.supported, ...(diagnostics.reason ? { reason: diagnostics.reason } : {}) }
-      },
-    }),
+    terminalEvents: createPostgresTerminalEventStream(pool, core.db, readTerminalAccess),
     terminalCommand,
     terminalWebsocket: {
       manager: terminalPtyManager,
@@ -3087,6 +3311,7 @@ async function createWebUiApp(
       await mcpRuntime.close()
       await embeddingRebuildRuntime.close()
       await embeddingTransport.close?.()
+      await loopScopeTrace?.close()
       await loopScopeTransport.close?.()
       await Promise.all([
         qqConnectOptions.transport.close(),
@@ -3156,13 +3381,29 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
     }
   }
   let canRebuildAgentMemoryIndex = false
+  let trashPurgeSchemaApplied = false
+  let searchUsageSchemaApplied = false
   let projectJournalPool: Pool | undefined
   let web: Awaited<ReturnType<typeof createWebUiApp>>
   try {
+    try {
+      trashPurgeSchemaApplied = await checkTrashPurgeMigration(pool) === 'applied'
+    } catch {
+      trashPurgeSchemaApplied = false
+    }
+    try {
+      searchUsageSchemaApplied = await checkSearchUsageMigration(pool) === 'applied'
+    } catch {
+      searchUsageSchemaApplied = false
+    }
     // 日志跨事务持有会话锁，使用独立连接池，避免占用本次确认仍需使用的业务连接。
     if (process.platform === 'linux' && core.receipts && await hasProjectDeleteJournalSchema(pool))
       projectJournalPool = createPool(config, 2)
-    web = await createWebUiApp(config, pool, core, redisEvents, env, () => canRebuildAgentMemoryIndex, projectJournalPool)
+    if (booleanSetting(env.GUGU_WEBUI_PROJECT_EXPIRY_WORKER_ENABLED, undefined, false)
+      && (!projectJournalPool || !await hasProjectExpiryJournalSchema(pool)))
+      throw new Error('项目过期清理 Worker 需要已迁移的项目日志结构')
+    web = await createWebUiApp(config, pool, core, redisEvents, env, () => canRebuildAgentMemoryIndex,
+      projectJournalPool, trashPurgeSchemaApplied, searchUsageSchemaApplied)
   } catch (error) {
     await projectJournalPool?.end().catch(() => undefined)
     await core.close().catch(() => undefined)
@@ -3192,6 +3433,10 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
   }
 
   if (ragIndexMigration === 'pending') console.info('Agent RAG 索引迁移尚未应用，后台重建未启动')
+  if (!trashPurgeSchemaApplied || process.platform !== 'linux')
+    console.info('回收站清空的 Node 文件后端尚未就绪，清空工具与后台任务未启用')
+  if (!searchUsageSchemaApplied)
+    console.info('Node 搜索用量迁移尚未应用，深度研究与相似图搜索未启用')
   let closePromise: Promise<void> | undefined
   return {
     app,
@@ -3224,6 +3469,7 @@ async function main(): Promise<void> {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  timestampConsole()
   void main().catch(() => {
     console.error('gugu-webui startup failed')
     process.exitCode = 1

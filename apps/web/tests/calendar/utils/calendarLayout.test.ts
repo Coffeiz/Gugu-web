@@ -101,4 +101,19 @@ describe('calendarLayout', () => {
     ])
     expect(timedLayoutFor(input, '2026-08-02', 48)).toEqual(result)
   })
+
+  it('周视图活动在实际时段的上下两端保留等距留白，短活动仍可点击', () => {
+    const date = '2026-08-02'
+    const hourHeight = 48
+    const [hour, halfHour, endOfDay] = timedLayoutFor([
+      event('hour', date, '02:00', '03:00'),
+      event('half', date, '08:30', '09:00'),
+      event('short', date, '23:55', '00:00'),
+    ], date, hourHeight)
+
+    expect([hour.top - 2 * hourHeight, 3 * hourHeight - hour.top - hour.height]).toEqual([1, 1])
+    expect([halfHour.top - 8.5 * hourHeight, 9 * hourHeight - halfHour.top - halfHour.height]).toEqual([1, 1])
+    expect(endOfDay.height).toBe(15)
+    expect(endOfDay.top + endOfDay.height).toBe(24 * hourHeight - 1)
+  })
 })

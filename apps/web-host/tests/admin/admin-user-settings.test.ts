@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { parseQuotaPatch } from '@gugu/core/admin/user-settings'
+import { parseQuotaPatch } from '../../src/modules/admin/user-management.js'
 
 test('配额遵循Python整数转换、null及各字段下界，忽略未知字段', () => {
   assert.deepEqual(parseQuotaPatch({token_limit_6h: ' -1 ', token_limit_weekly: 4.9, storage_limit_bytes: null, search_limit_daily: true, extra: 20}), {token_limit_6h:-1, token_limit_weekly:4, storage_limit_bytes:null, search_limit_daily:1})
@@ -11,7 +11,7 @@ test('配额遵循Python整数转换、null及各字段下界，忽略未知字�
 import Fastify from 'fastify'
 import {Pool} from 'pg'
 import {randomUUID} from 'node:crypto'
-import {registerAdminUserSettingsRoutes,createPostgresAdminSettingsTransaction} from '../../src/modules/admin/user-settings.js'
+import {registerAdminUserSettingsRoutes,createPostgresAdminSettingsTransaction} from '../../src/modules/admin/users.js'
 
 test('管理员更新配额持久化、失败不部分写入，开发者标记可逆且拒绝未授权请求', async () => {
   const url=process.env.GUGU_WEBUI_TEST_DATABASE_URL

@@ -15,11 +15,11 @@ import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import {
   CoreHost,
-  desktopHandlers,
   desktopReply,
   verifyArtifact,
   DesktopError,
 } from './core-host.js'
+import { desktopHandlers } from './ipc/index.js'
 import { DesktopLifecycle } from './lifecycle.js'
 import {
   secureWindow,

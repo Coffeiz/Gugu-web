@@ -38,6 +38,25 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
+it('运行中的卡片恢复计时，结束后显示持久化耗时', async () => {
+  vi.useFakeTimers()
+  try {
+    vi.setSystemTime(new Date('2026-01-01T00:00:03Z'))
+    const { host, msg } = mountBubble({ toolStatus: 'running', toolStartedAt: '2026-01-01T00:00:01Z' })
+    const duration = () => host.querySelector('.tool-event-duration')?.textContent
+    expect(duration()).toBe('2.0s')
+    await vi.advanceTimersByTimeAsync(500)
+    expect(duration()).toBe('2.5s')
+    msg.toolStatus = 'success'
+    msg.toolDurationMs = 2600
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(duration()).toBe('2.6s')
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
 it('管理员覆盖优先显示，只有历史默认标签时沿用当前语言', () => {
   const custom = mountBubble(Object.assign({ toolName: 'list_projects' }, { toolLabelOverride: '正在核对项目' }))
   expect(custom.host.querySelector('.tool-event-label')?.textContent).toBe('正在核对项目')

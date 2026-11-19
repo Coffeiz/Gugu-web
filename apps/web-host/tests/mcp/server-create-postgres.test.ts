@@ -7,15 +7,15 @@ import { createPostgresRuntime, tablesSql } from '@gugu/core/data'
 import { createMcpServerCreator } from '@gugu/core/mcp/server-create'
 import { createMcpServerConfigLister } from '@gugu/core/mcp/server-list'
 import { createMcpManagementCreateOperations, createMcpManagementEditOperations, createMcpManagementTool, createToolRegistry } from '@gugu/core/tools'
-import { createWebAgentConfirmationAuthorization, createWebAgentToolConfirmation } from '../../src/domains/agent-sessions/tools/agent-confirmation.js'
-import { createPostgresTrustedIntentStore } from '../../src/domains/agent-sessions/persistence/agent-trusted-intent-postgres.js'
-import { createTrustedPromptDescriptions } from '../../src/domains/agent-sessions/persistence/agent-trusted-prompt-descriptions.js'
+import { createWebAgentConfirmationAuthorization, createWebAgentToolConfirmation } from '../../src/modules/agent-sessions/tools/agent-confirmation.js'
+import { createPostgresTrustedIntentStore } from '../../src/modules/agent-sessions/persistence/agent-trusted-intent-postgres.js'
+import { createTrustedPromptDescriptions } from '../../src/modules/agent-sessions/persistence/agent-trusted-prompt-descriptions.js'
 import { createAgentInteractionDescription } from '@gugu/core/agent'
-import { createPostgresInteractionActivator } from '../../src/domains/agent-sessions/persistence/agent-interaction-activate-postgres.js'
-import { createPostgresSecretInteraction } from '../../src/domains/agent-sessions/persistence/agent-secret-interaction-postgres.js'
-import { createInteractionResumeEnqueuer, claimInteractionResumeLocked } from '../../src/domains/agent-sessions/persistence/agent-interaction-resume-postgres.js'
+import { createPostgresInteractionActivator } from '../../src/modules/agent-sessions/persistence/agent-interaction-activate-postgres.js'
+import { createPostgresSecretInteraction } from '../../src/modules/agent-sessions/persistence/agent-secret-interaction-postgres.js'
+import { createInteractionResumeEnqueuer, claimInteractionResumeLocked } from '../../src/modules/agent-sessions/persistence/agent-interaction-resume-postgres.js'
 import { withPostgresTransaction } from '../../src/adapters/postgres-transaction.js'
-import { createAgentSecretInteractionService, registerAgentSecretInteractionRoutes } from '../../src/domains/agent-sessions/agent-secret-interaction-route.js'
+import { createAgentSecretInteractionService, registerAgentSecretInteractionRoutes } from '../../src/modules/agent-sessions/agent-secret-interaction-route.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
@@ -193,6 +193,7 @@ test('MCP 创建限定 owner、仅保存信封密文并失效旧 Python 工具�
     assert.equal((await pool.query('SELECT * FROM agent_interaction_intents')).rowCount, 1)
     const activator = createPostgresInteractionActivator(pool, createAgentInteractionDescription(createTrustedPromptDescriptions({
       loadIntent: intents.loadIntent, async createConfirmation() { throw new Error('凭据阶段不申请确认码') },
+      filesystemAuthorizationEnabled: () => false,
     })))
     let pending = resultAdd.interaction
     await activator.activate(identity, pending, scope.signal)

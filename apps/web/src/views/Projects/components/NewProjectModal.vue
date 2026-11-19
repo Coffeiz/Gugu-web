@@ -563,7 +563,7 @@ async function handleCreate() {
 }
 .header-name-input::placeholder { color: var(--text-secondary); opacity: 0.45; font-weight: 700; }
 .header-name-input:focus {
-  border-color: color-mix(in srgb, var(--action-primary) 40%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--action-primary) 10%, transparent);
+  border-color: var(--input-border-focus);
 }
 .header-name-input.error { color: var(--color-warning); }
 .name-error {
@@ -627,7 +627,6 @@ input:not(.name-input):not(.header-name-input):hover:not(:disabled) {
 input:not(.name-input):not(.header-name-input):focus:not(:disabled) {
   background: var(--input-bg-focus);
   border-color: var(--input-border-focus);
-  box-shadow: var(--input-focus-shadow);
 }
 
 /* ── 看板列 ── */
@@ -808,8 +807,7 @@ input:not(.name-input):not(.header-name-input):focus:not(:disabled) {
   transition: background 0.15s, border-color 0.15s; width: 100% !important;
 }
 .np-todo-input:focus {
-  background: rgba(255,255,255,0.88); border-color: color-mix(in srgb, var(--action-primary) 45%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--action-primary) 12%, transparent);
+  background: rgba(255,255,255,0.88); border-color: var(--input-border-focus);
 }
 .np-todo-del {
   width: 22px; height: 22px; border-radius: 6px;

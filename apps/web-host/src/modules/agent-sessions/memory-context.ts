@@ -1,7 +1,7 @@
 import { loadAgentMemoryContext } from '@gugu/core/agent/memory/context'
 import type { AgentMemoryVectorSearchPort } from '@gugu/core/agent/memory/context'
 import type { ContextDataPorts, HistoryIdentity } from '@gugu/core/agent'
-import { createLocalAgentMemoryRagStore } from '../../domains/agent-sessions/tools/agent-rag-memory-store.js'
+import { createLocalAgentMemoryRagStore } from './tools/agent-rag-memory-store.js'
 
 export type AgentMemoryVectorSearchFactory = (ownerId: string) => AgentMemoryVectorSearchPort
 

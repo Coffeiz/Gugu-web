@@ -7,7 +7,7 @@ import { mkdtemp, rm, writeFile, type FileHandle } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentAttachmentUploadOperations } from '../agent/attachment-upload.js'
-import { isOwnedFileStorageKey } from '../../domains/files/file-owner.js'
+import { isOwnedFileStorageKey } from '../files/file-owner.js'
 
 export function createWebScheduledAttachmentResources(core: SqlDataRuntime, storageRoot: string,
   downloadAttachment: (owner: string, id: string) => Promise<{

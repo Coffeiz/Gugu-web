@@ -4,7 +4,7 @@ import {tmpdir} from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import {createApp} from '../../src/app.js'
-import {createUserToken} from '../../src/domains/auth/auth.js'
+import {createUserToken} from '../../src/modules/auth/auth.js'
 
 test('Cookie 流地址支持附件下载及 Range，普通预览保持 inline',async()=>{
  const root=await mkdtemp(path.join(tmpdir(),'gugu-stream-download-')),file=path.join(root,'data')

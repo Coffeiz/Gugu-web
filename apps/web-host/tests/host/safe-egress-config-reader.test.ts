@@ -3,7 +3,7 @@ import test from 'node:test'
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createSafeEgressSettingsReader } from '../../src/modules/admin/safe-egress-settings.js'
+import { createSafeEgressSettingsReader } from '../../src/modules/admin/network.js'
 
 test('安全出站配置按默认、环境嵌套与override优先级读取且不改写文件', async () => {
   const root = await mkdtemp(join(tmpdir(), 'gugu-safe-egress-read-'))

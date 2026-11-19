@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { targetConfirmationIdentity } from '../../src/domains/agent-sessions/tools/confirmation-identity.js'
+import { targetConfirmationIdentity } from '../../src/modules/agent-sessions/tools/confirmation-identity.js'
 
 test('目标重排不改变身份，但 action、上下文和目标变化会改变身份', () => {
   const original = targetConfirmationIdentity(

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
-import { createPostgresFileReadOperations } from '../../src/domains/files/file-reads-postgres.js'
+import { createPostgresFileReadOperations } from '../../src/modules/files/file-reads-postgres.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const owner = '11111111-1111-4111-8111-111111111111'

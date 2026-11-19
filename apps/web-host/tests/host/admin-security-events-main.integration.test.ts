@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { Pool } from 'pg'
 import { applySecurityEventsMigration } from '../../src/migrations/security-events-migrate.js'
-import { createSecurityEventFingerprint } from '../../src/domains/admin/admin-audit-log.js'
+import { createSecurityEventFingerprint } from '../../src/modules/admin/audit.js'
 import { startServer } from '../../src/main.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL

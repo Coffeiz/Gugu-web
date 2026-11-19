@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { readConfigOverride } from '../../src/adapters/config-override-file.js'
-import { createAgentStateLabelOverrides } from '../../src/domains/agent-sessions/agent-state-label-config.js'
+import { createAgentStateLabelOverrides } from '../../src/modules/agent-sessions/agent-state-label-config.js'
 
 test('合成配置支持旧扁平、嵌套、动态读取和 Python 值形式', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'gugu-label-config-')), path = join(dir, 'test-config.json')

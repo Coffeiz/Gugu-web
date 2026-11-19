@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { registerAdminVoicePresetTestRoute } from '../../src/modules/admin/voice-test.js'
+import { registerAdminVoicePresetTestRoute } from '../../src/modules/admin/voice.js'
 
 test('语音预设测试需管理员权限并复用已保存凭据且拒绝目的地变化', async () => {
   const calls: unknown[] = []

@@ -6,7 +6,7 @@ import {join,resolve} from 'node:path'
 import test from 'node:test'
 import Fastify from 'fastify'
 import {temporarySmtp} from './fixtures/temporary-smtp.js'
-import {createSmtpFileProbe,registerSmtpProbeRoute} from '../../src/modules/admin/smtp-probe.js'
+import {createSmtpFileProbe,registerSmtpProbeRoute} from '../../src/modules/admin/smtp.js'
 
 test('管理员SMTP真实TLS/STARTTLS、无认证/密码回退、动态只读配置与Python一致',async()=>{
  const root=await mkdtemp(join(tmpdir(),'smtp-probe-')),path=join(root,'override.json')

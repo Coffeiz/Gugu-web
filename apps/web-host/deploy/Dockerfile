@@ -32,6 +32,7 @@ COPY --from=build --chown=node:node /workspace/packages/sandbox/package.json ./p
 COPY --from=build --chown=node:node /workspace/packages/sandbox/dist ./packages/sandbox/dist
 COPY --from=build --chown=node:node /workspace/packages/fs/package.json ./packages/fs/package.json
 COPY --from=build --chown=node:node /workspace/packages/fs/dist ./packages/fs/dist
+COPY --from=build --chown=node:node /workspace/packages/loopscope/ ./packages/loopscope/
 COPY --from=build --chown=node:node /workspace/apps/web/dist ./apps/web/dist
 RUN mkdir -p /data && chown node:node /data
 

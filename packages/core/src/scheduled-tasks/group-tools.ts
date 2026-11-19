@@ -1,13 +1,17 @@
 import type { Kysely } from 'kysely'
 import type { RunIdentity } from '../agent/models.js'
+import { createSqlMemoryScopeStateReader, MemorySearchAccessError, createMemorySearch, type AuthorizedMemoryScope, type MemoryRagScopeStatePort } from '../agent/rag/index.js'
 import { groupScopePrefix, type MemoryRagStorageReader } from '../agent/rag/memory-loader.js'
 import { createSqlAgentGroupHistory } from '../agent/sessions/im-tools.js'
 import { createAgentImTools, type AgentImToolPorts } from '../agent/tools/im.js'
+import { createMemorySearchTool } from '../agent/tools/memory.js'
+import type { MemorySearchPort, ToolDefinition } from '../agent/tools/index.js'
 import { createImMaintenanceSource } from '../memory/im-maintenance-source.js'
 import { createKyselyScheduledTaskExecutionReader, createKyselyScheduledTaskGroupScopeReader,
   type ScheduledTaskExecutionPlan } from './run-now-read.js'
 
 type GroupPort = NonNullable<AgentImToolPorts['group']>
+type Group = NonNullable<Awaited<ReturnType<GroupPort['scope']>>>
 type Members = Awaited<ReturnType<GroupPort['members']>>
 
 function record(value: unknown): Record<string, unknown> {
@@ -30,6 +34,54 @@ function parseMembers(raw: string | null): Members {
       last_seen_at: typeof member.last_seen_at === 'number' ? member.last_seen_at : undefined,
     }]
   }))
+}
+
+/** 定时 Run 没有当前 IM 发送者，只能在每次授权检查时重新绑定到单一群 scope。 */
+export function createScheduledTaskGroupMemorySearchPort<DB>(options: {
+  db?: Kysely<DB>
+  storage: MemoryRagStorageReader
+  scopeState?: MemoryRagScopeStatePort
+  resolveGroup(identity: RunIdentity, signal: AbortSignal): Promise<Group | null>
+}): MemorySearchPort {
+  const scopeState = options.scopeState ?? (options.db
+    ? { getMemoryScopeState: createSqlMemoryScopeStateReader(options.db) }
+    : null)
+  if (!scopeState) throw new TypeError('定时群记忆 scope 状态端口未装配')
+  return { search: async (identity, request, signal) => {
+    const requested = request.scope ?? 'auto'
+    if (requested !== 'auto' && requested !== 'current_group')
+      throw new MemorySearchAccessError('定时任务只能搜索当前群聊记忆')
+    const resolveScope = async (candidate: RunIdentity, innerSignal: AbortSignal): Promise<AuthorizedMemoryScope> => {
+      innerSignal.throwIfAborted()
+      const group = await options.resolveGroup(candidate, innerSignal)
+      innerSignal.throwIfAborted()
+      if (!group) throw new MemorySearchAccessError('定时任务群聊授权已失效')
+      return { ownerId: candidate.ownerId, type: 'group', id: group.chatId,
+        platform: group.platform, botId: group.botId, groupId: group.chatId }
+    }
+    const search = createMemorySearch({
+      async resolveScopes(candidate, _requested, innerSignal) { return [await resolveScope(candidate, innerSignal)] },
+      async authorize(candidate, scopes, innerSignal) {
+        try {
+          const current = await resolveScope(candidate, innerSignal)
+          return scopes.length === 1 && scopes[0]?.type === 'group' && scopes[0].ownerId === current.ownerId
+            && scopes[0].id === current.id && scopes[0].platform === current.platform && scopes[0].botId === current.botId
+        } catch (error) {
+          if (error instanceof MemorySearchAccessError) return false
+          throw error
+        }
+      },
+      snapshot: async (candidate, innerSignal) => {
+        innerSignal.throwIfAborted()
+        const current = await resolveScope(candidate, innerSignal)
+        return { revision: `scheduled:${candidate.sessionId}:${current.platform}:${current.botId}:${current.id}`, text: '' }
+      },
+      storage: () => options.storage,
+      scopeState,
+    })
+    return search(identity, { ...request, scope: requested === 'auto' ? 'current_group' : requested,
+      strategy: request.strategy ?? 'bm25' }, signal)
+  } }
 }
 
 /** 已绑定的群范围在工具发现和读取时都与当前任务及 Bot 归属核对。 */
@@ -69,7 +121,7 @@ export function createScheduledTaskGroupTools<DB>(db: Kysely<DB>, backend: 'post
       if (!current) throw new Error('定时任务群聊授权已失效')
       return current
     }
-    return createAgentImTools({ group: {
+    const tools: ToolDefinition[] = createAgentImTools({ group: {
       scope,
       async speakers(candidate, _group, signal) {
         const rows = await history.speakers(candidate, await authorize(candidate, signal), signal)
@@ -95,5 +147,20 @@ export function createScheduledTaskGroupTools<DB>(db: Kysely<DB>, backend: 'post
         return parseMembers(raw)
       },
     } })
+    if (storage) {
+      const resolveGroup = async (candidate: RunIdentity, signal: AbortSignal): Promise<Group | null> => {
+        signal.throwIfAborted()
+        if (candidate.ownerId !== expected.ownerId || candidate.sessionId !== expected.sessionId || candidate.runId !== expected.runId)
+          return null
+        const current = await verifyGroup(task)
+        signal.throwIfAborted()
+        if (!current) return null
+        return { platform: current.platform, botId: current.botId, chatId: current.scopeId }
+      }
+      const memorySearch = createScheduledTaskGroupMemorySearchPort({ db, storage,
+        resolveGroup: (candidate, signal) => resolveGroup(candidate, signal) })
+      tools.push(createMemorySearchTool(memorySearch))
+    }
+    return tools
   }
 }

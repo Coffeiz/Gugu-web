@@ -4,9 +4,9 @@ import test from 'node:test'
 import { Pool } from 'pg'
 import { Kysely, PostgresDialect } from 'kysely'
 import type { Database } from '@gugu/core/data'
-import { createPostgresTrustedIntentStore } from '../../src/domains/agent-sessions/persistence/agent-trusted-intent-postgres.js'
-import { createTrustedPromptDescriptions } from '../../src/domains/agent-sessions/persistence/agent-trusted-prompt-descriptions.js'
-import { targetConfirmationIdentity } from '../../src/domains/agent-sessions/tools/confirmation-identity.js'
+import { createPostgresTrustedIntentStore } from '../../src/modules/agent-sessions/persistence/agent-trusted-intent-postgres.js'
+import { createTrustedPromptDescriptions } from '../../src/modules/agent-sessions/persistence/agent-trusted-prompt-descriptions.js'
+import { targetConfirmationIdentity } from '../../src/modules/agent-sessions/tools/confirmation-identity.js'
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
 test('加密意图读取拒绝交互类型混用和异轮次恢复', async () => {
@@ -91,10 +91,36 @@ test('空提醒集合仍生成目标确认，且目标与版本摘要参与确�
     operation: { intent: { schemaVersion: 2 as const, binding: { ...identity, roundId: 'round', toolCallId: 'call', toolName: 'delete_event', normalizedInputDigest: 'input' },
       intentId: 'intent', interactionId: 'interaction', operationId: 'operation', purpose: 'action' as const, action: 'delete_event', targetsDigest: 'targets', versionsDigest: 'versions', authorizationEpoch: 'epoch', expiresAt: Date.now() + 60000 },
       snapshot: { targetsDigest: 'targets', versionsDigest: 'versions', targetIds: { eventIds: [1], reminderIds: [] } } } }
-  const descriptions = createTrustedPromptDescriptions({ async loadIntent() { return intent }, async createConfirmation(_owner, _summary, target) { captured = target; return 'synthetic-code' } })
+  const descriptions = createTrustedPromptDescriptions({ async loadIntent() { return intent }, async createConfirmation(_owner, _summary, target) { captured = target; return 'synthetic-code' }, filesystemAuthorizationEnabled: () => false })
   const result = await descriptions.confirmation({} as never, identity, request)
   assert.equal(result.kind, 'confirm')
   assert.equal(captured, targetConfirmationIdentity('delete_event', { eventIds: [1] }, { targets_digest: 'targets', versions_digest: 'versions' }))
+})
+
+test('完整沙箱授权提示只使用固定可信文案并绑定 owner 会话', async () => {
+  const identity = { ownerId: 'owner-a', sessionId: '41', runId: 'run-a' }
+  const request = { id: 'auth-interaction', kind: 'question' as const,
+    toolCall: { id: 'call-a', name: 'ask_user', input: { authorization: 'user_sandbox', title: '模型伪造标题', body: '模型伪造范围' } } }
+  const queries: Array<{ text: string; values?: unknown[] }> = []
+  const client = { async query(text: string, values?: unknown[]) {
+    queries.push({ text, values })
+    if (text.includes('FROM conversation_sessions')) return { rows: [{ id: 41 }], rowCount: 1 }
+    return { rows: [], rowCount: 0 }
+  } } as never
+  const descriptions = createTrustedPromptDescriptions({
+    async loadIntent() { return null }, async createConfirmation() { return null }, filesystemAuthorizationEnabled: () => true,
+  })
+  const prompt = await descriptions.authorization(client, identity, request)
+  assert.equal(prompt.kind, 'choice')
+  assert.equal(prompt.title, '确认授权完整用户沙箱权限？')
+  assert.match(prompt.body, /不会授权宿主机、其他用户目录或 Docker 权限/u)
+  assert.deepEqual(prompt.options.map(option => [option.id, option.actionType]), [['confirm', 'choice'], ['cancel', 'cancel']])
+  assert.deepEqual(prompt.context, { command_action: 'filesystem_authorization_grant' })
+  assert.equal(prompt.allowTextInput, false)
+  assert.deepEqual(queries[0]?.values, [41, 'owner-a'])
+  await assert.rejects(createTrustedPromptDescriptions({
+    async loadIntent() { return null }, async createConfirmation() { return null }, filesystemAuthorizationEnabled: () => false,
+  }).authorization(client, identity, request), /当前未开启/u)
 })
 
 test('可信确认使用目标身份签发，MCP 凭据目标受 owner 限制', { skip: !databaseUrl && '需要隔离 PostgreSQL' }, async () => {
@@ -115,6 +141,7 @@ test('可信确认使用目标身份签发，MCP 凭据目标受 owner 限制', 
     const trusted = createTrustedPromptDescriptions({
       async loadIntent(_client, id, pending) { if (id.ownerId !== 'owner-a' || pending.id !== 'trusted-interaction') return null; return pending.kind === 'confirmation' ? { kind: 'confirmation', summary: '删除合成项目', action: 'delete', targets: { project: [123] }, ttlMinutes: 5 } : { kind: 'credential', serverId: server, action: '配置' } },
       async createConfirmation(owner, summary, target) { assert.equal(owner, 'owner-a'); assert.equal(summary, '删除合成项目'); createdIdentity = target; return 'synthetic-code' },
+      filesystemAuthorizationEnabled: () => false,
     })
     const client = await pool.connect()
     try {
@@ -201,6 +228,7 @@ test('MCP UUID 目标经过加密意图和 Web 确认标识保持不变，目标
   const descriptions = createTrustedPromptDescriptions({
     loadIntent: store.loadIntent,
     async createConfirmation(_owner, _title, reference) { targetIdentity = reference; return 'synthetic-code' },
+    filesystemAuthorizationEnabled: () => false,
   })
   await descriptions.confirmation(client, identity, request)
   assert.equal(targetIdentity, targetConfirmationIdentity(intent.action, value.targets, { targets_digest: 'target', versions_digest: 'version' }))

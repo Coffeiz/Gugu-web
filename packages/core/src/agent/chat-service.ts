@@ -14,7 +14,7 @@ export interface AgentChatEventBus {
 /** Core Agent Chat 的跨端调用契约；Host 只负责认证、准备与持久端口装配。 */
 export interface AgentChatService<I> {
   start(ownerId: string, input: I, origin: string | undefined, signal?: AbortSignal): Promise<AsyncIterable<AgentChatEvent>>
-  resume(ownerId: string, sessionId: number, signal?: AbortSignal): Promise<AsyncIterable<AgentChatEvent> | null>
+  resume(ownerId: string, sessionId: number, signal?: AbortSignal, runId?: string): Promise<AsyncIterable<AgentChatEvent> | null>
   wake(ownerId: string, sessionId: number): Promise<boolean>
   cancel(ownerId: string, sessionId: number): Promise<Record<string, unknown> | null>
   retryReconstruction?(ownerId: string, sessionId: number): Promise<Record<string, unknown> | null>
@@ -26,7 +26,7 @@ export interface AgentChatServicePorts<C, I> {
   harness?: Pick<AgentRunner<C>, 'start' | 'cancel'>
   cancellation: Pick<CancellationPort, 'request' | 'notify'>
   prepare(ownerId: string, input: I, origin: string | undefined): Promise<{ identity: RunIdentity; userMessageId: number }>
-  active(ownerId: string, sessionId: number): Promise<{ identity: RunIdentity | null } | null>
+  active(ownerId: string, sessionId: number, runId?: string): Promise<{ identity: RunIdentity | null } | null>
   events: AgentChatEventBus
   project(event: RunEvent): Promise<readonly AgentChatEvent[]>
   /** 已装配的持久调度路径；缺重建器时 kick 不得执行。 */
@@ -96,9 +96,10 @@ export function createAgentChatService<C, I>(ports: AgentChatServicePorts<C, I>)
         yield* subscription
       })()
     },
-    async resume(owner: string, sessionId: number, signal?: AbortSignal): Promise<AsyncIterable<AgentChatEvent> | null> {
-      const active = await ports.active(owner, sessionId)
+    async resume(owner: string, sessionId: number, signal?: AbortSignal, runId?: string): Promise<AsyncIterable<AgentChatEvent> | null> {
+      const active = await ports.active(owner, sessionId, runId)
       if (!active) return null
+      if (runId !== undefined && active.identity?.runId !== runId) return null
       if (!active.identity) return (async function* () { yield { type: 'done', idle: true } })()
       assertIdentity(active.identity, owner, sessionId)
       return project(active.identity, signal)

@@ -61,12 +61,13 @@ describe('transition 令牌消费契约', () => {
     expect(violations).toEqual([])
   })
 
-  it('弹窗 textarea 焦点阴影保留同序 inset 层，避免聚焦时阴影离散跳变', () => {
+  it('弹窗 textarea 聚焦保留现有内高光并使用共享焦点描边', () => {
     const adoptionForms = contents.get(resolve(SRC_ROOT, 'assets/styles/adoption/forms.css')) ?? ''
     const focusRule = adoptionForms.match(
       /html\[data-theme\]\[data-family\] \.bm-card textarea:not\(\.theme-native-control\):focus\s*\{([^}]*)\}/,
     )?.[1] ?? ''
 
-    expect(focusRule).toMatch(/box-shadow:\s*var\(--input-hover-shadow\),\s*var\(--input-focus-shadow\);/)
+    expect(focusRule).toMatch(/box-shadow:\s*var\(--input-hover-shadow\);/)
+    expect(focusRule).toContain('border-color: var(--input-border-focus);')
   })
 })

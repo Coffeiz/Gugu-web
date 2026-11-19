@@ -224,7 +224,7 @@ onMounted(loadHistory)
   transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard);
 }
 .text-input:hover:not(:disabled) { background: var(--input-bg-hover); border-color: var(--input-border-hover); }
-.text-input:focus:not(:disabled) { background: var(--input-bg-focus); border-color: var(--input-border-focus); box-shadow: var(--input-hover-shadow), var(--input-focus-shadow); }
+.text-input:focus:not(:disabled) { background: var(--input-bg-focus); border-color: var(--input-border-focus); box-shadow: var(--input-hover-shadow); }
 .text-input::placeholder { color: var(--input-placeholder); opacity: .82; }
 .textarea { resize: none; line-height: 1.6; }
 

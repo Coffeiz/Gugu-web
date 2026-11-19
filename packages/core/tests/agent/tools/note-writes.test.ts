@@ -50,7 +50,9 @@ it('笔记结构化引用必须归属当前 owner，创建和行编辑一次提�
       expect(new Date((created.value as { note: { captured_at: string } }).note.captured_at).toISOString()).toBe('2026-11-17T04:00:00.000Z')
       expect(await dispatch('create', 'note_create', input)).toMatchObject({ successful: true, mutated: false, value: created.value })
       const edit = (expected: string) => ({ node_id: id, captured_at: '2026-11-17T04:00:00.123456Z', line_edits: [{ target_lines: '1', content: '# 新标题', expected }] })
-      expect(await dispatch('stale', 'note_update', edit('过时'))).toMatchObject({ successful: false, mutated: false })
+      expect(await dispatch('stale', 'note_update', edit('过时'))).toMatchObject({
+        successful: false, mutated: false, value: { error: expect.stringMatching(/target_lines 1-1.*expected 不一致.*numbered_content/) },
+      })
       expect(await dispatch('foreign-update', 'note_update', edit('# 标题'), outsider)).toMatchObject({ successful: false })
       expect(await dispatch('update', 'note_update', edit('# 标题'))).toMatchObject({
         successful: true, mutated: true, value: { note: { captured_at: '2026-11-17T04:00:00.123456+00:00', content_md: `# 新标题\n\n[[project:${project.id}|引用项目]]` } },
@@ -59,6 +61,22 @@ it('笔记结构化引用必须归属当前 owner，创建和行编辑一次提�
       expect(await core.db.selectFrom('mind_nodes').select(['id', 'version', 'origin']).execute()).toEqual([{ id, version: 2, origin: 'gugu' }])
       expect(await core.db.selectFrom('undo_operations').select('action').orderBy('action').execute()).toEqual([{ action: 'create' }, { action: 'update' }])
       expect(published).toBe(2)
+      const replace = (find: string, replacement: string) => ({ node_id: id, find_replace: { find, replace: replacement } })
+      expect(await dispatch('mixed', 'note_update', { ...replace('新标题', '改写'), append_markdown: '不得追加' }))
+        .toMatchObject({ successful: false, mutated: false, value: { error: expect.stringContaining('只能选一种') } })
+      expect(await dispatch('absent', 'note_update', replace('新标题 ', '改写')))
+        .toMatchObject({ successful: false, mutated: false, value: { error: expect.stringContaining('未找到原文') } })
+      const replacement = replace('新标题', '$&重复重复重复')
+      expect(await dispatch('replace', 'note_update', replacement)).toMatchObject({
+        successful: true, mutated: true, value: { note: { content_md: `# $&重复重复重复\n\n[[project:${project.id}|引用项目]]` } },
+      })
+      expect(await dispatch('replace', 'note_update', replacement)).toMatchObject({ successful: true, mutated: false })
+      expect(await dispatch('ambiguous', 'note_update', replace('重复重复', '改写')))
+        .toMatchObject({ successful: false, mutated: false, value: { error: expect.stringContaining('匹配多处') } })
+      expect(await dispatch('delete-fragment', 'note_update', replace('$&', ''))).toMatchObject({
+        successful: true, mutated: true, value: { note: { content_md: `# 重复重复重复\n\n[[project:${project.id}|引用项目]]` } },
+      })
+      expect(published).toBe(4)
       allowed = false
       expect(await dispatch('revoked', 'note_update', { node_id: id, append_markdown: '无权写入' })).toMatchObject({ successful: false })
     } finally { await core.close() }

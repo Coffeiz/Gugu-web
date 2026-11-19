@@ -214,7 +214,6 @@ html[data-theme][data-family] .sidebar .soon-badge {
 html[data-theme='dark'][data-family] :is(.files-page, .project-modal-root) .fc-card.pre-selected:not(.selected) {
   background: color-mix(in srgb,var(--action-primary) 6%,var(--surface-card-solid));
   border-color: color-mix(in srgb,var(--action-primary) 45%,transparent);
-  box-shadow: inset 0 1px 0 var(--highlight-soft), 0 0 0 1.5px color-mix(in srgb,var(--action-primary) 15%,transparent);
 }
 
 /* Folder/file hover affordances sit on top of cards and therefore need their own control contract. */

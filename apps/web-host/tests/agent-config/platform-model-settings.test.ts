@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { resolvePlatformModelSettings } from '../../src/domains/agent-config/platform-model-settings.js'
+import { resolvePlatformModelSettings } from '../../src/modules/agent/model-config/platform-model-settings.js'
 
 test('平台模型设置按默认值、环境和配置覆盖的顺序合并并保留模型池', () => {
   const settings = resolvePlatformModelSettings({

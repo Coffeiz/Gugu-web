@@ -12,8 +12,8 @@ import {
   type EmailChangeOptions,
   type EmailChangeStore,
   type EmailChangeUser,
-} from '../../src/domains/auth/email-change.js'
-import { RateLimitError } from '../../src/domains/auth/rate-limit.js'
+} from '../../src/modules/auth/email-change.js'
+import { RateLimitError } from '../../src/modules/auth/rate-limit.js'
 
 const ownerId = '3c392b91-07b0-4c36-8f7f-1a2c611f7480'
 const currentEmail = 'cedarz@example.test'

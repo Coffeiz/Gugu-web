@@ -13,13 +13,13 @@ import { buildDocuments } from '../../../../packages/core/src/agent/rag/adapters
 import { createSqlRagPersistentIndexReader } from '../../../../packages/core/src/agent/rag/persistent-index.js'
 import { createSqlRagPersistentIndexWriter } from '../../../../packages/core/src/agent/rag/persistent-writer.js'
 import { createSqlRagRebuildWorker } from '../../../../packages/core/src/agent/rag/rebuild-worker.js'
-import { createAgentToolRegistry } from '../../src/domains/agent-sessions/tools/agent-tool-registry.js'
-import { createLocalAgentKnowledgeReadStore } from '../../src/domains/agent-sessions/tools/agent-rag-knowledge-store.js'
-import { createLocalAgentKnowledgeDeletePort, createLocalAgentKnowledgeWritePort } from '../../src/domains/agent-sessions/tools/agent-knowledge-write.js'
+import { createAgentToolRegistry } from '../../src/modules/agent-sessions/tools/agent-tool-registry.js'
+import { createLocalAgentKnowledgeReadStore } from '../../src/modules/agent-sessions/tools/agent-rag-knowledge-store.js'
+import { createLocalAgentKnowledgeDeletePort, createLocalAgentKnowledgeWritePort } from '../../src/modules/agent-sessions/tools/agent-knowledge-write.js'
 import { applyRagIndexMigration } from '../../src/migrations/rag-index-migrate.js'
-import { createAuthorizedWebAgentProductionRagRunPorts } from '../../src/domains/agent-sessions/tools/agent-rag-production-ports.js'
-import { createWebAgentConfirmationAuthorization, createWebAgentToolConfirmation } from '../../src/domains/agent-sessions/tools/agent-confirmation.js'
-import { createPostgresTrustedIntentStore } from '../../src/domains/agent-sessions/persistence/agent-trusted-intent-postgres.js'
+import { createAuthorizedWebAgentProductionRagRunPorts } from '../../src/modules/agent-sessions/tools/agent-rag-production-ports.js'
+import { createWebAgentConfirmationAuthorization, createWebAgentToolConfirmation } from '../../src/modules/agent-sessions/tools/agent-confirmation.js'
+import { createPostgresTrustedIntentStore } from '../../src/modules/agent-sessions/persistence/agent-trusted-intent-postgres.js'
 
 const pgUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 test('知识删除在文件发布后提交失败仍可恢复，保留历史并移除 PostgreSQL 索引', { skip: !pgUrl }, async () => {

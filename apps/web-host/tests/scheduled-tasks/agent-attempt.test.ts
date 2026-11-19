@@ -10,10 +10,10 @@ import { serializeAgentKnowledgeEntry } from '@gugu/core/agent/knowledge/entry'
 import { stableJson, type CanonicalRunPreparationPorts } from '@gugu/core/agent'
 import { createScheduledTaskContextLoader } from '@gugu/core/scheduled-task-run-now'
 import { ProviderStreamSanitizer, stripThinking, type ProviderHttpRequest } from '@gugu/core/providers'
-import { encryptByokEnvelope } from '../../src/domains/agent-config/byok.js'
-import { createConfiguredWebAgentProviderBinding } from '../../src/domains/agent-config/configured-web-provider-binding.js'
-import { createWebAgentPromptReader } from '../../src/domains/agent-sessions/context/agent-prompt-files.js'
-import { createLocalPreferenceTextFiles } from '../../src/domains/preferences/persistence/personality-files.js'
+import { encryptByokEnvelope } from '../../src/modules/agent/model-config/byok.js'
+import { createConfiguredWebAgentProviderBinding } from '../../src/modules/agent/model-config/configured-web-provider-binding.js'
+import { createWebAgentPromptReader } from '../../src/modules/agent-sessions/context/agent-prompt-files.js'
+import { createLocalPreferenceTextFiles } from '../../src/modules/preferences/persistence/personality-files.js'
 import { createWebScheduledTaskContextSources } from '../../src/modules/scheduled-tasks/agent-context.js'
 import { createWebScheduledTaskToolResources } from '../../src/modules/scheduled-tasks/agent-tools.js'
 import { createWebScheduledTaskAgentAttempt } from '../../src/modules/scheduled-tasks/agent-attempt.js'
@@ -104,6 +104,7 @@ test('定时执行按任务 owner 绑定 BYOK，并为每次尝试生成独立�
     }
     const runs: string[] = []
     const requests: ProviderHttpRequest[] = []
+    const runtimeReasoningPolicies: Array<string | undefined> = []
     let failBeforeStart = false
     let usePersistedPrompt = false
     let useWrongSubject = false
@@ -124,7 +125,7 @@ test('定时执行按任务 owner 绑定 BYOK，并为每次尝试生成独立�
         assert.equal(model.usageConfig.isByok, isByok)
         assert.equal(resolved.config.model, isByok ? 'synthetic-user-model' : 'synthetic-platform-model')
         assert.equal(resolved.config.api_key, isByok ? 'synthetic-user-key' : 'synthetic-platform-key')
-        assert.equal(resolved.config.reasoning_persistence, 'off')
+        assert.equal(resolved.config.reasoning_persistence, 'continuation')
         await assert.rejects(model.resolve({ ...identity, ownerId: randomUUID() }, model.modelIdentity, signal), /身份不匹配/)
         assertReleased = async () => { await assert.rejects(model.resolve(identity, model.modelIdentity, signal), /已释放/) }
         if (failBeforeStart) throw new Error('定时 Agent 准备失败')
@@ -194,20 +195,26 @@ test('定时执行按任务 owner 绑定 BYOK，并为每次尝试生成独立�
             diagnose() {},
           },
           provider: {
-            transport: { async request(request) {
-              requests.push(request)
-              revokeLeaseOnReply?.()
-              const payload = ++modelRound === 1
-                ? { choices: [{ delta: { tool_calls: [{ index: 0, id: 'synthetic-clock', type: 'function',
-                  function: { name: tool.name, arguments: '{}' } }] }, finish_reason: 'tool_calls' }] }
-                : { choices: [{ delta: { content: '已完成' }, finish_reason: 'stop' }] }
-              return { status: 200, headers: { 'content-type': 'text/event-stream' },
-                body: (async function* () {
-                  yield new TextEncoder().encode(`data: ${JSON.stringify({ ...payload,
-                    usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 },
-                  })}\n\ndata: [DONE]\n\n`)
-                })(), async cancel() {} }
-            } },
+            createTransport(config) {
+              runtimeReasoningPolicies.push(config.reasoning_persistence)
+              return {
+                async request(request) {
+                  requests.push(request)
+                  revokeLeaseOnReply?.()
+                  const payload = ++modelRound === 1
+                    ? { choices: [{ delta: { tool_calls: [{ index: 0, id: 'synthetic-clock', type: 'function',
+                      function: { name: tool.name, arguments: '{}' } }] }, finish_reason: 'tool_calls' }] }
+                    : { choices: [{ delta: { content: '已完成' }, finish_reason: 'stop' }] }
+                  return { status: 200, headers: { 'content-type': 'text/event-stream' },
+                    body: (async function* () {
+                      yield new TextEncoder().encode(`data: ${JSON.stringify({ ...payload,
+                        usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 },
+                      })}\n\ndata: [DONE]\n\n`)
+                    })(), async cancel() {} }
+                },
+                async close() {},
+              }
+            },
           },
         }
       },
@@ -224,6 +231,8 @@ test('定时执行按任务 owner 绑定 BYOK，并为每次尝试生成独立�
     }
     assert.equal(new Set(runs).size, 3)
     assert.equal(requests.length, 6)
+    assert.ok(runtimeReasoningPolicies.length > 0)
+    assert.ok(runtimeReasoningPolicies.every(value => value === 'off'))
     assert.equal(toolCalls, 3)
     for (const [index, request] of requests.entries()) {
       const body = JSON.stringify(request.body)

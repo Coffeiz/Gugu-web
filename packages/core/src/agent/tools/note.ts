@@ -3,7 +3,7 @@ import type { SqlDataRuntime } from '../../data/runtime.js'
 import { prepareMindNoteCreate, MindNoteCreateError, type MindNoteReadResponse } from '../../mind/note-create.js'
 import { createBorrowedSqlMindNoteInserter } from '../../mind/note-postgres-sqlite.js'
 import { createSqlMindNoteMutator } from '../../mind/note-mutations-sql.js'
-import { mindBlocksSchema, serializeMindBlocks, applyMindLineEdits, MindNoteContentError } from '../../mind/note-content.js'
+import { mindBlocksSchema, serializeMindBlocks, applyMindLineEdits, replaceUniqueMindText, MindNoteContentError } from '../../mind/note-content.js'
 import { strip } from '../../shared/values.js'
 import { utc } from '../../shared/timestamps.js'
 import { normalizeDateInput } from './date-input.js'
@@ -94,10 +94,18 @@ const noteFields = {
   color: z.enum(['amber', 'coral', 'blue', 'teal']).nullable().optional(),
   captured_at: z.string().optional(),
 }
+const noteBodyModes = ['append_markdown', 'append_blocks', 'line_edits', 'find_replace'] as const
+const mixedNoteBodyModes = noteBodyModes.flatMap((first, index) =>
+  noteBodyModes.slice(index + 1).map(second => ({ required: [first, second] })),
+)
 const noteWriteSchemas = {
   note_create: z.object({ ...noteFields, title: z.string().optional(), markdown: z.string().optional(), blocks: mindBlocksSchema.optional() }).strict(),
   note_update: z.object({
     ...noteFields, node_id: z.number().int().safe(), append_markdown: z.string().optional(), append_blocks: mindBlocksSchema.optional(),
+    find_replace: z.object({
+      find: z.string().min(1).describe('从 note_get.content_md 逐字复制的非空原文，必须唯一匹配'),
+      replace: z.string().describe('替换文字，空字符串删除该处原文'),
+    }).strict().optional(),
     line_edits: z.array(z.object({ target_lines: z.string().regex(/^(all|[0-9]+([-,][0-9]+)?)$/u), content: z.string(), expected: z.string().optional() }).strict()).optional(),
   }).strict(),
 }
@@ -174,7 +182,7 @@ export function createNoteWritePort(core: SqlDataRuntime, options: {
       return failure('请提供 markdown 或 blocks 中的一种。普通笔记优先用 markdown 字符串；需要可点击引用或结构化待办时用 blocks。',
         '普通笔记格式：{"markdown":"# 标题\\n\\n正文"}。不要把数组或对象包装成 item。')
     }
-    const mixedBodyUpdate = new MindNoteContentError('正文更新方式只能选一种：append_markdown、append_blocks 或 line_edits。普通文字追加优先用 append_markdown。')
+    const mixedBodyUpdate = new MindNoteContentError('正文更新方式只能选一种：append_markdown、append_blocks、line_edits 或 find_replace。普通文字追加优先用 append_markdown。')
     let saved: MindNoteReadResponse | undefined
     let callbackError: unknown
     try {
@@ -217,10 +225,10 @@ export function createNoteWritePort(core: SqlDataRuntime, options: {
             const input = request.args
             const before = await note(input.node_id).executeTakeFirst()
             if (!before) throw new MindNoteContentError('找不到这条便签')
-            const { title, color, captured_at, append_markdown, append_blocks, line_edits } = input
-            const values = [append_markdown, append_blocks, line_edits].filter(value => value !== undefined)
-            if (values.length > 1) throw mixedBodyUpdate
-            if (values.length === 0 && title === undefined && color === undefined && captured_at === undefined)
+            const { title, color, captured_at, append_markdown, append_blocks, line_edits, find_replace } = input
+            const bodyModeCount = noteBodyModes.filter(mode => input[mode] !== undefined).length
+            if (bodyModeCount > 1) throw mixedBodyUpdate
+            if (bodyModeCount === 0 && title === undefined && color === undefined && captured_at === undefined)
               throw new MindNoteContentError('至少提供一个要修改的字段')
             const patch: Record<string, unknown> = { version: Number(before.version) }
             if (title !== undefined) patch.title = title
@@ -233,6 +241,7 @@ export function createNoteWritePort(core: SqlDataRuntime, options: {
             if (appended === '') throw new MindNoteContentError('append_blocks 不能为空')
             if (appended !== undefined) patch.contentMd = before.content_md ? `${before.content_md}\n\n${appended}` : appended
             if (line_edits !== undefined) patch.contentMd = applyMindLineEdits(before.content_md, line_edits)
+            if (find_replace !== undefined) patch.contentMd = replaceUniqueMindText(before.content_md, find_replace.find, find_replace.replace)
             signal.throwIfAborted()
             const prepared = prepareMindNoteUpdate(patch, now)
             if (when && /\.\d{6}/u.test(when)) prepared.preciseCapturedAt = when
@@ -266,14 +275,16 @@ export function createNoteWritePort(core: SqlDataRuntime, options: {
 export function createNoteWriteTools(port: NoteWritePort): ToolDefinition[] {
   const descriptions = {
     note_create: '创建普通时间流笔记。使用 markdown 或 blocks，标题用于索引。captured_at 可指定归属日期。',
-    note_update: '更新普通笔记。用 append_markdown、append_blocks 或 line_edits 修改正文。数字行编辑须附 expected 原文。',
+    note_update: '更新普通笔记。正文更新方式互斥，一次最多传一个：append_markdown（普通追加）、append_blocks（结构化追加）、line_edits（按行编辑）或 find_replace（原文唯一匹配时替换）。数字行编辑以 note_get.numbered_content 的物理行号为准，标题和空行均计入；expected 只传原文，不含行号前缀。局部替换优先从 note_get.content_md 复制原文到 find_replace.find。',
   }
   const names = ['note_create', 'note_update'] as const
   return names.map(name => {
     const schema = noteWriteSchemas[name]
+    const parameters = z.toJSONSchema(schema) as Record<string, Json>
+    if (name === 'note_update') parameters.not = { anyOf: mixedNoteBodyModes }
     return {
       definition: { name, schema: { type: 'function', function: {
-        name, description: descriptions[name], parameters: z.toJSONSchema(schema) as Record<string, Json>,
+        name, description: descriptions[name], parameters,
       } } },
       effect: 'write',
       strictArrayFields: ['blocks', 'append_blocks', 'content', 'items', 'paragraphs'],

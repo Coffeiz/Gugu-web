@@ -6,7 +6,7 @@ import {join,resolve} from 'node:path'
 import {execFileSync} from 'node:child_process'
 import Fastify from 'fastify'
 import {createMisreadMarkdownExporter} from '@gugu/core/perception-misread-export'
-import {createLocalMisreadTextReader,registerAdminMisreadExportRoute} from '../../src/modules/admin/perception-misread-export.js'
+import {createLocalMisreadTextReader,registerAdminMisreadExportRoute} from '../../src/modules/admin/perception.js'
 import {installHttpErrorHandler} from '../../src/http/errors.js'
 
 test('固定Local错读文件与Python读端一致，空/缺失/UTF8替换及安全路径',async()=>{

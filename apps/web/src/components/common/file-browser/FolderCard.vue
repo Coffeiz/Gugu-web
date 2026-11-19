@@ -81,7 +81,6 @@ defineProps({
 }
 .folder-card.selected {
   border-color: var(--folder-card-border-selected);
-  box-shadow: var(--folder-card-shadow-selected);
 }
 /* 选择态只叠主题色遮罩；常驻伪元素确保移除 selected 后仍可淡出。 */
 .folder-card::before {
@@ -95,7 +94,6 @@ defineProps({
 .folder-card.pre-selected:not(.selected) {
   border-color: var(--folder-card-border-preselected);
   background: var(--folder-card-bg-preselected);
-  box-shadow: var(--folder-card-shadow-preselected);
 }
 .fd-icon-area {
   height: 90px; flex-shrink: 0;
@@ -114,7 +112,7 @@ defineProps({
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   line-height: 1.35; padding-bottom: 2px; margin-bottom: -2px;
 }
-/* 输入框宽度限制在名称栏内，但名称行允许 focus glow 绘制；卡片根节点仍负责最终裁切。 */
+/* 输入框宽度限制在名称栏内，卡片根节点负责最终裁切。 */
 .fd-name:has(.rename-sizer) { overflow: visible; text-overflow: clip; }
 .fd-count { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; line-height: 1.15; color: var(--content-secondary); opacity: 0.55; margin-top: 2px; }
 .sel-cb-enter-from, .sel-cb-leave-to { opacity: 0; }

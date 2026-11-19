@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createAdminLlmPresetReader } from '../../src/modules/admin/llm-preset-read.js'
+import { createAdminLlmPresetReader } from '../../src/modules/admin/llm.js'
 
 test('Host 注入模型预设时管理员认证先于配置读取且密钥被遮蔽', async () => {
   let reads = 0

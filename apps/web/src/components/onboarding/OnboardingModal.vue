@@ -699,14 +699,12 @@ async function next() {
 .locale-option:focus-visible {
   outline: 0;
   border-color: var(--border-focus);
-  box-shadow: var(--control-focus-shadow);
 }
 
-/* 选中态只画边缘与泛光，不再盖一层 action-soft 蒙版。 */
+/* 选中态只突出边缘，不再盖一层 action-soft 蒙版。 */
 .locale-option.selected {
   border-color: var(--border-focus);
   background: var(--workspace-card-bg);
-  box-shadow: var(--control-focus-shadow), var(--workspace-card-shadow);
 }
 
 .language-code {
@@ -779,7 +777,6 @@ async function next() {
 .feature-option.selected {
   outline: 0;
   border-color: var(--border-focus);
-  box-shadow: var(--control-focus-shadow), var(--workspace-card-shadow);
 }
 .feature-option.selected { animation: onboarding-feature-select var(--motion-hover-control) var(--motion-ease-standard) both; }
 @keyframes onboarding-feature-select {

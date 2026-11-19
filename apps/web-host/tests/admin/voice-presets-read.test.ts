@@ -4,7 +4,7 @@ import {mkdtemp,readFile,writeFile,rm} from 'node:fs/promises'
 import {join} from 'node:path'
 import {tmpdir} from 'node:os'
 import Fastify from 'fastify'
-import {createVoicePresetsFileReader,registerVoicePresetsReadRoute} from '../../src/modules/admin/voice-presets-read.js'
+import {createVoicePresetsFileReader,registerVoicePresetsReadRoute} from '../../src/modules/admin/voice.js'
 test('语音预设只读动态配置并正确遮蔽ASCII/Unicode密钥，保留未知字段和激活态',async()=>{
  const root=await mkdtemp(join(tmpdir(),'voice-read-')),path=join(root,'override.json'),app=Fastify()
  registerVoicePresetsReadRoute(app,{requireAdmin:async(request,reply)=>{if(request.headers.authorization!=='admin')return reply.code(401).send({detail:'未登录'})},read:createVoicePresetsFileReader(path)})

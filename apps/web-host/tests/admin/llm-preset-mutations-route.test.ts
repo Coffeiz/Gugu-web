@@ -3,7 +3,7 @@ import test from 'node:test'
 import {execFileSync} from 'node:child_process'
 import {resolve} from 'node:path'
 import Fastify from 'fastify'
-import {registerLlmPresetMutationRoutes} from '../../src/modules/admin/llm-preset-mutations.js'
+import {registerLlmPresetMutationRoutes} from '../../src/modules/admin/llm-settings.js'
 import {createLlmPresetMutations} from '../../../../packages/core/src/agent/config/llm-preset-mutations.js'
 import {installHttpErrorHandler} from '../../src/http/errors.js'
 

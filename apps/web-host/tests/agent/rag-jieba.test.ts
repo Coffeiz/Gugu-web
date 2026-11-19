@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { configureRagJieba, tokenizeRaw } from '../../../../packages/core/src/agent/rag/tokenizer.js'
-import { getAgentRagJieba } from '../../src/domains/agent-sessions/tools/agent-rag-jieba.js'
+import { getAgentRagJieba } from '../../src/modules/agent-sessions/tools/agent-rag-jieba.js'
 
 type GoldenCase = { text: string; tokens: string[] }
 

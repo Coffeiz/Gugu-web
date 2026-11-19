@@ -26,6 +26,14 @@ export function createCanonicalRunner(ports: {
       }),
     } : { ...ports.context, load: requirePreparedCapabilities(ports.context.load) }),
     execution: createHarnessExecutor(ports.executor),
+    observationSnapshot(context) {
+      const area = context.prepared.area
+      return {
+        revision: area.revision, digest: area.digest,
+        entries: area.entries.map(entry => ({ sequence: entry.sequence, source: entry.source,
+          persistencePolicy: entry.persistencePolicy, message: entry.message })),
+      }
+    },
     reply: createPortableReplyPolicy({ context: ports.replyContext ?? ((context) => context.replyContext) }),
   })
 }

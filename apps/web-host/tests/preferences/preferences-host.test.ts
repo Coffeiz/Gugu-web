@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/domains/auth/auth.js'
-import type { PublicUserRecord } from '../../src/domains/auth/auth.js'
-import type { PreferencesStore } from '../../src/domains/preferences/preferences.js'
+import { createUserToken } from '../../src/modules/auth/auth.js'
+import type { PublicUserRecord } from '../../src/modules/auth/auth.js'
+import type { PreferencesStore } from '../../src/modules/preferences/preferences.js'
 
 const ownerId = '00000000-0000-4000-8000-000000000031'
 const secret = 'synthetic-test-secret-for-preferences'

@@ -4,12 +4,12 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import type { ProjectRecord } from '@gugu/core'
-import type { ProjectTrashFile, ProjectTrashFolder } from '../../src/domains/projects/application/project-trash.js'
+import type { ProjectTrashFile, ProjectTrashFolder } from '@gugu/core/project-trash'
 import {
   createLocalProjectTrashStorage,
   createProjectTrashOriginalStorageKeyResolver,
   projectFileTrashKey,
-} from '../../src/domains/projects/persistence/project-trash-storage.js'
+} from '../../src/modules/projects/persistence/project-trash-storage.js'
 
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
 const originalKey = `${ownerId}/项目文件/2026/11/计划 #17/文档/计划.md`

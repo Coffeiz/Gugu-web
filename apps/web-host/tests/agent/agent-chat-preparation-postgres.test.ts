@@ -2,9 +2,9 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { Pool } from 'pg'
-import { registerAgentRunStartupLocked } from '../../src/domains/agent-sessions/persistence/agent-run-startup-postgres.js'
-import { createPostgresAgentChatPreparation, createPostgresWebChatSession, type AgentChatPreparationPorts } from '../../src/domains/agent-sessions/persistence/agent-chat-preparation.js'
-import { enqueueAgentRunLocked } from '../../src/domains/agent-sessions/persistence/agent-run-dispatch-postgres.js'
+import { registerAgentRunStartupLocked } from '../../src/modules/agent-sessions/persistence/agent-run-startup-postgres.js'
+import { createPostgresAgentChatPreparation, createPostgresWebChatSession, type AgentChatPreparationPorts } from '../../src/modules/agent-sessions/persistence/agent-chat-preparation.js'
+import { enqueueAgentRunLocked } from '../../src/modules/agent-sessions/persistence/agent-run-dispatch-postgres.js'
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
 test('隔离 PG 新会话和问候先于用户消息提交，附件或队列失败回滚所有数据', { skip: !url && '需要隔离 PostgreSQL' }, async () => {

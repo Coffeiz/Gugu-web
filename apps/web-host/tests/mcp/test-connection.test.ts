@@ -76,3 +76,18 @@ test('缺少已配置的凭据槽位值时不尝试连接外部服务',async()=>
  if(!result.ok){assert.equal(result.error_kind,'configuration');assert.match(result.error,/缺少凭据值/)}
  assert.deepEqual(closed,[])
 })
+
+test('stdio 连接测试经注入的 MXC client 执行发现并关闭会话',async()=>{
+ const whereCalls:string[][]=[],closed:string[]=[];let spawned:{owner:string;command:string;timeoutSeconds:number}|undefined
+ const stdioRow={...row,transport:'stdio',endpoint:'',command:'mcp-sample --read-only',credential_slots:[],encrypted_credentials:''}
+ const testConnection=createPostgresMcpConnectionTester(database(stdioRow,whereCalls),{
+  decrypt:{async decrypt(){throw new Error('stdio 不应解密 HTTP 配置')}},
+  transport:()=>{throw new Error('stdio 不应建立 HTTP transport')},maxTools:8,
+  stdioClient:async (input:{owner:string;command:string;timeoutSeconds:number})=>{spawned=input;return {async connect(){},async listTools(){return {tools:[{name:'echo',inputSchema:{type:'object'}}]}},async close(){closed.push('client')}}},
+ } as never)
+ const result=await testConnection(owner,server)
+ assert.deepEqual(whereCalls,[['id',server],['user_id',owner],['scope','user']])
+ assert.deepEqual(spawned,{owner,command:'mcp-sample --read-only',timeoutSeconds:12})
+ assert.deepEqual(result,{ok:true,tool_count:1,tools:['echo']})
+ assert.deepEqual(closed,['client'])
+})

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import SQLite from 'better-sqlite3'
 import { Kysely, SqliteDialect } from 'kysely'
 import { createTelegramBotApi, createTelegramConnector } from '../../src/im/telegram-connect.js'
+import { markdownV2, splitMarkdownV2 } from '../../src/im/telegram-format.js'
 
 const token = '123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef0123456789'
 const otherToken = '654321:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef0123456789'
@@ -208,8 +209,51 @@ test('Telegram sendMessage uses the fixed official HTTPS origin and passes text 
   assert.equal(await api.sendMessage(token, '-1007002', '安全合成消息'), true)
   assert.deepEqual(requests, [{
     url: `https://api.telegram.org/bot${token}/sendMessage`,
-    body: { chat_id: '-1007002', text: '安全合成消息' },
+    body: { chat_id: '-1007002', text: '安全合成消息', parse_mode: 'MarkdownV2' },
   }])
   assert.equal(await api.sendMessage(token, '', '不发送'), false)
   assert.equal(requests.length, 1)
+})
+
+test('Telegram MarkdownV2 keeps supported formatting and renders unsafe links as escaped text', () => {
+  const formatted = markdownV2('**bold _inner_** and *italic!* [link](https://example.test/a?x=1&y=2)\n`a_b`\n[unsafe](javascript:alert(1))')
+  assert.equal(formatted, '*bold \\_inner\\_* and _italic\\!_ [link](https://example.test/a?x=1&y=2)\n`a_b`\nunsafe (javascript:alert\\(1)\\)')
+})
+
+test('Telegram MarkdownV2 renders lists and splits long fenced code into closed blocks', () => {
+  assert.equal(markdownV2('- 普通项\n1) 有序项\n- [x] 完成\n- [ ] 未完成'), '• 普通项\n1\\. 有序项\n☑ 完成\n☐ 未完成')
+  const content = 'a_b😀'.repeat(400) + '\n'
+  const chunks = splitMarkdownV2('```python\n' + content + '```', 512)
+  assert.ok(chunks.length > 1)
+  assert.ok(chunks.every(chunk => chunk.startsWith('```python\n') && chunk.endsWith('```')))
+  assert.ok(chunks.every(chunk => chunk.length <= 512))
+  assert.equal(chunks.map(chunk => chunk.slice('```python\n'.length, -3)).join(''), content)
+})
+
+test('Telegram MarkdownV2 splits long emoji by UTF-16 units and retains all source text', async () => {
+  const source = '😀'.repeat(2100)
+  const chunks = splitMarkdownV2(source)
+  assert.equal(chunks.length, 2)
+  assert.equal(chunks.map(chunk => [...chunk].length).join(','), '2032,68')
+  assert.ok(chunks.every(chunk => Buffer.byteLength(chunk, 'utf16le') / 2 <= 4096))
+
+  const requests: Array<{ body: unknown }> = []
+  const api = createTelegramBotApi({ async request(request) {
+    requests.push({ body: request.body })
+    return { status: 200, headers: {}, body: (async function* () {
+      yield Buffer.from('{"ok":true,"result":{"message_id":17}}')
+    })(), async cancel() {} }
+  } })
+  assert.equal(await api.sendMessage(token, '-1007002', source), true)
+  assert.equal(requests.length, 2)
+  assert.deepEqual(requests.map(item => (item.body as { parse_mode: string }).parse_mode), ['MarkdownV2', 'MarkdownV2'])
+  assert.equal(requests.map(item => (item.body as { text: string }).text).join(''), source)
+})
+
+test('Telegram MarkdownV2 falls back to escaped chunks without cutting code points', () => {
+  const chunks = splitMarkdownV2('😀a_b '.repeat(1000) + '尾', 512)
+  assert.ok(chunks.length > 1)
+  assert.ok(chunks.every(chunk => chunk.length <= 512))
+  assert.ok(chunks.join('').includes('a\\_b'))
+  assert.ok(chunks.join('').endsWith('尾'))
 })

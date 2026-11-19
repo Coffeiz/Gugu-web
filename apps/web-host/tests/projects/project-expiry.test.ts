@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import type { Pool } from 'pg'
-import { purgeExpiredProject, recoverProjectExpiryJournal } from '../../src/domains/projects/persistence/project-expiry-postgres.js'
+import { purgeExpiredProject, recoverProjectExpiryJournal } from '../../src/modules/projects/persistence/project-expiry-postgres.js'
 
 test('过期项目清理限定 owner，删除文件并在事务中更新配额', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'gugu-expiry-'))

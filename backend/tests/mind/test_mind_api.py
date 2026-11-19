@@ -516,7 +516,7 @@ async def test_canvas_relations_only_list_visible_nodes_and_are_idempotent(db, u
     a = await _new_note(db, user_a, content="A")
     b = await _new_note(db, user_a, content="B")
     outside = await _new_note(db, user_a, content="不在画布上")
-    await add_canvas_item(canvas.id, MindCanvasItemCreate(node_id=a.id), request=None, current_user=user_a, db=db)
+    item = await add_canvas_item(canvas.id, MindCanvasItemCreate(node_id=a.id), request=None, current_user=user_a, db=db)
     await add_canvas_item(canvas.id, MindCanvasItemCreate(node_id=b.id), request=None, current_user=user_a, db=db)
 
     one = await create_relation(MindRelationCreate(canvas_id=canvas.id, src_node_id=a.id, dst_node_id=b.id), current_user=user_a, db=db)
@@ -531,6 +531,24 @@ async def test_canvas_relations_only_list_visible_nodes_and_are_idempotent(db, u
 
     relations = await list_canvas_relations(canvas.id, current_user=user_a, db=db)
     assert [relation.id for relation in relations] == [one.id, parallel.id]
+
+    await remove_canvas_item(canvas.id, item.id, request=None, current_user=user_a, db=db)
+    await update_canvas(
+        canvas.id, MindCanvasUpdate(data={"scale": 1.25, "detachedRelationIds": []}),
+        current_user=user_a, db=db,
+    )
+    await add_canvas_item(canvas.id, MindCanvasItemCreate(node_id=a.id), request=None, current_user=user_a, db=db)
+    assert await list_canvas_relations(canvas.id, current_user=user_a, db=db) == []
+
+    reconnected = await create_relation(
+        MindRelationCreate(canvas_id=canvas.id, src_node_id=a.id, dst_node_id=b.id),
+        current_user=user_a, db=db,
+    )
+    await update_canvas(
+        canvas.id, MindCanvasUpdate(data={"detachedRelationIds": [one.id, parallel.id]}),
+        current_user=user_a, db=db,
+    )
+    assert [row.id for row in await list_canvas_relations(canvas.id, current_user=user_a, db=db)] == [reconnected.id]
 
 
 @pytest.mark.asyncio

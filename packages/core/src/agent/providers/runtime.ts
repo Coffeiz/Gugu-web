@@ -13,13 +13,17 @@ import type { RetryClock } from './retry.js'
 import { ProviderClientPool, providerConfigKey } from './client-pool.js'
 import { stripThinking, ProviderStreamSanitizer, sanitizeProviderText } from './sanitize.js'
 import { normalizedApiKey } from './diagnostics.js'
-import { RequestProbe } from './cache-probe.js'
+import { RequestProbe, providerCacheDiagnostics } from './cache-probe.js'
 import type { ProviderProbeSink } from './cache-probe.js'
 import { outputBudget, parseStructuredJson } from './standalone.js'
 import { filterReasoningConfig } from './base.js'
 import { stripCacheControl } from './openai/history.js'
+import { recordAgentObservation } from '../observation.js'
+import type { AgentObservationPort } from '../observation.js'
 
 export interface ProviderRuntimeOptions extends ContextServices {
+  /** 通用观测端口只接收实际请求 body，不接收传输凭据或请求头。 */
+  readonly observation?: AgentObservationPort
   /** 由Host的可信选模/BYOK解析器提供，必须与Harness冻结模型身份一致。 */
   resolve(identity: RunIdentity, modelIdentity: string, signal: AbortSignal): Promise<{ modelIdentity: string; accessScopeHash: string; config: ProviderConfig; systemPrompt: string }>
   readonly references: ContextReferenceCodec
@@ -36,8 +40,14 @@ export interface ProviderRuntimeOptions extends ContextServices {
   readonly maxContinuationEntries?: number
   readonly maxContinuationBytes?: number
   readonly maxContinuationTotalBytes?: number
+  readonly continuationStore?: ProviderContinuationStore
 }
 interface PrivateContinuation { identity: RunIdentity; modelIdentity: string; accessScopeHash: string; round: number; areaDigest: string; value: unknown; expiresAt: number; bytes: number }
+type ContinuationScope = Pick<PrivateContinuation, 'identity' | 'modelIdentity' | 'accessScopeHash'>
+export interface ProviderContinuationStore {
+  save(scope: ContinuationScope, reference: string, value: Pick<PrivateContinuation, 'round' | 'areaDigest' | 'value'>, ttlMs: number): Promise<void>
+  read(scope: ContinuationScope, reference: string): Promise<Pick<PrivateContinuation, 'round' | 'areaDigest' | 'value'> | null>
+}
 
 /** cache标记可能把字符串包成单个text块；这里只证明同构，复用时仍发送原始wire。 */
 function comparableWire(value: Json): Json {
@@ -131,17 +141,20 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
     return new RequestProbe(body, { id: this.options.nextId(), digest: this.options.digest, now: () => this.#now(), sink: this.options.probeSink!,
       secrets: config.api_key ? [config.api_key] : [], diagnose: error => this.#diagnose('provider_probe_sink', error), cacheSupported: policy.capabilities(config).cache_mode === 'active', stableRowCount, historySanitization })
   }
-  #continuation(context: CanonicalRunContext): unknown {
-    if (!context.continuationRef) return undefined
+  async #readContinuation(context: CanonicalRunContext) {
+    const reference = context.continuationRef
+    if (!reference) return null
     this.#pruneContinuations()
-    const stored = this.#continuations.get(context.continuationRef)
+    const local = this.#continuations.get(reference)
+    if (local && (this.#key(local.identity) !== this.#key(context.identity)
+      || local.modelIdentity !== context.modelIdentity || local.accessScopeHash !== context.accessScopeHash))
+      throw new ProviderError('input_rejected')
+    const stored = local ?? await this.options.continuationStore?.read(context, reference)
     if (!stored) {
       this.#diagnose('provider_continuation_unavailable', { modelIdentity: context.modelIdentity })
       throw new ProviderError('input_rejected')
     }
-    if (this.#key(stored.identity) !== this.#key(context.identity) || stored.modelIdentity !== context.modelIdentity || stored.accessScopeHash !== context.accessScopeHash)
-      throw new ProviderError('input_rejected')
-    return clone(stored.value)
+    return stored
   }
   readonly stageContinuation: CanonicalContextPorts['stageContinuation'] = async input => {
     let encoded: string
@@ -150,12 +163,15 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
     if (typeof encoded !== 'string') throw new ProviderError('protocol')
     const bytes = new TextEncoder().encode(encoded).byteLength
     if (bytes > (this.options.maxContinuationBytes ?? 16 * 1024 * 1024) || bytes > (this.options.maxContinuationTotalBytes ?? 64 * 1024 * 1024)) throw new ProviderError('input_rejected')
-    for (const [reference, stored] of this.#continuations) if (this.#key(stored.identity) === this.#key(input.identity)) this.#dropContinuation(reference)
     const reference = `provider:${this.options.nextId()}`
     if (!/^[A-Za-z0-9:._-]{1,256}$/.test(reference)) throw new ProviderError('protocol')
+    const ttlMs = this.options.continuationTtlMs ?? 15 * 60_000
+    const { round, areaDigest, value } = input
+    await this.options.continuationStore?.save(input, reference, { round, areaDigest, value }, ttlMs)
+    for (const [previous, stored] of this.#continuations) if (this.#key(stored.identity) === this.#key(input.identity)) this.#dropContinuation(previous)
     this.#pruneContinuations()
     while (this.#continuations.size >= (this.options.maxContinuationEntries ?? 256) || this.#continuationBytes + bytes > (this.options.maxContinuationTotalBytes ?? 64 * 1024 * 1024)) this.#dropContinuation(this.#continuations.keys().next().value!)
-    this.#continuations.set(reference, { identity: clone(input.identity), modelIdentity: input.modelIdentity, accessScopeHash: input.accessScopeHash, round: input.round, areaDigest: input.areaDigest, value: clone(input.value), expiresAt: this.#now() + (this.options.continuationTtlMs ?? 15 * 60_000), bytes })
+    this.#continuations.set(reference, { identity: clone(input.identity), modelIdentity: input.modelIdentity, accessScopeHash: input.accessScopeHash, round, areaDigest, value: clone(value), expiresAt: this.#now() + ttlMs, bytes })
     this.#continuationBytes += bytes
     return reference
   }
@@ -163,12 +179,8 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
   async withStagedContinuation<T>(context: CanonicalRunContext, callback: (input: {
     value: unknown; round: number; areaDigest: string
   }) => Promise<T>): Promise<T> {
-    if (!context.continuationRef) throw new ProviderError('input_rejected')
-    this.#pruneContinuations()
-    const staged = this.#continuations.get(context.continuationRef)
-    if (!staged || this.#key(staged.identity) !== this.#key(context.identity)
-      || staged.modelIdentity !== context.modelIdentity || staged.accessScopeHash !== context.accessScopeHash)
-      throw new ProviderError('input_rejected')
+    const staged = await this.#readContinuation(context)
+    if (!staged) throw new ProviderError('input_rejected')
     return callback({ value: clone(staged.value), round: staged.round, areaDigest: staged.areaDigest })
   }
   readonly currentRequest: CanonicalContextPorts['currentRequest'] = (identity, input) => {
@@ -182,7 +194,7 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
     const { config, policy, driver, systemPrompt, accessScopeHash } = await this.#selection(identity, context.modelIdentity, signal)
     if (accessScopeHash !== context.accessScopeHash) throw new ProviderError('input_rejected')
     const prepared = await restorePreparedContext(context.prepared, identity, { digest: this.options.digest, nextId: this.options.nextId, prepareRequest: this.prepareRequest }, this.options.references, signal)
-    const area = prepared.area, continuation = this.#continuation(context)
+    const area = prepared.area, continuation = clone((await this.#readContinuation(context))?.value)
     const initialImages = request.round === 1 ? area.entries.filter(entry => Array.isArray(entry.message.content) && hasInitialInlineImage(entry.message.content)).map(entry => entry.entryId) : []
     const stableMessages = [...area.requestPrefix, ...area.messages]
     const projectionOptions = { continuation, digest: this.options.digest, preserveNativeThinking: true, dynamicTailSize: area.dynamicTail.length }
@@ -238,6 +250,19 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
             probe.current?.fail(new ProviderError('stream_incomplete'))
             probe.current = this.#probe(body as JsonObject, config, policy, diagnosticStableRows, historySanitization)
           }
+          recordAgentObservation(this.options.observation, {
+            identity, kind: 'provider', name: 'request', at: this.#now(), round: request.round,
+            spanId: `${identity.runId}:round:${request.round}:provider`, parentSpanId: `${identity.runId}:round:${request.round}`,
+            status: 'sent', input: clone(body),
+            attributes: {
+              protocol: driver.protocol, provider: policy.name, model: context.modelIdentity,
+              cache_diagnostics: providerCacheDiagnostics(body as JsonObject, this.options.digest, {
+                cacheSupported: policy.capabilities(config).cache_mode === 'active', stableRowCount: diagnosticStableRows,
+              }),
+              ...(actualCacheAnchor === undefined ? {} : { cache_anchor: clone(actualCacheAnchor) }),
+              ...(historySanitization ? { history_sanitization: clone(historySanitization) } : {}),
+            },
+          })
           try { return await transport.request({ ...outgoing, allowLocal: outgoing.allowLocal === true && ['local', 'ollama'].includes((config.provider ?? '').trim().toLowerCase()) }, outgoingSignal) }
           catch (error) { probe.current?.fail(classifyProviderError(error)); throw error }
         },
@@ -301,7 +326,44 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
       else if (driver.protocol === 'anthropic') body = { ...body, messages: prepareAnthropicCache(rows, policy, config, this.options.digest, stableCount).messages }
       const fingerprint = input.cacheSingleflight && providerCacheSupported(policy, config)
         ? stableRequestFingerprint(body, rowsKey, stable.length ? stableCount : 0, this.options.digest) : null
-      const operation = () => driver.complete(invocation, { ...dependencies, transport: { request: (_request, outgoingSignal) => dependencies.transport.request({ ...outbound, body }, outgoingSignal) } })
+      const operation = async () => {
+        if (input.runId) recordAgentObservation(this.options.observation, {
+          identity: { ownerId: input.ownerId, sessionId: input.sessionId, runId: input.runId },
+          kind: 'provider', name: 'request', at: this.#now(), round: 0,
+          spanId: `${input.runId}:round:0:provider`, parentSpanId: `${input.runId}:round:0`, status: 'sent', input: clone(body),
+          attributes: { protocol: driver.protocol, provider: policy.name, model: input.modelIdentity, purpose: 'branch',
+            cache_diagnostics: providerCacheDiagnostics(body, this.options.digest, { cacheSupported: policy.capabilities(config).cache_mode === 'active', stableRowCount: stableCount }) },
+        })
+        let result: ProviderCompletion
+        try {
+          result = await driver.complete(invocation, { ...dependencies, transport: { request: (_request, outgoingSignal) => dependencies.transport.request({ ...outbound, body }, outgoingSignal) } })
+        } catch (raw) {
+          if (input.runId) {
+            const error = signal.aborted ? new ProviderError('cancelled') : classifyProviderError(raw)
+            recordAgentObservation(this.options.observation, {
+              identity: { ownerId: input.ownerId, sessionId: input.sessionId, runId: input.runId },
+              kind: 'provider', name: 'complete', at: this.#now(), round: 0,
+              spanId: `${input.runId}:round:0:provider`, parentSpanId: `${input.runId}:round:0`,
+              status: error.code === 'cancelled' ? 'cancelled' : 'error',
+              attributes: { protocol: driver.protocol, provider: policy.name, model: input.modelIdentity, purpose: 'branch', error_code: error.code },
+            })
+          }
+          throw raw
+        }
+        if (input.runId) recordAgentObservation(this.options.observation, {
+          identity: { ownerId: input.ownerId, sessionId: input.sessionId, runId: input.runId },
+          kind: 'provider', name: 'usage', at: this.#now(), round: 0, usage: result.usage,
+          attributes: { protocol: driver.protocol, provider: policy.name, model: input.modelIdentity, purpose: 'branch' },
+        })
+        if (input.runId) recordAgentObservation(this.options.observation, {
+          identity: { ownerId: input.ownerId, sessionId: input.sessionId, runId: input.runId },
+          kind: 'provider', name: 'complete', at: this.#now(), round: 0,
+          spanId: `${input.runId}:round:0:provider`, parentSpanId: `${input.runId}:round:0`,
+          status: 'success', output: result.text,
+          attributes: { protocol: driver.protocol, provider: policy.name, model: input.modelIdentity, purpose: 'branch' },
+        })
+        return result
+      }
       return fingerprint
         ? this.#coordinator.run(this.options.digest({ owner: identity.ownerId, provider: policy.name, protocol: driver.protocol, endpoint: outbound.url, credential: config.api_key ?? '', fingerprint }), signal, operation)
         : operation()

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { Pool } from 'pg'
-import { startProjectExpiryWorker } from '../../src/domains/projects/project-expiry-worker.js'
+import { startProjectExpiryWorker } from '../../src/modules/projects/project-expiry-worker.js'
 
 test('未显式启用时不连接数据库，避免与 Python 清理器并行消费', async () => {
   let calls = 0

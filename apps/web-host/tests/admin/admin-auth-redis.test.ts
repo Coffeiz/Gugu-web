@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import Fastify from 'fastify'
 import test from 'node:test'
 import { createRedisAdminAuthVersionStore } from '../../src/adapters/redis-events.js'
-import { createAdminAuthAdapter } from '../../src/domains/admin/admin-auth.js'
+import { createAdminAuthAdapter } from '../../src/modules/admin/auth.js'
 
 const redisUrl = process.env.GUGU_WEBUI_TEST_REDIS_URL
 const secret = 'synthetic-admin-shared-secret'

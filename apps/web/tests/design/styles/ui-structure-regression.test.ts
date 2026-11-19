@@ -346,11 +346,11 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(configField).not.toContain('border: 1px solid rgba(255,255,255,0.1)')
     expect(adoptedForms).toContain('.admin-main .ctrl-grp input')
     expect(adoptedForms).toContain('border-radius: var(--input-radius);')
-    expect(adoptedForms).toContain('box-shadow: var(--input-focus-shadow);')
+    expect(adoptedForms).toContain('border-color: var(--input-border-focus);')
   })
 
-  it('日历活动输入框聚焦时保留 hover 光晕，确保 focus 光晕有淡入动画', () => {
-    expect(eventFormFields).toContain('box-shadow: var(--input-hover-shadow), var(--input-focus-shadow);')
+  it('日历活动输入框沿用公共焦点描边', () => {
+    expect(eventFormFields).toContain('border-color: var(--input-border-focus);')
   })
 
   it('主题组件覆盖和跨 DOM bridge 保持明确的统一入口', () => {

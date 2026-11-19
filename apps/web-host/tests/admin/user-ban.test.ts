@@ -6,8 +6,8 @@ import {resolve} from 'node:path'
 import {Pool} from 'pg'
 import Fastify from 'fastify'
 import {createPostgresRuntime} from '@gugu/core/data'
-import {createAdminUserBanToggle} from '@gugu/core/admin-user-ban'
-import {registerAdminUserBanRoute} from '../../src/modules/admin/user-ban.js'
+import {createAdminUserBanToggle} from '../../src/modules/admin/user-management.js'
+import {registerAdminUserBanRoute} from '../../src/modules/admin/users.js'
 const databaseUrl=process.env.GUGU_WEBUI_TEST_DATABASE_URL,python=process.env.GUGU_WEBUI_TEST_PYTHON
 
 test('管理员兼容封禁正式PG状态、安全版本、并发与两个提交的审计语义', {skip:(!databaseUrl||!python)&&'需要隔离PG与显式Python'},async()=>{

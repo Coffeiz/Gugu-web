@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createImMemoryGroupDailyCompactor } from '../../src/modules/admin/im-memory-group-daily-compaction.js'
+import { createImMemoryGroupDailyCompactor } from '../../src/modules/admin/memory.js'
 
 test('group daily compaction moves oldest batches first and persists only date-preserving model output', async () => {
   const writes: Array<[string, string]> = [], prompts: string[] = []

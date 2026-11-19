@@ -4,7 +4,7 @@ import {execFileSync} from 'node:child_process'
 import {resolve} from 'node:path'
 import Fastify from 'fastify'
 import {aggregatePerceptionStats} from '@gugu/core/perception-stats'
-import {registerAdminPerceptionStatsRoute} from '../../src/modules/admin/perception-stats.js'
+import {registerAdminPerceptionStatsRoute} from '../../src/modules/admin/perception.js'
 import {installHttpErrorHandler} from '../../src/http/errors.js'
 const python=process.env.GUGU_WEBUI_TEST_PYTHON
 const p=(u:string,ts:number,intent:string,model='synthetic-model',extra:Record<string,unknown>={})=>({t:'perc',u,ts,intent,model,...extra})

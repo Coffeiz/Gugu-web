@@ -8,7 +8,7 @@ export interface AgentSessionStateRecord {
 export interface AgentSessionStatePorts {
   read(ownerId: string, sessionId: number): Promise<AgentSessionStateRecord | null>
   recover(ownerId: string, sessionId: number): Promise<unknown>
-  isActive(sessionId: number): Promise<boolean>
+  isActive(sessionId: number, ownerId: string): Promise<boolean>
 }
 
 /** 读取与 Python get_session_state 相同的 owner 快照，并按恢复后刷新、再检查运行态的顺序执行。 */
@@ -20,7 +20,7 @@ export function createAgentSessionStateReader(ports: AgentSessionStatePorts) {
     await ports.recover(ownerId, sessionId)
     const session = await ports.read(ownerId, sessionId)
     if (!session) return null
-    const active = await ports.isActive(sessionId)
+    const active = await ports.isActive(sessionId, ownerId)
     return { executionState: session.executionState, pendingMessageCount: session.pendingMessageCount, active }
   }
 }

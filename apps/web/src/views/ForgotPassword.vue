@@ -132,8 +132,7 @@ async function handleSubmit() {
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .field input:focus {
-  border-color: color-mix(in srgb, var(--action-primary) 50%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--action-primary) 12%, transparent), inset 0 1px 3px rgba(80,90,110,0.06);
+  border-color: var(--input-border-focus);
 }
 .field input::placeholder { color: #b0b4c4; }
 .field input:disabled { opacity: 0.5; }

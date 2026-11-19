@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { registerAdminLlmPresetRoutes } from '../../src/domains/admin/admin-llm-presets.js'
+import { registerAdminLlmPresetRoutes } from '../../src/modules/admin/llm.js'
 
 type Preset = Record<string, unknown> & { id: string; provider: string; api_key: string; base_url: string; model: string }
 const initial = (): { ai_presets: { active_id: string; items: Preset[] }; ai: Record<string, unknown> } => ({ ai_presets: { active_id: 'active', items: [

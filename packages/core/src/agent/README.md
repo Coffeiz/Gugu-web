@@ -28,6 +28,10 @@
 
 Web/SSE、IM 平台入口、身份、凭据、数据库连接及实际执行后端由 Host 装配。可移植的 `@gugu/core/agent` 入口加载 Run、Provider 编排与上下文规则。需要 Node、Kysely 或存储契约的 RAG、知识、记忆和持久交互用例由 Host 通过各自的 Core 子路径显式装配。摘要工具 schema 由当前 Run 的可信 Host 读取，Core 管理预算门控、初始化复用和失败重试。Chat 和定时任务共用 Core 的运行用量汇总。
 
+Runtime 所有权明确归 Core：`createAgentRuntime`、`createAgentDispatchRuntime`、Chat 生命周期、Runner/模型循环、dispatch worker/supervisor、Run 重建、事件重放及交互恢复状态机都在本目录实现。Skill frontmatter 解析、Markdown 头部注册、单 Run 的内置/用户 Skill 组合、owner/来源复验也归 Core；Host 只提供可信租约 owner、正式用户 Skill 目录/正文读取和安全指纹端口。Web Host 的生命周期、Reconstructor 和持久 Runtime 模块只把可信身份、当前租约、Provider/工具绑定、PostgreSQL/Redis 端口及 HTTP/SSE 投影接到这些 Core 契约；生命周期状态转换、checkpoint/恢复校验、事件顺序和取消规则的变更应落在 Core。Host 保留数据库/平台专属查询、协议投影与进程启停，不复制第二份 Agent Runtime。
+
+跨 Host 的 Agent 运行观测由 `AgentObservationPort` 作为可选通用端口从 Core Runner 和 ProviderRuntime 发出。Core 负责真实生命周期、上下文快照、Provider 实际请求 body、Provider 返回用量及工具调用事实；Host 注入诊断接收方和传输。Core 不依赖 LoopScope、HTTP、数据库或平台鉴权，观测接收失败不得改变执行、持久化或取消行为。
+
 测试按职责位于 `tests/agent/{context,core,run,interactions}/`，反思行为仍由对应上下文行为用例保护。目录移动保持原业务断言，同步更新 suite、测试元数据及 Python 行为映射；不将重整计为新增工具迁移或平台验收。
 
 ## 草案、测试与公共入口

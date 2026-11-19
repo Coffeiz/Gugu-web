@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
+import { createHash, randomUUID } from 'node:crypto'
 import test from 'node:test'
 import type { Pool, PoolClient } from 'pg'
-import { createPostgresTrashPurgeOperations } from '../../src/domains/files/persistence/trash-purge-postgres.js'
-import { TrashCooldownError } from '../../src/domains/files/trash.js'
+import { createPostgresTrashPurgeOperations } from '../../src/modules/files/persistence/trash-purge-postgres.js'
+import { TrashCooldownError } from '../../src/modules/files/trash.js'
 
 const ownerId = '11111111-1111-4111-8111-111111111111'
 
@@ -68,6 +69,44 @@ test('重复清空复用 owner 的活动任务，不重复创建或唤醒', asyn
   assert.equal(notifications, 0)
   assert.equal(calls.some((call) => call.sql.includes('INSERT INTO trash_purge_jobs')), false)
   assert.equal(calls.at(-1)?.sql, 'COMMIT')
+})
+
+test('Agent purge 操作 ID 与 job 原子关联，重试在 job 完成后仍返回同一行', async () => {
+  const stableJob = { ...job, id: 44 }
+  const { pool, calls } = fakePool([
+    { rows: [] }, { rows: [{ id: ownerId }] }, { rows: [] },
+    { rows: [{ count: 2, digest: 'files-digest' }] }, { rows: [{ count: 1, digest: 'folders-digest' }] },
+    { rows: [] }, { rows: [] }, { rows: [stableJob] }, { rows: [] },
+    { rows: [] }, { rows: [{ id: ownerId }] }, { rows: [stableJob] }, { rows: [stableJob] },
+  ])
+  let notifications = 0
+  const operations = createPostgresTrashPurgeOperations(pool, { async notifyWorker() { notifications++ } })
+  const operationId = randomUUID()
+  const snapshot = { file_count: 2, folder_count: 1,
+    digest: createHash('sha256').update('files-digest:folders-digest').digest('hex') }
+  assert.deepEqual(await operations.startEmptyForAgent(ownerId, operationId, snapshot), {
+    id: 44, status: 'queued', progressCurrent: 0, progressTotal: 3, failedCount: 0, errorCode: null,
+  })
+  assert.deepEqual(await operations.startEmptyForAgent(ownerId, operationId, snapshot), {
+    id: 44, status: 'queued', progressCurrent: 0, progressTotal: 3, failedCount: 0, errorCode: null,
+  })
+  assert.equal(calls[0]?.sql, 'BEGIN ISOLATION LEVEL SERIALIZABLE')
+  assert.equal(calls.filter(({ sql }) => sql.includes('INSERT INTO trash_purge_jobs')).length, 1)
+  assert.equal(calls.filter(({ sql }) => sql.includes('INSERT INTO trash_purge_agent_operations')).length, 1)
+  assert.equal(notifications, 1)
+})
+
+test('Agent purge job 创建时快照变化会拒绝新增物理删除任务', async () => {
+  const { pool, calls } = fakePool([
+    { rows: [] }, { rows: [{ id: ownerId }] }, { rows: [] },
+    { rows: [{ count: 3, digest: 'changed-files' }] }, { rows: [{ count: 1, digest: 'folders-digest' }] },
+  ])
+  const operations = createPostgresTrashPurgeOperations(pool, { async notifyWorker() {} })
+  const snapshot = { file_count: 2, folder_count: 1,
+    digest: createHash('sha256').update('files-digest:folders-digest').digest('hex') }
+  await assert.rejects(() => operations.startEmptyForAgent(ownerId, randomUUID(), snapshot), { code: 'conflict' })
+  assert.equal(calls.at(-1)?.sql, 'ROLLBACK')
+  assert.equal(calls.some(({ sql }) => sql.includes('INSERT INTO trash_purge_jobs')), false)
 })
 
 test('刚完成的非空清理在冷却期内拒绝新任务', async () => {

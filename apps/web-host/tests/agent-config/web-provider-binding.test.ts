@@ -7,7 +7,7 @@ import type { Pool, PoolClient } from 'pg'
 import type { ProviderConfig } from '@gugu/core/providers'
 import { updateConfigOverride } from '../../src/adapters/config-override-file.js'
 import { createPosixConfigFileLock } from '../../src/adapters/posix-config-lock.js'
-import { createWebAgentProviderBinding } from '../../src/domains/agent-config/web-provider-binding.js'
+import { createWebAgentProviderBinding } from '../../src/modules/agent/model-config/web-provider-binding.js'
 
 function fakePool() {
   const statements: string[] = []

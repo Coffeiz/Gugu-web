@@ -73,7 +73,7 @@ export function createWorkspaceLister(store: WorkspaceListReadPort, runtime: Wor
         filesystemAuthorizationEnabled: settings.fullUserSandboxAuthorizationEnabled,
         workspaceSupported: true, storageBackend: 'local', terminalMode,
         terminalEntryEnabled: settings.sandboxReady && terminalMode !== 'entry_disabled' && shellAvailable,
-        ptyEnabled: settings.sandboxReady && terminalMode === 'auto' && shellAvailable,
+        ptyEnabled: settings.sandboxReady && terminalMode === 'auto' && shellAvailable && settings.fullUserSandboxAuthorizationEnabled,
         items: rows.map(row => ({ id: Number(row.id), name: row.name, kind: row.kind,
           folderId: row.folder_id == null ? null : Number(row.folder_id), projectId: row.project_id == null ? null : Number(row.project_id),
           directoryId: row.directory_id == null ? null : Number(row.directory_id), enabled: row.enabled, isDefault: row.is_default,

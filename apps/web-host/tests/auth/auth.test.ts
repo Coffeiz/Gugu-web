@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHmac } from 'node:crypto'
 import test from 'node:test'
-import { authenticateUser, extractUserToken, verifyUserToken } from '../../src/domains/auth/auth.js'
+import { authenticateUser, extractUserToken, verifyUserToken } from '../../src/modules/auth/auth.js'
 
 const secret = 'synthetic-test-secret-with-sufficient-length'
 const userId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'

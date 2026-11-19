@@ -166,7 +166,7 @@ function refTypeLabel(type: CanvasRefItem['type']) {
 }
 .np-search:focus {
   border-color: var(--input-border-focus); background: var(--input-bg-focus);
-  box-shadow: var(--input-hover-shadow), var(--input-focus-shadow);
+  box-shadow: var(--input-hover-shadow);
 }
 .np-results { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; padding: 0 2px; }
 .np-note { display: flex; flex: 0 0 auto; flex-direction: column; gap: 3px; width: 100%; padding: 9px; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--text-primary); text-align: left; cursor: pointer; transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard); }

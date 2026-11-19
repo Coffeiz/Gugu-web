@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/domains/auth/auth.js'
+import { createUserToken } from '../../src/modules/auth/auth.js'
 import { createPostgresTerminalReopener } from '../../src/modules/terminals/reopen-operation.js'
 
 const coreRequire = createRequire(new URL('../../../../packages/core/package.json', import.meta.url))
@@ -31,9 +31,10 @@ test('createApp authenticated reopen commits the Core state and publishes update
     } } as never,
     db: db as never,
     publisher: { async publishResourceChanged(event: unknown) { events.push(event); return true } },
-    workspaceRuntime: { terminalMode: 'auto', shellSystemEnabled: false, fullUserSandboxAuthorizationEnabled: true },
-    async readRuntime() { return { shellEnabled: true, filesystemAuthorizationEnabled: true } },
-    async readSandboxReadiness() { return { ready: true } },
+    async readRuntime() {
+      return { terminalMode: 'auto', shellEnabled: true, shellSystemEnabled: false,
+        fullUserSandboxAuthorizationEnabled: true, sandboxReady: true }
+    },
     now: () => new Date('2026-11-17T12:00:00.000Z'),
   })
   const app = createApp({

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createPostgresAgentRunStartupStore } from '../../src/domains/agent-sessions/persistence/agent-run-startup-postgres.js'
+import { createPostgresAgentRunStartupStore } from '../../src/modules/agent-sessions/persistence/agent-run-startup-postgres.js'
 const owner = { ownerId: 'owner-a', sessionId: '1', runId: 'run-a' }
 function setup() {
   const entries = new Map<string, string>(); let activeLease = false, checkpoint = false

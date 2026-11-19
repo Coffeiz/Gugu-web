@@ -5,7 +5,7 @@ import { CoreError } from '@gugu/core'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
 import type { UserFromRequest } from '../../src/app.js'
 import { createProjectUpdater, type ProjectUpdateRuntime } from '@gugu/core/project-update'
-import { registerProjectRoutes } from '../../src/domains/projects/routes/projects.js'
+import { registerProjectRoutes } from '../../src/modules/projects/routes/projects.js'
 
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
 const unrelatedUserId = 'ad0902a0-c899-44ee-b180-d54eb04e4604'

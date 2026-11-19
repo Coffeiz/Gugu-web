@@ -4,8 +4,8 @@ import type { Pool } from 'pg'
 import { link, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { appendProjectUndoMove, recoverProjectUndoJournal, type ProjectUndoJournalStorage } from '../../src/domains/undo/persistence/project-journal.js'
-import { createLocalProjectUndoJournalStorage } from '../../src/domains/undo/persistence/project-journal-local.js'
+import { appendProjectUndoMove, recoverProjectUndoJournal, type ProjectUndoJournalStorage } from '../../src/modules/undo/persistence/project-journal.js'
+import { createLocalProjectUndoJournalStorage } from '../../src/modules/undo/persistence/project-journal-local.js'
 
 function fixture(status: string, paths: string[]) {
   const existing = new Set(paths), calls: string[] = []

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createPostgresProjectTrashPathMetadataReader } from '../../src/domains/projects/persistence/project-trash-path-metadata-postgres.js'
+import { createPostgresProjectTrashPathMetadataReader } from '../../src/modules/projects/persistence/project-trash-path-metadata-postgres.js'
 
 const ownerId = '00000000-0000-4000-8000-000000000041'
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createFeishuLinkButtonSender } from '../../src/domains/agent-sessions/tools/agent-link-buttons.js'
+import { createFeishuLinkButtonSender } from '../../src/modules/agent-sessions/tools/agent-link-buttons.js'
 
 const identity={ownerId:'00000000-0000-4000-8000-000000000001',sessionId:'1',runId:'run'}
 const target={botId:'synthetic-bot',receiveId:'ou_synthetic',accessToken:'synthetic-token'}
@@ -43,7 +43,7 @@ test('Host 注册器经实际 SQLite 收据调用飞书网关，重建后恢复�
  const {mkdtemp,rm}=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path')
  const {initializeSqlite,openSqliteRuntime}=await import('@gugu/core/data')
  const {createDurableImLinkButtonDeliveryPort}=await import('@gugu/core/tools')
- const {createAgentToolRegistry}=await import('../../src/domains/agent-sessions/tools/agent-tool-registry.js')
+ const {createAgentToolRegistry}=await import('../../src/modules/agent-sessions/tools/agent-tool-registry.js')
  const dir=await mkdtemp(join(tmpdir(),'gugu-feishu-'))
  try{
   await initializeSqlite(join(dir,'core.db'))

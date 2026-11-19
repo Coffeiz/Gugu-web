@@ -3,6 +3,7 @@ import { dataContext } from '../contracts/index.js'
 import type { JsonObject, ProviderTransport } from '../agent/providers/contracts.js'
 import { byteSource, multipartBody } from '../agent/providers/media.js'
 import { invalidateOwnerImSnapshots } from './user-bot-create.js'
+import { splitMarkdownV2 } from './telegram-format.js'
 
 const TOKEN = /^[0-9]{5,20}:[A-Za-z0-9_-]{20,128}$/
 export const telegramDocumentLimit = 50_000_000
@@ -165,9 +166,12 @@ export function createTelegramBotApi(transport: ProviderTransport) {
   }
   return {
     async sendMessage(token: string, chatId: string, text: string): Promise<boolean> {
-      if (!chatId || chatId.length > 256 || !text || text.length > 4096) return false
-      const result = await call(token, 'sendMessage', { chat_id: chatId, text })
-      return typeof result.message_id === 'number' && Number.isSafeInteger(result.message_id) && result.message_id > 0
+      if (!chatId || chatId.length > 256 || !text) return false
+      for (const chunk of splitMarkdownV2(text)) {
+        const result = await call(token, 'sendMessage', { chat_id: chatId, text: chunk, parse_mode: 'MarkdownV2' })
+        if (typeof result.message_id !== 'number' || !Number.isSafeInteger(result.message_id) || result.message_id <= 0) return false
+      }
+      return true
     },
     async sendAttachment(token: string, chatId: string, file: { bytes: Uint8Array; filename: string; mime: string }): Promise<boolean> {
       if (!chatId || chatId.length > 256 || file.bytes.byteLength === 0 || file.bytes.byteLength > telegramDocumentLimit

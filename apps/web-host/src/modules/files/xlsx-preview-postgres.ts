@@ -3,7 +3,7 @@ import { createXlsxPreviewReader, XlsxPreviewError, type XlsxPreviewArchive, typ
 import { openLocalFile, UnsafeLocalPathError } from '@gugu/fs/node'
 import JSZip from 'jszip'
 import type { Pool, QueryResultRow } from 'pg'
-import { isOwnedFileStorageKey } from '../../domains/files/file-owner.js'
+import { isOwnedFileStorageKey } from './file-owner.js'
 import { CoreError } from '@gugu/core'
 
 const MAX_FILE_BYTES = 256 * 1024 * 1024

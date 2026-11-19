@@ -1,9 +1,9 @@
 import { normalizeOnboardingState } from '@gugu/core/onboarding'
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
 import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
-import { enqueuePostgresAgentRagRebuild } from '../../../domains/agent-sessions/persistence/agent-rag-job-postgres.js'
-import { normalizeFileOwnerId, isOwnedFileStorageKey } from '../../../domains/files/file-owner.js'
-import { removeLocalFile } from '../../../domains/files/persistence/trash-mutations-postgres.js'
+import { enqueuePostgresAgentRagRebuild } from '../../../modules/agent-sessions/persistence/agent-rag-job-postgres.js'
+import { normalizeFileOwnerId, isOwnedFileStorageKey } from '../../files/file-owner.js'
+import { removeLocalFile } from '../../files/persistence/trash-mutations-postgres.js'
 
 interface SeedStateRow extends QueryResultRow { state: unknown }
 interface SeedFileRow extends QueryResultRow {

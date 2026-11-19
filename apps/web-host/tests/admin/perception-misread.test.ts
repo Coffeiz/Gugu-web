@@ -7,7 +7,7 @@ import {Pool} from 'pg'
 import Fastify from 'fastify'
 import {createPostgresRuntime} from '@gugu/core/data'
 import {createAdminMisreadReader} from '@gugu/core/perception-recent-misread'
-import {registerAdminRecentMisreadRoute} from '../../src/modules/admin/perception-recent-misread.js'
+import {registerAdminRecentMisreadRoute} from '../../src/modules/admin/perception.js'
 import {installHttpErrorHandler} from '../../src/http/errors.js'
 const databaseUrl=process.env.GUGU_WEBUI_TEST_DATABASE_URL,python=process.env.GUGU_WEBUI_TEST_PYTHON
 

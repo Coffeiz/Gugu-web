@@ -7,8 +7,8 @@ import { join, resolve } from 'node:path'
 import { Pool } from 'pg'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/domains/auth/auth.js'
-import { createPostgresWorkspaceDirectoryOperations } from '../../src/domains/workspaces/persistence/workspace-directories.js'
+import { createUserToken } from '../../src/modules/auth/auth.js'
+import { createPostgresWorkspaceDirectoryOperations } from '../../src/modules/workspaces/persistence/workspace-directories.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '620b9c9d-6955-4502-9ea8-ef337e649781'

@@ -35,8 +35,20 @@ describe('统一展示时间线', () => {
     const source = updateDisplayItem([], tool, scope)
     const sealed = sealDisplayTimeline(source, '2026-01-01T00:01:00Z')
     expect(source[0]!.toolStatus).toBe('running')
-    expect(sealed[0]).toMatchObject({ ...source[0], toolStatus: 'stopped', updatedAt: '2026-01-01T00:01:00Z' })
+    expect(sealed[0]).toMatchObject({ ...source[0], toolStartedAt: null, toolDurationMs: 60000, toolStatus: 'stopped', updatedAt: '2026-01-01T00:01:00Z' })
     expect(sealDisplayTimeline(sealed, '2026-01-01T00:02:00Z')).toEqual(sealed)
+  })
+
+  it('工具耗时只累计运行段，排队和等待确认不计时', () => {
+    let timeline = updateDisplayItem([], { ...tool, toolStatus: 'queued' }, scope)
+    const status = (toolStatus: string, second: string) => {
+      timeline = updateDisplayItem(timeline, { ...tool, toolStatus }, { ...scope, now: `2026-01-01T00:00:${second}Z` })
+      return timeline[0]
+    }
+    expect(status('running', '10')).toMatchObject({ toolStartedAt: '2026-01-01T00:00:10Z' })
+    expect(status('waiting', '12')).toMatchObject({ toolStartedAt: null, toolDurationMs: 2000 })
+    expect(status('running', '40')).toMatchObject({ toolStartedAt: '2026-01-01T00:00:40Z', toolDurationMs: 2000 })
+    expect(status('error', '41')).toMatchObject({ toolStartedAt: null, toolDurationMs: 3000 })
   })
 
   it('晚提交的取消展示仍锚定旧问题，下一条继续消息排在它后面，大编号不丢精度', () => {

@@ -6,16 +6,16 @@
     </div>
     <div class="panel-card">
       <div class="status-head">
-        <h3>{{ status.message || t('adminSandbox.readingRuntime') }}</h3>
+        <h3>{{ headline }}</h3>
         <span class="status-pill" :class="`status-${status.state}`">{{ stateLabel }}</span>
       </div>
       <div class="status-grid">
-        <div><span>{{ t('adminSandbox.mxcRuntime') }}</span><strong>{{ status.runtime_supported ? t('adminSandbox.ready') : t('adminSandbox.unavailable') }}</strong></div>
-        <div><span>{{ t('adminSandbox.executionBackend') }}</span><strong>{{ status.runtime_methods.join(', ') || t('adminSandbox.unknown') }}</strong></div>
+        <div><span>{{ t('adminSandbox.isolationRuntime') }}</span><strong>{{ status.runtime_supported ? t('adminSandbox.ready') : t('adminSandbox.unavailable') }}</strong></div>
+        <div><span>{{ t('adminSandbox.executionBackend') }}</span><strong>{{ offlineOnly ? 'Bubblewrap' : status.runtime_methods.join(', ') || t('adminSandbox.unknown') }}</strong></div>
         <div><span>{{ t('adminSandbox.shellExecution') }}</span><strong>{{ status.shell_enabled ? t('adminSandbox.enabled') : t('adminSandbox.disabled') }}</strong></div>
         <div><span>{{ t('adminSandbox.sandboxEnabled') }}</span><strong>{{ status.enabled ? t('adminSandbox.enabled') : t('adminSandbox.disabled') }}</strong></div>
         <div><span>{{ t('adminSandbox.dangerousShell') }}</span><strong>{{ status.shell_dangerous_enabled ? t('adminSandbox.enabled') : t('adminSandbox.disabled') }}</strong></div>
-        <div><span>{{ t('adminSandbox.proxyOnlyEgress') }}</span><strong>{{ status.egress_network_ready ? t('adminSandbox.ready') : t('adminSandbox.unavailable') }}</strong></div>
+        <div v-if="!offlineOnly"><span>{{ t('adminSandbox.proxyOnlyEgress') }}</span><strong>{{ status.egress_network_ready ? t('adminSandbox.ready') : t('adminSandbox.unavailable') }}</strong></div>
       </div>
       <p v-if="!status.readiness_checked" class="status-note">{{ t('adminSandbox.readinessUnavailable') }}</p>
       <p v-if="status.state === 'egress_unready'" class="status-note">{{ status.egress_config_error }}</p>
@@ -28,6 +28,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{
+  offlineOnly: boolean
   status: {
     enabled: boolean
     sandbox_ready: boolean
@@ -44,6 +45,9 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
+const headline = computed(() => props.offlineOnly && props.status.state === 'ready'
+  ? t('adminSandbox.bubblewrapReady')
+  : props.status.message || t('adminSandbox.readingRuntime'))
 const stateLabel = computed(() => props.status.state === 'ready' ? t('adminSandbox.ready')
   : props.status.state === 'disabled' ? t('adminSandbox.disabled') : t('adminSandbox.unavailable'))
 </script>

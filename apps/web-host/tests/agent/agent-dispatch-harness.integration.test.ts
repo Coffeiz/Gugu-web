@@ -6,12 +6,12 @@ import { createAgentDispatchRuntime, createAgentRunner, type AgentRunnerPorts } 
 import { createRedisAgentCancellationCommands } from '../../src/adapters/redis-events.js'
 import { createRedisLiveSubscription } from '../../src/adapters/redis-live-subscription.js'
 import { withPostgresTransaction } from '../../src/adapters/postgres-transaction.js'
-import { createAgentRunEventStream } from '../../src/domains/agent-sessions/agent-run-event-stream.js'
-import { createPostgresAgentDispatch, enqueueAgentRunLocked, type AgentDispatchLease } from '../../src/domains/agent-sessions/persistence/agent-run-dispatch-postgres.js'
-import { lockAgentRunSession } from '../../src/domains/agent-sessions/persistence/agent-run-startup-postgres.js'
-import { createPostgresAgentRunLeasePort } from '../../src/domains/agent-sessions/persistence/agent-run-lease-postgres.js'
-import { createPostgresAgentRunStore } from '../../src/domains/agent-sessions/persistence/agent-run-store-postgres.js'
-import { createRedisAgentRunCancellationPort } from '../../src/domains/agent-sessions/persistence/agent-run-cancellation-redis.js'
+import { createAgentRunEventStream } from '../../src/modules/agent-sessions/agent-run-event-stream.js'
+import { createPostgresAgentDispatch, enqueueAgentRunLocked, type AgentDispatchLease } from '../../src/modules/agent-sessions/persistence/agent-run-dispatch-postgres.js'
+import { lockAgentRunSession } from '../../src/modules/agent-sessions/persistence/agent-run-startup-postgres.js'
+import { createPostgresAgentRunLeasePort } from '../../src/modules/agent-sessions/persistence/agent-run-lease-postgres.js'
+import { createPostgresAgentRunStore } from '../../src/modules/agent-sessions/persistence/agent-run-store-postgres.js'
+import { createRedisAgentRunCancellationPort } from '../../src/modules/agent-sessions/persistence/agent-run-cancellation-redis.js'
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL, redis = process.env.GUGU_WEBUI_TEST_REDIS_URL
 
 test('持久调度经真实 PG、Redis 与 Harness 按顺序取消首轮并执行后续运行', { skip: !(url && redis) && '需要隔离 PG 和 Redis', timeout: 30000 }, async () => {

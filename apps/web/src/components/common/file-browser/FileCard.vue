@@ -93,13 +93,11 @@ defineProps({
 }
 .fc-card.selected {
   border-color: var(--file-card-border-selected);
-  box-shadow: var(--file-card-shadow-selected);
 }
 /* Full-card 预框选属于 FileCard 自己；不同主题只通过专用 token 调整强度。 */
 .fc-card.pre-selected:not(.selected) {
   background: var(--file-card-preselection-bg);
   border-color: var(--file-card-preselection-border);
-  box-shadow: var(--file-card-preselection-shadow);
 }
 /* Dashboard 最近文件面板：只要阴影变化，不要上浮位移。 */
 .fc-card.no-lift:hover { transform: none; }
@@ -169,7 +167,7 @@ defineProps({
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   line-height: 1.35; padding-bottom: 2px; margin-bottom: -2px;
 }
-/* 输入框宽度限制在名称栏内，但名称行允许 focus glow 绘制；卡片根节点仍负责最终裁切。 */
+/* 输入框宽度限制在名称栏内，卡片根节点负责最终裁切。 */
 .fc-name:has(.rename-sizer) { overflow: visible; text-overflow: clip; }
 .fc-meta { color: var(--content-secondary); font-size: 9px; line-height: 1.15; opacity: 0.55; margin-top: 2px; }
 

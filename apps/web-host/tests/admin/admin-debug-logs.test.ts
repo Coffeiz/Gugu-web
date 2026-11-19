@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { registerAdminDebugLogRoutes, resolveAdminDebugLogFiles } from '../../src/domains/admin/admin-debug-logs.js'
+import { registerAdminDebugLogRoutes, resolveAdminDebugLogFiles } from '../../src/modules/admin/logs.js'
 
 async function setup(resolveFiles?: (root: string) => ReturnType<typeof resolveAdminDebugLogFiles>) {
   const root = await mkdtemp(join(tmpdir(), 'gugu-admin-debug-'))

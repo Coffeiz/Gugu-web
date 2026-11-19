@@ -5,7 +5,7 @@ import { resolve } from 'node:path'
 import { Pool } from 'pg'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/domains/auth/auth.js'
+import { createUserToken } from '../../src/modules/auth/auth.js'
 import { applyAgentBaseMigration } from '../../src/migrations/agent-base-migrate.js'
 import { applyFilesystemAuthorizationMigration } from '../../src/migrations/filesystem-authorization-migrate.js'
 import { applySecurityEventsMigration, checkSecurityEventsMigration } from '../../src/migrations/security-events-migrate.js'
@@ -14,7 +14,7 @@ import { applyWebDomainMigration } from '../../src/migrations/web-domain-migrate
 import {
   createAgentSessionFilesystemAuthorization,
   type FilesystemAuthorizationConfirmationPort,
-} from '../../src/domains/agent-sessions/agent-filesystem-authorization.js'
+} from '../../src/modules/agent-sessions/agent-filesystem-authorization.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const secret = 'synthetic-filesystem-vite-secret'

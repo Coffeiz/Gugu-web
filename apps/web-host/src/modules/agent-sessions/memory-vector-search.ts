@@ -2,7 +2,7 @@ import type { AgentMemoryVectorSearchPort } from '@gugu/core/agent/memory/contex
 import type { RagQueryEmbeddingSettings } from '@gugu/core/agent/rag'
 import type { ProviderTransport } from '@gugu/core/providers'
 import { normalizeOwnerId } from '../../adapters/owner-context.js'
-import { createOwnerAgentRagVectorResolver } from '../../domains/agent-sessions/tools/agent-rag-vectors.js'
+import { createOwnerAgentRagVectorResolver } from './tools/agent-rag-vectors.js'
 
 export interface AgentMemoryVectorEmbeddingPort {
   resolve(ownerId: string, signal?: AbortSignal): Promise<RagQueryEmbeddingSettings | null>

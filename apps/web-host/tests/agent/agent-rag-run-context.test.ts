@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { RunIdentity } from '@gugu/core/agent'
-import type { AgentDispatchLease } from '../../src/domains/agent-sessions/persistence/agent-run-dispatch-postgres.js'
-import { createPostgresWebAgentMemorySnapshotReader, createWebAgentMemoryAuthorizer } from '../../src/domains/agent-sessions/tools/agent-rag-run-context.js'
+import type { AgentDispatchLease } from '../../src/modules/agent-sessions/persistence/agent-run-dispatch-postgres.js'
+import { createPostgresWebAgentMemorySnapshotReader, createWebAgentMemoryAuthorizer } from '../../src/modules/agent-sessions/tools/agent-rag-run-context.js'
 
 const lease: AgentDispatchLease = {
   identity: { ownerId: 'owner-a', sessionId: '17', runId: 'run-a' },

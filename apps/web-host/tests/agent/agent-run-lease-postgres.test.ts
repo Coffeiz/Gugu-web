@@ -3,8 +3,8 @@ import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
 import { RunStoreRejected, type RunIdentity } from '@gugu/core/agent'
-import { createPostgresAgentRunStartupStore } from '../../src/domains/agent-sessions/persistence/agent-run-startup-postgres.js'
-import { createPostgresAgentRunLeasePort } from '../../src/domains/agent-sessions/persistence/agent-run-lease-postgres.js'
+import { createPostgresAgentRunStartupStore } from '../../src/modules/agent-sessions/persistence/agent-run-startup-postgres.js'
+import { createPostgresAgentRunLeasePort } from '../../src/modules/agent-sessions/persistence/agent-run-lease-postgres.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '00000000-0000-4000-8000-000000000081'

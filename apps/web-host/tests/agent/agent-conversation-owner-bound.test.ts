@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { ConversationSearchPort } from '@gugu/core/tools'
-import { bindAgentConversationSearchOwner } from '../../src/domains/agent-sessions/tools/agent-conversations.js'
+import { bindAgentConversationSearchOwner } from '../../src/modules/agent-sessions/tools/agent-conversations.js'
 
 test('Web lease owner mismatch is rejected before conversation source access', async () => {
   const calls: string[] = []

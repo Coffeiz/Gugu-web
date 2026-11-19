@@ -38,7 +38,13 @@ export async function* parallelBatchForRun<C>(scope: RunCoordination<C>, calls: 
   const batch = runParallelDispatches(calls, async (call, signal) => {
     let event: RunEvent | null = null
     // 并发开始通知仍串行CAS，避免兄弟工具竞争checkpoint版本。
-    commits = commits.then(async () => { event = await scope.commit({}, 'tool_call', { toolCallId: call.id, name: call.name, status: 'running' }) })
+    commits = commits.then(async () => {
+      signal.throwIfAborted()
+      const inflightCalls = scope.state!.inflightCalls.filter(item => item.id !== call.id)
+      event = await scope.commit({ inflightCalls: [...inflightCalls, call] }, 'tool_call', {
+        toolCallId: call.id, name: call.name, status: 'running',
+      })
+    })
     await commits
     // 清理可能已发生在兄弟的DB提交等待期间；不能再向已无人消费的队列入项。
     if (signal.aborted)

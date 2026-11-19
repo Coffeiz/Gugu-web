@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { Pool } from 'pg'
-import { readProjectFileOverview } from '../../src/domains/projects/persistence/projects.js'
+import { readProjectFileOverview } from '../../src/modules/projects/persistence/projects.js'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 test('项目概览仅统计当前 owner 的存活项目文件与文件夹', { skip: !url }, async () => {

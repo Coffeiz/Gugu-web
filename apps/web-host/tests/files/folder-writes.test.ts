@@ -4,7 +4,7 @@ import Fastify from 'fastify'
 import test from 'node:test'
 import { nextFolderCopyName, planFolderCopyTree } from '@gugu/core/files/folder-copy'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
-import { registerFolderWriteRoutes } from '../../src/domains/files/folder-writes.js'
+import { registerFolderWriteRoutes } from '../../src/modules/files/folder-writes.js'
 import { registerFolderCopyRoute } from '../../src/modules/files/folder-copy.js'
 
 const ownerId = '00000000-0000-4000-8000-000000000012'

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { Pool } from 'pg'
-import { commitReasoningState, loadReasoningState } from '../../src/domains/agent-sessions/persistence/agent-reasoning-state-postgres.js'
+import { commitReasoningState, loadReasoningState } from '../../src/modules/agent-sessions/persistence/agent-reasoning-state-postgres.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

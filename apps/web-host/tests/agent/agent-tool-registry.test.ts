@@ -8,9 +8,10 @@ import type { AgentKnowledgeEntry } from '@gugu/core/agent/knowledge/entry'
 import { createGlobalSearchOperations, type GlobalSearchOperations } from '@gugu/core'
 import type { ProjectCreateRuntime } from '@gugu/core/project-create'
 import { createBuiltinSkillDefinitions, createSkillRegistry } from '@gugu/core/skills'
-import type { ClientDeleteConfirmationPort, ClientDeletePort, CalendarDeleteConfirmationPort, CalendarDeletePort, CalendarEventCreateToolPort, CalendarEventUpdateToolPort, CanvasBatchConfirmationPort, CanvasBatchPort, CanvasDeleteNotePort, CanvasDisconnectPort, CanvasDeletePort, KnowledgeWritePort, ScheduledTaskListPort, UseSkillPorts } from '@gugu/core/tools'
-import { createWebLinkButtonDeliveryPort } from '@gugu/core/tools'
-import { createAgentToolRegistry, filterConfiguredWebAgentTools, type AgentToolRegistryOptions } from '../../src/domains/agent-sessions/tools/agent-tool-registry.js'
+import type { ClientDeleteConfirmationPort, ClientDeletePort, CalendarDeleteConfirmationPort, CalendarDeletePort, CalendarEventCreateToolPort, CalendarEventUpdateToolPort, CanvasBatchConfirmationPort, CanvasBatchPort, CanvasDeleteNotePort, CanvasDisconnectPort, CanvasDeletePort, FileArchivePort, KnowledgeWritePort, ScheduledTaskListPort, UseSkillPorts } from '@gugu/core/tools'
+import { createScheduledSendFileTool, createWebLinkButtonDeliveryPort, createUndoLastActionTool } from '@gugu/core/tools'
+import { createAgentToolRegistry, filterConfiguredWebAgentTools, type AgentToolRegistryOptions } from '../../src/modules/agent-sessions/tools/agent-tool-registry.js'
+import { createWebAgentShell } from '../../src/modules/agent-sessions/tools/agent-shell.js'
 
 const identity = { ownerId: '00000000-0000-4000-8000-000000000001', sessionId: '1', runId: 'run' }
 function fixture(includeTime = false, includeOverview = false, includeProjects = true, skills?: UseSkillPorts, scheduledTasks?: ScheduledTaskListPort, search?: GlobalSearchOperations, extra: Pick<AgentToolRegistryOptions, 'events' | 'calendarCreate' | 'calendarUpdate' | 'calendarDelete' | 'trash' | 'httpGet'> = {}) {
@@ -41,12 +42,75 @@ function fixture(includeTime = false, includeOverview = false, includeProjects =
 test('Main 工具白名单保留已接入的业务工具组名称，并过滤未知工具', () => {
   const configured = [
     'create_client', 'update_client', 'delete_client', 'create_project', 'update_project', 'set_color', 'archive_project', 'add_stage',
-    'remove_stage', 'rename_stage', 'set_stages', 'update_stage', 'update_workspace', 'global_search',
+    'remove_stage', 'rename_stage', 'set_stages', 'update_stage', 'create_workspace', 'update_workspace', 'unlink_workspace', 'delete_workspace_directory', 'undo_last_action', 'delete_folder', 'delete_file', 'compress_files', 'extract_files', 'global_search',
     'canvas_list', 'canvas_focus_node', 'canvas_search_placeable', 'canvas_create_note', 'canvas_delete', 'note_undo', 'call_tool', 'create_skill', 'update_skill', 'delete_skill',
     'note_create', 'note_update', 'delete_scheduled_task', 'web_search', 'similar_image_search', 'deep_research',
-    'mcp_demo_lookup', 'untrusted_tool', 'mcp_demo_../lookup',
+    'grep', 'delete_folder', 'save_uploaded_file', 'mcp_demo_lookup', 'untrusted_tool', 'mcp_demo_../lookup',
   ]
   assert.deepEqual(filterConfiguredWebAgentTools(configured), configured.slice(0, -2))
+})
+
+test('文件归档工具仅在 Host 注入归档领域端口后注册并经实际 Registry 调用', async () => {
+  const without = createAgentToolRegistry({ core: {} as SqlDataRuntime, authorize: async () => true })
+  assert.equal((await without.capabilities(identity)).some(item => item.name === 'compress_files'), false)
+  const calls: string[] = []
+  const fileArchive: FileArchivePort = {
+    async compress(current, input, _roundId, _call, signal) { signal.throwIfAborted(); calls.push(`${current.ownerId}:${input.entries[0]?.id}`); return { file_id: 6, name: '资料.zip' } },
+    async extract() { throw new Error('无需调用') },
+  }
+  const registry = createAgentToolRegistry({ core: {} as SqlDataRuntime, fileArchive, authorize: async (_current, name) => name === 'compress_files' })
+  assert.equal((await registry.capabilities(identity)).some(item => item.name === 'compress_files'), true)
+  const result = await registry.tools.dispatch({ id: 'zip', name: 'compress_files', input: { entries: [{ kind: 'file', id: 3 }] } }, {
+    identity, roundId: 'round', signal: new AbortController().signal, resolution: null,
+    execute: async () => { throw new Error('归档不能调用执行后端') },
+  })
+  assert.deepEqual(result.value, { success: true, file_id: 6, name: '资料.zip' })
+  assert.deepEqual(calls, [`${identity.ownerId}:3`])
+})
+
+test('Agent Shell 进入真实注册器后仍须通过写入确认才规划挂载', async () => {
+  let requested = 0
+  const confirmation = {
+    gate: {
+      async prepare() {
+        requested++
+        return { ok: false }
+      },
+    },
+  } as unknown as Parameters<typeof createWebAgentShell>[0]['confirmation']
+  const shell = createWebAgentShell({
+    rootfs: '/synthetic-rootfs', confirmation,
+    async claim() { assert.fail('缺少确认时不能消费授权') },
+    async mounts() { assert.fail('缺少确认时不能挂载目录') },
+    async read() {
+      return { workspaceId: 1, workspaceTarget: '/workspace/current', facts: {
+        adminEnabled: true, sandboxEnabled: true, sandboxReady: true,
+        sessionOwned: true, workspaceValid: true, filesystemAuthorizationAvailable: true,
+        userEnabled: true, fullUserSandboxWrite: false, adminDangerousEnabled: true, userDangerousEnabled: true,
+      } }
+    },
+  })
+  const registry = createAgentToolRegistry({ core: {} as SqlDataRuntime, shell, authorize: async (_identity, name) => name === 'shell' })
+  assert.equal((await registry.capabilities(identity)).some(tool => tool.name === 'shell'), true)
+  await registry.tools.dispatch({ id: 'write', name: 'shell', input: { command: 'touch example' } }, scope())
+  assert.equal(requested, 1)
+  await registry.tools.dispatch({ id: 'untrusted', name: 'shell', input: { command: 'touch example', confirm: true } }, scope())
+  assert.equal(requested, 1)
+})
+
+test('undo_last_action 仅在 Node Undo 端口已装配且当前授权有效时注册', async () => {
+  let applies = 0
+  const options = { core: {} as SqlDataRuntime, authorize: async (_current: typeof identity, name: string) => name === 'undo_last_action' }
+  const absent = createAgentToolRegistry(options)
+  assert.equal((await absent.capabilities(identity)).some(item => item.name === 'undo_last_action'), false)
+  const ready = createAgentToolRegistry({ ...options, undoLastAction: createUndoLastActionTool({
+    async apply() { applies++; return { kind: 'completed', successful: true, mutated: true, value: { operation_id: 'selected' } } },
+    async reconcile() { return { kind: 'unknown' } },
+  }) })
+  assert.equal((await ready.capabilities(identity)).some(item => item.name === 'undo_last_action'), true)
+  const result = await ready.tools.dispatch({ id: 'undo-call', name: 'undo_last_action', input: {} }, scope())
+  assert.deepEqual(result, { kind: 'completed', successful: true, mutated: true, value: { operation_id: 'selected' } })
+  assert.equal(applies, 1)
 })
 
 test('缺少项目创建后端时不开放写工具，已授权只读工具仍可用', async () => {
@@ -106,6 +170,33 @@ test('知识写工具由 Host 注册器显式启用并继续使用可信 owner �
 
 const scope = (ownerId = identity.ownerId) => ({ identity: { ...identity, ownerId }, roundId: 'round-1', signal: new AbortController().signal,
   resolution: null, execute: async () => { throw new Error('不可调用宿主 Shell') } })
+
+test('send_file 通过生产工具注册器按授权 owner 解析文件并返回可投递产物', async () => {
+  let authorized = true
+  const resolvedOwners: string[] = []
+  const sendFile = createScheduledSendFileTool(async (current, source) => {
+    resolvedOwners.push(current.ownerId)
+    assert.deepEqual(source, { key: 'file_id', value: 23 })
+    return { file_id: 23, name: '合成报告', ext: 'txt', size_bytes: 4 }
+  }, { open: async () => { throw new Error('文件 ID 路径不应请求 URL') }, stage: async () => { throw new Error('文件 ID 路径不应暂存') } })
+  const registry = createAgentToolRegistry({ core: {} as SqlDataRuntime, sendFile,
+    authorize: async (current, name) => authorized && current.ownerId === identity.ownerId && name === 'send_file' })
+  assert.ok((await registry.capabilities(identity)).some(item => item.name === 'send_file'))
+  const result = await registry.tools.dispatch({ id: 'send-1', name: 'send_file', input: { file_id: 23 } }, scope())
+  assert.equal(result.kind, 'completed')
+  if (result.kind === 'completed') {
+    assert.equal(result.successful, true)
+    assert.deepEqual(result.artifact, { file_id: 23, name: '合成报告', ext: 'txt', size_bytes: 4 })
+    assert.deepEqual(result.value, { ok: true, message: '已准备好附件，将随本轮结果尝试投递，是否送达以后续回执为准。' })
+  }
+  assert.deepEqual(resolvedOwners, [identity.ownerId])
+  authorized = false
+  assert.equal((await registry.capabilities(identity)).some(item => item.name === 'send_file'), false)
+  const denied = await registry.tools.dispatch({ id: 'send-2', name: 'send_file', input: { file_id: 23 } }, scope())
+  assert.equal(denied.kind, 'completed')
+  if (denied.kind === 'completed') { assert.equal(denied.successful, false); assert.equal(denied.executed, false) }
+  assert.deepEqual(resolvedOwners, [identity.ownerId])
+})
 
 test('画布批处理只有 Host 注入持久确认与事务 claim 后才向模型注册', async () => {
   let allowed = true
@@ -221,14 +312,16 @@ test('http_get 缺少可信网络端口时不注册，注入后使用认证 owne
   let observed: unknown
   const enabled = fixture(false, false, false, undefined, undefined, undefined, { httpGet: { async get(input) {
     observed = input
-    return { status: 200, body: '合成正文' }
+    return { status: 200, headers: { 'content-type': 'text/plain' }, body: new TextEncoder().encode('合成正文') }
   } } })
   enabled.grant('http_get')
   assert.equal((await enabled.capabilities(identity)).some(item => item.name === 'http_get'), true)
   const call = { id: 'web', name: 'http_get', input: { url: 'https://public.example.test' } }
   const result = await enabled.tools.dispatch(call, scope())
   assert.equal(result.kind, 'completed')
-  if (result.kind === 'completed') assert.deepEqual(result.value, { status: 200, body: '合成正文' })
+  if (result.kind === 'completed') assert.deepEqual(result.value, {
+    status: 200, url: 'https://public.example.test', content_type: 'text/plain', body: '合成正文', truncated: false, total_chars: 4,
+  })
   assert.deepEqual(observed, { ownerId: identity.ownerId, url: 'https://public.example.test', maxChars: 4000 })
   enabled.revoke('http_get')
   const denied = await enabled.tools.dispatch(call, scope())
@@ -273,10 +366,19 @@ test('普通问题仅在 Host 显式开放且授权时注册并进入等待', as
   const options={core:{} as SqlDataRuntime,authorize:async()=>allowed}
   const absent=createAgentToolRegistry(options)
   assert.equal((await absent.capabilities(identity)).some(item=>item.name==='ask_user'),false)
-  const registry=createAgentToolRegistry({...options,askUser:true})
+  let authorization: 'disabled'|'already_authorized'|'available'='available'
+  const registry=createAgentToolRegistry({...options,askUser:{async authorization(){return authorization}}})
   const call={id:'ask',name:'ask_user',input:{kind:'choice',title:'请选择',body:'',options:[]}}
   const result=await registry.tools.dispatch(call,scope())
   assert.equal(result.kind,'waiting')
+  const grantCall={id:'ask-grant',name:'ask_user',input:{kind:'choice',authorization:'user_sandbox',title:'授权',body:'',options:[]}}
+  assert.equal((await registry.tools.dispatch(grantCall,scope())).kind,'waiting')
+  authorization='already_authorized'
+  const already=await registry.tools.dispatch(grantCall,scope())
+  assert.equal(already.kind==='completed' && already.successful,true)
+  authorization='disabled'
+  const disabled=await registry.tools.dispatch(grantCall,scope())
+  assert.equal(disabled.kind==='completed' && disabled.successful,false)
   allowed=false
   const denied=await registry.tools.dispatch(call,scope())
   assert.equal(denied.kind==='completed' && denied.executed,false)
@@ -478,7 +580,7 @@ test('近期待办需日历和时钟同时具备；回收站与近期待办按�
 })
 
 test('缺共享读取能力或仅apply原型时不开放新增工具', async () => {
-  const names=['list_events','list_workspaces','get_workspace','get_dashboard_stats','update_project','set_color','archive_project','add_stage','remove_stage','rename_stage','set_stages','update_stage','note_search','note_get','update_workspace','canvas_list']
+  const names=['list_events','list_workspaces','get_workspace','create_workspace','get_dashboard_stats','update_project','set_color','archive_project','add_stage','remove_stage','rename_stage','set_stages','update_stage','note_search','note_get','update_workspace','delete_folder','canvas_list']
   const registry=createAgentToolRegistry({core:{} as SqlDataRuntime,authorize:async()=>true,
     time:{now:()=>new Date('2026-11-15T00:00:00Z'),timezone:async()=> 'UTC'},
     projectMutations:{apply:async()=>{throw new Error('原型不可开放')}}})

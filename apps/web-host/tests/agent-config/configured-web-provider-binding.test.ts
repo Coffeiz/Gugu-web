@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import type { Pool } from 'pg'
-import { createConfiguredWebAgentProviderBinding } from '../../src/domains/agent-config/configured-web-provider-binding.js'
+import { createConfiguredWebAgentProviderBinding } from '../../src/modules/agent/model-config/configured-web-provider-binding.js'
 import { DEFAULT_AGENT_COMPACTION_INSTRUCTION } from '@gugu/core/agent'
 
 function pool(): Pick<Pool, 'connect'> {

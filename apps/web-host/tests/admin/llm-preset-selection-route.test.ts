@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import {registerLlmPresetSelectionRoutes} from '../../src/modules/admin/llm-preset-selection.js'
+import {registerLlmPresetSelectionRoutes} from '../../src/modules/admin/llm.js'
 import {createLlmPresetSelection} from '../../../../packages/core/src/agent/config/llm-preset-selection.js'
 import {installHttpErrorHandler} from '../../src/http/errors.js'
 

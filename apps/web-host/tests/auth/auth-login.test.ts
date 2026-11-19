@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { verifyUserToken, type PublicUserRecord } from '../../src/domains/auth/auth.js'
-import { createRedisRateLimiter, type RedisRateLimitCommands } from '../../src/domains/auth/rate-limit.js'
-import type { RateLimitHandler } from '../../src/domains/auth/rate-limit.js'
+import { verifyUserToken, type PublicUserRecord } from '../../src/modules/auth/auth.js'
+import { createRedisRateLimiter, type RedisRateLimitCommands } from '../../src/modules/auth/rate-limit.js'
+import type { RateLimitHandler } from '../../src/modules/auth/rate-limit.js'
 
 const secret = 'synthetic-login-secret-with-enough-entropy'
 const userId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
@@ -74,8 +74,8 @@ test('password login signs a compatible token, records activity, and returns the
     const body = response.json()
     assert.equal(body.token_type, 'bearer')
     assert.equal(body.user.id, userId)
-    assert.equal(body.user.display_name, 'Synthetic')
-    assert.equal(body.user.im_channels[0], 'qq')
+    assert.equal(body.user.displayName, 'Synthetic')
+    assert.equal(body.user.imChannels[0], 'qq')
     assert.equal(verifyUserToken(body.access_token, secret).securityVersion, 3)
     assert.deepEqual(calls, [
       ['authenticateCredentials', 'synthetic-user', 'valid-password'],

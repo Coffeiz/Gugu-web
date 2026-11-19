@@ -2,7 +2,7 @@ import type {FastifyInstance,FastifyRequest,preHandlerHookHandler} from 'fastify
 
 export interface McpRuntimeOperations {
  load(owner:string,serverId:string):Promise<{ok:boolean;state:string;tool_count:number;tool_names:string[];error:string|null}>
- reconnect(owner:string,serverId:string):Promise<{ok:boolean;state:string;tool_count:number;tool_names:string[];error:string|null}>
+ reconnect(owner:string,serverId:string):Promise<{ok:boolean;state:string;tool_count:number;total_loaded:number;tool_names:string[];error:string|null}>
  tools(owner:string,serverId:string):Promise<{server_id:string;state:string;loaded_tool_count:number;last_error:string|null}>
  close?():Promise<void>
 }

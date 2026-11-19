@@ -7,6 +7,9 @@ import { createSqlAgentGroupHistory, createSqlAgentOwnerSessionBindings } from '
 import { expect, it, vi } from 'vitest'
 import { createAgentImTools } from '../../../src/agent/tools/im.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
+import { createMemorySearchTool } from '../../../src/agent/tools/memory.js'
+import { configureRagJieba } from '../../../src/agent/rag/tokenizer.js'
+import { createScheduledTaskGroupMemorySearchPort } from '../../../src/scheduled-tasks/group-tools.js'
 
 const identity = { ownerId: 'owner-a', sessionId: '1', runId: 'run-a' }
 const context = { identity, roundId: 'round-a', signal: new AbortController().signal, resolution: null,
@@ -66,6 +69,34 @@ it('群搜索将精确曾用名优先于实时昵称的模糊匹配，并将查�
   expect(members).toHaveBeenCalledTimes(1)
   expect(await dispatch(reg, 'group_context_search', { chatId: 'forged' })).toMatchObject({ successful: false })
   expect(search).toHaveBeenCalledTimes(2)
+})
+
+it('定时群记忆搜索经工具 Registry 只读取当前群，范围撤销后不返回正文', async () => {
+  configureRagJieba({ cut: text => Array.from(text) })
+  const memoryIdentity = { ownerId: '00000000-0000-4000-8000-000000000001', sessionId: 'scheduled-task:1', runId: 'run-memory' }
+  const memoryContext = { ...context, identity: memoryIdentity }
+  const memory = '当前群的上线计划由值班同学在周五完成。'
+  let available = true
+  const port = createScheduledTaskGroupMemorySearchPort({
+    storage: { async readText({ key }) { return key.endsWith('/profile.json') ? JSON.stringify([{ text: memory }]) : null } },
+    scopeState: { async getMemoryScopeState() { return { revision: 'cursor-1', tombstoned: false } } },
+    async resolveGroup(candidate) {
+      return available && candidate.ownerId === memoryIdentity.ownerId
+        ? { platform: 'qq', botId: 'bot-a', chatId: 'group-a' } : null
+    },
+  })
+  const reg = createToolRegistry({ tools: [createMemorySearchTool(port)], authorize: async candidate => candidate.ownerId === memoryIdentity.ownerId })
+  const search = (input: Record<string, unknown>, candidate = memoryIdentity) => reg.tools.dispatch({
+    id: 'memory-search', name: 'search_memory', input,
+  }, { ...memoryContext, identity: candidate })
+  expect(await search({ query: '上线计划' })).toMatchObject({
+    kind: 'completed', successful: true, value: { strategy: 'bm25', results: [{ source: 'memory', text: expect.stringContaining('上线计划') }] },
+  })
+  expect(await search({ query: '上线计划', scope: 'private_memory' })).toMatchObject({ successful: false })
+  expect(await search({ query: '上线计划', scope: 'all_my_groups' })).toMatchObject({ successful: false })
+  expect(await search({ query: '上线计划' }, { ...memoryIdentity, ownerId: '00000000-0000-4000-8000-000000000002' })).toMatchObject({ successful: false })
+  available = false
+  expect(await search({ query: '上线计划' })).toMatchObject({ successful: false })
 })
 
 it('SQLite 群历史限定平台、机器人、群和 owner，绑定只接受 owner 的 Web 会话', async () => {

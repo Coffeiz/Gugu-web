@@ -1,7 +1,10 @@
+import { createHash } from 'node:crypto'
+import { z } from 'zod'
 import { strip } from '../../shared/values.js'
 import { asciiDecimalDigits } from '../../shared/unicode-decimal.js'
-import type { RunIdentity } from '../models.js'
-import type { ToolDefinition } from './contracts.js'
+import type { RunIdentity, ToolCall, ToolResult } from '../models.js'
+import type { ToolDefinition, ToolScope } from './contracts.js'
+import type { ConfirmationClaimReference, ConfirmationTargetSnapshot, createConfirmationGate } from './confirmation.js'
 
 export interface TrashListItem {
   id: number; file_id?: number; folder_id?: number; kind: 'file' | 'folder'
@@ -69,4 +72,83 @@ export function createTrashRestoreTools(port:TrashRestorePort):ToolDefinition[] 
       execute:(input:unknown,scope:import('./contracts.js').ToolScope,call:import('../models.js').ToolCall)=>port.apply({identity:scope.identity,roundId:scope.roundId,toolCallId:call.id,kind,id:(input as Record<string,number>)[field]!,signal:scope.signal}),
       reconcile:(input:unknown,identity:RunIdentity & {roundId:string},call:import('../models.js').ToolCall)=>port.reconcile({identity,roundId:identity.roundId,toolCallId:call.id,kind,id:(input as Record<string,number>)[field]!})}
   })
+}
+
+export interface TrashPurgeSnapshot {
+  file_count: number
+  folder_count: number
+  digest: string
+}
+export interface TrashPurgeJobResult {
+  id: number
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  progressCurrent: number
+  progressTotal: number
+  failedCount: number
+  errorCode: string | null
+}
+export interface TrashPurgeRequest {
+  identity: RunIdentity
+  roundId: string
+  toolCallId: string
+  snapshot: TrashPurgeSnapshot
+}
+export interface TrashPurgePort {
+  preview(identity: RunIdentity, signal: AbortSignal): Promise<TrashPurgeSnapshot>
+  apply(input: TrashPurgeRequest & { confirmation: ConfirmationClaimReference; signal: AbortSignal }): Promise<ToolResult>
+  reconcile(input: TrashPurgeRequest): Promise<ToolResult>
+}
+export interface TrashPurgeConfirmation {
+  gate: ReturnType<typeof createConfirmationGate>
+  claim(tx: unknown, receipt: ConfirmationClaimReference, signal: AbortSignal): Promise<boolean>
+}
+
+/** 只允许明确确认“全清”；物理删除由 Node 持久任务和 Host Worker 分批执行。 */
+export function createPermanentDeleteTool(port: TrashPurgePort, confirmation: TrashPurgeConfirmation): ToolDefinition {
+  const schema = z.object({ all: z.literal(true) }).strict()
+  const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
+  const failure = (error: string): ToolResult => ({ kind: 'completed', successful: false, mutated: false, value: { error } })
+  function targets(value: TrashPurgeSnapshot): ConfirmationTargetSnapshot {
+    return {
+      targetRefs: { trash: ['all'] },
+      targetsDigest: digest(['trash', 'all']),
+      versionsDigest: digest([value.file_count, value.folder_count, value.digest]),
+      displaySummary: `确认永久清空回收站：删除 ${value.file_count} 个文件和 ${value.folder_count} 个文件夹。此操作不可恢复。`,
+    }
+  }
+  const argsDigest = digest({ all: true })
+  async function apply(scope: ToolScope, call: ToolCall): Promise<ToolResult> {
+    scope.signal.throwIfAborted()
+    let current: TrashPurgeSnapshot
+    try { current = await port.preview(scope.identity, scope.signal) }
+    catch (error) { scope.signal.throwIfAborted(); return failure(error instanceof Error ? error.message : '回收站状态不可用') }
+    if (![current.file_count, current.folder_count].every(value => Number.isSafeInteger(value) && value >= 0)
+      || typeof current.digest !== 'string' || !current.digest) return failure('回收站快照无效')
+    if (current.file_count + current.folder_count === 0)
+      return { kind: 'completed', successful: true, mutated: false, value: { status: 'completed', progressCurrent: 0, progressTotal: 0, failedCount: 0 } }
+    const snapshot = targets(current)
+    if (scope.resolution === null) {
+      const prepared = await confirmation.gate.prepare(call, scope, argsDigest, snapshot)
+      return prepared.ok ? { kind: 'waiting', interaction: prepared.value } : failure('回收站清空确认无效或已过期')
+    }
+    const verified = await confirmation.gate.verify(call, scope, argsDigest, snapshot)
+    if (!verified.ok) return failure('回收站清空确认无效或已过期')
+    return port.apply({ identity: scope.identity, roundId: scope.roundId, toolCallId: call.id,
+      snapshot: current, confirmation: verified.value, signal: scope.signal })
+  }
+  return {
+    definition: { name: 'permanent_delete', schema: { type: 'function', function: {
+      name: 'permanent_delete',
+      description: '永久清空整个回收站。必须传 all=true；此操作不可恢复，Node 会在用户确认后创建持久清理任务。',
+      parameters: { type: 'object', properties: { all: { type: 'boolean', const: true } }, required: ['all'], additionalProperties: false },
+    } } },
+    effect: 'write', requiresInteraction: true, confirmationReplay: true,
+    validate(input) { return schema.safeParse(input) },
+    execute(_input, scope, call) { return apply(scope, call) },
+    reconcile(input, identity, call) {
+      if (!schema.safeParse(input).success) return Promise.resolve({ kind: 'unknown' })
+      return port.reconcile({ identity, roundId: identity.roundId, toolCallId: call.id,
+        snapshot: { file_count: 0, folder_count: 0, digest: '' } })
+    },
+  }
 }

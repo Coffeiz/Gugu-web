@@ -13,7 +13,7 @@
 
 ## 当前Node实现不能替代这些查询
 
-定位到的`apps/web-host/src/domains/agent-sessions/context/agent-overview-postgres.ts`属于尚未生产装配的上下文原型：`createAgentOverviewSources`被`createAgentContextAssembly`组合，但后者尚无生产调用；`formatAgentProjects`只有测试引用。不能因这些导出或PG测试通过认定总览工具已接入。
+定位到的`apps/web-host/src/modules/agent-sessions/context/agent-overview-postgres.ts`属于尚未生产装配的上下文原型：`createAgentOverviewSources`被`createAgentContextAssembly`组合，但后者尚无生产调用；`formatAgentProjects`只有测试引用。不能因这些导出或PG测试通过认定总览工具已接入。
 
 其项目查询是上下文分组优先级/限额投影；日历仅返回date/title的未来10项；文件概览限定personal；笔记是近7天20项。这些范围与工具契约不同。即使将格式函数移入Core，也不会补齐工具所需业务。
 

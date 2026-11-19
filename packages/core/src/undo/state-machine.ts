@@ -62,6 +62,13 @@ function shape(row: Row) {
     target_count: count, summary: `${row.action} ${count} 个对象`, created_at: new Date(row.created_at).toISOString(),
     status: row.status, can_undo: row.status === 'active', can_redo: row.status === 'undone' }
 }
+/** 保留期清理成功后写入的终态，避免 redo 分支清理任务被重复扫描。 */
+export function undoRetentionCompletion(failureCode: string | null): { status: 'expired'; failureCode: string } {
+  return {
+    status: 'expired',
+    failureCode: failureCode === 'redo_cleared_by_new_operation' ? 'redo_artifacts_cleaned' : failureCode ?? 'retention_expired',
+  }
+}
 /** 调用方持有事务；返回的错误须在提交后转成异常，不能在此处发布事件。 */
 export async function applyUndoInTransaction(
   tx: Kysely<Database>, backend: Backend, owner: string, rawContext: string,

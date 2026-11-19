@@ -3,8 +3,8 @@ import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { Pool } from 'pg'
 import type { SqlDataRuntime } from '@gugu/core/data'
-import { createAgentToolRegistry } from '../../src/domains/agent-sessions/tools/agent-tool-registry.js'
-import { createAgentTrashListPort } from '../../src/domains/agent-sessions/tools/agent-trash-tool.js'
+import { createAgentToolRegistry } from '../../src/modules/agent-sessions/tools/agent-tool-registry.js'
+import { createAgentTrashListPort } from '../../src/modules/agent-sessions/tools/agent-trash-tool.js'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 test('真实注册器与隔离PG回收站复用owner及顶层过滤，微秒排序和组禁用保持只读', { skip: !url && '需要隔离 PostgreSQL' }, async () => {

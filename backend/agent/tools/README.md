@@ -175,9 +175,9 @@ if blocked is not None:
 
 ## 正文编辑统一约定
 
-所有支持修改正文的 Agent 工具都使用统一的行级编辑契约，避免不同工具分别实现一套定位规则。当前 `note_update` 和 `edit_file` 均采用 `mode: "line_edit"` + `line_edits`；以后新增正文编辑工具也必须复用 `backend/agent/tools/text_edit.py`，不得重新引入独立的整篇覆盖模式。
+所有支持修改正文的 Agent 工具都使用统一的行级编辑契约，避免不同工具分别实现一套定位规则。当前 `note_update` 直接传 `line_edits`，`edit_file` 同时传 `mode: "line_edit"`；以后新增正文编辑工具也必须复用 `backend/agent/tools/text_edit.py`，不得重新引入独立的整篇覆盖模式。
 
-普通思维笔记创建和追加不需要构造块数组：`note_create` 可传 `markdown` 字符串，`note_update` 可传 `append_markdown` 字符串。只有需要可点击引用或结构化块时才使用 `blocks` / `append_blocks`；单次更新只能选择 `append_markdown`、`append_blocks`、`line_edits` 中的一种。
+普通思维笔记创建和追加不需要构造块数组：`note_create` 可传 `markdown` 字符串，`note_update` 可传 `append_markdown` 字符串。只有需要可点击引用或结构化块时才使用 `blocks` / `append_blocks`；单次更新只能选择 `append_markdown`、`append_blocks`、`line_edits`、`find_replace` 中的一种。`find_replace` 只在 `find` 字面原文唯一匹配时替换为 `replace`。
 
 ```json
 {

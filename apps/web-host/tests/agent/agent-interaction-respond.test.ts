@@ -5,8 +5,8 @@ import Fastify from 'fastify'
 import { Pool } from 'pg'
 import { consumeInteractionText } from '@gugu/core/agent'
 import { InteractionConsumeError } from '@gugu/core/agent/interactions/consume-action'
-import { registerAgentInteractionRespondRoute, createAgentInteractionRespondService } from '../../src/domains/agent-sessions/agent-interaction-respond.js'
-import { createPostgresInteractionTextStore } from '../../src/domains/agent-sessions/persistence/agent-interaction-consume-postgres.js'
+import { registerAgentInteractionRespondRoute, createAgentInteractionRespondService } from '../../src/modules/agent-sessions/agent-interaction-respond.js'
+import { createPostgresInteractionTextStore } from '../../src/modules/agent-sessions/persistence/agent-interaction-consume-postgres.js'
 
 test('路由认证、可信 owner、参数与错误脱敏', async () => {
   const app = Fastify(); let calls = 0
@@ -31,7 +31,7 @@ test('恢复选择与文本回答通过认证并只返回可恢复原 Run 的结
   registerAgentInteractionRespondRoute(app, { async requireUser(request, reply) { if (!request.headers.authorization) return reply.code(401).send() }, userIdFromRequest: () => 'trusted-owner', service: {
     async respond(owner, id, token, eventId) {
       calls.push(['respond', owner, id, token, eventId])
-      return { prompt_id: id, session_id: 12, kind: 'confirm', option_id: 'confirm', action_type: 'choice', context: { tool_call_id: 'call-a' }, result: { status: 'confirmed' } } as never
+      return { prompt_id: id, session_id: 12, kind: 'confirm', option_id: 'confirm', action_type: 'choice', context: { tool_call_id: 'call-a' }, result: { status: 'confirmed' }, run_id: 'original-run' } as never
     },
     async resumeText(owner, id, text, eventId) {
       calls.push(['resumeText', owner, id, text, eventId])
@@ -42,7 +42,7 @@ test('恢复选择与文本回答通过认证并只返回可恢复原 Run 的结
     assert.equal((await app.inject({ method: 'POST', url: '/api/v1/agent/interactions/7/resume', payload: { token: 'choice-token' } })).statusCode, 401)
     const choice = await app.inject({ method: 'POST', url: '/api/v1/agent/interactions/7/resume', headers: { authorization: 'yes' }, payload: { token: 'choice-token', event_id: 'event-a' } })
     assert.equal(choice.statusCode, 200)
-    assert.deepEqual(choice.json(), { ok: true, session_id: 12, status: 'confirmed', option_id: 'confirm' })
+    assert.deepEqual(choice.json(), { ok: true, session_id: 12, status: 'confirmed', option_id: 'confirm', run_id: 'original-run' })
     const text = await app.inject({ method: 'POST', url: '/api/v1/agent/interactions/8/resume-text', headers: { authorization: 'yes' }, payload: { text: '回答', event_id: 'event-b' } })
     assert.equal(text.statusCode, 200)
     assert.deepEqual(text.json(), { ok: true, session_id: 12 })
@@ -57,18 +57,29 @@ test('真实事务提交一次并原子入恢复队列，唤醒失败不重复�
   const pool = new Pool({ connectionString: url, options: `-c search_path=${schema}` })
   try {
     await pool.query('CREATE TABLE interaction_prompts (id integer PRIMARY KEY,user_id text,session_id integer,kind text,status text,expires_at timestamptz,resolved_at timestamptz,schema_json jsonb); CREATE TABLE interaction_actions (id integer PRIMARY KEY,prompt_id integer,token_hash text,action_type text,option_id text,context_json jsonb,status text,expires_at timestamptz,consumed_at timestamptz,consumed_event_id text); CREATE TABLE jobs(prompt_id integer)')
+    await pool.query("CREATE TABLE agent_interaction_bindings (user_id text,session_id integer,run_id text,prompt_id integer); INSERT INTO agent_interaction_bindings VALUES ('owner',7,'original-run',1)")
     await pool.query("INSERT INTO interaction_prompts VALUES (1,'owner',7,'confirm','active',now()+interval '1 hour',NULL,'{}')")
     await pool.query("INSERT INTO interaction_actions VALUES (1,1,$1,'choice','confirm', '{}','pending',now()+interval '1 hour',NULL,NULL)", [createHash('sha256').update('synthetic').digest('hex')])
     await pool.query("UPDATE interaction_actions SET context_json='{\"tool_call_id\":\"tool\"}' WHERE id=1")
     let wake = 0, diagnosed = 0
-    const service = createAgentInteractionRespondService({ pool, effects: { async applyCommandAction() { throw new Error('不得调用') }, async redeemConfirmation() { throw new Error('不得调用') } }, async enqueue(client, prompt) { await client.query('INSERT INTO jobs VALUES ($1)', [prompt.id]) }, async wake() { wake++; throw new Error('notification failed') }, diagnose() { diagnosed++ } })
+    const service = createAgentInteractionRespondService({ pool, effects: { async applyCommandAction() { throw new Error('不得调用') }, async redeemConfirmation() { throw new Error('不得调用') } }, async enqueue(client, prompt, _action, onEnqueued) { await client.query('INSERT INTO jobs VALUES ($1)', [prompt.id]); onEnqueued?.('original-run') }, async wake() { wake++; throw new Error('notification failed') }, diagnose() { diagnosed++ } })
     await assert.rejects(service.respond('other', 1, 'synthetic'), /交互不存在/)
     await assert.rejects(service.respond('owner', 1, 'wrong'), /动作无效/)
     const attempts = await Promise.allSettled([service.respond('owner', 1, 'synthetic'), service.respond('owner', 1, 'synthetic')])
     assert.equal(attempts.filter(item => item.status === 'fulfilled').length, 1)
+    assert.equal(attempts.find(item => item.status === 'fulfilled')?.value.run_id, 'original-run')
     assert.equal(Number((await pool.query('SELECT count(*) AS n FROM jobs')).rows[0].n), 1)
     assert.equal(wake, 1); assert.equal(diagnosed, 1)
     assert.equal((await pool.query('SELECT status FROM interaction_prompts')).rows[0].status, 'resolved')
+    const app = Fastify()
+    registerAgentInteractionRespondRoute(app, { async requireUser() {}, userIdFromRequest: () => 'owner', service })
+    try {
+      const retry = await app.inject({ method: 'POST', url: '/api/v1/agent/interactions/1/resume', payload: { token: 'synthetic' } })
+      assert.deepEqual(retry.json(), { ok: true, session_id: 7, run_id: 'original-run', status: 'confirmed', option_id: 'confirm' })
+      assert.equal((await app.inject({ method: 'POST', url: '/api/v1/agent/interactions/1/resume', payload: { token: 'wrong' } })).statusCode, 409)
+      assert.equal(await service.findResolvedRun?.('other', 1, 'synthetic'), null)
+      assert.equal(Number((await pool.query('SELECT count(*) AS n FROM jobs')).rows[0].n), 1)
+    } finally { await app.close() }
   } finally { await pool.end(); await admin.query(`DROP SCHEMA "${schema}" CASCADE`); await admin.end() }
 })
 

@@ -3,7 +3,7 @@ import { createServer } from 'node:http'
 import Fastify from 'fastify'
 import { afterEach, test } from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createAdminLlmCapabilityProbe } from '../../src/modules/admin/llm-capability-probe.js'
+import { createAdminLlmCapabilityProbe } from '../../src/modules/admin/llm-probe.js'
 import { LlmCapabilityProbeError } from '@gugu/core/agent/config'
 
 const apps: Array<ReturnType<typeof Fastify>> = []

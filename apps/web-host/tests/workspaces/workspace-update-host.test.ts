@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import type { UserAuthOptions } from '../../src/domains/auth/contracts.js'
+import type { UserAuthOptions } from '../../src/modules/auth/contracts.js'
 import { createApp } from '../../src/app.js'
 import { signedUserToken } from '../helpers/auth.js'
 

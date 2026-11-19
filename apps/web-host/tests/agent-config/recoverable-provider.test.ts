@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { bindRecoverableProvider, createReflectionModelScope, RecoverableProviderVersionError, type RecoverableProviderServices } from '../../src/domains/agent-config/recoverable-provider.js'
-import { createModelStrategy } from '../../src/domains/agent-config/model-strategy.js'
+import { bindRecoverableProvider, createReflectionModelScope, RecoverableProviderVersionError, type RecoverableProviderServices } from '../../src/modules/agent/model-config/recoverable-provider.js'
+import { createModelStrategy } from '../../src/modules/agent/model-config/model-strategy.js'
 const identity = { ownerId: 'owner-a', sessionId: '1', runId: 'run-a' }, signal = new AbortController().signal
 function setup() {
   let configuration = 'v1', credential = 'c1', scope = 'a'.repeat(64), releases = 0

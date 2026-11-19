@@ -136,8 +136,8 @@ describe('真实正式SQLite的三领域全局搜索切片', () => {
   })
   it('默认非空查询显式报告缺失能力且不执行 SQL，已选来源仍可搜索', async () => {
     const operations = createGlobalSearchOperations(sources())
-    expect(operations.availableTypes).toEqual(['project', 'event', 'client'])
-    expect(operations.missingTypes).toEqual(['file', 'folder', 'conversation', 'note', 'canvas_note', 'skill', 'mcp', 'scheduled_task'])
+    expect(operations.availableTypes).toEqual(['project', 'event', 'client', 'mcp', 'scheduled_task', 'note', 'canvas_note'])
+    expect(operations.missingTypes).toEqual(['file', 'folder', 'conversation', 'skill'])
     await expect(operations.search(owner, parseGlobalSearchQuery({ q: 'alpha' }))).rejects.toMatchObject({ code: 'conflict', missingTypes: operations.missingTypes })
     expect(queries).toBe(0)
     expect(await operations.search(owner, parseGlobalSearchQuery({ q: '' }))).toMatchObject({ total: 0, groups: [] })

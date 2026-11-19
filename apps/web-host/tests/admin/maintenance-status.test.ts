@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import {registerAdminMaintenanceStatusRoutes} from '../../src/modules/admin/maintenance-status.js'
+import {registerAdminMaintenanceStatusRoutes} from '../../src/modules/admin/runtime.js'
 import {createAdminMaintenanceStatus} from '@gugu/core/maintenance/admin-status'
 
 test('后台维护状态对齐空值/损坏JSON，并仅在600秒边界把running持久化为stale',async()=>{

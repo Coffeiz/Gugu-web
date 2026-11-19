@@ -1,6 +1,6 @@
 <template>
   <div class="drp-wrap" ref="wrapRef">
-    <div class="drp-input" :class="{ open, 'has-value': startDate || endDate, placeholder: !startDate && !endDate }" @click="toggle">
+    <div ref="triggerRef" class="drp-input" :class="{ open, 'has-value': startDate || endDate, placeholder: !startDate && !endDate }" @click="toggle">
       <svg class="drp-icon" width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
         <rect x="1" y="2" width="12" height="11" rx="3"/>
         <path d="M4 1v3M10 1v3M1 6h12"/>
@@ -13,7 +13,7 @@
       <span v-else>{{ placeholder }}</span>
     </div>
 
-    <PopupMenu ref="popupMenuRef" :show="open" :anchor="wrapRef" :style="popupStyle" popup-class="drp-popup-host drp-popup">
+    <PopupMenu ref="popupMenuRef" :show="open" :anchor="triggerRef" placement="auto" popup-class="drp-popup-host drp-popup">
 
           <!-- 头部导航 -->
           <div v-if="!yearMode" class="drp-header">
@@ -105,7 +105,6 @@ import { browserDayKey as toIso, buildCalendarMonthDays } from '@/utils/dateAttr
 
 const { t, tm, locale } = useI18n()
 const weekDays = computed(() => tm('sharedUi.weekdays') as string[])
-import { nextZ } from '@/composables/core/windowz'
 import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
 
 const props = defineProps({
@@ -117,8 +116,8 @@ const emit = defineEmits(['update:startDate', 'update:endDate'])
 
 const open      = ref(false)
 const wrapRef   = ref<HTMLElement | null>(null)
+const triggerRef = ref<HTMLElement | null>(null)
 const popupMenuRef = ref<InstanceType<typeof PopupMenu> | null>(null)
-const popupStyle = ref({})
 const yearMode  = ref(false)
 const phase     = ref('start')   // 'start' | 'end'
 const hovered   = ref<string | null>(null)
@@ -209,19 +208,9 @@ function selectYear(y: number) {
   yearMode.value = false
 }
 
-function calcPopupStyle() {
-  const rect = wrapRef.value?.getBoundingClientRect()
-  if (!rect) return
-  const popW = 240
-  const centerX = rect.left + rect.width / 2
-  const left = Math.max(8, Math.min(centerX - popW / 2, window.innerWidth - popW - 8))
-  popupStyle.value = { position: 'fixed', top: rect.bottom + 6 + 'px', left: left + 'px', width: popW + 'px', zIndex: nextZ() }
-}
-
 function toggle() {
   if (open.value) { open.value = false; yearMode.value = false; return }
   phase.value = 'start'
-  calcPopupStyle()
   open.value = true
 }
 
@@ -281,7 +270,7 @@ watch(() => props.startDate, v => {
 /* 展开态与 hover 互斥：点击打开后鼠标仍停在控件上时，不能再叠一层 hover 高光；
    open 始终只消费 focus token，移走鼠标前后视觉保持一致。 */
 .drp-input:hover:not(.open) { border-color: var(--input-border-hover); background: var(--input-bg-hover); box-shadow: var(--input-hover-shadow); }
-.drp-input.open { border-color: var(--input-border-focus); background: var(--input-bg-focus); box-shadow: var(--input-focus-shadow); }
+.drp-input.open { border-color: var(--input-border-focus); background: var(--input-bg-focus); }
 .drp-input.placeholder span { opacity: 0.6; }
 .drp-input.placeholder, .drp-input.placeholder span { color: var(--input-placeholder); }
 .drp-icon { flex-shrink: 0; color: var(--input-placeholder); }
@@ -390,5 +379,5 @@ watch(() => props.startDate, v => {
 }
 .drp-clear { background: none; }
 
-:global(.popup-menu-host.drp-popup-host) { padding: 12px; box-sizing: border-box; }
+.popup-menu-host.drp-popup-host { width: min(240px, calc(100vw - 12px)); padding: var(--space-md); box-sizing: border-box; }
 </style>

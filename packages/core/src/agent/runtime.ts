@@ -7,6 +7,7 @@ import type { ProviderRuntimeOptions } from './providers/runtime.js'
 import { createAgentChatService, type AgentChatServicePorts } from './chat-service.js'
 import { createAgentDispatchSupervisor, type AgentDispatchSupervisorPorts } from './run/dispatch-supervisor.js'
 import { createAgentDispatchWorker, type AgentDispatchRuntimeLease, type AgentDispatchWorkerPorts } from './run/dispatch-worker.js'
+import type { AgentObservationPort } from './observation.js'
 
 /**
  * 同一可信模型绑定下供 Host 摘要、反思等后台分支复用的 Provider 能力。
@@ -17,6 +18,8 @@ export type AgentProviderAuxiliaryPorts = Pick<ReturnType<typeof connectProvider
 
 /** Agent Harness 的可移植组合入口；可信身份、存储、授权和执行能力由 Host 注入。 */
 export interface AgentRuntimeOptions {
+  /** Host 注入的通用非阻塞诊断观测端口。 */
+  observation?: AgentObservationPort
   context: CanonicalContextPorts
   runPreparation?: CanonicalRunPreparationPorts
   executor: HarnessExecutorPorts
@@ -26,12 +29,13 @@ export interface AgentRuntimeOptions {
 
 /** 同一组上下文端口同时供 Provider 与 Harness 使用，避免模型身份或历史分叉。 */
 export function createAgentRuntime(options: AgentRuntimeOptions) {
-  const connected = connectProviderHarness(options.context, options.provider)
+  const observation = options.observation ?? options.runtime.observation ?? options.provider.observation
+  const connected = connectProviderHarness(options.context, { ...options.provider, observation })
   const harness = createCanonicalRunner({
     context: connected.context,
     runPreparation: options.runPreparation,
     executor: options.executor,
-    runtime: { ...options.runtime, provider: connected.provider },
+    runtime: { ...options.runtime, observation, provider: connected.provider },
   })
   return { harness, provider: connected.provider, close: () => connected.provider.close() }
 }
@@ -51,7 +55,7 @@ export function createAgentDispatchRuntime<C, L extends AgentDispatchRuntimeLeas
   const supervisor = createAgentDispatchSupervisor({ ...options.supervisor, listReady: limit => dispatch.listReady(limit), kick: worker.kick })
   const service = createAgentChatService<C, I>({
     ...options.chat,
-    active: (owner, session) => dispatch.active(owner, session),
+    active: (owner, session, runId) => dispatch.active(owner, session, runId),
     dispatch: {
       kick: worker.kick,
       notify: supervisor.notify,

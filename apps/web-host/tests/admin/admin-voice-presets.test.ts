@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { registerAdminVoicePresetRoutes } from '../../src/domains/admin/admin-voice-presets.js'
+import { registerAdminVoicePresetRoutes } from '../../src/modules/admin/voice.js'
 
 const seed = () => ({ voice_presets: { active_id: 'voice-a', items: [
   { id: 'voice-a', name: '语音 A', provider: 'qwen' as const, api_key: 'synthetic-secret-key', base_url: 'https://voice.example.test', model: 'qwen3-asr-flash', api_format: 'dashscope' as const, dashscope_service: 'qwen3-asr' as const },

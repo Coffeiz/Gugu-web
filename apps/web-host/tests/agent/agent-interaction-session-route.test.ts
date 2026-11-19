@@ -4,7 +4,7 @@ import Fastify from 'fastify'
 import { InteractionNotFoundError } from '@gugu/core/agent-sessions'
 import {
   registerAgentInteractionSessionRoute,
-} from '../../src/domains/agent-sessions/agent-interaction-session-route.js'
+} from '../../src/modules/agent-sessions/agent-interaction-session-route.js'
 
 test('敏感交互深链路由先认证，不读取身份或查询 prompt', async () => {
   const app = Fastify()

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { PoolClient } from 'pg'
-import { preflightFileUndo, readFileUndoArtifact } from '../../src/domains/undo/persistence/files.js'
+import { preflightFileUndo, readFileUndoArtifact } from '../../src/modules/undo/persistence/files.js'
 
 test('批量文件撤销先检查全部 owner 和版本，冲突时不执行写入', async () => {
   const calls: string[] = []

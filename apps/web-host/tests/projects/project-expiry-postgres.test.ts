@@ -8,7 +8,7 @@ import { Pool } from 'pg'
 import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { readdir } from 'node:fs/promises'
-import { recoverProjectExpiryJournal } from '../../src/domains/projects/persistence/project-expiry-postgres.js'
+import { recoverProjectExpiryJournal } from '../../src/modules/projects/persistence/project-expiry-postgres.js'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 test('隔离数据库中锁被占用时跳过恢复，释放后处理部分清理日志', { skip: !url }, async () => {
@@ -88,7 +88,7 @@ test('清理进程在暂存后崩溃，恢复后可重新清理并保留未登�
     await mkdir(directory, { recursive: true })
     await writeFile(file, '正文')
     await writeFile(path.join(directory, 'untracked'), '保留')
-    const moduleUrl = pathToFileURL(path.resolve('src/domains/projects/persistence/project-expiry-postgres.ts')).href
+    const moduleUrl = pathToFileURL(path.resolve('src/modules/projects/persistence/project-expiry-postgres.ts')).href
     const program = `import { Pool } from 'pg'; import { purgeExpiredProject } from ${JSON.stringify(moduleUrl)}; const p=new Pool({connectionString:process.env.TEST_URL,options:process.env.TEST_OPTIONS}); await purgeExpiredProject(p,process.env.TEST_ROOT,new Date(),null); await p.end();`
     child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', program], { env: { ...process.env, TEST_URL: url!, TEST_OPTIONS: `-c search_path=${schema}`, TEST_ROOT: root }, stdio: 'ignore' })
     const exited = new Promise<number | null>(resolve => child!.once('exit', resolve))
@@ -109,7 +109,7 @@ test('清理进程在暂存后崩溃，恢复后可重新清理并保留未登�
     assert.equal(recoveredAfterCrash, true)
     assert.equal(await readFile(file, 'utf8'), '正文')
     await pool.query('DROP TRIGGER pause_delete ON files')
-    const { purgeExpiredProject } = await import('../../src/domains/projects/persistence/project-expiry-postgres.js')
+    const { purgeExpiredProject } = await import('../../src/modules/projects/persistence/project-expiry-postgres.js')
     assert.equal(await purgeExpiredProject(pool, root, new Date(), null), true)
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM projects')).rows[0].n, 0)
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM scheduled_tasks')).rows[0].n, 0)

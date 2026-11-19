@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createAdminEmailTranslator } from '../../src/modules/admin/email-translate.js'
+import { createAdminEmailTranslator } from '../../src/modules/admin/email.js'
 
 const adminAuth = {
   registerRoutes() {},

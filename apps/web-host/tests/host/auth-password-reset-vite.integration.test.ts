@@ -6,8 +6,8 @@ import { resolve } from 'node:path'
 import { Pool } from 'pg'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createCsrfToken, createUserToken, type PublicUserRecord } from '../../src/domains/auth/auth.js'
-import { createPostgresPasswordResetStore, type PasswordResetRedisCommands } from '../../src/domains/auth/password-reset.js'
+import { createCsrfToken, createUserToken, type PublicUserRecord } from '../../src/modules/auth/auth.js'
+import { createPostgresPasswordResetStore, type PasswordResetRedisCommands } from '../../src/modules/auth/password-reset.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const secret = 'synthetic-password-reset-vite-secret'

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { Pool } from 'pg'
 import { withPostgresTransaction } from '../../src/adapters/postgres-transaction.js'
-import { bindAgentChatPendingQueue } from '../../src/domains/agent-sessions/persistence/agent-chat-pending-queue.js'
+import { bindAgentChatPendingQueue } from '../../src/modules/agent-sessions/persistence/agent-chat-pending-queue.js'
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
 test('待发队列绑定与消费按 owner 隔离，claim 冲突回滚且并发只消费一次', { skip: !url && '需要隔离 PostgreSQL' }, async () => {

@@ -260,7 +260,7 @@ export const mcpApi = {
   remove: (id: string) => del(`/mcp/servers/${encodeURIComponent(id)}`),
   test: (id: string) => post<{ ok: boolean; error?: string; tool_count?: number; tools?: string[] }>(`/mcp/servers/${encodeURIComponent(id)}/test_connection`, {}),
   loadStatus: (id: string) => post<{ ok: boolean; state: string; tool_count: number; tool_names?: string[]; error?: string | null }>(`/mcp/servers/${encodeURIComponent(id)}/load_status`, {}),
-  reconnect: (id: string) => post<{ ok: boolean; state: string; tool_count: number; tool_names?: string[]; error?: string }>(`/mcp/servers/${encodeURIComponent(id)}/reconnect`, {}),
+  reconnect: (id: string) => post<{ ok: boolean; state: string; tool_count: number; total_loaded: number; tool_names?: string[]; error?: string }>(`/mcp/servers/${encodeURIComponent(id)}/reconnect`, {}),
   tools: (id: string) => get(`/mcp/servers/${encodeURIComponent(id)}/tools`),
 }
 

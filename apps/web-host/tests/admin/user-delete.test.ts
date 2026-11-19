@@ -3,7 +3,7 @@ import test from 'node:test'
 import {CoreError} from '@gugu/core'
 import Fastify from 'fastify'
 import {createApp} from '../../src/app.js'
-import {registerAdminUserDeleteRoute} from '../../src/modules/admin/user-delete.js'
+import {registerAdminUserDeleteRoute} from '../../src/modules/admin/users.js'
 
 test('管理员删除账号后才写用户审计并返回清理对象数',async()=>{
   const order:string[]=[]

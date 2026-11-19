@@ -372,7 +372,7 @@ function handleToggleTodo(todo: ProjectTodo) {
   transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard);
 }
 .stage-input:hover { background: var(--input-bg-hover); border-color: var(--input-border-hover); box-shadow: var(--input-hover-shadow), 0 0 0 0 transparent; }
-.stage-input:focus { background: var(--input-bg-focus); border-color: var(--input-border-focus); box-shadow: var(--input-hover-shadow), var(--input-focus-shadow); }
+.stage-input:focus { background: var(--input-bg-focus); border-color: var(--input-border-focus); box-shadow: var(--input-hover-shadow); }
 .del-stage {
   flex: 0 0 22px; opacity: 0; pointer-events: none;
   color: var(--popup-item-fg-muted);

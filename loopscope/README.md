@@ -43,7 +43,7 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-默认监听 `127.0.0.1:4319`。
+默认监听 `127.0.0.1:4319`。 `/gugu-api` 默认代理到 Node Web Host 的 `127.0.0.1:9595`；需要其他后端地址时通过 `GUGU_API_TARGET` 指定。
 
 打开前端后，左侧可以选择 Session；进入 Session 后可在 `Conversation` 和 `Monitor` 间切换。Monitor 会按需加载 Run 和 Span，Run 列表和 Span 列表都支持分页；选中多个 Run 后可以导出 JSON。
 

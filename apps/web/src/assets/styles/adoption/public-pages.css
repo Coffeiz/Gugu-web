@@ -83,7 +83,7 @@
 .admin-login .field input:focus:not(:disabled) {
   background: var(--input-bg-focus);
   border-color: var(--input-border-focus);
-  box-shadow: var(--input-hover-shadow), var(--input-focus-shadow);
+  box-shadow: var(--input-hover-shadow);
 }
 .admin-login .field input::placeholder { color: var(--input-placeholder); }
 .admin-login .field input:disabled { opacity: 0.5; }
@@ -188,7 +188,6 @@ html[data-theme='dark'][data-family] .auth-page .field input:focus {
   color: var(--input-fg);
   background: var(--input-bg-focus);
   border-color: var(--input-border-focus);
-  box-shadow: var(--input-focus-shadow);
 }
 
 html[data-theme='dark'][data-family] .auth-page .error-msg {

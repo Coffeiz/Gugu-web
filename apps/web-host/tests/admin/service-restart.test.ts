@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import Fastify from 'fastify'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createServiceRestarter, registerServiceRestartRoute } from '../../src/modules/admin/service-restart.js'
+import { createServiceRestarter, registerServiceRestartRoute } from '../../src/modules/admin/runtime.js'
 
 import { createBackgroundWorkerLifecycle } from '../../src/maintenance/background-workers.js'
 

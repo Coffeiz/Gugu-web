@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createWebAgentPromptReader, readWebAgentImPrompt } from '../../src/domains/agent-sessions/context/agent-prompt-files.js'
+import { createWebAgentPromptReader, readWebAgentImPrompt } from '../../src/modules/agent-sessions/context/agent-prompt-files.js'
 
 test('Node Agent 默认加载 Host 随包发布的完整对话提示词', () => {
   const prompts = createWebAgentPromptReader()()

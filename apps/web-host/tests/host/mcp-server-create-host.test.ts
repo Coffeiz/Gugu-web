@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/domains/auth/auth.js'
+import { createUserToken } from '../../src/modules/auth/auth.js'
 
 test('生产 App 将 MCP 创建限制在认证 owner 并保留 Python 创建响应', async () => {
   const owner = '00000000-0000-4000-8000-000000000311'

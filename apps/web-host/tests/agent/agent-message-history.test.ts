@@ -11,7 +11,7 @@ import {
 import {
   AgentSessionNotFoundError,
   createAgentMessageHistory,
-} from '../../src/domains/agent-sessions/persistence/agent-message-history.js'
+} from '../../src/modules/agent-sessions/persistence/agent-message-history.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
@@ -165,7 +165,6 @@ test('through_id 缺少同会话游标时生成空页，不回退为按 ID 截�
   assert.equal(interactionReads, 0)
   assert.equal(statements.some((sql) => /WHERE[\s\S]*AND FALSE/.test(sql)), true)
   const pageSql = statements.find((sql) => sql.includes('pg_column_size'))!
-  assert.match(pageSql, /display_timeline <> 'null'::jsonb/)
   assert.match(pageSql, /pg_column_size\(message\.display_timeline\) > 1048576/)
   assert.doesNotMatch(pageSql, /SELECT[\s\S]*message\.content_json,/)
 })
@@ -247,6 +246,38 @@ test('消息历史按可见行分页、旧到新返回，并排除摘要与纯 c
     assert.equal(all.timelineEvents.length, 1)
     assert.equal('toolInput' in (all.timelineEvents[0] as object), false)
     assert.equal('toolResult' in (all.timelineEvents[0] as object), false)
+    const startedAt = '2026-11-12T00:00:06Z'
+    const runningHistory = createAgentMessageHistory(pool, {
+      activeStatuses: async () => new Map([[session.id, true]]),
+      async readActiveRun(requestOwner, requestSession) {
+        assert.equal(requestOwner, owner)
+        assert.equal(requestSession, session.id)
+        return {
+          status: 'running',
+          anchorMessageId: String(first.messages[0]!.id),
+          displayTimeline: [{
+            kind: 'tool', toolName: 'use_skill', toolCallId: 'call-active', toolStatus: 'running',
+            eventId: 'active-display', runId: 'run-active', roundId: 'run-active:1',
+            sequence: 1, anchorMessageId: String(first.messages[0]!.id), timelineOrder: '3000001',
+            createdAt: startedAt, updatedAt: startedAt, toolStartedAt: startedAt, toolDurationMs: 200,
+            toolResult: '合成内部结果',
+          }],
+        }
+      },
+    })
+    const restored = await runningHistory.list(owner, session.id, { restoreInteractions: true })
+    const activeEvent = restored.timelineEvents.find(item => item.eventId === 'active-display')
+    assert.equal(activeEvent?.toolStatus, 'running')
+    assert.equal(activeEvent?.toolStartedAt, startedAt)
+    assert.equal(activeEvent?.toolDurationMs, 200)
+    assert.equal(activeEvent?.toolResult, undefined)
+    assert.equal((await runningHistory.list(owner, session.id, { beforeId: 3, restoreInteractions: true }))
+      .timelineEvents.some(item => item.eventId === 'active-display'), false)
+    // 旧版 PostgreSQL 保留 json 列，读取和分页应与 jsonb 一致。
+    await pool.query('ALTER TABLE conversation_messages ALTER COLUMN display_timeline TYPE json USING display_timeline::json')
+    assert.deepEqual(await history.list(owner, session.id, { limit: 2 }), first)
+    assert.deepEqual(await history.list(owner, session.id, { limit: 10, beforeId: 3 }), older)
+    assert.deepEqual(await history.list(owner, session.id, { limit: 20 }), all)
     const negative = await pool.query<{ id: number }>(
       `INSERT INTO conversation_messages (session_id,role,content,conversation_seq,im_platform_sent_ms,created_at)
        VALUES ($1,'user','负时间',9,-1,$2) RETURNING id`, [session.id, created],

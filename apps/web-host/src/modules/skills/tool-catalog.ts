@@ -1,4 +1,4 @@
-import type { createAgentToolRegistry } from '../../domains/agent-sessions/tools/agent-tool-registry.js'
+import type { createAgentToolRegistry } from '../agent-sessions/tools/agent-tool-registry.js'
 import type { UserSkillTool } from './user-list.js'
 
 const NON_SKILL_TOOLS = new Set(['list_skills', 'create_skill', 'update_skill', 'delete_skill', 'send_link_buttons'])

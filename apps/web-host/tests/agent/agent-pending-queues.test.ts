@@ -8,7 +8,7 @@ import {
   createPostgresAgentPendingQueueReader,
   registerAgentImportedDraftQueueRoute,
   registerAgentPendingQueueReadRoute,
-} from '../../src/domains/agent-sessions/agent-pending-queues.js'
+} from '../../src/modules/agent-sessions/agent-pending-queues.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

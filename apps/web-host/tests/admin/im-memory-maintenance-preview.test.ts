@@ -4,9 +4,10 @@ import Fastify from 'fastify'
 import type { ProviderHttpRequest, ProviderTransport } from '@gugu/core/providers'
 import { createRedisScheduledTaskCommands, createRedisValueReader } from '../../src/adapters/redis-events.js'
 import {
-  createImMemoryMaintenancePreviewStarter, createImMemoryMaintenancePreviewState, createImMemoryMaintenancePreviewWorker, createStandaloneImMemoryModelCaller, IM_MEMORY_MODEL_PREVIEW_LOCK_KEY,
-  ImMemoryMaintenancePreviewError, registerImMemoryMaintenancePreviewRoute,
-} from '../../src/modules/admin/im-memory-maintenance-preview.js'
+  createImMemoryMaintenancePreviewStarter, createImMemoryMaintenancePreviewState, createImMemoryMaintenancePreviewWorker, IM_MEMORY_MODEL_PREVIEW_LOCK_KEY,
+  ImMemoryMaintenancePreviewError,
+} from '../../src/modules/admin/memory-preview.js'
+import { createStandaloneImMemoryModelCaller, registerImMemoryMaintenancePreviewRoute } from '../../src/modules/admin/memory-preview.js'
 
 const stateKey = 'im_memory:maintenance:model_preview'
 const planKey = 'im_memory:maintenance:model_preview:plan'

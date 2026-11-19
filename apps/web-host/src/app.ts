@@ -21,10 +21,16 @@ import { registerDataExportBrowserDownloadRoute, registerDataExportDownloadRoute
 import type { createDataExportCreator } from '@gugu/core/data-portability/create-export'
 import type { LlmPresetTestResult } from '@gugu/core/agent/config'
 import { registerTaskFilesystemAuthorizationRoutes, type TaskFilesystemAuthorizationOptions } from './modules/scheduled-tasks/task-filesystem-authorize.js'
-import { registerVoicePresetMutationRoutes, type VoicePresetMutationOptions } from './modules/admin/voice-presets-mutate.js'
+import { registerVoicePresetMutationRoutes, type VoicePresetMutationOptions } from './modules/admin/voice.js'
 import { registerDataExportCancelRoute } from './modules/data-portability/cancel-export.js'
 import { registerDataExportDeleteRoute, type DataExportDeleteOptions } from './modules/data-portability/delete-export.js'
 import type { createDataExportDeleter } from '@gugu/core/data-portability/delete-export'
+import { registerDataImportCancelRoute, type DataImportCancelOptions } from './modules/data-portability/cancel-import.js'
+import type { createDataImportCanceler } from '@gugu/core/data-portability/cancel-import'
+import { registerDataImportDeleteRoute, type DataImportDeleteOptions } from './modules/data-portability/delete-import.js'
+import { registerDataImportPreflightRoute } from './modules/data-portability/preflight-import.js'
+import type { DataImportPreflightRouteOptions } from './modules/data-portability/preflight-import.js'
+import type { createDataImportDeleter } from '@gugu/core/data-portability/delete-import'
 import type { createDataExportCanceler } from '@gugu/core/data-portability/cancel-export'
 import { registerTerminalDeleteRoute, type TerminalDeleteOptions } from './modules/terminals/delete.js'
 import { registerTerminalCreateRoute, type TerminalCreateRouteOptions } from './modules/terminals/create-route.js'
@@ -37,20 +43,21 @@ import { registerTerminalDetailRoute, type TerminalDetailOptions } from './modul
 import { registerTerminalRenameRoute, type TerminalRenameOptions } from './modules/terminals/rename.js'
 import { registerTerminalEventsRoute, type TerminalEventsOptions } from './modules/terminals/events.js'
 import { registerTerminalCommandRoutes, type TerminalCommandRouteOptions } from './modules/terminals/command.js'
-import { registerVoicePresetsReadRoute, type VoicePresetsReadOptions } from './modules/admin/voice-presets-read.js'
-import { registerAdminVoicePresetTestRoute, registerAdminVoiceTestRoute, type AdminVoicePresetTestOptions, type AdminVoiceTestOptions } from './modules/admin/voice-test.js'
-import { registerAdminSearchTestRoute, type AdminSearchTestOptions } from './modules/admin/search-test.js'
-import { registerAdminMaintenanceStatusRoutes } from './modules/admin/maintenance-status.js'
-import { registerAccountMemoryCleanupRoutes, type createAccountMemoryCleanupRuntime } from './modules/admin/account-memory-cleanup.js'
-import { registerAdminUpdateStatusRoute, type AdminUpdateMode } from './modules/admin/update-status.js'
+import { registerVoicePresetsReadRoute, type VoicePresetsReadOptions } from './modules/admin/voice.js'
+import { registerAdminVoicePresetTestRoute, registerAdminVoiceTestRoute, type AdminVoicePresetTestOptions, type AdminVoiceTestOptions } from './modules/admin/voice.js'
+import { registerAdminSearchTestRoute, type AdminSearchTestOptions } from './modules/admin/search.js'
+import { registerAdminMaintenanceStatusRoutes } from './modules/admin/runtime.js'
+import { registerAccountMemoryCleanupRoutes } from './modules/admin/memory-cleanup.js'
+import type { createAccountMemoryCleanupRuntime } from './modules/admin/memory-cleanup.js'
+import { registerAdminUpdateStatusRoute, type AdminUpdateMode } from './modules/admin/runtime.js'
 import { registerAccountDeleteRoute, type AccountDeleteOptions } from './modules/auth/account-delete.js'
-import { registerAdminUserDeleteRoute, type AdminUserDeleteOptions } from './modules/admin/user-delete.js'
-import { registerAgentCapabilityCatalogRoute, type AgentCapabilityCatalog } from './modules/admin/agent-capabilities.js'
-import { registerAgentStateLabelRoutes } from './modules/admin/agent-state-labels.js'
+import { registerAdminUserDeleteRoute, type AdminUserDeleteOptions } from './modules/admin/users.js'
+import { registerAgentCapabilityCatalogRoute, type AgentCapabilityCatalog } from './modules/admin/llm.js'
+import { registerAgentStateLabelRoutes } from './modules/admin/llm-strategy.js'
 import type { createAdminMaintenanceStatus } from '@gugu/core/maintenance/admin-status'
 import { createProviderCapabilityPreview } from '@gugu/core/byok/capabilities-preview'
-import { registerServiceStatusRoute, type createServiceStatusReader } from './modules/admin/service-status.js'
-import { registerServiceRestartRoute, type ServiceRestartOperations } from './modules/admin/service-restart.js'
+import { registerServiceStatusRoute, type createServiceStatusReader } from './modules/admin/runtime.js'
+import { registerServiceRestartRoute, type ServiceRestartOperations } from './modules/admin/runtime.js'
 import { registerAttachmentDownloadRoute, type AttachmentDownloadOptions } from './modules/agent/attachments/download.js'
 import { registerAgentAttachmentUploadRoute, type AgentAttachmentUploadOperations } from './modules/agent/attachment-upload.js'
 import { registerAttachmentDraftDeleteRoute, type AttachmentDraftDeleteOptions } from './modules/agent/attachment-delete.js'
@@ -62,7 +69,7 @@ import { registerAttachmentThumbnailRoute } from './modules/agent/attachment-thu
 import { registerUserBotBindingCodeRoutes, type UserBotBindingCodeOptions } from './modules/im/binding-code.js'
 import { registerLoopScopeProxyRoutes, type LoopScopeProxyOptions } from './modules/loopscope/proxy.js'
 import { registerTaskFilesystemRevokeRoute, type TaskFilesystemRevokeOptions } from './modules/scheduled-tasks/task-filesystem-revoke.js'
-import { registerStorageQuotaStatusRoute, type StorageQuotaStatusOptions } from './modules/admin/storage-quota-status.js'
+import { registerStorageQuotaStatusRoute, type StorageQuotaStatusOptions } from './modules/admin/storage.js'
 import { registerNotificationBroadcastRoute } from './modules/notifications/routes/broadcast.js'
 import type { NotificationBroadcastInput } from '@gugu/core/notifications/broadcast'
 import { registerMcpStatusRoute, type McpStatusOptions } from './modules/mcp/status.js'
@@ -71,10 +78,10 @@ import { registerMcpConnectionTestRoute, type McpConnectionTestOptions } from '.
 import { registerMcpServerListRoute, type McpServerListRouteOptions } from './modules/mcp/server-list.js'
 import { registerMcpRuntimeRoutes, type McpRuntimeRouteOptions } from './modules/mcp/runtime-routes.js'
 import { registerAttentionDefaultsRoute, type AttentionDefaultsOptions } from './modules/im/attention-defaults.js'
-import { registerEmailRecipientCountRoute } from './modules/admin/email-recipient-count.js'
+import { registerEmailRecipientCountRoute } from './modules/admin/email.js'
 import { registerEmbeddingRebuildStatusRoute, type EmbeddingRebuildStatusOptions } from './modules/byok/embedding-rebuild-status.js'
 import { registerEmbeddingRebuildRoute, type EmbeddingRebuildRouteOptions } from './modules/byok/embedding-rebuild.js'
-import { registerAdminEmbeddingRebuildRoutes, type AdminEmbeddingRebuildRouteOptions } from './modules/admin/embedding-rebuild.js'
+import { registerAdminEmbeddingRebuildRoutes, type AdminEmbeddingRebuildRouteOptions } from './modules/admin/embedding.js'
 import { registerAdminIndexRebuildRoute, type AdminIndexRebuildRouteOptions } from './modules/admin/index-rebuild.js'
 import { registerUserBotUnbindRoute, type UserBotUnbindOptions } from './modules/im/user-bot-unbind.js'
 import { registerPortabilityJobReadRoutes } from './modules/data-portability/read-jobs.js'
@@ -88,113 +95,108 @@ import { registerCredentialModelsPreviewRoute, type CredentialModelsPreviewOptio
 import { registerCredentialTestPreviewRoute, type CredentialTestPreviewRouteOptions } from './modules/byok/credential-test-preview.js'
 import { registerByokMediaCapabilityProbeRoute, type ByokMediaProbeOptions } from './modules/byok/media-capability-probe.js'
 import { registerProviderCapabilityPreviewRoute, type ProviderCapabilityPreviewOptions } from './modules/byok/capabilities-preview.js'
-import { registerStorageLiveTotalsRoute } from './modules/admin/storage-live-totals.js'
+import { registerStorageLiveTotalsRoute } from './modules/admin/storage.js'
 import { registerUserSkillDeleteRoute, type UserSkillDeleteOptions } from './modules/skills/user-delete.js'
 import { registerUserSkillListRoute, type UserSkillListOptions } from './modules/skills/user-list.js'
 import { registerUserSkillWriteRoutes, type UserSkillWriteOptions } from './modules/skills/user-write.js'
-import { registerSafeEgressReadRoute } from './modules/admin/safe-egress-read.js'
-import { registerImMemorySummaryRoutes, type ImMemorySummaryOptions } from './modules/admin/im-memory-summary.js'
-import { registerImMemoryMaintenanceApplyRoute } from './modules/admin/im-memory-maintenance-apply.js'
-import { registerImMemoryMaintenancePreviewRoute } from './modules/admin/im-memory-maintenance-preview.js'
-import { registerAdminUserBanRoute, type AdminUserBanOptions } from './modules/admin/user-ban.js'
-import { registerAdminEmailPreviewRoute, type AdminEmailPreviewOptions } from './modules/admin/email-preview.js'
-import { registerSmtpProbeRoute } from './modules/admin/smtp-probe.js'
-import { registerAdminEmailTestRoute } from './modules/admin/email-test.js'
-import { registerAdminEmailPublishRoute, type AdminEmailPublishOperations } from './modules/admin/email-publish.js'
-import { registerAdminEmailTranslateRoute, type AdminEmailTranslateOptions } from './modules/admin/email-translate.js'
+import { registerSafeEgressReadRoute } from './modules/admin/network.js'
+import { registerImMemorySummaryRoutes, type ImMemorySummaryOptions } from './modules/admin/memory.js'
+import { registerImMemoryMaintenanceApplyRoute } from './modules/admin/memory-apply.js'
+import { registerImMemoryMaintenancePreviewRoute } from './modules/admin/memory-preview.js'
+import { registerAdminUserBanRoute, type AdminUserBanOptions } from './modules/admin/users.js'
+import { registerAdminEmailPreviewRoute, type AdminEmailPreviewOptions } from './modules/admin/email.js'
+import { registerSmtpProbeRoute } from './modules/admin/smtp.js'
+import { registerAdminEmailTestRoute } from './modules/admin/email.js'
+import { registerAdminEmailPublishRoute, type AdminEmailPublishOperations } from './modules/admin/email.js'
+import { registerAdminEmailTranslateRoute, type AdminEmailTranslateOptions } from './modules/admin/email.js'
 import { registerAdminPromptRoutes, type AdminPromptOptions } from './modules/admin/prompts.js'
 import { registerLlmStrategyRoute, type LlmStrategyRouteOptions } from './modules/admin/llm-strategy.js'
-import { registerLlmPresetSelectionRoutes, type LlmPresetSelectionOptions } from './modules/admin/llm-preset-selection.js'
-import { registerLlmCapabilityOverrideRoute, type LlmCapabilityOverrideOptions } from './modules/admin/llm-capability-overrides.js'
-import { registerLlmPresetMutationRoutes, type LlmPresetMutationOptions } from './modules/admin/llm-preset-mutations.js'
-import { registerModelDirectoryRoutes, type ModelDirectoryRouteOptions } from './modules/admin/llm-model-directory.js'
-import { registerAdminRecentMisreadRoute, type AdminRecentMisreadOptions } from './modules/admin/perception-recent-misread.js'
-import { registerAdminPerceptionExportRoute, type AdminPerceptionExportOptions } from './modules/admin/perception-export.js'
-import { registerAdminMisreadExportRoute, type AdminMisreadExportOptions } from './modules/admin/perception-misread-export.js'
-import { registerAdminPerceptionStatsRoute, type AdminPerceptionStatsOptions } from './modules/admin/perception-stats.js'
-import { registerAdminOpsSummaryRoute } from './modules/admin/ops-summary.js'
-import { registerAdminFileSyncRunReadRoutes, type AdminFileSyncRunReadOptions } from './modules/filesync/admin-run-read.js'
-import { registerAdminFileSyncRunCancelRoute, type AdminFileSyncRunCancelOptions } from './modules/filesync/admin-run-cancel.js'
-import { registerAdminFileSyncDryRunRoute, type AdminFileSyncDryRunOptions } from './modules/filesync/admin-dry-run.js'
-import { registerAdminFileSyncInitializeRoute, type AdminFileSyncInitializeOptions } from './modules/filesync/admin-initialize.js'
-import { registerWatcherCapacityRoute } from './modules/filesync/watcher-capacity.js'
-import { registerAdminFileSyncEventsRoute, type AdminFileSyncEventsOptions } from './modules/filesync/admin-events.js'
+import { registerLlmPresetSelectionRoutes, type LlmPresetSelectionOptions } from './modules/admin/llm.js'
+import { registerLlmCapabilityOverrideRoute, type LlmCapabilityOverrideOptions } from './modules/admin/llm-probe.js'
+import { registerLlmPresetMutationRoutes, type LlmPresetMutationOptions } from './modules/admin/llm-settings.js'
+import { registerModelDirectoryRoutes, type ModelDirectoryRouteOptions } from './modules/admin/llm.js'
+import { registerAdminRecentMisreadRoute, type AdminRecentMisreadOptions } from './modules/admin/perception.js'
+import { registerAdminPerceptionExportRoute, type AdminPerceptionExportOptions } from './modules/admin/perception.js'
+import { registerAdminMisreadExportRoute, type AdminMisreadExportOptions } from './modules/admin/perception.js'
+import { registerAdminPerceptionStatsRoute, type AdminPerceptionStatsOptions } from './modules/admin/perception.js'
+import { registerAdminOpsSummaryRoute } from './modules/admin/runtime.js'
 import { registerEmbeddingProbeRoute, type createEmbeddingFileProbe } from './modules/admin/embedding-probe.js'
-import { registerAdminMediaProbePreviewRoute, type AdminMediaProbePreview } from './modules/admin/media-probe-preview.js'
-import { registerAdminLlmPresetTestRoute } from './modules/admin/llm-preset-test.js'
-import { registerAdminLlmPresetMediaProbeRoute } from './modules/admin/llm-preset-media-probe.js'
-import { registerAdminLlmPresetReadRoute, type AdminLlmPresetReadOptions } from './modules/admin/llm-preset-read.js'
-import { registerAdminLlmCapabilityProbeRoute } from './modules/admin/llm-capability-probe.js'
-import { registerAdminLlmCapabilityPreviewRoute } from './modules/admin/llm-capabilities-preview.js'
-import { registerAdminEmbeddingRebuildStatusRoute, type AdminEmbeddingRebuildStatusOptions } from './modules/admin/embedding-rebuild-status.js'
-import { registerSafeEgressUpdateRoute, type SafeEgressUpdateOptions } from './modules/admin/safe-egress-update.js'
-import { registerSafeEgressProbeRoute } from './modules/admin/safe-egress-probe.js'
-import { registerSandboxEgressRoutes, type SandboxEgressRouteOptions } from './modules/admin/sandbox-egress.js'
-import { registerSandboxStatusRoute, type SandboxStatusRouteOptions } from './modules/admin/sandbox-status.js'
-import { registerSandboxEnableRoute, type SandboxEnableRouteOptions } from './modules/admin/sandbox-enable.js'
-import { registerSandboxDisableRoute, type SandboxDisableRouteOptions } from './modules/admin/sandbox-disable.js'
+import { registerAdminMediaProbePreviewRoute, type AdminMediaProbePreview } from './modules/admin/llm-probe.js'
+import { registerAdminLlmPresetTestRoute } from './modules/admin/llm-probe.js'
+import { registerAdminLlmPresetMediaProbeRoute } from './modules/admin/llm-probe.js'
+import { registerAdminLlmPresetReadRoute, type AdminLlmPresetReadOptions } from './modules/admin/llm.js'
+import { registerAdminLlmCapabilityProbeRoute } from './modules/admin/llm-probe.js'
+import { registerAdminLlmCapabilityPreviewRoute } from './modules/admin/llm-probe.js'
+import { registerAdminEmbeddingRebuildStatusRoute, type AdminEmbeddingRebuildStatusOptions } from './modules/admin/embedding.js'
+import { registerSafeEgressUpdateRoute, type SafeEgressUpdateOptions } from './modules/admin/network-update.js'
+import { registerSafeEgressProbeRoute } from './modules/admin/network.js'
+import { registerSandboxEgressRoutes, type SandboxEgressRouteOptions } from './modules/admin/sandbox.js'
+import { registerSandboxStatusRoute, type SandboxStatusRouteOptions } from './modules/admin/sandbox.js'
+import { registerSandboxEnableRoute, type SandboxEnableRouteOptions } from './modules/admin/sandbox.js'
+import { registerSandboxDisableRoute, type SandboxDisableRouteOptions } from './modules/admin/sandbox.js'
 import type { SafeEgressReadSettings } from '@gugu/core/preferences/safe-egress'
 import { registerOnboardingResetGuideRoute } from './modules/onboarding/reset-guide.js'
-import { registerSystemLogRoutes, type SystemLogOptions } from './modules/admin/system-logs.js'
+import { registerSystemLogRoutes, type SystemLogOptions } from './modules/admin/logs.js'
 import { registerAdminAnalyticsRoutes, type AdminAnalyticsOptions } from './modules/admin/analytics.js'
-import { registerAdminAuditLogRoute, type AdminAuditLogOptions } from './modules/admin/audit-log.js'
-import { registerAdminUserSettingsRoutes, type AdminUserSettingsOptions } from './modules/admin/user-settings.js'
+import { registerAdminAuditLogRoute, type AdminAuditLogOptions } from './modules/admin/audit.js'
+import { registerAdminUserSettingsRoutes, type AdminUserSettingsOptions } from './modules/admin/users.js'
 import { registerNotificationAdminHistoryRoutes, type NotificationAdminHistoryOptions } from './modules/notifications/routes/admin-history.js'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
 import { requestContext } from '@gugu/core'
 import type { RequestContext } from '@gugu/core'
-import type { WorkspaceBindingOperations } from './domains/workspaces/persistence/workspace-bindings.js'
-import type { WorkspaceDirectoryOperations } from './domains/workspaces/workspace-directories.js'
+import type { WorkspaceBindingOperations } from './modules/workspaces/persistence/workspace-bindings.js'
+import type { WorkspaceDirectoryOperations } from './modules/workspaces/workspace-directories.js'
 import {
   authenticateUser,
   AuthenticationError,
   type PublicUserRecord,
-} from './domains/auth/auth.js'
-import type { UserAuthOptions } from './domains/auth/contracts.js'
+} from './modules/auth/auth.js'
+import type { UserAuthOptions } from './modules/auth/contracts.js'
+import { requiresDataReplacementWriteGate } from '@gugu/core/data-portability/write-gate'
 import { DEFAULT_PUBLIC_SITE_CONFIG, type PublicSiteConfig } from './modules/site/site-config.js'
 import { registerStaticFrontend } from './static.js'
-import { registerCurrentUserRoute, registerLoginRoute } from './domains/auth/routes/auth.js'
-import { registerLogoutRoute } from './domains/auth/routes/auth-logout.js'
-import { registerUserRoute, type RegisterUserRouteOptions } from './domains/auth/routes/auth-register.js'
-import { registerPreferencesRoutes, type PreferencesStore } from './domains/preferences/preferences.js'
+import { registerCurrentUserRoute, registerLoginRoute } from './modules/auth/routes/auth.js'
+import { registerLogoutRoute } from './modules/auth/routes/auth-logout.js'
+import { registerUserRoute, type RegisterUserRouteOptions } from './modules/auth/routes/auth-register.js'
+import { registerPreferencesRoutes, type PreferencesStore } from './modules/preferences/preferences.js'
 import { registerOnboardingRoutes } from './modules/onboarding/onboarding.js'
 import { registerOnboardingReseedRoute } from './modules/onboarding/reseed.js'
 import type { OnboardingStore } from '@gugu/core/onboarding'
 import {
   registerRegistrationCodeRoute,
   type RegistrationCodeRouteOptions,
-} from './domains/auth/routes/auth-registration-code.js'
-import { registerProfileRoute, type ProfileRouteOptions } from './domains/auth/routes/auth-profile.js'
-import { registerPasswordResetRoutes, type PasswordResetRouteOptions } from './domains/auth/password-reset.js'
+} from './modules/auth/routes/auth-registration-code.js'
+import { registerProfileRoute, type ProfileRouteOptions } from './modules/auth/routes/auth-profile.js'
+import { registerPasswordResetRoutes, type PasswordResetRouteOptions } from './modules/auth/password-reset.js'
 import {
   registerEmailChangeUserRoutes,
   registerEmailChangeVerifyRoute,
   type EmailChangeOptions,
-} from './domains/auth/email-change.js'
-import { registerUserQuotaRoute } from './domains/auth/quota.js'
+} from './modules/auth/email-change.js'
+import { registerUserQuotaRoute } from './modules/auth/quota.js'
 import { registerLiveRoutes, type LiveStreamOperations } from './modules/live/live.js'
 import {
   registerUserAvatarReadRoute,
   registerUserAvatarUploadRoute,
   type UserAvatarOperations,
-} from './domains/auth/avatar.js'
+} from './modules/auth/avatar.js'
 import { registerSiteConfigRoute } from './modules/site/routes/site-config.js'
 import { installHttpErrorHandler } from './http/errors.js'
 import { registerAuthenticatedDomain } from './http/authenticated-domain.js'
-import { registerProjectRoutes } from './domains/projects/routes/projects.js'
+import { registerProjectRoutes } from './modules/projects/routes/projects.js'
 import { registerClientRoutes } from './modules/clients/routes/clients.js'
 import { registerEventRoutes } from './modules/calendar/routes/events.js'
-import { registerMindNoteReadRoutes, type MindNoteReadOperations } from './domains/mind/mind-notes-read.js'
-import { registerMindCanvasReadRoutes, type MindCanvasReadOperations } from './domains/mind/mind-canvas-read.js'
+import { registerMindNoteReadRoutes, type MindNoteReadOperations } from './modules/mind/mind-notes-read.js'
+import { registerMindCanvasReadRoutes, type MindCanvasReadOperations } from './modules/mind/mind-canvas-read.js'
 import { registerMindReferenceSuggestRoute, type MindReferenceSuggestOperations } from './modules/mind/ref-suggest.js'
-import { registerMindCanvasMutationRoutes, type MindCanvasMutationOptions } from './domains/mind/routes/mind-canvas-mutations.js'
-import { registerMindCanvasNoteMutationRoutes, type MindCanvasNoteMutationOptions } from './domains/mind/routes/mind-canvas-note-mutations.js'
-import { registerMindCanvasItemMutationRoutes, type MindCanvasItemMutationOptions } from './domains/mind/routes/mind-canvas-item-mutations.js'
-import { registerMindCanvasRelationMutationRoutes, type MindCanvasRelationMutationOptions } from './domains/mind/routes/mind-canvas-relation-mutations.js'
-import { registerMindRefNodeCreateRoute, type MindRefNodeCreateOptions } from './domains/mind/routes/mind-ref-node-create.js'
-import { registerMindNoteCreateRoute, type MindNoteCreateOptions } from './domains/mind/routes/mind-note-create.js'
-import { registerMindNoteMutationRoutes, type MindNoteMutationOptions } from './domains/mind/routes/mind-note-mutations.js'
-import { registerUndoRoutes, type UndoOperations } from './domains/undo/undo.js'
+import { registerMindCanvasMutationRoutes, type MindCanvasMutationOptions } from './modules/mind/routes/mind-canvas-mutations.js'
+import { registerMindCanvasNoteMutationRoutes, type MindCanvasNoteMutationOptions } from './modules/mind/routes/mind-canvas-note-mutations.js'
+import { registerMindCanvasItemMutationRoutes, type MindCanvasItemMutationOptions } from './modules/mind/routes/mind-canvas-item-mutations.js'
+import { registerMindCanvasRelationMutationRoutes, type MindCanvasRelationMutationOptions } from './modules/mind/routes/mind-canvas-relation-mutations.js'
+import { registerMindRefNodeCreateRoute, type MindRefNodeCreateOptions } from './modules/mind/routes/mind-ref-node-create.js'
+import { registerMindNoteCreateRoute, type MindNoteCreateOptions } from './modules/mind/routes/mind-note-create.js'
+import { registerMindNoteMutationRoutes, type MindNoteMutationOptions } from './modules/mind/routes/mind-note-mutations.js'
+import { registerUndoRoutes, type UndoOperations } from './modules/undo/undo.js'
 import { registerScheduledTaskDelete } from './modules/scheduled-tasks/task-delete.js'
 import type { createScheduledTaskDeleter } from '@gugu/core/scheduled-task-delete'
 import { registerScheduledTaskList, type ScheduledTaskList } from './modules/scheduled-tasks/task-list.js'
@@ -206,95 +208,95 @@ import { registerScheduledTaskRunNow, type ScheduledTaskRunNow } from './modules
 import { registerNotificationRoutes } from './modules/notifications/routes/notifications.js'
 import { registerTrackRoute } from './modules/site/routes/track.js'
 import { registerAdminFeedbackRoute, registerFeedbackRoute, type AdminFeedbackOperations } from './modules/feedback/feedback.js'
-import { registerWorkspaceRoutes } from './domains/workspaces/routes/workspaces.js'
-import { registerWorkspaceDirectoryRoutes } from './domains/workspaces/workspace-directories.js'
-import { registerFileBrowserRoutes, type FileBrowserOperations } from './domains/files/browser.js'
-import { registerFolderWriteRoutes, type FolderWriteOperations } from './domains/files/folder-writes.js'
+import { registerWorkspaceRoutes } from './modules/workspaces/routes/workspaces.js'
+import { registerWorkspaceDirectoryRoutes } from './modules/workspaces/workspace-directories.js'
+import { registerFileBrowserRoutes, type FileBrowserOperations } from './modules/files/browser.js'
+import { registerFolderWriteRoutes, type FolderWriteOperations } from './modules/files/folder-writes.js'
 import { registerFolderCopyRoute, type FolderCopyOperations } from './modules/files/folder-copy.js'
 import { registerFolderDeleteRoute, type FolderDeleteOperations } from './modules/files/folder-delete.js'
-import { registerFileReadRoutes, type FileReadOperations } from './domains/files/file-reads.js'
+import { registerFileReadRoutes, type FileReadOperations } from './modules/files/file-reads.js'
 import { registerXlsxPreviewRoutes } from './modules/files/xlsx-preview.js'
 import { registerFileThumbnailRoute } from './modules/files/thumbnail.js'
-import { registerFileDeleteRoutes, type FileDeleteOperations } from './domains/files/file-delete.js'
-import { registerFileRestoreRoutes, type FileRestoreOperations } from './domains/files/file-restore.js'
-import { registerTrashRoutes, type TrashOperations } from './domains/files/trash.js'
-import { registerFileContentRoutes, type FileContentOperations } from './domains/files/file-content.js'
-import { registerFileUpdateRoutes, type FileUpdateOperations } from './domains/files/file-update.js'
-import { registerFileCopyRoutes, type FileCopyOperations } from './domains/files/file-copy.js'
-import { registerFileConflictRoutes, type FileConflictOperations } from './domains/files/file-conflicts.js'
-import { registerFileBatchDownloadRoutes, type FileBatchDownloadOperations } from './domains/files/file-batch-download.js'
-import { registerFileArchiveRoutes, type FileArchiveOperations } from './domains/files/file-archive.js'
+import { registerFileDeleteRoutes, type FileDeleteOperations } from './modules/files/file-delete.js'
+import { registerFileRestoreRoutes, type FileRestoreOperations } from './modules/files/file-restore.js'
+import { registerTrashRoutes, type TrashOperations } from './modules/files/trash.js'
+import { registerFileContentRoutes, type FileContentOperations } from './modules/files/file-content.js'
+import { registerFileUpdateRoutes, type FileUpdateOperations } from './modules/files/file-update.js'
+import { registerFileCopyRoutes, type FileCopyOperations } from './modules/files/file-copy.js'
+import { registerFileConflictRoutes, type FileConflictOperations } from './modules/files/file-conflicts.js'
+import { registerFileBatchDownloadRoutes, type FileBatchDownloadOperations } from './modules/files/file-batch-download.js'
+import { registerFileArchiveRoutes, type FileArchiveOperations } from './modules/files/file-archive.js'
 import { registerGlobalSearchRoute } from './modules/search/search.js'
 import type { GlobalSearchOperations } from '@gugu/core'
-import { registerFolderDownloadRoutes, type FolderDownloadOperations } from './domains/files/folder-download.js'
+import { registerFolderDownloadRoutes, type FolderDownloadOperations } from './modules/files/folder-download.js'
 import {
   installFileUploadSupport,
   registerFileUploadRoutes,
   type FileUploadOperations,
-} from './domains/files/file-upload.js'
-import { registerFolderReadRoutes, type FolderReadOperations } from './domains/files/folder-reads.js'
-import type { AdminAuthAdapter } from './domains/admin/admin-auth.js'
+} from './modules/files/file-upload.js'
+import { registerFolderReadRoutes, type FolderReadOperations } from './modules/files/folder-reads.js'
+import type { AdminAuthAdapter } from './modules/admin/auth.js'
 import { registerAdminUsersRoute, registerAdminUserRiskRoute, type AdminUsersOptions, type AdminUserRiskOptions } from './modules/admin/users.js'
 import {
   registerAdminUserStatusRoutes,
   type AdminUserStatusRouteOptions,
-} from './domains/admin/admin-users.js'
+} from './modules/admin/users.js'
 import {
   registerAdminDebugLogRoutes,
   type AdminDebugLogOptions,
-} from './domains/admin/admin-debug-logs.js'
+} from './modules/admin/logs.js'
 import {
   registerAdminStorageSnapshotsRoute,
   type AdminStorageSnapshotOptions,
-} from './domains/admin/admin-storage-snapshots.js'
+} from './modules/admin/storage.js'
 import {
   registerAdminSecurityEventRoutes,
   type AdminSecurityEventOptions,
-} from './domains/admin/admin-audit-log.js'
+} from './modules/admin/audit.js'
 import {
   registerAdminUserSecurityEventRoute,
   type AdminUserSecurityEventOptions,
-} from './domains/admin/admin-user-security-events.js'
-import { registerAdminAgentUsageRoute, type AgentUsageOptions } from './modules/admin/agent-usage.js'
-import { registerAdminConfigRoutes, type AdminConfigOptions } from './domains/admin/admin-config.js'
-import { registerAdminLlmPresetRoutes, type AdminLlmPresetOptions } from './domains/admin/admin-llm-presets.js'
-import { registerAgentMessageLocationRoute } from './domains/agent-sessions/agent-message-location.js'
-import { registerAgentMessageHistoryRoute } from './domains/agent-sessions/agent-message-history-route.js'
-import type { AgentMessagePageOptions } from './domains/agent-sessions/persistence/agent-message-history.js'
-import { registerAgentInteractionSessionRoute } from './domains/agent-sessions/agent-interaction-session-route.js'
-import { registerAgentInteractionRespondRoute, type AgentInteractionRespondService } from './domains/agent-sessions/agent-interaction-respond.js'
-import { registerAgentSecretInteractionRoutes, type AgentSecretInteractionService } from './domains/agent-sessions/agent-secret-interaction-route.js'
-import { registerAgentSessionRoute } from './domains/agent-sessions/agent-sessions.js'
-import { registerAgentChatRoutes, type AgentChatService } from './domains/agent-sessions/agent-chat-route.js'
-import { registerAgentSessionRefreshRoute } from './domains/agent-sessions/agent-session-refresh.js'
+} from './modules/admin/users.js'
+import { registerAdminAgentUsageRoute, type AgentUsageOptions } from './modules/admin/usage.js'
+import { registerAdminConfigRoutes, type AdminConfigOptions } from './modules/admin/config.js'
+import { registerAdminLlmPresetRoutes, type AdminLlmPresetOptions } from './modules/admin/llm.js'
+import { registerAgentMessageLocationRoute } from './modules/agent-sessions/agent-message-location.js'
+import { registerAgentMessageHistoryRoute } from './modules/agent-sessions/agent-message-history-route.js'
+import type { AgentMessagePageOptions } from './modules/agent-sessions/persistence/agent-message-history.js'
+import { registerAgentInteractionSessionRoute } from './modules/agent-sessions/agent-interaction-session-route.js'
+import { registerAgentInteractionRespondRoute, type AgentInteractionRespondService } from './modules/agent-sessions/agent-interaction-respond.js'
+import { registerAgentSecretInteractionRoutes, type AgentSecretInteractionService } from './modules/agent-sessions/agent-secret-interaction-route.js'
+import { registerAgentSessionRoute } from './modules/agent-sessions/agent-sessions.js'
+import { registerAgentChatRoutes, type AgentChatService } from './modules/agent-sessions/agent-chat-route.js'
+import { registerAgentSessionRefreshRoute } from './modules/agent-sessions/agent-session-refresh.js'
 import {
   registerAgentImportedDraftQueueRoute,
   registerAgentPendingQueueReadRoute,
   type AgentImportedDraftQueueReadOptions,
   type AgentPendingQueueReadOptions,
-} from './domains/agent-sessions/agent-pending-queues.js'
+} from './modules/agent-sessions/agent-pending-queues.js'
 import {
   registerAgentPendingQueueReplaceRoute,
   registerAgentPendingQueuePatchRoute,
   type AgentPendingQueueReplaceRouteOptions,
   type AgentPendingQueuePatchRouteOptions,
-} from './domains/agent-sessions/agent-pending-queue-patch.js'
+} from './modules/agent-sessions/agent-pending-queue-patch.js'
 import {
   registerAgentPendingQueueClaimRoutes,
   type AgentPendingQueueClaimRouteOptions,
-} from './domains/agent-sessions/agent-pending-queue-claims.js'
+} from './modules/agent-sessions/agent-pending-queue-claims.js'
 import {
   registerAgentSessionRenameRoute,
   type RenamedAgentSession,
-} from './domains/agent-sessions/agent-session-rename.js'
-import { registerAgentToolEventDetailsRoute } from './domains/agent-sessions/agent-tool-event-details.js'
-import { registerAgentMiscRoutes, type AgentMiscRoutesOptions } from './domains/agent-sessions/agent-misc.js'
+} from './modules/agent-sessions/agent-session-rename.js'
+import { registerAgentToolEventDetailsRoute } from './modules/agent-sessions/agent-tool-event-details.js'
+import { registerAgentMiscRoutes, type AgentMiscRoutesOptions } from './modules/agent-sessions/agent-misc.js'
 import {
   registerAgentFilesystemAuthorizationRoutes,
   type AgentFilesystemAuthorizationRouteOptions,
-} from './domains/agent-sessions/agent-filesystem-authorization-route.js'
+} from './modules/agent-sessions/agent-filesystem-authorization-route.js'
 
-export type { UserAuthOptions } from './domains/auth/contracts.js'
+export type { UserAuthOptions } from './modules/auth/contracts.js'
 
 export interface AuthenticatedWebUser extends PublicUserRecord {
   readonly requestContext: RequestContext
@@ -482,6 +484,10 @@ export interface WebUiOptions {
   dataExportDownload?: DataExportDownloadOptions
   cancelDataExport?: ReturnType<typeof createDataExportCanceler>
   deleteDataExport?: ReturnType<typeof createDataExportDeleter>
+  deleteDataImport?: ReturnType<typeof createDataImportDeleter>
+  cancelDataImport?: ReturnType<typeof createDataImportCanceler>
+  preflightDataImport?: DataImportPreflightRouteOptions['preflight']
+  cleanupDataImportStaging?: (ownerId:string,jobId:string,stagingKey:string)=>Promise<void>
   portabilityJobs?: ReturnType<typeof createPortabilityJobReader>
   userBotBindingCode?: Omit<UserBotBindingCodeOptions, 'requireUser' | 'ownerIdFromRequest'>
   userBotUnbind?: Omit<UserBotUnbindOptions, 'requireUser' | 'ownerIdFromRequest'>
@@ -555,12 +561,6 @@ export interface WebUiOptions {
   adminMisreadExport?: Omit<AdminMisreadExportOptions, 'requireAdmin'>
   adminPerceptionStats?: Omit<AdminPerceptionStatsOptions, 'requireAdmin'>
   adminOpsSummary?: Omit<Parameters<typeof registerAdminOpsSummaryRoute>[1], 'requireAdmin'>
-  adminFileSyncRunRead?: Omit<AdminFileSyncRunReadOptions, 'requireAdmin'>
-  adminFileSyncRunCancel?: Omit<AdminFileSyncRunCancelOptions, 'requireAdmin'>
-  adminFileSyncDryRun?: Omit<AdminFileSyncDryRunOptions, 'requireAdmin'>
-  adminFileSyncInitialize?: Omit<AdminFileSyncInitializeOptions, 'requireAdmin'>
-  watcherCapacity?: Omit<Parameters<typeof registerWatcherCapacityRoute>[1], 'requireAdmin'>
-  adminFileSyncEvents?: Omit<AdminFileSyncEventsOptions, 'requireAdmin'>
   adminEmbeddingProbe?: { probe: ReturnType<typeof createEmbeddingFileProbe> }
   adminMediaProbePreview?: { probe: AdminMediaProbePreview }
   adminLlmPresetTest?: { test(id: string): Promise<LlmPresetTestResult> }
@@ -613,6 +613,17 @@ async function authenticateRequest(
         : undefined,
     }, auth.secret, auth.lookupUser)
     await auth.markUserActive?.(user.id)
+    if (auth.isDataReplacementWriteLocked && requiresDataReplacementWriteGate(request.method, request.url.split('?', 1)[0] ?? '')) {
+      try {
+        if (await auth.isDataReplacementWriteLocked(user.id)) {
+          reply.code(423).header('Retry-After', '5').send({ detail: '账号正在替换用户数据，暂时不能修改；请稍后重试' })
+          return null
+        }
+      } catch {
+        reply.code(503).send({ detail: '账号状态暂不可用，请稍后重试' })
+        return null
+      }
+    }
     return {
       ...user,
       requestContext: requestContext({
@@ -778,6 +789,28 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
       requireUser: async request => { void userFromRequest(request) },
       ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
     } satisfies DataExportDeleteOptions))
+  }
+  if (options.deleteDataImport) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerDataImportDeleteRoute(routes, {
+      remove: options.deleteDataImport!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
+    } satisfies DataImportDeleteOptions))
+  }
+  if (options.cancelDataImport && options.cleanupDataImportStaging && options.portabilityJobs) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerDataImportCancelRoute(routes, {
+      cancel: options.cancelDataImport!,
+      cleanup: options.cleanupDataImportStaging!,
+      read: options.portabilityJobs!.getImport,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
+    } satisfies DataImportCancelOptions))
+  }
+  if (options.preflightDataImport && options.portabilityJobs) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerDataImportPreflightRoute(routes, {
+      preflight: options.preflightDataImport!,
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
+    }))
   }
   if (options.portabilityJobs) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => registerPortabilityJobReadRoutes(routes, userFromRequest, options.portabilityJobs!))
@@ -1671,12 +1704,6 @@ export function createApp(options: WebUiOptions) {
   if (options.adminAuth && options.adminMisreadExport) registerAdminMisreadExportRoute(app, { ...options.adminMisreadExport, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.adminPerceptionStats) registerAdminPerceptionStatsRoute(app, { ...options.adminPerceptionStats, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.adminOpsSummary) registerAdminOpsSummaryRoute(app, { ...options.adminOpsSummary, requireAdmin: options.adminAuth.requireAdmin })
-  if (options.adminAuth && options.adminFileSyncRunRead) registerAdminFileSyncRunReadRoutes(app, { ...options.adminFileSyncRunRead, requireAdmin: options.adminAuth.requireAdmin })
-  if (options.adminAuth && options.adminFileSyncRunCancel) registerAdminFileSyncRunCancelRoute(app, { ...options.adminFileSyncRunCancel, requireAdmin: options.adminAuth.requireAdmin })
-  if (options.adminAuth && options.adminFileSyncDryRun) registerAdminFileSyncDryRunRoute(app, { ...options.adminFileSyncDryRun, requireAdmin: options.adminAuth.requireAdmin })
-  if (options.adminAuth && options.adminFileSyncInitialize) registerAdminFileSyncInitializeRoute(app, { ...options.adminFileSyncInitialize, requireAdmin: options.adminAuth.requireAdmin })
-  if (options.adminAuth && options.watcherCapacity) registerWatcherCapacityRoute(app, { ...options.watcherCapacity, requireAdmin: options.adminAuth.requireAdmin })
-  if (options.adminAuth && options.adminFileSyncEvents) registerAdminFileSyncEventsRoute(app, { ...options.adminFileSyncEvents, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.adminEmbeddingProbe) registerEmbeddingProbeRoute(app, { ...options.adminEmbeddingProbe, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.adminMediaProbePreview) registerAdminMediaProbePreviewRoute(app, { ...options.adminMediaProbePreview, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.adminLlmPresetTest) registerAdminLlmPresetTestRoute(app, { ...options.adminLlmPresetTest, requireAdmin: options.adminAuth.requireAdmin })

@@ -6,6 +6,14 @@
 
 ## 按日期浏览
 
+### 2026-11-19
+
+- [Admin 管理能力归入 Web Host](./2026-11-19-Admin管理能力归入WebHost.md)
+
+- [Admin 共享数据与任务编排](./2026-11-19-Admin共享数据与任务编排.md)
+
+- [Web Host Admin 功能整理](./2026-11-19-Web-Host-Admin功能整理.md)
+
 ### 2026-11-18
 
 - [Node 定时任务 Telegram 结果投递](./2026-11-18-Node定时任务Telegram结果投递.md)

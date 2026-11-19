@@ -4,7 +4,7 @@ import test from 'node:test'
 import {
   createFilesystemAuthorizationConfirmationStore,
   type FilesystemAuthorizationRedisCommands,
-} from '../../src/domains/agent-sessions/filesystem-authorization-confirmations.js'
+} from '../../src/modules/agent-sessions/filesystem-authorization-confirmations.js'
 import { createTerminalConfirmationGate } from '../../src/modules/terminals/confirmation.js'
 
 class MemoryConfirmationRedis implements FilesystemAuthorizationRedisCommands {

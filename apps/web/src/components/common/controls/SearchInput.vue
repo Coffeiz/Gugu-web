@@ -1,5 +1,5 @@
 <template>
-  <div class="search-input" :class="{ active, 'no-focus-ring': noFocusRing }">
+  <div class="search-input" :class="{ active }">
     <Icon name="action.search" class="search-input-icon" :size="15" />
     <input
       ref="inputEl"
@@ -31,7 +31,6 @@ defineProps({
   ariaLabel: { type: String, default: '' },
   active: { type: Boolean, default: false },
   clearable: { type: Boolean, default: false },
-  noFocusRing: { type: Boolean, default: false },
 })
 const emit = defineEmits(['update:modelValue', 'focus', 'blur', 'compositionstart', 'compositionend', 'keydown', 'clear'])
 const inputEl = ref<HTMLInputElement | null>(null)
@@ -52,8 +51,7 @@ defineExpose({ focus: () => inputEl.value?.focus() })
   box-sizing:border-box; padding:0 12px; color:var(--input-fg); background:var(--input-bg); border:1px solid var(--input-border);
   border-radius:var(--control-radius); transition:background var(--motion-fast),border-color var(--motion-fast),box-shadow var(--motion-fast);
 }
-.search-input:focus-within, .search-input.active { background:var(--input-bg-focus); border-color:var(--input-border-focus); box-shadow:var(--input-focus-shadow); }
-.search-input.no-focus-ring:focus-within, .search-input.no-focus-ring.active { box-shadow:none; }
+.search-input:focus-within, .search-input.active { background:var(--input-bg-focus); border-color:var(--input-border-focus); }
 .search-input-icon { flex:0 0 auto; }
 .search-input:focus-within .search-input-icon, .search-input.active .search-input-icon { color:var(--action-primary); }
 .search-input-field {

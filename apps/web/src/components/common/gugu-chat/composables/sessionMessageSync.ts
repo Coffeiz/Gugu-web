@@ -96,6 +96,7 @@ export function mapSessionMessageDelta(
         toolDetailsAvailable: event.detailsAvailable,
         _toolDetailsSource: event.detailSource,
         toolDurationMs: event.toolDurationMs,
+        toolStartedAt: typeof event.toolStartedAt === 'string' ? event.toolStartedAt : undefined,
         time: displayTime(event.createdAt), _timelineOrder: event.timelineOrder,
         _createdAt: event.createdAt, _updatedAt: event.updatedAt,
         _syncKey: displayEventKey(event),

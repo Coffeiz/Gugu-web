@@ -26,7 +26,6 @@
   --mind-calendar-trigger-shadow-hover: none;
   --mind-calendar-trigger-bg-open: rgba(255,255,255,.75);
   --mind-calendar-trigger-border-open: rgba(255,255,255,.90);
-  --mind-calendar-trigger-shadow-open: none;
   --mind-calendar-trigger-icon: var(--color-primary);
 
   /* Legacy light paper values from the original Notes/Canvas implementation. */
@@ -38,8 +37,7 @@
   --note-highlight: rgba(255,255,255,.9);
   --note-shadow: var(--card-shadow);
   --note-shadow-hover: var(--card-shadow-hover);
-  --mind-note-border-selected: var(--action-outline);
-  --mind-note-shadow-selected: 0 0 0 2px var(--selection-bg), var(--elevation-card);
+  --mind-note-border-selected: var(--border-focus);
   --note-divider: color-mix(in srgb,var(--content-primary) 10%,transparent);
   --note-hover-overlay: var(--card-hover-overlay);
   --note-new-highlight: color-mix(in srgb,var(--action-primary) 20%,var(--note-surface));
@@ -93,7 +91,6 @@ html[data-family='mono'] {
   --mind-calendar-trigger-shadow-hover: var(--input-hover-shadow);
   --mind-calendar-trigger-bg-open: var(--input-bg-focus);
   --mind-calendar-trigger-border-open: var(--input-border-focus);
-  --mind-calendar-trigger-shadow-open: var(--input-focus-shadow);
 }
 
 html[data-theme='dark'][data-family] {
@@ -110,7 +107,6 @@ html[data-theme='dark'][data-family] {
   --mind-calendar-trigger-shadow-hover: var(--input-hover-shadow);
   --mind-calendar-trigger-bg-open: var(--input-bg-focus);
   --mind-calendar-trigger-border-open: var(--input-border-focus);
-  --mind-calendar-trigger-shadow-open: var(--input-focus-shadow);
 
   --note-highlight: var(--border-highlight);
 

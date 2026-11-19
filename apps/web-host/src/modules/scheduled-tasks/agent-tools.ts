@@ -4,9 +4,8 @@ import type { SqlDataRuntime } from '@gugu/core/data'
 import { createScheduledTaskGroupScopeVerifier, createScheduledTaskRunToolPorts } from '@gugu/core/scheduled-task-run-now'
 import { createKyselyScheduledTaskRunNowReader, hasScheduledEmailAuthorization, type ScheduledTaskExecutionPlan } from '@gugu/core/scheduled-task-run-now-read'
 import { createKyselyScheduledTaskReader, createScheduledTaskQueries } from '@gugu/core/scheduled-task-list'
-import { createSkillMetadataReader, type BuiltinSkillDefinition } from '@gugu/core/skills'
+import { createAgentSkillRuntimePorts, createSkillMetadataReader, type BuiltinSkillDefinition } from '@gugu/core/skills'
 import { createUserSkillReader } from '@gugu/core/agent/skills/user-body'
-import { createWebAgentSkillProductionPorts } from '../../domains/agent-sessions/tools/agent-skill-production-ports.js'
 import { createClientTools, createListEventsTool, createListProjectsTool, createListScheduledTasksTool,
   createSkillManagementReadTools, createTimeTool, createUpcomingTool, createUseSkillTool,
   type AgentEmailAutomationClaim, type ToolDefinition } from '@gugu/core/tools'
@@ -60,7 +59,7 @@ export function createWebScheduledTaskToolResources(options: {
       if (!await isCurrent()) throw new Error('定时任务工具授权已失效')
     }
     if (skillCatalog && skillMetadata) {
-      const skills = await createWebAgentSkillProductionPorts({
+      const skills = await createAgentSkillRuntimePorts({
         ...skillCatalog, ownerId, listUser: skillMetadata, readUser: readSkill,
       })
       enabled.push(createUseSkillTool(skills), ...createSkillManagementReadTools(skillMetadata))

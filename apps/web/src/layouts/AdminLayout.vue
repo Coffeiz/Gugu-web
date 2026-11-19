@@ -69,10 +69,6 @@
           <Icon name="admin.gauge" size="sm" />
           {{ t('admin.ops') }}
         </div>
-        <div class="nav-item" :class="{ active: isActive('/storage-audit') }" role="link" tabindex="0" @click="go('/storage-audit')">
-          <Icon name="admin.folder" size="sm" />
-          {{ t('admin.storageAudit') }}
-        </div>
         <div class="nav-item" :class="{ active: isActive('/storage-monitor') }" role="link" tabindex="0" @click="go('/storage-monitor')">
           <Icon name="admin.analytics" size="sm" />
           {{ t('admin.storageMonitor') }}

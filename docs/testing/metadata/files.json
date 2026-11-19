@@ -2,7 +2,7 @@
   "apps/web-host/tests/files/file-upload-postgres.test.ts": {
     "domain": "file-upload",
     "layer": "L2",
-    "owner": "apps/web-host/src/domains/files",
+    "owner": "apps/web-host/src/modules/files",
     "productionEntry": "共享 Local 上传与 Web Agent 下载端口",
     "keyBehavior": "隔离 PostgreSQL 与 Local 文件验证覆盖、配额、工作区落点与变更拒绝；下载提交断连后保留已提交或已替换文件、清理可证实的回滚残留，恢复读取失败时保留证据",
     "ci": "node-webui"
@@ -11,7 +11,7 @@
     "domain": "files",
     "layer": "L1",
     "owner": "packages/core/src/files/read.ts",
-    "productionEntry": "apps/web-host/src/domains/files/file-reads-postgres.ts",
+    "productionEntry": "apps/web-host/src/modules/files/file-reads-postgres.ts",
     "keyBehavior": "受控根相对路径读取、越界与符号链接拒绝及系统错误传播",
     "ci": "node-webui"
   },
@@ -26,7 +26,7 @@
   "apps/web-host/tests/files/file-reads-postgres-integration.test.ts": {
     "domain": "files",
     "layer": "L2",
-    "owner": "apps/web-host/src/domains/files/file-reads-postgres.ts",
+    "owner": "apps/web-host/src/modules/files/file-reads-postgres.ts",
     "productionEntry": "apps/web-host/src/modules/files/thumbnail.ts",
     "keyBehavior": "owner-scoped PostgreSQL 文件元数据与 Local 图片读取的隔离集成用例",
     "ci": "node-webui"
@@ -106,15 +106,15 @@
   "apps/web-host/tests/files/trash-purge-worker-postgres.test.ts": {
     "domain": "trash",
     "layer": "L2",
-    "owner": "apps/web-host/src/domains/files",
-    "productionEntry": "apps/web-host/src/domains/files/persistence/trash-purge-worker-postgres.ts",
+    "owner": "apps/web-host/src/modules/files",
+    "productionEntry": "apps/web-host/src/modules/files/trash-purge-worker-postgres.ts",
     "keyBehavior": "隔离 PG 回收站清理任务租约竞争、接管和 owner 条件进度",
     "ci": "web-host-node"
   },
   "apps/web-host/tests/files/file-update-commit-unknown.test.ts": {
     "domain": "files",
     "layer": "L2",
-    "owner": "apps/web-host/src/domains/files/file-update-postgres.ts",
+    "owner": "apps/web-host/src/modules/files/file-update-postgres.ts",
     "productionEntry": "Web Host PostgreSQL 文件更新操作",
     "keyBehavior": "COMMIT响应丢失后通过新连接核实提交状态并保持数据库路径与物理文件一致",
     "ci": "node-webui"
@@ -141,6 +141,22 @@
     "owner": "packages/core/src/undo/file-adapter.ts + apps/web-host/src/modules/files/undo-storage.ts",
     "productionEntry": "apps/web-host/src/main.ts → authenticated Undo route → Core SQLite/PostgreSQL transaction → safe local file replacement",
     "keyBehavior": "合成用户正文 Undo/redo 恢复正文和版本、隔离异主、数据库失败时回滚本地文件替换",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/files/undo-retention-postgres.test.ts": {
+    "domain": "files",
+    "layer": "L2",
+    "owner": "apps/web-host/src/maintenance/undo-retention.ts + packages/core/src/undo/state-machine.ts",
+    "productionEntry": "apps/web-host/src/main.ts → Undo 保留 Worker → PostgreSQL 与 Local artifact storage",
+    "keyBehavior": "清理到期和 redo 分支正文，回收历史错位操作目录；存储失败保留引用并允许重试",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/files/undo-retention-storage.test.ts": {
+    "domain": "files",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/files/undo-retention-storage.ts",
+    "productionEntry": "Undo 保留 Worker → owner-scoped Local artifact 目录",
+    "keyBehavior": "限定 owner 和操作目录，拒绝路径穿越及符号链接逃逸，删除不越出存储根",
     "ci": "node-webui"
   }
 }

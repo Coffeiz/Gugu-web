@@ -1,8 +1,8 @@
 import type { IncomingMessage, Server } from 'node:http'
 import type { TLSSocket } from 'node:tls'
 import { WebSocket, WebSocketServer, type RawData } from 'ws'
-import { authenticateUser } from '../../domains/auth/auth.js'
-import type { UserAuthOptions } from '../../domains/auth/contracts.js'
+import { authenticateUser } from '../auth/auth.js'
+import type { UserAuthOptions } from '../../modules/auth/contracts.js'
 import type { TerminalListItem } from '@gugu/core/terminals/list'
 
 export type PtySession = { handle: { pid: number; sandboxId: string }; cols: number; rows: number; workspaceId: number | null }

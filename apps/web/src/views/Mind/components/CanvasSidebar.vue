@@ -31,9 +31,7 @@
       :class="{ 'is-visible': visiblePanel === 'canvases' && contentVisible }"
     >
         <section class="cd-content-panel canvas-panel" :class="contentPanelClass('canvases')" :aria-hidden="visiblePanel !== 'canvases'">
-          <DrawerTrack class="canvas-track" data-drawer-scroll="canvases">
-            <CanvasDrawerContent :canvases="canvases" :active-id="activeId" :rename="props.renameCanvas" @create="emit('create')" @open="onOpen" @delete="onDelete" @delete-many="onDeleteMany" />
-          </DrawerTrack>
+          <CanvasDrawerContent :canvases="canvases" :active-id="activeId" :rename="props.renameCanvas" @create="emit('create')" @open="onOpen" @delete="onDelete" @delete-many="onDeleteMany" />
         </section>
     </DrawerViewport>
 
@@ -46,7 +44,7 @@
        <section class="cd-content-panel projects-panel" :class="contentPanelClass('projects')" :aria-hidden="visiblePanel !== 'projects'">
          <div ref="projectListRef" class="cd-list project-list">
            <DrawerTrack class="project-list-scroll" data-drawer-scroll="projects">
-           <SearchInput v-model="projectQuery" class="project-search" data-scrollbar-inset-header :placeholder="t('mindUi.filterProjects')" :no-focus-ring="true" @pointerdown.stop />
+           <SearchInput v-model="projectQuery" class="project-search" data-scrollbar-inset-header :placeholder="t('mindUi.filterProjects')" @pointerdown.stop />
            <div v-if="projectsLoading && !projects.length" class="project-skeletons" aria-hidden="true">
               <span v-for="index in 3" :key="index" class="project-skeleton"></span>
             </div>
@@ -336,10 +334,9 @@ onMounted(() => {
 .cd-content-panel { position: relative; width: 100%; opacity: 0; filter: blur(6px); pointer-events: none; transition: opacity .35s cubic-bezier(.22,1,.36,1), filter .35s cubic-bezier(.22,1,.36,1); }
 .cd-content-panel:not(.visible) { overflow: hidden; }
 .cd-content-panel.visible { opacity: 1; filter: blur(0); pointer-events: auto; }
-.canvas-panel { width: 190px; }
+.canvas-panel { display: flex; flex-direction: column; width: 190px; }
 .projects-panel { width: 284px; }
 .cd-list { box-sizing: border-box; max-height: none; overflow: visible; padding: 0 9px 9px; }
-.canvas-list { width: 190px; }
 .project-list { display: flex; flex-direction: column; width: 284px; height: 100%; min-height: 0; gap: 0; }
 .project-list-scroll { flex: 1 1 auto; max-height: none; overflow-y: auto; min-height: 0; padding-bottom: 9px; scrollbar-gutter: auto; }
 
@@ -359,7 +356,6 @@ onMounted(() => {
   background: var(--surface-canvas-card);
   pointer-events: none;
 }
-.canvas-track[data-drawer-scroll] { height: 100%; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: auto; }
 .project-groups, .project-group-cards { display: flex; flex-direction: column; gap: 6px; }
 .project-groups { gap: 9px; }
 .project-group { display: flex; flex-direction: column; gap: 0; }

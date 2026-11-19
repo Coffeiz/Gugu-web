@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { registerAdminUpdateStatusRoute } from '../../src/modules/admin/update-status.js'
+import { registerAdminUpdateStatusRoute } from '../../src/modules/admin/runtime.js'
 
 test('更新状态需要管理员认证，并明确提示由部署管理器手动更新', async () => {
   const app = Fastify()

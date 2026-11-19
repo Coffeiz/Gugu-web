@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
-import { RouterView, useRoute, useRouter } from 'vue-router'
+import { computed, onMounted, ref, watch } from 'vue'
+import { isNavigationFailure, NavigationFailureType, RouterView, useRoute, useRouter } from 'vue-router'
 import { desktopData, DesktopBridgeError } from '@/desktop/bridge'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import type { SandboxStatus } from '@/desktop/bridge'
 import type { DesktopOnboardingState } from '@gugu/core/desktop'
 import { applyThemePalette, useTheme, type ThemePalette } from '@/composables/core/useTheme'
+import { showAppError } from '@/composables/core/useAppToast'
 import ProjectsPage from '../projects/index.vue'
 import WorkbenchPage from '../workbench/index.vue'
 import ContactsPage from '../contacts/index.vue'
@@ -46,7 +47,7 @@ const sandboxMessage = ref('')
 const onboarding = ref<DesktopOnboardingState | null>(null)
 const pendingOperation = ref('')
 const contentArea = ref<HTMLElement | null>(null)
-const activeSection = ref('home')
+const activeSection = computed(() => String(route.name ?? 'home'))
 const { width: sidebarWidth, compact: sidebarCompact, restore: restoreSidebar, startResize: startSidebarResize, resize: resizeSidebar, finishResize: finishSidebarResize, handleResizeKeydown, minWidth: sidebarMinWidth, maxWidth: sidebarMaxWidth } = useDesktopSidebar()
 const PENDING_OPERATION_KEY = 'gugu.desktop.pending-operation'
 const contactsPanel = useDesktopContacts(perform, refresh)
@@ -54,14 +55,14 @@ const calendarPanel = useDesktopCalendar(perform)
 const { clients, clientName, editingClient, editedClientName } = contactsPanel
 const { calendar, calendarHistory } = calendarPanel
 
-function navigateTo(section: string) {
-  if (section === 'notes' || section === 'canvases') {
-    void router.push(`/${section}`)
-  }
-  activeSection.value = section
-  if (contentArea.value) contentArea.value.scrollTop = 0
-  if (section === 'calendar' && connected.value) {
-    void perform(calendarPanel.refresh)
+async function navigateTo(section: string, query?: { object_id: string }) {
+  try {
+    const failure = await router.push({ name: section, query })
+    if (isNavigationFailure(failure, NavigationFailureType.duplicated) && section === 'calendar' && connected.value) {
+      void perform(calendarPanel.refresh)
+    }
+  } catch {
+    showAppError('页面加载失败，请重试')
   }
 }
 
@@ -75,7 +76,7 @@ function moveCalendarProject(id: number, range: { start: string; end: string }) 
 }
 
 function openCalendarNote(id: number) {
-  void router.push({ path: '/notes', query: { object_id: String(id) } })
+  void navigateTo('notes', { object_id: String(id) })
 }
 
 async function perform(action: () => Promise<void>) {
@@ -100,10 +101,10 @@ async function refresh() {
   connected.value = true
 }
 
-watch(() => route.path, path => {
-  if (path === '/notes') activeSection.value = 'notes'
-  else if (path === '/canvases') activeSection.value = 'canvases'
-}, { immediate: true })
+watch(activeSection, section => {
+  if (contentArea.value) contentArea.value.scrollTop = 0
+  if (section === 'calendar' && connected.value) void perform(calendarPanel.refresh)
+})
 
 async function recoverPendingOperation() {
   if (!pendingOperation.value) return

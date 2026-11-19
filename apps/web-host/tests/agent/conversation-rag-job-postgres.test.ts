@@ -8,9 +8,9 @@ import { tablesSql } from '@gugu/core/data'
 import { enqueueMissingAgentRagBaselines } from '../../../../packages/core/src/agent/rag/rebuild-worker.js'
 import { enqueueCalendarRagIndex } from '../../../../packages/core/src/calendar/create-store.js'
 import { enqueueMindRagIndex } from '../../../../packages/core/src/mind/rag-index-job.js'
-import { createProjectPostCommitPublisher } from '../../src/domains/projects/persistence/project-post-commit-postgres.js'
+import { createProjectPostCommitPublisher } from '../../src/modules/projects/persistence/project-post-commit-postgres.js'
 import { withPostgresTransaction } from '../../src/adapters/postgres-transaction.js'
-import { enqueuePostgresAgentRagRebuild } from '../../src/domains/agent-sessions/persistence/agent-rag-job-postgres.js'
+import { enqueuePostgresAgentRagRebuild } from '../../src/modules/agent-sessions/persistence/agent-rag-job-postgres.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const schema = `gugu_conversation_rag_${randomUUID().replaceAll('-', '')}`

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { registerSafeEgressReadRoute } from '../../src/modules/admin/safe-egress-read.js'
+import { registerSafeEgressReadRoute } from '../../src/modules/admin/network.js'
 
 function setup(authorized = true) {
   let reads = 0

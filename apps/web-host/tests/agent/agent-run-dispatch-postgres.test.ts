@@ -3,9 +3,9 @@ import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { Pool } from 'pg'
 import { withPostgresTransaction } from '../../src/adapters/postgres-transaction.js'
-import { lockAgentRunSession } from '../../src/domains/agent-sessions/persistence/agent-run-startup-postgres.js'
-import { createPostgresAgentDispatch, enqueueAgentRunLocked } from '../../src/domains/agent-sessions/persistence/agent-run-dispatch-postgres.js'
-import { createPostgresAgentRunLeasePort } from '../../src/domains/agent-sessions/persistence/agent-run-lease-postgres.js'
+import { lockAgentRunSession } from '../../src/modules/agent-sessions/persistence/agent-run-startup-postgres.js'
+import { createPostgresAgentActiveStatusReader, createPostgresAgentDispatch, enqueueAgentRunLocked } from '../../src/modules/agent-sessions/persistence/agent-run-dispatch-postgres.js'
+import { createPostgresAgentRunLeasePort } from '../../src/modules/agent-sessions/persistence/agent-run-lease-postgres.js'
 
 test('聊天运行定位限定 owner，区分不存在、空闲及运行中会话', async () => {
   let rows: Array<{ run_id: string | null }> = []
@@ -20,30 +20,64 @@ test('聊天运行定位限定 owner，区分不存在、空闲及运行中会�
   assert.deepEqual(calls, [['owner-a', 1], ['owner-a', 1], ['owner-a', 1]])
   await assert.rejects(dispatch.active('owner-a', 0))
 })
+
+test('外部暂存前的 lease 检查绑定 owner、run、token 和 fencing 值', async () => {
+  let rowCount = 1
+  const calls: unknown[][] = []
+  const pool = { async query(_sql: string, args: unknown[]) { calls.push(args); return { rows: [], rowCount } } }
+  const dispatch = createPostgresAgentDispatch(pool as never, 'synthetic-key')
+  const lease = { identity: { ownerId: 'owner-a', sessionId: '4', runId: 'run-a' }, token: 'lease-token', fence: 7,
+    input: { v: 2, source: 'web' } } as never
+  assert.equal(await dispatch.isCurrent(lease), true)
+  assert.deepEqual(calls, [['owner-a', 4, 'run-a', 'lease-token', 7]])
+  rowCount = 0
+  assert.equal(await dispatch.isCurrent(lease), false)
+  assert.equal(calls.length, 2)
+  assert.equal(await dispatch.isCurrent({ ...lease, fence: 0 }), false)
+  assert.equal(calls.length, 2)
+})
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const interactionTables = `CREATE TABLE agent_run_interaction_receipts(user_id uuid,session_id integer,run_id text,receipt text,created_at timestamptz DEFAULT clock_timestamp(),PRIMARY KEY(user_id,session_id,run_id,receipt));
       CREATE TABLE interaction_prompts(id integer PRIMARY KEY,user_id uuid,session_id integer,kind text,schema_json jsonb,status text,expires_at timestamptz);
       CREATE TABLE agent_interaction_resumes(user_id uuid,session_id integer,run_id text,prompt_id integer,interaction_id text,receipt text,created_at timestamptz,completed_at timestamptz,claim_token text,claim_expires_at timestamptz,PRIMARY KEY(user_id,session_id,run_id,prompt_id));`
 
 
-test('运行定位优先当前运行和选中队列，再恢复等待交互，并隔离 owner', { skip: !url && '需要隔离 PostgreSQL' }, async () => {
+test('刷新时的活跃状态与 SSE 运行定位一致，并隔离 owner', { skip: !url && '需要隔离 PostgreSQL' }, async () => {
   const schema = `active_${randomUUID().replaceAll('-', '')}`, admin = new Pool({ connectionString: url })
   await admin.query(`CREATE SCHEMA "${schema}"`)
   const pool = new Pool({ connectionString: url, options: `-c search_path=${schema}` })
   try {
     await pool.query(`CREATE TABLE conversation_sessions(id integer PRIMARY KEY,user_id uuid,active_run_id text);
       CREATE TABLE agent_run_dispatch(user_id uuid,session_id integer,run_id text,state text);
-      CREATE TABLE agent_run_checkpoints(user_id uuid,session_id integer,run_id text,status text,updated_at timestamptz)`)
+      CREATE TABLE agent_run_checkpoints(user_id uuid,session_id integer,run_id text,status text,updated_at timestamptz,sequence bigint DEFAULT 6);
+      CREATE TABLE agent_interaction_resumes(user_id uuid,session_id integer,run_id text,completed_at timestamptz)`)
     const owner = randomUUID(), other = randomUUID(), dispatch = createPostgresAgentDispatch(pool, 'synthetic-key')
-    await pool.query('INSERT INTO conversation_sessions VALUES (1,$1,NULL)', [owner])
+    const readActiveStatuses = createPostgresAgentActiveStatusReader(pool)
+    await pool.query('INSERT INTO conversation_sessions VALUES (1,$1,NULL),(2,$2,NULL)', [owner, other])
+    assert.deepEqual(await readActiveStatuses([1, 2, 3], owner), new Map([[1, false]]))
     assert.equal(await dispatch.active(other, 1), null)
     assert.deepEqual(await dispatch.active(owner, 1), { identity: null })
-    await pool.query("INSERT INTO agent_run_checkpoints VALUES ($1,1,'waiting','waiting',clock_timestamp())", [owner])
+    await pool.query("INSERT INTO agent_run_checkpoints (user_id,session_id,run_id,status,updated_at) VALUES ($1,1,'waiting','waiting',clock_timestamp())", [owner])
     assert.equal((await dispatch.active(owner, 1))?.identity?.runId, 'waiting')
+    assert.equal((await readActiveStatuses([1], owner)).get(1), true)
+    const waiting = { ownerId: owner, sessionId: '1', runId: 'waiting' }
+    assert.deepEqual(await dispatch.readStreamCheckpoint(waiting), { status: 'waiting', sequence: 6 })
+    await pool.query("INSERT INTO agent_interaction_resumes VALUES ($1,1,'waiting',NULL)", [owner])
+    assert.deepEqual(await dispatch.readStreamCheckpoint(waiting), { status: 'running', sequence: 6 })
     await pool.query("INSERT INTO agent_run_dispatch VALUES ($1,1,'selected','selected')", [owner])
     assert.equal((await dispatch.active(owner, 1))?.identity?.runId, 'selected')
+    assert.equal((await readActiveStatuses([1], owner)).get(1), true)
     await pool.query("UPDATE conversation_sessions SET active_run_id='running' WHERE id=1")
     assert.equal((await dispatch.active(owner, 1))?.identity?.runId, 'running')
+    await pool.query("UPDATE agent_run_checkpoints SET status='completed' WHERE run_id='waiting'")
+    assert.deepEqual(await dispatch.readStreamCheckpoint(waiting), { status: 'completed', sequence: 6 })
+    assert.equal((await dispatch.active(owner, 1, 'waiting'))?.identity?.runId, 'waiting')
+    assert.equal(await dispatch.active(other, 1, 'waiting'), null)
+    assert.equal(await dispatch.active(owner, 2, 'waiting'), null)
+    await pool.query("UPDATE agent_run_dispatch SET state='done' WHERE run_id='selected'")
+    assert.equal((await readActiveStatuses([1], owner)).get(1), true)
+    await pool.query('UPDATE conversation_sessions SET active_run_id=NULL WHERE id=1')
+    assert.equal((await readActiveStatuses([1], owner)).get(1), false)
   } finally { await pool.end(); await admin.query(`DROP SCHEMA "${schema}" CASCADE`); await admin.end() }
 })
 

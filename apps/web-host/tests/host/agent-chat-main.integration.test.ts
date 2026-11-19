@@ -11,18 +11,61 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import { Pool, type PoolClient } from 'pg'
+import { parseAgentKnowledgeEntry, serializeAgentKnowledgeEntry, type AgentKnowledgeEntry } from '@gugu/core/agent/knowledge/entry'
 import { startServer } from '../../src/main.js'
 import { applyAgentBaseMigration, checkAgentBaseMigration } from '../../src/migrations/agent-base-migrate.js'
 import { applyAgentRunMigration, checkAgentRunMigration } from '../../src/migrations/agent-run-migrate.js'
 import { applyWebDomainMigration } from '../../src/migrations/web-domain-migrate.js'
 import { applyRagIndexMigration } from '../../src/migrations/rag-index-migrate.js'
-import { createRedisScheduledTaskCommands } from '../../src/adapters/redis-events.js'
-import { clearRedisAgentReflectionSession } from '../../src/domains/agent-sessions/persistence/agent-reflection-queue-redis.js'
+import { applyTrashPurgeMigration } from '../../src/migrations/trash-purge-migrate.js'
+import { applyInteractionActionsMigration } from '../../src/migrations/interaction-actions-migrate.js'
+import { createRedisScheduledTaskCommands, createRedisValueReader } from '../../src/adapters/redis-events.js'
+import { clearRedisAgentReflectionSession } from '../../src/modules/agent-sessions/persistence/agent-reflection-queue-redis.js'
 import { signedUserToken } from '../helpers/auth.js'
 import { applyFilesystemAuthorizationMigration, checkFilesystemAuthorizationMigration } from '../../src/migrations/filesystem-authorization-migrate.js'
 
 const pgUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const redisUrl = process.env.GUGU_WEBUI_TEST_REDIS_URL
+
+function officeCrc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff
+  for (const byte of bytes) {
+    crc ^= byte
+    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0)
+  }
+  return (crc ^ 0xffffffff) >>> 0
+}
+
+function officeZipStored(entries: Record<string, string>): Buffer {
+  const local: Buffer[] = [], central: Buffer[] = []
+  let offset = 0
+  for (const [name, value] of Object.entries(entries)) {
+    const nameBytes = Buffer.from(name), data = Buffer.from(value), crc = officeCrc32(data)
+    const header = Buffer.alloc(30)
+    header.writeUInt32LE(0x04034b50, 0); header.writeUInt16LE(20, 4)
+    header.writeUInt32LE(crc, 14); header.writeUInt32LE(data.length, 18); header.writeUInt32LE(data.length, 22)
+    header.writeUInt16LE(nameBytes.length, 26)
+    local.push(header, nameBytes, data)
+    const record = Buffer.alloc(46)
+    record.writeUInt32LE(0x02014b50, 0); record.writeUInt16LE(20, 4); record.writeUInt16LE(20, 6)
+    record.writeUInt32LE(crc, 16); record.writeUInt32LE(data.length, 20); record.writeUInt32LE(data.length, 24)
+    record.writeUInt16LE(nameBytes.length, 28); record.writeUInt32LE(offset, 42)
+    central.push(record, nameBytes)
+    offset += header.length + nameBytes.length + data.length
+  }
+  const centralBytes = Buffer.concat(central), end = Buffer.alloc(22)
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(Object.keys(entries).length, 8)
+  end.writeUInt16LE(Object.keys(entries).length, 10); end.writeUInt32LE(centralBytes.length, 12); end.writeUInt32LE(offset, 16)
+  return Buffer.concat([...local, centralBytes, end])
+}
+
+function syntheticDocx(text: string): Buffer {
+  return officeZipStored({
+    '[Content_Types].xml': '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>',
+    '_rels/.rels': '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>',
+    'word/document.xml': `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:body></w:document>`,
+  })
+}
 
 async function waitFor(condition: () => Promise<boolean>, signal: AbortSignal, describe: () => string) {
   try {
@@ -41,7 +84,7 @@ async function stopChild(child: ChildProcess | undefined, signal: NodeJS.Signals
 }
 
 test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
-  skip: !(pgUrl && redisUrl) && '需要隔离 PostgreSQL 和 Redis', timeout: 60_000,
+  skip: !(pgUrl && redisUrl) && '需要隔离 PostgreSQL 和 Redis', timeout: 90_000,
 }, async () => {
   const schema = `agent_chat_${randomUUID().replaceAll('-', '')}`
   const admin = new Pool({ connectionString: pgUrl })
@@ -51,7 +94,21 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
   const reflectionCommands = createRedisScheduledTaskCommands(redisUrl!)
   const root = await mkdtemp(join(tmpdir(), 'gugu-agent-chat-main-'))
   const requests: string[] = []
-  const continueAfterReconnect = Promise.withResolvers<void>()
+  let ordinaryNoteId: number | undefined
+  let agentCreatedClientId: number | undefined
+  let scheduledTaskId: number | undefined
+  let userSkillId: string | undefined
+  let foreignOwnerId: string | undefined
+  let agentCreatedEventId: number | undefined
+  const ragKnowledgeId = 'node-rag-agent-proof'
+  const foreignRagKnowledgeId = 'foreign-node-rag-proof'
+  const ragKnowledgeKeyword = '星辰检索合成词'
+  const scheduledTaskStartAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+  const eventCreateDate = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString().slice(0, 10)
+  const eventCreateTitle = 'Node生产创建的合成日程'
+  const eventUpdatedTitle = 'Node更新后的合成日程'
+  let resumeAfterReconnect!: () => void
+  const continueAfterReconnect = new Promise<void>(resolve => { resumeAfterReconnect = resolve })
   let cancelledProviderClosed = false
   const provider = createServer(async (request, response) => {
     const chunks: Buffer[] = []
@@ -66,6 +123,16 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
       return
     }
     const needsSearch = !afterCancellation && input.includes('查找我之前的合成报告') && !input.includes('synthetic-history')
+    const needsGlobalSearch = !afterCancellation && input.includes('跨类型搜索合成日程') && !input.includes('synthetic-global-search')
+    const needsCreateEvent = !afterCancellation && input.includes('创建合成日历事件') && !input.includes('synthetic-create-event')
+    const needsUpdateEvent = !afterCancellation && input.includes('更新合成日历事件') && !input.includes('synthetic-update-event')
+    const needsDeleteEvent = !afterCancellation && input.includes('删除合成日历事件') && !input.includes('synthetic-delete-event')
+    const needsKnowledgeSearch = !afterCancellation && input.includes('检索Node知识库合成条目') && !input.includes('synthetic-read-knowledge')
+    const needsKnowledgeExactRead = !afterCancellation && input.includes('精确读取Node RAG知识') && !input.includes('synthetic-read-knowledge-id')
+    const needsForeignKnowledgeRead = !afterCancellation && input.includes('尝试读取异主RAG条目') && !input.includes('synthetic-read-foreign-knowledge')
+    const needsKnowledgeSave = !afterCancellation && input.includes('保存Node知识回归') && !input.includes('synthetic-save-knowledge')
+    const needsKnowledgeUpdate = !afterCancellation && input.includes('更新Node知识回归') && !input.includes('synthetic-update-knowledge')
+    const needsAskUser = !afterCancellation && input.includes('需要一个合成选项') && !input.includes('synthetic-ask-user')
     const needsRead = !afterCancellation && !input.includes('强制退出用例')
       && input.includes('synthetic-history') && !input.includes('synthetic-read')
     const needsTime = !afterCancellation && input.includes('读取合成当前时间') && !input.includes('synthetic-time')
@@ -78,11 +145,15 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     const needsGetWorkspace = !afterCancellation && input.includes('读取合成工作区详情') && !input.includes('synthetic-get-workspace')
     const needsUpdateWorkspace = !afterCancellation && input.includes('更新合成工作区显示名称') && !input.includes('synthetic-update-workspace')
     const needsListScheduledTasks = !afterCancellation && input.includes('列出合成独立定时任务') && !input.includes('synthetic-list-scheduled-tasks')
+    const needsCreateScheduledTask = !afterCancellation && input.includes('创建合成独立定时任务') && !input.includes('synthetic-create-scheduled-task')
+    const needsUpdateScheduledTask = !afterCancellation && input.includes('更新合成独立定时任务') && !input.includes('synthetic-update-scheduled-task')
+    const needsDeleteScheduledTask = !afterCancellation && input.includes('删除合成独立定时任务') && !input.includes('synthetic-delete-scheduled-task')
     const needsListTrash = !afterCancellation && input.includes('列出合成回收站') && !input.includes('synthetic-list-trash')
     const needsRestoreFile = !afterCancellation && input.includes('恢复合成回收站文件') && !input.includes('synthetic-restore-file')
     const needsRestoreFolder = !afterCancellation && input.includes('恢复合成回收站目录') && !input.includes('synthetic-restore-folder')
     const needsCreateClient = !afterCancellation && input.includes('创建合成联系人') && !input.includes('synthetic-create-client')
     const needsUpdateClient = !afterCancellation && input.includes('更新合成联系人') && !input.includes('synthetic-update-client')
+    const needsDeleteClient = !afterCancellation && input.includes('删除合成联系人') && !input.includes('synthetic-delete-client')
     const needsCreateProject = !afterCancellation && input.includes('创建合成项目') && !input.includes('synthetic-create-project')
     const needsGetProject = !afterCancellation && input.includes('读取合成项目详情') && !input.includes('synthetic-get-project')
     const needsGetForeignProject = !afterCancellation && input.includes('读取异主合成项目详情') && !input.includes('synthetic-get-foreign-project')
@@ -104,6 +175,17 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     const needsNoteSearch = !afterCancellation && input.includes('搜索合成笔记') && !input.includes('synthetic-note-search')
     const needsNoteGet = !afterCancellation && input.includes('读取合成笔记') && !input.includes('synthetic-note-get')
     const needsForeignNoteGet = !afterCancellation && input.includes('读取异主合成笔记') && !input.includes('synthetic-foreign-note-get')
+    const needsOrdinaryNoteCreate = !afterCancellation && input.includes('创建普通合成笔记') && !input.includes('synthetic-note-create')
+    const needsOrdinaryNoteUpdate = !afterCancellation && input.includes('追加普通合成笔记') && !input.includes('synthetic-note-update')
+    const needsNoteDelete = !afterCancellation && input.includes('软删合成笔记') && !input.includes('synthetic-note-delete')
+    const needsNoteRestore = !afterCancellation && input.includes('恢复合成笔记') && !input.includes('synthetic-note-restore')
+    const needsNoteUndo = !afterCancellation && input.includes('撤销最近咕咕合成笔记') && !input.includes('synthetic-note-undo')
+    const needsListSkills = !afterCancellation && input.includes('合成技能目录') && !input.includes('synthetic-list-skills')
+    const needsUseSkill = !afterCancellation && input.includes('加载合成内置技能') && !input.includes('synthetic-use-skill')
+    const needsCreateSkill = !afterCancellation && input.includes('创建合成用户技能') && !input.includes('synthetic-create-skill')
+    const needsUpdateSkill = !afterCancellation && input.includes('更新合成用户技能') && !input.includes('synthetic-update-skill')
+    const needsUseUserSkill = !afterCancellation && input.includes('加载更新后的合成用户技能') && !input.includes('synthetic-use-user-skill')
+    const needsDeleteSkill = !afterCancellation && input.includes('删除合成用户技能') && !input.includes('synthetic-delete-user-skill')
     const needsUpdateProject = !afterCancellation && input.includes('修改合成项目') && !input.includes('synthetic-update-project')
     const needsSetProjectColor = !afterCancellation && input.includes('设置合成项目颜色') && !input.includes('synthetic-set-project-color')
     const needsArchiveProject = !afterCancellation && input.includes('归档合成项目') && !input.includes('synthetic-archive-project')
@@ -114,7 +196,7 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     const needsRemoveStage = !afterCancellation && input.includes('删除合成阶段') && !input.includes('synthetic-remove-stage')
     if (needsSearch && input.includes('强制退出用例'))
       await pool.query('INSERT INTO synthetic_crash_gate VALUES (5) ON CONFLICT DO NOTHING')
-    if (!needsSearch && input.includes('强制退出用例')) await continueAfterReconnect.promise
+    if (!needsSearch && input.includes('强制退出用例')) await continueAfterReconnect
     const choice = needsCanvasList
       ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-canvas-list', type: 'function', function: {
         name: 'call_tool', arguments: '{"tool_name":"canvas_list","arguments":{}}',
@@ -183,6 +265,30 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
           ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-foreign-note-get', type: 'function', function: {
             name: 'call_tool', arguments: JSON.stringify({ tool_name: 'note_get', arguments: { node_id: foreignNoteId } }),
           } }] }, finish_reason: 'tool_calls' }
+          : needsOrdinaryNoteCreate
+            ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-note-create', type: 'function', function: {
+              name: 'call_tool', arguments: JSON.stringify({ tool_name: 'note_create', arguments: {
+                title: 'Agent普通合成笔记', markdown: '# Agent普通合成笔记\n\n初始正文',
+              } }),
+            } }] }, finish_reason: 'tool_calls' }
+            : needsOrdinaryNoteUpdate
+              ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-note-update', type: 'function', function: {
+                name: 'call_tool', arguments: JSON.stringify({ tool_name: 'note_update', arguments: {
+                  node_id: ordinaryNoteId, append_markdown: '追加正文',
+                } }),
+              } }] }, finish_reason: 'tool_calls' }
+              : needsNoteDelete
+                ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-note-delete', type: 'function', function: {
+                  name: 'call_tool', arguments: JSON.stringify({ tool_name: 'note_delete', arguments: { node_id: ownerNoteId } }),
+                } }] }, finish_reason: 'tool_calls' }
+                : needsNoteRestore
+                  ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-note-restore', type: 'function', function: {
+                    name: 'call_tool', arguments: JSON.stringify({ tool_name: 'note_restore', arguments: { node_id: ownerNoteId } }),
+                  } }] }, finish_reason: 'tool_calls' }
+                  : needsNoteUndo
+                    ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-note-undo', type: 'function', function: {
+                      name: 'call_tool', arguments: '{"tool_name":"note_undo","arguments":{}}',
+                    } }] }, finish_reason: 'tool_calls' }
           : needsAddStage
       ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-add-stage', type: 'function', function: {
         name: 'call_tool', arguments: '{"tool_name":"add_stage","arguments":{"project":"工具创建项目","label":"新阶段"}}',
@@ -207,6 +313,102 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
                 ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-tool-schema', type: 'function', function: {
                   name: 'call_tool', arguments: '{"tool_name":"get_tool_schema","arguments":{"tools":["list_events"]}}',
                 } }] }, finish_reason: 'tool_calls' }
+                  : needsCreateEvent
+                    ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-create-event', type: 'function', function: {
+                      name: 'call_tool', arguments: JSON.stringify({ tool_name: 'create_event', arguments: {
+                          title: eventCreateTitle, date: eventCreateDate, all_day: true,
+                          reminders: [
+                            { lead_minutes: 30, channels: ['web'], delivery_mode: 'owner_private' },
+                            { lead_minutes: 60, channels: ['web'], delivery_mode: 'owner_private', enabled: false },
+                          ],
+                      } }),
+                    } }] }, finish_reason: 'tool_calls' }
+                    : needsUpdateEvent
+                      ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-update-event', type: 'function', function: {
+                        name: 'call_tool', arguments: JSON.stringify({ tool_name: 'update_event', arguments: {
+                          event_id: agentCreatedEventId, title: eventUpdatedTitle, time: '12:00',
+                        } }),
+                      } }] }, finish_reason: 'tool_calls' }
+                      : needsDeleteEvent
+                        ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-delete-event', type: 'function', function: {
+                          name: 'call_tool', arguments: JSON.stringify({ tool_name: 'delete_event', arguments: { event_id: agentCreatedEventId } }),
+                        } }] }, finish_reason: 'tool_calls' }
+                  : needsGlobalSearch
+                    ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-global-search', type: 'function', function: {
+                      name: 'call_tool', arguments: JSON.stringify({ tool_name: 'global_search', arguments: {
+                        query: eventUpdatedTitle, types: ['event'], owner_id: foreignOwnerId,
+                      } }),
+                    } }] }, finish_reason: 'tool_calls' }
+                    : needsKnowledgeSearch
+                      ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-read-knowledge', type: 'function', function: {
+                        name: 'call_tool', arguments: JSON.stringify({ tool_name: 'read_knowledge', arguments: {
+                          keyword: ragKnowledgeKeyword, limit: 5,
+                        } }),
+                      } }] }, finish_reason: 'tool_calls' }
+                      : needsKnowledgeExactRead
+                        ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-read-knowledge-id', type: 'function', function: {
+                          name: 'call_tool', arguments: JSON.stringify({ tool_name: 'read_knowledge', arguments: {
+                            knowledge_id: ragKnowledgeId,
+                          } }),
+                        } }] }, finish_reason: 'tool_calls' }
+                        : needsForeignKnowledgeRead
+                          ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-read-foreign-knowledge', type: 'function', function: {
+                            name: 'call_tool', arguments: JSON.stringify({ tool_name: 'read_knowledge', arguments: {
+                              knowledge_id: foreignRagKnowledgeId,
+                            } }),
+                          } }] }, finish_reason: 'tool_calls' }
+                          : needsKnowledgeSave
+                            ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-save-knowledge', type: 'function', function: {
+                              name: 'call_tool', arguments: JSON.stringify({ tool_name: 'save_knowledge', arguments: {
+                                title: 'Node生产RAG合成知识已保存', content: 'Node保存工具写入的第一版知识正文。',
+                                topic: 'Node RAG 检索验收', keywords: [ragKnowledgeKeyword],
+                                description: '生产 Run 写入回归。',
+                              } }),
+                            } }] }, finish_reason: 'tool_calls' }
+                            : needsKnowledgeUpdate
+                              ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-update-knowledge', type: 'function', function: {
+                                name: 'call_tool', arguments: JSON.stringify({ tool_name: 'update_knowledge', arguments: {
+                                  knowledge_id: ragKnowledgeId, title: 'Node生产RAG合成知识已更新',
+                                  content: 'Node更新工具写入并重建索引的最终知识正文。',
+                                  keywords: [ragKnowledgeKeyword, 'Node更新回归词'],
+                                } }),
+                              } }] }, finish_reason: 'tool_calls' }
+                              : needsAskUser
+                                ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-ask-user', type: 'function', function: {
+                                  name: 'call_tool', arguments: JSON.stringify({ tool_name: 'ask_user', arguments: {
+                                    kind: 'choice', title: 'Node合成澄清', body: '请选择用于续轮的合成选项。',
+                                    options: [{ id: 'left', label: '左侧选项' }, { id: 'right', label: '右侧选项' }],
+                                  } }),
+                                } }] }, finish_reason: 'tool_calls' }
+                : needsListSkills
+                  ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-list-skills', type: 'function', function: {
+                    name: 'call_tool', arguments: '{"tool_name":"list_skills","arguments":{}}',
+                  } }] }, finish_reason: 'tool_calls' }
+                  : needsUseSkill
+                    ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-use-skill', type: 'function', function: {
+                      name: 'call_tool', arguments: '{"tool_name":"use_skill","arguments":{"id":"S7"}}',
+                    } }] }, finish_reason: 'tool_calls' }
+                    : needsCreateSkill
+                      ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-create-skill', type: 'function', function: {
+                        name: 'call_tool', arguments: JSON.stringify({ tool_name: 'create_skill', arguments: {
+                          skill_name: 'Agent合成用户技能', description_short: '隔离验证用的用户技能',
+                          body: '# Agent合成用户技能\n\n初始技能正文。', related_tools: [], managed_by: 'assistant',
+                        } }),
+                      } }] }, finish_reason: 'tool_calls' }
+                      : needsUpdateSkill
+                        ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-update-skill', type: 'function', function: {
+                          name: 'call_tool', arguments: JSON.stringify({ tool_name: 'update_skill', arguments: {
+                            id: userSkillId, skill_name: 'Agent合成用户技能已更新', body: '# Agent合成用户技能\n\n更新后的用户技能正文。',
+                          } }),
+                        } }] }, finish_reason: 'tool_calls' }
+                        : needsUseUserSkill
+                          ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-use-user-skill', type: 'function', function: {
+                            name: 'call_tool', arguments: JSON.stringify({ tool_name: 'use_skill', arguments: { id: userSkillId } }),
+                          } }] }, finish_reason: 'tool_calls' }
+                          : needsDeleteSkill
+                            ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-delete-user-skill', type: 'function', function: {
+                              name: 'call_tool', arguments: JSON.stringify({ tool_name: 'delete_skill', arguments: { id: userSkillId } }),
+                            } }] }, finish_reason: 'tool_calls' }
                 : needsGetForeignProject
                 ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-get-foreign-project', type: 'function', function: {
                   name: 'call_tool', arguments: JSON.stringify({ tool_name: 'get_project', arguments: { project_id: foreignProjectId } }),
@@ -239,6 +441,10 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
         ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-update-client', type: 'function', function: {
           name: 'call_tool', arguments: '{"tool_name":"update_client","arguments":{"client":"工具创建联系人","notes":"已更新合成备注"}}',
         } }] }, finish_reason: 'tool_calls' }
+        : needsDeleteClient
+          ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-delete-client', type: 'function', function: {
+            name: 'call_tool', arguments: JSON.stringify({ tool_name: 'delete_client', arguments: { client_id: agentCreatedClientId } }),
+          } }] }, finish_reason: 'tool_calls' }
         : needsDashboard
       ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-dashboard', type: 'function', function: {
         name: 'call_tool', arguments: '{"tool_name":"get_dashboard_stats","arguments":{}}',
@@ -261,6 +467,23 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
               ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-list-scheduled-tasks', type: 'function', function: {
                 name: 'call_tool', arguments: '{"tool_name":"list_scheduled_tasks","arguments":{}}',
               } }] }, finish_reason: 'tool_calls' }
+              : needsCreateScheduledTask
+                ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-create-scheduled-task', type: 'function', function: {
+                  name: 'call_tool', arguments: JSON.stringify({ tool_name: 'create_scheduled_task', arguments: {
+                    schedule_name: 'Agent合成独立任务', instruction: '只用于隔离测试，不执行外部操作。', schedule_kind: 'once',
+                    start_at: scheduledTaskStartAt, channels: ['web'], enabled: false,
+                  } }),
+                } }] }, finish_reason: 'tool_calls' }
+                : needsUpdateScheduledTask
+                  ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-update-scheduled-task', type: 'function', function: {
+                    name: 'call_tool', arguments: JSON.stringify({ tool_name: 'update_scheduled_task', arguments: {
+                      task_id: scheduledTaskId, schedule_name: 'Agent合成独立任务已更新', instruction: '更新后的隔离指令。',
+                    } }),
+                  } }] }, finish_reason: 'tool_calls' }
+                  : needsDeleteScheduledTask
+                    ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-delete-scheduled-task', type: 'function', function: {
+                      name: 'call_tool', arguments: JSON.stringify({ tool_name: 'delete_scheduled_task', arguments: { task_id: scheduledTaskId } }),
+                    } }] }, finish_reason: 'tool_calls' }
               : needsListTrash
                 ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-list-trash', type: 'function', function: {
                   name: 'call_tool', arguments: '{"tool_name":"list_trash","arguments":{}}',
@@ -339,7 +562,10 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     assert.equal(await applyWebDomainMigration(pool), 'applied')
     assert.equal(await checkAgentRunMigration(pool), 'pending')
     assert.equal(await applyAgentRunMigration(pool), 'applied')
+    assert.equal(await applyTrashPurgeMigration(pool), 'applied')
     assert.equal(await checkAgentBaseMigration(pool), 'applied')
+    // 认证写门复用数据替换任务表；此集成只验证 Agent/RAG，不运行数据替换迁移。
+    await pool.query('CREATE TABLE data_import_jobs (id uuid PRIMARY KEY, user_id uuid NOT NULL, status text NOT NULL)')
     const secret = 'synthetic-web-agent-secret'
     const config = join(root, 'config.test.json')
     await writeFile(config, JSON.stringify({ agent: {
@@ -352,11 +578,13 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     await new Promise<void>(resolve => probe.close(() => resolve()))
     const env = {
       GUGU_WEBUI_DATABASE_URL: url.toString(), GUGU_WEBUI_SECRET_KEY: secret, GUGU_WEBUI_REDIS_URL: redisUrl,
+      CREDENTIALS_MASTER_KEY: 'synthetic-agent-confirmation-master-key',
       GUGU_WEBUI_HOST: '127.0.0.1', GUGU_WEBUI_PORT: String(listen.port), GUGU_CONFIG_OVERRIDE_FILE: config,
       STORAGE__LOCAL_PATH: join(root, 'storage'), AI__PROVIDER: 'local', AI__API_FORMAT: 'openai',
       AI__MODEL: 'synthetic-agent', AI__BASE_URL: `http://127.0.0.1:${endpoint.port}/v1`,
       AI__API_KEY: 'synthetic-key', AI__CONTEXT_TOKENS: '65536', BYOK__ENABLED: 'false', MCP__ENABLED: 'false', SMTP__ENABLED: 'false',
       ADMIN_USERNAME: 'synthetic-admin', ADMIN_PASSWORD: 'synthetic-password',
+      GUGU_WEBUI_ONCE_TASK_WORKER_ENABLED: 'true',
     }
     const base = `http://127.0.0.1:${listen.port}`
     host = await startServer(env)
@@ -413,6 +641,7 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     assert.match(await readFile(join(root, 'storage', firstFile.rows[0]!.storage_key), 'utf8'), /^# (给未来的自己|第一份记录)\n/u)
 
     const foreign = randomUUID()
+    foreignOwnerId = foreign
     await pool.query("INSERT INTO users(id,username,email,hashed_password) VALUES ($1,'小南','south@example.test','synthetic')", [foreign])
     await pool.query(`INSERT INTO clients(user_id,name,contact,email,phone,notes,created_at)
       VALUES ($1,'合成联系人','合成联系人本人','north-client@example.test','', '',now()),
@@ -492,9 +721,9 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     await pool.query("INSERT INTO conversation_sessions(user_id,source,title,last_message_seq) VALUES ($1,'web','月球校验报告',1),($2,'web','月球校验报告',1)", [owner, foreign])
     await pool.query(`INSERT INTO conversation_messages(session_id,role,content,conversation_seq,created_at)
       VALUES(1,'user','月球校验：己方合成报告状态已完成。',1,now()),(2,'user','月球校验：异主机密标记。',1,now())`)
-    const chat = (message: string, sessionId?: number) => fetch(base + '/api/v1/agent/chat', {
+    const chat = (message: string, sessionId?: number, attachments?: string[]) => fetch(base + '/api/v1/agent/chat', {
       method: 'POST', headers: { ...auth, 'content-type': 'application/json' },
-      body: JSON.stringify({ message, locale: 'zh-CN', session_id: sessionId }), signal: AbortSignal.timeout(12_000),
+      body: JSON.stringify({ message, locale: 'zh-CN', session_id: sessionId, attachments }), signal: AbortSignal.timeout(12_000),
     })
     const beforeIndex = await chat('无索引普通对话')
     const beforeSse = await beforeIndex.text()
@@ -505,14 +734,57 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     assert.deepEqual((await pool.query(
       "SELECT status FROM rag_index_jobs WHERE user_id=$1 AND source_type='conversation'", [owner],
     )).rows, [{ status: 'queued' }])
+    const officeAttachmentId = `office-${randomUUID()}`
+    const actualOfficeBytes = syntheticDocx('Agent Chat 生产 Office 附件正文')
+    const officeStorageKey = `${owner}/chat/agent-office-attachment.docx`
+    await mkdir(join(root, 'storage', owner, 'chat'), { recursive: true })
+    await writeFile(join(root, 'storage', officeStorageKey), actualOfficeBytes)
+    await pool.query(`INSERT INTO chat_attachments(user_id,attach_id,name,ext,mime,size,storage_key,kind,state)
+      VALUES ($1,$2,'agent-office-attachment.docx','docx',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',$3,$4,'text','draft')`,
+    [owner, officeAttachmentId, actualOfficeBytes.byteLength, officeStorageKey])
+    const officeResponse = await chat('请阅读当前工作表附件并总结', undefined, [officeAttachmentId])
+    const officeSse = await officeResponse.text()
+    assert.equal(officeResponse.status, 200, officeSse)
+    assert.match(officeSse, /"type":"done"/u)
+    assert.doesNotMatch(officeSse, /"type":"error"/u)
+    assert.ok(requests.at(-1)?.includes('Agent Chat 生产 Office 附件正文'), '已解析的 Office 正文必须进入真实 Provider 请求')
+    const claimedOfficeAttachment = await pool.query<{ state: string; message_id: number }>(
+      'SELECT state,message_id FROM chat_attachments WHERE user_id=$1 AND attach_id=$2', [owner, officeAttachmentId],
+    )
+    assert.equal(claimedOfficeAttachment.rows[0]?.state, 'attached')
+    assert.ok(Number(claimedOfficeAttachment.rows[0]?.message_id) > 0)
+    const knowledgeNow = Date.now() / 1000
+    const ragKnowledge: AgentKnowledgeEntry = {
+      id: ragKnowledgeId, title: 'Node生产RAG合成知识', content: '星辰检索合成词对应的隔离 owner 知识正文。',
+      topic: 'Node RAG 检索验收', keywords: [ragKnowledgeKeyword], description: '用于生产工具调用边界回归。',
+      scope: { type: 'owner', owner_user_id: owner, platform: '', bot_id: '', group_id: '', scope_id: '', project_id: '' },
+      source: { type: 'user', ref: '', label: '合成验收条目', checked_at: null }, confidence: 'confirmed',
+      version: 1, parent_id: null, created_at: knowledgeNow, updated_at: knowledgeNow, active: true, history: [],
+    }
+    const foreignRagKnowledge: AgentKnowledgeEntry = {
+      ...ragKnowledge, id: foreignRagKnowledgeId, title: '异主RAG机密条目',
+      content: '星辰检索合成词对应的异主机密正文。',
+      scope: { ...ragKnowledge.scope, owner_user_id: foreignOwnerId! },
+    }
+    for (const [knowledgeOwner, entry] of [[owner, ragKnowledge], [foreignOwnerId!, foreignRagKnowledge]] as const) {
+      const knowledgeDirectory = join(root, 'storage', knowledgeOwner, '.agent', 'knowledge')
+      await mkdir(join(knowledgeDirectory, 'entries'), { recursive: true })
+      await writeFile(join(knowledgeDirectory, '.timestamps-iso-v1'), 'synthetic test marker')
+      await writeFile(join(knowledgeDirectory, 'entries', `${entry.id}.md`), serializeAgentKnowledgeEntry(entry))
+    }
     await host.close()
     host = undefined
+    assert.equal(await applyInteractionActionsMigration(pool), 'applied')
     assert.equal(await applyRagIndexMigration(pool), 'applied')
     requests.length = 0
     host = await startServer(env)
     await waitFor(async () => (await pool.query(`SELECT DISTINCT source_type FROM knowledge_index_entries
       WHERE owner_user_id=$1 AND source_type IN ('calendar','project') AND deleted_at IS NULL`, [owner])).rowCount === 2,
     AbortSignal.timeout(8000), () => 'Node Worker 未从首个账号的引导数据建立项目与日历索引')
+    await waitFor(async () => (await pool.query(`SELECT owner_user_id,source_id FROM knowledge_index_entries
+      WHERE source_type='knowledge' AND source_id=ANY($1::text[]) AND deleted_at IS NULL`, [[ragKnowledgeId, foreignRagKnowledgeId]])).rowCount === 2,
+    AbortSignal.timeout(8000), () => 'Node Worker 未从 owner 与异主 Markdown 文件建立知识索引')
     const denied = await fetch(base + '/api/v1/agent/sessions/2/stream', { headers: auth, signal: AbortSignal.timeout(4000) })
     assert.equal(denied.status, 404)
     await denied.body?.cancel()
@@ -538,12 +810,17 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     assert.equal(savedLabels.statusCode, 200)
     assert.deepEqual(savedLabels.json().tools.find((row: { key: string }) => row.key === 'search_conversations'),
       { key: 'search_conversations', default: '搜历史对话', custom: '查找既有报告 | 查找旧会话', label: '查找既有报告 | 查找旧会话' })
+    const searchRequestStart = requests.length
     const response = await chat('查找我之前的合成报告。')
     const sse = await response.text()
     assert.equal(response.status, 200, sse)
     assert.match(response.headers.get('content-type') ?? '', /^text\/event-stream/)
     assert.match(sse, /"type":"done"/u)
     assert.match(sse, /"type":"tool_done"/u)
+    const searchRequests = requests.slice(searchRequestStart)
+    const sessionEvent = sse.split('\n').find(line => line.startsWith('data: ') && line.includes('"type":"session_id"'))
+    assert.ok(sessionEvent, sse)
+    const responseSessionId = (JSON.parse(sessionEvent.slice('data: '.length)) as { session_id: number }).session_id
     const toolEvents = sse.split('\n').filter(line => line.startsWith('data: ')).map(line => JSON.parse(line.slice(6)))
       .filter(event => event.type === 'display_event' && event.item.toolName === 'search_conversations')
     assert.ok(toolEvents.length >= 2)
@@ -553,27 +830,30 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     const label = toolEvents[0].item.toolLabelOverride
     assert.ok(['查找既有报告', '查找旧会话'].includes(label))
     assert.ok(toolEvents.every(event => event.item.toolLabelOverride === label))
-    const history = await host.app.inject({ url: '/api/v1/agent/sessions/4/messages', headers: auth })
+    const history = await host.app.inject({ url: `/api/v1/agent/sessions/${responseSessionId}/messages`, headers: auth })
     assert.equal(history.statusCode, 200, history.body)
     assert.partialDeepStrictEqual(history.json().session, { filesystemAuthorizationEnabled: true, filesystemAuthorized: false })
-    assert.ok(history.json().timelineEvents.some((item: { toolName?: string; toolLabelOverride?: string }) =>
-      item.toolName === 'search_conversations' && item.toolLabelOverride === label))
+    const historyBody = history.json()
+    assert.ok(Array.isArray(historyBody.timelineEvents), `历史消息响应缺少时间线：${JSON.stringify(historyBody)}`)
+    assert.ok(historyBody.timelineEvents.some((item: { toolName?: string; toolLabelOverride?: string }) =>
+      item.toolName === 'search_conversations' && item.toolLabelOverride === label),
+    `历史时间线缺少工具标签 ${String(label)}：${JSON.stringify(historyBody.timelineEvents)}`)
     assert.doesNotMatch(sse, /"type":"error"|异主机密标记/u)
-    assert.equal(requests.length, 3, sse)
-    const continuation = JSON.parse(requests[1]!) as { messages: Array<{ role: string; content: unknown }> }
+    assert.equal(searchRequests.length, 3, sse)
+    const continuation = JSON.parse(searchRequests[1]!) as { messages: Array<{ role: string; content: unknown }> }
     assert.match(JSON.stringify(continuation.messages.filter(row => row.role === 'tool')), /己方合成报告状态已完成/u)
-    const readContinuation = JSON.parse(requests[2]!) as { messages: Array<{ role: string; content: unknown }> }
+    const readContinuation = JSON.parse(searchRequests[2]!) as { messages: Array<{ role: string; content: unknown }> }
     const historyContent = readContinuation.messages.filter(row => row.role === 'tool').at(-1)?.content
     assert.ok(Array.isArray(historyContent))
     const historyText = (historyContent as Array<{ text?: unknown }>).find(block => typeof block.text === 'string')?.text
     assert.equal(typeof historyText, 'string')
     const historyResult = JSON.parse(historyText as string) as { messages: Array<{ role: string; content: string }> }
     assert.deepEqual(historyResult.messages, [{ role: '你', content: '月球校验：己方合成报告状态已完成。' }])
-    assert.ok(requests.every(body => !body.includes('异主机密标记')))
+    assert.ok(searchRequests.every(body => !body.includes('异主机密标记')))
     assert.deepEqual((await pool.query("SELECT status FROM agent_run_checkpoints WHERE user_id=$1 ORDER BY session_id", [owner])).rows,
-      [{ status: 'completed' }, { status: 'completed' }])
+      [{ status: 'completed' }, { status: 'completed' }, { status: 'completed' }])
     assert.deepEqual((await pool.query("SELECT content FROM conversation_messages WHERE session_id=4 AND role='assistant' AND canonical_batch_id IS NULL")).rows,
-      [{ content: '已读取合成会话正文。' }])
+      [{ content: '找到了合成会话。' }])
     const timeResponse = await chat('读取合成当前时间。', 4)
     const timeSse = await timeResponse.text()
     assert.equal(timeResponse.status, 200, timeSse)
@@ -632,6 +912,7 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
       { lead_minutes: 42, channels: ['web', 'qq'], enabled: false, delivery_mode: 'current_group' },
     ])
     assert.doesNotMatch(JSON.stringify(eventsValue), /异主提醒|不可见提醒正文/u)
+    const clientsRequestStart = requests.length
     const clientsResponse = await chat('列出合成联系人。', 4)
     const clientsSse = await clientsResponse.text()
     assert.equal(clientsResponse.status, 200, clientsSse)
@@ -639,10 +920,17 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     const clientsToolEvents = clientsSse.split('\n').filter(line => line.startsWith('data: ')).map(line => JSON.parse(line.slice(6)))
       .filter(event => event.type === 'display_event' && event.item.toolName === 'list_clients')
     assert.ok(clientsToolEvents.length >= 2, '联系人列表必须经过生产注册器及 Core owner-scoped client service')
-    const clientsRequest = JSON.parse(requests.at(-1)!) as { messages: Array<{ role: string; content: unknown }> }
-    const clientsContent = clientsRequest.messages.filter(row => row.role === 'tool').at(-1)?.content
-    assert.ok(Array.isArray(clientsContent))
-    const clientsText = (clientsContent as Array<{ text?: unknown }>).find(block => typeof block.text === 'string')?.text
+    const clientsRequest = requests.slice(clientsRequestStart).map(body => JSON.parse(body) as {
+      messages: Array<{ role: string; tool_call_id?: string; content: unknown }>
+    })
+      .findLast(request => JSON.stringify(request.messages.filter(row => row.role === 'tool')).includes('合成联系人'))
+    assert.ok(clientsRequest, '联系人工具结果必须进入本轮 Provider 续轮')
+    const clientsContent = clientsRequest.messages.find(row => row.role === 'tool'
+      && row.tool_call_id === 'synthetic-list-clients')?.content
+    const clientsText = typeof clientsContent === 'string' ? clientsContent
+      : Array.isArray(clientsContent)
+        ? (clientsContent as Array<{ text?: unknown }>).find(block => typeof block.text === 'string')?.text
+        : undefined
     assert.equal(typeof clientsText, 'string')
     assert.match(clientsText as string, /合成联系人/u)
     assert.doesNotMatch(clientsText as string, /异主联系人/u)
@@ -725,6 +1013,71 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     assert.equal(listedTasks[0]?.name, '合成独立任务')
     assert.equal(listedTasks[0]?.instruction, '独立任务合成指令')
     assert.equal(listedTasks[0]?.workspace_id, null)
+    const createScheduledTaskResponse = await chat('创建合成独立定时任务。', 4)
+    const createScheduledTaskSse = await createScheduledTaskResponse.text()
+    assert.equal(createScheduledTaskResponse.status, 200, createScheduledTaskSse)
+    assert.match(createScheduledTaskSse, /"type":"done"/u)
+    assert.ok(createScheduledTaskSse.includes('create_scheduled_task'), `${createScheduledTaskSse}\n${requests.at(-1)}`)
+    const createdScheduledTask = await pool.query<{ id: number; user_id: string; name: string; payload: string; schedule_kind: string; start_at: Date; enabled: boolean; channels: string }>(
+      "SELECT id,user_id,name,payload,schedule_kind,start_at,enabled,channels FROM scheduled_tasks WHERE user_id=$1 AND name='Agent合成独立任务' AND event_id IS NULL", [owner],
+    )
+    assert.equal(createdScheduledTask.rowCount, 1)
+    assert.deepEqual(createdScheduledTask.rows[0], {
+      id: createdScheduledTask.rows[0]!.id, user_id: owner, name: 'Agent合成独立任务',
+      payload: '只用于隔离测试，不执行外部操作。', schedule_kind: 'once', start_at: new Date(scheduledTaskStartAt),
+      enabled: false, channels: 'web',
+    })
+    scheduledTaskId = createdScheduledTask.rows[0]!.id
+    const updateScheduledTaskResponse = await chat('更新合成独立定时任务。', 4)
+    const updateScheduledTaskSse = await updateScheduledTaskResponse.text()
+    assert.equal(updateScheduledTaskResponse.status, 200, updateScheduledTaskSse)
+    assert.match(updateScheduledTaskSse, /"type":"done"/u)
+    assert.ok(updateScheduledTaskSse.includes('update_scheduled_task'))
+    assert.deepEqual((await pool.query<{ user_id: string; name: string; payload: string; enabled: boolean; channels: string }>(
+      'SELECT user_id,name,payload,enabled,channels FROM scheduled_tasks WHERE id=$1 AND user_id=$2 AND event_id IS NULL', [scheduledTaskId, owner],
+    )).rows, [{ user_id: owner, name: 'Agent合成独立任务已更新', payload: '更新后的隔离指令。', enabled: false, channels: 'web' }])
+    const scheduledTaskRevisionKey = `live-revision:${owner}:scheduled_tasks`
+    const readRedisValue = createRedisValueReader(redisUrl!)
+    const revisionBeforeTaskDelete = Number(await readRedisValue(scheduledTaskRevisionKey) ?? 0)
+    const deleteScheduledTaskResponse = await chat('删除合成独立定时任务。', 4)
+    const deleteScheduledTaskSse = await deleteScheduledTaskResponse.text()
+    assert.equal(deleteScheduledTaskResponse.status, 200, deleteScheduledTaskSse)
+    const deleteScheduledTaskInteractionLine = deleteScheduledTaskSse.split('\n').find(line =>
+      line.startsWith('data: ') && line.includes('"type":"interaction_required"'))
+    assert.ok(deleteScheduledTaskInteractionLine, deleteScheduledTaskSse)
+    const deleteScheduledTaskInteraction = JSON.parse(deleteScheduledTaskInteractionLine.slice('data: '.length)) as {
+      prompt_id: number; session_id: number; options: Array<{ id: string; token: string }>
+    }
+    assert.deepEqual((await pool.query<{ kind: string; status: string }>(
+      'SELECT kind,status FROM interaction_prompts WHERE id=$1 AND user_id=$2 AND session_id=$3',
+      [deleteScheduledTaskInteraction.prompt_id, owner, deleteScheduledTaskInteraction.session_id],
+    )).rows, [{ kind: 'confirm', status: 'active' }])
+    assert.equal((await pool.query('SELECT id FROM scheduled_tasks WHERE id=$1 AND user_id=$2 AND event_id IS NULL', [scheduledTaskId, owner])).rowCount, 1,
+      '用户确认之前，定时任务删除不能产生副作用')
+    const deleteScheduledTaskRun = await pool.query<{ run_id: string }>(
+      'SELECT run_id FROM agent_interaction_bindings WHERE prompt_id=$1 AND user_id=$2 AND session_id=$3',
+      [deleteScheduledTaskInteraction.prompt_id, owner, deleteScheduledTaskInteraction.session_id],
+    )
+    assert.equal(deleteScheduledTaskRun.rowCount, 1)
+    const confirmScheduledTaskDelete = deleteScheduledTaskInteraction.options.find(option => option.id === 'confirm')
+    assert.ok(confirmScheduledTaskDelete?.token)
+    const deleteTaskProviderCalls = requests.length
+    const confirmScheduledTaskDeleteResponse = await fetch(base + `/api/v1/agent/interactions/${deleteScheduledTaskInteraction.prompt_id}/resume`, {
+      method: 'POST', headers: { ...auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ token: confirmScheduledTaskDelete.token }), signal: AbortSignal.timeout(4000),
+    })
+    assert.equal(confirmScheduledTaskDeleteResponse.status, 200)
+    assert.equal((await confirmScheduledTaskDeleteResponse.json() as { status: string }).status, 'confirmed')
+    await waitFor(async () => {
+      const checkpoint = await pool.query<{ status: string }>(
+        'SELECT status FROM agent_run_checkpoints WHERE user_id=$1 AND session_id=$2 AND run_id=$3',
+        [owner, deleteScheduledTaskInteraction.session_id, deleteScheduledTaskRun.rows[0]!.run_id],
+      )
+      const task = await pool.query('SELECT id FROM scheduled_tasks WHERE id=$1 AND user_id=$2 AND event_id IS NULL', [scheduledTaskId, owner])
+      const revision = Number(await readRedisValue(scheduledTaskRevisionKey) ?? 0)
+      return checkpoint.rows[0]?.status === 'completed' && task.rowCount === 0 && revision > revisionBeforeTaskDelete
+        && requests.length > deleteTaskProviderCalls && requests.slice(deleteTaskProviderCalls).some(input => input.includes('synthetic-delete-scheduled-task'))
+    }, AbortSignal.timeout(8000), () => '定时任务确认后，删除/Redis 通知/Run 恢复没有闭合')
     const trashResponse = await chat('列出合成回收站。', 4)
     const trashSse = await trashResponse.text()
     assert.equal(trashResponse.status, 200, trashSse)
@@ -775,6 +1128,7 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     assert.equal(createdClient.rows[0]?.user_id, owner)
     assert.equal(createdClient.rows[0]?.contact, '合成联系人')
     assert.equal(createdClient.rows[0]?.email, 'tool-created@example.test')
+    agentCreatedClientId = createdClient.rows[0]!.id
     const updateClientResponse = await chat('更新合成联系人。', 4)
     const updateClientSse = await updateClientResponse.text()
     assert.equal(updateClientResponse.status, 200, updateClientSse)
@@ -783,6 +1137,46 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     assert.deepEqual((await pool.query<{ user_id: string; notes: string }>(
       "SELECT user_id,notes FROM clients WHERE name='工具创建联系人'",
     )).rows, [{ user_id: owner, notes: '已更新合成备注' }])
+    const deleteClientResponse = await chat('删除合成联系人。', 4)
+    const deleteClientSse = await deleteClientResponse.text()
+    assert.equal(deleteClientResponse.status, 200, deleteClientSse)
+    assert.match(deleteClientSse, /"type":"done"/u)
+    const deleteClientInteractionLine = deleteClientSse.split('\n').find(line =>
+      line.startsWith('data: ') && line.includes('"type":"interaction_required"'))
+    assert.ok(deleteClientInteractionLine, deleteClientSse)
+    const deleteClientInteraction = JSON.parse(deleteClientInteractionLine.slice('data: '.length)) as {
+      prompt_id: number; session_id: number; options: Array<{ id: string; token: string }>
+    }
+    assert.deepEqual((await pool.query<{ kind: string; status: string }>(
+      'SELECT kind,status FROM interaction_prompts WHERE id=$1 AND user_id=$2 AND session_id=$3',
+      [deleteClientInteraction.prompt_id, owner, deleteClientInteraction.session_id],
+    )).rows, [{ kind: 'confirm', status: 'active' }])
+    assert.equal((await pool.query('SELECT id FROM clients WHERE id=$1 AND user_id=$2', [agentCreatedClientId, owner])).rowCount, 1,
+      '用户确认之前，删除工具不能产生副作用')
+    const deleteClientRun = await pool.query<{ run_id: string }>(
+      'SELECT run_id FROM agent_interaction_bindings WHERE prompt_id=$1 AND user_id=$2 AND session_id=$3',
+      [deleteClientInteraction.prompt_id, owner, deleteClientInteraction.session_id],
+    )
+    assert.equal(deleteClientRun.rowCount, 1)
+    const confirmDelete = deleteClientInteraction.options.find(option => option.id === 'confirm')
+    assert.ok(confirmDelete?.token)
+    const deleteProviderCalls = requests.length
+    const confirmDeleteResponse = await fetch(base + `/api/v1/agent/interactions/${deleteClientInteraction.prompt_id}/resume`, {
+      method: 'POST', headers: { ...auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ token: confirmDelete.token }), signal: AbortSignal.timeout(4000),
+    })
+    assert.equal(confirmDeleteResponse.status, 200)
+    assert.equal((await confirmDeleteResponse.json() as { status: string }).status, 'confirmed')
+    await waitFor(async () => {
+      const checkpoint = await pool.query<{ status: string }>(
+        'SELECT status FROM agent_run_checkpoints WHERE user_id=$1 AND session_id=$2 AND run_id=$3',
+        [owner, deleteClientInteraction.session_id, deleteClientRun.rows[0]!.run_id],
+      )
+      const client = await pool.query('SELECT id FROM clients WHERE id=$1 AND user_id=$2', [agentCreatedClientId, owner])
+      return checkpoint.rows[0]?.status === 'completed' && client.rowCount === 0
+        && requests.length > deleteProviderCalls && requests.slice(deleteProviderCalls).some(input => input.includes('synthetic-delete-client'))
+    }, AbortSignal.timeout(8000), () => '联系人确认后，持久 Run 未完成删除并恢复 Provider')
+    assert.equal((await pool.query('SELECT id FROM clients WHERE id=$1 AND user_id=$2', [agentCreatedClientId, owner])).rowCount, 0)
     const createProjectResponse = await chat('创建合成项目。', 4)
     const createProjectSse = await createProjectResponse.text()
     assert.equal(createProjectResponse.status, 200, createProjectSse)
@@ -826,7 +1220,7 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     const finalProjectStages = await pool.query<{ current_stage: string | null; stages_json: string }>(
       "SELECT current_stage,stages_json FROM projects WHERE user_id=$1 AND name='工具创建项目' AND deleted_at IS NULL", [owner],
     )
-    const finalStages = JSON.parse(finalProjectStages.rows[0]!.stages_json) as Array<{ key: string; label: string; todos: Array<{ text: string; done: boolean }> }>
+    const finalStages = JSON.parse(finalProjectStages.rows[0]!.stages_json) as Array<{ key: string; label: string; todos: Array<{ id: unknown; text: string; done: boolean }> }>
     assert.deepEqual(finalStages.map(stage => stage.label), ['待办阶段'])
     assert.ok(finalStages[0]?.todos[0]?.id)
     assert.deepEqual(finalStages[0]?.todos.map(({ text, done }) => ({ text, done })), [{ text: '合成待办', done: false }])
@@ -865,6 +1259,330 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
       .filter(event => event.type === 'display_event' && event.item.toolName === 'get_tool_schema')
     assert.ok(schemaEvents.length >= 2, 'Schema discovery 必须经过生产 registry 并实际投影到 Run 事件')
     assert.match(schemaSse, /list_events/u, '实际工具结果应包含当前授权的目标 schema 名称')
+    const createEventResponse = await chat('创建合成日历事件。', 4)
+    const createEventSse = await createEventResponse.text()
+    assert.equal(createEventResponse.status, 200, createEventSse)
+    assert.match(createEventSse, /"type":"done"/u)
+    assert.ok(createEventSse.includes('create_event'))
+    const createdEvent = await pool.query<{ id: number; title: string; date: string; type: string }>(
+      'SELECT id,title,date,type FROM calendar_events WHERE user_id=$1 AND title=$2 AND deleted_at IS NULL', [owner, eventCreateTitle],
+    )
+    assert.equal(createdEvent.rowCount, 1, createEventSse)
+    assert.deepEqual(createdEvent.rows[0], { id: createdEvent.rows[0]?.id, title: eventCreateTitle, date: eventCreateDate, type: 'event' })
+    agentCreatedEventId = createdEvent.rows[0]?.id
+    assert.ok(agentCreatedEventId)
+    const remindersBeforeUpdate = await pool.query<{ id: number; reminder_lead_minutes: number; cron: string; enabled: boolean }>(
+      'SELECT id,reminder_lead_minutes,cron,enabled FROM scheduled_tasks WHERE user_id=$1 AND event_id=$2 ORDER BY reminder_lead_minutes',
+      [owner, agentCreatedEventId],
+    )
+    assert.equal(remindersBeforeUpdate.rowCount, 2)
+    const updateEventResponse = await chat('更新合成日历事件。', 4)
+    const updateEventSse = await updateEventResponse.text()
+    assert.equal(updateEventResponse.status, 200, updateEventSse)
+    assert.match(updateEventSse, /"type":"done"/u)
+    assert.ok(updateEventSse.includes('update_event'))
+    const updatedCalendarEvent = await pool.query<{ id: number; title: string; date: string; time: string; user_id: string }>(
+      'SELECT id,title,date,time,user_id FROM calendar_events WHERE id=$1 AND deleted_at IS NULL', [agentCreatedEventId],
+    )
+    assert.deepEqual(updatedCalendarEvent.rows[0], {
+      id: agentCreatedEventId, title: eventUpdatedTitle, date: eventCreateDate, time: '12:00', user_id: owner,
+    })
+    const updatedEventReminders = await pool.query<{ reminder_lead_minutes: number; channels: string; enabled: boolean; event_id: number }>(
+      'SELECT reminder_lead_minutes,channels,enabled,event_id FROM scheduled_tasks WHERE user_id=$1 AND event_id=$2 ORDER BY reminder_lead_minutes',
+      [owner, agentCreatedEventId],
+    )
+    assert.deepEqual(updatedEventReminders.rows, [
+      { reminder_lead_minutes: 30, channels: 'web', enabled: true, event_id: agentCreatedEventId },
+      { reminder_lead_minutes: 60, channels: 'web', enabled: false, event_id: agentCreatedEventId },
+    ], 'update_event 未显式传提醒时必须保留提醒 ID、提前量、渠道和停用状态')
+    const reminderSchedulesAfter = await pool.query<{ id: number; cron: string; name: string; payload: string }>(
+      'SELECT id,cron,name,payload FROM scheduled_tasks WHERE user_id=$1 AND event_id=$2 ORDER BY reminder_lead_minutes',
+      [owner, agentCreatedEventId],
+    )
+    assert.deepEqual(reminderSchedulesAfter.rows.map(row => row.id), remindersBeforeUpdate.rows.map(row => row.id),
+      '更新活动时间必须保留提醒任务身份')
+    assert.notEqual(reminderSchedulesAfter.rows[0]?.cron, remindersBeforeUpdate.rows[0]?.cron,
+      '启用提醒必须按活动新时间重排')
+    assert.equal(reminderSchedulesAfter.rows[1]?.cron, remindersBeforeUpdate.rows[1]?.cron,
+      '停用提醒的触发计划必须保留')
+    assert.ok(reminderSchedulesAfter.rows.every(row => row.name === `${eventUpdatedTitle} 提醒` && row.payload.includes(eventUpdatedTitle)),
+      '更新活动标题后提醒元数据必须一起更新')
+    const globalSearchResponse = await chat('跨类型搜索合成日程。', 4)
+    const globalSearchSse = await globalSearchResponse.text()
+    assert.equal(globalSearchResponse.status, 200, globalSearchSse)
+    assert.match(globalSearchSse, /"type":"done"/u)
+    assert.ok(globalSearchSse.includes('global_search'))
+    const globalSearchRequest = JSON.parse(requests.at(-1)!) as { messages: Array<{ role: string; content: unknown }> }
+    const globalSearchContent = globalSearchRequest.messages.filter(row => row.role === 'tool').at(-1)?.content
+    assert.ok(Array.isArray(globalSearchContent))
+    const globalSearchText = (globalSearchContent as Array<{ text?: unknown }>).find(block => typeof block.text === 'string')?.text
+    assert.equal(typeof globalSearchText, 'string')
+    const globalSearch = JSON.parse(globalSearchText as string) as {
+      total: number; groups: Array<{ type: string; items: Array<{ title: string }> }>
+    }
+    assert.equal(globalSearch.total, 1)
+    assert.deepEqual(globalSearch.groups.map(group => group.type), ['event'])
+    assert.deepEqual(globalSearch.groups[0]?.items.map(item => item.title), [eventUpdatedTitle])
+    assert.doesNotMatch(globalSearchText as string, /异主近期安排|异主提醒|异主机密标记/u,
+      'global_search 必须以可信 lease owner 查询，忽略 Provider 传入的 owner_id')
+    const calendarRevisionKey = `live-revision:${owner}:calendar`
+    const calendarRevisionBeforeDelete = Number(await readRedisValue(calendarRevisionKey) ?? 0)
+    const remindersBeforeDelete = await pool.query<{ id: number; enabled: boolean }>(
+      'SELECT id,enabled FROM scheduled_tasks WHERE user_id=$1 AND event_id=$2 ORDER BY reminder_lead_minutes', [owner, agentCreatedEventId],
+    )
+    assert.deepEqual(remindersBeforeDelete.rows.map(row => row.enabled), [true, false])
+    const deleteEventResponse = await chat('删除合成日历事件。', 4)
+    const deleteEventSse = await deleteEventResponse.text()
+    assert.equal(deleteEventResponse.status, 200, deleteEventSse)
+    const deleteEventInteractionLine = deleteEventSse.split('\n').find(line =>
+      line.startsWith('data: ') && line.includes('"type":"interaction_required"'))
+    assert.ok(deleteEventInteractionLine, deleteEventSse)
+    const deleteEventInteraction = JSON.parse(deleteEventInteractionLine.slice('data: '.length)) as {
+      prompt_id: number; session_id: number; options: Array<{ id: string; token: string }>
+    }
+    assert.deepEqual((await pool.query<{ kind: string; status: string }>(
+      'SELECT kind,status FROM interaction_prompts WHERE id=$1 AND user_id=$2 AND session_id=$3',
+      [deleteEventInteraction.prompt_id, owner, deleteEventInteraction.session_id],
+    )).rows, [{ kind: 'confirm', status: 'active' }])
+    assert.equal((await pool.query('SELECT id FROM calendar_events WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL', [agentCreatedEventId, owner])).rowCount, 1,
+      '用户确认之前，日历事件不能被删除')
+    const deleteEventRun = await pool.query<{ run_id: string }>(
+      'SELECT run_id FROM agent_interaction_bindings WHERE prompt_id=$1 AND user_id=$2 AND session_id=$3',
+      [deleteEventInteraction.prompt_id, owner, deleteEventInteraction.session_id],
+    )
+    assert.equal(deleteEventRun.rowCount, 1)
+    const confirmEventDelete = deleteEventInteraction.options.find(option => option.id === 'confirm')
+    assert.ok(confirmEventDelete?.token)
+    const deleteEventProviderCalls = requests.length
+    const confirmEventDeleteResponse = await fetch(base + `/api/v1/agent/interactions/${deleteEventInteraction.prompt_id}/resume`, {
+      method: 'POST', headers: { ...auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ token: confirmEventDelete.token }), signal: AbortSignal.timeout(4000),
+    })
+    assert.equal(confirmEventDeleteResponse.status, 200)
+    assert.equal((await confirmEventDeleteResponse.json() as { status: string }).status, 'confirmed')
+    await waitFor(async () => {
+      const checkpoint = await pool.query<{ status: string }>(
+        'SELECT status FROM agent_run_checkpoints WHERE user_id=$1 AND session_id=$2 AND run_id=$3',
+        [owner, deleteEventInteraction.session_id, deleteEventRun.rows[0]!.run_id],
+      )
+      const event = await pool.query('SELECT id FROM calendar_events WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL', [agentCreatedEventId, owner])
+      const reminders = await pool.query<{ enabled: boolean }>(
+        'SELECT enabled FROM scheduled_tasks WHERE user_id=$1 AND event_id=$2 ORDER BY reminder_lead_minutes', [owner, agentCreatedEventId],
+      )
+      const revision = Number(await readRedisValue(calendarRevisionKey) ?? 0)
+      return checkpoint.rows[0]?.status === 'completed' && event.rowCount === 0
+        && reminders.rows.length === 2 && reminders.rows.every(row => !row.enabled)
+        && revision > calendarRevisionBeforeDelete && requests.length > deleteEventProviderCalls
+        && requests.slice(deleteEventProviderCalls).some(input => input.includes('synthetic-delete-event'))
+    }, AbortSignal.timeout(8000), () => '日历确认后，事件软删/提醒停用/Redis 通知/Run 恢复没有闭合')
+    const readKnowledgeResponse = await chat('检索Node知识库合成条目。', 4)
+    const readKnowledgeSse = await readKnowledgeResponse.text()
+    assert.equal(readKnowledgeResponse.status, 200, readKnowledgeSse)
+    assert.match(readKnowledgeSse, /"type":"done"/u)
+    assert.ok(readKnowledgeSse.includes('read_knowledge'))
+    const readKnowledgeRequest = JSON.parse(requests.at(-1)!) as { messages: Array<{ role: string; content: unknown }> }
+    const readKnowledgeContent = readKnowledgeRequest.messages.filter(row => row.role === 'tool').at(-1)?.content
+    assert.ok(Array.isArray(readKnowledgeContent))
+    const readKnowledgeText = (readKnowledgeContent as Array<{ text?: unknown }>).find(block => typeof block.text === 'string')?.text
+    assert.equal(typeof readKnowledgeText, 'string')
+    const readKnowledge = JSON.parse(readKnowledgeText as string) as {
+      success: boolean; query: string; strategy: string; returned: number; entries: Array<{
+        knowledge_id: string; title: string; content: string; version: string
+      }>
+    }
+    assert.equal(readKnowledge.success, true)
+    assert.equal(readKnowledge.query, ragKnowledgeKeyword)
+    assert.equal(readKnowledge.strategy, 'bm25')
+    assert.equal(readKnowledge.returned, 1)
+    assert.equal(readKnowledge.entries.length, 1, 'RAG 搜索结果只能包含当前 owner 的知识记录')
+    assert.deepEqual(readKnowledge.entries.map(({ knowledge_id, title, version }) => ({ knowledge_id, title, version })), [{
+      knowledge_id: ragKnowledgeId, title: ragKnowledge.title, version: '1',
+    }])
+    assert.match(readKnowledge.entries[0]!.content, /Node生产RAG合成知识/u)
+    assert.match(readKnowledge.entries[0]!.content, /星辰检索合成词/u)
+    assert.match(readKnowledge.entries[0]!.content, /隔离 owner 知识正文/u,
+      '关键词检索应返回正式索引的共享标题/摘要/正文投影，不直接读取 FS 原文')
+    assert.doesNotMatch(readKnowledgeText as string, /异主RAG机密条目|异主机密正文/u)
+    const exactKnowledgeResponse = await chat('精确读取Node RAG知识。', 4)
+    const exactKnowledgeSse = await exactKnowledgeResponse.text()
+    assert.equal(exactKnowledgeResponse.status, 200, exactKnowledgeSse)
+    assert.match(exactKnowledgeSse, /"type":"done"/u)
+    assert.ok(exactKnowledgeSse.includes('read_knowledge'))
+    const exactKnowledgeRequest = JSON.parse(requests.at(-1)!) as { messages: Array<{ role: string; content: unknown }> }
+    const exactKnowledgeContent = exactKnowledgeRequest.messages.filter(row => row.role === 'tool').at(-1)?.content
+    assert.ok(Array.isArray(exactKnowledgeContent))
+    const exactKnowledgeText = (exactKnowledgeContent as Array<{ text?: unknown }>).find(block => typeof block.text === 'string')?.text
+    assert.equal(typeof exactKnowledgeText, 'string')
+    const exactKnowledge = JSON.parse(exactKnowledgeText as string) as {
+      success: boolean; entry: { knowledge_id: string; title: string; topic: string; description: string; keywords: string[];
+        confidence: string; source_type: string; content: string; scope_type: string; version: number; created_at: string; updated_at: string }
+    }
+    assert.equal(exactKnowledge.success, true)
+    assert.deepEqual(exactKnowledge.entry, {
+      knowledge_id: ragKnowledgeId, title: ragKnowledge.title, topic: ragKnowledge.topic,
+      description: ragKnowledge.description, keywords: [ragKnowledgeKeyword], confidence: 'confirmed', source_type: 'user',
+      scope_type: 'owner', content: ragKnowledge.content, version: 1,
+      created_at: exactKnowledge.entry.created_at, updated_at: exactKnowledge.entry.updated_at,
+    })
+    const foreignKnowledgeResponse = await chat('尝试读取异主RAG条目。', 4)
+    const foreignKnowledgeSse = await foreignKnowledgeResponse.text()
+    assert.equal(foreignKnowledgeResponse.status, 200, foreignKnowledgeSse)
+    assert.match(foreignKnowledgeSse, /"type":"done"/u)
+    const foreignKnowledgeRequest = JSON.parse(requests.at(-1)!) as { messages: Array<{ role: string; content: unknown }> }
+    const foreignKnowledgeContent = foreignKnowledgeRequest.messages.filter(row => row.role === 'tool').at(-1)?.content
+    assert.ok(Array.isArray(foreignKnowledgeContent))
+    const foreignKnowledgeText = (foreignKnowledgeContent as Array<{ text?: unknown }>).find(block => typeof block.text === 'string')?.text
+    assert.equal(typeof foreignKnowledgeText, 'string')
+    assert.match(foreignKnowledgeText as string, /知识条目不存在或已停用/u)
+    assert.doesNotMatch(foreignKnowledgeText as string, /异主RAG机密条目|异主机密正文/u)
+    const saveKnowledgeResponse = await chat('保存Node知识回归。', 4)
+    const saveKnowledgeSse = await saveKnowledgeResponse.text()
+    assert.equal(saveKnowledgeResponse.status, 200, saveKnowledgeSse)
+    assert.match(saveKnowledgeSse, /"type":"done"/u)
+    const knowledgeFilePath = join(root, 'storage', owner, '.agent', 'knowledge', 'entries', `${ragKnowledgeId}.md`)
+    if (process.platform === 'linux') {
+      assert.ok(saveKnowledgeSse.includes('save_knowledge'))
+      const saveKnowledgeRequest = JSON.parse(requests.at(-1)!) as { messages: Array<{ role: string; content: unknown }> }
+      const saveKnowledgeContent = saveKnowledgeRequest.messages.filter(row => row.role === 'tool').at(-1)?.content
+      assert.ok(Array.isArray(saveKnowledgeContent))
+      const saveKnowledgeText = (saveKnowledgeContent as Array<{ text?: unknown }>).find(block => typeof block.text === 'string')?.text
+      assert.equal(typeof saveKnowledgeText, 'string')
+      const saveKnowledgeResult = JSON.parse(saveKnowledgeText as string) as { success?: boolean; error?: string }
+      assert.equal(saveKnowledgeResult.success, true, saveKnowledgeText as string)
+      const savedKnowledge = parseAgentKnowledgeEntry(await readFile(knowledgeFilePath))
+      assert.deepEqual({ id: savedKnowledge.id, title: savedKnowledge.title, content: savedKnowledge.content, version: savedKnowledge.version }, {
+        id: ragKnowledgeId, title: 'Node生产RAG合成知识已保存', content: 'Node保存工具写入的第一版知识正文。', version: 2,
+      }, 'save_knowledge 必须复用同 topic owner 条目并持久递增版本')
+      await waitFor(async () => {
+        const row = await pool.query<{ document_version: string }>(`SELECT document_version FROM knowledge_index_entries
+          WHERE owner_user_id=$1 AND source_type='knowledge' AND source_id=$2 AND deleted_at IS NULL LIMIT 1`, [owner, ragKnowledgeId])
+        return row.rows[0]?.document_version.startsWith('2:') === true
+      }, AbortSignal.timeout(8000), () => 'save_knowledge 后 Node Worker 未刷新正式 RAG 索引')
+      const updateKnowledgeResponse = await chat('更新Node知识回归。', 4)
+      const updateKnowledgeSse = await updateKnowledgeResponse.text()
+      assert.equal(updateKnowledgeResponse.status, 200, updateKnowledgeSse)
+      assert.match(updateKnowledgeSse, /"type":"done"/u)
+      assert.ok(updateKnowledgeSse.includes('update_knowledge'))
+      const updatedKnowledge = parseAgentKnowledgeEntry(await readFile(knowledgeFilePath))
+      assert.deepEqual({ id: updatedKnowledge.id, title: updatedKnowledge.title, content: updatedKnowledge.content,
+        keywords: updatedKnowledge.keywords, version: updatedKnowledge.version }, {
+        id: ragKnowledgeId, title: 'Node生产RAG合成知识已更新',
+        content: 'Node更新工具写入并重建索引的最终知识正文。',
+        keywords: [ragKnowledgeKeyword, 'Node更新回归词'], version: 3,
+      }, 'update_knowledge 必须保留同一 owner ID 并写入新的正文版本')
+      assert.equal(updatedKnowledge.history.at(-1)?.content, 'Node保存工具写入的第一版知识正文。')
+      await waitFor(async () => {
+        const row = await pool.query<{ document_version: string }>(`SELECT document_version FROM knowledge_index_entries
+          WHERE owner_user_id=$1 AND source_type='knowledge' AND source_id=$2 AND deleted_at IS NULL LIMIT 1`, [owner, ragKnowledgeId])
+        return row.rows[0]?.document_version.startsWith('3:') === true
+      }, AbortSignal.timeout(8000), () => 'update_knowledge 后 Node Worker 未刷新正式 RAG 索引')
+    } else {
+      const request = JSON.parse(requests.at(-1)!) as { tools?: Array<{ function?: { name?: string } }> }
+      assert.equal(request.tools?.some(tool => ['save_knowledge', 'update_knowledge'].includes(tool.function?.name ?? '')), false,
+        '当前 Host 不具备 Linux 安全原子写入能力时，不得向 Agent 暴露知识写工具')
+      const unchangedKnowledge = parseAgentKnowledgeEntry(await readFile(knowledgeFilePath))
+      assert.equal(unchangedKnowledge.version, 1, '缺少安全写入后端时必须保持知识主数据不变')
+    }
+    const listSkillsResponse = await chat('列出合成技能目录。', 4)
+    const listSkillsSse = await listSkillsResponse.text()
+    assert.equal(listSkillsResponse.status, 200, listSkillsSse)
+    assert.match(listSkillsSse, /"type":"done"/u)
+    assert.ok(listSkillsSse.includes('list_skills'))
+    const listSkillsRequest = JSON.parse(requests.at(-1)!) as { messages: Array<{ role: string; content: unknown }> }
+    const listSkillsContent = listSkillsRequest.messages.filter(row => row.role === 'tool').at(-1)?.content
+    assert.ok(Array.isArray(listSkillsContent))
+    const listSkillsText = (listSkillsContent as Array<{ text?: unknown }>).find(block => typeof block.text === 'string')?.text
+    assert.equal(typeof listSkillsText, 'string')
+    const skillCatalog = JSON.parse(listSkillsText as string) as { count: number; skills: Array<{ id: string; name: string; source: string; enabled: boolean; body?: unknown }> }
+    assert.ok(skillCatalog.count > 0)
+    const chartSkill = skillCatalog.skills.find(skill => skill.id === 'S7')
+    assert.ok(chartSkill)
+    assert.deepEqual({ id: chartSkill?.id, name: chartSkill?.name, source: chartSkill?.source, enabled: chartSkill?.enabled }, {
+      id: 'S7', name: '图表与数学表达', source: 'builtin', enabled: true,
+    })
+    assert.equal(Object.hasOwn(chartSkill, 'body'), false, '技能目录只暴露 Markdown head 元数据，不返回正文')
+    const useSkillResponse = await chat('加载合成内置技能。', 4)
+    const useSkillSse = await useSkillResponse.text()
+    assert.equal(useSkillResponse.status, 200, useSkillSse)
+    assert.match(useSkillSse, /"type":"done"/u)
+    assert.ok(useSkillSse.includes('use_skill'))
+    const useSkillContinuation = JSON.parse(requests.at(-1)!) as { messages: unknown[] }
+    assert.match(JSON.stringify(useSkillContinuation.messages), /本 Skill 包含两种独立的视觉表达方式/u,
+      'use_skill 正文应经生产续轮进入下一次 Provider 请求')
+    const createSkillResponse = await chat('创建合成用户技能。', 4)
+    const createSkillSse = await createSkillResponse.text()
+    assert.equal(createSkillResponse.status, 200, createSkillSse)
+    assert.match(createSkillSse, /"type":"done"/u)
+    assert.ok(createSkillSse.includes('create_skill'))
+    const createdSkill = await pool.query<{ id: number; skill_id: string; name: string; body: string; managed_by: string; enabled: boolean }>(
+      `SELECT id,skill_id,name,body,managed_by,enabled FROM user_skills WHERE owner_id=$1 AND name='Agent合成用户技能'`, [owner],
+    )
+    assert.equal(createdSkill.rowCount, 1)
+    assert.equal(createdSkill.rows[0]?.body, '# Agent合成用户技能\n\n初始技能正文。')
+    assert.equal(createdSkill.rows[0]?.managed_by, 'assistant')
+    assert.equal(createdSkill.rows[0]?.enabled, true)
+    userSkillId = createdSkill.rows[0]?.skill_id
+    assert.match(userSkillId ?? '', /^U[1-9][0-9]*$/u)
+    const updateSkillResponse = await chat('更新合成用户技能。', 4)
+    const updateSkillSse = await updateSkillResponse.text()
+    assert.equal(updateSkillResponse.status, 200, updateSkillSse)
+    assert.match(updateSkillSse, /"type":"done"/u)
+    assert.ok(updateSkillSse.includes('update_skill'))
+    const updatedSkill = await pool.query<{ name: string; body: string; managed_by: string; enabled: boolean }>(
+      'SELECT name,body,managed_by,enabled FROM user_skills WHERE owner_id=$1 AND skill_id=$2', [owner, userSkillId],
+    )
+    assert.deepEqual(updatedSkill.rows[0], {
+      name: 'Agent合成用户技能已更新', body: '# Agent合成用户技能\n\n更新后的用户技能正文。', managed_by: 'assistant', enabled: true,
+    })
+    const useUserSkillResponse = await chat('加载更新后的合成用户技能。', 4)
+    const useUserSkillSse = await useUserSkillResponse.text()
+    assert.equal(useUserSkillResponse.status, 200, useUserSkillSse)
+    assert.match(useUserSkillSse, /"type":"done"/u)
+    assert.ok(useUserSkillSse.includes('use_skill'))
+    const useUserSkillContinuation = JSON.parse(requests.at(-1)!) as { messages: unknown[] }
+    assert.match(JSON.stringify(useUserSkillContinuation.messages), /更新后的用户技能正文/u,
+      '用户技能更新后的正文应经生产续轮进入下一次 Provider 请求')
+    const skillRevisionKey = `live-revision:${owner}:skills`
+    const skillRevisionBeforeDelete = Number(await readRedisValue(skillRevisionKey) ?? 0)
+    const deleteSkillResponse = await chat('删除合成用户技能。', 4)
+    const deleteSkillSse = await deleteSkillResponse.text()
+    assert.equal(deleteSkillResponse.status, 200, deleteSkillSse)
+    const deleteSkillInteractionLine = deleteSkillSse.split('\n').find(line =>
+      line.startsWith('data: ') && line.includes('"type":"interaction_required"'))
+    assert.ok(deleteSkillInteractionLine, deleteSkillSse)
+    const deleteSkillInteraction = JSON.parse(deleteSkillInteractionLine.slice('data: '.length)) as {
+      prompt_id: number; session_id: number; options: Array<{ id: string; token: string }>
+    }
+    assert.deepEqual((await pool.query<{ kind: string; status: string }>(
+      'SELECT kind,status FROM interaction_prompts WHERE id=$1 AND user_id=$2 AND session_id=$3',
+      [deleteSkillInteraction.prompt_id, owner, deleteSkillInteraction.session_id],
+    )).rows, [{ kind: 'confirm', status: 'active' }])
+    assert.equal((await pool.query('SELECT id FROM user_skills WHERE owner_id=$1 AND skill_id=$2', [owner, userSkillId])).rowCount, 1,
+      '用户确认之前，技能删除不能产生副作用')
+    const deleteSkillRun = await pool.query<{ run_id: string }>(
+      'SELECT run_id FROM agent_interaction_bindings WHERE prompt_id=$1 AND user_id=$2 AND session_id=$3',
+      [deleteSkillInteraction.prompt_id, owner, deleteSkillInteraction.session_id],
+    )
+    assert.equal(deleteSkillRun.rowCount, 1)
+    const confirmSkillDelete = deleteSkillInteraction.options.find(option => option.id === 'confirm')
+    assert.ok(confirmSkillDelete?.token)
+    const deleteSkillProviderCalls = requests.length
+    const confirmSkillDeleteResponse = await fetch(base + `/api/v1/agent/interactions/${deleteSkillInteraction.prompt_id}/resume`, {
+      method: 'POST', headers: { ...auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ token: confirmSkillDelete.token }), signal: AbortSignal.timeout(4000),
+    })
+    assert.equal(confirmSkillDeleteResponse.status, 200)
+    assert.equal((await confirmSkillDeleteResponse.json() as { status: string }).status, 'confirmed')
+    await waitFor(async () => {
+      const checkpoint = await pool.query<{ status: string }>(
+        'SELECT status FROM agent_run_checkpoints WHERE user_id=$1 AND session_id=$2 AND run_id=$3',
+        [owner, deleteSkillInteraction.session_id, deleteSkillRun.rows[0]!.run_id],
+      )
+      const skill = await pool.query('SELECT id FROM user_skills WHERE owner_id=$1 AND skill_id=$2', [owner, userSkillId])
+      const revision = Number(await readRedisValue(skillRevisionKey) ?? 0)
+      return checkpoint.rows[0]?.status === 'completed' && skill.rowCount === 0 && revision > skillRevisionBeforeDelete
+        && requests.length > deleteSkillProviderCalls && requests.slice(deleteSkillProviderCalls).some(input => input.includes('synthetic-delete-user-skill'))
+    }, AbortSignal.timeout(8000), () => '技能确认后，删除/Redis 通知/Run 恢复没有闭合')
     const noteSearchResponse = await chat('搜索合成笔记。', 4)
     const noteSearchSse = await noteSearchResponse.text()
     assert.equal(noteSearchResponse.status, 200, noteSearchSse)
@@ -901,6 +1619,61 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     assert.equal(typeof foreignNoteText, 'string')
     assert.match(foreignNoteText as string, /找不到这条思维节点/u)
     assert.doesNotMatch(foreignNoteText as string, /异主思维秘密/u)
+    const noteCreateResponse = await chat('创建普通合成笔记。', 4)
+    const noteCreateSse = await noteCreateResponse.text()
+    assert.equal(noteCreateResponse.status, 200, noteCreateSse)
+    assert.match(noteCreateSse, /"type":"done"/u)
+    assert.ok(noteCreateSse.includes('note_create'))
+    const createdOrdinaryNote = await pool.query<{ id: number; user_id: string; content_md: string; content_plain: string; version: number }>(
+      "SELECT id,user_id,content_md,content_plain,version FROM mind_nodes WHERE user_id=$1 AND kind='note' AND title='Agent普通合成笔记' AND deleted_at IS NULL", [owner],
+    )
+    assert.equal(createdOrdinaryNote.rowCount, 1)
+    assert.deepEqual(createdOrdinaryNote.rows[0], {
+      id: createdOrdinaryNote.rows[0]!.id, user_id: owner,
+      content_md: '# Agent普通合成笔记\n\n初始正文', content_plain: 'Agent普通合成笔记\n初始正文', version: 1,
+    })
+    ordinaryNoteId = createdOrdinaryNote.rows[0]!.id
+    const noteUpdateResponse = await chat('追加普通合成笔记。', 4)
+    const noteUpdateSse = await noteUpdateResponse.text()
+    assert.equal(noteUpdateResponse.status, 200, noteUpdateSse)
+    assert.match(noteUpdateSse, /"type":"done"/u)
+    assert.ok(noteUpdateSse.includes('note_update'))
+    assert.deepEqual((await pool.query<{ user_id: string; content_md: string; content_plain: string; version: number }>(
+      "SELECT user_id,content_md,content_plain,version FROM mind_nodes WHERE id=$1 AND user_id=$2 AND kind='note' AND deleted_at IS NULL", [ordinaryNoteId, owner],
+    )).rows, [{ user_id: owner, content_md: '# Agent普通合成笔记\n\n初始正文\n\n追加正文', content_plain: 'Agent普通合成笔记\n初始正文\n追加正文', version: createdOrdinaryNote.rows[0]!.version + 1 }])
+    const noteDeleteResponse = await chat('软删合成笔记。', 4)
+    const noteDeleteSse = await noteDeleteResponse.text()
+    assert.equal(noteDeleteResponse.status, 200, noteDeleteSse)
+    assert.match(noteDeleteSse, /"type":"done"/u)
+    assert.ok(noteDeleteSse.includes('note_delete'))
+    const softDeletedNote = await pool.query<{ deleted_at: Date | null; version: number; content_md: string }>(
+      'SELECT deleted_at,version,content_md FROM mind_nodes WHERE id=$1 AND user_id=$2', [ownerNoteId, owner],
+    )
+    assert.equal(softDeletedNote.rows[0]?.deleted_at instanceof Date, true)
+    assert.equal(softDeletedNote.rows[0]?.version, 2)
+    assert.equal(softDeletedNote.rows[0]?.content_md, '月球笔记：己方合成内容。\n第二行')
+    const noteRestoreResponse = await chat('恢复合成笔记。', 4)
+    const noteRestoreSse = await noteRestoreResponse.text()
+    assert.equal(noteRestoreResponse.status, 200, noteRestoreSse)
+    assert.match(noteRestoreSse, /"type":"done"/u)
+    assert.ok(noteRestoreSse.includes('note_restore'))
+    assert.deepEqual((await pool.query<{ deleted_at: Date | null; version: number; content_md: string }>(
+      'SELECT deleted_at,version,content_md FROM mind_nodes WHERE id=$1 AND user_id=$2', [ownerNoteId, owner],
+    )).rows, [{ deleted_at: null, version: 3, content_md: '月球笔记：己方合成内容。\n第二行' }])
+    assert.deepEqual((await pool.query<{ deleted_at: Date | null; version: number; content_md: string }>(
+      'SELECT deleted_at,version,content_md FROM mind_nodes WHERE id=$1 AND user_id=$2', [foreignNoteId, foreign],
+    )).rows, [{ deleted_at: null, version: 1, content_md: '月球笔记：异主思维秘密' }], 'owner 笔记生命周期操作不得改动异主内容')
+    const noteUndoResponse = await chat('撤销最近咕咕合成笔记。', 4)
+    const noteUndoSse = await noteUndoResponse.text()
+    assert.equal(noteUndoResponse.status, 200, noteUndoSse)
+    assert.match(noteUndoSse, /"type":"done"/u)
+    assert.ok(noteUndoSse.includes('note_undo'))
+    const undoneNote = await pool.query<{ deleted_at: Date | null; version: number; content_md: string }>(
+      'SELECT deleted_at,version,content_md FROM mind_nodes WHERE id=$1 AND user_id=$2', [ordinaryNoteId, owner],
+    )
+    assert.ok(undoneNote.rows[0]?.deleted_at instanceof Date, 'note_undo 应撤销当前 owner 最近一条由 Agent 创建的普通笔记')
+    assert.equal(undoneNote.rows[0]?.version, createdOrdinaryNote.rows[0]!.version + 2)
+    assert.equal(undoneNote.rows[0]?.content_md, '# Agent普通合成笔记\n\n初始正文\n\n追加正文')
     const canvasListResponse = await chat('列出合成画布。', 4)
     const canvasListSse = await canvasListResponse.text()
     assert.equal(canvasListResponse.status, 200, canvasListSse)
@@ -1188,7 +1961,7 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
       SET session_context=jsonb_set(session_context,'{snapshot_context}','"重启后不同的快照"') WHERE id=5 AND user_id=$1`, [owner])
     await startChild(`${schema}_second`)
     const resumed = await fetch(base + '/api/v1/agent/sessions/5/stream', { headers: auth, signal: AbortSignal.timeout(12_000) })
-    continueAfterReconnect.resolve()
+    resumeAfterReconnect()
     const resumedSse = await resumed.text()
     assert.equal(resumed.status, 200, resumedSse)
     assert.match(resumedSse, new RegExp(`"type":"done","run_id":"${crashedRun}"`, 'u'))
@@ -1252,8 +2025,56 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     assert.equal(next.status, 200, nextSse)
     assert.match(nextSse, /"type":"done","run_id":"[^"]+","cancelled":false/u)
     assert.doesNotMatch(nextSse, /"type":"error"/u)
+    const askUserResponse = await chat('需要一个合成选项。', 4)
+    const askUserSse = await askUserResponse.text()
+    assert.equal(askUserResponse.status, 200, askUserSse)
+    assert.match(askUserSse, /"type":"done"/u)
+    const interactionLine = askUserSse.split('\n').find(line => line.startsWith('data: ') && line.includes('"type":"interaction_required"'))
+    assert.ok(interactionLine, askUserSse)
+    const interaction = JSON.parse(interactionLine.slice('data: '.length)) as {
+      prompt_id: number; session_id: number; options: Array<{ id: string; token: string }>
+    }
+    assert.ok(interaction.prompt_id > 0)
+    assert.ok(interaction.options.some(option => option.id === 'left' && option.token))
+    assert.deepEqual((await pool.query<{ kind: string; status: string }>(
+      'SELECT kind,status FROM interaction_prompts WHERE id=$1 AND user_id=$2 AND session_id=$3',
+      [interaction.prompt_id, owner, interaction.session_id],
+    )).rows, [{ kind: 'choice', status: 'active' }], 'ask_user 必须将已校验选项持久化到 owner 会话')
+    assert.deepEqual((await pool.query<{ option_id: string }>(
+      'SELECT option_id FROM interaction_actions WHERE prompt_id=$1 ORDER BY option_id', [interaction.prompt_id],
+    )).rows.map(row => row.option_id), ['__custom_reply__', 'left', 'right'],
+    '选择项和允许的自定义回复都应由独立的 token 摘要动作持久化')
+    const resumeRun = await pool.query<{ run_id: string }>(
+      'SELECT run_id FROM agent_interaction_bindings WHERE prompt_id=$1 AND user_id=$2 AND session_id=$3',
+      [interaction.prompt_id, owner, interaction.session_id],
+    )
+    assert.equal(resumeRun.rowCount, 1)
+    const resumeProviderCalls = requests.length
+    const chosen = interaction.options.find(option => option.id === 'left')!
+    const resumeResponse = await fetch(base + `/api/v1/agent/interactions/${interaction.prompt_id}/resume`, {
+      method: 'POST', headers: { ...auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ token: chosen.token }), signal: AbortSignal.timeout(4000),
+    })
+    assert.equal(resumeResponse.status, 200)
+    assert.deepEqual(await resumeResponse.json(), { ok: true, session_id: interaction.session_id, status: 'selected', option_id: 'left' })
+    await waitFor(async () => {
+      const checkpoint = await pool.query<{ status: string }>(
+        'SELECT status FROM agent_run_checkpoints WHERE user_id=$1 AND session_id=$2 AND run_id=$3',
+        [owner, interaction.session_id, resumeRun.rows[0]!.run_id],
+      )
+      return checkpoint.rows[0]?.status === 'completed'
+        && requests.length > resumeProviderCalls
+        && requests.slice(resumeProviderCalls).some(input => input.includes('synthetic-ask-user'))
+    }, AbortSignal.timeout(8000), () => '选择 ask_user 选项后，持久 Run 未恢复到 Provider 并完成')
+    assert.ok(requests.slice(resumeProviderCalls).some(input => input.includes('左侧选项') || /option_id.{0,100}left/u.test(input)),
+      '恢复后的 Provider 请求必须包含已消费选项的持久结果')
+    const resumedAssistant = await pool.query<{ content: string }>(
+      "SELECT m.content FROM conversation_messages m JOIN conversation_sessions s ON s.id=m.session_id WHERE s.user_id=$1 AND m.session_id=$2 AND m.role='assistant' AND m.run_id=$3 AND m.canonical_batch_id IS NULL ORDER BY m.id DESC LIMIT 1",
+      [owner, interaction.session_id, resumeRun.rows[0]!.run_id],
+    )
+    assert.ok(resumedAssistant.rows[0]?.content.trim(), '恢复后的 Provider 轮必须持久化助手回复')
   } finally {
-    continueAfterReconnect.resolve()
+    resumeAfterReconnect()
     gate?.release(true)
     await stopChild(child, 'SIGKILL')
     await host?.close()

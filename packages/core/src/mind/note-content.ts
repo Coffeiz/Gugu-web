@@ -115,10 +115,20 @@ export function applyMindLineEdits(text: string, edits: readonly MindLineEdit[])
       throw new MindNoteContentError('line_edits 的目标行范围不能重叠')
     const before = lines.slice(edit.start - 1, edit.end).join('')
     if (edit.expected !== undefined && normalize(before) !== normalize(edit.expected))
-      throw new MindNoteContentError(`target_lines ${edit.start}-${edit.end} 的原文校验失败；正文可能已变化，请重新读取后再编辑`)
+      throw new MindNoteContentError(`target_lines ${edit.start}-${edit.end} 的原文校验失败：该范围与 expected 不一致。请重新调用 note_get，按 numbered_content 的物理行号定位（标题和空行均计入），并复制对应 Markdown 原文，不含行号前缀。`)
     const replacement = edit.content && /[\r\n]$/u.test(before) && !/[\r\n]$/u.test(edit.content)
       ? edit.content + '\n' : edit.content
     lines.splice(edit.start - 1, edit.end - edit.start + 1, replacement)
   }
   return lines.join('')
+}
+
+/** 对 Markdown 原文执行一次字面替换，重叠出现的匹配也算歧义。 */
+export function replaceUniqueMindText(text: string, find: string, replacement: string): string {
+  if (!find.length) throw new MindNoteContentError('find_replace.find 不能为空')
+  const start = text.indexOf(find)
+  if (start === -1) throw new MindNoteContentError('find_replace 未找到原文。请从最新 note_get.content_md 逐字复制，保留空格和换行。')
+  if (text.indexOf(find, start + 1) !== -1)
+    throw new MindNoteContentError('find_replace 匹配多处。请扩大 find 的原文范围，直到只匹配一处。')
+  return text.slice(0, start) + replacement + text.slice(start + find.length)
 }

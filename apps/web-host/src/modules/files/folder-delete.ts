@@ -1,5 +1,12 @@
 import { CoreError } from '@gugu/core'
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
+import type { PoolClient } from 'pg'
+
+export interface FolderDeleteReceipt {
+  operationId: string
+  fingerprint: string
+  method: 'agent.file.delete_folder'
+}
 
 export interface FolderDeleteMetadata {
   undoContextId: string | null
@@ -7,7 +14,8 @@ export interface FolderDeleteMetadata {
 }
 
 export interface FolderDeleteOperations {
-  remove(ownerId: string, folderId: number, metadata: FolderDeleteMetadata): Promise<void>
+  remove(ownerId: string, folderId: number, metadata: FolderDeleteMetadata,
+    operation?: { receipt: FolderDeleteReceipt; signal?: AbortSignal; authorize(client: Pick<PoolClient, 'query'>): Promise<void> }): Promise<unknown>
 }
 
 export interface FolderDeleteRouteOptions {

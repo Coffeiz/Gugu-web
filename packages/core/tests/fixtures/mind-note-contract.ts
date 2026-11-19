@@ -33,6 +33,7 @@ import { createSqlMindCanvasCreateRuntime } from '../../src/mind/canvas-create-s
 import { prepareMindNoteCreate } from '../../src/mind/note-create.js'
 
 export async function contract(db: Kysely<MindDatabase>, backend: 'sqlite' | 'postgres') {
+  await sql.raw(tablesSql(backend).ragJobs).execute(db)
   const owner = randomUUID(), other = randomUUID()
   const insert = createSqlMindNoteInserter(db, backend, () => '2026-11-14T10:00:00.000Z')
   const input = prepareMindNoteCreate({ contentMd: '# 标题\n正文', title: '索引', capturedAt: '2026-11-13T00:00:00Z' }, new Date('2026-11-14T10:00:00Z'))
@@ -460,4 +461,22 @@ export async function contract(db: Kysely<MindDatabase>, backend: 'sqlite' | 'po
   assert.equal(unchanged.deleted_at, null)
   await assert.rejects(insert(owner, input, 'tab'))
   assert.equal((await db.selectFrom('mind_nodes').selectAll().execute()).length, nodesBeforeRefRollback)
+
+  // 抽屉往返后，旧相机和锚点快照都不能恢复已断开的线。
+  const noUndo = { undoContextId: null, clientId: null, mutationId: null }
+  const projectItem = await addItem(owner, relationCanvas.id, { nodeId: projectRef.id }, noUndo)
+  const projectLink = { canvasId: relationCanvas.id, srcNodeId: canvasNote.id, dstNodeId: projectRef.id }
+  const oldLink = await createRelation(owner, projectLink, noUndo)
+  const oldParallel = await createRelation(owner, { ...projectLink, allowParallel: true }, noUndo)
+  const oldView = { scale: 1, relationAnchors: { [oldLink.id]: { srcSide: 'right', dstSide: 'left' } } }
+  await updateCanvas(owner, relationCanvas.id, { data: oldView }, noUndo)
+  const readLinkIds = async () => (await reader.listRelations(owner, relationCanvas.id))!.map(row => row.id)
+  const unrelated = (await readLinkIds()).filter(id => id !== oldLink.id && id !== oldParallel.id)
+  await removeItem(owner, relationCanvas.id, projectItem.id, noUndo)
+  await updateCanvas(owner, relationCanvas.id, { data: { ...oldView, scale: 1.25, detachedRelationIds: [] } }, noUndo)
+  await addItem(owner, relationCanvas.id, { nodeId: projectRef.id }, noUndo)
+  assert.deepEqual(await readLinkIds(), unrelated)
+  const reconnected = await createRelation(owner, projectLink, noUndo)
+  await updateCanvas(owner, relationCanvas.id, { data: { ...oldView, detachedRelationIds: [oldLink.id, oldParallel.id] } }, noUndo)
+  assert.deepEqual(await readLinkIds(), [...unrelated, reconnected.id].sort((a, b) => a - b))
 }

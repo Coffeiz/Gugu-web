@@ -7,7 +7,7 @@ import {
   createRedisRateLimiter,
   RateLimitError,
   type RedisRateLimitCommands,
-} from '../../src/domains/auth/rate-limit.js'
+} from '../../src/modules/auth/rate-limit.js'
 
 function makeRequest(
   forwardedFor: string | undefined,

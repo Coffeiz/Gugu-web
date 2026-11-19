@@ -3,8 +3,8 @@ import test from 'node:test'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import Fastify from 'fastify'
-import { createAdminAuditLogReader } from '@gugu/core/admin-audit-log'
-import { registerAdminAuditLogRoute } from '../../src/modules/admin/audit-log.js'
+import { createAdminAuditLogReader } from '../../src/modules/admin/audit.js'
+import { registerAdminAuditLogRoute } from '../../src/modules/admin/audit.js'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL

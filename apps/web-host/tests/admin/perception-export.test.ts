@@ -4,7 +4,7 @@ import {execFileSync} from 'node:child_process'
 import {resolve} from 'node:path'
 import Fastify from 'fastify'
 import {createPerceptionEventExporter} from '@gugu/core/perception-export'
-import {registerAdminPerceptionExportRoute} from '../../src/modules/admin/perception-export.js'
+import {registerAdminPerceptionExportRoute} from '../../src/modules/admin/perception.js'
 import {installHttpErrorHandler} from '../../src/http/errors.js'
 const python=process.env.GUGU_WEBUI_TEST_PYTHON
 const now=10000

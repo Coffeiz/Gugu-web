@@ -88,7 +88,7 @@ function onBlur() {
    .time-box / popup-input 同一套描边输入框契约），亮暗主题自动适配。 */
 .time-input.boxed { width: 100%; padding: 8px 11px; border: 1px solid var(--input-border); border-radius: var(--radius-xs); background: var(--input-bg); color: var(--input-fg); transition: border-color 0.15s, box-shadow 0.15s, background 0.15s; }
 .time-input.boxed:hover { border-color: var(--input-border-hover); background: var(--input-bg-hover); }
-.time-input.boxed:focus-within { border-color: var(--input-border-focus); box-shadow: var(--input-focus-shadow); background: var(--input-bg-focus); }
+.time-input.boxed:focus-within { border-color: var(--input-border-focus); background: var(--input-bg-focus); }
 .time-part { width: 22px; border: none; background: transparent; outline: none; padding: 0; text-align: center; font: 13px var(--font-sans); font-variant-numeric: tabular-nums; color: var(--text-primary); }
 .time-part::placeholder { color: var(--text-secondary); opacity: .65; }
 .time-colon { color: var(--text-secondary); font-size: 13px; font-weight: 600; line-height: 1; }

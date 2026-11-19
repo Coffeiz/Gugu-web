@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { registerAgentStateLabelRoutes } from '../../src/modules/admin/agent-state-labels.js'
-import { createAgentStateLabelOperations } from '../../src/modules/admin/agent-state-labels.js'
+import { registerAgentStateLabelRoutes } from '../../src/modules/admin/llm-strategy.js'
+import { createAgentStateLabelOperations } from '../../src/modules/admin/llm-strategy.js'
 import { createApp } from '../../src/app.js'
 
 test('Admin 状态标签目录需要管理员认证并返回特殊状态和工具标签', async () => {

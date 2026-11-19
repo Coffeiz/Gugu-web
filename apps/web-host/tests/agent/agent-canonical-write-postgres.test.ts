@@ -4,7 +4,7 @@ import test from 'node:test'
 import { Pool } from 'pg'
 import { MessageArea, stableJson, formatCompactedSummary } from '@gugu/core/agent'
 import type { CanonicalRunContext, RunCheckpoint } from '@gugu/core/agent'
-import { createCanonicalHistoryWriter, canonicalBaselineHash } from '../../src/domains/agent-sessions/persistence/agent-canonical-write-postgres.js'
+import { createCanonicalHistoryWriter, canonicalBaselineHash } from '../../src/modules/agent-sessions/persistence/agent-canonical-write-postgres.js'
 
 const digest = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
@@ -33,7 +33,8 @@ test('历史增量与展示顺序同事务提交，回滚与重放不产生重�
     area.append({ role: 'user', content: '上下文' }, { source: 'rag', persistencePolicy: 'commit_on_success' })
     area.append({ role: 'user', content: '问题' }, { source: 'user', persistencePolicy: 'already_persisted', persistedMessageId: anchor.rows[0]!.id })
     area.append({ role: 'assistant', content: '工具轮次' }, { source: 'tool_round', persistencePolicy: 'commit_on_success' })
-    const context = { identity, modelIdentity: 'model', prepared: { area: area.snapshot() }, compactions: [], continuationRef: null, providerCacheAnchor: null } as unknown as CanonicalRunContext
+    const context = { identity, modelIdentity: 'model', prepared: { area: area.snapshot() }, compactions: [],
+      continuationRef: 'provider:synthetic-run', providerCacheAnchor: null } as unknown as CanonicalRunContext
     const zero = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, contextInput: null }
     const checkpoint = { identity, totalUsage: zero, files: [], displayTimeline: [{ kind: 'assistant', text: '回答' }], providerRounds: [], calls: [] } as unknown as RunCheckpoint<CanonicalRunContext>
     const writer = createCanonicalHistoryWriter(async () => ({ defaultLimit6h: null, byokEnabled: false, localDeployment: false, model: 'model', provider: 'provider', isByok: false }))
@@ -61,7 +62,7 @@ test('历史增量与展示顺序同事务提交，回滚与重放不产生重�
       const snapshot = { ownerId: identity.ownerId, sessionId: '1', contextEpoch: 1, context: {}, snapshotHash: 'snapshot',
         sessionInfoHash: null, snapshotExpiresAt: null, baselineMessageSeq: 0 }
       const emptyArea = new MessageArea({ digest, nextId: randomUUID })
-      const compactContext = { ...context, identity: nextIdentity, prepared: { area: emptyArea.snapshot() },
+      const compactContext = { ...context, identity: nextIdentity, continuationRef: null, prepared: { area: emptyArea.snapshot() },
         historyBaseline: { baselineSeq: 0, baselineHash: null, snapshotHash: 'snapshot' },
         sourceEffects: { sessionSnapshot: { state: snapshot } }, compactions: [
           { id: 'compact-1', result: { changed: true, coversUnpersisted: false,

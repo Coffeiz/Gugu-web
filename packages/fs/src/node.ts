@@ -52,13 +52,20 @@ export function importLocalFile(
   return publishLocalFile(rootPath, relativePath, content, { replace: false, signal })
 }
 
+/** 在授权根内流式创建新文件，并通过已打开的目录句柄安全创建缺失父目录。 */
+export function writeLocalFileStream(
+  rootPath: string, relativePath: string, content: AsyncIterable<Uint8Array>, signal: AbortSignal,
+): Promise<void> {
+  return publishLocalFile(rootPath, relativePath, content, { replace: false, createParents: true, signal })
+}
+
 async function publishLocalFile(
   rootPath: string, relativePath: string, content: string | Uint8Array | AsyncIterable<Uint8Array>,
-  options: { replace: boolean; signal?: AbortSignal },
+  options: { replace: boolean; createParents?: boolean; signal?: AbortSignal },
 ): Promise<void> {
   options.signal?.throwIfAborted()
   const segments = relativePath.split('/')
-  if (process.platform !== 'linux' || options.replace && segments.length < 2 || segments.some(segment => !segment || segment === '.' || segment === '..' || segment.includes('\\') || segment.includes('\0')))
+  if (process.platform !== 'linux' || (options.replace || options.createParents) && segments.length < 2 || segments.some(segment => !segment || segment === '.' || segment === '..' || segment.includes('\\') || segment.includes('\0')))
     throw new UnsafeLocalPathError()
 
   const root = await realpath(rootPath)
@@ -74,7 +81,7 @@ async function publishLocalFile(
       catch (error) {
         const code = (error as NodeJS.ErrnoException).code
         if (code === 'ELOOP' || code === 'ENOTDIR') throw new UnsafeLocalPathError()
-        if (code !== 'ENOENT' || !options.replace) throw error
+        if (code !== 'ENOENT' || !options.replace && !options.createParents) throw error
         try { await mkdir(nextPath, { mode: 0o700 }) }
         catch (mkdirError) { if ((mkdirError as NodeJS.ErrnoException).code !== 'EEXIST') throw mkdirError }
         try { next = await open(nextPath, constants.O_RDONLY | constants.O_DIRECTORY | (constants.O_NOFOLLOW ?? 0)) }
@@ -212,21 +219,56 @@ async function removeLocalPath(rootPath: string, relativePath: string, fileOnly:
   }
 }
 
-async function checkedFilePath(rootPath: string, relativePath: string): Promise<string | null> {
+async function openAnchoredParent(rootPath: string, relativePath: string) {
   const segments = relativePath.split('/')
-  if (segments.some(segment => !segment || segment === '.' || segment === '..' || segment.includes('\\') || segment.includes('\0')))
+  if (process.platform !== 'linux' || segments.some(segment =>
+    !segment || segment === '.' || segment === '..' || segment.includes('\\') || segment.includes('\0')))
     throw new UnsafeLocalPathError()
-  try {
-    const root = await realpath(rootPath)
-    let target = root
-    for (const segment of segments) {
-      target = path.join(target, segment)
-      if (!within(root, target) || (await lstat(target)).isSymbolicLink()) throw new UnsafeLocalPathError()
-    }
-    return target
-  } catch (error) {
+  let root: string
+  try { root = await realpath(rootPath) }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
+  }
+  let handle
+  try { handle = await open(root, constants.O_RDONLY | constants.O_DIRECTORY | (constants.O_NOFOLLOW ?? 0)) }
+  catch (error) {
     const code = (error as NodeJS.ErrnoException).code
-    if (code === 'ENOENT' || code === 'ENOTDIR') return null
+    if (code === 'ELOOP' || code === 'ENOTDIR') throw new UnsafeLocalPathError()
+    if (code === 'ENOENT') return null
+    throw error
+  }
+  const ancestors: Awaited<ReturnType<typeof open>>[] = []
+  try {
+    let parent = `/proc/self/fd/${handle.fd}`
+    for (const segment of segments.slice(0, -1)) {
+      let next
+      try { next = await open(path.join(parent, segment), constants.O_RDONLY | constants.O_DIRECTORY | (constants.O_NOFOLLOW ?? 0)) }
+      catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        if (code === 'ENOENT') {
+          for (const ancestor of ancestors.reverse()) await ancestor.close()
+          await handle.close()
+          return null
+        }
+        if (code === 'ELOOP' || code === 'ENOTDIR') throw new UnsafeLocalPathError()
+        throw error
+      }
+      ancestors.push(next)
+      parent = `/proc/self/fd/${next.fd}`
+    }
+    return {
+      parent,
+      name: segments.at(-1)!,
+      path: path.join(root, ...segments),
+      close: async () => {
+        for (const ancestor of ancestors.reverse()) await ancestor.close()
+        await handle.close()
+      },
+    }
+  } catch (error) {
+    for (const ancestor of ancestors.reverse()) await ancestor.close()
+    await handle.close()
     throw error
   }
 }
@@ -234,31 +276,49 @@ async function checkedFilePath(rootPath: string, relativePath: string): Promise<
 /** 在授权根内暂存普通文件，目标已存在时拒绝覆盖。 */
 export async function stageLocalFile(root: string, relativePath: string, journalId: string) {
   if (!/^[0-9a-f-]{36}$/.test(journalId)) throw new UnsafeLocalPathError()
-  const original = await checkedFilePath(root, relativePath)
-  if (!original) return null
-  const info = await lstat(original)
-  if (!info.isFile()) throw new UnsafeLocalPathError()
-  const stagedPath = `${original}.gugu-purge-${journalId}`
-  await link(original, stagedPath)
-  try { await unlink(original) } catch (error) { await unlink(stagedPath).catch(() => undefined); throw error }
-  return { size: info.size, stagedPath }
+  const parent = await openAnchoredParent(root, relativePath)
+  if (!parent) return null
+  const original = `${parent.parent}/${parent.name}`
+  const staged = `${original}.gugu-purge-${journalId}`
+  try {
+    let info
+    try { info = await lstat(original) }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error }
+    if (!info.isFile() || info.isSymbolicLink()) throw new UnsafeLocalPathError()
+    await link(original, staged)
+    try {
+      const current = await lstat(original)
+      if (!current.isFile() || current.dev !== info.dev || current.ino !== info.ino) throw new UnsafeLocalPathError()
+      await unlink(original)
+    } catch (error) {
+      await unlink(staged).catch(() => undefined)
+      throw error
+    }
+    return { size: info.size, stagedPath: `${parent.path}.gugu-purge-${journalId}` }
+  } finally { await parent.close() }
 }
 
 /** 恢复或删除暂存文件；原位置已有不同文件时保留两者并报错。 */
 export async function finishStagedLocalFile(root: string, relativePath: string, journalId: string, restore: boolean): Promise<void> {
   if (!/^[0-9a-f-]{36}$/.test(journalId)) throw new UnsafeLocalPathError()
   const suffix = `.gugu-purge-${journalId}`
-  const staged = await checkedFilePath(root, `${relativePath}${suffix}`)
-  if (!staged) return
-  if (!(await lstat(staged)).isFile()) throw new UnsafeLocalPathError()
-  if (restore) {
-    const original = staged.slice(0, -suffix.length)
-    try { await link(staged, original) }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-      const [source, target] = await Promise.all([lstat(staged), lstat(original)])
-      if (!source.isFile() || !target.isFile() || source.dev !== target.dev || source.ino !== target.ino) throw error
+  const parent = await openAnchoredParent(root, relativePath)
+  if (!parent) return
+  const original = `${parent.parent}/${parent.name}`
+  const staged = `${original}${suffix}`
+  try {
+    let source
+    try { source = await lstat(staged) }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error }
+    if (!source.isFile() || source.isSymbolicLink()) throw new UnsafeLocalPathError()
+    if (restore) {
+      try { await link(staged, original) }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+        const target = await lstat(original)
+        if (!target.isFile() || target.isSymbolicLink() || source.dev !== target.dev || source.ino !== target.ino) throw error
+      }
     }
-  }
-  await unlink(staged)
+    await unlink(staged)
+  } finally { await parent.close() }
 }

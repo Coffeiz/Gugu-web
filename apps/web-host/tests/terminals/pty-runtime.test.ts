@@ -91,3 +91,37 @@ test('PTY runtime refuses closed terminals and egress without the Host proxy', a
   await assert.rejects(egress.runtime.startWithSubscription('owner-a', 'term-1'), /代理不可用/)
   assert.equal(egress.calls.some(call => Array.isArray(call) && call[0] === 'mounts'), false)
 })
+
+test('Bubblewrap PTY 拒绝继续使用已撤回或改变的工作区授权', async () => {
+  let workspaceTarget = 'target-a'
+  let fullUserSandboxWrite = true
+  const runtime = createTerminalPtyRuntime({
+    async read() { return terminal({ workspaceId: 4 }) },
+    async authorize() {},
+    async snapshot() {
+      return { workspaceId: 5, workspaceTarget, networkProfile: 'none', facts: {
+        adminEnabled: true, adminDangerousEnabled: false, sandboxEnabled: true, sandboxReady: true,
+        filesystemAuthorizationAvailable: true, sessionOwned: true, workspaceValid: true, userEnabled: true,
+        userDangerousEnabled: false, fullUserSandboxWrite,
+      } }
+    },
+    async mounts(_owner, workspaceId) {
+      assert.equal(workspaceId, 5)
+      return { cwd: '/synthetic', readonlyPaths: [], readwritePaths: ['/synthetic'], environment: {},
+        sandboxCwd: '/workspace/current', sandboxMounts: [{ source: '/synthetic', target: '/workspace/current', readonly: false }],
+        async close() {} }
+    },
+    manager: {
+      async startWithSubscription(spec) {
+        assert.equal(await spec.authorizeRunning?.(), true)
+        workspaceTarget = 'target-b'
+        assert.equal(await spec.authorizeRunning?.(), false)
+        workspaceTarget = 'target-a'
+        fullUserSandboxWrite = false
+        assert.equal(await spec.authorizeRunning?.(), false)
+        return { session: { handle: { pid: 33, sandboxId: 'term-1:33' }, cols: spec.cols, rows: spec.rows }, queue: { async take() { return null } } }
+      },
+    },
+  })
+  await runtime.startWithSubscription('owner-a', 'term-1')
+})

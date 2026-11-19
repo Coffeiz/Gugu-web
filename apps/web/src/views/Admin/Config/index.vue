@@ -121,59 +121,7 @@
         </div>
       </section>
 
-      <!-- ── 文件存储 ── -->
-      <section id="sec-storage" class="config-card">
-        <div class="card-head">
-          <div class="card-icon" style="--ic:rgba(176,120,88,0.12);--stroke:#b07858">
-            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
-              stroke-linecap="round" stroke-linejoin="round">
-              <path d="M3 6C3 4.9 3.9 4 5 4h4l2 2h6c1.1 0 2 .9 2 2v8c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V6z"/>
-            </svg>
-          </div>
-          <div class="card-title-block">
-            <h3>{{ t('configUi.fileStorage') }}</h3>
-            <p>{{ t('configUi.fileStorageHint') }}</p>
-          </div>
-        </div>
-
-        <div class="toggle-group">
-          <button class="toggle-btn" :class="{ active: draft.storage.backend === 'local' }"
-            @click="draft.storage.backend = 'local'">{{ t('configUi.localDisk') }}</button>
-          <button class="toggle-btn" :class="{ active: draft.storage.backend === 'oss' }"
-            @click="draft.storage.backend = 'oss'">{{ t('configUi.aliyunOss') }}</button>
-        </div>
-
-        <div v-if="draft.storage.backend === 'local'" class="field-grid">
-          <ConfigField :label="t('configUi.storagePath')" v-model="draft.storage.local_path" placeholder="../Gugu-data/users" class="span2" />
-        </div>
-        <div v-else class="field-grid">
-          <ConfigField :label="t('configUi.bucketName')" v-model="draft.storage.oss_bucket" placeholder="gugu-web" />
-          <ConfigField label="Endpoint"  v-model="draft.storage.oss_endpoint" placeholder="oss-cn-hangzhou.aliyuncs.com" />
-          <ConfigField label="AccessKey ID"     v-model="draft.storage.oss_access_key_id" type="password" :placeholder="t('configUi.keepUnchanged')" />
-          <ConfigField label="AccessKey Secret" v-model="draft.storage.oss_access_key_secret" type="password" :placeholder="t('configUi.keepUnchanged')" />
-          <ConfigField :label="t('configUi.objectPrefix')" v-model="draft.storage.oss_prefix" :placeholder="`gugugu/ ${t('configUi.optionalSuffix')}`" class="span2" />
-        </div>
-
-        <div v-if="draft.storage.backend === 'oss'" class="card-footer oss-footer">
-          <div class="oss-footer-top">
-            <code class="conn-preview">oss://{{ draft.storage.oss_bucket }}.{{ draft.storage.oss_endpoint }}/{{ draft.storage.oss_prefix }}</code>
-            <button class="btn-test" :class="{ loading: testLoading.oss }" @click="testOss">
-              <svg v-if="testLoading.oss" class="spin-icon" width="12" height="12" viewBox="0 0 12 12"
-                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <path d="M6 1v2M6 9v2M1 6h2M9 6h2"/>
-              </svg>
-              {{ testLoading.oss ? t('configUi.testing') : t('configUi.testOss') }}
-            </button>
-          </div>
-          <div v-if="testStatus.oss" class="oss-test-result" :class="testStatus.oss.ok ? 'ok' : 'fail'">
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-              <path v-if="testStatus.oss.ok" d="M2 6l2.5 2.5 5.5-5"/>
-              <path v-else d="M3 3l6 6M9 3l-6 6"/>
-            </svg>
-            {{ testStatus.oss.message }}
-          </div>
-        </div>
-      </section>
+      <StorageSettings v-model="draft.storage" />
 
       <!-- ── 邮件系统 ── -->
       <section id="sec-smtp" class="config-card">
@@ -271,8 +219,10 @@ import SecurityAlertSettings from './components/SecurityAlertSettings.vue'
 import OutboundNetworkSettings from './components/OutboundNetworkSettings.vue'
 import ImPlatformSettings from './components/ImPlatformSettings.vue'
 import DatabaseInitializationControl from './components/DatabaseInitializationControl.vue'
+import StorageSettings from './components/StorageSettings.vue'
 import { useSystemSmtpConfiguration } from './composables/useSystemSmtpConfiguration'
 import { useDatabaseInitialization } from './composables/useDatabaseInitialization'
+import { supportedStoragePatch } from './utils/storageConfigPatch'
 
 const { t } = useI18n()
 
@@ -314,8 +264,8 @@ const redisConnString = computed(() => {
 })
 
 // ── 连接测试 ──────────────────────────────────────────────────────────────
-const testStatus  = reactive<Record<string, any>>({ db: null, redis: null, oss: null, smtp: null })
-const testLoading = reactive({ db: false, redis: false, oss: false })
+const testStatus  = reactive<Record<string, any>>({ db: null, redis: null, smtp: null })
+const testLoading = reactive({ db: false, redis: false })
 const { loading: initing, initialize: initializeDatabase } = useDatabaseInitialization()
 
 async function testDb() {
@@ -371,31 +321,6 @@ async function testRedis() {
   }
 }
 
-async function testOss() {
-  testLoading.oss = true
-  testStatus.oss  = null
-  try {
-    const res = await adminStore.authFetch('/api/v1/admin/config/test-connection', {
-      method: 'POST',
-      body: JSON.stringify({
-        type: 'oss',
-        oss: {
-          endpoint:          draft.storage.oss_endpoint,
-          bucket:            draft.storage.oss_bucket,
-          access_key_id:     draft.storage.oss_access_key_id,
-          access_key_secret: draft.storage.oss_access_key_secret,
-          prefix:            draft.storage.oss_prefix,
-        },
-      }),
-    })
-    testStatus.oss = await res.json()
-  } catch (e) {
-    testStatus.oss = { ok: false, message: (e instanceof Error ? e.message : String(e)) }
-  } finally {
-    testLoading.oss = false
-  }
-}
-
 // ── 内联 TestResult 组件 ──────────────────────────────────────────────────
 const TestResult = defineComponent({
   props: { status: Object },
@@ -425,7 +350,7 @@ async function save() {
   await configStore.saveConfig({
     db:      { ...draft.db },
     redis:   { ...draft.redis },
-    storage: { ...draft.storage },
+    ...supportedStoragePatch(draft.storage),
     smtp:    { ...draft.smtp },
     security: { ...draft.security },
     im: { ...draft.im },
@@ -441,7 +366,6 @@ function resetDraft() {
   Object.assign(draft.im, configStore.cfg.im)
   testStatus.db    = null
   testStatus.redis = null
-  testStatus.oss   = null
   testStatus.smtp  = null
 }
 
@@ -593,17 +517,6 @@ async function testSmtp() {
 }
 .btn-primary:hover:not(:disabled) { filter: brightness(1.1); }
 .btn-primary:disabled { opacity: 0.5; cursor: default; }
-
-.oss-footer { flex-direction: column; align-items: stretch; gap: 10px; }
-.oss-footer-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.oss-test-result {
-  display: flex; align-items: flex-start; gap: 6px;
-  font-size: 12px; font-weight: 500; padding: 8px 12px; border-radius: 9px;
-  line-height: 1.5; word-break: break-all;
-}
-.oss-test-result svg { flex-shrink: 0; margin-top: 2px; }
-.oss-test-result.ok   { color: #5ab899; background: rgba(90,184,153,0.1);  border: 1px solid rgba(90,184,153,0.15); }
-.oss-test-result.fail { color: #e07878; background: rgba(224,120,120,0.1); border: 1px solid rgba(224,120,120,0.15); }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 .spin-icon { animation: spin 0.8s linear infinite; }

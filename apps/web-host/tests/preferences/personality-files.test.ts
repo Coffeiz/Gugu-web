@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readdir, rm, symlink } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { createLocalPreferenceTextFiles } from '../../src/domains/preferences/persistence/personality-files.js'
+import { createLocalPreferenceTextFiles } from '../../src/modules/preferences/persistence/personality-files.js'
 
 const ownerId = '00000000-0000-4000-8000-000000000021'
 

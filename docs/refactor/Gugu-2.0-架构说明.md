@@ -15,18 +15,21 @@
 - `apps/web/` 暂时承载 Vue 功能 UI；Web 与桌面共享看板、日历、笔记、画布等领域功能，分别装配应用壳、顶栏和主导航。不要求桌面沿用 Web Host 布局。
 - macOS、Windows 桌面采用本地优先、应用内单用户；Linux/NAS 与 SaaS 保留多用户。桌面是默认家节点，SaaS 不是必经中转。
 - 桌面端和移动端不提供 Admin 页面；本机权限、执行能力及运行状态通过各端自身的设置和状态界面管理。Linux/NAS 自托管保留管理后台；未来 SaaS 的管理能力以独立控制台的产品形态提供，具体部署和代码拆分另行确定。
+- **Admin 后端边界**：自部署管理业务与 PostgreSQL/Redis 适配由 Web Host 的 `modules/admin/` 承担；未来 SaaS 管理后端在独立仓库按自己的租户、权限和数据模型实现。公开自部署代码不应包含 SaaS 专属后端实现。
 - **Admin 数据边界**：Admin 专属 API 面向 Linux/NAS Web 和未来独立 SaaS 控制台，不要求 SQLite 适配或桌面 IPC；按服务端实际数据库与部署能力实现并验证，当前 Linux/NAS 以 PostgreSQL 为准，SaaS 使用自己的服务端适配。被普通业务或桌面实际复用的规则与数据能力仍须遵循对应跨端契约；不得把此例外扩展到普通用户 API，也不代表 SaaS 当前已接入。
 - **桌面埋点与服务端统计分离**：桌面和移动端不运行 Admin 查询，但可在用户授权和设置控制下向用户选择的服务上传必要的使用事件。事件契约、采集与上传属于普通跨端能力；离线队列可使用 SQLite，批量上传失败不得阻塞正常使用，按容量及保留时间限制暂存。默认不采集聊天正文、文件内容、凭据和本机绝对路径等敏感内容；关闭非必要统计后停止相关上传。SaaS 接收、存储与聚合事件并供其独立控制台查询；Linux/NAS 自部署的接收端及上报目标由部署者配置，不默认上传官方 SaaS。具体接收协议、数据类别及桌面授权界面须在实现时独立验收。
 - SaaS 长期以多用户 DB、云同步及相应消息/任务路由为职责，不持有用户 FS，也不装配本机用户目录、watcher 或通用 Shell。旧 FS 数据须在 SaaS 切换前完成去向与恢复验收。
 - 文件正文以授权范围内的本地 FS 为唯一真源，业务读写直接通过 FS Adapter 完成；不再采用“本地文件与 DB 正文副本靠 watcher 同步”的方案。DB 不为本地文件单独生成持久对象 ID；需要索引、搜索或预览时，可保存可丢弃、可从文件重建的派生数据。文件以授权根目录下的相对路径定位，改名或移动后旧路径引用允许失效；watcher 仅可作为派生数据刷新的优化，不得作为一致性或数据恢复的前提。
+- **Agent 文件操作目标**：2.0 收敛通用文件 CRUD 工具，目标由受授权的 Shell 完成目录列表、读取、搜索、创建、编辑、复制、移动及重命名等操作，并在替代能力验收后删除相应独立 Agent 工具及其注册、Schema 和提示词。删除、覆盖和批量写入仍须落实危险操作确认；Shell 不能绕过用户隔离、工作区授权根、资源和网络策略。此项是目标，不表示当前 Shell/MXC 在所有端已满足条件。
+- 删除旧工具前须盘点调用方和数据影响，并验证权限隔离、路径与符号链接、并发、失败恢复，以及适用的配额、撤销、资源刷新和引用行为。Office/PDF 提取可作为 Shell 可调用能力另行提供；附件读取、文件展示或发送涉及会话/消息语义，单独评估其接口和替代方案。项目、日历、笔记等业务用例继续经业务接口执行，不以直接操作数据库替代事务。无合适 Shell 的端按平台能力显式提供受限方案，不假设移动端可运行任意 Shell。
 - 可复用的 FS 能力收敛于 `packages/fs/`，Node 实现通过独立入口按需导入；Host 负责建立可信身份和授权根。当前仅安全只读打开已接入 Web 文件读取，写入、目录操作和其他端的接入仍待迁移。
 - Linux/NAS 自托管版 2.0 只支持本地文件系统存储，取消应用在线文件/附件/记忆存储的 OSS/S3 后端及其直传、预签名 URL、对象配额和对象搬移 API。升级路径必须包含旧版 OSS 数据的盘点与迁移/导出验收；不能在数据去向未确认时直接禁用旧对象读取。独立备份目标可另行设计，SaaS 云端对象存储由 SaaS 架构单独决定，不受此项取消决定约束。
 - 2.0 不把旧版“DB File 记录 ↔ 物理文件对象”双向对账和互相修复作为常规 Admin 能力；幽灵记录、孤儿文件导入/删除、路径镜像迁移仅可作为旧 FS 兼容数据迁移期的一次性诊断/修复工具。完成旧数据去向、完整性及恢复验收后，退役对应 Admin 页面、API 和维护任务。后续 Admin 存储页定位为存储健康与迁移/派生索引状态；若仍维护持久配额账本，可独立保留账本与 FS 实际占用核对，不与文件对象身份对账混为一体。缺失 FS 目录不得作为删除用户账号的依据。
 - RAG 目标复用 Gugu 1.7.7 的 TypeScript RAG 实现，作为 Node/Core 的唯一生产检索路径；不再把 Cython RAG 算法移植到 Node，也不长期维护 TS 与 Cython 两套生产引擎。Python/Cython 仅可在迁移期作为当前行为的参考基准，退出前以回归与质量集确认 TS 行为。
-- Linux/NAS 自部署保留多用户，执行后端目标改为 MXC 调用受授权的系统环境；2.0 不再维护 Linux Docker 执行沙箱。SaaS 不使用该 Linux 自部署执行方案，也不提供因此隐含的宿主机命令能力。MXC 必须在 Linux 上落实账号间的工作区、进程、资源和网络边界后，才可作为多用户通用执行后端启用；系统环境调用不等于无边界的宿主机 Shell。
-- Admin 的 Shell 管理随执行后端去 Docker 化：退役 Docker/Rootless/镜像状态、容器重建/重启和 Docker 网络诊断等实现专属控制；Linux/NAS 自托管保留通用执行环境健康/能力状态、全局启停、用户与 Agent 授权、危险操作策略、资源配额、网络策略和执行审计。网络及资源限制由 MXC/Host 的受控执行边界落实。SaaS 不展示或开放 Linux 自部署 Shell 管理；桌面端使用本地 Host 的权限和状态界面。
-- **2.0 出网目标**：Linux/NAS 不再把旧 Docker sandbox 专用 egress 网络及代理作为部署依赖。Web Host 自身调用模型、邮件、更新和外部服务时使用系统网络，并可按部署配置普通代理；对用户或模型提供的 URL，继续执行地址、DNS、重定向及连接目标的安全校验。MXC 策略只约束实际置于沙箱内的进程，不自动约束 Host 请求。
-- 沙箱网络由各平台 MXC 后端及系统能力执行，默认禁止出网；需要联网时仅在可信 Host 授权且后端能落实请求策略的情况下开放。域名、IP、端口、DNS、代理等细粒度能力以具体版本和后端实测为准，策略无法落实时拒绝执行，不降级为无约束宿主网络。Linux 多用户隔离须验证公网、内网、loopback、重定向/DNS 与跨用户服务边界；不同平台分别验收。未来 SaaS 可独立采用集中代理或审计，不依赖 Linux 自部署方案。
+- Linux/NAS 自部署保留多用户，执行后端目标改为直接使用 Bubblewrap 创建受授权的隔离环境；2.0 不再维护 Linux Docker 执行沙箱。SaaS 不使用该 Linux 自部署执行方案，也不提供因此隐含的宿主机命令能力。Bubblewrap 后端必须在 Linux 上落实账号间的工作区、进程、资源和网络边界后，才可作为多用户通用执行后端启用；系统环境调用不等于无边界的宿主机 Shell。
+- Admin 的 Shell 管理随执行后端去 Docker 化：退役 Docker/Rootless/镜像状态、容器重建/重启和 Docker 网络诊断等实现专属控制；Linux/NAS 自托管保留通用执行环境健康/能力状态、全局启停、用户与 Agent 授权、危险操作策略、资源配额、网络策略和执行审计。网络及资源限制由 Bubblewrap/Host 的受控执行边界落实。SaaS 不展示或开放 Linux 自部署 Shell 管理；桌面端使用本地 Host 的权限和状态界面。
+- **2.0 出网目标**：Linux/NAS 不再把旧 Docker sandbox 专用 egress 网络及代理作为部署依赖。Web Host 自身调用模型、邮件、更新和外部服务时使用系统网络，并可按部署配置普通代理；对用户或模型提供的 URL，继续执行地址、DNS、重定向及连接目标的安全校验。沙箱策略只约束实际置于沙箱内的进程，不自动约束 Host 请求。
+- 沙箱网络由各平台执行后端及系统能力执行，默认禁止出网；需要联网时仅在可信 Host 授权且后端能落实请求策略的情况下开放。域名、IP、端口、DNS、代理等细粒度能力以具体版本和后端实测为准，策略无法落实时拒绝执行，不降级为无约束宿主网络。Linux 多用户隔离须验证公网、内网、loopback、重定向/DNS 与跨用户服务边界；不同平台分别验收。未来 SaaS 可独立采用集中代理或审计，不依赖 Linux 自部署方案。
 - 旧 `safe_egress` 配置和 Admin API 的现有调用者、历史配置与实际运行路径须先盘点；确认不再需要后退役旧 Docker 专属能力，如确有普通代理需求则单独设计。清理前保护用户配置和数据，不以删除代理取代必要的请求校验与沙箱隔离。
 - 各 Host 使用同一套 Core 定义，但分别拥有数据实例和运行生命周期。代码共享、数据同步、远程任务转交是三件事，分别验收。
 
@@ -35,8 +38,8 @@
 | 产品/入口 | 数据与运行职责 | FS / 执行职责 | 当前状态 |
 | --- | --- | --- | --- |
 | macOS / Windows Desktop | Electron Host 装配本地 Node Core、SQLite、稳定本地所有者；默认家节点 | 授权目录内直接读写文件；系统凭据和原生执行 Broker | Electron + Node 数据验证壳已实现；完整 Agent、FS 产品接入和正式发行未完成 |
-| Linux / NAS 自托管 | 目标为 `apps/web-host` Node HTTP Host、多用户 Core Runtime、PostgreSQL；按部署需要使用 Redis（当前包目录为 `apps/web-host/`） | MXC 调用受授权的系统环境；保留多用户执行隔离，Linux Docker 执行沙箱不再作为 2.0 维护目标 | Node Host 的 Linux 部署切片已在 devserver 和 Node 26 容器验证；主站/Admin Vue 静态产物由镜像构建并由 Node Host 提供，另有健康检查、公开站点配置、密码登录与认证用户读取、项目活动/回收站列表、详情/文件计数读取、工作区列表/声明与绑定、日历读写、客户读写、通知和埋点路由；登录限流可选用共享 Redis。工作区列表暂时将 sandbox readiness 设为不可用；Node Host 已装配注册及注册后引导，隔离 PostgreSQL 和 Vite API 代理链路已有验证，实际部署可用性仍取决于配置。多数业务 API、SSE 和 Worker 仍运行在 Python |
-| SaaS | 多用户 PostgreSQL、云同步、连接路由；按启用能力装配常驻 Core Runtime 副本 | 不装配 Linux 自部署的 MXC 执行后端；长期无用户 FS，需要端侧资源时走显式授权的任务转交 | 新 Node SaaS Host 与云同步尚未实现；旧 FS 仅为过渡兼容 |
+| Linux / NAS 自托管 | 目标为 `apps/web-host` Node HTTP Host、多用户 Core Runtime、PostgreSQL；按部署需要使用 Redis（当前包目录为 `apps/web-host/`） | Bubblewrap 执行受授权的隔离环境；保留多用户执行隔离，Linux Docker 执行沙箱不再作为 2.0 维护目标 | Node Host 的 Linux 部署切片已在 devserver 和 Node 26 容器验证；主站/Admin Vue 静态产物由镜像构建并由 Node Host 提供，另有健康检查、公开站点配置、密码登录与认证用户读取、项目活动/回收站列表、详情/文件计数读取、工作区列表/声明与绑定、日历读写、客户读写、通知和埋点路由；登录限流可选用共享 Redis。工作区列表暂时将 sandbox readiness 设为不可用；Node Host 已装配注册及注册后引导，隔离 PostgreSQL 和 Vite API 代理链路已有验证，实际部署可用性仍取决于配置。多数业务 API、SSE 和 Worker 仍运行在 Python |
+| SaaS | 多用户 PostgreSQL、云同步、连接路由；按启用能力装配常驻 Core Runtime 副本 | 不装配 Linux 自部署的 Bubblewrap 执行后端；长期无用户 FS，需要端侧资源时走显式授权的任务转交 | 新 Node SaaS Host 与云同步尚未实现；旧 FS 仅为过渡兼容 |
 | Mobile | 可作为远端入口，后续也可承载独立本地数据/Runtime | 仅实现移动平台允许的文件和系统能力 | 目标方案；只承诺共享可移植 TS 边界，不假定能运行完整 Node、桌面原生模块或任意 Shell |
 | Web 控制台、IM 等入口 | 请求转换、连接、展示；业务事实由选定 Runtime 持久化 | 不因能够连接 Runtime 而获得端侧权限 | 现有入口保留；跨设备绑定/路由待实现 |
 
@@ -82,7 +85,7 @@ flowchart LR
 - **桌面构建与发布**：一次版本发布使用同一源码提交和版本号，Windows/macOS 在同一发布流水线中作为独立平台任务构建，完成后汇总为同一版本的 artifacts。macOS 签名/公证在 macOS runner 完成；Windows 产物在 Windows runner 构建并按发布配置签名。开发期可产出未签名验证包；正式分发需显式要求签名，缺失凭据时不得静默发布未签名包。CPU 架构与 macOS 是否提供 Universal 包按发行支持矩阵确定；每个平台产物分别做安装/启动 smoke。electron-builder 支持多目标配置，但原生依赖与 macOS 签名存在目标平台约束，不能将“单次流水线”理解成必须由单台机器打包全部平台；参考 [electron-builder 多平台构建](https://www.electron.build/v26/docs/features/multi-platform-build/)、[代码签名](https://www.electron.build/v26/docs/features/code-signing/) 与 [Electron 签名说明](https://www.electronjs.org/docs/latest/tutorial/code-signing)。
 - **Core 进程**：首个 Electron 版本继续随包独立 Node 26，通过固定可执行路径、固定参数和 `shell: false` 启动，清理环境注入；复用现有 NDJSON v2、Worker、schema 17 和操作收据。schema 17 增加可重建的 `knowledge_index_entries` RAG 索引表，schema 16 增加用户偏好文档，schema 15 增加反馈表，schema 14 增加引导状态表，schema 13 增加 SMTP 设置表，schema 12 增加交互动作表，schema 11 增加通知和交互提示表，schema 10 增加定时任务及触发收据表，schema 9 增加画布项和关系表，schema 8 增加日历事件与 RAG 任务表，schema 7 增加 Mind 画布表，schema 6 增加 Agent 会话表，schema 5 增加 Mind 节点表，schema 4 增加 Undo 持久化基础，旧库需显式备份升级；这不代表各业务的双库迁移已经完成。Core 不导入 Electron，不在 UI/Main 执行同步数据库工作，不启动 localhost HTTP 服务或依赖系统 PATH。
 - **运行时版本与 ABI**：Electron 自带 Node 的版本不等于 Core 声明的 Node 26。本阶段保留独立 Node，接受新增包体成本并纳入 N0 预算；`better-sqlite3` 仅在独立 Node 的 Worker 加载，按该 Node ABI 和目标架构装配。未来若改为 Electron `utilityProcess`，须先验证内嵌 Node、Core engines 和原生模块 ABI，再单独决策；启动失败不能自动切换运行时。Electron 原生模块的 ABI 差异见 [官方说明](https://www.electronjs.org/docs/latest/tutorial/using-native-node-modules)。
-- **Executor / 原生 Broker**：`packages/sandbox/` 定义执行请求、确认/取消、策略与能力协商，并提供可选的 MXC/平台适配；授权材料、真实目录和可用原生后端由 Host 注入。`mxc.ts` 封装 SDK 或版本化 native bridge 调用，不依赖 Electron；`platform.ts` 仅选择已授权且能落实策略的 Adapter。必要的原生 helper 保持有界协议和能力校验。桌面 `sandbox/diagnostics.ts` 只负责探测与脱敏诊断，不再复制执行策略或另建业务执行器。Electron 渲染沙箱不能据此替代 OS 隔离或放宽 MXC 策略。
+- **Executor / 原生 Broker**：`packages/sandbox/` 定义执行请求、确认/取消、策略与能力协商，并提供可选的 MXC/平台适配；授权材料、真实目录和可用原生后端由 Host 注入。`mxc/executor.ts` 封装 SDK 或版本化 native bridge 调用，不依赖 Electron；`mxc/platform.ts` 仅选择已授权且能落实策略的 Adapter。必要的原生 helper 保持有界协议和能力校验。桌面 `sandbox/diagnostics.ts` 只负责探测与脱敏诊断，不再复制执行策略或另建业务执行器。Electron 渲染沙箱不能据此替代 OS 隔离或放宽 MXC 策略。
 - **装配与发行**：按 `electron-builder.yml` 使用 **electron-builder**，由 `scripts/package.ts` 装配 Core 制品、目标架构依赖与许可证，并生成安装包；`scripts/smoke.ts` 运行独立制品冒烟。固定 Electron、electron-builder 及后续更新依赖的稳定版本后再改锁文件。UI/Main/Preload 可放 ASAR；独立 Node、Core/Worker、生产依赖及原生 helper 通过真实资源目录分发，独立 Node 不依赖 Electron 的 ASAR 虚拟文件系统。pnpm workspace 依赖收集、资源摘要和安装后路径必须实测。参见 [electron-builder 稳定版配置](https://www.electron.build/v26/docs/configuration/) 与 [ASAR 限制](https://www.electronjs.org/docs/latest/tutorial/asar-archives)。
 - **更新**：`main/updater.ts` 管理版本检查、下载/校验及用户确认安装；调用 `lifecycle.ts` 停止接收写入、收敛未完成操作并退出 Core 后再安装。发行签名、更新来源校验、失败后的可启动版本及数据 schema 回滚分别验收；验证版不默认开启生产更新通道。后续可接入 `electron-updater`，具体格式及平台要求按 [官方更新文档](https://www.electron.build/v26/docs/features/auto-update/) 冻结。
 
@@ -111,17 +114,19 @@ scripts/
 
 SaaS 尚无当前仓库内的 Node Host。稳定后可维持独立私有仓库，无需预建空 `apps/saas/`。2.0 的业务、后台任务与执行入口最终由 Node 承担，完成切换后删除 Python 后端。Node Worker 在需要独立部署、扩缩容或生命周期时增加 `apps/worker/`，其余由相应 Host 装配 Core Job Runtime。
 
-`packages/fs/` 与 `packages/sandbox/` 是独立共享包目标：FS 负责授权根目录内的直接读写、路径边界与文件操作；Sandbox 负责执行契约、策略和平台适配。Host 建立可信身份与授权，按部署能力注入文件根目录、执行后端及生命周期；共享包不自行授予权限。两个独立包已建立：只读 FS 已接入 Web Host，Sandbox 已承载现有执行器实现，Core 保留兼容导出。完整 FS 产品路径和 Linux MXC 多用户隔离仍待实现和验收。
+`packages/fs/` 与 `packages/sandbox/` 是独立共享包目标：FS 负责授权根目录内的直接读写、路径边界与文件操作；Sandbox 负责执行契约、策略和平台适配。Host 建立可信身份与授权，按部署能力注入文件根目录、执行后端及生命周期；共享包不自行授予权限。两个独立包已建立：只读 FS 已接入 Web Host，Sandbox 已承载现有执行器实现，Core 保留兼容导出。完整 FS 产品路径和 Linux Bubblewrap 多用户隔离仍待实现和验收。
 
-核心职责树如下；目标是 Core 按业务模块组织共享规则与用例，Web Host 按模块组织协议接线。Core 顶层旧 `domain/`、`application/` 已按业务和共用职责归位；`apps/web-host/src/domains/` 等仍处于迁移中，不表示目标结构已完成。桌面和 Web 共用的业务规则、完整业务用例及其数据契约先按领域归入 Core，再继续新增 N2 业务迁移。业务规则、事务、Undo、文件和事件作为完整用例处理，不能只移动代码或复制两份实现；各 Host 保留可信身份、平台能力和生命周期装配。
+核心职责树如下；目标是 Core 按业务模块组织共享规则与用例，Web Host 按模块组织协议接线。Core 顶层旧 `domain/`、`application/` 已按业务和共用职责归位。Web Host 的 HTTP 路由、运行装配和工具适配已归入 `apps/web-host/src/modules/`，旧 `apps/web-host/src/domains/` 已移除。运行回归进度见迁移清单。桌面和 Web 共用的业务规则、完整业务用例及其数据契约先按领域归入 Core，再继续新增 N2 业务迁移。业务规则、事务、Undo、文件和事件作为完整用例处理，不能只移动代码或复制两份实现；各 Host 保留可信身份、平台能力和生命周期装配。
 
 同名业务模块在 Core 和 Host 中分别承担业务实现与入口适配，不维护两套规则。按需拆分领域规则、用例与仓储，不要求每个模块创建相同的空目录，也不为每条接口增加一层。2.0 尚未发布：现有内部调用、测试及导出应随迁移同步切换，确认无调用方后删除仅为旧 Node 目录或导出保留的转发层；仍要兑现已确定的产品行为和数据迁移契约；旧版代码可从 Git 历史查阅。
+
+目录迁移的逐域状态和验收范围见[迁移任务清单](Gugu-2.0-迁移任务清单.md)。新调用方直接引用目标模块。旧目录在并行切片交接后逐项移除。
 
 Web Host 的 `app.ts` 与 `main.ts` 是组合根，不承担逐路由业务实现。`app.ts` 创建 Fastify 实例、安装共享认证/错误/请求上下文边界、提供健康检查并注册业务域插件；各 `modules/<domain>/routes.ts` 汇总本域路由并作为 Fastify 插件挂载，单条路由可继续留在同域现有文件中。`main.ts` 负责解析启动配置、建立 PostgreSQL/Core/Redis 等共享资源、调用 Host 装配、启动服务与 Worker，并管理关闭顺序。只有当一个业务域确有多项平台依赖或生命周期需要集中构造时，才在 `modules/<domain>/host.ts` 放该域 Host 工厂；不要求每个目录都创建它。
 
 组合根应保持薄且可审查，但不设机械行数门槛。按业务域增量收敛路由注册和 Host 依赖装配，保持 Fastify 插件生命周期、认证 owner、HTTP 状态/错误语义、事务和启动关闭顺序；不引入通用 DI 容器、不按每条路由增加空壳层，也不在迁移进行中批量搬动同一根文件。
 
-公共数据访问优先沿用 Core 已有 Kysely 与 SQLite/PostgreSQL 适配：通用查询、数据编码和业务约束可共用，锁、事务并发、数据库专有查询与迁移保留必要的方言实现。按已实现业务切片建立 SQLite 与 PostgreSQL 同契约回归，不假定同一 SQL 自然拥有相同语义。Fastify、HTTP DTO/错误映射、Cookie、服务端部署和 Admin 等端专属职责留在 Host；桌面经受限 IPC 调用相同 Core 用例。无需为每条 API 新增抽象层或将 Host 专属能力迁入 Core。
+公共数据访问优先沿用 Core 已有 Kysely 与 SQLite/PostgreSQL 适配：通用查询、数据编码和业务约束可共用，锁、事务并发、数据库专有查询与迁移保留必要的方言实现。按已实现业务切片建立 SQLite 与 PostgreSQL 同契约回归，不假定同一 SQL 自然拥有相同语义。Fastify、HTTP DTO/错误映射、Cookie、服务端部署与自部署专属 Admin 适配留在 Host，自部署管理业务由 Web Host 承载；桌面经受限 IPC 调用相同 Core 用例。无需为每条 API 新增抽象层或将 Host 专属能力迁入 Core。
 
 ```text
 packages/core/                     # 公开、可独立构建的 TS Core
@@ -217,7 +222,7 @@ apps/web-host/                     # Linux/NAS 自托管版 Node HTTP Host 与�
     adapters/
       postgres/                    # 连接池与 Core PostgreSQL Adapter 装配
       redis-events.ts              # 跨域 Redis 通知与 revision Adapter
-      executor/                    # 〔规划〕Linux MXC；隔离验收后才允许装配
+      executor/                    # 〔规划〕Linux Bubblewrap；隔离验收后才允许装配
     workers/                       # 队列/租约/消费生命周期；由 Host 注入运行时 Adapter
     migrations/                    # WebUI 部署所需的显式数据库迁移
   web-dist/                        # frontend 构建生成的静态产物，不提交源码副本
@@ -285,6 +290,8 @@ WebUI 目录参照 Python `backend/app/api/v1/`、`backend/app/services/`、`bac
 
 **FileSync 退役决策（2026-11-16）**：2.0 采用本地文件直读，不再维护本地 FS 与 DB watcher 同步方案。因此旧 FileSync 绑定、事件、对账、冲突修复、watcher 容量及 folder-doctor 对账 API 不迁入 Core 或 Node Host；迁移清单应标为“退役/不迁移”，后续清理其 UI、路由、Worker 和部署依赖。普通文件读写及按路径访问仍保留，不属于 FileSync。
 
+**入口清理（2026-11-18）**：Web 管理侧移除旧存储对账页面与导航；Node Host 不再装配或注册 FileSync 管理、事件和 watcher 容量接口，相应 Node/Core 管理模块及专属前端已移除。历史 Python 后端保持原样供旧数据迁移与行为对照。现有文件写入链仍含同步事件和路径锁等旧依赖，必须先以本地 FS 直读方案替换并验证并发、恢复和数据完整性，再移除；不能把用户文件并发锁直接当作无用对账代码删除。配额账本、磁盘容量统计和数据迁移恢复单独保留与审查。
+
 Vue 前端 API 客户端目标位于 `apps/web/src/api/`，并按业务域组织：通用传输、CSRF、错误与请求去重由 `client.ts` 承担；`auth.ts`、`files.ts`、`projects.ts`、`mind.ts`、`calendar.ts`、`schedules.ts`、`agent.ts`、`integrations.ts`、`preferences.ts` 和 `admin/` 各自负责对应领域。领域类型放在所属 API 模块，`types/` 只收真正跨域共享类型。现有 `apps/web/src/services/api.ts` 在迁移期作为兼容入口逐步收口到新模块，调用方分批迁移；`index.ts` 可提供短期兼容导出，不能重新成为所有业务 API 的集中实现。
 
 ### 多端前端：共享功能，分端 Shell
@@ -340,7 +347,7 @@ RAG 复用既有 TypeScript 算法。Node/Core 负责授权数据读取、来源
 
 `runtime/transport/ipc.ts` 是 Core 进程消息传输适配，与 Renderer → Preload → Main 的 Electron IPC 属于两个边界。它通过注入端口连接，不 import Electron，不把原始 IPC 对象交给工具/界面。stdio 与 IPC 复用同一命令、收据、限额和错误契约；每个 Host 在装配时显式选择一种传输，不在异常时自动切换或重放修改。Electron 继续使用 NDJSON v2；通用 IPC 适配已独立回归，其他 Host 接入时仍须显式选择。
 
-执行实现位于 `packages/sandbox/`，Core 的 `agent/executor/` 保留兼容导出：`contracts.ts` / `policy.ts` 不依赖 Electron 或平台 SDK；`mxc.ts` 及平台后端仅由获准的 Node Host 显式装配。可移植 Core 入口不主动导入 MXC、Node 进程或原生模块；Linux/NAS 自部署目标使用 MXC 调用经授权的系统环境，不再维护 Linux Docker 执行沙箱；SaaS 不装配这条 Linux 执行路径，Mobile 按自身能力集选择实现。共享包中存在 `mxc.ts` 不代表 Host 自动获得执行权限。`policy.ts` 只能收紧可信 Host 授权并检查可落实能力，最终文件/网络/进程限制仍须由 OS 后端强制执行。MXC 的 Linux 多用户隔离尚属验收要求，未验证前不得宣称满足多用户通用执行的安全边界，也不得回退到无隔离的宿主机执行。
+执行实现位于 `packages/sandbox/`，Core 的 `agent/executor/` 保留兼容导出：`contracts.ts` / `policy.ts` 不依赖 Electron 或平台 SDK；`mxc/` 和 `linux/bubblewrap/` 中的平台后端仅由获准的 Node Host 显式装配。可移植 Core 入口不主动导入 MXC、Node 进程或原生模块；Linux/NAS 自部署目标使用 Bubblewrap 执行经授权的隔离环境，不再维护 Linux Docker 执行沙箱；SaaS 不装配这条 Linux 执行路径，Mobile 按自身能力集选择实现。共享包中存在 MXC 适配 不代表 Host 自动获得执行权限。`policy.ts` 只能收紧可信 Host 授权并检查可落实能力，最终文件/网络/进程限制仍须由 OS 后端强制执行。Bubblewrap 的 Linux 多用户隔离尚属验收要求，未验证前不得宣称满足多用户通用执行的安全边界，也不得回退到无隔离的宿主机执行。
 
 `agent/runner.ts` 组合运行准备与依赖，`agent/core.ts` 管理模型工具循环及事件顺序，`context/`、`run/`、`interactions/` 和 `memory/` 分别承载上下文、运行生命周期、交互和反思，`providers/` 适配模型协议，`tools/` 描述工具意图并通过确认门调用 Executor；三者不自行绕过执行边界。桌面 `diagnostics.ts` 只显示脱敏后的能力/版本与拒绝原因，不运行任意命令、不改 ACL，也不通过诊断结果自动放宽策略。真实目录授权与系统凭据是端侧能力，由 Host 注入；watcher 若接入，只用于刷新派生索引，不参与正文同步或正确性保证。具体平台文件待功能切片时补充，不在主进程入口堆叠实现。
 
@@ -385,7 +392,7 @@ Core 负责队列项状态、顺序、认领和恢复规则，并通过存储与
 | --- | --- | --- |
 | Windows MXC | 已验证授权目录、只读/越界拒绝、受控网络拒绝、超时和终止；实验 Host 有固定验证入口 | 严格 UI 策略下 Node 初始化仍有兼容缺口；Node/MCP/PTY、链接/重解析点、继承句柄、完整进程树和真实发行环境验收 |
 | macOS 执行 | Electron 数据制品与实际应用验证已接入三平台矩阵 | 可发布的原生隔离 Adapter、目录授权、网络、进程回收、签名后边界；不能将数据制品通过算作沙箱通过 |
-| Linux / NAS MXC | 作为自部署多用户的目标执行后端；Linux Docker 执行沙箱不再作为 2.0 维护目标 | Linux 上的用户隔离、授权目录、进程树、资源/网络限制、超时终止与拒绝策略均须实测；完成前不启用多用户通用执行 |
+| Linux / NAS Bubblewrap | 作为自部署多用户的目标执行后端；Linux Docker 执行沙箱不再作为 2.0 维护目标 | Linux 上的用户隔离、授权目录、进程树、资源/网络限制、超时终止与拒绝策略均须实测；完成前不启用多用户通用执行 |
 | 本地 FS | 文件正文由授权范围内的本地文件系统持有，按根目录和相对路径直接读写；不以 DB 副本作为正文真源 | 各平台授权目录及路径边界；原子写入、覆盖恢复、删除恢复；派生数据失效后可重建 |
 | 派生索引 / watcher / Secrets | DB 可保存可重建的索引、搜索或预览数据；watcher 不承担文件正文同步 | 索引重建与失效策略；watcher 如启用只能触发刷新；桌面系统凭据接入 |
 | 云同步 | 方向和本地稳定身份/版本底座已有定义 | 实体全局 ID、同步游标、墓碑、冲突/重放/离线恢复、设备绑定与隔离协议 |

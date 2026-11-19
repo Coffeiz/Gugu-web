@@ -18,7 +18,7 @@
   "apps/web-host/tests/projects/project-trash-storage.test.ts": {
     "domain": "projects",
     "layer": "L2",
-    "owner": "apps/web-host/src/domains/projects/persistence",
+    "owner": "apps/web-host/src/modules/projects/persistence",
     "productionEntry": "createLocalProjectTrashStorage",
     "keyBehavior": "真实临时文件在预检查后创建目标、rollback 冲突均不覆盖双方；目录拒绝、owner 根和 symlink fail-closed",
     "ci": "node-webui"
@@ -26,7 +26,7 @@
   "apps/web-host/tests/projects/project-directory-storage.test.ts": {
     "domain": "projects",
     "layer": "L2",
-    "owner": "apps/web-host/src/domains/projects/persistence",
+    "owner": "apps/web-host/src/modules/projects/persistence",
     "productionEntry": "createLocalProjectDirectoryRenamer",
     "keyBehavior": "无原子不覆盖目录原语时拒绝正反向移动，保留源树和权限；缺失源兼容、owner 与 symlink 边界",
     "ci": "node-webui"
@@ -34,7 +34,7 @@
   "apps/web-host/tests/projects/project-undo-journal.test.ts": {
     "domain": "undo",
     "layer": "L2",
-    "owner": "apps/web-host/src/domains/undo/persistence",
+    "owner": "apps/web-host/src/modules/undo/persistence",
     "productionEntry": "recoverProjectUndoJournal / createLocalProjectUndoJournalStorage",
     "keyBehavior": "合成 SQL 端口与真实临时文件验证正反向恢复竞态、双硬链接和不支持目录时保留双方及 journal，不冒充 PG 集成",
     "ci": "node-webui"
@@ -107,7 +107,7 @@
     "domain": "projects",
     "layer": "L2",
     "owner": "packages/core/src/projects/project-read.ts",
-    "productionEntry": "apps/web-host/src/domains/projects/persistence/projects.ts",
+    "productionEntry": "apps/web-host/src/modules/projects/persistence/projects.ts",
     "keyBehavior": "真实Fastify与隔离PG验证项目读取计数投影、owner归档回收站、完整DTO阶段历史兼容、SQL错误脱敏和表锁取消清理",
     "ci": "node-webui"
   },
@@ -122,8 +122,8 @@
   "apps/web-host/tests/projects/core-undo-project-postgres.test.ts": {
     "domain": "undo",
     "layer": "L2",
-    "owner": "apps/web-host/src/domains/undo",
-    "productionEntry": "apps/web-host/src/domains/undo/persistence/core-operations.ts",
+    "owner": "apps/web-host/src/modules/undo",
+    "productionEntry": "apps/web-host/src/modules/undo/persistence/core-operations.ts",
     "keyBehavior": "PG 项目撤销的日志锁序、提交不确定与恢复协调；目录使用显式内存能力端口，不验收 Local 目录原语",
     "ci": "web-host-node"
   }

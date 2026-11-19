@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { createBuiltinSkillDefinitions } from '../../../src/agent/skills/builtin.js'
 import { createSkillRegistry } from '../../../src/agent/skills/index.js'
+import { createAgentSkillRuntimePorts } from '../../../src/agent/skills/runtime.js'
 import { createBundledSkillDocuments } from '../../../dist/agent/skills/bundled.js'
 import { discoverSkillDocuments } from '../../../scripts/build-skills.mjs'
 
@@ -77,6 +78,40 @@ describe('内置Skill文档到注册器', () => {
     controller.abort(new Error('取消加载'))
     await expect(createBuiltinSkillDefinitions([{ name: 'writing.md', read }], controller.signal)).rejects.toThrow('取消加载')
     expect(read).not.toHaveBeenCalled()
+  })
+  it('共享 Skill Runtime 只组合启用的合法用户项，并按可信 owner 重验正文来源', async () => {
+    const builtins = await createBuiltinSkillDefinitions([{ name: 'builtin.md', read: async () => document('内置正文') }], signal())
+    let enabled = true
+    let body = '用户正文 v1'
+    const runtimeIdentity = { ...identity, ownerId: '可信owner' }
+    const runtime = await createAgentSkillRuntimePorts({
+      ownerId: '可信owner',
+      builtins,
+      async listUser(owner) {
+        expect(owner).toBe('可信owner')
+        return { skills: [
+          { id: 'U1', name: '个人技能', description_short: '个人说明', category: 'personal', related_tools: ['read_file'], enabled: true, source: 'user' },
+          { id: 'U2', name: '已停用', description_short: '停用项', category: 'personal', related_tools: [], enabled: false, source: 'user' },
+          { id: 'S3', name: '伪内置', description_short: '冲突项', category: 'personal', related_tools: [], enabled: true, source: 'user' },
+        ] }
+      },
+      async readUser(owner, id) {
+        return owner === '可信owner' && id === 'U1' && enabled
+          ? { id, name: '个人技能', body, contentDigest: body.endsWith('v1') ? 'digest-v1' : 'digest-v2' }
+          : null
+      },
+      fingerprint: owner => `owner:${owner}`,
+    })
+    expect((await runtime.skills.catalog(runtimeIdentity)).map(item => item.id)).toEqual(['S1', 'U1'])
+    expect(await runtime.origin(runtimeIdentity, 'U1', signal())).toEqual({ source: 'user', ownerFingerprint: 'owner:可信owner' })
+    expect((await runtime.skills.load('U1', runtimeIdentity, signal())).content).toBe('用户正文 v1')
+    body = '用户正文 v2'
+    expect((await runtime.skills.load('U1', runtimeIdentity, signal())).contentDigest).toBe('digest-v2')
+    await expect(runtime.skills.catalog({ ...runtimeIdentity, ownerId: '其他owner' })).resolves.toEqual([])
+    await expect(runtime.skills.load('U1', { ...runtimeIdentity, ownerId: '其他owner' }, signal())).rejects.toMatchObject({ code: 'unavailable' })
+    enabled = false
+    await expect(runtime.skills.load('U1', runtimeIdentity, signal())).rejects.toMatchObject({ code: 'unavailable' })
+    await expect(runtime.origin({ ...runtimeIdentity, ownerId: '其他owner' }, 'U1', signal())).rejects.toThrow('技能来源无效')
   })
   it('真实仓库builtin文档经过注册器加载，名称/目录与正文摘要一致', async () => {
     // 文件系统仅存在于可信Host测试端口；生产Core不依赖Python目录。

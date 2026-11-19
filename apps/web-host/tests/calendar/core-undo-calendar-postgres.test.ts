@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
-import { createHostCoreUndoOperations } from '../../src/domains/undo/persistence/core-operations.js'
+import { createHostCoreUndoOperations } from '../../src/modules/undo/persistence/core-operations.js'
 import { createPostgresRuntime } from '@gugu/core/data'
 import { createRuntimeUndoTransactionPort } from '@gugu/core/undo'
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { registerAdminUserSecurityEventRoute } from '../../src/domains/admin/admin-user-security-events.js'
+import { registerAdminUserSecurityEventRoute } from '../../src/modules/admin/users.js'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
 
 const userId = '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b'

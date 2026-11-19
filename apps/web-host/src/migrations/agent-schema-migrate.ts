@@ -18,6 +18,8 @@ interface AgentSchemaMigration {
   readonly prerequisites?: readonly string[]
   readonly downstreamIndexes?: readonly string[]
   readonly functions?: readonly string[]
+  /** 允许先验结构匹配的既有业务表由 Node 迁移登记接管，不转换或丢弃行。 */
+  readonly adoptExisting?: (client: PoolClient) => Promise<boolean>
   readonly lockKey: string
 }
 
@@ -71,7 +73,10 @@ async function inspect(client: PoolClient, migration: AgentSchemaMigration): Pro
   if (rows.some(row => !row.matches) || prerequisites.some(name => !present.get(name)))
     throw new AgentSchemaMigrationError('incompatible')
   if (!present.get(ledger)) {
-    if (objects.some(name => present.get(name))) throw new AgentSchemaMigrationError('incompatible')
+    if (objects.some(name => present.get(name))) {
+      if (!migration.adoptExisting || !await migration.adoptExisting(client))
+        throw new AgentSchemaMigrationError('incompatible')
+    }
     return 'pending'
   }
   if (objects.some(name => !present.get(name))) throw new AgentSchemaMigrationError('incompatible')

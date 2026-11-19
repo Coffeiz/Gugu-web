@@ -247,6 +247,30 @@
     "keyBehavior": "只读打开限制在授权根下；流式文件导入仅在完整收到并同步后发布，同名竞争不覆盖，取消或路径越界时拒绝并清理",
     "ci": "core-node"
   },
+  "packages/fs/tests/node-stage-race.test.ts": {
+    "domain": "storage",
+    "layer": "L1",
+    "owner": "packages/fs/src/node.ts",
+    "productionEntry": "packages/fs/src/node.ts → apps/web-host/src/modules/files/persistence/trash-mutations-postgres.ts",
+    "keyBehavior": "owner 目录在暂存校验后被替换为符号链接时，暂存和恢复仍锚定授权目录句柄，不改动链接目标",
+    "ci": "core-node"
+  },
+  "apps/web-host/tests/projects/project-expiry.test.ts": {
+    "domain": "projects",
+    "layer": "L1",
+    "owner": "apps/web-host/src/modules/projects/persistence/project-expiry-postgres.ts",
+    "productionEntry": "apps/web-host/src/main.ts → startProjectExpiryWorker → PostgreSQL project expiry journals → Local staged files",
+    "keyBehavior": "owner-scoped 清理、配额事务、存储失败回滚、未知提交保留暂存文件、重启日志恢复且不覆盖并发文件",
+    "ci": "backend-ts"
+  },
+  "apps/web-host/tests/projects/project-expiry-worker.test.ts": {
+    "domain": "projects",
+    "layer": "L1",
+    "owner": "apps/web-host/src/modules/projects/project-expiry-worker.ts",
+    "productionEntry": "apps/web-host/src/main.ts → backgroundWorkers",
+    "keyBehavior": "默认不启动以避免与 Python housekeeping 重复消费；停止等待在途恢复；锁忙时重试",
+    "ci": "backend-ts"
+  },
   "packages/charts/test/worker.test.mjs": {
     "domain": "chart-rendering",
     "layer": "L1",

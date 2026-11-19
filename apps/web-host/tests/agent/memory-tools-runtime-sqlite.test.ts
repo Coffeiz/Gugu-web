@@ -5,11 +5,11 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { embedRagQuery, prepareMemory } from '@gugu/core/agent/rag'
 import { initializeSqlite, openSqliteRuntime } from '@gugu/core/data'
-import { createAgentToolRegistry } from '../../src/domains/agent-sessions/tools/agent-tool-registry.js'
-import { createPostgresAgentMemorySearchPort, createWebOwnerMemorySearchPort } from '../../src/domains/agent-sessions/tools/agent-memory-search.js'
-import { createPostgresAgentImMemoryContextReader, createPostgresAgentMemoryScopeResolver } from '../../src/domains/agent-sessions/tools/agent-memory-scopes.js'
-import { createLocalAgentMemoryRagStore } from '../../src/domains/agent-sessions/tools/agent-rag-memory-store.js'
-import { createPostgresAgentEmbeddingSettingsResolver, createPostgresAgentRagEmbeddingPort } from '../../src/domains/agent-sessions/tools/agent-rag-vectors.js'
+import { createAgentToolRegistry } from '../../src/modules/agent-sessions/tools/agent-tool-registry.js'
+import { createPostgresAgentMemorySearchPort, createWebOwnerMemorySearchPort } from '../../src/modules/agent-sessions/tools/agent-memory-search.js'
+import { createPostgresAgentImMemoryContextReader, createPostgresAgentMemoryScopeResolver } from '../../src/modules/agent-sessions/tools/agent-memory-scopes.js'
+import { createLocalAgentMemoryRagStore } from '../../src/modules/agent-sessions/tools/agent-rag-memory-store.js'
+import { createPostgresAgentEmbeddingSettingsResolver, createPostgresAgentRagEmbeddingPort } from '../../src/modules/agent-sessions/tools/agent-rag-vectors.js'
 
 test('IM memory context 从当前 owner 会话和本次 run 的用户消息读取，并对缺失身份 fail closed', async () => {
   const owner = 'f17421a3-8520-4c8b-92e5-736882f4bd82'
@@ -326,6 +326,14 @@ test('IM 记忆 scope 从可信上下文和 owner reflection cursor 解析并经
     if (privateFromGroup.kind === 'completed') {
       assert.equal((privateFromGroup.value as { error: string }).error, '当前会话不能读取 owner 私人记忆')
       assert.doesNotMatch(JSON.stringify(privateFromGroup.value), /coffee private memory/u)
+    }
+
+    imContext = { platform: 'qq', chatType: 'private', chatId: 'private-1', channelId: 'bot-1', role: 'member', platformUserId: 'member-1' }
+    const currentGroupFromPrivate = await dispatch('current-group-from-private', 'current_group')
+    assert.equal(currentGroupFromPrivate.kind === 'completed' && currentGroupFromPrivate.successful, false)
+    if (currentGroupFromPrivate.kind === 'completed') {
+      assert.equal((currentGroupFromPrivate.value as { error: string }).error, 'current_group 只能在群聊中使用')
+      assert.doesNotMatch(JSON.stringify(currentGroupFromPrivate.value), /coffee private memory/u)
     }
   } finally {
     await core.close()

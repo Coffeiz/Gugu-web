@@ -5,9 +5,9 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { initializeSqlite, openSqliteRuntime } from '@gugu/core/data'
 import type { SqlDataRuntime } from '@gugu/core/data'
-import { createAgentToolRegistry } from '../../src/domains/agent-sessions/tools/agent-tool-registry.js'
-import { createCoreAgentConversationSearchPort } from '../../src/domains/agent-sessions/tools/agent-conversations.js'
-import { createWebAgentToolPorts } from '../../src/domains/agent-sessions/agent-web-reconstructor.js'
+import { createAgentToolRegistry } from '../../src/modules/agent-sessions/tools/agent-tool-registry.js'
+import { createCoreAgentConversationSearchPort } from '../../src/modules/agent-sessions/tools/agent-conversations.js'
+import { createWebAgentToolPorts } from '../../src/modules/agent-sessions/agent-web-reconstructor.js'
 
 const lease = {
   identity: { ownerId: 'owner-a', sessionId: '12', runId: 'run-a' },

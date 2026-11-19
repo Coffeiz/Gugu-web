@@ -6,7 +6,7 @@ import { resolve } from 'node:path'
 import { Pool } from 'pg'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createCsrfToken, createUserToken, type PublicUserRecord } from '../../src/domains/auth/auth.js'
+import { createCsrfToken, createUserToken, type PublicUserRecord } from '../../src/modules/auth/auth.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const secret = 'synthetic-profile-vite-secret'

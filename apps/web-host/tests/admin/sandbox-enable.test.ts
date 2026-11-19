@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Fastify from 'fastify'
-import { registerSandboxEnableRoute, createSandboxRuntimeUpdater } from '../../src/modules/admin/sandbox-enable.js'
+import { registerSandboxEnableRoute, createSandboxRuntimeUpdater } from '../../src/modules/admin/sandbox.js'
 import { createApp } from '../../src/app.js'
 
 const settings = {

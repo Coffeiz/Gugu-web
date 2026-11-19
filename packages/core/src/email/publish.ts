@@ -1,4 +1,4 @@
-import type { EmailRecipientGroups } from '../admin/email-recipient-list.js'
+import type { EmailRecipientGroups } from './recipients.js'
 import { strip } from '../shared/values.js'
 import { renderSmtpDraftMessage, SmtpDeliveryFailure, type SmtpTestDelivery, type SmtpTestSettings } from './smtp-test.js'
 import type { EmailPreviewDraft } from './preview.js'

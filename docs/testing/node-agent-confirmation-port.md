@@ -9,7 +9,7 @@
 | 已有入口 | 已实现职责 | 不能据此推断已完成的职责 |
 | --- | --- | --- |
 | `backend/agent/interactions/confirmations.py` | Python 确认载荷、ACTION/AUTHORIZATION 区分、目标身份、短码兑换、Redis TTL、可选原子单次授权消费、服务不可用时关闭 | 旧 grant 主要绑定 owner/摘要/目标身份，并不自动包含 Node 的 run/call/版本；不能直接作为完整新授权 |
-| `apps/web-host/src/domains/agent-sessions/tools/confirmation-identity.ts` | `targetConfirmationIdentity` 兼容 Python 确定性编码：操作、资源类型、上下文、完整目标集合；目标顺序无关，数字与字符串身份不同，重复 ID 拒绝 | 这是身份编码，不是签名/授权凭据；不自行绑定 owner/session/run/call、记录版本、时效或持久消费 |
+| `apps/web-host/src/modules/agent-sessions/tools/confirmation-identity.ts` | `targetConfirmationIdentity` 兼容 Python 确定性编码：操作、资源类型、上下文、完整目标集合；目标顺序无关，数字与字符串身份不同，重复 ID 拒绝 | 这是身份编码，不是签名/授权凭据；不自行绑定 owner/session/run/call、记录版本、时效或持久消费 |
 | `.../persistence/agent-trusted-intent-postgres.ts` | `createPostgresTrustedIntentStore` 加密保存可信意图，按 owner/session/run/interaction/call 读写；校验完整 binding、目标/版本 digest、收据与有效期，并在事务 claim 时回调当前权限复核 | 合成 Pool 回归不证明真实 PG 并发、Redis 确认兑换与领域收据故障恢复已验收 |
 | `.../persistence/agent-trusted-prompt-descriptions.ts` | 从可信 store 读取 confirmation intent，以已有 target identity 和创建确认码端口构造固定确认/取消按钮；凭据交互另有 owner-scoped 查询 | `createConfirmation` 是注入端口；确认码成功创建不证明授权检查、危险业务执行或版本验证已接通 |
 | `.../persistence/agent-interaction-activate-postgres.ts` | 同事务绑定 prompt/action 与 Run，确认交互禁止自定义文本；重复激活校验旧绑定；按队列轮到前台后激活 | 交互 prompt 不是领域资源锁；不能在用户等待期间一直持有业务事务或将原模型参数当可信意图 |
@@ -17,7 +17,7 @@
 | `packages/core/src/agent/interactions/coordinator.ts` | 可信 resolution 绑定 pending interaction、校验类型、原子 checkpoint 消费 receipt；确认成功直接继续原调用，取消/过期收尾不再调用业务；秘密值不进 Canonical | Harness 只验证交互编排，Tools 仍须核验意图、授权和实际资源；`status=confirmed` 本身不是可执行授权 |
 | `.../persistence/agent-interaction-resume-postgres.ts` | 持久恢复队列和 Run interaction receipt 查询 | 这是交互回答消费收据，不是危险业务已经提交的凭证 |
 
-上表 `...` 均为 `apps/web-host/src/domains/agent-sessions/`，禁止重复创建第二套确认 UI、token store、交互 worker 或 Agent 调度框架。
+上表 `...` 均为 `apps/web-host/src/modules/agent-sessions/`，禁止重复创建第二套确认 UI、token store、交互 worker 或 Agent 调度框架。
 
 ## 必须绑定的可信执行意图
 

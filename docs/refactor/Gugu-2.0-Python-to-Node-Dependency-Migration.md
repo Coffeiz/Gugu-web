@@ -104,7 +104,7 @@
 | `python-docx==1.1.2` | DOCX 文本 | `mammoth`（DOCX→HTML/文本抽取） | M | 段落顺序、表格、页眉脚等；Mammoth 不负责 HTML 净化，不视为结构编辑能力 |
 | `openpyxl==3.1.5` | XLSX 文本 | `xlsx`（SheetJS CE，读取） | M | 公式缓存、合并单元格、多个 sheet；先验证 Gugu 所需字段与工作簿特性 |
 | `xlrd==2.0.1` | 旧 XLS | `xlsx`（SheetJS CE，BIFF/XLS 读取） | H | BIFF8、日期序列、编码与真实样本兼容性 |
-| `python-pptx==1.0.2` | PPTX 文本 | 现有 `jszip` + `fast-xml-parser` + OOXML 专用抽取适配器 | H | 关系与部件顺序、文字框、组合形状、表格、备注；限制 ZIP/XML 资源并拒绝 DTD/实体 |
+| `python-pptx==1.0.2` | PPTX 文本 | `fflate` + `fast-xml-parser` + OOXML 专用抽取适配器 | H | 关系与部件顺序、文字框、组合形状、表格、备注；限制 ZIP/XML 资源并拒绝 DTD/实体 |
 | `striprtf==0.0.28` | RTF 文本 | 独立 RTF parser；仅在明确需要高保真转换时评估受限转换服务 | H | Unicode 转义、嵌套样式、容错与资源上限 |
 | `odfpy==1.4.1` | ODF 文本 | `xlsx`（SheetJS CE，仅 ODS 读取）；ODT/ODP 使用专用 ZIP/XML 适配器 | H | ODS 表格兼容性、ODT/ODP 命名空间和内容顺序；不引入 `officeparser` 兜底 |
 
@@ -114,10 +114,10 @@
 |---|---|---|
 | DOCX | Mammoth | 专注 Word 文档，维护历史较长；用于文本/HTML 抽取，不承担 HTML 净化或结构编辑。 |
 | XLSX、XLS、ODS | SheetJS CE（npm 包 `xlsx`） | 成熟表格解析；分别验证工作表、BIFF8、日期序列、ODS 和公式缓存等 Gugu 所需行为。读取能力不代表无损写入。 |
-| PPTX、ODT、ODP | `fast-xml-parser` + 格式专用适配器 | 由适配器处理 OOXML/ODF ZIP 结构和 Gugu 所需投影；PPTX ZIP 层先复用 Web Host 已有的 `jszip`。 |
+| PPTX、ODT、ODP | `fflate` + `fast-xml-parser` + 格式专用适配器 | 由适配器处理 OOXML/ODF ZIP 结构和 Gugu 所需投影；PPTX ZIP 层使用 `fflate`。 |
 | RTF | 独立 RTF parser；必要时另评估受限转换服务 | 暂不绑定低活跃度综合解析库；先覆盖 Unicode 转义、嵌套样式、容错和资源限制。 |
 
-不引入 `officeparser`。当前 Core 的 XLSX 预览消费者已声明并锁定 SheetJS CE 0.20.3 与 `fast-xml-parser` 5.11.2：SheetJS 读取单元格、合并区域和行列尺寸，XML parser 校验并投影工作簿、关系及绘图 XML；ZIP 资源校验和图片定位由 XLSX 适配代码负责。XML 路径拒绝 DTD/ENTITY、未知实体、非法 XML 字符及不合法文档结构。Mammoth 尚无已迁移的服务端消费者。DOCX/PPTX/ODF API 仍须依据实际调用方补充合成与兼容性样本、owner/资源限制及安全回归；未知 OOXML/ODF 部件保留和创建/结构编辑能力需单独评估，不从读取能力推断。
+不引入 `officeparser`。当前 Core 的 XLSX 预览消费者已声明并锁定 SheetJS CE 0.20.3 与 `fast-xml-parser` 5.11.2：SheetJS 读取单元格、合并区域和行列尺寸，XML parser 校验并投影工作簿、关系及绘图 XML；ZIP 资源校验和图片定位由 XLSX 适配代码负责。XML 路径拒绝 DTD/ENTITY、未知实体、非法 XML 字符及不合法文档结构。DOCX 使用 Mammoth；PPTX 的 ZIP 与 OOXML 投影使用 `fflate` 和 `fast-xml-parser`。DOCX/PPTX/ODF API 仍须依据实际调用方补充合成与兼容性样本、owner/资源限制及安全回归；未知 OOXML/ODF 部件保留和创建/结构编辑能力需单独评估，不从读取能力推断。
 
 ### 1.6 Python 传递依赖与安全约束（同样逐项记录）
 
@@ -150,7 +150,7 @@
 | `mutmut==3.8.0` | `@stryker-mutator/core` + Vitest runner | M | 先迁移人工运行规范、变异目标与阈值 |
 | `pytest-xdist>=3.5` | Vitest pool/sharding | M | 测试隔离、每 worker 独立 DB/Redis |
 
-> **不要**因 TS 迁移而简单删除现有 5,000+ Python 测试；保留 Python Golden Runner，直至对应功能的 TS 差分测试及生产回归达标。
+> Python pytest 仅作为旧行为基准，不构成 Node 构建、运行或生产调用依赖。按领域补齐 TypeScript 行为回归后，2.0 最终删除 Python 后端；不保留 Python Golden Runner、桥接或双运行时。
 
 ## 3. 原 Python 包与桌面 Host 的迁移表
 
@@ -161,10 +161,10 @@
 | `gugu-core` Python wheel | 顶层 `packages/core/` TypeScript | 项目/联系人首批已迁；其余 Domain/Application 逐域迁移 | 中 |
 | `gugu_core/data` SQLAlchemy | `packages/core/src/data/` + Kysely | 首批已落地；后续仍须**跨域事务整体迁移**，不得 Python/Node 双写 | 高 |
 | `gugu_core.data.runtime.LocalRuntime` | Node SQLite Host | 显式 initialize/open/migrate/close | 高 |
-| `gugu_core.data.migrations` | SQLite 增量迁移器 | 当前本地 schema 17；v1 至 v16 显式备份升级及失败回滚；schema 17 增加可重建 RAG 索引表，业务来源和 Worker 生产接入仍待完成 | 高 |
+| `gugu_core.data.migrations` | Node SQLite 与 Host PostgreSQL migrations | Core schema 18 包含可重建 RAG 索引表及显式 SQLite 升级；Web Host 提供正式 PostgreSQL 索引迁移校验/应用命令，Node Worker、八类来源、写入队列与 Web Agent RAG Run 已接线。隔离 PostgreSQL/Redis 调用链已验证；目标部署上的正式迁移仍是切换步骤，不由工具运行时回退 Python | 高 |
 | `gugu-desktop-host` Python 管道进程 | 独立 Node 26 Core 进程 | Node 已替换 Python；Electron Main 继续使用 NDJSON v2、Worker 与收据契约 | 中 |
 | 旧 Rust 桌面 Host | Electron + TS Main/Preload | 已迁入窗口/生命周期与 IPC 的安全、恢复契约；Core 不依赖 Electron | 高 |
-| `@microsoft/mxc-sdk@1.0.1` | **复用（PoC）** | 通过 `packages/sandbox/src/mxc.ts` 适配 Host 注入的原生后端；保留有界协议/能力校验，不导入 Electron | 高 |
+| `@microsoft/mxc-sdk@1.0.1` | **复用（PoC）** | 通过 `packages/sandbox/src/mxc/executor.ts` 适配 Host 注入的原生后端；保留有界协议/能力校验，不导入 Electron | 高 |
 | 旧 Rust 桌面构建 CLI | `electron` + `electron-builder` | 已从活动依赖、源码和构建链移除；用 `electron-builder.yml` 及 `scripts/package.ts` / `smoke.ts` 验证依赖与资源 | 中～高 |
 | Vue `apps/web/` 独立 desktop 入口 | **复用** | 将旧桌面 bridge 改为最小 Preload API；不暴露通用 IPC/FS/进程接口 | 中 |
 | `gugu-desktop` Node engines 约束 | 构建 Node、Electron 内嵌 Node、Core Node 分别声明 | Core 保持已声明的 Node 26；不假设 Electron 内嵌版本相同 | 中 |
@@ -189,9 +189,9 @@ Core 的 `runtime/transport/stdio.ts` / `ipc.ts` 仅适配传输，复用 `runti
 | Cython 原生 RAG 内核 | 当前 Python 参考实现 | 复用 1.7.7 TypeScript RAG；迁移后 Node 只运行 TS 检索路径 | Python/Cython 差分回归、分词/排序/权限过滤、性能与索引重建 |
 | RAG 来源正文与文件/记忆内容 | 本地文件或既有 Canonical 来源 | 通过授权 FS / Core 来源 Adapter 按需读取；DB 只存可重建的派生索引/缓存，不复制文件正文或创建独立本地文件对象 ID | 路径授权、来源变更后的失效/重建、删除屏障、ACL 过滤 |
 | Linux sandboxd/容器 | Web/NAS 执行隔离 | 保留或实现同协议 Adapter | 防止 Host fallback |
-| Windows MXC | PR #116 有受限验证 | 从旧桌面 Host 绑定抽离后端，经 `packages/sandbox/src/mxc.ts` 适配；桌面仅装配/诊断 | Node/MCP/PTY 严格隔离尚未证明；Electron Renderer sandbox 不替代它 |
+| Windows MXC | PR #116 有受限验证 | 从旧桌面 Host 绑定抽离后端，经 `packages/sandbox/src/mxc/executor.ts` 适配；桌面仅装配/诊断 | Node/MCP/PTY 严格隔离尚未证明；Electron Renderer sandbox 不替代它 |
 | macOS sandbox | 尚未验收 | 原生 Adapter（待选型） | 签名、公证、文件授权、进程树 |
-| 文件监听 | Python watcher / TS Sidecar | `chokidar` 或 OS watcher Adapter | rename、丢事件、恢复对账 |
+| 文件监听 | Python watcher / TS Sidecar | 文件读写以本地 FS 为准，不迁移 DB↔FS watcher 或对账 | UI 刷新如需监听，另行设计为可丢弃的通知，不作为同步与持久化依据 |
 | CLI、Shell、PTY、MCP stdio | sandboxd/Unix socket 与 Python 桥 | Node `spawn` + OS Sandbox Broker | 取消、stdio、终止信号、权限 |
 | SSE / Redis 事件总线 | 浏览器跨页状态通知 | Fastify SSE + Redis | event ID、重连、顺序 |
 | Docker/Compose | 当前 Python 构建镜像 | Node 多阶段构建 | 非 root、健康检查、版本回滚 |

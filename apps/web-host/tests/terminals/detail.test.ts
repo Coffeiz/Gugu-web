@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { createRequire } from 'node:module'
 import Fastify from 'fastify'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
-import { createPostgresTerminalDetailReader } from '../../src/domains/terminals/persistence/detail.js'
+import { createPostgresTerminalDetailReader } from '../../src/modules/terminals/persistence/detail.js'
 import { registerTerminalDetailRoute } from '../../src/modules/terminals/detail.js'
 
 const owner = '00000000-0000-4000-8000-000000000141'
@@ -29,10 +29,10 @@ function setup(preferences = { shell_enabled: true }) {
   const pool = { async query(_query: string, values: string[]) { preferenceOwners.push(values[0]!); return { rows: [{ data_json: preferences }] } } }
   const app = Fastify()
   installHttpErrorHandler(app)
-  const read = createPostgresTerminalDetailReader(pool as never, db, {
+  const read = createPostgresTerminalDetailReader(pool as never, db, async () => ({
     terminalMode: 'auto', shellEnabled: true, shellSystemEnabled: false,
-    async readSandboxReadiness() { return { ready: true } },
-  })
+    sandboxReady: true,
+  }))
   registerTerminalDetailRoute(app, {
     requireUser: async (request, reply) => { if (request.headers.authorization !== 'synthetic-user') return reply.code(401).send({ detail: '未授权' }) },
     ownerIdFromRequest: () => owner,

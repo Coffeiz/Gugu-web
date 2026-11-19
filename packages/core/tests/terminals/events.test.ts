@@ -161,13 +161,13 @@ test('Shell 事实每次读取 owner 会话、工作区、用户开关和授权�
   const native = new SQLite(':memory:')
   const db = new Kysely<Record<string, never>>({ dialect: new SqliteDialect({ database: native }) })
   native.exec(`CREATE TABLE terminal_sessions(id TEXT,owner_id TEXT,session_id INTEGER,workspace_id INTEGER,closed_at TEXT);
-    CREATE TABLE conversation_sessions(id INTEGER,user_id TEXT,workspace_id INTEGER,filesystem_authorization_grant_id INTEGER);
+    CREATE TABLE conversation_sessions(id INTEGER,user_id TEXT,workspace_id INTEGER);
     CREATE TABLE workspaces(id INTEGER,user_id TEXT,name TEXT,kind TEXT,folder_id INTEGER,project_id INTEGER,directory_id INTEGER,enabled INTEGER);
     CREATE TABLE workspace_directories(id INTEGER,user_id TEXT,directory_name TEXT,deleted_at TEXT,is_default INTEGER,name TEXT);
     CREATE TABLE user_preferences(user_id TEXT,data_json TEXT);
     CREATE TABLE filesystem_authorization_grants(id INTEGER,user_id TEXT,subject_type TEXT,subject_id TEXT,scope TEXT,permission TEXT,revoked_at TEXT,expires_at TEXT);
     INSERT INTO terminal_sessions VALUES('mine','${owner.replaceAll('-', '')}',1,NULL,NULL);
-    INSERT INTO conversation_sessions VALUES(1,'${owner.replaceAll('-', '')}',2,NULL);
+    INSERT INTO conversation_sessions VALUES(1,'${owner.replaceAll('-', '')}',2);
     INSERT INTO workspaces VALUES(2,'${owner.replaceAll('-', '')}','工作区','directory',NULL,NULL,3,1);
     INSERT INTO workspace_directories VALUES(3,'${owner.replaceAll('-', '')}','default',NULL,0,'默认');
     INSERT INTO filesystem_authorization_grants VALUES(1,'${owner.replaceAll('-', '')}','session','1','user_sandbox','read_write',NULL,NULL);`)
@@ -176,9 +176,9 @@ test('Shell 事实每次读取 owner 会话、工作区、用户开关和授权�
     assert.equal(await read(other, 'mine', true), null)
     assert.equal((await read(owner, 'mine', false))?.fullUserSandboxWrite, false)
     assert.equal((await read(owner, 'mine', true))?.fullUserSandboxWrite, true)
-    native.exec('UPDATE conversation_sessions SET filesystem_authorization_grant_id=99')
+    native.exec("UPDATE filesystem_authorization_grants SET subject_id='99'")
     assert.equal((await read(owner, 'mine', true))?.fullUserSandboxWrite, false)
-    native.exec('UPDATE conversation_sessions SET filesystem_authorization_grant_id=NULL')
+    native.exec("UPDATE filesystem_authorization_grants SET subject_id='1'")
     native.exec("UPDATE filesystem_authorization_grants SET expires_at='2000-01-01 00:00:00'")
     assert.equal((await read(owner, 'mine', true))?.fullUserSandboxWrite, false)
     native.exec("UPDATE filesystem_authorization_grants SET expires_at=NULL; UPDATE conversation_sessions SET user_id='foreign'")
@@ -197,12 +197,12 @@ test('未绑定 Workspace 时 Shell 快照跟踪 owner 的默认目录目标', a
   const native = new SQLite(':memory:')
   const db = new Kysely<Record<string, never>>({ dialect: new SqliteDialect({ database: native }) })
   native.exec(`CREATE TABLE terminal_sessions(id TEXT,owner_id TEXT,session_id INTEGER,workspace_id INTEGER,closed_at TEXT);
-    CREATE TABLE conversation_sessions(id INTEGER,user_id TEXT,workspace_id INTEGER,filesystem_authorization_grant_id INTEGER);
+    CREATE TABLE conversation_sessions(id INTEGER,user_id TEXT,workspace_id INTEGER);
     CREATE TABLE workspaces(id INTEGER,user_id TEXT,name TEXT,kind TEXT,folder_id INTEGER,project_id INTEGER,directory_id INTEGER,enabled INTEGER);
     CREATE TABLE workspace_directories(id INTEGER,user_id TEXT,directory_name TEXT,deleted_at TEXT,is_default INTEGER,name TEXT);
     CREATE TABLE user_preferences(user_id TEXT,data_json TEXT);
     INSERT INTO terminal_sessions VALUES('mine','${owner.replaceAll('-', '')}',1,NULL,NULL);
-    INSERT INTO conversation_sessions VALUES(1,'${owner.replaceAll('-', '')}',NULL,NULL);
+    INSERT INTO conversation_sessions VALUES(1,'${owner.replaceAll('-', '')}',NULL);
     INSERT INTO workspaces VALUES(2,'${owner.replaceAll('-', '')}','默认工作区','directory',NULL,NULL,3,1);
     INSERT INTO workspace_directories VALUES(3,'${owner.replaceAll('-', '')}','个人目录',NULL,1,'默认目录');
     INSERT INTO user_preferences VALUES('${owner.replaceAll('-', '')}','{}');`)

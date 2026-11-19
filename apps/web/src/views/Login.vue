@@ -120,7 +120,6 @@ async function handleLogin() {
 /* 与 hover 同特异度、源顺序在后：聚焦后悬停不丢 focus 描边。 */
 .field input:focus:not(:disabled) {
   border-color: var(--input-border-focus);
-  box-shadow: var(--input-focus-shadow), inset 0 1px 3px rgba(80,90,110,0.06);
 }
 .field input::placeholder { color: var(--input-placeholder); }
 .field input:disabled { opacity: 0.5; }

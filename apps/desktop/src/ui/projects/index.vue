@@ -41,7 +41,7 @@ const uiStore = useUiStore()
   height: 100%;
 }
 .project-collection-actions { display: flex; gap: var(--space-xs); }
-.desktop-projects-page :deep(.kanban) { height: 100%; }
+.desktop-projects-page :deep(.kanban) { height: 100%; gap: var(--space-md); }
 @media (max-width: 760px) {
   .desktop-projects-page { height: auto; }
   .desktop-projects-page :deep(.projects-page) { grid-template-rows: auto auto; height: auto; }

@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { randomUUID } from 'node:crypto'
 import { Pool, type PoolClient } from 'pg'
-import { applyMindUndoCore } from '../../src/domains/undo/persistence/mind-core.js'
-import { MindUndoConflict, MindUndoUnsupported } from '../../src/domains/undo/persistence/mind.js'
+import { applyMindUndoCore } from '../../src/modules/undo/persistence/mind-core.js'
+import { MindUndoConflict, MindUndoUnsupported } from '../../src/modules/undo/persistence/mind.js'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const owner = '11111111-1111-4111-8111-111111111111'

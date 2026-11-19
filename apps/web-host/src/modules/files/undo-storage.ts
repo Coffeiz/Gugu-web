@@ -1,7 +1,7 @@
 import { lstat, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { isPathWithin } from '../../adapters/path-safety.js'
-import type { FileUndoStorage } from '../../domains/undo/persistence/core-operations.js'
+import type { FileUndoStorage } from '../undo/persistence/core-operations.js'
 
 async function safePath(rootPath: string, key: string): Promise<string> {
   const parts = key.split('/')

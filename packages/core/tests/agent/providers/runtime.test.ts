@@ -15,6 +15,7 @@ import { runContextBranch } from '../../../src/agent/memory/reflection.js'
 import type { JsonObject, ProviderHttpRequest, ProviderTransport } from '../../../src/agent/providers/contracts.js'
 import type { ProviderConfig, ProviderWire } from '../../../src/agent/providers/contracts.js'
 import type { ProviderProbeSink, ProviderRequestProbe } from '../../../src/agent/providers/cache-probe.js'
+import type { AgentObservation, AgentObservationPort } from '../../../src/agent/observation.js'
 import { RequestProbe } from '../../../src/agent/providers/cache-probe.js'
 import { requestJson } from '../../../src/agent/providers/http.js'
 import { listProviderModels, normalizedApiKey, providerDiagnosticRequest } from '../../../src/agent/providers/diagnostics.js'
@@ -26,7 +27,7 @@ const digest = (value: unknown) => createHash('sha256').update(stableJson(value)
 const encode = (text: string) => new TextEncoder().encode(text)
 async function* collectSource<T>(values: readonly T[]) { yield* values }
 async function all(source: AsyncIterable<ProviderEvent>) { const result: ProviderEvent[] = []; for await (const event of source) result.push(event); return result }
-function setup(scripts: readonly (string | { status: number; body: JsonObject })[], options: { config?: ProviderConfig; history?: CanonicalMessage[]; requestPrefix?: CanonicalMessage[]; systemPrompt?: string; probeSink?: ProviderProbeSink; extraReminder?: string; initialImage?: boolean; now?: () => number; coordinator?: PrefixCoordinator; diagnose?: (code: string, error: unknown) => void; sourceLoad?: CanonicalContextPorts['load']; scopeHash?: string } = {}) {
+function setup(scripts: readonly (string | { status: number; body: JsonObject })[], options: { config?: ProviderConfig; history?: CanonicalMessage[]; requestPrefix?: CanonicalMessage[]; systemPrompt?: string; probeSink?: ProviderProbeSink; observation?: AgentObservationPort; extraReminder?: string; initialImage?: boolean; now?: () => number; coordinator?: PrefixCoordinator; diagnose?: (code: string, error: unknown) => void; sourceLoad?: CanonicalContextPorts['load']; scopeHash?: string } = {}) {
   let id = 0, index = 0
   const sent: ProviderHttpRequest[] = []
   const currentContent: Json = options.initialImage ? [{ type: 'text', text: '读取合成信息' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'aW5pdGlhbA==' } }] : '读取合成信息'
@@ -64,11 +65,11 @@ function setup(scripts: readonly (string | { status: number; body: JsonObject })
     diagnoseCompactionFailure: vi.fn(),
   }
   if (options.sourceLoad) context.load = options.sourceLoad
-  const connected = connectProviderHarness(context, { transport, resolve: async () => ({ modelIdentity: 'model-a', accessScopeHash: options.scopeHash ?? digest(identity), config: options.config ?? { provider: 'openai', model: 'synthetic-model' }, systemPrompt: options.systemPrompt ?? '固定人格' }), probeSink: options.probeSink, diagnose: options.diagnose, coordinator: options.coordinator, clock: { now: options.now ?? (() => 0), sleep: async () => undefined } })
+  const connected = connectProviderHarness(context, { transport, resolve: async () => ({ modelIdentity: 'model-a', accessScopeHash: options.scopeHash ?? digest(identity), config: options.config ?? { provider: 'openai', model: 'synthetic-model' }, systemPrompt: options.systemPrompt ?? '固定人格' }), probeSink: options.probeSink, observation: options.observation, diagnose: options.diagnose, coordinator: options.coordinator, clock: { now: options.now ?? (() => 0), sleep: async () => undefined } })
   const fake = fixture([])
   fake.ports.presentError = vi.fn(fake.ports.presentError)
   const runtime = fake.ports as unknown as AgentRunnerPorts<CanonicalRunContext>
-  const harness = createCanonicalRunner({ context: connected.context, executor: { authorize: async () => { throw new Error('lookup不执行原生进程') }, executor: { execute: async () => { throw new Error('lookup不执行原生进程') } } }, runtime: { ...runtime, provider: connected.provider } })
+  const harness = createCanonicalRunner({ context: connected.context, executor: { authorize: async () => { throw new Error('lookup不执行原生进程') }, executor: { execute: async () => { throw new Error('lookup不执行原生进程') } } }, runtime: { ...runtime, observation: options.observation, provider: connected.provider } })
   return { ...connected, harness, sent, context, fake }
 }
 function chat(data: JsonObject) { return `data: ${JSON.stringify(data)}\n\ndata: [DONE]\n\n` }
@@ -96,6 +97,26 @@ function protocolFixture(protocol: string) {
 }
 
 describe('真实Provider到Canonical Harness组合', () => {
+  it('从 Core 真实执行路径发出 Provider body、轮次、用量与终态观测', async () => {
+    const observations: AgentObservation[] = []
+    const toolRequest = protocolFixture('openai').streamTool
+    const value = setup([toolRequest, final], { observation: { record: event => observations.push(event) } })
+    const result = await collect(value.harness.start(identity))
+    expect(result.state.status).toBe('completed')
+    expect(observations.map(event => `${event.kind}:${event.name}`)).toEqual(expect.arrayContaining([
+      'run:started', 'round:started', 'provider:request', 'provider:usage', 'tool:lookup', 'round:completed', 'run:finished',
+    ]))
+    expect(observations.filter(event => event.kind === 'tool').map(event => event.status)).toEqual(['running', 'success'])
+    const requests = observations.filter(event => event.kind === 'provider' && event.name === 'request')
+    const request = requests[0]!
+    expect(requests).toHaveLength(2)
+    expect(request.input).toMatchObject({ model: 'synthetic-model', messages: expect.any(Array), tools: expect.any(Array) })
+    expect(observations.filter(event => event.kind === 'provider' && event.name === 'usage').at(-1)?.usage).toEqual(result.state.totalUsage)
+    expect(observations.find(event => event.kind === 'tool' && event.status === 'running')?.input).toMatchObject({ query: '原参数' })
+    expect(observations.find(event => event.kind === 'tool' && event.status === 'success')?.output).toBe('合成结果')
+    expect(observations.find(event => event.kind === 'run' && event.name === 'finished')?.status).toBe('completed')
+    await value.provider.close()
+  })
   it('标准来源与 Provider 使用同一可信 scope 后可完成真实协议请求', async () => {
     const selection = { modelIdentity: 'model-a', contextWindow: 10000, locale: 'zh-CN', groupChat: false, workspaceBinding: null,
       contextScopeKey: 'opaque-version', contextPolicy: { loadOwnerContext: true, memoryEnabled: true } }
@@ -441,6 +462,26 @@ describe('共享重试、池与前缀协调契约', () => {
     expect((await value.provider.completeBranch({ ...identity, modelIdentity: 'model-a', stableSystem: '合成规则', delta: '分支合成请求', tools: [], canonicalHistory: [] })).output).toBe('完成')
     expect(probes).toHaveLength(4)
     for (const probe of [probes[1], probes[3]]) expect(probe).toMatchObject({ outcome: 'success', rawUsage: { prompt_tokens: 4, completion_tokens: 2 }, normalizedUsage: { contextInput: 4 } })
+    await value.provider.close()
+  })
+  it('Core观测端口记录反思分支的实际请求、usage和完成输出', async () => {
+    const observations: AgentObservation[] = []
+    const json = JSON.stringify({ choices: [{ message: { content: '合成分支输出' }, finish_reason: 'stop' }], usage: { prompt_tokens: 5, completion_tokens: 2 } })
+    const value = setup([json], { observation: { record: event => observations.push(event) } })
+    await value.provider.completeBranch({ ...identity, modelIdentity: 'model-a', stableSystem: '合成系统', delta: '合成分支输入', tools: [], canonicalHistory: [] })
+    expect(observations.map(event => `${event.kind}:${event.name}`)).toEqual(['provider:request', 'provider:usage', 'provider:complete'])
+    expect(observations[0]).toMatchObject({ input: { messages: expect.arrayContaining([{ role: 'user', content: '合成分支输入' }]) }, attributes: { purpose: 'branch' } })
+    expect(observations[1]).toMatchObject({ usage: { input: 5, output: 2 }, attributes: { purpose: 'branch' } })
+    expect(observations[2]).toMatchObject({ output: '合成分支输出', status: 'success', attributes: { purpose: 'branch' } })
+    await value.provider.close()
+  })
+  it('Core观测端口记录分支Provider失败类别但不泄漏上游错误正文', async () => {
+    const observations: AgentObservation[] = []
+    const value = setup([{ status: 401, body: { message: 'synthetic upstream detail must not enter trace' } }], { observation: { record: event => observations.push(event) } })
+    await expect(value.provider.completeBranch({ ...identity, modelIdentity: 'model-a', stableSystem: '合成系统', delta: '合成分支输入', tools: [], canonicalHistory: [] })).rejects.toMatchObject({ code: 'authentication' })
+    expect(observations.map(event => `${event.kind}:${event.name}`)).toEqual(['provider:request', 'provider:complete'])
+    expect(observations[1]).toMatchObject({ status: 'error', attributes: { purpose: 'branch', error_code: 'authentication' } })
+    expect(JSON.stringify(observations)).not.toContain('synthetic upstream detail')
     await value.provider.close()
   })
   it('缓存指纹仅覆盖最后锚点前缀，动态尾部改变不使稳定前缀失配', () => {

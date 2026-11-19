@@ -29,7 +29,7 @@ emoji: 📝
 {"node_id":123,"append_markdown":"追加正文"}
 ```
 
-只有需要可点击引用、格式化行内标记或结构化待办时才使用 `blocks` / `append_blocks`。引用仍须先查到真实对象 ID。普通 Markdown 路径不接受 `blocks`；更新正文时 `append_markdown`、`append_blocks`、`line_edits` 只能选一种。
+只有需要可点击引用、格式化行内标记或结构化待办时才使用 `blocks` / `append_blocks`。引用仍须先查到真实对象 ID。普通 Markdown 路径不接受 `blocks`；更新正文时 `append_markdown`、`append_blocks`、`line_edits`、`find_replace` 只能选一种。
 
 `blocks` 由工具 Schema 和服务端共同严格校验。**只使用下面的对象层级，不要自行递归或包装数组**。
 
@@ -39,8 +39,9 @@ emoji: 📝
 
 ## 更新前先读取最新正文
 
-- 更新已有正文必须先调用 `note_get` 获取最新 `numbered_content`，再决定使用追加或行编辑；不要使用几轮之前缓存的行号。
-- 指定行编辑使用 `mode: "line_edit"` 和 `line_edits`。数字目标必须带对应的 `expected` 原文；校验失败就重新读取，不能猜行号。
+- 更新已有正文必须先调用 `note_get` 获取最新 `numbered_content`，再决定使用追加、精确替换或行编辑；不要使用几轮之前缓存的行号。
+- 局部替换使用 `find_replace: {"find":"原文","replace":"新文字"}`，从 `content_md` 逐字复制原文。只在唯一匹配时写入，空字符串可删除这处原文。
+- 指定行编辑使用 `line_edits`。数字目标必须带对应的 `expected` 原文；校验失败就重新读取，不能猜行号。
 - `target_lines` 支持 `8`、`8-11`、`8,11`，整篇使用 `all`；`content: ""` 表示删除。多个范围不能重叠，工具会按倒序处理行号变化。
 - 删除旧内容应直接使用行编辑，不要在末尾追加“作废说明”冒充删除。
 

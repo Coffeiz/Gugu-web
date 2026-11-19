@@ -11,7 +11,11 @@ import type { EventCreateReminderRecord, PreparedEventReminder } from './applica
 function reminderDate(value: unknown, backend: 'sqlite' | 'postgres'): Date {
   if (value instanceof Date) return value
   if (typeof value !== 'string') throw new Error('活动提醒时间无效')
-  const normalized = backend === 'sqlite' ? utc(value).replace(' ', 'T') : value.replace(' ', 'T')
+  const timestamp = value.replace(' ', 'T')
+  // PostgreSQL may serialize a timestamptz with a short offset (for example +08).
+  // ECMAScript requires the minutes component, so normalize it before Date parsing.
+  const normalized = backend === 'sqlite' ? utc(value).replace(' ', 'T')
+    : timestamp.replace(/([+-]\d{2})(\d{2})$/u, '$1:$2').replace(/([+-]\d{2})$/u, '$1:00')
   const result = new Date(normalized)
   if (!Number.isFinite(result.getTime())) throw new Error('活动提醒时间无效')
   return result

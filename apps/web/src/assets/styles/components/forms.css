@@ -48,8 +48,7 @@
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .title-edit-input:focus {
-  border-color: var(--input-border-hover);
-  box-shadow: var(--input-focus-shadow);
+  border-color: var(--input-border-focus);
 }
 
 .form-input {
@@ -73,7 +72,6 @@ input:is([type='text'], [type='email'], [type='password'], [type='number'], [typ
 select { line-height: var(--line-height-body); vertical-align: middle; }
 .form-input:focus {
   border-color: var(--input-border-focus);
-  box-shadow: var(--input-focus-shadow);
   background: var(--input-bg-focus);
 }
 

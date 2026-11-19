@@ -493,7 +493,7 @@ const {
   restorePendingQueueForDraft,
   stick,
   fetchSessions, loadSession, newSession, deleteSession, renameSession,
-  send, stopStreaming,
+  send, stopStreaming, resumeStream,
   pendingQueue, removeQueued,
   scrollBottom,
   animateGreeting,
@@ -592,7 +592,10 @@ const pendingCustomPromptId = computed(() => findPendingTextInteractionId(messag
 
 async function onInteractionSelect(_msg: ChatMessage, option: { id: string; label: string; token: string }) {
   const promptId = _msg.interaction?.promptId
-  if (!promptId || !sessionId.value) return
+  const currentSessionId = sessionId.value
+  if (!promptId || !currentSessionId) return
+  const resumesTool = Boolean(_msg.interaction?.toolCallId)
+  let resumedRunId = _msg.runId
   if (option.id === CUSTOM_REPLY_OPTION_ID) {
     if (!_msg.interaction?.allowTextInput || _msg.interaction.kind === 'confirm') return
     try {
@@ -625,7 +628,7 @@ async function onInteractionSelect(_msg: ChatMessage, option: { id: string; labe
     _msg.interaction.submitting = true
   }
   try {
-    const endpoint = _msg.interaction?.toolCallId
+    const endpoint = resumesTool
       ? `${API_BASE}/agent/interactions/${promptId}/resume`
       : `${API_BASE}/agent/interactions/${promptId}/respond`
     const res = await fetch(endpoint, {
@@ -653,6 +656,10 @@ async function onInteractionSelect(_msg: ChatMessage, option: { id: string; labe
       }
       return
     }
+    if (resumesTool) {
+      const body = await res.json().catch(() => null) as { run_id?: unknown } | null
+      if (typeof body?.run_id === 'string') resumedRunId = body.run_id
+    }
   } catch {
     if (_msg.interaction) {
       _msg.interaction.submitting = false
@@ -667,6 +674,7 @@ async function onInteractionSelect(_msg: ChatMessage, option: { id: string; labe
     _msg.interaction.selectedOptionId = option.id
     _msg.interaction.responseText = option.label
   }
+  if (resumesTool && sessionId.value === currentSessionId) void resumeStream(currentSessionId, resumedRunId)
 }
 
 async function onSecretSubmit(_msg: ChatMessage, values: Record<string, string>) {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
-import { createInteractionSessionLookup } from '../../src/domains/agent-sessions/persistence/agent-interaction-session.js'
+import { createInteractionSessionLookup } from '../../src/modules/agent-sessions/persistence/agent-interaction-session.js'
 import { InteractionNotFoundError } from '@gugu/core/agent-sessions'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL

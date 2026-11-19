@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { registerAdminAuditLogRoute } from '../../src/modules/admin/audit-log.js'
-import { createAdminAuditLogReader } from '@gugu/core/admin-audit-log'
+import { registerAdminAuditLogRoute } from '../../src/modules/admin/audit.js'
+import { createAdminAuditLogReader } from '../../src/modules/admin/audit.js'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
 
 test('审计列表拒绝未授权读取，返回限定字段并保留UTC微秒；非法条数不查询', async () => {

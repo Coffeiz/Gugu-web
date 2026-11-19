@@ -169,11 +169,15 @@ export function timedLayoutFor(events: CalendarRenderItem[], iso: string, hourHe
   })
   flush()
 
-  return result.map(item => ({
-    ev: item.ev,
-    top: item.s / 60 * hourHeight,
-    height: Math.max(15, (item.e - item.s) / 60 * hourHeight - 2),
-    leftPct: item.col / item.count * 100,
-    widthPct: 100 / item.count,
-  }))
+  const inset = 1
+  return result.map(item => {
+    const height = Math.max(15, (item.e - item.s) / 60 * hourHeight - 2 * inset)
+    return {
+      ev: item.ev,
+      top: Math.min(item.s / 60 * hourHeight + inset, 24 * hourHeight - height - inset),
+      height,
+      leftPct: item.col / item.count * 100,
+      widthPct: 100 / item.count,
+    }
+  })
 }

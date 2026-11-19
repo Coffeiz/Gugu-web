@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createHmac } from 'node:crypto'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { createSecurityEventFingerprint, registerAdminSecurityEventRoutes, type AdminSecurityEventFilters } from '../../src/domains/admin/admin-audit-log.js'
+import { createSecurityEventFingerprint, registerAdminSecurityEventRoutes, type AdminSecurityEventFilters } from '../../src/modules/admin/audit.js'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
 
 type DbRow = Record<string, unknown>

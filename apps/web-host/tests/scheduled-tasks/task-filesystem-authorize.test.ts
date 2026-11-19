@@ -5,7 +5,7 @@ import {setTimeout as delay} from 'node:timers/promises'
 import {Pool} from 'pg'
 import {createPostgresRuntime} from '@gugu/core/data'
 import {createTaskFilesystemAuthorization} from '@gugu/core/scheduled-task-filesystem-authorize'
-import {createFilesystemAuthorizationConfirmationStore} from '../../src/domains/agent-sessions/filesystem-authorization-confirmations.js'
+import {createFilesystemAuthorizationConfirmationStore} from '../../src/modules/agent-sessions/filesystem-authorization-confirmations.js'
 import {createRedisFilesystemAuthorizationCommands} from '../../src/adapters/redis-events.js'
 const databaseUrl=process.env.GUGU_WEBUI_TEST_DATABASE_URL,redisUrl=process.env.GUGU_WEBUI_TEST_REDIS_URL
 

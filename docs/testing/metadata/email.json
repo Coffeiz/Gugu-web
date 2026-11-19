@@ -10,9 +10,9 @@
   "packages/core/tests/email/publish.test.ts": {
     "domain": "email",
     "layer": "L1",
-    "owner": "packages/core/src/email/publish.ts + packages/core/src/admin/email-recipient-list.ts",
-    "productionEntry": "Core 收件人读取和邮件批量投递用例",
-    "keyBehavior": "只发送给活跃订阅且邮箱有效的用户、按 locale 选翻译、单封失败不阻断其余收件人并限制并发",
+    "owner": "packages/core/src/email/publish.ts",
+    "productionEntry": "Core 邮件批量投递用例",
+    "keyBehavior": "按 locale 选翻译、单封失败不阻断其余收件人并限制并发",
     "ci": "core-node"
   }
 }

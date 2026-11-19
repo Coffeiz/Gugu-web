@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Pool } from 'pg'
 import test from 'node:test'
-import { createPostgresFileContentOperations } from '../../src/domains/files/file-content-postgres.js'
+import { createPostgresFileContentOperations } from '../../src/modules/files/file-content-postgres.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '11111111-1111-4111-8111-111111111111'

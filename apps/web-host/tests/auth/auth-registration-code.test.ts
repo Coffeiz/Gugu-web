@@ -2,9 +2,9 @@ import assert from 'node:assert/strict'
 import bcrypt from 'bcryptjs'
 import test from 'node:test'
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify'
-import type { PublicUserRecord } from '../../src/domains/auth/auth.js'
-import { verifyUserToken } from '../../src/domains/auth/auth.js'
-import { RegistrationRequestError, registerUserRoute } from '../../src/domains/auth/routes/auth-register.js'
+import type { PublicUserRecord } from '../../src/modules/auth/auth.js'
+import { verifyUserToken } from '../../src/modules/auth/auth.js'
+import { RegistrationRequestError, registerUserRoute } from '../../src/modules/auth/routes/auth-register.js'
 
 const secret = 'synthetic-register-test-secret-with-enough-entropy'
 const userId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
@@ -114,14 +114,14 @@ test('verified registration normalizes the email, commits with the code, then is
     assert.deepEqual(response.json().user, {
       id: userId,
       username: 'moon_小北',
-      display_name: 'moon_小北',
+      displayName: 'moon_小北',
       email: 'new@example.test',
-      is_active: true,
-      avatar_url: null,
-      created_at: '2026-11-13',
-      im_channels: [],
+      isActive: true,
+      avatarUrl: null,
+      createdAt: '2026-11-13',
+      imChannels: [],
       timezone: null,
-      email_subscribed: true,
+      emailSubscribed: true,
     })
     assert.deepEqual(fixture.calls, ['rateLimit', 'userExists', 'verifyCode', 'registerUser', 'seedUser'])
     assert.deepEqual(fixture.rateLimits, [{

@@ -9,9 +9,9 @@ import { createClientOperations } from '../../src/modules/clients/persistence/cl
 import { createCalendarEventReader, createKyselyCalendarReadPort } from '@gugu/core/calendar'
 import { createKyselyNotificationOperations } from '@gugu/core/notifications'
 import { createTrackOperations } from '../../src/modules/site/persistence/track.js'
-import { createProjectFileCountListing, createProjectGetter, createProjectListing } from '../../src/domains/projects/persistence/projects.js'
+import { createProjectFileCountListing, createProjectGetter, createProjectListing } from '../../src/modules/projects/persistence/projects.js'
 import { signedUserToken } from '../helpers/auth.js'
-import { createUserRepository } from '../../src/domains/auth/persistence/users.js'
+import { createUserRepository } from '../../src/modules/auth/persistence/users.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const secret = 'synthetic-postgres-integration-secret'

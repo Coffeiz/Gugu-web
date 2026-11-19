@@ -8,9 +8,9 @@ import { CoreError, createWorkspaceBindings } from '@gugu/core'
 import { createPostgresRuntime } from '@gugu/core/data'
 import { createKyselyWorkspaceBindingRuntime } from '@gugu/core/workspaces'
 import type { UserFromRequest } from '../../src/app.js'
-import type { WorkspaceCreateResponse } from '../../src/domains/workspaces/persistence/workspace-create.js'
-import { registerWorkspaceRoutes } from '../../src/domains/workspaces/routes/workspaces.js'
-import { createPostgresWorkspaceBindingOperations, type WorkspaceBindingOperations } from '../../src/domains/workspaces/persistence/workspace-bindings.js'
+import type { WorkspaceCreateResponse } from '../../src/modules/workspaces/persistence/workspace-create.js'
+import { registerWorkspaceRoutes } from '../../src/modules/workspaces/routes/workspaces.js'
+import { createPostgresWorkspaceBindingOperations, type WorkspaceBindingOperations } from '../../src/modules/workspaces/persistence/workspace-bindings.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'

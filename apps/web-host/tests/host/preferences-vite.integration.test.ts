@@ -7,8 +7,8 @@ import { createPostgresRuntime } from '@gugu/core/data'
 import { createKyselyPreferenceDocumentStore } from '@gugu/core'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createCsrfToken, createUserToken, type PublicUserRecord } from '../../src/domains/auth/auth.js'
-import { createPostgresPreferencesStore } from '../../src/domains/preferences/persistence/postgres.js'
+import { createCsrfToken, createUserToken, type PublicUserRecord } from '../../src/modules/auth/auth.js'
+import { createPostgresPreferencesStore } from '../../src/modules/preferences/persistence/postgres.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

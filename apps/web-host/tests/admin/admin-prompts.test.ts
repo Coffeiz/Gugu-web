@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { registerAdminPromptRoutes } from '../../src/domains/admin/admin-prompts.js'
+import { registerAdminPromptRoutes } from '../../src/modules/admin/prompt-files.js'
 
 async function setup() {
   const root = await mkdtemp(join(tmpdir(), 'gugu-admin-prompts-')), audits: Array<Record<string, unknown>> = [], app = Fastify()

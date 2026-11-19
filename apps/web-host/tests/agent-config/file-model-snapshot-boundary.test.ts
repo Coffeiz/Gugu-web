@@ -8,8 +8,8 @@ import { tmpdir } from 'node:os'
 import test from 'node:test'
 import { Pool } from 'pg'
 import type { ProviderConfig } from '@gugu/core/providers'
-import { createFileModelSnapshotBoundary } from '../../src/domains/agent-config/file-model-snapshot-boundary.js'
-import { createAtomicAgentModelSnapshot } from '../../src/domains/agent-config/atomic-model-snapshot.js'
+import { createFileModelSnapshotBoundary } from '../../src/modules/agent/model-config/file-model-snapshot-boundary.js'
+import { createAtomicAgentModelSnapshot } from '../../src/modules/agent/model-config/atomic-model-snapshot.js'
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const skip = !(url && ['darwin', 'linux'].includes(process.platform) && Number(process.versions.node.split('.')[0]) >= 26)
 

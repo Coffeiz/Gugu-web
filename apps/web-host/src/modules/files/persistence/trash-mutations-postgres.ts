@@ -1,0 +1,324 @@
+import { CoreError } from '@gugu/core'
+import { randomUUID } from 'node:crypto'
+import { lstat, readdir, realpath, unlink } from 'node:fs/promises'
+import { finishStagedLocalFile, stageLocalFile } from '@gugu/fs/node'
+import path from 'node:path'
+import type { Pool, PoolClient, QueryResultRow } from 'pg'
+import { isPathWithin } from '../../../adapters/path-safety.js'
+import { normalizeFileOwnerId } from '../file-owner.js'
+import type { TrashOperations } from '../trash.js'
+
+interface DeletedFileRow extends QueryResultRow {
+  id: number | string
+  storage_key: string
+  size_bytes: number | string
+}
+
+interface QuotaRow extends QueryResultRow {
+  used_bytes: number | string
+}
+
+export interface TrashMutationEvent {
+  ownerId: string
+  entityId: number
+  entityType: 'file' | 'folder'
+  origin: string | null
+}
+
+async function checkedLocalFile(storageRoot: string, ownerId: string, key: string): Promise<string | null> {
+  const segments = key.split('/')
+  if (segments[0] !== ownerId || segments.length < 2
+    || segments.some((segment) => !segment || segment === '.' || segment === '..'
+      || segment.includes('\\') || segment.includes('\0')))
+    throw new Error('invalid local file key')
+  const root = await realpath(storageRoot)
+  let current = root
+  for (const segment of segments) {
+    current = path.join(current, segment)
+    if (!isPathWithin(root, current)) throw new Error('local file path escaped storage root')
+    try {
+      if ((await lstat(current)).isSymbolicLink()) throw new Error('local file path traverses symlink')
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === 'ENOENT') return null
+      throw error
+    }
+  }
+  return current
+}
+
+export async function removeLocalFile(storageRoot: string, ownerId: string, key: string, remove: typeof unlink = unlink): Promise<boolean> {
+  const current = await checkedLocalFile(storageRoot, ownerId, key)
+  if (current === null) return true
+  try { await remove(current) } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  return true
+}
+
+/** 提交前暂存待清理文件；失败时由调用方按相反顺序恢复。 */
+function ownerScopedLocalPath(storageRoot: string, ownerId: string, key: string): { root: string; relative: string } {
+  const owner = normalizeFileOwnerId(ownerId)
+  const segments = key.split('/')
+  if (segments[0] !== owner || segments.length < 2 || segments.some(segment =>
+    !segment || segment === '.' || segment === '..' || segment.includes('\\') || segment.includes('\0')))
+    throw new Error('invalid local file key')
+  // 将 owner 目录作为相对路径的一部分传入文件系统适配器，由其从存储根逐层以
+  // O_NOFOLLOW 打开目录句柄；不能先校验 ownerRoot 再按可替换路径暂存。
+  return { root: storageRoot, relative: segments.join('/') }
+}
+
+export async function stageLocalFileRemoval(storageRoot: string, ownerId: string, key: string, journalId: string): Promise<{
+  size: number
+  stagedPath: string
+  restore(): Promise<void>
+  discard(): Promise<void>
+} | null> {
+  const target = ownerScopedLocalPath(storageRoot, ownerId, key)
+  const staged = await stageLocalFile(target.root, target.relative, journalId)
+  if (!staged) return null
+  return {
+    ...staged,
+    restore: () => finishStagedLocalFile(target.root, target.relative, journalId, true),
+    discard: () => finishStagedLocalFile(target.root, target.relative, journalId, false),
+  }
+}
+
+/** 仅恢复日志中声明的文件；目标存在时 link 会拒绝覆盖。 */
+export async function recoverStagedLocalFile(storageRoot: string, ownerId: string, key: string, journalId: string, restore: boolean): Promise<void> {
+  const target = ownerScopedLocalPath(storageRoot, ownerId, key)
+  await finishStagedLocalFile(target.root, target.relative, journalId, restore)
+}
+
+export async function lockQuota(client: PoolClient, ownerId: string): Promise<number> {
+  const result = await client.query<QuotaRow>(
+    `SELECT used_bytes FROM storage_quota_ledgers
+     WHERE user_id=$1 AND category='file_library' AND status='active' FOR UPDATE`, [ownerId],
+  )
+  const row = result.rows[0]
+  if (!row) throw new CoreError('busy', '存储配额账本尚未就绪，请稍后重试')
+  return Number(row.used_bytes)
+}
+
+async function measureDirectory(storageRoot: string, root: string, excluded: ReadonlySet<string>): Promise<number> {
+  let total = 0
+  let current = storageRoot
+  for (const part of path.relative(storageRoot, root).split(path.sep).filter(Boolean)) {
+    current = path.join(current, part)
+    try {
+      const info = await lstat(current)
+      if (info.isSymbolicLink() || !info.isDirectory()) return 0
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'EACCES') return 0
+      throw error
+    }
+  }
+  const visit = async (directory: string): Promise<void> => {
+    let entries
+    try { entries = await readdir(directory, { withFileTypes: true }) }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'EACCES') return
+      throw error
+    }
+    for (const entry of entries) {
+      const target = path.join(directory, entry.name)
+      if (excluded.has(target)) continue
+      let info
+      try { info = await lstat(target) }
+      catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'EACCES') continue
+        throw error
+      }
+      if (info.isSymbolicLink()) continue
+      if (info.isDirectory()) await visit(target)
+      else if (info.isFile()) total += info.size
+    }
+  }
+  await visit(root)
+  return total
+}
+
+export async function reconcileLocalUsage(
+  client: PoolClient,
+  storageRoot: string,
+  ownerId: string,
+  usedBytes: number,
+  excluded: ReadonlySet<string> = new Set(),
+): Promise<number> {
+  const root = await realpath(storageRoot)
+  const roots = [
+    path.join(root, ownerId, 'workspace'),
+    path.join(root, ownerId, '个人文件'),
+    path.join(root, ownerId, '项目文件'),
+    path.join(root, ownerId, 'trash'),
+    path.join(root, ownerId.replaceAll('-', ''), '.data-portability', 'imported'),
+  ]
+  const sizes = await Promise.all(roots.map((directory) => measureDirectory(root, directory, excluded)))
+  const measured = sizes.reduce((sum, size) => sum + size, 0)
+  const delta = measured - usedBytes
+  if (delta !== 0) {
+    await client.query(
+      `INSERT INTO storage_quota_events
+         (user_id,category,operation,delta_bytes,resource_type,resource_id,idempotency_key,metadata_json,created_at)
+       VALUES ($1,'file_library','reconcile',$2,'quota','file_library',$3,$4::jsonb,CURRENT_TIMESTAMP)`,
+      [ownerId, delta, `trash-reconcile:${ownerId}:${randomUUID()}`, JSON.stringify({ measured_bytes: measured })],
+    )
+  }
+  await client.query(
+    `UPDATE storage_quota_ledgers SET used_bytes=$2,last_reconciled_at=CURRENT_TIMESTAMP,
+       updated_at=CURRENT_TIMESTAMP WHERE user_id=$1 AND category='file_library' AND status='active'`,
+    [ownerId, measured],
+  )
+  return measured
+}
+
+async function releaseQuota(
+  client: PoolClient,
+  ownerId: string,
+  fileId: number,
+  sizeBytes: number,
+  usedBytes: number,
+): Promise<number> {
+  const released = Math.min(Math.max(0, sizeBytes), Math.max(0, usedBytes))
+  if (released <= 0) return usedBytes
+  await client.query(
+    `INSERT INTO storage_quota_events
+       (user_id,category,operation,delta_bytes,resource_type,resource_id,idempotency_key,metadata_json,created_at)
+     VALUES ($1,'file_library','trash_permanent_delete',$2,'file',$3,$4,NULL,CURRENT_TIMESTAMP)`,
+    [ownerId, -released, String(fileId), `trash-permanent-delete:${fileId}`],
+  )
+  await client.query(
+    `UPDATE storage_quota_ledgers SET used_bytes=$3,updated_at=CURRENT_TIMESTAMP
+     WHERE user_id=$1 AND category=$2 AND status='active'`,
+    [ownerId, 'file_library', usedBytes - released],
+  )
+  return usedBytes - released
+}
+
+export function createPostgresTrashMutationOperations(
+  pool: Pool,
+  options: {
+    storageRoot: string
+    publishChanged(event: TrashMutationEvent): Promise<void>
+  },
+): Pick<TrashOperations, 'hardDeleteFile' | 'hardDeleteFolder'> {
+  return {
+    async hardDeleteFile(rawOwner, fileId, origin) {
+      const ownerId = normalizeFileOwnerId(rawOwner)
+      if (!Number.isSafeInteger(fileId) || fileId < 1) throw new CoreError('invalid_request', '文件 ID 无效')
+      const client = await pool.connect()
+      let committed = false
+      let fileDeleted = false
+      let staged: Awaited<ReturnType<typeof stageLocalFileRemoval>> = null
+      try {
+        await client.query('BEGIN')
+        const found = await client.query<DeletedFileRow>(
+          `SELECT id,storage_key,size_bytes FROM files
+           WHERE id=$1 AND user_id=$2 AND deleted_at IS NOT NULL FOR UPDATE`, [fileId, ownerId],
+        )
+        const file = found.rows[0]
+        if (!file) throw new CoreError('not_found', '文件不存在')
+        let quota = Number(file.size_bytes) > 0 ? await lockQuota(client, ownerId) : null
+        if (quota !== null && quota < Number(file.size_bytes))
+          quota = await reconcileLocalUsage(client, options.storageRoot, ownerId, quota)
+        let deletedFromStorage = false
+        try {
+          staged = await stageLocalFileRemoval(options.storageRoot, ownerId, file.storage_key, randomUUID())
+          // 缺失文件与 Python 一样仍清理墓碑并释放账本；实际对象先暂存，等数据库提交后再销毁。
+          deletedFromStorage = true
+        } catch { /* 保留 Python 的坏对象清理语义，不因不可访问对象阻塞回收站。 */ }
+        if (deletedFromStorage && quota !== null)
+          await releaseQuota(client, ownerId, fileId, Number(file.size_bytes), quota)
+        await client.query('DELETE FROM files WHERE id=$1 AND user_id=$2', [fileId, ownerId])
+        await client.query('COMMIT')
+        committed = true
+        fileDeleted = true
+      } catch (error) {
+        if (!committed) {
+          let rolledBack = false
+          try { await client.query('ROLLBACK'); rolledBack = true } catch { /* 回滚结果未知时不能猜测文件是否应恢复。 */ }
+          if (rolledBack && staged) await staged.restore()
+        }
+        throw error
+      } finally {
+        client.release()
+      }
+      await staged?.discard().catch(() => undefined)
+      if (fileDeleted)
+        await options.publishChanged({ ownerId, entityId: fileId, entityType: 'file', origin }).catch(() => undefined)
+    },
+
+    async hardDeleteFolder(rawOwner, folderId, origin) {
+      const ownerId = normalizeFileOwnerId(rawOwner)
+      if (!Number.isSafeInteger(folderId) || folderId < 1) throw new CoreError('invalid_request', '文件夹 ID 无效')
+      const client = await pool.connect()
+      let committed = false
+      let folderIds: number[] = []
+      let deletedFileIds: number[] = []
+      const stagedFiles: Array<NonNullable<Awaited<ReturnType<typeof stageLocalFileRemoval>>>> = []
+      try {
+        await client.query('BEGIN')
+        const root = await client.query<{ id: number | string }>(
+          `SELECT folder.id FROM folders folder LEFT JOIN folders parent ON parent.id=folder.parent_id
+           WHERE folder.id=$1 AND folder.user_id=$2 AND folder.deleted_at IS NOT NULL
+             AND (folder.parent_id IS NULL OR parent.deleted_at IS NULL) FOR UPDATE OF folder`,
+          [folderId, ownerId],
+        )
+        if (!root.rowCount) throw new CoreError('not_found', '文件夹不存在')
+        const tree = await client.query<{ id: number | string }>(
+          `WITH RECURSIVE descendants AS (
+             SELECT id FROM folders WHERE id=$1 AND user_id=$2 AND deleted_at IS NOT NULL
+             UNION ALL
+             SELECT child.id FROM folders child JOIN descendants parent ON child.parent_id=parent.id
+             WHERE child.user_id=$2 AND child.deleted_at IS NOT NULL
+           ) SELECT id FROM descendants`, [folderId, ownerId],
+        )
+        folderIds = [...new Set(tree.rows.map((row) => Number(row.id)))]
+        const files = await client.query<DeletedFileRow>(
+          `SELECT id,storage_key,size_bytes FROM files
+           WHERE user_id=$1 AND folder_id=ANY($2::integer[]) AND deleted_at IS NOT NULL
+           ORDER BY id FOR UPDATE`, [ownerId, folderIds],
+        )
+        deletedFileIds = files.rows.map((file) => Number(file.id))
+        const needsQuota = files.rows.some((file) => Number(file.size_bytes) > 0)
+        let usedBytes = needsQuota ? await lockQuota(client, ownerId) : 0
+        const largestFile = files.rows.reduce((largest, file) => Math.max(largest, Number(file.size_bytes) || 0), 0)
+        if (needsQuota && usedBytes < largestFile)
+          usedBytes = await reconcileLocalUsage(client, options.storageRoot, ownerId, usedBytes)
+        for (const file of files.rows) {
+          let deletedFromStorage = false
+          try {
+            const staged = await stageLocalFileRemoval(options.storageRoot, ownerId, file.storage_key, randomUUID())
+            deletedFromStorage = true
+            if (staged) stagedFiles.push(staged)
+          } catch { /* 保留 Python 的坏对象清理语义；成功暂存的对象在提交失败时可恢复。 */ }
+          if (deletedFromStorage && Number(file.size_bytes) > 0) {
+            usedBytes = await releaseQuota(client, ownerId, Number(file.id), Number(file.size_bytes), usedBytes)
+          }
+        }
+        await client.query('DELETE FROM files WHERE user_id=$1 AND folder_id=ANY($2::integer[]) AND deleted_at IS NOT NULL', [ownerId, folderIds])
+        await client.query('DELETE FROM folders WHERE user_id=$1 AND id=ANY($2::integer[]) AND deleted_at IS NOT NULL', [ownerId, folderIds])
+        await client.query('COMMIT')
+        committed = true
+      } catch (error) {
+        if (!committed) {
+          let rolledBack = false
+          try { await client.query('ROLLBACK'); rolledBack = true } catch { /* 回滚结果未知时不能猜测文件是否应恢复。 */ }
+          if (rolledBack) {
+            for (const staged of stagedFiles.reverse()) await staged.restore()
+          }
+        }
+        throw error
+      } finally {
+        client.release()
+      }
+      for (const staged of stagedFiles) await staged.discard().catch(() => undefined)
+      for (const entityId of deletedFileIds)
+        await options.publishChanged({ ownerId, entityId, entityType: 'file', origin }).catch(() => undefined)
+      await options.publishChanged({ ownerId, entityId: folderId, entityType: 'folder', origin }).catch(() => undefined)
+    },
+  }
+}

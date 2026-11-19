@@ -1,12 +1,26 @@
-import { randomUUID } from 'node:crypto'
-import type { FastifyInstance, preHandlerHookHandler } from 'fastify'
-import { dataContext } from '@gugu/core/contracts'
-import type { ScheduledTaskRedisCommands } from '../scheduled-tasks/persistence/redis-lease.js'
+import type { FastifyInstance,preHandlerHookHandler } from 'fastify'
 
-const statusKey = 'rag:index-rebuild'
-const lockKey = 'rag:index-rebuild:node-lock'
-const lockTtlSeconds = 86_400
-const statusTtlSeconds = 3_600
+import { randomUUID } from 'node:crypto'
+
+import { dataContext } from '@gugu/core/contracts'
+
+export interface AdminIndexRebuildRouteOptions {
+  requireAdmin: preHandlerHookHandler
+  available(): boolean
+  canStart(): boolean
+  runtime: Pick<ReturnType<typeof createAdminIndexRebuildRuntime>, 'start' | 'close'>
+}
+
+export function registerAdminIndexRebuildRoute(app: FastifyInstance, options: AdminIndexRebuildRouteOptions): void {
+  app.post('/api/v1/admin/config/index-rebuild', { preHandler: options.requireAdmin }, async (_request, reply) => {
+    if (!options.available()) return reply.code(503).send({ detail: '维护状态服务不可用' })
+    if (!options.canStart()) return reply.code(503).send({ detail: '索引重建 Worker 未就绪' })
+    try { return await options.runtime.start() }
+    catch { return reply.code(503).send({ detail: '索引重建暂不可用' }) }
+  })
+  app.addHook('onClose', async () => options.runtime.close())
+}
+
 const sourceTimeoutMs = 15 * 60_000
 
 export interface AdminIndexRebuildState {
@@ -15,31 +29,6 @@ export interface AdminIndexRebuildState {
   acquire(token: string): Promise<boolean>
   write(value: unknown): Promise<void>
   release(token: string): Promise<void>
-}
-
-/** 管理任务继续使用 Python 共用状态键，Node 单独租约避免重复批次。 */
-export function createRedisAdminIndexRebuildState(redis: ScheduledTaskRedisCommands | null): AdminIndexRebuildState {
-  return {
-    available: () => redis !== null,
-    async read() {
-      if (!redis) throw Object.assign(new Error('索引状态服务不可用'), { statusCode: 503 })
-      const value = await redis.eval("return redis.call('GET',KEYS[1])", 1, statusKey)
-      if (typeof value !== 'string') return { status: 'idle' }
-      try { return JSON.parse(value) as unknown } catch { return { status: 'idle' } }
-    },
-    async acquire(token) {
-      if (!redis) throw Object.assign(new Error('索引状态服务不可用'), { statusCode: 503 })
-      return await redis.set(lockKey, token, 'EX', String(lockTtlSeconds), 'NX') === 'OK'
-    },
-    async write(value) {
-      if (!redis) throw Object.assign(new Error('索引状态服务不可用'), { statusCode: 503 })
-      await redis.set(statusKey, JSON.stringify(value), 'EX', String(statusTtlSeconds))
-    },
-    async release(token) {
-      if (!redis) return
-      await redis.eval("if redis.call('GET',KEYS[1])==ARGV[1] then return redis.call('DEL',KEYS[1]) else return 0 end", 1, lockKey, token)
-    },
-  }
 }
 
 export interface AdminIndexRebuildRuntimeOptions {
@@ -159,19 +148,37 @@ export function createAdminIndexRebuildRuntime(options: AdminIndexRebuildRuntime
   }
 }
 
-export interface AdminIndexRebuildRouteOptions {
-  requireAdmin: preHandlerHookHandler
-  available(): boolean
-  canStart(): boolean
-  runtime: Pick<ReturnType<typeof createAdminIndexRebuildRuntime>, 'start' | 'close'>
+export interface AdminIndexRedisCommands {
+  set(key: string, value: string, ...options: string[]): Promise<unknown>
+  eval(script: string, keyCount: number, ...args: string[]): Promise<unknown>
 }
 
-export function registerAdminIndexRebuildRoute(app: FastifyInstance, options: AdminIndexRebuildRouteOptions): void {
-  app.post('/api/v1/admin/config/index-rebuild', { preHandler: options.requireAdmin }, async (_request, reply) => {
-    if (!options.available()) return reply.code(503).send({ detail: '维护状态服务不可用' })
-    if (!options.canStart()) return reply.code(503).send({ detail: '索引重建 Worker 未就绪' })
-    try { return await options.runtime.start() }
-    catch { return reply.code(503).send({ detail: '索引重建暂不可用' }) }
-  })
-  app.addHook('onClose', async () => options.runtime.close())
+const statusKey = 'rag:index-rebuild'
+const lockKey = 'rag:index-rebuild:node-lock'
+const lockTtlSeconds = 86_400
+const statusTtlSeconds = 3_600
+
+/** 管理任务继续使用 Python 共用状态键，Node 单独租约避免重复批次。 */
+export function createRedisAdminIndexRebuildState(redis: AdminIndexRedisCommands | null): AdminIndexRebuildState {
+  return {
+    available: () => redis !== null,
+    async read() {
+      if (!redis) throw Object.assign(new Error('索引状态服务不可用'), { statusCode: 503 })
+      const value = await redis.eval("return redis.call('GET',KEYS[1])", 1, statusKey)
+      if (typeof value !== 'string') return { status: 'idle' }
+      try { return JSON.parse(value) as unknown } catch { return { status: 'idle' } }
+    },
+    async acquire(token) {
+      if (!redis) throw Object.assign(new Error('索引状态服务不可用'), { statusCode: 503 })
+      return await redis.set(lockKey, token, 'EX', String(lockTtlSeconds), 'NX') === 'OK'
+    },
+    async write(value) {
+      if (!redis) throw Object.assign(new Error('索引状态服务不可用'), { statusCode: 503 })
+      await redis.set(statusKey, JSON.stringify(value), 'EX', String(statusTtlSeconds))
+    },
+    async release(token) {
+      if (!redis) return
+      await redis.eval("if redis.call('GET',KEYS[1])==ARGV[1] then return redis.call('DEL',KEYS[1]) else return 0 end", 1, lockKey, token)
+    },
+  }
 }

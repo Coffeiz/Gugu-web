@@ -3,7 +3,7 @@ import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import type { PublicUserRecord } from '../../src/domains/auth/auth.js'
+import type { PublicUserRecord } from '../../src/modules/auth/auth.js'
 
 const ownerId = '4e3b3ce3-661b-4eb6-a888-e5e566983e78'
 const secret = 'synthetic-vite-session-secret'

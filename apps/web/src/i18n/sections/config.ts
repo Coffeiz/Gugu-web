@@ -10,6 +10,9 @@ export const configExtraUi = {
 } as const
 Object.assign(configExtraUi['ja-JP'], { testRecipient: 'テスト受信者' })
 Object.assign(configExtraUi['en-US'], { testRecipient: 'Test recipient' })
+Object.assign(configExtraUi['zh-CN'], { storageUnsupported: 'Gugu 2.0 自托管版仅支持本地文件系统。检测到旧 OSS 配置，请先按迁移流程处理原有对象文件。' })
+Object.assign(configExtraUi['ja-JP'], { storageUnsupported: 'Gugu 2.0 のセルフホスト版はローカルファイルシステムのみ対応します。旧 OSS 設定が検出されました。既存オブジェクトの移行を先に完了してください。' })
+Object.assign(configExtraUi['en-US'], { storageUnsupported: 'Gugu 2.0 self-hosted supports local files only. A legacy OSS configuration was found; migrate its existing objects before continuing.' })
 Object.assign(configExtraUi['zh-CN'], { schemaManagedExternally: '数据库结构由部署迁移流程管理' })
 Object.assign(configExtraUi['ja-JP'], { schemaManagedExternally: 'データベース構造はデプロイ時のマイグレーションで管理されます' })
 Object.assign(configExtraUi['en-US'], { schemaManagedExternally: 'Database schema is managed by the deployment migration process' })

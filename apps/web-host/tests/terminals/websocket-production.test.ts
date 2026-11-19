@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import WebSocket from 'ws'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/domains/auth/auth.js'
+import { createUserToken } from '../../src/modules/auth/auth.js'
 import type { TerminalWebsocketOptions } from '../../src/modules/terminals/websocket.js'
 
 const owner = '00000000-0000-4000-8000-000000000211'

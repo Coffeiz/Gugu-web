@@ -137,7 +137,11 @@ export function createMcpRuntime(options:{
   const {errorKind:_errorKind,...result}=await loadWithDiagnosis(owner,id)
   return result
  }
- async function reconnect(owner:string,id:string){await invalidate(owner,id);return load(owner,id)}
+ async function reconnect(owner:string,id:string){
+  await invalidate(owner,id)
+  const result=await load(owner,id)
+  return {...result,total_loaded:result.ok?result.tool_count:0}
+ }
  /** 探测的是已保存且启用的 owner 配置，只执行握手及工具发现。 */
  async function testConnection(owner:string,id:string,signal:AbortSignal){
   signal.throwIfAborted()

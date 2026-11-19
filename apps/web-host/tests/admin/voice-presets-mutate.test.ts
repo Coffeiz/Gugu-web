@@ -4,7 +4,7 @@ import {mkdtemp,readFile,writeFile,rm} from 'node:fs/promises'
 import {join} from 'node:path'
 import {tmpdir} from 'node:os'
 import Fastify from 'fastify'
-import {createVoicePresetFileMutations,registerVoicePresetMutationRoutes} from '../../src/modules/admin/voice-presets-mutate.js'
+import {createVoicePresetFileMutations,registerVoicePresetMutationRoutes} from '../../src/modules/admin/voice.js'
 test('语音预设CRUD持久化、目的地密钥隔离、失败回滚及停用删除活动项',async()=>{
  const root=await mkdtemp(join(tmpdir(),'voice-mutate-')),path=join(root,'override.json'),app=Fastify(),headers={authorization:'admin'}
  registerVoicePresetMutationRoutes(app,{requireAdmin:async(request,reply)=>{if(request.headers.authorization!=='admin')return reply.code(401).send({detail:'未登录'})},operations:createVoicePresetFileMutations(path)})

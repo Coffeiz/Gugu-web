@@ -199,7 +199,7 @@ function darkenHex(hex, amount = 0.60) {
 
 **重命名按钮交互**：进入重命名状态后，铅笔图标（`PhPencilSimple`）切换为勾图标（`PhCheck`），再次点击执行确认提交，`title` 同步变为"确认"。按钮加 `@mousedown.prevent` 阻止 input blur 先于 click 触发导致状态重置。点击后自动全选文件名（`startRename` 内 `el.focus(); el.select()`，以及 input 上 `@focus="$event.target.select()"`）。
 
-**卡片重命名输入框**：使用共享 ghost sizer（隐藏的 `rename-ghost` 撑开名称行，输入框覆盖其上），确保进入编辑时卡片高度不变。单输入模式沿用自然行盒尺寸：ghost 决定 sizer 高度，input 绝对定位覆盖其上；不要给共享单输入 sizer 强制 `1lh` 高度或 `appearance: none`。文件夹、文件名与后缀输入继承名称行行高；若输入内容盒不足，只扩展绝对定位 input 到名称行预留留白（当前上下各 1px），不得压低 `line-height`，也不得改变 ghost/sizer 的流式高度。分段布局只增加容器规则，禁止只给文件输入另设输入外观。文件与文件夹必须复用同一输入框基础 class、外观规则与 `--rename-input-*` / `--input-*` token；文件名分段只负责名称/后缀布局，不得叠画第二层焦点光晕。输入框不得覆盖元信息或撑高卡片；焦点态只使用标准描边与光晕。验收时用含下伸字母的值（如 `gg`）检查文件与文件夹的字形、文字基线、输入框高度和相邻元信息间距。
+**卡片重命名输入框**：使用共享 ghost sizer（隐藏的 `rename-ghost` 撑开名称行，输入框覆盖其上），确保进入编辑时卡片高度不变。单输入模式沿用自然行盒尺寸：ghost 决定 sizer 高度，input 绝对定位覆盖其上；不要给共享单输入 sizer 强制 `1lh` 高度或 `appearance: none`。文件夹、文件名与后缀输入继承名称行行高；若输入内容盒不足，只扩展绝对定位 input 到名称行预留留白（当前上下各 1px），不得压低 `line-height`，也不得改变 ghost/sizer 的流式高度。分段布局只增加容器规则，禁止只给文件输入另设输入外观。文件与文件夹必须复用同一输入框基础 class、外观规则与 `--rename-input-*` / `--input-*` token；文件名分段只负责名称/后缀布局，不得重复绘制焦点描边。输入框不得覆盖元信息或撑高卡片；焦点态只使用标准高亮描边。验收时用含下伸字母的值（如 `gg`）检查文件与文件夹的字形、文字基线、输入框高度和相邻元信息间距。
 
 ### 图标
 
@@ -334,7 +334,7 @@ function darkenHex(hex, amount = 0.60) {
 **表单控件**：
 
 - **字段标题交互（全站规范）**：文本、数字、日期、邮箱、URL、密码等输入框的标题与控件分开布局；点击标题不应触发控件聚焦。不要用包裹输入框的 `<label>` 或指向输入框的 `<label for>` 实现布局，改用 `aria-label` / `aria-labelledby` 提供可访问名称。复选框和单选框保留 label 可点击语义。全局回归由 `apps/web/tests/forms/field-label-focus.test.ts` 扫描所有 Vue 页面。
-- `field-input`：`padding: 9px 12px; border-radius: 8px; background: rgba(255,255,255,0.6); border: 1px solid rgba(0,0,0,0.1)`，focus 时蓝紫色光晕
+- `field-input`：`padding: 9px 12px; border-radius: 8px; background: rgba(255,255,255,0.6); border: 1px solid rgba(0,0,0,0.1)`，focus 时使用 `--input-border-focus` 高亮描边
 - `section-label`：`10px / 600 / uppercase / letter-spacing: 0.07em`，小型大写标题
 - `col-divider`：`border-top: 1px solid rgba(0,0,0,0.07)`，区块间水平线
 - `color-chip`：`22px` 圆，渐变背景，选中 `border: 2px solid #fff + box-shadow: 0 0 0 2px rgba(0,0,0,0.18)`

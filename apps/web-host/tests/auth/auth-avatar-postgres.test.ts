@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Pool } from 'pg'
 import test from 'node:test'
-import { createPostgresUserAvatarOperations } from '../../src/domains/auth/persistence/avatar.js'
+import { createPostgresUserAvatarOperations } from '../../src/modules/auth/persistence/avatar.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

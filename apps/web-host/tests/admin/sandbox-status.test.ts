@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { registerSandboxStatusRoute } from '../../src/modules/admin/sandbox-status.js'
+import { registerSandboxStatusRoute } from '../../src/modules/admin/sandbox.js'
 import { createApp } from '../../src/app.js'
 
 test('管理员沙盒状态反映 MXC、Shell 开关和 egress readiness，不暴露旧 Docker 字段', async () => {
@@ -94,5 +94,37 @@ test('生产 createApp 将沙盒状态路由置于真实 Admin guard 后', async
     const response = await app.inject({ method: 'GET', url: '/api/v1/admin/sandbox/status' })
     assert.equal(response.statusCode, 200)
     assert.equal(response.json().state, 'disabled')
+  } finally { await app.close() }
+})
+
+test('直连 Bubblewrap 在就绪前后都报告实际后端，并关闭代理出站', async () => {
+  const app = Fastify()
+  let supported = false
+  let networkProfile: 'none' | 'egress' = 'none'
+  registerSandboxStatusRoute(app, {
+    async requireAdmin() {},
+    async readSettings() {
+      return { shellEnabled: true, shellDangerousEnabled: false, sandboxEnabled: true,
+        sandboxReady: supported && networkProfile === 'none', networkProfile }
+    },
+    async readiness() {
+      return { executionBackend: 'bubblewrap', supported, methods: supported ? ['bubblewrap'] : [],
+        checkAvailable: true, proxyEnforcement: false }
+    },
+  })
+  try {
+    const url = '/api/v1/admin/sandbox/status'
+    const unready = (await app.inject(url)).json()
+    assert.equal(unready.execution_backend, 'bubblewrap')
+    assert.equal(unready.state, 'runtime_unavailable')
+    supported = true
+    const ready = (await app.inject(url)).json()
+    assert.equal(ready.execution_backend, 'bubblewrap')
+    assert.equal(ready.message, 'Bubblewrap 执行环境已就绪')
+    assert.equal(ready.egress_available, false)
+    networkProfile = 'egress'
+    const legacyProfile = (await app.inject(url)).json()
+    assert.equal(legacyProfile.state, 'egress_unready')
+    assert.match(legacyProfile.egress_config_error, /仅支持断网/)
   } finally { await app.close() }
 })

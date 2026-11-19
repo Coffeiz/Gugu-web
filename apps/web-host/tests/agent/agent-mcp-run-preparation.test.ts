@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createWebAgentMcpRunPreparation } from '../../src/domains/agent-sessions/tools/agent-mcp-run-preparation.js'
+import { createWebAgentMcpRunPreparation } from '../../src/modules/agent-sessions/tools/agent-mcp-run-preparation.js'
 
 const identity = { ownerId: 'owner-a', sessionId: '12', runId: 'run-a' }
 

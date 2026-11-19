@@ -12,7 +12,7 @@ import { projectFileTrashKey } from '@gugu/core/project-file-paths'
 import { applyProjectUndo, type ProjectUndoTransaction } from '@gugu/core/projects/undo'
 import { createKyselyProjectFileCountReader } from '@gugu/core/project-read-data'
 import { createRuntimeUndoTransactionPort, createUndoStateMachine } from '@gugu/core/undo'
-import { createLocalProjectTrashStorage } from '../../src/domains/projects/persistence/project-trash-storage.js'
+import { createLocalProjectTrashStorage } from '../../src/modules/projects/persistence/project-trash-storage.js'
 
 test('Core 项目恢复/Undo 经过临时 SQLite 与真实 Host 文件端口，冲突改名、同批恢复、计数和提交失败补偿一致', async () => {
   const root = await mkdtemp(join(tmpdir(), 'gugu-project-core-')), path = join(root, 'core.db')

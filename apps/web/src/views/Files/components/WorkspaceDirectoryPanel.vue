@@ -150,10 +150,10 @@ async function removeWorkspace(item: WorkspaceDirectory) {
 .workspace-modal { display:flex; flex-direction:column; gap:12px; padding:var(--space-lg); color:var(--text-primary); }
 .workspace-modal h2 { margin:0; font:var(--font-weight-semibold) var(--font-size-lg)/var(--line-height-ui) var(--font-sans); }
 /* 输入框交互口径对齐 .pm-workspace-input（ProfileWorkspacesPane）：基态声明透明
-   box-shadow + 三属性过渡，focus 叠加 --input-focus-shadow，泛光才有淡入淡出。 */
+   聚焦时沿用共享输入框的高亮描边。 */
 .workspace-input { box-sizing:border-box; width:100%; height:38px; padding:0 12px; color:var(--text-primary); background:var(--input-bg); border:1px solid var(--input-border); border-radius:var(--radius-xs); font:var(--font-weight-regular) var(--font-size-sm) var(--font-sans); outline:none; box-shadow:var(--input-hover-shadow), 0 0 0 0 transparent; transition:background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
 .workspace-input:hover { border-color:var(--input-border-hover); background:var(--input-bg-hover); }
-.workspace-input:focus { border-color:var(--input-border-focus); background:var(--input-bg-focus); box-shadow:var(--input-hover-shadow), var(--input-focus-shadow); }
+.workspace-input:focus { border-color:var(--input-border-focus); background:var(--input-bg-focus); box-shadow:var(--input-hover-shadow); }
 .workspace-form-error { color:var(--danger-button-fg) !important; }
 .workspace-modal-actions { display:flex; justify-content:flex-end; gap:8px; }
 @media (max-width:600px) { .workspace-panel-head { align-items:flex-start; flex-direction:column; } }

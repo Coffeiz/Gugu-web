@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { createByokListService, type ByokListRow } from '@gugu/core/agent/config'
-import { decryptByokCredential } from '../../src/domains/agent-config/byok.js'
+import { decryptByokCredential } from '../../src/modules/agent/model-config/byok.js'
 
 test('Core 凭据列表使用 Python 合成信封校验状态且不返回密文或明文', async () => {
   const owner = randomUUID()

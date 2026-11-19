@@ -5,8 +5,14 @@ import { stableJson } from '../agent/context/history/canonical-history.js'
 import type { CanonicalContextPorts } from '../agent/ports.js'
 import { createAgentRuntime, type AgentRuntimeOptions } from '../agent/runtime.js'
 import type { AssertScheduledTaskLease } from './runner.js'
+import type { ProviderConfig } from '../agent/providers/contracts.js'
 
 type AttemptRuntime = Omit<AgentRuntimeOptions['runtime'], 'store' | 'leases' | 'cancellation' | 'interactions' | 'publish'>
+
+/** 定时任务不持久化模型推理续接；模型选择和凭据仍由可信 Host 提供。 */
+export function scheduledTaskProviderSelection<T extends { config: ProviderConfig }>(selected: T): T {
+  return { ...selected, config: { ...selected.config, reasoning_persistence: 'off' } }
+}
 
 /** 单次定时尝试不创建会话历史。任务租约和最终状态仍由外层 ScheduledTaskRunner 管理。 */
 export function createScheduledTaskHarness(options: Omit<AgentRuntimeOptions, 'runtime'> & {
@@ -123,8 +129,11 @@ export function createScheduledTaskHarness(options: Omit<AgentRuntimeOptions, 'r
       async resolve(candidate, modelIdentity, signal) {
         assertOwned(candidate)
         await assertScheduledLease(signal)
-        const selected = await options.provider.resolve(candidate, modelIdentity, signal)
-        return request?.systemPrompt === undefined ? selected : { ...selected, systemPrompt: request.systemPrompt }
+        const selected = scheduledTaskProviderSelection(await options.provider.resolve(candidate, modelIdentity, signal))
+        return {
+          ...selected,
+          ...(request?.systemPrompt === undefined ? {} : { systemPrompt: request.systemPrompt }),
+        }
       },
     },
     runtime: {

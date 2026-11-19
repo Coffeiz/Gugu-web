@@ -3,7 +3,7 @@ import { createServer } from 'node:http'
 import Fastify from 'fastify'
 import { afterEach, test } from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createAdminMediaProbePreview, registerAdminMediaProbePreviewRoute } from '../../src/modules/admin/media-probe-preview.js'
+import { createAdminMediaProbePreview, registerAdminMediaProbePreviewRoute } from '../../src/modules/admin/llm-probe.js'
 
 const apps: Array<ReturnType<typeof Fastify>> = []
 afterEach(async () => { await Promise.all(apps.splice(0).map(app => app.close())) })

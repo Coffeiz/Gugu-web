@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Pool } from 'pg'
 import test from 'node:test'
-import { createUserToken } from '../../src/domains/auth/auth.js'
+import { createUserToken } from '../../src/modules/auth/auth.js'
 import { startServer } from '../../src/main.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL

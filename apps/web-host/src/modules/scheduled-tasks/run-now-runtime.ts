@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Kysely } from 'kysely'
+import { configureRagJieba } from '@gugu/core/agent/rag'
 import { createScheduledTaskExecution, createScheduledTaskGroupMemoryReader, createScheduledTaskGroupTools, createScheduledTaskRunNow,
   type RecurringStopExecution, type ScheduledTaskExecutionPorts } from '@gugu/core/scheduled-task-run-now'
 import { createKyselyScheduledTaskExecutionReader, createKyselyScheduledTaskGroupScopeReader,
@@ -10,7 +11,8 @@ import type { TaskFilesystemRevokeEffects } from '@gugu/core/scheduled-task-file
 import { createScheduledTaskRedisLease, type ScheduledTaskRedisCommands } from './persistence/redis-lease.js'
 import { createRepeatingTaskWorker } from './repeating-task-worker.js'
 import { createScheduledTaskTimer } from './repeating-timer.js'
-import { createLocalAgentMemoryRagStore } from '../../domains/agent-sessions/tools/agent-rag-memory-store.js'
+import { createLocalAgentMemoryRagStore } from '../../modules/agent-sessions/tools/agent-rag-memory-store.js'
+import { getAgentRagJieba } from '../../modules/agent-sessions/tools/agent-rag-jieba.js'
 
 /** 组合 Core owner/生命周期用例与实际 SQL、Redis lease、Agent/投递适配。 */
 export function createScheduledTaskRunNowRuntime<DB, Artifact>(options: {
@@ -30,6 +32,7 @@ export function createScheduledTaskRunNowRuntime<DB, Artifact>(options: {
   const readExecution = createKyselyScheduledTaskExecutionReader(options.db, options.backend, options.filesystemAuthorizationEnabled)
   const readGroupScope = createKyselyScheduledTaskGroupScopeReader(options.db, options.backend)
   const memoryStorage = options.storageRoot ? createLocalAgentMemoryRagStore(options.storageRoot) : undefined
+  if (memoryStorage) configureRagJieba(getAgentRagJieba())
   const readGroupMemory = memoryStorage
     ? createScheduledTaskGroupMemoryReader(options.db, memoryStorage)
     : undefined

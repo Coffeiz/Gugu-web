@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { PoolClient } from 'pg'
 import type { CanonicalRunContext } from '@gugu/core/agent'
-import { lockCanonicalHistoryBaseline } from '../../src/domains/agent-sessions/persistence/agent-history-baseline-postgres.js'
+import { lockCanonicalHistoryBaseline } from '../../src/modules/agent-sessions/persistence/agent-history-baseline-postgres.js'
 
 const identity = { ownerId: 'synthetic-owner', sessionId: '12', runId: 'synthetic-run' }
 const context = { identity, historyBaseline: { baselineSeq: 3, baselineHash: 'old-hash', snapshotHash: 'old-snapshot' },

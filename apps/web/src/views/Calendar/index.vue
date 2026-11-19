@@ -1274,9 +1274,9 @@ watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
 .cal-done { opacity: 0.45; }
 .cal-done:hover { opacity: 0.7; }   /* 悬停略恢复，方便看清要操作的那条 */
 
-.cal-page { display: flex; flex-direction: column; gap: 14px; height: 100%; }
+.cal-page { display: flex; flex-direction: column; gap: var(--space-md); height: 100%; }
 
-.cal-layout { display: grid; grid-template-columns: 1fr 260px; gap: 14px; flex: 1; min-height: 0; }
+.cal-layout { display: grid; grid-template-columns: 1fr 260px; gap: var(--space-md); flex: 1; min-height: 0; }
 .cal-main { padding: 16px 16px 8px; display: flex; flex-direction: column; overflow: hidden; }
 .chip-more-btn {
   height: 16px; box-sizing: border-box;
@@ -1374,7 +1374,7 @@ watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
 .upcoming-item:last-child { margin-bottom: 0; }
 
 .add-event-popup { background: transparent; border: 0; border-radius: 0; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; padding: 0; display: flex; flex-direction: column; max-height: calc(100vh - 24px); overflow-y: auto; overscroll-behavior: contain; }
-.popup-textarea:focus { border-color: color-mix(in srgb, var(--action-primary) 40%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--action-primary) 10%, transparent); background: rgba(255,255,255,0.85); }
+.popup-textarea:focus { border-color: var(--input-border-focus); background: rgba(255,255,255,0.85); }
 .popup-actions { display: flex; gap: 6px; justify-content: flex-end; align-items: center; margin-top: 2px; }
 .popup-delete { padding: 5px 12px; border-radius: 8px; border: 1px solid rgba(176,120,88,0.3); background: rgba(176,120,88,0.08); font-size: 12px; cursor: pointer; color: #b07858; font-family: var(--font-family-ui); font-weight: 600; transition: background 0.12s, border-color 0.12s; }
 .popup-delete:hover { background: rgba(176,120,88,0.15); border-color: rgba(176,120,88,0.5); }

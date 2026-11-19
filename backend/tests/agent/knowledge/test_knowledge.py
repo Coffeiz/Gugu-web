@@ -263,6 +263,64 @@ async def test_knowledge_delete_is_tombstoned_and_removed_from_active_results(kn
 
 
 @pytest.mark.asyncio
+async def test_delete_knowledge_tool_confirms_owner_target_before_tombstone_and_rag_event(
+    knowledge_storage, monkeypatch,
+):
+    """工具先确认 owner 的目标；拒绝或异主调用不改文件，批准后软删并通知索引。"""
+    from agent import events
+    from agent.tools.knowledge import _delete_knowledge
+    from agent.security import confirm
+
+    store = KnowledgeStore("user-a")
+    entry = KnowledgeEntry.create(
+        title="待确认删除", content="保留历史正文", topic="删除工具",
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("user"),
+    )
+    await store.save(entry)
+
+    requests = []
+
+    def require_confirmation(args, summary, user_id, **options):
+        requests.append((dict(args), summary, user_id, options))
+        return '{"status":"waiting_confirmation"}'
+
+    published = []
+    monkeypatch.setattr(confirm, "needs_confirmation", require_confirmation)
+    monkeypatch.setattr(events.bus, "publish", published.append)
+
+    blocked = await _delete_knowledge(None, "user-a", {"knowledge_id": entry.id})
+    assert blocked == '{"status":"waiting_confirmation"}'
+    assert len(requests) == 1
+    assert requests[0][0] == {"knowledge_id": entry.id}
+    assert requests[0][1] == "将删除知识条目「待确认删除」，保留历史但停止检索"
+    assert requests[0][2] == "user-a"
+    assert requests[0][3]["identity"] == f"delete_knowledge:knowledge_id={entry.id}"
+    assert requests[0][3]["purpose"] == confirm.ACTION
+    assert await store.get(entry.id) is not None
+    assert published == []
+
+    other_owner = await _delete_knowledge(None, "user-b", {"knowledge_id": entry.id})
+    assert other_owner == {"error": "知识条目不存在"}
+    assert len(requests) == 1
+    assert await store.get(entry.id) is not None
+    assert published == []
+
+    monkeypatch.setattr(confirm, "needs_confirmation", lambda *_args, **_options: None)
+    deleted = await _delete_knowledge(None, "user-a", {"knowledge_id": entry.id})
+    assert deleted == {"success": True, "knowledge_id": entry.id}
+    history = await store.list(active_only=False)
+    assert len(history) == 1
+    assert history[0].id == entry.id
+    assert history[0].content == "保留历史正文"
+    assert history[0].active is False
+    assert len(published) == 1
+    assert published[0].user_id == "user-a"
+    assert published[0].source_type == "knowledge"
+    assert published[0].source_id == entry.id
+    assert published[0].operation == "delete"
+
+
+@pytest.mark.asyncio
 async def test_knowledge_store_uses_one_markdown_file_per_entry(knowledge_storage):
     store = KnowledgeStore("user-a")
     entry = KnowledgeEntry.create(

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
-import {registerImMemorySummaryRoutes} from '../../src/modules/admin/im-memory-summary.js'
+import {registerImMemorySummaryRoutes} from '../../src/modules/admin/memory.js'
 
 test('两种只读预览经过管理员权限；失败不返回业务汇总',async()=>{
  const app=Fastify();let reads=0

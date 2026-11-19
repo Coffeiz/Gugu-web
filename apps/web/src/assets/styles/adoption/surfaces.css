@@ -90,7 +90,6 @@ html[data-theme][data-family] .rename-input-inline:focus {
   color: var(--input-fg);
   background: var(--input-bg-focus);
   border-color: var(--input-border-focus);
-  box-shadow: var(--input-focus-shadow);
 }
 html[data-theme][data-family] input::placeholder,
 html[data-theme][data-family] textarea::placeholder { color: var(--input-placeholder); }

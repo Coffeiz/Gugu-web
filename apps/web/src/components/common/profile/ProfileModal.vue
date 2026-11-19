@@ -354,7 +354,7 @@ async function doDeleteAccount() {
 .pm-bot-form { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: var(--radius-xs); background: var(--subpanel-bg); border: 1px solid var(--subpanel-border); }
 .pm-bot-input { width: 100%; padding: 8px 11px; border-radius: var(--input-radius); font-size: 13px; border: 1px solid var(--input-border); background: var(--input-bg); color: var(--input-fg); outline: none; box-shadow: var(--input-hover-shadow), 0 0 0 0 transparent; transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
 .pm-bot-input:hover { background: var(--input-bg-hover); border-color: var(--input-border-hover); box-shadow: var(--input-hover-shadow), 0 0 0 0 transparent; }
-.pm-bot-input:focus { border-color: var(--input-border-focus); box-shadow: var(--input-hover-shadow), var(--input-focus-shadow); }
+.pm-bot-input:focus { border-color: var(--input-border-focus); box-shadow: var(--input-hover-shadow); }
 .pm-bot-check { font-size: 12px; color: var(--content-secondary); display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .pm-bot-form-actions { display: flex; align-items: center; gap: 8px; }
 .pm-text-link { margin-top: 8px; background: none; border: none; cursor: pointer; font-size: 12px; color: var(--content-secondary); text-decoration: underline; padding: 0; }

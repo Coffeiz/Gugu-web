@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import { createApp } from '../../src/app.js'
-import { createAdminAuthAdapter } from '../../src/domains/admin/admin-auth.js'
+import { createAdminAuthAdapter } from '../../src/modules/admin/auth.js'
 import { createAdminHostGuard } from '../../src/http/admin-host-guard.js'
 
 test('Host registers Admin auth and storage snapshots with the same authenticated Admin guard', async () => {

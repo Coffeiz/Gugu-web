@@ -7,7 +7,7 @@ import { pipeline } from 'node:stream/promises'
 import JSZip from 'jszip'
 import test from 'node:test'
 import * as tar from 'tar'
-import { extractTar, extractZip } from '../../src/domains/files/file-archive-postgres.js'
+import { extractTar, extractZip } from '../../src/modules/files/file-archive-postgres.js'
 
 test('解压器可读取 Node 归档器生成的 ZIP 目录树和文件正文', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'gugu-archive-zip-test-'))

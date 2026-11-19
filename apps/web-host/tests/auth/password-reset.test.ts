@@ -9,8 +9,8 @@ import {
   registerPasswordResetRoutes,
   type PasswordResetRedisCommands,
   type PasswordResetStore,
-} from '../../src/domains/auth/password-reset.js'
-import { RateLimitError } from '../../src/domains/auth/rate-limit.js'
+} from '../../src/modules/auth/password-reset.js'
+import { RateLimitError } from '../../src/modules/auth/rate-limit.js'
 
 const ownerId = '5b850d82-3b90-4ec7-a1a1-8d8280b6c1ed'
 const secretEmail = 'cedarz@example.test'

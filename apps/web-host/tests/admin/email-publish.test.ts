@@ -4,7 +4,7 @@ import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import test from 'node:test'
 import {createApp} from '../../src/app.js'
-import {createAdminEmailPublishOperations,createEmailPublishTaskLifecycle} from '../../src/modules/admin/email-publish.js'
+import {createAdminEmailPublishOperations,createEmailPublishTaskLifecycle} from '../../src/modules/admin/email.js'
 import {createSmtpTestDelivery} from '../../src/adapters/smtp-test-delivery.js'
 import {temporarySmtp} from './fixtures/temporary-smtp.js'
 

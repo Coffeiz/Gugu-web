@@ -1,3 +1,4 @@
+import { desktopHandlers } from '../src/main/ipc/index.js'
 import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -12,7 +13,6 @@ import {
   DesktopError,
   verifyArtifact,
   desktopReply,
-  desktopHandlers,
 } from '../src/main/core-host.js'
 import { DesktopLifecycle } from '../src/main/lifecycle.js'
 

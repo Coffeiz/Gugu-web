@@ -6,9 +6,9 @@ import { dirname,join } from 'node:path'
 import test from 'node:test'
 import { Pool } from 'pg'
 import { createPostgresRuntime } from '@gugu/core/data'
-import { createAgentToolRegistry } from '../../src/domains/agent-sessions/tools/agent-tool-registry.js'
-import { createAgentTrashRestorePort } from '../../src/domains/agent-sessions/tools/agent-trash-restore.js'
-import { createPostgresFileRestoreOperations } from '../../src/domains/files/file-restore-postgres.js'
+import { createAgentToolRegistry } from '../../src/modules/agent-sessions/tools/agent-tool-registry.js'
+import { createAgentTrashRestorePort } from '../../src/modules/agent-sessions/tools/agent-trash-restore.js'
+import { createPostgresFileRestoreOperations } from '../../src/modules/files/file-restore-postgres.js'
 
 const url=process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

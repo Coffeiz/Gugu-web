@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
-import { registerAdminOpsSummaryRoute } from '../../src/modules/admin/ops-summary.js'
+import { registerAdminOpsSummaryRoute } from '../../src/modules/admin/runtime.js'
 
 function setup(hashes: Record<string, Record<string, string>> = {}) {
   const reads: string[] = []

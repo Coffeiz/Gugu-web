@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import Fastify from 'fastify'
 import test from 'node:test'
-import { registerFileBrowserRoutes } from '../../src/domains/files/browser.js'
+import { registerFileBrowserRoutes } from '../../src/modules/files/browser.js'
 
 test('Python file and folder page aliases return the same owner-scoped page shape', async () => {
   const app = Fastify({ routerOptions: { ignoreTrailingSlash: true } })

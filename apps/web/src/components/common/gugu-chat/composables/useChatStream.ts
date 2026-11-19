@@ -584,6 +584,8 @@ export function useChatStream(options: {
           } else if (evt.type === 'round_start') {
             currentRunId = String(evt.core_run_id || evt.run_id || currentRunId)
             currentRoundId = String(evt.round_id || 'round')
+            if (live() && !(runController && cancelRequestedControllers.has(runController)))
+              options.setStatus(options.thinkingItem())
           } else if (evt.type === '_new_round') {
             // 兼容旧事件：新版 round_start 已先建立身份，旧客户端只看到这里也不会报错。
             currentRunId = String(evt.core_run_id || evt.run_id || currentRunId)
@@ -768,8 +770,11 @@ export function useChatStream(options: {
   }
 
   // 续看：打开会话时若它正在生成（messages 接口返回 active），重连看后端跑完。
-  async function resumeStream(id: number) {
-    if (streaming.value) return            // 本地正在发/看，不重复连
+  async function resumeStream(id: number, runId?: string) {
+    if (streaming.value && !runId) return
+    if (sessionId.value !== id) return
+    // 已确认时旧流可能仍在结束等待态。切换订阅不取消后端运行。
+    if (runId) abortCtrl.value?.abort()
     const viewGeneration = options.getViewGeneration()
     const controller = new AbortController()
     runSessionIds.set(controller, id)
@@ -777,7 +782,8 @@ export function useChatStream(options: {
     streaming.value = true; options.clearStatus(); options.setStatus(options.thinkingItem())
     let cancelledTerminal = false
     try {
-      const res = await fetch(`${API_BASE}/agent/sessions/${id}/stream`, {
+      const query = runId ? `?run_id=${encodeURIComponent(runId)}` : ''
+      const res = await fetch(`${API_BASE}/agent/sessions/${id}/stream${query}`, {
         credentials: 'include',
         signal: controller.signal,
       })

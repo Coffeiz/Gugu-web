@@ -7,7 +7,7 @@ import { CoreError } from '@gugu/core'
 import { createMcpServerMutations } from '@gugu/core/mcp/server-mutations'
 import { createMcpServerConfigLister } from '@gugu/core/mcp/server-list'
 import { createMcpManagementEditOperations, createMcpManagementTool, createToolRegistry, type ClientDeleteConfirmationPort } from '@gugu/core/tools'
-import { createWebAgentConfirmationAuthorization } from '../../src/domains/agent-sessions/tools/agent-confirmation.js'
+import { createWebAgentConfirmationAuthorization } from '../../src/modules/agent-sessions/tools/agent-confirmation.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const seal = (plaintext: string) => `sealed:${Buffer.from(plaintext, 'utf8').toString('base64')}`

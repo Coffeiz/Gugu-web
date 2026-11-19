@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { PoolClient } from 'pg'
-import { createPostgresAgentInteractionCommandEffects } from '../../src/domains/agent-sessions/persistence/agent-interaction-command-effects.js'
+import { createPostgresAgentInteractionCommandEffects } from '../../src/modules/agent-sessions/persistence/agent-interaction-command-effects.js'
 
 const ownerId = '00000000-0000-4000-8000-000000000001'
 

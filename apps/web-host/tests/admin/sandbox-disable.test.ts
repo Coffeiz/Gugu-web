@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Fastify from 'fastify'
 import { createApp } from '../../src/app.js'
-import { registerSandboxDisableRoute } from '../../src/modules/admin/sandbox-disable.js'
-import { createSandboxRuntimeUpdater } from '../../src/modules/admin/sandbox-enable.js'
+import { registerSandboxDisableRoute } from '../../src/modules/admin/sandbox.js'
+import { createSandboxRuntimeUpdater } from '../../src/modules/admin/sandbox.js'
 
 test('停用 MXC Shell 原子关闭后续权限且保留无关配置', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gugu-sandbox-disable-'))

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
 import { activeVoiceTestSettings, createAdminVoiceConnectionTest } from '../../../../packages/core/src/agent/config/voice-test.js'
-import { createAdminVoiceProbe, registerAdminVoiceTestRoute } from '../../src/modules/admin/voice-test.js'
+import { createAdminVoiceProbe, registerAdminVoiceTestRoute } from '../../src/modules/admin/voice.js'
 import type { ProviderHttpRequest, ProviderTransport } from '@gugu/core/providers'
 
 const configured = {

@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import { resolve } from 'node:path'
 import base from './vite.config.js'
-import { desktopCalendarPreview } from './vite.desktop-calendar-preview.js'
+import { desktopCorePreview } from './vite.desktop-core-preview.js'
 
 export default defineConfig({
   ...base,
@@ -12,7 +12,7 @@ export default defineConfig({
   },
   plugins: [
     ...(base.plugins ?? []),
-    desktopCalendarPreview(resolve(__dirname, '../desktop')),
+    desktopCorePreview(resolve(__dirname, '../desktop')),
     {
       name: 'desktop-vite-preview-csp',
       transformIndexHtml(html) {

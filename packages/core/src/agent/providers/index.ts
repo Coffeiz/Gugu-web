@@ -1,7 +1,7 @@
 export type * from './contracts.js'
 export { adapterFor, capabilitySnapshot, providerSelection } from './registry.js'
 export { ProviderRuntime, connectProviderHarness } from './runtime.js'
-export type { ProviderRuntimeOptions } from './runtime.js'
+export type { ProviderContinuationStore, ProviderRuntimeOptions } from './runtime.js'
 export { ProviderError, classifyProviderError } from './errors.js'
 export { ProviderClientPool, providerConfigKey } from './client-pool.js'
 export { RequestProbe, providerCacheDiagnostics } from './cache-probe.js'

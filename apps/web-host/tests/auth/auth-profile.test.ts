@@ -5,8 +5,8 @@ import { createProfileUpdater, ProfileUpdateError } from '@gugu/core/auth/profil
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify'
 import { Pool } from 'pg'
 import test from 'node:test'
-import { createUserToken, verifyUserToken } from '../../src/domains/auth/auth.js'
-import { registerProfileRoute, type ProfileUser } from '../../src/domains/auth/routes/auth-profile.js'
+import { createUserToken, verifyUserToken } from '../../src/modules/auth/auth.js'
+import { registerProfileRoute, type ProfileUser } from '../../src/modules/auth/routes/auth-profile.js'
 import { createPostgresProfileUpdateStore } from '../../src/modules/auth/profile-update-postgres.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
@@ -202,9 +202,9 @@ test('profile update validates timezone and changes only the authenticated user 
       },
     })
     assert.equal(response.statusCode, 200)
-    assert.equal(response.json().display_name, '小北')
+    assert.equal(response.json().displayName, '小北')
     assert.equal(response.json().timezone, 'Asia/Tokyo')
-    assert.equal(response.json().email_subscribed, true)
+    assert.equal(response.json().emailSubscribed, true)
     assert.deepEqual(fixture.notifications, [`revision:${fixture.ownerId}:timezone:Asia/Tokyo`])
 
     const cleared = await fixture.app.inject({
@@ -213,9 +213,9 @@ test('profile update validates timezone and changes only the authenticated user 
       payload: { displayName: '  ', timezone: '', emailSubscribed: false },
     })
     assert.equal(cleared.statusCode, 200)
-    assert.equal(cleared.json().display_name, null)
+    assert.equal(cleared.json().displayName, null)
     assert.equal(cleared.json().timezone, null)
-    assert.equal(cleared.json().email_subscribed, false)
+    assert.equal(cleared.json().emailSubscribed, false)
     assert.deepEqual(fixture.notifications, [
       `revision:${fixture.ownerId}:timezone:Asia/Tokyo`,
       `revision:${fixture.ownerId}:timezone:<null>`,

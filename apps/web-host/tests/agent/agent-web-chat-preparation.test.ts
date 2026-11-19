@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { PoolClient } from 'pg'
-import { createPostgresWebAgentChatPreparation } from '../../src/domains/agent-sessions/persistence/agent-web-chat-preparation.js'
+import { createPostgresWebAgentChatPreparation } from '../../src/modules/agent-sessions/persistence/agent-web-chat-preparation.js'
 
 function fixture(options: { attachmentClaimFails?: boolean; project?: Record<string, unknown> | null; mcp?: Record<string, unknown> | null } = {}) {
   const statements: Array<{ sql: string; values: unknown[] }> = []

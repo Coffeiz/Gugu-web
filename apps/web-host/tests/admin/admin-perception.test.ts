@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
-import { registerAdminPerceptionRoutes } from '../../src/domains/admin/admin-perception.js'
+import { registerAdminPerceptionRoutes } from '../../src/modules/admin/perception.js'
 
 test('感知摘要在空数据和活跃门槛下不泄露事件明细', async () => {
   const app = Fastify()

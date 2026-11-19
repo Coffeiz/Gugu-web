@@ -484,6 +484,7 @@ onBeforeUnmount(() => {
 .note-editor { position: relative; }
 
 .ne-toolbar {
+  --ne-tool-size: 26px;
   display: flex; align-items: center; gap: 4px;
   padding: 6px 2px 4px;   /* 挪到正文下方了：上边距隔开文字，下边距接到后面的操作行 */
 }
@@ -521,9 +522,9 @@ onBeforeUnmount(() => {
 .ne-toolbar-floating.pending { opacity: 0; filter: blur(6px); pointer-events: none; }
 .ne-tool {
   display: inline-flex; align-items: center; justify-content: center;
-  box-sizing: border-box; flex: 0 0 var(--ne-tool-size, 26px);
-  width: var(--ne-tool-size, 26px); min-width: var(--ne-tool-size, 26px);
-  height: var(--ne-tool-size, 26px); padding: 0;
+  box-sizing: border-box; flex: 0 0 var(--ne-tool-size);
+  width: var(--ne-tool-size); min-width: var(--ne-tool-size);
+  height: var(--ne-tool-size); padding: 0;
   border: 1px solid transparent; border-radius: 6px;
   background: transparent; color: var(--text-secondary);
   font-size: 11.5px; font-weight: 600; cursor: pointer;
@@ -537,8 +538,7 @@ onBeforeUnmount(() => {
 .ne-toolbar-actions { margin-left: 0; flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
 .ne-toolbar-actions:empty { display: none; }
 
-/* 普通笔记卡片宽度有限：只压缩左侧工具，不压缩右侧完成按钮，保证它始终固定在最右侧。
-   画布工具栏是独立浮层，继续使用上面的默认尺寸。 */
+/* 普通笔记卡片宽度有限，使用紧凑工具栏；画布浮层使用默认尺寸。 */
 .ne-toolbar:not(.ne-toolbar-floating) {
   --ne-tool-size: 22px; --ne-toolbar-gap: 2px; --ne-drawer-max-width: 150px;
 }
@@ -588,8 +588,8 @@ onBeforeUnmount(() => {
 .ne-toolbar .ne-drawer.open.has-link-input .ne-drawer-items { max-width: 240px; padding: 6px; margin-block: -6px; transition: none; }
 .ne-style-item {
   display: inline-flex; align-items: center; justify-content: center;
-  box-sizing: border-box; flex: 0 0 var(--ne-tool-size, 26px);
-  width: var(--ne-tool-size, 26px); height: var(--ne-tool-size, 26px); padding: 0;
+  box-sizing: border-box; flex: 0 0 var(--ne-tool-size);
+  width: var(--ne-tool-size); height: var(--ne-tool-size); padding: 0;
   border: 1px solid transparent; border-radius: 6px;
   background: transparent; color: var(--text-secondary); cursor: pointer;
   --stagger-delay: 0s;
@@ -650,8 +650,9 @@ onBeforeUnmount(() => {
   color: var(--text-secondary); opacity: 0.5;
 }
 
-/* 引用 chip 被选中时的高亮环，只有编辑态会出现 */
+/* 编辑态下用描边标记选中的引用。 */
 .ne-body .ProseMirror .mind-ref.ProseMirror-selectednode {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--action-primary) 50%, transparent);
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
 }
 </style>

@@ -8,7 +8,7 @@ export default defineConfig({
     port: 4319,
     proxy: {
       '/gugu-api': {
-        target: process.env.GUGU_API_TARGET ?? 'http://127.0.0.1:8000',
+        target: process.env.GUGU_API_TARGET ?? 'http://127.0.0.1:9595',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/gugu-api/, '/api/v1'),
       },

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import type { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg'
-import { createPostgresFileUpdateOperations } from '../../src/domains/files/file-update-postgres.js'
+import { createPostgresFileUpdateOperations } from '../../src/modules/files/file-update-postgres.js'
 
 const owner = '11111111-1111-4111-8111-111111111111'
 const sourceKey = `${owner}/个人文件/笔记.md`

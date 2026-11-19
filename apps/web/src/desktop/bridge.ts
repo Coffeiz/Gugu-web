@@ -1,7 +1,7 @@
 import type { DesktopBridge, DesktopProject, DesktopClient, DesktopCalendarEvent, DesktopCanvas, DesktopCanvasItem, DesktopNote, DesktopReply } from '@gugu/core/desktop'
 import type { DesktopAppearancePreferences, DesktopOnboardingState } from '@gugu/core/desktop'
 import type { DesktopProjectCollection, DesktopProjectDetails } from '@gugu/core/desktop'
-import { desktopPreviewCalendarEndpoint, desktopPreviewCalendarMethods } from './preview-calendar'
+import { desktopPreviewRoutes, projectBoardMethods } from './preview-core'
 export type { SandboxStatus } from '@gugu/core/desktop'
 export type ProjectRow = DesktopProject
 export type ClientRow = DesktopClient
@@ -33,11 +33,6 @@ async function call<T>(action: (bridge: DesktopBridge) => Promise<DesktopReply<T
   return reply.result
 }
 
-const projectBoardMethods = [
-  'projectBoard', 'projectDetails', 'createBoardProject',
-  'updateBoardProject', 'deleteBoardProject', 'restoreBoardProject',
-] as const satisfies readonly (keyof DesktopBridge)[]
-
 function callProjectBoard<T>(action: (bridge: DesktopBridge) => Promise<DesktopReply<T>>): Promise<T> {
   return call(bridge => {
     if (projectBoardMethods.some(method => typeof bridge[method] !== 'function'))
@@ -46,46 +41,39 @@ function callProjectBoard<T>(action: (bridge: DesktopBridge) => Promise<DesktopR
   })
 }
 
-const previewCalendarMethods = new Set<string>(desktopPreviewCalendarMethods)
+const previewEndpoints = new Map<string, string>(
+  desktopPreviewRoutes.flatMap(({ endpoint, methods }) => methods.map(method => [method, endpoint] as const)),
+)
+let previewBridge: DesktopBridge | undefined
 
-async function callPreviewCalendar(method: string, args: unknown[]): Promise<DesktopReply<unknown>> {
-  const response = await fetch(desktopPreviewCalendarEndpoint, {
+async function callPreviewCore(endpoint: string, method: string, args: unknown[]): Promise<DesktopReply<unknown>> {
+  const response = await fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ method, args }),
   })
   if (!response.ok || !response.headers.get('content-type')?.includes('application/json')) {
-    throw new DesktopBridgeError('preview_unavailable', '本机日历预览服务未就绪，请通过桌面开发服务打开预览')
+    throw new DesktopBridgeError('preview_unavailable', '本机预览服务未就绪，请通过桌面开发服务打开预览')
   }
   return response.json()
 }
 
 function createPreviewBridge(): DesktopBridge | undefined {
   if (!import.meta.env.DEV || new URLSearchParams(location.search).get('desktopPreview') !== '1') return undefined
+  if (previewBridge) return previewBridge
   const defaults = {
     appearance: { theme: 'light', themeFamily: 'glass', palette: 'neutral' },
     onboarding: { should_show: false, guide: { enabled: false, current_step: '', completed_steps: [], dismissed: false, completed_at: null, should_show: false }, seed: {} },
     sandboxStatus: { supported: false, methods: [], checkAvailable: false, reason: '浏览器预览模式' },
   }
-  const arrayMethods = new Set(['projects', 'clients', 'canvases', 'canvasItems', 'notes'])
-  const previewCanvases: DesktopCanvas[] = []
-  let nextCanvasId = 1
-  return new Proxy({} as DesktopBridge, {
+  previewBridge = new Proxy({} as DesktopBridge, {
     get: (_target, key: string) => {
-      if (key === 'projectBoard') return async () => ({ ok: true, result: { items: [], nextOffset: null } })
-      if (['projectDetails', 'createBoardProject', 'updateBoardProject', 'deleteBoardProject', 'restoreBoardProject'].includes(key))
-        return async () => ({ ok: false, error: { code: 'invalid_request', message: '请在桌面应用中操作本地项目' } })
-      if (previewCalendarMethods.has(key)) return (...args: unknown[]) => callPreviewCalendar(key, args)
-      if (key === 'canvases') return async () => ({ ok: true, result: [...previewCanvases] })
-      if (key === 'createCanvas') return async (title = '未命名画布') => {
-        const now = new Date().toISOString()
-        const canvas: DesktopCanvas = { id: nextCanvasId++, title, projectId: null, data: {}, createdAt: now, updatedAt: now }
-        previewCanvases.unshift(canvas)
-        return { ok: true, result: canvas }
-      }
-      return async () => ({ ok: true, result: key in defaults ? defaults[key as keyof typeof defaults] : arrayMethods.has(key) ? [] : null })
+      const endpoint = previewEndpoints.get(key)
+      if (endpoint) return (...args: unknown[]) => callPreviewCore(endpoint, key, args)
+      return async () => ({ ok: true, result: key in defaults ? defaults[key as keyof typeof defaults] : key === 'clients' ? [] : null })
     },
   })
+  return previewBridge
 }
 
 export const desktopData = {
@@ -123,7 +111,9 @@ export const desktopData = {
   deleteCalendarEvent: (id: number, version: number) => call(bridge => bridge.deleteCalendarEvent(id, version)),
   canvases: () => call(bridge => bridge.canvases()),
   createCanvas: (title: string) => call(bridge => bridge.createCanvas(title)),
-  updateCanvas: (id: number, body: { title?: string; data?: Record<string, unknown> }) => call(bridge => bridge.updateCanvas(id, body)),
+  // 画布数据可能来自响应式 Store，Electron IPC 只能接收可克隆的普通数据。
+  updateCanvas: (id: number, body: { title?: string; data?: Record<string, unknown> }) =>
+    call(bridge => bridge.updateCanvas(id, JSON.parse(JSON.stringify(body)))),
   deleteCanvas: (id: number) => call(bridge => bridge.deleteCanvas(id)),
   canvasItems: (canvasId: number) => call(bridge => bridge.canvasItems(canvasId)),
   canvasRelations: (canvasId: number) => call(bridge => bridge.canvasRelations(canvasId)),

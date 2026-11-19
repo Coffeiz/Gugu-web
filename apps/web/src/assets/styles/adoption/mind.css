@@ -135,13 +135,11 @@ html[data-theme][data-family] .ne-link-input input {
 html[data-theme][data-family] .ne-link-input input:focus {
   background: var(--input-bg-focus);
   border-color: var(--input-border-focus);
-  box-shadow: var(--input-focus-shadow);
 }
 html[data-theme][data-family] .ne-link-ok { color: var(--choice-chip-fg-active); background: var(--choice-chip-bg-active); }
 html[data-theme][data-family] .ne-link-ok:hover { background: var(--choice-chip-bg-hover); }
-html[data-theme][data-family] .ne-body .ProseMirror .mind-ref.ProseMirror-selectednode { box-shadow: 0 0 0 2px var(--focus-ring); }
 
-/* Notes calendar trigger: component geometry stays in Mind/index.vue; paint is a Mind token contract.
+/* Notes calendar trigger: component geometry stays in MindToolbar.vue; paint is a Mind token contract.
    hover excludes open so focused/open state cannot pick up a second hover surface. */
 html[data-theme][data-family] .mind-cal-picker .dp-input {
   background: var(--mind-calendar-trigger-bg);
@@ -156,25 +154,10 @@ html[data-theme][data-family] .mind-cal-picker .dp-input:hover:not(.open) {
 html[data-theme][data-family] .mind-cal-picker .dp-input.open {
   background: var(--mind-calendar-trigger-bg-open);
   border-color: var(--mind-calendar-trigger-border-open);
-  box-shadow: var(--mind-calendar-trigger-shadow-open);
 }
 html[data-theme][data-family] .mind-cal-picker .dp-icon { color: var(--mind-calendar-trigger-icon); }
 
-/* Mind page filter */
-html[data-theme][data-family] .mind-filter {
-  background: var(--input-bg);
-  border-color: var(--input-border);
-  transition: background-color var(--motion-hover-control) var(--motion-ease-standard),
-              border-color var(--motion-hover-control) var(--motion-ease-standard),
-              box-shadow var(--motion-hover-control) var(--motion-ease-standard);
-}
-html[data-theme][data-family] .mind-filter:focus-within {
-  background: var(--input-bg-focus);
-  border-color: var(--input-border-focus);
-  box-shadow: var(--input-focus-shadow);
-}
 html[data-theme][data-family] .mind-tab.on { color: var(--selection-fg); }
-html[data-theme][data-family] .mf-clear:hover { background: var(--control-bg-hover); }
 
 /* Canvas toolbar/drawer controls use shared control surfaces. */
 html[data-theme][data-family] .canvas-toolbar button:hover,
@@ -191,17 +174,7 @@ html[data-theme][data-family] .np-search {
 html[data-theme][data-family] .np-search:focus {
   background: var(--input-bg-focus);
   border-color: var(--input-border-focus);
-  box-shadow: var(--input-hover-shadow), var(--input-focus-shadow);
-}
-html[data-theme][data-family] .canvas-create-card {
-  color: var(--content-secondary);
-  background: var(--inline-action-bg);
-  border-color: var(--inline-action-border);
-}
-html[data-theme][data-family] .canvas-create-card:hover {
-  color: var(--inline-action-fg-hover);
-  background: var(--inline-action-bg-hover);
-  border-color: var(--inline-action-border-hover);
+  box-shadow: var(--input-hover-shadow);
 }
 html[data-theme][data-family] .canvas-item:hover { background: var(--control-bg-hover); }
 html[data-theme][data-family] .canvas-item.active {

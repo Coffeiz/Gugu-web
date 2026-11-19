@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import Fastify from 'fastify'
 import test from 'node:test'
-import { registerSafeEgressProbeRoute } from '../../src/modules/admin/safe-egress-probe.js'
+import { registerSafeEgressProbeRoute } from '../../src/modules/admin/network.js'
 
 test('安全出站试测先鉴权、严格校验并调用实际测试用例', async () => {
  const app=Fastify();let calls=0

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createWebAgentMcpProductionPorts } from '../../src/domains/agent-sessions/tools/agent-mcp-production-ports.js'
+import { createWebAgentMcpProductionPorts } from '../../src/modules/agent-sessions/tools/agent-mcp-production-ports.js'
 
 test('Web MCP Host 端口按当前 Run owner 复核目录并透传真实 runtime', async () => {
   let current = [{ name: 'mcp_places_lookup', server_id: 'server-a', tool_name: 'lookup' }]

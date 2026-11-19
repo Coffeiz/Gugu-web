@@ -125,6 +125,20 @@ test('禁用时不外连；重连先关闭旧连接，调用复用当前 owner r
  assert.equal(f.stats().transportClosed,2)
 })
 
+test('MCP reconnect keeps the Python total_loaded response field on success and failure',async()=>{
+ const successful=fixture()
+ assert.deepEqual(await successful.service.reconnect(owner,server),{
+  ok:true,state:'ok',tool_count:1,tool_names:['mcp_gaode_geocode'],error:null,total_loaded:1,
+ })
+ await successful.service.close()
+
+ const failed=fixture(undefined,undefined,new Error('401 synthetic-secret'))
+ assert.deepEqual(await failed.service.reconnect(owner,server),{
+  ok:false,state:'error',tool_count:0,tool_names:[],error:'MCP server 认证失败，请检查凭据',total_loaded:0,
+ })
+ await failed.service.close()
+})
+
 test('单 server 错误不泄露 endpoint 或凭据，stdio 不启动系统进程',async()=>{
  let clientCalls=0
  const f=fixture()

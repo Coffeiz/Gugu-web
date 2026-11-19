@@ -6,9 +6,10 @@ import path from 'node:path'
 import { Pool } from 'pg'
 import test from 'node:test'
 import { createPostgresRuntime, tablesSql } from '@gugu/core/data'
-import { createPostgresFileUploadOperations } from '../../src/domains/files/file-upload-postgres.js'
-import { createWebAgentDownloadTool } from '../../src/domains/agent-sessions/tools/agent-web-download.js'
-import { createAuthorizedWebAgentProductionRagRunPorts } from '../../src/domains/agent-sessions/tools/agent-rag-production-ports.js'
+import { createPostgresFileUploadOperations } from '../../src/modules/files/file-upload-postgres.js'
+import { createWebAgentDownloadTool } from '../../src/modules/agent-sessions/tools/agent-web-download.js'
+import { createWebAgentFileCreatePort } from '../../src/modules/agent-sessions/tools/agent-file-create.js'
+import { createAuthorizedWebAgentProductionRagRunPorts } from '../../src/modules/agent-sessions/tools/agent-rag-production-ports.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '11111111-1111-4111-8111-111111111111'
@@ -175,6 +176,8 @@ test('PostgreSQL Local 上传创建文件并覆盖时同步更新物理正文、
     const makeRegistry = (upload = operations) => createAuthorizedWebAgentProductionRagRunPorts({
       core, pool, lease, storageRoot: root, enabled: () => true,
       selection: { modelIdentity: 'synthetic', contextScopeKey: lease.input.accessVersion, contextPolicy: { loadOwnerContext: true, memoryEnabled: false } },
+      enabledFileCreate: true,
+      fileCreate: createWebAgentFileCreatePort({ pool, upload, lease }),
       webDownload: createWebAgentDownloadTool({
         pool, db: core.db, lease, upload,
         async open(url) {
@@ -207,6 +210,12 @@ test('PostgreSQL Local 上传创建文件并覆盖时同步更新物理正文、
     assert.equal(await readFile(path.join(root, ownerId, '个人文件', '下载.txt'), 'utf8'), 'download body')
     assert.deepEqual(await makeRegistry().tools.dispatch(call, scope), { ...downloaded, mutated: false })
     assert.equal(requests, 1)
+    const createCall = { id: 'create-text', name: 'create_file', input: { filename: 'agent.txt', content: 'Agent 内容', space: 'personal' } }
+    const createdText = await registry.tools.dispatch(createCall, scope)
+    assert.ok(createdText.kind === 'completed' && createdText.successful && createdText.mutated, JSON.stringify(createdText))
+    assert.equal(await readFile(path.join(root, ownerId, '个人文件', 'agent.txt'), 'utf8'), 'Agent 内容')
+    const createdTextReplay = await makeRegistry().tools.dispatch(createCall, scope)
+    assert.deepEqual(createdTextReplay, { ...createdText, mutated: false })
     const project = await pool.query<{ id: number }>("INSERT INTO projects(user_id,name,start_date) VALUES ($1,'下载项目','2026-01-01') RETURNING id", [ownerId])
     const projectId = project.rows[0]!.id
     const folder = await pool.query<{ id: number }>("INSERT INTO folders(user_id,project_id,name) VALUES ($1,$2,'下载目录') RETURNING id", [ownerId, projectId])
@@ -236,7 +245,8 @@ test('PostgreSQL Local 上传创建文件并覆盖时同步更新物理正文、
     assert.equal(requests, 7)
     assert.equal(released, requests)
     const saved = await pool.query('SELECT result_json FROM core_operation_receipts')
-    assert.equal(saved.rowCount, 3)
+    assert.equal(saved.rowCount, 4)
+    assert.equal((await pool.query('SELECT method FROM core_operation_receipts WHERE method=$1', ['agent.file.create'])).rowCount, 1)
     assert.doesNotMatch(JSON.stringify(saved.rows), /synthetic|token=/u)
     const ledger = await pool.query("SELECT delta_bytes FROM storage_quota_events WHERE operation='web_download'")
     assert.deepEqual(ledger.rows.map(row => Number(row.delta_bytes)), [13, 13, 13])

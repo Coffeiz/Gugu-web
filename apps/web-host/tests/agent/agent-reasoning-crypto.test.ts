@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { decryptReasoningPayload, encryptReasoningPayload } from '../../src/domains/agent-sessions/persistence/agent-reasoning-crypto.js'
-import { decryptByokCredential } from '../../src/domains/agent-config/byok.js'
+import { decryptReasoningPayload, encryptReasoningPayload } from '../../src/modules/agent-sessions/persistence/agent-reasoning-crypto.js'
+import { decryptByokCredential } from '../../src/modules/agent/model-config/byok.js'
 
 test('推理状态信封兼容既有 BYOK 解密器，密文损坏或错误密钥均拒绝', () => {
   const plain = '{"synthetic":"私有数据"}', key = 'synthetic-key', sealed = encryptReasoningPayload(plain, key, 1)

@@ -441,7 +441,7 @@ function submit() {
 .divider-full { margin-left: 0; margin-right: 0; }
 .title-input { width: 100%; box-sizing: border-box; outline: none; font-size: 16px; font-weight: 700; color: var(--text-primary); font-family: var(--font-sans); padding: 6px 11px; margin-bottom: 10px; border: 1px solid var(--input-border); border-radius: var(--radius-xs); background: var(--input-bg); transition: border-color 0.15s, box-shadow 0.15s; }
 .title-input::placeholder { color: var(--input-placeholder); font-weight: 700; }
-.title-input:focus { border-color: var(--input-border-focus); box-shadow: var(--input-focus-shadow); }
+.title-input:focus { border-color: var(--input-border-focus); }
 .field { display: block; margin-bottom: 11px; }
 .field > span { display: block; font-size: 12px; font-weight: 700; color: var(--text-secondary); margin-bottom: 6px; }
 .field-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 7px; }
@@ -471,7 +471,7 @@ function submit() {
 .boundary-clear { width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: var(--option-bg); color: var(--content-secondary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: color var(--hover-motion-control), background-color var(--hover-motion-control); }
 .boundary-clear:hover { background: var(--option-bg-hover); color: var(--content-primary); }
 .field input[type=text], .field input:not([type]), .field textarea, .field select, .field input[type=number] { width: 100%; box-sizing: border-box; padding: 8px 11px; border: 1px solid var(--input-border); border-radius: var(--radius-xs); background: var(--input-bg); font-size: 13px; font-family: var(--font-sans); color: var(--text-primary); outline: none; transition: border-color 0.15s, box-shadow 0.15s; }
-.field input:focus, .field textarea:focus, .field select:focus { border-color: var(--input-border-focus); box-shadow: var(--input-focus-shadow); }
+.field input:focus, .field textarea:focus, .field select:focus { border-color: var(--input-border-focus); }
 .reminder-field { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
 .reminder-field textarea { flex: 1 1 auto; min-height: 96px; max-height: none; resize: none; line-height: 1.6; overflow-y: hidden; }
 .repeat-tabs { display: flex; gap: 6px; }

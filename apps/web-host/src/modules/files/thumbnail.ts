@@ -2,7 +2,7 @@ import { imageSize } from 'image-size'
 import { createCanvas, loadImage } from '@napi-rs/canvas'
 import { CoreError } from '@gugu/core'
 import { planFileThumbnail } from '@gugu/core/files/read'
-import type { FileReadOperations } from '../../domains/files/file-reads.js'
+import type { FileReadOperations } from './file-reads.js'
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
 
 export interface FileThumbnailOptions {

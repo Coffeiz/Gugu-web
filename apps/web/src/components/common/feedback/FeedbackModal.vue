@@ -157,7 +157,6 @@ async function submit() {
 .feedback-textarea:hover:not(:disabled) { background: var(--input-bg-hover); border-color: var(--input-border-hover); }
 .feedback-textarea:focus:not(:disabled) {
   border-color: var(--input-border-focus);
-  box-shadow: var(--input-focus-shadow);
 }
 .feedback-textarea::placeholder { color: var(--input-placeholder); }
 

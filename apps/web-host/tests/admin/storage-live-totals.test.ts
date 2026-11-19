@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { Pool } from 'pg'
-import { createStorageLiveTotals } from '@gugu/core/admin/storage-live-totals'
+import { createStorageLiveTotals } from '../../src/modules/admin/storage.js'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 test('实时存储统计分离草稿和已挂载附件，统计全部文件且不写快照', { skip: !url && '需要隔离PG' }, async () => {

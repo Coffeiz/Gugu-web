@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import test from 'node:test'
 import { createApp } from '../../src/app.js'
-import { createUserToken } from '../../src/domains/auth/auth.js'
+import { createUserToken } from '../../src/modules/auth/auth.js'
 import { createPostgresTerminalLifecycle } from '../../src/modules/terminals/lifecycle-operation.js'
 
 const coreRequire = createRequire(new URL('../../../../packages/core/package.json', import.meta.url))

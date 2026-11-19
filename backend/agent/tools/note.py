@@ -287,6 +287,25 @@ async def _create_note(db, user_id, args: dict):
     return {"note": _note_detail(node)}
 
 
+_NOTE_BODY_MODES = ("append_markdown", "append_blocks", "line_edits", "find_replace")
+
+
+def _replace_unique_note_text(text: str, edit: dict) -> str:
+    if not isinstance(edit, dict) or set(edit) != {"find", "replace"}:
+        raise ValueError("find_replace 必须包含 find 和 replace")
+    find, replacement = edit["find"], edit["replace"]
+    if not isinstance(find, str) or not find:
+        raise ValueError("find_replace.find 不能为空")
+    if not isinstance(replacement, str):
+        raise ValueError("find_replace.replace 必须是字符串")
+    start = text.find(find)
+    if start == -1:
+        raise ValueError("find_replace 未找到原文。请从最新 note_get.content_md 逐字复制，保留空格和换行。")
+    if text.find(find, start + 1) != -1:
+        raise ValueError("find_replace 匹配多处。请扩大 find 的原文范围，直到只匹配一处。")
+    return text[:start] + replacement + text[start + len(find):]
+
+
 async def _update_note(db, user_id, args: dict):
     node_id = args.get("node_id")
     if not isinstance(node_id, int):
@@ -302,10 +321,10 @@ async def _update_note(db, user_id, args: dict):
                 fields[name] = args[name]
         if "captured_at" in args:
             fields["captured_at"] = _parse_captured_at(args["captured_at"])
-        content_operations = [key for key in ("append_markdown", "append_blocks", "line_edits") if key in args]
+        content_operations = [key for key in _NOTE_BODY_MODES if key in args]
         if len(content_operations) > 1:
             return {
-                "error": "正文更新方式只能选一种：append_markdown、append_blocks 或 line_edits。普通文字追加优先用 append_markdown。",
+                "error": "正文更新方式只能选一种：append_markdown、append_blocks、line_edits 或 find_replace。普通文字追加优先用 append_markdown。",
                 "next_action": '普通文字追加格式：{"node_id":123,"append_markdown":"追加内容"}，node_id 必须来自 note_search/note_get。',
             }
         if "append_markdown" in args:
@@ -321,6 +340,8 @@ async def _update_note(db, user_id, args: dict):
             fields["content_md"] = f"{node.content_md}\n\n{appended}" if node.content_md else appended
         if "line_edits" in args:
             fields["content_md"], _ = apply_line_edits(node.content_md or "", args["line_edits"])
+        if "find_replace" in args:
+            fields["content_md"] = _replace_unique_note_text(node.content_md or "", args["find_replace"])
         if not fields:
             return {"error": "至少提供一个要修改的字段"}
         if not await update_mind_note(db, node_id, user_id, node.version, fields):
@@ -434,22 +455,37 @@ class NoteSkill(BaseSkill):
         Tool(
             name="note_update", label="更新思维笔记",
             description_short='更新笔记；普通文字追加优先传 append_markdown。',
-            description="更新笔记必须传 note_search/note_get 返回的真实 node_id。普通文字追加优先使用 append_markdown 字符串，例如 {\"node_id\":123,\"append_markdown\":\"追加内容\"}；可点击引用或结构化列表才使用 append_blocks。正文修改方式 append_markdown、append_blocks、line_edits 只能选一种。line_edits 数字行必须带 note_get.numbered_content 中对应的 expected 原文，整篇用 all。不要猜 node_id，也不要给数组添加 item 包装。captured_at 仅用于指定归属日期。",
+            description="更新笔记必须传 note_search/note_get 返回的真实 node_id。普通文字追加优先使用 append_markdown 字符串，例如 {\"node_id\":123,\"append_markdown\":\"追加内容\"}；可点击引用或结构化列表才使用 append_blocks。正文更新方式互斥，一次最多传一个：append_markdown、append_blocks、line_edits 或 find_replace。数字行以 note_get.numbered_content 的物理行号为准，标题与空行均计入；expected 只传原文，不含行号前缀。局部替换优先从 note_get.content_md 复制原文到 find_replace.find，唯一匹配才写入。不要猜 node_id，也不要给数组添加 item 包装。captured_at 仅用于指定归属日期。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "node_id": {"type": "integer"},
                     "title": {"type": ["string", "null"]},
                     "color": {"type": ["string", "null"], "enum": ["amber", "coral", "blue", "teal", None]},
-                    "append_markdown": {"type": "string", "description": "追加普通 Markdown 正文；与 append_blocks、line_edits 互斥。"},
+                    "append_markdown": {"type": "string", "description": "追加普通 Markdown 正文；与其他正文更新方式互斥。"},
                     "append_blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA},
                     "line_edits": {"type": "array", "items": {"type": "object", "properties": {
                         "target_lines": {"type": "string", "pattern": "^(all|[0-9]+([-,][0-9]+)?)$"},
                         "content": {"type": "string"},
                         "expected": {"type": "string"},
                     }, "required": ["target_lines", "content"], "additionalProperties": False}},
+                    "find_replace": {
+                        "type": "object",
+                        "description": "按 Markdown 原文唯一匹配后替换；与其他正文更新方式互斥。",
+                        "properties": {
+                            "find": {"type": "string", "minLength": 1},
+                            "replace": {"type": "string", "description": "替换文字，空字符串删除该处原文。"},
+                        },
+                        "required": ["find", "replace"],
+                        "additionalProperties": False,
+                    },
                     "captured_at": {"type": "string"},
                 },
+                "not": {"anyOf": [
+                    {"required": [first, second]}
+                    for index, first in enumerate(_NOTE_BODY_MODES)
+                    for second in _NOTE_BODY_MODES[index + 1:]
+                ]},
                 "required": ["node_id"],
                 "additionalProperties": False,
             },

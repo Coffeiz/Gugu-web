@@ -4,6 +4,8 @@
 >
 > **当前路线：先完成 Node Web/NAS 后端迁移，再基于稳定的共享 Core 推进桌面产品化。** Web 使用 Node Host + PostgreSQL；桌面使用 Electron + Node Core + 本地 SQLite。两端共享 Core 契约，但拥有不同 Host 和数据生命周期。2.0 的 API、Agent 工具、后台任务与执行入口统一迁入 Node。未完成的功能明确标为不可用；不保留 Python 回退、双写或双运行时兼容层。旧版数据升级、备份与恢复单独验收。
 
+**Agent 文件工具方向调整（目标，未完成）**：通用文件 CRUD 计划收敛至受授权 Shell，替代能力验证前保留现有功能；不再以新增独立 CRUD 工具数量作为迁移目标。先盘点工具、Skill/Schema、注册器、调用方和数据影响，验证 MXC/Host 的用户隔离、授权根、危险操作确认、并发与失败恢复，以及适用的配额、Undo、事件刷新和引用行为，再逐项删除可替代的 Node 工具及接线。Office/PDF 提取、附件读取和文件展示/发送分别评估替代方式；业务工具继续保留业务事务。无 Shell 的平台不得假定具备任意命令能力。旧 Python 后端保留为行为参考；相关回归以旧版可观察行为为基准，不因目标调整将尚未验收的替代路径标记完成。
+
 > **2026-11-13 存储范围决策**：Gugu 2.0 Linux/NAS 自托管版只支持本地文件系统，Node WebUI 不迁移在线 OSS/S3 文件、附件或记忆存储 API（包括 OSS 直传/预签名 URL、对象配额和对象搬移）。既有 Node OSS 实现与历史验收记录仅作迁移过程证据，不构成 2.0 支持承诺；旧 OSS 数据迁移/导出路径仍需实现与验收，用户数据切换到 2.0 前必须完成数据盘点和去向确认。独立备份目标另行设计，SaaS 对象存储不在本决定范围内。
 
 Agent 工具与技能正文的注册、配置和授权边界见 [Agent 工具与技能注册机制](Gugu-2.0-Agent工具与技能注册机制.md)；注册器存在不代表具体工具或 Host 已完成迁移。
@@ -87,9 +89,13 @@ Agent 工具与技能正文的注册、配置和授权边界见 [Agent 工具与
 
 以下仅统计已有 Web 业务的共享工作，不代表整个 N2 或桌面产品完成度。勾选表示该项范围内的用例、正式双库适配和对应调用方均已接通，并按 Python 行为基线完成适用的回归；原型、单库实现或仅有路由不算完成。按业务切片增量交付，不为凑统一结构增加无必要的抽象。
 
+**Admin 后端边界调整（2026-11-19）**：自部署的管理业务、PostgreSQL/Redis 适配收敛于 `apps/web-host/src/modules/admin/`，由 Web Host 负责管理员认证、连接和生命周期；未来 SaaS 管理后端在独立仓库设计。既有全局查询和 Redis 键不提供租户隔离。历史共享包的测试记录只证明当时的自部署行为，不代表 SaaS 能力。
+
 Admin 专属 API 为服务端能力，当前 Web 使用 PostgreSQL，未来 SaaS 使用自身服务端适配，不要求 SQLite 或桌面 IPC。仅当某条规则或数据能力被普通业务或桌面实际复用时，才按对应跨端契约验证。桌面埋点采集与上传不属于 Admin 查询：其本地离线队列可使用 SQLite，服务端接收和聚合另行实现。
 
-- [ ] 按架构说明将现有共享业务、用例和适用数据实现逐步按领域收敛到 `packages/core/src/` 对应模块；Web Host 的目标 `modules/` 保留 HTTP、平台适配和装配。同步迁移真实调用方、测试与包导出，移除确认无调用方的旧 Node 内部转发层；保留 Python 参考后端及既有对外行为、数据和运行时协议。
+**Admin 更新 API 范围（2026-11-18）**：Node Web Host 的 2.0 制品由 Compose/NAS 管理器更新整镜像；旧 Python `standalone_app_bundle` 更新器所需的持久化 `/app` 应用包切换运行时不在 Node 制品中。Node 只提供管理员可见的部署状态说明，并对旧 app-bundle 模式 fail-closed；前端在 `enabled=false` 时隐藏操作面板，`/check`、`/preflight`、`/start` 和 rollback 路由不注册。对应 API 迁移表记录为“2.0 不迁移”，不再作为待迁移项。Node 状态路由与真实 `createApp` Admin 鉴权回归 3/3；Docker 与真实部署未验收。
+
+- [ ] 按架构说明将现有共享业务、用例和适用数据实现逐步按领域收敛到 `packages/core/src/` 对应模块；Web Host 的目标 `modules/` 保留 HTTP、平台适配和装配。同步迁移真实调用方、测试与包导出，移除确认无调用方的旧 Node 内部转发层。2.0 的 API、Agent 工具、后台任务和执行入口统一由 Node 承担；Python 只作为迁移资料，不保留 Python 运行、桥接、兼容或回退路径，完成 Node 切换与验收后删除 Python 后端。
 
 - [x] 建立共享 Core、SQLite/PG 适配、事务和首批项目/联系人双库契约。
 - [ ] **项目与联系人**：桌面已通过受限 IPC 接通项目列表/创建/重命名及联系人列表/创建/重命名/删除，真实 SQLite Worker 回归覆盖重启持久化；仍需补项目更新的正式 SQLite 覆盖，以及文件计数、引用、恢复和 Undo 等跨域路径，并核对联系人双库行为。
@@ -119,7 +125,7 @@ Knowledge overview 已有要求迁移标记存在的 Core 只读子集，合成�
 
 个人记忆已有明确限定为规范小规模数据的 Core 读取规则，合成存储 Node 4/4、Python 记忆存储对照 19/19；真实存储和 Host 未接入，legacy 写回、超预算 embedding 与 Python 容错尚未实现，不能作为完整记忆服务。
 
-RAG Host Worker 在生产 `main.ts` 启动前检查正式索引迁移，仅 `applied` 时启动，并于关闭时停止/等待。Node Host 已移除旧消费者选择开关。首次 Worker 调用幂等地为无索引、无任务的 owner/source 建全量基线，不覆盖现存增量任务。生产来源集合现包括 project、calendar、note、canvas、scheduled_task、conversation、knowledge 和 memory；临时 SQLite 的 Host Worker 来源组回归验证已覆盖八类来源。knowledge 使用 owner-bound FS reader，memory 使用 `config.storageLocalPath` 与 SQL scope revision/tombstone reader。Mind、conversation 和 scheduled_task 的已发现 Node 写入事务会排入持久任务；Core/Host 现另有 `save_knowledge`、`update_knowledge` 工具与 owner-bound Markdown freshness producer，Host 写端按 Python 行为迁移旧时间戳、先撤回旧索引/围栏在途 Worker、再原子写主数据并排队。Core 实际注册器回归 7/7 通过；devserver Linux 上 Host 写入→Worker→正式索引及 registry 共 **20/20** 通过。Node 私聊记忆反思已接入生产模型提取、持久发布和后台调度。升级验收需先停止旧版进程，再验证 Node 独立消费、正式索引迁移、来源完整性与重启恢复；当前无生产切换证据。Host 锁定 `@node-rs/jieba@2.0.1` 并使用包内词典。`search_conversations` 与 `search_memory` 已由可信 Web Run resource factory 装入生产 ToolRegistry；memory 查询逐次校验当前 lease、工具权限、owner scope 与快照版本。`createWebAgentRagResources` 也会装配 prompt memory snapshot 的旧向量搜索；定向 RAG/Run 回归覆盖 registry dispatch 和 owner 授权，但真实 PG/Redis/embedding、Node Worker 唯一消费者切换及部署尚未验收，故 RAG 只记为已接生产入口、真实服务未验收。
+RAG Host Worker 在生产 `main.ts` 启动前检查正式索引迁移，仅 `applied` 时启动，并于关闭时停止/等待。Node Host 独立生产和消费持久索引，不保留 Python bridge、fallback 或双引擎运行选择。首次 Worker 调用幂等地为无索引、无任务的 owner/source 建全量基线，不覆盖现存增量任务。生产来源集合包括 project、calendar、note、canvas、scheduled_task、conversation、knowledge 和 memory；knowledge 使用 owner-bound FS reader，memory 使用 `config.storageLocalPath` 与 SQL scope revision/tombstone reader。Mind、conversation、scheduled_task 与 knowledge 的已发现 Node 写入事务会排入持久任务；knowledge freshness 更新先撤回旧索引并围栏在途 Worker，再原子写主数据并排队。Node 私聊记忆反思已接入生产模型提取、持久发布和后台调度。Host 锁定 `@node-rs/jieba@2.0.1` 并使用包内词典。`search_conversations`、`search_memory`、查询期向量召回和 prompt memory snapshot 已由可信 Web Run resource factory 装入同一个 lease-bound ToolRegistry/Context Builder。**2026-11-19 当前验收**：`main.ts → Agent Chat/Run lifecycle → dispatch lease → Reconstructor → 持久 RAG Worker/索引读取 → ToolRegistry → search_conversations` 已接通；Core RAG 70/70。Host RAG/Run **51 通过、5 跳过**，使用临时 PostgreSQL cluster/schema、Redis、临时 owner 文件目录和本机合成 Provider；生产 HTTP/SSE 主链 1/1 通过，验证八类来源写入 PostgreSQL 正式索引、两 owner 隔离及工具续轮命中。Web Host production build 通过。跳过项包含 Linux 专用安全写入场景；临时依赖与合成 Provider 不代表生产部署或真实外部服务验收。旧条目中的“main.ts 无 caller”是迁移过程快照，不再代表当前状态。
 
 2026-11-17 Web RAG owner 边界回归：生产 RAG 端口工厂将 `search_conversations` 的近期列表、检索与命中归属解析固定到 dispatch lease 的 owner；独立 Host 端口行为测试在 devserver **1/1 通过**，覆盖跨 owner 调用拒绝、取消优先传播和同 owner 大小写归一委托。测试使用合成端口，不访问数据库；它补强可复用 Host 边界，但不代表生产 `agentChat`/Run 装配完成，也不改变 Python Worker 默认消费的状态。
 
@@ -929,8 +935,326 @@ BYOK、Skills、MCP HTTP 和安全出站统一复验。devserver Node 75 通过�
 2026-11-18 `canvas_search_placeable` 真实 Web Agent 调用补验：Core 搜索经正式 HTTP/SSE Run 与生产 ToolRegistry 执行，隔离 PostgreSQL 同时包含 owner 和异主的项目；工具返回己方项目且排除异主结果。无写入副作用。生产 Host 集成 **1/1 通过、0 失败、0 跳过**，Core 画布组定向 **5 文件 12/12**。该工具与 `canvas_list/get/search/focus_node` 一并更新为已完成并接入 Web。静态工具分类为完成 **30**、待接入 **2**、部分 **54**、依赖阻塞 **22**、退役/重设计 **1**。Python pytest 本轮未运行；测试使用临时隔离 PG/Redis 和环回合成 Provider；最终运行目标为纯 Node。
 
 2026-11-18 画布创建与编辑组生产调用闭环验收。真实 Web Agent Run 连续执行 `canvas_create`、`canvas_create_note`、`canvas_update_node`、`canvas_update_note`、`canvas_add_node`、`canvas_connect`、`canvas_update_anchor`；生产 ToolRegistry/dispatch 与 Core 共享 Mind 事务均实际调用，隔离 PostgreSQL 回读验证 owner 画布与便签创建、节点布局、便签内容/版本、项目引用放置、关系行及关系端点 JSON。Core 画布定向 **5 文件 12/12**，正式 Host HTTP/SSE + 隔离 PG/Redis 集成 **1/1 通过、0 失败、0 跳过**。七工具更新为已完成并接入 Web。当前109项：完成 **37**、待接入 **2**、部分 **47**、依赖阻塞 **22**、退役/重设计 **1**。Python pytest 本轮未运行；测试只用临时存储与环回合成 Provider，无真实外部调用，迁移目标为纯 Node。
-2026-11-18 Node 定时任务 Telegram 结果投递：Core 固定 Telegram 官方 HTTPS `sendPhoto`/`sendDocument` multipart 协议并限制 50,000,000 字节；JPEG/PNG 小于等于 10,000,000 字节按照片发送，明确 400 才回退文件；Core 确认 Telegram 渠道也向 Agent 开放 `send_file`；Host 复用 owner 文件读取，发送前复核 Bot、平台、收件人、群会话和任务租约。`main.ts` 已将适配器装配到立即运行和可选 Worker，去除显式 Telegram 的整任务拒绝。首次 Host 回归因缺少附件发送能力而失败，修复后 Host 5/5、Core Bot API 9/9、Web Host production typecheck 通过。隔离 PostgreSQL/Redis 立即运行集成因本地未配置测试服务而跳过；Python `deliver_to_channels`、`_deliver_im_files` 及相邻 pytest 源码已核对，pytest 未运行。未连接真实 Telegram/代理；PG/Redis Worker、推送历史、SQLite 和部署尚未验收。
+2026-11-18 Node 定时任务 Telegram 结果投递：Core 固定 Telegram 官方 HTTPS `sendPhoto`/`sendDocument` multipart 协议并限制 50,000,000 字节；JPEG/PNG 小于等于 10,000,000 字节按照片发送，明确 400 才回退文件；Core 确认 Telegram 渠道也向 Agent 开放 `send_file`；Host 复用 owner 文件读取，发送前复核 Bot、平台、收件人、群会话和任务租约。`main.ts` 已将适配器装配到立即运行和可选 Worker，去除显式 Telegram 的整任务拒绝。首次 Host 回归因缺少附件发送能力而失败，修复后 Host 5/5、Core Bot API 9/9、Web Host production typecheck 通过。隔离 PostgreSQL/Redis 立即运行集成因本地未配置测试服务而跳过；Python `deliver_to_channels`、`_deliver_im_files` 及相邻 pytest 源码已核对，pytest 未运行。未迁移 Python MarkdownV2 和长消息分片；未连接真实 Telegram/代理，PG/Redis Worker、推送历史、SQLite 和部署尚未验收。
 
 2026-11-18 `list_scheduled_tasks` 与 `update_workspace` 生产工具验收：正式 Node `startServer` 在随机 PostgreSQL schema、临时 Redis、临时文件目录和环回合成 Provider 下，经 HTTP/SSE/dispatch/ToolRegistry 调用两项工具。定时任务只返回 owner 的独立任务，排除日历提醒和异主任务；工作区更新同步工作区声明与目录显示名，同时保留物理目录键。生产集成 **1/1**，Core 定时任务/工具批次 **3 文件 7/7**。默认系统目录按既有安全规则禁止重命名，验收夹具使用非系统 owner 目录。Python pytest 本轮未运行；旧 Python 只作行为基准，不进入 Node 执行路径。109 项状态：完成 **41**、待接入 **2**、部分 **43**、依赖阻塞 **22**、退役/重设计 **1**。没有 Python bridge、fallback、双写或双运行时；真实外部 Provider、平台投递和部署仍未验收。
 
 2026-11-18 `list_trash` 生产工具验收。正式 Node `startServer` 经 HTTP/SSE/ToolRegistry 查询隔离 PostgreSQL 回收站；夹具同时包含 owner 与异主的软删除文件，Provider 续轮只收到 owner 文件，微秒时间戳保持完整。Core `trash.test.ts` **4/4**，生产 Host 集成 **1/1**；此前 Python 回收站基准在隔离临时环境 **1/1** 通过，本轮未重跑（当前无 pytest/后端依赖）。状态更新为已完成并接入 Web。合并当前工具状态后：109 项完成 **43**、待接入 **2**、部分 **41**、依赖阻塞 **22**、退役/重设计 **1**。测试只用临时隔离服务和合成 Provider，无 Python 执行桥或外部服务调用。
+
+2026-11-18 `restore_file` / `restore_folder` 生产工具验收。正式 Node Agent Run 经 HTTP/SSE/ToolRegistry 调用 PostgreSQL owner-scoped 恢复端口，在临时存储中恢复独立文件及顶层目录子树；回读确认文件与目录墓碑清除、原逻辑路径重建、正文可读，异主数据不变。生产 Agent Run **1/1**，`trash-restore-runtime-postgres.test.ts` **1/1**；隔离用例覆盖父目录仍在回收站、异主/缺失目标、并发、提交结果未知和重建收据不重做。Python pytest 本轮未运行，已对照 Python 旧工具的错误语义、父目录门和物理文件缺失行为；本机未安装 pytest/后端依赖。两工具状态更新为已完成并接入 Web；按当前迁移表合并后，109 项为完成 **46**、待接入 **2**、部分 **38**、依赖阻塞 **22**、退役/重设计 **1**。无 Python 桥接或外部服务调用。
+
+2026-11-18 `note_create` / `note_update` 生产 Node Run 验收。正式 `startServer` 通过隔离 PostgreSQL、临时 Redis、HTTP/SSE、合成 Provider 和生产 ToolRegistry 实际创建普通 Markdown 笔记并追加正文；回读 owner、Markdown、纯文本投影和版本，确认实际持久副作用。Core `note-writes.test.ts` 与 `note-lifecycle.test.ts` **7/7**，生产 Agent 主链集成 **1/1**。测试依赖均为临时隔离服务，Provider 为环回合成实现；不调用 Python、不增加兼容桥接。静态工具状态合并当前清单：完成 **48**、待接入 **2**、部分 **36**、依赖阻塞 **22**、退役/重设计 **1**，合计109；真实外部 Provider 与生产部署未验收。
+
+2026-11-18 `note_delete` / `note_restore` / `note_undo` Node 生产 Run 验收。正式 Node Agent Run 经 HTTP/SSE/dispatch/ToolRegistry 软删并恢复指定 owner 普通笔记，再撤销当前 owner 最近创建的咕咕笔记；隔离 PostgreSQL 核对 tombstone、版本、正文与异主数据不变。生产主链 **1/1**，Core `note-writes.test.ts` + `note-lifecycle.test.ts` **7/7**。测试只使用临时 PG/Redis/文件目录及环回合成 Provider，不调用 Python。三工具由部分实现更新为已完成并接入 Web；按当前清单：完成 **51**、待接入 **2**、部分 **33**、依赖阻塞 **22**、退役/重设计 **1**。
+
+2026-11-18 `create_scheduled_task` / `update_scheduled_task` Node 生产 Run 验收。隔离 PostgreSQL/Redis 和正式 Node Agent Run 实际执行创建及更新；只创建停用的一次性任务，避免测试期间运行或投递。回读确认 owner、schedule_kind/start_at、渠道和指令；Host `task-writes-postgres.test.ts` **4/4**，Core `scheduled-tasks.test.ts` **1/1**，正式主链集成 **1/1**。工具由部分实现更新为已完成并接入 Web；109 项当前：完成 **53**、待接入 **2**、部分 **31**、依赖阻塞 **22**、退役/重设计 **1**。Node-only，无 Python bridge、fallback 或双运行时。真实邮件/IM 投递、工作区沙盒授权与生产部署未验收。
+
+2026-11-18 `list_skills` / `use_skill` Node 生产验收。生产 Host Run 经正式 ToolRegistry 调用 `list_skills` 与 `use_skill`：目录依据 `packages/core/resources/skills` Markdown head 返回 S7 元数据、不带正文；加载 S7 后，正文实际进入后续 Provider 请求。Core Markdown frontmatter 注册 **2/2**、Host `agent-skill-tool-runtime.test.ts` **1/1**、隔离 PostgreSQL/Redis 主链 **1/1**。两工具状态更新为已完成并接入 Web；109项：完成 **55**、待接入 **2**、部分 **29**、依赖阻塞 **22**、退役/重设计 **1**。2.0 仅用 Node 读取 Node 自有技能资源，不保留 Python 桥接、回退或双运行时；真实部署未验收。
+
+
+### 用户技能创建与更新生产接入（2026-11-18）
+
+`create_skill` / `update_skill` 通过正式 Node Agent Run 和 ToolRegistry 执行，复用现有用户技能管理器与事务收据；隔离 PostgreSQL 回读验证 owner、稳定 ID、来源/启用状态和 Markdown 正文，更新后由 `use_skill` 续轮实际加载新正文。Core 技能写入/SQLite 回归 **3/3**、HTTP/SSE 生产主链集成 **1/1** 通过，使用临时 PostgreSQL/Redis 与环回合成 Provider。工具状态由部分实现更新为已完成并接入 Web。109 项：完成 **57**、待接入 **2**、部分 **27**、依赖阻塞 **22**、退役/重设计 **1**。2.0 使用 Node 作为唯一运行时，旧 Python 仅作行为语义参考，不保留桥接、回退或双运行时，最终目标为删除 Python 后端。
+
+
+### 站内搜索与日历创建工具生产闭环（2026-11-18）
+
+`global_search` 与 `create_event` 经正式 Node Web Agent Run 的 HTTP/SSE、lease 授权、ToolRegistry 和 PostgreSQL 业务端口执行。隔离 PostgreSQL 验证工具创建的日程可回读，随后共享站内搜索按 `event` 来源找到该日程；Provider 另传异主 `owner_id`，搜索结果仍仅含当前用户数据。无提醒输入时没有创建投递任务。生产主链 **1/1**，Core `global-search.test.ts` 与 `calendar-create.test.ts` 合计 **8/8**；临时 PostgreSQL/Redis 与环回合成 Provider，未调用外部平台或 Python。两工具状态更新为已完成并接入 Web。109 项：完成 **59**、待接入 **2**、部分 **25**、依赖阻塞 **22**、退役/重设计 **1**。
+
+2026-11-18 Node-only RAG 与生产工具续轮复验：Core RAG **9 文件 70/70**，本轮 Host RAG/lease/正式来源 Worker/迁移/Jieba/检索 transport 批次 **53 通过、1 跳过、0 失败**；唯一跳过为 Linux 安全原子写入。另在临时 PostgreSQL/Redis 与环回合成 Provider 下实际运行 `startServer → HTTP/SSE → dispatch → Reconstructor → ToolRegistry` **1/1**，覆盖 `search_conversations`、owner 隔离、Run 恢复，以及 `create_event → update_event → global_search` 的日程写入、更新、检索链。模型伪造的异主 `owner_id` 不改变搜索归属。Core build、Host production typecheck 与 diff 检查通过。该主链用例不传提醒；禁用 Web 提醒的附加探测返回提交状态未知，提醒主链不计验收，`update_event` 保持部分实现。本轮未运行 Python 后端或 pytest；Node 是 2.0 唯一运行实现，Python 后端是最终删除目标，不添加桥接、fallback 或双运行时。工具清单当前按 109 项计：完成并接入 **59**、已实现待接入 **0**、部分实现 **25**、共享/平台依赖 **24**、退役/重设计 **1**。
+
+
+2026-11-18 `read_knowledge` Node 生产 Run 验收：隔离 PostgreSQL/Redis 与临时 owner FS 中，Node RAG Worker 从 owner 和异主 Markdown 建立正式索引；正式 `startServer` HTTP/SSE/ToolRegistry 经关键词 BM25 检索只返回当前 owner 的 ranker 投影，按 ID 返回 owner Markdown 全文，异主 ID 返回安全 not-found。Core `knowledge.test.ts` **8/8**，Host RAG/工具端口与 lease **16 通过、1 跳过**（Linux 安全原子写入），真实 Agent 主链 **1/1**。`read_knowledge` 更新为已完成并接入 Web；109 项当前：完成 **60**、待接入 **0**、部分 **24**、共享/平台依赖 **24**、退役/重设计 **1**。本轮未运行 Python 后端或 pytest，无 Python bridge、fallback 或双运行时。
+
+### 知识写入工具平台能力门（2026-11-18）
+
+真实 macOS Agent HTTP/SSE 回归发现 `save_knowledge` / `update_knowledge` 在缺少安全文件发布后端时仍被注册，导致工具调用结果未知。Host 现在仅在 Linux `writeLocalFile` 安全原子发布能力可用时装配写端口；macOS 回归 **1/1** 确认写工具未声明且 owner Markdown 未变化。Linux 写入和索引刷新继续由 Linux 专项集成测试验收；本机本轮无法验收该平台分支，故两工具保持部分实现。2.0 仅有 Node 运行路径，不加 Python 兼容、fallback 或普通文件写入降级。
+
+### Agent 用户交互动作表 Node 迁移（2026-11-18）
+
+Node `ask_user` 生产激活要求 `interaction_actions` 表保存选项 token 摘要；Agent Base migration 已建 `interaction_prompts`，但未迁移动作表。新增 schema migration，沿用 Agent migration ledger/checksum/结构验收，并提供 `migrate:interaction-actions:check`、`migrate:interaction-actions:apply`；应在 Agent Base 与 Web Domain schema 可用后执行 apply，再启用依赖持久交互的生产工具。隔离 `startServer → HTTP/SSE → dispatch → Reconstructor → ToolRegistry` 回归实际创建 owner/session 绑定的 choice prompt 与动作记录；Core RAG/interaction **131/131**、Host RAG tool ports **15/15**、主链 **1/1** 通过。MCP Secret store 清理由显式 Host 端口按 MCP 配置注入，不启用 MCP 时普通 ask_user 不访问该可选表。此次只验收等待态创建，不将 `/resume` 后 Provider 恢复续轮记为通过；ask_user 状态不升级。仅 Node schema/实现，无 Python bridge 或兼容回退。
+
+2026-11-18 `ask_user` choice 持久恢复闭环复验：更新真实 Host 集成，经 HTTP `/resume` 提交动作 token，等待 PostgreSQL checkpoint 由 waiting 恢复至 completed，并验证后续 Provider 请求包含已消费选项、助手回复持久化。临时 PostgreSQL/Redis/schema 与环回合成 Provider 下正式 Agent 主链 **1/1 通过**。choice/question 的 Node Web 生产续轮已验证；`form` 与 `authorization=user_sandbox` 仍无 Host 能力，因此 `ask_user` 保持部分实现，109 项状态统计不变（完成并接入60、部分24、共享/平台依赖24、退役/重设计1、待接入0）。未运行 Python pytest；2.0 只走 Node，最终删除 Python 后端，不增加桥接或兼容回退。
+
+2026-11-18 `update_event` 与 Node 日历提醒闭环：修复 PostgreSQL `timestamptz` 返回的短时区后缀解析，带提醒的事件创建不再错误返回未知结果。隔离正式 Web Agent Run 创建 owner 日程及启用/停用提醒，再更新标题和开始时间；校验提醒任务 ID、提前量、渠道和 enabled 保留，只有启用提醒的 cron/start_at 随活动改期，停用计划不变，标题投影更新。Core 日历创建/更新 **6/6**，`startServer → HTTP/SSE → dispatch → Reconstructor → ToolRegistry` 与临时 PostgreSQL/Redis 主链 **1/1**，Host production TypeScript noEmit 检查通过。更新工具状态为已完成并接入 Web；109 项当前：完成 **62**、待接入 **0**、部分 **22**、共享/平台依赖 **24**、退役/重设计 **1**。Python pytest 本轮未运行（本机无 `backend/.venv/bin/pytest`），真实 Provider、外部提醒投递和生产数据未验收。全路径 Node-only，无 Python 兼容桥、fallback 或双运行时。
+
+2026-11-18 联系人与定时任务删除确认生产续轮：隔离 PostgreSQL/Redis 下的正式 Web Agent Run 分别调用 `delete_client` 和 `delete_scheduled_task`，确认 prompt 校验 owner/session/run 绑定；数据库验证确认前无副作用、token 消费后同一持久 Run 恢复并执行删除，定时任务路径同时验证 Redis 资源版本递增。Core 联系人 **20/20**、定时任务删除 **1/1**、Host RAG/lease **15/15**、正式主链 **1/1**、Core build、Web Host production typecheck 和 diff 检查通过。当前静态工具数 109：完成并接入 **64**、已实现待接入 **0**、部分 **20**、共享/平台依赖 **24**、退役/重设计 **1**。本轮未运行 Python pytest；运行和装配只走 Node，最终目标为移除 Python 后端，不增加兼容桥或双运行时。
+
+2026-11-18 `delete_skill` Node 持久确认续轮闭环：正式 Agent Run 请求删除用户 Skill，隔离 PostgreSQL 确认提示与动作 token 绑定 owner/session/run；确认前保留 Skill，消费确认 token 后恢复相同 checkpoint、在业务事务中删除 Skill 并提交操作收据，随后向 Redis 发布 Skills 资源变更。Core `skill-management.test.ts` **2/2**、Host HTTP/删除 **1 通过、1 隔离 PG 子测试跳过**、临时 PostgreSQL/Redis/合成 Provider 的生产主链 **1/1**，Core build 与 Web Host production typecheck 通过。工具更新为已完成并接入 Web；109 项当前完成 **65**、待接入 **0**、部分 **19**、共享/平台依赖 **24**、退役/重设计 **1**。本轮不调用 Python，Node 继续作为唯一目标运行时。
+
+2026-11-18 `delete_event` Node 确认删除生产验收：正式 Agent Run 经持久 PostgreSQL 交互确认，在隔离 PostgreSQL 中软删 owner 活动，并停用其两条提醒（包括此前停用的提醒）；确认前无副作用，确认 token 消费后同一持久 Run 恢复，Redis 日历资源版本递增。Core `calendar-delete.test.ts` **5/5**、隔离 PostgreSQL/Redis HTTP/SSE 主链 **1/1**、Core build 与 Web Host production typecheck 通过。工具更新为已完成并接入 Web；109 项当前完成 **66**、待接入 **0**、部分 **18**、共享/平台依赖 **24**、退役/重设计 **1**。本轮不运行 Python pytest、不接触真实外部提醒投递；Node 是 2.0 唯一运行实现，Python 后端仍是最终删除目标。
+
+2026-11-18 文件工具组连续迁移：`edit_file`、`rename_file`、`copy_file`、`create_file`、`create_folder` 已进入 Core `files.ts` 工具组并接入 per-lease Host registry。创建目录复用 `FolderWriteOperations.create`，限定个人/项目/工作区目标并检查 owner/父目录授权；Core 文件组 **59/59**、Host 合成 lease/文件域端口和临时文件系统 **1/1**、Core build、Web Host production typecheck 与 diff 检查通过。Host 用例覆盖实际目录副作用及越权拒绝。创建文件的隔离 PostgreSQL 测试因测试 URL 未设置跳过；本组尚未验收真实 PostgreSQL 文件写入与完整 HTTP/SSE Run，故相关工具状态为部分实现。当前 109 项：完成 **69**、待接入 **0**、部分 **21**、共享/平台依赖 **18**、退役/重设计 **1**。所有执行与验收仅针对 Node 2.0，不做 Python 兼容或桥接。
+
+2026-11-18 `move_items` 与 `rename_folder` Node 文件组切片：两项工具均进入 Core `files.ts` 和 per-lease Web Registry。`move_items` 只接收 ID 列表（文件与文件夹合计最多 50 项）及明确 personal/project 目标，按项复用文件 CAS 和文件夹树移动事务；`rename_folder` 按 folder ID 读取 owner 版本并委托 FolderWriteOperations CAS/Undo/PathMirror。Core 文件组 **61/61**、Host 文件工具 Registry **1/1**、Core build、Web Host production typecheck 通过；Host 用合成 Pool/文件服务验证修改副作用、过期版本拒绝和撤权。真实 PostgreSQL 与完整 HTTP/SSE Run 未验收；移动工具仍缺名称解析/Workspace 目标，文件夹重命名仍缺按名称定位与重名消歧。当前 109 项：完成 **69**、待接入 **0**、部分 **23**、共享/平台依赖 **16**、退役/重设计 **1**。Node-only，无 Python 运行桥接。
+2026-11-18 `send_file` 已接入 Node Web Agent production Registry：Core 工具进入文件组，Host 按每个 dispatch lease 注入 owner 文件库/聊天附件解析和受控图片暂存；外部暂存前核对 owner/session/run/token/fence。Host adapter 经临时 SQLite 和真实临时文件验证 owner 读取、越界拒绝及 lease 失效时无暂存副作用；模拟图片响应与暂存验证有效租约产物。Host Registry/dispatch/lease 定向回归 **31 通过、6 跳过**（需要隔离 PostgreSQL），Core 图片/投递 **26/26**，Web Host production typecheck、diff 检查通过。真实 PostgreSQL、IM 投递和完整 HTTP/SSE Run 尚未验收，按部分实现记入 [`node-agent-tools-parity.md`](../testing/node-agent-tools-parity.md)。2.0 仅迁入 Node，不做 Python 兼容或桥接；Python 后端的最终移除仍需全量 Node 迁移与退出验收。
+2026-11-18 `save_uploaded_file` Node 文件工具组已接入 production Web Agent Registry。Host 按当前 owner/lease 下载附件，复用正式文件上传配额、事务、Undo 和收据；支持 recent/latest、精确单个/批量附件，目标 personal/project。可信 workspace 会话绑定未就绪，故 workspace 不开放。Core 文件回归 **62/62**、Host 附件 adapter **1/1**、授权端口 **17/17**、Host Registry/lease 合批 **32 通过、6 个隔离 PostgreSQL 用例跳过**，Core build、Host typecheck 与 diff 检查通过。测试用合成上传事务服务和临时附件文件；真实 PostgreSQL 和 HTTP/SSE Run 未验收，迁移状态与明细见 [`node-agent-tools-parity.md`](../testing/node-agent-tools-parity.md)。只迁入 Node；不新增 Python 兼容或桥接。
+
+2026-11-18 Node RAG 补齐 conversation 引用时间：生产 RAG 资源工厂默认从可信 owner/session 上下文读取时区，并通过统一历史时间 formatter 将持久索引的 UTC 消息时间投影到用户本地时间。Host 资源工厂实际调用 Core 持久索引和 RAG builder **1/1**，确认 `Asia/Shanghai` 输出分钟精度；Core RAG **70/70**，Host RAG/工具/来源 Worker/Jieba **44 通过、7 跳过**，生产 typecheck 通过。Host 测试使用临时 SQLite 和合成 lease/用户时区；隔离 PG/Redis 主链本轮未运行，既有生产主链验收记录不变。未运行 Python pytest 或外部 Provider。Node-only；Python 仅为最终删除目标，不构成兼容需求。
+
+2026-11-18 `list_recent_attachments` Node 文件组切片：Core 严格空参数工具经 Core ToolRegistry 返回 owner 草稿与当前 Web 会话已挂载附件元数据；production Web Reconstructor/Main 按当前 lease 注入 PostgreSQL adapter，并只在端口存在时开放工具。Host adapter/真实注册器 dispatch **2/2**、RAG 工具/授权回归 **18/18**、Core 文件组 **64/64**、Web Host production typecheck 通过。Host 数据库与 lease 依赖为合成对象；已覆盖查询 owner/session、run 身份拒绝、取消和 lease 撤销、非 Web 来源拒绝、错误脱敏及旧版草稿年龄格式。附件媒体正文读取及完整 HTTP/SSE Run 尚未接入/验收，因此仍列部分实现；未运行 Python pytest。109 项状态：完成 **69**、待接入 **0**、部分 **26**、共享/平台依赖 **13**、退役/重设计 **1**。Node-only，Python 不在运行路径。
+
+2026-11-18 `grep` Node 文件工具接线：Core 文件组按逐行字面量搜索、逻辑路径范围、上下文、Base64 省略、8 路有界读取及 128 KiB 结果预算输出命中；Host 查询只返回当前 owner 的活动 personal/project/workspace 登记文件，内容通过 `packages/fs` 授权根读取，路径不接受物理路径。生产 Main/Reconstructor、静态白名单、per-lease ToolRegistry 和复验授权已接通。Core `files.test.ts` **67/67**、Host adapter/dispatch **2/2**、Host 工具/授权/注册回归 **49/49**、Core build、Web Host production typecheck 和 `git diff --check` 通过。Node Host 用例用临时文件及合成 Pool；真实 PostgreSQL/HTTP-SSE Run 与全量 Python pytest 对照统一后续验收。当前工具总数 109：完成 **70**、待接入 **0**、部分 **26**、依赖共享能力或平台 **12**、退役/重设计 **1**。Node-only，无 Python bridge/fallback/双运行时。
+
+
+2026-11-19 `create_workspace` Node 工具切片：Core 严格校验 directory/project/folder 互斥目标，经 Web per-lease Registry 和授权进入 Host；Host 复用现有 PostgreSQL 声明创建、Workspace 顶层目录创建和共享读取投影。Core ToolRegistry dispatch **2/2**、Host Registry→lease adapter 回归 **2/2**、RAG 权限/注册回归 **49/49**、Web Host production typecheck 通过。三类领域依赖使用合成服务，未运行真实 PostgreSQL 或 HTTP/SSE Run；现有创建服务没有 Agent 持久操作收据，故列为部分实现。Python pytest 未运行；2.0 只运行 Node，Python 是最终移除目标，不保留桥接或回退。109 项：完成 **70**、待接入 **0**、部分 **27**、共享/平台依赖 **11**、退役/重设计 **1**。
+
+2026-11-19 `create_workspace` 持久调用回执补齐：Host adapter 注入 Core receipt runtime 与生产 Pool，校验当前 Web dispatch lease；按稳定 reservation/result operation ID 先持久预留、再调用共享 workspace creator、最后保存完整结果。重复调用/并发/进程恢复不重复创建；改参冲突和 reservation 后结果未知均保持 unknown，不伪报成功。Core ToolRegistry **3/3**、Host Registry→lease→SQLite receipt adapter **4/4**、Core build 通过。Node 测试用临时 SQLite、合成 Pool/lease 与领域服务；未验收真实 PostgreSQL 或完整 HTTP/SSE Run，`create_workspace` 仍为部分实现，工具状态计数不变。Node-only；没有 Python bridge/fallback。
+
+
+2026-11-19 `delete_folder` Node 文件工具切片：Core 注册稳定 ID 的软删除工具；Web Host per-lease adapter owner 查询后调用既有 PostgreSQL `FolderDeleteOperations`，复用级联软删、文件移入 30 天回收站、Undo 和 PathMirror rollback。Core ToolRegistry 行为 **2/2**、Host adapter dispatch/lease **2/2**、授权/注册/RAG 合批 **52/52**、既有 `folder-delete-postgres.test.ts` **2 通过、1 个隔离 PostgreSQL 用例跳过**；Core build、Web Host production typecheck 和 `git diff --check` 通过。Host adapter 用合成 Pool/操作端口；按名称定位、批量原子删除、Agent 持久调用收据和真实 PostgreSQL/HTTP-SSE Run 未接入/验收。109 项当前：完成 **70**、待接入 **0**、部分 **28**、共享/平台依赖 **10**、退役/重设计 **1**。Node-only，不保留 Python 兼容或运行桥接。
+
+2026-11-19 `save_uploaded_file` workspace 落点接入：Core 工具支持 `space=workspace`，Host 通过共享会话 Workspace reader 解析 owner 当前绑定或默认目录，上传事务重新锁定 session 并拒绝已重绑定的目录；不向模型暴露 workspace directory ID，也不回退到 personal。Core 文件工具 **67/67**、Host 附件 Registry dispatch **2/2**、Host 注册/授权合批 **50/50**、Web Host production build 通过。验证依赖为合成 Pool/Kysely query adapter、上传端口与临时附件文件；全量 Host typecheck 受本切片外既有测试类型错误阻断，真实 PostgreSQL 和 HTTP/SSE Run 未验收，状态仍为部分实现。Node-only，Python 仅作历史行为参考。
+
+2026-11-19 `delete_file` Node 文件切片：Core 接受稳定 `file_id` 或 1-50 个唯一 `file_ids`，Web Host per-lease Registry/授权复用正式 `FileDeleteOperations` 单项或原子批量软删除，写入回收站、Undo 和变更通知。Core 文件工具 **68/68**；Host 删除工具组 **5/5**、附件保存 **2/2**、Registry/授权/生产端口合批 **56/56**；文件删除领域回归 **8 通过、2 个隔离 PostgreSQL 用例跳过**；Core 与 Web Host production build 通过。验证使用合成 Pool/领域端口；真实 PostgreSQL、磁盘事务和 HTTP/SSE Run 未验收；路径定位与 Agent 持久收据未接入，故列部分实现。109 项：完成 **70**、待接入 **0**、部分 **29**、共享/平台依赖 **9**、退役/重设计 **1**。Node-only，Python 仅作历史行为参考。
+
+2026-11-19 `compress_files` / `extract_files` Node 文件组切片：Core `files.ts` 定义并校验两个工具；Web per-lease Host Registry/Main 注入正式 PostgreSQL/Local 文件归档操作，owner 与活动 dispatch lease 在业务事务内复核。复用同空间校验、512MB 压缩源限制、配额、ZIP/TAR 路径穿越防护、10,000 条目及 2GB 解压上限、重名保留与资源发布；结果维持旧工具字段及 100 项 ID 采样。Agent 工具调用以 owner/Run/轮次/tool-call ID 和参数指纹生成回执，并与归档/解压数据库副作用原子提交；恢复只读已提交回执，缺失时返回 `unknown`；提交应答丢失也保留 `unknown` 供 Run 收据恢复，不转成普通失败。Core 文件工具 **77/77**，Host 归档 lease/恢复定向回归 **5/5**，隔离临时 PostgreSQL 归档/解压事务回归 **1/1**，Core build 与 Web Host production build 通过。测试覆盖重复压缩/解压、COMMIT 应答丢失后 receipt 恢复且不重复副作用；合成 Pool 覆盖 lease 授权、回执构造和恢复结果映射。真实部署 PostgreSQL/磁盘、HTTP/SSE Run 恢复及执行中取消的生产集成仍未验收，两个工具维持部分实现。测试临时数据库、Storage 与 archive staging 均已清理。当前工具统计 **109 项：已完成70、待接入0、部分31、共享/平台依赖7、退役/重设计1**。未运行 Python pytest；Python 只作为历史业务参照，不是 2.0 运行、构建或验收依赖，最终目标删除 Python 后端。
+
+2026-11-19 Node-only RAG 复验：确认正式 Host 已在每个可信 lease 中装配自动 RAG、`search_conversations`/`search_memory` registry、正式索引 Worker、八类来源、Jieba、owner-bound 向量与 Web owner 记忆写入链；不增加 Python 兼容、桥接、回退或双运行时。Core RAG **70/70**，Host 定向调用回归 **40 通过、2 跳过、0 失败**，Core build、Web Host production build 与 diff 检查通过。隔离 HTTP/SSE Agent 主链本轮尝试因测试 schema 未包含认证写门查询表而首次返回 503；只在该集成夹具中补了 `data_import_jobs` 最小列后重跑，流程进入持久恢复阶段，但隔离 PostgreSQL 在恢复期间因磁盘空间不足（仅剩约 422 MiB）报 `No space left on device`，本轮主链未通过。临时数据库/Redis/目录已清理；未运行 Python、未调用真实 Provider。该失败不计为 RAG 行为回归失败，也不计作生产主链验收；需要在有足够空间的隔离 PostgreSQL/Redis 环境重跑。
+
+
+2026-11-19 `unlink_workspace` Node 工具切片：Core 工具组使用持久操作收据，工具调用先建立 owner 绑定的确认意图，确认后在同一收据事务复核 owner、名称和 kind，再复用工作区删除用例解绑声明、会话及普通任务；项目、目录、文件夹、文件和日历提醒保留。Web per-lease Registry、活动 lease 授权及 Main 装配已接通。Core 临时 SQLite ToolRegistry 行为回归 **7/7**（含原 workspace update 5 项），Host RAG/lease 回归 **21/21**、配置白名单/Registry 回归 **29/29**，Core build、Core typecheck、Web Host production typecheck 和 `git diff --check` 通过。确认依赖为合成凭据；真实 PG/Redis 确认恢复和完整 HTTP/SSE Run 未验收，因此 `unlink_workspace` 记录为部分实现。2.0 使用 Node-only 实现，不加 Python 兼容、桥接或回退；Python 仅保留为历史行为参考。当前 109 项：完成 **71**、待接入 **0**、部分 **32**、共享/平台依赖 **5**、退役/重设计 **1**。
+
+2026-11-19 `delete_workspace_directory` Node 工具接入：Core 确认摘要绑定目录标识、显示名、物理目录键和文件/文件夹/会话/任务计数；Web per-lease Registry、授权白名单及 Main 装配复用现有目录预览和删除服务。确认先写持久预留收据，未知结果只读回执，不重放物理删除。Core 工作区 ToolRegistry **9/9**，Host RAG/授权/注册/目录删除 **51/51**，Web Host production typecheck 与 `git diff --check` 通过。工具状态由依赖阻塞更新为部分实现；测试使用临时 SQLite 收据、合成 lease/Pool/确认端口和目录操作服务，真实 PostgreSQL/Redis、磁盘事务及 HTTP/SSE Run 未验收。本轮 Core 全量 build/typecheck 受当前安装缺失的 `mammoth`、`fflate` 阻塞，未运行 Python pytest。2.0 只运行 Node/TypeScript，不保留 Python 兼容层、桥接或回退，最终目标删除 Python 后端。109 项：已完成 **71**、待接入 **0**、部分 **33**、共享/平台依赖 **4**、退役/重设计 **1**。
+
+2026-11-19 `undo_last_action` Node 接入：Core `tools/undo.ts` 提供空参数契约；Host 按可信 owner/session/run 上下文选中并持久固定最近 Undo operation，复用既有 Node Core/Host Undo 状态机。每次操作复验 lease，确认工具 ID 不由模型提供；收据恢复在提交未知时仍定位同一个 operation。Core Undo 工具 **2/2**、Host Undo adapter **1/1**、工作区/RAG/Registry 合批 **53/53**、Web Host production typecheck 与 diff 检查通过。测试使用临时 SQLite、合成 Pool/lease 和 Undo 服务。Host 当前未给 Agent 撤销装配项目本地目录恢复存储，对应项目 Undo 明确返回不可用；真实 PG/Redis、完整 HTTP/SSE Run 未验收，工具列部分实现。本轮未运行 Python pytest；2.0 只运行 Node/TypeScript，不做 Python 兼容、桥接或回退，最终目标删除 Python 后端。109 项：已完成 **71**、待接入 **0**、部分 **34**、共享/平台依赖 **3**、退役/重设计 **1**。
+
+2026-11-19 `undo_last_action` 项目存储补接：Agent 与 Web Undo 的 Main 装配现在传入既有 Node 项目回收存储和受授权根约束的目录移动端口，项目撤销具备本地文件恢复能力。Host Agent Undo 收据及项目 Undo/临时 SQLite/临时文件系统定向回归 **5/5**，Web Host production typecheck 与 `git diff --check` 通过。真实 PostgreSQL/Redis 和完整 HTTP/SSE Run 尚未验收，工具仍为部分实现；本轮不运行或依赖 Python，109 项状态数不变。
+
+2026-11-19 `undo_last_action` 项目撤销工具路径补齐：虽然生产 Main 已注入 Node 项目回收存储和目录移动端口，Agent Host 端口仍硬拒绝 `projects` 资源；现已允许项目 Undo 经既有 Host 状态机执行，保持操作收据固定目标与 lease 复核。Agent Undo 路由及项目状态机定向 Node 回归 **4/4**；真实 PostgreSQL/Redis 与完整 HTTP/SSE Run 仍待统一验收，因此不升级工具整体状态。本次只运行 Node 测试，不接 Python 兼容层。
+
+2026-11-19 `permanent_delete` Node 工具接线：Core `trash.ts` 严格要求 `all=true`，读取当前 owner 快照并通过持久 confirmation gate 请求用户确认；确认后 Web Host 复核 owner/session/run lease 及文件/目录 tombstone 摘要，以 Core SQLite/SQL operation receipt 去重，再复用 Host `startEmpty` 创建 owner purge job。既有 Node Worker 负责持久分批删除、租约恢复和进度发布。生产 Main、per-lease ToolRegistry、静态白名单及 RAG 发现/执行授权已接通；空回收站无确认/副作用，确认前不排任务。Core 回收站 ToolRegistry **6/6**，Host purge adapter 与既有 PG purge job 行为 **5/5**，Core build、Host production typecheck 和 `git diff --check` 通过。测试依赖为临时 SQLite receipts 与合成 Pool/lease/确认/job 端口；隔离 PostgreSQL、Redis 唤醒、完整 HTTP/SSE Run 尚未验收，故记为部分实现。当前 109 项：已完成 **71**、待接入 **0**、部分 **35**、共享/平台依赖 **2**、退役/重设计 **1**。2.0 仅运行 Node/TypeScript，不接 Python 后端。
+
+2026-11-19 RAG 生产主链及回收站清空迁移复验：Node Web Host 增加正式 `trash_purge_jobs` schema migration 和 `migrate:trash-purge:check/apply`；启动时检查迁移状态，只有迁移已应用且 Linux 安全文件后端可用时才启用 `permanent_delete` 与清空 Worker。其他平台的 HTTP 清空入口显式返回 503，不创建无消费者的 job。隔离临时 PostgreSQL/Redis 上，正式 `startServer → HTTP/SSE → 会话写入 → conversation 索引 Worker → search_conversations ToolRegistry` **1/1**，验证 owner 内容可召回且排除异主；回收站 migration/job 行为、RAG Registry/工具及路由合批 **24 通过、1 跳过**，跳过项是 Linux 目录句柄安全暂存（当前运行平台 macOS）；独立路由/RAG/工具批次 **28 通过、1 个无隔离 PG 用例跳过**。Web Host production typecheck 和 `git diff --check` 通过。未运行 Python pytest、未调用真实付费 Provider 或部署服务；临时 DB/Redis/目录均已清理。`permanent_delete` 完整 HTTP/SSE 确认后恢复本轮仍未验收：探测中 confirmation 已消费但没有创建 purge job，checkpoint 最终呈 unknown，故工具保持部分实现，不宣称销毁调用链闭合。2.0 只运行 Node/TypeScript，Python 仅作历史行为参考并最终删除，无 Python bridge、fallback 或双运行时。
+
+2026-11-19 付费搜索工具 Node 可用性切片：为 `deep_research` / `similar_image_search` 新增 Node 管理的 `search_usage` 迁移和 `migrate:search-usage:check/apply`；迁移会严格校验并登记结构匹配的既有用量表，保留已有额度记录，结构不匹配则拒绝。生产启动检查迁移状态，未应用时两项付费工具不进入 per-lease Registry；已存在的普通 `web_search` 不受影响。现有 Core provider/参数、Host 凭据解密、图片 owner 校验、活动 Run 授权、持久配额预留/结果收据和安全出站端口接入生产 Run。Node `agent-search.test.ts` 与迁移测试在临时 PostgreSQL、合成 Provider/图片依赖下 **9/9 通过**，覆盖真实工具 dispatch、owner/lease 隔离、并发配额及未知结果不重复付费外呼、迁移新建/安全接管/拒绝不兼容结构；Web Host production typecheck 与 diff 检查通过。未调用真实付费 Provider 或公网，不运行 Python pytest；真实账号凭据、外部服务和部署留待统一验收，两项继续按部分实现统计。2.0 只运行 Node/TypeScript，不新增 Python 运行桥或双运行时。
+
+2026-11-19 `permanent_delete` 确认恢复闭环补齐：新增 Node migration `trash_purge_agent_operations`，以 owner 和稳定 Agent 操作 ID 将确认快照、purge job 与可恢复关联写入；job 与关联同 PostgreSQL 事务提交，结果写入收据前进程退出时可按同一快照/操作 ID恢复；若快照改变则不排任务。Agent ToolPort 在确认预留后首次 job 提交失败时，从持久预留读取确认快照并重试，同一操作重放读取同一个 job。定向 Host Node 测试 **7 通过、0 失败、2 跳过**，覆盖首次提交中断恢复、稳定 job 关联、快照漂移拒绝、owner 与确认门；跳过的 migration/Worker 集成均需隔离 PostgreSQL。Core build 通过；Web Host 全量 `tsc` 仍因其他 admin、scheduled-task 等测试类型错误失败，本次工具/迁移文件未出现在错误中。未验收真实 PostgreSQL/Redis、完整 HTTP/SSE Run 或部署，`permanent_delete` 仍列部分实现。全程 Node/TypeScript，不运行 Python。
+
+2026-11-19 定时群任务启用共享 Node `search_memory`：复用 Core RAG memory loader、正式 Jieba 装配、共享工具契约和群 scope tombstone/revision 查询。每次执行按同一 scheduled task/run 重新核对已绑定 owner/platform/bot/group；后台任务没有当前 IM 发送者，故拒绝 owner 私人及跨群 scope，只在当前群进行 BM25 召回。真实 Core ToolRegistry 用例验证命中当前群正文、异主/异群不可见、范围撤销、owner/run 伪造和不允许的 scope；Core RAG/群工具 **13/13**，Web Host Runtime **3 通过、2 跳过**（缺隔离 PostgreSQL/Redis），Core build 和 Web Host production typecheck 通过。生产 PG/Redis 定时任务群主链未验收，`search_memory` 总体仍属部分实现；本轮不使用 Python。
+
+2026-11-19 `read_file` 扩展 Node Office 文本读取：Web Host 继续用 owner-scoped 文件行解析和 `packages/fs` 授权根打开文件；Core 复用正式 Node Office 提取器读取 PDF、DOCX、XLSX/XLS、ODS、PPTX、ODT/ODP、RTF，30 MiB 单文档上限，结果仍按提取正文物理行号选择并受批量 64 MiB 上限约束。Core 文件/Office 回归 **92/92**，Host production ToolRegistry 实际读取临时 PDF **1/1**，Web Host production typecheck 通过。测试使用临时存储和合成 owner DB 查询；真实 PostgreSQL/HTTP-SSE Run 留待统一回归。未运行 Python。
+
+
+2026-11-19 `edit_file` 补齐可调用编辑操作：Core `files.ts` 接受 owner 文件 ID 或文件库逻辑路径，支持全文替换、追加、查找替换、按行替换/删除及最多 20 项批次；数字行修改要求 `expected` 校验原文，范围重叠拒绝，批次逐项报告失败，任一写入结果未知时不伪报普通失败。Web Host 在当前 lease 下复用 owner 文件清单解析路径，再经 owner 文件查询和现有文件内容 CAS/Undo 事务更新。Core ToolRegistry **73/73**，覆盖行修改/删除、原文及重叠校验、批次部分失败、owner 隔离；Host per-lease Registry 真实临时文件行为 **1/1**；Core build 与 Web Host production typecheck 通过。测试使用临时目录、合成 Pool/文件清单/文件事务；真实 PostgreSQL 与完整 HTTP/SSE Run 留待集中验收。本轮未运行 Python pytest。
+
+
+2026-11-19 `create_file` 批量与可信工作区目标补齐：Core 文件组支持最多 20 项创建并逐项返回成功/失败，每项派生稳定工具调用 ID 供 Host 收据去重；单文件 UTF-8 上限 256 KiB，按扩展名拒绝 PDF/Office 二进制伪写。Host workspace 目录从当前 owner/session 的可信绑定读取，上传事务锁定 session 后复核目录未变；不接受模型提供 workspace directory ID。Core files ToolRegistry **74/74**；Host create batch/文件字节/lease/独立收据/重放 **1/1**，既有 Host 单文件创建回归 **1/1**，Web Host production typecheck 通过。测试使用临时暂存目录、合成 Pool/上传事务；真实 PostgreSQL 与 HTTP/SSE Run 留待统一验收。Node-only，本轮未运行 Python pytest。
+
+2026-11-19 RAG Node 生产主链复验收：Host RAG/来源 Worker/Jieba/资源组在临时 PostgreSQL 与 Redis 下 **48 通过、1 跳过**（Linux 安全原子写），Core RAG **70/70**。隔离临时 PostgreSQL cluster/schema、Redis、owner 文件目录和本机合成 Provider 上，真实 `startServer → HTTP/SSE → 持久 dispatch → Reconstructor → ToolRegistry` **1/1 通过**，验证 Node 索引 Worker、两个 owner 的隔离及 `search_conversations` 实际命中。本次通过覆盖此前受磁盘空间影响而失败的尝试；并非生产数据/外部 Provider 验收。文件工具 `create_file`/`edit_file` Core **74/74**、Host 实际调用 **3/3**，Web Host production typecheck 与 diff 检查通过。2.0 仅运行 Node/TypeScript，Python 不是兼容或运行目标。
+
+2026-11-19 `read_file(attach_id)` 增加 owner 历史文本/PDF/Office 附件读取：Core 单项与批量 schema、来源互斥、UTF-8/行范围和 32/64 MiB 限制经实际注册器执行；Web per-lease adapter 按 owner 与附件 ID 查询 `chat_attachments`，随后经 `packages/fs` 授权根读取。Core `files.test.ts` **75/75**，Host Core Registry→Host adapter→临时附件文件 **1/1**；异主 Run 在查询前拒绝。历史图片/音频/视频仍需 Node 媒体解析与模型能力端口，URL 图片和 system scope 也未接入；不返回假成功。真实 PostgreSQL/HTTP-SSE Run 与部署验收留到统一阶段，本轮仅跑定向 Node 回归。
+
+2026-11-19 `list_dir` Node 文件库路径与筛选切片：Core `list_dir` 支持 `file_path=/personal`、`/project/{项目名}`、`/workspace/{工作区名}` 文件库登记路径，拒绝宿主路径、越界片段及与显式空间/过滤字段混用；Core 最多规范化 8 个关键词并传递 OR/AND，Host PostgreSQL 浏览服务安全绑定关键词、返回准确过滤总数。Host per-lease 端口按可信 owner 精确解析项目、工作区和逐层文件夹 ID，再复用既有文件浏览服务；生产 Main 注入 PostgreSQL 池。Core 文件组 **77/77**；Host 实际 ToolRegistry→owner SQL/文件分页 SQL **3/3**，覆盖路径、查询、total 及异主 lease 在 SQL 前拒绝。测试 SQL 使用合成 Pool；真实 PostgreSQL/HTTP-SSE Run 留待统一回归。旧版 Shell `scope=logical` 用户根、system scope、偏移分页和全量文件夹列表语义未迁移，不开放宿主路径。
+
+2026-11-19 `compress_files` / `extract_files` 持久调用收据补齐：Core 工具把稳定 Run 轮次与 ToolCall ID 交给可信 Host；Host 按 owner/Run/轮次/调用 ID/参数指纹生成收据，PostgreSQL 归档与解压服务将收据和业务变更放在同一事务。精确重试读取原结果；COMMIT 应答丢失返回 `unknown`，恢复只读收据、不重放文件副作用。Core 文件工具 **77/77**、Host lease/恢复行为 **5/5**、临时隔离 PostgreSQL 归档/解压/重复调用/提交未知恢复 **1/1**，Core build 与 Web Host production build 通过。使用临时 PostgreSQL cluster、schema、存储目录及合成 lease/Provider，临时目录已清理；没有运行 Python。正式部署数据库及完整 HTTP/SSE Run 验收仍未完成，两项维持部分实现。2.0 只有 Node/TypeScript 执行路径；Python 仅作历史行为参照，最终目标删除 Python 后端。
+
+### Web Host 旧目录收敛
+
+| 旧域 | 迁移边界 |
+| --- | --- |
+| terminals | 已并入 `modules/terminals/persistence/`。Host 保留 PostgreSQL、偏好和 MXC 接线，继续调用 Core 终端用例。生产入口、测试与测试元数据已更新。 |
+| admin、auth、mind、files | 分别合并到现有同名模块。保留 Web 认证、协议、平台和数据库装配，逐用例检查 Core 的现有规则与事务。 |
+| agent-config、agent-sessions | 模型配置归 Agent/BYOK 对应模块，运行装配归 Agent 会话模块。共享运行时和工具归 Core，避开并行工具修改。 |
+| preferences、projects、workspaces | 按业务建立对应模块。跨端偏好、项目与工作区规则归 Core，Host 保留部署与授权接线。 |
+| undo | HTTP 与 PostgreSQL 协调归 Undo 模块，复用 Core 状态机及领域适配，逐项确认项目恢复日志、文件存储及日历索引依赖。 |
+
+终端目录迁移已在 devserver 核对移动文件、调用方及测试文件的内容摘要。Node 定向回归 27/27，Web Host 生产源码类型检查通过。该切片沿用已有 Python 行为对照，未复跑 Python，也未新增数据库、真实 PTY 或部署验收。
+
+偏好模块已从 `domains/preferences/` 迁入 `modules/preferences/`。Host 保留 Fastify 路由、PostgreSQL、Local 文件与 SMTP 接线，复用 Core 偏好服务、校验和文件契约。Agent 上下文直接从 Core 引用文件契约。devserver 核对迁移文件及调用方摘要，偏好回归 21 通过、2 跳过，生产源码类型检查通过。未复跑 Python 或验收真实 SMTP、正式 SQLite 与部署。
+
+Mind 的画布和便签读取及写入路由已并入 `modules/mind/`，与引用建议路由同域。Fastify 的认证、DTO 和错误映射仍由 Host 负责，共享读取、写入与 Undo 事务仍调用 Core。devserver 核对迁移文件、组合根和测试摘要后，Mind 回归 43 通过、9 跳过、0 失败，生产源码类型检查通过。隔离 PostgreSQL 用例未执行，本轮未复跑 Python 或验收部署。
+
+Undo 已迁入 `modules/undo/`。Fastify 路由、PostgreSQL 事务协调、项目恢复日志和 Local 适配留在 Host，继续调用 Core Undo 状态机及领域适配。项目恢复 Worker 和记账事务、Agent Undo、文件适配及测试均改为直接引用新位置。项目恢复仍使用项目域的存储与路径移动实现，待项目域迁移时更新依赖。devserver 核对内容摘要后，Undo 定向回归 25 通过、15 跳过、0 失败，生产源码类型检查通过。跳过项依赖隔离数据库，本轮未复跑 Python 或部署联测。
+
+Agent 模型配置已归入 `modules/agent/model-config/`。Host 保留配置快照、凭据解密、PostgreSQL 凭据读取和 Provider 绑定，继续委托 Core 已有配置与模型规则。生产、测试及元数据引用已切换，仍有两处会话使用量类型依赖，随 Agent 会话域收敛处理。devserver 内容摘要一致，定向回归 14 通过、17 跳过、0 失败，生产源码类型检查通过。未复跑 Python 或进行真实 Provider 联测。
+
+工作区声明与绑定已迁入 `modules/workspaces/`，包含 HTTP 路由和创建、更新、读取、删除、绑定五个 PostgreSQL 适配器。组合根及 Agent 确认删除调用方已切换。继续复用 Core 声明和绑定用例，保留 Host 的可信身份、SQL 与事务装配。旧目录仅余两个 `workspace-directories.ts` 文件，保留其并行修改。devserver 核对本批文件摘要后，工作区回归 22 通过、9 跳过、0 失败，生产源码类型检查通过。未复跑 Python，也未验证正式 SQLite 或部署。
+
+Admin 的 14 个路由、认证和服务文件已并入 `modules/admin/`，生产入口和测试直接引用新位置。保留现有 Fastify 管理权限、Core 委托及 Host PostgreSQL/配置适配。旧目录仅保留有并行修改的 `admin-config.ts`。devserver 核对内容摘要，生产源码类型检查通过，审计、安全事件、运维摘要、感知及提示词定向回归 24/24。完整 Admin 批次仍需确认退出结果，未复跑 Python 或验证部署。
+
+项目 HTTP 路由及项目读取适配已迁入 `modules/projects/`。共享读取和文件数统计继续由 Core 提供，Host 保留认证、DTO 与 PostgreSQL 接线。生产入口、Agent 文件概览、旧项目更新和回收站调用方已切换。devserver 定向回归 13 通过、4 个隔离 PostgreSQL 用例跳过。修正相对引用后，生产类型检查仅剩并行 Agent 文件删除端口与 Core 类型不一致。项目写入、存储及恢复仍待分批迁移。
+
+项目 Local 存储、路径移动、回收站路径元数据和提交后事件适配共五个文件已归入 `modules/projects/persistence/`。生产组合根和 Undo 恢复调用方已改用新位置。删除项目回收站的旧 Host 转发，调用方直接使用 Core 用例与契约。devserver 核对文件摘要后，存储、回收站、更新、事件及恢复日志定向回归 54/54。生产类型检查仍报并行 Agent 文件删除端口签名不匹配。未复跑 Python 或执行真实 PostgreSQL 恢复联测。
+
+项目过期清理 Worker 入口已迁入 `modules/projects/`，生产组合根和测试直接引用新位置。PostgreSQL 清理及恢复适配保留在原路径，等待并行修改收尾。devserver 核对文件摘要，Worker 回归 3/3（默认关闭、停止等待在途恢复、锁释放后重试）；生产类型检查仍受 Agent 文件删除端口的签名冲突阻断。未复跑 Python 或真实 PostgreSQL 清理。
+
+认证邮箱变更和密码重置已迁入 `modules/auth/`，继续复用现有 Core 规则和 Host PostgreSQL 事务。SMTP 发送适配由认证、偏好和反馈共享，迁入 `adapters/smtp-email.ts`。生产入口与测试引用已更新。邮箱变更和密码重置仍依赖旧认证域限流端口，随认证域后续切换。devserver SSH 在握手阶段超时，本批远端摘要核对及回归尚无结果。
+
+认证限流已迁入 `modules/auth/rate-limit.ts`。登录、注册、邮箱变更、密码重置和 Redis 接线直接引用新路径，保留原有键、窗口和故障行为。静态引用核对及 diff 检查通过。devserver 验证已启动，整批结果待确认。
+
+用户配额路由与 PostgreSQL 读取适配已迁入 `modules/auth/`，认证契约和组合根改用新路径。devserver 核对内容摘要后，首次配额及限流合批受 Core data-portability 构建产物缺失影响，隔离 PG 配额用例跳过。此前邮箱变更、密码重置和 SMTP 批次 17/17。已启动 devserver Core 重建及认证复验。
+
+头像路由及 PostgreSQL/Local 适配已迁入 `modules/auth/`，生产组合根和测试直接引用新位置。用户响应和账号仓储仍引用旧认证域的现有实现。devserver 文件摘要一致，头像批次已启动，隔离 PG 头像用例跳过。此前 Core 重建完成，认证配额、限流、登录和注册验证码复验 22 通过、1 个隔离 PostgreSQL 用例跳过，生产源码类型检查通过。
+
+注册邮箱解析已归入 `modules/auth/email.ts`。沿用注册专用长度及格式契约，注册与验证码路由直接引用。devserver 摘要一致，验证码回归 6 通过，注册 PostgreSQL 4 跳过。上一批头像回归 3 通过、2 个隔离 PG 用例跳过，生产类型检查因并行 Agent 文件删除端口缺少 `resolveFilePath` 声明失败。
+
+账号仓储、注册事务、Redis 注册验证码及会话撤权适配已迁入 `modules/auth/persistence/`，旧认证 persistence 目录已删除。生产入口、头像、Redis 事件和验证码路由已切换。devserver 摘要一致，回归 12 通过、4 个隔离 PostgreSQL 用例跳过。生产类型检查仍仅报并行 Agent 文件删除端口缺少 `resolveFilePath` 声明。
+
+2026-11-19 `delete_file` 逻辑路径 Node 切片：Core/Host 在真实 ToolRegistry 调用中支持 `file_id`、单个登记逻辑路径和批量 `file_ids`；逻辑路径由当前 owner 的文件清单精确解析，只可访问 `/personal`、`/project`、`/workspace`，拒绝宿主路径和 `..`，未匹配或不唯一时不调用删除。删除继续复用 owner/lease 复核、同事务持久收据、Undo 与回收站。Core `files.test.ts` **77/77**，Host ToolRegistry/文件删除 **8/8**，Web Host production build 通过。Host 端口为合成清单/Pool/删除服务；真实 PostgreSQL 与完整 HTTP/SSE Run 未验收，故维持部分实现。本轮未运行 Python pytest；Node-only，不保留兼容、桥接或回退。
+
+批量文件及文件夹下载的两个 HTTP 路由与 PostgreSQL/Local ZIP 适配已并入 `modules/files/`。组合根与测试直接引用新位置，仍复用现有 owner 校验和受限文件读取。devserver 摘要一致，认证 ZIP 路由回归 1/1，两个隔离 PG 用例跳过。生产类型检查仍报 Agent 文件删除端口缺少 `resolveFilePath` 类型声明。
+
+文件读取路由及 PostgreSQL/Local 读取适配已迁入 `modules/files/`。批量下载、附件工具及组合根等调用方已切换，继续复用 Core 授权读取及相对引用解析。devserver 核对文件摘要后，定向回归 9 通过、3 个隔离 PostgreSQL 用例跳过。覆盖属主、范围、路径穿越和符号链接边界。
+
+2026-11-19 `rename_file` 登记逻辑路径 Node 切片：Core/Host 实际 ToolRegistry 支持 `file_id` 或 `file`，后者由当前 owner 文件清单经 lease 绑定后唯一解析，删除/改名均不接触宿主任意路径；版本 CAS、Undo 和文件更新复用既有 Host 文件域。Core 文件组 **77/77**、Host 文件工具生产 registry **1/1**、Web Host production build 通过。测试使用合成 owner 文件清单、Pool 和更新端口；真实 PostgreSQL/HTTP-SSE Run、旧版按名称消歧及扩展名规则未验收，故维持部分实现。本轮未运行 Python pytest，Node-only。
+
+文件内容和冲突检查的 HTTP 路由及 PostgreSQL/Local 适配共四个文件已并入 `modules/files/`。生产和测试调用方已切换，现有路径锁和写入记录保持原样。旧路径引用及 diff 检查已完成，devserver 摘要与定向回归待返回。
+
+2026-11-19 `copy_file` 登记逻辑路径 Node 切片：源文件可按 `file_id` 或 owner 文件清单经当前 lease 唯一解析的逻辑路径定位；拒绝宿主路径、越界和不唯一目标，随后复用现有文件复制领域事务、显式目标空间、keep_both、Undo 与 owner 校验。Core 文件组 **77/77**、Host 文件工具生产 registry **1/1**、Web Host production build 通过。测试依赖合成 owner 清单/Pool/复制端口，真实 PostgreSQL 与完整 HTTP/SSE Run 未验收，维持部分实现；本轮未运行 Python pytest，Node-only。
+
+文件夹读取路由与 PostgreSQL 适配已并入 `modules/files/`，组合根及测试已切换。静态引用与 diff 检查通过。同步仍在应用变更，远端一度还存在旧文件，需待摘要一致后计入回归结果。
+
+文件复制和元数据更新的 HTTP 路由及 PostgreSQL/Local 适配共四个文件已并入 `modules/files/`。组合根、Agent 调用及测试直接引用新位置，保留路径锁、物理补偿与配额记账接线。旧路径及 diff 静态检查通过，devserver 同步、摘要核对和回归已发起。
+
+文件恢复的 HTTP 路由和 PostgreSQL/Local 适配已并入 `modules/files/`，生产入口与 Agent 回收站恢复均直接引用新位置。旧引用检查与 diff 检查通过，devserver 正在同步及验证。上一批文件夹读取摘要核对发现组合根与本地不同，测试未启动，待同步收敛后重新核对。
+
+文件夹写入路由与 PostgreSQL 适配已并入 `modules/files/`，生产和 Agent 调用方直接引用新路径，保留现有事务与本地路径补偿。静态引用及 diff 检查通过。文件内容上一轮回归执行期间同步切换了组合根依赖，出现旧路径导入失败，不能作为行为验证。已发起摘要核对后的文件域合批复验。
+
+2026-11-19 `move_items` 文件逻辑路径 Node 切片：Core 与 Web per-lease Registry 支持文件 ID/登记逻辑路径逐项移动，Host 复用 owner 文件清单解析和既有 CAS/文件夹移动服务；歧义或不存在的路径按单项失败返回，不影响其他项，宿主路径及名称猜测拒绝。Core 文件组 **77/77**、Host 文件工具生产 registry **1/1**、Web Host production build 通过。测试使用合成 owner 清单、Pool 与文件域端口；真实 PostgreSQL/HTTP-SSE Run 尚未验收，维持部分实现；本轮未运行 Python pytest，Node-only。
+
+文件 ID、属主存储键和大小展示辅助函数已归入 `modules/files/`。调用方统一直接引用新位置，旧导入目录的属主限制保持原样。devserver 摘要核对后定向 12/12；前一批文件路由合批 33 通过、8 个隔离 PostgreSQL 用例跳过。合批生产类型检查仍受并行 Agent 复制、重命名、删除端口类型不匹配阻断。
+
+Local 路径变更适配与文件夹路径规划已迁入 `modules/files/`。所有调用方直接引用新位置，保留事务补偿、属主边界与不覆盖行为。devserver 摘要一致，路径规划、Local 操作与文件夹写入定向回归 13/13。上一批生产类型检查因 Agent 文件端口签名不匹配失败，本批类型检查尚待结果。
+
+文件配额记账、配额扫描及现有文件写入路径锁适配已迁入 `modules/files/persistence/`。保留事务与旧路径锁行为，调用方直接引用新位置。devserver 核对文件摘要后，配额及正文写入回归 5 通过、1 个隔离 PostgreSQL 用例跳过，当前 Web Host 生产源码类型检查通过。
+
+Agent 会话的敏感交互定位、消息定位、消息历史和工具详情路由共五个文件已迁入 `modules/agent-sessions/`。认证及 HTTP 映射留在 Host，共享查询继续使用 Core。首次回归发现工具详情路由漏迁同目录依赖，补齐后 devserver 摘要一致，定向回归 8 通过、2 个隔离 PostgreSQL 用例跳过，生产源码类型检查通过。消息历史的旧持久适配留待会话存储迁移。
+
+2026-11-19 工作区工具参数验证修正：Core `create_workspace` project/folder 目标 ID、工作区读取/更新/解除绑定 `workspace_id` 统一要求正安全整数；零/负 ID 在 dispatch 参数边界拒绝，不触达 Host。Core 定向回归 **11/11**、Core build 通过；工具状态分类不变，本轮未运行 Python pytest，Node-only。
+
+会话改名和上下文刷新已迁入 `modules/agent-sessions/`。生产组合根与测试已切换，继续委托 Core 会话用例及 PostgreSQL 仓储。devserver 文件摘要一致，定向回归 8 通过、2 个隔离 PostgreSQL 用例跳过，生产源码类型检查通过。
+
+Agent 会话列表、界面标签与命令路由、标签覆盖配置和待处理队列的查询、领取与更新已并入 `modules/agent-sessions/`。Host 保留可信身份和配置接线，沿用现有共享用例。devserver 核对文件摘要，定向回归 22 通过、6 个隔离 PostgreSQL 用例跳过，生产源码类型检查通过。
+
+会话授权路由、凭据交互路由及持久运行 SSE 重放适配已迁入 `modules/agent-sessions/`。组合根和既有运行生命周期已切换引用。授权及凭据持久化仍引用原实现。devserver 核对摘要后定向回归 9 通过、1 个隔离 PostgreSQL 用例跳过，生产源码类型检查通过。
+
+凭据交互 PostgreSQL 适配与可信交互描述已归入 `modules/agent-sessions/persistence/`。生产组合根、凭据路由和确认调用方已切换，保留配置版本复核及事务边界。devserver 核对摘要后，定向回归 2 通过、2 个隔离 PostgreSQL 用例跳过，生产源码类型检查通过。
+
+会话文件授权的 PostgreSQL 服务和 Redis 确认码适配已与路由统一归入 `modules/agent-sessions/`。生产组合根、消息历史与 Redis 命令类型引用已切换。devserver 核对文件摘要后，授权回归 6 通过、3 个隔离 PostgreSQL/Redis 用例跳过，生产源码类型检查通过。
+
+Agent 用量账本 PostgreSQL 适配已迁入 `modules/agent-sessions/persistence/`，聊天、反思、定时执行及模型配置调用方已切换。devserver 摘要一致，用量定向 3 通过、2 个隔离 PostgreSQL 用例跳过。本批生产类型检查受组合根的 `TrustedPromptPorts.filesystemAuthorizationEnabled` 接线缺失阻断。
+
+运行启动、PostgreSQL 租约及 Redis 取消适配已归入 `modules/agent-sessions/persistence/`。生命周期与测试已切换。devserver 核对摘要后定向回归 8 通过、4 个隔离 PostgreSQL/Redis 用例跳过。生产类型检查发现并行授权工具的 Core 导出和调用签名差异，以及新增调用方仍引用旧授权路径。旧引用已更新，完整类型检查需复验。
+
+推理状态加密、PostgreSQL 状态存储和孤儿运行恢复已归入 `modules/agent-sessions/persistence/`。组合根和推理桥接调用方已切换。devserver 核对摘要后，回归 3 通过、4 跳过（隔离 PostgreSQL 或带 cryptography 的 Python）。生产类型检查仅剩并行授权工具的 Core 导出和调用签名差异，上一批旧授权导入错误已消失。
+
+会话规范历史 PostgreSQL 读取与历史基线锁已归入 `modules/agent-sessions/persistence/`。上下文读取、规范写入与测试改用新路径，未改动历史投影或锁逻辑。静态旧路径及 diff 检查通过，devserver 摘要与定向回归待返回。推理桥接仍有未提交改动，留待后续迁移。
+
+2026-11-19 `ask_user` 完整用户沙箱授权交互接线：Core 工具调用 Host 注入的授权端口；生产 Host 绑定当前 Web dispatch lease、授权开关和 owner/session 现存 grant。等待交互由可信 Host 固定授权范围和确认/取消动作，禁止自由文本输入；确认复用既有 PostgreSQL grant 与安全审计事务。Core 交互 **21/21**，Host 注册/授权/提示定向组 **56 通过、3 跳过**，授权副作用组 **7 通过、4 跳过**，Web Host production build 通过。全量 Web Host typecheck 仍受既有测试源码类型错误阻断；隔离 PostgreSQL 端到端授权提示/响应未在本轮运行。`ask_user` 仍部分实现（通用表单及端到端服务验收未完成）。本轮不运行 Python；Python 是 2.0 删除目标后端的历史行为参考，Node 为唯一实现，不设兼容层。
+
+交互所属会话查询、交互消费事务及上下文快照效果适配已迁入 `modules/agent-sessions/persistence/`。组合根、交互响应、运行时与测试直接引用新位置。首次远端摘要检查时同步尚未应用这三个文件，未运行回归，需在同步完成后复验。
+
+群聊提及名称的 Host 解析适配已迁入 `modules/agent-sessions/persistence/`，消息历史继续调用共享 Core 查询。静态检查通过。devserver 首次摘要检查时新文件尚未到达。上一批交互与历史切片复核时仅组合根 `main.ts` 摘要不一致，Mutagen 报告暂存文件权限设置失败，未以该工作树执行组合回归。
+
+聊天附件认领、待处理队列绑定和聊天准备的 PostgreSQL 适配已迁入 `modules/agent-sessions/persistence/`。当前 Web 聊天准备组合直接引用新路径，保留既有 owner、事务及 RAG 入队接线。静态检查通过，devserver 同步及回归已发起，待结果。
+
+会话 RAG 重建任务和 IM 记忆索引变更适配已归入 `modules/agent-sessions/persistence/`。注册播种、重播种、聊天准备、历史写入及生产入口统一引用新位置，保留现有事务入队和清理语义。静态检查通过，devserver 核验待返回。
+
+RAG 索引 Worker 和重建装配已归入 `modules/agent-sessions/`，生产入口直接引用新位置。Worker 生命周期及 Core 索引行为保持原样，仍依赖旧目录的三个工具适配，待其迁移时切换。静态检查通过，devserver 文件摘要、回归和类型检查待返回。
+
+反思证据处理、PostgreSQL 来源、Local 写入及工作装配的四个 Host 文件已迁入 `modules/agent-sessions/persistence/`。模型和 Redis 队列适配保留并行改动，仅更新调用方引用。静态检查通过，devserver 摘要及反思回归待结果。
+
+Web 用户令牌、Cookie/CSRF 认证与退出路由已归入 `modules/auth/`。生产入口、用户仓储及测试直接引用新路径。静态检查通过，devserver 首次摘要检查时两个新文件尚未同步，未启动登录/退出回归。
+
+消息物化、历史引用、关联引用、总览查询、上下文主体、IM 渠道、提示文件及消息时间八个 Host 上下文文件已迁入 `modules/agent-sessions/context/`。Core 查询与上下文规则沿用现有实现，仍在编辑的上下文装配、来源、偏好和附件读取留原位。静态检查通过，devserver 摘要核对及回归待结果。
+
+登录、当前用户、注册和注册验证码路由已归入 `modules/auth/routes/`，移动的三个文件此前仅有本次迁移引入的 import 改动。生产入口、注册事务与测试已切换。旧认证域仍保留并行修改的契约、用户响应及资料路由。静态检查通过，devserver 文件摘要核对与回归待结果。
+
+项目更新、回收站事务与删除恢复 Worker 已迁入 `modules/projects/`。移动前核对差异仅有本目标引入的引用调整。生产入口和测试直接引用新位置，旧项目域仅余带并行修改的过期清理 PostgreSQL 适配。静态检查通过，devserver 摘要和回归待返回。
+
+归档路径校验、大小限制和 MIME 处理已移至 `modules/files/file-archive-rules.ts`。现有归档事务仅更新导入路径，保留并行修改。静态检查通过，devserver 摘要核对与归档规则回归待返回。
+
+RAG Worker 使用的 Local 记忆索引、PostgreSQL 索引范围和 Jieba 初始化适配已并入 `modules/agent-sessions/tools/`。RAG Worker 的三个旧工具依赖已切换，同时更新定时执行、记忆上下文以及会话检索调用方。静态检查通过，devserver 回归待结果。
+
+MCP 会话工具的运行准备与执行授权已归入 `modules/agent-sessions/tools/`。重建器和测试已切换引用。Host 的工具端口装配及 dispatch 租约类型暂仍引用旧位置。静态检查通过，devserver 验证尚待结果。
+
+MCP 工具端口已迁入 `modules/agent-sessions/tools/`。会话重建、定时任务、运行准备和生产端口均切换引用，旧注册器只作为现有类型依赖。静态检查通过，devserver 定向回归仍待同步和验证结果。
+
+MCP 生产端口随工具端口归入 `modules/agent-sessions/tools/`。移动前核对原差异仅为本轮旧路径调整，生产入口及回归改用新位置。静态检查通过，devserver 回归尚待结果。
+
+邮件、画布写入、飞书链接按钮的 Host 适配已迁入 `modules/agent-sessions/tools/`。组合根与测试引用已切换，沿用既有 Core 工具规则及 Host 平台边界。静态检查通过，devserver 摘要及行为回归待结果。
+
+Agent 定时任务写入、记忆写入和 RAG 向量查询的 Host 适配已归入 `modules/agent-sessions/tools/`。生产入口、记忆检索及测试已切换引用，继续使用 Core 与现有 BYOK、定时任务适配。静态检查通过，devserver 摘要及定向回归尚待结果。
+
+日历写入及提醒目标、IM、知识及索引存储、项目工具、RAG 运行上下文及工具端口和确认身份共九个未修改的 Host 文件已迁入 `modules/agent-sessions/tools/`。生产与测试引用已切换，保留其他工具的并行改动。静态检查通过，devserver SSH 在握手阶段超时，本批回归未启动。
+
+上下文装配、来源、偏好及推理状态桥接已迁入 `modules/agent-sessions/` 对应子目录。移动前确认四个文件差异均为此前迁移引入的引用调整。旧 context 仅剩有并行修改的附件读取。静态检查通过，devserver SSH 握手超时，本批回归未启动。
+
+运行存储、Web 聊天准备、反思模型及 Redis 队列装配已迁入 `modules/agent-sessions/persistence/`。四个文件原差异仅为本轮导入调整，生产及测试调用方已切换，未改事务和队列行为。静态检查通过，devserver SSH 握手超时，本批回归未运行。
+
+可信交互意图存储和交互命令事务效果已迁入 `modules/agent-sessions/persistence/`。移动前核对两文件差异仅为本目标导入路径调整，生产入口、确认工具及测试已切换。静态检查通过，devserver 摘要和定向回归待结果。
+
+项目文件概览、会话检索、RAG 上下文、记忆搜索和回收站恢复的五个 Host 工具适配已迁入 `modules/agent-sessions/tools/`。原差异仅有本目标引入的 import 调整，生产与测试直接引用新位置。静态检查通过，devserver 摘要及回归待结果。
+
+Web 与 Agent 共用的 PostgreSQL 回收站读取适配已迁入 `modules/files/persistence/`。生产入口、Agent 工具及测试已切换，旧回收站路由仍作为类型依赖。静态检查通过，devserver 回归尚待结果。
+
+Agent 工具确认适配已迁入 `modules/agent-sessions/tools/`。组合根、知识写入、定时任务和测试引用已更新，保留现有事务、可信意图及确认门。静态检查通过，devserver SSH 握手超时，未运行本批回归。
+
+旧目录余量复核：Admin 1、Agent 会话 39、认证 3、文件 11、项目 1、工作区 2。扫描 Web Host 生产及测试 TypeScript 的相对 `.js` 导入，当前均有对应源文件。剩余文件没有发现仅由本轮路径调整产生的差异，工作区目录删除仍含并行快照复核逻辑。devserver SSH 握手仍超时，Mutagen 尚在应用变更，待同步后继续运行回归。
+
+项目过期清理 PostgreSQL 适配已随 Worker 归入 `modules/projects/`，保留原有 schema readiness 检查。生产入口、测试及元数据改用新路径，旧项目目录已移除。文件回收站事务仍由旧文件域提供。静态检查通过，devserver SSH 仍在握手阶段超时，项目清理回归待复验。
+
+Admin 运行配置路由已归入 `modules/admin/`，保留现有 Redis/PG 连通性响应差异。生产入口和配置锁、能力 schema 测试改用新路径，旧 Admin 目录已移除。静态检查通过，devserver 同步与回归待结果。
+
+工作区目录路由与 PostgreSQL/Local 适配已迁入 `modules/workspaces/`，保留 Agent 确认删除时的目录快照复核。生产入口、Agent 调用方及测试引用已切换，旧工作区目录已移除。静态检查通过，devserver 内容核对和回归待结果。
+
+认证契约、用户响应映射和资料路由已迁入 `modules/auth/`，保留已有 DTO 及写入门禁相关改动。生产入口、终端与测试引用已切换，旧认证目录已删除。静态检查通过。工作区目录批次因远端缺少新文件未启动回归，认证批次仍待验证。
+
+归档 HTTP 路由及 PostgreSQL/Local 事务已迁入 `modules/files/`，原有工具收据与提交结果未知处理随实现保留。Web 入口、Agent 端口和测试直接引用新位置。静态检查通过。认证批次因远端缺少三个迁移文件未启动回归，归档批次仍待结果。
+
+文件浏览 HTTP 路由与 PostgreSQL 分页适配，以及回收站 HTTP 路由，已迁入 `modules/files/`。生产和测试调用方已切换，保留已有筛选、分页及回收站路由逻辑。旧路径扫描和 diff 检查通过。devserver 已能执行摘要命令，远端仍缺少两个新浏览文件，未启动本批回归。回收站写入及清除 PostgreSQL 适配仍在旧目录。
+
+上传与删除 HTTP 路由及 PostgreSQL 适配已归入 `modules/files/`。正式入口、注册种子文件、Agent 工具与测试直接引用新位置，保留现有收据和事务逻辑。旧路径、Web Host 相对导入及 diff 检查通过。devserver 摘要核对超时，本批未运行行为回归。旧文件域剩余近期有并行修改的回收站写入与清除适配。
+
+Agent 消息历史 PostgreSQL 读取已迁入 `modules/agent-sessions/persistence/`，保留现有展示时间线的 JSONB 兼容处理。重新核对上下文装配、来源、偏好和 Web 聊天准备的四组重复文件，确认解析后的导入与代码等价后移除旧副本。生产入口和测试引用已切换，相对导入及 diff 检查通过。devserver 缺少新历史读取文件，本批行为回归未启动。
+
+2026-11-19 `create_folder` 持久调用闭环补齐：Core 将 owner/session/run/round/call 与严格验证后的文件夹目标传给 Host；Host 复核当前 dispatch lease，先写 SQLite reservation，再复用 `FolderWriteOperations.create`，最后保存完整结果。重复 dispatch/恢复仅读结果，改参和结果未知不再次创建。Core 文件组 **77/77**，Host 生产 ToolRegistry→Host adapter→临时 SQLite receipts/真实临时文件域用例 **1/1**，Web Host production typecheck 通过。测试使用合成 Pool/lease/FolderWriteOperations；未验收真实 PostgreSQL 与完整 HTTP/SSE Run，仍列部分实现。Node-only，不使用 Python 运行桥接。
+
+Agent 会话的规范历史写入、Redis Provider 续接、交互激活、投影与恢复、运行派发共六个 Host 适配已迁入 `modules/agent-sessions/persistence/`。生产、测试和派发测试元数据均切换，保留既有事务和租约逻辑。旧 persistence 路径扫描、相对导入检查和 diff 检查通过。devserver SSH 握手超时，尚未执行本批构建及定向回归。
+
+Agent 聊天与交互响应路由、运行事件投影、当前消息附件的 PostgreSQL/本地文件读取已归入 `modules/agent-sessions/`。生产、测试及路由测试元数据已切换，保留现有 SSE 投影、授权调用及附件格式适配。旧路径扫描、相对导入和 diff 检查通过。devserver 可执行摘要命令，四个新路径均尚未同步，本批未启动构建或行为回归。
+
+Agent 记忆范围、搜索和知识写入的三个 Host 适配已归入 `modules/agent-sessions/tools/`，组合根及测试改用新路径。旧路径、相对导入和 diff 检查通过。devserver 上本批适配、组合根与选定测试文件摘要一致，已启动串行定向回归。
+
+2026-11-19 `rename_folder` 持久调用闭环补齐：Host 端口在复用文件夹 owner 读取、expected_version CAS、同名冲突检查及 FolderWriteOperations.rename/Undo/PathMirror 前，先绑定当前 dispatch lease 并持久预留；完整成功/业务拒绝结果均可读取恢复，未知结果不重放改名。Core 文件组 **77/77**、Host 文件工具 Registry→adapter→临时 SQLite receipts/临时文件域行为 **1/1**、Web Host production typecheck 通过。Host Pool/lease/领域服务使用合成依赖；按名称定位和真实 PostgreSQL/HTTP-SSE Run 尚未验收，仍列部分实现。Node-only，不使用 Python 运行桥接。
+
+上述记忆、搜索和知识写入回归在 devserver 完成，10 通过、0 失败、2 跳过。通过项覆盖 owner 记忆隔离、安全出站及 SQLite 文件写入后由持久 Worker 重建知识索引。缺少隔离 PostgreSQL 测试连接，付费搜索额度持久认领与知识删除事务失败恢复未运行。
+
+回收站写入与清除的 PostgreSQL 适配已迁入 `modules/files/persistence/`，保留并行工作加入的清除任务状态及文件恢复逻辑。组合根、注册重置、项目过期清理、测试与测试元数据均已切换。旧文件域目录已移除，旧路径扫描、相对导入及 diff 检查通过。devserver 尚缺两个迁移文件，回收站定向回归未启动。
+
+Agent 运行时的 Web 持久化装配、运行生命周期和 Web 重建器已归入 `modules/agent-sessions/`。继续调用 Core runtime，保留 PG/Redis、工具注入及观测端口，并切换组合根、测试与测试元数据。旧路径、相对导入和 diff 检查通过。旧目录剩余 22 个 Agent 工具适配或注册文件。
+
+运行装配批次在 devserver 核对组合根、迁移文件和定向测试后执行，6 通过、1 失败。失败用例预期 dispatch lease 激活前 RAG 授权读取为 0，实测为 4，待定位调用来源及确认迁移前基线。
+
+Agent 目录浏览、文件展示与读取、最近附件和文件内容检索的五个 Host 端口已归入 `modules/agent-sessions/tools/`，继续实现既有 Core 工具契约。生产和测试引用已切换，旧路径、相对导入及 diff 检查通过。devserver 尚缺这五个文件，未启动本批定向回归。
+
+Agent 提问授权、撤销上一操作、Web 下载及工作区目录删除的四个 Host 端口已归入 `modules/agent-sessions/tools/`。保留 Core 工具契约，以及现有确认、回执和文件处理逻辑。生产及测试引用已切换，旧路径扫描、相对导入及 diff 检查通过。旧目录剩余 13 个工具适配与注册文件。
+
+RAG 复测通过绑定阶段零查询断言及独立时区用例，但同一时区查询在注册器用例中的重复执行污染了 embedding owner 调用计数。已移除注册器用例的重复查询和专属夹具，保留独立时区回归和原 owner 断言，修正后的复测待同步。上述四个工具端口的 devserver 摘要核对超时，本批未启动回归。
+
+2026-11-19 `copy_file` 持久调用回执补齐：Core 将 Run 轮次及 ToolCall ID 传至可信 Web Host；文件复制事务复核活动 lease 后，以 owner 范围 advisory lock 去重，并将副本、Undo、文件变更记录和调用收据原子提交。相同调用重放返回原结果且不重复副作用，Run 恢复只读收据；提交结果未知返回 `unknown`。Core `files.test.ts` **77/77**，Host 实际 ToolRegistry/模拟 Pool/lease/复制端口 **1/1**，Core build 与 Web Host production typecheck 通过。没有使用真实 PostgreSQL、磁盘或 HTTP/SSE Run，`copy_file` 仍列部分实现。2.0 只有 Node/TypeScript 路径；Python 仅作为历史行为基准，最终删除 Python 后端，不引入桥接或 fallback。
+
+2026-11-19 `rename_file` 持久调用回执补齐：Core 在解析逻辑路径前先检查回执，Host 在当前 owner/dispatch lease 授权下把文件路径规划、版本 CAS、Undo、变更记录和调用回执原子提交。重放和 Run 恢复只读收据，源路径改名后仍可恢复原结果，提交未知不重试副作用。Core 文件工具 **77/77**，Host 实际 ToolRegistry/模拟 Pool/lease/更新端口 **1/1**，Core build 与 Web Host production typecheck 通过。未使用真实 PostgreSQL/文件系统或 HTTP/SSE Run，`rename_file` 仍为部分实现。2.0 使用 Node/TypeScript 唯一路径，不保留 Python bridge/fallback，最终删除 Python 后端。
+
+2026-11-19 `rename_file` 完整文件名规则迁移：Core 支持含后缀的 `new_name`、无后缀保留旧扩展名及 `format` 自定义后缀，并按历史规则将 markdown/md、text/txt、yml/yaml 归一；Host 使用既有文件更新事务的类型边界检查，禁止文本/二进制跨类后缀伪转换，保存原始内容；ToolResult 返回旧文件名。Core 文件组 **77/77**、Host 文件工具 registry **1/1**，Core build、Web Host production typecheck 通过。批量改名未迁移，真实 PG/HTTP-SSE 未验收；Node-only，不引入 Python 兼容层。
+
+Agent RAG 生产端口、运行授权和回收站工具 Host 适配已归入 `modules/agent-sessions/tools/`，生产及测试直接引用新位置。旧路径扫描、相对导入及 diff 检查通过。devserver 尚缺三个迁移文件，本批与 RAG 修正未启动回归。余下十个旧文件均为 Agent 工具适配或注册器。
+
+devserver 核对 Web 重建器、RAG 生产端口、运行授权及修正后的测试摘要一致。RAG 资源工厂复测 2 通过、0 失败、0 跳过，覆盖绑定前零授权查询、注册器实际分派、owner 读取与可信时区引用。回收站适配及选定回归文件亦已同步。
+
+归档、文件创建与编辑、文件夹删除、附件保存、批量文件写入装配及工作区创建共七个 Host 端口已归入 `modules/agent-sessions/tools/`。保留正在并行验证的复制、重命名及注册器路径，仅修正重命名新增的 RAG 授权导入。生产及测试相对导入与 diff 检查通过。已启动的回收站回归在加载阶段遇到 Core 构建产物缺失，随后 SSH 超时，未取得行为结果。
+
+文件复制 Host 端口已在并行会话完成回执回归后迁入 `modules/agent-sessions/tools/`，保留其事务授权和结果恢复逻辑。组合根和注册器行为测试直引新位置，旧路径、相对导入及 diff 检查通过。旧目录剩文件重命名和工具注册器。devserver 复查确认 Core 构建输出目录缺失，已启动仓库构建脚本以恢复回归依赖。
+
+最后的文件重命名 Host 端口及工具注册器已迁入 `modules/agent-sessions/tools/`，保留并行完成的重命名事务回执和恢复语义。组合根、模块调用方、测试和测试元数据已切换。旧 `apps/web-host/src/domains/` 已移除，非 Markdown 旧路径扫描、相对导入检查和 diff 检查通过。统一构建和行为回归仍待 devserver 完成。
+
+旧目录清理复核：Git 基线中的 252 个旧路径已从工作区移除。按文件名检查，251 个在 Host 或 Core 仍有对应文件；唯一改名项为旧 Skill 生产端口，组合根现直接装配 Core 的 `createAgentSkillRuntimePorts`。此项用于核对目录去向，运行行为以定向回归为准。现有 devserver 构建尚无结果，独立 SSH 检查在握手阶段超时。
+
+devserver 的正式 Core 构建脚本退出码为 0，缺失的错误契约产物已恢复。回收站源码级回归使用临时模块映射，12 通过、0 失败、2 跳过，覆盖配额校准、异主文件保护、提交失败恢复、清除任务幂等及 owner 状态隔离。两个真实 PostgreSQL 用例未配置隔离连接。Web Host 生产类型检查已在核对组合根、最后迁移文件和编译配置摘要，并确认远端无旧目录后启动。
+
+devserver 上 Web Host 生产 TypeScript 检查（`tsc -p tsconfig.build.json --noEmit`）通过。组合根、最终工具端口及七个定向测试文件摘要一致，已使用正式 Core 构建产物启动 Agent 工具串行回归。devserver 常规路径未发现独立 PostgreSQL 初始化或 Redis 服务二进制，隔离服务验证仍待落实。
+
+Agent 工具串行回归 47 通过、1 失败。失败发生在批量 `rename_file` 请求校验。远端 Core 源码摘要与本地一致，含批量处理；远端构建产物早于源码更新且缺少批量实现。已启动 Core 重建，待用新产物复测。原批量改名行为断言保持原样。
+
+旧目录去向按当前 Git 基线复核：Admin、Agent 会话、认证、文件、Mind、偏好、项目、终端、Undo 和工作区分别归入同名 `modules/`，原 `agent-config` 的 Web 模型配置适配归入 `modules/agent/model-config/`，共享 BYOK 规则位于 Core 的 `agent/config/`。当前生产源码、测试与脚本的旧路径扫描无命中，Node WebUI 技能中的现行入口也已改为新位置。

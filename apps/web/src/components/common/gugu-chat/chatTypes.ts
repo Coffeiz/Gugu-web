@@ -60,6 +60,7 @@ export interface ChatMessage {
   _toolDetailsLoaded?: boolean
   _toolDetailsSource?: { kind: 'timeline'; messageId: number; index: number }
   toolDurationMs?: number
+  toolStartedAt?: string
   _toolStartedAt?: number
   interaction?: {
     promptId: number

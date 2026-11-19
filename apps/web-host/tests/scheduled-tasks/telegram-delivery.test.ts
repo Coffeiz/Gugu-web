@@ -39,7 +39,7 @@ test('Telegram 试投递只向 owner Bot 的私聊或已验证群发送固定模
   const privateSend = await delivery(plan)
   assert.equal(await privateSend(), '已发送')
   assert.equal(requests[0]?.url, `https://api.telegram.org/bot${token}/sendMessage`)
-  assert.deepEqual(requests[0]?.body, { chat_id: '123456789', text: '⏰ 活动提醒（测试）\n\n这是合成测试正文' })
+  assert.deepEqual(requests[0]?.body, { chat_id: '123456789', text: '⏰ 活动提醒（测试）\n\n这是合成测试正文', parse_mode: 'MarkdownV2' })
 
   await assert.rejects(delivery({ ...plan, imDelivery: { telegram: { mode: 'group', chat_id: '-1007999' } } }),
     { statusCode: 400 })
@@ -47,7 +47,7 @@ test('Telegram 试投递只向 owner Bot 的私聊或已验证群发送固定模
 
   const groupSend = await delivery({ ...plan, imDelivery: { telegram: { mode: 'group', chat_id: '-1007002' } } })
   assert.equal(await groupSend(), '已发送')
-  assert.deepEqual(requests[1]?.body, { chat_id: '-1007002', text: '⏰ 活动提醒（测试）\n\n这是合成测试正文' })
+  assert.deepEqual(requests[1]?.body, { chat_id: '-1007002', text: '⏰ 活动提醒（测试）\n\n这是合成测试正文', parse_mode: 'MarkdownV2' })
   assert.ok(queries.some(query => query.sql.includes('conversation_sessions') && query.values[1] === '-1007002'))
 })
 

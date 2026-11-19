@@ -1,7 +1,10 @@
 <template>
   <div class="dp-wrap" ref="wrapRef">
-    <div
+    <button
+      type="button"
       class="dp-input"
+      :aria-label="triggerLabel || undefined"
+      :aria-expanded="open"
       :class="{ 'has-value': modelValue, placeholder: !modelValue, open }"
       @click="toggle"
     >
@@ -10,7 +13,7 @@
         <path d="M4 1v3M10 1v3M1 6h12"/>
       </svg>
       <span>{{ displayValue || placeholder }}</span>
-    </div>
+    </button>
 
     <PopupMenu :show="open" :style="{ ...popupStyle, padding: 0 }">
       <div class="dp-popup" :class="popupClass" ref="popupRef">
@@ -54,6 +57,7 @@
                 :key="d.key"
                 class="dp-day"
                 :aria-label="d.iso"
+                :disabled="isDisabled(d.iso)"
                 :class="{
                   'other': d.other,
                   'today': d.iso === todayIso,
@@ -106,6 +110,7 @@ const weekDays = computed(() => {
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
+  triggerLabel: { type: String, default: '' },
   placeholder: { type: String, default: '选择日期' },
   min: { type: String, default: '' },
   max: { type: String, default: '' },
@@ -280,6 +285,7 @@ watch(() => props.modelValue, v => {
 /* 与 DateSpanPicker.drp-input / TimeInput.boxed 同一套描边输入框契约（--input-* token）。 */
 .dp-input {
   display: flex; align-items: center; justify-content: center; gap: 7px;
+  width: 100%; box-sizing: border-box; font-family: inherit; line-height: inherit;
   padding: 8px 11px;
   background: var(--input-bg);
   border: 1px solid var(--input-border);
@@ -288,6 +294,7 @@ watch(() => props.modelValue, v => {
   cursor: pointer; user-select: none;
   transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
 }
+.dp-input:focus-visible { outline: 2px solid var(--border-focus); outline-offset: -2px; }
 .dp-input:hover {
   border-color: var(--input-border-hover);
   background: var(--input-bg-hover);
@@ -296,7 +303,6 @@ watch(() => props.modelValue, v => {
 .dp-input.open {
   border-color: var(--input-border-focus);
   background: var(--input-bg-focus);
-  box-shadow: var(--input-focus-shadow);
 }
 .dp-input.placeholder span { color: var(--input-placeholder); opacity: 0.6; font-size: 13px; }
 .dp-icon { color: var(--input-placeholder); flex-shrink: 0; }
