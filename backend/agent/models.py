@@ -52,6 +52,8 @@ class AgentRequest:
     interaction_event_id: Optional[str] = None
     user_message_id: Optional[int] = None            # 本次触发消息的持久化 ID，用于 IM 失败终态回写
     inbound_batch_key: Optional[str] = None         # Worker 固定的入站批次身份，不进入模型输入
+    platform_sent_ms: Optional[int] = None           # IM 平台原始发送时间，仅用于上下文展示/排序
+    im_event_id: Optional[str] = None                # IM 入站事件标识，供缺少平台时间时恢复到达时刻
     early_message_ids: Optional[list] = None        # 早落库的群消息行 id：run 复用这些行，不重复写
     im_batch_messages: Optional[list] = None        # 批次原始消息与早落库结果，供逐条恢复
     im_attention_transcripts: dict[str, str] = field(default_factory=dict)  # 本轮群注意力预转写，仅内存复用

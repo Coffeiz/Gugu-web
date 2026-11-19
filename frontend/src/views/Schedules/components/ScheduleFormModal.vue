@@ -1,133 +1,139 @@
 <template>
-  <BaseModal :show="props.show" width="420px" background="var(--panel-bg)" @close="emit('close')">
+  <BaseModal :show="props.show" width="800px" background="var(--panel-bg)" @close="emit('close')">
     <div class="sched-modal">
-      <input v-model="form.name" ref="nameRef" class="title-input" :placeholder="t('schedules.taskName')" :aria-label="t('schedules.taskName')" maxlength="100" />
-      <div class="divider divider-full"></div>
+      <div class="sched-form-grid">
+        <div class="sched-column sched-prompt-column">
+          <input v-model="form.name" ref="nameRef" class="title-input" :placeholder="t('schedules.taskName')" :aria-label="t('schedules.taskName')" maxlength="100" />
+          <div class="divider divider-full"></div>
 
-      <div class="field">
-        <span>{{ t('schedules.reminder') }}</span>
-        <textarea v-model="form.payload" ref="payloadRef" rows="3" :placeholder="t('schedules.reminderPlaceholder')" :aria-label="t('schedules.reminder')" @input="resizePayload"></textarea>
-      </div>
-      <div class="divider"></div>
-
-      <div v-if="props.workspaceSupported" class="field workspace-field">
-        <div class="field-heading">
-          <span>{{ t('schedules.workspace') }}</span>
-          <small>{{ t('schedules.workspaceHint') }}</small>
-        </div>
-        <AdminSelect
-          v-model="workspaceSelectValue"
-          class="workspace-select"
-          :options="workspaceOptions"
-          :placeholder="t('schedules.workspaceRoot')"
-        />
-      </div>
-      <div v-if="props.workspaceSupported && props.filesystemAuthorizationEnabled" class="field authorization-field">
-        <Checkbox v-model="form.filesystemAuthorized">
-          {{ t('schedules.fullSandboxAccess') }}
-        </Checkbox>
-        <small>{{ t('schedules.fullSandboxAccessHint') }}</small>
-      </div>
-      <div class="divider"></div>
-
-      <div class="field">
-        <span>{{ t('schedules.repeat') }}</span>
-        <div class="repeat-tabs">
-          <button v-for="opt in REPEAT_OPTS" :key="opt.v" type="button" class="repeat-tab"
-            :class="{ on: repeatMode === opt.v }" @click="setRepeatMode(opt.v)">{{ opt.label }}</button>
-        </div>
-        <div v-if="repeatMode === 'weekly'" class="weekly-days" data-testid="schedule-weekly-days">
-          <button v-for="weekday in weekdayOptions" :key="weekday.day" type="button" class="repeat-tab"
-            :class="{ on: weeklyDays.includes(weekday.day) }" @click="toggleWeeklyDay(weekday.day)">{{ weekday.name }}</button>
-        </div>
-        <div v-if="repeatMode === 'interval'" class="interval-presets">
-            <button v-for="minutes in INTERVAL_PRESETS" :key="minutes" type="button" class="interval-preset"
-            :class="{ on: intervalPreset === String(minutes) }" @click="selectIntervalPreset(minutes)">{{ minutes }}{{ t('schedules.intervalUnit') }}</button>
-          <button type="button" class="interval-preset" :class="{ on: intervalPreset === 'custom' }"
-            @click="selectIntervalPreset('custom')">{{ t('schedules.custom') }}</button>
+          <div class="field reminder-field">
+            <span>{{ t('schedules.reminder') }}</span>
+            <textarea v-model="form.payload" ref="payloadRef" rows="3" :placeholder="t('schedules.reminderPlaceholder')" :aria-label="t('schedules.reminder')" @input="resizePayload"></textarea>
           </div>
-      </div>
-      <div class="divider"></div>
 
-      <div v-if="repeatMode !== 'once' && (repeatMode !== 'interval' || intervalPreset === 'custom')" class="field time-field">
-        <span>{{ repeatMode === 'interval' ? t('schedules.minutes') : t('schedules.time') }}</span>
-        <input v-if="repeatMode === 'interval' && intervalPreset === 'custom'" v-model.number="intervalMinutes" type="number" min="1" max="60" step="1" :placeholder="t('scheduleUi.intervalPlaceholder')" :aria-label="t('schedules.minutes')" />
-        <TimeInput v-else v-model="form.time" />
-      </div>
-      <div v-if="repeatMode !== 'once' && (repeatMode !== 'interval' || intervalPreset === 'custom')" class="divider"></div>
-
-      <div v-if="repeatMode === 'once'" class="field once-field" data-testid="schedule-once-boundary">
-        <div class="field-heading">
-          <span>{{ t('schedules.onceAt') }}</span>
-          <small>{{ t('schedules.onceHint') }}</small>
-        </div>
-        <div class="once-controls">
-          <DatePicker :model-value="startDate" :placeholder="t('schedules.selectDate')" :show-clear="false"
-            @update:model-value="setStartDate" />
-          <TimeInput :model-value="startTime" @update:model-value="setStartTime" />
-          <button v-if="startDate || startTime" type="button" class="boundary-clear"
-            :aria-label="t('schedules.clearBoundary')" @click="clearStart">
-            <Icon name="action.close" :size="20" />
-          </button>
-        </div>
-      </div>
-
-      <div v-if="repeatMode !== 'once'" class="field schedule-window-field">
-        <div class="field-heading">
-          <span>{{ t('schedules.scheduleWindow') }}</span>
-          <small>{{ t('schedules.scheduleWindowHint') }}</small>
-        </div>
-        <div class="boundary-row" data-testid="schedule-start-boundary">
-          <span class="boundary-label">{{ t('schedules.startAt') }}</span>
-          <div class="boundary-controls">
-            <DatePicker :model-value="startDate" :placeholder="t('schedules.selectDate')" :show-clear="false"
-              @update:model-value="setStartDate" />
-            <TimeInput :model-value="startTime" @update:model-value="setStartTime" />
-            <button v-if="startDate || startTime" type="button" class="boundary-clear"
-              :aria-label="t('schedules.clearBoundary')" @click="clearStart">
-              <Icon name="action.close" :size="20" />
-            </button>
+          <div v-if="props.workspaceSupported" class="divider"></div>
+          <div v-if="props.workspaceSupported" class="field workspace-field">
+            <div class="field-heading">
+              <span>{{ t('schedules.workspace') }}</span>
+              <small>{{ t('schedules.workspaceHint') }}</small>
+            </div>
+            <AdminSelect
+              v-model="workspaceSelectValue"
+              class="workspace-select"
+              :options="workspaceOptions"
+              :placeholder="t('schedules.workspaceRoot')"
+            />
           </div>
-        </div>
-        <div class="boundary-row" data-testid="schedule-end-boundary">
-          <span class="boundary-label">{{ t('schedules.endAt') }}</span>
-          <div class="boundary-controls">
-            <DatePicker :model-value="endDate" :placeholder="t('schedules.selectDate')" :show-clear="false"
-              @update:model-value="setEndDate" />
-            <TimeInput :model-value="endTime" @update:model-value="setEndTime" />
-            <button v-if="endDate || endTime" type="button" class="boundary-clear"
-              :aria-label="t('schedules.clearBoundary')" @click="clearEnd">
-              <Icon name="action.close" :size="20" />
-            </button>
-          </div>
-        </div>
-      </div>
-      <div v-if="repeatMode !== 'once'" class="divider"></div>
-
-      <div class="field">
-        <span>{{ t('schedules.sendTo') }}</span>
-        <div class="chans">
-          <template v-for="channel in CHANNELS" :key="channel.value">
-            <Checkbox v-if="channel.value === 'web' || channel.value === 'email' || props.imChannels.includes(channel.value) || form.channels.includes(channel.value)"
-              :model-value="form.channels.includes(channel.value)"
-              @update:model-value="toggleChannel(channel.value, $event)">
-              <span>{{ channel.label }}</span>
-              <span v-if="form.channels.includes(channel.value) && channel.value !== 'web' && channel.value !== 'email' && !props.imChannels.includes(channel.value)" class="channel-unavailable-note">
-                {{ t('scheduleUi.channelUnavailablePreserved') }}
-              </span>
+          <div v-if="props.workspaceSupported && props.filesystemAuthorizationEnabled" class="field authorization-field">
+            <Checkbox v-model="form.filesystemAuthorized">
+              {{ t('schedules.fullSandboxAccess') }}
             </Checkbox>
-          </template>
+            <small>{{ t('schedules.fullSandboxAccessHint') }}</small>
+          </div>
         </div>
-        <div v-for="platform in IM_DELIVERY_PLATFORMS" :key="platform"
-          v-show="form.channels.includes(platform)" class="qq-delivery-field"
-          :data-testid="`schedule-${platform}-delivery`">
-          <span>{{ deliveryPlatformLabel(platform) }}</span>
-          <SelectPopup :model-value="deliveryTargets[platform]" :options="deliveryTargetOptions(platform)" popup-class="qq-target-popup"
-            auto-flip @update:model-value="setDeliveryTarget(platform, $event)" />
+
+        <div class="sched-column sched-settings-column">
+          <div class="field">
+            <span>{{ t('schedules.repeat') }}</span>
+            <div class="repeat-tabs">
+              <button v-for="opt in REPEAT_OPTS" :key="opt.v" type="button" class="repeat-tab"
+                :class="{ on: repeatMode === opt.v }" @click="setRepeatMode(opt.v)">{{ opt.label }}</button>
+            </div>
+            <div v-if="repeatMode === 'weekly'" class="weekly-days" data-testid="schedule-weekly-days">
+              <button v-for="weekday in weekdayOptions" :key="weekday.day" type="button" class="repeat-tab"
+                :class="{ on: weeklyDays.includes(weekday.day) }" @click="toggleWeeklyDay(weekday.day)">{{ weekday.name }}</button>
+            </div>
+            <div v-if="repeatMode === 'interval'" class="interval-presets">
+                <button v-for="minutes in INTERVAL_PRESETS" :key="minutes" type="button" class="interval-preset"
+                :class="{ on: intervalPreset === String(minutes) }" @click="selectIntervalPreset(minutes)">{{ minutes }}{{ t('schedules.intervalUnit') }}</button>
+              <button type="button" class="interval-preset" :class="{ on: intervalPreset === 'custom' }"
+                @click="selectIntervalPreset('custom')">{{ t('schedules.custom') }}</button>
+              </div>
+          </div>
+          <div class="divider"></div>
+
+          <div v-if="repeatMode !== 'once' && (repeatMode !== 'interval' || intervalPreset === 'custom')" class="field time-field">
+            <span>{{ repeatMode === 'interval' ? t('schedules.minutes') : t('schedules.time') }}</span>
+            <input v-if="repeatMode === 'interval' && intervalPreset === 'custom'" v-model.number="intervalMinutes" type="number" min="1" max="60" step="1" :placeholder="t('scheduleUi.intervalPlaceholder')" :aria-label="t('schedules.minutes')" />
+            <TimeInput v-else v-model="form.time" />
+          </div>
+          <div v-if="repeatMode !== 'once' && (repeatMode !== 'interval' || intervalPreset === 'custom')" class="divider"></div>
+
+          <div v-if="repeatMode === 'once'" class="field once-field" data-testid="schedule-once-boundary">
+            <div class="field-heading">
+              <span>{{ t('schedules.onceAt') }}</span>
+              <small>{{ t('schedules.onceHint') }}</small>
+            </div>
+            <div class="once-controls">
+              <DatePicker :model-value="startDate" :placeholder="t('schedules.selectDate')" :show-clear="false"
+                @update:model-value="setStartDate" />
+              <TimeInput :model-value="startTime" @update:model-value="setStartTime" />
+              <button v-if="startDate || startTime" type="button" class="boundary-clear"
+                :aria-label="t('schedules.clearBoundary')" @click="clearStart">
+                <Icon name="action.close" :size="20" />
+              </button>
+            </div>
+          </div>
+
+          <div v-if="repeatMode !== 'once'" class="field schedule-window-field">
+            <div class="field-heading">
+              <span>{{ t('schedules.scheduleWindow') }}</span>
+              <small>{{ t('schedules.scheduleWindowHint') }}</small>
+            </div>
+            <div class="boundary-row" data-testid="schedule-start-boundary">
+              <span class="boundary-label">{{ t('schedules.startAt') }}</span>
+              <div class="boundary-controls">
+                <DatePicker :model-value="startDate" :placeholder="t('schedules.selectDate')" :show-clear="false"
+                  @update:model-value="setStartDate" />
+                <TimeInput :model-value="startTime" @update:model-value="setStartTime" />
+                <button v-if="startDate || startTime" type="button" class="boundary-clear"
+                  :aria-label="t('schedules.clearBoundary')" @click="clearStart">
+                  <Icon name="action.close" :size="20" />
+                </button>
+              </div>
+            </div>
+            <div class="boundary-row" data-testid="schedule-end-boundary">
+              <span class="boundary-label">{{ t('schedules.endAt') }}</span>
+              <div class="boundary-controls">
+                <DatePicker :model-value="endDate" :placeholder="t('schedules.selectDate')" :show-clear="false"
+                  @update:model-value="setEndDate" />
+                <TimeInput :model-value="endTime" @update:model-value="setEndTime" />
+                <button v-if="endDate || endTime" type="button" class="boundary-clear"
+                  :aria-label="t('schedules.clearBoundary')" @click="clearEnd">
+                  <Icon name="action.close" :size="20" />
+                </button>
+              </div>
+            </div>
+          </div>
+          <div v-if="repeatMode !== 'once'" class="divider"></div>
+
+          <div class="field">
+            <span>{{ t('schedules.sendTo') }}</span>
+            <div class="chans">
+              <template v-for="channel in CHANNELS" :key="channel.value">
+                <Checkbox v-if="channel.value === 'web' || channel.value === 'email' || props.imChannels.includes(channel.value) || form.channels.includes(channel.value)"
+                  :model-value="form.channels.includes(channel.value)"
+                  @update:model-value="toggleChannel(channel.value, $event)">
+                  <span>{{ channel.label }}</span>
+                  <span v-if="form.channels.includes(channel.value) && channel.value !== 'web' && channel.value !== 'email' && !props.imChannels.includes(channel.value)" class="channel-unavailable-note">
+                    {{ t('scheduleUi.channelUnavailablePreserved') }}
+                  </span>
+                </Checkbox>
+              </template>
+            </div>
+            <div v-for="platform in IM_DELIVERY_PLATFORMS" :key="platform"
+              v-show="form.channels.includes(platform)" class="qq-delivery-field"
+              :data-testid="`schedule-${platform}-delivery`">
+              <span>{{ deliveryPlatformLabel(platform) }}</span>
+              <SelectPopup :model-value="deliveryTargets[platform]" :options="deliveryTargetOptions(platform)" popup-class="qq-target-popup"
+                auto-flip @update:model-value="setDeliveryTarget(platform, $event)" />
+            </div>
+          </div>
+
         </div>
       </div>
 
-        <div v-if="formErr || props.externalError" class="form-err">{{ formErr || props.externalError }}</div>
+      <div v-if="formErr || props.externalError" class="form-err">{{ formErr || props.externalError }}</div>
       <div class="modal-actions">
         <ActionButton variant="secondary" @click="emit('close')">{{ t('schedules.cancel') }}</ActionButton>
         <ActionButton :disabled="props.busy" @click="submit">{{ props.task ? t('schedules.save') : t('schedules.createAction') }}</ActionButton>
@@ -427,9 +433,12 @@ function submit() {
 /* 全套表面/边框/选中态消费语义 token（--input-* / --option-* / --action-*），与
    TimeInput.boxed、活动弹窗输入框同一契约，亮暗主题自动适配；
    亮色下这些 token 的原始值与旧硬编码（黑 10% 描边、白 72% 底、品牌紫渐变）几乎一致。 */
-.sched-modal { padding: 16px 18px; }
+.sched-modal { max-height: min(88vh, 820px); min-height: 0; box-sizing: border-box; display: flex; flex-direction: column; padding: 16px 18px; }
+.sched-form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 22px; flex: 1 1 auto; min-height: 0; }
+.sched-column { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 6px 10px 12px 6px; }
+.sched-prompt-column { display: flex; flex-direction: column; }
 .divider { height: 1px; background: var(--divider-line); margin: 2px 0 10px; }
-.divider-full { margin-left: -18px; margin-right: -18px; background: color-mix(in srgb, var(--content-primary) 8%, transparent); }
+.divider-full { margin-left: 0; margin-right: 0; }
 .title-input { width: 100%; box-sizing: border-box; outline: none; font-size: 16px; font-weight: 700; color: var(--text-primary); font-family: var(--font-sans); padding: 6px 11px; margin-bottom: 10px; border: 1px solid var(--input-border); border-radius: var(--radius-sm); background: var(--input-bg); transition: border-color 0.15s, box-shadow 0.15s; }
 .title-input::placeholder { color: var(--input-placeholder); font-weight: 700; }
 .title-input:focus { border-color: var(--input-border-focus); box-shadow: var(--input-focus-shadow); }
@@ -463,7 +472,8 @@ function submit() {
 .boundary-clear:hover { background: var(--option-bg-hover); color: var(--content-primary); }
 .field input[type=text], .field input:not([type]), .field textarea, .field select, .field input[type=number] { width: 100%; box-sizing: border-box; padding: 8px 11px; border: 1px solid var(--input-border); border-radius: var(--radius-sm); background: var(--input-bg); font-size: 13px; font-family: var(--font-sans); color: var(--text-primary); outline: none; transition: border-color 0.15s, box-shadow 0.15s; }
 .field input:focus, .field textarea:focus, .field select:focus { border-color: var(--input-border-focus); box-shadow: var(--input-focus-shadow); }
-.field textarea { min-height: 96px; max-height: 160px; resize: none; line-height: 1.6; overflow-y: hidden; }
+.reminder-field { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
+.reminder-field textarea { flex: 1 1 auto; min-height: 96px; max-height: none; resize: none; line-height: 1.6; overflow-y: hidden; }
 .repeat-tabs { display: flex; gap: 6px; }
 .repeat-tab { flex: 1; height: 34px; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-sm); border: 1px solid var(--option-border); background: var(--option-bg); font-size: 13px; font-family: var(--font-sans); color: var(--option-fg); cursor: pointer; transition: all 0.15s; text-align: center; }
 .repeat-tab:hover { border-color: var(--option-border-hover); }
@@ -490,8 +500,13 @@ function submit() {
 .form-err { color: var(--status-danger); font-size: 12px; margin-bottom: 10px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 12px; align-items: center; margin-top: 6px; }
 .modal-actions > button { width: 64px; min-height: 34px; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; }
+@media (max-width: 760px) {
+  .sched-form-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; overflow-y: auto; overscroll-behavior: contain; }
+  .sched-column { min-height: auto; overflow: visible; padding: 0; }
+  .sched-prompt-column { display: block; }
+}
 @media (max-width: 460px) {
-  .sched-modal { padding-left: 12px; padding-right: 12px; }
+  .sched-modal { padding: 12px; }
   .boundary-row { grid-template-columns: 1fr; gap: 4px; }
   .boundary-controls { grid-template-columns: minmax(0, 1fr) 78px 24px; }
   .field-heading { display: block; }

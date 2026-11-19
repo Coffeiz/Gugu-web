@@ -329,6 +329,7 @@ def test_group_batch_messages_replay_as_the_same_provider_prefix():
             chat_type="group",
             platform_user_id="member-a",
             platform_user_name="甲",
+            run_id="group-batch-1",
         ),
         SimpleNamespace(
             id=32,
@@ -342,21 +343,26 @@ def test_group_batch_messages_replay_as_the_same_provider_prefix():
             chat_type="group",
             platform_user_id="member-b",
             platform_user_name="乙",
+            run_id="group-batch-1",
         ),
     ]
     current_users = []
-    for message in history:
+    for index, message in enumerate(history):
         incoming = {
             "platform_user_id": message.platform_user_id,
             "platform_user_name": message.platform_user_name,
             "text": message.content,
             "quoted_text": message.quoted_text,
             "attachments": [],
+            "platform_sent_ms": int(sent_at.timestamp() * 1000),
         }
         current_users.append({
             "message": {
                 "role": "user",
-                "content": format_current_group_message(message.content, request, incoming),
+                "content": format_current_group_message(
+                    message.content, request, incoming, user_tz=timezone.utc,
+                    batch_reminder=index == 0,
+                ),
             },
             "message_time": message_time_reminder(message.sent_at, timezone.utc),
             "persisted_message_id": message.id,
@@ -377,9 +383,10 @@ def test_group_batch_messages_replay_as_the_same_provider_prefix():
     assert current_wire == restored_wire
     assert legacy_a[0] != treatment_b[-1]
     current_text = str(current_wire.to_messages())
-    assert "平台 ID：member-a" in current_text
-    assert "平台 ID：member-b" in current_text
-    assert "【引用消息】" in current_text and "先看这个" in current_text
+    assert "⟦群消息⟧ 甲 / 2026-10-28 10:12:00：先看这个" in current_text
+    assert "⟦群消息⟧ 乙 / 2026-10-28 10:12:00：还有这个" in current_text
+    assert "（引用：先看这个）" in current_text
+    assert "member-a" not in current_text and "member-b" not in current_text
     assert "权限角色" not in current_text
 
     entries = batch.area_entries

@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 
 from agent.context import provider_runner
+from agent.llm.modelctx import get_usage_context, usage_context_scope
 from agent.memory import store
 from agent.memory.daily_compaction import should_compact, split_oldest_batch
 from agent.memory.event_memory import deduplicate_event_sections, normalize_event_memory
@@ -39,18 +40,21 @@ _DATE_RE = re.compile(r"20\d{2}-\d{1,2}-\d{1,2}")
 logger = logging.getLogger(__name__)
 
 
-async def _generate_memory_entries(user: str, settings) -> dict:
+async def _generate_memory_entries(user_id, user: str, settings) -> dict:
     """直接调用 provider 生成新增事件，不引入对话 ContextBranch 生命周期。"""
-    for attempt in range(1, 3):
-        try:
-            output = await provider_runner.complete_json(
-                _load_sys(), user, settings, max_tokens=None,
-            )
-            if isinstance(output, dict) and output:
-                return output
-        except Exception as exc:
-            diag_log("agent.memory.compaction.provider", exc)
-            logger.warning("长期记忆压缩 provider 调用失败，第 %d 次尝试", attempt)
+    parent = get_usage_context()
+    session_id = parent.session_id if parent is not None and parent.user_id == user_id else None
+    with usage_context_scope(user_id, session_id, scenario="compaction"):
+        for attempt in range(1, 3):
+            try:
+                output = await provider_runner.complete_json(
+                    _load_sys(), user, settings, max_tokens=None,
+                )
+                if isinstance(output, dict) and output:
+                    return output
+            except Exception as exc:
+                diag_log("agent.memory.compaction.provider", exc)
+                logger.warning("长期记忆压缩 provider 调用失败，第 %d 次尝试", attempt)
     return {}
 
 
@@ -94,7 +98,7 @@ async def compact(user_id, settings) -> bool:
                 f"要追加的近期记录（只从这里提取新增事件，不要丢掉日期）：\n"
                 + "\n".join(batch) + "\n\n请只输出本批次要追加的事件章节。"
             )
-            out = await _generate_memory_entries(user, settings)
+            out = await _generate_memory_entries(user_id, user, settings)
             additions = normalize_event_memory(
                 (out.get("entries") or "").strip(),
                 fallback_title=(

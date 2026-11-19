@@ -27,6 +27,8 @@ export interface ChatMessage {
   /** send_link_buttons 的 Web 渲染（PRD-LLM-24）：URL 均经服务端安全校验。 */
   linkButtons?: { message: string; buttons: { id: string; label: string; url: string }[] }
   quotedText?: string
+  /** QQ 群只提及咕咕、没有正文的结构化消息。 */
+  mentionOnly?: boolean
   time: string
   streaming?: boolean
   // 群聊消息的发言人标注：ai 不用管；owner 自己发的不用管（右侧气泡不署名）；

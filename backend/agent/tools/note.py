@@ -259,10 +259,21 @@ async def _note_get(db, user_id, args: dict):
 
 
 async def _create_note(db, user_id, args: dict):
-    if "blocks" not in args:
-        return {"error": "需要提供 blocks"}
+    has_markdown = "markdown" in args
+    has_blocks = "blocks" in args
+    if has_markdown == has_blocks:
+        return {
+            "error": "请提供 markdown 或 blocks 中的一种。普通笔记优先用 markdown 字符串；需要可点击引用或结构化待办时用 blocks。",
+            "next_action": '普通笔记格式：{"markdown":"# 标题\\n\\n正文"}。不要把数组或对象包装成 item。',
+        }
     try:
-        content_md, refs = serialize_mind_blocks(args["blocks"])
+        if has_markdown:
+            content_md = args["markdown"]
+            if not isinstance(content_md, str) or not content_md.strip():
+                return {"error": "markdown 必须是非空字符串；普通笔记直接传 Markdown 正文。"}
+            refs = []
+        else:
+            content_md, refs = serialize_mind_blocks(args["blocks"])
         await validate_mind_references(db, user_id, refs)
         captured_at = _parse_captured_at(args["captured_at"]) if "captured_at" in args else None
         node = await create_mind_note(
@@ -291,17 +302,24 @@ async def _update_note(db, user_id, args: dict):
                 fields[name] = args[name]
         if "captured_at" in args:
             fields["captured_at"] = _parse_captured_at(args["captured_at"])
+        content_operations = [key for key in ("append_markdown", "append_blocks", "line_edits") if key in args]
+        if len(content_operations) > 1:
+            return {
+                "error": "正文更新方式只能选一种：append_markdown、append_blocks 或 line_edits。普通文字追加优先用 append_markdown。",
+                "next_action": '普通文字追加格式：{"node_id":123,"append_markdown":"追加内容"}，node_id 必须来自 note_search/note_get。',
+            }
+        if "append_markdown" in args:
+            appended = args["append_markdown"]
+            if not isinstance(appended, str) or not appended.strip():
+                return {"error": "append_markdown 必须是非空字符串。"}
+            fields["content_md"] = f"{node.content_md}\n\n{appended}" if node.content_md else appended
         if "append_blocks" in args:
-            if "line_edits" in args:
-                return {"error": "append_blocks 与 line_edits 不能同时使用，请分两次更新"}
             appended, refs = serialize_mind_blocks(args["append_blocks"])
             if not appended:
                 return {"error": "append_blocks 不能为空"}
             await validate_mind_references(db, user_id, refs)
             fields["content_md"] = f"{node.content_md}\n\n{appended}" if node.content_md else appended
         if "line_edits" in args:
-            if "append_blocks" in args:
-                return {"error": "append_blocks 与 line_edits 不能同时使用，请分两次更新"}
             fields["content_md"], _ = apply_line_edits(node.content_md or "", args["line_edits"])
         if not fields:
             return {"error": "至少提供一个要修改的字段"}
@@ -397,31 +415,33 @@ class NoteSkill(BaseSkill):
         ),
         Tool(
             name="note_create", label="记录思维笔记",
-            description_short='创建时间流笔记；必须传 blocks 数组，不能把正文放在 content 字符串。',
-            description="按用户要求创建时间流笔记。用户要求在笔记里 @/引用文件、项目或活动时，先搜索确认真实 ID，再在 blocks 的 content 中使用 reference 行内节点，不要写成普通 @文本。必须把内容块作为顶层 blocks 数组传入；不要把整篇 Markdown 或 JSON 字符串放在 content 字段。普通文字使用 paragraph 块，行内 text 放在块的 content 数组中。blocks 使用受限块结构，需改写时先确认草稿。列表和待办只支持扁平结构，列表项内不能继续嵌套列表、content 或 paragraphs，也不能把数组包装成 item 对象。日记只按日期归档，同一天的先后顺序由系统按写入顺序自动决定。补录历史日记时传 captured_at 日期即可，支持 MM-DD、MM/DD、YYYY-MM-DD、YYYY/MM/DD、年份前后和中文日期。",
+            description_short='创建时间流笔记；普通内容传 markdown 字符串。',
+            description="创建时间流笔记。普通文字、标题和 Markdown 正文优先放在 markdown 字符串中，例如 {\"markdown\":\"# 标题\\n\\n正文\"}；仅在需要可点击的文件/项目/活动引用或结构化列表时使用 blocks 数组。blocks 中引用必须先搜索确认真实 ID。不要把正文放在 content 字段，也不要给数组添加 item 包装。title 仅用于索引；要显示标题请写入正文的 Markdown 标题。日记可用 captured_at 指定归属日期。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "title": {"type": "string"},
                     "color": {"type": ["string", "null"], "enum": ["amber", "coral", "blue", "teal", None]},
+                    "markdown": {"type": "string", "description": "普通笔记正文，支持 Markdown；与 blocks 二选一。优先用于普通文字。"},
                     "blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA},
                     "captured_at": {"type": "string"},
                 },
-                "required": ["blocks"],
+                "additionalProperties": False,
             },
             handler=_create_note,
             mutates=True,
         ),
         Tool(
             name="note_update", label="更新思维笔记",
-            description_short='更新思维笔记；captured_at 只用于指定归属日期，不用于指定排序序号。',
-            description="对已知笔记做更新；必须使用 note_search/note_get 返回的真实 node_id 指定目标，不要猜 ID。用户要求在笔记里 @/引用文件、项目或活动时，先搜索确认真实 ID，再通过 append_blocks 的 reference 行内节点追加，不要写成普通 @文本。可追加 append_blocks，或用 line_edits 按 target_lines 更新/删除指定行；也可修改标题、颜色、归属日期。append_blocks 必须是块数组；普通文字示例：[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"文字\"}]}]。数字 target_lines 支持 8、8-11、8,11，整篇使用 all；content 为空表示删除，数字行必须提供从 note_get.numbered_content 读取的 expected 原文。行号以最新原始 Markdown 物理行号为准，多个范围不能重叠。append_blocks 与 note_create.blocks 使用同一扁平块结构。日期支持 MM-DD、MM/DD、YYYY-MM-DD、YYYY/MM/DD、年份前后和中文日期。",
+            description_short='更新笔记；普通文字追加优先传 append_markdown。',
+            description="更新笔记必须传 note_search/note_get 返回的真实 node_id。普通文字追加优先使用 append_markdown 字符串，例如 {\"node_id\":123,\"append_markdown\":\"追加内容\"}；可点击引用或结构化列表才使用 append_blocks。正文修改方式 append_markdown、append_blocks、line_edits 只能选一种。line_edits 数字行必须带 note_get.numbered_content 中对应的 expected 原文，整篇用 all。不要猜 node_id，也不要给数组添加 item 包装。captured_at 仅用于指定归属日期。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "node_id": {"type": "integer"},
                     "title": {"type": ["string", "null"]},
                     "color": {"type": ["string", "null"], "enum": ["amber", "coral", "blue", "teal", None]},
+                    "append_markdown": {"type": "string", "description": "追加普通 Markdown 正文；与 append_blocks、line_edits 互斥。"},
                     "append_blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA},
                     "line_edits": {"type": "array", "items": {"type": "object", "properties": {
                         "target_lines": {"type": "string", "pattern": "^(all|[0-9]+([-,][0-9]+)?)$"},

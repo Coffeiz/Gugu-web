@@ -1,0 +1,119 @@
+{
+  "samples": [
+    {
+      "sample_id": "conv-26",
+      "questions": 152,
+      "sessions": 19,
+      "facts": 192,
+      "f1": 0.4669720321453263,
+      "unknown": 37,
+      "memory_seconds": 36.43
+    },
+    {
+      "sample_id": "conv-30",
+      "questions": 81,
+      "sessions": 19,
+      "facts": 176,
+      "f1": 0.47349837284477814,
+      "unknown": 21,
+      "memory_seconds": 31.65
+    },
+    {
+      "sample_id": "conv-41",
+      "questions": 152,
+      "sessions": 32,
+      "facts": 310,
+      "f1": 0.5286612439304446,
+      "unknown": 27,
+      "memory_seconds": 66.86
+    },
+    {
+      "sample_id": "conv-42",
+      "questions": 199,
+      "sessions": 29,
+      "facts": 305,
+      "f1": 0.47640467754453825,
+      "unknown": 41,
+      "memory_seconds": 53.33
+    },
+    {
+      "sample_id": "conv-43",
+      "questions": 178,
+      "sessions": 29,
+      "facts": 308,
+      "f1": 0.48125130207844297,
+      "unknown": 35,
+      "memory_seconds": 56.94
+    },
+    {
+      "sample_id": "conv-44",
+      "questions": 123,
+      "sessions": 28,
+      "facts": 318,
+      "f1": 0.4930408770618693,
+      "unknown": 24,
+      "memory_seconds": 52.94
+    },
+    {
+      "sample_id": "conv-47",
+      "questions": 150,
+      "sessions": 31,
+      "facts": 348,
+      "f1": 0.5452210033974739,
+      "unknown": 36,
+      "memory_seconds": 151.84
+    },
+    {
+      "sample_id": "conv-48",
+      "questions": 191,
+      "sessions": 30,
+      "facts": 335,
+      "f1": 0.5380321107796971,
+      "unknown": 34,
+      "memory_seconds": 56.089999999999996
+    },
+    {
+      "sample_id": "conv-49",
+      "questions": 156,
+      "sessions": 25,
+      "facts": 242,
+      "f1": 0.49227410375247177,
+      "unknown": 24,
+      "memory_seconds": 47.519999999999996
+    },
+    {
+      "sample_id": "conv-50",
+      "questions": 158,
+      "sessions": 30,
+      "facts": 289,
+      "f1": 0.4427221484840243,
+      "unknown": 40,
+      "memory_seconds": 51.33
+    }
+  ],
+  "conversations": 10,
+  "questions": 1540,
+  "mean_f1": 0.49486562334953554,
+  "conversation_macro_f1": 0.49380778720190666,
+  "by_category": {
+    "1": {
+      "n": 282,
+      "f1": 0.3074397334214262
+    },
+    "2": {
+      "n": 321,
+      "f1": 0.5916116181784131
+    },
+    "3": {
+      "n": 96,
+      "f1": 0.17952218417116197
+    },
+    "4": {
+      "n": 841,
+      "f1": 0.556781921543092
+    }
+  },
+  "unknown": 319,
+  "facts": 2823,
+  "sessions": 272
+}

@@ -1,0 +1,71 @@
+{
+  "judge_model": "deepseek-flash",
+  "judge_batch_size": 12,
+  "scoring": "correct / partial / incorrect; strict accuracy counts only correct",
+  "original_judge_counts": {
+    "correct": 913,
+    "incorrect": 432,
+    "partial": 195
+  },
+  "adjustment": "exact unknown answer with concrete reference is incorrect",
+  "adjusted_cases": [
+    {
+      "id": "0:72",
+      "original": "partial"
+    },
+    {
+      "id": "0:75",
+      "original": "partial"
+    },
+    {
+      "id": "0:76",
+      "original": "partial"
+    },
+    {
+      "id": "0:77",
+      "original": "partial"
+    },
+    {
+      "id": "0:81",
+      "original": "partial"
+    },
+    {
+      "id": "0:83",
+      "original": "partial"
+    },
+    {
+      "id": "7:36",
+      "original": "correct"
+    }
+  ],
+  "corrected_counts": {
+    "correct": 912,
+    "incorrect": 439,
+    "partial": 189
+  },
+  "strict_accuracy": 0.5922077922077922,
+  "by_category": {
+    "1": {
+      "correct": 88,
+      "incorrect": 92,
+      "partial": 102
+    },
+    "2": {
+      "correct": 230,
+      "incorrect": 82,
+      "partial": 9
+    },
+    "3": {
+      "correct": 30,
+      "incorrect": 59,
+      "partial": 7
+    },
+    "4": {
+      "correct": 564,
+      "incorrect": 206,
+      "partial": 71
+    }
+  },
+  "source": "isolated full BM25 evaluation",
+  "total": 1540
+}

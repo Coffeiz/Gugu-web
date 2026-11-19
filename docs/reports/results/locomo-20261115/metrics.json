@@ -1,0 +1,99 @@
+{
+  "bm25": {
+    "sample_id": "conv-26",
+    "model": "deepseek-flash",
+    "sessions": 19,
+    "memory_facts": 192,
+    "questions": 152,
+    "mean_f1": 0.4669720321453263,
+    "by_category": {
+      "1": {
+        "n": 32,
+        "mean_f1": 0.33085317460317465
+      },
+      "2": {
+        "n": 37,
+        "mean_f1": 0.692922992922993
+      },
+      "3": {
+        "n": 13,
+        "mean_f1": 0.15805860805860805
+      },
+      "4": {
+        "n": 70,
+        "mean_f1": 0.467136209369648
+      }
+    },
+    "memory_seconds": 36.43,
+    "unknown_answers": 37,
+    "method": "LLM simulated memory extraction; production Cython BM25 top12; batched independent QA; categories1-4"
+  },
+  "hybrid": {
+    "sample_id": "conv-26",
+    "model": "deepseek-flash",
+    "sessions": 19,
+    "memory_facts": 192,
+    "questions": 152,
+    "mean_f1": 0.48537936818620414,
+    "by_category": {
+      "1": {
+        "n": 32,
+        "mean_f1": 0.30524295956697384
+      },
+      "2": {
+        "n": 37,
+        "mean_f1": 0.6931525107995696
+      },
+      "3": {
+        "n": 13,
+        "mean_f1": 0.17344322344322344
+      },
+      "4": {
+        "n": 70,
+        "mean_f1": 0.5158354921973414
+      }
+    },
+    "memory_seconds": 36.43,
+    "unknown_answers": 26,
+    "method": "simulated memory; production Cython BM25 top50 candidates + production hybrid RRF 0.45 lexical/0.55 vector; top12; dsflash; serial"
+  },
+  "semantic_review": {
+    "judge": "当前 Codex 对已有输出逐题语义审阅，非独立盲测 judge API",
+    "rubric": "完全正确须覆盖核心答案且无实质矛盾；列表遗漏或混合错误为部分正确；Unknown 为错误；理由不必照抄参考",
+    "n": 152,
+    "counts": {
+      "correct": 97,
+      "partial": 11,
+      "incorrect": 44
+    },
+    "strict_accuracy": 0.6381578947368421,
+    "by_category": {
+      "1": {
+        "incorrect": 11,
+        "correct": 15,
+        "partial": 6
+      },
+      "2": {
+        "correct": 29,
+        "incorrect": 8
+      },
+      "3": {
+        "partial": 1,
+        "incorrect": 7,
+        "correct": 5
+      },
+      "4": {
+        "correct": 48,
+        "incorrect": 18,
+        "partial": 4
+      }
+    },
+    "limitations": [
+      "仅一个对话",
+      "评分者已知此前 F1，非盲评",
+      "没有逐题审阅全部原始证据，主要以参考答案为准，争议题抽查原文",
+      "不是官方排行榜评分",
+      "多余但明显错误的信息会扣分"
+    ]
+  }
+}

@@ -497,9 +497,7 @@ def test_group_history_keeps_sender_id_and_name_in_model_context():
 
     formatted = format_history_content(message, request)
 
-    assert "【群消息】" in formatted
-    assert "【发言人元数据】\n平台 ID：member-2\n显示名：CoffeiZzz" in formatted
-    assert "【消息正文】\n看看项目" in formatted
+    assert formatted == "⟦群消息⟧ CoffeiZzz / 时间未知：看看项目"
 
 
 def test_history_does_not_inject_persisted_message_time():
@@ -517,7 +515,7 @@ def test_history_does_not_inject_persisted_message_time():
     assert "2026-08-20" not in format_history_content(message, request)
 
 
-def test_current_group_message_separates_speaker_metadata_from_body():
+def test_current_group_message_contains_only_speaker_time_and_body():
     from agent.im.context_loader import format_current_content
     from agent.models import AgentRequest
 
@@ -534,9 +532,27 @@ def test_current_group_message_separates_speaker_metadata_from_body():
 
     formatted = format_current_content(request.message, request)
 
-    assert "【发言人元数据】\n平台 ID：owner-1\n显示名：小北" in formatted
+    assert formatted == "⟦群消息⟧ 小北 / 时间未知：我喜欢什么"
     assert "权限角色" not in formatted
-    assert "【消息正文】\n我喜欢什么" in formatted
+    assert "【群聊批次】" not in formatted
+
+
+def test_single_group_message_uses_platform_sent_time_from_request():
+    from datetime import datetime, timezone
+
+    from agent.im.context_loader import format_current_content
+    from agent.models import AgentRequest
+
+    sent_at = datetime(2026, 8, 22, 7, 22, tzinfo=timezone.utc)
+    request = AgentRequest(
+        message="在吗", user_id="owner-uuid", user_name="主人", source="qq",
+        chat_id="chat-1", platform_user_id="member-1", platform_user_name="群友",
+        platform_sent_ms=int(sent_at.timestamp() * 1000),
+    )
+
+    assert format_current_content("在吗", request, user_tz=timezone.utc) == (
+        "⟦群消息⟧ 群友 / 2026-08-22 07:22:00：在吗"
+    )
 
 
 def test_session_route_uses_group_id_for_group_and_sender_id_for_private_chat():

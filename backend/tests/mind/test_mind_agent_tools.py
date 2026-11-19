@@ -113,6 +113,26 @@ async def test_create_note_serializes_supported_blocks_and_references(db, user_a
     assert "- [ ] 跑回归" in note["content_md"]
 
 
+async def test_create_note_accepts_plain_markdown_without_block_arrays(db, user_a):
+    """普通笔记可直接传 Markdown，避免模型把每层数组生成为 item 包装。"""
+    result = await _create_note(db, user_a.id, {
+        "markdown": "# 主动发现需求\n\n先记录验证结果。",
+    })
+
+    assert result["note"]["content_md"] == "# 主动发现需求\n\n先记录验证结果。"
+    assert result["note"]["content_plain"] == "主动发现需求\n先记录验证结果。"
+
+
+async def test_create_note_requires_one_content_format(db, user_a):
+    """创建时同时传 blocks 与 markdown 不得产生格式优先级歧义。"""
+    result = await _create_note(db, user_a.id, {
+        "markdown": "普通正文",
+        "blocks": [{"type": "paragraph", "content": [{"type": "text", "text": "另一份正文"}]}],
+    })
+
+    assert result["error"].startswith("请提供 markdown 或 blocks 中的一种")
+
+
 async def test_create_note_rejects_invalid_color_and_other_users_reference(db, user_a, user_b):
     user_a_id = user_a.id
     user_b_id = user_b.id
@@ -149,6 +169,27 @@ async def test_update_note_appends_without_exposing_version(db, user_a):
         "node_id": note["node_id"], "title": "增量标题",
     })
     assert updated["note"]["title"] == "增量标题"
+
+
+async def test_update_note_appends_plain_markdown_and_rejects_mixed_edit_modes(db, user_a):
+    """纯文字追加走字符串契约；一次正文更新不能混用多种编辑模式。"""
+    created = await _create_note(db, user_a.id, {"markdown": "# 记录\n\n第一段"})
+    node_id = created["note"]["node_id"]
+
+    updated = await _update_note(db, user_a.id, {
+        "node_id": node_id,
+        "append_markdown": "第二段",
+    })
+    assert updated["note"]["content_md"] == "# 记录\n\n第一段\n\n第二段"
+
+    rejected = await _update_note(db, user_a.id, {
+        "node_id": node_id,
+        "append_markdown": "不应写入",
+        "line_edits": [{"target_lines": "all", "content": "覆盖"}],
+    })
+    assert rejected["error"].startswith("正文更新方式只能选一种")
+    unchanged = await _note_get(db, user_a.id, {"node_id": node_id})
+    assert unchanged["node"]["content_md"] == "# 记录\n\n第一段\n\n第二段"
 
 
 async def test_delete_reads_current_version_and_restore_returns_note(db, user_a):

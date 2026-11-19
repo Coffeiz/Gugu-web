@@ -54,7 +54,8 @@ async def persist_early_im_message(payload: dict, *, message_id: str) -> Optiona
         return None
     text = str(payload.get("text") or "")
     attachments = list(payload.get("attachments") or [])
-    if not text.strip() and not attachments:
+    mention_only = payload.get("mention_only") is True
+    if not text.strip() and not attachments and not mention_only:
         return None
     # Gateway 的原始媒体字典尚未下载/暂存，不能在早落库时生成附件卡片。
     # 这类消息等 dispatch 生成 attach_id 后随 run 一起落库，避免先推一个永久缺图的气泡。
@@ -130,6 +131,7 @@ async def persist_early_im_message(payload: dict, *, message_id: str) -> Optiona
             "current_bot": payload.get("native_bot_mentioned"),
             "other_bot": payload.get("mentions_other_bot"),
             "other_member": payload.get("mentions_other_member"),
+            "mention_only": mention_only,
         },
             chat_type=route.chat_type,
             files=cards or None,
@@ -158,6 +160,7 @@ async def persist_early_im_message(payload: dict, *, message_id: str) -> Optiona
                 "platform_user_name": payload.get("platform_user_name"),
                 "platform_bot_user_id": payload.get("platform_bot_user_id"),
                 "chat_type": route.chat_type,
+                "mention_only": mention_only,
                 "files": cards,
             }],
         )

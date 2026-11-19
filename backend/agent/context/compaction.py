@@ -375,6 +375,7 @@ async def compact_context(
     compact_summary_msg = {
         "role": "user",
         "content": format_compacted_summary(compact_summary),
+        "_compacted_summary": True,
     }
     new_messages.append(compact_summary_msg)
 

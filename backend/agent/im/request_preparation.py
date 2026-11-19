@@ -89,6 +89,8 @@ async def prepare_request(
     request = AgentRequest(
         message=payload.get("text", ""),
         inbound_batch_key=payload.get("_inbound_batch_key"),
+        platform_sent_ms=payload.get("platform_sent_ms"),
+        im_event_id=str(payload.get("event_id") or "") or None,
         early_message_ids=payload.get("_early_message_ids") or None,
         im_batch_messages=payload.get("_batch_messages") or None,
         group_attention_pending_ask_resume=(payload.get("_pending_ask_resume") is True),

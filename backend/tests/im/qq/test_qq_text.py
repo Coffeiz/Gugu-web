@@ -242,8 +242,10 @@ def test_send_file_tool_status_describes_preparation_not_delivery():
     assert '尝试发送' in format_tool_event(event, markdown=True)
 
 
-async def test_final_markdown_normalization_keeps_sent_prefix_and_delivers_tail(monkeypatch):
+@pytest.mark.parametrize("marker", ["", " ❌", " ❌️ ✅"])
+async def test_final_markdown_normalization_keeps_sent_prefix_and_delivers_tail(monkeypatch, marker):
     from agent.im.replies import _fix_loose_bold
+    from agent.security.sanitize import strip_disallowed_emoji
     frames = []
 
     async def request(*args, json_body):
@@ -257,12 +259,15 @@ async def test_final_markdown_normalization_keeps_sent_prefix_and_delivers_tail(
     monkeypatch.setattr(outbound, '_next_seq', AsyncMock(return_value=1))
     stream = outbound.create_private_text_stream('synthetic-user', channel_id='synthetic-bot', message_id='synthetic-message')
     stream.prefix_normalizer = _fix_loose_bold
-    stream.push('** 重点**\n')
+    draft = f'判断{marker}\n** 重点**\n'
+    visible = '判断 ✅' if marker.endswith('✅') else '判断'
+    stream.push(draft)
     await stream._flush()
-    await stream.finish('**重点**\n后续内容', allow_rewrite=True)
+    await stream.finish(_fix_loose_bold(strip_disallowed_emoji(draft)) + '后续内容', allow_rewrite=True)
 
+    assert frames[0]['content_raw'] == f'{visible}\n** 重点**\n'
     assert frames[-1]['input_state'] == 10
-    assert frames[-1]['content_raw'] == '** 重点**\n后续内容\n'
+    assert frames[-1]['content_raw'] == f'{visible}\n** 重点**\n后续内容\n'
 
 
 async def test_qq_40007_closes_last_acknowledged_prefix(monkeypatch):

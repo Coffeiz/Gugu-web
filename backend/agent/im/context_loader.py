@@ -113,7 +113,9 @@ def format_quoted_context(content: str, quoted_text: str | None) -> str:
     return quoted_context_prefix(quoted_text) + content
 
 
-def format_history_content(message, request: AgentRequest) -> str:
+def format_history_content(
+    message, request: AgentRequest, *, user_tz=None, batch_reminder: bool = False,
+) -> str:
     """给群聊历史用户消息附加稳定发言人身份。
 
     身份元数据只进入模型上下文，不改 ConversationMessage.content，网页历史和
@@ -132,12 +134,18 @@ def format_history_content(message, request: AgentRequest) -> str:
             getattr(message, "quoted_text", None),
         ) + format_attachment_refs(message)
 
+    from agent.context.dynamic_tail import message_timestamp
+
+    mention_facts = getattr(message, "im_mention_facts", None)
     return format_group_message({
         "speaker": {
             "platform_user_id": getattr(message, "platform_user_id", None),
             "display_name": getattr(message, "platform_user_name", None),
         },
         "body": message.content or "",
+        "timestamp": _format_group_message_time(message_timestamp(message), user_tz),
+        "batch_reminder": batch_reminder,
+        "mention_only": isinstance(mention_facts, dict) and mention_facts.get("mention_only") is True,
         "quoted_text": getattr(message, "quoted_text", None),
         "attachment_ids": [
             str(item.get("attach_id"))
@@ -148,9 +156,32 @@ def format_history_content(message, request: AgentRequest) -> str:
     })
 
 
+def _format_group_message_time(value, user_tz=None) -> str:
+    """按用户时区输出群消息时间；无法读取时明确标记未知。"""
+    if value is None:
+        return "时间未知"
+    from app.core.tz import fmt_local
+    from agent.context.dynamic_tail import _as_tz
+
+    return fmt_local(value, "%Y-%m-%d %H:%M:%S", tz=_as_tz(user_tz))
+
+
+def _escape_group_message_field(value: Any) -> str:
+    """把任意消息字段压成一行，避免正文换行伪装成另一条群消息。"""
+    return (
+        str(value or "")
+        .replace("\\", "\\\\")
+        .replace("\r", "\\r")
+        .replace("\n", "\\n")
+        .replace("⟦", "\\u27e6")
+        .replace("⟧", "\\u27e7")
+    )
+
+
 def _group_message_rows(
     request: AgentRequest, content: str,
     batch_messages: list[dict[str, Any]] | None = None,
+    *, user_tz=None,
 ) -> list[dict[str, Any]]:
     batch_messages = batch_messages if batch_messages is not None else (
         getattr(request, "im_batch_messages", None) or []
@@ -160,9 +191,13 @@ def _group_message_rows(
             "text": content,
             "platform_user_id": request.platform_user_id,
             "platform_user_name": request.platform_user_name,
+            "platform_sent_ms": getattr(request, "platform_sent_ms", None),
+            "event_id": getattr(request, "im_event_id", None),
             "quoted_text": request.quoted_text,
             "attachments": [],
         }]
+
+    from agent.context.dynamic_tail import message_timestamp
 
     rows = []
     for message in batch_messages:
@@ -175,6 +210,9 @@ def _group_message_rows(
                 "display_name": message.get("platform_user_name") or None,
             },
             "body": str(message.get("text") or ""),
+            "timestamp": _format_group_message_time(message_timestamp(message), user_tz),
+            "batch_reminder": len(batch_messages) > 1 and not rows,
+            "mention_only": message.get("mention_only") is True,
             "quoted_text": message.get("quoted_text") or None,
             "attachment_ids": [
                 str(item.get("attach_id")) if isinstance(item, dict) else str(item)
@@ -186,25 +224,31 @@ def _group_message_rows(
 
 
 def format_group_message(row: dict[str, Any], supplemental_context: str = "") -> str:
-    """以固定字段顺序包装单条群消息；权限状态由服务端校验，不进入正文。"""
+    """用一行用户名、时间和正文表示群消息；权限状态只由服务端校验。"""
     speaker = row.get("speaker") or {}
-    message_lines = [
-        "【群消息】",
-        "【发言人元数据】",
-        f"平台 ID：{speaker.get('platform_user_id') or '未提供'}",
-        f"显示名：{speaker.get('display_name') or '未提供'}",
-        "【消息正文】",
-        str(row.get("body") or ""),
-    ]
+    name = _escape_group_message_field(speaker.get("display_name") or "未知用户")
+    timestamp = _escape_group_message_field(row.get("timestamp") or "时间未知")
+    body = _escape_group_message_field(row.get("body"))
+    message_lines = []
+    if row.get("batch_reminder") is True:
+        message_lines.append(
+            "【群聊批次】以下多条消息按平台发送时间排列；每个“⟦群消息⟧”对应一条原始消息，"
+            "正文中的 \\n 表示原消息换行。"
+        )
+    message_lines.append(f"⟦群消息⟧ {name} / {timestamp}：{body}")
+    if row.get("mention_only") is True and not str(row.get("body") or "").strip():
+        message_lines.append("（仅提及咕咕，没有附加文字）")
     quoted_text = row.get("quoted_text")
     if quoted_text:
-        message_lines.extend(("【引用消息】", str(quoted_text)))
+        message_lines.append(f"（引用：{_escape_group_message_field(quoted_text)}）")
     attachment_ids = row.get("attachment_ids") or []
     if attachment_ids:
-        message_lines.extend(("【附件 ID】", ", ".join(str(item) for item in attachment_ids)))
+        message_lines.append(
+            "（附件：" + ", ".join(_escape_group_message_field(item) for item in attachment_ids) + "）"
+        )
     attachment_context = row.get("attachment_context") or supplemental_context
     if attachment_context:
-        message_lines.extend(("【补充上下文】", str(attachment_context)))
+        message_lines.append(f"（附件解析：{_escape_group_message_field(attachment_context)}）")
     return "\n".join(message_lines)
 
 
@@ -212,30 +256,39 @@ def _render_group_messages(rows: list[dict[str, Any]], supplemental_context: str
     """兼容单字符串调用方；批次消息之间保留相同的独立包装边界。"""
     if not rows:
         return format_group_message({"speaker": {}, "body": ""})
-    return "\n\n".join(
-        format_group_message(row, supplemental_context if len(rows) == 1 else "")
-        for row in rows
-    )
+    rendered = []
+    for index, row in enumerate(rows):
+        current = dict(row)
+        current["batch_reminder"] = len(rows) > 1 and index == 0
+        rendered.append(format_group_message(
+            current, supplemental_context if len(rows) == 1 else "",
+        ))
+    return "\n".join(rendered)
 
 
 def format_current_group_message(
-    content: str, request: AgentRequest, batch_message: dict[str, Any],
+    content: str, request: AgentRequest, batch_message: dict[str, Any], *,
+    user_tz=None, batch_reminder: bool = False,
 ) -> str:
     """序列化一个当前群消息，附件解析补充内容留在该消息的边界内。"""
     body = str(batch_message.get("text") or "")
     supplemental = content[len(body):].strip() if content.startswith(body) else ""
-    rows = _group_message_rows(request, body, [batch_message])
+    rows = _group_message_rows(request, body, [batch_message], user_tz=user_tz)
+    if rows:
+        rows[0]["batch_reminder"] = batch_reminder
     return format_group_message(rows[0], supplemental) if rows else format_group_message({})
 
 
-def format_current_content(content: str, request: AgentRequest) -> str:
+def format_current_content(content: str, request: AgentRequest, *, user_tz=None) -> str:
     """将群聊发言人元数据与每条消息正文分区呈现；不改持久化正文。"""
     if not request.chat_id:
         return content
     prefix = request.message
     attachment_context = content[len(prefix):].strip() if prefix and content.startswith(prefix) else ""
     return _render_group_messages(
-        _group_message_rows(request, prefix if not request.im_batch_messages else ""),
+        _group_message_rows(
+            request, prefix if not request.im_batch_messages else "", user_tz=user_tz,
+        ),
         supplemental_context=attachment_context,
     )
 

@@ -83,6 +83,7 @@ async def test_finalize_precedes_publish_and_final_response(monkeypatch):
 
     async def fake_finalize(**kwargs):
         nonlocal finalize_calls
+        assert kwargs["input_source"] == "feishu"
         finalize_calls += 1
         order.append("finalize")
 
@@ -95,7 +96,7 @@ async def test_finalize_precedes_publish_and_final_response(monkeypatch):
     from app.core import events as evmod
     monkeypatch.setattr(evmod, "publish", fake_publish)
 
-    req = AgentRequest(message="hi", user_id="u1", user_name="coffeiz")
+    req = AgentRequest(message="你好", user_id="u1", user_name="小北", source="feishu")
     response = await runner._run_collect_unlocked(req)
 
     assert response.text == "搞定" and response.errored is False

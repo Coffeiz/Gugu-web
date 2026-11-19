@@ -16,3 +16,10 @@ describe('折线图数值轴上限', () => {
     expect(options.scales.y).not.toHaveProperty('max')
   })
 })
+
+it('多入口折线悬浮时显示分类和值，包括零次调用', () => {
+  const { tooltip } = lineChartOptions({ showLegend: true }).plugins
+
+  expect(tooltip.callbacks.label({ dataset: { label: 'QQ' }, raw: 17 })).toBe('QQ: 17')
+  expect(tooltip.callbacks.label({ dataset: { label: '飞书' }, raw: 0 })).toBe('飞书: 0')
+})

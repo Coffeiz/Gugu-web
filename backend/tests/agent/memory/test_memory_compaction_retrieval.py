@@ -102,18 +102,33 @@ async def test_owner_daily_compacts_all_entries_at_fifty_and_clears_daily(monkey
 
 
 @pytest.mark.asyncio
-async def test_memory_compaction_retries_provider_without_context_branch(monkeypatch, storage):
-    from agent.memory import memory_compress as compress, store
+async def test_memory_compaction_retries_and_records_usage_separately_from_chat(
+    monkeypatch, storage, db, user_a,
+):
+    """验证沉淀重试的用量归入压缩，且后续主对话沿用原会话与场景。"""
+    from sqlalchemy import select
 
-    uid = "memory-retry-test"
+    from agent.llm.modelctx import usage_context_scope
+    from agent.memory import memory_compress as compress, store
+    from agent.usage import record_current_usage
+    from app.models import AgentUsage, ConversationSession
+
+    uid = user_a.id
+    session = ConversationSession(user_id=uid)
+    db.add(session)
+    await db.commit()
+    settings = SimpleNamespace(quota=SimpleNamespace(default_token_limit_6h=None))
+    model = SimpleNamespace(model="test-model", provider="test-provider", is_byok=True)
     await store.write_daily_lines(uid, [f"- 2026-08-24 新事件{i}" for i in range(1, 101)])
     calls = 0
 
     async def flaky_complete(*_args, **_kwargs):
+        """首次模拟上游超时，重试成功后用实际记账入口记录用量。"""
         nonlocal calls
         calls += 1
         if calls == 1:
             raise TimeoutError("provider timeout")
+        await record_current_usage(settings, model, {"input": 140_000, "cache_read": 128})
         return {"entries": "## 记录长期记忆：重试事件\n\n2026-08-24 重试后完成。"}
 
     async def fake_sync(*_args, **_kwargs):
@@ -126,8 +141,20 @@ async def test_memory_compaction_retries_provider_without_context_branch(monkeyp
     monkeypatch.setattr(compress.store, "sync_memory_vecs", fake_sync)
     monkeypatch.setattr(compress, "retrieve_event_references", no_references)
 
-    assert await compress.compact(uid, SimpleNamespace()) is True
+    with usage_context_scope(uid, session.id, scenario="chat"):
+        assert await compress.compact(uid, settings) is True
+        await record_current_usage(settings, model, {"input": 10, "cache_read": 90})
+
     assert calls == 2
+    rows = (await db.execute(
+        select(AgentUsage.scenario, AgentUsage.session_id, AgentUsage.tokens_in, AgentUsage.cache_read)
+        .where(AgentUsage.user_id == uid)
+        .order_by(AgentUsage.id)
+    )).all()
+    assert rows == [
+        ("compaction", session.id, 140_000, 128),
+        ("chat", session.id, 10, 90),
+    ]
 
 
 @pytest.mark.asyncio

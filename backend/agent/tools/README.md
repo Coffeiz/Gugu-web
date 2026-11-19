@@ -177,6 +177,8 @@ if blocked is not None:
 
 所有支持修改正文的 Agent 工具都使用统一的行级编辑契约，避免不同工具分别实现一套定位规则。当前 `note_update` 和 `edit_file` 均采用 `mode: "line_edit"` + `line_edits`；以后新增正文编辑工具也必须复用 `backend/agent/tools/text_edit.py`，不得重新引入独立的整篇覆盖模式。
 
+普通思维笔记创建和追加不需要构造块数组：`note_create` 可传 `markdown` 字符串，`note_update` 可传 `append_markdown` 字符串。只有需要可点击引用或结构化块时才使用 `blocks` / `append_blocks`；单次更新只能选择 `append_markdown`、`append_blocks`、`line_edits` 中的一种。
+
 ```json
 {
   "mode": "line_edit",
@@ -187,7 +189,7 @@ if blocked is not None:
 }
 ```
 
-`target_lines` 使用 1-based 原始 Markdown 物理行号，支持单行（`8`）、范围（`8-11`）、Bash/`sed` 风格范围（`8,11`）和整篇（`all`）。数字目标必须同时提供读取结果中的 `expected` 原文，范围编辑时用换行连接；原文不匹配会拒绝修改，避免把渲染后的页面行号误当成 Markdown 行号。`content` 为空表示删除目标行；多个范围不得重叠，由工具从后往前应用。调用前必须先读取最新正文，修改后必须重新读取核对；整篇编辑只能使用 `target_lines: "all"`，不再使用 `replace_all`。笔记的追加仍使用 `append_blocks`，不应通过追加“作废说明”替代删除原内容。
+`target_lines` 使用 1-based 原始 Markdown 物理行号，支持单行（`8`）、范围（`8-11`）、Bash/`sed` 风格范围（`8,11`）和整篇（`all`）。数字目标必须同时提供读取结果中的 `expected` 原文，范围编辑时用换行连接；原文不匹配会拒绝修改，避免把渲染后的页面行号误当成 Markdown 行号。`content` 为空表示删除目标行；多个范围不得重叠，由工具从后往前应用。调用前必须先读取最新正文，修改后必须重新读取核对；整篇编辑只能使用 `target_lines: "all"`，不再使用 `replace_all`。追加普通正文用 `append_markdown`，结构化内容用 `append_blocks`；不应通过追加“作废说明”替代删除原内容。
 
 新增正文编辑工具时必须遵守同一套边界：读取接口返回原始正文和稳定的物理行号，`read_file.target_lines` 可按同一语法截取读取范围；`grep` 只负责在当前权限内定位文本并返回行号/上下文，不替代精确读取。编辑接口复用 `backend/agent/tools/text_edit.py`，不得依据 UI/HTML/Markdown 渲染后的可见行号；数字目标没有 `expected` 或校验失败时必须拒绝执行，不能猜测或静默改动。编辑成功后必须重新读取同一资源核对，测试至少覆盖行号偏移、过期正文、删除范围、`all` 整篇替换和多范围倒序应用；批量入口也必须逐项沿用这些规则。
 

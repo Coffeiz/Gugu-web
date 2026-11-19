@@ -5,6 +5,34 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+# 完整输入中不足 1% 的缓存读取视为冷请求。
+CACHE_COLD_READ_MULTIPLIER = 100
+
+
+def _cache_round_stats(rounds, input_totals: tuple[int, int, int]) -> dict[str, int] | None:
+    """仅汇总与账本输入一致的完整轮次。"""
+    fresh = read = written = 0
+    cold_calls = warm_input = warm_read = 0
+    for usage in rounds or ():
+        round_fresh = int(usage.get("input", 0) or 0)
+        round_read = int(usage.get("cache_read", 0) or 0)
+        round_written = int(usage.get("cache_write", 0) or 0)
+        fresh += round_fresh
+        read += round_read
+        written += round_written
+        full_input = round_fresh + round_read + round_written
+        if full_input <= 0:
+            continue
+        if round_read * CACHE_COLD_READ_MULTIPLIER < full_input:
+            cold_calls += 1
+        else:
+            warm_input += full_input
+            warm_read += round_read
+    if not rounds or (fresh, read, written) != input_totals:
+        return None
+    return {"cold_calls": cold_calls, "warm_input": warm_input, "warm_read": warm_read}
+
+
 @dataclass(frozen=True)
 class UsageResult:
     """一次调用实际写入账本的输入/输出用量。"""
@@ -100,6 +128,8 @@ async def record_usage(
     session_id: int | None = None,
     tools_used: list[str] | None = None,
     scenario: str = "chat",
+    input_source: str | None = None,
+    provider_rounds: list[dict] | None = None,
     db=None,
 ) -> UsageResult:
     """把一次实际 provider 调用写入 AgentUsage，并沿用平台配额封顶规则。"""
@@ -128,11 +158,13 @@ async def record_usage(
             tokens_out=capped_out,
             cache_read=cache_read,
             cache_write=cache_write,
+            cache_round_stats=_cache_round_stats(provider_rounds, (capped_in, cache_read, cache_write)),
             model=str(getattr(model_cfg, "model", "")),
             provider=str(getattr(model_cfg, "provider", "")),
             is_byok=bool(getattr(model_cfg, "is_byok", False)),
             tools_used=tools_used or None,
             scenario=scenario or "chat",
+            input_source=input_source,
         ))
         return UsageResult(tokens_in=capped_in, tokens_out=capped_out)
 
