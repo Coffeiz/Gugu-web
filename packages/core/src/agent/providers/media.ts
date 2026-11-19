@@ -41,7 +41,10 @@ export interface VendorMediaSource {
   readonly stream?: () => AsyncIterable<Uint8Array>
 }
 export interface VendorMediaDependencies extends ProviderDriverDependencies {
-  probeVideo?(source: VendorMediaSource, signal: AbortSignal): Promise<{ duration: number | null }>
+  probeVideo?(source: VendorMediaSource, signal: AbortSignal): Promise<{ duration: number | null; width?: number; height?: number; bitRate?: number; codec?: string | null }>
+  transcodeVideo?(source: VendorMediaSource, profile: {maxDimension: number; bitrate: string}, signal: AbortSignal): Promise<VendorMediaSource | null>
+  /** Host可提供owner/config/内容绑定的真实上传缓存；缺省仍走正式MiniMax上传协议。 */
+  uploadVideo?(source: VendorMediaSource, config: import('./contracts.js').ProviderConfig, signal: AbortSignal): Promise<string | null>
 }
 
 const encoder = new TextEncoder()

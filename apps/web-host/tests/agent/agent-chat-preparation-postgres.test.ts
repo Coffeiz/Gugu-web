@@ -32,6 +32,9 @@ test('隔离 PG 新会话和问候先于用户消息提交，附件或队列失�
     }
     const prepare = createPostgresAgentChatPreparation(pool, ports)
     const owner = randomUUID()
+    // 生产身份行也是Web/IM创建的共同串行点；只创建本随机schema的合成owner。
+    await pool.query('CREATE TABLE users(id uuid PRIMARY KEY)')
+    await pool.query('INSERT INTO users(id) VALUES($1)',[owner])
     const result = await prepare(owner, { message: '测试', greeting: '  欢迎  ', client_message_id: 'client-1' }, 'run-1', { mode: 'direct' })
     const session = (await pool.query('SELECT * FROM conversation_sessions WHERE id = $1', [result.sessionId])).rows[0]
     assert.equal(session.title, '测试'); assert.equal(session.source, 'web'); assert.equal(session.context_epoch, 1); assert.equal(Number(session.last_message_seq), 2)

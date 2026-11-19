@@ -81,6 +81,18 @@ test('历史增量与展示顺序同事务提交，回滚与重放不产生重�
       const summary = await pool.query("SELECT content,covers_until_seq FROM conversation_messages WHERE role='summary'")
       assert.equal(summary.rows[0].content, '历史摘要')
       assert.equal(Number(summary.rows[0].covers_until_seq), 1)
+      const privateWriter=createCanonicalHistoryWriter(async()=>({defaultLimit6h:null,byokEnabled:false,localDeployment:false,model:'model',provider:'provider',isByok:false}),
+        {async commitContinuation(){throw new Error('成功私有状态发布钩子')}})
+      for(const outcome of ['interruption','silent'] as const){
+        const stopped={...identity,runId:`synthetic-${outcome}`},empty=new MessageArea({digest,nextId:randomUUID})
+        const stoppedContext={...context,identity:stopped,prepared:{area:empty.snapshot()},continuationRef:'provider:synthetic-stopped'} as CanonicalRunContext
+        await client.query('BEGIN')
+        await privateWriter(client,stopped,{outcome,context:stoppedContext,text:''},{...checkpoint,identity:stopped,displayTimeline:[]})
+        await client.query('ROLLBACK')
+        await client.query('BEGIN')
+        await assert.rejects(privateWriter(client,stopped,{outcome:'success',context:stoppedContext,text:''},{...checkpoint,identity:stopped,displayTimeline:[]}),/成功私有状态发布钩子/)
+        await client.query('ROLLBACK')
+      }
     } finally { client.release() }
   } finally { await pool.end(); await admin.query(`DROP SCHEMA "${schema}" CASCADE`); await admin.end() }
 })

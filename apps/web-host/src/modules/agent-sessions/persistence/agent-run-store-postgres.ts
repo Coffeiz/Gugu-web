@@ -14,6 +14,8 @@ export interface AgentRunHistoryWrite<C> {
 }
 
 export interface AgentRunStoreOptions<C> {
+  /** 私有Provider状态与每次checkpoint CAS同事务；只允许当前client与内存，不得执行网络或另借连接。 */
+  persistPrivateContext?(client:PoolClient,identity:RunIdentity,next:RunCheckpoint<C>,previous:RunCheckpoint<C>|null):Promise<void>
   /** 首次 prepared checkpoint 与快照 CAS 同事务提交。 */
   applyPreparedContext?(client: PoolClient, identity: RunIdentity, context: C): Promise<void>
   /** Canonical history, usage and pending compaction must share the checkpoint transaction. */
@@ -162,6 +164,7 @@ export function createPostgresAgentRunStore<C>(
         await insertEvents(client, codec, identity, events)
         if (checkpoint.context !== null && options.applyPreparedContext)
           await options.applyPreparedContext(client, identity, checkpoint.context)
+        await options.persistPrivateContext?.(client,identity,checkpoint,null)
       }, (error) => isPostgresUniqueViolation(error) ? new RunStoreRejected('conflict') : error)
     },
 
@@ -217,6 +220,7 @@ export function createPostgresAgentRunStore<C>(
           if (previous.context === null)
             await options.applyPreparedContext(client, identity, change.checkpoint.context)
         }
+        if(options.persistPrivateContext)await options.persistPrivateContext(client,identity,change.checkpoint,codec.decryptCheckpoint<C>(identity,Number(current.rows[0].version),current.rows[0].nonce,current.rows[0].payload))
         if (change.history !== null)
           await options.writeHistory(client, identity, change.history, change.checkpoint)
       }, (error) => isPostgresUniqueViolation(error) ? new RunStoreRejected('conflict') : error)

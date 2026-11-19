@@ -11,6 +11,8 @@ export class RedisStreamQueue implements StreamQueue {
     private readonly stream: string,
     private readonly group: string,
     private readonly consumer: string,
+    /** 显式隔离可识别ID的坏条目；处理器仍须失败且不ACK，不能伪造业务成功。 */
+    private readonly invalidEntry?: (id: string) => InboundMessage,
   ) {}
 
   async claimStale(count: number, minIdleMs: number): Promise<InboundMessage[]> {
@@ -19,7 +21,7 @@ export class RedisStreamQueue implements StreamQueue {
       String(minIdleMs), '0-0', 'COUNT', String(count),
     ])
     if (!Array.isArray(result) || !Array.isArray(result[1])) return []
-    return (result[1] as unknown[]).map(parseEntry)
+    return (result[1] as unknown[]).map(value => this.entry(value))
   }
 
   async consume(count: number, blockMs: number): Promise<InboundMessage[]> {
@@ -33,11 +35,20 @@ export class RedisStreamQueue implements StreamQueue {
     const result = await this.redis.sendCommand(command)
     if (!Array.isArray(result) || !Array.isArray(result[0])) return []
     const [, entries] = result[0] as [unknown, unknown]
-    return Array.isArray(entries) ? entries.map(parseEntry) : []
+    return Array.isArray(entries) ? entries.map(value => this.entry(value)) : []
   }
 
   async acknowledge(messageId: string): Promise<void> {
     await this.redis.sendCommand(['XACK', this.stream, this.group, messageId])
+  }
+
+  private entry(value: unknown): InboundMessage {
+    try { return parseEntry(value) }
+    catch (error) {
+      if (this.invalidEntry && Array.isArray(value) && typeof value[0] === 'string' && /^\d+-\d+$/.test(value[0]))
+        return this.invalidEntry(value[0])
+      throw error
+    }
   }
 }
 

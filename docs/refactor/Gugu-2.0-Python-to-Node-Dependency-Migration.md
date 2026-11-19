@@ -77,6 +77,22 @@
 
 > QQ 目前为 raw WebSocket + HTTP；微信 iLink 有独立适配代码，它们**虽不是上述 pip 包**，仍须迁移消息、媒体、幂等、Gateway、trace_id 与重试逻辑。
 
+2026-11-18 实现进展：Web Host 固定使用 `@larksuiteoapi/node-sdk@1.76.0` 与 `ws@8.22.0`；微信 AES 使用 `node:crypto`，四平台 HTTP 复用受控传输。`main.ts` 已接真实生产资源与 Node IM bootstrap，包括永久准入、持久批次、媒体 claim/恢复、IM-only 调度、原平台回复、交互与出站恢复扫描。默认 Python 归属下不启动 Node 消费者；真实平台、全媒体转码及部署切换仍按 [IM Gateway 迁移清单](Gugu-2.0-IM-Gateway迁移清单.md) 分别验收，不能据依赖安装或隔离网络替身判定平台验收通过。
+
+群注意力接入生产 Ingress、当前策略复核与既有 Harness 回复门；延迟 ASK 走内部持久 resume 收据和正式 v3 Run 入队，成功平台回执与加密事实同事务保存。Node 独立 Redis issued/取消证明丢失时取消旧唤醒。生产 `resources()` 读取真实 PG/本地 FS/配置，不依赖 Python 消费者双写补齐。
+
+共享链路复用真实控制事务、冻结 Run 取消、授权上下文/引用恢复、IM memory 与当前群工具。异步工厂使用同一 ProviderRuntime 装配压缩/finalizer；成功历史同事务登记反思 Job，独立消费者承担租约、journal/CAS、cursor/RAG 与清除围栏；最小 read_file/send_file 已注册实际授权能力。飞书图表实际 PNG、隔离 PG/Redis/Linux FS 行为均独立记录，平台/Provider HTTP 为替身。“组件实现、生产接线、Python 回归、真实平台”继续分别验收。
+
+被动群与 idle 反思增量已接正式消息收据和成功 Run：`reflection-triggers.ts` 持久计数、独立窗口与 scope 冻结，`reflection-tail.ts` 校验有界序号尾部，`reflection-postgres.ts` 使用真实 Run 前缀发起 Core 反思分支。每50条被动消息生成窗口，只有成功主动 Run 设置180秒 idle，被动不重置；无合格快照不调用 Provider。原始成员身份与混合批次最低权限分开处理，owner 不落成员记忆。旧 schema 显式升级使用 `reflection-trigger-upgrade.sql`，缺原始冻结的旧 Run 不反填当前版本。群daily 100条自动沉淀已复用既有Core规则、正式提示词和真实Provider独立分支，逐批加密文件计划与后继Job支持跨进程恢复，不推进消息水位。owner daily 50条已接本人BM25参考、追加主档、逐响应用量和持久恢复，profile/pattern低频维护已接Core门限、独立Provider、加密计划与失败冷却，QQ可选私聊流与Telegram私聊draft/保活/图文已进共享持久投递，独立平台密钥/显式约束升级及退出排空，不走旁路observer；platform-user成员可从真实checkpoint恢复，公开group仍等原快照。真实平台和部署切换另验。
+
+语音 Run 已补实际活动语音预设/`speech_to_text` BYOK 与三种 Core ASR 协议接线，Host 负责有界 ffprobe/ffmpeg、当前版本/权限和字幕卡片事务。主模型原生音频直接使用授权稳定引用，未配置独立 ASR 走既有 early exit；隔离 PG/Redis 与实际 OGG 转码整链路已通过，平台/Provider 网络为替身。群注意力非 autonomous 模式已接独立 ASR-only 工厂与加密持久收据，原消息证明及派发事务绑定后由真实 Run 复用，未知请求不重发；不把字幕写回密封入站材料。引用语音已补完整来源与历史证明，SILK 已通过受限 Rust WASM worker 接入。视频已补 Core 规则、真实 ffprobe/ffmpeg、MiniMax 上传及加密缓存；OpenAI/M3/不支持视频三种生产链路通过隔离存储验收。原生音频附加字幕与 sessions 卡片精细更新已通过生产隔离回归11/11，MiMo Chat保留原音频格式；HEIC与旧默认Python相同明确拒绝，不能把仅声明的依赖误记为已存在解码能力；真实平台另验。
+
+Responses/Anthropic私有推理已补活动checkpoint同事务加密、原ref恢复及成功历史事务发布跨Run状态；关闭模式、工具Schema变化与当前权限均复核。OpenAI Chat/Ollama只保存当前Run私有工具续接，按Python基线不发布跨Run成功状态。`resources()`调用同一真实服务，活动表沿既有显式迁移；三协议工具轮、Anthropic重启跨Run/off及Responses拒绝均经隔离PG/Redis/Harness验收，网络为替身。Anthropic跨Run只保存Python同形thinking映射和tail，不宣称恢复Node额外原始响应块；真实Provider、OS强杀及部署另行验收。
+
+Responses 上游协议拒绝已从 Core 通知 Host，按本次加载时冻结的版本 CAS 失效数据库成功状态，不能让旧 Run 清除较新状态。正式三 Run 回归验证两次成功续接后第三次真实 400 拒绝、密文清空及失败终态完成；平台/Provider 网络仍为替身，PG/Redis/Harness 真实。
+
+Node IM 自动保留复用现有 Core PG session 删除与 Host 本地文件引用计数：真实事务中的50会话替换、按摘要水位2000条/每批500的历史保留、无消息外键的永久消费标记及持久FS回收均已由正式 Gateway/Worker/Agent Run 链验证。后台仅处理Node登记目标，保护引用证明、运行/投递/交互/反思及 pending ASK，FS失败保留重试。Python消费者及配置不变；显式删除已接Node同事务永久墓碑/持久GC与真实取消，认证HTTP整链路5/5；Web owner取消不再依赖已撤销的Bot/群/平台绑定，出站仍严格复核；未知投递仍409。Node Web实际创建已加入同一owner行锁，真实PG双向竞争/回滚/跨owner验证通过；Python创建者仍须部署上保持同写域单写者，不能据Node锁推断Python并行写入已协调。
+
 ### 1.4 搜索、多语言、日期和通用工具
 
 | Python 依赖（原约束） | 用途 | Node/TS 目标候选 | 难度 | 必须验收 |
@@ -97,9 +113,9 @@
 
 | Python 依赖（原约束） | 用途 | Node/TS 目标候选 | 难度 | 必须验收 |
 |---|---|---|---|---|
-| `Pillow>=13.0.0` | 图片读取、缩略图 | `sharp` | M | EXIF、方向、透明图、多帧、大图安全限制 |
-| `pillow-heif>=0.16.0` | iPhone HEIC/HEIF | `sharp`（经验证的 HEIF/libheif build）/ 独立 `libheif` | H | 实机 HEIC/HEIF、授权/编解码器、跨平台包 |
-| `pilk>=0.2.4` | QQ/微信 SILK → PCM | SILK 原生解码器或 WASM 包；FFmpeg 后处理 | H | 腾讯头、24k/单声道、错误音频、Windows/macOS；许可证审查 |
+| `Pillow>=13.0.0` | 图片读取、缩略图 | IM 副本复用已有 `@napi-rs/canvas` + TIFF 的受限 FFmpeg；其他调用方另核对 | M | IM PNG/JPEG/GIF/WebP/BMP/TIFF 完整解码、降采样/透明铺白/原样策略已实现；HEIC 未支持，EXIF、多帧及其他领域不以此代验收 |
+| `pillow-heif>=0.16.0` | 仅依赖声明，旧生产未注册HEIF opener | 默认拒绝与旧实际行为一致；真实解码作为后续能力补齐 | — | 内存真实HEIC可直接codec解码，但正式Python fit_image注册前None、进程内显式注册后JPEG；不得把后者计作旧入口验收 |
+| `pilk>=0.2.4` | QQ/微信 SILK → PCM | Host 锁定 `@zpowertech/audio-player@0.1.1`，受限独立 Node/WASM → 24k 单声道 PCM → FFmpeg WAV | H | Linux 32 组采样率/信号/标准腾讯头与 pilk 逐字节差分、畸形帧/超时/取消及构建 JS worker已验证；Windows/macOS 单独记录，第三方声明随 Host 保留 |
 | `trafilatura>=2.0.0` | 网页正文抽取 → Markdown | `@mozilla/readability` + `jsdom`，必要时 `cheerio` | H | 中文页面、动态站点、链接、表格与正文质量 |
 | `python-docx==1.1.2` | DOCX 文本 | `mammoth`（DOCX→HTML/文本抽取） | M | 段落顺序、表格、页眉脚等；Mammoth 不负责 HTML 净化，不视为结构编辑能力 |
 | `openpyxl==3.1.5` | XLSX 文本 | `xlsx`（SheetJS CE，读取） | M | 公式缓存、合并单元格、多个 sheet；先验证 Gugu 所需字段与工作簿特性 |

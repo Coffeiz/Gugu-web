@@ -4,7 +4,7 @@ import type { MemoryRagScopeStatePort } from './memory-loader.js'
 
 type ScopeStateRow = {
   scope_version: number | string | null
-  updated_at: Date | string | null
+  updated_at: string | null
   tombstoned: boolean | number | null
 }
 
@@ -30,7 +30,9 @@ export function createSqlMemoryScopeStateReader<DB>(db: Kysely<DB>): MemoryRagSc
             WHERE owner_user_id = ${ownerId} AND platform = ${scope.platform}
               AND bot_id = ${scope.botId} AND scope_type = ${cursorType}
               AND scope_id = ${scope.id} LIMIT 1) AS scope_version,
-          (SELECT updated_at FROM memory_reflection_cursors
+          -- 在数据库内转文本，避免pg驱动先构造毫秒Date而丢失scope revision微秒。
+          -- SQLite的原文本值经CAST保持不变，沿用已有revision/cache契约。
+          (SELECT CAST(updated_at AS TEXT) FROM memory_reflection_cursors
             WHERE owner_user_id = ${ownerId} AND platform = ${scope.platform}
               AND bot_id = ${scope.botId} AND scope_type = ${cursorType}
               AND scope_id = ${scope.id} LIMIT 1) AS updated_at,
@@ -47,9 +49,7 @@ export function createSqlMemoryScopeStateReader<DB>(db: Kysely<DB>): MemoryRagSc
     signal?.throwIfAborted()
     if (!row) throw new CoreError('storage_error', 'Memory scope 状态查询失败')
 
-    const updatedAt = row.updated_at instanceof Date
-      ? row.updated_at.toISOString()
-      : String(row.updated_at || '')
+    const updatedAt = String(row.updated_at || '')
     const revision = row.scope_version == null
       ? 'missing'
       : `${Number(row.scope_version) || 0}:${updatedAt}`

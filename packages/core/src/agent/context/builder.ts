@@ -33,7 +33,7 @@ export function createAgentContextBuilder(ports: AgentContextBuilderPorts): Cont
       return {
         systemPrompt: buildAgentStaticPrompt(ports.staticPrompt(selection, identity, stylePreferences, snapshot.userTimezone)),
         systemInMessages: ports.systemInMessages(selection),
-        fixedPrefix: [{ role: 'system', content: `[system-reminder]\n${internalContextPolicy}\n\n${snapshot.snapshotContext}\n[/system-reminder]` }],
+        fixedPrefix: agentContextSnapshotPrefix(snapshot.snapshotContext),
       }
     },
   }
@@ -92,4 +92,8 @@ export function createWebAgentContextBuilder(ports: Omit<AgentContextBuilderPort
 export function agentCurrentTimeReminderBody(now: Date, timezone: string): string {
   const reminder = agentCurrentTimeReminder(now, timezone).content
   return reminder.slice('[system-reminder]\n'.length, -'\n[/system-reminder]'.length)
+}
+
+export function agentContextSnapshotPrefix(snapshot: string): import('../models.js').CanonicalMessage[] {
+  return [{ role: 'system', content: `[system-reminder]\n${internalContextPolicy}\n\n${snapshot}\n[/system-reminder]` }]
 }

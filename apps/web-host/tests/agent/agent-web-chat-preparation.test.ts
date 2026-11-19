@@ -10,6 +10,7 @@ function fixture(options: { attachmentClaimFails?: boolean; project?: Record<str
     async query(sql: string, values: unknown[] = []) {
       statements.push({ sql, values })
       if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rowCount: null, rows: [] }
+      if (sql.includes('SELECT id FROM users')) return { rowCount: 1, rows: [{ id: values[0] }] }
       if (sql.includes('SELECT id FROM conversation_sessions')) return { rowCount: 1, rows: [{ id: 7 }] }
       if (sql.includes('INSERT INTO conversation_sessions')) return { rowCount: 1, rows: [{ id: 7 }] }
       if (sql.includes('INSERT INTO agent_run_startups')) return { rowCount: 1, rows: [] }

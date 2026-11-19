@@ -123,10 +123,10 @@ export async function commitReasoningState(client: PoolClient, identity: Reasoni
 
 /** 显式失效受版本保护；调用方须在同一事务中提交并决定是否保留先前成功状态。 */
 export async function invalidateReasoningState(client: PoolClient, identity: ReasoningIdentity, expectedVersion: number,
-  reason: 'manual' | 'branch_changed' | 'provider_rejected'): Promise<boolean> {
+  reason: 'manual' | 'branch_changed' | 'provider_rejected' | 'responses_incompatible'): Promise<boolean> {
   valid(identity)
   if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0
-    || !['manual', 'branch_changed', 'provider_rejected'].includes(reason)) throw new TypeError('推理状态失效参数无效')
+    || !['manual', 'branch_changed', 'provider_rejected', 'responses_incompatible'].includes(reason)) throw new TypeError('推理状态失效参数无效')
   await owned(client, identity)
   const row = await read(client, identity)
   if (!row) {

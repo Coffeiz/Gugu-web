@@ -14,6 +14,8 @@ import { openProxyTunnel, proxyFor, proxyOptionsFromEnvironment } from './proxy.
 import type { ProviderProxyOptions } from './proxy.js'
 export { proxyOptionsFromEnvironment } from './proxy.js'
 export { isPublicAddress } from './network.js'
+export { resolvePinnedTarget } from './network.js'
+export type { AddressResolver, ResolvedAddress } from './network.js'
 
 export interface NodeProviderTransportOptions {
   readonly resolve?: AddressResolver
@@ -148,7 +150,7 @@ export class NodeProviderTransport implements ProviderTransport {
     // 代理隧道按请求关闭；不把不同目标/身份的隧道放入同一个keepalive origin池。
     if (proxyAgent && tunnel) proxyAgent.createConnection = () => tunnel
     return await new Promise<ProviderHttpResponse>((resolve, reject) => {
-      let received = false
+      let requestStarted = false
       let settled = false
       let failure: unknown = null
       const requestOptions = {
@@ -177,12 +179,12 @@ export class NodeProviderTransport implements ProviderTransport {
       request.once('error', error => {
         proxyAgent?.destroy(); tunnel?.destroy()
         release()
-        failure = signal.aborted ? new ProviderError('cancelled') : classifyProviderError(error, { requestStarted: received })
+        failure = signal.aborted ? new ProviderError('cancelled') : classifyProviderError(error, { requestStarted })
         clearTimeout(connectTimer); if (writeTimer) clearTimeout(writeTimer)
-        if (!settled) { settled = true; reject(signal.aborted ? new ProviderError('cancelled') : classifyProviderError(error, { requestStarted: received })) }
+        if (!settled) { settled = true; reject(failure) }
       })
       request.once('response', response => {
-        received = true; settled = true
+        requestStarted = true; settled = true
         clearTimeout(connectTimer)
         if (writeTimer) clearTimeout(writeTimer)
         const resultHeaders: Record<string, string> = {}
@@ -210,10 +212,13 @@ export class NodeProviderTransport implements ProviderTransport {
       void (async () => {
         try {
           request.once('finish', () => { if (writeTimer) clearTimeout(writeTimer) })
-          if (body instanceof Uint8Array) { armWriteTimeout(); request.end(body) }
+          // write/end之后请求可能已到达对端；未收到响应不能证明写入没有生效。
+          // DNS、池等待和明确连接超时仍通过各自的安全错误保留未发送事实。
+          if (body instanceof Uint8Array) { armWriteTimeout(); requestStarted = true; request.end(body) }
           else {
             if (body) for await (const chunk of body) {
               throwIfCancelled(signal)
+              requestStarted = true
               if (!request.write(chunk)) {
                 armWriteTimeout()
                 await once(request, 'drain', { signal })
@@ -221,6 +226,7 @@ export class NodeProviderTransport implements ProviderTransport {
               }
             }
             armWriteTimeout()
+            requestStarted = true
             request.end()
           }
         } catch (error) { request.destroy(error instanceof ProviderError ? error : new ProviderError(signal.aborted ? 'cancelled' : 'network')) }

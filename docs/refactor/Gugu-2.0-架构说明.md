@@ -116,7 +116,7 @@ SaaS 尚无当前仓库内的 Node Host。稳定后可维持独立私有仓库�
 
 `packages/fs/` 与 `packages/sandbox/` 是独立共享包目标：FS 负责授权根目录内的直接读写、路径边界与文件操作；Sandbox 负责执行契约、策略和平台适配。Host 建立可信身份与授权，按部署能力注入文件根目录、执行后端及生命周期；共享包不自行授予权限。两个独立包已建立：只读 FS 已接入 Web Host，Sandbox 已承载现有执行器实现，Core 保留兼容导出。完整 FS 产品路径和 Linux Bubblewrap 多用户隔离仍待实现和验收。
 
-核心职责树如下；目标是 Core 按业务模块组织共享规则与用例，Web Host 按模块组织协议接线。Core 顶层旧 `domain/`、`application/` 已按业务和共用职责归位。Web Host 的 HTTP 路由、运行装配和工具适配已归入 `apps/web-host/src/modules/`，旧 `apps/web-host/src/domains/` 已移除。运行回归进度见迁移清单。桌面和 Web 共用的业务规则、完整业务用例及其数据契约先按领域归入 Core，再继续新增 N2 业务迁移。业务规则、事务、Undo、文件和事件作为完整用例处理，不能只移动代码或复制两份实现；各 Host 保留可信身份、平台能力和生命周期装配。
+核心职责树如下；目标是 Core 按业务模块组织共享规则与用例，Web Host 按模块组织协议接线。Core 顶层旧 `domain/`、`application/` 已按业务和共用职责归位。Web Host 的 HTTP 路由、运行装配和工具适配已归入 `apps/web-host/src/modules/`，旧 `apps/web-host/src/modules/` 已移除。运行回归进度见迁移清单。桌面和 Web 共用的业务规则、完整业务用例及其数据契约先按领域归入 Core，再继续新增 N2 业务迁移。业务规则、事务、Undo、文件和事件作为完整用例处理，不能只移动代码或复制两份实现；各 Host 保留可信身份、平台能力和生命周期装配。
 
 同名业务模块在 Core 和 Host 中分别承担业务实现与入口适配，不维护两套规则。按需拆分领域规则、用例与仓储，不要求每个模块创建相同的空目录，也不为每条接口增加一层。2.0 尚未发布：现有内部调用、测试及导出应随迁移同步切换，确认无调用方后删除仅为旧 Node 目录或导出保留的转发层；仍要兑现已确定的产品行为和数据迁移契约；旧版代码可从 Git 历史查阅。
 
@@ -372,6 +372,30 @@ Core 负责队列项状态、顺序、认领和恢复规则，并通过存储与
 当前 Python 待发队列已有数据库持久化；Node Web Host 有 PostgreSQL 专属的部分接口和适配。共享 Core 队列服务、桌面 SQLite/IPC 装配及完整跨端回归仍待实现，不能把现有 IPC 请求队列或已注册 HTTP 接口视为聊天队列已完成。
 
 ## 3. 数据统一与 Node 迁移规则
+
+### IM Gateway 的 Core / Host 边界
+
+语音复用 Core 的 OpenAI-compatible、DashScope、MiniMax ASR 协议。Host 从实际活动语音预设与当前用户 `speech_to_text` BYOK 选择配置，负责安全 ffprobe/ffmpeg、临时文件、当前权限和配置版本；主模型原生音频不依赖独立 ASR；配置独立ASR时可附加卡片字幕，原音频仍交给主模型，字幕不重复注入正文。公开字幕更新通过 sessions 事件发布，不含内部存储材料。正文只通过有权附件读取，checkpoint 保存稳定引用；字幕卡片由同事务完整批次证明保护，未配置 ASR 走既有 Harness early exit，不注入模拟识别或另建 Agent 循环。
+
+IM 消息解析和规范化、可信身份对照后的权限规则、会话范围与批次排序、范围记忆投影、平台工具可见性，以及 Agent Run 事件的结果投递规则，放在 `packages/core/src/im/`。这些规则不直接读取 Web 数据库、Redis、凭据或上传目录；复用既有 Agent Runner、Provider 和工具确认门。
+
+`apps/web-host/src/modules/im/gateway/` 承担配置解密和通知、连接监督、平台 WS/HTTP 协议、媒体传输、入站加密及具体 Redis/PG 适配。平台 ACK 不代表业务交互已获授权，Runner outbox ACK 也不代表平台回复已投递；入站、运行和出站收据必须各自保留作用域与恢复语义。未知投递结果不能自动重发。
+
+`apps/web-host/src/main.ts` 已通过 `modules/im/gateway/bootstrap.ts` 接入可信 Bot/群授权、永久控制准入与秘密阶段 CAS、持久批次、Redis Streams Worker、本地媒体与严格 IM v3 调度重建器。`production-resources.ts` 从真实 PG/本地 FS/配置组合来源、工具、交互、同一 Provider 的压缩和反思以及平台回复。Gateway 分流后的队列使用独立准入密封，Worker 不得重新把旧文本交给新交互。Web 重建器继续只接 Web v2；IM 调度和恢复扫描只领取已验明的 IM 来源。默认归属仍为 Python，Node 显式切换前不构造或启动上述消费者。逐平台实现与验收见 [IM Gateway 迁移清单](Gugu-2.0-IM-Gateway迁移清单.md)。
+
+工具发现和执行复用同一授权注册器；受限成员不读取 owner 业务资料，群静态人格使用独立的群偏好投影。正式 system 随 checkpoint 冻结，恢复请求从相同访问范围的权威快照还原固定前缀。控制组合复用真实绑定/秘密/选项/取消事务，取消目标在首次准入时冻结。异步上下文工厂用同一 ProviderRuntime 装配压缩和 finalizer 后才创建 Harness；反思 Job 与成功历史同事务登记，独立消费者使用有界租约、原权限、文件 journal/CAS 和清除围栏。飞书卡片、QQ可选私聊流及Telegram私聊draft/图文通过共享流式入口、独立平台加密状态和操作收据投递；半事件和未知结果保持待处理，独立出站恢复不重跑 Provider。平台不支持的交互或尚未装配的工具明确拒绝，不能旁路发送正文或注册空 Schema。
+
+IM 被动群反思由正式收据同事务观察，每50条生成持久窗口；成功 Node Run 才启动180秒 idle，被动入站只推进序号水位。恢复扫描按当前身份、原 scope 版本和连续 Node 游标证明生成任务，管理员清除或版本跳变不能被后续 Node 更新掩盖。混合批次始终保留最低执行权限，记忆归属另按可信 Bot 逐人解析，owner 不写入成员 scope。反思分支使用真实 Run 前缀及有界、密封证明完整的被动尾部；公开group快照丢失暂缓；platform-user成员可按原owned Session/来源/成员group和当前权限从正式checkpoint重建，pending先延期，不借owner权限。已有文件计划先恢复，同 owner 后续任务不能提前改写其恢复前提。迁移 DDL 由显式部署步骤执行，启动只检查契约；Python 默认归属不变。
+
+群daily达到100条、owner daily达到50条后，成功反思同事务登记独立维护任务，按最旧100条逐批沉淀触发时的全部记录。Core负责冻结尾部、各自日期保留规则和事件整理；Host复用当前Provider绑定、正式压缩提示词及加密文件计划。群分支输入本群memory/daily；owner分支只输入本批daily及有界的本人BM25历史参考，新章节追加旧主档。均不借主请求历史或工具。每批提交后登记余批，恢复既有计划不再次调用模型或记账；并发新头部保留，旧尾部/长期记忆变化拒绝覆盖。owner逐响应保存实际用量，先取用量再解析JSON，失败响应成本与retry状态原子提交，未知不冒充零。维护不推进消息反思游标，沿现有owner互斥、清除revision、当前授权和会话保留边界。profile/pattern周期维护已接Core owner-periodic规则与Host独立任务：成功owner反思后才检查100条、+30、7天、失败1小时门限；请求前持久attempt与阶段，成功计划冻结整理后数量及完成时间。未知请求结果不自动重发；已提交计划恢复不重复请求或用量。列表和独立字段水位共同CAS，提交后通知业务revision及RAG，维护不推进消息游标。
+
+迁移采用单一消费者归属：先停止对应 Python Gateway 与 IM Worker 消费、排空或显式移交旧任务，再启用 Node。独立 Redis 命名空间用于隔离状态，不能单独防止两个运行时从平台接收并重复回复；任何运行时均不得清理对方的锁、pending 或健康状态。
+
+群注意力算法及最小冻结决策属于共享 Core；实际覆盖窗口、当前配置、取消水位、原始锚点和成功送达证据由 Host 提供。决策在网络/Redis 查询后由 PG 事务复核并密封，普通重投不得重评估已静默消息。平台 accepted 与加密事实同一提交，FINAL 提升原事实而不再发送；assistant 历史不能作为平台成功送达依据。内部延迟 ASK 必须证明原 passive 段与持久 resume 收据，不能以入站布尔值升级消息；Redis 状态丢失按取消处理。Node 入口已装配相应扫描，但真实平台和部署验收仍独立记录，不据隔离网络替身回归改变 Python 消费归属。
+
+媒体决策复用 Core Provider 规则，Host 承担授权文件、实际解码/ffprobe/ffmpeg、上传与加密缓存；只修改模型输入副本，checkpoint 仍保存原附件引用。Responses、Anthropic、OpenAI Chat和Ollama的当前Run私有状态由Host在RunStore checkpoint事务中单独加密，绑定当前 Run/ref/上下文版本，恢复沿原引用装回 Provider；跨 Run 只发布成功历史事务的状态，配置指纹使用可信配置/凭据/权限的稳定版本，不使用含 Run/nonce 的模型身份。协议不兼容通过 Core 明确通知 Host，以冻结版本 CAS 失效成功状态；Core 不持有数据库实现。Anthropic跨Run成功载荷与Python一样仅含历史tool ID对应的thinking块和final tail，加载时以当前可信模型/owner/scope重绑内部身份；完整Node响应块仅用于活动Run精确恢复，不声称跨Run原始wire逐块相等。OpenAI Chat/Ollama只保存当前Run恢复材料，不发布跨Run成功状态。off仍失效旧成功状态，但不禁用当前Run工具轮私有恢复。HEIC保持旧默认入口的明确拒绝。
+
+Node IM 自动保留通过 `beforeCreate` 复用既有 Core 同客户端事务删除，由 owner 锁协调已接协议的 Node 创建者；成功历史和已提交入站登记 Host 专用保留目标，独立 maintenance 循环按摘要覆盖水位分批裁剪。物理删除前同事务保留无消息/会话级联依赖的消费墓碑，提交后经持久 owned-key 队列与真实引用计数回收附件。运行/交互/投递/反思/延迟 ASK 和语音引用证明均保护，附件复制与删除按行锁串行后重查。Python默认归属不构造此服务或清其状态；显式认证删除已接 Node 事实识别、真实取消、同事务墓碑/持久回收，Node 路径不调用 Python 反思Redis清理；默认Python完全沿既有用例。活跃Run取消复用只读密封来源证明，另以同事务当前active账户及owned Session授权，Bot/群/平台绑定撤权不扩大出站权限；未知投递仍409安全拒绝。Node Web的真实创建函数也已接相同owner行的NO KEY UPDATE NOWAIT锁，竞争时外层事务完整回滚，IM随后重读数量；Web不因此新增淘汰语义。真实PG验证了双向竞争及跨owner独立。Python参考写入口不改动，混合部署必须保持同写域单写者，不以Node验证冒充Python并行写入已协调。
 
 1. 一个完整业务命令由同一个 UoW/连接拥有事务。仓储不自行 commit；项目、撤销记录、关联元数据、需要可靠投递的 outbox 必须一起设计。
 2. 同一部署的同一写域只有一个权威写入口。2.0 在 Node 命令和授权能力具备时开放对应 Web 操作，未迁完的操作保持未接入。数据迁移与恢复使用显式流程。

@@ -1,4 +1,5 @@
 import { classifyProviderError, ProviderError, throwIfCancelled } from '../errors.js'
+import { strip } from '../../../shared/values.js'
 import type { JsonObject, ProviderConfig } from '../contracts.js'
 import { requestJson } from '../http.js'
 import { normalizedApiKey } from '../diagnostics.js'
@@ -32,16 +33,16 @@ export function dashscopeAsrEndpoint(baseUrl: string | undefined): string {
 /** 百炼三条产品线的已有响应形状；空识别结果保持空串。 */
 export function dashscopeAsrTranscript(payload: Record<string, unknown>): string {
   const output = record(payload.output)
-  if (typeof output.text === 'string') return output.text.trim()
+  if (typeof output.text === 'string') return strip(output.text)
   const sentence = record(output.sentence)
-  if (typeof sentence.text === 'string') return sentence.text.trim()
+  if (typeof sentence.text === 'string') return strip(sentence.text)
   const choices = Array.isArray(output.choices) ? output.choices : []
   const content = record(record(choices[0]).message).content
-  if (typeof content === 'string') return content.trim()
-  if (Array.isArray(content)) return content.map(item => {
+  if (typeof content === 'string') return strip(content)
+  if (Array.isArray(content)) return strip(content.map(item => {
     const value = record(item).text
     return typeof value === 'string' || typeof value === 'number' ? String(value || '') : ''
-  }).join('').trim()
+  }).join(''))
   return ''
 }
 

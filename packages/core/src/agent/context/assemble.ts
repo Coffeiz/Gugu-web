@@ -82,9 +82,13 @@ export function effectiveRunHistory(input: PrepareContextInput): {
   currentId: string | null
 } {
   validateHistoryRows(input, input.history)
-  const currentId = input.resumeInteraction ? null : input.currentUser?.persistedMessageId ?? null
+  const current = input.currentUsers?.length ? input.currentUsers : input.currentUser ? [input.currentUser] : []
+  const currentIds = new Set(current.flatMap(user => user.persistedMessageId ? [user.persistedMessageId] : []))
+  // 批次按平台时间排序可能与落库序号不同；RAG水位取真实历史中最早的本批锚点。
+  const currentId = input.resumeInteraction ? null : input.history.find(row => currentIds.has(row.id))?.id
+    ?? current.find(user => user.persistedMessageId)?.persistedMessageId ?? null
   const history = input.history.filter(row => !hasOnlyLegacyTimeContext(row)
-    && (input.currentUsersInHistory || currentId == null || row.id !== currentId))
+    && (input.currentUsersInHistory || input.resumeInteraction || !currentIds.has(row.id)))
   return { history, currentId }
 }
 
@@ -203,7 +207,7 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
     let pending = requests.get(id)
     if (!pending) {
       // 重启后由授权来源重建冻结快照；同进程的后续轮次不能重新生成动态前缀。
-      pending = ports.prepareRequest(state.identity, signal).then(copy)
+      pending = ports.prepareRequest(state.identity, signal, state).then(copy)
       requests.set(id, pending)
       void pending.catch(() => requests.delete(id))
     }
@@ -302,8 +306,9 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
       const request = { prefix: prepared.area.requestPrefix, dynamicTail: prepared.area.dynamicTail }
       requests.set(key(identity), Promise.resolve(request))
       ports.rememberPreparedRequest?.(identity, request)
-      return {
+      const context: CanonicalRunContext = {
         identity: copy(identity), modelIdentity: loaded.modelIdentity, accessScopeHash, contextWindow: loaded.contextWindow,
+        ...(loaded.input.systemPrompt === undefined ? {} : { providerSystemPrompt: loaded.input.systemPrompt }),
         capabilities: loaded.capabilities ? copy(loaded.capabilities) : null,
         replyContext: { userRequest, locale, decisionGuardEnabled: loaded.replyContext?.decisionGuardEnabled === true },
         prepared: await savePreparedContext(prepared, identity, ports.references, signal), compactions: [], continuationRef: null,
@@ -311,6 +316,12 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
         pendingRound: null, failedCompactionInput: null, sourceEffects: loaded.sourceEffects ? copy(loaded.sourceEffects) : null,
         providerCacheAnchor: null, currentProviderInput: null
       }
+      if (ports.initializeContinuation) {
+        const reference = await ports.initializeContinuation(copy(context), signal, prepared.area.digest())
+        if (reference !== null && !/^[A-Za-z0-9:._-]{1,256}$/.test(reference)) throw new Error('推理续接记录ID无效')
+        return { ...context, continuationRef: reference }
+      }
+      return context
     },
     async afterRound(state, result, round) {
       if (state.capabilities && result.calls.some(call => !state.capabilities!.toolNames.includes(call.name)))

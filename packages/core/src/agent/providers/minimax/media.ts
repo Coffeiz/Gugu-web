@@ -74,7 +74,7 @@ export async function prepareMiniMaxVideo(source: VendorMediaSource, config: Pro
   if (typeof duration !== 'number' || !Number.isFinite(duration) || duration <= 0) throw new VendorMediaError('video_duration_unknown')
   if (duration > 1800) throw new VendorMediaError('video_duration_limit')
   if (source.size > 4 * 1024 * 1024) {
-    const fileId = await uploadMiniMaxVideo(source, config, dependencies, signal)
+    const fileId = await (dependencies.uploadVideo ? dependencies.uploadVideo(source, config, signal) : uploadMiniMaxVideo(source, config, dependencies, signal))
     if (!fileId) throw new ProviderError('upstream')
     return { mode: 'file', mime: source.mime, fileId, uri: `mm_file://${fileId}` }
   }

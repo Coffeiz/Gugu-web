@@ -2,8 +2,8 @@ import { createCanonicalRunner } from './runner.js'
 import type { CanonicalRunContext } from './models.js'
 import type { CanonicalContextPorts, CanonicalRunPreparationPorts, AgentRunnerPorts } from './ports.js'
 import type { HarnessExecutorPorts } from './executor/contracts.js'
-import { connectProviderHarness } from './providers/runtime.js'
-import type { ProviderRuntimeOptions } from './providers/runtime.js'
+import { connectProviderHarness, connectProviderHarnessWithContextFactory } from './providers/runtime.js'
+import type { ProviderRuntimeOptions, ProviderContextFactoryInput } from './providers/runtime.js'
 import { createAgentChatService, type AgentChatServicePorts } from './chat-service.js'
 import { createAgentDispatchSupervisor, type AgentDispatchSupervisorPorts } from './run/dispatch-supervisor.js'
 import { createAgentDispatchWorker, type AgentDispatchRuntimeLease, type AgentDispatchWorkerPorts } from './run/dispatch-worker.js'
@@ -86,4 +86,20 @@ export function createAgentDispatchRuntime<C, L extends AgentDispatchRuntimeLeas
       return closing
     },
   }
+}
+
+export interface AgentRuntimeContextFactoryOptions extends Omit<AgentRuntimeOptions, 'context'> {
+  context: ProviderContextFactoryInput
+}
+
+/** 共享实际Provider实例的异步资源装配；旧同步入口保持原调用契约。 */
+export async function createAgentRuntimeWithContextFactory(options: AgentRuntimeContextFactoryOptions) {
+  const connected = await connectProviderHarnessWithContextFactory(options.context, {
+    ...options.provider,
+  })
+  try {
+    const harness = createCanonicalRunner({ context: connected.context, runPreparation: options.runPreparation,
+      executor: options.executor, runtime: { ...options.runtime, observation: options.observation, provider: connected.provider } })
+    return { harness, close: () => connected.provider.close() }
+  } catch (error) { await connected.provider.close(); throw error }
 }

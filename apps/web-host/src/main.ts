@@ -1,3 +1,6 @@
+import { createGatewayConfigChangePublisher } from './modules/im/gateway/bot-config.js'
+import { createNodeImHostRuntime } from './modules/im/gateway/bootstrap.js'
+import { readImRuntimeOwnership } from './modules/im/gateway/host-runtime.js'
 import { timestampConsole } from './shared/logging.js'
 import bcrypt from 'bcryptjs'
 import { readFile } from 'node:fs/promises'
@@ -383,7 +386,7 @@ import { createAgentMessageHistory } from './modules/agent-sessions/persistence/
 import { createPostgresAgentOrphanRecovery } from './modules/agent-sessions/persistence/agent-run-recovery.js'
 import { createAgentImMemoryRagMutationPorts } from './modules/agent-sessions/persistence/agent-im-memory-rag-mutations.js'
 import { createPostgresAgentSessionStateReader } from './modules/agent-sessions/state.js'
-import { createPostgresAgentInteractionHistory } from '@gugu/core/agent-sessions'
+import { createPostgresAgentInteractionHistory, type AgentSessionDeletePorts } from '@gugu/core/agent-sessions'
 import { createInteractionSessionLookup } from './modules/agent-sessions/persistence/agent-interaction-session.js'
 import { createPostgresAgentMessageLocator } from './modules/agent-sessions/agent-message-location.js'
 import {
@@ -700,6 +703,11 @@ async function createWebUiApp(
   projectJournalPool?: Pool,
   trashPurgeSchemaApplied = false,
   searchUsageSchemaApplied = false,
+  im?: {
+    bindMcp(runtime: ReturnType<typeof createMcpRuntime>): void
+    clearOwner(ownerId: string, remove: () => Promise<unknown>): Promise<void>
+    removeSession(ownerId: string, sessionId: number, ports: AgentSessionDeletePorts, legacy: () => Promise<boolean>): Promise<boolean>
+  },
 ): Promise<{ app: ReturnType<typeof createApp>; startWorkers(): Promise<void> }> {
   const publisher = redisEvents ?? noRedisEvents
   const fileUploads = createPostgresFileUploadOperations(pool, {
@@ -804,6 +812,9 @@ async function createWebUiApp(
     async builtinNames(_owner) { return new Set(skillToolRegistry.catalog().map(item => item.name)) },
     stdioClient: mcpStdioClient,
   })
+  im?.bindMcp(mcpRuntime)
+  const publishImChannelsChanged = createGatewayConfigChangePublisher(pool,
+    ownerId => publisher.publishResourceChanged({ ownerId, resource: 'im_channels', operation: 'refresh' }))
   const userSkillTools = async (owner: string) => {
     const [builtins, dynamic] = await Promise.all([builtinSkillTools(owner), mcpSkillTools(owner)])
     const known = new Set(builtins.map(item => item.name))
@@ -1287,6 +1298,13 @@ async function createWebUiApp(
     }),
   })
   const memoryVectorStore = createLocalUserMemoryVectorStore(config.storageLocalPath)
+  const sessionDeletePorts: AgentSessionDeletePorts = {
+      removeIfUnreferenced: (ownerId, storageKey) => createPostgresChatAttachmentDraftDeletePorts(pool, config.storageLocalPath).removeUnreferenced(ownerId, storageKey),
+      clearReflection: config.redisUrl
+        ? createRedisAgentSessionReflectionCleaner(config.redisUrl)
+        : async () => { throw new Error('Redis 会话反思清理不可用') },
+    }
+  const legacySessionDelete = createPostgresAgentSessionDeleteOperations(pool, sessionDeletePorts)
   const withOwnerMemoryLock = createOwnerMemoryLock(core.db)
   const accountMemoryCleanup = config.redisUrl && core.receipts && process.platform === 'linux'
     ? createAccountMemoryCleanupRuntime({
@@ -2760,12 +2778,9 @@ async function createWebUiApp(
     agentFilesystemAuthorization: { operations: agentFilesystemAuthorization },
     refreshAgentSession: createPostgresAgentSessionRefresher(pool),
     renameAgentSession: createPostgresAgentSessionRenamer(pool),
-    deleteAgentSession: createPostgresAgentSessionDeleteOperations(pool, {
-      removeIfUnreferenced: (ownerId, storageKey) => createPostgresChatAttachmentDraftDeletePorts(pool, config.storageLocalPath).removeUnreferenced(ownerId, storageKey),
-      clearReflection: config.redisUrl
-        ? createRedisAgentSessionReflectionCleaner(config.redisUrl)
-        : async () => { throw new Error('Redis 会话反思清理不可用') },
-    }),
+    deleteAgentSession: { remove: (ownerId, sessionId) => im
+      ? im.removeSession(ownerId, sessionId, sessionDeletePorts, () => legacySessionDelete.remove(ownerId, sessionId))
+      : legacySessionDelete.remove(ownerId, sessionId) },
     lookupAgentInteractionSession: createInteractionSessionLookup(pool).get,
     listAgentMessages,
     locateAgentMessage: createPostgresAgentMessageLocator(pool),
@@ -3111,40 +3126,40 @@ async function createWebUiApp(
     userBotBindingCode: { issue: createPostgresRedisBindingCodeIssuer(pool, config.redisUrl ?? '', config.secretKey) },
     userBotUnbind: { unbind: createPostgresUserBotUnbinder(pool, async ownerId => {
       try { await invalidateOwnerImSnapshots(core.db, ownerId) } catch { /* 与 Python 一致，失效失败不阻止后续资源通知。 */ }
-      await publisher.publishResourceChanged({ ownerId, resource: 'im_channels', operation: 'refresh' })
+      await publishImChannelsChanged(ownerId)
     }) },
     userBotUpdate: { update: createUserBotUpdater(core.db, {
       encrypt: value => encryptEncryptedString(config.secretKey, value), decrypt: value => decryptEncryptedString(config.secretKey, value),
-      publishChanged: ownerId => publisher.publishResourceChanged({ ownerId, resource: 'im_channels', operation: 'refresh' }),
+      publishChanged: publishImChannelsChanged,
     }) },
     userBotDelete: { remove: createUserBotDeleter(core.db, {
       clearReach: createRedisUserBotReachCleaner(config.redisUrl ?? ''),
-      publishChanged: ownerId => publisher.publishResourceChanged({ ownerId, resource: 'im_channels', operation: 'refresh' }),
+      publishChanged: publishImChannelsChanged,
     }) },
     wechatConnect: { connect: createWechatConnector(core.db, {
       ...wechatConnectOptions, encrypt: value => encryptEncryptedString(config.secretKey, value),
       platforms: createImPlatformSettingsReader(env, resolveConfigOverridePath(env)),
-      publishChanged: ownerId => publisher.publishResourceChanged({ ownerId, resource: 'im_channels', operation: 'refresh' }),
+      publishChanged: publishImChannelsChanged,
     }) },
     feishuConnect: { connect: createFeishuConnector(core.db, {
       ...feishuConnectOptions, encrypt: value => encryptEncryptedString(config.secretKey, value),
       platforms: createImPlatformSettingsReader(env, resolveConfigOverridePath(env)),
-      publishChanged: ownerId => publisher.publishResourceChanged({ ownerId, resource: 'im_channels', operation: 'refresh' }),
+      publishChanged: publishImChannelsChanged,
     }) },
     qqConnect: { connect: createQqConnector(core.db, {
       ...qqConnectOptions, encrypt: value => encryptEncryptedString(config.secretKey, value),
       platforms: createImPlatformSettingsReader(env, resolveConfigOverridePath(env)),
-      publishChanged: ownerId => publisher.publishResourceChanged({ ownerId, resource: 'im_channels', operation: 'refresh' }),
+      publishChanged: publishImChannelsChanged,
     }) },
     telegramConnect: { connect: createTelegramConnector(core.db, {
       ...telegramConnectOptions, encrypt: value => encryptEncryptedString(config.secretKey, value),
       platforms: createImPlatformSettingsReader(env, resolveConfigOverridePath(env)), dialect: 'postgres',
-      publishChanged: ownerId => publisher.publishResourceChanged({ ownerId, resource: 'im_channels', operation: 'refresh' }),
+      publishChanged: publishImChannelsChanged,
     }) },
     userBotCreate: { create: createQqBotCreator(core.db, {
       encrypt: value => encryptEncryptedString(config.secretKey, value), decrypt: value => decryptEncryptedString(config.secretKey, value),
       platforms: createImPlatformSettingsReader(env, resolveConfigOverridePath(env)),
-      publishChanged: ownerId => publisher.publishResourceChanged({ ownerId, resource: 'im_channels', operation: 'refresh' }),
+      publishChanged: publishImChannelsChanged,
     }) },
     mcpStatus: { read: createMcpStatusReader(() => readMcpSettings().enabled) },
     mcpServerConfig: (() => {
@@ -3245,7 +3260,10 @@ async function createWebUiApp(
     }),
     clearAgentMemory: { clear: createMemoryClearer({
       invalidateMemoryIndex: ownerId => invalidateAgentMemoryRag(core.db, core.backend, ownerId),
-      clearOwner: ownerId => withOwnerMemoryLock(ownerId, () => removeLocalTree(config.storageLocalPath, `${ownerId}/.agent`)),
+      clearOwner: ownerId => {
+        const remove = () => withOwnerMemoryLock(ownerId, () => removeLocalTree(config.storageLocalPath, `${ownerId}/.agent`))
+        return im ? im.clearOwner(ownerId, remove) : remove()
+      },
       enqueueMemoryRebuild: ownerId => enqueueAgentRagRebuild(core.db, core.backend, ownerId, 'memory'),
       bumpContextRevision: async ownerId => { await publisher.bumpContextRevision(ownerId, 'memory') },
     }) },
@@ -3339,6 +3357,7 @@ async function listen(app: ReturnType<typeof createApp>, host: string, port: num
 export async function startServer(env: NodeJS.ProcessEnv = process.env) {
   const configOverridePath = resolveConfigOverridePath(env)
   const config = loadConfig(env, configOverridePath)
+  const ownership = readImRuntimeOwnership(env)
   const pool = createPool(config)
   const redisEvents = config.redisUrl ? createRedisEventPublisher(config.redisUrl) : undefined
   let core: SqlDataRuntime
@@ -3360,6 +3379,9 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
       adminVoicePresetTest: createAdminVoicePresetTestOperations(config.configOverridePath, env),
       adminSearchTest: { test: createAdminSearchTestOperations(config.configOverridePath, env) },
     })
+    app.get('/health/im', async (_request, reply) => ownership.runtime === 'python'
+      ? { ownership: 'python', status: 'disabled' }
+      : reply.code(503).send({ ownership: 'node', status: 'unavailable' }))
     try {
       await listen(app, config.host, config.port)
     } catch (listenError) {
@@ -3384,6 +3406,9 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
   let trashPurgeSchemaApplied = false
   let searchUsageSchemaApplied = false
   let projectJournalPool: Pool | undefined
+  let imRuntime: ReturnType<typeof createNodeImHostRuntime> | undefined
+  let sharedMcp: ReturnType<typeof createMcpRuntime> | undefined
+  let imDeliveryPool: Pool | undefined
   let web: Awaited<ReturnType<typeof createWebUiApp>>
   try {
     try {
@@ -3403,7 +3428,16 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
       && (!projectJournalPool || !await hasProjectExpiryJournalSchema(pool)))
       throw new Error('项目过期清理 Worker 需要已迁移的项目日志结构')
     web = await createWebUiApp(config, pool, core, redisEvents, env, () => canRebuildAgentMemoryIndex,
-      projectJournalPool, trashPurgeSchemaApplied, searchUsageSchemaApplied)
+      projectJournalPool, trashPurgeSchemaApplied, searchUsageSchemaApplied, {
+        bindMcp(runtime) { sharedMcp = runtime },
+        async clearOwner(ownerId, remove) {
+          if (imRuntime) await imRuntime.clearOwner(ownerId, remove)
+          else await remove()
+        },
+        removeSession(ownerId, sessionId, ports, legacy) {
+          return imRuntime ? imRuntime.removeSession(ownerId, sessionId, ports, legacy) : legacy()
+        },
+      })
   } catch (error) {
     await projectJournalPool?.end().catch(() => undefined)
     await core.close().catch(() => undefined)
@@ -3422,10 +3456,29 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
   }
   canRebuildAgentMemoryIndex = ragIndexMigration === 'applied'
   try {
+    if (ownership.runtime === 'node') imDeliveryPool = createPool(config, 4)
+    const gateway = createNodeImHostRuntime({ pool, deliveryPool: imDeliveryPool ?? pool, core, redisUrl: config.redisUrl,
+      secretKey: config.secretKey, storageRoot: config.storageLocalPath, configOverridePath, environment: env,
+      promptRoot: webAgentPromptRoot, publicAppUrl: config.publicAppUrl, ownership, mcpRuntime: sharedMcp,
+      diagnose() { console.error('Node IM 运行状态异常；请检查 IM 健康状态') },
+    })
+    imRuntime = gateway
+    app.get('/health/im', async (_request, reply) => {
+      const health = gateway.health()
+      const supervisor = health.supervisor as { configuration?: string; notifications?: string; cleanupUnknown?: number; retrying?: number } | null
+      const ready = health.status === 'disabled' || health.status === 'running'
+        && Object.values(health.loops).every(state => state === 'running')
+        && supervisor?.configuration === 'ready' && supervisor.notifications === 'connected'
+        && supervisor.cleanupUnknown === 0 && supervisor.retrying === 0
+      return ready ? health : reply.code(503).send(health)
+    })
+    app.addHook('onClose', async () => { await gateway.stop() })
+    await gateway.start()
     await listen(app, config.host, config.port)
     await web.startWorkers()
   } catch (error) {
     await app.close().catch(() => undefined)
+    await imDeliveryPool?.end().catch(() => undefined)
     await projectJournalPool?.end().catch(() => undefined)
     await core.close().catch(() => undefined)
     await pool.end().catch(() => undefined)
@@ -3446,6 +3499,7 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
         try {
           await app.close()
         } finally {
+          await imDeliveryPool?.end()
           await projectJournalPool?.end()
           await core.close()
           await pool.end()

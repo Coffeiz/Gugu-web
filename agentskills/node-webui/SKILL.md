@@ -47,6 +47,20 @@ description: gugu-webui Node.js/Fastify 后端开发、Python API 迁移与实�
 | 用户 Skill 写入 | `packages/core/src/agent/skills/user-management.ts` 的准备端口供 Agent 把共享写入纳入 Run 收据事务，REST 使用同一管理器的创建和更新入口。Host 提供当前租约的事务内授权及提交后通知。 |
 | Python 数字分类与转换 | `packages/core/src/shared/unicode-decimal.ts`：固定生产 Python 的 Unicode 16，区分 Nd 十进制和 isdigit；工具整数/日期/行号与项目编号共用，不使用 Node 较新 Unicode 属性扩大可接受输入；维护生成器为 `packages/core/scripts/generate-tool-unicode.py` |
 
+| IM 身份与入站规则 | `packages/core/src/im/access.ts`、`inbound-preflight.ts`、`inbound-batch.ts`、`shortcut.ts`：可信 Bot 对照后的角色/工具/上下文、控制消息优先、批次排序和快捷意图；Host 必须提供当前权限、冻结的取消目标和真实消费事务，不能把纯规则当认证 |
+| IM 上下文、引用与检索 | `apps/web-host/src/modules/im/gateway/context-services.ts`、`context-reference-codec.ts`、`memory-search.ts`、`group-context.ts`：真实业务来源、附件归属、当前Run租约及群/记忆scope；检索Schema与执行复用同一ToolRegistry，成员白名单不能因端口可用而扩大 |
+| IM 注意力与成功送达 | `packages/core/src/im/attention/directive.ts`、`im/run-delivery.ts`：冻结决策/回复门与可携带证据的投递契约；Host `attention-runtime.ts`、`pending-ask-dispatch.ts`、`attention-ledger.ts` 提供真实覆盖/当前策略/内部唤醒/原子accepted事实，不能用assistant历史、入站布尔或缺失Redis证明补齐 |
+| IM 持久流式 | `gateway/feishu/persistent.ts`、`qq/persistent.ts`、`telegram-persistent.ts` 共用Run投递器及 `delivery-store.ts` 平台独立加密/CAS；QQ只用可信Markdown＋开关，不能在旧正文/流收据未决时切换发送器。TG draft不等同最终送达，保活与外层收据SQL共用FIFO，Host在释放投递租约前close排空。未知副作用不重发；旧库显式执行 `projection-platform-upgrade.sql`，不得启动时DDL |
+| IM 即时反馈与成员恢复 | Core `im/shortcut.ts` 即时表情及 `im/access.ts` 展示策略；Host `platform-connections.ts` 只在新鲜永久准入后反馈，QQ附件按可信群策略/格式与Bot目标冷却，失败不吞消息。`production-reflection-bindings.ts:rebuildMemberSnapshot` 仅从真实owned checkpoint按原member scope恢复，公开group无快照仍defer，不能借owner权限 |
+| Web / IM Provider 配置 | `apps/web-host/src/modules/agent/model-config/configured-provider-settings.ts`：固定提示词、版本密钥和有效模型解析；来源各自绑定访问范围，IM 不复用 Web 的 owner/私聊特例 |
+| IM Provider私有续接 | `modules/agent-sessions/persistence/agent-reasoning-persistence.ts:createProviderReasoningPersistence` 与 `agent-reasoning-bridge.ts`：四协议活动值与checkpoint同事务加密，原ref精确恢复；仅Responses/Anthropic发布Python同形跨Run成功状态。Anthropic完整响应块仅存活动侧表，off仍允许当前Run工具私有恢复；绑定实际adapter身份，不把配置原字符串当协议身份，不把私有wire写进Canonical或回复 |
+| IM 独立语音识别与音频处理 | `apps/web-host/src/modules/im/gateway/voice-config.ts`、`voice-runtime.ts`、`audio.ts`：活动 voice preset/当前 speech_to_text BYOK、每次HTTP与转码的版本/授权复核、Core三种ASR协议和有界ffmpeg；不借聊天模型凭据，不信平台duration，不让清理或预检失败伪装空识别 |
+| IM 语音卡片结果 | `apps/web-host/src/modules/im/gateway/voice-transcripts.ts`：同事务client验证整个密封批次，只更新本消息首个非quoted voice卡片，借用既有RunScope，禁止另写宽松HMAC/归属规则 |
+| IM daily沉淀 | Core `memory/im-group-daily-compaction.ts` / `owner-daily-compaction.ts`：群100条、owner50条触发，冻结旧尾部、最旧100条批次、不同日期保留规则与有界历史参考；Host `gateway/reflection-daily.ts` / `reflection-owner-daily.ts` / `reflection-files.ts`：独立真实Provider、前后授权、CAS和逐响应用量。持久调度复用`reflection-postgres.ts`，不得把群私人召回开关当作owner学习禁令、借主快照/工具补造维护输入、丢掉坏JSON已产生的数值用量或把缺报当零 |
+| IM owner周期维护 | Core `memory/owner-periodic.ts`：profile/pattern独立100/+30/7天/失败1小时门限及输出校验；Host `gateway/reflection-owner-periodic.ts` / `reflection-files.ts`：正式提示词、最多一次结构纠正、列表和metadata CAS。复用加密Job和owner锁；仅活跃owner反思后登记，不新增全局模型扫描。无计划的未知请求结果不重发，数据库已有计划优先恢复，费用共用`reflection-usage.ts`，不得以缺报冒充零 |
+| Redis RESP 与连接规则 | `apps/web-host/src/adapters/cache/redis-protocol.ts`：有界 RESP、命令编码、URL/TCP/TLS；订阅使用 `redis-live-subscription.ts`，IM Streams 使用 `redis-stream-commands.ts`，未知写结果不得自动重发 |
+| 凭据交互提交事务 | `apps/web-host/src/modules/agent-sessions/persistence/agent-secret-interaction-postgres.ts`：`consumeSecretInteractionLocked` 借用同一事务；Web 全字段和 IM 私聊逐字段输入均复用校验/加密/恢复门 |
+
 新增稳定复用入口时，在本节补充契约与路径；删除或迁移入口时同步更新，避免清单过期。
 
 ## Python API 迁移

@@ -67,7 +67,13 @@ export function createWebAgentMemoryAuthorizer(
  */
 export function createPostgresWebAgentMemorySnapshotReader(pool: Pick<Pool, 'query'>, lease: AgentDispatchLease) {
   if (lease.input.v !== 2 || lease.input.source !== 'web') throw new TypeError('Web Agent RAG 运行来源无法验证')
-  const bound = Object.freeze({ ...lease.identity })
+  return createPostgresAgentMemorySnapshotReader(pool, lease.identity)
+}
+
+/** 来源适配器先验证各自dispatch版本；共享读取只接受精确绑定的Run身份。 */
+export function createPostgresAgentMemorySnapshotReader(pool: Pick<Pool, 'query'>, expected: RunIdentity) {
+  const bound = Object.freeze({ ...expected })
+  if (!bound.ownerId || !bound.runId || !/^[1-9]\d*$/u.test(bound.sessionId)) throw new TypeError('Agent RAG 运行身份无效')
   return async (identity: RunIdentity, signal: AbortSignal): Promise<MemorySearchSnapshot> => {
     signal.throwIfAborted()
     if (!sameRun(identity, bound)) throw new Error('Agent RAG 运行身份不匹配')

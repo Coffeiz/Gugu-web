@@ -24,5 +24,12 @@ test('来源快照与当前消息仅允许 owner 读取并绑定实际消息锚�
     await assert.rejects(current({ ...identity, ownerId: other }), /用户消息不存在/)
     const bad = createPostgresCurrentTurnReader(pool, '9', async () => ({ currentUser: { persistedMessageId: '10', message: { role: 'user', content: '' } } }))
     await assert.rejects(bad(identity), /锚点不一致/)
+    const user = (persistedMessageId: string) => ({ persistedMessageId, message: { role: 'user' as const, content: `合成批次${persistedMessageId}` } })
+    const batch = createPostgresCurrentTurnReader(pool, '9', async () => ({ currentUsers: [user('8'), user('9')] }))
+    assert.deepEqual((await batch(identity)).currentUsers?.map(item => item.persistedMessageId), ['8', '9'])
+    for (const value of [{ currentUsers: [user('9'), user('8')] }, { currentUsers: [user('9'), user('9')] },
+      { currentUsers: [user('8'), user('9')], currentUser: user('9') }]) {
+      await assert.rejects(createPostgresCurrentTurnReader(pool, '9', async () => value)(identity), /锚点不一致/)
+    }
   } finally { await pool.end(); await admin.query(`DROP SCHEMA "${schema}" CASCADE`); await admin.end() }
 })

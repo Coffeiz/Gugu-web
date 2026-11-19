@@ -39,6 +39,27 @@ export function splitOldestGroupDailyBatch<T>(entries: readonly T[], batchSize =
   return items.length <= size ? [[], items] : [items.slice(0, -size), items.slice(-size)]
 }
 
+/** 冻结初始daily范围后逐批清空；并发追加只允许出现在头部，不能覆盖被编辑/删减的旧范围。 */
+export function prepareGroupDailyCompactionBatch(currentDaily: string, frozenEntries?: readonly (readonly [string, string])[]): {
+  batch: Array<[string, string]>
+  remainingEntries: Array<[string, string]>
+  dailyAfter: string
+} | null {
+  const invalid = () => new Error('群每日记忆已变更，暂不能沉淀')
+  if (typeof currentDaily !== 'string' || frozenEntries !== undefined && (!Array.isArray(frozenEntries)
+    || frozenEntries.some(entry => !Array.isArray(entry) || entry.length !== 2 || entry.some(value => typeof value !== 'string')))) throw invalid()
+  const current = parseGroupDailyEntries(currentDaily)
+  if (frozenEntries === undefined && !shouldCompactGroupDaily(current.length)) return null
+  const frozen: Array<[string, string]> = (frozenEntries ?? current).map(([date, note]) => [date, note])
+  if (frozen.length > current.length) throw invalid()
+  const headSize = current.length - frozen.length
+  if (frozen.some(([date, note], index) => date !== current[headSize + index]![0] || note !== current[headSize + index]![1])) throw invalid()
+  // 传入空的剩余范围代表该轮已清空；新增头部留给下一轮重新判断100条阈值。
+  if (!frozen.length) return null
+  const [remainingEntries, batch] = splitOldestGroupDailyBatch(frozen)
+  return { batch, remainingEntries, dailyAfter: renderGroupDailyEntries([...current.slice(0, headSize), ...remainingEntries]) }
+}
+
 const datePattern = /20\d{2}-\d{1,2}-\d{1,2}/gu
 export function groupDailyDatesPreserved(entries: readonly (readonly [string, string])[], memory: string): boolean {
   const dates = new Set((entries.map(([date]) => date).join('\n').match(datePattern) ?? []))

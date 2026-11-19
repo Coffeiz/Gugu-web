@@ -1,4 +1,4 @@
-import type { RagRankCandidate, RagSearchScope } from './contracts.js'
+import type { RagDocument, RagRankCandidate, RagSearchScope } from './contracts.js'
 import type { createSqlRagPersistentIndexReader } from './persistent-index.js'
 import { createRagLexicalIndex } from './lexical-index.js'
 import { rankCandidates } from './ranking/rank-candidates.js'
@@ -8,23 +8,37 @@ import { readRagDocumentVectors, type RagVectorSource } from './vector-reader.js
 export function createScopedRagSearch(ports:{
  index:ReturnType<typeof createSqlRagPersistentIndexReader>
  authorize(owner:string,scope:RagSearchScope,signal?:AbortSignal):Promise<boolean>
+ /** 可选可信事实复核：在排序/向量/结果投影前裁剪过期索引与邻文；不能自行授予scope。 */
+ filterDocuments?(documents:readonly RagDocument[],signal?:AbortSignal):Promise<readonly RagDocument[]>
  vectors?:{version:string;source(owner:string,signal?:AbortSignal):Promise<RagVectorSource>;embed(owner:string,query:string,signal?:AbortSignal):Promise<readonly number[]>}
 }) {
- return async(owner:string,scope:RagSearchScope,query:string,options:{sourceTypes:readonly string[];limit:number;beforeMessageId?:number;selectionMode?:'confidence'|'top_k';excludeContentHashes?:readonly string[]},signal?:AbortSignal)=>{
+ return async(owner:string,scope:RagSearchScope|readonly RagSearchScope[],query:string,options:{sourceTypes:readonly string[];limit:number;beforeMessageId?:number;selectionMode?:'confidence'|'top_k';excludeContentHashes?:readonly string[]},signal?:AbortSignal)=>{
   signal?.throwIfAborted()
   if(!options.sourceTypes.length||!Number.isSafeInteger(options.limit)||options.limit<1||options.limit>50)throw new Error('RAG 查询参数无效')
   if(options.beforeMessageId!==undefined&&(!Number.isSafeInteger(options.beforeMessageId)||options.beforeMessageId<1))throw new Error('RAG 消息水位无效')
-  const trustedScope=structuredClone(scope)
-  if(!await ports.authorize(owner,trustedScope,signal))throw new Error('RAG 检索未授权')
-  signal?.throwIfAborted()
-  const snapshot=await ports.index.snapshotForScope(owner,trustedScope,signal)
+  const scopes:RagSearchScope[]=Array.isArray(scope)?structuredClone(scope):[structuredClone(scope as RagSearchScope)]
+  if(!scopes.length||scopes.length>3)throw new Error('RAG 检索范围数量无效')
+  const snapshots=[]
+  for(const current of scopes){
+   if(!await ports.authorize(owner,current,signal))throw new Error('RAG 检索未授权')
+   signal?.throwIfAborted();snapshots.push(await ports.index.snapshotForScope(owner,current,signal))
+  }
+  const snapshot={revision:snapshots.length===1?snapshots[0]!.revision:snapshots.map(value=>value.revision??'empty').join('|'),documents:[...new Map(snapshots.flatMap(value=>value.documents).map(document=>[document.id,document])).values()]}
+  // 并集内全部文档均来自逐scope授权的快照；多scope在同一语料上统一排名和预算。
+  const trustedScope=scopes.length===1?scopes[0]:undefined
   const allowed=new Set(options.sourceTypes)
-  const documents=snapshot.documents.filter(doc=>{
+  let documents=snapshot.documents.filter(doc=>{
    if(!allowed.has(doc.source_type))return false
    if(options.beforeMessageId===undefined||doc.source_type!=='conversation'||doc.metadata?.kind!=='message')return true
    const id=Number(doc.metadata.message_id)
    return Number.isSafeInteger(id)&&id>0&&id<options.beforeMessageId
   })
+  if(ports.filterDocuments)documents=[...await ports.filterDocuments(documents,signal)].filter(doc=>allowed.has(doc.source_type)&&scopes.some(current=>{
+   if(current.scope_type==='owner')return doc.scope_type==='owner'
+   if(current.scope_type==='project'||current.scope_type==='folder')return doc.scope_type==='owner'&&String(doc.metadata?.[current.scope_type==='project'?'project_id':'folder_id']??'')===current.scope_id
+   if(doc.platform!==current.platform||doc.bot_id!==current.bot_id||doc.group_id!==current.group_id)return false
+   return doc.scope_type===current.scope_type&&doc.scope_id===current.scope_id||current.scope_type==='member'&&doc.scope_type==='group'
+  }))
   const index=createRagLexicalIndex(owner)
   index.replace(owner,snapshot.revision||'empty',documents)
   let fused
@@ -58,7 +72,7 @@ export function createScopedRagSearch(ports:{
   })
   const ranked=rankCandidates(query,candidates,{limit:options.limit,maxChars:3000,selectionMode:options.selectionMode??'top_k',excludeContentHashes:[...(options.excludeContentHashes??[])],corpusStatistics:index.statistics(owner)})
   signal?.throwIfAborted()
-  if(!await ports.authorize(owner,trustedScope,signal))throw new Error('RAG 检索授权已撤销')
+  for(const current of scopes)if(!await ports.authorize(owner,current,signal))throw new Error('RAG 检索授权已撤销')
   signal?.throwIfAborted()
   return {results:ranked.results.map(item=>({...item,document:byId.get(item.id)!})),fusion:fused.fusion,vectorDocCount:fused.vectorDocCount,revision:snapshot.revision,diagnostics:ranked.diagnostics}
  }

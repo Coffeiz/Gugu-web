@@ -7,6 +7,17 @@ import type { AgentSkillRuntimePorts } from '../skills/runtime.js'
 import { SkillRegistryError } from '../skills/registry.js'
 import type { ToolDefinition } from './contracts.js'
 
+/** 群自动回复的零参数选择；真正静默由Harness回复门原子提交，不能作为普通工具执行。 */
+export function createChooseNoReplyTool(): ToolDefinition {
+  const schema = z.object({}).strict()
+  return { definition: { name: 'choose_no_reply', schema: { type: 'function', function: {
+    name: 'choose_no_reply', description: '选择本轮不回复。可以先阅读上下文；确定不需要回应时单独调用。已经输出正文后不能改为静默。',
+    parameters: { type: 'object', properties: {}, additionalProperties: false },
+  } } }, effect: 'read', validate: input => schema.safeParse(input),
+  async execute() { return { kind: 'completed', value: { error: '本轮不回复只能由群回复门处理' }, successful: false, mutated: false, executed: false } },
+  }
+}
+
 const inputSchema = z.object({ id: z.string().regex(/^[SU][1-9][0-9]*$/) }).passthrough()
 
 export type UseSkillPorts = AgentSkillRuntimePorts

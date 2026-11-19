@@ -1,13 +1,16 @@
 import type { CancellationPort } from '../ports.js'
-import type { AgentRunner, InteractionResolution, RunIdentity } from '../models.js'
+import type { AgentRunner, InteractionResolution, RunEvent, RunIdentity } from '../models.js'
 
 export interface AgentDispatchRuntimeLease {
   identity: RunIdentity
   input: { userMessageId: number }
+  replyChoice?: 'pending' | 'reply'
   mode: 'start' | 'resume'
   /** Host 仅可在持久收据完成 owner/单次消费校验后附加；Core Harness 再校验 interaction 绑定。 */
   resolution?: InteractionResolution
 }
+
+export class AgentDispatchDeferredError extends Error {}
 
 export class AgentRunReconstructionVersionError extends Error {}
 
@@ -25,6 +28,7 @@ export interface AgentDispatchWorkerPorts<C, L extends AgentDispatchRuntimeLease
   reconstruct(lease: L): Promise<{
     harness: Pick<AgentRunner<C>, 'start' | 'resume'>
     cancellation: Pick<CancellationPort, 'request' | 'notify'>
+    consume?(events: AsyncIterable<RunEvent>): Promise<void>
     close(): Promise<void>
   } | null>
   /** 仅当没有 checkpoint 且租约仍有效时记录安全启动失败。 */
@@ -49,6 +53,10 @@ export function createAgentDispatchWorker<C, L extends AgentDispatchRuntimeLease
       let runtime
       try { runtime = await ports.reconstruct(lease) }
       catch (error) {
+        if (error instanceof AgentDispatchDeferredError) {
+          await ports.dispatch.setReconstructionStatus(lease, 'unavailable')
+          return 'unavailable'
+        }
         if (!(error instanceof AgentRunReconstructionVersionError)) throw error
         await ports.dispatch.setReconstructionStatus(lease, 'version_conflict')
         return 'unavailable'
@@ -73,14 +81,19 @@ export function createAgentDispatchWorker<C, L extends AgentDispatchRuntimeLease
         try {
           const run = lease.mode === 'resume'
             ? runtime.harness.resume(lease.identity, lease.resolution)
-            : runtime.harness.start(lease.identity, { anchorMessageId: String(lease.input.userMessageId) })
-          for await (const _event of run) { /* Core 在 yield 前提交状态和事件。 */ }
+            : runtime.harness.start(lease.identity, { anchorMessageId: String(lease.input.userMessageId), ...(lease.replyChoice ? { replyChoice: lease.replyChoice } : {}) })
+          if (runtime.consume) await runtime.consume(run)
+          else for await (const _event of run) { /* Core 在 yield 前提交状态和事件。 */ }
         } catch (error) { failed = { error } }
       } finally {
         stopped = true
         if (timer) clearTimeout(timer)
         if (renewing) await renewing
         await runtime.close()
+      }
+      if (failed?.error instanceof AgentDispatchDeferredError) {
+        await ports.dispatch.setReconstructionStatus(lease, 'unavailable')
+        return 'unavailable'
       }
       if (failed && !await ports.failStart(lease)) throw failed.error
       return await ports.dispatch.finish(lease) ? 'settled' : 'unsettled'

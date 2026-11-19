@@ -102,7 +102,7 @@ export async function enqueueAgentRagRebuild(db:Kysely<any>,backend:'postgres'|'
  await db.transaction().execute(tx=>enqueueAgentRagRebuildInTransaction(tx,backend,rawOwner,sourceType))
 }
 
-export async function enqueueAgentRagRebuildInTransaction(db:Transaction<any>,backend:'postgres'|'sqlite',rawOwner:string,sourceType:string):Promise<void> {
+export async function enqueueAgentRagRebuildInTransaction(db:Kysely<any>,backend:'postgres'|'sqlite',rawOwner:string,sourceType:string):Promise<void> {
  const normalized=dataContext(rawOwner).ownerId
  const owner=backend==='sqlite'?normalized.replaceAll('-',''):normalized
  if(!REBUILDABLE_AGENT_RAG_SOURCES.has(sourceType))throw new Error('RAG 索引来源无效')
