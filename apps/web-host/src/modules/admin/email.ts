@@ -12,7 +12,7 @@ import { normalizeEmailTestRecipient,testAdminEmail,type AdminEmailTestDraft } f
 
 import { readSmtpFileSettings } from './smtp.js'
 
-import { createSmtpTestDelivery } from '../../adapters/smtp-test-delivery.js'
+import { createSmtpTestDelivery } from '../../adapters/email/smtp-test-delivery.js'
 
 import type { EmailTranslationDraft } from '@gugu/core/email/translate'
 
@@ -26,7 +26,7 @@ import { createNodeProviderTransport } from '@gugu/core/providers/node'
 
 import { createHash } from 'node:crypto'
 
-import { readConfigOverride } from '../../adapters/config-override-file.js'
+import { readConfigOverride } from '../../adapters/config/config-override-file.js'
 
 import { strip } from '@gugu/core/shared/values'
 

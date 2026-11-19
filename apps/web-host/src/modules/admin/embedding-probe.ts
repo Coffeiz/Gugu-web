@@ -4,7 +4,7 @@ import { embeddingDimensions,probeEmbedding,type EmbeddingProbeInput,type Embedd
 
 import { NodeProviderTransport } from '@gugu/core/providers/node'
 
-import { readConfigOverride } from '../../adapters/config-override-file.js'
+import { readConfigOverride } from '../../adapters/config/config-override-file.js'
 
 import { pythonQueryBoolean } from '../../http/python-query.js'
 

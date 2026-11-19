@@ -14,8 +14,8 @@ import { createServer as createTlsServer, getCACertificates, setDefaultCACertifi
 import type { LightMyRequestResponse } from 'fastify'
 import { Pool } from 'pg'
 import { tablesSql } from '@gugu/core/data'
-import { encryptEncryptedString } from '../../src/adapters/encrypted-string.js'
-import { createRedisExpiringValueStore } from '../../src/adapters/redis-events.js'
+import { encryptEncryptedString } from '../../src/adapters/security/encrypted-string.js'
+import { createRedisExpiringValueStore } from '../../src/adapters/cache/redis-events.js'
 import { startServer } from '../../src/main.js'
 import { signedUserToken } from '../helpers/auth.js'
 

@@ -43,7 +43,7 @@ test('创建凭据时 owner 隔离、同能力切换及失败回滚',{skip:!proc
 
 test('正式 PG 模型和 Python 创建 handler 同语义', {skip:!process.env.GUGU_WEBUI_TEST_DATABASE_URL||!process.env.GUGU_CORE_GOLDEN_PYTHON},async()=>{
  const {Pool}=await import('pg'),{randomUUID}=await import('node:crypto'),{execFileSync}=await import('node:child_process')
- const {createByokEnvelope}=await import('../../src/adapters/byok-envelope.js'),{mkdtemp,rm}=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path')
+ const {createByokEnvelope}=await import('../../src/adapters/security/byok-envelope.js'),{mkdtemp,rm}=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path')
  const url=process.env.GUGU_WEBUI_TEST_DATABASE_URL!,schema=`byok_formal_${randomUUID().replaceAll('-','')}`,dir=await mkdtemp(join(tmpdir(),'byok-formal-'))
  const admin=new Pool({connectionString:url,max:1});await admin.query(`CREATE SCHEMA "${schema}"`)
  const pool=new Pool({connectionString:url,options:`-c search_path=${schema}`,max:4})

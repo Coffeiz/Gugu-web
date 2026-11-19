@@ -2,7 +2,7 @@ import type { Pool, PoolClient } from 'pg'
 import { CoreError } from '@gugu/core'
 import { createSecretInteractionConsumer, type SecretInteractionTransaction } from '@gugu/core/agent/interactions/consume-secret'
 import { type InteractionActionRecord, type InteractionPromptRecord } from '@gugu/core/agent/interactions/consume-action'
-import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import { withPostgresTransaction } from '../../../adapters/database/postgres-transaction.js'
 import { mcpCredentialConfigurationVersionSql } from './agent-trusted-prompt-descriptions.js'
 
 interface SecretEnvelope { ciphertext: string; nonce: string; encryptedDataKey: string; keyVersion: number }

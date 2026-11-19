@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import type { Pool } from 'pg'
 import type { UserFromRequest } from '../../app.js'
-import { normalizeOwnerId } from '../../adapters/owner-context.js'
+import { normalizeOwnerId } from '../../shared/owner-context.js'
 
 type GroupRow = { chat_id: string; title: string | null }
 const platforms = new Set(['qq', 'feishu', 'telegram'])

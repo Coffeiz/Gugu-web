@@ -12,7 +12,7 @@ import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fas
 import type { WriteRequestMetadata } from '../../app.js'
 import type { PoolClient } from 'pg'
 import { writeRequestMetadata } from '../../http/request.js'
-import { runBestEffort } from '../../adapters/best-effort.js'
+import { runBestEffort } from '../../shared/best-effort.js'
 
 export interface FileUploadInput {
   space: string

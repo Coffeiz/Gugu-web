@@ -3,7 +3,7 @@ import { embedRagQuery, type RagQueryEmbeddingSettings, type RagVectorSource } f
 import type { ProviderTransport } from '@gugu/core/providers'
 import { createNodeProviderTransport } from '@gugu/core/providers/node'
 import type { Pool } from 'pg'
-import { normalizeOwnerId } from '../../../adapters/owner-context.js'
+import { normalizeOwnerId } from '../../../shared/owner-context.js'
 import { createPostgresAgentEmbeddingSettingsResolver, type EmbeddingCredentialEnvelope } from '../../byok/embedding-settings.js'
 export { createPostgresAgentEmbeddingSettingsResolver } from '../../byok/embedding-settings.js'
 

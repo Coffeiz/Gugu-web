@@ -4,9 +4,9 @@ import type { MxcDiagnostics } from '@gugu/sandbox/platform'
 
 
 
-import { mutateConfigOverride,type ConfigOverrideLock } from '../../adapters/config-override-file.js'
+import { mutateConfigOverride,type ConfigOverrideLock } from '../../adapters/config/config-override-file.js'
 
-import { createPosixConfigFileLock } from '../../adapters/posix-config-lock.js'
+import { createPosixConfigFileLock } from '../../adapters/config/posix-config-lock.js'
 
 
 

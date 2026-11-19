@@ -2,7 +2,7 @@ import type { Pool } from 'pg'
 import type { Kysely } from 'kysely'
 import { createTerminalReopener, type TerminalReopenSettings } from '@gugu/core/terminals/reopen'
 import type { TerminalListItem } from '@gugu/core/terminals/list'
-import type { RedisEventPublisher } from '../../adapters/redis-events.js'
+import type { RedisEventPublisher } from '../../adapters/cache/redis-events.js'
 
 /** Host preferences and live MXC readiness feed the Core owner transaction. */
 export function createPostgresTerminalReopener<DB>(options: {

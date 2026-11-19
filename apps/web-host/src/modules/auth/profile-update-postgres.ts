@@ -1,6 +1,6 @@
 import type { Pool } from 'pg'
 import type { ProfileUpdatePorts, ProfileUpdatePatch, ProfileUpdateTransaction } from '@gugu/core/auth/profile-update'
-import { withPostgresTransaction } from '../../adapters/postgres-transaction.js'
+import { withPostgresTransaction } from '../../adapters/database/postgres-transaction.js'
 
 interface ProfileRow {
   readonly timezone: string | null

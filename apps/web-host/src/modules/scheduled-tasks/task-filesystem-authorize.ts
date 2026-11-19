@@ -1,6 +1,6 @@
 import type {FastifyInstance,FastifyRequest,preHandlerHookHandler} from 'fastify'
 import {z} from 'zod'
-import {readConfigOverride} from '../../adapters/config-override-file.js'
+import {readConfigOverride} from '../../adapters/config/config-override-file.js'
 import {parsePythonInteger} from '../../http/request.js'
 
 const object=z.record(z.string(),z.unknown())

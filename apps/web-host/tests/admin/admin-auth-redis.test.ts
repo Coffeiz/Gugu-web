@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import Fastify from 'fastify'
 import test from 'node:test'
-import { createRedisAdminAuthVersionStore } from '../../src/adapters/redis-events.js'
+import { createRedisAdminAuthVersionStore } from '../../src/adapters/cache/redis-events.js'
 import { createAdminAuthAdapter } from '../../src/modules/admin/auth.js'
 
 const redisUrl = process.env.GUGU_WEBUI_TEST_REDIS_URL

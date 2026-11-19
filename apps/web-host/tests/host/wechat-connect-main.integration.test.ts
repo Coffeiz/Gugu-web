@@ -10,7 +10,7 @@ import {createServer as createSocket} from 'node:net'
 import {Pool} from 'pg'
 import {startServer} from '../../src/main.js'
 import {signedUserToken} from '../helpers/auth.js'
-import {createRedisExpiringValueStore} from '../../src/adapters/redis-events.js'
+import {createRedisExpiringValueStore} from '../../src/adapters/cache/redis-events.js'
 import {createWechatConnectHostOptions} from '../../src/modules/im/wechat-connect.js'
 async function freePort(){const socket=createSocket();await new Promise<void>(done=>socket.listen(0,'127.0.0.1',done));const address=socket.address();assert.ok(address&&typeof address!=='string');await new Promise<void>(done=>socket.close(()=>done()));return address.port}
 

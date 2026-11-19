@@ -7,8 +7,8 @@ import { join } from 'node:path'
 import test from 'node:test'
 import Fastify from 'fastify'
 import { registerAdminConfigRoutes } from '../../src/modules/admin/config.js'
-import { createPosixConfigFileLock } from '../../src/adapters/posix-config-lock.js'
-import { updateConfigOverride } from '../../src/adapters/config-override-file.js'
+import { createPosixConfigFileLock } from '../../src/adapters/config/posix-config-lock.js'
+import { updateConfigOverride } from '../../src/adapters/config/config-override-file.js'
 const unsupported = !['darwin', 'linux'].includes(process.platform) || Number(process.versions.node.split('.')[0]) < 26
 
 test('Admin 更新等待另一 Node 进程，读取最新文件并保留并发模型配置', { skip: unsupported && '需要 Node 26 和 POSIX 平台', timeout: 10_000 }, async () => {
@@ -18,7 +18,7 @@ test('Admin 更新等待另一 Node 进程，读取最新文件并保留并发�
   try {
     await writeFile(path, JSON.stringify({ ai: { model: 'original', api_key: 'synthetic-secret' }, db: { password: 'synthetic-db', host: 'old' } }))
     registerAdminConfigRoutes(app, { path, env: {}, requireAdmin: async () => {} })
-    const lockModule = new URL('../../src/adapters/posix-config-lock.ts', import.meta.url).href
+    const lockModule = new URL('../../src/adapters/config/posix-config-lock.ts', import.meta.url).href
     const script = `
       import { once } from 'node:events'
       import { readFile, rename, writeFile } from 'node:fs/promises'

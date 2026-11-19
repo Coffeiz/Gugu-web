@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { loadConfig } from '../../src/config.js'
-import { resolveConfigOverridePath } from '../../src/adapters/config-override-file.js'
+import { resolveConfigOverridePath } from '../../src/adapters/config/config-override-file.js'
 
 test('运行配置默认位于 Web Host 自身目录，显式路径仍优先', () => {
   const expected = fileURLToPath(new URL('../../config.override.json', import.meta.url))

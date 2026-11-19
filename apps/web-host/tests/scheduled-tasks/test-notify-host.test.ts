@@ -11,7 +11,7 @@ import { createScheduledTaskWechatDelivery } from '../../src/modules/scheduled-t
 import { createScheduledTaskQqDelivery } from '../../src/modules/scheduled-tasks/qq-delivery.js'
 import type { ProviderHttpRequest } from '@gugu/core/providers'
 import { signedUserToken } from '../helpers/auth.js'
-import { decryptEncryptedString, encryptEncryptedString } from '../../src/adapters/encrypted-string.js'
+import { decryptEncryptedString, encryptEncryptedString } from '../../src/adapters/security/encrypted-string.js'
 
 test('飞书试投递使用当前 owner 的 Bot 和已验证的群地址', async () => {
   const owner = 'e2dc7e3a-e0a7-4ce3-a782-3efb560c6d91'

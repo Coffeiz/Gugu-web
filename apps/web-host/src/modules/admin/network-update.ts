@@ -4,11 +4,11 @@ import { createSafeEgressUpdater,SafeEgressUpdateError,type SafeEgressPatch } fr
 
 import { createSafeEgressSettingsReader } from './network.js'
 
-import { mutateConfigOverride } from '../../adapters/config-override-file.js'
+import { mutateConfigOverride } from '../../adapters/config/config-override-file.js'
 
-import { createPosixConfigFileLock } from '../../adapters/posix-config-lock.js'
+import { createPosixConfigFileLock } from '../../adapters/config/posix-config-lock.js'
 
-import { decryptEncryptedString,encryptEncryptedString } from '../../adapters/encrypted-string.js'
+import { decryptEncryptedString,encryptEncryptedString } from '../../adapters/security/encrypted-string.js'
 
 import { pythonQueryBoolean } from '../../http/python-query.js'
 

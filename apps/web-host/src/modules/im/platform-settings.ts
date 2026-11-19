@@ -1,4 +1,4 @@
-import {readConfigOverride} from '../../adapters/config-override-file.js'
+import {readConfigOverride} from '../../adapters/config/config-override-file.js'
 import {pythonQueryBoolean} from '../../http/python-query.js'
 const platforms=['feishu','qq','wechat','telegram'] as const
 function record(value:unknown):Record<string,unknown> {if(!value || typeof value!=='object' || Array.isArray(value))throw new Error('IM平台配置无效');return value as Record<string,unknown>}

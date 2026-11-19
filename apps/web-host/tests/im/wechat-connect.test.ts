@@ -10,8 +10,8 @@ import {createServer} from 'node:https'
 import {NodeProviderTransport} from '../../../../packages/core/src/agent/providers/transport/node.js'
 import {createPostgresRuntime} from '../../../../packages/core/src/data/postgres.js'
 import {createWechatConnector} from '../../../../packages/core/src/im/wechat-connect.js'
-import {createRedisExpiringValueStore} from '../../src/adapters/redis-events.js'
-import {encryptEncryptedString,decryptEncryptedString} from '../../src/adapters/encrypted-string.js'
+import {createRedisExpiringValueStore} from '../../src/adapters/cache/redis-events.js'
+import {encryptEncryptedString,decryptEncryptedString} from '../../src/adapters/security/encrypted-string.js'
 import type {ProviderHttpRequest,ProviderTransport} from '../../../../packages/core/src/agent/providers/contracts.js'
 
 test('微信真实Python协议、owner挑战、加密PG与gateway消费，事务失败不清挑战或发布',async()=>{

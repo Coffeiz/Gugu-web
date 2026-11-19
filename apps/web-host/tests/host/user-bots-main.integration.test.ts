@@ -21,7 +21,7 @@ async function freePort(): Promise<number> {
   return address.port
 }
 
-import {encryptEncryptedString} from '../../src/adapters/encrypted-string.js'
+import {encryptEncryptedString} from '../../src/adapters/security/encrypted-string.js'
 test('生产main按认证owner读取Bot且动态IM开关热更新，兼容两种斜杠路径', {skip:!databaseUrl&&'需要隔离PostgreSQL'},async()=>{
  const redisUrl=process.env.GUGU_WEBUI_TEST_REDIS_URL
  const schema=`bots_main_${randomUUID().replaceAll('-','')}`,admin=new Pool({connectionString:databaseUrl});await admin.query(`CREATE SCHEMA "${schema}"`)

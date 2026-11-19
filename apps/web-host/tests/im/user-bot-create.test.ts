@@ -8,7 +8,7 @@ import {execFileSync} from 'node:child_process'
 import {Pool} from 'pg'
 import {createPostgresRuntime} from '../../../../packages/core/src/data/postgres.js'
 import {createQqBotCreator,invalidateOwnerImSnapshots} from '../../../../packages/core/src/im/user-bot-create.js'
-import {encryptEncryptedString,decryptEncryptedString} from '../../src/adapters/encrypted-string.js'
+import {encryptEncryptedString,decryptEncryptedString} from '../../src/adapters/security/encrypted-string.js'
 const databaseUrl=process.env.GUGU_WEBUI_TEST_DATABASE_URL,python=process.env.GUGU_WEBUI_TEST_PYTHON
 
 test('QQ创建实际加密持久化、owner并发隔离，Python gateway读取及IM快照失效协议', {skip:(!databaseUrl||!python)&&'需要隔离PG与显式Python'},async()=>{

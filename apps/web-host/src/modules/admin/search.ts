@@ -12,7 +12,7 @@ import { createNodeProviderTransport } from '@gugu/core/providers/node'
 
 import { redactToolError } from '@gugu/core/agent'
 
-import { readConfigOverride } from '../../adapters/config-override-file.js'
+import { readConfigOverride } from '../../adapters/config/config-override-file.js'
 
 const requestSchema = z.object({
   target: z.enum(['tavily', 'deep_research', 'baidu_similar_images']),

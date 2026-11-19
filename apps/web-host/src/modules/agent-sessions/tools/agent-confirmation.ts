@@ -4,7 +4,7 @@ import { createConfirmationGate, type ConfirmationBinding, type ConfirmationTarg
 import type { RunIdentity } from '@gugu/core/agent'
 import type { Database } from '@gugu/core/data'
 import { sql, type Transaction } from 'kysely'
-import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import { withPostgresTransaction } from '../../../adapters/database/postgres-transaction.js'
 import type { AgentDispatchLease } from '../persistence/agent-run-dispatch-postgres.js'
 import type { createPostgresTrustedIntentStore } from '../persistence/agent-trusted-intent-postgres.js'
 import type { TrustedPromptIntent } from '../persistence/agent-trusted-prompt-descriptions.js'

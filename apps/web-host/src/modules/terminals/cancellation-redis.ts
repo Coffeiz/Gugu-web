@@ -1,4 +1,4 @@
-import type { RedisAgentCancellationCommands } from '../../adapters/redis-events.js'
+import type { RedisAgentCancellationCommands } from '../../adapters/cache/redis-events.js'
 
 /** 取消标记仅包含 owner、终端和请求标识，不包含命令或输出。 */
 export function createTerminalCancellationMarkers(redis: RedisAgentCancellationCommands, ttlSeconds = 600) {

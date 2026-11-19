@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
-import { createRedisAgentCancellationCommands } from '../../src/adapters/redis-events.js'
-import { createRedisLiveSubscription } from '../../src/adapters/redis-live-subscription.js'
+import { createRedisAgentCancellationCommands } from '../../src/adapters/cache/redis-events.js'
+import { createRedisLiveSubscription } from '../../src/adapters/cache/redis-live-subscription.js'
 import { createAgentDispatchSupervisor } from '@gugu/core/agent'
 const url = process.env.GUGU_WEBUI_TEST_REDIS_URL
 

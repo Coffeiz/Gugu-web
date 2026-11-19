@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { Pool } from 'pg'
 import { createPostgresAdminUserStatusStore } from '../../src/modules/admin/user-status.js'
-import { withPostgresTransaction } from '../../src/adapters/postgres-transaction.js'
+import { withPostgresTransaction } from '../../src/adapters/database/postgres-transaction.js'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

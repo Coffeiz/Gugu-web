@@ -2,9 +2,9 @@ import type { FastifyInstance,preHandlerHookHandler } from 'fastify'
 
 import { testSmtp,type SmtpTestInput,type SmtpTestSettings } from '@gugu/core/email/smtp-test'
 
-import { readConfigOverride } from '../../adapters/config-override-file.js'
+import { readConfigOverride } from '../../adapters/config/config-override-file.js'
 
-import { createSmtpTestDelivery } from '../../adapters/smtp-test-delivery.js'
+import { createSmtpTestDelivery } from '../../adapters/email/smtp-test-delivery.js'
 
 import { pythonQueryBoolean } from '../../http/python-query.js'
 

@@ -8,7 +8,7 @@ import test from 'node:test'
 import {Pool} from 'pg'
 import {startServer} from '../../src/main.js'
 import {createServiceStatusReader} from '../../src/modules/admin/runtime.js'
-import {createRedisAdminMaintenanceCommands,createRedisServiceStatusCommands} from '../../src/adapters/redis-events.js'
+import {createRedisAdminMaintenanceCommands,createRedisServiceStatusCommands} from '../../src/adapters/cache/redis-events.js'
 const url=process.env.GUGU_WEBUI_TEST_DATABASE_URL,redis=process.env.GUGU_WEBUI_TEST_REDIS_URL
 async function port(){const socket=createServer();await new Promise<void>(resolve=>socket.listen(0,'127.0.0.1',resolve));const address=socket.address();assert.ok(address&&typeof address!=='string');await new Promise<void>(resolve=>socket.close(()=>resolve()));return address.port}
 

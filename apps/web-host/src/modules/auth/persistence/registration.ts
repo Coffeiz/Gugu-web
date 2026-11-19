@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { performance } from 'node:perf_hooks'
 import type { Pool, PoolClient } from 'pg'
-import { isPostgresUniqueViolation } from '../../../adapters/postgres-errors.js'
+import { isPostgresUniqueViolation } from '../../../adapters/database/postgres-errors.js'
 import { ensureRegistrationFileLibraryQuota } from '../../files/persistence/storage-quota.js'
 import type { PublicUserRecord } from '../auth.js'
 import {

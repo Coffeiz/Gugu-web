@@ -9,7 +9,7 @@ import {createServer} from 'node:net'
 import {Pool} from 'pg'
 import {startServer} from '../../src/main.js'
 import {signedUserToken} from '../helpers/auth.js'
-import {createRedisScheduledTaskCommands,createRedisValueReader} from '../../src/adapters/redis-events.js'
+import {createRedisScheduledTaskCommands,createRedisValueReader} from '../../src/adapters/cache/redis-events.js'
 async function freePort(){const s=createServer();await new Promise<void>(r=>s.listen(0,'127.0.0.1',r));const a=s.address();assert.ok(a&&typeof a!=='string');await new Promise<void>(r=>s.close(()=>r()));return a.port}
 test('生产Bot PUT与DELETE真实认证/PG/Redis/SSE，owner隔离且无Redis不撤销持久变更',async()=>{
  const url=process.env.GUGU_WEBUI_TEST_DATABASE_URL,redisBase=process.env.GUGU_WEBUI_TEST_REDIS_URL,python=process.env.GUGU_CORE_GOLDEN_PYTHON;assert.ok(url);assert.ok(redisBase);assert.ok(python)

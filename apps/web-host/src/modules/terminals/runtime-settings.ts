@@ -1,4 +1,4 @@
-import { readConfigOverride } from '../../adapters/config-override-file.js'
+import { readConfigOverride } from '../../adapters/config/config-override-file.js'
 import { normalizeMxcEgressProxyUrl } from './egress-proxy-url.js'
 
 /** 读取服务端沙盒配置；配置错误时拒绝执行，不能静默启用网络或沙盒。 */

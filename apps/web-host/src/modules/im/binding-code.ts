@@ -2,7 +2,7 @@ import {createHmac,randomBytes,randomInt} from 'node:crypto'
 import type {FastifyInstance,FastifyRequest,preHandlerHookHandler} from 'fastify'
 import type {Pool} from 'pg'
 import {createUserBotBindingCodeIssuer,BindingCodeUnavailable} from '@gugu/core/im/binding-code'
-import {createRedisScheduledTaskCommands} from '../../adapters/redis-events.js'
+import {createRedisScheduledTaskCommands} from '../../adapters/cache/redis-events.js'
 export function createPostgresRedisBindingCodeIssuer(pool:Pick<Pool,'query'>,redisUrl:string,secretKey:string) {
  const redis=createRedisScheduledTaskCommands(redisUrl)
  return createUserBotBindingCodeIssuer({query:(sql,params)=>pool.query(sql,params),

@@ -1,6 +1,6 @@
 import { CoreError } from '@gugu/core'
 import type { DataImportPreflightStore, DataImportPreflightStorage } from '@gugu/core/data-portability/preflight-import'
-import { withPostgresTransaction } from '../../adapters/postgres-transaction.js'
+import { withPostgresTransaction } from '../../adapters/database/postgres-transaction.js'
 import { writeLocalFileStream, removeLocalFile } from '@gugu/fs/node'
 import type { Pool, PoolClient } from 'pg'
 

@@ -9,7 +9,7 @@ import { enqueueMissingAgentRagBaselines } from '../../../../packages/core/src/a
 import { enqueueCalendarRagIndex } from '../../../../packages/core/src/calendar/create-store.js'
 import { enqueueMindRagIndex } from '../../../../packages/core/src/mind/rag-index-job.js'
 import { createProjectPostCommitPublisher } from '../../src/modules/projects/persistence/project-post-commit-postgres.js'
-import { withPostgresTransaction } from '../../src/adapters/postgres-transaction.js'
+import { withPostgresTransaction } from '../../src/adapters/database/postgres-transaction.js'
 import { enqueuePostgresAgentRagRebuild } from '../../src/modules/agent-sessions/persistence/agent-rag-job-postgres.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL

@@ -1,5 +1,5 @@
 import {createDataImportDeleter,type DataImportDeleteStore} from '@gugu/core/data-portability/delete-import'
-import {withPostgresTransaction} from '../../adapters/postgres-transaction.js'
+import {withPostgresTransaction} from '../../adapters/database/postgres-transaction.js'
 import {removeLocalFile} from '@gugu/fs/node'
 import type {Pool,PoolClient} from 'pg'
 

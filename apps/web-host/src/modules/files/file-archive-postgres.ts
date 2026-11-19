@@ -11,7 +11,7 @@ import * as tar from 'tar'
 import { CoreError } from '@gugu/core'
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
 import type { WriteRequestMetadata } from '../../app.js'
-import { isPathWithin } from '../../adapters/path-safety.js'
+import { isPathWithin } from '../../shared/path-safety.js'
 import { formatFileSize } from './file-size.js'
 import type { FileArchiveInput, FileArchiveOperations, FileArchiveReceipt, FileUnarchiveInput } from './file-archive.js'
 import {

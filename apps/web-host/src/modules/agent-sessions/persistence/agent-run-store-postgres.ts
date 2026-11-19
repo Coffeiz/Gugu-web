@@ -4,8 +4,8 @@ import { createAgentRunCodec, assertRunIdentity as validateIdentity, sameRunIden
 import { withBorrowedPostgresQuery } from '@gugu/core/data'
 import type { Lease, RunCheckpoint, RunEvent, RunIdentity, RunStore } from '@gugu/core/agent'
 import { agentRunStartupFailed, lockAgentRunSession } from './agent-run-startup-postgres.js'
-import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
-import { isPostgresUniqueViolation } from '../../../adapters/postgres-errors.js'
+import { withPostgresTransaction } from '../../../adapters/database/postgres-transaction.js'
+import { isPostgresUniqueViolation } from '../../../adapters/database/postgres-errors.js'
 
 export interface AgentRunHistoryWrite<C> {
   outcome: 'success' | 'interruption' | 'silent'

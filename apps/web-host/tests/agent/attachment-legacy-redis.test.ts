@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { createServer } from 'node:net'
 import test from 'node:test'
-import { createRedisLegacyChatAttachmentCleaner } from '../../src/adapters/redis-events.js'
+import { createRedisLegacyChatAttachmentCleaner } from '../../src/adapters/cache/redis-events.js'
 
 const owner = '11111111-1111-4111-8111-111111111111'
 

@@ -1,8 +1,8 @@
 import { CoreError } from '@gugu/core'
 import type { Fields } from '@gugu/core'
 import type { Pool, PoolClient } from 'pg'
-import { isPostgresUniqueViolation } from '../../../adapters/postgres-errors.js'
-import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import { isPostgresUniqueViolation } from '../../../adapters/database/postgres-errors.js'
+import { withPostgresTransaction } from '../../../adapters/database/postgres-transaction.js'
 import type { WorkspaceCreateResponse } from './workspace-create.js'
 import { createWorkspaceDeclarationUpdater, WorkspaceUpdateError } from '@gugu/core/workspace-declarations'
 

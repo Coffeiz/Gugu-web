@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { readConfigOverride } from '../../src/adapters/config-override-file.js'
+import { readConfigOverride } from '../../src/adapters/config/config-override-file.js'
 import { createAgentStateLabelOverrides } from '../../src/modules/agent-sessions/agent-state-label-config.js'
 
 test('合成配置支持旧扁平、嵌套、动态读取和 Python 值形式', async () => {

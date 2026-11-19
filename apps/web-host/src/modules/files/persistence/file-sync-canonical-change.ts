@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { lstat, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import type { PoolClient, QueryResultRow } from 'pg'
-import { isPathWithin } from '../../../adapters/path-safety.js'
+import { isPathWithin } from '../../../shared/path-safety.js'
 
 type BindingRow = QueryResultRow & {
   id: number | string

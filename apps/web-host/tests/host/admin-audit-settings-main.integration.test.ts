@@ -10,8 +10,8 @@ import test from 'node:test'
 import { createUserToken } from '../../src/modules/auth/auth.js'
 import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
-import { createRedisLiveSubscription } from '../../src/adapters/redis-live-subscription.js'
-import { createRedisAgentCancellationCommands,createRedisFilesystemAuthorizationCommands } from '../../src/adapters/redis-events.js'
+import { createRedisLiveSubscription } from '../../src/adapters/cache/redis-live-subscription.js'
+import { createRedisAgentCancellationCommands,createRedisFilesystemAuthorizationCommands } from '../../src/adapters/cache/redis-events.js'
 import { startServer } from '../../src/main.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL

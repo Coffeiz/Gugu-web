@@ -2,7 +2,7 @@ import type { Pool } from 'pg'
 import type { Kysely } from 'kysely'
 import { createTerminalCreator, type TerminalCreateAccessSettings } from '@gugu/core/terminals/create'
 import type { TerminalListItem } from '@gugu/core/terminals/list'
-import type { RedisEventPublisher } from '../../adapters/redis-events.js'
+import type { RedisEventPublisher } from '../../adapters/cache/redis-events.js'
 
 /** Host-only preferences/readiness are combined with the Core creation transaction. */
 export function createPostgresTerminalCreator<DB>(options: {

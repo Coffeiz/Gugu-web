@@ -1,6 +1,6 @@
 import { CoreError } from '@gugu/core'
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
-import { withPostgresTransaction } from '../../adapters/postgres-transaction.js'
+import { withPostgresTransaction } from '../../adapters/database/postgres-transaction.js'
 import type { FolderCreateInput, FolderMoveInput, FolderRenameInput, FolderWriteMetadata, FolderWriteOperations } from './folder-writes.js'
 import type { PreparedPathMirrorMutation } from './local-path-mirror.js'
 

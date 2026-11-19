@@ -1,6 +1,6 @@
 import { chmod, chown, lstat, mkdir, readdir, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
-import { isPathWithin } from '../../../adapters/path-safety.js'
+import { isPathWithin } from '../../../shared/path-safety.js'
 import { moveProjectFileNoReplace } from './project-path-move.js'
 
 function keySegments(key: string): string[] {

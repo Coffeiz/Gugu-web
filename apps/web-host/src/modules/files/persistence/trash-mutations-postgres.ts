@@ -4,7 +4,7 @@ import { lstat, readdir, realpath, unlink } from 'node:fs/promises'
 import { finishStagedLocalFile, stageLocalFile } from '@gugu/fs/node'
 import path from 'node:path'
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
-import { isPathWithin } from '../../../adapters/path-safety.js'
+import { isPathWithin } from '../../../shared/path-safety.js'
 import { normalizeFileOwnerId } from '../file-owner.js'
 import type { TrashOperations } from '../trash.js'
 

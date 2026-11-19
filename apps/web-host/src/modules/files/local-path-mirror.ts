@@ -1,6 +1,6 @@
 import { link, lstat, mkdir, readdir, rmdir, unlink } from 'node:fs/promises'
 import path from 'node:path'
-import { isPathWithin } from '../../adapters/path-safety.js'
+import { isPathWithin } from '../../shared/path-safety.js'
 
 export interface PathMirrorMove {
   readonly fromKey: string

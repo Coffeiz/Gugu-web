@@ -13,7 +13,7 @@ import { planAccountMemoryCleanup } from '@gugu/core/memory/account-cleanup-prev
 import { createAccountMemoryCleanupStorage } from '../../src/modules/admin/memory-store.js'
 import { startServer } from '../../src/main.js'
 import { applyRagIndexMigration } from '../../src/migrations/rag-index-migrate.js'
-import { createConfiguredByokEnvelope } from '../../src/adapters/byok-envelope.js'
+import { createConfiguredByokEnvelope } from '../../src/adapters/security/byok-envelope.js'
 
 const pgUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const redisUrl = process.env.GUGU_WEBUI_TEST_REDIS_URL

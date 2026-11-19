@@ -16,7 +16,7 @@ async function freePort(): Promise<number> {
   return address.port
 }
 
-import {createRedisAgentCancellationCommands,createRedisScheduledTaskCommands} from '../../src/adapters/redis-events.js'
+import {createRedisAgentCancellationCommands,createRedisScheduledTaskCommands} from '../../src/adapters/cache/redis-events.js'
 import {storageQuotaStateKey,storageQuotaLockKey} from '../../src/modules/admin/storage.js'
 test('生产Host读取真实配额状态且未配置Redis返回脱敏503',async()=>{
  const configured=process.env.GUGU_WEBUI_TEST_REDIS_URL;assert.ok(configured);const scopedRedis=new URL(configured);scopedRedis.pathname='/15';const redisUrl=scopedRedis.toString();assert.ok(databaseUrl)

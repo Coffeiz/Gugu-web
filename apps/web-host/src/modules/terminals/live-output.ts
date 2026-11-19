@@ -1,4 +1,4 @@
-import type { RedisEventPublisher } from '../../adapters/redis-events.js'
+import type { RedisEventPublisher } from '../../adapters/cache/redis-events.js'
 
 /** 临时输出只经 owner 的实时频道发送；持久化终态由命令用例另行提交。 */
 export function createTerminalLiveOutput(publisher: Pick<RedisEventPublisher, 'publishResourceChanged'>, now = () => new Date()) {

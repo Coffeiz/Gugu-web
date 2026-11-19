@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import Fastify from 'fastify'
 import type { ProviderHttpRequest, ProviderTransport } from '@gugu/core/providers'
-import { createRedisScheduledTaskCommands, createRedisValueReader } from '../../src/adapters/redis-events.js'
+import { createRedisScheduledTaskCommands, createRedisValueReader } from '../../src/adapters/cache/redis-events.js'
 import {
   createImMemoryMaintenancePreviewStarter, createImMemoryMaintenancePreviewState, createImMemoryMaintenancePreviewWorker, IM_MEMORY_MODEL_PREVIEW_LOCK_KEY,
   ImMemoryMaintenancePreviewError,

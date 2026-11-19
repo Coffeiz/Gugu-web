@@ -3,7 +3,7 @@ import { CoreError } from '@gugu/core'
 import { link, lstat, mkdir, realpath, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
-import { isPathWithin } from '../../adapters/path-safety.js'
+import { isPathWithin } from '../../shared/path-safety.js'
 import { normalizeFileOwnerId } from './file-owner.js'
 import type { FileRestoreOperations } from './file-restore.js'
 

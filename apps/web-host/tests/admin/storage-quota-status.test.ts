@@ -13,7 +13,7 @@ test('配额状态保留终态、无锁标记中断且不覆盖并发完成',asy
 })
 import Fastify from 'fastify'
 import {createRedisStorageQuotaStatusStore,registerStorageQuotaStatusRoute} from '../../src/modules/admin/storage.js'
-import {createRedisAgentCancellationCommands,createRedisScheduledTaskCommands} from '../../src/adapters/redis-events.js'
+import {createRedisAgentCancellationCommands,createRedisScheduledTaskCommands} from '../../src/adapters/cache/redis-events.js'
 test('真实Redis读取状态、锁丢失写回7天TTL且鉴权在读取前拒绝',async()=>{
  const configured=process.env.GUGU_WEBUI_TEST_REDIS_URL;assert.ok(configured);const scopedRedis=new URL(configured);scopedRedis.pathname='/14';const redisUrl=scopedRedis.toString()
  const io=createRedisAgentCancellationCommands(redisUrl),commands=createRedisScheduledTaskCommands(redisUrl),store=createRedisStorageQuotaStatusStore(redisUrl),app=Fastify()

@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import bcrypt from 'bcryptjs'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { Pool, PoolClient } from 'pg'
-import { withPostgresTransaction } from '../../adapters/postgres-transaction.js'
+import { withPostgresTransaction } from '../../adapters/database/postgres-transaction.js'
 import { RateLimitError, type RateLimitHandler } from './rate-limit.js'
 
 export const EMAIL_CHANGE_TTL_SECONDS = 30 * 60

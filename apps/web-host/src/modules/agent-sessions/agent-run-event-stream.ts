@@ -1,5 +1,5 @@
 import { createAgentRunEventStream as createCoreRunEventStream, type AgentRunEventReader, type RunIdentity } from '@gugu/core/agent'
-import type { LiveSubscriptionFactory } from '../../adapters/redis-live-subscription.js'
+import type { LiveSubscriptionFactory } from '../../adapters/cache/redis-live-subscription.js'
 
 interface Publisher { publish(channel: string, value: string): Promise<number> }
 function channel(identity: RunIdentity): string {

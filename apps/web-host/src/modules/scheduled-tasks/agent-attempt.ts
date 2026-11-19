@@ -4,7 +4,7 @@ import { canonicalToolsUsed, type CanonicalRunContext, type RunIdentity } from '
 import { createScheduledTaskAgentAttempt, createScheduledTaskHarness,
   type ScheduledTaskExecutionPorts } from '@gugu/core/scheduled-task-run-now'
 import type { createConfiguredWebAgentProviderBinding } from '../agent/model-config/configured-web-provider-binding.js'
-import { withPostgresTransaction } from '../../adapters/postgres-transaction.js'
+import { withPostgresTransaction } from '../../adapters/database/postgres-transaction.js'
 import { recordAgentUsage } from '../../modules/agent-sessions/persistence/agent-usage-postgres.js'
 
 type AttemptInput = Parameters<ScheduledTaskExecutionPorts<unknown>['attempt']>[0]

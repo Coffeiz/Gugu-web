@@ -2,11 +2,11 @@ import type { FastifyInstance,preHandlerHookHandler } from 'fastify'
 
 import { Client } from 'pg'
 
-import { pingRedis } from '../../adapters/redis-events.js'
+import { pingRedis } from '../../adapters/cache/redis-events.js'
 
-import { readConfigOverride,updateConfigOverride,type ConfigDocument } from '../../adapters/config-override-file.js'
+import { readConfigOverride,updateConfigOverride,type ConfigDocument } from '../../adapters/config/config-override-file.js'
 
-import { createPosixConfigFileLock } from '../../adapters/posix-config-lock.js'
+import { createPosixConfigFileLock } from '../../adapters/config/posix-config-lock.js'
 
 export interface AdminConfigOptions {
   readonly requireAdmin: preHandlerHookHandler

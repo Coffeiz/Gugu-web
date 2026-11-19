@@ -8,7 +8,7 @@ import {
   createRedisEventPublisher,
   createRedisRateLimitCommands,
   createRedisTrashPurgeNotifier,
-} from '../../src/adapters/redis-events.js'
+} from '../../src/adapters/cache/redis-events.js'
 
 function decodeCommand(buffer: Buffer): string[] | null {
   const text = buffer.toString('utf8')

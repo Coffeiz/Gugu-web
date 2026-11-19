@@ -5,7 +5,7 @@ import type {Pool,PoolClient} from 'pg'
 import {createAccountDeleter} from '@gugu/core/account/delete-account'
 import {CoreError} from '@gugu/core'
 import {removeLocalTree} from '@gugu/fs/node'
-import {withPostgresTransaction} from '../../adapters/postgres-transaction.js'
+import {withPostgresTransaction} from '../../adapters/database/postgres-transaction.js'
 import {deleteOwnerThumbnailCache} from '../files/thumbnail.js'
 
 type OwnerFiles={id:number}

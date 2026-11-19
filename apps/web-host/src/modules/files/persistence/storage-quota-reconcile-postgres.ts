@@ -3,7 +3,7 @@ import type { StorageQuotaReconcilePort } from '../../admin/storage.js'
 import { lstat, readdir, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
-import { isPathWithin } from '../../../adapters/path-safety.js'
+import { isPathWithin } from '../../../shared/path-safety.js'
 
 const MAX_BIGINT = '9223372036854775807'
 const MAX_ACTIVE_SCANS = 4

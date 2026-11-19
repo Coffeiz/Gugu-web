@@ -25,8 +25,8 @@ description: gugu-webui Node.js/Fastify 后端开发、Python API 迁移与实�
 
 | 契约 | 复用入口 |
 |---|---|
-| PostgreSQL 事务、唯一键错误 | `apps/web-host/src/adapters/postgres-transaction.ts`：`withPostgresTransaction`；`apps/web-host/src/adapters/postgres-errors.ts`：`isPostgresUniqueViolation` |
-| 路径包含判断、owner ID 规范化、提交后 best-effort | `apps/web-host/src/adapters/path-safety.ts`：`isPathWithin`；`apps/web-host/src/adapters/owner-context.ts`：`normalizeOwnerId`；`apps/web-host/src/adapters/best-effort.ts`：`runBestEffort` |
+| PostgreSQL 事务、唯一键错误 | `apps/web-host/src/adapters/database/postgres-transaction.ts`：`withPostgresTransaction`；`apps/web-host/src/adapters/database/postgres-errors.ts`：`isPostgresUniqueViolation` |
+| 路径包含判断、owner ID 规范化、提交后 best-effort | `apps/web-host/src/shared/path-safety.ts`：`isPathWithin`；`apps/web-host/src/shared/owner-context.ts`：`normalizeOwnerId`；`apps/web-host/src/shared/best-effort.ts`：`runBestEffort` |
 | Cookie 解析、请求元数据 | `apps/web-host/src/http/cookies.ts`：`parseCookieHeader`；`apps/web-host/src/http/request.ts`：`writeRequestMetadata`（`limitHeaders` 用于 trim 并限制文件写入头长） |
 | 日期键与 UTC 时间格式化 | `apps/web-host/src/shared/date-time.ts`：`dateKeyInTimeZone`、`addUtcDaysToDateKey`、`startOfDateKeyInTimeZone`、`toUtcIsoWithOffset` |
 | Admin HTTP 错误、通用密钥遮蔽 | `apps/web-host/src/modules/admin/errors.ts`；`@gugu/core/shared/secret-mask`：`maskSecret` |

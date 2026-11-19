@@ -4,7 +4,7 @@ import type { ProviderHttpResponse, ProviderTransport } from '@gugu/core/provide
 import { createNodeProviderTransport } from '@gugu/core/providers/node'
 import type { SafeEgressReadSettings } from '@gugu/core/preferences/safe-egress'
 import { validateSafeEgressProxyUrl } from '@gugu/core/preferences/safe-egress-update'
-import { decryptEncryptedString } from './encrypted-string.js'
+import { decryptEncryptedString } from '../security/encrypted-string.js'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest, Agent } from 'node:https'
 import { connect as tlsConnect, type TLSSocket } from 'node:tls'

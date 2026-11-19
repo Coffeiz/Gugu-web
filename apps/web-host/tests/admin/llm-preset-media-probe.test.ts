@@ -7,7 +7,7 @@ import Fastify from 'fastify'
 import { afterEach, test } from 'node:test'
 import { createApp } from '../../src/app.js'
 import { createAdminLlmPresetMediaProbe } from '../../src/modules/admin/llm-probe.js'
-import { readConfigOverride } from '../../src/adapters/config-override-file.js'
+import { readConfigOverride } from '../../src/adapters/config/config-override-file.js'
 import { createLlmStrategyFileMutator } from '../../src/modules/admin/llm-strategy.js'
 
 const apps: Array<ReturnType<typeof Fastify>> = []

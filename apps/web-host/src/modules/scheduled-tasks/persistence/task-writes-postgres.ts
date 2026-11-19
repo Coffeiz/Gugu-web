@@ -1,9 +1,9 @@
 import type { Pool, PoolClient } from 'pg'
 import { CompiledQuery, type Transaction } from 'kysely'
 import type { Database } from '@gugu/core/data'
-import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
-import { normalizeOwnerId } from '../../../adapters/owner-context.js'
-import { isPostgresUniqueViolation } from '../../../adapters/postgres-errors.js'
+import { withPostgresTransaction } from '../../../adapters/database/postgres-transaction.js'
+import { normalizeOwnerId } from '../../../shared/owner-context.js'
+import { isPostgresUniqueViolation } from '../../../adapters/database/postgres-errors.js'
 import { scheduleTimestamp, type ScheduleSpec } from '@gugu/core/scheduled-task-schedule'
 import {
   createScheduledTask,

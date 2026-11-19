@@ -8,7 +8,7 @@ import { resolve } from 'node:path'
 
 import { adminHttpError } from './errors.js'
 
-import { createRedisScheduledTaskCommands,createRedisValueReader } from '../../adapters/redis-events.js'
+import { createRedisScheduledTaskCommands,createRedisValueReader } from '../../adapters/cache/redis-events.js'
 
 import { randomUUID } from 'node:crypto'
 

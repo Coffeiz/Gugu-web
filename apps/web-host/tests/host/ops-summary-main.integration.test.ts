@@ -6,7 +6,7 @@ import {tmpdir} from 'node:os'
 import {join,resolve} from 'node:path'
 import {createServer} from 'node:net'
 import {startServer} from '../../src/main.js'
-import {createRedisScheduledTaskCommands,createRedisHashReader} from '../../src/adapters/redis-events.js'
+import {createRedisScheduledTaskCommands,createRedisHashReader} from '../../src/adapters/cache/redis-events.js'
 async function freePort(){const server=createServer();await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const a=server.address();assert.ok(a&&typeof a!=='string');await new Promise<void>(r=>server.close(()=>r()));return a.port}
 test('生产运维汇总读取真实Redis，与Python handler全字段一致，故障503脱敏',async()=>{
  const databaseUrl=process.env.GUGU_WEBUI_TEST_DATABASE_URL,redisBase=process.env.GUGU_WEBUI_TEST_REDIS_URL,python=process.env.GUGU_CORE_GOLDEN_PYTHON;assert.ok(databaseUrl);assert.ok(redisBase);assert.ok(python)

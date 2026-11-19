@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto'
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
-import { withPostgresTransaction } from '../../adapters/postgres-transaction.js'
+import { withPostgresTransaction } from '../../adapters/database/postgres-transaction.js'
 
 const SUBJECT_TYPE = 'session'
 const AUTHORIZATION_SCOPE = 'user_sandbox'

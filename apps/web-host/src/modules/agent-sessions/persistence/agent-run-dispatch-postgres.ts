@@ -1,7 +1,7 @@
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes, randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import type { InteractionResolution, RunIdentity } from '@gugu/core/agent'
-import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import { withPostgresTransaction } from '../../../adapters/database/postgres-transaction.js'
 import { lockAgentRunSession } from './agent-run-startup-postgres.js'
 import { claimInteractionResumeLocked } from './agent-interaction-resume-postgres.js'
 

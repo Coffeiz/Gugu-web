@@ -8,7 +8,7 @@ import { Kysely, PostgresDialect, sql } from 'kysely'
 import { Pool } from 'pg'
 import type { RunIdentity } from '@gugu/core/agent'
 import { databaseTime, initializeSqlite, openSqliteRuntime, SqlDataRuntime, type Database } from '@gugu/core/data'
-import { createRedisScheduledTaskCommands } from '../../src/adapters/redis-events.js'
+import { createRedisScheduledTaskCommands } from '../../src/adapters/cache/redis-events.js'
 import { createWebScheduledTaskToolResources } from '../../src/modules/scheduled-tasks/agent-tools.js'
 import { createScheduledTaskRunNowRuntime } from '../../src/modules/scheduled-tasks/run-now-runtime.js'
 

@@ -1,5 +1,5 @@
 import type { Pool } from 'pg'
-import { runBestEffort } from '../../../adapters/best-effort.js'
+import { runBestEffort } from '../../../shared/best-effort.js'
 import type { CalendarEventDeletePublication } from '@gugu/core/calendar'
 import type { EventUpdatePublication } from '@gugu/core/calendar'
 

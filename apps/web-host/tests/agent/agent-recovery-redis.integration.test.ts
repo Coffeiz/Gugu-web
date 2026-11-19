@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { createConnection } from 'node:net'
 import test from 'node:test'
-import { createRedisAgentRunRecoveryState } from '../../src/adapters/redis-events.js'
+import { createRedisAgentRunRecoveryState } from '../../src/adapters/cache/redis-events.js'
 
 const redisUrl = process.env.GUGU_WEBUI_TEST_REDIS_URL
 async function command(url: string, ...parts: string[]): Promise<string> {

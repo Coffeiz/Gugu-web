@@ -12,8 +12,8 @@ import {Pool} from 'pg'
 import {createPostgresRuntime} from '../../../../packages/core/src/data/postgres.js'
 import {createFeishuConnector} from '../../../../packages/core/src/im/feishu-connect.js'
 import {NodeProviderTransport} from '../../../../packages/core/src/agent/providers/transport/node.js'
-import {createRedisExpiringValueStore,createRedisFeishuReachWriter} from '../../src/adapters/redis-events.js'
-import {encryptEncryptedString,decryptEncryptedString} from '../../src/adapters/encrypted-string.js'
+import {createRedisExpiringValueStore,createRedisFeishuReachWriter} from '../../src/adapters/cache/redis-events.js'
+import {encryptEncryptedString,decryptEncryptedString} from '../../src/adapters/security/encrypted-string.js'
 import {temporarySmtp} from '../admin/fixtures/temporary-smtp.js'
 test('飞书设备授权实际TLS/Redis/PG：owner、等待/拒绝/过期、密钥更新、owner绑定及Python reach消费',async()=>{
  const url=process.env.GUGU_WEBUI_TEST_DATABASE_URL,redisUrl=process.env.GUGU_WEBUI_TEST_REDIS_URL,python=process.env.GUGU_CORE_GOLDEN_PYTHON;assert.ok(url);assert.ok(redisUrl);assert.ok(python)

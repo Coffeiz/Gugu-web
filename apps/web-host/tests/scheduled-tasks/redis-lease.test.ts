@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { test } from 'node:test'
 import { createScheduledTaskRedisLease } from '../../src/modules/scheduled-tasks/persistence/redis-lease.js'
-import { createRedisScheduledTaskCommands } from '../../src/adapters/redis-events.js'
+import { createRedisScheduledTaskCommands } from '../../src/adapters/cache/redis-events.js'
 import { randomInt } from 'node:crypto'
 const run = promisify(execFile)
 const socket = process.env.GUGU_TEST_REDIS_SOCKET

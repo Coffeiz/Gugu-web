@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import { withPostgresTransaction } from '../../../adapters/database/postgres-transaction.js'
 import { agentRunStartupFailed, lockAgentRunSession } from './agent-run-startup-postgres.js'
 import type { Pool } from 'pg'
 import { RunStoreRejected, type Lease, type LeasePort, type RunIdentity } from '@gugu/core/agent'

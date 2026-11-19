@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from 'node:crypto'
 import type { ProviderContinuationStore } from '@gugu/core/providers'
-import type { createRedisExpiringValueStore } from '../../../adapters/redis-events.js'
+import type { createRedisExpiringValueStore } from '../../../adapters/cache/redis-events.js'
 
 /** 续接值仅短期存入 Redis。检查点、对话历史及事件中只容纳引用。 */
 export function createRedisProviderContinuationStore(

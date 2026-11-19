@@ -9,7 +9,7 @@ import type {
   ProjectTrashStorage,
 } from '@gugu/core/project-trash'
 import { ProjectTrashStoragePathError } from '@gugu/core/project-trash'
-import { isPathWithin } from '../../../adapters/path-safety.js'
+import { isPathWithin } from '../../../shared/path-safety.js'
 import { moveProjectFileNoReplace } from './project-path-move.js'
 
 export async function checkedPath(root: string, ownerId: string, key: string, allowMissing = true): Promise<string> {

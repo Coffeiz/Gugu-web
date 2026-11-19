@@ -1,6 +1,6 @@
 import { tablesSql } from '@gugu/core/data'
 import type { Pool } from 'pg'
-import { withPostgresTransaction } from '../adapters/postgres-transaction.js'
+import { withPostgresTransaction } from '../adapters/database/postgres-transaction.js'
 import { AgentSchemaMigrationError } from './agent-schema-migrate.js'
 
 const storage = [

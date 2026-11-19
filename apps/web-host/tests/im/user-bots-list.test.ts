@@ -1,12 +1,12 @@
 import {readFile} from 'node:fs/promises'
-import {decryptEncryptedString} from '../../src/adapters/encrypted-string.js'
+import {decryptEncryptedString} from '../../src/adapters/security/encrypted-string.js'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {Pool} from 'pg'
 import {randomUUID} from 'node:crypto'
 import Fastify from 'fastify'
 import {registerUserBotsListRoute,createPostgresUserBotsReader} from '../../src/modules/im/user-bots.js'
-import {encryptEncryptedString as encryptSmtpPassword} from '../../src/adapters/encrypted-string.js'
+import {encryptEncryptedString as encryptSmtpPassword} from '../../src/adapters/security/encrypted-string.js'
 test('Bot列表仅当前owner、真实密文遮蔽、旧模式和工具白名单规范化',async()=>{
  const connectionString=process.env.GUGU_WEBUI_TEST_DATABASE_URL;assert.ok(connectionString)
  const schema=`bots_${randomUUID().replaceAll('-','')}`,admin=new Pool({connectionString});await admin.query(`CREATE SCHEMA "${schema}"`)

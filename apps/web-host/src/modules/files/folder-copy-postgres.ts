@@ -6,7 +6,7 @@ import { nextFolderCopyName, planFolderCopyTree } from '@gugu/core/files/folder-
 import type { FolderCopyPlanNode, FolderCopyTreeNode } from '@gugu/core/files/folder-copy'
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
 import type { WriteRequestMetadata } from '../../app.js'
-import { isPathWithin } from '../../adapters/path-safety.js'
+import { isPathWithin } from '../../shared/path-safety.js'
 import { isOwnedFileStorageKey } from './file-owner.js'
 import { createPostgresFolderPathMirrorPlanner } from './folder-path-planner.js'
 import { updateFileStorageQuota } from './persistence/storage-quota.js'

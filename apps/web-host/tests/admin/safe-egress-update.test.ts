@@ -5,7 +5,7 @@ import {join} from 'node:path'
 import {tmpdir} from 'node:os'
 import Fastify from 'fastify'
 import {createSafeEgressFileUpdater,registerSafeEgressUpdateRoute} from '../../src/modules/admin/network-update.js'
-import {encryptEncryptedString,decryptEncryptedString} from '../../src/adapters/encrypted-string.js'
+import {encryptEncryptedString,decryptEncryptedString} from '../../src/adapters/security/encrypted-string.js'
 test('代理配置PATCH加密保存、保留未提交密码、明确清除并保护其他配置段',async()=>{
  const root=await mkdtemp(join(tmpdir(),'egress-update-')),path=join(root,'override.json'),secret='synthetic-egress-secret',app=Fastify(),headers={authorization:'admin'}
  registerSafeEgressUpdateRoute(app,{requireAdmin:async(request,reply)=>{if(request.headers.authorization!=='admin')return reply.code(401).send({detail:'未登录'})},update:createSafeEgressFileUpdater({},path,secret)})

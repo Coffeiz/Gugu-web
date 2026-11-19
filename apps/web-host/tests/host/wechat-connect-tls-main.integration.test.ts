@@ -12,7 +12,7 @@ import type {Duplex} from 'node:stream'
 import {Pool} from 'pg'
 import {startServer} from '../../src/main.js'
 import {signedUserToken} from '../helpers/auth.js'
-import {createRedisExpiringValueStore} from '../../src/adapters/redis-events.js'
+import {createRedisExpiringValueStore} from '../../src/adapters/cache/redis-events.js'
 async function freePort(){const socket=createSocket();await new Promise<void>(done=>socket.listen(0,'127.0.0.1',done));const addr=socket.address();assert.ok(addr&&typeof addr!=='string');await new Promise<void>(done=>socket.close(()=>done()));return addr.port}
 
 test('生产微信扫码TLS→Redis→PG→实际Python gateway，真实SSE刷新、无Redis及平台热开关',async()=>{

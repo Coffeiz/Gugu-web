@@ -1,4 +1,4 @@
-import { runBestEffort } from '../../../adapters/best-effort.js'
+import { runBestEffort } from '../../../shared/best-effort.js'
 import type { EventCreatePublication } from '@gugu/core/calendar'
 
 export interface CalendarCreatePostCommitEffects {

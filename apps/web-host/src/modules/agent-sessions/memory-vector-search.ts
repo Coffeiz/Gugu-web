@@ -1,7 +1,7 @@
 import type { AgentMemoryVectorSearchPort } from '@gugu/core/agent/memory/context'
 import type { RagQueryEmbeddingSettings } from '@gugu/core/agent/rag'
 import type { ProviderTransport } from '@gugu/core/providers'
-import { normalizeOwnerId } from '../../adapters/owner-context.js'
+import { normalizeOwnerId } from '../../shared/owner-context.js'
 import { createOwnerAgentRagVectorResolver } from './tools/agent-rag-vectors.js'
 
 export interface AgentMemoryVectorEmbeddingPort {

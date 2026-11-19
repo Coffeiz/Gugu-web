@@ -6,7 +6,7 @@ import {
   createSmtpTransport,
   sendUserSmtpTestEmail,
   type SmtpEmailSettings,
-} from '../../src/adapters/smtp-email.js'
+} from '../../src/adapters/email/smtp-email.js'
 
 const settings: SmtpEmailSettings = {
   host: 'smtp.example.test',

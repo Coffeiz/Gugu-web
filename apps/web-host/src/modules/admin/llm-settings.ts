@@ -10,7 +10,7 @@ import { createNodeProviderTransport } from '@gugu/core/providers/node'
 
 import { stableJson } from '@gugu/core/agent'
 
-import { readConfigOverride,type ConfigDocument } from '../../adapters/config-override-file.js'
+import { readConfigOverride,type ConfigDocument } from '../../adapters/config/config-override-file.js'
 
 import type { AdminLlmPresetOptions } from './llm.js'
 

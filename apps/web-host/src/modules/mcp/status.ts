@@ -1,6 +1,6 @@
 import type {FastifyInstance,preHandlerHookHandler} from 'fastify'
 import {z} from 'zod'
-import {readConfigOverride} from '../../adapters/config-override-file.js'
+import {readConfigOverride} from '../../adapters/config/config-override-file.js'
 
 const objectSchema=z.record(z.string(),z.unknown())
 const enabledSchema=z.union([z.boolean(),z.literal(0).transform(()=>false),z.literal(1).transform(()=>true),z.stringbool()])

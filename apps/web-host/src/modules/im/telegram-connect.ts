@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply, preHandlerHookHandler } from 'fastify'
 import { createTelegramBotApi, type createTelegramConnector } from '@gugu/core/im/telegram-connect'
-import { createPublicAgentEgress } from '../../adapters/safe-egress-proxy.js'
+import { createPublicAgentEgress } from '../../adapters/network/safe-egress-proxy.js'
 import type { SafeEgressReadSettings } from '@gugu/core/preferences/safe-egress'
 
 /** 每次校验都热读管理员代理；启用代理失败时 createPublicAgentEgress 不会回退直连。 */

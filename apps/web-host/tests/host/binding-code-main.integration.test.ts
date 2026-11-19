@@ -22,7 +22,7 @@ async function freePort(): Promise<number> {
 
 import {execFileSync} from 'node:child_process'
 import {resolve} from 'node:path'
-import {createRedisValueReader,createRedisScheduledTaskCommands} from '../../src/adapters/redis-events.js'
+import {createRedisValueReader,createRedisScheduledTaskCommands} from '../../src/adapters/cache/redis-events.js'
 test('生产Node签发QQ/Telegram绑定码可由真实Python消费者完成绑定',async()=>{
  const configured=process.env.GUGU_WEBUI_TEST_REDIS_URL;assert.ok(configured);assert.ok(databaseUrl)
  const redis=new URL(configured);redis.pathname='/12';const redisUrl=redis.toString(),schema=`binding_main_${randomUUID().replaceAll('-','')}`,admin=new Pool({connectionString:databaseUrl})

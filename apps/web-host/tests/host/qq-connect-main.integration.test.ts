@@ -11,7 +11,7 @@ import {Pool} from 'pg'
 import {startServer} from '../../src/main.js'
 import {signedUserToken} from '../helpers/auth.js'
 import {temporarySmtp} from '../admin/fixtures/temporary-smtp.js'
-import {createRedisExpiringValueStore} from '../../src/adapters/redis-events.js'
+import {createRedisExpiringValueStore} from '../../src/adapters/cache/redis-events.js'
 async function freePort(){const s=createPortServer();await new Promise<void>(r=>s.listen(0,'127.0.0.1',r));const a=s.address();assert.ok(a&&typeof a!=='string');await new Promise<void>(r=>s.close(()=>r()));return a.port}
 test('生产QQ扫码完整TLS→Redis→加密PG→gateway消费，未配置Redis不请求上游且关闭连接',async()=>{
  const databaseUrl=process.env.GUGU_WEBUI_TEST_DATABASE_URL,redisUrl=process.env.GUGU_WEBUI_TEST_REDIS_URL,python=process.env.GUGU_CORE_GOLDEN_PYTHON;assert.ok(databaseUrl);assert.ok(redisUrl);assert.ok(python)

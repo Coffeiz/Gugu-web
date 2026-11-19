@@ -3,7 +3,7 @@ import type { Kysely } from 'kysely'
 import { createTerminalCommandService, type TerminalCommandInput, type TerminalCommandPorts } from '@gugu/core/terminals/command'
 import { createTerminalEventAppender } from '@gugu/core/terminals/append'
 import type { TerminalListItem } from '@gugu/core/terminals/list'
-import type { RedisEventPublisher } from '../../adapters/redis-events.js'
+import type { RedisEventPublisher } from '../../adapters/cache/redis-events.js'
 
 /** 终端状态与事件提交后通知；执行端与逐次授权由同一 Host 显式提供。 */
 export function createHostTerminalCommandService<DB>(options: {

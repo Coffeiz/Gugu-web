@@ -9,14 +9,14 @@ import type { FastifyReply } from 'fastify'
 
 import { createVoicePresetMutations,VoicePresetMutationError,VoicePresetMutationUnavailable } from '@gugu/core/agent/config/voice-presets-mutate'
 
-import { mutateConfigOverride } from '../../adapters/config-override-file.js'
+import { mutateConfigOverride } from '../../adapters/config/config-override-file.js'
 
-import { createPosixConfigFileLock } from '../../adapters/posix-config-lock.js'
+import { createPosixConfigFileLock } from '../../adapters/config/posix-config-lock.js'
 
 
 import { createVoicePresetsReader } from '@gugu/core/agent/config/voice-presets-read'
 
-import { readConfigOverride } from '../../adapters/config-override-file.js'
+import { readConfigOverride } from '../../adapters/config/config-override-file.js'
 
 import { createHash } from 'node:crypto'
 

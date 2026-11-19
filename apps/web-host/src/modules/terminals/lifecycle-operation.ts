@@ -1,7 +1,7 @@
 import type { Kysely } from 'kysely'
 import { readTerminalCleanupState, resetTerminalForOwner, terminateTerminalForOwner } from '@gugu/core/terminals/lifecycle'
 import type { TerminalListItem } from '@gugu/core/terminals/list'
-import type { RedisEventPublisher } from '../../adapters/redis-events.js'
+import type { RedisEventPublisher } from '../../adapters/cache/redis-events.js'
 
 type TerminalPtyLifecycleManager = {
   get(terminalId: string): unknown

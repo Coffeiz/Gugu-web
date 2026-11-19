@@ -1,6 +1,6 @@
 import type { AuthorizedMemoryScope } from '@gugu/core/agent/rag'
 import type { SqlDataRuntime } from '@gugu/core/data'
-import { normalizeOwnerId } from '../../../adapters/owner-context.js'
+import { normalizeOwnerId } from '../../../shared/owner-context.js'
 
 type ScopeRow = { scope_type: string; scope_id: string; platform: string; bot_id: string }
 interface ScopeQuery {

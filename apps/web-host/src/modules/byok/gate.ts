@@ -1,4 +1,4 @@
-import {readConfigOverride} from '../../adapters/config-override-file.js'
+import {readConfigOverride} from '../../adapters/config/config-override-file.js'
 
 type RecordValue=Record<string,unknown>
 function object(value:unknown):RecordValue{

@@ -1,6 +1,6 @@
 import type { Kysely } from 'kysely'
 import { markTerminalPtyExited, markTerminalPtyRunning } from '@gugu/core/terminals/pty-state'
-import type { RedisEventPublisher } from '../../adapters/redis-events.js'
+import type { RedisEventPublisher } from '../../adapters/cache/redis-events.js'
 import type { TerminalPtyStateOperations } from './websocket.js'
 
 /** Core owns PTY status transactions; Host only publishes committed resource changes. */

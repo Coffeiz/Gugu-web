@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import type { Pool } from 'pg'
 import type { RunEvent } from '@gugu/core/agent'
-import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import { withPostgresTransaction } from '../../../adapters/database/postgres-transaction.js'
 function object(value: unknown): Record<string, unknown> { return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {} }
 /** 仅按已验证的 run 绑定读取并轮换该 prompt 令牌，outbox 永不包含令牌。 */
 export function createPostgresInteractionProjection(pool: Pick<Pool, 'connect'>) {

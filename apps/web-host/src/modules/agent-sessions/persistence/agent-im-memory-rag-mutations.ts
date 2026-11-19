@@ -1,6 +1,6 @@
 import { changeAgentMemoryScopeAndEnqueue, invalidateAgentMemoryRag } from '@gugu/core/agent/rag'
 import type { SqlDataRuntime } from '@gugu/core/data'
-import { normalizeOwnerId } from '../../../adapters/owner-context.js'
+import { normalizeOwnerId } from '../../../shared/owner-context.js'
 import type { ImMemoryMaintenanceApplyPorts } from '../../admin/memory-apply.js'
 
 type Scope = Parameters<ImMemoryMaintenanceApplyPorts['memoryIndex']['changed']>[0]

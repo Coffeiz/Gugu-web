@@ -1,6 +1,6 @@
 import type { Fields, ProjectRecord } from '@gugu/core'
 import type { Pool, PoolClient } from 'pg'
-import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import { withPostgresTransaction } from '../../../adapters/database/postgres-transaction.js'
 import { recordForwardUndoOperation } from '../../undo/persistence/forward-operation.js'
 import { projectTimestamp, readProjectFileCount } from './projects.js'
 import type {

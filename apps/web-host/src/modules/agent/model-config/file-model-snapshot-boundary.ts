@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { stableJson, type RunIdentity } from '@gugu/core/agent'
 import { createModelStrategy, type ModelSettingsSnapshot } from './model-strategy.js'
-import { createPosixConfigFileLock } from '../../../adapters/posix-config-lock.js'
+import { createPosixConfigFileLock } from '../../../adapters/config/posix-config-lock.js'
 import type { ModelSnapshotBoundary } from './atomic-model-snapshot.js'
 
 /** 必须由 Host 解析完文件、默认值和环境值；versionMaterial 必须包含实际生效的密钥身份。 */

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { Pool } from 'pg'
 import { withBorrowedPostgresQuery, type BorrowedPostgresQuery } from '@gugu/core/data'
-import { withPostgresTransaction } from '../../src/adapters/postgres-transaction.js'
+import { withPostgresTransaction } from '../../src/adapters/database/postgres-transaction.js'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 test('借用事务保持同一连接，effects 失败回滚且连接不能越期或重入', { skip: !url && '需要隔离 PostgreSQL' }, async () => {

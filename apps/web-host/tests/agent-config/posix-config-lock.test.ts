@@ -5,9 +5,9 @@ import { mkdtemp, rm, access } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { createPosixConfigFileLock } from '../../src/adapters/posix-config-lock.js'
+import { createPosixConfigFileLock } from '../../src/adapters/config/posix-config-lock.js'
 const unsupported = !['darwin', 'linux'].includes(process.platform) || Number(process.versions.node.split('.')[0]) < 26
-const moduleUrl = new URL('../../src/adapters/posix-config-lock.ts', import.meta.url).href
+const moduleUrl = new URL('../../src/adapters/config/posix-config-lock.ts', import.meta.url).href
 const moduleArgs = ['--import', 'tsx', '--input-type=module', '-e']
 const probe = `
   import {createPosixConfigFileLock} from ${JSON.stringify(moduleUrl)}

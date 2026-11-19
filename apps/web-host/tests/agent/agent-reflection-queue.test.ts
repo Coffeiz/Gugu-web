@@ -5,7 +5,7 @@ import { test } from 'node:test'
 import type { CanonicalCompletionInput } from '@gugu/core/agent'
 import { clearRedisAgentReflectionSession, createRedisAgentReflectionInbox, createRedisAgentReflectionQueue, createWebAgentReflectionFinalizer } from '../../src/modules/agent-sessions/persistence/agent-reflection-queue-redis.js'
 
-import { createRedisScheduledTaskCommands } from '../../src/adapters/redis-events.js'
+import { createRedisScheduledTaskCommands } from '../../src/adapters/cache/redis-events.js'
 import { createOwnerReflectionWork } from '../../src/modules/agent-sessions/persistence/agent-owner-reflection-work.js'
 
 const identity = { ownerId: '00000000-0000-4000-8000-000000000240', sessionId: '42', runId: 'synthetic-run' }

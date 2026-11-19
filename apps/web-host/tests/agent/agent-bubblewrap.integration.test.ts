@@ -21,7 +21,7 @@ import { createInteractionResumeEnqueuer, createPostgresInteractionResumeQueue }
 import { createTrustedPromptDescriptions } from '../../src/modules/agent-sessions/persistence/agent-trusted-prompt-descriptions.js'
 import { createAgentInteractionRespondService } from '../../src/modules/agent-sessions/agent-interaction-respond.js'
 import { createFilesystemAuthorizationConfirmationStore } from '../../src/modules/agent-sessions/filesystem-authorization-confirmations.js'
-import { createRedisFilesystemAuthorizationCommands } from '../../src/adapters/redis-events.js'
+import { createRedisFilesystemAuthorizationCommands } from '../../src/adapters/cache/redis-events.js'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const rootfs = process.env.GUGU_BUBBLEWRAP_TEST_ROOTFS

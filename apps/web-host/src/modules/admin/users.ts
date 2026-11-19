@@ -7,7 +7,7 @@ import { createAdminUserStatusOperations, type AdminUserStatusStore } from './us
 
 import type { FastifyRequest } from 'fastify'
 
-import { withPostgresTransaction } from '../../adapters/postgres-transaction.js'
+import { withPostgresTransaction } from '../../adapters/database/postgres-transaction.js'
 
 
 import { toUtcIsoWithOffset } from '../../shared/date-time.js'

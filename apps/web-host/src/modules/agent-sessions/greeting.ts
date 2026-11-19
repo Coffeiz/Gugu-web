@@ -10,8 +10,8 @@ import type { GreetingCache, GreetingGeneratorPorts, GreetingMemory, GreetingPro
 import { createModelStrategy } from '../agent/model-config/model-strategy.js'
 import { readActiveLlmCredential, resolveByokLlmAsync } from '../agent/model-config/byok.js'
 import { resolvePlatformModelSettings } from '../agent/model-config/platform-model-settings.js'
-import { createConfiguredByokEnvelope } from '../../adapters/byok-envelope.js'
-import { readConfigOverride } from '../../adapters/config-override-file.js'
+import { createConfiguredByokEnvelope } from '../../adapters/security/byok-envelope.js'
+import { readConfigOverride } from '../../adapters/config/config-override-file.js'
 import type { ScheduledTaskRedisCommands } from '../../modules/scheduled-tasks/persistence/redis-lease.js'
 
 const ownerPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu

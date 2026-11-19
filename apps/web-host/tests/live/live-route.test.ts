@@ -6,7 +6,7 @@ import test from 'node:test'
 import {
   RedisLiveSubscriptionError,
   type LiveSubscription,
-} from '../../src/adapters/redis-live-subscription.js'
+} from '../../src/adapters/cache/redis-live-subscription.js'
 import { LIVE_BROADCAST_CHANNEL, registerLiveRoutes, type LiveStreamOperations } from '../../src/modules/live/live.js'
 
 const ownerId = 'f45a2d6c-8f42-48c2-a07a-91edb07c9383'

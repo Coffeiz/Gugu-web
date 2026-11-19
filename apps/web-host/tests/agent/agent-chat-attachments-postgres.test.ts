@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { Pool } from 'pg'
-import { withPostgresTransaction } from '../../src/adapters/postgres-transaction.js'
+import { withPostgresTransaction } from '../../src/adapters/database/postgres-transaction.js'
 import { claimOwnedChatAttachments, readOwnedChatAttachments } from '../../src/modules/agent-sessions/persistence/agent-chat-attachments.js'
 import { applyAgentBaseMigration } from '../../src/migrations/agent-base-migrate.js'
 

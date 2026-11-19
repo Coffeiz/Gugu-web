@@ -8,8 +8,8 @@ import {tmpdir} from 'node:os'
 import {Pool} from 'pg'
 import {createPostgresRuntime} from '../../../../packages/core/src/data/postgres.js'
 import {createLlmStrategySetter,invalidateAllProviderReasoningStates} from '../../../../packages/core/src/agent/config/llm-strategy.js'
-import {mutateConfigOverride} from '../../src/adapters/config-override-file.js'
-import {createPosixConfigFileLock} from '../../src/adapters/posix-config-lock.js'
+import {mutateConfigOverride} from '../../src/adapters/config/config-override-file.js'
+import {createPosixConfigFileLock} from '../../src/adapters/config/posix-config-lock.js'
 const databaseUrl=process.env.GUGU_WEBUI_TEST_DATABASE_URL,python=process.env.GUGU_WEBUI_TEST_PYTHON
 
 test('策略原子写入由真实Python pick_model消费，active推理状态全局失效且失败不回滚配置', {skip:(!databaseUrl||!python)&&'需要隔离PG与显式Python'},async()=>{

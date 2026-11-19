@@ -1,6 +1,6 @@
 import type { CancellationPort, RunIdentity } from '@gugu/core/agent'
-import type { RedisAgentCancellationCommands } from '../../../adapters/redis-events.js'
-import type { LiveSubscriptionFactory } from '../../../adapters/redis-live-subscription.js'
+import type { RedisAgentCancellationCommands } from '../../../adapters/cache/redis-events.js'
+import type { LiveSubscriptionFactory } from '../../../adapters/cache/redis-live-subscription.js'
 
 const DEFAULT_CANCEL_TTL_SECONDS = 300
 const CHANNEL_PREFIX = 'agent-run-cancel:v1'

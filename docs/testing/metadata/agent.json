@@ -122,7 +122,7 @@
   "apps/web-host/tests/agent/attachment-legacy-redis.test.ts": {
     "domain": "agent-attachments",
     "layer": "L2",
-    "owner": "apps/web-host/src/adapters/redis-events.ts",
+    "owner": "apps/web-host/src/adapters/cache/redis-events.ts",
     "productionEntry": "Host Redis RESP adapter for legacy chatfile scan/delete",
     "keyBehavior": "Redis 脚本按 owner 前缀列出兼容旧键并按精确键删除；隔离 RESP server 不代表真实 Redis 验收",
     "ci": "node-webui"

@@ -1,5 +1,5 @@
 import type { Pool } from 'pg'
-import { runBestEffort } from '../../../adapters/best-effort.js'
+import { runBestEffort } from '../../../shared/best-effort.js'
 
 export type ProjectPostCommitResource = 'projects' | 'files' | 'calendar' | 'scheduled_tasks'
 export type ProjectPostCommitOperation = 'create' | 'update' | 'delete'

@@ -3,7 +3,7 @@ import { link, lstat, mkdir, realpath, rm, stat, unlink } from 'node:fs/promises
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
-import { isPathWithin } from '../../adapters/path-safety.js'
+import { isPathWithin } from '../../shared/path-safety.js'
 import { isOwnedFileStorageKey, normalizeFileOwnerId } from './file-owner.js'
 import type { FileDeleteAgentOperation, FileDeleteAgentResult, FileDeleteOperations } from './file-delete.js'
 import { lockFileSyncPath, lockFileSyncPaths } from './persistence/file-sync-canonical-change.js'

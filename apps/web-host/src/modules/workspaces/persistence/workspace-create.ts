@@ -1,6 +1,6 @@
 import type { Fields } from '@gugu/core'
 import type { Pool, PoolClient } from 'pg'
-import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import { withPostgresTransaction } from '../../../adapters/database/postgres-transaction.js'
 import { createWorkspaceDeclarationCreator } from '@gugu/core/workspace-declarations'
 
 type WorkspaceKind = 'folder' | 'project' | 'directory'

@@ -5,7 +5,7 @@ import { createFeishuBotApi, isFeishuMessageId } from '@gugu/core/im/feishu-bot-
 import type { ProviderTransport } from '@gugu/core/providers'
 import type { Pool } from 'pg'
 import { createAgentImTools, type AgentImToolPorts } from '@gugu/core/tools'
-import { createRedisImOwnerSessionBindings } from '../../../adapters/redis-events.js'
+import { createRedisImOwnerSessionBindings } from '../../../adapters/cache/redis-events.js'
 import { readEnabledFeishuBot } from '../../im/feishu-bot.js'
 
 type PrivateOwner = NonNullable<AgentImToolPorts['ownerSession']>['privateOwner']

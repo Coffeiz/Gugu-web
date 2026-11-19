@@ -10,7 +10,7 @@ import {createServer as createPortServer} from 'node:net'
 import {Pool} from 'pg'
 import {startServer} from '../../src/main.js'
 import {signedUserToken} from '../helpers/auth.js'
-import {createRedisExpiringValueStore} from '../../src/adapters/redis-events.js'
+import {createRedisExpiringValueStore} from '../../src/adapters/cache/redis-events.js'
 import {createFeishuConnectHostOptions} from '../../src/modules/im/feishu-connect.js'
 async function freePort(){const s=createPortServer();await new Promise<void>(r=>s.listen(0,'127.0.0.1',r));const a=s.address();assert.ok(a&&typeof a!=='string');await new Promise<void>(r=>s.close(()=>r()));return a.port}
 test('生产飞书固定官方目标：真实认证/Redis owner与过期，无Redis503，拒绝向外发送',async()=>{

@@ -2,7 +2,7 @@ import { createWorkspaceBindings } from '@gugu/core'
 import type { WorkspaceBindingOperations } from '@gugu/core'
 import type { WorkspaceDeclaration } from '@gugu/core/workspace-declarations'
 import type { Pool, PoolClient } from 'pg'
-import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import { withPostgresTransaction } from '../../../adapters/database/postgres-transaction.js'
 
 export type { WorkspaceBindingOperations } from '@gugu/core'
 

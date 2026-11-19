@@ -12,7 +12,7 @@ import type { SafeEgressReadSettings } from '@gugu/core/preferences/safe-egress'
 import { createDeepResearchTool, createDurableAgentPaidSearch, createSimilarImageSearchTool, createWebSearchTool, type HttpGetPort, type ToolDefinition } from '@gugu/core/tools'
 import { decryptByokCredential, type ByokCredential } from '../../agent/model-config/byok.js'
 import { dateKeyInTimeZone, startOfDateKeyInTimeZone } from '../../../shared/date-time.js'
-import { createPublicAgentEgress } from '../../../adapters/safe-egress-proxy.js'
+import { createPublicAgentEgress } from '../../../adapters/network/safe-egress-proxy.js'
 import type { WebAgentBinding } from '../agent-web-reconstructor.js'
 
 const HTTP_GET_MAX_BYTES = 2 * 1024 * 1024

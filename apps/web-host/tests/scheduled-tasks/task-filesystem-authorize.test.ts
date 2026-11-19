@@ -6,7 +6,7 @@ import {Pool} from 'pg'
 import {createPostgresRuntime} from '@gugu/core/data'
 import {createTaskFilesystemAuthorization} from '@gugu/core/scheduled-task-filesystem-authorize'
 import {createFilesystemAuthorizationConfirmationStore} from '../../src/modules/agent-sessions/filesystem-authorization-confirmations.js'
-import {createRedisFilesystemAuthorizationCommands} from '../../src/adapters/redis-events.js'
+import {createRedisFilesystemAuthorizationCommands} from '../../src/adapters/cache/redis-events.js'
 const databaseUrl=process.env.GUGU_WEBUI_TEST_DATABASE_URL,redisUrl=process.env.GUGU_WEBUI_TEST_REDIS_URL
 
 test('任务授权真实确认码绑定owner/任务且一次消费，授予事务审计、并发及热关闭保护', {skip:(!databaseUrl||!redisUrl)&&'需要隔离PostgreSQL/Redis'},async()=>{

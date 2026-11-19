@@ -2,7 +2,7 @@ import type { Pool } from 'pg'
 import type { PreferenceDocumentStore } from '@gugu/core'
 import type { PreferencesStore } from '../preferences.js'
 import { createLocalPreferenceTextFiles } from './personality-files.js'
-import { decryptEncryptedString as decryptSmtpPassword } from '../../../adapters/encrypted-string.js'
+import { decryptEncryptedString as decryptSmtpPassword } from '../../../adapters/security/encrypted-string.js'
 import type { UserSmtpSettings, UserSmtpSettingsStore } from '../smtp.js'
 
 /** PostgreSQL persistence for the Python-compatible per-user preference document. */

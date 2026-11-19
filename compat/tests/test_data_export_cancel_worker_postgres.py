@@ -56,7 +56,7 @@ def test_node_cancel_is_consumed_by_actual_python_export_worker(tmp_path, monkey
             script = """
 import {Pool} from 'pg';
 import {createDataExportCanceler} from '@gugu/core/data-portability/cancel-export';
-import {withPostgresTransaction} from './src/adapters/postgres-transaction.ts';
+import {withPostgresTransaction} from './src/adapters/database/postgres-transaction.ts';
 const pool=new Pool({connectionString:process.env.GUGU_WEBUI_TEST_DATABASE_URL,options:'-c search_path='+process.env.GUGU_TEST_SCHEMA});
 try {const cancel=createDataExportCanceler(work=>withPostgresTransaction(pool,client=>work((sql,params)=>client.query(sql,params))),(sql,params)=>pool.query(sql,params));
 console.log(JSON.stringify(await cancel(process.env.GUGU_TEST_OWNER,process.env.GUGU_TEST_JOB)));}finally{await pool.end();}

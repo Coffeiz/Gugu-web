@@ -32,15 +32,15 @@ import { createFilesystemAuthorizationConfirmationStore } from '../../src/module
 import { createAgentInteractionRespondService } from '../../src/modules/agent-sessions/agent-interaction-respond.js'
 import { createAgentSecretInteractionService } from '../../src/modules/agent-sessions/agent-secret-interaction-route.js'
 import { createPostgresSecretInteraction } from '../../src/modules/agent-sessions/persistence/agent-secret-interaction-postgres.js'
-import { createByokEnvelope } from '../../src/adapters/byok-envelope.js'
+import { createByokEnvelope } from '../../src/adapters/security/byok-envelope.js'
 import { projectAgentRunEvent } from '../../src/modules/agent-sessions/agent-run-events.js'
 import { consumeInteractionAction } from '@gugu/core/agent/interactions/consume-action'
 import { createAgentChatService, createAgentInteractionDescription, createAgentRunner, processOneInteraction, stableJson,
   type AgentRunnerPorts, type CanonicalContextPorts, type RunIdentity } from '@gugu/core/agent'
 import { ProviderStreamSanitizer, stripThinking } from '@gugu/core/providers'
 import { createPersistentAgentRuntime } from '../../src/modules/agent-sessions/agent-persistent-runtime.js'
-import { createRedisAgentCancellationCommands, createRedisFilesystemAuthorizationCommands } from '../../src/adapters/redis-events.js'
-import { createRedisLiveSubscription } from '../../src/adapters/redis-live-subscription.js'
+import { createRedisAgentCancellationCommands, createRedisFilesystemAuthorizationCommands } from '../../src/adapters/cache/redis-events.js'
+import { createRedisLiveSubscription } from '../../src/adapters/cache/redis-live-subscription.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL, redisUrl = process.env.GUGU_WEBUI_TEST_REDIS_URL
 const digest = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')

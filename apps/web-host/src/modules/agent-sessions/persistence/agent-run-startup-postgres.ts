@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from 'pg'
 import type { RunIdentity } from '@gugu/core/agent'
-import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import { withPostgresTransaction } from '../../../adapters/database/postgres-transaction.js'
 
 function parameters(identity: RunIdentity): [string, number, string] {
   const session = Number(identity.sessionId)

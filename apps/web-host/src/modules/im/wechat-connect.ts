@@ -2,7 +2,7 @@ import {randomUUID,randomInt} from 'node:crypto'
 import type {FastifyInstance,FastifyReply,FastifyRequest,preHandlerHookHandler} from 'fastify'
 import {NodeProviderTransport} from '@gugu/core/providers/node'
 import type {createWechatConnector} from '@gugu/core/im/wechat-connect'
-import {createRedisExpiringValueStore} from '../../adapters/redis-events.js'
+import {createRedisExpiringValueStore} from '../../adapters/cache/redis-events.js'
 
 /** 与Python一致固定官方iLink目标；合成服务只由测试依赖或隔离代理提供。 */
 export function createWechatConnectHostOptions(env:NodeJS.ProcessEnv,redisUrl:string){

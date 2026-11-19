@@ -1,5 +1,5 @@
 import type { Pool } from 'pg'
-import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import { withPostgresTransaction } from '../../../adapters/database/postgres-transaction.js'
 
 export class UserNotFoundError extends Error {
   constructor() {

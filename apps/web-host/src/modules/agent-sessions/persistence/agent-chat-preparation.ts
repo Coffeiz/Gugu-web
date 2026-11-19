@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from 'pg'
 import type { AgentChatInput } from '../agent-chat-route.js'
 import type { RunIdentity } from '@gugu/core/agent'
-import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import { withPostgresTransaction } from '../../../adapters/database/postgres-transaction.js'
 import type { AgentDispatchInput } from './agent-run-dispatch-postgres.js'
 import { enqueuePostgresAgentRagRebuild } from './agent-rag-job-postgres.js'
 

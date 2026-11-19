@@ -9,8 +9,8 @@ import {Pool} from 'pg'
 import {createPostgresRuntime} from '../../../../packages/core/src/data/postgres.js'
 import {createQqBotCreator} from '../../../../packages/core/src/im/user-bot-create.js'
 import {createUserBotDeleter} from '../../../../packages/core/src/im/user-bot-delete.js'
-import {createRedisUserBotReachCleaner,createRedisScheduledTaskCommands,createRedisValueReader} from '../../src/adapters/redis-events.js'
-import {encryptEncryptedString,decryptEncryptedString} from '../../src/adapters/encrypted-string.js'
+import {createRedisUserBotReachCleaner,createRedisScheduledTaskCommands,createRedisValueReader} from '../../src/adapters/cache/redis-events.js'
+import {encryptEncryptedString,decryptEncryptedString} from '../../src/adapters/security/encrypted-string.js'
 test('Bot删除真实PG/Redis保护owner、清平台与匹配最近reach，提交后失效IM快照并广播',async()=>{
  const url=process.env.GUGU_WEBUI_TEST_DATABASE_URL,redisBase=process.env.GUGU_WEBUI_TEST_REDIS_URL,python=process.env.GUGU_CORE_GOLDEN_PYTHON;assert.ok(url);assert.ok(redisBase);assert.ok(python)
  const schema=`bot_delete_${randomUUID().replaceAll('-','')}`,admin=new Pool({connectionString:url,max:1}),root=await mkdtemp(join(tmpdir(),'bot-delete-')),owner=randomUUID(),other=randomUUID(),secret='synthetic-bot-delete-secret';await admin.query(`CREATE SCHEMA "${schema}"`)

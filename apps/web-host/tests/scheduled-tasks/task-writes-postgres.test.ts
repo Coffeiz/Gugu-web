@@ -14,7 +14,7 @@ import { createPostgresTaskExternal } from '../../src/modules/scheduled-tasks/pe
 import { createWebAgentScheduledTaskWrites } from '../../src/modules/agent-sessions/tools/agent-scheduled-task-writes.js'
 import { createWebAgentConfirmationAuthorization } from '../../src/modules/agent-sessions/tools/agent-confirmation.js'
 import { createWebAgentRagRunAuthorization } from '../../src/modules/agent-sessions/tools/agent-rag-run-authorization.js'
-import { createRedisNotificationPublisher, createRedisScheduledTaskCommands } from '../../src/adapters/redis-events.js'
+import { createRedisNotificationPublisher, createRedisScheduledTaskCommands } from '../../src/adapters/cache/redis-events.js'
 import { createScheduledTaskRunNowRuntime } from '../../src/modules/scheduled-tasks/run-now-runtime.js'
 import { createPostgresScheduledTaskResultDelivery } from '../../src/modules/scheduled-tasks/test-notify-postgres.js'
 

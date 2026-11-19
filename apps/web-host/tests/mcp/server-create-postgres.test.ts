@@ -14,7 +14,7 @@ import { createAgentInteractionDescription } from '@gugu/core/agent'
 import { createPostgresInteractionActivator } from '../../src/modules/agent-sessions/persistence/agent-interaction-activate-postgres.js'
 import { createPostgresSecretInteraction } from '../../src/modules/agent-sessions/persistence/agent-secret-interaction-postgres.js'
 import { createInteractionResumeEnqueuer, claimInteractionResumeLocked } from '../../src/modules/agent-sessions/persistence/agent-interaction-resume-postgres.js'
-import { withPostgresTransaction } from '../../src/adapters/postgres-transaction.js'
+import { withPostgresTransaction } from '../../src/adapters/database/postgres-transaction.js'
 import { createAgentSecretInteractionService, registerAgentSecretInteractionRoutes } from '../../src/modules/agent-sessions/agent-secret-interaction-route.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL

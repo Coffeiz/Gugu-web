@@ -1,6 +1,6 @@
 import { normalizeOnboardingState } from '@gugu/core/onboarding'
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
-import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import { withPostgresTransaction } from '../../../adapters/database/postgres-transaction.js'
 import { enqueuePostgresAgentRagRebuild } from '../../../modules/agent-sessions/persistence/agent-rag-job-postgres.js'
 import { normalizeFileOwnerId, isOwnedFileStorageKey } from '../../files/file-owner.js'
 import { removeLocalFile } from '../../files/persistence/trash-mutations-postgres.js'

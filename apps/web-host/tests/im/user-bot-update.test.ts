@@ -9,7 +9,7 @@ import {Pool} from 'pg'
 import {createPostgresRuntime} from '../../../../packages/core/src/data/postgres.js'
 import {createQqBotCreator} from '../../../../packages/core/src/im/user-bot-create.js'
 import {createUserBotUpdater} from '../../../../packages/core/src/im/user-bot-update.js'
-import {encryptEncryptedString,decryptEncryptedString} from '../../src/adapters/encrypted-string.js'
+import {encryptEncryptedString,decryptEncryptedString} from '../../src/adapters/security/encrypted-string.js'
 test('Bot更新真实PG保留掩码密钥、隔离owner、归一化群权限，验证失败无副作用并序列化版本',async()=>{
  const url=process.env.GUGU_WEBUI_TEST_DATABASE_URL,python=process.env.GUGU_CORE_GOLDEN_PYTHON;assert.ok(url);assert.ok(python)
  const schema=`bot_update_${randomUUID().replaceAll('-','')}`,admin=new Pool({connectionString:url,max:1}),root=await mkdtemp(join(tmpdir(),'bot-update-')),owner=randomUUID(),other=randomUUID(),secret='synthetic-bot-update-secret';await admin.query(`CREATE SCHEMA "${schema}"`)

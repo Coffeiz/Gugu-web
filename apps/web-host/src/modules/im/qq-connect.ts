@@ -2,7 +2,7 @@ import {randomBytes} from 'node:crypto'
 import type {FastifyInstance,FastifyRequest,preHandlerHookHandler} from 'fastify'
 import {NodeProviderTransport} from '@gugu/core/providers/node'
 import type {createQqConnector} from '@gugu/core/im/qq-connect'
-import {createRedisExpiringValueStore} from '../../adapters/redis-events.js'
+import {createRedisExpiringValueStore} from '../../adapters/cache/redis-events.js'
 /** 自定义门户仅来自可信Host环境；请求体不能改变目标或开启本地网络访问。 */
 export function createQqConnectHostOptions(env:NodeJS.ProcessEnv,redisUrl:string) {
  const host=env.QQ_PORTAL_HOST||'q.qq.com',portal=new URL(`https://${host}`)

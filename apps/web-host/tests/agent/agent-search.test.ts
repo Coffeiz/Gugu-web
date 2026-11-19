@@ -12,7 +12,7 @@ import { createAgentRunner, type AgentRunnerPorts, type RunCheckpoint } from '@g
 import { createWebAgentConfirmationAuthorization } from '../../src/modules/agent-sessions/tools/agent-confirmation.js'
 import type { ContextSourceSelection } from '@gugu/core/agent'
 import { createHttpGetTool, createToolRegistry } from '@gugu/core/tools'
-import { createPublicAgentEgress } from '../../src/adapters/safe-egress-proxy.js'
+import { createPublicAgentEgress } from '../../src/adapters/network/safe-egress-proxy.js'
 import { createWebAgentSearchPorts, verifySearchImage } from '../../src/modules/agent-sessions/tools/agent-search.js'
 
 const identity = { ownerId: 'owner-search', sessionId: '5', runId: 'run-search' }

@@ -10,9 +10,9 @@ import { createSafeEgressProbe,SafeEgressProbeError } from '@gugu/core/preferenc
 
 import { SafeEgressUpdateError,validateSafeEgressProxyUrl } from '@gugu/core/preferences/safe-egress-update'
 
-import { decryptEncryptedString } from '../../adapters/encrypted-string.js'
+import { decryptEncryptedString } from '../../adapters/security/encrypted-string.js'
 
-import { safeEgressRequest } from '../../adapters/safe-egress-proxy.js'
+import { safeEgressRequest } from '../../adapters/network/safe-egress-proxy.js'
 
 import { environmentCa } from '@gugu/core/providers/node'
 
@@ -21,7 +21,7 @@ import { pythonQueryBoolean } from '../../http/python-query.js'
 
 import { publicSafeEgressSettings,type SafeEgressReadSettings } from '@gugu/core/preferences/safe-egress'
 
-import { readConfigOverride } from '../../adapters/config-override-file.js'
+import { readConfigOverride } from '../../adapters/config/config-override-file.js'
 
 
 type Input = { proxy_url?:string|null; proxy_username?:string|null; proxy_password?:string|null; clear_credentials?:boolean }

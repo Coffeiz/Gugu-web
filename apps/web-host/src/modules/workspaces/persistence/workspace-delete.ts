@@ -1,7 +1,7 @@
 import { createWorkspaceDeleter } from '@gugu/core'
 import type { WorkspaceDeletionTransaction } from '@gugu/core'
 import type { Pool, PoolClient } from 'pg'
-import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import { withPostgresTransaction } from '../../../adapters/database/postgres-transaction.js'
 import { enqueueScheduledTaskRagRebuild } from '../../../modules/scheduled-tasks/persistence/task-rag-job-postgres.js'
 
 export type { WorkspaceDeleteResult } from '@gugu/core'

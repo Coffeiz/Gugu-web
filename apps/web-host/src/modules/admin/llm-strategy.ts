@@ -2,9 +2,9 @@ import type { FastifyInstance,preHandlerHookHandler } from 'fastify'
 
 import type { createLlmStrategySetter,LlmStrategyInput,LlmStrategyMutator } from '@gugu/core/agent/config/llm-strategy'
 
-import { mutateConfigOverride } from '../../adapters/config-override-file.js'
+import { mutateConfigOverride } from '../../adapters/config/config-override-file.js'
 
-import { createPosixConfigFileLock } from '../../adapters/posix-config-lock.js'
+import { createPosixConfigFileLock } from '../../adapters/config/posix-config-lock.js'
 
 
 import { z } from 'zod'
@@ -13,7 +13,7 @@ import { cleanAgentStateLabelOverrides,projectAgentStateLabelCatalog } from '@gu
 
 import { DEFAULT_AGENT_STATE_LABELS } from '@gugu/core/agent-sessions'
 
-import { readConfigOverride } from '../../adapters/config-override-file.js'
+import { readConfigOverride } from '../../adapters/config/config-override-file.js'
 
 
 export function createLlmStrategyFileMutator(path:string):LlmStrategyMutator{

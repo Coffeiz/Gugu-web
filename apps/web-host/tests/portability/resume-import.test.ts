@@ -7,7 +7,7 @@ import {Pool} from 'pg'
 import Fastify from 'fastify'
 import {createDataImportResumer} from '@gugu/core/data-portability/resume-import'
 import {registerDataImportResumeRoute} from '../../src/modules/data-portability/resume-import.js'
-import {withPostgresTransaction} from '../../src/adapters/postgres-transaction.js'
+import {withPostgresTransaction} from '../../src/adapters/database/postgres-transaction.js'
 const databaseUrl=process.env.GUGU_WEBUI_TEST_DATABASE_URL,python=process.env.GUGU_WEBUI_TEST_PYTHON
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex')
 

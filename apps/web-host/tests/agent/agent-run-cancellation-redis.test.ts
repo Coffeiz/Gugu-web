@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import type { LiveSubscription, LiveSubscriptionFactory, LiveSubscriptionMessage } from '../../src/adapters/redis-live-subscription.js'
+import type { LiveSubscription, LiveSubscriptionFactory, LiveSubscriptionMessage } from '../../src/adapters/cache/redis-live-subscription.js'
 import { createRedisAgentRunCancellationPort } from '../../src/modules/agent-sessions/persistence/agent-run-cancellation-redis.js'
 
 const identity = { ownerId: 'owner-1', sessionId: '17', runId: 'run-1' }
@@ -147,8 +147,8 @@ test('run cancellation never publishes when the durable marker write is rejected
 })
 
 test('隔离 Redis 中取消标记和通知只作用于指定 run', { skip: !process.env.GUGU_WEBUI_TEST_REDIS_URL && '需要隔离 Redis' }, async () => {
-  const { createRedisAgentCancellationCommands } = await import('../../src/adapters/redis-events.js')
-  const { createRedisLiveSubscription } = await import('../../src/adapters/redis-live-subscription.js')
+  const { createRedisAgentCancellationCommands } = await import('../../src/adapters/cache/redis-events.js')
+  const { createRedisLiveSubscription } = await import('../../src/adapters/cache/redis-live-subscription.js')
   const url = process.env.GUGU_WEBUI_TEST_REDIS_URL!
   const current = { ownerId: `owner-${crypto.randomUUID()}`, sessionId: '17', runId: 'run-1' }
   const port = createRedisAgentRunCancellationPort(createRedisAgentCancellationCommands(url), createRedisLiveSubscription(url))

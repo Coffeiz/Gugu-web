@@ -5,7 +5,7 @@ import {join} from 'node:path'
 import test from 'node:test'
 import {createApp} from '../../src/app.js'
 import {createAdminEmailPublishOperations,createEmailPublishTaskLifecycle} from '../../src/modules/admin/email.js'
-import {createSmtpTestDelivery} from '../../src/adapters/smtp-test-delivery.js'
+import {createSmtpTestDelivery} from '../../src/adapters/email/smtp-test-delivery.js'
 import {temporarySmtp} from './fixtures/temporary-smtp.js'
 
 const draft={subject:'公告主题',title:'公告',body:'正文',translations:{'ja-JP':{subject:'お知らせ',title:'公告',body:'本文'}}}

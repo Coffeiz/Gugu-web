@@ -4,7 +4,7 @@ import type { Transporter } from 'nodemailer'
 import { createFeedbackNotifier, type FeedbackNotificationSettings } from '@gugu/core/feedback'
 
 const ownerId = 'a2419f7e-6ab5-4e98-a7af-0394039f4507'
-const settings: FeedbackNotificationSettings & import('../../src/adapters/smtp-email.js').SmtpEmailSettings = {
+const settings: FeedbackNotificationSettings & import('../../src/adapters/email/smtp-email.js').SmtpEmailSettings = {
   enabled: true, host: 'smtp.example.test', port: 465, user: 'sender@example.test', password: 'synthetic',
   fromAddress: '', useSsl: true, toAddress: 'support@example.test', feedbackEnabled: true,
 }

@@ -4,7 +4,7 @@ import {randomUUID} from 'node:crypto'
 import Fastify from 'fastify'
 import {createEmbeddingRebuildStatusReader} from '@gugu/core/byok/embedding-rebuild-status'
 import {registerEmbeddingRebuildStatusRoute} from '../../src/modules/byok/embedding-rebuild-status.js'
-import {createRedisAgentCancellationCommands,createRedisFilesystemAuthorizationCommands} from '../../src/adapters/redis-events.js'
+import {createRedisAgentCancellationCommands,createRedisFilesystemAuthorizationCommands} from '../../src/adapters/cache/redis-events.js'
 import {installHttpErrorHandler} from '../../src/http/errors.js'
 
 test('重建状态缺失/损坏兼容idle，正常进度保持，错误消息复用公共脱敏',async()=>{

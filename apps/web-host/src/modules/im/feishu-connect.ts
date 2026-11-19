@@ -2,7 +2,7 @@ import {randomBytes} from 'node:crypto'
 import type {FastifyInstance,FastifyRequest,preHandlerHookHandler,FastifyReply} from 'fastify'
 import {NodeProviderTransport} from '@gugu/core/providers/node'
 import type {createFeishuConnector} from '@gugu/core/im/feishu-connect'
-import {createRedisExpiringValueStore,createRedisFeishuReachWriter} from '../../adapters/redis-events.js'
+import {createRedisExpiringValueStore,createRedisFeishuReachWriter} from '../../adapters/cache/redis-events.js'
 /** 与Python一致固定官方设备授权目标；合成门户只能由测试显式注入Core依赖。 */
 export function createFeishuConnectHostOptions(env:NodeJS.ProcessEnv,redisUrl:string) {
  return {portalBase:'https://accounts.feishu.cn',allowLocal:false,stateAvailable:Boolean(redisUrl),transport:new NodeProviderTransport({environment:()=>env}),store:createRedisExpiringValueStore(redisUrl),saveReach:createRedisFeishuReachWriter(redisUrl),generateId:()=>randomBytes(16).toString('base64url')}

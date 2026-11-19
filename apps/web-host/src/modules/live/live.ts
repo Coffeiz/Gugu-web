@@ -4,7 +4,7 @@ import { serializeLiveMessage } from '@gugu/core/live-message'
 import {
   RedisLiveSubscriptionError,
   type LiveSubscriptionFactory,
-} from '../../adapters/redis-live-subscription.js'
+} from '../../adapters/cache/redis-live-subscription.js'
 
 export const LIVE_BROADCAST_CHANNEL = 'events:__broadcast__'
 const resetFrame = ': live connection reset; client will reconnect\n\n'

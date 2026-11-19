@@ -1,7 +1,7 @@
 import type { ContextDataPorts } from '@gugu/core/agent'
 import type { Pool } from 'pg'
 import { agentContextSubject } from './agent-context-subject.js'
-import { normalizeOwnerId } from '../../../adapters/owner-context.js'
+import { normalizeOwnerId } from '../../../shared/owner-context.js'
 
 export const AGENT_IM_PLATFORMS = ['feishu', 'qq', 'wechat', 'telegram'] as const
 export type AgentImPlatform = typeof AGENT_IM_PLATFORMS[number]

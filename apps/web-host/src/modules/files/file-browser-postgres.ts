@@ -1,7 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
 import { CoreError } from '@gugu/core'
 import type { Pool, QueryResultRow } from 'pg'
-import { normalizeOwnerId } from '../../adapters/owner-context.js'
+import { normalizeOwnerId } from '../../shared/owner-context.js'
 import type { FileBrowserOperations, FilePageQuery, FolderPageQuery } from './browser.js'
 
 type CursorValue = string | number

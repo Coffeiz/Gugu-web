@@ -11,7 +11,7 @@ import type { createAdminModelDirectory } from '@gugu/core/agent/config/admin-mo
 
 import { readAdminLlmPresets } from '@gugu/core/agent/config'
 
-import { readConfigOverride } from '../../adapters/config-override-file.js'
+import { readConfigOverride } from '../../adapters/config/config-override-file.js'
 
 
 import type { createLlmPresetSelection } from '@gugu/core/agent/config/llm-preset-selection'

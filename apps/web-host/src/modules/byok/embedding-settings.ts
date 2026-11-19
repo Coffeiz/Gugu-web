@@ -1,6 +1,6 @@
 import type { RagQueryEmbeddingSettings } from '@gugu/core/agent/rag'
 import type { Pool } from 'pg'
-import { normalizeOwnerId } from '../../adapters/owner-context.js'
+import { normalizeOwnerId } from '../../shared/owner-context.js'
 
 export type EmbeddingCredentialEnvelope = { encrypted_value: string; nonce: string; encrypted_data_key: string; key_version: number }
 

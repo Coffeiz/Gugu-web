@@ -4,7 +4,7 @@ import test from 'node:test'
 import {
   createRedisLiveSubscription,
   RedisLiveSubscriptionError,
-} from '../../src/adapters/redis-live-subscription.js'
+} from '../../src/adapters/cache/redis-live-subscription.js'
 
 interface FakeRedisOptions {
   sendMessage?: boolean

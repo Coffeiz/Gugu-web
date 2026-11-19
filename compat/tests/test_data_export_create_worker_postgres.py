@@ -53,7 +53,7 @@ def test_node_created_export_is_consumed_into_owner_scoped_encrypted_archive(tmp
             script = """
 import {Pool} from 'pg';import {randomUUID} from 'node:crypto';
 import {createDataExportCreator} from '@gugu/core/data-portability/create-export';
-import {withPostgresTransaction} from './src/adapters/postgres-transaction.ts';
+import {withPostgresTransaction} from './src/adapters/database/postgres-transaction.ts';
 const pool=new Pool({connectionString:process.env.GUGU_WEBUI_TEST_DATABASE_URL,options:'-c search_path='+process.env.GUGU_TEST_SCHEMA});
 try {const create=createDataExportCreator(work=>withPostgresTransaction(pool,client=>work((sql,params)=>client.query(sql,params))),(sql,params)=>pool.query(sql,params),{now:()=>new Date(),uuid:randomUUID});console.log(JSON.stringify(await create(process.env.GUGU_TEST_OWNER,['projects'],'synthetic-consumer-request')));}finally{await pool.end();}
 """

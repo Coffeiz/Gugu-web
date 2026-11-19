@@ -19,7 +19,7 @@ import { applyWebDomainMigration } from '../../src/migrations/web-domain-migrate
 import { applyRagIndexMigration } from '../../src/migrations/rag-index-migrate.js'
 import { applyTrashPurgeMigration } from '../../src/migrations/trash-purge-migrate.js'
 import { applyInteractionActionsMigration } from '../../src/migrations/interaction-actions-migrate.js'
-import { createRedisScheduledTaskCommands, createRedisValueReader } from '../../src/adapters/redis-events.js'
+import { createRedisScheduledTaskCommands, createRedisValueReader } from '../../src/adapters/cache/redis-events.js'
 import { clearRedisAgentReflectionSession } from '../../src/modules/agent-sessions/persistence/agent-reflection-queue-redis.js'
 import { signedUserToken } from '../helpers/auth.js'
 import { applyFilesystemAuthorizationMigration, checkFilesystemAuthorizationMigration } from '../../src/migrations/filesystem-authorization-migrate.js'

@@ -2,7 +2,7 @@ import { CoreError, createPreferenceService, parsePreferenceRequest as requestBo
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
 import type { PreferenceTextFiles, PreferenceTextKind } from './persistence/personality-files.js'
 import { registerUserSmtpSettingsRoutes, type UserSmtpSettingsStore, type UserSmtpTestInput } from './smtp.js'
-import { sendUserSmtpTestEmail } from '../../adapters/smtp-email.js'
+import { sendUserSmtpTestEmail } from '../../adapters/email/smtp-email.js'
 import { registerUserSmtpPreviewRoute } from './smtp-preview.js'
 
 export interface PreferencesStore {

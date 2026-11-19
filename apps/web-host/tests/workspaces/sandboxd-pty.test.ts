@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
-import { createSandboxdWorkspacePtyTerminator } from '../../src/adapters/sandboxd-pty.js'
+import { createSandboxdWorkspacePtyTerminator } from '../../src/adapters/sandbox/sandboxd-pty.js'
 
 test('Workspace delete terminates the persisted sandbox container through the shared daemon socket', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gugu-sandboxd-pty-'))
