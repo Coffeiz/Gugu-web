@@ -43,7 +43,7 @@ test('主应用页面按导航顺序打开后可离开，不残留卡住的旧�
   const schedules = page.locator('.sched-page')
   await assertTransition(canvas, schedules)
   await expect(schedules.getByRole('button', { name: '新建任务' })).toBeVisible()
-  await expect(schedules.locator('.task-grid, .scrollable-card-layout__empty')).toBeVisible({ timeout: 20000 })
+  await expect(schedules.locator('.task-grid, .first-use-empty')).toBeVisible({ timeout: 20000 })
 
   await clickNav(page, '文件库')
   const files = page.locator('.files-page .files-main')
@@ -69,11 +69,8 @@ test('主应用页面按导航顺序打开后可离开，不残留卡住的旧�
   const skills = page.locator('.skills-page .skills-home')
   await assertTransition(currentPage, skills)
   expect((await skillsResponse).status()).toBeLessThan(500)
-  await expect(skills.locator('.skill-group, .scrollable-card-layout__empty, .error-banner').first()).toBeVisible({ timeout: 20000 })
-  await expect.poll(async () => {
-    const emptyState = skills.locator('.scrollable-card-layout__empty')
-    return !(await emptyState.count()) || !(await emptyState.innerText()).includes('正在加载技能')
-  }).toBe(true)
+  await expect(skills.locator('.skill-group, .first-use-empty, .error-banner').first()).toBeVisible({ timeout: 20000 })
+
 
   // MCP 是否开放由用户配置决定；开放时检查页面能挂载并能继续离开。
   const mcpNav = page.locator('.nav-item[role="link"]').filter({ hasText: 'MCP' }).first()

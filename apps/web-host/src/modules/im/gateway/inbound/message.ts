@@ -286,10 +286,11 @@ export function createImMessageMaterializer(options: {
     } catch (error) { if (error instanceof ImVoiceUnavailableError) throw error; throw new ImMessageMaterializationError() }
   }
   function references(base: ContextReferenceCodec): ContextReferenceCodec {
-    async function convert(entry: MessageEntry, target: { ownerId: string; sessionId: string }, hydrate: boolean, signal?: AbortSignal): Promise<CanonicalMessage> {
+    async function convert(entry: MessageEntry, target: { ownerId: string; sessionId: string }, hydrate: boolean, signal?: AbortSignal, batch = false): Promise<CanonicalMessage> {
       try {
         if (target.ownerId !== identity.ownerId || target.sessionId !== identity.sessionId) throw new ImMessageMaterializationError()
-        await authorize(signal)
+        if (!batch) await authorize(signal)
+        signal?.throwIfAborted()
         const message = structuredClone(hydrate ? await base.hydrate(entry, target, signal) : entry.message)
         // 相同媒体字节不能代表附件身份。按可信消息锚点和原附件顺序匹配每次出现，
         // 不依赖异步读取完成顺序，也不向Provider媒体块添加私有标记。
@@ -314,7 +315,7 @@ export function createImMessageMaterializer(options: {
               stable=ordered[index]?.item.reference
               if(!stable)throw new ImMessageMaterializationError()
             }
-            if (stable) { await media(String(stable.attach_id), signal); return stable }
+            if (stable) { if (!batch) await media(String(stable.attach_id), signal); return stable }
           }
           if (hydrate && value.type === 'attachment_ref' && value.kind === 'image') {
             const owned = await media(String(value.attach_id), signal)
@@ -339,13 +340,23 @@ export function createImMessageMaterializer(options: {
         }
         // 元数据内的稳定附件refs保持原样，只有真正Canonical正文参与媒体投影。
         message.content = await visit(message.content)
+        if (batch) return message
         const projected = hydrate ? message : await base.dehydrate({ ...entry, message }, target, signal)
         if (!hydrate) assertDurableCanonical(projected)
         await authorize(signal)
         return projected
       } catch { throw new ImMessageMaterializationError() }
     }
-    return { hydrate: (entry, target, signal) => convert(entry, target, true, signal), dehydrate: (entry, target, signal) => convert(entry, target, false, signal) }
+    return {
+      ...(base.dehydrateBatch && { async dehydrateBatch(entries, target, signal, timing) {
+        const started = performance.now()
+        const projected: MessageEntry[] = []
+        for (const entry of entries)
+          projected.push({ ...entry, message: await convert(entry, target, false, signal, true) })
+        timing?.('project_im_media', performance.now() - started)
+        return base.dehydrateBatch!(projected, target, signal, timing)
+      } }),
+      hydrate: (entry, target, signal) => convert(entry, target, true, signal), dehydrate: (entry, target, signal) => convert(entry, target, false, signal) }
   }
   return { materialize, references }
 }

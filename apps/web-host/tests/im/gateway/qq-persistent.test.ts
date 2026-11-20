@@ -4,8 +4,8 @@ import {randomUUID} from 'node:crypto'
 import {test} from 'node:test'
 import type {Pool} from 'pg'
 import type {RunEvent} from '@gugu/core/agent'
-import {createQqClient} from '../../../src/modules/im/gateway/platforms/qq/client.js'
-import {createQqSender} from '../../../src/modules/im/gateway/platforms/qq/sender.js'
+import {createQqClient} from '@gugu/gateway/qq'
+import {createQqSender} from '@gugu/gateway/qq'
 import {createPersistentQqProjection} from '../../../src/modules/im/gateway/platforms/qq/persistent.js'
 import {withPostgresImDeliveryStore,type ImDeliverySession} from '../../../src/modules/im/gateway/delivery/store.js'
 
@@ -45,6 +45,48 @@ test('手动flush的snapshot保留真实stream/index/msg_seq，恢复不新建�
   assert.throws(()=>p.sender.privateStream(target,undefined,{snapshot:{...saved,msgSeq:null}}))
  }finally{await p.client.close()}
 })
+test('新流以原始消息 ID 发送，恢复时沿用已确认首帧的目标和流 ID',async()=>{
+ const p=platform(),legacyMessageId='synthetic-quote-index'
+ try {
+  for(const existing of [false,true]){
+   const m=memory(),firstId=existing?legacyMessageId:target.messageId
+   const project=(messageId:string)=>createPersistentQqProjection({
+    identity,target:{...target,messageId},legacyMessageId,policyVersion:'v1',receipts:m.receipts,
+    sender:p.sender,authorize:p.authorize,now:()=>1000,
+   })
+   const initial=project(firstId),offset=p.requests.length
+   await initial.project({identity,deliveryId:'first',event:event(1,'token',{text:'首帧正文\n'})})
+   const reopened=project(target.messageId)
+   await reopened.project({identity,deliveryId:'final',event:event(2,'final',{status:'completed',text:'首帧正文\n定稿'})})
+   const frames=p.requests.slice(offset)
+   assert.deepEqual(frames.map(frame=>[frame.msg_id,frame.event_id,frame.input_state]),[[firstId,firstId,1],[firstId,firstId,10]])
+   assert.equal(typeof frames[1]!.stream_msg_id,'string')
+  }
+ }finally{await p.client.close()}
+})
+
+test('上一段结束后下一段立即发送完整首行，段内继续节流',async()=>{
+ const p=platform(),m=memory();let time=1000
+ const stream=createPersistentQqProjection({identity,target,policyVersion:'v1',receipts:m.receipts,sender:p.sender,authorize:p.authorize,now:()=>time})
+ const push=(sequence:number,type:RunEvent['type'],payload:RunEvent['payload'],round=1)=>stream.project({identity,deliveryId:`d-${sequence}`,event:event(sequence,type,payload,round)})
+ try{
+  await push(1,'token',{text:'第一段\n'})
+  time=1200
+  await push(2,'round_end',{text:'第一段\n'})
+  await push(3,'token',{text:'第二'},2)
+  assert.deepEqual(p.requests.map(f=>[f.input_state,f.index]),[[1,0],[10,1]])
+  time=1250
+  await push(4,'token',{text:'段\n'},2)
+  assert.deepEqual(p.requests.map(f=>[f.input_state,f.index]),[[1,0],[10,1],[1,0]])
+  time=1300
+  await push(5,'token',{text:'第二行\n'},2)
+  assert.equal(p.requests.length,3)
+  time=1750
+  await push(6,'token',{text:'第三行\n'},2)
+  assert.deepEqual(p.requests.map(f=>[f.input_state,f.index]),[[1,0],[10,1],[1,0],[1,1]])
+ }finally{await p.client.close()}
+})
+
 test('流首帧auth等待后撤权及429等待后撤权均不再发业务HTTP',async()=>{
  const p=platform(),q=platform()
  try{
@@ -89,6 +131,19 @@ test('普通fallback本身结果未知不能重发，流拒绝同时撤权不能
   try{assert.notEqual(await make().project(input),'accepted');const before=p.requests.length;assert.equal(await make().project(input),'unknown');assert.equal(p.requests.length,before);assert.equal(p.paths.filter(path=>path.endsWith('/messages')).length,revoked?0:1)}finally{await p.client.close()}
  }
 })
+test('检查点续跑沿用已打开的 QQ 流，恢复事件不发送或关闭正文', async () => {
+ const p=platform(),m=memory()
+ const send=(e:RunEvent)=>createPersistentQqProjection({identity,target,policyVersion:'v1',receipts:m.receipts,sender:p.sender,authorize:p.authorize})
+   .project({identity,event:e,deliveryId:`delivery-${e.sequence}`})
+ try {
+  assert.equal(await send(event(1,'token',{text:'回复前半段\n'})),'accepted')
+  assert.equal(await send(event(2,'run_resumed')),'accepted')
+  assert.deepEqual(p.requests.map(item=>item.input_state),[1])
+  assert.equal(await send(event(3,'final',{status:'completed',text:'回复前半段\n回复后半段'})),'accepted')
+  assert.deepEqual(p.requests.map(item=>item.input_state),[1,10])
+ } finally { await p.client.close() }
+})
+
 test('同Run事件按序持久，工具前关闭当前流、交互暂停/恢复新段；秘密结果不投递',async()=>{
  const p=platform(),m=memory();let time=1000
  const make=()=>createPersistentQqProjection({identity,target,policyVersion:'v1',receipts:m.receipts,sender:p.sender,authorize:p.authorize,now:()=>time})

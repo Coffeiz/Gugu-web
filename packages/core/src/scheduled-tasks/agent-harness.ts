@@ -97,7 +97,7 @@ export function createScheduledTaskHarness(options: Omit<AgentRuntimeOptions, 'r
       assertSubject(configuration.identity)
       return configuration
     },
-  }, { ...options.context.preparation, digest: options.context.digest, nextId: options.context.nextId }) : loadContext
+  }, { ...options.context.preparation, digest: options.context.digest, nextId: options.context.nextId }, options.observation) : loadContext
 
   const runtime = createAgentRuntime({
     observation: options.observation,

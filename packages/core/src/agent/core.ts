@@ -1,9 +1,10 @@
+import { ProviderError, providerFailureFields } from './providers/errors.js'
 import type { ExecutionResult } from './executor/contracts.js'
 import { mergeUsage } from './context/budget.js'
 import type { DisplayItem,DispatchOutcome,InteractionResolution,Json,Lease,PortableValue,ProviderCursor,ProviderRecoveryBoundary,ReplyChoice,ReplyGateCall,RunCheckpoint,RunEvent,AgentRunner,RunIdentity,SanitizerCheckpoint,ToolCall,ToolPlan,ToolResult } from './models.js'
 import { AgentRunError,isEarlyExit,RunStoreRejected,ToolResultCheckpointUnavailable } from './models.js'
 import { cacheResultForRun,encodeResultForRun,hydrateResultForRun,normalizePersistentArtifact } from './context/history/attachment-refs.js'
-import { portableSnapshot,snapshotInteraction,snapshotToolCall,snapshotToolResult } from './context/history/canonical-history.js'
+import { portableSnapshot,redactToolRequestHeaders,snapshotInteraction,snapshotToolCall,snapshotToolResult } from './context/history/canonical-history.js'
 import { stripHistoryMedia } from './context/history/ordering.js'
 import { activateNextInteractionForRun,closeInteractionsForRun,completeResolutionClosureForRun,resumeWaitingRun } from './interactions/coordinator.js'
 import type { AgentRunnerPorts,RunCoordination,StreamSanitizer } from './ports.js'
@@ -16,6 +17,52 @@ import { parallelBatchForRun,providerStreamLifetime,publishRunEvent,replayRunEve
 import { rejectAdapterCall } from './tools/call-adapter.js'
 
 
+
+function contextSummaryMetrics(snapshot: unknown) {
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return {}
+  const entries = (snapshot as { entries?: unknown }).entries
+  if (!Array.isArray(entries)) return {}
+  const summaries: string[] = []
+  const textOf = (value: unknown): string => {
+    if (typeof value === 'string') return value
+    if (Array.isArray(value)) return value.map(textOf).join('\n')
+    if (!value || typeof value !== 'object') return ''
+    const row = value as Record<string, unknown>
+    return typeof row.text === 'string' ? row.text : textOf(row.content)
+  }
+  for (const value of entries) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue
+    const message = (value as { message?: unknown }).message
+    const content = message && typeof message === 'object' && !Array.isArray(message)
+      ? textOf((message as Record<string, unknown>).content) : ''
+    if (content.includes('<compacted-summary>')) summaries.push(content)
+  }
+  return {
+    message_count: entries.length,
+    summary_count: summaries.length,
+    summary_chars: summaries.reduce((total, value) => total + value.length, 0),
+  }
+}
+
+function skillInjectionMetadata(value: unknown): Record<string, string | number> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const result = value as Record<string, unknown>
+  const marker = result._capability_usage
+  if (!marker || typeof marker !== 'object' || Array.isArray(marker)) return null
+  const usage = marker as Record<string, unknown>
+  if (usage.kind !== 'skill' || usage.loaded !== true || typeof usage.id !== 'string'
+    || !/^[SU][1-9][0-9]*$/.test(usage.id) || typeof usage.content_digest !== 'string'
+    || !/^[a-f0-9]{16,64}$/i.test(usage.content_digest) || typeof result.content !== 'string') return null
+  if (usage.id.startsWith('U') && (usage.source !== 'user' || typeof usage.owner_fingerprint !== 'string')) return null
+  if (usage.id.startsWith('S') && usage.source !== undefined && usage.source !== 'builtin') return null
+  return {
+    skill: usage.id,
+    content_chars: result.content.length,
+    content_digest: usage.content_digest,
+    source: usage.id.startsWith('U') ? 'user' : 'builtin',
+    ...(typeof usage.owner_fingerprint === 'string' ? { owner_fingerprint: usage.owner_fingerprint } : {}),
+  }
+}
 
 /**
  * 可移植 Run 编排。DB/Redis、Provider wire、交互授权与调度均由显式端口注入。
@@ -41,14 +88,47 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
     round?: number, attributes?: Readonly<Record<string, string | number | boolean | null>>) => recordAgentRunLog(ports.log, {
     identity, at: observedAt(), level, event, ...(round === undefined ? {} : { round }), ...(attributes ? { attributes } : {}),
   })
+  const recordToolSchemaFailure = (identity: RunIdentity, context: C | null, call: ToolCall, round: number,
+    errorKind: string, error: unknown, parentSpanId: string): void => {
+    let schema: unknown = null
+    try { if (context !== null) schema = ports.toolSchemaSnapshot?.(context, call.name) ?? null } catch { /* Schema 观测失败不影响工具回执。 */ }
+    logRun(identity, 'warn', 'agent.tools.schema_error', round, {
+      errorCode: errorKind === 'parse_error' ? 'invalid_arguments' : 'tool_failed',
+    })
+    recordAgentObservation(ports.observation, {
+      identity, kind: 'tool', name: `Tool schema error · ${call.name}`, at: observedAt(), round,
+      spanId: `${parentSpanId}:schema-error`, parentSpanId, status: 'error',
+      input: { tool_name: call.name, schema, arguments: call.input, error },
+      output: { tool_name: call.name, error_kind: errorKind },
+      attributes: { context_source: 'tool_schema_error', error_kind: errorKind, tool_name: call.name },
+    })
+  }
+  const recordToolInvocation = (identity: RunIdentity, call: ToolCall, round: number,
+    outcome: 'success' | 'error' | 'waiting' | 'unknown' | 'cancelled' | 'deferred' | 'invalid',
+    startedAt?: number, attributes: Readonly<Record<string, string | number | boolean | null>> = {}) => {
+    const endedAt = observedAt()
+    const safeTool = /^[A-Za-z0-9_.:-]{1,120}$/.test(call.name) ? call.name : 'unknown_tool'
+    const level = outcome === 'unknown' ? 'error' : outcome === 'error' || outcome === 'invalid' ? 'warn' : 'info'
+    logRun(identity, level, 'agent.tools.invocation', round, {
+      tool: safeTool, outcome,
+      ...(startedAt === undefined ? {} : { durationMs: Math.max(0, endedAt - startedAt) }),
+      ...attributes,
+    })
+  }
   const observeEvent = (event: RunEvent) => {
     const payload = event.payload
-    if (event.type === 'run_started') recordAgentObservation(ports.observation, {
-      identity: event.identity, kind: 'run', name: 'started', at: observedAt(), spanId: event.identity.runId, status: 'running',
-    })
-    else if (event.type === 'run_resumed') recordAgentObservation(ports.observation, {
-      identity: event.identity, kind: 'run', name: 'resumed', at: observedAt(), spanId: event.identity.runId, status: 'running',
-    })
+    if (event.type === 'run_started') {
+      logRun(event.identity, 'info', 'agent.run.started')
+      recordAgentObservation(ports.observation, {
+        identity: event.identity, kind: 'run', name: 'started', at: observedAt(), spanId: event.identity.runId, status: 'running',
+      })
+    }
+    else if (event.type === 'run_resumed') {
+      logRun(event.identity, 'info', 'agent.run.resumed')
+      recordAgentObservation(ports.observation, {
+        identity: event.identity, kind: 'run', name: 'resumed', at: observedAt(), spanId: event.identity.runId, status: 'running',
+      })
+    }
     else if (event.type === 'round_start') recordAgentObservation(ports.observation, {
       identity: event.identity, kind: 'round', name: 'started', at: observedAt(), round: event.round,
       spanId: `${event.identity.runId}:round:${event.round}`, parentSpanId: event.identity.runId, status: 'running',
@@ -66,6 +146,10 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
       const at = observedAt()
       const status = String(payload.status ?? 'unknown')
       const text = typeof payload.text === 'string' ? payload.text : ''
+      const safeStatus = ['completed', 'failed', 'cancelled', 'unknown'].includes(status)
+        ? status as 'completed' | 'failed' | 'cancelled' | 'unknown' : 'unknown'
+      logRun(event.identity, safeStatus === 'failed' ? 'error' : 'info', 'agent.run.finished', event.round,
+        { status: safeStatus })
       recordAgentObservation(ports.observation, {
         identity: event.identity, kind: 'run', name: 'finished', at, spanId: event.identity.runId,
         status, output: text,
@@ -99,6 +183,25 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
     let providerRecovery = !fresh
     let finalized = false
     let persistenceUncertain = false
+    let lastProviderFailure: unknown
+    function reportProviderFailure(error: unknown, contextOverflow: boolean) {
+      if (!state) return
+      lastProviderFailure = error
+      const errorCode = ports.presentError(error).code
+      const safeCode = /^[a-z][a-z0-9_.-]{0,63}$/i.test(errorCode) ? errorCode : 'provider_error'
+      const diagnostic = providerFailureFields(error)
+      const cancelled = diagnostic.providerErrorCode === 'cancelled'
+      const roundSpanId = `${identity.runId}:round:${state.round}`
+      recordAgentObservation(ports.observation, {
+        identity, kind: 'provider', name: 'complete', at: observedAt(), round: state.round,
+        spanId: `${roundSpanId}:provider`, parentSpanId: roundSpanId,
+        status: cancelled ? 'cancelled' : 'error',
+        attributes: { error_code: safeCode, context_overflow: contextOverflow, ...diagnostic },
+      })
+      logRun(identity, contextOverflow || cancelled ? 'warn' : 'error', 'agent.provider.error', state.round,
+        { errorCode: safeCode, contextOverflow, ...diagnostic })
+    }
+
     const dispatchedCalls = new Set<string>()
     const uncertainExecutions = new Set<string>()
     const dispatchKey = (call: ToolCall) => `${state?.round ?? 0}:${call.id}`
@@ -129,6 +232,9 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
       else if (type === 'tool_call' || type === 'tool_done' || type === 'interaction_required') {
         const toolCallId = String(payload.toolCallId ?? '')
         const toolName = typeof payload.name === 'string' ? payload.name : undefined
+        const priorCall = state.calls.find(call => call.id === toolCallId)
+        const toolInput = type === 'tool_call' && priorCall && !priorCall.parseError
+          ? projectPersistentToolInput(priorCall.input) : undefined
         const matches = (item: DisplayItem) => item.kind === 'tool' && item.runId === identity.runId
           && item.roundId === roundId && item.toolCallId === toolCallId
         const toolLabelOverride = toolName && !displayTimeline.some(matches) ? ports.toolLabelOverride?.(toolName) : undefined
@@ -137,12 +243,14 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
           ...(toolName ? { toolName } : {}),
           ...(toolLabelOverride ? { toolLabelOverride } : {}),
           toolStatus: type === 'interaction_required' ? 'waiting' : String(payload.status ?? 'running'),
+          ...(toolInput === undefined ? {} : { toolInput }),
           ...(payload.result === undefined ? {} : { toolResult: payload.result }),
         }, { anchorMessageId: state.anchorMessageId, now })
         changed = displayTimeline.find(matches)
       }
       else if (type === 'final') {
-        const sealed = sealDisplayTimeline(displayTimeline, now)
+        const incomplete = patch.status === 'failed' || patch.status === 'unknown'
+        const sealed = sealDisplayTimeline(displayTimeline, now, incomplete)
         sealedTools = sealed.filter((item, index) => item !== displayTimeline[index])
         displayTimeline = sealed
       }
@@ -184,7 +292,7 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
         // 提交可能已完成；不得随后再次 finalization 或重放调用来掩盖未知结果。
         persistenceUncertain = true
         controller.abort()
-        throw new AgentRunError('persistence_unknown', '运行提交结果未知，请重新查询状态')
+        throw new AgentRunError('persistence_unknown', '运行提交结果未知，请重新查询状态', { cause: error })
       }
       const previousContext = state.context
       state = next
@@ -204,8 +312,14 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
     async function executeTool(call: ToolCall, resolving: InteractionResolution | null, signal = controller.signal, waitForCleanup = false): Promise<ToolResult> {
       if (signal.aborted)
         throw new AgentRunError('cancelled', '当前任务已取消')
+      const startedAt = observedAt()
+      const round = state!.round
       if (call.parseError) {
         logRun(identity, 'warn', 'agent.tools.dispatch_failed', state!.round, { errorCode: 'invalid_arguments' })
+        recordToolInvocation(identity, call, round, 'invalid', startedAt, { executed: false, errorCode: 'invalid_arguments' })
+        if (state!.context !== null)
+          recordToolSchemaFailure(identity, state!.context, call, state!.round, 'parse_error',
+            { parse_error: true, code: call.parseError }, `${identity.runId}:round:${state!.round}:tool:${call.id}`)
         recordAgentObservation(ports.observation, {
           identity, kind: 'tool', name: call.name, at: observedAt(), round: state!.round,
           spanId: `${identity.runId}:round:${state!.round}:tool:${call.id}`,
@@ -215,7 +329,6 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
         return { kind: 'completed', value: { error: '工具参数不是合法的 JSON 对象，请修正参数后重试', code: call.parseError }, executed: false, successful: false, mutated: false }
       }
       dispatchedCalls.add(dispatchKey(call))
-      const round = state!.round
       const toolSpanId = `${identity.runId}:round:${round}:tool:${call.id}`
       recordAgentObservation(ports.observation, {
         identity, kind: 'tool', name: call.name, at: observedAt(), round, spanId: toolSpanId,
@@ -268,19 +381,39 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
           return { kind: 'unknown' as const }
         throw error
       }).finally(() => { closed = true })
-      if (waitForCleanup)
-        return operation
       try {
-        return await cancellable(operation, signal)
+        const result = waitForCleanup ? await operation : await cancellable(operation, signal).catch(async (error) => {
+          if (error instanceof AgentRunError && error.code === 'cancelled') {
+            // ToolPort的确定回执先到时优先保留，资源清理所需额外await不能反转完成/取消顺序。
+            const completed = observed
+            const settled = await operation.then((value) => ({ result: value }), () => null)
+            if (completed && 'result' in completed && settled)
+              return settled.result
+          }
+          throw error
+        })
+        if (result.kind === 'waiting')
+          recordToolInvocation(identity, call, round, 'waiting', startedAt, { executed: true, interaction: result.interaction.kind })
+        else if (result.kind === 'unknown')
+          recordToolInvocation(identity, call, round, 'unknown', startedAt, { executed: true, errorCode: 'result_unknown' })
+        else {
+          const outcome = result.value && typeof result.value === 'object' && 'status' in result.value
+            && ['cancelled', 'deferred'].includes(String(result.value.status))
+            ? result.value.status as 'cancelled' | 'deferred' : result.successful ? 'success' : 'error'
+          const code = result.value && typeof result.value === 'object' && 'code' in result.value
+            && typeof result.value.code === 'string' && /^[a-z][a-z0-9_.-]{0,63}$/i.test(result.value.code)
+            ? result.value.code : null
+          recordToolInvocation(identity, call, round, outcome, startedAt, {
+            executed: result.executed !== false, mutated: result.mutated,
+            ...(code ? { errorCode: code } : {}),
+          })
+        }
+        return result
       }
       catch (error) {
-        if (error instanceof AgentRunError && error.code === 'cancelled') {
-          // ToolPort的确定回执先到时优先保留，资源清理所需额外await不能反转完成/取消顺序。
-          const completed = observed
-          const settled = await operation.then((result) => ({ result }), () => null)
-          if (completed && 'result' in completed && settled)
-            return settled.result
-        }
+        const cancelled = error instanceof AgentRunError && error.code === 'cancelled'
+        recordToolInvocation(identity, call, round, cancelled ? 'cancelled' : 'error', startedAt,
+          { executed: dispatchedCalls.has(dispatchKey(call)), errorCode: cancelled ? 'cancelled' : 'tool_failed' })
         throw error
       }
     }
@@ -332,6 +465,24 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
       }
       const isButtons = artifact !== undefined && artifact !== null && typeof artifact === 'object' && !Array.isArray(artifact) && 'kind' in artifact && artifact.kind === 'link_buttons'
       const resultStatus = result.value && typeof result.value === 'object' && 'status' in result.value && ['cancelled', 'deferred'].includes(String(result.value.status)) ? String(result.value.status) : result.successful ? 'success' : 'error'
+      if (!result.successful && result.value && typeof result.value === 'object' && !Array.isArray(result.value)
+        && '_schema_recovery' in result.value) {
+        const recovery = (result.value as Record<string, unknown>)._schema_recovery
+        if (recovery && typeof recovery === 'object' && !Array.isArray(recovery)
+          && (recovery as Record<string, unknown>).needed === true)
+          recordToolSchemaFailure(identity, state.context, call, state.round,
+            String((recovery as Record<string, unknown>).reason ?? 'validation_error'), result.value,
+            `${identity.runId}:round:${state.round}:tool:${call.id}`)
+      }
+      const skill = result.successful ? skillInjectionMetadata(result.value) : null
+      if (skill)
+        recordAgentObservation(ports.observation, {
+          identity, kind: 'context', name: 'Skill context injected', at: observedAt(), round: state.round,
+          spanId: `${identity.runId}:round:${state.round}:skill:${call.id}`,
+          parentSpanId: `${identity.runId}:round:${state.round}:tool:${call.id}`, status: 'success',
+          input: skill, output: { skill: skill.skill, content_digest: skill.content_digest },
+          attributes: { context_source: 'skill_body', skill: skill.skill, action: 'loaded', source: skill.source },
+        })
       if (!result.successful)
         logRun(identity, 'warn', 'agent.tools.dispatch_failed', state.round, { errorCode: 'tool_failed', executed: result.executed !== false, mutated: result.mutated })
       recordAgentObservation(ports.observation, {
@@ -437,39 +588,70 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
       }
       const inline = state.parallelCallIds.length === 0 && state.toolResults.length === 0
       let serialWaiting = state.toolResults.some((item) => item.result.kind === 'unknown')
-      for (const id of state.serialCallIds) {
-        const call = state.calls.find((item) => item.id === id)!
-        const previous = state.toolResults.find((item) => item.callId === id)?.result
-        if (previous) {
-          serialWaiting ||= previous.kind === 'waiting' || previous.kind === 'unknown'
-          continue
-        }
-        let result: ToolResult
-        if (serialWaiting || controller.signal.aborted)
-          result = stoppedResult(call, 'deferred')
-        else if (state.inflightCall?.id === call.id)
-          result = await ports.tools.reconcile(call, { ...identity, roundId: `${identity.runId}:${state.round}` })
-        else {
-          yield (await commit({ inflightCall: call }, 'tool_call', { toolCallId: call.id, name: call.name, status: 'running' }))!
-          try {
-            await checkCancellation()
-            result = await executeTool(call, null)
+      const serialCallIds = [...state.serialCallIds]
+      const serialRound = state.round
+      const hasParallelCalls = state.parallelCallIds.length > 0
+      const serialBatchStartedAt = serialCallIds.length > 1 ? observedAt() : null
+      try {
+        for (const id of serialCallIds) {
+          const call = state.calls.find((item) => item.id === id)!
+          const previous = state.toolResults.find((item) => item.callId === id)?.result
+          if (previous) {
+            serialWaiting ||= previous.kind === 'waiting' || previous.kind === 'unknown'
+            continue
           }
-          catch (error) {
-            if (controller.signal.aborted || (error instanceof AgentRunError && error.code === 'cancelled')) {
-              controller.abort()
-              result = stoppedResult(call, dispatchedCalls.has(dispatchKey(call)) ? 'cancelled' : 'deferred')
+          let result: ToolResult
+          if (serialWaiting || controller.signal.aborted)
+            result = stoppedResult(call, 'deferred')
+          else if (state.inflightCall?.id === call.id)
+            result = await ports.tools.reconcile(call, { ...identity, roundId: `${identity.runId}:${state.round}` })
+          else {
+            yield (await commit({ inflightCall: call }, 'tool_call', { toolCallId: call.id, name: call.name, status: 'running' }))!
+            try {
+              await checkCancellation()
+              result = await executeTool(call, null)
             }
-            else
-              result = { kind: 'completed', value: { error: ports.presentError(error).code }, successful: false, mutated: false }
+            catch (error) {
+              if (controller.signal.aborted || (error instanceof AgentRunError && error.code === 'cancelled')) {
+                controller.abort()
+                result = stoppedResult(call, dispatchedCalls.has(dispatchKey(call)) ? 'cancelled' : 'deferred')
+              }
+              else
+                result = { kind: 'completed', value: { error: ports.presentError(error).code }, successful: false, mutated: false }
+            }
+          }
+          const cached = await cacheResult(call, result)
+          serialWaiting ||= cached.kind === 'waiting' || cached.kind === 'unknown'
+          if (inline) {
+            yield await applyTool(call, cached)
+            if (terminalRunStates.has(state.status))
+              return
           }
         }
-        const cached = await cacheResult(call, result)
-        serialWaiting ||= cached.kind === 'waiting' || cached.kind === 'unknown'
-        if (inline) {
-          yield await applyTool(call, cached)
-          if (terminalRunStates.has(state.status))
-            return
+      }
+      finally {
+        if (serialBatchStartedAt !== null) {
+          const elapsedMs = Math.max(0, observedAt() - serialBatchStartedAt)
+          const currentState = state
+          const results = currentState?.toolResults.filter(item => serialCallIds.includes(item.callId)) ?? []
+          const counts = results.reduce((summary, item) => {
+            const kind = item.result.kind
+            if (kind === 'waiting') summary.waiting++
+            else if (kind === 'unknown') summary.unknown++
+            else if (kind === 'completed') item.result.successful ? summary.succeeded++ : summary.failed++
+            else if (kind === 'cancelled') summary.cancelled++
+            else if (kind === 'deferred') summary.deferred++
+            else summary.failed++
+            return summary
+          }, { succeeded: 0, failed: 0, cancelled: 0, deferred: 0, waiting: 0, unknown: 0 })
+          const status = counts.failed ? 'error' : counts.unknown ? 'unknown' : counts.cancelled ? 'cancelled' : 'success'
+          const reason = hasParallelCalls ? 'mixed_batch' : 'parallel_disabled'
+          observePhase(identity, 'Serial tool batch', serialBatchStartedAt, serialRound, status, {
+            mode: 'serial', calls: serialCallIds.length, reason, elapsedMs, ...counts,
+          })
+          logRun(identity, counts.failed || counts.unknown ? 'warn' : 'info', 'agent.tools.serial_batch', serialRound, {
+            mode: 'serial', reason, elapsedMs, calls: serialCallIds.length, ...counts,
+          })
         }
       }
       await commit({ toolsDispatched: true })
@@ -524,7 +706,7 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
             throw error
           }
           persistenceUncertain = true
-          throw new AgentRunError('persistence_unknown', '运行创建结果未知，请重新查询状态')
+          throw new AgentRunError('persistence_unknown', '运行创建结果未知，请重新查询状态', { cause: error })
         }
         observeEvent(event)
         await publish(event, controller.signal)
@@ -651,6 +833,22 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
           if (state.pending)
             return state
           if (state.callIndex >= state.calls.length) {
+            if (state.calls.length > 0) {
+              const transitionAt = observedAt()
+              const nextRound = state.round + 1
+              logRun(identity, 'info', 'agent.run.continued', state.round, {
+                reason: 'tool_round', nextRound, toolCount: state.calls.length,
+              })
+              recordAgentObservation(ports.observation, {
+                identity, kind: 'state', name: 'Continue after tool round', at: transitionAt,
+                startedAt: transitionAt, endedAt: transitionAt, durationMs: 0,
+                spanId: `${identity.runId}:state:continue-after-tool-round:${state.round}`,
+                parentSpanId: identity.runId, status: 'success',
+                input: { round: state.round, tool_call_count: state.calls.length },
+                output: { next_round: nextRound },
+                attributes: { reason: 'tool_round' },
+              })
+            }
             await commit({ phase: 'idle', calls: [], callIndex: 0, inflightCall: null, inflightCalls: [], parallelLimit: null, toolResults: [], toolsDispatched: false, parallelCallIds: [], serialCallIds: [], isolatedCallIds: [] })
             continue
           }
@@ -826,18 +1024,7 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
               yield (await commit(streamPatch(), 'retry', { attempt: item.attempt, maxRetries: item.maxRetries, nextRetryMs: item.nextRetryMs, errorCode }))!
             }
             else if (item.type === 'error') {
-              const errorCode = ports.presentError(item.error).code
-              recordAgentObservation(ports.observation, {
-                identity, kind: 'provider', name: 'complete', at: observedAt(), round: state.round,
-                spanId: `${identity.runId}:round:${state.round}:provider`,
-                parentSpanId: `${identity.runId}:round:${state.round}`,
-                status: errorCode === 'cancelled' ? 'cancelled' : 'error',
-                attributes: { error_code: /^[a-z][a-z0-9_.-]{0,63}$/i.test(errorCode) ? errorCode : 'provider_error', context_overflow: item.contextOverflow },
-              })
-              logRun(identity, item.contextOverflow || errorCode === 'cancelled' ? 'warn' : 'error', 'agent.provider.error', state.round, {
-                errorCode: /^[a-z][a-z0-9_.-]{0,63}$/i.test(errorCode) ? errorCode : 'provider_error',
-                contextOverflow: item.contextOverflow === true,
-              })
+              reportProviderFailure(item.error, item.contextOverflow === true)
               if (item.contextOverflow && state.overflowRetries < 1) {
                 overflow = true
                 break
@@ -1015,18 +1202,30 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
         // 仅按本次 provider 实际用量决定压缩，不能拿字符或累计token推算。
         if (state.usage.contextInput !== null) {
           const compactionStartedAt = observedAt()
+          const before = contextSummaryMetrics(ports.observationSnapshot?.(state.context))
           let adjusted: Awaited<ReturnType<typeof ports.context.afterUsage>>
           try {
             adjusted = await ports.context.afterUsage(state.context, state.usage, controller.signal)
-            observePhase(identity, 'Usage based context compaction', compactionStartedAt, state.round,
-              adjusted.applied ? 'success' : 'skipped', { applied: adjusted.applied, reason: adjusted.reason ?? 'not_applied' })
-            if (!adjusted.applied)
-              logRun(identity, adjusted.reason === 'failed' ? 'warn' : 'info', 'agent.context.compaction_skipped', state.round,
-                { reason: adjusted.reason ?? 'not_applied' })
+            const after = contextSummaryMetrics(ports.observationSnapshot?.(adjusted.context))
+            observePhase(identity, 'Context compaction', compactionStartedAt, state.round,
+              adjusted.applied ? 'success' : 'skipped', {
+                phase: 'completed', applied: adjusted.applied, reason: adjusted.reason ?? 'not_applied',
+                before_messages: before.message_count, after_messages: after.message_count,
+                before_summary_count: before.summary_count, after_summary_count: after.summary_count,
+                before_summary_chars: before.summary_chars, after_summary_chars: after.summary_chars,
+              })
+            if (!adjusted.applied) {
+              const failed = adjusted.reason === 'failed'
+              logRun(identity, failed ? 'error' : 'info', failed ? 'agent.context.compaction_failed' : 'agent.context.compaction_skipped', state.round,
+                { reason: failed ? 'summary_failed' : adjusted.reason ?? 'not_applied' })
+            }
           }
           catch (error) {
-            observePhase(identity, 'Usage based context compaction', compactionStartedAt, state.round,
-              error instanceof AgentRunError && error.code === 'cancelled' ? 'cancelled' : 'error')
+            observePhase(identity, 'Context compaction', compactionStartedAt, state.round,
+              error instanceof AgentRunError && error.code === 'cancelled' ? 'cancelled' : 'error', {
+                phase: 'failed', reason: 'error', before_messages: before.message_count,
+                before_summary_count: before.summary_count, before_summary_chars: before.summary_chars,
+              })
             throw error
           }
           if (adjusted.applied)
@@ -1050,6 +1249,8 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
         yield await finish('unknown', 'tool_receipt_not_persisted', '工具执行回执未能安全保存，执行结果需要重新核对，请勿重复操作。')
         return state
       }
+      if (state.phase === 'provider' && error instanceof ProviderError && error !== lastProviderFailure)
+        reportProviderFailure(error, error.code === 'context_overflow')
       const rejected = await rejectPendingOverflow()
       if (rejected)
         yield rejected
@@ -1145,7 +1346,7 @@ export function projectProviderDiagnostic(input: unknown): Readonly<Record<strin
   return Object.freeze(result)
 }
 
-export const finalToolStatuses = new Set(['success', 'error', 'skipped', 'cancelled', 'stopped', 'deferred'])
+export const finalToolStatuses = new Set(['success', 'error', 'skipped', 'cancelled', 'stopped', 'deferred', 'unknown'])
 
 /** 对展示事件做有身份的upsert：更新状态不能改变原位置、首次时间或anchor。 */
 function updateToolTiming(previous: DisplayItem | undefined, status: string | undefined, now: string): Partial<DisplayItem> {
@@ -1189,10 +1390,14 @@ export function updateDisplayItem(items: readonly DisplayItem[], incoming: Pick<
 }
 
 /** 封存只关闭仍打开的气泡，不补造身份、时间和顺序，也不改调用方原数组。 */
-export function sealDisplayTimeline(items: readonly DisplayItem[], now: string): readonly DisplayItem[] {
-  return items.map((item) => item.kind === 'tool' && ['queued', 'running', 'waiting'].includes(item.toolStatus ?? '')
-    ? { ...item, ...updateToolTiming(item, 'stopped', now), toolStatus: 'stopped', updatedAt: now }
-    : item)
+export function sealDisplayTimeline(items: readonly DisplayItem[], now: string, incomplete = false): readonly DisplayItem[] {
+  const isOpen = (item: DisplayItem) => item.kind === 'tool' && ['queued', 'running', 'waiting'].includes(item.toolStatus ?? '')
+  const unresolvedIndex = incomplete ? items.findLastIndex(item => isOpen(item) && item.toolStatus !== 'queued') : -1
+  return items.map((item, index) => {
+    if (!isOpen(item)) return item
+    const toolStatus = index === unresolvedIndex ? 'unknown' : 'stopped'
+    return { ...item, ...updateToolTiming(item, toolStatus, now), toolStatus, updatedAt: now }
+  })
 }
 
 export function reference(value: string): boolean { return /^[A-Za-z0-9_.:-]{1,256}$/.test(value) }
@@ -1229,6 +1434,21 @@ export function redactToolError(text: string): string {
     .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '‹id已隐藏›')
     .replace(/\n?\s*File "[^"]+", line \d+[^\n]*(?:\n\s+[^\n]+)?/g, '')
     .trim()
+}
+
+/** 工具参数只投影到 owner 可读的展示时间线，清理凭据和过大的输入。 */
+export function projectPersistentToolInput(value: unknown): PortableValue {
+  function redact(input: Json): Json {
+    if (typeof input === 'string') return redactToolError(input)
+    if (Array.isArray(input)) return input.map(redact)
+    if (input && typeof input === 'object') return Object.fromEntries(Object.entries(input).map(([key, child]) => [
+      key, /(?:password|passwd|secret|token|credential|api[_-]?key|authorization|cookie|private[_-]?key)/i.test(key)
+        ? '[已隐藏]' : redact(child),
+    ]))
+    return input
+  }
+  const input = redact(redactToolRequestHeaders(stripHistoryMedia(portableSnapshot(value) as Json)))
+  return JSON.stringify(input).length <= 16_000 ? input : '[输入过长，已隐藏]'
 }
 
 /**

@@ -14,6 +14,7 @@ export function useDesktopCalendarLayout(
   monthWeeks: ComputedRef<CalendarMonthDay[][]>,
   weekDays: ComputedRef<CalendarWeekDay[]>,
   weekHeights: Record<number, number>,
+  monthDragPreview: ComputedRef<{ item: CalendarRenderItem; range: { start: string; end: string } } | null>,
 ) {
   const projectStore = useProjectStore()
   const projects = computed(() => projectStore.projects
@@ -30,7 +31,19 @@ export function useDesktopCalendarLayout(
       createdAt: project.createdAt,
       progress: projectProgress(project),
     }))))
-  const monthBars = computed(() => monthWeeks.value.map(week => weekBars(projects.value, week)))
+  const monthProjects = computed(() => {
+    const preview = monthDragPreview.value
+    if (preview?.item.calendarType !== 'project') return projects.value
+    return projects.value.map(project => project.id === preview.item.id
+      ? { ...project, startDate: preview.range.start, endDate: preview.range.end }
+      : project)
+  })
+  const monthEvents = computed(() => {
+    const preview = monthDragPreview.value
+    if (preview?.item.calendarType !== 'event') return events.value
+    return events.value.map(event => event.id === preview.item.id ? { ...event, date: preview.range.start } : event)
+  })
+  const monthBars = computed(() => monthWeeks.value.map(week => weekBars(monthProjects.value, week)))
   const weekAllDay = computed(() => weekBars(projects.value, weekDays.value))
   const weekAllDayShown = computed(() => capWeekBars(weekAllDay.value, 5))
   const wvShownRows = computed(() => Math.max(0, ...weekAllDayShown.value.map(bar => (bar.row ?? 0) + 1)))
@@ -38,8 +51,8 @@ export function useDesktopCalendarLayout(
     (wvShownRows.value + allDayItemsFor(day.iso).length + Number(weekMoreFor(index).length > 0)) * layout.barHeight + 6
   ))))
 
-  function singleDayProjects(iso: string) {
-    return projects.value.filter(project => project.startDate === iso && project.endDate === iso)
+  function singleDayProjects(iso: string, items = projects.value) {
+    return items.filter(project => project.startDate === iso && project.endDate === iso)
   }
   function weekBarsCapped(_week: CalendarMonthDay[], index: number) {
     return { bars: capWeekBars(monthBars.value[index] ?? [], maxSlots(weekHeights[index] ?? 100, layout)) }
@@ -47,7 +60,7 @@ export function useDesktopCalendarLayout(
   function dayLayout(iso: string, week: CalendarMonthDay[], index: number) {
     return calculateDayLayout(
       iso, weekBarsCapped(week, index).bars, monthBars.value[index] ?? [],
-      singleDayProjects(iso), events.value, maxSlots(weekHeights[index] ?? 100, layout), layout,
+      singleDayProjects(iso, monthProjects.value), monthEvents.value, maxSlots(weekHeights[index] ?? 100, layout), layout,
     )
   }
   function allDayItemsFor(iso: string) {

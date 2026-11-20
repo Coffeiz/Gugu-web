@@ -52,6 +52,16 @@
           </div>
         </header>
 
+        <div v-if="traceCaptureTruncated" class="trace-capture-warning">
+          {{ t('monitor.traceTruncated') }}
+        </div>
+        <div v-else-if="traceCaptureUnavailable" class="trace-capture-warning">
+          {{ t('monitor.traceUnavailable') }}
+        </div>
+        <div v-if="runRootMissing" class="trace-capture-warning">
+          {{ t('monitor.runRootMissing') }}
+        </div>
+
         <section class="usage-grid">
           <div class="usage-card"><span>Input</span><b>{{ fmtTokens(usage.input) }}</b><small>{{ usageSourceLabel }}</small></div>
           <div class="usage-card"><span>Output</span><b>{{ fmtTokens(usage.output) }}</b><small>generated</small></div>
@@ -176,6 +186,8 @@ watch(
 
 const selected = computed(() => props.details?.[selectedId.value] ?? props.runs.find(r => r.id === selectedId.value) ?? null)
 const selectedLoaded = computed(() => Boolean(props.details?.[selectedId.value]?.spans))
+const runRootMissing = computed(() => selectedLoaded.value
+  && !(selected.value?.spans ?? []).some(span => span.id === selected.value?.id))
 const usage = computed<TokenUsage>(() => resolveUsage(selected.value))
 const usageSourceLabel = computed(() => {
   if (hasProviderUsage(selected.value)) return 'provider reported prompt tokens'
@@ -184,6 +196,11 @@ const usageSourceLabel = computed(() => {
 const cacheRatio = computed(() => usage.value.input ? Math.min((usage.value.cache_read ?? 0) / usage.value.input, 1) : 0)
 const cachePercent = computed(() => usage.value.input ? `${(cacheRatio.value * 100).toFixed(1)}%` : '—')
 const cacheMode = computed(() => (selected.value?.attributes?.cache_mode ?? 'active') as string)
+const traceCaptureTruncated = computed(() => {
+  const value = selected.value?.attributes?.trace_capture_truncated
+  return !!value && typeof value === 'object'
+})
+const traceCaptureUnavailable = computed(() => selected.value?.attributes?.trace_capture_unavailable === 'trace_size_limit')
 const canonicalStats = computed<CanonicalEventStats>(() => {
   const value = selected.value?.attributes?.canonical_events
   return value && typeof value === 'object' ? value as CanonicalEventStats : {}
@@ -221,22 +238,45 @@ const modelLabel = computed(() => {
   const label = labels.map(parts => parts.filter(Boolean).join(' / ')).find(Boolean)
   if (label) return label
   if (selected.value?.ended_at && !(selected.value.spans ?? []).some(isModelSpan)) {
-    return t('monitor.noModelCall')
+    return hasProviderUsage(selected.value) ? t('monitor.modelUnknown') : t('monitor.noModelCall')
   }
   return t('monitor.modelUnknown')
 })
-const rootSpans = computed(() => (selected.value?.spans ?? []).filter(s => !s.parent_span_id))
+const displaySpans = computed(() => {
+  const spans = selected.value?.spans ?? []
+  const ids = new Set(spans.map(span => span.id))
+  const root = spans.find(span => span.kind === 'run' && !span.parent_span_id)
+  if (!root) return spans
+  return spans.map(span => span.parent_span_id && !ids.has(span.parent_span_id)
+    ? { ...span, parent_span_id: root.id } : span)
+    .sort((a, b) => a.started_at - b.started_at)
+})
+const rootSpans = computed(() => {
+  const ids = new Set(displaySpans.value.map(span => span.id))
+  return displaySpans.value.filter(span => !span.parent_span_id || !ids.has(span.parent_span_id))
+})
 const injectionSpans = computed(() => (selected.value?.spans ?? []).filter((span) => {
   const source = span.attributes?.context_source
-  return source === 'tool_schema' || source === 'tool_schema_error' || source === 'capability_catalog' || source === 'skill_index' || source === 'skill_body' || source === 'shell_policy'
+  return source === 'tool_schema' || source === 'tool_schema_error' || source === 'capability_catalog' || source === 'skill_index' || source === 'skill_body' || source === 'shell_policy' || source === 'rag_retrieval'
 }))
 function injectionLabel(span: any) {
-  const labels: Record<string, string> = { tool_schema: 'trace.contextSchema', tool_schema_error: 'trace.schemaError', capability_catalog: 'trace.capabilityCatalog', skill_index: 'trace.skillIndex', skill_body: 'trace.skillBody', shell_policy: 'trace.shellPolicy' }
+  const labels: Record<string, string> = { tool_schema: 'trace.contextSchema', tool_schema_error: 'trace.schemaError', capability_catalog: 'trace.capabilityCatalog', skill_index: 'trace.skillIndex', skill_body: 'trace.skillBody', shell_policy: 'trace.shellPolicy', rag_retrieval: 'trace.ragRetrieval' }
   const key = labels[String(span.attributes?.context_source)]
   return key ? t(key) : span.name
 }
 function injectionSummary(span: any) {
   const input = (span.input && typeof span.input === 'object' ? span.input : {}) as Record<string, any>
+  if (span.attributes?.context_source === 'rag_retrieval') {
+    const output = (span.output && typeof span.output === 'object' ? span.output : {}) as Record<string, any>
+    const diagnostics = (output.diagnostics && typeof output.diagnostics === 'object' ? output.diagnostics : {}) as Record<string, any>
+    const hits = Array.isArray(output.scope_hits) ? output.scope_hits.reduce((sum: number, row: any) => sum + Number(row?.hit_count || 0), 0) : 0
+    const duration = Number(span.duration_ms)
+    const parts = [t('monitor.ragMessages', { count: Number(output.message_count || 0) }), t('monitor.ragHits', { count: hits })]
+    if (Number.isFinite(duration)) parts.push(t('monitor.ragDuration', { duration: duration >= 1000 ? `${(duration / 1000).toFixed(2)}s` : `${Math.round(duration)}ms` }))
+    if (output.reason) parts.push(String(output.reason))
+    if (diagnostics.engine) parts.push(String(diagnostics.engine))
+    return parts.join(' · ')
+  }
   if (span.attributes?.context_source === 'shell_policy') {
     return span.attributes?.role === 'stable_protocol' ? t('monitor.stableProtocol') : t('monitor.dynamicPermissions')
   }
@@ -250,7 +290,7 @@ function injectionSummary(span: any) {
   if (span.attributes?.context_source === 'skill_index') return `${t('monitor.skillsCount', { count: span.attributes?.skill_count ?? 0 })} index`
   return `${input.skill ?? span.attributes?.skill ?? 'Skill'} · ${span.attributes?.action === 'reused' ? t('monitor.skillActionReused') : t('monitor.skillActionFirst')}`
 }
-function childrenOf(id: string) { return (selected.value?.spans ?? []).filter(s => s.parent_span_id === id) }
+function childrenOf(id: string) { return displaySpans.value.filter(s => s.parent_span_id === id) }
 function spanRound(span: any) {
   const fromId = String(span.id ?? '').match(/:round:(\d+)(?::provider)?$/)?.[1]
   return Number(span.attributes?.round ?? fromId ?? 0)
@@ -263,18 +303,7 @@ function previousRoundSpan(span: any) {
   const currentRound = spanRound(span)
   const previousInRun = rounds.reverse().find(item => spanRound(item) < currentRound)
   if (previousInRun) return previousInRun
-  if (currentRound > 1) return undefined
-
-  const currentRun = selected.value
-  if (!currentRun) return undefined
-  const previousRun = props.runs
-    .filter(run => run.id !== currentRun.id && run.started_at < currentRun.started_at)
-    .sort((a, b) => b.started_at - a.started_at)[0]
-  const previousSpans = previousRun ? props.details?.[previousRun.id]?.spans ?? [] : []
-  return previousSpans
-    .filter(item => isModelSpan(item) && item.attributes?.purpose !== 'branch')
-    .sort((a, b) => (spanRound(a) - spanRound(b)) || a.ordinal - b.ordinal)
-    .at(-1)
+  return undefined
 }
 function selectRun(runId: string) {
   if (selectedId.value !== runId) selectedId.value = runId
@@ -305,7 +334,6 @@ function onRunListScroll(event: Event) {
 function resolveUsage(run: TraceRun | TraceRunSummary | null): TokenUsage {
   if (!run) return {}
   const spans = run.spans ?? []
-  if (!spans.some(isModelSpan)) return {}
   const candidates = [run.usage, run.attributes?.tokens]
   for (const candidate of candidates) {
     const normalized = normalizeUsage(candidate)
@@ -376,7 +404,9 @@ function normalizeUsage(value: Record<string, any> | undefined): TokenUsage {
   return {
     input, output, cache_read: cacheRead, cache_write: cacheWrite,
     fresh_input: fresh ?? (legacyNodeUsage ? rawInput : input !== undefined ? Math.max(input - (cacheRead ?? 0) - (cacheWrite ?? 0), 0) : undefined),
-    total: total ?? (input !== undefined || output !== undefined ? (input ?? 0) + (output ?? 0) : undefined),
+    total: legacyNodeUsage && input !== undefined
+      ? input + (output ?? 0)
+      : total ?? (input !== undefined || output !== undefined ? (input ?? 0) + (output ?? 0) : undefined),
     cache_ratio: input ? (cacheRead ?? 0) / input : 0,
   }
 }
@@ -432,6 +462,7 @@ function fmtTokens(v: number | null | undefined) {
 .run-header { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; }
 .run-header h2 { margin:3px 0 5px; font:600 14px var(--font-mono); }
 .run-sub { display:flex; align-items:baseline; gap:7px; color:var(--content-tertiary); font-size:9px; line-height:1.4; }
+.trace-capture-warning { margin-top:10px; padding:8px 11px; border:1px solid color-mix(in srgb,var(--status-warning) 30%,var(--border-subtle)); border-radius:var(--radius-md); background:color-mix(in srgb,var(--status-warning) 9%,var(--surface-panel)); color:var(--content-secondary); font-size:10px; line-height:1.5; }
 .duration { text-align:right; }
 .run-header-actions { display:flex; align-items:flex-start; gap:14px; }
 .duration small { display:block; color:var(--content-tertiary); font-size:8px; text-transform:uppercase; letter-spacing:.08em; }

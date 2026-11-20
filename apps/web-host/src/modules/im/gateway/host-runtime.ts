@@ -52,6 +52,8 @@ export interface ImHostComponents {
   /** 保留服务独立扫描；旧组件夹具可不装配，正式工厂必须接通。 */
   maintain?(signal:AbortSignal):Promise<void>
   reflection: LifecycleService
+  pauseIngress?(): void
+  drainRuns?(): Promise<void>
   close(): Promise<void>
 }
 type LoopName = 'dispatch' | 'delivery' | 'pending' | 'interaction' | 'maintenance'
@@ -93,14 +95,20 @@ export function createImHostLifecycle(options: {
     if (state === 'disabled') return
     return stopPromise ??= (async () => {
       state = 'stopping'
-      // 先阻止新协议入站，再中断队列读和后台扫描；已在运行的业务排空，不主动取消Agent。
+      // 停止准入和扫描后，保留平台发送器，等已启动的 Run 完成持久化与投递。
       let failed = false
       controller.abort()
-      // start与stop可并发；已进入start的服务先取消，尚在取得连接的构造必须完成后再关底层资源。
-      for (const service of [...started].reverse()) try { await service.stop() } catch { failed = true }
+      components?.pauseIngress?.()
+      const worker = components?.worker
+      if (worker && started.includes(worker)) try { await worker.stop() } catch { failed = true }
+      await Promise.allSettled(tasks)
+      try { await components?.drainRuns?.() } catch { failed = true }
+      for (const service of [...started].reverse()) {
+        if (service !== worker) try { await service.stop() } catch { failed = true }
+      }
+      // 尚在取得连接的构造必须完成后再关底层资源。
       await construction
       failed ||= assemblyCleanupUnknown
-      await Promise.allSettled(tasks)
       if (components) try { await components.close() } catch { failed = true }
       if (failed) {
         // 清理不确定时保留仍有效的进程归属锁，不能允许另一个Node重复消费。
@@ -138,7 +146,9 @@ export function createImHostLifecycle(options: {
           if(components.maintain)loop('maintenance',components.maintain)
         } catch (error) {
           assemblyCleanupUnknown ||= error instanceof ImHostAssemblyCleanupError
-          finishConstruction(); await stop(); throw new Error('IM 运行启动未完成')
+          finishConstruction()
+          try { await stop() } catch { throw new Error('IM 运行资源清理未完成', { cause: error }) }
+          throw new Error('IM 运行启动未完成', { cause: error })
         }
       })()
     }, stop,

@@ -85,20 +85,49 @@ export function createUseSkillTool(ports: AgentSkillRuntimePorts): ToolDefinitio
   }
 }
 
+const fileSchemaAlternatives = new Map([
+  ['shell', '优先用沙箱路径浏览目录、查找文件或读取文本。个人文件在 /personal。'],
+  ['global_search', 'Shell 不可用时，可按名称搜索文件。传 query 和 types: ["file"]。'],
+  ['view_image', '查看已找到的图片。传 path，使用已授权的沙箱路径。'],
+  ['read_file', '按当前 Schema 读取已授权的文件内容。'],
+])
+
+function suggestAuthorizedTools(rejected: readonly string[], available: readonly PreparedToolDefinition[]) {
+  const related = rejected.some(name => /file|image|list_dir|workspace|grep/iu.test(name))
+  const candidates = new Map(available.filter(tool => tool.name !== 'get_tool_schema').map(tool => [tool.name, tool]))
+  const preferred = related ? [...fileSchemaAlternatives.keys()].filter(name => candidates.has(name)) : []
+  const names = preferred.length ? preferred : [...candidates.keys()].slice(0, 8)
+  return names.map(name => {
+    const schema = candidates.get(name)!.schema
+    const fn = schema.function
+    const description = fn && typeof fn === 'object' && !Array.isArray(fn) ? fn.description : schema.description
+    const usage = fileSchemaAlternatives.get(name) ?? (typeof description === 'string' ? description.slice(0, 200) : '按当前工具目录的参数说明调用。')
+    return { name, usage }
+  })
+}
+
 /** 当前可信注册器的公开能力；不执行目标，也不把发现结果当执行授权。 */
 export function createGetToolSchemaTool(capabilities:(identity:RunIdentity)=>Promise<import('../models.js').PreparedToolDefinition[]>):ToolDefinition{
   const schema=z.object({tools:z.array(z.string().min(1).max(80)).min(1).max(12)}).strict()
   return {
-    definition:{name:'get_tool_schema',schema:{type:'function',function:{name:'get_tool_schema',description:'获取当前已授权工具的参数Schema声明；只读，不执行目标工具。支持前缀通配符。',
+    definition:{name:'get_tool_schema',schema:{type:'function',function:{name:'get_tool_schema',description:'获取当前已授权工具的参数 Schema。优先从当前目录逐字选择工具名，已有当前版本的 Schema 时直接复用。支持前缀通配符。',
       parameters:{type:'object',properties:{tools:{type:'array',minItems:1,maxItems:12,items:{type:'string',minLength:1,maxLength:80}}},required:['tools'],additionalProperties:false}}}},
     effect:'read',validate:input=>schema.safeParse(input),
     async execute(input,scope){
       const available=scope.discoverRelatedTools ? await scope.discoverRelatedTools() : await capabilities(scope.identity)
       scope.signal.throwIfAborted()
       const value=selectToolSchemas((input as z.infer<typeof schema>).tools,available)
-      const names = 'tool_schemas' in value ? value.tool_schemas : []
+      if ('error' in value) {
+        const alternatives = suggestAuthorizedTools(value.rejected, available)
+        return { kind: 'completed', successful: false, mutated: false, value: {
+          ...value, alternatives, next_action: alternatives.length
+            ? '从当前工具目录或 alternatives 选择已授权工具并按其用法执行。已有当前 Schema 时直接调用，切勿重试被拒绝的名称。'
+            : '当前没有可推荐的授权工具。请根据现有能力说明限制，或走正常权限申请流程。',
+        } }
+      }
+      const names = value.tool_schemas
       const definitions = new Map(available.map(tool => [tool.name, tool]))
-      return {kind:'completed',successful:!('error' in value),mutated:false,value,
+      return {kind:'completed',successful:true,mutated:false,value,
         ...(names.length ? { canonicalEvents: [
           { type: 'tool-discovery', tool_names: names },
           ...names.map(name => toolSchemaEvent(definitions.get(name)!)),

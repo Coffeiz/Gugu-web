@@ -10,7 +10,7 @@
 | `clients.ts` | 联系人领域工具。 |
 | `conversations.ts` | 历史对话工具组；正文由 owner 限定读取服务提供，搜索依赖可信 RAG 与会话定位端口。 |
 | `knowledge.ts` | 知识读取工具组；ID 精确读取由 Host owner FS 端口提供，关键词查询只接受 Host 授权范围并查询持久 BM25 索引。 |
-| `files.ts` | 文件领域工具组；`list_dir` 复用 Host 文件浏览分页服务，支持明确空间或 `file_path` 指定的 `/personal`、`/project`、`/workspace` 文件库登记路径，按 owner 解析项目/工作区/目录，支持关键词 OR/AND 和完整文件总数；这不是旧版 Shell `scope=logical` 本地目录访问。`grep` 按 Host owner 文件清单和 `packages/fs` 授权根检索登记的文本文件，`read_file` 按 owner file_id、Host 精确解析的文件库逻辑路径或 owner `attach_id` 定位；聊天附件仅开放白名单文本及 PDF/Office 正文，行范围和 32 MiB 单项/64 MiB 批次限制在 Core 校验，历史图片/音频/视频暂不开放；文件正文经授权根读取，PDF/Office 文档复用 Core 受限提取器并限制 30 MiB；单项或最多 20 项创建文件（workspace 目录由 Host 可信会话绑定解析）/文件夹、按逻辑路径或 file_id 的全文/追加/查找/按行及批量正文编辑、重命名/复制、单项或 1-50 项文件软删、文件夹软删及按 ID 批量移动复用 Host 文件域事务；`compress_files` / `extract_files` 复用 Host 正式归档事务、同空间与 owner 检查、配额、ZIP/TAR 路径校验和资源发布。Agent 调用收据与归档/解压领域变更在同一 PostgreSQL 事务提交；恢复只查询 owner/Run/轮次/调用 ID/参数指纹匹配的已提交收据，缺少回执返回 `unknown`，不重放副作用。`save_uploaded_file` 的 workspace 落点只从可信会话绑定或默认目录解析，并在上传事务复核；`present_file` 只按 owner 文件 ID、逻辑路径或名称返回当前网页预览引用。均不接收任意宿主路径。`list_recent_attachments` 只返回当前 owner/会话附件元数据。隔离临时 PostgreSQL 归档/解压行为回归 **1/1**，但生产部署与完整 HTTP/SSE Run 验收仍未完成。 |
+| `files.ts` | 文件读取、附件保存与列表、网页预览及文件和文件夹软删除。按 owner 文件 ID、已登记逻辑路径或附件 ID 限定访问。正文读取保留单项与批次上限，文档正文复用 Core 受限提取器。通用文件操作由已授权的 Shell 提供。 |
 | `canvas.ts` | 画布工具组；列表、分页快照、已有节点/可放置资源搜索、卡片定位、创建/引用放置、有序批处理、确认后画布/便签/关系删除、连接/端点及布局/视图移除/便签正文编辑；计数/视图/独立关系审计委托共享Mind读取，不在读取时改线。 |
 | `note.ts` | Mind笔记搜索、详情、软删、恢复与撤销工具组；来源节点、一跳关系和正文引用由共享Mind读取聚合。 |
 | `calendar.ts` | 日历工具组，活动和提醒聚合委托共享日历服务；事件删除复用共享软删/Undo事务及可信确认门。 |

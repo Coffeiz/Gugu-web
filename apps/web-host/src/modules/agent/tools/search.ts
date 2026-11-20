@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from 'node:timers/promises'
 import { decryptByokCredential } from '../../byok/crypto.js'
 import { type ByokCredential } from '../../byok/store.js'
 import type { Pool } from 'pg'
@@ -17,14 +18,21 @@ import { createPublicAgentEgress } from '../../../adapters/network/safe-egress-p
 import type { WebAgentBinding } from '../run/reconstruct.js'
 
 const HTTP_GET_MAX_BYTES = 2 * 1024 * 1024
+const HTTP_GET_TIMEOUT_MS = 20_000
 const HTTP_GET_RETRY_DELAYS = [1000, 2000] as const
 
 /** Web Agent 的 GET 复用固定公网 DNS/连接和管理员代理策略；不跟随重定向。 */
 export function createWebAgentHttpGetPort(egress: Pick<ReturnType<typeof createPublicAgentEgress>, 'withTransport'>): HttpGetPort {
-  return { async get(input, signal) {
+  return { async get(input, callerSignal) {
+    const deadline = AbortSignal.timeout(HTTP_GET_TIMEOUT_MS)
+    const signal = AbortSignal.any([callerSignal, deadline])
+    const checkDeadline = () => {
+      callerSignal.throwIfAborted()
+      if (deadline.aborted) throw new ProviderError('timeout')
+    }
     for (let attempt = 0; ; attempt++) {
       try {
-        return await egress.withTransport(signal, async transport => {
+        const result = await egress.withTransport(signal, async transport => {
           const response = await transport.request({
             url: input.url, method: 'GET', timeoutMs: 15_000,
             headers: { 'user-agent': 'curl/8', ...(input.headers ?? {}) },
@@ -47,16 +55,15 @@ export function createWebAgentHttpGetPort(egress: Pick<ReturnType<typeof createP
             return { status: response.status, headers: response.headers, body: Buffer.concat(chunks, size) }
           } finally { await Promise.resolve(response.cancel()).catch(() => undefined) }
         })
+        checkDeadline()
+        return result
       } catch (error) {
-        signal.throwIfAborted()
+        checkDeadline()
         const retryable = error instanceof ProviderError && error.options.retryable === true
           && (error.code === 'timeout' || error.code === 'network')
         if (!retryable || attempt >= HTTP_GET_RETRY_DELAYS.length) throw error
-        await new Promise<void>((resolve, reject) => {
-          const timer = setTimeout(() => { signal.removeEventListener('abort', cancel); resolve() }, HTTP_GET_RETRY_DELAYS[attempt]!)
-          const cancel = () => { clearTimeout(timer); signal.removeEventListener('abort', cancel); reject(new ProviderError('cancelled')) }
-          signal.addEventListener('abort', cancel, { once: true })
-        })
+        try { await sleep(HTTP_GET_RETRY_DELAYS[attempt], undefined, { signal }) }
+        catch { checkDeadline() }
       }
     }
   } }

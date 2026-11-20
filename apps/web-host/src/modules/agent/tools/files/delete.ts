@@ -1,4 +1,4 @@
-import type { FileDeletePort, FileFolderDeletePort, FileGrepPort } from '@gugu/core/tools'
+import type { FileDeletePort, FileFolderDeletePort, FilePathLookup } from '@gugu/core/tools'
 import { createHash } from 'node:crypto'
 import { CoreError } from '@gugu/core'
 import { stableJson, type ToolCall, type ToolResult } from '@gugu/core/agent'
@@ -86,7 +86,7 @@ export function createWebAgentFileDeletePort(
   pool: Pick<Pool, 'query'>,
   operations: FileDeleteOperations,
   lease: AgentDispatchLease,
-  files?: Pick<FileGrepPort, 'list'>,
+  files?: Pick<FilePathLookup, 'list'>,
 ): FileDeletePort {
   if (lease.input.v !== 2 || lease.input.source !== 'web') throw new TypeError('Web Agent 文件删除来源无法验证')
   const expected = Object.freeze({ ...lease.identity })

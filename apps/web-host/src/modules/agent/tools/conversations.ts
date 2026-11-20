@@ -1,6 +1,6 @@
 import type { Pool } from 'pg'
 import type { ConversationReadPort,ConversationSearchPort,ConversationSearchHit } from '@gugu/core/tools'
-import type { RunIdentity } from '@gugu/core/agent'
+import type { AgentObservationPort, RunIdentity } from '@gugu/core/agent'
 import type { SqlDataRuntime } from '@gugu/core/data'
 import { createPostgresAgentConversationTextReader,createSqlAgentConversationSearchSources } from '@gugu/core/agent-sessions'
 import { configureRagJieba,createSqlRagConversationSearch,type RagJieba } from '@gugu/core/agent/rag'
@@ -22,9 +22,9 @@ export function createAgentConversationSearchPort(core:Pick<SqlDataRuntime,'db'|
 }
 
 /** 只有 Host 已提供正式分词器后才启用 Core RAG 会话搜索。 */
-export function createCoreAgentConversationSearchPort(core:Pick<SqlDataRuntime,'db'|'backend'>,jieba:RagJieba=getAgentRagJieba()):ConversationSearchPort {
+export function createCoreAgentConversationSearchPort(core:Pick<SqlDataRuntime,'db'|'backend'>,jieba:RagJieba=getAgentRagJieba(),trace?:{identity:RunIdentity;observation?:AgentObservationPort}):ConversationSearchPort {
  configureRagJieba(jieba)
- return createAgentConversationSearchPort(core,{search:createSqlRagConversationSearch(core.db,core.backend)})
+ return createAgentConversationSearchPort(core,{search:createSqlRagConversationSearch(core.db,core.backend,trace)})
 }
 
 /** 将生产 Web RAG 会话搜索限制在 dispatch lease 的 owner 范围。 */

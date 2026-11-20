@@ -52,20 +52,22 @@ export async function createImRunSender(options: ArtifactOptions & {
   const source = await proof.read()
   const format = scope.platform === 'qq' ? await qqFormat() : null
   const guard = async () => { try { await proof.read(); return format === null || await qqFormat() === format } catch { return false } }
-  async function text(input: Parameters<ImRunDeliveryPorts<unknown>['sender']['text']>[0], extraAuthorize?: () => Promise<boolean>, kind: 'text' | 'interaction' = 'text'): ReturnType<ImRunDeliveryPorts<unknown>['sender']['text']> {
+  async function text(input: Parameters<ImRunDeliveryPorts<unknown>['sender']['text']>[0], extraAuthorize?: () => Promise<boolean>, kind: 'text' | 'interaction' | 'tool' = 'text'): ReturnType<ImRunDeliveryPorts<unknown>['sender']['text']> {
     try {
       if (!same(input.identity, identity) || !input.deliveryId || typeof input.text !== 'string' || !input.text) return 'rejected'
       const authorize = async () => await guard() && (!extraAuthorize || await extraAuthorize())
       if (!await authorize()) return 'rejected'
-      const wire = options.sender(binding), original = payload.platform_message_id ?? payload.message_id
+      const wire = options.sender(binding)
+      const original = scope.platform === 'qq' ? payload.message_id : payload.platform_message_id ?? payload.message_id
       if (!wire || wire.platform !== scope.platform) return 'rejected'
       const recipient = scope.chatId ?? scope.platformUserId
-      const evidence = (receipt: Parameters<typeof imAcceptedEvidence>[0]['receipt']) => imAcceptedEvidence({ scope, source, recipient, kind, text: input.text, receipt })
+      const evidence = (receipt: Parameters<typeof imAcceptedEvidence>[0]['receipt']) => kind === 'tool' ? receipt.outcome
+        : imAcceptedEvidence({ scope, source, recipient, kind, text: input.text, receipt })
       if (wire.platform === 'telegram') return evidence(await wire.sender.text({ chatId: recipient, chatType: scope.chatType,
         ...(typeof original === 'string' ? { replyToMessageId: original } : {}) }, input.text, { authorize }))
       if (wire.platform === 'feishu') return evidence(await wire.sender.text(recipient, input.text, undefined, authorize))
       if (wire.platform === 'qq') return evidence(await wire.sender.text({ id: recipient, chatType: scope.chatType,
-        messageFormat: format!, messageId: typeof original === 'string' ? original : undefined,
+        messageFormat: format!, messageId: kind !== 'tool' && typeof original === 'string' ? original : undefined,
         ...(scope.chatType === 'group' ? { mentionUserId: actor.platformUserId } : {}) }, input.text, undefined, authorize))
       if (scope.chatType !== 'c2c' || typeof payload.context_token !== 'string' || !payload.context_token) return 'rejected'
       return evidence(await wire.sender.text({ userId: scope.platformUserId, contextToken: payload.context_token }, input.text, undefined, authorize))
@@ -73,6 +75,8 @@ export async function createImRunSender(options: ArtifactOptions & {
   }
   return {
     text,
+    toolNotice: input => scope.chatType === 'c2c' && (scope.platform === 'qq' || scope.platform === 'wechat')
+      ? text(input, undefined, 'tool') : Promise.resolve('rejected'),
     artifact: createImRunArtifactSender(options),
     async interaction(input) {
       try {

@@ -7,13 +7,13 @@
             <Icon name="admin.alarm" :size="14" />{{ t('schedules.create') }}
           </ActionButton>
         </template>
-        <div v-if="!loading && !tasks.length" class="scrollable-card-layout__empty">
-          <Icon name="admin.alarm" :size="32" />
-          <strong>{{ t('schedules.emptyTitle') }}</strong>
-          <span>{{ t('schedules.emptyHint') }}</span>
-          <ActionButton fit @click="openChatSetup">{{ t('schedules.createFirst') }}</ActionButton>
-        </div>
-        <div v-else-if="tasks.length" class="task-grid">
+        <template v-if="!loading && !tasks.length" #empty>
+          <FirstUseEmptyState :title="t('schedules.emptyTitle')" :description="t('schedules.emptyHint')">
+            <template #icon><Icon name="admin.alarm" :size="24" /></template>
+            <ActionButton fit @click="openChatSetup">{{ t('schedules.createFirst') }}</ActionButton>
+          </FirstUseEmptyState>
+        </template>
+        <div v-if="tasks.length" class="task-grid">
           <ScheduleCard v-for="task in tasks" :key="task.id" :task="task" :busy="busy"
             @toggle="toggle" @run="runNow" @edit="openEdit" @remove="remove" />
         </div>
@@ -35,6 +35,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
+import FirstUseEmptyState from '@/components/common/layout/FirstUseEmptyState.vue'
 import ScrollableCardLayout from '@/components/common/layout/ScrollableCardLayout.vue'
 import { errorMessage, showAppError } from '@/composables/core/useAppToast'
 import { workspacesApi } from '@/services/api'

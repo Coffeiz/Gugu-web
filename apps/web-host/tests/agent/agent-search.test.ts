@@ -7,13 +7,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Pool } from 'pg'
 import { createPostgresRuntime, tablesSql } from '@gugu/core/data'
-import type { ProviderHttpRequest, ProviderTransport } from '@gugu/core/providers'
+import { ProviderError, type ProviderHttpRequest, type ProviderTransport } from '@gugu/core/providers'
 import { createAgentRunner, type AgentRunnerPorts, type RunCheckpoint } from '@gugu/core/agent'
 import { createWebAgentConfirmationAuthorization } from '../../src/modules/agent/tools/confirm.js'
 import type { ContextSourceSelection } from '@gugu/core/agent'
 import { createHttpGetTool, createToolRegistry } from '@gugu/core/tools'
 import { createPublicAgentEgress } from '../../src/adapters/network/safe-egress-proxy.js'
-import { createWebAgentSearchPorts, verifySearchImage } from '../../src/modules/agent/tools/search.js'
+import { createWebAgentHttpGetPort, createWebAgentSearchPorts, verifySearchImage } from '../../src/modules/agent/tools/search.js'
 
 const identity = { ownerId: 'owner-search', sessionId: '5', runId: 'run-search' }
 const scope = {
@@ -96,6 +96,22 @@ test('http_get 通过安全公网传输读取 HTML，保留链接并删除页面
   assert.equal(value.content_type, 'text/html')
   assert.match(value.body, /\[原文\]\(https:\/\/example\.test\/source\)/u)
   assert.doesNotMatch(value.body, /导航机密噪音|private-script/u)
+})
+
+test('http_get 总时限耗尽时终止重试并报告超时', async t => {
+  const deadline = new AbortController()
+  t.mock.method(AbortSignal, 'timeout', () => deadline.signal)
+  let attempts = 0
+  const port = createWebAgentHttpGetPort({
+    async withTransport() {
+      attempts++
+      deadline.abort()
+      throw new ProviderError('network', { retryable: true })
+    },
+  })
+  await assert.rejects(port.get({ ownerId: identity.ownerId, url: 'https://example.test', maxChars: 100 },
+    scope.signal), { code: 'timeout' })
+  assert.equal(attempts, 1)
 })
 
 test('Web 搜索端口经 Core Harness 分派，并把结果带入下一轮 Provider 上下文', async () => {

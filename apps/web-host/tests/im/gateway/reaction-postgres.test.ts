@@ -11,8 +11,8 @@ import { createPostgresImAccess } from '../../../src/modules/im/gateway/inbound/
 import { createPostgresImConversationStore } from '../../../src/modules/im/gateway/agent/conversations.js'
 import { createImInboundEnvelope } from '../../../src/modules/im/gateway/inbound/envelope.js'
 import { createPostgresImReaction } from '../../../src/modules/im/gateway/attention/reactions.js'
-import { createFeishuClient } from '../../../src/modules/im/gateway/platforms/feishu/client.js'
-import { createFeishuSender } from '../../../src/modules/im/gateway/platforms/feishu/sender.js'
+import { createFeishuClient } from '@gugu/gateway/feishu'
+import { createFeishuSender } from '@gugu/gateway/feishu'
 import { imActorInputFromPayload } from '@gugu/core/im/access'
 
 const url = process.env.GUGU_IM_GATEWAY_TEST_DATABASE_URL

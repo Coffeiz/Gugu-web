@@ -69,10 +69,10 @@ export function createAgentRunToolPorts(options: {
     tools,
     preparation: {
       ...options.preparation,
-      async discover(input, signal) {
+      async discover(input, signal, preparedConfiguration) {
         signal.throwIfAborted()
         if (input.identity.ownerId !== identity.ownerId) throw new AgentRunReconstructionVersionError('工具运行身份不匹配')
-        const configuration = await options.preparation.configuration(identity, signal)
+        const configuration = preparedConfiguration ?? await options.preparation.configuration(identity, signal)
         signal.throwIfAborted()
         if (configuration.identity.ownerId !== input.identity.ownerId
           || configuration.identity.subject.kind !== input.identity.subject.kind

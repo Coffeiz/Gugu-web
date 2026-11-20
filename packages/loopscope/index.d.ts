@@ -29,7 +29,7 @@ export function createLoopScopeTrace(options: {
       method: 'POST'
       allowLocal: true
       headers: Readonly<Record<string, string>>
-      body: Record<string, unknown>
+      body: Record<string, unknown> | Uint8Array
     }, signal: AbortSignal): Promise<{ status: number; cancel?(): Promise<void> | void }>
   }
 }): { record(event: LoopScopeTraceEvent): void; close(drainMs?: number): Promise<void> }

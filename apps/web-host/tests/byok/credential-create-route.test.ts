@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import Fastify from 'fastify'
-import { registerCredentialCreateRoute } from '../../src/modules/byok/routes.js'
+import { ByokEncryptionUnavailable } from '../../src/modules/byok/store.js'
+import { registerCredentialCreateRoute, registerCredentialPatchRoute } from '../../src/modules/byok/routes.js'
 test('创建凭据解析与 Pydantic 布尔、整数规则一致并要求认证',async()=>{
  const app=Fastify();let body:any
  registerCredentialCreateRoute(app,{requireUser:async(req,reply)=>{if(!req.headers.authorization)return reply.code(401).send()},ownerIdFromRequest:()=> '00000000-0000-4000-8000-000000000071',create:async(_owner,input)=>{body=input;return {id:1} as never}})
@@ -20,4 +21,21 @@ test('HTTP请求校验与真实 Python CredentialCreate 对照', {skip:!process.
  const env={...process.env,GUGU_ENV_FILE:'/dev/null',GUGU_CONFIG_OVERRIDE_FILE:'/tmp/gugu-n2-byok-nonexistent',PYTHONPATH:'.'}
  const result=execFileSync(process.env.GUGU_CORE_GOLDEN_PYTHON!,['-c',script],{cwd:'../../backend',env,input:JSON.stringify(samples),encoding:'utf8'}).trim().split('\n').map(Number)
  try{for(let i=0;i<samples.length;i++){const response=await app.inject({method:'POST',url:'/api/v1/byok',payload:samples[i]});assert.equal(response.statusCode===200,!!result[i],`case ${i}`)}}finally{await app.close()}
+})
+
+test('BYOK 保存失败明确返回加密服务不可用，响应隐藏底层原因', async () => {
+ const app = Fastify()
+ const fail = async () => { throw new ByokEncryptionUnavailable(new Error('synthetic diagnostic only')) }
+ const auth = { requireUser: async () => {}, ownerIdFromRequest: () => '00000000-0000-4000-8000-000000000071' }
+ registerCredentialCreateRoute(app, { ...auth, create: fail })
+ registerCredentialPatchRoute(app, { ...auth, patch: fail })
+ try {
+  for (const response of [
+   await app.inject({ method: 'POST', url: '/api/v1/byok', payload: { provider: 'openai', capability: 'llm', value: 'synthetic' } }),
+   await app.inject({ method: 'PATCH', url: '/api/v1/byok/1', payload: { value: 'synthetic' } }),
+  ]) {
+   assert.equal(response.statusCode, 503)
+   assert.deepEqual(response.json(), { detail: 'BYOK 加密服务暂不可用，请联系管理员检查凭据主密钥。' })
+  }
+ } finally { await app.close() }
 })

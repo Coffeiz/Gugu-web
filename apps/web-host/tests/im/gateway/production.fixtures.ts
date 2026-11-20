@@ -1,3 +1,4 @@
+import { byokBindings } from '@gugu/database/postgres/migrations/0021_byok_bindings'
 import { agentReasoningSql } from '@gugu/database/postgres/migrations/0012_agent_reasoning'
 import { imGatewaySql } from '@gugu/database/postgres/migrations/0013_im_gateway'
 import { imReflectionSql } from '@gugu/database/postgres/migrations/0014_im_reflection'
@@ -56,7 +57,9 @@ export async function createImProductionFixture(options:{python:string;databaseU
   await Promise.all([mkdir(storageRoot,{recursive:true}),mkdir(promptRoot,{recursive:true})])
   for(const name of ['default.md','persona.md','skills.md','policy.md','retrieval.md'])await writeFile(join(promptRoot,name),`# 合成测试规范\n你是合成测试助手。仅处理当前授权用户与当前会话的任务。\n`)
   await mkdir(join(promptRoot,'im'),{recursive:true})
-  for(const name of ['compress_conv.md','im/group_chat.md','im/group_compress.md','memory_compress.md','profile_compact.md','pattern_compact.md'])await writeFile(join(promptRoot,name),await readFile(join(backend,'agent','prompts',name)))
+  const packagedPrompts=fileURLToPath(new URL('../../../assets/agent-prompts/',import.meta.url))
+  for(const name of ['compress_conv.md','im/group_chat.md','im/group_compress.md','memory_compress.md'])await writeFile(join(promptRoot,name),await readFile(join(packagedPrompts,name)))
+  for(const name of ['profile_compact.md','pattern_compact.md'])await writeFile(join(promptRoot,name),await readFile(join(backend,'agent','prompts',name)))
   const compiled=await run(options.python,['-c',pythonSchema],{cwd:backend,env:{PATH:process.env.PATH,TZ:'UTC',PYTHONIOENCODING:'utf-8',PYTHONPATH:[backend,compat].join(delimiter),PYTHONDONTWRITEBYTECODE:'1',GUGU_ENV_FILE:join(root,'missing.env'),GUGU_CONFIG_OVERRIDE_FILE:join(root,'missing.json')},maxBuffer:8*1024*1024})
   const source=JSON.parse(compiled.stdout) as {ddl:string[];metadata:Record<string,{defaults:Record<string,unknown>;json:string[];columns:string[]}>}
   await admin.query(`CREATE SCHEMA "${schema}"`)
@@ -67,12 +70,10 @@ export async function createImProductionFixture(options:{python:string;databaseU
    const name=/CREATE TABLE(?: IF NOT EXISTS)? ([a-z_]+)/u.exec(statement)?.[1]
    if(name&&!(await pool.query('SELECT to_regclass($1) AS name',[name])).rows[0]?.name)await pool.query(statement)
   }
-  const gateway=['admission','conversation','delivery','attentionLedger','bindingConsume','shortcut','nativeInteraction','pendingAsk','reaction','reflection','production','fileTools','voiceCache','ownerSession','compact'] as const
-  for(const file of gateway)await pool.query(imGatewaySql[file])
-  await pool.query(imReflectionSql.reflectionTrigger)
-  await pool.query(imGatewaySql.retiredInbound)
-  await pool.query(imGatewaySql.historyRetention)
+  for(const statement of Object.values(imGatewaySql))await pool.query(statement)
+  for(const statement of Object.values(imReflectionSql))await pool.query(statement)
   await pool.query(agentReasoningSql.agentReasoningActive)
+  await byokBindings.apply(pool)
   core=await createPostgresRuntime({url:databaseUrl,schema,maxConnections:6})
   async function insert(table:string,overrides:Record<string,unknown>){
    const meta=source.metadata[table]

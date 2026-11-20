@@ -178,7 +178,7 @@ export function createPostgresImControls(options: {
     ...shortcut,reply:options.reply,
   }
   /** 原生按钮只消费给定token，不轮换token或按label/序号重新选择。 */
-  async function consumeNativeAction(scope:ImPreflightScope,promptId:number,token:string,signal:AbortSignal,replayOnly=false):Promise<{accepted:boolean;replayed:boolean}> {
+  async function consumeNativeAction(scope:ImPreflightScope,promptId:number,token:string,signal:AbortSignal,replayOnly=false):Promise<{accepted:boolean;replayed:boolean;awaitingText?:boolean}> {
     if(!Number.isSafeInteger(promptId)||promptId<1||typeof token!=='string'||!token||token.length>256||!await authorize(scope,signal))return{accepted:false,replayed:false}
     const bot=await access.readBot(scope)
     if(!bot||scope.platform==='telegram'&&resolveImAccess(scope,bot).role!=='owner'||scope.chatType==='c2c'&&!await privateOwner(scope,signal))return{accepted:false,replayed:false}
@@ -194,7 +194,7 @@ export function createPostgresImControls(options: {
     if(!action||row.admitted!==true)return{accepted:false,replayed:false}
     if(action.status==='consumed'&&action.consumed_event_id===scope.eventId){
       const schema=row.schema_json as Record<string,unknown>,result=schema.resolved_result as Record<string,unknown>|undefined
-      return{accepted:result?.status!=='error',replayed:true}
+      return{accepted:result?.status!=='error',replayed:true,awaitingText:action.option_id==='__custom_reply__'&&schema.custom_input_active===true}
     }
     if(replayOnly||action.status!=='pending'||!action.live)return{accepted:false,replayed:false}
     const bound=perScope(scope,signal),target={identity:{ownerId:scope.ownerId,sessionId:String(row.session_id),runId:row.run_id},promptId,toolCallId:row.tool_call_id}
@@ -211,7 +211,12 @@ export function createPostgresImControls(options: {
     const service=createAgentInteractionRespondService({pool:options.pool,effects:options.interactionEffects,enqueue:bound.enqueueChecked,wake:options.wakeInteractions,diagnose(){report('interaction_wake_pending')}})
     const result=await service.respond(scope.ownerId,promptId,token,scope.eventId)
     if(result.prompt_id!==promptId||String(result.session_id)!==target.identity.sessionId)throw fail()
-    return{accepted:result.result.status!=='error',replayed:false}
+    const awaitingText = result.result.status === 'awaiting_text'
+    if ((scope.platform === 'qq' || scope.platform === 'telegram') && awaitingText) {
+      try { await options.reply(scope, '请直接发送你的回复，咕咕会继续处理。', { quote: false, signal }) }
+      catch { report('interaction_wake_pending') }
+    }
+    return{accepted:result.result.status!=='error',replayed:false,awaitingText}
   }
   return{ports,preflight:createImInboundPreflight(ports),consumeNativeAction,
     authorizeNativeTarget:(scope:ImPreflightScope,target:ImInteractionTarget,signal:AbortSignal)=>perScope(scope,signal).authorizeTarget(target)}

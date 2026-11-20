@@ -1,3 +1,9 @@
+import { createMcpManagementTool } from '@gugu/core/tools'
+import { createMcpServerConfigLister } from '@gugu/core/mcp/server-list'
+import { createMcpSettingsReader } from '../../mcp/status.js'
+import { createConfiguredByokEnvelope } from '../../byok/crypto.js'
+import { recoverRunModelPin } from '../../agent/llm/recovery.js'
+import { createImRuntimeBindingStore } from './agent/store.js'
 import { createHash } from 'node:crypto'
 import type { Pool,PoolClient } from 'pg'
 import type { SqlDataRuntime } from '@gugu/core/data'
@@ -25,10 +31,10 @@ import { createImInteractionRecovery } from './interactions/recover.js'
 import { createGatewayBotConfig, createGatewayConfigChangePublisher, type TrustedGatewayBot } from './bot-config.js'
 import { createGatewaySupervisor } from '@gugu/gateway'
 import { createPlatformConnections } from './platform-connections.js'
-import { createQqSocketFactory } from './platforms/qq/socket.js'
+import { createQqSocketFactory } from '@gugu/gateway/qq'
 import { createQqMessagePreparer } from './platforms/qq/prepare.js'
 import { readTrustedQqMessageFormat } from './platforms/qq/format.js'
-import { createFeishuWsNetwork } from './platforms/feishu/ws-network.js'
+import { createFeishuWsNetwork } from '@gugu/gateway/feishu'
 import { createPostgresImAttachmentIngress } from './inbound/attachments.js'
 import { createPostgresImGatewayAdmission } from './inbound/admission.js'
 import { createPostgresImControls } from './attention/controls.js'
@@ -67,6 +73,9 @@ export interface NodeImHostOptions {
   environment: NodeJS.ProcessEnv; ownership?: ImRuntimeOwnership
   /** 与Web API实际消费的同一MCP runtime；不注册尚未装配的MCP工具。 */
   mcpRuntime?: Pick<ReturnType<typeof createMcpRuntime>, 'invalidate'>
+    & Partial<Pick<ReturnType<typeof createMcpRuntime>, 'state' | 'testConnection' | 'dispatchForAgent'>>
+  mcpDirectory?: NonNullable<ImProductionResourcesOptions['mcpTools']>['directory']
+  imOwnerTools?: ImProductionResourcesOptions['imOwnerTools']
   onReflection?(service: ImReflectionService): void
   observation?: AgentObservationPort
   log?: AgentRunLogPort
@@ -184,11 +193,35 @@ export function createNodeImHostRuntime(options: NodeImHostOptions) {
           },
           async telegramToken(binding, signal) { signal?.throwIfAborted(); return (await config.read()).find(bot => bot.platform === 'telegram' && bot.id === binding.botId && bot.owner === binding.ownerId)?.credentials.appSecret ?? null } }),
       })
+      const mcpSettings = createMcpSettingsReader(configPath, environment)
+      const { state: readMcpState, testConnection: testMcpConnection } = options.mcpRuntime
+      const mcpManagement = readMcpState && testMcpConnection ? {
+        enabled: () => mcpSettings().enabled === true,
+        tool: createMcpManagementTool({
+          list: createMcpServerConfigLister(options.core.db),
+          decrypt: createConfiguredByokEnvelope(environment).decrypt,
+          enabled: () => mcpSettings().enabled === true,
+          state: readMcpState,
+          testConnection: testMcpConnection,
+        }),
+      } : undefined
+      const configLister = createMcpServerConfigLister(options.core.db)
+      const dispatchMcp = options.mcpRuntime.dispatchForAgent
+      const mcpDirectory = options.mcpDirectory
+      const mcpTools: ImProductionResourcesOptions['mcpTools'] = dispatchMcp && mcpDirectory ? {
+        async directory(owner) {
+          if (mcpSettings().enabled !== true) return []
+          const configs = await configLister(owner)
+          const auto = new Set(configs.filter(config => config.enabled && config.confirm_mode === 'auto').map(config => config.id))
+          return auto.size ? (await mcpDirectory(owner)).filter(tool => auto.has(tool.server_id)) : []
+        },
+        dispatch: dispatchMcp,
+      } : undefined
       const production: Omit<ImProductionResourcesOptions, 'reflection'> = {
         pool: options.pool, core: options.core, secretKey: options.secretKey, storageRoot: options.storageRoot, promptRoot: options.promptRoot,
-        redisUrl, publicAppUrl: options.publicAppUrl, environment, access, model, memoryEnabled, voice, voiceCache, ownerSessions, retention:historyRetention, sender: connections.sender,
+        redisUrl, publicAppUrl: options.publicAppUrl, environment, configOverridePath: configPath, access, model, memoryEnabled, voice, voiceCache, ownerSessions, retention:historyRetention, sender: connections.sender,
         controls: { authorizeNativeTarget: (...args) => controls.authorizeNativeTarget(...args) }, nativeInteraction: input => native.interaction(input),
-        readRoute, diagnose: report, ...(options.testing?.provider ? { provider: options.testing.provider } : {}),
+        readRoute, mcpManagement, mcpTools, imOwnerTools: options.imOwnerTools, diagnose: report, observation: options.observation, ...(options.testing?.provider ? { provider: options.testing.provider } : {}),
       }
       reflection = createImReflectionService({ pool: options.pool, secretKey: options.secretKey, storageRoot: options.storageRoot,
         supportedPlatforms, readRoute, readRouteLocked: (...args) => ingress.readRouteLocked(...args), memoryEnabled,passiveMemoryEnabled:memoryEnabled,
@@ -243,13 +276,20 @@ export function createNodeImHostRuntime(options: NodeImHostOptions) {
           if (outcome !== 'accepted') throw new Error('IM 控制回复尚未送达')
         },
       })
-      native = createPostgresImNativeInteractions({ pool: options.pool, secretKey: options.secretKey, supportedPlatforms, controls, readRoute, sender: connections.sender })
+      native = createPostgresImNativeInteractions({ pool: options.pool, secretKey: options.secretKey, supportedPlatforms, controls, readRoute, sender: connections.sender, diagnose: report })
       const ingressOptions = { pool: options.pool, secretKey: options.secretKey, supportedPlatforms, preflight: controls.preflight, model, memoryEnabled,
         async beforeCreateSession(client:Parameters<typeof sessionRetention.beforeCreate>[0],ownerId:string){
           const result=await sessionRetention.beforeCreate(client,ownerId)
           for(const deleted of result.deleted)await historyRetention.enqueueCleanupLocked(client,ownerId,deleted.storageKeys)
         },
-        async conversationChanged(ownerId:string,sessionId:number){await historyRetention.schedule(ownerId,sessionId);runtime.wake('maintenance')},
+        async conversationChanged(ownerId: string, sessionId: number) {
+          await Promise.all([
+            publisher.publishResourceChanged({ ownerId, resource: 'sessions', operation: 'update',
+              entityId: sessionId, payload: { messages_changed: true } })
+              .then(sent => { if (!sent) report('im_runtime_event_pending') }),
+            historyRetention.schedule(ownerId, sessionId).then(() => runtime.wake('maintenance')),
+          ])
+        },
         async observePassiveLocked(client:PoolClient,ownerId:string,sessionId:number,messageIds:readonly string[]){await reflection!.observePassiveLocked(client,ownerId,sessionId,messageIds)},
         attention, pendingAsks, retired, ownerSession: ownerSessions.readLocked, bindVoiceCacheLocked: voiceCache.bindRunLocked, notify: async () => runtime.wake('dispatch'), diagnose: report }
       ingress = createPostgresImIngress({ ...ingressOptions, attachments: { mode: 'text-only' } })
@@ -263,17 +303,20 @@ export function createNodeImHostRuntime(options: NodeImHostOptions) {
         handleBatch: (...args: Parameters<typeof ingress.handleBatch>) => { if (!args[1].length) throw new Error('IM 批次为空'); return scoped(args[0], args[1][0]!.payload).handleBatch(...args) } }
       const dispatch = createPostgresAgentDispatch(options.pool, options.secretKey, 30000, ['im'],
         {beforeClaim:createImDispatchOrder({secretKey:options.secretKey,diagnose:report}).beforeClaim})
+      const bindingStore = createImRuntimeBindingStore(options.pool, options.secretKey)
       const reconstruct = createImAgentReconstructor({ pool: options.pool, deliveryPool: options.deliveryPool, secretKey: options.secretKey, redis, subscribe,
         access, readRoute, readReconstructionStatus: dispatch.readReconstructionStatus, history, resources: createImProductionResources({ ...production, reflection }),
         verifyPendingAsk: ingress.verifyPendingAskRun, observation: options.observation, log: options.log,
         async bind(lease, actor, checkpoint) {
           const bot = await access.readBot(actor); if (!bot) return null
+          const frozen = checkpoint ? null : await bindingStore.readOptional(lease.identity)
+          const pin = checkpoint ?? (frozen ? recoverRunModelPin(lease.identity, frozen.modelIdentity, options.secretKey) : null)
           return model.bindRun(lease.identity, actor, bot, await memoryEnabled(), lease.input.locale,
-            checkpoint ? { identity: lease.identity, modelIdentity: checkpoint.modelIdentity, accessScopeHash: checkpoint.accessScopeHash } : undefined)
+            pin ? { identity: lease.identity, modelIdentity: pin.modelIdentity, accessScopeHash: pin.accessScopeHash } : undefined)
         }, diagnose: report,
       })
       const dispatchWorker = createAgentDispatchWorker({ dispatch, reconstruct, failStart: dispatch.failStart })
-      const scans = createImHostScans({ pool: options.pool, secretKey: options.secretKey, kick: dispatchWorker.kick, concurrency: 2,
+      const scans = createImHostScans({ pool: options.pool, secretKey: options.secretKey, kick: dispatchWorker.kick, concurrency: 2, diagnose: report,
         async recover(identity, input, signal) {
           const route = await readRoute(identity), actorInput = imActorInputForDispatch({ identity, input }, route), snapshot = await access.snapshot(actorInput), actor = snapshot.actor(actorInput)
           const resources = await createImProductionDelivery(production, { identity, input, route, actor })
@@ -282,7 +325,7 @@ export function createNodeImHostRuntime(options: NodeImHostOptions) {
           await withPostgresImDeliveryStore(options.deliveryPool, identity, async receipts => {
             const projection = resources.streamFactory?.(receipts, resources.authorize)
             try { await createImRunDeliveryRecovery({ events: { readAfter: store.readEventsAfter }, receipts, sender: resources.sender,
-              stream: projection, authorize: resources.authorize,
+              stream: projection, authorize: resources.authorize, showIntermediateReplies: resources.showIntermediateReplies,
               digest: value => createHash('sha256').update(stableJson(value)).digest('hex') }).recover(identity, signal) }
             finally { await projection?.close?.() }
           }, { secretKey: options.secretKey, platform: actor.platform === 'wechat' ? undefined : actor.platform, ledger: { scope: { ownerId: identity.ownerId, platform: input.im.platform, botId: input.im.botId,
@@ -297,11 +340,11 @@ export function createNodeImHostRuntime(options: NodeImHostOptions) {
       const worker = createNodeImWorker({ secretKey: options.secretKey, commands: workerRedis, ingress: workerIngress, concurrency: 2,
         ownership: { runtime: 'node', pythonGatewayStopped: true, pythonImConsumerStopped: true }, diagnose: report })
       supervisor = createGatewaySupervisor({ read: config.read, subscribe: config.subscribe, connect: connections.connect, report })
-      return { supervisor, worker, reflection, scanDispatch: scans.scanDispatch, recoverDeliveries: scans.recoverDeliveries,
+      return { supervisor, worker, reflection, pauseIngress: connections.pauseIngress, drainRuns: scans.close, scanDispatch: scans.scanDispatch, recoverDeliveries: scans.recoverDeliveries,
         async maintain(signal:AbortSignal){await historyRetention.scan(signal)},
         pumpPending: signal => ingress.pumpPendingAsks(signal).then(() => undefined), pumpInteractions: interaction.pump,
         async close() {
-          interaction.close(); await scans.close()
+          interaction.close()
           const results = await Promise.allSettled([...cleanup].reverse().map(close => Promise.resolve().then(close)))
           if (results.some(result => result.status === 'rejected')) throw new Error('IM 生产资源清理未完成')
         },

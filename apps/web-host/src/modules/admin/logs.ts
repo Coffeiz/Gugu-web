@@ -1,5 +1,6 @@
+import { setTimeout as wait } from 'node:timers/promises'
 import { lstat } from 'node:fs/promises'
-import { ansi, epoch, fileIdentity, formatTime, lineDate, openLog, readLogHistory, type HistoryPosition } from '@gugu/log/file/read'
+import { ansi, epoch, fileIdentity, formatTime, lineDate, logLineMessage, openLog, readLogHistory, type HistoryPosition } from '@gugu/log/file/read'
 import { webLogFile } from '../../shared/log-files.js'
 
 import { basename,dirname,join } from 'node:path'
@@ -87,6 +88,7 @@ async function streamLogs(
   request: FastifyRequest<{ Querystring: { source?: string } }>,
   reply: FastifyReply,
   options: AdminDebugLogOptions,
+  shutdown: AbortSignal,
 ): Promise<void> {
   const requested = request.query.source
   const selectedSources: AdminDebugLogSource[] = requested && sources.includes(requested as AdminDebugLogSource)
@@ -108,6 +110,7 @@ async function streamLogs(
     carried[item] = epoch
   }
 
+  if (shutdown.aborted) { await reply.code(503).send(); return }
   reply.hijack()
   reply.raw.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
@@ -120,7 +123,7 @@ async function streamLogs(
   }
   const delay = options.pollIntervalMs ?? 1000
   try {
-    while (!disconnected(request, reply)) {
+    while (!shutdown.aborted && !disconnected(request, reply)) {
       let authorized = false
       try { authorized = await options.verifyAdmin(request) }
       catch { authorized = false }
@@ -151,14 +154,15 @@ async function streamLogs(
             const line = rawLine.replace(ansi, '').trim()
             if (!line) continue
             carried[item] = lineDate(line, carried[item] ?? epoch)
-            write(`data: ${JSON.stringify({ source: item, line, time: formatTime(carried[item]!) })}\n\n`)
+            write(`data: ${JSON.stringify({ source: item, line, time: formatTime(carried[item]!), message: logLineMessage(line) })}\n\n`)
           }
         } catch {
           // 日志文件轮转或短暂不可读时保留连接，下一轮重新检查固定路径。
         }
       }
       write(': keepalive\n\n')
-      await new Promise((resolveDelay) => setTimeout(resolveDelay, delay))
+      try { await wait(delay, undefined, { signal: shutdown }) }
+      catch (error) { if (!shutdown.aborted) throw error }
     }
   } finally {
     if (!reply.raw.destroyed && !reply.raw.writableEnded) reply.raw.end()
@@ -166,6 +170,8 @@ async function streamLogs(
 }
 
 export function registerAdminDebugLogRoutes(app: FastifyInstance, options: AdminDebugLogOptions): void {
+  const shutdown = new AbortController()
+  app.addHook('preClose', async () => { shutdown.abort() })
   app.get<{ Querystring: { lines?: number; source?: string; cursor?: string; query?: string } }>(
     '/api/v1/admin/debug/logs/tail',
     {
@@ -189,7 +195,7 @@ export function registerAdminDebugLogRoutes(app: FastifyInstance, options: Admin
         : sources
       const previous = decodeCursor(cursor)
       const positions: HistoryCursor = {}
-      const rows: { time: Date; source: AdminDebugLogSource; index: number; line: string }[] = []
+      const rows: { time: Date; source: AdminDebugLogSource; index: number; line: string; message?: string }[] = []
       for (const item of selectedSources) {
         if (previous[item] === null) { positions[item] = null; continue }
         const path = item === 'web' ? await resolveWebPath(options) : options.paths[item]
@@ -199,7 +205,7 @@ export function registerAdminDebugLogRoutes(app: FastifyInstance, options: Admin
       }
       rows.sort((a, b) => a.time.getTime() - b.time.getTime() || a.source.localeCompare(b.source) || a.index - b.index)
       return {
-        lines: rows.map(({ time, source: item, line }) => ({ source: item, line, time: formatTime(time) })),
+        lines: rows.map(({ time, source: item, line, message }) => ({ source: item, line, time: formatTime(time), message })),
         next_cursor: encodeCursor(positions),
         has_more: Object.values(positions).some(position => position !== null),
       }
@@ -209,7 +215,7 @@ export function registerAdminDebugLogRoutes(app: FastifyInstance, options: Admin
   app.get<{ Querystring: { source?: string } }>(
     '/api/v1/admin/debug/logs/stream',
     { preHandler: options.requireAdmin, schema: { querystring: { type: 'object', properties: { source: { type: 'string' } } } } },
-    (request, reply) => streamLogs(request, reply, options),
+    (request, reply) => streamLogs(request, reply, options, shutdown.signal),
   )
 }
 

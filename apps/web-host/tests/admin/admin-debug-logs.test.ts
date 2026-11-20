@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { configureDiagnosticLog, createLogWriter, diagLog } from '../../src/shared/log-files.js'
+import { configureDiagnosticLog, createLogWriter, createWebRuntimeLog, diagLog } from '../../src/shared/log-files.js'
 import { registerAdminDebugLogRoutes, resolveAdminDebugLogFiles } from '../../src/modules/admin/logs.js'
 
 async function setup(resolveFiles?: (root: string) => ReturnType<typeof resolveAdminDebugLogFiles>) {
@@ -258,5 +258,73 @@ test('轮转后游标继续读取旧文件，重启追加并保留导入历史�
     write('next-rotation\n')
     assert.equal((await readdir(ctx.root)).filter(name => name.startsWith('gugu.log.rotate-')).length, 1)
     assert.equal(await readFile(imported, 'utf8'), 'imported\n')
+  } finally { await ctx.cleanup() }
+})
+
+test('Admin Gateway 日志按来源读取脱敏摘要，堆栈通过事件编号留在诊断文件', async () => {
+  const ctx = await setup(root => resolveAdminDebugLogFiles(join(root, 'gugu.log')))
+  try {
+    createWebRuntimeLog(ctx.paths.web, 'gateway')('gateway.degraded', {
+      code: 'dispatch_unavailable', error: new Error('合成凭据和消息正文'),
+    })
+    const response = await ctx.app.inject({
+      url: '/api/v1/admin/debug/logs/tail?source=gateway',
+      headers: { authorization: 'admin' },
+    })
+    assert.equal(response.statusCode, 200)
+    const [row] = response.json().lines
+    assert.equal(row.message, '消息网关运行异常 · 消息调度不可用')
+    assert.equal(row.source, 'gateway')
+    const record = JSON.parse(row.line)
+    assert.equal(record.event, 'gateway.degraded')
+    assert.equal(record.message, row.message)
+    assert.equal(record.attributes.code, 'dispatch_unavailable')
+    assert.equal(record.frames, undefined)
+    assert.doesNotMatch(response.body, /合成凭据和消息正文/)
+    const diagnostic = JSON.parse(await readFile(join(ctx.root, 'gugu-diag.log'), 'utf8'))
+    assert.equal(diagnostic.incident, record.incident)
+    assert.ok(diagnostic.frames.length > 0)
+  } finally { await ctx.cleanup() }
+})
+
+test('启动迁移警告保留可辨认的固定状态，并过滤未知输入', async () => {
+  const ctx = await setup(root => resolveAdminDebugLogFiles(join(root, 'gugu.log')))
+  try {
+    const log = createWebRuntimeLog(ctx.paths.web)
+    log('host.rag_unavailable', { code: 'migration_incompatible', error: new Error('合成连接信息') })
+    log('host.trash_purge_unavailable', { code: 'platform_unsupported' })
+    log('host.search_usage_unavailable', { code: 'migration_pending' })
+    log('host.rag_unavailable', { code: '合成未知状态' })
+    const response = await ctx.app.inject({
+      url: '/api/v1/admin/debug/logs/tail?source=web',
+      headers: { authorization: 'admin' },
+    })
+    assert.equal(response.statusCode, 200)
+    const records = response.json().lines.map((row: { line: string }) => JSON.parse(row.line))
+    assert.deepEqual(records.map((record: { attributes: { code: string } }) => record.attributes.code), [
+      'migration_incompatible', 'platform_unsupported', 'migration_pending', 'unknown',
+    ])
+    assert.doesNotMatch(response.body, /合成连接信息|合成未知状态/)
+  } finally { await ctx.cleanup() }
+})
+
+test('历史日志可用中文摘要和原始事件码查找', async () => {
+  const ctx = await setup(root => resolveAdminDebugLogFiles(join(root, 'gugu.log')))
+  try {
+    const line = JSON.stringify({
+      time: '2026-11-19T22:52:54.775Z', event: 'host.shutdown_phase_slow',
+      attributes: { phase: 'agent_runs', elapsedMs: 5000 },
+    })
+    await writeFile(ctx.paths.web, line + '\n')
+    for (const query of ['运行中的任务', 'host.shutdown_phase_slow']) {
+      const response = await ctx.app.inject({
+        url: `/api/v1/admin/debug/logs/tail?source=web&query=${encodeURIComponent(query)}`,
+        headers: { authorization: 'admin' },
+      })
+      assert.equal(response.statusCode, 200)
+      const [row] = response.json().lines
+      assert.equal(row.message, '关闭耗时较长 · 运行中的任务 · 耗时 5000 毫秒')
+      assert.equal(row.line, line)
+    }
   } finally { await ctx.cleanup() }
 })

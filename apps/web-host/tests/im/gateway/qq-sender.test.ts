@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { ProviderHttpRequest } from '@gugu/core/providers'
-import { createQqClient, QqApiError } from '../../../src/modules/im/gateway/platforms/qq/client.js'
-import { buildQqKeyboard, formatQqInteractionFallback, createQqSender, splitQqGroupMentions, type QqSequencePort } from '../../../src/modules/im/gateway/platforms/qq/sender.js'
+import { createQqClient, QqApiError } from '@gugu/gateway/qq'
+import { buildQqKeyboard, formatQqInteractionFallback, createQqSender, splitQqGroupMentions, type QqSequencePort } from '@gugu/gateway/qq'
 
 function fixture() {
   const calls: { path: string; body: Record<string, unknown> }[] = [], counters = new Map<string, number>(), sequenceCalls: unknown[] = [], waits: number[] = []
@@ -265,6 +265,20 @@ test('QQ按钮按40单位最多5行排列，容量不足只发送旧文本恢复
   assert.equal(f.calls.length, 1)
   assert.equal(f.calls[0]!.body.keyboard, undefined)
   assert.equal(JSON.stringify(f.calls[0]!.body).includes('token-'), false)
+})
+
+test('QQ 长选项按正文编号发送，仍可通过原生按钮选择每一项', async () => {
+  const f = fixture()
+  const options = Array.from({ length: 6 }, (_, index) => ({
+    id: `option-${index}`, label: `这是第 ${index + 1} 个用于回归测试的完整选项说明`, token: `token-${index}`,
+  }))
+  const result = await f.sender.interaction(target, { prompt_id: 17, options })
+  assert.equal(result.delivery, 'native')
+  const body = f.calls[0]!.body as { keyboard: { content: { rows: { buttons: { render_data: { label: string }; action: { data: string } }[] }[] } }; markdown: { content: string } }
+  const buttons = body.keyboard.content.rows.flatMap(row => row.buttons)
+  assert.deepEqual(buttons.map(button => button.render_data.label), ['1', '2', '3', '4', '5', '6'])
+  assert.deepEqual(buttons.map(button => button.action.data), options.map(option => `17:${option.token}`))
+  for (const option of options) assert.ok(body.markdown.content.includes(option.label))
 })
 
 test('QQ空选项、自定义回复和凭据入口使用旧文本，非法或已解决prompt不得变成新确认', async () => {

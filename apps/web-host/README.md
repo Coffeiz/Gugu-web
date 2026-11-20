@@ -12,13 +12,15 @@
 
 咕咕聊天和命令式终端执行单条 `rm` 时，使用现有危险命令权限和一次性确认，将授权路径移入磁盘回收站。支持字面量文件路径、`--` 与短选项 `-r`、`-R`、`-f`，回收项可恢复并沿用 30 天保留期。请用文件库回收站执行永久删除。
 
+咕咕可用 `delete_file(path)` 按沙盒映射路径回收文件。工具成功后返回回收项路径。使用 `list_trash` 查看磁盘回收站，再将返回的 `/trash/<回收项 UUID>` 路径传给 `restore_file`、`restore_folder` 或 `permanent_delete(path)`。永久删除也支持 `paths`（最多 50 项）和 `all=true`（清空）。确认期间回收项变化时，需要重新确认。写操作均需逐次确认，删除和恢复受会话挂载权限约束。文件记录无需在旧数据库登记。
+
 脚本、解释器和无法识别为普通写入的组合命令使用只读挂载。可识别的普通写入（如 `mkdir`、`touch` 和工作目录内的重定向）仍可写入授权目录。交互式终端中的受管目录为只读。显式启用的系统 Shell 继续使用独立权限和确认流程。
 
 ## Docker Compose
 
 Web Host 发布时包含同级的 `dist/` 和 `assets/`。对话、定时任务、管理员提示词编辑及 IM 维护共用 `assets/agent-prompts/`。运行服务账号需要对此目录有写权限，管理员保存的文本会用于后续运行。注册引导音频位于 `assets/onboarding/`。
 
-运行配置默认位于 Web Host 包目录的 `config.override.json`，可用 `GUGU_CONFIG_OVERRIDE_FILE` 指定。Compose 使用持久卷中的文件。管理员保存需要部署预先提供合法的配置文件，首次配置可从空 JSON 对象开始。Web Host 默认追加写入包目录的 `logs/gugu.log`，部署可用 `GUGU_LOG_FILE` 指定固定路径。Compose 将日志放在持久卷的 `/data/logs/`。常规日志与同目录下仅供服务器运维查看的 `gugu-diag.log` 各按 10 MiB 轮转并保留最近 10 份归档。Debug 页可以分页和搜索常规归档。Agent Run 与 Desktop 共用 `@gugu/log` 的 JSONL 事件、字段白名单和诊断格式。Run 失败时，常规和诊断记录通过同一 Run 指纹关联。迁移时可将旧日志复制到同目录，以 `gugu.log.history-<13 位毫秒时间戳>-<64 位十六进制唯一标识>` 命名，自动轮转会保留这些迁移归档。使用 BYOK 时，通过 `CREDENTIALS_MASTER_KEY` 或工作区外的 `CREDENTIALS_MASTER_KEY_FILE` 提供主密钥。已有加密凭据继续使用对应的原密钥。
+运行配置默认位于 Web Host 包目录的 `config.override.json`，可用 `GUGU_CONFIG_OVERRIDE_FILE` 指定。Compose 使用持久卷中的文件。管理员保存需要部署预先提供合法的配置文件，首次配置可从空 JSON 对象开始。Web Host 默认追加写入包目录的 `logs/gugu.log`，部署可用 `GUGU_LOG_FILE` 指定固定路径。Compose 将日志放在持久卷的 `/data/logs/`。常规日志与同目录下仅供服务器运维查看的 `gugu-diag.log` 各按 10 MiB 轮转并保留最近 10 份归档。Debug 页可以分页和搜索常规归档。Agent Run 与 Desktop 共用 `@gugu/log` 的 JSONL 事件、字段白名单和诊断格式。Run 失败时，常规和诊断记录通过同一 Run 指纹关联。 Node Gateway 的常规事件写入 `gugu-gateway.log`，Sandbox 和宿主生命周期事件写入 `gugu.log`。同一运行故障的常规记录与私有诊断通过 `incident` 关联。迁移时可将旧日志复制到同目录，以 `gugu.log.history-<13 位毫秒时间戳>-<64 位十六进制唯一标识>` 命名，自动轮转会保留这些迁移归档。BYOK 优先使用显式主密钥或工作区外的 `CREDENTIALS_MASTER_KEY_FILE`。Linux Web Host 默认读取 `GUGU_DATA_DIR/.byok-master-key`，未配置数据目录时使用 `$XDG_STATE_HOME/gugu/.byok-master-key`，再默认到 `~/.local/state/gugu/.byok-master-key`。首次保存凭据时自动创建，迁移已有凭据时须把原主密钥放入默认路径或显式指定原文件。
 
 在仓库根目录执行：
 

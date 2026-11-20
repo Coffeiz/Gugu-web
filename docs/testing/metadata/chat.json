@@ -39,6 +39,14 @@
     "keyBehavior": "恢复开放提问后自定义回答路由到原交互，不进入普通发送队列",
     "ci": "frontend-test"
   },
+  "apps/web/tests/chat/composables/sessionRunStatus.test.ts": {
+    "domain": "chat-rendering",
+    "layer": "L0",
+    "owner": "apps/web/chat",
+    "productionEntry": "apps/web/src/components/common/gugu-chat/composables/sessionRunStatus.ts",
+    "keyBehavior": "旧 Run 的迟到事件不覆盖新 Run 的侧栏动画，等待确认后可恢复",
+    "ci": "frontend-test"
+  },
   "apps/web/tests/chat/composables/sessionScrollLayout.test.ts": {
     "domain": "chat-rendering",
     "layer": "L0",

@@ -57,6 +57,13 @@ it('运行中的卡片恢复计时，结束后显示持久化耗时', async () =
   }
 })
 
+it('历史中的未知工具结果显示未确认状态且不继续计时', () => {
+  const { host } = mountBubble({ toolStatus: 'unknown', toolStartedAt: '2026-01-01T00:00:01Z' })
+  expect(host.textContent).toContain('chatUi.toolResultUnknown')
+  expect(host.textContent).not.toContain('chatUi.toolRunning')
+  expect(host.querySelector('.tool-event-duration')).toBeNull()
+})
+
 it('管理员覆盖优先显示，只有历史默认标签时沿用当前语言', () => {
   const custom = mountBubble(Object.assign({ toolName: 'list_projects' }, { toolLabelOverride: '正在核对项目' }))
   expect(custom.host.querySelector('.tool-event-label')?.textContent).toBe('正在核对项目')

@@ -1,5 +1,5 @@
 <template>
-  <section class="workspace-files" :aria-busy="pending">
+  <section class="workspace-files" :class="{ 'is-loading': loading && !error }" :aria-busy="pending">
     <div v-if="error" role="alert">
       <p>{{ error }}</p>
       <ActionButton variant="secondary" @click="load">{{ t('common.actions.retry') }}</ActionButton>
@@ -114,6 +114,7 @@
           @click="runContext(entry => emit('cut', entry))"><Icon name="action.cut" :size="13" />{{ t('sharedUi.cut') }}</button>
       </template>
     </FileBrowserContextMenu>
+    <UploadConflictDialog ref="conflictDialog" />
   </section>
 </template>
 
@@ -132,6 +133,7 @@ import FileUploadButton from '@/components/common/file-browser/FileUploadButton.
 import FileUploadGhostCard from '@/components/common/file-browser/FileUploadGhostCard.vue'
 import RenameInput from '@/components/common/file-browser/RenameInput.vue'
 import Icon from '@/components/common/icons/Icon.vue'
+import UploadConflictDialog from '@/components/common/overlays/UploadConflictDialog.vue'
 import { errorMessage, showAppError } from '@/composables/core/useAppToast'
 import { filesToItems, readDroppedEntries, uploadWorkspaceFile, type UploadItem } from '@/composables/files/useFileUploadCore'
 import { useFileLibraryFolderPresentation } from '@/composables/files/useFileLibraryFolderPresentation'
@@ -291,6 +293,8 @@ async function commitRename(entry: PathFileEntry) {
   }
 }
 
+const conflictDialog = ref<InstanceType<typeof UploadConflictDialog> | null>(null)
+
 async function uploadItems(items: UploadItem[]) {
   const target = { directoryId: props.directoryId, relativePath: props.relativePath }
   const epoch = accountBoundaryEpoch.value
@@ -299,7 +303,9 @@ async function uploadItems(items: UploadItem[]) {
     const { base, ext } = splitName(item.file.name)
     const ghost = createGhost(base || item.file.name, ext)
     try {
-      await uploadWorkspaceFile(target, item, progress => updateGhostProgress(ghost, progress))
+      await uploadWorkspaceFile(target, item, progress => updateGhostProgress(ghost, progress),
+        conflicts => conflictDialog.value?.show(conflicts) ?? Promise.resolve(new Map()),
+        () => epoch === accountBoundaryEpoch.value)
       removeGhost(ghost)
     } catch (cause) {
       failGhost(ghost)
@@ -384,6 +390,15 @@ function openFile(entry: PathFileEntry) {
 </script>
 
 <style scoped>
+.workspace-files.is-loading {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+}
+.workspace-files.is-loading > [role="status"] {
+  padding: 0;
+}
+
 .workspace-file-list :is(.list-head, .list-row) {
   grid-template-columns: minmax(0, 1fr) 64px 72px 34px;
 }

@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import { ILinkApiError } from './client.js'
-import type { createILinkClient } from './client.js'
+import { ILinkApiError } from '@gugu/gateway/wechat'
+import type { createILinkClient } from '@gugu/gateway/wechat'
 import { WECHAT_MEDIA_MAX_BYTES, WechatMediaError } from './media.js'
 import type { createWechatMedia } from './media.js'
 import type { RunEvent } from '@gugu/core/agent'
-import { createWechatTypingIndicator, createWechatTypingTicketCache, type WechatTypingOptions } from './typing.js'
+import { createWechatTypingIndicator, createWechatTypingTicketCache, type WechatTypingOptions } from '@gugu/gateway/wechat'
 
 /** 由Host可信运行绑定解析；contextToken是秘密，只能在内存和受控平台请求中使用。 */
 export interface WechatSendTarget { readonly userId: string; readonly contextToken: string; readonly typingTicket?: string }

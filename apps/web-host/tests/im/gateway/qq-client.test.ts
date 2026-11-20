@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ProviderHttpRequest, ProviderTransport } from '@gugu/core/providers';
-import { createQqClient, QqApiError } from '../../../src/modules/im/gateway/platforms/qq/client.js';
+import { createQqClient, QqApiError } from '@gugu/gateway/qq';
 
 test('QQ鉴权await后撤权，在实际消息transport请求前复核且不重试发送',async()=>{
   let calls=0,allowed=true

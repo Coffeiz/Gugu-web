@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { connectWechatPolling, type WechatPollingOptions } from '../../../src/modules/im/gateway/platforms/wechat/polling.js'
+import { connectWechatPolling, type WechatPollingOptions } from '@gugu/gateway/wechat'
 
 const message = (token = 'context-synthetic', extra: Record<string, unknown> = {}) => ({
   message_type: 1, from_user_id: 'wx-synthetic', context_token: token, create_time_ms: 123,

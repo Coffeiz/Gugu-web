@@ -1,3 +1,4 @@
+import {completeQqLines} from '@gugu/core/im/qq-text'
 import {createHash} from 'node:crypto'
 import {z} from 'zod'
 import {stableJson,type RunIdentity,type RunEvent} from '@gugu/core/agent'
@@ -5,7 +6,7 @@ import type {ImRunDeliveryPorts,ImDeliveryAcknowledgement} from '@gugu/core/im/r
 import type {ImDeliverySession} from '../../delivery/store.js'
 import {imAcceptedEvidence,type ImAcceptedSource} from '../../agent/evidence.js'
 import type {ImAttachmentScope} from '../../inbound/attachments.js'
-import {parseQqStreamSnapshot,type createQqSender,type QqTarget,type QqReceipt} from './sender.js'
+import {parseQqStreamSnapshot,type createQqSender,type QqTarget,type QqReceipt} from '@gugu/gateway/qq'
 import {createFeishuRunEventProjector,type FeishuChartRenderer} from '../feishu/run-events.js'
 
 const hash=(value:unknown)=>createHash('sha256').update(stableJson(value)).digest('hex')
@@ -20,25 +21,30 @@ class Blocked extends Error{constructor(readonly outcome:'unknown'|'rejected'){s
 
 /** 禁自主timer：只有正式有序Run事件可发帧，所有原生回执与状态共用既有加密投递事务。 */
 export function createPersistentQqProjection(options:{
- identity:RunIdentity;target:QqTarget;policyVersion:string;receipts:ImDeliverySession;sender:Pick<ReturnType<typeof createQqSender>,'privateStream'|'text'|'prepareText'>
+ identity:RunIdentity;target:QqTarget;legacyMessageId?:string;policyVersion:string;receipts:ImDeliverySession;sender:Pick<ReturnType<typeof createQqSender>,'privateStream'|'text'|'prepareText'>
  authorize():Promise<boolean>;acceptedEvidence?:{scope:ImAttachmentScope;recipient:string;source():Promise<ImAcceptedSource>};now?():number
  /** 整次上传+发送共用一个持久op；父Host必须在每次HTTP复核当前授权。 */
  sendChart?(png:Uint8Array):Promise<QqReceipt>
  renderCharts?:FeishuChartRenderer
 }):NonNullable<ImRunDeliveryPorts<unknown>['stream']>{
- const identity=Object.freeze({...options.identity}),target=structuredClone(options.target),store=options.receipts.projection
- if(!store||target.chatType!=='c2c'||target.messageFormat!=='markdown'||!target.id||!options.policyVersion)throw new Error('QQ 持久流式投影未配置')
+ const identity=Object.freeze({...options.identity}),currentTarget=structuredClone(options.target),store=options.receipts.projection
+ if(!store||currentTarget.chatType!=='c2c'||currentTarget.messageFormat!=='markdown'||!currentTarget.id||!options.policyVersion)throw new Error('QQ 持久流式投影未配置')
  if(options.acceptedEvidence&&(options.acceptedEvidence.scope.platform!=='qq'||options.acceptedEvidence.scope.ownerId!==identity.ownerId
-  ||options.acceptedEvidence.scope.chatType!=='c2c'||options.acceptedEvidence.scope.chatId!==null||options.acceptedEvidence.scope.platformUserId!==target.id||options.acceptedEvidence.recipient!==target.id))throw new Error('QQ 持久流式证据无效')
- const targetHash=hash([target,options.policyVersion,options.acceptedEvidence?.scope??null,!!options.sendChart]),now=options.now??Date.now
+  ||options.acceptedEvidence.scope.chatType!=='c2c'||options.acceptedEvidence.scope.chatId!==null||options.acceptedEvidence.scope.platformUserId!==currentTarget.id||options.acceptedEvidence.recipient!==currentTarget.id))throw new Error('QQ 持久流式证据无效')
+ const targetDigest=(target:QqTarget)=>hash([target,options.policyVersion,options.acceptedEvidence?.scope??null,!!options.sendChart])
+ const legacyTarget=options.legacyMessageId?{...currentTarget,messageId:options.legacyMessageId}:null
+ const currentHash=targetDigest(currentTarget),legacyHash=legacyTarget&&targetDigest(legacyTarget),now=options.now??Date.now
  let tail:Promise<unknown>=Promise.resolve()
  async function project(input:Parameters<NonNullable<ImRunDeliveryPorts<unknown>['stream']>['project']>[0]):Promise<ImDeliveryAcknowledgement>{
   if(stableJson(input.identity)!==stableJson(identity)||stableJson(input.event.identity)!==stableJson(identity)||!input.deliveryId)throw new Error('QQ 流式投递身份无效')
   const event=input.event
   if(!Number.isSafeInteger(event.sequence)||event.sequence<1||!Number.isSafeInteger(event.round)||event.round<0)throw new Error('QQ 流式事件顺序无效')
   const read=await store!.read();let version=read.version
-  let state:State=read.state===null?{v:1,target:targetHash,eventSequence:0,lastEventHash:'',segment:0,round:event.round,stage:'open',mode:'stream',plainBuffer:'',current:null,pendingRoundText:null,visible:[],lastFlushAt:0,inflight:null,
+  let state:State=read.state===null?{v:1,target:currentHash,eventSequence:0,lastEventHash:'',segment:0,round:event.round,stage:'open',mode:'stream',plainBuffer:'',current:null,pendingRoundText:null,visible:[],lastFlushAt:0,inflight:null,
    parser:createFeishuRunEventProjector().snapshot(),line:'',chartSource:'',rawRound:'',charts:[]}:schema.parse(read.state)
+  // 旧投影继续使用原目标，避免把已发送的流切到另一个被动消息 ID。
+  const target=legacyTarget&&state.target===legacyHash?legacyTarget:currentTarget
+  const targetHash=target===legacyTarget?legacyHash:currentHash
   if(state.target!==targetHash)throw new Error('QQ 流式恢复策略不匹配')
   if(state.current!==null)parseQqStreamSnapshot(state.current)
   let parser=createFeishuRunEventProjector({checkpoint:state.parser,...(options.renderCharts?{renderCharts:options.renderCharts}:{})})
@@ -57,7 +63,8 @@ export function createPersistentQqProjection(options:{
   if(event.sequence===state.eventSequence)return state.lastEventHash===hash(event)?acknowledged():'unknown'
   if(!await options.authorize())return 'rejected'
   if(state.stage==='finished')return 'rejected'
-  if(event.type==='run_resumed'){if(state.stage!=='paused')return 'rejected';state.stage='open'}
+  // 检查点续跑也会发出 run_resumed，已有正文投影应继续使用原段。
+  if(event.type==='run_resumed'&&state.stage==='paused')state.stage='open'
   else if(state.stage==='paused'&&!['interaction_resolved','interaction_required','tool_done','final'].includes(event.type))return 'rejected'
   state.inflight={sequence:event.sequence,fingerprint:hash(event)}
   version=await store!.checkpoint(version,snapshot())
@@ -67,12 +74,14 @@ export function createPersistentQqProjection(options:{
    async checkpoint(value){state.current=value;version=await store!.checkpoint(version,snapshot())}})
   async function send(final:boolean,text?:string){
    const value=open();let key=`qq:${state.segment}:${event.sequence}:${++operation}:${final?'done':'frame'}`
-   const fingerprint=hash([targetHash,state.segment,event.sequence,final,text??null,value.snapshot()])
+   const before=value.snapshot()
+   const fingerprint=hash([targetHash,state.segment,event.sequence,final,text??null,before])
    if(!await options.authorize())throw new Blocked('rejected')
    if(await options.receipts.begin(identity,key,fingerprint)!=='new')throw new Blocked('unknown')
    if(!await options.authorize()){await options.receipts.settle(identity,key,'rejected');throw new Blocked('rejected')}
    const receipt=final?await value.finish(text,{allowRewrite:true}):await value.flush()
-   state.current=value.snapshot()
+   const after=value.snapshot()
+   state.current=after
    if(receipt.outcome==='rejected'&&receipt.definitelyUnsent&&value.snapshot().streamId===null&&value.snapshot().index===0&&await options.authorize()){
     await options.receipts.settle(identity,key,'rejected')
     state.mode='plain';state.plainBuffer=value.snapshot().fullText;state.current=null;stream=undefined;state.segment++
@@ -81,7 +90,7 @@ export function createPersistentQqProjection(options:{
     return
    }
    if(receipt.outcome!=='accepted'||final&&!receipt.closed){await options.receipts.settle(identity,key,receipt.outcome==='rejected'?'rejected':'unknown');throw new Blocked(receipt.outcome==='rejected'?'rejected':'unknown')}
-   state.lastFlushAt=now()
+   if(!final&&after.index>before.index)state.lastFlushAt=now()
    if(final){const finished=value.snapshot();state.visible.push({round:state.round,text:finished.lastSentContent,source:finished.fullText,boundary:event.type,ids:[...receipt.platformMessageIds]});state.current=null;state.segment++;stream=undefined}
    version=await store!.accepted(key,version,snapshot())
   }
@@ -158,7 +167,11 @@ export function createPersistentQqProjection(options:{
     if(state.pendingRoundText!==null){await finishSource();await close(state.pendingRoundText);state.pendingRoundText=null;state.rawRound='';resetParser()}
     if(state.round!==event.round){await finishSource();await close();state.round=event.round;state.rawRound='';resetParser()}
     await tokens(event.payload.text)
-    if(state.current!==null&&now()-state.lastFlushAt>=500)await send(false)
+    if(state.current!==null){
+     const frame=parseQqStreamSnapshot(state.current), complete=completeQqLines(frame.fullText)
+     // 每段首帧独立发送。空刷和上一段的 DONE 不占用新段的节流窗口。
+     if(complete.trim()&&complete!==frame.lastSentText&&(frame.index===0||now()-state.lastFlushAt>=500))await send(false)
+    }
    }else if(event.type==='round_end'){if(state.round!==event.round){await close();state.round=event.round}state.pendingRoundText=typeof event.payload.text==='string'?event.payload.text:state.mode==='plain'?state.plainBuffer:state.current===null?'':parseQqStreamSnapshot(state.current).fullText}
    else if(event.type==='tool_call'||event.type==='interaction_required'){
     await finishSource();await close(state.pendingRoundText??undefined);state.pendingRoundText=null;if(event.type==='interaction_required')state.stage='paused'

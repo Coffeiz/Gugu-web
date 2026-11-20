@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import path from 'node:path'
+import { gunzipSync } from 'node:zlib'
 import { fileURLToPath } from 'node:url'
 import { ZodError } from 'zod'
 import { TraceRunFinishSchema, TraceRunInputSchema } from '@loopscope/contracts'
@@ -26,7 +27,7 @@ function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.end(JSON.stringify(body))
 }
 
-async function readJson(req: IncomingMessage, limit = 24 * 1024 * 1024) {
+async function readJson(req: IncomingMessage, limit = 64 * 1024 * 1024) {
   const chunks: Buffer[] = []
   let size = 0
   for await (const chunk of req) {
@@ -35,7 +36,15 @@ async function readJson(req: IncomingMessage, limit = 24 * 1024 * 1024) {
     if (size > limit) throw new Error('payload too large')
     chunks.push(buffer)
   }
-  const body = Buffer.concat(chunks).toString('utf8')
+  let bytes = Buffer.concat(chunks)
+  if (String(req.headers['content-encoding'] ?? '').toLowerCase() === 'gzip') {
+    try { bytes = gunzipSync(bytes, { maxOutputLength: 96 * 1024 * 1024 }) }
+    catch (error) {
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'ERR_BUFFER_TOO_LARGE') throw new Error('payload too large')
+      throw new Error('invalid compressed payload')
+    }
+  }
+  const body = bytes.toString('utf8')
   return body ? JSON.parse(body) : {}
 }
 

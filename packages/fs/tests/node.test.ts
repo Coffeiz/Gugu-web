@@ -115,6 +115,30 @@ it.skipIf(process.platform !== 'linux')('流式导入完整后才发布，并发
   expect((await readdir(path.join(root, 'imports'))).sort()).toEqual(['collision.txt', 'source.txt'])
 })
 
+it.skipIf(process.platform !== 'linux')('显式覆盖只发布完整文件，并保护途中被修改的目标', async () => {
+  await mkdir(path.join(root, 'imports'), { recursive: true })
+  const relative = 'imports/source.txt'
+  const destination = path.join(root, relative)
+  await writeFile(destination, '原内容')
+  const { signal } = new AbortController()
+  async function* interrupted() {
+    yield Buffer.from('不完整正文')
+    throw new Error('上传中断')
+  }
+  await expect(importLocalFile(root, relative, interrupted(), signal, true)).rejects.toThrow('上传中断')
+  expect(await readFile(destination, 'utf8')).toBe('原内容')
+  async function* concurrent() {
+    yield Buffer.from('本次上传')
+    await writeFile(destination, '其他端修改')
+  }
+  await expect(importLocalFile(root, relative, concurrent(), signal, true)).rejects.toMatchObject({ code: 'EEXIST' })
+  expect(await readFile(destination, 'utf8')).toBe('其他端修改')
+  async function* data() { yield Buffer.from('新正文') }
+  await importLocalFile(root, relative, data(), signal, true)
+  expect(await readFile(destination, 'utf8')).toBe('新正文')
+  expect(await readdir(path.join(root, 'imports'))).toEqual(['source.txt'])
+})
+
 it.skipIf(process.platform !== 'linux')('流式导入拒绝不存在的目标目录和符号链接父目录', async () => {
   await mkdir(root, { recursive: true })
   const outside = await mkdtemp(path.join(tmpdir(), 'gugu-fs-outside-'))

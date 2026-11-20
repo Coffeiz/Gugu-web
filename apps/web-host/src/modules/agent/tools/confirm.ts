@@ -22,6 +22,7 @@ export interface WebAgentToolConfirmationOptions {
   intents: TrustedIntentStore
   lease: AgentDispatchLease
   action: string
+  imOwnerAuthorized?: boolean
   ttlMinutes?: number
   now?: () => number
   /** 必须复核当前 owner 权限与 lease，并返回权限版本；无权限时返回 null。 */
@@ -119,8 +120,11 @@ export function createWebAgentToolConfirmation(options: WebAgentToolConfirmation
   const leaseIdentity = Object.freeze({ ...options.lease.identity })
   const ttlMinutes = options.ttlMinutes ?? 5
   const now = options.now ?? Date.now
-  if (options.lease.input.v !== 2 || options.lease.input.source !== 'web'
-    || !options.action.trim() || options.action.length > 128
+  const source = options.lease.input
+  const sourceAllowed = source.v === 2 && source.source === 'web'
+    || source.v === 3 && source.source === 'im' && source.im.chatType === 'c2c'
+      && source.im.platform !== 'wechat' && options.imOwnerAuthorized === true
+  if (!sourceAllowed || !options.action.trim() || options.action.length > 128
     || !Number.isSafeInteger(ttlMinutes) || ttlMinutes < 1 || ttlMinutes > 30
     || typeof options.authorize !== 'function' || typeof options.authorizeInTransaction !== 'function'
     || typeof options.describe !== 'function') throw new TypeError('Web Agent 可信确认能力未完整配置')

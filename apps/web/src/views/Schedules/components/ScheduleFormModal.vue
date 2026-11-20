@@ -205,6 +205,7 @@ const deliveryTargets = reactive<Record<ImDeliveryPlatform, string>>({ qq: 'priv
 const initialDeliveryTargets = reactive<Record<ImDeliveryPlatform, string>>({ qq: 'private', feishu: 'private', telegram: 'private' })
 const deliveryGroups = reactive<Record<ImDeliveryPlatform, ImDeliveryGroup[]>>({ qq: [], feishu: [], telegram: [] })
 const privateAvailable = reactive<Record<ImDeliveryPlatform, boolean>>({ qq: true, feishu: false, telegram: false })
+const deliveryLoadFailed = reactive<Partial<Record<ImDeliveryPlatform, boolean>>>({})
 const intervalMinutes = ref(5)
 const intervalPreset = ref('5')
 const startDate = ref('')
@@ -261,6 +262,7 @@ function resetForm() {
     initialDeliveryTargets[platform] = deliveryTargets[platform]
     deliveryGroups[platform] = []
     privateAvailable[platform] = platform === 'qq'
+    deliveryLoadFailed[platform] = false
   }
   repeatMode.value = taskKind === 'once' ? 'once' : (taskKind === 'interval' ? 'interval' : parsed.mode)
   intervalMinutes.value = parsed.intervalMinutes ?? 5
@@ -276,17 +278,23 @@ function resetForm() {
   formErr.value = ''
   nextTick(() => { nameRef.value?.focus(); resizePayload() })
 }
-watch(() => props.show, show => { if (show) { resetForm(); void loadDeliveryTargets() } })
-async function loadDeliveryTargets() {
+watch(() => props.show, (show, _previous, onCleanup) => {
+  if (!show) return
+  resetForm()
+  const controller = new AbortController()
+  onCleanup(() => controller.abort())
+  void loadDeliveryTargets(controller.signal)
+})
+async function loadDeliveryTargets(signal: AbortSignal) {
   const platforms = IM_DELIVERY_PLATFORMS.filter(platform => props.imChannels.includes(platform))
   await Promise.all(platforms.map(async platform => {
     try {
       const res = await scheduledTasksApi.listDeliveryTargets(platform)
+      if (signal.aborted) return
       deliveryGroups[platform] = res.groups
       privateAvailable[platform] = res.private_available
     } catch {
-      deliveryGroups[platform] = []
-      privateAvailable[platform] = false
+      if (!signal.aborted) deliveryLoadFailed[platform] = true
     }
   }))
 }
@@ -294,7 +302,8 @@ function deliveryPlatformLabel(platform: ImDeliveryPlatform) {
   return t(`schedules.${platform}`)
 }
 function deliveryTargetOptions(platform: ImDeliveryPlatform) {
-  const privateLabel = privateAvailable[platform] ? t('schedules.qqPrivate') : t('schedules.privateUnavailable')
+  const privateLabel = deliveryLoadFailed[platform] ? t('scheduleUi.targetLoadFailed')
+    : privateAvailable[platform] ? t('schedules.qqPrivate') : t('schedules.privateUnavailable')
   return buildImTargetOptions(deliveryGroups[platform], deliveryTargets[platform], privateLabel,
     chatId => t('scheduleUi.groupUnavailable', { chatId }))
 }

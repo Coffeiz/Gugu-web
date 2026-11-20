@@ -5,7 +5,7 @@ import type { EventDispatcher } from '@larksuiteoapi/node-sdk'
 import { ProviderError, type ProviderTransport } from '@gugu/core/providers'
 import type { TrustedGatewayBot } from '../../../src/modules/im/gateway/bot-config.js'
 import { createPlatformConnections, type GatewayConnectionServices } from '../../../src/modules/im/gateway/platform-connections.js'
-import type { QqSocket } from '../../../src/modules/im/gateway/platforms/qq/connection.js'
+import type { QqSocket } from '@gugu/gateway/qq'
 
 const owner = '00000000-0000-4000-8000-000000000087', cutoff = '2026-01-01 00:00:00.123456+00'
 const token = '123456:synthetic_telegram_feedback_token_123'

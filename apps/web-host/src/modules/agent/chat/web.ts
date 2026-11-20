@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from 'pg'
+import type { AgentObservationPort } from '@gugu/core/agent'
 import type { AgentChatInput } from './routes.js'
 import { resolveAgentChatReferences } from '../context/references.js'
 import { bindAgentChatPendingQueue } from './draft.js'
@@ -14,13 +15,14 @@ import { registerAgentRunStartupLocked } from '../run/start.js'
  */
 export function createPostgresWebAgentChatPreparation(
   pool: Pick<Pool, 'connect'>,
-  options: { dispatchSecret: string; dispatchTtlSeconds: number },
+  options: { dispatchSecret: string; dispatchTtlSeconds: number; observation?: AgentObservationPort },
 ) {
   if (!options.dispatchSecret) throw new TypeError('Agent dispatch 密钥未配置')
   if (!Number.isSafeInteger(options.dispatchTtlSeconds) || options.dispatchTtlSeconds < 1 || options.dispatchTtlSeconds > 604800)
     throw new RangeError('Agent dispatch 保存期限无效')
 
   return createPostgresAgentChatPreparation(pool, {
+    observation: options.observation,
     createSession: createPostgresWebChatSession,
     registerStartup: registerAgentRunStartupLocked,
     async resolveAttachments(client: PoolClient, ownerId: string, input: AgentChatInput) {

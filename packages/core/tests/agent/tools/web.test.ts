@@ -66,7 +66,7 @@ it('http_get 批量按输入顺序部分成功，单项异常不泄露异常消�
     urls: ['https://first.test', 'https://bad.test', 'https://third.test'], max_chars: 100,
   } }, scope())
   expect(result).toMatchObject({ successful: true, value: { results: [
-    { status: 200, url: 'https://first.test' }, { error: '请求失败：Error' }, { status: 200, url: 'https://third.test' },
+    { status: 200, url: 'https://first.test' }, { error: '网页请求失败，请改用其他来源' }, { status: 200, url: 'https://third.test' },
   ] } })
   expect(JSON.stringify(result)).not.toContain('凭据和响应正文')
 })
@@ -74,8 +74,22 @@ it('http_get 批量按输入顺序部分成功，单项异常不泄露异常消�
 it('http_get 单 URL 请求异常返回 Python 兼容错误对象且不泄露异常消息', async () => {
   const { registry, scope } = mount({ async get() { throw new TypeError('上游响应和请求头不能泄漏') } })
   const result = await registry.tools.dispatch({ id: 'failed', name: 'http_get', input: { url: 'https://bad.test' } }, scope())
-  expect(result).toMatchObject({ successful: true, value: { error: '请求失败：TypeError' } })
+  expect(result).toMatchObject({ successful: true, value: { error: '网页请求失败，请改用其他来源' } })
   expect(JSON.stringify(result)).not.toContain('上游响应和请求头')
+})
+
+it('http_get 返回连接超时和网络失败的安全原因', async () => {
+  const { registry, scope } = mount({ async get(input) {
+    if (input.url === 'https://slow.test') throw new ProviderError('timeout', { timeoutPhase: 'connect' })
+    throw new ProviderError('network')
+  } })
+  const result = await registry.tools.dispatch({ id: 'failed-sites', name: 'http_get', input: {
+    urls: ['https://slow.test', 'https://offline.test'],
+  } }, scope())
+  expect(result).toMatchObject({ value: { results: [
+    { error_code: 'timeout', error: '连接目标网站超时，请改用其他来源' },
+    { error_code: 'network', error: '无法连接目标网站或连接中断，请改用其他来源' },
+  ] } })
 })
 
 it('http_get 补全默认 HTTPS，并在 Host 网络端口前拒绝 URL 凭据', async () => {

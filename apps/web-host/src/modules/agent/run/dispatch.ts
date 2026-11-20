@@ -120,17 +120,27 @@ export async function enqueueAgentRunLocked(client: PoolClient, secret: string, 
   await updatePending(client, identity)
 }
 
-// 状态读取与 SSE 续接使用同一套运行定位规则。
-const currentRunId = `coalesce(s.active_run_id,
-        (SELECT d.run_id FROM agent_run_dispatch d WHERE d.user_id=s.user_id AND d.session_id=s.id AND d.state='selected' LIMIT 1),
+// 终态提交早于租约释放和调度清理。状态读取与默认 SSE 续接都以 checkpoint 为准。
+const terminalCheckpoint = (runId: 's.active_run_id' | 'd.run_id') => `EXISTS (
+          SELECT 1 FROM agent_run_checkpoints c
+          WHERE c.user_id=s.user_id AND c.session_id=s.id AND c.run_id=${runId}
+            AND c.status IN ('completed','cancelled','failed','unknown'))`
+const currentRunId = `coalesce(
+        CASE WHEN NOT ${terminalCheckpoint('s.active_run_id')} THEN s.active_run_id END,
+        (SELECT d.run_id FROM agent_run_dispatch d WHERE d.user_id=s.user_id AND d.session_id=s.id
+          AND d.state='selected' AND NOT ${terminalCheckpoint('d.run_id')} LIMIT 1),
         (SELECT c.run_id FROM agent_run_checkpoints c WHERE c.user_id=s.user_id AND c.session_id=s.id AND c.status='waiting' ORDER BY c.updated_at DESC,c.run_id DESC LIMIT 1))`
 
-export function createPostgresAgentActiveStatusReader(pool: Pick<Pool, 'query'>) {
+export function createPostgresAgentActiveStatusReader(pool: Pick<Pool, 'query'>, mode: 'active' | 'generating' = 'active') {
+  const waiting = mode === 'generating' ? `AND NOT EXISTS (
+    SELECT 1 FROM agent_run_checkpoints c WHERE c.user_id=s.user_id AND c.session_id=s.id
+    AND c.run_id=selected.run_id AND c.status='waiting')` : ''
   return async (sessionIds: number[], ownerId: string): Promise<Map<number, boolean>> => {
     if (!sessionIds.length) return new Map()
     const { rows } = await pool.query<{ id: number; active: boolean }>(
-      `SELECT s.id, ${currentRunId} IS NOT NULL AS active
-       FROM conversation_sessions s WHERE s.user_id=$1 AND s.id=ANY($2::integer[])`,
+      `SELECT s.id, (selected.run_id IS NOT NULL ${waiting}) AS active
+       FROM conversation_sessions s CROSS JOIN LATERAL (SELECT ${currentRunId} AS run_id) selected
+       WHERE s.user_id=$1 AND s.id=ANY($2::integer[])`,
       [ownerId, sessionIds],
     )
     return new Map(rows.map(({ id, active }) => [id, active]))

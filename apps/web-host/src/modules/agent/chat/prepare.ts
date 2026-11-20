@@ -1,11 +1,12 @@
 import type { Pool, PoolClient } from 'pg'
 import type { AgentChatInput } from './routes.js'
-import type { RunIdentity } from '@gugu/core/agent'
+import type { AgentObservation, AgentObservationPort, RunIdentity } from '@gugu/core/agent'
 import { withPostgresTransaction } from '../../../adapters/database/postgres-transaction.js'
 import type { AgentDispatchInput, RunModelPin } from '../run/dispatch.js'
 import { enqueuePostgresAgentRagRebuild } from '../rag/jobs.js'
 
 export interface AgentChatPreparationPorts {
+  observation?: AgentObservationPort
   /** 按 Python 会话默认值创建会话；调用方不得提交或关闭事务。 */
   createSession(client: PoolClient, ownerId: string, title: string): Promise<number>
   registerStartup(client: PoolClient, identity: RunIdentity): Promise<boolean>
@@ -46,8 +47,11 @@ export async function createPostgresWebChatSession(client: PoolClient, ownerId: 
 
 /** 用户消息、附件 claim 和队列确认共用事务；任何端口失败均回滚。 */
 export function createPostgresAgentChatPreparation(pool: Pick<Pool, 'connect'>, ports: AgentChatPreparationPorts) {
-  return async (ownerId: string, input: AgentChatInput, runId: string, scheduling: AgentChatScheduling) => withPostgresTransaction(pool, async client => {
+  return async (ownerId: string, input: AgentChatInput, runId: string, scheduling: AgentChatScheduling) => {
+    const observations: AgentObservation[] = []
+    const result = await withPostgresTransaction(pool, async client => {
     if (!ownerId || !runId || runId.length > 128) throw new TypeError('用户或运行身份无效')
+    const sessionStartedAt = Date.now()
     let sessionId = input.session_id ?? null
     let isNew = false
     if (sessionId) {
@@ -62,6 +66,16 @@ export function createPostgresAgentChatPreparation(pool: Pick<Pool, 'connect'>, 
     }
     if (!await ports.registerStartup(client, { ownerId, sessionId: String(sessionId), runId }))
       throw new Error('运行启动登记冲突')
+    const identity = { ownerId, sessionId: String(sessionId), runId }
+    const observe = (name: string, startedAt: number, output: Record<string, unknown>, span: string) => {
+      const endedAt = Date.now()
+      observations.push({ identity, kind: 'context', name,
+        spanId: `${runId}:phase:${span}`, parentSpanId: runId, at: endedAt, startedAt, endedAt,
+        durationMs: Math.max(0, endedAt - startedAt), status: 'success', output,
+        attributes: { context_source: 'chat_preparation' } })
+    }
+    observe('Run session and startup registration', sessionStartedAt, { created_session: isNew }, 'session-resolution')
+    const messageStartedAt = Date.now()
     const greeting = isNew ? input.greeting?.trim() : ''
     const attachments = await ports.resolveAttachments(client, ownerId, input)
     const referenceContent = await ports.resolveReferences(client, ownerId, input)
@@ -76,7 +90,10 @@ export function createPostgresAgentChatPreparation(pool: Pick<Pool, 'connect'>, 
     await enqueuePostgresAgentRagRebuild(client, ownerId, 'conversation')
     await ports.claimAttachments(client, ownerId, messageId, attachments.attachIds)
     await ports.bindQueue(client, ownerId, sessionId, isNew, input)
+    observe('Message persistence and attachment claim', messageStartedAt,
+      { message_count: count, attachment_count: attachments.attachIds.length, reference_count: input.references?.length ?? 0 }, 'message-persistence')
     if (scheduling.mode === 'dispatch') {
+      const dispatchStartedAt = Date.now()
       const identity = { ownerId, sessionId: String(sessionId), runId }
       const pin = await scheduling.pin?.(identity, input.credential_id)
       if (input.credential_id !== undefined && !pin) throw new Error('指定凭据无法绑定到运行')
@@ -86,7 +103,13 @@ export function createPostgresAgentChatPreparation(pool: Pick<Pool, 'connect'>, 
       const model = pin && { modelIdentity: pin.modelIdentity, accessScopeHash: pin.accessScopeHash }
       if (!/^[a-f0-9]{64}$/.test(accessVersion)) throw new TypeError('运行访问范围版本无效')
       await ports.enqueueDispatch(client, identity, { userMessageId: messageId, locale: input.locale ?? null, origin: scheduling.origin, accessVersion, v: 2, source: 'web', ...(model && { model }) }, scheduling.ttlSeconds)
+      observe('Run dispatch enqueue', dispatchStartedAt, { queued: true }, 'dispatch-enqueue')
     }
     return { sessionId, userMessageId: messageId, isNew, runId }
-  })
+    })
+    for (const event of observations) {
+      try { ports.observation?.record(event) } catch { /* 观测失败不能影响响应。 */ }
+    }
+    return result
+  }
 }

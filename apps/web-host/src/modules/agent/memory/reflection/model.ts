@@ -1,4 +1,4 @@
-import { runContextBranch, type BranchResult, type RunIdentity, type Usage } from '@gugu/core/agent'
+import { runContextBranch, type AgentObservation, type AgentObservationPort, type BranchResult, type RunIdentity, type Usage } from '@gugu/core/agent'
 import { ProviderRuntime, outputBudget as providerOutputBudget, providerSelection, type ProviderRuntimeOptions } from '@gugu/core/providers'
 import type { Pool } from 'pg'
 import { RecoverableProviderVersionError, type createReflectionModelScope } from '../../llm/recovery.js'
@@ -11,6 +11,10 @@ import { planReflectionEvidence, reflectionWireBytes } from './evidence.js'
 
 type Extract = Parameters<typeof createOwnerReflectionWork>[0]['extract']
 type Bind = Awaited<ReturnType<typeof createConfiguredWebAgentProviderBinding>>['bind']
+
+function observe(port: AgentObservationPort | undefined, event: AgentObservation) {
+  try { port?.record(event) } catch { /* 观测失败不能改变反思分支结果。 */ }
+}
 
 function branchUsage(value: BranchResult['usage']): Usage | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
@@ -37,7 +41,7 @@ export function createOwnerReflectionExtractor(options: {
   modelScope: ReturnType<typeof createReflectionModelScope>
   source: ReturnType<typeof createPostgresOwnerReflectionSource>
   pool: Pick<Pool, 'connect'>
-  context: Pick<ProviderRuntimeOptions, 'digest' | 'nextId' | 'references' | 'prepareRequest'>
+  context: Pick<ProviderRuntimeOptions, 'digest' | 'nextId' | 'references' | 'prepareRequest'> & { observation?: AgentObservationPort }
   transport(config: Awaited<ReturnType<Bind>>['usageConfig']): ProviderRuntimeOptions['transportFactory']
   canSpend(ownerId: string): Promise<boolean>
   readPrompt(): Promise<string>
@@ -87,15 +91,61 @@ export function createOwnerReflectionExtractor(options: {
       const branch = async (prompt: string, evidence: string, outputMode: 'json' | 'text', maxOutputTokens: number) => {
         deadline.throwIfAborted()
         if (!await options.canSpend(batch.ownerId) || !await batch.isCurrent()) return null
-        const result = await runContextBranch({ ...identity, stableSystem: prompt, delta: evidence, tools: [], scope: model.accessScopeHash }, {
-          name: 'reflection', outputMode, maxOutputTokens,
-        }, {
-          provider: provider.branchProvider(model.modelIdentity),
-          digest: options.context.digest, nextId: options.context.nextId,
-          async pauseBeforeRetry() {}, diagnostic: options.diagnose,
-        }, deadline)
+        const observationIdentity: RunIdentity = { ...identity, runId: `reflection-${options.context.nextId()}` }
+        const startedAt = Date.now()
+        observe(options.context.observation, {
+          identity: observationIdentity, kind: 'run', name: 'started', at: startedAt, spanId: observationIdentity.runId, status: 'running',
+          attributes: { scenario: 'reflection', reflection_scope: 'private', trigger_source: 'unknown', origin_run_id: identity.runId },
+        })
+        let result: BranchResult | undefined
+        let endedAt = startedAt
+        try {
+          result = await runContextBranch({ ...identity, observationIdentity, stableSystem: prompt, delta: evidence, tools: [], scope: model.accessScopeHash }, {
+            name: 'reflection', outputMode, maxOutputTokens,
+          }, {
+            provider: provider.branchProvider(model.modelIdentity),
+            digest: options.context.digest, nextId: options.context.nextId,
+            async pauseBeforeRetry() {}, diagnostic: options.diagnose,
+          }, deadline)
+        } finally {
+          endedAt = Date.now()
+          observe(options.context.observation, {
+            identity: observationIdentity, kind: 'run', name: 'finished', at: endedAt, spanId: observationIdentity.runId,
+            status: deadline.aborted ? 'cancelled' : result?.ok ? 'completed' : 'failed',
+            usage: (result ? branchUsage(result.usage) : null) ?? undefined,
+            output: { scenario: 'reflection', reflection_scope: 'private', trigger_source: 'unknown', origin_run_id: identity.runId,
+              ...(result ? { attempts: result.attempts, probe_eligible: result.usage !== null } : {}) },
+          })
+        }
+        if (!result) return null
         await meterReflection(options.pool, identity, result, model)
         deadline.throwIfAborted()
+        const usage = branchUsage(result.usage)
+        const inputTokens = Math.max(0, usage?.contextInput ?? usage?.input ?? 0)
+        const cacheRead = Math.max(0, usage?.cacheRead ?? 0)
+        const cacheWrite = Math.max(0, usage?.cacheWrite ?? 0)
+        const cacheSupported = policy.capabilities(config).cache_mode === 'active'
+        const cacheHitRatio = inputTokens ? cacheRead / inputTokens : 0
+        const probe = {
+          schema_version: 1, scenario: 'reflection', provider: policy.name, model: config.model,
+          api_format: policy.protocol(config), cache_supported: cacheSupported,
+          input_tokens: inputTokens, fresh_input_tokens: Math.max(0, inputTokens - cacheRead - cacheWrite),
+          cache_read_tokens: cacheRead, cache_write_tokens: cacheWrite, cache_hit_ratio: cacheHitRatio,
+          reflection_scope: 'private', trigger_source: 'unknown', origin_run_id: identity.runId,
+          snapshot_source: 'persisted_history', probe_eligible: cacheSupported && inputTokens >= 32_000,
+          cache_low_hit: result.ok && cacheSupported && inputTokens >= 32_000 && cacheHitRatio <= 0.05,
+          attempt_index: result.attempts, request_duration_ms: Math.max(0, endedAt - startedAt),
+          request_outcome: result.ok ? 'success' : 'error',
+        }
+        const observationAt = Date.now()
+        observe(options.context.observation, {
+          identity: observationIdentity, kind: 'context', name: 'Reflection cache observation',
+          at: observationAt, startedAt, endedAt: observationAt, durationMs: Math.max(0, endedAt - startedAt),
+          spanId: `${observationIdentity.runId}:reflection-cache-observation`, parentSpanId: observationIdentity.runId,
+          status: result.ok ? 'success' : 'error', input: { reflection_cache_probe: probe },
+          output: { cache_hit_ratio: cacheHitRatio, probe_eligible: probe.probe_eligible, cache_low_hit: probe.cache_low_hit },
+          attributes: { context_source: 'reflection_cache_probe', scenario: 'reflection', reflection_scope: 'private', trigger_source: 'unknown' },
+        })
         // 输出到达模型长度上限时，即便 JSON 仍可解析也不能作为完整证据。
         const metadata = result.usage
         if (metadata && typeof metadata === 'object' && !Array.isArray(metadata) && metadata.incomplete_reason) return null

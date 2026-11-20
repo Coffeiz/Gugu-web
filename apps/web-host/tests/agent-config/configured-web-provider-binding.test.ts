@@ -57,3 +57,29 @@ test('configured Web provider derives an opaque scope from synthetic Host config
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+test('configured Web provider runs the platform model when BYOK is enabled but no user credential is bound', async () => {
+  const directory = await mkdtemp(join(await realpath(tmpdir()), 'configured-web-provider-no-master-'))
+  const promptRoot = join(directory, 'prompts')
+  const identity = { ownerId: 'synthetic-owner', sessionId: '24', runId: 'synthetic-no-master-run' }
+  try {
+    await mkdir(promptRoot)
+    for (const name of ['default.md', 'persona.md', 'skills.md', 'policy.md', 'retrieval.md']) await writeFile(join(promptRoot, name), `synthetic ${name}`)
+    const provider = await createConfiguredWebAgentProviderBinding({
+      pool: pool(), configPath: join(directory, 'missing-config.override.json'), versionSecret: 'synthetic-version-secret', promptRoot,
+      environment: { AI__MODEL: 'synthetic-platform-model' },
+      permissionIdentity: 'web-agent-rag-read-v1:search_conversations,search_memory',
+      contextPolicy: () => ({ loadOwnerContext: true, memoryEnabled: true }),
+      defaultLimit6h: null,
+    })
+
+    const version = await provider.accessVersion(identity)
+    assert.match(version, /^[a-f0-9]{64}$/)
+    const runBinding = await provider.bindRun(identity, 'zh-CN')
+    assert.deepEqual(runBinding.usageConfig, { defaultLimit6h: null, byokEnabled: true, localDeployment: false,
+      model: 'synthetic-platform-model', provider: 'qwen', isByok: false })
+    runBinding.release()
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})

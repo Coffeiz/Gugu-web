@@ -3,10 +3,10 @@ import { z } from 'zod'
 import { stableJson, type RunIdentity } from '@gugu/core/agent'
 import type { ImDeliveryResult, ImRunDeliveryPorts } from '@gugu/core/im/run-delivery'
 import type { ImDeliverySession } from '../../delivery/store.js'
-import { FeishuApiError, type createFeishuClient } from './client.js'
-import { createFeishuSender } from './sender.js'
+import { FeishuApiError, type createFeishuClient } from '@gugu/gateway/feishu'
+import { createFeishuSender } from '@gugu/gateway/feishu'
 import { buildFeishuStreamingCard } from './streaming.js'
-import { FeishuPresentation, type FeishuToolSummaryPolicy } from './presentation.js'
+import { FeishuPresentation, type FeishuToolSummaryPolicy } from '@gugu/gateway/feishu'
 import { createFeishuRunEventProjector, type FeishuChartRenderer } from './run-events.js'
 import { imAcceptedEvidence, type ImAcceptedSource } from '../../agent/evidence.js'
 import type { ImAttachmentScope } from '../../inbound/attachments.js'
@@ -76,8 +76,9 @@ export function createPersistentFeishuProjection(options: {
     if (!await options.authorize()) return 'rejected'
     if (state.stage === 'finished') return 'rejected'
     if (event.type === 'run_resumed') {
-      if (state.stage !== 'paused') return 'rejected'
-      state = fresh(state.segment + 1, state.eventSequence)
+      if (state.stage === 'closing') return 'rejected'
+      // 检查点续跑沿用已有投影；只有交互等待结束才开启新段。
+      if (state.stage === 'paused') state = fresh(state.segment + 1, state.eventSequence)
     } else if (state.stage === 'paused' && !['interaction_resolved', 'tool_done', 'interaction_required', 'final'].includes(event.type)) return 'rejected'
     if (event.type === 'interaction_resolved' && ['cancelled', 'aborted', 'expired'].includes(String(event.payload.status))) state.stage = 'closing'
     state.inflight = { sequence: event.sequence, eventId: event.id, fingerprint: hash(event) }

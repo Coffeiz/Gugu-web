@@ -1,5 +1,5 @@
 import type { SqlDataRuntime } from '@gugu/core/data'
-import type { CanonicalRunPreparationPorts, ContextSourceSelection, RunIdentity } from '@gugu/core/agent'
+import type { AgentObservationPort, CanonicalRunPreparationPorts, ContextSourceSelection, RunIdentity } from '@gugu/core/agent'
 import type { RagSearchScope } from '@gugu/core/agent/rag'
 import type { ProviderTransport } from '@gugu/core/providers'
 import type { RagQueryEmbeddingSettings } from '@gugu/core/agent/rag'
@@ -31,15 +31,18 @@ export function createWebAgentProductionRagToolPorts(options: {
     resolve(ownerId: string, signal?: AbortSignal): Promise<RagQueryEmbeddingSettings | null>
     createTransport(settings: RagQueryEmbeddingSettings): ProviderTransport
   }
+  observation?: AgentObservationPort
 }) {
   const authorizeMemory = createWebAgentMemoryAuthorizer(options.pool, options.lease, options.registry, options.preparation)
   const snapshot = createPostgresWebAgentMemorySnapshotReader(options.pool, options.lease)
   const ports = createWebAgentRagToolPorts({
     core: options.core,
+    identity: options.lease.identity,
     storageRoot: options.storageRoot,
     authorizeMemory: (identity: RunIdentity, signal, scopes) => authorizeMemory(identity, signal, scopes),
     snapshot,
     ...(options.embedding ? { embedding: options.embedding } : {}),
+    ...(options.observation ? { observation: options.observation } : {}),
   })
   return {
     ...ports,
@@ -120,6 +123,7 @@ export function createWebAgentProductionToolRegistry(options: Omit<AgentToolRegi
     resolve(ownerId: string, signal?: AbortSignal): Promise<RagQueryEmbeddingSettings | null>
     createTransport(settings: RagQueryEmbeddingSettings): ProviderTransport
   }
+  observation?: AgentObservationPort
 }) {
   let registry: ReturnType<typeof createAgentToolRegistry> | undefined
   const rag = createWebAgentProductionRagToolPorts({
@@ -135,6 +139,7 @@ export function createWebAgentProductionToolRegistry(options: Omit<AgentToolRegi
       },
     },
     ...(options.embedding ? { embedding: options.embedding } : {}),
+    ...(options.observation ? { observation: options.observation } : {}),
   })
   registry = createRegistry({ ...options, ...rag })
   return registry
@@ -157,6 +162,7 @@ export function createWebAgentProductionRagRunPorts(options: Omit<AgentToolRegis
     resolve(ownerId: string, signal?: AbortSignal): Promise<RagQueryEmbeddingSettings | null>
     createTransport(settings: RagQueryEmbeddingSettings): ProviderTransport
   }
+  observation?: AgentObservationPort
   conversationMessageTime?(identity: import('@gugu/core/agent').HistoryIdentity, timestamp: string, signal?: AbortSignal): Promise<string>
 }) {
   return {
@@ -180,20 +186,14 @@ export function createAuthorizedWebAgentProductionRagRunPorts(options: Omit<Para
   enabledLinkButtons?: boolean
   enabledFileRead?: boolean
   enabledFilePresent?: boolean
-  enabledFileGrep?: boolean
-  enabledFileDirectoryRead?: boolean
+
+
   enabledFileFolderDelete?: boolean
   enabledFileDelete?: boolean
-  enabledFileEdit?: boolean
-  enabledFileRename?: boolean
-  enabledFileCopy?: boolean
-  enabledFileCreate?: boolean
+
   enabledSaveUploadedFile?: boolean
   enabledRecentAttachments?: boolean
-  enabledFolderCreate?: boolean
-  enabledFolderRename?: boolean
-  enabledFileMoveItems?: boolean
-  enabledFileArchive?: boolean
+
   enabledSendFile?: boolean
   enabledHttpGet?: boolean
   enabledCalendarRead?: boolean
@@ -221,8 +221,8 @@ export function createAuthorizedWebAgentProductionRagRunPorts(options: Omit<Para
   enabledProjectOverview?: boolean
   enabledScheduledTasks?: boolean
 }) {
-  const { enabledConversationRead = false, enabledTime = false, enabledCalendarRead = false, enabledUpcoming = false, enabledDashboard = false, enabledWorkspaces = false, enabledWorkspaceMutations = false, enabledWorkspaceCreation = false, enabledWorkspaceUnlink = false, enabledWorkspaceDirectoryDelete = false, enabledUndoLastAction = false, enabledTrashList = false, enabledTrashRestore = false, enabledTrashPurge = false, enabledCanvasReads = false, enabledCanvasPlaceableSearch = false, enabledCanvasCreate = false, enabledCanvasMutations = false, enabledNoteReads = false, enabledNoteLifecycle = false, enabledProjectCreation = false, enabledProjectMutations = false, enabledClientTools = false, enabledClientDelete = false, enabledProjectOverview = false, enabledScheduledTasks = false, enabledCalendarCanvasTools = [], enabledKnowledgeRead = false, enabledKnowledgeWrites = false, enabledGlobalSearch = false, enabledAskUser = false, enabledLinkButtons = false, enabledFileRead = false, enabledFilePresent = false, enabledFileGrep = false, enabledFileDirectoryRead = false, enabledFileFolderDelete = false, enabledFileDelete = false, enabledFileEdit = false, enabledFileRename = false, enabledFileCopy = false, enabledFileCreate = false, enabledSaveUploadedFile = false, enabledRecentAttachments = false, enabledFileArchive = false, enabledFolderCreate = false, enabledFolderRename = false, enabledFileMoveItems = false, enabledSendFile = false, enabledHttpGet = false, ...runOptions } = options
-  const authorization = createWebAgentRagRunAuthorization(options.pool, options.lease, { enabledShell: Boolean(runOptions.shell), enabledConversationRead, enabledTime, enabledCalendarRead, enabledUpcoming, enabledDashboard, enabledWorkspaces, enabledWorkspaceMutations, enabledWorkspaceCreation, enabledWorkspaceUnlink: enabledWorkspaceUnlink || Boolean(runOptions.workspaceUnlink && runOptions.workspaces), enabledWorkspaceDirectoryDelete: enabledWorkspaceDirectoryDelete || Boolean(runOptions.workspaceDirectoryDelete), enabledUndoLastAction: enabledUndoLastAction || Boolean(runOptions.undoLastAction), enabledTrashList, enabledTrashRestore, enabledTrashPurge: enabledTrashPurge || Boolean(runOptions.trashPurge), enabledCanvasReads, enabledCanvasPlaceableSearch, enabledCanvasCreate, enabledCanvasMutations, enabledNoteReads, enabledNoteLifecycle, enabledProjectCreation, enabledProjectMutations, enabledProjectDelete: Boolean(runOptions.projectDelete), enabledClientTools, enabledClientDelete, enabledProjectOverview, enabledScheduledTasks, enabledCalendarCanvasTools, enabledKnowledgeRead, enabledKnowledgeWrites, enabledKnowledgeDelete: Boolean(runOptions.knowledgeDelete), enabledRemember: Boolean(runOptions.remember), enabledGlobalSearch, enabledAskUser, enabledLinkButtons, enabledFileRead, enabledFilePresent, enabledFileGrep, enabledFileDirectoryRead, enabledFileFolderDelete, enabledFileDelete, enabledFileEdit, enabledFileRename, enabledFileCopy, enabledFileCreate, enabledSaveUploadedFile, enabledRecentAttachments, enabledFileArchive, enabledFolderCreate, enabledFolderRename, enabledFileMoveItems, enabledSendFile, enabledHttpGet, enabledSkillManagement: Boolean(runOptions.skillManagement), enabledSkillDelete: Boolean(runOptions.skillDelete), enabledNoteWrites: Boolean(runOptions.noteWrites), enabledCallTool: Boolean(runOptions.callTool), enabledMcpManagement: Boolean(runOptions.mcpManagement), enabledScheduledTaskWrites: Boolean(runOptions.scheduledTaskWrites?.length), enabledScheduledTaskDelete: Boolean(runOptions.scheduledTaskDelete), enabledSendEmail: Boolean(runOptions.sendEmail), enabledWebSearch: Boolean(runOptions.webSearch), enabledWebDownload: Boolean(runOptions.webDownload), enabledSimilarImageSearch: Boolean(runOptions.similarImageSearch), enabledDeepResearch: Boolean(runOptions.deepResearch) })
+  const { enabledConversationRead = false, enabledTime = false, enabledCalendarRead = false, enabledUpcoming = false, enabledDashboard = false, enabledWorkspaces = false, enabledWorkspaceMutations = false, enabledWorkspaceCreation = false, enabledWorkspaceUnlink = false, enabledWorkspaceDirectoryDelete = false, enabledUndoLastAction = false, enabledTrashList = false, enabledTrashRestore = false, enabledTrashPurge = false, enabledCanvasReads = false, enabledCanvasPlaceableSearch = false, enabledCanvasCreate = false, enabledCanvasMutations = false, enabledNoteReads = false, enabledNoteLifecycle = false, enabledProjectCreation = false, enabledProjectMutations = false, enabledClientTools = false, enabledClientDelete = false, enabledProjectOverview = false, enabledScheduledTasks = false, enabledCalendarCanvasTools = [], enabledKnowledgeRead = false, enabledKnowledgeWrites = false, enabledGlobalSearch = false, enabledAskUser = false, enabledLinkButtons = false, enabledFileRead = false, enabledFilePresent = false, enabledFileFolderDelete = false, enabledFileDelete = false, enabledSaveUploadedFile = false, enabledRecentAttachments = false, enabledSendFile = false, enabledHttpGet = false, ...runOptions } = options
+  const authorization = createWebAgentRagRunAuthorization(options.pool, options.lease, { enabledShell: Boolean(runOptions.shell), enabledConversationRead, enabledTime, enabledCalendarRead, enabledUpcoming, enabledDashboard, enabledWorkspaces, enabledWorkspaceMutations, enabledWorkspaceCreation, enabledWorkspaceUnlink: enabledWorkspaceUnlink || Boolean(runOptions.workspaceUnlink && runOptions.workspaces), enabledWorkspaceDirectoryDelete: enabledWorkspaceDirectoryDelete || Boolean(runOptions.workspaceDirectoryDelete), enabledUndoLastAction: enabledUndoLastAction || Boolean(runOptions.undoLastAction), enabledTrashList, enabledTrashRestore, enabledTrashPurge: enabledTrashPurge || Boolean(runOptions.trashPurge), enabledCanvasReads, enabledCanvasPlaceableSearch, enabledCanvasCreate, enabledCanvasMutations, enabledNoteReads, enabledNoteLifecycle, enabledProjectCreation, enabledProjectMutations, enabledProjectDelete: Boolean(runOptions.projectDelete), enabledClientTools, enabledClientDelete, enabledProjectOverview, enabledScheduledTasks, enabledCalendarCanvasTools, enabledKnowledgeRead, enabledKnowledgeWrites, enabledKnowledgeDelete: Boolean(runOptions.knowledgeDelete), enabledRemember: Boolean(runOptions.remember), enabledGlobalSearch, enabledAskUser, enabledLinkButtons, enabledFileRead, enabledImageView: Boolean(runOptions.viewImage), enabledFilePresent, enabledFileFolderDelete, enabledFileDelete, enabledSaveUploadedFile, enabledRecentAttachments, enabledSendFile, enabledHttpGet, enabledSkillManagement: Boolean(runOptions.skillManagement), enabledSkillDelete: Boolean(runOptions.skillDelete), enabledNoteWrites: Boolean(runOptions.noteWrites), enabledCallTool: Boolean(runOptions.callTool), enabledMcpManagement: Boolean(runOptions.mcpManagement), enabledScheduledTaskWrites: Boolean(runOptions.scheduledTaskWrites?.length), enabledScheduledTaskDelete: Boolean(runOptions.scheduledTaskDelete), enabledSendEmail: Boolean(runOptions.sendEmail), enabledWebSearch: Boolean(runOptions.webSearch), enabledWebDownload: Boolean(runOptions.webDownload), enabledSimilarImageSearch: Boolean(runOptions.similarImageSearch), enabledDeepResearch: Boolean(runOptions.deepResearch) })
   const ownerContextAllowed = options.selection.contextPolicy.loadOwnerContext === true
   const configuration: CanonicalRunPreparationPorts['configuration'] = async (identity, signal) => {
     const result = await authorization.configuration(identity, signal)
@@ -237,16 +237,10 @@ export function createAuthorizedWebAgentProductionRagRunPorts(options: Omit<Para
     linkButtons: enabledLinkButtons ? runOptions.linkButtons : undefined,
     readFile: enabledFileRead ? runOptions.readFile : undefined,
     presentFile: enabledFilePresent ? runOptions.presentFile : undefined,
-    fileGrep: enabledFileGrep ? runOptions.fileGrep : undefined,
-    fileEdit: enabledFileEdit ? runOptions.fileEdit : undefined,
-    fileRename: enabledFileRename ? runOptions.fileRename : undefined,
-    fileCopy: enabledFileCopy ? runOptions.fileCopy : undefined,
-    fileCreate: enabledFileCreate ? runOptions.fileCreate : undefined,
+
     saveUploadedFile: enabledSaveUploadedFile ? runOptions.saveUploadedFile : undefined,
     recentAttachments: enabledRecentAttachments ? runOptions.recentAttachments : undefined,
-    folderCreate: enabledFolderCreate ? runOptions.folderCreate : undefined,
-    folderRename: enabledFolderRename ? runOptions.folderRename : undefined,
-    fileMoveItems: enabledFileMoveItems ? runOptions.fileMoveItems : undefined,
+
     authorize: async (identity, name) => ownerContextAllowed && await authorization.authorize(identity, name),
     preparation: { configuration },
   })

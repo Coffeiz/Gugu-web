@@ -19,16 +19,34 @@ export function agentCurrentDate(now: Date, timezone: string): string {
   return `${get('year')}-${get('month')}-${get('day')}（星期${day}）`
 }
 
+const staticPrompts = new Map<string, string>()
+const maxStaticPrompts = 32
+
 export function buildAgentStaticPrompt(input: AgentStaticPromptInput): string {
-  let text = input.base.trim()
-  if (text.includes('{today}')) text = text.replaceAll('{today}', agentCurrentDate(input.now, input.timezone))
+  const { now, timezone, ...stable } = input
+  const date = stable.base.includes('{today}') ? agentCurrentDate(now, timezone) : ''
+  // 所有影响输出的字段均来自本次已授权读取，日期变化后自动失效。
+  const key = JSON.stringify([stable, date])
+  const cached = staticPrompts.get(key)
+  if (cached !== undefined) {
+    staticPrompts.delete(key)
+    staticPrompts.set(key, cached)
+    return cached
+  }
+  const text = date ? stable.base.trim().replaceAll('{today}', date) : stable.base.trim()
   const base = text.split('\n---', 1)[0]!.trim()
   const language = ({ 'zh-CN': '简体中文', 'ja-JP': '日本語', 'en-US': 'English' } as Record<string, string>)[input.locale ?? ''] ?? '简体中文'
   const lang = `## 当前交流语言\n当前用户界面语言为「${language}」。除非用户明确要求使用其他语言，否则请始终使用「${language}」与用户交流，包括回答、解释、错误提示和工具调用结果。`
   const preference = input.groupChat ? (input.groupPersonalityPreferenceEnabled ? input.groupPersonalityPreference : '') : (input.personalityPreferenceEnabled ? input.personalityPreference : '')
   const persona = preference?.trim() || input.persona.trim()
   const custom = input.customReplyStyleEnabled && input.customReplyStyle?.trim() ? `## 用户自定义回复风格\n\n只调整表达方式，不改变人格设定、事实、安全规则或权限。当前用户的明确表达要求优先。\n\n${input.customReplyStyle.trim()}` : ''
-  return [base, input.afterBasePrompt?.trim(), lang, persona, input.skills.trim(), input.policy.trim(), input.retrieval.trim(), custom, input.skillIndex.trim()].filter(Boolean).join('\n\n---\n\n')
+  const prompt = [base, input.afterBasePrompt?.trim(), lang, persona, input.skills.trim(), input.policy.trim(), input.retrieval.trim(), custom, input.skillIndex.trim()].filter(Boolean).join('\n\n---\n\n')
+  // 限制单条大小，避免用户偏好或技能内容长期占用过多内存。
+  if (key.length <= 128 * 1024) {
+    staticPrompts.set(key, prompt)
+    if (staticPrompts.size > maxStaticPrompts) staticPrompts.delete(staticPrompts.keys().next().value!)
+  }
+  return prompt
 }
 
 export interface AgentMemorySnapshot {

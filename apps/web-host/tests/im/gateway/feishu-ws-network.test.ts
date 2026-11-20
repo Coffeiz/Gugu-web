@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createFeishuWsNetwork } from '../../../src/modules/im/gateway/platforms/feishu/ws-network.js'
+import { createFeishuWsNetwork } from '@gugu/gateway/feishu'
 
 const endpoint = 'wss://msg-frontier.feishu.cn/ws/v2?ticket=synthetic-ticket&device_id=synthetic-device&service_id=1'
 const signal = () => new AbortController().signal

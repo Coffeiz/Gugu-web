@@ -1,3 +1,4 @@
+import { shutdownStep } from '../shared/shutdown.js'
 import { createWebRuntimeLog } from '../shared/log-files.js'
 import { createGatewayConfigChangePublisher } from '../modules/im/gateway/bot-config.js'
 import bcrypt from 'bcryptjs'
@@ -395,6 +396,7 @@ const noRedisEvents: RedisEventPublisher = {
   async publishAuthStateChanged() { return false },
   async bumpContextRevision() { return false },
   async publishResourceChanged() { return false },
+  async publishAgentRunChanged() { return false },
   async publishTrashPurgeProgress() { return false },
 }
 
@@ -474,7 +476,7 @@ export async function createWebUiApp(
     removeSession(ownerId: string, sessionId: number, ports: AgentSessionDeletePorts, legacy: () => Promise<boolean>): Promise<boolean>
   },
 ): Promise<{ app: ReturnType<typeof createApp>; startWorkers(): Promise<void>
-  loopScopeTrace: ReturnType<typeof createWebLoopScopeTrace>; agentRunLog: import('@gugu/core/agent').AgentRunLogPort }> {
+  loopScopeTrace: ReturnType<typeof createWebLoopScopeTrace>; agentRunLog: import('@gugu/core/agent').AgentRunLogPort; imOwnerTools: Awaited<ReturnType<typeof createAgentServices>>['imOwnerTools']; imMcpDirectory: ReturnType<typeof createMcpSkillToolDirectory> }> {
   const publisher = redisEvents ?? noRedisEvents
   const fileUploads = createPostgresFileUploadOperations(pool, {
     storageRoot: config.storageLocalPath,
@@ -616,7 +618,7 @@ export async function createWebUiApp(
   const postgresSearchSources = createPostgresGlobalSearchSources(pool)
   const globalSearch = createGlobalSearchOperations(postgresSearchSources)
   const webSearch = process.platform === 'linux' ? createGlobalSearchOperations([
-    ...postgresSearchSources.filter(source => source.type !== 'file' && source.type !== 'folder'),
+    ...postgresSearchSources,
     ...createDiskFileSearchSources(pool, config.storageLocalPath),
   ]) : globalSearch
   const mindRefSuggest = createMindReferenceSuggester({
@@ -778,7 +780,7 @@ export async function createWebUiApp(
     ? createPostgresAgentActiveStatusReader(pool)
     : async () => new Map<number, boolean>()
   const listAgentSessions = createAgentSessionLister(pool, {
-    activeStatuses: readAgentActiveStatuses,
+    activeStatuses: config.redisUrl ? createPostgresAgentActiveStatusReader(pool, 'generating') : readAgentActiveStatuses,
     filesystemAuthorizationEnabled: () => config.workspaceRuntimeSettings.fullUserSandboxAuthorizationEnabled,
     // Host 尚未探测 sandboxd 就绪状态；与 workspace list 一样禁用 Shell/PTY 展示。
     workspaceShellSupported: () => false,
@@ -1084,16 +1086,16 @@ export async function createWebUiApp(
     wait: waitForMemoryIndexRebuild,
     now: Date.now,
   })
-  const { scheduledAttempt, agentRunLifecycle, ownerReflectionWork, agentInteractionRespond, agentSecretInteraction, agentRunLog } = await createAgentServices({
+  const { scheduledAttempt, agentRunLifecycle, ownerReflectionWork, agentInteractionRespond, agentSecretInteraction, agentRunLog, imOwnerTools } = await createAgentServices({
     config, pool, core, env,
     publisher, capabilitySkills, filesystemAuthorizationConfirmations, readMcpSettings,
     mcpSkillTools, mcpRuntime, projectTrashStorage, projectDirectoryRenamer,
     canRebuildAgentMemoryIndex, bubblewrapRootfs, shellMounts, readAgentShellSnapshot,
-    projectDeleteJournal, trashPurgeSchemaApplied, fileUploads, searchUsageSchemaApplied,
-    folderDelete, fileDeletes, folderWrites, projectCreateRuntime,
+    projectDeleteJournal, fileUploads, searchUsageSchemaApplied,
+    folderDelete, projectCreateRuntime,
     publishProjectMutation, projectUpdateRuntime, publishCanvasChanged, scheduledNotifyImPlatforms,
-    workspaceCreate, workspaceDirectories, fileRestores, trashOperations,
-    userSkillManager, globalSearch, resolveEmbeddingSettings, createEmbeddingTransport,
+    workspaceCreate, workspaceDirectories,
+    userSkillManager, globalSearch: webSearch, resolveEmbeddingSettings, createEmbeddingTransport,
     publishCalendarCreate, publishCalendarMutation, loopScopeTrace, readStateLabelOverrides,
     // 调度依赖在 Agent 初始化后装配，工具执行时才读取。
     get scheduledAttachments() { return scheduledAttachments },
@@ -2039,25 +2041,25 @@ export async function createWebUiApp(
     track: createTrackOperations(pool),
   })
   app.addHook('onClose', async () => {
-    await accountMemoryCleanup?.close()
+    if (accountMemoryCleanup) await shutdownStep(runtimeLog, 'account_memory', () => accountMemoryCleanup.close())
     try {
-      await backgroundWorkers.stop()
+      await shutdownStep(runtimeLog, 'workers', () => backgroundWorkers.stop())
     } finally {
-      await scheduledRunNow?.drain()
-      await agentRunLifecycle?.close()
-      await mcpRuntime.close()
-      await embeddingRebuildRuntime.close()
-      await embeddingTransport.close?.()
-      await loopScopeTrace?.close()
-      await loopScopeTransport.close?.()
-      await Promise.all([
+      if (scheduledRunNow) await shutdownStep(runtimeLog, 'scheduled_runs', () => scheduledRunNow.drain())
+      if (agentRunLifecycle) await shutdownStep(runtimeLog, 'agent_runs', () => agentRunLifecycle.close())
+      await shutdownStep(runtimeLog, 'mcp', () => mcpRuntime.close())
+      await shutdownStep(runtimeLog, 'embedding_rebuild', () => embeddingRebuildRuntime.close())
+      await shutdownStep(runtimeLog, 'embedding_transport', () => embeddingTransport.close?.())
+      if (loopScopeTrace) await shutdownStep(runtimeLog, 'loopscope', () => loopScopeTrace.close())
+      await shutdownStep(runtimeLog, 'loopscope_transport', () => loopScopeTransport.close?.())
+      await shutdownStep(runtimeLog, 'im_transports', () => Promise.all([
         qqConnectOptions.transport.close(),
         feishuConnectOptions.transport.close(),
         wechatConnectOptions.transport.close(),
-      ])
+      ]))
     }
   })
-  return { app, loopScopeTrace, agentRunLog, async startWorkers() {
+  return { app, loopScopeTrace, agentRunLog, imOwnerTools, imMcpDirectory: mcpSkillTools, async startWorkers() {
     await agentRunLifecycle?.start()
     await backgroundWorkers.start()
   } }

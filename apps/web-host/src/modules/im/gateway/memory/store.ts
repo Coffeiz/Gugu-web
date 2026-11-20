@@ -10,6 +10,7 @@ import { normalizeOwnerId } from '../../../../shared/owner-context.js'
 import { canonicalBaselineHash } from '../../../agent/chat/write.js'
 import { enqueuePostgresAgentRagRebuild } from '../../../agent/rag/jobs.js'
 import { createPostgresImAccess } from '../inbound/access.js'
+import { imSessionScopeSql } from '../agent/conversations.js'
 import { createPostgresCanonicalHistoryReader } from '../../../agent/chat/canonical.js'
 
 const digest = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')
@@ -79,8 +80,7 @@ export function createPostgresImCompact(options: {
         }
         const bound=scope.chatType==='c2c'?await options.readOwnerSession(client,scope):null
         const found=bound!==null?await client.query(`SELECT * FROM conversation_sessions WHERE user_id=$1 AND id=$2 AND (source='web' OR source IS NULL) FOR UPDATE`,[scope.ownerId,bound])
-          :await client.query(`SELECT * FROM conversation_sessions WHERE user_id=$1 AND source=$2 AND bot_id=$3::text
-            AND CASE WHEN $4::text IS NOT NULL THEN chat_type='group' AND chat_id=$4 ELSE chat_id IS NULL AND platform_user_id=$5 AND (chat_type='c2c' OR chat_type IS NULL) END
+          :await client.query(`SELECT * FROM conversation_sessions WHERE ${imSessionScopeSql}
             ORDER BY updated_at DESC,id DESC LIMIT 1 FOR UPDATE`,[scope.ownerId,scope.platform,scope.botId,scope.chatId,scope.platformUserId])
         const session=found.rows[0]
         let state:State=session?'requesting':'no_session',fence:string|null=null

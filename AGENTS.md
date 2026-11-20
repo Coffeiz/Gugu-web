@@ -5,8 +5,8 @@
 | Skill | 路径 | 适用场景 |
 |-------|------|---------|
 | frontend | `agentskills/frontend/SKILL.md` | Vue/TS 前端开发 |
-| backend | `agentskills/backend/SKILL.md` | Python/FastAPI 后端 |
-| node-webui | `agentskills/node-webui/SKILL.md` | gugu-webui Node.js/Fastify 后端与 API 迁移 |
+| backend | `agentskills/backend/SKILL.md` | Node.js 后端开发入口（转到 node-webui） |
+| node-webui | `agentskills/node-webui/SKILL.md` | Node.js/Fastify Web Host、Core、Gateway 与 Desktop 后端 |
 | canvas-mind | `agentskills/canvas-mind/SKILL.md` | 画布/便签/Mind |
 | design | `agentskills/design/SKILL.md` | UI 视觉与交互规范 |
 | testing | `agentskills/testing/SKILL.md` | 写/改测试 |
@@ -32,6 +32,7 @@
 
 - 日常开发优先使用 `corepack pnpm --filter @gugu/webui dev` 监听源码和共享包，不要因每次编辑而手动运行全量 build。仅首次缺少共享包制品、资源生成、发布或需要验证生产构建时执行对应构建。
 - 监听会重启 Web Host；运行中的 Agent 任务和请求可能中断。修改共享包后应确认监听编译成功，不能用旧制品掩盖编译错误。
+- 新后端功能、缺陷修复、测试和架构演进均以 `apps/web-host/`、`apps/desktop/` 与 `packages/` 中的 Node.js 实现为目标。Python 后端只可作为历史行为和数据迁移的只读参考，不是新增实现、验收或运行目标。
 
 ## 调试原则
 
@@ -50,9 +51,9 @@
 
 ## 安全规范
 
-- 聊天正文、附件名和用户输入不得写入可见日志；使用 `agent/logsafe.py` 的 `fingerprint()`。
-- 可见错误必须经过 `app.core.redaction.redact()`；原始异常只能写入 `diag_log()`/`diag_log_raw()`。
-- 跨用户数据查询使用 `app/core/ownership.py` 的 `get_owned()`。
+- 聊天正文、附件名和用户输入不得写入可见日志；使用 `@gugu/log` 的指纹、字段白名单和诊断日志接口，遵循 `agentskills/node-webui/SKILL.md`。
+- 可见错误必须走 Node Host/Core 的统一错误映射和脱敏；原始异常只允许进入受限诊断日志，不得写入常规日志或用户响应。
+- 跨用户读写由可信 owner 上下文和 Core/Host 的 owner 限定端口执行；不得仅凭请求参数中的 owner/id 查询其他用户数据。
 - destructive 工具必须声明 `destructive=True` 并接入 `confirm` 确认门。
 - 外部请求复用 URL 安全校验，禁止自动跟随未经校验的重定向。
 - 不得把 token、密钥或凭据写入 URL、日志或 Git。
@@ -60,7 +61,7 @@
 
 ## 用户运行配置保护
 
-- `backend/config.override.json`、`backend/.env` 及 devserver 上的同名运行配置属于用户数据，默认只读。
+- `apps/web-host/config.override.json`、`apps/web-host/.env`、Desktop 的运行配置及 devserver 上对应配置属于用户数据，默认只读。旧 `backend/` 目录中的配置也按用户数据保护，但不作为新后端运行或开发目标。
 - Agent、测试脚本、诊断脚本、Mutagen 同步和部署流程不得擅自创建、清空、重写或用本地副本覆盖这些文件；测试必须使用临时目录或显式 mock 配置路径。
 - 用户明确要求修改运行配置时，只修改指定字段，保留其他字段；写入必须使用原子替换并先校验 JSON，禁止把解析失败当成空对象继续写回。
 - 任何配置迁移、恢复或重建操作都必须先生成带时间戳的备份，并在完成后校验数据库、LLM 预设和其他配置段仍然存在；不得在日志中输出密码、Token 或 API Key。

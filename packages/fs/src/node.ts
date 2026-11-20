@@ -47,11 +47,11 @@ export function writeLocalFile(rootPath: string, relativePath: string, content: 
   return publishLocalFile(rootPath, relativePath, content, { replace: true })
 }
 
-/** 完整接收并同步文件后才发布；目录已存在，且并发写入同名目标时拒绝覆盖。 */
+/** 完整接收并同步文件后才发布；仅显式覆盖时允许替换现有普通文件。 */
 export function importLocalFile(
-  rootPath: string, relativePath: string, content: AsyncIterable<Uint8Array>, signal: AbortSignal,
+  rootPath: string, relativePath: string, content: AsyncIterable<Uint8Array>, signal: AbortSignal, overwrite = false,
 ): Promise<void> {
-  return publishLocalFile(rootPath, relativePath, content, { replace: false, signal })
+  return publishLocalFile(rootPath, relativePath, content, { replace: overwrite, requireExisting: overwrite, signal })
 }
 
 /** 在授权根内流式创建新文件，并通过已打开的目录句柄安全创建缺失父目录。 */
@@ -63,7 +63,7 @@ export function writeLocalFileStream(
 
 async function publishLocalFile(
   rootPath: string, relativePath: string, content: string | Uint8Array | AsyncIterable<Uint8Array>,
-  options: { replace: boolean; createParents?: boolean; signal?: AbortSignal },
+  options: { replace: boolean; requireExisting?: boolean; createParents?: boolean; signal?: AbortSignal },
 ): Promise<void> {
   options.signal?.throwIfAborted()
   const segments = relativePath.split('/')
@@ -77,14 +77,16 @@ async function publishLocalFile(
   let temporaryPath: string | undefined
   try {
     for (const segment of segments.slice(0, -1)) {
-      const next = await openChildDirectory(parent, segment, options.replace || options.createParents === true)
+      const next = await openChildDirectory(parent, segment, (options.replace && !options.requireExisting) || options.createParents === true)
       parents.push(next)
       parent = `/proc/self/fd/${next.fd}`
     }
 
     const name = segments.at(-1)!
     const targetPath = `${parent}/${name}`
-    if (options.replace) {
+    const original = options.requireExisting ? await lstat(targetPath, { bigint: true }) : null
+    if (original && !original.isFile()) throw new UnsafeLocalPathError()
+    if (options.replace && !original) {
       try {
         if ((await lstat(targetPath)).isSymbolicLink()) throw new UnsafeLocalPathError()
       } catch (error) {
@@ -100,6 +102,11 @@ async function publishLocalFile(
       await file.sync()
     } finally { await file.close() }
     options.signal?.throwIfAborted()
+    if (original) {
+      const current = await lstat(targetPath, { bigint: true })
+      if (current.dev !== original.dev || current.ino !== original.ino || current.ctimeNs !== original.ctimeNs)
+        throw Object.assign(new Error('覆盖目标已变化'), { code: 'EEXIST' })
+    }
     if (options.replace) await rename(staged, targetPath)
     else {
       await link(staged, targetPath)
@@ -224,19 +231,19 @@ async function openChildDirectory(parent: string, name: string, create: boolean)
   return openChildDirectory(parent, name, false)
 }
 
-async function openAnchoredParent(rootPath: string, relativePath: string, createParents = false) {
+async function openAnchoredParent(rootPath: string | number, relativePath: string, createParents = false) {
   const segments = relativePath.split('/')
   if (process.platform !== 'linux' || segments.some(segment =>
     !segment || segment === '.' || segment === '..' || segment.includes('\\') || segment.includes('\0')))
     throw new UnsafeLocalPathError()
   let root: string
-  try { root = await realpath(rootPath) }
+  try { root = typeof rootPath === 'number' ? `/proc/self/fd/${rootPath}` : await realpath(rootPath) }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
     throw error
   }
   let handle
-  try { handle = await open(root, constants.O_RDONLY | constants.O_DIRECTORY | (constants.O_NOFOLLOW ?? 0)) }
+  try { handle = await open(root, constants.O_RDONLY | constants.O_DIRECTORY | (typeof rootPath === 'number' ? 0 : constants.O_NOFOLLOW ?? 0)) }
   catch (error) {
     const code = (error as NodeJS.ErrnoException).code
     if (code === 'ELOOP' || code === 'ENOTDIR') throw new UnsafeLocalPathError()
@@ -330,7 +337,7 @@ export async function moveLocalEntry(root: string, fromPath: string, toPath: str
 }
 
 /** 读取用户可修改的目录树时，逐段固定目录句柄，拒绝符号链接。 */
-export async function openAnchoredLocalFile(root: string, relativePath: string) {
+export async function openAnchoredLocalFile(root: string | number, relativePath: string) {
   const parent = await openAnchoredParent(root, relativePath)
   if (!parent) return null
   try {
@@ -469,8 +476,8 @@ export function createLocalFileTree(storageRoot: string, rootKey: string) {
     },
     open: (relativePath: string) => openAnchoredLocalFile(storageRoot, key(relativePath)),
     mkdir: (relativePath: string) => createLocalDirectory(storageRoot, key(relativePath)),
-    upload: (relativePath: string, content: AsyncIterable<Uint8Array>, signal: AbortSignal) =>
-      importLocalFile(storageRoot, key(relativePath), content, signal),
+    upload: (relativePath: string, content: AsyncIterable<Uint8Array>, signal: AbortSignal, overwrite = false) =>
+      importLocalFile(storageRoot, key(relativePath), content, signal, overwrite),
     async move(relativePath: string, destination: string) {
       const from = key(relativePath)
       const to = key(destination)

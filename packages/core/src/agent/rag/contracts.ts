@@ -143,6 +143,8 @@ export type RagUnifiedDiagnostics = {
 
 export type RagRankDiagnostics = RagUnifiedDiagnostics & RagScoreStats & {
   elapsed_ms: number;
+  stage_ms?: Record<string, number>;
+  fallback_reason?: string | null;
   source_diagnostics?: Record<string, {
     candidate_count: number;
     eligible_count: number;

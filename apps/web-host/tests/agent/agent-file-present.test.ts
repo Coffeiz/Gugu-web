@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createPresentFileTool, createToolRegistry, type FileGrepCandidate } from '@gugu/core/tools'
+import { createPresentFileTool, createToolRegistry, type FilePathCandidate } from '@gugu/core/tools'
 import { createWebAgentFilePresentPort } from '../../src/modules/agent/tools/files/present.js'
 
 test('present_file 经 Web lease 与 Core Registry 只返回 owner 文件预览指令', async () => {
@@ -18,12 +18,11 @@ test('present_file 经 Web lease 与 Core Registry 只返回 owner 文件预览�
     if (!row || values[1] !== ownerId || row.user_id !== values[1]) return { rowCount: 0, rows: [] }
     return { rowCount: 1, rows: [row] }
   } }
-  const candidates: FileGrepCandidate[] = [{ file_id: 7, name: 'voice.mp3', space: 'personal', path: '/personal/voice.mp3',
-    project_id: null, folder_id: null, workspace_directory_id: null, size_bytes: 3, is_text: false }]
+  const candidates: FilePathCandidate[] = [{ file_id: 7, name: 'voice.mp3', path: '/personal/voice.mp3' }]
   let authorized = true
   const registry = createToolRegistry({ authorize: async (current, name) => authorized && current.ownerId === ownerId && name === 'present_file',
     tools: [createPresentFileTool(createWebAgentFilePresentPort({ pool, ownerId, lease,
-      files: { async list(current, signal) { signal.throwIfAborted(); assert.deepEqual(current, identity); return candidates }, async readText() { throw new Error('unused') } },
+      files: { async list(current, signal) { signal.throwIfAborted(); assert.deepEqual(current, identity); return candidates } },
     }))] })
   const dispatch = (input: unknown, current = identity) => registry.tools.dispatch({ id: 'present-file', name: 'present_file', input }, {
     identity: current, roundId: '2', signal: new AbortController().signal, resolution: null,

@@ -1,7 +1,7 @@
 import type { ProviderHttpRequest, ProviderHttpResponse, ProviderTransport } from '@gugu/core/providers'
 import { ProviderError } from '@gugu/core/providers'
-import type { createILinkClient } from './client.js'
-import { aesEcbPaddedSize, aeskeyToB64, aeskeyToHex, decryptInboundAesEcb, encryptForUpload, genFilekeyHex, md5Hex } from './media-crypto.js'
+import type { createILinkClient } from '@gugu/gateway/wechat'
+import { aesEcbPaddedSize, aeskeyToB64, aeskeyToHex, decryptInboundAesEcb, encryptForUpload, genFilekeyHex, md5Hex } from '@gugu/gateway/wechat'
 
 export const WECHAT_MEDIA_MAX_BYTES = 20 * 1024 * 1024
 const cdnOrigin = 'https://novac2c.cdn.weixin.qq.com'

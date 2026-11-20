@@ -6,23 +6,14 @@ const RAG_TOOLS = new Set(['search_conversations', 'search_memory', 'use_skill',
 const SKILL_WRITE_TOOLS = ['create_skill', 'update_skill'] as const
 const ASK_USER_TOOLS = new Set(['ask_user'])
 const LINK_BUTTON_TOOLS = new Set(['send_link_buttons'])
+const IMAGE_VIEW_TOOLS = new Set(['view_image'])
 const FILE_READ_TOOLS = new Set(['read_file'])
 const FILE_PRESENT_TOOLS = new Set(['present_file'])
-const FILE_GREP_TOOLS = new Set(['grep'])
-const FILE_DIRECTORY_TOOLS = new Set(['list_dir'])
 const FILE_FOLDER_DELETE_TOOLS = new Set(['delete_folder'])
 const FILE_DELETE_TOOLS = new Set(['delete_file'])
-const FILE_EDIT_TOOLS = new Set(['edit_file'])
-const FILE_RENAME_TOOLS = new Set(['rename_file'])
-const FILE_COPY_TOOLS = new Set(['copy_file'])
-const FILE_CREATE_TOOLS = new Set(['create_file'])
-const FOLDER_CREATE_TOOLS = new Set(['create_folder'])
-const FOLDER_RENAME_TOOLS = new Set(['rename_folder'])
-const FILE_MOVE_TOOLS = new Set(['move_items'])
 const FILE_SEND_TOOLS = new Set(['send_file'])
 const FILE_SAVE_ATTACHMENT_TOOLS = new Set(['save_uploaded_file'])
 const FILE_RECENT_ATTACHMENT_TOOLS = new Set(['list_recent_attachments'])
-const FILE_ARCHIVE_TOOLS = new Set(['compress_files', 'extract_files'])
 const CORE_READ_TOOLS = new Set(['list_clients', 'list_projects', 'get_tool_schema'])
 const PROJECT_CREATE_TOOLS = new Set(['create_project'])
 const PROJECT_MUTATION_TOOLS = new Set(['update_project', 'set_color', 'archive_project', 'add_stage', 'remove_stage', 'rename_stage', 'set_stages', 'update_stage'])
@@ -72,7 +63,7 @@ export type WebCalendarCanvasToolName =
 export function createWebAgentRagRunAuthorization(
   pool: Pick<Pool, 'query'>,
   lease: AgentDispatchLease,
-  options: { enabledShell?: boolean; enabledCalendarCanvasTools?: readonly WebCalendarCanvasToolName[]; enabledConversationRead?: boolean; enabledTime?: boolean; enabledRemember?: boolean; enabledKnowledgeRead?: boolean; enabledKnowledgeWrites?: boolean; enabledKnowledgeDelete?: boolean; enabledGlobalSearch?: boolean; enabledAskUser?: boolean; enabledSkillManagement?: boolean; enabledSkillDelete?: boolean; enabledNoteWrites?: boolean; enabledCallTool?: boolean; enabledMcpManagement?: boolean; enabledScheduledTaskWrites?: boolean; enabledScheduledTaskDelete?: boolean; enabledSendEmail?: boolean; enabledHttpGet?: boolean; enabledWebSearch?: boolean; enabledWebDownload?: boolean; enabledSimilarImageSearch?: boolean; enabledDeepResearch?: boolean; enabledLinkButtons?: boolean; enabledFileRead?: boolean; enabledFilePresent?: boolean; enabledFileGrep?: boolean; enabledFileDirectoryRead?: boolean; enabledFileFolderDelete?: boolean; enabledFileDelete?: boolean; enabledFileEdit?: boolean; enabledFileRename?: boolean; enabledFileCopy?: boolean; enabledFileCreate?: boolean; enabledSaveUploadedFile?: boolean; enabledRecentAttachments?: boolean; enabledFileArchive?: boolean; enabledFolderCreate?: boolean; enabledFolderRename?: boolean; enabledFileMoveItems?: boolean; enabledSendFile?: boolean; enabledCalendarRead?: boolean; enabledUpcoming?: boolean; enabledClientTools?: boolean; enabledClientDelete?: boolean; enabledDashboard?: boolean; enabledProjectOverview?: boolean; enabledProjectCreation?: boolean; enabledProjectMutations?: boolean; enabledProjectDelete?: boolean; enabledWorkspaces?: boolean; enabledWorkspaceMutations?: boolean; enabledWorkspaceCreation?: boolean; enabledWorkspaceUnlink?: boolean; enabledWorkspaceDirectoryDelete?: boolean; enabledUndoLastAction?: boolean; enabledScheduledTasks?: boolean; enabledTrashList?: boolean; enabledTrashRestore?: boolean; enabledTrashPurge?: boolean; enabledCanvasReads?: boolean; enabledCanvasPlaceableSearch?: boolean; enabledCanvasCreate?: boolean; enabledCanvasMutations?: boolean; enabledNoteReads?: boolean; enabledNoteLifecycle?: boolean } = {},
+  options: { enabledShell?: boolean; enabledCalendarCanvasTools?: readonly WebCalendarCanvasToolName[]; enabledConversationRead?: boolean; enabledTime?: boolean; enabledRemember?: boolean; enabledKnowledgeRead?: boolean; enabledKnowledgeWrites?: boolean; enabledKnowledgeDelete?: boolean; enabledGlobalSearch?: boolean; enabledAskUser?: boolean; enabledSkillManagement?: boolean; enabledSkillDelete?: boolean; enabledNoteWrites?: boolean; enabledCallTool?: boolean; enabledMcpManagement?: boolean; enabledScheduledTaskWrites?: boolean; enabledScheduledTaskDelete?: boolean; enabledSendEmail?: boolean; enabledHttpGet?: boolean; enabledWebSearch?: boolean; enabledWebDownload?: boolean; enabledSimilarImageSearch?: boolean; enabledDeepResearch?: boolean; enabledLinkButtons?: boolean; enabledFileRead?: boolean; enabledImageView?: boolean; enabledFilePresent?: boolean; enabledFileFolderDelete?: boolean; enabledFileDelete?: boolean; enabledSaveUploadedFile?: boolean; enabledRecentAttachments?: boolean; enabledSendFile?: boolean; enabledCalendarRead?: boolean; enabledUpcoming?: boolean; enabledClientTools?: boolean; enabledClientDelete?: boolean; enabledDashboard?: boolean; enabledProjectOverview?: boolean; enabledProjectCreation?: boolean; enabledProjectMutations?: boolean; enabledProjectDelete?: boolean; enabledWorkspaces?: boolean; enabledWorkspaceMutations?: boolean; enabledWorkspaceCreation?: boolean; enabledWorkspaceUnlink?: boolean; enabledWorkspaceDirectoryDelete?: boolean; enabledUndoLastAction?: boolean; enabledScheduledTasks?: boolean; enabledTrashList?: boolean; enabledTrashRestore?: boolean; enabledTrashPurge?: boolean; enabledCanvasReads?: boolean; enabledCanvasPlaceableSearch?: boolean; enabledCanvasCreate?: boolean; enabledCanvasMutations?: boolean; enabledNoteReads?: boolean; enabledNoteLifecycle?: boolean } = {},
 ): {
   configuration: CanonicalRunPreparationPorts['configuration']
   authorize(identity: RunIdentity, name: string, signal?: AbortSignal): Promise<boolean>
@@ -100,22 +91,13 @@ export function createWebAgentRagRunAuthorization(
     ...(options.enabledAskUser === true ? ASK_USER_TOOLS : []),
     ...(options.enabledLinkButtons === true ? LINK_BUTTON_TOOLS : []),
     ...(options.enabledShell ? ['shell'] : []),
+    ...(options.enabledImageView === true ? IMAGE_VIEW_TOOLS : []),
     ...(options.enabledFileRead === true ? FILE_READ_TOOLS : []),
     ...(options.enabledFilePresent === true ? FILE_PRESENT_TOOLS : []),
-    ...(options.enabledFileGrep === true ? FILE_GREP_TOOLS : []),
-    ...(options.enabledFileDirectoryRead === true ? FILE_DIRECTORY_TOOLS : []),
     ...(options.enabledFileFolderDelete === true ? FILE_FOLDER_DELETE_TOOLS : []),
     ...(options.enabledFileDelete === true ? FILE_DELETE_TOOLS : []),
-    ...(options.enabledFileEdit === true ? FILE_EDIT_TOOLS : []),
-    ...(options.enabledFileRename === true ? FILE_RENAME_TOOLS : []),
-    ...(options.enabledFileCopy === true ? FILE_COPY_TOOLS : []),
-    ...(options.enabledFileCreate === true ? FILE_CREATE_TOOLS : []),
     ...(options.enabledSaveUploadedFile === true ? FILE_SAVE_ATTACHMENT_TOOLS : []),
     ...(options.enabledRecentAttachments === true ? FILE_RECENT_ATTACHMENT_TOOLS : []),
-    ...(options.enabledFileArchive === true ? FILE_ARCHIVE_TOOLS : []),
-    ...(options.enabledFolderCreate === true ? FOLDER_CREATE_TOOLS : []),
-    ...(options.enabledFolderRename === true ? FOLDER_RENAME_TOOLS : []),
-    ...(options.enabledFileMoveItems === true ? FILE_MOVE_TOOLS : []),
     ...(options.enabledSendFile === true ? FILE_SEND_TOOLS : []),
     ...(options.enabledConversationRead === true ? CONVERSATION_READ_TOOLS : []),
     ...(options.enabledTime === true ? TIME_TOOLS : []),

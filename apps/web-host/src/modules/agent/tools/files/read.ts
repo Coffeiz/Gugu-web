@@ -1,7 +1,7 @@
 import type { Pool, QueryResultRow } from 'pg'
 import type { RunIdentity } from '@gugu/core/agent'
 import { openLocalFile } from '@gugu/fs/node'
-import type { FileGrepPort, ReadFilePorts } from '@gugu/core/tools'
+import type { FilePathLookup, ReadFilePorts } from '@gugu/core/tools'
 import { isOwnedFileStorageKey } from '../../../files/store.js'
 import type { AgentDispatchLease } from '../../run/dispatch.js'
 
@@ -32,7 +32,7 @@ export function createWebAgentFileReadPort(
   pool: Pick<Pool, 'query'>,
   storageRoot: string,
   lease: AgentDispatchLease,
-  files?: FileGrepPort,
+  files?: FilePathLookup,
 ): ReadFilePorts {
   const expected = Object.freeze({ ...lease.identity })
   const matchesLease = (identity: RunIdentity) => identity.ownerId === expected.ownerId

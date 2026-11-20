@@ -115,6 +115,7 @@ export function useChatStream(options: {
   contextCompactingItem: () => StatusItem
   scrollBottom: (force?: boolean) => Promise<void>
   fetchSessions: () => Promise<void>
+  updateSidebarRun?: (sessionId: number, runId: string, running: boolean) => void
   syncResumedHistory?: (id: number) => Promise<void>
   refreshAfterTools: (usedTools: Set<string>) => Promise<void>
   loadQuota: () => void
@@ -584,6 +585,7 @@ export function useChatStream(options: {
           } else if (evt.type === 'round_start') {
             currentRunId = String(evt.core_run_id || evt.run_id || currentRunId)
             currentRoundId = String(evt.round_id || 'round')
+            if (live() && sid != null) options.updateSidebarRun?.(sid, currentRunId, true)
             if (live() && !(runController && cancelRequestedControllers.has(runController)))
               options.setStatus(options.thinkingItem())
           } else if (evt.type === '_new_round') {
@@ -607,9 +609,13 @@ export function useChatStream(options: {
               options.clearStatus()
             }
             const delta = mapSessionMessageDelta({ timelineEvents: [item] }, mkid, role => ({ role }))
+            const reply = delta.find(message => message.role === 'ai')
+            if (reply?.text) reply.streaming = true
             messages.value = mergeSessionMessageDelta(messages.value, delta)
             if (item.kind === 'assistant') {
+              const previous = messages.value[syncAiIndex()]
               aiMessageId = messages.value.find(message => message._syncKey === `event:${item.eventId}`)?.id ?? null
+              if (previous?.streaming && previous.id !== aiMessageId) previous.streaming = false
               syncAiIndex()
             }
             scheduleStreamScroll()
@@ -624,6 +630,7 @@ export function useChatStream(options: {
             else if (MCP_TOOLS.has(evt.name)) notifyResourceChanged('mcp')
           } else if (evt.type === 'interaction_required') {
             interactionPaused = true
+            if (live() && sid != null) options.updateSidebarRun?.(sid, String(evt.core_run_id || currentRunId || evt.run_id || ''), false)
             const eventSessionId = evt.session_id == null ? null : Number(evt.session_id)
             const interactionBelongsToView = viewGeneration === options.getViewGeneration()
               && (eventSessionId == null
@@ -683,6 +690,7 @@ export function useChatStream(options: {
             }
           } else if (evt.type === 'done') {
             if (runController) runTerminalControllers.add(runController)
+            if (sid != null) options.updateSidebarRun?.(sid, String(evt.core_run_id || evt.run_id || currentRunId), false)
             // 会话列表的运行态由独立的用户级 live 事件刷新；若该瞬时通知丢失，
             // 当前流仍能收到终态，借此重新读取服务端快照，避免侧栏标题动画残留。
             void options.fetchSessions()

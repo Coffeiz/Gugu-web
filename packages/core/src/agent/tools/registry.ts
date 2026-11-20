@@ -1,6 +1,6 @@
 import type { PreparedToolDefinition, RunIdentity, ToolResult } from '../models.js'
 import type { ToolPort } from '../ports.js'
-import { portableSnapshot } from '../context/history/canonical-history.js'
+import { portableSnapshot, stableJson } from '../context/history/canonical-history.js'
 import type { ToolDefinition, ToolGroupDefinition, ToolRegistryConfiguration, ToolRegistryOptions } from './contracts.js'
 import { enrichToolError, invalidInputResult } from './input-errors.js'
 import { normalizeToolInput } from './normalize-input.js'
@@ -38,6 +38,7 @@ function withInputAdaptations(result: ToolResult, adaptations: readonly string[]
 export function createToolRegistry(options: ToolRegistryOptions): {
   tools: ToolPort
   capabilities(identity: RunIdentity): Promise<PreparedToolDefinition[]>
+  definitionVersion(): string
   catalog(): { name: string; description: string; category: string; enabled: boolean; source: 'builtin' }[]
   register(tool: ToolDefinition): void
   registerGroup(group: ToolGroupDefinition): void
@@ -90,14 +91,15 @@ export function createToolRegistry(options: ToolRegistryOptions): {
     register(preauthorized)
   }
   const preauthorizedEntry = preauthorized && entries.get(preauthorized.definition.name)
-  const confirmationGated = options.confirmationGatedDestructiveTool
-  if (confirmationGated) {
+  const confirmedEntries = new Set<ToolDefinition>()
+  const legacyConfirmation = options.confirmationGatedDestructiveTool
+  for (const confirmationGated of [...(legacyConfirmation ? [legacyConfirmation] : []), ...options.confirmationGatedDestructiveTools ?? []]) {
     if (!confirmationGated.destructive || !confirmationGated.requiresInteraction || !confirmationGated.confirmationReplay
       || confirmationGated.effect !== 'write') throw new Error('持久确认工具定义无效')
     register(confirmationGated)
+    confirmedEntries.add(entries.get(confirmationGated.definition.name)!)
   }
-  const confirmedEntry = confirmationGated && entries.get(confirmationGated.definition.name)
-  const blocked = (tool: ToolDefinition) => tool.destructive && tool !== preauthorizedEntry && tool !== confirmedEntry
+  const blocked = (tool: ToolDefinition) => tool.destructive && tool !== preauthorizedEntry && !confirmedEntries.has(tool)
   configure(options.configuration ?? {})
   async function authorized(identity: RunIdentity, name: string): Promise<boolean> {
     try { return await options.authorize(identity, name) === true } catch { return false }
@@ -183,6 +185,8 @@ export function createToolRegistry(options: ToolRegistryOptions): {
       return { name, description, category: groupId ? groupNames.get(groupId) ?? '' : '',
         enabled: enabled(name), source: 'builtin' as const }
     })
+  }, definitionVersion() {
+    return stableJson([...entries].map(([name, tool]) => [enabled(name), blocked(tool), tool.definition]))
   }, async capabilities(identity) {
     identity = Object.freeze({ ...identity })
     const definitions: PreparedToolDefinition[] = []

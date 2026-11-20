@@ -1,4 +1,4 @@
-import { contextAccessScopeHash, stableJson, type CanonicalContextPorts, type CanonicalRunContext, type ContextSourcePorts, type RunEvent, type RunIdentity } from '@gugu/core/agent'
+import { createAgentRunToolPorts, contextAccessScopeHash, stableJson, type CanonicalContextPorts, type CanonicalRunContext, type ContextSourcePorts, type RunEvent, type RunIdentity } from '@gugu/core/agent'
 import type { ProviderContextFactoryInput, ProviderFactoryContext } from '@gugu/core/providers'
 import { imActorInputFromPayload, imCanUseTool, imContextPolicy, type ImActor, type ImActorInput } from '@gugu/core/im/access'
 import { createImRunDelivery, ImRunDeliveryBlocked, type ImRunDeliveryPorts } from '@gugu/core/im/run-delivery'
@@ -31,6 +31,7 @@ export interface ImAgentReconstructionResources extends Omit<WebAgentReconstruct
   source: Omit<ContextSourcePorts, 'readSnapshot' | 'historyReader' | 'currentTurn' | 'select' | 'digest' | 'nextId' | 'builder'>
   builder: Omit<AgentContextBuilderPorts, 'dynamic'> & { now(): number }
   sender: ImRunDeliveryPorts<CanonicalRunContext>['sender']
+  showIntermediateReplies?: boolean
   streamFactory?(receipts: ImDeliverySession, authorize: () => Promise<boolean>): NonNullable<ImRunDeliveryPorts<CanonicalRunContext>['stream']> & { close?(): Promise<void> }
   /** 平台可观察实际Run生命周期（如微信typing）；每次平台动作仍须调用当前授权。 */
   observeRun?(events: AsyncIterable<RunEvent>, authorize: () => Promise<boolean>): AsyncIterable<RunEvent>
@@ -171,43 +172,50 @@ export function createImAgentReconstructor(options: ImAgentReconstructorOptions)
           } }
         }
       }
-      const preparation: NonNullable<PersistentAgentRuntimeOptions['runPreparation']> = {
-        ...resources.preparation,
-        async configuration(target, signal) {
-          if (!sameIdentity(target, id) || !await authorizeCurrent()) throw new Error('IM 工具授权已变更')
-          const config = await configured(target, signal)
-          if (config.identity.ownerId !== id.ownerId || config.identity.subject.kind !== 'session'
-            || config.identity.subject.id !== id.sessionId || config.source !== actor.platform || !await authorizeCurrent()) throw new Error('IM 工具来源不匹配')
-          return { ...config, toolNames: [...config.toolNames.filter(name => imCanUseTool(actor, name, groupAutoReply) && name !== 'choose_no_reply'),
-            ...(groupAutoReply ? ['choose_no_reply'] : [])] }
+      const toolPorts = createAgentRunToolPorts({
+        identity: id,
+        preparation: {
+          ...resources.preparation,
+          async configuration(target, signal) {
+            if (!sameIdentity(target, id) || !await authorizeCurrent()) throw new Error('IM 工具授权已变更')
+            const config = await configured(target, signal)
+            if (config.identity.ownerId !== id.ownerId || config.identity.subject.kind !== 'session'
+              || config.identity.subject.id !== id.sessionId || config.source !== actor.platform || !await authorizeCurrent())
+              throw new Error('IM 工具来源不匹配')
+            return { ...config, toolNames: [...config.toolNames.filter(name => imCanUseTool(actor, name, groupAutoReply) && name !== 'choose_no_reply'),
+              ...(groupAutoReply ? ['choose_no_reply'] : [])] }
+          },
         },
-        async discover(config, signal) {
-          signal.throwIfAborted()
-          if (config.identity.ownerId !== id.ownerId || config.identity.subject.kind !== 'session' || config.identity.subject.id !== id.sessionId || !await authorizeCurrent())
-            throw new Error('IM 工具发现身份不匹配')
-          const allowed = new Set(config.toolNames)
-          const capabilities=await resources.toolRegistry.capabilities(id)
-          if(!await authorizeCurrent())throw new Error('IM 工具授权已变更')
-          return [...capabilities.filter(tool => allowed.has(tool.name)
-            && tool.name !== 'choose_no_reply' && imCanUseTool(actor, tool.name, groupAutoReply)),
-            ...(groupAutoReply && allowed.has('choose_no_reply') && await authorizeTool(input, 'choose_no_reply', true) ? [replyGate!.definition] : [])]
+        configurationMatches(config) {
+          return config.source === actor.platform && config.identity.subject.kind === 'session' && config.identity.subject.id === id.sessionId
         },
-      }
+        registry: {
+          async capabilities(target) {
+            if (!sameIdentity(target, id) || !await authorizeCurrent()) throw new Error('IM 工具发现身份不匹配')
+            const capabilities = await resources.toolRegistry.capabilities(target)
+            if (!await authorizeCurrent()) throw new Error('IM 工具授权已变更')
+            return [...capabilities.filter(tool => tool.name !== 'choose_no_reply' && imCanUseTool(actor, tool.name, groupAutoReply)),
+              ...(replyGate && await authorizeTool(input, 'choose_no_reply', true) ? [replyGate.definition] : [])]
+          },
+          tools: {
+            plan: resources.toolRegistry.tools.plan,
+            async dispatch(call, scope) {
+              if (!imCanUseTool(actor, call.name) || !await authorizeTool(input, call.name))
+                return { kind: 'completed', value: { error: 'IM 工具权限已变更' }, successful: false, mutated: false, executed: false }
+              return resources.toolRegistry.tools.dispatch(call, scope)
+            },
+            async reconcile(call, target) {
+              if (!imCanUseTool(actor, call.name) || !await authorizeTool(input, call.name)) return { kind: 'unknown' }
+              return resources.toolRegistry.tools.reconcile(call, target)
+            },
+          },
+        },
+      })
       const persistentOptions: Omit<PersistentAgentRuntimeOptions, 'context'> = { pool: options.pool, secretKey: options.secretKey, redis: options.redis, subscribe: options.subscribe,
         history: resources.history ?? createWebAgentBindingHistory(lease, binding),
-        runPreparation: preparation, executor: resources.executor, provider: { ...resources.provider, resolve: binding.resolve },
+        runPreparation: toolPorts.preparation, executor: resources.executor, provider: { ...resources.provider, resolve: binding.resolve },
         runtime: { ...resources.runtime, observation: options.observation, log: options.log,
-          ...(replyGate ? { replyGate } : {}), tools: {
-          async dispatch(call, scope) {
-            if (!sameIdentity(scope.identity, id) || !imCanUseTool(actor, call.name) || !await authorizeTool(input, call.name))
-              return { kind: 'completed', value: { error: 'IM 工具权限已变更' }, successful: false, mutated: false, executed: false }
-            return resources.toolRegistry.tools.dispatch(call, scope)
-          },
-          async reconcile(call, target) {
-            if (!sameIdentity(target, id) || !imCanUseTool(actor, call.name) || !await authorizeTool(input, call.name)) return { kind: 'unknown' }
-            return resources.toolRegistry.tools.reconcile(call, target)
-          },
-        } }, interactionActivation: resources.interactionActivation,
+          ...(replyGate ? { replyGate } : {}), tools: toolPorts.tools }, interactionActivation: resources.interactionActivation,
         scheduling: { mode: 'dispatch', readReconstructionStatus: options.readReconstructionStatus,
           leaseFor: target => sameIdentity(target, id) ? lease : null },
       }
@@ -231,7 +239,7 @@ export function createImAgentReconstructor(options: ImAgentReconstructorOptions)
             const projection = resources.streamFactory?.(receipts, authorize)
             const delivery = createImRunDelivery({ runner: instance.harness, events: { readAfter: instance.store.readEventsAfter }, receipts,
               digest: contextServices.digest, authorize: async target => sameIdentity(target, id) && await authorize(), sender: resources.sender,
-              stream: projection })
+              stream: projection, showIntermediateReplies: resources.showIntermediateReplies })
             const observed = { async *[Symbol.asyncIterator]() { started = true; yield* events } }
             const deliveryEvents = resources.observeRun
               ? resources.observeRun(observed, authorizeCurrent) : observed

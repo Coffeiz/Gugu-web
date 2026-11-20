@@ -14,6 +14,6 @@ try {
     await pool.end()
   }
 } catch (error) {
-  process.stderr.write((error instanceof PostgresMigrationError ? error.message : '迁移命令或数据库配置无效') + '\n')
+  process.stderr.write(`${new Date().toISOString()} ${(error instanceof PostgresMigrationError ? error.message : '迁移命令或数据库配置无效')}\n`)
   process.exitCode = 1
 }

@@ -1,7 +1,7 @@
 import type { Pool } from 'pg'
 import type { SqlDataRuntime } from '@gugu/core/data'
 import { MemorySearchAccessError, type AuthorizedMemoryScope } from '@gugu/core/agent/rag'
-import type { CanonicalRunPreparationPorts, RunIdentity } from '@gugu/core/agent'
+import type { AgentObservationPort, CanonicalRunPreparationPorts, RunIdentity } from '@gugu/core/agent'
 import type { ImActor, ImBotAccess } from '@gugu/core/im/access'
 import { imCanUseTool } from '@gugu/core/im/access'
 import { resolveImMemorySearchScopes, type ImMemorySearchPolicy } from '@gugu/core/im/memory-search-scopes'
@@ -26,6 +26,7 @@ export function createPostgresImMemorySearch(options: {
   access: ReturnType<typeof createPostgresImAccess>
   configuration: CanonicalRunPreparationPorts['configuration']
   embedding?: Parameters<typeof createWebOwnerMemorySearchPort>[1]['embedding']
+  observation?: AgentObservationPort
 }): MemorySearchPort {
   if (typeof options.configuration !== 'function' || typeof options.access?.authorizeDelivery !== 'function') throw denied()
   const lease = structuredClone(options.lease), actor = structuredClone(options.actor), bot = structuredClone(options.bot), identity = lease.identity
@@ -83,6 +84,7 @@ export function createPostgresImMemorySearch(options: {
       return !!proposed?.length && proposed.every(scope => allowed.has(key(scope)))
     },
     snapshot: createPostgresAgentMemorySnapshotReader(options.pool, identity),
+    observation: options.observation,
     ...(options.embedding ? { embedding: options.embedding } : {}),
   })
   return { async search(target, request, signal) {

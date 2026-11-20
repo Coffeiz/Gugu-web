@@ -108,3 +108,26 @@ test('branch Provider failures close only their own spans with a safe error cate
   assert.equal(snapshot.spans.find(span => span.kind === 'provider')?.attributes.error_code, 'authentication')
   assert.equal(JSON.stringify(snapshot).includes('synthetic upstream detail must not enter trace'), false)
 })
+
+test('大体积终态快照使用旧 Collector 可读取的 JSON，并保留模型输入及最终正文', async () => {
+  const sent = []
+  const trace = createLoopScopeTrace({
+    endpoint: 'http://127.0.0.1:4320',
+    transport: { async request(request) {
+      if (request.headers['content-encoding']) return { status: 400 }
+      sent.push(request)
+      return response()
+    } },
+  })
+  const emit = event => trace.record({ identity, at: tick(), ...event })
+  const prompt = 'x'.repeat(1024 * 1024 + 1)
+  emit({ kind: 'run', name: 'started' })
+  emit({ kind: 'provider', name: 'request', round: 1, input: { messages: [{ role: 'user', content: prompt }] } })
+  emit({ kind: 'output', name: 'Final response', output: '最终正文' })
+  emit({ kind: 'run', name: 'finished', status: 'completed', output: '最终正文' })
+  await trace.close()
+  const snapshot = sent.find(request => request.url.endsWith('/runs') && request.body.ended_at != null)?.body
+  assert.equal(snapshot?.status, 'success')
+  assert.equal(snapshot.spans.find(span => span.kind === 'llm')?.input.messages[0].content, prompt)
+  assert.equal(snapshot.spans.find(span => span.name === 'Final response')?.output, '最终正文')
+})

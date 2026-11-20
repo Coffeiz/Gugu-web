@@ -151,7 +151,7 @@ export function registerWorkspaceDirectoryRoutes(
   const files = options.operations.files
   if (files) {
     const registerFileRoutes = (prefix: string, directory: (params: { directory_id: string }) => FileDirectory) => {
-      type FileRequest = { Params: { directory_id: string }; Querystring: { path?: string; download?: string } }
+      type FileRequest = { Params: { directory_id: string }; Querystring: { path?: string; download?: string; overwrite?: string } }
       const scope = (request: FastifyRequest<FileRequest>) => {
         const path = request.query.path ?? ''
         if (typeof path !== 'string' || path.length > 4096)
@@ -189,6 +189,8 @@ export function registerWorkspaceDirectoryRoutes(
         files.moveToTrash(...scope(request)))
       app.post<FileRequest>(`${prefix}/content`, { preHandler: options.requireUser }, async (request, reply) => {
         const location = scope(request)
+        const overwrite = request.query.overwrite
+        if (overwrite !== undefined && overwrite !== '1') throw new CoreError('invalid_request', '上传覆盖选项无效')
         const controller = new AbortController()
         const onClose = () => { if (!reply.raw.writableEnded) controller.abort() }
         reply.raw.once('close', onClose)
@@ -205,7 +207,7 @@ export function registerWorkspaceDirectoryRoutes(
           if (!uploaded) throw new CoreError('invalid_request', '缺少上传文件')
         }
         try {
-          return reply.code(201).send(await files.upload(...location, content(), controller.signal))
+          return reply.code(201).send(await files.upload(...location, content(), controller.signal, overwrite === '1'))
         } finally {
           reply.raw.off('close', onClose)
         }

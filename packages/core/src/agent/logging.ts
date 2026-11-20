@@ -1,6 +1,10 @@
 import type { RunIdentity } from './models.js'
 
 export type AgentRunLogEventName =
+  | 'agent.run.started'
+  | 'agent.run.resumed'
+  | 'agent.run.continued'
+  | 'agent.run.finished'
   | 'agent.provider.retry'
   | 'agent.provider.error'
   | 'agent.provider.incomplete'
@@ -10,7 +14,11 @@ export type AgentRunLogEventName =
   | 'agent.context.compaction_skipped'
   | 'agent.context.overflow_recovery'
   | 'agent.tools.parallel_batch'
+  | 'agent.tools.serial_batch'
+  | 'agent.tools.invocation'
   | 'agent.tools.dispatch_failed'
+  | 'agent.tools.schema_error'
+  | 'agent.tools.shell_unavailable'
   | 'agent.reply_gate.blocked'
   | 'agent.interaction.confirm_replay_failed'
   | 'agent.interaction.activation_failed'

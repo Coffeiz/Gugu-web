@@ -24,7 +24,7 @@ export interface TrashPurgeProgressEvent {
   type: 'task.progress'
   task_type: 'trash_purge'
   task_id: number
-  status: 'queued' | 'running' | 'completed' | 'failed'
+  status: 'queued' | 'running' | 'waiting' | 'completed' | 'failed'
   progress_current: number
   progress_total: number
   failed_count: number
@@ -36,7 +36,8 @@ export interface AgentRunChangedEvent {
   event_id: string
   type: 'agent.run.changed'
   session_id: number
-  status: 'running' | 'completed' | 'failed'
+  run_id?: string
+  status: 'running' | 'waiting' | 'completed' | 'failed'
   created_at: string
 }
 
@@ -97,7 +98,8 @@ export function isAgentRunChangedEvent(value: unknown): value is AgentRunChanged
     && typeof event.event_id === 'string' && event.event_id.length > 0
     && event.type === 'agent.run.changed'
     && Number.isSafeInteger(event.session_id) && Number(event.session_id) > 0
-    && ['running', 'completed', 'failed'].includes(String(event.status))
+    && (event.run_id === undefined || typeof event.run_id === 'string' && /^[A-Za-z0-9:_-]{1,128}$/.test(event.run_id))
+    && ['running', 'waiting', 'completed', 'failed'].includes(String(event.status))
     && typeof event.created_at === 'string' && !Number.isNaN(Date.parse(event.created_at))
 }
 

@@ -34,11 +34,14 @@ export function createCanonicalHistoryWriter(resolveConfig: (identity: RunIdenti
       `SELECT last_message_seq::text FROM conversation_sessions WHERE id = $1 AND user_id = $2 FOR UPDATE`, [identity.sessionId, identity.ownerId])
     if (!session.rows[0]) throw new Error('Agent 会话不存在')
     let compacted: { summary: string; baseline: number; hash: string; snapshot: NonNullable<CanonicalRunContext['sourceEffects']>['sessionSnapshot']['state'] } | null = null
-    if (history.outcome === 'success' && context.compactions.length) {
+    // 与旧版请求内压缩一致：覆盖未落库内容的摘要只用于本次请求。
+    // 后续摘要会继承前一份摘要的内容，因此整条压缩链都必须具备覆盖证明。
+    const requestOnlyCompaction = context.compactions.some(item => item.result.coversUnpersisted !== false)
+    if (history.outcome === 'success' && context.compactions.length && !requestOnlyCompaction) {
       await lockCanonicalHistoryBaseline(client, identity, context)
       const result = context.compactions.at(-1)!.result
       const ids = context.compactions.flatMap(item => item.result.coversUntilMessageIds)
-      if (context.compactions.some(item => !item.result.changed || item.result.coversUnpersisted !== false)
+      if (context.compactions.some(item => !item.result.changed)
         || !ids.length || new Set(ids).size !== ids.length || !context.sourceEffects
         || ids.some(id => !/^[1-9]\d*$/.test(id) || !Number.isSafeInteger(Number(id))))
         throw new Error('Agent 压缩覆盖边界无效')
@@ -67,7 +70,9 @@ export function createCanonicalHistoryWriter(resolveConfig: (identity: RunIdenti
       compacted = { summary, baseline, hash, snapshot }
     }
     const area = MessageArea.restore({ digest, nextId: randomUUID }, context.prepared.area)
-    const delta = area.persistenceDelta(history.outcome === 'interruption' ? 'interruption' : 'success')
+    const failed = checkpoint.status === 'failed' || checkpoint.status === 'unknown'
+    // 展示历史保留未完成的调用，但不能把缺少工具结果的批次放入后续模型上下文。
+    const delta = area.persistenceDelta(failed ? 'failure' : history.outcome === 'interruption' ? 'interruption' : 'success')
     const anchorEntry = [...area.entries].reverse().find(entry => entry.persistedMessageId != null && ['user', 'reference', 'attachment'].includes(entry.source))
     let anchor: { conversation_seq: string; created_at: Date; sent_at: Date | null; im_platform_sent_ms: string | null; im_event_received_ms: string | null } | undefined
     if (anchorEntry) {
@@ -83,8 +88,9 @@ export function createCanonicalHistoryWriter(resolveConfig: (identity: RunIdenti
     [identity.sessionId, identity.runId, shortDigest({ finalized_run: identity.runId })])
     if (receipt.rowCount !== 1) throw new Error('Agent 终态已提交')
     if (anchorEntry && history.outcome !== 'silent') await client.query(
-      `UPDATE conversation_messages SET run_id = $3, round_id = 'round-1' WHERE id = $1 AND session_id = $2`,
-      [anchorEntry.persistedMessageId, identity.sessionId, identity.runId])
+      `UPDATE conversation_messages SET run_id = $3, round_id = 'round-1', run_outcome = $4::jsonb WHERE id = $1 AND session_id = $2`,
+      [anchorEntry.persistedMessageId, identity.sessionId, identity.runId, failed
+        ? JSON.stringify({ status: 'failed', runId: identity.runId, errorCode: checkpoint.errorCode }) : null])
     const groups = delta.batches.map(batch => ({ entries: batch.entries, metadata: batch.metadata }))
     groups.push(...delta.entries.filter(entry => !entry.batchId).map(entry => ({ entries: [entry], metadata: { kind: entry.source } })))
     groups.sort((a, b) => a.entries[0]!.sequence - b.entries[0]!.sequence)
@@ -129,13 +135,13 @@ export function createCanonicalHistoryWriter(resolveConfig: (identity: RunIdenti
     if (hasDisplay) {
       const timeline = checkpoint.displayTimeline.map(item => item.kind === 'tool' && (item.toolStatus === 'queued' || item.toolStatus === 'running')
         ? { ...item, toolStatus: 'stopped', updatedAt: new Date().toISOString() } : item)
-      const text = history.outcome === 'interruption' && history.text ? `${history.text}\n\n[本轮已中止，以上内容未完成]` : history.text
+      const text = checkpoint.status === 'cancelled' && history.text ? `${history.text}\n\n[本轮已中止，以上内容未完成]` : history.text
       await client.query(`INSERT INTO conversation_messages (session_id,conversation_seq,role,content,files,display_timeline,run_id,round_id,created_at,sent_at)
         VALUES ($1,$2,'assistant',$3,$4::jsonb,$5::jsonb,$6,'round-1',clock_timestamp(),clock_timestamp())`,
       [identity.sessionId, ++sequence, text, checkpoint.files.length ? JSON.stringify(sanitizeMediaPayload(checkpoint.files)) : null,
         timeline.length ? JSON.stringify(sanitizeMediaPayload(timeline)) : null, identity.runId])
     }
-    if (context.providerCacheAnchor) await client.query(`UPDATE conversation_sessions SET session_context = jsonb_set(coalesce(session_context::jsonb,'{}'::jsonb), '{provider_cache_anchor}', $3::jsonb)
+    if (!failed && !requestOnlyCompaction && context.providerCacheAnchor) await client.query(`UPDATE conversation_sessions SET session_context = jsonb_set(coalesce(session_context::jsonb,'{}'::jsonb), '{provider_cache_anchor}', $3::jsonb)
       WHERE id = $1 AND user_id = $2`, [identity.sessionId, identity.ownerId, JSON.stringify(context.providerCacheAnchor.anchor)])
     if (total > 0) await enqueuePostgresAgentRagRebuild(client, identity.ownerId, 'conversation')
     const source = typeof options?.usageSource === 'function' ? await options.usageSource(identity, client) : options?.usageSource ?? 'web'

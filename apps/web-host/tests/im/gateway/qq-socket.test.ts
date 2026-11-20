@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events'
 import { Agent } from 'node:https'
 import { test } from 'node:test'
 import WebSocket, { type ClientOptions } from 'ws'
-import { createQqSocketFactory } from '../../../src/modules/im/gateway/platforms/qq/socket.js'
+import { createQqSocketFactory } from '@gugu/gateway/qq'
 
 class Socket extends EventEmitter {
   readyState: number = WebSocket.CONNECTING

@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import { FeishuApiError, type createFeishuClient } from './client.js'
-import { buildFeishuCardElements, createFeishuSender, type FeishuDeliveryReceipt } from './sender.js'
+import { FeishuApiError, type createFeishuClient } from '@gugu/gateway/feishu'
+import { buildFeishuCardElements, createFeishuSender, type FeishuDeliveryReceipt } from '@gugu/gateway/feishu'
 import type { RunEvent } from '@gugu/core/agent'
-import { FeishuPresentation, type FeishuToolEvent, type FeishuToolSummaryPolicy } from './presentation.js'
+import { FeishuPresentation, type FeishuToolEvent, type FeishuToolSummaryPolicy } from '@gugu/gateway/feishu'
 import { createFeishuRunEventProjector, validFeishuChartPng, type FeishuChartRenderer } from './run-events.js'
 import type { ChartRequest } from '@gugu/charts/render'
 

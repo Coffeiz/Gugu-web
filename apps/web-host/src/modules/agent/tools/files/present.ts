@@ -1,5 +1,5 @@
 import type { Pool, QueryResultRow } from 'pg'
-import type { FilePresentationPort, FilePresentationResolution, FileGrepPort, FileGrepCandidate } from '@gugu/core/tools'
+import type { FilePresentationPort, FilePresentationResolution, FilePathLookup, FilePathCandidate } from '@gugu/core/tools'
 import type { RunIdentity } from '@gugu/core/agent'
 import { isOwnedFileStorageKey } from '../../../files/store.js'
 import type { AgentDispatchLease } from '../../run/dispatch.js'
@@ -19,7 +19,7 @@ export function createWebAgentFilePresentPort(options: {
   pool: Pick<Pool, 'query'>
   ownerId: string
   lease: AgentDispatchLease
-  files: FileGrepPort
+  files: FilePathLookup
 }): FilePresentationPort {
   const expected = Object.freeze({ ...options.lease.identity })
   if (options.lease.input.v !== 2 || options.lease.input.source !== 'web'
@@ -63,7 +63,7 @@ export function createWebAgentFilePresentPort(options: {
         if (parts.length < 2) return { error: '文件路径还需要包含文件名' }
         const files = await options.files.list(identity, signal)
         signal.throwIfAborted()
-        const matches = files.filter((file: FileGrepCandidate) => file.path === name)
+        const matches = files.filter((file: FilePathCandidate) => file.path === name)
         if (matches.length === 1) {
           const file = matches[0]!
           const extension = file.name.lastIndexOf('.')
@@ -74,7 +74,7 @@ export function createWebAgentFilePresentPort(options: {
         if (matches.length > 1) return { error: '逻辑路径匹配到多个文件记录，请用 file_id 指定。', candidates: matches.slice(0, 10).map(file => ({
           id: file.file_id, name: file.name,
         })) }
-        return { error: '逻辑路径未匹配到已登记的文件；请先用 list_dir 确认路径和文件是否已同步。' }
+        return { error: '逻辑路径未匹配到已登记的文件；请确认文件是否已同步，或用文件 ID 指定。' }
       }
 
       const baseName = name.includes('.') ? name.slice(0, name.lastIndexOf('.')) : name

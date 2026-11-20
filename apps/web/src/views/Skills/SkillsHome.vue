@@ -8,13 +8,13 @@
         </ActionButton>
       </template>
       <div v-if="loading" class="scrollable-card-layout__empty">{{ t('skills.loading') }}</div>
-      <div v-else-if="!skills.length" class="scrollable-card-layout__empty">
-        <Icon name="resource.skill" :size="32" />
-        <strong>{{ t('skills.emptyTitle') }}</strong>
-        <span>{{ t('skills.emptyHint') }}</span>
-        <ActionButton fit @click="openChatSetup">{{ t('skills.createFirst') }}</ActionButton>
-      </div>
-      <template v-else>
+      <template v-if="!loading && !error && !skills.length" #empty>
+        <FirstUseEmptyState :title="t('skills.emptyTitle')" :description="t('skills.emptyHint')">
+          <template #icon><Icon name="resource.skill" :size="24" /></template>
+          <ActionButton fit @click="openChatSetup">{{ t('skills.createFirst') }}</ActionButton>
+        </FirstUseEmptyState>
+      </template>
+      <template v-if="!loading && skills.length">
         <section class="skill-group" aria-labelledby="user-skills-heading">
           <h2 id="user-skills-heading" class="skill-group-title">{{ t('skills.managedByUser') }}</h2>
           <div v-if="userSkills.length" class="skill-group-grid">
@@ -54,6 +54,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
+import FirstUseEmptyState from '@/components/common/layout/FirstUseEmptyState.vue'
 import ScrollableCardLayout from '@/components/common/layout/ScrollableCardLayout.vue'
 import type { UserSkillItem, UserSkillWrite } from '@/services/api'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'

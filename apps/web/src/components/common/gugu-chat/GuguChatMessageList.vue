@@ -267,8 +267,13 @@ watch(virtualRows, (rows) => {
     if (m && m.role === 'ai' && !m.streaming && m.html == null) m.html = renderMd(m.text)
   }
 })
-watch(virtualTotalSize, async () => {
-  await nextTick()
+watch([virtualTotalSize, () => props.messages.length], ([, count], [previousSize, previousCount]) => {
+  const el = messagesEl.value
+  // 行高更新与占位 DOM 在同一轮提交。只延续原本贴底的视口，新增消息走既有跟随流程。
+  if (el && !props.resizing && !props.sessionSettling && count === previousCount
+    && previousSize - el.scrollTop - el.clientHeight <= 2) {
+    el.scrollTop = el.scrollHeight - el.clientHeight
+  }
   updateScrollPosition()
 }, { flush: 'post' })
 

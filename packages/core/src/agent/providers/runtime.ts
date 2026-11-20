@@ -1,12 +1,14 @@
+import { formatToolResults } from './tool-result-format.js'
+import { withToolReminder } from '../context/assemble.js'
 import { canonicalEventStats, stableJson } from '../context/history/canonical-history.js'
 import { throwIfCancelled } from './errors.js'
 import type { BranchProviderPort, CanonicalContextPorts, ContextReferenceCodec, ContextServices, ProviderPort, ReflectionProjectionPort, SummaryGenerationPorts } from '../ports.js'
-import type { BranchInput, CanonicalRunContext, FrozenProviderRequest, Json, ProviderEvent, ProviderRequest, RunIdentity } from '../models.js'
+import type { BranchInput, BranchName, CanonicalRunContext, FrozenProviderRequest, Json, ProviderEvent, ProviderRequest, RunIdentity } from '../models.js'
 import { hasInitialInlineImage,restorePreparedContext } from '../context/history/attachment-refs.js'
 import { buildRebuiltReflectionSnapshot } from '../memory/reflection.js'
 import type { HistorySanitization, JsonObject, ProviderCompletion, ProviderConfig, ProviderDriverDependencies, ProviderInvocation, ProviderProjection, ProviderTransport, ProviderTransportFactory, ProviderWire } from './contracts.js'
 import { providerSelection } from './registry.js'
-import { ProviderError, classifyProviderError } from './errors.js'
+import { ProviderError, classifyProviderError, providerFailureFields } from './errors.js'
 import { clone, observe, record } from './values.js'
 import { prepareAnthropicCache, InProcessPrefixCoordinator, stableRequestFingerprint, providerCacheSupported } from './cache.js'
 import type { PrefixCoordinator } from './cache.js'
@@ -17,12 +19,23 @@ import { stripThinking, ProviderStreamSanitizer, sanitizeProviderText } from './
 import { normalizedApiKey } from './diagnostics.js'
 import { RequestProbe, providerCacheDiagnostics } from './cache-probe.js'
 import type { ProviderProbeSink } from './cache-probe.js'
-import { recordProviderBoundaryObservations } from './observation.js'
+import { anthropicRequestStructure, recordProviderBoundaryObservations } from './observation.js'
 import { outputBudget, parseStructuredJson } from './standalone.js'
 import { filterReasoningConfig } from './base.js'
 import { stripCacheControl } from './openai/history.js'
 import { recordAgentObservation } from '../observation.js'
 import type { AgentObservationPort } from '../observation.js'
+
+function providerToolSchemas(capabilities: CanonicalRunContext['capabilities']) {
+  if (!capabilities) return []
+  const names = capabilities.providerToolNames
+  if (!names) return capabilities.tools.map(tool => clone(tool.schema))
+  const definitions = new Map(capabilities.tools.map(tool => [tool.name, tool.schema]))
+  return names.flatMap(name => {
+    const schema = definitions.get(name)
+    return schema ? [clone(schema)] : []
+  })
+}
 
 export interface ProviderRuntimeOptions extends ContextServices {
   /** 通用观测端口只接收实际请求 body，不接收传输凭据或请求头。 */
@@ -92,12 +105,31 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
     const stored = this.#continuations.get(reference)
     if (stored) { this.#continuationBytes -= stored.bytes; this.#continuations.delete(reference) }
   }
+  #observeContinuation(identity: RunIdentity, phase: 'restore' | 'stage', round: number, startedAt: number,
+    status: 'success' | 'error', attributes: Readonly<Record<string, string | number | boolean>> = {}): void {
+    const endedAt = this.#now()
+    recordAgentObservation(this.options.observation, {
+      identity, kind: 'state', name: phase === 'restore' ? 'Provider continuation restore' : 'Provider continuation stage',
+      at: endedAt, round, spanId: `${identity.runId}:continuation:${phase}:${round}`,
+      parentSpanId: identity.runId, status, startedAt, endedAt, durationMs: Math.max(0, endedAt - startedAt),
+      attributes: {
+        phase,
+        continuation_attempted: true,
+        ...(phase === 'restore' ? { continuation_reused: status === 'success', continuation_unavailable: status !== 'success' } : {}),
+        state_status: phase === 'restore' ? status === 'success' ? 'reused' : 'unavailable' : status === 'success' ? 'captured' : 'unavailable',
+        sequence: round,
+        ...attributes,
+      },
+    })
+  }
   #pruneContinuations(): void { for (const [reference, stored] of this.#continuations) if (stored.expiresAt <= this.#now()) this.#dropContinuation(reference) }
   readonly prepareRequest: CanonicalContextPorts['prepareRequest'] = (identity, signal, context) => {
     const key = this.#key(identity)
     let pending = this.#prefixes.get(key)
     if (!pending) {
-      pending = this.options.prepareRequest(identity, signal, context).then(clone)
+      pending = this.options.prepareRequest(identity, signal, context).then(value => clone({
+        prefix: value.prefix, dynamicTail: withToolReminder(value.dynamicTail, context?.capabilities?.toolReminder),
+      }))
       this.#prefixes.set(key, pending)
       void pending.catch(() => this.#prefixes.delete(key))
     }
@@ -149,36 +181,60 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
   async #readContinuation(context: CanonicalRunContext) {
     const reference = context.continuationRef
     if (!reference) return null
+    const startedAt = this.#now()
     this.#pruneContinuations()
     const local = this.#continuations.get(reference)
-    if (local && (this.#key(local.identity) !== this.#key(context.identity)
-      || local.modelIdentity !== context.modelIdentity || local.accessScopeHash !== context.accessScopeHash))
-      throw new ProviderError('input_rejected')
-    const stored = local ?? await this.options.continuationStore?.read(context, reference)
-    if (!stored) {
-      this.#diagnose('provider_continuation_unavailable', { modelIdentity: context.modelIdentity })
-      throw new ProviderError('input_rejected')
+    try {
+      if (local && (this.#key(local.identity) !== this.#key(context.identity)
+        || local.modelIdentity !== context.modelIdentity || local.accessScopeHash !== context.accessScopeHash))
+        throw new ProviderError('input_rejected')
+      const stored = local ?? await this.options.continuationStore?.read(context, reference)
+      if (!stored) {
+        this.#diagnose('provider_continuation_unavailable', { modelIdentity: context.modelIdentity })
+        throw new ProviderError('input_rejected')
+      }
+      this.#observeContinuation(context.identity, 'restore', stored.round, startedAt, 'success', {
+        source: local ? 'memory' : 'store', state_digest: stored.areaDigest,
+      })
+      return stored
+    } catch (error) {
+      this.#observeContinuation(context.identity, 'restore', context.pendingRound?.round ?? 0, startedAt, 'error', { reason: 'unavailable' })
+      throw error
     }
-    return stored
   }
   readonly stageContinuation: CanonicalContextPorts['stageContinuation'] = async input => {
+    const startedAt = this.#now()
     let encoded: string
-    try { encoded = JSON.stringify(input.value) }
-    catch { throw new ProviderError('protocol') }
-    if (typeof encoded !== 'string') throw new ProviderError('protocol')
-    const bytes = new TextEncoder().encode(encoded).byteLength
-    if (bytes > (this.options.maxContinuationBytes ?? 16 * 1024 * 1024) || bytes > (this.options.maxContinuationTotalBytes ?? 64 * 1024 * 1024)) throw new ProviderError('input_rejected')
-    const reference = `provider:${this.options.nextId()}`
-    if (!/^[A-Za-z0-9:._-]{1,256}$/.test(reference)) throw new ProviderError('protocol')
-    const ttlMs = this.options.continuationTtlMs ?? 15 * 60_000
-    const { round, areaDigest, value } = input
-    await this.options.continuationStore?.save(input, reference, { round, areaDigest, value }, ttlMs)
-    for (const [previous, stored] of this.#continuations) if (this.#key(stored.identity) === this.#key(input.identity)) this.#dropContinuation(previous)
-    this.#pruneContinuations()
-    while (this.#continuations.size >= (this.options.maxContinuationEntries ?? 256) || this.#continuationBytes + bytes > (this.options.maxContinuationTotalBytes ?? 64 * 1024 * 1024)) this.#dropContinuation(this.#continuations.keys().next().value!)
-    this.#continuations.set(reference, { identity: clone(input.identity), modelIdentity: input.modelIdentity, accessScopeHash: input.accessScopeHash, round, areaDigest, value: clone(value), expiresAt: this.#now() + ttlMs, bytes })
-    this.#continuationBytes += bytes
-    return reference
+    let bytes = 0
+    let failureReason: 'invalid_state' | 'size_limit' | 'persistence_failed' = 'invalid_state'
+    try {
+      try { encoded = JSON.stringify(input.value) }
+      catch { throw new ProviderError('protocol') }
+      if (typeof encoded !== 'string') throw new ProviderError('protocol')
+      bytes = new TextEncoder().encode(encoded).byteLength
+      if (bytes > (this.options.maxContinuationBytes ?? 16 * 1024 * 1024) || bytes > (this.options.maxContinuationTotalBytes ?? 64 * 1024 * 1024)) {
+        failureReason = 'size_limit'
+        throw new ProviderError('input_rejected')
+      }
+      const reference = `provider:${this.options.nextId()}`
+      if (!/^[A-Za-z0-9:._-]{1,256}$/.test(reference)) throw new ProviderError('protocol')
+      const ttlMs = this.options.continuationTtlMs ?? 15 * 60_000
+      const { round, areaDigest, value } = input
+      failureReason = 'persistence_failed'
+      await this.options.continuationStore?.save(input, reference, { round, areaDigest, value }, ttlMs)
+      for (const [previous, stored] of this.#continuations) if (this.#key(stored.identity) === this.#key(input.identity)) this.#dropContinuation(previous)
+      this.#pruneContinuations()
+      while (this.#continuations.size >= (this.options.maxContinuationEntries ?? 256) || this.#continuationBytes + bytes > (this.options.maxContinuationTotalBytes ?? 64 * 1024 * 1024)) this.#dropContinuation(this.#continuations.keys().next().value!)
+      this.#continuations.set(reference, { identity: clone(input.identity), modelIdentity: input.modelIdentity, accessScopeHash: input.accessScopeHash, round, areaDigest, value: clone(value), expiresAt: this.#now() + ttlMs, bytes })
+      this.#continuationBytes += bytes
+      this.#observeContinuation(input.identity, 'stage', round, startedAt, 'success', { state_size: bytes, state_digest: areaDigest })
+      return reference
+    } catch (error) {
+      this.#observeContinuation(input.identity, 'stage', input.round, startedAt, 'error', {
+        reason: failureReason,
+      })
+      throw error
+    }
   }
   /** 只由可信持久化Host恢复原引用；不会分配新引用或修改Canonical。 */
   restoreContinuation(input: { reference:string; identity:RunIdentity; modelIdentity:string; accessScopeHash:string; round:number; areaDigest:string; value:unknown }): void {
@@ -215,9 +271,18 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
     return clone(stored)
   }
   async *stream(request: ProviderRequest<CanonicalRunContext>): AsyncGenerator<ProviderEvent> {
+    try { yield* this.#stream(request) }
+    catch (raw) {
+      const error = request.signal.aborted ? new ProviderError('cancelled') : classifyProviderError(raw)
+      throw new ProviderError(error.code, { ...error.options, stage: error.options.stage ?? 'prepare' })
+    }
+  }
+  async *#stream(request: ProviderRequest<CanonicalRunContext>): AsyncGenerator<ProviderEvent> {
     const { context, identity, signal } = request
     const preparationStartedAt = this.#now()
     let preparationObserved = false
+    let responseStatus: number | undefined
+    let retryAttempt = 0
     if (this.#key(context.identity) !== this.#key(identity)) throw new ProviderError('input_rejected')
     const { config, policy, driver, systemPrompt: boundSystem, accessScopeHash } = await this.#selection(identity, context.modelIdentity, signal)
     if (accessScopeHash !== context.accessScopeHash) throw new ProviderError('input_rejected')
@@ -229,13 +294,13 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
     const initialImages = request.round === 1 ? area.entries.filter(entry => Array.isArray(entry.message.content) && hasInitialInlineImage(entry.message.content)).map(entry => entry.entryId) : []
     const stableMessages = [...area.requestPrefix, ...area.messages]
     const projectionOptions = { continuation, digest: this.options.digest, preserveNativeThinking: true, dynamicTailSize: area.dynamicTail.length }
-    const stableHistory = driver.project(stableMessages, config, policy, { ...projectionOptions, dynamicTailSize: 0 })
+    const stableHistory = driver.project(formatToolResults(stableMessages), config, policy, { ...projectionOptions, dynamicTailSize: 0 })
     let historySanitization: HistorySanitization | undefined
-    const history = driver.project([...stableMessages, ...area.dynamicTail], config, policy, { ...projectionOptions, onSanitization: value => { historySanitization = value } })
+    const history = driver.project(formatToolResults([...stableMessages, ...area.dynamicTail]), config, policy, { ...projectionOptions, onSanitization: value => { historySanitization = value } })
     const anchor: unknown = context.providerCacheAnchor?.anchor
     let actualCacheAnchor: unknown
     const scope = { ...identity, round: request.round, modelIdentity: context.modelIdentity, accessScopeHash: context.accessScopeHash }
-    const input: ProviderInvocation = { config, policy, history, system: systemPrompt, tools: context.capabilities?.tools.map(tool => clone(tool.schema)) ?? [], signal, scope, purpose: 'chat', continuation, cacheAnchor: anchor, stableHistoryCount: stableHistory.length }
+    const input: ProviderInvocation = { config, policy, history, system: systemPrompt, tools: providerToolSchemas(context.capabilities), signal, scope, purpose: 'chat', continuation, cacheAnchor: anchor, stableHistoryCount: stableHistory.length }
     const transport = this.#transport(identity, config, policy)
     const probe: { current: RequestProbe | null } = { current: null }
     let usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, contextInput: null as number | null }
@@ -262,7 +327,7 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
             const same = (left: unknown, right: unknown) => this.options.digest(comparableWire((left ?? null) as Json)) === this.options.digest(comparableWire((right ?? null) as Json))
             const stableRowCount = Array.isArray(stableRows) && stableRows.length <= rows.length
               && same(rows.slice(0, stableRows.length), stableRows) && same(wireSystem, stableSystem) ? stableRows.length : null
-            const prefix = driver.project(area.requestPrefix, config, policy, { digest: this.options.digest, preserveNativeThinking: true })
+            const prefix = driver.project(formatToolResults(area.requestPrefix), config, policy, { digest: this.options.digest, preserveNativeThinking: true })
             const prefixRows = driver.protocol === 'responses' ? prefix.filter(row => row.role !== 'system')
               : record(driver.buildRequest({ ...input, history: prefix, continuation: undefined, stableHistoryCount: prefix.length }, dependencies, true).body).messages
             const protectedPrefixRowCount = Array.isArray(prefixRows) && same(rows.slice(0, prefixRows.length), prefixRows) ? prefixRows.length : undefined
@@ -312,11 +377,18 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
             attributes: {
               protocol: driver.protocol, provider: policy.name, model: config.model,
               cache_diagnostics: toolDiagnostics,
+              ...(driver.protocol === 'anthropic' && Array.isArray(rows)
+                ? { request_structure: anthropicRequestStructure(rows, this.options.digest) } : {}),
               ...(actualCacheAnchor === undefined ? {} : { cache_anchor: clone(actualCacheAnchor) }),
               ...(historySanitization ? { history_sanitization: clone(historySanitization) } : {}),
             },
           })
-          try { return await transport.request({ ...outgoing, allowLocal: outgoing.allowLocal === true && ['local', 'ollama'].includes((config.provider ?? '').trim().toLowerCase()) }, outgoingSignal) }
+          responseStatus = undefined
+          try {
+            const response = await transport.request({ ...outgoing, allowLocal: outgoing.allowLocal === true && ['local', 'ollama'].includes((config.provider ?? '').trim().toLowerCase()) }, outgoingSignal)
+            responseStatus = response.status
+            return response
+          }
           catch (error) { probe.current?.fail(classifyProviderError(error)); throw error }
         },
       },
@@ -332,18 +404,24 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
             ...(initialImages.length ? { consumedInitialMedia: { expectedRevision: area.revision, entryIds: initialImages } } : {}) }
         } else {
           if (event.type === 'usage') usage = event.usage
-          if (event.type === 'retry') probe.current?.fail(new ProviderError('upstream'))
+          if (event.type === 'retry') { retryAttempt = event.attempt; probe.current?.fail(new ProviderError('upstream')) }
           yield event
         }
       }
     } catch (raw) {
-      const error = signal.aborted ? new ProviderError('cancelled') : classifyProviderError(raw)
+      const classified = signal.aborted ? new ProviderError('cancelled') : classifyProviderError(raw)
+      const error = new ProviderError(classified.code, {
+        status: responseStatus, ...classified.options, retryAttempt,
+        providerProtocol: driver.protocol,
+        ...(classified.code === 'protocol' && !classified.options.protocolDetail ? { protocolDetail: 'unclassified_protocol_error' as const } : {}),
+        stage: classified.options.stage ?? (responseStatus === undefined ? 'prepare' : 'stream'),
+      })
       probe.current?.fail(error)
       if (error.options.protocolIncompatible) {
         try { await this.options.invalidateContinuation?.(context,signal) }
         catch(raw) {
           this.#diagnose('provider_continuation_invalidation_failed',raw)
-          yield{type:'error',error:new ProviderError('upstream',{retryable:false,requestStarted:true}),contextOverflow:false}
+          yield{type:'error',error:new ProviderError(error.code,{...error.options,retryable:false,stage:'continuation'}),contextOverflow:false}
           return
         }
         for (const [ref, stored] of this.#continuations) if (this.#key(stored.identity) === this.#key(identity)) this.#dropContinuation(ref)
@@ -351,8 +429,9 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
       yield { type: 'error', error, contextOverflow: error.code === 'context_overflow' && !error.options.outputStarted }
     }
   }
-  async completeBranch(input: BranchInput<ProviderWire> & { modelIdentity: string; outputMode?: 'text' | 'json'; maxOutputTokens?: number | null; cacheSingleflight?: boolean; thinking?: string | null }, signal = new AbortController().signal) {
+  async completeBranch(input: BranchInput<ProviderWire> & { modelIdentity: string; scenario?: BranchName; outputMode?: 'text' | 'json'; maxOutputTokens?: number | null; cacheSingleflight?: boolean; thinking?: string | null }, signal = new AbortController().signal) {
     const identity = { ownerId: input.ownerId, sessionId: input.sessionId, runId: input.runId ?? 'branch' }
+    const observationIdentity = input.observationIdentity ?? identity
     const selected = await this.#selection(identity, input.modelIdentity, signal)
     const { policy, driver, accessScopeHash } = selected
     const config = input.thinking === undefined ? selected.config : filterReasoningConfig({ ...selected.config, thinking: input.thinking }, policy)
@@ -360,7 +439,7 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
       || input.projection.wire.identity?.ownerId !== input.ownerId || input.projection.wire.identity?.sessionId !== input.sessionId || input.projection.wire.accessScopeHash !== accessScopeHash)) throw new ProviderError('input_rejected')
     const count = input.projection ? input.projection.wire.stableRowCount ?? (input.projection.dynamicTailSize === 0 ? input.projection.wire.messages.length : -1) : 0
     if (input.projection && (!Number.isSafeInteger(count) || count < 0 || count > input.projection.wire.messages.length)) throw new ProviderError('input_rejected')
-    const stable = input.projection ? clone(input.projection.wire.messages.slice(0, count)) : driver.project(input.canonicalHistory ?? [], config, policy, { digest: this.options.digest })
+    const stable = input.projection ? clone(input.projection.wire.messages.slice(0, count)) : driver.project(formatToolResults(input.canonicalHistory ?? []), config, policy, { digest: this.options.digest })
     const delta = driver.project([{ role: 'user', content: input.delta }], config, policy, { digest: this.options.digest })
     const invocation: ProviderInvocation = { config, policy, history: [...stable, ...delta], system: input.stableSystem, wireSystem: input.projection?.wire.system, tools: input.tools as JsonObject[], signal,
       scope: { ...identity, round: 0, modelIdentity: input.modelIdentity, accessScopeHash: '' }, purpose: 'branch', hasHistory: stable.length > 0,
@@ -389,10 +468,14 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
         ? stableRequestFingerprint(body, rowsKey, stable.length ? stableCount : 0, this.options.digest) : null
       const operation = async () => {
         if (input.runId) recordAgentObservation(this.options.observation, {
-          identity: { ownerId: input.ownerId, sessionId: input.sessionId, runId: input.runId },
+          identity: observationIdentity,
           kind: 'provider', name: 'request', at: this.#now(), round: 0,
-          spanId: `${input.runId}:round:0:provider`, parentSpanId: `${input.runId}:round:0`, status: 'sent', input: clone(body),
-          attributes: { protocol: driver.protocol, provider: policy.name, model: config.model, purpose: 'branch',
+          spanId: `${observationIdentity.runId}:round:0:provider`, parentSpanId: `${observationIdentity.runId}:round:0`, status: 'sent',
+          input: input.observationIdentity ? {
+            request_fields: Object.keys(body), history_field: rowsKey, message_count: rows.length,
+            body_bytes: new TextEncoder().encode(JSON.stringify(body)).byteLength, body_digest: this.options.digest(body),
+          } : clone(body),
+          attributes: { protocol: driver.protocol, provider: policy.name, model: config.model, purpose: 'branch', branch_name: input.scenario ?? 'unknown',
             cache_diagnostics: providerCacheDiagnostics(body, this.options.digest, { cacheSupported: policy.capabilities(config).cache_mode === 'active', stableRowCount: stableCount }) },
         })
         let result: ProviderCompletion
@@ -402,26 +485,28 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
           if (input.runId) {
             const error = signal.aborted ? new ProviderError('cancelled') : classifyProviderError(raw)
             recordAgentObservation(this.options.observation, {
-              identity: { ownerId: input.ownerId, sessionId: input.sessionId, runId: input.runId },
+              identity: observationIdentity,
               kind: 'provider', name: 'complete', at: this.#now(), round: 0,
-              spanId: `${input.runId}:round:0:provider`, parentSpanId: `${input.runId}:round:0`,
+              spanId: `${observationIdentity.runId}:round:0:provider`, parentSpanId: `${observationIdentity.runId}:round:0`,
               status: error.code === 'cancelled' ? 'cancelled' : 'error',
-              attributes: { protocol: driver.protocol, provider: policy.name, model: config.model, purpose: 'branch', error_code: error.code },
+              attributes: { protocol: driver.protocol, provider: policy.name, model: config.model, purpose: 'branch', branch_name: input.scenario ?? 'unknown', error_code: error.code, ...providerFailureFields(error) },
             })
           }
           throw raw
         }
         if (input.runId) recordAgentObservation(this.options.observation, {
-          identity: { ownerId: input.ownerId, sessionId: input.sessionId, runId: input.runId },
+          identity: observationIdentity,
           kind: 'provider', name: 'usage', at: this.#now(), round: 0, usage: result.usage,
-          attributes: { protocol: driver.protocol, provider: policy.name, model: config.model, purpose: 'branch' },
+          attributes: { protocol: driver.protocol, provider: policy.name, model: config.model, purpose: 'branch', branch_name: input.scenario ?? 'unknown' },
         })
         if (input.runId) recordAgentObservation(this.options.observation, {
-          identity: { ownerId: input.ownerId, sessionId: input.sessionId, runId: input.runId },
+          identity: observationIdentity,
           kind: 'provider', name: 'complete', at: this.#now(), round: 0,
-          spanId: `${input.runId}:round:0:provider`, parentSpanId: `${input.runId}:round:0`,
-          status: 'success', output: result.text,
-          attributes: { protocol: driver.protocol, provider: policy.name, model: config.model, purpose: 'branch' },
+          spanId: `${observationIdentity.runId}:round:0:provider`, parentSpanId: `${observationIdentity.runId}:round:0`,
+          status: 'success', output: input.observationIdentity
+            ? { response_chars: result.text.length, response_digest: this.options.digest(result.text) }
+            : result.text,
+          attributes: { protocol: driver.protocol, provider: policy.name, model: config.model, purpose: 'branch', branch_name: input.scenario ?? 'unknown' },
         })
         return result
       }
@@ -450,12 +535,12 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
       { digest: this.options.digest, nextId: this.options.nextId,
         prepareRequest: (target, currentSignal) => this.prepareRequest({ ...identity, ...target }, currentSignal, context) }, this.options.references, signal)
     const area = prepared.area
-    const project = (messages: readonly import('../models.js').CanonicalMessage[]) => driver.project(messages, config, policy,
+    const project = (messages: readonly import('../models.js').CanonicalMessage[]) => driver.project(formatToolResults(messages), config, policy,
       { digest: this.options.digest, preserveNativeThinking: true, dynamicTailSize: 0 })
     const history = project([...area.requestPrefix, ...area.messages])
     const dependencies: ProviderDriverDependencies = { digest: this.options.digest, diagnose: this.#diagnose, transport: this.#transport(identity, config, policy) }
     const input: ProviderInvocation = { config, policy, history, system: systemPrompt,
-      tools: context.capabilities?.tools.map(tool => clone(tool.schema)) ?? [], signal,
+      tools: providerToolSchemas(context.capabilities), signal,
       scope: { ...identity, modelIdentity: context.modelIdentity, accessScopeHash, round: 0 }, purpose: 'chat', stableHistoryCount: history.length }
     const body = record(driver.buildRequest(input, dependencies, true).body), rows = body.messages ?? body.input
     if (!Array.isArray(rows)) throw new ProviderError('input_rejected')
@@ -482,7 +567,7 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
         throw new ProviderError('input_rejected')
       const count = wire.stableRowCount ?? (projection.dynamicTailSize === 0 ? wire.messages.length : -1)
       if (!Number.isSafeInteger(count) || count < 0 || count > wire.messages.length) throw new ProviderError('input_rejected')
-      const messages = [...clone(wire.messages.slice(0, count)), ...driver.project(tail, config, policy, { digest: this.options.digest, preserveNativeThinking: true })]
+      const messages = [...clone(wire.messages.slice(0, count)), ...driver.project(formatToolResults(tail), config, policy, { digest: this.options.digest, preserveNativeThinking: true })]
       return { ...clone(projection), dynamicTailSize: 0, wire: { ...clone(wire), messages, stableRowCount: messages.length } }
     } }
   }

@@ -30,6 +30,7 @@ export interface WorkerConsumerOptions {
   beforeBatch?(messageId: string, payload: Record<string, unknown>): Promise<Record<string, unknown> | null>
   /** 只在持久批次事务成功后返回；失败保留每条消息各自的Stream与租约状态。 */
   handleBatch?(messages: readonly InboundMessage[]): Promise<void>
+  onFailure?(error: unknown): void
   batchDelayMs?: number
   recoverStarted?(messageId: string): Promise<boolean>
   leaseSeconds?: number
@@ -144,7 +145,10 @@ export class WorkerConsumer {
     const task = (this.options.handleBatch
       ? this.dispatch(message, { key, previous, release: releasePreparation })
       : this.withConversationLock(key, () => this.dispatch(message)))
-      .catch(() => { this.failureCount++ })
+      .catch(error => {
+        this.failureCount++
+        try { this.options.onFailure?.(error) } catch { /* 诊断失败不影响消费清理。 */ }
+      })
       .finally(async () => {
         if (prepared) {
           await previous

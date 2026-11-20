@@ -3,8 +3,8 @@ import test from 'node:test'
 import type { ProviderHttpRequest } from '@gugu/core/providers'
 import type { RunEvent } from '@gugu/core/agent'
 import { createFeishuRunEventProjector } from '../../../src/modules/im/gateway/platforms/feishu/run-events.js'
-import { FeishuPresentation, type FeishuToolSummaryPolicy } from '../../../src/modules/im/gateway/platforms/feishu/presentation.js'
-import { createFeishuClient, FeishuApiError } from '../../../src/modules/im/gateway/platforms/feishu/client.js'
+import { FeishuPresentation, type FeishuToolSummaryPolicy } from '@gugu/gateway/feishu'
+import { createFeishuClient, FeishuApiError } from '@gugu/gateway/feishu'
 import { buildFeishuStreamingCard, createFeishuStreamingSender, type FeishuStreamEvent } from '../../../src/modules/im/gateway/platforms/feishu/streaming.js'
 
 async function* stream(...events: FeishuStreamEvent[]) { yield* events }

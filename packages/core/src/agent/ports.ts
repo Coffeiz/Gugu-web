@@ -41,6 +41,9 @@ export interface HistoryImageReaderPort {
 export interface ContextReferenceCodec {
   /** 必须用可信owner恢复/验证稳定引用；缺失附件不能以空正文伪装成功。 */
   dehydrate(entry: MessageEntry, identity: HistoryIdentity, signal?: AbortSignal): Promise<CanonicalMessage>
+  /** 按输入顺序校验整份检查点的引用。 */
+  dehydrateBatch?(entries: readonly MessageEntry[], identity: HistoryIdentity, signal?: AbortSignal,
+    timing?: (stage: string, durationMs: number) => void): Promise<readonly CanonicalMessage[]>
   hydrate(entry: MessageEntry, identity: HistoryIdentity, signal?: AbortSignal): Promise<CanonicalMessage>
 }
 
@@ -55,6 +58,8 @@ export interface PreparationPorts extends ContextServices {
 }
 
 export interface CanonicalContextPorts extends ContextServices {
+  /** Optional LoopScope-only observations; never participates in context preparation or authorization. */
+  readonly observation?: AgentObservationPort
   readonly finalization: CanonicalFinalizationPort
   readonly references: ContextReferenceCodec
   load(identity: RunIdentity, signal: AbortSignal): Promise<{
@@ -179,7 +184,7 @@ export interface CanonicalRunPreparationPorts {
   discover(input: {
     identity: PreparationIdentity
     toolNames: readonly string[]
-  }, signal: AbortSignal): Promise<readonly PreparedToolDefinition[]>
+  }, signal: AbortSignal, configuration?: Awaited<ReturnType<CanonicalRunPreparationPorts['configuration']>>): Promise<readonly PreparedToolDefinition[]>
   readonly capabilities: CapabilityPreparationPorts
   /** 纯格式化：更新快照正文固定位置，不重新查询或执行权限编排。
    * original.systemInMessages为true时，system由Canonical主prepare添加，返回值不重复包含system。
@@ -459,6 +464,8 @@ export interface AgentRunnerPorts<C> {
   readonly context: ContextPort<C>
   /** Optional serializable view of a prepared context for controlled diagnostics. */
   readonly observationSnapshot?: (context: C) => unknown
+  /** Optional authoritative schema lookup for LoopScope validation failures. */
+  readonly toolSchemaSnapshot?: (context: C, toolName: string) => unknown
   readonly tools: ToolPort
   readonly interactions: InteractionPort
   readonly execution: ExecutionPort

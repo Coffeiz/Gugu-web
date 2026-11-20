@@ -22,7 +22,7 @@
 |------|------|------|
 | 前端 | Vue 3 + Vite | `<script setup>` + Pinia |
 | 图标库 | Phosphor Icons（`@phosphor-icons/vue`） | MIT，UI 操作图标统一 `weight="bold"` |
-| 后端 | FastAPI (Python) | 异步，SQLAlchemy 2.0 async |
+| 后端 | Node.js + TypeScript | Web Host 使用 Fastify；Core、Database、Gateway 在 Desktop/Web Host 间按契约复用 |
 | 数据库 | PostgreSQL + Redis | 结构化数据 + 缓存/实时 |
 | 文件存储 | 阿里云 OSS / 本地 | 可切换，Admin 配置 |
 | 模型 | 可配置（Qwen / Anthropic / OpenAI 兼容） | Admin 后台热更新 |
@@ -56,25 +56,20 @@ apps/web/
 │   └── utils/
 ```
 
-### 后端（FastAPI）
+### 后端（Node.js）
 
 ```
-backend/
-├── app/
-│   ├── api/v1/
-│   │   ├── projects.py
-│   │   ├── tasks.py
-│   │   ├── files.py
-│   │   └── agent.py     # 自然语言对话/指令入口
-│   ├── services/
-│   │   ├── agent/       # 自然语言对话逻辑、记忆管理（Markdown 文件作为记忆）
-│   │   └── storage/     # OSS 文件操作
-│   ├── models/          # SQLAlchemy 数据库模型
-│   ├── schemas/         # Pydantic 请求/响应校验
-│   ├── core/            # 配置、JWT、中间件
-│   ├── db/              # 连接池、Alembic 迁移
-│   └── main.py
+apps/
+├── web-host/            # Fastify API、Web 运行时、后台任务与服务端适配
+└── desktop/             # Desktop Host 与本地运行时适配
+packages/
+├── core/                # 跨宿主业务规则、Agent Loop 与应用契约
+├── database/            # 共享数据库 schema、迁移和数据库基础设施
+├── gateway/             # IM 网关协议与运行时
+└── log/                 # 共用结构化日志和诊断契约
 ```
+
+后端新增功能以 Node.js 实现为准；历史 Python 代码仅可用于确认既有业务行为，不是开发、测试或运行目标。具体模块边界和命令见 `agentskills/node-webui/SKILL.md`。
 
 ---
 

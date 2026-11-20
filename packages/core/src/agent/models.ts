@@ -228,6 +228,7 @@ export interface PrepareContextInput extends HistoryIdentity {
   allowHistoricalImages?: boolean
   /** 来自可信Tools registry的当前模型schema，只追加request-only更新，不重写历史声明。 */
   latestToolSchemas?: readonly Block[]
+  toolReminder?: string
   extraReminder?: string | null
   preparedRag?: RagContext
   snapshotText?: string
@@ -390,6 +391,7 @@ export interface PreparationIdentity {
 
 export interface CapabilityCatalog {
   readonly metadataOnly: boolean
+  readonly fixedAdapter?: true
   readonly toolCatalog: string
   readonly skillCatalog: string
   /** Tools提供的完整公开用户Skill元数据，首次冻结到session候选；空数组也必须明确返回。 */
@@ -407,6 +409,8 @@ export interface PreparedToolDefinition {
 export interface RunCapabilities {
   readonly toolNames: readonly string[]
   readonly tools: readonly PreparedToolDefinition[]
+  readonly providerToolNames?: readonly string[]
+  readonly toolReminder?: string
   readonly subject?: PreparationIdentity
   readonly userSkillSnapshot?: readonly Json[]
 }
@@ -499,6 +503,9 @@ export type BranchName = 'compaction' | 'reflection' | 'reflection-preview' | 'k
 
 export interface BranchInput<Wire> extends HistoryIdentity {
   runId: string | null
+  /** 可选的隔离观测身份；Provider 选择仍使用原始 runId。 */
+  observationIdentity?: RunIdentity
+  scenario?: BranchName
   stableSystem: string
   delta: string
   tools: Json[]
@@ -924,8 +931,8 @@ export type ToolPlan = {
 }
 
 export class AgentRunError extends Error {
-  constructor(readonly code: 'not_found' | 'conflict' | 'lease_lost' | 'invalid_state' | 'cancelled' | 'persistence_unknown', message: string) {
-    super(message)
+  constructor(readonly code: 'not_found' | 'conflict' | 'lease_lost' | 'invalid_state' | 'cancelled' | 'persistence_unknown', message: string, options?: ErrorOptions) {
+    super(message, options)
     this.name = 'AgentRunError'
   }
 }

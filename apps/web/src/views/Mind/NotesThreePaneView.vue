@@ -73,11 +73,11 @@
                 </div>
               </div>
             </template>
-            <div v-if="!store.timeline.length" class="ntp-state ntp-empty-state" role="status">
-              <span class="ntp-state-icon" aria-hidden="true"><PhNotePencil :size="22" weight="regular" /></span>
-              <strong class="ntp-state-title">{{ store.filterQ.trim() ? t('mindThreePane.noMatches') : t('mindThreePane.emptyTitle') }}</strong>
-              <span class="ntp-state-description">{{ store.filterQ.trim() ? t('mindThreePane.noMatchesHint') : t('mindThreePane.emptyHint') }}</span>
-            </div>
+            <FirstUseEmptyState v-if="!store.timeline.length" class="ntp-empty-state"
+              :title="store.filterQ.trim() ? t('mindThreePane.noMatches') : t('mindThreePane.emptyTitle')"
+              :description="store.filterQ.trim() ? t('mindThreePane.noMatchesHint') : t('mindThreePane.emptyHint')">
+              <template #icon><PhNotePencil :size="22" weight="regular" /></template>
+            </FirstUseEmptyState>
             <div v-if="store.loadingMore" class="ntp-state ntp-loading ntp-loading-more" role="status" aria-live="polite" aria-busy="true">
               <span class="ntp-spinner" aria-hidden="true"></span>
               <span>{{ t('mindThreePane.loadingMore') }}</span>
@@ -163,13 +163,11 @@
           <strong class="ntp-state-title">{{ t('mindThreePane.loadingNotes') }}</strong>
           <span class="ntp-state-description">{{ t('mindThreePane.loadingHint') }}</span>
         </div>
-        <div v-else class="ntp-state ntp-empty-state ntp-detail-empty" role="status">
-          <span class="ntp-state-icon" aria-hidden="true"><PhNotePencil :size="24" weight="regular" /></span>
-          <strong class="ntp-state-title">{{ store.timeline.length ? t('mindThreePane.chooseNote') : t('mindThreePane.detailEmptyTitle') }}</strong>
-          <span class="ntp-state-description">
-            {{ store.timeline.length ? t('mindThreePane.chooseNoteHint') : store.filterQ.trim() ? t('mindThreePane.noMatchesHint') : t('mindThreePane.detailEmptyHint') }}
-          </span>
-        </div>
+        <FirstUseEmptyState v-else class="ntp-empty-state ntp-detail-empty"
+          :title="store.timeline.length ? t('mindThreePane.chooseNote') : t('mindThreePane.detailEmptyTitle')"
+          :description="store.timeline.length ? t('mindThreePane.chooseNoteHint') : store.filterQ.trim() ? t('mindThreePane.noMatchesHint') : t('mindThreePane.detailEmptyHint')">
+          <template #icon><PhNotePencil :size="24" weight="regular" /></template>
+        </FirstUseEmptyState>
       </div>
       <aside v-if="selected" class="ntp-info">
         <div class="info-sec">
@@ -231,6 +229,7 @@ import { persistMindNoteDraft } from './utils/noteDraft'
 import NoteEditor from './components/NoteEditor.vue'
 import MindToolbar from './components/MindToolbar.vue'
 import DateIndex from './components/DateIndex.vue'
+import FirstUseEmptyState from '@/components/common/layout/FirstUseEmptyState.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import DatePicker from '@/components/common/controls/DatePicker.vue'
 
@@ -811,7 +810,7 @@ function onListScroll() {
   mask-image: linear-gradient(to bottom, transparent 0, #000 40px, #000 calc(100% - 64px), transparent 100%);
 }
 .ntp-state { color: var(--text-secondary); }
-.ntp-empty-state,
+.ntp-empty-state { min-height: min(52vh, 360px); --empty-description-width: 220px; }
 .ntp-loading-initial {
   min-height: min(52vh, 360px); box-sizing: border-box;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -819,12 +818,6 @@ function onListScroll() {
 }
 .ntp-list-scroll > .ntp-empty-state,
 .ntp-list-scroll > .ntp-loading-initial { min-height: calc(100% - 44px); }
-.ntp-state-icon {
-  width: 48px; height: 48px; display: grid; place-items: center; margin-bottom: 3px;
-  border: 1px solid color-mix(in srgb, var(--color-primary) 18%, transparent);
-  border-radius: 16px; background: color-mix(in srgb, var(--color-primary) 8%, transparent);
-  color: var(--color-primary);
-}
 .ntp-state-title { color: var(--text-primary); font-size: 14px; font-weight: 650; line-height: 1.45; }
 .ntp-state-description { max-width: 220px; color: var(--text-secondary); font-size: 12.5px; line-height: 1.6; }
 .ntp-loading { display: flex; align-items: center; justify-content: center; gap: 9px; color: var(--text-secondary); font-size: 12.5px; line-height: 1.5; }
@@ -950,7 +943,7 @@ function onListScroll() {
 /* 编辑态：工具栏自带 4px 底 padding，外层留 6px，与只读态 10px 对齐。 */
 .ntp-reading.editing { overflow: hidden; padding-bottom: 6px; }
 .ntp-detail.empty .ntp-reading { display: grid; place-items: center; }
-.ntp-detail-empty { max-width: 320px; }
+.ntp-detail-empty { max-width: 320px; --empty-description-width: 260px; }
 .ntp-detail-empty.ntp-loading { flex-direction: column; gap: 10px; text-align: center; }
 .ntp-detail-empty .ntp-state-description { max-width: 260px; }
 .rp-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0; }

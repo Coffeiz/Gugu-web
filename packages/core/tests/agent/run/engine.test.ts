@@ -124,13 +124,13 @@ describe('Harness Run生命周期与持久化边界', () => {
     expect(f.histories).toHaveLength(1)
   })
 
-  it('错误文案经安全端口展示，error不写canonical history', async () => {
+  it('错误文案安全展示，历史只保留已经公开的部分回复', async () => {
     const f = fixture([[{ type: 'token', text: '中间文本' }, { type: 'error', error: new Error('合成凭据与私有正文') }]])
     const { state, events } = await collect(f.harness.start(identity))
     expect(state.status).toBe('failed')
     expect(events.at(-1)?.payload).toMatchObject({ text: '上游暂时不可用' })
     expect(JSON.stringify(events)).not.toContain('私有正文')
-    expect(f.histories).toEqual([])
+    expect(f.histories).toMatchObject([{ outcome: 'interruption', text: '中间文本' }])
   })
 
   it('取消保留已完成轮次和部分正文，不把用户取消文案当助手历史', async () => {
@@ -675,7 +675,7 @@ describe('Harness Run生命周期与持久化边界', () => {
     expect(events.at(-1)?.payload.usage).toEqual(usage)
     expect(f.ports.tools.dispatch).not.toHaveBeenCalled()
     expect(f.ports.context.afterRound).not.toHaveBeenCalled()
-    expect(f.histories).toEqual([])
+    expect(f.histories).toMatchObject([{ outcome: 'interruption', text: '' }])
     await collect(createAgentRunner(f.ports).resume(identity))
     expect(f.records.get(f.idKey(identity))!.totalUsage).toEqual(usage)
   })
@@ -769,7 +769,8 @@ describe('Harness Run生命周期与持久化边界', () => {
   })
 
   it('tool_done安全详情与刷新时间线同事务，可信投影过滤私有字段后Core递归替换媒体和错误', async () => {
-    const f = fixture([[{ type: 'complete', text: '', calls: [toolCall] }], [{ type: 'complete', text: '完成', calls: [] }]])
+    const call = { ...toolCall, input: { query: '合成查询', headers: { Authorization: 'synthetic-header-secret' }, token: 'synthetic-input-secret' } }
+    const f = fixture([[{ type: 'complete', text: '', calls: [call] }], [{ type: 'complete', text: '完成', calls: [] }]])
     f.ports.tools.dispatch = vi.fn<ToolPort['dispatch']>(async () => ({ kind: 'completed', value: { ok: true, privateReceipt: 'opaque-synthetic-receipt' }, successful: true, mutated: false }))
     f.ports.presentToolResult = vi.fn(async (value) => ({ ok: (value as { ok: boolean }).ok, nested: [{ type: 'video', source: { data: 'synthetic-private-media' } }, { error: '/home/synthetic/private.txt' }] }))
     const { state, events } = await collect(f.harness.start(identity))
@@ -778,8 +779,11 @@ describe('Harness Run生命周期与持久化边界', () => {
     expect(state.displayTimeline.find((item) => item.kind === 'tool')?.toolResult).toEqual(expected)
     const committed = vi.mocked(f.ports.store.commit).mock.calls.map(([change]) => change).find((change) => change.events[0]?.type === 'tool_done')!
     expect(committed.checkpoint.displayTimeline.find((item) => item.kind === 'tool')?.toolResult).toEqual(expected)
-    expect(f.ports.presentToolResult).toHaveBeenCalledWith({ ok: true, privateReceipt: 'opaque-synthetic-receipt' }, { identity, round: 1, call: toolCall })
-    expect(JSON.stringify(events)).not.toContain('opaque-synthetic-receipt')
+    expect(f.ports.presentToolResult).toHaveBeenCalledWith({ ok: true, privateReceipt: 'opaque-synthetic-receipt' }, { identity, round: 1, call })
+    const expectedInput = { query: '合成查询', headers: { Authorization: '[已隐藏]' }, token: '[已隐藏]' }
+    expect(events.find(event => event.type === 'tool_call')?.payload.display).toMatchObject({ toolInput: expectedInput })
+    expect(committed.checkpoint.displayTimeline.find(item => item.kind === 'tool')?.toolInput).toEqual(expectedInput)
+    expect(JSON.stringify(events)).not.toMatch(/opaque-synthetic-receipt|synthetic-header-secret|synthetic-input-secret/)
     expect(JSON.stringify(events)).not.toContain('synthetic-private-media')
   })
 
@@ -821,7 +825,7 @@ describe('Harness Run生命周期与持久化边界', () => {
     expect(state.status).toBe('unknown')
     expect(state.remoteStatusUnknown).toBe(true)
     const stopped = state.displayTimeline.find(item => item.toolCallId === 'first-call')
-    expect(stopped?.toolStatus).toBe('stopped')
+    expect(stopped?.toolStatus).toBe('unknown')
     expect(events.at(-1)?.payload.sealedTools).toContainEqual(stopped)
     expect(effects).toBe(1)
     expect(f.ports.tools.dispatch).toHaveBeenCalledTimes(1)
@@ -884,7 +888,7 @@ describe('Harness Run生命周期与持久化边界', () => {
     expect(result.state).toMatchObject({ status: 'failed', errorCode: 'interaction_expired', pending: null, queuedInteractions: [], resolutionClosure: null })
     expect(result.events.filter((event) => event.type === 'tool_done').map((event) => [event.payload.toolCallId, event.payload.status])).toEqual([['first-call', 'error'], ['queued-call', 'cancelled']])
     expect(f.receipts.has('expired-receipt')).toBe(true)
-    expect(f.histories).toEqual([])
+    expect(f.histories).toMatchObject([{ outcome: 'interruption', text: '' }])
     expect(f.ports.tools.dispatch).toHaveBeenCalledTimes(2)
     expect(f.ports.provider.stream).toHaveBeenCalledTimes(1)
   })

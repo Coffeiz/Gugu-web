@@ -95,7 +95,7 @@
         @mousedown="onMainMouseDown"
         style="position:relative"
       >
-        <FileUploadDropOverlay :visible="isDragging" @drop="dropFiles" />
+        <FileUploadDropOverlay :visible="isDragging" />
 
         <KeepAlive>
           <WorkspaceDirectoryPanel v-if="currentType === 'root'" ref="workspaceDirectoryPanel" @open="openWorkspaceDirectory" />
@@ -398,7 +398,7 @@ function enterFolder(folder: FolderCardMeta): void { withDirectNav(() => rawEnte
 function openWorkspaceDirectory(directory: WorkspaceDirectory): void {
   enterFolder({
     id: `workspace:${directory.id}`,
-    type: directory.isDefault ? 'disk-workspace' : 'workspace',
+    type: 'disk-workspace',
     displayName: directory.name,
     count: directory.fileCount + directory.folderCount,
     fileCount: directory.fileCount,
@@ -594,19 +594,28 @@ function onPageClick() {
 }
 
 const conflictDialogRef = ref<InstanceType<typeof UploadConflictDialog> | null>(null)
+const showUploadConflicts = (conflicts: Parameters<InstanceType<typeof UploadConflictDialog>['show']>[0]) =>
+  conflictDialogRef.value?.show(conflicts) ?? Promise.resolve(new Map(conflicts.map(item => [item.filename, { action: 'skip' as const }])))
 const fileUpload = useFileLibraryUpload({
   currentType,
   currentSeg,
-  canUpload,
+  canUpload: computed(() => canUpload.value || !!workspaceTarget.value),
   fileCacheStore: cacheStore,
   loadContents,
   fetchStorage,
-  showConflicts: conflicts => conflictDialogRef.value?.show(conflicts) ?? Promise.resolve(new Map()),
+  showConflicts: showUploadConflicts,
 })
 const { uploadingItems, handleFileInput, onDragEnter, onDragLeave, handleDrop, isDragging } = fileUpload
-function dropFiles(event: DragEvent) {
-  if (workspaceTarget.value) return workspaceFiles.value?.handleDrop(event)
-  return handleDrop(event)
+watch(currentSeg, fileUpload.resetDrag)
+
+async function dropFiles(event: DragEvent) {
+  fileUpload.resetDrag()
+  try {
+    if (workspaceTarget.value) await workspaceFiles.value?.handleDrop(event)
+    else await handleDrop(event)
+  } catch (error) {
+    showAppError(errorMessage(error))
+  }
 }
 
 // ── 预览 ──
@@ -637,7 +646,7 @@ const batchActions = useFileLibraryBatchActions({
       workspaceDirectoryId: seg?.space === 'workspace' ? (seg.workspaceDirectoryId ?? null) : null,
     }
   },
-  showConflicts: conflicts => conflictDialogRef.value?.show(conflicts) ?? Promise.resolve(new Map()),
+  showConflicts: showUploadConflicts,
 })
 const archiveActions = useFileArchiveActions({
   cacheStore,
@@ -1230,28 +1239,6 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 
 /* FilesGridView / FileCard / FilesTrashView 已各自拥有网格、卡片和回收站视觉；
    页面入口不再复制这些 selector，避免模块化后形成父 scoped root 与子组件双 owner。 */
-
-/* ── 拖拽遮罩 ── */
-.drop-overlay {
-  position: absolute; inset: 0; z-index: 50;
-  background: rgba(232,233,238,0.82);
-  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-  border-radius: inherit;
-  corner-shape: inherit;
-  display: flex; align-items: center; justify-content: center;
-  pointer-events: none;
-}
-.drop-zone-hint {
-  display: flex; flex-direction: column; align-items: center; gap: 10px;
-  padding: 40px 60px;
-  background: rgba(255,255,255,0.72);
-  border: 2px dashed color-mix(in srgb, var(--action-primary) 45%, transparent); border-radius: 20px;
-  color: var(--color-primary);
-}
-.drop-hint { font-size: 16px; font-weight: 700; color: var(--text-primary); }
-
-.drop-fade-enter-active, .drop-fade-leave-active { transition: opacity 0.18s; }
-.drop-fade-enter-from, .drop-fade-leave-to { opacity: 0; }
 
 .content-body { width: 100%; height: 100%; display: contents; }
 </style>

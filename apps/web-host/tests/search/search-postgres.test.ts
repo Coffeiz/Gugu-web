@@ -107,8 +107,6 @@ test('认证全局搜索以真实 PostgreSQL 返回归属会话标题和消息�
       CREATE TABLE conversation_sessions(id integer PRIMARY KEY,user_id uuid,title text,updated_at timestamptz);
       CREATE TABLE conversation_messages(id integer PRIMARY KEY,session_id integer,content text,created_at timestamptz);
       CREATE TABLE projects(id integer,user_id uuid,name text,contact_name text,current_stage text,deleted_at timestamptz,updated_at timestamptz);
-      CREATE TABLE files(id integer,user_id uuid,display_name text,ext text,deleted_at timestamptz,updated_at timestamptz);
-      CREATE TABLE folders(id integer,user_id uuid,name text,deleted_at timestamptz,created_at timestamptz);
       CREATE TABLE calendar_events(id integer,user_id uuid,title text,description text,contact_name text,deleted_at timestamptz,date date);
       CREATE TABLE clients(id integer,user_id uuid,name text,contact text,email text,phone text,notes text,created_at timestamptz);
       CREATE TABLE user_skills(id integer,owner_id uuid,name text,skill_id text,description_short text,description_long text,updated_at timestamptz);

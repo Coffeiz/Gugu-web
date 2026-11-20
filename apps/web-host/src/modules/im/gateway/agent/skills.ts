@@ -5,6 +5,7 @@ import { createBuiltinSkillDefinitions, createSkillRegistry, type SkillDefinitio
 import { createBundledSkillDocuments } from '@gugu/core/skills/bundled'
 import type { ImActor } from '@gugu/core/im/access'
 import { imCanUseTool } from '@gugu/core/im/access'
+import { createAgentToolBrief } from '../../../agent/tools/brief.js'
 
 const same = (a: RunIdentity, b: RunIdentity) => a.ownerId === b.ownerId && a.sessionId === b.sessionId && a.runId === b.runId
 const failure = () => new Error('IM 技能资源不可用')
@@ -49,17 +50,21 @@ export async function createImProductionSkills(options: {
     return id.startsWith('S') ? { source: 'builtin' as const } : { source: 'user' as const,
       ownerFingerprint: createHash('sha256').update(identity.ownerId).digest('hex') }
   } }
-  const catalog: CanonicalRunPreparationPorts['capabilities']['catalog'] = async (_names, subject, _tools, signal, context) => {
+  const catalog: CanonicalRunPreparationPorts['capabilities']['catalog'] = async (names, subject, tools, signal, context) => {
     signal?.throwIfAborted()
     if (subject.ownerId !== identity.ownerId || subject.subject.kind !== 'session' || subject.subject.id !== identity.sessionId
       || !await options.authorize()) throw failure()
-    const metadata = await registry.catalog(identity)
+    const [metadata, preferences] = await Promise.all([
+      registry.catalog(identity),
+      options.pool.query('SELECT data_json FROM user_preferences WHERE user_id=$1', [identity.ownerId]),
+    ])
+    signal?.throwIfAborted()
+    if (!await options.authorize()) throw failure()
+    const allowed = new Set(names)
     const currentUsers = metadata.filter(meta => meta.source === 'user').map(meta => JSON.parse(JSON.stringify(meta)) as Json)
-    // 跨Run冻结由Core负责；已有快照不能被当前目录悄悄替换。
-    return { metadataOnly: true, toolCatalog: '',
-      // 目录已由来源builder写入真实静态skillIndex，不在动态快照中重复追加。
-      skillCatalog: '',
-      userSkills: context?.userSkillSnapshot ? [...context.userSkillSnapshot] : currentUsers }
+    return createAgentToolBrief(preferences.rows[0]?.data_json,
+      (tools ?? []).filter(tool => allowed.has(tool.name) && imCanUseTool(actor, tool.name)),
+      context?.userSkillSnapshot ?? currentUsers)
   }
   return { registry, tools, catalog }
 }

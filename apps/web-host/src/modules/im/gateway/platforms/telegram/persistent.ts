@@ -7,7 +7,7 @@ import type { createTelegramSender, TelegramDeliveryReceipt, TelegramTarget } fr
 import type { ImAttachmentScope } from '../../inbound/attachments.js'
 import { imAcceptedEvidence, type ImAcceptedSource } from '../../agent/evidence.js'
 import { createFeishuRunEventProjector, type FeishuChartRenderer } from '../feishu/run-events.js'
-import { FeishuPresentation, type FeishuToolSummaryPolicy } from '../feishu/presentation.js'
+import { FeishuPresentation, type FeishuToolSummaryPolicy } from '@gugu/gateway/feishu'
 
 const hash = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')
 const id = z.string().regex(/^[1-9]\d*$/).max(32)
@@ -106,8 +106,9 @@ export function createPersistentTelegramProjection(options: {
     if (event.sequence <= state.eventSequence) return acknowledged()
     if (!await options.authorize() || state.stage === 'finished') return 'rejected'
     if (event.type === 'run_resumed') {
-      if (state.stage !== 'paused') return 'rejected'
-      state = fresh(state.segment + 1, state.eventSequence, state.visible)
+      if (state.stage === 'closing') return 'rejected'
+      // 检查点续跑沿用已有投影；只有交互等待结束才开启新段。
+      if (state.stage === 'paused') state = fresh(state.segment + 1, state.eventSequence, state.visible)
     } else if (state.stage === 'paused' && !['interaction_resolved', 'tool_done', 'interaction_required', 'final'].includes(event.type)) return 'rejected'
     if (event.type === 'interaction_resolved' && ['cancelled', 'aborted', 'expired'].includes(String(event.payload.status))) state.stage = 'closing'
     const snapshot = () => {

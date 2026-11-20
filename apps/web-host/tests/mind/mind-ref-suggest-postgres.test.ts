@@ -52,6 +52,11 @@ test('query suggestions reuse typed global search results and return individual 
   let messageArgs: unknown[] | undefined
   const pool = {
     async query(sql: string, values?: unknown[]) {
+      if (sql.includes('FROM files')) {
+        assert.deepEqual(values, [ownerId, 3, '%检索词%'])
+        return { rows: [{ id: 8, display_name: '检索词', ext: 'md', space: 'mind' }] }
+      }
+      if (sql.includes('FROM folders')) return { rows: [] }
       messageSql = sql
       messageArgs = values
       return { rows: [{ id: 19, content: '前文包含需要精确定位的检索词以及后续说明', session_title: '讨论记录' }] }
@@ -71,13 +76,14 @@ test('query suggestions reuse typed global search results and return individual 
 
   assert.deepEqual(result, [
     { type: 'project', id: 2, label: '项目命中', subtitle: '客户' },
+    { type: 'file', id: 8, label: '检索词.md', subtitle: 'mind' },
     { type: 'conversation', id: 19, label: '前文包含需要精确定位的检索词以及后续说明', subtitle: '讨论记录' },
   ])
   const input = searchInput as { requestOwner: string; input: { q: string; queries: string[]; mode: string; perType: number; types: string[] } }
   assert.equal(input.requestOwner, ownerId)
   assert.deepEqual(input.input, {
     q: '检索词', queries: ['检索词'], mode: 'OR', perType: 3,
-    types: ['project', 'file', 'folder', 'event', 'canvas_note', 'skill', 'mcp', 'scheduled_task'],
+    types: ['project', 'event', 'canvas_note', 'skill', 'mcp', 'scheduled_task'],
   })
   assert.match(messageSql, /s\.user_id=\$1/)
   assert.match(messageSql, /m\.content_json IS NULL/)

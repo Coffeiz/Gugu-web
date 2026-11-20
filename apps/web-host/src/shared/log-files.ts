@@ -21,7 +21,22 @@ export function configureDiagnosticLog(webPath: string): void {
 }
 
 export function diagLog(where: string, error: unknown): void {
-  diagLogRaw(where, error instanceof Error ? error.stack ?? error.message : inspect(error, { colors: false, customInspect: false }))
+  if (!(error instanceof Error)) {
+    diagLogRaw(where, inspect(error, { colors: false, customInspect: false, depth: 4, maxStringLength: 2000 }))
+    return
+  }
+  const chain: string[] = []
+  const seen = new Set<unknown>()
+  let current: unknown = error
+  while (current instanceof Error && !seen.has(current) && chain.length < 4) {
+    seen.add(current)
+    const stack = current.stack?.split('\n').slice(1, 9).join('\n')
+    chain.push(`${current.name}: ${current.message}${stack ? `\n${stack}` : ''}`)
+    current = (current as Error & { cause?: unknown }).cause
+  }
+  if (current !== undefined && chain.length < 4 && !seen.has(current))
+    chain.push(inspect(current, { colors: false, customInspect: false, depth: 2, maxStringLength: 1000 }))
+  diagLogRaw(where, chain.join('\nCaused by: '))
 }
 
 export function appendDiagnosticLine(line: string): void {

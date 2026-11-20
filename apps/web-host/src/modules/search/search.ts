@@ -14,9 +14,9 @@ export function registerGlobalSearchRoute(app: FastifyInstance, options: GlobalS
     const onClose = () => { if (!reply.raw.writableEnded) controller.abort() }
     reply.raw.once('close', onClose)
     try {
-      return await options.operations.search(
-        options.ownerIdFromRequest(request), parseGlobalSearchQuery(request.query), { signal: controller.signal },
-      )
+      const query = parseGlobalSearchQuery(request.query)
+      const types = query.types ?? options.operations.availableTypes
+      return await options.operations.search(options.ownerIdFromRequest(request), { ...query, types }, { signal: controller.signal })
     } finally {
       reply.raw.off('close', onClose)
     }

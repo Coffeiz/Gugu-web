@@ -8,7 +8,7 @@ import type { AgentKnowledgeEntry } from '@gugu/core/agent/knowledge/entry'
 import { createGlobalSearchOperations, type GlobalSearchOperations } from '@gugu/core'
 import type { ProjectCreateRuntime } from '@gugu/core/project-create'
 import { createBuiltinSkillDefinitions, createSkillRegistry } from '@gugu/core/skills'
-import type { ClientDeleteConfirmationPort, ClientDeletePort, CalendarDeleteConfirmationPort, CalendarDeletePort, CalendarEventCreateToolPort, CalendarEventUpdateToolPort, CanvasBatchConfirmationPort, CanvasBatchPort, CanvasDeleteNotePort, CanvasDisconnectPort, CanvasDeletePort, FileArchivePort, KnowledgeWritePort, ScheduledTaskListPort, UseSkillPorts } from '@gugu/core/tools'
+import type { ClientDeleteConfirmationPort, ClientDeletePort, CalendarDeleteConfirmationPort, CalendarDeletePort, CalendarEventCreateToolPort, CalendarEventUpdateToolPort, CanvasBatchConfirmationPort, CanvasBatchPort, CanvasDeleteNotePort, CanvasDisconnectPort, CanvasDeletePort, KnowledgeWritePort, ScheduledTaskListPort, UseSkillPorts } from '@gugu/core/tools'
 import { createScheduledSendFileTool, createWebLinkButtonDeliveryPort, createUndoLastActionTool } from '@gugu/core/tools'
 import { createAgentToolRegistry, filterConfiguredWebAgentTools, type AgentToolRegistryOptions } from '../../src/modules/agent/tools/registry.js'
 import { createWebAgentShell } from '../../src/modules/agent/tools/shell/sandbox.js'
@@ -47,25 +47,8 @@ test('Main 工具白名单保留已接入的业务工具组名称，并过滤未
     'note_create', 'note_update', 'delete_scheduled_task', 'web_search', 'similar_image_search', 'deep_research',
     'grep', 'delete_folder', 'save_uploaded_file', 'mcp_demo_lookup', 'untrusted_tool', 'mcp_demo_../lookup',
   ]
-  assert.deepEqual(filterConfiguredWebAgentTools(configured), configured.slice(0, -2))
-})
-
-test('文件归档工具仅在 Host 注入归档领域端口后注册并经实际 Registry 调用', async () => {
-  const without = createAgentToolRegistry({ core: {} as SqlDataRuntime, authorize: async () => true })
-  assert.equal((await without.capabilities(identity)).some(item => item.name === 'compress_files'), false)
-  const calls: string[] = []
-  const fileArchive: FileArchivePort = {
-    async compress(current, input, _roundId, _call, signal) { signal.throwIfAborted(); calls.push(`${current.ownerId}:${input.entries[0]?.id}`); return { file_id: 6, name: '资料.zip' } },
-    async extract() { throw new Error('无需调用') },
-  }
-  const registry = createAgentToolRegistry({ core: {} as SqlDataRuntime, fileArchive, authorize: async (_current, name) => name === 'compress_files' })
-  assert.equal((await registry.capabilities(identity)).some(item => item.name === 'compress_files'), true)
-  const result = await registry.tools.dispatch({ id: 'zip', name: 'compress_files', input: { entries: [{ kind: 'file', id: 3 }] } }, {
-    identity, roundId: 'round', signal: new AbortController().signal, resolution: null,
-    execute: async () => { throw new Error('归档不能调用执行后端') },
-  })
-  assert.deepEqual(result.value, { success: true, file_id: 6, name: '资料.zip' })
-  assert.deepEqual(calls, [`${identity.ownerId}:3`])
+  const retired = new Set(['compress_files', 'extract_files', 'grep'])
+  assert.deepEqual(filterConfiguredWebAgentTools(configured), configured.slice(0, -2).filter(name => !retired.has(name)))
 })
 
 test('Agent Shell 进入真实注册器后仍须通过写入确认才规划挂载', async () => {

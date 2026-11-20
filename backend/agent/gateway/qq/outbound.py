@@ -605,7 +605,16 @@ def _keyboard_wire_payload(prompt: dict[str, Any]) -> dict[str, Any]:
                 "unsupport_tips": "请回复选项序号或选项文字",
             },
         })
-    return {"content": {"rows": [{"buttons": row} for row in _pack_button_rows(buttons)]}}
+    try:
+        rows = _pack_button_rows(buttons)
+    except ValueError:
+        if len(buttons) > 10:
+            raise
+        # 完整选项保留在正文中，键盘超宽时用编号保留原生回调。
+        for index, button in enumerate(buttons, start=1):
+            button["render_data"]["label"] = str(index)
+        rows = _pack_button_rows(buttons)
+    return {"content": {"rows": [{"buttons": row} for row in rows]}}
 
 def _pack_button_rows(buttons: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     """按估算宽度贪心切行：按钮平分一行宽度时中文标签会被客户端截断；

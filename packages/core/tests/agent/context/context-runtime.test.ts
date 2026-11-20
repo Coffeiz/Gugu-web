@@ -210,6 +210,34 @@ describe('Canonical上下文与Run运行时组合', () => {
     expect(state.replyContext).toEqual({ userRequest: '解释一下图片内容', locale: 'zh-CN', decisionGuardEnabled: true })
   })
 
+  it('图片工具结果保持原生块，检查点固化引用后可恢复图片', async () => {
+    const { ports } = fixture()
+    const image = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } }
+    const reference = { type: 'attachment_ref', attach_id: 'synthetic-image' }
+    const replace = (value: import('../../../src/agent/index.js').Json, hydrate: boolean): import('../../../src/agent/index.js').Json => {
+      if (Array.isArray(value)) return value.map(item => replace(item, hydrate))
+      if (!value || typeof value !== 'object') return value
+      if (!hydrate && value.type === 'image') return reference
+      if (hydrate && value.type === 'attachment_ref' && value.attach_id === reference.attach_id) return image
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, replace(item, hydrate)]))
+    }
+    ports.references = {
+      dehydrate: async entry => ({ ...entry.message, content: replace(entry.message.content, false) }),
+      hydrate: async entry => ({ ...entry.message, content: replace(entry.message.content, true) }),
+    }
+    const context = createCanonicalContextPort(ports)
+    const call = { id: 'view', name: 'view_image', input: {} }
+    let state = await context.prepare(identity, signal())
+    state = await context.afterRound(state, { text: '', calls: [call] }, 1)
+    state = await context.afterTool(state, call, {
+      kind: 'completed', value: { width: 1 }, modelValue: [image], successful: true, mutated: false,
+    }, 1)
+    expect(state.pendingRound?.dispatched[0]?.content).toEqual([reference])
+    expect(stableJson(state.prepared)).not.toContain('AAAA')
+    const restored = await restorePreparedContext(state.prepared, identity, ports, ports.references, signal())
+    expect(stableJson(restored.area.messages)).toContain('AAAA')
+  })
+
   it('缓存锚点只交接同模型稳定元数据，不用native continuation替代或接受秘密字段', async () => {
     const { context } = fixture()
     const initial = await context.prepare(identity, signal())

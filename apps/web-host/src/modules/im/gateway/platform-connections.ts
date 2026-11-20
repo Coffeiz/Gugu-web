@@ -9,19 +9,19 @@ import type { TrustedGatewayBot } from './bot-config.js'
 import { createNodeImInbox, type NodeImBotBinding } from './inbound/inbox.js'
 import { createImInboundEnvelope } from './inbound/envelope.js'
 import { createTelegramInbox } from './platforms/telegram/inbox.js'
-import { createFeishuClient } from './platforms/feishu/client.js'
-import { createFeishuConnection, type FeishuConnectionOptions } from './platforms/feishu/connection.js'
-import { createFeishuSender } from './platforms/feishu/sender.js'
+import { createFeishuClient } from '@gugu/gateway/feishu'
+import { createFeishuConnection, type FeishuConnectionOptions } from '@gugu/gateway/feishu'
+import { createFeishuSender } from '@gugu/gateway/feishu'
 import { createFeishuStreamingSender } from './platforms/feishu/streaming.js'
-import { createQqClient } from './platforms/qq/client.js'
-import { createQqConnection, type QqSocket } from './platforms/qq/connection.js'
-import { createQqSender } from './platforms/qq/sender.js'
-import { createQqMediaUploader } from './platforms/qq/media-upload.js'
+import { createQqClient } from '@gugu/gateway/qq'
+import { createQqConnection, type QqSocket } from '@gugu/gateway/qq'
+import { createQqSender } from '@gugu/gateway/qq'
+import { createQqMediaUploader } from '@gugu/gateway/qq'
 import { createQqReplySequences } from './platforms/qq/sequences.js'
-import { createILinkClient } from './platforms/wechat/client.js'
+import { createILinkClient } from '@gugu/gateway/wechat'
 import { createWechatMedia } from './platforms/wechat/media.js'
 import { createWechatSender } from './platforms/wechat/sender.js'
-import { connectWechatPolling } from './platforms/wechat/polling.js'
+import { connectWechatPolling } from '@gugu/gateway/wechat'
 import { createPlatformMedia, type PlatformAttachmentStore } from './media/platform.js'
 import { GatewayConnectionCleanupError, type GatewayClock, type GatewayConnection } from '@gugu/gateway'
 import { ImGatewayAdmissionError, type ImGatewayAdmissionPort } from './inbound/admission.js'
@@ -77,7 +77,7 @@ export function createPlatformConnections(options: {
   feishuNetwork?(spec: TrustedGatewayBot): FeishuConnectionOptions['wsNetwork']
   createFeishuSdk?: FeishuConnectionOptions['createSdkClient']
   qqSocket?(url: string, signal: AbortSignal): Promise<QqSocket>
-  report?(code: 'platform-unavailable' | 'admission-pending' | 'admission-unknown' | 'admission-unavailable' | 'callback-cleanup-pending'): void
+  report?(code: string, error?: unknown): void
 }) {
   if (!options.secretKey || typeof options.services !== 'function' || typeof options.sanitizeText !== 'function') throw invalid()
   const envelope = createImInboundEnvelope(options.secretKey), inbox = createNodeImInbox(options.redis)
@@ -85,6 +85,8 @@ export function createPlatformConnections(options: {
   const opening = new Set<string>()
   const blocked = new Set<string>()
   const now = options.now ?? Date.now
+  let accepting = true
+  function assertAccepting() { if (!accepting) throw invalid() }
   async function connect(spec: TrustedGatewayBot, signal: AbortSignal): Promise<GatewayConnection> {
     if(spec&&blocked.has(spec.key))throw new GatewayConnectionCleanupError()
     if (!spec || !['feishu', 'qq', 'wechat', 'telegram'].includes(spec.platform) || !/^[1-9]\d*$/u.test(spec.id) ||
@@ -102,6 +104,7 @@ export function createPlatformConnections(options: {
     let text!: (payload: Payload, value: string, quote: boolean, signal: AbortSignal, authorize: () => Promise<boolean>) => Promise<void>
     const preflight = async (payload: Payload, hasPendingMedia: boolean, signal: AbortSignal, mediaIds: readonly string[] = [],
       afterFreshAdmission?: (authorize: () => Promise<boolean>) => Promise<void>, captureFeedback?: (authorize: () => Promise<boolean>) => void) => {
+      assertAccepting()
       const scope = { ...trustedScope(spec, payload), eventId: String(payload.platform_event_id || payload.message_id || '') }
       let token: string | undefined
       try {
@@ -155,7 +158,7 @@ export function createPlatformConnections(options: {
       })()
       return stopped
     }
-    const abort = () => { void finish().catch(() => options.report?.('platform-unavailable')) }
+    const abort = () => { void finish().catch(error => options.report?.(`${spec.platform}-cleanup-failed`, error)) }
     try {
       signal.throwIfAborted()
       if (spec.platform === 'telegram') {
@@ -183,6 +186,7 @@ export function createPlatformConnections(options: {
             }, signal, value => text(p, value, true, signal, feedback.authorize))
           },
           callback: async (data, signal) => {
+            assertAccepting()
             const result = await services.callback!({ binding, platform: 'telegram', data }, signal)
             if (!result.consumed) return false
             if (typeof data.id !== 'string' || !data.id) throw invalid()
@@ -198,7 +202,7 @@ export function createPlatformConnections(options: {
               }
             }
             return true
-          }, report: () => options.report?.('platform-unavailable') })
+          }, report: (event, error) => options.report?.(`telegram-${event}`, error) })
       } else if (spec.platform === 'wechat') {
         const client = createILinkClient({ botToken: spec.credentials.appSecret, baseUrl: spec.credentials.appId, transport: options.transport?.(spec, 'api') })
         const wxMedia = createWechatMedia({ client, transport: options.transport?.(spec, 'media') }); cleanup.push(() => wxMedia.close())
@@ -210,7 +214,7 @@ export function createPlatformConnections(options: {
           sleep: options.clock ? (ms, signal) => options.clock!.sleep(ms, signal) : undefined,
           preflight: (p, hasMedia, signal, items) => preflight(p, hasMedia, signal, items.map((item, index) => `${item.source}:${item.kind}:${index}`)),
           materialize: (items, p, signal) => media.wechat(trustedScope(spec, p), items, p, wxMedia, signal),
-          enqueue: (p, signal) => enqueue(p, signal), report: () => options.report?.('platform-unavailable') })
+          enqueue: (p, signal) => enqueue(p, signal), report: (event, error) => options.report?.(`wechat-${event}`, error) })
       } else if (spec.platform === 'qq') {
         if (!options.qqSocket) throw invalid()
         const client = createQqClient({ appId: spec.credentials.appId, appSecret: spec.credentials.appSecret, sandbox: spec.sandbox,
@@ -225,8 +229,9 @@ export function createPlatformConnections(options: {
           chatType: p.chat_type as Scope['chatType'], ...(quote ? { messageId: String(p.message_id) } : {}) }, value, signal, authorize)).outcome !== 'accepted') throw invalid() }
         const lastAck=new Map<string,number>()
         connection = createQqConnection({ getAccessToken: signal => client.getAccessToken(signal), getGateway: (_token, signal) => client.getGateway(signal),
-          openSocket: options.qqSocket, clock: options.clock, report: () => options.report?.('platform-unavailable'),
+          openSocket: options.qqSocket, clock: options.clock, report: (event, error) => options.report?.(`qq-${event}`, error),
           onEvent: async (kind, data, signal) => {
+            assertAccepting()
             if (kind === 'INTERACTION_CREATE') {
               const result = await services.callback!({ binding, platform: 'qq', data: { ...data } }, signal)
               if (!result.consumed || typeof data.id !== 'string') throw invalid()
@@ -264,7 +269,7 @@ export function createPlatformConnections(options: {
         if (typeof bot.open_id !== 'string' || !bot.open_id) throw invalid()
         const botOpenId = bot.open_id
         text = async (p, value, _quote, signal, authorize) => { if (typeof authorize !== 'function') throw invalid()
-          if ((await out.text(String(p.chat_id), value, signal, authorize)).outcome !== 'accepted') throw invalid() }
+          if ((await out.text(String(p.chat_type === 'group' ? p.chat_id : p.platform_user_id), value, signal, authorize)).outcome !== 'accepted') throw invalid() }
         const parse = (data: unknown, eventType: string) => parseFeishuEvent(object(data) && object(data.event) ? data
           : { header: { event_type: eventType, ...(object(data) ? { app_id: data.app_id, event_id: data.event_id, create_time: data.create_time } : {}) }, event: data },
         { botId: spec.id, ownerId: spec.owner, appId: spec.credentials.appId, botOpenId, nowMs: now() })
@@ -277,11 +282,13 @@ export function createPlatformConnections(options: {
                   chooseImInstantReactionEmoji(String(parsed.preflight.text ?? ''), parsed.mediaItems.length > 0 || Array.isArray(parsed.preflight.attachments) && parsed.preflight.attachments.length > 0), signal, authorize)
               }) === 'consumed') return
             await enqueue(await media.feishu(trustedScope(spec, parsed.payload), parsed, client, botOpenId, signal), signal) },
-          onCardAction: async (data, signal) => { const parsed = parse(data, 'card.action.trigger'); if (!parsed || parsed.kind !== 'card_action') throw invalid()
+          onCardAction: async (data, signal) => { assertAccepting(); const parsed = parse(data, 'card.action.trigger'); if (!parsed || parsed.kind !== 'card_action') throw invalid()
             const result = await services.callback!({ binding, platform: 'feishu', data: { ...parsed, raw: data } }, signal)
             if (!result.consumed) throw invalid()
             return result.response ?? { toast: { type: result.accepted ? 'info' : 'error', content: result.accepted ? '已收到选择' : '交互已失效' } } },
-          report: () => options.report?.('platform-unavailable') })
+          report: (event, error) => {
+            if (event !== 'reconnected' && event !== 'reconnecting') options.report?.(`feishu-${event}`, error)
+          } })
       } else throw invalid()
       signal.throwIfAborted()
       active.set(spec.key, { ownerId: spec.owner, value: sender })
@@ -295,7 +302,7 @@ export function createPlatformConnections(options: {
       throw invalid()
     }
   }
-  return { async connect(spec: TrustedGatewayBot, signal: AbortSignal): Promise<GatewayConnection> {
+  return { pauseIngress() { accepting = false }, async connect(spec: TrustedGatewayBot, signal: AbortSignal): Promise<GatewayConnection> {
     if (!spec || opening.has(spec.key)) throw invalid()
     opening.add(spec.key)
     try { return await connect(spec, signal) } catch(error) { if(error instanceof GatewayConnectionCleanupError)throw error;throw invalid() } finally { opening.delete(spec.key) }

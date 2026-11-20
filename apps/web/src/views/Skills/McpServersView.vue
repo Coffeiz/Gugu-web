@@ -11,13 +11,13 @@
             <Icon name="action.add" :size="14" />{{ t('skillsMcpUi.add') }}
           </ActionButton>
         </template>
-        <div v-if="!items.length" class="scrollable-card-layout__empty">
-          <Icon name="resource.mcp" :size="32" />
-          <strong>{{ t('skillsMcpUi.empty') }}</strong>
-          <span>{{ t('skillsMcpUi.hint') }}</span>
-          <ActionButton fit @click="openChatSetup">{{ t('skillsMcpUi.createFirst') }}</ActionButton>
-        </div>
-        <div v-else class="mcp-list">
+        <template v-if="!items.length && !error" #empty>
+          <FirstUseEmptyState :title="t('skillsMcpUi.empty')" :description="t('skillsMcpUi.hint')">
+            <template #icon><Icon name="resource.mcp" :size="24" /></template>
+            <ActionButton fit @click="openChatSetup">{{ t('skillsMcpUi.createFirst') }}</ActionButton>
+          </FirstUseEmptyState>
+        </template>
+        <div v-if="items.length" class="mcp-list">
           <McpCard
             v-for="item in items"
             :key="item.id"
@@ -56,6 +56,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import Icon from '@/components/common/icons/Icon.vue'
+import FirstUseEmptyState from '@/components/common/layout/FirstUseEmptyState.vue'
 import ScrollableCardLayout from '@/components/common/layout/ScrollableCardLayout.vue'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { showAppError, showAppSuccess } from '@/composables/core/useAppToast'

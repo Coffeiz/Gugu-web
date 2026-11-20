@@ -1,5 +1,5 @@
 import type { FastifyInstance, preHandlerHookHandler, FastifyRequest } from 'fastify'
-import type { createCredentialCreator, createCredentialPatch } from './store.js'
+import { ByokEncryptionUnavailable, type createCredentialCreator, type createCredentialPatch } from './store.js'
 import type { createByokListService } from '@gugu/core/agent/config'
 import type { createCredentialSavedTest, createCredentialTestPreview } from './checks/connection.js'
 import { testParams, createSchema, patchSchema, testSchema, modelsSchema, mediaSchema, previewSchema, type PreviewInput } from './schemas.js'
@@ -8,6 +8,16 @@ import type { createCredentialModelsPreview } from './checks/models.js'
 import type { UserAuthOptions } from '../auth/contracts.js'
 import type { WebUiOptions } from '../../http/options.js'
 import { registerProtectedDomain } from '../../http/user.js'
+import { diagLog } from '../../shared/log-files.js'
+
+async function saveCredential<T>(run: () => Promise<T>, request: FastifyRequest, reply: import('fastify').FastifyReply) {
+ try { return await run() }
+ catch (error) {
+  if (!(error instanceof ByokEncryptionUnavailable)) throw error
+  diagLog(`http.${request.method} ${request.routeOptions.url}`, new Error(error.message))
+  return reply.code(error.statusCode).send({ detail: error.message })
+ }
+}
 
 export interface ProviderCapabilityPreviewOptions{
  requireUser:preHandlerHookHandler
@@ -29,7 +39,7 @@ export function registerCredentialCreateRoute(app:FastifyInstance,options:Creden
   app.post(path, { preHandler: options.requireUser }, async (request, reply) => {
    const body = createSchema.safeParse(request.body)
    if (!body.success) return reply.code(422).send({ detail: '凭据参数无效' })
-   return options.create(options.ownerIdFromRequest(request), body.data, makeDefault)
+   return saveCredential(() => options.create(options.ownerIdFromRequest(request), body.data, makeDefault), request, reply)
   })
  }
 }
@@ -66,7 +76,7 @@ export function registerCredentialPatchRoute(app:FastifyInstance,options:Credent
  app.patch<{Params:{credential_id:string}}>('/api/v1/byok/:credential_id',{preHandler:options.requireUser},async(request,reply)=>{
   const id=Number(request.params.credential_id),body=patchSchema.safeParse(request.body)
   if(!Number.isSafeInteger(id)||!body.success)return reply.code(422).send({detail:'凭据参数无效'})
-  return options.patch(options.ownerIdFromRequest(request),id,body.data)
+  return saveCredential(() => options.patch(options.ownerIdFromRequest(request),id,body.data), request, reply)
  })
  app.put<{Params:{credential_id:string}}>('/api/v1/byok/:credential_id/default', { preHandler: options.requireUser }, async (request, reply) => {
   const id = Number(request.params.credential_id)

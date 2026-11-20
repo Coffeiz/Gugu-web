@@ -831,10 +831,16 @@ export const pathFilesApi = {
   move: (file: PathFileRef, destination: string) => patch<{ ok: boolean }>(pathFileEndpoint(file, 'entries'), { destination }),
   copy: (file: PathFileRef, destination: string) => post<{ ok: boolean }>(pathFileEndpoint(file, 'copy'), { destination }),
   moveToTrash: (file: PathFileRef) => del(pathFileEndpoint(file, 'entries')),
-  upload(file: PathFileRef, content: File, onProgress: (progress: number) => void) {
+  upload(file: PathFileRef, content: File, onProgress: (progress: number) => void, overwrite = false) {
     const form = new FormData()
     form.append('file', content)
-    return uploadWithProgress(pathFileEndpoint(file, 'content'), form, onProgress)
+    return uploadWithProgress(pathFileEndpoint(file, 'content') + (overwrite ? '&overwrite=1' : ''), form, onProgress)
+  },
+  saveText(file: PathFileRef, content: string) {
+    const name = file.relativePath.split('/').at(-1) || 'file'
+    const form = new FormData()
+    form.append('file', new Blob([content], { type: 'text/plain' }), name)
+    return upload(pathFileEndpoint(file, 'content') + '&overwrite=1', form)
   },
   download(file: PathFileRef) {
     const anchor = document.createElement('a')

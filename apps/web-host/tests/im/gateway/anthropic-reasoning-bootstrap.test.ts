@@ -23,6 +23,7 @@ test('正式Anthropic私有续接：真实工具轮/成功跨进程与跨Run，o
  skip:!(databaseUrl&&redisUrl&&python)&&'需专用隔离PG/Redis与离线ORM解释器；仅平台/Provider网络为替身',timeout:180000,
 },async()=>{
  const f=await createImProductionFixture({databaseUrl,python:python!}),redis=createRedisStreamCommands(redisUrl!)
+ await f.insert('user_preferences', { user_id: f.ownerId, data_json: JSON.stringify({ tool_injection_mode: 'full' }) })
  let runtime:ReturnType<typeof createNodeImHostRuntime>|undefined,baseline:Set<string>|undefined,phase=1,emitted=0,mainCalls=0
  const delivered:string[]=[],diagnostics:string[]=[],privateMarker='synthetic-private-anthropic-'
  try{

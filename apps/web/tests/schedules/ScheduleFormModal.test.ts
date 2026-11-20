@@ -4,6 +4,7 @@ import { createApp, defineComponent, h, nextTick, reactive } from 'vue'
 import { createPinia } from 'pinia'
 import { i18n, setLocale } from '@/i18n'
 import ScheduleFormModal from '@/views/Schedules/components/ScheduleFormModal.vue'
+import { scheduledTasksApi } from '@/services/api'
 
 vi.mock('@/services/api', () => ({
   scheduledTasksApi: { listDeliveryTargets: vi.fn().mockResolvedValue({ groups: [], private_available: false }) },
@@ -27,10 +28,38 @@ vi.mock('@/components/common/controls/DatePicker.vue', () => ({ default: { rende
 vi.mock('@/components/common/controls/TimeInput.vue', () => ({ default: { render: () => h('div') } }))
 vi.mock('@/components/common/icons/Icon.vue', () => ({ default: { render: () => h('span') } }))
 vi.mock('@/components/AdminSelect.vue', () => ({ default: { render: () => h('div') } }))
-vi.mock('@/components/common/controls/SelectPopup.vue', () => ({ default: { render: () => h('div') } }))
+vi.mock('@/components/common/controls/SelectPopup.vue', () => ({
+  default: defineComponent({
+    props: ['modelValue', 'options'],
+    setup(props) { return () => h('div', props.options?.find((option: any) => option.value === props.modelValue)?.label) },
+  }),
+}))
 
 let cleanup: (() => void) | undefined
 afterEach(() => { cleanup?.(); cleanup = undefined })
+
+it.each([
+  ['ready', '私聊提醒我'],
+  ['unavailable', '私聊（暂无可用会话）'],
+  ['failed', '私聊状态加载失败'],
+])('QQ 私聊选项区分 %s 响应', async (status, label) => {
+  setLocale('zh-CN')
+  const api = vi.mocked(scheduledTasksApi.listDeliveryTargets)
+  if (status === 'failed') api.mockRejectedValueOnce(new Error('502'))
+  else api.mockResolvedValueOnce({ groups: [], private_available: status === 'ready' })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const state = reactive({ show: false })
+  const app = createApp({
+    render: () => h(ScheduleFormModal, { show: state.show, imChannels: ['qq'],
+      task: { id: 17, name: '旧任务', payload: '提醒内容', cron: '0 9 * * *', channels: ['qq'], enabled: true },
+    }),
+  })
+  app.use(i18n).use(createPinia()).mount(host)
+  cleanup = () => { app.unmount(); host.remove() }
+  state.show = true
+  await vi.waitFor(() => expect(host.querySelector('[data-testid="schedule-qq-delivery"]')?.textContent).toContain(label))
+})
 
 it('编辑时保留已暂停平台的渠道，新建时仍不能选择该平台', async () => {
   setLocale('zh-CN')

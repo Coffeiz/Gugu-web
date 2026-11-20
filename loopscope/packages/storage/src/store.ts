@@ -69,6 +69,28 @@ export class TraceStore {
     const ended = payload.ended_at ?? null
 
     db.transaction(tx => {
+      // 续跑可能由另一个进程上报，同一 Run 的新快照只覆盖同 ID 的 span。
+      const previous = tx.select({ raw: runs.rawJson }).from(runs)
+        .where(and(eq(runs.id, payload.id), eq(runs.sessionKey, payload.session_key))).get()
+      if (previous && !payload.attributes.trace_capture_unavailable) {
+        const prior = TraceRunInputSchema.safeParse(previous.raw)
+        if (prior.success) {
+          const combined = new Map(prior.data.spans.map(span => [span.id, span]))
+          payload.started_at = Math.min(payload.started_at, prior.data.started_at)
+          for (const span of payload.spans) {
+            const before = combined.get(span.id)
+            if (before && (span.kind === 'run' || span.kind === 'tool' && span.duration_ms == null)) {
+              span.started_at = Math.min(span.started_at, before.started_at)
+              if (span.kind === 'tool' && !Object.keys(record(span.input)).length) span.input = before.input
+              if (span.ended_at != null && (span.kind === 'run' || before.status === 'running' || before.duration_ms != null))
+                span.duration_ms = Math.max(0, (span.ended_at - span.started_at) * 1000)
+            }
+            combined.set(span.id, span)
+          }
+          payload.spans = [...combined.values()].sort((a, b) => a.started_at - b.started_at)
+          if (ended != null) payload.duration_ms = Math.max(0, (ended - payload.started_at) * 1000)
+        }
+      }
       tx.insert(sessions).values({
         sessionKey: payload.session_key,
         externalSessionId: payload.external_session_id,
@@ -103,6 +125,7 @@ export class TraceStore {
         target: runs.id,
         set: {
           sessionKey: payload.session_key,
+          startedAt: payload.started_at,
           traceId: payload.trace_id,
           // 允许迟到的运行中快照更新正文，但不能把已经提交的终态改回 running。
           status: sql`CASE WHEN ${runs.endedAt} IS NOT NULL AND excluded.ended_at IS NULL THEN ${runs.status} ELSE excluded.status END`,

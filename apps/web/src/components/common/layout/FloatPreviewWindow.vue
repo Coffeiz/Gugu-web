@@ -50,7 +50,7 @@
       <ImageViewer v-if="isImg" :blobUrl="blobUrl ?? undefined" :upscale="isVector" @loaded="onImageLoaded" />
       <VideoViewer v-else-if="isVid && videoSrc" :src="videoSrc ?? undefined" :refresh-src="!win.file.attach_id ? refreshVideoSource : undefined" />
       <OfficeViewer v-else-if="isOffice && (!isCsv || !csvTextMode) && (blobUrl || (isXlsx && typeof win.file.id === 'number'))" :blobUrl="blobUrl ?? undefined" :ext="win.file.ext ?? ''" :file-id="typeof win.file.id === 'number' ? win.file.id : undefined" :file-version="win.file.version" @content-size="onOfficeContentSize" @csv-render-failed="onCsvRenderFailed" />
-      <TextViewer  v-else-if="isText && (!isCsv || csvTextMode) && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :read-only="!!win.textFallback || !!win.file.workspaceFile" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.workspaceFile?.relativePath ?? win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" @content-saved="onTextContentSaved" @refresh="refreshHtmlPreview" />
+      <TextViewer  v-else-if="isText && (!isCsv || csvTextMode) && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :read-only="!!win.textFallback" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.workspaceFile ? JSON.stringify(win.file.workspaceFile) : win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" @content-saved="onTextContentSaved" @refresh="refreshHtmlPreview" />
       <div v-if="loading && !placeholderReady" class="fpw-status fpw-loading">
         <div class="fpw-spinner"></div>
         <span>{{ t('viewerUi.loading') }}</span>

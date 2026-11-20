@@ -69,7 +69,7 @@ export function createDiskTrash(
     try {
       await writeDescriptor(tree, entry)
       moved = await moveLocalEntry(storage, source, `${key}/payload`)
-      return moved
+      return moved ? entry : false
     } finally {
       if (!moved) await removeLocalTree(storage, key)
     }
@@ -119,11 +119,14 @@ export function createDiskTrash(
       return entries.sort((left, right) => right.deletedAt.localeCompare(left.deletedAt))
     },
     store,
+    info,
     importLegacy,
-    async restore(owner: string, id: string) {
+    async restore(owner: string, id: string, expectedRoot?: string) {
       const entry = await info(owner, id)
       if (!entry) throw new CoreError('not_found', '回收项不存在')
-      const tree = createLocalFileTree(storage, await resolveRoot(owner, entry.directory))
+      const destinationRoot = await resolveRoot(owner, entry.directory)
+      if (expectedRoot !== undefined && expectedRoot !== destinationRoot) throw new CoreError('conflict', '恢复目录授权已变化')
+      const tree = createLocalFileTree(storage, destinationRoot)
       const destination = tree.storageKey(entry.relativePath)
       if (!await createLocalFileTree(storage, posix.dirname(destination)).ensureRoot()) return false
       const key = item(owner, id)

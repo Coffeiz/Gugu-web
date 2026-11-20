@@ -1,4 +1,4 @@
-import { buildFixedRequestPrefix } from '../context/assemble.js'
+import { buildFixedRequestPrefix, withToolReminder } from '../context/assemble.js'
 import { contextAccessScopeHash, readSessionSnapshot } from '../context/prepare.js'
 import type { CanonicalRunContext, ContextSourceSelection, RunCheckpoint, RunIdentity } from '../models.js'
 import type { CanonicalContextPorts, ContextServices, ContextSourcePorts } from '../ports.js'
@@ -20,7 +20,7 @@ type Runtime<L extends AgentDispatchRuntimeLease> = NonNullable<Awaited<ReturnTy
 /** 从原 Run 的持久会话快照重建固定前缀，不读取当前会话的资料。 */
 export function restoreAgentRequestPrefix(
   identity: RunIdentity,
-  checkpoint: Pick<CanonicalRunContext, 'identity' | 'sourceEffects' | 'accessScopeHash'> & {
+  checkpoint: Pick<CanonicalRunContext, 'identity' | 'sourceEffects' | 'accessScopeHash' | 'capabilities'> & {
     prepared: Pick<CanonicalRunContext['prepared'], 'requestPrefixSize' | 'requestDigest'>
   },
   selection: ContextSourceSelection,
@@ -36,8 +36,8 @@ export function restoreAgentRequestPrefix(
     throw new AgentRunReconstructionVersionError('运行前缀的快照归属或访问范围不匹配')
 
   const prefix = buildFixedRequestPrefix(ports.builder.buildRequest(readSessionSnapshot(state), selection, { ...boundIdentity }))
-  // 标准快照准备链的动态尾部为空；摘要会拒绝用该约定恢复不匹配的请求。
-  const restored: Awaited<ReturnType<CanonicalContextPorts['prepareRequest']>> = { prefix, dynamicTail: [] }
+  // 网页简介目录通过同一 Run 的冻结能力恢复，摘要仍绑定请求内容。
+  const restored: Awaited<ReturnType<CanonicalContextPorts['prepareRequest']>> = { prefix, dynamicTail: withToolReminder([], checkpoint.capabilities?.toolReminder) }
   if (checkpoint.prepared.requestPrefixSize !== prefix.length || checkpoint.prepared.requestDigest !== ports.digest(restored))
     throw new AgentRunReconstructionVersionError('运行请求前缀已变化，无法恢复')
   return async (candidate, signal) => {

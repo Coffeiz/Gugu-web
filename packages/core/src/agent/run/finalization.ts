@@ -21,8 +21,15 @@ export function canonicalToolsUsed(checkpoint: Pick<RunCheckpoint<unknown>, 'dis
 export async function finishForRun<C>(scope: RunCoordination<C>, status: 'completed' | 'cancelled' | 'failed' | 'unknown', code: string | null, text: string, silent = false): Promise<RunEvent> {
   if (!scope.state || scope.finalized)
     throw new AgentRunError('invalid_state', '运行已终结')
-  const history = scope.state.context !== null && (status === 'completed' || (status === 'cancelled' && (scope.state.text || scope.state.roundTexts.length || scope.state.completedToolCount || scope.state.displayTimeline.some((item) => item.kind === 'tool' && item.toolStatus === 'cancelled'))))
-    ? { outcome: (silent ? 'silent' : status === 'cancelled' ? 'interruption' : 'success') as 'success' | 'interruption' | 'silent', context: scope.state.context, text: status === 'cancelled' ? scope.state.text : text }
+  const incomplete = status === 'failed' || status === 'unknown'
+  const hasCancelledHistory = status === 'cancelled' && (scope.state.text || scope.state.roundTexts.length
+    || scope.state.completedToolCount || scope.state.displayTimeline.some(item => item.kind === 'tool' && item.toolStatus === 'cancelled'))
+  // 失败只保留已经公开的输出。缓冲中的草稿仍可能被回复门拦下。
+  const visibleText = incomplete ? scope.state.displayTimeline.filter(item => item.kind === 'assistant' && item.text)
+    .map(item => item.text).join('\n\n') : status === 'cancelled' ? scope.state.text : text
+  const history = scope.state.context !== null && (status === 'completed' || incomplete || hasCancelledHistory)
+    ? { outcome: (silent ? 'silent' : status === 'completed' ? 'success' : 'interruption') as 'success' | 'interruption' | 'silent',
+      context: scope.state.context, text: visibleText }
     : null
   const remoteStatusUnknown = status === 'unknown' || scope.state.remoteStatusUnknown || scope.uncertainExecutions.size > 0 || (status === 'cancelled' && scope.state.phase === 'provider')
   const totalUsage = scope.state.phase === 'provider' && scope.state.round > 0 && scope.state.usageAppliedRound !== scope.state.round ? mergeUsage(scope.state.totalUsage, scope.state.usage) : scope.state.totalUsage

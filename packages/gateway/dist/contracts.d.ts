@@ -28,5 +28,5 @@ export interface GatewaySupervisorPorts<S extends GatewayBotSpec> {
     connect(spec: S, signal: AbortSignal): Promise<GatewayConnection>;
     clock?: GatewayClock;
     /** 只发送固定事件码，不传播凭据、用户输入或异常文本。 */
-    report?(event: 'config-unavailable' | 'listener-unavailable' | 'connection-failed' | 'cleanup-failed'): void;
+    report?(event: 'config-unavailable' | 'listener-unavailable' | 'connection-failed' | 'cleanup-failed', error?: unknown): void;
 }

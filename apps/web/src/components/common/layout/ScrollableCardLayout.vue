@@ -1,10 +1,12 @@
 <template>
   <div class="scrollable-card-layout">
-    <div class="scrollable-card-layout__viewport scroll-surface scroll-surface--compact">
+    <div class="scrollable-card-layout__viewport scroll-surface scroll-surface--compact"
+      :class="{ 'has-empty': slots.empty }">
       <div v-if="slots.actions" class="scrollable-card-layout__actions">
         <slot name="actions" />
       </div>
-      <slot />
+      <div v-if="slots.empty" class="scrollable-card-layout__first-use"><slot name="empty" /></div>
+      <slot v-else />
     </div>
   </div>
 </template>
@@ -32,7 +34,19 @@ const slots = useSlots()
   padding: 32px 8px 38px;
 }
 
+.scrollable-card-layout__viewport.has-empty {
+  display: flex;
+  flex-direction: column;
+}
+
+.scrollable-card-layout__first-use {
+  flex: 1 0 auto;
+  display: grid;
+  place-items: center;
+}
+
 .scrollable-card-layout__actions {
+  flex: none;
   display: flex;
   align-items: flex-start;
   margin-bottom: 16px;
@@ -48,13 +62,4 @@ const slots = useSlots()
   color: var(--content-secondary);
 }
 
-.scrollable-card-layout__viewport :deep(.scrollable-card-layout__empty strong) {
-  color: var(--content-primary);
-}
-
-.scrollable-card-layout__viewport :deep(.scrollable-card-layout__empty span) {
-  max-width: 420px;
-  font-size: 12px;
-  text-align: center;
-}
 </style>

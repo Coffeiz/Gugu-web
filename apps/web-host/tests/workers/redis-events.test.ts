@@ -129,6 +129,23 @@ test('project/file context revisions are supported and scheduled-task changes do
   ])
 })
 
+test('Run 启动通知只向会话 owner 推送订阅所需的标识', async () => {
+  const redis = await fakeRedis(() => undefined)
+  try {
+    const publisher = createRedisEventPublisher(redis.url, () => new Date('2026-11-13T00:00:00.000Z'), () => 'evt-test')
+    assert.equal(await publisher.publishAgentRunChanged({
+      ownerId: 'synthetic-owner', sessionId: 23, runId: 'synthetic-run', status: 'running',
+    }), true)
+    const publications = redis.commands.filter(command => command[0] === 'PUBLISH')
+    assert.equal(publications.length, 1)
+    assert.equal(publications[0]![1], 'events:synthetic-owner')
+    assert.deepEqual(JSON.parse(publications[0]![2]!), {
+      protocol_version: 'live-event-v1', event_id: 'evt-test', type: 'agent.run.changed',
+      session_id: 23, run_id: 'synthetic-run', status: 'running', created_at: '2026-11-13T00:00:00.000Z',
+    })
+  } finally { await redis.close() }
+})
+
 test('resource event increments shared revision and publishes the committed response metadata', async () => {
   const redis = await fakeRedis(() => undefined)
   try {

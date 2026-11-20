@@ -156,7 +156,21 @@ async function fetchOne(port: HttpGetPort, ownerId: string, url: string, maxChar
     return await httpGetResult(url, maxChars, response, signal)
   } catch (error) {
     signal.throwIfAborted()
-    return { error: `请求失败：${error instanceof Error ? error.name : '未知错误'}` }
+    if (error instanceof ProviderError) {
+      switch (error.code) {
+        case 'timeout':
+          return { error_code: 'timeout', error: error.options.timeoutPhase === 'connect'
+            ? '连接目标网站超时，请改用其他来源'
+            : '读取网页超时，请改用其他来源' }
+        case 'network':
+          return { error_code: 'network', error: '无法连接目标网站或连接中断，请改用其他来源' }
+        case 'input_rejected':
+          return { error_code: 'input_rejected', error: '目标地址或请求未通过公网访问校验' }
+        case 'authentication':
+          return { error_code: 'authentication', error: '出站代理认证失败，请联系管理员' }
+      }
+    }
+    return { error: '网页请求失败，请改用其他来源' }
   }
 }
 

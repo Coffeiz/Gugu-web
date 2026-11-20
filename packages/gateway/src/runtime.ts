@@ -58,9 +58,9 @@ export function createGatewaySupervisor<S extends GatewayBotSpec>(ports: Gateway
     if (stopping) return;
     let specs: readonly S[];
     try { specs = await ports.read(); }
-    catch {
+    catch (error) {
       configuration = 'unavailable';
-      ports.report?.('config-unavailable');
+      ports.report?.('config-unavailable', error);
       if (!configRetry && !stopping) {
         const controller = new AbortController();
         configRetry = controller;
@@ -98,19 +98,19 @@ export function createGatewaySupervisor<S extends GatewayBotSpec>(ports: Gateway
           uncertain.delete(spec.key);
           if (time.now() - entry.started < 5_000) retry(spec);
           else { failures.delete(spec.key); notify(); }
-        }, () => {
+        }, error => {
           // 无法证明旧消费者已释放时保留归属，不能通过重启制造双消费。
           if (active.get(spec.key) === entry) {
             uncertain.add(spec.key);
-            if (!stopping) ports.report?.('cleanup-failed');
+            if (!stopping) ports.report?.('cleanup-failed', error);
           }
         });
         if (stopping) { await drain(entry); active.delete(spec.key); }
       } catch (error) {
         if (error instanceof GatewayConnectionCleanupError) {
           uncertain.add(spec.key);
-          if (!stopping) ports.report?.('cleanup-failed');
-        } else if (!stopping) { ports.report?.('connection-failed'); retry(spec); }
+          if (!stopping) ports.report?.('cleanup-failed', error);
+        } else if (!stopping) { ports.report?.('connection-failed', error); retry(spec); }
       } finally { lifetime.signal.removeEventListener('abort', cancel); }
     }
   }
@@ -119,7 +119,7 @@ export function createGatewaySupervisor<S extends GatewayBotSpec>(ports: Gateway
     queued = true;
     serial = serial.then(async () => {
       queued = false;
-      try { await reconcile(); } catch { ports.report?.('cleanup-failed'); }
+      try { await reconcile(); } catch (error) { ports.report?.('cleanup-failed', error); }
     });
   }
   async function listen(ready: () => void) {
@@ -141,11 +141,11 @@ export function createGatewaySupervisor<S extends GatewayBotSpec>(ports: Gateway
             }),
           ]);
         } finally { lifetime.signal.removeEventListener('abort', aborted); }
-      } catch { if (!stopping) ports.report?.('listener-unavailable'); }
+      } catch (error) { if (!stopping) ports.report?.('listener-unavailable', error); }
       finally {
         notifications = stopping ? 'stopped' : 'disconnected';
         if (subscription) {
-          try { await subscription.close(); } catch { ports.report?.('cleanup-failed'); }
+          try { await subscription.close(); } catch (error) { ports.report?.('cleanup-failed', error); }
           subscription = undefined;
         }
       }

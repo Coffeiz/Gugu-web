@@ -148,8 +148,8 @@ describe.skipIf(!url)('独立conversation来源的真实PostgreSQL/正式临时S
       expect(await createSqliteConversationSearch(sqlite.db).search(owner, query)).toEqual(
         await createPostgresGlobalSearchSources(pool).find(source => source.type === 'conversation')!.search(owner, query))
       const postgresOperations = createGlobalSearchOperations(createPostgresGlobalSearchSources(pool))
-      expect(postgresOperations.availableTypes).toHaveLength(11)
-      expect(postgresOperations.missingTypes).toEqual([])
+      expect(postgresOperations.availableTypes).toHaveLength(9)
+      expect(postgresOperations.missingTypes).toEqual(['file', 'folder'])
       const operations = createGlobalSearchOperations(createKyselySqliteGlobalSearchSources(sqlite.db))
       expect(operations.availableTypes).not.toContain('conversation')
       await expect(operations.search(owner, query)).rejects.toMatchObject({ code: 'conflict' })

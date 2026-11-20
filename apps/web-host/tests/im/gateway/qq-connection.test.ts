@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createQqConnection } from '../../../src/modules/im/gateway/platforms/qq/connection.js';
-import type { QqMessageEvent, QqSocket } from '../../../src/modules/im/gateway/platforms/qq/connection.js';
+import { createQqConnection } from '@gugu/gateway/qq';
+import type { QqMessageEvent, QqSocket } from '@gugu/gateway/qq';
 import type { GatewayClock } from '@gugu/gateway';
 
 const flush = async () => { for (let index = 0; index < 40; index++) await Promise.resolve(); };

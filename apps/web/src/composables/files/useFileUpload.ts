@@ -98,8 +98,10 @@ export function useFileUpload(options: FileUploadOptions) {
     dragCounter.value = Math.max(0, dragCounter.value - 1)
   }
 
+  function resetDrag() { dragCounter.value = 0 }
+
   async function handleDrop(event: DragEvent) {
-    dragCounter.value = 0
+    resetDrag()
     if (!canUpload(options) || !event.dataTransfer) return
     const items = await readDroppedEntries(event.dataTransfer)
     if (items.length) await uploadFiles(items)
@@ -117,5 +119,6 @@ export function useFileUpload(options: FileUploadOptions) {
     onDragEnter,
     onDragLeave,
     handleDrop,
+    resetDrag,
   }
 }

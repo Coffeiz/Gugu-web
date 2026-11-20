@@ -1,4 +1,6 @@
-import { createWebRuntimeLog } from '../shared/log-files.js'
+import { shutdownStep } from '../shared/shutdown.js'
+import { drainHttpConnections } from '../http/drain.js'
+import { createWebRuntimeLog, diagLog } from '../shared/log-files.js'
 import { createNodeImHostRuntime } from '../modules/im/gateway/bootstrap.js'
 import { readImRuntimeOwnership } from '../modules/im/gateway/host-runtime.js'
 import { createAdminEmailTranslator } from '../modules/admin/email.js'
@@ -13,6 +15,7 @@ import { createApp } from '../app.js'
 import { loadConfig } from '../config.js'
 import { resolveConfigOverridePath } from '../adapters/config/config-override-file.js'
 import { hasProjectDeleteJournalSchema } from '../modules/undo/journal.js'
+import { PostgresMigrationError } from '@gugu/database/postgres'
 import { checkRagIndexMigration } from '@gugu/database/postgres/migrations/0011_rag_index'
 import { checkTrashPurgeMigration } from '@gugu/database/postgres/migrations/0009_trash_purge'
 import { checkSearchUsageMigration } from '@gugu/database/postgres/migrations/0010_search_usage'
@@ -28,6 +31,7 @@ async function listen(app: ReturnType<typeof createApp>, host: string, port: num
   try {
     await app.listen({ host, port })
   } catch (error) {
+    diagLog('http.listen_failed', error)
     await app.close().catch(() => undefined)
     throw new Error('gugu-webui HTTP server failed to listen', { cause: error })
   }
@@ -76,13 +80,28 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
       pool,
       close() {
         closePromise ??= (async () => {
-          await app.close()
-          await pool.end()
+          await shutdownStep(report, 'http', () => app.close())
+          await shutdownStep(report, 'postgres_pool', () => pool.end())
         })()
         return closePromise
       },
     }
   }
+  async function checkFeatureMigration(
+    event: 'host.trash_purge_unavailable' | 'host.search_usage_unavailable' | 'host.rag_unavailable',
+    check: (pool: Pool) => Promise<'applied' | 'pending'>,
+  ) {
+    try {
+      if (await check(pool) === 'applied') return true
+      report(event, { code: 'migration_pending' })
+    } catch (error) {
+      const code = error instanceof PostgresMigrationError && error.code === 'incompatible'
+        ? 'migration_incompatible' : 'migration_unavailable'
+      report(event, { code, error })
+    }
+    return false
+  }
+
   let canRebuildAgentMemoryIndex = false
   let trashPurgeSchemaApplied = false
   let searchUsageSchemaApplied = false
@@ -92,16 +111,10 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
   let imDeliveryPool: Pool | undefined
   let web: Awaited<ReturnType<typeof createWebUiApp>>
   try {
-    try {
-      trashPurgeSchemaApplied = await checkTrashPurgeMigration(pool) === 'applied'
-    } catch {
-      trashPurgeSchemaApplied = false
-    }
-    try {
-      searchUsageSchemaApplied = await checkSearchUsageMigration(pool) === 'applied'
-    } catch {
-      searchUsageSchemaApplied = false
-    }
+    trashPurgeSchemaApplied = await checkFeatureMigration('host.trash_purge_unavailable', checkTrashPurgeMigration)
+    if (trashPurgeSchemaApplied && process.platform !== 'linux')
+      report('host.trash_purge_unavailable', { code: 'platform_unsupported' })
+    searchUsageSchemaApplied = await checkFeatureMigration('host.search_usage_unavailable', checkSearchUsageMigration)
     // 日志跨事务持有会话锁，使用独立连接池，避免占用本次确认仍需使用的业务连接。
     if (process.platform === 'linux' && core.receipts && await hasProjectDeleteJournalSchema(pool))
       projectJournalPool = createPool(config, 2)
@@ -126,21 +139,19 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
     throw error
   }
   const app = web.app
-  let ragIndexMigration: 'pending' | 'applied' | 'unavailable'
-  try {
-    ragIndexMigration = await checkRagIndexMigration(pool)
-  } catch (error) {
-    ragIndexMigration = 'unavailable'
-    report('host.rag_unavailable', { error })
-  }
-  canRebuildAgentMemoryIndex = ragIndexMigration === 'applied'
+  drainHttpConnections(app)
+  canRebuildAgentMemoryIndex = await checkFeatureMigration('host.rag_unavailable', checkRagIndexMigration)
   try {
     if (ownership.runtime === 'node') imDeliveryPool = createPool(config, 4)
     const gateway = createNodeImHostRuntime({ pool, deliveryPool: imDeliveryPool ?? pool, core, redisUrl: config.redisUrl,
       secretKey: config.secretKey, storageRoot: config.storageLocalPath, configOverridePath, environment: env,
-      promptRoot: webAgentPromptRoot, publicAppUrl: config.publicAppUrl, ownership, mcpRuntime: sharedMcp,
+      promptRoot: webAgentPromptRoot, publicAppUrl: config.publicAppUrl, ownership, mcpRuntime: sharedMcp, imOwnerTools: web.imOwnerTools, mcpDirectory: web.imMcpDirectory,
       observation: web.loopScopeTrace?.forSource('im'), log: web.agentRunLog,
-      diagnose(code, error) { gatewayLog('gateway.degraded', { code, error }) },
+      diagnose(code, error) {
+        if (code === 'im_rag_timeout') gatewayLog('gateway.rag_timeout', { error })
+        else if (code === 'im_rag_late_completion') gatewayLog('gateway.rag_late_completion', { error })
+        else gatewayLog('gateway.degraded', { code, error })
+      },
     })
     imRuntime = gateway
     app.get('/health/im', async (_request, reply) => {
@@ -154,7 +165,7 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
     })
     app.addHook('onClose', async () => {
       try {
-        await gateway.stop()
+        await shutdownStep(report, 'gateway', () => gateway.stop())
         if (ownership.runtime === 'node') gatewayLog('gateway.stopped')
       } catch (error) {
         gatewayLog('gateway.stop_failed', { error })
@@ -170,8 +181,9 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
     }
     await listen(app, config.host, config.port)
     await web.startWorkers()
-    report('host.started')
+    report('host.started', { pid: process.pid })
   } catch (error) {
+    diagLog('host.start_failed', error)
     await app.close().catch(() => undefined)
     await imDeliveryPool?.end().catch(() => undefined)
     await projectJournalPool?.end().catch(() => undefined)
@@ -180,11 +192,6 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
     throw error
   }
 
-  if (ragIndexMigration === 'pending') console.info('Agent RAG 索引迁移尚未应用，后台重建未启动')
-  if (!trashPurgeSchemaApplied || process.platform !== 'linux')
-    console.info('回收站清空的 Node 文件后端尚未就绪，清空工具与后台任务未启用')
-  if (!searchUsageSchemaApplied)
-    console.info('Node 搜索用量迁移尚未应用，深度研究与相似图搜索未启用')
   let closePromise: Promise<void> | undefined
   return {
     app,
@@ -192,12 +199,12 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
     close() {
       closePromise ??= (async () => {
         try {
-          await app.close()
+          await shutdownStep(report, 'http', () => app.close())
         } finally {
-          await imDeliveryPool?.end()
-          await projectJournalPool?.end()
-          await core.close()
-          await pool.end()
+          if (imDeliveryPool) await shutdownStep(report, 'im_delivery_pool', () => imDeliveryPool.end())
+          if (projectJournalPool) await shutdownStep(report, 'project_journal_pool', () => projectJournalPool.end())
+          await shutdownStep(report, 'core', () => core.close())
+          await shutdownStep(report, 'postgres_pool', () => pool.end())
         }
       })()
       return closePromise

@@ -22,9 +22,6 @@ describe('共享Core搜索与认证Host路由的真实隔离PostgreSQL', { skip:
     pool = new Pool({ connectionString: url, options: `-c search_path=${schema}`, max: 4, connectionTimeoutMillis: 5000 })
     await pool.query(`
       CREATE TABLE projects(id integer PRIMARY KEY,user_id uuid,name text,contact_name text,status text,current_stage text,deleted_at timestamptz,updated_at timestamptz);
-      CREATE TABLE files(id integer PRIMARY KEY,user_id uuid,display_name text,ext text,search_romaji text,space text,size text,workspace_directory_id integer,project_id integer,folder_id integer,deleted_at timestamptz,updated_at timestamptz);
-      CREATE TABLE folders(id integer PRIMARY KEY,user_id uuid,name text,search_romaji text,workspace_directory_id integer,project_id integer,parent_id integer,deleted_at timestamptz,created_at timestamptz);
-      CREATE TABLE workspace_directories(id integer PRIMARY KEY,user_id uuid,name text,deleted_at timestamptz);
       CREATE TABLE calendar_events(id integer PRIMARY KEY,user_id uuid,title text,description text,contact_name text,deleted_at timestamptz,date text);
       CREATE TABLE clients(id integer PRIMARY KEY,user_id uuid,name text,contact text,email text,phone text,notes text,created_at timestamptz);
       CREATE TABLE user_skills(id integer PRIMARY KEY,owner_id uuid,name text,skill_id text,description_short text,description_long text,body text,enabled boolean,updated_at timestamptz);
@@ -38,9 +35,6 @@ describe('共享Core搜索与认证Host路由的真实隔离PostgreSQL', { skip:
     `)
     const inserts: Array<[string, unknown[]]> = [
       ["INSERT INTO projects VALUES (1,$1,'命中','小北','active','',NULL,'2026-01-01'),(2,$1,'命中扩展','小北','pending','',NULL,'2026-01-03'),(3,$2,'命中其他账号','小北','active','',NULL,'2026-01-01'),(4,$1,'命中已删','小北','active','','2026-01-01','2026-01-01')", [owner, foreign]],
-      ["INSERT INTO workspace_directories VALUES (1,$1,'主工作区',NULL),(2,$2,'私有目录名',NULL)", [owner, foreign]],
-      ["INSERT INTO folders VALUES (1,$1,'命中目录',NULL,1,NULL,NULL,NULL,'2026-01-01'),(2,$1,'命中子目录',NULL,1,NULL,1,NULL,'2026-01-02'),(3,$2,'私有父名',NULL,2,NULL,NULL,NULL,'2026-01-01'),(4,$1,'命中越权父链',NULL,1,NULL,3,NULL,'2026-01-03'),(5,$1,'命中错根',NULL,2,NULL,NULL,NULL,'2026-01-04')", [owner, foreign]],
-      ["INSERT INTO files VALUES (1,$1,'命中','txt',NULL,'workspace','12 B',1,NULL,2,NULL,'2026-01-04'),(2,$1,'命中坏父链','txt',NULL,'workspace','1 B',1,NULL,4,NULL,'2026-01-03'),(3,$1,'命中错根文件','txt',NULL,'workspace','1 B',2,NULL,5,NULL,'2026-01-02'),(4,$2,'命中其他文件','txt',NULL,'personal','1 B',NULL,NULL,NULL,NULL,'2026-01-01'),(5,$1,'命中删除文件','txt',NULL,'personal','1 B',NULL,NULL,NULL,'2026-01-01','2026-01-01')", [owner, foreign]],
       ["INSERT INTO calendar_events VALUES (1,$1,'命中日程','说明','小北',NULL,'2026-01-01'),(2,$2,'命中其他日程','说明','小北',NULL,'2026-01-01'),(3,$1,'命中删除日程','说明','小北','2026-01-01','2026-01-01')", [owner, foreign]],
       ["INSERT INTO clients VALUES (1,$1,'命中联系人','小北',NULL,NULL,'备注','2026-01-01'),(2,$2,'命中其他联系人',NULL,NULL,NULL,NULL,'2026-01-01')", [owner, foreign]],
       ["INSERT INTO user_skills VALUES (1,$1,'命中技能','U1','元数据说明','长说明','机密正文仅内部',false,'2026-01-01'),(2,$2,'命中其他技能','U2','其他','其他','其他私密正文',true,'2026-01-01')", [owner, foreign]],
@@ -74,11 +68,11 @@ describe('共享Core搜索与认证Host路由的真实隔离PostgreSQL', { skip:
     assert.equal(response.statusCode, 200, response.body)
     return response.json() as Result
   }
-  it('默认全部11来源经过真实SQL，保留分组次序、查询形状、ANDOR与perType', async () => {
+  it('默认全部 PostgreSQL 来源经过真实SQL，保留分组次序、查询形状、ANDOR与perType', async () => {
     assert.equal((await app.inject({ url: '/api/v1/search?q=命中' })).statusCode, 401)
     const all = await search(`q=${encodeURIComponent('命中')}&per_type=1`)
-    assert.deepEqual(all.groups.map(group => group.type), ['project', 'file', 'folder', 'event', 'client', 'skill', 'mcp', 'scheduled_task', 'note', 'canvas_note', 'conversation'])
-    assert.equal(all.total, 11)
+    assert.deepEqual(all.groups.map(group => group.type), ['project', 'event', 'client', 'skill', 'mcp', 'scheduled_task', 'note', 'canvas_note', 'conversation'])
+    assert.equal(all.total, 9)
     assert.equal(all.query, '命中'); assert.deepEqual(all.queries, ['命中']); assert.equal(all.mode, 'OR')
     assert.ok(all.groups.every(group => group.items.length === 1 && group.label))
     assert.equal(all.groups[0]!.items[0]!.id, 1)
@@ -89,7 +83,7 @@ describe('共享Core搜索与认证Host路由的真实隔离PostgreSQL', { skip:
     assert.equal(either.total, 2)
     assert.deepEqual(await search('q=%20%20'), { query: '', queries: [], mode: 'OR', total: 0, groups: [] })
   })
-  it('真实来源保护owner/软删/有效任务和私有metadata，导航不泄漏错owner父链或根', async () => {
+  it('真实来源保护 owner、软删、有效任务和私有元数据', async () => {
     const result = await search(`q=${encodeURIComponent('命中')}&per_type=200`)
     const group = (type: string) => result.groups.find(value => value.type === type)!.items
     assert.deepEqual(group('project').map(item => item.id), [1, 2])
@@ -99,12 +93,6 @@ describe('共享Core搜索与认证Host路由的真实隔离PostgreSQL', { skip:
     assert.deepEqual(new Set(group('mcp').map(item => item.id)), new Set(['user-mcp', 'platform-mcp']))
     const text = JSON.stringify(result)
     for (const hidden of ['机密正文', 'endpoint-secret', '凭据秘密', '其他账号', '其他文件', '删除文件', '删除日程', '已删便签', '其他会话', '私有目录名', '私有父名']) assert.equal(text.includes(hidden), false, hidden)
-    const good = group('file').find(item => item.id === 1)!
-    assert.equal(good.workspace_directory_name, '主工作区')
-    assert.deepEqual(good.folder_path, [{ id: 1, name: '命中目录' }, { id: 2, name: '命中子目录' }])
-    assert.deepEqual(group('file').find(item => item.id === 2)!.folder_path, [])
-    assert.equal(group('file').find(item => item.id === 3)!.workspace_directory_name, undefined)
-    assert.equal(group('folder').find(item => item.id === 5)!.workspace_directory_name, undefined)
     const foreignResult = await search(`q=${encodeURIComponent('命中')}&types=project&types=conversation`, foreign)
     assert.deepEqual(foreignResult.groups.map(value => value.items.map(item => item.id)), [[3], [3]])
     assert.equal((await search(`q=${encodeURIComponent('机密正文')}&types=skill`)).total, 0)
@@ -155,73 +143,19 @@ describe('共享Core搜索与认证Host路由的真实隔离PostgreSQL', { skip:
       await pool.query('DELETE FROM conversation_sessions WHERE id IN (20,21) AND user_id=$1', [owner])
     }
   })
-  it('真实并发文件位置查询取消后等待全部待锁兄弟排空，连接可归还和复用', async () => {
-    const operations = createGlobalSearchOperations(createPostgresGlobalSearchSources(pool))
-    const query = parseGlobalSearchQuery({ q: '命中', types: 'file' })
-    const oid = await admin.query<{ oid: number }>(
-      'SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname=$2',
-      [schema, 'folders'],
-    )
-    assert.equal(oid.rowCount, 1)
-    const blocker = await pool.connect()
-    const controller = new AbortController(), reason = new Error('合成文件导航取消')
-    let settled = false
-    let observed: Promise<{ value: unknown; error: unknown }> | undefined
-    try {
-      await blocker.query('BEGIN')
-      await blocker.query(`LOCK TABLE "${schema}".folders IN ACCESS EXCLUSIVE MODE`)
-      const pending = operations.search(owner, query, { signal: controller.signal })
-      observed = pending.then(value => { settled = true; return { value, error: undefined } },
-        error => { settled = true; return { value: undefined, error } })
-      const deadline = Date.now() + 5000
-      let waiting = 0
-      while (Date.now() < deadline) {
-        const locks = await admin.query<{ waiting: number }>(
-          "SELECT count(*)::integer AS waiting FROM pg_locks WHERE relation=$1::oid AND locktype='relation' AND NOT granted",
-          [oid.rows[0]!.oid],
-        )
-        waiting = locks.rows[0]!.waiting
-        if (waiting >= 2) break
-        if (settled) break
-      }
-      assert.ok(waiting >= 2, `需观测到至少两个真实导航兄弟待锁，实际${waiting}`)
-      controller.abort(reason)
-      await new Promise<void>(resolve => setImmediate(resolve))
-      assert.equal(settled, false, '锁尚未释放时不能丢弃仍在运行的导航查询')
-    } finally {
-      if (!controller.signal.aborted) controller.abort(reason)
-      try { await blocker.query('ROLLBACK') } finally { blocker.release() }
-      if (observed) await observed
-    }
-    const outcome = await observed!
-    assert.equal(outcome.value, undefined)
-    assert.equal(outcome.error, reason)
-    assert.equal(pool.waitingCount, 0)
-    // 所有原有连接均已归还；借满pool也能完成，不依赖新建额外连接掩盖泄漏。
-    const borrowed = await Promise.allSettled(Array.from({ length: 4 }, () => pool.connect()))
-    try {
-      assert.ok(borrowed.every(result => result.status === 'fulfilled'), '取消后应能借满全部连接')
-      assert.equal(pool.waitingCount, 0)
-    } finally { for (const result of borrowed) if (result.status === 'fulfilled') result.value.release() }
-    assert.equal(pool.idleCount, pool.totalCount)
-    const again = await operations.search(owner, query) as Result
-    assert.equal(again.groups[0]!.type, 'file')
-    assert.equal(again.groups[0]!.items.length, 3)
-  })
-
   it('默认全来源遇到真实表缺失拒绝，不返回前面来源已生成的部分groups', async () => {
     const operations = createGlobalSearchOperations(createPostgresGlobalSearchSources(pool))
     let renamed = false
     try {
       await pool.query('ALTER TABLE clients RENAME TO clients_temporarily_unavailable')
       renamed = true
-      await assert.rejects(operations.search(owner, parseGlobalSearchQuery({ q: '命中' })),
+      await assert.rejects(operations.search(owner, parseGlobalSearchQuery({ q: '命中', types: [...operations.availableTypes] })),
         (error: unknown) => typeof error === 'object' && error !== null && 'code' in error && error.code === '42P01')
     } finally {
       if (renamed) await pool.query('ALTER TABLE clients_temporarily_unavailable RENAME TO clients')
     }
-    const restored = await operations.search(owner, parseGlobalSearchQuery({ q: '命中' })) as Result
-    assert.equal(restored.groups.length, 11)
+    const restored = await operations.search(owner, parseGlobalSearchQuery({ q: '命中', types: [...operations.availableTypes] })) as Result
+    assert.equal(restored.groups.length, 9)
   })
 
 })

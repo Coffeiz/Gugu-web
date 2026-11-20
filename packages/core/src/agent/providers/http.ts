@@ -11,9 +11,11 @@ async function response(deps: ProviderDriverDependencies, request: ProviderHttpR
   let result: ProviderHttpResponse
   try { result = await deps.transport.request(request, signal) }
   catch (error) {
-    observe(() => deps.diagnose?.('provider_transport', error))
     if (signal.aborted) throw new ProviderError('cancelled')
-    throw classifyProviderError(error)
+    const classified = classifyProviderError(error)
+    const failure = new ProviderError(classified.code, { ...classified.options, stage: classified.options.stage ?? 'transport' })
+    observe(() => deps.diagnose?.('provider_transport', failure))
+    throw failure
   }
   if (result.status < 200 || result.status >= 300) {
     let body: unknown
@@ -25,8 +27,8 @@ async function response(deps: ProviderDriverDependencies, request: ProviderHttpR
     const responses = /\/responses(?:\?|$)/.test(request.url)
     const incompatible = responses && ([405, 415, 501].includes(result.status)
       || [400, 404, 422].includes(result.status) && /json_parse_error|responseinput|response input|responses endpoint|responses api|does not support responses|unsupported responses/.test(detail))
-    const error = classifyProviderError({ status: result.status, body }, { requestStarted: true, outputStarted: false, protocolIncompatible: incompatible, providerUrl: request.url })
-    observe(() => deps.diagnose?.('provider_http', { status: result.status, body }))
+    const error = classifyProviderError({ status: result.status, body }, { requestStarted: true, outputStarted: false, protocolIncompatible: incompatible, stage: 'http', providerUrl: request.url })
+    observe(() => deps.diagnose?.('provider_http', error))
     throw error
   }
   return result
@@ -55,28 +57,33 @@ export async function requestJson(deps: ProviderDriverDependencies, request: Pro
     return record(body)
   } catch (error) {
     if (signal.aborted) throw new ProviderError('cancelled')
-    observe(() => deps.diagnose?.('provider_json', error))
-    if (error instanceof SyntaxError || error instanceof TypeError && String(record(error).code).startsWith('ERR_ENCODING_'))
-      throw new ProviderError('protocol', { requestStarted: true })
-    throw classifyProviderError(error, { requestStarted: true })
+    const classified = error instanceof SyntaxError || error instanceof TypeError && String(record(error).code).startsWith('ERR_ENCODING_')
+      ? new ProviderError('protocol') : classifyProviderError(error)
+    const failure = new ProviderError(classified.code, { requestStarted: true, status: result.status, ...classified.options, stage: classified.options.stage ?? 'decode' })
+    observe(() => deps.diagnose?.('provider_json', failure))
+    throw failure
   } finally { signal.removeEventListener('abort', cancel); await result.cancel() }
 }
 
 async function* lines(result: ProviderHttpResponse, signal: AbortSignal): AsyncGenerator<string> {
   const decoder = new TextDecoder('utf-8', { fatal: true })
+  function decode(chunk?: Uint8Array) {
+    try { return decoder.decode(chunk, { stream: chunk !== undefined }) }
+    catch { throw new ProviderError('protocol', { requestStarted: true, protocolDetail: 'stream_invalid_utf8' }) }
+  }
   let pending = ''
   for await (const chunk of result.body) {
     throwIfCancelled(signal)
-    pending += decoder.decode(chunk, { stream: true })
+    pending += decode(chunk)
     let match: RegExpExecArray | null
     while ((match = /\r\n|\n|\r(?!$)/.exec(pending))) {
       yield pending.slice(0, match.index)
       pending = pending.slice(match.index + match[0].length)
     }
-    if (pending.length > 16 * 1024 * 1024) throw new ProviderError('protocol', { requestStarted: true })
+    if (pending.length > 16 * 1024 * 1024) throw new ProviderError('protocol', { requestStarted: true, protocolDetail: 'stream_line_limit' })
   }
   throwIfCancelled(signal)
-  pending += decoder.decode()
+  pending += decode()
   if (pending.endsWith('\r')) pending = pending.slice(0, -1)
   if (pending) yield pending
 }
@@ -90,7 +97,7 @@ export async function* requestEvents(deps: ProviderDriverDependencies, request: 
     const raw = data.join('\n')
     if (raw === '[DONE]') return { event: 'done', data: null }
     try { return { event: event || 'message', data: JSON.parse(raw) as unknown } }
-    catch { throw new ProviderError('protocol', { requestStarted: true }) }
+    catch { throw new ProviderError('protocol', { requestStarted: true, protocolDetail: 'sse_invalid_json' }) }
   }
   try {
     for await (const line of lines(result, signal)) {
@@ -103,14 +110,16 @@ export async function* requestEvents(deps: ProviderDriverDependencies, request: 
         const value = colon < 0 ? '' : line.slice(colon + 1).replace(/^ /, '')
         if (field === 'event') event = value
         if (field === 'data') { data.push(value); size += value.length }
-        if (size > 16 * 1024 * 1024) throw new ProviderError('protocol', { requestStarted: true })
+        if (size > 16 * 1024 * 1024) throw new ProviderError('protocol', { requestStarted: true, protocolDetail: 'sse_event_limit' })
       }
     }
     if (data.length) yield emit()
   } catch (error) {
     if (signal.aborted) throw new ProviderError('cancelled')
-    observe(() => deps.diagnose?.('provider_stream', error))
-    throw error instanceof ProviderError ? error : classifyProviderError(error, { requestStarted: true })
+    const classified = classifyProviderError(error)
+    const failure = new ProviderError(classified.code, { requestStarted: true, status: result.status, ...classified.options, stage: classified.options.stage ?? 'stream' })
+    observe(() => deps.diagnose?.('provider_stream', failure))
+    throw failure
   } finally { signal.removeEventListener('abort', cancel); await result.cancel() }
 }
 
@@ -122,8 +131,8 @@ export async function* requestNdjson(deps: ProviderDriverDependencies, request: 
     for await (const line of lines(result, signal)) {
       if (!line.trim()) continue
       let value: unknown
-      try { value = JSON.parse(line) } catch { throw new ProviderError('protocol', { requestStarted: true }) }
-      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ProviderError('protocol')
+      try { value = JSON.parse(line) } catch { throw new ProviderError('protocol', { requestStarted: true, protocolDetail: 'ndjson_invalid_json' }) }
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ProviderError('protocol', { protocolDetail: 'ndjson_invalid_record' })
       yield record(value)
     }
   } catch (error) {

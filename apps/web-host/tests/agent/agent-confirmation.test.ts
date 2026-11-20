@@ -11,6 +11,22 @@ const lease: AgentDispatchLease = {
   mode: 'start', cancelRequested: false,
 }
 
+test('IM 确认端口只接受经 owner 校验的原生私聊来源', () => {
+  const make = (chatType: 'c2c' | 'group', platform: 'qq' | 'wechat', owner: boolean) =>
+    createWebAgentToolConfirmation({
+      lease: { ...lease, input: { ...lease.input, v: 3, source: 'im', origin: null,
+        im: { platform, botId: '1', chatType, chatId: chatType === 'group' ? 'test-group' : null, platformUserId: 'test-owner' } } },
+      action: 'delete_client', pool: {} as never, intents: {} as never, imOwnerAuthorized: owner,
+      async authorize() { return null },
+      async authorizeInTransaction() { return null },
+      async describe() { return { summary: '删除测试联系人' } },
+    })
+  assert.ok(make('c2c', 'qq', true).gate)
+  assert.throws(() => make('c2c', 'qq', false))
+  assert.throws(() => make('group', 'qq', true))
+  assert.throws(() => make('c2c', 'wechat', true))
+})
+
 test('咕咕管理的技能直接删除要求事务内的账号与访问版本仍匹配当前 lease', async () => {
   const tx = {} as never
   let checked = 0

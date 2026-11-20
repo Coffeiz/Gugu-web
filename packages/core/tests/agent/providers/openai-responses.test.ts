@@ -367,7 +367,8 @@ describe('Responses真实请求与流终态', () => {
       expect(emitted.filter(event => event.type === 'complete')).toEqual([])
       expect(emitted.filter(event => event.type === 'token').map(event => event.type === 'token' ? event.text : '')).toEqual(afterOutput ? ['已有正文'] : [])
       expect(failure.requests).toHaveLength(1); expect(failure.cancel).toHaveBeenCalledTimes(1)
-      expect(JSON.stringify(failure.diagnose.mock.calls)).toContain('合成私有错误正文')
+      expect(failure.diagnose).toHaveBeenCalledWith('responses.failed', expect.objectContaining({ code: 'upstream', options: expect.objectContaining({ stage: 'stream' }) }))
+      expect(JSON.stringify(failure.diagnose.mock.calls)).not.toContain('合成私有错误正文')
     }
   })
   it.each([

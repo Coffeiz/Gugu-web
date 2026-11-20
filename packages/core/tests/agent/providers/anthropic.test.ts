@@ -67,6 +67,26 @@ describe('Anthropic真实HTTP协议边界', () => {
     expect(f.closed).toEqual([0])
   })
 
+  it('MiniMax 跳过思考块中的错位工具参数，后续工具参数只来自工具块', async () => {
+    const response = { events: [start(),
+      blockStart(0, { type: 'thinking', thinking: '' }),
+      delta(0, { type: 'thinking_delta', thinking: '合成思考' }),
+      delta(0, { type: 'input_json_delta', partial_json: '{"wrong":true}' }), stop(0),
+      blockStart(1, { type: 'tool_use', id: 'call-a', name: 'lookup', input: {} }),
+      delta(1, { type: 'input_json_delta', partial_json: '{"q":"合成"}' }), stop(1),
+      { type: 'message_delta', delta: { stop_reason: 'tool_use' } }, end,
+    ] }
+    const f = fixture([response])
+    const events = await collect(invocation({
+      config: { provider: 'minimax', model: 'MiniMax-M3.1-Flash' }, policy: minimaxPolicy,
+    }), f.dependencies)
+    expect(final(events)).toMatchObject({ calls: [{ id: 'call-a', name: 'lookup', input: { q: '合成' } }] })
+    expect(f.requests).toHaveLength(1)
+    await expect(collect(invocation(), fixture([response]).dependencies)).rejects.toMatchObject({
+      code: 'protocol', options: { protocolDetail: 'unexpected_block_delta' },
+    })
+  })
+
   it.each(['content_block_stop', 'content_block_delta', 'empty_tool_delta'])('缺块%s尚无正文时只用相同参数非流式恢复一次，恢复正文进入正常事件链', async type => {
     const eventType = type === 'empty_tool_delta' ? 'content_block_delta' : type
     const emptyDelta = type === 'empty_tool_delta' ? { type: 'input_json_delta', partial_json: '' } : { type: 'text_delta', text: '' }
@@ -103,12 +123,13 @@ describe('Anthropic真实HTTP协议边界', () => {
     expect(f.closed).toEqual([0])
   })
 
-  it('已输出正文再缺块不重放；恢复请求失败也不暴露原始错误或重新进入重试', async () => {
-    const visible = fixture([{ events: [start(), blockStart(0, { type: 'text', text: '' }), delta(0, { type: 'text_delta', text: '已输出' }), { type: 'content_block_stop', index: 1 }] }])
+  it('恢复结果正文不匹配时保留已输出片段；恢复失败不重新进入重试', async () => {
+    const visible = fixture([{ events: [start(), blockStart(0, { type: 'text', text: '' }), delta(0, { type: 'text_delta', text: '已输出' }), { type: 'content_block_stop', index: 1 }] },
+      { json: { content: [{ type: 'text', text: '改写过的正文' }] } }])
     const seen: ProviderEvent[] = []
     await expect((async () => { for await (const event of anthropicDriver.stream(invocation(), visible.dependencies)) seen.push(event) })()).rejects.toMatchObject({ code: 'protocol', options: { outputStarted: true, retryable: false } })
     expect(seen.filter(event => event.type === 'token')).toEqual([{ type: 'token', text: '已输出' }])
-    expect(visible.requests).toHaveLength(1)
+    expect(visible.requests).toHaveLength(2)
     const failure = fixture([{ events: [start(), { type: 'content_block_stop', index: 0 }] }])
     const request = failure.dependencies.transport.request
     failure.dependencies.transport.request = vi.fn(async (value, signal) => {
@@ -117,6 +138,15 @@ describe('Anthropic真实HTTP协议边界', () => {
     })
     await expect(collect(invocation(), failure.dependencies)).rejects.toMatchObject({ code: 'timeout', options: { retryable: false } })
     expect(failure.dependencies.transport.request).toHaveBeenCalledTimes(2)
+  })
+
+  it('正文输出后缺少结束块，恢复只追加匹配正文的剩余部分', async () => {
+    const f = fixture([{ events: [start(), blockStart(0, { type: 'text', text: '已输出' }), stop(1)] },
+      { json: { content: [{ type: 'text', text: '已输出后续' }], stop_reason: 'end_turn' } }])
+    const events = await collect(invocation(), f.dependencies)
+    expect(events.filter(event => event.type === 'token').map(event => event.text)).toEqual(['已输出', '后续'])
+    expect(final(events)).toMatchObject({ text: '已输出后续', calls: [] })
+    expect(f.requests).toHaveLength(2)
   })
 
   it('EOF不能冒充空成功，正常空message_stop保留空答供Harness重试', async () => {

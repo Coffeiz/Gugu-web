@@ -1,5 +1,5 @@
 import type { SqlDataRuntime } from '@gugu/core/data'
-import type { RunIdentity } from '@gugu/core/agent'
+import type { AgentObservationPort, RunIdentity } from '@gugu/core/agent'
 import type { AuthorizedMemoryScope, MemorySearchSnapshot, RagQueryEmbeddingSettings } from '@gugu/core/agent/rag'
 import type { ProviderTransport } from '@gugu/core/providers'
 import type { ConversationSearchPort, MemorySearchPort } from '@gugu/core/tools'
@@ -13,6 +13,7 @@ import { createCoreAgentConversationSearchPort } from '../tools/conversations.js
  */
 export interface WebAgentRagToolPortOptions {
   core: Pick<SqlDataRuntime, 'db' | 'backend'>
+  identity?: RunIdentity
   storageRoot: string
   authorizeMemory(identity: RunIdentity, signal: AbortSignal, scopes?: readonly AuthorizedMemoryScope[]): Promise<boolean>
   snapshot(identity: RunIdentity, signal: AbortSignal): Promise<MemorySearchSnapshot>
@@ -21,6 +22,7 @@ export interface WebAgentRagToolPortOptions {
     resolve(ownerId: string, signal?: AbortSignal): Promise<RagQueryEmbeddingSettings | null>
     createTransport(settings: RagQueryEmbeddingSettings): ProviderTransport
   }
+  observation?: AgentObservationPort
 }
 
 export interface WebAgentRagToolPorts {
@@ -35,12 +37,14 @@ export function createWebAgentRagToolPorts(options: WebAgentRagToolPortOptions):
     throw new TypeError('Web Agent RAG 授权或快照端口未装配')
 
   return {
-    conversationSearch: createCoreAgentConversationSearchPort(options.core),
+    conversationSearch: createCoreAgentConversationSearchPort(options.core, undefined,
+      options.identity ? { identity: options.identity, observation: options.observation } : undefined),
     memorySearch: createWebOwnerMemorySearchPort(options.core, {
       storageRoot: options.storageRoot,
       authorize: options.authorizeMemory,
       snapshot: options.snapshot,
       ...(options.embedding ? { embedding: options.embedding } : {}),
+      ...(options.observation ? { observation: options.observation } : {}),
     }),
   }
 }

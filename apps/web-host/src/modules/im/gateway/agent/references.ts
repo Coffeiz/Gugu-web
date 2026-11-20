@@ -34,11 +34,17 @@ export function createImContextReferenceCodec(options: {
       || 'runId' in target && target.runId !== identity.runId || await options.authorize(signal) !== true) throw new ImContextReferenceError()
     signal?.throwIfAborted()
   }
-  async function convert(entry: MessageEntry, target: HistoryIdentity, signal?: AbortSignal): Promise<CanonicalMessage> {
+  const dehydrateBatch: NonNullable<ContextReferenceCodec['dehydrateBatch']> = async (entries, target, signal, timing) => {
     try {
+      let started = performance.now()
+      const mark = (stage: string) => {
+        const end = performance.now()
+        timing?.(stage, end - started)
+        started = end
+      }
       await authorize(target, signal)
-      const message = structuredClone(entry.message)
-      assertDurableCanonical(message)
+      mark('authorize_before')
+      const messages = entries.map(entry => structuredClone(entry.message))
       const refs: Record<string, Json>[] = []
       function visit(value: Json, decode = true): void {
         if (Array.isArray(value)) { for (const item of value) visit(item, decode); return }
@@ -58,7 +64,12 @@ export function createImContextReferenceCodec(options: {
           } else visit(item, decode)
         }
       }
-      visit(message)
+      for (const message of messages) {
+        signal?.throwIfAborted()
+        assertDurableCanonical(message)
+        visit(message)
+      }
+      mark('scan_references')
       // 私聊可能绑定Web会话；由正式入站收据证明本Run的Bot/平台/sender，不能只信session.source。
       const owned = await options.pool.query(`SELECT 1 FROM conversation_sessions s
         WHERE s.user_id=$1 AND s.id=$2 AND EXISTS (
@@ -69,6 +80,7 @@ export function createImContextReferenceCodec(options: {
               OR $6='c2c' AND m.platform_user_id=$8))`,
       [identity.ownerId, identity.sessionId, identity.runId, scope.platform, scope.botId, scope.chatType, scope.chatId, scope.platformUserId])
       if (owned.rows.length !== 1) throw new ImContextReferenceError()
+      mark('receipt_ownership')
       const ids = [...new Set(refs.map(ref => ref.attach_id as string))]
       if (ids.length) {
         const rows = (await options.pool.query<AttachmentRow>(`SELECT a.attach_id,a.name,a.kind,a.ext,a.mime,a.size,a.storage_key,a.platform,a.state,a.extra
@@ -88,9 +100,14 @@ export function createImContextReferenceCodec(options: {
             throw new ImContextReferenceError()
         }
       }
+      mark('attachment_validation')
       await authorize(target, signal)
-      return message
+      mark('authorize_after')
+      return messages
     } catch { throw new ImContextReferenceError() }
   }
-  return { dehydrate: convert, hydrate: convert }
+  async function convert(entry: MessageEntry, target: HistoryIdentity, signal?: AbortSignal): Promise<CanonicalMessage> {
+    return (await dehydrateBatch([entry], target, signal))[0]!
+  }
+  return { dehydrate: convert, dehydrateBatch, hydrate: convert }
 }

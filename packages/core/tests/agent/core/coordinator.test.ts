@@ -64,6 +64,24 @@ describe('Harness 流式协调、背压与事件顺序', () => {
     expect(f.ports.provider.stream).not.toHaveBeenCalled()
   })
 
+  it('工具结果未知时保留已公开回复和工具时间线，终态标记未确认', async () => {
+    const call = toolCall
+    const f = fixture([[{ type: 'token', text: '正在检查' }, { type: 'complete', text: '正在检查', calls: [call] }]])
+    vi.mocked(f.ports.tools.dispatch).mockResolvedValueOnce({ kind: 'unknown' })
+    const result = await collect(f.harness.start(identity))
+    expect(result.state.status).toBe('unknown')
+    expect(f.histories.at(-1)).toMatchObject({ outcome: 'interruption', text: '正在检查' })
+    expect(result.state.displayTimeline.find(item => item.toolCallId === call.id)?.toolStatus).toBe('unknown')
+    expect(result.events.at(-1)?.payload.sealedTools).toMatchObject([{ toolCallId: call.id, toolStatus: 'unknown' }])
+  })
+
+  it('模型失败时保留之前已经流出的回复', async () => {
+    const f = fixture([[{ type: 'token', text: '部分回复' }, { type: 'error', error: new Error('合成故障') }]])
+    const result = await collect(f.harness.start(identity))
+    expect(result.state.status).toBe('failed')
+    expect(f.histories.at(-1)).toMatchObject({ outcome: 'interruption', text: '部分回复' })
+  })
+
   it('provider overlow仅显式压缩成功才重试，第二次溢出停止', async () => {
     const f = fixture([[{ type: 'error', error: new Error('合成overflow'), contextOverflow: true }], [{ type: 'error', error: new Error('合成overflow'), contextOverflow: true }]])
     f.ports.context.recoverOverflow = vi.fn(async (context) => ({ context: [...context, 'compressed'], applied: true }))
@@ -305,7 +323,7 @@ describe('Harness 流式协调、背压与事件顺序', () => {
     expect((await collect(failed.harness.start(identity))).state.status).toBe('failed')
   })
 
-  it('工具前draft与真实回执完成后续轮提前EOF，保留轮次但不把draft当最终答案持久化或反思', async () => {
+  it('工具回执完成后续轮提前结束，保留已公开的回复与工具状态且不触发反思', async () => {
     const f = fixture([[{ type: 'token', text: '正在核验' }, { type: 'complete', text: '正在核验', calls: [toolCall] }], []])
     f.ports.context.afterFinal = vi.fn(async () => undefined)
     const { state, events } = await collect(f.harness.start(identity))
@@ -314,7 +332,8 @@ describe('Harness 流式协调、背压与事件顺序', () => {
     expect(events.filter((event) => event.type === 'final').map((event) => event.payload)).toEqual([
       expect.objectContaining({ text: '工具结果已返回，但后续回复没有完成，请重试。', status: 'failed' }),
     ])
-    expect(f.histories).toEqual([])
+    expect(f.histories).toMatchObject([{ outcome: 'interruption', text: '正在核验' }])
+    expect(state.displayTimeline.find(item => item.toolCallId === toolCall.id)?.toolStatus).toBe('success')
     expect(f.ports.context.afterFinal).not.toHaveBeenCalled()
     expect(f.ports.tools.dispatch).toHaveBeenCalledTimes(1)
     expect(f.ports.provider.stream).toHaveBeenCalledTimes(2)

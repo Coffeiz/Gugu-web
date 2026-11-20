@@ -22,7 +22,7 @@ test('get_project 经真实注册器和隔离PG读取文件概览，保护owner�
       CREATE TABLE files(user_id uuid,project_id integer,space text,folder_id integer,deleted_at timestamptz);
       CREATE TABLE folders(user_id uuid,project_id integer,deleted_at timestamptz)`)
     const owner = randomUUID(), other = randomUUID()
-    const project = await runtime.transaction(dataContext(owner), data => data.projects.create({ name: '合成项目' }))
+    const project = await runtime.transaction(dataContext(owner), data => data.projects.create({ name: '合成项目', start_date: '2026-11-03' }))
     const foreign = await runtime.transaction(dataContext(other), data => data.projects.create({ name: '其他用户项目' }))
     const deleted = await runtime.transaction(dataContext(owner), data => data.projects.create({ name: '已删除项目' }))
     await pool.query('UPDATE projects SET deleted_at=now() WHERE id=$1', [deleted.id])
@@ -46,6 +46,7 @@ test('get_project 经真实注册器和隔离PG读取文件概览，保护owner�
     assert.equal(found.kind, 'completed')
     if (found.kind !== 'completed') throw new Error('工具未完成')
     assert.equal(found.successful, true)
+    assert.equal((found.value as { sandbox_path: string }).sandbox_path, `/project/2026/11/合成项目 #${project.id}`)
     assert.deepEqual((found.value as { files: unknown }).files, { total_file_count: 2, root_file_count: 1, total_folder_count: 1 })
     const before = reads
     const denied = await dispatch(foreign.id)

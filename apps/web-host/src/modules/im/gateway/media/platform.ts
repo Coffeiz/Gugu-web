@@ -4,7 +4,7 @@ import { parseFeishuQuoteFacts, type ParsedFeishuMessage } from '@gugu/core/im/f
 import type { ParsedQqMessage } from '@gugu/core/im/qq-message'
 import type { TelegramInboundPayload } from '@gugu/core/im/telegram-message'
 import type { WechatInboundPayload, WechatMediaRequirement } from '@gugu/core/im/wechat-message'
-import type { createFeishuClient } from '../platforms/feishu/client.js'
+import type { createFeishuClient } from '@gugu/gateway/feishu'
 import type { createTelegramBotApi } from '@gugu/gateway/telegram'
 import { createTelegramMediaIngress } from '../platforms/telegram/media.js'
 import type { createWechatMedia } from '../platforms/wechat/media.js'

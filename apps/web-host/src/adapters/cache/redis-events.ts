@@ -48,8 +48,9 @@ export interface RedisEventPublisher {
   publishAuthStateChanged(userId: string): Promise<boolean>
   bumpContextRevision(userId: string, resource: string): Promise<boolean>
   publishResourceChanged(input: ResourceChangedInput): Promise<boolean>
+  publishAgentRunChanged(input: { ownerId: string; sessionId: number; runId: string; status: 'running' | 'waiting' | 'completed' | 'failed' }): Promise<boolean>
   publishTrashPurgeProgress(input: {
-    ownerId: string; jobId: number; status: 'queued' | 'running' | 'completed' | 'failed'
+    ownerId: string; jobId: number; status: 'queued' | 'running' | 'waiting' | 'completed' | 'failed'
     progressCurrent: number; progressTotal: number; failedCount: number
   }): Promise<boolean>
 }
@@ -621,6 +622,24 @@ export function createRedisEventPublisher(
         return true
       } catch {
         reportFailure('resource notification')
+        return false
+      }
+    },
+
+    async publishAgentRunChanged(input) {
+      try {
+        await withRedis(redisUrl, command => command('PUBLISH', `events:${input.ownerId}`, JSON.stringify({
+          protocol_version: 'live-event-v1',
+          event_id: eventId(),
+          type: 'agent.run.changed',
+          session_id: input.sessionId,
+          run_id: input.runId,
+          status: input.status,
+          created_at: now().toISOString(),
+        })))
+        return true
+      } catch {
+        reportFailure('agent run notification')
         return false
       }
     },

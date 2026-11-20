@@ -1,6 +1,6 @@
+import { isContextOverflowError } from '../../context/budget.js'
 import { observe } from '../values.js'
 import type { CanonicalMessage, Json, ProviderEvent, ToolCall } from '../../models.js'
-import { isContextOverflowError } from '../../context/budget.js'
 import type { JsonObject, ProjectionOptions, ProtocolDriver, ProviderConfig, ProviderDriverDependencies, ProviderInvocation, ProviderPolicy, ResponsesInputCapabilities } from '../contracts.js'
 import { classifyProviderError, ProviderError } from '../errors.js'
 import { requestEvents, requestJson } from '../http.js'
@@ -135,8 +135,11 @@ function requestBody(input: ProviderInvocation, deps: ProviderDriverDependencies
 
 function failure(response: unknown, event: unknown, deps: ProviderDriverDependencies, outputStarted = false): never {
   const error = record(response).error || record(event).error || event
-  observe(() => deps.diagnose?.('responses.failed', error))
-  throw new ProviderError(isContextOverflowError(error) ? 'context_overflow' : 'upstream', { requestStarted: true, outputStarted })
+  const { upstreamCode, upstreamType } = classifyProviderError({ error }).options
+  const failure = new ProviderError(isContextOverflowError(error) ? 'context_overflow' : 'upstream',
+    { requestStarted: true, outputStarted, stage: 'stream', upstreamCode, upstreamType })
+  observe(() => deps.diagnose?.('responses.failed', failure))
+  throw failure
 }
 
 async function* stream(input: ProviderInvocation, deps: ProviderDriverDependencies): AsyncGenerator<ProviderEvent> {
@@ -174,8 +177,8 @@ async function* stream(input: ProviderInvocation, deps: ProviderDriverDependenci
   const ordered = [...items.values()].sort((a, b) => a.order - b.order).map(value => value.item)
   const calls: ToolCall[] = ordered.filter(item => item.type === 'function_call').map(item => {
     const id = text(item.call_id || item.id), name = text(item.name)
-    if (!id || !name) throw new ProviderError('protocol', { requestStarted: true, outputStarted: true })
-    if (item.arguments !== undefined && item.arguments !== null && typeof item.arguments !== 'string') throw new ProviderError('protocol', { requestStarted: true, outputStarted: true })
+    if (!id || !name) throw new ProviderError('protocol', { protocolDetail: 'invalid_tool_identity', requestStarted: true, outputStarted: true })
+    if (item.arguments !== undefined && item.arguments !== null && typeof item.arguments !== 'string') throw new ProviderError('protocol', { protocolDetail: 'invalid_tool_arguments', requestStarted: true, outputStarted: true })
     return normalizedToolCall(id, name, text(item.arguments) || args.get(text(item.id)) || '{}', text(item.id) || undefined)
   })
   const reasoning = ordered.filter(item => item.type === 'reasoning' && (item.status === undefined || item.status === null || item.status === 'completed'))
@@ -200,7 +203,7 @@ export const responsesDriver: ProtocolDriver = {
     const usage = normalizeOpenaiUsage(response.usage)
     reportUsage(deps, response.usage ?? null, usage)
     if (status === 'failed' || response.error) failure(response, response, deps)
-    if (!Array.isArray(response.output) && typeof response.output_text !== 'string') throw new ProviderError('protocol', { requestStarted: true })
+    if (!Array.isArray(response.output) && typeof response.output_text !== 'string') throw new ProviderError('protocol', { protocolDetail: 'invalid_response_shape', requestStarted: true })
     return { text: responsesOutputText(response), usage, finishReason: status || null, incompleteReason: text(record(response.incomplete_details).reason) || null }
   },
 }

@@ -5,6 +5,7 @@ import { test } from 'node:test'
 import type { ProviderTransport } from '@gugu/core/providers'
 import { createNodeImHostRuntime } from '../../../src/modules/im/gateway/bootstrap.js'
 import { createRedisStreamCommands } from '../../../src/adapters/cache/redis-stream-commands.js'
+import { createRedisLiveSubscription, type LiveSubscription } from '../../../src/adapters/cache/redis-live-subscription.js'
 import { createLocalPreferenceTextFiles } from '../../../src/modules/preferences/persistence/personality-files.js'
 import { createImProductionFixture } from './production.fixtures.js'
 
@@ -25,15 +26,16 @@ async function until(check: () => Promise<boolean>, diagnostics: () => unknown, 
   assert.fail(`正式链路未完成：${JSON.stringify(await diagnostics())}`)
 }
 
-const bootstrapCases:Array<{platform:'telegram'|'qq'|'wechat'|'feishu';privateStreaming?:boolean;chart?:boolean;flip?:boolean;plainFlip?:boolean;streamRejected?:boolean}>=[
+const bootstrapCases:Array<{platform:'telegram'|'qq'|'wechat'|'feishu';privateStreaming?:boolean;chart?:boolean;flip?:boolean;plainFlip?:boolean;streamRejected?:boolean;group?:boolean}>=[
   ...(['telegram','qq','wechat','feishu'] as const).map(platform=>({platform})),
+  {platform:'feishu',group:true},
   {platform:'qq',privateStreaming:true},
   {platform:'qq',privateStreaming:true,chart:true},
   {platform:'qq',privateStreaming:true,flip:true},
   {platform:'qq',plainFlip:true},
   {platform:'qq',privateStreaming:true,streamRejected:true},
 ]
-for (const {platform,privateStreaming=false,chart=false,flip=false,plainFlip=false,streamRejected=false} of bootstrapCases) test(`${platform}${privateStreaming?'私聊流式':''}${chart?'真实图表':''}${flip?'开关切换':''}${plainFlip?'普通转流式':''}${streamRejected?'零受理回退':''} 正式bootstrap：真实准入/队列/生产资源/Harness/出站；重启重投不再Run`, {
+for (const {platform,privateStreaming=false,chart=false,flip=false,plainFlip=false,streamRejected=false,group=false} of bootstrapCases) test(`${platform}${group?'群聊':''}${privateStreaming?'私聊流式':''}${chart?'真实图表':''}${flip?'开关切换':''}${plainFlip?'普通转流式':''}${streamRejected?'零受理回退':''} 正式bootstrap：真实准入/队列/生产资源/Harness/出站；重启重投不再Run`, {
   skip: !(databaseUrl && redisUrl && python) && '需专属隔离Redis、PG及离线ORM解释器', timeout: 120000,
 }, async () => {
   const f = await createImProductionFixture({ python: python!, databaseUrl, platform })
@@ -47,18 +49,36 @@ for (const {platform,privateStreaming=false,chart=false,flip=false,plainFlip=fal
   let flipped=false,streamAttempts=0
   const persona = '合成来源快照：请始终称呼当前用户为小北。'
   await createLocalPreferenceTextFiles(f.storageRoot).write(f.ownerId, 'personality', persona)
-  await f.insert('user_preferences', { user_id: f.ownerId, data_json: JSON.stringify({ personality_preference_enabled: true }) })
+  await f.insert('user_preferences', { user_id: f.ownerId, data_json: JSON.stringify({ personality_preference_enabled: true, ...(plainFlip ? { show_intermediate_replies: true } : {}) }) })
   if(plainFlip)await f.pool.query(`CREATE FUNCTION reject_plain_cursor() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN
     IF NEW.cursor>OLD.cursor AND EXISTS(SELECT 1 FROM gugu_im_delivery_receipts r WHERE r.user_id=NEW.user_id AND r.session_id=NEW.session_id
       AND r.run_id=NEW.run_id AND r.delivery_key LIKE 'round:%:text' AND r.state='accepted') THEN RAISE EXCEPTION 'synthetic-cursor-fault';END IF;
     RETURN NEW;END$$; CREATE TRIGGER reject_plain_cursor BEFORE UPDATE ON gugu_im_run_delivery FOR EACH ROW EXECUTE FUNCTION reject_plain_cursor()`)
+  let cardKitCreates = 0
   let sent = 0, starts = 0, runtime: ReturnType<typeof createNodeImHostRuntime> | undefined
   let rejectDelivery = platform === 'telegram'
+  const probeMcpSchema = (platform === 'qq' && !privateStreaming && !plainFlip) || group
+  let requestedMcpSchema = false
+  let forwardedTime = false
   // 仅平台HTTP/WS和Provider网络为替身；业务source、模型绑定、授权、Redis、PG、Harness均实际运行。
   const provider: ProviderTransport = { async request(request) {
     const body = typeof request.body === 'string' || request.body instanceof Uint8Array
       ? JSON.parse(Buffer.from(request.body).toString()) : structuredClone(request.body) as Record<string, unknown>
     requests.push(body)
+    if (probeMcpSchema && body.stream && !requestedMcpSchema) {
+      requestedMcpSchema = true
+      const call = { index: 0, id: 'mcp_schema_probe', type: 'function', function: {
+        name: 'get_tool_schema', arguments: JSON.stringify({ tools: ['manage_mcp_servers'] }),
+      } }
+      return response(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [call] }, finish_reason: 'tool_calls' }] })}\n\ndata: [DONE]\n\n`)
+    }
+    if (probeMcpSchema && !group && body.stream && !forwardedTime) {
+      forwardedTime = true
+      const call = { index: 0, id: 'forwarded_time', type: 'function', function: {
+        name: 'call_tool', arguments: JSON.stringify({ tool_name: 'get_current_time', arguments: {} }),
+      } }
+      return response(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [call] }, finish_reason: 'tool_calls' }] })}\n\ndata: [DONE]\n\n`)
+    }
     return response(body.stream ? `data: ${JSON.stringify({ choices: [{ delta: { content: answer }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`
       : { choices: [{ message: { content: '合成摘要' }, finish_reason: 'stop' }], usage: { prompt_tokens: 3, completion_tokens: 2 } })
   }, async close() {} }
@@ -115,7 +135,7 @@ for (const {platform,privateStreaming=false,chart=false,flip=false,plainFlip=fal
       }
       if (path.includes('/tenant_access_token/')) return response({ code: 0, tenant_access_token: 'synthetic-feishu-access', expire: 7200 })
       if (path.endsWith('/bot/v3/info')) return response({ code: 0, data: { bot: { open_id: 'ou_bot' } } })
-      if (platform === 'feishu' && path.endsWith('/cards')) return response({ code: 0, data: { card_id: 'card_synthetic' } })
+      if (platform === 'feishu' && path.endsWith('/cards')) { cardKitCreates++; return response({ code: 0, data: { card_id: 'card_synthetic' } }) }
       if (platform === 'feishu' && path.endsWith('/messages')) { sent++; return response({ code: 0, data: { message_id: `om_out_${sent}` } }) }
       if (platform === 'feishu' && path.includes('/cardkit/')) return response({ code: 0 })
       if (path.endsWith('/callback/ws/endpoint')) return response({ code: 0, data: { URL: 'wss://msg-frontier.feishu.cn/ws/v2?ticket=synthetic', ClientConfig: {} } })
@@ -123,24 +143,30 @@ for (const {platform,privateStreaming=false,chart=false,flip=false,plainFlip=fal
     }, async close() {} }
     return createNodeImHostRuntime({ ...f, redisUrl: redisUrl!, publicAppUrl: 'https://app.example.test',
       ownership: { runtime: 'node', pythonGatewayStopped: true, pythonImConsumerStopped: true },
-      mcpRuntime: { async invalidate() { throw new Error('此用例不消费MCP凭据') } }, diagnose: code => diagnostics.push(code),
+      mcpRuntime: {
+        async invalidate() { throw new Error('此用例不消费MCP凭据') },
+        state: (_ownerId, id) => ({ server_id: id, state: 'unloaded', loaded_tool_count: 0, loaded_tool_names: [], last_error: null }),
+        async testConnection() { return { ok: true, toolNames: [] } },
+      }, diagnose: code => diagnostics.push(code),
       testing: { provider: { transport: provider }, intervalMs: 100,
         platform: { transport: () => transport, resolve: async () => [{ address: '9.9.9.9', family: 4 }],
           qqSocket: async (_url, signal) => { socketSignal = signal; return { send: async () => {}, close: async () => {},
             packets: (async function* () { yield { op: 10, d: { heartbeat_interval: 60000 } }; yield { op: 0, t: 'READY', s: 1, d: { session_id: 'synthetic-session' } }
-              yield { op: 0, t: 'C2C_MESSAGE_CREATE', s: 2, d: { id: 'qq_101', content: question, author: { user_openid: ownerPlatformId }, timestamp: new Date().toISOString() } }
+              yield { op: 0, t: 'C2C_MESSAGE_CREATE', s: 2, d: { id: 'qq_101', message_scene: { ext: ['msg_idx=qq_reference_index'] }, content: question, author: { user_openid: ownerPlatformId }, timestamp: new Date().toISOString() } }
               try { await blocked(socketSignal) } catch { /* 合成WS取消结束。 */ } })() } },
           feishuNetwork: () => { const agent = new Agent(); return { agent, validateEndpoint: async () => {}, close: async () => agent.destroy() } },
           createFeishuSdk: config => ({ async start({ eventDispatcher }) { config.onReady!(); starts++;
             await eventDispatcher.invoke({ schema: '2.0', header: { event_type: 'im.message.receive_v1', app_id: 'cli_0123456789abcdef', create_time: String(Date.now()), event_id: 'fs_event_101' },
-              event: { sender: { sender_type: 'user', sender_id: { open_id: ownerPlatformId } }, message: { message_id: 'om_input', chat_id: 'oc_private', chat_type: 'p2p', message_type: 'text', content: JSON.stringify({ text: question }), mentions: [] } } }, { needCheck: false })
+              event: { sender: { sender_type: 'user', sender_id: { open_id: ownerPlatformId } }, message: { message_id: 'om_input', chat_id: group ? 'oc_group' : 'oc_private', chat_type: group ? 'group' : 'p2p', message_type: 'text', content: JSON.stringify({ text: group ? `@_user_1 ${question}` : question }), mentions: group ? [{ key: '@_user_1', id: { open_id: 'ou_bot' }, name: '合成机器人' }] : [] } } }, { needCheck: false })
           }, close() {} }),
         } },
     })
   }
   let previousKeys: Set<string> | undefined
+  let live: LiveSubscription | undefined
   try {
     previousKeys = new Set((await redis.sendCommand(['EVAL', 'return redis.call("KEYS","*")', '1', 'gugu:bootstrap:cleanup'])) as string[])
+    live = await createRedisLiveSubscription(redisUrl!)([`events:${f.ownerId}`])
     runtime = make(); await runtime.start()
     await until(async () => (await f.pool.query("SELECT 1 FROM agent_run_checkpoints WHERE status='completed'")).rowCount! > 0
       && (plainFlip?flipped&&sent===1:flip?flipped&&streamFrames.length===1:platform === 'telegram' ? (await f.pool.query("SELECT 1 FROM gugu_im_delivery_receipts WHERE state='rejected'")).rowCount! > 0
@@ -150,9 +176,51 @@ for (const {platform,privateStreaming=false,chart=false,flip=false,plainFlip=fal
         checkpoints: (await f.pool.query('SELECT status FROM agent_run_checkpoints')).rows }),chart?900:300)
     const primary = requests.find(body => JSON.stringify(body).includes(question))
     assert.ok(primary, 'Provider必须看到实际原始入站正文')
-    assert.ok(JSON.stringify(primary!.messages).includes(persona), '必须装配当前owner真实本地persona来源快照')
+    if (probeMcpSchema) {
+      const result = requests.filter(body => body.stream).flatMap(body =>
+        body.messages as { role: string; tool_call_id?: string; content?: string }[]).find(message =>
+        message.role === 'tool' && message.tool_call_id === 'mcp_schema_probe')
+      assert.ok(result?.content)
+      const schema = JSON.parse(result.content)
+      if (group) assert.deepEqual(schema.rejected, ['manage_mcp_servers'])
+      else {
+        assert.deepEqual(schema.tool_schemas, ['manage_mcp_servers'])
+        const forwarded = requests.filter(body => body.stream).flatMap(body =>
+          body.messages as { role: string; tool_call_id?: string; content?: string }[]).find(message =>
+          message.role === 'tool' && message.tool_call_id === 'forwarded_time')
+        assert.ok(forwarded?.content)
+        assert.equal(JSON.parse(forwarded.content).timezone, 'UTC')
+      }
+    }
+    const sessionId = (await f.pool.query('SELECT id FROM conversation_sessions')).rows[0]?.id
+    assert.ok(sessionId)
+    const liveSignal = AbortSignal.timeout(5000)
+    const operations = new Set<string>()
+    while (operations.size < 2) {
+      const message = await live.next(liveSignal)
+      assert.ok(message)
+      const change = JSON.parse(message.data)
+      if (change.resource !== 'sessions' || change.payload?.messages_changed !== true) continue
+      assert.equal(String(change.entity_id), String(sessionId))
+      assert.deepEqual(change.payload, { messages_changed: true })
+      operations.add(change.operation)
+    }
+    assert.deepEqual([...operations], ['update', 'refresh'])
+    if (!group) assert.ok(JSON.stringify(primary!.messages).includes(persona), '必须装配当前owner真实本地persona来源快照')
     const tools = (primary!.tools as { function: { name: string } }[] ?? []).map(tool => tool.function.name)
-    assert.equal(tools.includes('react'), platform === 'feishu')
+    assert.deepEqual(tools.filter(name => name !== 'choose_no_reply'), ['call_tool', 'get_tool_schema', 'use_skill', 'ask_user'])
+    const catalog = JSON.stringify(primary!.messages)
+    if (!group) assert.equal(catalog.includes('`react`'), platform === 'feishu')
+    if (probeMcpSchema) {
+      for (const name of ['get_project', 'list_events', 'get_upcoming', 'get_dashboard_stats', 'note_search', 'canvas_list']) {
+        assert.equal(catalog.includes(`\`${name}\``), !group, `IM 工具授权：${name}`)
+      }
+    }
+    if(group){
+      assert.equal(cardKitCreates,0)
+      assert.equal(sent,1)
+      assert.equal((await f.pool.query("SELECT 1 FROM gugu_im_platform_projection WHERE platform='feishu'")).rowCount,0)
+    }
     if(privateStreaming&&!chart&&!flip&&!streamRejected){
       assert.ok(streamFrames.length>=2)
       assert.equal(streamFrames[0]!.input_state,1);assert.equal(streamFrames.at(-1)!.input_state,10)
@@ -160,6 +228,7 @@ for (const {platform,privateStreaming=false,chart=false,flip=false,plainFlip=fal
       assert.ok(streamFrames.every(frame=>frame.msg_seq===streamFrames[0]!.msg_seq))
       assert.equal(streamFrames.at(-1)!.stream_msg_id,'qq_stream_out')
     }
+    if(platform==='qq'&&!privateStreaming)assert.equal(plainMessages[0]?.msg_id,'qq_101')
     if(platform==='telegram')assert.ok(drafts.length>0,'真实Run token须经生产draft入口')
     if(streamRejected){
       assert.equal(streamAttempts,1);assert.equal(streamFrames.length,1)
@@ -224,7 +293,7 @@ for (const {platform,privateStreaming=false,chart=false,flip=false,plainFlip=fal
         }
       }
     } finally {
-      await redis.close(); await f.close()
+      await live?.close(); await redis.close(); await f.close()
     }
   }
 })

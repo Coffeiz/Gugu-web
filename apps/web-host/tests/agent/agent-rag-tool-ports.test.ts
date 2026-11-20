@@ -379,22 +379,6 @@ test('list_recent_attachments 仅在 Host 装配附件端口后授权并逐次�
   assert.equal(await enabled.authorize(identity, 'list_recent_attachments'), false)
 })
 
-test('grep 仅在 Web Host 注入 owner 文件检索端口后进入授权配置', async () => {
-  const identity = { ownerId: 'owner-synthetic', sessionId: '41', runId: 'grep-run' }
-  const lease = { identity, token: 'token-synthetic', fence: 7, input: { v: 2, source: 'web' }, mode: 'start', cancelRequested: false } as const
-  let active = true
-  const pool = { async query() { return { rowCount: active ? 1 : 0, rows: [] } } }
-  const disabled = createWebAgentRagRunAuthorization(pool as never, lease)
-  assert.equal((await disabled.configuration(identity, new AbortController().signal)).toolNames.includes('grep'), false)
-  assert.equal(await disabled.authorize(identity, 'grep'), false)
-  const enabled = createWebAgentRagRunAuthorization(pool as never, lease, { enabledFileGrep: true })
-  assert.equal((await enabled.configuration(identity, new AbortController().signal)).toolNames.includes('grep'), true)
-  assert.equal(await enabled.authorize(identity, 'grep'), true)
-  assert.equal(await enabled.authorize({ ...identity, ownerId: 'other-owner' }, 'grep'), false)
-  active = false
-  assert.equal(await enabled.authorize(identity, 'grep'), false)
-})
-
 test('生产 Web Run 仅在 Host 提供共享搜索服务时注册 global_search 并按 lease 执行 owner 查询', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gugu-agent-global-search-'))
   let runtime: Awaited<ReturnType<typeof openSqliteRuntime>>['runtime'] | undefined
@@ -755,7 +739,7 @@ test('生产 RAG 组合仅在 Host 提供可信端口时发现并分派历史、
         signal.throwIfAborted()
         assert.equal(candidate.ownerId, identity.ownerId)
         assert.equal(projectId, ownProject.id)
-        return { total_file_count: 3, root_file_count: 1, total_folder_count: 2 }
+        return { total_file_count: 3, root_file_count: 1, total_folder_count: 2, sandbox_path: `/project/合成项目 #${projectId}` }
       },
       scheduledTasks: { list: (candidate, signal) => createScheduledTaskQueries(
         createKyselyScheduledTaskReader(runtime!.db, 'sqlite'),
@@ -877,6 +861,7 @@ test('生产 RAG 组合仅在 Host 提供可信端口时发现并分派历史、
     })
     assert.equal(project.kind === 'completed' && project.successful, true, JSON.stringify(project))
     assert.equal(project.kind === 'completed' && (project.value as { files: { total_file_count: number } }).files.total_file_count, 3)
+    assert.equal(project.kind === 'completed' && (project.value as { sandbox_path: string }).sandbox_path, `/project/合成项目 #${ownProject.id}`)
     const tasks = await withHistory.toolRegistry.tools.dispatch({ id: 'tasks', name: 'list_scheduled_tasks', input: { owner_id: otherOwner } }, {
       identity, roundId: '1', signal: new AbortController().signal, resolution: null,
       execute: async () => { throw new Error('定时任务只读工具不能调用执行后端') },

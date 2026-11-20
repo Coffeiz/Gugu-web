@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { RunIdentity } from '../models.js'
+import type { AgentObservationPort } from '../observation.js'
+import { recordAgentObservation } from '../observation.js'
 import type { AuthorizedMemoryScope, MemoryRagScopeStatePort, MemoryRagStorageReader } from './memory-loader.js'
 import { prepareMemory } from './memory-loader.js'
 import { createRagLexicalIndex } from './lexical-index.js'
@@ -24,6 +26,7 @@ export interface MemorySearchSnapshot { revision: string; text: string }
 
 /** 只有 resolveScopes 可以把已验证的 IM/DB 权限转换为 memory scope。 */
 export interface MemorySearchPorts {
+  observation?: AgentObservationPort
   resolveScopes(identity: RunIdentity, requested: MemorySearchScope, signal: AbortSignal): Promise<AuthorizedMemoryScope[]>
   authorize(identity: RunIdentity, scopes: readonly AuthorizedMemoryScope[], signal: AbortSignal): Promise<boolean>
   snapshot(identity: RunIdentity, signal: AbortSignal): Promise<MemorySearchSnapshot>
@@ -48,10 +51,26 @@ function exactScopeMatch(document: { scope_type: string; scope_id: string; platf
  * the shared TS lexical/hybrid ranker. No model-provided owner, group or member ID is accepted.
  */
 export function createMemorySearch(ports: MemorySearchPorts) {
+  let observationSequence = 0
   return async (identity: RunIdentity, request: MemorySearchRequest, signal: AbortSignal) => {
+    const startedAt = Date.now()
+    const spanId = () => `${identity.runId}:rag:memory-search:${++observationSequence}`
+    const record = (status: 'success' | 'error' | 'cancelled', output: Record<string, unknown>, attributes: Record<string, unknown> = {}) => {
+      const endedAt = Date.now()
+      recordAgentObservation(ports.observation, {
+        identity, kind: 'context', name: 'Knowledge RAG recall', spanId: spanId(), at: endedAt,
+        startedAt, endedAt, durationMs: Math.max(0, endedAt - startedAt), status, output,
+        attributes: { context_source: 'rag_retrieval', rag_mode: 'tool', namespace: 'knowledge', source_type: 'memory', ...attributes },
+      })
+    }
+    try {
     signal.throwIfAborted()
     const query = request.query.trim()
-    if (!query) return { query: '', results: [], has_more: false, message: '需要提供检索关键词' }
+    if (!query) {
+      const result = { query: '', results: [], has_more: false, message: '需要提供检索关键词' }
+      record('success', { message_count: 0, injected: false, reason: 'empty_query', scope_hits: [] })
+      return result
+    }
     const limit = request.limit ?? 5
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 25) throw new TypeError('RAG 查询参数无效')
     const requestedScope = request.scope ?? 'auto'
@@ -127,7 +146,7 @@ export function createMemorySearch(ports: MemorySearchPorts) {
         confidence: result.confidence, source_quality: result.source_quality }
     })
     const strategyUsed = fused.fusion === 'hybrid-rrf' ? 'hybrid' : 'bm25'
-    return { query, results, has_more: fused.diagnostics.eligible_count > results.length,
+    const result = { query, results, has_more: fused.diagnostics.eligible_count > results.length,
       strategy: strategyUsed, fallback_reason: fallbackReason, index_source: prepared.indexSource, sources: ['memory'],
       candidate_count: candidates.length, permission_rejected: 0,
       rejected_low_score: ranked.diagnostics.rejected_low_score, rejected_not_preferred: ranked.diagnostics.rejected_not_preferred,
@@ -143,5 +162,41 @@ export function createMemorySearch(ports: MemorySearchPorts) {
       cache_miss_reasons: [], sidecar_reused: null, stage_ms: { ...prepared.probe.stage_ms, rank_candidates_ms: ranked.diagnostics.elapsed_ms },
       source_diagnostics: { memory: { candidate_count: candidates.length, hit_count: fused.diagnostics.eligible_count } },
       rank: ranked.diagnostics, ...(results.length ? {} : { message: '未找到相关记忆' }) }
+    record('success', {
+      message_count: results.length, injected: results.length > 0,
+      reason: results.length ? '' : fallbackReason || 'no_hits',
+      scope_hits: [{ scope: 'memory', candidate_count: candidates.length, hit_count: results.length }],
+      diagnostics: {
+        engine: result.engine, index_version: prepared.indexSource || 'memory-transient', scope_type: scopes.map(scope => scope.type).join(','),
+        vector_doc_count: fused.vectorDocCount, candidate_count: candidates.length, eligible_count: fused.diagnostics.eligible_count,
+        accepted_count: results.length, filtered_count: fused.diagnostics.filtered_count,
+        rejected_duplicate: ranked.diagnostics.rejected_duplicate, rejected_parent: ranked.diagnostics.rejected_parent,
+        rejected_source: ranked.diagnostics.rejected_source, rejected_similarity: ranked.diagnostics.rejected_similarity,
+        rejected_low_score: ranked.diagnostics.rejected_low_score, rejected_not_preferred: ranked.diagnostics.rejected_not_preferred,
+        output_chars: ranked.diagnostics.output_chars, elapsed_ms: ranked.diagnostics.elapsed_ms,
+        top_confidence: ranked.diagnostics.top_confidence, threshold: ranked.diagnostics.threshold,
+        preferred_threshold: ranked.diagnostics.preferred_threshold, selection_mode: ranked.diagnostics.selection_mode,
+        scoring_version: ranked.diagnostics.scoring_version, rescore_version: ranked.diagnostics.rescore_version ?? null,
+        idf_source: ranked.diagnostics.idf_source ?? null, contribution_exponent: ranked.diagnostics.contribution_exponent ?? null,
+        fallback_reason: fallbackReason, cache_hit: prepared.probe.cache.owner_cache_hit || prepared.probe.cache.scoped_cache_hit,
+        cache_entries: prepared.probe.cache.owner_cache_hit || prepared.probe.cache.scoped_cache_hit ? 1 : 0,
+        cache_miss_reasons: [], stage_ms: { ...prepared.probe.stage_ms, rank_candidates_ms: ranked.diagnostics.elapsed_ms },
+        source_diagnostics: { memory: { candidate_count: candidates.length, eligible_count: fused.diagnostics.eligible_count, accepted_count: results.length } },
+        rank_details: ranked.results.map((item, index) => ({
+          rank: index + 1, source_type: 'memory', source_quality: item.source_quality, confidence: item.confidence,
+          fused_score: item.fused_score, normalized_score: item.normalized_score,
+          ...(item.rank_score === undefined ? {} : { rank_score: item.rank_score }),
+          ...(item.query_idf_baseline === undefined ? {} : { query_idf_baseline: item.query_idf_baseline }),
+          contributions: item.rank_contributions ?? [],
+        })),
+      },
+    })
+    return result
+    } catch (error) {
+      const cancelled = signal.aborted
+      record(cancelled ? 'cancelled' : 'error', { message_count: 0, injected: false, reason: cancelled ? 'aborted' : 'retrieval_failed' },
+        { failure_reason: cancelled ? 'aborted' : 'retrieval_failed' })
+      throw error
+    }
   }
 }

@@ -27,7 +27,7 @@ export function createDiskFileSearchSources(pool: Pick<Pool, 'query'>, storageRo
       pool.query<{ id: number; name: string; start_date: unknown; created_at: unknown }>(
         'SELECT id,name,start_date,created_at FROM projects WHERE user_id=$1 AND deleted_at IS NULL ORDER BY id', [owner]),
       pool.query<{ id: number; name: string; directory_name: string }>(
-        'SELECT id,name,directory_name FROM workspace_directories WHERE user_id=$1 AND is_default=TRUE AND deleted_at IS NULL ORDER BY id', [owner]),
+        'SELECT id,name,directory_name FROM workspace_directories WHERE user_id=$1 AND deleted_at IS NULL ORDER BY id', [owner]),
     ])
     return [
       { directoryId: 'personal', name: '个人文件', storageKey: personalFileStorageKey(owner) },
@@ -65,9 +65,10 @@ export function createDiskFileSearchSources(pool: Pick<Pool, 'query'>, storageRo
           if (kind === 'folder') directories.push(entry.relativePath)
           if (query.types && !query.types.includes(kind)) continue
           const title = entry.name.normalize('NFC').toLowerCase()
-          const hits = terms.filter(term => title.includes(term)).length
+          const path = entry.relativePath.normalize('NFC').toLowerCase()
+          const hits = terms.filter(term => path.includes(term)).length
           if (query.mode === 'AND' ? hits !== terms.length : hits === 0) continue
-          const rank = title === terms[0] ? 0 : title.startsWith(terms[0]!) ? 1 : 2
+          const rank = title === terms[0] ? 0 : title.startsWith(terms[0]!) ? 1 : title.includes(terms[0]!) ? 2 : 3
           const candidates = found[kind]
           const candidate = {
             item: {

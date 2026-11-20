@@ -79,7 +79,7 @@ const toolLabel = computed(() => {
 })
 const statusText = computed(() => ({
   queued: t('chatUi.toolQueued'), running: t('chatUi.toolRunning'), waiting: t('chatUi.toolWaiting'), success: t('chatUi.toolDone'), error: t('chatUi.toolFailed'), skipped: t('chatUi.toolSkipped'),
-  cancelled: t('chatUi.toolCancelled'), stopped: t('chatUi.toolStopped'),
+  cancelled: t('chatUi.toolCancelled'), stopped: t('chatUi.toolStopped'), unknown: t('chatUi.toolResultUnknown'),
 }[props.msg.toolStatus || 'running']))
 const headerStatusText = computed(() => {
   if (detailsError.value) return `${t('chatUi.loadToolDetailsFailed')} · ${t('chatUi.retryToolDetails')}`
@@ -180,34 +180,17 @@ function prepareDetailLeave(element: Element) {
   node.style.overflow = 'hidden'
 }
 
-function animateDetail(element: Element, targetHeight: string, done: () => void, followBottom = false) {
+function animateDetail(element: Element, targetHeight: string, done: () => void) {
   const node = element as HTMLElement
   detailTransitionCleanups.get(node)?.()
   let finished = false
   let timer: number | undefined
-  let frame: number | undefined
-  const viewport = followBottom ? node.closest<HTMLElement>('.chat-messages') : null
-  let following = Boolean(viewport && viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 40)
-  const stopFollowing = () => { following = false }
-  const follow = () => {
-    if (finished || !following || !viewport) return
-    viewport.scrollTop = viewport.scrollHeight - viewport.clientHeight
-    frame = requestAnimationFrame(follow)
-  }
-  viewport?.addEventListener('wheel', stopFollowing, { passive: true })
-  viewport?.addEventListener('touchstart', stopFollowing, { passive: true })
-  if (following) frame = requestAnimationFrame(follow)
-  const cleanupFollow = () => {
-    if (frame !== undefined) cancelAnimationFrame(frame)
-    viewport?.removeEventListener('wheel', stopFollowing)
-    viewport?.removeEventListener('touchstart', stopFollowing)
-  }
+  // 行高变化由虚拟列表的底部锚点统一跟随。
   const finish = () => {
     if (finished) return
     finished = true
     node.removeEventListener('transitionend', onEnd)
     if (timer !== undefined) window.clearTimeout(timer)
-    cleanupFollow()
     detailTransitionCleanups.delete(node)
     done()
   }
@@ -226,14 +209,13 @@ function animateDetail(element: Element, targetHeight: string, done: () => void,
     finished = true
     node.removeEventListener('transitionend', onEnd)
     if (timer !== undefined) window.clearTimeout(timer)
-    cleanupFollow()
     detailTransitionCleanups.delete(node)
   })
 }
 
 function animateDetailEnter(element: Element, done: () => void) {
   const node = element as HTMLElement
-  animateDetail(node, `${node.scrollHeight}px`, done, true)
+  animateDetail(node, `${node.scrollHeight}px`, done)
 }
 
 function animateDetailLeave(element: Element, done: () => void) {
@@ -284,6 +266,7 @@ function cleanupDetailTransition(element: Element) {
 .tool-event-state.is-error { background: var(--status-danger); }
 .tool-event-state.is-skipped { background: var(--status-warning); }
 .tool-event-state.is-cancelled,
+.tool-event-state.is-unknown,
 .tool-event-state.is-stopped { background: var(--content-tertiary); }
 .tool-event-label { display: block; min-width: 0; color: var(--content-primary); font-size: var(--font-size-sm); font-weight: 600; line-height: var(--line-height-ui); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool-event-meta { grid-column: 2; grid-row: 2; color: var(--content-secondary); font-size: var(--font-size-xs); min-width: 0; overflow-wrap: anywhere; }

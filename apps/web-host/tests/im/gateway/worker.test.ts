@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { createRuntimeLog } from '@gugu/log/runtime'
+import { ImConversationError } from '../../../src/modules/im/gateway/agent/conversations.js'
 import { createImInboundPreflight, type ImPreflightPorts } from '@gugu/core/im/inbound-preflight'
 import type { RedisStreamCommands } from '../../../src/adapters/cache/redis-stream-commands.js'
 import { RedisStreamCommandError } from '../../../src/adapters/cache/redis-stream-commands.js'
@@ -103,10 +105,12 @@ function commandFixture(initial: Entry[] = []) {
     gateGroup() { gateGroup = true }, releaseGroup() { creation.resolve() }, exists() { groupExists = true },
   }
 }
-function workerFixture(entries: Entry[] = [], handle: Handler = async () => null, concurrency = 2) {
+function workerFixture(entries: Entry[] = [], handle: Handler = async () => null, concurrency = 2,
+  diagnose?: Parameters<typeof createNodeImWorker>[0]['diagnose']) {
   const redis = commandFixture(entries), diagnoses: string[] = []
   const worker = createNodeImWorker({ secretKey: secret, commands: redis.commands, ingress: { handle }, concurrency,
-    ownership: { runtime: 'node', pythonGatewayStopped: true, pythonImConsumerStopped: true }, diagnose: code => { diagnoses.push(code) } })
+    ownership: { runtime: 'node', pythonGatewayStopped: true, pythonImConsumerStopped: true },
+    diagnose: (code, error) => { diagnoses.push(code); diagnose?.(code, error) } })
   return { ...redis, redis, worker, diagnoses }
 }
 type IngressPorts = Parameters<typeof createNodeImWorker>[0]['ingress']
@@ -171,14 +175,29 @@ test('已completed消息重新出现只ACK不再调用ingress，BUSYGROUP允许�
 
 test('ingress事务失败保留pending和未完成lease，不ACK也不泄露原异常正文', async () => {
   const failed = deferred()
-  const f = workerFixture([event('93-0')], async () => { failed.resolve(); throw new Error('synthetic-private-transaction-body') })
+  const regular: string[] = [], diagnostic: string[] = []
+  const log = createRuntimeLog({ regular: line => regular.push(line), diagnostic: line => diagnostic.push(line) })
+  const f = workerFixture([event('93-0')], async () => {
+    failed.resolve()
+    const cause = Object.assign(new Error('synthetic-private-transaction-body'), { code: '23503' })
+    throw new ImConversationError('storage_failure', { cause })
+  }, 2, (code, error) => log('gateway.degraded', { code, error }))
   try {
     await f.worker.start(); await failed.promise; await f.redis.waitForRead(2)
     f.redis.releaseRead(2); await f.redis.waitForRead(3)
     assert.equal(f.acknowledgements.length, 0)
     assert.notEqual(f.states.get('im:node:state:93-0'), 'completed')
     assert.equal(f.worker.health().messageFailures, 1)
-    assert.equal(JSON.stringify(f.diagnoses).includes('synthetic-private'), false)
+    assert.equal(regular.length, 1)
+    assert.equal(diagnostic.length, 1)
+    const record = JSON.parse(regular[0]!), detail = JSON.parse(diagnostic[0]!)
+    assert.deepEqual(record.attributes, { code: 'message_failed', errorCode: 'internal_error' })
+    assert.ok(record.incident)
+    assert.equal(detail.incident, record.incident)
+    assert.ok(detail.frames.length)
+    assert.equal(detail.causeCode, '23503')
+    assert.ok(detail.causeFrames.length)
+    assert.doesNotMatch(regular[0]! + diagnostic[0]!, /synthetic-private/)
   } finally { await f.worker.stop() }
 })
 

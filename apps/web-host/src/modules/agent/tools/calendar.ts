@@ -12,9 +12,11 @@ export function createWebCalendarReminderTargets(options: {
   pool: Pick<Pool, 'connect'>
   lease: AgentDispatchLease
   delivery: Pick<TaskExternalResolution, 'resolveDelivery'>
+  authorize?: () => Promise<boolean>
 }): CalendarReminderTargetPort {
   const { lease } = options
-  if (lease.input.v !== 2 || lease.input.source !== 'web') throw new TypeError('日历提醒运行来源无效')
+  if (!(lease.input.v === 2 && lease.input.source === 'web')
+    && !(lease.input.v === 3 && lease.input.source === 'im' && options.authorize)) throw new TypeError('日历提醒运行来源无效')
   const identity = Object.freeze({ ...lease.identity })
   const token = lease.token, fence = lease.fence
   return {
@@ -33,7 +35,7 @@ export function createWebCalendarReminderTargets(options: {
         [identity.ownerId, identity.sessionId, identity.runId, token, fence])
         const active = await isActive()
         signal.throwIfAborted()
-        if (active.rowCount !== 1) return { ok: false, error: '日历提醒运行授权已失效' }
+        if (active.rowCount !== 1 || options.authorize && !await options.authorize()) return { ok: false, error: '日历提醒运行授权已失效' }
         const resolved = []
         for (const reminder of reminders) {
           const channels = reminder.channels?.length ? [...reminder.channels] : ['web']
@@ -43,7 +45,7 @@ export function createWebCalendarReminderTargets(options: {
         }
         const current = await isActive()
         signal.throwIfAborted()
-        if (current.rowCount !== 1) return { ok: false, error: '日历提醒运行授权已失效' }
+        if (current.rowCount !== 1 || options.authorize && !await options.authorize()) return { ok: false, error: '日历提醒运行授权已失效' }
         return { ok: true, reminders: resolved }
       } finally {
         client.release()
@@ -58,6 +60,7 @@ export function createWebAgentCalendarWritePorts(options: {
   pool: Pick<Pool, 'connect'>
   lease: AgentDispatchLease
   delivery: Pick<TaskExternalResolution, 'resolveDelivery'>
+  authorize?: () => Promise<boolean>
   publishCreate(event: EventCreatePublication): Promise<void>
   publishUpdate(event: EventUpdatePublication): Promise<void>
   publishDelete?: Parameters<typeof createCalendarDeletePort>[1]

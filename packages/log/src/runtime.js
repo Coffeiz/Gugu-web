@@ -1,42 +1,69 @@
+import { writeLogRecord } from './jsonl.js'
 import { randomUUID } from 'node:crypto'
 import { errorFrames, failureCode } from './redact.js'
 
 const levels = new Map(Object.entries({
   'host.started': 'info', 'host.stopped': 'info', 'host.start_failed': 'error',
+  'host.shutdown_requested': 'info', 'host.shutdown_phase_started': 'info', 'host.shutdown_phase_finished': 'info',
+  'host.shutdown_phase_slow': 'warn', 'host.shutdown_phase_failed': 'error',
   'host.stop_failed': 'error', 'host.database_unavailable': 'warn', 'host.rag_unavailable': 'warn',
+  'host.trash_purge_unavailable': 'warn', 'host.search_usage_unavailable': 'warn',
   'gateway.started': 'info', 'gateway.stopped': 'info', 'gateway.start_failed': 'error',
   'gateway.stop_failed': 'error', 'gateway.degraded': 'warn',
+  'gateway.rag_timeout': 'warn', 'gateway.rag_late_completion': 'info',
   'sandbox.probe_failed': 'warn', 'sandbox.command_failed': 'warn', 'sandbox.system_completed': 'info',
 }))
 const conditions = new Set((
   'binding_post_commit_pending cleanup_failed compact_unavailable delivery_pending im_compaction_failed ' +
-  'im_history_retention_failed im_history_storage_cleanup_failed im_provider_failed im_retention_failed ' +
-  'im_retention_pending_unknown im_runtime_event_pending im_video_failed im_voice_failed interaction_wake_pending ' +
+  'im_history_retention_failed im_history_storage_cleanup_failed im_provider_failed im_run_failed im_retention_failed ' +
+  'im_retention_pending_unknown im_runtime_event_pending im_video_failed im_voice_failed interaction_wake_pending interaction_callback_failed ' +
   'dispatch_unavailable delivery_unavailable pending_unavailable interaction_unavailable maintenance_unavailable ' +
   'message_failed notify_pending ownership_lost pending_ask_notify_pending poll post queue_unavailable ' +
   'reflection_dead reflection_deferred reflection_notification_pending reflection_retry reflection_usage_unknown ' +
   'secret_wake_pending session_delete_cleanup_pending session_delete_notification_pending ' +
-  'shortcut_notification_pending shortcut_read_unavailable start stop typing poll-unavailable'
+  'shortcut_notification_pending shortcut_read_unavailable start stop typing poll-unavailable ' +
+  'config-unavailable listener-unavailable connection-failed cleanup-failed post-commit-pending qface-unavailable ' +
+  'im_delivery_policy_changed im_dispatch_order_unavailable im_preferences_unavailable ' +
+  'platform-unavailable admission-pending admission-unknown admission-unavailable callback-cleanup-pending ' +
+  'telegram-poll-unavailable telegram-cleanup-failed wechat-cleanup-failed wechat-poll-unavailable wechat-start-notify-unavailable wechat-stop-notify-unavailable wechat-typing-ticket-unavailable ' +
+  'qq-connection-failed qq-event-failed qq-heartbeat-failed qq-heartbeat-timeout qq-cleanup-failed ' +
+  'feishu-sdk-error feishu-sdk-warning feishu-misrouted-event feishu-event-failed feishu-cleanup-failed feishu-connection-failed'
 ).split(' '))
 
+const migrationConditions = new Set(['migration_incompatible', 'migration_pending', 'migration_unavailable', 'platform_unsupported'])
+const migrationEvents = new Set(['host.rag_unavailable', 'host.trash_purge_unavailable', 'host.search_usage_unavailable'])
+
+const shutdownPhases = new Set([
+  'http', 'gateway', 'account_memory', 'workers', 'scheduled_runs', 'agent_runs', 'mcp',
+  'embedding_rebuild', 'embedding_transport', 'loopscope', 'loopscope_transport', 'im_transports',
+  'im_delivery_pool', 'project_journal_pool', 'core', 'postgres_pool',
+])
+const signals = new Set(['SIGINT', 'SIGTERM'])
+
 export function createRuntimeLog({ regular, diagnostic }) {
-  const write = (sink, record) => {
-    try { sink(JSON.stringify(record) + '\n') }
-    catch { /* 观测失败不改变宿主运行结果。 */ }
-  }
   return (event, details = {}) => {
     if (!levels.has(event)) return
-    const { error, code, ok, timedOut } = details
+    const { error, code, ok, timedOut, phase, signal, elapsedMs, pid } = details
     const incident = error === undefined ? undefined : randomUUID()
+    const allowedCodes = event === 'gateway.degraded' ? conditions : migrationEvents.has(event) ? migrationConditions : null
+    const lifecycle = event.startsWith('host.shutdown_') || event === 'host.started' || event === 'host.stopped' || event === 'host.stop_failed'
     const attributes = {
-      ...(event === 'gateway.degraded' && code !== undefined ? { code: conditions.has(code) ? code : 'unknown' } : {}),
+      ...(event.startsWith('host.shutdown_phase_') && shutdownPhases.has(phase) ? { phase } : {}),
+      ...(lifecycle && signals.has(signal) ? { signal } : {}),
+      ...(lifecycle && Number.isSafeInteger(elapsedMs) && elapsedMs >= 0 ? { elapsedMs } : {}),
+      ...(lifecycle && Number.isSafeInteger(pid) && pid > 0 ? { pid } : {}),
+      ...(allowedCodes && code !== undefined ? { code: allowedCodes.has(code) ? code : 'unknown' } : {}),
       ...(incident ? { errorCode: failureCode(error) } : {}),
       ...(event === 'sandbox.system_completed' && typeof ok === 'boolean' ? { ok } : {}),
       ...(event === 'sandbox.system_completed' && typeof timedOut === 'boolean' ? { timedOut } : {}),
     }
     const record = { time: new Date().toISOString(), level: levels.get(event), event,
       ...(incident ? { incident } : {}), ...(Object.keys(attributes).length ? { attributes } : {}) }
-    write(regular, record)
-    if (incident) write(diagnostic, { ...record, frames: errorFrames(error) })
+    writeLogRecord(regular, record)
+    if (incident) {
+      const cause = error instanceof Error && error.cause instanceof Error ? error.cause : undefined
+      writeLogRecord(diagnostic, { ...record, frames: errorFrames(error),
+        ...(cause ? { causeCode: failureCode(cause), causeFrames: errorFrames(cause) } : {}) })
+    }
   }
 }

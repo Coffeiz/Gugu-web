@@ -6,7 +6,7 @@ import type { Pool } from 'pg'
 import { createAgentRunner, projectPersistentToolResult, type AgentRunnerPorts, type InteractionResolution, type RunCheckpoint, type RunEvent } from '@gugu/core/agent'
 import { createImRunDelivery, ImRunDeliveryBlocked } from '@gugu/core/im/run-delivery'
 import type { ImRunDeliveryPorts } from '@gugu/core/im/run-delivery'
-import { createFeishuClient } from '../../../src/modules/im/gateway/platforms/feishu/client.js'
+import { createFeishuClient } from '@gugu/gateway/feishu'
 import { createPersistentFeishuProjection } from '../../../src/modules/im/gateway/platforms/feishu/persistent.js'
 import { withPostgresImDeliveryStore, type ImDeliverySession } from '../../../src/modules/im/gateway/delivery/store.js'
 

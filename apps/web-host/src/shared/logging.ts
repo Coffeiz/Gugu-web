@@ -8,9 +8,10 @@ export function timestampConsole(output: Console = console, now: () => Date = ()
       const date = now()
       const pad = (value: number) => String(value).padStart(2, '0')
       const time = `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
-      if (append) append(`${time} ${formatWithOptions({ colors: false }, ...args)}\n`)
-      if (typeof args[0] === 'string') write(`${time} ${args[0]}`, ...args.slice(1))
-      else write(time, ...args)
+      const rendered = formatWithOptions({ colors: false }, ...args)
+      const timestamped = rendered.split('\n').map(line => `${time} ${line}`).join('\n')
+      if (append) append(`${timestamped}\n`)
+      write(timestamped)
     }
   }
 }

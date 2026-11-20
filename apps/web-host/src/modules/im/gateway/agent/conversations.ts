@@ -11,6 +11,9 @@ import { parseImAttentionRecord, type ImAttentionRecord } from '@gugu/core/im/at
 import type { ImRetiredInboundKey } from '../inbound/retired.js';
 
 type Payload = Record<string, unknown>;
+// 群聊用群 ID，私聊用联系人 ID；历史记录的 chat_type 可为空。
+export const imSessionScopeSql = `user_id=$1 AND source=$2 AND bot_id=$3
+  AND (CASE WHEN $4::text IS NOT NULL THEN chat_id=$4 ELSE chat_id IS NULL AND platform_user_id=$5 END)`;
 export interface ImConversationAnchor {
   sessionId: number; messageId: number; conversationSeq: number;
   runId: string | null; duplicate: boolean; isNewSession: boolean;
@@ -41,7 +44,7 @@ export type ImConversationAttachments = { mode: 'text-only' } | {
   claim(client: PoolClient, ownerId: string, messageId: number, attachmentIds: readonly string[]): Promise<void>;
 };
 export class ImConversationError extends Error {
-  constructor(readonly code: 'invalid_input' | 'unauthorized' | 'conflict' | 'not_found' | 'storage_failure') { super('IM 会话持久化未完成'); this.name = 'ImConversationError'; }
+  constructor(readonly code: 'invalid_input' | 'unauthorized' | 'conflict' | 'not_found' | 'storage_failure', options?: ErrorOptions) { super('IM 会话持久化未完成', options); this.name = 'ImConversationError'; }
 }
 const object = (value: unknown): value is Payload => value !== null && typeof value === 'object' && !Array.isArray(value);
 function identifier(value: unknown, max = 128): string {
@@ -94,7 +97,7 @@ export function createPostgresImConversationStore(options: {
 }) {
   const envelope = createImInboundEnvelope(options.secretKey);
   const digest = (value: unknown) => imConversationDigest(options.secretKey, value);
-  const mapped = (value: unknown) => value instanceof ImConversationError ? value : new ImConversationError('storage_failure');
+  const mapped = (value: unknown) => value instanceof ImConversationError ? value : new ImConversationError('storage_failure', { cause: value });
   function normalize(binding: NodeImBotBinding, input: Payload) {
     const owner = normalizeOwnerId(binding.ownerId);
     if (owner !== binding.ownerId || !['feishu', 'qq', 'wechat', 'telegram'].includes(binding.platform) || !/^[1-9]\d*$/.test(binding.botId)) throw new ImConversationError('invalid_input');
@@ -168,9 +171,8 @@ export function createPostgresImConversationStore(options: {
             if (!session) throw new ImConversationError('not_found');
           } else {
             const params = [binding.ownerId, binding.platform, binding.botId, p.chat, p.sender];
-            const where = `user_id=$1 AND source=$2 AND bot_id=$3 AND (CASE WHEN $4::text IS NOT NULL THEN chat_id=$4 AND chat_type='group' ELSE chat_id IS NULL AND platform_user_id=$5 AND (chat_type='c2c' OR chat_type IS NULL) END)`;
-            if (input.sessionId !== undefined) session = (await client.query<{ id: number }>(`SELECT id FROM conversation_sessions WHERE ${where} AND id=$6 FOR UPDATE`, [...params, positive(input.sessionId)])).rows[0];
-            if (!session) session = (await client.query<{ id: number }>(`SELECT id FROM conversation_sessions WHERE ${where} ORDER BY updated_at DESC,id DESC LIMIT 1 FOR UPDATE`, params)).rows[0];
+            if (input.sessionId !== undefined) session = (await client.query<{ id: number }>(`SELECT id FROM conversation_sessions WHERE ${imSessionScopeSql} AND id=$6 FOR UPDATE`, [...params, positive(input.sessionId)])).rows[0];
+            if (!session) session = (await client.query<{ id: number }>(`SELECT id FROM conversation_sessions WHERE ${imSessionScopeSql} ORDER BY updated_at DESC,id DESC LIMIT 1 FOR UPDATE`, params)).rows[0];
           }
           // 清理持session行锁；等到该锁后再次读取，防止早查墓碑后旧收据被级联删除。
           if (await retired()) return null;
@@ -195,7 +197,9 @@ export function createPostgresImConversationStore(options: {
               normalizePersistentArtifact(stable);
             }
           }
-          const allocated = await client.query<{ last_message_seq: string }>('UPDATE conversation_sessions SET last_message_seq=last_message_seq+1,updated_at=clock_timestamp() WHERE id=$1 AND user_id=$2 RETURNING last_message_seq::text', [sessionId, binding.ownerId]);
+          const allocated = await client.query<{ last_message_seq: string }>(`UPDATE conversation_sessions SET last_message_seq=last_message_seq+1,
+            updated_at=clock_timestamp(),chat_type=COALESCE($3,chat_type)
+            WHERE id=$1 AND user_id=$2 RETURNING last_message_seq::text`, [sessionId, binding.ownerId, bound === null ? p.type : null]);
           sequence = Number(allocated.rows[0]?.last_message_seq);
           if (!Number.isSafeInteger(sequence) || sequence < 1) throw new ImConversationError('conflict');
           const row = await client.query<{ id: number }>(`INSERT INTO conversation_messages

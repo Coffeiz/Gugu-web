@@ -1,5 +1,5 @@
 import { describe,expect,it,vi } from 'vitest'
-import type { CapabilityPreparationPorts,PreparationIdentity } from "../../../src/agent/index.js"
+import type { AgentObservation,CapabilityPreparationPorts,PreparationIdentity,RunIdentity } from "../../../src/agent/index.js"
 import { createCanonicalRunLoader,discoverToolsAndRecall,prepareContext,prepareRunCapabilities,stableJson } from "../../../src/agent/index.js"
 
 const identity: PreparationIdentity = {
@@ -19,6 +19,38 @@ function ports(): CapabilityPreparationPorts {
 }
 
 describe('Harness 准备编排保持短事务、身份与提示词边界', () => {
+  it('简介模式下工具权限变化只影响动态目录，固定前缀和 Provider 入口顺序稳定', async () => {
+    const run = { ownerId: identity.ownerId, sessionId: identity.subject.id, runId: 'run-brief' }
+    const services = { digest: stableJson, nextId: () => 'entry-brief', buildRag: async () => ({ tail: [] }) }
+    let businessTools = ['list_projects', 'shell']
+    const load = createCanonicalRunLoader(async () => ({
+      modelIdentity: 'brief-model', contextWindow: 1000, accessScopeHash: 'brief-scope',
+      input: { ...run, history: [], fixedPrefix: [], systemPrompt: '静态系统', systemInMessages: true, extraReminder: '原有提醒' },
+    }), {
+      configuration: async () => ({ identity, source: 'qq', toolNames: [...businessTools, 'ask_user', 'call_tool'] }),
+      discover: async ({ toolNames }) => toolNames.map(name => ({ name, schema: { type: 'object' } })),
+      capabilities: { ...ports(), async catalog(names) {
+        return { fixedAdapter: true, metadataOnly: false, toolCatalog: names.join('、'), skillCatalog: '', userSkills: [] }
+      } },
+      formatPrefix: ({ original }) => original.fixedPrefix,
+    }, services)
+    const signal = new AbortController().signal
+    const first = await load(run, signal)
+    businessTools = ['list_events']
+    const second = await load(run, signal)
+    if ('kind' in first || 'kind' in second) throw new Error('测试不应早退')
+    const a = await prepareContext(first.input, services)
+    const b = await prepareContext(second.input, services)
+    expect(a.area.requestPrefix).toEqual(b.area.requestPrefix)
+    expect(first.capabilities?.providerToolNames).toEqual(['call_tool', 'ask_user'])
+    expect(second.capabilities?.providerToolNames).toEqual(first.capabilities?.providerToolNames)
+    expect(stableJson(a.area.dynamicTail)).toContain('list_projects')
+    expect(stableJson(a.area.dynamicTail)).toContain('合成本轮 Shell 状态')
+    expect(stableJson(b.area.dynamicTail)).toContain('list_events')
+    expect(stableJson(b.area.dynamicTail)).not.toContain('list_projects')
+    expect(stableJson(b.area.dynamicTail)).toContain('原有提醒')
+  })
+
   it.each([true, false])('定时任务标准准备不执行交互RAG或提交当前输入，Shell仅留system：%s', async systemInMessages => {
     const owner = { ownerId: '小北', sessionId: 'task-run-scope', runId: 'run-task' }
     const services = { digest: stableJson, nextId: () => 'entry-task' }
@@ -53,6 +85,29 @@ describe('Harness 准备编排保持短事务、身份与提示词边界', () =>
       recall: async () => { expect(started).toBe(true); release(); return { tail: [] } },
     })
     expect(result).toEqual({ tools: ['synthetic-tool'], rag: { tail: [] } })
+  })
+
+  it('自动RAG的LoopScope span保留实际注入消息，便于核对召回内容', async () => {
+    const run: RunIdentity = { ownerId: 'owner-synthetic', sessionId: 'session-synthetic', runId: 'run-synthetic' }
+    const observed: AgentObservation[] = []
+    const rag = {
+      tail: [{ role: 'user', content: [{ type: 'knowledge-context', text: '[owner-rag]\n[1] memory / 合成记忆\n合成召回正文' }] }],
+      injected: true,
+      scope_hits: [{ scope: 'owner-rag', candidate_count: 3, hit_count: 1 }],
+    }
+    await discoverToolsAndRecall({
+      identity: run,
+      observation: { record: event => observed.push(event) },
+      discover: async () => [],
+      recall: async () => rag,
+    })
+    const span = observed.find(event => event.name === 'Automatic RAG retrieval')
+    expect(span?.output).toMatchObject({
+      message_count: 1,
+      rag_messages: rag.tail,
+      injected: true,
+      scope_hits: [{ scope: 'owner-rag', candidate_count: 3, hit_count: 1 }],
+    })
   })
 
   it('一侧失败时取消并等待另一侧清理，保留真实失败供错误分类', async () => {

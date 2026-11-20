@@ -1,5 +1,5 @@
 import { configureRagJieba, createMemorySearch, createSqlMemoryScopeStateReader, type AuthorizedMemoryScope, type MemorySearchScope, type MemorySearchSnapshot } from '@gugu/core/agent/rag'
-import type { RunIdentity } from '@gugu/core/agent'
+import type { AgentObservationPort, RunIdentity } from '@gugu/core/agent'
 import type { SqlDataRuntime } from '@gugu/core/data'
 import type { ProviderTransport } from '@gugu/core/providers'
 import type { RagQueryEmbeddingSettings } from '@gugu/core/agent/rag'
@@ -24,6 +24,7 @@ export function createWebOwnerMemorySearchPort(core: Pick<SqlDataRuntime, 'db'>,
     resolve(ownerId: string, signal?: AbortSignal): Promise<RagQueryEmbeddingSettings | null>
     createTransport(settings: RagQueryEmbeddingSettings): ProviderTransport
   }
+  observation?: AgentObservationPort
 }): MemorySearchPort {
   if (!options.storageRoot.trim() || typeof options.authorize !== 'function' || typeof options.snapshot !== 'function') {
     throw new TypeError('Web 记忆搜索依赖未就绪')
@@ -34,6 +35,7 @@ export function createWebOwnerMemorySearchPort(core: Pick<SqlDataRuntime, 'db'>,
   const resolveVectors = options.embedding ? createOwnerAgentRagVectorResolver({ root: options.storageRoot,
     resolveEmbedding: options.embedding.resolve, createTransport: options.embedding.createTransport }) : null
   const search = createMemorySearch({
+    observation: options.observation,
     async resolveScopes(identity, requested, signal) {
       if (options.resolveScopes) return options.resolveScopes(identity, requested, signal)
       // Python 在非 IM 请求上将任何允许的 scope 选择收敛到 owner；Web 身份没有群上下文。

@@ -130,21 +130,28 @@ for (const [name, storagePath, url] of [
       }
       assert.equal((await mutation('POST', `${url}/folders?path=target`)).statusCode, 201)
       assert.equal((await mutation('POST', `${url}/folders?path=target`)).statusCode, 409)
-      const form = new FormData()
-      form.append('file', new Blob(['uploaded bytes']), 'upload.txt')
-      const body = new Request('http://localhost', { method: 'POST', body: form })
-      const upload = await ctx.app.inject({ method: 'POST', url: `${url}/content?path=upload.txt`,
-        headers: { authorization: 'user', 'content-type': body.headers.get('content-type')! },
-        payload: Buffer.from(await body.arrayBuffer()),
-      })
+      const uploadText = async (path: string, content: string, overwrite = false) => {
+        const form = new FormData()
+        form.append('file', new Blob([content]), 'upload.txt')
+        const body = new Request('http://localhost', { method: 'POST', body: form })
+        return ctx.app.inject({ method: 'POST', url: `${url}/content?path=${encodeURIComponent(path)}${overwrite ? '&overwrite=1' : ''}`,
+          headers: { authorization: 'user', 'content-type': body.headers.get('content-type')! },
+          payload: Buffer.from(await body.arrayBuffer()),
+        })
+      }
+      const upload = await uploadText('upload.txt', 'uploaded bytes')
       assert.equal(upload.statusCode, 201)
+      assert.equal((await uploadText('upload.txt', '编辑后的正文', true)).statusCode, 201)
+      assert.equal((await request(`${url}/content?path=upload.txt`)).body, '编辑后的正文')
+      assert.equal((await uploadText('missing.txt', '无需新建', true)).statusCode, 404)
+      assert.equal((await uploadText('other/private.txt', '越界编辑', true)).statusCode, 404)
       assert.equal((await mutation('PATCH', `${url}/entries?path=upload.txt`, { destination: 'renamed.txt' })).statusCode, 200)
       assert.equal((await mutation('PATCH', `${url}/entries?path=renamed.txt`, { destination: 'target/t.txt' })).statusCode, 200)
       assert.equal((await mutation('PATCH', `${url}/entries?path=docs/t.txt`, { destination: 'target/t.txt' })).statusCode, 409)
       assert.equal((await mutation('PATCH', `${url}/entries?path=docs/t.txt`, { destination: 'other/private.txt' })).statusCode, 404)
       assert.equal((await mutation('PATCH', `${url}/entries?path=docs/t.txt`, { destination: '../outside.txt' })).statusCode, 404)
       assert.equal((await mutation('PATCH', `${url}/entries?path=target`, { destination: 'target/subfolder' })).statusCode, 422)
-      assert.equal((await request(`${url}/content?path=target/t.txt`)).body, 'uploaded bytes')
+      assert.equal((await request(`${url}/content?path=target/t.txt`)).body, '编辑后的正文')
       assert.equal((await request(`${url}/content?path=docs/t.txt`)).body, 'line1\nline2\n')
       const copy = await mutation('POST', `${url}/copy?path=docs`, { destination: 'docs-copy' })
       assert.equal(copy.statusCode, 200)

@@ -1,12 +1,13 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest'
-import { resolveFolderTree, uploadFilesWithFolders, uploadFileWithProgress } from '@/composables/files/useFileUploadCore'
+import { resolveFolderTree, uploadWorkspaceFile, uploadFilesWithFolders, uploadFileWithProgress } from '@/composables/files/useFileUploadCore'
 import { getTopLevelUploadGroups, prepareUploadBatch } from '@/composables/files/useFileUploadController'
-import { filesApi, foldersApi, uploadWithProgress } from '@/services/api'
+import { filesApi, foldersApi, pathFilesApi, uploadWithProgress } from '@/services/api'
 
 vi.mock('@/services/api', () => ({
   filesApi: { checkConflicts: vi.fn() },
   foldersApi: { list: vi.fn(), resolvePaths: vi.fn(), create: vi.fn() },
+  pathFilesApi: { entries: vi.fn(), upload: vi.fn() },
   uploadWithProgress: vi.fn(),
 }))
 
@@ -29,6 +30,28 @@ it('上传先发送位置和覆盖字段，最后才发送文件内容', async (
     ['stage_name', '初稿'], ['on_conflict', 'overwrite'], ['overwrite_file_id', '16'], ['file', file],
   ])
   expect(progress).toBe(onProgress)
+})
+
+it('路径上传先等待同名选择，保留两者会避开已占用后缀，取消不会写入', async () => {
+  const file = new File(['新内容'], '方案.txt')
+  const target = { directoryId: 'personal', relativePath: '资料' } as const
+  const upload = vi.mocked(pathFilesApi.upload)
+  const progress = vi.fn()
+  vi.mocked(pathFilesApi.entries).mockResolvedValue(['方案.txt', '方案 (1).txt'].map(name => ({
+    name, kind: 'file', relativePath: `资料/${name}`, size: 3, mimeType: 'text/plain',
+  })))
+  const item = { file, relativePath: file.name }
+  const prompt = vi.fn(async () => {
+    expect(upload).not.toHaveBeenCalled()
+    return new Map([[file.name, { action: 'keep_both' as const }]])
+  })
+
+  await uploadWorkspaceFile(target, item, progress, prompt, () => true)
+  expect(prompt).toHaveBeenCalledWith([{ filename: file.name, canOverwrite: true }])
+  expect(upload).toHaveBeenCalledWith({ ...target, relativePath: '资料/方案 (2).txt' }, file, progress, false)
+  upload.mockClear()
+  await expect(uploadWorkspaceFile(target, item, progress, async () => new Map(), () => true)).resolves.toBe(false)
+  expect(upload).not.toHaveBeenCalled()
 })
 
 describe('getTopLevelUploadGroups', () => {

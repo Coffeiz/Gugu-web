@@ -3,6 +3,10 @@ import { lstat, open, readdir } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { isLogArchive } from './write.js'
 
+import { logLineMessage } from '../presentation.js'
+
+export { logLineMessage }
+
 export const openLog = (path) => open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
 export const fileIdentity = (info) => `${info.dev}:${info.ino}`
 
@@ -137,7 +141,9 @@ export async function readLogHistory(path, { cursor, lines, query }) {
     let carried = page.carried
     const matching = page.lines.flatMap(line => {
       carried = lineDate(line, carried)
-      return !needle || line.toLocaleLowerCase().includes(needle) ? [{ time: carried, line }] : []
+      const message = logLineMessage(line)
+      const matches = !needle || line.toLocaleLowerCase().includes(needle) || message?.toLocaleLowerCase().includes(needle)
+      return matches ? [{ time: carried, line, ...(message ? { message } : {}) }] : []
     })
     selected.unshift(...matching)
     if (page.start > 0 && page.start < (end ?? file.size)) {

@@ -38,9 +38,12 @@ export function createGlobalSearchTool(search: GlobalSearchOperations): ToolDefi
         value: { error: '当前平台未提供所请求的搜索来源', unavailable_types: missing } }
       const value = await search.search(scope.identity.ownerId, query, { signal: scope.signal })
       scope.signal.throwIfAborted()
+      if (!value || typeof value !== 'object' || !('groups' in value) || !Array.isArray(value.groups))
+        return { kind: 'completed', successful: true, mutated: false, value }
+      // 分组类型属于搜索元数据。媒体块的 type 保留给持久化编解码器。
+      const groups = value.groups.map(({ type, ...group }) => ({ ...group, source_type: type }))
       return { kind: 'completed', successful: true, mutated: false,
-        value: value !== null && typeof value === 'object' && 'total' in value && value.total === 0
-          ? { ...value, note: noMatches } : value }
+        value: { ...value, groups, ...('total' in value && value.total === 0 ? { note: noMatches } : {}) } }
     },
   }
 }

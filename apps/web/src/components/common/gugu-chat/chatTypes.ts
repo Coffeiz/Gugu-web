@@ -52,7 +52,7 @@ export interface ChatMessage {
   toolName?: string
   toolLabel?: string
   toolLabelOverride?: string
-  toolStatus?: 'queued' | 'running' | 'waiting' | 'success' | 'error' | 'skipped' | 'cancelled' | 'stopped'
+  toolStatus?: 'queued' | 'running' | 'waiting' | 'success' | 'error' | 'skipped' | 'cancelled' | 'stopped' | 'unknown'
   toolInput?: unknown
   toolResult?: unknown
   /** 历史工具详情在首次展开时由服务端按归属读取。 */

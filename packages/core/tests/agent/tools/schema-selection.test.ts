@@ -1,3 +1,4 @@
+import { createGetToolSchemaTool } from '../../../src/agent/tools/meta.js'
 import { describe, expect, it, vi } from 'vitest'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import { selectToolSchemas } from '../../../src/agent/tools/schema-selection.js'
@@ -90,4 +91,25 @@ describe('仅从可信当前capabilities选择工具Schema', () => {
     expect(selectToolSchemas([' ', '\u0085'], available)).toEqual({ tool_schemas: [], rejected: [] })
     expect(f.execute).not.toHaveBeenCalled()
   })
+})
+
+
+it('猜测文件工具名全部未命中时，推荐授权的 Shell 和图片入口', async () => {
+  const f = fixture(['global_search', 'view_image', 'read_file', 'shell'])
+  f.denied.add('read_file')
+  const tool = createGetToolSchemaTool(candidate => f.registry.capabilities(candidate))
+  const input = { tools: ['list_files', 'read_file', 'search_files'] }
+  const result = await tool.execute(input, {
+    identity, roundId: '1', signal: new AbortController().signal, resolution: null,
+    execute: async () => { throw new Error('只读 Schema 工具不能执行替代工具') },
+  }, { id: 'schema', name: 'get_tool_schema', input })
+  expect(result).toMatchObject({ kind: 'completed', successful: false, value: {
+    rejected: input.tools,
+    alternatives: [
+      { name: 'shell', usage: expect.stringContaining('/personal') },
+      { name: 'global_search', usage: expect.stringContaining('types') },
+      { name: 'view_image', usage: expect.stringContaining('path') },
+    ],
+  } })
+  expect(f.execute).not.toHaveBeenCalled()
 })

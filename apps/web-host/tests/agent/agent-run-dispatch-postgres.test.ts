@@ -74,10 +74,15 @@ test('刷新时的活跃状态与 SSE 运行定位一致，并隔离 owner', { s
     assert.equal((await dispatch.active(owner, 1, 'waiting'))?.identity?.runId, 'waiting')
     assert.equal(await dispatch.active(other, 1, 'waiting'), null)
     assert.equal(await dispatch.active(owner, 2, 'waiting'), null)
-    await pool.query("UPDATE agent_run_dispatch SET state='done' WHERE run_id='selected'")
+    // 终态与 SSE final 已提交，调度和会话记录仍可能指向旧 run。
+    await pool.query(`INSERT INTO agent_run_checkpoints (user_id,session_id,run_id,status,updated_at)
+      VALUES ($1,1,'running','completed',clock_timestamp()),($1,1,'selected','running',clock_timestamp())`, [owner])
+    assert.equal((await dispatch.active(owner, 1))?.identity?.runId, 'selected')
     assert.equal((await readActiveStatuses([1], owner)).get(1), true)
-    await pool.query('UPDATE conversation_sessions SET active_run_id=NULL WHERE id=1')
+    await pool.query("UPDATE agent_run_checkpoints SET status='completed' WHERE run_id='selected'")
     assert.equal((await readActiveStatuses([1], owner)).get(1), false)
+    assert.deepEqual(await dispatch.active(owner, 1), { identity: null })
+    assert.equal((await dispatch.active(owner, 1, 'selected'))?.identity?.runId, 'selected')
   } finally { await pool.end(); await admin.query(`DROP SCHEMA "${schema}" CASCADE`); await admin.end() }
 })
 

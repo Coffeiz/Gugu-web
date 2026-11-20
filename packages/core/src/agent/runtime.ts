@@ -94,12 +94,13 @@ export interface AgentRuntimeContextFactoryOptions extends Omit<AgentRuntimeOpti
 
 /** 共享实际Provider实例的异步资源装配；旧同步入口保持原调用契约。 */
 export async function createAgentRuntimeWithContextFactory(options: AgentRuntimeContextFactoryOptions) {
+  const observation = options.observation ?? options.runtime.observation ?? options.provider.observation
   const connected = await connectProviderHarnessWithContextFactory(options.context, {
-    ...options.provider, observation: options.observation ?? options.runtime.observation ?? options.provider.observation,
+    ...options.provider, observation,
   })
   try {
     const harness = createCanonicalRunner({ context: connected.context, runPreparation: options.runPreparation,
-      executor: options.executor, runtime: { ...options.runtime, observation: options.observation, provider: connected.provider } })
+      executor: options.executor, runtime: { ...options.runtime, observation, provider: connected.provider } })
     return { harness, close: () => connected.provider.close() }
   } catch (error) { await connected.provider.close(); throw error }
 }

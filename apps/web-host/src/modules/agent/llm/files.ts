@@ -9,7 +9,7 @@ import type { ModelSnapshotBoundary } from './snapshot.js'
 /** 必须由 Host 解析完文件、默认值和环境值；versionMaterial 必须包含实际生效的密钥身份。 */
 export interface EffectiveModelConfiguration extends Omit<ModelSettingsSnapshot, 'accessScopeHash' | 'contextScopeKey'> {
   readonly versionMaterial: {
-    /** 当前和仍可使用的历史密钥，键为版本；禁用 BYOK 时可为空对象。 */
+    /** 当前和仍可使用的历史密钥，键为版本；没有已绑定用户凭据时可为空对象。 */
     readonly credentialsMasterKeys: Readonly<Record<string, string>>
     readonly permissionIdentity: string
     readonly environment: Readonly<Record<string, unknown>>
@@ -37,7 +37,7 @@ function readDocument(path: string): Record<string, unknown> {
     const value: unknown = JSON.parse(readFileSync(path, 'utf8'))
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error()
     return value as Record<string, unknown>
-  } catch { throw new Error('模型配置不存在或格式无效') }
+  } catch (error) { throw new Error('模型配置不存在或格式无效', { cause: error }) }
 }
 /** 实现内容版本，而非单调 revision；A→B→A 会恢复同一版本。 */
 export function createFileModelSnapshotBoundary(options: FileModelBoundaryOptions): ModelSnapshotBoundary {
@@ -61,8 +61,8 @@ export function createFileModelSnapshotBoundary(options: FileModelBoundaryOption
       signal.throwIfAborted()
       let effective: EffectiveModelConfiguration
       try { effective = options.resolveEffective(options.readDocument?.(options.path) ?? readDocument(options.path), identity) }
-      catch { throw new Error('无法解析有效模型配置') }
-      if (!effective || !effective.ai || typeof effective.ai.model !== 'string' || !effective.ai.model.trim() || typeof effective.byokEnabled !== 'boolean' || typeof effective.systemPrompt !== 'string' || !effective.versionMaterial || typeof effective.versionMaterial !== 'object' || !effective.versionMaterial.credentialsMasterKeys || typeof effective.versionMaterial.credentialsMasterKeys !== 'object' || Array.isArray(effective.versionMaterial.credentialsMasterKeys) || Object.values(effective.versionMaterial.credentialsMasterKeys).some(key => typeof key !== 'string' || !key) || (effective.byokEnabled || effective.ai.deployment_mode === 'local') && !Object.keys(effective.versionMaterial.credentialsMasterKeys).length || typeof effective.versionMaterial.permissionIdentity !== 'string' || !effective.versionMaterial.permissionIdentity || !effective.versionMaterial.environment || typeof effective.versionMaterial.environment !== 'object' || Array.isArray(effective.versionMaterial.environment)) throw new Error('有效模型配置不完整')
+      catch (error) { throw new Error('无法解析有效模型配置', { cause: error }) }
+      if (!effective || !effective.ai || typeof effective.ai.model !== 'string' || !effective.ai.model.trim() || typeof effective.byokEnabled !== 'boolean' || typeof effective.systemPrompt !== 'string' || !effective.versionMaterial || typeof effective.versionMaterial !== 'object' || !effective.versionMaterial.credentialsMasterKeys || typeof effective.versionMaterial.credentialsMasterKeys !== 'object' || Array.isArray(effective.versionMaterial.credentialsMasterKeys) || Object.values(effective.versionMaterial.credentialsMasterKeys).some(key => typeof key !== 'string' || !key) || typeof effective.versionMaterial.permissionIdentity !== 'string' || !effective.versionMaterial.permissionIdentity || !effective.versionMaterial.environment || typeof effective.versionMaterial.environment !== 'object' || Array.isArray(effective.versionMaterial.environment)) throw new Error('有效模型配置不完整')
       let version: string
       try {
         assertJson(effective)

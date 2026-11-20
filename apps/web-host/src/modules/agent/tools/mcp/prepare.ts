@@ -1,4 +1,4 @@
-import type { CanonicalRunPreparationPorts, RunIdentity } from '@gugu/core/agent'
+import type { AgentObservationPort, CanonicalRunPreparationPorts, RunIdentity } from '@gugu/core/agent'
 import type { AgentMcpToolPortsOptions } from './ports.js'
 
 type Configuration = Awaited<ReturnType<CanonicalRunPreparationPorts['configuration']>>
@@ -11,7 +11,9 @@ type Configuration = Awaited<ReturnType<CanonicalRunPreparationPorts['configurat
 export function createWebAgentMcpRunPreparation(
   base: Pick<CanonicalRunPreparationPorts, 'configuration'>,
   mcp?: Pick<AgentMcpToolPortsOptions, 'directory'>,
+  observation?: AgentObservationPort,
 ): CanonicalRunPreparationPorts['configuration'] {
+  let sequence = 0
   return async (identity: RunIdentity, signal: AbortSignal): Promise<Configuration> => {
     signal.throwIfAborted()
     const configuration = await base.configuration(identity, signal)
@@ -23,13 +25,28 @@ export function createWebAgentMcpRunPreparation(
       throw new Error('运行身份不匹配')
     if (!mcp) return configuration
 
-    const directory = await mcp.directory(identity.ownerId)
-    signal.throwIfAborted()
+    const startedAt = Date.now()
+    const spanId = `${identity.runId}:mcp-discovery:${++sequence}`
+    let directory: Awaited<ReturnType<NonNullable<typeof mcp>['directory']>>
+    try { directory = await mcp.directory(identity.ownerId); signal.throwIfAborted() }
+    catch (error) {
+      const endedAt = Date.now()
+      try { observation?.record({ identity, kind: 'context', name: 'MCP tool discovery', spanId,
+        at: endedAt, startedAt, endedAt, durationMs: Math.max(0, endedAt - startedAt), status: signal.aborted ? 'cancelled' : 'error',
+        output: {}, attributes: { context_source: 'mcp_tool_discovery', failure_reason: signal.aborted ? 'aborted' : 'discovery_failed' } }) }
+      catch { /* 观测失败不能改变工具授权结果。 */ }
+      throw error
+    }
     const names = new Set<string>()
     for (const tool of directory) {
       if (typeof tool.name === 'string' && tool.name.startsWith('mcp_') && tool.name.length <= 256)
         names.add(tool.name)
     }
+    const endedAt = Date.now()
+    try { observation?.record({ identity, kind: 'context', name: 'MCP tool discovery', spanId,
+      at: endedAt, startedAt, endedAt, durationMs: Math.max(0, endedAt - startedAt), status: 'success',
+      output: { tool_count: names.size }, attributes: { context_source: 'mcp_tool_discovery' } }) }
+    catch { /* 观测失败不能改变工具授权结果。 */ }
     return { ...configuration, toolNames: [...new Set([...configuration.toolNames, ...names])] }
   }
 }

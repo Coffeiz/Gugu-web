@@ -964,7 +964,6 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
 :deep(.chat-messages) {
   flex: 1; overflow-y: auto; overflow-x: hidden; position: relative;
 }
-.chat-main.is-expanded :deep(.chat-messages .msg.ai .msg-bubble) { max-width: 90%; font-size: 14px; }
 .chat-main.is-expanded :deep(.chat-messages .msg-quoted) { max-width: 72%; font-size: 13.5px; }
 /* 虚拟列表占位容器：高度由 JS 撑出来（虚拟内容高度 + 顶部留白），撑出的空间给绝对定位的消息行腾地方 */
 :deep(.msg-virtual-spacer) { position: relative; width: 100%; }
@@ -1063,6 +1062,7 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
   white-space: nowrap; word-break: normal; overflow-wrap: normal;
 }
 :deep(.msg.ai .msg-bubble) {
+  max-width: var(--chat-assistant-bubble-max-width, 88%);
   background: var(--gugu-chat-assistant-bg); border: 1px solid var(--gugu-chat-assistant-border);
   border-bottom-left-radius: 4px; box-shadow: inset 0 1px 0 var(--gugu-chat-file-highlight);
 }

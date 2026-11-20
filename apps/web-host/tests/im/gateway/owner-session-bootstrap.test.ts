@@ -19,6 +19,7 @@ test('真实owner绑定工具→本人Web历史继续；拒绝他人会话、成
  skip:!(databaseUrl&&redisUrl&&python)&&'需专用隔离PG/Redis与离线ORM解释器',timeout:120000,
 },async()=>{
  const f=await createImProductionFixture({python:python!,databaseUrl,platform:'telegram'}),redis=createRedisStreamCommands(redisUrl!)
+ await f.insert('user_preferences', { user_id: f.ownerId, data_json: JSON.stringify({ tool_injection_mode: 'full' }) })
  const marker='合成网页事实：下周计划去虚构月城',delivered:string[]=[],diagnostics:string[]=[],bodies:Record<string,unknown>[]=[]
  let runtime:ReturnType<typeof createNodeImHostRuntime>|undefined,previous:Set<string>|undefined,polls=0,mainCalls=0,summaryCalls=0,bindingChecksComplete=false
  try{

@@ -21,10 +21,11 @@ export function createCanonicalRunner(ports: {
     ...ports.runtime,
     context: createCanonicalContextPort(ports.runPreparation ? {
       ...ports.context,
+      observation: ports.runtime.observation,
       load: createCanonicalRunLoader(ports.context.load, ports.runPreparation, {
         ...ports.context.preparation, digest: ports.context.digest, nextId: ports.context.nextId,
-      }),
-    } : { ...ports.context, load: requirePreparedCapabilities(ports.context.load) }),
+      }, ports.runtime.observation),
+    } : { ...ports.context, observation: ports.runtime.observation, load: requirePreparedCapabilities(ports.context.load) }),
     execution: createHarnessExecutor(ports.executor),
     observationSnapshot(context) {
       const area = context.prepared.area
@@ -33,6 +34,9 @@ export function createCanonicalRunner(ports: {
         entries: area.entries.map(entry => ({ sequence: entry.sequence, source: entry.source,
           persistencePolicy: entry.persistencePolicy, message: entry.message })),
       }
+    },
+    toolSchemaSnapshot(context, toolName) {
+      return context.capabilities?.tools.find(tool => tool.name === toolName)?.schema ?? null
     },
     reply: createPortableReplyPolicy({ context: ports.replyContext ?? ((context) => context.replyContext) }),
   })

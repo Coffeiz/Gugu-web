@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { createAgentDispatchRuntime, createAgentRunStateReader } from '@gugu/core/agent'
-import type { CanonicalRunContext, RunIdentity } from '@gugu/core/agent'
+import type { AgentObservationPort, CanonicalRunContext, RunIdentity } from '@gugu/core/agent'
 import type { Pool } from 'pg'
 import { createRedisAgentCancellationCommands } from '../../../adapters/cache/redis-events.js'
 import { createRedisLiveSubscription } from '../../../adapters/cache/redis-live-subscription.js'
@@ -19,6 +19,7 @@ import { createPostgresWebAgentChatPreparation } from '../chat/web.js'
 export function createWebAgentRunLifecycle(options: {
   pool: Pick<Pool, 'query' | 'connect'>
   secretKey: string
+  observation?: AgentObservationPort
   redisUrl: string
   dispatchTtlSeconds: number
   accessVersion(identity: RunIdentity): Promise<string>
@@ -45,6 +46,7 @@ export function createWebAgentRunLifecycle(options: {
   const preparation = createPostgresWebAgentChatPreparation(options.pool, {
     dispatchSecret: options.secretKey,
     dispatchTtlSeconds: options.dispatchTtlSeconds,
+    observation: options.observation,
   })
   return createAgentDispatchRuntime<CanonicalRunContext, AgentDispatchLease, AgentChatInput>({
     dispatch,

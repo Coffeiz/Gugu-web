@@ -1,18 +1,62 @@
 
 import type { CanonicalMessage,CanonicalSourceLoaderResult,CapabilityCatalog,ContextData,ContextLoadPolicy,CurrentTurnSources,HistoryIdentity,Json,PreparationIdentity,PreparedToolDefinition,RunCapabilities,RunIdentity,SessionSnapshotState } from '../models.js'
 import { AgentRunError,isEarlyExit } from '../models.js'
+import { recordAgentObservation } from '../observation.js'
+import type { AgentObservationPort } from '../observation.js'
 import { copy,portableSnapshot,stableJson } from './history/canonical-history.js'
 import { loadSessionHistory } from './history/ordering.js'
 import type { CanonicalContextPorts,CanonicalRunPreparationPorts,CapabilityPreparationPorts,ContextDataPorts,ContextServices,ContextSourcePorts,PreparationPorts,SessionSnapshotPorts } from '../ports.js'
 import { buildRunRagContext,currentRunQuery } from './assemble.js'
 
 /** 权限策略由可信Host计算；受限群成员只能读取自己的scope记忆与时区，不能触碰owner域。 */
-export async function loadContextData(identity: HistoryIdentity, policy: ContextLoadPolicy, ports: ContextDataPorts, signal?: AbortSignal, query = ''): Promise<ContextData> {
+interface ContextSourceTrace {
+  identity: RunIdentity
+  observation?: AgentObservationPort
+  now(): number
+}
+
+const contextSourceNames: Record<string, string> = {
+  loadTimezone: 'DB · User timezone', loadProjects: 'DB · Projects', loadEvents: 'DB · Calendar events',
+  loadNotes: 'DB · Recent notes', loadFilesOverview: 'DB · Files overview',
+  loadStylePreferences: 'DB · Reply style preferences', loadImChannels: 'IM channel state',
+  loadMemory: 'Memory retrieval', loadImMemory: 'Dynamic memory', loadKnowledge: 'Knowledge overview',
+}
+
+function loadContextSource<T extends Json>(trace: ContextSourceTrace | undefined, loader: string, input: Record<string, unknown>, load: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!trace?.observation)
+    return load()
+  const startedAt = trace.now()
+  return load().then(value => {
+    const endedAt = trace.now()
+    recordAgentObservation(trace.observation, {
+      identity: trace.identity, kind: 'context', name: contextSourceNames[loader] ?? loader,
+      spanId: `${trace.identity.runId}:context-source:${loader}`, at: endedAt,
+      startedAt, endedAt, durationMs: Math.max(0, endedAt - startedAt), status: 'success',
+      input: { loader, ...input }, output: value,
+      attributes: { context_source: loader, loader, ...(Array.isArray(value) || value && typeof value === 'object' ? { result_count: Array.isArray(value) ? value.length : Object.keys(value).length } : {}) },
+    })
+    return value
+  }, error => {
+    const endedAt = trace.now()
+    recordAgentObservation(trace.observation, {
+      identity: trace.identity, kind: 'context', name: contextSourceNames[loader] ?? loader,
+      spanId: `${trace.identity.runId}:context-source:${loader}`, at: endedAt,
+      startedAt, endedAt, durationMs: Math.max(0, endedAt - startedAt),
+      status: signal?.aborted ? 'cancelled' : 'error', input: { loader, ...input }, output: {},
+      attributes: { context_source: loader, loader, failure_reason: signal?.aborted ? 'aborted' : 'source_failed' },
+    })
+    throw error
+  })
+}
+
+export async function loadContextData(identity: HistoryIdentity, policy: ContextLoadPolicy, ports: ContextDataPorts, signal?: AbortSignal, query = '', trace?: ContextSourceTrace): Promise<ContextData> {
   signal?.throwIfAborted()
-  const userTimezone = await ports.loadTimezone(identity, signal)
+  const read = <T extends Json>(loader: string, input: Record<string, unknown>, load: () => Promise<T>, sourceSignal = signal): Promise<T> =>
+    loadContextSource(trace, loader, input, load, sourceSignal)
+  const userTimezone = await read('loadTimezone', {}, () => ports.loadTimezone(identity, signal))
   signal?.throwIfAborted()
   if (!policy.loadOwnerContext) {
-    const imMemory = await ports.loadImMemory(identity, signal)
+    const imMemory = await read('loadImMemory', {}, () => ports.loadImMemory(identity, signal))
     signal?.throwIfAborted()
     return { projects: [], userTimezone, events: [], notes: [], filesOverview: {}, stylePreferences: {}, memory: {}, imChannels: {}, imMemory: copy(imMemory), knowledge: [] }
   }
@@ -30,22 +74,22 @@ export async function loadContextData(identity: HistoryIdentity, policy: Context
     error: unknown
   }> => Promise.resolve().then(operation)
     .then(value => ({ ok: true as const, value }), error => { cancel.abort(error); return { ok: false as const, error } })
-  const memory = policy.memoryEnabled ? start(() => ports.loadMemory(identity, cancel.signal, query)) : Promise.resolve({ ok: true as const, value: {} })
-  const imMemory = start(() => ports.loadImMemory(identity, cancel.signal))
-  const knowledge = start(() => ports.loadKnowledge(identity, cancel.signal))
+  const memory = policy.memoryEnabled ? start(() => read('loadMemory', { query }, () => ports.loadMemory(identity, cancel.signal, query), cancel.signal)) : Promise.resolve({ ok: true as const, value: {} })
+  const imMemory = start(() => read('loadImMemory', {}, () => ports.loadImMemory(identity, cancel.signal), cancel.signal))
+  const knowledge = start(() => read('loadKnowledge', {}, () => ports.loadKnowledge(identity, cancel.signal), cancel.signal))
   try {
     cancel.signal.throwIfAborted()
-    const projects = await ports.loadProjects(identity, cancel.signal)
+    const projects = await read('loadProjects', {}, () => ports.loadProjects(identity, cancel.signal), cancel.signal)
     cancel.signal.throwIfAborted()
-    const events = await ports.loadEvents(identity, userTimezone, cancel.signal)
+    const events = await read('loadEvents', { timezone: userTimezone }, () => ports.loadEvents(identity, userTimezone, cancel.signal), cancel.signal)
     cancel.signal.throwIfAborted()
-    const notes = await ports.loadNotes(identity, cancel.signal)
+    const notes = await read('loadNotes', {}, () => ports.loadNotes(identity, cancel.signal), cancel.signal)
     cancel.signal.throwIfAborted()
-    const filesOverview = await ports.loadFilesOverview(identity, cancel.signal)
+    const filesOverview = await read('loadFilesOverview', {}, () => ports.loadFilesOverview(identity, cancel.signal), cancel.signal)
     cancel.signal.throwIfAborted()
-    const stylePreferences = await ports.loadStylePreferences(identity, cancel.signal)
+    const stylePreferences = await read('loadStylePreferences', {}, () => ports.loadStylePreferences(identity, cancel.signal), cancel.signal)
     cancel.signal.throwIfAborted()
-    const imChannels = await ports.loadImChannels(identity, cancel.signal)
+    const imChannels = await read('loadImChannels', {}, () => ports.loadImChannels(identity, cancel.signal), cancel.signal)
     const auxiliary = await Promise.all([memory, imMemory, knowledge])
     for (const result of auxiliary)
       if (!result.ok)
@@ -73,10 +117,10 @@ export async function loadContextData(identity: HistoryIdentity, policy: Context
 /** Core内统一来源顺序：owned snapshot → 可信模型策略 → 快照hit/rebuild → 连续历史 → 当前输入。
  * RAG由prepareContext在相同有效历史与排他水位上构建一次，不在来源阶段重复召回。
  */
-export function createCanonicalSourceLoader(ports: ContextSourcePorts): {
+export function createCanonicalSourceLoader(ports: ContextSourcePorts, observation?: AgentObservationPort): {
   load(identity: RunIdentity, signal: AbortSignal): Promise<CanonicalSourceLoaderResult>
 } {
-  return { load: (identity, signal) => prepareRunContextSources(identity, ports, signal) }
+  return { load: (identity, signal) => prepareRunContextSources(identity, ports, signal, observation) }
 }
 
 /** 供可信 Host 与来源加载器共用；scope key 不得包含凭据或明文隐私。 */
@@ -87,7 +131,7 @@ export function contextAccessScopeHash(identity: HistoryIdentity, selection: Pic
     scope_key: selection.contextScopeKey ?? 'owner', load_owner_context: selection.contextPolicy.loadOwnerContext, memory_enabled: selection.contextPolicy.memoryEnabled })
 }
 
-export async function prepareRunContextSources(identity: RunIdentity, ports: ContextSourcePorts, signal?: AbortSignal): Promise<CanonicalSourceLoaderResult> {
+export async function prepareRunContextSources(identity: RunIdentity, ports: ContextSourcePorts, signal?: AbortSignal, observation?: AgentObservationPort): Promise<CanonicalSourceLoaderResult> {
   const scope = copy(identity)
   signal?.throwIfAborted()
   const original = await ports.readSnapshot(copy(scope), signal)
@@ -100,31 +144,131 @@ export async function prepareRunContextSources(identity: RunIdentity, ports: Con
   const accessScopeHash = contextAccessScopeHash(scope, selection, ports.digest)
   signal?.throwIfAborted()
   let currentTurnPromise: Promise<CurrentTurnSources> | null = null
-  const readCurrentTurn = (requestSignal?: AbortSignal) => currentTurnPromise ??= ports.currentTurn(copy(scope), requestSignal ?? signal)
-  const snapshot = await ensureSessionSnapshot(scope, original, {
-    digest: ports.digest, nextId: ports.nextId, now: ports.now,
-    currentRevision: (_, requestSignal) => ports.currentRevision(copy(scope), requestSignal),
-    loadContext: async (_, requestSignal) => {
-      const current = await readCurrentTurn(requestSignal)
-      requestSignal?.throwIfAborted()
-      const data = await loadContextData(copy(scope), selection.contextPolicy, ports.data, requestSignal,
-        current.currentUser?.rawText ?? current.query ?? '')
-      requestSignal?.throwIfAborted()
-      return ports.builder.buildSnapshot(copy(data), copy(selection), copy(scope))
-    },
-  }, { locale: selection.locale, workspaceBinding: selection.workspaceBinding, accessScopeHash, signal })
+  const readCurrentTurn = (requestSignal?: AbortSignal) => currentTurnPromise ??= (() => {
+    const startedAt = ports.now()
+    return ports.currentTurn(copy(scope), requestSignal ?? signal).then(value => {
+      const endedAt = ports.now()
+      recordAgentObservation(observation, {
+        identity: scope, kind: 'context', name: 'Current message and attachment preparation',
+        spanId: `${scope.runId}:current-message-preparation`, at: endedAt, startedAt, endedAt,
+        durationMs: Math.max(0, endedAt - startedAt), status: 'success',
+        output: {
+          current_user_count: value.currentUsers?.length ?? (value.currentUser ? 1 : 0),
+          current_users_in_history: value.currentUsersInHistory === true,
+          has_query: typeof value.query === 'string' && value.query.length > 0,
+        },
+        attributes: { context_source: 'current_message_preparation' },
+      })
+      return value
+    }, error => {
+      const endedAt = ports.now()
+      const cancelled = requestSignal?.aborted === true || signal?.aborted === true
+      recordAgentObservation(observation, {
+        identity: scope, kind: 'context', name: 'Current message and attachment preparation',
+        spanId: `${scope.runId}:current-message-preparation`, at: endedAt, startedAt, endedAt,
+        durationMs: Math.max(0, endedAt - startedAt), status: cancelled ? 'cancelled' : 'error',
+        output: {}, attributes: { context_source: 'current_message_preparation', failure_reason: cancelled ? 'aborted' : 'materialization_failed' },
+      })
+      throw error
+    })
+  })()
+  const snapshotStartedAt = ports.now()
+  let snapshot: Awaited<ReturnType<typeof ensureSessionSnapshot>>
+  try {
+    snapshot = await ensureSessionSnapshot(scope, original, {
+      digest: ports.digest, nextId: ports.nextId, now: ports.now,
+      currentRevision: (_, requestSignal) => ports.currentRevision(copy(scope), requestSignal),
+      loadContext: async (_, requestSignal) => {
+        const current = await readCurrentTurn(requestSignal)
+        requestSignal?.throwIfAborted()
+        const data = await loadContextData(copy(scope), selection.contextPolicy, ports.data, requestSignal,
+          current.currentUser?.rawText ?? current.query ?? '', { identity: scope, observation, now: ports.now })
+        requestSignal?.throwIfAborted()
+        const payload = ports.builder.buildSnapshot(copy(data), copy(selection), copy(scope))
+        const assembledAt = ports.now()
+        recordAgentObservation(observation, {
+          identity: scope, kind: 'context', name: 'Context assembly & prompt',
+          spanId: `${scope.runId}:context:snapshot-assembly`, at: assembledAt,
+          startedAt: assembledAt, endedAt: assembledAt, durationMs: 0, status: 'success',
+          input: {
+            project_count: Array.isArray(data.projects) ? data.projects.length : 0,
+            event_count: Array.isArray(data.events) ? data.events.length : 0,
+            note_count: Array.isArray(data.notes) ? data.notes.length : 0,
+            knowledge_count: Array.isArray(data.knowledge) ? data.knowledge.length : 0,
+            locale: selection.locale, timezone: data.userTimezone,
+          },
+          output: { system_prompt: payload.systemPrompt, snapshot_context: payload.snapshotContext },
+          attributes: { context_source: 'prompt_assembly', phase: 'snapshot_rebuild' },
+        })
+        return payload
+      },
+    }, { locale: selection.locale, workspaceBinding: selection.workspaceBinding, accessScopeHash, signal })
+  }
+  catch (error) {
+    const endedAt = ports.now()
+    recordAgentObservation(observation, {
+      identity: scope, kind: 'context', name: 'Session snapshot', spanId: `${scope.runId}:session-snapshot`,
+      at: endedAt, startedAt: snapshotStartedAt, endedAt, durationMs: Math.max(0, endedAt - snapshotStartedAt),
+      status: signal?.aborted ? 'cancelled' : 'error',
+      input: { phase: 'prepare', context_epoch: original.contextEpoch, snapshot_hash: original.snapshotHash ?? '', session_info_hash: original.sessionInfoHash ?? '' },
+      output: { phase: 'failed' }, attributes: { context_source: 'snapshot_event', snapshot_event: true, failure_reason: signal?.aborted ? 'aborted' : 'snapshot_prepare_failed' },
+    })
+    throw error
+  }
+  const snapshotEndedAt = ports.now()
+  recordAgentObservation(observation, {
+    identity: scope, kind: 'context', name: 'Session snapshot', spanId: `${scope.runId}:session-snapshot`,
+    at: snapshotEndedAt, startedAt: snapshotStartedAt, endedAt: snapshotEndedAt,
+    durationMs: Math.max(0, snapshotEndedAt - snapshotStartedAt), status: 'success',
+    input: { phase: snapshot.phase, context_epoch: snapshot.expectedEpoch, snapshot_hash: original.snapshotHash ?? '', session_info_hash: original.sessionInfoHash ?? '', expires_at: snapshot.state.snapshotExpiresAt ?? null },
+    output: { phase: snapshot.phase, context_epoch: snapshot.state.contextEpoch },
+    attributes: { context_source: 'snapshot_event', snapshot_event: true },
+  })
   const baseline = snapshotHistoryBaseline(snapshot.state)
-  const history = await loadSessionHistory(scope, {
-    read: async (_, requestSignal) => {
-      const read = await ports.historyReader.read(copy(scope), requestSignal)
-      return { ...read, baselineSeq: Math.max(read.baselineSeq, baseline) }
-    },
-    ...(ports.historyReader.hydrateReferences ? { hydrateReferences: (_, rows, requestSignal) => ports.historyReader.hydrateReferences!(copy(scope), rows, requestSignal) } : {}),
-    ...(ports.historyReader.images ? { images: ports.historyReader.images } : {}),
-  }, signal, { loadImages: selection.allowHistoricalImages })
+  const historyStartedAt = ports.now()
+  let history: Awaited<ReturnType<typeof loadSessionHistory>>
+  try {
+    history = await loadSessionHistory(scope, {
+      read: async (_, requestSignal) => {
+        const read = await ports.historyReader.read(copy(scope), requestSignal)
+        return { ...read, baselineSeq: Math.max(read.baselineSeq, baseline) }
+      },
+      ...(ports.historyReader.hydrateReferences ? { hydrateReferences: (_, rows, requestSignal) => ports.historyReader.hydrateReferences!(copy(scope), rows, requestSignal) } : {}),
+      ...(ports.historyReader.images ? { images: ports.historyReader.images } : {}),
+    }, signal, { loadImages: selection.allowHistoricalImages })
+  }
+  catch (error) {
+    const historyEndedAt = ports.now()
+    recordAgentObservation(observation, {
+      identity: scope, kind: 'history', name: 'Initial conversation history', spanId: `${scope.runId}:initial-history`,
+      at: historyEndedAt, startedAt: historyStartedAt, endedAt: historyEndedAt,
+      durationMs: Math.max(0, historyEndedAt - historyStartedAt), status: signal?.aborted ? 'cancelled' : 'error',
+      input: { baseline_message_seq: baseline, allow_historical_images: selection.allowHistoricalImages }, output: {},
+      attributes: { context_source: 'initial_history', failure_reason: signal?.aborted ? 'aborted' : 'history_load_failed' },
+    })
+    throw error
+  }
+  const historyEndedAt = ports.now()
+  recordAgentObservation(observation, {
+    identity: scope, kind: 'history', name: 'Initial conversation history', spanId: `${scope.runId}:initial-history`,
+    at: historyEndedAt, startedAt: historyStartedAt, endedAt: historyEndedAt,
+    durationMs: Math.max(0, historyEndedAt - historyStartedAt), status: 'success',
+    input: { baseline_message_seq: baseline, allow_historical_images: selection.allowHistoricalImages },
+    output: history.rows,
+    attributes: { context_source: 'initial_history', row_count: history.rows.length, baseline_message_seq: baseline },
+  })
   const current = await readCurrentTurn(signal)
   signal?.throwIfAborted()
   const request = ports.builder.buildRequest(copy(snapshot.payload), copy(selection), copy(scope))
+  const requestBuiltAt = ports.now()
+  recordAgentObservation(observation, {
+    identity: scope, kind: 'context', name: 'System prompt and snapshot prefix',
+    spanId: `${scope.runId}:context:request-prompt`, at: requestBuiltAt,
+    startedAt: requestBuiltAt, endedAt: requestBuiltAt, durationMs: 0, status: 'success',
+    input: { snapshot_phase: snapshot.phase, system_in_messages: request.systemInMessages },
+    output: { system_prompt: request.systemPrompt, fixed_prefix: request.fixedPrefix },
+    attributes: { context_source: 'prompt_assembly', phase: 'provider_request' },
+  })
   return {
     modelIdentity: selection.modelIdentity, contextWindow: selection.contextWindow,
     input: {
@@ -311,6 +455,9 @@ export function updateBaselineSnapshot(original: SessionSnapshotState, messages:
 export async function discoverToolsAndRecall<Tools, Rag>(ports: {
   discover: (signal: AbortSignal) => Promise<Tools>
   recall: (signal: AbortSignal) => Promise<Rag>
+  observation?: AgentObservationPort
+  identity?: RunIdentity
+  now?: () => number
 }, signal?: AbortSignal): Promise<{
   tools: Tools
   rag: Rag
@@ -321,8 +468,115 @@ export async function discoverToolsAndRecall<Tools, Rag>(ports: {
     throw new AgentRunError('cancelled', '准备已取消')
   signal?.addEventListener('abort', cancelled, { once: true })
   // 两个端口都必须响应 signal，并在返回或抛出前释放自己的短事务/连接。
-  const tools = Promise.resolve().then(() => ports.discover(controller.signal))
-  const rag = Promise.resolve().then(() => ports.recall(controller.signal))
+  const now = ports.now ?? Date.now
+  const wasCancelled = () => signal?.aborted === true || controller.signal.aborted
+  const measured = async <T>(name: string, spanId: string, operation: () => Promise<T>, summarize: (value: T) => Json): Promise<T> => {
+    const startedAt = now()
+    try {
+      const value = await operation()
+      const endedAt = now()
+      const summary = summarize(value)
+      const ragReason = name === 'Automatic RAG retrieval' && summary && typeof summary === 'object' && !Array.isArray(summary)
+        ? (summary as Record<string, Json>).reason : undefined
+      const status = typeof ragReason === 'string' && ['timeout', 'capacity_exceeded', 'internal_error', 'unavailable'].includes(ragReason)
+        ? 'error' : 'success'
+      if (ports.observation && ports.identity)
+        recordAgentObservation(ports.observation, {
+          identity: ports.identity, kind: 'context', name, spanId, at: endedAt, startedAt, endedAt,
+          durationMs: Math.max(0, endedAt - startedAt), status, output: summary,
+          attributes: { context_source: name === 'Automatic RAG retrieval' ? 'rag_retrieval' : 'tool_discovery',
+            ...(status === 'error' && typeof ragReason === 'string' ? { failure_reason: ragReason } : {}) },
+        })
+      return value
+    }
+    catch (error) {
+      const endedAt = now()
+      if (ports.observation && ports.identity)
+        recordAgentObservation(ports.observation, {
+          identity: ports.identity, kind: 'context', name, spanId, at: endedAt, startedAt, endedAt,
+          durationMs: Math.max(0, endedAt - startedAt), status: wasCancelled() ? 'cancelled' : 'error',
+          output: {}, attributes: { context_source: name === 'Automatic RAG retrieval' ? 'rag_retrieval' : 'tool_discovery', failure_reason: wasCancelled() ? 'aborted' : 'preparation_failed' },
+        })
+      throw error
+    }
+  }
+  const tools = Promise.resolve().then(() => measured('Tool discovery', `${ports.identity?.runId}:tool-discovery`, () => ports.discover(controller.signal), value => ({
+    tool_count: Array.isArray(value) ? value.length : 0,
+  })))
+  const rag = Promise.resolve().then(() => measured('Automatic RAG retrieval', `${ports.identity?.runId}:rag-retrieval`, () => ports.recall(controller.signal), value => {
+    const context = value && typeof value === 'object' && !Array.isArray(value) ? value as {
+      tail?: unknown
+      injected?: unknown
+      reason?: unknown
+      scope_hits?: unknown
+      diagnostics?: unknown
+    } : {}
+    const diagnostics = context.diagnostics && typeof context.diagnostics === 'object' && !Array.isArray(context.diagnostics)
+      ? context.diagnostics as Record<string, unknown> : undefined
+    const diagnosticFields = ['engine', 'index_version', 'scope_type', 'vector_doc_count', 'candidate_count', 'accepted_count', 'eligible_count',
+      'filtered_count', 'rejected_duplicate', 'rejected_parent', 'rejected_source', 'rejected_similarity',
+      'rejected_low_score', 'rejected_not_preferred', 'output_chars', 'elapsed_ms', 'top_confidence',
+      'threshold', 'preferred_threshold', 'selection_mode', 'scoring_version', 'rescore_version', 'idf_source',
+      'contribution_exponent', 'fallback_reason']
+    const scalarDiagnostics: Record<string, Json> = {}
+    for (const key of diagnosticFields) {
+      const item = diagnostics?.[key]
+      if (item === null || ['string', 'boolean', 'number'].includes(typeof item))
+        scalarDiagnostics[key] = item as Json
+    }
+    if (diagnostics?.stage_ms && typeof diagnostics.stage_ms === 'object' && !Array.isArray(diagnostics.stage_ms)) {
+      const stages = Object.fromEntries(Object.entries(diagnostics.stage_ms as Record<string, unknown>)
+        .filter(([, value]) => typeof value === 'number' && Number.isFinite(value)))
+      if (Object.keys(stages).length) scalarDiagnostics.stage_ms = stages as Json
+    }
+    if (diagnostics?.source_diagnostics && typeof diagnostics.source_diagnostics === 'object' && !Array.isArray(diagnostics.source_diagnostics)) {
+      const sources = Object.fromEntries(Object.entries(diagnostics.source_diagnostics as Record<string, unknown>).flatMap(([name, value]) => {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return []
+        const counts = Object.fromEntries(Object.entries(value as Record<string, unknown>)
+          .filter(([, count]) => typeof count === 'number' && Number.isFinite(count)))
+        return Object.keys(counts).length ? [[name, counts]] : []
+      }))
+      if (Object.keys(sources).length) scalarDiagnostics.source_diagnostics = sources as Json
+    }
+    if (Array.isArray(diagnostics?.rank_details)) {
+      scalarDiagnostics.rank_details = diagnostics.rank_details.flatMap(item => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) return []
+        const row = item as Record<string, unknown>, summary: Record<string, Json> = {}
+        for (const key of ['rank', 'source_quality', 'query_match', 'fused_score', 'normalized_score', 'semantic_norm', 'confidence', 'rank_score', 'query_idf_baseline'])
+          if (typeof row[key] === 'number' && Number.isFinite(row[key])) summary[key] = row[key] as number
+        if (typeof row.source_type === 'string') summary.source_type = row.source_type
+        if (Array.isArray(row.contributions)) {
+          summary.contributions = row.contributions.flatMap(contribution => {
+            if (!contribution || typeof contribution !== 'object' || Array.isArray(contribution)) return []
+            const source = contribution as Record<string, unknown>, value: Record<string, Json> = {}
+            if (typeof source.term === 'string') value.term = source.term
+            for (const key of ['idf', 'query_weight', 'term_frequency', 'weighted', 'nonlinear'])
+              if (typeof source[key] === 'number' && Number.isFinite(source[key])) value[key] = source[key] as number
+            return [value]
+          })
+        }
+        return [summary]
+      })
+    }
+    const scopeHits = Array.isArray(context.scope_hits) ? context.scope_hits.flatMap(hit => {
+      if (!hit || typeof hit !== 'object' || Array.isArray(hit)) return []
+      const row = hit as Record<string, unknown>
+      const summary: Record<string, Json> = {}
+      if (typeof row.scope === 'string') summary.scope = row.scope
+      for (const key of ['candidate_count', 'hit_count'])
+        if (typeof row[key] === 'number' && Number.isFinite(row[key])) summary[key] = row[key] as number
+      return [summary]
+    }) : undefined
+    return {
+      message_count: Array.isArray(context.tail) ? context.tail.length : 0,
+      // LoopScope 需要能还原实际交给 Agent 的 RAG 内容；普通日志不经过这里。
+      ...(Array.isArray(context.tail) ? { rag_messages: context.tail as Json[] } : {}),
+      ...(typeof context.injected === 'boolean' ? { injected: context.injected } : {}),
+      ...(typeof context.reason === 'string' ? { reason: context.reason } : {}),
+      ...(scopeHits ? { scope_hits: scopeHits } : {}),
+      ...(Object.keys(scalarDiagnostics).length ? { diagnostics: scalarDiagnostics } : {}),
+    }
+  }))
   try {
     const [found, recalled] = await Promise.all([tools, rag])
     if (controller.signal.aborted)
@@ -359,6 +613,7 @@ export async function prepareRunCapabilities(input: {
   system: string
   snapshot: string
   catalog: CapabilityCatalog | null
+  shellReminder: string
 }> {
   signal?.throwIfAborted()
   const identity: PreparationIdentity = Object.freeze({
@@ -381,19 +636,32 @@ export async function prepareRunCapabilities(input: {
     throw new AgentRunError('invalid_state', '配置过滤不得扩大工具集合')
   names = [...configured]
   let system = input.system
+  let shellState: string | null = null
   if (names.includes('shell')) {
     const state = await ports.shellState(identity, signal)
     signal?.throwIfAborted()
     if (state == null)
       names = names.filter((name) => name !== 'shell')
-    else
-      system = [ports.appendShellProtocol(system), state].join(separator)
+    else shellState = state
   }
   const selectedTools = input.tools?.filter(tool => names.includes(tool.name)).map(copy)
   const catalog = await ports.catalog(Object.freeze([...names]), identity, selectedTools, signal, {
     query: input.query ?? '', ...(input.userSkillSnapshot !== undefined ? { userSkillSnapshot: copy([...input.userSkillSnapshot]) } : {}),
   })
   signal?.throwIfAborted()
+  const fileGuidance = shellState === null ? '' : [
+    '文件操作优先用已授权的 shell，使用沙箱路径。先用 pwd 或 ls 确认可见目录。',
+    '个人文件在 /personal，默认工作区在 /workspace/default，其他工作区在 /workspace/<工作区目录名>，项目文件在 /project 下。使用已知挂载路径，目录名和项目路径以实际返回为准。',
+    '浏览目录、查找文件、读取文本和普通文件操作用 shell。当前挂载、只读范围和写入确认规则照常生效；遇到权限限制先走正常授权流程。',
+    ...(names.includes('get_project') ? ['查询项目后优先用 get_project 返回的 sandbox_path 定位项目目录。'] : []),
+    ...(names.includes('view_image') ? ['找到图片后用 view_image 的 path 查看图片内容。'] : []),
+    ...(names.includes('delete_file') ? ['删除文件时优先用 delete_file 移入回收站。'] : []),
+  ].join('\n')
+  const shellReminder = shellState === null ? '' : catalog?.fixedAdapter
+    ? [ports.appendShellProtocol('').trim(), shellState, fileGuidance].filter(Boolean).join(separator)
+    : ''
+  if (shellState !== null && !catalog?.fixedAdapter)
+    system = [ports.appendShellProtocol(system), shellState, fileGuidance].filter(Boolean).join(separator)
   let snapshot = input.snapshot
   if (catalog) {
     if (!Array.isArray(catalog.userSkills)) throw new AgentRunError('invalid_state', '能力目录必须提供明确的用户技能快照')
@@ -401,11 +669,11 @@ export async function prepareRunCapabilities(input: {
     portableSnapshot(catalog.userSkills)
     if (input.userSkillSnapshot !== undefined && stableJson(catalog.userSkills) !== stableJson(input.userSkillSnapshot))
       throw new AgentRunError('invalid_state', '能力目录改变了已冻结的用户技能快照')
-    if (!catalog.metadataOnly)
+    if (!catalog.metadataOnly && !catalog.fixedAdapter)
       system = [system, catalog.toolCatalog].join(separator)
     snapshot = [snapshot, catalog.skillCatalog].join(separator)
   }
-  return { toolNames: Object.freeze(names), system, snapshot, catalog }
+  return { toolNames: Object.freeze(names), system, snapshot, catalog, shellReminder }
 }
 
 export function assertRunCapabilities(value: RunCapabilities): void {
@@ -415,7 +683,10 @@ export function assertRunCapabilities(value: RunCapabilities): void {
     || value.tools.length !== value.toolNames.length
     || value.tools.some(tool => !tool || typeof tool.name !== 'string' || !value.toolNames.includes(tool.name)
       || !tool.schema || typeof tool.schema !== 'object' || Array.isArray(tool.schema))
-    || new Set(value.tools.map(tool => tool.name)).size !== value.tools.length)
+    || new Set(value.tools.map(tool => tool.name)).size !== value.tools.length
+    || (value.providerToolNames !== undefined && (!Array.isArray(value.providerToolNames)
+      || new Set(value.providerToolNames).size !== value.providerToolNames.length
+      || value.providerToolNames.some(name => !value.toolNames.includes(name)))))
     throw new AgentRunError('invalid_state', '本轮能力缺少一致的名称和稳定Schema')
 }
 
@@ -432,11 +703,22 @@ export function requirePreparedCapabilities(load: CanonicalContextPorts['load'])
 /** 推荐准备主链：来源 → 并发发现/一次RAG → 能力过滤与目录 → 固定前缀 → Canonical。
  * load只负责owned来源与早退；外部adapter不得再次实现这套顺序。
  */
-export function createCanonicalRunLoader(load: CanonicalContextPorts['load'], ports: CanonicalRunPreparationPorts, rag: PreparationPorts): CanonicalContextPorts['load'] {
+export function createCanonicalRunLoader(load: CanonicalContextPorts['load'], ports: CanonicalRunPreparationPorts, rag: PreparationPorts, observation?: AgentObservationPort): CanonicalContextPorts['load'] {
   return async (identity, signal) => {
+    const preparationStartedAt = Date.now()
+    const prepare = async () => {
     const received = await load(copy(identity), signal)
-    if (isEarlyExit(received))
+    if (isEarlyExit(received)) {
+      const preparationEndedAt = Date.now()
+      recordAgentObservation(observation, {
+        identity, kind: 'context', name: 'Run context preparation', spanId: `${identity.runId}:run-preparation`,
+        at: preparationEndedAt, startedAt: preparationStartedAt, endedAt: preparationEndedAt,
+        durationMs: Math.max(0, preparationEndedAt - preparationStartedAt), status: received.response.errored ? 'error' : 'success',
+        output: { early_exit: true, reason: received.reason },
+        attributes: { context_source: 'run_preparation', ...(received.response.errored ? { failure_reason: received.reason } : {}) },
+      })
       return received
+    }
     const loaded = copy(received)
     if (loaded.input.ownerId !== identity.ownerId || loaded.input.sessionId !== identity.sessionId)
       throw new AgentRunError('not_found', '准备来源不存在')
@@ -449,8 +731,9 @@ export function createCanonicalRunLoader(load: CanonicalContextPorts['load'], po
     if (config.toolNames.some(name => typeof name !== 'string' || !name) || new Set(config.toolNames).size !== config.toolNames.length)
       throw new AgentRunError('invalid_state', '工具候选名称无效')
     const discovered = await discoverToolsAndRecall({
-      discover: abort => ports.discover(copy({ identity: config.identity, toolNames: config.toolNames }), abort),
+      discover: abort => ports.discover(copy({ identity: config.identity, toolNames: config.toolNames }), abort, config),
       recall: abort => buildRunRagContext(loaded.input, rag, abort),
+      observation, identity, now: Date.now,
     }, signal)
     const tools = portableSnapshot(discovered.tools) as unknown as PreparedToolDefinition[]
     if (!Array.isArray(tools) || tools.some(tool => !tool || typeof tool.name !== 'string' || !tool.name
@@ -461,11 +744,35 @@ export function createCanonicalRunLoader(load: CanonicalContextPorts['load'], po
     const snapshotContext = loaded.sourceEffects?.sessionSnapshot.state.context
     const frozenSkills = snapshotContext?.user_skill_snapshot
     if (frozenSkills !== undefined && !Array.isArray(frozenSkills)) throw new AgentRunError('invalid_state', '会话用户技能快照格式无效')
-    const prepared = await prepareRunCapabilities({
-      identity: config.identity, source: config.source,
-      toolNames: candidates, system: loaded.input.systemPrompt ?? '', snapshot: loaded.input.snapshotText ?? '', tools: copy(tools),
-      query: currentRunQuery(loaded.input), ...(frozenSkills !== undefined ? { userSkillSnapshot: frozenSkills as Json[] } : {}),
-    }, ports.capabilities, signal)
+    const capabilityStartedAt = Date.now()
+    let prepared: Awaited<ReturnType<typeof prepareRunCapabilities>>
+    try {
+      prepared = await prepareRunCapabilities({
+        identity: config.identity, source: config.source,
+        toolNames: candidates, system: loaded.input.systemPrompt ?? '', snapshot: loaded.input.snapshotText ?? '', tools: copy(tools),
+        query: currentRunQuery(loaded.input), ...(frozenSkills !== undefined ? { userSkillSnapshot: frozenSkills as Json[] } : {}),
+      }, ports.capabilities, signal)
+    }
+    catch (error) {
+      const capabilityEndedAt = Date.now()
+      recordAgentObservation(observation, {
+        identity, kind: 'context', name: 'Capability preparation', spanId: `${identity.runId}:capability-preparation`,
+        at: capabilityEndedAt, startedAt: capabilityStartedAt, endedAt: capabilityEndedAt,
+        durationMs: Math.max(0, capabilityEndedAt - capabilityStartedAt), status: signal?.aborted ? 'cancelled' : 'error',
+        input: { candidate_tool_count: candidates.length }, output: {},
+        attributes: { context_source: 'capability_preparation', failure_reason: signal?.aborted ? 'aborted' : 'preparation_failed' },
+      })
+      throw error
+    }
+    const capabilityEndedAt = Date.now()
+    recordAgentObservation(observation, {
+      identity, kind: 'context', name: 'Capability preparation', spanId: `${identity.runId}:capability-preparation`,
+      at: capabilityEndedAt, startedAt: capabilityStartedAt, endedAt: capabilityEndedAt,
+      durationMs: Math.max(0, capabilityEndedAt - capabilityStartedAt), status: 'success',
+      input: { candidate_tool_count: candidates.length },
+      output: { selected_tool_count: prepared.toolNames.length, catalog_loaded: prepared.catalog !== null },
+      attributes: { context_source: 'capability_preparation' },
+    })
     signal.throwIfAborted()
     const selected = tools.filter(tool => prepared.toolNames.includes(tool.name))
     if (prepared.toolNames.some(name => !selected.some(tool => tool.name === name)))
@@ -474,17 +781,54 @@ export function createCanonicalRunLoader(load: CanonicalContextPorts['load'], po
     const userSkills = prepared.catalog ? copy([...prepared.catalog.userSkills]) : undefined
     if (snapshotContext && frozenSkills === undefined && userSkills !== undefined)
       snapshotContext.user_skill_snapshot = copy(userSkills)
-    return {
+    const fixedAdapter = prepared.catalog?.fixedAdapter === true
+    // 固定顺序与旧版 Provider 元工具一致，群回复门仅在可信群运行内追加。
+    const providerToolNames = fixedAdapter
+      ? ['call_tool', 'get_tool_schema', 'use_skill', 'ask_user', 'stop_recurring', 'choose_no_reply']
+        .filter(name => prepared.toolNames.includes(name))
+      : undefined
+    const toolReminder = fixedAdapter
+      ? [prepared.catalog?.toolCatalog, prepared.shellReminder].filter(Boolean).join('\n\n')
+      : undefined
+    const completed = {
       ...loaded, capabilities: { toolNames: [...prepared.toolNames], tools: selected, subject: copy(config.identity),
+        ...(providerToolNames ? { providerToolNames } : {}),
+        ...(toolReminder ? { toolReminder } : {}),
         ...(userSkills !== undefined ? { userSkillSnapshot: userSkills } : {}) },
       input: {
         ...loaded.input, preparedRag: copy(discovered.rag), systemPrompt: prepared.system,
         snapshotText: prepared.snapshot, fixedPrefix,
-        latestToolSchemas: selected.map(tool => ({
+        ...(toolReminder ? { toolReminder } : {}),
+        latestToolSchemas: (providerToolNames ? selected.filter(tool => providerToolNames.includes(tool.name)) : selected).map(tool => ({
           type: 'tool-schema', tool_name: tool.name,
           schema_digest: rag.digest(tool.schema), schema: copy(tool.schema)
         })),
       }
+    }
+    const preparationEndedAt = Date.now()
+    recordAgentObservation(observation, {
+      identity, kind: 'context', name: 'Run context preparation', spanId: `${identity.runId}:run-preparation`,
+      at: preparationEndedAt, startedAt: preparationStartedAt, endedAt: preparationEndedAt,
+      durationMs: Math.max(0, preparationEndedAt - preparationStartedAt), status: 'success',
+      input: { source: config.source },
+      output: { tool_count: selected.length, rag_message_count: discovered.rag.tail.length },
+      attributes: { context_source: 'run_preparation' },
+    })
+    return completed
+    }
+    try {
+      return await prepare()
+    }
+    catch (error) {
+      const preparationEndedAt = Date.now()
+      recordAgentObservation(observation, {
+        identity, kind: 'context', name: 'Run context preparation', spanId: `${identity.runId}:run-preparation`,
+        at: preparationEndedAt, startedAt: preparationStartedAt, endedAt: preparationEndedAt,
+        durationMs: Math.max(0, preparationEndedAt - preparationStartedAt), status: signal?.aborted ? 'cancelled' : 'error',
+        input: {}, output: {},
+        attributes: { context_source: 'run_preparation', failure_reason: signal?.aborted ? 'aborted' : 'preparation_failed' },
+      })
+      throw error
     }
   }
 }

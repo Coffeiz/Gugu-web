@@ -11,7 +11,6 @@ export interface SearchSource {
   extraSelect?: string
   owner: string
   searchable: readonly string[]
-  romajiAlias?: string
   title: string
   subtitle?: string
   extraWhere?: string
@@ -26,28 +25,6 @@ export const SEARCH_SOURCES: readonly SearchSource[] = [
     searchable: ['p.name', 'p.contact_name', 'p.current_stage'], title: 'p.name',
     extraWhere: 'AND p.deleted_at IS NULL', orderBy: 'p.updated_at DESC',
     map: (row) => ({ id: row.id, title: row.name, subtitle: [row.contact_name, row.status].filter(Boolean).join(' · ') }),
-  },
-  {
-    type: 'file', label: '文件', table: 'files f', alias: 'f', owner: 'f.user_id',
-    searchable: ['f.display_name', 'f.ext'], romajiAlias: 'f.search_romaji', title: 'f.display_name',
-    extraWhere: 'AND f.deleted_at IS NULL', orderBy: 'f.updated_at DESC',
-    map: (row) => {
-      const label: Record<string, string> = { project: '项目', mind: '思维', asset: '素材', personal: '个人', workspace: '工作区' }
-      const space = String(row.space ?? '')
-      return {
-        id: row.id,
-        title: row.ext ? `${row.display_name}.${row.ext}` : row.display_name,
-        subtitle: space === 'workspace'
-          ? `工作区 · ${row.size ?? ''}`.trim()
-          : `${label[space] ?? space}空间 · ${row.size ?? ''}`.trim(),
-      }
-    },
-  },
-  {
-    type: 'folder', label: '文件夹', table: 'folders f', alias: 'f', owner: 'f.user_id',
-    searchable: ['f.name'], romajiAlias: 'f.search_romaji', title: 'f.name', extraWhere: 'AND f.deleted_at IS NULL',
-    orderBy: 'f.created_at DESC, f.id DESC',
-    map: (row) => ({ id: row.id, title: row.name, subtitle: row.project_id ? '项目' : row.workspace_directory_id ? '工作区' : '个人' }),
   },
   {
     type: 'event', label: '日程', table: 'calendar_events e', alias: 'e', owner: 'e.user_id',

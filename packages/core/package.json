@@ -151,6 +151,7 @@
     "./project-create-data": "./dist/projects/create-store.js",
     "./project-read-data": "./dist/projects/read-store.js",
     "./tools": "./dist/agent/tools/index.js",
+    "./tools/owner": "./dist/agent/tools/owner.js",
     "./skills": "./dist/agent/skills/index.js",
     "./skills/bundled": "./dist/agent/skills/bundled.js",
     "./providers": "./dist/agent/providers/index.js",

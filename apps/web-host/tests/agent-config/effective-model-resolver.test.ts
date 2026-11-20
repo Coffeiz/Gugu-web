@@ -32,20 +32,22 @@ test('effective model keeps Python pool inputs intact for the shared model strat
   assert.equal(effective.systemPrompt, 'synthetic resolved prompt')
 })
 
-test('effective model enables BYOK for local deployment and requires a usable key ring', () => {
-  assert.throws(() => resolveHostEffectiveModelConfiguration({
+test('effective model keeps BYOK enabled without requiring a master key before a user credential is selected', () => {
+  const effective = resolveHostEffectiveModelConfiguration({
     ...common,
     settings: { ...common.settings, ai: { ...platformModel, deployment_mode: 'local' } },
-  }), /credentials master keys/)
+  })
+  assert.equal(effective.byokEnabled, true)
+  assert.deepEqual(effective.versionMaterial.credentialsMasterKeys, {})
 
-  const effective = resolveHostEffectiveModelConfiguration({
+  const withMasterKey = resolveHostEffectiveModelConfiguration({
     ...common,
     settings: { ...common.settings, ai: { ...platformModel, deployment_mode: 'local' } },
     credentialsMasterKeys: { '3': 'synthetic-master-key-v3' },
   })
 
-  assert.equal(effective.byokEnabled, true)
-  assert.deepEqual(effective.versionMaterial.credentialsMasterKeys, { '3': 'synthetic-master-key-v3' })
+  assert.equal(withMasterKey.byokEnabled, true)
+  assert.deepEqual(withMasterKey.versionMaterial.credentialsMasterKeys, { '3': 'synthetic-master-key-v3' })
 })
 
 test('effective model refuses missing permission identity instead of weakening recovery scope', () => {

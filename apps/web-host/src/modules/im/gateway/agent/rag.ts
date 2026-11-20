@@ -25,6 +25,7 @@ export function createPostgresImRagContextBuilder(options: {
   selection: Pick<ContextSourceSelection, 'contextPolicy' | 'contextScopeKey' | 'modelIdentity'>
   access: ReturnType<typeof createPostgresImAccess>
   enabled(lease: AgentDispatchLease): boolean | Promise<boolean>
+  diagnose?(code: 'im_rag_timeout' | 'im_rag_late_completion'): void
 }) {
   const lease = structuredClone(options.lease), actor = structuredClone(options.actor), bot = structuredClone(options.bot), selection = structuredClone(options.selection), identity = lease.identity
   if (agentDispatchSource(lease.input) !== 'im' || lease.input.v !== 3 || lease.input.im.platform !== actor.platform || lease.input.im.botId !== actor.botId
@@ -151,12 +152,30 @@ export function createPostgresImRagContextBuilder(options: {
         if (Array.isArray(block.content_hashes)) for (const value of block.content_hashes) if (typeof value === 'string') excluded.add(value)
       }
       const result = await search(identity.ownerId, active.scopes.map(item => item.scope), input.query.trim(), { sourceTypes: sources, limit: 5, beforeMessageId: active.before, selectionMode: 'confidence', excludeContentHashes: [...excluded] }, signal)
-      if (!result.results.length) return empty('no_hits')
-      const label = active.scopes.map(item => item.label).join('+'), rows = [`[${label}]`, '以下是针对当前问题检索的资料片段，仅供参考。', `检索问题：${input.query.trim()}`], hashes: string[] = []
+      const diagnostics = {
+        engine: result.fusion,
+        vector_doc_count: result.vectorDocCount,
+        ...result.diagnostics,
+        rank_details: result.results.map((item, index) => ({
+          rank: index + 1,
+          source_type: item.document.source_type,
+          fused_score: item.fused_score,
+          normalized_score: item.normalized_score,
+          confidence: item.confidence,
+          rank_score: item.rank_score,
+          query_idf_baseline: item.query_idf_baseline ?? null,
+          contributions: item.rank_contributions ?? [],
+        })),
+      }
+      const label = active.scopes.map(item => item.label).join('+')
+      if (!result.results.length) return { ...empty('no_hits'), diagnostics,
+        scope_hits: [{ scope: label, candidate_count: result.diagnostics.candidate_count, hit_count: 0 }] }
+      const rows = [`[${label}]`, '以下是针对当前问题检索的资料片段，仅供参考。', `检索问题：${input.query.trim()}`], hashes: string[] = []
       for (const [index, item] of result.results.entries()) { rows.push(`[${index + 1}] ${item.document.source_type} / ${item.document.title || '未命名来源'}`, item.text); hashes.push(hash(item.document.content || item.text)) }
       rows.push(`[/${label}]`)
       const rendered = rows.join('\n'), block = { type: 'knowledge-context', scope: label, text: rendered, content_hash: hash(rendered), content_hashes: hashes }
-      return { tail: [{ role: 'user' as const, content: [block] }], blocks: [block], injected: true, scope_hits: [{ scope: label, candidate_count: result.diagnostics.candidate_count, hit_count: result.results.length }] }
+      return { tail: [{ role: 'user' as const, content: [block] }], blocks: [block], injected: true,
+        scope_hits: [{ scope: label, candidate_count: result.diagnostics.candidate_count, hit_count: result.results.length }], diagnostics }
     } catch { signal?.throwIfAborted(); return empty('unavailable') }
   }
   return async (input: Input, signal?: AbortSignal): Promise<RagContext> => {
@@ -165,11 +184,24 @@ export function createPostgresImRagContextBuilder(options: {
     if (pendingRecalls >= 32) return empty('capacity_exceeded')
     const deadline = new AbortController(), combined = AbortSignal.any([deadline.signal, ...(signal ? [signal] : [])])
     let timer: ReturnType<typeof setTimeout> | undefined, abort: (() => void) | undefined
+    let timedOut = false
     pendingRecalls++
     const work = build(input, combined).finally(() => { pendingRecalls-- })
-    const timeout = new Promise<ReturnType<typeof empty>>(resolve => { timer = setTimeout(() => { resolve(empty('timeout')); deadline.abort() }, 10000) })
+    void work.then(() => {
+      if (timedOut) { try { options.diagnose?.('im_rag_late_completion') } catch { /* 诊断失败不改变 RAG 结果。 */ } }
+    }, () => {
+      if (timedOut) { try { options.diagnose?.('im_rag_late_completion') } catch { /* 诊断失败不改变 RAG 结果。 */ } }
+    })
+    const timeout = new Promise<ReturnType<typeof empty>>(resolve => { timer = setTimeout(() => {
+      timedOut = true
+      try { options.diagnose?.('im_rag_timeout') } catch { /* 诊断失败不改变 RAG 结果。 */ }
+      resolve(empty('timeout')); deadline.abort()
+    }, 10000) })
     const cancelled = new Promise<never>((_resolve, reject) => { abort = () => reject(signal?.reason ?? new Error('检索已取消')); signal?.addEventListener('abort', abort, { once: true }) })
-    try { return await Promise.race([work, timeout, cancelled]) }
+    try {
+      const result = await Promise.race([work, timeout, cancelled])
+      return result
+    }
     finally { if (timer) clearTimeout(timer); if (abort) signal?.removeEventListener('abort', abort) }
   }
 }

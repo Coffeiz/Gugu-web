@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto'
-import type { Pool } from 'pg'
+import { DatabaseError, type Pool } from 'pg'
 import type { RunIdentity, ToolResult } from '@gugu/core/agent'
 import { CoreError, dataContext } from '@gugu/core'
 import type { SqlDataRuntime } from '@gugu/core/data'
 import type { WorkspaceCreateInput, WorkspaceCreatePort } from '@gugu/core/tools'
+import { diagLogRaw } from '../../../../shared/log-files.js'
 import type { AgentDispatchLease } from '../../run/dispatch.js'
 
 export interface WebAgentWorkspaceCreateOptions {
@@ -57,13 +58,40 @@ export function createWebAgentWorkspaceCreatePort(options: WebAgentWorkspaceCrea
     return result.rowCount === 1
   }
 
+  function diagnose(phase: string, reason: string, error?: unknown) {
+    const runId = /^[a-z0-9-]{1,128}$/iu.test(expected.runId) ? expected.runId : createHash('sha256').update(expected.runId).digest('hex')
+    const fields = { run_id: runId, phase, reason,
+      ...(error instanceof DatabaseError && /^[0-9A-Z]{5}$/u.test(error.code ?? '') ? {
+        sqlstate: error.code,
+        table: /^[a-z_][a-z0-9_]{0,62}$/u.test(error.table ?? '') ? error.table : undefined,
+        column: /^[a-z_][a-z0-9_]{0,62}$/u.test(error.column ?? '') ? error.column : undefined,
+      } : error instanceof CoreError ? { code: error.code } : {}),
+    }
+    diagLogRaw('agent.workspace.create', JSON.stringify(fields))
+  }
+
+  async function activeAfterReservation(signal: AbortSignal, phase: string) {
+    try {
+      if (await active(signal)) return true
+      diagnose(phase, 'lease_lost')
+      return false
+    } catch (error) {
+      signal.throwIfAborted()
+      diagnose(phase, 'lease_check_failed', error)
+      throw error
+    }
+  }
+
   async function readResult(input: WorkspaceCreateInput): Promise<ToolResult> {
     try {
       const key = coordinates(input)
       const saved = await options.core.operationWithTransaction(key.context, key.resultId,
         'agent.workspace.create.result', key.params, async () => { throw absent })
       return { kind: 'completed', successful: true, mutated: false, value: saved.result }
-    } catch { return { kind: 'unknown' } }
+    } catch (error) {
+      diagnose('reconcile', error === absent ? 'receipt_missing' : 'receipt_read_failed', error)
+      return { kind: 'unknown' }
+    }
   }
 
   return {
@@ -79,19 +107,23 @@ export function createWebAgentWorkspaceCreatePort(options: WebAgentWorkspaceCrea
             input.signal.throwIfAborted()
             return { reserved: true }
           }, { signal: input.signal })
-      } catch {
+      } catch (error) {
         input.signal.throwIfAborted()
+        diagnose('reservation', 'receipt_write_failed', error)
         return readResult(input)
       }
       if (reservation.replayed) return readResult(input)
-      if (!await active(input.signal)) return { kind: 'unknown' }
+      if (!await activeAfterReservation(input.signal, 'before_write')) return { kind: 'unknown' }
 
       let value: Record<string, unknown>
+      let phase = 'create_declaration'
       try {
         const { workspace_name: name, kind, enabled = true, project_id, folder_id } = input.args
         if (kind === 'directory') {
+          phase = 'create_directory'
           const directory = await options.createDirectory(expected.ownerId, name)
           input.signal.throwIfAborted()
+          phase = 'read_directory_declaration'
           const rows = await options.listWorkspaces(expected.ownerId, input.signal)
           const workspace = rows.find(row => row.kind === 'directory' && Number(row.directory_id) === directory.id)
           if (!workspace || !Number.isSafeInteger(Number(workspace.id))) throw new Error('新建工作区目录后未找到对应工作区绑定')
@@ -103,21 +135,24 @@ export function createWebAgentWorkspaceCreatePort(options: WebAgentWorkspaceCrea
             ...(kind === 'folder' && folder_id !== undefined ? { folderId: folder_id } : {}),
           })
           input.signal.throwIfAborted()
+          phase = 'read_declaration'
           const workspace = await options.readWorkspace(expected.ownerId, created.id, input.signal)
           if (!workspace) throw new Error('工作区创建后未能读取对应声明')
           value = { success: true, workspace }
         }
-      } catch {
+      } catch (error) {
         input.signal.throwIfAborted()
+        diagnose(phase, 'operation_failed', error)
         return { kind: 'unknown' }
       }
-      if (!await active(input.signal)) return { kind: 'unknown' }
+      if (!await activeAfterReservation(input.signal, 'before_result')) return { kind: 'unknown' }
       try {
         const saved = await options.core.operationWithTransaction(key.context, key.resultId,
           'agent.workspace.create.result', key.params, async () => value, { signal: input.signal })
         return { kind: 'completed', successful: true, mutated: !saved.replayed, value: saved.result }
-      } catch {
+      } catch (error) {
         input.signal.throwIfAborted()
+        diagnose('result', 'receipt_write_failed', error)
         return readResult(input)
       }
     },

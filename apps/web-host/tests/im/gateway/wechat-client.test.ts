@@ -3,7 +3,7 @@ import test from 'node:test'
 import { ProviderError } from '@gugu/core/providers'
 import type { ProviderHttpRequest, ProviderHttpResponse, ProviderTransport } from '@gugu/core/providers'
 import { NodeProviderTransport } from '@gugu/core/providers/node'
-import { createILinkClient, ILinkApiError, validateILinkBaseUrl } from '../../../src/modules/im/gateway/platforms/wechat/client.js'
+import { createILinkClient, ILinkApiError, validateILinkBaseUrl } from '@gugu/gateway/wechat'
 
 const token = 'synthetic-wechat-token', contextToken = 'synthetic-context-token'
 function fixture() {

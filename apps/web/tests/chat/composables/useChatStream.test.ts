@@ -61,6 +61,32 @@ describe('useChatStream 展示事件与生命周期', () => {
   })
 
 
+  it('流式正文更新在同一气泡中保持生成态，流结束后恢复静态展示', async () => {
+    const options = createOptions([])
+    const stream = useChatStream(options)
+    const body = new TransformStream<Uint8Array>()
+    const writer = body.writable.getWriter()
+    const encoder = new TextEncoder()
+    const write = (event: object) => writer.write(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body.readable)))
+
+    const running = stream.resumeStream(42)
+    const first = item('text-a', 'assistant', 1, { text: '第一段' })
+    try {
+      await write({ type: 'display_event', item: first })
+      await vi.waitFor(() => expect(options.messages.value[0]).toMatchObject({ text: '第一段', streaming: true }))
+      const id = options.messages.value[0].id
+
+      await write({ type: 'display_event', item: { ...first, text: '第一段，新文字', updatedAt: '2026-01-01T01:03:00Z' } })
+      await vi.waitFor(() => expect(options.messages.value).toMatchObject([{ id, text: '第一段，新文字', streaming: true }]))
+      await write({ type: 'done' })
+    } finally {
+      await writer.close()
+      await running
+    }
+    expect(options.messages.value[0]).toMatchObject({ text: '第一段，新文字', streaming: false })
+  })
+
   it('同一事件快照重复到达仍保持时间、位置，正文按版本替换而非累加', async () => {
     const first = item('text-a', 'assistant', 1, { text: '已生成', roundId: 'r1' })
     const tool = item('tool-a', 'tool', 2, { toolCallId: 'c1', toolName: 'shell', toolStatus: 'success' })
@@ -80,6 +106,8 @@ describe('useChatStream 展示事件与生命周期', () => {
 
   it('回复后进入新一轮时重新显示思考状态，直到本轮收到正文', async () => {
     const options = createOptions([])
+    const updateSidebarRun = vi.fn()
+    options.updateSidebarRun = updateSidebarRun
     const stream = useChatStream(options)
     vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
       { type: 'display_event', item: item('text-first', 'assistant', 1, { text: '上一轮回复' }) },
@@ -88,6 +116,7 @@ describe('useChatStream 展示事件与生命周期', () => {
       { type: 'done' },
     ])))
     await stream.resumeStream(42)
+    expect(updateSidebarRun.mock.calls).toEqual([[42, 'run-a', true], [42, 'run-a', false]])
     const statusCalls = vi.mocked(options.setStatus).mock.invocationCallOrder
     const clearCalls = vi.mocked(options.clearStatus).mock.invocationCallOrder
     expect(statusCalls).toHaveLength(2)

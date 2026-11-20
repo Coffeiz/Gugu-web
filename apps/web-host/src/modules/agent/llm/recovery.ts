@@ -56,6 +56,13 @@ function readRunModel(identity: RunIdentity, model: ModelIdentity, secret: strin
   return binding
 }
 
+export function recoverRunModelPin(identity: RunIdentity, modelIdentity: string, secret: string): ModelIdentity {
+  const binding = decode(modelIdentity, secret)
+  if (binding.ownerId !== identity.ownerId || binding.sessionId !== identity.sessionId || binding.runId !== identity.runId)
+    throw new RecoverableProviderVersionError('模型恢复身份不匹配')
+  return { modelIdentity, accessScopeHash: binding.accessScopeHash }
+}
+
 /** 验证每个 Run 的签名，再用不含 Run ID 的摘要标识可使用同一模型的回合。 */
 export function createReflectionModelScope(secret: string) {
   if (!secret) throw new TypeError('反思模型范围签名不可用')

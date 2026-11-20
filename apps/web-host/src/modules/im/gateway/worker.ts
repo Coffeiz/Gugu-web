@@ -28,7 +28,7 @@ export function createNodeImWorker(options: {
   batchDelayMs?: number
   /** 部署必须显式停止旧消费者；不同consumer group本身不能防双回复。 */
   ownership: { runtime: 'node'; pythonGatewayStopped: boolean; pythonImConsumerStopped: boolean }
-  diagnose(code: 'queue_unavailable' | 'message_failed'): void
+  diagnose(code: 'queue_unavailable' | 'message_failed', error?: unknown): void
 }) {
   const envelope = createImInboundEnvelope(options.secretKey)
   const controller = new AbortController()
@@ -39,6 +39,7 @@ export function createNodeImWorker(options: {
   const consumer = new WorkerConsumer({ queue: new RedisStreamQueue(options.commands, NODE_IM_INBOUND_STREAM, group, consumerName,
     id => ({ id, payload: { __invalid_stream_payload: true } })),
     leases: new RedisMessageLeaseStore(options.commands), concurrency: options.concurrency, createOwner: randomUUID,
+    onFailure: error => options.diagnose('message_failed', error),
     stateKey: id => `im:node:state:${id}`,
     conversationKey(message) {
       try {
@@ -88,18 +89,17 @@ export function createNodeImWorker(options: {
       }
       status = 'running'
       loop = (async () => {
-        let backoff = 1000, failures = consumer.failures
+        let backoff = 1000
         try {
           while (!controller.signal.aborted) {
             try {
               await consumer.waitForCapacity()
               if (controller.signal.aborted) return
               await consumer.runOnce(1000)
-              if (consumer.failures !== failures) { failures = consumer.failures; options.diagnose('message_failed') }
               status = 'running'; backoff = 1000
-            } catch {
+            } catch (error) {
               if (controller.signal.aborted) return
-              status = 'degraded'; options.diagnose('queue_unavailable')
+              status = 'degraded'; options.diagnose('queue_unavailable', error)
               await delay(backoff, undefined, { signal: controller.signal })
               backoff = Math.min(60000, backoff * 2)
             }

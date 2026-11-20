@@ -187,6 +187,13 @@ def test_keyboard_packs_rows_by_label_width():
         pass
 
 
+def test_long_choice_labels_keep_native_callbacks_with_numbered_buttons():
+    rows = _keyboard_rows_for_labels(["这是一个很长的选项，用于验证编号键盘"] * 6)
+    buttons = [button for row in rows for button in row["buttons"]]
+    assert [button["render_data"]["label"] for button in buttons] == list("123456")
+    assert [button["action"]["data"] for button in buttons] == [f"7:t-{index}" for index in range(6)]
+
+
 def test_keyboard_fits_nine_medium_labels_in_five_rows():
     """2026-09 真机回归：预算 30 时这组全 ≥16 单位的标签被误判装不下（9 行>5 行）
     导致整块键盘消失；40 的预算必须恰好 5 行放下。"""

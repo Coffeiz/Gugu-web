@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
-import { resolve } from 'path'
+import { dirname, resolve } from 'node:path'
+import { createRequire } from 'node:module'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 import Components from 'unplugin-vue-components/vite'
@@ -54,6 +55,22 @@ function versionPayload() {
   })
 }
 
+// 开发目录含非 ASCII 字符时，Vite 客户端生成的 env 文件绝对 URL 可能返回 404。
+const viteClientEnv = {
+  name: 'vite-client-env',
+  configureServer(server) {
+    const require = createRequire(import.meta.url)
+    const envFile = resolve(dirname(require.resolve('vite/package.json')), 'dist/client/env.mjs').replaceAll('\\', '/')
+    const envPath = '/@fs' + (envFile.startsWith('/') ? envFile : '/' + envFile)
+    const encodedPath = encodeURI(envPath)
+    server.middlewares.use((req, _res, next) => {
+      const [path, query] = (req.url ?? '').split(/(?=\?)/u, 2)
+      if (path === envPath || path === encodedPath) req.url = '/@vite/env' + (query ?? '')
+      next()
+    })
+  },
+}
+
 const adminEntry = {
   name: 'admin-entry',
   configureServer(server) {
@@ -94,6 +111,7 @@ export default defineConfig({
   },
   plugins: [
     vue(),
+    viteClientEnv,
     adminEntry,
     versionJsonPlugin,
     Components({

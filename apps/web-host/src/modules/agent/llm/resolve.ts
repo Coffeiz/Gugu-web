@@ -40,11 +40,9 @@ export function resolveHostEffectiveModelConfiguration(input: HostEffectiveModel
     throw new Error('credentials master keys 不可用')
   }
 
-  // Python resolve_run_config_for_user 在本地部署下即使平台 BYOK 开关关闭也会尝试 BYOK。
+  // 与 Python resolve_run_config_for_user 一致：没有已绑定的用户凭据时，平台模型
+  // 不需要 BYOK 主密钥。若后续实际读取到用户凭据，解密边界仍会因缺少主密钥而失败。
   const byokEnabled = settings.byokEnabled || settings.ai.deployment_mode === 'local'
-  if (byokEnabled && Object.keys(credentialsMasterKeys).length === 0) {
-    throw new Error('credentials master keys 不可用')
-  }
 
   return {
     ai: structuredClone(settings.ai),

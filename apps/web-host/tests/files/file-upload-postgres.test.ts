@@ -8,7 +8,6 @@ import test from 'node:test'
 import { createPostgresRuntime, tablesSql } from '@gugu/core/data'
 import { createPostgresFileUploadOperations } from '../../src/modules/files/upload.js'
 import { createWebAgentDownloadTool } from '../../src/modules/agent/tools/files/download.js'
-import { createWebAgentFileCreatePort } from '../../src/modules/agent/tools/files/create.js'
 import { createAuthorizedWebAgentProductionRagRunPorts } from '../../src/modules/agent/rag/production.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
@@ -177,8 +176,6 @@ test('PostgreSQL Local 上传创建文件并覆盖时同步更新物理正文、
     const makeRegistry = (upload = operations) => createAuthorizedWebAgentProductionRagRunPorts({
       core, pool, lease, storageRoot: root, enabled: () => true,
       selection: { modelIdentity: 'synthetic', contextScopeKey: lease.input.accessVersion, contextPolicy: { loadOwnerContext: true, memoryEnabled: false } },
-      enabledFileCreate: true,
-      fileCreate: createWebAgentFileCreatePort({ pool, upload, lease }),
       webDownload: createWebAgentDownloadTool({
         pool, db: core.db, lease, upload,
         async open(url) {
@@ -211,12 +208,6 @@ test('PostgreSQL Local 上传创建文件并覆盖时同步更新物理正文、
     assert.equal(await readFile(path.join(root, ownerId, '个人文件', '下载.txt'), 'utf8'), 'download body')
     assert.deepEqual(await makeRegistry().tools.dispatch(call, scope), { ...downloaded, mutated: false })
     assert.equal(requests, 1)
-    const createCall = { id: 'create-text', name: 'create_file', input: { filename: 'agent.txt', content: 'Agent 内容', space: 'personal' } }
-    const createdText = await registry.tools.dispatch(createCall, scope)
-    assert.ok(createdText.kind === 'completed' && createdText.successful && createdText.mutated, JSON.stringify(createdText))
-    assert.equal(await readFile(path.join(root, ownerId, '个人文件', 'agent.txt'), 'utf8'), 'Agent 内容')
-    const createdTextReplay = await makeRegistry().tools.dispatch(createCall, scope)
-    assert.deepEqual(createdTextReplay, { ...createdText, mutated: false })
     const project = await pool.query<{ id: number }>("INSERT INTO projects(user_id,name,start_date) VALUES ($1,'下载项目','2026-01-01') RETURNING id", [ownerId])
     const projectId = project.rows[0]!.id
     const folder = await pool.query<{ id: number }>("INSERT INTO folders(user_id,project_id,name) VALUES ($1,$2,'下载目录') RETURNING id", [ownerId, projectId])

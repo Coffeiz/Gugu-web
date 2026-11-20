@@ -91,14 +91,15 @@ function fixture() {
         if (sql.includes('FOR NO KEY UPDATE')) return rows(local.sessions.filter(row=>row.user_id===values[0]&&row.id===values[1]));
         if (sql.includes("source='web'")) return rows(local.sessions.filter(row => row.id === values[0] && row.user_id === values[1] && (row.source === 'web' || row.source == null)));
         const [user, platform, bot, chat, sender, explicit] = values;
-        return rows(local.sessions.filter(row => row.user_id === user && row.source === platform && row.bot_id === bot && (chat != null ? row.chat_id === chat && row.chat_type === 'group' : row.chat_id === null && row.platform_user_id === sender && row.chat_type !== 'group') && (explicit === undefined || row.id === explicit)).slice(-1));
+        return rows(local.sessions.filter(row => row.user_id === user && row.source === platform && row.bot_id === bot && (chat != null ? row.chat_id === chat : row.chat_id === null && row.platform_user_id === sender) && (explicit === undefined || row.id === explicit)).slice(-1));
       }
       if (sql.startsWith('INSERT INTO conversation_sessions')) {
         const row = { id: local.sessions.length + 1, user_id: values[0], source: values[2], bot_id: values[3], chat_id: values[4], platform_user_id: values[5], chat_type: values[6], last_message_seq: 0 };
         local.sessions.push(row); return rows([row]);
       }
       if (sql.startsWith('UPDATE conversation_sessions SET last_message_seq')) {
-        const row = local.sessions.find(row => row.id === values[0] && row.user_id === values[1]); if (!row) return rows([]);
+          const row = local.sessions.find(row => row.id === values[0] && row.user_id === values[1]); if (!row) return rows([]);
+          row.chat_type = values[2] ?? row.chat_type;
         row.last_message_seq = Number(row.last_message_seq) + 1; return rows([row]);
       }
       if (sql.startsWith('INSERT INTO conversation_messages')) {
@@ -672,6 +673,23 @@ test('隔离PG：真实并发路由锁、事务回滚、历史去重和密封rou
     assert.equal(createImInboundEnvelope(secretKey).open(binding, passiveRows[0].sealed_payload)._node_stream_event_id, '1700000000001-0');
     assert.equal(await ingress.prepareAdmitted(binding, { ...passive, message_id: 'fresh-native', platform_message_id: 'fresh-native' }, '1700000000004-0', new AbortController().signal), true);
     assert.equal(modelCalls, 0);
+    const legacyGroup = { ...payload, chat_type: 'group', chat_id: 'synthetic-legacy-room',
+      message_id: 'legacy-room-new', platform_message_id: 'legacy-room-new' };
+    const legacy = (await pool.query<{ id: number }>(`INSERT INTO conversation_sessions
+      (user_id,source,bot_id,chat_id,chat_type,last_message_seq,updated_at)
+      VALUES($1,'telegram','71',$2,NULL,1,clock_timestamp()) RETURNING id`, [owner, legacyGroup.chat_id])).rows[0]!;
+    await pool.query(`INSERT INTO conversation_messages(session_id,conversation_seq,role,content)
+      VALUES($1,1,'user','旧群消息')`, [legacy.id]);
+    const otherBot = (await pool.query<{ id: number }>(`INSERT INTO conversation_sessions
+      (user_id,source,bot_id,chat_id,chat_type,last_message_seq,updated_at)
+      VALUES($1,'telegram','73',$2,'group',0,clock_timestamp()) RETURNING id`, [owner, legacyGroup.chat_id])).rows[0]!;
+    const resumed = await store.persist(binding, legacyGroup, {
+      eventId: 'legacy-room-event', mode: 'dispatch', sessionId: otherBot.id, onDispatch: dispatch,
+    });
+    assert.equal(resumed?.sessionId, legacy.id);
+    assert.equal(resumed?.isNewSession, false);
+    assert.equal((await pool.query('SELECT chat_type FROM conversation_sessions WHERE id=$1', [legacy.id])).rows[0].chat_type, 'group');
+    assert.deepEqual((await pool.query('SELECT conversation_seq::int AS seq FROM conversation_messages WHERE session_id=$1 ORDER BY conversation_seq', [legacy.id])).rows, [{ seq: 1 }, { seq: 2 }]);
     await pool.query('UPDATE user_bots SET enabled=false'); await assert.rejects(store.readRoute({ ownerId: owner, sessionId: String(a!.sessionId), runId: a!.runId! }), ImConversationError);
     await assert.rejects(store.readRoute({ ownerId: owner, sessionId: String(segment.anchors[0]!.sessionId), runId: segment.runId! }), ImConversationError);
   } finally { await pool?.end(); await admin.query(`DROP SCHEMA "${schema}" CASCADE`); await admin.end(); }

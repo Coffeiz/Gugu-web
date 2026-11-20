@@ -52,7 +52,7 @@
                 <span class="src-tag" :class="`src-${row.source}`">{{ row.source }}</span>
               </span>
               <span class="col-time">{{ row.time }}</span>
-              <span class="col-msg">{{ row.message }}</span>
+              <LogMessage class="col-msg" :line="row.line" :message="row.message" />
             </div>
           </div>
         </template>
@@ -65,6 +65,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAdminStore } from '@/stores/admin'
+import LogMessage from './components/LogMessage.vue'
 import AdminSelect from '@/components/AdminSelect.vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import { classifyLogLevel } from '@/utils/logLevel'
@@ -128,7 +129,7 @@ const filtered = computed(() => {
   if (filterSource.value) list = list.filter(r => r.source === filterSource.value)
   if (filterLevel.value) list = list.filter(r => rowLevel(r.line) === `lvl-${filterLevel.value}`)
   const q = filterText.value.trim().toLowerCase()
-  if (q) list = list.filter(r => r.line.toLowerCase().includes(q))
+  if (q) list = list.filter(r => r.line.toLowerCase().includes(q) || r.message.toLowerCase().includes(q))
   return list
 })
 
@@ -158,12 +159,12 @@ function displayMessage(line: string) {
 }
 
 let lastLogTime = ''   // 续行 / uvicorn / print / traceback 无时间戳 → 沿用上一条 emit 时间，绝不用接收时间
-function addLine(source: string, line: string, time: any) {
+function addLine(source: string, line: string, time: any, message?: string) {
   if (searchResults.value !== null || pageIndex.value !== 0) return
   // 优先用后端给的 emit 时间（已解析+继承+归并排序）；退到行内解析；再退到上一条；都没有才空
   const t = time || parseTime(line) || lastLogTime
   if (t) lastLogTime = t
-  lines.value.push({ id: uid++, source, line, message: displayMessage(line), time: t })
+  lines.value.push({ id: uid++, source, line, message: message ?? displayMessage(line), time: t })
   if (lines.value.length > 2000) lines.value.splice(0, 200)
   if (autoScroll.value) {
     nextTick(() => {
@@ -183,13 +184,13 @@ async function loadTail() {
     latestHasMore.value = data.has_more === true
     lastLogTime = ''
     lines.value = []
-    for (const { source, line, time } of (data.lines ?? [])) addLine(source, line, time)
+    for (const { source, line, time, message } of (data.lines ?? [])) addLine(source, line, time, message)
   } catch {}
 }
 
 function toRows(rows: any[]) {
-  return rows.map(({ source, line, time }: any) => ({
-    id: uid++, source, line, message: displayMessage(line), time,
+  return rows.map(({ source, line, time, message }: any) => ({
+    id: uid++, source, line, message: message ?? displayMessage(line), time,
   }))
 }
 
@@ -291,8 +292,8 @@ async function startSSE() {
         const raw = row.slice(5).trim()
         if (!raw) continue
         try {
-          const { source, line, time } = JSON.parse(raw)
-          addLine(source, line, time)
+          const { source, line, time, message } = JSON.parse(raw)
+          addLine(source, line, time, message)
         } catch {}
       }
     }
@@ -400,7 +401,7 @@ onUnmounted(() => {
 .lt-row.lvl-warning .col-msg { color: rgba(230,180,80,0.9); }
 .lt-row.lvl-info    .col-msg { color: rgba(255,255,255,0.7); }
 .col-time { font-size: 11px; color: rgba(255,255,255,0.25); white-space: nowrap; overflow: hidden; padding-top: 1px; }
-.col-msg { color: rgba(255,255,255,0.45); word-break: break-all; white-space: pre-wrap; line-height: 1.55; }
+.col-msg { color: rgba(255,255,255,0.45); line-height: 1.55; }
 
 .src-tag {
   display: inline-block; padding: 1px 6px; border-radius: 5px;

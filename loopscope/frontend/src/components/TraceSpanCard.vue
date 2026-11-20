@@ -142,6 +142,10 @@
         </article>
       </div>
       <pre v-else>{{ pretty(inputWithoutSystemPrompt) }}</pre>
+      <article v-if="providerOptions && Object.keys(providerOptions).length" class="input-message provider-options">
+        <div class="input-message-label"><span>{{ t('trace.providerOptions') }}</span></div>
+        <pre>{{ pretty(providerOptions) }}</pre>
+      </article>
     </section>
     <section v-if="open.output" class="panel">
       <div class="panel-label">Output</div>
@@ -241,7 +245,17 @@ const assembly = computed(() => {
   const input = props.span.input as any
   return input && typeof input === 'object' && input.assembly ? input.assembly : null
 })
+const providerOptions = computed(() => {
+  const input = props.span.input
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null
+  const value = (input as Record<string, unknown>).provider_options
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+})
 const diagnostics = computed(() => {
+  if (props.span.attributes?.context_source === 'rag_retrieval') {
+    const value = props.span.output
+    return value && typeof value === 'object' ? value : null
+  }
   const value = assembly.value?.canonical_context
   return value && typeof value === 'object' ? value : null
 })
@@ -352,7 +366,8 @@ const inputForDisplay = computed(() => {
 const inputWithoutSystemPrompt = computed(() => {
   const input = inputForDisplay.value
   if (!systemPrompt.value || !input || typeof input !== 'object' || Array.isArray(input)) return input
-  const { system_prompt: _systemPrompt, snapshot: _snapshot, system: _system, instructions: _instructions, messages: _messages, ...rest } = input as Record<string, unknown>
+  const { system_prompt: _systemPrompt, snapshot: _snapshot, system: _system, instructions: _instructions,
+    messages: _messages, provider_options: _providerOptions, provider_request: _providerRequest, ...rest } = input as Record<string, unknown>
   return rest
 })
 const hasSource = computed(() => !!(props.span.code?.file || props.span.code?.function || props.span.attributes?.path))
@@ -367,6 +382,7 @@ const contextLabel = computed(() => {
     skill_index: 'trace.skillIndex',
     skill_body: 'trace.skillBody',
     shell_policy: 'trace.shellPolicy',
+    rag_retrieval: 'trace.ragRetrieval',
   }
   const key = labels[String(source)]
   return key ? t(key) : t('trace.contextInjection')
@@ -459,15 +475,18 @@ pre { margin:0; max-height:420px; overflow:auto; white-space:pre-wrap; overflow-
 .comparison-column.is-current { border-color:color-mix(in srgb,var(--action-primary) 42%,var(--border-subtle)); }
 .comparison-label { padding:6px 8px; color:var(--content-secondary); background:var(--surface-soft); font-size:9px; }
 .comparison-column pre { max-height:360px; padding:8px; }
-.input-message-list { display:grid; gap:7px; max-height:600px; overflow:auto; padding-right:2px; }
-.input-snapshot { margin-top:10px; border:1px solid color-mix(in srgb,var(--action-primary) 32%,var(--border-subtle)); border-radius:var(--radius-sm); overflow:hidden; background:color-mix(in srgb,var(--action-primary) 5%,var(--surface-card)); }
+.input-message-list { display:flex; flex-direction:column; align-items:stretch; gap:7px; max-height:600px; overflow:auto; padding-right:2px; }
+.input-panel { display:flex; flex-direction:column; gap:12px; }
+.input-panel > .panel-label { margin-bottom:0; }
+.input-snapshot { border:1px solid color-mix(in srgb,var(--action-primary) 32%,var(--border-subtle)); border-radius:var(--radius-sm); overflow:hidden; background:color-mix(in srgb,var(--action-primary) 5%,var(--surface-card)); }
 .input-snapshot pre { max-height:420px; padding:8px; }
-.input-message { border:1px solid var(--border-subtle); border-radius:var(--radius-sm); overflow:hidden; background:var(--surface-card); }
+.input-message { flex:0 0 auto; min-width:0; border:1px solid var(--border-subtle); border-radius:var(--radius-sm); overflow:hidden; background:var(--surface-card); }
+.provider-options { margin-top:7px; }
 .input-message.is-first-diff { border-color:var(--status-warning); box-shadow:0 0 0 2px color-mix(in srgb,var(--status-warning) 18%,transparent); }
 .input-message-label { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:5px 8px; color:var(--content-tertiary); background:var(--surface-soft); font:9px var(--font-mono); }
 .input-message-label b { color:var(--status-warning); font:9px var(--font-sans); }
-.input-message pre { max-height:none; padding:8px; }
-.input-system-prompt { margin-bottom:9px; border:1px solid color-mix(in srgb,var(--trace-context) 45%,var(--border-subtle)); border-radius:var(--radius-sm); overflow:hidden; background:var(--surface-card); }
+.input-message pre { display:block; min-height:2em; max-height:none; padding:8px; }
+.input-system-prompt { border:1px solid color-mix(in srgb,var(--trace-context) 45%,var(--border-subtle)); border-radius:var(--radius-sm); overflow:hidden; background:var(--surface-card); }
 .input-system-prompt .input-message-label { color:var(--action-primary); }
 .input-system-prompt .input-message-label b { color:var(--content-tertiary); font-weight:400; }
 .input-system-prompt pre { max-height:600px; padding:9px; background:color-mix(in srgb,var(--trace-context) 5%,var(--surface-card)); }

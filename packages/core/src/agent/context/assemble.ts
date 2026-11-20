@@ -10,6 +10,7 @@ import { enforceProviderOverflow,shouldCompact } from './budget.js'
 import { applyCompaction,compactContext } from './compaction.js'
 import { assertRunCapabilities } from './prepare.js'
 import { loadedSkills } from './loaded-skills.js'
+import { recordAgentObservation } from '../observation.js'
 
 /** 新运行和检查点恢复按同一顺序生成固定请求前缀。 */
 export function buildFixedRequestPrefix(input: Pick<PrepareContextInput, 'fixedPrefix' | 'systemInMessages' | 'systemPrompt'>): CanonicalMessage[] {
@@ -17,6 +18,13 @@ export function buildFixedRequestPrefix(input: Pick<PrepareContextInput, 'fixedP
   if (input.systemInMessages && input.systemPrompt)
     prefix.unshift({ role: 'system', content: input.systemPrompt })
   return prefix
+}
+
+/** 工具目录只进入请求尾部，恢复时用冻结目录重建。 */
+export function withToolReminder(tail: readonly CanonicalMessage[], reminder?: string): CanonicalMessage[] {
+  const content = reminder ? `[system-reminder]\n${reminder}\n[/system-reminder]` : null
+  if (!content || tail.some(message => message.role === 'user' && message.content === content)) return [...tail]
+  return [...tail, { role: 'user', content }]
 }
 
 export function rawUserText(user: CurrentUser): string {
@@ -162,8 +170,9 @@ export async function prepareContext(input: PrepareContextInput, ports: Preparat
   area.appendBatch(entries)
   if (input.latestToolSchemas?.length)
     refreshCanonicalToolSchemas(area, input.latestToolSchemas)
-  if (input.extraReminder)
-    area.setDynamicTail([{ role: 'user', content: `[system-reminder]\n${input.extraReminder}\n[/system-reminder]` }])
+  const dynamicTail: CanonicalMessage[] = input.extraReminder
+    ? [{ role: 'user', content: `[system-reminder]\n${input.extraReminder}\n[/system-reminder]` }] : []
+  area.setDynamicTail(withToolReminder(dynamicTail, input.toolReminder))
   return {
     area, rag: copy(rag), stanceToPersist: stanceDigest !== previous ? input.stance ?? null : null,
     protectedHistoryStart: area.protectedHistoryStart
@@ -207,7 +216,9 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
     let pending = requests.get(id)
     if (!pending) {
       // 重启后由授权来源重建冻结快照；同进程的后续轮次不能重新生成动态前缀。
-      pending = ports.prepareRequest(state.identity, signal, state).then(copy)
+      pending = ports.prepareRequest(state.identity, signal, state).then(value => copy({
+        prefix: value.prefix, dynamicTail: withToolReminder(value.dynamicTail, state.capabilities?.toolReminder),
+      }))
       requests.set(id, pending)
       void pending.catch(() => requests.delete(id))
     }
@@ -237,7 +248,7 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
     }
     return { ...state, pendingRound, prepared: checkpoint }
   }
-  async function toolResult(state: CanonicalRunContext, call: ToolCall, value: Json, round?: number, isError?: boolean): Promise<CanonicalRunContext> {
+  async function toolResult(state: CanonicalRunContext, call: ToolCall, value: Json, round?: number, isError?: boolean, nativeBlocks = false): Promise<CanonicalRunContext> {
     const prepared = await restore(state)
     const pending = state.pendingRound
     const original = pending?.calls.find(item => item.id === call.id)
@@ -246,7 +257,7 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
       || !original || (original.name !== call.name && !(resolved && 'call' in resolved && resolved.call.name === call.name)))
       throw new Error('工具回执与本轮调用声明不匹配')
     const results = pending.dispatched.filter((item) => item.callId !== call.id)
-    results.push({ callId: call.id, toolName: call.name, content: JSON.stringify(value), ...(isError ? { isError: true } : {}) })
+    results.push({ callId: call.id, toolName: call.name, content: nativeBlocks ? value : JSON.stringify(value), ...(isError ? { isError: true } : {}) })
     results.sort((left, right) => pending.calls.findIndex((item) => item.id === left.callId)
       - pending.calls.findIndex((item) => item.id === right.callId))
     const messages = canonicalToolRound({ text: pending.text, calls: pending.calls, dispatched: results })
@@ -283,7 +294,26 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
         throw new AgentRunError('not_found', '运行上下文不存在')
     },
     async prepare(identity, signal) {
+      const startedAt = Date.now()
+      let stageStartedAt = startedAt
+      const stages: Record<string, number> = {}, checkpointStages: Record<string, number> = {}
+      const mark = (stage: string) => {
+        const now = Date.now()
+        stages[stage] = Math.max(0, now - stageStartedAt)
+        stageStartedAt = now
+      }
+      const observe = () => {
+        const endedAt = Date.now()
+        recordAgentObservation(ports.observation, {
+          identity, kind: 'context', name: 'Agent context preparation breakdown',
+          spanId: `${identity.runId}:context:prepare-breakdown`, parentSpanId: identity.runId,
+          at: endedAt, startedAt, endedAt, durationMs: Math.max(0, endedAt - startedAt),
+          status: 'success', output: { stages_ms: stages, checkpoint_stages_ms: checkpointStages },
+          attributes: { context_source: 'agent_context_preparation' },
+        })
+      }
       const received = await ports.load(identity, signal)
+      mark('load')
       if (isEarlyExit(received))
         return received
       const loaded = copy(received)
@@ -302,25 +332,35 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
       const locale = loaded.replyContext?.locale ?? loaded.sourceEffects?.sessionSnapshot.state.context?.locale ?? 'zh-CN'
       if (typeof userRequest !== 'string' || typeof locale !== 'string')
         throw new Error('回复策略来源必须是明确的当前用户正文与语言')
+      mark('copy_and_validate')
       const prepared = await prepareContext(loaded.input, { ...ports.preparation, digest: ports.digest, nextId: ports.nextId }, signal)
+      mark('assemble_canonical_context')
       const request = { prefix: prepared.area.requestPrefix, dynamicTail: prepared.area.dynamicTail }
       requests.set(key(identity), Promise.resolve(request))
       ports.rememberPreparedRequest?.(identity, request)
+      mark('register_prepared_request')
+      const saved = await savePreparedContext(prepared, identity, ports.references, signal,
+        (stage, ms) => { checkpointStages[stage] = Math.round(ms * 100) / 100 })
+      mark('save_prepared_context')
       const context: CanonicalRunContext = {
         identity: copy(identity), modelIdentity: loaded.modelIdentity, accessScopeHash, contextWindow: loaded.contextWindow,
         ...(loaded.input.systemPrompt === undefined ? {} : { providerSystemPrompt: loaded.input.systemPrompt }),
         capabilities: loaded.capabilities ? copy(loaded.capabilities) : null,
         replyContext: { userRequest, locale, decisionGuardEnabled: loaded.replyContext?.decisionGuardEnabled === true },
-        prepared: await savePreparedContext(prepared, identity, ports.references, signal), compactions: [], continuationRef: null,
+        prepared: saved, compactions: [], continuationRef: null,
         ...(loaded.input.historyBaseline ? { historyBaseline: copy(loaded.input.historyBaseline) } : {}),
         pendingRound: null, failedCompactionInput: null, sourceEffects: loaded.sourceEffects ? copy(loaded.sourceEffects) : null,
         providerCacheAnchor: null, currentProviderInput: null
       }
+      mark('build_checkpoint')
       if (ports.initializeContinuation) {
         const reference = await ports.initializeContinuation(copy(context), signal, prepared.area.digest())
         if (reference !== null && !/^[A-Za-z0-9:._-]{1,256}$/.test(reference)) throw new Error('推理续接记录ID无效')
+        mark('initialize_continuation')
+        observe()
         return { ...context, continuationRef: reference }
       }
+      observe()
       return context
     },
     async afterRound(state, result, round) {
@@ -394,7 +434,9 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
       const value = result.kind === 'waiting'
         ? { pending: true, interaction_id: result.interaction.id, kind: result.interaction.kind }
         : json(result.modelValue === undefined ? result.value : result.modelValue)
-      const updated = await toolResult(state, call, value, round, result.kind === 'completed' && !result.successful)
+      // 原生模型块必须保留数组形状，引用编解码器才能在持久化时固化图片。
+      const nativeBlocks = result.kind === 'completed' && Array.isArray(result.modelValue)
+      const updated = await toolResult(state, call, value, round, result.kind === 'completed' && !result.successful, nativeBlocks)
       if (result.kind !== 'completed' || !result.canonicalEvents?.length)
         return updated
       const prepared = await restore(updated)
@@ -457,9 +499,21 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
       const rolling = entries.findIndex((entry) => entry.roundId != null && keptRounds.has(entry.roundId))
       let result: CompactionResult
       try {
+        const frozen = frozenRequest(state, prepared)
+        if (!frozen && ports.observation) {
+          const at = Date.now()
+          recordAgentObservation(ports.observation, {
+            identity: state.identity, kind: 'context', name: 'Canonical history fallback for compaction',
+            spanId: `${state.identity.runId}:canonical-history-fallback:${prepared.area.revision}`,
+            at, startedAt: at, endedAt: at, durationMs: 0, status: 'success',
+            input: { reason: 'provider_projection_unavailable' },
+            output: { entry_count: prepared.area.entries.length },
+            attributes: { context_source: 'canonical_history_fallback' },
+          })
+        }
         result = await compactContext(prepared.area, ports.compaction, {
           modelIdentity: state.modelIdentity, signal,
-          projection: frozenRequest(state, prepared)?.request.projection,
+          projection: frozen?.request.projection,
           ...(anchor < 0 ? {} : {
             window: {
               anchorIndex: prepared.area.fixedPrefixSize + anchor,

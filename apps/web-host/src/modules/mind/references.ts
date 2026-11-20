@@ -35,11 +35,25 @@ function rowItem(type: string, row: Row, label: unknown, subtitle?: unknown, id:
   }
 }
 
+async function fileReferences(pool: Pool, ownerId: string, limit: number, query: string | null) {
+  const [files, folders] = await Promise.all([
+    pool.query<Row>(`SELECT id,display_name,ext,space FROM files WHERE user_id=$1 AND deleted_at IS NULL
+      AND ($3::text IS NULL OR display_name ILIKE $3 OR ext ILIKE $3 OR search_romaji ILIKE $3)
+      ORDER BY updated_at DESC LIMIT $2`, [ownerId, limit, query]),
+    pool.query<Row>(`SELECT id,name FROM folders WHERE user_id=$1 AND deleted_at IS NULL
+      AND ($3::text IS NULL OR name ILIKE $3 OR search_romaji ILIKE $3)
+      ORDER BY updated_at DESC LIMIT $2`, [ownerId, limit, query]),
+  ])
+  return [
+    ...files.rows.map(row => rowItem('file', row, row.ext ? `${row.display_name}.${row.ext}` : row.display_name, row.space)),
+    ...folders.rows.map(row => rowItem('folder', row, row.name)),
+  ]
+}
+
 async function recent(pool: Pool, ownerId: string, limit: number): Promise<MindReferenceSuggestionItem[]> {
-  const [projects, files, folders, events, canvasNotes, skills, mcpServers, tasks] = await Promise.all([
+  const [projects, fileItems, events, canvasNotes, skills, mcpServers, tasks] = await Promise.all([
     pool.query<Row>('SELECT id, name, contact_name AS client FROM projects WHERE user_id=$1 AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT $2', [ownerId, limit]),
-    pool.query<Row>('SELECT id, display_name, ext, space FROM files WHERE user_id=$1 AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT $2', [ownerId, limit]),
-    pool.query<Row>('SELECT id, name FROM folders WHERE user_id=$1 AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT $2', [ownerId, limit]),
+    fileReferences(pool, ownerId, limit, null),
     pool.query<Row>('SELECT id, title, date FROM calendar_events WHERE user_id=$1 AND deleted_at IS NULL ORDER BY date DESC LIMIT $2', [ownerId, limit]),
     pool.query<Row>(
       `SELECT n.id, n.title, ci.canvas_id FROM mind_nodes n
@@ -63,8 +77,7 @@ async function recent(pool: Pool, ownerId: string, limit: number): Promise<MindR
   ])
   return [
     ...projects.rows.map(row => rowItem('project', row, row.name, row.client)),
-    ...files.rows.map(row => rowItem('file', row, `${row.display_name}.${row.ext}`, row.space)),
-    ...folders.rows.map(row => rowItem('folder', row, row.name)),
+    ...fileItems,
     ...events.rows.map(row => rowItem('event', row, row.title, row.date)),
     ...canvasNotes.rows.map(row => rowItem('canvas_note', row, row.title || '无标题画布便签', `画布 ${row.canvas_id}`)),
     ...skills.rows.map(row => rowItem('skill', row, row.name, row.skill_id)),
@@ -76,6 +89,7 @@ async function recent(pool: Pool, ownerId: string, limit: number): Promise<MindR
 export function createPostgresMindReferenceSuggestionPorts(pool: Pool) {
   return {
     recent: (ownerId: string, limit: number) => recent(pool, ownerId, limit),
+    matchingFileReferences: (ownerId: string, query: string, limit: number) => fileReferences(pool, ownerId, limit, `%${query}%`),
     async matchingMessages(ownerId: string, query: string, limit: number) {
       const result = await pool.query<Row>(
         `SELECT m.id, m.content, s.title AS session_title FROM conversation_messages m

@@ -62,9 +62,9 @@ export function createGatewaySupervisor(ports) {
         try {
             specs = await ports.read();
         }
-        catch {
+        catch (error) {
             configuration = 'unavailable';
-            ports.report?.('config-unavailable');
+            ports.report?.('config-unavailable', error);
             if (!configRetry && !stopping) {
                 const controller = new AbortController();
                 configRetry = controller;
@@ -122,12 +122,12 @@ export function createGatewaySupervisor(ports) {
                         failures.delete(spec.key);
                         notify();
                     }
-                }, () => {
+                }, error => {
                     // 无法证明旧消费者已释放时保留归属，不能通过重启制造双消费。
                     if (active.get(spec.key) === entry) {
                         uncertain.add(spec.key);
                         if (!stopping)
-                            ports.report?.('cleanup-failed');
+                            ports.report?.('cleanup-failed', error);
                     }
                 });
                 if (stopping) {
@@ -139,10 +139,10 @@ export function createGatewaySupervisor(ports) {
                 if (error instanceof GatewayConnectionCleanupError) {
                     uncertain.add(spec.key);
                     if (!stopping)
-                        ports.report?.('cleanup-failed');
+                        ports.report?.('cleanup-failed', error);
                 }
                 else if (!stopping) {
-                    ports.report?.('connection-failed');
+                    ports.report?.('connection-failed', error);
                     retry(spec);
                 }
             }
@@ -160,8 +160,8 @@ export function createGatewaySupervisor(ports) {
             try {
                 await reconcile();
             }
-            catch {
-                ports.report?.('cleanup-failed');
+            catch (error) {
+                ports.report?.('cleanup-failed', error);
             }
         });
     }
@@ -191,9 +191,9 @@ export function createGatewaySupervisor(ports) {
                     lifetime.signal.removeEventListener('abort', aborted);
                 }
             }
-            catch {
+            catch (error) {
                 if (!stopping)
-                    ports.report?.('listener-unavailable');
+                    ports.report?.('listener-unavailable', error);
             }
             finally {
                 notifications = stopping ? 'stopped' : 'disconnected';
@@ -201,8 +201,8 @@ export function createGatewaySupervisor(ports) {
                     try {
                         await subscription.close();
                     }
-                    catch {
-                        ports.report?.('cleanup-failed');
+                    catch (error) {
+                        ports.report?.('cleanup-failed', error);
                     }
                     subscription = undefined;
                 }

@@ -613,7 +613,7 @@
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/conversation-postgres.ts",
     "productionEntry": "IM Ingress→会话消息和入站收据事务→真实startup/加密v3调度",
-    "keyBehavior": "重复事件不重复Run、早落库复用消息、身份会话隔离、附件同事务claim与派发失败回滚；真实PG注意力被动/等待不派发、配置权限复核、失败恢复必经门和伪造事实剥离；真实Ingress/Redis snapshot/pending/accepted reader冻结非末条subject到加密v3派发并保留混批最低权限，模型scope版本为替身；真实completed batch Session/scope竞争用pg_blocking_pids gate证明读取无反序死锁，仍完整核对批次事实",
+    "keyBehavior": "重复事件不重复Run、早落库复用消息、身份会话隔离、附件同事务claim与派发失败回滚；旧群聊缺chat_type时复用原会话并延续消息序号；真实PG注意力被动/等待不派发、配置权限复核、失败恢复必经门和伪造事实剥离；真实Ingress/Redis snapshot/pending/accepted reader冻结非末条subject到加密v3派发并保留混批最低权限，模型scope版本为替身；真实completed batch Session/scope竞争用pg_blocking_pids gate证明读取无反序死锁，仍完整核对批次事实",
     "ci": "web-host-node"
   },
   "apps/web-host/tests/im/gateway/preflight-interactions.test.ts": {
@@ -869,7 +869,7 @@
     "layer": "L1",
     "owner": "packages/core/src/im/run-delivery.ts",
     "productionEntry": "真实AgentRunner事件到IM回复编排",
-    "keyBehavior": "最终/轮次/附件去重、未知网络结果不重发、逐次撤权、outbox恢复不重启Agent；恢复专用入口不要求假Runner，重复扫描不重发且撤权不发送",
+    "keyBehavior": "最终/轮次/附件去重、未知网络结果不重发、逐次撤权、outbox恢复不重启Agent；恢复专用入口不要求假Runner，重复扫描不重发且撤权不发送；工具完成提示在流式边界后投递，发送结果未知不重试也不阻塞最终正文",
     "ci": "node-webui"
   },
   "apps/web-host/tests/im/gateway/telegram-api.test.ts": {

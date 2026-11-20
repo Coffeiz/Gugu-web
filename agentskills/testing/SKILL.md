@@ -1,14 +1,14 @@
 ---
 name: testing
-description: 测试约定。pytest 基座、vitest 要求、E2E Playwright 标准、回归测试写法、禁止改断言规则。写或改测试前必须阅读。
+description: Node.js 后端、Vitest 与 Playwright 测试约定，涵盖测试选层、隔离和回归断言。写或改测试前必须阅读。
 ---
 
 # 测试约定
 
 ## 回归测试与主动脚本分层
 
-- 自动回归断言与人工发起的诊断、基准、冒烟脚本分开存放。后端回归测试只放 `backend/tests/`；前端 Vitest 放 `apps/web/tests/`；Playwright 放 `apps/web/e2e/`。后端主动脚本按用途放 `backend/scripts/diagnostics/`、`benchmarks/`、`smoke/` 或 `checks/`。
-- 主动脚本文件名用 `probe_*.py`、`compare_*.py`、`bench_*` 或 `smoke_*` 等动作名；禁止以 `test_*.py`、`*_test.py`、`*.test.*`、`*.spec.*` 命名，以免被测试收集和元数据审计误认。自动回归测试继续使用各框架的标准命名。
+- 自动回归断言与人工发起的诊断、基准、冒烟脚本分开存放。Node Web Host 回归测试放在 `apps/web-host/tests/`，Core 回归测试放在 `packages/core/tests/`，前端 Vitest 放在 `apps/web/tests/`，Playwright 放在 `apps/web/e2e/`。主动脚本按用途放在对应 Node package 的 `scripts/` 或仓库 `scripts/` 下。
+- 主动脚本使用描述动作的名称（如 `probe-*`、`compare-*`、`bench-*` 或 `smoke-*`）；避免使用测试框架会自动收集的 `*.test.*` / `*.spec.*` 命名。自动回归测试继续使用对应框架的标准命名。
 - 主动脚本不应成为回归测试的唯一覆盖。发现稳定行为后，应将合成输入、可重复断言沉淀到对应回归套件；真实 Provider/数据探针留在人工脚本目录并明确成本、副作用和授权边界。
 - `scripts/tests/` 是测试分层调度和清单治理工具，不是产品测试用例目录。性能报告、临时复现输出和真实数据不得放进回归测试目录。
 
@@ -44,29 +44,19 @@ description: 测试约定。pytest 基座、vitest 要求、E2E Playwright 标�
 - 删除或合并前，确认目标回归已有其他层级的有效覆盖，并遵守下文“测试失败时”的断言保护和数据安全要求。不同责任层的测试即使验证相似结果，也可能分别保护 API 契约、领域规则和用户路径。
 - 对高风险规则可抽样做变异验证或手动故障注入，确认行为被破坏时测试确实失败；这属于质量抽查，不改变下文规定的变异测试运行周期，也不自动接入 CI。
 
-## 后端（pytest）
+## Node 后端回归
 
-- 跑法：从 `backend/` 执行 `PYTHONPATH=. .venv/bin/pytest`，默认串行；只有任务明确需要并行性能评估时才使用 xdist。单测调试用 pdb 时不使用 xdist。
-- 测试基座在 `backend/tests/conftest.py`：
-  - `db` fixture 给每个测试一个全新的内存 SQLite（`StaticPool` 共享同一条连接），测完即弃。
-  - `user_a`/`user_b` 是标准的多用户越权测试姿势：B 拥有资源，A 拿着 B 的资源 id 调工具，必须得到"不存在"而不是数据。
-  - `_reset_redis_client`（autouse）测试结束后重置 `app.core.redis` 的模块级客户端单例。
-  - 模型列类型要方言无关（`Uuid`/`JSON`/`Text`…）——SQLite 能直接建表。
+- Web Host 测试位于 `apps/web-host/tests/`，由 `@gugu/webui` 的 Node test runner 执行：`corepack pnpm --filter @gugu/webui test`。变更涉及 Core、Gateway 等工作区依赖时按需构建依赖包；Host 测试脚本会执行自身的前置构建。
+- Core 测试位于 `packages/core/tests/`，使用 Vitest 与 `tests/suites.json` 分类。常用入口为 `corepack pnpm --filter @gugu/core test:unit`；集成、IPC、PostgreSQL 和 parity 套件按任务所需显式选择。完整分类见 [Node Core 回归对照清单](../../docs/testing/node-core-parity.md)。
+- Desktop Host 回归位于 `apps/desktop/tests/`；前端逻辑回归见下节；跨系统关键路径才使用少量 E2E。
+- 测试不得读取或写入用户 `.env`、`config.override.json`、真实数据库、真实存储或运行中用户数据。文件与沙盒测试使用临时目录和合成身份；PostgreSQL 集成测试使用专用测试连接、随机 schema，并只清理本次创建的 schema。
+- 诊断、基准和冒烟脚本默认拒绝真实数据库、模型或存储副作用；仅在明确授权并提供专用危险开关后运行。只读脚本也应使用合成身份或临时数据。
+- Python 后端历史测试不是 Node 后端的常规验收门。只有明确核对旧行为或数据迁移时才可作为只读参考；新行为必须由 Node 测试验证，不以旧 Python 测试通过作为交付条件。
+- 测试完成后检查 `git status --short` 和必要的临时存储目录，确保没有生成应被提交的运行时数据；不要清理无法确认归属的用户目录。
 
-### 测试数据隔离
+## TypeScript 单测（Core 与前端）
 
-- 测试不得读取或写入仓库外的真实 `Gugu-data/users/`、`backend/uploads/`、`backend/config.override.json` 或 `.env`。
-- `backend/tests/conftest.py` 的 autouse fixture 会把 `STORAGE__LOCAL_PATH` 指向每个测试独立的临时目录；新增用例不得绕过该 fixture，也不得把存储路径改回部署目录。
-- 需要文件或沙盒对象的测试必须使用 `tmp_path` 或显式 monkeypatch 的临时 `LocalStorageBackend`；测试用户、文件名和 UUID 使用合成值，不得复用真实用户 ID。
-- 诊断脚本和冒烟脚本不等同于 pytest：凡是可能连接真实数据库、调用真实模型、执行工具写入数据或访问真实存储的脚本，必须提供显式危险开关（例如 `--allow-real-data`/`--allow-real-llm`），默认拒绝运行；只读脚本也应使用全零 UUID 或临时数据。
-- 运行测试后检查工作区外存储没有新增测试目录；发现 `test-user`、`test-*` 或固定测试 UUID 目录时，先定位脚本来源，再清理，不要删除无法确认归属的用户目录。
-- 测试完成后应执行 `git status --short` 和必要的存储目录检查，确保没有生成应被提交的 JSONL、附件、缩略图或运行时索引。
-
-## 前端单测（vitest）
-
-独立 TS Core 的回归放在 `packages/core/tests/`，执行 `pnpm --filter @gugu/core test`；Python 对照测试执行 `test:golden`，必须显式提供安装了兼容包的 `GUGU_CORE_GOLDEN_PYTHON`。对应 Node job 单独连接隔离 PostgreSQL。保留 `backend/tests/core/` 的 Python 参考回归；新增 Core 测试同样登记元数据，不混入前端套件。
-
-Node Core 以 `tests/suites.json` 显式分类，已提供 unit/integration/ipc/postgres/parity/all；与 pytest 相同，process/external_service 自动归 slow。快速层不启动 Worker、进程或服务，显式选择的 PG/Python 缺依赖即失败。具体行为映射及严格校验差异见 [回归对照清单](../../docs/testing/node-core-parity.md)，整体状态见 [T1](../../docs/refactor/Gugu-2.0-架构与迁移任务清单.md#core-test-parity)。移动和新增时保留原断言，同步分类、元数据、清单与 CI；不能把当前项目/联系人切片描述为全量后端等价。Electron Host 回归放在 `apps/desktop/tests/`，真实制品 smoke 使用新建临时目录。
+Node Core 以 `tests/suites.json` 显式分类，提供 unit/integration/ipc/postgres/parity/all；涉及进程或外部服务的用例应归入慢速层。快速层不启动 Worker、进程或服务；显式选择的 PostgreSQL 集成缺少依赖时应失败，不静默跳过。移动和新增时保留行为断言，同步分类、元数据、清单与 CI；不能把局部切片描述为全量后端功能覆盖。真实制品 smoke 使用新建临时目录。
 
 - 跑法：`corepack pnpm --filter gugu-web run test:run`（一次性）或 `corepack pnpm --filter gugu-web run test`（watch）。
 - 所有前端 Vitest 测试统一放在 `apps/web/tests/<功能域>/`，按产品功能或跨模块领域归档；需要细分时在功能域下建立子目录。`apps/web/src/` 只放生产代码，禁止在源码旁新建 `*.test.*` / `*.spec.*`；旧的 `apps/web/test/` 扁平目录不再使用。Vitest 与 `test:fast` 只发现 `apps/web/tests/`。
@@ -81,8 +71,8 @@ Node Core 以 `tests/suites.json` 显式分类，已提供 unit/integration/ipc/
 
 - CRAP 复杂度/覆盖率报告和变异测试不属于自动 CI，不由 push、PR 或发布流水线触发。
 - 由维护者每季度手动运行；触及登记范围的重大重构或发布前可额外运行。使用各自文档中的显式范围和命令，并审查报告中的风险项。
-- 这些检查是补充性的质量评估，不替代普通 pytest、Vitest、E2E；现有自动 CI 测试范围保持不变。
-- 变异测试范围和源码→测试映射以 `scripts/quality/mutation_scope.json` 为准；手动入口为 `backend/.venv/bin/python scripts/quality/mutation_report.py --language both`，可用 `--language python|typescript` 单独运行。报告输出到 `docs/reports/`，同日重跑须显式 `--overwrite`。
+- 这些检查是补充性的质量评估，不替代 Node 后端回归、Vitest 或 E2E；现有自动 CI 测试范围保持不变。
+- 变异测试范围和源码→测试映射以 `scripts/quality/mutation_scope.json` 为准；该质量报告工具目前由 Python 脚本实现，手动入口为 `python3 scripts/quality/mutation_report.py --language typescript`。仅运行 TypeScript 范围，报告输出到 `docs/reports/`，同日重跑须显式 `--overwrite`。此脚本是维护工具，不代表 Python 后端是开发目标。
 - 如需保留同日基线并另存复跑，可传 `--report-dir docs/reports/<run-name>`；只允许写入 `docs/reports/` 内。
 - 变异报告必须把 killed、survived、timeout、编译/运行错误、无覆盖、等价和未检查状态分开。未运行、未覆盖或编译失败的变异不得计入 killed；只有完成行为审查后才能登记等价变异。
 - CRAP 目标预算为 5 分钟，单种语言的变异测试目标预算为 10 分钟；超预算优先排查环境和显式范围，不接入 CI 或放宽异常统计。
@@ -101,7 +91,7 @@ CI 的 Runtime integration workflow 执行 `test:e2e:stable`；当前稳定列�
 
 新增用例接 CI 的标准：
 - 不依赖测试账号的既有数据（每轮 CI 全新数据库）。
-- 不接真实模型——CI 用 `backend/scripts/testing/mock_llm_server.py`。断言只验证"收到了 AI 回复"，不抠固定文字。
+- 不接真实模型；mock LLM 服务位置以对应 workflow 和当前 Node 测试配置为准。断言只验证"收到了 AI 回复"，不抠固定文字。
 - 不需要真实设备权限或第三方账号绑定。
 
 新增 CI 用例需同时改 `.spec.ts` 文件、`apps/web/package.json` 的稳定 E2E 列表，并确认 workflow 调用 `pnpm --filter gugu-web run test:e2e:stable`。

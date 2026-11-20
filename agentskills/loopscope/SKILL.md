@@ -23,14 +23,14 @@ LoopScope 是 Gugu 的开发、回归和运行排障工具，不是普通业务�
 
 - `_jsonable()` 是 trace 对象序列化工具，不是正文脱敏器；不要把它描述成 redact/sanitize。
 - `digest` 和 fingerprint 只用于结构比较、缓存诊断和关联，不代替可展开的开发正文。
-- 普通 Gugu 日志仍必须遵循后端安全规范，使用 `redact()`、`diag_log()` 或 `fingerprint()`；该规则不自动套用到 LoopScope trace。
+- 普通 Gugu 日志仍必须遵循 Node 后端安全规范：使用 `@gugu/log` 的白名单事件字段、fingerprint 与受限诊断日志；该规则不自动套用到 LoopScope trace。
 - 修改 LoopScope trace 字段时，优先保证 Provider 实际输入与 trace 展示一致；不要为了“看起来安全”只记录二次摘要。
 - Collector 不可用时不能阻塞 Agent 主链路；上报失败应静默失败或进入独立诊断处理。
 
 ## 修改前检查
 
 1. 确认新增字段是否为开发诊断正文、结构 metadata 或凭据。
-2. 开发诊断正文可以进入 trace；凭据必须拒绝或清除；普通日志单独走后端日志脱敏规范。
+2. 开发诊断正文可以进入 trace；凭据必须拒绝或清除；普通日志单独走 Node 后端日志安全规范。
 3. 检查 `Input`、`Output`、`Context`、`Tool` 面板是否仍能还原真实排障现场。
 4. 增加或更新 trace contract、Collector 存储和前端展示测试。
 5. 用 `git diff --check`，并确认没有把真实 Token、API Key、密码或生产用户凭据写进测试 fixture、报告和提交历史。

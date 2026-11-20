@@ -61,6 +61,45 @@ function deliveryFixture(events: RunEvent[]) {
     setAuthorized(value: boolean) { authorized = value }, setOutcome(value: ImDeliveryResult) { outcome = value } }
 }
 
+test('工具完成提示在文本流边界后发送，失败或恢复不影响最终正文', async () => {
+  const events = [
+    event(1, 'tool_call', { name: 'get_current_time', input: '私有参数' }),
+    event(2, 'tool_done', { name: 'get_current_time', status: 'success', result: '私有结果' }),
+    event(3, 'tool_done', { name: 'choose_no_reply', status: 'success' }),
+    event(4, 'final', { status: 'completed', text: '最终正文' }),
+  ]
+  const f = deliveryFixture(events)
+  const messages: string[] = []
+  const recovery = createImRunDeliveryRecovery({
+    ...f.ports,
+    stream: { async project({ event }) { messages.push(event.type); return 'accepted' } },
+    sender: { ...f.ports.sender, async toolNotice({ text }) { messages.push(text); return 'unknown' } },
+  })
+  await recovery.recover(identity)
+  await recovery.recover(identity)
+  assert.deepEqual(messages, ['tool_call', 'tool_done', '✅ 获取当前时间完成', 'tool_done', 'final'])
+  assert.equal(f.cursor, 4)
+  assert.equal(f.receipts.get('tool-notice:2')?.state, 'unknown')
+})
+
+test('关闭中间回复时，实时和恢复投递仅发送最终正文及必要交互', async () => {
+  const events = [
+    event(1, 'round_end', { text: '中间正文' }),
+    event(2, 'interaction_required', { interactionId: 'prompt', kind: 'question', toolCallId: 'call' }),
+    event(3, 'round_end', { text: '最终正文' }, 2),
+    event(4, 'final', { status: 'completed', text: '最终正文' }, 2),
+  ]
+  for (const recovery of [false, true]) {
+    const f = deliveryFixture(events)
+    const ports = { ...f.ports, showIntermediateReplies: false }
+    if (recovery) await createImRunDeliveryRecovery(ports).recover(identity)
+    else await createImRunDelivery(ports).start(identity)
+    assert.deepEqual(f.sent.map(({ kind }) => kind), ['interaction', 'text'])
+    assert.equal(f.sent[1]?.value, '最终正文')
+    assert.equal(f.cursor, 4)
+  }
+})
+
 test('accepted携带证据同settle交Host，真实final仅提升相同正文且不重复发送', async () => {
   const f = deliveryFixture([event(1,'round_end',{text:'已送正文'}),event(2,'final',{text:'已送正文',status:'completed'})])
   const evidence = {v:1,platformMessageIds:['native-synthetic']}

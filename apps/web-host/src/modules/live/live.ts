@@ -32,7 +32,9 @@ async function* streamEvents(
   let subscription: Awaited<ReturnType<LiveSubscriptionFactory>> | null = null
   const channels = [`events:${ownerId}`, LIVE_BROADCAST_CHANNEL] as const
   try {
+    if (abort.signal.aborted) return
     subscription = await options.operations.subscribe(channels)
+    if (abort.signal.aborted) return
     yield connectedFrame
     if (!await options.operations.isUserActive(ownerId, expectedSecurityVersion)) {
       yield suspendedFrame
@@ -66,14 +68,25 @@ async function* streamEvents(
 }
 
 export function registerLiveRoutes(app: FastifyInstance, options: LiveRouteOptions): void {
+  const streams = new Set<AbortController>()
+  let closing = false
+  app.addHook('preClose', async () => {
+    closing = true
+    for (const stream of streams) stream.abort()
+  })
   app.get('/api/v1/live/stream', { preHandler: options.requireUser }, async (request, reply) => {
     const ownerId = options.ownerIdFromRequest(request)
     const expectedSecurityVersion = options.securityVersionFromRequest(request)
     const abort = new AbortController()
     const abortStream = () => abort.abort()
+    if (closing) abortStream()
+    else streams.add(abort)
     reply.raw.once('close', abortStream)
     const stream = Readable.from(streamEvents(ownerId, expectedSecurityVersion, options, abort))
-    stream.once('close', () => reply.raw.off('close', abortStream))
+    stream.once('close', () => {
+      reply.raw.off('close', abortStream)
+      streams.delete(abort)
+    })
     return reply
       .type('text/event-stream; charset=utf-8')
       .header('Cache-Control', 'no-cache, no-transform')

@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { RunEvent } from '@gugu/core/agent'
 import type { ProviderTransport } from '@gugu/core/providers'
-import { createILinkClient } from '../../../src/modules/im/gateway/platforms/wechat/client.js'
-import { createWechatTypingIndicator, createWechatTypingTicketCache, WECHAT_TICKET_TTL_MS } from '../../../src/modules/im/gateway/platforms/wechat/typing.js'
+import { createILinkClient } from '@gugu/gateway/wechat'
+import { createWechatTypingIndicator, createWechatTypingTicketCache, WECHAT_TICKET_TTL_MS } from '@gugu/gateway/wechat'
 import { createWechatSender } from '../../../src/modules/im/gateway/platforms/wechat/sender.js'
 
 const target = { userId: 'wx-synthetic', contextToken: 'synthetic-context' }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { bindRecoverableProvider, createReflectionModelScope, RecoverableProviderVersionError, type RecoverableProviderServices } from '../../src/modules/agent/llm/recovery.js'
+import { bindRecoverableProvider, createReflectionModelScope, recoverRunModelPin, RecoverableProviderVersionError, type RecoverableProviderServices } from '../../src/modules/agent/llm/recovery.js'
 import { createModelStrategy } from '../../src/modules/agent/llm/selection.js'
 const identity = { ownerId: 'owner-a', sessionId: '1', runId: 'run-a' }, signal = new AbortController().signal
 function setup() {
@@ -43,6 +43,20 @@ test('重启按 checkpoint 固定模型恢复，不再轮询，身份不包含�
   assert.equal(restored.modelIdentity, first.modelIdentity); assert.doesNotMatch(first.modelIdentity, /synthetic-secret/)
   first.release(); first.release(); next.release(); restored.release(); assert.equal(releases(), 3)
 })
+test('Run 尚未写入 checkpoint 时，使用已冻结的签名模型身份恢复', async () => {
+  const { services } = setup(), key = 'synthetic-signing-key'
+  const first = await bindRecoverableProvider(identity, services, key, signal)
+  first.release()
+  const pin = recoverRunModelPin(identity, first.modelIdentity, key)
+  assert.throws(() => recoverRunModelPin({ ...identity, runId: 'other-run' }, first.modelIdentity, key), RecoverableProviderVersionError)
+  assert.throws(() => recoverRunModelPin(identity, first.modelIdentity, 'wrong-signing-key'), RecoverableProviderVersionError)
+  const restored = await bindRecoverableProvider(identity, services, key, signal, { identity, ...pin })
+  try {
+    assert.equal(restored.modelIdentity, first.modelIdentity)
+    assert.equal((await restored.resolve(identity, pin.modelIdentity, signal)).config.model, 'model-a')
+  } finally { restored.release() }
+})
+
 test('版本、范围和运行身份漂移拒绝恢复并释放模型占位', async () => {
   const state = setup(), first = await bindRecoverableProvider(identity, state.services, 'synthetic-key', signal)
   const recovery = { identity, modelIdentity: first.modelIdentity, accessScopeHash: first.accessScopeHash }

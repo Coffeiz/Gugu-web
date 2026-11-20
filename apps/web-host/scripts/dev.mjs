@@ -34,7 +34,7 @@ for (const name of ['sandbox', 'database', 'core', 'fs', 'gateway']) {
   const project = resolve(root, `packages/${name}`)
   start(`${name} 监听`, [tsc, '-p', project, '--watch', '--preserveWatchOutput', '--incremental', '--tsBuildInfoFile', resolve(project, 'dist/.dev.tsbuildinfo'), '--noEmitOnError'])
 }
-const tsx = resolve(host, 'node_modules/tsx/dist/cli.mjs')
-start('Web Host 监听', [tsx, 'watch', '--clear-screen=false', ...['sandbox', 'database', 'core', 'fs', 'gateway'].flatMap(name => ['--include', resolve(root, `packages/${name}/dist/**/*.js`)]), 'src/main.ts'])
+// Node 监听会等待原进程正常退出，已开始的 Agent Run 可完成持久化和投递。
+start('Web Host 监听', ['--watch', '--watch-preserve-output', '--import', 'tsx', 'src/main.ts'])
 process.on('SIGINT', () => stop())
 process.on('SIGTERM', () => stop())

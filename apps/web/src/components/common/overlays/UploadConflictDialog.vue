@@ -21,7 +21,7 @@
         <div v-for="c in conflicts" :key="c.filename" class="ucd-item">
           <span class="ucd-name" :title="c.filename">{{ c.filename }}</span>
           <div class="ucd-choices">
-            <label class="ucd-radio" :class="{ active: choices[c.filename] === 'overwrite' }">
+            <label v-if="c.canOverwrite !== false" class="ucd-radio" :class="{ active: choices[c.filename] === 'overwrite' }">
               <input type="radio" :name="c.filename" value="overwrite" v-model="choices[c.filename]" />{{ t('viewerUi.overwrite') }}
             </label>
             <label class="ucd-radio" :class="{ active: choices[c.filename] === 'keep_both' }">
@@ -43,7 +43,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, onBeforeUnmount } from 'vue'
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import BaseModal from '@/components/common/overlays/BaseModal.vue'
 import { useI18n } from 'vue-i18n'
 
@@ -51,6 +52,7 @@ const { t } = useI18n()
 
 export interface ConflictItem {
   filename: string
+  canOverwrite?: boolean
   existingFile?: { id: number } | null
 }
 export interface ConflictDecision {
@@ -60,40 +62,60 @@ export interface ConflictDecision {
 
 const open = ref(false)
 const conflicts = ref<ConflictItem[]>([])
-const choices = reactive<Record<string, string>>({})
+const choices = ref<Record<string, ConflictDecision['action']>>(Object.create(null))
 let _resolve: ((m: Map<string, ConflictDecision>) => void) | null = null
 
 // 有冲突时弹出列表式确认，返回一个 Promise：resolve 出每个文件名 -> 决定（覆盖/保留两者/跳过）。
 // 没有冲突的文件不会经过这个弹窗，宿主直接按 keep_both 处理即可。
 function show(list: ConflictItem[]): Promise<Map<string, ConflictDecision>> {
+  if (_resolve) cancel()
   conflicts.value = list
-  for (const c of list) choices[c.filename] = 'keep_both'
+  choices.value = Object.create(null)
+  for (const c of list) choices.value[c.filename] = 'keep_both'
   open.value = true
   return new Promise(resolve => { _resolve = resolve })
 }
 
-function applyAll(action: string) {
-  for (const c of conflicts.value) choices[c.filename] = action
+function applyAll(action: ConflictDecision['action']) {
+  for (const c of conflicts.value) {
+    if (action !== 'overwrite' || c.canOverwrite !== false) choices.value[c.filename] = action
+  }
 }
 
 function _buildMap(): Map<string, ConflictDecision> {
   return new Map(conflicts.value.map(c => [
     c.filename,
-    { action: choices[c.filename] as ConflictDecision['action'], existingFileId: c.existingFile?.id },
+    { action: choices.value[c.filename], existingFileId: c.existingFile?.id },
   ]))
 }
 
-function confirm() {
+async function confirm() {
+  const resolve = _resolve
+  if (!resolve) return
+  const decisions = _buildMap()
+  const overwrites = conflicts.value.filter(item =>
+    item.canOverwrite === true && decisions.get(item.filename)?.action === 'overwrite')
   open.value = false
-  _resolve?.(_buildMap())
+  _resolve = null
+  if (overwrites.length && !await confirmDialog({
+    title: t('filesUi.overwriteTitle'),
+    message: t('filesUi.overwriteMessage', { count: overwrites.length }),
+    tone: 'danger',
+    confirmText: t('viewerUi.overwrite'),
+  })) {
+    for (const item of overwrites) decisions.set(item.filename, { action: 'skip' })
+  }
+  resolve(decisions)
 }
 
 function cancel() {
   open.value = false
   // 取消 = 这批冲突文件全部跳过，不上传（不影响本来就没冲突的其它文件）
   _resolve?.(new Map(conflicts.value.map(c => [c.filename, { action: 'skip' as const }])))
+  _resolve = null
 }
 
+onBeforeUnmount(cancel)
 defineExpose({ show })
 </script>
 

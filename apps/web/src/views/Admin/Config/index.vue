@@ -105,22 +105,6 @@
         </div>
       </section>
 
-      <!-- ── 站内搜索 ── -->
-      <section id="sec-search" class="config-card search-config-card">
-        <div class="card-head">
-          <div class="card-icon" style="--ic:rgba(122,184,200,0.15);--stroke:#7ab8c8">
-            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.5 12.5L17 17"/>
-            </svg>
-          </div>
-          <div class="card-title-block">
-            <h3>{{ t('configUi.globalSearch') }}</h3>
-            <p>{{ t('configUi.globalSearchHint') }}</p>
-          </div>
-          <p class="config-card-note">{{ t('configUi.globalSearchIndexInfo') }}</p>
-        </div>
-      </section>
-
       <StorageSettings v-model="draft.storage" />
 
       <!-- ── 邮件系统 ── -->
@@ -427,21 +411,28 @@ async function testSmtp() {
 }
 .config-card:hover { border-color: rgba(255,255,255,0.13); }
 
-.card-head { display: flex; align-items: center; gap: 13px; margin-bottom: 20px; }
-.card-icon {
+.card-head,
+#sec-storage :deep(.card-head) { display: flex; align-items: center; gap: 13px; margin-bottom: 20px; }
+.card-icon,
+#sec-storage :deep(.card-icon) {
   width: 38px; height: 38px; border-radius: 11px; background: var(--ic);
   display: flex; align-items: center; justify-content: center; flex-shrink: 0;
 }
-.card-icon svg { width: 18px; height: 18px; color: var(--stroke); }
-.card-title-block { flex: 1; }
-.card-title-block h3 { font-size: 14px; font-weight: 700; color: rgba(255,255,255,0.88); }
-.card-title-block p  { font-size: 12px; color: rgba(255,255,255,0.38); margin-top: 2px; }
+.card-icon svg,
+#sec-storage :deep(.card-icon svg) { width: 18px; height: 18px; color: var(--stroke); }
+.card-title-block,
+#sec-storage :deep(.card-title-block) { flex: 1; }
+.card-title-block h3,
+#sec-storage :deep(.card-title-block h3) { font-size: 14px; font-weight: 700; color: rgba(255,255,255,0.88); }
+.card-title-block p,
+#sec-storage :deep(.card-title-block p)  { font-size: 12px; color: rgba(255,255,255,0.38); margin-top: 2px; }
 
-.field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.field-grid :deep(.span2) { grid-column: span 2; }
+.field-grid,
+#sec-storage :deep(.field-grid) { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.field-grid :deep(.span2),
+#sec-storage :deep(.field-grid .span2) { grid-column: span 2; }
 
-.config-card-note { margin: 0; color: rgba(255,255,255,0.35); font-size: 12px; line-height: 1.5; text-align: right; }
-.search-config-card .card-head { margin-bottom: 0; }
+#sec-storage :deep(.config-card-note) { margin: 0; color: rgba(255,255,255,0.35); font-size: 12px; line-height: 1.5; text-align: right; }
 
 .toggle-group { display: flex; gap: 6px; margin-bottom: 16px; }
 .provider-grid { flex-wrap: wrap; }

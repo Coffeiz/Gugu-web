@@ -73,6 +73,7 @@ export interface ProjectFileOverview {
   total_file_count: number
   root_file_count: number
   total_folder_count: number
+  sandbox_path?: string
 }
 
 const getInput = z.object({ project_id: z.number().int().safe().optional(), project: z.string().optional() }).passthrough()
@@ -80,6 +81,8 @@ const overviewInput = z.object({
   total_file_count: z.number().int().nonnegative().safe(),
   root_file_count: z.number().int().nonnegative().safe(),
   total_folder_count: z.number().int().nonnegative().safe(),
+  sandbox_path: z.string().regex(/^\/project\/(?:[^/]+\/)*[^/]+$/u)
+    .refine(path => !path.includes('\0') && !path.includes('\\') && !path.split('/').some(part => part === '..' || part === '.')).optional(),
 }).strict().refine(value => value.root_file_count <= value.total_file_count)
 
 /** Host 必须提供可信 owner-scoped 实时文件概览；缺能力时不构造或开放此工具。 */
@@ -90,7 +93,7 @@ export function createGetProjectTool(options: {
   if (typeof options.fileOverview !== 'function') throw new Error('项目文件概览能力未装配')
   return {
     definition: { name: 'get_project', schema: { type: 'function', function: {
-      name: 'get_project', description: '读取项目结构。', parameters: { type: 'object', properties: {
+      name: 'get_project', description: '读取项目结构。返回的 sandbox_path 是项目文件在 Shell 沙箱中的路径，读写仍受当前授权限制。', parameters: { type: 'object', properties: {
         project_id: { type: 'integer' }, project: { type: 'string' },
       }, required: [] },
     } } },
@@ -104,11 +107,11 @@ export function createGetProjectTool(options: {
         data => resolveProject(data, input as z.infer<typeof getInput>), { signal: scope.signal })
       if ('error' in project) return { kind: 'completed', successful: false, mutated: false, value: project }
       scope.signal.throwIfAborted()
-      const files = overviewInput.parse(await options.fileOverview(scope.identity, project.id, scope.signal))
+      const { sandbox_path, ...files } = overviewInput.parse(await options.fileOverview(scope.identity, project.id, scope.signal))
       const stages = projectStages(project)
       return { kind: 'completed', successful: true, mutated: false, value: {
         id: project.id, name: project.name, status: project.status, priority: project.priority,
-        summary: project.summary, files, client: project.client, start_date: project.start_date,
+        summary: project.summary, files, ...(sandbox_path ? { sandbox_path } : {}), client: project.client, start_date: project.start_date,
         deadline: project.deadline, color: projectColorKey(project.color), current_stage: project.current_stage,
         archived: project.archived, stages: stages.map(stage => ({
           key: stage.key ?? null, label: stage.label ?? null, done: stage.done === undefined ? false : stage.done,

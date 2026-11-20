@@ -79,12 +79,13 @@ function isAgentRunChangedEvent(value: unknown): value is Record<string, unknown
     && typeof value.event_id === 'string' && value.event_id.length > 0
     && value.type === 'agent.run.changed'
     && isInteger(value.session_id) && value.session_id > 0
-    && ['running', 'completed', 'failed'].includes(String(value.status))
+    && (value.run_id === undefined || typeof value.run_id === 'string' && /^[A-Za-z0-9:_-]{1,128}$/.test(value.run_id))
+    && ['running', 'waiting', 'completed', 'failed'].includes(String(value.status))
     && typeof value.created_at === 'string'
 }
 
 function sanitizeAgentRunChangedEvent(value: Record<string, unknown>): Record<string, unknown> {
-  const fields = ['protocol_version', 'event_id', 'type', 'session_id', 'status', 'created_at']
+  const fields = ['protocol_version', 'event_id', 'type', 'session_id', 'run_id', 'status', 'created_at']
   return Object.fromEntries(fields.filter((key) => key in value).map((key) => [key, value[key]]))
 }
 

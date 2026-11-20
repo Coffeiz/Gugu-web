@@ -1,3 +1,5 @@
+import type { ConflictDecision, ConflictItem } from '@/components/common/overlays/UploadConflictDialog.vue'
+import { splitName } from '@/utils/fileParse'
 import { foldersApi, filesApi, uploadWithProgress, pathFilesApi, type ApiFolderResponse, type PathFileRef } from '@/services/api'
 import { pLimit, UPLOAD_CONCURRENCY } from '@/utils/concurrency'
 
@@ -7,11 +9,18 @@ export interface UploadItem {
   relativePath: string
 }
 
-export async function uploadWorkspaceFile(target: PathFileRef, item: UploadItem, onProgress: (progress: number) => void) {
+export async function uploadWorkspaceFile(
+  target: PathFileRef,
+  item: UploadItem,
+  onProgress: (progress: number) => void,
+  showConflicts: (items: ConflictItem[]) => Promise<Map<string, ConflictDecision>>,
+  isCurrent: () => boolean,
+) {
   const parts = item.relativePath.split('/')
-  const name = parts.pop()!
+  let name = parts.pop()!
   let parent = target.relativePath
   for (const part of parts) {
+    if (!isCurrent()) return false
     const relativePath = [parent, part].filter(Boolean).join('/')
     try {
       await pathFilesApi.createFolder({ directoryId: target.directoryId, relativePath })
@@ -22,9 +31,32 @@ export async function uploadWorkspaceFile(target: PathFileRef, item: UploadItem,
     }
     parent = relativePath
   }
-  return pathFilesApi.upload({
+  if (!isCurrent()) return false
+  const entries = await pathFilesApi.entries(target.directoryId, parent)
+  const existing = entries.find(entry => entry.name === name)
+  let overwrite = false
+  if (existing) {
+    if (!isCurrent()) return false
+    const choices = await showConflicts([{ filename: item.relativePath, canOverwrite: existing.kind === 'file' }])
+    const action = choices.get(item.relativePath)?.action
+    if (!action || action === 'skip') return false
+    overwrite = action === 'overwrite' && existing.kind === 'file'
+    if (!overwrite) {
+      const { base, ext } = splitName(name)
+      const names = new Set(entries.map(entry => entry.name))
+      for (let i = 1; ; i++) {
+        const candidate = `${base || name} (${i})${base && ext ? `.${ext}` : ''}`
+        if (names.has(candidate)) continue
+        name = candidate
+        break
+      }
+    }
+  }
+  if (!isCurrent()) return false
+  await pathFilesApi.upload({
     directoryId: target.directoryId, relativePath: [parent, name].filter(Boolean).join('/'),
-  }, item.file, onProgress)
+  }, item.file, onProgress, overwrite)
+  return true
 }
 
 /** 解析后的上传项：多了「应该落在哪个 folder_id」（null = 落在 baseFolderId/项目·个人根）。 */

@@ -122,11 +122,18 @@ export function codecMessage(message: CanonicalMessage, expected: CanonicalMessa
   return result
 }
 
-export async function savePreparedContext(prepared: PreparedContext, identity: HistoryIdentity, codec: ContextReferenceCodec, signal?: AbortSignal): Promise<PreparedContextCheckpoint> {
+export async function savePreparedContext(prepared: PreparedContext, identity: HistoryIdentity, codec: ContextReferenceCodec,
+  signal?: AbortSignal, timing?: (stage: string, durationMs: number) => void): Promise<PreparedContextCheckpoint> {
+  const started = performance.now()
   const original = prepared.area.snapshot(), entries: MessageEntry[] = []
-  for (const entry of original.entries) {
+  timing?.('snapshot', performance.now() - started)
+  signal?.throwIfAborted()
+  const projected = await codec.dehydrateBatch?.(original.entries.map(copy), identity, signal, timing)
+  if (projected && projected.length !== original.entries.length) throw new Error('批量引用固化结果数量不匹配')
+  const rebuildStarted = performance.now()
+  for (const [index, entry] of original.entries.entries()) {
     signal?.throwIfAborted()
-    const message = codecMessage(await codec.dehydrate(copy(entry), identity, signal), entry.message)
+    const message = codecMessage(projected ? projected[index]! : await codec.dehydrate(copy(entry), identity, signal), entry.message)
     signal?.throwIfAborted()
     assertDurableCanonical(message)
     entries.push({ ...copy(entry), message: copy(message) })
@@ -142,7 +149,9 @@ export async function savePreparedContext(prepared: PreparedContext, identity: H
     requestDigest: prepared.area.services.digest({ prefix: prepared.area.requestPrefix, dynamicTail: prepared.area.dynamicTail }),
     stanceToPersist: prepared.stanceToPersist
   }
-  return { ...state, digest: prepared.area.services.digest(state) }
+  const checkpoint = { ...state, digest: prepared.area.services.digest(state) }
+  if (projected) timing?.('rebuild_and_digest', performance.now() - rebuildStarted)
+  return checkpoint
 }
 
 export async function restorePreparedContext(checkpoint: PreparedContextCheckpoint, identity: HistoryIdentity, ports: ContextServices & {

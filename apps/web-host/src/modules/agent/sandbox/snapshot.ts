@@ -9,14 +9,17 @@ export function createAgentShellSnapshotReader<DB>(
   settings: () => Promise<Omit<Awaited<ReturnType<ReturnType<typeof createTerminalRuntimeSettingsReader>>>, 'shellSystemEnabled'> & { shellSystemEnabled?: boolean }>,
 ) {
   const readWorkspace = createSessionWorkspaceTargetReader(db, 'postgres')
-  return async (owner: string, session: string) => {
+  return async (owner: string, session: string,
+    diagnose?: (reason: 'invalid_session' | 'shell_disabled' | 'sandbox_unavailable' | 'workspace_unavailable' | 'account_unavailable') => void) => {
     const sessionId = Number(session)
-    if (!Number.isSafeInteger(sessionId) || sessionId < 1) return null
+    if (!Number.isSafeInteger(sessionId) || sessionId < 1) { diagnose?.('invalid_session'); return null }
     const runtime = await settings()
-    if (!runtime.shellEnabled || !runtime.sandboxEnabled || !runtime.sandboxReady || runtime.networkProfile !== 'none')
-      return null
+    if (!runtime.shellEnabled) { diagnose?.('shell_disabled'); return null }
+    if (!runtime.sandboxEnabled || !runtime.sandboxReady || runtime.networkProfile !== 'none') {
+      diagnose?.('sandbox_unavailable'); return null
+    }
     const target = await readWorkspace(owner, sessionId)
-    if (!target) return null
+    if (!target) { diagnose?.('workspace_unavailable'); return null }
     const { rows: [row] } = await pool.query<{ preferences: unknown; full_write: boolean; security_version: number }>(`
       SELECT p.data_json AS preferences, u.security_version,
         EXISTS(SELECT 1 FROM filesystem_authorization_grants g
@@ -27,7 +30,7 @@ export function createAgentShellSnapshotReader<DB>(
       LEFT JOIN user_preferences p ON p.user_id=s.user_id
       WHERE s.user_id=$1 AND s.id=$2 AND u.is_active=TRUE AND COALESCE(u.account_status,'active')='active'
     `, [owner, sessionId, runtime.filesystemAuthorizationEnabled])
-    if (!row) return null
+    if (!row) { diagnose?.('account_unavailable'); return null }
     const raw = typeof row.preferences === 'string' ? JSON.parse(row.preferences) : row.preferences
     const prefs = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {}
     return { workspaceId: target.workspaceId, workspaceTarget: JSON.stringify(target), securityVersion: row.security_version,

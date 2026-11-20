@@ -8,6 +8,34 @@ import { createImProductionFixture } from './production.fixtures.js'
 const databaseUrl = process.env.GUGU_IM_GATEWAY_TEST_DATABASE_URL
 const python = process.env.GUGU_IM_FIXTURE_PYTHON
 
+test('IM 简介模式仅列出当前群聊已开放的工具，全量模式省略重复目录', async () => {
+  const identity = { ownerId: 'owner', sessionId: '1', runId: 'run' }
+  const actor = { ownerId: identity.ownerId, botId: '1', platform: 'qq' as const,
+    chatType: 'group' as const, chatId: 'group', platformUserId: 'member', role: 'member' as const,
+    verifiedOwner: false, ownerMentionAuthorized: false, speakerRoles: null, allowedToolNames: ['web_search'] }
+  let mode = 'description'
+  const pool = {
+    async query() { return { rows: [{ data_json: { tool_injection_mode: mode } }] } },
+  } as unknown as Parameters<typeof createImProductionSkills>[0]['pool']
+  const resources = await createImProductionSkills({ pool, identity, actor, loadOwnerContext: false, authorize: async () => true })
+  const subject = { ownerId: identity.ownerId, workspaceId: null, subject: { kind: 'session' as const, id: identity.sessionId } }
+  const names = ['web_search', 'list_projects']
+  const tools = names.map(name => ({ name, schema: { function: { description: '查询公开信息。后续细节。',
+    parameters: { type: 'object', required: ['query'], properties: {
+      query: { type: 'string' }, mode: { type: 'string', enum: ['quick', 'deep'] },
+      filters: { type: 'array', items: { type: 'object', properties: { days: { type: 'integer' } } } },
+    } },
+  } } }))
+  const brief = await resources.catalog(names, subject, tools)
+  assert.match(brief?.toolCatalog ?? '', /`web_search`：查询公开信息。/u)
+  assert.match(brief!.toolCatalog, /query\(string\),必填、mode\(string\[quick\|deep\]\)、filters\(array<object:days:integer>\)/u)
+  assert.doesNotMatch(brief!.toolCatalog, /list_projects|后续细节/u)
+  mode = 'full'
+  const full = await resources.catalog(names, subject, tools)
+  assert.equal(full?.metadataOnly, true)
+  assert.equal(full.toolCatalog, '')
+})
+
 test('生产Skill资源使用真实PG元数据与按需正文：跨用户隔离、成员不可读取owner技能、停用后即时撤权', {
   skip: !(databaseUrl && python) && '需显式隔离PG及只读ORM编译解释器', timeout: 120000,
 }, async () => {

@@ -56,6 +56,7 @@
           @ready="onCmReady" @change="scheduleAutoSave"
         />
       </div>
+      <span v-if="saveError" class="tv-edit-error" role="alert">{{ saveError }}</span>
     </template>
     <!-- 代码类扩展名：直接就是 CodeMirror，没有单独的只读预览态——它本身就能当预览用
          （虚拟滚动+增量分词，大文件不卡）。真实文件可编辑，改动自动保存（防抖）；聊天附件等
@@ -67,6 +68,7 @@
           @ready="onCmReady" @change="scheduleAutoSave"
         />
       </div>
+      <span v-if="saveError" class="tv-edit-error" role="alert">{{ saveError }}</span>
     </template>
     <!-- Markdown 编辑复用 CodeMirror 的语法高亮。 -->
     <template v-else-if="editing && isMarkdownFile">
@@ -100,7 +102,8 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
 import RefreshButton from '@/components/common/controls/RefreshButton.vue'
-import { filesApi } from '@/services/api'
+import { filesApi, pathFilesApi } from '@/services/api'
+import { getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 import { sanitizeHtml, splitYamlFrontmatter } from '@/utils/markdown'
 import {
   downloadMarkdownMathPng,
@@ -141,7 +144,7 @@ const props = defineProps({
   // 文件标识：滚动位置按它存进 localStorage，刷新（重载/组件重建）后据此还原
   fileKey:  { type: [String, Number], default: null },
   // 文件库预览时用于解析 Markdown 相对链接；聊天附件等非文件库内容不传此值。
-  fileContext: { type: Object as PropType<Partial<FileMeta> | null>, default: null },
+  fileContext: { type: Object as PropType<(Partial<FileMeta> & { workspaceFile?: Parameters<typeof pathFilesApi.contentUrl>[0] }) | null>, default: null },
   // 虚拟文档（例如用户人格文件）不属于文件库，但复用同一套 Markdown 预览/编辑器。
   sourceText: { type: String, default: null },
   saveSource: { type: Function as PropType<(content: string) => Promise<void> | void>, default: null },
@@ -409,10 +412,12 @@ let markdownBodyStartLine = 0
 // 虚拟文档通过 saveSource 保存，不需要文件库 id。
 const isRealFile = computed(() => /^\d+$/.test(String(props.fileKey ?? '')))
 const isVirtualDocument = computed(() => props.sourceText !== null && !!props.saveSource)
-const isEditableDocument = computed(() => isRealFile.value || isVirtualDocument.value)
+const pathFile = computed(() => props.fileContext?.workspaceFile)
+const isStoredFile = computed(() => isRealFile.value || !!pathFile.value)
+const isEditableDocument = computed(() => isStoredFile.value || isVirtualDocument.value)
 const canEditContent = computed(() => isEditableDocument.value && !props.readOnly && !READ_ONLY_TEXT_EXTS.has((props.ext || '').toLowerCase()))
 // 可交互勾选 = md 文件 + 真实文件
-const savable  = computed(() => /^(md|markdown)$/i.test(props.ext || '') && isRealFile.value)
+const savable  = computed(() => /^(md|markdown)$/i.test(props.ext || '') && isStoredFile.value && !props.readOnly)
 // 可编辑 = 后端认得的文本类扩展名 + 真实文件（md 走「编辑」按钮切换态用得到；txt/代码类扩展名
 // 不看这个——它们不管是不是真实文件都直接显示 CodeMirror，只是能不能保存的区别，见 isCodeExt）
 // 无扩展名文件（.gitignore/.env 等点文件）同属纯文本：没有 ext 也没有 MIME 可判，直接放行。
@@ -527,22 +532,37 @@ function onCmReady({ view }: { view: any }) {
 // 代码文件自动保存（防抖，改一下等 800ms 没有新改动再存，不是敲一个字符存一次）。fileKey/待存
 // 内容在「排队时」（每次改动都会重新排一次）就地闭包捕获，不是等定时器触发才现读——就算这中间
 // 文件被切走（props.fileKey/editText 已经变成新文件的），排队中的这次还是会把旧文件的旧内容存
-// 到旧文件自己的 id 上，不会存错文件。没有保存中/已保存的 UI 提示；失败了只打 console，不打扰
-// 编辑——真要盯保存状态可以开 devtools 看。
+// 到旧文件自己的 id 上，不会存错文件。没有保存中/已保存的 UI 提示；失败后在编辑器内显示错误。
 let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
 
 function scheduleAutoSave(content = editText.value) {
-  if (!canEditContent.value || !isRealFile.value) return
+  if (!canEditContent.value || !isStoredFile.value) return
   if (autoSaveTimer) clearTimeout(autoSaveTimer)
-  const targetKey = props.fileKey
-  autoSaveTimer = setTimeout(() => { autoSaveTimer = null; doAutoSave(targetKey, content) }, 800)
+  const save = captureStoredFileSave()
+  autoSaveTimer = setTimeout(() => { autoSaveTimer = null; void doAutoSave(save, content) }, 800)
 }
-async function doAutoSave(targetKey: string | number, content: string) {
+let pathSaveQueue = Promise.resolve()
+function captureStoredFileSave(): (content: string) => Promise<unknown> {
+  const target = pathFile.value
+  const id = Number(props.fileKey)
+  if (!target) return content => saveFileContent(id, content)
+  const epoch = getAccountBoundaryEpoch()
+  return content => {
+    const request = pathSaveQueue.then(() => {
+      if (epoch !== getAccountBoundaryEpoch()) return
+      return pathFilesApi.saveText(target, content)
+    })
+    pathSaveQueue = request.then(() => undefined, () => undefined)
+    return request
+  }
+}
+async function doAutoSave(save: (content: string) => Promise<unknown>, content: string) {
   try {
-    await saveFileContent(Number(targetKey), content)
+    await save(content)
+    saveError.value = ''
     rawText.value = content
   } catch (e) {
-    console.error('[TextViewer] 自动保存失败:', e)  // eslint
+    saveError.value = '自动保存失败：' + (e instanceof Error ? e.message : '未知错误')
   }
 }
 
@@ -614,7 +634,7 @@ async function saveEdit() {
     if (isVirtualDocument.value) {
       await props.saveSource?.(editText.value)
     } else {
-      await saveFileContent(Number(props.fileKey), editText.value)
+      await captureStoredFileSave()(editText.value)
     }
     await processText(editText.value, props.ext)
     cmLoadSeq++
@@ -754,7 +774,7 @@ async function toggleTask(idx: number, cb: HTMLInputElement) {
   ls[hit] = ls[hit].replace(/\[[ xX]\]/, cb.checked ? '[x]' : '[ ]')
   rawText.value = ls.join('\n')
   try {
-    await saveFileContent(Number(props.fileKey), rawText.value)
+    await captureStoredFileSave()(rawText.value)
   } catch {
     rawText.value = before          // 存失败 → 回滚源 + 视觉
     cb.checked = !cb.checked

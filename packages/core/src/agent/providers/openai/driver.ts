@@ -95,7 +95,13 @@ async function* stream(input: ProviderInvocation, deps: ProviderDriverDependenci
   try { for await (const event of requestEvents(deps, openaiHttpRequest(input, body, 'chat/completions'), input.signal)) {
     if (event.event === 'done') break
     const chunk = record(event.data)
-    if (chunk.error) { observe(() => deps.diagnose?.('openai.stream_error', chunk.error)); throw new ProviderError('upstream', { requestStarted: true, outputStarted: output.length > 0 || calls.size > 0 }) }
+    if (chunk.error) {
+      const { upstreamCode, upstreamType } = classifyProviderError({ error: chunk.error }).options
+      const failure = new ProviderError('upstream', { requestStarted: true, outputStarted: output.length > 0 || calls.size > 0,
+        stage: 'stream', upstreamCode, upstreamType })
+      observe(() => deps.diagnose?.('openai.stream_error', failure))
+      throw failure
+    }
     if (chunk.usage != null) { usage = normalizeOpenaiUsage(chunk.usage); hasUsage = true; reportUsage(deps, chunk.usage, usage); yield { type: 'usage', usage } }
     const choice = record(array(chunk.choices)[0])
     if (!Object.keys(choice).length) continue
@@ -107,9 +113,9 @@ async function* stream(input: ProviderInvocation, deps: ProviderDriverDependenci
     if (token) { output += token; yield { type: 'token', text: token } }
     for (const raw of array(delta.tool_calls)) {
       const part = record(raw), index = finite(part.index)
-      if (index === null || !Number.isSafeInteger(index)) throw new ProviderError('protocol', { requestStarted: true, outputStarted: true })
+      if (index === null || !Number.isSafeInteger(index)) throw new ProviderError('protocol', { protocolDetail: 'invalid_block_index', requestStarted: true, outputStarted: true })
       const current = calls.get(index) ?? { id: '', name: '', raw: '' }, fn = record(part.function)
-      if (fn.arguments !== undefined && fn.arguments !== null && typeof fn.arguments !== 'string') throw new ProviderError('protocol', { requestStarted: true, outputStarted: true })
+      if (fn.arguments !== undefined && fn.arguments !== null && typeof fn.arguments !== 'string') throw new ProviderError('protocol', { protocolDetail: 'invalid_tool_arguments', requestStarted: true, outputStarted: true })
       if (text(part.id)) current.id = text(part.id)
       if (text(fn.name)) current.name = text(fn.name)
       current.raw += text(fn.arguments); calls.set(index, current)
@@ -120,7 +126,7 @@ async function* stream(input: ProviderInvocation, deps: ProviderDriverDependenci
   }
   if (!seen || !finishReason) throw new ProviderError('stream_incomplete', { requestStarted: true, outputStarted: !!output || calls.size > 0 })
   const normalized = [...calls.entries()].sort(([a], [b]) => a - b).map(([, call]) => {
-    if (!call.id || !call.name) throw new ProviderError('protocol', { requestStarted: true, outputStarted: true })
+    if (!call.id || !call.name) throw new ProviderError('protocol', { protocolDetail: 'invalid_tool_identity', requestStarted: true, outputStarted: true })
     return normalizedToolCall(call.id, call.name, call.raw)
   })
   if (!hasUsage) reportUsage(deps, null, unknownUsage)
@@ -144,7 +150,7 @@ export const openaiDriver: ProtocolDriver = {
   async complete(input, deps) {
     const { body } = requestBody(input, deps, false), response = await requestJson(deps, openaiHttpRequest(input, body, 'chat/completions'), input.signal)
     const choice = record(array(response.choices)[0]), message = record(choice.message)
-    if (!Object.keys(choice).length || !Object.keys(message).length) throw new ProviderError('protocol', { requestStarted: true })
+    if (!Object.keys(choice).length || !Object.keys(message).length) throw new ProviderError('protocol', { protocolDetail: 'invalid_response_shape', requestStarted: true })
     const usage = normalizeOpenaiUsage(response.usage)
     reportUsage(deps, response.usage ?? null, usage)
     return { text: text(message.content), usage, finishReason: text(choice.finish_reason) || null, ...(choice.finish_reason === 'length' ? { incompleteReason: 'max_tokens' } : {}) }

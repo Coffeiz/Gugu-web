@@ -197,24 +197,25 @@ export function parseAnthropicToolInput(raw: string): JsonObject {
 }
 
 function calls(blocks: readonly JsonObject[]): ToolCall[] {
-  if (blocks.some(block => !['text', 'tool_use', 'thinking', 'redacted_thinking'].includes(text(block.type)))) throw new ProviderError('protocol')
+  if (blocks.some(block => !['text', 'tool_use', 'thinking', 'redacted_thinking'].includes(text(block.type)))) throw new ProviderError('protocol', { protocolDetail: 'unsupported_block_type' })
   const result = blocks.filter(block => block.type === 'tool_use').map(block => {
     const id = text(block.id), name = normalizedToolName(block.name)
-    if (!id || !name) throw new ProviderError('protocol')
-    if (block.input != null && (typeof block.input !== 'object' || Array.isArray(block.input))) throw new ProviderError('protocol')
+    if (!id || !name) throw new ProviderError('protocol', { protocolDetail: 'invalid_tool_identity' })
+    if (block.input != null && (typeof block.input !== 'object' || Array.isArray(block.input))) throw new ProviderError('protocol', { protocolDetail: 'invalid_tool_arguments' })
     const input = object(block.input)
     return { id, name, input, rawArguments: JSON.stringify(input) }
   })
-  if (new Set(result.map(call => call.id)).size !== result.length) throw new ProviderError('protocol')
+  if (new Set(result.map(call => call.id)).size !== result.length) throw new ProviderError('protocol', { protocolDetail: 'duplicate_tool_id' })
   return result
 }
 
 function result(message: Record<string, unknown>, input: ProviderInvocation, dependencies: ProviderDriverDependencies): ProviderCompletion & { calls: ToolCall[] } {
   if (message.error) {
-    observe(() => dependencies.diagnose?.('anthropic_error_response', message.error))
-    throw classifyProviderError({ body: message }, { requestStarted: true, providerUrl: input.policy.baseUrl(input.config) })
+    const failure = classifyProviderError({ body: message }, { requestStarted: true, stage: 'decode', providerUrl: input.policy.baseUrl(input.config) })
+    observe(() => dependencies.diagnose?.('anthropic_error_response', failure))
+    throw failure
   }
-  if (!Array.isArray(message.content)) throw new ProviderError('protocol')
+  if (!Array.isArray(message.content)) throw new ProviderError('protocol', { protocolDetail: 'invalid_response_shape' })
   const blocks = message.content.map(object)
   const finishReason = text(message.stop_reason) || null
   const usage = anthropicUsage(message.usage)
@@ -228,16 +229,28 @@ class MissingContentBlock extends Error {
   constructor(readonly eventType: string, readonly index: number, readonly blockCount: number) { super('模型流内容块缺失') }
 }
 
+const diagnosticStreamEvents = new Set([
+  'message_start', 'message_delta', 'message_stop',
+  'content_block_start', 'content_block_delta', 'content_block_stop',
+])
+
+const diagnosticBlockTypes = new Set(['text', 'tool_use', 'thinking', 'redacted_thinking'])
+const diagnosticDeltaTypes = new Set(['text_delta', 'input_json_delta', 'thinking_delta', 'signature_delta', 'citations_delta'])
+
 async function* stream(input: ProviderInvocation, dependencies: ProviderDriverDependencies): AsyncGenerator<ProviderEvent> {
   const blocks = new Map<number, { block: JsonObject; raw: string; closed: boolean }>()
   let started = false, stopped = false, visible = '', partialOutput = false, finishReason: string | null = null
   let usage: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, contextInput: null }
   let rawUsage: unknown = null
+  let streamEvent: string | undefined, streamBlockIndex: number | undefined
   try {
     for await (const item of requestEvents(dependencies, anthropicRequest(input, true), input.signal)) {
       abort(input.signal)
       const event = record(item.data), type = text(event.type) || item.event
       if (type === 'ping') continue
+      streamEvent = diagnosticStreamEvents.has(type) ? type : undefined
+      streamBlockIndex = streamEvent?.startsWith('content_block_') && typeof event.index === 'number'
+        && Number.isSafeInteger(event.index) && event.index >= 0 ? event.index : undefined
       // 先记录已收到的输出事实；缺块不能让带内容的delta被误判为“尚无输出”。
       if (type === 'content_block_delta') {
         const received = record(event.delta)
@@ -247,11 +260,12 @@ async function* stream(input: ProviderInvocation, dependencies: ProviderDriverDe
         if (text(received.text) || ['tool_use', 'thinking', 'redacted_thinking'].includes(text(received.type))) partialOutput = true
       }
       if (type === 'error') {
-        observe(() => dependencies.diagnose?.('anthropic_sse_error', event.error))
-        throw classifyProviderError({ body: { error: event.error } }, { requestStarted: true, providerUrl: input.policy.baseUrl(input.config) })
+        const failure = classifyProviderError({ body: { error: event.error } }, { requestStarted: true, stage: 'stream', providerUrl: input.policy.baseUrl(input.config) })
+        observe(() => dependencies.diagnose?.('anthropic_sse_error', failure))
+        throw failure
       }
       if (type === 'message_start') {
-        if (started) throw new ProviderError('protocol')
+        if (started) throw new ProviderError('protocol', { protocolDetail: 'duplicate_message_start' })
         started = true
         const message = record(event.message)
         for (const [index, block] of array(message.content).entries()) {
@@ -264,24 +278,26 @@ async function* stream(input: ProviderInvocation, dependencies: ProviderDriverDe
         if (Object.keys(record(message.usage)).length) yield { type: 'usage', usage }
         continue
       }
-      if (!started) throw new ProviderError('protocol', { requestStarted: true, outputStarted: partialOutput, retryable: false })
+      if (!started) throw new ProviderError('protocol', { protocolDetail: 'event_before_message_start', requestStarted: true, outputStarted: partialOutput, retryable: false })
       if (type === 'content_block_start') {
         const index = finite(event.index)
-        if (index === null || !Number.isInteger(index) || index !== blocks.size) throw new ProviderError('protocol')
+        if (index === null || !Number.isInteger(index) || index !== blocks.size) throw new ProviderError('protocol', { protocolDetail: 'invalid_block_index' })
         const block = object(event.content_block)
-        if (!['text', 'tool_use', 'thinking', 'redacted_thinking'].includes(text(block.type))) throw new ProviderError('protocol')
+        if (!['text', 'tool_use', 'thinking', 'redacted_thinking'].includes(text(block.type))) throw new ProviderError('protocol', { protocolDetail: 'unsupported_block_type' })
         blocks.set(index, { block, raw: '', closed: false })
         if (block.type === 'text' && text(block.text)) { visible += text(block.text); yield { type: 'token', text: text(block.text) } }
       } else if (type === 'content_block_delta' || type === 'content_block_stop') {
         const index = finite(event.index), block = index === null ? undefined : blocks.get(index)
         if (!block) throw new MissingContentBlock(type, index ?? -1, blocks.size)
-        if (block.closed) throw new ProviderError('protocol')
+        if (block.closed) throw new ProviderError('protocol', { protocolDetail: 'event_after_block_stop' })
         if (type === 'content_block_stop') {
           block.closed = true
           if (block.block.type === 'tool_use' && block.raw) block.block.input = parseAnthropicToolInput(block.raw)
           continue
         }
         const delta = record(event.delta), deltaType = text(delta.type)
+        // MiniMax 偶尔把工具参数增量发到思考块，旧 Anthropic SDK 会跳过该增量。
+        if (input.policy.name === 'minimax' && deltaType === 'input_json_delta' && block.block.type === 'thinking') continue
         if (deltaType === 'text_delta' && block.block.type === 'text') {
           const addition = text(delta.text)
           block.block.text = text(block.block.text) + addition
@@ -289,7 +305,11 @@ async function* stream(input: ProviderInvocation, dependencies: ProviderDriverDe
         } else if (deltaType === 'input_json_delta' && block.block.type === 'tool_use') block.raw += text(delta.partial_json)
         else if (deltaType === 'thinking_delta' && block.block.type === 'thinking') block.block.thinking = text(block.block.thinking) + text(delta.thinking)
         else if (deltaType === 'signature_delta' && block.block.type === 'thinking') block.block.signature = text(block.block.signature) + text(delta.signature)
-        else throw new ProviderError('protocol')
+        else throw new ProviderError('protocol', {
+          protocolDetail: 'unexpected_block_delta',
+          streamBlockType: diagnosticBlockTypes.has(text(block.block.type)) ? text(block.block.type) : 'unknown',
+          streamDeltaType: diagnosticDeltaTypes.has(deltaType) ? deltaType : 'unknown',
+        })
       } else if (type === 'message_delta') {
         finishReason = text(record(event.delta).stop_reason) || finishReason
         usage = anthropicUsage(event.usage, usage)
@@ -302,7 +322,7 @@ async function* stream(input: ProviderInvocation, dependencies: ProviderDriverDe
         if ([...blocks.values()].some(value => !value.closed)) throw new ProviderError('stream_incomplete', { requestStarted: true, outputStarted: !!visible || partialOutput })
         stopped = true
         break
-      } else if (type !== 'done') throw new ProviderError('protocol')
+      } else if (type !== 'done') throw new ProviderError('protocol', { protocolDetail: 'unexpected_stream_event' })
     }
     if (!stopped) throw new ProviderError('stream_incomplete', { requestStarted: true, outputStarted: !!visible || partialOutput })
     const responseBlocks = [...blocks.values()].map(value => value.block)
@@ -314,24 +334,38 @@ async function* stream(input: ProviderInvocation, dependencies: ProviderDriverDe
       continuation: captureThinking(responseBlocks, input), cacheAnchor: input.cacheAnchor }
   } catch (error) {
     if (input.signal.aborted) throw new ProviderError('cancelled', { requestStarted: started, outputStarted: !!visible || partialOutput })
-    if (error instanceof MissingContentBlock && !visible && !partialOutput) {
+    if (error instanceof MissingContentBlock) {
       observe(() => dependencies.diagnose?.('anthropic_missing_content_block', { eventType: error.eventType, index: error.index, blockCount: error.blockCount }))
+    }
+    // 已显示正文时，仅允许为缺失的结束事件恢复纯文本，且必须匹配已显示的前缀。
+    const recoverVisible = !!visible && error instanceof MissingContentBlock && error.eventType === 'content_block_stop'
+      && [...blocks.values()].every(({ block }) => block.type === 'text')
+    if (error instanceof MissingContentBlock && ((!visible && !partialOutput) || recoverVisible)) {
       try {
-        const recovered = result(await requestJson(dependencies, anthropicRequest(input, false), input.signal), input, dependencies)
-        if (recovered.text) yield { type: 'token', text: recovered.text }
+        const message = await requestJson(dependencies, anthropicRequest(input, false), input.signal)
+        if (recoverVisible && (!Array.isArray(message.content)
+          || message.content.some(block => record(block).type !== 'text')
+          || !message.content.map(block => text(record(block).text)).join('').startsWith(visible))) {
+          throw new ProviderError('protocol', { requestStarted: true, outputStarted: true, stage: 'stream', protocolDetail: 'recovery_content_mismatch', streamEvent, streamBlockIndex })
+        }
+        const recovered = result(message, input, dependencies)
+        const remainder = recovered.text.slice(visible.length)
+        if (remainder) yield { type: 'token', text: remainder }
         yield { type: 'usage', usage: recovered.usage }
         yield { type: 'complete', ...recovered, cacheAnchor: input.cacheAnchor }
         return
       } catch (recoveryError) {
         if (input.signal.aborted) throw new ProviderError('cancelled')
         observe(() => dependencies.diagnose?.('anthropic_nonstream_recovery_failed', recoveryError))
-        throw recoveryError instanceof ProviderError ? new ProviderError(recoveryError.code, { ...recoveryError.options, retryable: false })
-          : new ProviderError('protocol', { requestStarted: true, retryable: false })
+        throw recoveryError instanceof ProviderError ? new ProviderError(recoveryError.code, { ...recoveryError.options, outputStarted: recoverVisible || recoveryError.options.outputStarted, retryable: false })
+          : new ProviderError('protocol', { requestStarted: true, outputStarted: recoverVisible, retryable: false })
       }
     }
-    if (error instanceof ProviderError) throw new ProviderError(error.code, { ...error.options, outputStarted: error.options.outputStarted || !!visible || partialOutput })
+    if (error instanceof ProviderError) throw new ProviderError(error.code, { ...error.options, outputStarted: error.options.outputStarted || !!visible || partialOutput,
+      ...(error.code === 'protocol' && !error.options.stage ? { streamEvent, streamBlockIndex } : {}) })
     observe(() => dependencies.diagnose?.('anthropic_stream_protocol_failure', error))
-    throw new ProviderError('protocol', { requestStarted: started, outputStarted: !!visible || partialOutput, retryable: false })
+    throw new ProviderError('protocol', { requestStarted: started, outputStarted: !!visible || partialOutput, retryable: false,
+      ...(error instanceof MissingContentBlock ? { protocolDetail: 'missing_content_block', streamEvent, streamBlockIndex } : {}) })
   }
 }
 

@@ -10,7 +10,7 @@ description: 产品设计规范摘要。Glassmorphism 视觉风格、色板系�
 ## 技术栈
 
 - 前端：Vue 3 + Vite + TypeScript + Pinia
-- 后端：FastAPI + SQLAlchemy (async) + PostgreSQL + Redis
+- 后端：Node.js + TypeScript；Web Host 使用 Fastify，Desktop/Web Host 共用 `packages/core/`、`packages/database/` 与 `packages/gateway/`，按部署配置连接 PostgreSQL/Redis
 - 设计风格：Glassmorphism（毛玻璃）+ 冷紫灰调色板
 
 ## 核心设计原则

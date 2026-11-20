@@ -1,3 +1,4 @@
+import { formatToolResults } from '../../../src/agent/providers/tool-result-format.js'
 import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import type { CanonicalContextPorts, AgentRunnerPorts } from '../../../src/agent/ports.js'
@@ -27,7 +28,7 @@ const digest = (value: unknown) => createHash('sha256').update(stableJson(value)
 const encode = (text: string) => new TextEncoder().encode(text)
 async function* collectSource<T>(values: readonly T[]) { yield* values }
 async function all(source: AsyncIterable<ProviderEvent>) { const result: ProviderEvent[] = []; for await (const event of source) result.push(event); return result }
-function setup(scripts: readonly (string | { status: number; body: JsonObject })[], options: { config?: ProviderConfig; history?: CanonicalMessage[]; requestPrefix?: CanonicalMessage[]; systemPrompt?: string; probeSink?: ProviderProbeSink; observation?: AgentObservationPort; extraReminder?: string; initialImage?: boolean; now?: () => number; coordinator?: PrefixCoordinator; diagnose?: (code: string, error: unknown) => void; sourceLoad?: CanonicalContextPorts['load']; scopeHash?: string } = {}) {
+function setup(scripts: readonly (string | { status: number; body: JsonObject })[], options: { config?: ProviderConfig; history?: CanonicalMessage[]; requestPrefix?: CanonicalMessage[]; systemPrompt?: string; probeSink?: ProviderProbeSink; observation?: AgentObservationPort; extraReminder?: string; initialImage?: boolean; now?: () => number; coordinator?: PrefixCoordinator; diagnose?: (code: string, error: unknown) => void; sourceLoad?: CanonicalContextPorts['load']; scopeHash?: string; log?: AgentRunnerPorts<CanonicalRunContext>['log'] } = {}) {
   let id = 0, index = 0
   const sent: ProviderHttpRequest[] = []
   const currentContent: Json = options.initialImage ? [{ type: 'text', text: '读取合成信息' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'aW5pdGlhbA==' } }] : '读取合成信息'
@@ -69,9 +70,47 @@ function setup(scripts: readonly (string | { status: number; body: JsonObject })
   const fake = fixture([])
   fake.ports.presentError = vi.fn(fake.ports.presentError)
   const runtime = fake.ports as unknown as AgentRunnerPorts<CanonicalRunContext>
-  const harness = createCanonicalRunner({ context: connected.context, executor: { authorize: async () => { throw new Error('lookup不执行原生进程') }, executor: { execute: async () => { throw new Error('lookup不执行原生进程') } } }, runtime: { ...runtime, observation: options.observation, provider: connected.provider } })
+  const harness = createCanonicalRunner({ context: connected.context, executor: { authorize: async () => { throw new Error('lookup不执行原生进程') }, executor: { execute: async () => { throw new Error('lookup不执行原生进程') } } }, runtime: { ...runtime, observation: options.observation, log: options.log, provider: connected.provider } })
   return { ...connected, harness, sent, context, fake }
 }
+it.each([
+  [{ status: 400, body: { error: { type: 'invalid_request_error', code: '2013', message: 'SYNTHETIC_PRIVATE_BODY' } } }, 400, 'http', '2013'],
+  ['event: error\ndata: {"type":"error","error":{"type":"invalid_request_error","code":"SYNTHETIC_PRIVATE_BODY"}}\n\n', 200, 'stream', undefined],
+] as const)('保留安全的模型失败字段，用户文案继续由宿主决定 (%s)', async (response, httpStatus, providerStage, upstreamCode) => {
+  const observed: Parameters<AgentObservationPort['record']>[0][] = []
+  const write = vi.fn()
+  const value = setup([response], { config: { provider: 'anthropic', model: 'synthetic-model' },
+    observation: { record: event => { observed.push(event) } }, log: { write } })
+  vi.mocked(value.fake.ports.presentError).mockReturnValue({ code: 'im_run_failed', text: '本次处理未完成，请稍后重试。' })
+  const result = await collect(value.harness.start(identity))
+  expect(result.state.status).toBe('failed')
+  expect(result.events.at(-1)?.payload).toMatchObject({ errorCode: 'im_run_failed', text: '本次处理未完成，请稍后重试。' })
+  const failure = observed.find(event => event.kind === 'provider' && event.name === 'complete' && event.status === 'error')
+  expect(failure?.attributes).toMatchObject({ httpStatus, providerStage, upstreamType: 'invalid_request_error', retryAttempt: 0 })
+  expect(failure?.attributes?.upstreamCode).toBe(upstreamCode)
+  expect(JSON.stringify(failure)).not.toContain('SYNTHETIC_PRIVATE_BODY')
+  const logged = write.mock.calls.map(([record]) => record).find(record => record.event === 'agent.provider.error')
+  expect(logged?.attributes).toMatchObject({ httpStatus, providerStage, upstreamType: 'invalid_request_error', retryAttempt: 0 })
+  expect(JSON.stringify(logged)).not.toContain('SYNTHETIC_PRIVATE_BODY')
+})
+
+it('HTTP 200 流已输出后遇到非法 SSE JSON，按 Run 记录安全的解析原因', async () => {
+  const write = vi.fn()
+  const frame = (event: JsonObject) => `data: ${JSON.stringify(event)}\n\n`
+  const response = frame({ type: 'message_start', message: { content: [] } })
+    + frame({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '合成片段' } })
+    + 'data: {SYNTHETIC_PRIVATE_BODY\n\n'
+  const value = setup([response], { config: { provider: 'anthropic', model: 'synthetic-model' }, log: { write } })
+  const result = await collect(value.harness.start(identity))
+  expect(result.state.status).toBe('failed')
+  const logged = write.mock.calls.map(([entry]) => entry).find(entry => entry.event === 'agent.provider.error')
+  expect(logged).toMatchObject({ round: 1, attributes: {
+    providerProtocol: 'anthropic', providerErrorCode: 'protocol', providerStage: 'stream',
+    protocolDetail: 'sse_invalid_json', httpStatus: 200, outputStarted: true, retryAttempt: 0,
+  } })
+  expect(JSON.stringify(logged)).not.toContain('SYNTHETIC_PRIVATE_BODY')
+})
+
 function chat(data: JsonObject) { return `data: ${JSON.stringify(data)}\n\ndata: [DONE]\n\n` }
 const tool = (raw: string) => chat({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call-a', function: { name: 'lookup', arguments: raw } }] }, finish_reason: 'tool_calls' }] })
 const final = chat({ choices: [{ delta: { content: '已整理合成结果。' }, finish_reason: 'stop' }], usage: { prompt_tokens: 7, completion_tokens: 3 } })
@@ -117,6 +156,24 @@ describe('真实Provider到Canonical Harness组合', () => {
     expect(observations.find(event => event.kind === 'tool' && event.status === 'running')?.input).toMatchObject({ query: '原参数' })
     expect(observations.find(event => event.kind === 'tool' && event.status === 'success')?.output).toBe('合成结果')
     expect(observations.find(event => event.kind === 'run' && event.name === 'finished')?.status).toBe('completed')
+    await value.provider.close()
+  })
+  it('简介模式只向 Provider 声明固定入口，业务目录保留在请求尾部', async () => {
+    const names = ['lookup', 'call_tool', 'get_tool_schema']
+    const reminder = '合成业务目录：lookup'
+    const value = setup([final], { sourceLoad: async () => ({
+      modelIdentity: 'model-a', contextWindow: 10000, accessScopeHash: digest(identity),
+      capabilities: { toolNames: names, providerToolNames: ['call_tool', 'get_tool_schema'], toolReminder: reminder,
+        tools: names.map(name => ({ name, schema: { type: 'function', function: { name, parameters: { type: 'object' } } } })) },
+      input: { ...identity, fixedPrefix: [], history: [], toolReminder: reminder,
+        currentUser: { persistedMessageId: 'current', message: { role: 'user', content: '合成问题' } } },
+    }) })
+    expect((await collect(value.harness.start(identity))).state.status).toBe('completed')
+    const body = value.sent[0]!.body as JsonObject
+    const schemas = body.tools as { function: { name: string } }[]
+    expect(schemas.map(tool => tool.function.name)).toEqual(['call_tool', 'get_tool_schema'])
+    expect(stableJson((body.messages as JsonObject[]).at(-1))).toContain(reminder)
+    expect(stableJson(body).split(reminder)).toHaveLength(2)
     await value.provider.close()
   })
   it('标准来源与 Provider 使用同一可信 scope 后可完成真实协议请求', async () => {
@@ -585,4 +642,38 @@ describe('共享重试、池与前缀协调契约', () => {
     expect(providerConfigKey('openai', { baseUrl: 'https://provider.example/v1', apiKey: 'synthetic-a', headers: {}, timeout: 10 }, digest))
       .not.toBe(providerConfigKey('openai', { baseUrl: 'https://provider.example/v1', apiKey: 'synthetic-b', headers: {}, timeout: 10 }, digest))
   })
+})
+
+it('模型投影包装试点工具并保留历史原文、调用配对和原生媒体', () => {
+  const shell = { ok: false, stdout: '一行\n```\n另一行\n', stderr: '失败', exit_code: 2 }
+  const values = [
+    { name: 'get_project', value: { id: 42, name: '合成项目', sandbox_path: '/project/2026/11/合成项目 #42' } },
+    { name: 'list_projects', value: [{ id: 42, name: '合成项目' }] },
+    { name: 'global_search', value: { total: 0, groups: [] } },
+    { name: 'shell', value: shell, error: true },
+    { name: 'shell', value: { status: 'unknown' }, error: true },
+    { name: 'lookup', value: { untouched: true } },
+  ]
+  const messages: CanonicalMessage[] = [{ role: 'user', content: values.map(({ name, value, error }, index) => ({
+    type: 'tool_result', tool_name: name, tool_call_id: String(index), content: JSON.stringify(value),
+    ...(error ? { is_error: true } : {}),
+  })) }]
+  const original = structuredClone(messages)
+  const [projected] = formatToolResults(messages)
+  const blocks = projected!.content as { tool_call_id: string; content: string; is_error?: boolean }[]
+  expect(blocks.map(block => block.tool_call_id)).toEqual(['0', '1', '2', '3', '4', '5'])
+  expect(blocks[0]!.content).toContain('【沙箱路径】/project/2026/11/合成项目 #42')
+  expect(blocks[1]!.content).toContain('【摘要】返回 1 个项目')
+  expect(blocks[2]!.content).toContain('【命中数】0')
+  expect(blocks[3]).toMatchObject({ is_error: true })
+  expect(blocks[3]!.content).toContain('【执行状态】失败')
+  expect(blocks[3]!.content).toContain('````\n' + shell.stdout + '````')
+  expect(blocks[4]!.content).toContain('【执行状态】结果未确认')
+  expect(blocks[5]!.content).toBe('{"untouched":true}')
+  expect(messages).toEqual(original)
+  const media: CanonicalMessage[] = [{ role: 'user', content: [{
+    type: 'tool_result', tool_name: 'global_search', tool_call_id: 'media',
+    content: [{ type: 'image', source: { type: 'base64', data: 'AAAA' } }],
+  }] }]
+  expect(formatToolResults(media)).toEqual(media)
 })

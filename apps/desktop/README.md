@@ -63,6 +63,6 @@ pnpm --dir apps/desktop smoke:mxc
 
 桌面 Node 制品中的 `host/gateway/telegram.mjs` 导出 `startDesktopTelegram`。可信的 Node 调用方负责提供 Bot 凭据、入站授权、交互回调、附件暂存策略，以及位于应用私有目录的 SQLite 路径。接口通过 `peek()` 读取未消费事件，处理成功后调用 `acknowledge(updateId)`，并通过 `sender` 发送回复。接收端原子保存消息和游标，进程重启后会重新交付未确认消息。
 
-Desktop 的本地 Agent 日志适配器和 Web Host 共用 `@gugu/log`。运行时传入适配器的 `log` 和 `diagnose` 端口后，日志写入 `userData/logs/`，常规日志按 5 MiB 轮转并保留 5 份，诊断日志按 2 MiB 轮转并保留 3 份。当前 Desktop 尚未启用本地聊天 Agent，远程 Run 的日志由执行它的 Web Host 保存。
+Desktop 的本地 Agent 日志适配器和 Web Host 共用 `@gugu/log`。运行时传入适配器的 `log` 和 `diagnose` 端口后，日志写入 `userData/logs/`，常规日志按 5 MiB 轮转并保留 5 份，诊断日志按 2 MiB 轮转并保留 3 份。当前 Desktop 尚未启用本地聊天 Agent，远程 Run 的日志由执行它的 Web Host 保存。 Electron 生命周期、Sandbox 探测失败和显式启动的 Telegram Gateway 也使用这两个本地文件。
 
 桌面启动时默认不连接 Telegram。本地聊天 Agent 接入后，由宿主显式启动网关，并在停止时等待 `stop()`。同一个 Bot 在任一时刻只能由一个宿主长轮询，从 Web Host 切换前须先停止其旧连接。

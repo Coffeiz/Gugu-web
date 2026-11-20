@@ -216,7 +216,7 @@ export function useChatSessions(options: {
       const loadedSession = sessions.value.find(s => s.id === id)
       // 历史接口同时返回服务端生成快照；用它校准侧栏运行态，避免切回时保留
       // 切走前缓存的 isRunning。缓存只用于合并已加载的历史，不能覆盖服务端终态。
-      if (loadedSession && typeof data.active === 'boolean') loadedSession.isRunning = data.active
+      if (loadedSession && data.active === false) loadedSession.isRunning = false
       if (loadedSession && data.session?.workspaceName !== undefined) loadedSession.workspaceName = data.session.workspaceName
       if (loadedSession && data.session?.goalActive !== undefined) loadedSession.goalActive = Boolean(data.session.goalActive)
       if (loadedSession && data.session?.goalStatus !== undefined) loadedSession.goalStatus = data.session.goalStatus

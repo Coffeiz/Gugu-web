@@ -4,6 +4,7 @@ import { agentDispatchSource, decryptAgentDispatchInput, type ImAgentDispatchInp
 
 /** IM收据仅作为候选索引；真正执行前仍解密验证v3来源，Web任务没有消费资格。 */
 export function createImHostScans(options: { pool: Pick<Pool, 'query'>; secretKey: string; concurrency?: number;
+  diagnose?(code: 'dispatch_unavailable', error: unknown): void
   kick(ownerId: string, sessionId: string): Promise<void>
   recover(identity: RunIdentity, input: ImAgentDispatchInput, signal: AbortSignal): Promise<void> }) {
   const capacity = options.concurrency ?? 4
@@ -41,7 +42,10 @@ export function createImHostScans(options: { pool: Pick<Pool, 'query'>; secretKe
         const key = JSON.stringify([identity.ownerId, identity.sessionId])
         if (running.has(key)) continue
         let task: Promise<void>
-        task = options.kick(identity.ownerId, identity.sessionId).catch(() => { failed = true }).finally(() => { if (running.get(key) === task) running.delete(key) })
+        task = options.kick(identity.ownerId, identity.sessionId).catch(error => {
+          failed = true
+          try { options.diagnose?.('dispatch_unavailable', error) } catch { /* 诊断不影响下一轮扫描。 */ }
+        }).finally(() => { if (running.get(key) === task) running.delete(key) })
         running.set(key, task)
       }
     },
@@ -56,7 +60,7 @@ export function createImHostScans(options: { pool: Pick<Pool, 'query'>; secretKe
           AND EXISTS(SELECT 1 FROM agent_run_events e WHERE e.user_id=d.user_id AND e.session_id=d.session_id AND e.run_id=d.run_id AND e.sequence>COALESCE(delivery.cursor,0))
         ORDER BY d.sequence LIMIT 32`, [deliveryAfter])
       if (!rows.rows.length) deliveryAfter = '0'
-      let failure = false
+      let failure: { cause: unknown } | undefined
       for (const row of rows.rows) {
         signal.throwIfAborted()
         if (closing) return
@@ -66,9 +70,9 @@ export function createImHostScans(options: { pool: Pick<Pool, 'query'>; secretKe
           const input = decryptAgentDispatchInput(options.secretKey, identity, row.nonce, row.payload)
           if (agentDispatchSource(input) !== 'im' || input.v !== 3 || input.source !== 'im') continue
           await options.recover(identity, input, signal)
-        } catch { if (signal.aborted) signal.throwIfAborted(); failure = true }
+        } catch (error) { if (signal.aborted) signal.throwIfAborted(); failure ??= { cause: error } }
       }
-      if (failure) throw new Error('IM 出站恢复尚未完成')
+      if (failure) throw new Error('IM 出站恢复尚未完成', failure)
     },
     async close() { closing = true; await Promise.allSettled([...running.values()]) },
   }

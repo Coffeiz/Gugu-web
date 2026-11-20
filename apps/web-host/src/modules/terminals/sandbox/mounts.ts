@@ -11,7 +11,7 @@ import type { ShellTrashCommand } from '../shell/trash.js'
 import { constants } from 'node:fs'
 import { mkdir, open, type FileHandle } from 'node:fs/promises'
 
-function sandboxTarget(key: string): string {
+export function sandboxTarget(key: string): string {
   const [, space, ...tail] = key.split('/')
   const target = space === '项目文件' ? 'project' : space === '个人文件' ? 'personal' : space === 'workspace' ? 'workspace' : null
   if (!target) throw new Error('工作区来源不属于可挂载的文件空间')
@@ -92,27 +92,32 @@ export function createTerminalWorkspaceMounts<DB>(pool: Pick<Pool, 'connect' | '
     const mount = await prepareTerminalMounts(storageRoot, owner, primary, readonly, [...new Set(writable)], cwd, initialize)
     const trashDirectory: FileDirectory = selected.kind === 'directory' ? selected.directoryId
       : selected.projectId === null ? 'personal' : { projectId: selected.projectId }
+    async function resolveTrashTarget(path: string) {
+      if (path.includes('\0') || path.includes('\\') || path.split('/').includes('..') || posix.basename(path) === '.') throw new CoreError('invalid_request', '删除路径不得越界')
+      const absolute = posix.resolve(mount.sandboxCwd, path)
+      const entry = mount.sandboxMounts.filter(entry => absolute.startsWith(entry.target + '/'))
+        .sort((a, b) => b.target.length - a.target.length)[0]
+      const key = entry && writable.find(key => sandboxTarget(key) === entry.target)
+      if (entry?.readonly || !key || mount.sandboxMounts.some(entry => entry.target === absolute || entry.target.startsWith(absolute + '/')))
+        throw new CoreError('invalid_request', '不能移除挂载根或未授权路径')
+      const projectRoot = entry.target === '/project' && /^\/project\/(?:\d{4}\/\d{2}\/)?[^/]+ #(\d+)\//u.exec(absolute)
+      const directory = key === primary ? trashDirectory : entry.target === '/personal' ? 'personal'
+        : projectRoot ? { projectId: Number(projectRoot[1]) } : (workspaceIds.get(key) ?? null)
+      if (directory === null) throw new CoreError('invalid_request', '请从文件库移除此目录中的文件')
+      const root = await resolveFileDirectoryRoot(pool, owner, directory)
+      const source = key + absolute.slice(sandboxTarget(key).length)
+      if (!source.startsWith(root + '/')) throw new CoreError('invalid_request', '文件目录授权已变化')
+      const relative = source.slice(root.length + 1)
+      return { directory, relative, root, source, absolute }
+    }
     return {
       ...mount,
+      resolveTrashTarget,
       async trash(command: ShellTrashCommand, signal: AbortSignal) {
         const targets = new Map<string, { directory: FileDirectory; relative: string; root: string }>()
         for (const path of command.paths) {
           signal.throwIfAborted()
-          if (path.split('/').includes('..') || posix.basename(path) === '.') throw new CoreError('invalid_request', '删除路径不得越界')
-          const absolute = posix.resolve(mount.sandboxCwd, path)
-          const entry = mount.sandboxMounts.filter(entry => absolute.startsWith(entry.target + '/'))
-            .sort((a, b) => b.target.length - a.target.length)[0]
-          const key = entry && writable.find(key => sandboxTarget(key) === entry.target)
-          if (entry?.readonly || !key || mount.sandboxMounts.some(entry => entry.target === absolute || entry.target.startsWith(absolute + '/')))
-            throw new CoreError('invalid_request', '不能移除挂载根或未授权路径')
-          const projectRoot = entry.target === '/project' && /^\/project\/(?:\d{4}\/\d{2}\/)?[^/]+ #(\d+)\//u.exec(absolute)
-          const directory = key === primary ? trashDirectory : entry.target === '/personal' ? 'personal'
-            : projectRoot ? { projectId: Number(projectRoot[1]) } : (workspaceIds.get(key) ?? null)
-          if (directory === null) throw new CoreError('invalid_request', '请从文件库移除此目录中的文件')
-          const root = await resolveFileDirectoryRoot(pool, owner, directory)
-          const source = key + absolute.slice(sandboxTarget(key).length)
-          if (!source.startsWith(root + '/')) throw new CoreError('invalid_request', '文件目录授权已变化')
-          const relative = source.slice(root.length + 1)
+          const { directory, relative, root, source } = await resolveTrashTarget(path)
           const kind = await localEntryKind(storageRoot, createLocalFileTree(storageRoot, root).storageKey(relative))
           if (targets.has(source) || (!kind && command.force)) continue
           if (!kind) throw new CoreError('invalid_request', '文件或目录不存在')

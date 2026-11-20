@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { configureRagJieba, createScopedRagSearch, createSqlRagPersistentIndexReader } from '@gugu/core/agent/rag'
-import type { CanonicalMessage, HistoryIdentity, RunIdentity } from '@gugu/core/agent'
+import type { CanonicalMessage, HistoryIdentity, RagContext, RunIdentity } from '@gugu/core/agent'
 import type { RagSearchScope } from '@gugu/core/agent/rag'
 import type { SqlDataRuntime } from '@gugu/core/data'
 import type { AgentDispatchLease } from '../run/dispatch.js'
@@ -62,7 +62,7 @@ export function createWebAgentRagContextBuilder(options: {
     history: readonly import('@gugu/core/agent').PersistedHistoryRow[]
     beforeMessageId: string | null
     snapshotText: string
-  }, signal?: AbortSignal) => {
+  }, signal?: AbortSignal): Promise<RagContext> => {
     const empty = (reason: string) => ({ tail: [] as CanonicalMessage[], injected: false, reason })
     signal?.throwIfAborted()
     if (input.ownerId !== bound.ownerId || input.sessionId !== bound.sessionId) throw new Error('Agent RAG 运行身份不匹配')
@@ -93,7 +93,28 @@ export function createWebAgentRagContextBuilder(options: {
         ...(beforeMessageId !== undefined ? { beforeMessageId } : {}),
       }, signal)
       signal?.throwIfAborted()
-      if (!result.results.length) return { ...empty('no_hits'), scope_hits: [{ scope: 'owner-rag', candidate_count: result.diagnostics.candidate_count, hit_count: 0 }] }
+      const diagnostics = {
+        engine: result.fusion,
+        index_version: result.revision,
+        scope_type: 'owner',
+        vector_doc_count: result.vectorDocCount,
+        ...result.diagnostics,
+        rank_details: result.results.map((item, index) => ({
+          rank: index + 1,
+          source_type: item.document.source_type,
+          source_quality: item.source_quality,
+          ...(item.query_match === undefined ? {} : { query_match: item.query_match }),
+          fused_score: item.fused_score,
+          normalized_score: item.normalized_score,
+          ...(item.semantic_norm === undefined ? {} : { semantic_norm: item.semantic_norm }),
+          confidence: item.confidence,
+          rank_score: item.rank_score,
+          query_idf_baseline: item.query_idf_baseline ?? null,
+          contributions: item.rank_contributions ?? [],
+        })),
+      }
+      if (!result.results.length) return { ...empty('no_hits'),
+        scope_hits: [{ scope: 'owner-rag', candidate_count: result.diagnostics.candidate_count, hit_count: 0 }], diagnostics }
 
       const rows = [
         '[knowledge-context]',
@@ -126,7 +147,9 @@ export function createWebAgentRagContextBuilder(options: {
         tail: [{ role: 'user', content: [block] }],
         blocks: [block],
         injected: true,
+        reason: 'injected',
         scope_hits: [{ scope: 'owner-rag', candidate_count: result.diagnostics.candidate_count, hit_count: result.results.length }],
+        diagnostics,
       }
     } catch (error) {
       signal?.throwIfAborted()

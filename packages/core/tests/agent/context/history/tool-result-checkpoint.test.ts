@@ -1,3 +1,5 @@
+import { createGlobalSearchOperations } from '../../../../src/search/global-search.js'
+import { createGlobalSearchTool } from '../../../../src/agent/tools/global-search.js'
 import { createHash } from 'node:crypto'
 import { describe,expect,it } from 'vitest'
 import type { CanonicalMessage,ContextReferenceCodec,Json,MessageEntry,ToolResult,ToolResultCheckpointScope } from "../../../../src/agent/index.js"
@@ -151,4 +153,25 @@ describe('工具回执授权引用checkpoint', () => {
     expect(() => assertDurableCanonical({ type: 'tool_result', content: JSON.stringify({ content: media }) })).not.toThrow()
     expect(() => assertDurableCanonical({ role: 'user', content: media })).not.toThrow()
   })
+})
+
+
+it('文件搜索分组通过真实工具回执固化并恢复，媒体块校验保持生效', async () => {
+  const hit = { id: 'sample', title: '合成文件', path_file: { relativePath: '合成文件.txt' } }
+  const search = createGlobalSearchOperations([{ type: 'file', label: '文件', search: async () => [hit] }])
+  const tool = createGlobalSearchTool(search)
+  const input = { query: '合成', types: ['file'] }
+  const call = { id: 'search', name: 'global_search', input }
+  const result = await tool.execute(input, {
+    identity: scope.identity, roundId: '1', signal: new AbortController().signal, resolution: null,
+    execute: async () => { throw new Error('只读搜索不能调用执行后端') },
+  }, call)
+  const checkpoint = createToolResultCheckpoint(passthrough, services)
+  const address = { ...scope, call }
+  const stored = await checkpoint.checkpointToolResult(address, result)
+  expect(await checkpoint.restoreToolResult(address, stored)).toMatchObject({
+    kind: 'completed', successful: true, value: { groups: [{ source_type: 'file', label: '文件', items: [hit] }] },
+  })
+  await expect(checkpoint.checkpointToolResult(address, completed({ type: 'file', data: 'synthetic' })))
+    .rejects.toThrow('持久化上下文必须使用授权的稳定引用')
 })

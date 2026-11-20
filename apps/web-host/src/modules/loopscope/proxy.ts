@@ -9,6 +9,8 @@ const responseHeaders=['content-type','cache-control','last-modified','etag']
 /** 可信Host注入Collector地址；用户只能选择固定只读资源，不能传入上游URL。 */
 export function registerLoopScopeProxyRoutes(app:FastifyInstance,options:LoopScopeProxyOptions):void{
  const client=createLoopScopeClient(options)
+ const shutdown=new AbortController()
+ app.addHook('preClose',async()=>{shutdown.abort()})
  app.get('/api/v1/dev/loopscope/*',{preHandler:options.requireUser},async(request,reply)=>{
   const path=(request.params as {'*':string})['*']
   const query=request.raw.url?.split('?').slice(1).join('?')??''
@@ -16,7 +18,7 @@ export function registerLoopScopeProxyRoutes(app:FastifyInstance,options:LoopSco
   const timer=setTimeout(()=>abort.abort(),streaming?5000:10000);timer.unref()
   let upstream:Awaited<ReturnType<typeof client.read>>
   try{
-   upstream=await client.read(path,query,abort.signal)
+   upstream=await client.read(path,query,streaming?AbortSignal.any([abort.signal,shutdown.signal]):abort.signal)
   }catch{clearTimeout(timer);return reply.code(503).send({detail:'LoopScope Collector 暂不可用'})}
   if(!upstream){clearTimeout(timer);return reply.code(404).send({detail:'LoopScope 路径不存在'})}
   reply.code(upstream.status)

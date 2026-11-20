@@ -67,13 +67,21 @@ test('Node交接缺任一Python停机断言时，获取锁与组件构造前拒�
   assert.throws(() => readImRuntimeOwnership({ IM__RUNTIME_OWNER: 'synthetic-private' }), { message: 'IM 消费归属配置无效' })
 })
 
-test('启动实际组件前持有唯一归属，停止先入站后消费者并排空扫描，最后释放资源与锁', async () => {
+test('启动前取得唯一归属，停机暂停入站并排空 Run 后才关闭平台发送器和锁', async () => {
   const f = fixture(); await f.runtime.start()
   assert.equal(f.runtime.health().status, 'running')
   assert.deepEqual(f.calls.slice(0, 5), ['lease:acquire', 'resources:create', 'reflection:start', 'worker:start', 'supervisor:start'])
   assert.ok(['dispatch', 'delivery', 'pending', 'interaction'].every(name => f.calls.includes(name)))
-  await f.runtime.stop(); await f.runtime.stop()
-  assert.deepEqual(f.calls.slice(-5), ['supervisor:stop', 'worker:stop', 'reflection:stop', 'resources:close', 'lease:close'])
+  const entered = Promise.withResolvers<void>(), finished = Promise.withResolvers<void>()
+  f.components.pauseIngress = () => { f.calls.push('ingress:pause') }
+  f.components.drainRuns = async () => { entered.resolve(); await finished.promise; f.calls.push('run:finished') }
+  const stop = f.runtime.stop()
+  await entered.promise
+  assert.equal(f.calls.includes('supervisor:stop'), false)
+  assert.equal(f.calls.includes('lease:close'), false)
+  finished.resolve()
+  await stop; await f.runtime.stop()
+  assert.deepEqual(f.calls.slice(-7), ['ingress:pause', 'worker:stop', 'run:finished', 'supervisor:stop', 'reflection:stop', 'resources:close', 'lease:close'])
   assert.equal(f.runtime.health().status, 'stopped')
 })
 

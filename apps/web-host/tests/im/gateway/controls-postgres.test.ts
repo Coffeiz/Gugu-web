@@ -9,12 +9,12 @@ import { createPostgresImControls } from '../../../src/modules/im/gateway/attent
 import { createPostgresImNativeInteractions } from '../../../src/modules/im/gateway/interactions/store.js'
 import { createTelegramBotApi } from '@gugu/gateway/telegram'
 import { createTelegramSender } from '@gugu/gateway/telegram'
-import { createQqClient } from '../../../src/modules/im/gateway/platforms/qq/client.js'
-import { createQqSender } from '../../../src/modules/im/gateway/platforms/qq/sender.js'
+import { createQqClient } from '@gugu/gateway/qq'
+import { createQqSender } from '@gugu/gateway/qq'
 import { createQqReplySequences } from '../../../src/modules/im/gateway/platforms/qq/sequences.js'
-import { createQqMediaUploader } from '../../../src/modules/im/gateway/platforms/qq/media-upload.js'
-import { createFeishuClient } from '../../../src/modules/im/gateway/platforms/feishu/client.js'
-import { createFeishuSender } from '../../../src/modules/im/gateway/platforms/feishu/sender.js'
+import { createQqMediaUploader } from '@gugu/gateway/qq'
+import { createFeishuClient } from '@gugu/gateway/feishu'
+import { createFeishuSender } from '@gugu/gateway/feishu'
 import type { ProviderTransport } from '@gugu/core/providers'
 import type { GatewayPlatformSender } from '../../../src/modules/im/gateway/platform-connections.js'
 import { createPostgresImAccess } from '../../../src/modules/im/gateway/inbound/access.js'
@@ -71,7 +71,7 @@ test('隔离PG/Redis：真实Core预检组合绑定、凭据、选择及冻结�
       CREATE TABLE agent_run_events(user_id uuid,session_id integer,run_id text,event_id text,sequence bigint,nonce bytea,payload bytea,created_at timestamptz,acknowledged_at timestamptz,PRIMARY KEY(user_id,session_id,run_id,event_id));
       CREATE TABLE agent_run_interaction_receipts(user_id uuid,session_id integer,run_id text,receipt text,created_at timestamptz);
       CREATE TABLE interaction_prompts(id serial PRIMARY KEY,user_id uuid,session_id integer,kind text,title text,body text,schema_json jsonb,status text,expires_at timestamptz,created_at timestamptz,resolved_at timestamptz);
-      CREATE TABLE interaction_actions(id serial PRIMARY KEY,prompt_id integer,token_hash text,action_type text,option_id text,context_json jsonb,status text,expires_at timestamptz,created_at timestamptz,consumed_at timestamptz,consumed_event_id text);
+      CREATE TABLE interaction_actions(id serial PRIMARY KEY,prompt_id integer,token_hash text,action_type text,option_id text,context_json jsonb,status varchar(20),expires_at timestamptz,created_at timestamptz,consumed_at timestamptz,consumed_event_id text);
       CREATE TABLE agent_interaction_bindings(prompt_id integer PRIMARY KEY,user_id uuid,session_id integer,run_id text,interaction_id text,tool_call_id text);
       CREATE TABLE agent_interaction_resumes(user_id uuid,session_id integer,run_id text,prompt_id integer,interaction_id text,receipt text,created_at timestamptz);
       CREATE TABLE mcp_secret_inputs(id serial PRIMARY KEY,prompt_id integer,user_id uuid,server_id uuid,session_id integer,platform text,bot_id text,chat_id text,chat_type text,platform_user_id text,status text,next_field_index integer,consumed_event_ids json,encrypted_payload text,payload_nonce text,encrypted_data_key text,key_version integer,expires_at timestamptz,created_at timestamptz,updated_at timestamptz,UNIQUE(prompt_id));
@@ -87,7 +87,7 @@ test('隔离PG/Redis：真实Core预检组合绑定、凭据、选择及冻结�
     }
     async function run(kind:'question'|'credential'|'confirmation',current=scope,toolName='ask_user_question'){
       const binding={ownerId:owner,botId:String(keyId),platform:current.platform},identity={ownerId:owner,sessionId:'1',runId:`run-${kind}`}
-      const payload={owner_user_id:owner,platform:current.platform,bot_id:String(keyId),channel_id:String(keyId),chat_type:current.chatType,chat_id:current.platform==='feishu'&&current.chatType==='c2c'?'oc_synthetic':current.chatId,
+      const payload={owner_user_id:owner,platform:current.platform,bot_id:String(keyId),channel_id:String(keyId),chat_type:current.chatType,chat_id:current.chatId,
         platform_user_id:current.platformUserId,message_id:current.platform==='wechat'?'synthetic-private-reply-context':'31',
         ...(current.platform==='wechat'?{context_token:'synthetic-private-reply-context'}:{platform_message_id:'31'}),text:'合成消息',bot_mentioned:false,mentions_other_bot:false}
       await pool.query('UPDATE conversation_sessions SET source=$1,chat_type=$2,chat_id=$3,platform_user_id=$4 WHERE id=1',[current.platform,current.chatType,current.chatId,current.platformUserId])
@@ -102,7 +102,7 @@ test('隔离PG/Redis：真实Core预检组合绑定、凭据、选择及冻结�
       const activator=createPostgresInteractionActivator(pool,{async describe(){return kind==='credential'
         ?{kind:'form',title:'合成凭据',body:'',options:[],context:{secret_target:{kind:'mcp_credentials',server_id:server}},secretFields:[{name:'api_key',label:'合成密钥',type:'secret'}]}
         :kind==='confirmation'?{kind:'confirm',title:'合成确认',body:'',options:[{id:'confirm',label:'确认',actionType:'confirm'}],context:{}}
-        :{kind:'choice',title:'合成选项',body:'',options:[{id:'yes',label:'继续',actionType:'choice'}],context:{}}}})
+        :{kind:'choice',title:'合成选项',body:'',allowTextInput:true,options:[{id:'yes',label:'继续',actionType:'choice'}],context:{}}}})
       const store=createPostgresAgentRunStore<string[]>(pool,secretKey,{async writeHistory(){throw new Error('等待前不应结束历史')}})
       const ports:AgentRunnerPorts<string[]>={clock:{now:()=>new Date().toISOString()},store,leases:createPostgresAgentRunLeasePort(pool),
         cancellation:{async isRequested(){return false},async request(){},async notify(){},async subscribe(){return()=>{}}},
@@ -182,7 +182,8 @@ test('隔离PG/Redis：真实Core预检组合绑定、凭据、选择及冻结�
       }
     })
     for(const platform of ['telegram','qq','feishu'] as const)for(const kind of ['question','confirmation','credential'] as const)for(const mode of platform==='telegram'&&kind==='question'?['normal','rejected','unknown','index-failure']:['normal'])await t.test(`${platform}/${kind}/${mode}实际sender发送token并登记HMAC消息证明，原生callback进入真实消费与恢复事务`,async()=>{
-      await reset();const current={...scope,platform}
+      await reset();const current={...scope,platform,platformUserId:platform==='feishu'?'ou_synthetic':scope.platformUserId}
+      if(platform==='feishu')await pool.query('UPDATE user_bots SET owner_platform_user_id=$1',[current.platformUserId])
       if(kind==='credential')await pool.query("INSERT INTO user_mcp_servers(id,user_id,scope,credential_slots)VALUES($1,$2,'user','[{\"id\":\"api_key\",\"target\":\"header\"}]')",[server,owner])
       const identity=await run(kind,current,kind==='credential'?'mcp_connect':'ask_user_question'),binding={ownerId:owner,botId:String(keyId),platform}
       const requests:{path:string;body:Record<string,unknown>}[]=[]
@@ -224,30 +225,55 @@ test('隔离PG/Redis：真实Core预检组合绑定、凭据、选择及冻结�
         assert.equal(await native.interaction({identity,event,deliveryId:`delivery-${platform}`}),'accepted')
         const sent=requests.filter(r=>platform==='telegram'?r.path.endsWith('/sendMessage'):platform==='qq'?r.path.includes('/messages'):r.path.endsWith('/im/v1/messages')).at(-1)!
         assert.ok(sent)
-        let promptId:number,token:string,cancelToken:string|undefined
+        let promptId:number,token:string,cancelToken:string|undefined,customToken:string|undefined
         if(platform==='telegram'){
           const buttons=((sent.body.reply_markup as any).inline_keyboard)[0],button=buttons[0].callback_data as string
           ;[promptId,token]=[Number(button.split(':')[0]),button.split(':')[1]!]
           cancelToken=buttons[1]?.callback_data.split(':')[1]
+          if(kind==='question')customToken=cancelToken
         }else if(platform==='qq'){
           const buttons=(sent.body.keyboard as any).content.rows[0].buttons,button=buttons[0].action.data as string
           ;[promptId,token]=[Number(button.split(':')[0]),button.split(':')[1]!]
           cancelToken=buttons[1]?.action.data.split(':')[1]
+          if(kind==='question')customToken=cancelToken
         }else{
+          assert.equal(sent.body.receive_id,current.platformUserId)
           const content=JSON.parse(String(sent.body.content)),buttons=content.elements.find((e:any)=>e.tag==='action').actions,value=buttons[0].value
           promptId=value.prompt_id;token=value.token
           cancelToken=buttons[1]?.value.token
+          if(kind==='question')customToken=cancelToken
         }
         const raw=platform==='telegram'?{id:'callback-native',from:{id:8181},message:{message_id:701,chat:{id:8181,type:'private'}},data:`${promptId}:${token}`}
-          :platform==='qq'?{id:'callback-native',user_openid:'8181',message_id:'qq_synthetic_message',data:{resolved:{button_data:`${promptId}:${token}`}}}
-          :{kind:'card_action',ownerId:owner,botId:String(keyId),eventId:'callback-native',operatorId:'8181',promptId,actionToken:token,label:'不可信标签',raw:{header:{event_id:'callback-native'},event:{operator:{open_id:'8181'},action:{value:{prompt_id:promptId,token}},context:{open_chat_id:'oc_synthetic',open_message_id:'om_synthetic'}}}}
+          :platform==='qq'?{id:'callback-native',user_openid:'8181',data:{resolved:{button_data:`${promptId}:${token}`}}}
+          :{kind:'card_action',ownerId:owner,botId:String(keyId),eventId:'callback-native',operatorId:current.platformUserId,promptId,actionToken:token,label:'不可信标签',raw:{header:{event_id:'callback-native'},event:{operator:{open_id:current.platformUserId},action:{value:{prompt_id:promptId,token}},context:{open_chat_id:'oc_synthetic',open_message_id:'om_synthetic'}}}}
         assert.equal((await native.callback({binding,platform,data:{...raw,...(platform==='telegram'?{message:{message_id:702,chat:{id:8181,type:'private'}}}:platform==='qq'?{message_id:'other-message'}:{raw:{...(raw as any).raw,event:{...(raw as any).raw.event,context:{open_chat_id:'oc_synthetic',open_message_id:'other-message'}}}})}},signal)).accepted,false)
         assert.equal((await pool.query('SELECT count(*)::int AS n FROM agent_interaction_resumes')).rows[0].n,0)
         assert.equal((await native.callback({binding:{...binding,ownerId:randomUUID()},platform,data:raw},signal)).accepted,false)
         const otherActor=platform==='telegram'?{...raw,from:{id:9191}}:platform==='qq'?{...raw,user_openid:'other-sender'}:{...raw,operatorId:'other-sender',raw:{...(raw as any).raw,event:{...(raw as any).raw.event,operator:{open_id:'other-sender'}}}}
         assert.equal((await native.callback({binding,platform,data:otherActor},signal)).accepted,false)
-        assert.equal((await native.callback({binding,platform,data:raw},signal)).accepted,true)
-        assert.equal((await native.callback({binding,platform,data:raw},signal)).accepted,true)
+        if (kind === 'question') {
+          assert.ok(customToken)
+          const eventId = 'callback-custom'
+          const customData = `${promptId}:${customToken}`
+          const custom = platform === 'qq' ? { ...raw, id: eventId, data: { resolved: { button_data: customData } } }
+            : platform === 'telegram' ? { ...raw, id: eventId, data: customData }
+            : { ...raw, eventId, actionToken: customToken, raw: {
+              header: { event_id: eventId },
+              event: { operator: { open_id: current.platformUserId }, action: { value: { prompt_id: promptId, token: customToken } },
+                context: { open_chat_id: 'oc_synthetic', open_message_id: 'om_synthetic' } },
+            } }
+          const first = await native.callback({ binding, platform, data: custom }, signal)
+          assert.equal(first.accepted, true)
+          assert.equal((await native.callback({ binding, platform, data: custom }, signal)).accepted, true)
+          assert.equal((await pool.query("SELECT schema_json->>'custom_input_active' AS active FROM interaction_prompts")).rows[0].active, 'true')
+          if (platform === 'feishu') assert.match(JSON.stringify(first.response), /请直接发送你的回复/u)
+          else assert.equal(replies.filter(text => text.text.includes('请直接发送你的回复')).length, 1)
+          assert.equal((await pool.query('SELECT count(*)::int AS n FROM agent_interaction_resumes')).rows[0].n, 0)
+          assert.equal(await preflight('合成自定义回答', {...current, eventId:'custom-text'}),'consumed')
+        } else {
+          assert.equal((await native.callback({binding,platform,data:raw},signal)).accepted,true)
+          assert.equal((await native.callback({binding,platform,data:raw},signal)).accepted,true)
+        }
         assert.equal((await pool.query('SELECT count(*)::int AS n FROM agent_interaction_resumes')).rows[0].n,kind==='credential'?0:1)
         if(kind==='credential'){
           assert.ok(cancelToken)
@@ -310,13 +336,19 @@ test('隔离PG/Redis：真实Core预检组合绑定、凭据、选择及冻结�
           const sent=JSON.parse(String(wire.requests.at(-1)!.body)).msg
           assert.equal(sent.context_token,'synthetic-private-reply-context')
           const text=sent.item_list[0].text_item.text
-          if(kind==='question'){assert.match(text,/1\. 继续/);assert.match(text,/请直接回复选项序号或选项文字/)}
+          if(kind==='question'){assert.match(text,/1\. 继续/);assert.match(text,/自定义回复/)}
           else{assert.match(text,/https:\/\/app\.example\/\?mcp_credential_prompt=/);assert.doesNotMatch(text,/api_key|synthetic-private-secret/)}
           assert.doesNotMatch(text,/"token"|token_hash/)
           const count=wire.requests.length
           assert.equal(await sender.interaction({...input,deliveryId:'wrong',event:{...event,payload:{...event.payload,interactionId:'wrong-prompt'}}}),'rejected')
           await pool.query('UPDATE user_bots SET enabled=false')
           assert.equal(await sender.interaction({...input,deliveryId:'revoked'}),'rejected');assert.equal(wire.requests.length,count)
+          if(kind==='question'){
+            await pool.query('UPDATE user_bots SET enabled=true')
+            assert.equal(await preflight('自定义回复',{...wxScope,eventId:'wechat-custom'}),'consumed')
+            assert.equal(await preflight('合成自定义回答',{...wxScope,eventId:'wechat-custom-text'}),'consumed')
+            assert.equal((await pool.query('SELECT count(*)::int AS n FROM agent_interaction_resumes')).rows[0].n,1)
+          }
         }finally{await wire.close()}
       }
     }))

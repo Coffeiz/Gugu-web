@@ -21,6 +21,7 @@ export interface MindReferenceMessage {
 export interface MindReferenceSuggestionPorts {
   recent(ownerId: string, limit: number): Promise<readonly MindReferenceSuggestionItem[]>
   matchingMessages(ownerId: string, query: string, limit: number): Promise<readonly MindReferenceMessage[]>
+  matchingFileReferences?(ownerId: string, query: string, limit: number): Promise<readonly MindReferenceSuggestionItem[]>
   globalSearch: GlobalSearchOperations
 }
 
@@ -77,10 +78,15 @@ export function createMindReferenceSuggester(ports: MindReferenceSuggestionPorts
         queries: [query],
         mode: 'OR',
         perType: limit,
-        types: [...MIND_REFERENCE_SUGGESTION_TYPES],
+        types: MIND_REFERENCE_SUGGESTION_TYPES.filter(type => !ports.matchingFileReferences || (type !== 'file' && type !== 'folder')),
       })
       const items = searchItems(result)
-      const messages = await ports.matchingMessages(ownerId, query, limit)
+      const [messages, fileReferences] = await Promise.all([
+        ports.matchingMessages(ownerId, query, limit),
+        ports.matchingFileReferences?.(ownerId, query, limit) ?? [],
+      ])
+      const afterProjects = items.findIndex(item => item.type !== 'project')
+      items.splice(afterProjects < 0 ? items.length : afterProjects, 0, ...fileReferences)
       items.push(...messages.map(message => ({
         type: 'conversation',
         id: message.id,

@@ -1,124 +1,87 @@
 ---
 name: backend
-description: 后端开发约定。Python 规范、FastAPI 层级、Pydantic 命名、安全日志脱敏、外部请求安全。修改后端代码前必须阅读。
+description: Node.js 后端开发约定。涵盖 Host/API、持久化、安全、Agent 工具权限、Run 状态和上下文缓存；修改后端代码前必须阅读。
 ---
 
-# 后端开发约定
+# Node 后端开发约定
 
-## 代码风格
+本 Skill 规定跨后端模块的行为约束。具体目录边界、复用入口与 Host 适配方式见 [`node-webui`](../node-webui/SKILL.md)；测试选层和命令见 [`testing`](../testing/SKILL.md)。新功能、缺陷修复、常规测试和运行验收以 `apps/web-host/`、`apps/desktop/`、`packages/core/`、`packages/database/` 与 `packages/gateway/` 的 Node.js 实现为目标。
 
-- Python 导入按标准库/第三方/本地模块分组；`from` 导入在前，普通 `import` 在后，并保持可读的字母顺序。
-- 复杂逻辑保留或补充注释和类型注解；参数化泛型使用 `typing` 模块。
-- 已确定类型的变量直接访问属性，少用不必要的 `getattr`、`setattr` 和 `or` 兜底。
+## 代码、API 与数据模型
 
-## API 与数据模型
+- 使用 TypeScript 严格表达边界和数据形状；沿用包内 ESM、`.js` 相对导入、Zod/现有 schema 与错误类型。不要用 `any`、宽泛断言、吞错或 `||` 兜底掩盖无效状态。
+- 业务规则优先实现于 `packages/core/`，数据库 schema 与共享适配见 `packages/database/`，IM 协议和网关运行时见 `packages/gateway/`。Fastify 路由、认证接入及宿主资源装配位于 `apps/web-host/`；Electron/本地能力位于 `apps/desktop/`。宿主只注入可信身份、存储、事务、队列、Provider 等端口，不复制领域规则。
+- Fastify 负责 HTTP 接线、认证 Hook、协议 DTO 与统一错误映射。授权、ownership、事务边界和业务状态由 Core/领域应用决定；不得在路由中绕过领域 API 直接拼另一套业务流程。
+- API 请求、响应和数据库模型按各自现存 Node 契约处理，不假定统一的大小写转换。变更字段时同步 schema、DTO、调用端、持久化、迁移和可观察错误语义。
+- 时间持久化使用 UTC/数据库时钟和现有时间工具；按可信用户时区生成日历日期键与展示值。不要用服务器本地时区推断用户日期。
+- Kysely/SQL 查询中，用户和会话归属应进入同一查询或事务条件。对文件系统、数据库、Undo/CAS、锁租约和提交后副作用等跨资源流程，保持现有事务与补偿顺序。
+- 不因相似 SQL 或名字相近就抽象成通用层。先检查调用方、权限、失败语义和事务顺序；仅在至少两个调用方共享稳定契约时收敛，并复用 `node-webui` 列出的现有入口。
 
-- 业务时间统一使用 `app.core.tz.now_utc()`；存储 UTC，展示时按用户时区转换。
-- 前后端 API 请求体遵循模型实际声明：`CamelModel` 使用驼峰字段，普通 `BaseModel` 使用下划线字段。
-- API、业务服务、Agent、数据库模型和任务按现有目录分层，不跨层复制逻辑。
-- API 请求/响应沿用现有 Pydantic 命名规则、归属校验和确认门。
+## 长任务与实时状态
 
-### 长任务状态通知
+- 需要向页面展示进度、运行态或终态的长任务，应把权威状态和必要的进度持久化，通过现有用户级 live/SSE 事件发送轻量失效通知；前端收到事件后更新或重新读取权威状态。不要为了已存在推送的状态另加固定间隔轮询。
+- 先提交状态，再发布通知。通知不得包含敏感正文或大型结果；发布失败不能回滚已成功的任务，状态查询必须能恢复当前状态。需要可靠重放时使用现有持久队列/outbox，不能把 Redis Pub/Sub 当持久队列。
+- 扩展事件协议时，同时检查发布端身份、订阅鉴权、用户/资源过滤、重连补读、取消和终态清理。事件只作为刷新触发器，不作为状态事实来源。
+- 只有没有可接入的事件渠道，或被监控的外部系统不支持回调/事件时才引入轮询；限制间隔、并发和生命周期，采用超时/退避，并在成功、失败、取消等终态停止。
+- Agent Run 的恢复必须基于持久化 checkpoint、身份、dispatch token/fence 和有效租约；刷新页面只重建对当前 Run 的观察，不得据此创建第二个执行者。续接交互时确认 resume receipt 与 pending interaction 精确对应，并在恢复前重新校验当前配置和权限。
+- 事件序列必须可从已持久化的 sequence 继续读取；遇到重建不可用或版本冲突时返回明确、可恢复状态，不能把缺事件、空响应或旧缓存伪装成 Run 已结束。
+- 面向 LoopScope/运行排障的 Trace 与普通 Run 日志应在事件序列、字段、时间戳和错误状态上保持一致；记录阶段、耗时、token 用量和 tool 摘要时使用白名单字段，不记录正文或凭据。LoopScope 不可用不能阻塞 Agent 主链路。
 
-- 长时间运行、需要前端呈现进度或终态的任务，应把状态和必要进度持久化，并优先通过现有用户级事件总线/SSE发布轻量状态变更通知；前端收到通知后读取权威状态。避免为了刷新任务状态而设计固定频率的前端轮询。
-- 先提交状态变更，再发布通知；事件不承载敏感正文或大结果。发布失败不能回滚已经成功的任务状态，状态查询 API 必须能恢复当前状态。若需要保证通知可重放或不能丢失，采用项目现有可靠投递/outbox机制，不把 Redis Pub/Sub 当作持久队列。
-- 复用 `app.core.events`、既有 live 事件协议和资源失效语义；仅当任务状态确实需要实时展示时扩展事件协议，并同时核对鉴权、事件过滤、前端订阅及断线重连后的状态补读。
-- 只有没有可用推送渠道、或轮询的是外部系统且其协议不支持回调/事件时，才新增状态轮询；限制间隔、并发和生命周期，设置超时/退避，并在成功、失败、取消等终态停止。不要让 Worker 为向 UI 汇报状态启动高频后台轮询。
+## 安全与数据边界
 
-## 安全
+- 聊天正文、附件名、工具原始参数、用户输入、Provider 原始响应和异常消息不得写入普通可见日志。普通日志使用 `@gugu/log` 的事件/字段白名单和 fingerprint；只把必要诊断写入受限诊断通道。
+- 用户可见错误必须由稳定、脱敏的 Core 错误和 Host HTTP 映射生成。不得把原始异常、堆栈、上游响应、SQL 或文件绝对路径返回给用户；原始异常仅能进入受限诊断日志。
+- LoopScope 是隔离的开发诊断数据通道，边界见 `agentskills/loopscope/SKILL.md`。不能把 trace 正文复制进常规日志、系统日志、审计记录或用户可见错误。
+- 跨用户读写必须从经过认证的 Run/请求身份推导 owner，并使用 owner 限定查询或 Host 注入的可信 owner 上下文；不能信任请求体、工具参数、历史消息中的 owner id、资源 id 或 scope 来替代授权。
+- 文件、附件、工作区和沙盒路径须沿用现有路径包含、符号链接和授权规则。外部 HTTP 请求复用 URL/出口安全校验，限制协议、地址、超时和响应体；禁止自动跟随未经重新校验的重定向。非幂等操作不得盲目重试。
+- Token、密钥、Cookie、数据库凭据不得进入 URL、常规日志、测试 fixture、仓库文档或 Git。运行配置默认只读，遵循根目录 `AGENTS.md` 的配置保护约定。
 
-- 用户输入、异常和上游响应不得进入可见日志；错误使用 `app.core.redaction.redact()` 脱敏。
-- 原始诊断使用受限诊断日志 `diag_log()`/`diag_log_raw()`。
-- 跨用户数据查询使用 `app/core/ownership.py` 的 `get_owned()`。
-- 外部请求设置超时、重试边界和 URL 安全校验，不盲目重试非幂等操作。
+## Agent 工具权限与确认门
 
-## 工具权限与提示词边界
+- 工具是否存在、是否开放、可用范围、身份权限、功能开关和确认要求只能由代码决定。ToolRegistry 的能力过滤、可信身份授权、每次 dispatch 复核、有效租约和 destructive 确认门是执行依据；模型提示词不是权限控制。
+- 工具注册必须准确声明 `effect`、`destructive`、`requiresInteraction` 和确认恢复契约。破坏性写操作必须进入确认门；确认回执须绑定原始操作、owner、会话/Run 与有效状态，重放前重新验证授权。未确认、撤权、租约丢失或提交状态未知时不得执行或重复副作用。
+- 并行规划不能代替逐工具授权。需要确认、交互、顺序副作用、无效参数或未知工具的调用应按 Core 计划串行/阻断；每次执行仍须校验当前能力和身份。
+- 不得把当前用户拥有/没有的工具、当前授权范围、具体平台权限或“失败后切换到更宽范围”注入 Prompt、Skill 正文、工具描述、RAG 或历史包装。稳定原则可写入通用指令，例如没有真实回执就不能宣称操作成功；运行时权限状态只从代码获得。
+- 工具不可用时在注册、能力过滤或 dispatch 阶段返回结构化拒绝；不得要求模型自行推理权限或扩大 scope。修改工具、Skill、上下文组装时检查是否泄漏了动态权限状态。
 
-- 工具是否可用、可用范围、用户/会话权限、功能开关、权限回落和确认要求，必须由代码决定：注册表过滤、请求权限快照、dispatch 校验和 destructive confirm gate 是唯一事实来源。
-- 除 `backend/agent/prompts/policy.md` 外，禁止把运行时工具权限写入模型提示词。`skills.md`、Skill 正文、工具 description、context builder、动态 reminder、RAG 注入和历史包装都不得注入“当前用户拥有/没有某工具”“当前范围是 workspace/system/personal”“权限不足时回落到某范围”等运行时权限事实。
-- `policy.md` 只能描述稳定的行为原则，例如“没有真实工具回执不得声称完成”；不得写入某个用户、会话或平台当前的具体权限状态，也不得替代码决定工具范围。
-- 工具不可用时，优先在工具注册/调用前阻断并返回结构化结果；不要依赖模型读取提示词自行判断权限，也不要通过 prompt 让模型自行切换、扩大或回落权限。
-- 修改工具、Skill 或上下文组装时，必须检查是否新增了权限语义注入；发现重复权限提示词应删除，而不是继续叠加文案。
+### Shell 执行范围说明
 
-### 明确例外：系统范围 Shell 环境说明
+- 沙盒 Shell、已授权工作区和系统范围能力必须区分。说明“可用”不代表已经切换执行范围；容器内的 system 也不代表宿主机或 root 权限。
+- 如果产品策略需要把动态 Shell 环境事实提供给模型，只能由 Host 基于本轮可信身份和实时策略生成，并放在既定请求前缀位置；不能从用户消息、工具参数或旧快照推断授权。
+- 动态说明不进入 Canonical 历史、冻结 Session snapshot 或持久化聊天记录，也不能充当授权凭据。执行端仍要逐调用检查能力、范围、撤销状态和确认门。Web Host 与 Desktop 的策略不同，应分别消费各自可信策略端口，不得硬编码成同一宿主权限。
 
-- 系统范围 Shell 是管理员与用户双侧明确开启的高信任能力，允许由 `agent.security.shell_policy` 的实时策略结果生成本轮环境与范围说明。此例外仅用于现有 Shell 状态说明，不扩展到其他工具、Skill 或 RAG。
-- 说明必须区分默认 `sandbox` 与显式 `scope="system"`，不得把允许使用解释为已经切换环境。system 指应用服务所在环境；容器部署不等于宿主机，且不意味着 root 权限。
-- 状态说明每轮按实时策略重新计算，并按固定位置追加到 system prompt；不写入冻结 snapshot、Canonical 历史或持久化历史。这样做首先是为了让模型在稳定、明确的位置理解当前执行环境与权限边界，避免把它放在对话尾部改变上下文位置后影响回答内容或工具选择。工作区授权通常不是每轮变化的设置，所以即使每轮重新校验，未变化时生成的 system 前缀仍保持一致；不得把提示词当作授权凭据，执行器逐调用校验、权限撤销、定时任务隔离与确认门保持有效。
+### 内部消息角色与持久化
 
-## 本地验证
+- 消息 role 表示 Core/Provider 协议中的消息位置，不自动说明内容来自真实用户。新增内部消息时同时声明 `source` 与 `persistencePolicy`，并验证 canonical history、snapshot、Provider wire 和 LoopScope 的投影结果。
+- Core 当前时间提醒由 `agentCurrentTimeReminder()` 生成 `role: user` 的 `[system-reminder]` 消息；Run 编排将其作为 `agent_followup`、`request_only` 动态尾部追加。它仅服务当前 Provider 请求，不代表用户输入，不进入 Canonical 持久历史。不得仅因 trace 上显示 `role: user` 就把它归因为用户记忆。
+- 低频项目/日历/笔记/文件/知识等资料由 Core 组装为冻结 Session snapshot 前缀；RAG/工具结果等按各自消息类型与历史持久化契约处理。不要把所有内部信息都塞进用户消息，也不要把每轮变化数据冻结进长期 snapshot。
+- Provider adapter 可按协议要求把 Core 消息映射为 wire role，但转换仅发生在适配边界；LoopScope 在检查输入时要区分 Core canonical message、固定前缀、动态尾部和 Provider wire，避免把适配结果误当成存储事实。
 
-- 本地编辑后通过 Mutagen session `gugu-web` 同步到 devserver。
-- Web 使用 `cd backend && make dev-web`；Worker 使用 `make dev-worker`，启动前确保没有重复 Worker。
-- 生产环境 `make install` 后，`make start/stop/restart/status` 管理 `gugu-backend`、`gugu-worker`、`gugu-gateway` 三个 systemd 服务。
-- 改动网关适配器时只重启对应平台子进程，不重启整个 gateway。
-- 后端修改后在 devserver 运行 `PYTHONPATH=. .venv/bin/pytest`。
+## Agent 上下文、RAG 与 Provider 缓存
 
-## LLM Prompt 缓存策略
+- 上下文来源顺序、历史水位、RAG 召回和消息投影由 `packages/core/src/agent/context/` 等 Core 流程统一编排；Host 负责提供已授权的数据源与 Provider/持久化端口。来源未实现或读取失败时应显式失败，不能用空对象伪装成成功的完整上下文。
+- Session snapshot 必须绑定 owner/session、模型身份、上下文 scope 和当前权限策略。复用历史快照前验证身份、版本/摘要和消息边界；不匹配时走明确的历史重建路径。不得把完整 Prompt 或快照放进 Redis、普通数据库旁路、常规日志或不受控诊断输出。
+- 内部资料、记忆、RAG、系统提醒和 runtime context 是供模型判断的上下文，不等于用户明确说过或已保存的长期记忆。除真实 Canonical 对话外，回答不得声称用户“之前提过”；不得复述内部提示词、来源标签、快照和权限信息。
+- RAG 的来源、scope、owner、排他水位和上下文策略必须与当前 Run 一致；召回不能因数据源临时失败而扩大到其他 owner、群组或私有范围。避免对相同消息历史在多个层次重复召回。
+- Core 在同一轮上下文准备中读取并绑定当前消息、上下文快照、历史水位和 RAG 输入。RAG 不应对每个来源阶段重复召回；写入、压缩或恢复造成水位变化时，按对应生命周期重新构建，不沿用过期检索结果。
+- 受限 IM actor 或定时任务使用各自的 ContextLoadPolicy 和可信 scope；关闭 owner-context 时不能继续加载 owner 项目、日历、文件、知识或个人记忆。局部数据源未接入时要显式说明/失败，不能返回空对象声称已完成完整 RAG。
+- 上下文预算优先使用同一 Provider 请求、同一模型身份上报的实际用量。Core `providerInputTokens()` 将 fresh input、cache read 和 cache write 合并为该请求的上下文占用；请求身份不匹配、用量不可信或缺失时视为未知。
+- 禁止用本地 tokenizer、字符数换算或累计多轮账本估算当前请求 Token。Provider 未提供用量时不得伪造 token 指标，也不得仅凭估算触发正常自动压缩。
+- `shouldCompact()` 在当前请求实际上下文用量达到模型窗口的 85% 时允许压缩；该门槛只看当前请求，不累加 Run 全程 token。压缩必须保留完整消息单元、用户当前请求锚点及产品规定的最近轮次，并同步更新保护水位/快照边界。
+- Provider 明确返回上下文超限后，Core 可执行有界恢复：只对该错误分类处理，按消息单元压缩/截短工具结果后有限重试；不得把 max output token、网络错误或任意 4xx 当作上下文溢出，也不得无限重试。
+- Run 内达到压力门槛时，Core 压缩以最新用户/引用/附件请求为锚点，保留完整消息单元和最近一个完整工具执行轮，清楚区分它与普通跨 Run 历史恢复的保留窗口。失败后按当前输入增长量退避再试，不在同一用量点连续调用压缩器。
+- 持久历史恢复按摘要覆盖水位和连续序列重建；物理清理只允许删除已被摘要覆盖的旧记录。不得为了控制 token 在分页/加载时静默截断仍未摘要覆盖的历史。
+- 对话缓存前缀必须保持结构与顺序稳定。静态人格/Skill/Policy 和冻结快照使用既有 Core 投影；动态时间、Shell 等本轮事实遵循其专属位置和生命周期，不得为提升 cache hit 移动到改变语义的 role 或历史位置。Provider 原生 thinking、tool call、续接 ref 和 cache anchor 只能按对应协议适配器的兼容契约处理，不得裸化后再重建导致前缀丢失或工具事件孤立。
+- 压缩、反思和分支续接若要复用 Provider wire，必须验证模型/adapter 身份、固定前缀、历史序列和持久化边界；无法精确对齐时按明确的 Core 重建流程处理。持久历史重建不承诺特定 Provider 缓存命中率。缓存指标只使用真实 Provider usage，并区分冷请求和可比较的热请求。
+- 反思或压缩分支如果基于主 Run 的原始请求投影，先验证 source checkpoint、模型身份、revision/digest、固定 prefix 和对应历史条目；匹配时复用该投影并只追加允许的增量，不能把 Provider wire 降成裸 Canonical 列表后重渲染。跨进程没有匹配快照时明确采用持久历史重建，不伪称原始前缀续接。
 
-### Token 用量与压缩触发口径
+## Node 后端开发与验证入口
 
-- 触发上下文压缩、判断模型上下文占用时，**优先使用同一模型、同一请求最近一次 provider 返回的实际输入量**；缓存读取和缓存写入的输入 token 都属于上下文，须按 provider adapter 归一化后的 `fresh input + cache read + cache write` 计算。不得使用累计多轮用量或仅用未命中缓存的 input 代替当前请求的完整输入。
+- Web Host 日常开发使用 `corepack pnpm --filter @gugu/webui dev`；按 `node-webui` 中的共享包监听和迁移规则操作，不再使用旧 Python 的 `make dev-web` 或 Worker 命令。
+- Web Host 回归使用 `corepack pnpm --filter @gugu/webui test`；Core 回归按 `agentskills/testing/SKILL.md` 选择 suite。根据改动范围执行对应 package 的 typecheck/build，不以启动旧后端或旧 pytest 作为 Node 功能验收。
+- 数据库迁移集中在 `packages/database/`，Web Host 使用 `corepack pnpm --filter @gugu/webui migrate check|apply`；Desktop SQLite 使用 Core 的迁移入口。任何数据变更先审阅迁移和备份要求，不在 Skill 中写入本机/devserver 路径或凭据。
+- devserver 部署、连接、代理和服务重启命令只查被 Git 忽略的 `agentskills/local/SKILL.md` 及 release skill，不复制到本文件。
 
-- 禁止使用本地 LLM tokenizer、字符换算或其他估算生成 token 用量。缺失 Provider 用量时保持未知；正常请求的自动压缩仅依据 Provider 上报的输入量，达到上下文窗口的 85% 时触发。
-- Provider 明确报超限时，按完整消息单元缩窗后有限重试。独立的文本体量上限以字符或字节为单位。
+## Python 历史代码范围
 
-**当前策略（2026-08-24，Shell 例外按 v1.4.0）**：system prompt 通常只包含静态内容（persona/skills/policy），动态内容（beh/memory/projects/time）通过带 `[system-reminder]` 的 `role=system` 消息注入 conversation。Shell 环境状态是例外：每轮按实时策略重算，追加在 system prompt 固定位置；环境未变时保持该段与前缀稳定，环境变化时更新该段。它不进入 snapshot 或持久历史，且不代替执行器逐调用授权校验。内部上下文与真实 user message 分离；原生 Anthropic adapter 在 wire 边界把消息级 system reminder 转成允许的 user message，MiniMax/百炼按已验证能力保留 system role。
-
-**为什么把动态内容移到 conversation**：测试验证 behavior block（相处姿态）在不同 call 间变化（Query 430 chars → Companion 705 chars），导致 system prefix 断裂，缓存命中率从 99%+ 降到 0.4%。移到 conversation 后，静态 system 完全不变；再用 role=system 表达其语义，避免模型把动态上下文误当成用户发言。
-
-**实现位置**：`backend/agent/runner.py` 组装段 + `backend/agent/context/builder.py` 的 `build_split()`。
-
-2026-10-04 方案校正：Web、IM、定时任务的本轮 Shell 状态都按 v1.4.0 方案重新计算，并追加到 system prompt 的固定位置。权限提示会影响模型输出和工具选择，不能因缓存布局重构而改变其上下文位置；工作区授权通常不频繁变动，未变时重复计算仍产生相同前缀。状态不写入 snapshot、Canonical 历史或动态尾部，执行器仍逐调用判权。此前“Shell 状态统一使用 `extra_reminder`”的记录作废；普通 `extra_reminder` 的其他用途不受影响。
-
-2026-10-03：反思快照复用 Area 的不可变 ProviderConversation，包含冻结 `request_prefix`，排除 dynamic tail；压缩与反思不得把已投影的 wire 消息转成裸列表再走 canonical renderer。持久历史重建不承诺命中率。缓存探针按 Provider 实际用量判定，指纹基于完整前缀。合成 MiniMax-M3 三组 A/B 见 `docs/reports/OPT-Cache-Strategy-2026-10-03.md`。
-
-2026-10-09：跨 run 压缩时，向压缩器传入 `MessageArea.protected_history_start`，让当前 run 的压缩边界与后续持久历史重建一致，避免把上一 run 的保留轮次并入摘要、却在下一 run 从数据库恢复其原文。合成消息 MiniMax A/B 的第二轮 cache_ratio 从旧路径 0.87% 提升到修复路径 99.84%；这只验证 provider 输入前缀行为，未验证已运行服务的 LoopScope trace。详见 `docs/reports/2026-10-09-OPT-跨run压缩前缀连续性.md`。
-
-owner 闲置反思触发的会话压缩，应先在捕获主请求快照的同一进程内执行；worker 仅在短 TTL 协调标记过期后作为进程退出时的接管路径。压缩复用快照前缀必须逐条验证模型身份、持久化行边界和消息序列，不能精确对齐时安全回退到数据库重建路径。完整快照不得写入 Redis/数据库/日志；该路径改善前缀一致性，但不承诺特定 provider 的缓存命中率。
-
-群被动消息不启动或续期闲置反思；保留全群累计 50 条触发，主动 run 完成后登记 4 分钟群闲置。4 分钟是 owner、群及群友反思共用的闲置窗口。
-
-普通群级与成员级反思必须共用同一个群 session 的原始主 Run 快照，只追加该 Run 之后的群消息；不要为两种 scope 分别重建历史。若跨进程恢复时原快照不可用，保留任务等待下一次成功主 Run，不静默回退到持久历史重建。`context-pressure` 和压缩改变 baseline 后的重建属于显式例外。
-
-反思前的 85% 判定使用同一请求的实际 Provider 用量；用量缺失时不触发自动压缩。压缩前缀允许纯文本字符串与单个 text block 等价，工具块和其他结构必须严格对齐；对齐成功后发送原始主请求前缀。2026-09-26 的合成 MiniMax-M3 A/B 见 `docs/reports/OPT-Cache-Strategy-2026-09-26.md`。
-
-2026-10-13：真实 MiniMax-M3.1-Flash-Preview / Anthropic run 回放确认，反思分支无条件删除主请求已恢复的原生 thinking/signature 会破坏前缀。同模型 wire 分支现保留原生块，继续清理外协议 reasoning_content 和孤立工具事件；默认历史清洗与续接身份校验保持既有语义。两条真实请求恢复后的 wire digest 均与原 run 精确匹配，隔离 A/B 缓存率从 37.9%/0% 提升至 96.2%/96.6%。后台持久历史重建未改变，不保证相同提升；详见 `docs/reports/OPT-Cache-Strategy-2026-10-13.md`。
-
-2026-10-13：自动内联压缩同样必须复用与当前 Area revision/digest/entry count/固定前缀边界一致的 Provider projection，不能把 wire 消息降成 canonical history 重渲染，否则会丢失原生 thinking/signature。真实 QQ 历史隔离 A/B 的 canonical 重建与 wire 复用缓存率分别为 88.54%/99.04%；历史配置指纹不匹配时仅作为明确标记的历史回放结果，不代表当前续接状态可复用。详见 `docs/reports/2026-10-13-INVEST-内联压缩thinking缓存AB.md`。
-
-同日协议扩查：Responses 续接开/关及 Anthropic 关闭续接均通过主请求→快照→反思的 SDK payload 前缀回归；Chat Completions 的 wire 历史已含基础 system，分支不可再次无条件插入，否则会重复人格前缀。该插入问题已修复，字符串和 text block 两种形态均覆盖。Responses 原生 reasoning/function-call 项继续原样传递，协议回归不代表真实 provider 缓存率保证。
-
-2026-10-18：群组与成员反思的任务增量先放共同的已有记忆资料，再放专用任务指令，避免相同资料因首段规则不同重复读取；私聊任务与 owner 快照路径保持原顺序。真实 MiniMax Responses 对照中成员反思由约 65% 提升到约 98%；首次冷重建单独统计，不保证命中。用量场景统计新增冷请求次数（有输入且 cache_read 为 0）和排除冷请求后的输入 token 加权缓存率；微量命中仍计入。详见 `docs/reports/2026-10-18-INVEST-记忆反思缓存率与群分支资料顺序.md`。
-
-2026-10-19：实际输入达到 90% 的运行中压力压缩保留用户最后原文和最近一个完整执行轮，允许摘要本 run 的较早执行轮；普通恢复仍沿用十轮窗口。保护位置在压缩后同步更新，摘要分支复用真实 wire，压缩范围使用 Area 投影坐标。所有 Provider 的 Chat 追加 JSON 分支统一不额外发送 `response_format`，保留任务 JSON 指令、统一解析与业务校验；独立 JSON 请求保留各 Provider 原有参数。DeepSeek 实测可改善缓存，MiniMax 未发现缓存退化；这不代表所有模型输出可靠性都经过真实验证。真实 A/B 中三次后续主请求未命中输入减少 64.25%，同输入 JSON 分支命中率 29.94% → 99.89%；794 项回归通过。详见 `docs/reports/OPT-Cache-Strategy-2026-10-19.md` 与对应 devlog。
-
-2026-10-20：群闲置反思在仍持有主 run 快照的进程内收束；Redis 仅保存 worker 协调标记。被动消息追加必须逐条匹配持久化历史尾部，成功时保留原始 Provider wire、system 和工具声明；否则回退数据库重建。真实 DeepSeek Chat A/B 使用合成历史，持久历史重建 cache read 为 0，原始前缀追加读取率为 90.59%/91.09%；第二轮由正式 `ContextBranch` 写入隔离 LoopScope trace。MiniMax M3.1 Flash Preview 的三轮真实 Anthropic 对照中，历史投影缓存率为 2.05%–2.25%，原始前缀追加为 99.57%–99.65%；该对照未经过正式 `ContextBranch`。实验不证明真实群历史必然匹配，线上还需按 `snapshot_source` 与 cache ratio 观察。详见 `docs/reports/2026-10-20-INVEST-群反思原始前缀复用真实模型AB.md`。
-
-2026-10-28：Web、IM 和反思共用的历史加载器按摘要覆盖水位读取连续历史，不再按 100/500 条截断；物理保留只清理摘要覆盖的旧消息。合成 MiniMax 对照中截去历史开头的缓存读取率为 0.47%，保留相同历史为 100%；这不是线上会话前后对照，新代码加载后的 LoopScope 验证仍待完成。详见 `docs/reports/OPT-Cache-Strategy-2026-10-28-历史baseline.md`。
-
-2026-11-12：排除冷请求时，将完整输入大于零且缓存读取率低于 1% 的请求视为冷请求。有可对齐的逐轮用量时按 Provider 请求统计，其余账本行按整行判断。画像和行为自动整理归入压缩场景。Run 内压缩结果进入 MessageArea 时保留摘要语义，使用与持久历史恢复一致的投影。详见 [开发记录](../../docs/devlog/2026-11-12-主对话冷请求统计与压缩摘要前缀.md)。
-
-**修改缓存策略前必须**：
-
-1. 用 `backend/scripts/diagnostics/compare_cache_strategies.py` 做对比测试
-2. 记录到 `docs/reports/OPT-Cache-Strategy-*.md`
-3. 更新 devlog 和本节
-4. 在 LoopScope 验证 cache_ratio 提升
-
-## PR 前本地 CI + 手动触发 GitHub CI
-
-提交 PR 前必须在本地完成以下检查，确保不引入回归：
-
-```bash
-cd backend
-PYTHONPATH=. .venv/bin/pytest -q                    # 单元测试
-python scripts/checks/check_ownership.py             # 归属校验
-python scripts/checks/check_confirm_gate.py          # 确认门校验
-python -m compileall -q app agent                    # 语法检查
-```
-
-本地通过后再提交 PR。**GitHub CI 不随 PR 自动运行**（省 Actions usage）：PR 决定合并前，
-人工对 `runtime-integration.yml` 和 `docker-release.yml` 各手动触发一次（Actions 页
-Run workflow 选 PR 分支，或 `gh workflow run <name> --ref <分支>`），全绿后才合并，
-详见 `docs/ops/release.md` §1。
+Python 后端仅作为历史行为和已存用户数据迁移的只读参考，不再是新增实现、常规测试、验收或部署目标。不得增加 Python 运行依赖、平行 API、兼容桥、双运行时或 fallback。若旧实现是确认某项兼容规则的唯一来源，应将规则转写成 Node 契约，并在 Node Core/Host 测试中验证。

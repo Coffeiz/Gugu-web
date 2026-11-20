@@ -7,6 +7,7 @@ import test from 'node:test'
 import type { Pool } from 'pg'
 import { assertDurableCanonical, type CanonicalMessage, type MessageEntry } from '@gugu/core/agent'
 import { createImContextReferenceCodec, ImContextReferenceError } from '../../../src/modules/im/gateway/agent/references.js'
+import { withViewImageReferences } from '../../../src/modules/agent/tools/files/image.js'
 import { createImMessageMaterializer } from '../../../src/modules/im/gateway/inbound/message.js'
 import { imAttachmentScopeKey, type ImAttachmentScope } from '../../../src/modules/im/gateway/inbound/attachments.js'
 
@@ -103,7 +104,8 @@ test('真实materializer+正式codec：本地PNG进入Canonical，持久引用�
     const materializer = createImMessageMaterializer({ ...f.options, storageRoot: directory, messageIds: ['11'], timezone: 'UTC', formatMessageTime: () => '合成时间' })
     const current = await materializer.materialize(identity, { id: '11', content: '', contentJson: null, files: [], references: [] })
     const codec = materializer.references(createImContextReferenceCodec(f.options))
-    const durable = await codec.dehydrate(entry(current.currentUser!.message), identity)
+    const [durable] = await withViewImageReferences(codec).dehydrateBatch!([entry(current.currentUser!.message)], identity)
+    assert.ok(durable)
     assertDurableCanonical(durable)
     assert.doesNotMatch(JSON.stringify(durable), new RegExp(png.toString('base64').slice(0, 16)))
     assert.match(JSON.stringify(await codec.hydrate(entry(durable), identity)), new RegExp(png.toString('base64').slice(0, 16)))
@@ -142,8 +144,12 @@ test('隔离PG正式SQL：当前Run、群和Bot收据与附件scope同时成立�
       await assert.rejects(create().hydrate(message, identity), failure)
       await pool.query("UPDATE conversation_sessions SET bot_id='91',source='telegram',chat_type='group'")
     }
+    assert.deepEqual(await create().dehydrateBatch!([message, message], identity), [message.message, message.message])
+    let reads = 0
+    const revokedAfterRead = createImContextReferenceCodec({ pool, identity, scope, authorize: async () => ++reads === 1 })
+    await assert.rejects(revokedAfterRead.dehydrateBatch!([message, message], identity), failure)
     await pool.query("UPDATE chat_attachments SET extra='{}'::jsonb")
-    await assert.rejects(create().hydrate(message, identity), failure)
+    await assert.rejects(create().dehydrateBatch!([message, message], identity), failure)
     await pool.query('UPDATE chat_attachments SET extra=$1', [a.extra])
     await pool.query("UPDATE gugu_im_inbound_receipts SET run_id='another-run'")
     await assert.rejects(create().hydrate(message, identity), failure)
@@ -155,4 +161,23 @@ test('隔离PG正式SQL：当前Run、群和Bot收据与附件scope同时成立�
     assert.deepEqual(await create({ chatType: 'c2c', chatId: null }).hydrate(message, identity), message.message)
     await assert.rejects(create({ chatType: 'c2c', chatId: null, platformUserId: 'another-speaker' }).hydrate(message, identity), failure)
   } finally { await pool?.end(); await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`); await admin.end() }
+})
+
+test('检查点批量引用只查一次收据和去重附件，读后撤权及越权附件均拒绝', async () => {
+  const entries = [entry({ role: 'user', content: '合成正文' }),
+    entry({ role: 'user', content: [ref(), ref()] }), entry({ role: 'user', content: [ref()] })]
+  const f = fixture()
+  let authorizations = 0
+  const codec = createImContextReferenceCodec({ ...f.options, async authorize() { authorizations++; return true } })
+  assert.deepEqual(await codec.dehydrateBatch!(entries, identity), entries.map(item => item.message))
+  assert.equal(authorizations, 2)
+  assert.equal(f.calls.length, 2)
+  assert.deepEqual(f.calls[1]!.args[2], ['synthetic-attachment'])
+
+  const revoked = fixture()
+  revoked.afterQuery(() => revoked.revoke())
+  await assert.rejects(createImContextReferenceCodec(revoked.options).dehydrateBatch!(entries, identity), failure)
+  const foreign = fixture()
+  foreign.rows[0]!.extra.im_ingress_scope = 'synthetic-foreign-scope'
+  await assert.rejects(createImContextReferenceCodec(foreign.options).dehydrateBatch!(entries, identity), failure)
 })

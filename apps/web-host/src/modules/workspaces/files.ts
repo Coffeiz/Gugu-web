@@ -65,6 +65,9 @@ export function createWorkspaceFileReads(pool: Pick<Pool, 'query'>, storageRoot:
     if (rows.length) throw new CoreError('conflict', '此路径关联旧版文件记录，暂不能通过路径修改')
   }
 
+  const storeTrashPath = (owner: string, directory: FileDirectory, path: string, root: string) =>
+    trash.store(owner, directory, path, createLocalFileTree(storageRoot, root).storageKey(path), new Date().toISOString())
+
   return {
     async list(ownerId: string, directory: FileDirectory, relativePath: string) {
       const fs = await tree(ownerId, directory)
@@ -91,11 +94,14 @@ export function createWorkspaceFileReads(pool: Pick<Pool, 'query'>, storageRoot:
         return fs.mkdir(path)
       })
     },
-    async upload(ownerId: string, directory: FileDirectory, path: string, content: AsyncIterable<Uint8Array>, signal: AbortSignal) {
-      const fs = await tree(ownerId, directory)
+    async upload(ownerId: string, directory: FileDirectory, path: string, content: AsyncIterable<Uint8Array>, signal: AbortSignal, overwrite = false) {
+      const owner = normalizeOwnerId(ownerId)
+      const root = await rootKey(owner, directory)
+      const fs = createLocalFileTree(storageRoot, root)
+      if (overwrite && typeof directory !== 'number') await checkLegacy(owner, root, [path])
       return write(async () => {
-        if (typeof directory !== 'number' && !await fs.ensureRoot()) return false
-        await fs.upload(path, content, signal)
+        if (!overwrite && typeof directory !== 'number' && !await fs.ensureRoot()) return false
+        await fs.upload(path, content, signal, overwrite)
       })
     },
     async move(ownerId: string, directory: FileDirectory, path: string, destination: string) {
@@ -113,10 +119,19 @@ export function createWorkspaceFileReads(pool: Pick<Pool, 'query'>, storageRoot:
       const root = await rootKey(owner, directory)
       if (options && options.expectedRoot !== root) throw new CoreError('conflict', '文件目录授权已变化')
       if (typeof directory !== 'number') await checkLegacy(owner, root, [path])
-      return write(() => trash.store(owner, directory, path, createLocalFileTree(storageRoot, root).storageKey(path), new Date().toISOString()))
+      return write(() => storeTrashPath(owner, directory, path, root))
+    },
+    async trashPath(ownerId: string, directory: FileDirectory, path: string, expectedRoot: string) {
+      const owner = normalizeOwnerId(ownerId)
+      const root = await rootKey(owner, directory)
+      if (expectedRoot !== root) throw new CoreError('conflict', '文件目录授权已变化')
+      const entry = await storeTrashPath(owner, directory, path, root)
+      if (!entry) throw new CoreError('not_found', '文件或目录不存在')
+      return entry
     },
     listDiskTrash: (ownerId: string) => trash.list(normalizeOwnerId(ownerId)),
-    restoreDiskTrash: (ownerId: string, id: string) => write(() => trash.restore(normalizeOwnerId(ownerId), id)),
+    getDiskTrash: (ownerId: string, id: string) => trash.info(normalizeOwnerId(ownerId), id),
+    restoreDiskTrash: (ownerId: string, id: string, expectedRoot?: string) => write(() => trash.restore(normalizeOwnerId(ownerId), id, expectedRoot)),
     purgeDiskTrash: (ownerId: string, id: string) => write(() => trash.purge(normalizeOwnerId(ownerId), id)),
   }
 }

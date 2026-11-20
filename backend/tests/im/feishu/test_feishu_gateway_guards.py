@@ -3,6 +3,8 @@ import json
 from concurrent.futures import Future
 from types import SimpleNamespace
 
+import pytest
+
 from agent.gateway.feishu import events, messages, runtime
 
 
@@ -120,14 +122,18 @@ def test_feishu_reads_bot_open_id_from_bot_info_response():
     assert events._feishu_bot_open_id(FakeClient()) == "ou_bot"
 
 
-def test_feishu_card_action_is_submitted_to_injected_gateway_runner(monkeypatch):
+@pytest.mark.parametrize("status, card_text", [
+    ("selected", "✅ 已确认收到选择，咕咕正在继续处理。"),
+    ("awaiting_text", "请直接发送你的回复，咕咕会继续处理。"),
+])
+def test_feishu_card_action_is_submitted_to_injected_gateway_runner(monkeypatch, status, card_text):
     from agent.interactions.feishu import encode_action_value
 
     consumed = []
 
     async def consume(owner, prompt_id, token, event_id, **kwargs):
         consumed.append((owner, prompt_id, token, event_id, kwargs))
-        return {"ok": True}
+        return {"result": {"status": status}}
 
     class Runner:
         def submit(self, coroutine):
@@ -149,7 +155,7 @@ def test_feishu_card_action_is_submitted_to_injected_gateway_runner(monkeypatch)
         data, "owner-1", events._EventServices(Runner(), messages._do_send, messages._do_react), "bot-1"
     )
 
-    assert response is not None
+    assert response.card.data["elements"][0]["text"]["content"] == card_text
     assert consumed == [(
         "owner-1", 9, "one-time-token", "evt-1",
         {"bot_id": "bot-1", "platform_user_id": "ou_operator"},

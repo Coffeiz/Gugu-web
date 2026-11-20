@@ -1,9 +1,9 @@
 ---
 name: node-webui
-description: gugu-webui Node.js/Fastify 后端开发、Python API 迁移与实现收敛。修改 Node WebUI 服务端代码前必须阅读。
+description: Node.js/Fastify Web Host 与共享后端开发约定，涵盖 Core、Database、Gateway 和 Desktop/Web Host 适配。修改后端代码前必须阅读。
 ---
 
-# Node WebUI 开发与迁移约定
+# Node 后端开发约定
 
 适用范围：`apps/web-host/src/` 中的 Fastify Host、领域路由、应用服务、持久化和适配器。前端改动阅读 `frontend` skill，测试设计阅读 `testing` skill；本文件不重复通用安全、Git、环境配置和测试规则。
 
@@ -46,11 +46,11 @@ description: gugu-webui Node.js/Fastify 后端开发、Python API 迁移与实�
 | 站内全局搜索 | `packages/core/src/search/`：查询解析、来源能力、分组及实际 PG/SQLite 读端口；Host 仅注入后端，未接来源明确不可用，不能把 Web 查询公共化算作 Agent 工具或 RAG 完成 |
 | 实时消息 envelope 与安全字段裁剪 | `@gugu/core/live-message`：共享业务消息校验及敏感字段裁剪；Web Host 保留认证、Redis 订阅、SSE 与账户状态复核 |
 | 普通笔记生命周期 | `packages/core/src/mind/note-lifecycle.ts`：精确软删/恢复与最近gugu目标解析；`note-mutations-sql.ts`：共享CAS/Undo和借用事务，快照保留非零微秒；回执复用note-read的detail投影 |
-| 画布放置与几何 | `packages/core/src/mind/canvas-layout.ts`：Python世界坐标/端点纯规则；`canvas-placement.ts`：借用事务创建canvas_note、引用和视图，复用原SQL服务，不在工具里复制数据库业务 |
+| 画布放置与几何 | `packages/core/src/mind/canvas-layout.ts`：世界坐标/端点纯规则；`canvas-placement.ts`：借用事务创建canvas_note、引用和视图，复用原SQL服务，不在工具里复制数据库业务 |
 | Agent画布批量编辑 | `packages/core/src/mind/canvas-edits.ts`：布局、视图移除、画布便签字段更新复用原SQL服务和外层事务；工具组持久收据与Undo共同提交，事件在提交后发布 |
 | Agent画布候选和技能元数据目录 | `packages/core/src/mind/canvas-read.ts`：owner限定候选检索及旧分页探测；`packages/core/src/agent/skills/user-read.ts`：Markdown head定义和含停用项的用户Skill元数据，不使用可加载catalog替代管理目录 |
 | 用户 Skill 写入 | `packages/core/src/agent/skills/user-management.ts` 的准备端口供 Agent 把共享写入纳入 Run 收据事务，REST 使用同一管理器的创建和更新入口。Host 提供当前租约的事务内授权及提交后通知。 |
-| Python 数字分类与转换 | `packages/core/src/shared/unicode-decimal.ts`：固定生产 Python 的 Unicode 16，区分 Nd 十进制和 isdigit；工具整数/日期/行号与项目编号共用，不使用 Node 较新 Unicode 属性扩大可接受输入；维护生成器为 `packages/core/scripts/generate-tool-unicode.py` |
+| Unicode 数字分类与转换 | `packages/core/src/shared/unicode-decimal.ts`：固定 Unicode 16 分类，区分 Nd 十进制和更宽泛的数字字符；工具整数/日期/行号与项目编号共用，不使用 Node 较新 Unicode 属性扩大可接受输入；Python 格式的代码生成脚本仅为维护工具，不是运行依赖 |
 
 | IM 身份与入站规则 | `packages/core/src/im/access.ts`、`inbound-preflight.ts`、`inbound-batch.ts`、`shortcut.ts`：可信 Bot 对照后的角色/工具/上下文、控制消息优先、批次排序和快捷意图；Host 必须提供当前权限、冻结的取消目标和真实消费事务，不能把纯规则当认证 |
 | IM 上下文、引用与检索 | `apps/web-host/src/modules/im/gateway/context-services.ts`、`context-reference-codec.ts`、`memory-search.ts`、`group-context.ts`：真实业务来源、附件归属、当前Run租约及群/记忆scope；检索Schema与执行复用同一ToolRegistry，成员白名单不能因端口可用而扩大 |
@@ -58,7 +58,7 @@ description: gugu-webui Node.js/Fastify 后端开发、Python API 迁移与实�
 | IM 持久流式 | `gateway/platforms/feishu/persistent.ts`、`platforms/qq/persistent.ts`、`platforms/telegram/persistent.ts` 共用Run投递器及 `delivery/store.ts` 平台独立加密/CAS；QQ只用可信Markdown＋开关，不能在旧正文/流收据未决时切换发送器。TG draft不等同最终送达，保活与外层收据SQL共用FIFO，Host在释放投递租约前close排空。未知副作用不重发；投递表由统一数据库迁移显式创建，启动仅检查 |
 | IM 即时反馈与成员恢复 | Core `im/shortcut.ts` 即时表情及 `im/access.ts` 展示策略；Host `platform-connections.ts` 只在新鲜永久准入后反馈，QQ附件按可信群策略/格式与Bot目标冷却，失败不吞消息。`production-reflection-bindings.ts:rebuildMemberSnapshot` 仅从真实owned checkpoint按原member scope恢复，公开group无快照仍defer，不能借owner权限 |
 | Web / IM Provider 配置 | `apps/web-host/src/modules/agent/llm/settings.ts`：固定提示词、版本密钥和有效模型解析；来源各自绑定访问范围，IM 不复用 Web 的 owner/私聊特例 |
-| IM Provider私有续接 | `modules/agent/run/reasoning/active.ts:createProviderReasoningPersistence` 与 `modules/agent/run/reasoning/bridge.ts`：四协议活动值与checkpoint同事务加密，原ref精确恢复；仅Responses/Anthropic发布Python同形跨Run成功状态。Anthropic完整响应块仅存活动侧表，off仍允许当前Run工具私有恢复；绑定实际adapter身份，不把配置原字符串当协议身份，不把私有wire写进Canonical或回复 |
+| IM Provider私有续接 | `modules/agent/run/reasoning/active.ts:createProviderReasoningPersistence` 与 `modules/agent/run/reasoning/bridge.ts`：四协议活动值与checkpoint同事务加密，原ref精确恢复；Responses/Anthropic 发布协议原生的跨 Run 成功状态。Anthropic完整响应块仅存活动侧表，off仍允许当前Run工具私有恢复；绑定实际adapter身份，不把配置原字符串当协议身份，不把私有wire写进Canonical或回复 |
 | IM 独立语音识别与音频处理 | `apps/web-host/src/modules/im/gateway/media/config.ts`、`media/voice.ts`、`audio.ts`：活动 voice preset/当前 speech_to_text BYOK、每次HTTP与转码的版本/授权复核、Core三种ASR协议和有界ffmpeg；不借聊天模型凭据，不信平台duration，不让清理或预检失败伪装空识别 |
 | IM 语音卡片结果 | `apps/web-host/src/modules/im/gateway/media/transcripts.ts`：同事务client验证整个密封批次，只更新本消息首个非quoted voice卡片，借用既有RunScope，禁止另写宽松HMAC/归属规则 |
 | IM daily沉淀 | Core `memory/im-group-daily-compaction.ts` / `owner-daily-compaction.ts`：群100条、owner50条触发，冻结旧尾部、最旧100条批次、不同日期保留规则与有界历史参考；Host `gateway/memory/daily.ts` / `memory/owner.ts` / `memory/files.ts`：独立真实Provider、前后授权、CAS和逐响应用量。持久调度复用`memory/jobs.ts`，不得把群私人召回开关当作owner学习禁令、借主快照/工具补造维护输入、丢掉坏JSON已产生的数值用量或把缺报当零 |
@@ -68,8 +68,9 @@ description: gugu-webui Node.js/Fastify 后端开发、Python API 迁移与实�
 
 新增稳定复用入口时，在本节补充契约与路径；删除或迁移入口时同步更新，避免清单过期。
 
-## Python API 迁移
+## 后端目标与历史参考
 
-- Python 当前行为只作为迁移前的历史业务行为参考，用于识别应保留的规则和安全边界。2.0 只实现 Node 路径，不保留 Python 运行依赖、兼容桥、fallback 或双运行时；最终目标是删除 Python 后端。保持需保留的认证与 owner 隔离、DTO、错误语义、事务顺序及提交后副作用，但以 2.0 契约和架构决策为准。
-- TDD 不作硬性要求；按切片验证对应 Python pytest 回归与 Node 行为/集成路径，并把结果记录到 Node API 迁移清单。只注册路由或验证未认证请求返回 401，不能单独作为业务迁移完成证据。
+- 所有新后端实现、修复、测试和运行验收均以 Node.js 为目标：共享规则优先进入 `packages/core/`，数据库公共能力进入 `packages/database/`，IM 网关能力进入 `packages/gateway/`，宿主差异留在 `apps/web-host/` 或 `apps/desktop/`。
+- Python 实现只作为历史行为和迁移数据的只读参考。不得新增 Python API、运行依赖、双运行时、兼容桥或 fallback；无需为 Node 改动运行 Python pytest。需要保留的行为应转化为 Node 契约，并通过 Node 单测、集成测试或端到端路径验证。
+- 迁移清单用于追踪 Node 实现的功能覆盖和未完成项，不要求将旧 Python 后端重新实现或维持为平行目标。仅注册路由或验证未认证请求返回 401，不能单独作为业务功能完成证据。
 - 修改共享模块前检查工作区和并行会话的编辑范围；发生职责重叠时先协调并保留其他会话的未提交改动。完成通用收敛后通知相关会话复用入口和边界规则。

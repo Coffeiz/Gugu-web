@@ -1,3 +1,4 @@
+import { BUILTIN_AGENT_TOOL_STATE_LABELS } from '../agent/sessions/state-labels.js'
 import type { AgentRunner, PortableValue, RunEvent, RunIdentity } from '../agent/models.js'
 import { normalizePersistentArtifact } from '../agent/context/history/attachment-refs.js'
 
@@ -23,9 +24,12 @@ export interface ImRunDeliveryPorts<C> {
   digest(value: unknown): string
   authorize(identity: RunIdentity): Promise<boolean>
   /** 同一持久投递入口的可选平台流投影；正文由它独占，不能在observeRun旁路发送。 */
+  /** 宿主按平台与用户偏好决定是否提前发送普通消息的中间轮正文。 */
+  readonly showIntermediateReplies?: boolean
   readonly stream?: { project(input: { identity: RunIdentity; deliveryId: string; event: RunEvent }): Promise<ImDeliveryAcknowledgement> }
   readonly sender: {
     text(input: { identity: RunIdentity; deliveryId: string; text: string }): Promise<ImDeliveryAcknowledgement>
+    toolNotice?(input: { identity: RunIdentity; deliveryId: string; text: string }): Promise<ImDeliveryAcknowledgement>
     artifact(input: { identity: RunIdentity; deliveryId: string; artifact: PortableValue }): Promise<ImDeliveryAcknowledgement>
     /** 可信交互服务按event身份读取prompt；不转发工具参数或秘密。 */
     interaction(input: { identity: RunIdentity; deliveryId: string; event: RunEvent }): Promise<ImDeliveryAcknowledgement>
@@ -114,7 +118,22 @@ function createDelivery<C>(ports: Omit<ImRunDeliveryPorts<C>, 'runner'>) {
         : event.type === 'interaction_resolved' ? { ...event, payload: { interactionId: event.payload.interactionId, status: event.payload.status } } : event
       await deliver(identity, `stream:${event.sequence}`, streamed, deliveryId => ports.stream!.project({ identity, deliveryId, event: streamed }), signal, fact)
     }
-    if (!ports.stream && event.type === 'round_end' && text) {
+    if (ports.sender.toolNotice && event.type === 'tool_done') {
+      const { name, status } = event.payload
+      if (typeof name === 'string' && /^[\w.:-]{1,120}$/u.test(name) && name !== 'choose_no_reply') {
+        const label = Object.hasOwn(BUILTIN_AGENT_TOOL_STATE_LABELS, name) ? BUILTIN_AGENT_TOOL_STATE_LABELS[name] : name
+        const notice = status === 'success' || status === 'ok' ? `✅ ${label}完成`
+          : status === 'waiting' ? `⏸️ ${label}：任务已暂停，等待确认` : `⚠️ ${label}未完成`
+        try {
+          // 提示独立记账，投递不明时不得阻塞后续正文或重复外发。
+          await deliver(identity, `tool-notice:${event.sequence}`, notice,
+            deliveryId => ports.sender.toolNotice!({ identity, deliveryId, text: notice }), signal)
+        } catch (error) {
+          if (!(error instanceof ImRunDeliveryBlocked) || !['unknown', 'rejected'].includes(error.reason)) throw error
+        }
+      }
+    }
+    if (!ports.stream && ports.showIntermediateReplies !== false && event.type === 'round_end' && text) {
       await deliver(identity, `round:${event.round}:text`, text, deliveryId => ports.sender.text({ identity, deliveryId, text }), signal, fact)
     } else if (event.type === 'interaction_required') {
       if (typeof event.payload.interactionId !== 'string' || !event.payload.interactionId ||

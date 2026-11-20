@@ -28,7 +28,7 @@ test('锁内读取完整配置与 PG owner 快照，内容和实际密钥变化�
     await writeFile(path, JSON.stringify(base))
     let masterKey = 'synthetic-master-1', envKey = 'synthetic-env-1', permission = 'permission-1', incomplete = false
     const boundary = createFileModelSnapshotBoundary({ path, versionSecret: 'synthetic-hmac-key',
-      resolveEffective(document) { return { ai: document.ai as ProviderConfig, byokEnabled: true, systemPrompt: '合成系统', versionMaterial: { credentialsMasterKeys: incomplete ? {} as Record<string, string> : { '1': masterKey }, permissionIdentity: permission, environment: { apiKey: envKey } } } },
+      resolveEffective(document) { return { ai: document.ai as ProviderConfig, byokEnabled: true, systemPrompt: '合成系统', versionMaterial: { credentialsMasterKeys: { '1': masterKey }, permissionIdentity: incomplete ? '' : permission, environment: { apiKey: envKey } } } },
       async accessScope() { return { contextScopeKey: 'b'.repeat(64), accessScopeHash: 'c'.repeat(64) } },
     })
     const select = createAtomicAgentModelSnapshot(pool, 'synthetic-credential-hmac', boundary, null), identity = { ownerId: 'owner-a', sessionId: '1', runId: 'run-a' }, signal = new AbortController().signal

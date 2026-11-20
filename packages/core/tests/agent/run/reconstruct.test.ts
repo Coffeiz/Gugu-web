@@ -150,3 +150,15 @@ it('快照归属或作用域无效时拒绝读取提示，前缀内容变化时�
   state.context!.snapshot_context = '长度相同但内容变化的请求'
   expect(() => restoreAgentRequestPrefix(identity, checkpoint, selection, ports)).toThrow('运行请求前缀已变化')
 })
+
+it('重启时从本 Run 的能力快照恢复简介目录到动态尾部', async () => {
+  const { checkpoint, expected, selection, ports } = savedRequest()
+  const toolReminder = '合成工具简介：查询项目'
+  const request = { prefix: expected.prefix,
+    dynamicTail: [{ role: 'user', content: `[system-reminder]\n${toolReminder}\n[/system-reminder]` }] }
+  const restored = restoreAgentRequestPrefix(identity, {
+    ...checkpoint, capabilities: { toolNames: [], tools: [], toolReminder },
+    prepared: { ...checkpoint.prepared, requestDigest: stableJson(request) },
+  }, selection, ports)
+  expect(await restored(identity)).toEqual(request)
+})

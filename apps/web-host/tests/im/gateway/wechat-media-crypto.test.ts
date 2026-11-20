@@ -4,7 +4,7 @@ import { createCipheriv } from 'node:crypto'
 import {
   aesEcbPaddedSize, aeskeyToB64, aeskeyToHex, decryptAesEcb, decryptInboundAesEcb,
   encryptAesEcb, encryptForUpload, genFilekeyHex, md5Hex,
-} from '../../../src/modules/im/gateway/platforms/wechat/media-crypto.js'
+} from '@gugu/gateway/wechat'
 
 const key = Buffer.from('000102030405060708090a0b0c0d0e0f', 'hex')
 

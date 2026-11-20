@@ -16,11 +16,12 @@ export function createImRuntimeBindingStore(pool: Pick<Pool, 'query'>, secretKey
       || typeof usage.byokEnabled !== 'boolean' || typeof usage.localDeployment !== 'boolean' || typeof usage.isByok !== 'boolean'
       || !usage.model || !usage.provider || usage.defaultLimit6h !== null && (!Number.isSafeInteger(usage.defaultLimit6h) || usage.defaultLimit6h < 0)) throw failure()
   }
-  async function read(identity: RunIdentity, query: Pick<PoolClient, 'query'> | Pick<Pool, 'query'> = pool): Promise<Binding> {
+  async function readOptional(identity: RunIdentity, query: Pick<PoolClient, 'query'> | Pick<Pool, 'query'> = pool): Promise<Binding | null> {
     try {
       const result = await query.query(`SELECT b.nonce,b.payload FROM gugu_im_runtime_bindings b
         JOIN conversation_sessions s ON s.user_id=b.user_id AND s.id=b.session_id
         WHERE b.user_id=$1 AND b.session_id=$2 AND b.run_id=$3`, [identity.ownerId, identity.sessionId, identity.runId])
+      if (result.rows.length === 0) return null
       const row = result.rows[0]
       if (result.rows.length !== 1 || !row || row.nonce.length !== 12 || row.payload.length < 16) throw failure()
       const cipher = createDecipheriv('aes-256-gcm', key, row.nonce)
@@ -30,7 +31,12 @@ export function createImRuntimeBindingStore(pool: Pick<Pool, 'query'>, secretKey
       return value
     } catch { throw failure() }
   }
-  return { read, async freeze(identity: RunIdentity, input: Omit<Binding, 'v'>) {
+  async function read(identity: RunIdentity, query?: Pick<PoolClient, 'query'>) {
+    const binding = await readOptional(identity, query)
+    if (!binding) throw failure()
+    return binding
+  }
+  return { read, readOptional, async freeze(identity: RunIdentity, input: Omit<Binding, 'v'>) {
     const value: Binding = { v: 1, ...input }; validate(value)
     const nonce = randomBytes(12), cipher = createCipheriv('aes-256-gcm', key, nonce)
     cipher.setAAD(aad(identity))

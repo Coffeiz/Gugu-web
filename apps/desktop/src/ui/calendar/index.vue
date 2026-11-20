@@ -95,18 +95,7 @@ const renderEvents = computed<CalendarRenderItem[]>(() => props.events.map(event
   version: event.version,
 })))
 const weekHeights = reactive<Record<number, number>>({})
-const { projects, dayLayout, weekBarsCapped, wvAllDayH, weekAllDayShown, wvShownRows, allDayItemsFor, weekMoreFor, pbarStyle } =
-  useDesktopCalendarLayout(renderEvents, monthWeeks, weekDays, weekHeights)
 const { selectedNotes, loading: notesLoading, failed: notesFailed } = useCalendarNotes(selectedDate)
-const selectedEvents = computed(() => {
-  const date = selectedDate.value
-  if (!date) return []
-  return [
-    ...projects.value.filter(project => (project.startDate ?? '') <= date && (project.endDate ?? '') >= date),
-    ...renderEvents.value.filter(event => event.date === date),
-  ]
-})
-const upcomingList = computed(() => buildUpcomingList(projects.value, renderEvents.value))
 const selectedDateLabel = computed(() => selectedDate.value
   ? new Intl.DateTimeFormat(locale.value, { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' }).format(new Date(`${selectedDate.value}T00:00:00`))
   : '')
@@ -136,6 +125,21 @@ const dragRange = computed(() => {
   }
   return null
 })
+const monthDragPreview = computed(() => {
+  if (!drag.item || !dragRange.value) return null
+  return { item: drag.item, range: dragRange.value }
+})
+const { projects, dayLayout, weekBarsCapped, wvAllDayH, weekAllDayShown, wvShownRows, allDayItemsFor, weekMoreFor, pbarStyle } =
+  useDesktopCalendarLayout(renderEvents, monthWeeks, weekDays, weekHeights, monthDragPreview)
+const selectedEvents = computed(() => {
+  const date = selectedDate.value
+  if (!date) return []
+  return [
+    ...projects.value.filter(project => (project.startDate ?? '') <= date && (project.endDate ?? '') >= date),
+    ...renderEvents.value.filter(event => event.date === date),
+  ]
+})
+const upcomingList = computed(() => buildUpcomingList(projects.value, renderEvents.value))
 const activeRange = computed(() => {
   if (rangeSelect.active && rangeSelect.anchor && hoverRangeEnd.value) {
     const [start, end] = [rangeSelect.anchor, hoverRangeEnd.value].sort()

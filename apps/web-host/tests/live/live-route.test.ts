@@ -1,3 +1,4 @@
+import { drainHttpConnections } from '../../src/http/drain.js'
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import { get as httpGet, type ClientRequest } from 'node:http'
@@ -67,6 +68,42 @@ function liveEvent(overrides: Record<string, unknown> = {}) {
   }
 }
 
+test('停机关闭常驻 SSE，同时等待正在处理的请求自然完成', { timeout: 5000 }, async () => {
+  const subscription = makeSubscription()
+  subscription.next = signal => new Promise((_, reject) => {
+    signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+  })
+  const { app } = makeApp(subscription)
+  drainHttpConnections(app)
+  const started = Promise.withResolvers<void>()
+  const finish = Promise.withResolvers<void>()
+  app.get('/synthetic-in-flight', async () => {
+    started.resolve()
+    await finish.promise
+    return { completed: true }
+  })
+  const url = await app.listen({ host: '127.0.0.1', port: 0 })
+  const stream = await fetch(`${url}/api/v1/live/stream`)
+  const reader = stream.body!.getReader()
+  const running = fetch(`${url}/synthetic-in-flight`)
+  let closed = false
+  try {
+    assert.match(Buffer.from((await reader.read()).value!).toString(), /connected/)
+    await started.promise
+    const shutdown = app.close().then(() => { closed = true })
+    assert.equal((await reader.read()).done, true)
+    assert.equal(subscription.closed, true)
+    assert.equal(closed, false)
+    finish.resolve()
+    assert.deepEqual(await (await running).json(), { completed: true })
+    await shutdown
+  } finally {
+    finish.resolve()
+    await reader.cancel()
+    await app.close()
+  }
+})
+
 test('实时流使用认证 owner 频道，先发首帧并返回 canonical 事件与 SSE headers', async () => {
   const subscription = makeSubscription([JSON.stringify(liveEvent())])
   const { app, calls } = makeApp(subscription)
@@ -93,7 +130,7 @@ test('实时流使用认证 owner 频道，先发首帧并返回 canonical 事�
 test('实时流裁剪 agent/filesync 字段并过滤无效 envelope 与控制消息', async () => {
   const agent = {
     protocol_version: 'live-event-v1', event_id: 'agent-1', type: 'agent.run.changed',
-    session_id: 12, status: 'running', created_at: '2026-11-14T00:00:00+00:00', secret: 'drop-me',
+    session_id: 12, run_id: 'synthetic-run:12', status: 'running', created_at: '2026-11-14T00:00:00+00:00', secret: 'drop-me',
   }
   const filesync = {
     protocol_version: 'live-event-v1', event_id: 'sync-1', type: 'filesync.run.changed',
@@ -116,6 +153,7 @@ test('实时流裁剪 agent/filesync 字段并过滤无效 envelope 与控制消
     assert.equal(response.body.includes(invalid), false)
     assert.equal(response.body.includes('auth.state.changed'), false)
     assert.ok(response.body.includes('"session_id":12'))
+    assert.ok(response.body.includes('"run_id":"synthetic-run:12"'))
     assert.equal(response.body.includes('"secret"'), false)
     assert.ok(response.body.includes('"binding_id":5'))
     assert.equal(response.body.includes('"payload"'), false)

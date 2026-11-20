@@ -41,7 +41,7 @@
       </span>
     </div>
   </div>
-  <FileBrowserEmptyState v-else variant="trash" :text="t('filesViewUi.emptyTrash')" />
+  <FileBrowserEmptyState v-else class="disk-trash-empty" variant="trash" :text="t('filesViewUi.emptyTrash')" />
 </template>
 
 <script setup lang="ts">
@@ -72,6 +72,7 @@ const rows = computed(() => props.entries.map(entry => {
 </script>
 
 <style scoped>
+.disk-trash-empty { min-height: 100%; box-sizing: border-box; justify-content: center; padding: 0; }
 .disk-trash-status { padding: var(--space-md); color: var(--content-secondary); }
 .disk-trash-list :is(.list-head, .list-row) {
   grid-template-columns: minmax(0, 1fr) clamp(42px, 8vw, 90px) clamp(86px, 15vw, 160px) 88px;

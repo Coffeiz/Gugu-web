@@ -8,6 +8,11 @@ import type { ByokListRow } from '@gugu/core/agent/config'
 import { createHmac } from 'node:crypto'
 import type { CredentialDestination } from '@gugu/core/byok/policy'
 
+export class ByokEncryptionUnavailable extends Error {
+ readonly statusCode = 503
+ constructor(cause: unknown) { super('BYOK 加密服务暂不可用，请联系管理员检查凭据主密钥。', { cause }) }
+}
+
 export interface CredentialInput {provider:string;capability:'llm'|'deep_research'|'similar_image_search'|'speech_to_text'|'embedding';value:string;api_format?:string;base_url?:string;model?:string;dimensions?:number|null;max_tokens?:number|null;context_tokens?:number|null;thinking?:string|null;reasoning_effort?:string|null;reasoning_persistence?:string;web_search_enabled?:boolean|null;image?:boolean;video?:boolean;audio?:boolean;image_detail?:string}
 
 export interface EncryptedCredential {ciphertext:string;nonce:string;encryptedDataKey:string;keyVersion:number}
@@ -27,7 +32,7 @@ export function createCredentialCreator(options:CreateCredentialOptions){
   const allowEmpty=allowsEmptyByokKey(input.capability, input.provider, input.base_url ?? '')
   if(!input.value&&!allowEmpty)throw Object.assign(new Error('该 Provider 需要 API Key，不能为空'),{statusCode:422})
   let encrypted:EncryptedCredential
-  try{encrypted=await options.encrypt(input.value,allowEmpty)}catch{throw Object.assign(new Error('BYOK 加密服务未配置，请先设置 CREDENTIALS_MASTER_KEY'),{statusCode:503})}
+  try{encrypted=await options.encrypt(input.value,allowEmpty)}catch(error){throw new ByokEncryptionUnavailable(error)}
   return options.transaction(async query=>{
    await query('SELECT id FROM users WHERE id=$1 FOR UPDATE',[owner])
    if (makeDefault) await query('UPDATE user_provider_credentials SET enabled=false WHERE user_id=$1 AND capability=$2 AND enabled IS TRUE',[owner,input.capability])
@@ -140,7 +145,7 @@ export function createCredentialPatch<DB>(db:Kysely<DB>,options:CredentialPatchO
     if(!allowEmpty){let empty=false;try{empty=(await options.decrypt(row))===''}catch{};if(empty)throw Object.assign(new Error('该 Provider 需要 API Key，请填写后保存'),{statusCode:422})}
    }else{
     if(!input.value&&!allowEmpty)throw Object.assign(new Error('该 Provider 需要 API Key，不能为空'),{statusCode:422})
-    try{envelope=await options.encrypt(input.value,allowEmpty)}catch{throw Object.assign(new Error('BYOK 加密服务未配置，请先设置 CREDENTIALS_MASTER_KEY'),{statusCode:503})}
+    try{envelope=await options.encrypt(input.value,allowEmpty)}catch(error){throw new ByokEncryptionUnavailable(error)}
    }
    if(input.web_search_enabled===true&&(row.capability!=='llm'||!supportsByokWebSearch(provider,format)))throw Object.assign(new Error('当前 Provider 或 API 格式不支持联网搜索'),{statusCode:422})
    if(row.capability!=='llm'&&input.web_search_enabled!=null)throw Object.assign(new Error('联网搜索开关只适用于 LLM 凭据'),{statusCode:422})

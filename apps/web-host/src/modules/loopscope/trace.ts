@@ -4,7 +4,7 @@ import type { ProviderHttpRequest, ProviderTransport } from '@gugu/core/provider
 
 export interface WebLoopScopeTrace {
   observation: AgentObservationPort
-  forSource(source: 'web' | 'im' | 'scheduled'): AgentObservationPort
+  forSource(source: 'web' | 'im' | 'scheduled' | 'reflection'): AgentObservationPort
   close(): Promise<void>
 }
 
@@ -16,7 +16,7 @@ export function createWebLoopScopeTrace(options: {
 }): WebLoopScopeTrace | undefined {
   if (!loopScopeTraceEnabled(options.enabled)) return undefined
   const collectors = new Map<string, ReturnType<typeof createLoopScopeTrace>>()
-  const collectorFor = (source: 'web' | 'im' | 'scheduled') => {
+  const collectorFor = (source: 'web' | 'im' | 'scheduled' | 'reflection') => {
     let collector = collectors.get(source)
     if (!collector) {
       collector = createLoopScopeTrace({
@@ -30,7 +30,7 @@ export function createWebLoopScopeTrace(options: {
     }
     return collector
   }
-  const portFor = (source: 'web' | 'im' | 'scheduled'): AgentObservationPort => {
+  const portFor = (source: 'web' | 'im' | 'scheduled' | 'reflection'): AgentObservationPort => {
     const collector = collectorFor(source)
     return { record: (event: AgentObservation) => collector.record(event as Parameters<typeof collector.record>[0]) }
   }

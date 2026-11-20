@@ -1,5 +1,5 @@
 import { AgentRunReconstructionVersionError as AgentReconstructionVersionError, createAgentCompactionPort, createAgentRunReconstructor, createAgentRunToolPorts, createLazyAgentCompactionPort, restoreAgentRequestPrefix } from '@gugu/core/agent'
-import type { AgentProviderAuxiliaryPorts, AgentRunBinding, AgentRuntimeOptions, CanonicalContextPorts, CanonicalRunContext, CanonicalRunPreparationPorts, ContextDataPorts, ContextSourcePorts, CurrentTurnSources, RunIdentity, HistoryIdentity } from '@gugu/core/agent'
+import type { AgentObservationPort, AgentProviderAuxiliaryPorts, AgentRunBinding, AgentRuntimeOptions, CanonicalContextPorts, CanonicalRunContext, CanonicalRunPreparationPorts, ContextDataPorts, ContextSourcePorts, CurrentTurnSources, RunIdentity, HistoryIdentity } from '@gugu/core/agent'
 import type { ProviderRuntimeOptions } from '@gugu/core/providers'
 import type { OwnedCurrentMessage } from '../context/source.js'
 import { createPostgresCurrentTurnReader, createWebAgentSourceLoader } from '../context/source.js'
@@ -104,11 +104,12 @@ export interface WebAgentReconstructorOptions {
 
 /** 将已配置的 Host 资源与当前租约的上下文、RAG 授权及注册器组合。 */
 export function createWebAgentRagResources(options: {
+  observation?: AgentObservationPort
   source: Omit<AgentContextAssemblyOptions, 'digest' | 'nextId' | 'select' | 'currentTurn'>
   rag: Omit<Parameters<typeof createAuthorizedWebAgentProductionRagRunPorts>[0], 'lease' | 'selection'> & {
     /** 每个可信 lease 单独创建写端口；只有实际提供的端口才进入授权配置。 */
     toolPorts?(lease: AgentDispatchLease, binding: WebAgentBinding, context: Pick<ContextDataPorts, 'loadTimezone'>): Promise<Partial<Pick<AgentToolRegistryOptions,
-      'conversations' | 'time' | 'knowledge' | 'remember' | 'knowledgeWrites' | 'knowledgeDelete' | 'search' | 'events' | 'calendar' | 'dashboard' | 'fileOverview' | 'workspaces' | 'workspaceMutations' | 'workspaceCreation' | 'scheduledTasks' | 'scheduledTaskWrites' | 'scheduledTaskDelete' | 'trash' | 'trashRestore' | 'trashPurge' | 'canvases' | 'canvasPlaceableSearch' | 'canvasCreation' | 'canvasEdits' | 'canvasPlacements' | 'canvasRelations' | 'noteLifecycle' | 'noteWrites' | 'notes' | 'projects' | 'projectMutations' | 'projectDelete' | 'calendarCreate' | 'calendarUpdate' | 'calendarDelete' | 'canvasBatch' | 'canvasDeleteNote' | 'canvasDisconnect' | 'canvasDelete' | 'clientDelete' | 'skills' | 'skillMetadata' | 'skillManagement' | 'skillDelete' | 'callTool' | 'mcpManagement' | 'httpGet' | 'webSearch' | 'webDownload' | 'similarImageSearch' | 'deepResearch' | 'askUser' | 'shell' | 'readFile' | 'presentFile' | 'fileDirectory' | 'fileFolderDelete' | 'fileDelete' | 'fileGrep' | 'fileEdit' | 'fileRename' | 'fileCopy' | 'fileCreate' | 'saveUploadedFile' | 'recentAttachments' | 'folderCreate' | 'folderRename' | 'fileMoveItems' | 'fileArchive' | 'sendFile' | 'linkButtons' | 'sendEmail'>>>
+      'conversations' | 'time' | 'knowledge' | 'remember' | 'knowledgeWrites' | 'knowledgeDelete' | 'search' | 'events' | 'calendar' | 'dashboard' | 'fileOverview' | 'workspaces' | 'workspaceMutations' | 'workspaceCreation' | 'scheduledTasks' | 'scheduledTaskWrites' | 'scheduledTaskDelete' | 'diskTrashTools' | 'trash' | 'trashRestore' | 'trashPurge' | 'canvases' | 'canvasPlaceableSearch' | 'canvasCreation' | 'canvasEdits' | 'canvasPlacements' | 'canvasRelations' | 'noteLifecycle' | 'noteWrites' | 'notes' | 'projects' | 'projectMutations' | 'projectDelete' | 'calendarCreate' | 'calendarUpdate' | 'calendarDelete' | 'canvasBatch' | 'canvasDeleteNote' | 'canvasDisconnect' | 'canvasDelete' | 'clientDelete' | 'skills' | 'skillMetadata' | 'skillManagement' | 'skillDelete' | 'callTool' | 'mcpManagement' | 'httpGet' | 'webSearch' | 'webDownload' | 'similarImageSearch' | 'deepResearch' | 'askUser' | 'shell' | 'readFile' | 'viewImage' | 'presentFile' | 'fileFolderDelete' | 'fileDelete' | 'saveUploadedFile' | 'recentAttachments' | 'sendFile' | 'linkButtons' | 'sendEmail'>>>
   }
   compactionInstruction?: string
   /** Web 私聊反思与 Host Node 消费者共享签名模型范围。 */
@@ -139,7 +140,7 @@ export function createWebAgentRagResources(options: {
       ...(toolPorts.canvasDisconnect ? ['canvas_disconnect' as const] : []),
       ...(toolPorts.canvasBatch ? ['canvas_batch' as const] : []),
     ]
-    const rag = createAuthorizedWebAgentProductionRagRunPorts({ ...ragOptions, ...toolPorts,
+    const rag = createAuthorizedWebAgentProductionRagRunPorts({ ...ragOptions, ...toolPorts, observation: options.observation,
       conversationMessageTime: ragOptions.conversationMessageTime ?? (async (identity, timestamp, signal) =>
         formatAgentHistoryMessageTime(timestamp, await source.data.loadTimezone(identity, signal))),
       enabledConversationRead: Boolean(toolPorts.conversations), enabledTime: Boolean(toolPorts.time),
@@ -148,9 +149,9 @@ export function createWebAgentRagResources(options: {
       enabledWorkspaces: Boolean(toolPorts.workspaces),
       enabledWorkspaceMutations: Boolean(toolPorts.workspaceMutations),
       enabledWorkspaceCreation: Boolean(toolPorts.workspaceCreation),
-      enabledTrashList: Boolean(toolPorts.trash),
-      enabledTrashRestore: Boolean(toolPorts.trashRestore),
-      enabledTrashPurge: Boolean(toolPorts.trashPurge),
+      enabledTrashList: Boolean(toolPorts.diskTrashTools),
+      enabledTrashRestore: Boolean(toolPorts.diskTrashTools),
+      enabledTrashPurge: Boolean(toolPorts.diskTrashTools),
       enabledCanvasReads: Boolean(toolPorts.canvases),
       enabledCanvasPlaceableSearch: Boolean(toolPorts.canvasPlaceableSearch),
       enabledCanvasCreate: Boolean(toolPorts.canvasCreation),
@@ -168,21 +169,17 @@ export function createWebAgentRagResources(options: {
       enabledLinkButtons: Boolean(toolPorts.linkButtons),
       enabledFileRead: Boolean(toolPorts.readFile),
       enabledFilePresent: Boolean(toolPorts.presentFile),
-      enabledFileGrep: Boolean(toolPorts.fileGrep),
-      enabledFileDirectoryRead: Boolean(toolPorts.fileDirectory),
+
+
       enabledFileFolderDelete: Boolean(toolPorts.fileFolderDelete),
-      enabledFileArchive: Boolean(toolPorts.fileArchive),
-      enabledFileDelete: Boolean(toolPorts.fileDelete),
-      enabledFileEdit: Boolean(toolPorts.fileEdit),
-      enabledFileRename: Boolean(toolPorts.fileRename),
-      enabledFileCopy: Boolean(toolPorts.fileCopy),
-      enabledFileCreate: Boolean(toolPorts.fileCreate),
+
+      enabledFileDelete: Boolean(toolPorts.diskTrashTools),
+
       enabledSaveUploadedFile: Boolean(toolPorts.saveUploadedFile),
       enabledRecentAttachments: Boolean(toolPorts.recentAttachments),
-      enabledFolderCreate: Boolean(toolPorts.folderCreate),
-      enabledFileMoveItems: Boolean(toolPorts.fileMoveItems),
+
       enabledSendFile: Boolean(toolPorts.sendFile),
-      enabledFolderRename: Boolean(toolPorts.folderRename),
+
       enabledClientTools: Boolean(ragOptions.core),
       enabledClientDelete: Boolean(toolPorts.clientDelete?.confirmation),
       lease, selection: binding.selection })
@@ -194,7 +191,7 @@ export function createWebAgentRagResources(options: {
         return options.remaining.mcp!.authorize(identity, name, signal)
       },
     } : undefined
-    const configuration = createWebAgentMcpRunPreparation(rag, mcp)
+    const configuration = createWebAgentMcpRunPreparation(rag, mcp, options.observation)
     const compactionInstruction = binding.compactionInstruction ?? options.compactionInstruction ?? ''
     let providerBinding: {
       provider: AgentProviderAuxiliaryPorts
@@ -264,7 +261,7 @@ export function createWebAgentReconstructor(options: WebAgentReconstructorOption
       const id = lease.identity
       const selection = binding.selection
       const source = createWebAgentSourceLoader(options.pool, { ...resources.source, data: { ...resources.source.data, loadImMemory: createWebImMemoryLoader(lease) }, digest: resources.context.digest, nextId: resources.context.nextId,
-        select: async () => selection, currentTurn: createPostgresCurrentTurnReader(options.pool, String(lease.input.userMessageId), resources.materialize) })
+        select: async () => selection, currentTurn: createPostgresCurrentTurnReader(options.pool, String(lease.input.userMessageId), resources.materialize) }, options.observation)
       const toolPorts = createWebAgentToolPorts(lease, resources.toolRegistry, resources.preparation, resources.mcp)
       const history = options.historyForBinding?.(lease, binding) ?? createWebAgentBindingHistory(lease, binding)
       return createPersistentAgentRuntime({ pool: options.pool, secretKey: options.secretKey, redis: options.redis, subscribe: options.subscribe, history,

@@ -95,16 +95,33 @@ test('外部目录别名指向工作区时不得写入主密钥',async()=>{
  }finally{await rm(dir,{recursive:true,force:true})}
 })
 
-test('缺少显式主密钥时拒绝凭据操作，环境密钥可以独立使用', async()=>{
- assert.equal(resolveByokKeyFile({}),null)
- assert.equal(resolveByokKeyFile({CREDENTIALS_MASTER_KEY_FILE:' '}),null)
- assert.deepEqual(await readConfiguredByokMasterKeys({}),{})
- const configured=createConfiguredByokEnvelope({CREDENTIALS_MASTER_KEY:'synthetic-host-master'})
- const row=await configured.encrypt('synthetic')
- assert.equal(await configured.decrypt(row),'synthetic')
- const unconfigured=createConfiguredByokEnvelope({})
- await assert.rejects(unconfigured.encrypt('synthetic'),/未配置凭据主密钥/)
- await assert.rejects(unconfigured.decrypt(row),/未配置凭据主密钥/)
+test('显式环境密钥优先，默认路径指向宿主持久数据目录', async()=>{
+ const data=join(tmpdir(),'synthetic-byok-data')
+ assert.equal(resolveByokKeyFile({GUGU_DATA_DIR:data}),join(data,'.byok-master-key'))
+ assert.equal(resolveByokKeyFile({XDG_STATE_HOME:data}),join(data,'gugu','.byok-master-key'))
+ assert.equal(resolveByokKeyFile({GUGU_DATA_DIR:data,CREDENTIALS_MASTER_KEY_FILE:join(data,'explicit')}),join(data,'explicit'))
+ const env={GUGU_DATA_DIR:data,CREDENTIALS_MASTER_KEY:'synthetic-host-master'}
+ const codec=createConfiguredByokEnvelope(env)
+ assert.equal(await codec.decrypt(await codec.encrypt('synthetic')),'synthetic')
+})
+
+test('默认路径首次保存创建密钥，已有密钥可被新进程配置读取', {skip:process.platform!=='linux'&&'需要 Linux 目录句柄'}, async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'byok-default-'))
+ try{
+  const {stat,writeFile}=await import('node:fs/promises')
+  const env={GUGU_DATA_DIR:dir}, path=resolveByokKeyFile(env), codec=createConfiguredByokEnvelope(env)
+  const old=await createConfiguredByokEnvelope({CREDENTIALS_MASTER_KEY:'synthetic-legacy'}).encrypt('existing')
+  assert.deepEqual(await readConfiguredByokMasterKeys(env),{})
+  await assert.rejects(codec.decrypt(old))
+  await assert.rejects(stat(path),{code:'ENOENT'})
+  await writeFile(path,'synthetic-legacy\n',{mode:0o600})
+  assert.equal(await codec.decrypt(old),'existing')
+  assert.equal(await createConfiguredByokEnvelope(env).decrypt(await codec.encrypt('updated')),'updated')
+  const fresh={GUGU_DATA_DIR:join(dir,'fresh')}
+  const value=await createConfiguredByokEnvelope(fresh).encrypt('first')
+  assert.equal((await stat(resolveByokKeyFile(fresh))).mode&0o777,0o600)
+  assert.equal(await createConfiguredByokEnvelope(fresh).decrypt(value),'first')
+ }finally{await rm(dir,{recursive:true,force:true})}
 })
 
 test('多个 Node 调用并发写入时只初始化显式主密钥文件', {skip:process.platform!=='linux'&&'需要 Linux 目录句柄'}, async()=>{

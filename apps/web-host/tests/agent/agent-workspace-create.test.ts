@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseError } from 'pg'
+import { configureDiagnosticLog } from '../../src/shared/log-files.js'
 import { createToolRegistry, createWorkspaceTool } from '@gugu/core/tools'
 import { initializeSqlite, openSqliteRuntime } from '@gugu/core/data'
 import type { SqlDataRuntime } from '@gugu/core/data'
@@ -141,4 +143,24 @@ test('并发重派同一个调用最多执行一次创建，旁路重放只读�
   assert.ok(second.kind === 'completed' || second.kind === 'unknown')
   assert.deepEqual(await port.reconcile(request), { kind: 'completed', successful: true, mutated: false,
     value: { success: true, workspace: { id: 61, kind: 'directory', directory_id: 81, name: '物理目录', owner: identity.ownerId } } })
+})
+
+
+test('工作区创建失败保留未知结果，并记录可关联 Run 的脱敏数据库原因', async t => {
+  await setup()
+  t.after(cleanup)
+  configureDiagnosticLog(join(folder, 'web.log'))
+  const error = new DatabaseError('合成工作区名称不应写入日志', 0, 'error')
+  Object.assign(error, { code: '23502', table: 'workspaces', column: 'created_at', detail: '合成私有错误详情' })
+  const port = hostPort({ async createDeclaration() { throw error } })
+  const outcome = await port.create({ identity, roundId: 'round-1', toolCallId: 'sql-failure',
+    args: { workspace_name: '合成用户输入', kind: 'project', project_id: 17 }, signal: new AbortController().signal })
+  assert.deepEqual(outcome, { kind: 'unknown' })
+  const log = await readFile(join(folder, 'gugu-diag.log'), 'utf8')
+  const payload = JSON.parse(log.split(' | ')[1]!)
+  assert.deepEqual(payload, {
+    run_id: identity.runId, phase: 'create_declaration', reason: 'operation_failed',
+    sqlstate: '23502', table: 'workspaces', column: 'created_at',
+  })
+  assert.doesNotMatch(log, /合成|owner_id/)
 })

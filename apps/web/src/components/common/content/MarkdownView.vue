@@ -79,7 +79,7 @@ watch([rendered, locale, () => props.renderMath], async () => {
 }, { flush: 'post' })
 
 onMounted(() => {
-  if (props.streamMotion && root.value) updateStreamMotion(root.value, false)
+  if (props.streamMotion && root.value) updateStreamMotion(root.value, true)
   if (props.renderMath) renderMarkdownMath(root.value, createMathLabels())
   renderMermaidBlocks()
   themeObserver = new MutationObserver(() => renderMermaidBlocks())

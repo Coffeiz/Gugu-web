@@ -2,12 +2,13 @@ import { ref, computed, nextTick, onUnmounted, watch, type Ref } from 'vue'
 import { CLIENT_ID, agentApi } from '@/services/api'
 import { i18n } from '@/i18n'
 import { useLiveStore } from '@/stores/live'
-import { getAccountBoundaryEpoch } from '@/utils/accountBoundary'
+import { accountBoundaryEpoch, getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 import { getGreeting, prefetchGreeting } from '@/composables/shared/useGreeting'
 import type { ChatMessage, ChatFile, ChatSession, ChatReference } from '../chatTypes'
 import { renderMd } from '../markdown'
 import { SESSION_KEY, LAST_SESSION_KEY } from '../chatConstants'
 import { ensureSessionMessageLoaded } from './sessionMessageSync'
+import { acceptsSidebarRunStatus, type SidebarRunStatus } from './sessionRunStatus'
 import { waitForSessionSettlement } from './sessionReadiness'
 import { hasPendingMessageMarkdown, type SessionScrollAnchor } from './sessionScrollLayout'
 import { getSessionPendingQueueId, setPendingQueueRecoveryNeeded } from './chatPendingQueueStorage'
@@ -184,7 +185,22 @@ export function useChatConversation(options: {
     return ++_chatViewGeneration
   }
 
+  const sidebarRuns = new Map<number, SidebarRunStatus>()
+  watch(accountBoundaryEpoch, () => sidebarRuns.clear(), { flush: 'sync' })
   let sessionsFetchVersion = 0
+
+  function updateSidebarRun(id: number, runId: string | undefined, running: boolean, fromUserEvents = false) {
+    if (!runId) return
+    const previous = sidebarRuns.get(id)
+    const next = { runId, running }
+    if (!acceptsSidebarRunStatus(previous, next, fromUserEvents)) return
+    const session = sessions.value.find(item => item.id === id)
+    if (previous?.runId === runId && previous.running === running && session?.isRunning === running) return
+    sidebarRuns.set(id, next)
+    if (session) session.isRunning = running
+    // 丢弃在本次状态事件之前启动的列表请求。
+    sessionsFetchVersion++
+  }
   async function fetchSessions() {
     const version = ++sessionsFetchVersion
     const epoch = getAccountBoundaryEpoch()
@@ -193,6 +209,11 @@ export function useChatConversation(options: {
       if (version === sessionsFetchVersion && epoch === getAccountBoundaryEpoch()) sessions.value = result
     } catch {}
   }
+  const reconcileVisibleSessions = () => {
+    if (document.visibilityState === 'visible') void fetchSessions()
+  }
+  document.addEventListener('visibilitychange', reconcileVisibleSessions)
+  onUnmounted(() => document.removeEventListener('visibilitychange', reconcileVisibleSessions))
 
   // role/platformUserId → 气泡归属 + 群成员发言人标注。三态：
   // - 'ai'：assistant，左侧，不比对
@@ -465,7 +486,7 @@ export function useChatConversation(options: {
     pendingAtt: options.pendingAtt,
     composerRef: options.composerRef,
     setStatus, clearStatus, thinkingItem: _thinkingItem, contextCompactingItem: _contextCompactingItem,
-    scrollBottom, fetchSessions,
+    scrollBottom, fetchSessions, updateSidebarRun,
     syncResumedHistory: (id) => sessionsApi.refreshSessionMessages(id),
     refreshAfterTools: options.refreshAfterTools,
     loadQuota: options.loadQuota,
@@ -572,8 +593,10 @@ export function useChatConversation(options: {
     void fetchSessions()
   })
 
+  let deferredRunSession: number | null = null
   watch(() => liveStore.agentRunEvent, (event) => {
     if (!event) return
+    updateSidebarRun(event.session_id, event.run_id, event.status === 'running', true)
     void fetchSessions()
     if (event.status === 'completed' || event.status === 'failed') {
       if (sessionId.value !== event.session_id) return
@@ -584,15 +607,25 @@ export function useChatConversation(options: {
     if (event.status !== 'running') return
     // IM 首条消息会先在服务端创建并提交 session，再发布 run=running；列表刷新不应
     // 等待助手回复后的 sessions 事件，否则新 IM 会话在生成期间或回复失败时不可见。
-    if (sessionId.value !== event.session_id || streaming.value || sessionSettling.value) return
+    if (sessionId.value !== event.session_id) return
+    if (streaming.value || sessionSettling.value) {
+      deferredRunSession = event.session_id
+      return
+    }
     // IM run 开始时通过用户级 live 事件通知；只续接当前正在看的会话。
-    void resumeStream(event.session_id)
+    void resumeStream(event.session_id, event.run_id)
   })
 
   const deferredSessionRefresh = new Set<number>()
   watch([sessionSettling, streaming], ([settling, active]) => {
     if (settling || active || sessionId.value == null) return
     const id = sessionId.value
+    if (deferredRunSession === id) {
+      deferredRunSession = null
+      void agentApi.getSessionState(String(id)).then(state => {
+        if (state.active && sessionId.value === id && !streaming.value && !sessionSettling.value) void resumeStream(id)
+      }).catch(() => {})
+    }
     if (!deferredSessionRefresh.delete(id)) return
     void refreshSessionMessages(id)
   })
@@ -613,7 +646,7 @@ export function useChatConversation(options: {
     if (!matchesCurrentSession) return
     const session = sessions.value.find(item => item.id === Number(e.session_id))
     if (session && e.title) session.title = e.title
-    if (!appendedCount || isOwnOrigin) return
+    if ((!appendedCount && e.messages_changed !== true) || isOwnOrigin) return
     if (sessionSettling.value) {
       deferredSessionRefresh.add(Number(e.session_id))
       return

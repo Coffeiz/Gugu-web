@@ -209,9 +209,11 @@
         </div>
       </div>
   </BaseModal>
+  <UploadConflictDialog ref="conflictDialog" />
 </template>
 
 <script setup lang="ts">
+import UploadConflictDialog from '@/components/common/overlays/UploadConflictDialog.vue'
 import CloseButton from '@/components/common/overlays/CloseButton.vue'
 import { ref, computed, watch, type PropType } from 'vue'
 import { uploadDirectWithProgress, filesApi, foldersApi, type PathFileRef } from '@/services/api'
@@ -412,6 +414,8 @@ function handleClose() {
   emit('close')
 }
 
+const conflictDialog = ref<InstanceType<typeof UploadConflictDialog> | null>(null)
+
 async function handleUpload() {
   if (pendingFiles.value.length === 0 || uploading.value) return
   uploading.value = true
@@ -431,9 +435,11 @@ async function handleUpload() {
       while (items.length) {
         const item = items[0]
         if (account !== getAccountBoundaryEpoch()) return
-        await uploadWorkspaceFile(target, item, progress => { fileProgresses.value[0] = progress })
+        const created = await uploadWorkspaceFile(target, item, progress => { fileProgresses.value[0] = progress },
+          conflicts => conflictDialog.value?.show(conflicts) ?? Promise.resolve(new Map()),
+          () => account === getAccountBoundaryEpoch())
         if (account !== getAccountBoundaryEpoch()) return
-        emit('workspace-changed')
+        if (created) emit('workspace-changed')
         items.shift()
         pendingFiles.value.shift()
         pendingPaths.value.shift()

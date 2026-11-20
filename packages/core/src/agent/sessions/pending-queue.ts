@@ -88,7 +88,7 @@ export function createSqlAgentPendingQueue(db: Db, dialect: 'postgres' | 'sqlite
     },
     async readImportedDrafts(owner: string) {
       owner = ownerKey(owner)
-      const result = await sql<{ queue_id: string; items: unknown }>`SELECT queue_id,items FROM conversation_pending_queues WHERE user_id=${owner} AND session_id IS NULL AND queue_id LIKE 'import-%' ORDER BY updated_at,id`.execute(db)
+      const result = await sql<{ queue_id: string; items: unknown }>`SELECT queue_id,items FROM conversation_pending_queues WHERE user_id=${owner} AND session_id IS NULL AND queue_id LIKE 'import-%' ORDER BY updated_at,queue_id`.execute(db)
       const time = now()
       return result.rows.map(item => ({ queueId: item.queue_id, items: visiblePendingQueueItems(item.queue_id, null, decode(item.items), time), projected: true as const }))
     },
