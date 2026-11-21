@@ -63,7 +63,7 @@ export function renderSmartStream(source: string, partial = false) {
 export function readSmartStream(node: HTMLElement): SmartStreamLayout | undefined {
   const ratio = node.dataset.smartStream
   if (!ratio) return
-  const regions = regionNames.flatMap(name => {
+  const regions = regionNames.flatMap<SmartStreamRegion>(name => {
     const region = [...node.children].find(child => child.getAttribute('data-smart-region') === name)
     if (!(region instanceof HTMLElement)) return []
     const status = region.dataset.smartRegionStatus
