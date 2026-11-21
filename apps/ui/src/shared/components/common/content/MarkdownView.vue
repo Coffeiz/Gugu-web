@@ -183,20 +183,20 @@ html[data-theme='dark'] .md-view:deep(.md-code-block) { border-color: rgba(255,2
    token 拍扁成一个 class 列表的问题；GuguChat 是 hljs.highlight() 直接出的真实
    嵌套 <span>，浏览器天然只认最内层，不会有那个问题。 */
 .md-view :deep(.hljs-keyword), .md-view :deep(.hljs-literal),
-.md-view :deep(.hljs-selector-tag), .md-view :deep(.hljs-tag) { color: var(--action-primary-hover); font-weight: 600; }
+.md-view :deep(.hljs-selector-tag), .md-view :deep(.hljs-tag) { color: var(--syntax-keyword); font-weight: 600; }
 .md-view :deep(.hljs-string), .md-view :deep(.hljs-regexp),
 .md-view :deep(.hljs-symbol), .md-view :deep(.hljs-bullet),
-.md-view :deep(.hljs-addition) { color: var(--status-success); }
+.md-view :deep(.hljs-addition) { color: var(--syntax-string); }
 .md-view :deep(.hljs-comment), .md-view :deep(.hljs-quote),
-.md-view :deep(.hljs-meta) { color: var(--content-tertiary); font-style: italic; }
+.md-view :deep(.hljs-meta) { color: var(--syntax-comment); font-style: italic; }
 .md-view :deep(.hljs-number), .md-view :deep(.hljs-attr),
-.md-view :deep(.hljs-attribute), .md-view :deep(.hljs-deletion) { color: var(--status-warning); }
+.md-view :deep(.hljs-attribute), .md-view :deep(.hljs-deletion) { color: var(--syntax-property); }
 .md-view :deep(.hljs-function), .md-view :deep(.hljs-name),
-.md-view :deep(.hljs-type), .md-view :deep(.hljs-params) { color: var(--status-info); font-weight: 600; }
+.md-view :deep(.hljs-type), .md-view :deep(.hljs-params) { color: var(--syntax-type); font-weight: 600; }
 .md-view :deep(.hljs-title), .md-view :deep(.hljs-section),
-.md-view :deep(.hljs-selector-id), .md-view :deep(.hljs-selector-class) { color: var(--status-info); font-weight: 600; }
+.md-view :deep(.hljs-selector-id), .md-view :deep(.hljs-selector-class) { color: var(--syntax-type); font-weight: 600; }
 .md-view :deep(.hljs-built_in), .md-view :deep(.hljs-builtin-name),
-.md-view :deep(.hljs-link) { color: var(--status-success); opacity: 0.9; }
+.md-view :deep(.hljs-link) { color: var(--syntax-string); opacity: 0.9; }
 .md-view :deep(.hljs-variable), .md-view :deep(.hljs-template-variable) { color: var(--content-primary); }
 .md-view :deep(.hljs-emphasis) { font-style: italic; }
 .md-view :deep(.hljs-strong) { font-weight: 700; }

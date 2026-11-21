@@ -35,6 +35,13 @@
   --content-inverse: var(--theme-content-inverse);
   --content-on-accent: #fff;
 
+  /* 语法高亮 */
+  --syntax-keyword: var(--action-primary-hover);
+  --syntax-string: var(--status-success);
+  --syntax-property: var(--status-warning);
+  --syntax-type: var(--status-info);
+  --syntax-comment: var(--content-tertiary);
+
   /* Borders */
   --border-hairline: var(--theme-border-hairline);
   --border-subtle: var(--theme-border-subtle);
@@ -196,6 +203,11 @@
   --content-secondary: var(--content-primary);
   --content-tertiary: var(--content-primary);
   --content-muted: var(--content-primary);
+  --syntax-keyword: #d5b7ff;
+  --syntax-string: #a8eac0;
+  --syntax-property: #ffd28d;
+  --syntax-type: #a7d6ff;
+  --syntax-comment: #b8c1cd;
   --selection-text-bg: color-mix(in srgb, var(--action-primary) 55%, black);
 }
 
