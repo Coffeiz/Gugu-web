@@ -7,6 +7,21 @@ function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
 
+function sessionTitle(input: unknown, fallback: string): string {
+  let content = record(input).user_message
+  if (typeof content === 'string' && content.trimStart().startsWith('[{')) {
+    try { content = JSON.parse(content) } catch { content = undefined }
+  }
+  if (Array.isArray(content)) {
+    content = content.map(record).filter(block => block.type === 'text' || block.type === 'input_text')
+      .map(block => textContent(block)).join(' ')
+  }
+  const title = (typeof content === 'string' ? content : fallback)
+    .replace(/^【消息时间】[^\n]*\n/u, '').replace(/^【消息正文】\s*/u, '')
+    .trim().split(/\r?\n/u)[0]?.trim()
+  return title?.slice(0, 48) || fallback
+}
+
 function textContent(value: unknown): string {
   if (typeof value === 'string') return value
   const obj = record(value)
@@ -63,9 +78,8 @@ export class TraceStore {
   ingestRun(raw: unknown) {
     const payload = TraceRunInputSchema.parse(raw)
     const { db } = this.connection
-    const inputObj = record(payload.input)
-    const titleSource = String(inputObj.user_message ?? payload.title ?? '').trim()
-    const title = titleSource.slice(0, 48) || `Session ${payload.external_session_id || payload.session_key}`
+    const desktopTitle = payload.source === 'desktop' ? payload.title?.trim() : undefined
+    const title = desktopTitle || sessionTitle(payload.input, payload.title || `Session ${payload.external_session_id || payload.session_key}`)
     const ended = payload.ended_at ?? null
 
     db.transaction(tx => {
@@ -104,7 +118,7 @@ export class TraceStore {
           externalSessionId: payload.external_session_id,
           source: payload.source,
           updatedAt: sql`max(${sessions.updatedAt}, excluded.updated_at)`,
-          title: sql`CASE WHEN ${sessions.title} LIKE 'Session %' OR ${sessions.title} = 'Untitled session' THEN excluded.title ELSE ${sessions.title} END`,
+          title: desktopTitle || sql`CASE WHEN ${sessions.title} LIKE 'Session %' OR ${sessions.title} = 'Untitled session' THEN excluded.title ELSE ${sessions.title} END`,
         },
       }).run()
 
@@ -285,7 +299,11 @@ export class TraceStore {
       session_key: row.sessionKey,
       external_session_id: row.externalSessionId ?? '',
       source: row.source,
-      title: row.title,
+      title: row.title.startsWith('[{')
+        ? sessionTitle(this.connection.db.select({ input: runs.inputJson }).from(runs)
+          .where(eq(runs.sessionKey, row.sessionKey)).orderBy(desc(runs.startedAt)).get()?.input,
+          `Session ${row.externalSessionId ?? row.sessionKey}`)
+        : row.title,
       created_at: row.createdAt,
       updated_at: row.updatedAt,
       run_count: Number(row.runCount ?? 0),

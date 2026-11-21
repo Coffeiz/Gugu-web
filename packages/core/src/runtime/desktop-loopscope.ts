@@ -1,8 +1,10 @@
 import { createLoopScopeTrace, defaultLoopScopeEndpoint, loopScopeTraceEnabled } from '@gugu/loopscope'
+import { sql, type Kysely } from 'kysely'
+import type { Database } from '../data/schema.js'
 import type { AgentObservationPort } from '../agent/observation.js'
 import { createNodeProviderTransport } from '../agent/providers/transport/node.js'
 
-export function createDesktopLoopScope(env: Readonly<NodeJS.ProcessEnv>) {
+export function createDesktopLoopScope(env: Readonly<NodeJS.ProcessEnv>, db: Kysely<Database>, ownerId: string) {
   if (!loopScopeTraceEnabled(env.LOOPSCOPE_ENABLED)) return undefined
 
   const transport = createNodeProviderTransport({
@@ -12,6 +14,15 @@ export function createDesktopLoopScope(env: Readonly<NodeJS.ProcessEnv>) {
     const trace = createLoopScopeTrace({
       endpoint: env.LOOPSCOPE_ENDPOINT?.trim() || defaultLoopScopeEndpoint,
       source: 'desktop',
+      async resolveSessionTitle(sessionId) {
+        const id = Number(sessionId)
+        if (!Number.isSafeInteger(id) || id <= 0 || String(id) !== sessionId) return undefined
+        const owner = ownerId.replaceAll('-', '')
+        const result = await sql<{ title: string | null }>`
+          SELECT title FROM conversation_sessions WHERE id = ${id} AND user_id = ${owner}
+        `.execute(db)
+        return result.rows[0]?.title?.trim() || undefined
+      },
       transport,
     })
     const observation: AgentObservationPort = { record: trace.record }

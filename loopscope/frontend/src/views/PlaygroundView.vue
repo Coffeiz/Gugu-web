@@ -3,9 +3,9 @@
     <section class="sessions">
       <header>
         <div><span class="eyebrow">SESSIONS</span><h2>Conversation</h2></div>
-        <button class="new" :title="t('playground.newSession')" @click="newSession">＋</button>
+        <button v-if="!localDesktopMode" class="new" :title="t('playground.newSession')" @click="newSession">＋</button>
       </header>
-      <div v-if="!connected" class="empty small">{{ t('playground.openDev') }}</div>
+      <div v-if="!connected && !localDesktopMode" class="empty small">{{ t('playground.openDev') }}</div>
       <button
         v-for="s in sessions" :key="s.id"
         class="session-row" :class="{ active: s.id === activeId }"
@@ -50,8 +50,8 @@
           <div v-if="loadingOlder" class="older-loading">{{ t('playground.loadingOlder') }}</div>
           <div v-if="!messages.length" class="empty">
             <div class="empty-orb">◎</div>
-            <strong>{{ t('playground.startMessage') }}</strong>
-            <span>{{ t('playground.agentLoopHint') }}</span>
+            <strong>{{ t(localDesktopMode ? 'playground.desktopEmpty' : 'playground.startMessage') }}</strong>
+            <span v-if="!localDesktopMode">{{ t('playground.agentLoopHint') }}</span>
           </div>
 
           <article v-for="(m, idx) in messages" :key="m.id" class="message" :class="m.role">
@@ -88,7 +88,7 @@
           </article>
         </div>
 
-        <form class="composer ls-card" @submit.prevent="send">
+        <form v-if="!localDesktopMode" class="composer ls-card" @submit.prevent="send">
           <textarea v-model="draft" :disabled="sending || !connected" rows="1" :placeholder="t('playground.composer')" @keydown="handleComposerKeydown" />
           <div class="composer-foot">
             <span>{{ mode === 'detail' ? t('playground.detailedSummary') : t('playground.normalConversation') }}</span>
@@ -119,6 +119,7 @@
 </template>
 
 <script setup lang="ts">
+import { localDesktopMode } from '../services/api'
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import type { ChatMessage, GuguSession, TraceRun, TraceRunSummary, TraceSession } from '../types'
 import { listGuguSessions, loadBootstrap, loadMessagePage, sendMessage } from '../services/gugu'
@@ -164,6 +165,7 @@ const scrollEl = ref<HTMLElement | null>(null)
 const monitorRef = ref<{ getScrollTop: () => number; setScrollTop: (value: number) => void } | null>(null)
 const conversationScrollTop = ref(0)
 const monitorScrollTop = ref(0)
+
 const connected = ref(!!loadBootstrap())
 const activeSession = computed(() => sessions.value.find(s => s.id === activeId.value))
 let stopTraceEvents: (() => void) | null = null
@@ -177,7 +179,7 @@ async function refreshSessions() {
   sessions.value = await listGuguSessions()
 }
 function refreshDesktopSessions() {
-  if (!connected.value) return Promise.resolve()
+  if (!connected.value && !localDesktopMode) return Promise.resolve()
   desktopSessionRefresh ??= listTraceSessions()
     .then(entries => { desktopSessions.value = entries.filter(session => session.source === 'desktop') })
     .catch(() => { /* Collector 暂不可用时保留已有会话。 */ })
@@ -613,9 +615,10 @@ function preview(v: unknown) {
   return (s || '').slice(0, 700)
 }
 async function onBootstrap() {
-  connected.value = !!loadBootstrap()
+  connected.value = !localDesktopMode && !!loadBootstrap()
   await Promise.all([refreshSessions(), refreshDesktopSessions()])
-  if (!activeSessionKey.value && sessions.value[0]) await selectSession(sessions.value[0].id)
+  if (!activeSessionKey.value && desktopSessions.value[0] && localDesktopMode) await selectDesktopSession(desktopSessions.value[0])
+  else if (!activeSessionKey.value && sessions.value[0]) await selectSession(sessions.value[0].id)
 }
 onMounted(async () => {
   window.addEventListener('loopscope:bootstrap', onBootstrap)

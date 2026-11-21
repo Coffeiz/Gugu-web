@@ -996,7 +996,8 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
   font-size: var(--font-size-sm); overflow-wrap: anywhere;
 }
 :deep(.chat-smart-panel > header > h4 + .chat-smart-layout) { margin-block-start: 8px; }
-:deep(.chat-smart-panel > footer) { border-block-start: 1px solid var(--content-divider); }
+:deep(.chat-smart-panel > .chat-smart-panel-body) { grid-row: 2; }
+:deep(.chat-smart-panel > footer) { grid-row: 3; border-block-start: 1px solid var(--content-divider); }
 :deep(.chat-smart-panel[data-smart-height]:not([data-smart-height="auto"]) > .chat-smart-panel-body) {
   overflow: auto; overscroll-behavior-y: contain;
 }

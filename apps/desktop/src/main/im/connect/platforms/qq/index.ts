@@ -1,7 +1,7 @@
 import type { ImGroupReplyMode } from '@gugu/core/im/group-settings'
 import { randomBytes, randomInt, randomUUID } from 'node:crypto'
 import { IM_BINDING_MAX_ATTEMPTS, IM_BINDING_TTL_SECONDS } from '@gugu/core/im/binding-code'
-import { defaultUserBotGroupSettings } from '@gugu/core/im/user-bots'
+import { defaultUserBotGroupSettings, updateUserBotGroupTools, userBotGroupToolFlags } from '@gugu/core/im/user-bots'
 import { createQqPairing } from '@gugu/gateway/qq'
 import { createEncryptedDesktopStore } from '../../../../auth/store.js'
 import { DesktopError } from '../../../../core-host.js'
@@ -130,15 +130,12 @@ export function createDesktopQqPairing(directory: string, encryption: Encryption
     }) => state.serialize(async () => {
       const current = await credentials.read()
       if (!current?.userId || (patch.groupChatEnabled === true && !current.userId)) throw invalid()
-      const tools = new Map<string, boolean>([
-        ['http_get', current.groupWebToolsEnabled === true], ['similar_image_search', current.groupWebToolsEnabled === true],
-        ['send_file', current.groupWebToolsEnabled === true], ['web_search', current.groupProviderSearchEnabled === true],
-        ['group_context_search', current.groupHistorySearchEnabled === true],
-      ])
-      for (const [enabled, names] of [
-        [patch.groupWebToolsEnabled, ['http_get', 'similar_image_search', 'send_file']],
-        [patch.groupProviderSearchEnabled, ['web_search']], [patch.groupHistorySearchEnabled, ['group_context_search']],
-      ] as const) if (enabled !== undefined) for (const name of names) tools.set(name, enabled)
+      const currentTools = updateUserBotGroupTools([], {
+        groupWebToolsEnabled: current.groupWebToolsEnabled,
+        groupProviderSearchEnabled: current.groupProviderSearchEnabled,
+        groupHistorySearchEnabled: current.groupHistorySearchEnabled,
+      })
+      const toolFlags = userBotGroupToolFlags(updateUserBotGroupTools(currentTools, patch))
       const next = {
         ...current,
         ...(patch.groupChatEnabled === undefined ? {} : { groupChatEnabled: patch.groupChatEnabled }),
@@ -146,9 +143,7 @@ export function createDesktopQqPairing(directory: string, encryption: Encryption
         ...(patch.groupOwnerMemoryEnabled === undefined ? {} : { groupOwnerMemoryEnabled: patch.groupOwnerMemoryEnabled }),
         ...(patch.groupMemoryEnabled === undefined ? {} : { groupMemoryEnabled: patch.groupMemoryEnabled }),
         ...(patch.memberMemoryEnabled === undefined ? {} : { memberMemoryEnabled: patch.memberMemoryEnabled }),
-        groupWebToolsEnabled: ['http_get', 'similar_image_search', 'send_file'].every(name => tools.get(name)),
-        groupProviderSearchEnabled: tools.get('web_search') === true,
-        groupHistorySearchEnabled: tools.get('group_context_search') === true,
+        ...toolFlags,
         ...(patch.groupChatEnabled === undefined ? {} : { revision: randomUUID() }),
       }
       await credentials.write(parseCredential(next))

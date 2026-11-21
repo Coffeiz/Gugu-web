@@ -1,4 +1,5 @@
 export const en = {
+  'playground.desktopEmpty': 'Start a conversation in the desktop app to see its trace here.',
   'playground.newSession': 'New session',
   'playground.openDev': 'Open LoopScope from Gugu /dev to connect automatically.',
   'playground.refreshSession': 'Refresh messages and Runs for this session',
@@ -26,6 +27,7 @@ export const en = {
   'playground.spanLoadFailed': 'Could not load Run spans ({message}). Check the LoopScope Collector and retry.',
 }
 export const zh = {
+  'playground.desktopEmpty': '在桌面端发起对话后，可在这里查看运行记录。',
   'playground.newSession': '新会话',
   'playground.openDev': '从咕咕 /dev 打开 LoopScope 后会自动连接。',
   'playground.refreshSession': '刷新当前会话消息和 Runs',

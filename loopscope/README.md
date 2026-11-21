@@ -58,7 +58,7 @@ export LOOPSCOPE_ENDPOINT=http://127.0.0.1:4320
 
 Web Host 和桌面应用的地址指向同一 Collector 时，可以在同一个 Monitor 中查看两端的 Run。桌面应用重启后读取环境变量，上报来源为 `desktop`。桌面没有 Web Host 的请求排队阶段。
 
-Web 入口位于 Gugu 的 `/dev` 页面。该页面通过 `postMessage` 提供 API 地址，Gugu API 使用同站 HttpOnly Cookie。桌面 trace 直接从 Collector 的 Session 列表进入。仅在受控开发环境开启采集，跨机器访问时由部署层限制来源并提供独立认证。
+Web 入口位于 Gugu 的 `/dev` 页面。该页面通过 `postMessage` 提供 API 地址，Gugu API 使用同站 HttpOnly Cookie。桌面 trace 从 Collector 的 Session 列表进入。本机只运行桌面和 Collector 时，在前端目录用 `VITE_LOOPSCOPE_LOCAL_DESKTOP=true pnpm dev --strictPort` 启动，然后打开 `http://127.0.0.1:4319/`。此模式通过本机 Vite 只读转发到 `127.0.0.1:4320`。仅在受控开发环境开启采集，跨机器访问时由部署层限制来源并提供独立认证。
 
 ### Docker
 

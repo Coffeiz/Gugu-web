@@ -40,7 +40,7 @@ export function buildAgentStaticPrompt(input: AgentStaticPromptInput): string {
   const preference = input.groupChat ? (input.groupPersonalityPreferenceEnabled ? input.groupPersonalityPreference : '') : (input.personalityPreferenceEnabled ? input.personalityPreference : '')
   const persona = preference?.trim() || input.persona.trim()
   const custom = input.customReplyStyleEnabled && input.customReplyStyle?.trim() ? `## 用户自定义回复风格\n\n只调整表达方式，不改变人格设定、事实、安全规则或权限。当前用户的明确表达要求优先。\n\n${input.customReplyStyle.trim()}` : ''
-  const channel = input.imChat ? '## 当前渠道\n当前会话是即时通讯。只用文字摘要和普通列表呈现信息，不调用「智能界面展示」技能，不输出 gugu-ui 围栏或 gugu-ui-stream 围栏。' : ''
+  const channel = input.imChat ? '## 当前渠道\n当前会话是即时通讯。只用文字摘要和普通列表呈现信息，不调用「智能界面展示」技能，不输出 gugu-ui 围栏、gugu-ui-dsl 围栏或 gugu-ui-stream 围栏。' : ''
   const prompt = [base, input.afterBasePrompt?.trim(), channel, lang, persona, input.skills.trim(), input.policy.trim(), custom, input.skillIndex.trim()].filter(Boolean).join('\n\n---\n\n')
   // 限制单条大小，避免用户偏好或技能内容长期占用过多内存。
   if (key.length <= 128 * 1024) {

@@ -1,7 +1,10 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import type { DesktopOnboardingState } from '@gugu/core/desktop'
 import type { SandboxStatus } from '@desktop/bridge/bridge'
+
+const { t } = useI18n()
 
 defineProps<{
   connected: boolean
@@ -41,6 +44,15 @@ const emit = defineEmits<{
   <section class="desktop-panel glass-card desktop-sandbox">
     <div><h2 class="section-title">执行隔离</h2><p>{{ sandbox?.supported ? '已检测到原生隔离能力' : '当前环境未提供原生隔离能力' }}</p><p v-if="sandboxMessage" role="status">{{ sandboxMessage }}</p></div>
     <ActionButton fit variant="secondary" :disabled="busy" @click="emit('checkSandbox')">重新检测</ActionButton>
+  </section>
+  <section class="desktop-panel glass-card desktop-sandbox" aria-labelledby="desktop-loopscope">
+    <div>
+      <h2 id="desktop-loopscope" class="section-title">{{ t('devHome.tools.loopScope.label') }}</h2>
+      <p>{{ t('devHome.tools.loopScope.description') }}</p>
+    </div>
+    <ActionButton fit variant="secondary" href="http://127.0.0.1:4319/" target="_blank" rel="noopener noreferrer">
+      {{ t('devHome.tools.loopScope.openLocal') }}
+    </ActionButton>
   </section>
   <ActionButton fit variant="secondary" class="desktop-refresh" :disabled="busy" @click="emit('refresh')">{{ busy ? '处理中…' : '刷新本地数据' }}</ActionButton>
 </template>

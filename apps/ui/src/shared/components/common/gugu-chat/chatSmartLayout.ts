@@ -135,13 +135,16 @@ export function renderSmartLayout(layout: unknown, t: Translate, initialState?: 
       case 'panel': {
         const height = component.height ?? 'auto'
         if (height !== 'auto' && height !== 'compact' && height !== 'regular' && height !== 'tall') throw new Error()
-        const label = text(component.label)
+        const label = component.label == null || component.label === '' ? '' : text(component.label)
+        const labelAttrs = label ? ` aria-label="${label}"` : ''
+        const title = label ? `<h4>${iconSlot(component.icon)}${label}</h4>` : ''
         const header = component.header == null ? '' : renderGroup(component.header, 1, depth)
         const body = renderGroup(component.children, 1, depth)
         const footer = component.footer == null ? '' : renderGroup(component.footer, 1, depth)
-        return `<section class="chat-smart-panel" data-smart-height="${height}" aria-label="${label}">
-          <header><h4>${iconSlot(component.icon)}${label}</h4>${header}</header>
-          <div class="chat-smart-panel-body"${height === 'auto' ? '' : ` tabindex="0" role="region" aria-label="${label}"`}>${body}</div>
+        const scrollAttrs = height === 'auto' ? '' : ` tabindex="0"${label ? ` role="region"${labelAttrs}` : ''}`
+        return `<section class="chat-smart-panel" data-smart-height="${height}"${labelAttrs}>
+          ${title || header ? `<header>${title}${header}</header>` : ''}
+          <div class="chat-smart-panel-body"${scrollAttrs}>${body}</div>
           ${footer ? `<footer>${footer}</footer>` : ''}
         </section>`
       }
@@ -150,7 +153,8 @@ export function renderSmartLayout(layout: unknown, t: Translate, initialState?: 
         if (orientation !== 'horizontal' && orientation !== 'vertical') throw new Error()
         if (!Array.isArray(component.children) || !component.children.length || component.children.length > 24) throw new Error()
         const children = component.children.map(child => render(child, depth + 1)).join('')
-        return children ? `<div class="chat-smart-toolbar" data-smart-orientation="${orientation}" role="group" aria-label="${text(component.label)}">${children}</div>` : ''
+        const groupAttrs = component.label == null ? '' : ` role="group" aria-label="${text(component.label)}"`
+        return children ? `<div class="chat-smart-toolbar" data-smart-orientation="${orientation}"${groupAttrs}>${children}</div>` : ''
       }
       case 'timeline': {
         if (!Array.isArray(component.items) || !component.items.length || component.items.length > 30) throw new Error()

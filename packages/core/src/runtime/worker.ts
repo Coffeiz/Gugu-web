@@ -158,7 +158,7 @@ try {
   const notifyAgentRunChanged = (sessionId: number, runId: string) => {
     port.postMessage({ event: 'agent_run_changed', sessionId, runId })
   }
-  const loopScope = config.exclusive ? createDesktopLoopScope(process.env) : undefined
+  const loopScope = config.exclusive ? createDesktopLoopScope(process.env, runtime.db, ownerId) : undefined
   const agentModule: unknown = config.agentRuntimeModule
     ? await import(pathToFileURL(resolve(config.agentRuntimeModule)).href)
     : undefined

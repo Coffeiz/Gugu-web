@@ -448,6 +448,45 @@ it('流式围栏闭合后单独标记 JSON 错误的区域，保留可用底栏'
   expect(footer?.querySelector('a')?.getAttribute('href')).toBe('https://example.com/')
 })
 
+it('DSL 与 JSON 共用稳定样式，具名区域生效，未闭合时保留占位', async () => {
+  const { compileSmartDsl } = await import('@/components/common/gugu-chat/chatSmartDsl')
+  const body = [
+    'state panelOpen=true',
+    'split ratio="60:40" secondaryWhen={"state":"panelOpen","equals":true} {',
+    '  @primary {',
+    '    panel label="" {',
+    '      grid columns=2 gap=compact surface=soft {',
+    '        toolbar {',
+    '          button label="切换右栏" label=切换右栏 action={"type":"toggle-state","state":"panelOpen"}',
+    '        }',
+    '      }',
+    '    }',
+    '  }',
+    '  @secondary {',
+    '    text text="模拟会话 {保留原文}" padding=roomy radius=medium',
+    '    progress label=进度 value=67 unit=%',
+    '  }',
+    '}',
+  ].join('\n')
+  const opening = '```gugu-ui-dsl\n'
+  const html = sanitizeChatHtml(renderMd(opening + body + '\n```'))
+  const json = compileSmartDsl(body)
+  expect(html.trim()).toBe(sanitizeChatHtml(renderMd(fence(json))).replace('<p>摘要</p>', '').trim())
+  const host = document.createElement('div')
+  host.innerHTML = html
+  const panel = host.querySelector('.chat-smart-panel')
+  expect(panel).not.toBeNull()
+  expect(panel?.querySelector('header')).toBeNull()
+  expect(panel?.hasAttribute('aria-label')).toBe(false)
+  expect(host.querySelector('.chat-smart-toolbar button')?.textContent).toBe('切换右栏')
+  expect(host.querySelector('[data-smart-style-gap], [data-smart-style-surface]')).toBeNull()
+  expect(host.querySelector('[data-smart-when="panelOpen"]')?.textContent).toContain('模拟会话 {保留原文}')
+  expect(host.querySelector('.chat-smart-progress-block')?.textContent).toContain('67%')
+  expect(renderMd(opening + 'text text=甲 text=乙\n```')).toContain(i18n.global.t('smartView.unavailable'))
+  expect(renderMdStream(opening + body)).toContain(i18n.global.t('smartView.generating'))
+  expect(renderMd(opening + 'text text=alert(1)\n```')).toContain(i18n.global.t('smartView.unavailable'))
+})
+
 it('网页动作沿用聊天外链行为，无效地址不生成导航入口', () => {
   const host = render({ version: 1, layout: { type: 'stack', children: [
     { type: 'button', label: '打开网页', action: { type: 'open-url', url: 'https://example.com/?a=1&b=2' } },

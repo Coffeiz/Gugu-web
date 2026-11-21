@@ -1,6 +1,7 @@
 import type { TraceRun, TraceRunSummary, TraceSession } from '../types'
 
 // 所有诊断数据都通过 Gugu 用户鉴权代理读取；不要直接访问无用户会话的 Collector。
+export const localDesktopMode = import.meta.env.DEV && import.meta.env.VITE_LOOPSCOPE_LOCAL_DESKTOP === 'true'
 const BASE = '/gugu-api/dev/loopscope'
 
 function collectorFetch(path: string) {
