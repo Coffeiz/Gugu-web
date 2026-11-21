@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
+import { createRemoteByokClient } from '@gugu/core/byok/client'
 import { createRemoteAuthClient, RemoteAuthError } from '@gugu/core/auth/client'
 import type { RemoteSession, RemoteUser } from '@gugu/core/auth/contracts'
 import { DESKTOP_CHANNELS } from '@gugu/core/desktop'
@@ -112,4 +113,27 @@ it('远程 BYOK 拒绝从旧账号页面提交操作', async () => {
     action: 'delete', id: 1,
   })).rejects.toMatchObject({ code: 'session_changed' })
   expect(calls).toEqual([session])
+})
+
+it('专项能力用远程账号的当前凭据，草稿测试不创建凭据', async () => {
+  const requests: { path: string; method?: string }[] = []
+  const draft = { provider: 'tavily', capability: 'deep_research' as const, value: 'synthetic-key',
+    api_format: '', base_url: '', model: '' }
+  const byok = createRemoteByokClient(async (url, options) => {
+    const path = new URL(String(url)).pathname
+    requests.push({ path, method: options?.method })
+    expect(new Headers(options?.headers).get('Authorization')).toBe('Bearer ' + session.token)
+    expect(options?.redirect).toBe('error')
+    const { value: _secret, ...summary } = draft
+    return Response.json(path.endsWith('/test-preview') ? { ok: true } : {
+      ...summary, id: 1, enabled: true, has_value: true,
+    })
+  })
+  await expect(byok(session, { action: 'test-preview', input: draft })).resolves.toEqual({ ok: true })
+  await expect(byok(session, { action: 'create', makeDefault: true, input: draft }))
+    .resolves.toMatchObject({ id: 1, enabled: true })
+  expect(requests).toEqual([
+    { path: '/api/v1/byok/test-preview', method: 'POST' },
+    { path: '/api/v1/byok', method: 'POST' },
+  ])
 })

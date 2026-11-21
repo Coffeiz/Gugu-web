@@ -220,7 +220,7 @@ const taskInput = {
   cron: z.string().nullable().optional(),
   interval_minutes: z.number().int().min(1).max(60).nullable().optional(),
   start_at: z.string().nullable().optional(), end_at: z.string().nullable().optional(),
-  channels: z.array(z.enum(['web', 'email', 'feishu', 'qq'])).min(1).refine(unique).optional(),
+  channels: z.array(z.enum(['web', 'email', 'feishu', 'qq', 'telegram', 'wechat'])).min(1).refine(unique).optional(),
   enabled: z.boolean().optional(), delivery_mode: deliveryMode.optional(),
   authorized_tools: z.array(z.literal('send_email')).max(1).optional(),
   email_attachment_file_ids: z.array(taskId.positive()).max(5).refine(unique).optional(),
@@ -243,6 +243,7 @@ type TaskWriteRequest = WriteCoordinates & ({ name: 'create_scheduled_task'; arg
 export interface ScheduledTaskWriteRuntime {
   capabilities: ScheduledTaskCapabilities
   reminderOnly?: boolean
+  supportedChannels?: readonly NonNullable<TaskInput['channels']>[number][]
   filesystemRevocation?: TaskFilesystemRevokeEffects
   emailAuthorization?: Partial<Record<TaskWriteName, ScheduledTaskConfirmation>>
   canPreauthorizeEmail?(identity: RunIdentity, signal: AbortSignal): Promise<boolean>
@@ -435,8 +436,10 @@ export function createScheduledTaskWriteTools(core: SqlDataRuntime, runtime: Sch
     create_scheduled_task: '创建独立定时任务，按可信渠道投递。提供 schedule_name、instruction 和 schedule_kind。提醒模式传 execution_mode=reminder，到点原样发送 instruction，不调用模型；指令模式传 instruction，到点由咕咕执行，可使用已授权工具。省略模式时按指令模式创建。',
     update_scheduled_task: '更新独立定时任务。通过 task_id 或 task 定位，execution_mode=reminder 到点原样投递正文，不调用模型；execution_mode=instruction 到点由咕咕执行指令。省略模式保持原值。批量撤销文件授权时传 task_ids 和 filesystem_authorized=false。',
   }
+  const deliveryChannels = z.array(z.enum(runtime.supportedChannels ?? ['web', 'email', 'feishu', 'qq']))
+    .min(1).refine(unique).optional()
   return (Object.keys(taskWriteSchemas) as TaskWriteName[]).map(name => {
-    const schema = taskWriteSchemas[name]
+    const schema = taskWriteSchemas[name].safeExtend({ channels: deliveryChannels })
     return {
       definition: { name, schema: { type: 'function', function: {
         name, description: descriptions[name] + (runtime.emailAuthorization?.[name] ? '预授权 send_email 需要用户确认。' : ''), parameters: z.toJSONSchema(schema) as Record<string, Json>,

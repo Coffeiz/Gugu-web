@@ -95,6 +95,7 @@
   },
   "devDependencies": {
     "@gugu/core": "workspace:*",
+    "@gugu/desktop-contracts": "workspace:*",
     "@playwright/test": "^1.62.1",
     "@stryker-mutator/core": "10.0.0",
     "@stryker-mutator/typescript-checker": "10.0.0",

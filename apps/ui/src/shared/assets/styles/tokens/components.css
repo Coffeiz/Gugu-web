@@ -84,8 +84,8 @@
   --sidebar-bg: var(--surface-sidebar);
   --sidebar-border: var(--border-default);
   --sidebar-highlight: var(--theme-highlight-side);
-  --sidebar-label-fg: var(--content-secondary);
-  --sidebar-item-fg: var(--color-muted);
+  --sidebar-label-fg: var(--theme-content-secondary);
+  --sidebar-item-fg: var(--theme-content-secondary);
   --sidebar-item-hover: var(--action-soft);
   /* 暗色调色板未单独声明 active-bg 时，回退到 raised surface，避免选中项只剩边框。 */
   --sidebar-item-active: var(--theme-sidebar-active-bg, var(--surface-raised));
@@ -195,7 +195,7 @@
   --gugu-chat-session-hover: var(--surface-soft-hover);
   --gugu-chat-session-active: var(--sidebar-item-active);
   --gugu-chat-session-active-fg: var(--sidebar-item-active-fg);
-  --gugu-chat-caption: var(--content-tertiary);
+  --gugu-chat-caption: var(--theme-content-tertiary);
   --gugu-chat-header-height: 50px;
   --gugu-chat-composer-height: 50px;
   --gugu-chat-user-bg: var(--action-primary);
@@ -235,6 +235,6 @@ html[data-theme='dark'][data-family] {
   --design-section-bg: var(--glass-card-background);
   --design-section-border: var(--glass-card-border);
   --design-card-bg: var(--glass-card-background);
-  --sidebar-item-fg: var(--content-primary);
+  --sidebar-item-fg: var(--theme-content-primary);
   --sidebar-item-active: var(--surface-raised);
 }

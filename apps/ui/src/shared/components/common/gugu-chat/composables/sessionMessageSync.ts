@@ -28,6 +28,7 @@ export function sortSessionTimelineMessages(items: ChatMessage[]) {
     a.role === 'interaction' && b.role === 'tool' &&
     Boolean(a.interaction?.toolCallId) && a.interaction?.toolCallId === b.toolCallId
   return items.sort((a, b) => {
+    if (Boolean(a._greeting) !== Boolean(b._greeting)) return a._greeting ? -1 : 1
     const aTimestamp = Date.parse(a._completedAt || a._createdAt || '')
     const bTimestamp = Date.parse(b._completedAt || b._createdAt || '')
     const aHasTimestamp = Number.isFinite(aTimestamp)
@@ -93,6 +94,7 @@ export function mapSessionMessageDelta(
         toolLabelOverride: typeof event.toolLabelOverride === 'string' ? event.toolLabelOverride : undefined,
         runId: event.runId, roundId: event.roundId,
         toolStatus: event.toolStatus || (event.toolResult !== undefined ? 'success' : 'running'),
+        shellActivity: event.shellActivity,
         toolInput: event.toolInput, toolResult: event.toolResult,
         toolDetailsAvailable: event.detailsAvailable,
         _toolDetailsSource: event.detailSource,

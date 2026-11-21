@@ -1,7 +1,7 @@
 export const scheduleUi = {
   'zh-CN': {
     cardActive: '已启用', cardPaused: '已停用', cardRunTime: '执行时间',
-    desktopInstructionPending: '桌面端暂未接入指令执行', taskMode: '任务模式', reminderMode: '提醒模式', instructionMode: '指令模式', emptyMode: '暂无任务',
+    taskMode: '任务模式', reminderMode: '提醒模式', instructionMode: '指令模式', emptyMode: '暂无任务',
     reminderExample: '例如：记得提交工时', instructionBody: '任务指令', reminderRequired: '请输入提醒内容',
     intervalPlaceholder: '例如 15',
     onceInPast: '单次任务的执行时间必须晚于当前时间',
@@ -9,10 +9,11 @@ export const scheduleUi = {
     groupUnavailable: '原群（当前不可验证）：{chatId}',
     targetLoadFailed: '私聊状态加载失败',
     channelUnavailablePreserved: '平台已暂停，保存仍保留此渠道',
+    wechatNeedsMessage: '先在微信里给咕咕发一条消息，再重新打开表单',
   },
   'ja-JP': {
     cardActive: '有効', cardPaused: '無効', cardRunTime: '実行時刻',
-    desktopInstructionPending: 'デスクトップでの指示実行は未対応です', taskMode: 'タスクモード', reminderMode: 'リマインダーモード', instructionMode: '指示モード', emptyMode: 'タスクはありません',
+    taskMode: 'タスクモード', reminderMode: 'リマインダーモード', instructionMode: '指示モード', emptyMode: 'タスクはありません',
     reminderExample: '例：勤怠を提出する', instructionBody: 'タスクの指示', reminderRequired: 'リマインダーの内容を入力してください',
     intervalPlaceholder: '例: 15',
     onceInPast: '一回限りのタスクは現在より後の日時を指定してください',
@@ -20,10 +21,11 @@ export const scheduleUi = {
     groupUnavailable: '元のグループ（現在確認できません）：{chatId}',
     targetLoadFailed: '個人チャットの状態を取得できません',
     channelUnavailablePreserved: '停止中のため保存時も維持',
+    wechatNeedsMessage: 'WeChat でメッセージを送信してからフォームを開き直してください',
   },
   'en-US': {
     cardActive: 'Enabled', cardPaused: 'Disabled', cardRunTime: 'Runs at',
-    desktopInstructionPending: 'Desktop instruction execution is unavailable', taskMode: 'Task mode', reminderMode: 'Reminder mode', instructionMode: 'Instruction mode', emptyMode: 'No tasks',
+    taskMode: 'Task mode', reminderMode: 'Reminder mode', instructionMode: 'Instruction mode', emptyMode: 'No tasks',
     reminderExample: 'e.g. Submit your timesheet', instructionBody: 'Task instructions', reminderRequired: 'Enter a reminder message',
     intervalPlaceholder: 'e.g. 15',
     onceInPast: 'A one-time task must be scheduled in the future',
@@ -31,5 +33,6 @@ export const scheduleUi = {
     groupUnavailable: 'Original group (currently unavailable): {chatId}',
     targetLoadFailed: 'Could not load private chat status',
     channelUnavailablePreserved: 'Platform paused; destination is preserved',
+    wechatNeedsMessage: 'Send Gugu a message on WeChat, then reopen this form',
   },
 } as const

@@ -8,6 +8,7 @@ import { portableSnapshot,redactToolRequestHeaders,snapshotInteraction,snapshotT
 import { stripHistoryMedia } from './context/history/ordering.js'
 import { activateNextInteractionForRun,closeInteractionsForRun,completeResolutionClosureForRun,resumeWaitingRun } from './interactions/coordinator.js'
 import type { AgentRunnerPorts,RunCoordination,StreamSanitizer } from './ports.js'
+import { describeShellActivity } from './shell-activity.js'
 import { recordAgentObservation } from './observation.js'
 import { recordAgentRunLog } from './logging.js'
 import { cancellable,checkCancellationForRun,requestRunCancellation,stoppedResultForRun } from './run/cancellation.js'
@@ -237,11 +238,15 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
           ? projectPersistentToolInput(priorCall.input, priorCall.name) : undefined
         const matches = (item: DisplayItem) => item.kind === 'tool' && item.runId === identity.runId
           && item.roundId === roundId && item.toolCallId === toolCallId
-        const toolLabelOverride = toolName && !displayTimeline.some(matches) ? ports.toolLabelOverride?.(toolName) : undefined
+        const previous = displayTimeline.find(matches)
+        const toolLabelOverride = toolName && !previous ? ports.toolLabelOverride?.(toolName) : undefined
+        const shellActivity = (toolName ?? previous?.toolName) === 'shell'
+          ? describeShellActivity(toolInput ?? previous?.toolInput, payload.result ?? previous?.toolResult) : undefined
         displayTimeline = updateDisplayItem(displayTimeline, {
           kind: 'tool', runId: identity.runId, roundId, toolCallId,
           ...(toolName ? { toolName } : {}),
           ...(toolLabelOverride ? { toolLabelOverride } : {}),
+          ...(shellActivity ? { shellActivity } : {}),
           toolStatus: type === 'interaction_required' ? 'waiting' : String(payload.status ?? 'running'),
           ...(toolInput === undefined ? {} : { toolInput }),
           ...(payload.result === undefined ? {} : { toolResult: payload.result }),

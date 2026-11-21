@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { DESKTOP_CHANNELS } from '@gugu/core/desktop'
 import { BrowserWindow, ipcMain, screen, type IpcMainInvokeEvent } from 'electron'
-import { desktopPreviewBounds, previewWindowChannels as channels, type DesktopPreviewFile, type DesktopPreviewMetadata, type DesktopPreviewWindowFile } from '../shared/preview-window.js'
+import { desktopPreviewBounds } from './preview-window-bounds.js'
+import { previewWindowChannels as channels, type DesktopPreviewFile, type DesktopPreviewMetadata, type DesktopPreviewWindowFile } from '@gugu/desktop-contracts'
 import { DesktopError, desktopReply } from './core-host.js'
 import { desktopWindowMaterial, secureWindow, trustedCaller, windowOptions } from './windows.js'
 

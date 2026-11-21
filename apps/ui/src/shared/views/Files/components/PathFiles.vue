@@ -182,7 +182,7 @@ import { useUploadQueue } from '@/composables/shared/useUploadQueue'
 import { type PathDirectory, type PathFileEntry } from '@/services/api'
 import { usePathFileAccess } from '@/services/pathFileAccess'
 import { isPreviewable, usePreviewStore } from '@/stores/preview'
-import { shouldOpenFileInSystem } from '@/utils/filePreviewTypes'
+import { shouldOpenFileInSystem } from '@gugu/desktop-contracts/file-preview'
 import { useFileOpenAccess } from '@/services/fileOpenAccess'
 import { accountBoundaryEpoch } from '@/utils/accountBoundary'
 import { fmtBytes } from '@/utils/fileSize'
@@ -317,6 +317,7 @@ onScopeDispose(() => { request++; clearTimeout(loadingTimer) })
 
 function selected(entry: PathFileEntry) { return props.selectedPaths?.has(entry.relativePath) ?? false }
 function preSelected(entry: PathFileEntry) { return props.previewPaths?.has(entry.relativePath) ?? false }
+function selectableEntries() { return sortedEntries.value.filter(entry => !isDownloads(entry)) }
 function selectedEntries() { return sortedEntries.value.filter(selected) }
 
 function openContext(entry: PathFileEntry, event: MouseEvent) {
@@ -433,7 +434,7 @@ async function handleMoveAction(
   })
 }
 
-defineExpose({ handleDrop, handleMoveAction, selectedEntries })
+defineExpose({ handleDrop, handleMoveAction, selectedEntries, selectableEntries })
 
 function download(entry: PathFileEntry) {
   void pathFilesApi.download({ directoryId: props.directoryId, relativePath: entry.relativePath }).catch(error => showAppError(errorMessage(error)))

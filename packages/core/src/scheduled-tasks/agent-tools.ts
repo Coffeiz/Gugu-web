@@ -13,6 +13,19 @@ export function allowsScheduledMcpTool(names: readonly string[], tool: string, m
   return names.length === 0 ? mode === 'auto' : names.includes(tool)
 }
 
+function createScheduledToolVisibility(names: ReadonlySet<string>, gates: Readonly<Record<string, () => Promise<boolean>>>) {
+  async function available(name: string) {
+    return names.has(name) && (!Object.hasOwn(gates, name) || await gates[name]!())
+  }
+  return {
+    available,
+    async filter(configured: readonly string[]) {
+      const visible = await Promise.all(configured.map(available))
+      return configured.filter((_, index) => visible[index])
+    },
+  }
+}
+
 /** 内置读取与单独授权的 MCP 端口共用此任务及运行身份。 */
 export function createScheduledTaskRunToolPorts(options: {
   identity: RunIdentity
@@ -20,6 +33,7 @@ export function createScheduledTaskRunToolPorts(options: {
   assertLease: AssertScheduledTaskLease
   isCurrent(): Promise<boolean>
   isGroupScopeCurrent?(): Promise<boolean>
+  isGroupMemoryCurrent?(): Promise<boolean>
   definitions: readonly ToolDefinition[]
   sendFile?: ToolDefinition
   email?: { tool: ToolDefinition; isAuthorized(): Promise<boolean> }
@@ -51,13 +65,16 @@ export function createScheduledTaskRunToolPorts(options: {
     await assertLease()
     return isCurrent()
   }
+  const visibility = createScheduledToolVisibility(configuredNames, {
+    send_email: async () => await email?.isAuthorized() === true,
+    group_context_search: async () => await options.isGroupScopeCurrent?.() === true,
+    search_memory: async () => await options.isGroupMemoryCurrent?.() === true,
+  })
   const builtins = createToolRegistry({
     tools: definitions,
     preauthorizedDestructiveTool: email?.tool,
     async authorize(candidate, name) {
-      return names.has(name) && await current(candidate)
-        && (name !== 'send_email' || await email?.isAuthorized() === true)
-        && (!['group_context_search', 'search_memory'].includes(name) || await options.isGroupScopeCurrent?.() === true)
+      return names.has(name) && await current(candidate) && await visibility.available(name)
     },
   })
   return createAgentRunToolPorts({
@@ -69,11 +86,12 @@ export function createScheduledTaskRunToolPorts(options: {
         signal.throwIfAborted()
         if (!await current(candidate)) throw new Error('定时任务工具授权已失效')
         signal.throwIfAborted()
-        return { identity: selection, source: 'scheduled_task', toolNames: [...configuredNames] }
+        const toolNames = await visibility.filter([...configuredNames])
+        return { identity: selection, source: 'scheduled_task', toolNames }
       },
       capabilities: {
         workspaceSupported: false,
-        async filterConfigured(configured) { return configured.filter(name => configuredNames.has(name)) },
+        filterConfigured: visibility.filter,
         async shellPolicy() { return { allowed: false, needsConfirmation: false } },
         async shellState() { return null },
         appendShellProtocol(system) { return system },

@@ -1,7 +1,7 @@
 <template>
   <div class="tool-detail-row">
     <button class="tool-event-head" type="button" :aria-expanded="expanded" :aria-busy="detailsLoading && expandRequested" @click="toggleExpanded">
-      <span class="tool-event-state" :class="`is-${msg.toolStatus || 'running'}`" aria-hidden="true" />
+      <span class="tool-event-state" :class="`is-${noMatches ? 'success' : msg.toolStatus || 'running'}`" aria-hidden="true" />
       <span class="tool-event-label" :title="toolLabel">{{ toolLabel }}</span>
       <span class="tool-event-meta" :class="{ 'is-error': detailsError }" aria-live="polite">{{ headerStatusText }}</span>
       <span v-if="durationText" class="tool-event-duration">{{ durationText }}</span>
@@ -49,7 +49,7 @@ import { useDelayedSkeleton } from '@/composables/core/useDelayedSkeleton'
 import type { ChatMessage } from './chatTypes'
 import { agentApi } from '@/services/api'
 import { chatToolDetailsKey } from './chatPresentationAccess'
-import { formatToolDuration, toolActivityLabel } from './toolActivity'
+import { formatToolDuration, toolHasNoMatches, toolActivityLabel } from './toolActivity'
 
 const readToolDetails = inject(chatToolDetailsKey, agentApi.getToolEventDetails)
 
@@ -74,6 +74,7 @@ watch(() => [props.msg, props.sessionId, props.expanded], () => {
 onBeforeUnmount(resetDetailsRequest)
 const OUTPUT_DISPLAY_LIMIT = 32_000
 const toolLabel = computed(() => toolActivityLabel(props.msg, t, te))
+const noMatches = computed(() => toolHasNoMatches(props.msg))
 const statusText = computed(() => ({
   queued: t('chatUi.toolQueued'), running: t('chatUi.toolRunning'), waiting: t('chatUi.toolWaiting'), success: t('chatUi.toolDone'), error: t('chatUi.toolFailed'), skipped: t('chatUi.toolSkipped'),
   cancelled: t('chatUi.toolCancelled'), stopped: t('chatUi.toolStopped'), unknown: t('chatUi.toolResultUnknown'),
@@ -81,7 +82,7 @@ const statusText = computed(() => ({
 const headerStatusText = computed(() => {
   if (detailsError.value) return `${t('chatUi.loadToolDetailsFailed')} · ${t('chatUi.retryToolDetails')}`
   if (showDetailsLoading.value && expandRequested.value) return t('chatUi.loadingToolDetails')
-  return statusText.value
+  return noMatches.value ? t('toolNames.shell_no_matches') : statusText.value
 })
 const runningSince = computed(() => props.msg.toolStatus === 'running'
   ? Date.parse(props.msg.toolStartedAt ?? '')

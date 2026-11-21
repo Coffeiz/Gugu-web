@@ -17,13 +17,17 @@ import { createSqliteAgentPersistence, createSqliteAgentRuntime } from '../../..
 import { createSqliteAgentAdmission } from '../../../src/agent/run/sqlite-admission.js'
 import { createSqliteAgentRunCoordination } from '../../../src/agent/run/sqlite-coordination.js'
 import { applySqliteAgentSnapshot, createSqliteAgentSessionSource } from '../../../src/agent/context/sqlite-source.js'
+import { prepareContext } from '../../../src/agent/context/assemble.js'
+import { selectSessionHistory, restoreHistoryForRequest } from '../../../src/agent/context/history/ordering.js'
+import { formatAgentHistoryMessageTime } from '../../../src/agent/context/history/time.js'
+import { contentText } from '../../../src/agent/context/compaction.js'
 import { MessageArea, stableJson } from '../../../src/agent/context/history/canonical-history.js'
 import { createConversationRagSource } from '../../../src/agent/rag/conversation-index-source.js'
 import { createSqlRagRebuildWorker } from '../../../src/agent/rag/rebuild-worker.js'
 import { writeSqliteAgentHistory } from '../../../src/agent/run/sqlite-history.js'
 import { contextAccessScopeHash, createCanonicalSourceLoader } from '../../../src/agent/context/prepare.js'
 import { ProviderStreamSanitizer, stripThinking } from '../../../src/agent/providers/index.js'
-import type { CanonicalRunContext, RunCheckpoint, RunEvent } from '../../../src/agent/models.js'
+import type { CanonicalRunContext, CurrentUser, RunCheckpoint, RunEvent } from '../../../src/agent/models.js'
 
 it('SQLite Agent Run 加密重读，阻止跨用户、过期租约与重复确认，失败时回滚事件和历史', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gugu-sqlite-run-'))
@@ -220,12 +224,14 @@ it('共享聊天服务通过 SQLite 原子登记，重复发送只重放同一�
         projection: { interaction: async () => { throw new Error('测试不触发交互') } },
       })
       let starts = 0
+      let originalUser: CurrentUser | undefined
       const service = createChat({
         async *start(identity) {
           expect(await Promise.all(committed)).toEqual([[expect.objectContaining({ role: 'user', text: input.message })]])
           starts++
           const { currentUser } = await source.currentTurn(identity)
           expect(currentUser?.rawText).toBe(input.message)
+          originalUser = currentUser
           await expect(source.currentTurn({ ...identity, ownerId: randomUUID() })).rejects.toThrow('用户消息不存在')
           const snapshot = (await source.readSnapshot(identity))!
           const history = await source.historyReader.read(identity)
@@ -292,6 +298,22 @@ it('共享聊天服务通过 SQLite 原子登记，重复发送只重放同一�
         { content: '合成工具轮次', history_anchor_seq: null },
         { content: '合成回复', history_anchor_seq: null },
       ])
+      const historyIdentity = { ownerId, sessionId: String(session.id) }
+      expect(originalUser?.messageTimestamp).toBeTruthy()
+      const currentUser = { ...originalUser, message: { role: 'user' as const, content: input.message } }
+      const prepared = await prepareContext({ ...historyIdentity, history: [], fixedPrefix: [], currentUser, userTimezone: 'UTC' }, {
+        digest: value => createHash('sha256').update(stableJson(value)).digest('hex'), nextId: randomUUID,
+        buildRag: async () => ({ tail: [] }), formatMessageTime: formatAgentHistoryMessageTime,
+      })
+      const originalUserPrompt = contentText(prepared.area.messages[0]!.content)
+      expect(originalUserPrompt).toMatch(/^【消息时间】/)
+      const persisted = await source.historyReader.read(historyIdentity)
+      const ordered = selectSessionHistory(historyIdentity, persisted.rows, persisted.baselineSeq).rows
+      expect(ordered.slice(0, 2).map(row => row.content)).toEqual(['合成召回', '合成问题'])
+      const restored = restoreHistoryForRequest(ordered[1]!, {
+        userTimezone: 'UTC', formatMessageTime: formatAgentHistoryMessageTime,
+      })
+      expect(contentText(restored!.content)).toBe(originalUserPrompt)
       expect(await readDesktopAgentMessages(runtime.db, ownerId, session.id)).toMatchObject([
         { role: 'user', text: '合成问题', runId },
         { role: 'assistant', text: '合成回复', runId },

@@ -13,14 +13,14 @@ test('当前消息使用发送时的所属用户引用快照，并拒绝伪造�
   const pool = new Pool({ connectionString: url, options: `-c search_path=${schema}` })
   try {
     await pool.query(`CREATE TABLE conversation_sessions (id integer PRIMARY KEY,user_id uuid);
-      CREATE TABLE conversation_messages (id integer PRIMARY KEY,session_id integer,role text,content text,content_json jsonb,files jsonb,references_json jsonb);
+      CREATE TABLE conversation_messages (id integer PRIMARY KEY,session_id integer,role text,content text,content_json jsonb,files jsonb,references_json jsonb, created_at timestamptz NOT NULL DEFAULT now());
       CREATE TABLE projects (id integer PRIMARY KEY,user_id uuid,name text,status text,contact_name text,progress integer,current_stage text)`)
     const owner = randomUUID(), other = randomUUID(), identity = { ownerId: owner, sessionId: '1', runId: 'run' }
     await pool.query("INSERT INTO conversation_sessions VALUES (1,$1),(2,$2)", [owner, other])
     await pool.query("INSERT INTO projects VALUES (1,$1,'本人项目','进行中',null,20,null),(2,$2,'他人私有','进行中',null,20,null)", [owner, other])
     const references = [{ type: 'project', id: 1, name: '客户端伪造' }, { type: 'project', id: 2 }]
     const snapshot = await resolveAgentChatReferences(pool, owner, { message: '查询进度', references })
-    await pool.query(`INSERT INTO conversation_messages VALUES
+    await pool.query(`INSERT INTO conversation_messages (id,session_id,role,content,content_json,files,references_json) VALUES
       (1,1,'user','查询进度',$2::jsonb,NULL,$1::jsonb),(2,1,'user','纯文本',NULL,NULL,NULL),
       (3,1,'user','带附件',NULL,'[{"attach_id":"synthetic"}]',NULL),
       (4,1,'user','/memory',NULL,NULL,NULL),(5,2,'user','私有',NULL,NULL,NULL)`, [JSON.stringify(references), JSON.stringify(snapshot)])

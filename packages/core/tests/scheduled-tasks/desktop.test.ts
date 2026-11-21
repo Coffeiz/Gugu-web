@@ -7,6 +7,9 @@ import { sql } from 'kysely'
 import { dataContext } from '../../src/contracts/index.js'
 import { initializeSqlite, openSqliteRuntime } from '../../src/data/sqlite.js'
 import type { Database } from '../../src/data/schema.js'
+import { desktopScheduleImConnection, desktopScheduleImReminderVersion, type DesktopScheduleImTarget } from '../../src/scheduled-tasks/desktop-im.js'
+import { readDesktopScheduledGroups } from '../../src/scheduled-tasks/desktop-group-targets.js'
+import { admitDesktopImEvent, prepareDesktopImEvent } from '../../src/im/desktop-inbox.js'
 import { desktopScheduledTasks } from '../../src/scheduled-tasks/desktop.js'
 
 it('桌面定时提醒使用同一 SQLite 事务写入，且一次性提醒只认领一次', async () => {
@@ -33,7 +36,7 @@ it('桌面定时提醒使用同一 SQLite 事务写入，且一次性提醒只�
       await expect(service.claim(due)).resolves.toEqual([])
       await expect(service.update(task.id, { channels: ['web'] })).resolves.toMatchObject({ channels: ['web'] })
       await expect(service.claim(due - 1)).resolves.toEqual([])
-      await expect(service.claim(due)).resolves.toEqual([{ id: task.id, name: fields.name, payload: '' }])
+      await expect(service.claim(due)).resolves.toEqual([{ id: task.id, mode: 'reminder', name: fields.name, payload: '' }])
       await expect(service.claim(due + 30_000)).resolves.toEqual([])
       const completed = await service.get(task.id)
       expect(completed.enabled).toBe(false)
@@ -46,6 +49,35 @@ it('桌面定时提醒使用同一 SQLite 事务写入，且一次性提醒只�
       const eventId = event!.id
       const standalone = await service.create({ ...fields, execution_mode: 'instruction', payload: '独立任务指令' })
       expect(standalone.execution_mode).toBe('instruction')
+      await expect(service.claim(due - 1)).resolves.toEqual([])
+      await expect(service.claim(due, new Set([standalone.id]))).resolves.toEqual([])
+      await expect(service.claim(due)).resolves.toEqual([{ id: standalone.id, mode: 'instruction', fireAt: due }])
+      await expect(service.assertInstructionCurrent(standalone.id, standalone, due)).resolves.toBeUndefined()
+      await expect(service.assertInstructionCurrent(standalone.id, standalone, due + 1000)).rejects.toMatchObject({ code: 'conflict' })
+      await service.finishInstruction(standalone.id, due, true)
+      await expect(service.get(standalone.id)).resolves.toMatchObject({ enabled: false, last_run_failed: true })
+      await service.update(standalone.id, { payload: '已修改任务指令' })
+      await expect(service.assertInstructionCurrent(standalone.id, standalone, due)).rejects.toMatchObject({ code: 'conflict' })
+      const group: DesktopScheduleImTarget = { platform: 'qq', chatType: 'group', botId: 'bot-synthetic',
+        boundUserId: 'owner-synthetic', recipient: 'group-synthetic' }
+      const receipt = { platform: group.platform, connectionId: desktopScheduleImConnection(group),
+        eventKey: '合成收件', sealedEvent: 'AQ==' }
+      await admitDesktopImEvent(runtime.db, ownerId, receipt)
+      await prepareDesktopImEvent(runtime.db, ownerId, { ...receipt, chatType: 'group', ownerPlatformUserId: group.boundUserId })
+      await expect(readDesktopScheduledGroups<Database>(runtime.db, ownerId, 'qq', async () => group))
+        .resolves.toEqual([{ target: group, title: '即时通讯' }])
+      await expect(readDesktopScheduledGroups<Database>(runtime.db, ownerId, 'qq',
+        async () => ({ ...group, recipient: 'unrelated-group' }))).resolves.toEqual([])
+      await expect(readDesktopScheduledGroups<Database>(runtime.db, randomUUID(), 'qq', async () => group)).resolves.toEqual([])
+      const imFields = { ...fields, channels: ['web', 'qq'], execution_mode: 'reminder', payload: '本群提醒正文' }
+      await expect(service.create(imFields)).rejects.toMatchObject({ code: 'invalid_request' })
+      const imTask = await service.create(imFields, null, [group])
+      expect(imTask.delivery_targets).toEqual({ qq: group })
+      await expect(service.claim(due)).resolves.toEqual([{
+        id: imTask.id, mode: 'reminder', name: imTask.name, payload: imTask.payload,
+        imDelivery: { fireAt: due, desktop: true, version: desktopScheduleImReminderVersion(imTask, [group]) },
+      }])
+      await expect(service.claim(due + 1)).resolves.toEqual([])
       const activity = await service.create({ ...fields, execution_mode: 'instruction', payload: '整理议题' }, eventId)
       await expect(service.get(activity.id)).rejects.toMatchObject({ code: 'not_found' })
       await expect(service.list(undefined, eventId)).resolves.toMatchObject({ tasks: [{ id: activity.id, execution_mode: 'reminder' }] })
@@ -54,7 +86,7 @@ it('桌面定时提醒使用同一 SQLite 事务写入，且一次性提醒只�
       await sql`UPDATE calendar_events SET deleted_at=CURRENT_TIMESTAMP WHERE id=${eventId}`.execute(runtime.db)
       await expect(service.claim(due)).resolves.toEqual([])
       await sql`UPDATE calendar_events SET deleted_at=NULL WHERE id=${eventId}`.execute(runtime.db)
-      await expect(service.claim(due)).resolves.toEqual([{ id: activity.id, name: fields.name, payload: '提醒：读书会（2027-01-05）' }])
+      await expect(service.claim(due)).resolves.toEqual([{ id: activity.id, mode: 'reminder', name: fields.name, payload: '提醒：读书会（2027-01-05）' }])
     } finally {
       await runtime.close()
     }

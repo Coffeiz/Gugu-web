@@ -7,7 +7,6 @@
           <div class="divider divider-full"></div>
 
           <TaskModeSwitch v-model="executionMode" class="sched-mode" />
-          <p v-if="props.desktop && executionMode === 'instruction'" class="field-hint">{{ t('scheduleUi.desktopInstructionPending') }}</p>
           <div v-if="!props.desktop" class="divider"></div>
 
           <div class="field reminder-field">
@@ -115,7 +114,8 @@
             <span>{{ t('schedules.sendTo') }}</span>
             <div class="chans">
               <template v-for="channel in CHANNELS" :key="channel.value">
-                <Checkbox v-if="desktop || channel.value === 'web' || channel.value === 'email' || props.imChannels.includes(channel.value) || form.channels.includes(channel.value)"
+                <Checkbox v-if="channel.value === 'web' || channel.value === 'email' || props.imChannels.includes(channel.value) || form.channels.includes(channel.value) || (channel.value === 'wechat' && props.wechatNeedsMessage)"
+                  :disabled="channel.value === 'wechat' && props.wechatNeedsMessage && !form.channels.includes('wechat')"
                   :model-value="form.channels.includes(channel.value)"
                   @update:model-value="toggleChannel(channel.value, $event)">
                   <span>{{ channel.label }}</span>
@@ -125,11 +125,12 @@
                 </Checkbox>
               </template>
             </div>
-            <div v-for="platform in IM_DELIVERY_PLATFORMS" :key="platform"
-              v-show="form.channels.includes(platform)" class="qq-delivery-field"
+            <p v-if="props.wechatNeedsMessage" class="channel-unavailable-note">{{ t('scheduleUi.wechatNeedsMessage') }}</p>
+            <div v-for="platform in destinationPlatforms" :key="platform"
+              v-show="form.channels.includes(platform)" class="im-delivery-field"
               :data-testid="`schedule-${platform}-delivery`">
               <span>{{ deliveryPlatformLabel(platform) }}</span>
-              <SelectPopup :model-value="deliveryTargets[platform]" :options="deliveryTargetOptions(platform)" popup-class="qq-target-popup"
+              <SelectPopup :model-value="deliveryTargets[platform]" :options="deliveryTargetOptions(platform)" popup-class="im-target-popup"
                 auto-flip @update:model-value="setDeliveryTarget(platform, $event)" />
             </div>
           </div>
@@ -158,7 +159,7 @@ import TimeInput from '@/components/common/controls/TimeInput.vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import AdminSelect from '@/components/AdminSelect.vue'
 import SelectPopup from '@/components/common/controls/SelectPopup.vue'
-import { scheduledTasksApi } from '@/services/api'
+import { useScheduleAccess } from '@/services/scheduleAccess'
 import { usePreferencesStore } from '@/stores/preferences'
 import {
   buildCron,
@@ -170,11 +171,13 @@ import {
 } from '../utils/scheduleCron'
 import { buildImDeliveryFields, buildImTargetOptions, IM_DELIVERY_PLATFORMS, type ImDeliveryPlatform, type ImDeliveryGroup } from '@/utils/imDelivery'
 
+const scheduleAccess = useScheduleAccess()
 const props = defineProps({
   desktop: Boolean,
   show: { type: Boolean, default: false },
   task: { type: Object as PropType<Record<string, any> | null>, default: null },
   imChannels: { type: Array as PropType<string[]>, default: () => [] },
+  wechatNeedsMessage: Boolean,
   workspaces: { type: Array as PropType<Array<{ id: number; name: string }>>, default: () => [] },
   busy: { type: Boolean, default: false },
   externalError: { type: String, default: '' },
@@ -193,11 +196,9 @@ const REPEAT_OPTS = computed<{ v: RepeatMode; label: string }[]>(() => [
   { v: 'weekly', label: t('schedules.weekly') },
 ])
 const INTERVAL_PRESETS = [1, 5, 10, 30, 60]
-const CHANNELS = computed(() => props.desktop ? [
-  { value: 'web', label: t('schedules.desktopNotice') },
-] : [
-  { value: 'web', label: t('schedules.webNotice') },
-  { value: 'email', label: t('schedules.email') },
+const CHANNELS = computed(() => [
+  { value: 'web', label: t(props.desktop ? 'schedules.desktopNotice' : 'schedules.webNotice') },
+  ...(!props.desktop ? [{ value: 'email', label: t('schedules.email') }] : []),
   { value: 'feishu', label: t('schedules.feishu') },
   { value: 'qq', label: t('schedules.qq') },
   { value: 'wechat', label: t('schedules.wechat') },
@@ -209,11 +210,13 @@ const workspaceOptions = computed(() => [
 ])
 const repeatMode = ref<RepeatMode>('daily')
 const weeklyDays = ref<number[]>([1])
-const deliveryTargets = reactive<Record<ImDeliveryPlatform, string>>({ qq: 'private', feishu: 'private', telegram: 'private' })
-const initialDeliveryTargets = reactive<Record<ImDeliveryPlatform, string>>({ qq: 'private', feishu: 'private', telegram: 'private' })
-const deliveryGroups = reactive<Record<ImDeliveryPlatform, ImDeliveryGroup[]>>({ qq: [], feishu: [], telegram: [] })
-const privateAvailable = reactive<Record<ImDeliveryPlatform, boolean>>({ qq: true, feishu: false, telegram: false })
-const deliveryLoadFailed = reactive<Partial<Record<ImDeliveryPlatform, boolean>>>({})
+type DestinationPlatform = ImDeliveryPlatform | 'wechat'
+const destinationPlatforms = computed<DestinationPlatform[]>(() => props.desktop ? [...IM_DELIVERY_PLATFORMS, 'wechat'] : [...IM_DELIVERY_PLATFORMS])
+const deliveryTargets = reactive<Record<DestinationPlatform, string>>({ qq: 'private', feishu: 'private', telegram: 'private', wechat: 'private' })
+const initialDeliveryTargets = reactive<Record<DestinationPlatform, string>>({ qq: 'private', feishu: 'private', telegram: 'private', wechat: 'private' })
+const deliveryGroups = reactive<Record<DestinationPlatform, ImDeliveryGroup[]>>({ qq: [], feishu: [], telegram: [], wechat: [] })
+const privateAvailable = reactive<Record<DestinationPlatform, boolean>>({ qq: true, feishu: false, telegram: false, wechat: false })
+const deliveryLoadFailed = reactive<Partial<Record<DestinationPlatform, boolean>>>({})
 const intervalMinutes = ref(5)
 const intervalPreset = ref('5')
 const startDate = ref('')
@@ -265,9 +268,10 @@ function resetForm() {
     : blankForm())
   weeklyDays.value = parsed.weeklyDays?.length ? [...parsed.weeklyDays] : [new Date().getDay()]
   const targets = props.task?.delivery_targets as Record<string, any> | undefined
-  for (const platform of IM_DELIVERY_PLATFORMS) {
+  for (const platform of destinationPlatforms.value) {
     const target = targets?.[platform]
-    deliveryTargets[platform] = target?.chat_type === 'group' && target.chat_id ? String(target.chat_id) : 'private'
+    deliveryTargets[platform] = target?.chat_type === 'group' && target.chat_id ? String(target.chat_id)
+      : target?.chatType === 'group' && target.recipient ? String(target.recipient) : 'private'
     initialDeliveryTargets[platform] = deliveryTargets[platform]
     deliveryGroups[platform] = []
     privateAvailable[platform] = platform === 'qq'
@@ -288,19 +292,22 @@ function resetForm() {
   formErr.value = ''
   nextTick(() => { nameRef.value?.focus(); resizePayload() })
 }
-watch(() => props.show, (show, _previous, onCleanup) => {
+watch(() => props.show, show => {
   if (!show) return
   resetForm()
-  if (props.desktop) return
+})
+watch([() => props.show, () => props.imChannels], ([show], _previous, onCleanup) => {
+  if (!show) return
   const controller = new AbortController()
   onCleanup(() => controller.abort())
   void loadDeliveryTargets(controller.signal)
 })
 async function loadDeliveryTargets(signal: AbortSignal) {
-  const platforms = IM_DELIVERY_PLATFORMS.filter(platform => props.imChannels.includes(platform))
+  const platforms = destinationPlatforms.value.filter(platform => props.imChannels.includes(platform))
   await Promise.all(platforms.map(async platform => {
     try {
-      const res = await scheduledTasksApi.listDeliveryTargets(platform)
+      if (!scheduleAccess?.listDeliveryTargets) return
+      const res = await scheduleAccess.listDeliveryTargets(platform)
       if (signal.aborted) return
       deliveryGroups[platform] = res.groups
       privateAvailable[platform] = res.private_available
@@ -309,16 +316,16 @@ async function loadDeliveryTargets(signal: AbortSignal) {
     }
   }))
 }
-function deliveryPlatformLabel(platform: ImDeliveryPlatform) {
+function deliveryPlatformLabel(platform: DestinationPlatform) {
   return t(`schedules.${platform}`)
 }
-function deliveryTargetOptions(platform: ImDeliveryPlatform) {
+function deliveryTargetOptions(platform: DestinationPlatform) {
   const privateLabel = deliveryLoadFailed[platform] ? t('scheduleUi.targetLoadFailed')
     : privateAvailable[platform] ? t('schedules.qqPrivate') : t('schedules.privateUnavailable')
   return buildImTargetOptions(deliveryGroups[platform], deliveryTargets[platform], privateLabel,
     chatId => t('scheduleUi.groupUnavailable', { chatId }))
 }
-function setDeliveryTarget(platform: ImDeliveryPlatform, value: string) {
+function setDeliveryTarget(platform: DestinationPlatform, value: string) {
   deliveryTargets[platform] = value
 }
 function resizePayload() {
@@ -513,14 +520,14 @@ function submit() {
 .chans :deep(.app-checkbox) { min-width: 0; }
 .chans :deep(.app-checkbox__label) { min-width: 0; white-space: normal; flex-wrap: wrap; }
 .channel-unavailable-note { flex: 1 1 100%; min-width: 0; color: var(--content-tertiary); font-size: 10px; line-height: 1.3; }
-.qq-delivery-field {
+.im-delivery-field {
   display: flex; flex-direction: column; gap: 4px; min-width: 0; margin-top: 8px;
   color: var(--content-secondary); font-size: 12px; line-height: 1.45;
 }
-.qq-delivery-field > span { display: block; min-width: 0; line-height: 1.45; }
-.qq-delivery-field :deep(.select-popup) { display: block; }
-.qq-delivery-field :deep(.select-popup-trigger) { width: 100%; box-sizing: border-box; }
-:global(.qq-target-popup) { max-height: 260px; overflow-y: auto; }
+.im-delivery-field > span { display: block; min-width: 0; line-height: 1.45; }
+.im-delivery-field :deep(.select-popup) { display: block; }
+.im-delivery-field :deep(.select-popup-trigger) { width: 100%; box-sizing: border-box; }
+:global(.im-target-popup) { max-height: 260px; overflow-y: auto; }
 .form-err { color: var(--status-danger); font-size: 12px; margin-bottom: 10px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 12px; align-items: center; margin-top: 6px; }
 .modal-actions > button { width: 64px; min-height: 34px; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; }

@@ -3,8 +3,6 @@ import { DESKTOP_CHANNELS, MAX_FRAME } from '@gugu/core/desktop'
 import { DesktopError } from '../core-host.js'
 import type { IpcHandlers } from '../ipc/types.js'
 
-export { previewAttachmentPath } from '../../shared/agent-attachment-preview.js'
-
 export async function handlePreviewAttachment(req: IncomingMessage, handlers: IpcHandlers) {
   const binary = req.headers['content-type'] === 'application/octet-stream'
   const limit = binary ? 32 * 1024 * 1024 : MAX_FRAME / 2

@@ -2,7 +2,7 @@ import type { AssertScheduledTaskLease, ScheduledTaskExecutionCallback, Schedule
 export { createScheduledTaskAgentAttempt, createScheduledTaskExecution,
   scheduledTaskSupportsFileDelivery, type RecurringStopExecution, type ScheduledTaskExecutionPorts } from './execute.js'
 export { createScheduledTaskGroupMemoryReader } from './group-memory.js'
-export { createScheduledTaskGroupTools, createScheduledTaskGroupScopeVerifier } from './group-tools.js'
+export { createScheduledTaskGroupTools, createScheduledTaskGroupScopeVerifier, createScheduledTaskGroupMemoryAuthorizer } from './group-tools.js'
 export { createScheduledTaskHarness, scheduledTaskProviderSelection } from './agent-harness.js'
 export { createScheduledTaskContextLoader } from './owner-context.js'
 export { allowsScheduledMcpTool, createScheduledTaskRunToolPorts } from './agent-tools.js'

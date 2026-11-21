@@ -4,6 +4,8 @@ import type { MessageArea } from '../context/history/canonical-history.js'
 import { blocks,copy,stableJson } from '../context/history/canonical-history.js'
 import { historyOrderKey } from '../context/history/ordering.js'
 import type { BranchPorts,CanonicalFinalizationPort,ContextServices,PassiveGroupTailPorts,ReflectionFinalizationPorts,ReflectionProjectionPort,ReflectionRecoveryPorts } from '../ports.js'
+import { recordAgentObservation, type AgentObservationPort } from '../observation.js'
+import type { RunIdentity } from '../models.js'
 import { isContextOverflowError,shouldCompact } from '../context/budget.js'
 
 /** 仅供已通过owned-idle/租约门的恢复调用方使用；不会凭空追加主Run assistant回复。 */
@@ -330,6 +332,36 @@ export function buildOwnerReflectionInput(input: {
       return content == null ? '' : String(content)
     })).filter(Boolean)
   return { userMessage: input.ownerMessage, assistantEvidence: results.join('\n\n') || '（只分析当前 owner 发言，不分析群聊助手回复）' }
+}
+
+/** 网页和桌面普通对话共用反思调用与观测归属。 */
+export async function runPrivateReflectionBranch<Wire>(
+  input: Pick<BranchInput<Wire>, 'stableSystem' | 'delta' | 'scope'> & RunIdentity,
+  policy: Pick<BranchPolicy, 'outputMode' | 'maxOutputTokens'>,
+  ports: BranchPorts<Wire>,
+  signal: AbortSignal,
+  observation?: AgentObservationPort,
+  trace?: { identity?: RunIdentity; trigger?: 'idle' },
+): Promise<BranchResult> {
+  const identity = trace?.identity ?? { ownerId: input.ownerId, sessionId: input.sessionId, runId: `reflection-${ports.nextId()}` }
+  const attributes = { scenario: 'reflection', reflection_scope: 'private', trigger_source: trace?.trigger ?? 'unknown', origin_run_id: input.runId }
+  recordAgentObservation(observation, { identity, kind: 'run', name: 'started', at: Date.now(), spanId: identity.runId, status: 'running', attributes })
+  let result: BranchResult | undefined
+  try {
+    result = await runContextBranch({ ...input, observationIdentity: identity, tools: [] }, { ...policy, name: 'reflection' }, ports, signal)
+    return result
+  } finally {
+    recordAgentObservation(observation, {
+      identity, kind: 'run', name: 'finished', at: Date.now(), spanId: identity.runId,
+      status: signal.aborted ? 'cancelled' : result?.ok ? 'completed' : 'failed',
+      usage: result?.usage && typeof result.usage === 'object' && !Array.isArray(result.usage)
+        && typeof result.usage.input === 'number' && typeof result.usage.output === 'number'
+        ? { input: result.usage.input, output: result.usage.output,
+          cacheRead: Number(result.usage.cacheRead ?? 0), cacheWrite: Number(result.usage.cacheWrite ?? 0),
+          contextInput: typeof result.usage.contextInput === 'number' ? result.usage.contextInput : null } : undefined,
+      output: { ...attributes, ...(result ? { attempts: result.attempts, probe_eligible: result.usage !== null } : {}) },
+    })
+  }
 }
 
 export async function runContextBranch<Wire>(input: BranchInput<Wire>, policy: BranchPolicy, ports: BranchPorts<Wire>, signal?: AbortSignal): Promise<BranchResult> {

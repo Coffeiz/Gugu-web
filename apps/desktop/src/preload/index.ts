@@ -1,17 +1,62 @@
+import {
+  applicationEditKeys, applicationMenuChannels,
+  type ApplicationEditAction, type ApplicationMenuBridge, type ApplicationMenuCommand,
+} from '@gugu/desktop-contracts'
+import { nativeEditingChannel, type EditingFocus } from '../keyboard-editing.js'
 import { createNativeFileDragGuard } from './native-file-drag.js'
-import { previewWindowChannels, type PreviewWindowBridge } from '../shared/preview-window.js'
+import { previewWindowChannels, projectWindowChannels, type PreviewWindowBridge, type ProjectWindowBridge } from '@gugu/desktop-contracts'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import { projectWindowChannels, type ProjectWindowBridge } from '../shared/project-window.js'
 import { DESKTOP_CHANNELS } from '@gugu/core/desktop'
 import type { DesktopBridge, DesktopProjectCollection } from '@gugu/core/desktop'
 import type { DesktopAppearancePreferences } from '@gugu/core/desktop'
 
 if (typeof window !== 'undefined') {
+  let lastFocus: EditingFocus | undefined
+  function syncNativeEditing() {
+    const focused = document.activeElement
+    const selection = window.getSelection()
+    const editable = focused instanceof HTMLElement && focused.isContentEditable
+    const needsEditorHistory = editable && !!focused.closest('.ProseMirror, .cm-content')
+    const native = editable || !!focused?.closest('input, textarea, select') || (!!selection && !selection.isCollapsed)
+    const focus = needsEditorHistory ? 'editor' : native ? 'native' : 'page'
+    if (focus === lastFocus) return
+    lastFocus = focus
+    ipcRenderer.send(nativeEditingChannel, focus)
+  }
+  document.addEventListener('focusin', syncNativeEditing, true)
+  document.addEventListener('focusout', () => queueMicrotask(syncNativeEditing), true)
+  document.addEventListener('selectionchange', syncNativeEditing)
+  syncNativeEditing()
+
   const setNativeDragSource = createNativeFileDragGuard(window, file => webUtils.getPathForFile(file))
   ipcRenderer.on(DESKTOP_CHANNELS.nativeFileDragSource, (_event, path: unknown) => {
     setNativeDragSource(typeof path === 'string' ? path : null)
   })
 }
+
+// 菜单可能在主窗口刚加载、Vue 壳层尚未订阅时触发。
+const pendingMenuCommands: ApplicationMenuCommand[] = []
+let menuListener: ((command: ApplicationMenuCommand) => void) | undefined
+ipcRenderer.on(applicationMenuChannels.command, (_event, command: ApplicationMenuCommand) => {
+  if (menuListener) menuListener(command)
+  else pendingMenuCommands.push(command)
+})
+ipcRenderer.on(applicationMenuChannels.edit, (_event, action: ApplicationEditAction) => {
+  if (!Object.hasOwn(applicationEditKeys, action)) return
+  const target = document.activeElement ?? document.body
+  target?.dispatchEvent(new KeyboardEvent('keydown', {
+    key: applicationEditKeys[action], metaKey: true, shiftKey: action === 'redo',
+    bubbles: true, cancelable: true, composed: true,
+  }))
+})
+const applicationMenu: ApplicationMenuBridge = {
+  onCommand(listener) {
+    menuListener = listener
+    for (const command of pendingMenuCommands.splice(0)) listener(command)
+    return () => { if (menuListener === listener) menuListener = undefined }
+  },
+}
+contextBridge.exposeInMainWorld('guguApplicationMenu', applicationMenu)
 
 type CanvasItemAddBody = Parameters<DesktopBridge['addCanvasItem']>[1]
 type CanvasItemFrontBody = Parameters<DesktopBridge['bringCanvasItemToFront']>[2]
@@ -28,6 +73,7 @@ const bridge: DesktopBridge = Object.freeze({
   wechatPairing: (command: Parameters<DesktopBridge['wechatPairing']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.wechatPairing, command),
   telegramGateway: (command: Parameters<DesktopBridge['telegramGateway']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.telegramGateway, command),
   terminal: (command: Parameters<DesktopBridge['terminal']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.terminal, command),
+  personalSmtp: (...args: Parameters<DesktopBridge['personalSmtp']>) => ipcRenderer.invoke(DESKTOP_CHANNELS.personalSmtp, ...args),
   mail: (command: Parameters<DesktopBridge['mail']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.mail, command),
   createDroppedFileReference: (file: File) => ipcRenderer.invoke(DESKTOP_CHANNELS.createDroppedFileReference, webUtils.getPathForFile(file)),
   openDroppedFileReference: (id: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.openDroppedFileReference, id),
@@ -51,6 +97,12 @@ const bridge: DesktopBridge = Object.freeze({
   scheduleTask: (command: Parameters<DesktopBridge['scheduleTask']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.scheduleTask, command),
   onScheduleChanged: (callback: () => void) => subscribeDesktopEvent(DESKTOP_CHANNELS.scheduleChanged, callback),
   readLogs: (kind: Parameters<DesktopBridge['readLogs']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.readLogs, kind),
+  applyBusinessArchive: (id: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.applyBusinessArchive, id),
+  preflightBusinessArchive: () => ipcRenderer.invoke(DESKTOP_CHANNELS.preflightBusinessArchive),
+  exportBusinessArchive: () => ipcRenderer.invoke(DESKTOP_CHANNELS.exportBusinessArchive),
+  dataInventory: () => ipcRenderer.invoke(DESKTOP_CHANNELS.dataInventory),
+  agentUsage: () => ipcRenderer.invoke(DESKTOP_CHANNELS.agentUsage),
+  agentPreference: (...args: Parameters<DesktopBridge['agentPreference']>) => ipcRenderer.invoke(DESKTOP_CHANNELS.agentPreference, ...args),
   clearAgentMemory: () => ipcRenderer.invoke(DESKTOP_CHANNELS.clearAgentMemory),
   clearAgentAttachments: () => ipcRenderer.invoke(DESKTOP_CHANNELS.clearAgentAttachments),
   appearance: () => ipcRenderer.invoke(DESKTOP_CHANNELS.appearance),

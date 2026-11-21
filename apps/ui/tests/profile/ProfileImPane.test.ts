@@ -636,8 +636,8 @@ it('桌面 QQ 通过本机接口生成并显示私聊绑定码', async () => {
   } finally { vi.unstubAllGlobals() }
 })
 
-it('桌面消息偏好通过本机桥接保存，重新打开后仍显示保存值', async () => {
-  const saved = { imToolDisplayMode: 'all', showIntermediateReplies: false }
+it('桌面连接偏好经本机桥接保存，网关保活默认开启且可持久关闭', async () => {
+  const saved = { imToolDisplayMode: 'all', showIntermediateReplies: false, keepGatewayOnline: undefined as boolean | undefined }
   const appearance = vi.fn(async () => ({ ok: true, result: { ...saved } }))
   const updateAppearance = vi.fn(async (patch: Partial<typeof saved>) => {
     Object.assign(saved, patch)
@@ -654,10 +654,14 @@ it('桌面消息偏好通过本机桥接保存，重新打开后仍显示保存�
     const slow = () => Array.from(host!.querySelectorAll<HTMLButtonElement>('button'))
       .find(button => button.textContent?.trim() === 'profileImUi.toolDisplaySlowOnly')
     const intermediate = () => host!.querySelector<HTMLButtonElement>('[aria-label="profileImUi.toggleIntermediateReplies"]')
+    const keepOnline = () => host!.querySelector<HTMLButtonElement>('[aria-label="profileImUi.keepGatewayOnline"]')
+    expect(keepOnline()?.getAttribute('aria-pressed')).toBe('true')
+    keepOnline()?.click()
     slow()?.click()
     intermediate()?.click()
     await vi.waitFor(() => {
       expect(updateAppearance.mock.calls).toEqual([
+        [{ keepGatewayOnline: false }],
         [{ imToolDisplayMode: 'slow_only' }],
         [{ showIntermediateReplies: true }],
       ])
@@ -665,6 +669,7 @@ it('桌面消息偏好通过本机桥接保存，重新打开后仍显示保存�
     app?.unmount()
     await mount()
     await vi.waitFor(() => {
+      expect(keepOnline()?.getAttribute('aria-pressed')).toBe('false')
       expect(slow()?.getAttribute('aria-pressed')).toBe('true')
       expect(intermediate()?.getAttribute('aria-pressed')).toBe('true')
     })

@@ -18,6 +18,7 @@ import type { DesktopFileDirectory, DesktopProjectDetails } from '@gugu/core/des
 import DesktopFileLocations from './components/DesktopFileLocations.vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import { useFolderNavigation } from '@/composables/files/useFolderNavigation'
+import { hasShortcutOverlay } from '@/interaction/keyboardShortcuts'
 import { usePathFileSelection } from '@/composables/files/usePathFileSelection'
 import { useSorting } from '@/composables/shared/useSorting'
 import { errorMessage, showAppError, showAppNotice } from '@/composables/core/useAppToast'
@@ -98,7 +99,8 @@ async function loadProjects() {
 }
 watch(isProjects, active => { if (active) void loadProjects() })
 const selection = usePathFileSelection({
-  target, container: main, getSelectedEntries: () => files.value?.selectedEntries() ?? [],
+  target, container: main, getEntries: () => files.value?.selectableEntries() ?? [],
+  getSelectedEntries: () => files.value?.selectedEntries() ?? [],
   reload: () => { reload.value++ },
 })
 watch(directoryId, () => {
@@ -108,6 +110,12 @@ watch(directoryId, () => {
   folderName.value = ''
   renameOpen.value = false
 }, { flush: 'sync' })
+function onFileShortcut(event: KeyboardEvent) {
+  if (!hasShortcutOverlay(event.target)) selection.handleShortcut(event)
+}
+onMounted(() => document.addEventListener('keydown', onFileShortcut))
+onScopeDispose(() => document.removeEventListener('keydown', onFileShortcut))
+
 const { selectionMode, selectionRect, selectedPaths, previewPaths, cutPaths, pasteCount, canPaste, fileCount, folderCount } = selection
 const { SORT_OPTIONS, sortKey, sortDir, onSortSelect } = useSorting('workspace-files')
 const sortOptions = computed(() => SORT_OPTIONS.value.filter(({ key }) => key !== 'stage' && key !== 'createdAt'))

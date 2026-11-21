@@ -1,0 +1,13 @@
+{
+  "name": "@gugu/desktop-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./file-preview": "./src/file-preview.ts"
+  },
+  "devDependencies": {
+    "@gugu/core": "workspace:*"
+  }
+}

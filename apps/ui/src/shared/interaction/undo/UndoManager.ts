@@ -2,23 +2,14 @@ import { errorMessage, showAppError, showAppNotice } from '@/composables/core/us
 import { i18n } from '@/i18n'
 import { undoApi } from '@/services/api'
 
-export function isEditableTarget(target: EventTarget | null): boolean {
-  const element = target instanceof HTMLElement ? target : null
-  if (!element) return false
-  return element.isContentEditable || element.getAttribute('contenteditable') === 'true'
-    || ['INPUT', 'TEXTAREA', 'SELECT'].includes(element.tagName)
-}
-
-function isProtectedOverlay(target: EventTarget | null): boolean {
-  const element = target instanceof Element ? target : null
-  return !!element?.closest('[role="dialog"], .modal, .confirm-dialog')
-}
+export { isEditableTarget } from '@/interaction/keyboardShortcuts'
+import { hasShortcutOverlay, shortcutKey } from '@/interaction/keyboardShortcuts'
 
 export function undoShortcutMode(event: KeyboardEvent): 'undo' | 'redo' | undefined {
-  if (event.defaultPrevented || event.isComposing || event.repeat || isEditableTarget(event.target)
-    || isProtectedOverlay(event.target)) return
-  if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'z') return
-  return event.shiftKey ? 'redo' : 'undo'
+  const key = shortcutKey(event)
+  if (!key || hasShortcutOverlay(event.target)) return
+  if (key === 'y' && !event.shiftKey) return 'redo'
+  if (key === 'z') return event.shiftKey ? 'redo' : 'undo'
 }
 
 export class UndoManager {

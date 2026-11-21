@@ -3,12 +3,13 @@ import type { DesktopAgentChatEvent, DesktopAgentMessage, DesktopAgentSession, D
 import { getLocale } from '@/i18n'
 import { DesktopBridgeError } from '@desktop/bridge/bridge'
 
-import { agentSessionPreviewPath } from '../../../../desktop/src/shared/agent-session-preview'
+import { agentSessionPreviewPath } from '@gugu/desktop-contracts'
 
 type DesktopWindow = Window & { guguDesktop?: DesktopBridge }
 
 export function requestDesktopAgentSessions(command: { action: 'forgetMemory'; query: string; revision?: string }): Promise<{ count: number; revision: string }>
 export function requestDesktopAgentSessions(command: Extract<import('@gugu/core/desktop').DesktopAgentSessionCommand, { action: 'goal' }>): Promise<{ text: string }>
+export function requestDesktopAgentSessions(command: Extract<Parameters<DesktopBridge['agentSessions']>[0], { action: 'greeting' }>): Promise<{ text: string }>
 export function requestDesktopAgentSessions(command: { action: 'readMemory' }): Promise<{ text: string }>
 export function requestDesktopAgentSessions(command: { action: 'messageLocation'; messageId: number }): Promise<{ id: number; sessionId: number }>
 export function requestDesktopAgentSessions(command: { action: 'history'; id: number; before?: number }): Promise<import('@gugu/core/desktop').DesktopAgentHistoryPage>

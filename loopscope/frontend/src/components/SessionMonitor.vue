@@ -303,7 +303,15 @@ function previousRoundSpan(span: any) {
   const currentRound = spanRound(span)
   const previousInRun = rounds.reverse().find(item => spanRound(item) < currentRound)
   if (previousInRun) return previousInRun
-  return undefined
+  const current = selected.value
+  if (currentRound !== 1 || !current) return undefined
+  const previous = props.runs.filter(run => run.session_key === current.session_key && !run.id.startsWith('run-reflection-') && run.started_at < current.started_at && run.ended_at != null
+    && run.ended_at <= current.started_at).sort((a, b) => b.started_at - a.started_at)[0]
+  const last = (previous && props.details?.[previous.id]?.spans)?.filter(item =>
+    isModelSpan(item) && item.attributes?.purpose !== 'branch')
+    .sort((a, b) => spanRound(b) - spanRound(a) || b.ordinal - a.ordinal)[0]
+  return last && ['provider', 'model', 'protocol'].every(key => last.attributes?.[key] === span.attributes?.[key])
+    ? last : undefined
 }
 function selectRun(runId: string) {
   if (selectedId.value !== runId) selectedId.value = runId

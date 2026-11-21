@@ -238,7 +238,7 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
     } finally { await host.close() }
   })
 
-  it('桌面 Agent 的模型地址错误穿过 sidecar 保留错误码，修正后可以继续对话', async () => {
+  it.each(['新会话', '旧版序号未同步的会话'])('桌面 Agent 的模型地址错误保留错误码，修正后可发送首条消息（%s）', async (scenario) => {
     const database = join(directory(), 'core.db')
     const entry = resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js')
     const provider = createServer((_request, response) => {
@@ -249,8 +249,16 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
     onTestFinished(() => new Promise<void>(resolve => provider.close(() => resolve())))
     const address = provider.address()
     if (!address || typeof address === 'string') throw new Error('合成模型监听失败')
-    const host = await launchCoreHost(process.execPath, entry, database)
+    let host = await launchCoreHost(process.execPath, entry, database)
     try {
+      const { id } = await host.request<{ id: number }>('agent.sessions.create', { title: '合成对话', greeting: '合成开场白' })
+      if (scenario === '旧版序号未同步的会话') {
+        await host.close()
+        const writer = new DatabaseSync(database)
+        try { writer.prepare('UPDATE conversation_sessions SET last_message_seq=0 WHERE id=?').run(id) }
+        finally { writer.close() }
+        host = await launchCoreHost(process.execPath, entry, database)
+      }
       host.setHostRequestHandler(async ({ method }) => {
         if (method === 'agent.tools.policy') return desktopAgentToolPolicy()
         if (method.endsWith('.available')) return false
@@ -259,7 +267,6 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
         if (method === 'agent.files.overview') return { total: 0, folders: [], files: [], partial: false }
         throw new Error('未预期的宿主请求')
       })
-      const { id } = await host.request<{ id: number }>('agent.sessions.create', { title: '合成对话' })
       const start = (base_url: string) => host.request<{ run_id: string }>('agent.sessions.startRun', {
         id, text: '合成查询', clientId: randomUUID(), interactive: true,
         model: { provider: 'local', api_format: 'openai', base_url, api_key: '', model: 'synthetic',
@@ -272,6 +279,45 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
         expect(await host.request('agent.sessions.events', { id, runId, after: 0 }))
           .toMatchObject({ status: 'completed' })
       }, { timeout: 5000 })
+      await expect(host.request('agent.sessions.messages', { id })).resolves.toEqual([
+        expect.objectContaining({ role: 'assistant', text: '合成开场白' }),
+        expect.objectContaining({ role: 'user', text: '合成查询' }),
+        expect.objectContaining({ role: 'assistant', text: '合成回复' }),
+      ])
+    } finally { await host.close() }
+  })
+
+  it('桌面问候用本地近七天记忆生成，并校验请求语言', async () => {
+    const database = join(directory(), 'core.db')
+    const runtime = await LocalRuntime.initialize(database, { agentRuntimeModule: desktopAgentRuntimeModule })
+    const owner = runtime.ownerId.replaceAll('-', '')
+    await runtime.close()
+    const today = new Date().toISOString().slice(0, 10)
+    const seed = new DatabaseSync(database)
+    try {
+      seed.prepare('INSERT INTO desktop_agent_memory_documents (user_id,target,body) VALUES (?,?,?)')
+        .run(owner, 'daily', `## ${today}\n- 最近在练习手冲咖啡\n## 2000-01-01\n- 很久以前的合成记录`)
+    } finally { seed.close() }
+
+    const entry = resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js')
+    const host = await launchCoreHost(process.execPath, entry, database)
+    const completeGreeting = vi.fn(async (_prompt: string, _signal: AbortSignal) => '「今天的咖啡喝得开心吗？」')
+    try {
+      const request = agentSessionHandlers(host, { completeGreeting } as ReturnType<typeof createDesktopAgentModelService>)[DESKTOP_CHANNELS.agentSessions]!
+      await expect(request({ action: 'greeting', locale: 'en-US' }))
+        .resolves.toEqual({ text: '今天的咖啡喝得开心吗？' })
+      expect(completeGreeting).toHaveBeenCalledTimes(1)
+      const prompt = completeGreeting.mock.calls[0]![0]
+      expect(prompt).toContain('最近在练习手冲咖啡')
+      expect(prompt).not.toContain('很久以前的合成记录')
+      expect(prompt).toContain('natural English')
+      const session = await request({ action: 'create', title: '合成问候会话', greeting: '今天的咖啡喝得开心吗？',
+        operationId: randomUUID() }) as { id: number }
+      await expect(request({ action: 'messages', id: session.id })).resolves.toEqual([
+        expect.objectContaining({ role: 'assistant', text: '今天的咖啡喝得开心吗？' }),
+      ])
+      await expect(request({ action: 'greeting', locale: 'invalid' })).rejects.toMatchObject({ code: 'invalid_request' })
+      expect(completeGreeting).toHaveBeenCalledTimes(1)
     } finally { await host.close() }
   })
 
@@ -1478,7 +1524,7 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
       expect(databaseView.prepare('SELECT deleted_at FROM mind_maps WHERE id=?').get(canvas!.id)).toMatchObject({ deleted_at: expect.any(String) })
     } finally { databaseView.close() }
   })
-  it('桌面代理默认关闭，和外观偏好独立保存并在重启后恢复', async () => {
+  it('桌面代理、网关保活与外观偏好独立保存并在重启后恢复', async () => {
     const root = directory(), database = join(root, 'core.db')
     const entry = resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js')
     const workbench = { locale: 'ja-JP', defaultView: 'calendar', calendarWeekStart: 'sunday', calendarDoneMode: 'deadline', projectSort: 'name' }
@@ -1486,7 +1532,7 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
     try {
       const handlers = workspaceHandlers(host, async () => null)
       expect(await handlers['gugu:preferences:appearance:get']!()).toEqual({
-        theme: 'light', themeFamily: 'glass', palette: 'neutral', useSystemProxy: false,
+        theme: 'light', themeFamily: 'glass', palette: 'neutral', useSystemProxy: false, keepGatewayOnline: true,
         timezone: null, locale: null, defaultView: 'projects', calendarWeekStart: 'monday', calendarDoneMode: 'done', projectSort: 'default',
         imToolDisplayMode: 'all', showIntermediateReplies: false, decisionGuardEnabled: false, toolInjectionMode: 'description', customReplyStyle: null, customReplyStyleEnabled: false,
       })
@@ -1504,6 +1550,8 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
       expect(await handlers['gugu:preferences:appearance:update']!({ automaticModeEnabled: false })).toMatchObject({ useSystemProxy: true, automaticModeEnabled: false })
       expect(await handlers['gugu:preferences:appearance:update']!({ automaticModeEnabled: true })).toMatchObject({ useSystemProxy: true, automaticModeEnabled: true })
       await expect(handlers['gugu:preferences:appearance:update']!({ shellFullAccess: true })).rejects.toMatchObject({ code: 'invalid_request' })
+      await expect(handlers['gugu:preferences:appearance:update']!({ keepGatewayOnline: 'false' })).rejects.toMatchObject({ code: 'invalid_request' })
+      await expect(handlers['gugu:preferences:appearance:update']!({ keepGatewayOnline: false })).resolves.toMatchObject({ keepGatewayOnline: false })
       await expect(handlers['gugu:preferences:appearance:update']!({ timezone: 'Invalid/Timezone' }))
         .rejects.toMatchObject({ code: 'invalid_request' })
       await expect(handlers['gugu:preferences:appearance:update']!({ timezone: 'Pacific/Kiritimati' }))
@@ -1512,7 +1560,7 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
       await expect(handlers['gugu:preferences:appearance:update']!({ defaultView: ['calendar'] })).rejects.toMatchObject({ code: 'invalid_request' })
       await expect(handlers['gugu:preferences:appearance:update']!(workbench)).resolves.toMatchObject(workbench)
       expect(await handlers['gugu:preferences:appearance:update']!({ theme: 'dark', themeFamily: 'mono', palette: 'cafe' })).toEqual({
-        theme: 'dark', themeFamily: 'mono', palette: 'cafe', useSystemProxy: true, automaticModeEnabled: true,
+        theme: 'dark', themeFamily: 'mono', palette: 'cafe', useSystemProxy: true, automaticModeEnabled: true, keepGatewayOnline: false,
         timezone: 'Pacific/Kiritimati', ...workbench,
         imToolDisplayMode: 'all', showIntermediateReplies: false, decisionGuardEnabled: false, toolInjectionMode: 'description', customReplyStyle: '保留的旧文本偏好', customReplyStyleEnabled: false,
       })
@@ -1526,7 +1574,7 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
     host = await launchCoreHost(process.execPath, entry, database)
     try {
       expect(await workspaceHandlers(host, async () => null)['gugu:preferences:appearance:get']!()).toEqual({
-        theme: 'dark', themeFamily: 'mono', palette: 'cafe', useSystemProxy: true, automaticModeEnabled: true,
+        theme: 'dark', themeFamily: 'mono', palette: 'cafe', useSystemProxy: true, automaticModeEnabled: true, keepGatewayOnline: false,
         timezone: 'Pacific/Kiritimati', ...workbench,
         imToolDisplayMode: 'all', showIntermediateReplies: false, decisionGuardEnabled: false, toolInjectionMode: 'description', customReplyStyle: '保留的旧文本偏好', customReplyStyleEnabled: false,
       })

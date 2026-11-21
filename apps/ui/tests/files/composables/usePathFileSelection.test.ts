@@ -4,7 +4,7 @@ import { confirmFileDeletion } from '@/composables/files/useFileDeleteConfirm'
 import { usePathFileSelection } from '@/composables/files/usePathFileSelection'
 import { pathFilesApi, type PathFileEntry, type PathFileRef } from '@/services/api'
 
-vi.mock('@/services/api', () => ({ pathFilesApi: { move: vi.fn(), moveToTrash: vi.fn() } }))
+vi.mock('@/services/api', () => ({ pathFilesApi: { move: vi.fn(), copy: vi.fn(), moveToTrash: vi.fn() } }))
 vi.mock('@/composables/files/useFileDeleteConfirm', () => ({ confirmFileDeletion: vi.fn() }))
 vi.mock('@/composables/core/useAppToast', () => ({
   errorMessage: (error: Error) => error.message,
@@ -23,6 +23,7 @@ it('批量粘贴遇到冲突时保留失败项，并限制在原授权目录内�
   const selection = scope.run(() => usePathFileSelection({
     target,
     container: ref(null),
+    getEntries: () => entries,
     getSelectedEntries: () => entries.filter(entry => selection.selectedPaths.value.has(entry.relativePath)),
     reload,
   }))!
@@ -30,7 +31,7 @@ it('批量粘贴遇到冲突时保留失败项，并限制在原授权目录内�
   move.mockResolvedValueOnce({ ok: true }).mockRejectedValueOnce(new Error('目标已存在'))
     .mockResolvedValueOnce({ ok: true })
   try {
-    entries.forEach(selection.select)
+    entries.forEach(entry => selection.select(entry))
     selection.cutSelected()
     expect(selection.fileCount.value).toBe(0)
 
@@ -59,6 +60,7 @@ it('取消移到回收站时保留选中状态且不发请求', async () => {
   const selection = scope.run(() => usePathFileSelection({
     target: ref<PathFileRef>({ directoryId: 'personal', relativePath: '' }),
     container: ref(null),
+    getEntries: () => [entry],
     getSelectedEntries: () => [entry],
     reload: vi.fn(),
   }))!
@@ -80,7 +82,7 @@ it('文件夹卡片确认后仅删除当前项目的目标，取消文件删除�
   const target = ref<PathFileRef>({ directoryId: 'project:7', relativePath: '' })
   const reload = vi.fn()
   const selection = scope.run(() => usePathFileSelection({
-    target, container: ref(null), getSelectedEntries: () => [other], reload,
+    target, container: ref(null), getEntries: () => [other], getSelectedEntries: () => [other], reload,
   }))!
   const confirm = vi.mocked(confirmFileDeletion)
   const trash = vi.mocked(pathFilesApi.moveToTrash)
@@ -94,6 +96,51 @@ it('文件夹卡片确认后仅删除当前项目的目标，取消文件删除�
     expect(confirm).toHaveBeenNthCalledWith(2, 'folder', { name: folder.name })
     expect(trash).toHaveBeenCalledExactlyOnceWith({ directoryId: 'project:7', relativePath: folder.relativePath })
     expect(reload).toHaveBeenCalledOnce()
+  } finally {
+    scope.stop()
+  }
+})
+
+
+it('文件与文件夹支持范围选择、全选和复制粘贴，富文本继续处理自己的快捷键', async () => {
+  const scope = effectScope()
+  const entries = [file('首项.txt'), { ...file('资料'), kind: 'directory' as const }, file('末项.txt')]
+  const target = ref<PathFileRef>({ directoryId: 'project:7', relativePath: '' })
+  const reload = vi.fn()
+  const selection = scope.run(() => usePathFileSelection({
+    target, container: ref(null), getEntries: () => entries,
+    getSelectedEntries: () => entries.filter(entry => selection.selectedPaths.value.has(entry.relativePath)),
+    reload,
+  }))!
+  const copy = vi.mocked(pathFilesApi.copy).mockClear().mockResolvedValue({ ok: true })
+  const editor = document.createElement('div')
+  editor.contentEditable = 'true'
+  editor.setAttribute('contenteditable', 'true')
+  const child = editor.appendChild(document.createElement('span'))
+  function press(key: string, element: HTMLElement = document.body) {
+    const event = new KeyboardEvent('keydown', { key, metaKey: true, cancelable: true })
+    element.addEventListener('keydown', selection.handleShortcut, { once: true })
+    element.dispatchEvent(event)
+    return event.defaultPrevented
+  }
+  try {
+    selection.select(entries[0])
+    selection.select(entries[1], new MouseEvent('click', { shiftKey: true }))
+    expect(selection.selectedPaths.value).toEqual(new Set(['首项.txt', '资料']))
+    expect(press('a', child)).toBe(false)
+    expect(selection.selectedPaths.value.size).toBe(2)
+
+    expect(press('a')).toBe(true)
+    expect(selection.selectedPaths.value.size).toBe(3)
+    expect(press('c', child)).toBe(false)
+    expect(selection.canPaste.value).toBe(false)
+    expect(press('C')).toBe(true)
+    target.value = { directoryId: 'project:7', relativePath: '目标' }
+    expect(press('v')).toBe(true)
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce())
+    expect(copy.mock.calls.map(([source, destination]) => [source.relativePath, destination])).toEqual(
+      entries.map(entry => [entry.relativePath, `目标/${entry.name}`]),
+    )
   } finally {
     scope.stop()
   }

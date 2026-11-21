@@ -4,6 +4,12 @@ const fixedMethods = new Set([
   'agent.memory.resolveEmbedding',
   'agent.log.append',
   'agent.tools.policy',
+  'agent.schedules.model',
+  'agent.schedules.im.privateTarget',
+  'agent.schedules.im.decodeGroup',
+  'agent.schedules.im.groupCatalog',
+  'agent.schedules.im.authorize',
+  'agent.schedules.im.deliver',
 ])
 
 const allowedPatterns = [

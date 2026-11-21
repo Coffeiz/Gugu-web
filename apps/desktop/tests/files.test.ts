@@ -1,4 +1,4 @@
-import { shouldOpenFileInSystem } from '../../ui/src/shared/utils/filePreviewTypes'
+import { shouldOpenFileInSystem } from '@gugu/desktop-contracts/file-preview'
 import { createHash } from 'node:crypto'
 import { lstat, mkdtemp, mkdir, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'

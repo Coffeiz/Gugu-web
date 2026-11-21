@@ -5,7 +5,6 @@
       <ToggleSwitch size="sm" :model-value="props.task.enabled" :aria-label="props.task.enabled ? t('schedules.disable') : t('schedules.enable')" @update:model-value="$emit('toggle', props.task)" />
     </div>
     <div class="tc-when">{{ scheduleLabel() }} · {{ channelLabel(props.task.channels) }}</div>
-    <span v-if="desktop && props.task.execution_mode === 'instruction'" class="tc-status">{{ t('scheduleUi.desktopInstructionPending') }}</span>
     <div class="tc-window">
       <span>{{ t('schedules.startAt') }} {{ props.task.start_at ? fmtDateTime(props.task.start_at) : t('schedules.noStart') }}</span>
       <span>{{ t('schedules.endAt') }} {{ props.task.end_at ? fmtDateTime(props.task.end_at) : t('schedules.noEnd') }}</span>
@@ -15,7 +14,7 @@
     <div class="tc-foot">
       <span class="tc-last">{{ props.task.last_run_at ? t('schedules.previousRun', { time: fmtTime(props.task.last_run_at) }) : t('schedules.neverRun') }}</span>
       <span class="tc-acts">
-        <button class="card-link-btn" :disabled="props.busy || isEnded() || (desktop && (props.task.execution_mode === 'instruction' || !props.task.channels?.includes('web')))" @click="$emit('run', props.task)">{{ t('schedules.testRun') }}</button>
+        <button class="card-link-btn" :disabled="props.busy || isEnded() || (desktop && (props.task.execution_mode !== 'instruction' && !props.task.channels?.includes('web')))" @click="$emit('run', props.task)">{{ t('schedules.testRun') }}</button>
         <button class="card-link-btn" @click="$emit('edit', props.task)">{{ t('schedules.edit') }}</button>
         <button class="card-link-btn danger" @click="$emit('remove', props.task)">{{ t('schedules.delete') }}</button>
       </span>
@@ -42,9 +41,8 @@ const { t, locale } = useI18n()
 
 const desktop = useScheduleAccess()?.storesSchedulesLocally === true
 function channelLabel(channels: any) {
-  if (desktop) return channels?.includes('web') ? t('schedules.desktopNotice') : t('schedules.noDelivery')
-  const map = { web: t('schedules.webNotice'), email: t('schedules.email'), chat: t('schedules.webNotice'), feishu: t('schedules.feishu'), qq: t('schedules.qq'), wechat: t('schedules.wechat'), telegram: t('schedules.telegram'), im: `${t('schedules.feishu')}/${t('schedules.qq')}/${t('schedules.wechat')}/${t('schedules.telegram')}` }
-  return (channels || []).map((channel: string) => map[channel as keyof typeof map] || channel).join(' + ') || '—'
+  const map = { web: t(desktop ? 'schedules.desktopNotice' : 'schedules.webNotice'), email: t('schedules.email'), chat: t('schedules.webNotice'), feishu: t('schedules.feishu'), qq: t('schedules.qq'), wechat: t('schedules.wechat'), telegram: t('schedules.telegram'), im: `${t('schedules.feishu')}/${t('schedules.qq')}/${t('schedules.wechat')}/${t('schedules.telegram')}` }
+  return (channels || []).map((channel: string) => map[channel as keyof typeof map] || channel).join(' + ') || (desktop ? t('schedules.noDelivery') : '—')
 }
 
 function scheduleLabel() {

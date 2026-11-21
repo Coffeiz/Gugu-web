@@ -1,3 +1,4 @@
+import { resolveImToolLabel } from '@gugu/core/im/run-delivery';
 import { createImChartParser } from '../../runtime/chart-parser.js';
 /** 增量跟踪顶层围栏；源码始终原样透传，渲染失败不能改写canonical正文。 */
 export function createFeishuRunEventProjector(options = {}) {
@@ -12,7 +13,7 @@ export function createFeishuRunEventProjector(options = {}) {
             if (event.type === 'tool_call' || event.type === 'tool_done')
                 return [{ type: event.type,
                         ...(typeof payload.toolCallId === 'string' ? { toolCallId: payload.toolCallId } : {}),
-                        ...(typeof payload.name === 'string' ? { name: payload.name } : {}),
+                        ...(typeof payload.name === 'string' ? { name: payload.name, label: resolveImToolLabel(payload.name, payload.display) } : {}),
                         ...(typeof payload.status === 'string' ? { status: payload.status } : {}),
                         ...('result' in payload ? { result: payload.result } : {}),
                     }];

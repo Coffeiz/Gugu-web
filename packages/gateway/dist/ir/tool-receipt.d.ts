@@ -1,4 +1,5 @@
 export interface ImToolReceipt {
+    display?: unknown;
     name?: string;
     label?: string;
     status?: string;

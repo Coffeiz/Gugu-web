@@ -2,9 +2,10 @@
 import { expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, reactive, ref } from 'vue'
 import { i18n } from '@/i18n'
+import { localizedToolStatusLabel } from '@/components/common/gugu-chat/messageDisplay'
 import GuguChatToolActivity from '@/components/common/gugu-chat/GuguChatToolActivity.vue'
 import { chatToolDetailsKey } from '@/components/common/gugu-chat/chatPresentationAccess'
-import { projectChatRows, toolGroupElapsedMs } from '@/components/common/gugu-chat/toolActivity'
+import { projectChatRows, toolGroupElapsedMs, toolActivityLabel, toolHasNoMatches } from '@/components/common/gugu-chat/toolActivity'
 import type { ChatMessage } from '@/components/common/gugu-chat/chatTypes'
 
 function message(id: number, role: string, extra: Partial<ChatMessage> = {}): ChatMessage {
@@ -131,4 +132,36 @@ it('工具组耗时采用首开始到末结束的时间跨度', () => {
   expect(toolGroupElapsedMs([tool(1, '00', '02'), tool(2, '04', '06')])).toBe(6000)
   expect(toolGroupElapsedMs([tool(1, '00', '04'), tool(2, '01', '03')])).toBe(4000)
   expect(toolGroupElapsedMs([message(1, 'tool', { toolDurationMs: 120 })])).toBe(120)
+})
+
+
+it('历史 Shell 动作按当前语言显示，并将无匹配结果从失败中区分', () => {
+  const tool = message(1, 'tool', { toolName: 'shell', toolStatus: 'error',
+    shellActivity: { action: 'search', target: 'package.json', noMatches: true } })
+  expect(toolHasNoMatches(tool)).toBe(true)
+  expect(toolActivityLabel(tool, (key, values) => i18n.global.t(key, values ?? {}, { locale: 'en-US' }), key => i18n.global.te(key, 'en-US')))
+    .toBe('Search in package.json')
+  expect(toolActivityLabel(message(2, 'tool', { toolName: 'view_image' }),
+    key => i18n.global.t(key, {}, { locale: 'ja-JP' }), key => i18n.global.te(key, 'ja-JP')))
+    .toBe('画像を表示')
+})
+
+it('Shell 运行状态使用当前调用协议和保留的动作摘要', () => {
+  const translated = i18n.global.t('toolNames.shell_git_diff')
+  expect(localizedToolStatusLabel({ name: 'call_tool', input: { tool_name: 'shell', arguments: { command: 'git diff' } } })).toBe(translated)
+  expect(localizedToolStatusLabel({ name: 'shell', shellActivity: { action: 'git_diff' } })).toBe(translated)
+})
+
+it('折叠的单条 Shell 工具在完成后仍显示具体动作', () => {
+  const host = document.createElement('div')
+  const tool = message(1, 'tool', { toolName: 'shell', toolStatus: 'success', shellActivity: { action: 'git_diff' } })
+  const app = createApp({ render: () => h(GuguChatToolActivity, {
+    tools: [tool], expanded: false, expandedTools: new Set<string>(), sessionId: 10,
+  }) })
+  app.use(i18n).mount(host)
+  try {
+    expect(host.textContent).toContain(i18n.global.t('toolNames.shell_git_diff'))
+  } finally {
+    app.unmount()
+  }
 })

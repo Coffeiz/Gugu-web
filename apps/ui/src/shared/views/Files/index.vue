@@ -259,6 +259,7 @@ import { useSorting } from '@/composables/shared/useSorting'
 import { projectStatusLabelKey } from '@/utils/projectStages'
 import UploadConflictDialog from '@/components/common/overlays/UploadConflictDialog.vue'
 import WorkspaceDirectoryPanel from '@/views/Files/components/WorkspaceDirectoryPanel.vue'
+import { hasShortcutOverlay, hasTextSelection, shortcutKey } from '@/interaction/keyboardShortcuts'
 import { usePathFileSelection } from '@/composables/files/usePathFileSelection'
 import PathFiles from '@/views/Files/components/PathFiles.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
@@ -435,6 +436,7 @@ onUnmounted(() => { uiStore.workspaceUploadTarget = null })
 const pathSelection = usePathFileSelection({
   target: workspaceTarget,
   container: mainRef,
+  getEntries: () => workspaceFiles.value?.selectableEntries() ?? [],
   getSelectedEntries: () => workspaceFiles.value?.selectedEntries() ?? [],
   reload: () => { workspaceReload.value++ },
 })
@@ -1095,26 +1097,24 @@ function ctxPaste() {
 }
 
 // ── 键盘快捷键 ──
-function onKeyDown(e: KeyboardEvent) {
-  if ((e.target as HTMLElement)?.closest?.('input, textarea, [contenteditable="true"]')) return
-  const ctrl = e.ctrlKey || e.metaKey
+function onKeyDown(event: KeyboardEvent) {
+  if (hasShortcutOverlay(event.target)) return
   if (workspaceTarget.value) {
-    if (ctrl && e.key === 'c' && pathSelectedPaths.value.size) { e.preventDefault(); pathSelection.copySelected() }
-    if (ctrl && e.key === 'x' && pathSelectedPaths.value.size) { e.preventDefault(); pathSelection.cutSelected() }
-    if (ctrl && e.key === 'v' && pathCanPaste.value) { e.preventDefault(); void pathSelection.paste() }
+    pathSelection.handleShortcut(event)
     return
   }
-  if (ctrl && e.key === 'x') {
-    const fids = [...selectedIds.value]
-    const dids = [...selectedFolderKeys.value]
-      .map(k => contents.value.folders.find(f => f.id === k)?.folderId)
-      .filter((id): id is number => id != null)
-    if (fids.length || dids.length) { cbStore.cut(fids, dids); e.preventDefault() }
-  } else if (ctrl && e.key === 'c') {
-    const fids = [...selectedIds.value]
-    if (fids.length) { cbStore.copy(fids, []); e.preventDefault() }
-  } else if (ctrl && e.key === 'v') {
-    if (cbStore.hasContent()) { batchActions.paste(); e.preventDefault() }
+  const key = shortcutKey(event)
+  if (!key || event.shiftKey || currentType.value === 'root' || currentType.value === 'trash') return
+  if (key === 'a' && selection.selectAll()) {
+    event.preventDefault()
+  } else if ((key === 'x' || key === 'c') && inSelectionMode.value
+    && (selectedIds.value.size || selectedFolderKeys.value.size) && !hasTextSelection()) {
+    if (key === 'x') selCut()
+    else selCopy()
+    event.preventDefault()
+  } else if (key === 'v' && cbStore.hasContent()) {
+    event.preventDefault()
+    void batchActions.paste()
   }
 }
 

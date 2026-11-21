@@ -93,6 +93,7 @@ function createDesktopRouter() {
     routes: [
       // 普通页面由桌面壳层渲染；笔记和画布在路由提交前解析异步组件。
       { path: '/', name: 'home', components: {} },
+      ...(import.meta.env.DEV ? [{ path: '/dev', name: 'dev-workbench', components: {} }] : []),
       ...['projects', 'calendar', 'schedules', 'files', 'terminals', 'skills', 'mcp', 'mail', 'contacts', 'team', 'notifications']
         .map(section => ({ path: `/${section}`, name: section, components: {} })),
       { path: '/notes', name: 'notes', component: () => import('@/views/Mind/NotesThreePaneView.vue') },

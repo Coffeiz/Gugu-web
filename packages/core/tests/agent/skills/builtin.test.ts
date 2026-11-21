@@ -39,7 +39,7 @@ describe('内置Skill文档到注册器', () => {
     const registry = createSkillRegistry({ skills: definitions, authorize: async () => true })
     const catalog = await registry.catalog(identity)
     expect(catalog.map(item => item.id).sort((left, right) => Number(left.slice(1)) - Number(right.slice(1)))).toEqual([
-      ...Array.from({ length: 13 }, (_, index) => `S${index + 1}`),
+      ...Array.from({ length: 12 }, (_, index) => `S${index + 1}`),
     ])
     expect(catalog.find(item => item.key === 'chart-and-math')).toMatchObject({
       name: '图表与数学表达', description: expect.stringMatching(/Mermaid.*TeX/u), related_tools: [],
@@ -48,9 +48,7 @@ describe('内置Skill文档到注册器', () => {
     expect(catalog.find(item => item.key === 'canvas')?.related_tools).toContain('present_file')
     expect((await registry.load('S4', identity, signal())).content).toContain('桌面工具返回的本机绝对路径')
     expect((await registry.load('S10', identity, signal())).content).toContain('managed_by=assistant')
-    const smartView = catalog.find(item => item.key === 'smart-view')
-    expect(smartView).toMatchObject({ name: '智能界面展示', related_tools: [] })
-    expect((await registry.load(smartView!.id, identity, signal())).content).toContain('slider')
+    expect(catalog.some(item => item.key === 'smart-view')).toBe(false)
   })
   it('扁平frontmatter提取元数据，正文digest对齐Python SHA256前16hex', async () => {
     const definitions = await createBuiltinSkillDefinitions([{ name: 'writing.md', read: async () => document('正文😀') }], signal())

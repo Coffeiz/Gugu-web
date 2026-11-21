@@ -111,7 +111,7 @@ function createRun(event, source, maxSpans) {
     id, trace_id: safeId(identity.runId), session_key: `gugu:${source}:${safeId(identity.sessionId)}`,
     external_session_id: String(identity.sessionId), source, status: 'running', started_at: startedAt,
     ended_at: null, duration_ms: null, input: {}, output: {}, attributes: {}, usage: {}, spans: [],
-    _spans: new Map(), _startedAtMs: event.at, _output: '', _lastRequest: null, _maxSpans: maxSpans,
+    _ownerId: identity.ownerId, _spans: new Map(), _startedAtMs: event.at, _output: '', _lastRequest: null, _maxSpans: maxSpans,
     _adapterRequests: new Set(), _adapterResults: new Set(),
   }
 }
@@ -131,7 +131,40 @@ function spanFor(run, event, id, name, kind, parentSpanId) {
   return span
 }
 
-function updateRun(run, event) {
+// 缓存标记可以移动，比较模型可见内容时去掉标记，原始请求仍完整保留。
+function comparablePrefix(value) {
+  if (Array.isArray(value)) return value.map(comparablePrefix)
+  if (!isRecord(value)) return value
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => key !== 'cache_control')
+    .map(([key, item]) => [key, comparablePrefix(item)]))
+}
+
+function compareProviderPrefix(previousRun, body, attributes) {
+  const previous = previousRun?.attributes.cache_rounds?.at(-1)
+  const request = previousRun?._lastRequest
+  if (!previous || !request || previous.provider !== attributes?.provider
+    || previous.model !== attributes?.model || previous.api_format !== attributes?.protocol) return null
+  const previousRows = providerRows(request)
+  const rows = providerRows(body)
+  const boundary = previous.stable_message_count
+  if (!Number.isSafeInteger(boundary) || boundary <= 0 || boundary > previousRows.length) return null
+  let matched = 0
+  while (matched < boundary && matched < rows.length
+    && stableText(comparablePrefix(previousRows[matched])) === stableText(comparablePrefix(rows[matched]))) matched++
+  const sameEnvelope = ['system', 'instructions', 'tools'].every(key =>
+    stableText(comparablePrefix(request[key])) === stableText(comparablePrefix(body[key])))
+  return {
+    stable: sameEnvelope && matched === boundary,
+    basis: 'provider_rows_without_cache_control',
+    previous_run_id: previousRun.id,
+    previous_round: previous.round,
+    matched_message_count: matched,
+    compared_message_count: boundary,
+  }
+}
+
+function updateRun(run, event, priorRun) {
   if (run._traceDisabled) {
     if (event.kind === 'run' && event.name === 'finished') {
       run.status = ({ completed: 'success', failed: 'error', cancelled: 'cancelled', unknown: 'unknown' })[event.status] ?? event.status ?? 'unknown'
@@ -170,11 +203,8 @@ function updateRun(run, event) {
     const providerOptions = Object.fromEntries(Object.entries(body)
       .filter(([key]) => !['messages', 'input', 'system', 'instructions'].includes(key)))
     const cache = isRecord(event.attributes?.cache_diagnostics) ? cloneSafe(event.attributes.cache_diagnostics) : null
-    const previous = !isBranch ? run.attributes.cache_rounds?.at(-1) : null
-    const previousRows = providerRows(isRecord(run._lastRequest) ? run._lastRequest : {})
-    const previousBoundary = Number(previous?.stable_message_count ?? 0)
-    const prefixStable = previous && previousBoundary <= previousRows.length && previousBoundary <= rows.length
-      ? stableText(previousRows.slice(0, previousBoundary)) === stableText(rows.slice(0, previousBoundary)) : null
+    const compared = isBranch ? null : compareProviderPrefix(run._lastRequest ? run : priorRun, body, event.attributes)
+    const prefixStable = compared?.stable ?? null
     const canonical = isRecord(run.attributes.canonical_events) ? cloneSafe(run.attributes.canonical_events) : null
     const assembly = {
       system: { location: body.system != null ? 'system' : body.instructions != null ? 'instructions' : 'messages[0]', reused: (event.round ?? 0) > 1, source_round: 1 },
@@ -186,8 +216,7 @@ function updateRun(run, event) {
       canonical_context: {
         phase: 'provider-input', provider_message_count: rows.length,
         ...run._spans.get(`${roundId}:context:provider-layout`)?.output,
-        prefix_integrity: { stable: prefixStable,
-          basis: 'stable_prefix_digest' },
+        prefix_integrity: compared ?? { stable: null },
       },
     }
     span.input = {
@@ -222,7 +251,7 @@ function updateRun(run, event) {
         prefix_unchanged: prefixStable }
       run.attributes.cache_rounds ??= []
       run.attributes.cache_rounds.push(cacheRound)
-      run.attributes.cache_rounds.splice(12)
+      if (run.attributes.cache_rounds.length > 12) run.attributes.cache_rounds.shift()
       const cacheSpan = spanFor(run, event, `${modelSpanId}:cache`, 'Provider cache boundary', 'cache', modelSpanId)
       cacheSpan.input = { stable_message_count: cache.stable_message_count, cache_anchor_indices: cache.cache_anchor_indices }
       cacheSpan.output = cacheRound
@@ -438,7 +467,7 @@ function updateRun(run, event) {
 }
 
 function snapshot(run) {
-  const { _spans, _startedAtMs, _output, _lastRequest, _maxSpans, _traceDisabled, _adapterRequests, _adapterResults, ...payload } = run
+  const { _ownerId, _spans, _startedAtMs, _output, _lastRequest, _maxSpans, _traceDisabled, _adapterRequests, _adapterResults, ...payload } = run
   payload.spans = [..._spans.values()].map(span => ({ ...span }))
   return cloneSafe(payload)
 }
@@ -526,7 +555,15 @@ export function createLoopScopeTrace({ endpoint, transport, source = 'web', reso
         }
         run = createRun(event, source, maxSpans); runs.set(id, run)
       }
-      updateRun(run, event)
+      let priorRun
+      if (event.kind === 'provider' && event.name === 'request' && event.round === 1 && !run._lastRequest) {
+        for (const candidate of runs.values()) {
+          if (candidate !== run && candidate._lastRequest && candidate._ownerId === run._ownerId && candidate.session_key === run.session_key
+            && candidate.ended_at !== null && candidate.ended_at <= run.started_at
+            && (!priorRun || candidate.ended_at > priorRun.ended_at)) priorRun = candidate
+        }
+      }
+      updateRun(run, event, priorRun)
       let payload = snapshot(run)
       let size = new TextEncoder().encode(JSON.stringify(payload)).byteLength
       if (run._traceDisabled || size > maxTraceBytes) {

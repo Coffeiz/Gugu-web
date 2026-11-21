@@ -5,17 +5,16 @@ import FilePreviewModal from '@/components/common/file-browser/FilePreviewModal.
 import MailPage from '@/views/Mail/index.vue'
 import FloatPreviewWindow from '@/components/common/layout/FloatPreviewWindow.vue'
 import { usePreviewStore } from '@/stores/preview'
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import type { ApplicationMenuBridge, ApplicationMenuCommand } from '@gugu/desktop-contracts'
+import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { isNavigationFailure, NavigationFailureType, RouterView, useRoute, useRouter } from 'vue-router'
 import { desktopData, DesktopBridgeError } from '@desktop/bridge/bridge'
+import { useDesktopMindHistory } from '../mind/useDesktopMindHistory'
 import { undoShortcutMode } from '@/interaction/undo/UndoManager'
-import type { SandboxStatus } from '@desktop/bridge/bridge'
-import type { DesktopOnboardingState } from '@gugu/core/desktop'
 import { setUserTimezone } from '@/utils/userTimezone'
 import { usePreferencesStore } from '@/stores/preferences'
 import { errorMessage, showAppError } from '@/composables/core/useAppToast'
 import ProjectsPage from '../projects/index.vue'
-import WorkbenchPage from '../workbench/index.vue'
 import ContactsPage from '../contacts/index.vue'
 import DesktopPersonalSettings from '../account/DesktopPersonalSettings.vue'
 import WorkspaceRouteSkeleton from '@/components/common/feedback/skeleton/WorkspaceRouteSkeleton.vue'
@@ -44,6 +43,9 @@ import { useUiStore } from '@/stores/ui'
 import { runtime } from '@/interaction/runtime'
 import { provideRuntime } from '@/interaction/runtime/vue'
 
+const DevWorkbench = import.meta.env.DEV ? defineAsyncComponent(() => import('../workbench/index.vue')) : null
+const DevWorkbenchButton = import.meta.env.DEV ? defineAsyncComponent(() => import('../workbench/DevWorkbenchButton.vue')) : null
+
 const projectStore = useProjectStore()
 const preferences = usePreferencesStore()
 const route = useRoute()
@@ -63,9 +65,6 @@ function openPersonalSettings(tab: 'info' | 'prefs' = 'info') {
 const busy = ref(false)
 const error = ref('')
 const connected = ref(false)
-const sandbox = ref<SandboxStatus | null>(null)
-const sandboxMessage = ref('')
-const onboarding = ref<DesktopOnboardingState | null>(null)
 const pendingOperation = ref('')
 const contentArea = ref<HTMLElement | null>(null)
 const previewStore = usePreviewStore()
@@ -79,16 +78,24 @@ const calendarPanel = useDesktopCalendar(perform)
 const { clients, clientName, editingClient, editedClientName } = contactsPanel
 const { calendar, calendarHistory, initialLoading: calendarInitialLoading } = calendarPanel
 
-function onCalendarHistoryShortcut(event: KeyboardEvent) {
-  if (activeSection.value !== 'calendar' || personalSettingsOpen.value || uiStore.openNewProject || projectStore.modalProject) return
+const applyMindHistory = useDesktopMindHistory()
+
+function onHistoryShortcut(event: KeyboardEvent) {
+  if (personalSettingsOpen.value || uiStore.openNewProject || projectStore.modalProject) return
   const mode = undoShortcutMode(event)
-  if (!mode || !calendarHistory.value[mode]) return
-  event.preventDefault()
-  void calendarPanel.applyHistoryAction(mode)
+  if (!mode) return
+  const section = activeSection.value
+  if (section === 'calendar' && calendarHistory.value[mode]) {
+    event.preventDefault()
+    void calendarPanel.applyHistoryAction(mode)
+  } else if (section === 'notes' || section === 'canvases') {
+    event.preventDefault()
+    void perform(() => applyMindHistory(mode))
+  }
 }
 
-onMounted(() => window.addEventListener('keydown', onCalendarHistoryShortcut))
-onUnmounted(() => window.removeEventListener('keydown', onCalendarHistoryShortcut))
+onMounted(() => window.addEventListener('keydown', onHistoryShortcut))
+onUnmounted(() => window.removeEventListener('keydown', onHistoryShortcut))
 
 async function navigateTo(section: string, query?: { object_id: string }) {
   try {
@@ -100,6 +107,42 @@ async function navigateTo(section: string, query?: { object_id: string }) {
     showAppError('页面加载失败，请重试')
   }
 }
+
+const globalSearch = ref<InstanceType<typeof GlobalSearch> | null>(null)
+const routedPage = ref<{ openNewDraft?: () => Promise<void> } | null>(null)
+let menuNavigationRequested = false
+
+async function runMenuCommand(command: ApplicationMenuCommand) {
+  if (command === 'settings') {
+    openPersonalSettings('prefs')
+    return
+  }
+  if (command === 'search') {
+    globalSearch.value?.focus()
+    return
+  }
+  if (command === 'new-project') {
+    uiStore.openNewProject = true
+    return
+  }
+  const section = command === 'new-note' ? 'notes' : command
+  menuNavigationRequested = true
+  await navigateTo(section)
+  if (command === 'new-note' && activeSection.value === 'notes') {
+    await nextTick()
+    await routedPage.value?.openNewDraft?.()
+  }
+}
+
+let stopApplicationMenu: (() => void) | undefined
+let menuWork = Promise.resolve()
+onMounted(() => {
+  const bridge = (window as Window & { guguApplicationMenu?: ApplicationMenuBridge }).guguApplicationMenu
+  stopApplicationMenu = bridge?.onCommand(command => {
+    menuWork = menuWork.then(() => runMenuCommand(command)).catch(() => showAppError('无法完成菜单操作，请重试'))
+  })
+})
+onUnmounted(() => stopApplicationMenu?.())
 
 function openCalendarProjectDialog(range: { start: string; end: string }) {
   uiStore.newProjectRange = range
@@ -162,15 +205,6 @@ async function recoverPendingOperation() {
   error.value = '已查询到操作收据，本地数据已刷新'
 }
 
-function checkSandbox() {
-  return perform(async () => {
-    sandboxMessage.value = '正在检测…'
-    sandbox.value = await desktopData.sandboxStatus()
-    sandboxMessage.value = sandbox.value.reason ?? (sandbox.value.supported ? '已检测到原生隔离能力' : '当前环境未提供原生隔离能力')
-  })
-}
-
-
 watch(() => projectStore.modalProject?.id, async id => {
   if (!id || !projectWindowBridge) return
   try {
@@ -196,13 +230,12 @@ onMounted(() => perform(async () => {
   await syncDesktopFileOpenPreference(appearance.fileOpenPreference).catch(error => showAppError(errorMessage(error)))
   await preferences.fetch(appearance)
   setUserTimezone(appearance.timezone)
-  if (route.name === 'home') {
+  if (route.name === 'home' && !menuNavigationRequested) {
     const defaultView = preferences.defaultView
-    await router.replace({ name: defaultView === 'mind' ? 'notes' : defaultView })
+    const section = defaultView === 'mind' ? 'notes' : defaultView
+    await router.replace({ name: section !== 'home' && section !== 'dev-workbench' && router.hasRoute(section) ? section : 'projects' })
   }
-  onboarding.value = await desktopData.onboarding()
   await refresh()
-  sandbox.value = await desktopData.sandboxStatus()
 }))
 </script>
 
@@ -232,26 +265,25 @@ onMounted(() => perform(async () => {
       @resize-keydown="handleResizeKeydown"
     />
     <header class="desktop-topbar">
-      <GlobalSearch desktop class="topbar-search" />
+      <DevWorkbenchButton
+        v-if="DevWorkbenchButton"
+        :active="activeSection === 'dev-workbench'"
+        @open="navigateTo('dev-workbench')"
+      />
+      <GlobalSearch ref="globalSearch" desktop class="topbar-search" />
     </header>
     <main id="desktop-home" ref="contentArea" class="desktop-workbench" :class="{ 'is-canvas-workspace': visibleSection === 'canvases' }">
     <p v-if="error" class="desktop-error" role="alert">{{ error }}</p>
-    <ActionButton v-if="pendingOperation && activeSection !== 'home'" fit variant="secondary"
+    <ActionButton v-if="pendingOperation" fit variant="secondary"
       :disabled="busy" @click="perform(recoverPendingOperation)">查询待确认操作</ActionButton>
     <WorkspaceRouteSkeleton v-if="pendingSkeleton" desktop :route-name="pendingSkeleton" />
     <div v-show="!pendingSkeleton" class="desktop-route-host">
-    <WorkbenchPage
-      v-if="activeSection === 'home'"
+    <DevWorkbench
+      v-if="DevWorkbench && activeSection === 'dev-workbench'"
       :connected="connected"
       :busy="busy"
-      :onboarding="onboarding"
-      :sandbox="sandbox"
-      :sandbox-message="sandboxMessage"
-      :pending-operation="pendingOperation"
       @open-appearance="openPersonalSettings('prefs')"
       @refresh="perform(refresh)"
-      @recover="perform(recoverPendingOperation)"
-      @check-sandbox="checkSandbox"
     />
     <ProjectsPage v-if="activeSection === 'projects'" />
     <ContactsPage
@@ -269,7 +301,9 @@ onMounted(() => perform(async () => {
       <DesktopCalendar :events="calendar" :initial-loading="calendarInitialLoading" :busy="busy" :save-event="calendarPanel.save" :remove-event="calendarPanel.remove" @add-project="openCalendarProjectDialog" @open-note="openCalendarNote" @move-project="moveCalendarProject" />
     </section>
     <section v-if="activeSection === 'notes' || activeSection === 'canvases'" class="desktop-mind-page">
-      <RouterView />
+      <RouterView v-slot="{ Component }">
+        <component :is="Component" ref="routedPage" />
+      </RouterView>
     </section>
     <DesktopSchedules v-if="activeSection === 'schedules'" />
     <DesktopSkills v-if="activeSection === 'skills'" />
@@ -281,7 +315,7 @@ onMounted(() => perform(async () => {
     </div>
     </main>
     <DesktopPersonalSettings v-if="personalSettingsMounted" :show="personalSettingsOpen"
-      :connected="connected" :initial-nav="personalSettingsTab" @close="personalSettingsOpen = false" />
+      :connected="connected" :initial-nav="personalSettingsTab" @close="personalSettingsOpen = false" :refresh-imported-data="() => perform(refresh)" />
     <NewProjectModal :show="uiStore.openNewProject" :init-status="uiStore.newProjectInitStatus" @close="uiStore.openNewProject = false; uiStore.newProjectInitStatus = null" @create-error="recordPendingOperation" />
     <ProjectModal v-if="!projectWindowBridge" :project="projectStore.modalProject" @close="projectStore.closeModal()" />
     <FilePreviewModal :show="!!previewStore.singleFile" :file="previewStore.singleFile" @close="previewStore.close" />
@@ -371,7 +405,7 @@ onMounted(() => perform(async () => {
 .desktop-error { padding: 12px 16px; background: var(--control-bg); border: 1px solid var(--status-danger); border-radius: 8px; }
 @media (max-width: 760px) {
   .desktop-shell { grid-template-columns: 64px minmax(0,1fr); }
-  .desktop-topbar { gap: 8px; margin-right: 8px; padding: 0; }
+  .desktop-topbar { display: flex; align-items: center; gap: 8px; margin-right: 8px; padding: 0; }
   .topbar-search { position: static; width: auto; flex: 1; min-width: 0; transform: none; }
 }
 </style>

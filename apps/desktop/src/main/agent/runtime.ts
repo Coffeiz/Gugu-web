@@ -1,3 +1,5 @@
+import { desktopScheduleImDeliveryTargets, desktopScheduleImPlatforms, desktopScheduleImTarget, ownsDesktopScheduleImTarget, readDesktopScheduleImTargets, type DesktopScheduleImPlatform, type DesktopScheduleImTarget } from '../../../../../packages/core/src/scheduled-tasks/desktop-im.js'
+import { createListScheduledTasksTool } from '../../../../../packages/core/src/agent/tools/scheduled-tasks.js'
 import { appendWorkspaceAgentInstructions } from '../../../../../packages/core/src/agent/context/prompt-format.js'
 import { mcpServiceReminder, type McpToolLookup } from '../../../../../packages/core/src/mcp/tool-directory.js'
 import { createImSendFileTool } from '../../../../../packages/core/src/agent/tools/send-file.js'
@@ -26,6 +28,7 @@ import { createClientDeletePort } from '../../../../../packages/core/src/agent/t
 import type { ProjectFileOverview } from '../../../../../packages/core/src/agent/tools/projects.js'
 import { createDesktopShellTool, desktopHostAuthorization } from '../../../../../packages/core/src/runtime/desktop-shell.js'
 import { createSendEmailTool, createDurableAgentEmailDelivery } from '../../../../../packages/core/src/agent/tools/email.js'
+import { createLocalPreferenceTextFiles } from '../../../../../packages/core/src/preferences/text-files.js'
 import { createDesktopAppearanceService } from '../../../../../packages/core/src/preferences/desktop-appearance.js'
 import { normalizeThemePalette } from '../../../../../packages/core/src/preferences/palette.js'
 import { renderSmtpDraftMessage, sanitizeEmailHtml } from '../../../../../packages/core/src/email/smtp-test.js'
@@ -61,16 +64,17 @@ import { CoreError, dataContext, DEFAULT_LLM_CONTEXT_TOKENS, DEFAULT_LLM_OUTPUT_
 import { stableJson } from '../../../../../packages/core/src/agent/context/history/canonical-history.js'
 import { applyOwnerReflectionOutput } from '../../../../../packages/core/src/agent/memory/owner-reflection.js'
 import { applyImMaintenanceOutput } from '../../../../../packages/core/src/memory/im-maintenance-apply.js'
-import { runContextBranch } from '../../../../../packages/core/src/agent/memory/reflection.js'
+import { PRIVATE_REFLECTION_IDLE_SECONDS, qualifiesReflectionTurn } from '../../../../../packages/core/src/agent/memory/reflection/window.js'
+import { runContextBranch, runPrivateReflectionBranch } from '../../../../../packages/core/src/agent/memory/reflection.js'
 import { dateKeyInTimeZone } from '../../../../../packages/core/src/shared/date-time.js'
 import { contextAccessScopeHash, createCanonicalSourceLoader, readSessionSnapshot } from '../../../../../packages/core/src/agent/context/prepare.js'
 import type { AgentObservationPort } from '../../../../../packages/core/src/agent/observation.js'
 import { agentContextSnapshotPrefix } from '../../../../../packages/core/src/agent/context/builder.js'
-import { buildAgentStaticPrompt, formatAgentMemory } from '../../../../../packages/core/src/agent/context/prompt-format.js'
+import { agentPromptPreferenceFields, buildAgentStaticPrompt, formatAgentMemory } from '../../../../../packages/core/src/agent/context/prompt-format.js'
 import { createAgentCompactionPort, createLazyAgentCompactionPort } from '../../../../../packages/core/src/agent/context/compaction-runtime.js'
 import type { AgentProviderAuxiliaryPorts } from '../../../../../packages/core/src/agent/runtime.js'
 import { buildFixedRequestPrefix } from '../../../../../packages/core/src/agent/context/assemble.js'
-import { formatSqliteAgentOverview, readSqliteAgentOverviewData, readSqliteAgentStylePreferences, type SqliteAgentOverviewData } from '../../../../../packages/core/src/agent/context/sqlite-overview.js'
+import { formatSqliteAgentOverview, readSqliteAgentOverviewData, readSqliteOwnerStylePreferences, readSqliteAgentStylePreferences, type SqliteAgentOverviewData } from '../../../../../packages/core/src/agent/context/sqlite-overview.js'
 import { createSqliteAgentSessionSource } from '../../../../../packages/core/src/agent/context/sqlite-source.js'
 import type { RagQueryEmbeddingSettings } from '../../../../../packages/core/src/agent/rag/query-embedding.js'
 import type { CanonicalRunContext, Json, RunCheckpoint, RunIdentity, PreparedToolDefinition } from '../../../../../packages/core/src/agent/models.js'
@@ -194,12 +198,16 @@ function maskEmailAddress(value: string): string {
 
 export { CoreError as DesktopAgentCoreError }
 
+import { createDesktopScheduledAgent } from '../schedules/agent.js'
+import { createDesktopScheduledImContext } from '../schedules/context.js'
+
 export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: string, ownerId: string,
   notify: (sessionId: number, runId: string) => void,
   hostRequest: (method: string, params: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>,
   memoryFiles?: DesktopMemoryFiles, observation?: AgentObservationPort,
   promptDirectory = fileURLToPath(new URL('../agent-prompts/', import.meta.url))) {
   const { db } = core
+  const preferenceFiles = createLocalPreferenceTextFiles(dirname(databasePath))
   const agentWorkspaces = createAgentWorkspaceQueries(createDesktopWorkspaceReadPort(hostRequest))
   let disabledAgentTools: Promise<ReadonlySet<string>> | undefined
   async function configuredAgentTools(names: readonly string[], signal?: AbortSignal) {
@@ -325,6 +333,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
   const responding = new Set<number>()
   const reflectionAbort = new AbortController()
   let reflectionRecovery: Promise<void> | undefined
+  let reflectionTimer: ReturnType<typeof setTimeout> | undefined
   let builtinSkills: Promise<BuiltinSkillDefinition[]> | undefined
   let embeddingGeneration = 0
   let memoryEmbedding: {
@@ -399,9 +408,12 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
   const ragWorkerAbort = new AbortController()
   ragWorkerTask = runRagWorker(ragWorkerAbort.signal)
 
+  const scheduledImContext = createDesktopScheduledImContext({ db, ownerId, memoryFiles, hostRequest })
+  const currentScheduledIm = scheduledImContext.authorizeIm
+
   async function prepareRunRuntime(sessionId: number | null, config: ProviderConfig | null, embedding?: RagQueryEmbeddingSettings, interactive = false, resumeIdentity?: RunIdentity, modelId?: string, locale = 'zh-CN') {
-    const imSession = sessionId === null ? null : (await sql<{ chat_type: string | null }>`
-      SELECT s.chat_type FROM conversation_sessions s JOIN desktop_im_sessions im
+    const imSession = sessionId === null ? null : (await sql<{ chat_type: string | null; platform: string }>`
+      SELECT s.chat_type,im.platform FROM conversation_sessions s JOIN desktop_im_sessions im
         ON im.session_id=s.id AND im.owner_id=s.user_id
       WHERE s.id=${sessionId} AND s.user_id=${dataContext(ownerId).ownerId.replaceAll('-', '')}
     `.execute(db)).rows[0]
@@ -453,19 +465,16 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       contextScopeKey: groupChat ? 'desktop-im-group' : 'desktop-overview',
     }
     if (config && !groupChat) await memoryFiles?.flush()
-    const allBuiltins = await (builtinSkills ??= createBuiltinSkillDefinitions(createBundledSkillDocuments(), new AbortController().signal))
-    const builtins = imSession ? allBuiltins.filter(skill => skill.key !== 'smart-view') : allBuiltins
+    const builtins = await (builtinSkills ??= createBuiltinSkillDefinitions(createBundledSkillDocuments(), new AbortController().signal))
     const preferences = await createDesktopAppearanceService(createKyselyPreferenceDocumentStore(db, 'sqlite')).get(ownerId)
     let timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
     const agentClock = { now: () => new Date(), timezone: async () => timezone }
     const prompts = readAgentPromptSet(promptDirectory)
+    const smartView = imSession ? undefined : readAgentPrompt('smart_view.md', promptDirectory)
     const buildSystemPrompt = (preferences: Record<string, Json>) => buildAgentStaticPrompt({
-      ...prompts, skillIndex: formatBuiltinSkillIndex(builtins), imChat: Boolean(imSession),
-      locale: selection.locale, timezone, now: new Date(),
-      customReplyStyleEnabled: preferences.custom_reply_style_enabled === true,
-      customReplyStyle: typeof preferences.custom_reply_style === 'string' ? preferences.custom_reply_style : undefined,
-      personalityPreferenceEnabled: preferences.personality_preference_enabled === true,
-      personalityPreference: typeof preferences.personality_preference === 'string' ? preferences.personality_preference : undefined,
+      ...prompts, smartView, skillIndex: formatBuiltinSkillIndex(builtins), imChat: Boolean(imSession),
+      locale: selection.locale, timezone, now: new Date(), groupChat,
+      ...agentPromptPreferenceFields(preferences),
     })
     let systemPrompt = buildSystemPrompt(stylePreferences)
     const request = (snapshot: string, prompt = systemPrompt) => ({
@@ -682,7 +691,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       diagnostic: line => { void hostRequest('agent.log.append', { line, diagnostic: true }).catch(() => {}) },
       fingerprint: value => createHmac('sha256', secret).update(value).digest('hex'),
     })
-    const skillMetadata = createSkillMetadataReader(db, 'sqlite', allBuiltins)
+    const skillMetadata = createSkillMetadataReader(db, 'sqlite', builtins)
     const skills = await createAgentSkillRuntimePorts({
       ownerId, builtins, listUser: skillMetadata,
       readUser: createUserSkillReader(db, 'sqlite'),
@@ -1055,6 +1064,92 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         } }
       },
     }) : undefined
+    async function privateScheduleImTarget(platform: DesktopScheduleImPlatform, identity: RunIdentity, signal?: AbortSignal,
+      database: Kysely<Database> = db) {
+      const target = desktopScheduleImTarget.safeParse(await hostRequest('agent.schedules.im.privateTarget', { platform }, signal))
+      return target.success && await ownsDesktopScheduleImTarget<Database>(database, identity.ownerId, target.data) ? target.data : null
+    }
+    async function scheduleImTarget(identity: RunIdentity, signal?: AbortSignal, database: Kysely<Database> = db) {
+      const platform = imSession?.platform
+      if (platform !== 'qq' && platform !== 'feishu' && platform !== 'telegram' && platform !== 'wechat') return null
+      if (!groupChat) return privateScheduleImTarget(platform, identity, signal, database)
+      const receipt = await desktopImGroupRunEvent(database, identity)
+      if (!receipt) return null
+      const scope = desktopGroupMemoryContext(await hostRequest('agent.im.readGroupMemoryContext', { ...receipt, ownerId }, signal), ownerId)
+      if (!scope?.actor.verifiedOwner || scope.platform !== platform) return null
+      const target = desktopScheduleImTarget.safeParse({
+        platform, botId: scope.botId, chatType: 'group', recipient: scope.chatId, boundUserId: scope.platformUserId,
+      })
+      return target.success ? target.data : null
+    }
+    function writeScheduleTarget(input: Record<string, unknown>) {
+      const { delivery_targets, authorized_tools: _authorizedTools, ...fields } = input
+      const targets = readDesktopScheduleImTargets(delivery_targets, Array.isArray(fields.channels) ? fields.channels : [])
+      return { fields, targets }
+    }
+    const scheduleWrites = core.receipts ? createScheduledTaskWriteTools(core, {
+      reminderOnly: !imSession,
+      supportedChannels: ['web', ...desktopScheduleImPlatforms],
+      capabilities: { workspaceSupported: false, filesystemAuthorizationEnabled: false },
+      async authorize(tx, identity, input, signal) {
+        if (input.workspace_id !== undefined || input.email_attachment_file_ids !== undefined || input.authorized_tools !== undefined
+          || input.filesystem_authorized !== undefined || input.channels?.some(channel => channel !== 'web' && channel !== 'qq' && channel !== 'feishu' && channel !== 'telegram' && channel !== 'wechat'))
+          return false
+        if (!await authorizeWrite(tx, identity, signal)) return false
+        if (!groupChat) return input.delivery_mode !== 'current_group'
+        const target = await scheduleImTarget(identity, signal, tx)
+        if (!target || input.delivery_mode === 'owner_private' || 'task' in input || 'task_ids' in input) return false
+        if ('task_id' in input && typeof input.task_id === 'number') {
+          const task = await desktopScheduledTasks<Database>(tx, identity.ownerId).get(input.task_id)
+          const current = readDesktopScheduleImTargets(task.delivery_targets, task.channels).find(candidate => candidate.chatType === 'group')
+          return stableJson(current) === stableJson(target)
+        }
+        return true
+      },
+      async delivery(tx, identity, intent, signal) {
+        const channelList = intent.channels
+        const selected = channelList?.filter(channel => channel === 'qq' || channel === 'feishu' || channel === 'telegram' || channel === 'wechat') ?? []
+        const bound = imSession && (groupChat || !selected.length) ? await scheduleImTarget(identity, signal, tx) : null
+        if ((groupChat || intent.mode === 'current_group') && bound?.chatType !== 'group')
+          throw new ScheduledTaskReferenceError('当前 IM 对话没有可用的群任务投递授权')
+        if (intent.mode === 'owner_private' && !bound && !selected.length)
+          throw new ScheduledTaskReferenceError('请指定可用的私聊投递渠道')
+        const channels = [...new Set([...selected, ...(bound ? [bound.platform] : [])])]
+        if (!channels.length) return {}
+        const targets: DesktopScheduleImTarget[] = []
+        for (const platform of channels) {
+          const target = bound?.platform === platform ? bound : await privateScheduleImTarget(platform, identity, signal, tx)
+          if (!target || !await currentScheduledIm(target, signal, tx))
+            throw new ScheduledTaskReferenceError('当前 IM 投递目标已失效')
+          targets.push(target)
+        }
+        return {
+          channels: [...channels, ...(channelList?.includes('web') ? ['web'] : [])],
+          delivery_targets: desktopScheduleImDeliveryTargets(targets),
+        }
+      },
+      async create(tx, owner, input) {
+        const { fields, targets } = writeScheduleTarget(input)
+        return (await desktopScheduledTasks<Database>(tx, owner).create({ execution_mode: targets.length ? 'instruction' : 'reminder', ...fields }, null, targets)).id
+      },
+      async update(tx, owner, id, patch) {
+        const { fields, targets } = writeScheduleTarget(patch)
+        const tasks = desktopScheduledTasks<Database>(tx, owner)
+        if (!imSession && (fields.execution_mode ?? (await tasks.get(id)).execution_mode) !== 'reminder')
+          throw new ScheduledTaskReferenceError('桌面端请使用提醒模式 execution_mode=reminder')
+        await tasks.update(id, fields, null, targets)
+      },
+      async publish() {},
+    }) : []
+    const groupScheduleList = createListScheduledTasksTool({
+      async list(identity, signal) {
+        const target = await scheduleImTarget(identity, signal)
+        if (!target) return []
+        return (await scheduledTasks.agent(identity.ownerId, signal)).filter(task =>
+          readDesktopScheduleImTargets(task.delivery_targets, task.channels).some(candidate => stableJson(candidate) === stableJson(target)))
+          .map(({ delivery_targets: _target, ...task }) => task)
+      },
+    })
     const registry = createOwnerToolRegistry({
       ...(sendEmail ? { sendEmail } : {}),
       ...(saveAttachment ? { saveAttachment } : {}),
@@ -1207,27 +1302,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       ...(core.receipts && interactive ? {
         scheduledTaskDelete: createScheduledTaskDeleteTool(core, confirmation, async () => {}),
       } : {}),
-      ...(core.receipts ? { scheduledTaskWrites: createScheduledTaskWriteTools(core, {
-        capabilities: { workspaceSupported: false, filesystemAuthorizationEnabled: false },
-        reminderOnly: true,
-        async authorize(tx, identity, input, signal) {
-          if (input.workspace_id !== undefined || input.email_attachment_file_ids !== undefined || input.authorized_tools !== undefined
-            || input.filesystem_authorized !== undefined || input.delivery_mode !== undefined
-            || input.channels?.some(channel => channel !== 'web')) return false
-          return authorizeWrite(tx, identity, signal)
-        },
-        async delivery() { return {} },
-        async create(tx, owner, input) {
-          return (await desktopScheduledTasks<Database>(tx, owner).create(input)).id
-        },
-        async update(tx, owner, id, patch) {
-          const tasks = desktopScheduledTasks<Database>(tx, owner)
-          if ((patch.execution_mode ?? (await tasks.get(id)).execution_mode) !== 'reminder')
-            throw new ScheduledTaskReferenceError('桌面端请使用提醒模式 execution_mode=reminder')
-          await tasks.update(id, patch)
-        },
-        async publish() {},
-      }) } : {}),
+      ...(scheduleWrites.length ? { scheduledTaskWrites: scheduleWrites } : {}),
       notes: createAgentMindReader(db, 'sqlite', resolveDesktopFileReference),
       workspaces: agentWorkspaces,
       ...(core.receipts ? { noteLifecycle: createNoteLifecyclePort(core, async () => {}) } : {}),
@@ -1284,14 +1359,20 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     }
     const groupTools = groupChat ? createToolRegistry({
       tools: [
-        createTimeTool(agentClock),
+        createTimeTool(agentClock), groupScheduleList, ...scheduleWrites,
         createGroupContextSearchTool(createDesktopGroupContextSearch(db, identity => authorizeGroupTool(identity, 'group_context_search'))),
         ...(webSearch ? [webSearch] : []),
         ...(imageSearchAvailable === true ? [similarImageSearch] : []),
         createHttpGetTool(httpGet),
         ...(sendFile ? [sendFile] : []),
       ],
-      authorize: (identity, name) => name === 'get_current_time' ? authorize(identity) : authorizeGroupTool(identity, name),
+      async authorize(identity, name) {
+        if (name === 'get_current_time') return authorize(identity)
+        if (['list_scheduled_tasks', 'create_scheduled_task', 'update_scheduled_task'].includes(name))
+          return await authorize(identity) && (await configuredAgentTools([name])).length === 1
+            && Boolean(await scheduleImTarget(identity))
+        return authorizeGroupTool(identity, name)
+      },
     }) : undefined
     const configuredTools = async (identity: RunIdentity, lookup?: McpToolLookup): Promise<PreparedToolDefinition[]> => {
       if (groupTools) return groupTools.capabilities(identity)
@@ -1335,8 +1416,8 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
           ? data.stylePreferences as Record<string, Json> : {}
         if (groupChat) {
           snapshotContext = formatGroupMemory(data.imMemory)
-          systemPrompt = buildSystemPrompt({})
-          return { systemPrompt, snapshotContext, sessionInfo: { stylePreferences: {} }, userTimezone: data.userTimezone, locale: selection.locale }
+          systemPrompt = buildSystemPrompt(stylePreferences)
+          return { systemPrompt, snapshotContext, sessionInfo: { stylePreferences }, userTimezone: data.userTimezone, locale: selection.locale }
         }
         if (!overviewData || !ownerMemory) throw new CoreError('conflict', '桌面 Agent 上下文尚未准备')
         const knowledgeRows = Array.isArray(data.knowledge)
@@ -1413,16 +1494,17 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     }, observation)
     let provider: AgentProviderAuxiliaryPorts | undefined
     let reflectionWork: Promise<void> = Promise.resolve()
-    async function enqueueReflection(identity: RunIdentity, text: string, modelIdentity: string) {
+    async function enqueueReflection(identity: RunIdentity, text: string, modelIdentity: string, hadTools: boolean) {
       if (!text.trim() || text.length > 1_000_000) return
       const turn = await sessionSource.currentTurn(identity)
-      if (!turn.currentUser) return
+      if (!turn.currentUser || !qualifiesReflectionTurn({ userMessage: turn.currentUser.rawText ?? '', usedTools: hadTools })) return
       const owner = dataContext(identity.ownerId).ownerId.replaceAll('-', '')
       await sql`INSERT INTO desktop_agent_reflection_jobs
         (user_id,session_id,run_id,user_message_id,model_identity,assistant_text,status,attempts,created_at_ms)
         VALUES(${owner},${Number(identity.sessionId)},${identity.runId},${Number(turn.currentUser.persistedMessageId)},
           ${modelIdentity},${text},'queued',0,${Date.now()})
         ON CONFLICT(user_id,session_id,run_id) DO NOTHING`.execute(db)
+      scheduleReflectionRecovery(PRIVATE_REFLECTION_IDLE_SECONDS * 1000)
     }
     async function enqueueImReflection(identity: RunIdentity, text: string, modelIdentity: string) {
       if (!groupChat || !memoryFiles || !text.trim() || text.length > 1_000_000) return
@@ -1633,28 +1715,38 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     async function drainReflections(signal = reflectionAbort.signal) {
       if (!provider) return
       const owner = dataContext(ownerId).ownerId.replaceAll('-', '')
-      const { rows: pending } = await sql<{ run_id: string; session_id: number }>`SELECT j.run_id,j.session_id
-        FROM desktop_agent_reflection_jobs j LEFT JOIN desktop_agent_run_models m
-          ON m.user_id=j.user_id AND m.session_id=j.session_id AND m.run_id=j.run_id
-        WHERE j.user_id=${owner} AND j.session_id=${Number(sessionId)} AND j.model_identity=${selection.modelIdentity}
-          AND m.model_id IS ${modelId ?? null}
-          AND (j.status='queued' OR (j.status='processing' AND j.claimed_at_ms < ${Date.now() - 300_000}))
-        ORDER BY j.created_at_ms,j.run_id`.execute(db)
-      for (const candidate of pending) {
-        signal.throwIfAborted()
-        const claimTime = Date.now()
-        const { rows: [job] } = await sql<{ run_id: string; session_id: number; user_message_id: number;
-          model_identity: string; assistant_text: string; attempts: number }>`UPDATE desktop_agent_reflection_jobs
-          SET status='processing',claimed_at_ms=${claimTime},attempts=attempts+1
-          WHERE user_id=${owner} AND session_id=${candidate.session_id} AND run_id=${candidate.run_id}
-            AND (status='queued' OR (status='processing' AND claimed_at_ms < ${claimTime - 300_000}))
-          RETURNING run_id,session_id,user_message_id,model_identity,assistant_text,attempts`.execute(db)
-        if (!job) continue
+      const claimTime = Date.now()
+      const dueBefore = claimTime - PRIVATE_REFLECTION_IDLE_SECONDS * 1000
+      const { rows: jobs } = await sql<{ run_id: string; session_id: number; user_message_id: number;
+        model_identity: string; assistant_text: string; attempts: number; created_at_ms: number }>`
+        WITH eligible AS MATERIALIZED (
+          SELECT job.run_id FROM desktop_agent_reflection_jobs job
+          WHERE job.user_id=${owner} AND job.session_id=${Number(sessionId)}
+            AND job.model_identity=${selection.modelIdentity} AND job.status='queued'
+            AND (SELECT model_id FROM desktop_agent_run_models m
+              WHERE m.user_id=job.user_id AND m.session_id=job.session_id AND m.run_id=job.run_id) IS ${modelId ?? null}
+            AND NOT EXISTS (SELECT 1 FROM desktop_agent_reflection_jobs newer
+              WHERE newer.user_id=job.user_id AND newer.session_id=job.session_id
+                AND (newer.created_at_ms > ${dueBefore} OR newer.status='processing'))
+        )
+        UPDATE desktop_agent_reflection_jobs
+        SET status='processing',claimed_at_ms=${claimTime},attempts=attempts+1
+        WHERE user_id=${owner} AND session_id=${Number(sessionId)} AND run_id IN (SELECT run_id FROM eligible)
+        RETURNING run_id,session_id,user_message_id,model_identity,assistant_text,attempts,created_at_ms`.execute(db)
+      jobs.sort((left, right) => left.user_message_id - right.user_message_id)
+      const job = jobs.at(-1)
+      if (job) {
+        const jobIds = JSON.stringify(jobs.map(row => row.run_id))
         const identity: RunIdentity = { ownerId, sessionId: String(job.session_id), runId: job.run_id }
         try {
-          const turn = await sessionSource.currentTurn(identity)
-          if (Number(turn.currentUser?.persistedMessageId) !== job.user_message_id || !turn.currentUser)
-            throw new Error('reflection_source_unavailable')
+          const turns = []
+          for (const row of jobs) {
+            const turn = await sessionSource.currentTurn({ ...identity, runId: row.run_id })
+            if (Number(turn.currentUser?.persistedMessageId) !== row.user_message_id || !turn.currentUser)
+              throw new Error('reflection_source_unavailable')
+            turns.push({ userMessage: turn.currentUser.rawText ?? '', assistantReply: row.assistant_text,
+              timestamp: new Date(row.created_at_ms).toISOString() })
+          }
           const snapshot = await readSqliteAgentMemorySnapshot(db, ownerId, undefined, memoryFiles)
           const decode = (key: string, fallback: Json): Json => {
             const raw = snapshot.files[key]
@@ -1668,18 +1760,18 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
           }
           const now = new Date()
           const timeout = AbortSignal.timeout(90_000)
-          const reflection = await runContextBranch({
-            ownerId, sessionId: identity.sessionId, runId: identity.runId,
-            stableSystem: readAgentPrompt('reflection.md', promptDirectory).trim(),
+          const reflection = await runPrivateReflectionBranch({
+            ...identity, stableSystem: readAgentPrompt('reflection.md', promptDirectory).trim(),
             delta: JSON.stringify({ date: dateKeyInTimeZone(now, timezone), userName: '',
-              profile: current.profile, pattern: current.pattern, summary: current.summary,
-              turns: [[turn.currentUser.rawText, job.assistant_text]] }),
-            tools: [], scope: runAccessScope(identity),
-          }, { name: 'reflection', outputMode: 'json', maxRetries: 1, maxOutputTokens: 1024 }, {
+              profile: current.profile, pattern: current.pattern, summary: current.summary, turns }),
+            scope: runAccessScope(identity),
+          }, { outputMode: 'json', maxOutputTokens: 1024 }, {
             provider: provider.branchProvider(job.model_identity), digest, nextId: randomUUID,
             async pauseBeforeRetry() {}, diagnostic: () => {},
-          }, AbortSignal.any([signal, timeout]))
+          }, AbortSignal.any([signal, timeout]), observation, { trigger: 'idle' })
           signal.throwIfAborted()
+          if (reflection.usage && typeof reflection.usage === 'object' && !Array.isArray(reflection.usage) && reflection.usage.incomplete_reason)
+            throw new Error('reflection_output_empty')
           if (!reflection.ok) throw new Error(`reflection_${reflection.reason}`)
           const changes = applyOwnerReflectionOutput({ current, output: reflection.output,
             now: now.getTime(), date: dateKeyInTimeZone(now, timezone), nextId: randomUUID })
@@ -1691,9 +1783,10 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
             if (!owned) return
             const fresh = await readSqliteAgentMemorySnapshot(tx, ownerId, undefined, memoryFiles)
             if (fresh.revision !== snapshot.revision) {
-              await sql`UPDATE desktop_agent_reflection_jobs SET status=${job.attempts >= 3 ? 'failed' : 'queued'},
+              await sql`UPDATE desktop_agent_reflection_jobs SET status=CASE WHEN attempts>=3 THEN 'failed' ELSE 'queued' END,
                 claimed_at_ms=NULL,last_error='stale_memory_snapshot'
-                WHERE user_id=${owner} AND session_id=${job.session_id} AND run_id=${job.run_id}`.execute(tx)
+                WHERE user_id=${owner} AND session_id=${job.session_id} AND run_id IN (SELECT value FROM json_each(${jobIds}))
+                  AND status='processing' AND claimed_at_ms=${claimTime}`.execute(tx)
               return
             }
             for (const [target, value] of Object.entries(changes)) {
@@ -1709,14 +1802,15 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
             if (Object.keys(changes).length)
               await enqueueAgentRagRebuildInTransaction(tx, 'sqlite', ownerId, 'memory')
             await sql`UPDATE desktop_agent_reflection_jobs SET status='completed',claimed_at_ms=NULL,last_error=NULL
-              WHERE user_id=${owner} AND session_id=${job.session_id} AND run_id=${job.run_id}`.execute(tx)
+              WHERE user_id=${owner} AND session_id=${job.session_id} AND run_id IN (SELECT value FROM json_each(${jobIds}))
+                  AND status='processing' AND claimed_at_ms=${claimTime}`.execute(tx)
           })
         } catch (error) {
           const errorCode = signal.aborted ? 'reflection_interrupted' : error instanceof Error && /^reflection_(?:provider_error|output_empty|schema_invalid|source_unavailable)$/u.test(error.message)
             ? error.message : 'reflection_unavailable'
-          await sql`UPDATE desktop_agent_reflection_jobs SET status=${job.attempts >= 3 ? 'failed' : 'queued'},
+          await sql`UPDATE desktop_agent_reflection_jobs SET status=CASE WHEN attempts>=3 THEN 'failed' ELSE 'queued' END,
             claimed_at_ms=NULL,last_error=${errorCode}
-            WHERE user_id=${owner} AND session_id=${job.session_id} AND run_id=${job.run_id}
+            WHERE user_id=${owner} AND session_id=${job.session_id} AND run_id IN (SELECT value FROM json_each(${jobIds}))
               AND status='processing' AND claimed_at_ms=${claimTime}`.execute(db)
         }
       }
@@ -1778,6 +1872,12 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         async load(identity, signal) {
           boundIdentity = identity
           if (groupTools) {
+            stylePreferences = await readSqliteAgentStylePreferences(db, identity, signal, preferenceFiles, true)
+            if (stylePreferences.group_personality_preference_enabled) {
+              const fingerprint = digest(stylePreferences)
+              contextRevision = Number.parseInt(fingerprint.slice(0, 12), 16)
+              selection.contextScopeKey = `desktop-im-group:${fingerprint}`
+            }
             const loaded = await source.load(identity, signal)
             const tools = await configuredTools(identity)
             const memberReminder = await readMemberReminder(identity, signal)
@@ -1806,18 +1906,10 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
           ownerMemory = memory
           memoryRevision = revision
           overviewData = await readSqliteAgentOverviewData(db, identity, timezone, signal)
-          stylePreferences = await readSqliteAgentStylePreferences(db, identity, signal)
+          stylePreferences = await readSqliteAgentStylePreferences(db, identity, signal, preferenceFiles)
           if (selection.contextPolicy.loadOwnerContext) {
             if (!await authorizeContext(identity)) throw new CoreError('conflict', '当前运行无权读取 IM 渠道')
-            const snapshot: unknown = await hostRequest('agent.im.snapshot', {}, signal)
-            if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot))
-              throw new CoreError('storage_error', '桌面 IM 渠道状态无效')
-            const record = snapshot as Record<string, unknown>
-            imChannels = Object.fromEntries(['feishu', 'qq', 'wechat', 'telegram'].map(platform => {
-              const enabled = record[platform]
-              if (typeof enabled !== 'boolean') throw new CoreError('storage_error', '桌面 IM 渠道状态无效')
-              return [platform, enabled]
-            }))
+            imChannels = await readImChannels(signal)
           }
           contextRevision = Number.parseInt(digest([revision, overviewData, filesOverview, stylePreferences, imChannels, timezone]).slice(0, 12), 16)
           selection.contextScopeKey = `desktop-overview:${contextRevision}`
@@ -1868,8 +1960,8 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         },
         compaction, finalization: { complete: async input => {
           if (groupChat) await enqueueImReflection(input.identity, input.text, input.modelIdentity)
-          else await enqueueReflection(input.identity, input.text, input.modelIdentity)
-          reflectionWork = reflectionWork.then(() => drainReflections()).then(() => memoryFiles?.flush()).catch(() => {})
+          else await enqueueReflection(input.identity, input.text, input.modelIdentity, input.hadTools)
+          if (groupChat) reflectionWork = reflectionWork.then(() => drainReflections()).then(() => memoryFiles?.flush()).catch(() => {})
         } }, currentRequest: () => null,
         stageContinuation: unavailable, releaseContinuations: async () => {}, diagnoseCompactionFailure: () => {},
       },
@@ -1983,7 +2075,102 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     return true
   }
 
+  async function readImChannels(signal?: AbortSignal) {
+    const snapshot: unknown = await hostRequest('agent.im.snapshot', {}, signal)
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot))
+      throw new CoreError('storage_error', '桌面 IM 渠道状态无效')
+    const record = snapshot as Record<string, unknown>
+    return Object.fromEntries(['feishu', 'qq', 'wechat', 'telegram'].map(platform => {
+      const enabled = record[platform]
+      if (typeof enabled !== 'boolean') throw new CoreError('storage_error', '桌面 IM 渠道状态无效')
+      return [platform, enabled]
+    }))
+  }
+
+  const scheduledAgent = createDesktopScheduledAgent({
+    core, promptDirectory, observation, filterTools: configuredAgentTools,
+    model: () => hostRequest('agent.schedules.model', {}) as Promise<ProviderConfig>,
+    ...scheduledImContext,
+    async deliverIm(target, text) { await hostRequest('agent.schedules.im.deliver', { target, text }, AbortSignal.timeout(30_000)) },
+    loadGroupStyle: (identity, signal) => readSqliteOwnerStylePreferences(db, identity.ownerId, signal, preferenceFiles, true),
+    contextData: {
+      loadImChannels: (_identity, signal) => readImChannels(signal),
+      loadStylePreferences: (identity, signal) => readSqliteOwnerStylePreferences(db, identity.ownerId, signal, preferenceFiles),
+      async loadMemory(identity, signal, query = '') {
+        const active = signal ?? new AbortController().signal
+        await memoryFiles?.flush()
+        const embedding = await hostRequest('agent.memory.resolveEmbedding', {}, active) as RagQueryEmbeddingSettings | null
+        return (await readSqliteAgentMemory(db, identity.ownerId, query, active, embedding ?? undefined,
+          memoryFiles, scheduledAgentProxy)).memory
+      },
+    },
+    resolveProxy: scheduledAgentProxy,
+  })
+  async function scheduledAgentProxy(url: URL, signal?: AbortSignal) {
+    const preferences = await createDesktopAppearanceService(createKyselyPreferenceDocumentStore(db, 'sqlite')).get(ownerId)
+    return preferences.useSystemProxy
+      ? (await hostRequest('network.resolveProxy', { origin: url.origin }, signal) as ProxyEndpoint | null) ?? undefined
+      : undefined
+  }
+  // 新回合唤醒闲置调度。认领时仍从持久化记录核对整段会话的闲置时间。
+  function scheduleReflectionRecovery(delay: number) {
+    if (reflectionTimer || reflectionAbort.signal.aborted) return
+    reflectionTimer = setTimeout(() => {
+      reflectionTimer = undefined
+      resumeReflections()
+    }, delay)
+    reflectionTimer.unref()
+  }
+
+  function resumeReflections() {
+    if (reflectionRecovery || reflectionAbort.signal.aborted) return
+    const signal = reflectionAbort.signal
+    reflectionRecovery = (async () => {
+      const owner = dataContext(ownerId).ownerId.replaceAll('-', '')
+      const { rows } = await sql<{ session_id: number; model_identity: string; model_id: string | null }>`
+        SELECT DISTINCT jobs.session_id,jobs.model_identity,m.model_id FROM (
+          SELECT user_id,session_id,run_id,model_identity FROM desktop_agent_reflection_jobs WHERE user_id=${owner} AND status='queued'
+          UNION ALL
+          SELECT owner_id AS user_id,session_id,run_id,model_identity FROM desktop_im_reflection_jobs WHERE owner_id=${owner} AND status='queued'
+        ) jobs LEFT JOIN desktop_agent_run_models m
+          ON m.user_id=jobs.user_id AND m.session_id=jobs.session_id AND m.run_id=jobs.run_id
+        ORDER BY jobs.session_id,jobs.model_identity,m.model_id`.execute(db)
+      for (const row of rows) {
+        signal.throwIfAborted()
+        try {
+          const config = await hostRequest('agent.memory.resolveReflectionModel', { modelIdentity: row.model_identity, modelId: row.model_id }, signal) as ProviderConfig | null
+          if (!config || reflectionModelIdentity(config) !== row.model_identity) continue
+          const { agent, recoverReflections } = await createRunRuntime(row.session_id, config, undefined, false, undefined, row.model_id ?? undefined)
+          try { await recoverReflections(signal); await memoryFiles?.flush() }
+          finally { await agent.close() }
+        } catch {
+          signal.throwIfAborted()
+        }
+      }
+    })().catch(() => {}).finally(async () => {
+      reflectionRecovery = undefined
+      if (reflectionAbort.signal.aborted) return
+      const { rows: [pending] } = await sql<{ latest: number | null }>`
+        SELECT MIN(latest) AS latest FROM (
+          SELECT MAX(created_at_ms) AS latest FROM desktop_agent_reflection_jobs
+          WHERE user_id=${dataContext(ownerId).ownerId.replaceAll('-', '')}
+          GROUP BY session_id HAVING SUM(status='queued') > 0
+        )`.execute(db).catch(() => ({ rows: [] }))
+      if (pending?.latest != null) {
+        const remaining = pending.latest + PRIVATE_REFLECTION_IDLE_SECONDS * 1000 - Date.now()
+        scheduleReflectionRecovery(remaining > 0 ? remaining : 30_000)
+      }
+    })
+  }
+
   return {
+    async runScheduledInstruction(...args: Parameters<typeof scheduledAgent>) {
+      const result = scheduledAgent(...args)
+      const done = result.then(() => {}, () => {})
+      runTasks.add(done)
+      try { return await result }
+      finally { runTasks.delete(done) }
+    },
     async listBuiltinTools() {
       const prepared = await prepareRunRuntime(null, null, undefined, true)
       if (prepared.kind !== 'catalog') throw new CoreError('invalid_request', 'Agent 工具目录无效')
@@ -2009,33 +2196,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         signal.aborted ? Promise.resolve({ kind: 'unknown' }) : recovery.tools.reconcile(call, identity),
       checkpoint => resumeCheckpoint(checkpoint, signal))
     },
-    resumeReflections() {
-      if (reflectionRecovery || reflectionAbort.signal.aborted) return
-      const signal = reflectionAbort.signal
-      reflectionRecovery = (async () => {
-        const owner = dataContext(ownerId).ownerId.replaceAll('-', '')
-        const { rows } = await sql<{ session_id: number; model_identity: string; model_id: string | null }>`
-          SELECT DISTINCT jobs.session_id,jobs.model_identity,m.model_id FROM (
-            SELECT user_id,session_id,run_id,model_identity FROM desktop_agent_reflection_jobs WHERE user_id=${owner} AND status='queued'
-            UNION ALL
-            SELECT owner_id AS user_id,session_id,run_id,model_identity FROM desktop_im_reflection_jobs WHERE owner_id=${owner} AND status='queued'
-          ) jobs LEFT JOIN desktop_agent_run_models m
-            ON m.user_id=jobs.user_id AND m.session_id=jobs.session_id AND m.run_id=jobs.run_id
-          ORDER BY jobs.session_id,jobs.model_identity,m.model_id`.execute(db)
-        for (const row of rows) {
-          signal.throwIfAborted()
-          try {
-            const config = await hostRequest('agent.memory.resolveReflectionModel', { modelIdentity: row.model_identity, modelId: row.model_id }, signal) as ProviderConfig | null
-            if (!config || reflectionModelIdentity(config) !== row.model_identity) continue
-            const { agent, recoverReflections } = await createRunRuntime(row.session_id, config, undefined, false, undefined, row.model_id ?? undefined)
-            try { await recoverReflections(signal); await memoryFiles?.flush() }
-            finally { await agent.close() }
-          } catch {
-            signal.throwIfAborted()
-          }
-        }
-      })().catch(() => {}).finally(() => { reflectionRecovery = undefined })
-    },
+    resumeReflections,
     invalidateEmbedding() {
       embeddingGeneration++
       memoryEmbedding?.controller.abort()
@@ -2151,6 +2312,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     },
     async close() {
       reflectionAbort.abort()
+      if (reflectionTimer) clearTimeout(reflectionTimer)
       await reflectionRecovery
       ragWorkerStopped = true
       ragWorkerAbort.abort(new Error('桌面 RAG Worker 已停止'))

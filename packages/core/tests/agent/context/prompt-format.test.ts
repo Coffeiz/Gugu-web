@@ -1,3 +1,4 @@
+import { readAgentPrompt } from '../../../src/agent/context/prompts.js'
 import { describe, expect, it } from 'vitest'
 import { agentCurrentDate, agentCurrentTimeReminder, asAgentContextRecord, buildAgentDynamicSnapshot, buildAgentStaticPrompt, formatAgentMemory, formatAgentProjects, formatAgentSource } from '../../../src/agent/index.js'
 
@@ -11,11 +12,15 @@ describe('共享 Agent 提示词和上下文格式', () => {
     expect(value).not.toContain('默认人格'); expect(value).not.toContain('旧段落'); expect(value).not.toContain('00:30')
   })
 
-  it('仅在当前渠道为 IM 时注入智能界面限制，私聊和群聊都适用', () => {
-    const base = { base: '基础提示', persona: '', skills: '', policy: '', skillIndex: '', timezone: 'UTC', now: new Date('2026-01-01T00:00:00Z') }
-    expect(buildAgentStaticPrompt(base)).not.toContain('当前会话是即时通讯')
+  it('非 IM 注入智能界面生成规范，IM 私聊和群聊只注入渠道限制', () => {
+    const base = { base: '基础提示', persona: '', skills: '', policy: '', skillIndex: '', smartView: readAgentPrompt('smart_view.md'), timezone: 'UTC', now: new Date('2026-01-01T00:00:00Z') }
+    const web = buildAgentStaticPrompt(base)
+    expect(web).toContain(base.smartView.trim())
+    expect(web).not.toContain('当前会话是即时通讯')
     for (const groupChat of [false, true]) {
-      expect(buildAgentStaticPrompt({ ...base, imChat: true, groupChat })).toContain('不输出 gugu-ui 围栏')
+      const im = buildAgentStaticPrompt({ ...base, imChat: true, groupChat })
+      expect(im).toContain('不输出 gugu-ui 围栏')
+      expect(im).not.toContain('## 输出格式')
     }
   })
 

@@ -700,6 +700,30 @@ describe('useChatStream 展示事件与生命周期', () => {
     expect(options.messages.value.some(message => message.text.includes('没有收到回复'))).toBe(false)
   })
 
+  it('切到空白新对话后，旧连接结束也不插入空回复提示', async () => {
+    const options = createOptions([])
+    let viewGeneration = 0
+    options.getViewGeneration = () => viewGeneration
+    const stream = useChatStream(options)
+    const fetchStarted = Promise.withResolvers<void>()
+    const response = Promise.withResolvers<Response>()
+    vi.stubGlobal('fetch', vi.fn(() => {
+      fetchStarted.resolve()
+      return response.promise
+    }))
+    options.inputText.value = '合成消息'
+    const sending = stream.send()
+    await fetchStarted.promise
+
+    viewGeneration++
+    options.sessionId.value = null
+    options.messages.value = []
+    response.resolve(sseResponse([{ type: 'done' }]))
+    await sending
+
+    expect(options.messages.value).toEqual([])
+  })
+
   it('取消接口迟到失败时不覆盖已经到达的正常终态', async () => {
     const options = createOptions([])
     const stream = useChatStream(options)

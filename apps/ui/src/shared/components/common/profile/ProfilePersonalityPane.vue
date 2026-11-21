@@ -9,7 +9,7 @@
           <span class="pm-field-hint">{{ t('personalityUi.hint') }}</span>
         </div>
         <div class="personality-toggle">
-          <ToggleSwitch :model-value="enabled" :disabled="saving || !hasContent" :aria-label="t('personalityUi.enable')" @update:model-value="onToggle" />
+          <ToggleSwitch :model-value="enabled" :disabled="saving" :aria-label="t('personalityUi.enable')" @update:model-value="onToggle" />
           <span class="personality-enabled-label">{{ enabled ? t('personalityUi.enabled') : t('personalityUi.disabled') }}</span>
         </div>
       </div>
@@ -22,7 +22,7 @@
         <div class="personality-file-actions">
           <input ref="fileInput" class="personality-file-input" type="file" accept=".md,text/markdown" @change="onFileSelected" />
           <button type="button" class="pm-text-button" :disabled="saving" @click="fileInput?.click()">{{ t('personalityUi.upload') }}</button>
-          <button type="button" class="pm-text-button" :disabled="saving" @click="openEditor">{{ t('personalityUi.edit') }}</button>
+          <button type="button" class="pm-text-button" :disabled="saving" @click="openEditor()">{{ t('personalityUi.edit') }}</button>
         </div>
       </div>
       <div v-if="error || status" class="personality-status" :class="{ error: !!error }">{{ error || status }}</div>
@@ -31,7 +31,7 @@
     <div class="personality-heading">
       <div class="pm-field-desc"><span class="pm-field-name">{{ t('personalityUi.customStyle') }}</span><span class="pm-field-hint">{{ t('personalityUi.customStyleHint') }}</span></div>
       <div class="personality-toggle">
-        <ToggleSwitch :model-value="customEnabled" :disabled="customSaving || !hasCustomStyle" :aria-label="t('personalityUi.customStyleEnable')" @update:model-value="toggleCustomStyle" />
+        <ToggleSwitch :model-value="customEnabled" :disabled="customSaving" :aria-label="t('personalityUi.customStyleEnable')" @update:model-value="toggleCustomStyle" />
         <span class="personality-enabled-label">{{ customEnabled ? t('personalityUi.enabled') : t('personalityUi.disabled') }}</span>
       </div>
     </div>
@@ -44,7 +44,7 @@
       <div class="personality-file-actions">
         <input ref="customFileInput" class="personality-file-input" type="file" accept=".md,.txt,text/markdown,text/plain" @change="onCustomFileSelected" />
         <button type="button" class="pm-text-button" :disabled="customSaving" @click="customFileInput?.click()">{{ t('personalityUi.upload') }}</button>
-        <button type="button" class="pm-text-button" :disabled="customSaving" @click="openCustomEditor">{{ t('personalityUi.edit') }}</button>
+        <button type="button" class="pm-text-button" :disabled="customSaving" @click="openCustomEditor()">{{ t('personalityUi.edit') }}</button>
       </div>
     </div>
     <div v-if="customError || customStatus" class="personality-status" :class="{ error: !!customError }">{{ customError || customStatus }}</div>
@@ -73,19 +73,21 @@ const customFileInput = ref<HTMLInputElement | null>(null)
 const hasCustomStyle = computed(() => !!prefsStore.customReplyStyle.trim())
 const customCharacterCount = computed(() => Array.from(prefsStore.customReplyStyle).length)
 
-function openCustomEditor() {
+function openCustomEditor(enableOnSave = false) {
   customStatus.value = ''; customError.value = ''
   previewStore.openVirtual(
     { id: -2, displayName: 'reply-style', ext: 'MD', size: `${customCharacterCount.value} 字符` },
     prefsStore.customReplyStyle,
-    saveCustomDocument,
+    content => saveCustomDocument(content, enableOnSave),
   )
 }
 
-async function saveCustomDocument(content: string) {
+async function saveCustomDocument(content: string, enableOnSave: boolean) {
   customSaving.value = true; customError.value = ''; customStatus.value = ''
   try {
     await prefsStore.saveCustomReplyStyle(content)
+    if (enableOnSave && content.trim()) await prefsStore.saveCustomReplyStyleEnabled(true)
+    customEnabled.value = prefsStore.customReplyStyleEnabled && hasCustomStyle.value
     customStatus.value = t('personalityUi.saved')
   } catch (err) {
     customError.value = err instanceof Error ? err.message : t('personalityUi.saveFailed')
@@ -108,6 +110,7 @@ async function onCustomFileSelected(event: Event) {
   } finally { customSaving.value = false }
 }
 async function toggleCustomStyle(value: boolean) {
+  if (value && !hasCustomStyle.value) { openCustomEditor(true); return }
   const previous = customEnabled.value
   customEnabled.value = value
   customSaving.value = true; customError.value = ''; customStatus.value = ''
@@ -128,17 +131,18 @@ const hasContent = computed(() => !!prefsStore.personalityPreference.trim())
 const characterCount = computed(() => Array.from(prefsStore.personalityPreference).length)
 
 function syncFromStore() { enabled.value = prefsStore.personalityPreferenceEnabled }
-function openEditor() {
+function openEditor(enableOnSave = false) {
   status.value = ''; error.value = ''
   previewStore.openVirtual(
     { id: -1, displayName: 'persona', ext: 'MD', size: `${characterCount.value} 字符` },
     prefsStore.personalityPreference,
-    saveDocument,
+    content => saveDocument(content, enableOnSave),
   )
 }
 
-async function saveDocument(content: string) {
-  await prefsStore.savePersonalityPreference(content, enabled.value)
+async function saveDocument(content: string, enableOnSave: boolean) {
+  await prefsStore.savePersonalityPreference(content, !!content.trim() && (enableOnSave || enabled.value))
+  syncFromStore()
   status.value = t('personalityUi.saved')
   error.value = ''
 }
@@ -159,6 +163,7 @@ async function onFileSelected(event: Event) {
 }
 
 async function onToggle(value: boolean) {
+  if (value && !hasContent.value) { openEditor(true); return }
   const previous = enabled.value
   if (statusTimer !== null) { window.clearTimeout(statusTimer); statusTimer = null }
   enabled.value = value; saving.value = true; error.value = ''
@@ -172,7 +177,16 @@ async function onToggle(value: boolean) {
   } finally { saving.value = false }
 }
 
-onMounted(async () => { if (desktop || !prefsStore.loaded) await prefsStore.fetch(); syncFromStore(); customEnabled.value = prefsStore.customReplyStyleEnabled })
+onMounted(async () => {
+  try {
+    if (desktop) await prefsStore.fetchAgentPreferences()
+    else if (!prefsStore.loaded) await prefsStore.fetch()
+    syncFromStore()
+    customEnabled.value = prefsStore.customReplyStyleEnabled && hasCustomStyle.value
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : t('personalityUi.saveFailed')
+  }
+})
 onUnmounted(() => { if (statusTimer !== null) window.clearTimeout(statusTimer) })
 </script>
 

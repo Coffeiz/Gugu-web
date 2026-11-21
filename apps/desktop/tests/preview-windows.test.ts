@@ -54,7 +54,7 @@ vi.mock('../src/main/windows.js', () => ({
 }))
 
 import { registerPreviewWindows } from '../src/main/preview-windows.js'
-import { previewWindowChannels } from '../src/shared/preview-window.js'
+import { previewWindowChannels } from '@gugu/desktop-contracts'
 
 beforeEach(() => { state.windows.length = 0; state.handlers.clear() })
 

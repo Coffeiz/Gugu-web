@@ -1,6 +1,42 @@
+import { describeShellActivity, type ShellActivity } from '../agent/shell-activity.js'
 import { BUILTIN_AGENT_TOOL_STATE_LABELS } from '../agent/sessions/state-labels.js'
 import type { AgentRunner, PortableValue, RunEvent, RunIdentity } from '../agent/models.js'
 import { normalizePersistentArtifact } from '../agent/context/history/attachment-refs.js'
+
+const shellLabels: Readonly<Record<ShellActivity['action'], string>> = {
+  directory: '查看目录', read: '读取文件', search: '搜索内容', find: '查找文件',
+  check: '检查与统计', checks: '执行多项检查', git: '查看 Git 状态', git_diff: '查看 Git 差异',
+  git_history: '查看 Git 历史', build: '构建项目', test: '运行测试',
+}
+
+function defaultToolLabel(name: string): string {
+  return Object.hasOwn(BUILTIN_AGENT_TOOL_STATE_LABELS, name) ? BUILTIN_AGENT_TOOL_STATE_LABELS[name]! : name
+}
+
+/** IM 标题只使用动作，不带命令参数或本机文件名。 */
+export function resolveImToolLabel(name: string | undefined, display?: unknown, label?: string): string {
+  const item = display && typeof display === 'object'
+    ? display as { shellActivity?: ShellActivity; toolInput?: unknown; toolResult?: unknown; toolLabelOverride?: unknown }
+    : undefined
+  if (name === 'shell' && item) {
+    const action = item.shellActivity?.action ?? describeShellActivity(item.toolInput, item.toolResult)?.action
+    if (action && Object.hasOwn(shellLabels, action)) return shellLabels[action]
+  }
+  const override = typeof item?.toolLabelOverride === 'string' ? item.toolLabelOverride.trim() : ''
+  return label?.trim() || override || (name === 'shell' ? '执行 Shell 命令' : name?.trim() ? defaultToolLabel(name.trim()) : '工具')
+}
+
+function toolStatusText(label: string, status: unknown): string {
+  if (status === 'success' || status === 'ok') return `✅ ${label}完成`
+  if (status === 'waiting') return `⏸️ ${label}：任务已暂停，等待确认`
+  return `⚠️ ${label}未完成`
+}
+
+export function formatImToolStatus(label: string, status: unknown,
+  sanitize: (label: string) => string = value => value): string {
+  const safe = [...sanitize(label.replace(/\s+/gu, ' '))].slice(0, 80).join('')
+  return toolStatusText(safe, status)
+}
 
 export type ImDeliveryResult = 'accepted' | 'rejected' | 'unknown'
 export type ImDeliveryAcknowledgement = ImDeliveryResult | { readonly outcome: ImDeliveryResult; readonly evidence?: PortableValue }
@@ -137,12 +173,11 @@ function createDelivery<C>(ports: Omit<ImRunDeliveryPorts<C>, 'runner'>) {
     if (ports.sender.toolNotice && event.type === 'tool_done') {
       const { name, status } = event.payload
       if (typeof name === 'string' && /^[\w.:-]{1,120}$/u.test(name) && name !== 'choose_no_reply') {
-        const label = Object.hasOwn(BUILTIN_AGENT_TOOL_STATE_LABELS, name) ? BUILTIN_AGENT_TOOL_STATE_LABELS[name] : name
-        const notice = status === 'success' || status === 'ok' ? `✅ ${label}完成`
-          : status === 'waiting' ? `⏸️ ${label}：任务已暂停，等待确认` : `⚠️ ${label}未完成`
+        const notice = formatImToolStatus(resolveImToolLabel(name, event.payload.display), status)
         try {
           // 提示独立记账，投递不明时不得阻塞后续正文或重复外发。
-          await deliver(identity, `tool-notice:${event.sequence}`, notice,
+          // 保留已登记的摘要指纹，避免旧回执在恢复游标时产生冲突。
+          await deliver(identity, `tool-notice:${event.sequence}`, toolStatusText(defaultToolLabel(name), status),
             deliveryId => ports.sender.toolNotice!({ identity, deliveryId, text: notice }), signal)
         } catch (error) {
           if (!(error instanceof ImRunDeliveryBlocked) || !['unknown', 'rejected'].includes(error.reason)) throw error

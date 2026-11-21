@@ -1,6 +1,7 @@
 import { isPreviewable } from '@/stores/preview'
 import { i18n } from '@/i18n'
-import type { ChatFile } from './chatTypes'
+import type { ChatFile, ChatMessage } from './chatTypes'
+import { toolActivityLabel } from './toolActivity'
 
 // 图片附件缩略图（与文件库共用 useThumbCache）
 export const IMG_EXTS = new Set(['jpg','jpeg','png','gif','webp','avif','bmp','svg','heic','heif'])
@@ -58,15 +59,17 @@ export function displayQQFaces(text: string): string {
   )
 }
 
-export function localizedToolStatusLabel(event: { name?: string; label?: string; custom?: string; input?: unknown }): string {
+export function localizedToolStatusLabel(event: { name?: string; label?: string; custom?: string; input?: unknown; shellActivity?: ChatMessage['shellActivity'] }): string {
   if (typeof event.custom === 'string' && event.custom.trim()) return event.custom.trim()
   let toolName = event.name || ''
-  // call_tool 是固定 Adapter，实际工具名在 input.name 中，和完成后的工具卡片保持一致。
+  // 固定 Adapter 优先读取当前协议字段，兼容旧事件。
   if (toolName === 'call_tool' && event.input && typeof event.input === 'object') {
-    const target = (event.input as { name?: unknown }).name
+    const input = event.input as { tool_name?: unknown; name?: unknown }
+    const target = input.tool_name ?? input.name
     if (typeof target === 'string' && target.trim()) toolName = target.trim()
   }
-  const key = `toolNames.${toolName}`
-  if (toolName && i18n.global.te(key)) return i18n.global.t(key)
-  return event.label || event.name || i18n.global.t('chatUi.toolCall')
+  const input = toolName === 'shell' && event.name === 'call_tool' && event.input && typeof event.input === 'object'
+    ? (event.input as { arguments?: unknown }).arguments ?? event.input : event.input
+  return toolActivityLabel({ toolName, toolLabel: event.label, toolInput: input, shellActivity: event.shellActivity },
+    (key, values) => values ? i18n.global.t(key, values) : i18n.global.t(key), key => i18n.global.te(key))
 }

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { createDesktopGreetingAccess } from '../greeting-access'
 import { createDesktopChatCommandAccess, listDesktopChatCommands } from '../chat-command-access'
 import { encodeVoiceRecording } from '../voice-recording'
 import { provide } from 'vue'
@@ -27,6 +28,7 @@ import {
 } from '../agent-chat'
 
 const imAccess = createDesktopChatImAccess()
+const greetingAccess = createDesktopGreetingAccess()
 const router = useRouter()
 const uiStore = useUiStore()
 const readAgentUiLabels = createAgentUiLabels({
@@ -175,6 +177,7 @@ async function uploadAttachment(file: File, voice = false) {
 <template>
   <GuguChat
     :im-access="imAccess"
+    :greeting-access="greetingAccess"
     :read-ui-labels="readUiLabels"
     :session-access="sessionAccess"
     :automatic-mode-access="automaticModeAccess"

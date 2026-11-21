@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import { afterEach, expect, it, vi } from 'vitest'
 import { DESKTOP_CHANNELS } from '@gugu/core/desktop'
 import type { IpcHost } from '../src/main/ipc/types.js'
+import { createDesktopScheduledIm } from '../src/main/schedules/im.js'
 import { scheduleHandlers } from '../src/main/schedules/ipc.js'
 import { deliverLocalReminder } from '../src/main/schedules/reminders.js'
 
@@ -53,4 +54,67 @@ it('系统未返回投递事件时报未确认，迟到的事件不改变结果'
   const emitter = notification.show.mock.calls[0]![0] as EventEmitter
   expect(emitter.listenerCount('show')).toBe(0)
   expect(emitter.listenerCount('failed')).toBe(0)
+})
+
+it('预览中手动试跑指令返回 Agent 正文，并且不发送系统通知', async () => {
+  vi.useFakeTimers()
+  const request = vi.fn(async (method: string) => {
+    if (method === 'schedules.get') return { ...task, execution_mode: 'instruction' }
+    if (method === 'schedules.instruction.start') return null
+    if (method === 'schedules.instruction.result') return { status: 'success', text: '合成执行结果' }
+    throw new Error('未预期的任务请求')
+  })
+  const handlers = scheduleHandlers({ request } as unknown as IpcHost, deliverLocalReminder, false)
+  const result = handlers[DESKTOP_CHANNELS.scheduleTask]!({ action: 'run', id: task.id })
+  await vi.advanceTimersByTimeAsync(500)
+  await expect(result).resolves.toEqual({ msg: '合成执行结果' })
+  expect(request).toHaveBeenCalledWith('schedules.instruction.start', { id: task.id })
+  expect(notification.show).not.toHaveBeenCalled()
+})
+
+it('主动群提醒使用已绑定的 Bot，取凭据后撤权则不发送', async () => {
+  const target = { platform: 'qq', chatType: 'group', recipient: 'group-synthetic',
+    botId: 'bot-synthetic', boundUserId: 'owner-synthetic' }
+  const bot = { appId: target.botId, appSecret: 'synthetic-secret', userId: target.boundUserId,
+    enabled: true, groupChatEnabled: true }
+  const paths: string[] = []
+  let revokeAfterAuthorization = false
+  const delivery = createDesktopScheduledIm({
+    qq: async () => bot,
+    feishu: async () => null,
+    telegram: async () => null,
+    wechat: async () => null,
+    transport: () => ({
+      async request(request) {
+        const path = new URL(request.url).pathname
+        paths.push(path)
+        const isToken = path.endsWith('/getAppAccessToken')
+        if (isToken && revokeAfterAuthorization) bot.groupChatEnabled = false
+        return { status: 200, headers: {}, body: (async function* () {
+          yield Buffer.from(JSON.stringify(isToken ? { access_token: 'synthetic-access' } : { id: 'synthetic-send' }))
+        })(), cancel() {} }
+      },
+      async close() {},
+    }),
+  })
+  const signal = new AbortController().signal
+  await expect(delivery.deliver({ ...target, boundUserId: 'other-synthetic' }, '提醒正文', signal))
+    .rejects.toMatchObject({ code: 'conflict' })
+  expect(paths).toEqual([])
+  revokeAfterAuthorization = true
+  await expect(delivery.deliver(target, '提醒正文', signal)).rejects.toMatchObject({ code: 'schedule_failed' })
+  expect(paths).toEqual(['/app/getAppAccessToken'])
+})
+
+it('定时任务表单请求桌面渠道，并把所选微信和 QQ 交给任务保存接口', async () => {
+  const fields = { name: '合成提醒', payload: '合成内容', channels: ['wechat', 'qq'] }
+  const request = vi.fn(async (method: string) => {
+    if (method === 'schedules.channels') return { channels: ['wechat', 'qq'] }
+    if (method === 'schedules.create') return { id: 1 }
+    throw new Error('未预期的任务请求')
+  })
+  const handle = scheduleHandlers({ request } as unknown as IpcHost, deliverLocalReminder)[DESKTOP_CHANNELS.scheduleTask]!
+  await expect(handle({ action: 'channels' })).resolves.toEqual({ channels: ['wechat', 'qq'] })
+  await expect(handle({ action: 'create', fields })).resolves.toEqual({ id: 1 })
+  expect(request).toHaveBeenCalledWith('schedules.create', { fields })
 })

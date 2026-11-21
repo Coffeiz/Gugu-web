@@ -3,11 +3,12 @@ import { createWebAgentContextBuilder, type ContextDataPorts } from '../../src/a
 import { createScheduledTaskContextLoader } from '../../src/scheduled-tasks/run-now.js'
 
 const identity = { ownerId: 'owner', sessionId: 'scheduled-task:7', runId: 'run' }
-const task = { id: '7', ownerId: 'owner' }
+const task = { id: '7', ownerId: 'owner', payload: '查询本周项目进度' }
 const model = { modelIdentity: 'model', contextWindow: 8192, accessScopeHash: 'scope' }
 
-function fixture(memoryEnabled = true) {
+function fixture(memoryEnabled = true, group = false) {
   const reads: string[] = []
+  const queries: string[] = []
   function source<T>(name: string, value: T) {
     return async ({ ownerId, sessionId }: { ownerId: string; sessionId: string }) => {
       expect({ ownerId, sessionId }).toEqual({ ownerId: identity.ownerId, sessionId: identity.sessionId })
@@ -22,7 +23,10 @@ function fixture(memoryEnabled = true) {
     loadNotes: source('notes', [{ title: '不应读取的笔记' }]),
     loadFilesOverview: source('files', { total: 1, files: [{ name: '本人文件.txt' }] }),
     loadStylePreferences: source('style', { custom_reply_style: '本人的风格' }),
-    loadMemory: source('memory', { profile: '本人的记忆' }),
+    async loadMemory(target, _signal, query) {
+      queries.push(query ?? '')
+      return source('memory', { profile: '本人的记忆' })(target)
+    },
     loadImChannels: source('channels', { qq: true }),
     loadImMemory: source('im-memory', { profile: '不应从会话读取的群资料' }),
     loadKnowledge: source('knowledge', []),
@@ -36,16 +40,18 @@ function fixture(memoryEnabled = true) {
     },
     sessionInfo: () => ({}),
     systemInMessages: () => false,
-  })
+  }, null, { includeScopedContext: true })
   const load = createScheduledTaskContextLoader({
-    data, builder, now, memoryEnabled, identity, task, model, prompt: '本次定时任务',
+    data, builder, now, memoryEnabled, identity, model, prompt: '本次定时任务',
+    loadGroupStyle: source('group-style', { group_personality_preference: '本群专用风格' }),
+    task: group ? { ...task, groupScope: { ownerId: task.ownerId, platform: 'qq', botId: '1', scopeType: 'group', scopeId: '群一' } } : task,
   })
-  return { load, reads }
+  return { load, reads, queries }
 }
 
 describe('定时任务 owner 上下文', () => {
   it('读取 owner 业务数据，保留一次性投递指令且不加载会话或笔记', async () => {
-    const { load, reads } = fixture()
+    const { load, reads, queries } = fixture()
     const result = await load(identity, new AbortController().signal)
     const { input, ...binding } = result
     expect(binding).toEqual(model)
@@ -59,6 +65,7 @@ describe('定时任务 owner 上下文', () => {
     expect(input.extraReminder).toContain('16:00')
     for (const text of ['本人的项目', '本人的日历', '本人文件.txt', '本人的记忆'])
       expect(input.snapshotText).toContain(text)
+    expect(queries).toEqual([task.payload])
     expect([...reads].sort()).toEqual(['calendar', 'channels', 'files', 'knowledge', 'memory', 'projects', 'style', 'timezone'])
   })
 
@@ -69,6 +76,16 @@ describe('定时任务 owner 上下文', () => {
       await expect(load({ ...identity, ...mismatch }, signal)).rejects.toThrow('定时任务上下文身份不匹配')
     await expect(load(identity, AbortSignal.abort())).rejects.toHaveProperty('name', 'AbortError')
     expect(reads).toEqual([])
+  })
+
+  it('群投递关闭个人记忆、偏好和业务资料读取', async () => {
+    const { load, reads } = fixture(true, true)
+    const { input } = await load(identity, new AbortController().signal)
+    expect(input.snapshotText).not.toContain('本人的记忆')
+    expect(input.systemPrompt).not.toContain('本人的风格')
+    expect(input.systemPrompt).toContain('本群专用风格')
+    expect(input.snapshotText).toContain('QQ：已连')
+    expect(reads).toEqual(['timezone', 'group-style'])
   })
 
   it('关闭长期记忆时跳过记忆读取', async () => {

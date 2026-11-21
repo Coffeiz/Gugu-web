@@ -1,7 +1,7 @@
 import type { RunIdentity } from '@gugu/core/agent'
 import { createAgentCalendarReader, createKyselyCalendarAgentReadPort, createKyselyCalendarReadPort } from '@gugu/core/calendar'
 import type { SqlDataRuntime } from '@gugu/core/data'
-import { createScheduledTaskGroupScopeVerifier, createScheduledTaskRunToolPorts, allowsScheduledMcpTool } from '@gugu/core/scheduled-task-run-now'
+import { createScheduledTaskGroupMemoryAuthorizer, createScheduledTaskGroupScopeVerifier, createScheduledTaskRunToolPorts, allowsScheduledMcpTool } from '@gugu/core/scheduled-task-run-now'
 import { createKyselyScheduledTaskRunNowReader, hasScheduledEmailAuthorization, type ScheduledTaskExecutionPlan, createKyselyScheduledTaskExecutionReader } from '@gugu/core/scheduled-task-run-now-read'
 import { createKyselyScheduledTaskReader, createScheduledTaskQueries } from '@gugu/core/scheduled-task-list'
 import { createAgentSkillRuntimePorts, createSkillMetadataReader, type BuiltinSkillDefinition } from '@gugu/core/skills'
@@ -27,6 +27,7 @@ export function createWebScheduledTaskToolResources(options: {
   const { db, backend } = core
   const readOwned = createKyselyScheduledTaskRunNowReader(db, backend)
   const verifyGroup = createScheduledTaskGroupScopeVerifier(db, backend)
+  const verifyGroupMemory = createScheduledTaskGroupMemoryAuthorizer(db, backend)
   const calendar = createKyselyCalendarReadPort(db, backend)
   const tasks = createScheduledTaskQueries(createKyselyScheduledTaskReader(db, backend),
     () => ({ workspaceSupported: backend === 'postgres', filesystemAuthorizationEnabled: false }))
@@ -81,6 +82,7 @@ export function createWebScheduledTaskToolResources(options: {
       identity: run.identity, task, assertLease: run.assertLease, definitions: enabled, isCurrent,
       email,
       isGroupScopeCurrent: async () => Boolean(await verifyGroup(task)),
+      isGroupMemoryCurrent: async () => Boolean(await verifyGroupMemory(task)),
       mcp: await bindMcp?.(task, run.identity),
     })
   }

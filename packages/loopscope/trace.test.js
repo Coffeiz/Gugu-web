@@ -138,3 +138,28 @@ test('大体积终态快照使用旧 Collector 可读取的 JSON，并保留模�
   assert.equal(snapshot.spans.find(span => span.kind === 'llm')?.input.messages[0].content, prompt)
   assert.equal(snapshot.spans.find(span => span.name === 'Final response')?.output, '最终正文')
 })
+
+test('首轮诊断对比同一会话上一轮运行的最后一次请求', async () => {
+  const sent = []
+  const trace = createLoopScopeTrace({ endpoint: 'http://127.0.0.1:4320', transport: {
+    async request(request) { sent.push(request); return response() },
+  } })
+  const emit = (runId, event, ownerId = identity.ownerId) =>
+    trace.record({ identity: { ...identity, runId, ownerId }, at: tick(), ...event })
+  const input = { system: '合成系统提示', messages: [{ role: 'user', content: '合成召回' }] }
+  const attributes = { provider: 'fixture', protocol: 'anthropic', model: 'fixture', cache_diagnostics: { stable_message_count: 1 } }
+  emit('previous', { kind: 'provider', name: 'request', round: 2, input, attributes })
+  emit('previous', { kind: 'run', name: 'finished', status: 'completed' })
+  emit('next', { kind: 'provider', name: 'request', round: 1,
+    input: { ...input, messages: [...input.messages, { role: 'user', content: '合成追问' }] }, attributes })
+  emit('next', { kind: 'run', name: 'finished', status: 'completed' })
+  emit('different-owner', { kind: 'provider', name: 'request', round: 1, input, attributes }, 'other-owner')
+  await trace.close()
+  const diagnostic = id => sent.filter(item => item.body?.id === id && item.body?.spans)
+    .at(-1)?.body.spans.find(span => span.kind === 'llm')?.input.assembly.canonical_context.prefix_integrity
+  assert.deepEqual(diagnostic('run-next'), {
+    stable: true, basis: 'provider_rows_without_cache_control', previous_run_id: 'run-previous',
+    previous_round: 2, matched_message_count: 1, compared_message_count: 1,
+  })
+  assert.deepEqual(diagnostic('run-different-owner'), { stable: null })
+})

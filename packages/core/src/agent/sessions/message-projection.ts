@@ -1,3 +1,4 @@
+import { describeShellActivity } from '../shell-activity.js'
 import { replacePlatformMentionIds, sanitizeMediaPayload } from '../context/messages/index.js'
 
 export interface AgentMessageProjectionRow {
@@ -50,8 +51,11 @@ function projectAgentTimelineEvent(raw: unknown, messageId: number, index: numbe
   const event = Object.fromEntries(Object.entries(item).filter(([key]) =>
     !(item.kind === 'tool' && (key === 'toolInput' || key === 'toolResult')),
   ))
+  const shellActivity = item.kind === 'tool' && item.toolName === 'shell'
+    ? describeShellActivity(item.toolInput, item.toolResult) : undefined
   return {
     ...event,
+    ...(shellActivity ? { shellActivity } : {}),
     id: `${messageId}:${index}`,
     messageId,
     timelineOrder: item.timelineOrder,

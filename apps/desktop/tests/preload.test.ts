@@ -14,14 +14,17 @@ vi.mock('electron', () => ({
 import '../src/preload/index.js'
 
 it('Preload 只暴露固定业务函数，不透传任意 channel 或 Electron 对象', async () => {
-  const [name, bridge] = spies.expose.mock.calls[0]!
+  const [name, bridge] = spies.expose.mock.calls.find(([key]) => key === 'guguDesktop')!
   expect(name).toBe('guguDesktop')
   expect(Object.keys(bridge).sort()).toEqual([
     'addCanvasItem',
     'agentAttachment',
     'agentModel',
+    'agentPreference',
     'agentSessions',
+    'agentUsage',
     'appearance',
+    'applyBusinessArchive',
     'auxiliaryModel',
     'bringCanvasItemToFront',
     'calendar',
@@ -42,6 +45,7 @@ it('Preload 只暴露固定业务函数，不透传任意 channel 或 Electron �
     'createNote',
     'createProject',
     'createRefNode',
+    'dataInventory',
     'deleteBoardProject',
     'deleteCalendarEvent',
     'deleteCanvas',
@@ -49,6 +53,7 @@ it('Preload 只暴露固定业务函数，不透传任意 channel 或 Electron �
     'deleteCanvasRelation',
     'deleteClient',
     'deleteNote',
+    'exportBusinessArchive',
     'feishuPairing',
     'files',
     'mail',
@@ -58,6 +63,8 @@ it('Preload 只暴露固定业务函数，不透传任意 channel 或 Electron �
     'onScheduleChanged',
     'onboarding',
     'openDroppedFileReference',
+    'personalSmtp',
+    'preflightBusinessArchive',
     'projectBoard',
     'projectDetails',
     'projects',
@@ -91,6 +98,10 @@ it('Preload 只暴露固定业务函数，不透传任意 channel 或 Electron �
     'updateNote',
     'wechatPairing',
   ])
+  await bridge.applyBusinessArchive('synthetic-preflight-id')
+  expect(spies.invoke).toHaveBeenLastCalledWith('gugu:preferences:apply-business-archive', 'synthetic-preflight-id')
+  await bridge.personalSmtp('get')
+  expect(spies.invoke).toHaveBeenLastCalledWith('gugu:preferences:personal-smtp', 'get')
   await bridge.files({ action: 'list', path: '' })
   expect(spies.invoke).toHaveBeenLastCalledWith('gugu:files:request', { action: 'list', path: '' })
   await bridge.search(['样本'])

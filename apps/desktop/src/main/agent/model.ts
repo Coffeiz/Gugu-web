@@ -340,6 +340,15 @@ export function createDesktopAgentModelService(store: ReturnType<typeof createDe
     async resolveRunModel(modelId?: string): Promise<ProviderConfig> {
       return (await resolveRunModelSelection(modelId)).config
     },
+    async completeGreeting(prompt: string, signal: AbortSignal) {
+      const { preset } = await selectChatPreset()
+      signal.throwIfAborted()
+      const greetingId = randomUUID()
+      return withProvider(preset, (config, transport) => completeStandaloneText({
+        config, prompt, maxTokens: 180, signal,
+        identity: { ownerId: 'desktop', sessionId: 'greeting', runId: greetingId },
+      }, { transport, digest }))
+    },
     test(id?: string | null, draft?: unknown) {
       return probe(async () => {
         if (draft !== undefined) return readDraft(draft, 'save', id)

@@ -144,12 +144,14 @@ test('定时执行复核工作区、文件系统授权和群聊归属', { skip: 
       schedule_kind text,start_at timestamptz,end_at timestamptz,channels text,enabled boolean,last_run_at timestamptz,
       last_run_failed boolean,updated_at timestamptz,delivery_targets jsonb,authorized_tools jsonb,email_attachment_file_ids jsonb,
       workspace_id integer,filesystem_authorization_grant_id integer,event_id integer,execution_mode text NOT NULL DEFAULT 'instruction');
+      CREATE TABLE calendar_events(id integer PRIMARY KEY,user_id uuid,title text,date date,time text,deleted_at timestamptz);
       CREATE TABLE workspaces(id integer PRIMARY KEY,user_id uuid,name text,kind text,enabled boolean,
       directory_id integer,folder_id integer,project_id integer);
       CREATE TABLE workspace_directories(id integer PRIMARY KEY,user_id uuid,directory_name text,deleted_at timestamptz);
       CREATE TABLE filesystem_authorization_grants(id integer PRIMARY KEY,user_id uuid,subject_type text,subject_id text,
         scope text,permission text,revoked_at timestamptz,expires_at timestamptz);
-      CREATE TABLE user_bots(id integer PRIMARY KEY,user_id uuid,platform text,enabled boolean);
+      CREATE TABLE user_bots(id integer PRIMARY KEY,user_id uuid,platform text,enabled boolean,group_memory_enabled boolean NOT NULL DEFAULT TRUE,
+        group_chat_enabled boolean NOT NULL DEFAULT TRUE,feishu_group_chat_enabled boolean);
       CREATE TABLE conversation_sessions(id integer PRIMARY KEY,user_id uuid,source text,bot_id text,chat_type text,chat_id text);
       CREATE TABLE conversation_messages(id integer PRIMARY KEY,session_id integer,role text,content text,content_json jsonb,
         conversation_seq integer,platform_user_id text,platform_user_name text,created_at timestamptz);
@@ -179,7 +181,7 @@ test('定时执行复核工作区、文件系统授权和群聊归属', { skip: 
       skillCatalog: { builtins: [], fingerprint: id => `synthetic:${id}` },
     })
     const run = createScheduledTaskRunNowRuntime({
-      db, backend: 'postgres', redis: fakeRedis(), waitSeconds: 1,
+      db, backend: 'postgres', redis: fakeRedis(), waitSeconds: 10,
       filesystemAuthorizationEnabled: () => filesystemEnabled,
       storageRoot,
       execution: {
@@ -239,6 +241,12 @@ test('定时执行复核工作区、文件系统授权和群聊归属', { skip: 
               const deniedMemory = await searchMemory({ query: '群资料' }, candidate)
               assert.ok(deniedMemory.kind === 'completed' && !deniedMemory.successful)
             }
+            await pool.query('UPDATE user_bots SET group_memory_enabled=FALSE WHERE id=5')
+            assert.equal(await exposesGroupSearch(), true)
+            assert.equal(await exposesMemorySearch(), false)
+            const memoryDisabled = await searchMemory()
+            assert.ok(memoryDisabled.kind === 'completed' && !memoryDisabled.successful)
+            await pool.query('UPDATE user_bots SET group_memory_enabled=TRUE WHERE id=5')
             await pool.query('UPDATE user_bots SET enabled=FALSE WHERE id=5')
             assert.equal(await exposesGroupSearch(), false)
             assert.equal(await exposesMemorySearch(), false)
@@ -311,6 +319,7 @@ test('定时执行复核工作区、文件系统授权和群聊归属', { skip: 
     filesystemEnabled = false
     await expectGrant(null)
     filesystemEnabled = true
+    await pool.query("INSERT INTO calendar_events VALUES(1,$1,'合成事件','2026-01-01',NULL,NULL)", [owner])
     await pool.query('UPDATE scheduled_tasks SET event_id=1 WHERE id=2')
     await expectGrant(null)
     await pool.query('UPDATE scheduled_tasks SET event_id=NULL,filesystem_authorization_grant_id=NULL WHERE id=2')
@@ -319,7 +328,7 @@ test('定时执行复核工作区、文件系统授权和群聊归属', { skip: 
     const group = { chat_type: 'group', channel_id: '5', chat_id: 'group-synthetic' }
     await pool.query(`INSERT INTO scheduled_tasks(id,user_id,name,payload,schedule_kind,channels,enabled,delivery_targets)
       VALUES(3,$1,'群提醒','检查事项','cron','qq',TRUE,$2)`, [owner, JSON.stringify({ qq: group })])
-    await pool.query("INSERT INTO user_bots VALUES(5,$1,'qq',TRUE),(6,$1,'qq',TRUE)", [owner])
+    await pool.query("INSERT INTO user_bots(id,user_id,platform,enabled) VALUES(5,$1,'qq',TRUE),(6,$1,'qq',TRUE)", [owner])
     await pool.query("INSERT INTO conversation_sessions VALUES(1,$1,'qq','5','group','group-synthetic')", [other])
     async function writeSummary(scopeOwner: string, botId: string, groupId: string, text: string) {
       const root = join(storageRoot, scopeOwner, '.agent', 'memories', 'im', 'qq', botId, 'groups', groupId)
@@ -336,6 +345,7 @@ test('定时执行复核工作区、文件系统授权和群聊归属', { skip: 
     await writeSummary(owner, '5', 'another-group', '异群范围')
 
     const before = executions
+    const beforeDeliveries = deliveries
     const denied = { 错误: '任务群聊目标不可用，已跳过执行' }
     assert.deepEqual((await run(owner, '3')).result, denied)
     await pool.query("UPDATE conversation_sessions SET user_id=$1,bot_id='6'", [owner])
@@ -349,7 +359,7 @@ test('定时执行复核工作区、文件系统授权和群聊归属', { skip: 
     assert.deepEqual((await run(owner, '3')).result, denied)
     await pool.query('UPDATE scheduled_tasks SET delivery_targets=$1 WHERE id=3', [JSON.stringify({ qq: group })])
     assert.equal(executions, before)
-    assert.equal(deliveries, before)
+    assert.equal(deliveries, beforeDeliveries)
 
     await pool.query(`INSERT INTO conversation_sessions VALUES
       (2,$1,'qq','5','group','group-synthetic'),(3,$2,'qq','6','group','group-synthetic'),
@@ -359,6 +369,14 @@ test('定时执行复核工作区、文件系统授权和群聊归属', { skip: 
       (3,2,'user','异主部署完成',NULL,3,'member-1','小北',NOW()),(4,3,'user','异 Bot 部署完成',NULL,4,'member-1','小北',NOW()),
       (5,4,'user','异群部署完成',NULL,5,'member-1','小北',NOW()),(6,5,'user','异平台部署完成',NULL,6,'member-1','小北',NOW()),
       (7,1,'user','结构化部署完成','{}',7,'member-1','小北',NOW())`)
+    await pool.query("UPDATE scheduled_tasks SET channels='qq,telegram' WHERE id=3")
+    await pool.query('UPDATE scheduled_tasks SET delivery_targets=$1 WHERE id=3',
+      [JSON.stringify({ qq: group, telegram: { chat_type: 'c2c', channel_id: '7', puid: 'synthetic-private' } })])
+    await pool.query('UPDATE user_bots SET group_memory_enabled=FALSE WHERE id=5')
+    assert.deepEqual((await run(owner, '3')).result, { 网页通知: '已发送' })
+    assert.ok(groupScopes.at(-1))
+    assert.doesNotMatch(prompts.at(-1)!, /本群概要|本群资料/u)
+    await pool.query('UPDATE user_bots SET group_memory_enabled=TRUE WHERE id=5')
     verifyGroupSearch = true
     assert.deepEqual((await run(owner, '3')).result, { 网页通知: '已发送' })
     assert.deepEqual(groupScopes.at(-1), { ownerId: owner, platform: 'qq', botId: '5', scopeType: 'group', scopeId: 'group-synthetic' })

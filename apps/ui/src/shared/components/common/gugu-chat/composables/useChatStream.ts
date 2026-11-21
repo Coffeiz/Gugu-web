@@ -99,7 +99,7 @@ export interface ChatRunAccess {
   cancel: (id: number, runId: string) => Promise<{ outcome: string }>
   readState: (id: number) => Promise<{ runId?: string; status: string }>
   readHistory: (id: number, before?: number) => Promise<ChatSessionHistory>
-  createSession: (title: string) => Promise<{ id: number }>
+  createSession: (title: string, greeting?: string) => Promise<{ id: number }>
   resume: (id: number, runId: string, signal: AbortSignal) => ReadableStream<Uint8Array>
   send: (input: {
     id: number; text: string; clientMessageId: string; modelId?: string
@@ -647,7 +647,8 @@ export function useChatStream(options: {
               usedTools.add(item.toolName)
               options.setStatus(item.toolStatus === 'running' || item.toolStatus === 'queued'
                 ? { kind: 'text', label: localizedToolStatusLabel({
-                    name: item.toolName, label: item.toolLabel, custom: item.toolLabelOverride,
+                    name: item.toolName, label: item.toolLabel, custom: item.toolLabelOverride, input: item.toolInput,
+                    shellActivity: item.shellActivity,
                   }) }
                 : options.thinkingItem())
             } else {
@@ -1041,7 +1042,8 @@ export function useChatStream(options: {
       } else if (!streaming.value) {
         optimisticUserMessage = { id: mkid(), role: 'user', text, time: now(),
           clientMessageId, _syncKey: `client:${clientMessageId}`,
-          _createdAt: sentAt,
+          // 首条用户消息的本地时间早于服务端保存问候的时间，等历史回填后再参与时间排序。
+          _createdAt: targetSessionId == null && messages.value[0]?._greeting ? undefined : sentAt,
           references: refs.length ? refs : undefined,
           files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl, img_width: a.img_width, img_height: a.img_height })) : undefined }
         messages.value.push(optimisticUserMessage)
@@ -1111,7 +1113,8 @@ export function useChatStream(options: {
       let streamBody: ReadableStream<Uint8Array>
       if (runAccess) {
         if (ownerSid == null) {
-          const created = await runAccess.createSession(text.slice(0, 48) || i18n.global.t('chatUi.newConversation'))
+          const title = text.slice(0, 48) || i18n.global.t('chatUi.newConversation')
+          const created = await runAccess.createSession(title, greetingForSession || undefined)
           ownerSid = created.id
           if (viewGeneration === options.getViewGeneration() && sessionId.value == null) options.bindNewSessionId(created.id)
           await options.fetchSessions()
@@ -1172,7 +1175,9 @@ export function useChatStream(options: {
       interruptedDelivery = r.interruptedDelivery
       r.usedTools.forEach(t => usedTools.add(t))
       // 用户中途切走了 → 别把兜底气泡塞进当前别的会话视图（回复已在后端，切回会重载）
-      if (!interruptedDelivery && aiIdx === -1 && !r.receivedAssistantContent && !r.detached && !r.aborted && !r.interactionPaused) {
+      if (viewGeneration === options.getViewGeneration() && sessionId.value === resolvedSid
+        && abortCtrl.value === requestController
+        && !interruptedDelivery && aiIdx === -1 && !r.receivedAssistantContent && !r.detached && !r.aborted && !r.interactionPaused) {
         messages.value.push({ id: mkid(), role: 'ai', text: i18n.global.t('chatUi.noReply'), time: now() })
         await options.scrollBottom()
       }

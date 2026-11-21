@@ -1,3 +1,4 @@
+import { cleanGreeting } from '@gugu/core/agent'
 import { parseAgentCommand } from '@gugu/core/agent/commands/menu'
 import { isAgentCommandHelpArgument } from '@gugu/core/agent/commands/help'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -219,6 +220,11 @@ export function agentSessionHandlers(host: IpcHost, model: ReturnType<typeof cre
         }
         if (command.action === 'forgetMemory' && 'query' in command)
           return host.request('agent.memory.forget', { query: command.query, ...('revision' in command ? { revision: command.revision } : {}) })
+        if (command.action === 'greeting' && 'locale' in command) {
+          const signal = AbortSignal.timeout(12_000)
+          const prompt = await host.request<string>('agent.greeting.prompt', { locale: command.locale })
+          return { text: cleanGreeting(await model.completeGreeting(prompt, signal)).slice(0, 2000) }
+        }
         if (command.action === 'readMemory') return host.request('agent.memory.read')
         if (command.action === 'goal' && 'id' in command && 'goalAction' in command)
           return host.request('agent.sessions.goal', { id: command.id, action: command.goalAction })
@@ -272,7 +278,9 @@ export function agentSessionHandlers(host: IpcHost, model: ReturnType<typeof cre
         if (command.action === 'messages' && 'id' in command)
           return host.request('agent.sessions.messages', { id: command.id })
         if (command.action === 'create' && 'title' in command && 'operationId' in command && typeof command.operationId === 'string')
-          return host.request('agent.sessions.create', { title: command.title }, command.operationId)
+          return host.request('agent.sessions.create', {
+            title: command.title, ...('greeting' in command ? { greeting: command.greeting } : {}),
+          }, command.operationId)
       }
       throw new DesktopError('invalid_request', '会话操作无效')
     },

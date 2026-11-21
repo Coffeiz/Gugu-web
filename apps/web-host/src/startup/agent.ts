@@ -12,7 +12,7 @@ import { createSessionWorkspaceTargetReader } from '@gugu/core/workspaces/shell-
 import { resolveFileDirectoryRoot } from '../modules/workspaces/files.js'
 import { readPostgresFolderPathMirrorKey } from '../modules/files/folders/paths.js'
 import { createTerminalWorkspaceMounts, sandboxTarget } from '../modules/terminals/sandbox/mounts.js'
-import { AgentRunError, createFirstTurnTitleWriter, stableJson } from '@gugu/core/agent'
+import { AgentRunError, agentPromptPreferenceFields, createFirstTurnTitleWriter, stableJson } from '@gugu/core/agent'
 import { ProviderStreamSanitizer, stripThinking } from '@gugu/core/providers'
 import { createPostgresTaskExternal } from '../modules/scheduled-tasks/store.js'
 import { createMcpServerConfigLister } from '@gugu/core/mcp/server-list'
@@ -46,6 +46,7 @@ import { createHostCoreUndoOperations } from '../modules/undo/service.js'
 import { createLocalFileUndoStorage } from '../modules/files/storage/undo.js'
 import { createRuntimeUndoTransactionPort } from '@gugu/core/undo'
 import { createKyselyScheduledTaskReader, createScheduledTaskQueries } from '@gugu/core/scheduled-task-list'
+import { createAgentMemoryVectorSearchFactory } from '../modules/agent/memory/vectors.js'
 import { createScheduledTaskContextLoader, scheduledTaskSupportsFileDelivery } from '@gugu/core/scheduled-task-run-now'
 import { createWebScheduledTaskAgentAttempt } from '../modules/scheduled-tasks/run/attempt.js'
 import { createWebScheduledTaskContextSources } from '../modules/scheduled-tasks/run/context.js'
@@ -825,14 +826,10 @@ export async function createAgentServices(options: AgentDependencies) {
         now: Date.now,
         staticPrompt(selection: import('@gugu/core/agent').ContextSourceSelection, _identity: import('@gugu/core/agent').RunIdentity, style: import('@gugu/core/agent').Json = {}, timezone?: string) {
           const prompts = readPrompts()
-          const preferences = style && typeof style === 'object' && !Array.isArray(style) ? style as Record<string, unknown> : {}
           return {
-            ...prompts, skillIndex,
-            locale: selection.locale, groupChat: false,
-            customReplyStyleEnabled: preferences.custom_reply_style_enabled === true,
-            ...(typeof preferences.custom_reply_style === 'string' ? { customReplyStyle: preferences.custom_reply_style } : {}),
-            personalityPreferenceEnabled: preferences.personality_preference_enabled === true,
-            ...(typeof preferences.personality_preference === 'string' ? { personalityPreference: preferences.personality_preference } : {}),
+            ...prompts, smartView: readAgentPrompt('smart_view.md', promptRoot), skillIndex,
+            locale: selection.locale, groupChat: selection.groupChat, imChat: selection.groupChat,
+            ...agentPromptPreferenceFields(style),
             timezone: timezone || serverTimezone,
             now: new Date(),
           }
@@ -843,6 +840,10 @@ export async function createAgentServices(options: AgentDependencies) {
     }
     const scheduledContext = createWebScheduledTaskContextSources({
       pool, storageRoot: config.storageLocalPath, redis: source.redis, serverTimezone,
+      memoryVectorSearch: createAgentMemoryVectorSearchFactory({
+        storageRoot: config.storageLocalPath,
+        embedding: { resolve: resolveEmbeddingSettings, createTransport: createEmbeddingTransport },
+      }),
       now: Date.now, imPlatformEnabled: platform => imPlatforms().includes(platform), staticPrompt: source.builder.staticPrompt,
     })
     const scheduledTools = createWebScheduledTaskToolResources({
@@ -867,7 +868,8 @@ export async function createAgentServices(options: AgentDependencies) {
         const { webSearch } = await createWebAgentSearchPorts({
           identity, binding: { resolve: model.resolve, selection: {
             modelIdentity: model.modelIdentity, contextWindow: model.contextWindow, locale: 'zh-CN',
-            groupChat: false, workspaceBinding: null, contextPolicy: { loadOwnerContext: true, memoryEnabled },
+            groupChat: Boolean(task.groupScope), workspaceBinding: null,
+            contextPolicy: { loadOwnerContext: !task.groupScope, memoryEnabled: memoryEnabled && !task.groupScope },
           } },
           readSafeEgress: createSafeEgressSettingsReader(env, overridePath), secretKey: config.secretKey, digest,
         })

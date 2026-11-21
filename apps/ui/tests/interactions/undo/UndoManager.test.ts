@@ -30,9 +30,22 @@ describe('UndoManager 快捷键边界', () => {
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }))
     await vi.waitFor(() => expect(undo).toHaveBeenCalledWith('op-undo'))
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', metaKey: true, shiftKey: true, bubbles: true }))
-    await vi.waitFor(() => expect(preview).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(redo).toHaveBeenCalledWith('op-redo'))
+    await Promise.resolve()
+    expect(preview).toHaveBeenCalledTimes(2)
     expect(undo).toHaveBeenCalledWith('op-undo')
     expect(redo).toHaveBeenCalledWith('op-redo')
-    manager.stop()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'y', ctrlKey: true, bubbles: true }))
+    await vi.waitFor(() => expect(redo).toHaveBeenCalledTimes(2))
+
+    const overlay = document.body.appendChild(document.createElement('div'))
+    overlay.className = 'bm-overlay'
+    try {
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }))
+      expect(undo).toHaveBeenCalledTimes(1)
+    } finally {
+      overlay.remove()
+      manager.stop()
+    }
   })
 })

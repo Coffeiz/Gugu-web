@@ -7,6 +7,7 @@ import { desktopCorePreview } from '../desktop/scripts/vite-core-preview.mjs'
 const desktopSourceEntries = {
   '@gugu/core/contracts': 'core/src/contracts/index.ts',
   '@gugu/core/desktop': 'core/src/contracts/desktop.ts',
+  '@gugu/core/agent/shell-activity': 'core/src/agent/shell-activity.ts',
   '@gugu/core/agent/chat-sse': 'core/src/agent/chat-sse.ts',
   '@gugu/core/agent/commands/menu': 'core/src/agent/commands/menu.ts',
   '@gugu/core/im/user-bots': 'core/src/im/user-bots.ts',

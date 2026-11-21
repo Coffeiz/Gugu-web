@@ -33,11 +33,12 @@ interface QqCredential {
 function parseCredential(input: unknown): QqCredential {
   if (!input || typeof input !== 'object') throw invalid()
   const defaults = defaultUserBotGroupSettings('qq')
+  const defaultGroupTools = userBotGroupToolFlags(defaults.groupAllowedTools)
   const { appId, appSecret, enabled, revision, userId, bindingEventId,
     groupChatEnabled = defaults.groupChatEnabled,
-    groupHistorySearchEnabled = defaults.groupAllowedTools.includes('group_context_search'),
-    groupWebToolsEnabled = ['http_get', 'similar_image_search', 'send_file'].every(tool => defaults.groupAllowedTools.includes(tool)),
-    groupProviderSearchEnabled = defaults.groupAllowedTools.includes('web_search'),
+    groupHistorySearchEnabled = defaultGroupTools.groupHistorySearchEnabled,
+    groupWebToolsEnabled = defaultGroupTools.groupWebToolsEnabled,
+    groupProviderSearchEnabled = defaultGroupTools.groupProviderSearchEnabled,
     groupOwnerMemoryEnabled = defaults.groupOwnerMemoryEnabled,
     groupMemoryEnabled = defaults.groupMemoryEnabled,
     memberMemoryEnabled = defaults.memberMemoryEnabled,

@@ -178,7 +178,7 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
                   && (message.toolStatus === 'success' || message.toolStatus === 'error')
                   && (toolMode === 'all' || (message.toolDurationMs ?? 0) >= 5000))
                   await sendNotice(`tool:${message.eventId}`, formatImToolReceipt({
-                    name: message.toolName, label: message.toolLabelOverride, status: message.toolStatus,
+                    name: message.toolName, status: message.toolStatus, display: message,
                   }, redactToolError))
               }
               current.cursor = page.cursor

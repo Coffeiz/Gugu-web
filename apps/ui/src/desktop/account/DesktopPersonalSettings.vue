@@ -12,7 +12,7 @@ import DesktopWorkspaceSettings from './DesktopWorkspaceSettings.vue'
 import RemoteAccountPane from './index.vue'
 import { desktopImSettingsAdapter } from '../im/connect/adapter'
 
-defineProps<{ show: boolean; connected: boolean; initialNav: 'info' | 'prefs' }>()
+defineProps<{ show: boolean; connected: boolean; initialNav: 'info' | 'prefs'; refreshImportedData?: () => void }>()
 defineEmits<{ close: [] }>()
 
 const { t } = useI18n()
@@ -30,7 +30,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <ProfileModal desktop :desktop-im-adapter="desktopImSettingsAdapter" :connect-telegram="connectTelegram" :show="show" :initial-nav="initialNav" @close="$emit('close')">
+  <ProfileModal desktop :desktop-im-adapter="desktopImSettingsAdapter" :connect-telegram="connectTelegram" :show="show" :initial-nav="initialNav" @close="$emit('close')" :refresh-imported-data="refreshImportedData">
     <template #local-status>
       <div class="pm-sep"></div>
       <section class="pm-section">

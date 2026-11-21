@@ -59,7 +59,7 @@ import Icon from '@/components/common/icons/Icon.vue'
 import SearchInput from '@/components/common/controls/SearchInput.vue'
 import { useSearchAccess, type SearchGroup, type SearchItem } from '@/services/searchAccess'
 import { useFileOpenAccess } from '@/services/fileOpenAccess'
-import { shouldOpenFileInSystem } from '@/utils/filePreviewTypes'
+import { shouldOpenFileInSystem } from '@gugu/desktop-contracts/file-preview'
 import { useUiStore } from '@/stores/ui'
 import { isPreviewable, usePreviewStore } from '@/stores/preview'
 import { splitName } from '@/utils/fileParse'
@@ -229,10 +229,15 @@ function onReposition() {
   if (open.value) updatePanelPos()
 }
 
+function focusSearch() {
+  inputEl.value?.focus()
+}
+defineExpose({ focus: focusSearch })
+
 function onSearchShortcut(event: KeyboardEvent) {
   if (!props.desktop || event.defaultPrevented || event.altKey || event.shiftKey || !(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'k') return
   event.preventDefault()
-  inputEl.value?.focus()
+  focusSearch()
 }
 onMounted(() => {
   window.addEventListener('keydown', onSearchShortcut)

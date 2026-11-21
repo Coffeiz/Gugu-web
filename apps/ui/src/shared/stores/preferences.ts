@@ -6,7 +6,7 @@ import { getLocale, isSupportedLocale, setLocale, type SupportedLocale } from '@
 import { applyThemePalette, applyServerTheme } from '@/composables/core/useTheme'
 import { InteractionSync } from '@/interaction/sync/InteractionSync'
 import { useLocalPreferencesAccess } from '@/services/localPreferencesAccess'
-import type { DesktopAppearancePreferences } from '@gugu/core/desktop'
+import type { DesktopAgentPreference, DesktopAgentPreferenceKind, DesktopAgentPreferencePatch, DesktopAppearancePreferences } from '@gugu/core/desktop'
 
 const AUTOMATIC_MODE_SYNC_KEY = 'gugu-automatic-mode-sync'
 const DESKTOP_PROJECT_PREFS = 'gugu.desktop.project.'
@@ -90,8 +90,6 @@ export const usePreferencesStore = defineStore('preferences', () => {
   function applyDesktopPreferences(data: DesktopAppearancePreferences) {
     decisionGuardEnabled.value = data.decisionGuardEnabled === true
     toolInjectionMode.value = data.toolInjectionMode === 'full' ? 'full' : 'description'
-    customReplyStyle.value = data.customReplyStyle ?? ''
-    customReplyStyleEnabled.value = data.customReplyStyleEnabled === true
     defaultView.value = data.defaultView ?? 'projects'
     calendarWeekStart.value = data.calendarWeekStart ?? 'monday'
     calendarDoneMode.value = data.calendarDoneMode ?? 'done'
@@ -267,32 +265,70 @@ export const usePreferencesStore = defineStore('preferences', () => {
     await saveOptimistically('toolInjectionMode', { toolInjectionMode: next }, () => { toolInjectionMode.value = next }, () => { toolInjectionMode.value = previous })
   }
 
+  function applyAgentText(kind: DesktopAgentPreferenceKind, data: DesktopAgentPreference) {
+    if (kind === 'personality') {
+      personalityPreference.value = data.content ?? ''
+      personalityPreferenceEnabled.value = data.enabled
+    } else if (kind === 'group-personality') {
+      groupPersonalityPreference.value = data.content ?? ''
+      groupPersonalityPreferenceEnabled.value = data.enabled
+    } else {
+      customReplyStyle.value = data.content ?? ''
+      customReplyStyleEnabled.value = data.enabled
+    }
+    personalityPreferenceRevision.value = data.revision
+  }
+
+  async function fetchAgentPreferences() {
+    if (!desktop) return
+    const kinds = ['personality', 'group-personality', 'reply-style'] as const
+    const data = await Promise.all(kinds.map(kind => desktop.agentPreference(kind)))
+    kinds.forEach((kind, index) => applyAgentText(kind, data[index]!))
+  }
+
+  async function saveDesktopAgentText(kind: DesktopAgentPreferenceKind, patch: DesktopAgentPreferencePatch) {
+    if (!desktop) throw new Error('本机偏好服务不可用')
+    const data = await desktop.agentPreference(kind, patch)
+    applyAgentText(kind, data)
+    return data
+  }
+
+  async function uploadDesktopAgentText(kind: DesktopAgentPreferenceKind, file: File) {
+    if (!acceptsPreferenceTextFilename(kind, file.name))
+      throw new Error(kind === 'reply-style' ? '回复风格文件必须是 Markdown 或 TXT 文件' : '人格偏好文件必须是 Markdown 文件')
+    if (file.size > MAX_PREFERENCE_TEXT_UPLOAD_BYTES) throw new Error('偏好文件过大')
+    const bytes = await file.arrayBuffer()
+    let text: string
+    try { text = decodePreferenceTextUpload(new Uint8Array(bytes)) }
+    catch { throw new Error('偏好文件必须使用 UTF-8 编码') }
+    return saveDesktopAgentText(kind, { content: text })
+  }
+
   async function saveCustomReplyStyle(text: string) {
     const customReplyStyleText = text.trim() || null
-    const data = desktop ? await desktop.updateAppearance({ customReplyStyle: customReplyStyleText })
-      : await preferencesApi.updateReplyStyle(customReplyStyleText)
+    if (desktop) {
+      const { content, enabled } = await saveDesktopAgentText('reply-style', { content: customReplyStyleText })
+      return { customReplyStyle: content, customReplyStyleEnabled: enabled }
+    }
+    const data = await preferencesApi.updateReplyStyle(customReplyStyleText)
     customReplyStyle.value = data.customReplyStyle ?? ''
     return data
   }
 
   async function saveCustomReplyStyleEnabled(enabled: boolean) {
     const patch = { customReplyStyleEnabled: enabled }
-    const data = desktop ? await desktop.updateAppearance(patch) : await preferencesApi.update(patch)
+    if (desktop) {
+      const data = await saveDesktopAgentText('reply-style', { enabled })
+      return { customReplyStyle: data.content, customReplyStyleEnabled: data.enabled }
+    }
+    const data = await preferencesApi.update(patch)
     customReplyStyle.value = data.customReplyStyle ?? ''
     customReplyStyleEnabled.value = data.customReplyStyleEnabled ?? false
     return data
   }
 
   async function uploadCustomReplyStyle(file: File) {
-    if (desktop) {
-      if (!acceptsPreferenceTextFilename('reply-style', file.name)) throw new Error('回复风格文件必须是 Markdown 或 TXT 文件')
-      if (file.size > MAX_PREFERENCE_TEXT_UPLOAD_BYTES) throw new Error('偏好文件过大')
-      const bytes = await file.arrayBuffer()
-      let text: string
-      try { text = decodePreferenceTextUpload(new Uint8Array(bytes)) }
-      catch { throw new Error('偏好文件必须使用 UTF-8 编码') }
-      return saveCustomReplyStyle(text)
-    }
+    if (desktop) return uploadDesktopAgentText('reply-style', file)
     const data = await preferencesApi.uploadReplyStyle(file)
     customReplyStyle.value = data.customReplyStyle ?? ''
     customReplyStyleEnabled.value = data.customReplyStyleEnabled ?? false
@@ -300,6 +336,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   }
 
   async function savePersonalityPreference(text: string, enabled: boolean) {
+    if (desktop) return saveDesktopAgentText('personality', { content: text.trim() || null, enabled })
     const data = await preferencesApi.update({
       personalityPreference: text.trim() || null,
       personalityPreferenceEnabled: enabled,
@@ -312,6 +349,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   }
 
   async function uploadPersonalityFile(file: File) {
+    if (desktop) return uploadDesktopAgentText('personality', file)
     const data = await preferencesApi.uploadPersonality(file)
     personalityPreference.value = data.personalityPreference ?? ''
     personalityPreferenceEnabled.value = data.personalityPreferenceEnabled ?? false
@@ -321,6 +359,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   }
 
   async function saveGroupPersonalityPreference(text: string, enabled: boolean) {
+    if (desktop) return saveDesktopAgentText('group-personality', { content: text.trim() || null, enabled })
     const data = await preferencesApi.update({
       groupPersonalityPreference: text.trim() || null,
       groupPersonalityPreferenceEnabled: enabled,
@@ -333,6 +372,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   }
 
   async function uploadGroupPersonalityFile(file: File) {
+    if (desktop) return uploadDesktopAgentText('group-personality', file)
     const data = await preferencesApi.uploadGroupPersonality(file)
     groupPersonalityPreference.value = data.groupPersonalityPreference ?? ''
     groupPersonalityPreferenceEnabled.value = data.groupPersonalityPreferenceEnabled ?? false
@@ -361,6 +401,6 @@ export const usePreferencesStore = defineStore('preferences', () => {
 
   return {
     lastStages, stageTemplates, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, projectSort, shellEnabled, shellSystemEnabled, shellDangerousEnabled, automaticModeEnabled, decisionGuardEnabled, imToolDisplayMode, showIntermediateReplies, toolInjectionMode, customReplyStyle, customReplyStyleEnabled, personalityPreference, personalityPreferenceEnabled, groupPersonalityPreference, groupPersonalityPreferenceEnabled, personalityPreferenceAvailable, personalityPreferenceRevision, emailChangeEnabled, locale,
-    loaded, fetch, applyDesktopPreferences, refreshAutomaticModeEnabled, notifyAutomaticModeChanged, refreshEmailChangeEnabled, saveLocale, saveLastStages, saveTemplates, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveProjectSort, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveAutomaticModeEnabled, saveDecisionGuardEnabled, saveImToolDisplayMode, saveShowIntermediateReplies, saveToolInjectionMode, saveCustomReplyStyle, saveCustomReplyStyleEnabled, uploadCustomReplyStyle, savePersonalityPreference, uploadPersonalityFile, saveGroupPersonalityPreference, uploadGroupPersonalityFile,
+    loaded, fetch, fetchAgentPreferences, applyDesktopPreferences, refreshAutomaticModeEnabled, notifyAutomaticModeChanged, refreshEmailChangeEnabled, saveLocale, saveLastStages, saveTemplates, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveProjectSort, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveAutomaticModeEnabled, saveDecisionGuardEnabled, saveImToolDisplayMode, saveShowIntermediateReplies, saveToolInjectionMode, saveCustomReplyStyle, saveCustomReplyStyleEnabled, uploadCustomReplyStyle, savePersonalityPreference, uploadPersonalityFile, saveGroupPersonalityPreference, uploadGroupPersonalityFile,
   }
 })

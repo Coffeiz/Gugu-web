@@ -6,20 +6,25 @@ import type { Database } from '../data/schema.js'
 
 /** 搜索范围由已登记 Run 的群会话和入站消息序号决定。 */
 export function createDesktopGroupContextSearch(db: Kysely<Database>,
-  authorize: (identity: RunIdentity) => Promise<boolean>): GroupContextSearchPort {
+  authorize: (identity: RunIdentity) => Promise<boolean>, scheduledConnection?: string): GroupContextSearchPort {
   return {
     async search(identity, request, signal) {
       signal.throwIfAborted()
       if (!await authorize(identity)) return { error: '群消息搜索未授权' }
       const owner = dataContext(identity.ownerId).ownerId.replaceAll('-', '')
       const session = Number(identity.sessionId)
-      if (!Number.isSafeInteger(session) || session < 1) return { error: '群会话无效' }
+      if (!scheduledConnection && (!Number.isSafeInteger(session) || session < 1)) return { error: '群会话无效' }
       const queries = request.queries.filter(Boolean)
       const matches = queries.length
         ? sql`AND (${sql.join(queries.map(query => sql`instr(lower(m.content),lower(${query}))>0`),
           request.mode === 'AND' ? sql` AND ` : sql` OR `)})`
         : sql``
-      const history = sql`
+      const history = scheduledConnection ? sql`
+        FROM desktop_im_sessions im
+        JOIN conversation_sessions s ON s.id=im.session_id AND s.user_id=im.owner_id AND s.chat_type='group'
+        JOIN conversation_messages m ON m.session_id=s.id AND m.canonical_batch_id IS NULL
+        WHERE im.owner_id=${owner} AND im.connection_id=${scheduledConnection}`
+        : sql`
         FROM agent_run_admissions r
         JOIN conversation_sessions s ON s.id=r.session_id AND s.user_id=r.user_id
           AND s.chat_type='group' AND s.active_run_id=r.run_id

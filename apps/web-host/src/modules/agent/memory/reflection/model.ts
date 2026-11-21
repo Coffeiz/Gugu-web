@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { runContextBranch, type AgentObservation, type AgentObservationPort, type BranchResult, type RunIdentity, type Usage } from '@gugu/core/agent'
+import { runPrivateReflectionBranch, type AgentObservation, type AgentObservationPort, type BranchResult, type RunIdentity, type Usage } from '@gugu/core/agent'
 import { ProviderRuntime, outputBudget as providerOutputBudget, providerSelection, type ProviderRuntimeOptions } from '@gugu/core/providers'
 import type { Pool } from 'pg'
 import { RecoverableProviderVersionError, type createReflectionModelScope } from '../../llm/recovery.js'
@@ -101,31 +101,14 @@ export function createOwnerReflectionExtractor(options: {
         if (!await options.canSpend(batch.ownerId) || !await batch.isCurrent()) return null
         const observationIdentity: RunIdentity = { ...identity, runId: `reflection-${options.context.nextId()}` }
         const startedAt = Date.now()
-        observe(options.context.observation, {
-          identity: observationIdentity, kind: 'run', name: 'started', at: startedAt, spanId: observationIdentity.runId, status: 'running',
-          attributes: { scenario: 'reflection', reflection_scope: 'private', trigger_source: 'unknown', origin_run_id: identity.runId },
-        })
-        let result: BranchResult | undefined
-        let endedAt = startedAt
-        try {
-          result = await runContextBranch({ ...identity, observationIdentity, stableSystem: prompt, delta: evidence, tools: [], scope: model.accessScopeHash }, {
-            name: 'reflection', outputMode, maxOutputTokens,
-          }, {
-            provider: provider.branchProvider(model.modelIdentity),
-            digest: options.context.digest, nextId: options.context.nextId,
-            async pauseBeforeRetry() {}, diagnostic: options.diagnose,
-          }, deadline)
-        } finally {
-          endedAt = Date.now()
-          observe(options.context.observation, {
-            identity: observationIdentity, kind: 'run', name: 'finished', at: endedAt, spanId: observationIdentity.runId,
-            status: deadline.aborted ? 'cancelled' : result?.ok ? 'completed' : 'failed',
-            usage: (result ? branchUsage(result.usage) : null) ?? undefined,
-            output: { scenario: 'reflection', reflection_scope: 'private', trigger_source: 'unknown', origin_run_id: identity.runId,
-              ...(result ? { attempts: result.attempts, probe_eligible: result.usage !== null } : {}) },
-          })
-        }
-        if (!result) return null
+        const result = await runPrivateReflectionBranch({ ...identity, stableSystem: prompt, delta: evidence, scope: model.accessScopeHash }, {
+          outputMode, maxOutputTokens,
+        }, {
+          provider: provider.branchProvider(model.modelIdentity),
+          digest: options.context.digest, nextId: options.context.nextId,
+          async pauseBeforeRetry() {}, diagnostic: options.diagnose,
+        }, deadline, options.context.observation, { identity: observationIdentity })
+        const endedAt = Date.now()
         await meterReflection(options.pool, identity, result, model)
         deadline.throwIfAborted()
         const usage = branchUsage(result.usage)

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { classifyImGroupInbound, defaultImTools, imActorInputFromPayload, imCanUseGroupOwnerMemory, imCanUseTool, imContextPolicy, imDisplayPolicy, imVisibleToolNames, resolveImAccess, resolveImActor } from '../../src/im/access.js'
+import { userBotGroupFileToolsAllowed, userBotGroupToolAllowed, userBotGroupToolFlags } from '../../src/im/user-bots.js'
 import type { ImActorInput, ImBotAccess, ImPlatform } from '../../src/im/access.js'
 
 const bot: ImBotAccess = { id: '7', ownerId: 'owner-a', platform: 'qq', ownerPlatformUserId: 'sender-owner', groupAllowedTools: ['web_search'], groupOwnerMemoryEnabled: true }
@@ -68,6 +69,22 @@ test('旧群权限保留搜图和发送文件，过滤已退役的文件读取�
   assert.deepEqual(resolveImAccess(scope, {
     ...bot, groupAllowedTools: ['similar_image_search'],
   }).allowedToolNames, ['similar_image_search'])
+})
+
+test('共享群工具规则保留搜索到HTTP读取的权限映射，但不开放附件准入', () => {
+  const allTools = ['web_search', 'http_get', 'similar_image_search', 'send_file', 'group_context_search']
+  assert.deepEqual(userBotGroupToolFlags(allTools), {
+    groupWebToolsEnabled: true, groupProviderSearchEnabled: true, groupHistorySearchEnabled: true,
+  })
+  for (const tool of allTools) assert.equal(userBotGroupToolAllowed(allTools, tool), true)
+  assert.equal(userBotGroupToolAllowed(['web_search'], 'http_get'), true)
+  assert.equal(userBotGroupToolAllowed(['send_file'], 'http_get'), false)
+  assert.equal(userBotGroupToolAllowed(['send_file'], 'list_projects'), false)
+  assert.equal(userBotGroupFileToolsAllowed(['send_file']), true)
+  assert.equal(userBotGroupFileToolsAllowed(['web_search']), false)
+  assert.equal(userBotGroupFileToolsAllowed(['web_search', 'group_context_search']), false)
+  assert.equal(userBotGroupFileToolsAllowed({ groupWebToolsEnabled: false, groupProviderSearchEnabled: true }), false)
+  assert.equal(userBotGroupFileToolsAllowed({ groupWebToolsEnabled: true, groupProviderSearchEnabled: false }), true)
 })
 
 test('QQ和Telegram私聊必须核对绑定，飞书和微信保留旧版可信私聊owner语义', () => {

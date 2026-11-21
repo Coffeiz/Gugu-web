@@ -214,11 +214,11 @@ it.each([false, true])('桌面 QQ 恢复原群收件时复核绑定（解密时�
       expect(await gateway.authorizeGroupTool({ ...receipt, name: 'http_get' }, signal)).toBe(true)
       expect(await gateway.authorizeGroupTool({ ...receipt, name: 'similar_image_search' }, signal)).toBe(true)
       expect(await gateway.authorizeGroupTool({ ...receipt, name: 'send_file' }, signal)).toBe(true)
-      expect(await gateway.authorizeGroupTool({ ...receipt, name: 'web_search' }, signal)).toBe(true)
+      expect(await gateway.authorizeGroupTool({ ...receipt, name: 'web_search' }, signal)).toBe(false)
       bot.groupWebToolsEnabled = false
       bot.groupProviderSearchEnabled = true
       expect(await gateway.authorizeGroupTool({ ...receipt, name: 'web_search' }, signal)).toBe(true)
-      expect(await gateway.authorizeGroupTool({ ...receipt, name: 'http_get' }, signal)).toBe(false)
+      expect(await gateway.authorizeGroupTool({ ...receipt, name: 'http_get' }, signal)).toBe(true)
       expect(await gateway.authorizeGroupTool({ ...receipt, name: 'list_projects' }, signal)).toBe(false)
 
       expect(await gateway.authorizeGroupTool({ ...receipt, connectionId: 'wrong' }, signal)).toBe(false)

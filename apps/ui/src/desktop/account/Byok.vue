@@ -89,19 +89,6 @@ function test(item: ByokSummary) {
   })
 }
 
-function bind(item: ByokSummary) {
-  void perform(async () => {
-    if (items.value.some(entry => entry.capability === item.capability && entry.enabled)
-        && !await confirmDialog({
-          title: t('desktopByok.replaceTitle'), message: t('desktopByok.replaceMessage'),
-          confirmText: t('common.actions.confirm'), tone: 'warning',
-        })) return
-    await request({ action: 'bind', id: item.id })
-    await refresh()
-    message.value = '已设置服务器默认凭据'
-  })
-}
-
 function remove(item: ByokSummary) {
   void perform(async () => {
     if (!await confirmDialog({
@@ -129,11 +116,10 @@ onMounted(() => void perform(refresh))
       <ul v-if="items.length" class="items">
         <li v-for="item in items" :key="item.id">
           <strong>{{ item.provider }} {{ item.model }}</strong>
-          <span>{{ capabilities.find(entry => entry.value === item.capability)?.label }}{{ item.enabled ? ' · 服务器默认' : '' }}</span>
+          <span>{{ capabilities.find(entry => entry.value === item.capability)?.label }}</span>
           <div class="actions">
             <ActionButton fit variant="secondary" :disabled="busy" @click="edit(item)">编辑</ActionButton>
             <ActionButton fit variant="secondary" :disabled="busy" @click="test(item)">测试</ActionButton>
-            <ActionButton v-if="!item.enabled" fit variant="secondary" :disabled="busy" @click="bind(item)">设为默认</ActionButton>
             <ActionButton fit variant="secondary" :disabled="busy" @click="remove(item)">{{ t('desktopByok.deleteTitle') }}</ActionButton>
           </div>
         </li>

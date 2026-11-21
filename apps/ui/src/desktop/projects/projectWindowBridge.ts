@@ -1,5 +1,5 @@
 import type { DesktopReply } from '@gugu/core/desktop'
-import type { ProjectWindowBridge } from '../../../../desktop/src/shared/project-window'
+import type { ProjectWindowBridge } from '@gugu/desktop-contracts'
 import { DesktopBridgeError } from '@desktop/bridge/bridge'
 
 export const projectWindowBridge = (window as Window & { guguProjectWindow?: ProjectWindowBridge }).guguProjectWindow

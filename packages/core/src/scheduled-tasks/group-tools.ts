@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely'
+import { sql, type Kysely } from 'kysely'
 import type { RunIdentity } from '../agent/models.js'
 import { createSqlMemoryScopeStateReader, MemorySearchAccessError, createMemorySearch, type AuthorizedMemoryScope, type MemoryRagScopeStatePort } from '../agent/rag/index.js'
 import { groupScopePrefix, type MemoryRagStorageReader } from '../agent/rag/memory-loader.js'
@@ -51,7 +51,7 @@ export function createScheduledTaskGroupMemorySearchPort<DB>(options: {
     const requested = request.scope ?? 'auto'
     if (requested !== 'auto' && requested !== 'current_group')
       throw new MemorySearchAccessError('定时任务只能搜索当前群聊记忆')
-    const resolveScope = async (candidate: RunIdentity, innerSignal: AbortSignal): Promise<AuthorizedMemoryScope> => {
+    const resolveScope = async (candidate: RunIdentity, innerSignal: AbortSignal): Promise<AuthorizedMemoryScope & { platform: string; botId: string }> => {
       innerSignal.throwIfAborted()
       const group = await options.resolveGroup(candidate, innerSignal)
       innerSignal.throwIfAborted()
@@ -64,7 +64,10 @@ export function createScheduledTaskGroupMemorySearchPort<DB>(options: {
       async authorize(candidate, scopes, innerSignal) {
         try {
           const current = await resolveScope(candidate, innerSignal)
-          return scopes.length === 1 && scopes[0]?.type === 'group' && scopes[0].ownerId === current.ownerId
+          const state = await scopeState.getMemoryScopeState(candidate, {
+            type: 'group', id: current.id, platform: current.platform, botId: current.botId,
+          }, innerSignal)
+          return !state.tombstoned && scopes.length === 1 && scopes[0]?.type === 'group' && scopes[0].ownerId === current.ownerId
             && scopes[0].id === current.id && scopes[0].platform === current.platform && scopes[0].botId === current.botId
         } catch (error) {
           if (error instanceof MemorySearchAccessError) return false
@@ -98,11 +101,38 @@ export function createScheduledTaskGroupScopeVerifier<DB>(db: Kysely<DB>, backen
   }
 }
 
+export function createScheduledTaskGroupMemoryAuthorizer<DB>(db: Kysely<DB>, backend: 'postgres' | 'sqlite') {
+  const verify = createScheduledTaskGroupScopeVerifier(db, backend)
+  return async (task: Pick<ScheduledTaskExecutionPlan, 'id' | 'ownerId' | 'groupScope'>) => {
+    const scope = await verify(task)
+    if (!scope) return null
+    const { rows } = await sql`SELECT 1 FROM user_bots
+      WHERE id=${scope.botId} AND user_id=${scope.ownerId} AND platform=${scope.platform}
+        AND enabled=TRUE AND group_memory_enabled=TRUE
+        AND CASE WHEN platform='feishu' THEN feishu_group_chat_enabled IS DISTINCT FROM FALSE ELSE group_chat_enabled IS TRUE END`.execute(db)
+    return rows.length ? scope : null
+  }
+}
+
+async function readScheduledGroupMembers<DB>(db: Kysely<DB>, ownerId: string, group: Group,
+  storage: MemoryRagStorageReader | undefined, signal: AbortSignal, authorizeMemory: () => Promise<boolean>): Promise<Members> {
+  if (!storage || !await authorizeMemory()) return {}
+  const { isTombstoned } = createImMaintenanceSource(db)
+  const key = { owner_user_id: ownerId, platform: group.platform, bot_id: group.botId,
+    scope_type: 'group' as const, scope_id: group.chatId }
+  if (await isTombstoned(key)) return {}
+  const prefix = groupScopePrefix(ownerId, { ownerId, platform: group.platform, botId: group.botId, type: 'group', id: group.chatId })
+  const raw = await storage.readText({ ownerId, key: `${prefix}members.json`, maxChars: 2_000_000, signal })
+  signal.throwIfAborted()
+  if (await isTombstoned(key) || !await authorizeMemory()) return {}
+  return parseMembers(raw)
+}
+
 /** 定时 Agent 复用共享群搜索工具。每次读取用绑定的 Run 身份重查任务和群归属。 */
 export function createScheduledTaskGroupTools<DB>(db: Kysely<DB>, backend: 'postgres' | 'sqlite', storage?: MemoryRagStorageReader) {
   const verifyGroup = createScheduledTaskGroupScopeVerifier(db, backend)
+  const verifyMemory = createScheduledTaskGroupMemoryAuthorizer(db, backend)
   const history = createSqlAgentGroupHistory(db, backend)
-  const { isTombstoned } = createImMaintenanceSource(db)
   return (task: ScheduledTaskExecutionPlan, identity: RunIdentity) => {
     const bound = task.groupScope
     if (!bound || identity.ownerId !== task.ownerId || bound.ownerId !== task.ownerId) return []
@@ -135,16 +165,7 @@ export function createScheduledTaskGroupTools<DB>(db: Kysely<DB>, backend: 'post
       },
       async members(candidate, _group, signal) {
         const group = await authorize(candidate, signal)
-        if (!storage) return {}
-        const ownerId = candidate.ownerId
-        const key = { owner_user_id: ownerId, platform: group.platform, bot_id: group.botId,
-          scope_type: 'group' as const, scope_id: group.chatId }
-        if (await isTombstoned(key)) return {}
-        const prefix = groupScopePrefix(ownerId, { ownerId, platform: group.platform, botId: group.botId, type: 'group', id: group.chatId })
-        const raw = await storage.readText({ ownerId, key: `${prefix}members.json`, maxChars: 2_000_000, signal })
-        if (await isTombstoned(key)) return {}
-        await authorize(candidate, signal)
-        return parseMembers(raw)
+        return readScheduledGroupMembers(db, candidate.ownerId, group, storage, signal, async () => Boolean(await verifyMemory(task)))
       },
     } })
     if (storage) {
@@ -152,7 +173,7 @@ export function createScheduledTaskGroupTools<DB>(db: Kysely<DB>, backend: 'post
         signal.throwIfAborted()
         if (candidate.ownerId !== expected.ownerId || candidate.sessionId !== expected.sessionId || candidate.runId !== expected.runId)
           return null
-        const current = await verifyGroup(task)
+        const current = await verifyMemory(task)
         signal.throwIfAborted()
         if (!current) return null
         return { platform: current.platform, botId: current.botId, chatId: current.scopeId }

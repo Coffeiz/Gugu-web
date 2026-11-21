@@ -1,11 +1,14 @@
-import { shouldOpenFileInSystem } from '../../../ui/src/shared/utils/filePreviewTypes.js'
+import { applicationMenuChannels, type ApplicationMenuCommand } from '@gugu/desktop-contracts'
+import { buildApplicationMenu, buildStatusMenu } from './application-menu.js'
+import { shouldOpenFileInSystem } from '@gugu/desktop-contracts/file-preview'
+import { createGatewayPowerPolicy } from './im/gateway-power.js'
 import { createDesktopImAttachmentSender } from './im/gateway/delivery/attachments.js'
 import { createDesktopImCallback } from './im/gateway/interactions/callback.js'
 import { createDesktopQqReferences } from './im/gateway/platforms/qq/references.js'
 import { createDesktopQqGateway } from './im/gateway/platforms/qq/index.js'
 import { createDesktopFeishuGateway } from './im/gateway/platforms/feishu/index.js'
 import { createDesktopRecordingTranscriber } from './agent/voice-recording.js'
-import { createDesktopWechatCursor, createDesktopWechatGateway } from './im/gateway/platforms/wechat/index.js'
+import { createDesktopWechatCursor, createDesktopWechatGateway, createDesktopWechatReach } from './im/gateway/platforms/wechat/index.js'
 import { createRequire } from 'node:module'
 import { randomUUID } from 'node:crypto'
 import { createDesktopQqPairing } from './im/connect/platforms/qq/index.js'
@@ -31,6 +34,7 @@ import { desktopAgentAttachmentHandlers, readDesktopAgentAttachment, removeDeskt
 import { createDesktopAgentModelService, createDesktopAgentModelStore } from './agent/model.js'
 import { desktopAgentToolPolicy } from './agent/tool-policy.js'
 import { resourceHandlers } from './mcp/ipc.js'
+import { bindDesktopScheduledIm } from './schedules/im.js'
 import { scheduleHandlers } from './schedules/ipc.js'
 import { deliverLocalReminder, startLocalReminders } from './schedules/reminders.js'
 import { DESKTOP_CHANNELS, type DesktopAppearancePreferences, type DesktopProjectDetails } from '@gugu/core/desktop'
@@ -45,6 +49,7 @@ import {
   ipcMain,
   powerMonitor,
   Menu,
+  Tray,
   nativeImage,
   dialog,
   protocol,
@@ -56,8 +61,8 @@ import {
 } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { basename, extname, join, resolve, sep } from 'node:path'
+import { mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
+import { basename, dirname, extname, join, resolve, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import {
@@ -67,12 +72,15 @@ import {
   DesktopError,
 } from './core-host.js'
 import { workspaceHandlers } from './workspace/ipc.js'
+import { MAX_DESKTOP_SEARCH_IMAGE_BYTES } from '@gugu/core/agent/search-contracts'
+import { createDesktopPaidSearchHost, isDesktopPaidSearchMethod } from './agent/paid-search-host.js'
+import { createDesktopPersonalSmtp } from './mail/personal-smtp.js'
 import { createDesktopMailService } from './mail/index.js'
 import { createDesktopMailAttachmentResolver } from './mail/attachments.js'
 import { registerDesktopIpc } from './ipc/register.js'
 import { createRemoteSessionStore } from './auth/store.js'
-import { createRemoteAgentDeepResearchClient, createRemoteAgentSearchAvailabilityClient, createRemoteAgentSimilarImageSearchClient, RemoteAgentSearchError } from '@gugu/core/agent/search-client'
-import { desktopDeepResearchInput, desktopSimilarImageHostInput, MAX_DESKTOP_SEARCH_IMAGE_BYTES } from '@gugu/core/agent/search-contracts'
+
+
 import { createRemoteAccountHandlers } from './auth/session.js'
 import { DesktopLifecycle } from './lifecycle.js'
 import {
@@ -131,12 +139,17 @@ else {
   let wechat: ReturnType<typeof createDesktopWechatGateway> | undefined
   let telegram: ReturnType<typeof createDesktopTelegramGateway> | undefined
   let closing = false
+  let tray: Tray | undefined
+  let openMainWindow = () => {}
+  let gatewayPower: ReturnType<typeof createGatewayPowerPolicy> | undefined
   let stopReminders: (() => void) | undefined
   app.on('before-quit', (event) => {
     if (quitting || !lifecycle) return
     event.preventDefault()
     if (closing) return
     closing = true
+    gatewayPower?.close()
+    if (tray && !tray.isDestroyed()) tray.destroy()
     stopReminders?.()
     const stopIm = Promise.allSettled([telegram?.stop(), wechat?.stop(), feishu?.stop(), qq?.stop()]).then(results => {
       for (const result of results) if (result.status === 'rejected') report('host.stop_failed', { error: result.reason })
@@ -146,14 +159,8 @@ else {
       app.quit()
     })
   })
-  app.on('window-all-closed', () => app.quit())
-  app.on('second-instance', () => {
-    const window = BrowserWindow.getAllWindows()[0]
-    if (window) {
-      if (window.isMinimized()) window.restore()
-      window.focus()
-    }
-  })
+  app.on('window-all-closed', () => { if (!tray) app.quit() })
+  app.on('second-instance', () => openMainWindow())
   void app
     .whenReady()
     .then(async () => {
@@ -201,15 +208,17 @@ else {
         resolveDesktopSystemProxy(origin, url => systemProxy.resolveProxy(url))
       const networkPreferences = await host.request<DesktopAppearancePreferences>('preferences.desktop.get')
       let useSystemProxy = networkPreferences.useSystemProxy === true
+      let keepGatewayOnline = networkPreferences.keepGatewayOnline !== false
+      let suspended = false
+      let sleepGeneration = 0
       let fileOpenPreference = networkPreferences.fileOpenPreference
       const resolveModelProxy = async (url: URL) => useSystemProxy ? resolveSystemProxy(url.origin) : undefined
       const remoteFetch: typeof fetch = (input, init) => useSystemProxy
         ? systemProxy.fetch(input instanceof URL ? input.href : input, init)
         : directDesktopFetch(input, init)
       const remoteSessionStore = createRemoteSessionStore(dataDirectory, safeStorage)
-      const remoteSearchAvailable = createRemoteAgentSearchAvailabilityClient(remoteFetch)
-      const remoteDeepResearch = createRemoteAgentDeepResearchClient(remoteFetch)
-      const remoteSimilarImageSearch = createRemoteAgentSimilarImageSearchClient(remoteFetch)
+      const paidSearch = createDesktopPaidSearchHost(remoteSessionStore, remoteFetch, id =>
+        readDesktopAgentAttachment(host, dataDirectory, id, MAX_DESKTOP_SEARCH_IMAGE_BYTES))
       const agentModel = createDesktopAgentModelService(createDesktopAgentModelStore(dataDirectory, safeStorage), resolveModelProxy)
       const admitIm = createDesktopImInbox(host, safeStorage, dataDirectory)
       const pendingImAsks = createDesktopImPendingAskStore(dataDirectory, safeStorage)
@@ -233,7 +242,8 @@ else {
       const newImTransport = () => createNodeProviderTransport(desktopTransportOptions(false, resolveModelProxy))
       // 扫码任务只在本进程有效，使用本次启动的本地身份隔离。
       const wechatPairing = createDesktopWechatPairing(dataDirectory, safeStorage, randomUUID(), newImTransport(), async () => { wechat?.refresh(); await wechat?.settled() })
-      const wechatGateway = wechat = createDesktopWechatGateway(wechatPairing, admitIm, dispatchIm, newImTransport, createDesktopWechatCursor(dataDirectory, safeStorage), (code, error) => report('gateway.degraded', { code, error }))
+      const wechatReach = createDesktopWechatReach(dataDirectory, safeStorage)
+      const wechatGateway = wechat = createDesktopWechatGateway(wechatPairing, admitIm, dispatchIm, newImTransport, createDesktopWechatCursor(dataDirectory, safeStorage), (code, error) => report('gateway.degraded', { code, error }), wechatReach)
       const feishuPairing = createDesktopFeishuPairing(dataDirectory, safeStorage, randomUUID(), newImTransport(), async () => {
         feishu?.refresh()
         await feishu?.settled()
@@ -242,7 +252,19 @@ else {
       const qqPairing = createDesktopQqPairing(dataDirectory, safeStorage, randomUUID(), newImTransport(), () => qq?.refresh())
       const qqGateway = qq = createDesktopQqGateway(qqPairing, admitIm, dispatchIm, newImTransport, undefined, callbackIm,
         (code, error) => report('gateway.degraded', { code, error }), { host, encryption: safeStorage, dataDirectory, voice: imVoice, references: createDesktopQqReferences(dataDirectory, safeStorage) })
-      if (!smoke) await Promise.all([gateway.start(), wechatGateway.start(), feishuGateway.start(), qqGateway.start()])
+      const scheduledIm = bindDesktopScheduledIm({ feishuPairing, qqPairing, wechatPairing, wechatReach, telegram: gateway, transport: newImTransport,
+        async readScheduledGroup(params, signal) {
+          const reader = params.platform === 'qq' ? qqGateway : params.platform === 'feishu' ? feishuGateway : params.platform === 'telegram' ? gateway : null
+          return reader?.readScheduledGroup(params, signal) ?? null
+        },
+      })
+      const gateways = [gateway, wechatGateway, feishuGateway, qqGateway]
+      if (!smoke) {
+        const power = gatewayPower = createGatewayPowerPolicy(() => !closing && !suspended && keepGatewayOnline
+          && gateways.some(gateway => gateway.health().configured > 0))
+        gateways.forEach(gateway => gateway.onConfigurationChanged(power.update))
+        await Promise.all(gateways.map(gateway => gateway.start()))
+      }
       const uiPath = app.isPackaged
         ? join(app.getAppPath(), 'ui/desktop.html')
         : resolve(app.getAppPath(), '../ui/dist-desktop/desktop.html')
@@ -287,9 +309,13 @@ else {
           }
         },
       }, join(dataDirectory, 'file-workspaces.json'), dataDirectory, readProject)
+      const personalSmtp = createDesktopPersonalSmtp(dataDirectory, safeStorage, async () => {
+        const session = await remoteSessionStore.read()
+        return session ? (await createRemoteAuthClient(remoteFetch).restore(session).catch(() => null))?.email ?? '' : ''
+      })
       const desktopMail = createDesktopMailService(dataDirectory, safeStorage, undefined,
         createDesktopMailAttachmentResolver(async id => id.startsWith('drop-')
-          ? droppedReferences.resolve(id) : files.resolveWorkspaceReference(id)))
+          ? droppedReferences.resolve(id) : files.resolveWorkspaceReference(id)), personalSmtp)
       let previewWindows: ReturnType<typeof registerPreviewWindows> | undefined
       const agentAttachments = desktopAgentAttachmentHandlers(host, dataDirectory,
         createDesktopRecordingTranscriber(dataDirectory, safeStorage, resolveModelProxy))
@@ -314,50 +340,14 @@ else {
           append(params.line)
           return null
         }
+        if (method.startsWith('agent.schedules.im.')) return scheduledIm(method, params, signal)
+        if (method === 'agent.schedules.model' && Object.keys(params).length === 0) return agentModel.resolveRunModel()
         if (method === 'agent.memory.resolveReflectionModel' && Object.keys(params).length === 2)
           return agentModel.resolveReflectionModel(params.modelIdentity, params.modelId)
         if (method === 'agent.memory.resolveEmbedding' && Object.keys(params).length === 0)
           return await resolveEmbedding() ?? null
         if (method === 'network.resolveProxy') return await resolveSystemProxy(params.origin) ?? null
-        if ((method === 'agent.search.deep_research.available' || method === 'agent.search.similar_image_search.available')
-          && Object.keys(params).length === 0) {
-          const session = await remoteSessionStore.read()
-          return session ? remoteSearchAvailable(session,
-            method === 'agent.search.deep_research.available' ? 'deep-research' : 'similar-image', signal) : false
-        }
-        if (method === 'agent.search.deep_research') {
-          const parsed = desktopDeepResearchInput.safeParse(params)
-          if (!parsed.success) throw new DesktopError('invalid_request', '深度研究请求无效')
-          const session = await remoteSessionStore.read()
-          if (!session) throw new DesktopError('closed', '请先登录远程服务器以使用深度研究')
-          try { return await remoteDeepResearch(session, parsed.data, signal) }
-          catch (error) {
-            signal.throwIfAborted()
-            if (error instanceof RemoteAgentSearchError)
-              throw new DesktopError('storage_error', error.message)
-            throw new DesktopError('storage_error', '远程深度研究暂不可用，请稍后重试')
-          }
-        }
-        if (method === 'agent.search.similar_image_search') {
-          const parsed = desktopSimilarImageHostInput.safeParse(params)
-          if (!parsed.success) throw new DesktopError('invalid_request', '相似图片搜索请求无效')
-          const session = await remoteSessionStore.read()
-          if (!session) throw new DesktopError('closed', '请先登录远程服务器以使用相似图片搜索')
-          try {
-            if (!('attach_id' in parsed.data)) return await remoteSimilarImageSearch(session, parsed.data, signal)
-            const { attach_id, ...fields } = parsed.data
-            const image = await readDesktopAgentAttachment(host, dataDirectory, attach_id, MAX_DESKTOP_SEARCH_IMAGE_BYTES)
-            signal?.throwIfAborted()
-            return await remoteSimilarImageSearch(session, { ...fields, image_base64: Buffer.from(image.data).toString('base64') }, signal)
-          }
-          catch (error) {
-            signal.throwIfAborted()
-            if (error instanceof DesktopError) throw error
-            if (error instanceof RemoteAgentSearchError)
-              throw new DesktopError(error.code, error.message)
-            throw new DesktopError('storage_error', '远程相似图片搜索暂不可用，请稍后重试')
-          }
-        }
+        if (isDesktopPaidSearchMethod(method)) return paidSearch(method, params, signal)
         if (method === 'agent.files.globalSearch') {
           const { queries, mode, perType } = params
           if (!Array.isArray(queries) || queries.length > 8
@@ -507,6 +497,7 @@ else {
       const preload = join(app.getAppPath(), 'dist/preload/index.cjs')
       const mainWindowSize = createMainWindowSizeStore(dataDirectory)
       let mainWindow: BrowserWindow | undefined
+      let mainWindowLoad: Promise<void> | undefined
       host.onAgentRunChanged(sessionId => {
         if (mainWindow && !mainWindow.isDestroyed())
           mainWindow.webContents.send(DESKTOP_CHANNELS.agentRunChanged, sessionId)
@@ -524,13 +515,49 @@ else {
             console.warn('无法保存主窗口尺寸')
           }
         })
-        window.once('closed', () => { if (mainWindow === window) mainWindow = undefined })
+        window.once('closed', () => {
+          if (mainWindow !== window) return
+          mainWindow = undefined
+          mainWindowLoad = undefined
+        })
         secureWindow(window, url => {
           void shell.openExternal(url).catch(() => { console.warn('无法打开外部链接') })
         })
-        await window.loadURL(devUiUrl ?? uiUrl)
-        return window
+        try {
+          mainWindowLoad = window.loadURL(devUiUrl ?? uiUrl)
+          await mainWindowLoad
+          return window
+        } catch (error) {
+          if (window.isDestroyed()) return window
+          window.destroy()
+          throw error
+        }
       }
+      openMainWindow = () => {
+        if (closing || quitting) return
+        if (process.platform === 'darwin') app.show()
+        if (!mainWindow) {
+          void createWindow().catch(error => report('host.start_failed', { error }))
+          return
+        }
+        if (mainWindow.isMinimized()) mainWindow.restore()
+        mainWindow.show()
+        mainWindow.focus()
+      }
+      async function sendMenuCommand(command: ApplicationMenuCommand) {
+        if (closing || quitting) return
+        openMainWindow()
+        const target = mainWindow
+        await mainWindowLoad
+        if (target && target === mainWindow && !target.isDestroyed()) {
+          target.webContents.send(applicationMenuChannels.command, command)
+        }
+      }
+      function runMenuCommand(command: ApplicationMenuCommand) {
+        void sendMenuCommand(command).catch(error => report('host.start_failed', { error }))
+      }
+      let pendingArchive: { id: string; path: string; digest: string } | undefined
+      let handlingArchive = false
       const handlers = {
         ...desktopLogHandlers(dataDirectory),
         [DESKTOP_CHANNELS.createDroppedFileReference]: (path: unknown) => {
@@ -546,6 +573,8 @@ else {
           const updated = await host.request<DesktopAppearancePreferences>('preferences.desktop.update', { patch })
           useSystemProxy = updated.useSystemProxy === true
           fileOpenPreference = updated.fileOpenPreference
+          keepGatewayOnline = updated.keepGatewayOnline !== false
+          gatewayPower?.update()
           return updated
         },
         ...resourceHandlers(host, resolveModelProxy),
@@ -563,6 +592,54 @@ else {
           () => host.request('agent.memory.invalidateEmbedding')),
         ...files.handlers,
         ...desktopMail.handlers,
+        [DESKTOP_CHANNELS.preflightBusinessArchive]: async () => {
+          if (handlingArchive) throw new DesktopError('conflict', '正在处理另一个归档')
+          handlingArchive = true
+          pendingArchive = undefined
+          try {
+            const options: Electron.OpenDialogOptions = {
+              properties: ['openFile'], filters: [{ name: 'ZIP', extensions: ['zip'] }],
+            }
+            const selected = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options)
+            const path = selected.filePaths[0]
+            if (selected.canceled || !path) return null
+            const { digest, added, skipped } = await host.request<{ digest: string; added: number; skipped: number }>(
+              'preferences.preflightBusinessArchive', { path })
+            const id = randomUUID()
+            pendingArchive = { id, path, digest }
+            return { id, added, skipped }
+          } finally { handlingArchive = false }
+        },
+        [DESKTOP_CHANNELS.applyBusinessArchive]: async (id: unknown) => {
+          if (handlingArchive || !pendingArchive || pendingArchive.id !== id)
+            throw new DesktopError('conflict', '请重新预检需要导入的归档')
+          const { path, digest } = pendingArchive
+          handlingArchive = true
+          try {
+            const { added, skipped } = await host.request<{ added: number; skipped: number }>(
+              'preferences.applyBusinessArchive', { path, digest })
+            pendingArchive = undefined
+            return { added, skipped }
+          } finally { handlingArchive = false }
+        },
+        [DESKTOP_CHANNELS.exportBusinessArchive]: async () => {
+          const options = { defaultPath: `gugu-export-${randomUUID().slice(0, 12)}.zip`, filters: [{ name: 'ZIP', extensions: ['zip'] }] }
+          const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options)
+          if (result.canceled || !result.filePath) return null
+          const directory = await mkdtemp(join(dirname(result.filePath), '.gugu-export-'))
+          const temporary = join(directory, 'archive.zip')
+          try {
+            await host.request('preferences.exportBusinessArchive', { path: temporary })
+            await rename(temporary, result.filePath)
+          } catch (error) {
+            if (error instanceof DesktopError) throw error
+            throw new DesktopError('storage_error', '归档保存失败')
+          } finally {
+            await rm(directory, { recursive: true, force: true }).catch(() => {})
+          }
+          return null
+        },
+        [DESKTOP_CHANNELS.personalSmtp]: personalSmtp.command,
         ...desktopTerminalHandlers(host, files.personalRoot),
         ...scheduleHandlers(host, deliverLocalReminder),
         ...createRemoteAccountHandlers(remoteSessionStore, createRemoteAuthClient(remoteFetch), createRemoteByokClient(remoteFetch)),
@@ -582,7 +659,11 @@ else {
               report('host.start_failed', { error })
               throw error
             }
-          } : undefined, { ...files, content: fileContent })
+          } : undefined, { ...files, content: fileContent }, (method, params, signal) => {
+            if (method === 'agent.schedules.im.groupCatalog')
+              return host.request('schedules.groupCatalog', { platform: params.platform })
+            return scheduledIm(method, params, signal)
+          })
         app.once('before-quit', () => {
           previewAgent.close()
           previewAgent.closeAllConnections()
@@ -650,66 +731,45 @@ else {
           : null,
         () => host.close(),
       )
-      Menu.setApplicationMenu(
-        Menu.buildFromTemplate([
-          {
-            label: '咕咕',
-            submenu: [
-              {
-                label: '检查更新',
-                enabled: updater.status().state !== 'disabled',
-                click: async () => {
-                  try {
-                    if (updater.status().state !== 'downloaded') {
-                      await updater.check()
-                      if (updater.status().state !== 'available') {
-                        await dialog.showMessageBox({
-                          message: '当前没有可用更新',
-                        })
-                        return
-                      }
-                      const download = await dialog.showMessageBox({
-                        message: '发现新版本，是否下载更新？',
-                        buttons: ['取消', '下载'],
-                        defaultId: 0,
-                        cancelId: 0,
-                      })
-                      if (download.response !== 1) return
-                      await updater.download()
-                    }
-                    const install = await dialog.showMessageBox({
-                      message: '更新已下载并校验。安装将关闭本地工作台，是否继续？',
-                      buttons: ['稍后', '安装并重启'],
-                      defaultId: 0,
-                      cancelId: 0,
-                    })
-                    if (install.response === 1) await updater.install(true)
-                  } catch {
-                    await dialog.showMessageBox({
-                      type: 'error',
-                      message: '更新未完成，请重新启动当前版本后检查更新状态',
-                    })
-                  }
-                },
-              },
-              { type: 'separator' },
-              { role: 'quit', label: '退出' },
-            ],
-          },
-          {
-            label: '编辑',
-            submenu: [
-              { role: 'undo' },
-              { role: 'redo' },
-              { type: 'separator' },
-              { role: 'cut' },
-              { role: 'copy' },
-              { role: 'paste' },
-              { role: 'selectAll' },
-            ],
-          },
-        ]),
-      )
+      async function checkForUpdates() {
+        try {
+          if (updater.status().state !== 'downloaded') {
+            await updater.check()
+            if (updater.status().state !== 'available') {
+              await dialog.showMessageBox({
+                message: '当前没有可用更新',
+              })
+              return
+            }
+            const download = await dialog.showMessageBox({
+              message: '发现新版本，是否下载更新？',
+              buttons: ['取消', '下载'],
+              defaultId: 0,
+              cancelId: 0,
+            })
+            if (download.response !== 1) return
+            await updater.download()
+          }
+          const install = await dialog.showMessageBox({
+            message: '更新已下载并校验。安装将关闭本地工作台，是否继续？',
+            buttons: ['稍后', '安装并重启'],
+            defaultId: 0,
+            cancelId: 0,
+          })
+          if (install.response === 1) await updater.install(true)
+        } catch {
+          await dialog.showMessageBox({
+            type: 'error',
+            message: '更新未完成，请重新启动当前版本后检查更新状态',
+          })
+        }
+      }
+      Menu.setApplicationMenu(Menu.buildFromTemplate(buildApplicationMenu({
+        mac: process.platform === 'darwin',
+        canUpdate: updater.status().state !== 'disabled',
+        checkForUpdates,
+        sendCommand: runMenuCommand,
+      })))
       function startReminders() {
         stopReminders?.()
         stopReminders = startLocalReminders(host, () => {
@@ -717,20 +777,42 @@ else {
         }, error => report('scheduled_tasks.check_failed', { error }))
       }
       powerMonitor.on('suspend', () => {
+        if (closing) return
+        suspended = true
+        sleepGeneration++
+        gatewayPower?.release()
         stopReminders?.()
         void host.pause().catch(error => report('host.stop_failed', { error }))
       })
       powerMonitor.on('resume', () => {
-        void host.start().then(startReminders).catch(error => report('host.start_failed', { error }))
+        if (closing || !suspended) return
+        const generation = sleepGeneration
+        void host.start().then(async () => {
+          if (closing || generation !== sleepGeneration || !suspended) return
+          suspended = false
+          gatewayPower?.update()
+          startReminders()
+          if (!smoke) await Promise.all(gateways.map(gateway => gateway.resume()))
+        }).catch(error => report('host.start_failed', { error }))
       })
-      app.on('activate', () => {
-        if (!quitting && !mainWindow) void createWindow()
-      })
-      await createWindow()
+      app.on('activate', () => openMainWindow())
+      if (process.platform === 'darwin' || process.platform === 'win32') {
+        const icon = nativeImage.createFromPath(join(app.getAppPath(), 'assets', 'icon.png'))
+        tray = new Tray(icon.resize({ width: process.platform === 'darwin' ? 18 : 16 }))
+        tray.setToolTip('咕咕')
+        tray.setContextMenu(Menu.buildFromTemplate(buildStatusMenu(
+          process.platform === 'darwin', openMainWindow, () => runMenuCommand('new-note'),
+        )))
+        if (process.platform === 'win32') tray.on('click', openMainWindow)
+      }
+      if (mainWindow) await mainWindowLoad
+      else await createWindow()
       startReminders()
       report('host.started')
     })
     .catch(async (error) => {
+      gatewayPower?.close()
+      if (tray && !tray.isDestroyed()) tray.destroy()
       report('host.start_failed', { error })
       stopReminders?.()
       for (const gateway of [telegram, wechat, feishu, qq])

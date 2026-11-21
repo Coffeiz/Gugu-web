@@ -104,7 +104,9 @@
             <!-- 标题行（引用 chip 并排）+ 固定分割线：间距与编辑态标题 h1 的
                  padding/margin 完全同值，两种模式标题→分割线→正文的节奏一致 -->
             <div v-if="selectedTitle || nodeRef" class="rp-title-row">
-              <h1 v-if="selectedTitle" class="rp-title">{{ selectedTitle }}</h1>
+              <h1 v-if="selectedTitle" class="rp-title">
+                <button type="button" class="rp-title-button" @click="startEdit('title')">{{ selectedTitle }}</button>
+              </h1>
               <button v-if="nodeRef" class="ntp-ref-chip" :title="refTypeLabel(nodeRef.type)" @click="openNodeRef(nodeRef)">
                 <component :is="refIcon(nodeRef.type)" :size="14" weight="bold" />
                 <span class="label">{{ nodeRef.label }}</span>
@@ -147,7 +149,7 @@
               ></textarea>
             </div>
             <div class="rp-divider"></div>
-            <NoteEditor ref="noteEditorRef" v-model="editMd" :autofocus="true" :expand-drawers="true" class="rp-editor" @submit="finishEdit">
+            <NoteEditor ref="noteEditorRef" v-model="editMd" :autofocus="!focusEditTitle" :expand-drawers="true" class="rp-editor" @submit="finishEdit">
               <template #foot-actions>
                 <ActionButton variant="primary" fit class="rp-foot-action" @click="finishEdit">
                   <PhCheck :size="14" weight="bold" /> {{ t('mindUi.editDone') }}
@@ -460,6 +462,7 @@ async function onSave(note: MindNote, md: string, title?: string | null) {
 // ── 阅读窗格编辑态：标题独占输入位 + 正文进 NoteEditor（与卡片编辑同一台 TipTap）──
 const editing = ref(false)
 const editTitle = ref('')
+const focusEditTitle = ref(false)
 const editMd = ref('')
 const titleInputRef = ref<HTMLTextAreaElement | null>(null)
 const noteEditorRef = ref<InstanceType<typeof NoteEditor> | null>(null)
@@ -499,11 +502,12 @@ function settleReadingScroll() {
   el.closest<HTMLElement>('.page-content')?.scrollTo({ top: 0 })
 }
 
-async function startEdit(lineUnit: number | null = null) {
+async function startEdit(target: number | 'title' | null = null) {
   if (!selected.value) return
   const parts = splitMindTitleBody(selected.value.contentMd)
   editTitle.value = parts.titleMarkdown || selected.value.title || ''
   editMd.value = parts.body
+  focusEditTitle.value = target === 'title' || (target === null && !editTitle.value)
   editing.value = true
   await nextTick()
   resizeTitleInput()
@@ -511,8 +515,8 @@ async function startEdit(lineUnit: number | null = null) {
   settleReadingScroll()
   // 从正文点进来的：光标落到被点的块（NoteEditor 的 focusAtLineUnit 会顺带重算补全下拉）；
   // 工具栏入口且无标题便签：光标落标题位，引导先写标题
-  if (lineUnit != null) noteEditorRef.value?.focusAtLineUnit(lineUnit)
-  else if (!editTitle.value) titleInputRef.value?.focus()
+  if (typeof target === 'number') noteEditorRef.value?.focusAtLineUnit(target)
+  else if (focusEditTitle.value) titleInputRef.value?.focus()
 }
 function cancelEdit() {
   const note = selected.value
@@ -550,6 +554,17 @@ async function createNew() {
   pendingNewId.value = draft.id
   await selectAndEdit(draft.id)
 }
+
+async function openNewDraft() {
+  store.filterQ = ''
+  if (editing.value && pendingNewId.value != null && pendingNewId.value === selectedId.value) {
+    titleInputRef.value?.focus()
+    return
+  }
+  await createNew()
+}
+
+defineExpose({ openNewDraft })
 
 /** 等待选中状态渲染后再切入编辑，避免选中 watcher 覆盖编辑态。 */
 async function selectAndEdit(id: number) {
@@ -955,7 +970,11 @@ function onListScroll() {
 .ntp-detail-empty.ntp-loading { flex-direction: column; gap: 10px; text-align: center; }
 .rp-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0; }
 /* 浏览器原生 input 的文字垂直居中与 h1 字形基线有约 1px 的差异，预览标题微调对齐编辑态。 */
-.rp-title { position: relative; top: 1px; font-size: 23px; font-weight: 700; line-height: 1.35; margin: 0; color: var(--text-primary); }
+.rp-title { position: relative; flex: 1; min-width: 0; top: 1px; font-size: 23px; font-weight: 700; line-height: 1.35; margin: 0; color: var(--text-primary); }
+.rp-title-button {
+  display: block; width: 100%; padding: 0; border: 0; background: transparent;
+  color: inherit; font: inherit; text-align: left; overflow-wrap: anywhere; cursor: text;
+}
 /* 标题→分割线→正文的节奏（12/14）与编辑态标题 h1 的 padding/margin 严格同值，
    两种模式切换时标题、分割线、正文的相对位置不动 */
 .rp-divider { border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent); margin: 12px 0 14px; }

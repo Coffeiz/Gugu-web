@@ -4,6 +4,7 @@ import { showBrowserReminder } from '@/composables/schedules/browserNotification
 
 export const webScheduleAccess: ScheduleAccess = {
   storesSchedulesLocally: false,
+  listDeliveryTargets: platform => platform === 'wechat' ? Promise.resolve({ groups: [], private_available: true }) : scheduledTasksApi.listDeliveryTargets(platform),
   list: eventId => eventId === undefined ? scheduledTasksApi.list() : scheduledTasksApi.listForEvent(eventId),
   create: (fields, eventId) => scheduledTasksApi.create(eventId === undefined ? fields : { ...fields, event_id: eventId }),
   update(id, fields, change) {

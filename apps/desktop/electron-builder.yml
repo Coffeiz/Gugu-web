@@ -8,6 +8,7 @@ directories:
   buildResources: assets
 files:
   - dist/**
+  - assets/icon.png
   - ui/**
   - node_modules/**
   - package.json

@@ -5,6 +5,8 @@ import { spawn } from 'node:child_process'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import {
   DESKTOP_METHODS,
+  DESKTOP_ARCHIVE_TIMEOUT_MS,
+  DESKTOP_ARCHIVE_METHODS,
   DESKTOP_MUTATIONS,
   MAX_FRAME,
   MAX_AGENT_RESPONSE,
@@ -295,7 +297,7 @@ export class CoreHost {
     }
     if (this.buffered.length >= MAX_FRAME) this.fail()
   }
-  private frame(chunkId?: number): Promise<Record<string, unknown>> {
+  private frame(chunkId?: number, timeoutMs = this.timeoutMs): Promise<Record<string, unknown>> {
     if (!this.healthy || this.waiting)
       return Promise.reject(new DesktopError('closed', 'Core 已停止，请重新启动应用'))
     return new Promise((resolveFrame, reject) => {
@@ -303,7 +305,7 @@ export class CoreHost {
         chunkId, chunks: [], size: 0,
         resolve: resolveFrame,
         reject,
-        timer: setTimeout(() => this.fail(), this.timeoutMs),
+        timer: setTimeout(() => this.fail(), timeoutMs),
       }
     })
   }
@@ -371,7 +373,7 @@ export class CoreHost {
       ['owner_id', 'user_id', 'ownerId'].some((key) => key in params)
     )
       return Promise.reject(new DesktopError('invalid_request', '桌面请求无效'))
-    const requestLimit = method === 'preferences.desktop.update' ? MAX_FRAME : MAX_FRAME / 2
+    const requestLimit = ['preferences.desktop.update', 'preferences.agent'].includes(method) ? MAX_FRAME : MAX_FRAME / 2
     let snapshot: Record<string, unknown>
     try {
       const encoded = JSON.stringify(params)
@@ -404,7 +406,8 @@ export class CoreHost {
           throw new DesktopError('invalid_request', '桌面请求超出长度限制')
         let response: Record<string, unknown>
         try {
-          const pending = this.frame(acceptChunks ? id : undefined)
+          const timeout = DESKTOP_ARCHIVE_METHODS.includes(method) ? DESKTOP_ARCHIVE_TIMEOUT_MS + 5_000 : undefined
+          const pending = this.frame(acceptChunks ? id : undefined, timeout)
           this.child.stdin.write(request)
           response = await pending
         } catch {

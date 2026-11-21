@@ -20,12 +20,13 @@ export const byokList = z.object({
   status: z.enum(['ready', 'needs_reconfigure']),
   items: z.array(byokSummary),
 })
-export const byokTest = z.object({ ok: z.boolean() })
+export const byokTest = z.object({ ok: z.boolean(), message: z.string().optional() })
 export const byokCommand = z.discriminatedUnion('action', [
   z.object({ action: z.literal('list') }),
-  z.object({ action: z.literal('create'), input: fields.extend({ capability: byokCapability, value: secret }) }),
-  z.object({ action: z.literal('update'), id, input: fields.extend({ value: secret }).partial() }),
+  z.object({ action: z.literal('create'), makeDefault: z.boolean().optional(), input: fields.extend({ capability: byokCapability, value: secret }) }),
+  z.object({ action: z.literal('update'), id, input: fields.extend({ value: secret, enabled: z.boolean() }).partial() }),
   z.object({ action: z.literal('test'), id }),
+  z.object({ action: z.literal('test-preview'), input: fields.partial().required({ provider: true }).extend({ capability: byokCapability, value: secret, credential_id: id.optional() }) }),
   z.object({ action: z.literal('bind'), id }),
   z.object({ action: z.literal('delete'), id }),
 ])

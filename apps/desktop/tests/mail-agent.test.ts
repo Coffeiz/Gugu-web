@@ -5,6 +5,8 @@ import { DESKTOP_CHANNELS } from '@gugu/core/desktop'
 import type { MailTransport } from '@gugu/core/mail/service'
 import { afterEach, describe, expect, it } from 'vitest'
 import { desktopMailAttachmentDigest } from '../src/main/mail/attachments.js'
+import { createDesktopPersonalSmtp } from '../src/main/mail/personal-smtp.js'
+import type { SmtpTestDelivery } from '@gugu/core/email/smtp-test'
 import { createDesktopMailService } from '../src/main/mail/index.js'
 
 describe('桌面 Agent 邮件宿主端口', () => {
@@ -46,6 +48,42 @@ describe('桌面 Agent 邮件宿主端口', () => {
     await expect(service.sendForAgent(request)).resolves.toMatchObject({ partial: false })
     await expect(service.sendForAgent(request)).rejects.toMatchObject({ code: 'conflict' })
     expect(sends).toHaveLength(1)
+  })
+
+  it('个人 SMTP 保留同目标的密码并供测试邮件和 Agent 发送共用', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'gugu-personal-smtp-'))
+    directories.push(directory)
+    const deliveries: SmtpTestDelivery[] = []
+    const encryption = {
+      async isAsyncEncryptionAvailable() { return true },
+      async encryptStringAsync(value: string) { return Buffer.from(value) },
+      async decryptStringAsync(value: Buffer) { return { result: value.toString('utf8'), shouldReEncrypt: false } },
+    }
+    const smtp = createDesktopPersonalSmtp(directory, encryption, async () => 'registered@example.test',
+      async delivery => { deliveries.push(delivery) })
+    const settings = { host: 'smtp.example.test', port: 587, user: 'sender@example.test', enabled: true }
+    await expect(smtp.command('save', { ...settings, password: 'synthetic-secret' })).resolves.not.toHaveProperty('password')
+    await smtp.command('save', { ...settings, fromAddr: '小北' })
+    await expect(smtp.command('save', { ...settings, host: 'other.example.test' })).rejects.toMatchObject({ code: 'invalid_request' })
+    await expect(smtp.command('test', settings)).resolves.toMatchObject({ ok: true })
+    expect(deliveries[0]).toMatchObject({ toAddress: 'registered@example.test', password: 'synthetic-secret' })
+    const mail = createDesktopMailService(directory, encryption, undefined, undefined, smtp)
+    const [account] = await mail.listAccounts()
+    expect(account).toMatchObject({ email: settings.user })
+    expect(account).not.toHaveProperty('password')
+    const request = {
+      accountId: account!.id, accountVersion: account!.version, attachmentDigest: desktopMailAttachmentDigest([]),
+      attemptId: '00000000-0000-4000-8000-000000000002', fileRefs: [],
+      draft: { to: ['recipient@example.test'], subject: '合成邮件', text: '测试正文', inlineAttachments: [] },
+    }
+    await expect(mail.sendForAgent(request)).resolves.toEqual({ partial: false })
+    await expect(mail.sendForAgent(request)).rejects.toMatchObject({ code: 'conflict' })
+    expect(deliveries).toHaveLength(2)
+    expect(deliveries[1]).toMatchObject({ fromName: '小北', toAddress: 'recipient@example.test',
+      message: { plain: '测试正文' } })
+    await smtp.command('save', { ...settings, enabled: false })
+    expect(await mail.listAccounts()).toEqual([])
+    await expect(mail.sendForAgent(request)).rejects.toMatchObject({ code: 'conflict' })
   })
 
   it('重新读取引用附件并在确认后文件内容变化时拒绝发送', async () => {

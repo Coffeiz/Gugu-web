@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick } from 'vue'
+import { desktopProfileKey } from '@/components/common/profile/desktopProfile'
 import ProfileDataPortabilityPane from '@/components/common/profile/ProfileDataPortabilityPane.vue'
 
 const mocks = vi.hoisted(() => ({
@@ -9,11 +10,18 @@ const mocks = vi.hoisted(() => ({
   resumeImport: vi.fn(),
   deleteImport: vi.fn(),
   confirm: vi.fn(),
+  desktopAccess: vi.fn(),
+  createExport: vi.fn(),
 }))
 
+vi.mock('@/services/localPreferencesAccess', () => ({ useLocalPreferencesAccess: mocks.desktopAccess }))
 vi.mock('@/services/api', () => ({
   dataPortabilityApi: {
-    preview: vi.fn().mockResolvedValue({ categories: {}, format_version: '1.0' }),
+    preview: vi.fn().mockResolvedValue({
+      categories: { projects: { records: 1, bytes: 0 }, files: { records: 2, bytes: 1024 } },
+      format_version: '1.0',
+    }),
+    createExport: mocks.createExport,
     listExports: vi.fn().mockResolvedValue([]),
     listImports: mocks.listImports,
     resumeImport: mocks.resumeImport,
@@ -27,10 +35,11 @@ vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 let app: ReturnType<typeof createApp> | undefined
 let host: HTMLDivElement | undefined
 
-function mountPane() {
+function mountPane(desktop = false) {
   host = document.createElement('div')
   document.body.appendChild(host)
   app = createApp(ProfileDataPortabilityPane)
+  app.provide(desktopProfileKey, desktop)
   app.mount(host)
   return host
 }
@@ -54,6 +63,8 @@ beforeEach(() => {
   }))
   mocks.deleteImport.mockReset().mockResolvedValue(undefined)
   mocks.confirm.mockReset().mockResolvedValue(true)
+  mocks.desktopAccess.mockReset().mockReturnValue(null)
+  mocks.createExport.mockReset().mockResolvedValue(undefined)
 })
 
 afterEach(() => {
@@ -83,4 +94,45 @@ describe('数据迁移导入任务历史', () => {
     expect(mocks.deleteImport).toHaveBeenCalledWith('failed-job')
     expect(root.textContent).not.toContain('failed-job')
   })
+})
+
+it('桌面表单只显示当前预检包并等待确认后导入', async () => {
+  const preflightBusinessArchive = vi.fn()
+    .mockResolvedValueOnce({ id: 'first', added: 1, skipped: 0 })
+    .mockResolvedValueOnce({ id: 'second', added: 2, skipped: 1 })
+  const applyBusinessArchive = vi.fn().mockResolvedValue({ added: 2, skipped: 1 })
+  mocks.desktopAccess.mockReturnValue({
+    preflightBusinessArchive, applyBusinessArchive,
+    dataInventory: vi.fn().mockResolvedValue({ projects: 0, clients: 0 }),
+  })
+  const root = mountPane(true)
+  await flushUi()
+  const button = (key: string) => Array.from(root.querySelectorAll('button'))
+    .find(element => element.textContent?.trim() === `profileDataUi.${key}`)!
+  button('preflight').click()
+  await flushUi()
+  button('preflight').click()
+  await flushUi()
+  expect(root.textContent).not.toContain('profileDataUi.importJobs')
+  expect(root.textContent).not.toContain('profileDataUi.jobs')
+  expect(root.querySelectorAll('.data-import .data-job')).toHaveLength(1)
+  mocks.confirm.mockResolvedValueOnce(false)
+  button('incrementalImport').click()
+  await flushUi()
+  expect(applyBusinessArchive).not.toHaveBeenCalled()
+  button('incrementalImport').click()
+  await flushUi()
+  expect(applyBusinessArchive).toHaveBeenCalledExactlyOnceWith('second')
+  expect(root.querySelector('.data-job')?.textContent).toContain('profileDataUi.importCompleted')
+})
+
+it('Web 导出忽略旧预览返回的文件库类别', async () => {
+  const root = mountPane()
+  await flushUi()
+  expect(root.textContent).not.toContain('profileDataUi.category_files')
+  const button = Array.from(root.querySelectorAll('button'))
+    .find(element => element.textContent?.trim() === 'profileDataUi.createExport')!
+  button.click()
+  await flushUi()
+  expect(mocks.createExport).toHaveBeenCalledExactlyOnceWith(['projects'], expect.any(String))
 })

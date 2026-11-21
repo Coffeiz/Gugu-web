@@ -28,6 +28,18 @@ const groupToolSets = Object.freeze({
  groupProviderSearchEnabled:['web_search'],
  groupHistorySearchEnabled:['group_context_search'],
 })
+const groupFileToolNames = groupToolSets.groupWebToolsEnabled
+/** Desktop 与 Web Host 对同一群工具授权使用同一判定；未知工具始终拒绝。 */
+export function userBotGroupToolAllowed(configured:unknown,toolName:string):boolean {
+ return normalizeUserBotTools(configured).includes(toolName)
+}
+/** 群附件处理只有在至少一个网页/图片/文件工具获准时才开放。 */
+export function userBotGroupFileToolsAllowed(configured:unknown):boolean {
+ if(configured&&typeof configured==='object'&&!Array.isArray(configured))
+  return (configured as {groupWebToolsEnabled?:unknown}).groupWebToolsEnabled===true
+ const tools=new Set(Array.isArray(configured)?configured.filter((name):name is string=>typeof name==='string'):[])
+ return groupFileToolNames.some(name=>tools.has(name))
+}
 export type UserBotGroupToolPatch = Partial<Record<keyof typeof groupToolSets, boolean>>
 /** WebUI 與本机设置用同一规则投影和更新分组工具开关。 */
 export function userBotGroupToolFlags(configured:unknown) {

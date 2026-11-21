@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import FilePreviewModal from '@/components/common/file-browser/FilePreviewModal.vue'
 import FloatPreviewWindow from '@/components/common/layout/FloatPreviewWindow.vue'
 import { usePreviewStore } from '@/stores/preview'
@@ -18,6 +18,9 @@ import { projectWindowBridge, projectWindowResult } from './projectWindowBridge'
 const props = defineProps({ projectId: { type: Number, required: true } })
 const previewStore = usePreviewStore()
 const projectStore = useProjectStore()
+watch(() => projectStore.modalProject?.name, name => {
+  document.title = name ? `项目 · ${name}` : '咕咕 · 项目'
+}, { immediate: true })
 provideRuntime(runtime)
 const loading = ref(true)
 const closing = ref(false)

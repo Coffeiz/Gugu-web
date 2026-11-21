@@ -119,6 +119,7 @@ export default defineConfig({
       // 通过预构建 URL 加载共享契约，避免开发工作区中文路径生成失效的 /@fs/ URL。
       '@gugu/core/contracts', '@gugu/core/desktop', '@gugu/core/agent/chat-sse', '@gugu/core/agent/commands/menu', '@gugu/core/mail/contracts',
       '@gugu/core/preferences/text-upload', '@gugu/core/im/user-bots',
+      '@gugu/desktop-contracts/file-preview',
       'vue-codemirror', 'codemirror', '@codemirror/view', '@codemirror/state',
       '@codemirror/language', '@codemirror/autocomplete', '@lezer/highlight',
       '@codemirror/lang-markdown', '@codemirror/lang-javascript', '@codemirror/lang-python',

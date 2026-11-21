@@ -50,6 +50,15 @@ export function createAgentPreferenceContextSources(pool: Pick<Pool, 'query'>, f
     signal?.throwIfAborted()
     return output
   }
+  const loadGroupStyle: ContextDataPorts['loadStylePreferences'] = async (identity, signal): Promise<Json> => {
+    signal?.throwIfAborted()
+    const row = await owned(identity)
+    const data = parseData(row.data_json ?? '{}')
+    const personality = truthy(data.group_personality_preference_enabled)
+      ? normalized(await files.read(identity.ownerId, 'group-personality')) : null
+    signal?.throwIfAborted()
+    return personality ? { group_personality_preference_enabled: true, group_personality_preference: personality } : {}
+  }
   const currentRevision = async (identity: HistoryIdentity, signal?: AbortSignal): Promise<number> => {
     signal?.throwIfAborted(); await owned(identity); signal?.throwIfAborted()
     const raw = await redis.get(`context-revision:${identity.ownerId}`)
@@ -58,5 +67,5 @@ export function createAgentPreferenceContextSources(pool: Pick<Pool, 'query'>, f
     if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw))) throw new Error('上下文版本无效')
     return Number(raw)
   }
-  return { loadTimezone, loadStylePreferences, currentRevision }
+  return { loadTimezone, loadStylePreferences, loadGroupStyle, currentRevision }
 }

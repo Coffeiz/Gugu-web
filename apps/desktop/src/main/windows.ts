@@ -1,3 +1,5 @@
+import { applicationMenuChannels, type ApplicationEditAction } from '@gugu/desktop-contracts'
+import { nativeEditingChannel, type EditingFocus } from '../keyboard-editing.js'
 import type {
   BrowserWindowConstructorOptions,
   BrowserWindow,
@@ -91,7 +93,31 @@ export function windowOptions(
     },
   }
 }
+const editingFocus = new WeakMap<Electron.WebContents, EditingFocus>()
+const rendererEditKeys = new Set(['a', 'c', 'v', 'x', 'y', 'z'])
+
+export function dispatchWindowEdit(contents: Electron.WebContents, action: ApplicationEditAction) {
+  if (contents.isDestroyed()) return
+  const focus = editingFocus.get(contents) ?? 'page'
+  const editorHistory = focus === 'editor' && (action === 'undo' || action === 'redo')
+  if (focus === 'page' || editorHistory) contents.send(applicationMenuChannels.edit, action)
+  else contents[action]()
+}
+
 export function secureWindow(window: BrowserWindow, openExternal?: (url: string) => void) {
+  window.webContents.ipc.on(nativeEditingChannel, (event, focus: unknown) => {
+    if (event.senderFrame !== window.webContents.mainFrame) return
+    if (focus === 'page' || focus === 'native' || focus === 'editor') editingFocus.set(window.webContents, focus)
+  })
+  window.webContents.on('before-input-event', (_event, input) => {
+    // 业务操作和富文本历史交给渲染器，原生输入框及文本剪贴板由系统处理。
+    const mac = process.platform === 'darwin'
+    const primary = mac ? input.meta : input.control
+    const key = input.key.toLowerCase()
+    const focus = editingFocus.get(window.webContents) ?? 'page'
+    const renderer = focus === 'page' || (mac && focus === 'editor' && (key === 'z' || key === 'y'))
+    window.webContents.setIgnoreMenuShortcuts(renderer && primary && !input.alt && rendererEditKeys.has(key))
+  })
   window.webContents.setWindowOpenHandler(({ url, postBody }) => {
     if (openExternal && !postBody) {
       const target = URL.parse(url)

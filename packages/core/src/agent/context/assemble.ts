@@ -182,7 +182,9 @@ export async function prepareContext(input: PrepareContextInput, ports: Preparat
         })
         continue
       }
-      const message = canonicalizeMessage({ ...copy(user.message), content: inlineMessageTime(user.message.content, user.messageTime) })
+      const messageTime = user.messageTime ?? (user.messageTimestamp && input.userTimezone
+        ? ports.formatMessageTime?.(user.messageTimestamp, input.userTimezone) : undefined)
+      const message = canonicalizeMessage({ ...copy(user.message), content: inlineMessageTime(user.message.content, messageTime) })
       const values = blocks(message.content)
       const source = values.some(block => block.type === 'knowledge-context' && block.scope === 'explicit-reference') ? 'reference'
         : values.some(block => mediaTypes.has(block.type)) ? 'attachment' : 'user'

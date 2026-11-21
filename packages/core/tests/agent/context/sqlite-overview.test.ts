@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { sql } from 'kysely'
 import { initializeSqlite, openSqliteRuntime } from '../../../src/data/sqlite.js'
+import { createLocalPreferenceTextFiles } from '../../../src/preferences/text-files.js'
+import { desktopAgentPreference } from '../../../src/preferences/desktop-agent.js'
+import { createKyselyPreferenceDocumentStore } from '../../../src/preferences/document-store.js'
 import { readSqliteAgentOverviewData, readSqliteAgentStylePreferences, formatSqliteAgentOverview } from '../../../src/agent/context/sqlite-overview.js'
 
 describe('Desktop SQLite Agent 上下文来源', () => {
@@ -60,7 +63,26 @@ describe('Desktop SQLite Agent 上下文来源', () => {
       personality_preference_enabled: false,
       personality_preference_revision: 0,
     })
-    await expect(readSqliteAgentStylePreferences(runtime.db, { ...identity, runId: randomUUID() }, new AbortController().signal))
+    const files = createLocalPreferenceTextFiles(directory)
+    const store = createKyselyPreferenceDocumentStore(runtime.db, 'sqlite')
+    await expect(desktopAgentPreference(store, files, ownerId, 'reply-style'))
+      .resolves.toMatchObject({ content: '简洁、直说', enabled: true })
+    await desktopAgentPreference(store, files, ownerId, 'personality', { content: '私人设定', enabled: true })
+    await desktopAgentPreference(store, files, ownerId, 'group-personality', { content: '群聊设定', enabled: true })
+    await desktopAgentPreference(store, files, ownerId, 'reply-style', { content: '只使用短句' })
+    expect(await readFile(join(directory, ownerId, '.agent', 'prompt', 'persona.md'), 'utf8')).toBe('私人设定')
+    const signal = new AbortController().signal
+    const personal = await readSqliteAgentStylePreferences(runtime.db, identity, signal, files)
+    expect(personal).toMatchObject({ personality_preference: '私人设定', custom_reply_style: '只使用短句' })
+    expect(personal).not.toHaveProperty('group_personality_preference')
+    await expect(readSqliteAgentStylePreferences(runtime.db, identity, signal, files, true)).resolves.toEqual({
+      group_personality_preference_enabled: true, group_personality_preference: '群聊设定',
+    })
+    await desktopAgentPreference(store, files, ownerId, 'personality', { enabled: false })
+    const disabled = await readSqliteAgentStylePreferences(runtime.db, identity, signal, files)
+    expect(disabled.personality_preference_enabled).toBe(false)
+    expect(disabled).not.toHaveProperty('personality_preference')
+    await expect(readSqliteAgentStylePreferences(runtime.db, { ...identity, runId: randomUUID() }, signal, files))
       .rejects.toThrow('本机会话上下文不存在')
   })
 })

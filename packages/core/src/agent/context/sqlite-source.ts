@@ -59,8 +59,11 @@ export function createSqliteAgentSessionSource(
         const { rows } = await sql<HistoryRow>`
           SELECT s.baseline_message_seq AS baseline,s.baseline_message_hash AS baseline_hash,s.snapshot_hash,s.source,
             m.id,m.conversation_seq,m.history_anchor_seq,m.role,m.content,m.content_json,m.covers_until_seq,
-            m.run_id,m.round_id,m.canonical_batch_id,m.created_at,m.sent_at,m.quoted_text,m.files
+            m.run_id,m.round_id,m.canonical_batch_id,coalesce(anchor.created_at,m.created_at) AS created_at,
+            m.sent_at,m.quoted_text,m.files
           FROM conversation_sessions s LEFT JOIN conversation_messages m ON m.session_id=s.id
+          LEFT JOIN conversation_messages anchor ON anchor.session_id=s.id AND anchor.conversation_seq=m.history_anchor_seq
+            AND anchor.role='user' AND anchor.run_id=m.run_id
           WHERE s.user_id=${owner} AND s.id=${session} AND (s.source IS NULL OR s.source='web')`.execute(db)
         signal?.throwIfAborted()
         const first = rows[0]
@@ -108,8 +111,8 @@ export function createSqliteAgentSessionSource(
     async currentTurn(identity, signal) {
       signal?.throwIfAborted()
       const { owner, session } = scope(identity.ownerId, identity.sessionId)
-      const { rows } = await sql<{ id: number; content: string; files: string | null; session_context: string | null }>`
-        SELECT m.id,m.content,m.files,s.session_context FROM agent_run_admissions a
+      const { rows } = await sql<{ id: number; content: string; files: string | null; session_context: string | null; created_at: string }>`
+        SELECT m.id,m.content,m.files,s.session_context,m.created_at FROM agent_run_admissions a
         JOIN conversation_sessions s ON s.id=a.session_id AND s.user_id=a.user_id
         JOIN conversation_messages m ON m.id=a.user_message_id AND m.session_id=s.id AND m.role='user'
         WHERE a.user_id=${owner} AND a.session_id=${session} AND a.run_id=${identity.runId}
@@ -139,7 +142,7 @@ export function createSqliteAgentSessionSource(
         : prepared.rawText
       const rawText = await resolveDesktopChatReferences(db, identity.ownerId, references, input,
         options.readReferencedFile ? id => options.readReferencedFile!(id, signal) : undefined, inherited)
-      return { currentUser: { persistedMessageId: String(row.id), rawText,
+      return { currentUser: { persistedMessageId: String(row.id), rawText, messageTimestamp: utc(row.created_at),
         message: { role: 'user', content: goal.goalActive
           ? `${rawText}\n\n[目标任务] ${String(context.goal_text)}。仅当完整目标完成时，在答复末尾单独输出 ${GOAL_DONE_MARKER}，不要解释标记。`
           : rawText }, files: prepared.cards } }

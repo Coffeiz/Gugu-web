@@ -34,6 +34,7 @@ import FileBrowserPanel from '@/components/common/file-browser/FileBrowserPanel.
 import ProjectFileToolbar from './ProjectFileToolbar.vue'
 import FileSelectionToolbar from '@/components/common/file-browser/FileSelectionToolbar.vue'
 import PathFiles from '@/views/Files/components/PathFiles.vue'
+import { hasShortcutOverlay } from '@/interaction/keyboardShortcuts'
 import { usePathFileSelection } from '@/composables/files/usePathFileSelection'
 import { useFolderNavigation } from '@/composables/files/useFolderNavigation'
 import { parseBreadcrumbSurfaceId } from '@/interaction/runtime/adapters/file/fileRuntimeAdapter'
@@ -58,7 +59,8 @@ const target = computed(() => ({
   directoryId: `project:${props.projectId}` as const, relativePath: folderStack.value.at(-1)?.relativePath ?? '',
 }))
 const selection = usePathFileSelection({
-  target, container: main, getSelectedEntries: () => files.value?.selectedEntries() ?? [],
+  target, container: main, getEntries: () => files.value?.selectableEntries() ?? [],
+  getSelectedEntries: () => files.value?.selectedEntries() ?? [],
   reload: () => { reload.value++ },
 })
 const { selectionMode, selectionRect, selectedPaths, previewPaths, cutPaths, pasteCount, canPaste, fileCount, folderCount } = selection
@@ -142,17 +144,19 @@ async function createFolder() {
 }
 
 function onKeyDown(event: KeyboardEvent) {
-  if (!(event.ctrlKey || event.metaKey) || (event.target as Element | null)?.closest?.('input, textarea, [contenteditable]')) return
-  if (event.key === 'c' && selectedPaths.value.size) {
-    event.preventDefault(); event.stopImmediatePropagation(); selection.copySelected()
-  } else if (event.key === 'x' && selectedPaths.value.size) {
-    event.preventDefault(); event.stopImmediatePropagation(); selection.cutSelected()
-  } else if (event.key === 'v' && canPaste.value) {
-    event.preventDefault(); event.stopImmediatePropagation(); void selection.paste()
-  }
+  const target = event.target
+  const panel = main.value
+  if (!panel || document.querySelector('.confirm-dialog')) return
+  const projectOverlay = panel.closest<HTMLElement>('.bm-center')
+  if (projectOverlay) {
+    if (target instanceof Element && target !== document.body && !projectOverlay.contains(target)) return
+    if (target === document.body && Array.from(document.querySelectorAll<HTMLElement>('.bm-center:not(.bm-leave-active)'))
+      .some(overlay => Number(overlay.style.zIndex) > Number(projectOverlay.style.zIndex))) return
+  } else if (hasShortcutOverlay(target)) return
+  selection.handleShortcut(event)
 }
-onMounted(() => document.addEventListener('keydown', onKeyDown, true))
-onScopeDispose(() => document.removeEventListener('keydown', onKeyDown, true))
+onMounted(() => document.addEventListener('keydown', onKeyDown))
+onScopeDispose(() => document.removeEventListener('keydown', onKeyDown))
 </script>
 
 <style scoped>

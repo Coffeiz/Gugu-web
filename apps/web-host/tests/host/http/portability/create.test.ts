@@ -6,6 +6,17 @@ import {withPostgresTransaction} from '../../../../src/adapters/database/postgre
 import {createDataExportCreator} from '@gugu/core/data-portability/create-export'
 const url=process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
+test('旧客户端提交文件库类别时拒绝创建归档任务', async () => {
+ const create = createDataExportCreator(
+  async () => assert.fail('校验失败后不得创建导出任务'),
+  async () => assert.fail('校验失败后不得查询任务'),
+  { now: () => new Date(), uuid: randomUUID },
+ )
+ await assert.rejects(create(randomUUID(), ['files', 'projects'], 'synthetic-legacy-file-export'), {
+  code: 'invalid_request', message: '导出不支持文件库文件',
+ })
+})
+
 test('导出创建按用户锁执行幂等和跨导入导出互斥，并发不同请求不产生双任务', {skip:!url&&'需要隔离PG'},async()=>{
  const schema=`export_create_${randomUUID().replaceAll('-','')}`,admin=new Pool({connectionString:url});await admin.query(`CREATE SCHEMA "${schema}"`)
  const pool=new Pool({connectionString:url,options:`-c search_path=${schema}`,max:4}),owner=randomUUID(),other=randomUUID()

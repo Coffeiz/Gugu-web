@@ -27,6 +27,7 @@
   },
   "files": [
     "dist",
+    "assets/icon.png",
     "README.md"
   ],
   "dependencies": {
@@ -34,6 +35,7 @@
   },
   "devDependencies": {
     "@gugu/core": "workspace:*",
+    "@gugu/desktop-contracts": "workspace:*",
     "@gugu/fs": "workspace:*",
     "@gugu/gateway": "workspace:*",
     "@gugu/log": "workspace:*",

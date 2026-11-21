@@ -91,8 +91,8 @@ export function desktopHistoryToWebShape(page: DesktopAgentHistoryPage, active =
   }
 }
 
-export async function createDesktopChatSession(title: string) {
-  return requestDesktopAgentSessions({ action: 'create', title, operationId: crypto.randomUUID() })
+export async function createDesktopChatSession(title: string, greeting?: string) {
+  return requestDesktopAgentSessions({ action: 'create', title, operationId: crypto.randomUUID(), ...(greeting ? { greeting } : {}) })
 }
 
 export async function renameDesktopChatSession(id: number, title: string) {

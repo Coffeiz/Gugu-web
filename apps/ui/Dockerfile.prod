@@ -10,12 +10,14 @@ RUN npm install --global pnpm@10.15.0
 # lockfile 变更时只下载增量。
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/ui/package.json ./apps/ui/package.json
+COPY packages/desktop-contracts/package.json ./packages/desktop-contracts/package.json
 COPY packages/charts/package.json ./packages/charts/package.json
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm config set store-dir /pnpm/store \
     && pnpm install --filter gugu-web --frozen-lockfile
 
 COPY apps/ui/ ./apps/ui/
+COPY packages/desktop-contracts/ ./packages/desktop-contracts/
 COPY packages/charts/ ./packages/charts/
 WORKDIR /workspace/apps/ui
 RUN pnpm build

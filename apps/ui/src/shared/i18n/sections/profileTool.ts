@@ -1,9 +1,9 @@
 type LocaleMessages = Record<string, any>
 
 export function applyProfileToolSection(messages: Record<'zh-CN' | 'ja-JP' | 'en-US', LocaleMessages>) {
-  Object.assign((messages['zh-CN'] as Record<string, any>).profileToolUi, { smtpEnabled: '启用个人 SMTP' })
-  Object.assign((messages['ja-JP'] as Record<string, any>).profileToolUi, { smtpEnabled: '個人 SMTP を有効化' })
-  Object.assign((messages['en-US'] as Record<string, any>).profileToolUi, { smtpEnabled: 'Enable personal SMTP' })
+  Object.assign((messages['zh-CN'] as Record<string, any>).profileToolUi, { desktopSmtpHint: '配置个人 SMTP 后即可用于邮件工具。', desktopCapabilityHint: '为深度研究和相似图搜索选择提供商并填写 API Key。', smtpEnabled: '启用个人 SMTP' })
+  Object.assign((messages['ja-JP'] as Record<string, any>).profileToolUi, { desktopSmtpHint: '個人 SMTP を設定するとメールツールで使用できます。', desktopCapabilityHint: '深度調査と類似画像検索のプロバイダーを選択し、API Key を入力してください。', smtpEnabled: '個人 SMTP を有効化' })
+  Object.assign((messages['en-US'] as Record<string, any>).profileToolUi, { desktopSmtpHint: 'Configure personal SMTP to use it with email tools.', desktopCapabilityHint: 'Choose a provider and enter an API key for deep research and similar-image search.', smtpEnabled: 'Enable personal SMTP' })
   Object.assign((messages['zh-CN'] as Record<string, any>).profileToolUi, { smtpTo: '测试收件人（默认注册邮箱）' })
   Object.assign((messages['ja-JP'] as Record<string, any>).profileToolUi, { smtpTo: 'テスト受信者（既定は登録メール）' })
   Object.assign((messages['en-US'] as Record<string, any>).profileToolUi, { smtpTo: 'Test recipient (defaults to account email)' })

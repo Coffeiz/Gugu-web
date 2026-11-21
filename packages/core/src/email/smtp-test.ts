@@ -27,7 +27,7 @@ export class SmtpDeliveryFailure extends Error {
 }
 export interface SmtpTestSettings {host:string;port:number;user:string;password:string;from_addr:string;to_addr:string;test_to_addr:string}
 export interface SmtpTestInput {host:string;port:number;user:string;password?:string;from_addr?:string;to_addr:string;use_ssl?:boolean}
-export interface SmtpTestDelivery {host:string;port:number;user:string;password:string;fromName:string;fromAddress:string;toAddress:string;secure:boolean;message:SmtpTestMessage;attachments?:readonly EmailAttachment[]}
+export interface SmtpTestDelivery {host:string;port:number;user:string;password:string;fromName:string;fromAddress:string;toAddress:string;secure:boolean;message:SmtpTestMessage;attachments?:readonly (EmailAttachment & { cid?: string })[]}
 export async function testSmtp(input:SmtpTestInput,settings:SmtpTestSettings,send:(delivery:SmtpTestDelivery)=>Promise<void>):Promise<{ok:boolean;message:string}> {
  const host=input.host||settings.host,toAddress=input.to_addr||settings.test_to_addr||settings.to_addr,user=input.user||settings.user,from=input.from_addr||settings.from_addr||user
  if(!host)return {ok:false,message:'SMTP 服务器未配置'}

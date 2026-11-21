@@ -9,7 +9,7 @@ import {
 } from './general.js'
 import type { PreferenceDocumentStore } from './service.js'
 
-const DESKTOP_APPEARANCE_FIELDS = new Set(['theme', 'themeFamily', 'palette', 'useSystemProxy', 'fileOpenPreference', 'automaticModeEnabled', 'imToolDisplayMode', 'showIntermediateReplies', 'decisionGuardEnabled', 'toolInjectionMode', 'customReplyStyle', 'customReplyStyleEnabled', 'timezone', 'locale', 'defaultView', 'calendarWeekStart', 'calendarDoneMode', 'projectSort'])
+const DESKTOP_APPEARANCE_FIELDS = new Set(['theme', 'themeFamily', 'palette', 'useSystemProxy', 'keepGatewayOnline', 'fileOpenPreference', 'automaticModeEnabled', 'imToolDisplayMode', 'showIntermediateReplies', 'decisionGuardEnabled', 'toolInjectionMode', 'customReplyStyle', 'customReplyStyleEnabled', 'timezone', 'locale', 'defaultView', 'calendarWeekStart', 'calendarDoneMode', 'projectSort'])
 
 /** 桌面读取本机偏好，避免触发旧文本文件迁移。 */
 export function createDesktopAppearanceService(store: PreferenceDocumentStore) {
@@ -37,6 +37,7 @@ export function createDesktopAppearanceService(store: PreferenceDocumentStore) {
       imToolDisplayMode: normalized.imToolDisplayMode,
       showIntermediateReplies: normalized.showIntermediateReplies,
       useSystemProxy: data.useSystemProxy === true,
+      keepGatewayOnline: data.keepGatewayOnline !== false,
       ...(data.fileOpenPreference === 'system' || data.fileOpenPreference === 'preview'
         ? { fileOpenPreference: data.fileOpenPreference } : {}),
       ...(typeof data.automatic_mode_enabled === 'boolean' ? { automaticModeEnabled: normalized.automaticModeEnabled } : {}),
@@ -48,7 +49,7 @@ export function createDesktopAppearanceService(store: PreferenceDocumentStore) {
       const body = parsePreferenceRequest(rawBody)
       const unsupported = Object.keys(body).find((key) => !DESKTOP_APPEARANCE_FIELDS.has(key))
       if (unsupported) throw new CoreError('invalid_request', '桌面外观设置字段无效')
-      const { useSystemProxy, timezone, customReplyStyle, fileOpenPreference, calendarDoneMode, projectSort, ...appearance } = body
+      const { useSystemProxy, keepGatewayOnline, timezone, customReplyStyle, fileOpenPreference, calendarDoneMode, projectSort, ...appearance } = body
       if (calendarDoneMode !== undefined && calendarDoneMode !== 'done' && calendarDoneMode !== 'deadline')
         throw new CoreError('invalid_request', '已完成项目显示方式无效')
       if (projectSort !== undefined && projectSort !== 'default' && projectSort !== 'name' && projectSort !== 'deadline')
@@ -63,7 +64,10 @@ export function createDesktopAppearanceService(store: PreferenceDocumentStore) {
         throw new CoreError('invalid_request', '系统代理设置无效')
       if (timezone !== undefined && timezone !== null && (typeof timezone !== 'string' || !isValidTimezone(timezone)))
         throw new CoreError('invalid_request', '时区设置无效')
+      if (keepGatewayOnline !== undefined && typeof keepGatewayOnline !== 'boolean')
+        throw new CoreError('invalid_request', '保持网关在线设置无效')
       const patch = parsePreferencePatch(appearance)
+      if (keepGatewayOnline !== undefined) patch.keepGatewayOnline = keepGatewayOnline
       if (calendarDoneMode !== undefined) patch.calendarDoneMode = calendarDoneMode
       if (projectSort !== undefined) patch.projectSort = projectSort
       if (customReplyStyle !== undefined) patch.custom_reply_style = normalizePreferenceText(customReplyStyle, '回复风格')

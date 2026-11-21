@@ -12,6 +12,17 @@
       <span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="intermediateReplies" :aria-label="t('profileImUi.toggleIntermediateReplies')" @update:model-value="setIntermediateReplies" /><span class="pm-switch-label" :class="{ on: intermediateReplies }">{{ intermediateReplies ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span>
     </div>
   </div>
+  <div v-if="desktop && desktopImAdapter" class="pm-section">
+    <div class="pm-bot-group-row pm-interaction-preference-row">
+      <div class="pm-field-desc">
+        <span class="pm-field-name">{{ t('profileImUi.keepGatewayOnline') }}</span>
+        <span class="pm-field-hint">{{ t('profileImUi.keepGatewayOnlineHint') }}</span>
+      </div>
+      <ToggleSwitch size="sm" :model-value="localMessagePreferences.keepGatewayOnline !== false"
+        :disabled="!localPreferencesLoaded || gatewayPreferenceSaving" :aria-label="t('profileImUi.keepGatewayOnline')"
+        @update:model-value="setKeepGatewayOnline" />
+    </div>
+  </div>
   <div class="pm-sep"></div>
   <div class="pm-section">
     <div class="pm-section-label">{{ t('profileImUi.messaging') }}</div>
@@ -256,7 +267,9 @@ const pendingSettingWrites = new Set<Promise<void>>()
 let settingsRevision = 0
 let botsLoadSeq = 0
 
-const localMessagePreferences = ref<{ imToolDisplayMode?: 'off' | 'all' | 'slow_only'; showIntermediateReplies?: boolean }>({})
+const localMessagePreferences = ref<{ imToolDisplayMode?: 'off' | 'all' | 'slow_only'; showIntermediateReplies?: boolean; keepGatewayOnline?: boolean }>({})
+const localPreferencesLoaded = ref(false)
+const gatewayPreferenceSaving = ref(false)
 const toolDisplayMode = computed(() => desktop ? localMessagePreferences.value.imToolDisplayMode ?? 'all' : preferences.imToolDisplayMode)
 const intermediateReplies = computed(() => desktop ? localMessagePreferences.value.showIntermediateReplies === true : preferences.showIntermediateReplies)
 let localPreferenceWrite = Promise.resolve()
@@ -268,6 +281,13 @@ function saveLocalMessagePreferences(patch: typeof localMessagePreferences.value
     }
     catch (error) { connectErr.value = error instanceof Error ? error.message : t('profileImUi.connectionSettingsFailed') }
   })
+  return localPreferenceWrite
+}
+
+async function setKeepGatewayOnline(value: boolean) {
+  gatewayPreferenceSaving.value = true
+  try { await saveLocalMessagePreferences({ keepGatewayOnline: value }) }
+  finally { gatewayPreferenceSaving.value = false }
 }
 
 function setIntermediateReplies(value: boolean) {
@@ -525,7 +545,19 @@ function setMessageFormat(bot: Bot, scope: 'group' | 'private', mode: string) {
   void updateBotSetting(bot.id, patch, '消息格式设置失败')
 }
 async function removeBot(bot: Bot) { if (!await confirmDialog({ title: t('profileImUi.deleteBotTitle'), message: t('profileImUi.deleteBotMessage', { name: displayBotName(bot) }), tone: 'danger', confirmText: t('profileImUi.deleteBot') })) return; try { await waitForSettingWrites(); await userBotsApi.remove(bot.id); await loadBots() } catch (error) { connectErr.value = error instanceof Error ? error.message : t('profileImUi.connectionFailed') } }
-onMounted(() => { if (desktop) { localPreferenceWrite = props.desktopImAdapter?.appearance().then(value => { localMessagePreferences.value = value }).catch(() => {} ) ?? Promise.resolve(); refreshDesktopPairingStatus(); bindingCountdown = setInterval(tickBindingCodes, 1000); return } void preferences.fetch(); loadBots(); bindingCountdown = setInterval(tickBindingCodes, 1000) })
+onMounted(() => {
+  bindingCountdown = setInterval(tickBindingCodes, 1000)
+  if (desktop) {
+    localPreferenceWrite = props.desktopImAdapter?.appearance().then(value => {
+      localMessagePreferences.value = value
+      localPreferencesLoaded.value = true
+    }).catch(() => { connectErr.value = t('profileImUi.connectionSettingsFailed') }) ?? Promise.resolve()
+    refreshDesktopPairingStatus()
+    return
+  }
+  void preferences.fetch()
+  void loadBots()
+})
 onDeactivated(stopPoll)
 onActivated(() => { resumePoll(); refreshDesktopPairingStatus() })
 onActivated(() => { if (!desktop) void loadBots() })

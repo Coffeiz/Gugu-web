@@ -1,11 +1,10 @@
 // 将已固定的当前平台 Node 和生产依赖装配为自包含制品；不在用户启动时下载。
-import { createRequire } from 'node:module'
 import { createHash } from 'node:crypto'
 import { execFileSync, spawn } from 'node:child_process'
 import { buildCore } from '../../../packages/core/scripts/build.mjs'
 import { buildDesktopAgentRuntime } from './build-agent-runtime.mjs'
+import { prepareDesktopPty } from './prepare-pty.mjs'
 import {
-  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -100,12 +99,7 @@ async function prepareSidecar() {
   const decoder = 'node_modules/@zpowertech/audio-player'
   mkdirSync(dirname(join(host, decoder)), { recursive: true })
   cpSync(join(gateway, decoder), join(host, decoder), { recursive: true, dereference: true })
-  if (process.platform === 'darwin') {
-    const require = createRequire(join(host, 'package.json'))
-    const pty = dirname(require.resolve('node-pty/package.json'))
-    const helper = join(pty, 'prebuilds', `darwin-${process.arch}`, 'spawn-helper')
-    if (existsSync(helper)) chmodSync(helper, 0o755)
-  }
+  prepareDesktopPty(join(host, 'package.json'))
   cpSync(join(root, 'LICENSE'), join(host, 'LICENSE'))
   mkdirSync(join(host, 'agent'), { recursive: true })
   cpSync(join(desktop, '.tools/agent/runtime.mjs'), join(host, 'agent/runtime.mjs'))

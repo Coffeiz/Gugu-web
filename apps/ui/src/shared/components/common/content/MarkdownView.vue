@@ -133,10 +133,12 @@ onBeforeUnmount(() => {
 }
 .md-view :deep(.md-table-scroll > table) { margin: 0; }
 
-.md-view :deep(code) {
+.md-view :deep(code:not(pre code)) {
   font-family: var(--font-mono, var(--font-family-mono));
-  font-size: 0.88em; background: color-mix(in srgb, var(--action-primary) 12%, transparent);
-  color: var(--color-primary); border-radius: 5px; padding: 1px 5px;
+  font-size: 0.88em;
+  color: var(--content-primary);
+  background: color-mix(in srgb, var(--action-primary) 12%, transparent);
+  border-radius: 5px; padding: 1px 5px;
 }
 .md-view :deep(blockquote) {
   margin: 7px 0; padding: 2px 0 2px 10px;
@@ -154,7 +156,7 @@ onBeforeUnmount(() => {
 /* 代码块：GuguChat 的 hljs 渲染产物（.md-code-block + 头部语言标签 + 复制按钮 + token 配色）。
    轻量 renderMarkdown 产出的是裸 <pre><code>，由下面的 pre 兜底样式接管。 */
 .md-view :deep(pre) { margin: 7px 0; padding: 9px 12px; overflow-x: auto; background: rgba(20,22,40,0.05); border-radius: 8px; }
-.md-view :deep(pre code) { background: none; color: var(--text-primary); padding: 0; border-radius: 0; font-size: 0.95em; line-height: 1.6; }
+.md-view :deep(pre code) { font-family: var(--font-mono, var(--font-family-mono)); background: none; color: var(--text-primary); padding: 0; border-radius: 0; font-size: 0.95em; line-height: 1.6; }
 .md-view :deep(.md-mermaid) {
   width: 100%; margin: 9px 0; padding: 10px; box-sizing: border-box;
   overflow-x: auto; border: 1px solid var(--border-default);

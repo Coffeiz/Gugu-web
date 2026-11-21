@@ -2,10 +2,13 @@ import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { Pool } from 'pg'
-import { MessageArea, stableJson, formatCompactedSummary } from '@gugu/core/agent'
+import { MessageArea, stableJson, formatCompactedSummary, formatAgentHistoryMessageTime, prepareContext, selectSessionHistory, restoreHistoryForRequest } from '@gugu/core/agent'
 import type { CanonicalRunContext, RunCheckpoint } from '@gugu/core/agent'
 import { createCanonicalHistoryWriter, canonicalBaselineHash } from '../../../src/modules/agent/chat/write.js'
 
+import { createPostgresCanonicalHistoryReader } from '../../../src/modules/agent/chat/canonical.js'
+import { createPostgresCurrentTurnReader } from '../../../src/modules/agent/context/source.js'
+import { createWebCurrentMessageMaterializer } from '../../../src/modules/agent/context/message.js'
 import { persistRunCompaction } from '../../../src/modules/agent/chat/compact.js'
 
 const digest = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')
@@ -19,11 +22,11 @@ test('历史增量与展示顺序同事务提交，回滚与重放不产生重�
   const identity = { ownerId: randomUUID(), sessionId: '1', runId: 'synthetic-run' }
   try {
     await pool.query(`CREATE TABLE users (id uuid PRIMARY KEY, token_limit_6h integer, quota_window_started_at timestamptz);
-      CREATE TABLE conversation_sessions (id integer PRIMARY KEY,user_id uuid,last_message_seq bigint NOT NULL,session_context jsonb, baseline_message_seq bigint DEFAULT 0, baseline_message_hash text, snapshot_hash text, context_epoch integer DEFAULT 1, session_info_hash text, snapshot_expires_at timestamptz);
+      CREATE TABLE conversation_sessions (id integer PRIMARY KEY,user_id uuid,last_message_seq bigint NOT NULL,session_context jsonb, baseline_message_seq bigint DEFAULT 0, baseline_message_hash text, snapshot_hash text, context_epoch integer DEFAULT 1, session_info_hash text, snapshot_expires_at timestamptz, source text);
       CREATE TABLE conversation_batches (id bigserial PRIMARY KEY,session_id integer,version text,run_id text,round_id text,digest text,created_at timestamptz,UNIQUE(session_id,digest));
       CREATE TABLE conversation_messages (id bigserial PRIMARY KEY,session_id integer,conversation_seq bigint,history_anchor_seq bigint,
         role text,content text,content_json jsonb,canonical_batch_id bigint,run_id text,round_id text,created_at timestamptz,
-        sent_at timestamptz,im_platform_sent_ms bigint,im_event_received_ms bigint,files jsonb,display_timeline jsonb,run_outcome jsonb,covers_until_seq bigint,quoted_text text);
+        sent_at timestamptz,im_platform_sent_ms bigint,im_event_received_ms bigint,files jsonb,display_timeline jsonb,run_outcome jsonb,covers_until_seq bigint,quoted_text text,platform_user_id text,platform_user_name text,chat_type text,references_json jsonb);
       CREATE TABLE rag_index_jobs (id bigserial PRIMARY KEY,user_id uuid NOT NULL,source_type text NOT NULL,source_id text NOT NULL,version text NOT NULL,operation text NOT NULL,status text NOT NULL,generation integer NOT NULL,completed_generation integer NOT NULL,attempts integer NOT NULL,next_attempt_at timestamptz,lease_until timestamptz,last_started_at timestamptz,last_succeeded_at timestamptz,last_error_code text,pending_source_ids json NOT NULL,created_at timestamptz NOT NULL,updated_at timestamptz NOT NULL,UNIQUE(user_id,source_type));
       CREATE TABLE agent_usage (user_id uuid, session_id integer, tokens_in integer, tokens_out integer, cache_read integer,
         cache_write integer,cache_round_stats jsonb,model text,provider text,is_byok boolean,tools_used jsonb,scenario text,input_source text,created_at timestamptz)`)
@@ -31,6 +34,11 @@ test('历史增量与展示顺序同事务提交，回滚与重放不产生重�
     await pool.query('INSERT INTO conversation_sessions (id,user_id,last_message_seq,session_context) VALUES (1,$1,1,NULL)', [identity.ownerId])
     const anchor = await pool.query<{ id: string }>(`INSERT INTO conversation_messages (session_id,conversation_seq,role,content,created_at,sent_at)
       VALUES (1,1,'user','问题',clock_timestamp(),clock_timestamp()) RETURNING id::text`)
+    const first = await createPostgresCurrentTurnReader(pool, anchor.rows[0]!.id, createWebCurrentMessageMaterializer(pool))(identity)
+    const prepared = await prepareContext({ ...identity, ...first, history: [], fixedPrefix: [], userTimezone: 'Asia/Shanghai' },
+      { digest, nextId: randomUUID, buildRag: async () => ({ tail: [] }), formatMessageTime: formatAgentHistoryMessageTime })
+    const firstUserContent = prepared.area.messages[0]?.content
+    assert.match(String(firstUserContent), /^【消息时间】/)
     const area = new MessageArea({ digest, nextId: randomUUID })
     area.append({ role: 'user', content: '上下文' }, { source: 'rag', persistencePolicy: 'commit_on_success' })
     area.append({ role: 'user', content: '问题' }, { source: 'user', persistencePolicy: 'already_persisted', persistedMessageId: anchor.rows[0]!.id })
@@ -67,6 +75,14 @@ test('历史增量与展示顺序同事务提交，回滚与重放不产生重�
       const rows = await pool.query('SELECT role,content,history_anchor_seq FROM conversation_messages ORDER BY conversation_seq')
       assert.deepEqual(rows.rows.map(row => row.content), ['问题', '上下文', '工具轮次', '回答'])
       assert.equal(Number(rows.rows[1].history_anchor_seq), 1)
+      const continuation = { ...identity, runId: 'synthetic-next-run' }
+      const persisted = await createPostgresCanonicalHistoryReader(pool).read(continuation)
+      const ordered = selectSessionHistory(continuation, persisted.rows, persisted.baselineSeq).rows
+      assert.deepEqual(ordered.slice(0, 2).map(row => row.content), ['上下文', '问题'])
+      const restored = restoreHistoryForRequest(ordered[1]!, {
+        userTimezone: 'Asia/Shanghai', formatMessageTime: formatAgentHistoryMessageTime,
+      })
+      assert.equal(restored?.content, firstUserContent)
       await client.query('BEGIN')
       await assert.rejects(writer(client, identity, { outcome: 'success', context, text: '回答' }, checkpoint), /已提交/)
       await client.query('ROLLBACK')

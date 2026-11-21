@@ -11,9 +11,11 @@ RUN npm install --global pnpm@10.15.0
 # 依赖单独一层：workspace 元数据和 manifest 没变时改代码不用重装。
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/ui/package.json ./apps/ui/package.json
+COPY packages/desktop-contracts/package.json ./packages/desktop-contracts/package.json
 RUN pnpm install --filter gugu-web --frozen-lockfile
 
 COPY apps/ui/ ./apps/ui/
+COPY packages/desktop-contracts/ ./packages/desktop-contracts/
 WORKDIR /workspace/apps/ui
 
 EXPOSE 5173

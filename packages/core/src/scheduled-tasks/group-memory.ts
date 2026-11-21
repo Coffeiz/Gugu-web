@@ -32,8 +32,8 @@ function memoryText(raw: string | null): string {
 }
 
 /** 只读取已授权群的公开概要和资料，删除标记优先于残留文件。 */
-export function createScheduledTaskGroupMemoryReader<DB>(db: Kysely<DB>, storage: MemoryRagStorageReader) {
-  const { isTombstoned } = createImMaintenanceSource(db)
+export function createScheduledTaskGroupMemoryReader<DB>(db: Kysely<DB>, storage: MemoryRagStorageReader,
+  isTombstoned = createImMaintenanceSource(db).isTombstoned) {
   return async (scope: NonNullable<ScheduledTaskExecutionPlan['groupScope']>): Promise<string> => {
     const { ownerId, platform, botId, scopeId } = scope
     const key = { owner_user_id: ownerId, platform, bot_id: botId, scope_type: 'group' as const, scope_id: scopeId }

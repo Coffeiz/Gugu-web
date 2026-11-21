@@ -1,8 +1,10 @@
 import { sql, type Kysely } from 'kysely'
+import { dataContext } from '../../contracts/index.js'
 import { databaseTime, utc } from '../../data/codec.js'
 import type { Database } from '../../data/schema.js'
 import { dateKeyInTimeZone } from '../../shared/date-time.js'
-import { normalizePreferenceText, readDecisionGuardPreference } from '../../preferences/general.js'
+import { normalizePreferenceResponse, normalizePreferenceText, readPreferenceDocument } from '../../preferences/general.js'
+import type { PreferenceTextFiles } from '../../preferences/service.js'
 import type { RunIdentity } from '../models.js'
 import type { Json } from '../models.js'
 import { sqliteAgentRunScope } from '../run/sqlite-store.js'
@@ -14,44 +16,54 @@ export interface SqliteAgentOverviewData {
   notes: Json
 }
 
-function preferenceRecord(raw: unknown): Record<string, unknown> {
-  if (typeof raw !== 'string') return {}
-  try {
-    const value: unknown = JSON.parse(raw)
-    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
-  } catch {
-    return {}
-  }
-}
-
 /** 从当前 owner 的本机偏好文档读取 Web Agent 使用的回复风格设置。 */
 export async function readSqliteAgentStylePreferences(db: Kysely<Database>, identity: RunIdentity,
-  signal: AbortSignal): Promise<Record<string, Json>> {
+  signal: AbortSignal, files?: PreferenceTextFiles, groupChat = false): Promise<Record<string, Json>> {
   signal.throwIfAborted()
   const { owner, session, run } = sqliteAgentRunScope(identity)
-  return db.transaction().execute(async tx => {
-    const { rows } = await sql<{ data_json: string | null }>`
-      SELECT p.data_json FROM conversation_sessions s
-      LEFT JOIN user_preferences p ON p.user_id=s.user_id
-      WHERE s.id=${session} AND s.user_id=${owner} AND s.active_run_id=${run}
-        AND (s.source IS NULL OR s.source='web')`.execute(tx)
-    signal.throwIfAborted()
-    if (!rows.length) throw new Error('本机会话上下文不存在')
-    const data = preferenceRecord(rows[0]!.data_json)
-    const output: Record<string, Json> = {}
-    if (readDecisionGuardPreference(data)) output.decision_guard_enabled = true
-    const enabled = data.custom_reply_style_enabled != null && data.custom_reply_style_enabled !== false
-      && data.custom_reply_style_enabled !== 0 && data.custom_reply_style_enabled !== ''
-    if (enabled) output.custom_reply_style_enabled = true
-    const reply = normalizePreferenceText(data.custom_reply_style, '回复风格')
-    if (reply) output.custom_reply_style = reply
-    if (typeof data.locale === 'string' && ['zh-CN', 'ja-JP', 'en-US'].includes(data.locale)) output.locale = data.locale
-    output.personality_preference_enabled = false
-    const revision = Number(data.personality_preference_revision)
-    output.personality_preference_revision = Number.isSafeInteger(revision) && revision > 0 ? revision : 0
-    signal.throwIfAborted()
-    return output
-  })
+  const { rows } = await sql<{ data_json: string | null }>`
+    SELECT p.data_json FROM conversation_sessions s
+    LEFT JOIN user_preferences p ON p.user_id=s.user_id
+    WHERE s.id=${session} AND s.user_id=${owner} AND s.active_run_id=${run}
+      AND (s.source IS NULL OR s.source='web')`.execute(db)
+  if (!rows.length) throw new Error('本机会话上下文不存在')
+  return readSqliteOwnerStylePreferences(db, identity.ownerId, signal, files, groupChat, rows[0]!.data_json)
+}
+
+/** 调用方须先验证 owner 和当前执行身份。 */
+export async function readSqliteOwnerStylePreferences(db: Kysely<Database>, ownerId: string,
+  signal?: AbortSignal, files?: PreferenceTextFiles, groupChat = false, authorizedDocument?: string | null): Promise<Record<string, Json>> {
+  signal?.throwIfAborted()
+  const owner = dataContext(ownerId).ownerId.replaceAll('-', '')
+  const document = authorizedDocument === undefined
+    ? (await sql<{ data_json: string | null }>`SELECT data_json FROM user_preferences WHERE user_id=${owner}`.execute(db)).rows[0]?.data_json
+    : authorizedDocument
+  const data = readPreferenceDocument(document ?? null)
+  const kind = groupChat ? 'group-personality' : 'personality'
+  const [persona, replyStyle] = await Promise.all([
+    files?.read(ownerId, kind),
+    groupChat ? undefined : files?.read(ownerId, 'reply-style'),
+  ])
+  const text = normalizePreferenceText(persona, '人格偏好')
+  const reply = groupChat ? null : normalizePreferenceText(replyStyle ?? data.custom_reply_style, '回复风格')
+  const normalized = normalizePreferenceResponse(data, {
+    personality: groupChat ? null : text,
+    groupPersonality: groupChat ? text : null,
+    replyStyle: reply,
+  }, true)
+  signal?.throwIfAborted()
+  if (groupChat) return normalized.groupPersonalityPreferenceEnabled
+    ? { group_personality_preference_enabled: true, group_personality_preference: text }
+    : {}
+  return {
+    ...(normalized.decisionGuardEnabled ? { decision_guard_enabled: true } : {}),
+    ...(normalized.customReplyStyleEnabled ? { custom_reply_style_enabled: true } : {}),
+    ...(reply ? { custom_reply_style: reply } : {}),
+    ...(typeof normalized.locale === 'string' ? { locale: normalized.locale } : {}),
+    personality_preference_enabled: normalized.personalityPreferenceEnabled === true,
+    ...(normalized.personalityPreferenceEnabled ? { personality_preference: text } : {}),
+    personality_preference_revision: Number(normalized.personalityPreferenceRevision),
+  }
 }
 
 /** 读取桌面当前已接入的低频来源，固定在当前 owner 会话的 SQLite 读取视图。 */

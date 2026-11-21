@@ -1,7 +1,7 @@
 import type { DesktopBridge, DesktopProject, DesktopClient, DesktopCalendarEvent, DesktopCanvas, DesktopCanvasItem, DesktopNote, DesktopReply } from '@gugu/core/desktop'
-import type { DesktopAppearancePreferences, DesktopOnboardingState } from '@gugu/core/desktop'
+import type { DesktopAgentPreferenceKind, DesktopAgentPreferencePatch, DesktopAppearancePreferences, DesktopOnboardingState } from '@gugu/core/desktop'
 import type { DesktopProjectCollection, DesktopProjectDetails, DesktopScheduleCommand, DesktopScheduledTask } from '@gugu/core/desktop'
-import { desktopPreviewRoutes, projectBoardMethods } from './preview-core'
+import { desktopPreviewRoutes, projectBoardMethods } from '@gugu/desktop-contracts'
 export type { DesktopTelegramSnapshot, DesktopAgentMediaDimension, DesktopAgentModelCapabilities, DesktopAgentModel, DesktopAgentModelEntry, DesktopAgentModelList, DesktopAgentMessage, DesktopAgentSession, SandboxStatus } from '@gugu/core/desktop'
 export type ProjectRow = DesktopProject
 export type ClientRow = DesktopClient
@@ -83,11 +83,11 @@ function createPreviewBridge(): DesktopBridge | undefined {
 }
 
 export function hasRemoteAccountBridge() {
-  return typeof (window as DesktopWindow).guguDesktop?.remoteAccount === 'function'
+  return typeof ((window as DesktopWindow).guguDesktop ?? createPreviewBridge())?.remoteAccount === 'function'
 }
 
 export function hasRemoteByokBridge() {
-  return typeof (window as DesktopWindow).guguDesktop?.remoteByok === 'function'
+  return typeof ((window as DesktopWindow).guguDesktop ?? createPreviewBridge())?.remoteByok === 'function'
 }
 
 export function desktopRemoteByok(...args: Parameters<DesktopBridge['remoteByok']>) {
@@ -187,12 +187,14 @@ function requestSchedule(command: DesktopScheduleCommand) {
 }
 
 function scheduleFields(data: Record<string, unknown>) {
-  const { name, payload, schedule_kind, cron, interval_minutes, start_at, end_at, enabled, channels, execution_mode, reminder_lead_minutes } = data
-  return Object.fromEntries(Object.entries({ name, payload, schedule_kind, cron, interval_minutes, start_at, end_at, enabled, channels, execution_mode, reminder_lead_minutes })
+  const { name, payload, schedule_kind, cron, interval_minutes, start_at, end_at, enabled, channels, execution_mode, reminder_lead_minutes, im_delivery } = data
+  return Object.fromEntries(Object.entries({ name, payload, schedule_kind, cron, interval_minutes, start_at, end_at, enabled, channels, execution_mode, reminder_lead_minutes, im_delivery })
     .filter(([, value]) => value !== undefined))
 }
 
 export const desktopSchedules = {
+  listDeliveryTargets: (platform: string) => requestSchedule({ action: 'targets', platform }) as Promise<{ groups: { chat_id: string; title: string }[]; private_available: boolean }>,
+  channels: () => requestSchedule({ action: 'channels' }) as Promise<{ channels: string[] }>,
   async list(eventId?: number) {
     const tasks: DesktopScheduledTask[] = []
     let before: number | null = null
@@ -223,6 +225,8 @@ export const desktopData = {
   search: (queries: string[]) => call(bridge => bridge.search(queries)),
   readLogs: (kind: Parameters<DesktopBridge['readLogs']>[0]) => call(bridge => bridge.readLogs(kind)),
   appearance: () => call(bridge => bridge.appearance()),
+  agentUsage: () => call(bridge => bridge.agentUsage()),
+  agentPreference: (kind: DesktopAgentPreferenceKind, patch?: DesktopAgentPreferencePatch) => call(bridge => patch === undefined ? bridge.agentPreference(kind) : bridge.agentPreference(kind, patch)),
   clearAgentMemory: () => call(bridge => bridge.clearAgentMemory()),
   clearAgentAttachments: () => call(bridge => bridge.clearAgentAttachments()),
   updateAppearance: (patch: Partial<DesktopAppearancePreferences>) => call(bridge => bridge.updateAppearance(patch)),

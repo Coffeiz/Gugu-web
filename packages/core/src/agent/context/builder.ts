@@ -46,19 +46,21 @@ function rows(value: Json, label: string): Record<string, Json>[] {
 }
 
 /** Web 的可信来源投影与 owner scope 策略；数据读取和授权仍由 Host 注入。 */
-export function createWebAgentContextBuilder(ports: Omit<AgentContextBuilderPorts, 'dynamic'> & { now(): number }, source: 'web' | null = 'web'): ContextSourcePorts['builder'] {
+export function createWebAgentContextBuilder(ports: Omit<AgentContextBuilderPorts, 'dynamic'> & { now(): number }, source: 'web' | null = 'web',
+  options: { includeScopedContext?: boolean; includeOwnerOverview?: boolean } = {}): ContextSourcePorts['builder'] {
   return createAgentContextBuilder({
     ...ports,
     staticPrompt(selection, identity, stylePreferences, timezone) {
-      return ports.staticPrompt(selection, identity, selection.contextPolicy.loadOwnerContext ? stylePreferences : {}, timezone)
+      return ports.staticPrompt(selection, identity, selection.contextPolicy.loadOwnerContext || options.includeScopedContext ? stylePreferences : {}, timezone)
     },
     sessionInfo(selection, identity, stylePreferences) {
-      return { ...ports.sessionInfo(selection, identity), stylePreferences: selection.contextPolicy.loadOwnerContext ? stylePreferences ?? {} : {} }
+      return { ...ports.sessionInfo(selection, identity), stylePreferences: selection.contextPolicy.loadOwnerContext || options.includeScopedContext ? stylePreferences ?? {} : {} }
     },
     dynamic(data, selection) {
       const visibility = selection.contextPolicy.loadOwnerContext
-      const channels = visibility ? asAgentContextRecord(data.imChannels, 'IM 渠道状态') : {}
-      const files = visibility ? asAgentContextRecord(data.filesOverview, '文件概览') : {}
+      const overview = visibility && options.includeOwnerOverview !== false
+      const channels = visibility || options.includeScopedContext ? asAgentContextRecord(data.imChannels, 'IM 渠道状态') : {}
+      const files = overview ? asAgentContextRecord(data.filesOverview, '文件概览') : {}
       const memory = visibility && selection.contextPolicy.memoryEnabled ? asAgentContextRecord(data.memory, '记忆快照') as AgentMemorySnapshot : {}
       const fileRows = (key: 'folders' | 'files') => {
         const value = files[key]
@@ -73,16 +75,16 @@ export function createWebAgentContextBuilder(ports: Omit<AgentContextBuilderPort
         throw new TypeError('文件概览计数无效')
       return {
         memoryBlock: formatAgentMemory(memory, ports.now()),
-        projectBlock: visibility ? formatAgentProjects(data.projects) : '（本次任务不加载 owner 项目上下文）',
+        projectBlock: overview ? formatAgentProjects(data.projects) : '（本次任务不加载 owner 项目上下文）',
         sourceBlock: formatAgentSource(source, Object.fromEntries(['feishu', 'qq', 'wechat', 'telegram'].map(name => [name, channels[name] === true]))),
-        events: visibility ? rows(data.events, '日历概览').map(item => ({ date: String(item.date ?? ''), title: String(item.title ?? '') })) : [],
-        notes: visibility ? rows(data.notes, '笔记概览').map(item => ({ title: item.title == null ? null : String(item.title), content: item.content == null ? null : String(item.content), capturedAt: item.capturedAt == null ? null : String(item.capturedAt) })) : [],
-        files: visibility ? { total, ...(trash === undefined ? {} : { trash }), folders: fileRows('folders'), files: fileRows('files') } : null,
-        knowledge: visibility ? rows(data.knowledge, '知识概览') : [],
-        includeProjects: visibility,
-        includeCalendar: visibility,
-        includeFiles: visibility,
-        includeKnowledge: visibility,
+        events: overview ? rows(data.events, '日历概览').map(item => ({ date: String(item.date ?? ''), title: String(item.title ?? '') })) : [],
+        notes: overview ? rows(data.notes, '笔记概览').map(item => ({ title: item.title == null ? null : String(item.title), content: item.content == null ? null : String(item.content), capturedAt: item.capturedAt == null ? null : String(item.capturedAt) })) : [],
+        files: overview ? { total, ...(trash === undefined ? {} : { trash }), folders: fileRows('folders'), files: fileRows('files') } : null,
+        knowledge: overview ? rows(data.knowledge, '知识概览') : [],
+        includeProjects: overview,
+        includeCalendar: overview,
+        includeFiles: overview,
+        includeKnowledge: overview,
       }
     },
   })

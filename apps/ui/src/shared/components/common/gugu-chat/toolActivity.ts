@@ -1,3 +1,4 @@
+import { describeShellActivity } from '@gugu/core/agent/shell-activity'
 import type { ChatMessage } from './chatTypes'
 
 export function formatToolDuration(elapsed?: number) {
@@ -57,8 +58,25 @@ export function projectChatRows(messages: readonly ChatMessage[]) {
   return { rows, rowIndexByMessageIndex, openGroupIndex }
 }
 
-export function toolActivityLabel(msg: ChatMessage, translate: (key: string) => string, exists: (key: string) => boolean) {
+export function shellActivityForMessage(msg: Pick<ChatMessage, 'toolName' | 'toolInput' | 'toolResult' | 'shellActivity'>) {
+  return msg.toolName === 'shell' ? describeShellActivity(msg.toolInput, msg.toolResult) ?? msg.shellActivity : undefined
+}
+
+export function toolHasNoMatches(msg: ChatMessage) {
+  return msg.toolStatus === 'error' && shellActivityForMessage(msg)?.noMatches === true
+}
+
+export function toolActivityLabel(
+  msg: Pick<ChatMessage, 'toolName' | 'toolInput' | 'toolResult' | 'shellActivity' | 'toolLabel' | 'toolLabelOverride'>,
+  translate: (key: string, values?: { target: string }) => string,
+  exists: (key: string) => boolean,
+) {
   const name = msg.toolName || ''
+  const activity = shellActivityForMessage(msg)
+  if (!msg.toolLabelOverride?.trim() && activity) {
+    const key = `toolNames.shell_${activity.action}`
+    return activity.target ? translate(`${key}_target`, { target: activity.target }) : translate(key)
+  }
   const key = `toolNames.${name}`
   return msg.toolLabelOverride?.trim() || (name && exists(key) ? translate(key) : msg.toolLabel?.trim() || name || translate('chatUi.toolCall'))
 }

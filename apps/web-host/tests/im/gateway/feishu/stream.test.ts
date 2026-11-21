@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { ProviderHttpRequest } from '@gugu/core/providers'
 import type { RunEvent } from '@gugu/core/agent'
+import { formatImToolReceipt } from '@gugu/gateway'
 import { buildFeishuStreamingCard, createFeishuRunEventProjector, type FeishuStreamEvent } from '@gugu/gateway/feishu'
 import { FeishuPresentation, type FeishuToolSummaryPolicy } from '@gugu/gateway/feishu'
 import { createFeishuClient, FeishuApiError } from '@gugu/gateway/feishu'
@@ -169,6 +170,22 @@ test('飞书流式协议通过真实client与合成HTTP transport执行create/br
     assert.deepEqual(updates.map(body => body.sequence), [1, 2, 3])
     assert.equal(new URL(requests[2]!.url).searchParams.get('receive_id_type'), 'open_id')
   } finally { await client.close() }
+})
+
+test('IM 流式卡片和工具回执使用动作标题，标题不包含命令和文件名', async () => {
+  const projector = createFeishuRunEventProjector()
+  const display = { shellActivity: { action: 'git_diff', target: '合成内部文件' },
+    toolInput: { command: 'git diff 合成内部文件' }, toolLabelOverride: '通用 Shell 标签' }
+  for (const [status, expected] of [
+    ['success', '✅ 查看 Git 差异完成'], ['error', '⚠️ 查看 Git 差异未完成'],
+  ]) {
+    const payload = { name: 'shell', status, display }
+    const [activity] = await projector.push(runEvent('tool_done', payload))
+    assert.deepEqual(activity, { type: 'tool_done', name: 'shell', status, label: '查看 Git 差异' })
+    if (!activity || activity.type !== 'tool_done') assert.fail('缺少工具回执')
+    assert.equal(formatImToolReceipt(activity, clean), expected)
+    assert.equal(formatImToolReceipt(payload, clean), expected)
+  }
 })
 
 test('RunEvent图表投影识别分片顶层围栏，跳过内嵌示例、未闭合与超限且原文不变', async () => {

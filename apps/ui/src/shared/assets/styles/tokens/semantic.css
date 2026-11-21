@@ -192,5 +192,18 @@
    近白文字在其上仍有足够对比。必须写成顶层规则——嵌套在 :root 里的 & 会被
    构建管线丢弃（实测 stylesheets 里根本没有这条规则）。 */
 :root[data-theme='dark'] {
+  --content-primary: #fff;
+  --content-secondary: var(--content-primary);
+  --content-tertiary: var(--content-primary);
+  --content-muted: var(--content-primary);
   --selection-text-bg: color-mix(in srgb, var(--action-primary) 55%, black);
+}
+
+/* 导航保留各主题原有的文字层级。 */
+:root[data-theme='dark'] :where(nav, [role='navigation'], .sidebar, .desktop-sidebar, .exp-sidebar) {
+  --content-primary: var(--theme-content-primary);
+  --content-secondary: var(--theme-content-secondary);
+  --content-tertiary: var(--theme-content-tertiary);
+  --content-muted: color-mix(in srgb, var(--theme-content-secondary) 78%, transparent);
+  --color-muted: var(--content-secondary);
 }

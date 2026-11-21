@@ -1,5 +1,6 @@
 import { transcribeDesktopImFile, type DesktopImVoice } from '../../inbound/voice.js'
 import { classifyImGroupInbound, resolveImActor } from '@gugu/core/im/access'
+import { updateUserBotGroupTools, userBotGroupFileToolsAllowed, userBotGroupToolAllowed } from '@gugu/core/im/user-bots'
 import { createHash } from 'node:crypto'
 import { desktopTransportOptions } from '@gugu/core/providers/node'
 import { describeQqMedia, type QqMediaRequirement, createQqInboundPreparation, createQqFaceResolver, processQqMedia, handleQqBinding, parseQqMessage, QqMediaIngressError } from '@gugu/gateway/qq'
@@ -150,7 +151,7 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
         }
         const authorizeFile = async (message: Parameters<typeof admit>[1]) => {
           const current = await readActive()
-          return current?.groupChatEnabled === true && current.groupWebToolsEnabled === true && current.userId === userId
+          return current?.groupChatEnabled === true && userBotGroupFileToolsAllowed(current) && current.userId === userId
             && current.groupReplyMode !== 'record_only' && (message.botMentioned || current.groupReplyMode === 'reply_all')
         }
         if (!groupDeliveries.has(connectionId)) {
@@ -348,7 +349,7 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
       return { closed, async stop() { controller.abort(); try { await handle.stop() } finally { await closed } } }
     },
   })
-  async function readAuthorizedGroupMessage(params: Record<string, unknown>, signal: AbortSignal) {
+  async function readAuthorizedGroupMessage(params: Record<string, unknown>, signal: AbortSignal, scheduled = false) {
     const { connectionId, eventKey, sealedEvent } = params
     if (!runtime || signal.aborted || typeof connectionId !== 'string' || typeof eventKey !== 'string'
       || typeof sealedEvent !== 'string' || sealedEvent.length > 48_000) return null
@@ -356,27 +357,36 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
       const { result } = await runtime.encryption.decryptStringAsync(Buffer.from(sealedEvent, 'base64'))
       const current = await pairing.read()
       if (signal.aborted || !current?.enabled || !current.groupChatEnabled || !current.userId
-        || current.groupReplyMode === 'record_only') return null
+        || (!scheduled && current.groupReplyMode === 'record_only')) return null
       const message = parseImReceivedMessage({ platform: 'qq', ownerId: 'desktop', botId: current.appId }, JSON.parse(result).event)
       const { chatType, chatId } = message.scope
       if (chatType !== 'group' || !chatId || desktopImEventKey(message) !== eventKey
         || groupConnectionId(current.appId, chatId, current.userId) !== connectionId
-        || (!message.botMentioned && current.groupReplyMode !== 'reply_all')) return null
+        || (!scheduled && !message.botMentioned && current.groupReplyMode !== 'reply_all')) return null
       return { current, message }
     } catch { return null }
   }
 
   return {
     ...supervisor,
+    async readScheduledGroup(params: Record<string, unknown>, signal: AbortSignal) {
+      const result = await readAuthorizedGroupMessage(params, signal, true)
+      if (!result) return null
+      const { current, message } = result
+      return { platform: 'qq', chatType: 'group', botId: current.appId,
+        boundUserId: current.userId, recipient: message.scope.chatId }
+    },
     async authorizeGroupTool(params: Record<string, unknown>, signal: AbortSignal) {
       const { name } = params
       const authorized = await readAuthorizedGroupMessage(params, signal)
-      if (!authorized) return false
+      if (!authorized || typeof name !== 'string') return false
       const { current } = authorized
-      const enabled = name === 'group_context_search' ? current.groupHistorySearchEnabled
-        : name === 'web_search' ? current.groupProviderSearchEnabled === true || current.groupWebToolsEnabled === true
-        : name === 'http_get' || name === 'similar_image_search' || name === 'send_file' ? current.groupWebToolsEnabled === true : false
-      return enabled && !signal.aborted
+      const tools = updateUserBotGroupTools([], {
+        groupWebToolsEnabled: current.groupWebToolsEnabled,
+        groupProviderSearchEnabled: current.groupProviderSearchEnabled,
+        groupHistorySearchEnabled: current.groupHistorySearchEnabled,
+      })
+      return userBotGroupToolAllowed(tools, name) && !signal.aborted
     },
     async readGroupMemoryContext(params: Record<string, unknown>, signal: AbortSignal) {
       const authorized = await readAuthorizedGroupMessage(params, signal)

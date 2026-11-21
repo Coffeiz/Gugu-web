@@ -5,7 +5,7 @@ import AppToast from '@/components/common/feedback/AppToast.vue'
 import { previewWindowBridge } from './previewWindowBridge'
 import { isTextFallbackCandidate, type PreviewWindow } from '@/stores/preview'
 import { errorMessage, showAppError } from '@/composables/core/useAppToast'
-import type { DesktopPreviewWindowState } from '../../../../desktop/src/shared/preview-window'
+import type { DesktopPreviewWindowState } from '@gugu/desktop-contracts'
 
 const preview = shallowRef<PreviewWindow>()
 const failed = ref(false)

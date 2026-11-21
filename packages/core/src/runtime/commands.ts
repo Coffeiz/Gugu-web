@@ -6,7 +6,7 @@ import type { Fields } from '../contracts/index.js'
 import type { DataServices } from '../data/services.js'
 import type { LocalRuntime } from './local.js'
 import { object, onlyFields, safeInteger } from '../shared/values.js'
-import { DESKTOP_METHODS, DESKTOP_MUTATIONS, MAX_FRAME } from '../contracts/desktop.js'
+import { DESKTOP_METHODS, DESKTOP_MUTATIONS, MAX_FRAME, DESKTOP_ARCHIVE_METHODS, DESKTOP_ARCHIVE_TIMEOUT_MS } from '../contracts/desktop.js'
 import { desktopProjectFields, getDesktopProject, listDesktopProjects } from '../projects/desktop-board.js'
 import { projectResponse } from '../projects/project-projection.js'
 export { DESKTOP_METHODS, MAX_FRAME } from '../contracts/desktop.js'
@@ -70,7 +70,7 @@ const commandFields: Readonly<Record<string, readonly string[]>> = {
   'agent.sessions.goal': ['id', 'action'],
   'agent.sessions.compact': ['id', 'model', 'text', 'clientId', 'queueClaim'],
   'agent.sessions.recoverStartup': [],
-  'agent.sessions.create': ['title'],
+  'agent.sessions.create': ['title', 'greeting'],
   'agent.sessions.rename': ['id', 'title'],
   'agent.sessions.delete': ['id'],
   'agent.sessions.messages': ['id'],
@@ -81,6 +81,7 @@ const commandFields: Readonly<Record<string, readonly string[]>> = {
   'agent.memory.invalidateEmbedding': [],
   'agent.memory.resumeReflections': [],
   'agent.memory.read': [],
+  'agent.greeting.prompt': ['locale'],
   'agent.memory.clear': [],
   'agent.memory.forget': ['query', 'revision'],
   'agent.sessions.cancelRun': ['id', 'runId'],
@@ -104,12 +105,18 @@ const commandFields: Readonly<Record<string, readonly string[]>> = {
   'mcp.create': ['fields'],
   'mcp.update': ['id', 'fields'],
   'mcp.delete': ['id'],
+  'schedules.channels': [],
+  'schedules.targets': ['platform'],
+  'schedules.groupCatalog': ['platform'],
   'schedules.list': ['before', 'eventId'],
   'schedules.get': ['id'],
   'schedules.create': ['fields', 'eventId'],
   'schedules.update': ['id', 'fields', 'eventId'],
   'schedules.delete': ['id', 'eventId'],
   'schedules.claim': [],
+  'schedules.instruction.start': ['id', 'fireAt'],
+  'schedules.instruction.result': ['id'],
+  'schedules.reminder.deliverIm': ['id', 'fireAt'],
   'core.info': [],
   'desktop.search': ['queries'],
   'executor.diagnostics': [],
@@ -137,6 +144,12 @@ const commandFields: Readonly<Record<string, readonly string[]>> = {
   'calendar.update': ['id', 'body'],
   'calendar.delete': ['id', 'version'],
   'preferences.desktop.get': [],
+  'preferences.agent': ['kind', 'patch'],
+  'preferences.agentUsage': [],
+  'preferences.dataInventory': [],
+  'preferences.exportBusinessArchive': ['path'],
+  'preferences.preflightBusinessArchive': ['path'],
+  'preferences.applyBusinessArchive': ['path', 'digest'],
   'preferences.desktop.update': ['patch'],
   'onboarding.desktop.get': [],
   'mind.notes.list': [],
@@ -241,6 +254,7 @@ export async function desktopFrame(
             }
           : await runtime.call(request.method, request.params, {
               operationId: request.operation_id,
+              ...(DESKTOP_ARCHIVE_METHODS.includes(request.method) ? { timeoutMs: DESKTOP_ARCHIVE_TIMEOUT_MS } : {}),
             })
     return { v: protocol, id, result }
   } catch (error) {
@@ -427,7 +441,8 @@ export function validateCommandParams(method: string, params: Fields): void {
   if (/^(skills|mcp)\.(create|update)$/.test(method)) object(params.fields)
   if (method.startsWith('schedules.') && params.eventId !== undefined) safeInteger(params.eventId)
   if (method === 'schedules.list' && params.before !== undefined) safeInteger(params.before)
-  if (['schedules.get', 'schedules.update', 'schedules.delete'].includes(method)) safeInteger(params.id)
+  if (['schedules.get', 'schedules.update', 'schedules.delete', 'schedules.instruction.start', 'schedules.instruction.result', 'schedules.reminder.deliverIm'].includes(method)) safeInteger(params.id)
+  if (['schedules.instruction.start', 'schedules.reminder.deliverIm'].includes(method) && params.fireAt !== undefined) safeInteger(params.fireAt)
   if (['schedules.create', 'schedules.update'].includes(method)) object(params.fields)
   if (method.startsWith('mind.canvases.')) {
     if (['mind.canvases.items.list', 'mind.canvases.relations.list', 'mind.canvases.notes.create', 'mind.canvases.items.add', 'mind.canvases.items.update', 'mind.canvases.items.delete', 'mind.canvases.items.bring-to-front', 'mind.canvases.relations.delete'].includes(method)) safeInteger(params.canvasId)

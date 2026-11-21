@@ -1,3 +1,11 @@
+import { bindDesktopScheduledIm } from '../src/main/schedules/im.ts'
+import { createDesktopPaidSearchHost, isDesktopPaidSearchMethod } from '../src/main/agent/paid-search-host.ts'
+import { MAX_DESKTOP_SEARCH_IMAGE_BYTES } from '@gugu/core/agent/search-contracts'
+import { createDesktopMailService } from '../src/main/mail/index.ts'
+import { createDesktopPersonalSmtp } from '../src/main/mail/personal-smtp.ts'
+import { createRemoteAccountHandlers } from '../src/main/auth/session.ts'
+import { createRemoteSessionStore } from '../src/main/auth/store.ts'
+import { createRemoteAuthClient } from '@gugu/core/auth/client'
 import { createDesktopImInbox } from '../src/main/im/gateway/inbound/inbox.ts'
 import { createDesktopImDispatch } from '../src/main/im/gateway/delivery/dispatch.ts'
 import { createDesktopImCallback } from '../src/main/im/gateway/interactions/callback.ts'
@@ -6,10 +14,9 @@ import { createDesktopQqGateway } from '../src/main/im/gateway/platforms/qq/inde
 import { createDesktopFeishuPairing } from '../src/main/im/connect/platforms/feishu/index.ts'
 import { createDesktopFeishuGateway } from '../src/main/im/gateway/platforms/feishu/index.ts'
 import { createDesktopWechatPairing } from '../src/main/im/connect/platforms/wechat/index.ts'
-import { createDesktopWechatCursor, createDesktopWechatGateway } from '../src/main/im/gateway/platforms/wechat/index.ts'
-import { agentModelPreviewPath } from '../src/shared/agent-model-preview.ts'
+import { createDesktopWechatCursor, createDesktopWechatGateway, createDesktopWechatReach } from '../src/main/im/gateway/platforms/wechat/index.ts'
+import { agentModelPreviewPath, agentSessionPreviewPath, desktopPreviewRoutes, resourcesPreviewRoute, workspacePreviewRoutes, previewAttachmentPath } from '@gugu/desktop-contracts'
 import { streamPreviewRunChanges } from '../src/main/agent/preview-run-changes.ts'
-import { agentSessionPreviewPath } from '../src/shared/agent-session-preview.ts'
 import { createDesktopRecordingTranscriber } from '../src/main/agent/voice-recording.ts'
 import { createDesktopRuntimeLog } from '../src/main/log/index.ts'
 import { desktopLogHandlers } from '../src/main/log/read.ts'
@@ -26,8 +33,8 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { DESKTOP_CHANNELS, MAX_FRAME } from '@gugu/core/desktop'
 import { CoreHost, DesktopError, desktopReply, verifyArtifact } from '../src/main/core-host.ts'
-import { desktopAgentAttachmentHandlers, removeDesktopAgentAttachmentFiles } from '../src/main/agent/attachments.ts'
-import { handlePreviewAttachment, previewAttachmentPath } from '../src/main/agent/preview-attachments.ts'
+import { desktopAgentAttachmentHandlers, readDesktopAgentAttachment, removeDesktopAgentAttachmentFiles } from '../src/main/agent/attachments.ts'
+import { handlePreviewAttachment } from '../src/main/agent/preview-attachments.ts'
 import { auxiliaryModelHandlers, createDesktopEmbeddingResolver } from '../src/main/agent/auxiliary-model.ts'
 import { agentModelHandlers, agentSessionHandlers } from '../src/main/agent/ipc.ts'
 import { createDesktopAgentModelService, createDesktopAgentModelStore } from '../src/main/agent/model.ts'
@@ -36,7 +43,6 @@ import { pairingHandlers, telegramHandlers } from '../src/main/im/ipc.ts'
 import { workspaceHandlers } from '../src/main/workspace/ipc.ts'
 import { DesktopLifecycle } from '../src/main/lifecycle.ts'
 import { desktopPreviewDataDirectory, createDesktopPreviewEncryption } from '../src/main/preview-directory.ts'
-import { desktopPreviewRoutes, resourcesPreviewRoute, workspacePreviewRoutes } from '../../ui/src/desktop/bridge/preview-core.ts'
 
 const previewMethods = new Map(desktopPreviewRoutes.map(({ endpoint, methods }) => [endpoint, new Set(methods)]))
 previewMethods.set(agentSessionPreviewPath, new Set(['agentSessions']))
@@ -61,6 +67,26 @@ async function readCall(req, methods) {
   return call
 }
 
+function desktopScheduledImRequest(method, params, signal) {
+  const socketPath = process.env.GUGU_DESKTOP_PREVIEW_SOCKET
+  const secret = process.env.GUGU_DESKTOP_PREVIEW_SECRET
+  if (!socketPath || !secret) return null
+  return new Promise((resolve, reject) => {
+    const upstream = request({ socketPath, path: '/__desktop-preview/internal-scheduled-im', method: 'POST',
+      signal, headers: { Authorization: secret, 'Content-Type': 'application/json' } }, async response => {
+      try {
+        const chunks = []
+        for await (const chunk of response) chunks.push(chunk)
+        const reply = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+        if (!reply.ok) throw new DesktopError(reply.error.code, reply.error.message)
+        resolve(reply.result)
+      } catch (error) { reject(error) }
+    })
+    upstream.on('error', () => reject(new DesktopError('closed', '桌面应用正在启动或已退出')))
+    upstream.end(JSON.stringify({ method, params }))
+  })
+}
+
 export function desktopCorePreview(desktopRoot) {
   const artifactRoot = join(desktopRoot, 'resources', 'core-sidecar')
   let lifecycle
@@ -82,9 +108,22 @@ export function desktopCorePreview(desktopRoot) {
         const host = await CoreHost.launch(artifact.node, artifact.entry, join(directory, 'core.db'),
           artifact.manifest, undefined, filesRoot, artifact.workerEntry, artifact.agentRuntimeModule)
         host.setHostRequestHandler(async ({ method, params, signal }) => {
+          if (method === 'agent.tools.policy' && Object.keys(params).length === 0) return { disabledTools: [] }
+          if (method.startsWith('agent.schedules.im.')) return desktopScheduledImRequest(method, params, signal) ?? scheduledIm(method, params, signal)
+          if (method === 'agent.im.snapshot') {
+            const channels = await Promise.all(['feishu', 'qq', 'wechat', 'telegram'].map(async platform =>
+              [platform, Boolean(await (desktopScheduledImRequest('agent.schedules.im.privateTarget', { platform }, signal)
+              ?? scheduledIm('agent.schedules.im.privateTarget', { platform }, signal)))]))
+            return Object.fromEntries(channels)
+          }
+          if (method === 'agent.memory.resolveEmbedding') return await resolveEmbedding() ?? null
+          if (method === 'agent.schedules.model' && Object.keys(params).length === 0) return model.resolveRunModel()
           if (method === 'agent.memory.resolveReflectionModel' && Object.keys(params).length === 2)
             return model.resolveReflectionModel(params.modelIdentity, params.modelId)
-          if (method === 'agent.search.deep_research.available' || method === 'agent.search.similar_image_search.available') return false
+          if (isDesktopPaidSearchMethod(method)) return paidSearch(method, params, signal)
+          if (method === 'agent.email.accounts' && Object.keys(params).length === 0) return desktopMail.listAccounts()
+          if (method === 'agent.email.attachments') return desktopMail.inspectAgentAttachments(params, signal)
+          if (method === 'agent.email.send') return desktopMail.sendForAgent(params, signal)
           if (method === 'agent.files.globalSearch') return files.globalFileSearch(params.queries, params.mode, params.perType, signal)
           if (method === 'agent.files.resolveDroppedReference' || method === 'agent.files.resolveWorkspaceReference') return null
           if (method === 'network.resolveProxy') return previewProxy(new URL(params.origin)) ?? null
@@ -144,15 +183,28 @@ export function desktopCorePreview(desktopRoot) {
       const newTransport = () => createNodeProviderTransport(desktopTransportOptions(false, resolveModelProxy))
       const refresh = async gateway => { gateway.refresh(); await gateway.settled() }
       const wechatPairing = createDesktopWechatPairing(credentialDirectory, encryption, randomUUID(), newTransport(), () => refresh(wechat))
-      const wechat = createDesktopWechatGateway(wechatPairing, admit, dispatch, newTransport, createDesktopWechatCursor(credentialDirectory, encryption), (code, error) => report('gateway.degraded', { code, error }))
+      const wechatReach = createDesktopWechatReach(credentialDirectory, encryption)
+      const wechat = createDesktopWechatGateway(wechatPairing, admit, dispatch, newTransport, createDesktopWechatCursor(credentialDirectory, encryption), (code, error) => report('gateway.degraded', { code, error }), wechatReach)
       const feishuPairing = createDesktopFeishuPairing(credentialDirectory, encryption, randomUUID(), newTransport(), () => refresh(feishu))
       const feishu = createDesktopFeishuGateway(feishuPairing, admit, dispatch, newTransport, undefined, callback)
       const qqPairing = createDesktopQqPairing(credentialDirectory, encryption, randomUUID(), newTransport(), () => qq.refresh())
       const qq = createDesktopQqGateway(qqPairing, admit, dispatch, newTransport, undefined, callback,
         (code, error) => report('gateway.degraded', { code, error }), { host, encryption })
+      const scheduledIm = bindDesktopScheduledIm({ feishuPairing, qqPairing, wechatPairing, wechatReach, telegram, transport: newTransport })
+      const resolveEmbedding = createDesktopEmbeddingResolver(credentialDirectory, encryption)
       gateways.push(telegram, wechat, feishu, qq)
       let startingIm
+      const remoteSessions = createRemoteSessionStore(credentialDirectory, encryption)
+      const personalSmtp = createDesktopPersonalSmtp(credentialDirectory, encryption, async () => {
+        const session = await remoteSessions.read()
+        return session ? (await createRemoteAuthClient().restore(session).catch(() => null))?.email ?? '' : ''
+      })
+      const desktopMail = createDesktopMailService(credentialDirectory, encryption, undefined, undefined, personalSmtp)
+      const paidSearch = createDesktopPaidSearchHost(remoteSessions, fetch, id =>
+        readDesktopAgentAttachment(host, directory, id, MAX_DESKTOP_SEARCH_IMAGE_BYTES))
       const handlers = {
+        ...createRemoteAccountHandlers(remoteSessions),
+        [DESKTOP_CHANNELS.personalSmtp]: personalSmtp.command,
         ...desktopLogHandlers(directory),
         ...files.handlers,
         ...workspaceHandlers(lifecycle, async () => null, files.globalFileSearch, async id => {
@@ -173,7 +225,7 @@ export function desktopCorePreview(desktopRoot) {
         ...resourceHandlers(lifecycle, resolveModelProxy),
         ...scheduleHandlers(lifecycle, async () => {
           throw new DesktopError('unsupported', '浏览器预览无法发送桌面系统通知')
-        }),
+        }, false),
       }
       server.middlewares.use((req, res, next) => {
         const methods = previewMethods.get(req.url)
@@ -246,7 +298,7 @@ export function desktopCorePreview(desktopRoot) {
         void desktopReply(trustedCall, async () => {
           const { method, args } = await readCall(req, methods)
           if (req.url === '/__desktop-preview/im') await (startingIm ??= Promise.all(gateways.map(gateway => gateway.start())))
-          else if (method !== 'readLogs' && method !== 'files' && method !== 'agentModel' && method !== 'auxiliaryModel') await startCore()
+          else if (method !== 'readLogs' && method !== 'files' && method !== 'agentModel' && method !== 'auxiliaryModel' && method !== 'personalSmtp' && !method.startsWith('remote')) await startCore()
           const handler = handlers[DESKTOP_CHANNELS[method]]
           const command = args[0]
           if (!wantsChatStream || method !== 'agentSessions') return handler(...args)

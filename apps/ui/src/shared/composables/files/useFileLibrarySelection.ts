@@ -227,6 +227,14 @@ export function useFileLibrarySelection(options: FileLibrarySelectionOptions) {
     const files = options.getFiles(); const folders = options.getTrashFolders()
     return files.length + folders.length > 0 && files.every(file => box.selectedFileIds.value.has(file.id)) && folders.every(folder => selectedTrashFolderIds.value.has(folder.id))
   })
+  function selectAll() {
+    if (!flatSelectableItems.value.length) return false
+    selectModeForced.value = true
+    box.selectedFileIds.value = new Set(options.getFiles().map(file => file.id))
+    box.selectedFolderIds.value = new Set(options.getFolders().map(folder => folder.id))
+    lastAnchorIndex.value = 0
+    return true
+  }
   function toggleSelectAllTrash() { if (allTrashSelected.value) return clearSelection(); selectModeForced.value = true; box.selectedFileIds.value = new Set(options.getFiles().map(file => file.id)); selectedTrashFolderIds.value = new Set(options.getTrashFolders().map(folder => folder.id)) }
   function toggleSelectMode() {
     if (inSelectionMode.value) return clearSelection()
@@ -234,5 +242,5 @@ export function useFileLibrarySelection(options: FileLibrarySelectionOptions) {
     if (exitTimer !== null) { clearTimeout(exitTimer); exitTimer = null; selectionExiting.value = false }
     selectModeForced.value = true
   }
-  return { ...box, selectedIds: box.selectedFileIds, selectedFolderKeys: box.selectedFolderIds, selectedTrashFolderIds, previewFolderKeys: box.previewFolderIds, clearSelection, flatSelectableItems, inSelectionMode, selectModeForced, toggleSelectMode, toggleSelectAllTrash, allTrashSelected, handleFolderClick, handleFileClick, handleTrashFileClick, handleTrashFolderClick }
+  return { ...box, selectedIds: box.selectedFileIds, selectedFolderKeys: box.selectedFolderIds, selectedTrashFolderIds, previewFolderKeys: box.previewFolderIds, clearSelection, flatSelectableItems, inSelectionMode, selectModeForced, toggleSelectMode, selectAll, toggleSelectAllTrash, allTrashSelected, handleFolderClick, handleFileClick, handleTrashFileClick, handleTrashFolderClick }
 }

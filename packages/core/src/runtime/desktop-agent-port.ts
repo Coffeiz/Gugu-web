@@ -7,8 +7,12 @@ import type { SqlDataRuntime } from '../data/runtime.js'
 import type { DesktopMemoryFiles } from '../agent/memory/desktop-files.js'
 import type { CoreError } from '../contracts/error.js'
 
+import type { ScheduledTaskExecutionPlan } from '../scheduled-tasks/run-now-read.js'
+
 /** 平台 Agent 装配口；Core Worker 只依赖行为契约，不导入 Desktop 实现。 */
 export interface DesktopAgentRuntimePort {
+  runScheduledInstruction(task: ScheduledTaskExecutionPlan, isTrial: boolean, assertLease: () => Promise<void>):
+    Promise<{ text: string; status: 'success' | 'failed' }>
   listBuiltinTools(): Promise<Array<{ name: string; description: string; enabled: boolean }>>
   reconcileInterruptedRuns(): Promise<void>
   resumeReflections(): void

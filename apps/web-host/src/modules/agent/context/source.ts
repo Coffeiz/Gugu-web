@@ -36,7 +36,7 @@ export function createPostgresCurrentTurnReader(pool: Pick<Pool, 'query'>, messa
   if (!/^[1-9]\d*$/.test(messageId) || !Number.isSafeInteger(Number(messageId))) throw new TypeError('消息锚点无效')
   return async (identity, signal) => {
     valid(identity); signal?.throwIfAborted()
-    const result = await pool.query<{ id: string; content: string; content_json: unknown; files: unknown; references_json: unknown }>(`SELECT m.id::text,m.content,m.content_json,m.files,m.references_json
+    const result = await pool.query<{ id: string; content: string; content_json: unknown; files: unknown; references_json: unknown; created_at: string | null }>(`SELECT m.id::text,m.content,m.content_json,m.files,m.references_json,m.created_at::text
       FROM conversation_messages m JOIN conversation_sessions s ON s.id=m.session_id
       WHERE s.user_id=$1 AND s.id=$2 AND m.id=$3 AND m.role='user'`, [identity.ownerId, identity.sessionId, messageId])
     signal?.throwIfAborted()
@@ -47,7 +47,16 @@ export function createPostgresCurrentTurnReader(pool: Pick<Pool, 'query'>, messa
     if (current.currentUser && current.currentUsers?.length || !users.length || users.at(-1)?.persistedMessageId !== messageId
       || users.some(user => !user.persistedMessageId) || new Set(users.map(user => user.persistedMessageId)).size !== users.length)
       throw new Error('用户消息锚点不一致')
-    return current
+    const messageTimestamp = row.created_at
+    if (!messageTimestamp) return current
+    if (current.currentUser) return {
+      ...current, currentUser: { ...current.currentUser, messageTimestamp },
+    }
+    return {
+      ...current,
+      currentUsers: users.map(user => user.persistedMessageId === messageId
+        ? { ...user, messageTimestamp } : user),
+    }
   }
 }
 

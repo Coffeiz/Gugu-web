@@ -36,7 +36,7 @@ import FlipChevron from '@/components/common/controls/FlipChevron.vue'
 import GuguChatActivityLine from './GuguChatActivityLine.vue'
 import GuguChatToolBubble from './GuguChatToolBubble.vue'
 import type { ChatMessage } from './chatTypes'
-import { formatToolDuration, toolActivityLabel, toolGroupElapsedMs } from './toolActivity'
+import { formatToolDuration, shellActivityForMessage, toolActivityLabel, toolGroupElapsedMs, toolHasNoMatches } from './toolActivity'
 
 const props = defineProps<{
   tools: ChatMessage[]
@@ -53,7 +53,7 @@ const chevronTransition = 'transform var(--motion-hover-card) var(--motion-ease-
 const running = computed(() => props.tools.filter(tool => !tool.toolStatus || tool.toolStatus === 'running'))
 const waiting = computed(() => props.tools.find(tool => tool.toolStatus === 'waiting'))
 const queued = computed(() => props.tools.find(tool => tool.toolStatus === 'queued'))
-const failed = computed(() => props.tools.filter(tool => tool.toolStatus === 'error').length)
+const failed = computed(() => props.tools.filter(tool => tool.toolStatus === 'error' && !toolHasNoMatches(tool)).length)
 const interrupted = computed(() => props.tools.filter(tool =>
   tool.toolStatus === 'cancelled' || tool.toolStatus === 'stopped' || tool.toolStatus === 'skipped' || tool.toolStatus === 'unknown',
 ).length)
@@ -74,6 +74,8 @@ const label = computed(() => {
       : current
   }
   if (phase.value === 'queued') return `${toolActivityLabel(queued.value!, t, te)} · ${t('chatUi.toolQueued')}`
+  const onlyTool = props.tools.length === 1 ? props.tools[0] : undefined
+  if (onlyTool && shellActivityForMessage(onlyTool)) return toolActivityLabel(onlyTool, t, te)
   return t('chatUi.toolActivityTotal', { count: props.tools.length })
 })
 const duration = computed(() => formatToolDuration(props.elapsedMs ?? toolGroupElapsedMs(props.tools)))

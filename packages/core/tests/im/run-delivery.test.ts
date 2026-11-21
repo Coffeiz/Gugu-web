@@ -61,6 +61,26 @@ function deliveryFixture(events: RunEvent[]) {
     setAuthorized(value: boolean) { authorized = value }, setOutcome(value: ImDeliveryResult) { outcome = value } }
 }
 
+test('Shell 提示按动作显示并兼容已提交的旧回执', async () => {
+  const display = { shellActivity: { action: 'search', target: '合成内部目录' },
+    toolInput: { command: 'rg synthetic src' }, toolLabelOverride: '通用 Shell 标签' }
+  const events = [
+    event(1, 'tool_done', { name: 'shell', status: 'success', display }),
+    event(2, 'tool_done', { name: 'shell', status: 'success', display }),
+    event(3, 'tool_done', { name: 'shell', status: 'error', display }),
+  ]
+  const f = deliveryFixture(events)
+  f.receipts.set('tool-notice:1', { fingerprint: digest('✅ shell完成'), state: 'accepted' })
+  const notices: string[] = []
+  const recovery = createImRunDeliveryRecovery({
+    ...f.ports,
+    sender: { ...f.ports.sender, async toolNotice({ text }) { notices.push(text); return 'accepted' } },
+  })
+  await recovery.recover(identity)
+  assert.deepEqual(notices, ['✅ 搜索内容完成', '⚠️ 搜索内容未完成'])
+  assert.equal(f.cursor, 3)
+})
+
 test('工具完成提示在文本流边界后发送，失败或恢复不影响最终正文', async () => {
   const events = [
     event(1, 'tool_call', { name: 'get_current_time', input: '私有参数' }),

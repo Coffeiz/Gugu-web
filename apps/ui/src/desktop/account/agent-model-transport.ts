@@ -1,6 +1,6 @@
 import type { DesktopBridge, DesktopReply } from '@gugu/core/desktop'
 import { DesktopBridgeError } from '@desktop/bridge/bridge'
-import { agentModelPreviewPath } from '../../../../desktop/src/shared/agent-model-preview'
+import { agentModelPreviewPath } from '@gugu/desktop-contracts'
 
 type DesktopWindow = Window & { guguDesktop?: DesktopBridge }
 const nativeBridge = () => (window as DesktopWindow).guguDesktop

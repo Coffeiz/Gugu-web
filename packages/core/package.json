@@ -35,6 +35,7 @@
     "./agent/sessions/ui-labels": "./dist/agent/sessions/ui-labels.js",
     "./agent/sessions/state-labels": "./dist/agent/sessions/state-labels.js",
     "./agent/context/prompts": "./dist/agent/context/prompts.js",
+    "./agent/shell-activity": "./dist/agent/shell-activity.js",
     "./agent/chat-sse": "./dist/agent/chat-sse.js",
     "./agent/run/codec": "./dist/agent/run/codec.js",
     "./agent/context/history/images-postgres": "./dist/agent/context/history/images-postgres.js",
@@ -92,6 +93,7 @@
     "./mail/contracts": "./dist/mail/contracts.js",
     "./mail/service": "./dist/mail/service.js",
     "./mail/transport": "./dist/mail/transport.js",
+    "./email/smtp-delivery": "./dist/email/smtp-delivery.js",
     "./email/smtp-test": "./dist/email/smtp-test.js",
     "./email/test-delivery": "./dist/email/test-delivery.js",
     "./data-portability/download-export": "./dist/data-portability/download-export-node.js",
@@ -275,6 +277,7 @@
     "pinyin-pro": "3.29.5",
     "postal-mime": "^4.2.1",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "unzipper": "0.12.5",
     "zod": "4.6.7"
   },
   "optionalDependencies": {

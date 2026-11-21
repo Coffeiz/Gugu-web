@@ -52,12 +52,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onActivated, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useLocalPreferencesAccess } from '@/services/localPreferencesAccess'
 import { agentApi } from '@/services/api'
 import { authApi } from '@/api/auth'
 import { usePreferencesStore } from '@/stores/preferences'
+import { showAppError } from '@/composables/core/useAppToast'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import ProfilePersonalityPane from './ProfilePersonalityPane.vue'
 import TokenTrendChart from './TokenTrendChart.vue'
@@ -82,7 +83,23 @@ const recoverLabel = computed(() => {
 })
 function quotaBarStyle(used: number, limit: number | null) { if (!limit) return { width: '8%', background: 'color-mix(in srgb,var(--action-primary) 30%,transparent)' }; const pct = Math.min(100, used / limit * 100); const color = pct >= 90 ? 'rgba(200,80,80,0.7)' : pct >= 70 ? 'rgba(210,160,60,0.75)' : 'linear-gradient(90deg, color-mix(in srgb,var(--action-primary) 60%,transparent), color-mix(in srgb,var(--action-primary) 75%,transparent))'; return { width: pct + '%', background: color } }
 function quotaPctClass(used: number, limit: number | null) { if (!limit) return ''; const pct = used / limit * 100; return pct >= 90 ? 'pct-danger' : pct >= 70 ? 'pct-warn' : '' }
-async function loadQuota() { quotaLoading.value = true; try { quota.value = await authApi.getQuota(); if (quota.value.is_byok) loadTrends() } catch {} finally { quotaLoading.value = false } }
+async function loadQuota() {
+  quotaLoading.value = true
+  try {
+    if (desktop) {
+      const usage = await desktop.agentUsage()
+      quota.value.is_byok = usage !== null
+      trends.value = usage
+    } else {
+      quota.value = await authApi.getQuota()
+      if (quota.value.is_byok) await loadTrends()
+    }
+  } catch (error) {
+    if (desktop) showAppError(error instanceof Error ? error.message : t('common.errors.generic'))
+  } finally {
+    quotaLoading.value = false
+  }
+}
 async function loadTrends() { try { trends.value = await authApi.getUsageTrends(30) } catch {} }
 function onQuotaChanged() { loadQuota() }
 
@@ -91,7 +108,8 @@ async function clearMemory() { if (!await confirmDialog({ title: t('profileGuguU
 const attachClearing = ref(false); const attachMsg = ref(''); const attachMsgType = ref('ok')
 async function clearAttachments() { if (!await confirmDialog({ title: t('profileGuguUi.deleteAttachments'), message: t('profileGuguUi.deleteAttachmentsConfirm'), tone: 'danger', confirmText: t('profileGuguUi.deleteFiles') })) return; attachClearing.value = true; attachMsg.value = ''; try { const result = await (desktop ? desktop.clearAgentAttachments() : agentApi.clearAttachments()); attachMsg.value = result.deleted > 0 ? t('profileGuguUi.attachmentsDeleted', { count: result.deleted }) : t('profileGuguUi.noAttachments'); attachMsgType.value = 'ok' } catch (error) { attachMsg.value = (error instanceof Error ? error.message : '') || t('profileGuguUi.deleteFailed'); attachMsgType.value = 'err' } finally { attachClearing.value = false } }
 
-onMounted(() => { if (desktop) return; loadQuota(); reopenResume.value = localStorage.getItem('gugu_reopen_resume') === '1'; window.addEventListener('gugu-quota-changed', onQuotaChanged) })
+onActivated(() => { void loadQuota() })
+onMounted(() => { reopenResume.value = localStorage.getItem('gugu_reopen_resume') === '1'; window.addEventListener('gugu-quota-changed', onQuotaChanged) })
 onUnmounted(() => window.removeEventListener('gugu-quota-changed', onQuotaChanged))
 </script>
 

@@ -55,6 +55,8 @@
         <div><span>Reuse</span><strong>{{ assembly.system?.reused ? `round ${assembly.system.source_round || 1}` : 'inline' }}</strong></div>
         <div><span>Digest</span><code>{{ assembly.system?.digest || '—' }}</code></div>
         <div><span>Messages</span><strong>{{ assembly.messages?.count ?? '—' }}</strong></div>
+        <div v-if="prefixStable !== null"><span>{{ t('trace.cachePrefix') }}</span>
+          <strong>{{ prefixStable ? t('trace.unchanged') : t('trace.disconnected') }}</strong></div>
       </div>
       <p class="assembly-note">{{ t('trace.assemblyNote') }}</p>
     </section>
@@ -311,7 +313,7 @@ const firstDiff = computed(() => {
   const limit = Math.min(previousMessages.length, currentMessages.length)
   let index = 0
   while (index < limit && stableStringify(previousMessages[index]) === stableStringify(currentMessages[index])) index += 1
-  if (index === limit && previousMessages.length === currentMessages.length) return null
+  if (index === previousMessages.length) return null
   const previous = previousMessages[index]
   const current = currentMessages[index]
   const previousRepresentation = messageRepresentation(previous)
@@ -323,7 +325,12 @@ const firstDiff = computed(() => {
     current: { shape: { representation: currentRepresentation } },
   }
 })
-const prefixStable = computed(() => diagnostics.value?.prefix_integrity?.stable === true)
+const prefixStable = computed(() => {
+  const recorded = diagnostics.value?.prefix_integrity?.stable
+  if (typeof recorded === 'boolean') return recorded
+  if (!props.previousSpan || !previousInputMessages.value.length || !inputMessages.value.length) return null
+  return firstDiff.value === null
+})
 const diffReasonLabel = computed(() => {
   const labels: Record<string, string> = {
     wrapper_changed: 'trace.changedWrapper',
@@ -362,7 +369,7 @@ function messageText(value: unknown): string {
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
   if (value && typeof value === 'object') {
-    return `{${Object.keys(value as Record<string, unknown>).sort().map(key => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`).join(',')}}`
+    return `{${Object.keys(value as Record<string, unknown>).filter(key => key !== 'cache_control').sort().map(key => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`).join(',')}}`
   }
   return JSON.stringify(value)
 }

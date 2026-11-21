@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { BrowserWindow, IpcMainInvokeEvent } from 'electron'
+import { applicationMenuChannels } from '@gugu/desktop-contracts'
+import { nativeEditingChannel, type EditingFocus } from '../src/keyboard-editing.js'
 import { DesktopLifecycle } from '../src/main/lifecycle.js'
 import { DesktopUpdater } from '../src/main/updater.js'
 import {
   createMainWindowSizeStore,
+  dispatchWindowEdit,
   windowOptions,
   trustedCaller,
   secureWindow,
@@ -149,6 +152,7 @@ describe('桌面生命周期、窗口与更新边界', () => {
       on: (name: string, handler: (...args: unknown[]) => unknown) =>
         hooks.set(name, handler),
       setWindowOpenHandler: vi.fn(),
+      ipc: { on: vi.fn() },
       session: {
         on: (name: string, handler: (...args: unknown[]) => unknown) =>
           hooks.set(name, handler),
@@ -180,6 +184,38 @@ describe('桌面生命周期、窗口与更新边界', () => {
     expect(open({ url: webLink, postBody: {} })).toEqual({ action: 'deny' })
     expect(openExternal.mock.calls).toEqual([[webLink], ['http://example.test/']])
   })
+  it('编辑菜单随当前窗口的文本焦点切换，子 frame 不能改变路由', () => {
+    const listeners = new Map<string, (event: { senderFrame: object }, focus: EditingFocus) => void>()
+    const mainFrame = {}
+    const contents = {
+      mainFrame, isDestroyed: () => false,
+      on: vi.fn(), send: vi.fn(), copy: vi.fn(),
+      ipc: { on: (name: string, listener: (event: { senderFrame: object }, focus: EditingFocus) => void) => {
+        listeners.set(name, listener)
+      } },
+      setWindowOpenHandler: vi.fn(),
+      session: { on: vi.fn(), setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() },
+    }
+    const window = { webContents: contents } as unknown as BrowserWindow
+    secureWindow(window)
+    const selectText = listeners.get(nativeEditingChannel)!
+    selectText({ senderFrame: {} }, 'native')
+    dispatchWindowEdit(window.webContents, 'copy')
+    expect(contents.send).toHaveBeenCalledExactlyOnceWith(applicationMenuChannels.edit, 'copy')
+    expect(contents.copy).not.toHaveBeenCalled()
+
+    selectText({ senderFrame: mainFrame }, 'native')
+    dispatchWindowEdit(window.webContents, 'copy')
+    expect(contents.copy).toHaveBeenCalledOnce()
+    expect(contents.send).toHaveBeenCalledOnce()
+
+    selectText({ senderFrame: mainFrame }, 'editor')
+    dispatchWindowEdit(window.webContents, 'undo')
+    expect(contents.send).toHaveBeenLastCalledWith(applicationMenuChannels.edit, 'undo')
+    dispatchWindowEdit(window.webContents, 'copy')
+    expect(contents.copy).toHaveBeenCalledTimes(2)
+  })
+
   it('未确认或未校验的更新不安装，确认后先停写再交给安装器', async () => {
     const events: string[] = [],
       backend = {

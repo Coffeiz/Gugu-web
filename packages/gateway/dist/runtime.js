@@ -23,8 +23,10 @@ export function createGatewaySupervisor(ports) {
     const uncertain = new Set();
     const timers = new Set();
     let desired = new Map();
+    let onConfigured;
     let serial = Promise.resolve();
     let queued = false;
+    let refreshAfterSleep = false;
     let stopping = false;
     let listener;
     let subscription;
@@ -75,20 +77,25 @@ export function createGatewaySupervisor(ports) {
         }
         if (stopping)
             return;
+        const afterSleep = refreshAfterSleep;
+        refreshAfterSleep = false;
         configuration = 'ready';
         configRetry?.abort();
         configRetry = undefined;
         configDelay = 5_000;
+        const previousCount = desired.size;
         desired = new Map(specs.map(spec => [spec.key, spec]));
+        if (desired.size !== previousCount)
+            onConfigured?.();
         for (const [key, pending] of retries) {
-            if (desired.get(key)?.revision === pending.revision)
+            if (!afterSleep && desired.get(key)?.revision === pending.revision)
                 continue;
             pending.controller.abort();
             retries.delete(key);
             failures.delete(key);
         }
         for (const [key, entry] of active) {
-            if (desired.get(key)?.revision === entry.spec.revision)
+            if (desired.get(key)?.revision === entry.spec.revision && (!afterSleep || uncertain.has(key)))
                 continue;
             try {
                 await drain(entry);
@@ -229,6 +236,13 @@ export function createGatewaySupervisor(ports) {
         settled: () => serial,
         /** Host提交后的配置/绑定失效沿同一串行全量对账处理。 */
         refresh: notify,
+        onConfigurationChanged(listener) { onConfigured = listener; },
+        /** 睡眠前的长连接可能仍显示在线，重新对账并排空旧连接后再启动。 */
+        resume() {
+            refreshAfterSleep = true;
+            notify();
+            return serial;
+        },
         status: () => ({ running: active.size, retrying: retries.size, stopping }),
         /** 固定状态及计数；不公开Bot标识、配置版本、凭据或底层异常。 */
         health: () => ({ configuration, notifications, configured: desired.size,

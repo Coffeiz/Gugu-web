@@ -1,4 +1,4 @@
-import type { PreviewWindowBridge } from '../../../../desktop/src/shared/preview-window'
+import type { PreviewWindowBridge } from '@gugu/desktop-contracts'
 import { isFloatingPreviewable, isTextFallbackCandidate, type PreviewFile } from '@/stores/preview'
 import { showAppError } from '@/composables/core/useAppToast'
 

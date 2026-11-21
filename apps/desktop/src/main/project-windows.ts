@@ -1,6 +1,6 @@
 import { DESKTOP_CHANNELS, type DesktopProjectDetails } from '@gugu/core/desktop'
 import { BrowserWindow, ipcMain, screen, type IpcMainInvokeEvent } from 'electron'
-import { projectWindowChannels as channels } from '../shared/project-window.js'
+import { projectWindowChannels as channels } from '@gugu/desktop-contracts'
 import { DesktopError, desktopReply } from './core-host.js'
 import { desktopWindowMaterial, secureWindow, trustedCaller, windowOptions } from './windows.js'
 

@@ -43,10 +43,6 @@ const emit = defineEmits<{
         <span class="nav-group-label">{{ t('navigation.notifications') }}</span>
         <button type="button" class="nav-item nav-item-disabled" :class="{ active: activeSection === 'notifications' }" :aria-label="t('navigation.notifications')" @click="emit('navigate', 'notifications')"><Icon name="admin.bell" size="sm" /><span class="nav-label">{{ t('navigation.notifications') }}</span></button>
       </div>
-      <div class="nav-group dev-nav-group">
-        <span class="nav-group-label">{{ t('navigation.devTools') }}</span>
-        <button type="button" class="nav-item" :class="{ active: activeSection === 'home' }" :aria-label="t('navigation.devWorkbench')" @click="emit('navigate', 'home')"><Icon name="navigation.grid" size="sm" /><span class="nav-label">{{ t('navigation.workbench') }}</span></button>
-      </div>
     </nav>
     <button type="button" class="sidebar-footer" :aria-label="t('navigation.personalSettings')" :title="t('navigation.personalSettings')" @click="emit('openSettings')">
       <span class="settings-avatar" aria-hidden="true"><Icon name="user.default" size="sm" tone="inherit" /></span>
@@ -77,7 +73,6 @@ const emit = defineEmits<{
 .desktop-sidebar nav::-webkit-scrollbar { display: none; }
 .nav-group { display: grid; gap: 3px; padding: 0 0 8px; border-bottom: 1px solid color-mix(in srgb, var(--content-divider) 70%, transparent); }
 .nav-group-label { padding: 7px 12px 3px; color: var(--text-tertiary, var(--text-secondary)); font-size: 10px; font-weight: 650; letter-spacing: .04em; }
-.dev-nav-group { margin-top: auto; border-bottom: 0; padding-bottom: 0; }
 .nav-item { display: flex; align-items: center; gap: 13px; width: 100%; min-width: 0; height: 38px; padding: 0 12px; border: 1px solid transparent; border-radius: 10px; color: var(--content-secondary, var(--text-secondary)); background: transparent; font: inherit; font-size: 13px; text-align: left; cursor: pointer; transition: background .16s ease, color .16s ease, border-color .16s ease, box-shadow .16s ease; }
 .nav-item :deep(svg) { width: 18px; height: 18px; flex: 0 0 18px; }
 .nav-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

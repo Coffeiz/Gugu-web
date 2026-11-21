@@ -1,5 +1,5 @@
-import { isFloatingPreviewable, isImageExt, isOfficeExt, isSvgMime, isTextFallbackCandidate } from '../utils/filePreviewTypes'
-export { isAudioExt, isCsvExt, isFloatingPreviewable, isImageExt, isOfficeExt, isPreviewable, isSvgMime, isTextExt, isTextFallbackCandidate, isTextMime, isVideoExt } from '../utils/filePreviewTypes'
+import { isFloatingPreviewable, isImageExt, isOfficeExt, isSvgMime, isTextFallbackCandidate } from '@gugu/desktop-contracts/file-preview'
+export { isAudioExt, isCsvExt, isFloatingPreviewable, isImageExt, isOfficeExt, isPreviewable, isSvgMime, isTextExt, isTextFallbackCandidate, isTextMime, isVideoExt } from '@gugu/desktop-contracts/file-preview'
 import { defineStore } from 'pinia'
 import { inject, ref, type InjectionKey } from 'vue'
 import { nextZ } from '@/composables/core/windowz'

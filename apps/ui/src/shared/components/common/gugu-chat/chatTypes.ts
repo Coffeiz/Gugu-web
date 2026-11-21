@@ -51,6 +51,7 @@ export interface ChatMessage {
   toolCallId?: string
   toolName?: string
   toolLabel?: string
+  shellActivity?: import('@gugu/core/agent/shell-activity').ShellActivity
   toolLabelOverride?: string
   toolStatus?: 'queued' | 'running' | 'waiting' | 'success' | 'error' | 'skipped' | 'cancelled' | 'stopped' | 'unknown'
   toolInput?: unknown

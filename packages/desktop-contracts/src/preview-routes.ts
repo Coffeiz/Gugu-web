@@ -33,7 +33,7 @@ export const resourcesPreviewRoute = { endpoint: '/__desktop-preview/resources',
 
 export const desktopPreviewRoutes = [
   { endpoint: '/__desktop-preview/logs', methods: ['readLogs'] },
-  { endpoint: '/__desktop-preview/preferences', methods: ['appearance', 'updateAppearance', 'clearAgentMemory', 'clearAgentAttachments'] },
+  { endpoint: '/__desktop-preview/preferences', methods: ['appearance', 'updateAppearance', 'agentPreference', 'personalSmtp', 'remoteAccount', 'remoteLogin', 'remoteLogout', 'remoteByok', 'agentUsage', 'dataInventory', 'exportBusinessArchive', 'preflightBusinessArchive', 'applyBusinessArchive', 'clearAgentMemory', 'clearAgentAttachments'] },
   filesPreviewRoute,
   { endpoint: '/__desktop-preview/im', methods: ['telegramGateway', 'wechatPairing', 'feishuPairing', 'qqPairing'] },
   resourcesPreviewRoute,

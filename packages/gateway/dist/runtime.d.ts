@@ -5,6 +5,9 @@ export declare function createGatewaySupervisor<S extends GatewayBotSpec>(ports:
     settled: () => Promise<void>;
     /** Host提交后的配置/绑定失效沿同一串行全量对账处理。 */
     refresh: () => void;
+    onConfigurationChanged(listener: () => void): void;
+    /** 睡眠前的长连接可能仍显示在线，重新对账并排空旧连接后再启动。 */
+    resume(): Promise<void>;
     status: () => {
         running: number;
         retrying: number;

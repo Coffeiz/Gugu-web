@@ -8,9 +8,12 @@ import { join } from 'node:path'
 import { sql } from '../../../packages/core/node_modules/kysely/dist/index.js'
 import { initializeSqlite, openSqliteRuntime } from '../../../packages/core/src/data/sqlite.js'
 import { createDesktopAgentRuns } from '../.tools/agent/runtime.mjs'
+import { admitDesktopImEvent, prepareDesktopImEvent } from '../../../packages/core/src/im/desktop-inbox.js'
+import { resolveImActor } from '../../../packages/core/src/im/access.js'
 import { createDesktopLoopScope } from '../../../packages/core/dist/runtime/desktop-loopscope.js'
 import { createDesktopProjectUndoAdapter } from '../../../packages/core/src/runtime/desktop-project-undo.js'
 import { createRuntimeUndoTransactionPort, createUndoStateMachine } from '../../../packages/core/src/undo/state-machine.js'
+import { desktopScheduleImConnection, type DesktopScheduleImTarget } from '../../../packages/core/src/scheduled-tasks/desktop-im.js'
 import { createDesktopMemoryFiles } from '../../../packages/core/src/agent/memory/desktop-files.js'
 import { readSqliteAgentMemory } from '../../../packages/core/src/agent/memory/sqlite.js'
 import { createSqlAgentPendingQueue } from '../../../packages/core/src/agent/sessions/pending-queue.js'
@@ -21,6 +24,8 @@ import { createDesktopAgentSession } from '../../../packages/core/src/agent/sess
 import { createFirstTurnTitleWriter } from '../../../packages/core/src/agent/sessions/title.js'
 import { createDesktopAgentEventReader } from '../../../packages/core/src/runtime/desktop-agent-events.js'
 import { stableJson } from '../../../packages/core/dist/agent/context/history/canonical-history.js'
+import { createLocalPreferenceTextFiles } from '../../../packages/core/src/preferences/text-files.js'
+import { desktopAgentPreference } from '../../../packages/core/src/preferences/desktop-agent.js'
 import { createDesktopAppearanceService } from '../../../packages/core/src/preferences/desktop-appearance.js'
 import { createKyselyPreferenceDocumentStore } from '../../../packages/core/src/preferences/document-store.js'
 
@@ -112,6 +117,182 @@ describe('Desktop Agent Run 真实本机 Provider 接线', () => {
     expect(JSON.stringify(page.events)).toContain('收尾测试')
   })
 
+  it('桌面定时指令调用默认模型并使用任务工具授权，不写入会话历史', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'gugu-desktop-scheduled-run-'))
+    const path = join(directory, 'core.db')
+    await initializeSqlite(path)
+    const { runtime, ownerId } = await openSqliteRuntime(path)
+    const ownerKey = ownerId.replaceAll('-', '')
+    await sql`INSERT INTO desktop_agent_memory(user_id,target,body)
+      VALUES(${ownerKey},'profile',${JSON.stringify([{ text: '合成画像' }])})`.execute(runtime.db)
+    await createDesktopAppearanceService(createKyselyPreferenceDocumentStore(runtime.db, 'sqlite'))
+      .update(ownerId, { locale: 'en-US' })
+    const memoryRoot = join(directory, 'memory')
+    await mkdir(memoryRoot)
+    const disk = createDesktopMemoryFiles(runtime.db, memoryRoot, ownerId)
+    let groupMemoryEnabled = true
+    let imEnabled = true
+    const sent: unknown[] = []
+    const requests: Record<string, unknown>[] = []
+    const server = createServer(async (request, response) => {
+      const chunks = []
+      for await (const chunk of request) chunks.push(chunk)
+      requests.push(JSON.parse(Buffer.concat(chunks).toString()))
+      const call = requests.length === 1
+      const delta = call ? { tool_calls: [{ index: 0, id: 'synthetic-time', type: 'function',
+        function: { name: 'get_current_time', arguments: '{}' } }] } : { content: '定时任务已读取当前时间' }
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.end(`data: ${JSON.stringify({ choices: [{ delta, finish_reason: call ? 'tool_calls' : 'stop' }] })}\n\ndata: [DONE]\n\n`)
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('合成本机 Provider 未监听')
+    const runs = createDesktopAgentRuns(runtime, path, ownerId, () => {}, async (method: string, params) => {
+      if (method === 'agent.tools.policy') return { disabledTools: [] }
+      if (method === 'agent.memory.resolveEmbedding') return null
+      if (method === 'agent.im.snapshot') return { feishu: false, qq: false, wechat: false, telegram: true }
+      if (method === 'agent.schedules.im.authorize') return imEnabled ? { groupMemoryEnabled } : null
+      if (method === 'agent.schedules.im.deliver') { sent.push(params); return null }
+      if (method === 'agent.schedules.model') return {
+        provider: 'local', api_format: 'openai', base_url: `http://127.0.0.1:${address.port}/v1`,
+        api_key: '', model: 'synthetic-scheduled', context_tokens: 256_000, max_tokens: 512,
+      }
+      throw new Error('未预期的宿主请求')
+    }, disk)
+    cleanups.push(async () => {
+      await runs.close()
+      await runtime.close()
+      await new Promise<void>(resolve => server.close(() => resolve()))
+      await rm(directory, { recursive: true, force: true })
+    })
+    const result = await runs.runScheduledInstruction({
+      id: '1', ownerId, name: '合成定时任务', payload: '读出当前时间', executionMode: 'instruction',
+      channels: ['web'], deliveryTargets: {}, authorizedTools: [], emailAttachmentFileIds: [],
+      workspaceId: null, filesystemGrantId: null,
+    }, true, async () => {})
+    expect(result).toEqual({ status: 'success', text: '定时任务已读取当前时间' })
+    expect(requests).toHaveLength(2)
+    expect(requests[0]?.model).toBe('synthetic-scheduled')
+    const prompt = JSON.stringify(requests[0]?.messages)
+    expect(prompt).toContain('合成画像')
+    expect(prompt).toContain('当前用户界面语言为「English」')
+    expect(prompt).toContain('Telegram：已连')
+    const offered = (requests[0]?.tools as Array<{ function: { name: string } }>).map(tool => tool.function.name)
+    expect(offered).toContain('get_current_time')
+    expect(offered).not.toContain('shell')
+    expect(requests[1]?.messages).toEqual(expect.arrayContaining([expect.objectContaining({ role: 'tool', tool_call_id: 'synthetic-time' })]))
+    expect((await sql`SELECT id FROM conversation_sessions`.execute(runtime.db)).rows).toEqual([])
+
+    const group: DesktopScheduleImTarget = { platform: 'qq', botId: 'synthetic-bot',
+      boundUserId: 'synthetic-owner', chatType: 'group', recipient: 'synthetic-group' }
+    const session = await runtime.db.transaction().execute(tx => createDesktopAgentSession(tx, ownerId, '合成群聊'))
+    await sql`UPDATE conversation_sessions SET chat_type='group' WHERE id=${session.id}`.execute(runtime.db)
+    await sql`INSERT INTO desktop_im_sessions(owner_id,platform,connection_id,session_id)
+      VALUES(${ownerKey},'qq',${desktopScheduleImConnection(group)},${session.id})`.execute(runtime.db)
+    await disk.writeImScope({ owner_user_id: ownerId, platform: 'qq', bot_id: group.botId,
+      scope_type: 'group', scope_id: group.recipient }, 'summary.json', JSON.stringify({ text: '合成群概要' }))
+    const copiedPrivate: DesktopScheduleImTarget = { platform: 'feishu', botId: 'synthetic-feishu-bot',
+      boundUserId: 'ou_synthetic-owner', chatType: 'c2c', recipient: 'ou_synthetic-owner' }
+    const runGroup = () => runs.runScheduledInstruction({
+      id: '2', ownerId, name: '合成群任务', payload: '汇报群事务', executionMode: 'instruction',
+      channels: ['qq', 'feishu', 'web'], deliveryTargets: { qq: group, feishu: copiedPrivate }, authorizedTools: [], emailAttachmentFileIds: [],
+      workspaceId: null, filesystemGrantId: null,
+      groupScope: { ownerId, platform: 'qq', botId: group.botId, scopeType: 'group', scopeId: group.recipient },
+    }, true, async () => {})
+    expect((await runGroup()).status).toBe('success')
+    expect(sent).toEqual([group, copiedPrivate].map(target => ({ target, text: '定时任务已读取当前时间' })))
+    const groupPrompt = JSON.stringify(requests.at(-1)?.messages)
+    expect(groupPrompt).toContain('合成群概要')
+    expect(groupPrompt).not.toContain('合成画像')
+    expect(groupPrompt).not.toContain('当前用户界面语言为「English」')
+    groupMemoryEnabled = false
+    expect((await runGroup()).status).toBe('success')
+    expect(JSON.stringify(requests.at(-1)?.messages)).not.toContain('合成群概要')
+    expect(JSON.stringify(requests.at(-1)?.tools)).not.toContain('search_memory')
+    const privateTarget: DesktopScheduleImTarget = { ...group, chatType: 'c2c', recipient: group.boundUserId }
+    expect((await runs.runScheduledInstruction({
+      id: '3', ownerId, name: '合成私聊任务', payload: '汇报个人事务',
+      channels: ['qq'], deliveryTargets: { qq: privateTarget }, authorizedTools: [], emailAttachmentFileIds: [],
+      workspaceId: null, filesystemGrantId: null,
+    }, true, async () => {})).status).toBe('success')
+    expect(JSON.stringify(requests.at(-1)?.messages)).toContain('合成画像')
+    expect(sent.at(-1)).toMatchObject({ target: privateTarget })
+    imEnabled = false
+    await expect(runGroup()).rejects.toMatchObject({ code: 'conflict' })
+    expect(sent).toHaveLength(5)
+  })
+
+  it('已验证群主通过共享工具创建和停用本群任务', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'gugu-desktop-schedule-group-write-'))
+    const path = join(directory, 'core.db')
+    await initializeSqlite(path)
+    const { runtime, ownerId } = await openSqliteRuntime(path)
+    const target: DesktopScheduleImTarget = {
+      platform: 'qq', botId: 'synthetic-app', boundUserId: 'synthetic-owner', chatType: 'group', recipient: 'synthetic-group',
+    }
+    const connection = { platform: target.platform, connectionId: desktopScheduleImConnection(target) }
+    const event = { ...connection, eventKey: 'synthetic-schedule-write', sealedEvent: 'AQ==' }
+    await admitDesktopImEvent(runtime.db, ownerId, event)
+    const turn = await prepareDesktopImEvent(runtime.db, ownerId, {
+      ...connection, chatType: 'group', ownerPlatformUserId: target.boundUserId,
+    })
+    if (!turn) throw new Error('合成群收件未准备')
+    const actor = resolveImActor({ ownerId, botId: target.botId, platform: target.platform, chatType: 'group', chatId: target.recipient,
+      platformUserId: target.boundUserId, botMentioned: true, mentionsOtherBot: false,
+      speakers: [{ platformUserId: target.boundUserId }],
+    }, () => ({ role: 'owner', allowedToolNames: [] }))
+    const offered: string[][] = []
+    const server = createServer(async (request, response) => {
+      const chunks = []
+      for await (const chunk of request) chunks.push(chunk)
+      const body = JSON.parse(Buffer.concat(chunks).toString())
+      offered.push((body.tools ?? []).map((tool: { function: { name: string } }) => tool.function.name))
+      const call = offered.length === 1 ? { name: 'create_scheduled_task', arguments: JSON.stringify({
+        schedule_name: '群提醒', schedule_kind: 'cron', cron: '0 9 * * *', instruction: '例会提醒',
+        execution_mode: 'reminder', delivery_mode: 'current_group', channels: ['qq'],
+      }) } : offered.length === 2 ? { name: 'update_scheduled_task', arguments: JSON.stringify({ task_id: 1, enabled: false }) } : null
+      const delta = call ? { tool_calls: [{ index: 0, id: `schedule-${offered.length}`, type: 'function', function: call }] }
+        : { content: '已管理群任务' }
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.end(`data: ${JSON.stringify({ choices: [{ delta, finish_reason: call ? 'tool_calls' : 'stop' }] })}
+
+data: [DONE]
+
+`)
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('合成 Provider 未监听')
+    const runs = createDesktopAgentRuns(runtime, path, ownerId, () => {}, async method => {
+      if (method === 'agent.tools.policy') return { disabledTools: [] }
+      if (method.endsWith('.available')) return false
+      if (method === 'agent.log.append') return null
+      if (method === 'agent.im.authorizeGroupTool') return false
+      if (method === 'agent.im.readGroupMemoryContext')
+        return { actor, groupMemoryEnabled: false, groupOwnerMemoryEnabled: false, memberMemoryEnabled: false }
+      if (method === 'agent.schedules.im.authorize') return { groupMemoryEnabled: false, groupHistorySearchEnabled: false }
+      throw new Error('未预期的宿主请求')
+    })
+    cleanups.push(async () => {
+      await runs.close()
+      await runtime.close()
+      await new Promise<void>(resolve => server.close(() => resolve()))
+      await rm(directory, { recursive: true, force: true })
+    })
+    const started = await runs.start(turn.sessionId, '管理本群提醒', turn.clientId, {
+      provider: 'local', api_format: 'openai', base_url: `http://127.0.0.1:${address.port}/v1`,
+      api_key: '', model: 'synthetic', context_tokens: 256_000, max_tokens: 512, web_search_enabled: false,
+    }, undefined, true, undefined, [], [], undefined, undefined, { id: target.boundUserId, name: '小北' })
+    const read = createDesktopAgentEventReader(runtime.db, path, ownerId)
+    await expect.poll(async () => (await read(turn.sessionId, started.run_id, 0)).status).toBe('completed')
+    expect(offered[0]).toEqual(expect.arrayContaining(['create_scheduled_task', 'update_scheduled_task', 'list_scheduled_tasks']))
+    const { rows } = await sql<{ channels: string; delivery_targets: string; enabled: number }>`
+      SELECT channels,delivery_targets,enabled FROM scheduled_tasks`.execute(runtime.db)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ channels: 'qq', enabled: 0 })
+    expect(JSON.parse(rows[0]!.delivery_targets)).toEqual({ qq: target })
+  })
+
   it('桌面 IM 群会话生成回复时只公开时间工具且不读取个人上下文', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'gugu-desktop-group-run-'))
     const path = join(directory, 'core.db')
@@ -185,6 +366,10 @@ describe('Desktop Agent Run 真实本机 Provider 接线', () => {
         VALUES (${owner},'qq',${'a'.repeat(64)},${session.id})`.execute(tx)
       return session
     })
+    const preferenceFiles = createLocalPreferenceTextFiles(directory)
+    const preferences = createKyselyPreferenceDocumentStore(runtime.db, 'sqlite')
+    await desktopAgentPreference(preferences, preferenceFiles, ownerId, 'personality', { content: '合成个人设定', enabled: true })
+    await desktopAgentPreference(preferences, preferenceFiles, ownerId, 'group-personality', { content: '合成群聊设定', enabled: true })
     const { run_id: runId } = await runs.start(session.id, '测试群消息', 'synthetic-group', {
       provider: 'local', api_format: 'openai', base_url: `http://127.0.0.1:${address.port}/v1`,
       api_key: '', model: 'synthetic', context_tokens: 256_000, max_tokens: 512, web_search_enabled: false,
@@ -208,6 +393,8 @@ describe('Desktop Agent Run 真实本机 Provider 接线', () => {
       WHERE session_id=${session.id} AND client_message_id='synthetic-group'`.execute(runtime.db)
     expect(speakers).toEqual([{ platform_user_id: 'synthetic-member', platform_user_name: '小北' }])
     expect(requests.length).toBeGreaterThan(0)
+    expect(JSON.stringify(requests[0])).toContain('合成群聊设定')
+    expect(JSON.stringify(requests)).not.toContain('合成个人设定')
     const tools = requests.flatMap(request => Array.isArray(request.tools) ? request.tools : [])
     expect(tools.length).toBeGreaterThan(0)
     expect(tools.every(tool => tool.function?.name === 'get_current_time')).toBe(true)
@@ -293,6 +480,7 @@ describe('Desktop Agent Run 真实本机 Provider 接线', () => {
         if (!params.diagnostic) runLogs.push(JSON.parse(String(params.line)))
         return null
       }
+      if (method === 'agent.memory.resolveReflectionModel') return config
       expect(params).toEqual({})
       if (method === 'agent.tools.policy') return { disabledTools: [
         'delete_file', 'delete_folder', 'list_trash', 'restore_file', 'restore_folder', 'permanent_delete',
@@ -376,6 +564,25 @@ describe('Desktop Agent Run 真实本机 Provider 接线', () => {
     ]))
 
 
+    expect(requests).toHaveLength(1)
+    const secondText = '我也偏好简洁的回答'
+    const { run_id: secondRun } = await runs.start(session.id, secondText, 'desktop-reflection-batch', config)
+    const ageReflection = async (sessionId: number, reflectionRun: string) => {
+      const deadline = Date.now() + 5000
+      do {
+        const queued = await sql`SELECT 1 FROM desktop_agent_reflection_jobs
+          WHERE session_id=${sessionId} AND run_id=${reflectionRun} AND status='queued'`.execute(runtime.db)
+        if (queued.rows.length) {
+          await sql`UPDATE desktop_agent_reflection_jobs SET created_at_ms=${Date.now() - 181_000}
+            WHERE session_id=${sessionId} AND status='queued'`.execute(runtime.db)
+          runs!.resumeReflections()
+          return
+        }
+        await new Promise(resolve => setTimeout(resolve, 20))
+      } while (Date.now() < deadline)
+      throw new Error('未找到待处理的反思')
+    }
+    await ageReflection(session.id, secondRun)
     let reflectionStatus = 'queued'
     let memoryBody: string | undefined
     let reflectionDiagnostic: { attempts: number; last_error: string | null; model_identity: string } | undefined
@@ -400,8 +607,12 @@ describe('Desktop Agent Run 真实本机 Provider 接线', () => {
     expect(memory.memory).toContain('用户使用文件维护长期记忆')
     expect(memory.stance).toContain('闲聊')
     expect(await disk.readTarget('lens')).toContain('明确表达偏好')
-    expect(requests).toHaveLength(2)
-    expect('tools' in JSON.parse(requests[1]!) as object).toBe(false)
+    expect(requests).toHaveLength(3)
+    expect('tools' in JSON.parse(requests[2]!) as object).toBe(false)
+    expect(requests[2]).toContain(text)
+    expect(requests[2]).toContain(secondText)
+    expect((await sql`SELECT status FROM desktop_agent_reflection_jobs WHERE run_id=${secondRun}`.execute(runtime.db)).rows)
+      .toEqual([{ status: 'completed' }])
     await runs.close()
     await sql`UPDATE desktop_agent_reflection_jobs SET status='queued'
       WHERE user_id=${ownerId.replaceAll('-', '')} AND session_id=${session.id} AND run_id=${runId}`.execute(runtime.db)
@@ -431,11 +642,12 @@ describe('Desktop Agent Run 真实本机 Provider 接线', () => {
     }
     expect(status).toBe('completed')
     expect(resolved).toBe(1)
-    expect(requests).toHaveLength(3)
-    expect(JSON.parse(requests[2]!).stream).not.toBe(true)
+    expect(requests).toHaveLength(4)
+    expect(JSON.parse(requests[3]!).stream).not.toBe(true)
     hangReflection = true
     const thirdSession = await runtime.db.transaction().execute(tx => createDesktopAgentSession(tx, ownerId, '退出反思测试'))
     const { run_id: interruptedRun } = await runs.start(thirdSession.id, '测试退出', 'desktop-reflection-close', config)
+    await ageReflection(thirdSession.id, interruptedRun)
     await startedReflection
     await runs.close()
     await closedReflection

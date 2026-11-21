@@ -14,10 +14,20 @@ export function createDesktopWechatCursor(directory: string, encryption: Paramet
   })
 }
 
+/** 主动提醒复用当前绑定收到的微信会话凭据，仅存于本机加密存储。 */
+export function createDesktopWechatReach(directory: string, encryption: Parameters<typeof createEncryptedDesktopStore>[2]) {
+  return createEncryptedDesktopStore(directory, 'im-wechat-scheduled-reach', encryption, value => {
+    if (!value || typeof value !== 'object' || !('revision' in value) || typeof value.revision !== 'string'
+      || !('contextToken' in value) || typeof value.contextToken !== 'string' || !value.contextToken)
+      throw new Error('微信主动投递信息无效')
+    return { revision: value.revision, contextToken: value.contextToken }
+  })
+}
+
 export function createDesktopWechatGateway(pairing: Pick<ReturnType<typeof createDesktopWechatPairing>, 'read'>,
   admit: ReturnType<typeof createDesktopImInbox>, dispatch: ReturnType<typeof createDesktopImDispatch>,
   transport: () => NonNullable<Parameters<typeof createILinkClient>[0]['transport']>, cursor: ReturnType<typeof createDesktopWechatCursor>,
-  report?: (code: string, error?: unknown) => void) {
+  report?: (code: string, error?: unknown) => void, reach?: ReturnType<typeof createDesktopWechatReach>) {
   return createGatewaySupervisor({
     async read() {
       const bot = await pairing.read()
@@ -40,6 +50,7 @@ export function createDesktopWechatGateway(pairing: Pick<ReturnType<typeof creat
       // 在运行期间异步取票，微信入队和 Agent 启动无需等待。
       const tickets = createWechatTypingTicketCache(api, { fetchTimeoutMs: 2000 })
       let delivery: Promise<void> | undefined
+      let recentContextToken: string | undefined
       const handle = await connectWechatPolling<DesktopImFile>({
         botId: bot.botId, ownerId: connection.ownerId, signal: active, cursor: cursor(connectionId),
         prefetchTypingTicket: false,
@@ -55,6 +66,13 @@ export function createDesktopWechatGateway(pairing: Pick<ReturnType<typeof creat
             return 'consumed'
           }
           if (payload.chat_type !== 'c2c' || !payload.context_token || !await authorize()) return 'consumed'
+          if (reach && recentContextToken !== payload.context_token) {
+            const contextToken = payload.context_token
+            try {
+              await reach.write({ revision: bot.revision, contextToken })
+              recentContextToken = contextToken
+            } catch { report?.('wechat-schedule-reach-unavailable') }
+          }
           if (missingVoice) {
             const deliveryId = createHash('sha256').update(JSON.stringify([connectionId, payload.platform_event_id ?? payload.message_id, 'voice-notice'])).digest('hex')
             try {

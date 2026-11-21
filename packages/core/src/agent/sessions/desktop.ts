@@ -162,16 +162,23 @@ export async function manageDesktopSessionWorkspace(db: Kysely<Database>, owner:
   return db.isTransaction ? update(db) : db.transaction().execute(update)
 }
 
-export async function createDesktopAgentSession(tx: Transaction<Database>, owner: string, title: unknown): Promise<DesktopAgentSession> {
+export async function createDesktopAgentSession(tx: Transaction<Database>, owner: string, title: unknown, greeting?: unknown): Promise<DesktopAgentSession> {
   if (typeof title !== 'string' || !title.trim() || title.length > 200)
     throw new CoreError('invalid_request', '会话标题无效')
+  if (greeting !== undefined && (typeof greeting !== 'string' || greeting.length > 2000))
+    throw new CoreError('invalid_request', '会话问候无效')
   const user = dataContext(owner).ownerId.replaceAll('-', '')
   const time = databaseTime(nowUtc(), 'sqlite')
+  const opening = greeting?.trim()
   const row = await sql<{ id: number }>`
-    INSERT INTO conversation_sessions (user_id, title, title_locked, summary, source, context_epoch, created_at, updated_at)
-    VALUES (${user}, ${title.trim()}, 0, '', 'web', 0, ${time}, ${time})
+    INSERT INTO conversation_sessions (user_id, title, title_locked, summary, source, context_epoch, last_message_seq, created_at, updated_at)
+    VALUES (${user}, ${title.trim()}, 0, '', 'web', 0, ${opening ? 1 : 0}, ${time}, ${time})
     RETURNING id`.execute(tx)
-  return { id: Number(row.rows[0]!.id), title: title.trim(), updatedAt: utc(time).replace(' ', 'T') }
+  const id = Number(row.rows[0]!.id)
+  if (opening) await sql`INSERT INTO conversation_messages
+    (session_id, conversation_seq, role, content, created_at, sent_at)
+    VALUES (${id}, 1, 'assistant', ${opening}, ${time}, ${time})`.execute(tx)
+  return { id, title: title.trim(), updatedAt: utc(time).replace(' ', 'T') }
 }
 
 export async function readDesktopAgentMessages(db: Kysely<Database>, owner: string, id: number): Promise<DesktopAgentMessage[]> {

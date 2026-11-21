@@ -2,8 +2,12 @@
 :root {
   --bg-gradient: var(--theme-page); --glass-bg: var(--surface-glass);
   --glass-border: var(--theme-border-strong); --panel-bg: var(--theme-base);
-  --text-primary: var(--theme-content-primary); --text-secondary: var(--theme-content-secondary);
+  --text-primary: var(--content-primary); --text-secondary: var(--content-secondary);
   --color-primary: var(--theme-action-primary);
   --color-success: var(--theme-success); --color-warning: var(--theme-warning);
   --scrollbar-track: transparent; --scrollbar-thumb: var(--theme-scrollbar-thumb); --scrollbar-thumb-hover: var(--theme-scrollbar-thumb-hover); --divider-line: var(--theme-divider);
+}
+
+:root[data-theme='dark'] :where(nav, [role='navigation'], .sidebar, .desktop-sidebar, .exp-sidebar) {
+  --text-primary: var(--content-primary); --text-secondary: var(--content-secondary);
 }

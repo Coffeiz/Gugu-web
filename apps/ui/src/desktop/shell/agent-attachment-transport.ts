@@ -1,6 +1,6 @@
 import type { DesktopAgentAttachment, DesktopBridge, DesktopReply } from '@gugu/core/desktop'
 import { DesktopBridgeError } from '@desktop/bridge/bridge'
-import { previewAttachmentPath } from '../../../../desktop/src/shared/agent-attachment-preview'
+import { previewAttachmentPath } from '@gugu/desktop-contracts'
 
 type DesktopWindow = Window & { guguDesktop?: DesktopBridge }
 

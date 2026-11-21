@@ -26,7 +26,7 @@
       </template>
     </ScrollableCardLayout>
 
-    <ScheduleFormModal :desktop="desktop" :show="showModal" :task="editing" :im-channels="imChannels" :busy="busy"
+    <ScheduleFormModal :desktop="desktop" :show="showModal" :task="editing" :im-channels="imChannels" :wechat-needs-message="wechatNeedsMessage" :busy="busy"
       :workspaces="workspaces" :filesystem-authorization-enabled="filesystemAuthorizationEnabled"
       :workspace-supported="workspaceSupported"
       :external-error="formErr" @close="showModal = false" @save="submit" />
@@ -58,13 +58,25 @@ import FilesystemAuthorizationDialog from '@/components/common/filesystem/Filesy
 import { useScheduledTasks } from '@/composables/schedules/useScheduledTasks'
 import { useFilesystemAuthorization } from '@/composables/useFilesystemAuthorization'
 
-const desktop = useScheduleAccess()?.storesSchedulesLocally === true
+const scheduleAccess = useScheduleAccess()
+const desktop = scheduleAccess?.storesSchedulesLocally === true
 const authStore = useAuthStore()
 const uiStore = useUiStore()
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
-const imChannels = computed(() => authStore.user?.imChannels ?? [])
+const desktopChannels = ref<string[]>([])
+const wechatNeedsMessage = ref(false)
+const imChannels = computed(() => desktop ? desktopChannels.value : authStore.user?.imChannels ?? [])
+async function loadDesktopChannels() {
+  if (!scheduleAccess?.channels) return
+  try {
+    const result = await scheduleAccess.channels()
+    desktopChannels.value = result.channels
+    wechatNeedsMessage.value = result.wechatNeedsMessage === true
+  }
+  catch (error) { showAppError(errorMessage(error)) }
+}
 const { tasks, loaded, loading, busy, load, save, toggle, runNow, remove } = useScheduledTasks()
 const taskGroups = computed(() => [
   { mode: 'instruction', label: 'scheduleUi.instructionMode', tasks: tasks.value.filter(task => task.execution_mode !== 'reminder') },
@@ -138,6 +150,7 @@ window.addEventListener('gugu:open-object', openRequestedTask as EventListener)
 onBeforeUnmount(() => window.removeEventListener('gugu:open-object', openRequestedTask as EventListener))
 
 function openCreate() {
+  if (desktop) void loadDesktopChannels()
   editing.value = null
   formErr.value = ''
   showModal.value = true
@@ -146,6 +159,7 @@ function openCreate() {
 function openChatSetup() { uiStore.pendingChatPrefill = t('schedules.configureWithChat') }
 
 function openEdit(task: Record<string, any>) {
+  if (desktop) void loadDesktopChannels()
   editing.value = task
   formErr.value = ''
   showModal.value = true

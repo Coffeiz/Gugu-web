@@ -21,6 +21,7 @@ test('连接清理未知时保留旧归属，不启动替代消费者', async ()
   });
   await supervisor.start(); await supervisor.settled(); await flush();
   notify(); await supervisor.settled();
+  await supervisor.resume();
   assert.equal(connected, 1);
   assert.deepEqual(supervisor.status(), { running: 1, retrying: 0, stopping: false });
   assert.deepEqual(reports, ['cleanup-failed']);
@@ -202,5 +203,40 @@ test('数据库快照读取失败5秒后自动补读，不要求额外配置通�
   await f.advance(4_999); assert.equal(f.events.filter(event => event === 'read').length, before);
   await f.advance(1); assert.equal(f.events.filter(event => event === 'read').length, before + 1);
   assert.equal(f.supervisor.status().running, 0);
+  await f.supervisor.stop();
+});
+
+test('唤醒时先排空睡眠前的连接，再按最新启用配置重连', async () => {
+  const f = fixture();
+  const configuredCounts: number[] = [];
+  f.supervisor.onConfigurationChanged(() => configuredCounts.push(f.supervisor.health().configured));
+  await f.supervisor.start(); await f.supervisor.settled();
+
+  const gate = f.gate();
+  const resuming = f.supervisor.resume();
+  await flush();
+  assert.equal(f.connections.length, 1);
+  gate.resolve();
+  await resuming;
+  assert.equal(f.connections[0]!.stopped, true);
+  assert.equal(f.connections.length, 2);
+
+  f.silentUpdate([]);
+  await f.supervisor.resume();
+  assert.equal(f.connections[1]!.stopped, true);
+  assert.equal(f.connections.length, 2);
+  assert.deepEqual(configuredCounts, [1, 0]);
+  await f.supervisor.stop();
+});
+
+test('唤醒期间读取配置失败，补读成功后仍会更新睡眠前的连接', async () => {
+  const f = fixture(); await f.supervisor.start(); await f.supervisor.settled();
+  f.failRead(true);
+  await f.supervisor.resume();
+  assert.equal(f.connections.length, 1);
+  f.failRead(false);
+  await f.supervisor.settled();
+  assert.equal(f.connections[0]!.stopped, true);
+  assert.equal(f.connections.length, 2);
   await f.supervisor.stop();
 });

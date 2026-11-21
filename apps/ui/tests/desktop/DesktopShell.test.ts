@@ -14,7 +14,7 @@ import { installEnterDirective } from '@/directives/enter'
 import { projectAccessKey, type ProjectAccess } from '@/api/projects'
 import { localPreferencesAccessKey } from '@/services/localPreferencesAccess'
 import { desktopPreferencesAccess } from '@desktop/account/preferencesAccess'
-import { projectBoardMethods } from '@desktop/bridge/preview-core'
+import { projectBoardMethods } from '@gugu/desktop-contracts'
 import { desktopProjectAccess } from '@desktop/projects/access'
 import ProjectWindow from '@desktop/projects/ProjectWindow.vue'
 import { useProjectStore } from '@/stores/projects'
@@ -30,7 +30,7 @@ beforeEach(() => {
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
 })
 
-async function mountShell(section: 'home' | 'contacts' | 'projects' | 'calendar', bridge: Record<string, unknown> | null, list?: ProjectAccess['list']) {
+async function mountShell(section: 'home' | 'contacts' | 'projects' | 'calendar' | 'notes' | 'canvases', bridge: Record<string, unknown> | null, list?: ProjectAccess['list']) {
   vi.stubGlobal('guguDesktop', bridge && {
     appearance: async () => ok({ theme: 'light', themeFamily: 'glass', palette: 'neutral', defaultView: section }),
     onboarding: async () => ok(null),
@@ -39,7 +39,7 @@ async function mountShell(section: 'home' | 'contacts' | 'projects' | 'calendar'
     sandboxStatus: async () => ok({ supported: false, methods: [], checkAvailable: false }),
     ...bridge,
   })
-  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'home', components: {} }, { path: '/contacts', name: 'contacts', components: {} }, { path: '/projects', name: 'projects', components: {} }, { path: '/calendar', name: 'calendar', components: {} }] })
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'home', components: {} }, { path: '/dev', name: 'dev-workbench', components: {} }, { path: '/contacts', name: 'contacts', components: {} }, { path: '/projects', name: 'projects', components: {} }, { path: '/calendar', name: 'calendar', components: {} }, { path: '/notes', name: 'notes', components: {} }, { path: '/canvases', name: 'canvases', components: {} }] })
   await router.push({ name: section })
   const host = document.createElement('div')
   document.body.append(host)
@@ -208,7 +208,7 @@ it.each([{ uncertain: false }, { uncertain: true }])('桌面项目创建经过�
     } else {
       await vi.waitFor(() => expect(host.textContent).toContain(project.name))
       expect(localStorage.getItem(pendingKey)).toBeNull()
-      await router.push({ name: 'home' })
+      await clickButton(host, i18n.global.t('navigation.devTools'))
       await clickButton(host, '刷新本地数据')
       await vi.waitFor(() => expect(projectBoard).toHaveBeenCalledTimes(2))
       await router.push({ name: 'projects' })
@@ -233,16 +233,20 @@ it('桌面外观跟随系统配色模式，配色经本机桥保存后可在重�
     saved = { ...saved, ...patch }
     return ok(saved)
   })
+  const readOnboarding = vi.fn(async () => ok({ guide }))
   const bridge = {
     clients: async () => ok([]),
     appearance: async () => ok(saved),
     updateAppearance,
-    onboarding: async () => ok({ guide }),
+    onboarding: readOnboarding,
   }
   vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true, addEventListener() {}, removeEventListener() {} })))
   initializeDesktopTheme()
   const first = await mountShell('home', bridge, async () => [])
   try {
+    await vi.waitFor(() => expect(first.router.currentRoute.value.name).toBe('projects'))
+    expect(readOnboarding).not.toHaveBeenCalled()
+    await clickButton(first.host, i18n.global.t('navigation.devTools'))
     await vi.waitFor(() => expect(first.host.textContent).toContain('引导进行中：style · 已完成 1 步。'))
     expect(theme.dataset.theme).toBe('dark')
     expect(theme.dataset.family).toBe('mono')
@@ -260,7 +264,7 @@ it('桌面外观跟随系统配色模式，配色经本机桥保存后可在重�
     localStorage.setItem(paletteKey, 'red')
     const restarted = await mountShell('home', bridge, async () => [])
     try {
-      await vi.waitFor(() => expect(restarted.host.textContent).toContain('引导进行中'))
+      await vi.waitFor(() => expect(restarted.router.currentRoute.value.name).toBe('projects'))
       expect(theme.dataset.palette).toBe('blue')
       expect(localStorage.getItem(paletteKey)).toBe('blue')
       expect(updateAppearance).toHaveBeenCalledTimes(1)
@@ -282,8 +286,8 @@ it('普通浏览器没有桌面桥时显示错误并结束启动忙碌状态', a
   const { host, cleanup } = await mountShell('home', null, async () => [])
   try {
     await vi.waitFor(() => expect(host.querySelector('[role="alert"]')?.textContent).toContain('请在咕咕桌面应用中打开'))
-    const refresh = [...host.querySelectorAll('button')].find(button => button.textContent?.trim() === '刷新本地数据')
-    expect(refresh?.disabled).toBe(false)
+    await clickButton(host, i18n.global.t('navigation.devTools'))
+    await vi.waitFor(() => expect(host.textContent).toContain('无法读取引导状态'))
   } finally {
     cleanup()
   }
@@ -348,6 +352,7 @@ it('桌面日历使用读取的版本编辑，删除确认后可按快捷键撤�
     await clickButton(document, i18n.global.t('calendar.deleteEvent'))
     await vi.waitFor(() => expect(event()).toBeNull())
     expect(deleteCalendarEvent).toHaveBeenCalledExactlyOnceWith(12, 2)
+    await vi.waitFor(() => expect(document.querySelector('.confirm-dialog, .bm-overlay')).toBeNull())
 
     shortcut()
     await vi.waitFor(() => expect(event()?.textContent).toContain('更新活动'))
@@ -415,5 +420,31 @@ it('独立项目窗口取消重命名不写入，保存使用本机读取版本'
     app.unmount()
     host.remove()
     vi.unstubAllGlobals()
+  }
+})
+
+it('桌面笔记和画布从本地历史撤销与重做，编辑区按键不发出业务请求', async () => {
+  const undoPreview = vi.fn(async (context: string) => ok(context === 'desktop-mind'
+    ? { undo: { operation_id: '撤销项', can_undo: true }, redo: { operation_id: '重做项', can_redo: true } }
+    : {}))
+  const undoApply = vi.fn(async () => ok({}))
+  const undoRedo = vi.fn(async () => ok({}))
+  const { host, router, cleanup } = await mountShell('notes', { clients: async () => ok([]), undoPreview, undoApply, undoRedo }, async () => [])
+  try {
+    await vi.waitFor(() => expect(undoPreview).toHaveBeenCalledWith('desktop-calendar'))
+    const editor = host.appendChild(document.createElement('div'))
+    editor.setAttribute('contenteditable', 'true')
+    const child = editor.appendChild(document.createElement('span'))
+    const shortcut = (key: string) => new KeyboardEvent('keydown', { key, ctrlKey: true, bubbles: true, cancelable: true })
+    expect(child.dispatchEvent(shortcut('z'))).toBe(true)
+    expect(undoPreview).not.toHaveBeenCalledWith('desktop-mind')
+
+    expect(host.dispatchEvent(shortcut('z'))).toBe(false)
+    await vi.waitFor(() => expect(undoApply).toHaveBeenCalledExactlyOnceWith('desktop-mind', '撤销项', expect.any(String)))
+    await router.push({ name: 'canvases' })
+    expect(host.dispatchEvent(shortcut('y'))).toBe(false)
+    await vi.waitFor(() => expect(undoRedo).toHaveBeenCalledExactlyOnceWith('desktop-mind', '重做项', expect.any(String)))
+  } finally {
+    cleanup()
   }
 })

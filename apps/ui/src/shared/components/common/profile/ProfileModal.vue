@@ -48,8 +48,8 @@
           <slot v-else-if="desktop && activeNav === 'workspaces' && $slots['desktop-workspaces']" name="desktop-workspaces" />
           <slot v-else-if="desktop && activeNav === 'logs'" name="desktop-logs" />
           <template v-else>
-            <p v-if="desktop && activeNav !== 'info' && activeNav !== 'prefs' && activeNav !== 'im'" class="pm-desktop-notice" role="status">此页的设置等待桌面 IPC 接入。</p>
-            <div :inert="desktop && activeNav !== 'prefs' && activeNav !== 'im'">
+            <p v-if="desktop && activeNav !== 'info' && activeNav !== 'prefs' && activeNav !== 'im' && activeNav !== 'gugu' && activeNav !== 'tools' && activeNav !== 'data'" class="pm-desktop-notice" role="status">此页的设置等待桌面 IPC 接入。</p>
+            <div :inert="desktop && activeNav !== 'prefs' && activeNav !== 'im' && activeNav !== 'gugu' && activeNav !== 'tools' && activeNav !== 'data'">
               <KeepAlive>
                 <ProfileInfoPane v-if="activeNav === 'info'" :external-message="infoMsg" :external-message-type="infoMsgType" />
                 <ProfileAccountPane v-else-if="activeNav === 'account'" />
@@ -57,7 +57,7 @@
                 <ProfileByokPane v-else-if="activeNav === 'byok'" />
                 <ProfileToolPermissionsPane v-else-if="activeNav === 'tools'" />
                 <ProfileWorkspacesPane v-else-if="activeNav === 'workspaces'" />
-                <ProfileDataPortabilityPane v-else-if="activeNav === 'data'" />
+                <ProfileDataPortabilityPane v-else-if="activeNav === 'data'" :refresh-imported-data="refreshImportedData" />
                 <ProfileImPane v-else-if="activeNav === 'im'" :connect-telegram="connectTelegram" :desktop-im-adapter="desktopImAdapter">
                   <template #telegram-status="status"><slot name="telegram-status" v-bind="status" /></template>
                   <template #connection-notice><slot name="im-notice" /></template>
@@ -115,7 +115,7 @@ import Icon from '@/components/common/icons/Icon.vue'
 import { useI18n } from 'vue-i18n'
 import type { DesktopImSettingsAdapter } from '@/im/connect/desktopAdapter'
 
-const props = defineProps({ show: Boolean, desktop: Boolean, desktopImAdapter: Object as PropType<DesktopImSettingsAdapter>, connectTelegram: Function as PropType<(token: string) => Promise<void>>, initialNav: { type: String, default: 'info' } })
+const props = defineProps({ show: Boolean, desktop: Boolean, desktopImAdapter: Object as PropType<DesktopImSettingsAdapter>, connectTelegram: Function as PropType<(token: string) => Promise<void>>, initialNav: { type: String, default: 'info' }, refreshImportedData: Function as PropType<() => void> })
 provide(desktopProfileKey, props.desktop)
 const emit  = defineEmits(['close'])
 const router = useRouter()

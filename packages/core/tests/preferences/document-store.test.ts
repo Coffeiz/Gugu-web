@@ -6,6 +6,7 @@ import { Kysely, PostgresDialect, sql } from 'kysely'
 import { Pool } from 'pg'
 import { expect, it } from 'vitest'
 import { initializeSqlite, openSqliteRuntime } from '../../src/data/sqlite.js'
+import { createDesktopAppearanceService } from '../../src/preferences/desktop-appearance.js'
 import { createKyselyPreferenceDocumentStore } from '../../src/preferences/document-store.js'
 
 it('正式 SQLite 保存偏好并拒绝其他 owner 写入', async () => {
@@ -26,6 +27,14 @@ it('正式 SQLite 保存偏好并拒绝其他 owner 写入', async () => {
       await expect(store.write(other, { palette: 'red' })).rejects.toThrow()
       await expect(sql`UPDATE user_preferences SET user_id=${'f'.repeat(32)}`.execute(opened.runtime.db)).rejects.toThrow()
       expect(JSON.parse(String(await store.read(opened.ownerId)))).toEqual({ palette: 'blue' })
+
+      const desktop = createDesktopAppearanceService(store)
+      expect((await desktop.get(opened.ownerId)).keepGatewayOnline).toBe(true)
+      await expect(desktop.update(opened.ownerId, { keepGatewayOnline: 'false' }))
+        .rejects.toMatchObject({ code: 'invalid_request' })
+      await desktop.update(opened.ownerId, { keepGatewayOnline: false })
+      expect((await createDesktopAppearanceService(store).get(opened.ownerId)).keepGatewayOnline).toBe(false)
+      expect(JSON.parse(String(await store.read(opened.ownerId)))).toEqual({ palette: 'blue', keepGatewayOnline: false })
     } finally { await opened.runtime.close() }
   } finally { await rm(directory, { recursive: true, force: true }) }
 })

@@ -11,16 +11,18 @@ test('来源快照与当前消息仅允许 owner 读取并绑定实际消息锚�
   const pool = new Pool({ connectionString: url, options: `-c search_path=${schema}` })
   try {
     await pool.query(`CREATE TABLE conversation_sessions (id integer PRIMARY KEY,user_id uuid NOT NULL,context_epoch integer NOT NULL,session_context jsonb,snapshot_hash text,session_info_hash text,snapshot_expires_at timestamptz,baseline_message_seq bigint NOT NULL);
-      CREATE TABLE conversation_messages(id integer PRIMARY KEY,session_id integer NOT NULL,role text NOT NULL,content text NOT NULL,content_json jsonb,files jsonb,references_json jsonb)`)
+      CREATE TABLE conversation_messages(id integer PRIMARY KEY,session_id integer NOT NULL,role text NOT NULL,content text NOT NULL,content_json jsonb,files jsonb,references_json jsonb,created_at timestamptz NOT NULL)`)
     const owner = randomUUID(), other = randomUUID(), identity = { ownerId: owner, sessionId: '1', runId: 'run' }
     await pool.query("INSERT INTO conversation_sessions VALUES (1,$1,2,NULL,NULL,NULL,'2026-01-01T00:00:00Z',3)", [owner])
-    await pool.query("INSERT INTO conversation_messages VALUES (9,1,'user','合成',NULL,NULL,NULL)")
+    await pool.query("INSERT INTO conversation_messages VALUES (9,1,'user','合成',NULL,NULL,NULL,'2026-01-01T03:15:00.123456Z')")
     const read = createPostgresSnapshotReader(pool)
     assert.equal((await read(identity))?.baselineMessageSeq, 3)
     assert.equal((await read(identity))?.snapshotExpiresAt, Date.parse('2026-01-01T00:00:00Z'))
     assert.equal(await read({ ...identity, ownerId: other }), null)
     const current = createPostgresCurrentTurnReader(pool, '9', async (_identity, row) => ({ currentUser: { persistedMessageId: row.id, message: { role: 'user', content: row.content } } }))
-    assert.equal((await current(identity)).currentUser?.message.content, '合成')
+    const readCurrent = (await current(identity)).currentUser
+    assert.equal(readCurrent?.message.content, '合成')
+    assert.equal(Date.parse(readCurrent!.messageTimestamp!), Date.parse('2026-01-01T03:15:00.123Z'))
     await assert.rejects(current({ ...identity, ownerId: other }), /用户消息不存在/)
     const bad = createPostgresCurrentTurnReader(pool, '9', async () => ({ currentUser: { persistedMessageId: '10', message: { role: 'user', content: '' } } }))
     await assert.rejects(bad(identity), /锚点不一致/)

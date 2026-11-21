@@ -96,9 +96,10 @@ describe('mergeSessionMessageDelta', () => {
       dbId: 5,
     }
 
-    const merged = mergeSessionMessageDelta([greeting], [persistedGreeting])
+    const sendingUser: ChatMessage = { ...message(2, 'client:first', '合成回复'), role: 'user', _createdAt: undefined }
+    const merged = mergeSessionMessageDelta([greeting, sendingUser], [persistedGreeting])
 
-    expect(merged).toHaveLength(1)
+    expect(merged.map(item => item.role)).toEqual(['ai', 'user'])
     expect(merged[0]).toMatchObject({ id: greeting.id, dbId: 5, _syncKey: 'message:5', text: greeting.text })
     expect(merged[0]._greeting).toBeUndefined()
   })

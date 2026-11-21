@@ -31,6 +31,9 @@ importers:
       '@gugu/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@gugu/desktop-contracts':
+        specifier: workspace:*
+        version: link:../../packages/desktop-contracts
       '@gugu/fs':
         specifier: workspace:*
         version: link:../../packages/fs
@@ -263,6 +266,9 @@ importers:
       '@gugu/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@gugu/desktop-contracts':
+        specifier: workspace:*
+        version: link:../../packages/desktop-contracts
       '@playwright/test':
         specifier: ^1.62.1
         version: 1.62.1
@@ -642,6 +648,9 @@ importers:
       postal-mime:
         specifier: ^4.2.1
         version: 4.2.1
+      unzipper:
+        specifier: 0.12.5
+        version: 0.12.5
       xlsx:
         specifier: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
         version: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
@@ -703,6 +712,12 @@ importers:
       better-sqlite3:
         specifier: 13.2.0
         version: 13.2.0
+
+  packages/desktop-contracts:
+    devDependencies:
+      '@gugu/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/fs:
     devDependencies:

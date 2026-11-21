@@ -9,6 +9,8 @@ import { createMailTransport } from '@gugu/core/mail/transport'
 import { createEncryptedDesktopStore } from '../auth/store.js'
 import { DesktopError } from '../core-host.js'
 import type { IpcHandlers } from '../ipc/types.js'
+import { sanitizeEmailHtml } from '@gugu/core/email/smtp-test'
+import { personalSmtpId, type createDesktopPersonalSmtp } from './personal-smtp.js'
 import { desktopMailAttachmentDigest } from './attachments.js'
 
 type AgentAttachmentResolver = (references: readonly string[], signal?: AbortSignal) => Promise<EmailAttachment[]>
@@ -18,14 +20,28 @@ export function createDesktopMailService(
   encryption: Parameters<typeof createEncryptedDesktopStore>[2],
   transport: MailTransport = createMailTransport(),
   resolveAgentAttachments?: AgentAttachmentResolver,
+  personalSmtp?: ReturnType<typeof createDesktopPersonalSmtp>,
 ) {
   const accounts = createEncryptedDesktopStore<MailAccount[]>(directory, 'mail-accounts', encryption, value => mailStoredAccount.array().parse(value))
   const versionKey = randomBytes(32)
+  const version = (value: unknown) => createHmac('sha256', versionKey).update(JSON.stringify(value)).digest('hex')
   let mutation: Promise<unknown> = Promise.resolve()
   function update(change: (items: MailAccount[]) => MailAccount[]) {
     const write = mutation.then(async () => accounts.write(change(await accounts.read() ?? [])))
     mutation = write.catch(() => {})
     return write
+  }
+  async function claimAttempt(accountId: string, attemptId: string) {
+    const dir = join(directory, 'mail-send-receipts')
+    await mkdir(dir, { recursive: true, mode: 0o700 })
+    try {
+      const marker = await open(join(dir, `${accountId}.${attemptId}`), 'wx', 0o600)
+      await marker.close()
+      return true
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false
+      throw error
+    }
   }
   const store: MailStore = {
     async list() { return (await accounts.read() ?? []).map(({ password: _password, ...summary }) => summary) },
@@ -36,16 +52,7 @@ export function createDesktopMailService(
       const claim = mutation.then(async () => {
         const current = (await accounts.read() ?? []).find(item => item.id === accountId)
         if (!current || expectedAccount && accountVersion(current) !== accountVersion(expectedAccount)) return false
-        const dir = join(directory, 'mail-send-receipts')
-        await mkdir(dir, { recursive: true, mode: 0o700 })
-        try {
-          const marker = await open(join(dir, `${accountId}.${attemptId}`), 'wx', 0o600)
-          await marker.close()
-          return true
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false
-          throw error
-        }
+        return claimAttempt(accountId, attemptId)
       })
       mutation = claim.catch(() => {})
       return claim
@@ -57,8 +64,7 @@ export function createDesktopMailService(
     if (!resolveAgentAttachments) throw new DesktopError('unsupported', '本机邮件附件不可用')
     return resolveAgentAttachments(references, signal)
   }
-  const accountVersion = (account: MailAccount) => createHmac('sha256', versionKey)
-    .update(JSON.stringify(account)).digest('hex')
+  const accountVersion = (account: MailAccount) => version(account)
   const handlers: IpcHandlers = { [DESKTOP_CHANNELS.mail]: async input => {
     try { return await execute('desktop', input) }
     catch (error) {
@@ -74,10 +80,12 @@ export function createDesktopMailService(
     handlers,
     async listAccounts() {
       const stored = await accounts.read() ?? []
-      return stored.map(account => {
+      const items = stored.map(account => {
         const { password: _password, ...summary } = account
         return { ...summary, version: accountVersion(account) }
       })
+      const smtp = await personalSmtp?.read()
+      return smtp?.enabled ? [{ id: personalSmtpId, email: smtp.fromAddr.includes('@') ? smtp.fromAddr : smtp.user, version: version(smtp) }, ...items] : items
     },
     async inspectAgentAttachments(input: unknown, signal?: AbortSignal) {
       signal?.throwIfAborted()
@@ -109,9 +117,10 @@ export function createDesktopMailService(
         || request.fileRefs.some(id => typeof id !== 'string' || !/^(?:drop|path)-[A-Za-z0-9_-]{1,24000}$/u.test(id))
         || new Set(request.fileRefs).size !== request.fileRefs.length)
         throw new DesktopError('invalid_request', '邮件发送请求无效')
-      const account = await store.get('desktop', request.accountId)
+      const personal = request.accountId === personalSmtpId ? await personalSmtp?.read() : null
+      const account = personal?.enabled ? personal : await store.get('desktop', request.accountId)
       if (!account || !/^[a-f0-9]{64}$/u.test(request.accountVersion)
-        || accountVersion(account) !== request.accountVersion)
+        || version(account) !== request.accountVersion)
         throw new DesktopError('conflict', '发件邮箱设置已变化，请重新发起并确认邮件')
       const files = await resolveAttachments(request.fileRefs as string[], signal)
       if (desktopMailAttachmentDigest(files) !== request.attachmentDigest)
@@ -150,6 +159,24 @@ export function createDesktopMailService(
         } })
       if (!parsed.success || parsed.data.action !== 'send') throw new DesktopError('invalid_request', '邮件发送请求无效')
       signal?.throwIfAborted()
+      if (personal?.enabled && personalSmtp) {
+        const latest = await personalSmtp.read()
+        if (!latest?.enabled || version(latest) !== request.accountVersion)
+          throw new DesktopError('conflict', '发件邮箱设置已变化，请重新发起并确认邮件')
+        const { to, subject, text, html, attachments } = parsed.data.draft
+        if (to.length !== 1) throw new DesktopError('invalid_request', '请填写一个收件人')
+        if (!await claimAttempt(personalSmtpId, parsed.data.attemptId))
+          throw new DesktopError('conflict', '此发送请求已处理或结果待确认')
+        try {
+          await personalSmtp.deliver({ host: personal.host, port: personal.port, secure: personal.useSsl,
+            user: personal.user, password: personal.password, fromAddress: personal.fromAddr.includes('@') ? personal.fromAddr : personal.user,
+            fromName: personal.fromAddr && !personal.fromAddr.includes('@') ? personal.fromAddr : '咕咕',
+            toAddress: to[0]!, message: { subject, plain: text, html: html ? sanitizeEmailHtml(html) : '', images: [] }, attachments }, signal)
+          return { partial: false }
+        } catch {
+          throw new DesktopError('unsupported', '发送结果未确认，请核对邮件后再决定是否重试')
+        }
+      }
       try {
         return await execute('desktop', parsed.data,
           candidate => accountVersion(candidate) === request.accountVersion)

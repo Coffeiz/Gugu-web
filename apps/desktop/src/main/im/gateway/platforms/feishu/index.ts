@@ -1,6 +1,7 @@
 import { redactToolError } from '@gugu/core/agent'
 import { attentionSourceKind } from '@gugu/core/im/attention/directive'
 import { classifyImGroupInbound, resolveImActor } from '@gugu/core/im/access'
+import { userBotGroupFileToolsAllowed, userBotGroupToolAllowed } from '@gugu/core/im/user-bots'
 import { createDesktopImChartRenderer, createDesktopImProjectionReceipts } from '../../delivery/projection.js'
 import type { IpcHost } from '../../../../ipc/types.js'
 import type { safeStorage } from 'electron'
@@ -68,7 +69,7 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
         const allowFile = async (message: Parameters<typeof admit>[1]) => {
           const current = await readActive()
           return !!current?.userId && current.userId === ownerPlatformUserId && current.groupChatEnabled
-            && current.groupAllowedTools.some(tool => ['http_get', 'similar_image_search', 'send_file'].includes(tool))
+            && userBotGroupFileToolsAllowed(current.groupAllowedTools)
             && current.groupReplyMode !== 'record_only' && (message.botMentioned || current.groupReplyMode === 'reply_all')
         }
         if (!groupDeliveries.has(groupConnection)) {
@@ -296,32 +297,36 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
       }
     },
   })
-  async function readAuthorizedGroupMessage(params: Record<string, unknown>, signal: AbortSignal) {
+  async function readAuthorizedGroupMessage(params: Record<string, unknown>, signal: AbortSignal, scheduled = false) {
     const { connectionId, eventKey, sealedEvent } = params
     if (!projection || signal.aborted || typeof connectionId !== 'string' || typeof eventKey !== 'string'
       || typeof sealedEvent !== 'string' || sealedEvent.length > 48_000) return null
     try {
       const { result } = await projection.encryption.decryptStringAsync(Buffer.from(sealedEvent, 'base64'))
       const current = await pairing.read()
-      if (signal.aborted || !current?.enabled || !current.groupChatEnabled || !current.userId || current.groupReplyMode === 'record_only') return null
+      if (signal.aborted || !current?.enabled || !current.groupChatEnabled || !current.userId || (!scheduled && current.groupReplyMode === 'record_only')) return null
       const message = parseImReceivedMessage({ platform: 'feishu', ownerId: 'desktop', botId: current.appId }, JSON.parse(result).event)
       const { chatType, chatId } = message.scope
       if (chatType !== 'group' || !chatId || desktopImEventKey(message) !== eventKey
         || groupConnectionId(current.appId, chatId, current.userId) !== connectionId
-        || (!message.botMentioned && current.groupReplyMode !== 'reply_all')) return null
+        || (!scheduled && !message.botMentioned && current.groupReplyMode !== 'reply_all')) return null
       return { current, message }
     } catch { return null }
   }
   return {
     ...supervisor,
+    async readScheduledGroup(params: Record<string, unknown>, signal: AbortSignal) {
+      const result = await readAuthorizedGroupMessage(params, signal, true)
+      if (!result) return null
+      const { current, message } = result
+      return { platform: 'feishu', chatType: 'group', botId: current.appId,
+        boundUserId: current.userId, recipient: message.scope.chatId }
+    },
     async authorizeGroupTool(params: Record<string, unknown>, signal: AbortSignal) {
       const authorized = await readAuthorizedGroupMessage(params, signal)
       if (!authorized || typeof params.name !== 'string') return false
-      const tools = new Set(authorized.current.groupAllowedTools)
       const name = params.name
-      return (name === 'group_context_search' ? tools.has(name)
-        : name === 'web_search' ? tools.has(name)
-          : ['http_get', 'similar_image_search', 'send_file'].includes(name) ? tools.has(name) : false) && !signal.aborted
+      return userBotGroupToolAllowed(authorized.current.groupAllowedTools, name) && !signal.aborted
     },
     async readGroupMemoryContext(params: Record<string, unknown>, signal: AbortSignal) {
       const authorized = await readAuthorizedGroupMessage(params, signal)

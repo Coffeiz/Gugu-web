@@ -4,16 +4,19 @@ import { confirmFileDeletion } from './useFileDeleteConfirm'
 import { useBoxSelection } from '@/composables/shared/useBoxSelection'
 import { type PathFileEntry, type PathFileRef } from '@/services/api'
 import { usePathFileAccess } from '@/services/pathFileAccess'
+import { hasTextSelection, shortcutKey } from '@/interaction/keyboardShortcuts'
 import { accountBoundaryEpoch } from '@/utils/accountBoundary'
 
 export function usePathFileSelection(options: {
   target: Readonly<Ref<PathFileRef | null>>
   container: Ref<HTMLElement | null>
+  getEntries: () => PathFileEntry[]
   getSelectedEntries: () => PathFileEntry[]
   reload: () => void
 }) {
   const pathFilesApi = usePathFileAccess()
   const { target, container, getSelectedEntries, reload } = options
+  let anchor: string | undefined
   const forced = ref(false)
   const cut = shallowRef<{ directoryId: PathFileRef['directoryId']; entries: PathFileEntry[]; mode: 'cut' | 'copy' } | null>(null)
   const moving = ref(false)
@@ -37,6 +40,7 @@ export function usePathFileSelection(options: {
   const canPaste = computed(() => pasteCount.value > 0 && !moving.value)
 
   function clearSelection() {
+    anchor = undefined
     box.cancelDrag()
     box.clearSelection()
   }
@@ -44,7 +48,24 @@ export function usePathFileSelection(options: {
     if (selectionMode.value) clearSelection()
     else forced.value = true
   }
-  function select(entry: PathFileEntry) {
+  function selectEntries(entries: PathFileEntry[]) {
+    box.selectedFileIds.value = new Set(entries.filter(entry => entry.kind === 'file').map(entry => entry.relativePath))
+    box.selectedFolderIds.value = new Set(entries.filter(entry => entry.kind === 'directory').map(entry => entry.relativePath))
+  }
+
+  function select(entry: PathFileEntry, event?: MouseEvent | KeyboardEvent) {
+    if (event?.shiftKey) {
+      const entries = options.getEntries()
+      const start = entries.findIndex(item => item.relativePath === anchor)
+      const end = entries.findIndex(item => item.relativePath === entry.relativePath)
+      if (end >= 0) {
+        if (start < 0) anchor = entry.relativePath
+        const from = start < 0 ? end : start
+        selectEntries(entries.slice(Math.min(from, end), Math.max(from, end) + 1))
+        return
+      }
+    }
+    anchor = entry.relativePath
     const ids = entry.kind === 'directory' ? box.selectedFolderIds : box.selectedFileIds
     const next = new Set(ids.value)
     if (next.has(entry.relativePath)) next.delete(entry.relativePath)
@@ -131,6 +152,22 @@ export function usePathFileSelection(options: {
     return moveInto(cut.value.entries, location.relativePath)
   }
 
+  function handleShortcut(event: KeyboardEvent) {
+    const key = shortcutKey(event)
+    if (!target.value || !key || event.shiftKey) return
+    if (key === 'a') {
+      const entries = options.getEntries()
+      if (!entries.length) return
+      anchor = entries[0].relativePath
+      selectEntries(entries)
+    } else if ((key === 'c' || key === 'x') && selectedPaths.value.size && !hasTextSelection()) {
+      putSelection(key === 'c' ? 'copy' : 'cut')
+    } else if (key === 'v' && canPaste.value) {
+      void paste()
+    } else return
+    event.preventDefault()
+  }
+
   async function trashEntries(entries: readonly PathFileEntry[], single?: PathFileEntry) {
     const location = target.value
     if (!location || !entries.length || moving.value) return
@@ -180,7 +217,7 @@ export function usePathFileSelection(options: {
     fileCount: computed(() => box.selectedFileIds.value.size),
     folderCount: computed(() => box.selectedFolderIds.value.size),
     selectionMode, selectedPaths, previewPaths, cutPaths, pasteCount, canPaste,
-    select, clearSelection, toggleSelection, clearCut, paste, moveInto, downloadSelected,
+    select, handleShortcut, clearSelection, toggleSelection, clearCut, paste, moveInto, downloadSelected,
     trashSelected: () => trashEntries(getSelectedEntries()),
     trashEntry: (entry: PathFileEntry) => trashEntries([entry], entry),
     cutSelected: (entry?: PathFileEntry) => putSelection('cut', entry),

@@ -1,4 +1,5 @@
 import type { RunEvent } from '@gugu/core/agent'
+import { resolveImToolLabel } from '@gugu/core/im/run-delivery'
 import { createImChartParser, type ImChartRenderer } from '../../runtime/chart-parser.js'
 import type { FeishuToolEvent } from './presentation.js'
 
@@ -23,7 +24,7 @@ export function createFeishuRunEventProjector(options: {
         return [{ type: 'token', text: payload.text }, ...await parser.append(payload.text)]
       if (event.type === 'tool_call' || event.type === 'tool_done') return [{ type: event.type,
         ...(typeof payload.toolCallId === 'string' ? { toolCallId: payload.toolCallId } : {}),
-        ...(typeof payload.name === 'string' ? { name: payload.name } : {}),
+        ...(typeof payload.name === 'string' ? { name: payload.name, label: resolveImToolLabel(payload.name, payload.display) } : {}),
         ...(typeof payload.status === 'string' ? { status: payload.status } : {}),
         ...('result' in payload ? { result: payload.result } : {}),
       }]

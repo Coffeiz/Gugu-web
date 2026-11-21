@@ -35,8 +35,12 @@ function sessionScope(ownerId: string, session: number) {
 }
 
 async function readSession(db: Kysely<Database>, owner: string, session: number) {
-  return (await sql<SessionRow>`SELECT active_run_id, execution_state, last_message_seq, session_context
-    FROM conversation_sessions WHERE user_id=${owner} AND id=${session} AND (source IS NULL OR source='web')`.execute(db)).rows[0]
+  // 旧版可能写入问候却遗漏更新会话序号，入队时以已提交消息补齐序号。
+  return (await sql<SessionRow>`SELECT s.active_run_id, s.execution_state, s.session_context,
+    max(s.last_message_seq, coalesce((SELECT max(m.conversation_seq) FROM conversation_messages m
+      WHERE m.session_id=s.id), 0)) AS last_message_seq
+    FROM conversation_sessions s WHERE s.user_id=${owner} AND s.id=${session}
+      AND (s.source IS NULL OR s.source='web')`.execute(db)).rows[0]
 }
 
 async function isFinished(db: Kysely<Database>, owner: string, session: number, run: string) {

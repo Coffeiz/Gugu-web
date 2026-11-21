@@ -10,6 +10,8 @@ type BrowserReminder = { source?: string; id?: number; title?: string; content?:
 
 export interface ScheduleAccess {
   storesSchedulesLocally: boolean
+  listDeliveryTargets?(platform: 'qq' | 'feishu' | 'telegram' | 'wechat'): Promise<{ groups: { chat_id: string; title: string }[]; private_available: boolean }>
+  channels?(): Promise<{ channels: string[]; wechatNeedsMessage?: boolean }>
   list(eventId?: number): Promise<{ tasks: ScheduledTask[] }>
   create(fields: ScheduleFields, eventId?: number): Promise<SavedSchedule>
   update(id: number, fields: ScheduleFields, change?: ScheduleChange): Promise<SavedSchedule>

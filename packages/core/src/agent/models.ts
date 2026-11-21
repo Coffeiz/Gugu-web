@@ -199,6 +199,8 @@ export interface CurrentUser {
   rawText?: string
   /** 由注入的时区格式化器生成；不是当前墙钟时间。 */
   messageTime?: string | null
+  /** 入库的用户消息时间，由请求组装按会话时区格式化。 */
+  messageTimestamp?: string
 }
 
 export interface HistoryBaselineIdentity {
@@ -666,6 +668,8 @@ export interface DisplayItem {
   readonly toolCallId?: string
   readonly toolName?: string
   readonly toolLabelOverride?: string
+  readonly shellActivity?: import('./shell-activity.js').ShellActivity
+  readonly toolInput?: unknown
   readonly toolStatus?: string
   readonly toolStartedAt?: string | null
   readonly toolDurationMs?: number

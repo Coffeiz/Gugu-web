@@ -1,4 +1,6 @@
+import { matchesScheduledGroup, readDesktopScheduledGroups, readHostedScheduledGroups } from '../scheduled-tasks/desktop-group-targets.js'
 import { createKyselySqliteGlobalSearchSources } from '../search/sqlite.js'
+import { desktopScheduleImDeliveryTargets, desktopScheduleImPlatforms, desktopScheduleImTarget, desktopScheduleImReminderVersion, type DesktopScheduleImTarget, ownsDesktopScheduleImTarget, readDesktopScheduleImTargets } from '../scheduled-tasks/desktop-im.js'
 import { createGlobalSearchOperations } from '../search/global-search.js'
 import { parseGlobalSearchQuery } from '../search/query.js'
 import { createDesktopImProjectionTransfer } from './desktop-im-projection-transfer.js'
@@ -26,11 +28,11 @@ import { AgentToolEventDetailsNotFoundError, AgentToolEventSessionNotFoundError,
 import { appendDesktopAgentTurn, createDesktopAgentSession, deleteDesktopAgentSession, renameDesktopAgentSession, listDesktopAgentSessions, manageDesktopSessionGoal, manageDesktopSessionWorkspace, readDesktopAgentHistoryPage, readDesktopAgentMessages } from '../agent/sessions/desktop.js'
 import { createAgentSessionApplication } from '../agent/sessions/application.js'
 import { createSqlAgentSessionRepository } from '../agent/sessions/data.js'
-import { safeInteger } from '../shared/values.js'
+import { object, safeInteger } from '../shared/values.js'
 import { parentPort, workerData } from 'node:worker_threads'
 import { dataContext, CoreError } from '../contracts/index.js'
 import type { ErrorCode, Fields } from '../contracts/index.js'
-import type { Transaction } from 'kysely'
+import type { Kysely, Transaction } from 'kysely'
 import type { Database } from '../data/schema.js'
 import { initializeSqlite, openSqliteRuntime } from '../data/sqlite.js'
 import { execute, isMutation, validateCommandParams } from './commands.js'
@@ -76,6 +78,13 @@ import { filterConfiguredAgentTools } from '../agent/tools/configuration.js'
 import { isAllowedDesktopAgentHostRequest } from './desktop-host-method-policy.js'
 import { createDesktopMcpCrypto } from '../mcp/desktop-crypto.js'
 import { desktopScheduledTaskId, desktopScheduledTasks } from '../scheduled-tasks/desktop.js'
+import { createLocalPreferenceTextFiles } from '../preferences/text-files.js'
+import { importDesktopBusinessArchive } from '../data-portability/desktop-import.js'
+import { exportDesktopBusinessArchive } from '../data-portability/desktop-export.js'
+import { readDesktopDataInventory } from '../data-portability/desktop-inventory.js'
+import { buildDesktopGreetingPrompt } from './desktop-greeting.js'
+import { readDesktopAgentUsage } from './desktop-agent-usage.js'
+import { desktopAgentPreference } from '../preferences/desktop-agent.js'
 import { createDesktopAppearanceService } from '../preferences/desktop-appearance.js'
 import { purgeDesktopProject, setDesktopProjectDeleted } from '../projects/desktop-board.js'
 import { projectResponse } from '../projects/project-projection.js'
@@ -172,6 +181,14 @@ try {
       notifyAgentRunChanged, hostRequest, memoryFiles, loopScope?.observation,
       join(dirname(config.agentRuntimeModule!), '../agent-prompts'))
     : undefined
+  const scheduledRuns = new Map<number, { result: { text: string; status: 'success' | 'failed' } | null; expiresAt: number }>()
+  const scheduledImReminderClaims = new Map<number, { fireAt: number; version: string }>()
+  function pruneScheduledRuns() {
+    const now = Date.now()
+    for (const [id, run] of scheduledRuns) {
+      if (run.expiresAt <= now) scheduledRuns.delete(id)
+    }
+  }
   const agentAdmission = createSqliteAgentAdmission(runtime.db)
   async function builtinSkillTools() {
     if (!agentRuns) throw new CoreError('invalid_request', '当前 Core Worker 未装配桌面 Agent')
@@ -326,6 +343,12 @@ try {
         } else if (job.method === 'im.inbox.delivery') {
           validateCommandParams(job.method, job.params)
           result = await updateDesktopImDelivery(runtime.db, ownerId, job.params)
+        } else if (job.method === 'agent.greeting.prompt') {
+          validateCommandParams(job.method, job.params)
+          const { locale } = job.params
+          if (locale !== 'zh-CN' && locale !== 'ja-JP' && locale !== 'en-US')
+            throw new CoreError('invalid_request', '问候语言无效')
+          result = await buildDesktopGreetingPrompt(runtime.db, ownerId, locale, signal, memoryFiles)
         } else if (job.method === 'agent.memory.read') {
           validateCommandParams(job.method, job.params)
           const { memory } = await readSqliteAgentMemory(runtime.db, ownerId, '', AbortSignal.timeout(5000), undefined, memoryFiles)
@@ -532,7 +555,7 @@ try {
             case 'agent.sessions.create': {
               if (!job.operationId) throw new CoreError('invalid_request', '创建会话必须提供稳定操作标识')
               const outcome = await runtime.operationWithTransaction(context, job.operationId, job.method, job.params,
-                tx => createDesktopAgentSession(tx, ownerId, job.params.title), { signal })
+                tx => createDesktopAgentSession(tx, ownerId, job.params.title, job.params.greeting), { signal })
               result = outcome.result
               break
             }
@@ -601,16 +624,157 @@ try {
         } else if (job.method.startsWith('schedules.')) {
           validateCommandParams(job.method, job.params)
           const eventId = job.params.eventId === undefined ? null : desktopScheduledTaskId(job.params.eventId)
-          if (job.method === 'schedules.list') result = await desktopScheduledTasks(runtime.db, ownerId).list(job.params.before as number | undefined, eventId)
+          async function scheduledGroups(platform: string, hosted = true, database: Kysely<Database> = runtime.db) {
+            if (platform !== 'qq' && platform !== 'feishu' && platform !== 'telegram') return []
+            const local = await readDesktopScheduledGroups<Database>(database, ownerId, platform,
+              receipt => hostRequest('agent.schedules.im.decodeGroup', receipt, signal))
+            if (!hosted) return local
+            const remote = await readHostedScheduledGroups(platform,
+              () => hostRequest('agent.schedules.im.groupCatalog', { platform }, signal))
+            return [...local, ...remote]
+          }
+          async function ownsScheduledTarget(target: DesktopScheduleImTarget) {
+            if (await ownsDesktopScheduleImTarget(runtime.db, ownerId, target)) return true
+            return (await scheduledGroups(target.platform)).some(entry => matchesScheduledGroup(entry.target, target))
+          }
+          if (job.method === 'schedules.groupCatalog') {
+            result = await scheduledGroups(String(job.params.platform), false)
+          } else if (job.method === 'schedules.targets') {
+            const platform = String(job.params.platform)
+            const groups = await scheduledGroups(platform)
+            const choices = new Map(groups.map(entry => [entry.target.recipient, {
+              chat_id: entry.target.recipient,
+              title: entry.title === '即时通讯' ? entry.target.recipient : entry.title,
+            }]))
+            result = { groups: [...choices.values()], private_available: desktopScheduleImPlatforms.some(value => value === platform)
+              && Boolean(await hostRequest('agent.schedules.im.privateTarget', { platform }, signal)) }
+          } else if (job.method === 'schedules.channels') {
+            const available = await Promise.all(desktopScheduleImPlatforms.map(async platform =>
+              await hostRequest('agent.schedules.im.privateTarget', { platform }, signal) ? platform : null))
+            result = { channels: available.filter(Boolean) }
+          } else if (job.method === 'schedules.list') result = await desktopScheduledTasks(runtime.db, ownerId).list(job.params.before as number | undefined, eventId)
           else if (job.method === 'schedules.claim') {
-            result = await runtime.db.transaction().execute(tx => desktopScheduledTasks<Database>(tx, ownerId).claim(Date.now()))
+            pruneScheduledRuns()
+            const now = Date.now()
+            const claims = await runtime.db.transaction().execute(tx => desktopScheduledTasks<Database>(tx, ownerId).claim(now, new Set(scheduledRuns.keys())))
+            for (const [id, claim] of scheduledImReminderClaims) {
+              if (claim.fireAt < now - 120_000) scheduledImReminderClaims.delete(id)
+            }
+            result = claims.map(claim => {
+              if (claim.mode !== 'reminder' || !claim.imDelivery) return claim
+              const { fireAt, version, desktop } = claim.imDelivery
+              scheduledImReminderClaims.set(claim.id, { fireAt, version })
+              return { ...claim, imDelivery: { fireAt, desktop } }
+            })
+          } else if (job.method === 'schedules.instruction.start') {
+            if (!agentRuns) throw new CoreError('conflict', '桌面 Agent 未启动')
+            const id = desktopScheduledTaskId(job.params.id)
+            const fireAt = job.params.fireAt as number | undefined
+            pruneScheduledRuns()
+            if (scheduledRuns.has(id)) throw new CoreError('busy', '此定时任务正在执行')
+            if (scheduledRuns.size >= 16) throw new CoreError('busy', '定时任务正在执行，请稍后再试')
+            const tasks = desktopScheduledTasks(runtime.db, ownerId)
+            const task = await tasks.get(id)
+            const assertLease = () => tasks.assertInstructionCurrent(id, task, fireAt)
+            await assertLease()
+            const run: NonNullable<ReturnType<typeof scheduledRuns.get>> = { result: null, expiresAt: Infinity }
+            scheduledRuns.set(id, run)
+            void (async () => {
+              try {
+                const targets = readDesktopScheduleImTargets(task.delivery_targets, task.channels)
+                const group = targets.find(target => target.chatType === 'group')
+                if (!(await Promise.all(targets.map(ownsScheduledTarget))).every(Boolean))
+                  throw new CoreError('conflict', '定时任务的 IM 会话已不可用')
+                const outcome = await agentRuns.runScheduledInstruction({
+                  id: String(id), ownerId, name: task.name, payload: task.payload, executionMode: 'instruction',
+                  channels: task.channels, deliveryTargets: desktopScheduleImDeliveryTargets(targets),
+                  ...(group ? { groupScope: {
+                    ownerId, platform: group.platform, botId: group.botId, scopeType: 'group', scopeId: group.recipient,
+                  } } : {}),
+                  authorizedTools: [], emailAttachmentFileIds: [],
+                  workspaceId: null, filesystemGrantId: null,
+                }, fireAt === undefined, assertLease)
+                run.result = { ...outcome, text: outcome.text.slice(0, 4000) }
+              } catch (error) {
+                run.result = { status: 'failed', text: error instanceof CoreError && error.code === 'invalid_request'
+                  ? error.message : '定时任务指令执行失败，请检查任务和默认对话模型' }
+              } finally {
+                const failed = run.result?.status !== 'success'
+                if (fireAt !== undefined) await tasks.finishInstruction(id, fireAt, failed)
+                run.expiresAt = Date.now() + 60_000
+              }
+            })().catch(() => { scheduledRuns.delete(id) })
+            result = null
+          } else if (job.method === 'schedules.instruction.result') {
+            const id = desktopScheduledTaskId(job.params.id)
+            const run = scheduledRuns.get(id)
+            if (!run) throw new CoreError('not_found', '定时任务执行记录已失效')
+            result = Number.isFinite(run.expiresAt) ? run.result : null
+            if (result) scheduledRuns.delete(id)
+          } else if (job.method === 'schedules.reminder.deliverIm') {
+            const id = desktopScheduledTaskId(job.params.id)
+            const fireAt = job.params.fireAt as number | undefined
+            const tasks = desktopScheduledTasks(runtime.db, ownerId)
+            const task = await tasks.get(id)
+            const targets = readDesktopScheduleImTargets(task.delivery_targets, task.channels)
+            if (task.execution_mode !== 'reminder' || !targets.length
+              || !(await Promise.all(targets.map(ownsScheduledTarget))).every(Boolean)
+              || fireAt !== undefined && (!task.last_run_at || Date.parse(task.last_run_at) !== fireAt
+                || !task.enabled && task.schedule_kind !== 'once'))
+              throw new CoreError('conflict', '定时任务的 IM 投递目标已失效')
+            if (fireAt !== undefined) {
+              const claim = scheduledImReminderClaims.get(id)
+              if (claim?.fireAt !== fireAt || claim.version !== desktopScheduleImReminderVersion(task, targets))
+                throw new CoreError('conflict', '定时任务提醒认领已失效')
+              scheduledImReminderClaims.delete(id)
+            }
+            for (const target of targets) {
+              const latest = await tasks.get(id)
+              if (JSON.stringify(latest) !== JSON.stringify(task)) throw new CoreError('conflict', '定时任务已变更')
+              if (!await ownsScheduledTarget(target))
+                throw new CoreError('conflict', '定时任务的 IM 会话已不可用')
+              await hostRequest('agent.schedules.im.deliver', { target, text: task.payload }, AbortSignal.timeout(15_000))
+            }
+            result = '已发送 IM 提醒'
           } else if (job.method === 'schedules.get') result = await desktopScheduledTasks(runtime.db, ownerId).get(desktopScheduledTaskId(job.params.id))
           else {
             if (!job.operationId) throw new CoreError('invalid_request', '定时任务写入必须提供稳定操作标识')
             const outcome = await runtime.operationWithTransaction(context, job.operationId, job.method, job.params, async (tx, owner) => {
               const tasks = desktopScheduledTasks<Database>(tx, owner)
-              if (job.method === 'schedules.create') return tasks.create(job.params.fields, eventId)
-              if (job.method === 'schedules.update') return tasks.update(desktopScheduledTaskId(job.params.id), job.params.fields, eventId)
+              if (job.method === 'schedules.create' || job.method === 'schedules.update') {
+                const { im_delivery: rawDelivery, ...fields } = job.params.fields as Fields
+                if (rawDelivery !== undefined) object(rawDelivery)
+                const delivery = rawDelivery as Fields | undefined
+                const id = job.method === 'schedules.update' ? desktopScheduledTaskId(job.params.id) : null
+                const targets: DesktopScheduleImTarget[] = []
+                if (eventId === null && Array.isArray(fields.channels)) {
+                  const current = id === null ? null : await tasks.get(id)
+                  const saved = current ? readDesktopScheduleImTargets(current.delivery_targets, current.channels) : []
+                  for (const platform of desktopScheduleImPlatforms) {
+                    if (!fields.channels.includes(platform)) continue
+                    const selection = delivery?.[platform]
+                    if (selection !== undefined) object(selection)
+                    if (selection?.mode === 'group') {
+                      const entry = (await scheduledGroups(platform, true, tx)).find(group => group.target.recipient === selection.chat_id)
+                      if (!entry) throw new CoreError('invalid_request', '所选 IM 群会话不可用')
+                      targets.push(entry.target)
+                      continue
+                    }
+                    if (selection !== undefined && selection.mode !== 'private')
+                      throw new CoreError('invalid_request', 'IM 投递目标格式无效')
+                    const existing = saved.find(target => target.platform === platform)
+                    if (existing && selection === undefined) { targets.push(existing); continue }
+                    const target = desktopScheduleImTarget.safeParse(await hostRequest('agent.schedules.im.privateTarget', { platform }, signal))
+                    if (!target.success || target.data.platform !== platform || target.data.chatType !== 'c2c'
+                      || target.data.boundUserId !== target.data.recipient)
+                      throw new CoreError('invalid_request', '所选 IM 渠道尚无可用的私聊投递目标')
+                    targets.push(target.data)
+                  }
+                }
+                if (targets.filter(target => target.chatType === 'group').length > 1)
+                  throw new CoreError('invalid_request', '桌面定时任务只能投递到一个群')
+                return id === null ? tasks.create(fields, eventId, targets) : tasks.update(id, fields, eventId, targets)
+              }
               if (job.method === 'schedules.delete') return tasks.remove(desktopScheduledTaskId(job.params.id), eventId)
               throw new CoreError('invalid_request', '定时任务操作无效')
             }, { signal })
@@ -620,6 +784,31 @@ try {
           validateCommandParams(job.method, job.params)
           const query = parseGlobalSearchQuery(job.params)
           result = await desktopSearch.search(ownerId, { ...query, types: desktopSearch.availableTypes })
+        } else if (job.method === 'preferences.preflightBusinessArchive') {
+          validateCommandParams(job.method, job.params)
+          if (typeof job.params.path !== 'string') throw new CoreError('invalid_request', '归档路径无效')
+          result = await importDesktopBusinessArchive(runtime.db, ownerId, job.params.path, undefined, signal)
+        } else if (job.method === 'preferences.applyBusinessArchive') {
+          validateCommandParams(job.method, job.params)
+          const { path, digest } = job.params
+          if (typeof path !== 'string' || typeof digest !== 'string' || !/^[a-f0-9]{64}$/u.test(digest))
+            throw new CoreError('invalid_request', '归档参数无效')
+          result = await importDesktopBusinessArchive(runtime.db, ownerId, path, digest, signal)
+        } else if (job.method === 'preferences.exportBusinessArchive') {
+          validateCommandParams(job.method, job.params)
+          if (typeof job.params.path !== 'string') throw new CoreError('invalid_request', '归档路径无效')
+          await exportDesktopBusinessArchive(runtime.db, ownerId, job.params.path, signal)
+          result = null
+        } else if (job.method === 'preferences.dataInventory') {
+          result = await readDesktopDataInventory(runtime.db, ownerId)
+        } else if (job.method === 'preferences.agentUsage') {
+          validateCommandParams(job.method, job.params)
+          result = await readDesktopAgentUsage(runtime.db, config.database, ownerId)
+        } else if (job.method === 'preferences.agent') {
+          validateCommandParams(job.method, job.params)
+          result = await runtime.db.transaction().execute(tx => desktopAgentPreference(
+            createKyselyPreferenceDocumentStore(tx, runtime.backend),
+            createLocalPreferenceTextFiles(dirname(config.database)), ownerId, job.params.kind, job.params.patch))
         } else if (job.method === 'preferences.desktop.get') {
           validateCommandParams(job.method, job.params)
           result = await createDesktopAppearanceService(createKyselyPreferenceDocumentStore(runtime.db, runtime.backend)).get(ownerId)

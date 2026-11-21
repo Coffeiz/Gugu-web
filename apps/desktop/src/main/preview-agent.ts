@@ -1,13 +1,11 @@
-import { filesPreviewRoute, resourcesPreviewRoute, workspacePreviewRoutes } from '../../../ui/src/desktop/bridge/preview-core.js'
-import { agentModelPreviewPath } from '../shared/agent-model-preview.js'
+import { filesPreviewRoute, resourcesPreviewRoute, workspacePreviewRoutes, agentModelPreviewPath, agentSessionPreviewPath, previewAttachmentPath } from '@gugu/desktop-contracts'
 import { streamPreviewRunChanges } from './agent/preview-run-changes.js'
-import { agentSessionPreviewPath } from '../shared/agent-session-preview.js'
 import { createServer } from 'node:http'
 import { timingSafeEqual } from 'node:crypto'
 import { DESKTOP_CHANNELS, MAX_FRAME } from '@gugu/core/desktop'
 import { encodeAgentChatSse } from '@gugu/core/agent/chat-sse'
 import { DesktopError, desktopReply } from './core-host.js'
-import { handlePreviewAttachment, previewAttachmentPath } from './agent/preview-attachments.js'
+import { handlePreviewAttachment } from './agent/preview-attachments.js'
 import { servePreviewFile } from './files/preview.js'
 import type { IpcHandlers } from './ipc/types.js'
 
@@ -15,11 +13,12 @@ export async function startDesktopPreviewAgent(socket: string, secret: string, h
   subscribeRunChanges?: Parameters<typeof streamPreviewRunChanges>[1],
   reloadCore?: () => Promise<void>,
   files?: Parameters<typeof servePreviewFile>[2],
+  scheduledIm?: ReturnType<typeof import('./schedules/im.js').bindDesktopScheduledIm>,
 ) {
   const expected = Buffer.from(secret)
   const channels = new Map<string, ReadonlyMap<string, string>>([
     ['/__desktop-preview/im', new Map([['qqPairing', DESKTOP_CHANNELS.qqPairing], ['feishuPairing', DESKTOP_CHANNELS.feishuPairing], ['wechatPairing', DESKTOP_CHANNELS.wechatPairing], ['telegramGateway', DESKTOP_CHANNELS.telegramGateway]])],
-    ['/__desktop-preview/preferences', new Map([['appearance', DESKTOP_CHANNELS.appearance], ['updateAppearance', DESKTOP_CHANNELS.updateAppearance], ['clearAgentMemory', DESKTOP_CHANNELS.clearAgentMemory], ['clearAgentAttachments', DESKTOP_CHANNELS.clearAgentAttachments]])],
+    ['/__desktop-preview/preferences', new Map([['appearance', DESKTOP_CHANNELS.appearance], ['updateAppearance', DESKTOP_CHANNELS.updateAppearance], ['agentPreference', DESKTOP_CHANNELS.agentPreference], ['personalSmtp', DESKTOP_CHANNELS.personalSmtp], ['remoteAccount', DESKTOP_CHANNELS.remoteAccount], ['remoteLogin', DESKTOP_CHANNELS.remoteLogin], ['remoteLogout', DESKTOP_CHANNELS.remoteLogout], ['remoteByok', DESKTOP_CHANNELS.remoteByok], ['agentUsage', DESKTOP_CHANNELS.agentUsage], ['dataInventory', DESKTOP_CHANNELS.dataInventory], ['exportBusinessArchive', DESKTOP_CHANNELS.exportBusinessArchive], ['preflightBusinessArchive', DESKTOP_CHANNELS.preflightBusinessArchive], ['applyBusinessArchive', DESKTOP_CHANNELS.applyBusinessArchive], ['clearAgentMemory', DESKTOP_CHANNELS.clearAgentMemory], ['clearAgentAttachments', DESKTOP_CHANNELS.clearAgentAttachments]])],
     ['/__desktop-preview/logs', new Map([['readLogs', DESKTOP_CHANNELS.readLogs]])],
     ...[filesPreviewRoute, resourcesPreviewRoute, ...workspacePreviewRoutes].map(({ endpoint, methods }) => [endpoint,
       new Map<string, string>(methods.map(method => [method, DESKTOP_CHANNELS[method]])),
@@ -60,7 +59,8 @@ export async function startDesktopPreviewAgent(socket: string, secret: string, h
       res.end(JSON.stringify(reply))
       return
     }
-    if (!route) {
+    const internalSchedule = req.url === '/__desktop-preview/internal-scheduled-im' && scheduledIm
+    if (!route && !internalSchedule) {
       res.writeHead(403).end()
       return
     }
@@ -81,7 +81,8 @@ export async function startDesktopPreviewAgent(socket: string, secret: string, h
         chunks.push(chunk)
       }
       const call = JSON.parse(Buffer.concat(chunks).toString('utf8'))
-      const channel = route.get(call?.method)
+      if (internalSchedule) return internalSchedule(call.method, call.params, connection.signal)
+      const channel = route?.get(call?.method)
       const handler = channel && handlers[channel]
       if (!handler || !Array.isArray(call.args)) throw new DesktopError('invalid_request', '预览请求无效')
       const command = call.args[0]

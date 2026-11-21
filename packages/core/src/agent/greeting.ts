@@ -152,7 +152,7 @@ export function buildGreetingPrompt(input: GreetingPromptInput): string {
   return `${promptTemplate.replace('{ctx}', context)}\n${localeInstructions[locale]}`
 }
 
-function cleanGreeting(value: string): string { return value.trim().replace(/^["「」]+|["「」]+$/gu, '') }
+export function cleanGreeting(value: string): string { return value.trim().replace(/^["「」]+|["「」]+$/gu, '') }
 
 /** Python generate() 的 10 分钟缓存和跨进程互斥；模型/文件/Redis transport 留给 Host 注入。 */
 export function createGreetingGenerator(ports: GreetingGeneratorPorts) {

@@ -48,8 +48,9 @@ const base = '/api/v1/byok'
 function route(command: ByokCommand) {
   switch (command.action) {
     case 'list': return { path: base, method: 'GET', schema: byokList }
-    case 'create': return { path: base + '/saved', method: 'POST', schema: byokSummary }
+    case 'create': return { path: command.makeDefault ? base : base + '/saved', method: 'POST', schema: byokSummary }
     case 'update': return { path: base + '/' + command.id, method: 'PATCH', schema: byokSummary }
+    case 'test-preview': return { path: base + '/test-preview', method: 'POST', schema: byokTest }
     case 'test': return { path: base + '/' + command.id + '/test', method: 'POST', schema: byokTest }
     case 'bind': return { path: base + '/' + command.id + '/default', method: 'PUT' }
     case 'delete': return { path: base + '/' + command.id, method: 'DELETE' }

@@ -6,6 +6,10 @@ import type { ImGroupAttentionMode, ImGroupReplyMode } from '../im/group-setting
 
 // 仅共享桌面 DTO 和固定能力名称；不依赖 Electron 或 Node。
 export { CORE_SCHEMA_VERSION } from './schema.js'
+export const DESKTOP_ARCHIVE_TIMEOUT_MS = 120_000
+export const DESKTOP_ARCHIVE_METHODS: readonly string[] = [
+  'preferences.exportBusinessArchive', 'preferences.preflightBusinessArchive', 'preferences.applyBusinessArchive',
+]
 export const MAX_FRAME = 65_536
 export const MAX_AGENT_RESPONSE = 4 * 1024 * 1024
 export const CHUNKED_AGENT_METHODS = ['agent.sessions.events', 'agent.sessions.history', 'agent.sessions.messages', 'agent.sessions.toolDetails', 'agent.sessions.queue', 'im.inbox.projection', 'im.chart.render'] as const
@@ -43,6 +47,7 @@ export const DESKTOP_METHODS = [
   'agent.memory.invalidateEmbedding',
   'agent.memory.resumeReflections',
   'agent.memory.read',
+  'agent.greeting.prompt',
   'agent.memory.clear',
   'agent.memory.forget',
   'agent.sessions.respond',
@@ -73,6 +78,12 @@ export const DESKTOP_METHODS = [
   'schedules.update',
   'schedules.delete',
   'schedules.claim',
+  'schedules.channels',
+  'schedules.targets',
+  'schedules.groupCatalog',
+  'schedules.reminder.deliverIm',
+  'schedules.instruction.start',
+  'schedules.instruction.result',
   'projects.list',
   'projects.create',
   'projects.rename',
@@ -90,6 +101,12 @@ export const DESKTOP_METHODS = [
   'calendar.update',
   'calendar.delete',
   'preferences.desktop.get',
+  'preferences.agent',
+  'preferences.agentUsage',
+  'preferences.dataInventory',
+  'preferences.exportBusinessArchive',
+  'preferences.preflightBusinessArchive',
+  'preferences.applyBusinessArchive',
   'desktop.search',
   'preferences.desktop.update',
   'onboarding.desktop.get',
@@ -146,6 +163,7 @@ export const DESKTOP_MUTATIONS: readonly string[] = [
   'calendar.update',
   'calendar.delete',
   'preferences.desktop.update',
+  'preferences.applyBusinessArchive',
   'mind.canvases.create',
   'mind.canvases.update',
   'mind.canvases.delete',
@@ -188,6 +206,7 @@ export const DESKTOP_CHANNELS = {
   nativeFileDragSource: 'gugu:files:drag-source',
   createDroppedFileReference: 'gugu:files:dropped-reference',
   openDroppedFileReference: 'gugu:files:open-dropped-reference',
+  personalSmtp: 'gugu:preferences:personal-smtp',
   mail: 'gugu:mail:request',
   resources: 'gugu:resources:request',
   agentSessions: 'gugu:agent:sessions',
@@ -205,6 +224,12 @@ export const DESKTOP_CHANNELS = {
   appearance: 'gugu:preferences:appearance:get',
   readLogs: 'gugu:logs:read',
   updateAppearance: 'gugu:preferences:appearance:update',
+  agentPreference: 'gugu:preferences:agent',
+  agentUsage: 'gugu:preferences:agent-usage',
+  dataInventory: 'gugu:preferences:data-inventory',
+  exportBusinessArchive: 'gugu:preferences:export-business-archive',
+  preflightBusinessArchive: 'gugu:preferences:preflight-business-archive',
+  applyBusinessArchive: 'gugu:preferences:apply-business-archive',
   clearAgentMemory: 'gugu:preferences:memory:clear',
   clearAgentAttachments: 'gugu:preferences:attachments:clear-drafts',
   onboarding: 'gugu:onboarding:state:get',
@@ -392,11 +417,12 @@ export type DesktopAgentChatEvent =
 
 export type DesktopAgentSessionCommand =
   | { action: 'readMemory' }
+  | { action: 'greeting'; locale: 'zh-CN' | 'ja-JP' | 'en-US' }
   | { action: 'goal'; id: number; goalAction: 'status' | 'pause' | 'cancel' | 'resume' }
   | { action: 'workspace'; id: number; workspaceAction: 'list' | 'show' | 'bind' | 'unlink'; directoryId?: string; operationId: string }
   | { action: 'forgetMemory'; query: string; revision?: string }
   | { action: 'list' }
-  | { action: 'create'; title: string; operationId: string }
+  | { action: 'create'; title: string; operationId: string; greeting?: string }
   | { action: 'rename'; id: number; title: string; operationId: string }
   | { action: 'delete'; id: number; operationId: string }
   | { action: 'messages'; id: number }
@@ -542,12 +568,19 @@ export interface DesktopBridge {
   remoteLogout(): Promise<DesktopReply<RemoteAccountState>>
   files(command: DesktopFileCommand): Promise<DesktopReply<unknown>>
   startFileDrag?(directoryId: DesktopFileDirectory, path: string, preview?: string): Promise<DesktopReply<null>>
+  personalSmtp(action: 'get' | 'save' | 'test', input?: Record<string, unknown>): Promise<DesktopReply<import('../preferences/smtp.js').SmtpSettings & { configured: true } | { ok: boolean; message: string } | null>>
   mail(command: import('../mail/contracts.js').MailCommand): Promise<DesktopReply<unknown>>
   resources(command: DesktopResourceCommand): Promise<DesktopReply<unknown>>
   scheduleTask(command: DesktopScheduleCommand): Promise<DesktopReply<DesktopScheduleResult>>
   onScheduleChanged(callback: () => void): () => void
   createDroppedFileReference?(file: File): Promise<DesktopReply<{ type: 'file'; id: string; label: string }>>
   openDroppedFileReference?(id: string): Promise<DesktopReply<null>>
+  agentUsage(): Promise<DesktopReply<DesktopAgentUsage>>
+  dataInventory(): Promise<DesktopReply<Record<string, number>>>
+  preflightBusinessArchive(): Promise<DesktopReply<{ id: string; added: number; skipped: number } | null>>
+  applyBusinessArchive(id: string): Promise<DesktopReply<{ added: number; skipped: number }>>
+  exportBusinessArchive(): Promise<DesktopReply<null>>
+  agentPreference(kind: DesktopAgentPreferenceKind, patch?: DesktopAgentPreferencePatch): Promise<DesktopReply<DesktopAgentPreference>>
   clearAgentMemory(): Promise<DesktopReply<null>>
   clearAgentAttachments(): Promise<DesktopReply<{ deleted: number }>>
   appearance(): Promise<DesktopReply<DesktopAppearancePreferences>>
@@ -599,11 +632,25 @@ export interface DesktopBridge {
 }
 export type DesktopScheduledTask = ReturnType<typeof import('../scheduled-tasks/task-list.js').projectScheduledTaskForWeb>
 export type DesktopScheduleCommand =
+  | { action: 'channels' }
+  | { action: 'targets'; platform: string }
   | { action: 'list'; before?: number; eventId?: number }
   | { action: 'create'; fields: Record<string, unknown>; eventId?: number }
   | { action: 'update'; id: number; fields: Record<string, unknown>; eventId?: number }
   | { action: 'delete' | 'run'; id: number; eventId?: number }
-export type DesktopScheduleResult = { tasks: DesktopScheduledTask[]; nextBefore: number | null } | DesktopScheduledTask | { msg: string } | null
+export type DesktopScheduleResult = { groups: { chat_id: string; title: string }[]; private_available: boolean } | { channels: string[] } | { tasks: DesktopScheduledTask[]; nextBefore: number | null } | DesktopScheduledTask | { msg: string } | null
+
+export interface DesktopAgentUsage {
+  labels: string[]
+  tokens_in: number[]
+  tokens_out: number[]
+  cache_read: number[]
+  cache_write: number[]
+}
+
+export type DesktopAgentPreferenceKind = 'personality' | 'group-personality' | 'reply-style'
+export type DesktopAgentPreferencePatch = { content?: string | null; enabled?: boolean }
+export type DesktopAgentPreference = { content: string | null; enabled: boolean; revision: number }
 
 export interface DesktopAppearancePreferences {
   locale?: 'zh-CN' | 'ja-JP' | 'en-US' | null
@@ -620,6 +667,7 @@ export interface DesktopAppearancePreferences {
   showIntermediateReplies?: boolean
   fileOpenPreference?: 'preview' | 'system'
   useSystemProxy?: boolean
+  keepGatewayOnline?: boolean
   automaticModeEnabled?: boolean
   theme: 'light' | 'dark' | 'system'
   themeFamily: 'glass' | 'mono'

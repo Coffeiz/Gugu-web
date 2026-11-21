@@ -287,7 +287,7 @@ function previousRunFor(runId: string) {
   const current = runs.value.find(run => run.id === runId)
   if (!current) return undefined
   return runs.value
-    .filter(run => run.id !== runId && run.started_at < current.started_at)
+    .filter(run => run.id !== runId && run.session_key === current.session_key && !run.id.startsWith('run-reflection-') && run.started_at < current.started_at && run.ended_at != null && run.ended_at <= current.started_at)
     .sort((a, b) => b.started_at - a.started_at)[0]
 }
 async function loadRunDetail(runId: string, loadPrevious = true) {
@@ -296,6 +296,7 @@ async function loadRunDetail(runId: string, loadPrevious = true) {
   const existing = runDetails.value[runId]
   if (existing) {
     if (!existing.spans) await loadSpans(runId, 0)
+    if (loadPrevious) await loadPreviousRun(runId)
     return
   }
   loadingRunId.value = runId
@@ -303,14 +304,19 @@ async function loadRunDetail(runId: string, loadPrevious = true) {
     const detail = await getRun(runId, { includeSpans: false })
     runDetails.value = { ...runDetails.value, [runId]: detail }
     if (!await loadSpans(runId, 0)) return
-    if (loadPrevious) {
-      const previous = previousRunFor(runId)
-      if (previous && !runDetails.value[previous.id]) await loadRunDetail(previous.id, false)
-    }
+    if (loadPrevious) await loadPreviousRun(runId)
   } catch (cause) {
     error.value = t('playground.runLoadFailed', { message: errorMessage(cause) })
   } finally {
     loadingRunId.value = ''
+  }
+}
+async function loadPreviousRun(runId: string) {
+  const previous = previousRunFor(runId)
+  if (!previous) return
+  await loadRunDetail(previous.id, false)
+  while (spanHasMore.value[previous.id]) {
+    if (!await loadSpans(previous.id, spanOffsets.value[previous.id] ?? 0)) break
   }
 }
 function selectMonitorRun(runId: string) {

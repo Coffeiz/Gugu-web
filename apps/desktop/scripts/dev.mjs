@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process'
 import { createConnection, createServer } from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
+import { prepareDesktopPty } from './prepare-pty.mjs'
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const ui = resolve(desktop, '../ui')
@@ -23,6 +24,8 @@ const hostOutputs = [
 
 if (!existsSync(viteCli) || !existsSync(electronCli) || !existsSync(tsc))
   throw new Error('桌面开发依赖未安装')
+
+prepareDesktopPty(resolve(root, 'packages/core/package.json'))
 
 const preferredPort = 5176
 const lastPort = 5190
@@ -269,9 +272,9 @@ try {
   if (!stopping) {
     if (port !== preferredPort) console.log(`端口 ${preferredPort} 已被占用，改用 ${port}`)
     console.log(`桌面共享预览地址（与 Electron 共用模型、IM 和会话）：${devUrl}`)
-    for (const source of ['main', 'preload', 'shared'])
+    for (const source of ['main', 'preload'])
       watchSource(resolve(desktop, 'src', source), 1)
-    watchSource(resolve(ui, 'src/desktop/bridge'), 1)
+    watchSource(resolve(root, 'packages/desktop-contracts/src'), 1)
     for (const pkg of ['core', 'database', 'fs', 'gateway', 'log', 'loopscope', 'sandbox', 'charts']) {
       const directory = resolve(desktop, '../../packages', pkg)
       if (pkg === 'loopscope') watchSource(directory, 2)

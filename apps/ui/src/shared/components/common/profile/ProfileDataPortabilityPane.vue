@@ -1,47 +1,57 @@
 <template>
   <section class="pm-section data-pane">
     <h3 class="pm-section-label">{{ t('profileDataUi.title') }}</h3>
-    <p class="data-intro">{{ t('profileDataUi.intro') }}</p>
+    <p class="data-intro">{{ t(desktop ? 'profileDataUi.desktopArchiveUnavailable' : 'profileDataUi.intro') }}</p>
 
-    <div v-if="preview" class="data-summary">
+    <div v-if="preview || inventory" class="data-summary">
       <div v-for="category in visibleCategories" :key="category" class="data-summary-row">
         <span>{{ t(`profileDataUi.category_${category}`) }}</span>
-        <span>{{ t('profileDataUi.records', { count: preview.categories[category]?.records ?? 0 }) }}</span>
+        <span>{{ t('profileDataUi.records', { count: inventory?.[category] ?? preview?.categories[category]?.records ?? 0 }) }}</span>
       </div>
-      <div class="data-summary-total">{{ t('profileDataUi.estimatedBytes', { size: formatBytes(totalBytes) }) }}</div>
+      <div v-if="preview" class="data-summary-total">{{ t('profileDataUi.estimatedBytes', { size: formatBytes(totalBytes) }) }}</div>
     </div>
     <p v-else-if="loading" class="data-muted">{{ t('profileDataUi.preview') }}</p>
     <p v-if="error" class="pm-msg err">{{ error }}</p>
 
     <div class="data-options">
-      <Checkbox v-model="includeFiles" class="data-option">
-        {{ t('profileDataUi.includeFiles', { size: formatBytes(preview?.categories.files?.bytes ?? 0) }) }}
-      </Checkbox>
-      <Checkbox v-model="includeDrafts" class="data-option">{{ t('profileDataUi.includeDrafts') }}</Checkbox>
-      <Checkbox v-model="includeImMemory" class="data-option">{{ t('profileDataUi.includeImMemory') }}</Checkbox>
+      <Checkbox v-model="includeDrafts" :disabled="desktop" class="data-option">{{ t('profileDataUi.includeDrafts') }}</Checkbox>
+      <Checkbox v-model="includeImMemory" :disabled="desktop" class="data-option">{{ t('profileDataUi.includeImMemory') }}</Checkbox>
     </div>
-    <p class="data-muted">{{ t('profileDataUi.fileExportHint') }}</p>
+    <p class="data-muted">{{ t(desktop ? 'profileDataUi.desktopFileHint' : 'profileDataUi.fileExportHint') }}</p>
     <p class="data-warning">{{ t('profileDataUi.sensitiveHint') }}</p>
     <p class="data-muted">{{ t('profileDataUi.credentialsHint') }}</p>
 
     <div class="data-actions">
-      <button class="pm-save-btn" :disabled="creating || loading" @click="createExport">
+      <button class="pm-save-btn" :disabled="creating || loading || (desktop && (!inventory || !local?.exportBusinessArchive))" @click="createExport">
         {{ creating ? t('profileDataUi.creating') : t('profileDataUi.createExport') }}
       </button>
     </div>
 
     <div class="data-import">
       <h4>{{ t('profileDataUi.importTitle') }}</h4>
-      <p class="data-muted">{{ t('profileDataUi.importHint') }}</p>
+      <p class="data-muted">{{ t(desktop ? 'profileDataUi.desktopImportHint' : 'profileDataUi.importHint') }}</p>
       <div class="data-import-actions">
-        <input ref="archiveInput" type="file" accept=".zip,application/zip" :disabled="importing" @change="selectArchive" />
-        <button class="pm-style-chip" :disabled="!selectedArchive || importing" @click="preflightImport">
+        <input ref="archiveInput" type="file" accept=".zip,application/zip" :disabled="desktop || importing" @change="selectArchive" />
+        <button class="pm-style-chip" :disabled="importing || (desktop && applying) || (desktop ? !local?.preflightBusinessArchive : !selectedArchive)" @click="preflightImport">
           {{ importing ? t('profileDataUi.importing') : t('profileDataUi.preflight') }}
         </button>
       </div>
+      <article v-if="desktopPreflight" class="data-job" role="status">
+        <div class="data-job-copy">
+          <strong>{{ t(desktopPreflight.completed ? 'profileDataUi.importCompleted' : 'profileDataUi.previewReady') }}</strong>
+          <small>{{ t(desktopPreflight.completed ? 'profileDataUi.desktopImportCounts' : 'profileDataUi.importCounts', {
+            add: desktopPreflight.added, skip: desktopPreflight.skipped,
+          }) }}</small>
+        </div>
+        <div v-if="!desktopPreflight.completed && local?.applyBusinessArchive" class="data-job-actions">
+          <button class="pm-save-btn" :disabled="applying || importing" @click="applyIncremental()">
+            {{ applying ? t('profileDataUi.importing') : t('profileDataUi.incrementalImport') }}
+          </button>
+        </div>
+      </article>
     </div>
 
-    <div class="data-jobs">
+    <div v-if="!desktop" class="data-jobs">
       <h4>{{ t('profileDataUi.importJobs') }}</h4>
       <p v-if="importJobs.length === 0 && !loadingJobs" class="data-muted">{{ t('profileDataUi.importEmpty') }}</p>
       <article v-for="job in importJobs" :key="job.id" class="data-job">
@@ -101,7 +111,7 @@
       </article>
     </div>
 
-    <div class="data-jobs">
+    <div v-if="!desktop" class="data-jobs">
       <h4>{{ t('profileDataUi.jobs') }}</h4>
       <p v-if="jobs.length === 0 && !loadingJobs" class="data-muted">{{ t('profileDataUi.empty') }}</p>
       <article v-for="job in jobs" :key="job.id" class="data-job">
@@ -138,15 +148,20 @@
 </template>
 
 <script setup lang="ts">
+import { useLocalPreferencesAccess } from '@/services/localPreferencesAccess'
 import { useDesktopProfile } from './desktopProfile'
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Checkbox from '@/components/common/controls/Checkbox.vue'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { dataPortabilityApi, type DataExportJob, type DataImportJob } from '@/services/api'
 
+const props = defineProps({ refreshImportedData: Function as PropType<() => void> })
 const { t } = useI18n()
 const desktop = useDesktopProfile()
+const local = useLocalPreferencesAccess()
+const desktopPreflight = ref<{ id: string; added: number; skipped: number; completed?: boolean } | null>(null)
+const inventory = ref<Record<string, number> | null>(null)
 const preview = ref<Awaited<ReturnType<typeof dataPortabilityApi.preview>> | null>(null)
 const jobs = ref<DataExportJob[]>([])
 const importJobs = ref<DataImportJob[]>([])
@@ -165,9 +180,8 @@ const attemptedResumeJobs = new Set<string>()
 const importing = ref(false)
 const applying = ref(false)
 const error = ref('')
-const includeFiles = ref(true)
-const includeDrafts = ref(true)
-const includeImMemory = ref(true)
+const includeDrafts = ref(!desktop)
+const includeImMemory = ref(!desktop)
 let pollTimer: ReturnType<typeof setInterval> | undefined
 
 function createIdempotencyKey(): string {
@@ -184,19 +198,54 @@ function createIdempotencyKey(): string {
   return `data-portability-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
-const visibleCategories = computed(() => Object.keys(preview.value?.categories ?? {}).filter(key =>
-  !['archive_docs', 'drafts', 'im_memory'].includes(key),
+const visibleCategories = computed(() => Object.keys(inventory.value ?? preview.value?.categories ?? {}).filter(key =>
+  !['archive_docs', 'drafts', 'im_memory', 'files'].includes(key),
 ))
-const totalBytes = computed(() => {
-  const total = Object.values(preview.value?.categories ?? {}).reduce((sum, value) => sum + value.bytes, 0)
-  return includeFiles.value ? total : Math.max(0, total - (preview.value?.categories.files?.bytes ?? 0))
-})
+const totalBytes = computed(() => Object.entries(preview.value?.categories ?? {})
+  .reduce((sum, [key, value]) => key === 'files' ? sum : sum + value.bytes, 0))
 onMounted(async () => {
-  if (desktop) return
+  if (desktop) {
+    try {
+      if (!local?.dataInventory) throw new Error(t('profileDataUi.previewFailed'))
+      inventory.value = await local.dataInventory()
+    } catch {
+      error.value = t('profileDataUi.previewFailed')
+    } finally {
+      loading.value = false
+    }
+    return
+  }
   await Promise.all([loadPreview(), loadJobs(), loadImportJobs()])
   pollTimer = setInterval(() => { void loadJobs(); void loadImportJobs() }, 3000)
 })
 onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
+
+async function preflightDesktopArchive() {
+  if (!local?.preflightBusinessArchive || importing.value || applying.value) return
+  importing.value = true
+  error.value = ''
+  desktopPreflight.value = null
+  try {
+    desktopPreflight.value = await local.preflightBusinessArchive()
+  } catch {
+    error.value = t('profileDataUi.desktopPreflightFailed')
+  } finally {
+    importing.value = false
+  }
+}
+
+async function exportDesktopArchive() {
+  if (!local?.exportBusinessArchive || creating.value) return
+  creating.value = true
+  error.value = ''
+  try {
+    await local.exportBusinessArchive()
+  } catch {
+    error.value = t('profileDataUi.exportFailed')
+  } finally {
+    creating.value = false
+  }
+}
 
 async function loadPreview() {
   loading.value = true
@@ -233,6 +282,7 @@ async function loadImportJobs() {
 }
 
 async function createExport() {
+  if (desktop) return exportDesktopArchive()
   if (!preview.value || creating.value) return
   const confirmed = await confirmDialog({
     title: t('profileDataUi.confirmTitle'),
@@ -244,11 +294,8 @@ async function createExport() {
   creating.value = true
   error.value = ''
   try {
-    const categories = Object.keys(preview.value.categories).filter(key =>
-      key !== 'archive_docs' && (includeFiles.value || key !== 'files'),
-    )
-    if (!includeDrafts.value) categories.splice(categories.indexOf('drafts'), 1)
-    if (!includeImMemory.value) categories.splice(categories.indexOf('im_memory'), 1)
+    const categories = Object.keys(preview.value.categories).filter(key => key !== 'archive_docs' && key !== 'files'
+      && (includeDrafts.value || key !== 'drafts') && (includeImMemory.value || key !== 'im_memory'))
     await dataPortabilityApi.createExport(categories, createIdempotencyKey())
     await loadJobs()
   } catch (cause) {
@@ -340,6 +387,7 @@ function selectArchive(event: Event) {
 }
 
 async function preflightImport() {
+  if (desktop) return preflightDesktopArchive()
   if (!selectedArchive.value || importing.value) return
   importing.value = true
   error.value = ''
@@ -415,24 +463,35 @@ async function applyReplace(job: DataImportJob) {
   } finally { applying.value = false }
 }
 
-async function applyIncremental(job: DataImportJob) {
-  const token = importTokens.value[job.id]
-  if (!token || applying.value) return
+async function applyIncremental(job?: DataImportJob) {
+  const localJob = desktopPreflight.value
+  const applyLocal = local?.applyBusinessArchive
+  const webJob = job && { id: job.id, token: importTokens.value[job.id], counts: plannedImportCounts(job) }
+  if (applying.value || importing.value) return
+  if (desktop ? !localJob || localJob.completed || !applyLocal : !webJob?.token) return
+  const counts = desktop && localJob ? { add: localJob.added, skip: localJob.skipped } : webJob?.counts
   const confirmed = await confirmDialog({
     title: t('profileDataUi.incrementalConfirmTitle'),
-    message: t('profileDataUi.incrementalConfirmMessage', {
-      add: plannedImportCounts(job).add,
-      skip: plannedImportCounts(job).skip,
-    }),
+    message: t('profileDataUi.incrementalConfirmMessage', counts ?? {}),
     tone: 'warning',
     confirmText: t('profileDataUi.incrementalImport'),
   })
-  if (!confirmed) return
+  if (!confirmed || applying.value || (desktop && desktopPreflight.value !== localJob)) return
   applying.value = true
   error.value = ''
   try {
-    upsertImportJob(await dataPortabilityApi.applyImport(job.id, 'incremental', token, createIdempotencyKey()))
-    delete importTokens.value[job.id]
+    if (desktop && localJob && applyLocal) {
+      const result = await applyLocal(localJob.id)
+      desktopPreflight.value = { ...localJob, ...result, completed: true }
+      if (result.added > 0) props.refreshImportedData?.()
+      if (local?.dataInventory) {
+        try { inventory.value = await local.dataInventory() }
+        catch { error.value = t('profileDataUi.previewFailed') }
+      }
+    } else if (webJob?.token) {
+      upsertImportJob(await dataPortabilityApi.applyImport(webJob.id, 'incremental', webJob.token, createIdempotencyKey()))
+      delete importTokens.value[webJob.id]
+    }
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : t('profileDataUi.importFailed')
   } finally { applying.value = false }

@@ -8,7 +8,7 @@
       <div class="personality-toggle">
         <ToggleSwitch
           :model-value="enabled"
-          :disabled="saving || !hasContent"
+          :disabled="saving"
           :aria-label="t('personalityUi.groupPersonaEnable')"
           @update:model-value="onToggle"
         />
@@ -26,7 +26,7 @@
       <div class="personality-file-actions">
         <input ref="fileInput" class="personality-file-input" type="file" accept=".md,text/markdown" @change="onFileSelected" />
         <button type="button" class="pm-text-button" :disabled="saving" @click="fileInput?.click()">{{ t('personalityUi.upload') }}</button>
-        <button type="button" class="pm-text-button" :disabled="saving" @click="openEditor">{{ t('personalityUi.edit') }}</button>
+        <button type="button" class="pm-text-button" :disabled="saving" @click="openEditor()">{{ t('personalityUi.edit') }}</button>
       </div>
     </div>
     <div v-if="error || status" class="personality-status" :class="{ error: !!error }">{{ error || status }}</div>
@@ -53,22 +53,22 @@ const characterCount = computed(() => Array.from(prefsStore.groupPersonalityPref
 
 watch(() => prefsStore.groupPersonalityPreferenceEnabled, value => { enabled.value = value })
 
-function openEditor() {
+function openEditor(enableOnSave = false) {
   status.value = ''
   error.value = ''
   previewStore.openVirtual(
     { id: -3, displayName: 'group-persona', ext: 'MD', size: `${characterCount.value} 字符` },
     prefsStore.groupPersonalityPreference,
-    saveDocument,
+    content => saveDocument(content, enableOnSave),
   )
 }
 
-async function saveDocument(content: string) {
+async function saveDocument(content: string, enableOnSave: boolean) {
   saving.value = true
   status.value = ''
   error.value = ''
   try {
-    await prefsStore.saveGroupPersonalityPreference(content, enabled.value)
+    await prefsStore.saveGroupPersonalityPreference(content, !!content.trim() && (enableOnSave || enabled.value))
     status.value = t('personalityUi.saved')
   } catch (err) {
     error.value = err instanceof Error ? err.message : t('personalityUi.saveFailed')
@@ -98,6 +98,7 @@ async function onFileSelected(event: Event) {
 }
 
 async function onToggle(value: boolean) {
+  if (value && !hasContent.value) { openEditor(true); return }
   const previous = enabled.value
   enabled.value = value
   saving.value = true

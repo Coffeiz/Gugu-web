@@ -5,7 +5,7 @@ import { readDesktopAgentAttachmentContent } from '../../../../agent/attachments
 import type { IpcHost } from '../../../../ipc/types.js'
 import { transcribeDesktopImFile, type DesktopImVoice } from '../../inbound/voice.js'
 import { IM_BINDING_TTL_SECONDS, IM_BINDING_MAX_ATTEMPTS } from '@gugu/core/im/binding-code'
-import { updateUserBotGroupTools, userBotGroupToolFlags } from '@gugu/core/im/user-bots'
+import { updateUserBotGroupTools, userBotGroupFileToolsAllowed, userBotGroupToolAllowed, userBotGroupToolFlags } from '@gugu/core/im/user-bots'
 import { classifyImGroupInbound, resolveImActor } from '@gugu/core/im/access'
 import { createHash, randomInt, randomUUID } from 'node:crypto'
 import { createGatewaySupervisor, createImGroupAttentionGate, parseImReceivedMessage, readImReceivedMessage, type ImGroupAttentionHistory,
@@ -96,7 +96,7 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
         const allowFile = async (message: ImReceivedMessage) => {
           const latest = await store.read()
           return !!latest?.chatId && latest.groupChatEnabled && latest.groupReplyMode !== 'record_only'
-            && latest.groupAllowedTools.some(tool => ['http_get', 'similar_image_search', 'send_file'].includes(tool))
+            && userBotGroupFileToolsAllowed(latest.groupAllowedTools)
             && (message.botMentioned || latest.groupReplyMode === 'reply_all') && !dispatchSignal.aborted
         }
         if (!groupDeliveries.has(id) && dispatch) {
@@ -425,20 +425,20 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
     }
   }
 
-  async function readAuthorizedGroupMessage(params: Record<string, unknown>, signal: AbortSignal) {
+  async function readAuthorizedGroupMessage(params: Record<string, unknown>, signal: AbortSignal, scheduled = false) {
     const { connectionId: requestedConnection, eventKey, sealedEvent } = params
     if (signal.aborted || typeof requestedConnection !== 'string' || typeof eventKey !== 'string'
       || typeof sealedEvent !== 'string' || sealedEvent.length > 48_000) return null
     try {
       const { result } = await encryption.decryptStringAsync(Buffer.from(sealedEvent, 'base64'))
       const current = await store.read()
-      if (signal.aborted || !current?.enabled || !current.chatId || !current.groupChatEnabled || current.groupReplyMode === 'record_only') return null
+      if (signal.aborted || !current?.enabled || !current.chatId || !current.groupChatEnabled || (!scheduled && current.groupReplyMode === 'record_only')) return null
       const connection = { platform: 'telegram', ownerId: 'desktop', botId: botId(current) } as const
       const message = parseImReceivedMessage(connection, JSON.parse(result).event)
       const { chatType, chatId } = message.scope
       if (chatType !== 'group' || !chatId || desktopImEventKey(message) !== eventKey
         || groupConnectionId(current, chatId) !== requestedConnection
-        || (!message.botMentioned && current.groupReplyMode !== 'reply_all')) return null
+        || (!scheduled && !message.botMentioned && current.groupReplyMode !== 'reply_all')) return null
       return { current, message }
     } catch { return null }
   }
@@ -446,8 +446,12 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
   let stopping: Promise<void> | undefined
   return {
     async start() { await gateway.start() },
+    resume: gateway.resume,
+    health: gateway.health,
+    onConfigurationChanged: gateway.onConfigurationChanged,
     stop() { return stopping ??= gateway.stop() },
     snapshot: () => serialize(snapshot),
+    readScheduledBot: store.read,
     save: (input: unknown) => serialize(async () => {
       if (stopping) throw new DesktopError('busy', '网关正在停止')
       if (!isRecord(input)) throw new DesktopError('invalid_request', 'Telegram 配置无效')
@@ -507,10 +511,17 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
       await gateway.settled()
       return serialize(snapshot)
     },
+    async readScheduledGroup(params: Record<string, unknown>, signal: AbortSignal) {
+      const result = await readAuthorizedGroupMessage(params, signal, true)
+      if (!result) return null
+      const { current, message } = result
+      return { platform: 'telegram', chatType: 'group', botId: botId(current),
+        boundUserId: current.chatId, recipient: message.scope.chatId }
+    },
     async authorizeGroupTool(params: Record<string, unknown>, signal: AbortSignal) {
       const authorized = await readAuthorizedGroupMessage(params, signal)
       if (!authorized || typeof params.name !== 'string') return false
-      return authorized.current.groupAllowedTools.includes(params.name) && !signal.aborted
+      return userBotGroupToolAllowed(authorized.current.groupAllowedTools, params.name) && !signal.aborted
     },
     async readGroupMemoryContext(params: Record<string, unknown>, signal: AbortSignal) {
       const authorized = await readAuthorizedGroupMessage(params, signal)

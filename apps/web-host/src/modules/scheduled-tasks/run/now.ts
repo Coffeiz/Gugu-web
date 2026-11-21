@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Kysely } from 'kysely'
 import { configureRagJieba } from '@gugu/core/agent/rag'
-import { createScheduledTaskExecution, createScheduledTaskGroupMemoryReader, createScheduledTaskGroupTools, createScheduledTaskRunNow,
+import { createScheduledTaskExecution, createScheduledTaskGroupMemoryReader, createScheduledTaskGroupMemoryAuthorizer, createScheduledTaskGroupTools, createScheduledTaskRunNow,
   type RecurringStopExecution, type ScheduledTaskExecutionPorts } from '@gugu/core/scheduled-task-run-now'
 import { createKyselyScheduledTaskExecutionReader, createKyselyScheduledTaskGroupScopeReader,
   createKyselyScheduledTaskRunNowReader, type ScheduledTaskExecutionPlan } from '@gugu/core/scheduled-task-run-now-read'
@@ -31,6 +31,7 @@ export function createScheduledTaskRunNowRuntime<DB, Artifact>(options: {
   const repository = createKyselyOnceTaskRepository(options.db, options.backend)
   const readExecution = createKyselyScheduledTaskExecutionReader(options.db, options.backend, options.filesystemAuthorizationEnabled)
   const readGroupScope = createKyselyScheduledTaskGroupScopeReader(options.db, options.backend)
+  const authorizeGroupMemory = createScheduledTaskGroupMemoryAuthorizer(options.db, options.backend)
   const memoryStorage = options.storageRoot ? createLocalAgentMemoryRagStore(options.storageRoot) : undefined
   if (memoryStorage) configureRagJieba(getAgentRagJieba())
   const readGroupMemory = memoryStorage
@@ -40,13 +41,10 @@ export function createScheduledTaskRunNowRuntime<DB, Artifact>(options: {
     ...options.execution,
     toolsForRun: createScheduledTaskGroupTools(options.db, options.backend, memoryStorage),
     ...(readGroupMemory ? { async loadGroupMemory(task) {
-      if (!task.groupScope) return ''
-      let memory = ''
-      try { memory = await readGroupMemory(task.groupScope) }
-      catch { console.warn('定时任务群记忆读取失败') }
-      // 读取期间归属可能变化。确认该范围仍可用后才把文件内容传给模型。
-      if (!await readGroupScope(task)) throw new Error('任务群聊目标不可用')
-      return memory
+      const scope = await authorizeGroupMemory(task)
+      if (!scope) return ''
+      const memory = await readGroupMemory(scope)
+      return await authorizeGroupMemory(task) ? memory : ''
     } } : {}),
   })
   const lease = createScheduledTaskRedisLease(options.redis)
