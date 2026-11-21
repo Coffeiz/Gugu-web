@@ -16,6 +16,9 @@ const kinds: Partial<Record<AttentionKind, string>> = {
   MEMBER_ACTIVE: 'member_ACTIVE', PROACTIVE: 'proactive', ALLOW_RUN: 'autonomous',
 }
 export function attentionSourceKind(kind: AttentionKind | undefined): string | null { return kind ? kinds[kind] ?? null : null }
+export function isAttentionSourceKind(value: unknown): value is string {
+  return typeof value === 'string' && Object.values(kinds).includes(value)
+}
 export function parseImAttentionRecord(value: unknown): ImAttentionRecord {
   const fail = () => { throw new TypeError('IM 注意力事实无效') }
   if (!value || typeof value !== 'object' || Array.isArray(value)) return fail()

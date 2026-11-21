@@ -1,3 +1,4 @@
+import { canonicalAgentToolName } from '../tools/configuration.js'
 
 import type { Block,CanonicalRunContext,CanonicalMessage,CompactionResult,CurrentUser,EntryInput,FrozenProviderRequest,Json,PersistedHistoryRow,PrepareContextInput,PreparedContext,RagContext,RunIdentity,ToolCall,ToolResult } from '../models.js'
 import { AgentRunError,isEarlyExit } from '../models.js'
@@ -429,7 +430,7 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
       return context
     },
     isRoundToolAvailable(state, name) {
-      return state.capabilities?.toolNames.includes(name) ?? true
+      return state.capabilities?.toolNames.some(tool => canonicalAgentToolName(tool) === canonicalAgentToolName(name)) ?? true
     },
     async afterRound(state, result, round) {
       const prepared = await restore(state)

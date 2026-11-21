@@ -1,4 +1,5 @@
 import type { SkillDefinition } from './contracts.js'
+export { legacyBuiltinSkillKey } from './legacy-keys.js'
 import { strip } from '../../shared/values.js'
 
 /** 资源位置及读取权限由 Host 决定；Core 不枚举目录或解释模型提供的路径。 */
@@ -13,18 +14,6 @@ export interface BuiltinSkillDefinition extends SkillDefinition {
   readonly category: string
   readonly source: 'builtin'
   readonly related_tools: readonly string[]
-}
-
-// 此映射冻结在编号改为动态分配之前，只用于读取旧配置和已保存的回执。
-const legacySkillKeys = new Map([
-  ['S1', 'canvas'], ['S2', 'email'], ['S3', 'file-ops'], ['S4', 'im-bind'],
-  ['S5', 'image-analysis'], ['S6', 'knowledge-writing'], ['S7', 'chart-and-math'],
-  ['S8', 'note-writing'], ['S9', 'project-planning'], ['S12', 'weather'],
-  ['S13', 'web-search'], ['S14', 'skill-management'],
-])
-
-export function legacyBuiltinSkillKey(id: string): string | undefined {
-  return legacySkillKeys.get(id)
 }
 
 export const builtinSkillKeyPattern = /^[a-z0-9][a-z0-9._-]*$/u

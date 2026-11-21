@@ -222,3 +222,80 @@ describe('GuguChatInteraction', () => {
     })
   })
 })
+
+it('多选先勾选再提交，提交失败时保留草稿，成功后锁定选项', async () => {
+  const msg = reactive(interactionMessage([
+    { id: 'a', label: '保留', token: 'token-a' },
+    { id: 'b', label: '审阅', token: 'token-b' },
+  ]))
+  Object.assign(msg.interaction!, { kind: 'choice', selectionMode: 'multiple' })
+  mounted = mountInteraction(msg)
+  const [first, second] = [...mounted.host.querySelectorAll<HTMLButtonElement>('[role="checkbox"]')]
+  const [all, submit] = [...mounted.host.querySelectorAll<HTMLButtonElement>('.interaction-choice-footer button')]
+  expect(submit!.disabled).toBe(true)
+  all!.click()
+  await nextTick()
+  expect(first!.getAttribute('aria-checked')).toBe('true')
+  expect(second!.getAttribute('aria-checked')).toBe('true')
+  expect(mounted.onSelect).not.toHaveBeenCalled()
+  submit!.click()
+  await nextTick()
+  expect(mounted.onSelect).toHaveBeenCalledWith(msg, {
+    id: 'a', token: 'token-a', label: '保留、审阅', selectedOptionIds: ['a', 'b'],
+  })
+  msg.interaction!.submitting = false
+  await nextTick()
+  expect(submit!.disabled).toBe(false)
+  expect(second!.getAttribute('aria-checked')).toBe('true')
+  Object.assign(msg.interaction!, { resolved: true, selectedOptionIds: ['a', 'b'] })
+  await nextTick()
+  expect(second!.disabled).toBe(true)
+  expect(second!.getAttribute('aria-checked')).toBe('true')
+  expect(mounted.host.querySelector('.interaction-choice-footer')).toBeNull()
+})
+
+it('多选的自定义回复可以收起，并保留选项和文字草稿', async () => {
+  const msg = reactive(interactionMessage([
+    { id: 'a', label: '保留', token: 'token-a' },
+    { id: 'b', label: '审阅', token: 'token-b' },
+    { id: '__custom_reply__', label: '自定义回复', token: 'token-custom' },
+  ]))
+  Object.assign(msg.interaction!, { kind: 'choice', selectionMode: 'multiple', allowTextInput: true })
+  mounted = mountInteraction(msg)
+  const [first, second] = [...mounted.host.querySelectorAll<HTMLButtonElement>('[role="checkbox"]')]
+  const custom = mounted.host.querySelector<HTMLButtonElement>('.is-custom-choice')!
+  first!.click()
+  custom.click()
+  await nextTick()
+  const input = mounted.host.querySelector('textarea')!
+  input.value = '补充说明'
+  input.dispatchEvent(new Event('input'))
+  expect(first!.getAttribute('aria-checked')).toBe('true')
+  expect(first!.disabled).toBe(false)
+  custom.click()
+  await nextTick()
+  expect(mounted.host.querySelector('textarea')).toBeNull()
+  expect(first!.getAttribute('aria-checked')).toBe('true')
+  second!.click()
+  custom.click()
+  await nextTick()
+  expect(mounted.host.querySelector('textarea')?.value).toBe('补充说明')
+  expect(mounted.onSelect).not.toHaveBeenCalled()
+  mounted.host.querySelectorAll<HTMLButtonElement>('.interaction-choice-footer button')[1]!.click()
+  expect(mounted.onSelect).toHaveBeenCalledExactlyOnceWith(msg, {
+    id: 'a', token: 'token-a', label: '保留、审阅', selectedOptionIds: ['a', 'b'], customAnswer: '补充说明',
+  })
+})
+
+it('已提交的单选卡保留所有选项，只标记选中项且不重复显示答案', () => {
+  const msg = interactionMessage([
+    { id: 'a', label: '选项 A', token: '' },
+    { id: 'b', label: '选项 B', token: '' },
+  ])
+  Object.assign(msg.interaction!, { kind: 'choice', resolved: true, selectedOptionId: 'a', responseText: '选项 A' })
+  mounted = mountInteraction(msg)
+  const options = [...mounted.host.querySelectorAll<HTMLButtonElement>('.interaction-option')]
+  expect(options.map(option => [option.textContent?.trim(), option.getAttribute('aria-pressed'), option.disabled]))
+    .toEqual([['选项 A', 'true', true], ['选项 B', 'false', true]])
+  expect(mounted.host.querySelector('.interaction-response')).toBeNull()
+})

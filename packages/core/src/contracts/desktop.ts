@@ -2,6 +2,7 @@ export const DESKTOP_CALENDAR_UNDO_CONTEXT = 'desktop-calendar'
 import type { DisplayItem } from '../agent/models.js'
 import type { ByokCommand, ByokResult, ByokTarget, DesktopAuxiliaryModelCommand, DesktopAuxiliaryModelResult } from '../byok/contracts.js'
 import type { RemoteAccountState, RemoteLoginInput } from '../auth/contracts.js'
+import type { ImGroupAttentionMode, ImGroupReplyMode } from '../im/group-settings.js'
 
 // 仅共享桌面 DTO 和固定能力名称；不依赖 Electron 或 Node。
 export { CORE_SCHEMA_VERSION } from './schema.js'
@@ -15,6 +16,7 @@ export const DESKTOP_METHODS = [
   'im.inbox.prepare',
   'im.inbox.pendingConnection',
   'im.inbox.recordGroup',
+  'im.inbox.groupAttentionHistory',
   'im.inbox.reject',
   'im.inbox.prompt',
   'im.inbox.delivery',
@@ -400,7 +402,7 @@ export type DesktopAgentSessionCommand =
   | { action: 'disconnect'; operationId: string }
   | { action: 'cancelRun'; id: number; runId: string }
   | ({ action: 'respond'; id: number; runId: string; promptId: number } &
-    ({ operationId: string } & ({ token: string } | { text: string } | { secrets: Record<string, string> | null }) | { recover: true }))
+    ({ operationId: string } & ({ token: string; selectedOptionIds?: string[]; customAnswer?: string } | { text: string } | { secrets: Record<string, string> | null }) | { recover: true }))
   | { action: 'events'; id: number; runId?: string; after?: number; stateOnly?: true }
   | { action: 'cancel'; id: number; operationId: string }
   | { action: 'queue'; operationId?: string; queueAction: 'read'; queueId: string }
@@ -452,25 +454,49 @@ export interface DesktopTelegramSnapshot {
   bound: boolean
   binding?: { code: string; expiresAt: number }
   enabled: boolean
+  privateStreamingEnabled?: boolean
   status: 'disabled' | 'connecting' | 'connected' | 'retrying' | 'conflict' | 'cleanup_failed'
   messages: DesktopTelegramMessage[]
+  groupChatEnabled?: boolean
+  groupReplyMode?: ImGroupReplyMode
+  groupAttentionMode?: ImGroupAttentionMode
+  groupWebToolsEnabled?: boolean
+  groupProviderSearchEnabled?: boolean
+  groupHistorySearchEnabled?: boolean
+  groupOwnerMemoryEnabled?: boolean
+  groupMemoryEnabled?: boolean
+  memberMemoryEnabled?: boolean
+}
+export type DesktopImGroupSettingsPatch = {
+  groupChatEnabled?: boolean
+  groupReplyMode?: ImGroupReplyMode
+  groupAttentionMode?: ImGroupAttentionMode
+  groupWebToolsEnabled?: boolean
+  groupProviderSearchEnabled?: boolean
+  groupHistorySearchEnabled?: boolean
+  groupOwnerMemoryEnabled?: boolean
+  groupMemoryEnabled?: boolean
+  memberMemoryEnabled?: boolean
 }
 export type DesktopQrPairingCommand =
   | { action: 'start' | 'status' | 'enable' | 'disable' }
+  | { action: 'setPrivateStreaming'; enabled: boolean }
   | { action: 'poll'; taskId: string }
+  | { action: 'updateGroupSettings'; patch: DesktopImGroupSettingsPatch }
 
 export type DesktopImConnectionState = 'disabled' | 'connecting' | 'running' | 'retrying' | 'cleanup_failed'
 
-export type DesktopQqGroupReplyMode = 'reply_mentions' | 'reply_all' | 'record_only'
 export type DesktopQrPairingResult =
-  | { configured: boolean; enabled: boolean; bound?: boolean; privateMessageFormat?: 'compat' | 'markdown'; groupMessageFormat?: 'compat' | 'markdown'; privateStreamingEnabled?: boolean; groupChatEnabled?: boolean; groupHistorySearchEnabled?: boolean; groupWebToolsEnabled?: boolean; groupProviderSearchEnabled?: boolean; groupOwnerMemoryEnabled?: boolean; groupMemoryEnabled?: boolean; memberMemoryEnabled?: boolean; groupReplyMode?: DesktopQqGroupReplyMode; detail?: string; connectionState?: DesktopImConnectionState }
+  | { configured: boolean; enabled: boolean; bound?: boolean; privateMessageFormat?: 'compat' | 'markdown'; groupMessageFormat?: 'compat' | 'markdown'; privateStreamingEnabled?: boolean; groupChatEnabled?: boolean; groupHistorySearchEnabled?: boolean; groupWebToolsEnabled?: boolean; groupProviderSearchEnabled?: boolean; groupOwnerMemoryEnabled?: boolean; groupMemoryEnabled?: boolean; memberMemoryEnabled?: boolean; groupReplyMode?: ImGroupReplyMode; groupAttentionMode?: ImGroupAttentionMode; detail?: string; connectionState?: DesktopImConnectionState }
   | { task_id: string; scan_url: string }
   | { poll_id: string; scan_url: string }
   | { status: string; reason?: string; bot?: { id: number; name: string } }
 
 export type DesktopTelegramCommand =
   | { action: 'status' | 'enable' | 'disable' | 'bindingCode' }
+  | { action: 'setPrivateStreaming'; enabled: boolean }
   | { action: 'save'; input: { token: string } }
+  | { action: 'updateGroupSettings'; patch: DesktopImGroupSettingsPatch }
 
 export type DesktopLogKind = 'regular' | 'diagnostic'
 
@@ -494,7 +520,7 @@ export interface DesktopSearchResult {
 export interface DesktopBridge {
   search(queries: string[]): Promise<DesktopReply<DesktopSearchResult>>
   readLogs(kind: DesktopLogKind): Promise<DesktopReply<{ lines: string[]; truncated: boolean }>>
-  qqPairing(command: DesktopQrPairingCommand | { action: 'bindingCode' | 'unbind' } | { action: 'setPrivateMessageFormat' | 'setGroupMessageFormat'; format: 'compat' | 'markdown' } | { action: 'setPrivateStreaming' | 'setGroupChat' | 'setGroupWebTools' | 'setGroupProviderSearch' | 'setGroupHistorySearch' | 'setGroupOwnerMemory' | 'setGroupMemory' | 'setMemberMemory'; enabled: boolean } | { action: 'setGroupReplyMode'; mode: DesktopQqGroupReplyMode }): Promise<DesktopReply<DesktopQrPairingResult | { code: string; expires_in: number }>>
+  qqPairing(command: DesktopQrPairingCommand | { action: 'bindingCode' | 'unbind' } | { action: 'setPrivateMessageFormat' | 'setGroupMessageFormat'; format: 'compat' | 'markdown' } | { action: 'setPrivateStreaming' | 'setGroupChat' | 'setGroupWebTools' | 'setGroupProviderSearch' | 'setGroupHistorySearch' | 'setGroupOwnerMemory' | 'setGroupMemory' | 'setMemberMemory'; enabled: boolean } | { action: 'setGroupReplyMode'; mode: ImGroupReplyMode }): Promise<DesktopReply<DesktopQrPairingResult | { code: string; expires_in: number }>>
   feishuPairing(command: DesktopQrPairingCommand): Promise<DesktopReply<DesktopQrPairingResult>>
   wechatPairing(command: DesktopQrPairingCommand): Promise<DesktopReply<DesktopQrPairingResult>>
   telegramGateway(command: DesktopTelegramCommand): Promise<DesktopReply<DesktopTelegramSnapshot>>
@@ -607,6 +633,7 @@ export interface DesktopOnboardingState {
 }
 
 export type DesktopResourceCommand =
+  | { domain: 'citation'; action: 'site-name'; url: string }
   | { domain: 'skills'; action: 'list' | 'tools'; offset?: number }
   | { domain: 'mcp'; action: 'list' }
   | { domain: 'mcp'; action: 'config' | 'test'; id: string }

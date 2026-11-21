@@ -2,9 +2,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useUiStore } from '@/stores/ui'
+import { fileOpenAccessKey } from '@/services/fileOpenAccess'
+import { pathFileAccessKey } from '@/services/pathFileAccess'
+import { openPlatformPreviewKey } from '@/stores/preview'
 import { projectAccessKey } from '@/api/projects'
 import { webProjectAccess } from '@web/projects/access'
-import { filesApi } from '@/services/api'
+import { filesApi, pathFilesApi } from '@/services/api'
 import { createApp } from 'vue'
 import { locateConversationMessageKey, openProjectReferenceKey, useMindRefActions } from '@/composables/mind/useMindRefActions'
 import { showAppNotice } from '@/composables/core/useAppToast'
@@ -38,6 +41,29 @@ describe('useMindRefActions', () => {
     await expect(openMindRef('file', 1393)).resolves.toBe(false)
     expect(filesApi.get).not.toHaveBeenCalled()
     expect(showAppNotice).toHaveBeenCalledWith(i18n.global.t('mindUi.referenceMissing'))
+  })
+
+  it.each([[true, '交给系统'], [false, '提供下载']] as const)('系统打开能力为 %s 时，桌面 .clip 引用%s', async (canOpenInSystem) => {
+    const openInSystem = vi.fn(async () => {})
+    const openPreview = vi.fn(() => true)
+    const download = vi.fn(async () => {})
+    app.provide(fileOpenAccessKey, {
+      canOpenInSystem: () => canOpenInSystem, openInSystem, getOpenPreference: () => 'preview',
+    }).provide(openPlatformPreviewKey, openPreview)
+      .provide(pathFileAccessKey, { ...pathFilesApi, download })
+    const { openMindRef } = app.runWithContext(useMindRefActions)
+    const clip = { directoryId: 'personal', relativePath: 'drawing.clip', identity: '1.2.3' }
+    const jpg = { ...clip, relativePath: 'image.jpg' }
+    const encode = (file: typeof clip) => `path-${Buffer.from(JSON.stringify(file)).toString('base64url')}`
+
+    await expect(openMindRef('file', encode(clip))).resolves.toBe(true)
+    expect(openInSystem.mock.calls).toEqual(canOpenInSystem ? [[clip]] : [])
+    expect(download.mock.calls).toEqual(canOpenInSystem ? [] : [[clip]])
+    expect(openPreview).not.toHaveBeenCalled()
+    await expect(openMindRef('file', encode(jpg))).resolves.toBe(true)
+    expect(openPreview).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ ext: 'jpg', workspaceFile: jpg }))
+    expect(openInSystem).toHaveBeenCalledTimes(Number(canOpenInSystem))
+    expect(download).toHaveBeenCalledTimes(Number(!canOpenInSystem))
   })
 
   it('平台消息定位使用同一跳转状态，旧请求不会覆盖最近点击', async () => {

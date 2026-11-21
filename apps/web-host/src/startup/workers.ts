@@ -29,13 +29,14 @@ export function createWebWorkers(options: {
   trashPurgeSchemaApplied: boolean
   projectJournalPool?: Pool
   projectExpiryWorkerEnabled: boolean
+  projectPurgeAvailable: boolean
   canRebuildAgentMemoryIndex: () => boolean
   ownerReflectionWork?: Parameters<typeof startRagIndexWorker>[0]['work']
   scheduledRepeatingWorker?: ScheduledWorker
   scheduledOnceWorker?: ScheduledWorker
 }) {
   const { config, pool, core, publisher, trashOperations, trashPurgeSchemaApplied, projectJournalPool,
-    projectExpiryWorkerEnabled, canRebuildAgentMemoryIndex, ownerReflectionWork, scheduledRepeatingWorker, scheduledOnceWorker } = options
+    projectExpiryWorkerEnabled, projectPurgeAvailable, canRebuildAgentMemoryIndex, ownerReflectionWork, scheduledRepeatingWorker, scheduledOnceWorker } = options
   return createBackgroundWorkerLifecycle([
     () => startSecurityRetentionWorker({ pool, onError: () => { console.error('安全事件过期清理失败') } }),
     () => process.platform === 'linux' ? startDiskTrashRetentionWorker(pool, config.storageLocalPath,
@@ -53,8 +54,8 @@ export function createWebWorkers(options: {
       pool: projectJournalPool, storageRoot: config.storageLocalPath,
       onError: () => { console.error('项目删除文件日志恢复未完成') },
     }) : null,
-    () => projectExpiryWorkerEnabled && projectJournalPool ? startProjectExpiryWorker({
-      enabled: true, pool: projectJournalPool, storageRoot: config.storageLocalPath,
+    () => projectPurgeAvailable && projectJournalPool ? startProjectExpiryWorker({
+      enabled: true, expire: projectExpiryWorkerEnabled, pool: projectJournalPool, storageRoot: config.storageLocalPath,
       defaultLimitBytes: config.storageDefaultLimitBytes,
       onError: () => { console.error('过期项目清理失败') },
     }) : null,

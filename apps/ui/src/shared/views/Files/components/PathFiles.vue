@@ -125,6 +125,8 @@
     </FileBrowserGrid>
     <FileBrowserContextMenu :show="!!contextEntry" :x="contextX" :y="contextY" @close="contextEntry = null">
       <template v-if="contextEntry">
+        <button v-if="contextEntry.kind === 'file'" type="button" class="ctx-item popup-menu-item"
+          @click="runContext(openInfo)"><Icon name="status.info" :size="13" />{{ t('sharedUi.info') }}</button>
         <template v-if="contextEntry.kind === 'file' && fileOpenAccess?.canOpenInSystem(fileTarget(contextEntry))">
           <button type="button" class="ctx-item popup-menu-item" @click="runContext(previewFile)">
             <Icon name="action.expand" :size="13" />{{ t('filesUi.previewInGugu') }}
@@ -143,6 +145,8 @@
           @click="runContext(entry => emit('trash', entry))"><Icon name="action.delete" :size="13" />{{ t('sharedUi.moveToTrash') }}</button>
       </template>
     </FileBrowserContextMenu>
+    <FileInfoPopup :show="!!fileInfo" :file="fileInfo?.file" :location="fileInfo?.location"
+      :x="fileInfo?.x" :y="fileInfo?.y" @close="fileInfo = null" />
     <UploadConflictDialog ref="conflictDialog" />
   </section>
 </template>
@@ -156,6 +160,7 @@ import { useI18n } from 'vue-i18n'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import FileBrowserEmptyState from '@/components/common/file-browser/FileBrowserEmptyState.vue'
 import FileBrowserContextMenu from '@/components/common/file-browser/FileBrowserContextMenu.vue'
+import FileInfoPopup from '@/components/common/file-browser/FileInfoPopup.vue'
 import FileBrowserGrid from '@/components/common/file-browser/FileBrowserGrid.vue'
 import FileBrowserList from '@/components/common/file-browser/FileBrowserList.vue'
 import RuntimeFileCard from '@/components/common/file-browser/RuntimeFileCard.vue'
@@ -232,6 +237,12 @@ const renamingPath = ref('')
 const renameName = ref('')
 const renaming = ref(false)
 const contextEntry = ref<PathFileEntry | null>(null)
+const fileInfo = ref<{
+  file: { displayName: string; ext: string; sizeBytes: number; mimeType?: string }
+  location: string
+  x: number
+  y: number
+} | null>(null)
 const contextX = ref(0)
 const contextY = ref(0)
 const { uploadingItems, createGhost, updateGhostProgress, removeGhost, failGhost } = useUploadQueue()
@@ -300,6 +311,7 @@ watch([() => props.directoryId, () => props.relativePath, () => props.reload, ac
 watch([() => props.directoryId, () => props.relativePath, accountBoundaryEpoch], () => {
   cancelRename()
   contextEntry.value = null
+  fileInfo.value = null
 })
 onScopeDispose(() => { request++; clearTimeout(loadingTimer) })
 
@@ -318,6 +330,16 @@ function runContext(action: (entry: PathFileEntry) => void) {
   const entry = contextEntry.value
   contextEntry.value = null
   if (entry) action(entry)
+}
+
+function openInfo(entry: PathFileEntry) {
+  const { base, ext } = fileName(entry)
+  fileInfo.value = {
+    file: { displayName: base, ext, sizeBytes: entry.size, mimeType: entry.mimeType ?? undefined },
+    location: props.relativePath || '/',
+    x: contextX.value,
+    y: contextY.value,
+  }
 }
 
 function startRename(entry: PathFileEntry) {

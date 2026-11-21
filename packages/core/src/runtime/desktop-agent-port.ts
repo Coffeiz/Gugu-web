@@ -19,7 +19,7 @@ export interface DesktopAgentRuntimePort {
     locale?: string, groupSender?: DesktopGroupSender): Promise<unknown>
   runModel(sessionId: number, runId: string): Promise<string | null | undefined>
   respond(sessionId: number, runId: string, promptId: number, eventId: string,
-    reply: { token: string } | { text: string } | { secrets: Record<string, string> | null } | null,
+    reply: { token: string; selectedOptionIds?: string[]; customAnswer?: string } | { text: string } | { secrets: Record<string, string> | null } | null,
     config: ProviderConfig, embedding?: RagQueryEmbeddingSettings): Promise<unknown>
   notifyCancel(sessionId: number, runId: string): Promise<void>
   close(): Promise<void>

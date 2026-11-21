@@ -13,20 +13,22 @@
       <!-- v-memo：同一帧内其它消息在变（比如正在流式输出的那条）时，跳过这一行没变的
            子树重新生成——虚拟列表已经把同时挂载的行数摁在个位数附近，这里收益比之前小，
            但仍能省掉一趟不必要的 vnode diff。 -->
-      <div v-for="{ row, msg, messageIndex, tools } in rowsWithMsg" :key="String(row.key)" :data-index="row.index"
+      <div v-for="{ row, msg, messageIndex, tools, timestamp } in rowsWithMsg" :key="String(row.key)" :data-index="row.index"
            :data-message-id="String(msg.id)" :ref="measureRow"
            :class="['msg-virtual-row', { 'is-tool-row': msg.role === 'tool', 'is-interaction-row': msg.role === 'interaction' }]"
            :style="{ transform: `translateY(${row.start}px)` }">
-        <GuguChatToolActivity
-          v-if="tools" class="msg tool" :data-db-id="msg.dbId || ''" :tools="tools" :session-id="sessionId"
-          :expanded="expandedActivityIds.has(msg.id)" :expanded-tools="expandedToolMessageIds"
-          :awaiting-reply="streaming && row.index === projection.openGroupIndex"
-          @toggle="toggleActivity(msg.id)" @detail="setToolExpanded"
-        />
+        <div v-if="tools">
+          <GuguChatToolActivity
+            class="msg tool" :data-db-id="msg.dbId || ''" :tools="tools" :session-id="sessionId"
+            :expanded="expandedActivityIds.has(msg.id)" :expanded-tools="expandedToolMessageIds"
+            :awaiting-reply="streaming && row.index === projection.openGroupIndex"
+            @toggle="toggleActivity(msg.id)" @detail="setToolExpanded"
+          />
+        </div>
         <div v-else :class="['msg', msg.role]" :data-db-id="msg.dbId || ''"
-           v-memo="[msg.role, msg.speakerLabel, msg.text, msg.html, msg.streaming, messageIndex < messages.length - 1, msg.references, msg.roundId, msg.runOutcome, msg.linkButtons, msg.interaction?.resolved, msg.interaction?.expired, msg.interaction?.selectedOptionId, msg.interaction?.allowTextInput, msg.interaction?.customInputActive, msg.interaction?.taskPaused, msg.interaction?.submitting, msg.interaction?.responseText, msg.interaction?.secretFields, interactionAnswerMode, msg.files?.length, msg.files?.map(f => `${f.file_id ?? ''}:${f.attach_id ?? ''}:${f.ext ?? ''}:${f.transcript ?? ''}:${f.transcript_status ?? ''}:${f.transcript_origin ?? ''}`).join(','), msg.quotedText, copiedId === msg.id, voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId), voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId) ? voiceBars.join(',') : '']">
+           v-memo="[timestamp, msg.role, msg.speakerLabel, msg.text, msg.html, msg.streaming, messageIndex < messages.length - 1, msg.references, msg.roundId, msg.runOutcome, msg.linkButtons, sourceByMessage.get(msg.id), msg.interaction?.resolved, msg.interaction?.expired, msg.interaction?.selectedOptionId, msg.interaction?.selectedOptionIds, msg.interaction?.customAnswer, msg.interaction?.selectionMode, msg.interaction?.allowTextInput, msg.interaction?.customInputActive, msg.interaction?.taskPaused, msg.interaction?.submitting, msg.interaction?.responseText, msg.interaction?.secretFields, interactionAnswerMode, msg.files?.length, msg.files?.map(f => `${f.file_id ?? ''}:${f.attach_id ?? ''}:${f.ext ?? ''}:${f.transcript ?? ''}:${f.transcript_status ?? ''}:${f.transcript_origin ?? ''}`).join(','), msg.quotedText, copiedId === msg.id, voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId), voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId) ? voiceBars.join(',') : '']">
           <GuguChatMessageRow
-            :msg="msg" :has-following-message="messageIndex < messages.length - 1" :session-id="sessionId" :is-group-session="isGroupSession" :interaction-answer-mode="interactionAnswerMode"
+            :msg="msg" :timestamp="timestamp" :sources="sourceByMessage.get(msg.id)" :has-following-message="messageIndex < messages.length - 1" :session-id="sessionId" :is-group-session="isGroupSession" :interaction-answer-mode="interactionAnswerMode"
             :copied-id="copiedId" :voice-playing-id="voicePlayingId" :voice-bars="voiceBars"
             @copy="$emit('copy', $event)" @toggle-voice="$emit('toggleVoice', $event)"
             @open-file="$emit('openFile', $event)" @download="$emit('download', $event)" @action-click="$emit('actionClick', $event)"
@@ -39,16 +41,9 @@
         </div>
       </div>
     </div>
-    <!-- 整个生成期只维持一枚状态气泡：状态切换时替换内容，不让气泡闪退重建。 -->
-    <div v-if="statusKind && !(streaming && projection.openGroupIndex !== undefined)" class="msg ai">
-      <div class="msg-bubble status-pop"
-           :class="statusKind === 'dots' ? 'thinking' : 'tool-bubble'">
-        <template v-if="statusKind === 'dots'"><span /><span /><span /></template>
-        <template v-else>
-          <span class="tool-spinner" />
-          <span class="tool-label">{{ statusTyped }}</span>
-        </template>
-      </div>
+    <div v-if="statusKind && !(streaming && projection.openGroupIndex !== undefined)" class="chat-generation-status">
+      <GuguChatActivityLine :label="statusTyped || t('chatUi.preparingReply')"
+        :indicator="statusKind === 'dots' ? 'dots' : 'running'" />
     </div>
   </div>
     <Transition name="chat-scroll-to-bottom-fade">
@@ -58,7 +53,7 @@
         type="button"
         :aria-label="t('chatUi.scrollToLatest')"
         :title="t('chatUi.scrollToLatest')"
-        @click="scrollToBottom"
+        @click="scrollToBottom('smooth')"
       >
         <Icon name="action.skip-down" :size="20" />
       </button>
@@ -82,7 +77,10 @@ import type { SessionScrollAnchor } from './composables/sessionScrollLayout'
 import { ref, computed, watch, watchEffect, nextTick, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { defaultRangeExtractor, useVirtualizer } from '@tanstack/vue-virtual'
+import GuguChatActivityLine from './GuguChatActivityLine.vue'
 import GuguChatToolActivity from './GuguChatToolActivity.vue'
+import { useChatSources } from './useChatSources'
+import type { ChatSource } from './chatSources'
 import { projectChatRows } from './toolActivity'
 import GuguChatMessageRow from './GuguChatMessageRow.vue'
 import Icon from '@/components/common/icons/Icon.vue'
@@ -113,7 +111,7 @@ defineEmits<{
   openFile: [file: ChatFile]
   download: [file: ChatFile]
   actionClick: [e: MouseEvent]
-  interactionSelect: [msg: ChatMessage, option: { id: string; label: string; token: string }]
+  interactionSelect: [msg: ChatMessage, option: { id: string; label: string; token: string; selectedOptionIds?: string[]; customAnswer?: string }]
   interactionTextSubmit: [msg: ChatMessage, text: string]
   secretSubmit: [msg: ChatMessage, values: Record<string, string>]
   secretCancel: [msg: ChatMessage]
@@ -195,10 +193,10 @@ function updateScrollPosition() {
   showScrollToBottom.value = distanceFromBottom > SCROLL_TO_BOTTOM_THRESHOLD
 }
 
-function scrollToBottom() {
-  if (!messagesEl.value || props.messages.length === 0) return
-  // 保留平滑动画，同时让虚拟器按末尾消息的测量结果管理目标位置。
-  virtualizer.value.scrollToIndex(projection.value.rows.length - 1, { align: 'end', behavior: 'smooth' })
+function scrollToBottom(behavior: 'auto' | 'smooth' = 'auto') {
+  const lastRow = projection.value.rows.length - 1
+  if (!messagesEl.value || lastRow < 0) return
+  virtualizer.value.scrollToIndex(lastRow, { align: 'end', behavior })
 }
 
 // 消息高度不定长（纯文本/代码块/文件卡片/语音条差异很大），measureElement 首次挂载
@@ -250,8 +248,22 @@ const virtualTotalSize = computed(() => virtualizer.value.getTotalSize())
 // 这样消息行内部的模板完全不用改，照样按 msg.xxx 取值。
 const rowsWithMsg = computed(() => virtualRows.value.flatMap(row => {
   const projected = projection.value.rows[row.index]
-  return projected ? [{ row, ...projected }] : []
+  if (!projected) return []
+  const { msg, messageIndex, tools } = projected
+  const timestamp = tools ? undefined : msg.time
+  return [{ row, msg, messageIndex, tools, timestamp }]
 }))
+const visibleChatMessages = computed(() => rowsWithMsg.value.map(row => row.msg))
+const sourcesForMessage = useChatSources(() => props.sessionId, () => props.messages, () => visibleChatMessages.value)
+const sourceByMessage = computed<Map<number, ChatSource[] | undefined>>(previous => new Map(rowsWithMsg.value
+  .filter(row => row.msg.role === 'ai')
+  .map(({ msg, messageIndex }) => {
+    const sources = sourcesForMessage(msg, messageIndex)
+    const existing = previous?.get(msg.id)
+    return [msg.id, sources && existing?.length === sources.length && sources.every((source, index) => source === existing[index])
+      ? existing : sources] as const
+  })))
+
 watch(() => props.sessionId, async () => {
   // 切换会话时清掉旧行的测量结果，等新会话行重新挂载后再测量。
   expandedToolMessageIds.value = new Set()
@@ -327,6 +339,7 @@ function restoreScrollAnchor(messageIndex: number, offset: number): boolean {
 
 defineExpose({
   el: computed(() => messagesEl.value),
+  scrollToBottom,
   captureScrollAnchor,
   restoreScrollAnchor,
   getVirtualRangeStart: () => projection.value.rows[virtualRows.value[0]?.index ?? 0]?.messageIndex ?? 0,

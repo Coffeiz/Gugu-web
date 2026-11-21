@@ -3,7 +3,7 @@ export const zhCN = {
   desktopAgentModel: { hint: '可在聊天中选择模型。API Key 加密保存在此设备。', deleteMessage: '确定从此设备删除「{model}」的模型配置吗？', native: '请在咕咕桌面应用中配置本机模型。', passed: '模型连接测试通过' },
   desktopByok: { deleteTitle: '删除凭据', deleteMessage: '确定删除服务器上的凭据？依赖该凭据的配置可能失效。', replaceTitle: '切换服务器默认凭据', replaceMessage: '此服务器上的新任务将使用所选凭据。' },
   agentParallelUi: { label: '并行工具调用（调试）', hint: '开启后同一轮中的联网搜索、HTTP GET 和符合确认策略的 Shell 调用可并行；上限按右侧设置。危险命令需确认时仍按串行处理。', limit: '每轮并发上限' },
-  projectsDeleted: { deleted: '已删除项目', deletedShort: '已删除', noDeleted: '暂无已删除项目', deletedView: '查看已删除项目', deletedRetention: '保留 30 天', deletedAt: '删除于 {date}', restoreDeleted: '恢复项目', unknownDate: '未知日期' },
+  projectsDeleted: { purge: '永久删除', purgeMessage: '将永久删除「{name}」及其项目文件、文件夹和日历事项（含提醒）。此操作无法撤销。', deleted: '已删除项目', deletedShort: '已删除', noDeleted: '暂无已删除项目', deletedView: '查看已删除项目', deletedRetention: '保留 30 天', deletedAt: '删除于 {date}', restoreDeleted: '恢复项目', unknownDate: '未知日期' },
   storageAudit: { subtitle: '存储 ↔ DB 一致性核查：文件层与目录层；扫描只读，修复需显式操作。', fileAudit: '文件对账', fileAuditHint: '扫描物理对象与 File 表：幽灵记录与孤儿文件', scanning: '对账中…', scan: '扫描' },
   common: {
     actions: { save: '保存', cancel: '取消', confirm: '确定', close: '关闭', clear: '清除', retry: '重试', upload: '上传文件', createProject: '新建项目', send: '发送', download: '下载', delete: '删除', remove: '移除', cut: '剪切', copy: '复制', restore: '恢复', permanentDelete: '永久删除', paste: '粘贴' }, selected: '已选 {count} 项', cropAvatar: '裁切头像', cropAvatarHint: '拖动调整位置，滚轮或滑块缩放', imageNotReady: '图片未就绪', canvasUnavailable: '画布不可用', exportFailed: '导出失败', searching: '搜索中…', searchNoResults: '没找到「{query}」相关内容', searchPlaceholder: '搜索项目、文件、日程、联系人…', language: '语言', languageHint: '界面显示语言', search: '搜索', languages: { zhCN: '简体中文', jaJP: '日本語', enUS: 'English' },

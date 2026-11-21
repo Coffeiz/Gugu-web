@@ -7,7 +7,7 @@ const fixedMethods = new Set([
 ])
 
 const allowedPatterns = [
-  /^agent\.files\.(?:overview|projectOverview|resolve|present|resolveDroppedReference|resolveWorkspaceReference|globalSearch|downloadTarget|commitDownload|saveAttachment)$/u,
+  /^agent\.files\.(?:overview|projectOverview|resolve|present|resolveDroppedReference|resolveWorkspaceReference|workspaceList|globalSearch|downloadTarget|commitDownload|saveAttachment)$/u,
   /^agent\.im\.(?:snapshot|authorizeGroupTool|readGroupMemoryContext)$/u,
   /^agent\.search\.(?:deep_research|similar_image_search)(?:\.available)?$/u,
   /^agent\.email\.(?:accounts|attachments|send)$/u,

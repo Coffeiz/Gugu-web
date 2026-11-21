@@ -14,6 +14,7 @@ import { useRouter } from 'vue-router'
 import { agentApi } from '@/services/api'
 import { usePathFileAccess } from '@/services/pathFileAccess'
 import { useFileOpenAccess } from '@/services/fileOpenAccess'
+import { shouldOpenFileInSystem } from '@/utils/filePreviewTypes'
 import { eventsApi } from '@/api/calendar'
 import { errorMessage, showAppError, showAppNotice } from '@/composables/core/useAppToast'
 import { i18n } from '@/i18n'
@@ -129,10 +130,9 @@ export function useMindRefActions() {
       const filename = file.relativePath.split('/').at(-1)!
       const dot = filename.lastIndexOf('.')
       const ext = dot > 0 ? filename.slice(dot + 1) : ''
-      const previewable = isPreviewable(ext)
-      if (fileOpenAccess?.canOpenInSystem(file) && (!previewable || fileOpenAccess.getOpenPreference() === 'system'))
-        await fileOpenAccess.openInSystem(file)
-      else if (previewable) previewStore.open({ displayName: dot > 0 ? filename.slice(0, dot) : filename, ext, workspaceFile: file })
+      const useSystem = fileOpenAccess && shouldOpenFileInSystem(fileOpenAccess.getOpenPreference(), ext)
+      if (useSystem && fileOpenAccess.canOpenInSystem(file)) await fileOpenAccess.openInSystem(file)
+      else if (!useSystem && isPreviewable(ext)) previewStore.open({ displayName: dot > 0 ? filename.slice(0, dot) : filename, ext, workspaceFile: file })
       else await pathFilesApi.download(file).catch(error => showAppNotice(error instanceof Error ? error.message : i18n.global.t('mindUi.referenceMissing')))
       return true
     }

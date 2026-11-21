@@ -1,5 +1,6 @@
 export { initializeDesktopAgentCredentials } from './migrations/0012_desktop_agent_credentials.js'
 export { initializeDesktopImReflection } from './migrations/0013_desktop_im_reflection.js'
+export { initializeDesktopImAcceptedFacts } from './migrations/0014_desktop_im_accepted_facts.js'
 export { initializeDesktopImProjection } from './migrations/0011_desktop_im_projection.js'
 export { initializeDesktopAgentContinuations } from './migrations/0010_desktop_agent_continuations.js'
 export { initializeDesktopImInbox } from './migrations/0009_desktop_im_inbox.js'

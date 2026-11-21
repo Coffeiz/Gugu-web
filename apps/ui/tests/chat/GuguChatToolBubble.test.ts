@@ -42,6 +42,7 @@ afterEach(() => {
   for (const { app, host } of mounted.splice(0)) { app.unmount(); host.remove() }
   vi.clearAllMocks()
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 it('桌面历史卡片展开时读取本机会话详情，并渲染参数和结果', async () => {
@@ -93,6 +94,7 @@ it('管理员覆盖优先显示，只有历史默认标签时沿用当前语言'
 })
 
 it('详情返回前保持折叠，完整输入和结果就绪后只展开一次', async () => {
+  vi.useFakeTimers()
   const request = pendingDetails()
   const bubble = mountBubble()
   bubble.click()
@@ -100,12 +102,15 @@ it('详情返回前保持折叠，完整输入和结果就绪后只展开一次'
   expect(bubble.host.querySelector('.tool-detail-shell')).toBeNull()
   expect(bubble.host.textContent).toContain('chatUi.toolDone')
   expect(bubble.host.textContent).not.toContain('chatUi.loadingToolDetails')
-  expect(bubble.host.querySelector('.is-loading-details')).not.toBeNull()
+  expect(bubble.host.querySelector('button')?.getAttribute('aria-busy')).toBe('true')
+  await vi.advanceTimersByTimeAsync(100)
+  expect(bubble.host.textContent).not.toContain('chatUi.loadingToolDetails')
   expect(bubble.changes).not.toHaveBeenCalled()
   request.resolve({ toolInput: { cmd: 'pwd' }, toolResult: '合成结果' })
   await settle()
   expect(bubble.changes.mock.calls).toEqual([[true]])
-  expect(bubble.host.querySelector('.is-loading-details')).toBeNull()
+  await vi.advanceTimersByTimeAsync(150)
+  expect(bubble.host.textContent).not.toContain('chatUi.loadingToolDetails')
   expect(bubble.host.querySelector('.tool-detail-shell')?.textContent).toContain('合成结果')
   expect(bubble.host.querySelector('.tool-detail-shell')?.textContent).toContain('pwd')
 })
@@ -119,6 +124,7 @@ it('已有详情直接展开，不重复请求', async () => {
 })
 
 it('已展开卡片接管到历史投影时自动加载详情并避免空白', async () => {
+  vi.useFakeTimers()
   let resolveDetails!: (value: { toolInput?: unknown; toolResult?: unknown }) => void
   vi.mocked(agentApi.getToolEventDetails).mockReturnValueOnce(new Promise(resolve => {
     resolveDetails = resolve
@@ -142,6 +148,8 @@ it('已展开卡片接管到历史投影时自动加载详情并避免空白', a
   }
   await nextTick()
   expect(agentApi.getToolEventDetails).toHaveBeenCalledWith(7, { kind: 'timeline', messageId: 11, index: 0 })
+  expect(host.textContent).not.toContain('chatUi.loadingToolDetails')
+  await vi.advanceTimersByTimeAsync(151)
   expect(host.textContent).toContain('chatUi.loadingToolDetails')
 
   resolveDetails({ toolInput: { command: 'pwd' }, toolResult: '已取消' })
@@ -159,7 +167,7 @@ it('等待时取消不会被晚到响应打开，再次点击使用已缓存详�
   bubble.click()
   bubble.click()
   await nextTick()
-  expect(bubble.host.querySelector('.is-loading-details')).toBeNull()
+  expect(bubble.host.querySelector('button')?.getAttribute('aria-busy')).toBe('false')
   request.resolve({ toolResult: '缓存结果' })
   await settle()
   expect(bubble.changes).not.toHaveBeenCalled()

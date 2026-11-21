@@ -1,3 +1,4 @@
+import { CoreError } from '@gugu/core'
 import type { Pool, PoolClient } from 'pg'
 import { randomUUID } from 'node:crypto'
 import { ensureRegistrationFileLibraryQuota, lockQuota, reconcileLocalUsage } from '../../files/storage/quota.js'
@@ -13,6 +14,12 @@ export async function hasProjectExpiryJournalSchema(db: Pick<Pool, 'query'>): Pr
 
 /** 清理一个过期项目；行锁使恢复和多个清理者不会同时处理同一项目。 */
 export async function purgeExpiredProject(pool: Pool, storageRoot: string, cutoff: Date, defaultLimitBytes: number | null): Promise<boolean> {
+  return purgeDeletedProject(pool, storageRoot, defaultLimitBytes, { cutoff })
+}
+
+export async function purgeDeletedProject(pool: Pool, storageRoot: string, defaultLimitBytes: number | null,
+  target: { cutoff: Date } | { ownerId: string; projectId: number }): Promise<boolean> {
+  const manual = 'ownerId' in target
   const client = await pool.connect()
   const staged: NonNullable<Awaited<ReturnType<typeof stageLocalFileRemoval>>>[] = []
   let committed = false
@@ -21,14 +28,20 @@ export async function purgeExpiredProject(pool: Pool, storageRoot: string, cutof
   let journalClient: PoolClient | undefined
   try {
     const lock = await client.query<{ acquired: boolean }>("SELECT pg_try_advisory_lock(hashtext('gugu-project-expiry:' || current_schema())) AS acquired")
-    if (!lock.rows[0]?.acquired) return false
+    if (!lock.rows[0]?.acquired) {
+      if (manual) throw new CoreError('conflict', '项目清理正在进行，请稍后重试')
+      return false
+    }
     locked = true
     // 先预留日志连接，再持有项目行锁；其他请求等待项目时不会耗尽所需连接。
     journalClient = await pool.connect()
     await client.query('BEGIN')
     const result = await client.query<{ id: number; user_id: string }>(
-      `SELECT id,user_id::text FROM projects WHERE deleted_at IS NOT NULL AND deleted_at <= $1
-       ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1`, [cutoff],
+      manual
+        ? `SELECT id,user_id::text FROM projects WHERE user_id=$1 AND id=$2 AND deleted_at IS NOT NULL FOR UPDATE`
+        : `SELECT id,user_id::text FROM projects WHERE deleted_at IS NOT NULL AND deleted_at <= $1
+           ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1`,
+      manual ? [target.ownerId, target.projectId] : [target.cutoff],
     )
     const project = result.rows[0]
     if (!project) {
@@ -128,6 +141,7 @@ export async function recoverProjectExpiryJournal(pool: Pool, storageRoot: strin
 
 export interface ProjectExpiryWorkerOptions {
   enabled: boolean
+  expire?: boolean
   pool: Pool
   storageRoot: string
   defaultLimitBytes: number | null
@@ -167,6 +181,7 @@ export function startProjectExpiryWorker(options: ProjectExpiryWorkerOptions): {
       if (stopping) break
       try {
         await recover()
+        if (options.expire === false) continue
         const cutoff = new Date(Date.now() - retention)
         while (!stopping && await purgeExpiredProject(options.pool, options.storageRoot, cutoff, options.defaultLimitBytes)) { /* 逐项清理 */ }
       } catch (error) { options.onError(error) }

@@ -11,5 +11,6 @@ export const webProjectAccess: ProjectAccess = {
     post('/projects', data, idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : undefined),
   update: (id, data, meta) => patch(`/projects/${id}`, data, meta),
   delete: id => del(`/projects/${id}`),
+  purge: id => del(`/projects/${id}/purge`),
   restore: id => post(`/projects/${id}/restore`),
 }

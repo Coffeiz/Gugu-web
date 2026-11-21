@@ -21,6 +21,7 @@ const props = defineProps({
   animatedBlur: { type: Boolean, default: false },
   placement: { type: String as PropType<'bottom' | 'top' | 'auto'>, default: 'bottom' },
   position: { type: Object as PropType<{ x: number; y: number } | null>, default: null },
+  centered: { type: Boolean, default: false },
   style: { type: Object as PropType<Record<string, string | number | undefined>>, default: () => ({}) },
 })
 const emit = defineEmits<{ 'after-leave': [] }>()
@@ -51,12 +52,14 @@ function raiseBeforeAnchorInteraction(event: MouseEvent) {
 
 function position() {
   const rect = props.anchor?.getBoundingClientRect()
-  if (props.position) {
+  if (props.centered || props.position) {
     const width = popupRef.value?.offsetWidth ?? 0
     const height = popupRef.value?.offsetHeight ?? 0
-    const left = Math.max(6, Math.min(props.position.x, window.innerWidth - width - 6))
-    const top = Math.max(6, Math.min(props.position.y, window.innerHeight - height - 6))
-    popupStyle.value = { ...popupStyle.value, ...props.style, left: `${left}px`, top: `${top}px`, zIndex: popupZ.value || nextZ() }
+    const x = props.centered ? (window.innerWidth - width) / 2 : props.position!.x
+    const y = props.centered ? (window.innerHeight - height) / 2 : props.position!.y
+    const left = Math.max(6, Math.min(x, window.innerWidth - width - 6))
+    const top = Math.max(6, Math.min(y, window.innerHeight - height - 6))
+    popupStyle.value = { ...popupStyle.value, minWidth: undefined, ...props.style, left: `${left}px`, top: `${top}px`, zIndex: popupZ.value || nextZ() }
     return
   }
   if (!rect) return
@@ -94,7 +97,7 @@ watch(() => props.style, value => {
   }
   popupStyle.value = next
 }, { deep: true })
-watch(() => [props.anchor, props.position, props.placement], () => {
+watch(() => [props.anchor, props.position, props.placement, props.centered], () => {
   if (props.show) refresh()
 })
 watch(() => props.show, value => {

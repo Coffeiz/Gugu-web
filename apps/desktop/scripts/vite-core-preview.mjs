@@ -36,7 +36,7 @@ import { pairingHandlers, telegramHandlers } from '../src/main/im/ipc.ts'
 import { workspaceHandlers } from '../src/main/workspace/ipc.ts'
 import { DesktopLifecycle } from '../src/main/lifecycle.ts'
 import { desktopPreviewDataDirectory, createDesktopPreviewEncryption } from '../src/main/preview-directory.ts'
-import { desktopPreviewRoutes, workspacePreviewRoutes } from '../../ui/src/desktop/bridge/preview-core.ts'
+import { desktopPreviewRoutes, resourcesPreviewRoute, workspacePreviewRoutes } from '../../ui/src/desktop/bridge/preview-core.ts'
 
 const previewMethods = new Map(desktopPreviewRoutes.map(({ endpoint, methods }) => [endpoint, new Set(methods)]))
 previewMethods.set(agentSessionPreviewPath, new Set(['agentSessions']))
@@ -198,7 +198,7 @@ export function desktopCorePreview(desktopRoot) {
         const socketPath = process.env.GUGU_DESKTOP_PREVIEW_SOCKET
         const secret = process.env.GUGU_DESKTOP_PREVIEW_SECRET
         if ((trustedCall || permittedFile) && socketPath && secret &&
-          (content || upload || workspacePreviewEndpoints.has(req.url) || req.url === '/__desktop-preview/files' || req.url === '/__desktop-preview/im' || req.url === '/__desktop-preview/logs' || req.url === '/__desktop-preview/preferences' || req.url === agentModelPreviewPath || req.url === agentSessionPreviewPath || attachment)) {
+          (content || upload || workspacePreviewEndpoints.has(req.url) || req.url === resourcesPreviewRoute.endpoint || req.url === '/__desktop-preview/files' || req.url === '/__desktop-preview/im' || req.url === '/__desktop-preview/logs' || req.url === '/__desktop-preview/preferences' || req.url === agentModelPreviewPath || req.url === agentSessionPreviewPath || attachment)) {
           const upstream = request({
             socketPath, path: req.url, method: req.method,
             headers: { ...(req.headers['content-type'] ? { 'Content-Type': req.headers['content-type'] } : {}),

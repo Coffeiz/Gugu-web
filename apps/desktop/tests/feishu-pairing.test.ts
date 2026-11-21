@@ -36,13 +36,17 @@ it('飞书扫码替换旧任务，确认后仅通过加密存储保留凭据', a
     expect(await pairing.poll(old.poll_id)).toEqual({ status: 'expired' })
     expect(await pairing.poll(active.poll_id)).toEqual({ status: 'success', bot: { id: 1, name: '我的飞书', app_id: 'app' } })
     expect(await pairing.poll(active.poll_id)).toEqual({ status: 'expired' })
-    expect(await pairing.status()).toEqual({ configured: true, enabled: true })
+    expect(await pairing.status()).toMatchObject({ configured: true, enabled: true, bound: true,
+      groupChatEnabled: true, groupReplyMode: 'reply_mentions', groupAttentionMode: 'autonomous' })
+    await pairing.updateGroupSettings({ groupReplyMode: 'reply_all', groupAttentionMode: 'active',
+      groupOwnerMemoryEnabled: true, groupHistorySearchEnabled: true })
     const waiting = await pairing.start()
-    expect(await pairing.setEnabled(false)).toEqual({ configured: true, enabled: false })
+    expect(await pairing.setEnabled(false)).toMatchObject({ configured: true, enabled: false })
     expect(await pairing.poll(waiting.poll_id)).toEqual({ status: 'expired' })
     const reopened = createDesktopFeishuPairing(directory, encryption, owner, transport)
-    expect(await reopened.status()).toEqual({ configured: true, enabled: false })
-    expect(await reopened.setEnabled(true)).toEqual({ configured: true, enabled: true })
+    expect(await reopened.status()).toMatchObject({ configured: true, enabled: false,
+      groupReplyMode: 'reply_all', groupAttentionMode: 'active', groupOwnerMemoryEnabled: true, groupHistorySearchEnabled: true })
+    expect(await reopened.setEnabled(true)).toMatchObject({ configured: true, enabled: true })
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

@@ -392,3 +392,42 @@ test('a confirmation code with no redeemer is rejected before consuming the acti
   assert.equal(data.prompt.status, 'active')
   assert.equal(data.commits, 0)
 })
+
+test('多选在同一事务校验归属、去重并保存完整答案', async () => {
+  const data = state({
+    action: { tokenHash },
+    prompt: { schema: { source: 'agent', selection_mode: 'multiple', options: [
+      { id: 'keep', label: '保留', action_type: 'choice' },
+      { id: 'review', label: '审阅', action_type: 'choice' },
+      { id: '__custom_reply__', label: '自定义回复', action_type: 'custom_reply' },
+    ] } },
+  })
+  const reply = { ownerId: 'owner-a', promptId: 17, token: 'token' }
+  for (const selectedOptionIds of [[], ['review'], ['keep', 'other'], ['keep', '__custom_reply__']]) {
+    await assert.rejects(consume(data, { ...reply, selectedOptionIds }), { code: 'action_invalid' })
+  }
+  assert.equal(data.commits, 0)
+  assert.equal(data.action.status, 'pending')
+  const result = await consume(data, { ...reply, selectedOptionIds: ['keep', 'review', 'keep'] })
+  assert.deepEqual(result.result.selected_option_ids, ['keep', 'review'])
+  assert.deepEqual(result.result.value, ['keep', 'review'])
+  assert.equal(result.result.text, '保留、审阅')
+  assert.deepEqual(data.prompt.schema.resolved_result, result.result)
+  assert.equal(data.commits, 1)
+})
+
+test('自定义补充仅允许用于支持文本的多选，直接填写也可一次完成', async () => {
+  const reply = { ownerId: 'owner-a', promptId: 17, token: 'token', customAnswer: ' 补充说明 ' }
+  const single = state({ action: { tokenHash } })
+  await assert.rejects(consume(single, reply), { code: 'action_invalid' })
+  assert.equal(single.commits, 0)
+  const multi = state({
+    action: { tokenHash, optionId: '__custom_reply__', actionType: 'custom_reply' },
+    prompt: { schema: { source: 'agent', selection_mode: 'multiple', allow_text_input: true } },
+  })
+  const { result } = await consume(multi, reply)
+  assert.equal(result.status, 'selected')
+  assert.equal(result.custom_answer, '补充说明')
+  assert.equal(result.value, '补充说明')
+  assert.equal(multi.commits, 1)
+})

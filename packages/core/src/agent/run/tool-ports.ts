@@ -1,3 +1,5 @@
+import type { McpToolLookup } from '../../mcp/tool-directory.js'
+import { canonicalAgentToolName } from '../tools/configuration.js'
 import type { PreparedToolDefinition, RunIdentity, ToolResult } from '../models.js'
 import type { CanonicalRunPreparationPorts, ToolPort } from '../ports.js'
 import { AgentRunReconstructionVersionError } from './dispatch-worker.js'
@@ -9,9 +11,10 @@ type AgentRunConfiguration = Awaited<ReturnType<CanonicalRunPreparationPorts['co
 export function createAgentRunToolPorts(options: {
   identity: RunIdentity
   registry: {
-    capabilities(identity: RunIdentity): Promise<readonly PreparedToolDefinition[]>
+    capabilities(identity: RunIdentity, lookup?: McpToolLookup): Promise<readonly PreparedToolDefinition[]>
     tools: ToolPort
   }
+  lazyMcp?: boolean
   preparation: Omit<CanonicalRunPreparationPorts, 'discover'>
   configurationMatches(configuration: AgentRunConfiguration, identity: RunIdentity): boolean | Promise<boolean>
 }): { tools: ToolPort; preparation: CanonicalRunPreparationPorts } {
@@ -23,18 +26,23 @@ export function createAgentRunToolPorts(options: {
     if (configuration.identity.ownerId !== identity.ownerId || !await options.configurationMatches(configuration, identity))
       throw new AgentRunReconstructionVersionError('工具运行配置不匹配')
     const names = await options.preparation.capabilities.filterConfigured(configuration.toolNames, configuration.identity, signal)
-    const configured = new Set(configuration.toolNames.filter(name => names.includes(name)))
+    const configured = new Set(configuration.toolNames.map(canonicalAgentToolName).filter(name => names.includes(name)))
     const definitions = await options.registry.capabilities(identity)
     signal.throwIfAborted()
     return definitions.filter(definition => configured.has(definition.name))
   }
-  async function discoverRelatedTools(signal: AbortSignal) {
+  async function discoverRelatedTools(signal: AbortSignal, lookup?: McpToolLookup) {
     const configuration = await options.preparation.configuration(identity, signal)
-    return configuredDefinitions(signal, configuration)
+    const builtins = await configuredDefinitions(signal, configuration)
+    if (!options.lazyMcp || !lookup || (!lookup.server && lookup.names && !lookup.names.some(name => name.startsWith('mcp_')))) return builtins
+    if (!builtins.some(tool => tool.name === 'call_tool') || !builtins.some(tool => tool.name === 'search_tools')) return builtins
+    const dynamic = (await options.registry.capabilities(identity, lookup)).filter(tool => tool.name.startsWith('mcp_'))
+    signal.throwIfAborted()
+    return lookup.server ? dynamic : [...builtins, ...dynamic]
   }
   async function mayForward(name: string, signal: AbortSignal) {
-    const permitted = new Set((await discoverRelatedTools(signal)).map(definition => definition.name))
-    return permitted.has('call_tool') && permitted.has(name)
+    const permitted = new Set((await discoverRelatedTools(signal, name.startsWith('mcp_') ? { names: [name] } : undefined)).map(definition => definition.name))
+    return permitted.has('call_tool') && permitted.has(canonicalAgentToolName(name))
   }
   const tools: ToolPort = {
     async resolveCall(call, candidate, signal) {
@@ -57,7 +65,7 @@ export function createAgentRunToolPorts(options: {
       if (call.adapter === 'call_tool' && !await mayForward(call.name, scope.signal)) return {
         kind: 'completed', value: { error: '工具不存在或未开放' }, successful: false, mutated: false, executed: false,
       }
-      return options.registry.tools.dispatch(call, { ...scope, discoverRelatedTools: () => discoverRelatedTools(scope.signal) })
+      return options.registry.tools.dispatch(call, { ...scope, discoverRelatedTools: lookup => discoverRelatedTools(scope.signal, lookup) })
     },
     async reconcile(call, candidate) {
       if (!matchesRun(candidate)) return { kind: 'unknown' }
@@ -79,7 +87,7 @@ export function createAgentRunToolPorts(options: {
           || configuration.identity.subject.id !== input.identity.subject.id
           || configuration.identity.workspaceId !== input.identity.workspaceId)
           throw new AgentRunReconstructionVersionError('工具运行身份不匹配')
-        const configured = new Set(input.toolNames)
+        const configured = new Set(input.toolNames.map(canonicalAgentToolName))
         const definitions = await configuredDefinitions(signal, configuration)
         return definitions.filter(definition => configured.has(definition.name))
       },

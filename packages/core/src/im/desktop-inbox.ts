@@ -1,4 +1,5 @@
 import { claimDesktopChatAttachments, stageDesktopChatAttachment, type DesktopChatAttachmentInput } from '../agent/attachments/desktop-store.js'
+import { isAttentionSourceKind } from './attention/directive.js'
 import type { RunIdentity } from '../agent/models.js'
 import { createHash } from 'node:crypto'
 import { createDesktopAgentSession } from '../agent/sessions/desktop.js'
@@ -55,23 +56,24 @@ export async function admitDesktopImEvent(db: Kysely<Database>, ownerId: string,
   })
 }
 
-export async function desktopQqGroupRunEvent(db: Kysely<Database>, identity: RunIdentity) {
+export async function desktopImGroupRunEvent(db: Kysely<Database>, identity: RunIdentity) {
   const owner = identity.ownerId.toLowerCase().replaceAll('-', '')
   const session = Number(identity.sessionId)
-  const { rows } = await sql<{ connection_id: string; client_message_id: string; event_key: string; sealed_event: Buffer }>`
-    SELECT im.connection_id,m.client_message_id,i.event_key,i.sealed_event
+  const { rows } = await sql<{ platform: string; connection_id: string; client_message_id: string; event_key: string; sealed_event: Buffer }>`
+    SELECT im.platform,im.connection_id,m.client_message_id,i.event_key,i.sealed_event
     FROM agent_run_admissions a
     JOIN conversation_sessions s ON s.id=a.session_id AND s.user_id=a.user_id
       AND s.active_run_id=a.run_id AND s.chat_type='group'
     JOIN conversation_messages m ON m.id=a.user_message_id AND m.session_id=s.id
-    JOIN desktop_im_sessions im ON im.session_id=s.id AND im.owner_id=s.user_id AND im.platform='qq'
+    JOIN desktop_im_sessions im ON im.session_id=s.id AND im.owner_id=s.user_id AND im.platform IN ('feishu','qq','telegram')
     JOIN desktop_im_inbox i ON i.owner_id=im.owner_id AND i.platform=im.platform AND i.connection_id=im.connection_id
     WHERE a.user_id=${owner} AND a.session_id=${session} AND a.run_id=${identity.runId}
       AND (i.run_id=a.run_id OR i.run_id IS NULL AND i.state='pending')
     ORDER BY (i.run_id IS NULL),i.received_at,i.rowid LIMIT 1`.execute(db)
   // 尚未回填 run_id 时，调度器只能从同一连接的队首启动运行。
   const match = rows[0]
-  return match && imClientId('qq', match.connection_id, match.event_key) === match.client_message_id ? { connectionId: match.connection_id, eventKey: match.event_key, sealedEvent: match.sealed_event.toString('base64') } : null
+  return match && imClientId(match.platform, match.connection_id, match.event_key) === match.client_message_id
+    ? { platform: match.platform, connectionId: match.connection_id, eventKey: match.event_key, sealedEvent: match.sealed_event.toString('base64') } : null
 }
 
 /** 每次只返回一个连接的收件密文，供宿主重新核对当前绑定。 */
@@ -79,7 +81,7 @@ export async function readPendingDesktopImConnection(db: Kysely<Database>, owner
   const owner = ownerId.toLowerCase().replaceAll('-', '')
   const platform = fields.platform
   const after = fields.after ?? ''
-  if (platform !== 'qq' || typeof after !== 'string' || (after !== '' && !/^[0-9a-f]{64}$/u.test(after)))
+  if (!['feishu', 'qq', 'telegram'].includes(String(platform)) || typeof after !== 'string' || (after !== '' && !/^[0-9a-f]{64}$/u.test(after)))
     throw new CoreError('invalid_request', '本机 IM 恢复游标无效')
   const { rows } = await sql<{ connection_id: string; event_key: string; sealed_event: Buffer }>`
     SELECT connection_id,event_key,sealed_event FROM desktop_im_inbox
@@ -91,7 +93,7 @@ export async function readPendingDesktopImConnection(db: Kysely<Database>, owner
 
 async function ensureDesktopImSession(tx: Transaction<Database>, ownerId: string, owner: string,
   platform: string, connectionId: string, chatType: 'c2c' | 'group', ownerPlatformUserId: unknown) {
-  if (ownerPlatformUserId !== undefined && (platform !== 'qq' || chatType !== 'group'
+  if (ownerPlatformUserId !== undefined && (!['feishu', 'qq', 'telegram'].includes(platform) || chatType !== 'group'
     || typeof ownerPlatformUserId !== 'string' || !ownerPlatformUserId.trim() || ownerPlatformUserId.length > 256))
     throw new CoreError('invalid_request', '本机 IM 群身份无效')
   const mapped = (await sql<{ session_id: number; chat_type: string | null; platform_user_id: string | null }>`
@@ -122,7 +124,7 @@ export function recordDesktopImGroupMessage(db: Kysely<Database>, ownerId: strin
   const owner = ownerId.toLowerCase().replaceAll('-', '')
   const { platform, connectionId } = connectionScope(fields)
   const { eventKey, text, attachments = [], platformUserId, platformUserName } = fields
-  if (platform !== 'qq' || typeof eventKey !== 'string' || !/^[a-f0-9]{64}$/u.test(eventKey)
+  if (!['feishu', 'qq', 'telegram'].includes(platform) || typeof eventKey !== 'string' || !/^[a-f0-9]{64}$/u.test(eventKey)
     || typeof text !== 'string' || text.length > 32_000
     || !Array.isArray(attachments) || attachments.length > 32
     || attachments.some(input => !input || typeof input !== 'object' || Array.isArray(input))
@@ -157,6 +159,65 @@ export function recordDesktopImGroupMessage(db: Kysely<Database>, ownerId: strin
     }
     return true
   })
+}
+
+/** 从本机群会话已有消息读取短期参与度上下文，不另建一份消息存储。 */
+export async function readDesktopImGroupAttentionHistory(db: Kysely<Database>, ownerId: string, fields: Fields) {
+  const owner = ownerId.toLowerCase().replaceAll('-', '')
+  const { platform, connectionId } = connectionScope(fields)
+  if (!['feishu', 'qq', 'telegram'].includes(platform))
+    throw new CoreError('invalid_request', '本机 IM 群参与度平台无效')
+  const nowMs = Date.now(), sinceMs = nowMs - 10 * 60_000
+  const since = databaseTime(new Date(sinceMs).toISOString(), 'sqlite')
+  const { rows } = await sql<{ id: number; created_at: string; content: string; platform_user_id: string | null }>`
+    SELECT m.id,m.created_at,m.content,m.platform_user_id
+    FROM desktop_im_sessions im
+    JOIN conversation_sessions s ON s.id=im.session_id AND s.user_id=im.owner_id AND s.chat_type='group'
+    JOIN conversation_messages m ON m.session_id=s.id AND m.role='user' AND m.created_at >= ${since}
+    WHERE im.owner_id=${owner} AND im.platform=${platform} AND im.connection_id=${connectionId}
+    ORDER BY m.created_at DESC,m.id DESC LIMIT 81`.execute(db)
+  const budgetBytes = 32_000
+  let usedBytes = 0
+  const messages = rows.slice(0, 80).reverse().flatMap(row => {
+    if (!Number.isSafeInteger(row.id) || typeof row.created_at !== 'string' || typeof row.content !== 'string') return []
+    const createdAtMs = Date.parse(row.created_at)
+    const contentBytes = Buffer.byteLength(row.content, 'utf8')
+    if (!Number.isSafeInteger(createdAtMs) || createdAtMs <= 0 || !row.content.trim()
+      || contentBytes > 8_000 || usedBytes + contentBytes > budgetBytes) return []
+    usedBytes += contentBytes
+    return [{ id: row.id, createdAt: row.created_at, content: row.content,
+      platformUserId: typeof row.platform_user_id === 'string' ? row.platform_user_id : null }]
+  })
+  const factsRows = await sql<{ event_key: string; platform_message_id: string; recipient_sender_id: string; sent_at_ms: number; source_attention_kind: string | null; content: string }>`
+    SELECT f.event_key,f.platform_message_id,f.recipient_sender_id,f.sent_at_ms,f.source_attention_kind,m.content
+    FROM desktop_im_accepted_facts f
+    JOIN desktop_im_inbox i USING(owner_id,platform,connection_id,event_key)
+    JOIN desktop_im_delivery d USING(owner_id,platform,connection_id,event_key)
+    JOIN conversation_messages m ON m.id=f.message_id AND m.run_id=i.run_id
+    JOIN desktop_im_sessions im ON im.owner_id=f.owner_id AND im.platform=f.platform AND im.connection_id=f.connection_id AND im.session_id=m.session_id
+    JOIN conversation_sessions s ON s.id=im.session_id AND s.user_id=im.owner_id AND s.chat_type='group'
+    WHERE f.owner_id=${owner} AND f.platform=${platform} AND f.connection_id=${connectionId}
+      AND i.state='completed' AND d.state='accepted' AND f.sent_at_ms>=${sinceMs} AND f.sent_at_ms<=${nowMs}
+    ORDER BY f.sent_at_ms DESC LIMIT 129`.execute(db)
+  const acceptedFacts = factsRows.rows.flatMap(row => {
+    if (typeof row.platform_message_id !== 'string' || typeof row.recipient_sender_id !== 'string'
+      || !Number.isSafeInteger(row.sent_at_ms) || typeof row.content !== 'string' || !row.content.trim()) return []
+    if (!isAttentionSourceKind(row.source_attention_kind)) return []
+    return [{ platformMessageId: row.platform_message_id, recipientSenderId: row.recipient_sender_id,
+      sentAtMs: row.sent_at_ms, accepted: true as const, finalText: row.content,
+      sourceAttentionKind: row.source_attention_kind, proactive: row.source_attention_kind === 'proactive',
+      deliveryId: row.event_key }]
+  })
+  const uncovered = await sql`SELECT 1 FROM desktop_im_delivery d
+    JOIN desktop_im_inbox i USING(owner_id,platform,connection_id,event_key)
+    JOIN desktop_im_sessions im ON im.owner_id=i.owner_id AND im.platform=i.platform AND im.connection_id=i.connection_id AND im.session_id=i.session_id
+    JOIN conversation_sessions s ON s.id=im.session_id AND s.user_id=im.owner_id AND s.chat_type='group'
+    WHERE d.owner_id=${owner} AND d.platform=${platform} AND d.connection_id=${connectionId}
+      AND d.state='accepted' AND i.state='completed' AND i.received_at>=${since}
+      AND NOT EXISTS (SELECT 1 FROM desktop_im_accepted_facts f WHERE f.owner_id=d.owner_id AND f.platform=d.platform
+        AND f.connection_id=d.connection_id AND f.event_key=d.event_key) LIMIT 1`.execute(db)
+  return { messages, acceptedFacts, complete: rows.length <= 80 && factsRows.rows.length <= 128
+    && factsRows.rows.every(row => isAttentionSourceKind(row.source_attention_kind)) && uncovered.rows.length === 0 }
 }
 
 /** 只准备已持久化的收件。重试继续使用同一连接会话与 Agent 消息标识。 */
@@ -200,14 +261,27 @@ export function prepareDesktopImEvent(db: Kysely<Database>, ownerId: string, fie
 export function updateDesktopImDelivery(db: Kysely<Database>, ownerId: string, fields: Fields) {
   const owner = ownerId.toLowerCase().replaceAll('-', '')
   const { platform, connectionId } = connectionScope(fields)
-  const { eventKey, runId, action, noticeKey } = fields
+  const { eventKey, runId, action, noticeKey, replyFact } = fields
+  const validReplyFact = replyFact === undefined || Boolean(replyFact && typeof replyFact === 'object' && !Array.isArray(replyFact)
+    && Object.keys(replyFact).every(key => ['platformMessageIds', 'recipientSenderId', 'sentAtMs', 'sourceAttentionKind'].includes(key))
+    && Array.isArray((replyFact as Record<string, unknown>).platformMessageIds)
+    && ((replyFact as Record<string, unknown>).platformMessageIds as unknown[]).length > 0
+    && ((replyFact as Record<string, unknown>).platformMessageIds as unknown[]).length <= 128
+    && ((replyFact as Record<string, unknown>).platformMessageIds as unknown[]).every(id => typeof id === 'string' && id.length > 0 && id.length <= 512 && !/[\u0000-\u001f]/u.test(id))
+    && new Set((replyFact as Record<string, unknown>).platformMessageIds as string[]).size === ((replyFact as Record<string, unknown>).platformMessageIds as string[]).length
+    && typeof (replyFact as Record<string, unknown>).recipientSenderId === 'string'
+    && /^[^\u0000-\u001f]{1,256}$/u.test((replyFact as Record<string, unknown>).recipientSenderId as string)
+    && ((replyFact as Record<string, unknown>).sourceAttentionKind === undefined
+      || isAttentionSourceKind((replyFact as Record<string, unknown>).sourceAttentionKind))
+    && Number.isSafeInteger((replyFact as Record<string, unknown>).sentAtMs) && Number((replyFact as Record<string, unknown>).sentAtMs) > 0)
   if (typeof eventKey !== 'string' || !eventKey || typeof runId !== 'string' || !runId
     || (noticeKey !== undefined && (typeof noticeKey !== 'string' || !/^[a-f0-9]{64}$/.test(noticeKey)))
+    || !validReplyFact || replyFact !== undefined && (action !== 'accepted' || !['feishu', 'telegram'].includes(platform))
     || (action !== 'begin' && action !== 'accepted' && action !== 'rejected' && action !== 'unknown'))
     throw new CoreError('invalid_request', '本机 IM 投递状态无效')
   return db.transaction().execute(async tx => {
-    const event = (await sql<{ state: string }>`
-      SELECT state FROM desktop_im_inbox WHERE owner_id=${owner} AND platform=${platform}
+    const event = (await sql<{ state: string; session_id: number | null }>`
+      SELECT state,session_id FROM desktop_im_inbox WHERE owner_id=${owner} AND platform=${platform}
         AND connection_id=${connectionId} AND event_key=${eventKey} AND run_id=${runId}`.execute(tx)).rows[0]
     if (!event || event.state !== 'running') return false
     if (noticeKey !== undefined) {
@@ -232,6 +306,23 @@ export function updateDesktopImDelivery(db: Kysely<Database>, ownerId: string, f
       WHERE owner_id=${owner} AND platform=${platform} AND connection_id=${connectionId} AND event_key=${eventKey}
         AND state='sending' RETURNING state`.execute(tx)
     if (!updated.rows.length) return false
+    if (action === 'accepted' && replyFact !== undefined && event.session_id !== null) {
+      const fact = replyFact as { platformMessageIds: string[]; recipientSenderId: string; sentAtMs: number; sourceAttentionKind?: string }
+      const clientId = imClientId(platform, connectionId, eventKey)
+      const source = (await sql<{ platform_user_id: string | null }>`SELECT platform_user_id FROM conversation_messages
+        WHERE session_id=${event.session_id} AND client_message_id=${clientId} AND role='user' LIMIT 1`.execute(tx)).rows[0]
+      const assistant = (await sql<{ id: number }>`SELECT m.id FROM conversation_messages m
+        JOIN conversation_sessions s ON s.id=m.session_id AND s.user_id=${owner} AND s.chat_type='group'
+        WHERE m.session_id=${event.session_id} AND m.run_id=${runId} AND m.role='assistant'
+          AND m.canonical_batch_id IS NULL AND m.display_timeline IS NOT NULL
+        ORDER BY m.conversation_seq DESC,m.id DESC LIMIT 1`.execute(tx)).rows[0]
+      if (source?.platform_user_id === fact.recipientSenderId && assistant) {
+        for (const platformMessageId of fact.platformMessageIds) await sql`INSERT INTO desktop_im_accepted_facts
+          (owner_id,platform,connection_id,event_key,message_id,platform_message_id,recipient_sender_id,sent_at_ms,source_attention_kind)
+          VALUES(${owner},${platform},${connectionId},${eventKey},${assistant.id},${platformMessageId},${fact.recipientSenderId},${fact.sentAtMs},${fact.sourceAttentionKind ?? null})
+          ON CONFLICT(owner_id,platform,connection_id,event_key,platform_message_id) DO NOTHING`.execute(tx)
+      }
+    }
     await sql`UPDATE desktop_im_inbox SET state='completed' WHERE owner_id=${owner} AND platform=${platform}
       AND connection_id=${connectionId} AND event_key=${eventKey} AND run_id=${runId}`.execute(tx)
     return true

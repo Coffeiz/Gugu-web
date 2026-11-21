@@ -263,9 +263,15 @@ else {
         },
         trash: path => shell.trashItem(path),
         async thumbnail(bytes, name) {
-          if (process.platform !== 'darwin' && process.platform !== 'win32') {
+          const systemThumbnail = process.platform === 'darwin' || process.platform === 'win32'
+          if (!systemThumbnail || /\.(?:jpe?g|png)$/i.test(name)) {
             const image = nativeImage.createFromBuffer(bytes)
-            return image.isEmpty() ? undefined : image.resize({ width: 384 }).toPNG()
+            if (!image.isEmpty()) {
+              const { width, height } = image.getSize()
+              if (width <= 384 && height <= 256) return image.toPNG()
+              return image.resize(width / height >= 384 / 256 ? { width: 384 } : { height: 256 }).toPNG()
+            }
+            if (!systemThumbnail) return undefined
           }
           // 仅把已经通过工作区校验的文件内容交给系统缩略图服务。
           const directory = await mkdtemp(join(tmpdir(), 'gugu-thumbnail-'))
@@ -440,9 +446,14 @@ else {
           }
         }
         if (method === 'agent.im.sendAttachment') return imAttachments.send(params, signal, files.agentReadSendFile)
-        if (method === 'agent.im.authorizeGroupTool') return qqGateway.authorizeGroupTool(params, signal)
-        if (method === 'agent.im.readGroupMemoryContext' && typeof params.ownerId === 'string')
-          return qqGateway.readGroupMemoryContext(params, signal)
+        if (method === 'agent.im.authorizeGroupTool') {
+          const groupGateway = params.platform === 'feishu' ? feishuGateway : params.platform === 'telegram' ? gateway : params.platform === 'qq' ? qqGateway : undefined
+          return groupGateway && 'authorizeGroupTool' in groupGateway ? groupGateway.authorizeGroupTool(params, signal) : false
+        }
+        if (method === 'agent.im.readGroupMemoryContext' && typeof params.ownerId === 'string') {
+          const groupGateway = params.platform === 'feishu' ? feishuGateway : params.platform === 'telegram' ? gateway : params.platform === 'qq' ? qqGateway : undefined
+          return groupGateway && 'readGroupMemoryContext' in groupGateway ? groupGateway.readGroupMemoryContext(params, signal) : null
+        }
         if (method === 'agent.im.snapshot' && Object.keys(params).length === 0) {
           const [telegram, wechat, feishu, qq] = await Promise.all([
             gateway.snapshot(), wechatPairing.status(), feishuPairing.status(), qqPairing.status(),
@@ -458,6 +469,13 @@ else {
       })
       await host.request('agent.sessions.recoverStartup')
       void host.request('agent.memory.resumeReflections').catch(() => {})
+      async function fileContent(url: URL, range: string | null) {
+        if (!url.searchParams.has('reference')) return files.content(url, range)
+        const variant = url.searchParams.get('thumbnail') === '1' ? 'thumbnail' : 'metadata'
+        const file = await droppedReferences.resolve(url.searchParams.get('reference'))
+        if (!file) return new Response(null, { status: 404 })
+        return files.hostPresentationContent(file.path, file.fileIdentity, null, variant)
+      }
       protocol.handle('gugu-desktop', async (request) => {
         if (request.method !== 'GET') return new Response('界面资源不可用', { status: 405 })
         try {
@@ -470,7 +488,7 @@ else {
             const range = request.headers.get('range')
             const response = previewToken
               ? await previewWindows?.content(previewToken, range) ?? new Response(null, { status: 404 })
-              : await files.content(url, range)
+              : await fileContent(url, range)
             if (origin) response.headers.set('Access-Control-Allow-Origin', trustedOrigin)
             return response
           }
@@ -559,7 +577,7 @@ else {
               report('host.start_failed', { error })
               throw error
             }
-          } : undefined, files)
+          } : undefined, { ...files, content: fileContent })
         app.once('before-quit', () => {
           previewAgent.close()
           previewAgent.closeAllConnections()

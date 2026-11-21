@@ -159,6 +159,7 @@ const eventFormOpen = ref(false)
 const confirmingDelete = ref(false)
 const eventPopupPosition = ref<{ x: number; y: number } | null>(null)
 const eventPopupAnchor = ref<HTMLElement | null>(null)
+const eventPopupCentered = ref(false)
 const eventDraft = reactive<EventDraft>({ name: '', date: todayIso.value, ...defaultTimeRange(), description: '', allDay: false })
 const eventForm = useEventEditForm()
 const reminderError = ref('')
@@ -300,17 +301,18 @@ function openCreateEvent(date = selectedDate.value ?? todayIso.value, time = def
   reminderError.value = ''
   eventForm.resetReminder()
   eventPopupAnchor.value = null
+  eventPopupCentered.value = false
   eventPopupPosition.value = position ?? popupPositionFromPoint(window.innerWidth / 2, window.innerHeight / 2)
   eventFormOpen.value = true
 }
 function openEditEvent(
   item: CalendarRenderItem,
-  event: MouseEvent,
-  anchor = event.currentTarget instanceof HTMLElement ? event.currentTarget : null,
+  event?: MouseEvent,
+  anchor = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null,
 ) {
   const row = eventFor(item)
   if (!row) return
-  if (eventFormOpen.value && editingEvent.value?.id === row.id) {
+  if (event && eventFormOpen.value && editingEvent.value?.id === row.id) {
     if (!props.busy) eventFormOpen.value = false
     return
   }
@@ -327,7 +329,8 @@ function openEditEvent(
   reminderError.value = ''
   eventForm.resetReminder()
   eventPopupAnchor.value = anchor
-  eventPopupPosition.value = anchor ? null : popupPositionFromPoint(event.clientX, event.clientY)
+  eventPopupCentered.value = !event
+  eventPopupPosition.value = event && !anchor ? popupPositionFromPoint(event.clientX, event.clientY) : null
   eventFormOpen.value = true
   void eventForm.loadReminders(row).catch(error => {
     if (editingEvent.value?.id === row.id) reminderError.value = error instanceof Error ? error.message : '活动提醒加载失败'
@@ -344,7 +347,7 @@ watch([() => uiStore.pendingCalendarEvent, renderEvents], ([target, events]) => 
     cursor.value = new Date(date.getFullYear(), date.getMonth(), 1)
     weekRef.value = date
   }
-  openEditEvent(item, new MouseEvent('click', { clientX: window.innerWidth / 2, clientY: window.innerHeight / 2 }))
+  openEditEvent(item)
 }, { immediate: true })
 
 function onSidebarEdit(payload: { item: CalendarRenderItem; event: MouseEvent }) {
@@ -674,6 +677,7 @@ onUnmounted(() => {
     :show="eventFormOpen && !confirmingDelete"
     :anchor="eventPopupAnchor"
     :position="eventPopupPosition"
+    :centered="eventPopupCentered"
     placement="auto"
     :style="{ width: '240px' }"
     popup-class="desktop-calendar-add-popup"

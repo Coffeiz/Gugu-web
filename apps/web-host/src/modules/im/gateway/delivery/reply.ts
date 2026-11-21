@@ -7,7 +7,7 @@ import { createImRunArtifactSender } from './artifacts.js'
 import { createImRunScope } from '../agent/scope.js'
 import type { createPostgresImControls } from '../attention/controls.js'
 import { imAcceptedEvidence } from '../agent/evidence.js'
-import { readTrustedQqMessageFormat } from '../platforms/qq/format.js'
+import { readTrustedQqMessageFormat } from '../reply-settings.js'
 
 type ArtifactOptions = Parameters<typeof createImRunArtifactSender>[0]
 const same = (a: ArtifactOptions['identity'], b: ArtifactOptions['identity']) => a.ownerId === b.ownerId && a.sessionId === b.sessionId && a.runId === b.runId

@@ -29,7 +29,7 @@
           @remove="remove"
         />
       </div>
-      <template v-if="loaded && items.length && !editor" #footer>
+      <template v-if="loaded && items.length && !editor && maxServers !== null" #footer>
         <div class="mcp-footer">
           <span class="mcp-muted">{{ t('skillsMcpUi.limit', { count: maxServers }) }}</span>
         </div>
@@ -85,7 +85,7 @@ const busyId = ref<string | null>(null)
 const error = ref('')
 const formError = ref('')
 const items = ref<McpServerItem[]>([])
-const maxServers = ref(5)
+const maxServers = ref<number | null>(null)
 const editor = ref(false)
 const editing = ref<McpServerItem | null>(null)
 const formKey = ref(0)

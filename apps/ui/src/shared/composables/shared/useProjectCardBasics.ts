@@ -9,6 +9,30 @@ import { computed, type Ref } from 'vue'
 import type { Project } from '@/types/project'
 import { projectProgress } from '@/utils/projectProgress'
 
+function formatProjectCardDate(iso: string, today: Date) {
+  if (!iso) return ''
+  const date = new Date(iso + 'T00:00:00')
+  const monthDay = `${date.getMonth() + 1}/${date.getDate()}`
+  return date.getFullYear() !== today.getFullYear() ? `${date.getFullYear()}/${monthDay}` : monthDay
+}
+
+export function projectDeadlinePresentation(project: Pick<Project, 'deadline' | 'status'>, now = new Date()) {
+  const date = project.deadline
+  if (!date) return { label: '—', urgent: false, overdue: false }
+  const today = new Date(now)
+  today.setHours(0, 0, 0, 0)
+  const remaining = Math.ceil((new Date(date + 'T00:00:00').getTime() - today.getTime()) / 86400000)
+  if (!Number.isFinite(remaining)) return { label: '—', urgent: false, overdue: false }
+  const overdue = project.status !== 'done' && remaining < 0
+  const urgent = project.status !== 'done' && remaining <= 3
+  const label = overdue ? `逾期 ${-remaining} 天`
+    : remaining === 0 ? '今天截止'
+    : remaining === 1 ? '明天'
+    : remaining > 1 && remaining <= 7 ? `${remaining}天后`
+    : formatProjectCardDate(date, today)
+  return { label, urgent, overdue }
+}
+
 export function useProjectCardBasics(project: Ref<Project>) {
   const currentStageIndex = computed(() =>
     project.value.stages.findIndex(s => s.key === project.value.currentStage)
@@ -30,33 +54,10 @@ export function useProjectCardBasics(project: Ref<Project>) {
     return `rgb(${r},${g},${b})`
   })
 
-  const daysLeft = computed(() => {
-    if (!project.value.deadline) return null
-    const today = new Date(); today.setHours(0, 0, 0, 0)
-    const dl = new Date(project.value.deadline + 'T00:00:00')
-    return Math.ceil((dl.getTime() - today.getTime()) / 86400000)
-  })
-  const isUrgent = computed(() => project.value.status !== 'done' && (daysLeft.value ?? Infinity) <= 3)
-  const thisYear = new Date().getFullYear()
-  function fmtDate(iso: string) {
-    if (!iso) return ''
-    const d = new Date(iso + 'T00:00:00')
-    const mm = `${d.getMonth() + 1}/${d.getDate()}`
-    return d.getFullYear() !== thisYear ? `${d.getFullYear()}/${mm}` : mm
-  }
-  const deadlineLabel = computed(() => {
-    if (!project.value.deadline) return '—'
-    const d = daysLeft.value
-    if (d == null) return '—'
-    if (d < 0) {
-      if (project.value.status !== 'done') return `逾期 ${-d} 天`
-      return fmtDate(project.value.deadline)
-    }
-    if (d === 0) return '今天截止'
-    if (d === 1) return '明天'
-    if (d <= 7) return `${d}天后`
-    return fmtDate(project.value.deadline)
-  })
+  const deadline = computed(() => projectDeadlinePresentation(project.value))
+  const isUrgent = computed(() => deadline.value.urgent)
+  const deadlineLabel = computed(() => deadline.value.label)
+  const fmtDate = (iso: string) => formatProjectCardDate(iso, new Date())
 
   return { currentStageLabel, curTodoTotal, curDoneCount, stageProgress, nameColor, isUrgent, fmtDate, deadlineLabel }
 }

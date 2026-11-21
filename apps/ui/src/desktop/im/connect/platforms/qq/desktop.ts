@@ -1,4 +1,5 @@
 import { hasDesktopQqPairing, requestDesktopQqPairing } from '@desktop/bridge/bridge'
+import type { DesktopImGroupSettingsPatch } from '@/im/connect/desktopAdapter'
 
 export { hasDesktopQqPairing }
 
@@ -55,6 +56,11 @@ export const desktopQqConnectApi = {
   },
   async setGroupChat(enabled: boolean) {
     const result = await requestDesktopQqPairing({ action: 'setGroupChat', enabled })
+    if (!('configured' in result)) throw new Error()
+    return result
+  },
+  async updateGroupSettings(patch: DesktopImGroupSettingsPatch) {
+    const result = await requestDesktopQqPairing({ action: 'updateGroupSettings', patch })
     if (!('configured' in result)) throw new Error()
     return result
   },

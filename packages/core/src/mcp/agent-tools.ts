@@ -1,13 +1,14 @@
 import type { PreparedToolDefinition, RunIdentity, ToolCall, ToolPlan, ToolResult } from '../agent/models.js'
 import type { ToolPort } from '../agent/ports.js'
-import type { McpDirectoryTool } from './tool-directory.js'
+import type { McpDirectoryTool, McpServiceSummary, McpToolLookup } from './tool-directory.js'
 
 type Registry = { capabilities(identity: RunIdentity): Promise<PreparedToolDefinition[]>; tools: ToolPort }
 type RuntimeDispatch = { result: string; executed?: boolean } | { error: string; executed?: boolean } | { uncertain: true }
 
 export interface AgentMcpToolPortsOptions {
-  directory(ownerId: string): Promise<readonly McpDirectoryTool[]>
-  runtime: { dispatchForAgent(ownerId: string, serverId: string, name: string, args: unknown, signal?: AbortSignal): Promise<RuntimeDispatch> }
+  services?(ownerId: string): Promise<readonly McpServiceSummary[]>
+  directory(ownerId: string, lookup?: McpToolLookup): Promise<readonly McpDirectoryTool[]>
+  runtime: { dispatchForAgent(ownerId: string, serverId: string, name: string, args: unknown, signal?: AbortSignal, authorize?: () => Promise<boolean>): Promise<RuntimeDispatch> }
   authorize(identity: RunIdentity, name: string, signal?: AbortSignal): Promise<boolean>
   configured?(identity: RunIdentity, name: string, signal?: AbortSignal): Promise<boolean>
 }
@@ -18,9 +19,9 @@ export function createMcpAgentToolPorts(options: AgentMcpToolPortsOptions & { ba
     try { return await options.configured?.(identity, name, signal) !== false && await options.authorize(identity, name, signal) === true }
     catch { return false }
   }
-  async function declared(ownerId: string) {
+  async function declared(ownerId: string, lookup?: McpToolLookup) {
     const result = new Map<string, McpDirectoryTool>()
-    for (const tool of await options.directory(ownerId))
+    for (const tool of await options.directory(ownerId, lookup))
       if (tool.name.startsWith('mcp_') && !result.has(tool.name)) result.set(tool.name, tool)
     return result
   }
@@ -35,11 +36,12 @@ export function createMcpAgentToolPorts(options: AgentMcpToolPortsOptions & { ba
       scope.signal.throwIfAborted()
       if (!await allowed(identity, call.name, scope.signal))
         return { kind: 'completed', value: { error: '工具不存在或未开放' }, successful: false, mutated: false, executed: false }
-      const tool = (await declared(identity.ownerId)).get(call.name)
+      const tool = (await declared(identity.ownerId, options.services ? { names: [call.name] } : undefined)).get(call.name)
       if (!tool) return { kind: 'completed', value: { error: '工具不存在或未开放' }, successful: false, mutated: false, executed: false }
       scope.signal.throwIfAborted()
       let result: RuntimeDispatch
-      try { result = await options.runtime.dispatchForAgent(identity.ownerId, tool.server_id, tool.name, call.input, scope.signal) }
+      try { result = await options.runtime.dispatchForAgent(identity.ownerId, tool.server_id, tool.name, call.input, scope.signal,
+        options.services ? () => allowed(identity, call.name, scope.signal) : undefined) }
       catch { return { kind: 'unknown' } }
       if ('uncertain' in result) return { kind: 'unknown' }
       if ('error' in result) {
@@ -56,19 +58,20 @@ export function createMcpAgentToolPorts(options: AgentMcpToolPortsOptions & { ba
     },
   }
   return {
-    async capabilities(identity: RunIdentity): Promise<PreparedToolDefinition[]> {
+    async capabilities(identity: RunIdentity, lookup?: McpToolLookup): Promise<PreparedToolDefinition[]> {
       identity = Object.freeze({ ...identity })
       const builtins = await options.base.capabilities(identity)
+      if (options.services && !lookup) return builtins
       const names = new Set(builtins.map(tool => tool.name))
       const dynamic: PreparedToolDefinition[] = []
-      for (const [name, tool] of await declared(identity.ownerId)) {
+      for (const [name, tool] of await declared(identity.ownerId, options.services ? lookup : undefined)) {
         if (names.has(name) || !await allowed(identity, name)) continue
         names.add(name)
         dynamic.push({ name, schema: { type: 'function', function: {
           name, description: tool.description, parameters: tool.input_schema,
         } } as PreparedToolDefinition['schema'] })
       }
-      return [...builtins, ...dynamic]
+      return options.services && lookup?.server ? dynamic : [...builtins, ...dynamic]
     },
     tools,
   }

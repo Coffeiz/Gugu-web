@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto'
 import {pinyin} from 'pinyin-pro'
-import {createMcpToolDirectory,type McpDirectoryTool} from '@gugu/core/mcp/tool-directory'
+import {createMcpToolDirectory, matchesMcpLookup,type McpDirectoryTool} from '@gugu/core/mcp/tool-directory'
 import {createMcpSnapshotStore} from '@gugu/core/mcp/snapshot-store'
 import {mcpConfigDigestPayload} from '@gugu/core/mcp/config-digest'
 import {descriptionForProvider,descriptionShortOf,prefixedToolName,sanitizeInputSchema,validateInputSchema} from '@gugu/core/mcp/schema-adapter'
@@ -109,15 +109,17 @@ export function createMcpSkillToolDirectory<DB>(database:DB,options:{
  romanize?(value:string):string;builtinNames(owner:string):Promise<ReadonlySet<string>>
  configs?:DirectoryPorts['configs'];ports?:DirectoryPorts
  client?:ClientFactory
-}): (owner:string)=>Promise<McpDirectoryTool[]> {
+}) {
  const db=database as never
  const lister=createMcpServerConfigLister(db)
  const listConfigs=options.configs??(owner=>lister(owner))
  const snapshot=options.ports??createMcpSnapshotStore(db,'postgres',async(owner,connection)=>digest((await (options.configs?options.configs(owner):lister(owner,connection))).filter(row=>row.enabled)))
  const client=options.client??(input=>createMcpHttpClient(input))
- return createMcpToolDirectory({
+ const enabledConfigs=async(owner:string)=>(await listConfigs(owner)).filter(row=>row.enabled)
+ const directory=createMcpToolDirectory({
   enabled:options.enabled,
-  configs:async owner=>(await listConfigs(owner)).filter(row=>row.enabled),
+  configs:enabledConfigs,
+  select:(row,lookup)=>row.transport==='http' && matchesMcpLookup(row.name,lookup,options.romanize??chinesePinyin),
   digest,
   read:snapshot.read,
   writeIfCurrent:snapshot.writeIfCurrent,
@@ -130,5 +132,8 @@ export function createMcpSkillToolDirectory<DB>(database:DB,options:{
    })
    return {tools,complete:results.every(result=>result.complete)}
   },
+ })
+ return Object.assign(directory, {
+  services: async (owner:string) => await options.enabled() ? (await enabledConfigs(owner)).filter(row=>row.transport==='http').map(({name})=>({name})) : [],
  })
 }

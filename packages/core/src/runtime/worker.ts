@@ -8,7 +8,7 @@ import { dirname, join, resolve } from 'node:path'
 import { createChatAttachmentDraftClearer } from '../agent/attachments/clear-drafts.js'
 import { clearSqliteAgentMemory, forgetSqliteAgentMemory, readSqliteAgentMemory } from '../agent/memory/sqlite.js'
 import { loadSqliteAgentRunSecret } from '../agent/run/sqlite-secret.js'
-import { readDesktopImAttachmentReference, nextDesktopQqSequence, recordDesktopImGroupMessage, readPendingDesktopImConnection, desktopImProjection, rejectDesktopImEvent, desktopImPrompt, admitDesktopImEvent, prepareDesktopImEvent, updateDesktopImDelivery } from '../im/desktop-inbox.js'
+import { readDesktopImAttachmentReference, nextDesktopQqSequence, recordDesktopImGroupMessage, readDesktopImGroupAttentionHistory, readPendingDesktopImConnection, desktopImProjection, rejectDesktopImEvent, desktopImPrompt, admitDesktopImEvent, prepareDesktopImEvent, updateDesktopImDelivery } from '../im/desktop-inbox.js'
 import { DESKTOP_CALENDAR_UNDO_CONTEXT, MAX_AGENT_RESPONSE } from '../contracts/desktop.js'
 import { createDesktopMemoryFiles } from '../agent/memory/desktop-files.js'
 import { settleClosedSqliteInteraction } from '../agent/run/sqlite-recovery.js'
@@ -288,6 +288,9 @@ try {
         } else if (job.method === 'im.inbox.recordGroup') {
           validateCommandParams(job.method, job.params)
           result = await recordDesktopImGroupMessage(runtime.db, ownerId, job.params)
+        } else if (job.method === 'im.inbox.groupAttentionHistory') {
+          validateCommandParams(job.method, job.params)
+          result = await readDesktopImGroupAttentionHistory(runtime.db, ownerId, job.params)
         } else if (job.method === 'im.inbox.pendingConnection') {
           validateCommandParams(job.method, job.params)
           result = await readPendingDesktopImConnection(runtime.db, ownerId, job.params)
@@ -490,7 +493,7 @@ try {
             case 'agent.sessions.respond':
               result = await agentRuns!.respond(safeInteger(job.params.id), job.params.runId as string,
                 safeInteger(job.params.promptId), typeof job.params.eventId === 'string' ? job.params.eventId : '',
-                typeof job.params.token === 'string' ? { token: job.params.token }
+                typeof job.params.token === 'string' ? { token: job.params.token, selectedOptionIds: job.params.selectedOptionIds as string[] | undefined, customAnswer: job.params.customAnswer as string | undefined }
                   : typeof job.params.text === 'string' ? { text: job.params.text }
                     : Object.hasOwn(job.params, 'secrets') ? { secrets: job.params.secrets as Record<string, string> | null } : null,
                 job.params.model as ProviderConfig, job.params.embedding as RagQueryEmbeddingSettings | undefined)
@@ -569,7 +572,7 @@ try {
               break
             }
             case 'mcp.list':
-              result = await desktopMcp(runtime.db, ownerId, mcpCrypto).list()
+              result = await desktopMcp(runtime.db, ownerId, mcpCrypto).list(job.params.offset == null ? undefined : Number(job.params.offset))
               break
             case 'mcp.config':
               result = await desktopMcp(runtime.db, ownerId, mcpCrypto).config(id)

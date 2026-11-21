@@ -1,3 +1,4 @@
+import { canonicalAgentToolName } from '@gugu/core/agent'
 import { AgentRunReconstructionVersionError as AgentReconstructionVersionError, createAgentCompactionPort, createAgentRunReconstructor, createAgentRunToolPorts, createLazyAgentCompactionPort, restoreAgentRequestPrefix } from '@gugu/core/agent'
 import type { AgentObservationPort, AgentProviderAuxiliaryPorts, AgentRunBinding, AgentRuntimeOptions, CanonicalContextPorts, CanonicalRunContext, CanonicalRunPreparationPorts, ContextDataPorts, ContextSourcePorts, CurrentTurnSources, RunIdentity, HistoryIdentity } from '@gugu/core/agent'
 import type { ProviderRuntimeOptions } from '@gugu/core/providers'
@@ -77,12 +78,13 @@ export function createWebAgentToolPorts(
         && configuration.identity.subject.kind === 'session'
         && configuration.identity.subject.id === identity.sessionId
         && configuration.source === 'web'
-        && configuration.toolNames.includes(name)
+        && ((mcp.services && name.startsWith('mcp_') && configuration.toolNames.includes('call_tool') && configuration.toolNames.includes('search_tools'))
+          || configuration.toolNames.some(tool => canonicalAgentToolName(tool) === canonicalAgentToolName(name)))
         && (!mcp.configured || await mcp.configured(candidate, name, signal))
     },
   }) : registry
   return createAgentRunToolPorts({
-    identity, registry: boundRegistry, preparation,
+    identity, registry: boundRegistry, preparation, lazyMcp: Boolean(mcp?.services),
     configurationMatches(configuration) {
       return configuration.source === 'web' && configuration.identity.subject.kind === 'session'
         && configuration.identity.subject.id === identity.sessionId
@@ -193,7 +195,7 @@ export function createWebAgentRagResources(options: {
         return options.remaining.mcp!.authorize(identity, name, signal)
       },
     } : undefined
-    const configuration = createWebAgentMcpRunPreparation(rag, mcp, options.observation)
+    const configuration = createWebAgentMcpRunPreparation(rag, mcp?.services ? undefined : mcp, options.observation)
     const compactionInstruction = binding.compactionInstruction ?? options.compactionInstruction ?? ''
     let providerBinding: {
       provider: AgentProviderAuxiliaryPorts
@@ -210,7 +212,7 @@ export function createWebAgentRagResources(options: {
         maxOutputTokens: selected.config.max_tokens ?? 0, instruction: compactionInstruction,
         async loadTools(signal) {
           const runConfiguration = await configuration(identity, signal ?? new AbortController().signal)
-          const configured = new Set(runConfiguration.toolNames)
+          const configured = new Set(runConfiguration.toolNames.map(canonicalAgentToolName))
           return (await rag.toolRegistry.capabilities(identity)).filter(definition => configured.has(definition.name)).map(definition => definition.schema)
         },
         digest: context.digest, nextId: context.nextId,

@@ -295,7 +295,7 @@ function describeMcpAdd(name: string, endpoint: string, enabled: boolean, mode: 
 
 /** 新建提交借用与确认认领和持久收据相同的事务。 */
 export function createMcpManagementCreateOperations(runtime: SqlDataRuntime, ports: {
-  settings(): { default_timeout_seconds: number; max_tools_per_server: number; max_servers_per_user: number }
+  settings(): { default_timeout_seconds: number; max_tools_per_server: number; max_servers_per_user: number | null }
   id(): string
   encrypt: McpEnvelopeCrypto['encrypt']
   validateEndpoint(endpoint: string): string

@@ -61,7 +61,9 @@ export interface InteractionActionResult {
   status: string
   prompt_id: number
   option_id: string
-  value: string | null
+  selected_option_ids?: string[]
+  custom_answer?: string
+  value: string | string[] | null
   text: string
   confirm?: boolean
 }
@@ -81,6 +83,8 @@ export interface ConsumeInteractionOptions {
   ownerId: string
   promptId: number
   token: string
+  selectedOptionIds?: readonly string[]
+  customAnswer?: string
   eventId?: string
   /** IM 回调适配器可以显式允许对同一事件的重放进行确认。 */
   allowDuplicateEvent?: boolean
@@ -184,7 +188,24 @@ export async function consumeInteractionAction(
       throw new InteractionConsumeError('custom_reply_not_allowed', '该交互不接受自定义回答')
     }
 
-    const cancelled = action.optionId === 'cancel' || action.actionType === 'cancel'
+    const customAnswer = typeof options.customAnswer === 'string' ? options.customAnswer.trim() : ''
+    const multiplePrompt = schema.selection_mode === 'multiple' && schema.source === 'agent' &&
+      (prompt.kind === 'choice' || prompt.kind === 'question') && !actionContext.command_action
+    if (options.customAnswer !== undefined && (!multiplePrompt || !schema.allow_text_input ||
+      !customAnswer || Buffer.byteLength(customAnswer) > 8_000))
+      throw new InteractionConsumeError('action_invalid', '自定义回复无效')
+    const multiple = multiplePrompt && action.actionType === 'choice' && !customReply
+    const customOnly = multiplePrompt && customReply && Boolean(customAnswer)
+    const supplied = options.selectedOptionIds
+    if (supplied !== undefined && (!multiple || !Array.isArray(supplied)))
+      throw new InteractionConsumeError('action_invalid', '多选选项无效')
+    const choices = multiple && Array.isArray(schema.options)
+      ? new Set(schema.options.map(record).filter(option => option.action_type === 'choice').map(option => option.id))
+      : new Set()
+    const selectedIds = multiple ? [...new Set(supplied ?? [action.optionId])] : undefined
+    if (selectedIds && (!selectedIds.includes(action.optionId) || selectedIds.some(id => !choices.has(id)))) throw new InteractionConsumeError('action_invalid', '多选选项无效')
+
+    const cancelled = !multiple && (action.optionId === 'cancel' || action.actionType === 'cancel')
     const commandAction = String(actionContext.command_action || '')
     const shouldApplyCommand = !cancelled && (
       commandAction === 'workspace_delete' ||
@@ -209,7 +230,7 @@ export async function consumeInteractionAction(
     action.consumedAt = timestamp
     action.consumedEventId = options.eventId ?? null
 
-    if (customReply) {
+    if (customReply && !customOnly) {
       prompt.schema = { ...schema, custom_input_active: true }
       const result: InteractionActionResult = {
         kind: prompt.kind,
@@ -235,7 +256,7 @@ export async function consumeInteractionAction(
     prompt.resolvedAt = timestamp
     const confirmPrompt = prompt.kind === 'confirm'
     let status = cancelled || confirmPrompt && action.optionId !== 'confirm' ? 'cancelled' : 'selected'
-    let text = optionLabel(schema, action.optionId)
+    let text = selectedIds ? selectedIds.map(id => optionLabel(schema, id)).join('、') : optionLabel(schema, action.optionId)
     if (shouldApplyCommand) {
       const commandResult = await tx.applyCommandAction({
         ownerId: options.ownerId,
@@ -260,8 +281,10 @@ export async function consumeInteractionAction(
       status,
       prompt_id: prompt.id,
       option_id: action.optionId,
-      value: action.optionId,
-      text,
+      ...(selectedIds ? { selected_option_ids: selectedIds } : {}),
+      ...(customAnswer ? { custom_answer: customAnswer } : {}),
+      value: selectedIds ?? (customOnly ? customAnswer : action.optionId),
+      text: customAnswer ? [customOnly ? '' : text, customAnswer].filter(Boolean).join('\n') : text,
     }
     if (confirmPrompt) {
       if (status !== 'error') {

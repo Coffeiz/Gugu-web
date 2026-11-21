@@ -1,6 +1,7 @@
 import { pathFileAccessKey } from '@/services/pathFileAccess'
 import { desktopPathFileAccess } from '@desktop/files/pathFileAccess'
 import { scheduleAccessKey } from '@/services/scheduleAccess'
+import { chatCalendarEventsKey, chatCitationSiteKey } from '@/components/common/gugu-chat/chatPresentationAccess'
 import { desktopScheduleAccess } from './schedules/access'
 import { projectAccessKey } from '@/api/projects'
 import { desktopProjectAccess } from './projects/access'
@@ -23,7 +24,7 @@ import '@arco-design/web-vue/dist/arco.css'
 import '@/assets/styles/global.css'
 import { projectWindowBridge, projectWindowResult } from './projects/projectWindowBridge'
 import { openPlatformPreview, previewWindowBridge } from './files/previewWindowBridge'
-import { desktopMcpApi, desktopSkillsApi } from './resources/transport'
+import { desktopMcpApi, desktopSkillsApi, readDesktopCitationSite } from './resources/transport'
 import { mcpAccessKey, skillAccessKey } from '@/services/resourceAccess'
 import { canOpenDesktopFile, getDesktopFileOpenPreference, openDesktopFile } from './files/fileOpen'
 import { useProjectStore } from '@/stores/projects'
@@ -43,7 +44,7 @@ const nativePreview = previewWindowBridge && query.get('filePreview') === '1'
 const projectId = Number(query.get('projectWindow'))
 const nativeProject = projectWindowBridge && Number.isSafeInteger(projectId) && projectId > 0
 
-async function mountDesktop() {
+export async function mountDesktop() {
   const app = nativePreview
     ? createApp((await import('./files/DesktopPreviewWindow.vue')).default)
     : nativeProject
@@ -61,6 +62,8 @@ async function mountDesktop() {
   app.provide(locateConversationMessageKey, messageId => requestDesktopAgentSessions({ action: 'messageLocation', messageId }))
   app.provide(pathFileAccessKey, desktopPathFileAccess)
   app.provide(scheduleAccessKey, desktopScheduleAccess)
+  app.provide(chatCalendarEventsKey, desktopData.calendar)
+  app.provide(chatCitationSiteKey, readDesktopCitationSite)
   app.provide(projectAccessKey, desktopProjectAccess)
   app.provide(mindAccessKey, desktopMindAccess)
   app.provide(searchAccessKey, desktopSearchAccess)
@@ -74,7 +77,7 @@ async function mountDesktop() {
     revealLocalEntry: nativeDesktopBridge() ? (directoryId, path) => requestDesktopFile({ action: 'reveal', directoryId, path }) : undefined,
     startNativeDrag: hasDesktopFileDrag() ? startDesktopFileDrag : undefined,
     createDroppedReference: nativeDesktopBridge()?.createDroppedFileReference ? desktopData.createDroppedFileReference : undefined,
-    openDroppedReference: nativeDesktopBridge()?.openDroppedFileReference ? desktopData.openDroppedFileReference : undefined,
+    openDroppedReference: desktopData.openDroppedFileReference,
   })
   app.provide(skillAccessKey, { api: desktopSkillsApi, configureWithChat: false })
   app.provide(mcpAccessKey, {
@@ -83,8 +86,6 @@ async function mountDesktop() {
   installEnterDirective(app)
   app.use(pinia).use(i18n).use(ArcoVue).use(createDesktopRouter()).mount('#app')
 }
-
-void mountDesktop()
 
 function createDesktopRouter() {
   return createRouter({

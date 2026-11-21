@@ -10,6 +10,8 @@ function request<T>(command: DesktopResourceCommand): Promise<T> {
   }) as Promise<T>
 }
 
+export const readDesktopCitationSite = (url: string) => request<{ name: string | null }>({ domain: 'citation', action: 'site-name', url })
+
 export const desktopSkillsApi = {
   async list() {
     const skills: UserSkillItem[] = []
@@ -43,7 +45,7 @@ function testMcp(id: string) {
 }
 
 export const desktopMcpApi = {
-  list: () => request<{ items: McpServerItem[]; max_servers: number }>({ domain: 'mcp', action: 'list' }),
+  list: () => request<{ items: McpServerItem[]; max_servers: number | null }>({ domain: 'mcp', action: 'list' }),
   config: (id: string) => request<Pick<McpServerItem, 'endpoint' | 'credential_slots' | 'credential_values'>>({ domain: 'mcp', action: 'config', id }),
   create: (fields: Record<string, unknown>) => request<{ id: string }>({ domain: 'mcp', action: 'create', fields }),
   update: (id: string, fields: Record<string, unknown>) => request<{ id: string }>({ domain: 'mcp', action: 'update', id, fields }),

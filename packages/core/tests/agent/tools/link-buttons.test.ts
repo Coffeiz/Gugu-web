@@ -22,6 +22,16 @@ it('Web 按钮恢复重建相同 artifact，非 Web 身份不能伪造投递',as
  const sent=await registry.tools.dispatch(call,scope)
  expect(sent).toMatchObject({kind:'completed',successful:true,artifact:{kind:'link_buttons',message:'入口',buttons:call.input.buttons}})
  expect(await registry.tools.reconcile(call,{...identity,roundId:'r:1'})).toEqual(sent)
+ const buttons = Array.from({length:5}, (_, index) => ({
+   id:`project-${index}`, label:`示例项目 ${index}`, url:`gugu://open-object/project/${index + 1}`,
+ }))
+ const wrapped = {...call, input:{...call.input, buttons:{item:buttons}}}
+ const wrappedSent = await registry.tools.dispatch(wrapped, scope)
+ expect(wrappedSent).toMatchObject({successful:true, value:{button_count:5}, artifact:{buttons}})
+ expect(await registry.tools.reconcile(wrapped,{...identity,roundId:'r:1'})).toEqual(wrappedSent)
+ expect(await registry.tools.dispatch({...wrapped,input:{...wrapped.input,buttons:{item:[
+   ...buttons.slice(0,4), {...buttons[4],url:'javascript:alert(1)'},
+ ]}}},scope)).toMatchObject({successful:false})
  expect(await registry.tools.dispatch(call,{...scope,identity:{...identity,ownerId:'other'}})).toEqual({kind:'unknown'})
  for(const url of ['https://[broken/', 'https://[not-ip]/', 'https://u@example.test/','https://example.test：443/','https://user＠example.test/','https://example.test／path','https://::@example.test/','data:text/html,test']){
    expect(await registry.tools.dispatch({...call,input:{...call.input,buttons:[{id:'a',label:'查看',url}]}},scope)).toMatchObject({successful:false})

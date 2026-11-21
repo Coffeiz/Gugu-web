@@ -11,7 +11,7 @@ const synonyms = [
   ['file', 'files', 'document', '文件', '文档'],
   ['note', 'notes', '笔记', '便签'],
   ['canvas', '画布'],
-  ['client', 'contact', '联系人', '客户'],
+  ['client', 'clients', 'contact', 'contacts', '联系人', '客户'],
   ['task', 'tasks', '任务', '待办'],
   ['shell', 'terminal', '终端', '命令'],
 ]

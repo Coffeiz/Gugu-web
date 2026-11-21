@@ -7,14 +7,14 @@ import { dataContext } from '../contracts/index.js'
 import { createMcpHttpClient } from './sdk-client.js'
 import { createMcpSafeFetch } from './safe-fetch.js'
 import { createMcpServerConfigLister, type McpStoredServer } from './server-list.js'
-import { createMcpToolDirectory, type McpDirectoryTool } from './tool-directory.js'
+import { createMcpToolDirectory, matchesMcpLookup, type McpToolLookup, type McpDirectoryTool } from './tool-directory.js'
 import { createMcpSnapshotStore } from './snapshot-store.js'
 import { mcpConfigDigestPayload } from './config-digest.js'
 import { descriptionForProvider, descriptionShortOf, prefixedToolName, sanitizeInputSchema, validateInputArguments, validateInputSchema } from './schema-adapter.js'
 import { normalizeMcpSlots, validateMcpCredentialValues } from './server-config.js'
 import type { McpEnvelopeCrypto } from './server-mutations.js'
 
-function digest(rows: readonly McpStoredServer[]) {
+export function desktopMcpConfigDigest(rows: readonly McpStoredServer[]) {
   const stamp = (value: Date | string | null) => value === null ? '' : value instanceof Date
     ? value.toISOString() : value.replace(' ', 'T')
   return createHash('sha256').update(mcpConfigDigestPayload(rows.map(row => ({
@@ -73,10 +73,12 @@ export function createDesktopMcpAgentRuntime(db: Kysely<Database>, ownerId: stri
   const localOwner = dataContext(ownerId).ownerId
   const isLocalOwner = (owner: string) => dataContext(owner).ownerId === localOwner
   const snapshots = createMcpSnapshotStore(db, 'sqlite', async (owner, connection) =>
-    digest((await configs(owner, connection)).filter(row => row.enabled)))
+    desktopMcpConfigDigest((await configs(owner, connection)).filter(row => row.enabled)))
+  const romanize = (text: string) => pinyin(text, { toneType: 'none', type: 'array' }).join('')
   const loadDirectory = createMcpToolDirectory({
+    select: (row, lookup) => row.transport === 'http' && matchesMcpLookup(row.name, lookup, romanize),
     enabled: options.enabled ?? (() => true),
-    configs: async owner => (await configs(owner)).filter(row => row.enabled), digest,
+    configs: async owner => (await configs(owner)).filter(row => row.enabled), digest: desktopMcpConfigDigest,
     read: snapshots.read, writeIfCurrent: snapshots.writeIfCurrent,
     async discover(_owner, rows) {
       const names = await options.builtinNames()
@@ -103,7 +105,7 @@ export function createDesktopMcpAgentRuntime(db: Kysely<Database>, ownerId: stri
             const raw = entry as Record<string, unknown>
             const toolName = typeof raw.name === 'string' ? raw.name.trim() : ''
             if (!toolName || validateInputSchema(raw.inputSchema) !== null || (allowlist.size && !allowlist.has(toolName))) continue
-            const name = prefixedToolName(row.name, toolName, text => pinyin(text, { toneType: 'none', type: 'array' }).join(''))
+            const name = prefixedToolName(row.name, toolName, romanize)
             if (!name || names.has(name) || tools.some(tool => tool.name === name) || discovered.some(tool => tool.name === name)) continue
             discovered.push({ name, description: descriptionForProvider(typeof raw.description === 'string' ? raw.description : null, `${row.name} MCP 工具：${toolName}`),
               description_short: descriptionShortOf(typeof raw.description === 'string' ? raw.description : null) || `${row.name} MCP 工具：${toolName}`,
@@ -129,18 +131,20 @@ export function createDesktopMcpAgentRuntime(db: Kysely<Database>, ownerId: stri
       const rows = await configs(owner)
       if (!rows.some(row => row.id === serverId && row.enabled)) return { state: 'disabled', ...empty }
       const snapshot = await snapshots.read(owner)
-      if (snapshot?.digest !== digest(rows.filter(row => row.enabled))) return { state: 'unloaded', ...empty }
+      if (snapshot?.digest !== desktopMcpConfigDigest(rows.filter(row => row.enabled))) return { state: 'unloaded', ...empty }
       const names = snapshot.tools.filter(tool => tool.server_id === serverId).map(tool => tool.name).sort()
       return { state: 'ok', loaded_tool_count: names.length, loaded_tool_names: names }
     },
-    directory: async (owner: string) => isLocalOwner(owner) ? loadDirectory(owner) : [],
-    async dispatchForAgent(owner: string, serverId: string, toolName: string, args: unknown, signal?: AbortSignal) {
+    services: async (owner: string) => isLocalOwner(owner) && (options.enabled?.() ?? true)
+      ? (await configs(owner)).filter(row => row.enabled && row.transport === 'http').map(({ name }) => ({ name })) : [],
+    directory: async (owner: string, lookup?: McpToolLookup) => isLocalOwner(owner) ? loadDirectory(owner, lookup) : [],
+    async dispatchForAgent(owner: string, serverId: string, toolName: string, args: unknown, signal?: AbortSignal, authorize?: () => Promise<boolean>) {
       signal?.throwIfAborted()
       if (!isLocalOwner(owner)) return { error: 'MCP 工具不可用，请重新加载工具目录', executed: false as const }
       const row = (await configs(owner)).find(item => item.id === serverId)
       if (!row || !row.enabled || row.transport !== 'http' || !await (options.enabled?.() ?? true))
         return { error: 'MCP 工具不可用，请重新加载工具目录', executed: false as const }
-      const tool = (await loadDirectory(owner)).find(item => item.server_id === serverId && item.name === toolName)
+      const tool = (await loadDirectory(owner, { server: row.name, names: [toolName] })).find(item => item.server_id === serverId && item.name === toolName)
       if (!tool) return { error: 'MCP 工具不可用，请重新加载工具目录', executed: false as const }
       const validated = validateInputArguments(tool.name, tool.input_schema, args)
       if (!validated.success) return { result: JSON.stringify(validated.error), executed: false as const }
@@ -158,8 +162,10 @@ export function createDesktopMcpAgentRuntime(db: Kysely<Database>, ownerId: stri
         await client.connect()
         signal?.throwIfAborted()
         const current = (await configs(owner)).find(item => item.id === serverId)
-        if (!current || !current.enabled || digest([current]) !== digest([row]))
+        if (!current || !current.enabled || desktopMcpConfigDigest([current]) !== desktopMcpConfigDigest([row]))
           return { error: 'MCP 配置已变更，请重新加载工具目录', executed: false as const }
+        if (!await (options.enabled?.() ?? true) || (authorize && !await authorize()))
+          return { error: '当前会话无权调用该 MCP 工具', executed: false as const }
         signal?.throwIfAborted()
         dispatched = true
         const response = await client.callTool(tool.tool_name, validated.data, { signal, timeout: Math.max(1000, Math.min(300_000, row.timeout_seconds * 1000)) })

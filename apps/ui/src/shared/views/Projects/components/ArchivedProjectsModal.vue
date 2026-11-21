@@ -45,9 +45,15 @@
                         <template v-else>{{ p.client || t('projects.noClient') }} · {{ statusLabel(p.status) }}</template>
                       </div>
                     </div>
-                    <button class="ap-restore" :disabled="restoringId === p.id" @click="restore(p.id)">
-                      {{ restoringId === p.id ? t('projects.restoring') : restoreLabel }}
-                    </button>
+                    <div class="ap-actions">
+                      <ActionButton class="ap-action" variant="secondary" fit :disabled="restoringId !== null || purgingId !== null" @click="restore(p.id)">
+                        {{ restoringId === p.id ? t('projects.restoring') : restoreLabel }}
+                      </ActionButton>
+                      <ActionButton v-if="isDeleted && projectStore.canPurgeDeletedProject" class="ap-action" variant="danger" fit
+                        :disabled="restoringId !== null || purgingId !== null" @click="purge(p)">
+                        {{ t('projectsDeleted.purge') }}
+                      </ActionButton>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -62,6 +68,9 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import Icon from '@/components/common/icons/Icon.vue'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
+import { getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 import FlipChevron from '@/components/common/controls/FlipChevron.vue'
 import BaseModal from '@/components/common/overlays/BaseModal.vue'
 import { runtime } from '@/interaction/runtime'
@@ -80,6 +89,7 @@ const emit = defineEmits(['close'])
 const projectStore = useProjectStore()
 const { t } = useI18n()
 const restoringId = ref<number | null>(null)
+const purgingId = ref<number | null>(null)
 const layoutRoot = ref<HTMLElement | null>(null)
 const isDeleted = computed(() => props.mode === 'deleted')
 const title = computed(() => t(isDeleted.value ? 'projectsDeleted.deleted' : 'projects.archived'))
@@ -186,6 +196,25 @@ async function restore(id: number) {
   }
 }
 
+async function purge(project: Project) {
+  if (purgingId.value !== null || restoringId.value !== null) return
+  const epoch = getAccountBoundaryEpoch()
+  purgingId.value = project.id
+  try {
+    const confirmed = await confirmDialog({
+      title: t('projectsDeleted.purge'),
+      message: t('projectsDeleted.purgeMessage', { name: project.name }),
+      tone: 'danger',
+      confirmText: t('projectsDeleted.purge'),
+    })
+    if (confirmed && epoch === getAccountBoundaryEpoch()) await projectStore.purgeDeletedProject(project.id)
+  } catch (error) {
+    if (epoch === getAccountBoundaryEpoch()) showAppError(error instanceof Error ? error.message : String(error))
+  } finally {
+    purgingId.value = null
+  }
+}
+
 function formatDate(value: string | null | undefined): string {
   if (!value) return t('projectsDeleted.unknownDate')
   const date = new Date(value)
@@ -194,6 +223,7 @@ function formatDate(value: string | null | undefined): string {
 </script>
 
 <style scoped>
+.ap-actions { display: flex; gap: var(--space-xs); align-items: center; flex: none; }
 .ap-modal { display: flex; flex-direction: column; max-height: 70vh; }
 .ap-header {
   display: flex; align-items: center; justify-content: space-between;
@@ -277,12 +307,10 @@ function formatDate(value: string | null | undefined): string {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .ap-sub { font-size: 11px; color: var(--content-secondary); margin-top: 1px; }
-.ap-restore {
-  flex-shrink: 0; font-size: 12px; font-weight: 600; padding: 5px 10px;
-  border-radius: 8px; border: 1px solid color-mix(in srgb, var(--action-primary) 35%, transparent);
-  background: color-mix(in srgb, var(--action-primary) 8%, transparent); color: var(--color-primary, var(--action-primary));
-  cursor: pointer; transition: background 0.15s;
+.ap-actions .ap-action {
+  min-height: 26px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
 }
-.ap-restore:hover:not(:disabled) { background: color-mix(in srgb, var(--action-primary) 18%, transparent); }
-.ap-restore:disabled { opacity: 0.6; cursor: default; }
 </style>

@@ -24,7 +24,7 @@ registry.registerGroup({
   id: 'clients', name: '联系人', tools: createClientTools(core),
 })
 registry.register(createTimeTool({ now, timezone }))
-registry.configure({ groups: { clients: true }, tools: { update_client: false } })
+registry.configure({ groups: { clients: true }, tools: { update_contact: false } })
 // Host 将 registry.tools 注入既有 Harness，将 capabilities 接到工具发现端口。
 ```
 
@@ -105,7 +105,7 @@ Web 配置白名单共 84 个名称。实际会话按渠道、租约授权、后
 | 执行与联网 | `shell`, `web_search`, `web_download`, `http_get`, `similar_image_search`, `deep_research`, `global_search` |
 | 历史对话与记忆 | `search_conversations`, `read_conversation`, `search_memory`, `remember` |
 | 时间与总览 | `get_current_time`, `get_upcoming`, `get_dashboard_stats` |
-| 联系人 | `list_clients`, `create_client`, `update_client`, `delete_client` |
+| 联系人 | `list_contacts`, `create_contact`, `update_contact`, `delete_contact` |
 | 项目 | `list_projects`, `get_project`, `create_project`, `update_project`, `delete_project`, `set_color`, `archive_project`, `add_stage`, `remove_stage`, `rename_stage`, `set_stages`, `update_stage` |
 | 日历 | `list_events`, `create_event`, `update_event`, `delete_event` |
 | 定时任务 | `list_scheduled_tasks`, `create_scheduled_task`, `update_scheduled_task`, `delete_scheduled_task` |
@@ -116,6 +116,22 @@ Web 配置白名单共 84 个名称。实际会话按渠道、租约授权、后
 | 技能 | `use_skill`, `list_skills`, `create_skill`, `update_skill`, `delete_skill` |
 | 邮件与交互 | `send_email`, `send_link_buttons`, `ask_user` |
 | 工具管理与撤销 | `get_tool_schema`, `call_tool`, `manage_mcp_servers`, `undo_last_action` |
+
+### 联系人工具命名
+
+Web 与桌面只在工具目录中发布 `list_contacts`、`create_contact`、`update_contact` 和 `delete_contact`。「客户」仍可作为搜索关键词。创建和更新用 `name` 表示记录名称，`contact` 表示联系人姓名。更新和删除用 `contact_id` 或 `contact_query` 定位记录，批量删除用 `contact_ids`。
+
+执行和恢复可识别旧工具名及旧参数 `client_id`、`client_ids`、`client`、`client_name`，并走同一套授权和校验。删除继续绑定原始调用身份和持久确认记录。项目「客户」字段、现有数据表和 REST 路径沿用各自的业务契约。
+
+### Web 与桌面 MCP 按需发现
+
+聊天启动只读当前账号已启用、当前会话可使用的 MCP 服务配置。系统提示只列服务名称并说明发现流程，MCP 工具 Schema 不进入初始模型请求。内置工具仍使用原有注入策略。
+
+1. 用 `search_tools` 传 `query` 和 `mcp_server`，按用途搜索指定服务。未指定服务时搜索内置工具和当前配置下已有的 MCP 目录缓存。
+2. 需要完整参数时用 `search_tools` 的 `names` 查精确工具名。目录缓存缺失时只发现匹配服务，成功结果按 owner 和配置摘要缓存。某个服务发现失败时，其他服务仍可用。
+3. 用 `call_tool` 传 `tool_name` 和 `arguments`。每次执行按当前授权和目录复核，再由宿主校验参数和服务配置。停用服务或收回权限后，历史 Schema 不能继续授权调用。
+
+Web Host 和桌面共用目录选择、提示词和工具分派逻辑，分别提供本地配置、传输和会话授权。现有 IM 和定时任务工具目录策略沿用其宿主配置。
 
 IM 特有工具另有 `save_im_attachment`、`group_context_search`、`bind_web_session` 和飞书的 `react`。定时任务使用其中已授权的只读工具、邮件及已授权的 MCP。外部 MCP 工具由账号配置动态加载。
 

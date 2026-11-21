@@ -311,3 +311,24 @@ it('ask_user 拒绝不支持的授权、表单及伪造选项，撤权和取消�
  allowed=true;const abort=new AbortController();abort.abort();await expect(registry.tools.dispatch(call,{...scope,signal:abort.signal})).rejects.toThrow()
  const plan=await registry.tools.plan!([call],identity);expect(plan.mode==='serial'||plan.serialCallIds?.includes('ask')===true).toBe(true)
 })
+
+it('IM 的 ask_user 声明只支持单选，执行时拒绝多选参数', async () => {
+  const { createAskUserTool } = await import('../../../src/agent/tools/meta.js')
+  const { createToolRegistry } = await import('../../../src/agent/tools/registry.js')
+  const tool = createAskUserTool({ singleChoiceOnly: true, authorization: async () => 'disabled' })
+  const registry = createToolRegistry({ tools: [tool], authorize: async () => true })
+  const [definition] = await registry.capabilities(identity)
+  expect(definition?.schema).toMatchObject({ function: {
+    parameters: { properties: { options: expect.anything() } },
+    description: expect.stringContaining('只支持单选'),
+  } })
+  expect(JSON.stringify(definition?.schema)).not.toContain('selection_mode')
+  const call = { id: 'ask', name: 'ask_user', input: {
+    kind: 'choice', title: '选择方案', body: '请选择', options: [{ id: 'one', label: '方案一' }],
+  } }
+  const scope = { identity, roundId: 'round', signal: new AbortController().signal, resolution: null,
+    execute: async () => { throw new Error('不能执行') } }
+  expect(await registry.tools.dispatch(call, scope)).toMatchObject({ kind: 'waiting' })
+  expect(await registry.tools.dispatch({ ...call, input: { ...call.input, selection_mode: 'multiple' } }, scope))
+    .toMatchObject({ successful: false, executed: false })
+})

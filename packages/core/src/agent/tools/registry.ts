@@ -1,3 +1,4 @@
+import { canonicalAgentToolName } from './configuration.js'
 import type { PreparedToolDefinition, RunIdentity, ToolResult } from '../models.js'
 import type { ToolPort } from '../ports.js'
 import { portableSnapshot, stableJson } from '../context/history/canonical-history.js'
@@ -73,11 +74,15 @@ export function createToolRegistry(options: ToolRegistryOptions): {
   function configure(next: ToolRegistryConfiguration) {
     if (!record(next) || Object.keys(next).some(key => key !== 'tools' && key !== 'groups')
       || (next.tools !== undefined && !record(next.tools)) || (next.groups !== undefined && !record(next.groups))) throw new Error('工具启用配置无效')
-    for (const [name, enabled] of Object.entries(next.tools ?? {}))
-      if (!entries.has(name) || typeof enabled !== 'boolean') throw new Error('工具启用配置无效')
+    const tools: Record<string, boolean> = Object.create(null)
+    for (const [name, value] of Object.entries(next.tools ?? {})) {
+      const canonical = canonicalAgentToolName(name)
+      if (!entries.has(canonical) || typeof value !== 'boolean') throw new Error('工具启用配置无效')
+      tools[canonical] = tools[canonical] !== false && value
+    }
     for (const [id, enabled] of Object.entries(next.groups ?? {}))
       if (!groups.has(id) || typeof enabled !== 'boolean') throw new Error('工具分组启用配置无效')
-    configuration = structuredClone(next)
+    configuration = { ...structuredClone(next), tools }
   }
   function enabled(name: string) {
     const group = membership.get(name)
@@ -107,8 +112,8 @@ export function createToolRegistry(options: ToolRegistryOptions): {
   const tools: ToolPort = {
     async plan(calls) {
       const serialCallIds = calls.filter(call => {
-        const tool = entries.get(call.name)
-        return !tool || !enabled(call.name) || tool.destructive || tool.requiresInteraction
+        const tool = entries.get(canonicalAgentToolName(call.name))
+        return !tool || !enabled(canonicalAgentToolName(call.name)) || tool.destructive || tool.requiresInteraction
           || call.name === 'ask_user' || call.name === 'manage_mcp_servers' || call.parseError || !record(call.input)
       }).map(call => call.id)
       if (serialCallIds.length === calls.length) return { mode: 'serial' }
@@ -123,11 +128,11 @@ export function createToolRegistry(options: ToolRegistryOptions): {
       try { call = Object.freeze({ ...call, input: portableSnapshot(call.input) }) }
       catch { invalidSnapshot = true; call = Object.freeze({ ...call, input: null }) }
       scope.signal.throwIfAborted()
-      const tool = entries.get(call.name)
-      if (!tool || blocked(tool) || !enabled(call.name)) return rejected('工具不存在或未开放')
-      if (!await authorized(scope.identity, call.name)) return rejected('没有权限使用此工具')
+      const tool = entries.get(canonicalAgentToolName(call.name))
+      if (!tool || blocked(tool) || !enabled(canonicalAgentToolName(call.name))) return rejected('工具不存在或未开放')
+      if (!await authorized(scope.identity, tool.definition.name)) return rejected('没有权限使用此工具')
       scope.signal.throwIfAborted()
-      if (!enabled(call.name)) return rejected('工具不存在或未开放')
+      if (!enabled(canonicalAgentToolName(call.name))) return rejected('工具不存在或未开放')
       if (invalidSnapshot || call.parseError) return invalidInputResult(tool.definition, null)
       let parsed: ReturnType<ToolDefinition['validate']>
       let normalized: unknown
@@ -158,10 +163,10 @@ export function createToolRegistry(options: ToolRegistryOptions): {
       }
     },
     async reconcile(call, identity) {
-      const tool = entries.get(call.name)
-      if (!tool?.reconcile || blocked(tool) || !enabled(call.name)) return { kind: 'unknown' }
+      const tool = entries.get(canonicalAgentToolName(call.name))
+      if (!tool?.reconcile || blocked(tool) || !enabled(canonicalAgentToolName(call.name))) return { kind: 'unknown' }
       identity = Object.freeze({ ...identity })
-      if (!await authorized(identity, call.name) || !enabled(call.name)) return rejected('没有权限使用此工具')
+      if (!await authorized(identity, tool.definition.name) || !enabled(canonicalAgentToolName(call.name))) return rejected('没有权限使用此工具')
       try {
         call = Object.freeze({ ...call, input: portableSnapshot(call.input) })
         if (call.parseError) return { kind: 'unknown' }

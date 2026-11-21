@@ -1,3 +1,4 @@
+import { hasProjectExpiryJournalSchema, purgeDeletedProject } from '../modules/projects/lifecycle/expiry.js'
 import { DEFAULT_LLM_CONTEXT_TOKENS, DEFAULT_LLM_OUTPUT_TOKENS } from '@gugu/core/contracts'
 import { createSerialWorker } from '../workers/admission.js'
 import { shutdownStep } from '../shared/shutdown.js'
@@ -316,6 +317,7 @@ import {
 import { createPostgresXlsxPreviewOperations, createPostgresFileContentOperations } from '../modules/files/content.js'
 import { createPostgresFileUploadOperations, createPostgresFileConflictOperations } from '../modules/files/upload.js'
 import { createPublicAgentEgress } from '../adapters/network/safe-egress-proxy.js'
+import { createCitationSiteLookup } from '@gugu/core/agent/citation-site'
 import {
   createPostgresFileDeleteOperations,
   createPostgresFileRestoreOperations,
@@ -1238,10 +1240,11 @@ export async function createWebUiApp(
   if (repeatingWorkerEnabled && !scheduledRunNow) throw new Error('周期任务 Worker 需要 Redis')
   const scheduledRepeatingWorker = repeatingWorkerEnabled ? scheduledRunNow?.createRepeatingWorker() : undefined
   const projectExpiryWorkerEnabled = booleanSetting(env.GUGU_WEBUI_PROJECT_EXPIRY_WORKER_ENABLED, undefined, false)
-  if (projectExpiryWorkerEnabled && !projectJournalPool) throw new Error('项目过期清理 Worker 需要已迁移的 PostgreSQL 项目日志结构')
+  const projectPurgeAvailable = Boolean(projectJournalPool && await hasProjectExpiryJournalSchema(pool))
+  if (projectExpiryWorkerEnabled && !projectPurgeAvailable) throw new Error('项目过期清理 Worker 需要已迁移的 PostgreSQL 项目日志结构')
   const backgroundWorkers = createWebWorkers({
     config, pool, core, publisher, trashOperations, trashPurgeSchemaApplied, projectJournalPool,
-    projectExpiryWorkerEnabled, canRebuildAgentMemoryIndex, ownerReflectionWork, scheduledRepeatingWorker, scheduledOnceWorker,
+    projectExpiryWorkerEnabled, projectPurgeAvailable, canRebuildAgentMemoryIndex, ownerReflectionWork, scheduledRepeatingWorker, scheduledOnceWorker,
   })
   async function refreshScheduledWorkers() {
     await Promise.all([scheduledOnceWorker?.refresh(), scheduledRepeatingWorker?.refresh()])
@@ -1421,6 +1424,16 @@ export async function createWebUiApp(
         undoContextId: metadata.undoContextId,
         clientId: metadata.clientId,
       }),
+    ...(projectJournalPool && projectPurgeAvailable ? {
+      async purgeProject(ownerId: string, projectId: number, metadata: WriteRequestMetadata) {
+        const removed = await purgeDeletedProject(projectJournalPool, config.storageLocalPath,
+          config.storageDefaultLimitBytes, { ownerId, projectId })
+        if (removed) await publishProjectMutation({
+          userId: ownerId, resource: 'projects', operation: 'delete', entityId: projectId, origin: metadata.clientId ?? null,
+        })
+        return removed
+      },
+    } : {}),
     restoreProject: (ownerId: string, projectId: number, metadata: WriteRequestMetadata) =>
       projectTrash.restoreProject(ownerId, projectId, {
         undoContextId: metadata.undoContextId,
@@ -1740,6 +1753,7 @@ export async function createWebUiApp(
     }) },
     storageLiveTotals: { read: createStorageLiveTotals((sql, values) => pool.query(sql, values)) },
     safeEgressRead: { readSettings: createSafeEgressSettingsReader(env, resolveConfigOverridePath(env)) },
+    citationSiteName: createCitationSiteLookup(attachmentEgress),
     imMemorySummary: { read: createImMemorySummaryReader(core.db) },
     imMemoryMaintenanceApply: {
       apply: createImMemoryMaintenanceApplier({

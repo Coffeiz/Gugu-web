@@ -70,7 +70,7 @@ export { ParallelDispatchCancelled,runParallelDispatches } from './run/streaming
 export { projectPersistentToolResult,projectProviderDiagnostic,redactToolError,sameRecoveryBoundary,sanitizerCheckpoint,sealDisplayTimeline,snapshotCursor,updateDisplayItem } from './core.js'
 export { createCapabilityCatalog } from './capabilities/catalog.js'
 export type { CapabilitySkillMetadata, CapabilityToolMetadata } from './capabilities/catalog.js'
-export { filterConfiguredAgentTools } from './tools/configuration.js'
+export { canonicalAgentToolName, filterConfiguredAgentTools } from './tools/configuration.js'
 export { createViewImageTool, withViewImageReferences } from './tools/view-image.js'
 
 export { applyOwnerReflectionOutput } from './memory/owner-reflection.js'

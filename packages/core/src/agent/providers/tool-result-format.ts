@@ -1,3 +1,4 @@
+import { canonicalAgentToolName } from '../tools/configuration.js'
 import type { CanonicalMessage, Json } from '../models.js'
 
 const tools = new Map([
@@ -5,9 +6,14 @@ const tools = new Map([
   ['list_projects', '项目列表'],
   ['global_search', '站内全局搜索'],
   ['shell', 'Shell 命令'],
+  ['list_contacts', '联系人列表'],
+  ['create_contact', '新建联系人'],
+  ['update_contact', '更新联系人'],
+  ['delete_contact', '删除联系人'],
 ])
 const labels: Readonly<Record<string, string>> = {
   id: 'ID', name: '名称', status: '状态', priority: '优先级', summary: '项目摘要',
+  contact: '联系人姓名', contact_id: '联系人 ID', client_id: '联系人 ID', deleted_client_id: '已删除的联系人 ID',
   client: '客户', start_date: '开始日期', deadline: '截止日期', color: '颜色',
   current_stage: '当前阶段', archived: '已归档', stages_done: '已完成阶段数', stages_total: '阶段总数',
   stages: '项目阶段', key: '阶段键', label: '标签', done: '已完成', todos: '待办', text: '正文',
@@ -53,6 +59,7 @@ function render(value: Json, indent = '', project = false): string[] {
 }
 
 export function formatToolResult(name: string, content: string, isError: boolean): string {
+  name = canonicalAgentToolName(name)
   const title = tools.get(name)
   if (!title) return content
   let value: Json

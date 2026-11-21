@@ -55,3 +55,17 @@ test('Core delegates user sandbox authorization copy and actions only to trusted
   assert.deepEqual(spec.context, { command_action: 'filesystem_authorization_grant' })
   assert.equal(spec.allowTextInput, false)
 })
+
+test('IM 恢复旧 ask_user 请求时，卡片只投影单选选项', async () => {
+  const request = { id: 'im-question', kind: 'question' as const, toolCall: {
+    id: 'call-a', name: 'ask_user', input: {
+      kind: 'choice', title: '请选择', selection_mode: 'multiple',
+      options: [{ id: 'yes', label: '是' }, { id: 'no', label: '否' }],
+    },
+  } }
+  const normal = await createAgentInteractionDescription(emptyTrusted).describe(null, identity, request)
+  const im = await createAgentInteractionDescription(emptyTrusted, { singleChoiceOnly: true }).describe(null, identity, request)
+  assert.equal(normal.selectionMode, 'multiple')
+  assert.equal(Object.hasOwn(im, 'selectionMode'), false)
+  assert.deepEqual(im.options, normal.options)
+})

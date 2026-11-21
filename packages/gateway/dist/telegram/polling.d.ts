@@ -25,6 +25,7 @@ export interface TelegramPollingOptions {
     /** 必须通过统一交互服务进行归属检查和一次性消费；临时故障返回 false。 */
     callback(query: ObjectValue, signal: AbortSignal): Promise<boolean>;
     sleep?(ms: number, signal: AbortSignal): Promise<void>;
+    onPollStatus?(status: 'ready' | 'conflict' | 'retrying'): void;
     report?(event: 'poll-unavailable', error?: unknown): void;
 }
 /** 每 Bot 长轮询；不替代 IM 入站事务、权限与 Agent 运行处理。 */

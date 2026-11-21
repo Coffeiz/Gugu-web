@@ -11,6 +11,7 @@
   "tests/mcp/desktop-agent-runtime.test.ts": {"markers": [], "layer": "L2", "purpose": "contract"},
   "tests/agent/providers/video.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/agent/search-client.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+  "tests/agent/tools/citation-site.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/agent/tools/owner-session.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/agent/memory/owner-reflection.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/agent/tools/send-file.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},

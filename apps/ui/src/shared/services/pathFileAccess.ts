@@ -6,6 +6,7 @@ export interface PathFileAccess {
   entries: typeof pathFilesApi.entries
   contentUrl: typeof pathFilesApi.contentUrl
   thumbnailUrl: typeof pathFilesApi.thumbnailUrl
+  systemReferenceUrl?: (reference: string, thumbnail?: boolean) => string
   createFolder: typeof pathFilesApi.createFolder
   move: typeof pathFilesApi.move
   copy: typeof pathFilesApi.copy

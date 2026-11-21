@@ -1,5 +1,12 @@
 export const markdownStreamMotionDuration = 150
 
+export function animateStreamFade(element: Element, delay = 0) {
+  element.animate?.(
+    [{ opacity: 0.25, filter: 'blur(2px)' }, { opacity: 1, filter: 'blur(0)' }],
+    { duration: markdownStreamMotionDuration, delay, easing: 'ease-out', fill: 'backwards' },
+  )
+}
+
 type Reveal = { start: number; end: number; time: number }
 
 export function createMarkdownStreamMotion() {
@@ -44,10 +51,7 @@ export function createMarkdownStreamMotion() {
         range.setEnd(entry.node, to)
         const span = document.createElement('span')
         range.surroundContents(span)
-        span.animate(
-          [{ opacity: 0.25, filter: 'blur(2px)' }, { opacity: 1, filter: 'blur(0)' }],
-          { duration: markdownStreamMotionDuration, delay: batch.time - now, easing: 'ease-out', fill: 'backwards' },
-        )
+        animateStreamFade(span, batch.time - now)
       }
     }
   }

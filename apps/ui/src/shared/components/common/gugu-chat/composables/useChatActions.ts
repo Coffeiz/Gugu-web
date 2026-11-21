@@ -118,7 +118,7 @@ export function useChatActions(options: {
       setTimeout(() => { btn.textContent = i18n.global.t('chatUi.copy') }, 1200)
       return
     }
-    const a = target.closest?.('a[href^="gugu://"]') as HTMLAnchorElement | null
+    const a = target.closest?.('a[href^="gugu://" i]') as HTMLAnchorElement | null
     if (!a) return
     e.preventDefault()
     const href = a.getAttribute('href') || ''

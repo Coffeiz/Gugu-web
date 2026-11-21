@@ -18,7 +18,7 @@
       <span>{{ props.statusChecking ? t('skillsMcpUi.loadingTools') : t('skillsMcpUi.toolCount', { count: props.server.loaded_tool_count ?? 0 }) }}</span>
       <span>{{ props.statusChecking ? `${t('skillsMcpUi.enabled')} · ${t('skillsMcpUi.checking')}` : statusLabel }}</span>
     </div>
-    <p class="sc-desc" :title="connectionTarget">{{ connectionTarget }}</p>
+    <p v-if="connectionTarget" class="sc-desc" :title="connectionTarget">{{ connectionTarget }}</p>
     <p v-if="props.server.has_credentials" class="sc-credential">{{ t('skillsMcpUi.credentialsConfigured') }}</p>
     <div class="sc-foot">
       <span class="sc-updated">{{ props.server.scope === 'user' ? t('skillsMcpUi.userScope') : props.server.scope }}</span>
@@ -49,7 +49,7 @@ const statusState = computed(() => props.server.enabled ? (props.server.state ||
 const statusLabel = computed(() => props.server.enabled
   ? `${t('skillsMcpUi.enabled')} · ${t(`skillsMcpUi.state.${props.server.state || 'unloaded'}`)}`
   : t('skillsMcpUi.disabled'))
-const connectionTarget = computed(() => props.server.transport === 'stdio' ? props.server.command : props.server.endpoint)
+const connectionTarget = computed(() => (props.server.transport === 'stdio' ? props.server.command : props.server.endpoint)?.trim())
 </script>
 
 <style scoped>

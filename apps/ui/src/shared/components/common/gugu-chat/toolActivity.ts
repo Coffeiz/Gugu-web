@@ -1,5 +1,10 @@
 import type { ChatMessage } from './chatTypes'
 
+export function formatToolDuration(elapsed?: number) {
+  if (elapsed == null || !Number.isFinite(elapsed) || elapsed < 0) return ''
+  return elapsed < 1000 ? `${Math.round(elapsed)}ms` : `${(elapsed / 1000).toFixed(1)}s`
+}
+
 export function projectChatRows(messages: readonly ChatMessage[]) {
   const rows: { msg: ChatMessage; messageIndex: number; tools?: ChatMessage[] }[] = []
   const rowIndexByMessageIndex: number[] = []
@@ -17,7 +22,7 @@ export function projectChatRows(messages: readonly ChatMessage[]) {
       rows.push({ msg, messageIndex })
       const emptyReply = msg.role === 'ai' && msg.streaming && !msg.text.trim()
         && !msg.files?.length && !msg.linkButtons?.buttons.length
-      if (msg.role !== 'interaction' && !emptyReply) openGroupIndex = undefined
+      if (!emptyReply) openGroupIndex = undefined
     }
   }
   return { rows, rowIndexByMessageIndex, openGroupIndex }

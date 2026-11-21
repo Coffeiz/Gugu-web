@@ -1,3 +1,5 @@
+import { desktopMcpConfigDigest } from '../mcp/desktop-agent-runtime.js'
+import { createMcpSnapshotStore } from '../mcp/snapshot-store.js'
 import { createHash, randomUUID } from 'node:crypto'
 import { sql, type Kysely } from 'kysely'
 import { z } from 'zod'
@@ -70,22 +72,39 @@ export function desktopSkills<DB>(db: Kysely<DB>, owner: string, knownTools?: Re
   }
 }
 
-export const desktopMcpMaxServers = 5
+export const desktopMcpMaxServers = null
 export function desktopMcp<DB>(db: Kysely<DB>, owner: string, crypto: McpEnvelopeCrypto) {
   const listConfig = createMcpServerConfigLister(db, 'sqlite')
+  const snapshots = createMcpSnapshotStore(db, 'sqlite', async (id, connection) =>
+    desktopMcpConfigDigest((await listConfig(id, connection)).filter(row => row.enabled)))
   const mutations = createMcpServerMutations(db, { crypto, maxTools: 64 }, 'sqlite')
   const create = createMcpServerCreator(db, { maxServersPerUser: desktopMcpMaxServers, id: randomUUID, encrypt: crypto.encrypt }, 'sqlite')
   return {
-    async list() {
+    async list(offset?: number) {
       const rows = await listConfig(owner)
-      const items = rows.map(row => ({
-        id: row.id, name: row.name, scope: row.scope, transport: row.transport, endpoint: '', command: '',
-        credential_slots: row.credential_slots, has_credentials: Boolean(row.encrypted_credentials),
-        enabled: Boolean(row.enabled), confirm_mode: row.confirm_mode, timeout_seconds: row.timeout_seconds,
-        tool_allowlist: row.tool_allowlist, state: row.enabled ? 'unloaded' : 'disabled',
-        loaded_tool_count: 0, loaded_tool_names: [],
-      }))
-      return { enabled: true, max_servers: desktopMcpMaxServers, items }
+      const snapshot = await snapshots.read(owner)
+      const tools = snapshot?.digest === desktopMcpConfigDigest(rows.filter(row => row.enabled)) ? snapshot.tools : null
+      const items = rows.map(row => {
+        const names = tools?.filter(tool => tool.server_id === row.id).map(tool => tool.name).sort() ?? []
+        return {
+          id: row.id, name: row.name, scope: row.scope, transport: row.transport, endpoint: '', command: '',
+          credential_slots: row.credential_slots, has_credentials: Boolean(row.encrypted_credentials),
+          enabled: Boolean(row.enabled), confirm_mode: row.confirm_mode, timeout_seconds: row.timeout_seconds,
+          tool_allowlist: row.tool_allowlist, state: row.enabled ? (tools ? 'ok' : 'unloaded') : 'disabled',
+          loaded_tool_count: names.length, loaded_tool_names: names,
+          config_digest: createHash('sha256').update(JSON.stringify(row)).digest('hex'),
+        }
+      })
+      if (offset === undefined) return { enabled: true, max_servers: desktopMcpMaxServers, items }
+      const page: typeof items = []
+      let bytes = 0
+      for (const item of items.slice(offset)) {
+        bytes += Buffer.byteLength(JSON.stringify(item)) + 1
+        if (page.length && bytes > 48_000) break
+        page.push(item)
+      }
+      const next = offset + page.length
+      return { enabled: true, max_servers: desktopMcpMaxServers, items: page, nextOffset: next < items.length ? next : null }
     },
     async config(id: string) {
       const [row] = await listConfig(owner, db, id)
@@ -98,7 +117,7 @@ export function desktopMcp<DB>(db: Kysely<DB>, owner: string, crypto: McpEnvelop
       const credential_values: unknown = row.encrypted_credentials
         ? JSON.parse(await decode(row.encrypted_credentials, row.credentials_nonce, row.encrypted_credentials_key, row.credentials_key_version))
         : {}
-      return { endpoint, credential_values, credential_slots: row.credential_slots, timeout_seconds: row.timeout_seconds, tool_allowlist: row.tool_allowlist }
+      return { endpoint, config_digest: createHash('sha256').update(JSON.stringify(row)).digest('hex'), credential_values, credential_slots: row.credential_slots, timeout_seconds: row.timeout_seconds, tool_allowlist: row.tool_allowlist }
     },
     async write(id: string | undefined, value: unknown) {
       if (id) await mutations.updateStored(db, owner, id, parse(mcp.partial(), value))

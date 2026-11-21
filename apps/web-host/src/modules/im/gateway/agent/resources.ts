@@ -38,7 +38,7 @@ import type { createImOwnerSessions } from './owner.js'
 import { createImQuotedVoiceProof } from '../attention/quote.js'
 import { createPersistentFeishuProjection } from '../platforms/feishu/persistent.js'
 import { createPersistentQqProjection } from '../platforms/qq/persistent.js'
-import { readTrustedQqReplySettings } from '../platforms/qq/format.js'
+import { readTrustedImPrivateStreaming, readTrustedQqReplySettings } from '../reply-settings.js'
 import { sendQqChart } from '@gugu/gateway/qq'
 import { createPersistentTelegramProjection } from '../platforms/telegram/persistent.js'
 import { createPostgresImAttentionPolicyGuard } from '../attention/policy.js'
@@ -165,7 +165,9 @@ export async function createImProductionDelivery(options: DeliveryOptions, input
     sender.toolNotice = async value => (await get()).toolNotice!(value)
   }
   // 飞书群聊按普通回复收集。已经打开的旧群聊卡片仍要用原投影关闭。
-  const feishuStreaming = wire.platform === 'feishu' && (scope.chatType === 'c2c'
+  const feishuPrivateStreaming = wire.platform === 'feishu' && scope.chatType === 'c2c'
+    ? await readTrustedImPrivateStreaming(options.pool, binding) : false
+  const feishuStreaming = wire.platform === 'feishu' && ((scope.chatType === 'c2c' && feishuPrivateStreaming)
     || (await options.pool.query(`SELECT 1 FROM gugu_im_platform_projection
       WHERE user_id=$1 AND session_id=$2 AND run_id=$3 AND platform='feishu'`,
     [identity.ownerId, identity.sessionId, identity.runId])).rowCount === 1)
@@ -206,7 +208,7 @@ export async function createImProductionDelivery(options: DeliveryOptions, input
       }
     }
   }
-  if(wire.platform==='telegram'&&scope.chatType==='c2c'){
+  if(wire.platform==='telegram'&&scope.chatType==='c2c'&&await readTrustedImPrivateStreaming(options.pool,binding)){
     const original=route.payload.platform_message_id??route.payload.message_id
     streamFactory=(receipts,current)=>createPersistentTelegramProjection({identity,receipts,sender:wire.sender,
       target:{chatId:scope.platformUserId,chatType:'c2c',...(typeof original==='string'?{replyToMessageId:original}:{})},
@@ -329,7 +331,7 @@ export function createImProductionResources(options: ImProductionResourcesOption
     })
     const ownerTools = actor.role === 'owner' && actor.chatType === 'c2c' && options.imOwnerTools
       ? await options.imOwnerTools(lease, await services.source.data.loadTimezone(identity), authorizeCurrent, binding) : undefined
-    const builtins = createAgentToolRegistry({ core: options.core, authorize: authorizeTool, ...search, callTool: true, skills: skills.tools, mcpManagement: mcpManagement?.tool, askUser: { async authorization() { return 'disabled' } },
+    const builtins = createAgentToolRegistry({ core: options.core, authorize: authorizeTool, ...search, callTool: true, skills: skills.tools, mcpManagement: mcpManagement?.tool, askUser: { singleChoiceOnly: true, async authorization() { return 'disabled' } },
       fileOverview: createProjectFileOverviewPort(options.pool),
       calendar: createAgentCalendarReader(createKyselyCalendarAgentReadPort(options.core.db, 'postgres')),
       events: createKyselyCalendarReadPort(options.core.db, 'postgres'),

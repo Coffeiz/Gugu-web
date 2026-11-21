@@ -225,3 +225,24 @@ export function decideAttention(message: AttentionMessage, snapshot: AttentionSn
   if ((result.score ?? 0) < threshold) return { ...result, kind: 'PASSIVE', threshold, reasons: [...result.reasons, 'below_threshold'] }
   return { ...result, kind: 'PROACTIVE', threshold, reasons: [...result.reasons, 'threshold_reached'] }
 }
+
+export interface ScoredAttentionCandidate {
+  message: AttentionMessage
+  decision: AttentionDecision
+}
+
+/**
+ * 统一 Web Host 与 Desktop 从一批群消息中选择 Agent 触发项的规则。
+ * ASK 是否可延迟处理由宿主能力决定；不支持延迟唤醒的宿主应显式关闭 allowAsk。
+ */
+export function selectAttentionCandidate<T extends ScoredAttentionCandidate>(
+  candidates: readonly T[], mode: AttentionMode, options: { allowAsk?: boolean } = {},
+): T | null {
+  const eligible = new Set(['ALLOW_RUN', 'DIRECT', 'CONTINUE', 'CAPABILITY_ACTION', 'MEMBER_ACTIVE'])
+  const canAsk = options.allowAsk !== false
+  if (mode === 'autonomous') return candidates.find(candidate => eligible.has(candidate.decision.kind)) ?? null
+  return candidates.find(candidate => eligible.has(candidate.decision.kind))
+    ?? candidates.find(candidate => candidate.decision.kind === 'PROACTIVE'
+      && (canAsk || candidate.decision.sceneType !== 'ASK'))
+    ?? null
+}

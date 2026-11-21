@@ -272,8 +272,12 @@ function workspaceFiles(directoryId: DesktopFileDirectory, workspace: () => Prom
     }
   }
 
-  async function content(url: URL, range: string | null) {
+  async function content(url: URL, range: string | null, metadata = false) {
     const { handle, size, type, name } = await read(url.searchParams.get('path'), url.searchParams.get('identity') || undefined)
+    if (metadata) {
+      await handle.close()
+      return Response.json({ name, size }, { headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } })
+    }
     const download = url.searchParams.get('download') === '1'
     const headers = new Headers({
       'Content-Type': type, 'Content-Length': String(size), 'X-Content-Type-Options': 'nosniff',
@@ -919,11 +923,12 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
     resolvePresentation,
     globalFileSearch,
     resolveHostPresentation,
-    hostPresentationContent(path: string, identity: string, range: string | null) {
+    hostPresentationContent(path: string, identity: string, range: string | null, variant?: 'metadata' | 'thumbnail') {
       const url = new URL('gugu-desktop://app/__local-files/content')
       url.searchParams.set('path', basename(path))
       url.searchParams.set('identity', identity)
-      return workspaceFiles('personal', () => realpath(dirname(path))).content(url, range)
+      if (variant === 'thumbnail') url.searchParams.set('thumbnail', '1')
+      return workspaceFiles('personal', () => realpath(dirname(path))).content(url, range, variant === 'metadata')
     },
     async resolveFileForDrag(directoryId: unknown, path: unknown) {
       return withDirectory(directoryId, async () => {

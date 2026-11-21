@@ -2,7 +2,7 @@
 name: 邮件
 description: 用于向自己、指定邮箱或联系人发送邮件，也适用于含附件的通知和报告。
 category: communication
-related_tools: list_clients, send_email
+related_tools: list_contacts, send_email
 source: builtin
 emoji: ✉️
 ---

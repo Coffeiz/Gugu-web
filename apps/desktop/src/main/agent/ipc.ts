@@ -240,10 +240,11 @@ export function agentSessionHandlers(host: IpcHost, model: ReturnType<typeof cre
           && 'promptId' in command && typeof command.promptId === 'number') {
           const { id, runId, promptId } = command
           const recovering = 'recover' in command && command.recover === true && !('token' in command) && !('text' in command) && !('secrets' in command)
+          const tokenReplyCommand = command as typeof command & { selectedOptionIds?: string[]; customAnswer?: string }
           const reply = 'secrets' in command && !('text' in command) && !('token' in command)
             ? { secrets: command.secrets }
             : !('secrets' in command) && 'token' in command && typeof command.token === 'string' && !('text' in command)
-            ? { token: command.token }
+            ? { token: command.token, selectedOptionIds: tokenReplyCommand.selectedOptionIds, customAnswer: tokenReplyCommand.customAnswer }
             : !('secrets' in command) && 'text' in command && typeof command.text === 'string' && !('token' in command)
               ? { text: command.text } : null
           const eventId = 'operationId' in command && typeof command.operationId === 'string' ? command.operationId : undefined

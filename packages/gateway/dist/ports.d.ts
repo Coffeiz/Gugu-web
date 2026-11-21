@@ -3,3 +3,8 @@ export interface GatewayInbox {
     cursor(): Promise<number | null>;
     commit(updateId: number, payload: Record<string, unknown> | null): Promise<void>;
 }
+export interface GatewayPairingStore {
+    get(key: string): Promise<string | null>;
+    saveIfAbsent(key: string, value: string, seconds: number): Promise<boolean>;
+    delete(key: string): Promise<void>;
+}

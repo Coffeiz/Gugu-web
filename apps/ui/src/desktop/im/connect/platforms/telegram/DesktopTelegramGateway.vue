@@ -5,6 +5,8 @@ import { i18n } from '@/i18n'
 import { hasDesktopTelegramGateway, requestDesktopTelegram, type DesktopTelegramSnapshot } from '@desktop/bridge/bridge'
 import ImBotCard from '@/im/connect/ImBotCard.vue'
 import ImBindingRow from '@/im/connect/ImBindingRow.vue'
+import GroupChatSettings from '@/im/connect/GroupChatSettings.vue'
+import type { DesktopImGroupSettingsPatch } from '@/im/connect/desktopAdapter'
 
 const props = defineProps<{ savedSnapshot?: DesktopTelegramSnapshot }>()
 const emit = defineEmits<{ configured: [value: boolean] }>()
@@ -16,6 +18,11 @@ const busy = ref(false)
 const error = ref('')
 const now = ref(Date.now())
 const binding = computed(() => snapshot.value?.binding)
+const enabledTools = computed(() => [
+  ...(snapshot.value?.groupWebToolsEnabled ? ['web_tools' as const] : []),
+  ...(snapshot.value?.groupProviderSearchEnabled ? ['web_search' as const] : []),
+  ...(snapshot.value?.groupHistorySearchEnabled ? ['group_context_search' as const] : []),
+])
 const remaining = computed(() => Math.max(0, Math.ceil(((binding.value?.expiresAt ?? 0) - now.value) / 1000)))
 let timer: ReturnType<typeof setInterval> | undefined
 
@@ -51,6 +58,17 @@ async function run(command: Parameters<typeof requestDesktopTelegram>[0]) {
   }
 }
 
+function saveGroupSettings(patch: DesktopImGroupSettingsPatch) {
+  void run({ action: 'updateGroupSettings', patch })
+}
+function toggleTool(key: 'web_tools' | 'web_search' | 'group_context_search') {
+  if (!snapshot.value) return
+  const patch = key === 'web_tools' ? { groupWebToolsEnabled: snapshot.value.groupWebToolsEnabled !== true }
+    : key === 'web_search' ? { groupProviderSearchEnabled: snapshot.value.groupProviderSearchEnabled !== true }
+      : { groupHistorySearchEnabled: snapshot.value.groupHistorySearchEnabled !== true }
+  saveGroupSettings(patch)
+}
+
 async function toggleConnection() {
   if (busy.value || !snapshot.value?.configured) return
   if (snapshot.value.enabled) {
@@ -84,6 +102,25 @@ onMounted(() => { if (available) void run({ action: 'status' }) })
     <ImBindingRow v-if="snapshot.enabled" telegram :bound="snapshot.bound" :busy="busy"
       :binding="binding && { code: binding.code, expiresIn: remaining }"
       @generate="run({ action: 'bindingCode' })" @copy-failed="error = t('profileImUi.copyFailed')" />
+    <GroupChatSettings v-if="snapshot.bound" :show-group-toggle="true"
+      group-chat-hint="profileImUi.telegramGroupChatHint"
+      :group-chat-enabled="snapshot.groupChatEnabled === true"
+      :group-settings-visible="snapshot.groupChatEnabled === true"
+      :group-response-mode="snapshot.groupReplyMode ?? 'reply_mentions'"
+      :group-attention-mode="snapshot.groupAttentionMode ?? 'autonomous'" show-attention-mode
+      response-mode-hint="profileImUi.telegramGroupResponseHint" response-guide="telegram" show-private-streaming
+      :show-message-format="false" :message-format-bot="{ private_streaming_enabled: snapshot.privateStreamingEnabled }"
+      :group-owner-memory-enabled="snapshot.groupOwnerMemoryEnabled === true"
+      :group-memory-enabled="snapshot.groupMemoryEnabled !== false"
+      :member-memory-enabled="snapshot.memberMemoryEnabled !== false" :enabled-tools="enabledTools"
+      @group-chat="saveGroupSettings({ groupChatEnabled: $event })"
+      @response-mode="saveGroupSettings({ groupReplyMode: $event })"
+      @attention-mode="saveGroupSettings({ groupAttentionMode: $event })"
+      @private-streaming="run({ action: 'setPrivateStreaming', enabled: $event })"
+      @group-owner-memory="saveGroupSettings({ groupOwnerMemoryEnabled: $event })"
+      @group-memory="saveGroupSettings({ groupMemoryEnabled: $event })"
+      @member-memory="saveGroupSettings({ memberMemoryEnabled: $event })"
+      @toggle-tool="toggleTool" />
     <template v-if="snapshot?.bound">
       <h4 class="pm-section-label">{{ t('desktopTelegram.inbox') }}</h4>
       <p v-if="!snapshot.messages.length" class="pm-field-hint">{{ t('desktopTelegram.empty') }}</p>

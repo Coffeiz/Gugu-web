@@ -4,6 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import type { safeStorage } from 'electron'
 import { formatImToolReceipt, createImRequestedReply, parseImReceivedMessage, type ImConnectionIdentity, type ImReceivedMessage } from '@gugu/gateway'
 import { redactToolError, type RunEvent } from '@gugu/core/agent'
+import { isAttentionSourceKind } from '@gugu/core/im/attention/directive'
 import type { DesktopAgentEventPage, DesktopAppearancePreferences } from '@gugu/core/desktop'
 import { DesktopError } from '../../../core-host.js'
 import type { IpcHost } from '../../../ipc/types.js'
@@ -16,6 +17,8 @@ interface DesktopImStream {
   close(): Promise<void>
 }
 type Outcome = 'accepted' | 'rejected' | 'unknown'
+type SendResult = Outcome | { outcome: Outcome; platformMessageIds?: readonly string[] }
+type AcceptedReplyFact = { platformMessageIds: readonly string[]; recipientSenderId: string; sentAtMs: number; sourceAttentionKind?: string }
 type Prepared = { sessionId: number; runId: string | null; eventKey: string; sealedEvent: string; clientId: string }
 
 export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof safeStorage, 'decryptStringAsync'>,
@@ -29,7 +32,7 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
     sendPrompt?(prompt: Prompt, recipient: string): Promise<string | null>
     media?: DesktopImMediaRoute['media']
     authorize(): Promise<boolean>
-    send(reply: NonNullable<ReturnType<typeof createImRequestedReply>>, replyContext?: string): Promise<Outcome>
+    send(reply: NonNullable<ReturnType<typeof createImRequestedReply>>, replyContext?: string): Promise<SendResult>
   } & ({ userId: string; group?: never } | {
     group: { id: string; ownerPlatformUserId: string; authorizeMessage(event: ImReceivedMessage): Promise<boolean>; authorizeFile(event: ImReceivedMessage): Promise<boolean> }; userId?: never
   })) => {
@@ -68,15 +71,17 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
             const { result } = await encryption.decryptStringAsync(Buffer.from(item.sealedEvent, 'base64'))
             let envelope: DesktopImEnvelope | undefined
             try {
-              const candidate = JSON.parse(result) as { event: unknown; replyContext?: unknown; attachments?: unknown }
+              const candidate = JSON.parse(result) as { event: unknown; replyContext?: unknown; attachments?: unknown; sourceAttentionKind?: unknown }
               const event = parseImReceivedMessage(connection, candidate.event)
               const replyContext = candidate.replyContext
               const attachments = candidate.attachments
               if (desktopImEventKey(event) === item.eventKey
                 && (attachments === undefined || Array.isArray(attachments) && attachments.length <= 32
                   && attachments.every(id => typeof id === 'string' && /^[a-f0-9]{32}$/u.test(id)))
-                && (replyContext === undefined || (connection.platform === 'wechat' || connection.platform === 'feishu') && typeof replyContext === 'string'))
-                envelope = { event, replyContext, attachments }
+                && (replyContext === undefined || (connection.platform === 'wechat' || connection.platform === 'feishu') && typeof replyContext === 'string')
+                && (candidate.sourceAttentionKind === undefined || isAttentionSourceKind(candidate.sourceAttentionKind)))
+                envelope = { event, replyContext, attachments,
+                  ...(typeof candidate.sourceAttentionKind === 'string' ? { sourceAttentionKind: candidate.sourceAttentionKind } : {}) }
             } catch { /* 解密成功后的无效数据可以结案。 */ }
             const event = envelope?.event
             const matches = event && (options.group
@@ -107,21 +112,29 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
             }
             const clientId = item.clientId
             const target = { ...scope, eventKey: item.eventKey, runId: item.runId }
-            const update = (action: 'begin' | Outcome, noticeKey?: string) =>
-              host.request<boolean>('im.inbox.delivery', { ...target, action, ...(noticeKey ? { noticeKey } : {}) })
+            const update = (action: 'begin' | Outcome, noticeKey?: string, replyFact?: AcceptedReplyFact) =>
+              host.request<boolean>('im.inbox.delivery', { ...target, action, ...(noticeKey ? { noticeKey } : {}), ...(replyFact ? { replyFact } : {}) })
             const preferences = options.group ? undefined : await readPreferences?.()
             const makeReply = (text: string, deliveryId: string) =>
               createImRequestedReply(event.scope, { ownerId: connection.ownerId, deliveryId, text }, event.platformMessageId)
-            async function sendReply(reply: NonNullable<ReturnType<typeof makeReply>>): Promise<Outcome> {
-              if (!await options.authorize() || options.group && !await options.group.authorizeMessage(event!)) return 'rejected'
-              try { return await options.send(reply, replyContext) } catch { return 'unknown' }
+            async function sendReply(reply: NonNullable<ReturnType<typeof makeReply>>, trackAcceptedFact = false): Promise<{ outcome: Outcome; replyFact?: AcceptedReplyFact }> {
+              if (!await options.authorize() || options.group && !await options.group.authorizeMessage(event!)) return { outcome: 'rejected' }
+              try {
+                const sent = await options.send(reply, replyContext)
+                const outcome = typeof sent === 'string' ? sent : sent.outcome
+                const ids = typeof sent === 'string' ? [] : [...new Set(sent.platformMessageIds ?? [])]
+                const recipientSenderId = options.group ? event!.scope.platformUserId : null
+                return { outcome, ...(trackAcceptedFact && outcome === 'accepted' && ids.length && recipientSenderId
+                  ? { replyFact: { platformMessageIds: ids, recipientSenderId, sentAtMs: Date.now(),
+                    ...(envelope?.sourceAttentionKind ? { sourceAttentionKind: envelope.sourceAttentionKind } : {}) } } : {}) }
+              } catch { return { outcome: 'unknown' } }
             }
             async function sendNotice(key: string, text: string) {
               const noticeKey = createHash('sha256').update(JSON.stringify([clientId, key])).digest('hex')
               const reply = makeReply(text, noticeKey)
               if (!reply || !await options.authorize()) return
               if (!await update('begin', noticeKey)) return
-              await update(await sendReply(reply), noticeKey)
+              await update((await sendReply(reply)).outcome, noticeKey)
             }
             if (projection?.runId !== item.runId || projection.sessionId !== item.sessionId) {
               await projection?.stream?.close()
@@ -194,7 +207,10 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
                 if (current.stream) await update(current.streamOutcome === 'accepted' && !current.streamFinal ? 'unknown' : current.streamOutcome ?? 'unknown')
                 else {
                   const reply = makeReply(text, item.clientId)
-                  await update(reply && status === 'completed' ? await sendReply(reply) : 'rejected')
+                  if (reply && status === 'completed') {
+                    const sent = await sendReply(reply, Boolean(options.group))
+                    await update(sent.outcome, undefined, sent.replyFact)
+                  } else await update('rejected')
                 }
               }
               projection = undefined

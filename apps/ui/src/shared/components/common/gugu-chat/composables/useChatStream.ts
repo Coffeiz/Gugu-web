@@ -141,7 +141,6 @@ export function useChatStream(options: {
   onQueueDispatchError?: (error: unknown) => void
   trackMessageSent?: (turn: number) => void
   onAutomaticModeCommand?: () => Promise<void>
-  onContentReset?: () => void
   onPresentFile?: (file: PresentedFile) => void
 }) {
   let clientMessageSequence = 0
@@ -1039,7 +1038,6 @@ export function useChatStream(options: {
       if (isNewCommand && !streaming.value) {
         // /new 本身是控制命令，不成为新上下文的一部分；后端也会删除它的持久消息。
         messages.value = []
-        options.onContentReset?.()
       } else if (!streaming.value) {
         optimisticUserMessage = { id: mkid(), role: 'user', text, time: now(),
           clientMessageId, _syncKey: `client:${clientMessageId}`,

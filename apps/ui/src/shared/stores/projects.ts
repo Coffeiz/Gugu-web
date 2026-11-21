@@ -203,6 +203,16 @@ export const useProjectStore = defineStore('projects', () => {
     await fetchProjects()
   }
 
+  const canPurgeDeletedProject = Boolean(projectsApi.purge)
+
+  async function purgeDeletedProject(id: number) {
+    if (!projectsApi.purge) return
+    const epoch = getAccountBoundaryEpoch()
+    await projectsApi.purge(id)
+    if (epoch === getAccountBoundaryEpoch())
+      deletedProjects.value = deletedProjects.value.filter(p => p.id !== id)
+  }
+
   async function restoreDeletedProject(id: number) {
     await projectsApi.restore(id)
     deletedProjects.value = deletedProjects.value.filter(p => p.id !== id)
@@ -489,6 +499,6 @@ export const useProjectStore = defineStore('projects', () => {
     modalProject, openModal, loadModalProject, acceptDesktopProject, closeModal, resetAccountState,
     upcomingCalEvents, fetchUpcomingCalEvents,
     archivedProjects, archivedLoading, archivedLoaded, fetchArchivedProjects, unarchiveProject,
-    deletedProjects, deletedLoading, deletedLoaded, fetchDeletedProjects, restoreDeletedProject,
+    deletedProjects, deletedLoading, deletedLoaded, fetchDeletedProjects, restoreDeletedProject, canPurgeDeletedProject, purgeDeletedProject,
   }
 })

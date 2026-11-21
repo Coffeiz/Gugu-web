@@ -8,6 +8,7 @@ export interface AgentPromptSpec {
   options: Array<{ id: string; label: string; actionType: string }>
   context: Record<string, unknown>
   secretFields?: Array<{ name: string; label: string; type: 'secret' }>
+  selectionMode?: 'multiple'
   allowTextInput?: boolean
   expiresMinutes?: number
 }
@@ -32,6 +33,7 @@ function object(value: unknown): Record<string, unknown> {
  */
 export function createAgentInteractionDescription<Client>(
   trusted: AgentTrustedPromptDescriptions<Client>,
+  policy: { singleChoiceOnly?: boolean } = {},
 ): AgentPromptDescriptionPorts<Client> {
   return { async describe(client, identity, request) {
     if (request.kind === 'confirmation') return trusted.confirmation(client, identity, request)
@@ -45,8 +47,9 @@ export function createAgentInteractionDescription<Client>(
     if (args.secret_target || args.secret_fields) throw new Error('该交互需要可信授权处理器')
     const kind = args.kind ?? 'choice'
     if (kind !== 'choice' && kind !== 'question') throw new Error('交互类型无效')
+    const multiple = !policy.singleChoiceOnly && args.selection_mode === 'multiple'
     const raw = args.options === undefined ? [] : args.options
-    if (!Array.isArray(raw) || raw.length > 8) throw new Error('交互选项无效')
+    if (!Array.isArray(raw) || raw.length > 8 || (multiple && !raw.length)) throw new Error('交互选项无效')
     const options = raw.map(value => {
       const option = object(value), id = typeof option.id === 'string' ? option.id.trim() : '', label = typeof option.label === 'string' ? option.label.trim() : ''
       if (!id || id.length > 64 || !label || label.length > 120) throw new Error('交互选项无效')
@@ -58,6 +61,7 @@ export function createAgentInteractionDescription<Client>(
       body: typeof args.body === 'string' ? args.body.trim().slice(0, 1000) : '',
       options,
       context: {},
+      ...(multiple ? { selectionMode: 'multiple' as const } : {}),
       allowTextInput: true,
     }
   } }

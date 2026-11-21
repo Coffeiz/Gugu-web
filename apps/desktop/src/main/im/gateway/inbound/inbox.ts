@@ -16,6 +16,7 @@ export interface DesktopImEnvelope {
   event: ImReceivedMessage
   replyContext?: string
   attachments?: string[]
+  sourceAttentionKind?: string
 }
 
 export type DesktopImFile = { name: string; ext: string; mime: string; voice: boolean; transcript?: string; sourceIndex?: number; bytes: Uint8Array }
@@ -23,7 +24,8 @@ export type DesktopImFile = { name: string; ext: string; mime: string; voice: bo
 export function createDesktopImInbox(host: IpcHost, encryption: Pick<typeof safeStorage, 'isAsyncEncryptionAvailable' | 'encryptStringAsync'>,
   dataDirectory?: string) {
   return async (connectionId: string, event: ImReceivedMessage, replyContext?: string,
-    media?: { files: DesktopImFile[]; sourceMessageId?: string; recordOnly?: boolean; ownerPlatformUserId?: string; authorize(): Promise<boolean>; onAccepted?(ids: readonly string[]): Promise<void> }) => {
+    media?: { files: DesktopImFile[]; sourceMessageId?: string; recordOnly?: boolean; ownerPlatformUserId?: string;
+      sourceAttentionKind?: string; authorize(): Promise<boolean>; onAccepted?(ids: readonly string[]): Promise<void> }) => {
     if (!media?.recordOnly && !await encryption.isAsyncEncryptionAvailable())
       throw new DesktopError('credential_store', '无法加密本机 IM 收件')
     const eventKey = desktopImEventKey(event)
@@ -32,6 +34,7 @@ export function createDesktopImInbox(host: IpcHost, encryption: Pick<typeof safe
     }))
     const sealedEvent = media?.recordOnly ? null : await encryption.encryptStringAsync(JSON.stringify({
       event, replyContext, attachments: attachments?.map(file => file.attachId),
+      ...(media?.sourceAttentionKind ? { sourceAttentionKind: media.sourceAttentionKind } : {}),
     } satisfies DesktopImEnvelope))
     const written: string[] = []
     let retain = false

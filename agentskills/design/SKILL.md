@@ -7,6 +7,8 @@ description: 产品设计规范摘要。Glassmorphism 视觉风格、色板系�
 
 完整设计文档见 [references/frontend-design.md](references/frontend-design.md)（前台）和 [references/admin-design.md](references/admin-design.md)（Admin 后台）。
 
+[GuguChat 对话窗口设计规范](references/guguchat-design.md)涵盖 Markdown、工具信息、咕咕卡片和智能界面。
+
 ## 技术栈
 
 - 前端：Vue 3 + Vite + TypeScript + Pinia

@@ -1,3 +1,4 @@
+import { normalizeContactToolFields } from './normalize-input.js'
 import { z } from 'zod'
 import { createHash } from 'node:crypto'
 import { strip } from '../../shared/values.js'
@@ -17,13 +18,13 @@ import { createConfirmationGate, type ConfirmationClaimReference, type Confirmat
 import type { Database } from '../../data/schema.js'
 import type { Transaction } from 'kysely'
 
-const fields = { client_name: z.string().optional(), contact: z.string().optional(), email: z.string().optional(), phone: z.string().optional(), notes: z.string().optional() }
+const fields = { name: z.string().optional(), contact: z.string().optional(), email: z.string().optional(), phone: z.string().optional(), notes: z.string().optional() }
 const validators = {
-  list_clients: z.object({}).passthrough(),
-  create_client: z.object({ ...fields, client_name: z.string() }).passthrough(),
-  update_client: z.object({ client_id: z.number().int().safe().optional(), client: z.string().optional(), client_ids: z.array(z.number().int().safe()).max(50).refine(ids => new Set(ids).size === ids.length).meta({ uniqueItems: true }).optional(), ...fields }).passthrough(),
+  list_contacts: z.object({}).passthrough(),
+  create_contact: z.object({ ...fields, name: z.string() }).passthrough(),
+  update_contact: z.object({ contact_id: z.number().int().safe().optional(), contact_query: z.string().optional(), ...fields }).passthrough(),
 }
-const descriptions = { list_clients: '列出当前用户的所有联系人。', create_client: '新建联系人，记录联系人、邮箱、电话、备注。', update_client: '修改联系人信息（名称/联系人/邮箱/电话/备注）。' }
+const descriptions = { list_contacts: '列出当前用户的所有联系人。', create_contact: '新建联系人，记录名称、联系人姓名、邮箱、电话、备注。', update_contact: '按联系人的 ID 或现有名称定位记录，修改名称、联系人姓名、邮箱、电话或备注。' }
 function completed(value: unknown, successful = true, mutated = false): ToolResult {
   return { kind: 'completed', value, successful, mutated }
 }
@@ -38,7 +39,7 @@ function projection(row: ClientRecord) {
 export function createClientTools(runtime: SqlDataRuntime): ToolDefinition[] {
   return (Object.keys(validators) as (keyof typeof validators)[]).map(name => ({
     definition: { name, schema: { type: 'function', function: { name, description: descriptions[name], parameters: z.toJSONSchema(validators[name]) as Record<string, Json> } } },
-    effect: name === 'list_clients' ? 'read' : 'write',
+    effect: name === 'list_contacts' ? 'read' : 'write',
     validate(input) { return validators[name].safeParse(input) },
     async execute(input, scope) {
       const args = input as Record<string, unknown>
@@ -47,28 +48,28 @@ export function createClientTools(runtime: SqlDataRuntime): ToolDefinition[] {
       try {
         return await runtime.transaction(dataContext(scope.identity.ownerId), async data => {
           try {
-            if (name === 'list_clients') return completed((await data.clients.list()).map(projection))
-            if (name === 'create_client') {
-              if (!args.client_name) return failed('联系人名称必填')
-              const row = await data.clients.create({ name: args.client_name, contact: args.contact ?? null, email: args.email ?? null, phone: args.phone ?? null, notes: args.notes ?? '' })
-              return completed({ success: true, client_id: row.id, name: row.name }, true, true)
+            if (name === 'list_contacts') return completed((await data.clients.list()).map(projection))
+            if (name === 'create_contact') {
+              if (!args.name) return failed('联系人名称必填')
+              const row = await data.clients.create({ name: args.name, contact: args.contact ?? null, email: args.email ?? null, phone: args.phone ?? null, notes: args.notes ?? '' })
+              return completed({ success: true, contact_id: row.id, name: row.name }, true, true)
             }
             let row: ClientRecord | null | undefined
-            if (args.client_id) {
-              row = await data.clients.repository.get(args.client_id as number)
+            if (args.contact_id) {
+              row = await data.clients.repository.get(args.contact_id as number)
               if (!row) return failed('联系人不存在')
-            } else if (args.client) {
-              const query = strip(args.client as string)
+            } else if (args.contact_query) {
+              const query = strip(args.contact_query as string)
               const candidates = await data.clients.findByName(query)
               if (!candidates.length) return failed(`未找到联系人「${query}」`)
               if (candidates.length > 1) return failed(`有多个匹配「${query}」的联系人，请指明`, { candidates: candidates.slice(0, 10).map(item => ({ id: item.id, name: item.name })) })
               row = candidates[0]
-            } else return failed('需提供 client_id 或联系人名 client')
+            } else return failed('需提供 contact_id 或联系人名 contact_query')
             const changes: Fields = {}
-            for (const key of Object.keys(fields)) if (Object.hasOwn(args, key)) changes[key === 'client_name' ? 'name' : key] = args[key]
-            if (!Object.keys(changes).length) return failed('没提供要修改的字段（client_name/contact/email/phone/notes），未改动。')
+            for (const key of Object.keys(fields)) if (Object.hasOwn(args, key)) changes[key] = args[key]
+            if (!Object.keys(changes).length) return failed('没提供要修改的字段（name/contact/email/phone/notes），未改动。')
             const updated = await data.clients.update(row!.id, changes)
-            return completed({ success: true, client_id: updated.id, name: updated.name }, true, true)
+            return completed({ success: true, contact_id: updated.id, name: updated.name }, true, true)
           } catch (error) { callbackError = error; throw error }
         }, { signal: scope.signal })
       } catch (error) {
@@ -123,7 +124,7 @@ function clientDeleteCoordinate(input: ClientDeleteRequest) {
 async function resolveClientDeleteRows(data: DataServices, args: ClientDeleteRequest['args'], signal?: AbortSignal) {
   const submitted = args.client_ids ?? (args.client_id ? [args.client_id] : null)
   if (args.client_ids !== undefined && (!Array.isArray(args.client_ids) || args.client_ids.length < 1 || args.client_ids.length > 50))
-    return { rows: [], snapshot: { targetsDigest: '', versionsDigest: '' }, error: 'client_ids 必须是 1-50 个联系人 id' } as const
+    return { rows: [], snapshot: { targetsDigest: '', versionsDigest: '' }, error: 'contact_ids 必须是 1-50 个联系人 id' } as const
   let rows: ClientRecord[]
   if (submitted !== null) {
     const ids = [...new Set(submitted)].sort((a, b) => a - b)
@@ -138,7 +139,7 @@ async function resolveClientDeleteRows(data: DataServices, args: ClientDeleteReq
     if (rows.length !== ids.length) return { rows: [], snapshot: { targetsDigest: '', versionsDigest: '' }, error: '联系人不存在' } as const
   } else {
     if (typeof args.client !== 'string' || !args.client.trim())
-      return { rows: [], snapshot: { targetsDigest: '', versionsDigest: '' }, error: '需提供 client_id 或联系人名 client' } as const
+      return { rows: [], snapshot: { targetsDigest: '', versionsDigest: '' }, error: '需提供 contact_id 或联系人名称 contact_query' } as const
     const query = strip(args.client)
     const candidates = await data.clients.findByName(query)
     signal?.throwIfAborted()
@@ -178,7 +179,7 @@ export function createClientDeletePort(runtime: SqlDataRuntime, confirmation?: C
       if (previous.kind === 'completed') return previous
     }
     if (input.args.client_ids !== undefined && (!input.args.client_ids.length || input.args.client_ids.length > 50))
-      return { kind: 'completed', successful: false, mutated: false, value: { error: 'client_ids 必须是 1-50 个联系人 id' } }
+      return { kind: 'completed', successful: false, mutated: false, value: { error: 'contact_ids 必须是 1-50 个联系人 id' } }
     const batch = input.args.client_ids !== undefined
     const targets = await resolveClientDeleteTargets(runtime, input.identity.ownerId, input.args, input.signal)
     input.signal.throwIfAborted()
@@ -232,13 +233,26 @@ export function createClientDeletePort(runtime: SqlDataRuntime, confirmation?: C
 
 const clientDeleteId = z.number().int().safe()
 const clientDeleteInput = z.object({
-  client_id: clientDeleteId.optional(), client: z.string().optional(),
-  client_ids: z.array(clientDeleteId).max(50).refine(ids => new Set(ids).size === ids.length).optional(),
+  contact_id: clientDeleteId.optional(), contact_query: z.string().optional(),
+  contact_ids: z.array(clientDeleteId).max(50).refine(ids => new Set(ids).size === ids.length).optional(),
 }).passthrough()
+
+// 继续使用持久确认和删除收据约定的参数形状。
+function parseContactDeleteInput(input: unknown) {
+  const parsed = clientDeleteInput.safeParse(normalizeContactToolFields(input))
+  if (!parsed.success) return parsed
+  const { contact_id, contact_query, contact_ids, ...rest } = parsed.data
+  return { success: true as const, data: {
+    ...rest,
+    ...(contact_id === undefined ? {} : { client_id: contact_id }),
+    ...(contact_query === undefined ? {} : { client: contact_query }),
+    ...(contact_ids === undefined ? {} : { client_ids: contact_ids }),
+  } }
+}
 
 export async function describeClientDeleteTargets(data: DataServices, input: unknown,
   expected: Pick<ConfirmationTargetSnapshot, 'targetsDigest' | 'versionsDigest'>) {
-  const parsed = clientDeleteInput.safeParse(input)
+  const parsed = parseContactDeleteInput(input)
   if (!parsed.success) throw new CoreError('invalid_request', '联系人删除确认目标无效')
   const result = await resolveClientDeleteRows(data, parsed.data)
   if ('error' in result || result.snapshot.targetsDigest !== expected.targetsDigest
@@ -251,11 +265,11 @@ export async function describeClientDeleteTargets(data: DataServices, input: unk
 
 export function createClientDeleteTool(port: ClientDeletePort): ToolDefinition {
   const schema = clientDeleteInput
-  const request = (args: z.infer<typeof schema>, identity: RunIdentity, roundId: string, toolCallId: string): ClientDeleteRequest => ({ identity, roundId, toolCallId, args })
+  const request = (args: ClientDeleteRequest['args'], identity: RunIdentity, roundId: string, toolCallId: string): ClientDeleteRequest => ({ identity, roundId, toolCallId, args })
   return {
-    definition: { name: 'delete_client', schema: { type: 'function', function: { name: 'delete_client', description: '删除一个或多个联系人（不可恢复）。单项传 client_id 或联系人名 client，批量传 client_ids；执行前必须确认。', parameters: z.toJSONSchema(schema) as Record<string, Json> } } },
-    effect: 'write', destructive: port.destructive, requiresInteraction: true, confirmationReplay: true, validate: input => schema.safeParse(input),
-    execute(input, scope, call) { return port.apply({ ...request(input as z.infer<typeof schema>, scope.identity, scope.roundId, call.id), signal: scope.signal, call, scope }) },
-    reconcile(input, identity, call) { return port.reconcile(request(input as z.infer<typeof schema>, identity, identity.roundId, call.id)) },
+    definition: { name: 'delete_contact', schema: { type: 'function', function: { name: 'delete_contact', description: '删除一个或多个联系人（不可恢复）。单项传 contact_id 或联系人名称 contact_query，批量传 contact_ids；执行前必须确认。', parameters: z.toJSONSchema(schema) as Record<string, Json> } } },
+    effect: 'write', destructive: port.destructive, requiresInteraction: true, confirmationReplay: true, validate: parseContactDeleteInput,
+    execute(input, scope, call) { return port.apply({ ...request(input as ClientDeleteRequest['args'], scope.identity, scope.roundId, call.id), signal: scope.signal, call, scope }) },
+    reconcile(input, identity, call) { return port.reconcile(request(input as ClientDeleteRequest['args'], identity, identity.roundId, call.id)) },
   }
 }

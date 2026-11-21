@@ -37,20 +37,20 @@ it('桌面交互提示绑定到运行，重复激活复用原选项且隔离其�
       }))
       const signal = new AbortController().signal
       const pending = { id: 'synthetic-prompt', kind: 'question' as const, toolCall: {
-        id: 'synthetic-call', name: 'ask_user', input: { kind: 'question', title: '请选择', options: [{ id: 'a', label: '选项 A' }] },
+        id: 'synthetic-call', name: 'ask_user', input: { kind: 'question', title: '请选择', options: [{ id: 'a', label: '选项 A' }, { id: 'b', label: '选项 B' }] },
       } }
       await expect(activate({ ...identity, ownerId: randomUUID() }, pending, signal)).rejects.toMatchObject({ code: 'conflict' })
       await activate(identity, pending, signal)
       await activate(identity, pending, signal)
       const rows = await createSqlAgentInteractionHistory(runtime.db, 'sqlite', () => new Date())(ownerId, 1, { restoreActive: true })
       expect(rows).toEqual([expect.objectContaining({ title: '请选择', tool_call_id: 'synthetic-call',
-        options: [expect.objectContaining({ id: 'a', token: expect.any(String) }), expect.objectContaining({ id: '__custom_reply__' })] })])
+        options: [expect.objectContaining({ id: 'a', token: expect.any(String) }), expect.objectContaining({ id: 'b' }), expect.objectContaining({ id: '__custom_reply__' })] })])
       const projection = createSqliteInteractionProjection(runtime.db, 'synthetic-secret')
       const event = { identity, id: 'synthetic-event', sequence: 1, round: 1,
         type: 'interaction_required' as const, payload: { interactionId: pending.id } }
       const projected = await projection.interaction(event)
       expect(projected).toMatchObject({ type: 'interaction_required', prompt_id: rows[0]!.id,
-        core_run_id: identity.runId, resolved: false, options: [expect.objectContaining({ id: 'a' }), expect.any(Object)] })
+        core_run_id: identity.runId, resolved: false, options: [expect.objectContaining({ id: 'a' }), expect.objectContaining({ id: 'b' }), expect.any(Object)] })
       expect(await projection.interaction(event)).toEqual(projected)
       await expect(projection.interaction({ ...event, identity: { ...identity, runId: 'wrong-run' } }))
         .rejects.toMatchObject({ code: 'not_found' })
@@ -65,7 +65,9 @@ it('桌面交互提示绑定到运行，重复激活复用原选项且隔离其�
       } })
       expect(await consumeSqliteInteractionChoice(runtime.db, identity, promptId, token, 'synthetic-answer')).toEqual(answered)
       expect(await consumeSqliteInteraction(runtime.db, identity, promptId, null, '')).toEqual(answered)
-      expect(await projection.interaction(event)).toMatchObject({ resolved: true, selected_option_id: 'a', options: [] })
+      expect(await projection.interaction(event)).toMatchObject({ resolved: true, selected_option_id: 'a', options: [
+        { id: 'a', label: '选项 A', token: '' }, { id: 'b', label: '选项 B', token: '' },
+      ] })
       const textPrompt = { ...pending, id: 'synthetic-text-prompt' }
       await sql`UPDATE agent_run_checkpoints SET status='running' WHERE run_id=${identity.runId}`.execute(runtime.db)
       await activate(identity, textPrompt, signal)
@@ -89,6 +91,26 @@ it('桌面交互提示绑定到运行，重复激活复用原选项且隔离其�
       expect(await answer('合成回答')).toEqual(submitted)
       await expect(answer('另一个合成回答')).rejects.toMatchObject({ code: 'conflict' })
       expect(await projection.interaction(textEvent)).toMatchObject({ resolved: true, response_text: '合成回答' })
+      const multiPrompt = { ...pending, id: 'synthetic-multi-prompt', toolCall: {
+        ...pending.toolCall, input: { kind: 'choice', title: '可多选', selection_mode: 'multiple',
+          options: [{ id: 'a', label: '选项 A' }, { id: 'b', label: '选项 B' }] },
+      } }
+      await sql`UPDATE agent_run_checkpoints SET status='running' WHERE run_id=${identity.runId}`.execute(runtime.db)
+      await activate(identity, multiPrompt, signal)
+      const multiEvent = { ...event, payload: { interactionId: multiPrompt.id } }
+      const multi = await projection.interaction(multiEvent)
+      expect(multi).toMatchObject({ selection_mode: 'multiple', resolved: false })
+      await sql`UPDATE agent_run_checkpoints SET status='waiting' WHERE run_id=${identity.runId}`.execute(runtime.db)
+      const multiToken = (multi.options as Array<{ token: string }>)[0]!.token
+      await expect(consumeSqliteInteraction(runtime.db, identity, Number(multi.prompt_id), {
+        token: multiToken, selectedOptionIds: ['a', 'b'], customAnswer: '补充说明',
+      }, 'synthetic-multi-answer')).resolves.toMatchObject({ resolution: {
+        status: 'answered', value: { selected_option_ids: ['a', 'b'], custom_answer: '补充说明' },
+      } })
+      await expect(projection.interaction(multiEvent)).resolves.toMatchObject({
+        selection_mode: 'multiple', resolved: true, selected_option_ids: ['a', 'b'], custom_answer: '补充说明',
+        options: [{ id: 'a', token: '' }, { id: 'b', token: '' }],
+      })
       const shellPrompt = { id: 'synthetic-shell-prompt', kind: 'confirmation' as const, toolCall: {
         id: 'synthetic-shell-call', name: 'shell', input: { command: shellCommand },
       } }

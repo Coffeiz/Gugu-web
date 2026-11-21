@@ -1,10 +1,11 @@
+import { mcpServiceReminder, type McpToolLookup } from '../../../../../packages/core/src/mcp/tool-directory.js'
 import { createImSendFileTool } from '../../../../../packages/core/src/agent/tools/send-file.js'
 import { cleanupDesktopDownloadStaging, createDesktopWebDownload } from '../../../../../packages/core/src/runtime/desktop-web-download.js'
 import { openStreamedAgentGet } from '../../../../../packages/core/src/agent/tools/streamed-http-get.js'
 import { createHttpGetTool } from '../../../../../packages/core/src/agent/tools/web.js'
 import type { DesktopGroupSender } from '../../../../../packages/core/src/agent/run/sqlite-admission.js'
 import { createDesktopGroupContextSearch } from '../../../../../packages/core/src/im/desktop-group-context.js'
-import { desktopImAttachmentDelivery, desktopQqGroupRunEvent } from '../../../../../packages/core/src/im/desktop-inbox.js'
+import { desktopImAttachmentDelivery, desktopImGroupRunEvent } from '../../../../../packages/core/src/im/desktop-inbox.js'
 import { createImMemoryContextSource, type ImMemoryReadAuthorization } from '../../../../../packages/core/src/im/memory-source.js'
 import { imCanUseGroupOwnerMemory } from '../../../../../packages/core/src/im/access.js'
 import { formatGroupMemory, formatPlatformUserMemory } from '../../../../../packages/core/src/im/memory-context.js'
@@ -144,7 +145,7 @@ import { createKyselyScheduledTaskRagReader } from '../../../../../packages/core
 import { settleClosedSqliteInteraction, settleExclusiveSqliteAgentRuns } from '../../../../../packages/core/src/agent/run/sqlite-recovery.js'
 import { loadSqliteAgentRunSecret } from '../../../../../packages/core/src/agent/run/sqlite-secret.js'
 import { openLocalFile } from '@gugu/fs/node'
-import { filterConfiguredAgentTools } from '../../../../../packages/core/src/agent/index.js'
+import { canonicalAgentToolName, filterConfiguredAgentTools } from '../../../../../packages/core/src/agent/index.js'
 import { createViewImageTool, withViewImageReferences } from '../../../../../packages/core/src/agent/tools/view-image.js'
 import type { DesktopAgentRuntimeModule } from '../../../../../packages/core/src/runtime/desktop-agent-port.js'
 
@@ -158,8 +159,8 @@ function desktopGroupMemoryContext(value: unknown, ownerId: string): (ImMemoryRe
   const row = value as Record<string, unknown>, actorValue = row.actor
   if (!actorValue || typeof actorValue !== 'object' || Array.isArray(actorValue)) return null
   const actor = actorValue as Record<string, unknown>
-  if (actor.ownerId !== ownerId || actor.platform !== 'qq' || typeof actor.botId !== 'string'
-    || !/^[1-9]\d*$/u.test(actor.botId) || actor.chatType !== 'group' || typeof actor.chatId !== 'string' || !actor.chatId
+  if (actor.ownerId !== ownerId || !['feishu', 'qq', 'telegram'].includes(String(actor.platform)) || typeof actor.botId !== 'string'
+    || !/^[A-Za-z0-9._:-]{1,256}$/u.test(actor.botId) || actor.chatType !== 'group' || typeof actor.chatId !== 'string' || !actor.chatId
     || typeof actor.platformUserId !== 'string' || !actor.platformUserId
     || !['owner', 'member', 'unknown'].includes(String(actor.role))
     || !Array.isArray(actor.allowedToolNames) && actor.allowedToolNames !== null
@@ -170,7 +171,7 @@ function desktopGroupMemoryContext(value: unknown, ownerId: string): (ImMemoryRe
     || typeof actor.verifiedOwner !== 'boolean' || typeof actor.ownerMentionAuthorized !== 'boolean'
     || typeof row.groupMemoryEnabled !== 'boolean' || typeof row.memberMemoryEnabled !== 'boolean'
     || typeof row.groupOwnerMemoryEnabled !== 'boolean') return null
-  return { ownerId, botId: actor.botId, platform: 'qq', chatType: 'group', chatId: actor.chatId,
+  return { ownerId, botId: actor.botId, platform: actor.platform as ImActor['platform'], chatType: 'group', chatId: actor.chatId,
     platformUserId: actor.platformUserId, groupMemoryEnabled: row.groupMemoryEnabled, memberMemoryEnabled: row.memberMemoryEnabled,
     groupOwnerMemoryEnabled: row.groupOwnerMemoryEnabled,
     actor: actor as unknown as ImActor }
@@ -398,11 +399,13 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
   ragWorkerTask = runRagWorker(ragWorkerAbort.signal)
 
   async function prepareRunRuntime(sessionId: number | null, config: ProviderConfig | null, embedding?: RagQueryEmbeddingSettings, interactive = false, resumeIdentity?: RunIdentity, modelId?: string, locale = 'zh-CN') {
-    const imChatType = sessionId === null ? null : (await sql<{ chat_type: string | null }>`
+    const imSession = sessionId === null ? null : (await sql<{ chat_type: string | null }>`
       SELECT s.chat_type FROM conversation_sessions s JOIN desktop_im_sessions im
         ON im.session_id=s.id AND im.owner_id=s.user_id
       WHERE s.id=${sessionId} AND s.user_id=${dataContext(ownerId).ownerId.replaceAll('-', '')}
-    `.execute(db)).rows[0]?.chat_type
+    `.execute(db)).rows[0]
+    const imChatType = imSession?.chat_type
+    const singleChoiceOnly = Boolean(imSession)
     const groupChat = imChatType === 'group'
     if (groupChat) interactive = false
     const embeddingGenerationAtStart = embeddingGeneration
@@ -470,7 +473,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     async function readDesktopImMemory(identity: RunIdentity, signal?: AbortSignal): Promise<{ actor: ImActor | null; data: Json; groupOwnerMemoryEnabled: boolean }> {
       if (!groupChat || !memoryFiles) return { actor: null, data: {}, groupOwnerMemoryEnabled: false }
       signal?.throwIfAborted()
-      const receipt = await desktopQqGroupRunEvent(db, identity)
+      const receipt = await desktopImGroupRunEvent(db, identity)
       if (!receipt) return { actor: null, data: {}, groupOwnerMemoryEnabled: false }
       const resolve = async () => desktopGroupMemoryContext(await hostRequest('agent.im.readGroupMemoryContext', { ...receipt, ownerId }, signal), ownerId)
       const initial = await resolve()
@@ -1132,7 +1135,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         },
         metadata: identity => ({ undoContextId: `agent:${identity.sessionId}:${identity.runId}`.slice(0, 128) }),
       }) } : {}),
-      ...(interactive ? { askUser: { authorization: async () => 'disabled' as const } } : {}),
+      ...(interactive ? { askUser: { singleChoiceOnly, authorization: async () => 'disabled' as const } } : {}),
       httpGet,
       remember: createSqliteRememberMemory(db, memoryFiles),
       memorySearch: createSqliteMemorySearch(db, authorize, embedding, memoryFiles, resolveProxy),
@@ -1234,7 +1237,8 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     })
     const mcpTools = createMcpAgentToolPorts({
       base: registry,
-      directory: owner => mcpRuntime.directory(owner),
+      directory: mcpRuntime.directory,
+      services: mcpRuntime.services,
       runtime: mcpRuntime,
       configured: async (_identity, name) => (await configuredAgentTools([name])).length === 1,
       async authorize(identity, _name, signal) {
@@ -1244,7 +1248,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     })
     async function authorizeGroupTool(identity: RunIdentity, name: string) {
       if (!await authorize(identity)) return false
-      const receipt = await desktopQqGroupRunEvent(db, identity)
+      const receipt = await desktopImGroupRunEvent(db, identity)
       return !!receipt && await hostRequest('agent.im.authorizeGroupTool', { ...receipt, name }) === true
     }
     const groupTools = groupChat ? createToolRegistry({
@@ -1258,9 +1262,9 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       ],
       authorize: (identity, name) => name === 'get_current_time' ? authorize(identity) : authorizeGroupTool(identity, name),
     }) : undefined
-    const configuredTools = async (identity: RunIdentity): Promise<PreparedToolDefinition[]> => {
+    const configuredTools = async (identity: RunIdentity, lookup?: McpToolLookup): Promise<PreparedToolDefinition[]> => {
       if (groupTools) return groupTools.capabilities(identity)
-      const definitions = await mcpTools.capabilities(identity)
+      const definitions = await mcpTools.capabilities(identity, lookup)
       const allowed = new Set(await configuredAgentTools(definitions.map(tool => tool.name)))
       return definitions.filter(tool => allowed.has(tool.name))
     }
@@ -1290,9 +1294,9 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       } finally { await handle.close() }
     } })
     async function mayForward(name: string, identity: RunIdentity, signal?: AbortSignal) {
-      const allowed = new Set((await configuredTools(identity)).map(tool => tool.name))
+      const allowed = new Set((await configuredTools(identity, name.startsWith('mcp_') ? { names: [name] } : undefined)).map(tool => tool.name))
       signal?.throwIfAborted()
-      return allowed.has('call_tool') && allowed.has(name)
+      return allowed.has('call_tool') && allowed.has(canonicalAgentToolName(name))
     }
     const contextBuilder = {
       buildSnapshot: (data: Parameters<NonNullable<Parameters<typeof createCanonicalSourceLoader>[0]['builder']['buildSnapshot']>>[0]) => {
@@ -1391,7 +1395,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     }
     async function enqueueImReflection(identity: RunIdentity, text: string, modelIdentity: string) {
       if (!groupChat || !memoryFiles || !text.trim() || text.length > 1_000_000) return
-      const receipt = await desktopQqGroupRunEvent(db, identity)
+      const receipt = await desktopImGroupRunEvent(db, identity)
       if (!receipt) return
       const authorization = desktopGroupMemoryContext(await hostRequest('agent.im.readGroupMemoryContext',
         { ...receipt, ownerId }, reflectionAbort.signal), ownerId)
@@ -1412,7 +1416,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         scopes.push({ type: 'owner', id: owner })
       for (const scope of scopes) await sql`INSERT INTO desktop_im_reflection_jobs
         (owner_id,session_id,run_id,user_message_id,platform,connection_id,event_key,scope_type,scope_id,model_identity,status,attempts,created_at_ms)
-        VALUES(${owner},${Number(identity.sessionId)},${identity.runId},${source.id},'qq',${receipt.connectionId},${receipt.eventKey},
+        VALUES(${owner},${Number(identity.sessionId)},${identity.runId},${source.id},${receipt.platform},${receipt.connectionId},${receipt.eventKey},
           ${scope.type},${scope.id},${modelIdentity},'queued',0,${Date.now()})
         ON CONFLICT(owner_id,session_id,run_id,scope_type,scope_id) DO NOTHING`.execute(db)
     }
@@ -1482,7 +1486,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
             current = { profile: decode('profile', []), pattern: decode('pattern', []), summary: decode('summary', {}),
               daily: snapshot.files.daily ?? '', stance: decode('stance', {}), lens: decode('lens', {}) }
           } else {
-            const fileScope = { owner_user_id: owner, platform: 'qq' as const, bot_id: actor.botId,
+            const fileScope = { owner_user_id: owner, platform: actor.platform, bot_id: actor.botId,
               scope_type: scope.type, scope_id: scope.id }
             const fields = scope.type === 'group' ? ['profile', 'summary', 'daily', 'members'] as const
               : ['profile', 'pattern', 'summary', 'daily', 'memory'] as const
@@ -1501,7 +1505,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
               }
             }
             const { rows: tombstone } = await sql`SELECT 1 FROM desktop_im_memory_tombstones
-              WHERE owner_id=${owner} AND platform='qq' AND bot_id=${actor.botId}
+              WHERE owner_id=${owner} AND platform=${actor.platform} AND bot_id=${actor.botId}
                 AND scope_type=${scope.type} AND scope_id=${scope.id}`.execute(db)
             if (tombstone.length) throw new Error('reflection_authorization_changed')
           }
@@ -1558,7 +1562,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
                   AND scope_type='owner' AND scope_id=${job.scope_id} AND status='processing' AND claimed_at_ms=${claimTime}`.execute(tx)
             })
           } else {
-            const fileScope = { owner_user_id: owner, platform: 'qq' as const, bot_id: actor.botId,
+            const fileScope = { owner_user_id: owner, platform: actor.platform, bot_id: actor.botId,
               scope_type: scope.type, scope_id: scope.id }
             for (const [field, value] of Object.entries(changes)) {
               if (!['profile', 'pattern', 'summary', 'daily', 'memory', 'members'].includes(field)) continue
@@ -1569,7 +1573,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
               const filename = field === 'daily' || field === 'memory' ? `${field}.md` : `${field}.json`
               if (await memoryFiles.readImScope(fileScope, filename) !== rawFiles[field]) throw new Error('reflection_memory_changed')
               const { rows: tombstone } = await sql`SELECT 1 FROM desktop_im_memory_tombstones
-                WHERE owner_id=${owner} AND platform='qq' AND bot_id=${actor.botId}
+                WHERE owner_id=${owner} AND platform=${actor.platform} AND bot_id=${actor.botId}
                   AND scope_type=${scope.type} AND scope_id=${scope.id}`.execute(db)
               if (tombstone.length) throw new Error('reflection_authorization_changed')
               await memoryFiles.writeImScope(fileScope, filename,
@@ -1719,11 +1723,11 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
             ? mcpAction === 'add' ? mcpAddConfirmation : mcpAction === 'update' ? mcpUpdateConfirmation : mcpRemoveConfirmation
           : request.toolCall.name === 'delete_knowledge' ? knowledgeConfirmation
           : request.toolCall.name === 'delete_skill' ? skillDeleteConfirmation
-          : request.toolCall.name === 'delete_client' ? clientDeleteConfirmation : confirmation
+          : canonicalAgentToolName(request.toolCall.name) === 'delete_contact' ? clientDeleteConfirmation : confirmation
         return handler.describe(tx, identity, request)
       },
       credential: describeSqliteMcpCredential, authorization: unavailable,
-    }))
+    }, { singleChoiceOnly }))
     const agent = createSqliteAgentRuntime({
       observation,
       db, secret, history: { persistPrivateContext: continuation.persist }, admission: {
@@ -1786,7 +1790,10 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
           const loaded = await source.load(identity, signal)
           const tools = await configuredTools(identity)
           const toolNames = tools.map(tool => tool.name)
-          const brief = projectAgentToolBrief(createAgentToolBrief(preferences, tools), toolNames)
+          const catalog = createAgentToolBrief(preferences, tools)
+          const mcpReminder = ['search_tools', 'call_tool'].every(name => toolNames.includes(name))
+            ? mcpServiceReminder(await mcpRuntime.services(identity.ownerId)) : ''
+          const brief = projectAgentToolBrief({ ...catalog, mcpReminder }, toolNames)
           const { providerToolNames } = brief
           const visible = providerToolNames ? tools.filter(tool => providerToolNames.includes(tool.name)) : tools
           return { ...loaded, capabilities: { toolNames, tools, ...brief }, input: {
@@ -1839,7 +1846,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
             if (call.adapter === 'call_tool' && !await mayForward(call.name, scope.identity, scope.signal))
               return rejectAdapterCall('工具不存在或未开放')
             return mcpTools.tools.dispatch(call, {
-              ...scope, discoverRelatedTools: () => configuredTools(scope.identity),
+              ...scope, discoverRelatedTools: lookup => configuredTools(scope.identity, lookup),
             })
           },
           async reconcile(call, identity) {
@@ -2035,7 +2042,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     },
     runModel,
     async respond(sessionId: number, runId: string, promptId: number, eventId: string,
-      reply: { token: string } | { text: string } | { secrets: Record<string, string> | null } | null, config: ProviderConfig, embedding?: RagQueryEmbeddingSettings) {
+      reply: { token: string; selectedOptionIds?: string[]; customAnswer?: string } | { text: string } | { secrets: Record<string, string> | null } | null, config: ProviderConfig, embedding?: RagQueryEmbeddingSettings) {
       if (responding.has(sessionId)) throw new CoreError('busy', '正在提交交互回复')
       responding.add(sessionId)
       try {

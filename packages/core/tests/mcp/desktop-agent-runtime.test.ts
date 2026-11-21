@@ -48,6 +48,9 @@ it('Desktop 从本地 MCP 配置发现 owner 工具并调用服务端原名', as
     await expect(mcp.state(ownerId, saved.id)).resolves.toEqual({
       state: 'ok', loaded_tool_count: 1, loaded_tool_names: ['mcp_places_lookup'],
     })
+    await expect(desktopMcp(runtime.db, ownerId, crypto).list()).resolves.toMatchObject({
+      items: [{ id: saved.id, state: 'ok', loaded_tool_count: 1, loaded_tool_names: ['mcp_places_lookup'] }],
+    })
     await expect(mcp.directory('00000000-0000-4000-8000-000000000099')).resolves.toEqual([])
     await expect(mcp.dispatchForAgent(ownerId, saved.id, 'mcp_places_lookup', { query: '附近咖啡馆' }))
       .resolves.toEqual({ result: '找到两家', executed: true })

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { computed, createApp, defineComponent, ref } from 'vue'
+import { computed, createApp, defineComponent, nextTick, ref } from 'vue'
 import { useChatWindow } from '@/components/common/gugu-chat/composables/useChatWindow'
 import { LAST_WINDOW_MODE_KEY } from '@/components/common/gugu-chat/chatConstants'
 
@@ -12,6 +12,9 @@ describe('聊天窗口尺寸切换的底部锚点', () => {
   let wrapper: ReturnType<typeof createApp>
   let controls: ReturnType<typeof useChatWindow>
   let el: HTMLElement
+  let shell: HTMLElement
+  let spacer: HTMLElement
+  let contentHeight: number
   let height: number
   let total: number
   let rowStart: number
@@ -43,7 +46,14 @@ describe('聊天窗口尺寸切换的底部锚点', () => {
     total = 1000
     rowStart = 600
     rowHeight = 200
+    contentHeight = 0
     el = document.createElement('div')
+    shell = document.createElement('div')
+    spacer = document.createElement('div')
+    spacer.className = 'msg-virtual-spacer'
+    el.append(spacer)
+    Object.defineProperty(spacer, 'offsetHeight', { get: () => contentHeight })
+    Object.defineProperty(shell, 'offsetHeight', { get: () => height + 120 })
     const row = document.createElement('div')
     row.className = 'msg-virtual-row'
     row.dataset.index = '3'
@@ -65,7 +75,7 @@ describe('聊天窗口尺寸切换的底部锚点', () => {
     wrapper = createApp(defineComponent({
       setup() {
         controls = useChatWindow({
-          windowRef: ref(document.createElement('div')),
+          windowRef: ref(shell),
           composerRef: ref(null),
           messagesEl: computed(() => el),
         })
@@ -120,6 +130,28 @@ describe('聊天窗口尺寸切换的底部锚点', () => {
     notifyResize?.()
     expect(el.scrollTop).toBe(500)
     expect(controls.resizing.value).toBe(false)
+  })
+
+  it('历史默认半屏，新回复可自适应至 85%，关闭后恢复默认', async () => {
+    vi.stubGlobal('innerHeight', 1000)
+    window.dispatchEvent(new Event('resize'))
+    contentHeight = 530
+    controls.openInLastMode()
+    await nextTick()
+    expect(controls.smallH.value).toBe(500)
+    controls.enableCompactGrowth()
+    expect(controls.smallH.value).toBe(650)
+    contentHeight = 1400
+    notifyResize?.()
+    expect(controls.smallH.value).toBe(850)
+    controls.closeChat()
+    controls.finishChatClose()
+    controls.openInLastMode()
+    await nextTick()
+    expect(controls.smallH.value).toBe(500)
+    contentHeight = 20
+    notifyResize?.()
+    expect(controls.smallH.value).toBe(440)
   })
 
   it('悬浮球恢复上次关闭时的模式，刷新后仍保留', () => {

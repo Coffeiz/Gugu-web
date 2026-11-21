@@ -16,16 +16,25 @@
       <div class="pm-field-desc pm-help-anchor">
         <span class="pm-field-name">{{ t('profileImUi.responseMode') }}</span>
         <span class="pm-help-row">
-          <span class="pm-field-hint">{{ t('profileImUi.responseModeHint') }}</span>
-          <button :ref="setHelpAnchor" type="button" class="pm-help-toggle" @click.stop="helpOpen = !helpOpen">{{ t('profileImUi.guide') }}</button>
-          <PopupMenu :show="helpOpen" :anchor="helpAnchor" popup-class="pm-help-popup-host">
+          <span class="pm-field-hint">{{ t(responseModeHint) }}</span>
+          <button v-if="responseGuide" :ref="setHelpAnchor" type="button" class="pm-help-toggle" @click.stop="helpOpen = !helpOpen">{{ t('profileImUi.guide') }}</button>
+          <PopupMenu v-if="responseGuide" :show="helpOpen" :anchor="helpAnchor" popup-class="pm-help-popup-host">
             <div class="pm-help-pop" @click.stop>
-              <div class="pm-help-pop-title">{{ t('profileImUi.fullMessageTitle') }}</div>
-              <div class="pm-help-pop-step">{{ t('profileImUi.fullMessageStep1') }}</div>
-              <div class="pm-help-pop-step">{{ t('profileImUi.fullMessageStep2') }}</div>
-              <div class="pm-help-pop-step">{{ t('profileImUi.fullMessageStep3') }}</div>
-              <div class="pm-help-pop-step">{{ t('profileImUi.fullMessageStep4') }}</div>
-              <div class="pm-help-pop-note">{{ t('profileImUi.fullMessageNote') }}</div>
+              <template v-if="responseGuide === 'qq'">
+                <div class="pm-help-pop-title">{{ t('profileImUi.fullMessageTitle') }}</div>
+                <div class="pm-help-pop-step">{{ t('profileImUi.fullMessageStep1') }}</div>
+                <div class="pm-help-pop-step">{{ t('profileImUi.fullMessageStep2') }}</div>
+                <div class="pm-help-pop-step">{{ t('profileImUi.fullMessageStep3') }}</div>
+                <div class="pm-help-pop-step">{{ t('profileImUi.fullMessageStep4') }}</div>
+                <div class="pm-help-pop-note">{{ t('profileImUi.fullMessageNote') }}</div>
+              </template>
+              <template v-else-if="responseGuide === 'telegram'">
+                <div class="pm-help-pop-title">{{ t('profileImUi.telegramGroupGuideTitle') }}</div>
+                <div class="pm-help-pop-step">{{ t('profileImUi.telegramGroupGuideStep1') }}</div>
+                <div class="pm-help-pop-step">{{ t('profileImUi.telegramGroupGuideStep2') }}</div>
+                <div class="pm-help-pop-step">{{ t('profileImUi.telegramGroupGuideStep3') }}</div>
+                <div class="pm-help-pop-note">{{ t('profileImUi.telegramGroupGuideNote') }}</div>
+              </template>
             </div>
           </PopupMenu>
         </span>
@@ -36,9 +45,18 @@
           @click="emit('response-mode', option.key)">{{ t(option.label) }}</button>
       </div>
     </div>
+    <div v-if="showAttentionMode && groupResponseMode === 'reply_all'" class="pm-bot-group-row pm-bot-tools-row">
+      <div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.groupAttentionMode') }}</span><span class="pm-field-hint">{{ t('profileImUi.groupAttentionModeHint') }}</span></div>
+      <div class="pm-style-group pm-tool-options" role="group" :aria-label="t('profileImUi.groupAttentionMode')">
+        <button v-for="option in attentionOptions" :key="option.key" type="button" class="pm-style-chip"
+          :class="{ active: groupAttentionMode === option.key }" :aria-pressed="groupAttentionMode === option.key"
+          @click="emit('attention-mode', option.key)">{{ t(option.label) }}</button>
+      </div>
+    </div>
   </template>
 
-  <MessageFormatSettings :bot="messageFormatBot" :private-only="!groupChatEnabled" show-streaming
+  <MessageFormatSettings v-if="showMessageFormat || showPrivateStreaming" :bot="messageFormatBot" :private-only="!groupChatEnabled"
+    :show-formats="showMessageFormat" :show-streaming="showPrivateStreaming || showMessageFormat"
     @change="(scope, mode) => emit('message-format', scope, mode)"
     @streaming="emit('private-streaming', $event)" />
 
@@ -61,7 +79,7 @@
     <div class="pm-bot-group-row pm-bot-tools-row">
       <div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.memberTools') }}</span><span class="pm-field-hint">{{ t('profileImUi.memberToolsHint') }}</span></div>
       <div class="pm-style-group pm-tool-options" role="group" :aria-label="t('profileImUi.memberTools')">
-        <button v-for="option in toolOptions" :key="option.key" type="button" class="pm-style-chip"
+        <button v-for="option in toolOptions" :key="option.key" :data-tool-option="option.key" type="button" class="pm-style-chip"
           :class="{ active: enabledTools.includes(option.key) }" :aria-pressed="enabledTools.includes(option.key)"
           @click="emit('toggle-tool', option.key)">{{ t(`profileImUi.${option.labelKey}`) }}</button>
       </div>
@@ -76,27 +94,18 @@ import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 import GroupOwnerMemorySwitch from '@/components/common/profile/GroupOwnerMemorySwitch.vue'
 import MessageFormatSettings from '@/components/common/profile/MessageFormatSettings.vue'
 import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
+import type { ImGroupAttentionMode, ImGroupReplyMode } from '@gugu/core/im/group-settings'
 
 type MessageScope = 'group' | 'private'
 type ToolOption = 'web_tools' | 'web_search' | 'group_context_search'
-type GroupResponseMode = 'reply_mentions' | 'reply_all' | 'record_only'
+type GroupResponseMode = ImGroupReplyMode
+type GroupAttentionMode = ImGroupAttentionMode
 interface MessageFormatBot { group_message_format?: string; private_message_format?: string; private_streaming_enabled?: boolean }
 
-defineProps<{
-  showGroupToggle: boolean
-  groupChatHint: string
-  groupChatEnabled: boolean
-  groupSettingsVisible: boolean
-  groupResponseMode: GroupResponseMode
-  messageFormatBot: MessageFormatBot
-  groupOwnerMemoryEnabled: boolean
-  groupMemoryEnabled: boolean
-  memberMemoryEnabled: boolean
-  enabledTools: readonly ToolOption[]
-}>()
 const emit = defineEmits<{
   'group-chat': [enabled: boolean]
   'response-mode': [mode: GroupResponseMode]
+  'attention-mode': [mode: GroupAttentionMode]
   'message-format': [scope: MessageScope, mode: string]
   'private-streaming': [enabled: boolean]
   'group-owner-memory': [enabled: boolean]
@@ -131,6 +140,36 @@ const responseOptions = [
   { key: 'reply_mentions', label: 'profileImUi.replyMentions' },
   { key: 'record_only', label: 'profileImUi.recordOnly' },
 ] as const
+const attentionOptions = [
+  { key: 'quiet', label: 'profileImUi.groupAttentionQuiet' },
+  { key: 'natural', label: 'profileImUi.groupAttentionNatural' },
+  { key: 'active', label: 'profileImUi.groupAttentionActive' },
+  { key: 'autonomous', label: 'profileImUi.groupAttentionAutonomous' },
+] as const
+withDefaults(defineProps<{
+  showGroupToggle: boolean
+  groupChatHint: string
+  groupChatEnabled: boolean
+  groupSettingsVisible: boolean
+  groupResponseMode: GroupResponseMode
+  groupAttentionMode?: GroupAttentionMode
+  showAttentionMode?: boolean
+  responseModeHint?: string
+  responseGuide?: 'qq' | 'telegram'
+  showMessageFormat?: boolean
+  showPrivateStreaming?: boolean
+  messageFormatBot: MessageFormatBot
+  groupOwnerMemoryEnabled: boolean
+  groupMemoryEnabled: boolean
+  memberMemoryEnabled: boolean
+  enabledTools: readonly ToolOption[]
+}>(), {
+  groupAttentionMode: 'autonomous',
+  showAttentionMode: false,
+  responseModeHint: 'profileImUi.responseModeHint',
+  showMessageFormat: true,
+  showPrivateStreaming: false,
+})
 const toolOptions = [
   { key: 'web_tools', labelKey: 'webSearchTools' },
   { key: 'web_search', labelKey: 'providerWebSearch' },

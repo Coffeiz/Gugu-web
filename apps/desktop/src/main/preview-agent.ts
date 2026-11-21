@@ -1,4 +1,4 @@
-import { filesPreviewRoute, workspacePreviewRoutes } from '../../../ui/src/desktop/bridge/preview-core.js'
+import { filesPreviewRoute, resourcesPreviewRoute, workspacePreviewRoutes } from '../../../ui/src/desktop/bridge/preview-core.js'
 import { agentModelPreviewPath } from '../shared/agent-model-preview.js'
 import { streamPreviewRunChanges } from './agent/preview-run-changes.js'
 import { agentSessionPreviewPath } from '../shared/agent-session-preview.js'
@@ -21,7 +21,7 @@ export async function startDesktopPreviewAgent(socket: string, secret: string, h
     ['/__desktop-preview/im', new Map([['qqPairing', DESKTOP_CHANNELS.qqPairing], ['feishuPairing', DESKTOP_CHANNELS.feishuPairing], ['wechatPairing', DESKTOP_CHANNELS.wechatPairing], ['telegramGateway', DESKTOP_CHANNELS.telegramGateway]])],
     ['/__desktop-preview/preferences', new Map([['appearance', DESKTOP_CHANNELS.appearance], ['updateAppearance', DESKTOP_CHANNELS.updateAppearance], ['clearAgentMemory', DESKTOP_CHANNELS.clearAgentMemory], ['clearAgentAttachments', DESKTOP_CHANNELS.clearAgentAttachments]])],
     ['/__desktop-preview/logs', new Map([['readLogs', DESKTOP_CHANNELS.readLogs]])],
-    ...[filesPreviewRoute, ...workspacePreviewRoutes].map(({ endpoint, methods }) => [endpoint,
+    ...[filesPreviewRoute, resourcesPreviewRoute, ...workspacePreviewRoutes].map(({ endpoint, methods }) => [endpoint,
       new Map<string, string>(methods.map(method => [method, DESKTOP_CHANNELS[method]])),
     ] as const),
     [agentModelPreviewPath, new Map([['agentModel', DESKTOP_CHANNELS.agentModel], ['auxiliaryModel', DESKTOP_CHANNELS.auxiliaryModel]])],

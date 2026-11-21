@@ -41,7 +41,7 @@ it('桌面忽略 Web 会话通知，并在旧流结束后根据平台通知补�
       chat = useChatConversation({
         composerRef: ref(null), messageListRef: ref(null), pendingAtt: ref([]),
         refreshAfterTools: noOpAsync, loadQuota: noOp, playIncomingMessageSfx: noOp,
-        onContentReset: noOp, onCaptureBaseScrollH: noOp, onSyncSmallH: noOp,
+        onSyncSmallH: noOp,
         sessionAccess: {
           readHistory, readRunState, deleteSession: noOpAsync, renameSession: noOpAsync,
           listSessions, readPendingQueue: async () => ({ items: [] }),
@@ -102,7 +102,7 @@ it('Web 接入会话接口后仍补读历史并续接实时运行', async () => 
       chat = useChatConversation({
         composerRef: ref(null), messageListRef: ref(null), pendingAtt: ref([]),
         refreshAfterTools: noOpAsync, loadQuota: noOp, playIncomingMessageSfx: noOp,
-        onContentReset: noOp, onCaptureBaseScrollH: noOp, onSyncSmallH: noOp,
+        onSyncSmallH: noOp,
         sessionAccess: { ...webChatSessionAccess, listSessions },
         httpStream: { resume, send: async () => { throw new Error('续接不应发送新消息') } },
       })

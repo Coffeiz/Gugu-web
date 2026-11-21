@@ -47,7 +47,7 @@
   <!-- 聊天窗口（单一元素，小/大状态通过位置过渡）。窗口外壳/标题栏/消息列表/输入框
        收在 GuguChatWindow.vue；扫码绑定弹窗与侧边栏通过插槽填充（ref 由本组件持有，
        供 useChatImConnect 使用）。 -->
-  <Transition name="chat-open" @after-leave="finishChatClose" @leave-cancelled="chatClosing = false">
+  <Transition name="chat-open" @after-enter="animateGreeting(() => open)" @after-leave="finishChatClose" @leave-cancelled="chatClosing = false">
     <GuguChatWindow
       v-if="open || chatClosing"
       v-show="open"
@@ -344,12 +344,7 @@ watch(audioPlaying, (playing) => {
   else { rippleTimeout = setTimeout(() => { rippleActive.value = false }, 3600) }
 })
 
-// ── 窗口状态 / 位置 / 尺寸 / 层级 / 通知锚点 / 小窗高度跟随：见 useChatWindow.ts。
-// 该 composable 拥有 chat-window / expanded / resizing / windowStyle / miniPlayerStyle
-// / notifyAnchor / notifyOrigin / chatZ / contentH / _baseScrollH / syncSmallH 等。
-// 三个钩子（onContentReset / onCaptureBaseScrollH / onSyncSmallH）由它内部定义并
-// 暴露，本组件把它们传给 useChatConversation，把「内容变化 → 窗口尺寸跟随」这条
-// 链收在 useChatWindow 内闭环，不在本组件里写半透半遮的中间层。
+// 窗口尺寸、层级与通知锚点由 useChatWindow 管理。
 const windowRef = ref<InstanceType<typeof GuguChatWindow> | null>(null)
 // 把 GuguChatWindow 暴露的 DOM/组件引用包装成 useChatConversation / useChatWindow 需要的形态。
 const messageListRef = computed(() => windowRef.value?.messageListRef ?? null)
@@ -363,8 +358,7 @@ const {
   windowStyle, miniPlayerStyle,
   miniPinned, reopenResume,
   raiseChat, closeChat, finishChatClose, openInLastMode, markResizing, playIncomingMessageSfx,
-  resetContentH, captureBaseScrollH, setBaseScrollH, syncSmallH,
-  onContentReset, onCaptureBaseScrollH, onSyncSmallH,
+  onSyncSmallH, enableCompactGrowth,
   SESSION_KEY, LAST_SESSION_KEY,
 } = useChatWindow({
   windowRef: windowElRef,
@@ -378,7 +372,6 @@ async function toggleOpen() {
   if (open.value) { closeChat(); return }
   openInLastMode()
   if (expanded.value) void fetchSessions()
-  else resetContentH()
   props.trackChatEvent?.('chat_open')
   await alignNewWindowToBottom()
 }
@@ -408,22 +401,10 @@ async function enterExpanded() {
   composerRef.value?.focus?.()
 }
 
-// 收起：保留底部锚点，冻结高度基线，布局稳定后重新测量。
-async function exitExpanded() {
+// 收起期间保留底部锚点，尺寸过渡结束后重新测量。
+function exitExpanded() {
   markResizing()
-  resetContentH()   // 先重置，小窗 DOM 以 SMALL_H 直接创建，不产生二次缩小
-  // 缩小动画期间冻结增长（grown 恒 0、窗口稳在 SMALL_H）：大窗换行少、
-  // scrollHeight 偏小，拿它当基线会让小窗重新换行后的高度全被算成新增 → 顶满
-  setBaseScrollH(Infinity)
   expanded.value = false
-  await nextTick()
-  const el = messagesEl.value
-  if (!el) return
-  // 窗口域统一维护底部锚点；小窗布局稳定后再测真实基线。
-  setTimeout(() => {
-    captureBaseScrollH()
-    syncSmallH()
-  }, 450)
 }
 
 onMounted(() => {
@@ -549,7 +530,7 @@ const conversation = useChatConversation({
   trackMessageSent: props.trackMessageSent,
   onAutomaticModeCommand: () => refreshAutomaticMode().catch(() => {}),
   playIncomingMessageSfx: () => playIncomingMessageSfx(),
-  onContentReset, onCaptureBaseScrollH, onSyncSmallH,
+  onSyncSmallH,
   onQueuePersistenceError: () => showAppError(t('chatUi.pendingQueuePersistFailed')),
   onQueueDispatchError: () => showAppError(t('chatUi.networkError')),
   onPresentFile: (file) => previewStore.open({
@@ -572,6 +553,10 @@ const {
   animateGreeting,
 } = conversation
 
+watch(streaming, active => {
+  if (active && open.value && !expanded.value) enableCompactGrowth()
+})
+
 const badgeAuth = useAuthStore()
 const webSessionBadges = useWebSessionBadges({
   sessions, sessionId, visible: open,
@@ -583,7 +568,6 @@ watch(() => uiStore.pendingChatPrefill, async (prompt) => {
   if (!prompt) return
   uiStore.pendingChatPrefill = null
   open.value = true
-  if (!expanded.value) resetContentH()
   inputText.value = prompt
   await nextTick()
   // 首次打开时编辑器刚完成挂载，明确把光标放到预填文本末尾。
@@ -683,11 +667,11 @@ const interactionAnswerMode = computed(() => {
 })
 const pendingCustomPromptId = computed(() => findPendingTextInteractionId(messages.value, interactionAnswerMode.value))
 
-async function onInteractionSelect(message: ChatMessage, option: { id: string; label: string; token: string }) {
+async function onInteractionSelect(message: ChatMessage, option: { id: string; label: string; token: string; selectedOptionIds?: string[]; customAnswer?: string }) {
   const interaction = message.interaction
   const currentSessionId = sessionId.value
   if (!interaction?.promptId || !currentSessionId) return
-  const custom = option.id === CUSTOM_REPLY_OPTION_ID
+  const custom = option.id === CUSTOM_REPLY_OPTION_ID && !option.customAnswer
   if (custom && (!interaction.allowTextInput || interaction.kind === 'confirm')) return
 
   const resumesTool = !custom && Boolean(interaction.toolCallId)
@@ -697,7 +681,7 @@ async function onInteractionSelect(message: ChatMessage, option: { id: string; l
   try {
     const result = await (props.respondToInteraction ?? respondToHttpInteraction)({
       action: 'select', sessionId: currentSessionId, runId: message.runId,
-      promptId: interaction.promptId, token: option.token, resume: resumesTool,
+      promptId: interaction.promptId, token: option.token, resume: resumesTool, selectedOptionIds: option.selectedOptionIds, customAnswer: option.customAnswer,
     })
     if (result.status !== 'accepted') {
       if (result.status === 'expired' && !custom) {
@@ -722,6 +706,8 @@ async function onInteractionSelect(message: ChatMessage, option: { id: string; l
     }
 
     interaction.resolved = true
+    interaction.selectedOptionIds = option.selectedOptionIds
+    interaction.customAnswer = option.customAnswer
     interaction.selectedOptionId = option.id
     interaction.responseText = option.label
     if (resumesTool && sessionId.value === currentSessionId)
@@ -960,7 +946,7 @@ async function copyMsg(msg: ChatMessage) {
 
 // 任何打开路径（FAB / 通知点开 / 展开）都触发一次
 watch(open, (v) => {
-  if (v) { animateGreeting(); loadBots(); loadQuota(); loadVoiceAvailability(); pickOfflineLabel() }
+  if (v) { loadBots(); loadQuota(); loadVoiceAvailability(); pickOfflineLabel() }
 })
 
 // ── 展开/收起 ────────────────────────────────────────────

@@ -65,7 +65,7 @@ async function consumeSecretInTransaction(tx: Transaction<Database>, prompt: Int
   return { result: readSavedAnswer(prompt) }
 }
 
-type Reply = { token: string } | { text: string } | { secrets: Record<string, string> | null }
+type Reply = { token: string; selectedOptionIds?: string[]; customAnswer?: string } | { text: string } | { secrets: Record<string, string> | null }
 
 export function consumeSqliteInteractionText(
   db: Kysely<Database>, identity: RunIdentity, promptId: number, text: string, eventId: string,
@@ -151,7 +151,7 @@ export async function consumeSqliteInteraction(
         applyCommandAction: unavailable,
         redeemConfirmation: unavailable,
       }),
-    }, { ...options, token: reply.token, allowDuplicateEvent: true })
+    }, { ...options, token: reply.token, selectedOptionIds: reply.selectedOptionIds, customAnswer: reply.customAnswer, allowDuplicateEvent: true })
     const result = await consume.catch(error => {
       if ((error instanceof InteractionConsumeError || error instanceof InteractionTextError) && error.code === 'interaction_expired') return error
       throw error

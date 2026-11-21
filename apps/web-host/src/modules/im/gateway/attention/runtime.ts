@@ -1,5 +1,5 @@
 import type { Pool } from 'pg'
-import { buildLogicalCandidates, decideAttention } from '@gugu/core/im/attention/algorithm'
+import { buildLogicalCandidates, decideAttention, selectAttentionCandidate } from '@gugu/core/im/attention/algorithm'
 import { attentionMessageFromPayload } from '@gugu/core/im/attention/message'
 import { normalizeAttentionText } from '@gugu/core/im/attention/normalization'
 import { strip } from '@gugu/core/shared/values'
@@ -18,7 +18,6 @@ export interface ImAttentionOutcome {
   replyChoice: 'pending' | 'reply'
 }
 const invalid = () => new Error('群自动回复决策不可用')
-const eligible = new Set(['DIRECT', 'CONTINUE', 'CAPABILITY_ACTION', 'MEMBER_ACTIVE'])
 
 /** 不创建Agent循环。调用方必须把首次disposition持久化；只有可信pending唤醒可重评原ASK。 */
 export function createPostgresImAttentionRuntime(options: {
@@ -116,8 +115,7 @@ export function createPostgresImAttentionRuntime(options: {
         : await options.snapshot.load({ scope, sessionId, messages, watermarkMs }, signal)
       const scored = messages.map(message => ({ message, decision: decideAttention(message,
         { ...snapshot, messages: snapshot.messages.filter(m => m.eventId !== message.eventId && (!resume || m.eventReceivedMs <= message.eventReceivedMs)) }, mode, { botAliases: aliases }) }))
-      const selected = mode === 'autonomous' ? scored.slice(0, 1).find(x => eligible.has(x.decision.kind) || x.decision.kind === 'ALLOW_RUN')
-        : scored.find(x => eligible.has(x.decision.kind)) ?? scored.find(x => x.decision.kind === 'PROACTIVE')
+      const selected = selectAttentionCandidate(mode === 'autonomous' ? scored.slice(0, 1) : scored, mode)
       if (!selected) return outcome('passive', null, scored.sort((a, b) => (b.decision.score ?? 0) - (a.decision.score ?? 0))[0]?.decision ?? null)
       const { message, decision } = selected
       const subject = byId.get(message.eventId)!

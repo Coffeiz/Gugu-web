@@ -1,6 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { normalizeTelegramMessage } from '@gugu/core/im/telegram-message';
 import { GatewayConnectionCleanupError } from '../contracts.js';
+import { TelegramApiError } from './client.js';
 const object = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
 /** 每 Bot 长轮询；不替代 IM 入站事务、权限与 Agent 运行处理。 */
 export async function connectTelegramPolling(options) {
@@ -19,8 +20,12 @@ export async function connectTelegramPolling(options) {
         if (options.expectedPlatformBotId !== undefined && String(info.id) !== options.expectedPlatformBotId)
             throw new Error('Telegram Bot 身份不匹配');
         const webhook = await call('getWebhookInfo');
-        if (!object(webhook) || (typeof webhook.url === 'string' && webhook.url.trim()))
+        if (!object(webhook))
+            throw new Error('Telegram Webhook 状态无效');
+        if (typeof webhook.url === 'string' && webhook.url.trim()) {
+            options.onPollStatus?.('conflict');
             throw new Error('Telegram Webhook 与长轮询冲突');
+        }
         signal.throwIfAborted();
     }
     catch {
@@ -49,6 +54,7 @@ export async function connectTelegramPolling(options) {
                     const updates = await call('getUpdates', payload, 60_000);
                     if (!Array.isArray(updates))
                         throw new Error('Telegram 更新格式无效');
+                    options.onPollStatus?.('ready');
                     backoff = 1_000;
                     const ordered = updates.filter(object);
                     if (ordered.some(value => typeof value.update_id !== 'number' || !Number.isSafeInteger(value.update_id) || value.update_id < 0))
@@ -98,6 +104,8 @@ export async function connectTelegramPolling(options) {
                 catch (error) {
                     if (signal.aborted)
                         return;
+                    options.onPollStatus?.(error instanceof TelegramApiError &&
+                        (error.statusCode === 409 || error.errorCode === 409) ? 'conflict' : 'retrying');
                     options.report?.('poll-unavailable', error);
                     // 平台 429 只读取受限数字，不暴露任何上游正文或请求 URL。
                     const retryAfter = object(error) && typeof error.retryAfter === 'number' && Number.isFinite(error.retryAfter)

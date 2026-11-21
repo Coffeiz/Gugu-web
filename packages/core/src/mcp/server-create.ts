@@ -32,16 +32,17 @@ interface StoredServer {
 
 /** 写入配置并清除旧工具声明快照；旧 Python Manager 下次读取时会据此重新发现工具。 */
 export function createMcpServerCreator<DB>(db: Kysely<DB>, options: {
-  maxServersPerUser: number | (() => number)
+  maxServersPerUser: number | null | (() => number | null)
   id(): string
   encrypt(plaintext: string): Promise<McpEnvelope>
 }, backend: McpDatabaseBackend = 'postgres') {
   async function assertAvailable(connection: Kysely<DB>, owner: string, name: string) {
     const maxServers = typeof options.maxServersPerUser === 'function' ? options.maxServersPerUser() : options.maxServersPerUser
-    if (!Number.isSafeInteger(maxServers) || maxServers < 0) throw new TypeError('MCP server 数量上限无效')
     const existing = await sql<{ id: string }>`SELECT id FROM user_mcp_servers
       WHERE user_id=${owner} AND scope='user' AND name=${name} LIMIT 1`.execute(connection)
     if (existing.rows.length) throw new CoreError('invalid_request', `名称 ${name} 已存在`)
+    if (maxServers === null) return
+    if (!Number.isSafeInteger(maxServers) || maxServers < 0) throw new TypeError('MCP server 数量上限无效')
     const count = await sql<{ count: number | string }>`SELECT count(*) AS count FROM user_mcp_servers
       WHERE user_id=${owner} AND scope='user'`.execute(connection)
     if (Number(count.rows[0]?.count ?? 0) >= maxServers)

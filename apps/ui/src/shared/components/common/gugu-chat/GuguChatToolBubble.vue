@@ -18,9 +18,9 @@
       @after-leave="cleanupDetailTransition"
       @leave-cancelled="cancelDetailTransition"
     >
-      <div v-if="expanded" class="tool-detail-shell">
+      <div v-if="expanded && (!detailsLoading || showDetailsLoading)" class="tool-detail-shell">
         <div class="tool-event-detail">
-          <div v-if="detailsLoading && msg.toolInput === undefined && msg.toolResult === undefined" class="tool-event-section tool-details-loading" role="status">
+          <div v-if="showDetailsLoading && msg.toolInput === undefined && msg.toolResult === undefined" class="tool-event-section tool-details-loading" role="status">
             {{ t('chatUi.loadingToolDetails') }}
           </div>
           <div v-if="msg.toolInput !== undefined" class="tool-event-section">
@@ -45,10 +45,11 @@ import { useI18n } from 'vue-i18n'
 const { t, te } = useI18n()
 import { computed, inject, onBeforeUnmount, ref, watch } from 'vue'
 import FlipChevron from '@/components/common/controls/FlipChevron.vue'
+import { useDelayedSkeleton } from '@/composables/core/useDelayedSkeleton'
 import type { ChatMessage } from './chatTypes'
 import { agentApi } from '@/services/api'
 import { chatToolDetailsKey } from './chatPresentationAccess'
-import { toolActivityLabel } from './toolActivity'
+import { formatToolDuration, toolActivityLabel } from './toolActivity'
 
 const readToolDetails = inject(chatToolDetailsKey, agentApi.getToolEventDetails)
 
@@ -57,6 +58,7 @@ const emit = defineEmits<{ 'update:expanded': [expanded: boolean] }>()
 const detailsLoading = ref(false)
 const detailsError = ref(false)
 const expandRequested = ref(false)
+const showDetailsLoading = useDelayedSkeleton(() => detailsLoading.value && (expandRequested.value || props.expanded))
 let requestGeneration = 0
 
 function resetDetailsRequest() {
@@ -78,7 +80,7 @@ const statusText = computed(() => ({
 }[props.msg.toolStatus || 'running']))
 const headerStatusText = computed(() => {
   if (detailsError.value) return `${t('chatUi.loadToolDetailsFailed')} · ${t('chatUi.retryToolDetails')}`
-  if (detailsLoading.value && expandRequested.value) return t('chatUi.loadingToolDetails')
+  if (showDetailsLoading.value && expandRequested.value) return t('chatUi.loadingToolDetails')
   return statusText.value
 })
 const runningSince = computed(() => props.msg.toolStatus === 'running'
@@ -95,8 +97,7 @@ const durationText = computed(() => {
   const elapsed = Number.isFinite(runningSince.value)
     ? (props.msg.toolDurationMs ?? 0) + Math.max(0, durationNow.value - runningSince.value)
     : props.msg.toolDurationMs
-  if (elapsed == null || !Number.isFinite(elapsed) || elapsed < 0) return ''
-  return elapsed < 1000 ? `${Math.round(elapsed)}ms` : `${(elapsed / 1000).toFixed(1)}s`
+  return formatToolDuration(elapsed)
 })
 function formatValue(value: unknown) {
   if (typeof value === 'string') return value

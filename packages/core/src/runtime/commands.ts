@@ -53,10 +53,11 @@ const commandFields: Readonly<Record<string, readonly string[]>> = {
   'im.chart.render': ['type', 'source'],
   'im.qq.sequence': ['botId', 'messageId'],
   'im.inbox.projection': ['platform', 'connectionId', 'eventKey', 'runId', 'action', 'key', 'fingerprint', 'version', 'state', 'outcome', 'uploadId', 'part', 'total', 'chunk'],
-  'im.inbox.delivery': ['platform', 'connectionId', 'eventKey', 'runId', 'action', 'noticeKey'],
+  'im.inbox.delivery': ['platform', 'connectionId', 'eventKey', 'runId', 'action', 'noticeKey', 'replyFact'],
   'im.inbox.prompt': ['platform', 'connectionId', 'action', 'promptId', 'messageId', 'eventKey', 'runId'],
   'im.inbox.reject': ['platform', 'connectionId', 'eventKey'],
   'im.inbox.recordGroup': ['platform', 'connectionId', 'eventKey', 'text', 'attachments', 'platformUserId', 'platformUserName', 'ownerPlatformUserId'],
+  'im.inbox.groupAttentionHistory': ['platform', 'connectionId'],
   'im.inbox.pendingConnection': ['platform', 'after'],
   'im.inbox.prepare': ['platform', 'connectionId', 'chatType', 'ownerPlatformUserId'],
   'im.inbox.admit': ['platform', 'connectionId', 'eventKey', 'sealedEvent', 'attachments', 'sourceMessageId'],
@@ -88,12 +89,12 @@ const commandFields: Readonly<Record<string, readonly string[]>> = {
   'agent.attachments.download': ['attach_id'],
   'agent.attachments.forSession': ['id'],
   'agent.sessions.runModel': ['id', 'runId'],
-  'agent.sessions.respond': ['id', 'runId', 'promptId', 'eventId', 'token', 'text', 'secrets', 'model', 'embedding'],
+  'agent.sessions.respond': ['id', 'runId', 'promptId', 'eventId', 'token', 'selectedOptionIds', 'customAnswer', 'text', 'secrets', 'model', 'embedding'],
   'agent.sessions.append': ['id', 'text', 'reply'],
   'agent.sessions.queue': ['action', 'queue_id', 'session_id', 'items', 'removed_keys', 'key', 'claim_token'],
   'skills.list': ['offset'],
   'skills.tools': ['offset'],
-  'mcp.list': [],
+  'mcp.list': ['offset'],
   'mcp.config': ['id'],
   'skills.create': ['fields'],
   'skills.update': ['id', 'fields'],
@@ -366,6 +367,12 @@ export function validateCommandParams(method: string, params: Fields): void {
       if (fields.length > 16 || fields.some(([key, value]) => !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(key)
         || typeof value !== 'string' || value.length > 4096)) throw new CoreError('invalid_request', '凭据字段无效')
     }
+    if (params.selectedOptionIds !== undefined && (typeof params.token !== 'string'
+      || !Array.isArray(params.selectedOptionIds) || params.selectedOptionIds.some(id => typeof id !== 'string' || !id || id.length > 64)))
+      throw new CoreError('invalid_request', '多选选项无效')
+    if (params.customAnswer !== undefined && (typeof params.token !== 'string' || typeof params.customAnswer !== 'string'
+      || !params.customAnswer.trim() || Buffer.byteLength(params.customAnswer) > 8_000))
+      throw new CoreError('invalid_request', '自定义回复无效')
     const recovering = !secret && params.eventId === undefined && params.token === undefined && params.text === undefined
     if (typeof params.model.model !== 'string' || !params.model.model.trim() || params.model.model.length > 200
       || typeof params.model.base_url !== 'string' || params.model.base_url.length > 500
@@ -407,9 +414,9 @@ export function validateCommandParams(method: string, params: Fields): void {
     if (typeof params.context_id !== 'string' || !params.context_id.trim() || params.context_id.length > 128) throw new CoreError('invalid_request', '撤销上下文无效')
     if (method !== 'undo.preview' && (typeof params.undo_id !== 'string' || !params.undo_id || params.undo_id.length > 80)) throw new CoreError('invalid_request', '撤销标识无效')
   }
-  if ((method === 'skills.list' || method === 'skills.tools') && params.offset !== undefined &&
+  if ((method === 'skills.list' || method === 'skills.tools' || method === 'mcp.list') && params.offset !== undefined &&
       (!Number.isSafeInteger(params.offset) || Number(params.offset) < 0))
-    throw new CoreError('invalid_request', '技能分页无效')
+    throw new CoreError('invalid_request', '资源分页无效')
   if (/^(skills|mcp)\.(update|delete|config)$/.test(method) &&
       (typeof params.id !== 'string' || !params.id || params.id.length > 64))
     throw new CoreError('invalid_request', '资源标识无效')

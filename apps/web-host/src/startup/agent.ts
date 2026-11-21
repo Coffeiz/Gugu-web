@@ -1,3 +1,4 @@
+import { mcpServiceReminder } from '@gugu/core/mcp/tool-directory'
 import { canvasConfirmationLabels, createSaveAttachmentTool } from '@gugu/core/tools'
 import { type SerialWorker } from '../workers/admission.js'
 import { createOwnerFileTools } from '../modules/agent/tools/owner.js'
@@ -1036,7 +1037,9 @@ export async function createAgentServices(options: AgentDependencies) {
               signal?.throwIfAborted()
               const preferences = await pool.query('SELECT data_json FROM user_preferences WHERE user_id=$1', [identity.ownerId])
               signal?.throwIfAborted()
-              return createAgentToolBrief(preferences.rows[0]?.data_json, tools ?? [], context?.userSkillSnapshot)
+              const brief = createAgentToolBrief(preferences.rows[0]?.data_json, tools ?? [], context?.userSkillSnapshot)
+              const enabled = ['search_tools', 'call_tool'].every(name => _names.includes(name))
+              return { ...brief, mcpReminder: enabled ? mcpServiceReminder(await mcpSkillTools.services(identity.ownerId)) : '' }
             },
           },
           formatPrefix({ original }: { original: import('@gugu/core/agent').PrepareContextInput }) { return original.fixedPrefix },
@@ -1049,7 +1052,7 @@ export async function createAgentServices(options: AgentDependencies) {
         interactionActivation,
         executor: noUnisolatedExecution,
         provider: { continuationStore: providerContinuationStore, continuationTtlMs: 35 * 60_000, diagnose() { writeTimestampedAgentDiagnostic('Web Agent Provider 调用失败') } },
-        mcp: createWebAgentMcpProductionPorts({ directory: mcpSkillTools, runtime: mcpRuntime }),
+        mcp: createWebAgentMcpProductionPorts({ directory: mcpSkillTools, runtime: mcpRuntime, services: mcpSkillTools.services }),
       },
     })
     const dispatch = createPostgresAgentDispatch(pool, config.secretKey)

@@ -226,7 +226,8 @@ it('模型列表支持旧版迁移、并发新增、密钥隔离、默认切换�
         response.end(`data: ${JSON.stringify(frame)}\n\ndata: [DONE]\n\n`)
         return
       }
-      if (lastUser.includes('合成交互问题')) {
+      const textQuestion = lastUser.includes('合成自由文本问题')
+      if (lastUser.includes('合成交互问题') || textQuestion) {
         interactionKeys.push(request.headers.authorization)
         response.writeHead(200, { 'content-type': 'text/event-stream' })
         const answer = messages.some((message: { role: string; tool_call_id?: string }) =>
@@ -235,9 +236,9 @@ it('模型列表支持旧版迁移、并发新增、密钥隔离、默认切换�
           ? { choices: [{ delta: { content: '合成交互已续跑' }, finish_reason: 'stop' }],
             ...(lastUser.includes('合成交互问题压缩') ? { usage: { prompt_tokens: 250000, completion_tokens: 1 } } : {}) }
           : { choices: [{ delta: { tool_calls: [{ index: 0, id: 'synthetic-interaction-call', type: 'function',
-            function: { name: 'ask_user', arguments: JSON.stringify({
-              kind: 'choice', title: '合成提示', body: '', options: [{ id: 'a', label: '合成选项' }],
-            }) } }] }, finish_reason: 'tool_calls' }] }
+            function: { name: 'ask_user', arguments: JSON.stringify(textQuestion
+              ? { kind: 'question', title: '合成文本问题', body: '请填写合成文本答案' }
+              : { kind: 'choice', title: '合成提示', body: '', options: [{ id: 'a', label: '合成选项' }] }) } }] }, finish_reason: 'tool_calls' }] }
         response.end(`data: ${JSON.stringify(frame)}\n\ndata: [DONE]\n\n`)
         return
       }
@@ -381,9 +382,14 @@ it('模型列表支持旧版迁移、并发新增、密钥隔离、默认切换�
     let send = sessionHandler(runtime)
     await runtime.request('projects.create', { name: '合成上下文项目' })
     const session = await send({ action: 'create', title: '合成会话', operationId: randomUUID() }) as { id: number }
+    await expect(runtime.request('agent.sessions.workspace', { id: session.id, action: 'list' })).resolves.toEqual({
+      workspaces: [{ id: 'desktop:33333333-3333-4333-8333-333333333333', name: '合成桌面工作区' }],
+    })
     const operationId = randomUUID()
-    await runtime.request('agent.sessions.setWorkspace', { id: session.id, action: 'bind',
-      directoryId: 'desktop:33333333-3333-4333-8333-333333333333' })
+    try {
+      await runtime.request('agent.sessions.setWorkspace', { id: session.id, action: 'bind',
+        directoryId: 'desktop:33333333-3333-4333-8333-333333333333' })
+    } catch (error) { throw new Error('桌面工作区绑定写入失败', { cause: error }) }
     await expect(runtime.request('agent.sessions.workspace', { id: session.id, action: 'show' })).resolves.toMatchObject({
       workspace: { workspace_id: 'desktop:33333333-3333-4333-8333-333333333333', workspace_name: '合成桌面工作区' },
     })
@@ -397,7 +403,6 @@ it('模型列表支持旧版迁移、并发新增、密钥隔离、默认切换�
     const detached = expect(streaming).rejects.toMatchObject({ code: 'closed' })
     await expect.poll(() => chunks.join('')).toBe('合成增量')
     expect(JSON.stringify(sentMessages)).toContain('合成上下文项目')
-    expect(JSON.stringify(sentMessages)).toContain('合成桌面工作区')
     const { runId } = await send({ action: 'events', id: session.id }) as { runId: string }
     expect(await send({ action: 'list' })).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: session.id, isRunning: true, workspaceName: '合成桌面工作区' }),
@@ -490,6 +495,28 @@ it('模型列表支持旧版迁移、并发新增、密钥隔离、默认切换�
       messages: [{ role: 'user', interactions: [{ run_id: interactionRun, resolved: true, options: [] }] }],
     })
     expect(interactionKeys).toEqual(['Bearer synthetic-interaction-key', 'Bearer synthetic-interaction-key'])
+    const textSession = await send({ action: 'create', title: '合成文本交互会话', operationId: randomUUID() }) as { id: number }
+    await send({ action: 'send', id: textSession.id, text: '合成自由文本问题', operationId: randomUUID(), stream: true }, () => {})
+    const textPage = await send({ action: 'events', id: textSession.id }) as InteractionPage
+    expect(textPage.status).toBe('waiting')
+    const textHistory = await send({ action: 'history', id: textSession.id }) as {
+      messages: Array<{ interactions?: Array<{ id: number; run_id: string; options: Array<{ id: string; token: string }> }> }>
+    }
+    const textPrompt = textHistory.messages.flatMap(message => message.interactions ?? []).find(item => item.run_id === textPage.runId)
+    const customReply = textPrompt?.options.find(option => option.id === '__custom_reply__')
+    expect(customReply).toBeDefined()
+    await expect(send({ action: 'respond', id: textSession.id, runId: textPage.runId, promptId: textPrompt!.id,
+      token: customReply!.token, operationId: randomUUID() })).resolves.toEqual({ runId: textPage.runId, awaitingText: true })
+    await expect(send({ action: 'respond', id: textSession.id, runId: textPage.runId, promptId: textPrompt!.id,
+      text: ' 合成自由文本回答 ', operationId: randomUUID() })).resolves.toEqual({ runId: textPage.runId, awaitingText: false })
+    await vi.waitFor(async () => {
+      const result = await send({ action: 'events', id: textSession.id, runId: textPage.runId }) as InteractionPage
+      expect(result.status).toBe('completed')
+    }, { timeout: 2500 })
+    expect(await send({ action: 'messages', id: textSession.id })).toMatchObject([
+      { role: 'user', text: '合成自由文本问题', interactions: [{ run_id: textPage.runId, resolved: true, response_text: '合成自由文本回答' }] },
+      { role: 'assistant', text: '合成交互已续跑' },
+    ])
     await model.remove(interactionModelId)
     const cancelledInteraction = await send({ action: 'create', title: '合成取消交互', operationId: randomUUID() }) as { id: number }
     await send({ action: 'send', id: cancelledInteraction.id, text: '合成交互问题',

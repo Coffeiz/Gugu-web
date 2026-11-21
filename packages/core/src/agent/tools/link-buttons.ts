@@ -134,7 +134,7 @@ export function validateLinkButtons(message:string,buttons:LinkButton[]):{messag
 export function createLinkButtonsTools(port:LinkButtonDeliveryPort):ToolDefinition[]{
   const limited=(max:number)=>z.string().min(1).refine(value=>[...value].length<=max).meta({maxLength:max})
   const schema=z.object({message:limited(2000),buttons:z.array(z.object({id:limited(64),label:limited(40),url:limited(2048)}).strict()).min(1).max(5)}).strict()
-  return [{definition:{name:'send_link_buttons',schema:{type:'function',function:{name:'send_link_buttons',description:'向当前会话发送导航链接，不等待点击。',parameters:z.toJSONSchema(schema) as Record<string,import('../models.js').Json>}}},effect:'write',strictArrayFields:['buttons'],validate:input=>schema.safeParse(input),
+  return [{definition:{name:'send_link_buttons',schema:{type:'function',function:{name:'send_link_buttons',description:'向当前会话发送导航链接，不等待点击。buttons 直接传含 1–5 个按钮对象的数组。',parameters:z.toJSONSchema(schema) as Record<string,import('../models.js').Json>}}},effect:'write',validate:input=>schema.safeParse(input),
     async execute(input,scope,call){
       const value=input as z.infer<typeof schema>,result=validateLinkButtons(value.message,value.buttons)
       if('error' in result)return {kind:'completed',successful:false,mutated:false,value:{status:'rejected',delivery:'none',button_count:0,error:result.error}}

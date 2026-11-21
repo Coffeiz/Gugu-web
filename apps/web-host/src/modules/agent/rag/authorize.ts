@@ -1,3 +1,4 @@
+import { canonicalAgentToolName } from '@gugu/core/agent'
 import type { CanonicalRunPreparationPorts, RunIdentity } from '@gugu/core/agent'
 import type { Pool } from 'pg'
 import type { AgentDispatchLease } from '../run/dispatch.js'
@@ -14,7 +15,7 @@ const FILE_DELETE_TOOLS = new Set(['delete_file'])
 const FILE_SEND_TOOLS = new Set(['send_file'])
 const FILE_SAVE_ATTACHMENT_TOOLS = new Set(['save_attachment'])
 const FILE_RECENT_ATTACHMENT_TOOLS = new Set(['list_recent_attachments'])
-const CORE_READ_TOOLS = new Set(['list_clients', 'list_projects', 'search_tools'])
+const CORE_READ_TOOLS = new Set(['list_contacts', 'list_projects', 'search_tools'])
 const PROJECT_CREATE_TOOLS = new Set(['create_project'])
 const PROJECT_MUTATION_TOOLS = new Set(['update_project', 'set_color', 'archive_project', 'add_stage', 'remove_stage', 'rename_stage', 'set_stages', 'update_stage'])
 const PROJECT_DETAIL_TOOLS = new Set(['get_project'])
@@ -23,8 +24,8 @@ const TIME_TOOLS = new Set(['get_current_time'])
 const KNOWLEDGE_TOOLS = new Set(['read_knowledge'])
 const KNOWLEDGE_WRITE_TOOLS = new Set(['save_knowledge', 'update_knowledge'])
 const GLOBAL_SEARCH_TOOLS = new Set(['global_search'])
-const CLIENT_TOOLS = new Set(['list_clients', 'create_client', 'update_client'])
-const CLIENT_DELETE_TOOLS = new Set(['delete_client'])
+const CLIENT_TOOLS = new Set(['list_contacts', 'create_contact', 'update_contact'])
+const CLIENT_DELETE_TOOLS = new Set(['delete_contact'])
 const CALENDAR_READ_TOOLS = new Set(['list_events'])
 const UPCOMING_TOOLS = new Set(['get_upcoming'])
 const DASHBOARD_TOOLS = new Set(['get_dashboard_stats'])
@@ -157,7 +158,7 @@ export function createWebAgentRagRunAuthorization(
       }
     },
     async authorize(identity, name, signal = new AbortController().signal) {
-      return allowed.has(name) && await active(identity, signal)
+      return allowed.has(canonicalAgentToolName(name)) && await active(identity, signal)
     },
   }
 }

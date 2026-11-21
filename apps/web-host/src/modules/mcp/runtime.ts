@@ -171,8 +171,8 @@ export function createMcpRuntime(options:{
     const current=await rowFor(owner,id)
     if(!current.enabled||configFingerprint(current)!==entry.configFingerprint||!await options.enabled()
      ||!await authorize(current)||entries.get(key(owner,id))!==entry)
-     return {error:'当前定时任务无权调用该 MCP 工具',executed:false}
-   }catch{signal?.throwIfAborted();return {error:'当前定时任务无权调用该 MCP 工具',executed:false}}
+     return {error:'当前运行无权调用该 MCP 工具',executed:false}
+   }catch{signal?.throwIfAborted();return {error:'当前运行无权调用该 MCP 工具',executed:false}}
    signal?.throwIfAborted()
   }
   let response:unknown

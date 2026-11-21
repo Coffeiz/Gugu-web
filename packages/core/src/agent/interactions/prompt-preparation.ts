@@ -6,6 +6,7 @@ function validate(spec: AgentPromptSpec, request: PendingInteraction): Array<{ n
   if (!['choice', 'question', 'form', 'confirm'].includes(spec.kind) || typeof spec.title !== 'string' || typeof spec.body !== 'string' || !Array.isArray(spec.options) || spec.options.length > 8) throw new Error('交互内容无效')
   if (spec.options.some(option => !option.id || option.id.length > 64 || !option.label || option.label.length > 120 || !option.actionType)) throw new Error('交互选项无效')
   if (new Set(spec.options.map(option => option.id)).size !== spec.options.length) throw new Error('交互选项重复')
+  if (spec.selectionMode === 'multiple' && (request.kind !== 'question' || !spec.options.length || spec.options.some(option => option.id === '__custom_reply__' || option.actionType !== 'choice'))) throw new Error('多选交互需要选项')
   const fields = spec.secretFields ?? []
   if (request.kind === 'credential') {
     const target = spec.context.secret_target as Record<string, unknown> | undefined
@@ -31,6 +32,7 @@ export function prepareAgentInteractionPrompt(spec: AgentPromptSpec, request: Pe
   const context = { ...spec.context, tool_call_id: request.toolCall.id, tool_name: request.toolCall.name }
   const schema = {
     options: options.map(option => ({ id: option.id, label: option.label, action_type: option.actionType })),
+    ...(spec.selectionMode === 'multiple' ? { selection_mode: spec.selectionMode } : {}),
     secret_fields: secretFields, allow_text_input: allowText, source: 'agent', custom_input_active: false, context,
   }
   return { expiry, secret, options, context, schema }

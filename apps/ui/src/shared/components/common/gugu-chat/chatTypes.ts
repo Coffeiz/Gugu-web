@@ -75,6 +75,9 @@ export interface ChatMessage {
     taskPaused?: boolean
     submitting?: boolean
     resolved?: boolean
+    selectionMode?: 'multiple'
+    selectedOptionIds?: string[]
+    customAnswer?: string
     selectedOptionId?: string | null
     submissionRejected?: boolean
     responseText?: string | null
@@ -97,6 +100,7 @@ export function findPendingTextInteractionId(
       || interaction.expired
       || !interaction.allowTextInput
       || interaction.kind === 'confirm'
+      || interaction.selectionMode === 'multiple'
     ) continue
     const hasRealOptions = interaction.options.some(option => option.id !== CUSTOM_REPLY_OPTION_ID)
     if (interaction.customInputActive || !hasRealOptions) return interaction.promptId

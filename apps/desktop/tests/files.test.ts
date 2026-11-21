@@ -202,10 +202,14 @@ it('授权后的本机绝对路径可打开库内文件，并以只读内容流�
   })
   await expect(files.resolveHostPresentation(external, externalId)).resolves.toBeUndefined()
   expect(await (await files.hostPresentationContent(external, externalId, null)).text()).toBe('外部原件')
+  const metadata = await files.hostPresentationContent(external, externalId, null, 'metadata')
+  expect(await metadata.json()).toEqual({ name: '库外资料.md', size: Buffer.byteLength('外部原件') })
+  expect((await files.hostPresentationContent(external, externalId, null, 'thumbnail')).status).toBe(404)
   await rename(external, join(directory, '移走的原件.md'))
   await writeFile(external, '新文件')
   await expect(files.resolveHostPresentation(external, externalId)).rejects.toMatchObject({ code: 'not_found' })
   await expect(files.hostPresentationContent(external, externalId, null)).rejects.toMatchObject({ code: 'not_found' })
+  await expect(files.hostPresentationContent(external, externalId, null, 'metadata')).rejects.toMatchObject({ code: 'not_found' })
 })
 
 it.skipIf(!['darwin', 'win32'].includes(process.platform))('宿主文件与 Shell 共用会话授权，自动模式可直接通过', () => {

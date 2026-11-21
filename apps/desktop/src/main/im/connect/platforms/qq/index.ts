@@ -1,6 +1,7 @@
-import type { DesktopQqGroupReplyMode } from '@gugu/core/desktop'
+import type { ImGroupReplyMode } from '@gugu/core/im/group-settings'
 import { randomBytes, randomInt, randomUUID } from 'node:crypto'
 import { IM_BINDING_MAX_ATTEMPTS, IM_BINDING_TTL_SECONDS } from '@gugu/core/im/binding-code'
+import { defaultUserBotGroupSettings } from '@gugu/core/im/user-bots'
 import { createQqPairing } from '@gugu/gateway/qq'
 import { createEncryptedDesktopStore } from '../../../../auth/store.js'
 import { DesktopError } from '../../../../core-host.js'
@@ -26,12 +27,23 @@ interface QqCredential {
   groupOwnerMemoryEnabled?: boolean
   groupMemoryEnabled?: boolean
   memberMemoryEnabled?: boolean
-  groupReplyMode?: DesktopQqGroupReplyMode
+  groupReplyMode?: ImGroupReplyMode
 }
 
 function parseCredential(input: unknown): QqCredential {
   if (!input || typeof input !== 'object') throw invalid()
-  const { appId, appSecret, enabled, revision, userId, bindingEventId, groupChatEnabled = false, groupHistorySearchEnabled = false, groupWebToolsEnabled = false, groupProviderSearchEnabled = false, groupOwnerMemoryEnabled = false, groupMemoryEnabled = true, memberMemoryEnabled = true, groupReplyMode = 'reply_mentions', groupMessageFormat = 'compat', privateMessageFormat = 'markdown', privateStreamingEnabled = privateMessageFormat === 'markdown' } = input as Record<string, unknown>
+  const defaults = defaultUserBotGroupSettings('qq')
+  const { appId, appSecret, enabled, revision, userId, bindingEventId,
+    groupChatEnabled = defaults.groupChatEnabled,
+    groupHistorySearchEnabled = defaults.groupAllowedTools.includes('group_context_search'),
+    groupWebToolsEnabled = ['http_get', 'similar_image_search', 'send_file'].every(tool => defaults.groupAllowedTools.includes(tool)),
+    groupProviderSearchEnabled = defaults.groupAllowedTools.includes('web_search'),
+    groupOwnerMemoryEnabled = defaults.groupOwnerMemoryEnabled,
+    groupMemoryEnabled = defaults.groupMemoryEnabled,
+    memberMemoryEnabled = defaults.memberMemoryEnabled,
+    groupReplyMode = defaults.groupReplyMode,
+    groupMessageFormat = 'compat', privateMessageFormat = 'markdown',
+    privateStreamingEnabled = privateMessageFormat === 'markdown' } = input as Record<string, unknown>
   if (typeof appId !== 'string' || !appId || typeof appSecret !== 'string' || !appSecret
     || (groupMessageFormat !== 'compat' && groupMessageFormat !== 'markdown')
     || (privateMessageFormat !== 'compat' && privateMessageFormat !== 'markdown')
@@ -120,7 +132,39 @@ export function createDesktopQqPairing(directory: string, encryption: Encryption
       }
       return status()
     }),
-    setGroupReplyMode: (mode: DesktopQqGroupReplyMode) => state.serialize(async () => {
+    updateGroupSettings: (patch: {
+      groupChatEnabled?: boolean; groupReplyMode?: ImGroupReplyMode; groupOwnerMemoryEnabled?: boolean
+      groupMemoryEnabled?: boolean; memberMemoryEnabled?: boolean; groupWebToolsEnabled?: boolean
+      groupProviderSearchEnabled?: boolean; groupHistorySearchEnabled?: boolean
+    }) => state.serialize(async () => {
+      const current = await credentials.read()
+      if (!current?.userId || (patch.groupChatEnabled === true && !current.userId)) throw invalid()
+      const tools = new Map<string, boolean>([
+        ['http_get', current.groupWebToolsEnabled === true], ['similar_image_search', current.groupWebToolsEnabled === true],
+        ['send_file', current.groupWebToolsEnabled === true], ['web_search', current.groupProviderSearchEnabled === true],
+        ['group_context_search', current.groupHistorySearchEnabled === true],
+      ])
+      for (const [enabled, names] of [
+        [patch.groupWebToolsEnabled, ['http_get', 'similar_image_search', 'send_file']],
+        [patch.groupProviderSearchEnabled, ['web_search']], [patch.groupHistorySearchEnabled, ['group_context_search']],
+      ] as const) if (enabled !== undefined) for (const name of names) tools.set(name, enabled)
+      const next = {
+        ...current,
+        ...(patch.groupChatEnabled === undefined ? {} : { groupChatEnabled: patch.groupChatEnabled }),
+        ...(patch.groupReplyMode === undefined ? {} : { groupReplyMode: patch.groupReplyMode }),
+        ...(patch.groupOwnerMemoryEnabled === undefined ? {} : { groupOwnerMemoryEnabled: patch.groupOwnerMemoryEnabled }),
+        ...(patch.groupMemoryEnabled === undefined ? {} : { groupMemoryEnabled: patch.groupMemoryEnabled }),
+        ...(patch.memberMemoryEnabled === undefined ? {} : { memberMemoryEnabled: patch.memberMemoryEnabled }),
+        groupWebToolsEnabled: ['http_get', 'similar_image_search', 'send_file'].every(name => tools.get(name)),
+        groupProviderSearchEnabled: tools.get('web_search') === true,
+        groupHistorySearchEnabled: tools.get('group_context_search') === true,
+        ...(patch.groupChatEnabled === undefined ? {} : { revision: randomUUID() }),
+      }
+      await credentials.write(parseCredential(next))
+      if (patch.groupChatEnabled !== undefined) notifyChanged?.()
+      return status()
+    }),
+    setGroupReplyMode: (mode: ImGroupReplyMode) => state.serialize(async () => {
       const current = await credentials.read()
       if (!current?.userId || (mode !== 'reply_mentions' && mode !== 'reply_all' && mode !== 'record_only')) throw invalid()
       await credentials.write({ ...current, groupReplyMode: mode })

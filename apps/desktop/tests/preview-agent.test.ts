@@ -22,6 +22,7 @@ it('同一桌面宿主向受信预览返回模型和会话，拒绝未授权连�
   })
   const search = vi.fn(async (_queries: string[]) => ({ total: 1, groups: [{ type: 'project', items: [{ id: 1, title: '合成项目' }] }] }))
   const files = vi.fn(async () => [{ name: '合成.txt' }])
+  const openDroppedFileReference = vi.fn(async () => null)
   const content = vi.fn(async (_url: URL, range: string | null) => new Response('片段', { status: range ? 206 : 200 }))
   const attachment = vi.fn(async (command: { action: string }) => command.action === 'download'
     ? { data: new Uint8Array([0, 255]), name: '合成.txt', mime: 'text/plain' }
@@ -30,10 +31,13 @@ it('同一桌面宿主向受信预览返回模型和会话，拒绝未授权连�
     server = await startDesktopPreviewAgent(socketPath, secret, {
       [DESKTOP_CHANNELS.projectBoard]: async (collection, offset) => ({ collection, offset, items: [{ id: 'synthetic-project' }] }),
       [DESKTOP_CHANNELS.notes]: async () => [{ id: 'synthetic-note' }],
+      [DESKTOP_CHANNELS.calendar]: async () => [{ id: 7 }],
+      [DESKTOP_CHANNELS.scheduleTask]: async () => ({ tasks: [{ id: 8 }] }),
       [DESKTOP_CHANNELS.canvases]: async () => [{ id: 'synthetic-canvas' }],
       [DESKTOP_CHANNELS.canvasItems]: async canvasId => [{ canvasId, id: 'synthetic-item' }],
       [DESKTOP_CHANNELS.agentAttachment]: attachment,
       [DESKTOP_CHANNELS.files]: files,
+      [DESKTOP_CHANNELS.openDroppedFileReference]: openDroppedFileReference,
       [DESKTOP_CHANNELS.search]: search,
       [DESKTOP_CHANNELS.appearance]: async () => ({ useSystemProxy }),
       [DESKTOP_CHANNELS.updateAppearance]: updateAppearance,
@@ -58,6 +62,8 @@ it('同一桌面宿主向受信预览返回模型和会话，拒绝未授权连�
       ['/__desktop-preview/projects', 'projectBoard', board,
         { collection: 'archived', offset: 20, items: [{ id: 'synthetic-project' }] }],
       ['/__desktop-preview/mind', 'notes', undefined, [{ id: 'synthetic-note' }]],
+      ['/__desktop-preview/calendar', 'calendar', JSON.stringify({ method: 'calendar', args: [] }), [{ id: 7 }]],
+      ['/__desktop-preview/schedules', 'scheduleTask', undefined, { tasks: [{ id: 8 }] }],
       ['/__desktop-preview/mind', 'canvases', undefined, [{ id: 'synthetic-canvas' }]],
       ['/__desktop-preview/mind', 'canvasItems', JSON.stringify({ method: 'canvasItems', args: ['synthetic-canvas'] }),
         [{ canvasId: 'synthetic-canvas', id: 'synthetic-item' }]],
@@ -80,6 +86,12 @@ it('同一桌面宿主向受信预览返回模型和会话，拒绝未授权连�
     expect(JSON.parse((await call('/__desktop-preview/files', 'files', secret, open)).body))
       .toMatchObject({ ok: false, error: { code: 'unsupported' } })
     expect(files).toHaveBeenCalledTimes(1)
+    const openReference = JSON.stringify({ method: 'openDroppedFileReference', args: ['drop-synthetic'] })
+    await expect(call('/__desktop-preview/files', '', 'invalid', openReference)).resolves.toEqual({ status: 403, body: '' })
+    expect(openDroppedFileReference).not.toHaveBeenCalled()
+    expect(JSON.parse((await call('/__desktop-preview/files', '', secret, openReference)).body))
+      .toEqual({ ok: true, result: null })
+    expect(openDroppedFileReference).toHaveBeenCalledExactlyOnceWith('drop-synthetic')
     const filePath = '/__local-files/content?path=synthetic.txt'
     await expect(call(filePath, '', 'invalid', '', { Range: 'bytes=0-3' }, 'GET')).resolves.toEqual({ status: 403, body: '' })
     expect(content).not.toHaveBeenCalled()

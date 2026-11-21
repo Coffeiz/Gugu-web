@@ -33,8 +33,6 @@ interface StatusItem { kind: 'text' | 'dots' | 'hide'; label?: string }
  * 硬塞进某一侧、靠回调通知另一侧，只会比现在多一层间接。两个 composable
  * 都只拿到引用，谁都不"独占"，编排层负责创建和收尾（live 监听、持久化）。
  *
- * 对外只暴露窗口尺寸计算需要的三个钩子（onContentReset/onCaptureBaseScrollH/
- * onSyncSmallH），由 GuguChat.vue 组合时接到窗口尺寸那部分状态上。
  */
 export interface ChatGreetingAccess {
   prefetch(): Promise<void>
@@ -67,8 +65,6 @@ export function useChatConversation(options: {
   onQueueDispatchError?: (error: unknown) => void
   trackMessageSent?: (turn: number) => void
   onAutomaticModeCommand?: () => Promise<void>
-  onContentReset: () => void          // 窗口高度回到 SMALL_H 基线
-  onCaptureBaseScrollH: () => void    // 记录当前内容高度为新的增高基线
   onSyncSmallH: () => void            // 按内容真实高度重新计算窗口高
   onPresentFile?: (file: { file_id: number; name?: string; ext?: string }) => void
 }) {
@@ -129,7 +125,7 @@ export function useChatConversation(options: {
   const inputReferences = ref<ChatReference[]>([])
   const thinkingLabels = ref<string[]>([])   // 「思考中」候选文案（后台「状态命名」_thinking，可多个 | 分隔；空=三个点）
   const contextCompactingLabels = ref<string[]>([]) // 自动压缩状态文案（后台「状态命名」_context_compaction）
-  // 状态气泡贯穿整个生成期：工具/复查/思考只替换同一个气泡的内容，直到真实输出或中断。
+  // 生成状态在工具、复查和思考之间更新，直到真实输出或中断。
   const statusKind = ref('')   // '' | 'text'（工具/自定义思考）| 'dots'（默认思考三点）
   const statusTyped = ref('')  // 当前显示的文字（dots 时为空）
 
@@ -180,7 +176,7 @@ export function useChatConversation(options: {
       return
     }
 
-    // 气泡入场未完成时只保留最新状态，避免工具链里的短状态一闪而过。
+    // 状态刚显示时只保留最新状态，避免工具链里的短状态一闪而过。
     pendingStatus = item
     if (!statusSwitchTimer) {
       statusSwitchTimer = setTimeout(() => {
@@ -372,13 +368,14 @@ export function useChatConversation(options: {
 
   // 打开对话框时让默认问候像回复一样「打字机」冒出来（生成版 / 兜底都走这套）。每条问候只播一次。
   let _greetTimer: ReturnType<typeof setInterval> | null = null
-  async function animateGreeting() {
+  onUnmounted(() => { if (_greetTimer) clearInterval(_greetTimer) })
+  async function animateGreeting(isVisible: () => boolean) {
     const m = messages.value
     if (!(m.length === 1 && m[0]._greeting)) return   // 已有真实对话 → 不动
     const msg = m[0]
     if (msg._greetAnimated) return
     await options.greetingAccess?.prefetch()
-    if (messages.value.length !== 1 || messages.value[0] !== msg) return
+    if (!isVisible() || messages.value.length !== 1 || messages.value[0] !== msg || msg._greetAnimated) return
     const full = options.greetingAccess?.read() ?? pickGreetingFallback()
     if (!full) {
       messages.value = []
@@ -408,13 +405,9 @@ export function useChatConversation(options: {
     beforeMerge: () => { stick.value = false; invalidateScrollRequests() },
   })
 
-  // streaming 用即时滚动跟随，避免 smooth 叠加追不上。用虚拟列表的 scrollToIndex 而不是
-  // 直接写 scrollTop——最后一条消息的高度可能还只是估算值（还没被 measureElement 量过），
-  // scrollToIndex 会按当前最新的测量/估算结果算，比直接读 scrollHeight 更准。
-  function scrollToBottom(smooth = false) {
-    const idx = messages.value.length - 1
-    if (idx < 0) return
-    options.messageListRef.value?.scrollToIndex(idx, { align: 'end', behavior: smooth ? 'smooth' : 'auto' })
+  // 工具消息可以合并进前面的活动行，跟随滚动以最后一条展示行为准。
+  function scrollToBottom() {
+    options.messageListRef.value?.scrollToBottom()
   }
 
   // 用户上翻 → 停住；滚回接近底部 → 恢复跟随。messagesEl 是真实可滚动容器，scrollHeight
@@ -483,7 +476,6 @@ export function useChatConversation(options: {
     try {
       await nextTick()
       if (generation !== getViewGeneration()) return
-      options.onCaptureBaseScrollH()
       await restoreScrollPosition(null)
     } finally {
       if (generation === getViewGeneration()) sessionSettling.value = false
@@ -557,7 +549,6 @@ export function useChatConversation(options: {
     onQueueDispatchError: options.onQueueDispatchError,
     trackMessageSent: options.trackMessageSent,
     onAutomaticModeCommand: options.onAutomaticModeCommand,
-    onContentReset: options.onContentReset,
     onPresentFile: options.onPresentFile,
   })
   const {
@@ -577,8 +568,6 @@ export function useChatConversation(options: {
     restorePendingQueue: restorePendingQueueForSession,
     drainPendingQueue,
     clearStatus, setStatus, thinkingItem: _thinkingItem, contextCompactingItem: _contextCompactingItem,
-    onContentReset: options.onContentReset,
-    onCaptureBaseScrollH: options.onCaptureBaseScrollH,
     scrollBottom,
     captureScrollAnchor: () => sessionSettling.value ? undefined : options.messageListRef.value?.captureScrollAnchor(),
     restoreScrollPosition,

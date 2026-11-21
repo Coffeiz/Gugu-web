@@ -251,6 +251,7 @@ export interface WebUiOptions {
     metadata: WriteRequestMetadata,
   ) => Promise<unknown>
   deleteProject?: (ownerId: string, projectId: number, metadata: WriteRequestMetadata) => Promise<void>
+  purgeProject?: (ownerId: string, projectId: number, metadata: WriteRequestMetadata) => Promise<boolean>
   restoreProject?: (ownerId: string, projectId: number, metadata: WriteRequestMetadata) => Promise<unknown>
   clients?: ClientOptions
   events?: EventOptions
@@ -417,6 +418,7 @@ export interface WebUiOptions {
   accountDelete?: Omit<AccountDeleteOptions, 'requireUser' | 'ownerIdFromRequest'>
   secretPromptCancel?: Omit<SecretPromptCancelOptions, 'requireUser' | 'ownerIdFromRequest'>
   safeEgressRead?: { readSettings(): SafeEgressReadSettings }
+  citationSiteName?: (url: unknown) => Promise<string | null>
   imMemorySummary?: Omit<ImMemorySummaryOptions, 'requireAdmin'>
   imMemoryMaintenanceApply?: { apply(confirm: unknown): Promise<{ ok: true; applied: number; queued: number }> }
   imMemoryMaintenancePreview?: { start(): Promise<{ ok: true; total: number } | { ok: false; message: string; status: unknown }> }

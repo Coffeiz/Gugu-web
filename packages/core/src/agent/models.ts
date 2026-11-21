@@ -392,6 +392,7 @@ export interface PreparationIdentity {
 }
 
 export interface CapabilityCatalog {
+  mcpReminder?: string
   readonly metadataOnly: boolean
   readonly fixedAdapter?: true
   readonly toolCatalog: string

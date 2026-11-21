@@ -9,7 +9,7 @@ import { parsePythonInteger } from '../../../http/request.js'
 import { createPostgresInteractionConsumeStore, createPostgresInteractionTextStore, type InteractionSideEffects } from './consume.js'
 
 export interface AgentInteractionRespondService {
-  respond(ownerId: string, promptId: number, token: string, eventId?: string): Promise<InteractionConsumeResult & { run_id?: string }>
+  respond(ownerId: string, promptId: number, token: string, eventId?: string, selectedOptionIds?: string[], customAnswer?: string): Promise<InteractionConsumeResult & { run_id?: string }>
   findResolvedRun?(ownerId: string, promptId: number, token: string): Promise<{ session_id: number; run_id: string; status: string; option_id: string } | null>
   resumeText?(ownerId: string, promptId: number, text: string, eventId?: string): Promise<{
     prompt_id: number; session_id: number; kind: string; context: Record<string, unknown>; result: Record<string, unknown>; event_id?: string
@@ -48,7 +48,7 @@ export function createAgentInteractionRespondService(options: {
       )
       return rows[0] ?? null
     },
-    async respond(ownerId, promptId, token, eventId) {
+    async respond(ownerId, promptId, token, eventId, selectedOptionIds, customAnswer) {
       let runId: string | undefined
       const store = createPostgresInteractionConsumeStore(options.pool, {
         ...options.effects,
@@ -57,7 +57,7 @@ export function createAgentInteractionRespondService(options: {
             await options.enqueue(client, prompt, action, id => { runId = id })
         },
       })
-      const result = await consumeInteractionAction(store, { ownerId, promptId, token, ...(eventId != null ? { eventId } : {}) })
+      const result = await consumeInteractionAction(store, { ownerId, promptId, token, selectedOptionIds, customAnswer, ...(eventId != null ? { eventId } : {}) })
       const resolved = result.result
       if (typeof result.context.tool_call_id === 'string' && result.context.tool_call_id && resolved.status !== 'awaiting_text' && resolved.status !== 'error') {
         try { await options.wake(ownerId, result.session_id) } catch { try { options.diagnose() } catch { /* 诊断不得影响已提交结果。 */ } }
@@ -74,7 +74,7 @@ export function createAgentInteractionRespondService(options: {
   }
 }
 
-const bodySchema = z.object({ token: z.string(), event_id: z.string().nullish() })
+const bodySchema = z.object({ token: z.string(), custom_answer: z.string().max(8_000).optional(), selected_option_ids: z.array(z.string().min(1).max(64)).optional(), event_id: z.string().nullish() })
 const textBodySchema = z.object({ text: z.string(), event_id: z.string().nullish() })
 const errorDetails: Record<InteractionConsumeError['code'], string> = {
   interaction_not_found: '交互不存在', interaction_ended: '交互已结束', interaction_expired: '交互已过期',
@@ -91,7 +91,7 @@ export function registerAgentInteractionRespondRoute(app: FastifyInstance, optio
   app.post<{ Params: { prompt_id: string } }>('/api/v1/agent/interactions/:prompt_id/respond', { preHandler: options.requireUser }, async (request, reply) => {
     const promptId = parsePythonInteger(request.params.prompt_id), body = bodySchema.safeParse(request.body)
     if (promptId == null || !body.success) return reply.code(422).send({ detail: '交互请求无效' })
-    try { return await options.service.respond(options.userIdFromRequest(request), promptId, body.data.token, body.data.event_id ?? undefined) }
+    try { return await options.service.respond(options.userIdFromRequest(request), promptId, body.data.token, body.data.event_id ?? undefined, body.data.selected_option_ids, body.data.custom_answer) }
     catch (error) {
       if (error instanceof InteractionConsumeError) return reply.code(error.code === 'interaction_not_found' ? 404 : 409).send({ detail: errorDetails[error.code] })
       return reply.code(500).send({ detail: '交互处理失败' })
@@ -102,7 +102,7 @@ export function registerAgentInteractionRespondRoute(app: FastifyInstance, optio
     if (promptId == null || !body.success) return reply.code(422).send({ detail: '交互请求无效' })
     const ownerId = options.userIdFromRequest(request)
     try {
-      const result = await options.service.respond(ownerId, promptId, body.data.token, body.data.event_id ?? undefined)
+      const result = await options.service.respond(ownerId, promptId, body.data.token, body.data.event_id ?? undefined, body.data.selected_option_ids, body.data.custom_answer)
       if (!result.context.tool_call_id) return reply.code(409).send({ detail: '该交互不支持恢复原任务' })
       const resolved = result.result && typeof result.result === 'object' ? result.result as Record<string, unknown> : {}
       if (resolved.status === 'error') return reply.code(409).send({ detail: typeof resolved.text === 'string' ? resolved.text : '确认未生效，请重新发起操作。' })

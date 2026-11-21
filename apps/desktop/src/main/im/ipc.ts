@@ -19,6 +19,11 @@ export function telegramHandlers(gateway: ReturnType<typeof createDesktopTelegra
           case 'save': return gateway.save('input' in command ? command.input : null)
           case 'enable': return gateway.enable()
           case 'disable': return gateway.disable()
+          case 'updateGroupSettings':
+            if ('patch' in command && command.patch && typeof command.patch === 'object' && !Array.isArray(command.patch))
+              return gateway.updateGroupSettings(command.patch as never)
+          case 'setPrivateStreaming':
+            if ('enabled' in command && typeof command.enabled === 'boolean') return gateway.setPrivateStreaming(command.enabled)
         }
       }
       throw new DesktopError('invalid_request', 'Telegram 网关操作无效')
@@ -84,6 +89,10 @@ export function pairingHandlers(platform: 'wechat' | 'feishu' | 'qq',
           case 'setGroupChat':
             if ('setGroupChat' in pairing && 'enabled' in command && typeof command.enabled === 'boolean')
               return statusWithHealth(await pairing.setGroupChat(command.enabled))
+            break
+          case 'updateGroupSettings':
+            if ('updateGroupSettings' in pairing && 'patch' in command && command.patch && typeof command.patch === 'object' && !Array.isArray(command.patch))
+              return statusWithHealth(await pairing.updateGroupSettings(command.patch as never))
             break
           case 'setPrivateStreaming':
             if ('setPrivateStreaming' in pairing && 'enabled' in command && typeof command.enabled === 'boolean')

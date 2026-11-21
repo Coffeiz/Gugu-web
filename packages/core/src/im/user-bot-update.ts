@@ -38,10 +38,10 @@ export function createUserBotUpdater<DB>(db:Kysely<DB>,options:UserBotUpdateOpti
    }
    if((patch.group_requires_at??current.group_requires_at)===false&&input.group_response_mode==null)patch.group_read_enabled=false
    if(input.group_allowed_tools!=null){if(input.group_allowed_tools.some(tool=>!allowedUserBotTools.includes(tool)))invalid('包含不支持的群成员工具');patch.group_allowed_tools=normalizeUserBotTools(input.group_allowed_tools)}
-   if(input.private_streaming_enabled===true&&(input.private_message_format||current.private_message_format)!=='markdown')invalid('QQ 私聊流式仅支持 Markdown 格式')
+   if(input.private_streaming_enabled===true&&current.platform==='qq'&&(input.private_message_format||current.private_message_format)!=='markdown')invalid('QQ 私聊流式仅支持 Markdown 格式')
    for(const key of ['group_message_format','private_message_format'] as const)if(input[key]!=null){if(!['compat','markdown'].includes(input[key]))invalid('无效的 QQ 消息格式');patch[key]=input[key]}
-   if(input.private_streaming_enabled!=null){if(current.platform!=='qq')invalid('私聊流式设置仅适用于 QQ 机器人');patch.private_streaming_enabled=input.private_streaming_enabled}
-   if(input.private_message_format==='compat')patch.private_streaming_enabled=false
+   if(input.private_streaming_enabled!=null){if(!['qq','feishu','telegram'].includes(String(current.platform)))invalid('该平台不支持私聊流式传输');patch.private_streaming_enabled=input.private_streaming_enabled}
+   if(input.private_message_format==='compat'&&current.platform==='qq')patch.private_streaming_enabled=false
    const changed=Object.entries(patch).filter(([key,value])=>key==='group_allowed_tools'?JSON.stringify(value)!==JSON.stringify(current[key]):value!==current[key])
    if(!changed.length)return current
    const assignments=changed.map(([key,value])=>key==='group_allowed_tools'?sql`${sql.ref(key)}=${JSON.stringify(value)}::json`:sql`${sql.ref(key)}=${value}`)

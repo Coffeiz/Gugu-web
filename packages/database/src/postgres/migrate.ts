@@ -26,12 +26,13 @@ import { calendarReminderMode } from './migrations/0023_calendar_reminder_mode.j
 import { webPush } from './migrations/0024_web_push.js'
 import { webReflection } from './migrations/0025_web_reflection.js'
 import { reflectionCompaction } from './migrations/0026_reflection_compaction.js'
+import { imPrivateStreaming } from './migrations/0027_im_private_streaming.js'
 import { runPostgresMigrations } from './runner.js'
 
 const catalog = [
   initialize, webDomain, agentRun, agentSnapshots, filesystemAuthorization, securityEvents,
   terminalSessions, interactionActions, trashPurge, searchUsage, ragIndex,
-  agentReasoning, imGateway, imReflection, dataPortability, providerCredentials, mcp, fileSync, accountRecords, memory, byokBindings, scheduledTaskMode, calendarReminderMode, webPush, webReflection, reflectionCompaction,
+  agentReasoning, imGateway, imReflection, dataPortability, providerCredentials, mcp, fileSync, accountRecords, memory, byokBindings, scheduledTaskMode, calendarReminderMode, webPush, webReflection, reflectionCompaction, imPrivateStreaming,
 ]
 
 export function migratePostgres(pool: Pick<Pool, 'connect'>, action: MigrationAction) {

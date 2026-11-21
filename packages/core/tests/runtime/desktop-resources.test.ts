@@ -52,6 +52,12 @@ it('桌面技能与 MCP 写入本地数据库，配置密文和重放收据互�
       await expect(mcp.write(id, { transport: 'stdio' })).rejects.toMatchObject({ code: 'invalid_request' })
       await mcp.remove(id)
       await expect(mcp.config(id)).rejects.toMatchObject({ code: 'not_found' })
+      for (let index = 0; index < 6; index++) {
+        await mcp.write(undefined, { ...config, name: `阅读目录-${index}` })
+      }
+      const list = await mcp.list(0)
+      expect(list.max_servers).toBeNull()
+      expect(list.items).toHaveLength(6)
     } finally { await runtime.close() }
   } finally { await rm(directory, { recursive: true, force: true }) }
 })

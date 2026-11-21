@@ -14,7 +14,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { localDayKey } from '@/utils/dateAttribution'
 import { useDateScrubberMotion } from '@/composables/mind/useDateScrubberMotion'
@@ -31,7 +31,6 @@ const emit = defineEmits<{
 }>()
 
 const stripRef = ref<HTMLElement | null>(null)
-const stripWidth = ref(0)
 const hoverIndex = ref<number | null>(null)
 const DRAG_RATIO = 0.45
 let removeGestureListeners: (() => void) | null = null
@@ -53,7 +52,7 @@ const visibleTicks = computed(() => {
   return props.groups.slice(start, end).map((group, offset) => ({ group, index: start + offset }))
 })
 const trackStyle = computed(() => ({
-  transform: `translate3d(${stripWidth.value / 2 - positionForIndex(visualPosition.value, visualPosition.value, props.groups.length)}px,0,0)`,
+  transform: `translate3d(${-positionForIndex(visualPosition.value, visualPosition.value, props.groups.length)}px,0,0)`,
 }))
 
 watch(() => props.centerFrac, position => motion.syncExternal(position), { immediate: true })
@@ -87,12 +86,11 @@ function tipStyle(index: number) {
   }
 }
 
-function onResize() { stripWidth.value = stripRef.value?.clientWidth ?? 0 }
 function fractionNear(clientX: number): number | null {
   const root = stripRef.value
   if (!root || !visibleTicks.value.length) return null
   const rect = root.getBoundingClientRect()
-  const trackX = clientX - rect.left - stripWidth.value / 2 + positionForIndex(visualPosition.value, visualPosition.value, props.groups.length)
+  const trackX = clientX - (rect.left + rect.width / 2) + positionForIndex(visualPosition.value, visualPosition.value, props.groups.length)
   const ticks = visibleTicks.value
   const first = ticks[0].index
   if (trackX <= positionForIndex(first, visualPosition.value, props.groups.length)) return first
@@ -159,13 +157,8 @@ function onHover(event: PointerEvent) {
 }
 function onLeave() { hoverIndex.value = null }
 
-onMounted(() => {
-  onResize()
-  window.addEventListener('resize', onResize)
-})
 onBeforeUnmount(() => {
   removeGestureListeners?.()
-  window.removeEventListener('resize', onResize)
 })
 
 defineExpose({
@@ -196,7 +189,7 @@ function fmtLabel(iso: string) {
   -webkit-mask-image: linear-gradient(to right, transparent, #000 5%, #000 95%, transparent);
 }
 .date-scrub:active { cursor: grabbing; }
-.ds-track { position: absolute; top: 4px; left: 0; width: 0; height: 22px; will-change: transform; }
+.ds-track { position: absolute; top: 4px; left: 50%; width: 0; height: 22px; will-change: transform; }
 .dsb-tick { position: absolute; display: flex; align-items: flex-start; justify-content: center; width: 14px; height: 22px; padding: 0; transform: translateX(-50%); border: none; background: none; cursor: inherit; }
 .dsb-bar { width: 3px; height: 12px; border-radius: 99px; will-change: height, width, opacity, background; }
 .dsb-tip { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 4px; font-size: 10px; white-space: nowrap; color: var(--text-secondary); pointer-events: none; transition: opacity .15s ease; }

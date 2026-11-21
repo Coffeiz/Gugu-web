@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply, preHandlerHookHandler } from 'fastify'
 import { sql, type Kysely } from 'kysely'
 import { dataContext } from '@gugu/core/contracts'
+import { defaultUserBotGroupSettings } from '@gugu/core/im/user-bots'
 import { invalidateOwnerImSnapshots } from '@gugu/core/im/user-bot-create'
 import { createTelegramBotApi, createTelegramDeliveryApi, validateTelegramBotToken, verifyTelegramBotIdentity, type TelegramBotIdentity } from '@gugu/gateway/telegram'
 import { createPublicAgentEgress } from '../../../../../adapters/network/safe-egress-proxy.js'
@@ -133,6 +134,7 @@ export function createTelegramConnector<DB>(db: Kysely<DB>, options: TelegramCon
       const { token, info } = await verified(rawToken)
       const platformId = String(info.id)
       const name = botName(info)
+      const group = defaultUserBotGroupSettings('telegram')
       const encrypted = await options.encrypt(token)
       const id = await db.transaction().execute(async tx => {
         await lockUniqueKeys(tx, platformId, owner)
@@ -140,8 +142,8 @@ export function createTelegramConnector<DB>(db: Kysely<DB>, options: TelegramCon
         if (existing) throw new TelegramConnectionError(409, '每个咕咕账号只能接入一个 Telegram Bot；请使用替换凭据')
         const duplicate = (await sql<{ id: number }>`SELECT id FROM user_bots WHERE platform='telegram' AND app_id=${platformId} LIMIT 1`.execute(tx)).rows[0]
         if (duplicate) throw new TelegramConnectionError(409, '这个 Telegram Bot 已关联其他咕咕账号')
-        return (await sql<{ id: number }>`INSERT INTO user_bots(user_id,platform,name,app_id,app_secret,enabled,group_chat_enabled,bot_platform_user_id,created_at)
-          VALUES(${owner},'telegram',${name},${platformId},${encrypted},TRUE,FALSE,${platformId},CURRENT_TIMESTAMP) RETURNING id`.execute(tx)).rows[0]!.id
+        return (await sql<{ id: number }>`INSERT INTO user_bots(user_id,platform,name,app_id,app_secret,enabled,group_chat_enabled,group_attention_mode,group_allowed_tools,group_memory_enabled,member_memory_enabled,group_owner_memory_enabled,bot_platform_user_id,created_at)
+          VALUES(${owner},'telegram',${name},${platformId},${encrypted},TRUE,${group.groupChatEnabled},${group.groupAttentionMode},${JSON.stringify(group.groupAllowedTools)}::json,${group.groupMemoryEnabled},${group.memberMemoryEnabled},${group.groupOwnerMemoryEnabled},${platformId},CURRENT_TIMESTAMP) RETURNING id`.execute(tx)).rows[0]!.id
       })
       await notify(owner)
       return publicBot(id, name, platformId)

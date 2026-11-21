@@ -9,6 +9,7 @@ const desktopSourceEntries = {
   '@gugu/core/desktop': 'core/src/contracts/desktop.ts',
   '@gugu/core/agent/chat-sse': 'core/src/agent/chat-sse.ts',
   '@gugu/core/agent/commands/menu': 'core/src/agent/commands/menu.ts',
+  '@gugu/core/im/user-bots': 'core/src/im/user-bots.ts',
   '@gugu/core/mail/contracts': 'core/src/mail/contracts.ts',
   '@gugu/core/preferences/text-upload': 'core/src/preferences/text-upload.ts',
   '@gugu/database/version': 'database/src/version.ts',

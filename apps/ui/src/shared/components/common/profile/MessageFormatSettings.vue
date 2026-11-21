@@ -5,8 +5,8 @@
       <div class="pm-style-group pm-tool-options"><button v-for="option in options" :key="option.key" type="button" class="pm-style-chip" :class="{ active: format(scope.key) === option.key }" @click="setFormat(scope.key, option.key)">{{ t(option.labelKey) }}</button></div>
     </div>
     <div v-if="!privateOnly || showStreaming" class="pm-bot-group-row pm-bot-tools-row">
-      <div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.qqPrivateStreaming') }}</span><span class="pm-field-hint">{{ t(markdownPrivateFormat ? 'profileImUi.qqPrivateStreamingHint' : 'profileImUi.qqPrivateStreamingMarkdownRequiredHint') }}</span></div>
-      <span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="streamingEnabled" :disabled="!markdownPrivateFormat" :aria-label="t('profileImUi.qqPrivateStreaming')" @update:model-value="emit('streaming', $event)" /><span class="pm-switch-label" :class="{ on: streamingEnabled }">{{ streamingEnabled ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span>
+      <div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.privateStreaming') }}</span><span class="pm-field-hint">{{ t(markdownPrivateFormat || !showFormats ? 'profileImUi.privateStreamingHint' : 'profileImUi.qqPrivateStreamingMarkdownRequiredHint') }}</span></div>
+      <span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="streamingEnabled" :disabled="showFormats && !markdownPrivateFormat" :aria-label="t('profileImUi.privateStreaming')" @update:model-value="emit('streaming', $event)" /><span class="pm-switch-label" :class="{ on: streamingEnabled }">{{ streamingEnabled ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span>
     </div>
   </div>
 </template>
@@ -17,7 +17,7 @@ import { useI18n } from 'vue-i18n'
 import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 
 interface MessageFormatBot { group_message_format?: string; private_message_format?: string; private_streaming_enabled?: boolean }
-const props = defineProps<{ bot: MessageFormatBot; privateOnly?: boolean; showStreaming?: boolean }>()
+const props = withDefaults(defineProps<{ bot: MessageFormatBot; privateOnly?: boolean; showStreaming?: boolean; showFormats?: boolean }>(), { showFormats: true })
 const emit = defineEmits<{ change: [scope: 'group' | 'private', mode: string]; streaming: [enabled: boolean] }>()
 const { t } = useI18n()
 const markdownPrivateFormat = computed(() => format('private') === 'markdown')
@@ -26,7 +26,7 @@ const scopes = [
   { key: 'group', labelKey: 'profileImUi.groupMessageFormat', hintKey: 'profileImUi.groupMessageFormatHint' },
   { key: 'private', labelKey: 'profileImUi.privateMessageFormat', hintKey: 'profileImUi.privateMessageFormatHint' },
 ] as const
-const visibleScopes = computed(() => scopes.filter(scope => !props.privateOnly || scope.key === 'private'))
+const visibleScopes = computed(() => props.showFormats ? scopes.filter(scope => !props.privateOnly || scope.key === 'private') : [])
 const options = [
   { key: 'compat', labelKey: 'profileImUi.compatFormat' },
   { key: 'markdown', labelKey: 'profileImUi.markdownFormat' },

@@ -249,6 +249,14 @@ export function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) 
       ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId }))
   }
   registerByokRoutes(app, auth, options)
+  const citationSiteName = options.citationSiteName
+  if (citationSiteName) registerProtectedDomain(app, auth, routes => {
+    routes.post<{ Body: { url: string } }>('/api/v1/chat/citation-site', {
+      bodyLimit: 8192,
+      schema: { body: { type: 'object', required: ['url'], additionalProperties: false,
+        properties: { url: { type: 'string', maxLength: 4096 } } } },
+    }, async request => ({ name: await citationSiteName(request.body.url) }))
+  })
   if (options.desktopAgentDeepResearch)
     registerDesktopAgentDeepResearchRoute(app, auth, options.desktopAgentDeepResearch)
   if (options.desktopAgentSimilarImageSearch)
@@ -295,7 +303,7 @@ export function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) 
     })
   }
   if (options.listProjects || options.createProject || options.listProjectFileCounts || options.getProject
-    || options.updateProject || options.deleteProject || options.restoreProject) {
+    || options.updateProject || options.deleteProject || options.restoreProject || options.purgeProject) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => {
       registerProjectRoutes(routes, userFromRequest, options)
     })

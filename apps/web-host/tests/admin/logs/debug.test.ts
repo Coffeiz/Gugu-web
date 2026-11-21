@@ -287,6 +287,47 @@ test('Admin Gateway 日志按来源读取脱敏摘要，堆栈通过事件编号
   } finally { await ctx.cleanup() }
 })
 
+test('微信 iLink 故障仅展示白名单操作、状态码和平台返回码', async () => {
+  const ctx = await setup(root => resolveAdminDebugLogFiles(join(root, 'gugu.log')))
+  try {
+    const error = Object.assign(new Error('不得记录的令牌、URL 和响应正文'), {
+      name: 'ILinkApiError', operation: 'getupdates', outcome: 'unknown', statusCode: 502, ret: 17,
+    })
+    createWebRuntimeLog(ctx.paths.gateway, 'gateway')('gateway.degraded', {
+      code: 'wechat-poll-unavailable', error,
+    })
+    const response = await ctx.app.inject({
+      url: '/api/v1/admin/debug/logs/tail?source=gateway',
+      headers: { authorization: 'admin' },
+    })
+    assert.equal(response.statusCode, 200)
+    const [row] = response.json().lines
+    assert.equal(row.message, '消息网关运行异常 · 微信读取消息 · 上游结果未知 · HTTP 502 · 平台返回码 17')
+    const record = JSON.parse(row.line)
+    assert.deepEqual(record.attributes, {
+      code: 'wechat-poll-unavailable', errorCode: 'internal_error',
+      upstreamOperation: 'getupdates', upstreamOutcome: 'unknown', httpStatus: 502, upstreamRet: 17,
+    })
+    assert.doesNotMatch(response.body, /不得记录的令牌|URL 和响应正文/)
+
+    const malformed = Object.assign(new Error('秘密'), {
+      name: 'ILinkApiError', operation: 'token-secret', outcome: 'rejected', statusCode: 9999, ret: Number.MAX_SAFE_INTEGER,
+    })
+    createWebRuntimeLog(ctx.paths.gateway, 'gateway')('gateway.degraded', {
+      code: 'wechat-poll-unavailable', error: malformed,
+    })
+    const rows = (await ctx.app.inject({
+      url: '/api/v1/admin/debug/logs/tail?source=gateway&lines=10',
+      headers: { authorization: 'admin' },
+    })).json().lines
+    const malformedRecord = JSON.parse(rows[1].line)
+    assert.equal(malformedRecord.attributes.upstreamOperation, undefined)
+    assert.equal(malformedRecord.attributes.httpStatus, undefined)
+    assert.equal(malformedRecord.attributes.upstreamRet, undefined)
+    assert.doesNotMatch(JSON.stringify(rows), /token-secret|秘密/)
+  } finally { await ctx.cleanup() }
+})
+
 test('启动迁移警告保留可辨认的固定状态，并过滤未知输入', async () => {
   const ctx = await setup(root => resolveAdminDebugLogFiles(join(root, 'gugu.log')))
   try {

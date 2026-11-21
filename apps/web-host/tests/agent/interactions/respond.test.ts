@@ -29,8 +29,8 @@ test('路由认证、可信 owner、参数与错误脱敏', async () => {
 test('恢复选择与文本回答通过认证并只返回可恢复原 Run 的结果', async () => {
   const app = Fastify(); const calls: unknown[][] = []
   registerAgentInteractionRespondRoute(app, { async requireUser(request, reply) { if (!request.headers.authorization) return reply.code(401).send() }, userIdFromRequest: () => 'trusted-owner', service: {
-    async respond(owner, id, token, eventId) {
-      calls.push(['respond', owner, id, token, eventId])
+    async respond(owner, id, token, eventId, selectedOptionIds, customAnswer) {
+      calls.push(['respond', owner, id, token, eventId, ...(selectedOptionIds ? [selectedOptionIds, customAnswer] : [])])
       return { prompt_id: id, session_id: 12, kind: 'confirm', option_id: 'confirm', action_type: 'choice', context: { tool_call_id: 'call-a' }, result: { status: 'confirmed' }, run_id: 'original-run' } as never
     },
     async resumeText(owner, id, text, eventId) {
@@ -46,7 +46,16 @@ test('恢复选择与文本回答通过认证并只返回可恢复原 Run 的结
     const text = await app.inject({ method: 'POST', url: '/api/v1/agent/interactions/8/resume-text', headers: { authorization: 'yes' }, payload: { text: '回答', event_id: 'event-b' } })
     assert.equal(text.statusCode, 200)
     assert.deepEqual(text.json(), { ok: true, session_id: 12 })
-    assert.deepEqual(calls, [['respond', 'trusted-owner', 7, 'choice-token', 'event-a'], ['resumeText', 'trusted-owner', 8, '回答', 'event-b']])
+    const multiple = await app.inject({
+      method: 'POST', url: '/api/v1/agent/interactions/9/resume', headers: { authorization: 'yes' },
+      payload: { token: 'multiple-token', event_id: 'event-c', selected_option_ids: ['a', 'b'], custom_answer: '补充说明' },
+    })
+    assert.equal(multiple.statusCode, 200)
+    assert.deepEqual(calls, [
+      ['respond', 'trusted-owner', 7, 'choice-token', 'event-a'],
+      ['resumeText', 'trusted-owner', 8, '回答', 'event-b'],
+      ['respond', 'trusted-owner', 9, 'multiple-token', 'event-c', ['a', 'b'], '补充说明'],
+    ])
   } finally { await app.close() }
 })
 

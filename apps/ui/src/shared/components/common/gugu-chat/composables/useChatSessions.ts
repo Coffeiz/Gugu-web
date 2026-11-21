@@ -77,8 +77,6 @@ export function useChatSessions(options: {
   setStatus: (item: { kind: 'text' | 'dots' | 'hide'; label?: string }) => void
   thinkingItem: () => { kind: 'text' | 'dots' | 'hide'; label?: string }
   contextCompactingItem: () => { kind: 'text' | 'dots' | 'hide'; label?: string }
-  onContentReset: () => void
-  onCaptureBaseScrollH: () => void
   scrollBottom: (force?: boolean) => Promise<void>
   captureScrollAnchor: () => SessionScrollAnchor | null | undefined
   restoreScrollPosition: (anchor: SessionScrollAnchor | null) => Promise<void>
@@ -272,7 +270,6 @@ export function useChatSessions(options: {
     // 请求期间清掉旧会话的 DOM，避免新会话挂载前沿用旧 scrollTop；请求失败再恢复。
     messages.value = []
     options.clearStatus()
-    options.onContentReset()
     try {
       const platformHistory = options.historyAccess && !options.historyAccess.readFirstPage
         ? await readPlatformHistory(options.historyAccess, id, cachedSnapshot?.messages ?? [],
@@ -310,10 +307,9 @@ export function useChatSessions(options: {
       )
       cacheSessionSnapshot(id, messages.value, pagination)
       messageSync.setCursor(id, data.pagination?.newestId)
-      options.onContentReset(); options.resetSessionTurn()
+      options.resetSessionTurn()
       await nextTick()
       if (viewGeneration !== options.getViewGeneration() || accountEpoch !== getAccountBoundaryEpoch()) return 'superseded'
-      options.onCaptureBaseScrollH()   // 基线 = 切入会话的历史高度
       // 服务端活跃标记是续接的权威状态。历史中存在助手消息不能证明当前 run 已结束
       // （例如 IM run 或多轮工具过程）；/stream 会按稳定事件 ID 重放，完成后由历史收尾。
       const shouldResume = data.active === true

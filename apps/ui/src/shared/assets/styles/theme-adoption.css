@@ -342,8 +342,6 @@ html[data-theme='dark'][data-family] .cb-cancel { color: var(--content-secondary
 html[data-theme='dark'][data-family] .cb-cancel:hover { background: var(--surface-soft-hover); }
 html[data-theme='dark'][data-family] .chat-window .rec-dot { background: var(--status-danger); }
 html[data-theme='dark'][data-family] .chat-window .rec-time { color: var(--status-danger); }
-html[data-theme='dark'][data-family] .chat-window .tool-spinner { border-color: var(--border-subtle); border-top-color: var(--action-primary); }
-html[data-theme='dark'][data-family] .chat-window .tool-bubble,
 html[data-theme='dark'][data-family] .chat-window .msg-file-dl { color: var(--action-primary); }
 html[data-theme='dark'][data-family] .chat-window .msg-bubble.md-body a[href^='gugu://']:not(.chat-object-card) {
   color: var(--content-on-accent);

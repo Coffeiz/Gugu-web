@@ -6,7 +6,7 @@ type SkillsApi = Pick<typeof userSkillsApi, 'list' | 'tools'> & {
 }
 
 type McpApi = {
-  list(): Promise<{ items: McpServerItem[]; max_servers: number }>
+  list(): Promise<{ items: McpServerItem[]; max_servers: number | null }>
   create(fields: Record<string, unknown>): Promise<{ id: string }>
   update(id: string, fields: Record<string, unknown>): Promise<{ id: string }>
   remove(id: string): Promise<unknown>

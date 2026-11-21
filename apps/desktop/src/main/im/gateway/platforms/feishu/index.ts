@@ -1,4 +1,6 @@
 import { redactToolError } from '@gugu/core/agent'
+import { attentionSourceKind } from '@gugu/core/im/attention/directive'
+import { classifyImGroupInbound, resolveImActor } from '@gugu/core/im/access'
 import { createDesktopImChartRenderer, createDesktopImProjectionReceipts } from '../../delivery/projection.js'
 import type { IpcHost } from '../../../../ipc/types.js'
 import type { safeStorage } from 'electron'
@@ -6,21 +8,25 @@ import { DesktopError } from '../../../../core-host.js'
 import { transcribeDesktopImFile, type DesktopImVoice } from '../../inbound/voice.js'
 import { createHash } from 'node:crypto'
 import { FeishuMediaIngressError, parseFeishuEvent, processFeishuMedia, readFeishuQuote } from '@gugu/gateway/feishu'
-import { createGatewaySupervisor, readImReceivedMessage } from '@gugu/gateway'
+import { createGatewaySupervisor, createImGroupAttentionGate, readImReceivedMessage, type ImGroupAttentionHistory } from '@gugu/gateway'
 import { createPersistentFeishuProjection, createFeishuClient, createFeishuConnection, createFeishuSender, createFeishuWsNetwork } from '@gugu/gateway/feishu'
 import type { createDesktopFeishuPairing } from '../../../connect/platforms/feishu/index.js'
 import type { createDesktopImCallback } from '../../interactions/callback.js'
 import type { createDesktopImDispatch } from '../../delivery/dispatch.js'
 import { MAX_DESKTOP_ATTACHMENT_BYTES } from '../../../../agent/attachments.js'
-import type { DesktopImFile, createDesktopImInbox } from '../../inbound/inbox.js'
+import { desktopImEventKey, type DesktopImFile, type createDesktopImInbox } from '../../inbound/inbox.js'
+import { parseImReceivedMessage } from '@gugu/gateway'
 
 type Transport = NonNullable<Parameters<typeof createFeishuClient>[0]['transport']>
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
+function groupConnectionId(botId: string, groupId: string, ownerId: string) {
+  return createHash('sha256').update(JSON.stringify(['feishu-group', botId, groupId, ownerId])).digest('hex')
+}
 
 export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof createDesktopFeishuPairing>, 'read'>,
   admit: ReturnType<typeof createDesktopImInbox>, dispatch: ReturnType<typeof createDesktopImDispatch>,
   transport: () => Transport, connect = createFeishuConnection, callback?: ReturnType<typeof createDesktopImCallback>, voice?: DesktopImVoice, projection?: { host: IpcHost; encryption: Pick<typeof safeStorage, 'encryptStringAsync' | 'decryptStringAsync'> }) {
-  return createGatewaySupervisor({
+  const supervisor = createGatewaySupervisor({
     async read() {
       const bot = await pairing.read()
       return bot?.enabled ? [{ ...bot, key: 'feishu' }] : []
@@ -33,10 +39,71 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
       const sender = createFeishuSender({ client })
       const controller = new AbortController()
       const active = AbortSignal.any([signal, controller.signal])
-      async function authorize() {
-        if (active.aborted) return false
+      const groupDeliveries = new Map<string, Promise<void>>()
+      const groupAttention = createImGroupAttentionGate()
+      async function readActive() {
+        if (active.aborted) return null
         const current = await pairing.read()
-        return !active.aborted && current?.enabled === true && current.revision === bot.revision
+        return !active.aborted && current?.enabled === true && current.revision === bot.revision ? current : null
+      }
+      async function authorize() {
+        return !!await readActive()
+      }
+      async function authorizeGroup(groupId: string) {
+        const current = await readActive()
+        return !!current?.userId && current.groupChatEnabled && !active.aborted && Boolean(groupId)
+      }
+      function startGroupDispatch(groupId: string, ownerPlatformUserId: string) {
+        const groupConnection = groupConnectionId(bot.appId, groupId, ownerPlatformUserId)
+        const allow = () => authorizeGroup(groupId)
+        const allowMessage = async (message: Parameters<typeof admit>[1]) => {
+          const current = await readActive()
+          return !!current?.userId && current.userId === ownerPlatformUserId && current.groupChatEnabled
+            && current.groupReplyMode !== 'record_only'
+            && (message.botMentioned || current.groupReplyMode === 'reply_all')
+        }
+        const allowFile = async (message: Parameters<typeof admit>[1]) => {
+          const current = await readActive()
+          return !!current?.userId && current.userId === ownerPlatformUserId && current.groupChatEnabled
+            && current.groupAllowedTools.some(tool => ['http_get', 'similar_image_search', 'send_file'].includes(tool))
+            && current.groupReplyMode !== 'record_only' && (message.botMentioned || current.groupReplyMode === 'reply_all')
+        }
+        if (!groupDeliveries.has(groupConnection)) {
+          const work = dispatch({ connection, connectionId: groupConnection, signal: active, authorize: allow,
+            group: { id: groupId, ownerPlatformUserId, authorizeMessage: allowMessage, authorizeFile: allowFile },
+            async send(reply) {
+              if (reply.recipient !== groupId || !reply.originalMessageId || !await allow()) return 'rejected'
+              return await sender.text(groupId, reply.text, active, allow)
+            },
+          }).finally(() => { groupDeliveries.delete(groupConnection) })
+          groupDeliveries.set(groupConnection, work)
+          void work.catch(() => {})
+        }
+        return groupConnection
+      }
+      let recovery: Promise<void> | undefined
+      async function recoverGroups() {
+        if (!projection) return
+        let after = ''
+        while (!active.aborted) {
+          const current = await readActive()
+          if (!current?.groupChatEnabled || !current.userId || current.groupReplyMode === 'record_only') return
+          const row = await projection.host.request<{ connectionId: string; eventKey: string; sealedEvent: string } | null>(
+            'im.inbox.pendingConnection', { platform: 'feishu', after })
+          if (!row || typeof row.connectionId !== 'string' || !row.connectionId
+            || row.connectionId <= after || typeof row.eventKey !== 'string' || !row.eventKey
+            || typeof row.sealedEvent !== 'string' || !row.sealedEvent) return
+          after = row.connectionId
+          try {
+            const { result } = await projection.encryption.decryptStringAsync(Buffer.from(row.sealedEvent, 'base64'))
+            const message = parseImReceivedMessage(connection, JSON.parse(result).event)
+            const { chatType, chatId } = message.scope
+            if (chatType !== 'group' || !chatId || desktopImEventKey(message) !== row.eventKey
+              || groupConnectionId(current.appId, chatId, current.userId) !== row.connectionId
+              || (!message.botMentioned && current.groupReplyMode !== 'reply_all')) continue
+            startGroupDispatch(chatId, current.userId)
+          } catch { /* 无法恢复的密封收件由 Core 保留原有失败状态。 */ }
+        }
       }
       try {
         const response = await client.call('GET', '/open-apis/bot/v3/info', { signal: active, authorize })
@@ -55,25 +122,61 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
             if (!object(data) || !await authorize()) return
             const parsed = parse(data, 'im.message.receive_v1')
             if (parsed?.kind !== 'message' || parsed.payload.sender_is_bot === true
-              || parsed.payload.chat_type !== 'c2c' || parsed.payload.platform_user_id !== bot.userId
               || (!parsed.payload.text.trim() && !parsed.mediaItems.length) || !await authorize()) return
+            const isGroup = parsed.payload.chat_type === 'group'
+            if (isGroup) {
+              const current = await readActive()
+              if (!current?.userId || !current.groupChatEnabled || !parsed.payload.chat_id) return
+              const decision = classifyImGroupInbound({ platform: 'feishu', chatType: 'group', chatId: parsed.payload.chat_id,
+                groupMentioned: parsed.payload.bot_mentioned, mentionsOtherBot: parsed.payload.mentions_other_bot === true },
+              { requiresAt: current.groupReplyMode !== 'reply_all', readOnly: false })
+              if (current.groupReplyMode !== 'record_only' && decision !== 'reply') return
+            } else if (parsed.payload.platform_user_id !== bot.userId) return
             const mediaSignal = AbortSignal.any([active, messageSignal, AbortSignal.timeout(60_000)])
             const quote = await readFeishuQuote(parsed, client, botOpenId, mediaSignal, authorize)
             if (!await authorize()) return
             mediaSignal.throwIfAborted()
             const event = readImReceivedMessage(connection, { ...parsed.payload, ...quote })
+            const current = await readActive()
+            if (!current) return
+            let recordOnly = isGroup && current.groupReplyMode === 'record_only'
+            let sourceAttentionKind = isGroup && event.botMentioned ? attentionSourceKind('DIRECT') : null
+            if (isGroup && !recordOnly && current.groupReplyMode === 'reply_all') {
+              const attentionHistory = projection
+                ? await projection.host.request<ImGroupAttentionHistory>('im.inbox.groupAttentionHistory', {
+                  platform: 'feishu', connectionId: groupConnectionId(bot.appId, parsed.payload.chat_id, current.userId!),
+                })
+                : undefined
+              const attention = groupAttention.evaluate({ platform: 'feishu', botId: bot.appId,
+                groupId: parsed.payload.chat_id, mode: current.groupAttentionMode,
+                payload: { ...parsed.payload, processable_media: parsed.mediaItems.length > 0 } }, attentionHistory)
+              recordOnly = !attention.run
+              sourceAttentionKind = attentionSourceKind(attention.decision.kind)
+            }
+            const targetConnection = isGroup
+              ? groupConnectionId(bot.appId, parsed.payload.chat_id, current.userId!) : connectionId
+            const eventAuthorize = isGroup ? () => authorizeGroup(parsed.payload.chat_id) : authorize
             if (!parsed.mediaItems.length) {
-              await admit(connectionId, event, parsed.payload.chat_id)
+              if (recordOnly) await admit(targetConnection, event, undefined, { files: [], recordOnly, ownerPlatformUserId: current.userId!, authorize: eventAuthorize })
+              else {
+                if (isGroup) startGroupDispatch(parsed.payload.chat_id, current.userId!)
+                await admit(targetConnection, event, isGroup ? undefined : parsed.payload.chat_id,
+                  { files: [], sourceAttentionKind: sourceAttentionKind ?? undefined, authorize: eventAuthorize })
+              }
               return
             }
             const files: DesktopImFile[] = []
             try {
               await processFeishuMedia(parsed.mediaItems, client, {
-                maxBytes: MAX_DESKTOP_ATTACHMENT_BYTES, maxFiles: 16, signal: mediaSignal, authorize,
+                maxBytes: MAX_DESKTOP_ATTACHMENT_BYTES, maxFiles: 16, signal: mediaSignal, authorize: eventAuthorize,
               }, async file => { files.push(await transcribeDesktopImFile(file, voice, mediaSignal, authorize)) })
-              if (!await authorize()) return
+              if (!await eventAuthorize()) return
               try {
-                await admit(connectionId, event, parsed.payload.chat_id, { files, authorize })
+                if (recordOnly) await admit(targetConnection, event, undefined, { files, recordOnly, ownerPlatformUserId: current.userId!, authorize: eventAuthorize })
+                else {
+                  if (isGroup) startGroupDispatch(parsed.payload.chat_id, current.userId!)
+                  await admit(targetConnection, event, parsed.payload.chat_id, { files, sourceAttentionKind: sourceAttentionKind ?? undefined, authorize: eventAuthorize })
+                }
               } catch (error) {
                 if (!(error instanceof DesktopError && error.code === 'invalid_request')) throw error
                 throw new FeishuMediaIngressError('feishu_media_stage')
@@ -81,7 +184,7 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
             } catch (error) {
               if (!(error instanceof FeishuMediaIngressError) || active.aborted || messageSignal.aborted) throw error
               const signal = AbortSignal.any([active, messageSignal, AbortSignal.timeout(5_000)])
-              if (await authorize()) await sender.text(bot.userId, error.notice, signal, authorize)
+              if (await authorize()) await sender.text(isGroup ? parsed.payload.chat_id : bot.userId, error.notice, signal, authorize)
             }
           },
           async onCardAction(data) {
@@ -96,8 +199,9 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
             return { toast: { type: accepted ? 'info' : 'error', content: accepted ? '已收到选择' : '交互已失效' } }
           },
         })
+        if (projection) recovery = recoverGroups().catch(() => {}).finally(() => { recovery = undefined })
         const delivery = dispatch({ connection, connectionId, userId: bot.userId, signal: active, authorize, media: { platform: 'feishu', sender },
-          ...(projection ? { async createStream(target) {
+          ...(projection && bot.privateStreamingEnabled ? { async createStream(target) {
             const receipts = createDesktopImProjectionReceipts(projection.host, projection.encryption, {
               platform: 'feishu', connectionId, eventKey: target.eventKey, runId: target.runId,
             })
@@ -130,6 +234,8 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
         const closed = handle.closed.finally(async () => {
           controller.abort()
           await delivery
+          await recovery
+          await Promise.allSettled(groupDeliveries.values())
           await client.close()
         })
         void closed.catch(() => {})
@@ -141,4 +247,44 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
       }
     },
   })
+  async function readAuthorizedGroupMessage(params: Record<string, unknown>, signal: AbortSignal) {
+    const { connectionId, eventKey, sealedEvent } = params
+    if (!projection || signal.aborted || typeof connectionId !== 'string' || typeof eventKey !== 'string'
+      || typeof sealedEvent !== 'string' || sealedEvent.length > 48_000) return null
+    try {
+      const { result } = await projection.encryption.decryptStringAsync(Buffer.from(sealedEvent, 'base64'))
+      const current = await pairing.read()
+      if (signal.aborted || !current?.enabled || !current.groupChatEnabled || !current.userId || current.groupReplyMode === 'record_only') return null
+      const message = parseImReceivedMessage({ platform: 'feishu', ownerId: 'desktop', botId: current.appId }, JSON.parse(result).event)
+      const { chatType, chatId } = message.scope
+      if (chatType !== 'group' || !chatId || desktopImEventKey(message) !== eventKey
+        || groupConnectionId(current.appId, chatId, current.userId) !== connectionId
+        || (!message.botMentioned && current.groupReplyMode !== 'reply_all')) return null
+      return { current, message }
+    } catch { return null }
+  }
+  return {
+    ...supervisor,
+    async authorizeGroupTool(params: Record<string, unknown>, signal: AbortSignal) {
+      const authorized = await readAuthorizedGroupMessage(params, signal)
+      if (!authorized || typeof params.name !== 'string') return false
+      const tools = new Set(authorized.current.groupAllowedTools)
+      const name = params.name
+      return (name === 'group_context_search' ? tools.has(name)
+        : name === 'web_search' ? tools.has(name)
+          : ['http_get', 'similar_image_search', 'send_file'].includes(name) ? tools.has(name) : false) && !signal.aborted
+    },
+    async readGroupMemoryContext(params: Record<string, unknown>, signal: AbortSignal) {
+      const authorized = await readAuthorizedGroupMessage(params, signal)
+      if (!authorized || typeof params.ownerId !== 'string' || !params.ownerId) return null
+      const { current, message } = authorized
+      const actor = resolveImActor({ ownerId: params.ownerId, botId: current.appId, platform: 'feishu',
+        platformUserId: message.scope.platformUserId, chatType: 'group', chatId: message.scope.chatId,
+        botMentioned: message.botMentioned, mentionsOtherBot: false,
+        speakers: [{ platformUserId: message.scope.platformUserId }],
+      }, scope => ({ role: scope.platformUserId === current.userId ? 'owner' : 'member', allowedToolNames: [] }))
+      return { actor, groupMemoryEnabled: current.groupMemoryEnabled,
+        groupOwnerMemoryEnabled: current.groupOwnerMemoryEnabled, memberMemoryEnabled: current.memberMemoryEnabled }
+    },
+  }
 }

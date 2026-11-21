@@ -6,6 +6,16 @@ import { execSync } from 'node:child_process'
 import Components from 'unplugin-vue-components/vite'
 import AutoImport from 'unplugin-auto-import/vite'
 import { ArcoResolver } from 'unplugin-vue-components/resolvers'
+import { legacySkillKeys } from '../../packages/core/src/agent/skills/legacy-keys.ts'
+
+// 仅将内置技能的公开名称和描述注入对话卡片，技能正文留在宿主。
+const builtinSkillCards = Object.fromEntries([...legacySkillKeys].flatMap(([id, key]) => {
+  const metadata = readFileSync(resolve(__dirname, '../../packages/core/resources/skills', `${key}.md`), 'utf8')
+    .replace(/\r\n/g, '\n').split(/^---[ \t]*$/m)[1] ?? ''
+  const name = /^name:[ \t]*(.+)$/m.exec(metadata)?.[1]?.trim()
+  const description = /^description:[ \t]*(.+)$/m.exec(metadata)?.[1]?.trim()
+  return name && description ? [[id, { name, description }]] : []
+}))
 
 // 发版门版本号：优先 git 短哈希（只在真发版/换提交时变），无 git（如 zip 部署）回退构建时间戳（每次构建必变）
 const APP_VER = (() => {
@@ -119,6 +129,7 @@ export default defineConfig({
     ],
   },
   define: {
+    __BUILTIN_SKILL_CARDS__: JSON.stringify(builtinSkillCards),
     __APP_VERSION__: JSON.stringify(APP_VER),
     __APP_RELEASE__: JSON.stringify(APP_RELEASE),
     __APP_BUILT_AT__: JSON.stringify(APP_BUILT_AT),

@@ -3,7 +3,7 @@ import type { UserFromRequest, WebUiOptions, WriteRequestMetadata } from '../../
 import { queryBoolean, writeRequestMetadata } from '../../http/request.js'
 
 export interface ProjectRouteOptions extends Pick<WebUiOptions,
-  'listProjects' | 'createProject' | 'listProjectFileCounts' | 'getProject'
+  'listProjects' | 'createProject' | 'listProjectFileCounts' | 'getProject' | 'purgeProject'
 > {
   /** Host callback: performs owner-scoped project update and post-commit effects. */
   updateProject?: (
@@ -92,6 +92,18 @@ export function registerProjectRoutes(
       if (projectId === null)
         return reply.code(422).send({ detail: '项目标识无效' })
       await options.deleteProject!(user.requestContext.data.ownerId, projectId, writeRequestMetadata(request))
+      return reply.code(204).send()
+    })
+  }
+
+  if (options.purgeProject) {
+    app.delete('/api/v1/projects/:projectId/purge', async (request, reply) => {
+      const user = userFromRequest(request)
+      const projectId = parseIntegerPath((request.params as { projectId: string }).projectId)
+      if (projectId === null || projectId <= 0)
+        return reply.code(422).send({ detail: '项目标识无效' })
+      const removed = await options.purgeProject!(user.requestContext.data.ownerId, projectId, writeRequestMetadata(request))
+      if (!removed) return reply.code(404).send({ detail: '已删除项目不存在' })
       return reply.code(204).send()
     })
   }

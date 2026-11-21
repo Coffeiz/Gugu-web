@@ -12,9 +12,9 @@
         <div class="fp-info-body">
           <div class="fp-info-row">
             <span class="fp-info-label">{{ t('files.name') }}</span>
-            <span class="fp-info-val">{{ infoFile.displayName }}.{{ infoFile.ext?.toLowerCase() }}</span>
+            <span class="fp-info-val">{{ infoFile.displayName }}{{ infoFile.ext ? `.${infoFile.ext.toLowerCase()}` : '' }}</span>
           </div>
-          <div class="fp-info-row">
+          <div v-if="infoFile.ext" class="fp-info-row">
             <span class="fp-info-label">{{ t('files.format') }}</span>
             <span class="fp-info-val">{{ infoFile.ext?.toUpperCase() }}</span>
           </div>
@@ -73,6 +73,7 @@ const props = defineProps({
   y:    { type: Number, default: 0 },
   zIndex: { type: Number, default: 0 },
   resolution: { type: String, default: '' },
+  location: { type: String, default: undefined },
 })
 const emit = defineEmits(['close', 'navigate', 'update:x', 'update:y'])
 
@@ -92,6 +93,7 @@ const infoFile = computed<Partial<FileMeta>>(() => {
     : file
 })
 const folderPath = computed(() => {
+  if (props.location !== undefined) return props.location
   if (infoFile.value.attach_id) return ''
   const root = infoFile.value.projectName
     || (infoFile.value.workspaceDirectoryId != null ? (workspaceName.value || t('files.workspace')) : t('files.all'))

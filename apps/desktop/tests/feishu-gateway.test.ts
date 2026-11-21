@@ -112,6 +112,44 @@ it('飞书桌面只登记绑定用户私聊，撤权后拒绝入站', async () =
     expect(admit).toHaveBeenNthCalledWith(1, expect.stringMatching(/^[a-f0-9]{64}$/), expect.objectContaining({
       eventId: feishuPrivateMessage.message.message_id, text: feishuPrivateText, quotedText: '引用内容',
       scope: expect.objectContaining({ platform: 'feishu', chatType: 'c2c', platformUserId: bot.userId }),
-    }), feishuPrivateMessage.message.chat_id)
+    }), feishuPrivateMessage.message.chat_id, expect.objectContaining({ files: [], authorize: expect.any(Function) }))
+  } finally { await gateway.stop() }
+})
+
+it('飞书桌面按共享群策略登记群收件并启动群会话分发', async () => {
+  const appId = 'cli_0123456789abcdef'
+  const ownerId = 'ou_owner'
+  const bot = { appId, appSecret: 'synthetic-secret', userId: ownerId, enabled: true, revision: '1',
+    groupChatEnabled: true, groupReplyMode: 'reply_mentions' as const, groupAttentionMode: 'autonomous' as const,
+    groupAllowedTools: [], groupOwnerMemoryEnabled: false, groupMemoryEnabled: true, memberMemoryEnabled: true }
+  const admitted = vi.fn(async () => {})
+  const connected = Promise.withResolvers<FeishuConnectionOptions>()
+  const groupDispatch = Promise.withResolvers<Parameters<ReturnType<typeof createDesktopImDispatch>>[0]>()
+  const gateway = createDesktopFeishuGateway({ read: async () => bot }, admitted, async options => {
+    if (options.group) groupDispatch.resolve(options)
+  }, () => ({ async request(request) {
+    const response = request.url.includes('tenant_access_token') ? { code: 0, tenant_access_token: 'synthetic-token', expire: 7200 }
+      : { code: 0, bot: { open_id: 'ou_bot' } }
+    return { status: 200, headers: {}, body: (async function* () { yield Buffer.from(JSON.stringify(response)) })(), cancel() {} }
+  } }), async options => {
+    connected.resolve(options)
+    const closed = Promise.withResolvers<void>()
+    return { closed: closed.promise, async stop() { await options.wsNetwork.close(); closed.resolve() } }
+  })
+  try {
+    await gateway.start()
+    const connection = await connected.promise
+    await connection.onMessage({
+      header: { event_type: 'im.message.receive_v1', app_id: appId, event_id: 'evt_group_1' },
+      event: { sender: { sender_id: { open_id: 'ou_member' }, sender_type: 'user' }, message: {
+        chat_type: 'group', chat_id: 'oc_group', message_id: 'om_group_1', message_type: 'text',
+        content: '{"text":"@_user_ou_bot 帮我看看"}', mentions: [{ key: '@_user_ou_bot', name: '咕咕', id: { open_id: 'ou_bot' } }],
+      } },
+    }, new AbortController().signal)
+    const dispatch = await groupDispatch.promise
+    expect(dispatch.group).toMatchObject({ id: 'oc_group', ownerPlatformUserId: ownerId })
+    expect(admitted).toHaveBeenCalledWith(expect.stringMatching(/^[a-f0-9]{64}$/), expect.objectContaining({
+      eventId: 'om_group_1', scope: expect.objectContaining({ platform: 'feishu', chatType: 'group', chatId: 'oc_group' }),
+    }), undefined, expect.objectContaining({ files: [], authorize: expect.any(Function) }))
   } finally { await gateway.stop() }
 })

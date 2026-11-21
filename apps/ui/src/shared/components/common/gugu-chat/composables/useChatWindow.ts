@@ -1,13 +1,9 @@
 /**
  * 窗口状态、样式与小窗高度跟随的唯一所有权：open / expanded / resizing、窗口坐标、
- * z-index、通知锚点、播放器样式、contentH / _baseScrollH 高度基线。
+ * z-index、通知锚点、播放器样式和内容自适应高度。
  *
  * 不拥有：消息/会话/流式（useChatConversation）、附件/录音（useChatAttachments）、
  * 音频播放（useChatAudio）、IM 连接（useChatImConnect）、FAB 行为。
- *
- * 三个钩子（onContentReset / onCaptureBaseScrollH / onSyncSmallH）由本 composable
- * 内部定义并通过返回值暴露，由 GuguChat.vue 传给 useChatConversation，把「内容变化
- * → 窗口尺寸跟随」这条链收在本文件内闭环，不在主组件里写半透半遮的中间层。
  *
  * 依赖：useChatWindow 需要 windowRef（chat-window DOM 引用，由 GuguChatWindow.vue
  * 通过 defineExpose 暴露）、composerRef（调 fitTextarea 做过渡结束后的最终校准）、
@@ -106,26 +102,41 @@ export function useChatWindow(options: UseChatWindowOptions) {
     if (resizing.value) finishResizing()
   }
 
-  // 小窗高度跟随内容：直接用 messages 真实高度算窗口该多高，到 maxH 封顶后内部滚动。
   const contentH = ref(SMALL_H)
-  let _baseScrollH = 0   // 打开/切会话时的内容高度基线
-
-  function resetContentH() { contentH.value = SMALL_H }
-  function captureBaseScrollH() {
-    _baseScrollH = options.messagesEl.value?.scrollHeight || 0
-  }
-  function setBaseScrollH(v: number) { _baseScrollH = v }
-
+  const compactGrowth = ref(false)
   const smallH = computed(() => {
-    const maxH = Math.min(vh.value * 0.75, vh.value - 88 - 16)
-    return Math.min(maxH, Math.max(SMALL_H, contentH.value))
+    const maxH = Math.max(0, Math.min(vh.value * 0.85, vh.value - 88 - 16))
+    const limit = compactGrowth.value ? maxH : Math.min(maxH, vh.value / 2)
+    return Math.min(limit, Math.max(SMALL_H, contentH.value))
   })
 
   function syncSmallH() {
     const el = options.messagesEl.value
-    if (!el || expanded.value || resizing.value) return
-    contentH.value = SMALL_H + Math.max(0, el.scrollHeight - _baseScrollH)
+    const shell = options.windowRef.value
+    if (!open.value || !el || !shell || resizing.value) return
+    const spacer = el.querySelector<HTMLElement>('.msg-virtual-spacer')
+    if (!spacer) return
+    // scrollHeight 至少等于视口高度，不能用来判断内容变短后的自然高度。
+    const status = el.querySelector<HTMLElement>('.chat-generation-status')
+    const chromeH = shell.offsetHeight - el.clientHeight
+    contentH.value = chromeH + spacer.offsetHeight + (status?.offsetHeight ?? 0)
   }
+
+  watch([open, options.messagesEl, options.windowRef, resizing], ([visible, el, shell, inTransition], _previous, onCleanup) => {
+    if (!visible || !el || !shell || inTransition) return
+    syncSmallH()
+    const observer = new ResizeObserver(syncSmallH)
+    const spacer = el.querySelector('.msg-virtual-spacer')
+    if (spacer) observer.observe(spacer)
+    observer.observe(el)
+    observer.observe(shell)
+    const statusObserver = new MutationObserver(syncSmallH)
+    statusObserver.observe(el, { childList: true })
+    onCleanup(() => {
+      observer.disconnect()
+      statusObserver.disconnect()
+    })
+  }, { flush: 'post' })
 
   // ── 标记 resizing：监听 chat-window 自己的 transitionend，结束后清掉。
   // 用真实 transitionend 结束 resizing，而不是硬编码 420ms——CSS 过渡在性能不足时
@@ -237,7 +248,10 @@ export function useChatWindow(options: UseChatWindowOptions) {
 
   function finishChatClose() {
     chatClosing.value = false
-    if (!open.value) expanded.value = false
+    if (!open.value) {
+      expanded.value = false
+      compactGrowth.value = false
+    }
   }
 
   function openInLastMode() {
@@ -273,11 +287,9 @@ export function useChatWindow(options: UseChatWindowOptions) {
     setOpen: (v: boolean) => { open.value = v },
     setExpanded: (v: boolean) => { expanded.value = v },
     markResizing, raiseChat, closeChat, finishChatClose, openInLastMode,
-    resetContentH, captureBaseScrollH, setBaseScrollH, syncSmallH,
     playIncomingMessageSfx,
-    // 三个钩子（传给 useChatConversation）
-    onContentReset: resetContentH,
-    onCaptureBaseScrollH: captureBaseScrollH,
+    enableCompactGrowth: () => { compactGrowth.value = true },
+    // 滚动定位前先同步尺寸。
     onSyncSmallH: syncSmallH,
     // 常量
     SESSION_KEY, LAST_SESSION_KEY,

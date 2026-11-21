@@ -38,6 +38,12 @@ export const desktopPathFileAccess: PathFileAccess = {
   thumbnailUrl: file => isLocalFile(file)
     ? contentUrl(file) + '&thumbnail=1'
     : pathFilesApi.thumbnailUrl(file),
+  systemReferenceUrl: (reference, thumbnail) => {
+    const params = new URLSearchParams({ reference })
+    if (thumbnail) params.set('thumbnail', '1')
+    const origin = 'guguDesktop' in window ? 'gugu-desktop://app' : ''
+    return `${origin}/__local-files/content?${params}`
+  },
   createFolder: file => isLocalFile(file)
     ? requestLocalFile({ action: 'mkdir', ...localTarget(file) })
     : pathFilesApi.createFolder(file),

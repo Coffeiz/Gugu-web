@@ -1,3 +1,4 @@
+import { canonicalAgentToolName } from '../tools/configuration.js'
 import { randomUUID } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 import { sql, type Kysely, type Transaction } from 'kysely'
@@ -32,7 +33,7 @@ export function createSqliteToolConfirmation(
   const gate = createConfirmationGate({
     now: Date.now,
     async authorize(binding, requestedPurpose, requestedAction, signal) {
-      return requestedPurpose === purpose && requestedAction === action && binding.toolName === ((action === 'remove_mcp_server' || action === 'update_mcp_server' || action === 'add_mcp_server') ? 'manage_mcp_servers' : action)
+      return requestedPurpose === purpose && requestedAction === action && canonicalAgentToolName(binding.toolName) === canonicalAgentToolName((action === 'remove_mcp_server' || action === 'update_mcp_server' || action === 'add_mcp_server') ? 'manage_mcp_servers' : action)
         && await authorize(db, binding, signal) ? authorizationEpoch : null
     },
     async prepare(binding, snapshot, signal) {

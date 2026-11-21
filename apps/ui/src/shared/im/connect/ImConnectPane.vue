@@ -53,23 +53,30 @@
           <button v-if="desktopPairingStatus.qq?.bound" type="button" class="pm-style-chip pm-unbind-chip"
             @click="unbindQqIdentity()">{{ t('profileImUi.unbindQq') }}</button>
         </ImBindingRow>
-        <QqGroupSettings v-if="platform.key === 'qq'" :show-group-toggle="desktopPairingStatus.qq?.bound === true"
-          group-chat-hint="profileImUi.desktopQqGroupChatHint" :group-chat-enabled="desktopPairingStatus.qq?.groupChatEnabled === true"
-          :group-settings-visible="desktopPairingStatus.qq?.bound === true && desktopPairingStatus.qq.groupChatEnabled === true"
-          :group-response-mode="desktopPairingStatus.qq?.groupReplyMode ?? 'reply_mentions'"
-          :message-format-bot="{ group_message_format: desktopPairingStatus.qq?.groupMessageFormat, private_message_format: desktopPairingStatus.qq?.privateMessageFormat, private_streaming_enabled: desktopPairingStatus.qq?.privateStreamingEnabled }"
-          :group-owner-memory-enabled="desktopPairingStatus.qq?.groupOwnerMemoryEnabled === true"
-          :group-memory-enabled="desktopPairingStatus.qq?.groupMemoryEnabled !== false"
-          :member-memory-enabled="desktopPairingStatus.qq?.memberMemoryEnabled !== false"
-          :enabled-tools="desktopQqEnabledTools"
-          @group-chat="enabled => runDesktopQqSetting(api => api.setGroupChat(enabled))"
-          @response-mode="mode => runDesktopQqSetting(api => api.setGroupReplyMode(mode))"
+        <GroupChatSettings v-if="platform.key === 'qq' || platform.key === 'feishu'"
+          :show-group-toggle="desktopPairingStatus[platform.key]?.bound === true"
+          :group-chat-hint="platform.key === 'qq' ? 'profileImUi.desktopQqGroupChatHint' : 'profileImUi.feishuGroupChatHint'"
+          :group-chat-enabled="desktopPairingStatus[platform.key]?.groupChatEnabled === true"
+          :group-settings-visible="desktopPairingStatus[platform.key]?.bound === true && desktopPairingStatus[platform.key]?.groupChatEnabled === true"
+          :group-response-mode="desktopPairingStatus[platform.key]?.groupReplyMode ?? 'reply_mentions'"
+          :group-attention-mode="desktopPairingStatus[platform.key]?.groupAttentionMode ?? 'autonomous'"
+          :show-attention-mode="platform.key === 'feishu'"
+          :response-guide="platform.key === 'qq' ? 'qq' : undefined"
+          :show-message-format="platform.key === 'qq'" show-private-streaming
+          :message-format-bot="{ group_message_format: desktopPairingStatus[platform.key]?.groupMessageFormat, private_message_format: desktopPairingStatus[platform.key]?.privateMessageFormat, private_streaming_enabled: desktopPairingStatus[platform.key]?.privateStreamingEnabled }"
+          :group-owner-memory-enabled="desktopPairingStatus[platform.key]?.groupOwnerMemoryEnabled === true"
+          :group-memory-enabled="desktopPairingStatus[platform.key]?.groupMemoryEnabled !== false"
+          :member-memory-enabled="desktopPairingStatus[platform.key]?.memberMemoryEnabled !== false"
+          :enabled-tools="desktopEnabledTools(platform.key)"
+          @group-chat="enabled => saveDesktopGroupSettings(platform.key, { groupChatEnabled: enabled })"
+          @response-mode="mode => saveDesktopGroupSettings(platform.key, { groupReplyMode: mode })"
+          @attention-mode="mode => saveDesktopGroupSettings(platform.key, { groupAttentionMode: mode })"
           @message-format="setDesktopQqMessageFormat"
-          @private-streaming="enabled => runDesktopQqSetting(api => api.setPrivateStreaming(enabled))"
-          @group-owner-memory="enabled => runDesktopQqSetting(api => api.setGroupOwnerMemory(enabled))"
-          @group-memory="enabled => runDesktopQqSetting(api => api.setGroupMemory(enabled))"
-          @member-memory="enabled => runDesktopQqSetting(api => api.setMemberMemory(enabled))"
-          @toggle-tool="toggleDesktopQqTool" />
+          @private-streaming="enabled => setDesktopPrivateStreaming(platform.key, enabled)"
+          @group-owner-memory="enabled => saveDesktopGroupSettings(platform.key, { groupOwnerMemoryEnabled: enabled })"
+          @group-memory="enabled => saveDesktopGroupSettings(platform.key, { groupMemoryEnabled: enabled })"
+          @member-memory="enabled => saveDesktopGroupSettings(platform.key, { memberMemoryEnabled: enabled })"
+          @toggle-tool="tool => toggleDesktopGroupTool(platform.key, tool)" />
       </ImBotCard>
       <template v-if="!desktop">
       <ImBotCard v-for="bot in botsOf(platform.key)" :key="bot.id"
@@ -84,9 +91,9 @@
           <button v-if="platform.key === 'qq' && bot.owner_bound" type="button" class="pm-style-chip pm-unbind-chip"
             @click="unbindQqIdentity(bot)">{{ t('profileImUi.unbindQq') }}</button>
         </ImBindingRow>
-        <QqGroupSettings v-if="platform.key === 'qq'" :show-group-toggle="true" group-chat-hint="profileImUi.groupChatHint"
+        <GroupChatSettings v-if="platform.key === 'qq'" :show-group-toggle="true" group-chat-hint="profileImUi.groupChatHint"
           :group-chat-enabled="groupChatEnabled(bot)" :group-settings-visible="groupChatEnabled(bot)"
-          :group-response-mode="groupResponseMode(bot)" :message-format-bot="bot"
+          :group-response-mode="groupResponseMode(bot)" response-guide="qq" :message-format-bot="bot"
           :group-owner-memory-enabled="bot.group_owner_memory_enabled === true"
           :group-memory-enabled="bot.group_memory_enabled !== false" :member-memory-enabled="bot.member_memory_enabled !== false"
           :enabled-tools="qqEnabledTools(bot)"
@@ -98,15 +105,24 @@
           @group-memory="updateBotSetting(bot.id, { group_memory_enabled: $event }, '群聊记忆设置失败')"
           @member-memory="updateBotSetting(bot.id, { member_memory_enabled: $event }, '群聊记忆设置失败')"
           @toggle-tool="toggleQqTool(bot, $event)" />
-        <div v-if="['feishu', 'telegram'].includes(platform.key)" class="pm-bot-group-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.groupChat') }}</span><span class="pm-field-hint">{{ t(platform.key === 'feishu' ? 'profileImUi.feishuGroupChatHint' : 'profileImUi.telegramGroupChatHint') }}</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="groupChatEnabled(bot)" :aria-label="t('profileImUi.toggleGroupChat')" @update:model-value="toggleGroupChat(bot)" /><span class="pm-switch-label" :class="{ on: groupChatEnabled(bot) }">{{ groupChatEnabled(bot) ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span></div>
-        <div v-if="['feishu', 'telegram'].includes(platform.key) && groupChatEnabled(bot)" class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc pm-help-anchor"><span class="pm-field-name">{{ t('profileImUi.responseMode') }}</span><span class="pm-help-row"><span class="pm-field-hint">{{ t(platform.key === 'feishu' ? 'profileImUi.feishuGroupResponseHint' : 'profileImUi.telegramGroupResponseHint') }}</span><button v-if="platform.key === 'telegram'" :ref="el => setHelpAnchorRef(bot.id, el)" type="button" class="pm-help-toggle" @click.stop="toggleHelpPop(bot.id)">{{ t('profileImUi.guide') }}</button></span><PopupMenu v-if="platform.key === 'telegram'" :show="helpPopBotId === bot.id" :anchor="helpAnchorRefs[bot.id]" popup-class="pm-help-popup-host"><div class="pm-help-pop" @click.stop><div class="pm-help-pop-title">{{ t('profileImUi.telegramGroupGuideTitle') }}</div><div class="pm-help-pop-step">{{ t('profileImUi.telegramGroupGuideStep1') }}</div><div class="pm-help-pop-step">{{ t('profileImUi.telegramGroupGuideStep2') }}</div><div class="pm-help-pop-step">{{ t('profileImUi.telegramGroupGuideStep3') }}</div><div class="pm-help-pop-note">{{ t('profileImUi.telegramGroupGuideNote') }}</div></div></PopupMenu></div><div class="pm-style-group pm-tool-options"><button v-for="option in groupResponseOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: groupResponseMode(bot) === option.key }" @click="setGroupResponseMode(bot, option.key)">{{ t(`profileImUi.${option.key === 'reply_all' ? 'replyAll' : option.key === 'reply_mentions' ? 'replyMentions' : 'recordOnly'}`) }}</button></div></div>
-        <div v-if="['feishu', 'telegram'].includes(platform.key) && groupChatEnabled(bot) && groupResponseMode(bot) === 'reply_all'" class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.groupAttentionMode') }}</span><span class="pm-field-hint">{{ t('profileImUi.groupAttentionModeHint') }}</span></div><div class="pm-style-group pm-tool-options" role="group" :aria-label="t('profileImUi.groupAttentionMode')"><button v-for="option in groupAttentionOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: groupAttentionMode(bot) === option.key }" @click="setGroupAttentionMode(bot, option.key)">{{ t(option.label) }}</button></div></div>
-        <GroupOwnerMemorySwitch v-if="['feishu', 'telegram'].includes(platform.key) && groupChatEnabled(bot)" :enabled="bot.group_owner_memory_enabled === true" @change="value => updateBotSetting(bot.id, { group_owner_memory_enabled: value }, t('profileImUi.groupOwnerMemorySettingsFailed'))" />
-        <template v-if="['feishu', 'telegram'].includes(platform.key) && groupChatEnabled(bot)">
-          <div class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.groupMemory') }}</span><span class="pm-field-hint">{{ t('profileImUi.groupMemoryHint') }}</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.group_memory_enabled !== false" :aria-label="t('profileImUi.toggleGroupMemory')" @update:model-value="toggleMemory(bot, 'group_memory_enabled')" /><span class="pm-switch-label" :class="{ on: bot.group_memory_enabled !== false }">{{ bot.group_memory_enabled !== false ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span></div>
-          <div class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.memberMemory') }}</span><span class="pm-field-hint">{{ t('profileImUi.memberMemoryHint') }}</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.member_memory_enabled !== false" :aria-label="t('profileImUi.toggleMemberMemory')" @update:model-value="toggleMemory(bot, 'member_memory_enabled')" /><span class="pm-switch-label" :class="{ on: bot.member_memory_enabled !== false }">{{ bot.member_memory_enabled !== false ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span></div>
-        </template>
-        <div v-if="['feishu', 'telegram'].includes(platform.key) && groupChatEnabled(bot)" class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.memberTools') }}</span><span class="pm-field-hint">{{ t('profileImUi.memberToolsHint') }}</span></div><div class="pm-style-group pm-tool-options"><button v-for="option in groupToolOptions" :key="option.key" :data-tool-option="option.key" type="button" class="pm-style-chip" :class="{ active: hasGroupTool(bot, option) }" @click="toggleGroupTool(bot, option)">{{ t(`profileImUi.${option.labelKey}`) }}</button></div></div>
+        <GroupChatSettings v-if="['feishu', 'telegram'].includes(platform.key)"
+          :show-group-toggle="true"
+          :group-chat-hint="platform.key === 'feishu' ? 'profileImUi.feishuGroupChatHint' : 'profileImUi.telegramGroupChatHint'"
+          :group-chat-enabled="groupChatEnabled(bot)" :group-settings-visible="groupChatEnabled(bot)"
+          :group-response-mode="groupResponseMode(bot)" :group-attention-mode="groupAttentionMode(bot)"
+          :show-attention-mode="true" :show-message-format="false" show-private-streaming
+          :response-mode-hint="platform.key === 'feishu' ? 'profileImUi.feishuGroupResponseHint' : 'profileImUi.telegramGroupResponseHint'"
+          :response-guide="platform.key === 'telegram' ? 'telegram' : undefined" :message-format-bot="bot"
+          :group-owner-memory-enabled="bot.group_owner_memory_enabled === true"
+          :group-memory-enabled="bot.group_memory_enabled !== false" :member-memory-enabled="bot.member_memory_enabled !== false"
+          :enabled-tools="qqEnabledTools(bot)"
+          @group-chat="toggleGroupChat(bot)" @response-mode="mode => setGroupResponseMode(bot, mode)"
+          @attention-mode="mode => setGroupAttentionMode(bot, mode)"
+          @private-streaming="enabled => updateBotSetting(bot.id, { private_streaming_enabled: enabled }, t('profileImUi.connectionSettingsFailed'))"
+          @group-owner-memory="value => updateBotSetting(bot.id, { group_owner_memory_enabled: value }, t('profileImUi.groupOwnerMemorySettingsFailed'))"
+          @group-memory="value => updateBotSetting(bot.id, { group_memory_enabled: value }, '群聊记忆设置失败')"
+          @member-memory="value => updateBotSetting(bot.id, { member_memory_enabled: value }, '群聊记忆设置失败')"
+          @toggle-tool="key => toggleGroupTool(bot, groupToolOptions.find(option => option.key === key)!)" />
       </ImBotCard>
       </template>
       <TelegramConnectionForm v-if="platform.key === 'telegram' && telegramFormBotId !== null"
@@ -121,16 +137,15 @@
 </template>
 
 <script setup lang="ts">
-import type { DesktopImPairingStatus, DesktopImSettingsAdapter } from './desktopAdapter'
+import type { DesktopImGroupSettingsPatch, DesktopImPairingStatus, DesktopImSettingsAdapter } from './desktopAdapter'
 import { useDesktopProfile } from '@/components/common/profile/desktopProfile'
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
-import { normalizeUserBotTools } from '@gugu/core/im/user-bots'
+import { updateUserBotGroupTools, userBotGroupToolFlags } from '@gugu/core/im/user-bots'
 import ImBotCard from './ImBotCard.vue'
 import ImBindingRow from './ImBindingRow.vue'
 import TelegramConnectionForm from './TelegramConnectionForm.vue'
 import QRCode from 'qrcode'
 import Icon from '@/components/common/icons/Icon.vue'
-import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
 import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 import { feishuConnectApi, qqConnectApi, telegramConnectApi, userBotsApi, wechatConnectApi } from '@/services/api'
 import { optimisticMutation } from '@/utils/optimisticMutation'
@@ -138,9 +153,8 @@ import { beginOptimisticIntent, isOptimisticIntentCurrent, withOptimisticIntent 
 import { usePreferencesStore } from '@/stores/preferences'
 import { useLiveStore } from '@/stores/live'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
-import GroupOwnerMemorySwitch from '@/components/common/profile/GroupOwnerMemorySwitch.vue'
 import { useI18n } from 'vue-i18n'
-import QqGroupSettings from './QqGroupSettings.vue'
+import GroupChatSettings from './GroupChatSettings.vue'
 
 interface Bot { id: number; platform: string; name?: string; sandbox?: boolean; app_id?: string; enabled?: boolean; group_chat_enabled?: boolean; feishu_group_chat_enabled?: boolean | null; group_requires_at?: boolean; group_read_enabled?: boolean; group_memory_enabled?: boolean; group_owner_memory_enabled?: boolean; member_memory_enabled?: boolean; group_response_mode?: string; group_attention_mode?: 'quiet' | 'natural' | 'active' | 'autonomous'; group_allowed_tools?: string[]; group_message_format?: string; private_message_format?: string; private_streaming_enabled?: boolean; owner_bound?: boolean }
 type BotSettingPatch = Partial<Pick<Bot,
@@ -149,21 +163,10 @@ type BotSettingPatch = Partial<Pick<Bot,
   'group_memory_enabled' | 'member_memory_enabled' | 'group_owner_memory_enabled'
 >>
 
-const groupResponseOptions = [
-  { key: 'reply_all', label: '自动回复' },
-  { key: 'reply_mentions', label: '只响应 @' },
-  { key: 'record_only', label: '静默记录' },
-] as const
-const groupAttentionOptions = [
-  { key: 'quiet', label: 'profileImUi.groupAttentionQuiet' },
-  { key: 'natural', label: 'profileImUi.groupAttentionNatural' },
-  { key: 'active', label: 'profileImUi.groupAttentionActive' },
-  { key: 'autonomous', label: 'profileImUi.groupAttentionAutonomous' },
-] as const
 const groupToolOptions = [
-  { key: 'web_tools', labelKey: 'webSearchTools', tools: ['web_search', 'http_get', 'similar_image_search', 'send_file'] },
-  { key: 'web_search', labelKey: 'providerWebSearch', tools: ['web_search'] },
-  { key: 'group_context_search', labelKey: 'groupContextSearch', tools: ['group_context_search'] },
+  { key: 'web_tools', flag: 'groupWebToolsEnabled', labelKey: 'webSearchTools' },
+  { key: 'web_search', flag: 'groupProviderSearchEnabled', labelKey: 'providerWebSearch' },
+  { key: 'group_context_search', flag: 'groupHistorySearchEnabled', labelKey: 'groupContextSearch' },
 ] as const
 type QqToolKey = (typeof groupToolOptions)[number]['key']
 const toolDisplayOptions = [
@@ -176,15 +179,15 @@ const props = defineProps<{ connectTelegram?: (token: string) => Promise<void>; 
 const desktopPairingApis = desktop ? props.desktopImAdapter?.pairings ?? {} : {}
 const desktopQqApi = desktop ? props.desktopImAdapter?.qq : undefined
 const desktopPairingStatus = ref<Partial<Record<string, DesktopImPairingStatus>>>({})
-const desktopQqEnabledTools = computed<QqToolKey[]>(() => {
-  const status = desktopPairingStatus.value.qq
+function desktopEnabledTools(platform: string): QqToolKey[] {
+  const status = desktopPairingStatus.value[platform]
   if (!status) return []
   return [
     ...(status.groupWebToolsEnabled ? ['web_tools' as const] : []),
     ...(status.groupProviderSearchEnabled ? ['web_search' as const] : []),
     ...(status.groupHistorySearchEnabled ? ['group_context_search' as const] : []),
   ]
-})
+}
 const desktopPairingBusy = ref<Record<string, boolean>>({})
 const desktopPairingReads = new Set<string>()
 let desktopStatusTicks = 0
@@ -234,20 +237,6 @@ type Platform = typeof allPlatforms[number]
 const telegramToken = ref('')
 const telegramFormBotId = ref<number | null>(null)
 const bots = ref<Bot[]>([]); const botsOf = (platform: string) => bots.value.filter(bot => bot.platform === platform)
-const helpPopBotId = ref<number | null>(null)
-const helpAnchorRefs = ref<Record<number, HTMLElement | null>>({})
-function setHelpAnchorRef(botId: number, el: unknown) { helpAnchorRefs.value[botId] = el instanceof HTMLElement ? el : null }
-function toggleHelpPop(botId: number) { helpPopBotId.value = helpPopBotId.value === botId ? null : botId }
-// 拖选保护：弹层内拖选文字移出后松开，click 落在外面，不能因此误关
-let _helpPressInside = false
-function onDocPressCloseHelp(e: MouseEvent) {
-  _helpPressInside = e.target instanceof HTMLElement && !!e.target.closest('.popup-menu-host')
-}
-function onDocClickCloseHelp(e: MouseEvent) {
-  if (e && _helpPressInside) { _helpPressInside = false; return }
-  _helpPressInside = false
-  helpPopBotId.value = null
-}
 const connecting = ref(''); const connect = ref<{ platform: string; id: string } | null>(null); const connectHint = ref(''); const connectErr = ref(''); const connectCanvas = ref<HTMLCanvasElement | null>(null); const bindingBotId = ref<number | null>(null); const bindingCodes = ref<Record<number, { code: string; expiresIn: number }>>({}); let poll: ReturnType<typeof setInterval> | null = null; let bindingCountdown: ReturnType<typeof setInterval> | null = null
 const connectPanels = ref<Record<string, HTMLElement | null>>({})
 function setConnectPanelRef(platform: string, element: unknown) {
@@ -441,6 +430,16 @@ async function setDesktopQqMessageFormat(scope: 'group' | 'private', mode: strin
 function runDesktopQqSetting(update: (api: NonNullable<typeof desktopQqApi>) => Promise<DesktopImPairingStatus>) {
   if (desktopQqApi) void updateDesktopQqReplySettings(() => update(desktopQqApi))
 }
+async function setDesktopPrivateStreaming(platform: string, enabled: boolean) {
+  const api = desktopPairingApis[platform]
+  if (!api?.setPrivateStreaming || desktopPairingBusy.value[platform]) return
+  desktopPairingBusy.value[platform] = true
+  try {
+    desktopPairingStatus.value[platform] = await api.setPrivateStreaming(enabled)
+    liveStore.bump('im_channels')
+  } catch { connectErr.value = t('profileImUi.connectionSettingsFailed') }
+  finally { desktopPairingBusy.value[platform] = false }
+}
 async function updateDesktopQqReplySettings(update: () => Promise<DesktopImPairingStatus>) {
   if (!desktopQqApi) return
   if (desktopPairingBusy.value.qq) return
@@ -478,27 +477,25 @@ function toggleGroupChat(bot: Bot) {
   const field = current.platform === 'feishu' ? 'feishu_group_chat_enabled' : 'group_chat_enabled'
   void updateBotSetting(bot.id, { [field]: !groupChatEnabled(current) }, '群聊设置失败')
 }
-function toggleMemory(bot: Bot, field: 'group_memory_enabled' | 'member_memory_enabled') {
-  const current = botById(bot.id)
-  if (current) void updateBotSetting(bot.id, { [field]: current[field] !== false ? false : true }, '群聊记忆设置失败')
-}
 type QqGroupResponseMode = 'reply_mentions' | 'reply_all' | 'record_only'
 function groupResponseMode(bot: Bot): QqGroupResponseMode {
   if (bot.group_response_mode === 'reply_mentions' || bot.group_response_mode === 'reply_all' || bot.group_response_mode === 'record_only') return bot.group_response_mode
   return bot.group_read_enabled ? 'record_only' : (bot.group_requires_at ?? true) ? 'reply_mentions' : 'reply_all'
 }
 function setGroupResponseMode(bot: Bot, mode: string) { void updateBotSetting(bot.id, { group_response_mode: mode }, '群聊回应方式设置失败') }
-function groupAttentionMode(bot: Bot): string { return bot.group_attention_mode ?? 'autonomous' }
+function groupAttentionMode(bot: Bot): 'quiet' | 'natural' | 'active' | 'autonomous' {
+  return bot.group_attention_mode ?? 'autonomous'
+}
 function setGroupAttentionMode(bot: Bot, mode: 'quiet' | 'natural' | 'active' | 'autonomous') { void updateBotSetting(bot.id, { group_attention_mode: mode }, '群聊参与度设置失败') }
-function groupTools(bot: Bot): string[] { return normalizeUserBotTools(bot.group_allowed_tools) }
-function hasGroupTool(bot: Bot, option: (typeof groupToolOptions)[number]): boolean { return option.tools.every(t => groupTools(bot).includes(t)) }
+function hasGroupTool(bot: Bot, option: (typeof groupToolOptions)[number]): boolean {
+  return userBotGroupToolFlags(bot.group_allowed_tools)[option.flag]
+}
 function toggleGroupTool(bot: Bot, option: (typeof groupToolOptions)[number]) {
   const current = botById(bot.id)
   if (!current) return
-  const tools = new Set(groupTools(current))
-  if (hasGroupTool(current, option)) option.tools.forEach(t => tools.delete(t))
-  else option.tools.forEach(t => tools.add(t))
-  void updateBotSetting(bot.id, { group_allowed_tools: [...tools] }, '群聊工具设置失败')
+  const group_allowed_tools = updateUserBotGroupTools(current.group_allowed_tools,
+    { [option.flag]: !hasGroupTool(current, option) })
+  void updateBotSetting(bot.id, { group_allowed_tools }, '群聊工具设置失败')
 }
 function qqEnabledTools(bot: Bot): QqToolKey[] {
   return groupToolOptions.filter(option => hasGroupTool(bot, option)).map(option => option.key)
@@ -518,21 +515,38 @@ function toggleDesktopQqTool(key: QqToolKey) {
       : () => desktopQqApi.setGroupHistorySearch(status.groupHistorySearchEnabled !== true)
   void updateDesktopQqReplySettings(update)
 }
+async function saveDesktopGroupSettings(platform: string, patch: DesktopImGroupSettingsPatch) {
+  const api = desktopPairingApis[platform]
+  if (!api?.updateGroupSettings || desktopPairingBusy.value[platform]) return
+  desktopPairingBusy.value[platform] = true
+  try {
+    desktopPairingStatus.value[platform] = await api.updateGroupSettings(patch)
+    liveStore.bump('im_channels')
+  } catch { connectErr.value = t('profileImUi.connectionSettingsFailed') }
+  finally { desktopPairingBusy.value[platform] = false }
+}
+function toggleDesktopGroupTool(platform: string, key: QqToolKey) {
+  const status = desktopPairingStatus.value[platform]
+  if (!status) return
+  const patch = key === 'web_tools' ? { groupWebToolsEnabled: status.groupWebToolsEnabled !== true }
+    : key === 'web_search' ? { groupProviderSearchEnabled: status.groupProviderSearchEnabled !== true }
+      : { groupHistorySearchEnabled: status.groupHistorySearchEnabled !== true }
+  void saveDesktopGroupSettings(platform, patch)
+}
 function setMessageFormat(bot: Bot, scope: 'group' | 'private', mode: string) {
   const patch = scope === 'group' ? { group_message_format: mode } : { private_message_format: mode }
   void updateBotSetting(bot.id, patch, '消息格式设置失败')
 }
 async function removeBot(bot: Bot) { if (!await confirmDialog({ title: t('profileImUi.deleteBotTitle'), message: t('profileImUi.deleteBotMessage', { name: displayBotName(bot) }), tone: 'danger', confirmText: t('profileImUi.deleteBot') })) return; try { await waitForSettingWrites(); await userBotsApi.remove(bot.id); await loadBots() } catch (error) { connectErr.value = error instanceof Error ? error.message : t('profileImUi.connectionFailed') } }
-onMounted(() => { document.addEventListener('mousedown', onDocPressCloseHelp, true); document.addEventListener('click', onDocClickCloseHelp); if (desktop) { localPreferenceWrite = props.desktopImAdapter?.appearance().then(value => { localMessagePreferences.value = value }).catch(() => {} ) ?? Promise.resolve(); refreshDesktopPairingStatus(); bindingCountdown = setInterval(tickBindingCodes, 1000); return } void preferences.fetch(); loadBots(); bindingCountdown = setInterval(tickBindingCodes, 1000) })
+onMounted(() => { if (desktop) { localPreferenceWrite = props.desktopImAdapter?.appearance().then(value => { localMessagePreferences.value = value }).catch(() => {} ) ?? Promise.resolve(); refreshDesktopPairingStatus(); bindingCountdown = setInterval(tickBindingCodes, 1000); return } void preferences.fetch(); loadBots(); bindingCountdown = setInterval(tickBindingCodes, 1000) })
 onDeactivated(stopPoll)
-onDeactivated(onDocClickCloseHelp)
 onActivated(() => { resumePoll(); refreshDesktopPairingStatus() })
 onActivated(() => { if (!desktop) void loadBots() })
 watch(() => liveStore.rev.im_channels, () => { if (!desktop) void loadBots() })
 watch(() => liveStore.connected, connected => {
   if (!desktop && connected && Object.values(bindingCodes.value).some(binding => binding.expiresIn > 0)) void loadBots()
 })
-onBeforeUnmount(() => { cancelConnect(); if (bindingCountdown) clearInterval(bindingCountdown); document.removeEventListener('mousedown', onDocPressCloseHelp, true); document.removeEventListener('click', onDocClickCloseHelp) })
+onBeforeUnmount(() => { cancelConnect(); if (bindingCountdown) clearInterval(bindingCountdown) })
 </script>
 
 <style scoped>

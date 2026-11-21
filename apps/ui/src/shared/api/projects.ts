@@ -13,6 +13,7 @@ export interface ProjectAccess {
   create(data: Schemas['ProjectCreate'], idempotencyKey?: string): Promise<ProjectResponse>
   update(id: number, data: Schemas['ProjectUpdate'], meta?: RequestMeta): Promise<ProjectResponse>
   delete(id: number): Promise<unknown>
+  purge?(id: number): Promise<unknown>
   restore(id: number): Promise<unknown>
 }
 

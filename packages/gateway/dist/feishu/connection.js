@@ -54,7 +54,7 @@ export async function createFeishuConnection(options) {
         serial = task.then(() => undefined, () => undefined);
         return task;
     }
-    function control(work) {
+    async function control(work) {
         if (stopping)
             return Promise.reject(safeError());
         // 卡片是有响应时限的控制信号，不能排在普通消息/媒体暂存之后。
@@ -72,7 +72,22 @@ export async function createFeishuConnection(options) {
         });
         controls.add(task);
         void task.then(() => controls.delete(task), () => controls.delete(task));
-        return task;
+        // 只限制卡片响应等待时间。后台消费仍受连接生命周期和一次性动作约束。
+        let timer;
+        const pending = new Promise(resolve => {
+            timer = setTimeout(() => resolve({
+                toast: { type: 'info', content: '已收到操作，仍在处理中；请稍后查看，暂勿重复点击。' },
+            }), 2_000);
+        });
+        try {
+            return await Promise.race([task, pending]);
+        }
+        catch {
+            return { toast: { type: 'error', content: '操作未能完成，请稍后重试。' } };
+        }
+        finally {
+            clearTimeout(timer);
+        }
     }
     dispatcher.register({
         'im.message.receive_v1': (data) => matchesApp(data) ? enqueue(() => options.onMessage(data, lifetime.signal)) : undefined,

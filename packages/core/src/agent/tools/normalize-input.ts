@@ -152,6 +152,20 @@ function hoistArrayItems(schema: Schema, input: Record<string, unknown>, state: 
   }
 }
 
+export function normalizeContactToolFields(input: unknown): unknown {
+  if (!object(input)) return input
+  const source = { ...input }
+  for (const [legacy, current] of Object.entries({
+    client_id: 'contact_id', client_ids: 'contact_ids', client: 'contact_query', client_name: 'name',
+  })) {
+    if (Object.hasOwn(source, legacy)) {
+      if (!Object.hasOwn(source, current)) source[current] = source[legacy]
+      delete source[legacy]
+    }
+  }
+  return source
+}
+
 /** 仅做已迁移的无歧义标量与容器兼容；随后仍必须经过工具 validator，不授予任何能力。 */
 export function normalizeToolInput(definition: PreparedToolDefinition, input: unknown, context: { defaultYear?: number; strictArrayFields?: readonly string[]; adaptations?: string[] } = {}): unknown {
   if (!object(input)) return input
@@ -159,11 +173,11 @@ export function normalizeToolInput(definition: PreparedToolDefinition, input: un
   const functionSchema = object(wire.function) ? wire.function.parameters : wire.input_schema
   if (!object(functionSchema)) return input
   const alias: Record<string, string> = {
-    create_client: 'client_name', update_client: 'client_name',
     create_project: 'project_name', update_project: 'project_name',
   }
   const state: NormalizationState = { strict: context.strictArrayFields ?? [], adaptations: context.adaptations }
   const properties = object(functionSchema.properties) ? functionSchema.properties : {}
+  const contactTool = ['create_contact', 'update_contact', 'delete_contact'].includes(definition.name)
   let unwrapped = input
   // 只解除精确匹配的协议形状，绝不更换已授权的工具名。
   if (functionSchema.additionalProperties === false && !Object.hasOwn(properties, 'tool_name') && !Object.hasOwn(properties, 'arguments')
@@ -172,9 +186,10 @@ export function normalizeToolInput(definition: PreparedToolDefinition, input: un
     state.adaptations?.push('call_tool_envelope:unwrapped')
   }
   if (Object.keys(unwrapped).length === 1 && !Object.hasOwn(properties, 'arguments') && object(unwrapped.arguments)
-    && Object.keys(unwrapped.arguments).some(key => Object.hasOwn(properties, key))) unwrapped = unwrapped.arguments
+    && Object.keys(contactTool ? normalizeContactToolFields(unwrapped.arguments) as Record<string, unknown> : unwrapped.arguments)
+      .some(key => Object.hasOwn(properties, key))) unwrapped = unwrapped.arguments
   const field = alias[definition.name]
-  const source = { ...unwrapped }
+  const source = contactTool ? normalizeContactToolFields(unwrapped) as Record<string, unknown> : { ...unwrapped }
   // 专属名称字段即使显式为null/空串，也不能被历史name覆盖。
   if (field && object(functionSchema.properties) && Object.hasOwn(functionSchema.properties, field)
     && Object.hasOwn(source, 'name') && !Object.hasOwn(source, field)) {

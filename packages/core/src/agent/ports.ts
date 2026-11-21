@@ -431,7 +431,7 @@ export interface ToolPort {
     readonly execute: (request: ExecutionRequest) => Promise<ExecutionResult>
     readonly resolution: InteractionResolution | null
     readonly loadedSkills?: Readonly<Record<string, { digest: string; source: 'builtin' | 'user'; ownerFingerprint?: string }>>
-    readonly discoverRelatedTools?: () => Promise<readonly PreparedToolDefinition[]>
+    readonly discoverRelatedTools?: (lookup?: import('../mcp/tool-directory.js').McpToolLookup) => Promise<readonly PreparedToolDefinition[]>
   }): Promise<ToolResult>
   /** 跨进程恢复只查已提交操作收据；未知结果必须明确返回 unknown。 */
   reconcile(call: ToolCall, identity: RunIdentity & {

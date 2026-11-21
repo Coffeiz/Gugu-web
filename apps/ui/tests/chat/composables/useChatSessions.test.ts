@@ -55,8 +55,6 @@ function createSessionManager(historyAccess?: ChatSessionHistoryAccess) {
       setStatus: () => {},
       thinkingItem: () => ({ kind: 'dots' as const }),
       contextCompactingItem: () => ({ kind: 'hide' as const }),
-      onContentReset: () => {},
-      onCaptureBaseScrollH: () => {},
       scrollBottom: async () => {},
       captureScrollAnchor, restoreScrollPosition,
       waitForSessionSettlement: async () => {},

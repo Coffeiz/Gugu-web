@@ -215,7 +215,11 @@ export const desktopSchedules = {
 
 export const desktopData = {
   createDroppedFileReference: (file: File) => call(bridge => bridge.createDroppedFileReference!(file)),
-  openDroppedFileReference: (id: string) => call(bridge => bridge.openDroppedFileReference!(id)),
+  openDroppedFileReference: (id: string) => call(bridge => {
+    if (typeof bridge.openDroppedFileReference !== 'function')
+      throw new DesktopBridgeError('unsupported', '请更新桌面应用后打开本机文件')
+    return bridge.openDroppedFileReference(id)
+  }),
   search: (queries: string[]) => call(bridge => bridge.search(queries)),
   readLogs: (kind: Parameters<DesktopBridge['readLogs']>[0]) => call(bridge => bridge.readLogs(kind)),
   appearance: () => call(bridge => bridge.appearance()),

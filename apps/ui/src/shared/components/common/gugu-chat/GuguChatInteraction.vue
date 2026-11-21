@@ -1,18 +1,34 @@
 <template>
-  <div class="interaction-bubble">
-    <div class="interaction-title">{{ msg.interaction?.title || t('chatUi.confirmRequired') }}</div>
-    <div class="interaction-body">{{ msg.interaction?.body }}</div>
+  <div class="interaction-bubble" :class="{ 'is-choice': isChoice, 'is-multiple-choice': isMultiple }">
+    <div class="interaction-title">
+      <span v-if="isChoice" class="interaction-choice-icon"><Icon name="action.list" :size="15" /></span>
+      <span>{{ msg.interaction?.title || t('chatUi.confirmRequired') }}</span>
+    </div>
+    <div v-if="!isChoice || msg.interaction?.body" class="interaction-body">{{ msg.interaction?.body }}</div>
     <!-- 空 options 的存量提问（兜底按钮上线前创建的）不渲染空按钮区，避免悬空分隔线 -->
-    <div v-if="displayOptions.length" class="interaction-actions">
+    <div v-if="displayOptions.length" class="interaction-actions"
+         :role="isChoice ? 'group' : undefined" :aria-label="isChoice ? msg.interaction?.title : undefined">
       <ActionButton v-for="option in displayOptions" :key="option.id" class="interaction-option" fit
-                    :class="{ 'is-selected': msg.interaction?.selectedOptionId === option.id }"
-                    :aria-pressed="msg.interaction?.selectedOptionId === option.id"
-                    :disabled="resolved || submitting || expired" @click="selectOption(option)">
-        {{ option.label }}
+                    :variant="isChoice ? 'secondary' : 'primary'"
+                    :class="{ 'is-selected': optionSelected(option.id), 'is-custom-choice': option.id === CUSTOM_REPLY_OPTION_ID }"
+                    :aria-pressed="!isMultiple || option.id === CUSTOM_REPLY_OPTION_ID ? optionSelected(option.id) : undefined"
+                    :aria-expanded="option.id === CUSTOM_REPLY_OPTION_ID ? customExpanded : undefined"
+                    :role="isMultiple && option.id !== CUSTOM_REPLY_OPTION_ID ? 'checkbox' : undefined"
+                    :aria-checked="isMultiple && option.id !== CUSTOM_REPLY_OPTION_ID ? optionSelected(option.id) : undefined"
+                    :disabled="resolved || submitting || expired" @click="onOptionClick(option)">
+        <template v-if="isChoice">
+          <span class="interaction-choice-marker" aria-hidden="true">
+            <Icon v-if="optionSelected(option.id)" name="status.success" :size="13" />
+            <Icon v-else-if="option.id === CUSTOM_REPLY_OPTION_ID" name="action.edit" :size="13" />
+          </span>
+          <span class="interaction-choice-label">{{ option.label }}</span>
+          <Icon v-if="!resolved && !expired && (!isMultiple || option.id === CUSTOM_REPLY_OPTION_ID)" class="interaction-choice-arrow" name="action.chevron-next" :size="15" />
+        </template>
+        <template v-else>{{ option.label }}</template>
       </ActionButton>
     </div>
-    <form v-if="answerMode === 'inline' && customInputActive && msg.interaction?.allowTextInput && !resolved && !expired && !secretFields.length"
-          class="interaction-answer" @submit.prevent="submitText">
+    <form v-if="showAnswerInput && !resolved && !expired"
+          class="interaction-answer" @submit.prevent="submitAnswer">
       <textarea
         ref="answerInput"
         v-model="answerText"
@@ -23,12 +39,23 @@
         :disabled="submitting"
         @keydown="onAnswerKeydown"
       />
-      <div class="interaction-answer-actions">
+      <div v-if="!isMultiple" class="interaction-answer-actions">
         <ActionButton type="submit" fit :disabled="submitting || !answerText.trim()">
           {{ t('chatUi.interactionAnswerSubmit') }}
         </ActionButton>
       </div>
     </form>
+    <div v-if="isMultiple && !resolved && !expired" class="interaction-choice-footer">
+      <span role="status">{{ t('chatUi.multiSelected', { count: draftOptionIds.length }) }}</span>
+      <div class="interaction-choice-footer-actions">
+        <ActionButton fit variant="secondary" :disabled="submitting" @click="toggleAllChoices">
+          {{ t(allChoicesSelected ? 'chatUi.multiClear' : 'chatUi.multiSelectAll') }}
+        </ActionButton>
+        <ActionButton fit :disabled="submitting || !draftOptionIds.length && !activeCustomAnswer" @click="submitChoices">
+          {{ t('chatUi.interactionAnswerSubmit') }}
+        </ActionButton>
+      </div>
+    </div>
     <form v-if="secretFields.length && !resolved" class="interaction-secrets" @submit.prevent="submitSecrets">
       <div v-for="field in secretFields" :key="field.name" class="interaction-secret-field">
         <span>{{ field.label }}</span>
@@ -47,11 +74,11 @@
         </ActionButton>
       </div>
     </form>
-    <div v-if="answerMode === 'composer' && customInputActive && !resolved && !expired" class="interaction-custom-hint">{{ t('chatUi.customReplyHint') }}</div>
-    <div v-if="resolved && msg.interaction?.responseText" class="interaction-response">
-      {{ msg.interaction.responseText }}
+    <div v-if="!isMultiple && answerMode === 'composer' && customInputActive && !resolved && !expired" class="interaction-custom-hint">{{ t('chatUi.customReplyHint') }}</div>
+    <div v-if="resolved && msg.interaction?.responseText && !answerShownByOptions" class="interaction-response">
+      {{ msg.interaction.customAnswer || msg.interaction.responseText }}
     </div>
-    <div v-if="submitting" class="interaction-resolved">{{ t('chatUi.confirmationSubmitting') }}</div>
+    <div v-if="submitting" class="interaction-resolved">{{ t(isMultiple ? 'chatUi.multiSubmitting' : 'chatUi.confirmationSubmitting') }}</div>
     <div v-else-if="expired" class="interaction-resolved">{{ t('chatUi.expired') }}</div>
     <div v-else-if="resolved && isPausedConfirmation && msg.interaction?.selectedOptionId === 'confirm'" class="interaction-resolved">
       {{ t('chatUi.confirmationConfirmed') }}
@@ -67,6 +94,7 @@
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import { CUSTOM_REPLY_OPTION_ID, type ChatMessage, type InteractionAnswerMode } from './chatTypes'
 
@@ -88,21 +116,88 @@ const isPausedConfirmation = computed(() => Boolean(
   props.msg.interaction?.taskPaused
   || (props.msg.interaction?.kind === 'confirm' && props.msg.interaction?.toolCallId),
 ))
-const displayOptions = computed(() => (props.msg.interaction?.options || [])
-  .filter(() => !secretFields.value.length)
-  .filter(option => !(option.id === CUSTOM_REPLY_OPTION_ID && (customInputActive.value || resolved.value || expired.value)))
-  .map(option => option.id === CUSTOM_REPLY_OPTION_ID
-    ? { ...option, label: t('chatUi.customReply') }
-    : option))
 const secretFields = computed(() => (props.msg.interaction?.secretFields || [])
   .filter(field => field && field.name))
+const isChoice = computed(() => {
+  const interaction = props.msg.interaction
+  return !secretFields.value.length && (interaction?.kind === 'choice' ||
+    (interaction?.kind === 'question' && interaction.options.some(option => option.id !== CUSTOM_REPLY_OPTION_ID)))
+})
+const isMultiple = computed(() => isChoice.value && props.msg.interaction?.selectionMode === 'multiple')
+const customExpanded = ref(customInputActive.value)
+const showAnswerInput = computed(() => props.msg.interaction?.allowTextInput && !secretFields.value.length &&
+  customExpanded.value && (isMultiple.value || props.answerMode === 'inline'))
+const displayOptions = computed(() => {
+  if (secretFields.value.length) return []
+  const options = (props.msg.interaction?.options ?? []).filter(option => option.id !== CUSTOM_REPLY_OPTION_ID)
+  if (resolved.value || expired.value) return options
+  const custom = props.msg.interaction?.options.find(option => option.id === CUSTOM_REPLY_OPTION_ID)
+  if ((!customInputActive.value || isMultiple.value || props.answerMode === 'inline') &&
+    (custom || (customInputActive.value && options.length))) {
+    options.push({ id: CUSTOM_REPLY_OPTION_ID, token: custom?.token ?? '', label: t('chatUi.customReply') })
+  }
+  return options
+})
+const draftOptionIds = ref<string[]>([])
+const answerShownByOptions = computed(() => {
+  const interaction = props.msg.interaction
+  return isChoice.value && !interaction?.customAnswer && (
+    Boolean(interaction?.selectedOptionIds?.length) || displayOptions.value.some(option =>
+      option.id === interaction?.selectedOptionId && option.label === interaction?.responseText)
+  )
+})
+const choiceOptions = computed(() => displayOptions.value.filter(option => option.id !== CUSTOM_REPLY_OPTION_ID))
+const allChoicesSelected = computed(() => choiceOptions.value.length > 0 && draftOptionIds.value.length === choiceOptions.value.length)
+
+function toggleAllChoices() {
+  draftOptionIds.value = allChoicesSelected.value ? [] : choiceOptions.value.map(option => option.id)
+}
+function optionSelected(id: string) {
+  if (id === CUSTOM_REPLY_OPTION_ID && !resolved.value) return customExpanded.value
+  if (!isMultiple.value) return props.msg.interaction?.selectedOptionId === id
+  return (resolved.value ? props.msg.interaction?.selectedOptionIds : draftOptionIds.value)?.includes(id) ?? false
+}
+
+function onOptionClick(option: { id: string; label: string; token: string }) {
+  if (resolved.value || submitting.value || expired.value) return
+  if (option.id === CUSTOM_REPLY_OPTION_ID && (isMultiple.value || (customInputActive.value && props.answerMode === 'inline'))) {
+    customExpanded.value = !customExpanded.value
+    return
+  }
+  if (!isMultiple.value) {
+    selectOption(option)
+    return
+  }
+  draftOptionIds.value = optionSelected(option.id)
+    ? draftOptionIds.value.filter(id => id !== option.id)
+    : [...draftOptionIds.value, option.id]
+}
+
+function submitChoices() {
+  const options = choiceOptions.value.filter(option => draftOptionIds.value.includes(option.id))
+  const customAnswer = activeCustomAnswer.value
+  const first = options[0]
+  if (first) {
+    selectOption({
+      ...first, label: options.map(option => option.label).join('、'), selectedOptionIds: options.map(option => option.id),
+      ...(customAnswer ? { customAnswer } : {}),
+    })
+    return
+  }
+  if (!customAnswer) return
+  const custom = displayOptions.value.find(option => option.id === CUSTOM_REPLY_OPTION_ID)
+  if (custom?.token) selectOption({ ...custom, label: customAnswer, customAnswer })
+  else if (customInputActive.value) submitText()
+}
+
 const secretValues = ref<Record<string, string>>({})
 const answerText = ref('')
+const activeCustomAnswer = computed(() => customExpanded.value ? answerText.value.trim() : '')
 const answerInput = ref<HTMLTextAreaElement | null>(null)
 const secretsReady = computed(() => secretFields.value.length > 0
   && secretFields.value.every(field => Boolean(secretValues.value[field.name]?.trim())))
 const emit = defineEmits<{
-  select: [msg: ChatMessage, option: { id: string; label: string; token: string }]
+  select: [msg: ChatMessage, option: { id: string; label: string; token: string; selectedOptionIds?: string[]; customAnswer?: string }]
   textSubmit: [msg: ChatMessage, text: string]
   secretSubmit: [msg: ChatMessage, values: Record<string, string>]
   secretCancel: [msg: ChatMessage]
@@ -121,7 +216,7 @@ function cancelSecrets() {
   if (props.msg.interaction) props.msg.interaction.submitting = true
   emit('secretCancel', props.msg)
 }
-function selectOption(option: { id: string; label: string; token: string }) {
+function selectOption(option: { id: string; label: string; token: string; selectedOptionIds?: string[]; customAnswer?: string }) {
   if (resolved.value || submitting.value || expired.value) return
   submitting.value = true
   if (props.msg.interaction) props.msg.interaction.submitting = true
@@ -134,10 +229,14 @@ function submitText() {
   if (props.msg.interaction) props.msg.interaction.submitting = true
   emit('textSubmit', props.msg, text)
 }
+function submitAnswer() {
+  if (isMultiple.value) submitChoices()
+  else submitText()
+}
 function onAnswerKeydown(event: KeyboardEvent) {
   if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
   event.preventDefault()
-  submitText()
+  submitAnswer()
 }
 function activateOpenQuestion() {
   const interaction = props.msg.interaction
@@ -185,8 +284,11 @@ watch(() => props.msg.interaction?.resolved, (value) => {
   if (value) secretValues.value = {}
 })
 watch(() => props.msg.interaction?.expiresAt, scheduleExpiry)
-watch(customInputActive, async (active) => {
-  if (active && props.answerMode === 'inline' && !resolved.value && !expired.value) {
+watch(customInputActive, active => {
+  if (!isMultiple.value && active) customExpanded.value = true
+})
+watch(showAnswerInput, async active => {
+  if (active && !resolved.value && !expired.value) {
     await nextTick()
     answerInput.value?.focus()
   }
@@ -227,6 +329,52 @@ onBeforeUnmount(() => { if (expiryTimer) clearTimeout(expiryTimer) })
   white-space: normal;
   overflow-wrap: anywhere;
 }
+.interaction-bubble.is-choice {
+  padding: 15px;
+  border-color: var(--action-outline);
+  background: linear-gradient(155deg, var(--action-soft), transparent 68%), var(--surface-card-solid);
+}
+:global(html[data-theme='light'] .interaction-bubble.is-choice) {
+  background-image: linear-gradient(335deg, var(--action-soft), transparent 68%);
+}
+.is-choice .interaction-title { display: flex; align-items: center; gap: 9px; overflow-wrap: anywhere; }
+.interaction-choice-icon {
+  display: grid; place-items: center; flex: 0 0 28px; block-size: 28px;
+  border-radius: var(--radius-xs); background: var(--action-soft); color: var(--action-primary);
+}
+.is-choice .interaction-body { margin-top: 8px; }
+.is-choice .interaction-actions { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
+.is-choice .interaction-actions :deep(.interaction-option) {
+  width: 100%; padding: 8px 10px; min-height: 38px;
+  justify-content: flex-start; text-align: start; color: var(--content-primary);
+  border-color: var(--content-divider); background: var(--surface-soft);
+  transition: background-color var(--motion-hover-control), border-color var(--motion-hover-control), opacity var(--motion-hover-control);
+}
+.is-choice .interaction-actions :deep(.interaction-option:hover:not(:disabled)),
+.is-choice .interaction-actions :deep(.interaction-option.is-selected) {
+  background: var(--action-soft); border-color: var(--action-outline); box-shadow: none;
+}
+.is-choice .interaction-actions :deep(.interaction-option .app-action-button-content) {
+  display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 9px; width: 100%;
+}
+.interaction-choice-marker {
+  display: grid; place-items: center; inline-size: 18px; block-size: 18px;
+  box-sizing: border-box; border: 1px solid var(--border-default); border-radius: 50%;
+  color: var(--action-primary);
+}
+.is-selected .interaction-choice-marker { border-color: var(--action-outline); background: var(--action-soft); }
+.interaction-choice-label { min-width: 0; }
+.interaction-choice-arrow { color: var(--content-secondary); }
+.is-custom-choice[aria-expanded="true"] .interaction-choice-arrow { transform: rotate(90deg); }
+.is-multiple-choice .interaction-option:not(.is-custom-choice) .interaction-choice-marker {
+  border-radius: var(--radius-xs);
+}
+.interaction-choice-footer {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-sm);
+  margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--content-divider);
+  color: var(--content-secondary); font-size: var(--font-size-xs);
+}
+.interaction-choice-footer-actions { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
 .interaction-custom-hint { margin-top: 8px; color: var(--content-secondary); font-size: var(--font-size-xs); }
 .interaction-answer { display:flex; flex-direction:column; gap:var(--space-sm); margin-top:13px; padding-top:11px; border-top:1px solid var(--content-divider); }
 .interaction-answer-input { box-sizing:border-box; width:100%; min-height:72px; line-height:var(--line-height-body); }

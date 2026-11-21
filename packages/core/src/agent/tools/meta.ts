@@ -23,6 +23,7 @@ const inputSchema = z.object({ id: z.string().regex(/^[SU][1-9][0-9]*$/) }).pass
 export type UseSkillPorts = AgentSkillRuntimePorts
 
 export interface AskUserAuthorizationPort {
+  singleChoiceOnly?: boolean
   authorization(identity: RunIdentity, signal: AbortSignal): Promise<'disabled' | 'already_authorized' | 'available'>
 }
 
@@ -98,15 +99,16 @@ export function createSearchToolsTool(capabilities: (identity: RunIdentity) => P
   const query = z.string().trim().min(1).max(200)
   const limit = z.number().int().min(1).max(20).default(10)
   const names = z.array(z.string().trim().min(1).max(80).regex(/^[^*]+$/u)).min(1).max(20)
-  const inputSchema = z.union([z.object({ query, limit }).strict(), z.object({ names }).strict()])
+  const mcp_server = z.string().trim().min(1).max(200).optional()
+  const inputSchema = z.union([z.object({ query, limit, mcp_server }).strict(), z.object({ names }).strict()])
   return {
     definition: { name: 'search_tools', schema: { type: 'function', function: {
       name: 'search_tools',
-      description: '在当前已授权工具中按用途搜索，或按精确名称读取完整 Schema。query 的 limit 默认 10，最多 20，返回候选及扁平参数摘要，唯一命中时附完整 Schema。已知工具名称、或结果标记 requires_full_schema 时，用 names 查询，一次最多传 20 个名称。',
+      description: '在当前已授权工具中按用途搜索，或按精确名称读取完整 Schema。查询指定 MCP 时同时传 query 和 mcp_server。query 的 limit 默认 10，最多 20，返回候选及扁平参数摘要，唯一命中时附完整 Schema。已知工具名称、或结果标记 requires_full_schema 时，用 names 查询，一次最多传 20 个名称。',
       parameters: {
         type: 'object', additionalProperties: false,
-        properties: { query: z.toJSONSchema(query) as Record<string, Json>, names: z.toJSONSchema(names) as Record<string, Json>, limit: z.toJSONSchema(limit) as Record<string, Json> },
-        oneOf: [{ required: ['query'] }, { required: ['names'], not: { required: ['limit'] } }],
+        properties: { mcp_server: { type: 'string', minLength: 1, maxLength: 200 }, query: z.toJSONSchema(query) as Record<string, Json>, names: z.toJSONSchema(names) as Record<string, Json>, limit: z.toJSONSchema(limit) as Record<string, Json> },
+        oneOf: [{ required: ['query'] }, { required: ['names'], not: { anyOf: [{ required: ['limit'] }, { required: ['mcp_server'] }] } }],
       },
     } } },
     effect: 'read',
@@ -114,7 +116,7 @@ export function createSearchToolsTool(capabilities: (identity: RunIdentity) => P
     validate: input => inputSchema.safeParse(input),
     async execute(input, scope) {
       const request = inputSchema.parse(input)
-      const directory = scope.discoverRelatedTools ? await scope.discoverRelatedTools() : await capabilities(scope.identity)
+      const directory = scope.discoverRelatedTools ? await scope.discoverRelatedTools('names' in request ? { names: request.names } : { server: request.mcp_server }) : await capabilities(scope.identity)
       scope.signal.throwIfAborted()
       const available = directory.filter(tool => tool.name !== 'search_tools')
       let matches: PreparedToolDefinition[]
@@ -152,8 +154,16 @@ export function createSearchToolsTool(capabilities: (identity: RunIdentity) => P
 /** 普通问题进入既有交互协调器；沙盒授权由可信授权流程单独提供。 */
 export function createAskUserTool(ports?: AskUserAuthorizationPort):ToolDefinition {
   const option=z.object({id:z.string().min(1).max(64),label:z.string().min(1).max(120)}).strict()
-  const schema=z.object({kind:z.enum(['choice','question']),title:z.string().max(120),body:z.string().max(1000),authorization:z.literal('user_sandbox').optional(),options:z.array(option).max(8).optional()}).strict()
-  return {definition:{name:'ask_user',schema:{type:'function',function:{name:'ask_user',description:'向用户提出澄清问题，等待回答后继续。权限授权和危险操作使用专门的确认流程。',parameters:z.toJSONSchema(schema) as Record<string,import('../models.js').Json>}}},effect:'read',requiresInteraction:true,strictArrayFields:['options'],validate:input=>schema.safeParse(input),
+  const baseSchema = z.object({
+    kind: z.enum(['choice', 'question']), title: z.string().max(120), body: z.string().max(1000),
+    authorization: z.literal('user_sandbox').optional(), options: z.array(option).max(8).optional(),
+  }).strict()
+  const schema = ports?.singleChoiceOnly ? baseSchema : baseSchema.extend({
+    selection_mode: z.enum(['single', 'multiple']).optional(),
+  })
+  const selectionHint = ports?.singleChoiceOnly
+    ? '选项只支持单选。' : '需要用户勾选多项时使用 selection_mode: multiple，并提供可选项。'
+  return {definition:{name:'ask_user',schema:{type:'function',function:{name:'ask_user',description:`向用户提出澄清问题，等待回答后继续。${selectionHint}权限授权和危险操作使用专门的确认流程。`,parameters:z.toJSONSchema(schema) as Record<string,import('../models.js').Json>}}},effect:'read',requiresInteraction:true,strictArrayFields:['options'],validate:input=>schema.safeParse(input),
     async execute(input,scope,call){
       const args=input as z.infer<typeof schema>
       if(args.authorization){
@@ -164,7 +174,7 @@ export function createAskUserTool(ports?: AskUserAuthorizationPort):ToolDefiniti
         if(authorization==='already_authorized')return {kind:'completed',successful:true,mutated:false,value:{status:'already_authorized',message:'当前会话已获得完整用户沙箱权限。'}}
       }
       const options=args.options??[],ids=options.map(item=>item.id.trim())
-      if(ids.some(id=>!id||id==='__custom_reply__') || new Set(ids).size!==ids.length || options.some(item=>!item.label.trim()))return {kind:'completed',successful:false,mutated:false,value:{error:'交互选项无效'}}
+      if(('selection_mode' in args && args.selection_mode==='multiple'&&!ids.length) || ids.some(id=>!id||id==='__custom_reply__') || new Set(ids).size!==ids.length || options.some(item=>!item.label.trim()))return {kind:'completed',successful:false,mutated:false,value:{error:'交互选项无效'}}
       const id=createHash('sha256').update(JSON.stringify([scope.identity.ownerId,scope.identity.sessionId,scope.identity.runId,scope.roundId,call.id])).digest('hex')
       return {kind:'waiting',interaction:{id:`question-${id}`,kind:'question',toolCall:call}}
     }}

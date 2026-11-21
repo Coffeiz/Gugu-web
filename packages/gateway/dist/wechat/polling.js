@@ -15,8 +15,10 @@ export async function connectWechatPolling(options) {
         }
         catch { /* 诊断不可打断连接生命周期。 */ }
     };
+    let cursor = '';
     try {
         signal.throwIfAborted();
+        cursor = await options.cursor?.read() ?? '';
         try {
             await options.api.notifyStart(signal);
         }
@@ -53,7 +55,6 @@ export async function connectWechatPolling(options) {
         }
     }
     async function poll() {
-        let cursor = '';
         try {
             while (!signal.aborted) {
                 try {
@@ -70,7 +71,7 @@ export async function connectWechatPolling(options) {
                         if (!parsed)
                             continue;
                         const payload = structuredClone(parsed.payload);
-                        const preflight = await options.preflight(structuredClone(payload), parsed.mediaItems.length > 0, signal, parsed.mediaItems);
+                        const preflight = await options.preflight(structuredClone(payload), parsed.mediaItems.length > 0, signal, parsed.mediaItems, parsed.voiceTranscriptionMissing);
                         signal.throwIfAborted();
                         if (preflight === 'consumed')
                             continue;
@@ -100,8 +101,11 @@ export async function connectWechatPolling(options) {
                     }
                     // 与旧Python先推进cursor不同：入队失败不承认整个响应已消费。
                     // 崩溃/重读可能重复投递前半批消息，enqueue必须以平台/bot/chat/事件原子去重。
-                    if (typeof response.get_updates_buf === 'string' && response.get_updates_buf)
-                        cursor = response.get_updates_buf;
+                    const nextCursor = response.get_updates_buf;
+                    if (typeof nextCursor === 'string' && nextCursor && nextCursor !== cursor) {
+                        await options.cursor?.write(nextCursor);
+                        cursor = nextCursor;
+                    }
                 }
                 catch (error) {
                     if (signal.aborted)

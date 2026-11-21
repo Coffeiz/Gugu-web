@@ -42,6 +42,27 @@ const shutdownPhases = new Set([
   'im_delivery_pool', 'project_journal_pool', 'core', 'postgres_pool',
 ])
 const signals = new Set(['SIGINT', 'SIGTERM'])
+const iLinkOperations = new Set([
+  'getupdates', 'sendmessage', 'getuploadurl', 'getconfig', 'sendtyping',
+  'msg/notifystart', 'msg/notifystop', 'close', 'configure',
+])
+
+/** iLink 错误本身已剥离请求与响应；日志边界仍只接受固定操作名和有限数值。 */
+function safeILinkDetails(error) {
+  if (!(error instanceof Error) || error.name !== 'ILinkApiError') return {}
+  const operation = iLinkOperations.has(error.operation) ? error.operation : undefined
+  const outcome = error.outcome === 'rejected' || error.outcome === 'unknown' ? error.outcome : undefined
+  const statusCode = Number.isInteger(error.statusCode) && error.statusCode >= 100 && error.statusCode <= 599
+    ? error.statusCode : undefined
+  const ret = Number.isSafeInteger(error.ret) && error.ret >= -999999 && error.ret <= 999999 && error.ret !== 0
+    ? error.ret : undefined
+  return {
+    ...(operation ? { upstreamOperation: operation } : {}),
+    ...(outcome ? { upstreamOutcome: outcome } : {}),
+    ...(statusCode !== undefined ? { httpStatus: statusCode } : {}),
+    ...(ret !== undefined ? { upstreamRet: ret } : {}),
+  }
+}
 
 export function createRuntimeLog({ regular, diagnostic }) {
   return (event, details = {}) => {
@@ -53,6 +74,7 @@ export function createRuntimeLog({ regular, diagnostic }) {
     const errorCode = incident ? failureCode(error) : undefined
     const mediaStatus = (code === 'qq-event-failed' && ['qq_media_address', 'qq_media_download'].includes(errorCode)
       || code === 'feishu-event-failed' && errorCode === 'feishu_media_download') ? error?.httpStatus : undefined
+    const iLinkDetails = typeof code === 'string' && code.startsWith('wechat-') ? safeILinkDetails(error) : {}
     const attributes = {
       ...(event.startsWith('host.shutdown_phase_') && shutdownPhases.has(phase) ? { phase } : {}),
       ...(lifecycle && signals.has(signal) ? { signal } : {}),
@@ -60,6 +82,7 @@ export function createRuntimeLog({ regular, diagnostic }) {
       ...(lifecycle && Number.isSafeInteger(pid) && pid > 0 ? { pid } : {}),
       ...(allowedCodes && code !== undefined ? { code: allowedCodes.has(code) ? code : 'unknown' } : {}),
       ...(errorCode ? { errorCode } : {}),
+      ...iLinkDetails,
       ...(Number.isInteger(mediaStatus) && mediaStatus >= 100 && mediaStatus <= 599 ? { httpStatus: mediaStatus } : {}),
       ...(event === 'sandbox.system_completed' && typeof ok === 'boolean' ? { ok } : {}),
       ...(event === 'sandbox.system_completed' && typeof timedOut === 'boolean' ? { timedOut } : {}),

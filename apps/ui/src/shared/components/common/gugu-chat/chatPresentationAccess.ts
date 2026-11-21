@@ -16,3 +16,9 @@ export const chatToolDetailsKey: InjectionKey<(
 export const chatCommandCatalogKey: InjectionKey<() => Promise<ChatCommandOption[]>> = Symbol('chatCommandCatalog')
 
 export const chatAttachmentImageKey: InjectionKey<(id: string) => Promise<Blob>> = Symbol('chatAttachmentImage')
+export const chatCitationSiteKey: InjectionKey<(url: string) => Promise<{ name: string | null }>> = Symbol('chatCitationSite')
+
+export type ChatCalendarEvent = {
+  id: number; title: string; date: string; time?: string | null; endTime?: string | null
+}
+export const chatCalendarEventsKey: InjectionKey<() => Promise<ChatCalendarEvent[]>> = Symbol('chatCalendarEvents')

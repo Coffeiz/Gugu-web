@@ -1,3 +1,4 @@
+import { canonicalAgentToolName } from '@gugu/core/agent'
 import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import { createConfirmationGate, type ConfirmationBinding, type ConfirmationTargetSnapshot } from '@gugu/core/tools'
@@ -215,7 +216,7 @@ export function createWebAgentToolConfirmation(options: WebAgentToolConfirmation
   return {
     gate,
     async authorizeDirect(tx: Transaction<Database>, binding: ConfirmationBinding, signal: AbortSignal): Promise<boolean> {
-      if (!allowed(binding) || binding.toolName !== options.action) return false
+      if (!allowed(binding) || canonicalAgentToolName(binding.toolName) !== canonicalAgentToolName(options.action)) return false
       const epoch = await options.authorizeInTransaction(tx, binding, signal)
       signal.throwIfAborted()
       return epoch !== null && epoch.endsWith(`:${options.lease.input.accessVersion}`)

@@ -232,7 +232,7 @@ const props = defineProps<{
   onOpenFile: (file: ChatFile) => void
   onDownload: (file: ChatFile) => void
   onActionClick: (e: MouseEvent) => void
-  onInteractionSelect: (msg: ChatMessage, option: { id: string; label: string; token: string }) => void
+  onInteractionSelect: (msg: ChatMessage, option: { id: string; label: string; token: string; selectedOptionIds?: string[]; customAnswer?: string }) => void
   onInteractionTextSubmit: (msg: ChatMessage, text: string) => void
   onSecretSubmit: (msg: ChatMessage, values: Record<string, string>) => void
   onSecretCancel: (msg: ChatMessage) => void
@@ -495,8 +495,8 @@ defineExpose({
 .chat-main.is-expanded :deep(.msg-virtual-row) { padding: 0 24px var(--space-sm); }
 :deep(.msg-virtual-row.is-tool-row), .chat-main.is-expanded :deep(.msg-virtual-row.is-tool-row),
 :deep(.msg-virtual-row.is-interaction-row), .chat-main.is-expanded :deep(.msg-virtual-row.is-interaction-row) { padding-bottom: var(--space-xs); }
-:deep(.chat-messages > .msg) { margin: 8px 13px 12px; }
-.chat-main.is-expanded :deep(.chat-messages > .msg) { margin: 12px 24px 20px; }
+:deep(.chat-generation-status) { padding: 0 13px var(--space-xs); }
+.chat-main.is-expanded :deep(.chat-generation-status) { padding-inline: 24px; }
 
 /* ── 排队条：生成中发出的消息在输入框上方排队（不进对话流），排水发送时落入对话 ── */
 .chat-pending-strip {
@@ -587,27 +587,194 @@ defineExpose({
   border-top: 1px solid color-mix(in srgb, var(--content-primary) 20%, transparent);
   margin: 1.25em 0;
 }
+:deep(.chat-object-cards) {
+  display: grid; align-items: stretch; gap: var(--space-sm);
+  inline-size: 100%; max-inline-size: 420px; min-width: 0; margin-block: var(--space-sm);
+}
+:deep(.chat-object-cards.is-multiple) {
+  display: block; max-inline-size: none;
+  column-width: 280px; column-gap: var(--space-sm);
+}
+:deep(.chat-object-cards.is-multiple > .chat-object-card) {
+  break-inside: avoid; margin-block-end: var(--space-sm);
+}
 :deep(.msg-bubble.md-body a.chat-object-card) {
-  display: inline-flex; align-items: center; vertical-align: middle; gap: 9px;
-  min-width: 210px; max-width: min(340px, 100%); margin: 5px 6px 5px 0; padding: 9px 11px;
-  color: var(--content-primary); background: var(--surface-card-solid);
-  border: 1px solid var(--border-default); border-radius: var(--card-radius);
-  box-shadow: var(--card-shadow); text-decoration: none; cursor: pointer;
-  transition: var(--card-motion), box-shadow var(--motion-hover-card) var(--motion-ease-standard);
+  position: relative; isolation: isolate;
+  display: flex; flex-direction: column; justify-content: flex-start; gap: var(--space-sm);
+  box-sizing: border-box; inline-size: 100%; min-width: 0; padding: 15px 16px;
+  color: var(--content-primary);
+  background: linear-gradient(var(--chat-card-gradient-angle, 155deg), var(--action-soft), transparent 65%), var(--surface-card-solid);
+  border: 1px solid var(--action-outline); border-radius: var(--card-radius);
+  text-decoration: none; cursor: pointer;
+  transition: background-color var(--motion-hover-control), border-color var(--motion-hover-control);
 }
-:deep(.msg-bubble.md-body a.chat-object-card:hover) {
+:deep(.msg-bubble.md-body a.chat-object-card[href]:hover) {
   color: var(--content-primary); opacity: 1;
-  background-color: var(--card-surface-bg-hover); border-color: var(--card-surface-border-hover);
-  box-shadow: var(--card-shadow-hover); transform: translateY(-1px);
+  background-color: var(--card-surface-bg-hover); border-color: var(--action-primary);
 }
-:deep(.msg-bubble.md-body a.chat-object-card:active) { transform: translateY(1px); opacity: 0.93; }
-:deep(.chat-object-card-icon) { display: grid; place-items: center; flex: 0 0 27px; width: 27px; height: 27px; border-radius: var(--radius-xs); background: var(--surface-soft-hover); color: var(--action-primary); }
-:deep(.chat-object-card-icon-svg) { display: block; width: 16px; height: 16px; fill: currentColor; }
-:deep(.chat-object-card-body) { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
-:deep(.chat-object-card-body strong) { overflow: hidden; font-size: 12.5px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-:deep(.chat-object-card-body small) { color: var(--content-tertiary); font-size: 10.5px; }
-:deep(.chat-object-card-arrow) { display: grid; place-items: center; flex: 0 0 16px; color: var(--content-tertiary); }
-:deep(.chat-object-card-arrow-svg) { display: block; width: 14px; height: 14px; fill: currentColor; }
+:global(html[data-theme='light'] .chat-window .msg-bubble.md-body a.chat-object-card:is(:not([data-object-type="file"]), :has(> .chat-object-image-preview.is-loaded))) {
+  --chat-card-gradient-angle: 335deg;
+}
+:deep(.msg-bubble.md-body a.chat-object-card:focus-visible) { outline: 2px solid var(--border-focus); outline-offset: -2px; }
+:deep(.msg-bubble.md-body a.chat-object-card:active) { opacity: 0.9; }
+:deep(.msg-bubble.md-body a.chat-object-card.is-snapshot) { cursor: default; }
+:deep(.msg-bubble.md-body a.chat-object-card:not([href])) { cursor: default; }
+:deep(.chat-object-card-snapshot) {
+  color: var(--content-secondary); font-size: var(--font-size-xs);
+}
+:deep(.chat-object-card-heading) { display: flex; align-items: center; gap: var(--space-xs); min-width: 0; }
+:deep(.chat-object-card-kind), :deep(.chat-object-card-description) {
+  color: var(--content-secondary); font-size: var(--font-size-sm); overflow-wrap: anywhere;
+}
+:deep(.chat-object-card-title) {
+  color: var(--content-primary); font-size: var(--font-size-xl); font-weight: 600;
+  line-height: 1.35; overflow-wrap: anywhere;
+}
+:deep(.chat-object-card-description) { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+:deep(.chat-object-card[data-object-type="note"] .chat-object-card-description) {
+  -webkit-line-clamp: 3; line-height: 1.55;
+  padding-inline-start: 10px; border-inline-start: 2px solid var(--content-divider);
+}
+:deep(.chat-object-card:is([data-object-type="skill"], [data-object-type="scheduled-task"]) .chat-object-card-description) {
+  -webkit-line-clamp: 3; line-height: 1.55;
+  padding-block-start: 8px; border-block-start: 1px solid var(--content-divider);
+}
+:deep(.chat-schedule-status) {
+  margin-inline-start: auto; padding: 2px 7px;
+  border-radius: var(--radius-pill); background: var(--surface-soft);
+  color: var(--content-secondary); font-size: var(--font-size-xs);
+}
+:deep(.chat-schedule-status.is-active) {
+  color: var(--status-success); background: color-mix(in srgb, var(--status-success) 14%, transparent);
+}
+:deep(.chat-canvas-card-context) {
+  display: flex; align-items: center; gap: var(--space-xs); min-width: 0;
+  padding-block-start: 8px; border-block-start: 1px solid var(--content-divider);
+  color: var(--content-secondary); font-size: var(--font-size-xs);
+}
+:deep(.chat-canvas-card-context > span:last-child) {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+:deep(.chat-note-card-date) {
+  min-width: 0; margin-inline-start: auto; color: var(--content-secondary);
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  font-size: var(--font-size-xs); font-variant-numeric: tabular-nums;
+}
+:deep(a.chat-object-card :is(.chat-object-card-icon, .chat-object-card-arrow)) { display: none; }
+:deep(a.chat-object-card .chat-canvas-card-context > .chat-object-card-icon) {
+  display: flex; flex: none; color: var(--action-primary);
+}
+:deep(.chat-canvas-card-context svg) {
+  display: block; inline-size: 14px; block-size: 14px; fill: currentColor;
+}
+:deep(a.chat-object-card .chat-object-card-kind) {
+  padding: 2px 8px; border-radius: var(--radius-xs); background: var(--action-soft);
+  color: var(--content-primary); font-weight: 600; white-space: nowrap;
+}
+:deep(.chat-object-file-identity) { display: flex; align-items: center; gap: 10px; min-width: 0; }
+:deep(.chat-object-file-icon) {
+  display: grid; place-items: center; flex: 0 0 38px; block-size: 38px;
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--chat-file-icon-color) 16%, transparent); color: var(--chat-file-icon-color);
+}
+:deep(.chat-object-file-identity .chat-object-card-title) { min-width: 0; }
+:deep(.chat-object-card-loading) {
+  position: absolute; inset: 0; z-index: 1;
+  display: flex; align-items: center; justify-content: center; gap: var(--space-xs);
+  border-radius: inherit; pointer-events: none;
+  background: color-mix(in srgb, var(--surface-card-solid) 88%, transparent);
+  color: var(--content-primary); font-size: var(--font-size-sm); font-weight: 500;
+  visibility: hidden;
+  animation: chat-object-card-loading 160ms ease 180ms forwards;
+}
+:deep(.chat-object-card-loading.is-streaming) {
+  visibility: visible; animation: none;
+}
+:deep(.chat-object-card-loading::before) {
+  content: ''; inline-size: 12px; block-size: 12px; flex: none;
+  box-sizing: border-box; border-radius: 50%;
+  border: 2px solid var(--action-outline); border-inline-end-color: var(--content-primary);
+  animation: chat-object-card-spin 800ms linear infinite;
+}
+:deep(.chat-object-image-preview:is(.is-loaded, .is-failed) ~ .chat-object-card-loading.is-image-only) {
+  display: none;
+}
+@keyframes chat-object-card-loading {
+  from { opacity: 0; }
+  to { visibility: visible; opacity: 1; }
+}
+@keyframes chat-object-card-spin {
+  to { transform: rotate(1turn); }
+}
+@media (prefers-reduced-motion: reduce) {
+  :deep(.chat-object-card-loading) { animation-timing-function: step-end; animation-duration: 1ms; }
+  :deep(.chat-object-card-loading::before) { animation: none; }
+}
+:deep(.chat-object-card > img.chat-object-image-preview:not(.is-loaded)) {
+  position: absolute; inline-size: 1px; block-size: 1px; opacity: 0; pointer-events: none;
+}
+:deep(.msg-bubble.md-body a.chat-object-card[data-object-type="file"]:has(> .chat-object-image-preview.is-loaded)) {
+  padding: 0; gap: 0; overflow: hidden;
+}
+:deep(.md-view .chat-object-card > img.chat-object-image-preview.is-loaded) {
+  inline-size: 100%; block-size: auto; max-block-size: min(280px, 36dvh);
+  margin: 0; object-fit: contain; border-radius: 0; background: var(--surface-soft);
+  border-block-end: 1px solid var(--content-divider);
+}
+:deep(.md-view .chat-object-cards.is-multiple .chat-object-image-preview.is-loaded) {
+  aspect-ratio: 4 / 3;
+}
+:deep(.md-view .chat-object-cards .chat-object-image-preview.is-loaded.is-portrait) {
+  aspect-ratio: auto; max-block-size: min(460px, 65dvh);
+}
+:deep(.chat-object-card:has(> .chat-object-image-preview.is-loaded) .chat-object-file-icon) { display: none; }
+:deep(.chat-object-image-preview.is-loaded + .chat-object-file-identity) {
+  padding: 10px 14px;
+}
+:deep(.chat-object-image-preview.is-loaded ~ .chat-object-card-details) {
+  padding: 0 14px 10px;
+}
+:deep(.chat-object-card:has(> .chat-object-image-preview.is-loaded) .chat-object-file-identity .chat-object-card-title) {
+  font-size: var(--font-size-md);
+}
+:deep(.chat-project-status) {
+  margin-inline-start: auto; padding: 1px 7px; border-radius: var(--radius-pill);
+  background: var(--surface-soft); color: var(--content-secondary);
+  font-size: var(--font-size-xs); white-space: nowrap;
+}
+
+:deep(.chat-object-card-details) {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 124px), 1fr));
+  gap: var(--space-xs); min-width: 0;
+}
+:deep(.chat-object-card-fact) {
+  display: grid; gap: 2px; min-width: 0; padding: 6px 9px;
+  border-radius: var(--radius-xs); background: var(--surface-soft); overflow-wrap: anywhere;
+}
+:deep(.chat-object-card-fact-label) { color: var(--content-secondary); font-size: var(--font-size-xs); }
+:deep(.chat-object-card-fact-value) { color: var(--content-primary); font-size: var(--font-size-sm); font-weight: 500; }
+:deep(.chat-object-card-fact.is-urgent .chat-object-card-fact-value) { color: var(--status-warning); }
+:deep(.chat-object-card-fact.is-overdue .chat-object-card-fact-value) { color: var(--status-danger); }
+:deep(.chat-project-progress) {
+  display: grid; gap: var(--space-xs); margin-top: auto; padding-top: var(--space-xs);
+}
+:deep(.chat-project-progress-heading) { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-xs); }
+:deep(.chat-project-meter) {
+  appearance: none; display: block; inline-size: 100%; min-inline-size: 0; block-size: 6px; overflow: hidden;
+  border: 0; border-radius: var(--radius-pill); background: var(--surface-soft-hover); color: var(--action-primary);
+}
+:deep(.chat-project-meter::-webkit-progress-bar) { background: var(--surface-soft-hover); }
+:deep(.chat-project-meter::-webkit-progress-value) { border-radius: var(--radius-pill); background: var(--chat-project-fill, var(--action-primary)); }
+:deep(.chat-project-meter::-moz-progress-bar) { border-radius: var(--radius-pill); background: var(--chat-project-fill, var(--action-primary)); }
+:deep(.chat-project-percent) { color: var(--content-primary); font-size: var(--font-size-lg); font-weight: 600; font-variant-numeric: tabular-nums; }
+:deep(.chat-project-status.is-pending) { color: var(--status-warning); background: var(--status-warning-bg); }
+:deep(.chat-project-status.is-active) { color: var(--status-info); background: var(--status-info-bg); }
+:deep(.chat-project-status.is-done) { color: var(--status-success); background: var(--status-success-bg); }
+:deep(.msg-bubble.md-body a[href^="gugu://open-object/"]:not(.chat-object-card)),
+:deep(.msg-bubble.md-body a[href^="gugu://focus-canvas/"]:not(.chat-object-card)),
+:deep(.msg-bubble.md-body a[href^="gugu://open-skill/"]:not(.chat-object-card)) {
+  margin-block: 0; padding: 0 0.55em; font-size: 0.9em; line-height: 1.5; vertical-align: baseline;
+}
 :deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card):hover) {
   background: var(--gugu-chat-send-bg); border-color: var(--action-primary-hover);
   box-shadow: none; opacity: 1;
@@ -655,6 +822,9 @@ defineExpose({
   max-width: var(--chat-assistant-bubble-max-width, 88%);
   background: var(--gugu-chat-assistant-bg); border: 1px solid var(--gugu-chat-assistant-border);
   border-bottom-left-radius: 4px; box-shadow: inset 0 1px 0 var(--gugu-chat-file-highlight);
+}
+:deep(.msg.ai .msg-bubble.md-body:has(> .md-view .chat-object-cards)) {
+  box-sizing: border-box; inline-size: var(--chat-assistant-bubble-max-width, 88%);
 }
 :deep(.msg.member .msg-bubble) {
   background: var(--gugu-chat-member-bg); border: 1px solid var(--gugu-chat-member-border);
@@ -744,6 +914,7 @@ defineExpose({
   background: var(--surface-card-solid); color: var(--content-primary);
   box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card);
 }
+:deep(.msg-link-buttons:first-child) { margin-top: 0; }
 :deep(.msg-link-buttons .interaction-body) {
   margin-top: 0; color: var(--content-secondary); font-size: var(--font-size-sm);
   line-height: var(--line-height-body); white-space: pre-wrap;
@@ -839,29 +1010,6 @@ defineExpose({
 :deep(.msg:hover .msg-copy-btn) { opacity: 1; }
 :deep(.msg-copy-btn:hover) { background: var(--gugu-chat-copy-hover-bg); color: var(--action-primary); }
 :deep(.msg-copy-btn svg) { display: block; }
-
-/* ── 思考/工具动画（状态气泡渲染于 GuguChatMessageList.vue，同样需要 :deep()） ── */
-:deep(.thinking) { display: flex; gap: 4px; align-items: center; padding: 16px 13px; }
-:deep(.thinking span) {
-  display: inline-block; width: 6px; height: 6px; border-radius: 50%;
-  background: var(--color-primary); animation: bounce 1.2s infinite; opacity: 0.6;
-}
-:deep(.thinking span:nth-child(2)) { animation-delay: 0.2s; }
-:deep(.thinking span:nth-child(3)) { animation-delay: 0.4s; }
-@keyframes bounce { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-5px); } }
-
-/* 状态气泡只在生成开始时入场，后续状态切换只更新文字。 */
-:deep(.status-pop) { animation: statusPop 0.3s cubic-bezier(0.2, 0.8, 0.3, 1) both; }
-@keyframes statusPop { from { opacity: 0; transform: translateY(7px) scale(0.96); } to { opacity: 1; transform: none; } }
-
-:deep(.tool-bubble) { display: flex; align-items: center; gap: 8px; color: var(--color-primary); }
-:deep(.tool-spinner) {
-  width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
-  border: 2px solid var(--gugu-chat-tool-border); border-top-color: var(--action-primary);
-  animation: spin 0.7s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
-:deep(.tool-label) { font-weight: 600; }
 
 /* ── Markdown ── */
 /* md 排版由通用组件 MarkdownView 提供；这里只保留聊天气泡的内边距（渲染于

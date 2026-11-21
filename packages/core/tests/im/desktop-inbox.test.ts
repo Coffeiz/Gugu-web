@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { sql } from 'kysely'
 import { expect, it } from 'vitest'
 import { initializeSqlite, openSqliteRuntime } from '../../src/data/sqlite.js'
-import { readDesktopImAttachmentReference, desktopImAttachmentDelivery, desktopQqGroupRunEvent, recordDesktopImGroupMessage, readPendingDesktopImConnection, admitDesktopImEvent, prepareDesktopImEvent, updateDesktopImDelivery, nextDesktopQqSequence, desktopImProjection, desktopImPrompt, rejectDesktopImEvent } from '../../src/im/desktop-inbox.js'
+import { readDesktopImAttachmentReference, desktopImAttachmentDelivery, desktopImGroupRunEvent, recordDesktopImGroupMessage, readPendingDesktopImConnection, admitDesktopImEvent, prepareDesktopImEvent, updateDesktopImDelivery, nextDesktopQqSequence, desktopImProjection, desktopImPrompt, rejectDesktopImEvent } from '../../src/im/desktop-inbox.js'
 
 it('重启后为同一收件恢复原会话和消息标识，隔离其他连接', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gugu-im-inbox-'))
@@ -259,11 +259,11 @@ it('仅记录的群消息只写一条历史，切到回应模式后重放也不�
       const { identity } = await createSqliteAgentAdmission(runtime.db).prepare(ownerId, {
         session_id: prepared.sessionId, message: '测试当前轮', client_message_id: prepared.clientId,
       })
-      expect(await desktopQqGroupRunEvent(runtime.db, identity)).toMatchObject({ eventKey: incoming.eventKey, sealedEvent: 'AQ==' })
+      expect(await desktopImGroupRunEvent(runtime.db, identity)).toMatchObject({ eventKey: incoming.eventKey, sealedEvent: 'AQ==' })
       const recovered = await prepareDesktopImEvent(runtime.db, ownerId, { ...event, chatType: 'group' })
       expect(recovered?.runId).toBe(identity.runId)
-      expect(await desktopQqGroupRunEvent(runtime.db, identity)).toMatchObject({ eventKey: incoming.eventKey, sealedEvent: 'AQ==' })
-      expect(await desktopQqGroupRunEvent(runtime.db, { ...identity, runId: 'other-run' })).toBeNull()
+      expect(await desktopImGroupRunEvent(runtime.db, identity)).toMatchObject({ eventKey: incoming.eventKey, sealedEvent: 'AQ==' })
+      expect(await desktopImGroupRunEvent(runtime.db, { ...identity, runId: 'other-run' })).toBeNull()
 
       await recordDesktopImGroupMessage(runtime.db, ownerId, { ...event, eventKey: '2'.repeat(64), text: '测试后来消息' })
       const request = { keyword: '测试', queries: ['测试'], mode: 'OR' as const, limit: 10, speaker: '' }
@@ -282,6 +282,33 @@ it('仅记录的群消息只写一条历史，切到回应模式后重放也不�
       expect(await revoked.search(identity, request, signal)).toEqual({ error: '群消息搜索未授权' })
 
 
+    } finally { await runtime.close() }
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
+it('飞书和 Telegram 使用通用桌面群会话与收件恢复身份', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gugu-im-group-platforms-'))
+  const path = join(directory, 'test.db')
+  try {
+    await initializeSqlite(path)
+    const { runtime, ownerId } = await openSqliteRuntime(path)
+    try {
+      for (const [index, platform] of (['feishu', 'telegram'] as const).entries()) {
+        const connectionId = String(index + 1).repeat(64)
+        const event = { platform, connectionId, eventKey: String(index + 3).repeat(64), text: `测试${platform}群`,
+          platformUserId: 'sender', platformUserName: '小北', ownerPlatformUserId: 'owner' }
+        expect(await recordDesktopImGroupMessage(runtime.db, ownerId, event)).toBe(true)
+        const incoming = { ...event, eventKey: String(index + 5).repeat(64), sealedEvent: 'AQ==' }
+        await admitDesktopImEvent(runtime.db, ownerId, incoming)
+        const prepared = await prepareDesktopImEvent(runtime.db, ownerId, { ...event, chatType: 'group' })
+        if (!prepared) throw new Error('收件未准备')
+        const { identity } = await createSqliteAgentAdmission(runtime.db).prepare(ownerId, {
+          session_id: prepared.sessionId, message: event.text, client_message_id: prepared.clientId,
+        })
+        expect(await desktopImGroupRunEvent(runtime.db, identity)).toMatchObject({
+          platform, connectionId, eventKey: incoming.eventKey, sealedEvent: 'AQ==',
+        })
+      }
     } finally { await runtime.close() }
   } finally { await rm(directory, { recursive: true, force: true }) }
 })

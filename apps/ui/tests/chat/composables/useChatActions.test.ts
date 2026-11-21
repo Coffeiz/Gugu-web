@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createApp } from 'vue'
+import { i18n } from '@/i18n'
+import GuguChatMessageRow from '@/components/common/gugu-chat/GuguChatMessageRow.vue'
 
 const fetchProjects = vi.fn()
 const fetchUpcomingCalEvents = vi.fn()
@@ -34,6 +37,41 @@ afterEach(() => {
 })
 
 import { useChatActions } from '@/components/common/gugu-chat/composables/useChatActions'
+
+it('链接按钮点击走应用内项目和画布导航，外站链接保留浏览器默认行为', () => {
+  const push = vi.fn()
+  const onOpenObject = vi.fn()
+  const { onChatActionClick } = useChatActions({
+    router: { push } as never, onOpenObject, onBindPlatform: vi.fn(), onOpenSkill: vi.fn(),
+  })
+  const buttons = [
+    { id: 'project', label: '示例项目', url: 'GUGU://open-object/project/21' },
+    { id: 'canvas', label: '示例画布节点', url: 'gugu://focus-canvas/2/3' },
+    { id: 'external', label: '外部网站', url: 'https://example.test/' },
+  ]
+  const host = document.createElement('div')
+  const app = createApp(GuguChatMessageRow, {
+    msg: { id: 1, role: 'ai', text: '', time: '', linkButtons: { message: '入口', buttons } },
+    sessionId: 1, isGroupSession: false, interactionAnswerMode: 'composer',
+    copiedId: null, voicePlayingId: null, voiceBars: [], onActionClick: onChatActionClick,
+  }).use(i18n)
+  app.mount(host)
+  try {
+    const click = (label: string) => {
+      const anchor = host.querySelector<HTMLAnchorElement>(`a[aria-label="${label}"]`)!
+      const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+      anchor.firstElementChild!.dispatchEvent(event)
+      return { prevented: event.defaultPrevented, target: anchor.target }
+    }
+    expect(click('示例项目')).toEqual({ prevented: true, target: '' })
+    expect(onOpenObject).toHaveBeenCalledExactlyOnceWith('project', 21)
+    expect(click('示例画布节点')).toEqual({ prevented: true, target: '' })
+    expect(push).toHaveBeenCalledExactlyOnceWith('/canvases')
+    expect(click('外部网站')).toEqual({ prevented: false, target: '_blank' })
+  } finally {
+    app.unmount()
+  }
+})
 
 describe('useChatActions 工具完成后的资源刷新', () => {
   beforeEach(() => {

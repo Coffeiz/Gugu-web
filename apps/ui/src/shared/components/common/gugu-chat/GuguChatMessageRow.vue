@@ -20,7 +20,7 @@
       <span v-else class="msg-quoted-file" @click.stop="$emit('openFile', f)">{{ f.name }}{{ f.ext ? `.${f.ext}` : '' }}</span>
     </template>
   </div>
-  <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body" @click="onBodyClick"><MarkdownView :html="assistantHtml" :text="displayed" chat :stream-motion="presenting" :render-math="!presenting" /></div>
+  <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body" @click="onBodyClick"><GuguChatCitations :html="assistantHtml" :text="displayed" :presenting="presenting" :sources="sources" :snapshot-message="sessionId && msg.dbId ? JSON.stringify([sessionId, msg.dbId, msg._createdAt ?? '']) : undefined" /></div>
   <!-- 用户消息也走 MD 渲染（sanitize 后），和 AI 气泡同一条链路；样式差异由
        .user-md 在 GuguChat.vue 里按紫底气泡重映射。输入框侧保持纯文本不渲染。 -->
   <div v-else-if="msg.text || msg.references?.length" class="msg-bubble user-md" @click="onBodyClick"><MarkdownView :html="msg.html ?? renderChatMd(displayQQFaces(msg.text), msg.references)" :text="msg.text" chat render-math /></div>
@@ -30,13 +30,13 @@
     </span>
     <span v-if="runOutcomeDetail">{{ runOutcomeDetail }}</span>
   </div>
-  <!-- send_link_buttons（PRD-LLM-24）：URL 全部经服务端安全校验，这里只渲染普通导航链接；
-       target=_blank 配合 noopener noreferrer，不使用 v-html 拼接。 -->
+  <!-- 卡片与正文共用应用内导航；外部链接由浏览器打开。 -->
   <div v-if="msg.linkButtons?.buttons?.length" class="msg-link-buttons interaction-bubble" role="group" :aria-label="msg.linkButtons.message || t('chatUi.gugu')">
     <div v-if="msg.linkButtons.message" class="interaction-body">{{ displayQQFaces(msg.linkButtons.message) }}</div>
-    <div class="interaction-actions">
+    <div class="interaction-actions" @click="emit('actionClick', $event)">
       <ActionButton v-for="b in msg.linkButtons.buttons" :key="b.id" class="interaction-option" fit
-                    :href="b.url" target="_blank" rel="noopener noreferrer" :aria-label="b.label">
+                    :href="b.url" :target="/^gugu:\/\//i.test(b.url) ? undefined : '_blank'"
+                    rel="noopener noreferrer" :aria-label="b.label">
         {{ b.label }}
       </ActionButton>
     </div>
@@ -87,9 +87,9 @@
     </div>
     </template>
   </div>
-  <div v-if="msg.role !== 'tool' && msg.role !== 'interaction'" class="msg-footer">
-    <span class="msg-time">{{ msg.time }}</span>
-    <button class="msg-copy-btn" @click="$emit('copy', msg)" :title="t('chat.copy')">
+  <div v-if="timestamp || showCopy" class="msg-footer">
+    <span v-if="timestamp" class="msg-time">{{ timestamp }}</span>
+    <button v-if="showCopy" class="msg-copy-btn" @click="$emit('copy', msg)" :title="t('chat.copy')">
       <Icon name="status.success" v-if="copiedId === msg.id" :size="11" />
       <Icon name="action.copy"  v-else :size="11" />
     </button>
@@ -109,6 +109,8 @@ import { translateAgentError } from '@/i18n'
  * 暂时仍由主组件持有，Phase 2/4 会把其中一部分收进对应 composable）。
  */
 import MarkdownView from '@/components/common/content/MarkdownView.vue'
+import GuguChatCitations from './GuguChatCitations.vue'
+import type { ChatSource } from './chatSources'
 import GuguChatInteraction from './GuguChatInteraction.vue'
 import { findClickedChatReference, type ChatMessage, type ChatFile, type ChatReference, type InteractionAnswerMode } from './chatTypes'
 import { renderMdStream, renderChatMd } from './markdown'
@@ -121,6 +123,8 @@ import { chatAttachmentImageKey } from './chatPresentationAccess'
 import { makeLazyThumbDirective } from './lazyThumbDirective'
 const props = defineProps<{
   msg: ChatMessage
+  timestamp?: string
+  sources?: readonly ChatSource[]
   sessionId: number | null
   hasFollowingMessage?: boolean
   isGroupSession: boolean
@@ -129,6 +133,7 @@ const props = defineProps<{
   voicePlayingId: string | null
   voiceBars: number[]
 }>()
+const showCopy = computed(() => props.msg.role !== 'tool' && props.msg.role !== 'interaction' && Boolean(props.msg.text?.trim()))
 const { displayed, presenting } = useStreamText(() => ({
   key: `${props.sessionId}:${props.msg._syncKey ?? props.msg.id}`,
   text: props.msg.role === 'ai' ? props.msg.text ?? '' : '',
@@ -176,7 +181,7 @@ const emit = defineEmits<{
   openFile: [file: ChatFile]
   download: [file: ChatFile]
   actionClick: [e: MouseEvent]
-  interactionSelect: [msg: ChatMessage, option: { id: string; label: string; token: string }]
+  interactionSelect: [msg: ChatMessage, option: { id: string; label: string; token: string; selectedOptionIds?: string[]; customAnswer?: string }]
   interactionTextSubmit: [msg: ChatMessage, text: string]
   secretSubmit: [msg: ChatMessage, values: Record<string, string>]
   secretCancel: [msg: ChatMessage]

@@ -7,7 +7,7 @@ export type ChatInteractionAnswer = {
   runId?: string
   promptId: number
 } & (
-  | { action: 'select'; token: string; resume: boolean }
+  | { action: 'select'; token: string; resume: boolean; selectedOptionIds?: string[]; customAnswer?: string }
   | { action: 'text'; text: string }
   | { action: 'secrets'; secrets: Record<string, string> | null }
 )
@@ -26,7 +26,7 @@ export const respondToHttpInteraction: ChatInteractionAccess = async answer => {
   switch (answer.action) {
     case 'select':
       route = answer.resume ? 'resume' : 'respond'
-      payload = { token: answer.token }
+      payload = { token: answer.token, selected_option_ids: answer.selectedOptionIds, custom_answer: answer.customAnswer }
       break
     case 'text':
       route = 'resume-text'

@@ -1,3 +1,4 @@
+import { readResolvedChoiceOptions } from '../interactions/projection.js'
 import { createHash, createHmac, randomBytes } from 'node:crypto'
 import { Kysely, PostgresDialect, sql } from 'kysely'
 import type { Pool } from 'pg'
@@ -165,13 +166,20 @@ export function createSqlAgentInteractionHistory(db: Kysely<any>, backend: 'post
           const updated = await sql`UPDATE interaction_actions SET token_hash=${hash} WHERE id=${action.id} AND prompt_id=${row.id} AND status='pending' AND ${expiryGuard} RETURNING id`.execute(tx)
           if (updated.rows.length) options.push({ id: action.option_id, label: label(schema, action.option_id), token })
         }
+        const resolved = object(schema.resolved_result)
+        if (!row.active) {
+          options.push(...readResolvedChoiceOptions(row.kind, schema))
+          if (options.length && typeof resolved.option_id === 'string') selected = resolved.option_id
+        }
         const call = truthy(context.tool_call_id) ? pythonString(context.tool_call_id) : null
         const fields = schema.secret_fields, secretFields = Array.isArray(fields) ? fields : typeof fields === 'string' ? Array.from(fields) : fields && typeof fields === 'object' ? Object.keys(fields) : []
         output.push({ id: row.id, session_id: row.session_id, kind: row.kind, title: row.title, body: row.body, tool_call_id: call,
           task_paused: row.kind === 'confirm' && !!call, options, secret_fields: secretFields,
           allow_text_input: schema.source === 'agent' && truthy(schema.allow_text_input), custom_input_active: truthy(schema.custom_input_active),
           resolved: !row.active, ...(row.status === 'expired' ? { expired: true } : {}),
-          selected_option_id: selected, response_text: object(schema.resolved_result).text ?? null,
+          selected_option_id: selected, response_text: resolved.text ?? null,
+          ...(typeof resolved.custom_answer === 'string' ? { custom_answer: resolved.custom_answer } : {}),
+          ...(schema.selection_mode === 'multiple' ? { selection_mode: 'multiple', selected_option_ids: resolved.selected_option_ids } : {}),
           expires_at: timestamp(row.expires_at), created_at: timestamp(row.created_at) })
       }
       return output

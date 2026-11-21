@@ -74,6 +74,12 @@ const providerStages = new Map(Object.entries({
   decode: '解析响应', stream: '读取响应流', continuation: '续接模型调用',
 }))
 
+const iLinkOperations = new Map(Object.entries({
+  getupdates: '读取消息', sendmessage: '发送消息', getuploadurl: '获取上传地址',
+  getconfig: '读取配置', sendtyping: '发送输入状态', 'msg/notifystart': '启动通知',
+  'msg/notifystop': '停止通知', close: '关闭连接', configure: '配置请求',
+}))
+
 const conditions = new Map(Object.entries({
   im_provider_failed: 'IM 模型调用失败', im_run_failed: 'IM 任务执行失败', dispatch_unavailable: '消息调度不可用',
   im_model_unavailable: '即时通讯缺少默认模型，消息等待处理',
@@ -94,8 +100,12 @@ export function eventMessage(record) {
     Number.isSafeInteger(record.round) ? `第 ${record.round} 轮` : undefined,
     conditions.get(attributes.code),
     providerStages.get(attributes.providerStage),
+    iLinkOperations.has(attributes.upstreamOperation) ? `微信${iLinkOperations.get(attributes.upstreamOperation)}` : undefined,
+    attributes.upstreamOutcome === 'rejected' ? '上游拒绝' : attributes.upstreamOutcome === 'unknown' ? '上游结果未知' : undefined,
     Number.isInteger(attributes.httpStatus) && attributes.httpStatus >= 100 && attributes.httpStatus <= 599
       ? `HTTP ${attributes.httpStatus}` : undefined,
+    Number.isSafeInteger(attributes.upstreamRet) && attributes.upstreamRet !== 0 && attributes.upstreamRet >= -999999 && attributes.upstreamRet <= 999999
+      ? `平台返回码 ${attributes.upstreamRet}` : undefined,
   ].filter(Boolean)
   return [label, ...details].join(' · ')
 }

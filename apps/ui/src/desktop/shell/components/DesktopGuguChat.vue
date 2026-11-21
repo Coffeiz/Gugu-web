@@ -2,6 +2,8 @@
 import { createDesktopChatCommandAccess, listDesktopChatCommands } from '../chat-command-access'
 import { encodeVoiceRecording } from '../voice-recording'
 import { provide } from 'vue'
+import { useRouter } from 'vue-router'
+import { useUiStore } from '@/stores/ui'
 import { chatAttachmentImageKey, chatCommandCatalogKey, chatModelCatalogKey, chatToolDetailsKey } from '@/components/common/gugu-chat/chatPresentationAccess'
 import type { DesktopBridge } from '@gugu/core/desktop'
 import type { ChatReference, QueuedMessagePayload } from '@/components/common/gugu-chat/chatTypes'
@@ -25,6 +27,8 @@ import {
 } from '../agent-chat'
 
 const imAccess = createDesktopChatImAccess()
+const router = useRouter()
+const uiStore = useUiStore()
 const readAgentUiLabels = createAgentUiLabels({
   defaultStateLabels: { ...DEFAULT_AGENT_STATE_LABELS, ...BUILTIN_AGENT_TOOL_STATE_LABELS },
   stateLabelOverrides: () => ({}),
@@ -55,7 +59,7 @@ const resolveChatCommand = createDesktopChatCommandAccess(automaticModeAccess)
 const respondToInteraction: ChatInteractionAccess = async answer => {
   const { sessionId, runId, promptId } = answer
   if (!runId) return { status: 'failed' }
-  const request = answer.action === 'select' ? { token: answer.token }
+  const request = answer.action === 'select' ? { token: answer.token, selectedOptionIds: answer.selectedOptionIds, customAnswer: answer.customAnswer }
     : answer.action === 'text' ? { text: answer.text } : { secrets: answer.secrets }
   const result = await requestDesktopAgentSessions({
     action: 'respond', id: sessionId, runId, promptId, operationId: crypto.randomUUID(), ...request,
@@ -151,11 +155,15 @@ async function referenceDroppedFile(file: File) {
 }
 
 async function openPlatformReference(reference: Pick<ChatReference, 'type' | 'id'>) {
+  if (reference.type === 'event') {
+    const id = Number(reference.id)
+    if (!Number.isSafeInteger(id) || id < 1) return false
+    uiStore.pendingCalendarEvent = { id }
+    await router.push('/calendar')
+    return true
+  }
   if (reference.type !== 'file' || typeof reference.id !== 'string' || !reference.id.startsWith('drop-')) return false
-  const bridge = fileBridge()
-  if (!bridge?.openDroppedFileReference) throw new DesktopBridgeError('unsupported', '请在桌面应用中打开本机文件')
-  const result = await bridge.openDroppedFileReference(reference.id)
-  if (result.ok === false) throw new DesktopBridgeError(result.error.code, result.error.message)
+  await desktopData.openDroppedFileReference(reference.id)
   return true
 }
 
