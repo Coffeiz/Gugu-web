@@ -203,7 +203,7 @@ async function purge(project: Project) {
   try {
     const confirmed = await confirmDialog({
       title: t('projectsDeleted.purge'),
-      message: t('projectsDeleted.purgeMessage', { name: project.name }),
+      message: t(projectStore.storesProjectsLocally ? 'projectsDeleted.purgeLocalMessage' : 'projectsDeleted.purgeMessage', { name: project.name }),
       tone: 'danger',
       confirmText: t('projectsDeleted.purge'),
     })

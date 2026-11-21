@@ -500,5 +500,6 @@ export const useProjectStore = defineStore('projects', () => {
     upcomingCalEvents, fetchUpcomingCalEvents,
     archivedProjects, archivedLoading, archivedLoaded, fetchArchivedProjects, unarchiveProject,
     deletedProjects, deletedLoading, deletedLoaded, fetchDeletedProjects, restoreDeletedProject, canPurgeDeletedProject, purgeDeletedProject,
+    storesProjectsLocally: projectsApi.storesProjectsLocally,
   }
 })

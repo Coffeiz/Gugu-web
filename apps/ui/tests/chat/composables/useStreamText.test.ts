@@ -64,6 +64,22 @@ describe('流式正文展示', () => {
     expect(displayed.value).toBe('少量文字长回复长回')
   })
 
+  it('跳过智能界面数据的逐字播放，闭合后继续逐字显示正文', async () => {
+    const { message, displayed } = mount()
+    const pending = '摘要\n\n```gugu-ui\n{"payload":"' + '示例'.repeat(1500)
+    message.text = pending
+    await nextTick()
+    vi.advanceTimersByTime(25)
+    expect(displayed.value).toBe(pending)
+    const closed = pending + '"}\n```'
+    message.text = closed + '\n\n后续正文'
+    await nextTick()
+    vi.advanceTimersByTime(25)
+    expect(displayed.value).toBe(closed)
+    vi.advanceTimersByTime(25)
+    expect(displayed.value).toBe(closed + '\n\n后续正')
+  })
+
   it('结束时平稳排空，后续工具卡出现时同步结算前文', async () => {
     const { message, displayed, presenting } = mount()
     message.text = '快照'.repeat(300)

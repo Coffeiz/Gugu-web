@@ -295,6 +295,7 @@ describe('个人设置中的 IM 群权限', () => {
       start: vi.fn(async () => ({ scan_url: 'https://example.test/qr' })),
       poll: vi.fn(async () => ({ status: 'pending' })),
       setMessageFormat: vi.fn(async () => status),
+      updateGroupSettings: vi.fn(async () => status),
       setPrivateStreaming: vi.fn(async () => status),
       setGroupReplyMode: vi.fn(async () => status),
       setGroupWebTools: vi.fn(async () => status),
@@ -344,9 +345,58 @@ describe('个人设置中的 IM 群权限', () => {
     await flushUi()
     ;(card.querySelector('[aria-label="profileImUi.toggleMemberMemory"]') as HTMLButtonElement).click()
     await flushUi()
-    expect(pairing.setGroupOwnerMemory).toHaveBeenCalledWith(true)
-    expect(pairing.setGroupMemory).toHaveBeenCalledWith(false)
-    expect(pairing.setMemberMemory).toHaveBeenCalledWith(false)
+    expect(pairing.updateGroupSettings).toHaveBeenCalledWith({ groupOwnerMemoryEnabled: true })
+    expect(pairing.updateGroupSettings).toHaveBeenCalledWith({ groupMemoryEnabled: false })
+    expect(pairing.updateGroupSettings).toHaveBeenCalledWith({ memberMemoryEnabled: false })
+  })
+
+  it('桌面飞书沿用共享的群回应和记忆设置，并通过统一补丁写回飞书适配器', async () => {
+    const status: DesktopImPairingStatus = {
+      configured: true, enabled: true, bound: true, groupChatEnabled: true,
+      groupReplyMode: 'reply_all', groupAttentionMode: 'autonomous',
+      privateStreamingEnabled: true, groupOwnerMemoryEnabled: false,
+      groupMemoryEnabled: true, memberMemoryEnabled: true, groupHistorySearchEnabled: true,
+    }
+    const feishu = {
+      status: vi.fn(async () => status), start: vi.fn(async () => ({ scan_url: 'https://example.test/qr' })),
+      poll: vi.fn(async () => ({ status: 'pending' })),
+      updateGroupSettings: vi.fn(async () => status), setPrivateStreaming: vi.fn(async () => status),
+    }
+    const desktopImAdapter: DesktopImSettingsAdapter = {
+      pairings: { feishu }, appearance: vi.fn(async () => ({ imToolDisplayMode: 'all', showIntermediateReplies: false })),
+      updateAppearance: vi.fn(async () => ({ imToolDisplayMode: 'all', showIntermediateReplies: false })),
+    }
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    mocks.desktop = true
+    app = createApp(ProfileImPane, { desktopImAdapter })
+    app.mount(host)
+    await flushUi()
+
+    const card = host.querySelector('[data-platform="feishu"] .pm-bot-item') as HTMLElement
+    const labels = [...card.querySelectorAll('.pm-bot-group-row .pm-field-name')].map(element => element.textContent)
+    expect(labels).toEqual([
+      'profileImUi.groupChat', 'profileImUi.responseMode', 'profileImUi.groupAttentionMode',
+      'profileImUi.groupMemory', 'profileImUi.memberMemory', 'profileImUi.memberTools',
+    ])
+    const responseRow = [...card.querySelectorAll('.pm-bot-group-row')]
+      .find(row => row.querySelector('.pm-field-name')?.textContent === 'profileImUi.responseMode') as HTMLElement
+    expect(responseRow.querySelector('.pm-field-hint')?.textContent).toBe('profileImUi.feishuGroupResponseHint')
+    expect(card.querySelector('[aria-label="profileImUi.toggleGroupOwnerMemory"]')).not.toBeNull()
+    const natural = Array.from(card.querySelectorAll('.pm-tool-options button'))
+      .find(button => button.textContent?.includes('profileImUi.groupAttentionNatural')) as HTMLButtonElement
+    natural.click()
+    await flushUi()
+    ;(card.querySelector('[aria-label="profileImUi.toggleGroupOwnerMemory"]') as HTMLButtonElement).click()
+    await flushUi()
+    ;(card.querySelector('[aria-label="profileImUi.toggleGroupMemory"]') as HTMLButtonElement).click()
+    await flushUi()
+    ;(card.querySelector('[data-tool-option="group_context_search"]') as HTMLButtonElement).click()
+    await flushUi()
+    expect(feishu.updateGroupSettings).toHaveBeenCalledWith({ groupAttentionMode: 'natural' })
+    expect(feishu.updateGroupSettings).toHaveBeenCalledWith({ groupOwnerMemoryEnabled: true })
+    expect(feishu.updateGroupSettings).toHaveBeenCalledWith({ groupMemoryEnabled: false })
+    expect(feishu.updateGroupSettings).toHaveBeenCalledWith({ groupHistorySearchEnabled: false })
   })
 
   it('群成员的 Provider 联网搜索单独授权，切换其他工具不会丢失该权限', async () => {

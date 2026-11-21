@@ -8,7 +8,8 @@ import { IM_BINDING_TTL_SECONDS, IM_BINDING_MAX_ATTEMPTS } from '@gugu/core/im/b
 import { updateUserBotGroupTools, userBotGroupToolFlags } from '@gugu/core/im/user-bots'
 import { classifyImGroupInbound, resolveImActor } from '@gugu/core/im/access'
 import { createHash, randomInt, randomUUID } from 'node:crypto'
-import { createGatewaySupervisor, createImGroupAttentionGate, parseImReceivedMessage, readImReceivedMessage, type ImGroupAttentionHistory, type ImReceivedMessage } from '@gugu/gateway'
+import { createGatewaySupervisor, createImGroupAttentionGate, parseImReceivedMessage, readImReceivedMessage, type ImGroupAttentionHistory,
+  type ImPendingAskResume, type ImPendingAskStore, type ImReceivedMessage } from '@gugu/gateway'
 import { handleTelegramBinding, createTelegramAdapter, createPersistentTelegramProjection, processTelegramAttachments, telegramAttachmentReference, TelegramApiError, verifyTelegramBotIdentity } from '@gugu/gateway/telegram'
 import { createNodeProviderTransport, desktopTransportOptions } from '@gugu/core/providers/node'
 import type { DesktopTelegramMessage, DesktopTelegramSnapshot } from '@gugu/core/desktop'
@@ -19,6 +20,7 @@ import { createDesktopTelegramConfig, parseDesktopTelegramBot, validTelegramPriv
 import type { createDesktopImCallback } from '../../interactions/callback.js'
 import { desktopImEventKey, type DesktopImFile, type createDesktopImInbox } from '../../inbound/inbox.js'
 import type { createDesktopImDispatch } from '../../delivery/dispatch.js'
+import { startDesktopImPendingAskPump } from '../../inbound/pending-asks.js'
 
 type Inbox = { cursor: number | null; messages: DesktopTelegramMessage[] }
 const inboxLimit = 100
@@ -34,7 +36,8 @@ function parseInbox(value: unknown): Inbox {
 
 export function createDesktopTelegramGateway(directory: string, encryption: DesktopTelegramEncryption, connect = createTelegramAdapter,
   resolveProxy?: NonNullable<Parameters<typeof createNodeProviderTransport>[0]>['resolveProxy'],
-  admit?: ReturnType<typeof createDesktopImInbox>, dispatch?: ReturnType<typeof createDesktopImDispatch>, callback?: ReturnType<typeof createDesktopImCallback>, voice?: DesktopImVoice, attachmentHost?: IpcHost) {
+  admit?: ReturnType<typeof createDesktopImInbox>, dispatch?: ReturnType<typeof createDesktopImDispatch>, callback?: ReturnType<typeof createDesktopImCallback>, voice?: DesktopImVoice,
+  attachmentHost?: IpcHost, pendingAsks?: ImPendingAskStore) {
   const store = createDesktopTelegramConfig(directory, encryption)
   const emptyInbox: Inbox = { cursor: null, messages: [] }
   const botId = (bot: DesktopTelegramBot) => bot.token.split(':', 1)[0]!
@@ -70,6 +73,7 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
       const dispatchSignal = AbortSignal.any([signal, controller.signal])
       const groupDeliveries = new Map<string, Promise<void>>()
       const groupAttention = createImGroupAttentionGate()
+      let stopPendingAskPump = () => {}
       async function authorize() {
         if (dispatchSignal.aborted) return false
         const latest = await store.read()
@@ -230,7 +234,14 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
           signal.throwIfAborted()
           if (!await authorize()) throw new DesktopError('cancelled', 'IM 连接已变更')
           if (!payload.text.trim() && !files.length) return null
+          const ready = { ...payload, attachments: [], quoted_attachments: [] }
+          const event = readImReceivedMessage(connection, ready)
+          let pendingAsk = false
           if (isGroup && groupId && latest && !recordOnly && latest.groupReplyMode === 'reply_all') {
+            const pendingScope = { ownerId: 'desktop', botId: botId(bot), platform: 'telegram' as const, groupId }
+            await pendingAsks?.observe(pendingScope, { eventMs: Date.now(), senderId: event.scope.platformUserId,
+              replyTo: typeof payload.reply_to_platform_message_id === 'string' ? payload.reply_to_platform_message_id : undefined,
+              directMention: event.botMentioned }, dispatchSignal)
             const attentionHistory = attachmentHost
               ? await attachmentHost.request<ImGroupAttentionHistory>('im.inbox.groupAttentionHistory', {
                 platform: 'telegram', connectionId: groupConnectionId(latest, groupId),
@@ -240,12 +251,23 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
               mode: latest.groupAttentionMode,
               payload: { ...payload, processable_media: files.length > 0 } }, attentionHistory)
             recordOnly = !attention.run
+            pendingAsk = attention.pendingAsk && !files.length && Boolean(event.text.trim())
             sourceAttentionKind = attentionSourceKind(attention.decision.kind)
           }
-          const ready = { ...payload, attachments: [], quoted_attachments: [] }
           if (admit) {
-            const event = readImReceivedMessage(connection, ready)
-            if (recordOnly) await admit(eventConnectionId, event, undefined, { files, recordOnly, ownerPlatformUserId: bot.chatId!, authorize: eventAuthorize })
+            if (recordOnly) {
+              const recorded = await admit(eventConnectionId, event, undefined, { files, recordOnly, ownerPlatformUserId: bot.chatId!, authorize: eventAuthorize })
+              if (recorded && pendingAsk && pendingAsks && attachmentHost && groupId) {
+                const eventKey = desktopImEventKey(event), eventMs = Date.now()
+                const sealedEvent = await encryption.encryptStringAsync(JSON.stringify({ event, sourceAttentionKind,
+                  pendingAskResume: true }))
+                await pendingAsks.register({ ownerId: 'desktop', botId: botId(bot), platform: 'telegram', groupId }, {
+                  eventId: `${eventMs}-${eventKey}`, eventMs, platformMessageId: event.platformMessageId ?? event.eventId,
+                  senderId: event.scope.platformUserId, payload: { eventKey, event, ownerPlatformUserId: bot.chatId,
+                    sourceAttentionKind, sealedEvent: sealedEvent.toString('base64') },
+                }, dispatchSignal)
+              }
+            }
             else {
               if (isGroup && groupId) startGroupDispatch(groupId)
               if (files.length) await admit(eventConnectionId, event, undefined, { files, authorize: eventAuthorize,
@@ -292,6 +314,33 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
           },
         },
       })
+      if (pendingAsks && attachmentHost && dispatch && bot.chatId) stopPendingAskPump = startDesktopImPendingAskPump({
+        store: pendingAsks, signal: dispatchSignal,
+        async authorize(resume, currentSignal) {
+          currentSignal.throwIfAborted()
+          const latest = await store.read(), payload = resume.trigger.payload
+          if (!latest?.chatId || !latest.groupChatEnabled || latest.groupReplyMode !== 'reply_all'
+            || resume.scope.platform !== 'telegram' || resume.scope.botId !== botId(latest)
+            || !isRecord(payload) || typeof payload.eventKey !== 'string' || payload.ownerPlatformUserId !== latest.chatId
+            || typeof payload.sealedEvent !== 'string' || !isRecord(payload.event)) return false
+          const event = parseImReceivedMessage(connection, payload.event)
+          return event.scope.chatType === 'group' && event.scope.chatId === resume.scope.groupId
+            && event.scope.platformUserId === resume.trigger.senderId && desktopImEventKey(event) === payload.eventKey
+        },
+        async dispatch(resume: ImPendingAskResume, currentSignal: AbortSignal) {
+          currentSignal.throwIfAborted()
+          const payload = resume.trigger.payload
+          if (!isRecord(payload) || typeof payload.eventKey !== 'string' || typeof payload.ownerPlatformUserId !== 'string'
+            || typeof payload.sealedEvent !== 'string' || !isRecord(payload.event)) throw new Error('桌面 Telegram 延迟收件无效')
+          const latest = await store.read()
+          if (!latest?.chatId) return
+          const accepted = await attachmentHost.request<boolean>('im.inbox.resumePendingAsk', { platform: 'telegram',
+            connectionId: groupConnectionId(latest, resume.scope.groupId), eventKey: payload.eventKey,
+            sealedEvent: payload.sealedEvent, ownerPlatformUserId: payload.ownerPlatformUserId,
+            platformUserId: resume.trigger.senderId, text: String(payload.event.text ?? '') })
+          if (accepted) startGroupDispatch(resume.scope.groupId)
+        },
+      })
       if (attachmentHost) recovery = recoverGroups().catch(() => {}).finally(() => { recovery = undefined })
       if (!dispatch || !bot.chatId) return handle
       const delivery = dispatch({ connection, connectionId: connectionId(bot), userId: bot.chatId,
@@ -334,6 +383,7 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
         },
       })
       const closed = handle.closed.finally(() => controller.abort()).then(async () => {
+        stopPendingAskPump()
         await recovery
         await delivery
         await Promise.allSettled(groupDeliveries.values())

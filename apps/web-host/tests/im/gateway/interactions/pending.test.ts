@@ -2,11 +2,24 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { createRedisStreamCommands } from '../../../../src/adapters/cache/redis-stream-commands.js'
-import { createRedisImPendingAskStore, pumpImPendingAsks, PENDING_ASK_RUN_PROOF_TTL_SECONDS } from '../../../../src/modules/im/gateway/interactions/ask.js'
+import { IM_PENDING_ASK_MAX_WAIT_MS, IM_PENDING_ASK_MIN_WAIT_MS, IM_PENDING_ASK_QUIET_MS, imPendingAskDueAt, isImPendingAskReady, pumpImPendingAsks } from '@gugu/gateway'
+import { createRedisImPendingAskStore, PENDING_ASK_RUN_PROOF_TTL_SECONDS } from '../../../../src/modules/im/gateway/interactions/ask.js'
 
 const signal = new AbortController().signal
 const scope = { ownerId: randomUUID(), botId: '42', platform: 'qq' as const, groupId: 'synthetic-group' }
 const trigger = (at: number, eventId = 'synthetic-event') => ({ eventId, eventMs: at, platformMessageId: 'synthetic-platform-message', senderId: 'synthetic-member', payload: { text: '合成敏感问题', context_token: 'synthetic-private-context', attachments: [] } })
+
+test('Web 与 Desktop 共用 ASK 最短等待、安静窗口和最长等待策略', () => {
+  const startedAt = 1_000
+  assert.equal(IM_PENDING_ASK_MIN_WAIT_MS, 60_000)
+  assert.equal(IM_PENDING_ASK_QUIET_MS, 30_000)
+  assert.equal(IM_PENDING_ASK_MAX_WAIT_MS, 180_000)
+  assert.equal(imPendingAskDueAt({ startedAt, latestAskAt: startedAt, latestActivityAt: startedAt }), startedAt + 60_000)
+  assert.equal(imPendingAskDueAt({ startedAt, latestAskAt: startedAt + 30_000, latestActivityAt: startedAt + 50_000 }), startedAt + 90_000)
+  assert.equal(imPendingAskDueAt({ startedAt, latestAskAt: startedAt + 170_000, latestActivityAt: startedAt + 170_000 }), startedAt + 180_000)
+  assert.equal(isImPendingAskReady({ startedAt, latestAskAt: startedAt, latestActivityAt: startedAt + 30_000 }, startedAt + 60_000), true)
+  assert.equal(isImPendingAskReady({ startedAt, latestAskAt: startedAt, latestActivityAt: startedAt + 40_000 }, startedAt + 60_000), false)
+})
 
 test('延迟ASK只接受精确单事件；取消发生前不写Redis，错误不包含正文或凭据', async () => {
   const calls: string[][] = []

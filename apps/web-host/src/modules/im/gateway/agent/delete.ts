@@ -9,7 +9,8 @@ import {enqueueCleanupLocked} from '../memory/history.js'
 import {withImReflectionOwnerLock} from '../memory/jobs.js'
 import {imActorInputForDispatch} from './reconstruct.js'
 import {createImRunSourceProof} from './scope.js'
-import type {createRedisImPendingAskStore,ImPendingAskScope} from '../interactions/ask.js'
+import type {ImPendingAskScope} from '@gugu/gateway'
+import type {createRedisImPendingAskStore} from '../interactions/ask.js'
 
 export class ImSessionDeleteBusy extends Error{readonly statusCode=409;constructor(){super('会话仍在处理消息或被引用，请稍后重试');this.name='ImSessionDeleteBusy'}}
 export class ImSessionDeleteUnavailable extends Error{readonly statusCode=503;constructor(){super('会话删除服务暂不可用');this.name='ImSessionDeleteUnavailable'}}

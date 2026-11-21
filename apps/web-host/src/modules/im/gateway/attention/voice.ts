@@ -3,7 +3,7 @@ import type { ImActor } from '@gugu/core/im/access'
 import type { ImAudioInput } from '../inbound/message.js'
 import type { ImAttachmentScope } from '../inbound/attachments.js'
 import type { ImAttentionCandidate } from './runtime.js'
-import type { ImPendingAskScope } from '../interactions/ask.js'
+import type { ImPendingAskScope } from '@gugu/gateway'
 
 /** 只含永久消息/附件身份；原生平台消息ID与正文不进入明文ASR收据。 */
 export interface ImAttentionVoiceIdentity {

@@ -20,7 +20,10 @@
       <span v-else class="msg-quoted-file" @click.stop="$emit('openFile', f)">{{ f.name }}{{ f.ext ? `.${f.ext}` : '' }}</span>
     </template>
   </div>
-  <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body" @click="onBodyClick"><GuguChatCitations :html="assistantHtml" :text="displayed" :presenting="presenting" :sources="sources" :snapshot-message="sessionId && msg.dbId ? JSON.stringify([sessionId, msg.dbId, msg._createdAt ?? '']) : undefined" /></div>
+  <GuguChatCitations v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)"
+    :html="assistantHtml" :text="displayed" :presenting="presenting" :sources="sources"
+    :snapshot-message="sessionId && msg.dbId ? JSON.stringify([sessionId, msg.dbId, msg._createdAt ?? '']) : undefined"
+    @body-click="onBodyClick" />
   <!-- 用户消息也走 MD 渲染（sanitize 后），和 AI 气泡同一条链路；样式差异由
        .user-md 在 GuguChat.vue 里按紫底气泡重映射。输入框侧保持纯文本不渲染。 -->
   <div v-else-if="msg.text || msg.references?.length" class="msg-bubble user-md" @click="onBodyClick"><MarkdownView :html="msg.html ?? renderChatMd(displayQQFaces(msg.text), msg.references)" :text="msg.text" chat render-math /></div>
@@ -87,8 +90,8 @@
     </div>
     </template>
   </div>
-  <div v-if="timestamp || showCopy" class="msg-footer">
-    <span v-if="timestamp" class="msg-time">{{ timestamp }}</span>
+  <div v-if="visibleTimestamp || showCopy" class="msg-footer">
+    <span v-if="visibleTimestamp" class="msg-time">{{ visibleTimestamp }}</span>
     <button v-if="showCopy" class="msg-copy-btn" @click="$emit('copy', msg)" :title="t('chat.copy')">
       <Icon name="status.success" v-if="copiedId === msg.id" :size="11" />
       <Icon name="action.copy"  v-else :size="11" />
@@ -143,6 +146,23 @@ const { displayed, presenting } = useStreamText(() => ({
 const assistantHtml = computed(() => {
   if (!presenting.value) return props.msg.html ?? renderChatMd(props.msg.text, props.msg.references)
   return renderMdStream(displayed.value)
+})
+const visibleTimestamp = computed(() => {
+  const { msg, timestamp } = props
+  if (!timestamp || msg.role === 'interaction') return undefined
+  if (msg.role !== 'ai') return timestamp
+  if (!msg.text?.trim()) {
+    const files = msg.files?.filter(file => !file.quoted) ?? []
+    const onlyFileCards = files.length > 0 && files.every(file => file.kind !== 'voice' && !file.qq_face)
+    return msg.linkButtons?.buttons.length || onlyFileCards ? undefined : timestamp
+  }
+  const html = assistantHtml.value
+  if (!html.includes('class="chat-object-cards')) return timestamp
+  const content = document.createElement('template')
+  content.innerHTML = html
+  const blocks = [...content.content.childNodes].filter(node => node.nodeType === Node.ELEMENT_NODE || node.textContent?.trim())
+  return blocks.length && blocks.every(node => node instanceof Element && node.classList.contains('chat-object-cards'))
+    ? undefined : timestamp
 })
 const { t } = useI18n()
 const openTranscripts = ref(new Set<string>())

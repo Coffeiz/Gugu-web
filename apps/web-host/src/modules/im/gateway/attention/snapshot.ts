@@ -4,7 +4,7 @@ import type { AttentionMessage, AttentionSnapshot, BotReplyFact } from '@gugu/co
 import type { RedisCommandClient } from '../../../../workers/redis-stream-queue.js'
 import { createImInboundEnvelope } from '../inbound/envelope.js'
 import { nodeImAttentionKeys } from '../inbound/inbox.js'
-import type { ImPendingAskScope } from '../interactions/ask.js'
+import type { ImPendingAskScope } from '@gugu/gateway'
 
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
 const invalid = () => new Error('群注意力上下文不可用')

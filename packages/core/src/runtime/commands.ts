@@ -20,6 +20,7 @@ export function isMutation(method: string): boolean {
     'projects.board.update',
     'projects.board.delete',
     'projects.board.restore',
+    'projects.board.purge',
     'clients.create',
     'clients.update',
     'clients.delete',
@@ -58,6 +59,7 @@ const commandFields: Readonly<Record<string, readonly string[]>> = {
   'im.inbox.reject': ['platform', 'connectionId', 'eventKey'],
   'im.inbox.recordGroup': ['platform', 'connectionId', 'eventKey', 'text', 'attachments', 'platformUserId', 'platformUserName', 'ownerPlatformUserId'],
   'im.inbox.groupAttentionHistory': ['platform', 'connectionId'],
+  'im.inbox.resumePendingAsk': ['platform', 'connectionId', 'eventKey', 'sealedEvent', 'ownerPlatformUserId', 'platformUserId', 'text'],
   'im.inbox.pendingConnection': ['platform', 'after'],
   'im.inbox.prepare': ['platform', 'connectionId', 'chatType', 'ownerPlatformUserId'],
   'im.inbox.admit': ['platform', 'connectionId', 'eventKey', 'sealedEvent', 'attachments', 'sourceMessageId'],
@@ -82,7 +84,7 @@ const commandFields: Readonly<Record<string, readonly string[]>> = {
   'agent.memory.clear': [],
   'agent.memory.forget': ['query', 'revision'],
   'agent.sessions.cancelRun': ['id', 'runId'],
-  'agent.sessions.startRun': ['id', 'text', 'clientId', 'model', 'embedding', 'interactive', 'modelId', 'attachments', 'references', 'queueClaim', 'locale', 'groupSender'],
+  'agent.sessions.startRun': ['id', 'text', 'clientId', 'model', 'embedding', 'interactive', 'modelId', 'attachments', 'references', 'queueClaim', 'locale', 'groupSender', 'resumePassiveMessage'],
   'agent.attachments.stage': ['attachment'],
   'agent.attachments.deleteDraft': ['attach_id'],
   'agent.attachments.clearDrafts': [],
@@ -121,6 +123,7 @@ const commandFields: Readonly<Record<string, readonly string[]>> = {
   'projects.board.update': ['id', 'version', 'fields'],
   'projects.board.delete': ['id'],
   'projects.board.restore': ['id'],
+  'projects.board.purge': ['id'],
   'clients.list': [],
   'clients.update': ['id', 'fields'],
   'clients.delete': ['id'],
@@ -266,6 +269,7 @@ export function validateCommandParams(method: string, params: Fields): void {
     }
     if ((params.locale !== undefined && params.locale !== 'zh-CN' && params.locale !== 'ja-JP' && params.locale !== 'en-US')
       || (params.interactive !== undefined && typeof params.interactive !== 'boolean')
+      || (params.resumePassiveMessage !== undefined && typeof params.resumePassiveMessage !== 'boolean')
       || (params.modelId !== undefined && (typeof params.modelId !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(params.modelId)))
       || typeof params.text !== 'string' || Buffer.byteLength(params.text) > 12_000
       || (!params.text.trim() && (!Array.isArray(params.attachments) || !params.attachments.length)

@@ -13,7 +13,7 @@
       <!-- v-memo：同一帧内其它消息在变（比如正在流式输出的那条）时，跳过这一行没变的
            子树重新生成——虚拟列表已经把同时挂载的行数摁在个位数附近，这里收益比之前小，
            但仍能省掉一趟不必要的 vnode diff。 -->
-      <div v-for="{ row, msg, messageIndex, tools, timestamp } in rowsWithMsg" :key="String(row.key)" :data-index="row.index"
+      <div v-for="{ row, msg, messageIndex, tools, timestamp, elapsedMs } in rowsWithMsg" :key="String(row.key)" :data-index="row.index"
            :data-message-id="String(msg.id)" :ref="measureRow"
            :class="['msg-virtual-row', { 'is-tool-row': msg.role === 'tool', 'is-interaction-row': msg.role === 'interaction' }]"
            :style="{ transform: `translateY(${row.start}px)` }">
@@ -21,7 +21,7 @@
           <GuguChatToolActivity
             class="msg tool" :data-db-id="msg.dbId || ''" :tools="tools" :session-id="sessionId"
             :expanded="expandedActivityIds.has(msg.id)" :expanded-tools="expandedToolMessageIds"
-            :awaiting-reply="streaming && row.index === projection.openGroupIndex"
+            :awaiting-reply="streaming && row.index === projection.openGroupIndex" :elapsed-ms="elapsedMs"
             @toggle="toggleActivity(msg.id)" @detail="setToolExpanded"
           />
         </div>
@@ -152,7 +152,7 @@ function onSelectionPointerDown(event: PointerEvent) {
   if (!event.isPrimary || event.button !== 0) return
   const target = event.target instanceof Element ? event.target : null
   if (!target || target.closest('button, a, input, textarea, select, [contenteditable="true"]')) return
-  if (!target.closest('.msg-bubble, .tool-detail-shell')) return
+  if (!target.closest('.msg-bubble, .chat-assistant-smart-card, .tool-detail-shell')) return
   const messageId = rowMessageId(target)
   if (!messageId) return
   selectionActive.value = true
@@ -249,9 +249,9 @@ const virtualTotalSize = computed(() => virtualizer.value.getTotalSize())
 const rowsWithMsg = computed(() => virtualRows.value.flatMap(row => {
   const projected = projection.value.rows[row.index]
   if (!projected) return []
-  const { msg, messageIndex, tools } = projected
+  const { msg, messageIndex, tools, elapsedMs } = projected
   const timestamp = tools ? undefined : msg.time
-  return [{ row, msg, messageIndex, tools, timestamp }]
+  return [{ row, msg, messageIndex, tools, timestamp, elapsedMs }]
 }))
 const visibleChatMessages = computed(() => rowsWithMsg.value.map(row => row.msg))
 const sourcesForMessage = useChatSources(() => props.sessionId, () => props.messages, () => visibleChatMessages.value)

@@ -5,6 +5,7 @@ import { i18n } from '@/i18n'
 import { MIND_REF_TYPE_ICON_PATH } from '@/composables/mind/useMindEditor'
 import type { ChatReference } from './chatTypes'
 import { renderObjectCardParagraph } from './chatObjectCards'
+import { renderSmartView } from './chatSmartViews'
 import { sanitizeChatHtml } from '@/utils/markdown'
 import { normalizeMarkdownMathSource, prepareLatexCodeForMath } from '@/utils/chart/math'
 
@@ -21,6 +22,7 @@ marked.use({
     // 伙伴语气几乎不需要真删除线，把 ~~x~~ 直接渲染成纯文本 x（保留表格等其它 GFM 能力）。
     r.del = (t: Tokens.Del) => (t && t.text) || ''
     r.code = ({ text, lang }: Tokens.Code) => {
+      if (String(lang || '').trim() === 'gugu-ui') return renderSmartView(text)
       if (String(lang || '').trim().toLowerCase() === 'mermaid') {
         return `<pre class="md-mermaid-source"><code>${escapeHtml(text)}</code></pre>`
       }
@@ -227,33 +229,48 @@ export function renderChatMd(text: string, references: ChatReference[] = []) {
   return appendUnmentionedReferences(output.innerHTML, matches)
 }
 
-// 流式渲染专用：补全未闭合的代码围栏，避免 marked 把半段代码块解析成残缺 HTML
-// 单条缓存：同一帧内 text 未变则直接返回上次结果，避免重复解析
-let _mdStreamCache: { text: string; html: string } | null = null
-export function renderMdStream(text: string) {
-  if (!text) return ''
-  if (_mdStreamCache?.text === text) return _mdStreamCache.html
-  const lines = text.split('\n')
+export function scanChatMarkdownFences(lines: string[]) {
+  const smartRanges: { start: number; end: number }[] = []
+  let offset = 0
+  let smartStart = 0
   let openFence: { char: string; size: number; line: number; info: string } | null = null
-  for (let index = 0; index < lines.length; index += 1) {
+  for (let index = 0; index < lines.length; offset += lines[index++].length + 1) {
     const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(lines[index])
     if (!match) continue
     const marker = match[1]
     if (!openFence) {
       openFence = { char: marker[0], size: marker.length, line: index, info: match[2].trim() }
+      if (openFence.info === 'gugu-ui') smartStart = offset
     } else if (marker[0] === openFence.char && marker.length >= openFence.size && !match[2].trim()) {
+      if (openFence.info === 'gugu-ui') smartRanges.push({ start: smartStart, end: offset + lines[index].length })
       openFence = null
     }
   }
+  if (openFence?.info === 'gugu-ui') smartRanges.push({ start: smartStart, end: offset - 1 })
+  return { openFence, smartRanges }
+}
 
-  if (openFence) {
+// 流式渲染保留普通代码块，并为未完成的智能界面显示占位。
+let _mdStreamCache: { text: string; locale: string; html: string } | null = null
+export function renderMdStream(text: string) {
+  if (!text) return ''
+  const locale = i18n.global.locale.value
+  if (_mdStreamCache?.text === text && _mdStreamCache.locale === locale) return _mdStreamCache.html
+  const lines = text.split('\n')
+  const { openFence } = scanChatMarkdownFences(lines)
+  if (openFence?.info === 'gugu-ui') {
+    lines.splice(openFence.line)
+  } else if (openFence) {
     if (openFence.info.split(/\s+/)[0]?.toLowerCase() === 'mermaid') {
       const opening = /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(lines[openFence.line])
       if (opening) lines[openFence.line] = `${opening[1]}${opening[2]}text`
     }
     lines.push(`${openFence.char.repeat(openFence.size)}`)
   }
-  const html = marked.parse(prepareMarkdown(lines.join('\n'))) as string
-  _mdStreamCache = { text, html }
+  const prose = marked.parse(prepareMarkdown(lines.join('\n'))) as string
+  const html = openFence?.info === 'gugu-ui'
+    ? prose + `<section class="chat-smart-view chat-smart-view-generating"><span role="status">${escapeHtml(i18n.global.t('smartView.generating'))}</span></section>`
+    : prose
+  _mdStreamCache = { text, locale, html }
   return html
 }

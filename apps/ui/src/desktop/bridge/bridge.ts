@@ -247,6 +247,11 @@ export const desktopData = {
   updateBoardProject: (id: number, version: number, fields: Record<string, unknown>) =>
     callProjectBoard(bridge => bridge.updateBoardProject(id, version, JSON.parse(JSON.stringify(fields)))),
   deleteBoardProject: (id: number) => callProjectBoard(bridge => bridge.deleteBoardProject(id)),
+  purgeBoardProject: (id: number) => callProjectBoard(bridge => {
+    if (typeof bridge.purgeBoardProject !== 'function')
+      throw new DesktopBridgeError('desktop_update_required', '请更新并重新启动桌面应用后再永久删除项目')
+    return bridge.purgeBoardProject(id)
+  }),
   restoreBoardProject: (id: number) => callProjectBoard(bridge => bridge.restoreBoardProject(id)),
   clients: () => call(bridge => bridge.clients()),
   createClient: (name: string) => call(bridge => bridge.createClient(name)),

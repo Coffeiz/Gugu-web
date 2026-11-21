@@ -499,6 +499,11 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       const data = await source.loadImMemory(identity, signal)
       return { actor: initial.actor, data, groupOwnerMemoryEnabled: initial.groupOwnerMemoryEnabled }
     }
+    async function readMemberReminder(identity: RunIdentity, signal?: AbortSignal) {
+      const memory = await readDesktopImMemory(identity, signal)
+      const personal = memory.actor?.role === 'member' ? formatPlatformUserMemory(memory.data) : ''
+      return personal ? [{ role: 'user' as const, content: `[system-reminder]\n${personal}\n[/system-reminder]` }] : []
+    }
     const resolveProxy: NodeProviderTransportOptions['resolveProxy'] = preferences.useSystemProxy
       ? async (url, signal) => (await hostRequest('network.resolveProxy', { origin: url.origin }, signal) as ProxyEndpoint | null) ?? undefined
       : undefined
@@ -1748,7 +1753,9 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
           if (groupTools) {
             const loaded = await source.load(identity, signal)
             const tools = await configuredTools(identity)
-            return { ...loaded, capabilities: { toolNames: tools.map(tool => tool.name), tools } }
+            const memberReminder = await readMemberReminder(identity, signal)
+            return { ...loaded, capabilities: { toolNames: tools.map(tool => tool.name), tools },
+              input: { ...loaded.input, fixedPrefix: [...loaded.input.fixedPrefix, ...memberReminder] } }
           }
           const turn = await sessionSource.currentTurn(identity, signal)
           const { memory, revision } = await readSqliteAgentMemory(db, ownerId, turn.currentUser?.rawText ?? '', signal, embedding, memoryFiles, resolveProxy)
@@ -1808,10 +1815,12 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
           const snapshot = context?.sourceEffects?.sessionSnapshot.state
           if (!snapshot) throw new Error('运行缺少会话快照')
           const prepared = contextBuilder.buildRequest(readSessionSnapshot(snapshot))
-          const currentMemory = groupChat ? await readDesktopImMemory(_identity, _signal) : null
-          const personal = currentMemory?.actor?.role === 'member' ? formatPlatformUserMemory(currentMemory.data) : ''
-          return { prefix: buildFixedRequestPrefix(prepared), dynamicTail: personal
-            ? [{ role: 'user' as const, content: `[system-reminder]\n${personal}\n[/system-reminder]` }] : [] }
+          const prefix = buildFixedRequestPrefix(prepared)
+          const memberReminder = groupChat ? await readMemberReminder(_identity, _signal) : []
+          const legacy = { prefix, dynamicTail: memberReminder }
+          if (memberReminder.length && context.prepared.requestPrefixSize === prefix.length
+            && context.prepared.requestDigest === digest(legacy)) return legacy
+          return { prefix: [...prefix, ...memberReminder], dynamicTail: [] }
         },
         references: withViewImageReferences({ dehydrate: async entry => entry.message, hydrate: async entry => entry.message }),
         async writeSessionTitle(input, complete) {
@@ -1999,7 +2008,8 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       memoryEmbedding = undefined
     },
     async start(sessionId: number, text: string, clientId: string, config: ProviderConfig, embedding?: RagQueryEmbeddingSettings, interactive = false, modelId?: string,
-      attachments: string[] = [], references: DesktopAgentChatReference[] = [], queueClaim?: { key: number; token: string }, locale?: string, groupSender?: DesktopGroupSender) {
+      attachments: string[] = [], references: DesktopAgentChatReference[] = [], queueClaim?: { key: number; token: string }, locale?: string,
+      groupSender?: DesktopGroupSender, resumePassiveMessage = false) {
       if (responding.has(sessionId)) throw new CoreError('busy', '会话已有运行中的任务')
       const active = await admission.active(ownerId, sessionId)
       if (active?.identity && running.has(sessionId)) throw new CoreError('busy', '会话已有运行中的任务')
@@ -2007,7 +2017,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       const { agent, drainReflections } = await createRunRuntime(sessionId, config, embedding, interactive, undefined, modelId, locale)
       try {
         const stream = await agent.service.start(ownerId, { session_id: sessionId, message: text,
-          client_message_id: clientId, attachments, references, queueClaim, groupSender }, undefined)
+          client_message_id: clientId, attachments, references, queueClaim, groupSender, resumePassiveMessage }, undefined)
         const iterator = stream[Symbol.asyncIterator]()
         const first = await iterator.next()
         if (first.done || typeof first.value.run_id !== 'string') throw new Error('运行确认缺失')

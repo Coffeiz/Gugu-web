@@ -65,6 +65,7 @@
   --control-focus-shadow: 0 0 0 3px color-mix(in srgb,var(--focus-ring) 48%,transparent);
   /* 紧凑进度轨道与音频播放器的无描边滑动条保持一致。 */
   --progress-track-height: 3px;
+  --progress-thumb-size: 10px;
   --progress-track-radius: 99px;
   --progress-track-bg: color-mix(in srgb,var(--action-primary) 14%,transparent);
   --progress-fill-bg: var(--action-primary);

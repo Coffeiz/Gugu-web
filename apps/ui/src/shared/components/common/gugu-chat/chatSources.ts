@@ -83,6 +83,11 @@ export function decorateChatSources(html: string, sources: readonly ChatSource[]
     element.classList.remove('chat-source-pill')
   }
   const byUrl = new Map(sources.map(source => [source.url, source]))
+  // 同路径的查询参数可能指向不同内容。仅复用胶囊外观，摘要和标题仍以精确匹配为准。
+  const pathsWithQuery = new Set(sources.flatMap(source => {
+    const url = sourceUrl(source.url)
+    return url?.search ? [url.origin + url.pathname] : []
+  }))
   function withLinkTitle(source: ChatSource, anchor: Element): ChatSource {
     const label = (anchor.textContent ?? '').trim()
     const title = source.title
@@ -95,7 +100,10 @@ export function decorateChatSources(html: string, sources: readonly ChatSource[]
   function match(anchor: Element | null) {
     if (anchor?.tagName !== 'A' || anchor.closest('pre, code') || anchor.querySelector('img')) return
     const url = sourceUrl(anchor.getAttribute('href'))
-    return url && byUrl.get(url.href)
+    if (!url) return
+    const exact = byUrl.get(url.href)
+    if (exact || url.search || url.hash || !pathsWithQuery.has(url.origin + url.pathname)) return exact
+    return { url: url.href, site: url.hostname, title: '', summary: '', date: '', icon: sourceIcon(url) }
   }
   for (const anchor of root.querySelectorAll<HTMLAnchorElement>('a[href]')) {
     if (!root.contains(anchor)) continue

@@ -17,6 +17,7 @@ export interface DesktopImEnvelope {
   replyContext?: string
   attachments?: string[]
   sourceAttentionKind?: string
+  pendingAskResume?: boolean
 }
 
 export type DesktopImFile = { name: string; ext: string; mime: string; voice: boolean; transcript?: string; sourceIndex?: number; bytes: Uint8Array }
@@ -25,7 +26,7 @@ export function createDesktopImInbox(host: IpcHost, encryption: Pick<typeof safe
   dataDirectory?: string) {
   return async (connectionId: string, event: ImReceivedMessage, replyContext?: string,
     media?: { files: DesktopImFile[]; sourceMessageId?: string; recordOnly?: boolean; ownerPlatformUserId?: string;
-      sourceAttentionKind?: string; authorize(): Promise<boolean>; onAccepted?(ids: readonly string[]): Promise<void> }) => {
+      sourceAttentionKind?: string; authorize(): Promise<boolean>; onAccepted?(ids: readonly string[]): Promise<void> }): Promise<boolean> => {
     if (!media?.recordOnly && !await encryption.isAsyncEncryptionAvailable())
       throw new DesktopError('credential_store', '无法加密本机 IM 收件')
     const eventKey = desktopImEventKey(event)
@@ -39,13 +40,14 @@ export function createDesktopImInbox(host: IpcHost, encryption: Pick<typeof safe
     const written: string[] = []
     let retain = false
     let committed = false
+    let acceptedRecord = false
     try {
       if (media && attachments?.length) {
         if (!dataDirectory) throw new DesktopError('storage_error', 'IM 附件存储目录不可用')
         for (const [index, attachment] of attachments.entries())
           written.push(await writeDesktopAgentAttachment(dataDirectory, attachment.attachId, media.files[index]!.bytes))
       }
-      if (media && !await media.authorize()) return
+      if (media && !await media.authorize()) return false
       retain = true
       const scope = { platform: event.scope.platform, connectionId, eventKey }
       const files = attachments ? { attachments } : {}
@@ -54,6 +56,7 @@ export function createDesktopImInbox(host: IpcHost, encryption: Pick<typeof safe
         : await host.request<boolean>('im.inbox.recordGroup', { ...scope, text: event.text, platformUserId: event.scope.platformUserId, platformUserName: event.platformUserName,
           ownerPlatformUserId: media?.ownerPlatformUserId, ...files })
       committed = accepted === true
+      acceptedRecord = accepted === true
       retain = accepted !== false
       if (accepted === true && attachments) await media?.onAccepted?.(attachments.map(file => file.attachId))
     } catch (error) {
@@ -62,5 +65,6 @@ export function createDesktopImInbox(host: IpcHost, encryption: Pick<typeof safe
     } finally {
       if (!retain) await rollbackImMedia(written, path => rm(path, { force: true }))
     }
+    return acceptedRecord
   }
 }

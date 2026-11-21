@@ -67,7 +67,7 @@
             <Icon name="media.speaker-low"   v-else-if="!muted && volume > 0" :size="14" />
             <Icon name="media.speaker-off" v-else :size="14" />
           </button>
-          <input class="mp-vol-slider" type="range" min="0" max="1" step="0.02" :value="volume" :style="{ '--volume-progress': `${volume * 100}%` }" @input="onSetVolume" />
+          <input class="mp-vol-slider progress-range" type="range" min="0" max="1" step="0.02" :value="volume" :style="{ '--progress-position': `${volume * 100}%` }" @input="onSetVolume" />
         </div>
       </div>
 
@@ -225,7 +225,7 @@ function trackName(track: AudioTrack) {
 .mp-track::before { content: ''; position: absolute; inset: -5px 0; border-radius: 99px; background: transparent; }
 .mp-track:hover .mp-thumb { opacity: 1; }
 .mp-fill { position: absolute; top: 0; height: 100%; border-radius: var(--progress-track-radius); background: var(--progress-fill-bg); pointer-events: none; }
-.mp-thumb { position: absolute; top: 50%; transform: translate(-50%,-50%); width: 10px; height: 10px; border-radius: 50%; background: var(--action-primary); pointer-events: none; opacity: 0; transition: opacity 0.15s; }
+.mp-thumb { position: absolute; top: 50%; transform: translate(-50%,-50%); width: var(--progress-thumb-size); height: var(--progress-thumb-size); border-radius: 50%; background: var(--progress-fill-bg); pointer-events: none; opacity: 0; transition: opacity 0.15s; }
 .mp-btn--pin { width: 24px; height: 24px; border-radius: 6px; border: none; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; background: none; color: var(--text-secondary); transition: background 0.12s, color 0.12s; }
 .mp-btn--pin svg { display: block; }
 .mp-btn--pin:hover { background: var(--action-soft-hover); color: var(--action-primary); }
@@ -256,11 +256,7 @@ function trackName(track: AudioTrack) {
 .mp-vol-btn { width: 22px; height: 22px; border: none; border-radius: 6px; background: none; color: var(--text-secondary); display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; transition: background 0.12s, color 0.12s; }
 .mp-vol-btn:hover { background: var(--action-soft-hover); color: var(--action-primary); }
 .mp-vol-btn svg { display: block; }
-.mp-vol-slider { width: 60px; height: 3px; margin: 0; padding: 0; appearance: none; border: 0; border-radius: 99px; outline: none; cursor: pointer; background: linear-gradient(to right, var(--action-primary) 0 var(--volume-progress), color-mix(in srgb, var(--action-primary) 14%, transparent) var(--volume-progress) 100%); }
-.mp-vol-slider::-webkit-slider-runnable-track { height: 3px; border: 0; border-radius: 99px; background: transparent; }
-.mp-vol-slider::-webkit-slider-thumb { width: 10px; height: 10px; margin-top: -3.5px; appearance: none; border: 0; border-radius: 50%; background: var(--action-primary); }
-.mp-vol-slider::-moz-range-track { height: 3px; border: 0; border-radius: 99px; background: transparent; }
-.mp-vol-slider::-moz-range-thumb { width: 10px; height: 10px; border: 0; border-radius: 50%; background: var(--action-primary); }
+.mp-vol-slider { inline-size: 60px; }
 .mp-playlist { box-sizing: border-box; overflow: hidden; border: 1px solid var(--glass-card-border); border-radius: 8px; background: color-mix(in srgb, var(--surface-card-solid) 72%, transparent); }
 .mp-playlist-header { display: flex; justify-content: space-between; padding: 7px 9px 5px; color: var(--text-secondary); font-size: 10px; }
 .mp-playlist-items { display: flex; flex-direction: column; gap: 1px; max-height: 154px; overflow-y: auto; padding: 0 4px 4px; }

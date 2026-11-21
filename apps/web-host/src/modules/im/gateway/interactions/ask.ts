@@ -1,20 +1,12 @@
 import { createCipheriv, createDecipheriv, createHmac, hkdfSync, randomBytes } from 'node:crypto'
+import {
+  IM_PENDING_ASK_MAX_WAIT_MS, IM_PENDING_ASK_MIN_WAIT_MS, IM_PENDING_ASK_QUIET_MS,
+  type ImPendingAskResume, type ImPendingAskScope, type ImPendingAskTrigger,
+} from '@gugu/gateway'
 import type { RedisCommandClient } from '../../../../workers/redis-stream-queue.js'
 
-export const PENDING_ASK_MIN_WAIT_MS = 60_000
-export const PENDING_ASK_QUIET_MS = 30_000
-export const PENDING_ASK_MAX_WAIT_MS = 180_000
 /** 与Node持久派发保留期一致；Python旧取消水位仅600秒。 */
 export const PENDING_ASK_RUN_PROOF_TTL_SECONDS = 7 * 24 * 60 * 60
-export interface ImPendingAskScope { ownerId: string; botId: string; platform: 'qq' | 'feishu' | 'telegram'; groupId: string }
-/** 只能由完成准入、授权及注意力评分的调用方提供单条触发事件，不接收合批载荷。 */
-export interface ImPendingAskTrigger {
-  eventId: string; eventMs: number; platformMessageId: string; senderId: string
-  payload: Readonly<Record<string, unknown>>
-}
-export interface ImPendingAskResume {
-  scope: ImPendingAskScope; trigger: ImPendingAskTrigger; resumeId: string; latestAskMs: number
-}
 const index = 'im:node:{pending-ask}:due:v1'
 const prefix = 'im:node:{pending-ask}:v1:'
 const failure = () => new Error('群延迟回复状态暂时不可用')
@@ -23,6 +15,7 @@ const object = (value: unknown): value is Record<string, unknown> => !!value && 
 const time = (value: number) => Number.isSafeInteger(value) && value > 0
 // 在任何写入前检查类型，避免Lua错误造成部分变更。索引只存不可逆scope摘要。
 const header = `
+local MIN_WAIT=${IM_PENDING_ASK_MIN_WAIT_MS}; local QUIET=${IM_PENDING_ASK_QUIET_MS}; local MAX_WAIT=${IM_PENDING_ASK_MAX_WAIT_MS}
 for i,key in ipairs(KEYS) do
  local kind=redis.call('TYPE',key); if type(kind)=='table' then kind=kind.ok end
  local expected=i==2 and 'zset' or 'string'
@@ -30,7 +23,7 @@ for i,key in ipairs(KEYS) do
 end
 local id=ARGV[1]; local at=tonumber(ARGV[2])
 local raw=redis.call('GET',KEYS[1]); local s=raw and cjson.decode(raw) or nil
-local function due(v) return math.min(math.max(v.started+60000,v.latest+60000,v.activity+30000),v.started+180000) end
+local function due(v) return math.min(math.max(v.started+MIN_WAIT,v.latest+MIN_WAIT,v.activity+QUIET),v.started+MAX_WAIT) end
 local function save(v)
  redis.call('SET',KEYS[1],cjson.encode(v),'EX',600); redis.call('ZADD',KEYS[2],due(v),id)
 end
@@ -66,8 +59,8 @@ redis.call('DEL',KEYS[1]); redis.call('ZREM',KEYS[2],id); return 1
 const claim = header + `
 if not s then redis.call('ZREM',KEYS[2],id); return false end
 if s.resume~=ARGV[3] then return false end
-local ready=at>=s.latest+60000 and at-s.activity>=30000
-if at>=s.started+180000 and not ready then
+local ready=at>=s.latest+MIN_WAIT and at-s.activity>=QUIET
+if at>=s.started+MAX_WAIT and not ready then
  redis.call('DEL',KEYS[1]); redis.call('ZREM',KEYS[2],id); return false
 end
 if ready and due(s)<=at then
@@ -207,24 +200,4 @@ export function createRedisImPendingAskStore(options: { redis: RedisCommandClien
     },
   }
   return store
-}
-
-/** 每次唤醒重新授权；dispatch必须持久化稳定resumeId的内部收据，未知入队结果保留重试。 */
-export async function pumpImPendingAsks(options: {
-  store: ReturnType<typeof createRedisImPendingAskStore>
-  authorize(resume: ImPendingAskResume, signal: AbortSignal): Promise<boolean>
-  dispatch(resume: ImPendingAskResume, signal: AbortSignal): Promise<void>
-}, signal: AbortSignal): Promise<number> {
-  let dispatched = 0
-  for (const resume of await options.store.claimDue(100, signal)) {
-    signal.throwIfAborted()
-    if (!await options.store.isCurrent(resume, signal)) continue
-    if (await options.store.isCancelled(resume, signal)) { await options.store.complete(resume, signal); continue }
-    if (!await options.authorize(resume, signal)) { await options.store.complete(resume, signal); continue }
-    // 授权等待期间新ASK或直接召唤可能替换旧触发；内部dispatch仍须以resumeId原子幂等。
-    if (!await options.store.isCurrent(resume, signal) || await options.store.isCancelled(resume, signal)) continue
-    await options.dispatch(resume, signal)
-    await options.store.complete(resume, signal); dispatched++
-  }
-  return dispatched
 }

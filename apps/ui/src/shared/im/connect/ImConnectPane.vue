@@ -62,6 +62,7 @@
           :group-attention-mode="desktopPairingStatus[platform.key]?.groupAttentionMode ?? 'autonomous'"
           :show-attention-mode="platform.key === 'feishu'"
           :response-guide="platform.key === 'qq' ? 'qq' : undefined"
+          :response-mode-hint="platform.key === 'feishu' ? 'profileImUi.feishuGroupResponseHint' : undefined"
           :show-message-format="platform.key === 'qq'" show-private-streaming
           :message-format-bot="{ group_message_format: desktopPairingStatus[platform.key]?.groupMessageFormat, private_message_format: desktopPairingStatus[platform.key]?.privateMessageFormat, private_streaming_enabled: desktopPairingStatus[platform.key]?.privateStreamingEnabled }"
           :group-owner-memory-enabled="desktopPairingStatus[platform.key]?.groupOwnerMemoryEnabled === true"

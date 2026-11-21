@@ -16,7 +16,7 @@ export interface DesktopAgentRuntimePort {
   start(sessionId: number, text: string, clientId: string, config: ProviderConfig,
     embedding?: RagQueryEmbeddingSettings, interactive?: boolean, modelId?: string,
     attachments?: string[], references?: DesktopAgentChatReference[], queueClaim?: { key: number; token: string },
-    locale?: string, groupSender?: DesktopGroupSender): Promise<unknown>
+    locale?: string, groupSender?: DesktopGroupSender, resumePassiveMessage?: boolean): Promise<unknown>
   runModel(sessionId: number, runId: string): Promise<string | null | undefined>
   respond(sessionId: number, runId: string, promptId: number, eventId: string,
     reply: { token: string; selectedOptionIds?: string[]; customAnswer?: string } | { text: string } | { secrets: Record<string, string> | null } | null,

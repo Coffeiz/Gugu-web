@@ -131,6 +131,8 @@
         :pending-att="pendingAtt" :att-uploading="attUploading" :standalone-references="dropFilesAsReferences"
         :recording="recording" :record-secs="recordSecs" :voice-input-available="voiceInputAvailable"
         :expanded="expanded" :streaming="streaming" :vw="vw"
+        :can-interrupt-detached-run="canInterruptDetachedRun" :interrupt-pending="interruptPending"
+        :on-interrupt-detached-run="onInterruptDetachedRun"
         :automatic-mode-enabled="automaticModeEnabled"
         :automatic-mode-available="automaticModeAvailable"
         :automatic-mode-saving="automaticModeSaving"
@@ -386,7 +388,7 @@ defineExpose({
 
 /* ── 单一布局 ── */
 .chat-window { display: flex; }
-.chat-main { --chat-assistant-bubble-max-width: 88%; flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.chat-main { --chat-assistant-bubble-max-width: 100%; flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
 .chat-header {
   min-height: var(--gugu-chat-header-height);
@@ -563,7 +565,7 @@ defineExpose({
    没法在模板里挂 class，数值直接写这里（hover/active 与全局 .press-fx 保持一致） */
 /* .msg-bubble.md-body 本体现在渲染于 GuguChatMessageRow.vue（子组件），这里必须整条选择器都用 :deep() 才能穿透组件边界匹配到，光把内层 a 包 :deep()
    不够——外层 class 名同样带着父组件的 scope 校验。 */
-:deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card)) {
+:deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card, .chat-smart-row, .chat-smart-button)) {
   display: inline-flex; align-items: center; gap: 5px;
   margin: 3px 4px 3px 0; padding: 5px 12px;
   font-size: 12.5px; font-weight: 600; text-decoration: none;
@@ -578,7 +580,7 @@ defineExpose({
     opacity var(--motion-hover-control) var(--motion-ease-standard);
   user-select: none;
 }
-:deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card) strong) {
+:deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card, .chat-smart-row, .chat-smart-button) strong) {
   color: inherit;
 }
 /* 咕咕回复的 `---` 分隔线：实色次级文字色，全主题可辨，与预览窗 .tv-md hr 同口径 */
@@ -770,16 +772,16 @@ defineExpose({
 :deep(.chat-project-status.is-pending) { color: var(--status-warning); background: var(--status-warning-bg); }
 :deep(.chat-project-status.is-active) { color: var(--status-info); background: var(--status-info-bg); }
 :deep(.chat-project-status.is-done) { color: var(--status-success); background: var(--status-success-bg); }
-:deep(.msg-bubble.md-body a[href^="gugu://open-object/"]:not(.chat-object-card)),
-:deep(.msg-bubble.md-body a[href^="gugu://focus-canvas/"]:not(.chat-object-card)),
-:deep(.msg-bubble.md-body a[href^="gugu://open-skill/"]:not(.chat-object-card)) {
+:deep(.msg-bubble.md-body a[href^="gugu://open-object/"]:not(.chat-object-card, .chat-smart-row, .chat-smart-button)),
+:deep(.msg-bubble.md-body a[href^="gugu://focus-canvas/"]:not(.chat-object-card, .chat-smart-row, .chat-smart-button)),
+:deep(.msg-bubble.md-body a[href^="gugu://open-skill/"]:not(.chat-object-card, .chat-smart-row, .chat-smart-button)) {
   margin-block: 0; padding: 0 0.55em; font-size: 0.9em; line-height: 1.5; vertical-align: baseline;
 }
-:deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card):hover) {
+:deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card, .chat-smart-row, .chat-smart-button):hover) {
   background: var(--gugu-chat-send-bg); border-color: var(--action-primary-hover);
   box-shadow: none; opacity: 1;
 }
-:deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card):active) { transform: translateY(1px); opacity: 0.93; }
+:deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card, .chat-smart-row, .chat-smart-button):active) { transform: translateY(1px); opacity: 0.93; }
 
 /* .cb-* 扫码绑定弹窗样式已随 GuguChatBindDialog.vue 迁移 */
 /* .im-qr-cancel 已随 GuguChatImConnect.vue 迁移 */
@@ -819,12 +821,203 @@ defineExpose({
   white-space: nowrap; word-break: normal; overflow-wrap: normal;
 }
 :deep(.msg.ai .msg-bubble) {
-  max-width: var(--chat-assistant-bubble-max-width, 88%);
-  background: var(--gugu-chat-assistant-bg); border: 1px solid var(--gugu-chat-assistant-border);
-  border-bottom-left-radius: 4px; box-shadow: inset 0 1px 0 var(--gugu-chat-file-highlight);
+  box-sizing: border-box; inline-size: var(--chat-assistant-bubble-max-width);
+  max-inline-size: 100%; min-inline-size: 0;
 }
-:deep(.msg.ai .msg-bubble.md-body:has(> .md-view .chat-object-cards)) {
-  box-sizing: border-box; inline-size: var(--chat-assistant-bubble-max-width, 88%);
+:deep(.msg.ai .msg-bubble),
+:deep(.md-view .chat-smart-view) {
+  background: var(--gugu-chat-assistant-bg); border: 1px solid var(--gugu-chat-assistant-border);
+  box-shadow: inset 0 1px 0 var(--gugu-chat-file-highlight);
+}
+:deep(.msg.ai .msg-bubble) { border-bottom-left-radius: 4px; }
+:deep(.chat-assistant-content) {
+  display: flex; flex-direction: column; align-items: flex-start;
+  gap: 8px; width: 100%; min-width: 0;
+}
+:deep(.chat-assistant-smart-card) {
+  inline-size: var(--chat-assistant-bubble-max-width); min-width: 0;
+  font-size: var(--gugu-body-size); line-height: var(--gugu-body-line);
+}
+/* 智能界面按自己的可用宽度排列字段，紧凑窗不依赖页面断点。 */
+:deep(.md-view .chat-smart-view) {
+  --progress-track-height: 6px;
+  --progress-thumb-size: 14px;
+  container-type: inline-size;
+  margin-block: 8px;
+  padding: 14px;
+  border-radius: var(--card-radius);
+  color: var(--content-primary);
+}
+:deep(.chat-smart-heading),
+:deep(.chat-smart-metrics) { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+:deep(.chat-smart-heading) { justify-content: space-between; }
+:deep(.chat-smart-heading > strong) { font-size: var(--font-size-lg); }
+:deep(.chat-smart-heading > span),
+:deep(.chat-smart-summary),
+:deep(.chat-smart-view-notice) { font-size: var(--font-size-sm); color: var(--content-secondary); overflow-wrap: anywhere; }
+:deep(.chat-smart-summary) { margin-top: 4px; }
+:deep(.chat-smart-metrics) {
+  margin-top: 10px; padding: 6px 9px; border-radius: var(--radius-xs); background: var(--action-soft);
+  font-size: var(--font-size-sm);
+}
+:deep(.chat-smart-metrics > span) { color: var(--status-danger); }
+:deep(.md-view ul.chat-smart-rows) { list-style: none; margin: 8px 0 0; padding: 0; }
+:deep(.chat-smart-rows > li) { margin: 0; border-bottom: 1px solid var(--content-divider); }
+:deep(.chat-smart-rows > li:last-child) { border-bottom: 0; }
+:deep(.md-view a.chat-smart-row) {
+  display: grid; gap: 3px 12px; padding: 7px 8px; border-radius: var(--radius-xs);
+  color: var(--content-primary); text-decoration: none; overflow-wrap: anywhere;
+  transition: background-color var(--motion-hover-control);
+}
+:deep(.md-view a.chat-smart-row:hover) { background: var(--surface-soft); }
+:deep(.md-view a.chat-smart-row:focus-visible) { outline: 2px solid var(--border-focus); outline-offset: -2px; }
+:deep(.chat-smart-fields) { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
+:deep(.chat-smart-detail),
+:deep(.chat-smart-when),
+:deep(.chat-smart-progress) { color: var(--content-secondary); font-size: var(--font-size-xs); }
+:deep(.chat-smart-when) { font-variant-numeric: tabular-nums; white-space: nowrap; }
+:deep(.chat-smart-progress) { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+:deep(.chat-smart-progress progress) { inline-size: 42px; }
+:deep(.chat-smart-status) {
+  padding-inline: 6px; border-radius: var(--radius-pill); background: var(--surface-soft);
+  color: var(--content-secondary); font-size: var(--font-size-xs);
+}
+:deep(.chat-smart-status.is-overdue) { color: var(--status-danger); }
+:deep(.chat-smart-status.is-today) { color: var(--status-warning); }
+:deep(.chat-smart-status.is-completed) { color: var(--status-success); }
+:deep(.chat-smart-view > .chat-smart-view-notice) { padding-block: 10px 2px; }
+:deep(.chat-smart-layout) { display: grid; gap: 10px; min-width: 0; }
+:deep(.chat-smart-layout:has(> a.chat-smart-button):not(:has(> :not(a.chat-smart-button)))) {
+  --smart-button-basis: min(100%, max(140px, (100% - 24px) / 4));
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+:deep(.chat-smart-section) { display: grid; align-content: start; gap: 7px; padding-block-start: 8px; border-top: 1px solid var(--content-divider); }
+:deep(.md-view .chat-smart-section > h4) { margin: 0; font-size: var(--font-size-sm); }
+:deep(.md-view .chat-smart-layout-view .chat-smart-row) {
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px;
+  padding: 7px 8px; overflow-wrap: anywhere;
+}
+:deep(.chat-smart-list-detail) { color: var(--content-secondary); font-size: var(--font-size-xs); }
+:deep(.chat-smart-label),
+:deep(.chat-smart-text),
+:deep(.chat-smart-section h4) { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+:deep(.chat-smart-icon) { flex: 0 0 15px; display: inline-flex; align-self: center; color: var(--action-primary); }
+:deep(.chat-smart-text > .chat-smart-icon),
+:deep(.chat-smart-section h4 > .chat-smart-icon) {
+  align-self: flex-start; align-items: center; block-size: 1lh;
+}
+:deep(.chat-smart-layout > *) { min-width: 0; }
+:deep(.chat-smart-text) { white-space: pre-wrap; overflow-wrap: anywhere; }
+:deep(.chat-smart-text.is-title) { font-size: var(--font-size-lg); font-weight: 700; }
+:deep(.chat-smart-text.is-hint) { color: var(--content-secondary); font-size: var(--font-size-sm); }
+:deep(.chat-smart-metric),
+:deep(.chat-smart-progress-block),
+:deep(.chat-smart-slider) {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center; gap: 6px 10px; padding: 8px 10px;
+  border-radius: var(--radius-xs); background: var(--surface-soft);
+  font-size: var(--font-size-sm); overflow-wrap: anywhere;
+}
+:deep(.chat-smart-metric > strong) { font-size: var(--font-size-lg); }
+:deep(.chat-smart-layout-view [data-smart-color="accent"]) { --smart-view-color: var(--action-primary); }
+:deep(.chat-smart-layout-view [data-smart-color="info"]) { --smart-view-color: var(--status-info); }
+:deep(.chat-smart-layout-view [data-smart-color="success"]) { --smart-view-color: var(--status-success); }
+:deep(.chat-smart-layout-view [data-smart-color="warning"]) { --smart-view-color: var(--status-warning); }
+:deep(.chat-smart-layout-view [data-smart-color="danger"]) { --smart-view-color: var(--status-danger); }
+:deep(.chat-smart-text[data-smart-color]),
+:deep(.chat-smart-text[data-smart-color] > .chat-smart-icon),
+:deep(.chat-smart-metric[data-smart-color] > strong) {
+  color: var(--smart-view-color);
+}
+:deep(.chat-smart-layout-view [data-smart-color] > :is(progress, .progress-range)) {
+  --progress-fill-bg: var(--smart-view-color);
+  --progress-track-bg: color-mix(in srgb, var(--progress-fill-bg) 18%, transparent);
+}
+html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress, .progress-range)) {
+  --progress-fill-bg: color-mix(in srgb, var(--smart-view-color, var(--action-primary)) 70%, var(--content-on-accent));
+  --progress-track-bg: color-mix(in srgb, var(--progress-fill-bg) 20%, transparent);
+}
+:deep(.chat-smart-progress-block progress),
+:deep(.chat-smart-slider input) {
+  grid-column: 1 / -1; inline-size: 100%; min-width: 0;
+  margin: 0;
+}
+:deep(.md-view a.chat-smart-button) {
+  justify-self: stretch; flex: 1 0 var(--smart-button-basis, auto);
+  align-content: center;
+  padding: 6px 10px; border: 1px solid var(--action-outline);
+  box-sizing: border-box; max-inline-size: 100%; font-size: var(--font-size-sm);
+  border-radius: var(--radius-xs); color: var(--content-primary); background-color: var(--action-soft);
+  text-decoration: none; overflow-wrap: anywhere;
+  transition: background-color var(--motion-hover-control) var(--motion-ease-standard);
+}
+:deep(.md-view a.chat-smart-button:hover) { background-color: var(--surface-soft); }
+:deep(.md-view a.chat-smart-button:focus-visible) { outline: 2px solid var(--border-focus); }
+:deep(.chat-smart-layout-view [hidden]) { display: none; }
+:deep(.chat-smart-switch) { display: grid; gap: 10px; min-width: 0; }
+:deep(.chat-smart-switch > [data-smart-panel] > .chat-smart-layout:not(:has(> :not(.chat-smart-text.is-body))) > .chat-smart-text.is-body) {
+  padding: 8px 10px;
+  border-radius: var(--radius-xs);
+  background: var(--surface-soft);
+  font-size: var(--font-size-sm);
+  line-height: 1.55;
+}
+:deep(.chat-smart-switch-options) {
+  display: flex; flex-wrap: wrap; gap: 4px; padding: 4px;
+  border-radius: var(--radius-sm); background: var(--segmented-track-bg);
+}
+:deep(.chat-smart-switch-options > button) {
+  flex: 1 1 auto; min-width: 0; max-width: 100%; padding: 5px 10px; border: 0; border-radius: var(--radius-xs);
+  background: transparent; color: var(--content-secondary); font: inherit;
+  font-size: var(--font-size-sm); overflow-wrap: anywhere; cursor: pointer;
+  transition: background-color var(--motion-hover-control), color var(--motion-hover-control);
+}
+:deep(.chat-smart-switch-options > button[aria-pressed="false"]:hover) {
+  background-color: var(--sidebar-item-hover); color: var(--content-primary);
+}
+:deep(.chat-smart-switch-options > button[aria-pressed="true"]) {
+  background: var(--segmented-pill-bg); color: var(--content-primary); font-weight: 600;
+}
+:deep(.chat-smart-switch-options > button:focus-visible) { outline: 2px solid var(--border-focus); }
+:deep(.chat-smart-layout[data-columns]:not([data-columns="1"]) > .chat-smart-metric) {
+  grid-template-columns: minmax(0, 1fr); align-content: start; gap: 3px;
+}
+@container (min-width: 250px) {
+  :deep(.chat-smart-layout:is([data-columns="2"], [data-columns="3"])) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container (min-width: 320px) {
+  :deep(.chat-smart-layout[data-columns="3"]) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+:deep(.chat-smart-layout[data-columns="2"]:has(> .chat-smart-section)) {
+  --smart-section-column-floor: calc((100% - 10px) / 2);
+}
+:deep(.chat-smart-layout[data-columns="3"]:has(> .chat-smart-section)) {
+  --smart-section-column-floor: calc((100% - 20px) / 3);
+}
+:deep(.chat-smart-layout:is([data-columns="2"], [data-columns="3"]):has(> .chat-smart-section)) {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, max(240px, var(--smart-section-column-floor))), 1fr));
+  align-items: start;
+}
+@container (min-width: 420px) {
+  :deep(.md-view a.chat-smart-row) { grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); align-items: center; }
+  :deep(.chat-smart-fields) { justify-content: flex-end; }
+}
+
+:deep(.chat-assistant-smart-card .md-view > .chat-smart-view) { margin-block: 0; }
+:deep(.chat-smart-view-generating > [role="status"]) {
+  display: flex; align-items: center; gap: 8px;
+  min-block-size: 28px; color: var(--content-secondary); font-size: var(--font-size-sm);
+}
+:deep(.chat-smart-view-generating > [role="status"]::before) {
+  content: ''; flex: 0 0 12px; block-size: 12px; box-sizing: border-box;
+  border: 2px solid var(--content-divider); border-block-start-color: var(--action-primary);
+  border-radius: 50%; animation: chat-smart-view-loading 900ms linear infinite;
+}
+@keyframes chat-smart-view-loading { to { transform: rotate(1turn); } }
+@media (prefers-reduced-motion: reduce) {
+  :deep(.chat-smart-view-generating > [role="status"]::before) { animation: none; }
 }
 :deep(.msg.member .msg-bubble) {
   background: var(--gugu-chat-member-bg); border: 1px solid var(--gugu-chat-member-border);
@@ -909,7 +1102,7 @@ defineExpose({
 
 /* send_link_buttons 复用 ask_user 的气泡与按钮契约：链接仍是普通导航，不产生交互回调。 */
 :deep(.msg-link-buttons) {
-  width: min(360px, 88%); box-sizing: border-box; margin: 6px 0 0; padding: 14px;
+  inline-size: var(--chat-assistant-bubble-max-width); box-sizing: border-box; margin: 6px 0 0; padding: 14px;
   border: 1px solid var(--border-default); border-radius: var(--card-radius);
   background: var(--surface-card-solid); color: var(--content-primary);
   box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card);

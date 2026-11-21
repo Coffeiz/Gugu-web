@@ -61,7 +61,7 @@ export function createWebSearchTool(
   return {
     definition: { name: 'web_search', schema: { type: 'function', function: {
       name: 'web_search',
-      description: '使用当前模型 Provider 的原生联网搜索核对资料，调用可能产生费用。',
+      description: '使用当前模型 Provider 的原生联网搜索核对资料，调用可能产生费用。引用结果时原样复制其完整 URL，保留查询参数；链接标题可以简写。',
       parameters,
     } } },
     effect: 'read',

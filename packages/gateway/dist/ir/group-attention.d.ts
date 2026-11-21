@@ -22,6 +22,7 @@ export interface ImGroupAttentionHistory {
 export declare function createImGroupAttentionGate(): {
     evaluate(input: ImGroupAttentionInput, persistedHistory?: ImGroupAttentionHistory): {
         run: boolean;
+        pendingAsk: boolean;
         decision: AttentionDecision;
     };
 };

@@ -8,7 +8,7 @@ import { dirname, join, resolve } from 'node:path'
 import { createChatAttachmentDraftClearer } from '../agent/attachments/clear-drafts.js'
 import { clearSqliteAgentMemory, forgetSqliteAgentMemory, readSqliteAgentMemory } from '../agent/memory/sqlite.js'
 import { loadSqliteAgentRunSecret } from '../agent/run/sqlite-secret.js'
-import { readDesktopImAttachmentReference, nextDesktopQqSequence, recordDesktopImGroupMessage, readDesktopImGroupAttentionHistory, readPendingDesktopImConnection, desktopImProjection, rejectDesktopImEvent, desktopImPrompt, admitDesktopImEvent, prepareDesktopImEvent, updateDesktopImDelivery } from '../im/desktop-inbox.js'
+import { readDesktopImAttachmentReference, nextDesktopQqSequence, recordDesktopImGroupMessage, readDesktopImGroupAttentionHistory, resumeDesktopImPendingAsk, readPendingDesktopImConnection, desktopImProjection, rejectDesktopImEvent, desktopImPrompt, admitDesktopImEvent, prepareDesktopImEvent, updateDesktopImDelivery } from '../im/desktop-inbox.js'
 import { DESKTOP_CALENDAR_UNDO_CONTEXT, MAX_AGENT_RESPONSE } from '../contracts/desktop.js'
 import { createDesktopMemoryFiles } from '../agent/memory/desktop-files.js'
 import { settleClosedSqliteInteraction } from '../agent/run/sqlite-recovery.js'
@@ -77,7 +77,7 @@ import { isAllowedDesktopAgentHostRequest } from './desktop-host-method-policy.j
 import { createDesktopMcpCrypto } from '../mcp/desktop-crypto.js'
 import { desktopScheduledTaskId, desktopScheduledTasks } from '../scheduled-tasks/desktop.js'
 import { createDesktopAppearanceService } from '../preferences/desktop-appearance.js'
-import { setDesktopProjectDeleted } from '../projects/desktop-board.js'
+import { purgeDesktopProject, setDesktopProjectDeleted } from '../projects/desktop-board.js'
 import { projectResponse } from '../projects/project-projection.js'
 import { projectRecord } from '../data/codec.js'
 import { createKyselyPreferenceDocumentStore } from '../preferences/document-store.js'
@@ -291,6 +291,9 @@ try {
         } else if (job.method === 'im.inbox.groupAttentionHistory') {
           validateCommandParams(job.method, job.params)
           result = await readDesktopImGroupAttentionHistory(runtime.db, ownerId, job.params)
+        } else if (job.method === 'im.inbox.resumePendingAsk') {
+          validateCommandParams(job.method, job.params)
+          result = await resumeDesktopImPendingAsk(runtime.db, ownerId, job.params)
         } else if (job.method === 'im.inbox.pendingConnection') {
           validateCommandParams(job.method, job.params)
           result = await readPendingDesktopImConnection(runtime.db, ownerId, job.params)
@@ -485,7 +488,8 @@ try {
                 job.params.interactive === true, job.params.modelId as string | undefined,
                 job.params.attachments as string[] | undefined, job.params.references as import('../contracts/desktop.js').DesktopAgentChatReference[] | undefined,
                 job.params.queueClaim as { key: number; token: string } | undefined, job.params.locale as string | undefined,
-                job.params.groupSender as import('../agent/run/sqlite-admission.js').DesktopGroupSender | undefined)
+                job.params.groupSender as import('../agent/run/sqlite-admission.js').DesktopGroupSender | undefined,
+                job.params.resumePassiveMessage === true)
               break
             case 'agent.sessions.runModel':
               result = await agentRuns!.runModel(safeInteger(job.params.id), job.params.runId as string)
@@ -625,12 +629,16 @@ try {
           const outcome = await runtime.operationWithTransaction(context, job.operationId, job.method, job.params,
             tx => createDesktopAppearanceService(createKyselyPreferenceDocumentStore(tx, runtime.backend)).update(ownerId, job.params.patch), { signal })
           result = outcome.result
-        } else if (job.method === 'projects.board.delete' || job.method === 'projects.board.restore') {
+        } else if (job.method === 'projects.board.delete' || job.method === 'projects.board.restore' || job.method === 'projects.board.purge') {
           validateCommandParams(job.method, job.params)
           if (!job.operationId) throw new CoreError('invalid_request', '项目写入必须提供稳定操作标识')
           const deleted = job.method === 'projects.board.delete'
           const outcome = await runtime.operationWithTransaction(context, job.operationId, job.method, job.params,
             async (tx, owner) => {
+              if (job.method === 'projects.board.purge') {
+                await purgeDesktopProject(tx, owner, job.params.id)
+                return null
+              }
               const project = await setDesktopProjectDeleted(tx, owner, job.params.id, deleted)
               return deleted ? null : projectResponse(projectRecord(project), 0)
             }, { signal })

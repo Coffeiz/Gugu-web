@@ -13,7 +13,7 @@ export const workspacePreviewRoutes = [
   { endpoint: '/__desktop-preview/schedules', methods: ['scheduleTask'] },
   {
     endpoint: '/__desktop-preview/projects',
-    methods: ['projects', ...projectBoardMethods],
+    methods: ['projects', ...projectBoardMethods, 'purgeBoardProject'],
   },
   {
     endpoint: '/__desktop-preview/mind',

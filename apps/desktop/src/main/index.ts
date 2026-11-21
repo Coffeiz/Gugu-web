@@ -19,6 +19,7 @@ import { createRemoteByokClient } from '@gugu/core/byok/client'
 import { directDesktopFetch } from './network.js'
 import { resolveDesktopSystemProxy } from './proxy.js'
 import { createDesktopImInbox } from './im/gateway/inbound/inbox.js'
+import { createDesktopImPendingAskStore } from './im/gateway/inbound/pending-asks.js'
 import { createDesktopTelegramGateway } from './im/gateway/platforms/telegram/index.js'
 import { telegramHandlers, pairingHandlers } from './im/ipc.js'
 import { desktopTerminalHandlers } from './terminal/ipc.js'
@@ -211,6 +212,7 @@ else {
       const remoteSimilarImageSearch = createRemoteAgentSimilarImageSearchClient(remoteFetch)
       const agentModel = createDesktopAgentModelService(createDesktopAgentModelStore(dataDirectory, safeStorage), resolveModelProxy)
       const admitIm = createDesktopImInbox(host, safeStorage, dataDirectory)
+      const pendingImAsks = createDesktopImPendingAskStore(dataDirectory, safeStorage)
       const imAttachments = createDesktopImAttachmentSender(dataDirectory, safeStorage)
       const dispatchIm = createDesktopImDispatch(host, safeStorage, agentModel, () => host.request<DesktopAppearancePreferences>('preferences.desktop.get'), (code, error) => report('gateway.degraded', { code, error }), imAttachments.register)
       const callbackIm = createDesktopImCallback(host, agentModel)
@@ -227,7 +229,7 @@ else {
         return (await imTranscriber).transcribe(input, signal, authorize)
       }
       const imVoice = { transcribe: transcribeImVoice, report: (error: unknown) => report('gateway.degraded', { code: 'im_voice_failed', error }) }
-      const gateway = telegram = createDesktopTelegramGateway(dataDirectory, safeStorage, undefined, resolveModelProxy, admitIm, dispatchIm, callbackIm, imVoice, host)
+      const gateway = telegram = createDesktopTelegramGateway(dataDirectory, safeStorage, undefined, resolveModelProxy, admitIm, dispatchIm, callbackIm, imVoice, host, pendingImAsks)
       const newImTransport = () => createNodeProviderTransport(desktopTransportOptions(false, resolveModelProxy))
       // 扫码任务只在本进程有效，使用本次启动的本地身份隔离。
       const wechatPairing = createDesktopWechatPairing(dataDirectory, safeStorage, randomUUID(), newImTransport(), async () => { wechat?.refresh(); await wechat?.settled() })
@@ -236,7 +238,7 @@ else {
         feishu?.refresh()
         await feishu?.settled()
       })
-      const feishuGateway = feishu = createDesktopFeishuGateway(feishuPairing, admitIm, dispatchIm, newImTransport, undefined, callbackIm, imVoice, { host, encryption: safeStorage })
+      const feishuGateway = feishu = createDesktopFeishuGateway(feishuPairing, admitIm, dispatchIm, newImTransport, undefined, callbackIm, imVoice, { host, encryption: safeStorage }, pendingImAsks)
       const qqPairing = createDesktopQqPairing(dataDirectory, safeStorage, randomUUID(), newImTransport(), () => qq?.refresh())
       const qqGateway = qq = createDesktopQqGateway(qqPairing, admitIm, dispatchIm, newImTransport, undefined, callbackIm,
         (code, error) => report('gateway.degraded', { code, error }), { host, encryption: safeStorage, dataDirectory, voice: imVoice, references: createDesktopQqReferences(dataDirectory, safeStorage) })

@@ -1,5 +1,5 @@
 import { formatToolResults } from './tool-result-format.js'
-import { withToolReminder } from '../context/assemble.js'
+import { placeToolReminder } from '../context/assemble.js'
 import { canonicalEventStats, stableJson } from '../context/history/canonical-history.js'
 import { throwIfCancelled } from './errors.js'
 import type { BranchProviderPort, CanonicalContextPorts, ContextReferenceCodec, ContextServices, ProviderPort, ReflectionProjectionPort, SummaryGenerationPorts } from '../ports.js'
@@ -128,9 +128,8 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
     const key = this.#key(identity)
     let pending = this.#prefixes.get(key)
     if (!pending) {
-      pending = this.options.prepareRequest(identity, signal, context).then(value => clone({
-        prefix: value.prefix, dynamicTail: withToolReminder(value.dynamicTail, context?.capabilities?.toolReminder),
-      }))
+      pending = this.options.prepareRequest(identity, signal, context).then(value =>
+        clone(placeToolReminder(value, context?.capabilities?.toolReminder, context?.prepared, this.options.digest)))
       this.#prefixes.set(key, pending)
       void pending.catch(() => this.#prefixes.delete(key))
     }

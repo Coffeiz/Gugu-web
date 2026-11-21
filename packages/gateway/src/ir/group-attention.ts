@@ -49,7 +49,7 @@ export function createImGroupAttentionGate() {
   let sequence = 0
 
   return {
-    evaluate(input: ImGroupAttentionInput, persistedHistory?: ImGroupAttentionHistory): { run: boolean; decision: AttentionDecision } {
+    evaluate(input: ImGroupAttentionInput, persistedHistory?: ImGroupAttentionHistory): { run: boolean; pendingAsk: boolean; decision: AttentionDecision } {
       const nowMs = input.nowMs ?? Date.now()
       if (!Number.isSafeInteger(nowMs) || nowMs <= 0 || !input.botId || !input.groupId) {
         throw new Error('群聊参与度上下文无效')
@@ -82,12 +82,13 @@ export function createImGroupAttentionGate() {
         { botAliases: ['咕咕'] })
       const mentioned = payload.native_bot_mentioned === true || payload.bot_mentioned === true || payload.group_mentioned === true
       const run = mentioned || selectAttentionCandidate([{ message: subject, decision }], input.mode, { allowAsk: false }) !== null
+      const pendingAsk = !run && selectAttentionCandidate([{ message: subject, decision }], input.mode)?.decision.sceneType === 'ASK'
 
       recent.push(current)
       history.delete(key)
       history.set(key, recent.slice(-maxMessagesPerGroup))
       if (history.size > maxGroups) history.delete(history.keys().next().value!)
-      return { run, decision }
+      return { run, pendingAsk, decision }
     },
   }
 }

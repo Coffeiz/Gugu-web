@@ -164,10 +164,11 @@ describe('真实Provider到Canonical Harness组合', () => {
     expect(observations.find(event => event.kind === 'run' && event.name === 'finished')?.status).toBe('completed')
     await value.provider.close()
   })
-  it('简介模式只向 Provider 声明固定入口，业务目录保留在请求尾部', async () => {
+  it('简介模式保留固定工具入口，后续工具轮不移动首轮工具简介', async () => {
     const names = ['lookup', 'call_tool', 'search_tools']
     const reminder = '合成业务目录：lookup'
-    const value = setup([final], { sourceLoad: async () => ({
+    const { config, streamTool, streamFinal } = protocolFixture('anthropic')
+    const value = setup([streamTool, streamFinal], { config, sourceLoad: async () => ({
       modelIdentity: 'model-a', contextWindow: 10000, accessScopeHash: digest(identity),
       capabilities: { toolNames: names, providerToolNames: ['call_tool', 'search_tools'], toolReminder: reminder,
         tools: names.map(name => ({ name, schema: { type: 'function', function: { name, parameters: { type: 'object' } } } })) },
@@ -176,10 +177,14 @@ describe('真实Provider到Canonical Harness组合', () => {
     }) })
     expect((await collect(value.harness.start(identity))).state.status).toBe('completed')
     const body = value.sent[0]!.body as JsonObject
-    const schemas = body.tools as { function: { name: string } }[]
-    expect(schemas.map(tool => tool.function.name)).toEqual(['call_tool', 'search_tools'])
-    expect(stableJson((body.messages as JsonObject[]).at(-1))).toContain(reminder)
+    const schemas = body.tools as { name: string }[]
+    expect(schemas.map(tool => tool.name)).toEqual(['call_tool', 'search_tools'])
+    const rows = (request: JsonObject) => JSON.parse(JSON.stringify(request.messages), (key, value) =>
+      key === 'cache_control' ? undefined : value) as JsonObject[]
+    const next = value.sent[1]!.body as JsonObject
+    expect(rows(next).slice(0, rows(body).length)).toEqual(rows(body))
     expect(stableJson(body).split(reminder)).toHaveLength(2)
+    expect(stableJson(next).split(reminder)).toHaveLength(2)
     await value.provider.close()
   })
   it('标准来源与 Provider 使用同一可信 scope 后可完成真实协议请求', async () => {

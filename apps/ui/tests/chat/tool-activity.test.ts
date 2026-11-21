@@ -4,7 +4,7 @@ import { createApp, h, nextTick, reactive, ref } from 'vue'
 import { i18n } from '@/i18n'
 import GuguChatToolActivity from '@/components/common/gugu-chat/GuguChatToolActivity.vue'
 import { chatToolDetailsKey } from '@/components/common/gugu-chat/chatPresentationAccess'
-import { projectChatRows } from '@/components/common/gugu-chat/toolActivity'
+import { projectChatRows, toolGroupElapsedMs } from '@/components/common/gugu-chat/toolActivity'
 import type { ChatMessage } from '@/components/common/gugu-chat/chatTypes'
 
 function message(id: number, role: string, extra: Partial<ChatMessage> = {}): ChatMessage {
@@ -36,7 +36,7 @@ it('并行活动共享摘要，逐项按需加载脱敏回执并保留展开状�
   const host = document.createElement('div')
   const app = createApp({
     render: () => h(GuguChatToolActivity, { tools, expanded: expanded.value, expandedTools,
-      sessionId: 10, awaitingReply: false, onToggle: () => { expanded.value = !expanded.value },
+      sessionId: 10, awaitingReply: false, elapsedMs: 5400, onToggle: () => { expanded.value = !expanded.value },
       onDetail: (id, value) => value ? expandedTools.add(String(id)) : expandedTools.delete(String(id)) }),
   })
   app.use(i18n).provide(chatToolDetailsKey, readDetails).mount(host)
@@ -50,7 +50,7 @@ it('并行活动共享摘要，逐项按需加载脱敏回执并保留展开状�
     await nextTick()
     expect(host.textContent).toContain(i18n.global.t('chatUi.toolActivityTotal', { count: 2 }))
     expect(host.textContent).toContain(i18n.global.t('chatUi.toolActivityFailed', { count: 1 }))
-    expect(host.querySelector('[title="' + i18n.global.t('chatUi.toolActivityDuration', { duration: '1.2s' }) + '"]')?.textContent?.trim()).toBe('1.2s')
+    expect(host.querySelector('[title="' + i18n.global.t('chatUi.toolActivityDuration', { duration: '5.4s' }) + '"]')?.textContent?.trim()).toBe('5.4s')
     host.querySelector('button')!.click()
     await nextTick()
     expect(host.querySelectorAll('button')).toHaveLength(3)
@@ -106,4 +106,29 @@ it('工具之间的短空档不闪状态，长空档显示处理中，确认和�
     app.unmount()
     vi.useRealTimers()
   }
+})
+
+
+it('只在最后一个工具组显示同轮消息到回复完成的实际间隔', () => {
+  const runId = 'sample-run'
+  const user = message(1, 'user', { runId, _createdAt: '2026-11-22T00:00:00Z' })
+  const firstTool = message(2, 'tool', { runId, toolDurationMs: 100 })
+  const intermediate = message(3, 'ai', { runId, _updatedAt: '2026-11-22T00:00:02Z' })
+  const secondTool = message(4, 'tool', { runId, toolDurationMs: 300 })
+  const final = message(5, 'ai', { runId, _updatedAt: '2026-11-22T00:00:09Z' })
+  const series = [user, firstTool, intermediate, secondTool]
+  expect(projectChatRows([...series, final]).rows.filter(row => row.tools).map(row => row.elapsedMs))
+    .toEqual([undefined, 9000])
+  expect(projectChatRows([...series, { ...final, streaming: true }]).rows.some(row => row.elapsedMs !== undefined)).toBe(false)
+  expect(projectChatRows([...series.slice(1), final]).rows.some(row => row.elapsedMs !== undefined)).toBe(false)
+})
+
+
+it('工具组耗时采用首开始到末结束的时间跨度', () => {
+  const tool = (id: number, start: string, end: string) => message(id, 'tool', {
+    _createdAt: `2026-11-22T00:00:${start}Z`, _updatedAt: `2026-11-22T00:00:${end}Z`,
+  })
+  expect(toolGroupElapsedMs([tool(1, '00', '02'), tool(2, '04', '06')])).toBe(6000)
+  expect(toolGroupElapsedMs([tool(1, '00', '04'), tool(2, '01', '03')])).toBe(4000)
+  expect(toolGroupElapsedMs([message(1, 'tool', { toolDurationMs: 120 })])).toBe(120)
 })

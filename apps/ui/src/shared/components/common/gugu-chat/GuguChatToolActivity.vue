@@ -10,7 +10,7 @@
         </template>
       </template>
       <span v-if="phase === 'complete' && duration" class="activity-duration"
-        :title="t('chatUi.toolActivityDuration', { duration })" :aria-label="t('chatUi.toolActivityDuration', { duration })">
+        :title="durationLabel" :aria-label="durationLabel">
         {{ duration }}
       </span>
       <FlipChevron :open="expanded" :size="10" :transition="chevronTransition" aria-hidden="true" />
@@ -36,7 +36,7 @@ import FlipChevron from '@/components/common/controls/FlipChevron.vue'
 import GuguChatActivityLine from './GuguChatActivityLine.vue'
 import GuguChatToolBubble from './GuguChatToolBubble.vue'
 import type { ChatMessage } from './chatTypes'
-import { formatToolDuration, toolActivityLabel } from './toolActivity'
+import { formatToolDuration, toolActivityLabel, toolGroupElapsedMs } from './toolActivity'
 
 const props = defineProps<{
   tools: ChatMessage[]
@@ -44,6 +44,7 @@ const props = defineProps<{
   expanded: boolean
   expandedTools: ReadonlySet<string>
   awaitingReply: boolean
+  elapsedMs?: number
 }>()
 defineEmits<{ toggle: []; detail: [id: number, expanded: boolean] }>()
 
@@ -75,13 +76,9 @@ const label = computed(() => {
   if (phase.value === 'queued') return `${toolActivityLabel(queued.value!, t, te)} · ${t('chatUi.toolQueued')}`
   return t('chatUi.toolActivityTotal', { count: props.tools.length })
 })
-const duration = computed(() => {
-  const durations = props.tools.flatMap(tool => {
-    const elapsed = tool.toolDurationMs
-    return elapsed != null && Number.isFinite(elapsed) && elapsed >= 0 ? [elapsed] : []
-  })
-  return durations.length ? formatToolDuration(durations.reduce((total, elapsed) => total + elapsed)) : ''
-})
+const duration = computed(() => formatToolDuration(props.elapsedMs ?? toolGroupElapsedMs(props.tools)))
+const durationLabel = computed(() => t(props.elapsedMs === undefined
+  ? 'chatUi.toolActivityGroupDuration' : 'chatUi.toolActivityDuration', { duration: duration.value }))
 const displayedLabel = ref(phase.value === 'processing' ? '' : label.value)
 watch([label, phase], ([nextLabel, nextPhase], previous, onCleanup) => {
   const show = () => { displayedLabel.value = nextLabel }

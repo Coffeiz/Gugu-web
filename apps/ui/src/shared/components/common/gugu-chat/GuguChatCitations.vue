@@ -1,7 +1,11 @@
 <template>
-  <MarkdownView :html="decorated.html" :text="text" chat :stream-motion="presenting" :render-math="!presenting"
-    @pointerover="onHover" @pointerout="onPointerOut" @focusin="onFocus" @focusout="scheduleClose" @click="onClick"
-    @load.capture="showLoadedImage" @error.capture="markImageFailed" />
+  <div ref="messageContent" class="chat-assistant-content"
+    @pointerover="onHover" @pointerout="onPointerOut" @focusin="onFocus" @focusout="scheduleClose" @click="onMessageClick"
+    @input="onSmartInput" @load.capture="showLoadedImage" @error.capture="markImageFailed">
+    <div v-for="(block, index) in blocks" :key="index" :class="block.smart ? 'chat-assistant-smart-card' : 'msg-bubble md-body'">
+      <MarkdownView :html="block.html" :text="text" chat :stream-motion="presenting && !block.smart" :render-math="!presenting && !block.smart" />
+    </div>
+  </div>
   <Teleport to="body">
     <Transition name="citation-preview">
       <aside v-if="active && source" ref="card" class="chat-citation-preview" role="dialog" :aria-label="t('chatUi.citationPreview')"
@@ -28,7 +32,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { computed, h, inject, nextTick, onBeforeUnmount, ref, render, shallowRef, watch } from 'vue'
 import { getActivePinia } from 'pinia'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
@@ -44,8 +48,16 @@ import { useChatScheduleCards } from './chatScheduleCards'
 import { chatCalendarEventsKey } from './chatPresentationAccess'
 import { applyChatCardSnapshots, stripChatCardSnapshotMarkers } from './chatCardSnapshots'
 import { useCitationSiteNames } from './useCitationSiteNames'
+import Icon from '@/components/common/icons/Icon.vue'
+import { selectSmartViewOption, smartViewIcons, updateSmartViewSlider } from './chatSmartLayout'
 
 const props = defineProps<{ html: string; text: string; presenting: boolean; sources?: readonly ChatSource[]; snapshotMessage?: string }>()
+const emit = defineEmits<{ 'body-click': [event: MouseEvent] }>()
+function onMessageClick(event: MouseEvent) {
+  if (selectSmartViewOption(event.target)) return
+  onClick(event)
+  emit('body-click', event)
+}
 const { t } = useI18n()
 const desktop = Boolean(inject(chatCalendarEventsKey, null))
 const auth = !desktop && getActivePinia() ? useAuthStore() : null
@@ -82,6 +94,48 @@ const decorated = computed(() => {
     ? decorateChatSources(html, namedSources.value)
     : { html, groups: [] }
 })
+
+const blocks = computed(() => {
+  const { html } = decorated.value
+  const original = [{ html, smart: false }]
+  if (!html.includes('chat-smart-view')) return original
+  const content = document.createElement('template')
+  content.innerHTML = html
+  const result: typeof original = []
+  const prose = document.createElement('template')
+  function flushProse() {
+    const html = prose.innerHTML.trim()
+    if (html) result.push({ html, smart: false })
+    prose.content.replaceChildren()
+  }
+  for (const node of [...content.content.childNodes]) {
+    if (node instanceof HTMLElement && node.matches('section.chat-smart-view')) {
+      flushProse()
+      result.push({ html: node.outerHTML, smart: true })
+    } else {
+      prose.content.appendChild(node)
+    }
+  }
+  flushProse()
+  return result.some(block => block.smart) ? result : original
+})
+
+const messageContent = ref<HTMLElement>()
+watch([messageContent, blocks], (_, __, onCleanup) => {
+  const root = messageContent.value
+  root?.querySelectorAll<HTMLInputElement>('input[data-smart-slider]').forEach(updateSmartViewSlider)
+  const slots = root?.querySelectorAll<HTMLElement>('.chat-smart-layout-view [data-smart-icon]')
+  for (const slot of slots ?? []) {
+    const icon = smartViewIcons.get(slot.dataset.smartIcon ?? '')
+    if (icon) render(h(Icon, { name: icon, size: 15 }), slot)
+  }
+  onCleanup(() => slots?.forEach(slot => render(null, slot)))
+}, { flush: 'post' })
+
+function onSmartInput(event: Event) {
+  if (event.target instanceof HTMLInputElement && event.target.dataset.smartSlider)
+    updateSmartViewSlider(event.target)
+}
 
 const active = shallowRef<{ anchor: HTMLAnchorElement; sources: ChatSource[] }>()
 const card = ref<HTMLElement>()

@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { sql } from 'kysely'
 import { expect, it } from 'vitest'
 import { initializeSqlite, openSqliteRuntime } from '../../src/data/sqlite.js'
-import { readDesktopImAttachmentReference, desktopImAttachmentDelivery, desktopImGroupRunEvent, recordDesktopImGroupMessage, readPendingDesktopImConnection, admitDesktopImEvent, prepareDesktopImEvent, updateDesktopImDelivery, nextDesktopQqSequence, desktopImProjection, desktopImPrompt, rejectDesktopImEvent } from '../../src/im/desktop-inbox.js'
+import { readDesktopImAttachmentReference, desktopImAttachmentDelivery, desktopImGroupRunEvent, recordDesktopImGroupMessage, resumeDesktopImPendingAsk, readPendingDesktopImConnection, admitDesktopImEvent, prepareDesktopImEvent, updateDesktopImDelivery, nextDesktopQqSequence, desktopImProjection, desktopImPrompt, rejectDesktopImEvent } from '../../src/im/desktop-inbox.js'
 
 it('重启后为同一收件恢复原会话和消息标识，隔离其他连接', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gugu-im-inbox-'))
@@ -308,6 +308,40 @@ it('飞书和 Telegram 使用通用桌面群会话与收件恢复身份', async 
         expect(await desktopImGroupRunEvent(runtime.db, identity)).toMatchObject({
           platform, connectionId, eventKey: incoming.eventKey, sealedEvent: 'AQ==',
         })
+      }
+    } finally { await runtime.close() }
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
+it('飞书和 Telegram 的延迟 ASK 复用被动历史消息，不重复追加用户消息', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gugu-im-pending-ask-'))
+  const path = join(directory, 'test.db')
+  try {
+    await initializeSqlite(path)
+    const { runtime, ownerId } = await openSqliteRuntime(path)
+    try {
+      for (const [index, platform] of (['feishu', 'telegram'] as const).entries()) {
+        const connectionId = String(index + 6).repeat(64)
+        const eventKey = String(index + 8).repeat(64)
+        const text = `延迟问题${platform}`
+        const event = { platform, connectionId, eventKey, text, platformUserId: 'member',
+          platformUserName: '小北', ownerPlatformUserId: 'owner' }
+        expect(await recordDesktopImGroupMessage(runtime.db, ownerId, event)).toBe(true)
+        expect(await resumeDesktopImPendingAsk(runtime.db, ownerId, { platform, connectionId, eventKey,
+          sealedEvent: 'AQ==', ownerPlatformUserId: 'owner', platformUserId: 'member', text })).toBe(true)
+        const prepared = await prepareDesktopImEvent(runtime.db, ownerId, { platform, connectionId,
+          chatType: 'group', ownerPlatformUserId: 'owner' })
+        if (!prepared) throw new Error('延迟收件未准备')
+        const { identity } = await createSqliteAgentAdmission(runtime.db).prepare(ownerId, {
+          session_id: prepared.sessionId, message: text, client_message_id: prepared.clientId,
+          groupSender: { id: 'member', name: '小北' }, resumePassiveMessage: true,
+        })
+        const messages = await sql<{ content: string; conversation_seq: number }>`SELECT content,conversation_seq
+          FROM conversation_messages WHERE session_id=${prepared.sessionId} ORDER BY conversation_seq`.execute(runtime.db)
+        expect(messages.rows).toEqual([{ content: text, conversation_seq: 1 }])
+        expect(await desktopImGroupRunEvent(runtime.db, identity)).toMatchObject({ platform, eventKey, connectionId })
+        expect(await resumeDesktopImPendingAsk(runtime.db, ownerId, { platform, connectionId, eventKey,
+          sealedEvent: 'AQ==', ownerPlatformUserId: 'owner', platformUserId: 'member', text })).toBe(false)
       }
     } finally { await runtime.close() }
   } finally { await rm(directory, { recursive: true, force: true }) }

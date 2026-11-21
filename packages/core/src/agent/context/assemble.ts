@@ -21,11 +21,32 @@ export function buildFixedRequestPrefix(input: Pick<PrepareContextInput, 'fixedP
   return prefix
 }
 
-/** 工具目录只进入请求尾部，恢复时用冻结目录重建。 */
-export function withToolReminder(tail: readonly CanonicalMessage[], reminder?: string): CanonicalMessage[] {
+/** 将冻结的工具简介作为一条请求消息插入。 */
+function withToolReminder(tail: readonly CanonicalMessage[], reminder?: string): CanonicalMessage[] {
   const content = reminder ? `[system-reminder]\n${reminder}\n[/system-reminder]` : null
   if (!content || tail.some(message => message.role === 'user' && message.content === content)) return [...tail]
   return [...tail, { role: 'user', content }]
+}
+
+type RequestParts = { prefix: readonly CanonicalMessage[]; dynamicTail: readonly CanonicalMessage[] }
+
+/** 工具轮追加到历史后，简介仍留在固定前缀。旧检查点按原有摘要恢复旧布局。 */
+export function placeToolReminder(
+  request: RequestParts,
+  reminder?: string,
+  checkpoint?: Pick<CanonicalRunContext['prepared'], 'requestPrefixSize' | 'requestDigest'>,
+  digest?: (value: unknown) => string,
+): { prefix: CanonicalMessage[]; dynamicTail: CanonicalMessage[] } {
+  if (checkpoint && digest && request.prefix.length === checkpoint.requestPrefixSize
+    && digest(request) === checkpoint.requestDigest)
+    return { prefix: [...request.prefix], dynamicTail: [...request.dynamicTail] }
+  const stable = { prefix: withToolReminder(request.prefix, reminder), dynamicTail: [...request.dynamicTail] }
+  if (!checkpoint || !digest) return stable
+  const legacy = { prefix: [...request.prefix], dynamicTail: withToolReminder(request.dynamicTail, reminder) }
+  for (const layout of [stable, legacy]) {
+    if (layout.prefix.length === checkpoint.requestPrefixSize && digest(layout) === checkpoint.requestDigest) return layout
+  }
+  return stable
 }
 
 export function rawUserText(user: CurrentUser): string {
@@ -132,7 +153,7 @@ export async function prepareContext(input: PrepareContextInput, ports: Preparat
     message: CanonicalMessage
   } => entry.message != null)
   const area = new MessageArea(ports, restored.map(entry => entry.message))
-  const prefix = buildFixedRequestPrefix(input)
+  const prefix = withToolReminder(buildFixedRequestPrefix(input), input.toolReminder)
   area.configureRequest(prefix)
   const protectedIds = protectedMessageIds(history)
   const start = restored.findIndex(entry => protectedIds.has(entry.row.id))
@@ -173,7 +194,7 @@ export async function prepareContext(input: PrepareContextInput, ports: Preparat
     refreshCanonicalToolSchemas(area, input.latestToolSchemas)
   const dynamicTail: CanonicalMessage[] = input.extraReminder
     ? [{ role: 'user', content: `[system-reminder]\n${input.extraReminder}\n[/system-reminder]` }] : []
-  area.setDynamicTail(withToolReminder(dynamicTail, input.toolReminder))
+  area.setDynamicTail(dynamicTail)
   return {
     area, rag: copy(rag), stanceToPersist: stanceDigest !== previous ? input.stance ?? null : null,
     protectedHistoryStart: area.protectedHistoryStart
@@ -217,9 +238,8 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
     let pending = requests.get(id)
     if (!pending) {
       // 重启后由授权来源重建冻结快照；同进程的后续轮次不能重新生成动态前缀。
-      pending = ports.prepareRequest(state.identity, signal, state).then(value => copy({
-        prefix: value.prefix, dynamicTail: withToolReminder(value.dynamicTail, state.capabilities?.toolReminder),
-      }))
+      pending = ports.prepareRequest(state.identity, signal, state).then(value =>
+        copy(placeToolReminder(value, state.capabilities?.toolReminder, state.prepared, ports.digest)))
       requests.set(id, pending)
       void pending.catch(() => requests.delete(id))
     }

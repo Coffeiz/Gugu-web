@@ -64,6 +64,7 @@ const bridge: DesktopBridge = Object.freeze({
   createBoardProject: (fields: Record<string, unknown>, operationId?: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.createBoardProject, fields, operationId),
   updateBoardProject: (id: number, version: number, fields: Record<string, unknown>) => ipcRenderer.invoke(DESKTOP_CHANNELS.updateBoardProject, id, version, fields),
   deleteBoardProject: (id: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.deleteBoardProject, id),
+  purgeBoardProject: (id: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.purgeBoardProject, id),
   restoreBoardProject: (id: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.restoreBoardProject, id),
   clients: () => ipcRenderer.invoke(DESKTOP_CHANNELS.clients),
   createClient: (name: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.createClient, name),

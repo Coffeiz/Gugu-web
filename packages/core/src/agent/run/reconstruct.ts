@@ -1,4 +1,4 @@
-import { buildFixedRequestPrefix, withToolReminder } from '../context/assemble.js'
+import { buildFixedRequestPrefix, placeToolReminder } from '../context/assemble.js'
 import { contextAccessScopeHash, readSessionSnapshot } from '../context/prepare.js'
 import type { CanonicalRunContext, ContextSourceSelection, RunCheckpoint, RunIdentity } from '../models.js'
 import type { CanonicalContextPorts, ContextServices, ContextSourcePorts } from '../ports.js'
@@ -37,8 +37,8 @@ export function restoreAgentRequestPrefix(
 
   const prefix = buildFixedRequestPrefix(ports.builder.buildRequest(readSessionSnapshot(state), selection, { ...boundIdentity }))
   // 网页简介目录通过同一 Run 的冻结能力恢复，摘要仍绑定请求内容。
-  const restored: Awaited<ReturnType<CanonicalContextPorts['prepareRequest']>> = { prefix, dynamicTail: withToolReminder([], checkpoint.capabilities?.toolReminder) }
-  if (checkpoint.prepared.requestPrefixSize !== prefix.length || checkpoint.prepared.requestDigest !== ports.digest(restored))
+  const restored = placeToolReminder({ prefix, dynamicTail: [] }, checkpoint.capabilities?.toolReminder, checkpoint.prepared, ports.digest)
+  if (checkpoint.prepared.requestPrefixSize !== restored.prefix.length || checkpoint.prepared.requestDigest !== ports.digest(restored))
     throw new AgentRunReconstructionVersionError('运行请求前缀已变化，无法恢复')
   return async (candidate, signal) => {
     signal?.throwIfAborted()

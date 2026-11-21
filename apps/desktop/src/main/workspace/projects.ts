@@ -15,6 +15,7 @@ export function projectsHandlers(host: IpcHost): IpcHandlers {
     [DESKTOP_CHANNELS.updateBoardProject]: (id, version, fields) =>
       host.request('projects.board.update', { id, version, fields }),
     [DESKTOP_CHANNELS.deleteBoardProject]: id => host.request('projects.board.delete', { id }),
+    [DESKTOP_CHANNELS.purgeBoardProject]: id => host.request('projects.board.purge', { id }),
     [DESKTOP_CHANNELS.restoreBoardProject]: id => host.request('projects.board.restore', { id }),
   }
 }

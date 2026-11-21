@@ -3,9 +3,10 @@ import { buildLogicalCandidates, decideAttention, selectAttentionCandidate } fro
 import { attentionMessageFromPayload } from '@gugu/core/im/attention/message'
 import { normalizeAttentionText } from '@gugu/core/im/attention/normalization'
 import { strip } from '@gugu/core/shared/values'
+import type { ImPendingAskResume, ImPendingAskScope } from '@gugu/gateway'
 import type { AttentionDecision, AttentionMessage, AttentionMode, AttentionSnapshot } from '@gugu/core/im/attention/types'
 import type { createPostgresRedisImAttentionSnapshot } from './snapshot.js'
-import type { createRedisImPendingAskStore, ImPendingAskResume, ImPendingAskScope } from '../interactions/ask.js'
+import type { createRedisImPendingAskStore } from '../interactions/ask.js'
 import type { ImAttentionVoiceReadInput, ImAttentionVoiceResult } from './voice.js'
 
 export interface ImAttentionCandidate { eventId: string; payload: Readonly<Record<string, unknown>> }

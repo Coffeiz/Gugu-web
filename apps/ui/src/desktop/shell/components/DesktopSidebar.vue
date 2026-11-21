@@ -81,7 +81,7 @@ const emit = defineEmits<{
 .nav-item { display: flex; align-items: center; gap: 13px; width: 100%; min-width: 0; height: 38px; padding: 0 12px; border: 1px solid transparent; border-radius: 10px; color: var(--content-secondary, var(--text-secondary)); background: transparent; font: inherit; font-size: 13px; text-align: left; cursor: pointer; transition: background .16s ease, color .16s ease, border-color .16s ease, box-shadow .16s ease; }
 .nav-item :deep(svg) { width: 18px; height: 18px; flex: 0 0 18px; }
 .nav-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nav-item:hover { color: var(--content-primary, var(--text-primary)); background: color-mix(in srgb, var(--sidebar-item-active) 55%, transparent); }
+.nav-item:hover:not(.active) { color: var(--content-primary, var(--text-primary)); background: var(--sidebar-item-hover); }
 .nav-item.active { color: var(--sidebar-item-active-fg); background: var(--sidebar-item-active); border-color: var(--sidebar-item-active-border); box-shadow: var(--sidebar-item-selected-shadow); font-weight: 650; }
 .nav-item-disabled { color: var(--text-secondary); }
 .sidebar-footer { position: relative; flex: none; display: flex; align-items: center; gap: 8px; padding: var(--sidebar-footer-inset); border: 1px solid var(--sidebar-user-border); border-radius: var(--radius-sm); background: var(--surface-card-solid); color: var(--content-primary); box-shadow: var(--sidebar-item-active-shadow); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }

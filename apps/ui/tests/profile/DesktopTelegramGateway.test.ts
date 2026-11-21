@@ -28,3 +28,36 @@ it('Telegram 停用确认取消后保留连接', async () => {
     expect(mocks.request).toHaveBeenCalledExactlyOnceWith({ action: 'status' })
   } finally { app.unmount() }
 })
+
+it('桌面 Telegram 显示与其他群平台一致的回应、参与度、记忆和工具设置，并保存到本机适配器', async () => {
+  mocks.request.mockImplementation(async () => ({
+    configured: true, bound: true, enabled: true, status: 'connected', messages: [],
+    groupChatEnabled: true, groupReplyMode: 'reply_all', groupAttentionMode: 'autonomous',
+    privateStreamingEnabled: true, groupOwnerMemoryEnabled: false, groupMemoryEnabled: true,
+    memberMemoryEnabled: true, groupHistorySearchEnabled: true,
+  }))
+  const host = document.createElement('div')
+  const app = createApp(DesktopTelegramGateway)
+  app.mount(host)
+  try {
+    await nextTick()
+    await nextTick()
+    const card = host.querySelector('.pm-bot-item') as HTMLElement
+    const labels = [...card.querySelectorAll('.pm-bot-group-row .pm-field-name')].map(element => element.textContent)
+    expect(labels).toEqual([
+      'profileImUi.telegramBinding', 'profileImUi.groupChat', 'profileImUi.responseMode',
+      'profileImUi.groupAttentionMode', 'profileImUi.privateStreaming', 'profileImUi.groupOwnerMemory',
+      'profileImUi.groupMemory', 'profileImUi.memberMemory', 'profileImUi.memberTools',
+    ])
+
+    ;(card.querySelector('[aria-label="profileImUi.toggleGroupMemory"]') as HTMLButtonElement).click()
+    await nextTick()
+    expect(mocks.request).toHaveBeenCalledWith({ action: 'updateGroupSettings', patch: { groupMemoryEnabled: false } })
+    ;(card.querySelector('[data-tool-option="group_context_search"]') as HTMLButtonElement).click()
+    await nextTick()
+    expect(mocks.request).toHaveBeenCalledWith({ action: 'updateGroupSettings', patch: { groupHistorySearchEnabled: false } })
+    ;(card.querySelector('[aria-label="profileImUi.privateStreaming"]') as HTMLButtonElement).click()
+    await nextTick()
+    expect(mocks.request).toHaveBeenCalledWith({ action: 'setPrivateStreaming', enabled: false })
+  } finally { app.unmount(); host.remove() }
+})

@@ -8,7 +8,8 @@ import { DesktopError } from '../../../../core-host.js'
 import { transcribeDesktopImFile, type DesktopImVoice } from '../../inbound/voice.js'
 import { createHash } from 'node:crypto'
 import { FeishuMediaIngressError, parseFeishuEvent, processFeishuMedia, readFeishuQuote } from '@gugu/gateway/feishu'
-import { createGatewaySupervisor, createImGroupAttentionGate, readImReceivedMessage, type ImGroupAttentionHistory } from '@gugu/gateway'
+import { createGatewaySupervisor, createImGroupAttentionGate, readImReceivedMessage, type ImGroupAttentionHistory,
+  type ImPendingAskStore } from '@gugu/gateway'
 import { createPersistentFeishuProjection, createFeishuClient, createFeishuConnection, createFeishuSender, createFeishuWsNetwork } from '@gugu/gateway/feishu'
 import type { createDesktopFeishuPairing } from '../../../connect/platforms/feishu/index.js'
 import type { createDesktopImCallback } from '../../interactions/callback.js'
@@ -16,6 +17,7 @@ import type { createDesktopImDispatch } from '../../delivery/dispatch.js'
 import { MAX_DESKTOP_ATTACHMENT_BYTES } from '../../../../agent/attachments.js'
 import { desktopImEventKey, type DesktopImFile, type createDesktopImInbox } from '../../inbound/inbox.js'
 import { parseImReceivedMessage } from '@gugu/gateway'
+import { startDesktopImPendingAskPump } from '../../inbound/pending-asks.js'
 
 type Transport = NonNullable<Parameters<typeof createFeishuClient>[0]['transport']>
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -25,7 +27,8 @@ function groupConnectionId(botId: string, groupId: string, ownerId: string) {
 
 export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof createDesktopFeishuPairing>, 'read'>,
   admit: ReturnType<typeof createDesktopImInbox>, dispatch: ReturnType<typeof createDesktopImDispatch>,
-  transport: () => Transport, connect = createFeishuConnection, callback?: ReturnType<typeof createDesktopImCallback>, voice?: DesktopImVoice, projection?: { host: IpcHost; encryption: Pick<typeof safeStorage, 'encryptStringAsync' | 'decryptStringAsync'> }) {
+  transport: () => Transport, connect = createFeishuConnection, callback?: ReturnType<typeof createDesktopImCallback>, voice?: DesktopImVoice,
+  projection?: { host: IpcHost; encryption: Pick<typeof safeStorage, 'encryptStringAsync' | 'decryptStringAsync'> }, pendingAsks?: ImPendingAskStore) {
   const supervisor = createGatewaySupervisor({
     async read() {
       const bot = await pairing.read()
@@ -82,6 +85,7 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
         return groupConnection
       }
       let recovery: Promise<void> | undefined
+      let stopPendingAskPump = () => {}
       async function recoverGroups() {
         if (!projection) return
         let after = ''
@@ -140,8 +144,13 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
             const current = await readActive()
             if (!current) return
             let recordOnly = isGroup && current.groupReplyMode === 'record_only'
+            let pendingAsk = false
             let sourceAttentionKind = isGroup && event.botMentioned ? attentionSourceKind('DIRECT') : null
             if (isGroup && !recordOnly && current.groupReplyMode === 'reply_all') {
+              const pendingScope = { ownerId: 'desktop', botId: bot.appId, platform: 'feishu' as const, groupId: parsed.payload.chat_id }
+              await pendingAsks?.observe(pendingScope, { eventMs: Date.now(), senderId: event.scope.platformUserId,
+                ownBotId: botOpenId, replyTo: typeof parsed.payload.reply_to_platform_message_id === 'string'
+                  ? parsed.payload.reply_to_platform_message_id : undefined, directMention: event.botMentioned }, active)
               const attentionHistory = projection
                 ? await projection.host.request<ImGroupAttentionHistory>('im.inbox.groupAttentionHistory', {
                   platform: 'feishu', connectionId: groupConnectionId(bot.appId, parsed.payload.chat_id, current.userId!),
@@ -151,13 +160,26 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
                 groupId: parsed.payload.chat_id, mode: current.groupAttentionMode,
                 payload: { ...parsed.payload, processable_media: parsed.mediaItems.length > 0 } }, attentionHistory)
               recordOnly = !attention.run
+              pendingAsk = attention.pendingAsk && !parsed.mediaItems.length && Boolean(event.text.trim())
               sourceAttentionKind = attentionSourceKind(attention.decision.kind)
             }
             const targetConnection = isGroup
               ? groupConnectionId(bot.appId, parsed.payload.chat_id, current.userId!) : connectionId
             const eventAuthorize = isGroup ? () => authorizeGroup(parsed.payload.chat_id) : authorize
             if (!parsed.mediaItems.length) {
-              if (recordOnly) await admit(targetConnection, event, undefined, { files: [], recordOnly, ownerPlatformUserId: current.userId!, authorize: eventAuthorize })
+              if (recordOnly) {
+                const recorded = await admit(targetConnection, event, undefined, { files: [], recordOnly, ownerPlatformUserId: current.userId!, authorize: eventAuthorize })
+                if (recorded && pendingAsk && pendingAsks && projection) {
+                  const eventKey = desktopImEventKey(event), eventMs = Date.now()
+                  const sealedEvent = await projection.encryption.encryptStringAsync(JSON.stringify({ event, sourceAttentionKind,
+                    pendingAskResume: true }))
+                  await pendingAsks.register({ ownerId: 'desktop', botId: bot.appId, platform: 'feishu', groupId: parsed.payload.chat_id }, {
+                    eventId: `${eventMs}-${eventKey}`, eventMs, platformMessageId: event.platformMessageId ?? event.eventId,
+                    senderId: event.scope.platformUserId, payload: { eventKey, event, ownerPlatformUserId: current.userId,
+                      sourceAttentionKind, sealedEvent: sealedEvent.toString('base64') },
+                  }, active)
+                }
+              }
               else {
                 if (isGroup) startGroupDispatch(parsed.payload.chat_id, current.userId!)
                 await admit(targetConnection, event, isGroup ? undefined : parsed.payload.chat_id,
@@ -172,7 +194,7 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
               }, async file => { files.push(await transcribeDesktopImFile(file, voice, mediaSignal, authorize)) })
               if (!await eventAuthorize()) return
               try {
-                if (recordOnly) await admit(targetConnection, event, undefined, { files, recordOnly, ownerPlatformUserId: current.userId!, authorize: eventAuthorize })
+              if (recordOnly) await admit(targetConnection, event, undefined, { files, recordOnly, ownerPlatformUserId: current.userId!, authorize: eventAuthorize })
                 else {
                   if (isGroup) startGroupDispatch(parsed.payload.chat_id, current.userId!)
                   await admit(targetConnection, event, parsed.payload.chat_id, { files, sourceAttentionKind: sourceAttentionKind ?? undefined, authorize: eventAuthorize })
@@ -197,6 +219,32 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
               }
             } catch { /* 平台只收到脱敏的交互结果。 */ }
             return { toast: { type: accepted ? 'info' : 'error', content: accepted ? '已收到选择' : '交互已失效' } }
+          },
+        })
+        if (pendingAsks && projection) stopPendingAskPump = startDesktopImPendingAskPump({
+          store: pendingAsks, signal: active,
+          async authorize(resume, currentSignal) {
+            currentSignal.throwIfAborted()
+            const current = await readActive(), payload = resume.trigger.payload
+            if (!current?.userId || !current.groupChatEnabled || current.groupReplyMode !== 'reply_all'
+              || resume.scope.platform !== 'feishu' || resume.scope.botId !== current.appId
+              || !object(payload) || typeof payload.eventKey !== 'string' || typeof payload.ownerPlatformUserId !== 'string'
+              || payload.ownerPlatformUserId !== current.userId || typeof payload.sealedEvent !== 'string'
+              || !object(payload.event)) return false
+            const event = parseImReceivedMessage(connection, payload.event)
+            return event.scope.chatType === 'group' && event.scope.chatId === resume.scope.groupId
+              && event.scope.platformUserId === resume.trigger.senderId && desktopImEventKey(event) === payload.eventKey
+          },
+          async dispatch(resume, currentSignal) {
+            currentSignal.throwIfAborted()
+            const payload = resume.trigger.payload
+            if (!object(payload) || typeof payload.eventKey !== 'string' || typeof payload.ownerPlatformUserId !== 'string'
+              || typeof payload.sealedEvent !== 'string') throw new Error('桌面飞书延迟收件无效')
+            const connectionId = groupConnectionId(bot.appId, resume.scope.groupId, payload.ownerPlatformUserId)
+            const accepted = await projection.host.request<boolean>('im.inbox.resumePendingAsk', { platform: 'feishu', connectionId,
+              eventKey: payload.eventKey, sealedEvent: payload.sealedEvent, ownerPlatformUserId: payload.ownerPlatformUserId,
+              platformUserId: resume.trigger.senderId, text: String((payload.event as Record<string, unknown>).text ?? '') })
+            if (accepted) startGroupDispatch(resume.scope.groupId, payload.ownerPlatformUserId)
           },
         })
         if (projection) recovery = recoverGroups().catch(() => {}).finally(() => { recovery = undefined })
@@ -233,6 +281,7 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
         })
         const closed = handle.closed.finally(async () => {
           controller.abort()
+          stopPendingAskPump()
           await delivery
           await recovery
           await Promise.allSettled(groupDeliveries.values())

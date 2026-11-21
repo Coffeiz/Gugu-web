@@ -9,7 +9,8 @@ import { createImInboundEnvelope } from '../inbound/envelope.js'
 import type { NodeImBotBinding } from '../inbound/inbox.js'
 import type { ImConversationAnchor } from '../agent/conversations.js'
 import type { createPostgresImAttentionRuntime } from '../attention/runtime.js'
-import type { createRedisImPendingAskStore, ImPendingAskResume } from './ask.js'
+import type { ImPendingAskResume } from '@gugu/gateway'
+import type { createRedisImPendingAskStore } from './ask.js'
 
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
 const failure = () => new Error('群延迟回复派发不可用')

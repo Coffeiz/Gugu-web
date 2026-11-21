@@ -101,10 +101,14 @@
         <button v-if="voiceInputAvailable && !recording" class="att-btn" @click="onStartRecord" :title="t('chat.voiceInput')" :aria-label="t('chat.voiceInput')">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="1.5" width="4" height="8" rx="2"/><path d="M3.5 7a4.5 4.5 0 0 0 9 0M8 11.5V14M5.5 14h5"/></svg>
         </button>
-        <button class="send-btn" :class="{ 'exp-send-btn': expanded }" @click="recording ? onStopRecord() : onSendClick()">
-          <Icon name="status.success"      v-if="recording" :size="expanded ? 14 : 13" />
-          <Icon name="action.next" v-else-if="!streaming || hasDraft" :size="expanded ? 14 : 13" />
-          <Icon name="action.stop-fill" v-else :size="expanded ? 14 : 13" />
+        <button v-if="canStop && !recording" type="button" class="send-btn" :class="{ 'exp-send-btn': expanded }"
+          :disabled="interruptPending" :title="t('chatUi.interruptRun')" :aria-label="t('chatUi.interruptRun')"
+          @click="streaming ? onStopStreaming() : onInterruptDetachedRun?.()">
+          <Icon name="action.stop-fill" :size="expanded ? 14 : 13" />
+        </button>
+        <button v-if="!canStop || hasDraft || recording" type="button" class="send-btn" :class="{ 'exp-send-btn': expanded }"
+          @click="recording ? onStopRecord() : onSend()">
+          <Icon :name="recording ? 'status.success' : 'action.next'" :size="expanded ? 14 : 13" />
         </button>
       </div>
     </div>
@@ -160,6 +164,9 @@ const props = defineProps<{
   expanded: boolean
   ownerZ: number
   streaming: boolean
+  canInterruptDetachedRun?: boolean
+  interruptPending?: boolean
+  onInterruptDetachedRun?: () => void
   automaticModeEnabled: boolean
   automaticModeAvailable: boolean
   automaticModeSaving: boolean
@@ -178,6 +185,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{ 'update:modelValue': [value: string]; 'update:references': [value: ChatReference[]] }>()
 const hasDraft = computed(() => Boolean(props.modelValue.trim() || props.pendingAtt.length || (props.standaloneReferences && props.references.length)))
+const canStop = computed(() => props.streaming || props.canInterruptDetachedRun)
 const commandMenuVisible = ref(false)
 const commandIndex = ref(0)
 const readChatCommands = inject(chatCommandCatalogKey, loadChatCommands)
@@ -428,12 +436,6 @@ function onKeydown(event: KeyboardEvent) {
     event.preventDefault()
     commandMenuVisible.value = false
   }
-}
-
-function onSendClick() {
-  // 生成中有草稿时，点击仍应发送并进入队列；没有草稿才是停止当前生成。
-  if (props.streaming && !hasDraft.value) props.onStopStreaming()
-  else props.onSend()
 }
 
 function onOutsidePointerdown(event: PointerEvent) {

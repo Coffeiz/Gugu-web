@@ -22,6 +22,8 @@ export interface SqliteAgentChatInput {
   attachments?: string[]
   references?: DesktopAgentChatReference[]
   groupSender?: DesktopGroupSender
+  /** Gateway 已确认的桌面群延迟唤醒可复用同一条被动历史消息。 */
+  resumePassiveMessage?: boolean
 }
 
 interface SessionRow { session_context: string | null; active_run_id: string | null; execution_state: string; last_message_seq: number }
@@ -64,6 +66,9 @@ export function createSqliteAgentAdmission(
       const clientId = input.client_message_id
       if (typeof input.message !== 'string' || (!message && !input.attachments?.length && !input.references?.length) || message.length > 32_000 || (clientId != null && !/^[A-Za-z0-9:_-]{1,64}$/.test(clientId)))
         throw new CoreError('invalid_request', '聊天请求无效')
+      if (input.resumePassiveMessage !== undefined && typeof input.resumePassiveMessage !== 'boolean'
+        || input.resumePassiveMessage === true && (!clientId || !input.groupSender || input.attachments?.length || input.references?.length))
+        throw new CoreError('invalid_request', '群聊延迟唤醒参数无效')
       const prepared = await db.transaction().execute(async tx => {
         const current = await readSession(tx, owner, session)
         if (!current) throw new CoreError('not_found', '会话不存在')
@@ -77,19 +82,28 @@ export function createSqliteAgentAdmission(
             WHERE im.owner_id=${owner} AND im.session_id=${session} AND s.chat_type='group'`.execute(tx)
           if (!group.rows.length) throw new CoreError('invalid_request', '发言人资料仅适用于群会话')
         }
+        let passiveMessageId: number | undefined
         if (clientId != null) {
-          const previous = (await sql<{ run_id: string | null; id: number; content: string; files: string | null; references_json: string | null }>`
-            SELECT a.run_id,m.id,m.content,m.files,m.references_json FROM conversation_messages m
+          const previous = (await sql<{ run_id: string | null; id: number; content: string; files: string | null; references_json: string | null; platform_user_id: string | null; platform_user_name: string | null }>`
+            SELECT a.run_id,m.id,m.content,m.files,m.references_json,m.platform_user_id,m.platform_user_name FROM conversation_messages m
             LEFT JOIN agent_run_admissions a ON a.session_id=m.session_id AND a.user_id=${owner} AND a.user_message_id=m.id
             WHERE m.session_id=${session} AND m.client_message_id=${clientId}`.execute(tx)).rows[0]
           if (previous) {
             const previousIds = previous.files ? (JSON.parse(previous.files) as Array<{ attach_id?: string }>).map(file => file.attach_id).filter(Boolean) : []
             const requestedIds = [...new Set(input.attachments ?? [])]
             const previousReferences = previous.references_json ? JSON.parse(previous.references_json) : []
-            if (!previous.run_id || previous.content !== message || JSON.stringify(previousIds) !== JSON.stringify(requestedIds)
-              || JSON.stringify(previousReferences) !== JSON.stringify(input.references ?? []))
+            if (previous.run_id && previous.content === message && JSON.stringify(previousIds) === JSON.stringify(requestedIds)
+              && JSON.stringify(previousReferences) === JSON.stringify(input.references ?? []))
+              return { identity: { ownerId, sessionId: String(session), runId: previous.run_id }, userMessageId: previous.id, replay: true }
+            const sessionType = (await sql<{ chat_type: string | null }>`SELECT chat_type FROM conversation_sessions
+              WHERE id=${session} AND user_id=${owner}`.execute(tx)).rows[0]?.chat_type
+            if (input.resumePassiveMessage !== true || sessionType !== 'group' || previous.run_id
+              || previous.content !== message || previous.platform_user_id !== input.groupSender?.id
+              || (input.groupSender?.name !== undefined && previous.platform_user_name !== input.groupSender.name)
+              || previousIds.length || requestedIds.length || JSON.stringify(previousReferences) !== '[]'
+              || (input.references?.length ?? 0) > 0)
               throw new CoreError('conflict', '消息标识已被使用')
-            return { identity: { ownerId, sessionId: String(session), runId: previous.run_id }, userMessageId: previous.id, replay: true }
+            passiveMessageId = previous.id
           }
         }
         if (current.execution_state === 'baseline_updating'
@@ -97,14 +111,14 @@ export function createSqliteAgentAdmission(
           throw new CoreError('conflict', '会话已有运行中的任务')
         const identity = { ownerId, sessionId: String(session), runId: randomUUID() }
         const at = databaseTime(nowUtc(), 'sqlite')
-        const sequence = current.last_message_seq + 1
+        const sequence = passiveMessageId === undefined ? current.last_message_seq + 1 : current.last_message_seq
         const references = input.references ?? []
         if (references.length > 50) throw new CoreError('invalid_request', '引用数量超出限制')
         const referencedText = await resolveDesktopChatReferences(tx, ownerId, references, message)
         const contentJson = referencedText === message ? null : JSON.stringify([{ type: 'text', text: referencedText }])
-        const { rows } = await sql<{ id: number }>`INSERT INTO conversation_messages
+        const { rows } = passiveMessageId === undefined ? await sql<{ id: number }>`INSERT INTO conversation_messages
           (session_id,conversation_seq,role,content,client_message_id,references_json,content_json,created_at,platform_user_id,platform_user_name)
-          VALUES(${session},${sequence},'user',${message},${clientId ?? null},${references.length ? JSON.stringify(references) : null},${contentJson},${at},${sender?.id ?? null},${sender?.name ?? null}) RETURNING id`.execute(tx)
+          VALUES(${session},${sequence},'user',${message},${clientId ?? null},${references.length ? JSON.stringify(references) : null},${contentJson},${at},${sender?.id ?? null},${sender?.name ?? null}) RETURNING id`.execute(tx) : { rows: [{ id: passiveMessageId }] }
         const userMessageId = rows[0]!.id
         const files = await claimDesktopChatAttachments(tx, ownerId, userMessageId, input.attachments ?? [], session, clientId)
         if (!message && referencedText === message && !files.some(file => file.kind === 'text' || file.kind === 'image'

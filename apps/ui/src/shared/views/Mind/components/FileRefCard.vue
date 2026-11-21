@@ -15,7 +15,7 @@
     @mouseleave="onLeave"
   >
     <template v-if="thumbnail" #thumb>
-      <img :src="thumbnail" decoding="async" draggable="false" alt="" />
+      <img :key="thumbnail" :src="thumbnail" decoding="async" draggable="false" alt="" @error="onThumbnailError" />
     </template>
     <template v-if="!pathReference" #meta>{{ t('mindUi.referenceMissing') }}</template>
     <CardAffordances :hovering="isHovering" :node-id="props.item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
@@ -66,17 +66,27 @@ function onEnter() {
 }
 function onLeave() { isHovering.value = false; emit('hover', props.item, false) }
 
-const pathReference = computed(() => isMindFileReference(props.item.node.refSnapshot?.fileReferenceId))
+const referenceId = computed(() => props.item.node.refSnapshot?.fileReferenceId)
+const pathReference = computed(() => isMindFileReference(referenceId.value))
 const pathName = computed(() => {
   const name = props.item.node.title || t('mindUi.unnamedObject')
   const parsed = splitName(name)
   return parsed.base ? parsed : { base: name, ext: '' }
 })
-const thumbnail = computed(() => {
-  const id = props.item.node.refSnapshot?.fileReferenceId
-  const file = typeof id === 'string' ? decodeMindFileReference(id) : null
-  return file && isImageExt(pathName.value.ext) ? pathFilesApi.thumbnailUrl(file) : null
+const thumbnailUrl = computed(() => {
+  const id = referenceId.value
+  if (!isMindFileReference(id) || !isImageExt(pathName.value.ext)) return null
+  if (id.startsWith('drop-')) return pathFilesApi.systemReferenceUrl?.(id, true) ?? null
+  const file = decodeMindFileReference(id)
+  return file ? pathFilesApi.thumbnailUrl(file) : null
 })
+const thumbnailFailed = ref(false)
+watch(thumbnailUrl, () => { thumbnailFailed.value = false }, { flush: 'sync' })
+const thumbnail = computed(() => thumbnailFailed.value ? null : thumbnailUrl.value)
+function onThumbnailError(event: Event) {
+  if ((event.currentTarget as HTMLImageElement).getAttribute('src') === thumbnailUrl.value)
+    thumbnailFailed.value = true
+}
 const cardStyle = computed(() => {
   const { w } = itemSize(props.item)
   return { position: 'absolute', left: `${props.item.x}px`, top: `${props.item.y}px`, width: `${w}px`, zIndex: `${props.item.z}` }

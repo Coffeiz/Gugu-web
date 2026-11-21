@@ -61,6 +61,7 @@ it('Preload 只暴露固定业务函数，不透传任意 channel 或 Electron �
     'projectBoard',
     'projectDetails',
     'projects',
+    'purgeBoardProject',
     'qqPairing',
     'readLogs',
     'receipt',

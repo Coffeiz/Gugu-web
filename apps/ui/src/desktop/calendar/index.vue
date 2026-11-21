@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import SkeletonGate from '@/components/common/feedback/skeleton/SkeletonGate.vue'
 import { showAppError } from '@/composables/core/useAppToast'
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { CalendarRow } from '@desktop/bridge/bridge'
 import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
@@ -329,7 +329,7 @@ function openEditEvent(
   reminderError.value = ''
   eventForm.resetReminder()
   eventPopupAnchor.value = anchor
-  eventPopupCentered.value = !event
+  eventPopupCentered.value = !event && !anchor
   eventPopupPosition.value = event && !anchor ? popupPositionFromPoint(event.clientX, event.clientY) : null
   eventFormOpen.value = true
   void eventForm.loadReminders(row).catch(error => {
@@ -337,17 +337,29 @@ function openEditEvent(
   })
 }
 const uiStore = useUiStore()
-watch([() => uiStore.pendingCalendarEvent, renderEvents], ([target, events]) => {
+const calendarGrid = ref<HTMLElement | null>(null)
+const calendarSidebar = ref<HTMLElement | null>(null)
+watch([() => uiStore.pendingCalendarEvent, renderEvents], async ([target, events], _previous, onCleanup) => {
   if (!target) return
   const item = events.find(event => event.id === target.id)
   if (!item) return
-  uiStore.pendingCalendarEvent = null
+  let cancelled = false
+  onCleanup(() => { cancelled = true })
   const date = new Date(`${item.date}T00:00:00`)
   if (!Number.isNaN(date.getTime())) {
     cursor.value = new Date(date.getFullYear(), date.getMonth(), 1)
     weekRef.value = date
   }
-  openEditEvent(item)
+  selectedDate.value = item.date
+  await nextTick()
+  if (cancelled || uiStore.pendingCalendarEvent !== target) return
+  const selector = `[data-calendar-edit-event="${item.id}"]`
+  const anchor = calendarGrid.value?.querySelector<HTMLElement>(selector)
+    ?? calendarSidebar.value?.querySelector<HTMLElement>(selector)
+    ?? null
+  anchor?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  uiStore.pendingCalendarEvent = null
+  openEditEvent(item, undefined, anchor)
 }, { immediate: true })
 
 function onSidebarEdit(payload: { item: CalendarRenderItem; event: MouseEvent }) {
@@ -549,7 +561,7 @@ onUnmounted(() => {
     @toggle-picker="togglePicker"
   />
   <div class="desktop-cal-layout">
-    <section class="desktop-cal-grid glass-card" :class="{ 'is-initial-loading': initialLoading }" aria-label="月历">
+    <section ref="calendarGrid" class="desktop-cal-grid glass-card" :class="{ 'is-initial-loading': initialLoading }" aria-label="月历">
       <div class="desktop-cal-month" :class="{ 'is-week-view': viewMode === 'week' }">
         <MonthGrid
           v-if="viewMode === 'month'"
@@ -625,7 +637,7 @@ onUnmounted(() => {
         <CalendarSkeleton :rows="viewMode === 'month' ? monthWeeks.length : 12" />
       </SkeletonGate>
     </section>
-    <aside class="desktop-cal-info">
+    <aside ref="calendarSidebar" class="desktop-cal-info">
       <CalendarSidebar
         :selected-date-label="selectedDateLabel"
         :selected-events="selectedEvents"

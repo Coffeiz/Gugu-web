@@ -57,12 +57,13 @@ export function createImGroupAttentionGate() {
             const decision = decideAttention(subject, snapshot, input.mode, { botAliases: ['咕咕'] });
             const mentioned = payload.native_bot_mentioned === true || payload.bot_mentioned === true || payload.group_mentioned === true;
             const run = mentioned || selectAttentionCandidate([{ message: subject, decision }], input.mode, { allowAsk: false }) !== null;
+            const pendingAsk = !run && selectAttentionCandidate([{ message: subject, decision }], input.mode)?.decision.sceneType === 'ASK';
             recent.push(current);
             history.delete(key);
             history.set(key, recent.slice(-maxMessagesPerGroup));
             if (history.size > maxGroups)
                 history.delete(history.keys().next().value);
-            return { run, decision };
+            return { run, pendingAsk, decision };
         },
     };
 }

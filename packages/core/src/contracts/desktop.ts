@@ -17,6 +17,7 @@ export const DESKTOP_METHODS = [
   'im.inbox.pendingConnection',
   'im.inbox.recordGroup',
   'im.inbox.groupAttentionHistory',
+  'im.inbox.resumePendingAsk',
   'im.inbox.reject',
   'im.inbox.prompt',
   'im.inbox.delivery',
@@ -81,6 +82,7 @@ export const DESKTOP_METHODS = [
   'projects.board.update',
   'projects.board.delete',
   'projects.board.restore',
+  'projects.board.purge',
   'clients.list',
   'clients.create',
   'clients.update',
@@ -112,6 +114,7 @@ export const DESKTOP_METHODS = [
   'desktop.terminal',
 ] as const
 export const DESKTOP_MUTATIONS: readonly string[] = [
+  'im.inbox.resumePendingAsk',
   'agent.attachments.stage',
   'agent.attachments.deleteDraft',
   'agent.sessions.create',
@@ -135,6 +138,7 @@ export const DESKTOP_MUTATIONS: readonly string[] = [
   'projects.board.update',
   'projects.board.delete',
   'projects.board.restore',
+  'projects.board.purge',
   'clients.create',
   'clients.update',
   'clients.delete',
@@ -172,6 +176,7 @@ export const DESKTOP_CHANNELS = {
   updateBoardProject: 'gugu:projects:board:update',
   deleteBoardProject: 'gugu:projects:board:delete',
   restoreBoardProject: 'gugu:projects:board:restore',
+  purgeBoardProject: 'gugu:projects:board:purge',
   clients: 'gugu:clients:list',
   createClient: 'gugu:clients:create',
   renameClient: 'gugu:clients:rename',
@@ -556,6 +561,7 @@ export interface DesktopBridge {
   createBoardProject(fields: Record<string, unknown>, operationId?: string): Promise<DesktopReply<DesktopProjectDetails>>
   updateBoardProject(id: number, version: number, fields: Record<string, unknown>): Promise<DesktopReply<DesktopProjectDetails>>
   deleteBoardProject(id: number): Promise<DesktopReply<null>>
+  purgeBoardProject(id: number): Promise<DesktopReply<null>>
   restoreBoardProject(id: number): Promise<DesktopReply<DesktopProjectDetails>>
   clients(): Promise<DesktopReply<DesktopClient[]>>
   createClient(name: string): Promise<DesktopReply<DesktopClient>>

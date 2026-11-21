@@ -13,5 +13,6 @@ export const desktopProjectAccess: ProjectAccess = {
     return desktopData.updateBoardProject(id, version, fields)
   },
   delete: desktopData.deleteBoardProject,
+  purge: desktopData.purgeBoardProject,
   restore: desktopData.restoreBoardProject,
 }

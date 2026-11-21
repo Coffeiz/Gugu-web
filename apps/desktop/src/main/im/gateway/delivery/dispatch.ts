@@ -71,7 +71,7 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
             const { result } = await encryption.decryptStringAsync(Buffer.from(item.sealedEvent, 'base64'))
             let envelope: DesktopImEnvelope | undefined
             try {
-              const candidate = JSON.parse(result) as { event: unknown; replyContext?: unknown; attachments?: unknown; sourceAttentionKind?: unknown }
+              const candidate = JSON.parse(result) as { event: unknown; replyContext?: unknown; attachments?: unknown; sourceAttentionKind?: unknown; pendingAskResume?: unknown }
               const event = parseImReceivedMessage(connection, candidate.event)
               const replyContext = candidate.replyContext
               const attachments = candidate.attachments
@@ -79,9 +79,11 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
                 && (attachments === undefined || Array.isArray(attachments) && attachments.length <= 32
                   && attachments.every(id => typeof id === 'string' && /^[a-f0-9]{32}$/u.test(id)))
                 && (replyContext === undefined || (connection.platform === 'wechat' || connection.platform === 'feishu') && typeof replyContext === 'string')
-                && (candidate.sourceAttentionKind === undefined || isAttentionSourceKind(candidate.sourceAttentionKind)))
+                && (candidate.sourceAttentionKind === undefined || isAttentionSourceKind(candidate.sourceAttentionKind))
+                && (candidate.pendingAskResume === undefined || candidate.pendingAskResume === true && options.group !== undefined))
                 envelope = { event, replyContext, attachments,
-                  ...(typeof candidate.sourceAttentionKind === 'string' ? { sourceAttentionKind: candidate.sourceAttentionKind } : {}) }
+                  ...(typeof candidate.sourceAttentionKind === 'string' ? { sourceAttentionKind: candidate.sourceAttentionKind } : {}),
+                  ...(candidate.pendingAskResume === true ? { pendingAskResume: true } : {}) }
             } catch { /* 解密成功后的无效数据可以结案。 */ }
             const event = envelope?.event
             const matches = event && (options.group
@@ -106,6 +108,7 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
               await host.request('agent.sessions.startRun', {
                 id: item.sessionId, text: event.quotedText ? `引用消息：${JSON.stringify(event.quotedText)}\n\n${event.text}` : event.text, clientId: item.clientId, model: selection.config, modelId: selection.id, interactive: !options.group && Boolean(options.sendPrompt),
                 ...(options.group ? { groupSender: { id: event.scope.platformUserId, name: event.platformUserName } } : {}),
+                ...(envelope?.pendingAskResume ? { resumePassiveMessage: true } : {}),
                 ...(envelope?.attachments ? { attachments: envelope.attachments } : {}),
               })
               continue

@@ -64,3 +64,18 @@ export async function setDesktopProjectDeleted(
     .where('deleted_at', deleted ? 'is' : '=', current.deleted_at).execute()
   return project
 }
+
+/** 桌面只清理项目记录和所属日程，绑定的磁盘目录由用户管理。 */
+export async function purgeDesktopProject(tx: Transaction<Database>, ownerId: string, rawId: unknown): Promise<void> {
+  const id = safeInteger(rawId)
+  const project = await tx.selectFrom('projects').select('id')
+    .where('user_id', '=', ownerId).where('id', '=', id).where('deleted_at', 'is not', null).executeTakeFirst()
+  if (!project) throw new CoreError('not_found', '已删除项目不存在')
+
+  const events = tx.selectFrom('calendar_events').select('id')
+    .where('user_id', '=', ownerId).where('project_id', '=', id)
+  await tx.deleteFrom('scheduled_tasks').where('user_id', '=', ownerId).where('event_id', 'in', events).execute()
+  await tx.deleteFrom('calendar_events').where('user_id', '=', ownerId).where('project_id', '=', id).execute()
+  await tx.deleteFrom('projects').where('user_id', '=', ownerId).where('id', '=', id)
+    .where('deleted_at', 'is not', null).executeTakeFirstOrThrow()
+}

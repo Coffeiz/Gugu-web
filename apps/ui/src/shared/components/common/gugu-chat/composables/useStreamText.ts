@@ -1,5 +1,6 @@
 import { onScopeDispose, shallowRef, watch } from 'vue'
 import { markdownStreamMotionDuration } from '../../content/markdownStreamMotion'
+import { scanChatMarkdownFences } from '../markdown'
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
 const revealInterval = 25
@@ -25,6 +26,7 @@ export function useStreamText(source: () => {
   const presenting = shallowRef(false)
   let key: string | undefined
   let target = ''
+  let smartRanges: ReturnType<typeof scanChatMarkdownFences>['smartRanges'] = []
   let streaming = false
   let timer: ReturnType<typeof setTimeout> | undefined
   let finishTimer: ReturnType<typeof setTimeout> | undefined
@@ -58,7 +60,10 @@ export function useStreamText(source: () => {
     if (timer !== undefined) return
     timer = setTimeout(() => {
       timer = undefined
-      displayed.value = target.slice(0, prefixEnd(target, displayed.value.length, graphemesPerReveal))
+      const start = displayed.value.length
+      const next = prefixEnd(target, start, graphemesPerReveal)
+      const smartRange = smartRanges.find(range => range.start < next && range.end > start)
+      displayed.value = target.slice(0, Math.max(next, smartRange?.end ?? 0))
       schedule()
     }, revealInterval)
   }
@@ -69,6 +74,7 @@ export function useStreamText(source: () => {
     const wasStreaming = streaming
     key = current.key
     target = current.text
+    smartRanges = target.includes('gugu-ui') ? scanChatMarkdownFences(target.split('\n')).smartRanges : []
     streaming = current.streaming
     if (replaced || !append || current.hasFollowingMessage
       || ((streaming || wasStreaming) && typeof window !== 'undefined'

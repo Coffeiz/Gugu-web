@@ -151,14 +151,16 @@ it('快照归属或作用域无效时拒绝读取提示，前缀内容变化时�
   expect(() => restoreAgentRequestPrefix(identity, checkpoint, selection, ports)).toThrow('运行请求前缀已变化')
 })
 
-it('重启时从本 Run 的能力快照恢复简介目录到动态尾部', async () => {
+it.each(['固定前缀', '旧动态尾部'] as const)('重启时按原检查点恢复工具简介到%s', async (layout) => {
   const { checkpoint, expected, selection, ports } = savedRequest()
   const toolReminder = '合成工具简介：查询项目'
-  const request = { prefix: expected.prefix,
-    dynamicTail: [{ role: 'user', content: `[system-reminder]\n${toolReminder}\n[/system-reminder]` }] }
+  const reminder = { role: 'user' as const, content: `[system-reminder]\n${toolReminder}\n[/system-reminder]` }
+  const request = layout === '固定前缀'
+    ? { prefix: [...expected.prefix, reminder], dynamicTail: [] }
+    : { prefix: expected.prefix, dynamicTail: [reminder] }
   const restored = restoreAgentRequestPrefix(identity, {
     ...checkpoint, capabilities: { toolNames: [], tools: [], toolReminder },
-    prepared: { ...checkpoint.prepared, requestDigest: stableJson(request) },
+    prepared: { ...checkpoint.prepared, requestPrefixSize: request.prefix.length, requestDigest: stableJson(request) },
   }, selection, ports)
   expect(await restored(identity)).toEqual(request)
 })

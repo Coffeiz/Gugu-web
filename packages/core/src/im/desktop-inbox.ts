@@ -161,6 +161,36 @@ export function recordDesktopImGroupMessage(db: Kysely<Database>, ownerId: strin
   })
 }
 
+/** 仅将已写入群历史的原消息提升为待运行收件，供 Gateway 的可信延迟唤醒使用。 */
+export async function resumeDesktopImPendingAsk(db: Kysely<Database>, ownerId: string, fields: Fields): Promise<boolean> {
+  const owner = ownerId.toLowerCase().replaceAll('-', '')
+  const { platform, connectionId } = connectionScope(fields)
+  const { eventKey, sealedEvent, ownerPlatformUserId, platformUserId, text } = fields
+  if (!['feishu', 'telegram'].includes(platform) || typeof eventKey !== 'string' || !/^[a-f0-9]{64}$/u.test(eventKey)
+    || typeof sealedEvent !== 'string' || sealedEvent.length > 48_000 || !/^[A-Za-z0-9+/]+={0,2}$/u.test(sealedEvent)
+    || typeof ownerPlatformUserId !== 'string' || !ownerPlatformUserId.trim() || ownerPlatformUserId.length > 256
+    || typeof platformUserId !== 'string' || !platformUserId.trim() || platformUserId.length > 256
+    || typeof text !== 'string' || !text.trim() || text.length > 32_000)
+    throw new CoreError('invalid_request', '本机 IM 延迟唤醒收件无效')
+  const sealed = Buffer.from(sealedEvent, 'base64')
+  if (sealed.toString('base64') !== sealedEvent) throw new CoreError('invalid_request', '本机 IM 延迟唤醒密文无效')
+  return db.transaction().execute(async tx => {
+    const session = (await sql<{ session_id: number }>`SELECT im.session_id FROM desktop_im_sessions im
+      JOIN conversation_sessions s ON s.id=im.session_id AND s.user_id=im.owner_id AND s.chat_type='group'
+      JOIN conversation_messages m ON m.session_id=s.id AND m.role='user'
+        AND m.client_message_id=${imClientId(platform, connectionId, eventKey)}
+      LEFT JOIN agent_run_admissions a ON a.session_id=m.session_id AND a.user_id=${owner} AND a.user_message_id=m.id
+      WHERE im.owner_id=${owner} AND im.platform=${platform} AND im.connection_id=${connectionId}
+        AND s.platform_user_id=${ownerPlatformUserId} AND m.platform_user_id=${platformUserId}
+        AND m.content=${text} AND a.run_id IS NULL LIMIT 1`.execute(tx)).rows[0]
+    if (!session) return false
+    const inserted = await sql`INSERT INTO desktop_im_inbox(owner_id,platform,connection_id,event_key,sealed_event,received_at)
+      VALUES(${owner},${platform},${connectionId},${eventKey},${sealed},${new Date().toISOString()})
+      ON CONFLICT(owner_id,platform,connection_id,event_key) DO NOTHING RETURNING event_key`.execute(tx)
+    return inserted.rows.length === 1
+  })
+}
+
 /** 从本机群会话已有消息读取短期参与度上下文，不另建一份消息存储。 */
 export async function readDesktopImGroupAttentionHistory(db: Kysely<Database>, ownerId: string, fields: Fields) {
   const owner = ownerId.toLowerCase().replaceAll('-', '')

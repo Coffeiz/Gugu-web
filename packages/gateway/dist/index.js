@@ -7,6 +7,7 @@ export * from './runtime/admission.js';
 export * from './ir/interaction.js';
 export * from './ir/reply.js';
 export * from './ir/group-attention.js';
+export * from './ir/pending-ask.js';
 export * from './ir/tool-receipt.js';
 export * from './runtime/inbound-preflight.js';
 export * from './runtime/chart-parser.js';

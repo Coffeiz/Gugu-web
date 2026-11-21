@@ -25,7 +25,8 @@ import { projectDeadlinePresentation } from '@/composables/shared/useProjectCard
 import { runtime } from '@/interaction/runtime'
 import { provideRuntime } from '@/interaction/runtime/vue'
 
-function mountComposer(catalog: ChatModelCatalog, references: ChatReference[] = []) {
+function mountComposer(catalog: ChatModelCatalog, references: ChatReference[] = [],
+  overrides: Partial<InstanceType<typeof GuguChatComposer>['$props']> = {}) {
   const onReferenceClick = vi.fn()
   const host = document.createElement('div')
   document.body.appendChild(host)
@@ -42,7 +43,7 @@ function mountComposer(catalog: ChatModelCatalog, references: ChatReference[] = 
   const app = createApp({
     setup() {
       provideRuntime(runtime)
-      return () => h(GuguChatComposer, { ...props, ref: composer })
+      return () => h(GuguChatComposer, { ...props, ...overrides, ref: composer })
     },
   }).use(createPinia()).use(i18n)
   app.provide(mindAccessKey, webMindAccess)
@@ -51,6 +52,24 @@ function mountComposer(catalog: ChatModelCatalog, references: ChatReference[] = 
   app.mount(host)
   return { app, host, composer, onReferenceClick }
 }
+
+it('后台运行时发送区可以中断，同时保留草稿的发送入口', () => {
+  const onInterruptDetachedRun = vi.fn()
+  const onSend = vi.fn()
+  const { app, host } = mountComposer(createWebChatModelCatalog(() => null), [], {
+    modelValue: '待发送草稿', canInterruptDetachedRun: true, onInterruptDetachedRun, onSend,
+  })
+  try {
+    const stop = host.querySelector<HTMLButtonElement>(`button[aria-label="${i18n.global.t('chatUi.interruptRun')}"]`)
+    stop?.click()
+    expect(onInterruptDetachedRun).toHaveBeenCalledOnce()
+    host.querySelector<HTMLButtonElement>('.send-btn:not([aria-label])')?.click()
+    expect(onSend).toHaveBeenCalledOnce()
+  } finally {
+    app.unmount()
+    host.remove()
+  }
+})
 
 it('Web 模型选择保留配置默认、显式服务端默认和固定模型', async () => {
   const key = 'gugu:chat-model:42'
@@ -492,5 +511,32 @@ it('从历史响应恢复只含引用的消息后，可从消息行打开引用'
   } finally {
     app.unmount()
     host.remove()
+  }
+})
+
+it('独立卡片消息隐藏时间戳，普通消息和含卡片的正文保留时间戳', () => {
+  const link = 'gugu://open-object/project/2'
+  const messages = [
+    { role: 'interaction', text: '', interaction: {
+      promptId: 1, kind: 'choice', title: '请选择', body: '', options: [],
+    } },
+    { role: 'ai', text: link },
+    { role: 'ai', text: '', linkButtons: { message: '打开项目', buttons: [{ id: 'p', label: '项目', url: link }] } },
+    { role: 'ai', text: `这是项目。\n\n${link}` },
+    { role: 'user', text: '给我看看项目' },
+  ]
+  for (const [index, message] of messages.entries()) {
+    const host = document.createElement('div')
+    const app = createApp(GuguChatMessageRow, {
+      msg: { id: index, time: '09:30', ...message }, timestamp: '09:30',
+      sessionId: null, isGroupSession: false, interactionAnswerMode: 'composer',
+      copiedId: null, voicePlayingId: null, voiceBars: [],
+    }).use(i18n)
+    app.mount(host)
+    try {
+      expect(host.querySelector('.msg-time')?.textContent).toBe(index < 3 ? undefined : '09:30')
+    } finally {
+      app.unmount()
+    }
   }
 })
