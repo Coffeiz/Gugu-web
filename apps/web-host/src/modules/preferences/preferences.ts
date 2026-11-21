@@ -1,3 +1,4 @@
+import { acceptsPreferenceTextFilename, decodePreferenceTextUpload, MAX_PREFERENCE_TEXT_UPLOAD_BYTES } from '@gugu/core/preferences/text-upload'
 import { CoreError, createPreferenceService, parsePreferenceRequest as requestBody } from '@gugu/core'
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
 import type { PreferenceTextFiles, PreferenceTextKind } from './persistence/personality-files.js'
@@ -34,21 +35,19 @@ export interface PreferencesRouteOptions {
 async function uploadedText(request: FastifyRequest, kind: PreferenceTextKind): Promise<string> {
   const part = await request.file()
   if (!part) throw new CoreError('invalid_request', '缺少上传文件')
-  const filename = (part.filename || '').trim().toLowerCase()
-  const allowed = kind === 'reply-style' ? filename.endsWith('.md') || filename.endsWith('.txt') : filename.endsWith('.md')
-  if (!allowed) throw Object.assign(new Error(kind === 'reply-style'
+  if (!acceptsPreferenceTextFilename(kind, part.filename || '')) throw Object.assign(new Error(kind === 'reply-style'
     ? '回复风格文件必须是 Markdown 或 TXT 文件' : '人格文件必须是 Markdown（.md）文件'), { statusCode: 415 })
   const chunks: Buffer[] = []
   let length = 0
   for await (const chunk of part.file) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
     length += buffer.length
-    if (length <= 40000) chunks.push(buffer)
+    if (length <= MAX_PREFERENCE_TEXT_UPLOAD_BYTES) chunks.push(buffer)
   }
-  if (part.file.truncated || length > 40000) throw Object.assign(new Error('偏好文件过大'), { statusCode: 413 })
+  if (part.file.truncated || length > MAX_PREFERENCE_TEXT_UPLOAD_BYTES) throw Object.assign(new Error('偏好文件过大'), { statusCode: 413 })
   let content: string
   try {
-    content = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks))
+    content = decodePreferenceTextUpload(Buffer.concat(chunks))
   } catch {
     throw Object.assign(new Error('偏好文件必须使用 UTF-8 编码'), { statusCode: 400 })
   }

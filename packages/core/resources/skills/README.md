@@ -1,6 +1,6 @@
 # Node 内置 Skill Markdown 资源
 
-构建脚本自动读取本目录全部 `.md` 文件，并由正文 frontmatter 的 `id`、名称、描述和关联工具生成内置 Skill 定义；`README.md` 仅作说明并跳过。新增或移除 Markdown 文件即可改变打包与注册目录，不维护第二份 ID/文件 manifest。当前目录保留已迁入 2.0 资源范围的文档；尚待重设计的文件操作、定时任务和 Shell 正文仍只在 Python 基准目录，不会被 Node 自动发现。
+构建脚本读取本目录的技能 Markdown，跳过 `README.md`。头部使用 `name`、`description`、`category` 等字段。文件名去掉 `.md` 后作为稳定键，并按文件名字符顺序自动分配从 `S1` 开始的连续编号。启停配置与历史回执引用稳定键，请保持已发布文件名稳定。
 
 文档作为可信 Host 提供的资源打包，正文仍由注册器按需读取。内置 Skill 文本和 `related_tools` 都不是权限来源；关联工具只有在可信 Host 实际注册并授权后才可调用。
 

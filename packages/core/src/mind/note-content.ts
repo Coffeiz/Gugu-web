@@ -1,95 +1,8 @@
-import { z } from 'zod'
 import { asciiDecimalDigits, isDecimalDigits } from '../shared/unicode-decimal.js'
 import { strip } from '../shared/values.js'
 import { physicalLines } from './note-read.js'
 
-const referenceType = z.enum(['project', 'file', 'event'])
-const mark = z.object({ type: z.enum(['bold', 'italic', 'strike', 'code', 'link']), href: z.string().optional() }).strict()
-const inline = z.object({
-  type: z.enum(['text', 'reference']), text: z.string().optional(), marks: z.array(mark).optional(),
-  ref_type: referenceType.optional(), ref_id: z.number().int().safe().optional(), label: z.string().optional(),
-}).strict()
-const content = z.array(inline)
-const item = z.object({ content, checked: z.boolean().optional() }).strict()
-export const mindBlocksSchema = z.array(z.object({
-  type: z.enum(['paragraph', 'heading', 'bullet_list', 'ordered_list', 'task_list', 'blockquote', 'code_block', 'horizontal_rule']),
-  content: content.optional(), items: z.array(item).optional(), paragraphs: z.array(item).optional(),
-  code: z.string().optional(), language: z.string().optional(),
-}).strict())
-
 export class MindNoteContentError extends Error {}
-type Reference = { type: z.infer<typeof referenceType>; id: number }
-
-function requireText(value: string | undefined, field: string): string {
-  if (value === undefined) throw new MindNoteContentError(`${field} 必须是文本`)
-  if (value.includes('\0')) throw new MindNoteContentError(`${field} 不能包含空字符`)
-  return value
-}
-
-export function serializeMindBlocks(blocks: z.infer<typeof mindBlocksSchema>) {
-  if (blocks.length > 200) throw new MindNoteContentError('单条笔记最多支持 200 个内容块')
-  const references = new Map<string, Reference>()
-
-  function renderInline(parts: z.infer<typeof content> = []): string {
-    return parts.map(part => {
-      if (part.type === 'reference') {
-        const { ref_type, ref_id } = part
-        const label = requireText(part.label, '引用显示名')
-        if (!ref_type || !ref_id || ref_id < 1) throw new MindNoteContentError('引用必须指向已有的项目、文件或活动')
-        if (/[\]|]/u.test(label)) throw new MindNoteContentError('引用显示名不能包含 ] 或 |')
-        references.set(`${ref_type}:${ref_id}`, { type: ref_type, id: ref_id })
-        return `[[${ref_type}:${ref_id}|${label}]]`
-      }
-      let text = requireText(part.text, '文本')
-      const marks = part.marks ?? []
-      const names = new Set(marks.map(value => value.type))
-      if (names.size !== marks.length) throw new MindNoteContentError('同一种文字样式不能重复')
-      if (names.has('code') && names.size > 1) throw new MindNoteContentError('行内代码不能与其他文字样式叠加')
-      for (const { type, href } of marks) {
-        if (type === 'link') {
-          const link = strip(requireText(href, '链接地址'))
-          if (!/^(https?|mailto):/iu.test(link)) throw new MindNoteContentError('链接只支持 http、https 或 mailto 协议')
-          text = `[${text}](${link})`
-        } else {
-          if (type === 'code' && text.includes('`')) throw new MindNoteContentError('行内代码文本不能包含反引号')
-          const marker = { bold: '**', italic: '*', strike: '~~', code: '`' }[type]
-          text = marker + text + marker
-        }
-      }
-      return text
-    }).join('')
-  }
-
-  const markdown = blocks.map(block => {
-    switch (block.type) {
-      case 'paragraph': return renderInline(block.content)
-      case 'heading': return '# ' + renderInline(block.content)
-      case 'horizontal_rule': return '---'
-      case 'code_block': {
-        const code = requireText(block.code, '代码块内容')
-        const language = block.language ?? ''
-        if (/[\n`]/u.test(language)) throw new MindNoteContentError('代码块语言非法')
-        if (code.includes('```')) throw new MindNoteContentError('代码块内容不能包含三个连续反引号')
-        return '```' + language + '\n' + code + '\n```'
-      }
-      case 'blockquote':
-        if (!block.paragraphs) throw new MindNoteContentError('引用块 paragraphs 必须是数组')
-        return block.paragraphs.map(paragraph => '> ' + renderInline(paragraph.content)).join('\n')
-      default: {
-        const field = { bullet_list: '列表 items', ordered_list: '有序列表 items', task_list: '待办 items' }[block.type]
-        if (!block.items) throw new MindNoteContentError(`${field} 必须是数组`)
-        return block.items.map((line, index) => {
-          if (block.type === 'task_list' && line.checked === undefined)
-            throw new MindNoteContentError('待办项必须包含 checked 布尔值')
-          const prefix = block.type === 'ordered_list' ? `${index + 1}. `
-            : block.type === 'task_list' ? `- [${line.checked ? 'x' : ' '}] ` : '- '
-          return prefix + renderInline(line.content)
-        }).join('\n')
-      }
-    }
-  }).join('\n\n')
-  return { markdown, references: [...references.values()] }
-}
 
 export type MindLineEdit = { target_lines: string; content: string; expected?: string }
 export function applyMindLineEdits(text: string, edits: readonly MindLineEdit[]): string {
@@ -131,4 +44,29 @@ export function replaceUniqueMindText(text: string, find: string, replacement: s
   if (text.indexOf(find, start + 1) !== -1)
     throw new MindNoteContentError('find_replace 匹配多处。请扩大 find 的原文范围，直到只匹配一处。')
   return text.slice(0, start) + replacement + text.slice(start + find.length)
+}
+
+/** 只转换正文中的应用链接，保留代码和转义示例。 */
+export async function convertMindMarkdownLinks(
+  markdown: string,
+  resolve: (type: string, id: string) => Promise<void>,
+  previous?: string,
+): Promise<string> {
+  const parts: string[] = []
+  let cursor = 0
+  const tokens = /^ {0,3}(`{3,}|~{3,})[^\r\n]*(?:\r?\n|$)[\s\S]*?(?:^ {0,3}\1[`~]*[ \t]*(?=\r?$)|(?![\s\S]))|(?<!`)(`+)(?!`)[\s\S]*?(?<!`)\2(?!`)|(?<![!\\])\[([^\[\]\r\n]+)\]\(gugu:\/\/open-object\/(file|project|event)\/([A-Za-z0-9_-]+)\)/gmu
+  const validated = new Set<string>()
+  for (const match of markdown.matchAll(tokens)) {
+    const [, , , label, type, id] = match
+    if (!label || !type || !id || previous?.includes(match[0])) continue
+    const key = `${type}:${id}`
+    if (!validated.has(key)) {
+      await resolve(type, id)
+      validated.add(key)
+    }
+    parts.push(markdown.slice(cursor, match.index), `[[${key}|${label}]]`)
+    cursor = match.index + match[0].length
+  }
+  parts.push(markdown.slice(cursor))
+  return parts.join('')
 }

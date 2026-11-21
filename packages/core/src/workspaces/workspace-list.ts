@@ -85,12 +85,12 @@ export function createWorkspaceLister(store: WorkspaceListReadPort, runtime: Wor
 }
 
 export interface AgentWorkspacePayload {
-  workspace_id: number; name: string; kind: string; enabled: boolean; is_default: boolean; bound_session_count: number
+  workspace_id: number | string; name: string; kind: string; enabled?: boolean; is_default?: boolean; bound_session_count?: number
   project_id: number | null; folder_id: number | null; project_name?: string | null; folder_name?: string | null
-  directory_id?: number; directory_name?: string | null
+  directory_id?: number | string; directory_name?: string | null
 }
 export interface WorkspaceAgentReadPort {
-  read(ownerId: string, workspaceId: number | undefined, signal?: AbortSignal): Promise<AgentWorkspacePayload[]>
+  read(ownerId: string, workspaceId: number | string | undefined, signal?: AbortSignal): Promise<AgentWorkspacePayload[]>
 }
 
 /** Agent管理视图保留停用声明及关联资源名称，不授予Shell或文件系统权限。 */
@@ -100,9 +100,11 @@ export function createAgentWorkspaceQueries(port: WorkspaceAgentReadPort) {
       signal?.throwIfAborted()
       return port.read(dataContext(rawOwner).ownerId, undefined, signal).finally(() => signal?.throwIfAborted())
     },
-    async get(rawOwner: string, workspaceId: number, signal?: AbortSignal) {
+    async get(rawOwner: string, workspaceId: number | string, signal?: AbortSignal) {
       signal?.throwIfAborted()
-      if (!Number.isSafeInteger(workspaceId)) throw new CoreError('invalid_request', '工作区ID无效')
+      if (typeof workspaceId === 'number' ? !Number.isSafeInteger(workspaceId) || workspaceId < 1
+        : typeof workspaceId !== 'string' || !workspaceId.trim() || workspaceId.length > 256)
+        throw new CoreError('invalid_request', '工作区ID无效')
       const rows = await port.read(dataContext(rawOwner).ownerId, workspaceId, signal).finally(() => signal?.throwIfAborted())
       return rows[0] ?? null
     },

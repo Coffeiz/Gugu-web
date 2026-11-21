@@ -1,4 +1,29 @@
 import { classifyShellCommandRisk, type ShellCommandRisk } from './shell-command-risk.js'
+import type { RunIdentity } from '../models.js'
+import { actionApprovalMode, type ActionApprovalPolicy } from '../tools/confirmation.js'
+
+export function createHostShellGrants(durationMs: number, now = Date.now) {
+  const grants = new Map<string, { expiresAt: number; authorization: string }>()
+  const key = ({ ownerId, sessionId }: RunIdentity) => JSON.stringify([ownerId, sessionId])
+  return {
+    permits(identity: RunIdentity, authorization: string) {
+      const id = key(identity)
+      const grant = grants.get(id)
+      if (!grant) return false
+      if (grant.expiresAt <= now() || grant.authorization !== authorization) {
+        grants.delete(id)
+        return false
+      }
+      return true
+    },
+    approve(identity: RunIdentity, authorization: string) {
+      const time = now()
+      for (const [id, grant] of grants) if (grant.expiresAt <= time) grants.delete(id)
+      grants.set(key(identity), { expiresAt: time + durationMs, authorization })
+    },
+  }
+}
+
 
 export interface ShellPolicyFacts {
   adminEnabled: boolean
@@ -38,4 +63,13 @@ export function evaluateSandboxShell(command: string, facts: ShellPolicyFacts, o
   if (risk === 'dangerous' && !facts.userDangerousEnabled) return deny('用户未开放全部 Shell 命令')
   return { allowed: true, reason: risk === 'dangerous' ? '危险命令需要用户确认' : '允许在 sandbox 范围执行', risk,
     needsConfirmation: risk === 'dangerous', fullUserSandboxWrite: facts.fullUserSandboxWrite }
+}
+
+
+export function shellConfirmationMode(
+  decision: Pick<ShellPolicyDecision, 'risk' | 'needsConfirmation'>,
+  options: { system: boolean; isolatedWorkspace: boolean; approvalPolicy: ActionApprovalPolicy; hasResolution: boolean },
+): 'request' | 'verify' | 'execute' | 'stale' {
+  const required = !options.isolatedWorkspace && (decision.needsConfirmation || (!options.system && decision.risk === 'write'))
+  return actionApprovalMode(options.approvalPolicy, required, options.hasResolution)
 }

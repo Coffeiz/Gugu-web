@@ -167,51 +167,51 @@
     "keyBehavior": "候选 app 必须保留基础配置并通过离线 bundle 与 Shell smoke 校验",
     "ci": "docker-release"
   },
-  "apps/web/e2e/theme-divider.spec.ts": {
+  "apps/ui/e2e/theme-divider.spec.ts": {
     "domain": "frontend-ui",
     "layer": "L3",
-    "owner": "apps/web/e2e",
-    "productionEntry": "apps/web/src/assets/styles/tokens/semantic.css",
+    "owner": "apps/ui/e2e",
+    "productionEntry": "apps/ui/src/shared/assets/styles/tokens/semantic.css",
     "keyBehavior": "浅色分隔线和虚线边界与背景保持可见对比，日历侧栏的组间分隔线在各主题下使用内容分隔线颜色",
     "ci": "runtime-integration"
   },
-  "apps/web/e2e/page-lifecycle.spec.ts": {
+  "apps/ui/e2e/page-lifecycle.spec.ts": {
     "domain": "frontend-ui",
     "layer": "L3",
-    "owner": "apps/web/e2e",
-    "productionEntry": "apps/web/src/router/index.ts",
+    "owner": "apps/ui/e2e",
+    "productionEntry": "apps/ui/src/web/router/index.ts",
     "keyBehavior": "主导航顺序打开各页面并离开，确认视图加载完成、可关闭且无运行时异常",
     "ci": "runtime-integration"
   },
-  "apps/web/e2e/project-file-drag-experimental.spec.ts": {
+  "apps/ui/e2e/project-file-drag-experimental.spec.ts": {
     "domain": "file-library",
     "layer": "L3",
-    "owner": "apps/web/e2e",
-    "productionEntry": "apps/web/src/views/Projects/components/ProjectFilesPanel.vue",
+    "owner": "apps/ui/e2e",
+    "productionEntry": "apps/ui/src/shared/views/Projects/components/ProjectFilesPanel.vue",
     "keyBehavior": "项目文件区拖拽完成目标命中、持久化移动和目标目录导航",
     "ci": "experimental"
   },
-  "apps/web/e2e/file-library-bounded-pagination.spec.ts": {
+  "apps/ui/e2e/file-library-bounded-pagination.spec.ts": {
     "domain": "file-library",
     "layer": "L3",
-    "owner": "apps/web/e2e",
-    "productionEntry": "apps/web/src/views/Files",
+    "owner": "apps/ui/e2e",
+    "productionEntry": "apps/ui/src/shared/views/Files",
     "keyBehavior": "进入个人目录仅请求有界文件页，继续滚动时使用游标加载后续页",
     "ci": "experimental"
   },
-  "apps/web/e2e/global-search-navigation.spec.ts": {
+  "apps/ui/e2e/global-search-navigation.spec.ts": {
     "domain": "global-search",
     "layer": "L3",
-    "owner": "apps/web/e2e",
-    "productionEntry": "apps/web/src/components/common/gugu-chat",
+    "owner": "apps/ui/e2e",
+    "productionEntry": "apps/ui/src/shared/components/common/gugu-chat",
     "keyBehavior": "全局搜索可按目标 ID 打开首屏外便签或定时任务，并正确消费路由参数",
     "ci": "experimental"
   },
-  "apps/web/e2e/mermaid.spec.ts": {
+  "apps/ui/e2e/mermaid.spec.ts": {
     "domain": "markdown-mermaid",
     "layer": "L3",
-    "owner": "apps/web/e2e",
-    "productionEntry": "apps/web/src/utils/chart/mermaidRenderer.ts",
+    "owner": "apps/ui/e2e",
+    "productionEntry": "apps/ui/src/shared/utils/chart/mermaidRenderer.ts",
     "keyBehavior": "浏览器验证 Mermaid 路由样式、窄屏预览与导出 PNG 的用户可见结果",
     "ci": "frontend-e2e"
   },

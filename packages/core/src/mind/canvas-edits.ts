@@ -2,7 +2,7 @@ import { createMindCanvasRelationCreate, type MindRelationCreateRuntime } from '
 import { createSqlMindCanvasRelationCreateRuntime } from './relation-create-sql.js'
 import { recommendedCanvasSides } from './canvas-layout.js'
 import type { CanvasItemAddRuntime } from './canvas-item-add.js'
-import { applyCanvasPlacements, type CanvasPlacementIntent } from './canvas-placement.js'
+import { applyCanvasPlacements, type CanvasPlacementIntent, type ResolveCanvasFileReference } from './canvas-placement.js'
 import { createMindCanvasUpdate } from './canvas-update.js'
 import { createSqlMindCanvasUpdateRuntime } from './canvas-update-sql.js'
 import { parseCanvasData } from './canvas-layout.js'
@@ -28,7 +28,7 @@ export interface CanvasLayoutEdit { item_id: number; x?: number; y?: number; z?:
 export interface CanvasNoteEdit { node_id: number; title?: string; content?: string; color?: 'amber'|'coral'|'blue'|'teal' }
 export interface CanvasBatchOperation {
   kind: 'create_note'|'add_node'|'update_item'|'remove_item'|'delete_note'|'connect'
-  ref_type?: 'project'|'file'|'event'; ref_id?: number; node_id?: number
+  ref_type?: 'project'|'file'|'event'; ref_id?: number | string; node_id?: number
   item_id?: number; source_node_id?: number; target_node_id?: number
   source_side?: 'left'|'right'; target_side?: 'left'|'right'
   title?: string; content?: string; color?: 'amber'|'coral'|'blue'|'teal'
@@ -47,7 +47,7 @@ export type CanvasEditIntent = CanvasPlacementIntent
 export type CanvasEditPublication = Parameters<MindRelationCreateRuntime['publishChanged']>[0] | Parameters<CanvasItemAddRuntime['publishChanged']>[0] | Parameters<CanvasItemUpdateRuntime['publishChanged']>[0] | Parameters<MindCanvasItemRemoveRuntime['publishChanged']>[0] | MindCanvasNoteMutationEvent | MindRefNodeChangedEvent | Parameters<MindCanvasUpdateRuntime['publishChanged']>[0]
 
 interface EditContext {
-  tx: Transaction<Database>; backend: Backend; owner: string; canonical: string; context: string; signal: AbortSignal
+  tx: Transaction<Database>; backend: Backend; owner: string; canonical: string; context: string; signal: AbortSignal; resolveFileReference?: ResolveCanvasFileReference
 }
 interface EditResult { results: Record<string,unknown>[]; publications: CanvasEditPublication[]; changed: boolean }
 async function readItem(ctx:EditContext,id:number,canvasId:number) {
@@ -194,9 +194,9 @@ async function connectItems(ctx:EditContext,intent:Extract<CanvasEditIntent,{act
     changed:!existing||existing.deleted_at!==null||before?.source_side!==after.source_side||before?.target_side!==after.target_side}
 }
 /** 批量编辑复用同一外层事务的领域写服务，失败整批回滚；通知由调用方提交后发送。 */
-export async function applyCanvasEdits(tx: Transaction<Database>, backend: Backend, rawOwner: string, intent: CanvasEditIntent, context: string, signal: AbortSignal) {
+export async function applyCanvasEdits(tx: Transaction<Database>, backend: Backend, rawOwner: string, intent: CanvasEditIntent, context: string, signal: AbortSignal, resolveFileReference?: ResolveCanvasFileReference) {
   const canonical=dataContext(rawOwner).ownerId,owner=backend==='sqlite'?canonical.replaceAll('-',''):canonical
-  const ctx:EditContext={tx,backend,owner,canonical,context,signal}
+  const ctx:EditContext={tx,backend,owner,canonical,context,signal,resolveFileReference}
   signal.throwIfAborted()
   if(intent.action!=='note'&&intent.action!=='anchor'&&intent.action!=='delete_note') {
     let query=tx.selectFrom('mind_maps').select('id').where('id','=',intent.canvas_id).where('user_id','=',owner).where('deleted_at','is',null)
@@ -216,7 +216,7 @@ export async function applyCanvasEdits(tx: Transaction<Database>, backend: Backe
 }
 
 /** 批处理按旧 Python 顺序在同一外层事务中复用 Mind 用例；失败由调用方回滚整批。 */
-export async function applyCanvasEditBatch(tx:Transaction<Database>,backend:Backend,rawOwner:string,intent:CanvasBatchIntent,context:string,signal:AbortSignal){
+export async function applyCanvasEditBatch(tx:Transaction<Database>,backend:Backend,rawOwner:string,intent:CanvasBatchIntent,context:string,signal:AbortSignal,resolveFileReference?: ResolveCanvasFileReference){
   const publications:CanvasEditPublication[]=[]
   const results:Record<string,unknown>[]=[]
   let mutated=false
@@ -233,7 +233,7 @@ export async function applyCanvasEditBatch(tx:Transaction<Database>,backend:Back
           if(entry.title!==undefined&&(typeof entry.title!=='string'||[...entry.title.trim()].length>300)||entry.content!==undefined&&typeof entry.content!=='string')throw new MindCanvasNoteMutationError('第 '+(index+1)+' 个便签操作格式不正确',422)
           edit={action:'create_note',canvas_id:intent.canvas_id,entries:[{title:entry.title,content:entry.content,color:entry.color,position:entry.position,width:entry.width,height:entry.height}],batched:false};break
         case 'add_node':
-          if(!['project','file','event'].includes(String(entry.ref_type))||!Number.isSafeInteger(entry.ref_id))throw new MindRefNodeCreateError(422,'第 '+(index+1)+' 个放置操作缺少有效引用')
+          if(!['project','file','event'].includes(String(entry.ref_type)))throw new MindRefNodeCreateError(422,'第 '+(index+1)+' 个放置操作缺少有效引用类型')
           edit={action:'add',canvas_id:intent.canvas_id,entries:[{ref_type:entry.ref_type,ref_id:entry.ref_id,position:entry.position}],batched:false};break
         case 'update_item':
           if(!Number.isSafeInteger(entry.item_id))throw new MindCanvasItemMutationError('第 '+(index+1)+' 个布局操作缺少 item_id',422)
@@ -251,7 +251,7 @@ export async function applyCanvasEditBatch(tx:Transaction<Database>,backend:Back
           edit={action:'connect',canvas_id:intent.canvas_id,source_node_id:entry.source_node_id!,target_node_id:entry.target_node_id!,source_side:entry.source_side,target_side:entry.target_side,batched:false};break
         default: throw new MindCanvasItemMutationError(`不支持的批量操作 ${(entry as {kind?:string}).kind??'空操作'}`,422)
       }
-      const result=await applyCanvasEdits(tx,backend,rawOwner,edit,context,signal)
+      const result=await applyCanvasEdits(tx,backend,rawOwner,edit,context,signal,resolveFileReference)
       const value=result.value&&typeof result.value==='object'&&!Array.isArray(result.value)?result.value as Record<string,unknown>:{}
       delete value.canvas_id
       results.push({index,kind:entry.kind,...value})

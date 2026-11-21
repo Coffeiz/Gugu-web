@@ -1,9 +1,9 @@
 {
-  "apps/web/tests/services/apiInFlightDedup.test.ts": {
+  "apps/ui/tests/services/apiInFlightDedup.test.ts": {
     "domain": "frontend-api",
     "layer": "L0",
-    "owner": "apps/web/services",
-    "productionEntry": "apps/web/src/services/api.ts",
+    "owner": "apps/ui/src/shared/api",
+    "productionEntry": "apps/ui/src/web/projects/access.ts",
     "keyBehavior": "同一用户的完全相同并发 GET 合并为一个请求且各调用方获得独立结果；请求结束后刷新、不同用户或不同路径仍独立请求",
     "ci": "frontend-test"
   }

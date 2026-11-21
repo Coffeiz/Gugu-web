@@ -1,13 +1,13 @@
+import { sessionSnapshotContextSql } from '../../../agent/context/effects.js'
 import { createHash, createHmac, randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import type { ProviderWire } from '@gugu/core/providers'
-import { MessageArea, compactContext, stableJson, unwrapCompactedSummary, isCompactedSummaryMessage,
-  updateBaselineSnapshot, loadSessionHistory, restoreHistoryForRequest, type CompactionPort, type RunIdentity, type SessionSnapshotState } from '@gugu/core/agent'
-import type { ImPreflightScope } from '@gugu/core/im/inbound-preflight'
+import { MessageArea, compactContext, stableJson, projectManualHistoryCompaction,
+  updateBaselineSnapshot, loadSessionHistory, restoreHistoryForRequest, formatAgentHistoryMessageTime, type CompactionPort, type RunIdentity, type SessionSnapshotState } from '@gugu/core/agent'
+import type { ImPreflightScope } from '@gugu/gateway'
 import { resolveImAccess } from '@gugu/core/im/access'
 import { withPostgresTransaction } from '../../../../adapters/database/postgres-transaction.js'
 import { normalizeOwnerId } from '../../../../shared/owner-context.js'
-import { canonicalBaselineHash } from '../../../agent/chat/write.js'
 import { enqueuePostgresAgentRagRebuild } from '../../../agent/rag/jobs.js'
 import { createPostgresImAccess } from '../inbound/access.js'
 import { imSessionScopeSql } from '../agent/conversations.js'
@@ -127,7 +127,7 @@ export function createPostgresImCompact(options: {
         const timezone=runtime.timezone
         const messages=history.rows.flatMap(row=>{
           const value=restoreHistoryForRequest(row,{groupChat:scope.chatType==='group',userTimezone:timezone,
-            formatMessageTime:(value,zone)=>new Intl.DateTimeFormat('zh-CN',{timeZone:zone,dateStyle:'short',timeStyle:'short'}).format(new Date(value))})
+            formatMessageTime:formatAgentHistoryMessageTime})
           return value?[value]:[]
         })
         const area=new MessageArea({digest,nextId:randomUUID},messages)
@@ -142,19 +142,15 @@ export function createPostgresImCompact(options: {
             ||!Number.isSafeInteger(Number(fresh.last_message_seq)+1))throw new ImCompactError()
           let state:State='not_needed'
           if(result.changed){
-            const ids=result.coversUntilMessageIds,covered=rows.filter(row=>row.role!=='summary').slice(0,ids.length)
             const actual=(await client.query<HistoryRow>(`SELECT id::text,role,content,content_json,coalesce(history_anchor_seq,conversation_seq)::text AS effective FROM conversation_messages WHERE session_id=$1 AND role<>'summary' AND coalesce(history_anchor_seq,conversation_seq)>$2 AND (run_id IS NULL OR run_id NOT LIKE 'im-pending:%') ORDER BY coalesce(history_anchor_seq,conversation_seq),(history_anchor_seq IS NULL),conversation_seq`,[receipt.session_id,session.baseline_message_seq])).rows
-            const baseline=Number(covered.at(-1)?.effective),summary=result.messages.filter(isCompactedSummaryMessage)
-            if(!ids.length||result.coversUnpersisted||ids.some((id,i)=>covered[i]?.id!==id)||stableJson(actual.slice(0,ids.length))!==stableJson(covered)
-              ||!Number.isSafeInteger(baseline)||baseline<=Number(session.baseline_message_seq)||Number(actual[ids.length]?.effective??Infinity)<=baseline||summary.length!==1||typeof summary[0]!.content!=='string')throw new ImCompactError()
-            const text=unwrapCompactedSummary(summary[0]!.content)
+            const { baseline, summary: text, hash } = projectManualHistoryCompaction(result, rows, actual, Number(session.baseline_message_seq))!
             if(!Number.isSafeInteger(Number(fresh.last_message_seq))||Number(fresh.last_message_seq)<0||!Number.isSafeInteger(Number(fresh.last_message_seq)+1))throw new ImCompactError()
             // 旧Web/IM会话可以没有snapshot；有snapshot时沿正式更新契约，无snapshot仍保持待真实重建。
             const original:SessionSnapshotState={ownerId:scope.ownerId,sessionId:identity.sessionId,context:session.session_context,contextEpoch:session.context_epoch,snapshotHash:session.snapshot_hash,sessionInfoHash:session.session_info_hash,snapshotExpiresAt:session.snapshot_expires_at?new Date(session.snapshot_expires_at).getTime():null,baselineMessageSeq:Number(session.baseline_message_seq)}
             const snapshot=session.session_context?updateBaselineSnapshot(original,[{role:'summary',content:text}],{digest,nextId:randomUUID,now:Date.now},{baselineMessageSeq:baseline}):null
             await client.query("DELETE FROM conversation_messages WHERE session_id=$1 AND role='summary'",[receipt.session_id])
             await client.query(`INSERT INTO conversation_messages(session_id,conversation_seq,role,content,covers_until_seq,created_at) VALUES($1,$2,'summary',$3,$4,clock_timestamp())`,[receipt.session_id,Number(fresh.last_message_seq)+1,text,baseline])
-            await client.query(`UPDATE conversation_sessions SET last_message_seq=last_message_seq+1,baseline_message_seq=$3,baseline_message_hash=$4,session_context=$5::jsonb,context_epoch=$6,snapshot_hash=$7,snapshot_expires_at=$8 WHERE user_id=$1 AND id=$2`,[scope.ownerId,receipt.session_id,baseline,canonicalBaselineHash(covered),snapshot?JSON.stringify(snapshot.context):null,snapshot?.contextEpoch??session.context_epoch,snapshot?.snapshotHash??null,snapshot?.snapshotExpiresAt?new Date(snapshot.snapshotExpiresAt):null])
+            await client.query(`UPDATE conversation_sessions SET last_message_seq=last_message_seq+1,baseline_message_seq=$3,baseline_message_hash=$4,session_context=${sessionSnapshotContextSql},context_epoch=$6,snapshot_hash=$7,snapshot_expires_at=$8 WHERE user_id=$1 AND id=$2`,[scope.ownerId,receipt.session_id,baseline,hash,snapshot?JSON.stringify(snapshot.context):null,snapshot?.contextEpoch??session.context_epoch,snapshot?.snapshotHash??null,snapshot?.snapshotExpiresAt?new Date(snapshot.snapshotExpiresAt):null])
             await enqueuePostgresAgentRagRebuild(client, scope.ownerId, 'conversation');state='compacted'
           }
           await runtime!.recordUsage(client)

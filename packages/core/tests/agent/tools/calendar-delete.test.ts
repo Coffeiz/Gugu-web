@@ -4,10 +4,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sql } from 'kysely'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { createCalendarDeletePort, createCalendarDeleteTool, type CalendarDeleteConfirmationPort } from '../../../src/agent/tools/calendar.js'
+import { createCalendarDeletePort, createCalendarDeleteTool, describeCalendarDeleteTargets, type CalendarDeleteConfirmationPort } from '../../../src/agent/tools/calendar.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import type { ToolCall } from '../../../src/agent/models.js'
 import { initializeSqlite, openSqliteRuntime } from '../../../src/data/sqlite.js'
+import { DESKTOP_CALENDAR_UNDO_CONTEXT } from '../../../src/contracts/desktop.js'
 import type { SqlDataRuntime } from '../../../src/data/runtime.js'
 
 let core: SqlDataRuntime, folder: string, owner: string, other: string
@@ -34,7 +35,7 @@ beforeEach(async () => {
 })
 afterEach(async () => { await core?.close(); if (folder) await rm(folder, { recursive: true, force: true }) })
 
-function registry(claim = true, capture?: (targets: unknown) => void, mutate?: (tx: Parameters<CalendarDeleteConfirmationPort['claim']>[0]) => Promise<void>) {
+function registry(claim = true, capture?: (targets: unknown) => void, mutate?: (tx: Parameters<CalendarDeleteConfirmationPort['claim']>[0]) => Promise<void>, undoContextId?: string) {
   let preparedDigest: string | null = null, preparedTargets: unknown = null
   const gate = {
     async prepare(toolCall: ToolCall, _scope: unknown, inputDigest: string, targets: unknown) {
@@ -48,7 +49,7 @@ function registry(claim = true, capture?: (targets: unknown) => void, mutate?: (
     },
   } as unknown as CalendarDeleteConfirmationPort['gate']
   const confirmation: CalendarDeleteConfirmationPort = { gate, async claim(tx) { claims++; await mutate?.(tx); return claim } }
-  const tool = createCalendarDeleteTool(createCalendarDeletePort(core, async event => { published.push(event) }, confirmation))
+  const tool = createCalendarDeleteTool(createCalendarDeletePort(core, async event => { published.push(event) }, confirmation, undoContextId))
   return createToolRegistry({ tools: [tool], authorize: async () => allowed })
 }
 
@@ -147,4 +148,29 @@ it('确认等待期间事件版本变化后拒绝执行', async () => {
   expect(claims).toBe(0); expect(published).toHaveLength(0)
   expect((await sql`SELECT deleted_at FROM calendar_events WHERE id=1`.execute(core.db)).rows[0]!.deleted_at).toBeNull()
   expect((await sql`SELECT id FROM undo_operations`.execute(core.db)).rows).toHaveLength(0)
+})
+
+
+it('桌面确认文案显示冻结的事件和提醒，目标变更后拒绝继续', async () => {
+  let snapshot!: { targetsDigest: string; versionsDigest: string }
+  const tools = registry(true, value => { snapshot = value as typeof snapshot })
+  const input = { event_id: 1 }
+  expect(await tools.tools.dispatch(call(input), scope())).toMatchObject({ kind: 'waiting' })
+  await expect(describeCalendarDeleteTargets(core, owner, input, snapshot))
+    .resolves.toContain('「评审」，以及 1 个关联提醒')
+  await sql`UPDATE calendar_events SET version=version+1 WHERE id=1`.execute(core.db)
+  await expect(describeCalendarDeleteTargets(core, owner, input, snapshot))
+    .rejects.toMatchObject({ code: 'conflict' })
+})
+
+
+it('桌面日历能够找到聊天工具删除后的撤销记录', async () => {
+  const tools = registry(true, undefined, undefined, DESKTOP_CALENDAR_UNDO_CONTEXT)
+  const input = { event_id: 1 }
+  await tools.tools.dispatch(call(input), scope())
+  const resolution = { interactionId: 'interaction', receiptId: 'receipt', status: 'confirmed' as const, value: null }
+  expect(await tools.tools.dispatch(call(input), scope(resolution))).toMatchObject({ successful: true, mutated: true })
+  const records = await core.db.selectFrom('undo_operations').select('undo_context_id')
+    .where('undo_context_id', '=', DESKTOP_CALENDAR_UNDO_CONTEXT).execute()
+  expect(records).toHaveLength(1)
 })

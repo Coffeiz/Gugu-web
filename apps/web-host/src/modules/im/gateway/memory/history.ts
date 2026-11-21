@@ -60,7 +60,7 @@ ORDER BY effective,CASE WHEN history_anchor_seq IS NOT NULL THEN 0 ELSE 1 END,co
 
 /** 只扫描本Node队列；每个目标一短事务/最多500条，session→job顺序不跨Provider等待。 */
 export function createImHistoryRetention(options:ImHistoryRetentionOptions){
- const concurrency=options.concurrency??2,deferMs=options.deferMs??5000,controller=new AbortController()
+ const concurrency=options.concurrency??1,deferMs=options.deferMs??5000,controller=new AbortController()
  if(!Number.isSafeInteger(concurrency)||concurrency<1||concurrency>4||!Number.isSafeInteger(deferMs)||deferMs<1||deferMs>300000
   ||typeof options.beforeRemoveLocked!=='function'||typeof options.pendingAsk!=='function'||typeof options.removeIfUnreferenced!=='function')throw invalid()
  let scanning:Promise<ImHistoryRetentionStats>|null=null,cleaning:Promise<number>|null=null,closed=false

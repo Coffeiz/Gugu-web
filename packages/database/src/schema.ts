@@ -122,6 +122,7 @@ export interface CalendarEventTable {
   created_at: string; deleted_at: string | null; idempotency_key: string | null; idempotency_fingerprint: string | null
 }
 export interface ScheduledTaskTable {
+  execution_mode: Generated<'reminder' | 'instruction'>
   id: Generated<number>; user_id: string; event_id: number | null; reminder_lead_minutes: number | null
   workspace_id: number | null; filesystem_authorization_grant_id: number | null; name: string; payload: string; cron: string
   schedule_kind: string; interval_minutes: number | null; start_at: ColumnType<Date | string | null, Date | string | null, Date | string | null>

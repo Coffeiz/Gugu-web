@@ -13,6 +13,7 @@ export interface ImMaintenanceApplyResult {
   pattern?: unknown[]
   summary?: { text: string; ts: number }
   daily?: string
+  memory?: string
   members?: Record<string, unknown>
 }
 
@@ -144,16 +145,21 @@ export function applyImMaintenanceOutput(input: ImMaintenanceApplyInput): ImMain
   }
   const summary = text(output.summary)
   if (summary) result.summary = { text: summary, ts: input.now }
+  if (!group) {
+    const memory = text(output.memory), existing = text(current.memory)
+    if (memory && !existing.includes(memory))
+      result.memory = [existing, `## ${input.date}\n${memory}`].filter(Boolean).join('\n\n') + '\n'
+  }
   const entries = dailyEntries(current.daily)
   if (group) {
     for (const item of list(typeof output.daily === 'string' ? [output.daily] : output.daily).filter(value => typeof value === 'string')) {
       const note = text(item)
-      if (note) entries.unshift([input.date, note])
+      if (note && !entries.some(([date, existing]) => date === input.date && existing === note)) entries.unshift([input.date, note])
     }
     result.daily = renderDaily(entries)
   } else {
     const note = text(output.daily)
-    if (note) entries.unshift([input.date, note])
+    if (note && !entries.some(([date, existing]) => date === input.date && existing === note)) entries.unshift([input.date, note])
     result.daily = renderDaily(entries.slice(0, 50))
   }
   return result

@@ -1,40 +1,40 @@
 {
-  "apps/web/tests/profile/ProfileDataPortabilityPane.test.ts": {
+  "apps/ui/tests/profile/ProfileDataPortabilityPane.test.ts": {
     "domain": "data-portability",
     "layer": "L1",
-    "owner": "apps/web/profile",
-    "productionEntry": "apps/web/src/components/common/profile/ProfileDataPortabilityPane.vue",
+    "owner": "apps/ui/profile",
+    "productionEntry": "apps/ui/src/shared/components/common/profile/ProfileDataPortabilityPane.vue",
     "keyBehavior": "预检和失败任务可删除，增量导入完成状态明确显示撤回限制",
     "ci": "frontend-test"
   },
-  "apps/web/tests/profile/ProfileImPane.test.ts": {
+  "apps/ui/tests/profile/ProfileImPane.test.ts": {
     "domain": "im",
     "layer": "L1",
-    "owner": "apps/web/components/common/profile",
-    "productionEntry": "apps/web/src/components/common/profile/ProfileImPane.vue",
+    "owner": "apps/ui/components/common/profile",
+    "productionEntry": "apps/ui/src/shared/im/connect/ImConnectPane.vue",
     "keyBehavior": "平台群聊策略仅提交当前 Bot 对应字段；自动回复下按 Bot 保存注意力模式，切至仅响应 @ 后隐藏该选项；Telegram 连接和群策略入口正确呈现",
     "ci": "frontend-test"
   },
-  "apps/web/tests/profile/preferences-tool-injection.test.ts": {
+  "apps/ui/tests/profile/preferences-tool-injection.test.ts": {
     "domain": "agent-preferences",
     "layer": "L1",
-    "owner": "apps/web/stores",
-    "productionEntry": "apps/web/src/stores/preferences.ts",
+    "owner": "apps/ui/stores",
+    "productionEntry": "apps/ui/src/shared/stores/preferences.ts",
     "keyBehavior": "用户偏好加载时工具调用信息与中间回复使用产品约定默认值并正确注入状态",
     "ci": "frontend-test"
   },
-  "apps/web/tests/profile/MessageFormatSettings.test.ts": {
+  "apps/ui/tests/profile/MessageFormatSettings.test.ts": {
     "domain": "qq-message-format",
     "layer": "L1",
-    "owner": "apps/web/profile",
-    "productionEntry": "apps/web/src/components/common/profile/MessageFormatSettings.vue",
+    "owner": "apps/ui/profile",
+    "productionEntry": "apps/ui/src/shared/components/common/profile/MessageFormatSettings.vue",
     "keyBehavior": "QQ 消息格式设置展示受支持选项并提交用户选择",
     "ci": "frontend-test"
   },
-  "apps/web/tests/profile/preferences-group-personality.test.ts": {
+  "apps/ui/tests/profile/preferences-group-personality.test.ts": {
     "domain": "profile-group-personality",
     "layer": "L1",
-    "owner": "apps/web/src/components/common/profile",
+    "owner": "apps/ui/src/shared/components/common/profile",
     "productionEntry": "用户偏好设置中的群人格编辑区",
     "keyBehavior": "群人格文本、启用状态和上传独立保存，不覆盖个人人格配置",
     "ci": "frontend-vitest"

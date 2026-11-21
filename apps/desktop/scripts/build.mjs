@@ -1,6 +1,7 @@
 import { build } from 'esbuild'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { buildDesktopAgentRuntime } from './build-agent-runtime.mjs'
 const root = fileURLToPath(new URL('../', import.meta.url))
 for (const entry of ['main', 'preload']) {
   await build({
@@ -14,3 +15,4 @@ for (const entry of ['main', 'preload']) {
     sourcemap: true,
   })
 }
+await buildDesktopAgentRuntime()

@@ -28,6 +28,12 @@ export function providerDiagnosticRequest(config: ProviderConfig, kind: 'models'
 }
 
 export async function listProviderModels(config: ProviderConfig, dependencies: ProviderDriverDependencies, signal: AbortSignal): Promise<readonly unknown[]> {
+  const { policy, config: selected, driver } = providerSelection(config)
+  // 国内 Anthropic 兼容入口使用官方文档公布的目录。
+  if (policy.name === 'minimax' && driver.protocol === 'anthropic'
+    && /^https:\/\/(?:api\.minimax\.cn|api\.minimaxi\.com)\/anthropic(?:\/v1)?\/?$/u.test(policy.baseUrl(selected))) {
+    return [{ id: 'MiniMax-M3.1-Flash' }, { id: 'MiniMax-M3' }]
+  }
   const response = await requestJson(dependencies, providerDiagnosticRequest(config, 'models'), signal)
   const models = response.data ?? response.models
   if (!Array.isArray(models)) throw new ProviderError('protocol')

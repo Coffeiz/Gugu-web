@@ -1,7 +1,17 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { createNativeFileDragGuard } from './native-file-drag.js'
+import { previewWindowChannels, type PreviewWindowBridge } from '../shared/preview-window.js'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import { projectWindowChannels, type ProjectWindowBridge } from '../shared/project-window.js'
 import { DESKTOP_CHANNELS } from '@gugu/core/desktop'
 import type { DesktopBridge, DesktopProjectCollection } from '@gugu/core/desktop'
 import type { DesktopAppearancePreferences } from '@gugu/core/desktop'
+
+if (typeof window !== 'undefined') {
+  const setNativeDragSource = createNativeFileDragGuard(window, file => webUtils.getPathForFile(file))
+  ipcRenderer.on(DESKTOP_CHANNELS.nativeFileDragSource, (_event, path: unknown) => {
+    setNativeDragSource(typeof path === 'string' ? path : null)
+  })
+}
 
 type CanvasItemAddBody = Parameters<DesktopBridge['addCanvasItem']>[1]
 type CanvasItemFrontBody = Parameters<DesktopBridge['bringCanvasItemToFront']>[2]
@@ -13,6 +23,36 @@ const bridge: DesktopBridge = Object.freeze({
   remoteAccount: () => ipcRenderer.invoke(DESKTOP_CHANNELS.remoteAccount),
   remoteLogin: (input: Parameters<DesktopBridge['remoteLogin']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.remoteLogin, input),
   remoteLogout: () => ipcRenderer.invoke(DESKTOP_CHANNELS.remoteLogout),
+  qqPairing: (command: Parameters<DesktopBridge['qqPairing']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.qqPairing, command),
+  feishuPairing: (command: Parameters<DesktopBridge['feishuPairing']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.feishuPairing, command),
+  wechatPairing: (command: Parameters<DesktopBridge['wechatPairing']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.wechatPairing, command),
+  telegramGateway: (command: Parameters<DesktopBridge['telegramGateway']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.telegramGateway, command),
+  terminal: (command: Parameters<DesktopBridge['terminal']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.terminal, command),
+  mail: (command: Parameters<DesktopBridge['mail']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.mail, command),
+  createDroppedFileReference: (file: File) => ipcRenderer.invoke(DESKTOP_CHANNELS.createDroppedFileReference, webUtils.getPathForFile(file)),
+  openDroppedFileReference: (id: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.openDroppedFileReference, id),
+  startFileDrag: (directoryId: Parameters<NonNullable<DesktopBridge['startFileDrag']>>[0], path: string, preview?: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.startFileDrag, directoryId, path, preview),
+  files: (command: Parameters<DesktopBridge['files']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.files, command),
+  auxiliaryModel: (command: Parameters<DesktopBridge['auxiliaryModel']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.auxiliaryModel, command),
+  agentModel: (command: Parameters<DesktopBridge['agentModel']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.agentModel, command),
+  onAgentRunChanged: (callback: Parameters<NonNullable<DesktopBridge['onAgentRunChanged']>>[0]) => {
+    const listener = (_event: Electron.IpcRendererEvent, sessionId: number) => callback(sessionId)
+    ipcRenderer.on(DESKTOP_CHANNELS.agentRunChanged, listener)
+    return () => ipcRenderer.removeListener(DESKTOP_CHANNELS.agentRunChanged, listener)
+  },
+  onAgentChatEvent: (callback: Parameters<NonNullable<DesktopBridge['onAgentChatEvent']>>[0]) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: Parameters<typeof callback>[0]) => callback(payload)
+    ipcRenderer.on(DESKTOP_CHANNELS.agentChatEvent, listener)
+    return () => ipcRenderer.removeListener(DESKTOP_CHANNELS.agentChatEvent, listener)
+  },
+  agentSessions: (command: Parameters<DesktopBridge['agentSessions']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.agentSessions, command),
+  agentAttachment: (command: Parameters<NonNullable<DesktopBridge['agentAttachment']>>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.agentAttachment, command),
+  resources: (command: Parameters<DesktopBridge['resources']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.resources, command),
+  scheduleTask: (command: Parameters<DesktopBridge['scheduleTask']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.scheduleTask, command),
+  onScheduleChanged: (callback: () => void) => subscribeDesktopEvent(DESKTOP_CHANNELS.scheduleChanged, callback),
+  readLogs: (kind: Parameters<DesktopBridge['readLogs']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.readLogs, kind),
+  clearAgentMemory: () => ipcRenderer.invoke(DESKTOP_CHANNELS.clearAgentMemory),
+  clearAgentAttachments: () => ipcRenderer.invoke(DESKTOP_CHANNELS.clearAgentAttachments),
   appearance: () => ipcRenderer.invoke(DESKTOP_CHANNELS.appearance),
   updateAppearance: (patch: Partial<DesktopAppearancePreferences>) => ipcRenderer.invoke(DESKTOP_CHANNELS.updateAppearance, patch),
   onboarding: () => ipcRenderer.invoke(DESKTOP_CHANNELS.onboarding),
@@ -29,6 +69,7 @@ const bridge: DesktopBridge = Object.freeze({
   createClient: (name: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.createClient, name),
   renameClient: (id: number, name: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.renameClient, id, name),
   deleteClient: (id: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.deleteClient, id),
+  search: (queries: Parameters<DesktopBridge['search']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.search, queries),
   calendar: () => ipcRenderer.invoke(DESKTOP_CHANNELS.calendar),
   createCalendarEvent: (...args: Parameters<DesktopBridge['createCalendarEvent']>) => ipcRenderer.invoke(DESKTOP_CHANNELS.createCalendarEvent, ...args),
   updateCalendarEvent: (...args: Parameters<DesktopBridge['updateCalendarEvent']>) => ipcRenderer.invoke(DESKTOP_CHANNELS.updateCalendarEvent, ...args),
@@ -61,3 +102,36 @@ const bridge: DesktopBridge = Object.freeze({
   undoRedo: (contextId: string, undoId: string, operationId: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.undoRedo, contextId, undoId, operationId),
 })
 contextBridge.exposeInMainWorld('guguDesktop', bridge)
+
+function subscribeDesktopEvent(channel: string, callback: () => void) {
+  const listener = () => callback()
+  ipcRenderer.on(channel, listener)
+  return () => ipcRenderer.removeListener(channel, listener)
+}
+
+const projectWindow: ProjectWindowBridge = {
+  open: id => ipcRenderer.invoke(projectWindowChannels.open, id),
+  close: () => ipcRenderer.invoke(projectWindowChannels.close),
+  onPrepareClose: callback => subscribeDesktopEvent(projectWindowChannels.prepareClose, callback),
+  onUpdated: callback => {
+    const listener = (_event: Electron.IpcRendererEvent, project: Parameters<typeof callback>[0]) => callback(project)
+    ipcRenderer.on(projectWindowChannels.updated, listener)
+    return () => ipcRenderer.removeListener(projectWindowChannels.updated, listener)
+  },
+  onClosed: callback => subscribeDesktopEvent(projectWindowChannels.closed, callback),
+}
+contextBridge.exposeInMainWorld('guguProjectWindow', projectWindow)
+
+const previewWindow: PreviewWindowBridge = {
+  open: file => ipcRenderer.invoke(previewWindowChannels.open, file),
+  read: () => ipcRenderer.invoke(previewWindowChannels.read),
+  close: () => ipcRenderer.invoke(previewWindowChannels.close),
+  reveal: () => ipcRenderer.invoke(previewWindowChannels.reveal),
+  state: (action, enabled) => ipcRenderer.invoke(previewWindowChannels.state, action, enabled),
+  onStateChanged: callback => {
+    const listener = (_event: Electron.IpcRendererEvent, state: Parameters<typeof callback>[0]) => callback(state)
+    ipcRenderer.on(previewWindowChannels.stateChanged, listener)
+    return () => ipcRenderer.removeListener(previewWindowChannels.stateChanged, listener)
+  },
+}
+contextBridge.exposeInMainWorld('guguPreviewWindow', previewWindow)

@@ -5,6 +5,13 @@ export interface GuguSession {
   updatedAt?: string
 }
 
+export interface TraceSession {
+  session_key: string
+  external_session_id: string
+  source: string
+  title: string
+}
+
 export interface ChatDebugEvent {
   kind: 'status' | 'tool' | 'round'
   label: string

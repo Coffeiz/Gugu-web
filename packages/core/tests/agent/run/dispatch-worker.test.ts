@@ -30,6 +30,56 @@ function dispatch(overrides: Partial<Parameters<typeof createAgentDispatchWorker
 }
 
 describe('Core Agent dispatch execution', () => {
+  it('停机不等待其他调度器持有的执行名额，旧排队请求重开后也不认领', async () => {
+    const slot = Promise.withResolvers<void>()
+    const ports = dispatch()
+    const worker = createAgentDispatchWorker<string, Lease>({
+      dispatch: ports,
+      async runExclusive(task) { await slot.promise; return task() },
+      async failStart() { return false },
+      async reconstruct() { return null },
+    })
+    const queued = worker.runOnce(lease.identity.ownerId, lease.identity.sessionId)
+    await worker.close()
+    worker.reopen()
+    slot.resolve()
+    await expect(queued).resolves.toBe('idle')
+    expect(ports.claim).not.toHaveBeenCalled()
+  })
+
+  it.each([true, false])('停机停止认领并按收尾窗口处理在途任务，提前完成=%s', async finishesDuringGrace => {
+    let release!: () => void, entered!: () => void
+    const hold = new Promise<void>(resolve => { release = resolve })
+    const started = new Promise<void>(resolve => { entered = resolve })
+    const ports = dispatch({ cancellationRequested: async () => false })
+    const request = vi.fn(async () => {})
+    const notify = vi.fn(async () => { release() })
+    const worker = createAgentDispatchWorker<string, Lease>({
+      dispatch: ports, async failStart() { return false },
+      async reconstruct() {
+        return {
+          cancellation: { request, notify },
+          harness: {
+            async *start() { throw new Error('不应重新开始') },
+            async *resume() { entered(); await hold; yield event; return done },
+          },
+          async close() {},
+        }
+      },
+    })
+    const work = worker.kick(lease.identity.ownerId, lease.identity.sessionId)
+    await started
+    const closing = worker.close()
+    await expect(worker.runOnce(lease.identity.ownerId, '2')).resolves.toBe('idle')
+    expect(request).not.toHaveBeenCalled()
+    if (finishesDuringGrace) release()
+    await Promise.all([closing, work])
+    expect(request).toHaveBeenCalledTimes(finishesDuringGrace ? 0 : 1)
+    expect(notify).toHaveBeenCalledTimes(finishesDuringGrace ? 0 : 1)
+    expect(ports.claim).toHaveBeenCalledTimes(1)
+    expect(ports.finish).toHaveBeenCalledWith(lease)
+  })
+
   it('缺少可信恢复器时保留任务，不调用 Harness 或推进队列', async () => {
     const ports = dispatch()
     const worker = createAgentDispatchWorker<string, Lease>({ dispatch: ports, async failStart() { return false }, async reconstruct() { return null } })

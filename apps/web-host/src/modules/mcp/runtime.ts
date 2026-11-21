@@ -4,8 +4,8 @@ import type {McpStoredServer} from '@gugu/core/mcp/server-list'
 import {descriptionForProvider,descriptionShortOf,prefixedToolName,sanitizeInputSchema,validateInputArguments,validateInputSchema} from '@gugu/core/mcp/schema-adapter'
 import {normalizeMcpSlots,validateMcpCredentialValues} from '@gugu/core/mcp/server-config'
 import type {ProviderTransport} from '@gugu/core/providers'
-import {createMcpHttpClient} from './sdk-client.js'
-import {createMcpSafeFetch} from './safe-fetch.js'
+import {createMcpHttpClient} from '@gugu/core/mcp/sdk-client'
+import {createMcpSafeFetch} from '@gugu/core/mcp/safe-fetch'
 
 interface EnvelopeReader {decrypt(input:{ciphertext:string;nonce:string;encryptedDataKey:string;keyVersion:number}):Promise<string>}
 interface RuntimeTool {name:string;tool_name:string;description:string;description_short:string;input_schema:Record<string,unknown>}

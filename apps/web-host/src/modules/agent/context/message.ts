@@ -1,3 +1,4 @@
+import { parseAgentCommand } from '@gugu/core/agent/commands/menu'
 import type { CurrentTurnSources, Json, RunIdentity } from '@gugu/core/agent'
 import { resolveCurrentTurnTextAttachments } from '@gugu/core/agent'
 import type { Pool } from 'pg'
@@ -9,14 +10,6 @@ export class UnsupportedWebAgentMessageError extends Error {
   constructor(readonly reason: 'attachment' | 'command' | 'content') {
     super(reason === 'attachment' ? '当前运行暂不支持附件，请移除附件后重试。' : reason === 'command' ? '当前运行暂不支持该命令。' : '当前消息内容暂不支持恢复。')
   }
-}
-
-const commands = new Set(['memory', 'mem', 'forget', 'compact', 'goal', 'new', 'workspace', 'auto', 'help', 'h'])
-function isCommand(text: string): boolean {
-  const trimmed = text.trim()
-  if (!trimmed.startsWith('/') && !trimmed.startsWith('／')) return false
-  const name = trimmed.slice(1).trim().replaceAll('　', ' ').split(/\s+/, 1)[0]?.toLowerCase()
-  return !!name && commands.has(name)
 }
 
 /** 快照只读取服务端发送事务写入的消息，调用方提供的消息字段不作为引用来源。 */
@@ -31,7 +24,7 @@ export function createWebCurrentMessageMaterializer(pool: Pick<Pool, 'query'>, a
     const stored = result.rows[0]
     if (!stored || typeof stored.content !== 'string') throw new Error('用户消息不存在')
     if (stored.files != null && !Array.isArray(stored.files)) throw new UnsupportedWebAgentMessageError('content')
-    if (isCommand(stored.content)) throw new UnsupportedWebAgentMessageError('command')
+    if (parseAgentCommand(stored.content)?.recognized) throw new UnsupportedWebAgentMessageError('command')
     if (stored.references_json != null && !Array.isArray(stored.references_json)) throw new UnsupportedWebAgentMessageError('content')
     const references = (stored.references_json ?? []) as unknown[]
     if (stored.content_json != null) {

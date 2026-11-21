@@ -1,8 +1,8 @@
 import type {FastifyInstance,FastifyRequest,preHandlerHookHandler} from 'fastify'
 import {filterMcpConnectionTools} from '@gugu/core/mcp/test-connection'
 import {normalizeMcpSlots,validateMcpCredentialValues} from '@gugu/core/mcp/server-config'
-import {createMcpHttpClient} from './sdk-client.js'
-import {createMcpSafeFetch} from './safe-fetch.js'
+import {createMcpHttpClient} from '@gugu/core/mcp/sdk-client'
+import {createMcpSafeFetch} from '@gugu/core/mcp/safe-fetch'
 import type {ProviderTransport} from '@gugu/core/providers'
 
 export interface McpConnectionTestOptions {

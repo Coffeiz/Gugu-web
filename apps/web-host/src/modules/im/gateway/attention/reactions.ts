@@ -7,7 +7,7 @@ import { agentDispatchSource, decryptAgentDispatchInput, type AgentDispatchLease
 import { imActorInputForDispatch, type ImAgentReconstructorOptions } from '../agent/reconstruct.js'
 import type { createPostgresImAccess } from '../inbound/access.js'
 import type { NodeImBotBinding } from '../inbound/inbox.js'
-import type { GatewayPlatformSender } from '../platform-connections.js'
+import type { GatewayPlatformSender } from '../connections.js'
 
 /** 独立工具收据，不能借用包围整个Runner的投递锁，否则工具会与自身投递进程争锁。 */
 export function createPostgresImReaction(options: {

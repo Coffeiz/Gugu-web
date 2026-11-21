@@ -1,3 +1,4 @@
+import { proactiveImText } from '../../im/gateway/delivery/proactive.js'
 import type { Pool } from 'pg'
 import type { ProviderTransport } from '@gugu/core/providers'
 import { createWechatBotApi, wechatAttachmentLimit, wechatOrigin } from '@gugu/core/im/wechat-bot-api'
@@ -70,7 +71,7 @@ export function createScheduledTaskWechatDelivery(pool: Pick<Pool, 'query'>, opt
         const context = await currentContext()
         if (!context) return failed
         const token = await options.decrypt(bot.app_secret)
-        const sent = await api.sendText(target.recipient, context, token, `⏰ ${plan.title}\n\n${plan.text}`, AbortSignal.timeout(15_000))
+        const sent = await api.sendText(target.recipient, context, token, proactiveImText(plan), AbortSignal.timeout(15_000))
         return sent ? '已发送' : failed
       } catch {
         // 发送可能已到达服务端，连接异常也不在此自动重试。

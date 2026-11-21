@@ -219,11 +219,25 @@ async function readSkillDeleteTarget(db: Kysely<Database>, owner: string, id: st
     ${lock ? sql`FOR UPDATE` : sql``}`.execute(db)).rows[0]
   if (!row || !Number.isSafeInteger(row.id) || row.id < 1) return null
   return {
+    name: row.name,
     managedByAssistant: row.managed_by === 'assistant',
     targetsDigest: skillDeleteDigest({ ids: [row.id] }),
     versionsDigest: skillDeleteDigest(row),
     targetIds: { skill_row_id: [row.id] },
   }
+}
+
+const skillDeleteInput = z.object({ id: z.string().trim().toUpperCase().regex(/^U[1-9][0-9]*$/u) }).strict()
+
+export async function describeSkillDeleteTarget(db: Kysely<Database>, owner: string, input: unknown,
+  expected: { targetsDigest: string; versionsDigest: string }) {
+  const parsed = skillDeleteInput.safeParse(input)
+  if (!parsed.success) throw new CoreError('invalid_request', '技能删除确认目标无效')
+  const { id } = parsed.data
+  const target = await readSkillDeleteTarget(db, owner, id)
+  if (!target || target.targetsDigest !== expected.targetsDigest || target.versionsDigest !== expected.versionsDigest)
+    throw new CoreError('conflict', '技能删除确认目标已变化')
+  return `将删除技能「${target.name}」（${id}），此操作不可恢复`
 }
 
 function skillDeleteDigest(value: unknown) {
@@ -245,7 +259,7 @@ export function createSkillDeleteTool(
   publish: (ownerId: string) => Promise<unknown>,
 ): ToolDefinition {
   if (!runtime.receipts) throw new Error('删除技能需要持久操作收据')
-  const schema = z.object({ id: z.string().trim().toUpperCase().regex(/^U[1-9][0-9]*$/u) }).strict()
+  const schema = skillDeleteInput
   const missing = new Error('技能不存在或不属于当前用户')
   const changed = new Error('技能删除确认已使用或目标已变化')
   const rejected = (error: string): ToolResult => ({ kind: 'completed', successful: false, mutated: false, value: { error } })

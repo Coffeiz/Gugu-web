@@ -7,6 +7,7 @@ import { expect, it, vi } from 'vitest'
 import { createConfirmationGate, type ConfirmationIntent, type ConfirmationClaimReference } from '../../../src/agent/tools/confirmation.js'
 import { createSendEmailTool, createDurableAgentEmailDelivery } from '../../../src/agent/tools/email.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
+import type { ToolScope } from '../../../src/agent/tools/contracts.js'
 
 it('邮件默认使用可信账号邮箱，确认绑定邮件内容和附件版本，重放只读收据', async () => {
   const identity = { ownerId: 'owner-a', sessionId: '1', runId: 'run-a' }
@@ -37,12 +38,14 @@ it('邮件默认使用可信账号邮箱，确认绑定邮件内容和附件版�
   const prepare = vi.fn<Parameters<typeof createSendEmailTool>[0]['prepare']>(async (_operation, draft) => ({
     digest: JSON.stringify(draft), snapshot: { targetsDigest: 'owner-recipient', versionsDigest: version }, delivery: draft,
   }))
+  const emailTool = createSendEmailTool({
+    confirmation, accountEmail: async () => 'owner@example.com', clientEmail: async () => null, prepare, send,
+    async reconcile() { return sent ? { ...accepted, mutated: false } : { kind: 'unknown' } },
+  })
+  expect(emailTool.destructive).toBe(true)
   const registry = createToolRegistry({
     authorize: async candidate => candidate.ownerId === identity.ownerId,
-    tools: [createSendEmailTool({
-      confirmation, accountEmail: async () => 'owner@example.com', clientEmail: async () => null, prepare, send,
-      async reconcile() { return sent ? { ...accepted, mutated: false } : { kind: 'unknown' } },
-    })],
+    confirmationGatedDestructiveTools: [emailTool],
   })
   const call = { name: 'send_email', id: 'call-a', input: { subject: ' 计划 ', body: ' 正文 ', file_ids: [3] } }
   expect(await registry.tools.dispatch({ ...call, input: { ...call.input, client_id: 9 } }, scope)).toMatchObject({ value: { error: '联系人不存在' } })
@@ -58,6 +61,63 @@ it('邮件默认使用可信账号邮箱，确认绑定邮件内容和附件版�
   expect(await registry.tools.dispatch(call, resume)).toEqual(accepted)
   expect(await registry.tools.dispatch(call, resume)).toMatchObject({ successful: true, mutated: false })
   expect(send).toHaveBeenCalledTimes(1)
+})
+
+it('格式省略时选择当前宿主支持的默认邮件格式', async () => {
+  const delivered: unknown[] = []
+  const tool = createSendEmailTool({
+    supportedFormats: ['plain'],
+    async accountEmail() { return 'owner@example.com' },
+    async clientEmail() { return null },
+    async prepare(_operation, draft) {
+      return { digest: 'draft', snapshot: { targetsDigest: 'target', versionsDigest: 'version' }, delivery: draft }
+    },
+    async reconcile() { return { kind: 'unknown' } },
+    async sendAutomated(_operation, prepared) {
+      delivered.push(prepared)
+      return { kind: 'completed', successful: true, mutated: true, value: { status: 'sent' } }
+    },
+  })
+  const scope: ToolScope = {
+    identity: { ownerId: 'owner-a', sessionId: '1', runId: 'run-a' }, roundId: 'round-a',
+    signal: new AbortController().signal, resolution: null,
+    execute: async () => { throw new Error('不执行 Shell') },
+  }
+
+  const result = await tool.execute({ subject: '主题', body: '正文' }, scope, { name: 'send_email', id: 'call-a', input: { subject: '主题', body: '正文' } })
+
+  expect(result).toMatchObject({ kind: 'completed', successful: true })
+  expect(delivered[0]).toMatchObject({
+    delivery: { recipient: 'owner@example.com', subject: '主题', body: '正文', format: 'plain' },
+  })
+})
+
+it('桌面邮件 Schema 只公开本机文件引用并把授权引用交给 Host 准备端口', async () => {
+  let prepared: unknown
+  const tool = createSendEmailTool({
+    supportedFormats: ['plain', 'template', 'html'],
+    supportedAttachmentInputs: ['file_refs'],
+    async accountEmail() { return 'owner@example.com' },
+    async clientEmail() { return null },
+    async prepare(_operation, draft) {
+      prepared = draft
+      return { digest: 'draft', snapshot: { targetsDigest: 'target', versionsDigest: 'version' }, delivery: draft }
+    },
+    async reconcile() { return { kind: 'unknown' } },
+    async sendAutomated() { return { kind: 'completed', successful: true, mutated: true, value: { status: 'sent' } } },
+  })
+  const properties = (tool.definition.schema.function.parameters as { properties: Record<string, unknown> }).properties
+  expect(properties).toHaveProperty('file_refs')
+  expect(properties).not.toHaveProperty('file_ids')
+  const scope: ToolScope = {
+    identity: { ownerId: 'owner-a', sessionId: '1', runId: 'run-a' }, roundId: 'round-a',
+    signal: new AbortController().signal, resolution: null,
+    execute: async () => { throw new Error('不执行 Shell') },
+  }
+  const result = await tool.execute({ subject: '主题', body: '正文', file_refs: ['a'.repeat(24)] }, scope,
+    { name: 'send_email', id: 'call-a', input: { subject: '主题', body: '正文', file_refs: ['a'.repeat(24)] } })
+  expect(result).toMatchObject({ kind: 'completed', successful: true })
+  expect(prepared).toMatchObject({ fileRefs: ['a'.repeat(24)], format: 'template' })
 })
 
 it('SMTP 结果未知时保留持久尝试收据，重新装配和并发重试均不重发', async () => {

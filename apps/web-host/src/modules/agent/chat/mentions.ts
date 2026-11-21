@@ -64,6 +64,17 @@ export async function loadGroupMentionNames(input: LoadGroupMentionNamesInput): 
   const names = await latestSessionNames(pool, ownerId, sessionId, [...candidateIds])
   if (currentBotPlatformUserId && candidateIds.has(currentBotPlatformUserId))
     names.set(currentBotPlatformUserId, names.get(currentBotPlatformUserId) ?? '咕咕')
+  if (session.source === 'qq') {
+    // QQ 入站只在协议明确标记为当前机器人时写入此字段。
+    const unresolved = [...candidateIds].filter(id => !names.has(id))
+    if (unresolved.length) {
+      const known = await pool.query<{ id: string }>(`SELECT DISTINCT m.platform_bot_user_id AS id
+        FROM conversation_messages m JOIN conversation_sessions s ON s.id=m.session_id
+        WHERE s.id=$1 AND s.user_id=$2 AND s.source='qq' AND s.chat_type='group'
+          AND m.platform_bot_user_id=ANY($3::text[])`, [sessionId, ownerId, unresolved])
+      for (const { id } of known.rows) names.set(id, '咕咕')
+    }
+  }
   const unresolved = new Set([...candidateIds].filter((id) => !names.has(id)))
   if (unresolved.size) {
     for (const [id, name] of await queryNames({

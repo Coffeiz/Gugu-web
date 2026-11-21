@@ -32,7 +32,7 @@ export interface ImAgentReconstructionResources extends Omit<WebAgentReconstruct
   builder: Omit<AgentContextBuilderPorts, 'dynamic'> & { now(): number }
   sender: ImRunDeliveryPorts<CanonicalRunContext>['sender']
   showIntermediateReplies?: boolean
-  streamFactory?(receipts: ImDeliverySession, authorize: () => Promise<boolean>): NonNullable<ImRunDeliveryPorts<CanonicalRunContext>['stream']> & { close?(): Promise<void> }
+  streamFactory?(receipts: ImDeliverySession, authorize: () => Promise<boolean>): NonNullable<ImRunDeliveryPorts<CanonicalRunContext>['stream']> & { prepare?(events: AsyncIterable<RunEvent>): AsyncIterable<RunEvent>; close?(): Promise<void> }
   /** 平台可观察实际Run生命周期（如微信typing）；每次平台动作仍须调用当前授权。 */
   observeRun?(events: AsyncIterable<RunEvent>, authorize: () => Promise<boolean>): AsyncIterable<RunEvent>
 }
@@ -243,7 +243,7 @@ export function createImAgentReconstructor(options: ImAgentReconstructorOptions)
             const observed = { async *[Symbol.asyncIterator]() { started = true; yield* events } }
             const deliveryEvents = resources.observeRun
               ? resources.observeRun(observed, authorizeCurrent) : observed
-            try { await delivery.consume(id, deliveryEvents) }
+            try { await delivery.consume(id, projection?.prepare?.(deliveryEvents) ?? deliveryEvents) }
             catch (error) {
               if (!(error instanceof ImRunDeliveryBlocked)) throw error
               options.diagnose('delivery_pending')

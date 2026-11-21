@@ -41,7 +41,7 @@ function parseDaily(value: string): Array<{ date: string; note: string }> {
 }
 
 async function readMemoryFile(root: string, ownerId: string, name: string): Promise<string | null> {
-  const key = `${ownerId}/.agent/${name}`
+  const key = `${ownerId}/.agent/memories/${name}`
   try {
     const opened = await openLocalFile(root, key)
     if (!opened) return null

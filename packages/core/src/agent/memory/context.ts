@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { splitUserMemoryVectorChunks, userMemoryVectorChunkKey } from '../../byok/vector-rebuild.js'
 import type { Json } from '../models.js'
 
 export interface AgentMemoryContextStorage {
@@ -61,7 +61,7 @@ function parse(raw: string | null): unknown {
 async function read(storage: AgentMemoryContextStorage, ownerId: string, name: string, maxChars = FILE_LIMIT, signal?: AbortSignal): Promise<string | null> {
   signal?.throwIfAborted()
   try {
-    const value = await storage.readText({ ownerId, key: `${ownerId}/.agent/${name}`, maxChars, ...(signal ? { signal } : {}) })
+    const value = await storage.readText({ ownerId, key: `${ownerId}/.agent/memories/${name}`, maxChars, ...(signal ? { signal } : {}) })
     signal?.throwIfAborted()
     return value
   } catch (error) {
@@ -173,65 +173,14 @@ function renderPatterns(patterns: Pattern[], query: string, now: number, queryVe
   return chosen.map(({ item, effective }) => `- ${item.text}${item.kind === 'inferred' && effective < 0.45 ? '（不太确定）' : ''}`).join('\n')
 }
 
-function splitMemoryBlock(block: string, limit = 400): string[] {
-  const output: string[] = []
-  for (const raw of block.split(/\n\s*\n/u)) {
-    const paragraph = raw.trim()
-    if (!paragraph) continue
-    if (paragraph.length <= limit) { output.push(paragraph); continue }
-    let buffer = ''
-    for (let sentence of paragraph.split(/(?<=[。！？!?\n])/u)) {
-      while (sentence.length > limit) {
-        if (buffer) { output.push(buffer.trim()); buffer = '' }
-        output.push(sentence.slice(0, limit).trim())
-        sentence = sentence.slice(limit)
-      }
-      if (buffer && buffer.length + sentence.length > limit) { output.push(buffer.trim()); buffer = sentence }
-      else buffer += sentence
-    }
-    if (buffer.trim()) output.push(buffer.trim())
-  }
-  return output
-}
-
-function memoryChunks(text: string): string[] {
-  const headings = [...text.matchAll(/^##\s+记录长期记忆：.+$/gmu)]
-  if (!headings.length) return splitMemoryBlock(text)
-  const output: string[] = []
-  const before = text.slice(0, headings[0]!.index ?? 0).trim()
-  if (before) output.push(...splitMemoryBlock(before))
-  for (let index = 0; index < headings.length; index++) {
-    const start = headings[index]!.index ?? 0, end = headings[index + 1]?.index ?? text.length
-    const section = text.slice(start, end).trim()
-    if (section.length <= 400) { output.push(section); continue }
-    const [title = '', ...bodyLines] = section.split('\n')
-    const body = bodyLines.join('\n')
-    const context = bodyLines.map(line => line.trim()).filter(line => /^- (?:时间|类型|状态)：/u.test(line))
-    const prefix = [title.trim(), ...context].filter(Boolean).join('\n')
-    const contentLimit = Math.max(1, 400 - prefix.length - 2)
-    const blocks = body.split(/\n\s*\n|(?=^###\s+)/mu).map(item => item.trim()).filter(Boolean)
-    for (const block of blocks) {
-      const combined = `${prefix}\n\n${block}`.trim()
-      if (combined.length <= 400) output.push(combined)
-      else output.push(...splitMemoryBlock(block, contentLimit).map(part => `${prefix}\n\n${part}`.trim()))
-    }
-  }
-  return output.filter(Boolean)
-}
-
-function hashChunk(text: string): string {
-  // Python memory store uses md5(chunk.strip())[:12] as a stable cache key.
-  return createHash('md5').update(text.trim()).digest('hex').slice(0, 12)
-}
-
 function retrieveMemory(text: string, vectors: Record<string, MemoryVector>, queryVector?: readonly number[] | null): string {
   if (text.length <= MEMORY_INJECT_CHARS) return text
   const fallback = latestMemorySuffix(text, MEMORY_INJECT_CHARS)
   if (!queryVector || !Object.keys(vectors).length) return fallback
-  const chunks = memoryChunks(text)
-  const covered = chunks.filter(chunk => vectors[hashChunk(chunk)]).length
+  const chunks = splitUserMemoryVectorChunks(text)
+  const covered = chunks.filter(chunk => vectors[userMemoryVectorChunkKey(chunk)]).length
   if (covered < Math.max(1, Math.floor(chunks.length / 2))) return fallback
-  const ranked = chunks.map((chunk, index) => ({ chunk, index, score: cosine(queryVector, vectors[hashChunk(chunk)]?.v ?? []) }))
+  const ranked = chunks.map((chunk, index) => ({ chunk, index, score: cosine(queryVector, vectors[userMemoryVectorChunkKey(chunk)]?.v ?? []) }))
     .sort((a, b) => b.score - a.score)
   const picked: Array<{ chunk: string; index: number }> = []
   let used = 0

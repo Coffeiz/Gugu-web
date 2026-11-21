@@ -1,0 +1,135 @@
+/* Shared popover adoption: context menus, sort/admin menus and date pickers consume the same
+   surface/item/motion contract. The notification center owns its surface on the inner
+   .notif-popup-surface, so the outer positioning host is intentionally excluded to avoid double
+   compositing the translucent background and shadow. Sidebar settings keeps its historical
+   component-owned visual and only consumes theme variables. */
+html[data-theme][data-family] :is(
+  .popup-menu,
+  .popup-menu-dark,
+  .dp-popup,
+  .drp-popup
+) {
+  color: var(--popup-item-fg);
+  background: var(--popup-surface-bg);
+  border-color: var(--popup-surface-border);
+  border-radius: var(--popup-surface-radius);
+  box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight);
+  backdrop-filter: var(--popup-surface-blur);
+  -webkit-backdrop-filter: var(--popup-surface-blur);
+}
+html[data-theme][data-family] :is(.popup-menu, .popup-menu-dark) {
+  padding: var(--popup-surface-padding);
+}
+
+/* DatePicker 的毛玻璃由 PopupMenu host 统一绘制；内部只负责日历布局，避免双层 surface。 */
+html[data-theme][data-family] :is(
+  .popup-menu-host > .dp-popup,
+  .popup-menu-host > .adp-popup,
+  .popup-menu-host > .adp-year-popup,
+  .popup-menu-host > .note-picker
+) {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* Item paint is scoped to real generic popup containers. Do not target .popup-menu-item globally:
+   AppSidebar's settings menu deliberately has its own edge-to-edge pseudo-element hover geometry. */
+html[data-theme][data-family] :is(.popup-menu, .popup-menu-dark) .popup-menu-item {
+  color: var(--popup-item-fg);
+  transition:
+    color var(--motion-hover-control) var(--motion-ease-standard),
+    background-color var(--motion-hover-control) var(--motion-ease-standard);
+}
+html[data-theme][data-family] :is(.popup-menu, .popup-menu-dark) .popup-menu-item:hover:not(:disabled) {
+  color: var(--popup-item-fg);
+  background: var(--popup-item-bg-hover);
+}
+html[data-theme][data-family] :is(.popup-menu, .popup-menu-dark) .popup-menu-item.active {
+  color: var(--popup-item-fg-active);
+  background: var(--popup-item-bg-active);
+}
+html[data-theme][data-family] :is(.popup-menu, .popup-menu-dark) .popup-menu-item.danger {
+  color: var(--popup-item-danger);
+}
+html[data-theme][data-family] :is(.popup-menu, .popup-menu-dark) .popup-menu-item.danger:hover:not(:disabled) {
+  color: var(--popup-item-danger);
+  background: var(--popup-item-danger-bg-hover);
+}
+html[data-theme][data-family] :is(.popup-menu, .popup-menu-dark) .popup-menu-sep {
+  background: var(--popup-divider);
+}
+html[data-theme][data-family] :is(.popup-menu, .popup-menu-dark) .popup-menu-shortcut {
+  color: var(--popup-item-fg-muted);
+}
+
+/* DatePicker trigger 的输入框样式已由 DatePicker.vue scoped 直接消费 --input-*
+   token（与 DateSpanPicker/TimeInput 同一契约），这里不再重复覆盖。 */
+html[data-theme][data-family] :is(.dp-period, .dp-day, .dp-year-btn) { color: var(--content-primary); }
+html[data-theme][data-family] :is(.dp-nav, .dp-wh, .dp-clear) { color: var(--content-secondary); }
+html[data-theme][data-family] :is(.dp-period, .dp-nav, .dp-day, .dp-year-btn, .dp-clear, .dp-today) {
+  transition:
+    color var(--motion-hover-control) var(--motion-ease-standard),
+    background-color var(--motion-hover-control) var(--motion-ease-standard),
+    box-shadow var(--motion-hover-control) var(--motion-ease-standard);
+}
+html[data-theme][data-family] .dp-period-caret {
+  transition: transform var(--motion-hover-control) var(--motion-ease-standard);
+}
+html[data-theme][data-family] .dp-period:hover,
+html[data-theme][data-family] .dp-nav:hover,
+html[data-theme][data-family] .dp-day:hover:not(.selected),
+html[data-theme][data-family] .dp-year-btn:hover:not(.selected),
+html[data-theme][data-family] .dp-clear:hover {
+  color: var(--content-primary);
+  background: var(--popup-item-bg-hover);
+}
+html[data-theme][data-family] .dp-day.other { color: var(--content-tertiary); }
+html[data-theme][data-family] .dp-day.weekend:not(.selected):not(.today) { color: var(--calendar-weekend-fg); }
+html[data-theme][data-family] .dp-day.today:not(.selected),
+html[data-theme][data-family] .dp-year-btn.this-year:not(.selected),
+html[data-theme][data-family] .dp-today {
+  color: var(--selection-fg);
+  background: var(--selection-bg);
+}
+html[data-theme][data-family] .dp-day.selected,
+html[data-theme][data-family] .dp-year-btn.selected {
+  color: var(--content-on-accent);
+  background: var(--action-primary-bg);
+  box-shadow: var(--elevation-card);
+}
+html[data-theme][data-family] .dp-footer {
+  border-top-color: color-mix(in srgb, var(--content-primary) 12%, transparent);
+}
+html[data-theme][data-family] .dp-today:hover { background: var(--action-soft-hover); }
+
+/* Shared popover cadence. settings uses AppSidebar's original `popup` transition and is intentionally
+   excluded so adapting Mono never changes the existing settings animation. */
+html[data-theme][data-family] :is(.menu-pop-enter-active, .dp-pop-enter-active, .notif-pop-enter-active) {
+  transition:
+    opacity var(--popup-enter-duration) var(--popup-enter-easing),
+    transform var(--popup-enter-duration) var(--popup-enter-easing);
+}
+html[data-theme][data-family] :is(.menu-pop-leave-active, .dp-pop-leave-active, .notif-pop-leave-active) {
+  transition:
+    opacity var(--popup-leave-duration) var(--popup-leave-easing),
+    transform var(--popup-leave-duration) var(--popup-leave-easing);
+}
+html[data-theme][data-family] :is(.menu-pop-enter-from, .menu-pop-leave-to, .dp-pop-enter-from, .dp-pop-leave-to) {
+  opacity: 0;
+  transform: scale(.96) translateY(-2px);
+}
+html[data-theme][data-family] :is(.notif-pop-enter-from, .notif-pop-leave-to) {
+  opacity: 0;
+  transform: translateY(4px) scale(.98);
+}
+
+/* Chrome 在 transform 过渡期间可能暂停子 surface 的 backdrop-filter 合成。动画 active
+   阶段由同一个通知宿主暂时保留 blur，结束后仍由唯一的 notif-popup-surface 负责材质。 */
+html[data-theme][data-family] :is(.notif-pop-enter-active, .notif-pop-leave-active) {
+  backdrop-filter: var(--popup-surface-blur);
+  -webkit-backdrop-filter: var(--popup-surface-blur);
+}

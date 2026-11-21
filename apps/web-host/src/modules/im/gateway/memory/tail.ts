@@ -2,7 +2,7 @@ import type {Pool} from 'pg'
 import {formatGroupMessage,type CanonicalMessage,type RunIdentity} from '@gugu/core/agent'
 import type {ImActor} from '@gugu/core/im/access'
 import {createImInboundEnvelope} from '../inbound/envelope.js'
-import {imConversationDigest,imConversationFingerprint,imConversationScopeHash} from '../agent/identity.js'
+import {imConversationEventId,imConversationDigest,imConversationFingerprint,imConversationScopeHash} from '../agent/identity.js'
 
 export class ImReflectionTailError extends Error{
  constructor(readonly code:'deferred'|'invalid'|'unauthorized'){super('IM 反思被动尾段暂不可用');this.name='ImReflectionTailError'}
@@ -89,7 +89,7 @@ export async function loadImReflectionPassiveTail(input:ImReflectionPassiveTailI
     ||payload.platform_user_id!==row.platform_user_id||(payload.platform_user_name??null)!==row.platform_user_name||payload.text!==row.content||(payload.quoted_text??null)!==row.quoted_text
     ||!identifier(native)||native!==row.im_platform_message_id||(payload.reply_to_platform_message_id??null)!==row.im_reply_to_message_id
     ||actor.platform==='telegram'&&!positive(native)||row.scope_hash!==scopeHash
-    ||row.event_hash!==imConversationDigest(input.secretKey,[scopeHash,payload.platform_user_id,payload._pending_ask_resume_id||payload.platform_message_id||payload.message_id])
+    ||row.event_hash!==imConversationDigest(input.secretKey,[scopeHash,payload.platform_user_id,imConversationEventId(payload)])
     ||row.fingerprint!==imConversationFingerprint(input.secretKey,scopeHash,payload,attachments)
     ||payload.conversation_seq!==undefined&&Number(payload.conversation_seq)!==Number(row.sequence))throw fail()
    const text=formatGroupMessage({body:row.content,senderId:row.platform_user_id,senderName:row.platform_user_name,quote:row.quoted_text,attachmentIds:attachments})

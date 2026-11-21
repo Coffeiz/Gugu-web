@@ -3,6 +3,7 @@ import type { FastifyInstance,preHandlerHookHandler } from 'fastify'
 import { openLocalFile,UnsafeLocalPathError,writeLocalFile } from '@gugu/fs/node'
 
 import { applyImMaintenanceOutput } from '@gugu/core/im-memory-maintenance-apply'
+import { imMemoryScopeFileKey, type ImMemoryScopeFile } from '@gugu/core/im/memory-source'
 
 import { scopeRevision } from '@gugu/core/im-memory-maintenance-batches'
 
@@ -94,13 +95,8 @@ function safeComponent(value: unknown): string {
 export function imMemoryMaintenanceScopeFileKey(plan: Pick<ImMaintenanceCursor, 'owner_user_id' | 'platform' | 'bot_id' | 'scope_type' | 'scope_id'>, filename: string): string {
   const type = plan.scope_type
   if (type !== 'group' && type !== 'platform-user') throw new ImMemoryMaintenanceApplyError(400, '模型预览计划无效')
-  const branch = type === 'group' ? 'groups' : 'platform-users'
-  const quote = (value: unknown) => encodeURIComponent(safeComponent(value)).replace(/[!'()*]/gu, char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)
-  const allowed = type === 'group'
-    ? ['profile.json', 'summary.json', 'daily.md', 'memory.md', 'members.json']
-    : ['profile.json', 'pattern.json', 'summary.json', 'daily.md', 'memory.md']
-  if (!allowed.includes(filename)) throw new ImMemoryMaintenanceApplyError(400, '模型预览计划无效')
-  return [quote(plan.owner_user_id), '.agent', 'im', quote(plan.platform), quote(plan.bot_id), branch, quote(plan.scope_id), filename].join('/')
+  try { return imMemoryScopeFileKey(plan as ImMemoryScopeFile, filename) }
+  catch { throw new ImMemoryMaintenanceApplyError(400, '模型预览计划无效') }
 }
 
 async function readScope(plan: ScopePlan, storage: ImMemoryMaintenanceApplyPorts['storage']): Promise<RecordValue> {

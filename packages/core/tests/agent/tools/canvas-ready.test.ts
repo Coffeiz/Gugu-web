@@ -17,11 +17,10 @@ const identity=()=>({ownerId:owner,sessionId:'1',runId:'canvas-ready'})
 const scope=()=>({identity:identity(),roundId:'round',signal:new AbortController().signal,resolution:null,execute:async()=>{throw new Error('不执行进程')}})
 const call=(name:string,input:unknown,id=name)=>({id,name,input})
 const send=(name:string,input:unknown,id=name)=>registry.tools.dispatch(call(name,input,id),scope())
-function mount(){registry=createToolRegistry({groups:[{id:'canvas',name:'画布',tools:[createCanvasCreateTool(createCanvasCreationPort(core,publish)),createCanvasPlaceableSearchTool(createAgentPlaceableSearch(core.db,core.backend))]}],authorize:async()=>allowed})}
+function mount(){registry=createToolRegistry({groups:[{id:'canvas',name:'画布',tools:[createCanvasCreateTool(createCanvasCreationPort(core,publish)),createCanvasPlaceableSearchTool(createAgentPlaceableSearch(core.db,core.backend,async (candidate,query)=>candidate===owner&&['发布','准备'].includes(query)?[{id:'path-safe',label:'发布资料'}]:[]))]}],authorize:async()=>allowed})}
 beforeEach(async()=>{
   folder=await mkdtemp(join(tmpdir(),'gugu-canvas-ready-'));await initializeSqlite(join(folder,'core.db'))
   const opened=await openSqliteRuntime(join(folder,'core.db'));core=opened.runtime;owner=opened.ownerId;other=randomUUID();allowed=true;publish=vi.fn(async()=>{})
-  await sql`CREATE TABLE files(id INTEGER PRIMARY KEY,user_id TEXT,display_name TEXT,ext TEXT,stage_name TEXT,updated_at TEXT,deleted_at TEXT)`.execute(core.db)
   mount()
 })
 afterEach(async()=>{await core?.close();await rm(folder,{recursive:true,force:true})})
@@ -55,15 +54,14 @@ it('无效标题、非法参数、跨owner项目、取消与撤权不写入；�
 it('候选按项目/文件/活动分组探测并保留分页count和墓碑标记，不创建引用',async()=>{
   const project=await core.transaction({ownerId:owner},data=>data.projects.create({name:'发布项目'}))
   await core.transaction({ownerId:other},data=>data.projects.create({name:'发布隐私'}))
-  const key=owner.replaceAll('-',''),foreign=other.replaceAll('-',''),stamp='2026-11-15 00:00:00.000000'
-  await sql`INSERT INTO files VALUES(1,${key},'发布资料','md','准备',${stamp},NULL),(2,${foreign},'发布隐私','md','准备',${stamp},NULL),(3,${key},'发布删除','md','准备',${stamp},${stamp})`.execute(core.db)
+  const key=owner.replaceAll('-',''),stamp='2026-11-15 00:00:00.000000'
   await sql`INSERT INTO calendar_events(id,user_id,title,date,type,description,contact_name,version,created_at) VALUES(1,${key},'发布活动','2026-11-15','event','计划','小北',1,${stamp})`.execute(core.db)
   await send('canvas_create',{title:'画布'})
   const node=(await sql<{id:number}>`INSERT INTO mind_nodes(user_id,kind,title,content_md,content_plain,ref_type,ref_id,origin,version,captured_at,created_at,updated_at) VALUES(${key},'ref','项目','','','project',${project.id},'user',1,${stamp},${stamp},${stamp}) RETURNING id`.execute(core.db)).rows[0]!
   await sql`INSERT INTO mind_canvas_items(user_id,canvas_id,node_id,x,y,z,collapsed,data_json,created_at,updated_at,deleted_at) VALUES(${key},1,${node.id},0,0,0,0,'{}',${stamp},${stamp},${stamp})`.execute(core.db)
   const before=(await sql`SELECT count(*) n FROM mind_nodes`.execute(core.db)).rows
   expect(await send('canvas_search_placeable',{query:'发布',canvas_id:1,limit:1})).toMatchObject({value:{count:2,truncated:true,matches:[{ref_type:'project',ref_id:project.id,node_id:node.id,already_placed:true,canvas_item_id:1}]}})
-  expect(await send('canvas_search_placeable',{queries:['发布','发布'],canvas_id:1,offset:1,limit:2})).toMatchObject({value:{queries:['发布'],count:3,truncated:false,matches:[{ref_type:'file',ref_id:1},{ref_type:'event',ref_id:1}]}})
+  expect(await send('canvas_search_placeable',{queries:['发布','发布'],canvas_id:1,offset:1,limit:2})).toMatchObject({value:{queries:['发布'],count:3,truncated:false,matches:[{ref_type:'file',ref_id:'path-safe'},{ref_type:'event',ref_id:1}]}})
   expect(await send('canvas_search_placeable',{queries:['发布','准备'],mode:'AND',types:['file']})).toMatchObject({value:{count:1,matches:[{ref_type:'file'}]}})
   expect(await send('canvas_search_placeable',{query:'发布',canvas_id:999})).toMatchObject({successful:false,value:{error:'画布不存在'}})
   expect(await send('canvas_search_placeable',{})).toMatchObject({successful:false,value:{error:'需要提供搜索关键词 query 或 queries'}})

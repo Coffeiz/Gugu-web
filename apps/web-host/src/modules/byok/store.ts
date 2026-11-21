@@ -35,16 +35,19 @@ export function createCredentialCreator(options:CreateCredentialOptions){
   try{encrypted=await options.encrypt(input.value,allowEmpty)}catch(error){throw new ByokEncryptionUnavailable(error)}
   return options.transaction(async query=>{
    await query('SELECT id FROM users WHERE id=$1 FOR UPDATE',[owner])
-   if (makeDefault) await query('UPDATE user_provider_credentials SET enabled=false WHERE user_id=$1 AND capability=$2 AND enabled IS TRUE',[owner,input.capability])
+   const bind = makeDefault && (input.capability !== 'llm' || !(await query(
+    'SELECT 1 FROM user_provider_bindings WHERE user_id=$1 AND capability=$2', [owner, input.capability],
+   )).rows.length)
+   if (bind) await query('UPDATE user_provider_credentials SET enabled=false WHERE user_id=$1 AND capability=$2 AND enabled IS TRUE',[owner,input.capability])
    const fields=['user_id','provider','api_format','capability','encrypted_value','nonce','encrypted_data_key','key_version','base_url','model','max_tokens','context_tokens','thinking','reasoning_effort','reasoning_persistence','web_search_enabled','image','video','audio','image_detail','dimensions','enabled','created_at','updated_at']
-   const values=[owner,input.provider,input.api_format??'',input.capability,encrypted.ciphertext,encrypted.nonce,encrypted.encryptedDataKey,encrypted.keyVersion,input.base_url??'',input.model??'',input.max_tokens??null,input.context_tokens??null,input.thinking??null,input.reasoning_effort??null,input.reasoning_persistence??'off',web,input.image??false,input.video??false,input.audio??false,input.image_detail??'auto',input.dimensions??null,makeDefault,new Date(),new Date()]
+   const values=[owner,input.provider,input.api_format??'',input.capability,encrypted.ciphertext,encrypted.nonce,encrypted.encryptedDataKey,encrypted.keyVersion,input.base_url??'',input.model??'',input.max_tokens??null,input.context_tokens??null,input.thinking??null,input.reasoning_effort??null,input.reasoning_persistence??'off',web,input.image??false,input.video??false,input.audio??false,input.image_detail??'auto',input.dimensions??null,bind,new Date(),new Date()]
    const row=(await query(`INSERT INTO user_provider_credentials(${fields.join(',')}) VALUES(${values.map((_,i)=>`$${i+1}`).join(',')}) RETURNING id,provider,api_format,capability,base_url,model,max_tokens,context_tokens,thinking,reasoning_effort,reasoning_persistence,web_search_enabled,image,video,audio,image_detail,dimensions,enabled,last_verified_at,created_at,updated_at`,values)).rows[0]!
-   if (makeDefault) await query(
+   if (bind) await query(
     `INSERT INTO user_provider_bindings (user_id, capability, credential_id) VALUES ($1,$2,$3)
      ON CONFLICT (user_id, capability) DO UPDATE SET credential_id = EXCLUDED.credential_id`,
     [owner, input.capability, row.id],
    )
-   if(makeDefault && input.capability==='llm')await query("UPDATE provider_reasoning_states SET status='invalidated',invalidated_reason='config_changed',invalidated_at=CURRENT_TIMESTAMP,encrypted_payload='',payload_nonce='',encrypted_data_key='',payload_size=0,version=version+1,updated_at=CURRENT_TIMESTAMP WHERE user_id=$1 AND status='active'",[owner])
+   if(bind && input.capability==='llm')await query("UPDATE provider_reasoning_states SET status='invalidated',invalidated_reason='config_changed',invalidated_at=CURRENT_TIMESTAMP,encrypted_payload='',payload_nonce='',encrypted_data_key='',payload_size=0,version=version+1,updated_at=CURRENT_TIMESTAMP WHERE user_id=$1 AND status='active'",[owner])
    return {...row,id:Number(row.id),has_value:Boolean(encrypted.ciphertext)}
   })
  }

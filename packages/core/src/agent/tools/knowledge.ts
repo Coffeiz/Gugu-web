@@ -311,7 +311,7 @@ export function createKnowledgeDeleteTool(port: KnowledgeDeletePort): ToolDefini
       parameters: { type: 'object', properties: { knowledge_id: { type: 'string' } },
         required: ['knowledge_id'], additionalProperties: false },
     } } },
-    effect: 'write', requiresInteraction: true, confirmationReplay: true,
+    effect: 'write', destructive: true, requiresInteraction: true, confirmationReplay: true,
     validate: input => deleteKnowledgeSchema.safeParse(input),
     reconcile(input, identity, call) { return port.reconcile(key(identity, identity.roundId, call.id), idOf(input)) },
     async execute(input, scope, call) {

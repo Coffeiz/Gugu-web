@@ -18,13 +18,13 @@ it('正式 SQLite 搜索便签、画布便签和启用中的定时任务并隔�
       const owner = ownerId.replaceAll('-', ''), other = randomUUID().replaceAll('-', '')
       const stamp = '2026-01-01 00:00:00.000000'
       await sql`INSERT INTO mind_nodes(id,user_id,kind,title,content_md,content_plain,origin,version,captured_at,created_at,updated_at,deleted_at)
-        VALUES (1,${owner},'note','检索标题','正文含有目标词','正文含有目标词','user',1,${stamp},${stamp},${stamp},NULL),
+        VALUES (1,${owner},'note','检索标题',${'# 检索标题\n\n正文含有目标词'},${'检索标题\n正文含有目标词'},'user',1,${stamp},${stamp},${stamp},NULL),
           (2,${other},'note','其他账号目标词','不应命中','不应命中','user',1,${stamp},${stamp},${stamp},NULL),
           (3,${owner},'note','已删除目标词','墓碑','墓碑','user',1,${stamp},${stamp},${stamp},${stamp})`.execute(runtime.db)
       await sql`INSERT INTO mind_maps(id,user_id,title,data_json,created_at,updated_at,deleted_at)
         VALUES (1,${owner},'画布','{}',${stamp},${stamp},NULL)`.execute(runtime.db)
       await sql`INSERT INTO mind_nodes(id,user_id,kind,title,content_md,content_plain,origin,version,captured_at,created_at,updated_at,deleted_at)
-        VALUES (4,${owner},'canvas_note','画布目标词','画布目标词','画布正文目标词','user',1,${stamp},${stamp},${stamp},NULL),
+        VALUES (4,${owner},'canvas_note','新便签',${'# 画布标题\n\n画布正文目标词'},${'画布标题\n画布正文目标词'},'user',1,${stamp},${stamp},${stamp},NULL),
           (5,${other},'canvas_note','其他账号目标词','不应命中','不应命中','user',1,${stamp},${stamp},${stamp},NULL)`.execute(runtime.db)
       await sql`INSERT INTO mind_canvas_items(id,user_id,canvas_id,node_id,x,y,z,collapsed,data_json,created_at,updated_at,deleted_at)
         VALUES (1,${owner},1,4,0,0,1,0,'{}',${stamp},${stamp},NULL),
@@ -44,7 +44,9 @@ it('正式 SQLite 搜索便签、画布便签和启用中的定时任务并隔�
       const note = await operations.search(ownerId, parseGlobalSearchQuery({ q: '目标词', types: ['note'] })) as {groups: Array<{items: Array<Record<string, unknown>>}>}
       expect(note.groups[0]?.items).toEqual([{ id: 1, title: '检索标题', subtitle: '正文含有目标词', version: 1 }])
       const canvas = await operations.search(ownerId, parseGlobalSearchQuery({ q: '目标词', types: ['canvas_note'] })) as {groups: Array<{items: Array<Record<string, unknown>>}>}
-      expect(canvas.groups[0]?.items).toEqual([{ id: 4, title: '画布目标词', subtitle: '画布正文目标词', canvas_id: 1 }])
+      expect(canvas.groups[0]?.items).toEqual([{ id: 4, title: '画布标题', subtitle: '画布正文目标词', canvas_id: 1 }])
+      const titleOnly = await operations.search(ownerId, parseGlobalSearchQuery({ q: '画布标题', types: ['canvas_note'] }))
+      expect(titleOnly).toMatchObject({ groups: [{ items: [{ id: 4, title: '画布标题', subtitle: '画布正文目标词' }] }] })
       const tasks = await operations.search(ownerId, parseGlobalSearchQuery({ q: '目标词', types: ['scheduled_task'] })) as {groups: Array<{items: Array<Record<string, unknown>>}>}
       expect(tasks.groups[0]?.items).toEqual([{ id: 1, title: '目标词任务', subtitle: 'cron · 0 0 * * *' }])
       const mcp = await operations.search(ownerId, parseGlobalSearchQuery({ q: '目标词', types: ['mcp'] })) as {groups: Array<{items: Array<Record<string, unknown>>}>}

@@ -68,7 +68,7 @@ for (const {platform,privateStreaming=false,chart=false,flip=false,plainFlip=fal
     if (probeMcpSchema && body.stream && !requestedMcpSchema) {
       requestedMcpSchema = true
       const call = { index: 0, id: 'mcp_schema_probe', type: 'function', function: {
-        name: 'get_tool_schema', arguments: JSON.stringify({ tools: ['manage_mcp_servers'] }),
+        name: 'search_tools', arguments: JSON.stringify({ names: ['manage_mcp_servers'] }),
       } }
       return response(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [call] }, finish_reason: 'tool_calls' }] })}\n\ndata: [DONE]\n\n`)
     }
@@ -208,7 +208,7 @@ for (const {platform,privateStreaming=false,chart=false,flip=false,plainFlip=fal
     assert.deepEqual([...operations], ['update', 'refresh'])
     if (!group) assert.ok(JSON.stringify(primary!.messages).includes(persona), '必须装配当前owner真实本地persona来源快照')
     const tools = (primary!.tools as { function: { name: string } }[] ?? []).map(tool => tool.function.name)
-    assert.deepEqual(tools.filter(name => name !== 'choose_no_reply'), ['call_tool', 'get_tool_schema', 'use_skill', 'ask_user'])
+    assert.deepEqual(tools.filter(name => name !== 'choose_no_reply'), ['call_tool', 'search_tools', 'use_skill', 'ask_user'])
     const catalog = JSON.stringify(primary!.messages)
     if (!group) assert.equal(catalog.includes('`react`'), platform === 'feishu')
     if (probeMcpSchema) {

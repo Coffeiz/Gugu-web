@@ -10,7 +10,7 @@ Core 包含配置回退、百炼普通/多模态载荷、维度和结果规则�
 
 基线为 `backend/app/api/v1/config.py:test_embedding`、`EmbeddingTestRequest`、`backend/agent/memory/embedding.py:resolve_base_url/build_payload` 及 `app/core/config.py:normalize_dimensions`。现有 pytest `tests/agent/providers/test_byok_embedding.py` 作为相关回归，新建独立 fixture 直接调用原 handler。
 
-1. 先编写真实临时 HTTP、临时配置和 Host 路由测试，在 devserver 执行 `node --import tsx --test tests/admin/embedding-probe.test.ts`：退出 1，`ERR_MODULE_NOT_FOUND` 指向尚未实现的目标 route。此时没有 Core/Host 实现。
+1. 先编写真实临时 HTTP、临时配置和 Host 路由测试，在 devserver 执行 `node --import tsx --test tests/admin/search/probe.test.ts`：退出 1，`ERR_MODULE_NOT_FOUND` 指向尚未实现的目标 route。此时没有 Core/Host 实现。
 2. 实现后，首次运行被共享 Core 构建失败后的缺失 dist 阻断；没有把该失败当作业务红灯，也没有手写 dist、修改其他会话的阻塞文件。
 3. 主会话确认共享阻塞修复及无并发 build 后，本次相关源码和测试 5 项 SHA-256 完全一致；串行 Core build 退出 0。
 4. Node 两文件共 3/3 通过，覆盖生产 `startServer`、认证优先、真实 DNS 固定 HTTP 传输、HTTP 重定向不跟随、云提供方本地目标拒绝、非 200 脱敏、空/错误响应、空 Key 无 Authorization、配置回退/热更新及文件不变。
@@ -21,7 +21,7 @@ Core 包含配置回退、百炼普通/多模态载荷、维度和结果规则�
 ```sh
 corepack pnpm --filter @gugu/core build
 # apps/web-host；测试环境变量由会话提供，不记录实际连接地址
-node --import tsx --test tests/admin/embedding-probe.test.ts tests/host/embedding-probe-main.integration.test.ts
+node --import tsx --test tests/admin/search/probe.test.ts tests/host/main/admin/embedding.integration.test.ts
 # backend；使用任务临时 Python 环境，PYTHONPATH=.
 pytest ../apps/web-host/tests/admin/fixtures/embedding_probe_baseline_python.py tests/agent/providers/test_byok_embedding.py -q
 ```

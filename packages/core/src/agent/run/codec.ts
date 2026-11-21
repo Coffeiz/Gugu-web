@@ -14,7 +14,7 @@ export function assertRunCheckpoint<C>(identity: RunIdentity, checkpoint: RunChe
   if (!sameRunIdentity(identity, checkpoint.identity)) throw new TypeError('Agent run checkpoint 身份不一致')
   if (!Number.isSafeInteger(checkpoint.version) || checkpoint.version < 0 || !Number.isSafeInteger(checkpoint.sequence) || checkpoint.sequence < 0) throw new TypeError('Agent run checkpoint 版本无效')
 }
-function aad(identity: RunIdentity, kind: 'checkpoint' | 'event', id: string): Buffer {
+function aad(identity: RunIdentity, kind: 'checkpoint' | 'event' | 'continuation', id: string): Buffer {
   return Buffer.from(`${identity.ownerId}\n${identity.sessionId}\n${identity.runId}\n${kind}\n${id}`, 'utf8')
 }
 function deriveKey(secretKey: string): Buffer {
@@ -23,7 +23,7 @@ function deriveKey(secretKey: string): Buffer {
 /** 与既有 Web RunStore 密文格式兼容；密钥及原始异常不进入日志。 */
 export function createAgentRunCodec(secretKey: string) {
   if (!secretKey) throw new TypeError('Agent run 加密密钥不能为空')
-  function encrypt(identity: RunIdentity, kind: 'checkpoint' | 'event', id: string, value: unknown) {
+  function encrypt(identity: RunIdentity, kind: 'checkpoint' | 'event' | 'continuation', id: string, value: unknown) {
     assertRunIdentity(identity)
     const json = JSON.stringify(value)
     if (json === undefined) throw new TypeError('Agent run 状态无法序列化')
@@ -31,7 +31,7 @@ export function createAgentRunCodec(secretKey: string) {
     cipher.setAAD(aad(identity, kind, id))
     return { nonce, payload: Buffer.concat([cipher.update(json, 'utf8'), cipher.final(), cipher.getAuthTag()]) }
   }
-  function decrypt<T>(identity: RunIdentity, kind: 'checkpoint' | 'event', id: string, nonce: Uint8Array, payload: Uint8Array): T {
+  function decrypt<T>(identity: RunIdentity, kind: 'checkpoint' | 'event' | 'continuation', id: string, nonce: Uint8Array, payload: Uint8Array): T {
     assertRunIdentity(identity)
     if (nonce.length !== 12 || payload.length < 16) throw new Error('Agent run 状态密文无效')
     try {
@@ -41,6 +41,12 @@ export function createAgentRunCodec(secretKey: string) {
     } catch { throw new Error('Agent run 状态无法安全解密') }
   }
   return {
+    encryptContinuation(identity: RunIdentity, reference: string, value: unknown) {
+      return encrypt(identity, 'continuation', reference, value)
+    },
+    decryptContinuation<T>(identity: RunIdentity, reference: string, nonce: Uint8Array, payload: Uint8Array) {
+      return decrypt<T>(identity, 'continuation', reference, nonce, payload)
+    },
     encryptCheckpoint<C>(checkpoint: RunCheckpoint<C>) { assertRunCheckpoint(checkpoint.identity, checkpoint); return encrypt(checkpoint.identity, 'checkpoint', 'current', checkpoint) },
     decryptCheckpoint<C>(identity: RunIdentity, version: number, nonce: Uint8Array, payload: Uint8Array): RunCheckpoint<C> {
       const checkpoint = decrypt<RunCheckpoint<C>>(identity, 'checkpoint', 'current', nonce, payload)
@@ -58,4 +64,22 @@ export function createAgentRunCodec(secretKey: string) {
       return event
     },
   }
+}
+
+export function assertRunEventTransition(
+  identity: RunIdentity,
+  previousSequence: number,
+  nextSequence: number,
+  events: readonly RunEvent[],
+): void {
+  if (!Number.isSafeInteger(previousSequence) || !Number.isSafeInteger(nextSequence)
+    || nextSequence < previousSequence)
+    throw new TypeError('Agent run 事件序号不能回退')
+  if (events.length === 0) {
+    if (nextSequence !== previousSequence) throw new TypeError('Agent run checkpoint 序号与事件不一致')
+    return
+  }
+  if (events.length !== 1 || nextSequence !== previousSequence + 1
+    || events[0]!.sequence !== nextSequence || !sameRunIdentity(identity, events[0]!.identity))
+    throw new TypeError('Agent run checkpoint 序号与事件不一致')
 }

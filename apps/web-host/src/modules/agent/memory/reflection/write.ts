@@ -30,7 +30,7 @@ export function createLocalOwnerReflectionWriter(options: {
     const context = dataContext(batch.ownerId)
     if (!/^[a-f0-9]{64}$/u.test(batch.batchId) || !/^[1-9]\d*$/u.test(batch.sessionId) || !Number.isSafeInteger(Number(batch.sessionId)))
       throw new TypeError('反思批次身份无效')
-    const base = `${context.ownerId}/.agent/`, staging = `${base}.reflection/${batch.batchId}`
+    const base = `${context.ownerId}/.agent/memories/`, staging = `${base}.reflection/${batch.batchId}`
     const coordinates = (phase: 'plan' | 'finish') => {
       const method = `agent.memory.reflection.${phase}`
       const key = hash([method, context.ownerId, batch.sessionId, batch.batchId])

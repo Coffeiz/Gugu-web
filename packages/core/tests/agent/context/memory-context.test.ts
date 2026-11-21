@@ -7,19 +7,19 @@ const owner = 'f17421a3-8520-4c8b-92e5-736882f4bd82'
 describe('Agent 记忆上下文读取', () => {
   it('按 Python read_memory 聚合 owner 记忆字段并尊重直注入上限', async () => {
     const files: Record<string, string> = {
-      [`${owner}/.agent/profile.json`]: JSON.stringify([
+      [`${owner}/.agent/memories/profile.json`]: JSON.stringify([
         { type: 'name', text: '小北', ts: 1 },
         { type: 'preference', text: '喜欢咖啡', ts: 2 },
       ]),
-      [`${owner}/.agent/pattern.json`]: JSON.stringify([
+      [`${owner}/.agent/memories/pattern.json`]: JSON.stringify([
         { id: 'p1', text: '喜欢猫', kind: 'observed', conf: 0.9, imp: 3, ts: 100 },
         { id: 'p2', text: '夜猫子', kind: 'inferred', conf: 0.6, imp: 3, ts: 50 },
       ]),
-      [`${owner}/.agent/memory.md`]: '长期记忆正文',
-      [`${owner}/.agent/daily.md`]: '今天聊了猫',
-      [`${owner}/.agent/summary.json`]: JSON.stringify({ text: '在写代码', ts: 123.5 }),
-      [`${owner}/.agent/stance.json`]: JSON.stringify({ stance: '闲聊', ts: 124.5 }),
-      [`${owner}/.agent/lens.json`]: JSON.stringify({ rules: [{ rule: '先确认偏好', confidence: 0.8, last_seen: 124.5 }], candidates: [] }),
+      [`${owner}/.agent/memories/memory.md`]: '长期记忆正文',
+      [`${owner}/.agent/memories/daily.md`]: '今天聊了猫',
+      [`${owner}/.agent/memories/summary.json`]: JSON.stringify({ text: '在写代码', ts: 123.5 }),
+      [`${owner}/.agent/memories/stance.json`]: JSON.stringify({ stance: '闲聊', ts: 124.5 }),
+      [`${owner}/.agent/memories/lens.json`]: JSON.stringify({ rules: [{ rule: '先确认偏好', confidence: 0.8, last_seen: 124.5 }], candidates: [] }),
     }
     const read = async ({ key }: { ownerId: string; key: string; maxChars: number }) => files[key] ?? null
 
@@ -40,8 +40,8 @@ describe('Agent 记忆上下文读取', () => {
 
   it('不接受无效 owner，并对超长 memory 与 daily 执行旧上下文预算', async () => {
     const files: Record<string, string> = {
-      [`${owner}/.agent/memory.md`]: '甲'.repeat(3_400),
-      [`${owner}/.agent/daily.md`]: '乙'.repeat(2_100),
+      [`${owner}/.agent/memories/memory.md`]: '甲'.repeat(3_400),
+      [`${owner}/.agent/memories/daily.md`]: '乙'.repeat(2_100),
     }
     const read = async ({ key }: { ownerId: string; key: string; maxChars: number }) => files[key] ?? null
     const result = await loadAgentMemoryContext({ ownerId: owner, query: '', now: 125_000, storage: { readText: read } })
@@ -57,7 +57,7 @@ describe('Agent 记忆上下文读取', () => {
       id: `p${index}`, text: `无关模式${index}`, kind: 'observed', conf: 0.9, imp: 3, ts: 100,
     }))
     patterns.push({ id: 'related', text: '喜欢猫', kind: 'observed', conf: 0.9, imp: 3, ts: 100 })
-    const files = { [`${owner}/.agent/pattern.json`]: JSON.stringify(patterns) }
+    const files = { [`${owner}/.agent/memories/pattern.json`]: JSON.stringify(patterns) }
     const result = await loadAgentMemoryContext({ ownerId: owner, query: '喜欢猫', now: 125_000,
       storage: { async readText({ key }) { return files[key] ?? null } } })
     expect(result.pattern.split('\n')).toHaveLength(50)
@@ -72,7 +72,7 @@ describe('Agent 记忆上下文读取', () => {
     const first = '甲'.repeat(3200)
     const second = '乙'.repeat(1600)
     const memory = `${first}\n\n${second}`
-    const files = { [`${owner}/.agent/pattern.json`]: JSON.stringify(patterns), [`${owner}/.agent/memory.md`]: memory }
+    const files = { [`${owner}/.agent/memories/pattern.json`]: JSON.stringify(patterns), [`${owner}/.agent/memories/memory.md`]: memory }
     const chunkKey = (value: string) => createHash('md5').update(value.trim()).digest('hex').slice(0, 12)
     let embeds = 0
     const vectors = {

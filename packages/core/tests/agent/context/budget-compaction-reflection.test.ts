@@ -294,6 +294,29 @@ describe('压缩候选、并发和完整轮边界', () => {
     expect([...emergency].length).toBeLessThanOrEqual(12_000)
     expect(emergency).toContain('更早摘要'); expect(emergency).not.toContain('<compacted-summary>')
   })
+  it('滚动压缩保留本轮结构化检索和姿态，仅为已落库历史生成覆盖证明', async () => {
+    const area = new MessageArea(services(), [
+      { ...user('旧问题'), _history_id: '10' },
+      { role: 'assistant', content: '旧答案', _history_id: '11' },
+    ])
+    const stance: CanonicalMessage = { role: 'user', content: [{ type: 'stance-context', text: '本轮姿态' }] }
+    const rag: CanonicalMessage = { role: 'user', content: [{ type: 'knowledge-context', text: '本轮召回' }] }
+    area.append(stance, { source: 'stance', persistencePolicy: 'commit_on_success' })
+    area.append(rag, { source: 'rag', persistencePolicy: 'commit_on_success' })
+    area.append({ ...user('本轮问题'), _history_id: '12' }, { source: 'user', persistencePolicy: 'already_persisted', persistedMessageId: '12' })
+    area.append({ role: 'assistant', content: '本轮答案' }, { source: 'tool_round', persistencePolicy: 'request_only' })
+    const result = await compactContext(area, {
+      summarize: async input => {
+        expect(input.compressible.map(message => message._history_id)).toEqual(['10', '11'])
+        return '旧对话摘要'
+      },
+    }, { modelIdentity: 'model', window: { anchorIndex: 4, from: 5 } })
+    expect(result).toMatchObject({ coversUntilMessageIds: ['10', '11'], coversUnpersisted: false,
+      anchorIndex: 3, protectedStartIndex: 4 })
+    applyCompaction(area, result)
+    expect(area.entries.slice(1).map(entry => entry.source)).toEqual(['stance', 'rag', 'user', 'tool_round'])
+    expect(area.persistenceDelta('success').entries.map(entry => entry.source)).toEqual(['stance', 'rag'])
+  })
   it('滚动压缩保留之前run、当前用户锚点及最新完整执行轮，返回新坐标', async () => {
     const area = new MessageArea(services(), history(25)); area.configureRequest([user('前缀')])
     const result = await compactContext(area, {
@@ -433,6 +456,44 @@ describe('摘要请求的实际超窗恢复', () => {
     expect(sent[2]!.slice(-2)).toEqual(sent[1]!.slice(-2))
     expect(tasks[1]).toContain('以对应的工具结果为准'); expect(tasks[2]).toContain('不要推测被裁切的消息')
     expect(stableJson(original)).toContain('完整参数')
+  })
+  it('压缩和反思共用一次请求，两份结果可独立解析', async () => {
+    const messages = history(4)
+    const candidates: Json[] = []
+    const outputs = [
+      '<summary>摘要一</summary><reflection>{"daily":"新的记忆"}</reflection>',
+      '<summary>摘要二</summary><reflection>{"daily":',
+      '<summary></summary><reflection>{}</reflection>',
+      '<summary>摘要三</summary><reflection>无效 JSON</reflection>',
+    ]
+    let calls = 0
+    const port: SummaryGenerationPorts<string> = {
+      ...services(), diagnostic() {}, pauseBeforeRetry: async () => {},
+      transformProjection() { throw new Error('未发生超窗') },
+      provider: {
+        isInputRejected: () => false,
+        async complete(input) {
+          expect(input.stableSystem).toBe('合成系统')
+          expect(input.canonicalHistory).toEqual(messages)
+          expect(input.delta).toContain('仅反思已冻结第一个回合')
+          return { output: outputs[calls++]!, usage: { output: 10, finish_reason: calls === 2 ? 'length' : 'stop' } }
+        },
+      },
+    }
+    const summarizer = createCompactionSummarizer({
+      ownerId: 'owner', sessionId: 'session', runId: 'run', stableSystem: '合成系统',
+      tools: [], contextTokens: 1000, maxOutputTokens: 100, instruction: '摘要任务',
+    }, port)
+    const input = {
+      history: messages, compressible: messages.slice(0, 2), previousSummary: null,
+      projection: null, preserveLatestUser: false,
+      reflection: { task: '仅反思已冻结第一个回合', receive: (candidate: Json) => candidates.push(candidate) },
+    }
+    const summaries: string[] = []
+    for (const _ of outputs) summaries.push(await summarizer.summarize(input))
+    expect(summaries).toEqual(['摘要一', '摘要二', '', '摘要三'])
+    expect(candidates).toEqual([{ daily: '新的记忆' }, {}])
+    expect(calls).toBe(outputs.length)
   })
   it('Provider输出截断不能作为成功摘要，普通错误不触发裁窗', async () => {
     let transforms = 0, calls = 0

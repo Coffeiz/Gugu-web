@@ -65,6 +65,8 @@ Domain/Contracts 不导入 Node、SQL 或具体 Host；Application/Agent 面向�
 
 Agent 工具和技能正文采用显式注册、可信 Host 装配与调用时授权；配置不能替代权限或确认。契约与尚未接线的范围见 [Agent 工具与技能注册机制](Gugu-2.0-Agent工具与技能注册机制.md)。
 
+Agent 的时间上下文由 Host 按平台约定注入：Web Host 使用用户设置的时区，桌面 Host 使用运行机器的系统时区。共享时间工具只消费 Host 提供的可信时区，不从用户资料或会话快照推断、覆盖桌面机器时区。
+
 ### 1.4 Electron 桌面进程与通信方案
 
 ```mermaid

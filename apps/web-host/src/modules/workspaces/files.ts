@@ -1,11 +1,11 @@
 import { CoreError } from '@gugu/core'
-import { createLocalFileTree, UnsafeLocalPathError } from '@gugu/fs/node'
+import { createLocalFileTree, localFileIdentity, UnsafeLocalPathError } from '@gugu/fs/node'
 import { lookup } from 'mime-types'
 import type { Pool } from 'pg'
 import { normalizeOwnerId } from '../../shared/owner-context.js'
 import { readPostgresProjectPathMirrorKey } from '../files/folders/paths.js'
 import { createDiskTrash } from '../files/trash/disk.js'
-import { personalFileStorageKey, workspaceDirectoryStorageKey } from './roots.js'
+import { personalFileStorageKey, sandboxTarget, workspaceDirectoryStorageKey } from './roots.js'
 
 export type FileDirectory = number | 'personal' | { projectId: number }
 
@@ -75,17 +75,54 @@ export function createWorkspaceFileReads(pool: Pick<Pool, 'query'>, storageRoot:
         const result = await fs.list(relativePath)
         return result ?? (typeof directory !== 'number' && relativePath === '' ? [] : null)
       })
-      return entries.map(entry => ({
-        ...entry,
-        mimeType: entry.kind === 'file' ? lookup(entry.name) || 'application/octet-stream' : null,
-      }))
+      const results = []
+      for (const entry of entries) {
+        if (entry.kind === 'file') {
+          results.push({ ...entry, mimeType: lookup(entry.name) || 'application/octet-stream' })
+          continue
+        }
+        const children = await fs.list(entry.relativePath).catch(error => {
+          if (error instanceof UnsafeLocalPathError || ['EACCES', 'EPERM'].includes(error.code)) return null
+          throw error
+        })
+        const folderCount = children?.filter(child => child.kind === 'directory').length
+        results.push({
+          ...entry, mimeType: null,
+          ...(children && folderCount !== undefined ? { folderCount, fileCount: children.length - folderCount } : {}),
+        })
+      }
+      return results
     },
-    async open(ownerId: string, directory: FileDirectory, relativePath: string) {
+    async open(ownerId: string, directory: FileDirectory, relativePath: string, expectedIdentity?: string) {
       const fs = await tree(ownerId, directory)
       const opened = await read(() => fs.open(relativePath))
+      if (expectedIdentity !== undefined) {
+        try {
+          if (await localFileIdentity(opened.handle) !== expectedIdentity)
+            throw new CoreError('not_found', '引用文件已移动或不存在')
+        } catch (error) {
+          await opened.handle.close()
+          throw error
+        }
+      }
       const fileName = relativePath.split('/').at(-1)!
       const mimeType = lookup(fileName) || 'application/octet-stream'
       return { ...opened, fileName, mimeType, file: null }
+    },
+    async reference(ownerId: string, directory: FileDirectory, relativePath: string, expectedIdentity?: string) {
+      const root = await rootKey(normalizeOwnerId(ownerId), directory)
+      const opened = await read(() => createLocalFileTree(storageRoot, root).open(relativePath))
+      try {
+        const identity = await localFileIdentity(opened.handle)
+        if (!identity || (expectedIdentity !== undefined && expectedIdentity !== identity))
+          throw new CoreError('not_found', '引用文件已移动或不存在')
+        const directoryId = typeof directory === 'object' ? `project:${directory.projectId}` : directory
+        const sandboxPath = `${sandboxTarget(root)}/${relativePath}`
+        const id = Buffer.from(JSON.stringify({ directoryId, relativePath, sandboxPath, identity })).toString('base64url')
+        return { type: 'file' as const, id: `path-${id}`, label: relativePath.split('/').at(-1)!, subtitle: sandboxPath }
+      } finally {
+        await opened.handle.close()
+      }
     },
     async mkdir(ownerId: string, directory: FileDirectory, path: string) {
       const fs = await tree(ownerId, directory)

@@ -52,6 +52,7 @@ export function prepareCalendarEventReminder(
     startAt,
     scheduleKind: 'once',
     name: `${event.title} 提醒`,
+    executionMode: 'reminder',
     payload: `提醒：${event.title}（${event.date}${event.time ? ` ${event.time}` : ''}）`,
   }
 }

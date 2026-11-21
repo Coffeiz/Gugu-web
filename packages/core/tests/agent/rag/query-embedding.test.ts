@@ -102,6 +102,20 @@ describe('1.7.7 RAG query embedding transport boundary', () => {
     expect((await embedRagQuery(settings(), query, transport, signal, ownerId)).vector).toEqual([1, 1])
   })
 
+  it('拒绝维度错误的向量，且不会让错误结果污染缓存', async () => {
+    const request = vi.fn()
+      .mockResolvedValueOnce(response(200, jsonBody({ data: [{ embedding: [1] }] })))
+      .mockResolvedValueOnce(response(200, jsonBody({ data: [{ embedding: [1, 0] }] })))
+    const query = '合成维度校验'
+    const ownerId = randomUUID()
+    const signal = new AbortController().signal
+    expect(await embedRagQuery(settings(), query, { request }, signal, ownerId))
+      .toMatchObject({ outcome: 'invalid_response', vector: [] })
+    expect(await embedRagQuery(settings(), query, { request }, signal, ownerId))
+      .toMatchObject({ outcome: 'success', vector: [1, 0] })
+    expect(request).toHaveBeenCalledTimes(2)
+  })
+
   it('does not cache failed responses', async () => {
     let requests = 0
     const transport: ProviderTransport = { async request() {

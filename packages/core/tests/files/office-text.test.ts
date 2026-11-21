@@ -1,3 +1,7 @@
+import { lstat, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { readDroppedFileExcerpt } from '../../src/runtime/desktop-file-excerpt.js'
 import { describe, expect, it } from 'vitest'
 import * as XLSX from 'xlsx'
 import { extractOfficeText } from '../../src/files/office-text.js'
@@ -284,4 +288,17 @@ describe('Office 正文提取（Python doctext 基线与 ODF 适配）', () => {
   it('对未知扩展名 fail closed，不把二进制文档误当 UTF-8 文本', async () => {
     await expect(extractOfficeText(Buffer.from([0, 1, 2]), 'bin')).rejects.toThrow('暂不支持')
   })
+})
+
+
+it('本机引用从已授权 PDF 原件获取正文并复核文件身份', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gugu-referenced-pdf-'))
+  try {
+    const path = join(directory, '合成.pdf')
+    await writeFile(path, pdfFixture())
+    const { dev, ino, birthtimeNs } = await lstat(path, { bigint: true })
+    await expect(readDroppedFileExcerpt(path, [dev, ino, birthtimeNs].join('.')))
+      .resolves.toEqual({ name: '合成.pdf', text: expect.stringContaining('Gugu PDF text') })
+    await expect(readDroppedFileExcerpt(path, '0.0.0')).resolves.toBeNull()
+  } finally { await rm(directory, { recursive: true, force: true }) }
 })

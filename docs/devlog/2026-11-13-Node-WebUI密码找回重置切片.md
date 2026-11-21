@@ -11,7 +11,7 @@
 
 - Node 26 下密码找回、配置、SMTP 和 Vite→Host 定向回归：12 项通过，0 失败；隔离 PostgreSQL Vite 集成 1 项跳过，因为没有配置专用测试库。
 - Python 行为基线 `test_auth_token_revocation.py` 与 `test_review_security_regressions.py`：21 项通过。
-- 切片文件定向 TypeScript 检查通过。全包 `pnpm typecheck` 被无关的 `tests/agent/agent-group-mentions.test.ts` 语法错误阻断（第 53–57 行）；没有修改该并行模块。
+- 切片文件定向 TypeScript 检查通过。全包 `pnpm typecheck` 被无关的 `tests/agent/chat/group-mentions.test.ts` 语法错误阻断（第 53–57 行）；没有修改该并行模块。
 - devserver 没有 PostgreSQL 服务端二进制，且 `pg_isready` 未发现运行中的服务器；未连接或写入应用数据库，也未使用 Docker。因此 PostgreSQL 事务和完整 Vite→Host→PostgreSQL 路径仍未验收。
 
 ## 未覆盖边界

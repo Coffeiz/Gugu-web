@@ -1,9 +1,9 @@
 {
-  "apps/web/tests/i18n/group-reply-error.test.ts": {
+  "apps/ui/tests/i18n/group-reply-error.test.ts": {
     "domain": "i18n-error-copy",
     "layer": "L0",
-    "owner": "apps/web/src/i18n/sections/common.ts",
-    "productionEntry": "apps/web/src/components/common/gugu-chat/composables/useChatStream.ts",
+    "owner": "apps/ui/src/shared/i18n/sections/common.ts",
+    "productionEntry": "apps/ui/src/shared/components/common/gugu-chat/composables/useChatStream.ts",
     "keyBehavior": "群聊选择门失败按界面语言取 chatUi.groupReplyFailed 文案，三语言互不相同，且不引导用户重发、不暴露实现术语",
     "ci": "frontend-test"
   }

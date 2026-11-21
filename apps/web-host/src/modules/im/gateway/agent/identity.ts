@@ -1,3 +1,4 @@
+import { wechatEventId } from '@gugu/gateway'
 import { createHmac } from 'node:crypto'
 import { stableJson } from '@gugu/core/agent'
 import type { NodeImBotBinding } from '../inbound/inbox.js'
@@ -10,5 +11,9 @@ export function imConversationScopeHash(secretKey: string, binding: NodeImBotBin
 }
 export function imConversationFingerprint(secretKey: string, scopeHash: string, payload: Readonly<Record<string, unknown>>, attachmentIds: readonly string[]) {
   return imConversationDigest(secretKey, [scopeHash, payload.platform_user_id, payload.text, payload.quoted_text ?? null, attachmentIds,
-    payload.platform_message_id ?? payload.message_id, payload.reply_to_platform_message_id ?? null])
+    wechatEventId(payload) ?? payload.platform_message_id ?? payload.message_id, payload.reply_to_platform_message_id ?? null])
+}
+
+export function imConversationEventId(payload: Readonly<Record<string, unknown>>) {
+  return payload._pending_ask_resume_id || wechatEventId(payload) || payload.platform_message_id || payload.message_id
 }

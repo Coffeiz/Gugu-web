@@ -6,7 +6,7 @@
 
 ## 回归保护
 
-新增 `gugu-webui/tests/host/auth-profile-vite.integration.test.ts`，通过 Vite 代理、Node Host 和随机隔离 PostgreSQL schema 验证：
+新增 `gugu-webui/tests/host/vite/auth/profile.integration.test.ts`，通过 Vite 代理、Node Host 和随机隔离 PostgreSQL schema 验证：
 
 - Cookie 会话可读取当前用户资料，资料更新只改变当前用户字段。
 - 时区提交后，revision 通知观察到已提交值。
@@ -21,7 +21,7 @@
 
 - Node Host 与 Vite 隔离 PostgreSQL 集成及资料路由回归：5 passed，0 failed，0 skipped。
 - Python 会话撤销和 Cookie 基线：10 passed。
-- `gugu-webui` TypeScript 全量检查仍失败于并行文件夹切片：`tests/files/folder-writes-postgres.test.ts` 的 5 处 fixture 未实现新增的 `FolderWriteRuntime.capturePathMirrorDirectoryKeys`。该类型错误位于另一会话正在修改的文件，本切片未改动它；待该切片收敛后重跑全量检查。
+- `gugu-webui` TypeScript 全量检查仍失败于并行文件夹切片：`tests/files/folders/write.postgres.test.ts` 的 5 处 fixture 未实现新增的 `FolderWriteRuntime.capturePathMirrorDirectoryKeys`。该类型错误位于另一会话正在修改的文件，本切片未改动它；待该切片收敛后重跑全量检查。
 
 ## 当前路由归属
 

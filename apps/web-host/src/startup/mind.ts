@@ -6,7 +6,8 @@ import { createMindCanvasCreation, createMindCanvasUpdate, createMindCanvasDelet
 import { createMindNoteMutations } from '@gugu/core/mind'
 import { type RedisEventPublisher } from '../adapters/cache/redis-events.js'
 
-export function createMindServices(core: SqlDataRuntime, publisher: RedisEventPublisher) {
+export function createMindServices(core: SqlDataRuntime, publisher: RedisEventPublisher,
+  resolveFileReference: (owner: string, id: string) => Promise<{ label: string } | null>) {
   const createMindNote = createMindNoteCreator({
     insert: createSqlMindNoteInserter(core.db, 'postgres'),
     async publishCreated({ ownerId, note, clientId, mutationId }) {
@@ -128,7 +129,7 @@ export function createMindServices(core: SqlDataRuntime, publisher: RedisEventPu
     },
     (operation) => {
       console.error(`gugu-webui ${operation} failed`)
-    },
+    }, undefined, resolveFileReference,
   ))
   return { createMindNote, mindNoteMutations, mindCanvasCreate, mindCanvasUpdate, mindCanvasDelete, mindCanvasNoteMutations, mindCanvasItemUpdate, mindCanvasItemRemove, mindCanvasItemAdd, mindGlobalRelationDelete, mindCanvasRelationCreate, mindCanvasRelationDelete, mindRefNodeCreator, publishCanvasChanged }
 }

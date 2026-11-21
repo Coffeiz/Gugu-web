@@ -3,6 +3,7 @@ import type { BrowserWindow, IpcMainInvokeEvent } from 'electron'
 import { DesktopLifecycle } from '../src/main/lifecycle.js'
 import { DesktopUpdater } from '../src/main/updater.js'
 import {
+  createMainWindowSizeStore,
   windowOptions,
   trustedCaller,
   secureWindow,
@@ -14,6 +15,27 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 describe('桌面生命周期、窗口与更新边界', () => {
+  it('重新打开主窗口时恢复最近保存的普通尺寸，并适应较小屏幕', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'gugu-window-size-'))
+    try {
+      const store = createMainWindowSizeStore(directory)
+      expect(store.read()).toBeUndefined()
+      store.save({ width: 1300, height: 780 })
+      store.save({ width: 1200, height: 740 })
+      const size = createMainWindowSizeStore(directory).read()!
+      expect(windowOptions('preload.cjs', false, { size, workArea: { width: 1600, height: 900 } }))
+        .toMatchObject({ width: 1200, height: 740 })
+      expect(windowOptions('preload.cjs', false, { size, workArea: { width: 1080, height: 700 } }))
+        .toMatchObject({ width: 1080, height: 700 })
+      writeFileSync(join(directory, 'main-window-size.json'), '{')
+      const invalid = createMainWindowSizeStore(directory).read()
+      expect(invalid).toBeUndefined()
+      expect(windowOptions('preload.cjs')).toMatchObject({ width: 1440, height: 800 })
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   it('界面协议只能读取随包 UI，拒绝其他来源和编码后的目录穿越', async () => {
     const root = mkdtempSync(join(tmpdir(), 'gugu-ui-resources-')),
       ui = join(root, 'ui')
@@ -143,9 +165,20 @@ describe('桌面生命周期、窗口与更新边界', () => {
     const permission = vi.fn()
     requests[0]!(null, 'camera', permission)
     expect(permission).toHaveBeenCalledWith(false)
-    expect(contents.setWindowOpenHandler.mock.calls[0]![0]()).toEqual({
+    expect(contents.setWindowOpenHandler.mock.calls[0]![0]({ url: 'https://example.test/' })).toEqual({
       action: 'deny',
     })
+    const openExternal = vi.fn()
+    secureWindow({ webContents: contents } as unknown as BrowserWindow, openExternal)
+    const open = contents.setWindowOpenHandler.mock.calls[1]![0]
+    const webLink = 'https://example.test/docs?q=chat#link'
+    expect(open({ url: webLink })).toEqual({ action: 'deny' })
+    expect(open({ url: 'http://example.test/' })).toEqual({ action: 'deny' })
+    for (const url of ['file:///tmp/synthetic', 'gugu://action', 'javascript:alert(1)', 'https://user:password@example.test/', '无效地址']) {
+      expect(open({ url })).toEqual({ action: 'deny' })
+    }
+    expect(open({ url: webLink, postBody: {} })).toEqual({ action: 'deny' })
+    expect(openExternal.mock.calls).toEqual([[webLink], ['http://example.test/']])
   })
   it('未确认或未校验的更新不安装，确认后先停写再交给安装器', async () => {
     const events: string[] = [],

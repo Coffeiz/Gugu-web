@@ -6,7 +6,7 @@ import {classifyImGroupInbound,imActorInputFromPayload} from '@gugu/core/im/acce
 import {createPostgresImAccess} from '../inbound/access.js'
 import {createPostgresImConversationStore} from '../agent/conversations.js'
 import {createImInboundEnvelope} from '../inbound/envelope.js'
-import {imConversationDigest,imConversationFingerprint,imConversationScopeHash} from '../agent/identity.js'
+import {imConversationEventId,imConversationDigest,imConversationFingerprint,imConversationScopeHash} from '../agent/identity.js'
 import {imAttachmentScopeKey,type ImAttachmentScope} from '../inbound/attachments.js'
 import {isOwnedFileStorageKey} from '../../../files/store.js'
 import type {ImAttentionVoiceReadInput,ImAttentionVoiceSource} from './voice.js'
@@ -55,7 +55,7 @@ export function createImAttentionVoiceSource(options:{
    const eventHashes=input.candidates.map(c=>{
     if(!/^\d+-\d+$/.test(c.eventId))throw invalid()
     const p=c.payload
-    return imConversationDigest(options.secretKey,[scopeHash,p.platform_user_id,p._pending_ask_resume_id||p.platform_message_id||p.message_id])
+    return imConversationDigest(options.secretKey,[scopeHash,p.platform_user_id,imConversationEventId(p)])
    })
    let expectedSegment:string|undefined,expectedState:string|undefined
    async function validate(currentSignal:AbortSignal){
@@ -83,7 +83,7 @@ export function createImAttentionVoiceSource(options:{
      if(actor.chatType!=='group'||actor.chatId!==scope.groupId||stored._node_stream_event_id!==value._node_stream_event_id
       ||typeof stored._node_stream_event_id!=='string'||!/^\d+-\d+$/.test(stored._node_stream_event_id)
       ||imConversationScopeHash(options.secretKey,binding,stored)!==scopeHash||row.scope_hash!==scopeHash
-      ||row.event_hash!==imConversationDigest(options.secretKey,[scopeHash,stored.platform_user_id,stored._pending_ask_resume_id||native])
+      ||row.event_hash!==imConversationDigest(options.secretKey,[scopeHash,stored.platform_user_id,imConversationEventId(stored)])
       ||row.fingerprint!==imConversationFingerprint(options.secretKey,scopeHash,stored,attachments)
       ||stableJson(ids(value))!==stableJson(attachments)||stored.text!==value.text||stored.platform_user_id!==value.platform_user_id
       ||stored.chat_id!==value.chat_id||native!==(value.platform_message_id??value.message_id)

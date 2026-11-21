@@ -1,33 +1,49 @@
-import { readFileSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { link, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { readAgentPrompt, readAgentPromptSet, agentPromptFiles } from '@gugu/core/agent/context/prompts'
 
-// src 与 dist 的模块层级相同，提示词随 Web Host 包发布。
-export const webAgentPromptRoot = fileURLToPath(new URL('../../../../assets/agent-prompts', import.meta.url))
+const legacyRoot = fileURLToPath(new URL('../../../../assets/agent-prompts', import.meta.url))
+const legacyFiles = [
+  ...Object.values(agentPromptFiles), 'compress_conv.md', 'reflection.md', 'memory_compress.md',
+  'profile_compact.md', 'pattern_compact.md',
+  'im/group_chat.md', 'im/group_compress.md', 'im/group_reflection.md', 'im/member_reflection.md',
+]
 
-const files = {
-  base: 'default.md',
-  persona: 'persona.md',
-  skills: 'skills.md',
-  policy: 'policy.md',
-  retrieval: 'retrieval.md',
-} as const
-
-export type WebAgentPromptFiles = Record<keyof typeof files, string>
-
-/** 每次 Agent 上下文组装读取当前文件，使 Admin 更新对后续 Run 生效。 */
-export function createWebAgentPromptReader(root = webAgentPromptRoot): () => WebAgentPromptFiles {
-  const directory = resolve(root)
-  return () => Object.fromEntries(Object.entries(files).map(([key, filename]) => {
-    try { return [key, readFileSync(resolve(directory, filename), 'utf8')] }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [key, '']
-      throw error
-    }
-  })) as WebAgentPromptFiles
+export function webAgentPromptRoot(storageRoot: string): string {
+  return resolve(storageRoot, '.agent-prompts')
 }
 
-export function readWebAgentImPrompt(name: 'group_compress' | 'group_reflection' | 'member_reflection'): Promise<string> {
-  return readFile(resolve(webAgentPromptRoot, 'im', `${name}.md`), 'utf8')
+/** 从旧部署导入覆盖文件，已保存到新目录的版本优先。 */
+export async function migrateWebAgentPrompts(root: string, source = legacyRoot): Promise<void> {
+  for (const name of legacyFiles) {
+    const content = await readFile(resolve(source, name), 'utf8').catch(error => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+      throw error
+    })
+    if (content === undefined) continue
+    const packaged = readAgentPrompt(name)
+    if (content === packaged) continue
+
+    const destination = resolve(root, name)
+    await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
+    const temp = `${destination}.${randomUUID()}.tmp`
+    try {
+      await writeFile(temp, content, { flag: 'wx', mode: 0o600 })
+      await link(temp, destination)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    } finally {
+      await rm(temp, { force: true })
+    }
+  }
+}
+
+export function createWebAgentPromptReader(root?: string): () => ReturnType<typeof readAgentPromptSet> {
+  return () => readAgentPromptSet(root)
+}
+
+export async function readWebAgentImPrompt(name: 'group_compress' | 'group_reflection' | 'member_reflection', root?: string): Promise<string> {
+  return readAgentPrompt(`im/${name}.md`, root)
 }

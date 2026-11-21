@@ -1,7 +1,7 @@
 import type { PoolClient } from 'pg'
 import type { PendingInteraction, RunIdentity } from '@gugu/core/agent'
 import { targetConfirmationIdentity, type ConfirmationContext, type ConfirmationTargetId } from '../tools/identity.js'
-import type { AgentPromptSpec } from '@gugu/core/agent'
+import { describeMcpCredentialPrompt, type AgentPromptSpec } from '@gugu/core/agent'
 import type { ConfirmationIntent, ConfirmationTargetSnapshot } from '@gugu/core/tools'
 import { readActiveSessionFilesystemGrant } from '../sandbox/authorization.js'
 
@@ -51,17 +51,10 @@ export function createTrustedPromptDescriptions(ports: TrustedPromptPorts) {
       if (!server) throw new Error('MCP server 不存在')
       if (intent.configurationVersion !== undefined && (request.toolCall.name !== 'manage_mcp_servers' || !/^[a-f0-9]{64}$/u.test(intent.configurationVersion)
         || server.configuration_version !== intent.configurationVersion)) throw new Error('MCP 凭据配置已变化')
-      const slots: unknown[] = Array.isArray(server.credential_slots) ? server.credential_slots : []
-      const fields = slots.map(value => {
-        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('凭据槽位无效')
-        const slot = value as Record<string, unknown>, name = slot.id, label = slot.label
-        if (typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(name) || typeof label !== 'string' || !label.trim() || label.length > 120) throw new Error('凭据槽位无效')
-        return { name, label: label.trim(), type: 'secret' as const }
+      return describeMcpCredentialPrompt({
+        id: intent.serverId, name: server.name, credentialSlots: server.credential_slots,
+        configurationVersion: intent.configurationVersion,
       })
-      if (!fields.length || fields.length > 16 || new Set(fields.map(field => field.name)).size !== fields.length) throw new Error('凭据槽位无效')
-      return { kind: 'form', title: '补全 MCP 凭据', body: `MCP 服务 [${String(server.name).slice(0, 64)}] 需要凭据，值只会加密保存。`, options: [],
-        secretFields: fields, context: { secret_target: { kind: 'mcp_credentials', server_id: intent.serverId,
-          ...(intent.configurationVersion ? { configuration_version: intent.configurationVersion } : {}) } } }
     },
     async authorization(client: PoolClient, identity: RunIdentity): Promise<AgentPromptSpec> {
       if (!ports.filesystemAuthorizationEnabled()) throw new Error('完整用户沙箱授权功能当前未开启')

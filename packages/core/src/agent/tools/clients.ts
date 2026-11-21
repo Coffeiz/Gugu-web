@@ -97,6 +97,7 @@ export interface ClientDeleteRequest {
 }
 
 export interface ClientDeletePort {
+  destructive?: boolean
   confirmation?: ClientDeleteConfirmationPort
   apply(input: ClientDeleteRequest & { signal: AbortSignal; call: ToolCall; scope: import('./contracts.js').ToolScope }): Promise<ToolResult>
   reconcile(input: ClientDeleteRequest): Promise<ToolResult>
@@ -119,7 +120,7 @@ function clientDeleteCoordinate(input: ClientDeleteRequest) {
   return { context, operationId: `${raw.slice(0, 8)}-${raw.slice(8, 12)}-${raw.slice(12, 16)}-${raw.slice(16, 20)}-${raw.slice(20)}` }
 }
 
-async function resolveClientDeleteRows(data: DataServices, args: ClientDeleteRequest['args'], signal: AbortSignal) {
+async function resolveClientDeleteRows(data: DataServices, args: ClientDeleteRequest['args'], signal?: AbortSignal) {
   const submitted = args.client_ids ?? (args.client_id ? [args.client_id] : null)
   if (args.client_ids !== undefined && (!Array.isArray(args.client_ids) || args.client_ids.length < 1 || args.client_ids.length > 50))
     return { rows: [], snapshot: { targetsDigest: '', versionsDigest: '' }, error: 'client_ids 必须是 1-50 个联系人 id' } as const
@@ -128,7 +129,7 @@ async function resolveClientDeleteRows(data: DataServices, args: ClientDeleteReq
     const ids = [...new Set(submitted)].sort((a, b) => a - b)
     rows = []
     for (const id of ids) {
-      signal.throwIfAborted()
+      signal?.throwIfAborted()
       const client = await data.clients.repository.get(id)
       if (!client) return { rows: [], snapshot: { targetsDigest: '', versionsDigest: '' },
         error: args.client_ids === undefined ? '联系人不存在' : `联系人 ${id} 不存在` } as const
@@ -140,7 +141,7 @@ async function resolveClientDeleteRows(data: DataServices, args: ClientDeleteReq
       return { rows: [], snapshot: { targetsDigest: '', versionsDigest: '' }, error: '需提供 client_id 或联系人名 client' } as const
     const query = strip(args.client)
     const candidates = await data.clients.findByName(query)
-    signal.throwIfAborted()
+    signal?.throwIfAborted()
     if (!candidates.length) return { rows: [], snapshot: { targetsDigest: '', versionsDigest: '' }, error: `未找到联系人「${query}」` } as const
     if (candidates.length > 1) return { rows: [], snapshot: { targetsDigest: '', versionsDigest: '' }, error: `有多个匹配「${query}」的联系人，请指明`, candidates: candidates.slice(0, 10).map(item => ({ id: item.id, name: item.name })) } as const
     rows = candidates
@@ -229,13 +230,31 @@ export function createClientDeletePort(runtime: SqlDataRuntime, confirmation?: C
   } }
 }
 
+const clientDeleteId = z.number().int().safe()
+const clientDeleteInput = z.object({
+  client_id: clientDeleteId.optional(), client: z.string().optional(),
+  client_ids: z.array(clientDeleteId).max(50).refine(ids => new Set(ids).size === ids.length).optional(),
+}).passthrough()
+
+export async function describeClientDeleteTargets(data: DataServices, input: unknown,
+  expected: Pick<ConfirmationTargetSnapshot, 'targetsDigest' | 'versionsDigest'>) {
+  const parsed = clientDeleteInput.safeParse(input)
+  if (!parsed.success) throw new CoreError('invalid_request', '联系人删除确认目标无效')
+  const result = await resolveClientDeleteRows(data, parsed.data)
+  if ('error' in result || result.snapshot.targetsDigest !== expected.targetsDigest
+    || result.snapshot.versionsDigest !== expected.versionsDigest)
+    throw new CoreError('conflict', '联系人删除确认目标已变化')
+  const names = result.rows.slice(0, 10).map(row => row.name).join('、').replace(/[\p{Cc}\p{Cf}]/gu, ' ')
+  const visible = Array.from(names).slice(0, 420).join('')
+  return `将删除联系人：${visible}，共 ${result.rows.length} 个，此操作不可恢复`
+}
+
 export function createClientDeleteTool(port: ClientDeletePort): ToolDefinition {
-  const id = z.number().int().safe()
-  const schema = z.object({ client_id: id.optional(), client: z.string().optional(), client_ids: z.array(id).max(50).refine(ids => new Set(ids).size === ids.length).optional() }).passthrough()
+  const schema = clientDeleteInput
   const request = (args: z.infer<typeof schema>, identity: RunIdentity, roundId: string, toolCallId: string): ClientDeleteRequest => ({ identity, roundId, toolCallId, args })
   return {
     definition: { name: 'delete_client', schema: { type: 'function', function: { name: 'delete_client', description: '删除一个或多个联系人（不可恢复）。单项传 client_id 或联系人名 client，批量传 client_ids；执行前必须确认。', parameters: z.toJSONSchema(schema) as Record<string, Json> } } },
-    effect: 'write', requiresInteraction: true, confirmationReplay: true, validate: input => schema.safeParse(input),
+    effect: 'write', destructive: port.destructive, requiresInteraction: true, confirmationReplay: true, validate: input => schema.safeParse(input),
     execute(input, scope, call) { return port.apply({ ...request(input as z.infer<typeof schema>, scope.identity, scope.roundId, call.id), signal: scope.signal, call, scope }) },
     reconcile(input, identity, call) { return port.reconcile(request(input as z.infer<typeof schema>, identity, identity.roundId, call.id)) },
   }

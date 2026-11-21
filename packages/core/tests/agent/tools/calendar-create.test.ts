@@ -47,7 +47,7 @@ it('全天/定时事件保留结果形状；内联提醒同事务持久化且调
   expect(allDay).toMatchObject({ kind: 'completed', successful: true, mutated: true,
     value: { success: true, title: '截止', date: '2026-12-10', time: null, end_time: null, reminders: [] } })
 
-  const input = { title: '评审', date: '2026-12-12', all_day: false, time: '10:00', end_time: '11:30', type: 'deadline',
+  const input = { title: '评审', date: '2026-12-12', all_day: false, time: '10:00', end_time: '11:30', type: 'deadline', description: '检查评审事项',
     reminders: [{ lead_minutes: 30, channels: ['qq', 'web'], delivery_mode: 'current_group' }] }
   const created = await tools.tools.dispatch(call(input), scope())
   expect(created).toMatchObject({ kind: 'completed', successful: true, mutated: true,
@@ -55,9 +55,9 @@ it('全天/定时事件保留结果形状；内联提醒同事务持久化且调
       reminders: [{ lead_minutes: 30, channels: ['qq', 'web'], enabled: true, delivery_mode: 'current_group' }] } })
   const eventId = (created.value as { event_id: number }).event_id
   const rows = await sql<{ user_id: string; event_id: number | null; channels: string; enabled: number; delivery_targets: string | null }>`
-    SELECT user_id,event_id,channels,enabled,delivery_targets FROM scheduled_tasks WHERE event_id=${eventId}`.execute(core.db)
+    SELECT user_id,event_id,channels,enabled,delivery_targets,execution_mode,payload FROM scheduled_tasks WHERE event_id=${eventId}`.execute(core.db)
   expect(rows.rows).toHaveLength(1)
-  expect(rows.rows[0]).toMatchObject({ user_id: owner.replaceAll('-', ''), event_id: eventId, channels: 'qq,web', enabled: 1 })
+  expect(rows.rows[0]).toMatchObject({ user_id: owner.replaceAll('-', ''), event_id: eventId, channels: 'qq,web', enabled: 1, execution_mode: 'reminder', payload: '提醒：评审（2026-12-12 10:00）' })
   expect(JSON.parse(rows.rows[0]!.delivery_targets ?? 'null')).toEqual({ qq: { chat_type: 'group', chat_id: 'synthetic-group' } })
   expect((await sql`SELECT id FROM undo_operations`.execute(core.db)).rows).toHaveLength(2)
   expect(published).toHaveLength(2)

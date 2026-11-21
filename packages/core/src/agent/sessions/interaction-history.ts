@@ -18,6 +18,8 @@ export interface AgentInteractionHistoryWindow {
   readonly startAtMs?: string
   readonly endBeforeMs?: string
   readonly toolCallIds?: readonly string[]
+  readonly promptId?: number
+  readonly promptIds?: readonly number[]
 }
 type Row = { id: number; session_id: number; kind: string; title: string; body: string; schema_json: unknown; status: string; active: boolean | number; expires_at: Date | string; created_at: Date | string }
 type Action = { id: number; prompt_id: number; option_id: string; status: string; expires_at: Date | string; usable: boolean | number }
@@ -93,7 +95,7 @@ export function createSqlAgentInteractionHistory(db: Kysely<any>, backend: 'post
   return async (ownerId: string, sessionId: number, window: AgentInteractionHistoryWindow) => {
     const canonical = dataContext(ownerId).ownerId
     if (!Number.isSafeInteger(sessionId) || sessionId < 1) throw new TypeError('会话身份无效')
-    if (window.toolCallIds?.length === 0) return []
+    if (window.toolCallIds?.length === 0 || window.promptIds?.length === 0) return []
     const owner = backend === 'sqlite' ? canonical.replaceAll('-', '') : canonical
     const start = window.startAtMs === undefined ? null : boundary(window.startAtMs, backend)
     const end = window.endBeforeMs === undefined ? null : boundary(window.endBeforeMs, backend)
@@ -107,7 +109,9 @@ export function createSqlAgentInteractionHistory(db: Kysely<any>, backend: 'post
       const candidateCondition = backend === 'sqlite' ? sql`1=1` : window.restoreActive
         ? sql`((1=1${candidateStart}${candidateEnd}${candidateTool}) OR p.status='active')`
         : sql`(1=1${candidateStart}${candidateEnd}${candidateTool})`
-      const candidates = await sql<{ id: number }>`SELECT p.id FROM interaction_prompts p WHERE p.user_id=${owner} AND p.session_id=${sessionId} AND ${candidateCondition} ORDER BY p.id`.execute(tx)
+      const promptFilter = window.promptId !== undefined ? sql` AND p.id=${window.promptId}`
+        : window.promptIds ? sql` AND p.id IN (${sql.join(window.promptIds)})` : sql``
+      const candidates = await sql<{ id: number }>`SELECT p.id FROM interaction_prompts p WHERE p.user_id=${owner} AND p.session_id=${sessionId}${promptFilter} AND ${candidateCondition} ORDER BY p.id`.execute(tx)
       if (!candidates.rows.length) return []
       const ids = candidates.rows.map(row => row.id)
       const actionLock = backend === 'postgres' ? sql` FOR UPDATE` : sql``
@@ -166,7 +170,8 @@ export function createSqlAgentInteractionHistory(db: Kysely<any>, backend: 'post
         output.push({ id: row.id, session_id: row.session_id, kind: row.kind, title: row.title, body: row.body, tool_call_id: call,
           task_paused: row.kind === 'confirm' && !!call, options, secret_fields: secretFields,
           allow_text_input: schema.source === 'agent' && truthy(schema.allow_text_input), custom_input_active: truthy(schema.custom_input_active),
-          resolved: !row.active, selected_option_id: selected, response_text: object(schema.resolved_result).text ?? null,
+          resolved: !row.active, ...(row.status === 'expired' ? { expired: true } : {}),
+          selected_option_id: selected, response_text: object(schema.resolved_result).text ?? null,
           expires_at: timestamp(row.expires_at), created_at: timestamp(row.created_at) })
       }
       return output

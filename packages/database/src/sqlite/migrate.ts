@@ -1,3 +1,14 @@
+export { initializeDesktopAgentCredentials } from './migrations/0012_desktop_agent_credentials.js'
+export { initializeDesktopImReflection } from './migrations/0013_desktop_im_reflection.js'
+export { initializeDesktopImProjection } from './migrations/0011_desktop_im_projection.js'
+export { initializeDesktopAgentContinuations } from './migrations/0010_desktop_agent_continuations.js'
+export { initializeDesktopImInbox } from './migrations/0009_desktop_im_inbox.js'
+export { initializeDesktopAgentConfirmations } from './migrations/0007_desktop_agent_confirmations.js'
+export { initializeDesktopChatAttachments } from './migrations/0008_desktop_chat_attachments.js'
+export { initializeDesktopAgentInteractions } from './migrations/0006_desktop_agent_interactions.js'
+export { initializeDesktopAgentMemory } from './migrations/0005_desktop_agent_memory.js'
+export { initializeDesktopAgentRuns } from './migrations/0004_desktop_agent_runs.js'
+export { initializeDesktopScheduleMode } from './migrations/0003_desktop_schedule_mode.js'
 import {
   closeSync,
   existsSync,
@@ -14,6 +25,7 @@ import { DatabaseError } from '../shared/error.js'
 import { configureSqlite, loadSqliteDriver } from './driver.js'
 import type { MigrationAction, MigrationStatus } from '../shared/command.js'
 import { initializeSchema } from './migrations/0001_initialize.js'
+export { initializeDesktopSkills } from './migrations/0002_desktop_skills.js'
 import { validateSqliteBaseline } from './validate.js'
 
 async function createDatabase(path: string): Promise<boolean> {

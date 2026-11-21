@@ -50,6 +50,7 @@ export function registerScheduledTaskDeliveryTargets(app: FastifyInstance, userF
 }
 
 export type ScheduledTaskDeliveryPlan = ScheduledTaskTestNotificationPlan & {
+  plainText?: boolean
   fixedTargets?: Readonly<Record<string, unknown>>
   artifacts?: readonly unknown[]
   emailAttachments?: EmailAttachmentReferences

@@ -1,4 +1,5 @@
 import { agentCommandHelp, isAgentCommandHelpArgument } from '../agent/commands/help.js'
+import { parseAgentCommand } from '../agent/commands/menu.js'
 import { length, strip } from '../shared/values.js'
 
 export type ImShortcutState = 'idle' | 'thinking' | 'searching' | 'generating' | 'waiting_confirm'
@@ -28,7 +29,7 @@ function trimCharacters(value: string, characters: ReadonlySet<string>): string 
 // Python \s包括NEL/分隔控制符且不包括BOM；与str.strip采用同一空白语义。
 const whitespace = '(?:[^\\S\\uFEFF]|[\\u001c-\\u001f\\u0085])'
 const leadingMention = new RegExp(`^${whitespace}*(?:<@!?(?:(?!${whitespace}|>).)+>|[@＠](?:(?!${whitespace}|[/／]).)+)${whitespace}+(?=[/／])`, 'u')
-const commands: Readonly<Record<string, ImShortcutCommand>> = { stop: 'stop', s: 'stop', cancel: 'stop', x: 'stop', status: 'status', compact: 'compact', help: 'help', h: 'help' }
+const commands = new Set<string>(['stop', 'status', 'compact', 'help'])
 const progressPunctuation = new Set(['?', '？', '??', '？？', '...', '。。。', '…', '在?', '在？'])
 const acknowledgements = new Set(['嗯', '嗯嗯', '嗯呢', '好', '好的', '好滴', '好哒', '行', '行吧', '成', '中', '哦', '哦哦', '噢', 'ok', 'okay', 'okk', 'k', '收到', '了解', '明白', '懂了', '谢谢', '谢了', '多谢', 'thanks', 'thx', '哈哈', '哈哈哈', '嘿嘿', '赞', '👍', '👌', '🙏'])
 const progress = new Set(['还在吗', '在吗', '在不在', '好了吗', '好了没', '弄好了吗', '完成了吗', '做完了吗', '查了吗', '查到了吗', '查好了吗', '搜到了吗', '搜好了吗', '找到了吗', '找到没', '怎么没反应', '怎么没回', '怎么没动静', '咋还没好', '进度', '进度呢', '怎么样了', '咋样了', '到哪了', '进度怎么样了', '进度怎么样', '进度如何', '现在怎么样了', '做到哪了', '弄到哪了'])
@@ -40,12 +41,11 @@ const replies: Readonly<Record<ImShortcutState, string>> = { idle: '在的，你
 
 export function parseImShortcutCommand(text: string, options: Pick<ImShortcutOptions, 'allowLeadingMention'> = {}): { command: ImShortcutCommand | null; argument: string } {
   const value = options.allowLeadingMention ? strip(text).replace(leadingMention, '') : strip(text)
-  if (value[0] !== '/' && value[0] !== '／') return { command: null, argument: '' }
-  const body = strip(value.slice(1)).replace(/　/gu, ' '), characters = Array.from(body)
-  const split = characters.findIndex(character => strip(character) === '')
-  const name = (split < 0 ? body : characters.slice(0, split).join('')).toLowerCase()
-  return { command: Object.hasOwn(commands, name) ? commands[name]! : null,
-    argument: split < 0 ? '' : strip(characters.slice(split).join('')) }
+  const parsed = parseAgentCommand(value.replaceAll('　', ' '))
+  return {
+    command: parsed?.recognized && commands.has(parsed.name) ? parsed.name as ImShortcutCommand : null,
+    argument: parsed?.argument ?? '',
+  }
 }
 
 export function isExplicitImCancel(text: string): boolean {

@@ -21,7 +21,7 @@ export async function authorizeOwnerReflectionWrite(tx: Transaction<Database>, b
   return !!rows[0] && canRead(rows[0])
 }
 
-/** Redis 只提供定位符。每次从同一 PostgreSQL 快照重读授权会话和已提交回合。 */
+/** 反思队列只提供定位符。每次从同一 PostgreSQL 快照重读授权会话和已提交回合。 */
 export function createPostgresOwnerReflectionSource(pool: Pick<Pool, 'query'>) {
   return async function read(batch: Pick<OwnerReflectionBatch, 'ownerId' | 'sessionId'> & {
     turns: readonly Anchor[]

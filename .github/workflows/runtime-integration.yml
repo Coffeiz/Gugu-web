@@ -162,6 +162,9 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --filter gugu-web --frozen-lockfile
 
+      - name: Check UI layer dependencies
+        run: pnpm --filter gugu-web run check:layers
+
       - name: Typecheck
         run: pnpm --filter gugu-web run typecheck
 
@@ -512,7 +515,7 @@ jobs:
         run: pnpm --filter gugu-web exec playwright install --with-deps chromium
 
       - name: Start frontend dev server
-        working-directory: apps/web
+        working-directory: apps/ui
         run: |
           nohup pnpm run dev -- --port 5173 --strictPort > /tmp/frontend.log 2>&1 &
           for i in $(seq 1 40); do
@@ -522,7 +525,7 @@ jobs:
           echo '::error::frontend dev server 未在预期时间内启动'; cat /tmp/frontend.log; exit 1
 
       - name: Check frontend API proxy login
-        working-directory: apps/web
+        working-directory: apps/ui
         run: |
           curl --fail-with-body --silent --show-error \
             -H 'Content-Type: application/json' \
@@ -531,7 +534,7 @@ jobs:
             http://127.0.0.1:5173/api/v1/auth/login
 
       - name: Run E2E (稳定关键路径)
-        working-directory: apps/web
+        working-directory: apps/ui
         # 按文件而非 --grep 选测试：chromium 项目依赖 setup 项目（登录态），
         # --grep 会连 setup 项目里那条不带 @ci 的登录用例一起过滤掉，导致
         # 依赖链断裂；按路径跑则 setup 依赖照常执行，只是被测文件收窄。
@@ -552,14 +555,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
-          path: apps/web/playwright-report/
+          path: apps/ui/playwright-report/
 
       - name: Upload Playwright test results on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-test-results
-          path: apps/web/test-results/
+          path: apps/ui/test-results/
 
       - name: Failure classification summary
         if: failure()

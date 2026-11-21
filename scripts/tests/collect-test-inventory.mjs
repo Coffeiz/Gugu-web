@@ -12,7 +12,7 @@ const workflow = fs.readdirSync(workflowDirectory)
   .filter(file => file.endsWith('.yml') || file.endsWith('.yaml'))
   .map(file => fs.readFileSync(path.join(workflowDirectory, file), 'utf8'))
   .join('\n')
-const frontendPackage = JSON.parse(fs.readFileSync(path.join(root, 'apps/web/package.json'), 'utf8'))
+const frontendPackage = JSON.parse(fs.readFileSync(path.join(root, 'apps/ui/package.json'), 'utf8'))
 const metadata = loadMetadata()
 const coreSuites = Object.fromEntries(testSuites('all').map(item => [item.file, item]))
 const outputPath = process.argv.slice(2).find(arg => arg.startsWith('--output='))?.slice('--output='.length)
@@ -106,7 +106,7 @@ function domainFor(file) {
     ['mind-project', /mind|canvas|project/],
     ['schedule', /schedule|worker_shutdown|datetime|tz_|regressions/],
     ['terminal-runtime', /terminal|shell|docker|runtime|loopscope|process|systemd|trace_ops|run_finalize/],
-    ['frontend-ui', /apps\/web\/|calendar|markdown|iconregistry|affordances|byokcredentials|accountboundary|cardoptimistic|datescrubber|flipcoordinator|optimisticmutation|check-/],
+    ['frontend-ui', /apps\/ui\/|calendar|markdown|iconregistry|affordances|byokcredentials|accountboundary|cardoptimistic|datescrubber|flipcoordinator|optimisticmutation|check-/],
     ['frontend-i18n-theme', /i18n|theme|style|token|formatters/],
   ]
   return domains.find(([, matcher]) => matcher.test(value))?.[0] ?? 'other'
@@ -123,7 +123,7 @@ function layerFor(file, kind) {
 }
 
 function ownerFor(file, kind, domain) {
-  if (kind === 'playwright') return 'apps/web/e2e'
+  if (kind === 'playwright') return 'apps/ui/e2e'
   if (kind === 'static-check') return '工程质量'
   if (kind === 'diagnostic-script') return 'backend/diagnostics'
   if (kind === 'benchmark-script') return 'backend/benchmarks'
@@ -131,7 +131,7 @@ function ownerFor(file, kind, domain) {
   if (kind === 'test-support') return '测试环境辅助'
   if (kind === 'test-governance') return '测试治理'
   if (kind === 'node-test') return file.startsWith('loopscope/') ? 'loopscope/runtime' : 'backend/ts'
-  if (kind === 'vitest') return `apps/web/${domain}`
+  if (kind === 'vitest') return `apps/ui/${domain}`
   return `backend/${domain}`
 }
 
@@ -205,12 +205,12 @@ const items = [
   ...gitFiles('backend/ts').filter(file => /\.test\.(ts|mjs)$/.test(file)).map(file => inventoryItem(file, 'node-test')),
   ...gitFiles('loopscope').filter(file => /\.test\.(ts|mjs)$/.test(file)).map(file => inventoryItem(file, 'node-test')),
   ...gitFiles('scripts/release').filter(file => /\.test\.mjs$/.test(file)).map(file => inventoryItem(file, 'node-test')),
-  ...gitFiles('apps/web/tests').filter(file => file.endsWith('.test.ts')).map(file => inventoryItem(file, 'vitest')),
+  ...gitFiles('apps/ui/tests').filter(file => file.endsWith('.test.ts')).map(file => inventoryItem(file, 'vitest')),
   ...gitFiles('packages/fs/tests').filter(file => file.endsWith('.test.ts')).map(file => inventoryItem(file, 'vitest')),
   ...gitFiles('packages/core/tests').filter(file => file.endsWith('.test.ts')).map(file => inventoryItem(file, 'vitest')),
   ...gitFiles('apps/desktop/tests').filter(file => file.endsWith('.test.ts')).map(file => inventoryItem(file, 'vitest')),
-  ...gitFiles('apps/web/e2e/*.spec.ts').map(file => inventoryItem(file, 'playwright')),
-  ...gitFiles('apps/web/scripts').filter(file => /\/check-[^/]+\.mjs$/.test(file)).map(file => inventoryItem(file, 'static-check')),
+  ...gitFiles('apps/ui/e2e/*.spec.ts').map(file => inventoryItem(file, 'playwright')),
+  ...gitFiles('apps/ui/scripts').filter(file => /\/check-[^/]+\.mjs$/.test(file)).map(file => inventoryItem(file, 'static-check')),
   ...gitFiles('scripts/licenses').filter(file => /\/check-[^/]+\.mjs$/.test(file)).map(file => inventoryItem(file, 'static-check')),
   ...gitFiles('scripts/tests').filter(file => /\/(check-|run-test-|run-fast-)[^/]+\.mjs$/.test(file)).map(file => inventoryItem(file, 'test-governance')),
 ].sort((left, right) => left.file.localeCompare(right.file))

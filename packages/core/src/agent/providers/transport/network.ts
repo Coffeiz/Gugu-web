@@ -49,7 +49,10 @@ export async function resolvePinnedTarget(raw: string, options: { allowLocal?: b
       options.signal?.addEventListener('abort', cancel, { once: true })
       void Promise.resolve().then(() => (options.resolve ?? resolveAddresses)(hostname)).then(value => { cleanup(); resolve(value) }, error => { cleanup(); reject(error) })
     })
-  } catch (error) { throw error instanceof ProviderError ? error : new ProviderError('network', { retryable: true, requestStarted: false }) }
+  } catch (error) {
+    if (error instanceof ProviderError) throw new ProviderError(error.code, { ...error.options, transportHop: 'dns' })
+    throw new ProviderError('network', { retryable: true, requestStarted: false, transportHop: 'dns' })
+  }
   throwIfCancelled(options.signal)
   if (!targets.length || targets.some(item => !isIP(item.address) || (!options.allowLocal && !isPublicAddress(item.address))))
     throw new ProviderError('input_rejected')

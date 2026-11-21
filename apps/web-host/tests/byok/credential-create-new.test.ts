@@ -1,7 +1,7 @@
 import { byokBindings } from '@gugu/database/postgres/migrations/0021_byok_bindings'
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createCredentialCreator } from '../../src/modules/byok/store.js'
+import { createCredentialCreator, readPostgresLlmCredentialSnapshot } from '../../src/modules/byok/store.js'
 
 test('BYOK创建在关闭时拒绝且不读取或写入用户凭据',async()=>{
  let called=false
@@ -10,7 +10,7 @@ test('BYOK创建在关闭时拒绝且不读取或写入用户凭据',async()=>{
  assert.equal(called,false)
 })
 
-test('创建凭据时 owner 隔离、同能力切换及失败回滚',{skip:!process.env.GUGU_WEBUI_TEST_DATABASE_URL&&'需要隔离 PostgreSQL'},async()=>{
+test('创建凭据时保留通用模型默认绑定、隔离 owner 并回滚失败写入',{skip:!process.env.GUGU_WEBUI_TEST_DATABASE_URL&&'需要隔离 PostgreSQL'},async()=>{
  const {Pool}=await import('pg'),{randomUUID}=await import('node:crypto')
  const url=process.env.GUGU_WEBUI_TEST_DATABASE_URL
  assert.ok(url)
@@ -38,6 +38,14 @@ test('创建凭据时 owner 隔离、同能力切换及失败回滚',{skip:!proc
   assert.equal((await pool.query('SELECT count(*)::int n FROM user_provider_credentials WHERE user_id=$1 AND enabled',[a])).rows[0].n,1)
   fail=false;const result=await create(a,{provider:'openai',capability:'llm',value:'two'})
   assert.equal(result.has_value,true);assert.equal('encrypted_value' in result,false)
+  assert.equal(result.enabled, false)
+  const client = await pool.connect()
+  try {
+    assert.equal((await readPostgresLlmCredentialSnapshot(client, a, 'synthetic-version-secret')).credentialId, initial.id)
+    assert.equal((await readPostgresLlmCredentialSnapshot(client, a, 'synthetic-version-secret', Number(result.id))).credentialId, result.id)
+  } finally {
+    client.release()
+  }
   assert.equal((await pool.query('SELECT count(*)::int n FROM user_provider_credentials WHERE user_id=$1 AND enabled',[a])).rows[0].n,1)
   assert.equal((await pool.query('SELECT count(*)::int n FROM user_provider_credentials WHERE user_id=$1 AND enabled',[b])).rows[0].n,1)
   await assert.rejects(create(a,{provider:'openai',capability:'llm',value:''}),(error:unknown)=>(error as {statusCode:number}).statusCode===422)

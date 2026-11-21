@@ -1,13 +1,11 @@
 import { createHmac } from 'node:crypto'
-import type { QqEmojiRef } from '@gugu/core/im/qq-message'
+import { QQ_REFERENCE_TTL_SECONDS, QQ_REFERENCE_MAX_ENTRIES, QQ_FACE_PENDING_MS, type QqEmojiRef } from '@gugu/gateway/qq'
 import type { RedisCommandClient } from '../../../../../workers/redis-stream-queue.js'
 import { createImInboundEnvelope } from '../../inbound/envelope.js'
 import type { ImAttachmentScope } from '../../inbound/attachments.js'
 
 type Value = Record<string, unknown>
-export const QQ_REFERENCE_TTL_SECONDS = 7 * 24 * 60 * 60
-export const QQ_REFERENCE_MAX_ENTRIES = 50_000
-export const QQ_FACE_PENDING_MS = 3000
+export { QQ_REFERENCE_TTL_SECONDS, QQ_REFERENCE_MAX_ENTRIES, QQ_FACE_PENDING_MS } from '@gugu/gateway/qq'
 const pendingLimit = 128
 const rememberScript = `
 local expected={'string','zset'}

@@ -9,6 +9,7 @@ import { initializeSqlite, openSqliteRuntime } from '../../../src/data/sqlite.js
 import type { SqlDataRuntime } from '../../../src/data/runtime.js'
 import { createGlobalSearchOperations } from '../../../src/search/global-search.js'
 import { createKyselySqliteGlobalSearchSources } from '../../../src/search/sqlite.js'
+import { createDesktopFileSearchSources } from '../../../src/search/desktop-files.js'
 import { createGlobalSearchTool } from '../../../src/agent/tools/global-search.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import type { ToolResult } from '../../../src/agent/models.js'
@@ -77,6 +78,24 @@ it('缺词、非法枚举和缺少平台来源明确失败，不将缺后端伪�
   expect(await dispatch({ query: 'alpha', types: ['file'] })).toMatchObject({ value: {
     error: '当前平台未提供所请求的搜索来源', unavailable_types: ['file'],
   } })
+})
+
+it('桌面默认查询所有可用来源，文件与文件夹只扫描一次', async () => {
+  const host = vi.fn(async () => ({ groups: [
+    { type: 'file', items: [{ id: '1', title: '样本.txt', path_file: { sandboxPath: '/personal/样本.txt' } }] },
+    { type: 'folder', items: [{ id: '2', title: '样本目录' }] },
+  ] }))
+  registry = createToolRegistry({
+    tools: [createGlobalSearchTool(createGlobalSearchOperations(createDesktopFileSearchSources(host)), true)],
+    authorize: async () => true,
+  })
+  const result = value(await dispatch({ queries: ['样本', '资料'], mode: 'AND' }))
+  expect(result.total).toBe(2)
+  expect(host).toHaveBeenCalledExactlyOnceWith({ queries: ['样本', '资料'], mode: 'AND', perType: 20 }, expect.any(AbortSignal))
+  expect(result.groups).toMatchObject([
+    { source_type: 'file', items: [{ path_file: { sandboxPath: '/personal/样本.txt' } }] },
+    { source_type: 'folder', items: [{ title: '样本目录' }] },
+  ])
 })
 
 it('发现后撤权、预取消及查询中取消均不产生可用结果，SQL失败不泄漏内部错误', async () => {

@@ -1,104 +1,112 @@
 {
-  "apps/web/tests/chat/composables/useWebSessionBadges.test.ts": {
+  "apps/ui/tests/chat/composables/useWebSessionBadges.test.ts": {
     "domain": "chat-session-status",
     "layer": "L1",
-    "owner": "apps/web/src/components/common/gugu-chat/composables/useWebSessionBadges.ts",
-    "productionEntry": "apps/web/src/components/common/gugu-chat/GuguChat.vue",
+    "owner": "apps/ui/src/shared/components/common/gugu-chat/composables/useWebSessionBadges.ts",
+    "productionEntry": "apps/ui/src/shared/components/common/gugu-chat/GuguChat.vue",
     "keyBehavior": "运行优先、后台完成未读、可见会话清除、刷新保留账号隔离已读版本，IM 不参与",
     "ci": "frontend-vitest"
   },
-  "apps/web/tests/chat/GuguChatImConnect.test.ts": {
+  "apps/ui/tests/chat/GuguChatImConnect.test.ts": {
     "domain": "im",
     "layer": "L1",
-    "owner": "apps/web/components/common/gugu-chat",
-    "productionEntry": "apps/web/src/components/common/gugu-chat/GuguChatImConnect.vue",
+    "owner": "apps/ui/components/common/gugu-chat",
+    "productionEntry": "apps/ui/src/shared/components/common/gugu-chat/GuguChatImConnect.vue",
     "keyBehavior": "Telegram 连接入口跳转到个人设置并展示已有 Telegram 会话",
     "ci": "frontend-test"
   },
-  "apps/web/tests/chat/composables/useChatImConnect.test.ts": {
+  "apps/ui/tests/chat/composables/useChatImConnect.test.ts": {
     "domain": "im-platform-settings",
     "layer": "L1",
-    "owner": "apps/web/components/common/gugu-chat/composables",
-    "productionEntry": "apps/web/src/components/common/gugu-chat/composables/useChatImConnect.ts",
+    "owner": "apps/ui/components/common/gugu-chat/composables",
+    "productionEntry": "apps/ui/src/shared/components/common/gugu-chat/composables/useChatImConnect.ts",
     "keyBehavior": "个人设置变更 IM 绑定后已打开的聊天侧栏重新读取 Bot 状态",
     "ci": "frontend-test"
   },
-  "apps/web/tests/chat/TelegramTokenDialog.test.ts": {
+  "apps/ui/tests/chat/TelegramTokenDialog.test.ts": {
     "domain": "im",
     "layer": "L1",
-    "owner": "apps/web/components/common/gugu-chat",
-    "productionEntry": "apps/web/src/components/common/gugu-chat/TelegramTokenDialog.vue",
+    "owner": "apps/ui/components/common/gugu-chat",
+    "productionEntry": "apps/ui/src/shared/components/common/gugu-chat/TelegramTokenDialog.vue",
     "keyBehavior": "连接弹窗按钮按文案自然撑开，避免固定窄按钮裁切文字",
     "ci": "frontend-test"
   },
-  "apps/web/tests/chat/chatInteractionState.test.ts": {
+  "apps/ui/tests/chat/chatInteractionAccess.test.ts": {
+    "domain": "chat-interactions",
+    "layer": "L1",
+    "owner": "apps/ui/src/shared/components/common/gugu-chat",
+    "productionEntry": "apps/ui/src/shared/components/common/gugu-chat/chatInteractionAccess.ts",
+    "keyBehavior": "确认、文本和凭据表单使用对应 Web 请求，过期令牌不会被当作已接受",
+    "ci": "frontend-test"
+  },
+  "apps/ui/tests/chat/chatInteractionState.test.ts": {
     "domain": "chat-interactions",
     "layer": "L0",
-    "owner": "apps/web/components/common/gugu-chat",
-    "productionEntry": "apps/web/src/components/common/gugu-chat/chatTypes.ts",
+    "owner": "apps/ui/components/common/gugu-chat",
+    "productionEntry": "apps/ui/src/shared/components/common/gugu-chat/chatTypes.ts",
     "keyBehavior": "恢复开放提问后自定义回答路由到原交互，不进入普通发送队列",
     "ci": "frontend-test"
   },
-  "apps/web/tests/chat/composables/sessionRunStatus.test.ts": {
+  "apps/ui/tests/chat/composables/sessionRunStatus.test.ts": {
     "domain": "chat-rendering",
     "layer": "L0",
-    "owner": "apps/web/chat",
-    "productionEntry": "apps/web/src/components/common/gugu-chat/composables/sessionRunStatus.ts",
+    "owner": "apps/ui/chat",
+    "productionEntry": "apps/ui/src/shared/components/common/gugu-chat/composables/sessionRunStatus.ts",
     "keyBehavior": "旧 Run 的迟到事件不覆盖新 Run 的侧栏动画，等待确认后可恢复",
     "ci": "frontend-test"
   },
-  "apps/web/tests/chat/composables/sessionScrollLayout.test.ts": {
+  "apps/ui/tests/chat/composables/sessionScrollLayout.test.ts": {
     "domain": "chat-rendering",
     "layer": "L0",
-    "owner": "apps/web/chat",
-    "productionEntry": "apps/web/src/components/common/gugu-chat/composables/sessionScrollLayout.ts",
+    "owner": "apps/ui/chat",
+    "productionEntry": "apps/ui/src/shared/components/common/gugu-chat/composables/sessionScrollLayout.ts",
     "keyBehavior": "切换会话时仅在当前虚拟窗口 Markdown 尚未稳定时阻止滚动布局计算",
     "ci": "frontend-test"
   },
-  "apps/web/tests/chat/composables/sessionReadiness.test.ts": {
+  "apps/ui/tests/chat/composables/sessionReadiness.test.ts": {
     "domain": "chat-navigation",
     "layer": "L0",
-    "owner": "apps/web/components/common/gugu-chat",
-    "productionEntry": "apps/web/src/components/common/gugu-chat/composables/sessionReadiness.ts",
+    "owner": "apps/ui/components/common/gugu-chat",
+    "productionEntry": "apps/ui/src/shared/components/common/gugu-chat/composables/sessionReadiness.ts",
     "keyBehavior": "同会话首次恢复结算期间等待后再定位，会话切换时解除过期等待",
     "ci": "frontend-test"
   },
-  "apps/web/tests/chat/composables/chatNavigation.test.ts": {
+  "apps/ui/tests/chat/composables/chatNavigation.test.ts": {
     "domain": "chat-navigation",
     "layer": "L0",
-    "owner": "apps/web/components/common/gugu-chat",
-    "productionEntry": "apps/web/src/components/common/gugu-chat/composables/chatNavigation.ts",
+    "owner": "apps/ui/components/common/gugu-chat",
+    "productionEntry": "apps/ui/src/shared/components/common/gugu-chat/composables/chatNavigation.ts",
     "keyBehavior": "旧会话导航等待期间发起新导航后，旧请求不清除或定位新请求，最终定位最新目标",
     "ci": "frontend-test"
   },
-  "apps/web/tests/chat/composables/startupSessionRestore.test.ts": {
+  "apps/ui/tests/chat/composables/startupSessionRestore.test.ts": {
     "domain": "chat-navigation",
     "layer": "L0",
-    "owner": "apps/web/components/common/gugu-chat",
-    "productionEntry": "apps/web/src/components/common/gugu-chat/composables/startupSessionRestore.ts",
+    "owner": "apps/ui/components/common/gugu-chat",
+    "productionEntry": "apps/ui/src/shared/components/common/gugu-chat/composables/startupSessionRestore.ts",
     "keyBehavior": "启动恢复被新导航取代时不重置新会话；仅明确的会话不可用清除恢复记录，临时失败保留记录",
     "ci": "frontend-test"
   },
-  "apps/web/tests/chat/composables/useChatSessions.test.ts": {
+  "apps/ui/tests/chat/composables/useChatSessions.test.ts": {
     "domain": "chat-navigation",
     "layer": "L0",
-    "owner": "apps/web/components/common/gugu-chat",
-    "productionEntry": "apps/web/src/components/common/gugu-chat/composables/useChatSessions.ts",
+    "owner": "apps/ui/components/common/gugu-chat",
+    "productionEntry": "apps/ui/src/shared/components/common/gugu-chat/composables/useChatSessions.ts",
     "keyBehavior": "刷新按服务端活跃态续接原会话；等待交互卡片恢复时切换会话，旧响应不得覆盖新会话消息",
     "ci": "frontend-test"
   },
-  "apps/web/tests/chat/composables/useChatHistoryPagination.test.ts": {
+  "apps/ui/tests/chat/composables/useChatHistoryPagination.test.ts": {
     "domain": "chat-history",
     "layer": "L1",
-    "owner": "apps/web/components/common/gugu-chat/composables",
-    "productionEntry": "apps/web/src/components/common/gugu-chat/composables/useChatHistoryPagination.ts",
+    "owner": "apps/ui/components/common/gugu-chat/composables",
+    "productionEntry": "apps/ui/src/shared/components/common/gugu-chat/composables/useChatHistoryPagination.ts",
     "keyBehavior": "历史游标逐页前进，时间线去重保持身份；请求去重、失败手动重试、空页停止、会话切换和卸载隔离迟到响应",
     "ci": "frontend-test"
   },
-  "apps/web/tests/chat/GuguChatToolBubble.test.ts": {
+  "apps/ui/tests/chat/GuguChatToolBubble.test.ts": {
     "domain": "chat-history",
     "layer": "L1",
-    "owner": "apps/web/src/components/common/gugu-chat/GuguChatToolBubble.vue",
+    "owner": "apps/ui/src/shared/components/common/gugu-chat/GuguChatToolBubble.vue",
     "productionEntry": "工具卡片运行计时、异步详情加载与展开",
     "keyBehavior": "运行中实时计时，结束后显示持久耗时；详情返回前保持折叠，就绪后只展开一次；缓存不重复请求，取消、失败重试和虚拟滚动卸载不误展开",
     "ci": "frontend-test"

@@ -1,0 +1,38 @@
+.byok-group { margin-top: 14px; }
+.byok-group-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.byok-group-title { color: var(--text-primary); font-size: 13px; font-weight: 650; margin-bottom: 6px; }
+.byok-card-grid { display: grid; grid-template-columns: 1fr; row-gap: 10px; margin-top: 8px; }
+.byok-card { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 11px 12px; border: 1px solid var(--input-border, var(--divider-line)); border-radius: 12px; background: var(--surface-subtle); box-shadow: inset 0 1px rgba(255,255,255,.18); }
+.byok-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.byok-card-head { flex: 1; min-width: 0; }
+.byok-card-main { min-width: 0; }
+.byok-name { min-width: 0; color: var(--text-primary); font-size: 13px; line-height: 1.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.byok-meta { color: var(--text-secondary); font-size: 11px; margin-top: 3px; }
+.byok-card-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; flex-shrink: 0; }
+.byok-card-actions .pm-danger-btn { padding: 5px 10px; border-radius: var(--choice-chip-radius); }
+.byok-form-grid { display: grid; grid-template-columns: 1fr; gap: 8px; margin: 10px 0; }
+.byok-editor { margin-top: 8px; padding: 12px; border: 1px solid var(--input-border); border-radius: 10px; background: var(--surface-subtle); }
+.byok-editor--expanded { margin-top: 0; border-top: 1px solid var(--input-border); border-left: 0; border-right: 0; border-top-left-radius: 0; border-top-right-radius: 0; box-shadow: inset 1px 0 var(--input-border), inset -1px 0 var(--input-border); }
+.byok-card-grid, .byok-editor { overflow-anchor: none; }
+.byok-card-grid:has(.byok-editor--expanded) { row-gap: 10px; }
+.byok-card:has(+ .byok-editor--expanded) { margin-bottom: -10px; border-bottom: 0; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.byok-editor--expanded { grid-column: 1; }
+.byok-editor-enter-active { max-height: 420px; box-sizing: border-box; overflow: hidden; transition: max-height .32s cubic-bezier(.22,.61,.36,1), padding .24s ease-out; }
+.byok-editor-leave-active { max-height: 420px; box-sizing: border-box; overflow: hidden; transition: max-height .34s cubic-bezier(.16, 1, .3, 1), padding .26s cubic-bezier(.16, 1, .3, 1); }
+.byok-editor-enter-from, .byok-editor-leave-to { max-height: 0; padding-top: 0; padding-bottom: 0; }
+.byok-editor-enter-to, .byok-editor-leave-from { max-height: 420px; }
+.byok-editor .form-input { height: 34px; box-sizing: border-box; }
+.byok-editor-title { color: var(--text-primary); font-size: 12px; font-weight: 650; }
+.byok-editor-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.byok-editor-actions > button { flex: 0 0 auto; white-space: nowrap; }
+.byok-editor .multimodal-capability-row { max-width: 360px; }
+.field-label { display: block; margin-bottom: 5px; color: var(--text-secondary); font-size: 11px; }
+@media (max-width: 680px) { .byok-card-grid { grid-template-columns: 1fr; } .byok-card { align-items: flex-start; flex-wrap: wrap; } .byok-card-actions { width: 100%; } }
+.byok-subsection { grid-column: 1 / -1; display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding-top: 0; border-top: 1px solid var(--divider-line); }
+.byok-subsection-title { color: var(--text-primary); font-size: 12px; font-weight: 650; }
+.byok-subsection .asel-wrap { min-width: 0; }
+.byok-subsection .asel-trigger { width: 100%; box-sizing: border-box; }
+.byok-subsection-hint { color: var(--text-tertiary, var(--text-secondary)); font-size: 10px; line-height: 1.3; opacity: .72; }
+.byok-budget-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.byok-editor-feedback { flex: 1 1 auto; min-width: 0; margin-right: auto; overflow-wrap: anywhere; font-size: 11px; line-height: 1.35; }
+@media (max-width: 680px) { .byok-budget-grid { grid-template-columns: 1fr; } }

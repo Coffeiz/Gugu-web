@@ -1,5 +1,4 @@
-import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { readAgentPrompt, readAgentPromptSet } from '@gugu/core/agent/context/prompts'
 import { createHash } from 'node:crypto'
 import type { Pool } from 'pg'
 import { capabilitySnapshot } from '@gugu/core/providers'
@@ -11,8 +10,6 @@ import { resolvePlatformModelSettings } from './platform.js'
 import { agentContextAccessScope } from './access.js'
 import { createWebAgentProviderBinding } from './web.js'
 import type { AgentUsageConfig } from '../run/usage.js'
-
-const promptFiles = ['default.md', 'persona.md', 'skills.md', 'policy.md', 'retrieval.md'] as const
 
 function modelEnvironment(env: NodeJS.ProcessEnv): Record<string, string> {
   return Object.fromEntries(Object.entries(env).filter(([key, value]) => value !== undefined
@@ -35,10 +32,10 @@ export async function createConfiguredWebAgentProviderBinding(options: {
 }) {
   if (!options.permissionIdentity.trim() || typeof options.contextPolicy !== 'function') throw new TypeError('Web Agent 权限或上下文策略未配置')
   const credentialsMasterKeys = await readConfiguredByokMasterKeys(options.environment)
-  const prompt = (await Promise.all(promptFiles.map(name => readFile(join(options.promptRoot, name), 'utf8')))).join('\n\n---\n\n')
-  if (!prompt.trim()) throw new Error('Web Agent 提示词不可用')
+  const readSystemPrompt = () => Object.values(readAgentPromptSet(options.promptRoot)).join('\n\n---\n\n')
+  if (!readSystemPrompt().trim()) throw new Error('Web Agent 提示词不可用')
   let compactionInstruction: string
-  try { compactionInstruction = (await readFile(join(options.promptRoot, 'compress_conv.md'), 'utf8')).trim() || DEFAULT_AGENT_COMPACTION_INSTRUCTION }
+  try { compactionInstruction = (readAgentPrompt('compress_conv.md', options.promptRoot)).trim() || DEFAULT_AGENT_COMPACTION_INSTRUCTION }
   catch (error) {
     if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'ENOENT') throw error
     compactionInstruction = DEFAULT_AGENT_COMPACTION_INSTRUCTION
@@ -63,7 +60,7 @@ export async function createConfiguredWebAgentProviderBinding(options: {
       const settings = resolvePlatformModelSettings(document, options.environment)
       return resolveHostEffectiveModelConfiguration({
         settings,
-        systemPrompt: prompt,
+        systemPrompt: readSystemPrompt(),
         credentialsMasterKeys,
         permissionIdentity: options.permissionIdentity,
         environment: modelEnvironment(options.environment),
@@ -85,7 +82,7 @@ export async function createConfiguredWebAgentProviderBinding(options: {
     defaultLimit6h: options.defaultLimit6h,
   })
   return {
-    async pin(identity: RunIdentity, credentialId?: number) {
+    async pin(identity: RunIdentity, credentialId?: number | null) {
       let bound: Awaited<ReturnType<typeof binding.bind>> | undefined
       try {
         bound = await binding.bind(identity, new AbortController().signal, undefined, credentialId)

@@ -1,3 +1,4 @@
+import type { PrepareCompactedReflection } from '../../../agent/chat/compact.js'
 import type { Pool, PoolClient } from 'pg'
 import type { CanonicalCompletionInput, CanonicalFinalizationPort, CanonicalRunContext, ReflectionSnapshot, RunCheckpoint, RunIdentity } from '@gugu/core/agent'
 import type { ProviderRuntime, ProviderWire } from '@gugu/core/providers'
@@ -55,13 +56,15 @@ export interface ImReflectionServiceOptions {
   /** 成员scope缺少内存快照时，从原成功checkpoint真实重建；群公开scope禁止使用。 */
   rebuildMemberSnapshot?(job:Readonly<ImReflectionJob>,runtime:ImReflectionRuntime,signal:AbortSignal):Promise<ReflectionSnapshot<ProviderWire>|null>
   /** 固定码，禁止异常/正文/路径。 */
-  diagnose(code:'reflection_retry'|'reflection_dead'|'reflection_deferred'|'reflection_notification_pending'|'reflection_usage_unknown'):void
+  diagnose(code:'reflection_retry'|'reflection_dead'|'reflection_deferred'|'reflection_notification_pending'|'reflection_usage_unknown'|'reflection_job_invalid'):void
   leaseMs?:number
   pollMs?:number
 }
 export type ImReflectionHistoryHook=(client:PoolClient,identity:RunIdentity,history:AgentRunHistoryWrite<CanonicalRunContext>,checkpoint:RunCheckpoint<CanonicalRunContext>)=>Promise<void>
 export interface ImReflectionService {
   historyHook:ImReflectionHistoryHook
+  prepareCompaction?: PrepareCompactedReflection
+  stageCompaction?(client:PoolClient,identity:RunIdentity,coveredUserIds:readonly string[]):Promise<void>
   observePassiveLocked(client:PoolClient,ownerId:string,sessionId:number,messageIds:readonly string[]):Promise<void>
   /** 应在同Provider工厂createContext期间构建；快照只留内存，通知只唤醒事务已提交任务。 */
   createFinalizer(input:{identity:RunIdentity;modelIdentity:string;provider:ProviderRuntime}):Promise<CanonicalFinalizationPort>

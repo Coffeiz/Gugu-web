@@ -38,7 +38,7 @@ for (const line of names) {
   const parts = line.split('\t')
   const file = parts.at(-1)
   if (file && testPattern.test(file)) {
-    const current = file.replace(/^gugu-core\//, 'packages/core/').replace(/^gugu-desktop\//, 'apps/desktop/').replace(/^gugu-webui\//, 'apps/web-host/').replace(/^frontend\//, 'apps/web/')
+    const current = file.replace(/^gugu-core\//, 'packages/core/').replace(/^gugu-desktop\//, 'apps/desktop/').replace(/^gugu-webui\//, 'apps/web-host/').replace(/^frontend\//, 'apps/ui/')
     if (fs.existsSync(path.join(root, current))) added.add(current)
   }
 }
@@ -63,7 +63,7 @@ for (const file of deletedFrontendTests) {
   const name = path.basename(file)
   deletedByName.set(name, [...(deletedByName.get(name) || []), file])
 }
-for (const file of untrackedTests.filter(item => item.startsWith('apps/web/tests/'))) {
+for (const file of untrackedTests.filter(item => item.startsWith('apps/ui/tests/'))) {
   const name = path.basename(file)
   untrackedByName.set(name, [...(untrackedByName.get(name) || []), file])
 }

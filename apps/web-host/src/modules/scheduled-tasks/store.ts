@@ -48,20 +48,20 @@ function taskWrites(transact: TaskWriteTransaction, options: TaskWriteOptions, c
         validateCron: options.validateCron,
         persist: async (rawId, input, spec, undoContextId) => {
       const owner = normalizeOwnerId(rawId)
-      if (independent && input.event_id != null) throw new TypeError('日历活动提醒由日历工具修改')
       let created = false
       let row: TaskRow
       try {
         row = await transact(async client => {
-          await validateTaskReferences(client, owner, input.workspace_id ?? null, input.email_attachment_file_ids ?? [])
+          const mode = input.event_id == null ? input.execution_mode ?? 'instruction' : 'reminder'
+          await validateTaskReferences(client, owner, mode === 'reminder' ? null : input.workspace_id ?? null, input.email_attachment_file_ids ?? [])
           if (input.event_id != null) {
             const event = await client.query('SELECT id FROM calendar_events WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL FOR SHARE', [input.event_id, owner])
             if (!event.rowCount) throw new TypeError('绑定的日历事件不存在')
             const existing = await client.query<TaskRow>(`SELECT *,${taskPreciseColumns} FROM scheduled_tasks WHERE user_id=$1 AND event_id=$2 AND cron=$3`, [owner, input.event_id, spec.cron])
             if (existing.rows[0]) return existing.rows[0]
           }
-          const resolved = await options.resolve(client, owner, input as unknown as Record<string, unknown>, spec, null)
-          const result = await client.query<TaskRow>(`INSERT INTO scheduled_tasks(user_id,event_id,workspace_id,name,payload,cron,schedule_kind,interval_minutes,start_at,end_at,channels,enabled,delivery_targets,authorized_tools,email_attachment_file_ids,reminder_lead_minutes,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::json,$14::json,$15::json,$16,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) RETURNING *,${taskPreciseColumns}`, [owner, input.event_id ?? null, resolved.workspace_id, input.name, input.payload || '', spec.cron, spec.schedule_kind, spec.interval_minutes, scheduleTimestamp(spec.start_at), scheduleTimestamp(spec.end_at), normalizeScheduledTaskChannels(input.channels ?? ['web']), input.enabled ?? true, JSON.stringify(resolved.delivery_targets ?? null), JSON.stringify(normalizeScheduledTaskTools(input.authorized_tools)), JSON.stringify(resolved.email_attachment_file_ids), resolved.reminder_lead_minutes])
+          const resolved = await options.resolve(client, owner, { ...input, execution_mode: mode }, spec, null)
+          const result = await client.query<TaskRow>(`INSERT INTO scheduled_tasks(user_id,event_id,workspace_id,name,payload,cron,schedule_kind,interval_minutes,start_at,end_at,channels,enabled,delivery_targets,authorized_tools,email_attachment_file_ids,reminder_lead_minutes,execution_mode,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::json,$14::json,$15::json,$16,$17,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) RETURNING *,${taskPreciseColumns}`, [owner, input.event_id ?? null, resolved.workspace_id, input.name, input.payload || '', spec.cron, spec.schedule_kind, spec.interval_minutes, scheduleTimestamp(spec.start_at), scheduleTimestamp(spec.end_at), normalizeScheduledTaskChannels(input.channels ?? ['web']), input.enabled ?? true, JSON.stringify(resolved.delivery_targets ?? null), JSON.stringify(mode === 'reminder' ? [] : normalizeScheduledTaskTools(input.authorized_tools)), JSON.stringify(resolved.email_attachment_file_ids), resolved.reminder_lead_minutes, mode])
           const task = result.rows[0]!
           if (input.event_id != null) await attachReminder(client, owner, undoContextId, Number(input.event_id), task)
           await enqueueScheduledTaskRagRebuild(client, owner, Number(task.id))
@@ -81,13 +81,13 @@ function taskWrites(transact: TaskWriteTransaction, options: TaskWriteOptions, c
         publish: (owner, task, from) => options.publish(owner, 'create', task, from),
       }, rawOwner, input, contextId, origin)
     },
-    update(rawOwner: string, id: number, patch: ScheduledTaskPatch, origin: string | null) {
+    update(rawOwner: string, id: number, patch: ScheduledTaskPatch, origin: string | null, eventId?: number) {
       return updateScheduledTask({
         validateCron: options.validateCron,
         persist: async (rawId, taskId, values, prepare) => {
       const owner = normalizeOwnerId(rawId)
       const row = await transact(async client => {
-        const found = await client.query<TaskRow>(`SELECT *,to_char(start_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS precise_start,to_char(end_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS precise_end FROM scheduled_tasks WHERE id=$1 AND user_id=$2 ${independent ? 'AND event_id IS NULL' : ''} FOR UPDATE`, [taskId, owner])
+        const found = await client.query<TaskRow>(`SELECT *,to_char(start_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS precise_start,to_char(end_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS precise_end FROM scheduled_tasks WHERE id=$1 AND user_id=$2 ${eventId !== undefined ? 'AND event_id=$3 AND EXISTS (SELECT 1 FROM calendar_events WHERE id=$3 AND user_id=$2 AND deleted_at IS NULL FOR SHARE)' : independent ? 'AND event_id IS NULL' : ''} FOR UPDATE`, eventId === undefined ? [taskId, owner] : [taskId, owner, eventId])
         const current = found.rows[0]
         if (!current) throw Object.assign(new Error('任务不存在'), { statusCode: 404 })
         const has = (key: string) => Object.prototype.hasOwnProperty.call(values, key)
@@ -104,6 +104,8 @@ function taskWrites(transact: TaskWriteTransaction, options: TaskWriteOptions, c
           start_at: current.start_at == null ? null : new Date(current.start_at),
           end_at: current.end_at == null ? null : new Date(current.end_at),
         }
+        const mode = current.event_id == null ? values.execution_mode ?? current.execution_mode ?? 'instruction' : 'reminder'
+        if (current.event_id == null && mode === 'reminder' && !String(values.payload ?? current.payload ?? '').trim()) throw new TypeError('请输入提醒内容')
         let resolved: ResolvedTaskFields | undefined
         const prepared: ScheduledTaskPreparedUpdate = await prepare(coreCurrent, async (_task, nextPatch, schedule) => {
           const spec: ScheduleSpec = schedule ?? retainedSchedule
@@ -113,15 +115,15 @@ function taskWrites(transact: TaskWriteTransaction, options: TaskWriteOptions, c
             const conflict = await client.query('SELECT id FROM scheduled_tasks WHERE user_id=$1 AND event_id=$2 AND cron=$3 AND id<>$4', [owner, current.event_id, spec.cron, taskId])
             if (conflict.rowCount) throw Object.assign(new Error('该活动在同一触发时刻已有提醒'), { statusCode: 409 })
           }
-          resolved = await options.resolve(client, owner, nextPatch, spec, current)
+          resolved = await options.resolve(client, owner, { ...nextPatch, execution_mode: mode }, spec, current)
         })
         const spec = prepared.schedule ?? retainedSchedule
         const normalizedPatch = prepared.patch
         const resolvedFields = resolved!
         const nextChannels = has('channels') && normalizedPatch.channels != null ? normalizeScheduledTaskChannels(normalizedPatch.channels) : current.channels
-        const nextTools = has('authorized_tools') && normalizedPatch.authorized_tools != null ? normalizeScheduledTaskTools(normalizedPatch.authorized_tools)
+        const nextTools = mode === 'reminder' ? [] : has('authorized_tools') && normalizedPatch.authorized_tools != null ? normalizeScheduledTaskTools(normalizedPatch.authorized_tools)
           : has('payload') && normalizedPatch.payload != null || scheduleKeys.some(has) || has('channels') && normalizedPatch.channels != null ? [] : current.authorized_tools
-        const result = await client.query<TaskRow>(`UPDATE scheduled_tasks SET name=$3,payload=$4,cron=$5,schedule_kind=$6,interval_minutes=$7,start_at=CASE WHEN $17::boolean THEN $8::timestamptz ELSE start_at END,end_at=CASE WHEN $17::boolean THEN $9::timestamptz ELSE end_at END,channels=$10,enabled=$11,workspace_id=$12,delivery_targets=$13::json,authorized_tools=$14::json,email_attachment_file_ids=$15::json,reminder_lead_minutes=$16,updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND user_id=$2 RETURNING *,${taskPreciseColumns}`, [taskId, owner, normalizedPatch.name ?? current.name, normalizedPatch.payload ?? current.payload, spec.cron, spec.schedule_kind, spec.interval_minutes, scheduleTimestamp(spec.start_at), scheduleTimestamp(spec.end_at), nextChannels, normalizedPatch.enabled ?? current.enabled, resolvedFields.workspace_id, JSON.stringify(resolvedFields.delivery_targets ?? null), JSON.stringify(nextTools ?? []), JSON.stringify(resolvedFields.email_attachment_file_ids), resolvedFields.reminder_lead_minutes, scheduleChanged])
+        const result = await client.query<TaskRow>(`UPDATE scheduled_tasks SET name=$3,payload=$4,cron=$5,schedule_kind=$6,interval_minutes=$7,start_at=CASE WHEN $17::boolean THEN $8::timestamptz ELSE start_at END,end_at=CASE WHEN $17::boolean THEN $9::timestamptz ELSE end_at END,channels=$10,enabled=$11,workspace_id=$12,delivery_targets=$13::json,authorized_tools=$14::json,email_attachment_file_ids=$15::json,reminder_lead_minutes=$16,execution_mode=$18,updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND user_id=$2 RETURNING *,${taskPreciseColumns}`, [taskId, owner, normalizedPatch.name ?? current.name, normalizedPatch.payload ?? current.payload, spec.cron, spec.schedule_kind, spec.interval_minutes, scheduleTimestamp(spec.start_at), scheduleTimestamp(spec.end_at), nextChannels, normalizedPatch.enabled ?? current.enabled, resolvedFields.workspace_id, JSON.stringify(resolvedFields.delivery_targets ?? null), JSON.stringify(nextTools ?? []), JSON.stringify(resolvedFields.email_attachment_file_ids), resolvedFields.reminder_lead_minutes, scheduleChanged, mode])
         await enqueueScheduledTaskRagRebuild(client, owner, taskId)
         return result.rows[0]!
       })
@@ -180,12 +182,12 @@ export async function validateTaskReferences(client: ResolverQuery, owner: strin
 
 export function createPostgresTaskResolver(external: TaskExternalResolution) {
   return async (client: ResolverQuery, owner: string, input: Record<string, unknown>, spec: ScheduleSpec, previous: ResolveRow | null): Promise<ResolvedTaskFields> => {
-    const workspace = has(input, 'workspace_id') ? input.workspace_id : previous?.workspace_id ?? null
+    const workspace = input.execution_mode === 'reminder' ? null : has(input, 'workspace_id') ? input.workspace_id : previous?.workspace_id ?? null
     const attachments = has(input, 'email_attachment_file_ids') ? input.email_attachment_file_ids ?? [] : previous?.email_attachment_file_ids ?? []
     const ids = await validateTaskReferences(client, owner,
       !previous || has(input, 'workspace_id') ? workspace : null,
       !previous || has(input, 'email_attachment_file_ids') ? attachments : [])
-    if (previous && input.enabled === false && previous.event_id == null && previous.filesystem_authorization_grant_id != null)
+    if (previous && (input.enabled === false || input.execution_mode === 'reminder') && previous.event_id == null && previous.filesystem_authorization_grant_id != null)
       await external.revokeFilesystem(client, owner, previous)
     const delivery = !previous || input.channels != null || has(input, 'qq_delivery') || has(input, 'im_delivery')
       ? await external.resolveDelivery(client, owner, input, previous) : previous.delivery_targets

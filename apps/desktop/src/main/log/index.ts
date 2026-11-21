@@ -5,7 +5,7 @@ import { createAgentLog } from '@gugu/log'
 import { createLogWriter } from '@gugu/log/file'
 import { diagnosticLogPolicy, regularLogPolicy } from './policy.js'
 
-function desktopLogSinks(userData: string) {
+export function desktopLogSinks(userData: string) {
   const directory = join(userData, 'logs')
   return {
     regular: createLogWriter(join(directory, 'gugu.log'), regularLogPolicy),

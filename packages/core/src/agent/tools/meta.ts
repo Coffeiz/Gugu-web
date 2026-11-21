@@ -1,8 +1,8 @@
 import { z } from 'zod'
 import { createHash } from 'node:crypto'
-import { selectToolSchemas } from './schema-selection.js'
+import { rankToolSearch, summarizeTool } from './search-tools.js'
 import { stableJson } from '../context/history/canonical-history.js'
-import type { PreparedToolDefinition, RunIdentity } from '../models.js'
+import type { Json, PreparedToolDefinition, RunIdentity } from '../models.js'
 import type { AgentSkillRuntimePorts } from '../skills/runtime.js'
 import { SkillRegistryError } from '../skills/registry.js'
 import type { ToolDefinition } from './contracts.js'
@@ -29,6 +29,13 @@ export interface AskUserAuthorizationPort {
 function toolSchemaEvent(tool: PreparedToolDefinition) {
   return { type: 'tool-schema', tool_name: tool.name, schema_version: 1,
     schema_digest: createHash('sha256').update(stableJson(tool.schema)).digest('hex'), schema: tool.schema }
+}
+
+function toolDiscoveryEvents(tools: readonly PreparedToolDefinition[]) {
+  return [
+    { type: 'tool-discovery', tool_names: tools.map(tool => tool.name) },
+    ...tools.map(toolSchemaEvent),
+  ]
 }
 
 /** 使用真实技能注册器；usage marker 由 Harness 成功合入上下文后再记录摘要。 */
@@ -67,71 +74,76 @@ export function createUseSkillTool(ports: AgentSkillRuntimePorts): ToolDefinitio
       const related = new Set(latest.related_tools ?? [])
       const schemas = definitions.filter(tool => related.has(tool.name))
       const canonicalEvents = schemas.length > 0 ? [
-        { type: 'skill-schema', skill_name: id, tool_names: schemas.map(tool => tool.name) },
+        { type: 'skill-schema', skill_name: latest.key ?? id, tool_names: schemas.map(tool => tool.name) },
         ...schemas.map(toolSchemaEvent),
       ] : undefined
-      const previous = scope.loadedSkills?.[id]
+      const previous = scope.loadedSkills?.[latest.key ?? id]
       if (previous?.digest === loaded.contentDigest && previous.source === origin.source
         && (origin.source === 'builtin' || previous.ownerFingerprint === origin.ownerFingerprint)) return { kind: 'completed', successful: true, mutated: false, value: {
-        skill_id: id, skill_name: loaded.name, already_loaded: true,
+        skill_id: id, ...(latest.key ? { skill_key: latest.key } : {}), skill_name: loaded.name, already_loaded: true,
         message: `技能「${loaded.name}」的正文已在当前上下文中，无需重复加载。`,
       }, ...(canonicalEvents ? { canonicalEvents } : {}) }
       return { kind: 'completed', successful: true, mutated: false, value: {
-        skill_id: id, skill_name: loaded.name, content: loaded.content,
+        skill_id: id, ...(latest.key ? { skill_key: latest.key } : {}), skill_name: loaded.name, content: loaded.content,
         _capability_usage: { kind: 'skill', id, loaded: true, content_digest: loaded.contentDigest,
-          ...(origin.source === 'user' ? { source: 'user', owner_fingerprint: origin.ownerFingerprint } : {}) },
+          ...(origin.source === 'user' ? { source: 'user', owner_fingerprint: origin.ownerFingerprint }
+            : latest.key ? { source: 'builtin', skill_key: latest.key } : {}) },
       }, ...(canonicalEvents ? { canonicalEvents } : {}) }
     },
   }
 }
 
-const fileSchemaAlternatives = new Map([
-  ['shell', '优先用沙箱路径浏览目录、查找文件或读取文本。个人文件在 /personal。'],
-  ['global_search', 'Shell 不可用时，可按名称搜索文件。传 query 和 types: ["file"]。'],
-  ['view_image', '查看已找到的图片。传 path，使用已授权的沙箱路径。'],
-  ['read_file', '按当前 Schema 读取已授权的文件内容。'],
-])
-
-function suggestAuthorizedTools(rejected: readonly string[], available: readonly PreparedToolDefinition[]) {
-  const related = rejected.some(name => /file|image|list_dir|workspace|grep/iu.test(name))
-  const candidates = new Map(available.filter(tool => tool.name !== 'get_tool_schema').map(tool => [tool.name, tool]))
-  const preferred = related ? [...fileSchemaAlternatives.keys()].filter(name => candidates.has(name)) : []
-  const names = preferred.length ? preferred : [...candidates.keys()].slice(0, 8)
-  return names.map(name => {
-    const schema = candidates.get(name)!.schema
-    const fn = schema.function
-    const description = fn && typeof fn === 'object' && !Array.isArray(fn) ? fn.description : schema.description
-    const usage = fileSchemaAlternatives.get(name) ?? (typeof description === 'string' ? description.slice(0, 200) : '按当前工具目录的参数说明调用。')
-    return { name, usage }
-  })
-}
-
-/** 当前可信注册器的公开能力；不执行目标，也不把发现结果当执行授权。 */
-export function createGetToolSchemaTool(capabilities:(identity:RunIdentity)=>Promise<import('../models.js').PreparedToolDefinition[]>):ToolDefinition{
-  const schema=z.object({tools:z.array(z.string().min(1).max(80)).min(1).max(12)}).strict()
+/** 查询能力用途或按名称读取 Schema，只使用当前运行能发现的定义。 */
+export function createSearchToolsTool(capabilities: (identity: RunIdentity) => Promise<PreparedToolDefinition[]>): ToolDefinition {
+  const query = z.string().trim().min(1).max(200)
+  const limit = z.number().int().min(1).max(20).default(10)
+  const names = z.array(z.string().trim().min(1).max(80).regex(/^[^*]+$/u)).min(1).max(20)
+  const inputSchema = z.union([z.object({ query, limit }).strict(), z.object({ names }).strict()])
   return {
-    definition:{name:'get_tool_schema',schema:{type:'function',function:{name:'get_tool_schema',description:'获取当前已授权工具的参数 Schema。优先从当前目录逐字选择工具名，已有当前版本的 Schema 时直接复用。支持前缀通配符。',
-      parameters:{type:'object',properties:{tools:{type:'array',minItems:1,maxItems:12,items:{type:'string',minLength:1,maxLength:80}}},required:['tools'],additionalProperties:false}}}},
-    effect:'read',validate:input=>schema.safeParse(input),
-    async execute(input,scope){
-      const available=scope.discoverRelatedTools ? await scope.discoverRelatedTools() : await capabilities(scope.identity)
+    definition: { name: 'search_tools', schema: { type: 'function', function: {
+      name: 'search_tools',
+      description: '在当前已授权工具中按用途搜索，或按精确名称读取完整 Schema。query 的 limit 默认 10，最多 20，返回候选及扁平参数摘要，唯一命中时附完整 Schema。已知工具名称、或结果标记 requires_full_schema 时，用 names 查询，一次最多传 20 个名称。',
+      parameters: {
+        type: 'object', additionalProperties: false,
+        properties: { query: z.toJSONSchema(query) as Record<string, Json>, names: z.toJSONSchema(names) as Record<string, Json>, limit: z.toJSONSchema(limit) as Record<string, Json> },
+        oneOf: [{ required: ['query'] }, { required: ['names'], not: { required: ['limit'] } }],
+      },
+    } } },
+    effect: 'read',
+    strictArrayFields: ['names'],
+    validate: input => inputSchema.safeParse(input),
+    async execute(input, scope) {
+      const request = inputSchema.parse(input)
+      const directory = scope.discoverRelatedTools ? await scope.discoverRelatedTools() : await capabilities(scope.identity)
       scope.signal.throwIfAborted()
-      const value=selectToolSchemas((input as z.infer<typeof schema>).tools,available)
-      if ('error' in value) {
-        const alternatives = suggestAuthorizedTools(value.rejected, available)
-        return { kind: 'completed', successful: false, mutated: false, value: {
-          ...value, alternatives, next_action: alternatives.length
-            ? '从当前工具目录或 alternatives 选择已授权工具并按其用法执行。已有当前 Schema 时直接调用，切勿重试被拒绝的名称。'
-            : '当前没有可推荐的授权工具。请根据现有能力说明限制，或走正常权限申请流程。',
-        } }
+      const available = directory.filter(tool => tool.name !== 'search_tools')
+      let matches: PreparedToolDefinition[]
+      let rejected: string[] | undefined
+      if ('query' in request) {
+        matches = rankToolSearch(request.query, available, request.limit)
+      } else {
+        const byName = new Map(available.map(tool => [tool.name, tool]))
+        matches = []
+        rejected = []
+        for (const name of request.names) {
+          const tool = byName.get(name)
+          if (tool) {
+            matches.push(tool)
+            byName.delete(name)
+          } else rejected.push(name)
+        }
       }
-      const names = value.tool_schemas
-      const definitions = new Map(available.map(tool => [tool.name, tool]))
-      return {kind:'completed',successful:true,mutated:false,value,
-        ...(names.length ? { canonicalEvents: [
-          { type: 'tool-discovery', tool_names: names },
-          ...names.map(name => toolSchemaEvent(definitions.get(name)!)),
-        ] } : {}),
+      const includeSchema = rejected !== undefined || matches.length === 1
+      const summaries = matches.map(summarizeTool)
+      const selection = { results: summaries, ...(rejected ? { rejected } : {}) }
+      if (!includeSchema || !matches.length)
+        return { kind: 'completed', successful: true, mutated: false, value: selection }
+      return {
+        kind: 'completed', successful: true, mutated: false,
+        value: { ...selection, results: matches.map((tool, index) => ({ ...summaries[index]!, schema: tool.schema })) },
+        // 完整定义走已有的 Canonical 事件去重，避免在模型工具结果里重复注入。
+        modelValue: { ...selection, schema_in_context: true },
+        canonicalEvents: toolDiscoveryEvents(matches),
       }
     },
   }

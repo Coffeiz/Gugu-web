@@ -235,14 +235,14 @@ export function validateSqliteBaseline(db: SQLite.Database): { owner: string; ve
     }
   }
   {
-    matchColumns(db, 'scheduled_tasks', SCHEDULED_TASK_COLUMNS)
+    matchColumns(db, 'scheduled_tasks', columns(db, 'scheduled_tasks').includes('execution_mode') ? [...SCHEDULED_TASK_COLUMNS, 'execution_mode'] : SCHEDULED_TASK_COLUMNS)
     matchColumns(db, 'scheduled_task_fires', SCHEDULED_FIRE_COLUMNS)
     uniqueColumns(db, 'scheduled_task_fires', ['task_id', 'fire_at'])
     const indexes = db.pragma('index_list(scheduled_tasks)') as { name: string; unique: number; partial: number }[]
     const index = indexes.find(item => item.name === 'uq_scheduled_tasks_event_fire' && item.unique === 1 && item.partial === 1)
-    const columns = (db.pragma('index_info(uq_scheduled_tasks_event_fire)') as { name: string }[]).map(item => item.name).sort()
+    const indexedColumns = (db.pragma('index_info(uq_scheduled_tasks_event_fire)') as { name: string }[]).map(item => item.name).sort()
     const sql = (db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name='uq_scheduled_tasks_event_fire'").get() as { sql?: string } | undefined)?.sql ?? ''
-    if (!index || JSON.stringify(columns) !== JSON.stringify(['user_id', 'event_id', 'cron'].sort()) || !/\bWHERE\s+event_id\s+IS\s+NOT\s+NULL\s*$/i.test(sql))
+    if (!index || JSON.stringify(indexedColumns) !== JSON.stringify(['user_id', 'event_id', 'cron'].sort()) || !/\bWHERE\s+event_id\s+IS\s+NOT\s+NULL\s*$/i.test(sql))
       throw new DatabaseError('storage_error', '提醒触发唯一约束缺失，已拒绝打开')
     const tableSql = (db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='scheduled_tasks'").get() as { sql?: string } | undefined)?.sql ?? ''
     if (!/CHECK\s*\(\s*workspace_id\s+IS\s+NULL\s+AND\s+filesystem_authorization_grant_id\s+IS\s+NULL\s*\)/i.test(tableSql))

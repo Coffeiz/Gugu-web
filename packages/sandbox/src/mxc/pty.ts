@@ -33,6 +33,7 @@ export interface MxcPtyBridge {
 
 export interface MxcPtyBridgeOptions {
   readonly command: string
+  readonly containment?: 'bubblewrap' | 'seatbelt' | 'process'
   readonly spawn?: (request: ContainerRequest, options: { size: { columns: number; rows: number } }) => Promise<MxcPtyProcessLike>
 }
 
@@ -61,7 +62,7 @@ function onceWritable(stream: Writable, data: Uint8Array): Promise<void> {
 export function createMxcPtyBridge(options: MxcPtyBridgeOptions): MxcPtyBridge {
   const spawn = options.spawn ?? (async (request, spawnOptions) => {
     const sdk = await import('@microsoft/mxc-sdk/v1')
-    return sdk.spawnWithPty(request, spawnOptions)
+    return sdk.spawnWithPty(request, { ...spawnOptions, telemetry: { enabled: false } })
   })
   return {
     async open(spec) {
@@ -77,7 +78,7 @@ export function createMxcPtyBridge(options: MxcPtyBridgeOptions): MxcPtyBridge {
       const networkProxy = proxy ? validateProxy(proxy) : undefined
       const request: ContainerRequest = {
         command: options.command,
-        containment: { type: 'bubblewrap' },
+        containment: { type: options.containment ?? 'bubblewrap' },
         workingDirectory: spec.root,
         filesystem: {
           readwritePaths: [...new Set(spec.readwritePaths)],

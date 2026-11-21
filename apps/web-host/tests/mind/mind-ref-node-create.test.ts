@@ -96,6 +96,8 @@ test('reference type, id and missing owner-scoped target fail with Python-compat
 
   await assert.rejects(create('owner-a', { refType: 'client', refId: 2 }, metadata),
     (error: unknown) => error instanceof MindRefNodeCreateError && error.statusCode === 422)
+  await assert.rejects(create('owner-a', { refType: 'file', refId: 42 }, metadata),
+    (error: unknown) => error instanceof MindRefNodeCreateError && error.statusCode === 422)
   await assert.rejects(create('owner-a', { refType: 'event', refId: 'bad' }, metadata),
     (error: unknown) => error instanceof MindRefNodeCreateError && error.statusCode === 422)
   await assert.rejects(create('owner-a', { refType: 'event', refId: 2 }, metadata),

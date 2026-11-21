@@ -35,7 +35,7 @@ Core 新业务模块不依赖 Node fs、Fastify 或具体数据库驱动。旧�
 
 标准 Core 发现配置仍被本轮之前已有的未登记 Skill 测试阻断，故使用测试专用临时配置精确选择上述文件，保持串行和既有超时；新引用用例已增量登记 `tests/suites.json` 和测试元数据，没有改动不属于本轮的用例。Python 的配置路径、数据库和所有测试文件均在隔离临时目录，未读取仓库 `.env` 或 `config.override.json`。本机复用已安装的 Node 26、SQLite 驱动和依赖，未修改 lockfile 或运行依赖声明；验收后已移除本轮新建并核对目标的 11 个依赖查找链接，未删除其目标或原有文件。
 
-额外尝试的 `apps/web-host/tests/files/file-undo.test.ts` 在导入整站 app 时因本机缺少 `@napi-rs/canvas` 未能加载，不计通过。未为它替换实现或引入假依赖；原 Python 文件 Undo、Node artifact/版本预检和本轮项目真实 SQLite/FS Undo 合同分别记录，不冒充完整认证路由验收。
+额外尝试的 `apps/web-host/tests/files/undo/routes.test.ts` 在导入整站 app 时因本机缺少 `@napi-rs/canvas` 未能加载，不计通过。未为它替换实现或引入假依赖；原 Python 文件 Undo、Node artifact/版本预检和本轮项目真实 SQLite/FS Undo 合同分别记录，不冒充完整认证路由验收。
 
 ## 剩余依赖与未覆盖路径
 

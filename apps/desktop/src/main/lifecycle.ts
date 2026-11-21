@@ -1,9 +1,12 @@
 import { DesktopError } from './core-host.js'
 import type { CoreHost } from './core-host.js'
 
-type Host = Pick<CoreHost, 'request' | 'close'>
+type Host = Pick<CoreHost, 'request' | 'close'> & Partial<Pick<CoreHost, 'onAgentRunChanged' | 'setHostRequestHandler'>>
 export class DesktopLifecycle {
+  private hostRequestHandler?: Parameters<NonNullable<Host['setHostRequestHandler']>>[0]
   private current?: Host
+  private readonly runListeners = new Set<(sessionId: number, runId: string) => void>()
+  private detachRunListener?: () => void
   private starting?: Promise<void>
   private stopping?: Promise<void>
   private phase: 'idle' | 'starting' | 'running' | 'stopping' | 'closed' = 'idle'
@@ -18,7 +21,11 @@ export class DesktopLifecycle {
     this.phase = 'starting'
     this.starting = this.factory()
       .then((host) => {
+        if (this.hostRequestHandler) host.setHostRequestHandler?.(this.hostRequestHandler)
         this.current = host
+        this.detachRunListener = host.onAgentRunChanged?.((sessionId, runId) => {
+          for (const listener of this.runListeners) listener(sessionId, runId)
+        })
         if (this.phase !== 'stopping') this.phase = 'running'
       })
       .catch((error) => {
@@ -33,6 +40,16 @@ export class DesktopLifecycle {
         this.starting = undefined
       })
     return this.starting
+  }
+  onAgentRunChanged(listener: (sessionId: number, runId: string) => void): () => void {
+    this.runListeners.add(listener)
+    return () => { this.runListeners.delete(listener) }
+  }
+  setHostRequestHandler(handler: Parameters<NonNullable<Host['setHostRequestHandler']>>[0]): void {
+    if (this.phase !== 'running' || !this.current?.setHostRequestHandler)
+      throw new DesktopError('closed', 'Core 宿主能力只能在运行时启动后配置')
+    this.current.setHostRequestHandler(handler)
+    this.hostRequestHandler = handler
   }
   request<T = unknown>(method: string, params: Record<string, unknown> = {}, operationId?: string): Promise<T> {
     if (this.phase !== 'running' || !this.current)
@@ -53,6 +70,8 @@ export class DesktopLifecycle {
       try {
         await this.current?.close()
       } finally {
+        this.detachRunListener?.()
+        this.detachRunListener = undefined
         this.current = undefined
         this.phase = this.terminal ? 'closed' : 'idle'
       }
@@ -63,6 +82,7 @@ export class DesktopLifecycle {
   }
   close(): Promise<void> {
     this.terminal = true
+    this.runListeners.clear()
     return this.pause()
   }
 }

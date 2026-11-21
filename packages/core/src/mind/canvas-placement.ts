@@ -12,11 +12,12 @@ import { MindCanvasItemMutationError } from './canvas-item-remove.js'
 import type { CanvasEditPublication } from './canvas-edits.js'
 
 export interface CanvasNewNote {title?:string;content?:string;color?:'amber'|'coral'|'blue'|'teal';position?:CanvasPosition;width?:number;height?:number}
-export interface CanvasReferencePlacement {node_id?:number;ref_type?:'project'|'file'|'event';ref_id?:number;position?:CanvasPosition}
+export interface CanvasReferencePlacement {node_id?:number;ref_type?:'project'|'file'|'event';ref_id?:number|string;position?:CanvasPosition}
 export type CanvasPlacementIntent =
  | {action:'create_note';canvas_id:number;entries:CanvasNewNote[];batched:boolean}
  | {action:'add';canvas_id:number;entries:CanvasReferencePlacement[];batched:boolean}
-interface Context {tx:Transaction<Database>;backend:Backend;owner:string;canonical:string;context:string;signal:AbortSignal;data:Record<string,unknown>;canvasId:number}
+export type ResolveCanvasFileReference = (owner: string, id: string, signal: AbortSignal) => Promise<{ label: string } | null>
+interface Context {resolveFileReference?:ResolveCanvasFileReference;tx:Transaction<Database>;backend:Backend;owner:string;canonical:string;context:string;signal:AbortSignal;data:Record<string,unknown>;canvasId:number}
 async function position(ctx:Context,p:CanvasPosition|undefined) {
   const base=ctx.tx.selectFrom('mind_canvas_items').select(['x','y','w']).where('user_id','=',ctx.owner).where('canvas_id','=',ctx.canvasId).where('deleted_at','is',null)
   let near:CanvasGeometry|null=null,last:CanvasGeometry|null=null
@@ -53,7 +54,8 @@ async function createNotes(ctx:Context,intent:Extract<CanvasPlacementIntent,{act
 }
 async function addReferences(ctx:Context,intent:Extract<CanvasPlacementIntent,{action:'add'}>) {
   const publications:Array<CanvasEditPublication|MindRefNodeChangedEvent>=[],results:Record<string,unknown>[]=[]
-  const ref=createMindRefNodeCreator(createSqlMindRefNodeCreateRuntime(ctx.tx,ctx.backend,async event=>{publications.push(event)}))
+  const ref=createMindRefNodeCreator(createSqlMindRefNodeCreateRuntime(ctx.tx,ctx.backend,async event=>{publications.push(event)},undefined,undefined,
+    ctx.resolveFileReference && ((owner,id)=>ctx.resolveFileReference!(owner,id,ctx.signal))))
   const items=createSqlMindCanvasItemAddRuntime(ctx.tx,ctx.backend,async()=>{})
   for(const entry of intent.entries){
     rejectLegacySize(entry)

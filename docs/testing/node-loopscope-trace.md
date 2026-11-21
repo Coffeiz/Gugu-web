@@ -35,7 +35,7 @@
 - Web Host 通过已经固定目标并拒绝重定向的 Node transport 上报。Collector 慢、离线或失败只影响独立队列，不等待或抛回 Agent。
 - `LOOPSCOPE_ENDPOINT` 默认 `http://127.0.0.1:4320`。只读代理仍走原认证路由；采集开关只控制写入 trace 的采集器。
 - 单 Run 最多保存 600 spans、48 MiB；进程最多保留 12 个 Run，异步队列最多 64 个快照/64 MiB。正文不做截断；超过 Run 上限时整条标记 `trace_capture_unavailable=trace_size_limit`，不伪报部分采集为完整数据。大请求以 gzip 传输。
-- 行为回归只在 devserver 执行：`packages/core/tests/agent/providers/runtime.test.ts` 52/52 通过；`packages/loopscope/trace.test.js` 5/5 通过；`apps/web-host/tests/host/loopscope-trace.test.ts` 2/2 通过。未在本地运行测试。
+- 行为回归只在 devserver 执行：`packages/core/tests/agent/providers/runtime.test.ts` 52/52 通过；`packages/loopscope/trace.test.js` 5/5 通过；`apps/web-host/tests/host/http/loopscope/trace.test.ts` 2/2 通过。未在本地运行测试。
 - 本轮 Core 和 Host 全量类型检查在 devserver 超过 120 秒仍未返回结果，检查状态未知且不能标为通过；Node 行为回归均正常完成。Host 全量检查还会先重建 Core、FS、Charts，未拿到 Host `tsc` 结果。
 
 ## 当前验收边界

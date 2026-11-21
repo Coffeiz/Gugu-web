@@ -1,0 +1,489 @@
+<template>
+  <Teleport to="body">
+    <!-- 时长必须覆盖面板本身的滑动动画（入场 420ms、退场 260ms），否则 Vue 会提前卸载抽屉。 -->
+    <Transition name="fp" :duration="{ enter: 420, leave: 260 }">
+      <div v-if="show && !!file" class="fp-root" :style="{ zIndex: myZ }" @mousedown.capture="raise">
+        <div class="fp-overlay" @click="$emit('close')" />
+        <div class="fp-panel" :style="panelStyle">
+          <!-- 顶栏 -->
+          <div ref="panelHeaderRef" class="fp-header">
+            <div class="fp-title">
+              <span class="fp-ext" :style="{ color: extColor, background: extColor + '1a' }">{{ file.ext }}</span>
+              <span class="fp-name" :title="file.displayName">{{ file.displayName }}</span>
+            </div>
+            <div class="fp-header-actions">
+              <button ref="infoBtnRef" class="fp-action-btn" :class="{ active: showInfo }" :title="t('files.info')" @click="openInfo">
+                <Icon name="status.info" :size="16" />
+              </button>
+              <button v-if="fileOpenAccess?.canOpenInSystem(file.workspaceFile)" class="fp-action-btn" type="button"
+                :title="t('filesUi.openInSystem')" :aria-label="t('filesUi.openInSystem')" @click="openInSystem">
+                <Icon name="file.folder-open" :size="16" />
+              </button>
+              <button v-if="!desktopFile" class="fp-action-btn" :title="t('common.actions.download')" @click="handleDownload">
+                <Icon name="action.download" :size="16" />
+              </button>
+              <button class="fp-action-btn fp-close-btn" :title="`${t('common.actions.close')} (Esc)`" @click="$emit('close')">
+                <Icon name="action.close" :size="16" />
+              </button>
+            </div>
+          </div>
+
+          <!-- 内容区 -->
+          <div class="fp-body">
+            <div v-if="loading" class="fp-status">
+              <div class="fp-spinner"></div>
+              <span>{{ t('files.loading') }}</span>
+            </div>
+            <div v-else-if="unsupported" class="fp-status">
+              <span>{{ t('filesUi.desktopPreviewUnsupported') }}</span>
+              <ActionButton v-if="fileOpenAccess?.canOpenInSystem(file.workspaceFile)" fit variant="secondary" @click="openInSystem">{{ t('filesUi.openInSystem') }}</ActionButton>
+            </div>
+            <div v-else-if="error" class="fp-status fp-error">
+              <Icon name="status.warning" :size="32" style="opacity:.5" />
+              <span>{{ error }}</span>
+            </div>
+            <template v-else-if="blobUrl || videoSrc">
+              <PdfViewer v-if="isPdf" :blobUrl="blobUrl ?? undefined" />
+              <ImageViewer v-else-if="isImage"      :blobUrl="blobUrl ?? undefined" :upscale="isVectorImage" />
+              <TextViewer  v-else-if="isText"       :blobUrl="blobUrl ?? undefined" :ext="file?.ext" :fileKey="file?.workspaceFile ? JSON.stringify(file.workspaceFile) : file?.id ?? file?.attach_id ?? undefined" :fileContext="file ?? null" @refresh="refreshTextPreview" />
+              <VideoViewer v-else-if="isVideo"      :src="videoSrc ?? undefined" :refresh-src="refreshVideoSource" />
+
+            </template>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <FileInfoPopup :show="showInfo" :file="file" :x="infoX" :y="infoY" :z-index="myZ + 1" @close="showInfo = false" @navigate="navigateToFileDirectory" />
+  </Teleport>
+</template>
+
+<script setup lang="ts">
+import { ref, watch, computed, onUnmounted, nextTick, type PropType } from 'vue'
+import { useRouter } from 'vue-router'
+import type { FileMeta } from '@/stores/filesCache'
+import Icon from '@/components/common/icons/Icon.vue'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
+import { useFileOpenAccess } from '@/services/fileOpenAccess'
+import FileInfoPopup from '@/components/common/file-browser/FileInfoPopup.vue'
+import ImageViewer from '@/components/common/viewers/ImageViewer.vue'
+import TextViewer  from '@/components/common/viewers/TextViewer.vue'
+import { useLiveStore } from '@/stores/live'
+import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
+import PdfViewer   from '@/components/common/viewers/PdfViewer.vue'
+
+import { CLIENT_ID, filesApi } from '@/services/api'
+import { usePathFileAccess } from '@/services/pathFileAccess'
+import { isUnauthorizedResponse } from '@/services/authSession'
+import { isImageExt, isTextExt, isVideoExt, isPreviewAffectedByFileEvent, type PreviewFile } from '@/stores/preview'
+import { nextZ, registerEsc } from '@/composables/core/windowz'
+import { usePreviewBlobCache, withPreviewCacheBust as withCacheBust } from '@/composables/shared/usePreviewBlobCache'
+import { useI18n } from 'vue-i18n'
+import { accountBoundaryEpoch, getAccountBoundaryEpoch } from '@/utils/accountBoundary'
+import { useUiStore } from '@/stores/ui'
+
+const pathFilesApi = usePathFileAccess()
+
+const props = defineProps({
+  show: Boolean,
+  file: { type: Object as PropType<PreviewFile>, default: undefined },
+})
+const { t } = useI18n()
+const router = useRouter()
+const uiStore = useUiStore()
+const emit = defineEmits(['close'])
+const fileOpenAccess = useFileOpenAccess()
+const desktopFile = computed(() => !!fileOpenAccess && !!props.file?.workspaceFile)
+function openInSystem() {
+  if (props.file?.workspaceFile) void fileOpenAccess?.openInSystem(props.file.workspaceFile)
+}
+
+const blobUrl    = ref<string | null>(null)
+const videoSrc   = ref<string | null>(null)
+const loading    = ref(false)
+const error      = ref<string | null>(null)
+const previewBlobCache = usePreviewBlobCache()
+const currentCacheKey = ref('')
+
+const isImage  = computed(() => isImageExt(props.file?.ext))
+// 矢量图放大无损：适配视口允许超过折算 natural 尺寸（无尺寸 SVG 的 natural 只是 300×150）
+const isVectorImage = computed(() => props.file?.ext?.toUpperCase() === 'SVG')
+
+// 矢量图按内容纵横比收窄抽屉：全高抽屉固定 60vw 是竖长的，宽图只会在中间占一条。
+// 拿到图片真实纵横比后把面板宽度收成「与图片等高」的比例匹配值；横向不够时封顶
+// 92vw（此时上下留白已不可避免），非矢量文件保持 60vw 不变。
+const panelHeaderRef = ref<HTMLElement | null>(null)
+const vectorAspect = ref<number | null>(null)
+const vectorPanelWidth = ref<number | null>(null)
+const panelStyle = computed(() => (
+  isVectorImage.value && vectorPanelWidth.value
+    ? { width: `${vectorPanelWidth.value}px` }
+    : undefined
+))
+// .iv-wrap 自带 32px 内边距；头部高度运行时实测，量不到用 58 估（14+13 padding + 30 按钮 + 1 分隔线）
+const IV_BODY_PAD = 32
+// 窗口缩小后旧的 px 宽会超出新视口，必须跟着重算；量不到纵横比时保持旧行为（60vw）。
+function applyVectorPanelWidth() {
+  if (vectorAspect.value == null) return
+  const headerH = panelHeaderRef.value?.offsetHeight || 58
+  const availH = window.innerHeight - headerH - IV_BODY_PAD * 2
+  const fitW = availH * vectorAspect.value + IV_BODY_PAD * 2
+  vectorPanelWidth.value = Math.round(Math.max(320, Math.min(fitW, window.innerWidth * 0.92)))
+}
+function onWindowResize() {
+  if (isVectorImage.value && vectorAspect.value != null) applyVectorPanelWidth()
+}
+window.addEventListener('resize', onWindowResize)
+onUnmounted(() => window.removeEventListener('resize', onWindowResize))
+function measureVectorPanel(url: string) {
+  const img = new Image()
+  img.onload = () => {
+    if (!img.naturalWidth || !img.naturalHeight) return
+    vectorAspect.value = img.naturalWidth / img.naturalHeight
+    applyVectorPanelWidth()
+  }
+  img.src = url
+}
+watch(blobUrl, url => {
+  if (url && isVectorImage.value) measureVectorPanel(url)
+  else { vectorPanelWidth.value = null; vectorAspect.value = null }
+})
+const isText   = computed(() => isTextExt(props.file?.ext, props.file?.mimeType))
+const isVideo  = computed(() => isVideoExt(props.file?.ext))
+const unsupported = computed(() => desktopFile.value
+  && !isPdf.value && !isImage.value && !isText.value && !isVideo.value)
+const isPdf    = computed(() => props.file?.ext?.toUpperCase() === 'PDF')
+
+const EXT_COLORS: Record<string, string> = {
+  PDF: '#e05555',
+  DOC: '#2b7cd3', DOCX: '#2b7cd3',
+  XLS: '#1d6f42', XLSX: '#1d6f42',
+  PPT: '#d24726', PPTX: '#d24726',
+  MP3: '#e8935a', WAV: '#e8935a', OGG: '#e8935a',
+  FLAC: '#c4885a', M4A: '#e8935a', AAC: '#e8935a', OPUS: '#e8935a',
+  TXT: '#7b7fb2', MD: '#7b7fb2',
+  JPG: '#4caf7d', JPEG: '#4caf7d', PNG: '#4caf7d',
+  GIF: '#9c6fdb', WEBP: '#4caf7d', SVG: '#f0a500',
+}
+const extColor = ref('#7b7fb2')
+
+function revoke() {
+  previewBlobCache.release(currentCacheKey.value, blobUrl.value)
+  blobUrl.value = null
+  videoSrc.value = null
+  currentCacheKey.value = ''
+}
+
+let loadSequence = 0
+async function refreshVideoSource(): Promise<string> {
+  const workspaceFile = props.file?.workspaceFile
+  if (workspaceFile) return pathFilesApi.contentUrl(workspaceFile)
+  const id = props.file?.id
+  if (typeof id !== 'number') throw new Error('无法刷新视频地址')
+  const { url } = await filesApi.getStreamUrl(id)
+  if (!props.show || props.file?.id !== id) throw new DOMException('预览已切换', 'AbortError')
+  return url
+}
+
+watch(accountBoundaryEpoch, () => {
+  loadSequence += 1
+  revoke()
+  loading.value = false
+  error.value = null
+}, { flush: 'sync' })
+async function load(file: PreviewFile, refresh = false) {
+  const sequence = ++loadSequence
+  const accountEpoch = getAccountBoundaryEpoch()
+  revoke()
+  currentCacheKey.value = ''   // 先按旧 key 判定上一个 blob 是否在缓存里，再清掉防串位
+  loading.value    = true
+  error.value      = null
+  extColor.value   = EXT_COLORS[(file.ext ?? '').toUpperCase()] ?? '#7b7fb2'
+
+  if (unsupported.value) {
+    loading.value = false
+    return
+  }
+
+  const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
+  const headers: Record<string, string> = {}
+
+  try {
+    if (isVideoExt(file.ext)) {
+      const url = file.workspaceFile ? pathFilesApi.contentUrl(file.workspaceFile) : (await filesApi.getStreamUrl(file.id!)).url
+      if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
+      videoSrc.value = withCacheBust(url, refresh)
+    } else {
+      const bust = refresh ? `?_t=${Date.now()}` : ''   // 刷新时绕开浏览器缓存，确保拿到改后的新内容
+      const key = previewBlobCache.keyOf(file)
+      currentCacheKey.value = bust ? '' : key
+      if (!bust) {
+        const cached = previewBlobCache.get(key)
+        if (cached) { blobUrl.value = cached; return }
+      }
+      const dlUrl = file.workspaceFile ? pathFilesApi.contentUrl(file.workspaceFile) : (file.attach_id
+        ? `${BASE_URL}/agent/attachment/${file.attach_id}/download`
+        : `${BASE_URL}/files/${file.id!}/download`) + bust
+      const res = file.readContent ? new Response(await file.readContent())
+        : await fetch(dlUrl, { headers, credentials: 'include', cache: 'no-cache' })
+      if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
+      if (isUnauthorizedResponse(res)) return
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      let blob = await res.blob()
+      if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
+      // PDF 走 iframe 原生渲染，blob 必须是 application/pdf，否则浏览器可能当下载/空白
+      if (file.ext?.toUpperCase() === 'PDF' && blob.type !== 'application/pdf') {
+        blob = new Blob([blob], { type: 'application/pdf' })
+      }
+      const url = URL.createObjectURL(blob)
+      if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) {
+        URL.revokeObjectURL(url)
+        return
+      }
+      blobUrl.value = url
+      // 强制刷新也要替换同一 key 的旧 blob，避免关闭后再次打开回到旧内容。
+      if (key) previewBlobCache.put(key, url, accountEpoch)
+      currentCacheKey.value = key
+    }
+  } catch (e) {
+    if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
+    error.value = t('files.loadFailed', { message: e instanceof Error ? e.message : String(e) })
+  } finally {
+    if (sequence === loadSequence && accountEpoch === getAccountBoundaryEpoch()) {
+      loading.value    = false
+        }
+  }
+}
+
+function refreshTextPreview() {
+  const file = props.file
+  if (!props.show || !file || loading.value) return
+  void load(file, true)
+}
+
+watch(() => [props.show, props.file] as [boolean, Partial<FileMeta> | undefined], ([show, file]) => {
+  if (show && file) load(file)
+  else revoke()
+}, { immediate: true })
+
+const liveStore = useLiveStore()
+watch(() => liveStore.resourceEvent, (event) => {
+  if (event?.origin === CLIENT_ID || !isPreviewAffectedByFileEvent(props.file?.id, event)) return
+  if (props.show && props.file && !props.file.attach_id) load(props.file, true)
+})
+
+// 窗口层级:打开领新 z、点击置顶;ESC 统一走 windowz(只关最顶层)
+const myZ = ref(0)
+function raise() { myZ.value = nextZ() }
+let _unregEsc: (() => void) | null = null
+watch(() => props.show, v => {
+  if (v) {
+    raise()
+    _unregEsc = registerEsc({ getZ: () => myZ.value, close: () => emit('close') })
+  } else {
+    _unregEsc?.(); _unregEsc = null
+  }
+}, { immediate: true })
+
+async function handleDownload() {
+  if (!props.file) return
+  try {
+    const file = props.file
+    const filename = `${file.displayName}.${file.ext?.toLowerCase()}`
+    if (file.workspaceFile) {
+      await pathFilesApi.download(file.workspaceFile)
+    } else if (file.attach_id) {
+      const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
+      const res = file.readContent ? new Response(await file.readContent())
+        : await fetch(`${BASE_URL}/agent/attachment/${file.attach_id}/download`, { credentials: 'include' })
+      if (isUnauthorizedResponse(res)) return
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const url = URL.createObjectURL(await res.blob())
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = filename
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } else if (file.id != null) {
+      await filesApi.download(file.id, filename)
+    }
+  } catch (e) {
+    console.error('[Preview] 下载失败:', e)
+  }
+}
+
+onUnmounted(() => {
+  revoke()
+  _unregEsc?.()
+})
+
+// ── 文件信息弹窗 ─────────────────────────────────────────────────────────────
+const showInfo   = ref(false)
+const infoX      = ref(0)
+const infoY      = ref(0)
+const infoBtnRef = ref<HTMLElement | null>(null)
+
+async function openInfo() {
+  if (!showInfo.value && infoBtnRef.value) {
+    await nextTick()
+    const r = infoBtnRef.value.getBoundingClientRect()
+    infoX.value = Math.max(8, r.right - 220)
+    infoY.value = r.bottom + 6
+  }
+  showInfo.value = !showInfo.value
+}
+
+function navigateToFileDirectory(target?: Partial<FileMeta>) {
+  if (!target || !Number.isSafeInteger(Number(target.id)) || target.attach_id) return
+  uiStore.pendingFileTarget = {
+    kind: 'file',
+    id: Number(target.id),
+    ...(target.workspaceDirectoryId != null ? { workspaceDirectoryId: target.workspaceDirectoryId } : {}),
+  }
+  void router.push('/files')
+}
+
+
+// 关闭抽屉时同步关闭信息弹窗
+watch(() => props.show, v => { if (!v) showInfo.value = false })
+</script>
+
+<style scoped>
+/* ── 根容器 ── */
+.fp-root {
+  position: fixed;
+  inset: 0;
+  /* z-index 由 :style 动态(统一窗口带,点谁谁上) */
+  overflow: hidden;
+  /* 整个预览模态提升为独立 GPU 合成层，避免 OOPIF（PDF iframe）创建/销毁时
+     让预览内容与底层页面一起反复重绘。 */
+  will-change: transform;
+}
+
+/* ── 遮罩 ── */
+.fp-overlay {
+  position: absolute;
+  inset: 0;
+  background: var(--surface-scrim);
+  /* 保持独立合成层：opacity 过渡结束后不丢层，避免层析构时的整页重绘 */
+  will-change: opacity;
+}
+
+/* ── 侧边面板 ── */
+.fp-panel {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 60vw;
+  background: var(--modal-card-bg);
+  border-left: 1px solid var(--modal-card-border);
+  border-radius: var(--card-radius) 0 0 var(--card-radius);
+  box-shadow: var(--modal-card-shadow), inset 1px 0 0 var(--modal-card-highlight);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  will-change: transform;
+}
+
+/* ── 顶栏 ── */
+.fp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 13px;
+  border-bottom: 1px solid var(--panel-divider);
+  background: var(--surface-glass);
+  flex-shrink: 0;
+}
+.fp-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+.fp-ext {
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-radius: 4px;
+  padding: 2px 5px;
+  flex-shrink: 0;
+}
+.fp-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-bottom: 2px;
+  margin-bottom: -2px;
+}
+.fp-header-actions { display: flex; align-items: center; gap: 0; flex-shrink: 0; }
+.fp-action-btn {
+  width: 30px; height: 30px; border-radius: 7px; border: none;
+  background: none; color: var(--text-secondary);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: background 0.15s, color 0.15s;
+}
+.fp-action-btn svg { display: block; }
+.fp-action-btn:hover { background: var(--surface-soft-hover); color: var(--content-primary); }
+.fp-close-btn:hover { background: var(--status-danger-bg); color: var(--status-danger); }
+
+/* ── 内容区 ── */
+.fp-body {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  background: var(--surface-base);
+}
+.fp-iframe {
+  width: 100%; height: 100%; border: none; display: block;
+}
+
+/* ── 状态占位 ── */
+.fp-status {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 12px; color: var(--text-secondary); font-size: 13px;
+}
+.fp-error { color: var(--status-danger); }
+.fp-spinner {
+  width: 28px; height: 28px; border-radius: 50%;
+  border: 2px solid var(--action-soft);
+  border-top-color: var(--action-primary);
+  animation: fp-spin 0.7s linear infinite;
+}
+@keyframes fp-spin { to { transform: rotate(360deg); } }
+
+/* ── 动画 ── */
+.fp-enter-active .fp-overlay {
+  transition: opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.fp-leave-active .fp-overlay {
+  transition: opacity 0.22s cubic-bezier(0.4, 0, 1, 1);
+}
+.fp-enter-from .fp-overlay,
+.fp-leave-to   .fp-overlay { opacity: 0; }
+
+/* 入场：从右侧滑入，先快后慢，带轻微弹性感 */
+.fp-enter-active .fp-panel {
+  transition: transform 0.42s cubic-bezier(0.16, 1, 0.3, 1);
+}
+/* 退场：向右侧滑出，先慢后快，加速收回 */
+.fp-leave-active .fp-panel {
+  transition: transform 0.26s cubic-bezier(0.4, 0, 0.8, 0.6);
+}
+.fp-enter-from .fp-panel,
+.fp-leave-to   .fp-panel { transform: translateX(100%); }
+
+/* ── info 按钮激活态 ── */
+.fp-action-btn.active { background: var(--action-soft); color: var(--action-primary); }
+
+</style>

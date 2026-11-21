@@ -14,4 +14,4 @@
 
 ## 当前边界与后续条件
 
-Node Host 的会话 HTTP 路径与撤销行为已通过内存适配器验证；`main.ts` 使用 PostgreSQL 用户仓库的真实数据路径仍未验收。下一步需要 devserver 提供专用隔离 PostgreSQL URL，且测试账号具备创建/删除随机 schema 的权限，再运行 `tests/host/auth-session-vite.integration.test.ts` 及对应 PostgreSQL 适配器回归。没有使用 Docker，也没有连接生产或用户数据库。
+Node Host 的会话 HTTP 路径与撤销行为已通过内存适配器验证；`main.ts` 使用 PostgreSQL 用户仓库的真实数据路径仍未验收。下一步需要 devserver 提供专用隔离 PostgreSQL URL，且测试账号具备创建/删除随机 schema 的权限，再运行 `tests/host/vite/auth/session.integration.test.ts` 及对应 PostgreSQL 适配器回归。没有使用 Docker，也没有连接生产或用户数据库。

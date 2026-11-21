@@ -55,11 +55,16 @@ export interface CalendarEventCreateRequest {
   identity: RunIdentity
   roundId: string
   toolCallId: string
-  args: { title: string; date: string; all_day: boolean; time?: string; end_time?: string; type?: 'event' | 'deadline'; project_id?: number; reminders?: CalendarReminderIntent[] }
+  args: { title: string; date: string; all_day: boolean; time?: string; end_time?: string; type?: 'event' | 'deadline'; project_id?: number; description?: string; reminders?: CalendarReminderIntent[] }
 }
 export interface CalendarEventCreateToolPort {
   apply(input: CalendarEventCreateRequest & { signal: AbortSignal }): Promise<ToolResult>
   reconcile(input: CalendarEventCreateRequest): Promise<ToolResult>
+}
+
+type UndoContextBinding = string | ((identity: RunIdentity) => string)
+function calendarUndoContext(binding: UndoContextBinding | undefined, identity: RunIdentity): string {
+  return typeof binding === 'function' ? binding(identity) : binding ?? identity.sessionId
 }
 
 function calendarCreateResponse(result: Awaited<ReturnType<typeof createCalendarEvent>>, replayed = false) {
@@ -81,6 +86,7 @@ export function createCalendarEventCreatePort(
   publish: (event: EventCreatePublication) => Promise<void>,
   reminderTargets: CalendarReminderTargetPort,
   now: () => number = Date.now,
+  undoContextId?: UndoContextBinding,
 ): CalendarEventCreateToolPort {
   if (!core.receipts || typeof publish !== 'function' || typeof reminderTargets?.resolve !== 'function')
     throw new Error('日历事件创建后端未装配')
@@ -101,7 +107,7 @@ export function createCalendarEventCreatePort(
     const event: CalendarEventCreateInput = {
       title: args.title, date: args.date, time: args.all_day ? null : args.time ?? null,
       end_time: args.all_day ? null : args.end_time ?? null, type: args.type ?? 'event',
-      client: null, project_id: args.project_id ?? null, description: null,
+      client: null, project_id: args.project_id ?? null, description: args.description ?? null,
     }
     let prepared: PreparedEventReminder[] = []
     const requests = args.reminders ?? []
@@ -126,7 +132,7 @@ export function createCalendarEventCreatePort(
         const created = await createCalendarEvent(borrowed, {
           ownerId: input.identity.ownerId,
           input: event,
-          undoContextId: input.identity.sessionId,
+          undoContextId: calendarUndoContext(undoContextId, input.identity),
           idempotencyKey: key.operationId,
           idempotencyPayload: args,
           reminders: prepared,
@@ -159,7 +165,7 @@ const eventReminderSchema = z.object({
 const calendarCreateSchema = z.object({
   title: z.string(), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u), time: z.string().regex(timePattern).optional(),
   end_time: z.string().regex(timePattern).optional(), type: z.enum(['event', 'deadline']).optional(),
-  project_id: z.number().int().safe().optional(), reminders: z.array(eventReminderSchema).max(20).optional(), all_day: z.boolean(),
+  project_id: z.number().int().safe().optional(), description: z.string().optional(), reminders: z.array(eventReminderSchema).max(20).optional(), all_day: z.boolean(),
 }).passthrough().superRefine((value, context) => {
   if (value.all_day && (value.time !== undefined || value.end_time !== undefined)) context.addIssue({ code: 'custom', message: '全天活动不能设置开始或结束时间' })
   if (!value.all_day && value.time === undefined) context.addIssue({ code: 'custom', message: '非全天活动必须提供 time' })
@@ -169,11 +175,11 @@ export function createCalendarEventCreateTool(port: CalendarEventCreateToolPort)
   const request = (args: z.infer<typeof calendarCreateSchema>, identity: RunIdentity, roundId: string, toolCallId: string): CalendarEventCreateRequest => ({ identity, roundId, toolCallId, args })
   return {
     definition: { name: 'create_event', schema: { type: 'function', function: { name: 'create_event',
-      description: '创建日历活动或截止提醒；全天活动传 all_day=true，定时活动需提供 time；可在提醒数组中设置提前分钟数和通知渠道。',
+      description: '创建日历活动或截止提醒；全天活动传 all_day=true，定时活动需提供 time；reminders 可设置提前时间和通知渠道；到点直接发送活动标题和时间，不调用模型。',
       parameters: { type: 'object', properties: {
         title: { type: 'string' }, date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
         time: { type: 'string', pattern: '^([01]\\d|2[0-3]):[0-5]\\d$' }, end_time: { type: 'string', pattern: '^([01]\\d|2[0-3]):[0-5]\\d$' },
-        type: { type: 'string', enum: ['event', 'deadline'] }, project_id: { type: 'integer' }, all_day: { type: 'boolean' },
+        type: { type: 'string', enum: ['event', 'deadline'] }, project_id: { type: 'integer' }, description: { type: 'string' }, all_day: { type: 'boolean' },
         reminders: { type: 'array', maxItems: 20, 'x-empty-string': 'empty-array', items: { type: 'object', properties: {
           lead_minutes: { type: 'integer', minimum: 0 }, channels: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'string', enum: ['web', 'feishu', 'qq', 'wechat'] } },
           delivery_mode: { type: 'string', enum: ['owner_private', 'current_group'] }, enabled: { type: 'boolean' },
@@ -227,6 +233,7 @@ export function createCalendarEventUpdatePort(
   targets: CalendarEventUpdateTargetPort,
   reminderTargets: CalendarReminderTargetPort,
   now: () => number = Date.now,
+  undoContextId?: UndoContextBinding,
 ): CalendarEventUpdateToolPort {
   if (!core.receipts || typeof publish !== 'function' || typeof targets?.getById !== 'function'
     || typeof targets?.findByTitle !== 'function' || typeof reminderTargets?.resolve !== 'function')
@@ -289,7 +296,7 @@ export function createCalendarEventUpdatePort(
         const store = { ...borrowed.update, async publishCalendarEvent(event: EventUpdatePublication) { publications.push(event) } }
         const event = await updateCalendarEvent(store, {
           ownerId: input.identity.ownerId, eventId: target.event!.id,
-          body: { ...updates, version: Number(target.event!.version ?? 1) }, undoContextId: input.identity.sessionId,
+          body: { ...updates, version: Number(target.event!.version ?? 1) }, undoContextId: calendarUndoContext(undoContextId, input.identity),
           reminders: prepared,
         })
         const tasks = await borrowed.update.transaction(input.identity.ownerId, current => current.listOwnedEventReminders(target.event!.id))
@@ -325,7 +332,7 @@ export function createCalendarEventUpdateTool(port: CalendarEventUpdateToolPort)
   const request = (args: z.infer<typeof eventUpdateSchema>, identity: RunIdentity, roundId: string, toolCallId: string): CalendarEventUpdateRequest => ({ identity, roundId, toolCallId, args })
   return {
     definition: { name: 'update_event', schema: { type: 'function', function: { name: 'update_event',
-      description: '修改日历事件及其提醒；按 event_id 或标题 event（可附 on_date）定位。reminders 省略表示不改，提供数组表示整体替换，空数组清除提醒。',
+      description: '修改日历事件及其提醒；按 event_id 或标题 event（可附 on_date）定位。reminders 省略表示不改，提供数组表示整体替换，空数组清除提醒。活动提醒到点直接发送活动标题和时间，不调用模型。',
       parameters: { type: 'object', properties: {
         event_id: { type: 'integer' }, event: { type: 'string' }, on_date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
         title: { type: 'string' }, date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
@@ -448,6 +455,7 @@ export function createCalendarDeletePort(
   core: SqlDataRuntime,
   publish: (publication: CalendarEventDeletePublication) => Promise<void>,
   confirmation?: CalendarDeleteConfirmationPort,
+  undoContextId?: UndoContextBinding,
 ): CalendarDeletePort {
   if (!core.receipts || typeof publish !== 'function') throw new Error('日历删除后端未装配')
   const absent = new Error('日历删除收据不存在')
@@ -494,7 +502,7 @@ export function createCalendarDeletePort(
           const stores = createBorrowedKyselyCalendarMutationStores(tx, core.backend)
           const deleteStore = { ...stores.delete, async publishResourceChanged(event: CalendarEventDeletePublication) { publications.push(event) } }
           const results = await deleteCalendarEvents(deleteStore, { ownerId: input.identity.ownerId, eventIds: targets.ids,
-            expectedVersions: targets.versions, undoContextId: input.identity.sessionId, clientId: null })
+            expectedVersions: targets.versions, undoContextId: calendarUndoContext(undoContextId, input.identity), clientId: null })
           input.signal.throwIfAborted()
           return isBatch
             ? { success: true, deleted_count: results.length, results: results.map(result => ({ deleted_event_id: result.eventId, title: result.title, deleted_reminders: result.deletedReminders })) }
@@ -513,16 +521,32 @@ export function createCalendarDeletePort(
   } }
 }
 
-export function createCalendarDeleteTool(port: CalendarDeletePort): ToolDefinition {
-  const id = z.number().int().safe()
-  const schema = z.object({ event_id: id.optional(), event_ids: z.array(id).max(50).optional(), event: z.string().optional(), on_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u).optional() })
+const calendarDeleteId = z.number().int().safe()
+const calendarDeleteSchema = z.object({ event_id: calendarDeleteId.optional(), event_ids: z.array(calendarDeleteId).max(50).optional(), event: z.string().optional(), on_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u).optional() })
     .refine(value => value.event_ids === undefined || new Set(value.event_ids).size === value.event_ids.length)
-  const request = (args: z.infer<typeof schema>, identity: RunIdentity, roundId: string, toolCallId: string): CalendarDeleteRequest => ({ identity, roundId, toolCallId, args })
+
+export async function describeCalendarDeleteTargets(
+  core: Pick<SqlDataRuntime, 'db' | 'backend'>, ownerId: string, input: unknown,
+  expected: Pick<ConfirmationTargetSnapshot, 'targetsDigest' | 'versionsDigest'>,
+) {
+  const args = calendarDeleteSchema.safeParse(input)
+  if (!args.success) throw new CoreError('invalid_request', '日历事件删除参数无效')
+  const targets = await resolveCalendarDeleteTarget(core, ownerId, args.data, new AbortController().signal)
+  if (targets.error || expected.targetsDigest !== targets.snapshot.targetsDigest
+    || expected.versionsDigest !== targets.snapshot.versionsDigest)
+    throw new CoreError('conflict', '日历事件或提醒已变更，请重新确认')
+  const titles = targets.titles.slice(0, 8).map(title => `「${title.slice(0, 48)}」`).join('、')
+  const rest = targets.titles.length > 8 ? '等' : ''
+  return `删除 ${targets.ids.length} 个日历事件${titles}${rest}，以及 ${targets.reminders.length} 个关联提醒。`
+}
+
+export function createCalendarDeleteTool(port: CalendarDeletePort): ToolDefinition {
+  const request = (args: z.infer<typeof calendarDeleteSchema>, identity: RunIdentity, roundId: string, toolCallId: string): CalendarDeleteRequest => ({ identity, roundId, toolCallId, args })
   return {
     definition: { name: 'delete_event', schema: { type: 'function', function: { name: 'delete_event', description: '软删除一个或多个日历事件及其提醒；执行前需确认，可在当前对话撤销。单项支持 event_id 或事件标题 event，批量传 event_ids。',
       parameters: { type: 'object', properties: { event_id: { type: 'integer' }, event_ids: { type: 'array', maxItems: 50, uniqueItems: true, items: { type: 'integer' } }, event: { type: 'string' }, on_date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' } } } } } },
-    effect: 'write', requiresInteraction: true, confirmationReplay: true, validate: input => schema.safeParse(input),
-    execute(input, scope, call) { return port.apply({ ...request(input as z.infer<typeof schema>, scope.identity, scope.roundId, call.id), signal: scope.signal, call, scope }) },
-    reconcile(input, identity, call) { return port.reconcile(request(input as z.infer<typeof schema>, identity, identity.roundId, call.id)) },
+    effect: 'write', requiresInteraction: true, confirmationReplay: true, validate: input => calendarDeleteSchema.safeParse(input),
+    execute(input, scope, call) { return port.apply({ ...request(input as z.infer<typeof calendarDeleteSchema>, scope.identity, scope.roundId, call.id), signal: scope.signal, call, scope }) },
+    reconcile(input, identity, call) { return port.reconcile(request(input as z.infer<typeof calendarDeleteSchema>, identity, identity.roundId, call.id)) },
   }
 }

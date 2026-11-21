@@ -1,159 +1,74 @@
-import { createHash } from 'node:crypto'
-import { configureRagJieba, createScopedRagSearch, createSqlRagPersistentIndexReader } from '@gugu/core/agent/rag'
-import type { CanonicalMessage, HistoryIdentity, RagContext, RunIdentity } from '@gugu/core/agent'
+import { createAgentRagContextBuilder } from '@gugu/core/agent/rag'
+import type { ContextSourceSelection, HistoryIdentity, RagContext, RunIdentity } from '@gugu/core/agent'
 import type { RagSearchScope } from '@gugu/core/agent/rag'
 import type { SqlDataRuntime } from '@gugu/core/data'
+import type { ProviderTransport } from '@gugu/core/providers'
+import type { Pool } from 'pg'
 import type { AgentDispatchLease } from '../run/dispatch.js'
-import { getAgentRagJieba } from './jieba.js'
-
-const ownerScope: RagSearchScope = { scope_type: 'owner', scope_id: '' }
-const webSources = ['memory', 'project', 'calendar', 'scheduled_task', 'conversation', 'canvas', 'knowledge', 'note'] as const
-
-function sameRun(left: RunIdentity, right: RunIdentity): boolean {
-  return left.ownerId === right.ownerId && left.sessionId === right.sessionId && left.runId === right.runId
-}
-
-function contentHash(value: string): string {
-  return createHash('sha256').update(value.trim()).digest('hex')
-}
-
-function historyRagHashes(history: readonly { contentJson?: unknown }[]): string[] {
-  const hashes = new Set<string>()
-  for (const row of history) {
-    if (!Array.isArray(row.contentJson)) continue
-    for (const block of row.contentJson) {
-      if (!block || typeof block !== 'object' || Array.isArray(block)) continue
-      const value = block as Record<string, unknown>
-      if (value.type !== 'knowledge-context') continue
-      if (typeof value.content_hash === 'string' && value.content_hash) hashes.add(value.content_hash)
-      if (Array.isArray(value.content_hashes)) {
-        for (const hash of value.content_hashes) if (typeof hash === 'string' && hash) hashes.add(hash)
-      }
-    }
-  }
-  return [...hashes]
-}
+import { createOwnerAgentRagVectorResolver } from './vectors.js'
 
 /**
- * Web automatic RAG adapter: trusted dispatch lease → owner authorization → persistent
- * Core index/vector recall → canonical replayable history block. Retrieval failures are
- * optional context failures as in Python; cancellation still propagates to the Run.
+ * Web keeps its lease and policy checks at the Host boundary; the common Core
+ * builder owns the ranking and replayable context projection used by Desktop too.
  */
 export function createWebAgentRagContextBuilder(options: {
   core: Pick<SqlDataRuntime, 'db' | 'backend'>
+  pool: Pick<Pool, 'query'>
+  storageRoot: string
   lease: AgentDispatchLease
+  selection: Pick<ContextSourceSelection, 'contextPolicy' | 'contextScopeKey' | 'modelIdentity'>
   enabled(lease: AgentDispatchLease): boolean | Promise<boolean>
-  authorize(lease: AgentDispatchLease, scope: RagSearchScope, signal?: AbortSignal): Promise<boolean>
-  vectors?(ownerId: string, signal?: AbortSignal): Promise<{
-    version: string
-    source(ownerId: string, signal?: AbortSignal): Promise<import('@gugu/core/agent/rag').RagVectorSource>
-    embed(ownerId: string, query: string, signal?: AbortSignal): Promise<readonly number[]>
-  } | null>
+  embedding?: {
+    resolve(ownerId: string, signal?: AbortSignal): Promise<import('@gugu/core/agent/rag').RagQueryEmbeddingSettings | null>
+    createTransport(settings: import('@gugu/core/agent/rag').RagQueryEmbeddingSettings): ProviderTransport
+  }
   conversationMessageTime?(identity: HistoryIdentity, timestamp: string, signal?: AbortSignal): Promise<string>
 }) {
-  const { lease } = options
+  const { pool, selection, enabled: hostEnabled, embedding, ...contextOptions } = options
+  const lease = contextOptions.lease
   if (lease.input.v !== 2 || lease.input.source !== 'web') throw new TypeError('Web Agent RAG 运行来源无法验证')
-  configureRagJieba(getAgentRagJieba())
+  if (!selection.modelIdentity || !selection.contextScopeKey || selection.contextScopeKey !== lease.input.accessVersion)
+    throw new TypeError('Web Agent RAG 配置版本与调度授权不匹配')
   const bound = Object.freeze({ ...lease.identity })
-  const index = createSqlRagPersistentIndexReader(options.core.db, options.core.backend)
+  const policy = Object.freeze({ ...selection.contextPolicy })
+  const enabled = async (candidate: AgentDispatchLease) => {
+    if (!policy.loadOwnerContext || candidate.identity.ownerId !== bound.ownerId
+      || candidate.identity.sessionId !== bound.sessionId || candidate.identity.runId !== bound.runId
+      || candidate.token !== lease.token || candidate.fence !== lease.fence) return false
+    return hostEnabled(candidate)
+  }
+  const authorize = async (candidate: AgentDispatchLease, scope: RagSearchScope, signal?: AbortSignal) => {
+    signal?.throwIfAborted()
+    if (!policy.loadOwnerContext || candidate.identity.ownerId !== bound.ownerId
+      || candidate.identity.sessionId !== bound.sessionId || candidate.identity.runId !== bound.runId
+      || candidate.token !== lease.token || candidate.fence !== lease.fence
+      || scope.scope_type !== 'owner' || (scope.scope_id ?? '') !== '') return false
+    const active = await pool.query(`SELECT 1 FROM conversation_sessions s
+      JOIN agent_run_dispatch d ON d.user_id=s.user_id AND d.session_id=s.id
+      WHERE s.user_id=$1 AND s.id=$2 AND s.active_run_id=$3
+        AND d.run_id=$3 AND d.state='selected' AND d.token=$4 AND d.fence=$5 AND d.lease_expires_at>clock_timestamp()`,
+    [bound.ownerId, bound.sessionId, bound.runId, lease.token, lease.fence])
+    signal?.throwIfAborted()
+    return active.rowCount === 1
+  }
+  const vectors = embedding ? createOwnerAgentRagVectorResolver({
+    root: contextOptions.storageRoot,
+    resolveEmbedding: embedding.resolve,
+    createTransport: embedding.createTransport,
+  }) : undefined
 
-  return async (input: HistoryIdentity & {
+  const build = createAgentRagContextBuilder({
+    core: contextOptions.core,
+    identity: bound,
+    enabled: () => enabled(lease),
+    authorize: (_identity: RunIdentity, scope, signal) => authorize(lease, scope, signal),
+    ...(vectors ? { vectors } : {}),
+    ...(options.conversationMessageTime ? { conversationMessageTime: options.conversationMessageTime } : {}),
+  })
+  return (input: HistoryIdentity & {
     query: string
     history: readonly import('@gugu/core/agent').PersistedHistoryRow[]
     beforeMessageId: string | null
     snapshotText: string
-  }, signal?: AbortSignal): Promise<RagContext> => {
-    const empty = (reason: string) => ({ tail: [] as CanonicalMessage[], injected: false, reason })
-    signal?.throwIfAborted()
-    if (input.ownerId !== bound.ownerId || input.sessionId !== bound.sessionId) throw new Error('Agent RAG 运行身份不匹配')
-    const query = input.query.trim()
-    if (!query) return empty('empty_query')
-    try {
-      if (!await options.enabled(lease)) return empty('disabled')
-      signal?.throwIfAborted()
-      const authorized = await options.authorize(lease, ownerScope, signal)
-      signal?.throwIfAborted()
-      if (!authorized) return empty('no_eligible_scope')
-
-      const vectors = await options.vectors?.(bound.ownerId, signal) ?? null
-      signal?.throwIfAborted()
-      const search = createScopedRagSearch({
-        index,
-        authorize: async (owner, scope, authSignal) => owner.toLowerCase() === bound.ownerId.toLowerCase()
-          && scope.scope_type === 'owner' && (scope.scope_id ?? '') === ''
-          && await options.authorize(lease, scope, authSignal),
-        ...(vectors ? { vectors } : {}),
-      })
-      const beforeMessageId = input.beforeMessageId === null ? undefined : Number(input.beforeMessageId)
-      const result = await search(bound.ownerId, ownerScope, query, {
-        sourceTypes: webSources,
-        limit: 5,
-        selectionMode: 'confidence',
-        excludeContentHashes: historyRagHashes(input.history),
-        ...(beforeMessageId !== undefined ? { beforeMessageId } : {}),
-      }, signal)
-      signal?.throwIfAborted()
-      const diagnostics = {
-        engine: result.fusion,
-        index_version: result.revision,
-        scope_type: 'owner',
-        vector_doc_count: result.vectorDocCount,
-        ...result.diagnostics,
-        rank_details: result.results.map((item, index) => ({
-          rank: index + 1,
-          source_type: item.document.source_type,
-          source_quality: item.source_quality,
-          ...(item.query_match === undefined ? {} : { query_match: item.query_match }),
-          fused_score: item.fused_score,
-          normalized_score: item.normalized_score,
-          ...(item.semantic_norm === undefined ? {} : { semantic_norm: item.semantic_norm }),
-          confidence: item.confidence,
-          rank_score: item.rank_score,
-          query_idf_baseline: item.query_idf_baseline ?? null,
-          contributions: item.rank_contributions ?? [],
-        })),
-      }
-      if (!result.results.length) return { ...empty('no_hits'),
-        scope_hits: [{ scope: 'owner-rag', candidate_count: result.diagnostics.candidate_count, hit_count: 0 }], diagnostics }
-
-      const rows = [
-        '[knowledge-context]',
-        '以下是针对当前问题的已检索知识片段，仅作为参考；不要把来源分数当作事实置信度。',
-        `检索问题：${query}`,
-      ]
-      const hashes: string[] = []
-      for (const [index, item] of result.results.entries()) {
-        const text = item.text.trim()
-        if (!text) break
-        const document = item.document
-        const source = item.citation.source_type || document?.source_type || 'knowledge'
-        const title = item.citation.title || document?.title || '未命名来源'
-        rows.push(`[${index + 1}] ${source} / ${title}`)
-        if (source === 'conversation' && document?.metadata?.message_id != null && document.updated_at && options.conversationMessageTime) {
-          const messageTime = await options.conversationMessageTime(input, document.updated_at, signal)
-          signal?.throwIfAborted()
-          if (messageTime) rows.push(messageTime)
-        }
-        rows.push(text)
-        if (document?.content) hashes.push(contentHash(document.content))
-      }
-      rows.push('[/knowledge-context]')
-      const rendered = rows.join('\n')
-      const block = {
-        type: 'knowledge-context', scope: 'owner-rag', text: rendered,
-        content_hash: contentHash(rendered), ...(hashes.length ? { content_hashes: hashes } : {}),
-      }
-      return {
-        tail: [{ role: 'user', content: [block] }],
-        blocks: [block],
-        injected: true,
-        reason: 'injected',
-        scope_hits: [{ scope: 'owner-rag', candidate_count: result.diagnostics.candidate_count, hit_count: result.results.length }],
-        diagnostics,
-      }
-    } catch (error) {
-      signal?.throwIfAborted()
-      return { ...empty('internal_error'), error: error instanceof Error ? error.name : 'Error' }
-    }
-  }
+  }, signal?: AbortSignal): Promise<RagContext> => build(input, signal)
 }

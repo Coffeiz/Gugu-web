@@ -14,7 +14,7 @@ import { lockFileSyncPath, recordCanonicalFileChange } from './storage/sync.js'
 import { imageSize } from 'image-size'
 import { createCanvas, loadImage } from '@napi-rs/canvas'
 import { planFileThumbnail, openAuthorizedRelativeFile } from '@gugu/core/files/read'
-import type { FileReadOperations } from './browse.js'
+import type { FileContentSource, FileReadOperations } from './browse.js'
 import { XlsxPreviewError, createXlsxPreviewReader, type XlsxPreviewArchive, type XlsxPreviewArchiveEntry } from '@gugu/core/files/xlsx-preview'
 import { openLocalFile, UnsafeLocalPathError } from '@gugu/fs/node'
 import JSZip from 'jszip'
@@ -287,7 +287,7 @@ function fileMetadata(file: unknown): ThumbnailMetadata {
 function detectedFormat(raw: Buffer): string | null {
   try {
     const type = imageSize(raw).type
-    return typeof type === 'string' ? type.toUpperCase() : null
+    return type === 'jpg' ? 'JPEG' : typeof type === 'string' ? type.toUpperCase() : null
   } catch { return null }
 }
 
@@ -345,6 +345,25 @@ async function createThumbnail(
   if (plan.kind === 'raw') return { bytes: raw, mimeType: plan.mimeType }
   try { return await resizeThumbnail(raw, plan.maxDimension, plan.quality) }
   catch { return { bytes: raw, mimeType: plan.mimeType } }
+}
+
+/** 路径文件没有数据库 ID，直接使用已授权打开的文件生成卡片缩略图。 */
+export async function renderPathFileThumbnail(source: FileContentSource): Promise<RenderedThumbnail> {
+  let raw: Buffer
+  try {
+    if (source.size === 0 || source.size > 8 * 1024 * 1024)
+      throw new CoreError('not_found', '缩略图不可用')
+    raw = Buffer.alloc(source.size)
+    const { bytesRead } = await source.handle.read(raw, 0, raw.length, 0)
+    if (bytesRead !== raw.length) throw new CoreError('not_found', '缩略图不可用')
+  } finally {
+    await source.handle.close()
+  }
+  let dimensions
+  try { dimensions = imageSize(raw) } catch { throw new CoreError('not_found', '缩略图不可用') }
+  if (dimensions.width * dimensions.height > 40_000_000)
+    throw new CoreError('not_found', '缩略图不可用')
+  return createThumbnail(raw, null, 'card')
 }
 
 export function registerFileThumbnailRoute(app: FastifyInstance, options: FileThumbnailOptions): void {

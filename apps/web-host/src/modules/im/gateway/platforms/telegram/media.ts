@@ -1,20 +1,10 @@
-import { lookup as lookupMime } from 'mime-types'
-import { createTelegramBotApi, TelegramApiError } from '@gugu/gateway/telegram'
+import { rollbackImMedia } from '@gugu/gateway'
+import { createTelegramBotApi, processTelegramAttachments, telegramAttachmentReference, TelegramMediaIngressError } from '@gugu/gateway/telegram'
 
-/** Python基准使用decimal MB，不能复用Bot API底层20MiB默认值。 */
-export const TELEGRAM_INGRESS_MAX_BYTES = 20_000_000
-const sizeNotice = 'Telegram 单个附件下载上限为 20 MB，超限附件未接收。'
 const downloadNotice = '有附件暂时无法从 Telegram 下载，请稍后重试或重新发送。'
-const stagingNotice = '有附件已从 Telegram 下载，但保存失败，请稍后重试或重新发送。'
 type ObjectValue = Record<string, unknown>
 const object = (value: unknown): value is ObjectValue => value !== null && typeof value === 'object' && !Array.isArray(value)
-const integer = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value)
 
-export class TelegramMediaIngressError extends Error {
-  constructor(readonly code: 'cancelled' | 'storage_contract' | 'reuse_failed' | 'cleanup_failed' | 'close_failed') {
-    super('Telegram 媒体处理未完成'); this.name = 'TelegramMediaIngressError'
-  }
-}
 export interface TelegramStagedAttachment {
   ownerId: string
   attachId: string
@@ -50,23 +40,6 @@ export interface TelegramMediaIngressInput {
   attachments: readonly unknown[]
   quotedAttachments: readonly unknown[]
 }
-function safeFilename(raw: unknown, mediaType: string): [string, string] {
-  const fallback: Record<string, string> = { photo: 'jpg', voice: 'ogg', video: 'mp4', video_note: 'mp4', animation: 'mp4' }
-  const leaf = typeof raw === 'string' && raw ? raw.replaceAll('\\', '/').split('/').at(-1)! : '附件'
-  let filename = Array.from(leaf).filter(char => (char === ' ' || !/[\p{C}\p{Z}]/u.test(char)) && char !== '/' && char !== '\\').slice(0, 180).join('')
-  if (!filename || filename === '.' || filename === '..') filename = '附件'
-  const dot = filename.lastIndexOf('.')
-  const name = dot > 0 && !filename.startsWith('.') ? filename.slice(0, dot) : filename
-  const ext = dot > 0 && !filename.startsWith('.') ? Array.from(filename.slice(dot + 1).toLowerCase()).slice(0, 10).join('') : ''
-  return [Array.from(name).slice(0, 160).join('') || '附件', ext || fallback[mediaType] || 'bin']
-}
-function mimeType(item: ObjectValue, ext: string, mediaType: string): string {
-  const prefixes: Record<string, string> = { photo: 'image/', voice: 'audio/', audio: 'audio/', video: 'video/', video_note: 'video/', animation: 'video/' }
-  const fallback: Record<string, string> = { photo: 'image/jpeg', voice: 'audio/ogg', audio: 'audio/mpeg', video: 'video/mp4', video_note: 'video/mp4', animation: 'video/mp4' }
-  const candidate = typeof item.mime_type === 'string' ? item.mime_type : ''
-  if (/^[A-Za-z0-9.+-]{1,127}\/[A-Za-z0-9.+-]{1,127}$/.test(candidate) && (!prefixes[mediaType] || candidate.toLowerCase().startsWith(prefixes[mediaType]!))) return candidate.toLowerCase()
-  return fallback[mediaType] || lookupMime(`attachment.${ext}`) || 'application/octet-stream'
-}
 function validAttachment(value: { ownerId: string; attachId: string }, ownerId: string): boolean {
   return value.ownerId === ownerId && typeof value.attachId === 'string' && !!value.attachId && value.attachId.length <= 512 && !/[\x00-\x1f\x7f]/.test(value.attachId)
 }
@@ -89,16 +62,14 @@ export function createTelegramMediaIngress(options: {
       const raw = input.attachments.filter(object).map(item => ({ ...item })), quoted = input.quotedAttachments.filter(object).map(item => ({ ...item }))
       if (!input.ownerId || !input.botId) return { attachmentIds: [], sizeLimitExceeded: false, failureNotice: raw.length ? downloadNotice : null }
       const attachmentIds: string[] = [], created: { ownerId: string; attachId: string; creationReceipt: string }[] = []
-      let sizeLimitExceeded = false, downloadFailed = false, stagingFailed = false, totalBytes = 0
       try {
         checkCancelled(signal)
         for (const item of quoted) {
           checkCancelled(signal)
-          const source = item.source_platform_message_id
-          if (typeof source !== 'string' || !source) continue
-          const index = integer(item.source_attachment_index) && item.source_attachment_index >= 0 ? item.source_attachment_index : 0
+          const reference = telegramAttachmentReference(item)
+          if (!reference) continue
           let reused: { ownerId: string; attachId: string; created?: boolean; creationReceipt?: string } | null
-          try { reused = await options.storage.reuse({ ownerId: input.ownerId, botId: input.botId, platform: 'telegram', platformMessageId: source, attachmentIndex: index, quoted: true }, signal) }
+          try { reused = await options.storage.reuse({ ownerId: input.ownerId, botId: input.botId, platform: 'telegram', platformMessageId: reference.sourceMessageId, attachmentIndex: reference.sourceIndex, quoted: true }, signal) }
           catch { checkCancelled(signal); throw new TelegramMediaIngressError('reuse_failed') }
           if (reused) {
             if (!validAttachment(reused, input.ownerId)) throw new TelegramMediaIngressError('storage_contract')
@@ -116,52 +87,19 @@ export function createTelegramMediaIngress(options: {
         catch { checkCancelled(signal); token = null }
         checkCancelled(signal)
         if (!token) return { attachmentIds, sizeLimitExceeded: false, failureNotice: downloadNotice }
-        for (const [index, item] of raw.entries()) {
+        const result = await processTelegramAttachments(api, token, raw, signal, async (file, signal) => {
+          const staged = await options.storage.stage({ ...file, ownerId: input.ownerId, botId: input.botId,
+            platform: 'telegram', platformMessageId: input.platformMessageId }, signal)
+          if (!staged || !validAttachment(staged, input.ownerId) || typeof staged.created !== 'boolean' || staged.created && (typeof staged.creationReceipt !== 'string' || !staged.creationReceipt))
+            throw new TelegramMediaIngressError('storage_contract')
+          if (staged.created) created.push({ ownerId: input.ownerId, attachId: staged.attachId, creationReceipt: staged.creationReceipt! })
           checkCancelled(signal)
-          const fileId = item.file_id
-          if (typeof fileId !== 'string' || !fileId || fileId.length > 512 || /[\x00-\x1f\x7f]/.test(fileId)) { downloadFailed = true; continue }
-          if (integer(item.file_size) && item.file_size > TELEGRAM_INGRESS_MAX_BYTES) { sizeLimitExceeded = true; continue }
-          if (totalBytes >= TELEGRAM_INGRESS_MAX_BYTES) { sizeLimitExceeded = true; continue }
-          let downloaded = false
-          try {
-            const info = await api.call(token, 'getFile', { payload: { file_id: fileId }, signal })
-            checkCancelled(signal)
-            if (!object(info)) { downloadFailed = true; continue }
-            if (integer(info.file_size) && info.file_size > TELEGRAM_INGRESS_MAX_BYTES) { sizeLimitExceeded = true; continue }
-            const data = await api.downloadFile(token, typeof info.file_path === 'string' ? info.file_path : '', { maxBytes: TELEGRAM_INGRESS_MAX_BYTES, signal })
-            checkCancelled(signal)
-            if (!(data instanceof Uint8Array) || !data.byteLength || integer(info.file_size) && data.byteLength !== info.file_size) { downloadFailed = true; continue }
-            totalBytes += data.byteLength
-            if (data.byteLength > TELEGRAM_INGRESS_MAX_BYTES || totalBytes > TELEGRAM_INGRESS_MAX_BYTES) { sizeLimitExceeded = true; continue }
-            downloaded = true
-            const mediaType = typeof item.media_type === 'string' ? item.media_type : ''
-            const [name, ext] = safeFilename(item.file_name, mediaType)
-            const attachmentIndex = item.source_attachment_index === undefined ? index : item.source_attachment_index
-            if (!integer(attachmentIndex) || attachmentIndex < 0) throw new Error()
-            const staged = await options.storage.stage({ ownerId: input.ownerId, botId: input.botId, name, ext, mime: mimeType(item, ext, mediaType), data,
-              kind: mediaType === 'photo' ? 'image' : mediaType === 'voice' ? 'voice' : 'file',
-              duration: typeof item.duration === 'number' && Number.isFinite(item.duration) ? item.duration : null,
-              platform: 'telegram', platformMessageId: input.platformMessageId, attachmentIndex }, signal)
-            if (!staged || !validAttachment(staged, input.ownerId) || typeof staged.created !== 'boolean' || staged.created && (typeof staged.creationReceipt !== 'string' || !staged.creationReceipt))
-              throw new TelegramMediaIngressError('storage_contract')
-            if (staged.created) created.push({ ownerId: input.ownerId, attachId: staged.attachId, creationReceipt: staged.creationReceipt! })
-            checkCancelled(signal)
-            attachmentIds.push(staged.attachId)
-          } catch (error) {
-            checkCancelled(signal)
-            if (error instanceof TelegramMediaIngressError) throw error
-            if (error instanceof TelegramApiError && error.operation === 'getFile' && error.statusCode === 413) sizeLimitExceeded = true
-            else if (downloaded) stagingFailed = true
-            else downloadFailed = true
-          }
-        }
-        return { attachmentIds, sizeLimitExceeded, failureNotice: [sizeLimitExceeded ? sizeNotice : '', downloadFailed ? downloadNotice : '', stagingFailed ? stagingNotice : ''].filter(Boolean).join('\n') || null }
+          attachmentIds.push(staged.attachId)
+        })
+        return { attachmentIds, ...result }
+
       } catch (error) {
-        let cleanupFailed = false
-        for (const item of created.reverse()) {
-          try { await options.storage.release(item) } catch { cleanupFailed = true }
-        }
-        if (cleanupFailed) throw new TelegramMediaIngressError('cleanup_failed')
+        if (!await rollbackImMedia(created, item => options.storage.release(item))) throw new TelegramMediaIngressError('cleanup_failed')
         if (error instanceof TelegramMediaIngressError) throw error
         throw new TelegramMediaIngressError('storage_contract')
       }

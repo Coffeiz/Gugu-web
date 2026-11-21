@@ -1,4 +1,4 @@
-import { selectImTextChoice, type ImPreflightScope, type ImTextChoicePrompt, type ImTextChoiceResult } from '@gugu/core/im/inbound-preflight'
+import { selectImTextChoice, type ImPreflightScope, type ImTextChoicePrompt, type ImTextChoiceResult } from '@gugu/gateway'
 import type { AgentInteractionRespondService } from '../../../agent/interactions/respond.js'
 
 export interface ScopedImTextPrompt extends ImTextChoicePrompt {

@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="apps/web/public/Gugu-logo-colored.png" width="180" alt="咕咕 Logo">
+<img src="apps/ui/public/Gugu-logo-colored.png" width="180" alt="咕咕 Logo">
 
 # 咕咕
 
@@ -12,7 +12,7 @@
 
 [![status](https://img.shields.io/badge/status-active-success?style=flat)](https://www.gugugu.site)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat)](LICENSE)
-[![Vue](https://img.shields.io/badge/frontend-Vue%203-42b883?style=flat)](apps/web/)
+[![Vue](https://img.shields.io/badge/frontend-Vue%203-42b883?style=flat)](apps/ui/)
 [![Python](https://img.shields.io/badge/backend-Python%20latest-3776ab?style=flat)](backend/)
 
 [中文](README.md) ｜ [English](README_en.md) ｜ [快速部署](docs/quick-deploy.md) ｜ [在线预览](https://www.gugugu.site)
@@ -56,19 +56,19 @@
 <table>
   <tr>
     <td width="50%" valign="top">
-      <img src="apps/web/public/onboarding/kanban-drag-1.gif" width="100%" alt="看板跨列拖拽示例">
+      <img src="apps/ui/public/onboarding/kanban-drag-1.gif" width="100%" alt="看板跨列拖拽示例">
       <h3>看板</h3>
       <p>项目、阶段、任务和截止日期组成真实的项目工作流。</p>
     </td>
     <td width="50%" valign="top">
-      <img src="apps/web/public/onboarding/file-drag-1.gif" width="100%" alt="文件系统拖拽示例">
+      <img src="apps/ui/public/onboarding/file-drag-1.gif" width="100%" alt="文件系统拖拽示例">
       <h3>文件系统</h3>
       <p>文件、项目和个人资料在同一套工作空间中持续沉淀，支持本地磁盘和 OSS 存储。</p>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <img src="apps/web/public/onboarding/canvas-drag-1.gif" width="100%" alt="画布自由落点拖拽示例">
+      <img src="apps/ui/public/onboarding/canvas-drag-1.gif" width="100%" alt="画布自由落点拖拽示例">
       <h3>画布</h3>
       <p>把便签、项目、文件和日历活动放到自由画布中，建立可视化关系。</p>
     </td>
@@ -94,7 +94,7 @@
 <table>
   <tr>
     <td width="25%" valign="top">
-      <img src="apps/web/public/onboarding/IM-messages-1.gif" width="100%" alt="咕咕管理日程示例">
+      <img src="apps/ui/public/onboarding/IM-messages-1.gif" width="100%" alt="咕咕管理日程示例">
       <h3>管理日程</h3>
       <p>用自然语言创建和推进项目、安排日程，也可以把重复工作交给定时任务。</p>
     </td>
@@ -363,7 +363,7 @@ flowchart LR
 
 工具负责读取和修改工作空间，Skills 负责提供可复用的任务知识和操作流程。咕咕为工具和 Skills 制作了一套注册系统，可以快速注册、组织和接入新的能力；能力目录按需注入工具 Schema，在保持可用性的同时减少不必要的 Token 消耗。执行时仍由代码校验权限、参数和危险操作；在群聊中还会按群组、成员和发起者隔离数据与工具权限，避免同群成员互相越权访问。相关设计见[工具与 Skill 文档](docs/agent/05-TOOLS-AND-SKILLS.md)。
 
-在简介模式下，系统向模型注入全部已授权工具的 `description_short` 和自动生成的可用字段签名，同时注入当前可用 Skills 的短简介。业务工具需要更复杂的结构时，可通过 `get_tool_schema` 按需获取完整 Schema，实际操作时通过 `call_tool` 调用；Skills 通过 `use_skill` 后，系统才会读取 Skill 文档中注册并选择的工具，将这些工具的 Schema 注入后继续完成任务。当前默认使用全量模式。
+在简介模式下，系统向模型注入全部已授权工具的 `description_short` 和自动生成的可用字段签名，同时注入当前可用 Skills 的短简介。模型可以用 `search_tools` 按用途搜索，读取候选的扁平参数摘要，或按精确名称查询完整 Schema，再通过 `call_tool` 执行。调用 `use_skill` 后，系统会读取技能正文并注入当前已授权的关联工具 Schema。
 
 正文编辑契约和工具 Schema 的详细约定见[工具注册与开发文档](backend/agent/tools/README.md)。
 
@@ -456,7 +456,7 @@ LoopScope 是咕咕 Agent 的开发观测和排障工具，用来还原一次请
 
 ```text
 gugu/
-├─ apps/web/      Web 工作空间与 Admin 前端
+├─ apps/ui/      Web 工作空间与 Admin 前端
 ├─ backend/       API、Agent、Memory、Tools 与数据服务
 ├─ loopscope/     Agent 可观测系统
 ├─ docker/        部署与运行环境

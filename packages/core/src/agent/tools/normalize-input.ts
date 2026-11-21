@@ -152,43 +152,6 @@ function hoistArrayItems(schema: Schema, input: Record<string, unknown>, state: 
   }
 }
 
-function normalizeNoteBlocks(name: string, input: Record<string, unknown>, state: NormalizationState): void {
-  function decode(value: unknown): unknown[] | undefined {
-    if (typeof value !== 'string') return undefined
-    try {
-      const decoded: unknown = JSON.parse(value)
-      if (Array.isArray(decoded)) return decoded
-    } catch { /* 保留原输入供 Schema 拒绝。 */ }
-  }
-  function normalizeNodes(value: unknown, path: string): unknown {
-    if (Array.isArray(value)) return value.map((item, index) => normalizeNodes(item, `${path}[${index}]`))
-    if (!object(value)) return value
-    const result = { ...value }
-    if (Object.hasOwn(result, 'text') && !Object.hasOwn(result, 'type')) {
-      result.type = 'text'
-      adapted(state, `${path}.type`, 'inferred_text')
-    }
-    for (const field of ['content', 'items', 'paragraphs']) {
-      if (Object.hasOwn(result, field)) result[field] = normalizeNodes(result[field], `${path}.${field}`)
-    }
-    return result
-  }
-  if (name === 'note_create' && !Object.hasOwn(input, 'blocks')) {
-    const blocks = decode(input.content)
-    if (blocks) {
-      input.blocks = blocks
-      delete input.content
-      adapted(state, 'note_create.content', 'json_string_to_blocks')
-    }
-  }
-  for (const field of ['blocks', 'append_blocks']) {
-    if (!Object.hasOwn(input, field)) continue
-    const blocks = decode(input[field])
-    if (blocks) adapted(state, `${name}.${field}`, 'json_string_to_array')
-    input[field] = normalizeNodes(blocks ?? input[field], field)
-  }
-}
-
 /** 仅做已迁移的无歧义标量与容器兼容；随后仍必须经过工具 validator，不授予任何能力。 */
 export function normalizeToolInput(definition: PreparedToolDefinition, input: unknown, context: { defaultYear?: number; strictArrayFields?: readonly string[]; adaptations?: string[] } = {}): unknown {
   if (!object(input)) return input
@@ -232,7 +195,6 @@ export function normalizeToolInput(definition: PreparedToolDefinition, input: un
       source[field] = canonical
     }
   }
-  if (definition.name === 'note_create' || definition.name === 'note_update') normalizeNoteBlocks(definition.name, source, state)
   hoistArrayItems(functionSchema, source, state)
   return normalizeValue(functionSchema, source, '', state, '')
 }

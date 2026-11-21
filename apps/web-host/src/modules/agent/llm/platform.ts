@@ -1,3 +1,4 @@
+import { DEFAULT_LLM_CONTEXT_TOKENS, DEFAULT_LLM_OUTPUT_TOKENS } from '@gugu/core/contracts'
 import { ensureLlmPresets } from '@gugu/core/agent/config/llm-strategy'
 import type { ProviderConfig } from '@gugu/core/providers'
 
@@ -60,7 +61,7 @@ function parseBoolean(value: unknown): boolean {
 export function resolvePlatformModelSettings(document: RecordValue, env: NodeJS.ProcessEnv): PlatformModelSettings {
   const defaults: RecordValue = {
     provider: 'qwen', api_key: '', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-max',
-    max_tokens: 25_600, context_tokens: 128_000, thinking: '', reasoning_effort: '', reasoning_persistence: 'off',
+    max_tokens: DEFAULT_LLM_OUTPUT_TOKENS, context_tokens: DEFAULT_LLM_CONTEXT_TOKENS, thinking: '', reasoning_effort: '', reasoning_persistence: 'off',
     image: false, image_detail: 'auto', video: false, audio: false, api_format: '', ollama_mode: 'local',
     ollama_api_mode: 'native', ollama_keep_alive: '5m', deployment_mode: 'cloud', local_runtime: 'other',
     capability_overrides: {}, capability_checked_at: '', capability_fingerprint: '', web_search_enabled: false,

@@ -1,3 +1,4 @@
+import { projectAgentToolBrief } from '../capabilities/brief.js'
 
 import type { CanonicalMessage,CanonicalSourceLoaderResult,CapabilityCatalog,ContextData,ContextLoadPolicy,CurrentTurnSources,HistoryIdentity,Json,PreparationIdentity,PreparedToolDefinition,RunCapabilities,RunIdentity,SessionSnapshotState } from '../models.js'
 import { AgentRunError,isEarlyExit } from '../models.js'
@@ -287,7 +288,7 @@ export const SNAPSHOT_CONTEXT_VERSION = 3
 
 export const DEFAULT_IDLE_TTL_MS = 30 * 60000
 
-export const bindingFields = ['workspace_id', 'workspace_name', 'kind', 'space', 'project_id', 'folder_id', 'project_name', 'folder_name'] as const
+export const bindingFields = ['workspace_id', 'workspace_name', 'kind', 'space', 'project_id', 'folder_id', 'project_name', 'folder_name', 'directory_id', 'directory_name'] as const
 
 export function workspaceBindingKey(value: Record<string, Json> | null | undefined): Record<string, Json> {
   return Object.fromEntries(bindingFields.map(key => [key, value?.[key] ?? null]))
@@ -781,19 +782,11 @@ export function createCanonicalRunLoader(load: CanonicalContextPorts['load'], po
     const userSkills = prepared.catalog ? copy([...prepared.catalog.userSkills]) : undefined
     if (snapshotContext && frozenSkills === undefined && userSkills !== undefined)
       snapshotContext.user_skill_snapshot = copy(userSkills)
-    const fixedAdapter = prepared.catalog?.fixedAdapter === true
-    // 固定顺序与旧版 Provider 元工具一致，群回复门仅在可信群运行内追加。
-    const providerToolNames = fixedAdapter
-      ? ['call_tool', 'get_tool_schema', 'use_skill', 'ask_user', 'stop_recurring', 'choose_no_reply']
-        .filter(name => prepared.toolNames.includes(name))
-      : undefined
-    const toolReminder = fixedAdapter
-      ? [prepared.catalog?.toolCatalog, prepared.shellReminder].filter(Boolean).join('\n\n')
-      : undefined
+    const brief = projectAgentToolBrief(prepared.catalog, prepared.toolNames, prepared.shellReminder)
+    const { providerToolNames, toolReminder } = brief
     const completed = {
       ...loaded, capabilities: { toolNames: [...prepared.toolNames], tools: selected, subject: copy(config.identity),
-        ...(providerToolNames ? { providerToolNames } : {}),
-        ...(toolReminder ? { toolReminder } : {}),
+        ...brief,
         ...(userSkills !== undefined ? { userSkillSnapshot: userSkills } : {}) },
       input: {
         ...loaded.input, preparedRag: copy(discovered.rag), systemPrompt: prepared.system,

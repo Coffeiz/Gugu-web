@@ -24,7 +24,7 @@ export async function discoverSkillDocuments(sourceDirectory) {
   const names = entries
     .filter(entry => filename.test(entry.name) && entry.name.toUpperCase() !== 'README.MD')
     .map(entry => entry.name)
-    .sort((left, right) => left.localeCompare(right, 'en'))
+    .sort()
   const documents = []
   for (const name of names) {
     const entry = entries.find(item => item.name === name)
@@ -36,19 +36,19 @@ export async function discoverSkillDocuments(sourceDirectory) {
 }
 
 function moduleSource(documents) {
-  return `// 由构建脚本自动嵌入资源目录中的 Markdown；ID 与元数据由 frontmatter 解析。\nconst embedded = Object.freeze(${JSON.stringify(documents)}.map(item => Object.freeze(item)))\n\nexport function createBundledSkillDocuments() {\n  return Object.freeze(embedded.map(({ name, content }) => Object.freeze({\n    name,\n    async read(signal) { signal.throwIfAborted(); return content },\n  })))\n}\n`
+  return `// 由构建脚本自动嵌入资源目录中的 Markdown；运行时按文件名分配编号，解析头部元数据。\nconst embedded = Object.freeze(${JSON.stringify(documents)}.map(item => Object.freeze(item)))\n\nexport function createBundledSkillDocuments() {\n  return Object.freeze(embedded.map(({ name, content }) => Object.freeze({\n    name,\n    async read(signal) { signal.throwIfAborted(); return content },\n  })))\n}\n`
 }
 
 /** 先验证全部资源再写制品；默认仅使用Core自有资源，导入模块不会触发构建。 */
 export async function buildAgentSkills(options = {}) {
   let staging
   try {
-    const { sourceDirectory, outputDirectory } = options
+    const { sourceDirectory, outputDirectory, builtinModule } = options
     const source = resolve(sourceDirectory ?? join(coreRoot, 'resources/skills'))
     const output = resolve(outputDirectory ?? join(coreRoot, 'dist/agent/skills'))
     const documents = await discoverSkillDocuments(source)
     // 动态导入必须发生在函数调用时，正常Core编译完成后；不依赖Python源码目录。
-    const { createBuiltinSkillDefinitions } = await import(pathToFileURL(join(coreRoot, 'dist/agent/skills/builtin.js')).href)
+    const { createBuiltinSkillDefinitions } = await import(pathToFileURL(builtinModule ?? join(coreRoot, 'dist/agent/skills/builtin.js')).href)
     const definitions = await createBuiltinSkillDefinitions(documents.map(item => ({ name: item.name, async read(signal) { signal.throwIfAborted(); return item.content } })), new AbortController().signal)
     if (definitions.length !== documents.length) throw new Error()
     const displayNames = new Set()

@@ -1,6 +1,7 @@
+import { IM_BINDING_TTL_SECONDS, IM_BINDING_MAX_ATTEMPTS } from '@gugu/core/im/binding-code'
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
-import type { ImPreflightScope } from '@gugu/core/im/inbound-preflight'
+import type { ImPreflightScope } from '@gugu/gateway'
 import { normalizeOwnerId } from '../../../../shared/owner-context.js'
 import { withPostgresTransaction } from '../../../../adapters/database/postgres-transaction.js'
 import type { RedisCommandClient } from '../../../../workers/redis-stream-queue.js'
@@ -19,11 +20,11 @@ end
 if redis.call('GET',KEYS[1])~=ARGV[1] then return 0 end
 local count=redis.call('GET',KEYS[2])
 if count and (not string.match(count,'^%d+$') or #count>9) then return redis.error_reply('IM binding attempts invalid') end
-if tonumber(count or '0')>=5 then return 0 end
+if tonumber(count or '0')>=${IM_BINDING_MAX_ATTEMPTS} then return 0 end
 -- 正确码只校验既有失败预算；PG失败不应耗尽它，成功由同事务持久收据一次性消费。
 if ARGV[2]=='1' then return 1 end
 local attempts=redis.call('INCR',KEYS[2])
-if attempts==1 then redis.call('EXPIRE',KEYS[2],600) end
+if attempts==1 then redis.call('EXPIRE',KEYS[2],${IM_BINDING_TTL_SECONDS}) end
 return 0
 `
 /** 精确比较旧挑战，不能删除已重新签发的新码。 */

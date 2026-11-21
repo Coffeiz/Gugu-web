@@ -27,7 +27,7 @@ export function createSmallAgentMemory(store: AgentMemoryReadStore, nowSeconds: 
   if (!store || typeof store.read !== 'function' || typeof nowSeconds !== 'function') throw new TypeError('记忆读取端口未完整配置')
   return async (ownerId: string, signal?: AbortSignal): Promise<AgentSmallMemory> => {
     signal?.throwIfAborted()
-    const owner = dataContext(ownerId).ownerId, base = `${owner}/.agent/`, now = numeric(nowSeconds())
+    const owner = dataContext(ownerId).ownerId, base = `${owner}/.agent/memories/`, now = numeric(nowSeconds())
     const names = ['profile.json','pattern.json','facts.json','facts.md','memory.md','daily.md','summary.json','summary.md','summary.ts','stance.json','lens.json'] as const
     let values: Array<Uint8Array | null>
     try { values = await Promise.all(names.map(name => store.read(base + name))) } catch { signal?.throwIfAborted(); throw unavailable() }

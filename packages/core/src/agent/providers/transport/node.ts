@@ -6,13 +6,15 @@ import { createBrotliDecompress, createGunzip, createInflate } from 'node:zlib'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
 import { createHash, X509Certificate } from 'node:crypto'
-import type { ProviderHttpRequest, ProviderHttpResponse, ProviderTransport, ProviderTransportFactory } from '../contracts.js'
+import type { ProviderConnectionTiming, ProviderHttpRequest, ProviderHttpResponse, ProviderTransport, ProviderTransportFactory } from '../contracts.js'
 import { classifyProviderError, ProviderError } from '../errors.js'
 import { resolvePinnedTarget } from './network.js'
 import type { AddressResolver } from './network.js'
 import { openProxyTunnel, proxyFor, proxyOptionsFromEnvironment } from './proxy.js'
-import type { ProviderProxyOptions } from './proxy.js'
-export { proxyOptionsFromEnvironment } from './proxy.js'
+import type { ProxyEndpoint, ProviderProxyOptions } from './proxy.js'
+export { desktopModelTransportOptions, desktopTransportOptions } from './desktop.js'
+export type { ProxyEndpoint } from './proxy.js'
+export { proxyFor, proxyOptionsFromEnvironment } from './proxy.js'
 export { isPublicAddress } from './network.js'
 export { resolvePinnedTarget } from './network.js'
 export type { AddressResolver, ResolvedAddress } from './network.js'
@@ -27,6 +29,7 @@ export interface NodeProviderTransportOptions {
   readonly maxSockets?: number
   readonly idleTimeoutMs?: number
   readonly proxy?: ProviderProxyOptions
+  readonly resolveProxy?: (url: URL, signal: AbortSignal) => Promise<ProxyEndpoint | undefined>
   readonly ca?: string
   /** 搜索等受控出口可显式禁用环境代理/CA；普通模型客户端默认遵循环境。 */
   readonly trustEnvironment?: boolean
@@ -125,9 +128,14 @@ export class NodeProviderTransport implements ProviderTransport {
     const signal = AbortSignal.any([callerSignal, this.#closing.signal])
     if (this.#closed) throw new ProviderError('network', { requestStarted: false })
     throwIfCancelled(signal)
+    const started = performance.now()
+    const report = (timing: ProviderConnectionTiming) => {
+      try { input.onTiming?.(timing) } catch { /* 诊断不影响请求。 */ }
+    }
     const { url, target } = await resolvePinnedTarget(input.url, {
       resolve: this.options.resolve, allowLocal: this.options.allowLocal === true && input.allowLocal === true, signal, timeoutMs: this.options.connectTimeoutMs,
     })
+    report({ dnsMs: performance.now() - started })
     const headers: Record<string, string> = {}
     for (const [name, value] of Object.entries(input.headers)) {
       if (['host', 'connection', 'content-length', 'transfer-encoding', 'proxy-authorization'].includes(name.toLowerCase()) || /[\r\n]/.test(name + value))
@@ -142,15 +150,23 @@ export class NodeProviderTransport implements ProviderTransport {
     }
     if (body instanceof Uint8Array) headers['content-length'] = String(body.byteLength)
     const secure = url.protocol === 'https:'
+    const poolStarted = performance.now()
     const release = await this.#acquire(url.origin, signal)
+    report({ poolWaitMs: performance.now() - poolStarted })
     try {
-    const proxy = proxyFor(url, this.options.proxy)
-    const tunnel = proxy ? await openProxyTunnel(proxy, target, url, signal, { resolve: this.options.resolve, timeoutMs: this.options.connectTimeoutMs, ca: this.options.ca }) : null
+    const proxy = this.options.resolveProxy
+      ? await this.options.resolveProxy(url, signal)
+      : proxyFor(url, this.options.proxy)
+    report({ proxied: !!proxy })
+    const tunnelStarted = performance.now()
+    const tunnel = proxy ? await openProxyTunnel(proxy, target, url, signal, { resolve: this.options.resolveProxy ? undefined : this.options.resolve, timeoutMs: this.options.connectTimeoutMs, ca: this.options.ca }) : null
+    if (tunnel) report({ proxyTunnelMs: performance.now() - tunnelStarted })
     const proxyAgent = tunnel ? secure ? new HttpsAgent({ keepAlive: false }) : new HttpAgent({ keepAlive: false }) : null
     // 代理隧道按请求关闭；不把不同目标/身份的隧道放入同一个keepalive origin池。
     if (proxyAgent && tunnel) proxyAgent.createConnection = () => tunnel
     return await new Promise<ProviderHttpResponse>((resolve, reject) => {
       let requestStarted = false
+      let connectionReady = false
       let settled = false
       let failure: unknown = null
       const requestOptions = {
@@ -165,25 +181,42 @@ export class NodeProviderTransport implements ProviderTransport {
       let writeTimer: ReturnType<typeof setTimeout> | undefined
       const armWriteTimeout = () => {
         if (writeTimer) clearTimeout(writeTimer)
-        writeTimer = setTimeout(() => request.destroy(new ProviderError('timeout', { requestStarted: true, retryable: true, timeoutPhase: 'write' })), this.options.writeTimeoutMs ?? 10_000)
+        writeTimer = setTimeout(() => request.destroy(new ProviderError('timeout', { requestStarted: requestStarted && connectionReady, retryable: true, timeoutPhase: 'write' })), this.options.writeTimeoutMs ?? 10_000)
         writeTimer.unref()
       }
       request.once('socket', socket => {
+        report({ reusedSocket: request.reusedSocket })
         if (socket.connecting) {
+          const connectStarted = performance.now()
+          let tcpConnectedAt: number | undefined
+          socket.once('connect', () => {
+            tcpConnectedAt = performance.now()
+            report({ tcpConnectMs: tcpConnectedAt - connectStarted })
+          })
+          if (secure) socket.once('secureConnect', () => {
+            if (tcpConnectedAt !== undefined) report({ tlsHandshakeMs: performance.now() - tcpConnectedAt })
+          })
+
           connectTimer = setTimeout(() => request.destroy(new ProviderError('timeout', { requestStarted: false, retryable: true, timeoutPhase: 'connect' })), this.options.connectTimeoutMs ?? 10_000)
           connectTimer.unref()
-          socket.once(secure ? 'secureConnect' : 'connect', () => clearTimeout(connectTimer))
-        }
+          socket.once(secure ? 'secureConnect' : 'connect', () => {
+            connectionReady = true
+            clearTimeout(connectTimer)
+          })
+        } else connectionReady = true
       })
       request.setTimeout(input.timeoutMs ?? 300_000, () => request.destroy(new ProviderError('timeout', { requestStarted: true, retryable: true, timeoutPhase: 'read' })))
       request.once('error', error => {
         proxyAgent?.destroy(); tunnel?.destroy()
         release()
-        failure = signal.aborted ? new ProviderError('cancelled') : classifyProviderError(error, { requestStarted })
+        failure = signal.aborted ? new ProviderError('cancelled') : classifyProviderError(error, {
+          requestStarted: requestStarted && connectionReady, transportHop: 'provider',
+        })
         clearTimeout(connectTimer); if (writeTimer) clearTimeout(writeTimer)
         if (!settled) { settled = true; reject(failure) }
       })
       request.once('response', response => {
+        report({ responseHeadersMs: performance.now() - started })
         requestStarted = true; settled = true
         clearTimeout(connectTimer)
         if (writeTimer) clearTimeout(writeTimer)

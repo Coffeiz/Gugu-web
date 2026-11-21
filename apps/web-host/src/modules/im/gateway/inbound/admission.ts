@@ -1,7 +1,9 @@
+import { ImGatewayAdmissionError, imAdmissionKeys, requireImAdmissionId as id } from '@gugu/gateway'
+export { ImGatewayAdmissionError } from '@gugu/gateway'
 import { createHmac, randomUUID } from 'node:crypto'
 import type { Pool } from 'pg'
 import { stableJson } from '@gugu/core/agent'
-import type { ImPreflightScope } from '@gugu/core/im/inbound-preflight'
+import type { ImPreflightScope } from '@gugu/gateway'
 import { normalizeOwnerId } from '../../../../shared/owner-context.js'
 import { withPostgresTransaction } from '../../../../adapters/database/postgres-transaction.js'
 import type { NodeImBotBinding } from './inbox.js'
@@ -19,16 +21,6 @@ export interface ImGatewayAdmissionPort {
   finish(scope: ImPreflightScope, token: string, result: 'enqueue' | 'consumed'): Promise<void>
   markUnknown(scope: ImPreflightScope, token: string): Promise<void>
 }
-export class ImGatewayAdmissionError extends Error {
-  constructor(readonly code: 'invalid_input' | 'unauthorized' | 'conflict' | 'pending' | 'unknown' | 'unavailable') {
-    super('IM 入站准入尚未完成'); this.name = 'ImGatewayAdmissionError'
-  }
-}
-const id = (value: unknown, max = 8192): string => {
-  if (typeof value !== 'string' || !value || value.length > max || /[\x00-\x1f\x7f]/u.test(value)) throw new ImGatewayAdmissionError('invalid_input')
-  return value
-}
-
 /** 永久保存控制分流事实；不保存正文/凭据、不按短TTL重新解释旧事件、不自动重做不确定副作用。 */
 export function createPostgresImGatewayAdmission(options: {
   pool: Pick<Pool, 'connect'>; secretKey: string
@@ -40,12 +32,10 @@ export function createPostgresImGatewayAdmission(options: {
   function key(scope: ImPreflightScope) {
     try {
       const owner = normalizeOwnerId(scope.ownerId), bot = Number(scope.botId)
-      if (owner !== scope.ownerId || !/^[1-9]\d*$/u.test(scope.botId) || !Number.isSafeInteger(bot) || bot > 2147483647
-        || !['feishu', 'qq', 'wechat', 'telegram'].includes(scope.platform) || !['group', 'c2c'].includes(scope.chatType)
-        || scope.chatType === 'c2c' && scope.chatId !== null) throw new Error()
-      const sender = id(scope.platformUserId, 256), conversation = scope.chatType === 'group' ? id(scope.chatId, 256) : sender
-      const scopeHash = digest([owner, scope.platform, scope.botId, scope.chatType, conversation])
-      return [owner, scope.platform, bot, scope.chatType, scopeHash, digest([scopeHash, sender, id(scope.eventId)])] as const
+      if (owner !== scope.ownerId || !/^[1-9]\d*$/u.test(scope.botId) || !Number.isSafeInteger(bot) || bot > 2147483647)
+        throw new Error()
+      const { scopeHash, eventHash } = imAdmissionKeys(scope, digest)
+      return [owner, scope.platform, bot, scope.chatType, scopeHash, eventHash] as const
     } catch { throw new ImGatewayAdmissionError('invalid_input') }
   }
   async function change(scope: ImPreflightScope, token: string, state: 'admitted' | 'consumed' | 'unknown') {

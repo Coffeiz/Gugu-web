@@ -15,10 +15,9 @@ if (options.some((item) => !['--dir', '--mac', '--win', '--x64', '--arm64'].incl
 const node = process.execPath
 const run = (script: string, args: string[] = []) =>
   execFileSync(node, [script, ...args], { cwd: desktop, stdio: 'inherit' })
-run(join(root, 'packages/core/scripts/build.mjs'))
+run(join(desktop, 'scripts/prepare-sidecar.mjs'))
 run(join(desktop, 'scripts/build.mjs'))
 run(pnpm, ['--filter', 'gugu-web', 'build:desktop'])
-run(join(desktop, 'scripts/prepare-sidecar.mjs'))
 run(join(desktop, 'scripts/smoke-sidecar.mjs'))
 const staging = resolve(desktop, '.tools')
 mkdirSync(staging, { recursive: true })
@@ -33,7 +32,7 @@ try {
     '--config.node-linker=hoisted',
     stage,
   ])
-  cpSync(resolve(root, 'apps/web/dist-desktop'), join(stage, 'ui'), {
+  cpSync(resolve(root, 'apps/ui/dist-desktop'), join(stage, 'ui'), {
     recursive: true,
   })
   cpSync(join(root, 'LICENSE'), join(stage, 'LICENSE'))

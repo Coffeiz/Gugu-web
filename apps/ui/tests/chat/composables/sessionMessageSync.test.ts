@@ -1,0 +1,303 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { ref } from 'vue'
+import type { ChatMessage } from '@/components/common/gugu-chat/chatTypes'
+import { agentApi } from '@/services/api'
+import { createSessionMessageSynchronizer, ensureSessionMessageLoaded, findSessionMessageIndex, mapSessionMessageDelta, mergeSessionMessageDelta, replaceRunHistory, sortSessionTimelineMessages } from '@/components/common/gugu-chat/composables/sessionMessageSync'
+
+vi.mock('@/services/api', () => ({ agentApi: { getMessages: vi.fn() } }))
+
+const message = (id: number, key: string, text: string): ChatMessage => ({
+  id, role: 'ai', text, time: '', _syncKey: key,
+})
+
+describe('mergeSessionMessageDelta', () => {
+  it('claims the local user bubble atomically when final history gains a run identity', () => {
+    const local: ChatMessage = { ...message(1, 'client:request-a', '测试'), role: 'user', clientMessageId: 'request-a' }
+    const persisted: ChatMessage = { ...local, id: 2, dbId: 10, runId: 'run-a' }
+    const reply = { ...message(3, 'event:reply-a', '收到'), runId: 'run-a' }
+    const result = replaceRunHistory([local], [persisted, reply], 'run-a')
+    expect(result).toHaveLength(2)
+    expect(result[0]).toMatchObject({ id: 1, dbId: 10, role: 'user', runId: 'run-a' })
+    expect(replaceRunHistory(result, [persisted, reply], 'run-a')).toEqual(result)
+  })
+
+  it('appends unseen persisted messages without duplicating local bubbles', () => {
+    const current = [message(1, 'message:10', 'hello')]
+    const merged = mergeSessionMessageDelta(current, [
+      message(2, 'message:10', 'hello'),
+      message(3, 'message:11', 'world'),
+    ])
+
+    expect(merged).toHaveLength(2)
+    expect(merged[0]).toMatchObject({ id: 1, text: 'hello' })
+    expect(merged[1]).toMatchObject({ id: 3, text: 'world' })
+  })
+
+  it('updates an existing tool/timeline event when its persisted state changes', () => {
+    const current = [message(4, 'tool:call-1', 'running')]
+    const merged = mergeSessionMessageDelta(current, [message(5, 'tool:call-1', 'success')])
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({ id: 4, text: 'success' })
+  })
+
+  it('preserves unkeyed ephemeral messages', () => {
+    const ephemeral = message(1, '', 'streaming')
+    const merged = mergeSessionMessageDelta([ephemeral], [message(2, 'message:2', 'saved')])
+    expect(merged).toEqual([ephemeral, message(2, 'message:2', 'saved')])
+  })
+
+  it('身份补齐后折叠历史同步已经插入的同一条临时用户消息', () => {
+    const optimistic = { ...message(1, 'message:6', '用户文本'), role: 'user', dbId: 6 }
+    const persisted = { ...message(2, 'message:6', '用户文本'), role: 'user', dbId: 6, time: '19:30' }
+
+    const merged = mergeSessionMessageDelta([optimistic, persisted], [])
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({ id: optimistic.id, dbId: 6, _syncKey: 'message:6', role: 'user' })
+  })
+
+  it('历史先于 SSE 数据库确认到达时按客户端身份更新同一条乐观消息', () => {
+    const clientMessageId = 'tab-test:message-1'
+    const optimistic: ChatMessage = {
+      id: 1, role: 'user', text: '群 session 中的网页消息', time: '19:30',
+      clientMessageId, _syncKey: `client:${clientMessageId}`,
+    }
+    const persisted = mapSessionMessageDelta({
+      messages: [{ id: 73, role: 'user', content: optimistic.text, clientMessageId, createdAt: '2026-10-28T11:30:00Z' }],
+      timelineEvents: [],
+    }, () => 2, role => ({ role }))[0]
+
+    const beforeSseIdentity = mergeSessionMessageDelta([optimistic], [persisted])
+    expect(beforeSseIdentity).toHaveLength(1)
+    expect(beforeSseIdentity[0]).toMatchObject({ id: optimistic.id, dbId: 73, _syncKey: `client:${clientMessageId}` })
+
+    // SSE 后续确认数据库身份只补充 dbId，不替换跨来源稳定身份。
+    optimistic.dbId = 73
+    const afterSseIdentity = mergeSessionMessageDelta(beforeSseIdentity, [])
+    expect(afterSseIdentity).toHaveLength(1)
+    expect(afterSseIdentity[0]).toMatchObject({ id: optimistic.id, dbId: 73, text: optimistic.text })
+  })
+
+  it('相同正文但客户端身份不同的两次发送仍分别显示', () => {
+    const first = { ...message(1, 'client:send-1', '重复正文'), role: 'user' }
+    const second = { ...message(2, 'client:send-2', '重复正文'), role: 'user' }
+    expect(mergeSessionMessageDelta([first], [second])).toHaveLength(2)
+  })
+
+  it('用首次持久化记录认领本地默认问候，避免新会话出现重复问候', () => {
+    const greeting: ChatMessage = {
+      ...message(1, '', '咕咕在呢。今天想从哪件开始？'),
+      _greeting: true,
+      _greetFull: '咕咕在呢。今天想从哪件开始？',
+    }
+    const persistedGreeting = {
+      ...message(8, 'message:5', '咕咕在呢。今天想从哪件开始？'),
+      dbId: 5,
+    }
+
+    const merged = mergeSessionMessageDelta([greeting], [persistedGreeting])
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({ id: greeting.id, dbId: 5, _syncKey: 'message:5', text: greeting.text })
+    expect(merged[0]._greeting).toBeUndefined()
+  })
+
+
+  it('展示身份只由 eventId 决定，相同正文不同事件不会合并', () => {
+    const events = ['a', 'b'].map(eventId => ({ eventId, kind: 'assistant', text: '收到', runId: 'run-a', roundId: 'r1', createdAt: '2026-01-01T01:00:00Z' }))
+    const loaded = mapSessionMessageDelta({ timelineEvents: events }, (() => { let id = 1; return () => id++ })(), role => ({ role }))
+    expect(loaded.map(message => message._syncKey)).toEqual(['event:a', 'event:b'])
+    expect(mergeSessionMessageDelta(loaded, loaded)).toHaveLength(2)
+  })
+
+  it('IM 用户气泡按平台发生时间排序，助手按完成时间排在期间到达的消息之后', () => {
+    const loaded = mapSessionMessageDelta({
+      messages: [{
+        id: 73, role: 'user', content: 'Run 中到达的群消息',
+        createdAt: '2026-11-01T14:57:00Z', occurredAt: '2026-11-01T14:55:00Z',
+      }],
+      timelineEvents: [{
+        eventId: 'assistant-done', kind: 'assistant', text: 'Run 完成回复', runId: 'run-a',
+        createdAt: '2026-11-01T14:54:00Z', completedAt: '2026-11-01T14:56:00Z',
+      }],
+    }, (() => { let id = 1; return () => id++ })(), role => ({ role: role === 'assistant' ? 'ai' : role }))
+
+    const ordered = sortSessionTimelineMessages(loaded)
+
+    expect(ordered.map(item => item.text)).toEqual(['Run 中到达的群消息', 'Run 完成回复'])
+    expect(ordered[0]._createdAt).toBe('2026-11-01T14:55:00Z')
+    expect(ordered[1]._completedAt).toBe('2026-11-01T14:56:00Z')
+  })
+
+  it('迟到的旧检查点不能覆盖较新的实时事件', () => {
+    const current = [{ ...message(1, 'event:a', '新正文'), _updatedAt: '2026-01-01T01:02:00Z' }]
+    const incoming = [{ ...message(2, 'event:a', '旧正文'), _updatedAt: '2026-01-01T01:01:00Z' }]
+    expect(mergeSessionMessageDelta(current, incoming)[0].text).toBe('新正文')
+  })
+
+  it('run 交接幂等且不会删掉下一轮或无关消息', () => {
+    const current = [
+      { ...message(1, 'event:a', '实时'), runId: 'run-a', _timelineOrder: 1 },
+      { ...message(2, 'event:orphan', '临时'), runId: 'run-a', _timelineOrder: 2 },
+      { ...message(3, 'event:b', '下一轮'), runId: 'run-b', _timelineOrder: 3 },
+    ]
+    const incoming = [{ ...message(9, 'event:a', '历史'), runId: 'run-a', _timelineOrder: 1 }]
+    const once = replaceRunHistory(current, incoming, 'run-a')
+    expect(replaceRunHistory(once, incoming, 'run-a')).toEqual(once)
+    expect(once.map(message => [message.id, message.text])).toEqual([[1, '历史'], [3, '下一轮']])
+  })
+
+  it('run 历史接管时保留实时工具卡已加载的详情', () => {
+    const current: ChatMessage[] = [{
+      ...message(1, 'event:tool-1', ''), role: 'tool', runId: 'run-a',
+      toolInput: { command: 'pwd' }, toolResult: '已取消', _toolDetailsLoaded: true,
+    }]
+    const incoming: ChatMessage[] = [{
+      ...message(2, 'event:tool-1', ''), role: 'tool', runId: 'run-a',
+      toolStatus: 'cancelled', toolDetailsAvailable: true,
+      _toolDetailsSource: { kind: 'timeline', messageId: 11, index: 0 },
+    }]
+
+    const [tool] = replaceRunHistory(current, incoming, 'run-a')
+
+    expect(tool).toMatchObject({
+      id: 1, toolStatus: 'cancelled', toolInput: { command: 'pwd' },
+      toolResult: '已取消', _toolDetailsLoaded: true,
+    })
+  })
+
+})
+
+describe('session message refresh', () => {
+  beforeEach(() => {
+    vi.mocked(agentApi.getMessages).mockReset()
+  })
+
+  it('原位更新的检查点与自增消息增量一起校准', async () => {
+    const sessionId = ref<number | null>(12)
+    const messages = ref<ChatMessage[]>([message(1, 'message:40', 'already shown')])
+    vi.mocked(agentApi.getMessages).mockResolvedValue({
+      messages: [{ id: 40, role: 'user', content: 'already shown', createdAt: '2026-09-21T00:00:00Z',
+        runOutcome: { status: 'interrupted', errorCode: 'cancelled' } },
+        { id: 41, role: 'user', content: 'new', createdAt: '2026-09-21T00:01:00Z' }],
+      timelineEvents: [], pagination: { newestId: 41 },
+    } as any)
+    const sync = createSessionMessageSynchronizer({
+      messages, sessionId, mkid: (() => { let id = 10; return () => id++ })(),
+      resolveSpeaker: role => ({ role }), scrollBottom: async () => {},
+    })
+    sync.setCursor(12, 40)
+
+    await sync.refresh(12)
+
+    expect(agentApi.getMessages).toHaveBeenCalledWith(12, { afterId: 40, limit: 200 })
+    expect(messages.value.map(item => item.text)).toEqual(['already shown', 'new'])
+    expect(messages.value[1]._syncKey).toBe('message:41')
+    expect(messages.value[0].runOutcome?.status).toBe('interrupted')
+  })
+
+  it('does not apply a response after the active session changed', async () => {
+    const sessionId = ref<number | null>(12)
+    const messages = ref<ChatMessage[]>([])
+    let resolveRequest!: (value: any) => void
+    vi.mocked(agentApi.getMessages).mockReturnValue(new Promise(resolve => { resolveRequest = resolve }))
+    const sync = createSessionMessageSynchronizer({
+      messages, sessionId, mkid: () => 2,
+      resolveSpeaker: role => ({ role }), scrollBottom: async () => {},
+    })
+    const pending = sync.refresh(12)
+    sessionId.value = 13
+    resolveRequest({ messages: [{ id: 1, role: 'user', content: 'stale', createdAt: '' }], pagination: { newestId: 1 } })
+    await pending
+    expect(messages.value).toEqual([])
+  })
+})
+
+describe('search result message loading', () => {
+  it('loads a bounded page around an older hit and makes it available for navigation', async () => {
+    const messages = ref<ChatMessage[]>([{
+      ...message(1, 'message:500', 'latest'), dbId: 500,
+      _createdAt: '2026-09-02T00:00:00Z', _timelineOrder: 500000,
+    }])
+    vi.mocked(agentApi.getMessages).mockResolvedValue({
+      messages: [{ id: 17, role: 'user', content: 'older hit', createdAt: '2026-09-01T00:00:00Z' }],
+      timelineEvents: [],
+    } as any)
+
+    const found = await ensureSessionMessageLoaded({
+      sessionId: 12,
+      messageId: 17,
+      messages,
+      mkid: () => 2,
+      resolveSpeaker: role => ({ role }),
+    })
+
+    expect(found).toBe(true)
+    expect(agentApi.getMessages).toHaveBeenCalledWith(12, { throughId: 17, limit: 200 })
+    expect(messages.value.map(item => item.dbId)).toEqual([17, 500])
+    expect(messages.value.find(item => item.dbId === 17)?.text).toBe('older hit')
+  })
+
+  it('只有工具时间线的历史记录可以按详情来源定位，有正文时优先正文', async () => {
+    const messages = ref<ChatMessage[]>([])
+    const readHistoryThroughMessage = vi.fn(async () => ({
+      messages: [], timelineEvents: [{
+        kind: 'tool', eventId: 'recovered-search', messageId: 17, toolCallId: 'search-call',
+        toolName: 'similar_image_search', toolStatus: 'success', detailsAvailable: true,
+        detailSource: { kind: 'timeline', messageId: 17, index: 0 },
+      }],
+      pagination: { oldestId: 17, hasMore: true },
+    }))
+    const options = {
+      sessionId: 12, messageId: 17, messages, mkid: () => 1, resolveSpeaker: (role: string) => ({ role }),
+      readHistoryThroughMessage,
+    }
+    await expect(ensureSessionMessageLoaded(options)).resolves.toBe(true)
+    expect(messages.value.map(item => item.role)).toEqual(['tool'])
+    expect(findSessionMessageIndex(messages.value, 17)).toBe(0)
+    await expect(ensureSessionMessageLoaded(options)).resolves.toBe(true)
+    expect(readHistoryThroughMessage).toHaveBeenCalledExactlyOnceWith(12, 17)
+    messages.value.push({ ...message(2, 'message:17', '有正文'), dbId: 17 })
+    expect(findSessionMessageIndex(messages.value, 17)).toBe(1)
+  })
+
+  it('does not claim a search hit was loaded when it is outside the owned session page', async () => {
+    const messages = ref<ChatMessage[]>([])
+    vi.mocked(agentApi.getMessages).mockResolvedValue({ messages: [], timelineEvents: [] } as any)
+
+    const found = await ensureSessionMessageLoaded({
+      sessionId: 12,
+      messageId: 99,
+      messages,
+      mkid: () => 1,
+      resolveSpeaker: role => ({ role }),
+    })
+
+    expect(found).toBe(false)
+    expect(messages.value).toEqual([])
+  })
+
+  it('discards a history page if the user switches sessions before it returns', async () => {
+    const messages = ref<ChatMessage[]>([])
+    let finish!: (value: any) => void
+    vi.mocked(agentApi.getMessages).mockReturnValue(new Promise(resolve => { finish = resolve }) as any)
+    const activeSession = ref(12)
+    const loading = ensureSessionMessageLoaded({
+      sessionId: 12,
+      messageId: 17,
+      messages,
+      mkid: () => 1,
+      resolveSpeaker: role => ({ role }),
+      isCurrent: () => activeSession.value === 12,
+    })
+    activeSession.value = 13
+    finish({
+      messages: [{ id: 17, role: 'user', content: 'stale session hit', createdAt: '2026-09-01T00:00:00Z' }],
+      timelineEvents: [],
+    })
+
+    await expect(loading).resolves.toBe(false)
+    expect(messages.value).toEqual([])
+  })
+})

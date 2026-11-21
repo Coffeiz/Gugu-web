@@ -17,9 +17,9 @@ const details: Readonly<Record<string, string>> = {
 
 export function isAgentCommandHelpArgument(value: string): boolean { return ['help', '?', '？'].includes(strip(value).toLowerCase()) }
 
-export function agentCommandHelp(name: string, available: readonly string[]): string {
+export function agentCommandHelp(name: string, available: readonly string[], descriptions: Readonly<Record<string, string>> = {}): string {
   const menu = agentCommandMenu().filter(item => available.includes(item.command.slice(1)))
   if (name && Object.hasOwn(details, name))
     return menu.some(item => item.command === `/${name}`) ? details[name]! : `当前入口尚未提供 /${name} 命令。`
-  return ['🤖 当前入口可用命令：', ...menu.map(item => `${item.command}　${item.description}；发送 ${item.command} help 查看说明`)].join('\n')
+  return ['🤖 当前入口可用命令：', ...menu.map(item => `${item.command}　${descriptions[item.command] ?? item.description}；发送 ${item.command} help 查看说明`)].join('\n')
 }

@@ -1,3 +1,4 @@
+import { wechatEventId } from '@gugu/gateway'
 import { createHash } from 'node:crypto'
 import type { RedisCommandClient } from '../../../../workers/redis-stream-queue.js'
 
@@ -115,7 +116,7 @@ export function createNodeImInbox(redis: RedisCommandClient, options: { maxLengt
       if (Buffer.byteLength(serialized, 'utf8') > maxPayloadBytes) return invalid()
       const resume = typeof payload._pending_ask_resume_id === 'string' ? payload._pending_ask_resume_id.trim() : ''
       const identity = [binding.ownerId.trim(), binding.platform, binding.botId.trim(), payload.chat_type, payload.chat_id ?? '', payload.platform_user_id,
-        resume ? 'resume' : 'message', resume || String(payload.message_id).trim()]
+        resume ? 'resume' : 'message', resume || wechatEventId(payload) || String(payload.message_id).trim()]
       const seen = `im:node:seen:${hash(identity)}`
       const keys = [seen, NODE_IM_INBOUND_STREAM]
       if (payload.chat_type === 'group') {

@@ -99,10 +99,11 @@ export function createImHostLifecycle(options: {
       let failed = false
       controller.abort()
       components?.pauseIngress?.()
+      const drainRuns = Promise.resolve().then(() => components?.drainRuns?.()).catch(() => { failed = true })
       const worker = components?.worker
       if (worker && started.includes(worker)) try { await worker.stop() } catch { failed = true }
       await Promise.allSettled(tasks)
-      try { await components?.drainRuns?.() } catch { failed = true }
+      await drainRuns
       for (const service of [...started].reverse()) {
         if (service !== worker) try { await service.stop() } catch { failed = true }
       }

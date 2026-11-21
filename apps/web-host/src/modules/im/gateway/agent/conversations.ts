@@ -1,3 +1,4 @@
+import { replacePlatformMentionIds } from '@gugu/core/agent/context/messages'
 import type { Pool, PoolClient } from 'pg';
 import { normalizePersistentArtifact, stableJson } from '@gugu/core/agent';
 import type { RunIdentity } from '@gugu/core/agent';
@@ -6,7 +7,7 @@ import { normalizeOwnerId } from '../../../../shared/owner-context.js';
 import { withPostgresTransaction } from '../../../../adapters/database/postgres-transaction.js';
 import { createImInboundEnvelope } from '../inbound/envelope.js';
 import type { NodeImBotBinding } from '../inbound/inbox.js';
-import { imConversationDigest, imConversationFingerprint, imConversationScopeHash } from './identity.js';
+import { imConversationEventId, imConversationDigest, imConversationFingerprint, imConversationScopeHash } from './identity.js';
 import { parseImAttentionRecord, type ImAttentionRecord } from '@gugu/core/im/attention/directive';
 import type { ImRetiredInboundKey } from '../inbound/retired.js';
 
@@ -113,7 +114,7 @@ export function createPostgresImConversationStore(options: {
     if (new Set(ids).size !== ids.length || !payload.text.trim() && !ids.length) throw new ImConversationError('invalid_input');
     const value: Payload = { ...payload, bot_id: binding.botId, channel_id: binding.botId };
     const scopeHash = imConversationScopeHash(options.secretKey, binding, payload);
-    const eventHash = digest([scopeHash, sender, payload._pending_ask_resume_id || payload.platform_message_id || payload.message_id]);
+    const eventHash = digest([scopeHash, sender, imConversationEventId(payload)]);
     const fingerprint = imConversationFingerprint(options.secretKey, scopeHash, payload, ids as string[]);
     return { pendingMedia: false as const, value, ids: ids as string[], sender, type, chat, scopeHash, eventHash, fingerprint };
   }
@@ -179,10 +180,13 @@ export function createPostgresImConversationStore(options: {
           if (!session) {
             if (input.mode === 'early') return null;
             await options.beforeCreate?.(client, binding.ownerId);
+            const ownBotId = binding.platform === 'qq' && p.type === 'group' ? optionalText(p.value.platform_bot_user_id, 128) : null
+            const text = p.value.text as string
+            const title = ownBotId ? (replacePlatformMentionIds(text, new Map([[ownBotId, '咕咕']])) ?? text) : text
             session = (await client.query<{ id: number }>(`INSERT INTO conversation_sessions
               (user_id,title,title_locked,summary,source,bot_id,chat_id,platform_user_id,chat_type,context_epoch,baseline_message_seq,last_message_seq,execution_state,pending_message_count,created_at,updated_at)
               VALUES($1,$2,false,'',$3,$4,$5,$6,$7,1,0,0,'idle',0,clock_timestamp(),clock_timestamp()) RETURNING id`,
-            [binding.ownerId, Array.from(p.value.text as string).slice(0, 50).join('') || '新对话', binding.platform, binding.botId, p.chat, p.type === 'c2c' ? p.sender : null, p.type])).rows[0];
+            [binding.ownerId, Array.from(title).slice(0, 50).join('') || '新对话', binding.platform, binding.botId, p.chat, p.type === 'c2c' ? p.sender : null, p.type])).rows[0];
             isNew = true;
           }
           sessionId = positive(session?.id);

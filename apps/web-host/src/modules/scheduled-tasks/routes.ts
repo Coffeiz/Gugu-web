@@ -17,11 +17,11 @@ export const taskPreciseColumns = `to_char(start_at AT TIME ZONE 'UTC','YYYY-MM-
 
 const precise = (value: unknown, fallback: Date | string | null) => typeof value === 'string' ? value.replace('.000000Z', 'Z') : iso(fallback)
 
-export type ScheduledTaskList = (ownerId: string, eventId: number | null) => Promise<{ tasks: unknown[] }>
+export type ScheduledTaskList = (ownerId: string, eventId: number | null | 'all') => Promise<{ tasks: Array<{ enabled?: boolean; channels?: string[]; schedule_status?: string; schedule_kind?: string; last_run_at?: string | null; last_run_failed?: boolean }> }>
 
 export function taskResponse(t: TaskRow, filesystemAuthorizationEnabled: boolean) {
   return {
-      id: Number(t.id), name: t.name, payload: t.payload, cron: t.cron,
+      id: Number(t.id), ...(t.execution_mode === 'reminder' ? { execution_mode: 'reminder' as const } : {}), name: t.name, payload: t.payload, cron: t.cron,
       schedule_kind: taskScheduleKind(t), interval_minutes: t.interval_minutes,
       start_at: precise(t.precise_start, t.start_at), end_at: precise(t.precise_end, t.end_at), schedule_status: scheduleStatus(t),
       channels: (t.channels || '').split(',').filter(Boolean), enabled: t.enabled,
@@ -34,6 +34,12 @@ export function taskResponse(t: TaskRow, filesystemAuthorizationEnabled: boolean
 }
 
 export function registerScheduledTaskList(app: FastifyInstance, userFromRequest: UserFromRequest, list: ScheduledTaskList) {
+  app.get('/api/v1/scheduled-tasks/pending-web-notifications', async request => {
+    const { tasks } = await list(userFromRequest(request).requestContext.data.ownerId, 'all')
+    return { pending: tasks.some(task => task.enabled && task.schedule_status === 'active'
+      && (task.channels?.includes('web') || task.channels?.includes('chat'))
+      && (task.schedule_kind !== 'once' || !task.last_run_at)) }
+  })
   app.get<{ Querystring: { event_id?: string } }>('/api/v1/scheduled-tasks', async (request, reply) => {
     const id = request.query.event_id === undefined ? null : parsePythonInteger(request.query.event_id)
     if (request.query.event_id !== undefined && id == null) return reply.code(422).send({ detail: '活动标识无效' })
@@ -90,7 +96,7 @@ const datetime = z.preprocess(value => {
 }))
 
 const schema = z.object({
-  name: z.string(), payload: z.string(), schedule_kind: z.enum(['once', 'cron', 'interval']),
+  name: z.string(), payload: z.string(), execution_mode: z.enum(['reminder', 'instruction']).optional(), schedule_kind: z.enum(['once', 'cron', 'interval']),
   cron: z.string().nullable(), interval_minutes: integer.refine(value => value >= 1 && value <= 60).nullable(),
   start_at: datetime.nullable(), end_at: datetime.nullable(), channels: z.array(z.string()),
   enabled: boolean, event_id: integer.nullable(), workspace_id: integer.nullable(),
@@ -101,7 +107,7 @@ const schema = z.object({
 const createSchema = schema.partial().extend({ name: z.string().min(1).max(100), schedule_kind: z.enum(['once', 'cron', 'interval']) })
 
 const updateSchema = schema.omit({ event_id: true }).partial().extend({
-  name: z.string().nullish(), payload: z.string().nullish(), schedule_kind: z.enum(['once', 'cron', 'interval']).nullish(),
+  name: z.string().nullish(), payload: z.string().nullish(), execution_mode: z.enum(['reminder', 'instruction']).optional(), schedule_kind: z.enum(['once', 'cron', 'interval']).nullish(),
   channels: z.array(z.string()).nullish(), enabled: boolean.nullish(), authorized_tools: z.array(z.string()).nullish(),
   email_attachment_file_ids: z.array(integer).max(5).nullish(),
 })
@@ -116,10 +122,11 @@ export function registerScheduledTaskWrites(app: FastifyInstance, userFromReques
       return reply.code(result.created ? 201 : 200).send(result.task)
     } catch (error) { return sendError(error, reply) }
   })
-  app.patch<{ Params: { taskId: string } }>('/api/v1/scheduled-tasks/:taskId', async (request, reply) => {
+  app.patch<{ Params: { taskId: string }; Querystring: { event_id?: string } }>('/api/v1/scheduled-tasks/:taskId', async (request, reply) => {
     const id = parsePythonInteger(request.params.taskId), parsed = updateSchema.safeParse(request.body)
-    if (id == null || !parsed.success) return reply.code(422).send({ detail: '任务参数无效' })
-    try { return await writes.update(userFromRequest(request).requestContext.data.ownerId, id, parsed.data, writeRequestMetadata(request).clientId) }
+    const eventId = request.query.event_id === undefined ? undefined : parsePythonInteger(request.query.event_id)
+    if (id == null || eventId === null || !parsed.success) return reply.code(422).send({ detail: '任务参数无效' })
+    try { return await writes.update(userFromRequest(request).requestContext.data.ownerId, id, parsed.data, writeRequestMetadata(request).clientId, eventId) }
     catch (error) { return sendError(error, reply) }
   })
 }

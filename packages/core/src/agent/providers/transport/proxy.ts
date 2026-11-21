@@ -55,7 +55,7 @@ export async function openProxyTunnel(proxy: ProxyEndpoint, target: ResolvedAddr
     })
     const timer = setTimeout(() => request.destroy(new ProviderError('timeout', { retryable: true, requestStarted: false })), options.timeoutMs ?? 10_000)
     timer.unref()
-    request.once('error', error => { clearTimeout(timer); reject(signal.aborted ? new ProviderError('cancelled') : classifyProviderError(error, { requestStarted: false })) })
+    request.once('error', error => { clearTimeout(timer); reject(signal.aborted ? new ProviderError('cancelled') : classifyProviderError(error, { requestStarted: false, transportHop: 'proxy' })) })
     request.once('connect', (response, socket, head) => {
       clearTimeout(timer)
       if (response.statusCode !== 200) { socket.destroy(); reject(new ProviderError(response.statusCode === 407 ? 'authentication' : 'network', { retryable: false, requestStarted: false })); return }
@@ -72,6 +72,6 @@ export async function openProxyTunnel(proxy: ProxyEndpoint, target: ResolvedAddr
     const timer = setTimeout(() => secure.destroy(new ProviderError('timeout', { requestStarted: false, retryable: true })), options.timeoutMs ?? 10_000)
     timer.unref()
     secure.once('secureConnect', () => { clearTimeout(timer); signal.removeEventListener('abort', cancel); resolve(secure) })
-    secure.once('error', error => { clearTimeout(timer); signal.removeEventListener('abort', cancel); reject(classifyProviderError(error, { requestStarted: false })) })
+    secure.once('error', error => { clearTimeout(timer); signal.removeEventListener('abort', cancel); reject(classifyProviderError(error, { requestStarted: false, transportHop: 'provider' })) })
   })
 }

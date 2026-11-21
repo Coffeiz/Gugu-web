@@ -1,25 +1,25 @@
 {
-  "apps/web/tests/preview/FloatPreviewWindowDrag.test.ts": {
+  "apps/ui/tests/preview/FloatPreviewWindowDrag.test.ts": {
     "domain": "file-preview",
     "layer": "L1",
-    "owner": "apps/web/components/common/layout",
-    "productionEntry": "apps/web/src/components/common/layout/FloatPreviewWindow.vue",
+    "owner": "apps/ui/components/common/layout",
+    "productionEntry": "apps/ui/src/shared/components/common/layout/FloatPreviewWindow.vue",
     "keyBehavior": "真实预览组件拖动保持顶部可见、左右与底部 25% 额外视口边界，最大化禁止拖动并可恢复；用隔离虚拟文本避免网络",
     "ci": "frontend-test"
   },
-  "apps/web/tests/preview/VideoViewer.test.ts": {
+  "apps/ui/tests/preview/VideoViewer.test.ts": {
     "domain": "file-preview",
     "layer": "L1",
-    "owner": "apps/web/components/common/viewers",
-    "productionEntry": "apps/web/src/components/common/viewers/VideoViewer.vue",
+    "owner": "apps/ui/components/common/viewers",
+    "productionEntry": "apps/ui/src/shared/components/common/viewers/VideoViewer.vue",
     "keyBehavior": "播放或加载过期签名视频时刷新地址并恢复；切源竞态不串用播放进度；主动暂停中断 play 请求不会变成播放器错误",
     "ci": "frontend-test"
   },
-  "apps/web/tests/preview/htmlPreview.test.ts": {
+  "apps/ui/tests/preview/htmlPreview.test.ts": {
     "domain": "file-preview",
     "layer": "L0",
-    "owner": "apps/web/utils",
-    "productionEntry": "apps/web/src/utils/htmlPreview.ts",
+    "owner": "apps/ui/utils",
+    "productionEntry": "apps/ui/src/shared/utils/htmlPreview.ts",
     "keyBehavior": "HTML 预览中的同页锚点保持在隔离文档内，不解析到宿主应用路由",
     "ci": "frontend-test"
   }

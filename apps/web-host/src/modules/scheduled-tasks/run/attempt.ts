@@ -7,7 +7,7 @@ import type { createConfiguredWebAgentProviderBinding } from '../../agent/llm/co
 import { withPostgresTransaction } from '../../../adapters/database/postgres-transaction.js'
 import { recordAgentUsage } from '../../agent/run/usage.js'
 
-type AttemptInput = Parameters<ScheduledTaskExecutionPorts<unknown>['attempt']>[0]
+type AttemptInput = Parameters<NonNullable<ScheduledTaskExecutionPorts<unknown>['attempt']>>[0]
 type BindProvider = Awaited<ReturnType<typeof createConfiguredWebAgentProviderBinding>>['bind']
 type BoundModel = Awaited<ReturnType<BindProvider>>
 type HarnessOptions = Parameters<typeof createScheduledTaskHarness>[0]
@@ -24,7 +24,7 @@ export function createWebScheduledTaskAgentAttempt(options: {
   }): Promise<Omit<HarnessOptions, 'identity' | 'leaseToken' | 'provider' | 'assertScheduledLease'> & {
     provider: Omit<HarnessOptions['provider'], 'resolve'>
   }>
-}): ScheduledTaskExecutionPorts<unknown>['attempt'] {
+}): NonNullable<ScheduledTaskExecutionPorts<unknown>['attempt']> {
   return createScheduledTaskAgentAttempt<CanonicalRunContext>(async input => {
     const identity = Object.freeze({ ownerId: input.task.ownerId,
       sessionId: `scheduled-task:${input.task.id}`, runId: randomUUID() })

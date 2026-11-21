@@ -1,3 +1,4 @@
+import type { ResolveCanvasFileReference } from '../../mind/canvas-placement.js'
 import { MindCanvasRelationMutationError } from '../../mind/relation-delete-global.js'
 import { createMindCanvasRelationDelete } from '../../mind/relation-delete-canvas.js'
 import { createSqlMindCanvasRelationDeleteRuntime } from '../../mind/relation-delete-canvas-sql.js'
@@ -18,6 +19,13 @@ import { z } from 'zod'
 import type { createSqlMindCanvasReader } from '../../mind/canvas-read.js'
 import type { ToolDefinition } from './contracts.js'
 import { createConfirmationGate, type ConfirmationClaimReference, type ConfirmationTargetSnapshot } from './confirmation.js'
+
+export const canvasConfirmationLabels = {
+  canvas_delete: '删除画布及其内容',
+  canvas_delete_note: '删除画布专属便签及对应视图',
+  canvas_disconnect: '删除画布中的关系',
+  canvas_batch: '执行包含便签删除的画布批量操作',
+} as const
 
 const inputSchema = z.object({ project_id: z.number().int().safe().optional(), limit: z.number().int().safe().optional(), offset: z.number().int().safe().optional() }).passthrough()
 export type AgentCanvasReader = Pick<ReturnType<typeof createSqlMindCanvasReader>, 'listAgentCanvases' | 'getAgentCanvas' | 'searchAgentCanvas' | 'getAgentCanvasFocus'>
@@ -50,7 +58,7 @@ function createCanvasDetailTools(reader:AgentCanvasReader):ToolDefinition[]{
  const schemas={canvas_get:z.object({...common,include_nodes:z.boolean().optional(),include_relations:z.boolean().optional(),offset:z.number().int().min(0).optional()}).passthrough(),
   canvas_search:z.object({...common,query:z.string().optional(),q:z.string().optional(),queries:z.array(z.string()).optional(),types:z.array(z.enum(['canvas_note','project','file','event'])).optional(),mode:z.enum(['OR','AND']).optional()}).passthrough()}
  return (Object.keys(schemas) as (keyof typeof schemas)[]).map(name=>({
-  definition:{name,schema:{type:'function',function:{name,description:name==='canvas_get'?'读取画布分页节点和独立关系快照，审计仅给默认端点建议，不修改布局。':'搜索画布已有节点，返回limit+1探测count及truncated。',
+  definition:{name,schema:{type:'function',function:{name,description:name==='canvas_get'?'读取画布分页节点和独立关系快照，审计仅给默认端点建议，不修改布局。':'在指定画布内搜索已有内容。仅查画布便签时传 types=[canvas_note]。结果包含可读标题、正文摘要、node_id 和用于定位的 item_id。',
    parameters:(()=>{const result=z.toJSONSchema(schemas[name]) as Record<string,import('../models.js').Json>;delete result.additionalProperties;return result})()}}},
   effect:'read',validate:input=>schemas[name].safeParse(input),
   async execute(input,scope){
@@ -439,7 +447,7 @@ export function createCanvasDeleteTool(port:CanvasDeletePort):ToolDefinition{
   }
 }
 /** request_id 对同一owner+画布持久去重；批操作复用既有Mind事务与调用收据。 */
-export function createCanvasBatchPort(core:import('../../data/runtime.js').SqlDataRuntime,publish:(event:import('../../mind/canvas-edits.js').CanvasEditPublication)=>Promise<void>,confirmation?:CanvasBatchConfirmationPort):CanvasBatchPort{
+export function createCanvasBatchPort(core:import('../../data/runtime.js').SqlDataRuntime,publish:(event:import('../../mind/canvas-edits.js').CanvasEditPublication)=>Promise<void>,confirmation?:CanvasBatchConfirmationPort, resolveFileReference?: ResolveCanvasFileReference):CanvasBatchPort{
   if(!core.receipts||typeof publish!=='function')throw new Error('画布批处理后端未装配')
   const absent=new Error('画布批处理收据不存在')
   async function reconcile(input:CanvasBatchRequest):Promise<import('../models.js').ToolResult>{
@@ -486,7 +494,7 @@ export function createCanvasBatchPort(core:import('../../data/runtime.js').SqlDa
             const current=await canvasBatchDeleteSnapshot({db:tx,backend:core.backend},owner,input.args,input.signal)
             if(!current||!confirmedTargets||current.targetsDigest!==confirmedTargets.targetsDigest||current.versionsDigest!==confirmedTargets.versionsDigest)throw new Error('画布便签删除确认已使用或目标已变化')
           }
-          const result=await applyCanvasEditBatch(tx,core.backend,context.ownerId,input.args,operationId,input.signal)
+          const result=await applyCanvasEditBatch(tx,core.backend,context.ownerId,input.args,operationId,input.signal,resolveFileReference)
           events=result.publications;mutated=result.mutated
           return result.value
         }catch(error){callbackError=error;throw error}
@@ -506,7 +514,7 @@ export function createCanvasBatchPort(core:import('../../data/runtime.js').SqlDa
 export function createCanvasBatchTool(port:CanvasBatchPort):ToolDefinition{
   const id=z.number().int().safe(),finite=z.number().finite()
   const position=z.object({x:finite.optional(),y:finite.optional(),anchor:z.enum(['auto','viewport_center','viewport_top_left','viewport_top_right','viewport_bottom_left','viewport_bottom_right','near_node']).optional(),near_node_id:id.optional(),offset_x:finite.optional(),offset_y:finite.optional()}).passthrough().optional()
-  const operation=z.object({kind:z.enum(['create_note','add_node','update_item','remove_item','delete_note','connect']),ref_type:z.enum(['project','file','event']).optional(),ref_id:id.optional(),node_id:id.optional(),item_id:id.optional(),source_node_id:id.optional(),target_node_id:id.optional(),source_side:z.enum(['left','right']).optional(),target_side:z.enum(['left','right']).optional(),title:z.string().optional(),content:z.string().optional(),color:z.enum(['amber','coral','blue','teal']).optional(),x:finite.optional(),y:finite.optional(),width:finite.optional(),height:finite.optional(),z:id.optional(),collapsed:z.boolean().optional(),position}).passthrough()
+  const operation=z.object({kind:z.enum(['create_note','add_node','update_item','remove_item','delete_note','connect']),ref_type:z.enum(['project','file','event']).optional(),ref_id:z.union([id,z.string().regex(/^(path|drop)-[A-Za-z0-9_-]{1,24000}$/u)]).optional(),node_id:id.optional(),item_id:id.optional(),source_node_id:id.optional(),target_node_id:id.optional(),source_side:z.enum(['left','right']).optional(),target_side:z.enum(['left','right']).optional(),title:z.string().optional(),content:z.string().optional(),color:z.enum(['amber','coral','blue','teal']).optional(),x:finite.optional(),y:finite.optional(),width:finite.optional(),height:finite.optional(),z:id.optional(),collapsed:z.boolean().optional(),position}).passthrough()
   const schema=z.object({canvas_id:id,request_id:z.string().refine(value=>[...value].length<=120),operations:z.array(operation).min(1).max(20)}).passthrough()
   return {definition:{name:'canvas_batch',schema:{type:'function',function:{name:'canvas_batch',description:'在一个事务中按顺序批量编排画布节点、便签和连接，最多 20 项；任一操作失败则整批回滚，request_id 用于安全重放。删除便签须经过可信目标确认。',parameters:z.toJSONSchema(schema) as Record<string,import('../models.js').Json>}}},effect:'write',requiresInteraction:true,confirmationReplay:true,validate:input=>schema.safeParse(input),
     execute:(input,scope,call)=>port.apply({identity:scope.identity,roundId:scope.roundId,toolCallId:call.id,args:input as CanvasBatchIntent,signal:scope.signal,call,scope}),
@@ -514,7 +522,7 @@ export function createCanvasBatchTool(port:CanvasBatchPort):ToolDefinition{
   }
 }
 /** 三种画布编辑共用持久收据与恢复，业务字段及SQL交给Mind共享服务。 */
-export function createCanvasEditPort(core: import('../../data/runtime.js').SqlDataRuntime, publish: (event: import('../../mind/canvas-edits.js').CanvasEditPublication) => Promise<void>): CanvasEditPort {
+export function createCanvasEditPort(core: import('../../data/runtime.js').SqlDataRuntime, publish: (event: import('../../mind/canvas-edits.js').CanvasEditPublication) => Promise<void>, resolveFileReference?: ResolveCanvasFileReference): CanvasEditPort {
   if(!core.receipts||typeof publish!=='function')throw new Error('画布编辑后端未装配')
   const absent=new Error('画布编辑收据不存在')
   async function recover(input:CanvasEditRequest):Promise<import('../models.js').ToolResult>{
@@ -533,7 +541,7 @@ export function createCanvasEditPort(core: import('../../data/runtime.js').SqlDa
       const key=canvasCoordinate(input,'canvas.edit')
       const receipt=await core.operationWithTransaction(key.context,key.operationId,'agent.canvas.edit',input.intent,async tx=>{
         try{
-          const result=await applyCanvasEdits(tx,core.backend,key.context.ownerId,input.intent,key.operationId,input.signal)
+          const result=await applyCanvasEdits(tx,core.backend,key.context.ownerId,input.intent,key.operationId,input.signal,resolveFileReference)
           events=result.publications;mutated=result.mutated;return result.value
         }catch(error){callbackError=error;throw error}
       },{signal:input.signal})
@@ -592,8 +600,8 @@ export function createCanvasPlacementTools(port:CanvasEditPort):ToolDefinition[]
   const position=z.object({x:finite.optional(),y:finite.optional(),anchor:z.enum(['auto','viewport_center','viewport_top_left','viewport_top_right','viewport_bottom_left','viewport_bottom_right','near_node']).optional(),near_node_id:id.optional(),offset_x:finite.optional(),offset_y:finite.optional()}).strict()
     .refine(value=>(value.x===undefined)===(value.y===undefined)&&(value.anchor!=='near_node'||value.near_node_id!==undefined))
   const noteFields={title:z.string().refine(value=>[...value].length<=300).meta({maxLength:300}).optional(),content:z.string().optional(),color:z.enum(['amber','coral','blue','teal']).optional(),position:position.optional(),width:finite.min(180).max(520).optional(),height:finite.min(100).max(420).optional()}
-  const refFields={node_id:id.optional(),ref_type:z.enum(['project','file','event']).optional(),ref_id:id.optional(),position:position.optional()}
-  const reference=(value:{node_id?:number;ref_type?:string;ref_id?:number})=>value.node_id!==undefined?value.ref_type===undefined&&value.ref_id===undefined:value.ref_type!==undefined&&value.ref_id!==undefined
+  const refFields={node_id:id.optional(),ref_type:z.enum(['project','file','event']).optional(),ref_id:z.union([id,z.string().regex(/^(path|drop)-[A-Za-z0-9_-]{1,24000}$/u)]).optional(),position:position.optional()}
+  const reference=(value:{node_id?:number;ref_type?:string;ref_id?:number|string})=>value.node_id!==undefined?value.ref_type===undefined&&value.ref_id===undefined:value.ref_type!==undefined&&(value.ref_type==='file'?typeof value.ref_id==='string':typeof value.ref_id==='number')
   const noteEntry=z.object(noteFields).strict(),refEntry=z.object(refFields).strict().refine(reference)
   const notes=z.object({canvas_id:id,...noteFields,notes:z.array(noteEntry).min(1).max(20).optional()}).passthrough().refine(value=>value.notes===undefined||Object.keys(noteFields).every(key=>value[key]===undefined))
   const refs=z.object({canvas_id:id,...refFields,nodes:z.array(refEntry).min(1).max(20).optional()}).passthrough().refine(value=>value.nodes===undefined?reference(value):Object.keys(refFields).every(key=>value[key]===undefined))
@@ -613,7 +621,7 @@ export function createCanvasPlacementTools(port:CanvasEditPort):ToolDefinition[]
     const entry=properties[plural]!.items as Record<string,import('../models.js').Json>,entryProperties=entry.properties as Record<string,Record<string,import('../models.js').Json>>
     entryProperties.position!.allOf=conditions
     if(name==='canvas_add_node')entry.oneOf=[{required:['node_id'],not:{anyOf:['ref_type','ref_id'].map(field=>({required:[field]}))}},{required:['ref_type','ref_id'],not:{required:['node_id']}}]
-    return {definition:{name,schema:{type:'function',function:{name,description:name==='canvas_create_note'?'在指定画布创建专属便签，支持单项/批量及世界坐标或视口、相邻节点定位。':'放置已有业务引用或项目/文件/活动资源，不创建普通时间流笔记；已放置目标保留原布局。',parameters}}},effect:'write',
+    return {definition:{name,schema:{type:'function',function:{name,description:name==='canvas_create_note'?'在指定画布创建专属便签，支持单项/批量及世界坐标或视口、相邻节点定位。':'放置已有业务引用或项目/文件/活动资源，不创建普通时间流笔记；文件 ref_id 使用工具返回的路径引用，已放置目标保留原布局。',parameters}}},effect:'write',
       validate:input=>schemas[name].safeParse(input),
       execute:(input,scope,call)=>port.apply({identity:scope.identity,roundId:scope.roundId,toolCallId:call.id,intent:intent(name,input),signal:scope.signal}),
       reconcile:(input,identity,call)=>port.reconcile({identity,roundId:identity.roundId,toolCallId:call.id,intent:intent(name,input)})}

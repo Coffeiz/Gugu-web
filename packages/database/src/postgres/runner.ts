@@ -19,6 +19,8 @@ interface PostgresMigrationDefinition {
   readonly indexes?: readonly string[]
   readonly prerequisites?: readonly string[]
   readonly downstreamIndexes?: readonly string[]
+  readonly trackedFields?: readonly string[]
+  readonly downstreamFields?: readonly string[]
   readonly functions?: readonly string[]
 }
 
@@ -26,7 +28,7 @@ async function definitions(client: PoolClient, migration: PostgresMigrationDefin
   const { rows } = await client.query<{ kind: string; name: string; detail: string }>(`
     WITH managed AS (
       SELECT c.oid,c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-       WHERE n.nspname=current_schema() AND c.relname=ANY($1::text[])
+       WHERE n.nspname=current_schema() AND (c.relname=ANY($1::text[]) OR c.relname=ANY($7::text[]))
     )
     SELECT 'column' AS kind,m.relname||'.'||a.attname AS name,
       jsonb_build_array(a.attnum,format_type(a.atttypid,a.atttypmod),a.attnotnull,a.attidentity,
@@ -34,26 +36,31 @@ async function definitions(client: PoolClient, migration: PostgresMigrationDefin
       FROM managed m JOIN pg_attribute a ON a.attrelid=m.oid
        LEFT JOIN pg_attrdef d ON (d.adrelid,d.adnum)=(a.attrelid,a.attnum)
       WHERE a.attnum>0 AND NOT a.attisdropped
+       AND (m.relname=ANY($1::text[]) OR m.relname||'.'||a.attname=ANY($5::text[]))
+       AND NOT (m.relname||'.'||a.attname=ANY($6::text[]))
     UNION ALL
     SELECT 'constraint',m.relname||'.'||c.conname,
       jsonb_build_array(pg_get_constraintdef(c.oid),c.convalidated)::text
       FROM managed m JOIN pg_constraint c ON c.conrelid=m.oid
+      WHERE (m.relname=ANY($1::text[]) OR m.relname||'.'||c.conname=ANY($5::text[]))
+        AND NOT (m.relname||'.'||c.conname=ANY($6::text[]))
     UNION ALL
     SELECT 'index',c.relname,jsonb_build_array(pg_get_indexdef(c.oid),i.indisvalid,i.indisready)::text
       FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid JOIN pg_namespace n ON n.oid=c.relnamespace
-      WHERE n.nspname=current_schema() AND (i.indrelid IN (SELECT oid FROM managed) OR c.relname=ANY($2::text[]))
+      WHERE n.nspname=current_schema() AND (i.indrelid IN (SELECT oid FROM managed WHERE relname=ANY($1::text[])) OR c.relname=ANY($2::text[]))
         AND NOT (c.relname=ANY($3::text[]))
     UNION ALL
     SELECT 'trigger',m.relname||'.'||t.tgname,
       jsonb_build_array(pg_get_triggerdef(t.oid),t.tgenabled)::text
       FROM managed m JOIN pg_trigger t ON t.tgrelid=m.oid
-      WHERE NOT t.tgisinternal
+      WHERE NOT t.tgisinternal AND m.relname=ANY($1::text[])
     UNION ALL
     SELECT 'function',p.proname,pg_get_functiondef(p.oid)
       FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
       WHERE n.nspname=current_schema() AND p.proname=ANY($4::text[])
     ORDER BY kind,name,detail`, [
     migration.tables, migration.indexes ?? [], migration.downstreamIndexes ?? [], migration.functions ?? [],
+    migration.trackedFields ?? [], migration.downstreamFields ?? [], (migration.trackedFields ?? []).map(field => field.split('.')[0]),
   ])
   return hash(JSON.stringify(rows))
 }

@@ -14,11 +14,11 @@ Host 解析 HTTP 参数、建立认证和映射错误；Core 负责完整聚合�
 
 全部测试、Python 对照、构建与 typecheck 在 devserver；Python 串行，所有指标为私有测试 Redis DB9 的合成数据，测试开始确认精确日键不存在，结束只删除本次精确键，不使用 FLUSH。
 
-1. 移植旧回归场景到目标 route 测试，先执行 `node --import tsx --test tests/admin/ops-summary.test.ts`，退出 1：目标 module 尚不存在。此时没有新增 Core/Host 实现。
+1. 移植旧回归场景到目标 route 测试，先执行 `node --import tsx --test tests/admin/ops/summary.test.ts`，退出 1：目标 module 尚不存在。此时没有新增 Core/Host 实现。
 2. 实现后，真实生产 Host 初次读取得到 503 而非预期 200：Redis Lua cjson 将空 HGETALL 编为对象，而 reader 需要数组。修改 Lua 在空结果时明确返回 `[]`，保留断言。
 3. 下一次真实 Python 全字段对照失败：输入 `session:granted:ignored`，Python 不计数，Node 沿用原型的 split 限制误计 granted=3。按 Python partition 保留整个冒号余串，修复后串行 Core build 退出 0。
 4. 协议补充测试先红：`days=1e0` 被 Ajv 错收为 1（200，预期 422）。改为原始查询解析，兼容整数小数 `1.0`、下划线整数和重复参数取最后值，拒绝科学计数法；Python Pydantic 类型解析对照也确认该语法。
-5. 最终 `tests/admin/ops-summary.test.ts` 5/5、`tests/host/ops-summary-main.integration.test.ts` 1/1、未修改的旧原型回归 `tests/admin/admin-ops-summary.test.ts` 4/4：合计 10/10，0 跳过。生产测试调用真实 `startServer`，登录管理员后读取真实 Redis，并启动实际 Python handler 对同一 Redis、相同 UTC 日期及 days=2 计算完整响应逐字段比较；不是测试替身替代正式 Redis。
+5. 最终 `tests/admin/ops/summary.test.ts` 5/5、`tests/host/main/admin/ops.integration.test.ts` 1/1、未修改的旧原型回归 `tests/admin/ops/routes.test.ts` 4/4：合计 10/10，0 跳过。生产测试调用真实 `startServer`，登录管理员后读取真实 Redis，并启动实际 Python handler 对同一 Redis、相同 UTC 日期及 days=2 计算完整响应逐字段比较；不是测试替身替代正式 Redis。
 
 生产回归还覆盖未认证 401、空 hash、错误 Redis 类型、无 Redis 配置明确 503 和脱敏。工具及邮件 `1/32` 失败率按 Python IEEE754 half-even 舍入为 `.0312`，未使用 JS toFixed 近似替代。测试附加场景有部分在初始切片红灯之后编写；只有科学计数法补充场景另行取得明确行为红灯，不宣称每条场景都单独先红。
 

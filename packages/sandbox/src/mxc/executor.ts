@@ -10,7 +10,7 @@ export interface NativeProcess {
   dispose(): void
 }
 export type NativeSpawn = (request: {
-  containment: { type: 'process' | 'bubblewrap' }
+  containment: { type: 'process' | 'bubblewrap' } | { type: 'seatbelt'; config: { guiAccess: false; keychainAccess: false; nestedPty: false } }
   command: string
   workingDirectory: string
   timeoutMs: number
@@ -35,7 +35,7 @@ export class MxcExecutor implements ExecutionBackend {
     cancellation: true,
   })
   private networkProxy?: string
-  constructor(private spawn: NativeSpawn, private containment: 'process' | 'bubblewrap' = 'process', networkProxy?: string) {
+  constructor(private spawn: NativeSpawn, private containment: 'process' | 'bubblewrap' | 'seatbelt' = 'process', networkProxy?: string) {
     if (networkProxy !== undefined) {
       let proxy: URL
       try { proxy = new URL(networkProxy) } catch { throw new ExecutionError('denied', 'MXC 回环代理地址无效') }
@@ -81,7 +81,9 @@ export class MxcExecutor implements ExecutionBackend {
     }
     try {
       child = await this.spawn({
-        containment: { type: this.containment },
+        containment: this.containment === 'seatbelt'
+          ? { type: 'seatbelt', config: { guiAccess: false, keychainAccess: false, nestedPty: false } }
+          : { type: this.containment },
         command: policy.command,
         workingDirectory: policy.cwd,
         timeoutMs: policy.timeoutMs,

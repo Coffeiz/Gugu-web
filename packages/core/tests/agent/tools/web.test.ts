@@ -1,5 +1,10 @@
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, utimes } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { cleanupDesktopDownloadStaging, createDesktopWebDownload } from '../../../src/runtime/desktop-web-download.js'
 import { expect, it, vi } from 'vitest'
 import { createHttpGetTool, createWebDownloadTool, type HttpGetPort } from '../../../src/agent/tools/web.js'
+import { openStreamedAgentGet } from '../../../src/agent/tools/streamed-http-get.js'
 import { createDeepResearchTool, createSimilarImageSearchTool, createWebSearchTool } from '../../../src/agent/tools/search.js'
 import { fakeDependencies, fakeResponse } from '../providers/fixtures.js'
 import { ProviderError } from '../../../src/agent/providers/errors.js'
@@ -250,6 +255,25 @@ it('相似图搜索先归一旧版数字字符串结果数，再按整数范围�
   expect(search).toHaveBeenCalledTimes(1)
 })
 
+it('相似图 URL 模式拒绝本地附件 ID，并转发有效 URL', async () => {
+  const { scope } = mount({ async get() { return httpResponse('') } })
+  const search = vi.fn(async (input: { attachmentId: string; url: string; maxResults?: number }) => ({
+    kind: 'completed' as const, successful: true, mutated: false,
+    value: { image: input.url, count: input.maxResults ?? 15 },
+  }))
+  const tool = createSimilarImageSearchTool({ search }, { allowAttachments: false })
+  const registry = createToolRegistry({ tools: [tool], authorize: async () => true })
+  const dispatch = (input: unknown) => registry.tools.dispatch({ id: 'similar-url', name: 'similar_image_search', input }, scope())
+
+  await expect(dispatch({ attach_id: 'local-attachment' })).resolves.toMatchObject({
+    successful: false, executed: false,
+  })
+  await expect(dispatch({ image_url: 'https://images.example.test/input.png', max_results: 3 })).resolves.toMatchObject({
+    successful: true, value: { image: 'https://images.example.test/input.png', count: 3 },
+  })
+  expect(search).toHaveBeenCalledTimes(1)
+})
+
 it('相似图结果超出预算时省略长链接，保留完整候选链接和截断说明', async () => {
   const { dependencies } = fakeDependencies([fakeResponse({
     requestId: 'synthetic-request',
@@ -266,6 +290,27 @@ it('相似图结果超出预算时省略长链接，保留完整候选链接和�
   })
 })
 
+
+it('下载流消费或取消后，只释放一次响应和出站连接', async () => {
+  const data = new TextEncoder().encode('合成下载内容')
+  for (const cancelled of [false, true]) {
+    const raw = fakeResponse(null, { chunks: [data] })
+    const close = vi.fn(async () => {})
+    const cancel = vi.fn(raw.cancel)
+    const controller = new AbortController()
+    const response = await openStreamedAgentGet({ request: async () => ({ ...raw, cancel }), close },
+      'https://example.test/file', controller.signal)
+    if (cancelled) controller.abort()
+    else {
+      const chunks = []
+      for await (const chunk of response.body) chunks.push(chunk)
+      expect(chunks).toEqual([data])
+    }
+    await response.cancel()
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(close).toHaveBeenCalledOnce()
+  }
+})
 
 it('web_download 可信目标预检优先于网络，推导文件名并流式限制容量', async () => {
   const { scope } = mount({ async get() { return httpResponse('') } })
@@ -303,6 +348,44 @@ it('web_download 可信目标预检优先于网络，推导文件名并流式限
   open.mockResolvedValueOnce(overflow)
   await expect(dispatch({ url: 'example.test/file' })).resolves.toMatchObject({ successful: false, mutated: false, value: { error: '下载内容超过当前用户可用存储空间' } })
   expect(overflow.closed).toBe(true)
+})
+
+it('桌面下载完整落盘暂存后才通知宿主，完成后移除暂存', async () => {
+  const dataRoot = await mkdtemp(join(tmpdir(), 'gugu-agent-download-'))
+  const { scope } = mount({ async get() { return httpResponse('') } })
+  const data = new TextEncoder().encode('合成下载')
+  const commit = vi.fn(async ({ stage }: { stage: string }) => {
+    expect(await readFile(join(dataRoot, stage, 'body'))).toEqual(Buffer.from(data))
+  })
+  const registry = createToolRegistry({ authorize: async () => true, tools: [createDesktopWebDownload({
+    dataRoot, authorized: async () => true, readTarget: async () => 'synthetic-target', commit,
+    open: async () => fakeResponse(null, { headers: { 'content-type': 'text/plain' }, chunks: [data] }),
+  })] })
+  try {
+    await expect(registry.tools.dispatch({ id: 'download', name: 'web_download',
+      input: { url: 'https://example.test/sample' } }, scope())).resolves.toMatchObject({
+      successful: true, value: { path: expect.stringMatching(/^\/personal\/下载\/sample-[0-9a-f]+\.txt$/u) },
+    })
+    expect(commit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      target: 'synthetic-target', stage: expect.stringMatching(/^\.gugu-download-[A-Za-z0-9]{6}$/u),
+    }), expect.any(AbortSignal))
+    expect(await readdir(dataRoot)).toEqual([])
+  } finally { await rm(dataRoot, { recursive: true, force: true }) }
+})
+
+it('桌面启动只清理过期下载暂存目录', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gugu-download-cleanup-'))
+  const now = Date.now()
+  const old = new Date(now - 48 * 60 * 60 * 1000)
+  try {
+    for (const name of ['.gugu-download-Abc123', '.gugu-download-Abc456', '其他目录'])
+      await mkdir(join(directory, name))
+    await utimes(join(directory, '.gugu-download-Abc123'), old, old)
+    await utimes(join(directory, '其他目录'), old, old)
+    await symlink(join(directory, '其他目录'), join(directory, '.gugu-download-Abc789'), 'junction')
+    await cleanupDesktopDownloadStaging(directory, now)
+    expect((await readdir(directory)).sort()).toEqual(['.gugu-download-Abc456', '.gugu-download-Abc789', '其他目录'])
+  } finally { await rm(directory, { recursive: true, force: true }) }
 })
 
 it('web_download 对中断流和瞬时网络失败按旧退避重试，非重试错误不重发', async () => {

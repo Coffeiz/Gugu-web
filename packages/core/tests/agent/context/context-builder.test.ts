@@ -8,7 +8,7 @@ describe('Core Agent 上下文 builder', () => {
     const selection = { modelIdentity: 'model', contextWindow: 10000, locale: 'zh-CN', groupChat: false, workspaceBinding: null, contextPolicy: { loadOwnerContext: true, memoryEnabled: true } } satisfies ContextSourceSelection
     const data = { projects: [], userTimezone: 'Asia/Shanghai', events: [], notes: [], filesOverview: {}, stylePreferences: {}, memory: {}, imChannels: {}, imMemory: {}, knowledge: [] } satisfies ContextData
     const builder = createAgentContextBuilder({
-      staticPrompt: (_selection, _identity, _preferences, timezone) => ({ base: '今天 {today}', persona: '人格', skills: '', policy: '策略', retrieval: '', skillIndex: '', timezone: timezone ?? 'UTC', now }),
+      staticPrompt: (_selection, _identity, _preferences, timezone) => ({ base: '今天 {today}', persona: '人格', skills: '', policy: '策略', skillIndex: '', timezone: timezone ?? 'UTC', now }),
       dynamic: () => ({ memoryBlock: '记忆', projectBlock: '项目', sourceBlock: '来源', events: [], notes: [], files: null, knowledge: [], includeProjects: true, includeCalendar: true, includeFiles: true, includeKnowledge: true }),
       sessionInfo: () => ({ source: 'web' }), systemInMessages: () => true,
     })
@@ -37,7 +37,7 @@ describe('Core Agent 上下文 builder', () => {
       now: () => now.getTime(),
       staticPrompt: (_selection, _identity, stylePreferences, timezone) => {
         const prefs = stylePreferences && typeof stylePreferences === 'object' && !Array.isArray(stylePreferences) ? stylePreferences : {}
-        return { base: 'base', persona: 'persona', skills: '', policy: 'policy', retrieval: '', skillIndex: '', timezone: timezone ?? 'UTC', now,
+        return { base: 'base', persona: 'persona', skills: '', policy: 'policy', skillIndex: '', timezone: timezone ?? 'UTC', now,
           customReplyStyleEnabled: prefs.custom_reply_style_enabled === true,
           customReplyStyle: typeof prefs.custom_reply_style === 'string' ? prefs.custom_reply_style : '' }
       },

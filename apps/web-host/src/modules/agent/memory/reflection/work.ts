@@ -1,13 +1,15 @@
+import type { CompactionReflectionEdits } from '@gugu/core/agent/memory/owner-reflection-edits'
 import type { createRedisAgentReflectionInbox } from './queue.js'
 import type { createLocalOwnerReflectionWriter } from './write.js'
 
 type Batch = NonNullable<Awaited<ReturnType<ReturnType<typeof createRedisAgentReflectionInbox>>>>
+  & { compactionCandidate?: { output: CompactionReflectionEdits; evidence: string } }
 type Writer = ReturnType<typeof createLocalOwnerReflectionWriter>
 type Snapshot = Awaited<ReturnType<Writer['snapshot']>>
 
 /** 恢复持久发布优先于模型调用，只有提交收据后才确认 Redis 批次。 */
 export function createOwnerReflectionWork(options: {
-  claim: ReturnType<typeof createRedisAgentReflectionInbox>
+  claim(): Promise<Batch | null>
   writer: Writer
   checkSource?(batch: Batch, signal: AbortSignal): Promise<{ kind: 'ready' | 'defer' | 'discard' | 'split' }>
   extract(batch: Batch, snapshot: Snapshot, signal: AbortSignal): Promise<

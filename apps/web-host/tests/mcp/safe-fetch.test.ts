@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
 import {NodeProviderTransport} from '../../../../packages/core/src/agent/providers/transport/node.js'
-import {createMcpSafeFetch} from '../../src/modules/mcp/safe-fetch.js'
+import {createMcpSafeFetch} from '@gugu/core/mcp/safe-fetch'
 
 test('MCP 请求经过固定目标传输，拒绝跳转并可取消响应流',async()=>{
  let reached=false, closed=false

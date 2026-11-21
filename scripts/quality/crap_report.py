@@ -31,7 +31,7 @@ RISK_HIGH = 30.0
 RISK_MEDIUM = 15.0
 FULL_RUN_TIMEOUT_SECONDS = 900
 PYTHON_FULL_SCAN_DOMAIN = "全量扫描（backend/agent + backend/app）"
-TYPESCRIPT_FULL_SCAN_DOMAIN = "全量扫描（apps/web/src）"
+TYPESCRIPT_FULL_SCAN_DOMAIN = "全量扫描（apps/ui/src）"
 FULL_SCAN_LAYER = "全量测试套件覆盖率（手动）"
 FULL_SCAN_CI = "CRAP 报告仅周期性手动运行，不由自动 CI 触发"
 SENSITIVE_KEYS = {
@@ -350,9 +350,9 @@ def _run_test(language: str, entries: list[dict[str, Any]], temp_dir: Path) -> d
         display = f"python -m pytest -q --disable-warnings --cov={module} --cov-branch --cov-report=json:<TEMP> {', '.join(test_paths)}"
     else:
         source_paths = sorted({entry["source"] for entry in entries})
-        test_paths = sorted({str(Path(test).relative_to("apps/web")) for entry in entries for test in entry["tests"]})
+        test_paths = sorted({str(Path(test).relative_to("apps/ui")) for entry in entries for test in entry["tests"]})
         coverage_dir = temp_dir / "typescript-coverage"
-        source_patterns = ",".join(str(Path(path).relative_to("apps/web")) for path in source_paths)
+        source_patterns = ",".join(str(Path(path).relative_to("apps/ui")) for path in source_paths)
         command = [
             "corepack", "pnpm", "exec", "vitest", "run", *test_paths,
             "--coverage.enabled", "--coverage.provider=v8",
@@ -396,7 +396,7 @@ def _coverage_for_file(path: Path, coverage_path: Path, language: str) -> tuple[
     data = json.loads(coverage_path.read_text(encoding="utf-8"))
     file_map = data.get("files", {}) if language == "python" else data
     source_resolved = path.resolve()
-    language_root = ROOT / ("backend" if language == "python" else "apps/web")
+    language_root = ROOT / ("backend" if language == "python" else "apps/ui")
     record = None
     for key, candidate in file_map.items():
         candidate_path = Path(key)

@@ -7,6 +7,8 @@ const levels = new Map(Object.entries({
   'host.shutdown_requested': 'info', 'host.shutdown_phase_started': 'info', 'host.shutdown_phase_finished': 'info',
   'host.shutdown_phase_slow': 'warn', 'host.shutdown_phase_failed': 'error',
   'host.stop_failed': 'error', 'host.database_unavailable': 'warn', 'host.rag_unavailable': 'warn',
+  'scheduled_tasks.check_failed': 'warn',
+  'web_push.failed': 'warn',
   'host.trash_purge_unavailable': 'warn', 'host.search_usage_unavailable': 'warn',
   'gateway.started': 'info', 'gateway.stopped': 'info', 'gateway.start_failed': 'error',
   'gateway.stop_failed': 'error', 'gateway.degraded': 'warn',
@@ -17,15 +19,16 @@ const conditions = new Set((
   'binding_post_commit_pending cleanup_failed compact_unavailable delivery_pending im_compaction_failed ' +
   'im_history_retention_failed im_history_storage_cleanup_failed im_provider_failed im_run_failed im_retention_failed ' +
   'im_retention_pending_unknown im_runtime_event_pending im_video_failed im_voice_failed interaction_wake_pending interaction_callback_failed ' +
+  'qq_interaction_message_unmatched qq_interaction_action_rejected qq-interaction-ack-failed ' +
   'dispatch_unavailable delivery_unavailable pending_unavailable interaction_unavailable maintenance_unavailable ' +
   'message_failed notify_pending ownership_lost pending_ask_notify_pending poll post queue_unavailable ' +
   'reflection_dead reflection_deferred reflection_notification_pending reflection_retry reflection_usage_unknown ' +
   'secret_wake_pending session_delete_cleanup_pending session_delete_notification_pending ' +
   'shortcut_notification_pending shortcut_read_unavailable start stop typing poll-unavailable ' +
   'config-unavailable listener-unavailable connection-failed cleanup-failed post-commit-pending qface-unavailable ' +
-  'im_delivery_policy_changed im_dispatch_order_unavailable im_preferences_unavailable ' +
+  'im_delivery_policy_changed im_dispatch_order_unavailable im_preferences_unavailable im_model_unavailable ' +
   'platform-unavailable admission-pending admission-unknown admission-unavailable callback-cleanup-pending ' +
-  'telegram-poll-unavailable telegram-cleanup-failed wechat-cleanup-failed wechat-poll-unavailable wechat-start-notify-unavailable wechat-stop-notify-unavailable wechat-typing-ticket-unavailable ' +
+  'telegram-poll-unavailable telegram-cleanup-failed telegram-media-notice-failed wechat-voice-notice-failed wechat-cleanup-failed wechat-poll-unavailable wechat-sender-unmatched wechat-start-notify-unavailable wechat-stop-notify-unavailable wechat-typing-ticket-unavailable wechat-typing-unavailable wechat-typing-revoked wechat-typing-stop-unavailable ' +
   'qq-connection-failed qq-event-failed qq-heartbeat-failed qq-heartbeat-timeout qq-cleanup-failed ' +
   'feishu-sdk-error feishu-sdk-warning feishu-misrouted-event feishu-event-failed feishu-cleanup-failed feishu-connection-failed'
 ).split(' '))
@@ -34,7 +37,7 @@ const migrationConditions = new Set(['migration_incompatible', 'migration_pendin
 const migrationEvents = new Set(['host.rag_unavailable', 'host.trash_purge_unavailable', 'host.search_usage_unavailable'])
 
 const shutdownPhases = new Set([
-  'http', 'gateway', 'account_memory', 'workers', 'scheduled_runs', 'agent_runs', 'mcp',
+  'http', 'gateway', 'account_memory', 'web_push', 'workers', 'scheduled_runs', 'agent_runs', 'mcp',
   'embedding_rebuild', 'embedding_transport', 'loopscope', 'loopscope_transport', 'im_transports',
   'im_delivery_pool', 'project_journal_pool', 'core', 'postgres_pool',
 ])
@@ -47,13 +50,17 @@ export function createRuntimeLog({ regular, diagnostic }) {
     const incident = error === undefined ? undefined : randomUUID()
     const allowedCodes = event === 'gateway.degraded' ? conditions : migrationEvents.has(event) ? migrationConditions : null
     const lifecycle = event.startsWith('host.shutdown_') || event === 'host.started' || event === 'host.stopped' || event === 'host.stop_failed'
+    const errorCode = incident ? failureCode(error) : undefined
+    const mediaStatus = (code === 'qq-event-failed' && ['qq_media_address', 'qq_media_download'].includes(errorCode)
+      || code === 'feishu-event-failed' && errorCode === 'feishu_media_download') ? error?.httpStatus : undefined
     const attributes = {
       ...(event.startsWith('host.shutdown_phase_') && shutdownPhases.has(phase) ? { phase } : {}),
       ...(lifecycle && signals.has(signal) ? { signal } : {}),
       ...(lifecycle && Number.isSafeInteger(elapsedMs) && elapsedMs >= 0 ? { elapsedMs } : {}),
       ...(lifecycle && Number.isSafeInteger(pid) && pid > 0 ? { pid } : {}),
       ...(allowedCodes && code !== undefined ? { code: allowedCodes.has(code) ? code : 'unknown' } : {}),
-      ...(incident ? { errorCode: failureCode(error) } : {}),
+      ...(errorCode ? { errorCode } : {}),
+      ...(Number.isInteger(mediaStatus) && mediaStatus >= 100 && mediaStatus <= 599 ? { httpStatus: mediaStatus } : {}),
       ...(event === 'sandbox.system_completed' && typeof ok === 'boolean' ? { ok } : {}),
       ...(event === 'sandbox.system_completed' && typeof timedOut === 'boolean' ? { timedOut } : {}),
     }

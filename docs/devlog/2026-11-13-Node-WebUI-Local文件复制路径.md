@@ -7,8 +7,8 @@
 ## devserver 验证
 
 - Node 26 `@gugu/webui` typecheck：通过。
-- `tests/files/file-copy-route.test.ts`：通过，验证认证、owner、目标参数、元数据和无效请求响应。
-- 隔离 PostgreSQL `tests/files/file-copy-postgres.test.ts`：通过，验证重名复制、覆盖正文/版本/配额、稳定配额操作键、自身复制收据及 owner 隔离。
+- `tests/files/mutations/copy.test.ts`：通过，验证认证、owner、目标参数、元数据和无效请求响应。
+- 隔离 PostgreSQL `tests/files/mutations/copy.postgres.test.ts`：通过，验证重名复制、覆盖正文/版本/配额、稳定配额操作键、自身复制收据及 owner 隔离。
 - Node 文件域 `tests/files/*.test.ts`：**58/58 通过，0 跳过**。
 - Python 基准 `test_files_api.py`、`test_file_service.py`、`test_undo_files.py`：**91 项通过**，串行运行。
 - PostgreSQL 测试使用临时 schema 和合成文件目录，结束后删除 schema 与临时目录。全部测试在 devserver 原生执行，未使用 Docker。

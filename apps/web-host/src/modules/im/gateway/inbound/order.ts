@@ -2,7 +2,7 @@ import type {PoolClient} from 'pg'
 import type {RunIdentity} from '@gugu/core/agent'
 import {agentDispatchSource,decryptAgentDispatchInput,type AgentDispatchInput,type ImAgentDispatchInput} from '../../../agent/run/dispatch.js'
 import {createImInboundEnvelope} from './envelope.js'
-import {imConversationDigest,imConversationFingerprint,imConversationScopeHash} from '../agent/identity.js'
+import {imConversationEventId,imConversationDigest,imConversationFingerprint,imConversationScopeHash} from '../agent/identity.js'
 
 export class ImDispatchOrderError extends Error{constructor(){super('IM 消息执行顺序暂不可用');this.name='ImDispatchOrderError'}}
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value)
@@ -39,7 +39,7 @@ export function createImDispatchOrder(options:{secretKey:string;diagnose?(code:'
     ||route.chatType==='group'&&source.chat_id!==route.chatId||source.platform_user_id!==row.platform_user_id
     ||route.chatType==='c2c'&&source.platform_user_id!==route.platformUserId
     ||attachments.some(value=>typeof value!=='string')||row.fingerprint!==imConversationFingerprint(options.secretKey,scopeHash,source,attachments as string[])
-    ||row.event_hash!==imConversationDigest(options.secretKey,[scopeHash,source.platform_user_id,source._pending_ask_resume_id||source.platform_message_id||source.message_id])
+    ||row.event_hash!==imConversationDigest(options.secretKey,[scopeHash,source.platform_user_id,imConversationEventId(source)])
     ||(route.platform==='wechat'?row.im_platform_message_id!==null||source.message_id!==source.context_token:typeof native!=='string'||row.im_platform_message_id!==native||route.platform==='telegram'&&!/^[1-9]\d*$/.test(native)))throw new ImDispatchOrderError()
    sequences.add(seq)
   }

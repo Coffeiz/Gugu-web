@@ -60,7 +60,9 @@ export interface PreparationPorts extends ContextServices {
 export interface CanonicalContextPorts extends ContextServices {
   /** Optional LoopScope-only observations; never participates in context preparation or authorization. */
   readonly observation?: AgentObservationPort
+  persistCompaction?(context: CanonicalRunContext): Promise<void>
   readonly finalization: CanonicalFinalizationPort
+  writeSessionTitle?(input: CanonicalCompletionInput, complete: (prompt: string) => Promise<string>): Promise<void>
   readonly references: ContextReferenceCodec
   load(identity: RunIdentity, signal: AbortSignal): Promise<{
     input: PrepareContextInput
@@ -108,7 +110,7 @@ export interface CanonicalContextPorts extends ContextServices {
   diagnoseCompactionFailure(input: {
     identity: RunIdentity
     revision: number
-    contextInput: number
+    contextInput: number | null
   }, error: unknown): void
 }
 
@@ -372,6 +374,7 @@ export interface ContextPort<C> {
   }, result: ToolResult, signal?: AbortSignal): Promise<ToolResult>
   /** 必须在返回前关闭短事务，不跨 Provider 等待持有数据库连接。 */
   prepare(identity: RunIdentity, signal: AbortSignal): Promise<C | EarlyExit>
+  isRoundToolAvailable?(context: C, name: string): boolean
   afterRound(context: C, result: {
     readonly text: string
     readonly calls: readonly ToolCall[]
@@ -387,7 +390,7 @@ export interface ContextPort<C> {
     readonly applied: boolean
   }>
   /** 在 actual usage 达 85% 时的压缩编排；用量未知不触发。 */
-  afterUsage(context: C, usage: Usage, signal: AbortSignal): Promise<{
+  afterUsage(context: C, usage: Usage, signal: AbortSignal, onStart?: () => Promise<void>): Promise<{
     readonly context: C
     readonly applied: boolean
     readonly reason?: 'below_threshold' | 'retry_deferred' | 'failed' | 'no_change' | 'applied' | 'not_applied'

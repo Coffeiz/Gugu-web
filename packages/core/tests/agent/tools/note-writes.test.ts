@@ -8,7 +8,7 @@ import { initializeSqlite, openSqliteRuntime } from '../../../src/data/sqlite.js
 import { createNoteWritePort, createNoteWriteTools } from '../../../src/agent/tools/note.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 
-it('笔记结构化引用必须归属当前 owner，创建和行编辑一次提交并按调用收据重放', async () => {
+it('笔记 Markdown 引用必须归属当前 owner，创建和行编辑一次提交并按调用收据重放', async () => {
   const folder = await mkdtemp(join(tmpdir(), 'gugu-note-writes-'))
   try {
     const path = join(folder, 'core.db')
@@ -23,6 +23,7 @@ it('笔记结构化引用必须归属当前 owner，创建和行编辑一次提�
       let allowed = true
       const port = createNoteWritePort(core, {
         now: () => new Date('2026-11-18T15:00:00Z'), timezone: 'Asia/Shanghai',
+        async validateFileReference(owner, id) { return owner === ownerId && id === 'path-synthetic' },
         async publish() { published++ },
       })
       const registry = createToolRegistry({
@@ -34,13 +35,14 @@ it('笔记结构化引用必须归属当前 owner，创建和行编辑一次提�
         resolution: null, async execute() { throw new Error('笔记工具不调用执行器') },
       })
 
-      const block = (id: number) => ({
-        type: 'paragraph',
-        content: [{ type: 'reference', ref_type: 'project', ref_id: id, label: '引用项目' }],
-      })
-      expect(await dispatch('foreign', 'note_create', { blocks: [block(foreign.id)] }))
+      const projectLink = (id: number) => `[引用项目](gugu://open-object/project/${id})`
+      expect(await dispatch('foreign', 'note_create', { markdown: projectLink(foreign.id) }))
         .toMatchObject({ successful: false, mutated: false, value: { error: '引用对象不存在' } })
-      const input = { content: JSON.stringify([{ type: 'heading', content: [{ text: '标题' }] }, block(project.id)]), captured_at: '11月17日' }
+      expect(await dispatch('retired-file', 'note_create', { markdown: '[旧文件](gugu://open-object/file/42)' }))
+        .toMatchObject({ successful: false, mutated: false, value: { error: expect.stringContaining('文件引用无效') } })
+      expect(await dispatch('foreign-file', 'note_create', { markdown: '[其他文件](gugu://open-object/file/path-foreign)' }))
+        .toMatchObject({ successful: false, mutated: false, value: { error: expect.stringContaining('文件引用无效') } })
+      const input = { markdown: `# 标题\n\n${projectLink(project.id)}`, captured_at: '11月17日' }
       const created = await dispatch('create', 'note_create', input)
       expect(created).toMatchObject({ successful: true, mutated: true, value: {
         note: { origin: 'gugu', kind: 'note', content_md: `# 标题\n\n[[project:${project.id}|引用项目]]` },
@@ -77,6 +79,11 @@ it('笔记结构化引用必须归属当前 owner，创建和行编辑一次提�
         successful: true, mutated: true, value: { note: { content_md: `# 重复重复重复\n\n[[project:${project.id}|引用项目]]` } },
       })
       expect(published).toBe(4)
+      const fileLink = '[文档](gugu://open-object/file/path-synthetic)'
+      const example = '\`[示例](gugu://open-object/file/42)\`'
+      const code = '\`\`\`md\n[示例](gugu://open-object/file/42)\n\`\`\`'
+      expect(await dispatch('append-ref', 'note_update', { node_id: id, append_markdown: [fileLink, example, code].join('\n\n') }))
+        .toMatchObject({ successful: true, value: { note: { content_md: expect.stringContaining(`[[file:path-synthetic|文档]]\n\n${example}\n\n${code}`) } } })
       allowed = false
       expect(await dispatch('revoked', 'note_update', { node_id: id, append_markdown: '无权写入' })).toMatchObject({ successful: false })
     } finally { await core.close() }

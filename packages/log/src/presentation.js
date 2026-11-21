@@ -76,6 +76,8 @@ const providerStages = new Map(Object.entries({
 
 const conditions = new Map(Object.entries({
   im_provider_failed: 'IM 模型调用失败', im_run_failed: 'IM 任务执行失败', dispatch_unavailable: '消息调度不可用',
+  im_model_unavailable: '即时通讯缺少默认模型，消息等待处理',
+  'wechat-typing-ticket-unavailable': '微信输入状态不可用，继续处理消息',
   migration_incompatible: '数据库迁移版本不兼容', migration_pending: '数据库迁移尚未执行',
   migration_unavailable: '无法检查数据库迁移状态', platform_unsupported: '当前平台不支持',
 }))

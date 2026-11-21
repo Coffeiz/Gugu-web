@@ -1,0 +1,673 @@
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createApp, nextTick, reactive } from 'vue'
+import ProfileImPane from '@/im/connect/ImConnectPane.vue'
+import { desktopData } from '@desktop/bridge/bridge'
+import { desktopFeishuConnectApi } from '@desktop/im/connect/platforms/feishu/desktop'
+import { desktopQqConnectApi } from '@desktop/im/connect/platforms/qq/desktop'
+import { desktopWechatConnectApi } from '@desktop/im/connect/platforms/wechat/desktop'
+import type { DesktopImPairingStatus, DesktopImSettingsAdapter } from '@/im/connect/desktopAdapter'
+
+const mocks = vi.hoisted(() => ({
+  preferences: {
+    imToolDisplayMode: 'all',
+    showIntermediateReplies: false,
+    fetch: vi.fn(),
+    saveImToolDisplayMode: vi.fn(),
+    saveShowIntermediateReplies: vi.fn(),
+  },
+  list: vi.fn(),
+  update: vi.fn(),
+  feishuStart: vi.fn(),
+  telegramConnect: vi.fn(),
+  telegramReplace: vi.fn(),
+  telegramBinding: vi.fn(),
+  qrToCanvas: vi.fn(),
+  desktop: false,
+  liveState: null as { rev: { im_channels: number }; connected: boolean } | null,
+}))
+
+mocks.liveState = reactive({ rev: { im_channels: 0 }, connected: false })
+
+vi.mock('@/stores/preferences', () => ({ usePreferencesStore: () => mocks.preferences }))
+vi.mock('@/stores/live', () => ({ useLiveStore: () => mocks.liveState }))
+vi.mock('@/components/common/profile/desktopProfile', () => ({ useDesktopProfile: () => mocks.desktop }))
+vi.mock('@/services/api', () => ({
+  userBotsApi: { list: mocks.list, update: mocks.update },
+  feishuConnectApi: { start: mocks.feishuStart, poll: vi.fn() },
+  qqConnectApi: { start: vi.fn(), poll: vi.fn() },
+  wechatConnectApi: { start: vi.fn(), poll: vi.fn() },
+  telegramConnectApi: {
+    connect: mocks.telegramConnect,
+    replace: mocks.telegramReplace,
+    createBindingCode: mocks.telegramBinding,
+  },
+}))
+vi.mock('qrcode', () => ({ default: { toCanvas: mocks.qrToCanvas } }))
+vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
+vi.mock('@/composables/core/useConfirmDialog', () => ({ confirmDialog: vi.fn() }))
+vi.mock('@/components/common/overlays/PopupMenu.vue', async () => {
+  const { h } = await import('vue')
+  return { default: {
+    props: ['show'],
+    setup(props: { show: boolean }, { slots }: { slots: { default?: () => unknown[] } }) {
+      return () => props.show ? h('div', { class: 'popup-menu-host' }, slots.default?.()) : null
+    },
+  } }
+})
+vi.mock('@/components/common/icons/Icon.vue', () => ({ default: { template: '<span />' } }))
+vi.mock('@/components/common/profile/MessageFormatSettings.vue', () => ({ default: { template: '<div />' } }))
+vi.mock('@/components/common/profile/GroupOwnerMemorySwitch.vue', async () => {
+  const { h } = await import('vue')
+  return { default: {
+    props: ['enabled'],
+    emits: ['change'],
+    setup(props: { enabled: boolean }, { emit }: { emit: (event: 'change', enabled: boolean) => void }) {
+      return () => h('button', { type: 'button', 'aria-label': 'profileImUi.toggleGroupOwnerMemory',
+        onClick: () => emit('change', !props.enabled) })
+    },
+  } }
+})
+
+let app: ReturnType<typeof createApp> | undefined
+let host: HTMLDivElement | undefined
+
+async function flushUi() {
+  await Promise.resolve()
+  await nextTick()
+  await Promise.resolve()
+  await nextTick()
+}
+
+const runtimeDesktopImAdapter: DesktopImSettingsAdapter = {
+  pairings: {
+    feishu: desktopFeishuConnectApi,
+    qq: desktopQqConnectApi,
+    wechat: desktopWechatConnectApi,
+  },
+  qq: desktopQqConnectApi,
+  appearance: () => desktopData.appearance(),
+  updateAppearance: patch => desktopData.updateAppearance(patch),
+}
+
+async function mountDesktopProfilePane(props: { connectTelegram?: (token: string) => Promise<void> } = {}) {
+  mocks.desktop = true
+  app = createApp(ProfileImPane, { desktopImAdapter: runtimeDesktopImAdapter, ...props })
+  app.mount(host!)
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  app?.unmount()
+  host?.remove()
+  app = undefined
+  host = undefined
+  mocks.desktop = false
+  mocks.list.mockReset()
+  mocks.update.mockReset()
+  mocks.feishuStart.mockReset()
+  mocks.telegramConnect.mockReset()
+  mocks.telegramReplace.mockReset()
+  mocks.telegramBinding.mockReset()
+  mocks.qrToCanvas.mockReset()
+  if (mocks.liveState) {
+    mocks.liveState.rev.im_channels = 0
+    mocks.liveState.connected = false
+  }
+  delete (HTMLElement.prototype as HTMLElement & { scrollIntoView?: unknown }).scrollIntoView
+})
+
+describe('个人设置中的 IM 群权限', () => {
+  it('IM 展示偏好默认选择全部工具信息并隐藏中间回复', async () => {
+    mocks.list.mockResolvedValue({ items: [] })
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    app = createApp(ProfileImPane)
+    app.mount(host)
+    await flushUi()
+
+    expect(host.querySelector('.pm-tool-display-options button[aria-pressed="true"]')?.textContent).toBe('profileImUi.toolDisplayAll')
+    expect(host.querySelector('.toggle-switch[aria-label="profileImUi.toggleIntermediateReplies"]')?.getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('按服务端公布的支持平台隐藏全局关闭的平台接入入口', async () => {
+    mocks.list.mockResolvedValue({ items: [], supported_platforms: ['qq', 'telegram'] })
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    app = createApp(ProfileImPane)
+    app.mount(host)
+    await flushUi()
+
+    expect(host.querySelector('[data-platform="qq"]')).not.toBeNull()
+    expect(host.querySelector('[data-platform="telegram"]')).not.toBeNull()
+    expect(host.querySelector('[data-platform="feishu"]')).toBeNull()
+    expect(host.querySelector('[data-platform="wechat"]')).toBeNull()
+  })
+
+  it('新 Bot 缺少群策略字段时默认仅回应 @ 并启用群上下文搜索', async () => {
+    mocks.list.mockResolvedValue({ items: [{
+      id: 9, platform: 'telegram', enabled: true, group_chat_enabled: true,
+    }] })
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    app = createApp(ProfileImPane)
+    app.mount(host)
+    await flushUi()
+
+    const botRow = host.querySelector('[data-platform="telegram"] .pm-bot-item') as HTMLElement
+    const mentions = Array.from(botRow.querySelectorAll('.pm-tool-options button'))
+      .find(button => button.textContent?.includes('profileImUi.replyMentions')) as HTMLButtonElement
+    const contextSearch = Array.from(botRow.querySelectorAll('.pm-tool-options button'))
+      .find(button => button.textContent?.includes('profileImUi.groupContextSearch')) as HTMLButtonElement
+    expect(mentions.classList.contains('active')).toBe(true)
+    expect(contextSearch.classList.contains('active')).toBe(true)
+  })
+
+  it('飞书自动回复下按 Bot 保存注意力模式，切到仅响应 @ 后隐藏该选项', async () => {
+    mocks.list.mockResolvedValue({ items: [{
+      id: 21, platform: 'feishu', enabled: true, group_chat_enabled: true, feishu_group_chat_enabled: true,
+      group_response_mode: 'reply_all', group_attention_mode: 'autonomous',
+    }] })
+    mocks.update.mockResolvedValue({})
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    app = createApp(ProfileImPane)
+    app.mount(host)
+    await flushUi()
+
+    const botRow = host.querySelector('[data-platform="feishu"] .pm-bot-item') as HTMLElement
+    const attentionGroup = botRow.querySelector('[aria-label="profileImUi.groupAttentionMode"]') as HTMLElement
+    expect(attentionGroup).not.toBeNull()
+    const autonomous = Array.from(attentionGroup.querySelectorAll('button'))
+      .find(button => button.textContent?.includes('profileImUi.groupAttentionAutonomous')) as HTMLButtonElement
+    expect(autonomous.classList.contains('active')).toBe(true)
+
+    const natural = Array.from(attentionGroup.querySelectorAll('button'))
+      .find(button => button.textContent?.includes('profileImUi.groupAttentionNatural')) as HTMLButtonElement
+    natural.click()
+    await flushUi()
+    expect(mocks.update).toHaveBeenCalledWith(21, { group_attention_mode: 'natural' })
+
+    const mentions = Array.from(botRow.querySelectorAll('.pm-tool-options button'))
+      .find(button => button.textContent?.includes('profileImUi.replyMentions')) as HTMLButtonElement
+    mentions.click()
+    await flushUi()
+    expect(mocks.update).toHaveBeenLastCalledWith(21, { group_response_mode: 'reply_mentions' })
+    expect(botRow.querySelector('[aria-label="profileImUi.groupAttentionMode"]')).toBeNull()
+  })
+
+  it('Telegram 回应方式的引导说明如何关闭 Privacy Mode 并启用被提及回应', async () => {
+    mocks.list.mockResolvedValue({ items: [{
+      id: 8, platform: 'telegram', enabled: true, group_chat_enabled: true,
+    }] })
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    app = createApp(ProfileImPane)
+    app.mount(host)
+    await flushUi()
+
+    const telegramBlock = host.querySelector('[data-platform="telegram"]') as HTMLElement
+    const guideButton = telegramBlock.querySelector('.pm-help-toggle') as HTMLButtonElement
+    expect(guideButton).not.toBeNull()
+    guideButton.click()
+    await flushUi()
+
+    const guide = telegramBlock.querySelector('.pm-help-pop') as HTMLElement
+    expect(guide.textContent).toContain('profileImUi.telegramGroupGuideTitle')
+    expect(guide.textContent).toContain('profileImUi.telegramGroupGuideStep1')
+    expect(guide.textContent).toContain('profileImUi.telegramGroupGuideStep2')
+    expect(guide.textContent).toContain('profileImUi.telegramGroupGuideStep3')
+    expect(guide.textContent).toContain('profileImUi.telegramGroupGuideNote')
+    expect(guide.textContent).not.toContain('profileImUi.fullMessageTitle')
+  })
+
+  it('分别读取 QQ 与飞书群聊开关，并只写回当前平台字段', async () => {
+    mocks.list.mockResolvedValue({ items: [
+      { id: 1, platform: 'qq', enabled: true, group_chat_enabled: false },
+      { id: 2, platform: 'feishu', enabled: true, feishu_group_chat_enabled: null },
+    ] })
+    mocks.update.mockResolvedValue({})
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    app = createApp(ProfileImPane)
+    app.mount(host)
+    await flushUi()
+
+    const botRows = host.querySelectorAll('.pm-bot-item')
+    const feishuGroupToggle = botRows[0].querySelector('.toggle-switch[aria-label="profileImUi.toggleGroupChat"]') as HTMLButtonElement
+    const qqGroupToggle = botRows[1].querySelector('.toggle-switch[aria-label="profileImUi.toggleGroupChat"]') as HTMLButtonElement
+    expect(feishuGroupToggle.getAttribute('aria-pressed')).toBe('true') // 历史飞书 null 保持开启
+    expect(qqGroupToggle.getAttribute('aria-pressed')).toBe('false')
+
+    feishuGroupToggle.click()
+    await flushUi()
+    expect(mocks.update).toHaveBeenCalledWith(2, { feishu_group_chat_enabled: false })
+  })
+
+  it('Telegram 群开关启用后显示独立回应、记忆与成员工具策略并写回 Bot 设置', async () => {
+    mocks.list.mockResolvedValue({ items: [{
+      id: 7, platform: 'telegram', enabled: true, group_chat_enabled: false,
+      group_allowed_tools: ['web_search', 'http_get', 'similar_image_search', 'read_file', 'send_file'],
+    }] })
+    mocks.update.mockResolvedValue({})
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    app = createApp(ProfileImPane)
+    app.mount(host)
+    await flushUi()
+
+    const botRow = host.querySelector('[data-platform="telegram"] .pm-bot-item') as HTMLElement
+    const groupToggle = botRow.querySelector('.toggle-switch[aria-label="profileImUi.toggleGroupChat"]') as HTMLButtonElement
+    expect(groupToggle.getAttribute('aria-pressed')).toBe('false')
+    groupToggle.click()
+    await flushUi()
+    expect(mocks.update).toHaveBeenCalledWith(7, { group_chat_enabled: true })
+    expect(botRow.querySelector('[data-tool-option="web_tools"]')?.classList.contains('active')).toBe(true)
+
+    const recordOnly = Array.from(botRow.querySelectorAll('.pm-tool-options button'))
+      .find(button => button.textContent?.includes('profileImUi.recordOnly')) as HTMLButtonElement
+    recordOnly.click()
+    await flushUi()
+    expect(mocks.update).toHaveBeenCalledWith(7, { group_response_mode: 'record_only' })
+
+    const groupMemoryToggle = botRow.querySelector('.toggle-switch[aria-label="profileImUi.toggleGroupMemory"]') as HTMLButtonElement
+    groupMemoryToggle.click()
+    await flushUi()
+    expect(mocks.update).toHaveBeenCalledWith(7, { group_memory_enabled: false })
+
+    const contextTool = Array.from(botRow.querySelectorAll('.pm-tool-options button'))
+      .find(button => button.textContent?.includes('profileImUi.groupContextSearch')) as HTMLButtonElement
+    contextTool.click()
+    await flushUi()
+    expect(mocks.update).toHaveBeenCalledWith(7, {
+      group_allowed_tools: ['web_search', 'http_get', 'similar_image_search', 'send_file', 'group_context_search'],
+    })
+  })
+
+  it('桌面 QQ 显示与 Web 同序的回应选项、引导及三项记忆设置', async () => {
+    const status: DesktopImPairingStatus = {
+      configured: true, enabled: true, bound: true, groupChatEnabled: true,
+      groupReplyMode: 'reply_mentions', groupOwnerMemoryEnabled: false,
+      groupMemoryEnabled: true, memberMemoryEnabled: true,
+    }
+    const pairing = {
+      status: vi.fn(async () => status),
+      start: vi.fn(async () => ({ scan_url: 'https://example.test/qr' })),
+      poll: vi.fn(async () => ({ status: 'pending' })),
+      setMessageFormat: vi.fn(async () => status),
+      setPrivateStreaming: vi.fn(async () => status),
+      setGroupReplyMode: vi.fn(async () => status),
+      setGroupWebTools: vi.fn(async () => status),
+      setGroupProviderSearch: vi.fn(async () => status),
+      setGroupHistorySearch: vi.fn(async () => status),
+      setGroupOwnerMemory: vi.fn(async () => status),
+      setGroupMemory: vi.fn(async () => status),
+      setMemberMemory: vi.fn(async () => status),
+      setGroupChat: vi.fn(async () => status),
+      unbind: vi.fn(async () => status),
+      bindingCode: vi.fn(async () => ({ code: '123456', expires_in: 60 })),
+    }
+    const desktopImAdapter: DesktopImSettingsAdapter = {
+      pairings: { qq: pairing },
+      qq: pairing,
+      appearance: vi.fn(async () => ({ imToolDisplayMode: 'all', showIntermediateReplies: false })),
+      updateAppearance: vi.fn(async () => ({ imToolDisplayMode: 'all', showIntermediateReplies: false })),
+    }
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    mocks.desktop = true
+    app = createApp(ProfileImPane, { desktopImAdapter })
+    app.mount(host)
+    await flushUi()
+
+    expect(pairing.status).toHaveBeenCalledOnce()
+    expect(pairing.status).toHaveBeenCalledWith('status')
+    const card = host.querySelector('[data-platform="qq"] .pm-bot-item') as HTMLElement
+    const responseRow = Array.from(card.querySelectorAll('.pm-bot-group-row'))
+      .find(row => row.querySelector('.pm-field-name')?.textContent === 'profileImUi.responseMode') as HTMLElement
+    expect(responseRow).not.toBeNull()
+    expect(Array.from(responseRow.querySelectorAll('.pm-style-group button')).map(button => button.textContent?.trim()))
+      .toEqual(['profileImUi.replyAll', 'profileImUi.replyMentions', 'profileImUi.recordOnly'])
+    expect(responseRow.querySelector('.pm-help-toggle')?.textContent?.trim()).toBe('profileImUi.guide')
+    ;(responseRow.querySelector('.pm-help-toggle') as HTMLButtonElement).click()
+    await flushUi()
+    expect(card.querySelector('.pm-help-pop')?.textContent).toContain('profileImUi.fullMessageTitle')
+    const groupMemory = card.querySelector('[aria-label="profileImUi.toggleGroupMemory"]') as HTMLButtonElement
+    const memberMemory = card.querySelector('[aria-label="profileImUi.toggleMemberMemory"]') as HTMLButtonElement
+    const ownerMemory = card.querySelector('[aria-label="profileImUi.toggleGroupOwnerMemory"]') as HTMLButtonElement
+    expect(groupMemory).not.toBeNull()
+    expect(memberMemory).not.toBeNull()
+    expect(ownerMemory).not.toBeNull()
+    ownerMemory.click()
+    await flushUi()
+    ;(card.querySelector('[aria-label="profileImUi.toggleGroupMemory"]') as HTMLButtonElement).click()
+    await flushUi()
+    ;(card.querySelector('[aria-label="profileImUi.toggleMemberMemory"]') as HTMLButtonElement).click()
+    await flushUi()
+    expect(pairing.setGroupOwnerMemory).toHaveBeenCalledWith(true)
+    expect(pairing.setGroupMemory).toHaveBeenCalledWith(false)
+    expect(pairing.setMemberMemory).toHaveBeenCalledWith(false)
+  })
+
+  it('群成员的 Provider 联网搜索单独授权，切换其他工具不会丢失该权限', async () => {
+    mocks.list.mockResolvedValue({ items: [{
+      id: 12, platform: 'qq', enabled: true, group_chat_enabled: true,
+      group_allowed_tools: ['web_search', 'http_get', 'group_context_search'],
+    }] })
+    mocks.update.mockResolvedValue({})
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    app = createApp(ProfileImPane)
+    app.mount(host)
+    await flushUi()
+
+    const botRow = host.querySelector('[data-platform="qq"] .pm-bot-item') as HTMLElement
+    const toolButtons = [...botRow.querySelectorAll<HTMLButtonElement>('.pm-tool-options button')]
+    const providerSearch = toolButtons.find(button => button.textContent?.includes('profileImUi.providerWebSearch')) as HTMLButtonElement
+    const contextSearch = toolButtons.find(button => button.textContent?.includes('profileImUi.groupContextSearch')) as HTMLButtonElement
+    expect(providerSearch.textContent).toBe('profileImUi.providerWebSearch')
+    expect(providerSearch.classList.contains('active')).toBe(true)
+
+    contextSearch.click()
+    await flushUi()
+    expect(mocks.update).toHaveBeenLastCalledWith(12, {
+      group_allowed_tools: ['web_search', 'http_get'],
+    })
+
+    providerSearch.click()
+    await flushUi()
+    expect(mocks.update).toHaveBeenLastCalledWith(12, {
+      group_allowed_tools: ['http_get'],
+    })
+  })
+
+  it('扫码二维码显示在发起连接的平台区块内，并滚动到二维码位置', async () => {
+    mocks.list.mockResolvedValue({ items: [] })
+    mocks.feishuStart.mockResolvedValue({ poll_id: 'poll-1', scan_url: 'https://example.test/qr' })
+    mocks.qrToCanvas.mockResolvedValue(undefined)
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView })
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    app = createApp(ProfileImPane)
+    app.mount(host)
+    await flushUi()
+
+    ;(host.querySelector('[data-platform="feishu"] .pm-bind-btn') as HTMLButtonElement).click()
+    await flushUi()
+
+    const qr = host.querySelector('[data-platform="feishu"] .pm-qr-box')
+    expect(qr).not.toBeNull()
+    expect(host.querySelector('[data-platform="qq"] .pm-qr-box')).toBeNull()
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'nearest' })
+    expect(mocks.qrToCanvas).toHaveBeenCalledOnce()
+    const action = host.querySelector<HTMLButtonElement>('[data-platform="feishu"] .pm-bind-btn')!
+    expect(action.textContent?.trim()).toBe('profileImUi.cancel')
+    expect(action.getAttribute('aria-expanded')).toBe('true')
+    expect(qr?.querySelector('button')).toBeNull()
+    action.click()
+    await flushUi()
+    expect(host.querySelector('[data-platform="feishu"] .pm-qr-box')).toBeNull()
+    expect(action.textContent?.trim()).toBe('profileImUi.scanToConnect')
+    expect(mocks.feishuStart).toHaveBeenCalledOnce()
+  })
+
+  it('Telegram Token 只通过提交接口发送，成功后立即清空输入并刷新连接状态', async () => {
+    mocks.list.mockResolvedValue({ items: [] })
+    mocks.telegramConnect.mockResolvedValue({ id: 7, platform: 'telegram' })
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    app = createApp(ProfileImPane)
+    app.mount(host)
+    await flushUi()
+
+    ;(host.querySelector('[data-platform="telegram"] .pm-bind-btn') as HTMLButtonElement).click()
+    await flushUi()
+    const input = host.querySelector('#telegram-bot-token') as HTMLInputElement
+    input.value = '123456:synthetic-token-not-a-credential'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await flushUi()
+    ;(host.querySelector('.pm-telegram-token-controls button[type="submit"]') as HTMLButtonElement).click()
+    await flushUi()
+
+    expect(mocks.telegramConnect).toHaveBeenCalledWith('123456:synthetic-token-not-a-credential')
+    expect(host.querySelector('#telegram-bot-token')).toBeNull()
+    expect(host.textContent).not.toContain('123456:synthetic-token-not-a-credential')
+    expect(mocks.list).toHaveBeenCalledTimes(2)
+  })
+
+  it('Telegram Token 轮换请求只使用 Bot 记录 ID 路由且不回显 Token', async () => {
+    mocks.list.mockResolvedValue({ items: [{ id: 17, platform: 'telegram', name: '@sample_bot', app_id: '9001', enabled: true }] })
+    mocks.telegramReplace.mockResolvedValue({ id: 17, platform: 'telegram' })
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    app = createApp(ProfileImPane)
+    app.mount(host)
+    await flushUi()
+
+    ;(host.querySelector('[data-platform="telegram"] .pm-bind-btn') as HTMLButtonElement).click()
+    await flushUi()
+    const input = host.querySelector('#telegram-bot-token') as HTMLInputElement
+    input.value = '123456:another-synthetic-token'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await flushUi()
+    ;(host.querySelector('.pm-telegram-token-controls button[type="submit"]') as HTMLButtonElement).click()
+    await flushUi()
+
+    expect(mocks.telegramReplace).toHaveBeenCalledWith(17, '123456:another-synthetic-token')
+    expect(mocks.telegramConnect).not.toHaveBeenCalled()
+    expect(host.textContent).not.toContain('123456:another-synthetic-token')
+  })
+
+  it('取消 Telegram 接入不会发送 Token，验证失败也不回显输入值', async () => {
+    mocks.list.mockResolvedValue({ items: [] })
+    mocks.telegramConnect.mockRejectedValue(new Error('Telegram Bot Token 无效'))
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    app = createApp(ProfileImPane)
+    app.mount(host)
+    await flushUi()
+
+    ;(host.querySelector('[data-platform="telegram"] .pm-bind-btn') as HTMLButtonElement).click()
+    await flushUi()
+    let input = host.querySelector('#telegram-bot-token') as HTMLInputElement
+    input.value = '123456:cancelled-synthetic-token'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await flushUi()
+    ;(host.querySelector('.pm-telegram-token-controls button[type="button"]') as HTMLButtonElement).click()
+    await flushUi()
+    expect(mocks.telegramConnect).not.toHaveBeenCalled()
+
+    ;(host.querySelector('[data-platform="telegram"] .pm-bind-btn') as HTMLButtonElement).click()
+    await flushUi()
+    input = host.querySelector('#telegram-bot-token') as HTMLInputElement
+    input.value = '123456:failed-synthetic-token'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await flushUi()
+    ;(host.querySelector('.pm-telegram-token-controls button[type="submit"]') as HTMLButtonElement).click()
+    await flushUi()
+
+    expect(mocks.telegramConnect).toHaveBeenCalledWith('123456:failed-synthetic-token')
+    expect(host.textContent).not.toContain('123456:failed-synthetic-token')
+    expect(host.textContent).toContain('Telegram Bot Token 无效')
+  })
+
+  it('收到 IM 频道状态事件后刷新 Telegram owner 绑定状态，不靠定时轮询', async () => {
+    const unboundBot = { id: 17, platform: 'telegram', name: '@sample_bot', app_id: '9001', enabled: true, owner_bound: false }
+    mocks.list.mockResolvedValueOnce({ items: [unboundBot] }).mockResolvedValueOnce({ items: [{ ...unboundBot, owner_bound: true }] })
+    mocks.telegramBinding.mockResolvedValue({ code: '123456', expires_in: 600 })
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    app = createApp(ProfileImPane)
+    app.mount(host)
+    await flushUi()
+
+    ;(host.querySelector('[data-platform="telegram"] .pm-style-chip') as HTMLButtonElement).click()
+    await flushUi()
+    expect(host.textContent).toContain('/bind 123456')
+
+    if (mocks.liveState) mocks.liveState.rev.im_channels++
+    await flushUi()
+
+    expect(mocks.list).toHaveBeenCalledTimes(2)
+    expect(host.textContent).toContain('profileImUi.bound')
+    expect(host.textContent).not.toContain('/bind 123456')
+  })
+})
+
+it.each([['wechat', 'task_id'], ['feishu', 'poll_id'], ['qq', 'task_id']])('桌面 %s 使用本地扫码接口', async (platform, idKey) => {
+  const pairing = vi.fn(async (command: { action: string }) => ({
+    ok: true,
+    result: command.action === 'status' ? { configured: true, enabled: false, connectionState: 'disabled' }
+      : { [idKey]: 'synthetic', scan_url: 'https://example.com/scan' },
+  }))
+  vi.stubGlobal('guguDesktop', { [`${platform}Pairing`]: pairing })
+  try {
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    await mountDesktopProfilePane()
+    await flushUi()
+    const row = host.querySelector(`[data-platform="${platform}"]`)
+    const action = row?.querySelector<HTMLButtonElement>('.pm-bind-btn')
+    expect(row?.querySelector('[role="status"]')).toBeNull()
+    action?.click()
+    await flushUi()
+    await vi.waitFor(() => expect(action?.disabled).toBe(false))
+    expect(action?.textContent?.trim()).toBe('profileImUi.cancel')
+    expect(pairing).toHaveBeenCalledWith({ action: 'start' })
+    expect(mocks.qrToCanvas).toHaveBeenCalledWith(expect.any(HTMLCanvasElement), 'https://example.com/scan', expect.anything())
+    action?.click()
+    await flushUi()
+    expect(row?.querySelector('canvas')).toBeNull()
+    expect(mocks.list).not.toHaveBeenCalled()
+  } finally { vi.unstubAllGlobals() }
+})
+
+it.each(['wechat', 'feishu', 'qq'])('取消停用桌面 %s 时保留启用状态', async platform => {
+  const pairing = vi.fn(async () => ({ ok: true, result: { configured: true, enabled: true, connectionState: 'retrying' } }))
+  vi.stubGlobal('guguDesktop', { [`${platform}Pairing`]: pairing })
+  try {
+    const { confirmDialog } = await import('@/composables/core/useConfirmDialog')
+    vi.mocked(confirmDialog).mockResolvedValueOnce(false)
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    await mountDesktopProfilePane()
+    await flushUi()
+    const toggle = host.querySelector<HTMLButtonElement>(`[data-platform="${platform}"] [aria-label="profileImUi.disableBot"]`)
+    expect(toggle).not.toBeNull()
+    const card = toggle?.closest('.pm-bot-item')
+    expect(card?.querySelector('.pm-bot-name')?.textContent).toContain('profileImUi.default')
+    expect(card?.querySelector('.pm-switch-label')?.textContent).toBe('profileImUi.enabled')
+    expect(host.querySelector(`[data-platform="${platform}"] [role="status"]`)?.textContent?.trim()).toBe('profileImUi.desktopGateway.retrying')
+    toggle?.click()
+    await flushUi()
+    expect(confirmDialog).toHaveBeenCalled()
+    expect(pairing).not.toHaveBeenCalledWith({ action: 'disable' })
+  } finally { vi.unstubAllGlobals() }
+})
+
+it('桌面 QQ 通过本机接口生成并显示私聊绑定码', async () => {
+  const qqPairing = vi.fn(async (command: { action: string }) => ({
+    ok: true, result: command.action === 'bindingCode'
+      ? { code: '123456', expires_in: 600 }
+      : { configured: true, enabled: true, bound: false },
+  }))
+  vi.stubGlobal('guguDesktop', { qqPairing })
+  try {
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    await mountDesktopProfilePane()
+    await flushUi()
+    host.querySelector<HTMLButtonElement>('[data-platform="qq"] .pm-style-chip')?.click()
+    await flushUi()
+    expect(qqPairing).toHaveBeenCalledWith({ action: 'bindingCode' })
+    expect(host.querySelector('[data-platform="qq"] .pm-binding-code-value')?.textContent).toBe('123456')
+    expect(mocks.list).not.toHaveBeenCalled()
+  } finally { vi.unstubAllGlobals() }
+})
+
+it('桌面消息偏好通过本机桥接保存，重新打开后仍显示保存值', async () => {
+  const saved = { imToolDisplayMode: 'all', showIntermediateReplies: false }
+  const appearance = vi.fn(async () => ({ ok: true, result: { ...saved } }))
+  const updateAppearance = vi.fn(async (patch: Partial<typeof saved>) => {
+    Object.assign(saved, patch)
+    return { ok: true, result: { ...saved } }
+  })
+  vi.stubGlobal('guguDesktop', { appearance, updateAppearance })
+  const remoteReads = mocks.preferences.fetch.mock.calls.length
+  const mount = async () => mountDesktopProfilePane()
+  try {
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    await mount()
+    await flushUi()
+    const slow = () => Array.from(host!.querySelectorAll<HTMLButtonElement>('button'))
+      .find(button => button.textContent?.trim() === 'profileImUi.toolDisplaySlowOnly')
+    const intermediate = () => host!.querySelector<HTMLButtonElement>('[aria-label="profileImUi.toggleIntermediateReplies"]')
+    slow()?.click()
+    intermediate()?.click()
+    await vi.waitFor(() => {
+      expect(updateAppearance.mock.calls).toEqual([
+        [{ imToolDisplayMode: 'slow_only' }],
+        [{ showIntermediateReplies: true }],
+      ])
+    })
+    app?.unmount()
+    await mount()
+    await vi.waitFor(() => {
+      expect(slow()?.getAttribute('aria-pressed')).toBe('true')
+      expect(intermediate()?.getAttribute('aria-pressed')).toBe('true')
+    })
+    expect(appearance).toHaveBeenCalledTimes(2)
+    expect(mocks.preferences.fetch).toHaveBeenCalledTimes(remoteReads)
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
+it('桌面 Telegram 复用 Web 表单的取消、失败清空与重新提交行为', async () => {
+  const connectTelegram = vi.fn<(token: string) => Promise<void>>()
+    .mockRejectedValueOnce(new Error('合成验证失败'))
+    .mockResolvedValueOnce(undefined)
+  host = document.createElement('div')
+  document.body.appendChild(host)
+  await mountDesktopProfilePane({ connectTelegram })
+  await flushUi()
+
+  const telegram = host.querySelector('[data-platform="telegram"]')!
+  const open = telegram.querySelector<HTMLButtonElement>('button')!
+  const input = () => telegram.querySelector<HTMLInputElement>('input[type="password"]')
+  async function enterToken() {
+    open.click()
+    await nextTick()
+    input()!.value = 'synthetic-token'
+    input()!.dispatchEvent(new Event('input'))
+    await nextTick()
+  }
+  const submit = () => telegram.querySelector<HTMLButtonElement>('button[type="submit"]')!
+
+  await enterToken()
+  Array.from(telegram.querySelectorAll('button'))
+    .find(button => button.textContent?.trim() === 'profileImUi.cancel')!.click()
+  await flushUi()
+  expect(input()).toBeNull()
+  expect(connectTelegram).not.toHaveBeenCalled()
+
+  await enterToken()
+  submit().click()
+  await flushUi()
+  expect(host.textContent).toContain('合成验证失败')
+  expect(input()?.value).toBe('')
+  expect(open.getAttribute('aria-expanded')).toBe('true')
+
+  input()!.value = 'synthetic-retry-token'
+  input()!.dispatchEvent(new Event('input'))
+  await nextTick()
+  submit().click()
+  await flushUi()
+  expect(input()).toBeNull()
+  expect(open.getAttribute('aria-expanded')).toBe('false')
+  expect(connectTelegram.mock.calls).toEqual([['synthetic-token'], ['synthetic-retry-token']])
+  expect(mocks.telegramConnect).not.toHaveBeenCalled()
+  expect(mocks.telegramReplace).not.toHaveBeenCalled()
+})

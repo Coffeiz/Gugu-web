@@ -19,7 +19,7 @@ function ports(): CapabilityPreparationPorts {
 }
 
 describe('Harness 准备编排保持短事务、身份与提示词边界', () => {
-  it('简介模式下工具权限变化只影响动态目录，固定前缀和 Provider 入口顺序稳定', async () => {
+  it('简介模式下已授权 Shell 直接提供 Schema，业务工具留在动态目录', async () => {
     const run = { ownerId: identity.ownerId, sessionId: identity.subject.id, runId: 'run-brief' }
     const services = { digest: stableJson, nextId: () => 'entry-brief', buildRag: async () => ({ tail: [] }) }
     let businessTools = ['list_projects', 'shell']
@@ -42,8 +42,10 @@ describe('Harness 准备编排保持短事务、身份与提示词边界', () =>
     const a = await prepareContext(first.input, services)
     const b = await prepareContext(second.input, services)
     expect(a.area.requestPrefix).toEqual(b.area.requestPrefix)
-    expect(first.capabilities?.providerToolNames).toEqual(['call_tool', 'ask_user'])
-    expect(second.capabilities?.providerToolNames).toEqual(first.capabilities?.providerToolNames)
+    expect(first.capabilities?.providerToolNames).toEqual(['call_tool', 'ask_user', 'shell'])
+    expect(second.capabilities?.providerToolNames).toEqual(['call_tool', 'ask_user'])
+    expect(first.input.latestToolSchemas?.map(tool => tool.tool_name)).toContain('shell')
+    expect(second.input.latestToolSchemas?.map(tool => tool.tool_name)).not.toContain('shell')
     expect(stableJson(a.area.dynamicTail)).toContain('list_projects')
     expect(stableJson(a.area.dynamicTail)).toContain('合成本轮 Shell 状态')
     expect(stableJson(b.area.dynamicTail)).toContain('list_events')

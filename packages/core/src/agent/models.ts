@@ -272,6 +272,8 @@ export interface CanonicalRunContext {
     readonly assistantEntryId: string | null
     readonly resultEntryId: string | null
   } | null
+  /** 上游超限后的硬裁剪需要在成功回复后从持久历史生成摘要。 */
+  readonly overflowTrimmed?: true
   readonly failedCompactionInput: number | null
   /** 最近这一次完整Provider请求的实际输入；缺报即null，不能借前轮或peak补值。 */
   readonly currentProviderInput: number | null
@@ -445,6 +447,11 @@ export interface CompactionSummaryInput<Wire> {
   requestPrefix?: CanonicalMessage[]
   /** 精确匹配时保留原始 wire；Adapter 只能追加压缩任务，不重新渲染这段前缀。 */
   projection: OpaqueProviderProjection<Wire> | null
+  /** 调用方提供已冻结的区间与反思指令，候选仍须经授权写入端独立校验。 */
+  reflection?: {
+    task: string
+    receive(candidate: { [key: string]: Json }): void
+  }
   preserveLatestUser: boolean
 }
 

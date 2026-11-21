@@ -19,6 +19,11 @@ export function createKyselyProjectUpdateTransaction(tx: Transaction<Database>, 
     },
     async updateFileStoragePrefixes(requested, id, oldPrefix, newPrefix) {
       sameOwner(requested)
+      // Desktop project files live under Electron's file workspace; a Desktop SQLite database has no Web files table.
+      if (backend === 'sqlite') {
+        const table = await sql<{ name: string }>`SELECT name FROM sqlite_master WHERE type='table' AND name='files'`.execute(tx)
+        if (!table.rows.length) return
+      }
       // 不使用LIKE：名称中的百分号/下划线必须按字面前缀处理。
       const length = [...oldPrefix].length
       await sql`UPDATE files SET storage_key=${newPrefix} || substr(storage_key, ${length + 1})

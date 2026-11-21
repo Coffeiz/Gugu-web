@@ -36,7 +36,7 @@ export interface MindRefNodeUndoRecord {
 }
 
 export interface MindRefNodeTransaction {
-  create(ownerId: string, refType: MindReferenceType, refId: number): Promise<{
+  create(ownerId: string, refType: MindReferenceType, refId: number | string): Promise<{
     node: MindReferenceNodeSnapshot
     created: boolean
   }>
@@ -89,6 +89,12 @@ function referenceId(value: unknown): number {
   return parsed
 }
 
+function fileReferenceId(value: unknown): string {
+  if (typeof value !== 'string' || !/^(path|drop)-[A-Za-z0-9_-]{1,24000}$/u.test(value))
+    throw new MindRefNodeCreateError(422, '请使用文件路径引用')
+  return value
+}
+
 function snapshot(node: MindReferenceNodeSnapshot): Record<string, unknown> {
   return {
     id: Number(node.id), kind: node.kind, title: node.title, content_md: node.content_md,
@@ -106,7 +112,8 @@ export function createMindRefNodeCreator(runtime: MindRefNodeCreateRuntime) {
     async create(ownerId: string, value: unknown, metadata: MindRefNodeCreateMetadata): Promise<MindNoteReadResponse> {
       const body = object(value)
       const refType = referenceType(body.refType ?? body.ref_type)
-      const refId = referenceId(body.refId ?? body.ref_id)
+      const rawId = body.refId ?? body.ref_id
+      const refId = refType === 'file' ? fileReferenceId(rawId) : referenceId(rawId)
       const result = await runtime.transaction(ownerId, async (tx) => {
         const created = await tx.create(ownerId, refType, refId)
         if (created.created) {

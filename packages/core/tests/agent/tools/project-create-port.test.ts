@@ -8,9 +8,10 @@ import { createProjectCreator } from '../../../src/projects/project-create.js'
 import type { ProjectCreateRuntime } from '../../../src/projects/project-create.js'
 import { createKyselyProjectCreateRuntime } from '../../../src/projects/create-store.js'
 import { initializeSqlite, openSqliteRuntime } from '../../../src/data/sqlite.js'
-import { createProjectCreationPort, createAgentProjectCreator } from '../../../src/agent/tools/projects/creation-port.js'
+import { agentProjectDispatchKey, createProjectCreationPort, createAgentProjectCreator } from '../../../src/agent/tools/projects/creation-port.js'
 import { createProjectTool } from '../../../src/agent/tools/projects.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
+import { createOwnerToolRegistry } from '../../../src/agent/tools/owner.js'
 import type { ToolScope } from '../../../src/agent/tools/contracts.js'
 import { DEFAULT_PROJECT_COLOR, PROJECT_COLOR_PRESETS } from '../../../src/projects/colors.js'
 import { collect, fixture } from '../run/fixtures.js'
@@ -27,16 +28,26 @@ async function setup(wrap?: (runtime: ProjectCreateRuntime) => ProjectCreateRunt
   cleanups.push(() => core.close())
   const publish = vi.fn(async () => {})
   const runtime = createKyselyProjectCreateRuntime({ db: core.db, backend: 'sqlite', publishProjectCreated: publish })
-  const port = createProjectCreationPort({ runtime: wrap ? wrap(runtime) : runtime,
-    keyForCall: ({ identity, roundId, toolCallId }) => JSON.stringify([identity.sessionId, identity.runId, roundId, toolCallId]),
-  })
-  const registry = createToolRegistry({ tools: [createProjectTool(port)], authorize: async () => true })
-  const scope: ToolScope = { identity: { ownerId, sessionId: 'desktop-session', runId: 'run-a' }, roundId: 'round-a', signal: new AbortController().signal, resolution: null, execute: vi.fn() }
+  const registry = createOwnerToolRegistry({ core, projects: wrap ? wrap(runtime) : runtime, authorize: async () => true })
+  const scope: ToolScope = { identity: { ownerId, sessionId: '1', runId: 'run-a' }, roundId: 'round-a', signal: new AbortController().signal, resolution: null, execute: vi.fn() }
   const call = { id: 'call-a', name: 'create_project', input: args }
   return { core, ownerId, runtime, registry, scope, call, publish,
     rows: () => core.db.selectFrom('projects').selectAll().orderBy('id').execute(),
   }
 }
+
+it('宿主提供文件读取端口时仍不开放已退役的 read_file', async () => {
+  const { core, scope } = await setup()
+  const resolveOwnedFile = vi.fn(async () => null)
+  const registry = createOwnerToolRegistry({
+    core, authorize: async () => true,
+    readFile: { resolveOwnedFile, openFile: async () => null },
+  })
+  expect(registry.catalog().map(tool => tool.name)).not.toContain('read_file')
+  await expect(registry.tools.dispatch({ id: 'read', name: 'read_file', input: { file_id: 1 } }, scope))
+    .resolves.toMatchObject({ successful: false, executed: false })
+  expect(resolveOwnedFile).not.toHaveBeenCalled()
+})
 
 describe('真实SQLite项目创建经ToolRegistry与Core应用/数据适配器', () => {
   it.each([null, 42])('旧直接入口非字符串颜色%j仍使用既有默认色', async color => {
@@ -129,6 +140,21 @@ describe('真实SQLite项目创建经ToolRegistry与Core应用/数据适配器',
     expect(rows).toHaveLength(4)
     expect(rows.filter(row => row.user_id === f.ownerId.replaceAll('-', ''))).toHaveLength(3)
     expect(rows.filter(row => row.user_id === other.replaceAll('-', ''))).toHaveLength(1)
+  })
+  it('共享注册器重用已有调用键，并拒绝非规范会话标识', async () => {
+    const f = await setup()
+    const direct = createAgentProjectCreator(f.runtime)
+    const key = agentProjectDispatchKey({ sessionId: 1, runId: f.scope.identity.runId, roundId: f.scope.roundId, toolCallId: f.call.id })
+    const previous = await direct(f.ownerId, args, { idempotencyKey: key })
+    expect(previous).toMatchObject({ success: true })
+    expect(await f.registry.tools.dispatch(f.call, f.scope)).toMatchObject({
+      successful: true, mutated: false, value: { idempotent_replay: true },
+    })
+    for (const sessionId of ['01', '1e0', '9007199254740992']) {
+      expect(await f.registry.tools.dispatch(f.call, { ...f.scope, identity: { ...f.scope.identity, sessionId } }))
+        .toMatchObject({ successful: false, mutated: false, value: { error_code: 'invalid_request' } })
+    }
+    expect(await f.rows()).toHaveLength(1)
   })
   it('字段领域错误保留内部错误码，并向模型输出单层增强对象且不写入', async () => {
     const f = await setup()

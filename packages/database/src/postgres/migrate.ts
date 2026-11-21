@@ -21,12 +21,17 @@ import { fileSync } from './migrations/0018_file_sync.js'
 import { accountRecords } from './migrations/0019_account_records.js'
 import { memory } from './migrations/0020_memory.js'
 import { byokBindings } from './migrations/0021_byok_bindings.js'
+import { scheduledTaskMode } from './migrations/0022_scheduled_task_mode.js'
+import { calendarReminderMode } from './migrations/0023_calendar_reminder_mode.js'
+import { webPush } from './migrations/0024_web_push.js'
+import { webReflection } from './migrations/0025_web_reflection.js'
+import { reflectionCompaction } from './migrations/0026_reflection_compaction.js'
 import { runPostgresMigrations } from './runner.js'
 
 const catalog = [
   initialize, webDomain, agentRun, agentSnapshots, filesystemAuthorization, securityEvents,
   terminalSessions, interactionActions, trashPurge, searchUsage, ragIndex,
-  agentReasoning, imGateway, imReflection, dataPortability, providerCredentials, mcp, fileSync, accountRecords, memory, byokBindings,
+  agentReasoning, imGateway, imReflection, dataPortability, providerCredentials, mcp, fileSync, accountRecords, memory, byokBindings, scheduledTaskMode, calendarReminderMode, webPush, webReflection, reflectionCompaction,
 ]
 
 export function migratePostgres(pool: Pick<Pool, 'connect'>, action: MigrationAction) {

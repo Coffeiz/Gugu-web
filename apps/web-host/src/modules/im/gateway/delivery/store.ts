@@ -1,3 +1,4 @@
+import type { ImPlatformProjectionStore } from '@gugu/gateway'
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes, randomUUID } from 'node:crypto'
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
 import type { RunIdentity } from '@gugu/core/agent'
@@ -5,13 +6,7 @@ import type { ImRunDeliveryPorts } from '@gugu/core/im/run-delivery'
 import { createImAcceptedEvidenceCodec, type ImDeliveryLedgerContext } from '../attention/ledger.js'
 
 export type ImDeliveryReceipts = ImRunDeliveryPorts<unknown>['receipts']
-export interface ImPlatformProjectionStore {
-  readonly platform?: 'feishu' | 'qq' | 'telegram'
-  read(): Promise<{ version: number; state: unknown | null }>
-  checkpoint(expectedVersion: number, state: unknown): Promise<number>
-  /** 平台操作accepted与加密状态同一SQL原子提交；不能先settle后保存cardId。 */
-  accepted(key: string, expectedVersion: number, state: unknown): Promise<number>
-}
+export type { ImPlatformProjectionStore }
 export type ImDeliverySession = ImDeliveryReceipts & { projection?: ImPlatformProjectionStore }
 export class ImDeliveryStoreError extends Error {
   constructor(readonly code: 'busy' | 'lease_lost' | 'storage_failure' | 'not_found' | 'conflict') {

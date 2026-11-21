@@ -25,7 +25,7 @@ Node 路径均在 `gugu-core/tests/`，桌面行除外。`layer` 与依赖 marke
 
 ## 文件读取适配测试边界
 
-Core 的 `openAuthorizedRelativeFile` 只依赖 Host 注入的文件打开端口；使用 `packages/fs` 真实本地文件适配器的组合测试位于 `apps/web-host/tests/files/local-file-read.test.ts`，不让 Core 测试直接导入其他 workspace 包的源码。该测试拒绝越界路径和符号链接，并确认系统读取错误原样传播。2026-11-15 devserver 验证：Core 测试 TypeScript 项目 `tsc -p tsconfig.tests.json` 通过，Web Host 全量类型检查通过，文件读取定向回归 1/1 通过；运行前 Core/Web Host 源码与测试树本地、远端哈希一致。
+Core 的 `openAuthorizedRelativeFile` 只依赖 Host 注入的文件打开端口；使用 `packages/fs` 真实本地文件适配器的组合测试位于 `apps/web-host/tests/files/content/local.test.ts`，不让 Core 测试直接导入其他 workspace 包的源码。该测试拒绝越界路径和符号链接，并确认系统读取错误原样传播。2026-11-15 devserver 验证：Core 测试 TypeScript 项目 `tsc -p tsconfig.tests.json` 通过，Web Host 全量类型检查通过，文件读取定向回归 1/1 通过；运行前 Core/Web Host 源码与测试树本地、远端哈希一致。
 
 ## 已有语义差异
 

@@ -9,13 +9,14 @@ import type { RawBuilder } from 'kysely'
 import { CoreError } from '@gugu/core'
 import { stableJson } from '@gugu/core/agent'
 import type { RunIdentity, ToolCall } from '@gugu/core/agent'
-import type { SaveUploadedFilePort } from '@gugu/core/tools'
+import type { SaveAttachmentPort } from '@gugu/core/tools'
 import { createSessionWorkspaceTargetReader } from '@gugu/core/workspaces/shell-target'
 import type { SqlDataRuntime } from '@gugu/core/data'
 import { stageFile, type FileUploadInput, type FileUploadOperations, type FileUploadReceipt } from '../../../files/upload.js'
 import { createWebAgentRagRunAuthorization } from '../../rag/authorize.js'
 import type { AgentDispatchLease } from '../../run/dispatch.js'
 
+// 已持久化的收据标识参与幂等键计算，工具改名时保留。
 const SAVE_METHOD = 'agent.file.save_uploaded_file' as const
 const digest = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')
 function receipt(identity: RunIdentity & { roundId: string }, call: ToolCall, attachId: string, target: FileUploadInput): FileUploadReceipt {
@@ -32,15 +33,47 @@ function knownFailure(error: unknown): string | null {
   return null
 }
 
-function uploadTarget(input: Parameters<SaveUploadedFilePort['save']>[1], workspaceDirectoryId: number | null = null): FileUploadInput {
+function uploadTarget(input: Parameters<SaveAttachmentPort['save']>[1], workspaceDirectoryId: number | null = null): FileUploadInput {
   return {
     space: input.space, projectId: input.project_id ?? null, folderId: input.folder_id ?? null,
     workspaceDirectoryId, stageName: '', mindMapId: null, onConflict: 'keep_both', overwriteFileId: null,
   }
 }
 
+async function folderIdForPath(options: {
+  pool: Pick<Pool, 'query'>
+  ownerId: string
+  input: Parameters<SaveAttachmentPort['save']>[1]
+  workspaceDirectoryId: number | null
+  path: string
+  client?: Pick<PoolClient, 'query'>
+}): Promise<number> {
+  const names = options.path.split('/')
+  const result = await (options.client ?? options.pool).query<{ id: number | string }>(`
+    WITH RECURSIVE scoped_folders AS (
+      SELECT f.id, f.parent_id, f.name, ARRAY[f.name]::text[] AS path
+      FROM folders f
+      WHERE f.user_id=$1 AND f.deleted_at IS NULL AND f.parent_id IS NULL
+        AND f.project_id IS NOT DISTINCT FROM $2
+        AND f.workspace_directory_id IS NOT DISTINCT FROM $3
+      UNION ALL
+      SELECT child.id, child.parent_id, child.name, parent.path || child.name
+      FROM folders child JOIN scoped_folders parent ON child.parent_id=parent.id
+      WHERE child.user_id=$1 AND child.deleted_at IS NULL
+        AND child.project_id IS NOT DISTINCT FROM $2
+        AND child.workspace_directory_id IS NOT DISTINCT FROM $3
+        AND cardinality(parent.path)<64
+    )
+    SELECT id FROM scoped_folders WHERE path=$4::text[] LIMIT 2`, [
+    options.ownerId, options.input.space === 'project' ? options.input.project_id ?? null : null,
+    options.workspaceDirectoryId, names,
+  ])
+  if (result.rows.length !== 1) throw new CoreError('invalid_request', '目标文件夹不存在或不属于所选文件空间')
+  return Number(result.rows[0]!.id)
+}
+
 /** 按 owner/当前会话解析附件，复用正式文件配额、上传事务、Undo 与写入收据。 */
-export function createWebAgentSaveUploadedFilePort(options: {
+export function createWebAgentSaveAttachmentPort(options: {
   pool: Pick<Pool, 'query'>
   db: SqlDataRuntime['db']
   upload: FileUploadOperations
@@ -48,25 +81,34 @@ export function createWebAgentSaveUploadedFilePort(options: {
     fileName: string; ext: string; mimeType: string; handle: FileHandle
   }>
   lease: AgentDispatchLease
-}): SaveUploadedFilePort {
+}): SaveAttachmentPort {
   const expected = Object.freeze({ ...options.lease.identity })
   const matchesLease = (identity: RunIdentity) => identity.ownerId === expected.ownerId
     && identity.sessionId === expected.sessionId && identity.runId === expected.runId
-  const authorize = createWebAgentRagRunAuthorization(options.pool, options.lease, { enabledSaveUploadedFile: true })
-  async function resolveTarget(identity: RunIdentity, input: Parameters<SaveUploadedFilePort['save']>[1],
+  const authorize = createWebAgentRagRunAuthorization(options.pool, options.lease, { enabledSaveAttachment: true })
+  async function resolveTarget(identity: RunIdentity, input: Parameters<SaveAttachmentPort['save']>[1],
     signal: AbortSignal, client?: Pick<PoolClient, 'query'>): Promise<FileUploadInput> {
-    if (input.space !== 'workspace') return uploadTarget(input)
-    const read = createSessionWorkspaceTargetReader(options.db, 'postgres', async <Row>(statement: RawBuilder<Row>) => {
-      const compiled = statement.compile(options.db)
-      return (await (client ?? options.pool).query(compiled.sql, [...compiled.parameters])).rows as Row[]
-    })
-    const sessionId = Number(identity.sessionId)
-    if (!Number.isSafeInteger(sessionId) || sessionId <= 0) throw new CoreError('invalid_request', '当前会话工作区不可用')
-    const selected = await read(identity.ownerId, sessionId, { lockSession: Boolean(client) })
+    let workspaceDirectoryId: number | null = null
+    if (input.space === 'workspace') {
+      const read = createSessionWorkspaceTargetReader(options.db, 'postgres', async <Row>(statement: RawBuilder<Row>) => {
+        const compiled = statement.compile(options.db)
+        return (await (client ?? options.pool).query(compiled.sql, [...compiled.parameters])).rows as Row[]
+      })
+      const sessionId = Number(identity.sessionId)
+      if (!Number.isSafeInteger(sessionId) || sessionId <= 0) throw new CoreError('invalid_request', '当前会话工作区不可用')
+      const selected = await read(identity.ownerId, sessionId, { lockSession: Boolean(client) })
+      signal.throwIfAborted()
+      if (!selected) throw new CoreError('invalid_request', '当前会话没有可写入的工作区目录；请绑定工作区或选择 personal/project')
+      if (selected.kind !== 'directory') throw new CoreError('invalid_request', '当前会话绑定的工作区没有可写入的文件目录；请省略目标位置参数以使用当前工作区落点')
+      workspaceDirectoryId = selected.directoryId
+    }
+    const target = input.folder_path === undefined ? input : {
+      ...input,
+      folder_id: await folderIdForPath({ pool: options.pool, ownerId: identity.ownerId, input,
+        workspaceDirectoryId, path: input.folder_path, ...(client ? { client } : {}) }),
+    }
     signal.throwIfAborted()
-    if (!selected) throw new CoreError('invalid_request', '当前会话没有可写入的工作区目录；请绑定工作区或选择 personal/project')
-    if (selected.kind !== 'directory') throw new CoreError('invalid_request', '当前会话绑定的工作区没有可写入的文件目录；请省略目标位置参数以使用当前工作区落点')
-    return uploadTarget(input, selected.directoryId)
+    return uploadTarget(target, workspaceDirectoryId)
   }
 
   async function latestAttachment(identity: RunIdentity, signal: AbortSignal): Promise<string | null> {
@@ -83,7 +125,7 @@ export function createWebAgentSaveUploadedFilePort(options: {
   }
 
   async function saveOne(identity: RunIdentity, attachId: string, target: FileUploadInput,
-    roundId: string, call: ToolCall, signal: AbortSignal): Promise<{ attach_id: string; file_id: number; name: string; size_bytes: number; space: string; folder_id: number | null; project_id: number | null; mutated: boolean } | { attach_id: string; error: string }> {
+    roundId: string, call: ToolCall, signal: AbortSignal): Promise<{ attach_id: string; file_id: number; name: string; path?: string; size_bytes: number; space: string; folder_id: number | null; project_id: number | null; mutated: boolean } | { attach_id: string; error: string }> {
     signal.throwIfAborted()
     if (!matchesLease(identity)) return { attach_id: attachId, error: '附件保存授权已失效' }
     let opened: Awaited<ReturnType<typeof options.downloadAttachment>> | undefined
@@ -105,8 +147,8 @@ export function createWebAgentSaveUploadedFilePort(options: {
       }, {
         receipt: receipt({ ...expected, roundId }, call, attachId, target), signal,
         async authorize(client: Pick<PoolClient, 'query'>) {
-          const current = createWebAgentRagRunAuthorization(client, options.lease, { enabledSaveUploadedFile: true })
-          if (!await current.authorize(identity, 'save_uploaded_file', signal)) throw new Error('附件保存授权已失效')
+          const current = createWebAgentRagRunAuthorization(client, options.lease, { enabledSaveAttachment: true })
+          if (!await current.authorize(identity, 'save_attachment', signal)) throw new Error('附件保存授权已失效')
           if (target.space === 'workspace') {
             const currentTarget = await resolveTarget(identity, { source: 'attach_id', attach_id: attachId,
               space: 'workspace', ...(target.folderId === null ? {} : { folder_id: target.folderId }) }, signal, client)
@@ -120,6 +162,7 @@ export function createWebAgentSaveUploadedFilePort(options: {
         || typeof file.ext !== 'string' || !Number.isSafeInteger(file.sizeBytes))
         return { attach_id: attachId, error: '文件保存返回无效结果' }
       return { attach_id: attachId, file_id: Number(file.id), name: `${file.displayName}${file.ext ? `.${file.ext}` : ''}`,
+        ...(typeof file.logicalPath === 'string' ? { path: file.logicalPath } : {}),
         size_bytes: Number(file.sizeBytes), space: target.space, folder_id: target.folderId, project_id: target.projectId,
         mutated: stored.replayed !== true }
     } catch (error) {
@@ -154,7 +197,7 @@ export function createWebAgentSaveUploadedFilePort(options: {
         const single = results[0]
         if (single && 'error' in single) return { kind: 'failed', error: single.error }
         if (single && 'file_id' in single) return { kind: 'saved', mutated: single.mutated, value: {
-          file_id: single.file_id, name: single.name, size: single.size_bytes, space: single.space,
+          file_id: single.file_id, name: single.name, ...(single.path ? { path: single.path } : {}), size: single.size_bytes, space: single.space,
           ...(single.project_id ? { project_id: single.project_id } : {}), ...(single.folder_id ? { folder_id: single.folder_id } : {}),
         } }
         return { kind: 'failed', error: '附件不存在或已过期' }

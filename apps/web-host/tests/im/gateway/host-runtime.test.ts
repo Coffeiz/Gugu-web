@@ -68,11 +68,18 @@ test('Node交接缺任一Python停机断言时，获取锁与组件构造前拒�
 })
 
 test('启动前取得唯一归属，停机暂停入站并排空 Run 后才关闭平台发送器和锁', async () => {
-  const f = fixture(); await f.runtime.start()
+  const entered = Promise.withResolvers<void>(), finished = Promise.withResolvers<void>()
+  const f = fixture(components => {
+    const pump = components.pumpInteractions
+    components.pumpInteractions = async signal => {
+      await pump(signal)
+      await finished.promise
+    }
+  })
+  await f.runtime.start()
   assert.equal(f.runtime.health().status, 'running')
   assert.deepEqual(f.calls.slice(0, 5), ['lease:acquire', 'resources:create', 'reflection:start', 'worker:start', 'supervisor:start'])
   assert.ok(['dispatch', 'delivery', 'pending', 'interaction'].every(name => f.calls.includes(name)))
-  const entered = Promise.withResolvers<void>(), finished = Promise.withResolvers<void>()
   f.components.pauseIngress = () => { f.calls.push('ingress:pause') }
   f.components.drainRuns = async () => { entered.resolve(); await finished.promise; f.calls.push('run:finished') }
   const stop = f.runtime.stop()

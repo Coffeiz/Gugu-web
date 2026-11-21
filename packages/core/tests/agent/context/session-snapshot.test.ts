@@ -58,10 +58,11 @@ describe('会话快照事务候选与生命周期', () => {
     expect((await ensureSessionSnapshot(identity, first.state, port)).phase).toBe('rebuild')
   })
   it('locale或绑定的稳定字段变化重建，额外运行时字段变化不破坏命中', async () => {
-    const port = ports(), binding = { workspace_id: 1, space: 'personal', folder_id: 2, runtime_secret: 'not-in-key' }
+    const port = ports(), binding = { workspace_id: 1, space: 'personal', folder_id: 2, directory_id: 'desktop:11111111-1111-4111-8111-111111111111', runtime_secret: 'not-in-key' }
     const first = await ensureSessionSnapshot(identity, state(), port, { workspaceBinding: binding, locale: 'zh-CN' })
     expect((await ensureSessionSnapshot(identity, first.state, port, { workspaceBinding: { ...binding, runtime_secret: 'changed' }, locale: 'zh-CN' })).phase).toBe('hit')
     expect((await ensureSessionSnapshot(identity, first.state, port, { workspaceBinding: { ...binding, folder_id: 3 } })).phase).toBe('rebuild')
+    expect((await ensureSessionSnapshot(identity, first.state, port, { workspaceBinding: { ...binding, directory_id: 'desktop:22222222-2222-4222-8222-222222222222' } })).phase).toBe('rebuild')
     expect((await ensureSessionSnapshot(identity, first.state, port, { locale: 'en-US' })).phase).toBe('rebuild')
     expect(workspaceBindingKey(binding)).not.toHaveProperty('runtime_secret')
   })

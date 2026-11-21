@@ -6,7 +6,7 @@ import type { AuthorizedMemoryScope, MemoryRagScopeStatePort, MemoryRagStorageRe
 import { prepareMemory } from './memory-loader.js'
 import { createRagLexicalIndex } from './lexical-index.js'
 import { rankCandidates } from './ranking/rank-candidates.js'
-import type { RagRankCandidate } from './contracts.js'
+import type { RagDocument, RagRankCandidate } from './contracts.js'
 
 export type MemorySearchScope = 'auto' | 'current_group' | 'all_my_groups' | 'private_memory'
 export type MemorySearchSource = 'all' | 'profile' | 'pattern' | 'daily' | 'memory'
@@ -36,6 +36,7 @@ export interface MemorySearchPorts {
   vectors?(identity: RunIdentity, signal: AbortSignal): Promise<{
     version: string
     embed(query: string, signal: AbortSignal): Promise<readonly number[]>
+    readMissing?(documents: readonly RagDocument[], signal: AbortSignal): Promise<ReadonlyMap<string, readonly number[]>>
   } | null>
 }
 
@@ -107,10 +108,21 @@ export function createMemorySearch(ports: MemorySearchPorts) {
       try { queryVector = await vectors.embed(query, signal) } catch { signal.throwIfAborted() }
       signal.throwIfAborted()
       if (queryVector.length) {
+        let computed: ReadonlyMap<string, readonly number[]> | undefined
+        if (vectors.readMissing) {
+          const byIndexedId = new Map(indexedDocuments.map((document, position) => [document.id, documents[position]!]))
+          const missing = index.search(identity.ownerId, query, 50, ['memory']).results.flatMap(hit => {
+            const document = byIndexedId.get(hit.id)
+            return document && !prepared.vectors[document.id] ? [document] : []
+          })
+          if (missing.length) computed = await vectors.readMissing(missing, signal)
+        }
+        signal.throwIfAborted()
         fused = index.searchHybrid(identity.ownerId, query, 50, ['memory'], undefined, {
           queryVector, vectorVersion: vectors.version, expectedVersion: vectors.version,
           vectors: new Map(indexedDocuments.flatMap((document, index) => {
-            const vector = prepared.vectors[documents[index]!.id]
+            const id = documents[index]!.id
+            const vector = prepared.vectors[id] ?? computed?.get(id)
             return vector ? [[document.id, vector] as const] : []
           })),
         })

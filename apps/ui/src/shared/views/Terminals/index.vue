@@ -1,0 +1,503 @@
+<template>
+  <SkeletonGate v-if="loading" preserve-shell v-slot="{ visible }">
+    <TerminalSkeleton :show-content="visible" />
+  </SkeletonGate>
+  <div v-else class="terminals-page">
+    <section v-if="!enabled" class="terminal-state terminal-panel glass-card">
+      <div v-if="error" class="terminal-page-error" role="alert">{{ error }}</div>
+      <div class="terminal-empty">{{ t('terminals.unavailable') }}</div>
+    </section>
+    <template v-else>
+      <div v-if="error && !selected" class="terminal-page-error" role="alert">{{ error }}</div>
+      <aside class="terminal-list terminal-panel glass-card">
+        <ActionButton v-for="item in terminals" :key="item.id" class="terminal-item" variant="secondary" fit :aria-pressed="item.id === selectedId" :title="item.name" @click="select(item.id)">
+          <span class="terminal-item-icon"><Icon name="admin.terminal" :size="15" /></span>
+          <span class="terminal-item-copy"><b>{{ item.name }}</b><small>{{ item.source === 'agent' ? t('terminals.agentSource') : t('terminals.userSource') }} · {{ statusLabel(item.status) }}</small></span>
+          <span class="terminal-status" :class="item.status"></span>
+        </ActionButton>
+        <ActionButton class="terminal-add" variant="secondary" fit :disabled="!ptyEnabled" @click="createTerminal">
+          <Icon class="terminal-add-icon" name="action.add" :size="20" />{{ t('terminals.add') }}
+        </ActionButton>
+      </aside>
+      <main class="terminal-main terminal-panel glass-card">
+        <div v-if="selected" class="terminal-main-head">
+          <div class="terminal-title">
+            <input v-if="renaming" v-model="renameValue" class="terminal-rename" maxlength="200" @keydown.enter="saveRename" @keydown.esc="cancelRename" />
+            <h2 v-else>{{ selected.name }}</h2>
+            <span>{{ desktop ? t('terminalUi.desktopSystemShell') : selected.mode === 'agent-events' ? t('terminals.agentEvents') : `${selected.shellMode} · ${selected.networkProfile}` }}<template v-if="!desktop"> · {{ selected.outputChars }} {{ t('terminalUi.characters') }}</template></span>
+            <small v-if="selected.sessionId || selected.runId" class="terminal-associations">{{ t('terminals.session') }} {{ selected.sessionId ?? '—' }} · Run {{ selected.runId ?? '—' }}</small>
+          </div>
+          <div class="terminal-actions" :inert="desktop && !ptyEnabled">
+            <ActionButton v-if="renaming" fit @click="saveRename">{{ t('terminals.save') }}</ActionButton>
+            <ActionButton v-if="renaming" variant="secondary" fit @click="cancelRename">{{ t('terminals.cancel') }}</ActionButton>
+            <ActionButton v-else variant="secondary" fit @click="startRename"><Icon name="action.edit" :size="14" />{{ t('terminals.rename') }}</ActionButton>
+            <ActionButton v-if="selected.status !== 'terminated' && selected.status !== 'exited'" variant="secondary" fit @click="terminate"><Icon name="action.stop" :size="16" />{{ t('terminals.stop') }}</ActionButton>
+            <ActionButton v-else variant="secondary" fit @click="reopenTerminal"><Icon name="action.play" :size="14" />{{ t('terminals.start') }}</ActionButton>
+            <ActionButton variant="secondary" fit @click="resetSelected"><Icon name="action.refresh" :size="14" />{{ t('terminals.reset') }}</ActionButton>
+            <ActionButton variant="danger" fit @click="deleteSelected"><Icon name="action.delete" :size="14" />{{ t('terminals.delete') }}</ActionButton>
+          </div>
+        </div>
+        <template v-if="desktop && ptyEnabled">
+          <InteractivePtyTerminal v-for="item in terminals" v-show="item.id === selectedId" :key="item.id"
+            desktop :active="item.id === selectedId" :terminal-id="item.id" :paused="item.status === 'terminated' || item.status === 'exited'"
+            :restart-token="ptyRevisions[item.id] ?? 0" @status="handlePtyStatus" @exit="handlePtyExit" @error="error = $event" />
+        </template>
+        <KeepAlive v-else-if="!desktop">
+          <InteractivePtyTerminal
+            v-if="selected?.mode === 'interactive-pty' && ptyEnabled"
+            :key="selected.id"
+            :terminal-id="selected.id"
+            :paused="selected.status === 'terminated' || selected.status === 'exited'"
+            :restart-token="ptyRevisions[selected.id] ?? 0"
+            @status="handlePtyStatus"
+            @exit="handlePtyExit"
+            @error="error = $event"
+          />
+        </KeepAlive>
+        <div v-if="selected?.mode === 'interactive-pty' && !ptyEnabled" class="terminal-empty">{{ t(desktop ? 'terminalUi.desktopNative' : 'terminalUi.ptyUnavailable') }}</div>
+        <div v-if="selected && selected.mode !== 'interactive-pty'" ref="outputRef" class="terminal-output">
+          <div v-if="error" class="terminal-output-error" role="alert">[{{ t('terminalUi.errorLabel') }}] {{ error }}</div>
+          <div v-for="event in events" :key="event.localId ?? event.sequence" class="terminal-event" :class="{ 'is-pending': event.state === 'running', 'is-failed': event.state === 'failed' }">
+            <div v-if="event.type === 'command'" class="terminal-command"><span>$</span> {{ event.command }}</div>
+            <div v-else class="terminal-command terminal-status-event">{{ t('terminals.statusUpdated') }}</div>
+            <pre v-if="event.stdout">{{ event.stdout }}</pre>
+            <pre v-if="event.stderr" class="stderr">{{ event.stderr }}</pre>
+            <small v-if="event.state === 'running'" class="terminal-event-state">{{ t('terminals.running') }} <ActionButton v-if="event.runId" class="terminal-cancel" variant="secondary" fit @click="cancelEvent(event)">{{ t('terminals.stop') }}</ActionButton></small>
+            <small v-else-if="event.state === 'cancelled'" class="terminal-event-state">{{ t('terminals.cancelled') }} · {{ formatTime(event.occurredAt) }}</small>
+            <small v-else-if="event.state === 'failed'" class="terminal-event-state">{{ t('terminals.failed') }} · {{ formatTime(event.occurredAt) }}</small>
+            <small v-else-if="event.type === 'command'"><span>{{ event.exitCode === 0 ? t('terminals.completed') : t('terminals.failed') }} · {{ formatTime(event.occurredAt) }}</span><span v-if="event.exitCode !== null" class="terminal-exit-code">{{ event.exitCode }}</span></small>
+            <small v-else>{{ t('terminals.stateUpdated') }} · {{ formatTime(event.occurredAt) }}</small>
+          </div>
+          <div v-if="!events.length && !error" class="terminal-output-empty">{{ t('terminals.waitingOutput') }}</div>
+        </div>
+        <div v-else-if="!selected" class="terminal-empty">{{ t('terminals.select') }}</div>
+        <form v-if="selected && selected.mode === 'agent-events' && selected.status !== 'terminated' && selected.status !== 'exited'" class="terminal-input" @submit.prevent="submitCommand">
+          <input ref="commandInput" v-model="command" :placeholder="t('terminals.commandPlaceholder')" autocomplete="off" />
+          <ActionButton fit type="submit" :disabled="!command.trim()"><Icon name="action.send" :size="14" />{{ t('terminals.execute') }}</ActionButton>
+        </form>
+      </main>
+    </template>
+  </div>
+</template>
+
+<script setup lang="ts">
+import SkeletonGate from '@/components/common/feedback/skeleton/SkeletonGate.vue'
+import TerminalSkeleton from './components/TerminalSkeleton.vue'
+import { computed, inject, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
+import Icon from '@/components/common/icons/Icon.vue'
+import InteractivePtyTerminal from './components/InteractivePtyTerminal.vue'
+import { replaceOrAppendTerminalEvent, type TerminalEventView } from './terminalEvents'
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
+import { terminalsApi, type TerminalEventItem, type TerminalItem } from '@/services/api'
+import { useLiveStore } from '@/stores/live'
+import { InteractionSync } from '@/interaction/sync/InteractionSync'
+import { upsertById } from '@/utils/reconcileById'
+import { useI18n } from 'vue-i18n'
+import { localPtyAccessKey } from './localPtyAccess'
+
+const router = useRouter()
+const localPtyAvailable = Boolean(inject(localPtyAccessKey, null))
+const props = defineProps({ desktop: Boolean })
+const terminals = ref<TerminalItem[]>([])
+const selectedId = ref<string | null>(null)
+const events = ref<TerminalEventView[]>([])
+const enabled = ref(false)
+const loading = ref(true)
+const ptyEnabled = ref(false)
+const error = ref('')
+const outputRef = ref<HTMLElement | null>(null)
+const commandInput = ref<HTMLInputElement | null>(null)
+const command = ref('')
+const ptyRevisions = ref<Record<string, number>>({})
+const renaming = ref(false)
+const renameValue = ref('')
+let streamGeneration = 0
+let eventsAbortController: AbortController | null = null
+const route = useRoute()
+const live = useLiveStore()
+const { t, locale } = useI18n()
+
+const selected = computed(() => terminals.value.find(item => item.id === selectedId.value) ?? null)
+
+async function load(options: { autoOpen?: boolean } = {}) {
+  try {
+    const data = await terminalsApi.list()
+    enabled.value = data.enabled
+    ptyEnabled.value = data.ptyEnabled
+    terminals.value = data.items
+    const requestedId = typeof route.query.terminalId === 'string' ? route.query.terminalId : null
+    if (requestedId && terminals.value.some(item => item.id === requestedId)) selectedId.value = requestedId
+    else if (!selectedId.value || !terminals.value.some(item => item.id === selectedId.value)) selectedId.value = terminals.value[0]?.id ?? null
+    const current = selected.value
+    if (options.autoOpen && current?.source === 'user' && current.mode === 'interactive-pty' && ['terminated', 'exited'].includes(current.status)) {
+      try {
+        const reopened = await terminalsApi.reopen(current.id)
+        const index = terminals.value.findIndex(item => item.id === reopened.id)
+        if (index >= 0) terminals.value[index] = reopened
+        bumpPtyRevision(current.id)
+      } catch (cause) {
+        error.value = cause instanceof Error ? cause.message : t('terminalUi.autoStartError')
+      }
+    }
+    // 事件流持续监听，不属于一次性页面加载，不能等待它结束。
+    if (selectedId.value) void loadEvents(selectedId.value, true)
+  } catch (cause) {
+    const status = (cause as { status?: number }).status
+    if (status === 401 || status === 403) {
+      enabled.value = false
+      ptyEnabled.value = false
+      terminals.value = []
+      selectedId.value = null
+      await router.replace('/projects')
+      return
+    }
+    error.value = cause instanceof Error ? cause.message : t('terminalUi.readError')
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadEvents(id: string, reset = false, controller?: AbortController) {
+  if (selected.value?.mode === 'interactive-pty') return
+  if (reset) {
+    eventsAbortController?.abort()
+    eventsAbortController = new AbortController()
+  }
+  const activeController = controller ?? eventsAbortController ?? new AbortController()
+  eventsAbortController = activeController
+  const generation = ++streamGeneration
+  if (reset) { events.value = [] }
+  const cursor = reset ? 0 : (events.value.at(-1)?.sequence ?? 0)
+  try {
+    await terminalsApi.events(id, cursor, activeController.signal, event => {
+      if (generation !== streamGeneration || id !== selectedId.value) return
+      if (events.value.some(item => item.sequence === event.sequence)) return
+      replaceOrAppendEvent(event)
+      void nextTick(() => { if (outputRef.value) outputRef.value.scrollTop = outputRef.value.scrollHeight })
+    })
+    if (generation !== streamGeneration || id !== selectedId.value) return
+    if (activeController.signal.aborted || selected.value?.status === 'terminated' || selected.value?.status === 'exited') return
+    await loadEvents(id, false, activeController)
+  } catch (cause) {
+    if (activeController.signal.aborted || (cause instanceof DOMException && cause.name === 'AbortError')) return
+    if (generation === streamGeneration && id === selectedId.value) error.value = cause instanceof Error ? cause.message : t('terminalUi.eventsError')
+  }
+}
+
+function select(id: string) { selectedId.value = id; void loadEvents(id, true) }
+
+function replaceOrAppendEvent(event: TerminalEventItem) {
+  replaceOrAppendTerminalEvent(events.value, event)
+}
+
+function bumpPtyRevision(id: string) {
+  ptyRevisions.value = { ...ptyRevisions.value, [id]: (ptyRevisions.value[id] ?? 0) + 1 }
+}
+
+function updateTerminalStatus(id: string, status: TerminalItem['status']) {
+  const index = terminals.value.findIndex(item => item.id === id)
+  if (index >= 0 && terminals.value[index].status !== status) {
+    terminals.value[index] = { ...terminals.value[index], status }
+  }
+}
+
+function handlePtyStatus(payload: { terminalId: string }) {
+  updateTerminalStatus(payload.terminalId, 'running')
+}
+
+function handlePtyExit(terminalId: string) {
+  updateTerminalStatus(terminalId, 'exited')
+}
+
+// 终端输出优先消费统一业务事件；切换终端和断线时仍用 sequence API 补拉，避免 Redis pub/sub 丢消息。
+watch(() => live.resourceEvent, (event) => {
+  if (props.desktop || !event || event.resource !== 'terminals') return
+  if (InteractionSync.isOwnEvent(event.origin)) return
+  const payload = event.payload && typeof event.payload === 'object' ? event.payload as Record<string, any> : null
+  const terminalId = String(event.entity_id ?? payload?.terminal_id ?? '')
+  if (event.operation === 'refresh') {
+    void load()
+    return
+  }
+  if (event.operation === 'delete') {
+    terminals.value = terminals.value.filter(item => item.id !== terminalId)
+    if (selectedId.value === terminalId) {
+      eventsAbortController?.abort()
+      selectedId.value = terminals.value[0]?.id ?? null
+      events.value = []
+    }
+    return
+  }
+  const terminal = payload?.terminal as TerminalItem | undefined
+  if (terminal) {
+    const index = terminals.value.findIndex(item => item.id === terminal.id)
+    if (event.operation === 'create' && index < 0) terminals.value.unshift(terminal)
+    else if (index >= 0) terminals.value[index] = terminal
+    if (payload?.reset === true) bumpPtyRevision(terminal.id)
+  }
+  const terminalEvent = payload?.event as TerminalEventItem | undefined
+  if (event.operation === 'append' && terminalEvent && terminalId === selectedId.value
+      && !events.value.some(item => item.sequence === terminalEvent.sequence)) {
+    replaceOrAppendEvent(terminalEvent)
+    void nextTick(() => { if (outputRef.value) outputRef.value.scrollTop = outputRef.value.scrollHeight })
+  }
+})
+function startRename() { if (selected.value) { renameValue.value = selected.value.name; renaming.value = true } }
+function cancelRename() { renaming.value = false; renameValue.value = '' }
+async function saveRename() {
+  if (!selected.value || !renameValue.value.trim()) return
+  try {
+    const item = props.desktop
+      ? { ...selected.value, name: renameValue.value.trim() }
+      : await terminalsApi.rename(selected.value.id, renameValue.value.trim())
+    const index = terminals.value.findIndex(value => value.id === item.id)
+    if (index >= 0) terminals.value[index] = item
+    cancelRename()
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : t('terminals.renameError') }
+}
+async function submitCommand() {
+  if (!selected.value || !command.value.trim() || selected.value.status === 'terminated' || selected.value.status === 'exited') return
+  const submittedCommand = command.value.trim()
+  command.value = ''
+  error.value = ''
+  const pending: TerminalEventView = {
+    localId: `pending-${Date.now()}`,
+    sequence: -Date.now(), type: 'command', source: 'user', runId: selected.value.runId,
+    command: submittedCommand, stdout: '', stderr: '', exitCode: null,
+    occurredAt: new Date().toISOString(), state: 'running',
+  }
+  events.value.push(pending)
+  void nextTick(() => { if (outputRef.value) outputRef.value.scrollTop = outputRef.value.scrollHeight })
+  const targetId = selected.value.id
+  try {
+    const data = await terminalsApi.input(targetId, { command: submittedCommand })
+    const index = terminals.value.findIndex(value => value.id === data.terminal.id)
+    if (index >= 0) terminals.value[index] = data.terminal
+    const pendingIndex = events.value.findIndex(item => item.localId === pending.localId)
+    if (pendingIndex >= 0) events.value[pendingIndex] = { ...events.value[pendingIndex], runId: data.requestId }
+    replaceOrAppendEvent(data.event)
+    // 输入接口会发布 append 事件，现有 SSE 会增量更新输出；不要重置或重建事件流，
+    // 否则会清空输出列表并让终端内容短暂闪空。
+  } catch (cause) {
+    const pendingIndex = events.value.findIndex(item => item.localId === pending.localId)
+    if (pendingIndex >= 0) events.value[pendingIndex] = { ...events.value[pendingIndex], state: 'failed', stderr: t('terminals.commandSubmitFailed') }
+    error.value = cause instanceof Error ? cause.message : t('terminals.commandFailed')
+    if (!command.value) command.value = submittedCommand
+  }
+  finally {
+    await nextTick(() => {
+      if (selected.value?.status !== 'terminated' && selected.value?.status !== 'exited') commandInput.value?.focus()
+    })
+  }
+}
+async function cancelEvent(event: TerminalEventView) {
+  if (!selected.value || !event.runId || event.state !== 'running') return
+  try {
+    await terminalsApi.cancel(selected.value.id, event.runId)
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : t('terminalUi.cancelError')
+  }
+}
+function newDesktopTerminal(status: TerminalItem['status']): TerminalItem {
+  const now = new Date().toISOString()
+  return {
+    id: crypto.randomUUID(), source: 'user', mode: 'interactive-pty', status,
+    name: t('terminalUi.defaultName', { number: ++desktopTerminalNumber }),
+    shellMode: 'system', networkProfile: 'system', sessionId: null, workspaceId: null,
+    runId: null, lastSequence: 0, outputChars: 0, createdAt: now, updatedAt: now, closedAt: null,
+  }
+}
+let desktopTerminalNumber = 0
+
+async function createTerminal() {
+  if (props.desktop) {
+    const item = newDesktopTerminal('idle')
+    terminals.value.push(item)
+    select(item.id)
+    return
+  }
+  try {
+    const item = await terminalsApi.create({ name: t('terminalUi.defaultName', { number: terminals.value.length + 1 }), mode: 'interactive-pty' })
+    // 兼容实时事件先于 HTTP 响应到达的顺序，按服务端 id 做最终幂等对账。
+    terminals.value = upsertById(terminals.value, item)
+    select(item.id)
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : t('terminalUi.createError') }
+}
+async function terminate() {
+  const item = selected.value
+  if (!item) return
+  if (props.desktop) {
+    updateTerminalStatus(item.id, 'terminated')
+    return
+  }
+  await terminalsApi.terminate(item.id)
+  await load()
+}
+async function reopenTerminal() {
+  if (!selected.value || !['exited', 'terminated'].includes(selected.value.status)) return
+  try {
+    if (props.desktop) {
+      updateTerminalStatus(selected.value.id, 'running')
+      bumpPtyRevision(selected.value.id)
+      return
+    }
+    const item = await terminalsApi.reopen(selected.value.id)
+    const index = terminals.value.findIndex(value => value.id === item.id)
+    if (index >= 0) terminals.value[index] = item
+    // 同一 xterm 实例复用时显式重启连接；后端会重新创建 PTY 并发送 ready。
+    bumpPtyRevision(item.id)
+    updateTerminalStatus(item.id, 'running')
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : t('terminals.startError') }
+}
+async function resetSelected() {
+  if (!selected.value) return
+  const target = selected.value
+  if (!await confirmDialog({
+    title: t('terminals.resetTitle'),
+    message: t(props.desktop ? 'terminalUi.desktopResetMessage' : 'terminals.resetMessage', { name: target.name }),
+    tone: 'danger',
+    confirmText: t('terminals.reset'),
+  })) return
+  error.value = ''
+  try {
+    if (props.desktop) {
+      updateTerminalStatus(target.id, 'running')
+      bumpPtyRevision(target.id)
+      return
+    }
+    const item = await terminalsApi.reset(target.id)
+    const index = terminals.value.findIndex(value => value.id === item.id)
+    if (index >= 0) terminals.value[index] = item
+    bumpPtyRevision(item.id)
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : t('terminals.resetError') }
+}
+async function deleteSelected() {
+  if (!selected.value) return
+  const target = selected.value
+  if (!await confirmDialog({
+    title: t('terminals.deleteTitle'),
+    message: t(props.desktop ? 'terminalUi.desktopDeleteMessage' : 'terminals.deleteMessage', { name: target.name }),
+    tone: 'danger',
+    confirmText: t('terminals.delete'),
+  })) return
+  try {
+    if (props.desktop) {
+      terminals.value = terminals.value.filter(item => item.id !== target.id)
+      const { [target.id]: _revision, ...remaining } = ptyRevisions.value
+      ptyRevisions.value = remaining
+      if (selectedId.value === target.id) selectedId.value = terminals.value.at(-1)?.id ?? null
+      return
+    }
+    await terminalsApi.delete(target.id)
+    await load()
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : t('terminals.deleteError') }
+}
+function statusLabel(status: string) { return t(`terminals.statuses.${status}`, status) }
+function formatTime(value: string) { return new Date(value).toLocaleTimeString(locale.value, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }
+let closingCurrentTerminal = false
+function closeCurrentTerminal() {
+  const current = selected.value
+  if (closingCurrentTerminal || !current || current.source !== 'user' || current.mode !== 'interactive-pty') return
+  if (['terminated', 'exited'].includes(current.status)) return
+  closingCurrentTerminal = true
+  void terminalsApi.terminate(current.id).catch(() => {
+    // 路由离开时请求可能被浏览器取消，后端 detached TTL 仍会回收 PTY。
+  })
+}
+onMounted(() => {
+  if (!props.desktop) {
+    void load({ autoOpen: true })
+    return
+  }
+  const item = newDesktopTerminal('terminated')
+  terminals.value = [item]
+  selectedId.value = item.id
+  enabled.value = true
+  ptyEnabled.value = localPtyAvailable
+  loading.value = false
+})
+onUnmounted(() => {
+  streamGeneration++
+  eventsAbortController?.abort()
+  if (!props.desktop) closeCurrentTerminal()
+})
+</script>
+
+<style scoped src="./terminal-layout.css"></style>
+<style scoped>
+.terminals-page:has(.terminal-page-error):not(:has(.terminal-state)) { grid-template-rows:auto minmax(0, 1fr); }
+.terminal-state, .terminal-page-error { grid-column:1 / -1; }
+.terminal-list .terminal-item, .terminal-list .terminal-add {
+  width:100%;
+  height:auto;
+  min-height:50px;
+  flex-shrink:0;
+  border-radius:var(--radius-xs);
+}
+.terminal-list .terminal-item { text-align:left; }
+.terminal-add {
+  gap:var(--space-sm);
+  font-size:12px;
+  font-weight:600;
+}
+.terminal-add.app-action-button.is-secondary {
+  border:1px solid var(--inline-action-border);
+  border-radius:var(--radius-xs);
+  background:var(--inline-action-bg);
+  color:var(--inline-action-fg);
+}
+.terminal-add.app-action-button.is-secondary:hover:not(:disabled) {
+  border-color:var(--inline-action-border-hover);
+  background:var(--inline-action-bg-hover);
+  color:var(--inline-action-fg-hover);
+  filter:none;
+}
+.terminal-add-icon { opacity:.5; }
+.terminal-item :deep(.app-action-button-content) { width:100%; min-width:0; }
+.terminal-item[aria-pressed="true"] { border-color:var(--border-focus); }
+.terminal-item-icon { display:grid; place-items:center; width:28px; height:28px; flex:none; border-radius:var(--radius-compact); background:var(--surface-soft); color:var(--selection-fg); }
+.terminal-item-copy { min-width:0; flex:1; display:flex; flex-direction:column; gap:3px; }
+.terminal-item-copy b { font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.terminal-item-copy small { color:var(--content-tertiary); font-size:10px; }
+.terminal-status { width:7px; height:7px; flex:none; border-radius:50%; background:var(--content-tertiary); }
+.terminal-status.running { background:var(--success-fg); }
+.terminal-status.failed { background:var(--danger-fg); }
+.terminal-output-empty,.terminal-empty { display:grid; place-items:center; min-height:180px; color:var(--content-tertiary); font-size:12px; }
+.terminal-page-error { margin:0 0 var(--space-md); padding:8px 12px; color:var(--danger-fg); font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+.terminal-main-head h2 { margin:0; color:var(--content-primary); font-size:14px; overflow-wrap:anywhere; }
+.terminal-title > span { display:block; margin-top:4px; color:var(--content-tertiary); font-size:10px; }
+.terminal-output { min-height:0; flex:1; display:flex; flex-direction:column; overflow:auto; padding:16px; background:#101319; color:#e7edf7; font:13px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:.01em; }
+.terminal-output-empty { color:#778196; }
+.terminal-output-empty { flex:1; min-height:0; display:grid; place-items:center; }
+.terminal-output-error { padding:0 0 12px; margin-bottom:14px; border-bottom:1px solid color-mix(in srgb,var(--danger-fg) 32%,transparent); color:var(--danger-fg); font:inherit; white-space:pre-wrap; overflow-wrap:anywhere; }
+.terminal-event { padding-bottom:14px; margin-bottom:14px; border-bottom:1px solid var(--divider-line); }
+.terminal-command { color:var(--selection-fg); white-space:pre-wrap; overflow-wrap:anywhere; }
+.terminal-command span { color:var(--success-fg); }
+.terminal-event pre { margin:6px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; }
+.terminal-event pre.stderr { color:var(--danger-fg); }
+.terminal-event small { display:block; margin-top:7px; color:#aab4c5; font:11px/1.4 var(--font-sans); }
+.terminal-event-state { color:var(--content-tertiary); }
+.terminal-cancel { margin-left:var(--space-sm); }
+.terminal-exit-code { margin-left:8px; color:var(--content-tertiary); }
+.terminal-title { min-width:0; }
+.terminal-rename { box-sizing:border-box; width:min(320px, 45vw); height:var(--control-height-sm); padding:5px 8px; border:1px solid var(--input-border); border-radius:var(--input-radius); outline:none; background:var(--input-bg); color:var(--input-fg); font:inherit; line-height:calc(var(--control-height-sm) - 2px); transition:background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
+.terminal-input input { min-width:0; flex:1; border:1px solid var(--input-border); border-radius:var(--input-radius); outline:none; background:var(--input-bg); color:var(--input-fg); padding:8px 10px; font:12px ui-monospace,SFMono-Regular,Menlo,monospace; transition:background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
+.terminal-rename:focus,
+.terminal-input input:focus { background:var(--input-bg-focus); border-color:var(--input-border-focus); }
+.terminal-input input::placeholder { color:var(--input-placeholder); opacity:1; }
+.terminal-rename::selection,
+.terminal-input input::selection { background:var(--selection-bg); color:var(--selection-fg); }
+.terminal-associations { color:var(--content-tertiary); font-size:10px; overflow-wrap:anywhere; }
+
+@media (max-width:700px) {
+  .terminals-page:has(.terminal-page-error):not(:has(.terminal-state)) {
+    grid-template-columns:minmax(0, 1fr);
+    grid-template-rows:none;
+    height:auto;
+    min-height:100%;
+  }
+  .terminal-state { min-height:180px; }
+}
+</style>

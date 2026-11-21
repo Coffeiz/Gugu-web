@@ -12,10 +12,10 @@ describe('工具结果持久化与展示通用投影', () => {
     expect(result).toEqual({ content, media: [{ type: 'text', text: '[图片已查看]' }, { type: 'image_url', image_url: { url: 'https://example.test/image.png' } }] })
   })
 
-  it('error字段递归脱敏连接串/密钥/路径/UUID，成功字段保持原结果', () => {
+  it('用户可见 error 字段递归脱敏连接串和密钥，保留含 UUID 的路径', () => {
     const error = 'postgresql://synthetic:synthetic@example.test/synthetic token=synthetic-token-1234567890 /home/synthetic/report.txt 00000000-0000-4000-8000-000000000000'
-    const result = projectPersistentToolResult({ ok: true, failures: [{ error }], content: '正常业务内容' })
-    expect(result).toEqual({ ok: true, failures: [{ error: '‹连接串已隐藏› ‹密钥已隐藏› ‹路径已隐藏› ‹id已隐藏›' }], content: '正常业务内容' })
+    const result = projectPersistentToolResult({ ok: true, failures: [{ error }], content: '正常业务内容' }, true)
+    expect(result).toEqual({ ok: true, failures: [{ error: '‹连接串已隐藏› ‹密钥已隐藏› /home/synthetic/report.txt 00000000-0000-4000-8000-000000000000' }], content: '正常业务内容' })
     expect(redactToolError('失败\n  File "synthetic.py", line 2, in run\n    synthetic_call()')).toBe('失败')
   })
 
@@ -23,8 +23,8 @@ describe('工具结果持久化与展示通用投影', () => {
     const raw = '{ "ok" : true, "items" : [ 1, 2 ] }'
     expect(projectPersistentToolResult(raw)).toBe(raw)
     const encoded = JSON.stringify({ result: [{ type: 'video', source: { data: 'synthetic-private-media' } }], failed: [{ error: '/home/synthetic/private.txt' }] })
-    const result = projectPersistentToolResult(encoded)
+    const result = projectPersistentToolResult(encoded, true)
     expect(typeof result).toBe('string')
-    expect(JSON.parse(result as string)).toEqual({ failed: [{ error: '‹路径已隐藏›' }], result: [{ type: 'text', text: '[视频已查看]' }] })
+    expect(JSON.parse(result as string)).toEqual({ failed: [{ error: '/home/synthetic/private.txt' }], result: [{ type: 'text', text: '[视频已查看]' }] })
   })
 })

@@ -1,0 +1,104 @@
+<script setup lang="ts" generic="T">
+import { ref, computed } from 'vue'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
+import ContextMenu from '@/components/common/overlays/ContextMenu.vue'
+import Icon from '@/components/common/icons/Icon.vue'
+import type { SortOption } from '@/composables/shared/useSortedList'
+import { useI18n } from 'vue-i18n'
+
+const props = defineProps({
+  options: { type: Array as () => SortOption<T>[], required: true },
+  sortKey: { type: String, required: true },
+  sortDir: { type: String as () => 'asc' | 'desc', required: true },
+  /** 可选：按钮里的语义图标。传空字符串不显示。 */
+  icon: { type: String, default: 'action.sort' },
+})
+
+const emit = defineEmits<{
+  select: [key: string]
+}>()
+const { t } = useI18n()
+
+// 排序选项由文件库和项目文件面板共用；文案在此统一按 key 从 locale 读取，
+// 避免宿主在初始化时传入旧语言的 label，导致语言切换后按钮和弹窗不一致。
+const localizedOptions = computed(() => props.options.map(option => ({
+  ...option,
+  label: t(`filesViewUi.${option.key === 'stage' ? 'projectStage' : option.key === 'createdAt' ? 'date' : option.key}`),
+})))
+const sortLabel = computed(() => localizedOptions.value.find(option => option.key === props.sortKey)?.label ?? '')
+
+const sortBtnRef   = ref<HTMLElement | null>(null)
+const sortMenuOpen = ref(false)
+const sortMenuPos  = ref<{ x: number; y: number }>({ x: 0, y: 0 })
+
+function openMenu(event: MouseEvent) {
+  if (sortMenuOpen.value) { sortMenuOpen.value = false; return }
+  if (!(event.currentTarget instanceof HTMLElement)) return
+  sortBtnRef.value = event.currentTarget
+  const r = sortBtnRef.value.getBoundingClientRect()
+  // ContextMenu 的基础宽度为 160px；用按钮中心作为锚点，避免菜单左边缘跟按钮左边缘对齐造成视觉偏移。
+  sortMenuPos.value = { x: r.left + r.width / 2 - 80, y: r.bottom + 6 }
+  sortMenuOpen.value = true
+}
+
+function onSelect(key: string) {
+  emit('select', key)
+}
+
+function closeMenu() { sortMenuOpen.value = false }
+
+defineExpose({ closeMenu })
+</script>
+
+<template>
+  <div class="sort-selector" @click.stop>
+    <ActionButton
+      variant="secondary"
+      fit
+      @click.stop="openMenu"
+      :title="t('filesViewUi.sort')"
+    >
+      <Icon :name="icon" v-if="icon" size="sm" tone="inherit" />
+      {{ sortLabel }}
+      <svg
+        class="sort-dir-icon"
+        :class="{ desc: sortDir === 'desc' }"
+        width="9" height="9" viewBox="0 0 10 10" fill="none"
+        stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+      >
+        <path d="M5 2v6M2 5l3-3 3 3" />
+      </svg>
+    </ActionButton>
+    <!-- 与右键菜单同源：Teleport 到 body，backdrop-filter 才能正确生效 -->
+    <ContextMenu :show="sortMenuOpen" :anchor="sortBtnRef" :x="sortMenuPos.x" :y="sortMenuPos.y" @close="closeMenu">
+      <button
+        v-for="opt in localizedOptions"
+        :key="opt.key"
+        class="ctx-item popup-menu-item sort-menu-item"
+        :class="{ active: opt.key === sortKey }"
+        type="button"
+        @click="onSelect(opt.key)"
+      >
+        {{ opt.label }}
+        <svg
+          v-if="opt.key === sortKey"
+          class="sort-check"
+          :class="{ desc: sortDir === 'desc' }"
+          width="9" height="9" viewBox="0 0 10 10" fill="none"
+          stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+        >
+          <path d="M5 2v6M2 5l3-3 3 3" />
+        </svg>
+      </button>
+    </ContextMenu>
+  </div>
+</template>
+
+<style scoped>
+.sort-selector { position: relative; }
+.sort-dir-icon { transition: transform 0.2s; }
+.sort-dir-icon.desc { transform: rotate(180deg); }
+/* 排序弹窗经 ContextMenu(Teleport 到 body) 渲染，外观与右键菜单完全一致 */
+.sort-check { flex-shrink: 0; margin-left: auto; color: var(--color-primary); }
+.sort-check.desc { transform: rotate(180deg); }
+</style>

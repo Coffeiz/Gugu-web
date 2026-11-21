@@ -32,7 +32,7 @@ describe('Canonical 历史与 ledger 不变量', () => {
   })
   it('Schema与tool_result独立消息但同round/batch，最近相同schema去重，换实现必须重申', () => {
     const service = services(), area = new MessageArea(service)
-    const pair = area.appendBatch([{ message: { role: 'assistant', content: [{ type: 'tool_call', id: 'a', name: 'get_tool_schema', arguments: '{}' }] }, source: 'tool_round', persistencePolicy: 'commit_on_success', roundId: 'round-1' },
+    const pair = area.appendBatch([{ message: { role: 'assistant', content: [{ type: 'tool_call', id: 'a', name: 'search_tools', arguments: '{}' }] }, source: 'tool_round', persistencePolicy: 'commit_on_success', roundId: 'round-1' },
     { message: { role: 'user', content: [{ type: 'tool_result', tool_call_id: 'a', content: 'ok' }] }, source: 'tool_round', persistencePolicy: 'commit_on_success', roundId: 'round-1' }], { kind: 'tool-round' })
     const schema = { name: 'read', input_schema: { type: 'object' } }
     const event: Block = { type: 'tool-schema', tool_name: 'read', schema_version: 1, schema_digest: toolSchemaDigest(schema, service), implementation_digest: 'impl-1', schema }

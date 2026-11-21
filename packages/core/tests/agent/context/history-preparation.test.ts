@@ -169,9 +169,9 @@ describe('历史加载的水位、所有权与顺序', () => {
   it('图片/文件附件引用走各自回读通道，voice不重复注入，均不含媒体载荷', () => {
     const refs = formatAttachmentReferences([{ type: 'attachment_ref', attach_id: 'image', kind: 'image', name: '合成图' },
     { type: 'attachment_ref', attach_id: 'file', kind: 'binary', name: '合成表', ext: 'xlsx' }, { type: 'attachment_ref', attach_id: 'voice', kind: 'voice' }])
-    expect(refs).toContain('read_file(items='); expect(refs).toContain('save_uploaded_file'); expect(refs).toContain('合成表.xlsx')
+    expect(refs).toContain('历史图片附件：attach_id=image'); expect(refs).not.toContain('read_file'); expect(refs).toContain('save_attachment'); expect(refs).toContain('合成表.xlsx')
     expect(refs).not.toContain('attach_id=voice'); expect(refs).not.toContain('base64')
-    expect(refs.slice(0, refs.indexOf('save_uploaded_file'))).not.toContain('attach_id=file')
+    expect(refs.slice(0, refs.indexOf('save_attachment'))).not.toContain('attach_id=file')
   })
   it('群sender/quote/附件属于模型上下文分区，不改数据库原文，不注入runtime权限', () => {
     const envelope = normalizeHistoryMessage({ role: 'user', content: '继续', quoted_text: '合成引用', platform_user_id: 'member', platform_user_name: '小北', files: [{ attach_id: 'file', kind: 'text', ext: 'md' }] })
@@ -317,7 +317,7 @@ describe('统一当前轮组装', () => {
     const content = String(prepared.area.messages[0]!.content)
     expect(content).toContain('【消息时间】2026-11-13 08:00')
     expect(content).toContain('平台 ID：member\n显示名：小北'); expect(content).toContain('【引用消息】\n合成引用')
-    expect(content).toContain('save_uploaded_file'); expect(times).toEqual([[1000, 'Asia/Shanghai']])
+    expect(content).toContain('save_attachment'); expect(times).toEqual([[1000, 'Asia/Shanghai']])
   })
   it.each(['qq', 'feishu', 'wechat', 'web'])('主准备链的%s历史引用重建相同且不修改原文', async source => {
     const original = row(1, { content: '继续', quote: '引用原文', source })

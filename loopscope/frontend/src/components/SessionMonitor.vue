@@ -394,7 +394,7 @@ function normalizeUsage(value: Record<string, any> | undefined): TokenUsage {
   const fresh = number(value.fresh_input)
   const total = number(value.total)
   // 旧 Node Collector 的 input 是 fresh token；context_input 标记了该口径。
-  // 新 Node 和 Python Collector 的 input 已是总输入，fresh_input 单独展示。
+  // 当前 Collector 的 input 是总输入，fresh_input 单独展示。
   const cacheTokens = (cacheRead ?? 0) + (cacheWrite ?? 0)
   const legacyNodeUsage = value.context_input !== undefined || rawInput !== undefined && rawInput < cacheTokens
   const input = legacyNodeUsage && rawInput !== undefined

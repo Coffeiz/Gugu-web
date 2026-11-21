@@ -68,8 +68,8 @@ export function createWebAgentContextBuilder(ports: Omit<AgentContextBuilderPort
           : { name: String(item.name ?? ''), folder: item.folder == null ? null : String(item.folder) })
       }
       const total = files.total == null ? 0 : Number(files.total)
-      const trash = files.trash == null ? 0 : Number(files.trash)
-      if (!Number.isSafeInteger(total) || total < 0 || !Number.isSafeInteger(trash) || trash < 0)
+      const trash = files.trash == null ? undefined : Number(files.trash)
+      if (!Number.isSafeInteger(total) || total < 0 || (trash !== undefined && (!Number.isSafeInteger(trash) || trash < 0)))
         throw new TypeError('文件概览计数无效')
       return {
         memoryBlock: formatAgentMemory(memory, ports.now()),
@@ -77,7 +77,7 @@ export function createWebAgentContextBuilder(ports: Omit<AgentContextBuilderPort
         sourceBlock: formatAgentSource(source, Object.fromEntries(['feishu', 'qq', 'wechat', 'telegram'].map(name => [name, channels[name] === true]))),
         events: visibility ? rows(data.events, '日历概览').map(item => ({ date: String(item.date ?? ''), title: String(item.title ?? '') })) : [],
         notes: visibility ? rows(data.notes, '笔记概览').map(item => ({ title: item.title == null ? null : String(item.title), content: item.content == null ? null : String(item.content), capturedAt: item.capturedAt == null ? null : String(item.capturedAt) })) : [],
-        files: visibility ? { total, trash, folders: fileRows('folders'), files: fileRows('files') } : null,
+        files: visibility ? { total, ...(trash === undefined ? {} : { trash }), folders: fileRows('folders'), files: fileRows('files') } : null,
         knowledge: visibility ? rows(data.knowledge, '知识概览') : [],
         includeProjects: visibility,
         includeCalendar: visibility,

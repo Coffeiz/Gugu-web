@@ -1,3 +1,4 @@
+import { closeDesktopTerminal } from '../desktop-terminal.js'
 import { MAX_FRAME, boundedFrame, desktopFrame } from '../commands.js'
 import type { LocalRuntime } from '../local.js'
 
@@ -23,7 +24,9 @@ export function attachIpcTransport(
     closed = true
     port.off('message', receive)
     port.off('close', disconnected)
-    closing = queue.finally(() => runtime.close())
+    closing = queue.finally(async () => {
+      try { await closeDesktopTerminal() } finally { await runtime.close() }
+    })
     return closing
   }
   const disconnected = () => {

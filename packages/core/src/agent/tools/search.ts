@@ -227,6 +227,10 @@ const similarImageSchema = z.object({
   image_url: z.string().optional(),
   max_results: z.number().int().min(1).max(20).optional(),
 }).refine(args => args.attach_id !== undefined || args.image_url !== undefined)
+const similarImageUrlSchema = z.object({
+  image_url: z.string().trim().min(1).max(2_048),
+  max_results: z.number().int().min(1).max(20).optional(),
+})
 
 type SimilarImageInput = { attachmentId: string; url: string; maxResults?: number }
 export type SimilarImageSearchPort = PaidSearchPort<SimilarImageInput>
@@ -237,19 +241,23 @@ function normalizedImage(input: unknown): SimilarImageInput {
   return { attachmentId, url: attachmentId ? '' : args.image_url?.trim() ?? '', maxResults: args.max_results }
 }
 
-export function createSimilarImageSearchTool(port: SimilarImageSearchPort): ToolDefinition {
+export function createSimilarImageSearchTool(port: SimilarImageSearchPort, options: { allowAttachments?: boolean } = {}): ToolDefinition {
+  const allowAttachments = options.allowAttachments !== false
+  const inputSchema = allowAttachments ? similarImageSchema : similarImageUrlSchema
   return {
     definition: { name: 'similar_image_search', schema: { type: 'function', function: {
       name: 'similar_image_search',
-      description: '用已有的 JPG 或 PNG 附件、图片 URL 查找相似候选。',
-      parameters: { type: 'object', properties: {
-        attach_id: { type: 'string' },
-        image_url: { type: 'string' },
+      description: allowAttachments
+        ? '用已有的 JPG 或 PNG 附件、图片 URL 查找相似候选。'
+        : '用图片 URL 查找相似候选。',
+      parameters: { type: 'object', ...(allowAttachments ? {} : { required: ['image_url'] }), properties: {
+        ...(allowAttachments ? { attach_id: { type: 'string' } } : {}),
+        image_url: { type: 'string', ...(allowAttachments ? {} : { minLength: 1 }) },
         max_results: { type: 'integer', minimum: 1, maximum: 20 },
-      }, anyOf: [{ required: ['attach_id'] }, { required: ['image_url'] }] },
+      }, ...(allowAttachments ? { anyOf: [{ required: ['attach_id'] }, { required: ['image_url'] }] } : {}) },
     } } },
     effect: 'write',
-    validate(input) { return similarImageSchema.safeParse(input) },
+    validate(input) { return inputSchema.safeParse(input) },
     ...(port.reconcile ? { reconcile: (input: unknown, identity: RunIdentity & { roundId: string }, call: ToolCall) =>
       port.reconcile!(normalizedImage(input), identity, call) } : {}),
     async execute(input, scope, call) {

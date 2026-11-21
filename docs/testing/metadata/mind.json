@@ -1,25 +1,25 @@
 {
-  "apps/web/tests/mind/noteDraft.test.ts": {
+  "apps/ui/tests/mind/noteDraft.test.ts": {
     "domain": "mind-notes",
     "layer": "L0",
-    "owner": "apps/web/mind",
-    "productionEntry": "apps/web/src/views/Mind/utils/noteDraft.ts",
+    "owner": "apps/ui/mind",
+    "productionEntry": "apps/ui/src/shared/views/Mind/utils/noteDraft.ts",
     "keyBehavior": "未编辑空白草稿离开时不创建笔记；正文或仅标题草稿只持久化一次并保留 capturedAt",
     "ci": "frontend-test"
   },
-  "apps/web/tests/mind/noteEditCommit.test.ts": {
+  "apps/ui/tests/mind/noteEditCommit.test.ts": {
     "domain": "mind-notes",
     "layer": "L0",
-    "owner": "apps/web/composables/mind",
-    "productionEntry": "apps/web/src/composables/mind/noteEditCommit.ts",
+    "owner": "apps/ui/composables/mind",
+    "productionEntry": "apps/ui/src/shared/composables/mind/noteEditCommit.ts",
     "keyBehavior": "保存失败保留编辑态供重试，只有保存成功后才退出编辑",
     "ci": "frontend-test"
   },
-  "apps/web/tests/mind/CanvasToolbar.test.ts": {
+  "apps/ui/tests/mind/CanvasToolbar.test.ts": {
     "domain": "mind-canvas",
     "layer": "L1",
-    "owner": "apps/web/mind",
-    "productionEntry": "apps/web/src/views/Mind/components/CanvasToolbar.vue",
+    "owner": "apps/ui/mind",
+    "productionEntry": "apps/ui/src/shared/views/Mind/components/CanvasToolbar.vue",
     "keyBehavior": "画布对象选择器排除不可加入的文件夹和会话，仅将可加入对象交给画布",
     "ci": "frontend-test"
   },

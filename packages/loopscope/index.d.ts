@@ -1,18 +1,22 @@
 export const defaultLoopScopeEndpoint: string
 export function loopScopeTraceEnabled(value: unknown): boolean
+type TraceJson = null | boolean | number | string | TraceJson[] | { [key: string]: TraceJson }
 export interface LoopScopeTraceEvent {
   identity: { ownerId: string; sessionId: string; runId: string }
-  kind: 'run' | 'round' | 'provider' | 'tool' | 'context'
+  kind: 'run' | 'round' | 'provider' | 'tool' | 'context' | 'output' | 'history' | 'guard' | 'state'
   name: string
   at: number
   round?: number
   spanId?: string
   parentSpanId?: string | null
   status?: string
+  startedAt?: number
+  endedAt?: number | null
+  durationMs?: number | null
   input?: unknown
   output?: unknown
   attributes?: Readonly<Record<string, unknown>>
-  usage?: Readonly<Record<string, unknown>>
+  usage?: Readonly<Partial<Record<'input' | 'output' | 'cacheRead' | 'cacheWrite' | 'contextInput', number | null>>>
 }
 export function createLoopScopeTrace(options: {
   endpoint: string
@@ -29,7 +33,7 @@ export function createLoopScopeTrace(options: {
       method: 'POST'
       allowLocal: true
       headers: Readonly<Record<string, string>>
-      body: Record<string, unknown> | Uint8Array
+      body: Record<string, TraceJson> | Uint8Array
     }, signal: AbortSignal): Promise<{ status: number; cancel?(): Promise<void> | void }>
   }
 }): { record(event: LoopScopeTraceEvent): void; close(drainMs?: number): Promise<void> }

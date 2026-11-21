@@ -182,6 +182,33 @@ describe('Harness 交互等待、消费与恢复', () => {
     expect(f.histories.at(-1)?.context).toContain('tool:done-b:completed')
   })
 
+  it('同一轮两个串行 Shell 分别确认，不跳过第二项或提前请求模型', async () => {
+    const calls = ['shell-a', 'shell-b'].map(id => ({ ...toolCall, id, name: 'shell' }))
+    const f = fixture([[{ type: 'complete', text: '', calls }], [{ type: 'complete', text: '完成', calls: [] }]])
+    f.ports.tools.plan = vi.fn(async () => ({ mode: 'serial' as const }))
+    const executions: string[] = []
+    f.ports.tools.dispatch = vi.fn<ToolPort['dispatch']>(async (call, scope) => {
+      if (!scope.resolution) return { kind: 'waiting', interaction: { id: `intent-${call.id}`, kind: 'confirmation', toolCall: call } }
+      expect(scope.resolution.interactionId).toBe(`intent-${call.id}`)
+      executions.push(call.id)
+      return { kind: 'completed', value: '确认已执行', successful: true, mutated: true }
+    })
+    const first = await collect(f.harness.start(identity))
+    expect(first.state.pending?.id).toBe('intent-shell-a')
+    expect(f.ports.tools.dispatch).toHaveBeenCalledTimes(1)
+    expect(executions).toEqual([])
+    const confirm = (id: string) => collect(createAgentRunner(f.ports).resume(identity,
+      { interactionId: `intent-${id}`, receiptId: `receipt-${id}`, status: 'confirmed', value: null }))
+    const second = await confirm('shell-a')
+    expect(second.state.pending?.id).toBe('intent-shell-b')
+    expect(executions).toEqual(['shell-a'])
+    expect(f.ports.provider.stream).toHaveBeenCalledTimes(1)
+    const final = await confirm('shell-b')
+    expect(final.state.status).toBe('completed')
+    expect(executions).toEqual(['shell-a', 'shell-b'])
+    expect(f.ports.provider.stream).toHaveBeenCalledTimes(2)
+  })
+
   it('同批多个确认逐个激活且每个只重投自己的原调用，不在中间请求下一轮模型', async () => {
     const calls = ['confirm-a', 'confirm-b'].map((id) => ({ ...toolCall, id }))
     const f = fixture([[{ type: 'complete', text: '', calls }], [{ type: 'complete', text: '完成', calls: [] }]])

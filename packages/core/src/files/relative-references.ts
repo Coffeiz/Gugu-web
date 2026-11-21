@@ -38,3 +38,10 @@ export async function resolveRelativeReferences<File, Folder>(
   }
   return result
 }
+
+/** 显式引用字段按 JSON 编码，避免文件名或路径中的换行改变包裹结构。 */
+export function formatFileReference(fields: Record<string, string | number | undefined>) {
+  const lines = Object.entries(fields).flatMap(([label, value]) =>
+    value === undefined ? [] : [`【${label}】${JSON.stringify(value)}`])
+  return ['【引用文件】', ...lines, '【/引用文件】'].join('\n')
+}

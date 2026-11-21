@@ -16,7 +16,7 @@ const writableFields=(job:ImReflectionJob)=>job.scope.type==='owner'?[...fields(
 export function reflectionFileKey(job:ImReflectionJob,field:string):string{
   if(!writableFields(job).includes(field))throw fail()
   const filename=field==='daily'||field==='memory'?`${field}.md`:`${field}.json`
-  if(job.scope.type==='owner')return `${job.identity.ownerId}/.agent/${filename}`
+  if(job.scope.type==='owner')return `${job.identity.ownerId}/.agent/memories/${filename}`
   return imMemoryMaintenanceScopeFileKey({owner_user_id:job.identity.ownerId,platform:job.actor.platform,bot_id:job.actor.botId,
     scope_type:job.scope.type,scope_id:job.scope.id},filename)
 }

@@ -1,6 +1,9 @@
 export class BindingCodeUnavailable extends Error {readonly statusCode=503;constructor(){super('暂时无法生成绑定码');this.name='BindingCodeUnavailable'}}
 import {dataContext} from '../contracts/index.js'
 import type {UserBotsQuery} from './user-bots.js'
+export const IM_BINDING_TTL_SECONDS = 600
+export const IM_BINDING_MAX_ATTEMPTS = 5
+
 export interface BindingCodePorts {
  query:UserBotsQuery
  save(key:string,value:string,ttl:number):Promise<unknown>
@@ -18,7 +21,7 @@ export function createUserBotBindingCodeIssuer(ports:BindingCodePorts) {
   const code=ports.generateCode(),challenge=ports.generateChallenge()
   if(!/^\d{6}$/.test(code)||!challenge)throw new Error('绑定挑战生成失败')
   const message=`${platform==='qq'?'':'telegram:'}${botId}:${owner}:${code}`
-  try{await ports.save(`im:${platform}-binding:${botId}`,JSON.stringify({user_id:owner,code_hash:ports.sign(message),challenge_id:challenge}),600)}catch{throw new BindingCodeUnavailable()}
-  return {code,expires_in:600}
+  try{await ports.save(`im:${platform}-binding:${botId}`,JSON.stringify({user_id:owner,code_hash:ports.sign(message),challenge_id:challenge}),IM_BINDING_TTL_SECONDS)}catch{throw new BindingCodeUnavailable()}
+  return {code,expires_in:IM_BINDING_TTL_SECONDS}
  }
 }

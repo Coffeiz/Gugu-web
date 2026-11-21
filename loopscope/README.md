@@ -17,7 +17,7 @@ LoopScope 是 Gugu monorepo 中暂存的独立 AgentLoop 开发工具。它拥�
 | Token / Cache | 查看 input、output、cache read/write、fresh input、total、缓存率及 Provider usage 来源 |
 | Tool / Schema | 查看工具参数形状、结果、Schema digest、Schema 错误、模型看到的 Schema 和恢复信息 |
 | Skill | 查看 Skill 索引、正文是否首次加载或复用、正文长度及关联工具注入 |
-| Code Provenance | 定位 Python 文件、module、function、qualname 和行号 |
+| Code Provenance | 定位源码文件、module、function、qualname 和行号 |
 | Export | 多选或单独导出完整 Run，包含按 Round 整理的 `loopscope-run-export` v2 JSON |
 | 本地工具页 | `/tokens` 查看设计 Token，`/changelog` 查看变更，`/settings` 保存当前标签页的开发连接配置 |
 
@@ -49,14 +49,16 @@ pnpm dev
 
 ### Gugu trace
 
-启动 Gugu backend 前：
+启动 Node Web Host 或桌面应用前，在其启动环境中设置：
 
 ```bash
 export LOOPSCOPE_ENABLED=true
 export LOOPSCOPE_ENDPOINT=http://127.0.0.1:4320
 ```
 
-然后先登录 Gugu，进入 Gugu 的 `/dev` 页面并点击 LoopScope。使用时回到 Gugu 发起消息或操作，再在 LoopScope 中选择对应 Session 查看 Run。`/dev` 使用 `postMessage` 把当前开发登录的 token 和 API 地址传给新窗口；不会把 token 写入 URL 或 LoopScope SQLite。直接打开 LoopScope 前端或 Collector 地址不会自动关联当前账号。
+Web Host 和桌面应用的地址指向同一 Collector 时，可以在同一个 Monitor 中查看两端的 Run。桌面应用重启后读取环境变量，上报来源为 `desktop`。桌面没有 Web Host 的请求排队阶段。
+
+Web 入口位于 Gugu 的 `/dev` 页面。该页面通过 `postMessage` 提供 API 地址，Gugu API 使用同站 HttpOnly Cookie。桌面 trace 直接从 Collector 的 Session 列表进入。仅在受控开发环境开启采集，跨机器访问时由部署层限制来源并提供独立认证。
 
 ### Docker
 
@@ -67,11 +69,11 @@ docker compose up --build
 
 frontend `4319`、TypeScript Collector `4320` 仍是独立进程，SQLite 放在独立 volume。
 
-若 Gugu backend 也在 Docker 网络里运行，把 `LOOPSCOPE_ENDPOINT` 指到该网络中的 LoopScope backend；宿主机开发继续用 `http://127.0.0.1:4320`。
+若 Node Web Host 也在 Docker 网络里运行，把 `LOOPSCOPE_ENDPOINT` 指到该网络中的 LoopScope backend；宿主机开发继续用 `http://127.0.0.1:4320`。
 
 ## 独立边界
 
-LoopScope 不 source-import Gugu `frontend/` / `backend/`。Gugu 侧只保留开发期开关控制的 trace bridge；设计令牌是本地快照，后续由 LoopScope 自己维护。
+LoopScope 不 source-import Gugu 应用源码。Gugu 侧只保留开发期开关控制的 trace bridge；设计令牌是本地快照，后续由 LoopScope 自己维护。
 
 ## Trace 数据流
 

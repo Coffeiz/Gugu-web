@@ -32,7 +32,7 @@ it('真实注册器经正式SQLite只读定时任务，隔离owner和提醒并�
     expect((await registry.capabilities(identity)).map(item => item.name)).toEqual(['list_scheduled_tasks'])
     const result = await registry.tools.dispatch(call, scope)
     expect(result).toMatchObject({ kind: 'completed', successful: true, mutated: false, value: [
-      { id: 3, name: '合成任务', when: '每 10 分钟', schedule_kind: 'interval', cron: '0 9 * * *', interval_minutes: 10, start_at: null, end_at: null, schedule_status: 'disabled', instruction: '指令', channels: ['web', 'qq'], enabled: false, last_run_at: null, delivery_targets: { qq: 'private' }, authorized_tools: ['send_email'], email_attachment_file_ids: [5], workspace_id: null, filesystem_authorized: false },
+      { id: 3, name: '合成任务', when: '每 10 分钟', schedule_kind: 'interval', cron: '0 9 * * *', interval_minutes: 10, start_at: null, end_at: null, schedule_status: 'disabled', instruction: '指令', execution_mode: 'reminder', channels: ['web', 'qq'], enabled: false, last_run_at: null, delivery_targets: { qq: 'private' }, authorized_tools: ['send_email'], email_attachment_file_ids: [5], workspace_id: null, filesystem_authorized: false },
       { id: 1, when: '每天 09:00', schedule_status: 'active' },
     ] })
     expect((await registry.tools.dispatch(call, { ...scope, identity: { ...identity, ownerId: other } }))).toMatchObject({ successful: true, value: [] })
@@ -72,7 +72,7 @@ it('create/update 经注册器保存精确时间窗、保留省略字段并按�
         const schedule = normalizeSchedule(input, () => {}, fixedNow)
         const row = await tx.insertInto('scheduled_tasks').values({
           user_id: rawOwner.replaceAll('-', ''), event_id: null, reminder_lead_minutes: null, workspace_id: null,
-          filesystem_authorization_grant_id: null, name: String(input.name), payload: String(input.payload ?? ''),
+          filesystem_authorization_grant_id: null, execution_mode: input.execution_mode === 'reminder' ? 'reminder' : 'instruction', name: String(input.name), payload: String(input.payload ?? ''),
           cron: schedule.cron, schedule_kind: schedule.schedule_kind, interval_minutes: schedule.interval_minutes,
           start_at: scheduleTimestamp(schedule.start_at), end_at: scheduleTimestamp(schedule.end_at),
           channels: String(input.channels ?? 'web'), enabled: input.enabled === false ? 0 : 1,
@@ -87,6 +87,7 @@ it('create/update 经注册器保存精确时间窗、保留省略字段并按�
         const fields: Record<string, unknown> = {}
         if (patch.name !== undefined) fields.name = patch.name
         if (patch.payload !== undefined) fields.payload = patch.payload
+        if (patch.execution_mode !== undefined) fields.execution_mode = patch.execution_mode
         if (patch.start_at !== undefined) fields.start_at = patch.start_at
         if (patch.end_at !== undefined) fields.end_at = patch.end_at
         if (patch.schedule_kind !== undefined) fields.schedule_kind = patch.schedule_kind
@@ -102,18 +103,18 @@ it('create/update 经注册器保存精确时间窗、保留省略字段并按�
       async execute() { throw new Error('定时任务工具不调用 Shell') } })
     const dispatch = (id: string, name: string, input: unknown, currentOwner = ownerId) =>
       tools.tools.dispatch({ id, name, input }, scope(currentOwner))
-    const input = { schedule_name: '  精确窗口\u00a0', instruction: ' 执行一次 ', schedule_kind: 'interval', interval_minutes: 10,
+    const input = { schedule_name: '  精确窗口\u00a0', execution_mode: 'instruction', instruction: ' 执行一次 ', schedule_kind: 'interval', interval_minutes: 10,
       start_at: '2099-09-05T18:30:00', end_at: '2099-09-05T19:30:00', channels: ['web'] }
     const created = await dispatch('create-once', 'create_scheduled_task', input)
     expect(created).toMatchObject({ successful: true, mutated: true, value: {
-      success: true, task_id: 1, name: '精确窗口', instruction: '执行一次', schedule_kind: 'interval', interval_minutes: 10,
+      success: true, task_id: 1, name: '精确窗口', execution_mode: 'instruction', instruction: '执行一次', schedule_kind: 'interval', interval_minutes: 10,
       cron: '*/10 * * * *', schedule_status: 'active', start_at: '2099-09-05T10:30:00Z',
       end_at: '2099-09-05T11:30:00Z',
     } })
     expect(await dispatch('create-once', 'create_scheduled_task', input)).toMatchObject({ successful: true, mutated: false, value: created.value })
-    const updated = await dispatch('update-once', 'update_scheduled_task', { task_id: 1, schedule_name: '更新窗口', start_at: null })
+    const updated = await dispatch('update-once', 'update_scheduled_task', { task_id: 1, schedule_name: '更新窗口', execution_mode: 'reminder', start_at: null })
     expect(updated).toMatchObject({ successful: true, mutated: true, value: {
-      success: true, id: 1, name: '更新窗口', start_at: null, end_at: '2099-09-05T11:30:00Z',
+      success: true, id: 1, name: '更新窗口', execution_mode: 'reminder', start_at: null, end_at: '2099-09-05T11:30:00Z',
     } })
     expect(await dispatch('foreign-update', 'update_scheduled_task', { task_id: 1, schedule_name: '越权' }, other))
       .toMatchObject({ successful: false, value: { error: '没有权限使用此工具' } })

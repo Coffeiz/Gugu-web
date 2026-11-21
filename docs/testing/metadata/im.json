@@ -1,5 +1,5 @@
 {
-  "apps/web-host/tests/im/gateway/qq-persistent.test.ts": {
+  "apps/web-host/tests/im/gateway/qq/stream.test.ts": {
     "domain": "im-streaming",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/qq/persistent.ts",
@@ -7,7 +7,7 @@
     "keyBehavior": "原msg_seq/streamId/index/buffer与延迟round关闭，重启加密CAS、半事件unknown不重发；逐帧/重试授权、交互/工具边界及真实PNG图表顺序；真实PG与默认renderer，平台HTTP/部分chart callback为替身，不冒充完整Agent入口；仅当前段零ACK且明确FAILED_CONFIRMED的未送证明允许持久plain-buffer主动回退（无msg_id），前文不重发；普通fallback未知不重发、撤权不回退，真实PG跨lease恢复",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/telegram-persistent.test.ts": {
+  "apps/web-host/tests/im/gateway/telegram/stream.test.ts": {
     "domain": "im-streaming",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/telegram-persistent.ts",
@@ -15,7 +15,7 @@
     "keyBehavior": "分轮/图表/交互、偏好与草稿失败保留最终；15秒保活/close排空、HTTP前与429重试撤权；真实PG加密恢复、明确403可恢复，接受后SQL失败及unknown不重发；真实Mermaid/TeX→PNG→multipart，只有平台网络替身；真实PG受控15秒timer与Core外层begin交错，SQL FIFO保证原draft/final继续；提前结束回调先排空SQL再release，关闭后借用拒绝",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/member-reflection.test.ts": {
+  "apps/web-host/tests/im/gateway/memory/member.test.ts": {
     "domain": "im-reflection",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/production-reflection-bindings.ts",
@@ -23,32 +23,32 @@
     "keyBehavior": "QQ私聊与群platform-user成员恢复，真实PG/FS/参考codec/权限与配置；跨owner/发言人/群、停用Bot拒绝，公开group不重建，hydrate本身零HTTP；仅Provider网络替身，不借owner权限或伪造历史",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/anthropic-reasoning-bootstrap.test.ts": {
+  "apps/web-host/tests/im/gateway/agent/anthropic.test.ts": {
     "domain": "im-provider-reasoning", "layer": "L2", "owner": "apps/web-host/src/modules/im/gateway/production-resources.ts",
     "productionEntry": "真实TG准入/Redis Worker→生产Node Run/Harness→协议私有侧表→回复",
     "keyBehavior": "仅平台/Provider HTTP替身，真实PG/Redis/FS/工具：Anthropic多轮签名和redacted块、重启后下一Run续接、off失效但当前工具不丢；OpenAI Chat/Ollama只当前Run私有工具映射，不发布跨Run状态；checkpoint/事件/历史/平台与诊断不泄露私有值", "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/reflection-owner-periodic.test.ts": {
+  "apps/web-host/tests/im/gateway/memory/periodic.test.ts": {
     "domain": "im-reflection", "layer": "L2", "owner": "apps/web-host/src/modules/im/gateway/reflection-owner-periodic.ts",
     "productionEntry": "真实ProviderRuntime独立owner周期compaction→列表和水位FS CAS计划",
     "keyBehavior": "真实临时FS、实际Provider协议仅HTTP替身；仅结构失败纠正一次、不回显坏输出，逐响应费用及unknown；attempt幂等/不回退、成功时刻和整理后count、另一field/额外metadata保留，source/state变动、撤权和member拒绝，普通reflection不扩大读取范围", "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/reflection-periodic-bootstrap.test.ts": {
+  "apps/web-host/tests/im/gateway/memory/periodic.integration.test.ts": {
     "domain": "im-reflection", "layer": "L2", "owner": "apps/web-host/src/modules/im/gateway/reflection-postgres.ts",
     "productionEntry": "真实TG私聊→Redis Worker→Node Run→owner反思→周期任务/FS计划/RAG和业务revision",
     "keyBehavior": "隔离PG/Redis/FS/Harness五轮活跃对话，pattern非法来源ID纠正、profile失败不推进水位、1小时/7天/+30门、静默不扫描；prepared计划重启不重发/重复记账，另一field等待旧计划，独立状态/额外键保留，维护不推进消息游标；仅平台和Provider网络替身", "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/reflection-owner-daily.test.ts": {
+  "apps/web-host/tests/im/gateway/memory/owner.test.ts": {
     "domain": "im-reflection", "layer": "L2", "owner": "apps/web-host/src/modules/im/gateway/reflection-owner-daily.ts",
     "productionEntry": "真实ProviderRuntime独立owner compaction→memory/daily CAS计划",
     "keyBehavior": "本人scope、旧主档追加、严格日期、无主历史或工具、max_tokens无指定上限；两次Provider错误/空对象重试与实际响应usage，未知保持未知；可选RAG故障可继续，当前撤权、旧daily或memory改变不得写，普通reflection不额外加载memory", "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/reflection-owner-daily-bootstrap.test.ts": {
+  "apps/web-host/tests/im/gateway/memory/owner.integration.test.ts": {
     "domain": "im-reflection", "layer": "L2", "owner": "apps/web-host/src/modules/im/gateway/reflection-postgres.ts",
     "productionEntry": "真实TG私聊Gateway→Redis Worker→Node Run→owner reflection→50条daily触发→真实owner BM25→独立Provider→持久文件计划/RAG",
     "keyBehavior": "隔离PG/Redis/FS/Harness与真实词法检索，跨owner/群哨兵隔离，249条加真实新记录→100/100/50且旧主档仅追加；空JSON重试和无效entries的实际响应逐项记账，文件已写提交失败及两次重启不重发/重复用量/漏记录；仅平台与Provider网络替身", "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/retention-bootstrap.test.ts": {
+  "apps/web-host/tests/im/gateway/memory/retention.integration.test.ts": {
     "domain": "im-retention-production",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/bootstrap.ts",
@@ -56,7 +56,7 @@
     "keyBehavior": "真实PG/Redis/FS与Harness验证50会话替换、活跃保护、2000条已覆盖消息裁剪、提交后回收及Redis状态丢失后历史事件不再创建会话/Run；仅平台与Provider网络替身",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/retired-inbound.test.ts": {
+  "apps/web-host/tests/im/gateway/inbound/retired.test.ts": {
     "domain": "im-retired-inbound",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/retired-inbound.ts",
@@ -64,7 +64,7 @@
     "keyBehavior": "真实PG验证级联删除后去重、回滚、跨owner/Bot/group隔离及等待session锁后的晚到复核；真实FS故障重试与共享引用不误删",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/history-retention.test.ts": {
+  "apps/web-host/tests/im/gateway/memory/history.test.ts": {
     "domain": "im-history-retention",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/history-retention.ts",
@@ -72,7 +72,7 @@
     "keyBehavior": "真实PG/FS验证按摘要覆盖和anchor保留2000/每批500、pending/未完成状态保护、引用整批与draft竞态、Node cursor、startup checkpoint权威状态、永久墓碑/回滚及持久GC；pendingASK端口替身",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/session-retention.test.ts": {
+  "apps/web-host/tests/im/gateway/agent/retention.test.ts": {
     "domain": "im-session-retention",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/session-retention.ts",
@@ -80,7 +80,7 @@
     "keyBehavior": "真实PG验证并发50限额、每次只替换一个安全旧会话、运行/交互/投递/反思保护、Node cursor与startup权威状态、跨session/draft语音依赖及真实锁等待后复核；Web实际创建与IM共享owner行锁，双向NOWAIT冲突、提交后重计数、回滚及跨owner独立，Web不新增淘汰；墓碑hook明确替身",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/reasoning-bootstrap.test.ts": {
+  "apps/web-host/tests/im/gateway/agent/reasoning.test.ts": {
     "domain": "im-responses-reasoning-production",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/production-resources.ts",
@@ -88,7 +88,7 @@
     "keyBehavior": "隔离PG/Redis验证两次成功私有续接及第三Run真实协议拒绝后的版本CAS失效，checkpoint/outbox无私有正文，平台和Provider网络为替身",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/image-bootstrap.test.ts": {
+  "apps/web-host/tests/im/gateway/media/image.integration.test.ts": {
     "domain": "im-image-production",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/production-resources.ts",
@@ -96,7 +96,7 @@
     "keyBehavior": "隔离PG/Redis及实际解码器验证BMP/TIFF模型副本转JPEG、PNG原样发送、原附件/稳定引用保留；仅平台与Provider网络为替身；两条相同PNG消息经真实批处理和Harness只产生一个Run，首轮Provider请求前持久checkpoint逐消息保留各附件ID，成功消费后的图片折叠仍保持原契约",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/video-bootstrap.test.ts": {
+  "apps/web-host/tests/im/gateway/media/video.integration.test.ts": {
     "domain": "im-video-production",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/production-resources.ts",
@@ -104,7 +104,7 @@
     "keyBehavior": "隔离PG/Redis、真实ffprobe/ffmpeg验证OpenAI内联、MiniMax上传与加密缓存、不支持视频明确提示；checkpoint保留稳定引用，网络为替身",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/video-runtime.test.ts": {
+  "apps/web-host/tests/im/gateway/media/video.test.ts": {
     "domain": "im-video-runtime",
     "layer": "L1",
     "owner": "apps/web-host/src/modules/im/gateway/video-runtime.ts",
@@ -112,7 +112,7 @@
     "keyBehavior": "当前权限和来源复核、按owner/scope/模型隔离的加密缓存、失效缓存、取消与错误脱敏；处理器和网络使用可控替身",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/image.test.ts": {
+  "apps/web-host/tests/im/gateway/media/image.test.ts": {
     "domain": "im-image-processing",
     "layer": "L1",
     "owner": "apps/web-host/src/modules/im/gateway/image.ts",
@@ -128,7 +128,7 @@
     "keyBehavior": "真实协议能力开关、可信探测时长、普通与M3门限、转码/上传失败明确拒绝；媒体探测与传输端口为替身",
     "ci": "core-node"
   },
-  "apps/web-host/tests/im/gateway/video.test.ts": {
+  "apps/web-host/tests/im/gateway/media/clip.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/video.ts",
@@ -136,7 +136,7 @@
     "keyBehavior": "真实合成视频验证容器与MIME错配拒绝、时长max、只缩超限/不放大、H264/AAC/faststart、流大小与关闭、容量/进程超时/取消/typed清理失败；正式解析器覆盖容器与流水位冲突和未知时长，不调用平台或Provider",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/im-dispatch-order.test.ts": {
+  "apps/web-host/tests/im/gateway/inbound/order.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/im-dispatch-order.ts",
@@ -144,7 +144,7 @@
     "keyBehavior": "实际隔离PG验证切换Web目标后先入队Run先领取、其他Bot/群/peer互不阻塞；坏收据拒绝且token/fence不改变，early序号逆于平台业务排序仍可运行；默认Web消费者不执行IM门",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/owner-session-bootstrap.test.ts": {
+  "apps/web-host/tests/im/gateway/agent/owner.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/owner-session.ts",
@@ -152,7 +152,7 @@
     "keyBehavior": "真实ORM/PG/Redis/FS校验完整Run及租约、跨owner拒绝、旧调用不覆盖新绑定、事务内撤权回滚；本人Web历史实际续接、跨session同peer等待旧Run结束，随后平台compact进真实摘要事务但不创建假Run；群/成员/其他Bot/过期隔离，网络为替身",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/compact-postgres.test.ts": {
+  "apps/web-host/tests/im/gateway/agent/compact.postgres.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/compact-postgres.ts",
@@ -160,7 +160,7 @@
     "keyBehavior": "隔离ORM/PG验证无假Run/startup、busy拒绝、同事件仅一次、未知不重发、租约和群隔离、历史/摘要覆盖边界及失败回滚；摘要故障场景明确使用可控摘要端口",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/production-compaction.test.ts": {
+  "apps/web-host/tests/im/gateway/agent/compact.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/production-compaction.ts",
@@ -168,7 +168,7 @@
     "keyBehavior": "真实隔离PG/Redis/FS和POSIX配置锁，无旧IM Run也可从当前配置整理本人Web绑定历史；摘要与真实用量同事务提交，不启动Harness或假startup；仅Provider网络替身",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/voice-cache.test.ts": {
+  "apps/web-host/tests/im/gateway/media/voice/cache.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/voice-cache.ts",
@@ -176,7 +176,7 @@
     "keyBehavior": "真实隔离PG验证并发CAS、未知请求不重发、跨owner/session/消息附件拒绝、密文结果校验、撤权及真实Run绑定事务；转写端口为明确替身，不调用平台或付费Provider",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/voice-attention-source.test.ts": {
+  "apps/web-host/tests/im/gateway/media/voice/attention.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/voice-attention-source.ts",
@@ -184,7 +184,7 @@
     "keyBehavior": "实际Telegram解析/媒体producer和合成HTTP接真实ORM隔离PG与附件stage，验证复合来源键、全批speaker/顺序/HMAC、跨群及撤权；两个各33MiB附件累计超64MiB拒绝，不信伪造转录且passive仅允许缓存读取；无真实平台或Provider请求",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/voice-transcripts.test.ts": {
+  "apps/web-host/tests/im/gateway/media/voice/transcripts.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/voice-transcripts.ts",
@@ -192,7 +192,7 @@
     "keyBehavior": "真实隔离PG验证两声源只聚合首个非quoted voice、Python whitespace/quoted真值、completed/empty/failed幂等与其余files保持、显式Web私聊绑定、Run/Bot/speaker/群与密文错置拒绝、写后撤权及SQL失败回滚和错误脱敏；不缓存或伪造ASR响应",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/voice-runtime.test.ts": {
+  "apps/web-host/tests/im/gateway/media/voice/runtime.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/voice-runtime.ts",
@@ -200,7 +200,7 @@
     "keyBehavior": "实际Core协议在受控HTTP中验证独立ASR凭据、未配置null与空识别、有限重试/配置版本/撤权/取消、强制MiniMax实际时长/大小准入、转换限额、有效原生能力与Responses投影、输入复制和资源归属/typed清理错误；ASR-only固定选择拒绝其他owner，可信缓存正文/空命中零HTTP、unknown/撤权/取消不降为空串；PG配置读取、音频进程与平台不作为本套真实验收",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/voice-bootstrap.test.ts": {
+  "apps/web-host/tests/im/gateway/media/voice/bootstrap.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/production-resources.ts",
@@ -208,7 +208,7 @@
     "keyBehavior": "隔离真实ORM/PG/Redis/Linux FS验证独立ASR与主模型分离、原生音频不借ASR、未配置early_exit零Provider、checkpoint无原始音频；natural群语音和混合批次先增强注意力再由Run复用密文收据，只ASR一次且重启重投无重复Run/回复；仅平台/Provider网络替身，绝不触真实账号或付费服务；原生音频附加ASR字幕保留原音频且正文不重复字幕，completed/empty/failed与混合批次通过合法sessions细粒度事件刷新，公开卡片无内部字段",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/voice-config.test.ts": {
+  "apps/web-host/tests/im/gateway/media/voice/config.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/voice-config.ts",
@@ -216,7 +216,7 @@
     "keyBehavior": "默认/ENV/override优先级与独立语音预设不借聊天模型、通用36MiB及MiniMax50MiB/500秒、用户Key不拼平台目的地、真实PG/信封最小ID与跨owner隔离、轮换/停用/解密等待撤权、配置Key不可枚举及静态错误；不调用真实平台或付费Provider",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/audio.test.ts": {
+  "apps/web-host/tests/im/gateway/media/audio.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/audio.ts",
@@ -248,7 +248,7 @@
     "keyBehavior": "真实临时配置文件保护环境与覆盖优先级、配置重读及损坏JSON/无效配额固定错误；不访问用户运行配置",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/production-fixtures.test.ts": {
+  "apps/web-host/tests/im/gateway/fixtures.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/tests/im/gateway/production.fixtures.ts",
@@ -256,7 +256,7 @@
     "keyBehavior": "临时随机schema保留真实bot_id varchar/约束/默认值与合成owner/Bot，真实Node凭据封装、隔离config/prompt/storage，不读取运行.env或用户配置；需显式Python/PG，不调用Provider或平台；真实旧飞书投影约束启动拒绝，显式三平台升级重复执行后启动检查通过",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/production-resources.test.ts": {
+  "apps/web-host/tests/im/gateway/agent/resources.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/production-skills.ts",
@@ -264,7 +264,7 @@
     "keyBehavior": "真实ORM列约束的隔离PG验证同技能ID跨owner隔离、目录不含正文、跨会话与member拒绝owner技能、技能停用和Bot停用即时撤权；不是完整Gateway端到端测试",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/production-bindings-store.test.ts": {
+  "apps/web-host/tests/im/gateway/agent/bindings.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/production-bindings-store.ts",
@@ -272,7 +272,7 @@
     "keyBehavior": "真实PG验证并发幂等不覆写、选模冲突、owner/session/run AAD隔离、错密钥与密文篡改静态失败、单连接池持会话行锁读取不死锁；usage为合成元数据，不连接Provider",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/reflection-postgres.test.ts": {
+  "apps/web-host/tests/im/gateway/memory/reflection.postgres.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/reflection-postgres.ts",
@@ -280,7 +280,7 @@
     "keyBehavior": "隔离PG/Redis与Linux实际FS验证同client持锁history/usage/Job回滚、独立Provider分支、真实平台source与reflection用量、正向计划恢复不重复Provider/daily/用量、owner清除及解绑、公开群快照缺失defer、第5次拒绝dead、过期lease接管、owner互斥及prefix缺锚点不补造正文；仅Provider HTTP/业务上下文来源为替身，无真实账号/付费模型；真实PG时钟断言成功Run使用180秒闲置窗口，缺快照仍240秒暂缓，未到期不调用Provider；清除后旧Run不arm新revision，普通Admin变更的缺口不能借最新Node position跨越重绑；每scope启动版本冻结，进度按会话seq；未完成文件计划阻止同owner后续Provider写入，同群跨Session不批量提升Job版本，缺本Session连续证明时取消且零Provider请求；关闭群私人召回不禁止owner学习，缺合格owner前缀时保留窗口且不伪造owner Job；模拟已持久请求阶段后租约过期，无计划时dead且不重发/假记零；实际PG已提交计划但COMMIT回包丢失，即使第5次attempt仍恢复计划且模型/用量各一次；成员platform-user缺快照可用真实持久checkpoint恢复，错身份拒绝，公开group继续defer、pending先延期后恢复",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/file-tools.test.ts": {
+  "apps/web-host/tests/im/gateway/agent/files.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/file-tools.ts",
@@ -288,7 +288,7 @@
     "keyBehavior": "真实PG/FS保护owner私聊读取、跨owner拒绝、member不注册文件库Schema、跨toolCall同附件幂等、inflight和unknown不重发、恢复不重复final附件；平台HTTP与配置授权回调为明确替身",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/executor.test.ts": {
+  "apps/web-host/tests/im/gateway/agent/executor.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/executor.ts",
@@ -304,7 +304,7 @@
     "keyBehavior": "默认Python零Node构造；交接断言/真实PG锁竞争、启动停止竞态、部分失败排空、失锁与cleanup uncertain不放行第二消费者；初次握手清理未知透传正式监督器且实际PG锁仍拒绝第二Node；独立Node子进程持锁时拒绝第二消费者，实际SIGKILL并等待exit后可接管同锁，仅证明PG归属锁释放；协议组件为明确生命周期替身",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/interaction-recovery.test.ts": {
+  "apps/web-host/tests/im/gateway/interactions/recover.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/interaction-recovery.ts",
@@ -312,7 +312,7 @@
     "keyBehavior": "真实隔离PG/RunStore/租约/Harness验证waiting done后真实答案恢复、双pump不重跑工具、Web收据不认领和精确等待取消；Provider/上下文及取消通知为明确替身",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/attention-policy-postgres.test.ts": {
+  "apps/web-host/tests/im/gateway/attention/policy.postgres.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/attention-policy-postgres.ts",
@@ -320,7 +320,7 @@
     "keyBehavior": "真实隔离PG保护requires_at/read/mode规范化/版本改变、账户与群撤权、飞书nullable群开关及QQ/TG严格true、owner/Bot/群/session隔离；无attention旧Run兼容既有schema、SQL失败拒绝且不外泄。实际Runner取消终态由持久Worker与重建组合回归另验",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/pending-ask-dispatch.test.ts": {
+  "apps/web-host/tests/im/gateway/interactions/dispatch.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/pending-ask-dispatch.ts",
@@ -328,7 +328,7 @@
     "keyBehavior": "真实PG/Redis验证同原ASK并发只创建一个Run、专表持久幂等、原passive段冻结、当前配置变更不升级旧ASK、密封scope/hash/原stream水位、Run恢复不要求已complete Redis状态但显式取消生效、丢失独立issued证明即取消；模型选择accessVersion/最初classify为明确合成端口，无Provider或平台",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/attention-ledger.test.ts": {
+  "apps/web-host/tests/im/gateway/attention/ledger.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/attention-ledger.ts",
@@ -336,7 +336,7 @@
     "keyBehavior": "真实隔离PG故障触发器证明accepted和密文同SQL回滚，pending不重发；round正文final确认不重发，未知/旧缺证据不假覆盖；跨Bot/scope/Run/attempt篡改、微秒确认水位、最新32外本人激活与逐候选时间和群撤权；平台网络与Provider由其他组合回归验证",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/attention-runtime.test.ts": {
+  "apps/web-host/tests/im/gateway/attention/runtime.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/attention-runtime.ts",
@@ -344,7 +344,7 @@
     "keyBehavior": "真实PG/Redis保护bot_id varchar、跨群/短窗覆盖/原ASK时间/配置撤权，accepted ledger仅final按候选水位激活原成员；prepareVoice端口替身保护非autonomous全批预转写顺序、内存增强参与snapshot/评分而不改原payload、bypass不ASR、跨事件附件/重复结果拒绝和source拒绝不吞；不声称持久ASR缓存/真实平台已验收",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/pending-ask.test.ts": {
+  "apps/web-host/tests/im/gateway/interactions/pending.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/pending-ask.ts",
@@ -352,7 +352,7 @@
     "keyBehavior": "真实隔离Redis保护60秒最短等待、30秒静默、180秒上限、精确单事件加密、他人原生回复取消、跨群隔离、原时间水位、重启稳定ID、未知投递重试和旧CAS完成拒绝、7天负水位与claim原子issued证明TTL；授权与内部dispatch为显式替身，无真实Provider或平台",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/run-sender.test.ts": {
+  "apps/web-host/tests/im/gateway/delivery/sender.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/run-sender.ts",
@@ -360,7 +360,7 @@
     "keyBehavior": "真实PG与可控HTTP验证原消息引用、微信原context token、QQ可信格式冻结、全部批次锚点HMAC/密文错置、旧TG空native ID拒绝、未知原生交互不双发和敏感网页URL拒绝；成功证据只含实际receipt与逐锚密封队列来源，微信及旧来源缺失明确coverage不完整；正式持久Run及waiting组合另见Agent/controls回归",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/run-artifact-sender.test.ts": {
+  "apps/web-host/tests/im/gateway/delivery/artifacts.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/run-artifact-sender.ts",
@@ -368,7 +368,7 @@
     "keyBehavior": "真实PG/FS与平台HTTP替身验证owner/Bot/群/水位、member隔离、旧file_id软删除、逐HTTP撤权、未知不重传及rootId拒绝；飞书真实私聊批次最外chat_id=null仍仅用逐锚sealed末条目标，首/末rawchat篡改、跨群目标/附件与member读owner库均在HTTP前拒绝，四平台上传中取消不继续投递；不代表真实平台验收",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/rag-context.test.ts": {
+  "apps/web-host/tests/im/gateway/agent/rag.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/rag-context.ts",
@@ -376,7 +376,7 @@
     "keyBehavior": "真实PG/FS保护当前群/成员与显式owner、PG微秒事实水位和可变summary/title、历史hash排除、撤权墓碑与10秒取消排空；同scope_version同毫秒不同微秒仍推进revision并失效文件缓存；真实assembler逆序多currentUsers仍取首锚并提交同一canonical块；无付费Provider/真实平台",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/reaction-postgres.test.ts": {
+  "apps/web-host/tests/im/gateway/attention/reactions.postgres.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/reaction-postgres.ts",
@@ -384,7 +384,7 @@
     "keyBehavior": "真实PG并发幂等、未知/提交中断不重发、明确拒绝CAS重试、跨用户/群/Bot/Run及fence拒绝，刷新期间撤权不发业务；只有平台HTTP和配置选择为替身",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/feishu-persistent.test.ts": {
+  "apps/web-host/tests/im/gateway/feishu/persistent.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/feishu/persistent.ts",
@@ -392,7 +392,7 @@
     "keyBehavior": "真实PG原子accepted和状态CAS、半事件重启未知不重发、真实Harness交互/credential收尾与segment、恢复不重启Provider、每次业务HTTP前撤权复核；最终实际可见card关闭确认才返回正文/hash/nativeIDs证据，未知关闭不产事实",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/controls-postgres.test.ts": {
+  "apps/web-host/tests/im/gateway/interactions/controls.postgres.test.ts": {
     "domain": "im",
     "layer": "L3",
     "owner": "apps/web-host/src/modules/im/gateway/controls-postgres.ts",
@@ -400,7 +400,7 @@
     "keyBehavior": "真实PG/Redis/BYOK与实际三平台sender保护原生message HMAC索引、private secret start/cancel、未知不重发和拒绝CAS恢复、跨scope/工具角色复核及secret不进历史；Provider/平台网络和reply为替身",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/context-reference-codec.test.ts": {
+  "apps/web-host/tests/im/gateway/agent/references.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/context-reference-codec.ts",
@@ -408,7 +408,7 @@
     "keyBehavior": "跨owner/session/run/Bot/群隔离、读取后撤权、未知媒体与临时URL拒绝、真实FS图片重建；PG替身和opt-in隔离SQL分别验收",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/group-context.test.ts": {
+  "apps/web-host/tests/im/gateway/agent/group.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/group-context.ts",
@@ -424,7 +424,7 @@
     "keyBehavior": "四平台无owner兜底、当前群默认隔离、显式跨群预算、混合批次及unknown限制、跨用户/Bot拒绝",
     "ci": "node-core"
   },
-  "apps/web-host/tests/im/gateway/memory-search.test.ts": {
+  "apps/web-host/tests/im/gateway/memory/search.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/memory-search.ts",
@@ -432,7 +432,7 @@
     "keyBehavior": "真实FS/SQLite/Core排名验证群owner与私聊边界，成员白名单不扩大，缓存仍复核租约/墓碑/撤权；查询替身和隔离PG的lease/fence/游标/账户/快照分别覆盖",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/shortcut-controls.test.ts": {
+  "apps/web-host/tests/im/gateway/attention/shortcuts.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/shortcut-controls.ts",
@@ -440,7 +440,7 @@
     "keyBehavior": "取消引用贯穿分流、非发起人拒绝、不可用状态固定诊断回Run；显式已装配compact才调用真实端口并显示帮助，compact help不发模型请求，未接端口不假成功",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/shortcut-postgres.test.ts": {
+  "apps/web-host/tests/im/gateway/attention/shortcuts.postgres.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/shortcut-postgres.ts",
@@ -448,7 +448,7 @@
     "keyBehavior": "事件/Run cutoff、混合发起者隔离、waiting取消不误结算或重复Provider、通知失败保留durable成功及无绑定飞书微信私聊身份",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/context-services.test.ts": {
+  "apps/web-host/tests/im/gateway/agent/services.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/context-services.ts",
@@ -464,7 +464,7 @@
     "keyBehavior": "闲时进度和ACK进Agent、完整取消短句、命令规范化、非发起者及缺发起者证明不可取消，帮助不宣称未接功能；关键词即时表情优先级/大小写/媒体覆盖及默认值，与控制意图独立",
     "ci": "node-core"
   },
-  "apps/web-host/tests/im/gateway/wechat-typing.test.ts": {
+  "apps/web-host/tests/im/gateway/wechat/typing.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/wechat/typing.ts",
@@ -472,7 +472,7 @@
     "keyBehavior": "票据缓存与退避、超时和取消边界、旧ticket保留、实际协议和RunEvent顺序、撤权停止及清理不吞业务错误",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/admission-postgres.test.ts": {
+  "apps/web-host/tests/im/gateway/inbound/admission.postgres.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/admission-postgres.ts",
@@ -480,7 +480,7 @@
     "keyBehavior": "scope和事件HMAC隔离、一次控制分流、重投不作用新prompt、pending/unknown不盲重试、敏感信息不落明文及实际PG并发",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/qq-prepare.test.ts": {
+  "apps/web-host/tests/im/gateway/qq/prepare.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/qq/prepare.ts",
@@ -488,7 +488,7 @@
     "keyBehavior": "同群引用和私聊隔离，分离表情仅本人FIFO配对，QFace索引来源与缓存失败语义，秘密不进入引用索引",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/qq-reference-store.test.ts": {
+  "apps/web-host/tests/im/gateway/qq/references.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/qq/reference-store.ts",
@@ -504,23 +504,23 @@
     "keyBehavior": "完整会话隔离、消息顺序、防抖、控制即时消费、失败保留pending、心跳失租和停止排空",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/platform-feedback-authorization.test.ts": {
+  "apps/web-host/tests/im/gateway/attention/feedback.test.ts": {
     "domain": "im",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/im/gateway/platform-connections.ts",
+    "owner": "apps/web-host/src/modules/im/gateway/connections.ts",
     "productionEntry": "bootstrap→真实四平台协议解析→可信准入/控制预检→平台sender/API",
     "keyBehavior": "四平台控制事务等待后撤权零业务HTTP；QQ/飞书真实Token刷新后撤权不发消息或回退重发；TG 429及微信明确未发重试复核；TG媒体失败通知使用原准入收据scope，admitted重投不重跑秘密预检；平台网络/准入/控制事务/授权与Redis为受控替身",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/platform-connections.test.ts": {
+  "apps/web-host/tests/im/gateway/connections.test.ts": {
     "domain": "im",
     "layer": "L2",
-    "owner": "apps/web-host/src/modules/im/gateway/platform-connections.ts",
+    "owner": "apps/web-host/src/modules/im/gateway/connections.ts",
     "productionEntry": "Supervisor连接工厂→正式平台协议和预检→媒体→密封Node入队",
     "keyBehavior": "四平台合成协议入站、秘密先于下载、取消排空、重复连接拒绝及配置失败可见；真实飞书连接/工厂/监督器组合区分初始清理成功退避与未知冻结；media/client及TG API初始清理失败保留类型且不替代启动；TG消费后ACK/清键盘失败仅诊断并推进cursor，重复不重做业务；网络和业务端口为明确替身；新鲜永久准入后飞书即时表情先于下载/入队，重投/未授权不发，拒绝不吞原消息；QQ附件即时确认按Bot/目标10秒冷却和可信群策略、重投幂等，失败仍入队（群策略端口为明确替身）",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/platform-media.test.ts": {
+  "apps/web-host/tests/im/gateway/media/platform.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/platform-media.ts",
@@ -528,7 +528,7 @@
     "keyBehavior": "逐平台来源和下载边界校验，未校验重定向拒绝，失败只清理本次新建附件而保留既有引用",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/attachment-ingress.test.ts": {
+  "apps/web-host/tests/im/gateway/inbound/attachments.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/attachment-ingress.ts",
@@ -536,7 +536,7 @@
     "keyBehavior": "合成文件实际写读、来源并发去重、跨owner/Bot/群拒绝，失败补偿和清理授权；真实PG通过显式临时数据库验收",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/message-materializer.test.ts": {
+  "apps/web-host/tests/im/gateway/inbound/materialize.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/message-materializer.ts",
@@ -544,7 +544,7 @@
     "keyBehavior": "批次正文只出现一次、消息顺序和发言人保留、媒体读取前后授权、附件scope隔离及实际音频协议调用；原生音频稳定引用恢复不借ASR，未配置与实际空识别分离，转写等待撤权不返回正文；相同字节图片/原发及引用音频按各消息锚点和原附件顺序保留ID，全新codec恢复和重复固化不串引用，缺原附件不能借副本恢复；真实PG验证两张相同字节附件的stage/claim与checkpoint",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/interaction-lookup.test.ts": {
+  "apps/web-host/tests/im/gateway/interactions/lookup.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/interaction-lookup.ts",
@@ -568,7 +568,7 @@
     "keyBehavior": "未切换归属拒绝启动、提交后ACK、失败留pending、重复不再派发及满容量等待不饿死I/O",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/memory-source.test.ts": {
+  "apps/web-host/tests/im/gateway/memory/source.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/memory-source.ts",
@@ -576,15 +576,15 @@
     "keyBehavior": "实际文件按owner/Bot/群/成员隔离，读取前后撤权开关墓碑复核，路径和坏文件拒绝",
     "ci": "web-host-node"
   },
-  "packages/core/tests/im/inbound-preflight.test.ts": {
+  "apps/web-host/tests/im/gateway/inbound/preflight.test.ts": {
     "domain": "im",
     "layer": "L1",
-    "owner": "packages/core/src/im/inbound-preflight.ts",
+    "owner": "packages/gateway/src/runtime/inbound-preflight.ts",
     "productionEntry": "平台预检→Ingress控制消息消费",
     "keyBehavior": "秘密/绑定/选项/取消优先于媒体和历史，精确scope授权、事件重放不重复恢复",
-    "ci": "node-core"
+    "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/access-postgres.test.ts": {
+  "apps/web-host/tests/im/gateway/attention/access.postgres.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/access-postgres.ts",
@@ -592,7 +592,7 @@
     "keyBehavior": "当前Bot和账户归属限定、混合身份最低权限、撤权解绑后停止工具与投递",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/agent-reconstructor.test.ts": {
+  "apps/web-host/tests/im/gateway/agent/reconstruct.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/agent-reconstructor.ts",
@@ -600,7 +600,7 @@
     "keyBehavior": "来源/加密route/当前Bot/锚点/模型版本验证；attention严格匹配且唯一命中原stream事实、禁止私聊微信及非run；群meta真实helper零参数/实际prepared Schema/当前权限，缺pending证明或失租失败关闭；真实策略撤销仅当前lease取消，SQL故障不取消/不绑定且错误脱敏；PG查询与资源为明确前置替身，不冒充完整Run",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/binding-consume.test.ts": {
+  "apps/web-host/tests/im/gateway/inbound/binding.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/binding-consume.ts",
@@ -608,7 +608,7 @@
     "keyBehavior": "DB失败保留码、持久收据拒绝解绑后重放、旧挑战CAS不删新码、owner/Bot/平台隔离",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/conversation-postgres.test.ts": {
+  "apps/web-host/tests/im/gateway/agent/conversations.postgres.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/conversation-postgres.ts",
@@ -616,7 +616,7 @@
     "keyBehavior": "重复事件不重复Run、早落库复用消息、身份会话隔离、附件同事务claim与派发失败回滚；旧群聊缺chat_type时复用原会话并延续消息序号；真实PG注意力被动/等待不派发、配置权限复核、失败恢复必经门和伪造事实剥离；真实Ingress/Redis snapshot/pending/accepted reader冻结非末条subject到加密v3派发并保留混批最低权限，模型scope版本为替身；真实completed batch Session/scope竞争用pg_blocking_pids gate证明读取无反序死锁，仍完整核对批次事实",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/preflight-interactions.test.ts": {
+  "apps/web-host/tests/im/gateway/interactions/preflight.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/preflight-interactions.ts",
@@ -624,7 +624,7 @@
     "keyBehavior": "完整IMscope校验后复用统一确认和恢复，选项序号不被已消费项改变，重放不重复恢复",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/provider-binding.test.ts": {
+  "apps/web-host/tests/im/gateway/agent/provider.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/provider-binding.ts",
@@ -632,7 +632,7 @@
     "keyBehavior": "群/私聊与actor权限进入scope、策略冻结、调度前版本与恢复绑定一致且不重新选模型",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/secret-input.test.ts": {
+  "apps/web-host/tests/im/gateway/interactions/secret.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/agent/interactions/im-secret.ts",
@@ -640,10 +640,10 @@
     "keyBehavior": "完整scope私聊逐字段加密、旧事件幂等、取消和终态不复活、秘密不进入普通历史",
     "ci": "web-host-node"
   },
-  "packages/core/tests/im/qq-message.test.ts": {
+  "packages/gateway/tests/qq-message.test.ts": {
     "domain": "im",
     "layer": "L1",
-    "owner": "packages/core/src/im/qq-message.ts",
+    "owner": "packages/gateway/src/platforms/qq/message.ts",
     "productionEntry": "QQ WS事件共享解析与预检需求",
     "keyBehavior": "可信owner/Bot、群/私聊身份与is_you提及、表情/附件占位、引用scope需求而非假ID",
     "ci": "node-webui"
@@ -656,7 +656,7 @@
     "keyBehavior": "只有飞书注册react Schema、mood映射与逐调用撤权、未知恢复仅查收据不重发",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/im/gateway/inbound-envelope.test.ts": {
+  "apps/web-host/tests/im/gateway/inbound/envelope.test.ts": {
     "domain": "im",
     "layer": "L1",
     "owner": "apps/web-host/src/modules/im/gateway/inbound-envelope.ts",
@@ -664,7 +664,7 @@
     "keyBehavior": "正文与回复凭证不进Redis明文、稳定HMAC去重、owner/Bot/群/成员AAD防篡改、不回落明文",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/inbox.test.ts": {
+  "apps/web-host/tests/im/gateway/inbound/inbox.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/inbox.ts",
@@ -672,7 +672,7 @@
     "keyBehavior": "稳定scope去重、JSON前后归属复核、Lua写前TYPE/顺序边界、真实Redis独立验收非命令替身",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/qq-media-upload.test.ts": {
+  "apps/web-host/tests/im/gateway/qq/upload.test.ts": {
     "domain": "im",
     "layer": "L1",
     "owner": "apps/web-host/src/modules/im/gateway/qq/media-upload.ts",
@@ -680,7 +680,7 @@
     "keyBehavior": "真实client全协议、30MiB/10并发/300s、哈希与Unicode分片校验、失败取消排空、未知file_info不假成功",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/qq-sender.test.ts": {
+  "apps/web-host/tests/im/gateway/qq/sender.test.ts": {
     "domain": "im",
     "layer": "L1",
     "owner": "apps/web-host/src/modules/im/gateway/qq/sender.ts",
@@ -688,7 +688,7 @@
     "keyBehavior": "群mention分离、确认前缀与同帧幂等重试、首帧未知不重开、关闭失败未知、可信交互DTO与ACK分离",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/qq-sequences.test.ts": {
+  "apps/web-host/tests/im/gateway/qq/sequences.test.ts": {
     "domain": "im",
     "layer": "L1",
     "owner": "apps/web-host/src/modules/im/gateway/qq/sequences.ts",
@@ -696,7 +696,7 @@
     "keyBehavior": "owner/Bot/事件隔离、首次70分钟TTL/主动流10分钟TTL、Redis失败不退本地计数",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/feishu-streaming.test.ts": {
+  "apps/web-host/tests/im/gateway/feishu/stream.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/feishu/streaming.ts",
@@ -704,15 +704,15 @@
     "keyBehavior": "统一sequence、200ms/30字符节流、可见卡失败不重发、群摘要私聊脱敏、图表原位更新及真实Mermaid/LaTeX PNG；生产流式授权收据接线待完成",
     "ci": "web-host-node"
   },
-  "packages/core/tests/im/feishu-message.test.ts": {
+  "packages/gateway/tests/feishu-message.test.ts": {
     "domain": "im",
     "layer": "L1",
-    "owner": "packages/core/src/im/feishu-message.ts",
+    "owner": "packages/gateway/src/platforms/feishu/message.ts",
     "productionEntry": "飞书SDK事件→平台消息/卡片动作解析",
     "keyBehavior": "app错投与旧retry拒绝、结构化mention、text/post/card和媒体需求、真实引用解析且动作不进入普通Agent正文",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/im/gateway/feishu-client.test.ts": {
+  "apps/web-host/tests/im/gateway/feishu/client.test.ts": {
     "domain": "im",
     "layer": "L1",
     "owner": "apps/web-host/src/modules/im/gateway/feishu/client.ts",
@@ -720,7 +720,7 @@
     "keyBehavior": "Token单飞缓存与取消、受控路径、PUT/PATCH、内存上传和下载边界、错误脱敏",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/feishu-connection.test.ts": {
+  "apps/web-host/tests/im/gateway/feishu/connection.test.ts": {
     "domain": "im",
     "layer": "L1",
     "owner": "apps/web-host/src/modules/im/gateway/feishu/connection.ts",
@@ -728,7 +728,7 @@
     "keyBehavior": "onReady握手而非start返回即成功、消息/卡片EVENT、app错投、静默logger、停止排空与清理失败保留归属",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/feishu-ws-network.test.ts": {
+  "apps/web-host/tests/im/gateway/feishu/websocket.test.ts": {
     "domain": "im",
     "layer": "L1",
     "owner": "apps/web-host/src/modules/im/gateway/feishu/ws-network.ts",
@@ -736,7 +736,7 @@
     "keyBehavior": "仅已知官方WSS路径、公网DNS同次固定、禁止凭据/未知目标与混合DNS；未发起实际连接",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/feishu-sender.test.ts": {
+  "apps/web-host/tests/im/gateway/feishu/sender.test.ts": {
     "domain": "im",
     "layer": "L1",
     "owner": "apps/web-host/src/modules/im/gateway/feishu/sender.ts",
@@ -744,7 +744,7 @@
     "keyBehavior": "真实Multipart和消息协议、表格卡片、未知发送不重发、确定拒绝有限降级、平台ID收据",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/qq-client.test.ts": {
+  "apps/web-host/tests/im/gateway/qq/client.test.ts": {
     "domain": "im",
     "layer": "L1",
     "owner": "apps/web-host/src/modules/im/gateway/qq/client.ts",
@@ -752,7 +752,7 @@
     "keyBehavior": "单飞过期token、sandbox隔离、401仅一次刷新、未知结果不重发、消息/stream缺ID不假成功；鉴权await后逐HTTP授权复核阻止撤权发送",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/qq-socket.test.ts": {
+  "apps/web-host/tests/im/gateway/qq/socket.test.ts": {
     "domain": "im",
     "layer": "L1",
     "owner": "apps/web-host/src/modules/im/gateway/qq/socket.ts",
@@ -760,7 +760,7 @@
     "keyBehavior": "连接目标DNS固定和禁跳转、握手取消、受限JSON队列、坏帧关闭并保留已排队顺序；socket为替身",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/wechat-media.test.ts": {
+  "apps/web-host/tests/im/gateway/wechat/media.test.ts": {
     "domain": "im",
     "layer": "L1",
     "owner": "apps/web-host/src/modules/im/gateway/wechat/media.ts",
@@ -768,7 +768,7 @@
     "keyBehavior": "固定CDN和大小、实际AES密文、同filekey重试、未知/4xx不盲发、公私DNS拒绝",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/wechat-sender.test.ts": {
+  "apps/web-host/tests/im/gateway/wechat/sender.test.ts": {
     "domain": "im",
     "layer": "L1",
     "owner": "apps/web-host/src/modules/im/gateway/wechat/sender.ts",
@@ -776,7 +776,7 @@
     "keyBehavior": "context token预检、同用户顺序、稳定client_id、ret拒绝、未知结果不整流程重发",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/telegram-media.test.ts": {
+  "apps/web-host/tests/im/gateway/telegram/media.test.ts": {
     "domain": "im",
     "layer": "L1",
     "owner": "apps/web-host/src/modules/im/gateway/telegram-media.ts",
@@ -784,10 +784,10 @@
     "keyBehavior": "单文件/全批20,000,000字节、引用仅reuse、来源索引、取消精确回收当前创建收据、不清理历史",
     "ci": "web-host-node"
   },
-  "packages/core/tests/im/wechat-message.test.ts": {
+  "packages/gateway/tests/wechat-message.test.mjs": {
     "domain": "im",
     "layer": "L1",
-    "owner": "packages/core/src/im/wechat-message.ts",
+    "owner": "packages/gateway/src/platforms/wechat/message.ts",
     "productionEntry": "微信polling→共享消息解析",
     "keyBehavior": "context token、ASR与独立引用媒体描述，可信owner不从网络消息取得，旧不支持媒体不扩功能",
     "ci": "node-webui"
@@ -800,7 +800,7 @@
     "keyBehavior": "每来源50条及3000码点预算，群快照只含公开summary/profile，成员私聊与群资料隔离",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/im/gateway/context-builder.test.ts": {
+  "apps/web-host/tests/im/gateway/agent/context.test.ts": {
     "domain": "im",
     "layer": "L1",
     "owner": "apps/web-host/src/modules/im/gateway/context-builder.ts",
@@ -808,7 +808,7 @@
     "keyBehavior": "真实平台来源与scope记忆进入前缀，member不泄漏owner字段，owner/角色/群/成员快照拒绝错配",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/telegram-agent.integration.test.ts": {
+  "apps/web-host/tests/im/gateway/telegram/agent.integration.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "packages/core/src/im/run-delivery.ts + apps/web-host/src/modules/im/gateway",
@@ -816,7 +816,7 @@
     "keyBehavior": "两群member与owner私聊的历史/记忆隔离，最终一次回复与recover不重跑Provider，网络/存储/租约为替身",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/qq-connection.test.ts": {
+  "apps/web-host/tests/im/gateway/qq/connection.test.ts": {
     "domain": "im",
     "layer": "L1",
     "owner": "apps/web-host/src/modules/im/gateway/qq-connection.ts",
@@ -824,7 +824,7 @@
     "keyBehavior": "READY/RESUME/INVALID_SESSION、心跳ACK超时、重连退避、事件白名单与顺序、取消和清理失败",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/wechat-client.test.ts": {
+  "apps/web-host/tests/im/gateway/wechat/client.test.ts": {
     "domain": "im",
     "layer": "L1",
     "owner": "apps/web-host/src/modules/im/gateway/wechat/client.ts",
@@ -832,7 +832,7 @@
     "keyBehavior": "受控HTTPS目标、固定安全错误、context token、仅确定未发送的连接故障重试且复用client_id",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/wechat-polling.test.ts": {
+  "apps/web-host/tests/im/gateway/wechat/polling.test.ts": {
     "domain": "im",
     "layer": "L1",
     "owner": "apps/web-host/src/modules/im/gateway/wechat/polling.ts",
@@ -840,7 +840,7 @@
     "keyBehavior": "预检先于下载、入队成功才推进游标、unsupported边界、3秒退避、停止等待与独立通知超时",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/delivery-store.test.ts": {
+  "apps/web-host/tests/im/gateway/delivery/store.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/delivery-store.ts",
@@ -872,7 +872,7 @@
     "keyBehavior": "最终/轮次/附件去重、未知网络结果不重发、逐次撤权、outbox恢复不重启Agent；恢复专用入口不要求假Runner，重复扫描不重发且撤权不发送；工具完成提示在流式边界后投递，发送结果未知不重试也不阻塞最终正文",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/im/gateway/telegram-api.test.ts": {
+  "apps/web-host/tests/im/gateway/telegram/api.test.ts": {
     "domain": "im",
     "layer": "L1",
     "owner": "apps/web-host/src/modules/im/gateway/telegram-api.ts",
@@ -880,7 +880,7 @@
     "keyBehavior": "JSON/Multipart、禁重定向、下载大小、取消与安全错误；网络transport为替身",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/telegram-polling.test.ts": {
+  "apps/web-host/tests/im/gateway/telegram/polling.test.ts": {
     "domain": "im",
     "layer": "L1",
     "owner": "apps/web-host/src/modules/im/gateway/telegram-polling.ts",
@@ -888,7 +888,7 @@
     "keyBehavior": "忽略编辑、游标恢复、callback失败保序、预检先消费、webhook冲突拒绝启动",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/telegram-sender.test.ts": {
+  "apps/web-host/tests/im/gateway/telegram/sender.test.ts": {
     "domain": "im",
     "layer": "L1",
     "owner": "apps/web-host/src/modules/im/gateway/telegram-sender.ts",
@@ -896,15 +896,15 @@
     "keyBehavior": "群/bot限流、429边界、分片首引用末键盘、部分成功未知态、图片确定拒绝后改文档；原生prompt token编码和429等待后撤权不发HTTP",
     "ci": "web-host-node"
   },
-  "packages/core/tests/im/telegram-message.test.ts": {
+  "packages/gateway/tests/telegram-message.test.ts": {
     "domain": "im",
     "layer": "L1",
-    "owner": "packages/core/src/im/telegram-message.ts",
+    "owner": "packages/gateway/src/platforms/telegram/message.ts",
     "productionEntry": "Telegram 消息解析器（轮询入口须拒绝编辑事件）",
     "keyBehavior": "UTF-16 实体、定向命令、可信原生提及及未知事实、引用和附件跨 Bot/群隔离、机器人和匿名拒绝",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/im/gateway/telegram-inbox.test.ts": {
+  "apps/web-host/tests/im/gateway/telegram/inbox.test.ts": {
     "domain": "im",
     "layer": "L1",
     "owner": "apps/web-host/src/modules/im/gateway/telegram-inbox.ts",
@@ -936,7 +936,7 @@
     "keyBehavior": "owner 身份不来自载荷声明，混合成员批次不升级权限，群上下文不泄漏私人数据；展示策略复用Python偏好默认、群隐藏/飞书私聊强制完整，展示不升级权限",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/im/gateway/wechat-media-crypto.test.ts": {
+  "apps/web-host/tests/im/gateway/wechat/crypto.test.ts": {
     "domain": "im",
     "layer": "L1",
     "owner": "apps/web-host/src/modules/im/gateway/wechat/media-crypto.ts",
@@ -976,7 +976,7 @@
     "keyBehavior": "Python v3 决策契约覆盖问句、能力动作、话题锚点、成员窗口、模式阈值且沙盒不回显正文",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/im/attention-score.test.ts": {
+  "apps/web-host/tests/im/attention/score.test.ts": {
     "domain": "agent",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/attention-defaults.ts + packages/core/src/im/attention/dev-sandbox.ts",
@@ -1000,15 +1000,15 @@
     "keyBehavior": "引用与代码屏蔽和Unicode偏移",
     "ci": "node-webui"
   },
-  "packages/core/tests/im/telegram-connect.test.ts": {
+  "apps/web-host/tests/im/connect/telegram.connector.test.ts": {
     "domain": "api",
     "layer": "L1",
-    "owner": "packages/core/src/im/telegram-connect.ts",
+    "owner": "apps/web-host/src/modules/im/connect/platforms/telegram/index.ts",
     "productionEntry": "apps/web-host/src/main.ts",
     "keyBehavior": "Telegram Token 加密持久化、owner/平台冲突、原子替换、固定 HTTPS 请求及有界照片/文件 multipart 协议及仅 400 回退规则",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/im/telegram-connect-route.test.ts": {
+  "apps/web-host/tests/im/connect/telegram.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/telegram-connect.ts",
@@ -1016,55 +1016,55 @@
     "keyBehavior": "Telegram 接入认证、DTO、公开响应和错误脱敏",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/im/wechat-connect.test.ts": {
+  "apps/web-host/tests/im/connect/wechat.parity.test.ts": {
     "domain": "api",
     "layer": "L2",
-    "owner": "packages/core/src/im/wechat-connect.ts",
+    "owner": "packages/gateway/src/platforms/wechat/pairing.ts",
     "productionEntry": "apps/web-host/src/main.ts",
     "keyBehavior": "微信连接挑战和Python Gateway消费",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/im/wechat-connect-route.test.ts": {
+  "apps/web-host/tests/im/connect/wechat.test.ts": {
     "domain": "api",
     "layer": "L2",
-    "owner": "packages/core/src/im/wechat-connect.ts",
+    "owner": "packages/gateway/src/platforms/wechat/pairing.ts",
     "productionEntry": "apps/web-host/src/main.ts",
     "keyBehavior": "微信连接授权及错误语义",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/im/feishu-connect.test.ts": {
+  "apps/web-host/tests/im/connect/feishu.parity.test.ts": {
     "domain": "api",
     "layer": "L2",
-    "owner": "packages/core/src/im/feishu-connect.ts",
+    "owner": "packages/gateway/src/platforms/feishu/pairing.ts",
     "productionEntry": "apps/web-host/src/main.ts",
     "keyBehavior": "飞书设备流与Python消费者",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/im/feishu-connect-route.test.ts": {
+  "apps/web-host/tests/im/connect/feishu.test.ts": {
     "domain": "api",
     "layer": "L2",
-    "owner": "packages/core/src/im/feishu-connect.ts",
+    "owner": "packages/gateway/src/platforms/feishu/pairing.ts",
     "productionEntry": "apps/web-host/src/main.ts",
     "keyBehavior": "飞书连接认证与错误语义",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/im/qq-connect.test.ts": {
+  "apps/web-host/tests/im/connect/qq.parity.test.ts": {
     "domain": "api",
     "layer": "L2",
-    "owner": "packages/core/src/im/qq-connect.ts",
+    "owner": "packages/gateway/src/platforms/qq/pairing.ts",
     "productionEntry": "apps/web-host/src/main.ts",
     "keyBehavior": "QQ扫码挑战与Python Gateway消费",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/im/qq-connect-route.test.ts": {
+  "apps/web-host/tests/im/connect/qq.test.ts": {
     "domain": "api",
     "layer": "L2",
-    "owner": "packages/core/src/im/qq-connect.ts",
+    "owner": "packages/gateway/src/platforms/qq/pairing.ts",
     "productionEntry": "apps/web-host/src/main.ts",
     "keyBehavior": "QQ扫码认证和错误语义",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/im/user-bot-update.test.ts": {
+  "apps/web-host/tests/im/bots/update.parity.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/im/user-bot-update.ts",
@@ -1072,7 +1072,7 @@
     "keyBehavior": "Bot更新事务和Python规则对照",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/im/user-bot-update-route.test.ts": {
+  "apps/web-host/tests/im/bots/update.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/im/user-bot-update.ts",
@@ -1080,7 +1080,7 @@
     "keyBehavior": "Bot更新HTTP参数和错误语义",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/im/user-bot-delete.test.ts": {
+  "apps/web-host/tests/im/bots/delete.parity.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/im/user-bot-delete.ts",
@@ -1088,7 +1088,7 @@
     "keyBehavior": "Bot删除事务、Redis清理及Python对照",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/im/user-bot-create.test.ts": {
+  "apps/web-host/tests/im/bots/create.parity.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/im/user-bot-create.ts",
@@ -1096,7 +1096,7 @@
     "keyBehavior": "QQ创建加密、owner隔离及Python Gateway",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/im/user-bot-create-route.test.ts": {
+  "apps/web-host/tests/im/bots/create.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/im/user-bot-create.ts",
@@ -1112,7 +1112,7 @@
     "keyBehavior": "Python实际消费者读取Node签发的QQ和Telegram绑定码",
     "ci": "manual"
   },
-  "apps/web-host/tests/im/user-bot-binding-code.test.ts": {
+  "apps/web-host/tests/im/bots/code.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/im/binding-code.ts",
@@ -1120,7 +1120,7 @@
     "keyBehavior": "绑定码owner隔离、签名和过期",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/im/user-bot-unbind.test.ts": {
+  "apps/web-host/tests/im/bots/unbind.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/im/user-bots.ts",
@@ -1128,7 +1128,7 @@
     "keyBehavior": "QQ解绑授权与持久字段",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/im/im-platform-settings.test.ts": {
+  "apps/web-host/tests/im/platforms/settings.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/platform-settings.ts",
@@ -1136,7 +1136,7 @@
     "keyBehavior": "平台配置优先级与热更新",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/im/user-bots-list.test.ts": {
+  "apps/web-host/tests/im/bots/list.test.ts": {
     "domain": "im",
     "layer": "L2",
     "owner": "packages/core/src/im/user-bots.ts",
@@ -1664,7 +1664,7 @@
     "keyBehavior": "附件投递回执进入内部上下文，但不能跨会话或泄漏到其他用户历史",
     "ci": "backend-pytest"
   },
-  "apps/web-host/tests/im/gateway/session-delete.test.ts": {
+  "apps/web-host/tests/im/gateway/agent/delete.test.ts": {
     "domain": "im-session-delete",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/session-delete.ts",
@@ -1672,7 +1672,7 @@
     "keyBehavior": "真实PG保护跨owner、永久墓碑、GC、引用/未知投递保护、反思scope隔离、取消与等待恢复及事务故障脱敏；取消通知端口为明确替身；真实active owner账户与完整Node密封证明授权取消，Bot停用/群停用/解绑不阻止，inactive/跨owner/v2/坏HMAC拒绝；原出站仍按实际当前权限拒绝",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/session-delete-bootstrap.test.ts": {
+  "apps/web-host/tests/im/gateway/agent/delete.integration.test.ts": {
     "domain": "im-session-delete-production",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/bootstrap.ts",
@@ -1680,7 +1680,7 @@
     "keyBehavior": "隔离PG/Redis与合成账号验证已完成与活跃Run删除、Provider真实取消、跨owner拒绝、零Python清理及Redis丢失重放；仅平台/Provider网络替身；Bot停用、群停用和owner解绑后真实Provider取消与认证删除，撤权期间无文本或typing请求；恢复合成配置后确实重放旧事件且不复活",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/reflection-triggers.test.ts": {
+  "apps/web-host/tests/im/gateway/memory/triggers.test.ts": {
     "domain": "im-reflection",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/reflection-triggers.ts",
@@ -1688,7 +1688,7 @@
     "keyBehavior": "真实PG验证每50条窗口、180秒主动时钟/被动不延长、重投幂等、并发rollback、Seq逆ID、旧扫描与新Run竞争、revision/墓碑/关闭期间ignored及scope版本冻结；成功checkpoint为明确合成夹具，不发模型",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/reflection-tail.test.ts": {
+  "apps/web-host/tests/im/gateway/memory/tail.test.ts": {
     "domain": "im-reflection",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/reflection-tail.ts",
@@ -1696,7 +1696,7 @@
     "keyBehavior": "真实PG验证seq、原Run助手/其他Run边界、HMAC/指纹/原文/native/quote、scope隔离/撤权/取消与收据歧义；只读且不调用Provider或改游标",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/reflection-passive-bootstrap.test.ts": {
+  "apps/web-host/tests/im/gateway/memory/passive.integration.test.ts": {
     "domain": "im-reflection",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/bootstrap.ts",
@@ -1704,7 +1704,7 @@
     "keyBehavior": "真实PG/Redis/FS及Harness验证49不触发/50分scope、同Run多窗口、idle清余数、重启缺快照等待新真实Run、纯被动不伪造Run、关闭/观察故障恢复及停用群不阻塞；仅平台/Provider网络替身",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/reflection-daily.test.ts": {
+  "apps/web-host/tests/im/gateway/memory/daily.test.ts": {
     "domain": "im-reflection",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/reflection-daily.ts",
@@ -1712,7 +1712,7 @@
     "keyBehavior": "网络替身与真实临时文件验证日期完整、公开范围无工具与主对话wire、并发新增头部保留、旧memory或daily漂移拒绝及幂等应用",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/reflection-daily-bootstrap.test.ts": {
+  "apps/web-host/tests/im/gateway/memory/daily.integration.test.ts": {
     "domain": "im-reflection",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/reflection-postgres.ts",
@@ -1720,7 +1720,7 @@
     "keyBehavior": "隔离PG/Redis/FS/Harness以249条旧daily加真实反思触发250条最旧100/100/50，注入文件已写后提交失败与Provider空结果；跨进程恢复计划不重发模型/重复记账，失败保留未处理daily，最终每条恰好一次且维护不推进反思消息水位；仅平台/Provider网络替身",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/im/gateway/reflection-mixed-bootstrap.test.ts": {
+  "apps/web-host/tests/im/gateway/memory/mixed.integration.test.ts": {
     "domain": "im-reflection",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/im/gateway/reflection-postgres.ts",

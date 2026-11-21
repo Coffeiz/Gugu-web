@@ -29,7 +29,7 @@ const requiredSchemaQueries = [
   'SELECT id, user_id, notification_id, read_at FROM notification_reads LIMIT 0',
   'SELECT id, user_id, notification_id, dismissed_at FROM notification_dismissals LIMIT 0',
   'SELECT id, user_id, event, properties, created_at FROM frontend_events LIMIT 0',
-  `SELECT id, user_id, event_id, reminder_lead_minutes, name, payload, cron,
+  `SELECT id, user_id, event_id, reminder_lead_minutes, name, payload, execution_mode, cron,
           schedule_kind, start_at, channels, enabled, delivery_targets
    FROM scheduled_tasks LIMIT 0`,
   `SELECT id, user_id, undo_context_id, group_id, resource, action, target_refs,

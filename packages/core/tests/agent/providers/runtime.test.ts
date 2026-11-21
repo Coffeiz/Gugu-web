@@ -47,7 +47,8 @@ function setup(scripts: readonly (string | { status: number; body: JsonObject })
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, mediaCodec(item, hydrate)]))
   }
   const transport: ProviderTransport = { request: vi.fn(async request => {
-    sent.push(structuredClone(request))
+    const { onTiming: _onTiming, ...wire } = request
+    sent.push(structuredClone(wire))
     const text = scripts[index++]
     if (text === undefined) throw new Error('协议请求超出合成脚本范围')
     return { status: typeof text === 'string' ? 200 : text.status, headers: {}, body: collectSource([encode(typeof text === 'string' ? text : JSON.stringify(text.body))]), cancel: vi.fn() }
@@ -150,6 +151,11 @@ describe('真实Provider到Canonical Harness组合', () => {
     expect(observations.filter(event => event.kind === 'tool').map(event => event.status)).toEqual(['running', 'success'])
     const requests = observations.filter(event => event.kind === 'provider' && event.name === 'request')
     const request = requests[0]!
+    const timings = observations.filter(event => event.kind === 'provider' && event.name === 'timing')
+    expect(timings).toHaveLength(2)
+    expect(timings[0]?.attributes).toMatchObject({ attempt: 1, outcome: 'completed', firstStreamEventMs: expect.any(Number), streamEndMs: expect.any(Number) })
+    expect(timings[0]?.attributes).not.toHaveProperty('firstVisibleTokenMs')
+    expect(timings[1]?.attributes).toMatchObject({ firstVisibleTokenMs: expect.any(Number), responseHeadersMs: expect.any(Number) })
     expect(requests).toHaveLength(2)
     expect(request.input).toMatchObject({ model: 'synthetic-model', messages: expect.any(Array), tools: expect.any(Array) })
     expect(observations.filter(event => event.kind === 'provider' && event.name === 'usage').at(-1)?.usage).toEqual(result.state.totalUsage)
@@ -159,11 +165,11 @@ describe('真实Provider到Canonical Harness组合', () => {
     await value.provider.close()
   })
   it('简介模式只向 Provider 声明固定入口，业务目录保留在请求尾部', async () => {
-    const names = ['lookup', 'call_tool', 'get_tool_schema']
+    const names = ['lookup', 'call_tool', 'search_tools']
     const reminder = '合成业务目录：lookup'
     const value = setup([final], { sourceLoad: async () => ({
       modelIdentity: 'model-a', contextWindow: 10000, accessScopeHash: digest(identity),
-      capabilities: { toolNames: names, providerToolNames: ['call_tool', 'get_tool_schema'], toolReminder: reminder,
+      capabilities: { toolNames: names, providerToolNames: ['call_tool', 'search_tools'], toolReminder: reminder,
         tools: names.map(name => ({ name, schema: { type: 'function', function: { name, parameters: { type: 'object' } } } })) },
       input: { ...identity, fixedPrefix: [], history: [], toolReminder: reminder,
         currentUser: { persistedMessageId: 'current', message: { role: 'user', content: '合成问题' } } },
@@ -171,7 +177,7 @@ describe('真实Provider到Canonical Harness组合', () => {
     expect((await collect(value.harness.start(identity))).state.status).toBe('completed')
     const body = value.sent[0]!.body as JsonObject
     const schemas = body.tools as { function: { name: string } }[]
-    expect(schemas.map(tool => tool.function.name)).toEqual(['call_tool', 'get_tool_schema'])
+    expect(schemas.map(tool => tool.function.name)).toEqual(['call_tool', 'search_tools'])
     expect(stableJson((body.messages as JsonObject[]).at(-1))).toContain(reminder)
     expect(stableJson(body).split(reminder)).toHaveLength(2)
     await value.provider.close()

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { runContextBranch, type AgentObservation, type AgentObservationPort, type BranchResult, type RunIdentity, type Usage } from '@gugu/core/agent'
 import { ProviderRuntime, outputBudget as providerOutputBudget, providerSelection, type ProviderRuntimeOptions } from '@gugu/core/providers'
 import type { Pool } from 'pg'
@@ -75,6 +76,13 @@ export function createOwnerReflectionExtractor(options: {
       let date = dateKeyInTimeZone(now, options.timezone)
       if (source.timezone) {
         try { date = dateKeyInTimeZone(now, source.timezone) } catch { /* 个人时区无效时使用站点时区。 */ }
+      }
+      const candidate = batch.compactionCandidate
+      if (candidate) {
+        const evidence = source.turns.map(turn => [turn.userMessage, turn.assistantReply])
+        if (candidate.evidence === createHash('sha256').update(JSON.stringify(evidence)).digest('hex')) {
+          return { kind: 'ready', output: candidate.output, time: { now: now.getTime() / 1000, date } }
+        }
       }
       const base = { date, userName: source.userName,
         profile: snapshot.files['profile.json'], pattern: snapshot.files['pattern.json'], summary: snapshot.files['summary.json'] }

@@ -5,10 +5,10 @@ import type { createDataImportApplier } from '@gugu/core/data-portability/apply-
 import type { createDataImportResumer } from '@gugu/core/data-portability/resume-import'
 import { type SecretPromptCancelOptions } from '../modules/agent/interactions/secret-cancel.js'
 import { type UserBotCreateOptions, registerUserBotDeleteRoute, registerUserBotUpdateRoute } from '../modules/im/routes.js'
-import { type QqConnectRouteOptions } from '../modules/im/connect/qq.js'
-import { type FeishuConnectRouteOptions } from '../modules/im/connect/feishu.js'
-import { type WechatConnectRouteOptions } from '../modules/im/connect/wechat.js'
-import { type TelegramConnectRouteOptions } from '../modules/im/connect/telegram.js'
+import { type QqConnectRouteOptions } from '../modules/im/connect/platforms/qq/index.js'
+import { type FeishuConnectRouteOptions } from '../modules/im/connect/platforms/feishu/index.js'
+import { type WechatConnectRouteOptions } from '../modules/im/connect/platforms/wechat/index.js'
+import { type TelegramConnectRouteOptions } from '../modules/im/connect/platforms/telegram/index.js'
 import type { DataExportDownloadOptions } from '../modules/data-portability/download.js'
 import type { createDataExportCreator } from '@gugu/core/data-portability/create-export'
 import type { LlmPresetTestResult } from '@gugu/core/agent/config'
@@ -104,6 +104,7 @@ import { type AdminAuditLogOptions } from '../modules/admin/audit.js'
 import { type AdminUserSettingsOptions } from '../modules/admin/users.js'
 import { type NotificationAdminHistoryOptions } from '../modules/notifications/admin.js'
 import { type FastifyRequest } from 'fastify'
+import type { DesktopAgentDeepResearchOptions, DesktopAgentSimilarImageOptions } from '../modules/agent/tools/desktop-search-route.js'
 import { requestContext } from '@gugu/core'
 import type { RequestContext } from '@gugu/core'
 import type { WorkspaceBindingOperations } from '../modules/workspaces/bindings.js'
@@ -270,6 +271,7 @@ export interface WebUiOptions {
   scheduledTaskTestNotify?: ScheduledTaskTestNotifier
   scheduledTaskWrites?: ReturnType<typeof createPostgresTaskWrites>
   scheduledTaskRunNow?: ScheduledTaskRunNow
+  webPush?: ReturnType<typeof import('../modules/notifications/push.js').createWebPush>
   notifications?: NotificationOptions
   track?: TrackOptions
   feedback?: FeedbackOptions
@@ -407,6 +409,8 @@ export interface WebUiOptions {
   credentialMediaProbe?: Omit<ByokMediaProbeOptions, 'requireUser' | 'ownerIdFromRequest'>
   credentialList?: Omit<CredentialListOptions, 'requireUser' | 'ownerIdFromRequest'>
   providerCapabilityPreview?: Omit<ProviderCapabilityPreviewOptions, 'requireUser'>
+  desktopAgentDeepResearch?: DesktopAgentDeepResearchOptions
+  desktopAgentSimilarImageSearch?: DesktopAgentSimilarImageOptions
   userSkillDelete?: Omit<UserSkillDeleteOptions, 'requireUser' | 'ownerIdFromRequest'>
   userSkillList?: Omit<UserSkillListOptions, 'requireUser' | 'ownerIdFromRequest'>
   userSkillWrite?: Omit<UserSkillWriteOptions, 'requireUser' | 'ownerIdFromRequest'>

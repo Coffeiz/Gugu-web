@@ -2,6 +2,9 @@ import { z } from 'zod'
 import { CoreError } from './error.js'
 export { CoreError, type ErrorCode } from './error.js'
 
+export const DEFAULT_LLM_CONTEXT_TOKENS = 256_000
+export const DEFAULT_LLM_OUTPUT_TOKENS = 51_200
+
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
 export type Fields = Record<string, unknown>
 export const ownerSchema = z
@@ -14,6 +17,7 @@ export const frameSchema = z.strictObject({
   method: z.string(),
   params: z.record(z.string(), z.unknown()),
   operation_id: operationSchema.optional(),
+  accept_chunks: z.literal(true).optional(),
 })
 
 export const requestJsonSchema = z.toJSONSchema(frameSchema, { io: 'input' })
@@ -88,3 +92,5 @@ export interface ClientRecord {
   notes: string
   created_at: string
 }
+
+export { isMiniMaxAnthropicEndpointMigration } from '../byok/contracts.js'

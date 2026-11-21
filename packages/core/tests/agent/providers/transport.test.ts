@@ -14,7 +14,7 @@ import { embedRagQuery } from '../../../src/agent/rag/query-embedding.js'
 import { ProviderRuntime } from '../../../src/agent/providers/runtime.js'
 import { isPublicAddress, resolvePinnedTarget } from '../../../src/agent/providers/transport/network.js'
 import { requestEvents, requestJson } from '../../../src/agent/providers/http.js'
-import type { ProviderDriverDependencies } from '../../../src/agent/providers/contracts.js'
+import type { ProviderConnectionTiming, ProviderDriverDependencies } from '../../../src/agent/providers/contracts.js'
 import { proxyFor, proxyOptionsFromEnvironment } from '../../../src/agent/providers/transport/proxy.js'
 import { syntheticCertificate } from './tls-fixture.js'
 import { digest, invocation } from './openai-fixtures.js'
@@ -32,6 +32,19 @@ async function listen(value: Server) {
 }
 async function close(value: Server) { value.closeAllConnections(); await new Promise<void>((resolve, reject) => value.close(error => error ? reject(error) : resolve())) }
 const deps = (transport: ProviderDriverDependencies['transport']): ProviderDriverDependencies => ({ transport, digest: () => 'synthetic-network-digest' })
+
+it('连接被拒绝时，已排队的 POST 正文仍可安全重试', async () => {
+  const { value, base } = await server((_request, response) => response.end())
+  await close(value)
+  const transport = createNodeProviderTransport({ allowLocal: true, trustEnvironment: false,
+    resolve: async () => [{ address: '127.0.0.1', family: 4 }] })
+  try {
+    await expect(requestJson(deps(transport), { url: base, method: 'POST', headers: {}, body: { synthetic: true },
+      allowLocal: true }, new AbortController().signal)).rejects.toMatchObject({
+      code: 'network', options: { requestStarted: false, retryable: true, transportCode: 'ECONNREFUSED' },
+    })
+  } finally { await transport.close() }
+})
 
 it('飞书卡片所需PUT与PATCH经过同一固定目标传输并保留正文，不绕过网络授权', async () => {
   const received: { method: string; body: string }[] = []
@@ -180,11 +193,16 @@ describe('真实Node HTTP与分片、取消和响应体', () => {
     const sockets = new Set<unknown>()
     const test = await server((request, response) => { sockets.add(request.socket); response.end('{"ok":true}') })
     const transport = createNodeProviderTransport({ trustEnvironment: false, allowLocal: true, idleTimeoutMs: 30, resolve: async () => [{ address: '127.0.0.1', family: 4 }] })
-    const input = { url: test.base, method: 'GET' as const, headers: {}, allowLocal: true }
+    let timing: ProviderConnectionTiming = {}
+    const input = { url: test.base, method: 'GET' as const, headers: {}, allowLocal: true, onTiming: (sample: ProviderConnectionTiming) => Object.assign(timing, sample) }
     try {
       await requestJson(deps(transport), input, new AbortController().signal)
+      expect(timing).toMatchObject({ proxied: false, reusedSocket: false, dnsMs: expect.any(Number), poolWaitMs: expect.any(Number), tcpConnectMs: expect.any(Number), responseHeadersMs: expect.any(Number) })
+      timing = {}
       await requestJson(deps(transport), input, new AbortController().signal)
       expect(sockets.size).toBe(1)
+      expect(timing.reusedSocket).toBe(true)
+      expect(timing).not.toHaveProperty('tcpConnectMs')
       await new Promise(resolve => setTimeout(resolve, 70))
       await requestJson(deps(transport), input, new AbortController().signal)
       expect(sockets.size).toBe(2)
@@ -278,6 +296,19 @@ describe('真实Node HTTP与分片、取消和响应体', () => {
         expect(await requestJson(deps(controlled), { url: target.base, method: 'GET', headers: {}, allowLocal: true }, new AbortController().signal)).toEqual({ proxied: true })
         expect(path).toBe('')
       } finally { await ambient.close(); await controlled.close() }
+      let useSystemProxy = false
+      const desktop = createNodeProviderTransport({
+        ...baseOptions, trustEnvironment: false,
+        resolveProxy: async () => useSystemProxy ? { url: proxyUrl.replace('proxy.example', '127.0.0.1') } : undefined,
+      })
+      try {
+        for (const enabled of [false, true, false]) {
+          useSystemProxy = enabled
+          path = ''
+          await requestJson(deps(desktop), { url: target.base, method: 'GET', headers: {}, allowLocal: true }, new AbortController().signal)
+          expect(path).toBe(enabled ? `127.0.0.1:${new URL(target.base).port}` : '')
+        }
+      } finally { await desktop.close() }
       expect(proxyFor(new URL('https://api.provider.example'), { https: { url: 'https://proxy.example' }, noProxy: '.provider.example:443' })).toBeUndefined()
       const environment = proxyOptionsFromEnvironment({ HTTPS_PROXY: 'http://synthetic:proxy@proxy.example:8080', NO_PROXY: 'localhost' })
       expect(environment.https?.url).not.toContain('synthetic'); expect(environment.https?.authorization).toMatch(/^Basic /)

@@ -3,7 +3,7 @@ import { createLocalFileTree, UnsafeLocalPathError } from '@gugu/fs/node'
 import type { Pool } from 'pg'
 import { normalizeOwnerId } from '../../shared/owner-context.js'
 import { projectFileStorageKey } from '../files/folders/paths.js'
-import { personalFileStorageKey, workspaceDirectoryStorageKey } from '../workspaces/roots.js'
+import { personalFileStorageKey, sandboxTarget, workspaceDirectoryStorageKey } from '../workspaces/roots.js'
 
 interface SearchRoot {
   directoryId: number | 'personal' | `project:${number}`
@@ -15,10 +15,10 @@ interface PathHit {
   id: string
   title: string
   subtitle: string
-  path_file: { directoryId: SearchRoot['directoryId']; relativePath: string; directoryName: string }
+  path_file: { directoryId: SearchRoot['directoryId']; relativePath: string; directoryName: string; sandboxPath: string }
 }
 
-export function createDiskFileSearchSources(pool: Pick<Pool, 'query'>, storageRoot: string): GlobalSearchSource[] {
+export function createDiskFileSearchSources(pool: Pick<Pool, 'query'>, storageRoot: string) {
   // Core 为每次搜索建立单独的查询快照，文件和文件夹可以共用一次目录遍历。
   const searches = new WeakMap<GlobalSearchQuery, Map<string, Promise<Record<'file' | 'folder', PathHit[]>>>>()
 
@@ -44,12 +44,13 @@ export function createDiskFileSearchSources(pool: Pick<Pool, 'query'>, storageRo
   async function scan(owner: string, query: GlobalSearchQuery, signal?: AbortSignal) {
     type Ranked = { item: PathHit; hits: number; rank: number }
     const found: Record<'file' | 'folder', Ranked[]> = { file: [], folder: [] }
-    const terms = query.queries.map(term => term.normalize('NFC').toLowerCase())
+    const terms = query.queries.map(term => term.startsWith('/') ? term : term.normalize('NFC').toLowerCase())
     const compare = (left: Ranked, right: Ranked) =>
       right.hits - left.hits || left.rank - right.rank || left.item.title.localeCompare(right.item.title)
     if (!terms.length) return { file: [], folder: [] }
     for (const root of await roots(owner)) {
       const tree = createLocalFileTree(storageRoot, root.storageKey)
+      const sandboxRoot = sandboxTarget(root.storageKey)
       const directories = ['']
       while (directories.length) {
         signal?.throwIfAborted()
@@ -66,7 +67,8 @@ export function createDiskFileSearchSources(pool: Pick<Pool, 'query'>, storageRo
           if (query.types && !query.types.includes(kind)) continue
           const title = entry.name.normalize('NFC').toLowerCase()
           const path = entry.relativePath.normalize('NFC').toLowerCase()
-          const hits = terms.filter(term => path.includes(term)).length
+          const sandboxPath = `${sandboxRoot}/${entry.relativePath}`
+          const hits = terms.filter(term => term.startsWith('/') ? sandboxPath === term : path.includes(term)).length
           if (query.mode === 'AND' ? hits !== terms.length : hits === 0) continue
           const rank = title === terms[0] ? 0 : title.startsWith(terms[0]!) ? 1 : title.includes(terms[0]!) ? 2 : 3
           const candidates = found[kind]
@@ -74,7 +76,7 @@ export function createDiskFileSearchSources(pool: Pick<Pool, 'query'>, storageRo
             item: {
               id: JSON.stringify([root.directoryId, entry.relativePath]),
               title: entry.name, subtitle: [root.name, directory].filter(Boolean).join(' · '),
-              path_file: { directoryId: root.directoryId, directoryName: root.name, relativePath: entry.relativePath },
+              path_file: { directoryId: root.directoryId, directoryName: root.name, relativePath: entry.relativePath, sandboxPath },
             },
             hits, rank,
           }
@@ -90,7 +92,7 @@ export function createDiskFileSearchSources(pool: Pick<Pool, 'query'>, storageRo
 
   return (['file', 'folder'] as const).map(type => ({
     type, label: type === 'file' ? '文件' : '文件夹',
-    async search(rawOwner, query, signal) {
+    async search(rawOwner: string, query: GlobalSearchQuery, signal?: AbortSignal) {
       const owner = normalizeOwnerId(rawOwner)
       let byOwner = searches.get(query)
       if (!byOwner) { byOwner = new Map(); searches.set(query, byOwner) }
@@ -98,5 +100,5 @@ export function createDiskFileSearchSources(pool: Pick<Pool, 'query'>, storageRo
       byOwner.set(owner, pending)
       return (await pending)[type].map(item => ({ ...item }))
     },
-  }))
+  } satisfies GlobalSearchSource))
 }

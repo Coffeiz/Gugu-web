@@ -16,7 +16,7 @@ export interface MindNoteReadResponse {
 }
 
 const noteColors = new Set(['amber', 'coral', 'blue', 'teal'])
-const referencePattern = /\[\[(?<type>[a-z_]+):(?<id>\d+)\|(?<label>[^\]]*)\]\]/g
+const referencePattern = /\[\[(?<type>[a-z_]+):(?<id>\d+|(?:path|drop)-[A-Za-z0-9_-]+)\|(?<label>[^\]]*)\]\]/g
 
 export interface MindNoteCreateInput {
   contentMd: string
@@ -160,4 +160,15 @@ export function createMindNoteCreator(runtime: MindNoteCreateRuntime) {
     }
     return note
   }
+}
+
+export const CANVAS_NOTE_TITLE_LIMIT = 80
+
+export function canvasNoteDisplayTitle(row: { title?: unknown; content_md?: unknown; content_plain?: unknown }): string {
+  const firstLine = String(row.content_md ?? '').trimStart().split(/\r?\n/u, 1)[0] ?? ''
+  const heading = /^#{1,6}\s+(.+)$/u.exec(firstLine.trim())?.[1]
+  const metadata = String(row.title ?? '').trim()
+  const preview = String(row.content_plain ?? '').trim().split(/\r?\n/u, 1)[0]
+  const title = (heading && mindNotePlainText(heading)) || (metadata !== '新便签' && metadata) || preview
+  return title ? [...title].slice(0, CANVAS_NOTE_TITLE_LIMIT).join('') : '空白便签'
 }

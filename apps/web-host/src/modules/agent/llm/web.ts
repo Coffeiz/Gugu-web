@@ -57,7 +57,7 @@ export function createWebAgentProviderBinding(options: WebAgentProviderBindingOp
   }
 
   const bind = async (identity: RunIdentity, signal: AbortSignal,
-    recovery?: { identity: RunIdentity; modelIdentity: string; accessScopeHash: string }, credentialId?: number) => {
+    recovery?: { identity: RunIdentity; modelIdentity: string; accessScopeHash: string }, credentialId?: number | null) => {
     try { return await bindRecoverableProvider(identity, services, options.versionSecret, signal, recovery, credentialId) }
     finally { permissions.delete(runKey(identity)) }
   }
@@ -76,7 +76,7 @@ export function createWebAgentProviderBinding(options: WebAgentProviderBindingOp
       identity: RunIdentity,
       signal: AbortSignal,
       recovery?: { identity: RunIdentity; modelIdentity: string; accessScopeHash: string },
-      credentialId?: number,
+      credentialId?: number | null,
     ) {
       return bind(identity, signal, recovery, credentialId)
     },

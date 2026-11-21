@@ -1,8 +1,8 @@
-import { parseGatewayInteraction } from '@gugu/gateway'
+import { matchesImInteractionScope, readImReceivedInteraction } from '@gugu/gateway'
 import { createHmac,randomUUID } from 'node:crypto'
 import type { Pool } from 'pg'
 import { stableJson,type RunEvent,type RunIdentity } from '@gugu/core/agent'
-import type { ImPreflightScope } from '@gugu/core/im/inbound-preflight'
+import type { ImPreflightScope } from '@gugu/gateway'
 import type { ImDeliveryAcknowledgement } from '@gugu/core/im/run-delivery'
 import { withPostgresTransaction } from '../../../../adapters/database/postgres-transaction.js'
 import { createPostgresInteractionProjection } from '../../../agent/interactions/projection.js'
@@ -11,7 +11,7 @@ import { createPostgresImAccess } from '../inbound/access.js'
 import { createPostgresImGatewayAdmission } from '../inbound/admission.js'
 import { imActorInputForDispatch,type ImAgentReconstructorOptions } from '../agent/reconstruct.js'
 import type { createPostgresImControls } from '../attention/controls.js'
-import type { GatewayConnectionServices,GatewayPlatformSender } from '../platform-connections.js'
+import type { GatewayConnectionServices,GatewayPlatformSender } from '../connections.js'
 import type { NodeImBotBinding } from '../inbound/inbox.js'
 import { projectPrivateImSecretPromptLocked } from './secrets.js'
 import { createImRunScope } from '../agent/scope.js'
@@ -28,9 +28,9 @@ const fail=()=>new Error('IM 原生交互暂不可用')
 export function createPostgresImNativeInteractions(options:{
   pool:Pick<Pool,'query'|'connect'>;secretKey:string;supportedPlatforms():readonly string[]|Promise<readonly string[]>
   readRoute:ImAgentReconstructorOptions['readRoute']
-  diagnose?(code: 'interaction_callback_failed', error: unknown): void
+  diagnose?(code: 'interaction_callback_failed' | 'qq_interaction_message_unmatched' | 'qq_interaction_action_rejected', error?: unknown): void
   controls:Pick<ReturnType<typeof createPostgresImControls>,'consumeNativeAction'|'authorizeNativeTarget'>
-  /** 由platform-connections.sender按可信owner/Bot取当前实例，不自行获取平台凭据。 */
+  /** 由connections.sender按可信owner/Bot取当前实例，不自行获取平台凭据。 */
   sender(binding:NodeImBotBinding):GatewayPlatformSender|null
 }){
   if(!options.secretKey||typeof options.sender!=='function'||typeof options.controls?.consumeNativeAction!=='function'||typeof options.controls.authorizeNativeTarget!=='function'||typeof options.readRoute!=='function')throw fail()
@@ -123,9 +123,8 @@ export function createPostgresImNativeInteractions(options:{
       try{
         signal.throwIfAborted()
         const {binding,platform,data}=event
-        if(binding.platform!==platform||platform==='wechat')throw fail()
-        if(platform==='feishu'&&(data.ownerId!==binding.ownerId||data.botId!==binding.botId))throw fail()
-        const parsed=parseGatewayInteraction(platform,data)
+        if(platform==='wechat')throw fail()
+        const interaction=readImReceivedInteraction(binding,platform,data),parsed=interaction.action
         // 飞书私聊以用户 open_id 投递；回调同时携带平台会话 ID 与操作者。
         const recipients = platform === 'feishu' ? [parsed.operator, parsed.chatId] : [parsed.chatId]
         // QQ 回调可能不带原消息 ID。仍要求同 Bot、会话和 Prompt 的原生发送证明，
@@ -135,16 +134,21 @@ export function createPostgresImNativeInteractions(options:{
           AND chat_hash=ANY($5::text[]) AND prompt_id=$6`,
         [binding.ownerId,platform,binding.botId,parsed.messageId===null?null:recipients.map(recipient=>hmac('message',[binding,recipient,parsed.messageId])),
           recipients.map(recipient=>hmac('chat',[binding,recipient])),parsed.promptId])).rows
-        if(matches.length!==1)return{consumed:true,accepted:false}
+        if(matches.length!==1){
+          if(platform==='qq')options.diagnose?.('qq_interaction_message_unmatched')
+          return{consumed:true,accepted:false}
+        }
         const row=matches[0]!
         const identity={ownerId:binding.ownerId,sessionId:String(row.session_id),runId:row.run_id},input=await source(identity),im=input.im
-        if(im.platform!==platform||im.botId!==binding.botId||parsed.chatType&&parsed.chatType!==im.chatType||im.chatType==='group'&&parsed.chatId!==im.chatId||im.chatType==='c2c'&&parsed.operator!==im.platformUserId)throw fail()
+        if(!matchesImInteractionScope(interaction,{ownerId:identity.ownerId,platform:im.platform,botId:im.botId,
+          chatType:im.chatType,chatId:im.chatId,platformUserId:im.platformUserId}))throw fail()
         scope={ownerId:binding.ownerId,botId:binding.botId,platform,chatType:im.chatType,chatId:im.chatId,platformUserId:parsed.operator,eventId:`native-callback:${parsed.eventId}`}
         const admitted=await admission.begin({scope,text:hmac('action',[parsed.promptId,parsed.token,parsed.messageId]),hasPendingMedia:false})
         const trusted={...scope,eventId:admitted.controlEventId,admissionCutoff:admitted.receivedAt}
         if(admitted.status==='first')token=admitted.token
         const result=await options.controls.consumeNativeAction(trusted,parsed.promptId,parsed.token,signal,admitted.status!=='first')
         if(token)await admission.finish(scope,token,'consumed')
+        if(platform==='qq'&&!result.accepted)options.diagnose?.('qq_interaction_action_rejected')
         const feedback = result.awaitingText ? '请直接发送你的回复，咕咕会继续处理。' : '已确认收到选择；咕咕将继续处理。'
         return{consumed:true,accepted:result.accepted,...(platform==='feishu'&&result.accepted?{response:{
           toast:{type:'info',content:result.awaitingText?feedback:'已收到选择。'},card:{type:'raw',data:{config:{wide_screen_mode:true},elements:[{tag:'div',text:{tag:'plain_text',content:feedback}}]}}

@@ -161,7 +161,7 @@ jobs:
             apt_mirror: https://deb.debian.org
           - name: frontend
             context: .
-            dockerfile: apps/web/Dockerfile.prod
+            dockerfile: apps/ui/Dockerfile.prod
             tag: gugu-web-frontend:ci
             ci_image: ghcr.io/coffeiz/gugu-web-frontend
             cache-scope: frontend

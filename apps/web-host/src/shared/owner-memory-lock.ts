@@ -1,8 +1,10 @@
 import type { Database } from '@gugu/core/data'
 import { sql, type Kysely, type Transaction } from 'kysely'
 
+export const ownerMemoryLockKey = (ownerId: string) => 'agent-owner-memory:' + ownerId
+
 export async function lockOwnerMemory(tx: Transaction<Database>, ownerId: string): Promise<void> {
-  await sql`SELECT pg_advisory_xact_lock(hashtextextended(${'agent-owner-memory:' + ownerId}, 0))`.execute(tx)
+  await sql`SELECT pg_advisory_xact_lock(hashtextextended(${ownerMemoryLockKey(ownerId)}, 0))`.execute(tx)
 }
 
 /** 与数据导入确认和回滚入队串行化，返回计划需要复核的档案版本。 */

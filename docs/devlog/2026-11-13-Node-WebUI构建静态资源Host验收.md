@@ -11,7 +11,7 @@
 - Vite 生产构建生成主站和 Admin 两个入口。
 - Node Host 对构建产物请求 `/`、`/admin`、`/projects/42` 均返回 HTML，并能读取页面引用的构建 JS。
 - `/version.json` 返回 JSON；缺失 `/api/v1/*` 保持 404，不会被 SPA fallback 吞掉。
-- `gugu-webui/tests/host/static-files.test.ts`：1/1 通过，覆盖主站/Admin 入口、历史路由、静态文件和 API/资源 404 边界。
+- `gugu-webui/tests/host/http/static.test.ts`：1/1 通过，覆盖主站/Admin 入口、历史路由、静态文件和 API/资源 404 边界。
 - devserver 当前 Vite 入口 `/` 返回 200；`/api/v1/site-config` 经代理返回 200，未认证的 `/auth/me` 和工作区目录请求返回 401。
 
 构建输出写入唯一临时目录并在 smoke 后删除；Vite 插件写入的既有 `frontend/dist/version.json` 已恢复。Vite 配置因同步工作树没有 Git 元数据而输出版本探测提示，不影响构建或 Host smoke。

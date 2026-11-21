@@ -1,3 +1,4 @@
+import { DEFAULT_LLM_CONTEXT_TOKENS, DEFAULT_LLM_OUTPUT_TOKENS } from '@gugu/core/contracts'
 import { randomUUID } from 'node:crypto'
 
 import type { FastifyInstance,preHandlerHookHandler } from 'fastify'
@@ -41,7 +42,7 @@ const aiKeys = [
 const createFields = new Set(['name', ...aiKeys])
 const updateFields = new Set(['name', 'in_pool', ...aiKeys.filter(key => !['capability_checked_at', 'capability_fingerprint'].includes(key))])
 const defaults: Record<string, unknown> = {
-  max_tokens: 25600, context_tokens: 128000, thinking: '', reasoning_effort: '', reasoning_persistence: 'off',
+  max_tokens: DEFAULT_LLM_OUTPUT_TOKENS, context_tokens: DEFAULT_LLM_CONTEXT_TOKENS, thinking: '', reasoning_effort: '', reasoning_persistence: 'off',
   image: false, image_detail: 'auto', video: false, audio: false, web_search_enabled: false, api_format: '',
   ollama_mode: 'local', ollama_api_mode: 'native', ollama_keep_alive: '5m', deployment_mode: 'cloud',
   local_runtime: 'other', capability_overrides: {}, capability_checked_at: '', capability_fingerprint: '',

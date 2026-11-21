@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, open, rename, stat, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Fastify from 'fastify'
+import { createCanvas } from '@napi-rs/canvas'
+import { imageSize } from 'image-size'
 import { CoreError } from '@gugu/core'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
 import { createWorkspaceFileReads } from '../../src/modules/workspaces/files.js'
@@ -60,6 +62,38 @@ function setup(overrides: Partial<WorkspaceDirectoryOperations> = {}) {
   return { app, calls, close: () => app.close() }
 }
 
+test('个人文件缩略图使用当前用户的文件并缩小 JPEG', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'gugu-path-thumb-'))
+  const bytes = createCanvas(1024, 512).toBuffer('image/jpeg')
+  const filePath = join(root, '示例.jpg')
+  let opened = 0
+  const reads = createWorkspaceFileReads({} as Parameters<typeof createWorkspaceFileReads>[0], root)
+  const ctx = setup({ files: {
+    ...reads,
+    async open(owner, directory, relativePath) {
+      assert.equal(owner, ownerId)
+      assert.equal(directory, 'personal')
+      assert.equal(relativePath, '示例.jpg')
+      opened++
+      return { file: null, handle: await open(filePath, 'r'), size: bytes.length, fileName: '示例.jpg', mimeType: 'image/jpeg' }
+    },
+  } })
+  try {
+    await writeFile(filePath, bytes)
+    const url = '/api/v1/files/personal/thumb?' + new URLSearchParams({ path: '示例.jpg' })
+    assert.equal((await ctx.app.inject({ url })).statusCode, 401)
+    assert.equal(opened, 0)
+    const response = await ctx.app.inject({ url, headers: { authorization: 'user' } })
+    assert.equal(response.statusCode, 200)
+    assert.match(String(response.headers['content-type']), /^image\/(webp|jpeg)/)
+    const { width, height } = imageSize(response.rawPayload)
+    assert.deepEqual([width, height], [768, 384])
+  } finally {
+    await ctx.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 for (const [name, storagePath, url] of [
   ['默认工作区', 'workspace/default', '/api/v1/workspace-directories/7'],
   ['个人文件', '个人文件', '/api/v1/files/personal'],
@@ -101,13 +135,35 @@ for (const [name, storagePath, url] of [
       await writeFile(join(workspace, 'docs/t.txt'), 'line1\nline2\n')
       await writeFile(join(otherWorkspace, 'private.txt'), 'private')
       await symlink(otherWorkspace, join(workspace, 'other'))
+      await mkdir(join(workspace, 'docs/nested'))
+      await writeFile(join(workspace, 'docs/nested/child.txt'), '不计入上级')
       const listing = await request(`${url}/entries`)
       assert.equal(listing.statusCode, 200)
-      assert.deepEqual(listing.json().map((entry: { name: string }) => entry.name), ['docs'])
+      assert.deepEqual(listing.json().map(({ name, fileCount, folderCount }: { name: string; fileCount: number; folderCount: number }) => ({ name, fileCount, folderCount })),
+        [{ name: 'docs', fileCount: 1, folderCount: 1 }])
+      await rm(join(workspace, 'docs/nested'), { recursive: true })
       const file = await request(`${url}/content?path=docs%2Ft.txt&download=1`)
       assert.equal(file.statusCode, 200)
       assert.equal(file.body, 'line1\nline2\n')
       assert.match(String(file.headers['content-disposition']), /^attachment/)
+      const identityPath = join(workspace, 'docs/referenced.txt')
+      await writeFile(identityPath, '原文件')
+      const { dev, ino, birthtimeNs } = await stat(identityPath, { bigint: true })
+      const issued = await request(`${url}/reference?path=docs/referenced.txt`)
+      assert.equal(issued.statusCode, 200)
+      assert.equal(issued.json().label, 'referenced.txt')
+      const id: string = issued.json().id
+      assert.match(id, /^path-[A-Za-z0-9_-]+$/)
+      const anchor = JSON.parse(Buffer.from(id.slice(5), 'base64url').toString('utf8'))
+      assert.equal(anchor.relativePath, 'docs/referenced.txt')
+      assert.equal(anchor.identity, `${dev}.${ino}.${birthtimeNs}`)
+      const referenceUrl = `${url}/content?path=docs/referenced.txt&identity=${dev}.${ino}.${birthtimeNs}`
+      assert.equal((await request(referenceUrl)).body, '原文件')
+      await rename(identityPath, join(workspace, 'docs/renamed.txt'))
+      await writeFile(identityPath, '同名替代文件')
+      assert.equal((await request(referenceUrl)).statusCode, 404)
+      await rm(identityPath)
+      await rm(join(workspace, 'docs/renamed.txt'))
       const range = await request(`${url}/content?path=docs%2Ft.txt`, { range: 'bytes=0-4' })
       assert.equal(range.statusCode, 206)
       assert.equal(range.body, 'line1')

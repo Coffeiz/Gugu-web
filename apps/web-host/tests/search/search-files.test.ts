@@ -32,7 +32,7 @@ test('全局搜索匹配 Shell 文件及非默认工作区相对路径，排除�
     } } as unknown as Parameters<typeof createDiskFileSearchSources>[0]
     const operations = createGlobalSearchOperations(createDiskFileSearchSources(pool, root))
     const result = await operations.search(owner, parseGlobalSearchQuery({ q: '验收', types: 'file' })) as {
-      groups: Array<{ items: Array<{ path_file: { directoryId: string; relativePath: string } }> }>
+      groups: Array<{ items: Array<{ path_file: { directoryId: string; relativePath: string; sandboxPath: string } }> }>
     }
     const paths = result.groups.flatMap(group => group.items.map(item => item.path_file))
     assert.deepEqual(paths.map(({ directoryId, relativePath }) => [directoryId, relativePath]).sort(), [
@@ -42,7 +42,15 @@ test('全局搜索匹配 Shell 文件及非默认工作区相对路径，排除�
     ])
     const nested = await operations.search(owner, parseGlobalSearchQuery({ q: '子目录/验收', types: 'file' })) as typeof result
     assert.deepEqual(nested.groups[0]?.items.map(item => item.path_file.relativePath), ['子目录/验收.txt'])
-    assert.equal(queries.length, 4)
+    assert.deepEqual(paths.map(item => item.sandboxPath).sort(), [
+      '/personal/阶段/验收.txt', '/project/2026/04/测试 #1/验收.md', '/workspace/custom/子目录/验收.txt',
+    ])
+    const exact = await operations.search(owner, {
+      q: '/project/2026/04/测试 #1/验收.md', queries: ['/project/2026/04/测试 #1/验收.md'],
+      mode: 'OR', perType: 6, types: ['file'],
+    }) as typeof result
+    assert.deepEqual(exact.groups[0]?.items.map(item => item.path_file.sandboxPath), ['/project/2026/04/测试 #1/验收.md'])
+    assert.equal(queries.length, 6)
   } finally {
     await rm(root, { force: true, recursive: true })
   }

@@ -278,7 +278,7 @@ function splitSections(text: string): Array<{ title: string; content: string }> 
 
 async function readOwnerDocuments(ownerId: string, storage: MemoryRagStorageReader, signal?: AbortSignal): Promise<{ documents: RagDocument[]; source: string }> {
   signal?.throwIfAborted();
-  const base = `${ownerId}/.agent/`;
+  const base = `${ownerId}/.agent/memories/`;
   const indexRaw = await storage.readText({ ownerId, key: `${ownerId}/${MEMORY_INDEX_KEY}`, maxChars: 50_000_000, signal });
   signal?.throwIfAborted();
   const dailyRaw = await storage.readText({ ownerId, key: `${base}daily.md`, maxChars: 500_000, signal });
@@ -333,7 +333,7 @@ export function groupScopePrefix(ownerId: string, scope: AuthorizedMemoryScope):
   const bot = safeComponent(String(scope.botId || ""), "botId");
   const id = safeComponent(String(scope.id || ""), "scopeId");
   const branch = scope.type === "group" ? "groups" : "platform-users";
-  return `${owner}/.agent/im/${platform}/${bot}/${branch}/${id}/`;
+  return `${owner}/.agent/memories/im/${platform}/${bot}/${branch}/${id}/`;
 }
 
 function parseScopeFile(filename: string, raw: string | null): unknown {
@@ -409,7 +409,7 @@ export async function loadDocumentVectors(
 ): Promise<Record<string, number[]>> {
   signal?.throwIfAborted();
   if (!vectorVersion || !documents.length) return {};
-  const base = `${ownerId}/.agent/`;
+  const base = `${ownerId}/.agent/memories/`;
   const storageStarted = performance.now();
   const optionalRead = async (key: string): Promise<string | null> => {
     try {

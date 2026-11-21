@@ -1,9 +1,10 @@
+import { replacePlatformMentionIds } from '../context/messages/mentions.js'
 import { Kysely, PostgresDialect, sql, type Transaction } from 'kysely'
 import type { Pool } from 'pg'
 import { CoreError, dataContext } from '../../contracts/index.js'
 import { databaseTime, nowUtc, utc, type Clock } from '../../data/codec.js'
 
-type Row = { id: number; title: string; source: string | null; chat_type: string | null; workspace_name: string | null; session_context: unknown; updated_at_iso: string; created_at_iso: string }
+type Row = { title_bot_id?: string | null; id: number; title: string; source: string | null; chat_type: string | null; workspace_name: string | null; session_context: unknown; updated_at_iso: string; created_at_iso: string }
 export interface AgentSessionListRuntime {
   activeStatuses(sessionIds: number[], ownerId: string): Promise<Map<number, boolean>>
   filesystemAuthorizationEnabled(): boolean
@@ -12,6 +13,8 @@ export interface AgentSessionListRuntime {
   clock?: Clock
   /** SQLite 必须明确声明工作区存储是否装配；未装配时任何绑定均禁止读取。 */
   sqliteWorkspace?: 'available' | 'unavailable'
+  /** 桌面 IM 的会话来源存放在本地连接映射表。 */
+  desktopImSessions?: boolean
 }
 function isoUtc(value: string): string {
   const normalized = utc(value).replace(' ', 'T').replace(/\+00:00$/, '')
@@ -23,7 +26,15 @@ function truth(value: unknown): boolean {
   if (value && typeof value === 'object') return Object.keys(value).length > 0
   return Boolean(value)
 }
-function context(value: unknown, backend: 'postgres' | 'sqlite'): Record<string, unknown> {
+export function projectAgentSessionGoal(state: Record<string, unknown>): {
+  goalActive: boolean; goalStatus: 'active' | 'paused' | null
+} {
+  const hasGoal = typeof state.goal_text === 'string' && state.goal_text.trim().length > 0
+  const goalStatus = hasGoal ? state.goal_status === 'paused' ? 'paused' : 'active' : null
+  return { goalActive: goalStatus === 'active' && truth(state.goal_mode), goalStatus }
+}
+
+export function readAgentSessionContext(value: unknown, backend: 'postgres' | 'sqlite'): Record<string, unknown> {
   if (backend === 'sqlite' && typeof value === 'string') {
     try { value = JSON.parse(value) } catch { throw new CoreError('storage_error', '会话上下文数据格式无效') }
   }
@@ -53,9 +64,18 @@ export function createSqlAgentSessionLister(db: Kysely<any>, backend: 'postgres'
     const bound = workspaceUnavailable ? sql`EXISTS (SELECT 1 FROM conversation_sessions x WHERE x.user_id=${owner} AND x.workspace_id IS NOT NULL)` : sql`0`
     const updated = backend === 'postgres' ? sql`to_char(s.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US')` : sql`s.updated_at`
     const created = backend === 'postgres' ? sql`to_char(s.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US')` : sql`s.created_at`
+    const titleBot = backend === 'postgres' ? sql`CASE WHEN s.source='qq' AND s.chat_type='group' AND NOT s.title_locked AND s.title LIKE '%<@%' THEN
+      (SELECT m.platform_bot_user_id FROM conversation_messages m WHERE m.session_id=s.id AND m.platform_bot_user_id IS NOT NULL
+        AND (strpos(s.title,'<@'||m.platform_bot_user_id||'>')>0 OR strpos(s.title,'<@!'||m.platform_bot_user_id||'>')>0)
+        ORDER BY m.conversation_seq DESC LIMIT 1) END` : sql`NULL`
+    const desktopIm = backend === 'sqlite' && runtime.desktopImSessions === true
+    const sessionSource = desktopIm ? sql`COALESCE(im.platform,s.source)` : sql`s.source`
+    const chatType = desktopIm ? sql`CASE WHEN im.platform IS NOT NULL THEN COALESCE(s.chat_type, 'c2c') ELSE s.chat_type END` : sql`s.chat_type`
+    const imJoin = desktopIm ? sql`LEFT JOIN desktop_im_sessions im ON im.session_id=s.id AND im.owner_id=s.user_id` : sql``
+    const desktopAccessible = desktopIm ? sql`AND (s.source IS NULL OR s.source='web')` : sql``
     const load = async (connection: Kysely<any> | Transaction<any>, web: boolean) => {
-      const source = web ? sql`(s.source IS NULL OR s.source='web')` : sql`(s.source IS NOT NULL AND s.source<>'web')`
-      return (await sql<Row>`SELECT s.id,s.title,s.source,s.chat_type,${workspaceName} AS workspace_name,s.session_context,${updated} AS updated_at_iso,${created} AS created_at_iso,${bound} AS unavailable_workspace_bound FROM conversation_sessions s ${workspaceJoin} WHERE s.user_id=${owner} AND ${source} ORDER BY s.updated_at DESC LIMIT 50`.execute(connection)).rows
+      const source = web ? sql`(${sessionSource} IS NULL OR ${sessionSource}='web')` : sql`(${sessionSource} IS NOT NULL AND ${sessionSource}<>'web')`
+      return (await sql<Row>`SELECT s.id,s.title,${titleBot} AS title_bot_id,${sessionSource} AS source,${chatType} AS chat_type,${workspaceName} AS workspace_name,s.session_context,${updated} AS updated_at_iso,${created} AS created_at_iso,${bound} AS unavailable_workspace_bound FROM conversation_sessions s ${workspaceJoin} ${imJoin} WHERE s.user_id=${owner} ${desktopAccessible} AND ${source} ORDER BY s.updated_at DESC LIMIT 50`.execute(connection)).rows
     }
     const [web, im] = backend === 'sqlite'
       ? await db.transaction().execute(async tx => {
@@ -83,11 +103,10 @@ export function createSqlAgentSessionLister(db: Kysely<any>, backend: 'postgres'
     const grants = new Set(grantRows.filter(row => backend === 'postgres' || row.expires_at === null || databaseTime(row.expires_at, 'sqlite') > cutoff!).map(row => /^\d+$/.test(row.subject_id) ? Number(row.subject_id) : 0).filter(id => id > 0))
     const last = new Map(replies.map(row => [row.session_id, row.id])), shell = backend === 'sqlite' ? sqliteShell : runtime.workspaceShellSupported()
     return sessions.map(session => {
-      const state = context(session.session_context, backend), row: Record<string, unknown> = {
-        id: session.id, title: session.title, source: session.source, chatType: session.chat_type,
+      const state = readAgentSessionContext(session.session_context, backend), row: Record<string, unknown> = {
+        id: session.id, title: session.title_bot_id ? replacePlatformMentionIds(session.title, new Map([[session.title_bot_id, '咕咕']])) : session.title, source: session.source, chatType: session.chat_type,
         workspaceName: shell ? session.workspace_name : null,
-        goalActive: truth(state.goal_mode) && truth(state.goal_text),
-        goalStatus: truth(state.goal_text) ? state.goal_status === 'paused' ? 'paused' : 'active' : null,
+        ...projectAgentSessionGoal(state),
         filesystemAuthorized: enabled && grants.has(session.id), filesystemAuthorizationEnabled: enabled,
         updatedAt: isoUtc(session.updated_at_iso), createdAt: isoUtc(session.created_at_iso), isRunning: running.get(session.id),
       }

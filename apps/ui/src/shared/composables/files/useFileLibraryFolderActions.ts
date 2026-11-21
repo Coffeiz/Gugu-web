@@ -1,0 +1,110 @@
+import { ref, type Ref } from 'vue'
+import type { FolderCard as FolderCardMeta, NavSeg } from '@/utils/filesNav'
+import { useFilesCacheStore } from '@/stores/filesCache'
+import { useFileActions } from '@/composables/files/useFileActions'
+import { errorMessage, showAppError } from '@/composables/core/useAppToast'
+import { type PathFileRef } from '@/services/api'
+import { usePathFileAccess } from '@/services/pathFileAccess'
+import { confirmFileDeletion } from './useFileDeleteConfirm'
+import { useI18n } from 'vue-i18n'
+
+interface FolderActionsOptions {
+  currentType: Readonly<Ref<string>>
+  currentSeg: Readonly<Ref<NavSeg | null>>
+  projectSeg: Readonly<Ref<NavSeg | null>>
+  cacheStore: ReturnType<typeof useFilesCacheStore>
+  fileActions: ReturnType<typeof useFileActions>
+  loadContents: () => void
+  fetchStorage: () => void | Promise<void>
+  pathTarget?: Readonly<Ref<PathFileRef | null>>
+  reloadWorkspace?: () => void
+  pruneHistoryForFolders: (folderIds: Array<number | string>) => void
+}
+
+/** 文件库文件夹创建、下载和删除的页面适配；缓存乐观更新仍由文件库注入。 */
+export function useFileLibraryFolderActions(options: FolderActionsOptions) {
+  const pathFilesApi = usePathFileAccess()
+  const { currentType, currentSeg, projectSeg, cacheStore, fileActions, loadContents, fetchStorage, pruneHistoryForFolders } = options
+  const { t } = useI18n()
+  const newFolderName = ref('')
+  const newFolderLoading = ref(false)
+  const showNewFolderInput = ref(false)
+
+  async function createFolder() {
+    const name = newFolderName.value.trim()
+    if (!name || newFolderLoading.value) return
+    const type = currentType.value
+    const seg = currentSeg.value
+    const target = options.pathTarget?.value
+    if (target) {
+      newFolderLoading.value = true
+      try {
+        if (/[\/\\]/.test(name)) throw new Error(t('projects.invalidName'))
+        await pathFilesApi.createFolder({
+          directoryId: target.directoryId,
+          relativePath: [target.relativePath, name].filter(Boolean).join('/'),
+        })
+        newFolderName.value = ''
+        showNewFolderInput.value = false
+        options.reloadWorkspace?.()
+      } catch (error) {
+        showAppError(errorMessage(error))
+      } finally {
+        newFolderLoading.value = false
+      }
+      return
+    }
+    const projectId = (type === 'project' || type === 'folder')
+      ? (projectSeg.value?.id ?? seg?.projectId ?? null)
+      : null
+    const parentId = type === 'folder' ? (seg?.folderId ?? null) : null
+    const workspaceDirectoryId = (type === 'workspace' || seg?.space === 'workspace')
+      ? (seg?.workspaceDirectoryId ?? null)
+      : null
+    newFolderLoading.value = true
+    const tempId = -Date.now()
+    cacheStore.addFolder({ id: tempId, name, projectId, parentId, workspaceDirectoryId, fileCount: 0 })
+    newFolderName.value = ''
+    showNewFolderInput.value = false
+    loadContents()
+    try {
+      const real = await fileActions.createFolder(projectId, name, parentId, workspaceDirectoryId)
+      cacheStore.removeFolder(tempId)
+      cacheStore.addFolder({ id: real.id, name: real.name, projectId: real.projectId ?? null, parentId: real.parentId ?? null, workspaceDirectoryId: real.workspaceDirectoryId ?? workspaceDirectoryId, fileCount: 0 })
+      loadContents()
+    } catch (error) {
+      cacheStore.removeFolder(tempId)
+      loadContents()
+      console.error('[Files] 新建文件夹失败:', (error as Error).message)
+    } finally {
+      newFolderLoading.value = false
+    }
+  }
+
+  async function downloadFolder(folder: FolderCardMeta) {
+    if (folder.folderId == null) return
+    try {
+      await fileActions.downloadFolder(folder)
+    } catch {
+      showAppError(t('filesUi.downloadFailed'))
+    }
+  }
+
+  async function deleteFolder(folder: FolderCardMeta) {
+    if (folder.folderId == null) return
+    if (!await confirmFileDeletion('folder', { name: folder.displayName ?? '文件夹' })) return
+    pruneHistoryForFolders([folder.folderId])
+    cacheStore.removeFolder(folder.folderId)
+    loadContents()
+    try {
+      await fileActions.deleteFolder(folder.folderId)
+      await fetchStorage()
+    } catch (error) {
+      cacheStore.invalidatePages()
+      loadContents()
+      console.error('[Files] 删除文件夹失败:', (error as Error).message)
+    }
+  }
+
+  return { newFolderName, newFolderLoading, showNewFolderInput, createFolder, downloadFolder, deleteFolder }
+}

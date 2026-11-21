@@ -1,49 +1,9 @@
-import type { RecentAttachment, RecentAttachmentsPort } from '@gugu/core/tools'
+import { projectRecentAttachments, type RecentAttachmentRow } from '@gugu/core/agent'
+import type { RecentAttachmentsPort } from '@gugu/core/tools'
 import type { Pool, QueryResultRow } from 'pg'
 import type { AgentDispatchLease } from '../../run/dispatch.js'
 
-const draftTtlSeconds = 48 * 60 * 60
-const legacyAgeTtlSeconds = 7 * 24 * 60 * 60
-
-interface AttachmentRow extends QueryResultRow {
-  attach_id: string
-  name: string | null
-  ext: string | null
-  kind: string | null
-  platform: string | null
-  size: string | number | null
-  img_width: number | null
-  img_height: number | null
-  duration: number | null
-  created_at: Date | string
-}
-
-function ago(ttlLeft: number): string {
-  if (!Number.isFinite(ttlLeft) || ttlLeft < 0) return '未知'
-  const elapsed = Math.max(0, legacyAgeTtlSeconds - ttlLeft)
-  if (elapsed < 3600) return `约${Math.max(1, Math.floor(elapsed / 60))}分钟前`
-  if (elapsed < 86400) return `约${Math.floor(elapsed / 3600)}小时前`
-  return `约${Math.floor(elapsed / 86400)}天前`
-}
-
-function mapRow(row: AttachmentRow, state: 'draft' | 'attached', now: number): RecentAttachment {
-  const base: RecentAttachment = {
-    attach_id: row.attach_id,
-    name: row.name ?? '',
-    ext: row.ext ?? '',
-    kind: row.kind ?? 'binary',
-    platform: row.platform,
-    size_bytes: Number(row.size ?? 0),
-    img_width: row.img_width === null ? null : Number(row.img_width),
-    img_height: row.img_height === null ? null : Number(row.img_height),
-    state,
-  }
-  if (state === 'attached') return { ...base, duration: row.duration === null ? null : Number(row.duration) }
-  const createdAt = new Date(row.created_at).getTime()
-  const elapsed = Number.isFinite(createdAt) ? Math.max(0, (now - createdAt) / 1000) : Number.NaN
-  const ttlLeft = Number.isFinite(elapsed) ? Math.max(0, Math.trunc(draftTtlSeconds - elapsed)) : Number.NaN
-  return { ...base, staged_about: ago(ttlLeft) }
-}
+interface AttachmentRow extends QueryResultRow, RecentAttachmentRow {}
 
 /** owner/session 均来自当前 lease；返回字段只含附件展示元数据，不含存储键或正文。 */
 export function createWebAgentRecentAttachmentsPort(
@@ -68,12 +28,7 @@ export function createWebAgentRecentAttachmentsPort(
         WHERE a.user_id=$1 AND s.id=$2 AND a.state='attached'
         ORDER BY a.attached_at DESC,a.created_at DESC LIMIT 20`, [bound.ownerId, Number(bound.sessionId)])
       signal.throwIfAborted()
-      const timestamp = now()
-      if (!Number.isFinite(timestamp)) throw new RangeError('附件列表时钟无效')
-      return [
-        ...staged.rows.map(row => mapRow(row, 'draft', timestamp)),
-        ...attached.rows.map(row => mapRow(row, 'attached', timestamp)),
-      ]
+      return projectRecentAttachments(staged.rows, attached.rows, now())
     },
   }
 }

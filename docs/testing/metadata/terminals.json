@@ -1,5 +1,5 @@
 {
-  "apps/web-host/tests/host/terminal-access-main.integration.test.ts": {
+  "apps/web-host/tests/host/main/terminals.integration.test.ts": {
     "domain": "terminals",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/terminals/runtime-settings.ts",

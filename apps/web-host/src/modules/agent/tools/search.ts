@@ -1,4 +1,4 @@
-import { setTimeout as sleep } from 'node:timers/promises'
+import { createHash } from 'node:crypto'
 import { decryptByokCredential } from '../../byok/crypto.js'
 import { type ByokCredential } from '../../byok/store.js'
 import type { Pool } from 'pg'
@@ -9,64 +9,123 @@ import type { Database, SqlDataRuntime } from '@gugu/core/data'
 import { openLocalFile } from '@gugu/fs/node'
 import { isOwnedFileStorageKey } from '../../files/store.js'
 import { adminSearchTestSettings } from '../../admin/search.js'
-import { deepResearchProbe, normalizedApiKey, ProviderError, similarImageProbe, type ProviderTransport } from '@gugu/core/providers'
+import { deepResearchProbe, normalizedApiKey, similarImageProbe, type ProviderTransport } from '@gugu/core/providers'
 import type { RunIdentity } from '@gugu/core/agent'
+import type { ToolScope } from '@gugu/core/tools'
+import { MAX_DESKTOP_SEARCH_IMAGE_BYTES as MAX_SEARCH_IMAGE_BYTES, type DesktopDeepResearchInput, type DesktopSimilarImageInput } from '@gugu/core/agent/search-contracts'
 import type { SafeEgressReadSettings } from '@gugu/core/preferences/safe-egress'
-import { createDeepResearchTool, createDurableAgentPaidSearch, createSimilarImageSearchTool, createWebSearchTool, type HttpGetPort, type ToolDefinition } from '@gugu/core/tools'
+import { createAgentHttpGetPort, createDeepResearchTool, createDurableAgentPaidSearch, createSimilarImageSearchTool, createWebSearchTool, type HttpGetPort, type ToolDefinition } from '@gugu/core/tools'
 import { dateKeyInTimeZone, startOfDateKeyInTimeZone } from '../../../shared/date-time.js'
 import { createPublicAgentEgress } from '../../../adapters/network/safe-egress-proxy.js'
 import type { WebAgentBinding } from '../run/reconstruct.js'
 
-const HTTP_GET_MAX_BYTES = 2 * 1024 * 1024
-const HTTP_GET_TIMEOUT_MS = 20_000
-const HTTP_GET_RETRY_DELAYS = [1000, 2000] as const
+export { createAgentHttpGetPort as createWebAgentHttpGetPort } from '@gugu/core/tools'
 
-/** Web Agent 的 GET 复用固定公网 DNS/连接和管理员代理策略；不跟随重定向。 */
-export function createWebAgentHttpGetPort(egress: Pick<ReturnType<typeof createPublicAgentEgress>, 'withTransport'>): HttpGetPort {
-  return { async get(input, callerSignal) {
-    const deadline = AbortSignal.timeout(HTTP_GET_TIMEOUT_MS)
-    const signal = AbortSignal.any([callerSignal, deadline])
-    const checkDeadline = () => {
-      callerSignal.throwIfAborted()
-      if (deadline.aborted) throw new ProviderError('timeout')
+interface DesktopRemoteSearchOptions {
+  core: SqlDataRuntime
+  pool: Pick<Pool, 'query'>
+  schemaApplied: boolean
+  readConfig(): unknown
+  environment: Readonly<Record<string, string | undefined>>
+  keyForVersion(version: number): string
+  timezone: string
+  readSafeEgress(): SafeEgressReadSettings
+  secretKey: string
+  digest(value: unknown): string
+  imageStorageRoot?: string
+}
+
+type DesktopSearchImage = { id: string; bytes: Buffer }
+
+async function desktopRemoteSearchPorts(options: DesktopRemoteSearchOptions, ownerId: string, operationId: string, uploadedImage?: DesktopSearchImage, reconcileOnly = false) {
+  const identity: RunIdentity = { ownerId, sessionId: '1', runId: operationId }
+  const egress = createPublicAgentEgress(options.readSafeEgress, options.secretKey)
+  if (!reconcileOnly) {
+    try { egress.assertConfigured() }
+    catch { return {} }
+  }
+  return createPaidSearchPorts({
+    identity, digest: options.digest, withTransport: egress.withTransport, reconcileOnly,
+    research: {
+      pool: options.pool, schemaApplied: options.schemaApplied, readConfig: options.readConfig,
+      environment: options.environment, keyForVersion: options.keyForVersion, timezone: options.timezone,
+      ...(options.imageStorageRoot ? { imageStorageRoot: options.imageStorageRoot } : {}),
+      uploadedImage,
+      durable: {
+        core: options.core,
+        async authorize(_tx, candidate, signal) {
+          signal.throwIfAborted()
+          return candidate.ownerId === ownerId && candidate.sessionId === '1' && candidate.runId === operationId
+        },
+      },
+    },
+  })
+}
+
+export function createDesktopRemoteSearchAvailability(
+  options: DesktopRemoteSearchOptions, capability: 'deepResearch' | 'similarImageSearch',
+) {
+  return async (ownerId: string) => Boolean((await desktopRemoteSearchPorts(options, ownerId, 'availability'))[capability])
+}
+
+function desktopSearchScope(identity: RunIdentity, signal: AbortSignal): ToolScope {
+  return {
+    identity, roundId: 'desktop-remote-search', signal, resolution: null,
+    async execute() { throw new Error('远程搜索不执行本机工具请求') },
+  }
+}
+
+/** 桌面请求经认证后仍复用 Web 的 Provider、BYOK、额度与持久搜索收据。 */
+export function createDesktopRemoteDeepResearchExecutor(options: DesktopRemoteSearchOptions) {
+  return async (ownerId: string, input: DesktopDeepResearchInput, signal: AbortSignal) => {
+    const ports = await desktopRemoteSearchPorts(options, ownerId, input.operation_id, undefined, input.reconcile_only)
+    const tool = ports.deepResearch
+    if (!tool) return input.reconcile_only ? { kind: 'unknown' as const }
+      : { kind: 'completed', successful: false, mutated: false, value: { error: '深度研究暂不可用，请检查服务器搜索配置' } }
+    const toolInput = { query: input.query, ...(input.max_results === undefined ? {} : { max_results: input.max_results }),
+      ...(input.depth === undefined ? {} : { depth: input.depth }) }
+    const scope = desktopSearchScope({ ownerId, sessionId: '1', runId: input.operation_id }, signal)
+    const call = { id: input.operation_id, name: 'deep_research', input: toolInput }
+    signal.throwIfAborted()
+    if (input.reconcile_only) return tool.reconcile?.(toolInput, { ...scope.identity, roundId: scope.roundId }, call) ?? { kind: 'unknown' }
+    return tool.execute(toolInput, scope, call)
+  }
+}
+
+/** 图片 URL 沿用 Web 的安全出站、BYOK、每日额度和幂等收据。 */
+export function createDesktopRemoteSimilarImageExecutor(options: DesktopRemoteSearchOptions) {
+  return async (ownerId: string, input: DesktopSimilarImageInput, signal: AbortSignal) => {
+    const bytes = 'image_base64' in input ? Buffer.from(input.image_base64, 'base64') : undefined
+    const uploadedImage = bytes ? { bytes, id: createHash('sha256').update(bytes).digest('hex') } : undefined
+    const ports = await desktopRemoteSearchPorts(options, ownerId, input.operation_id, uploadedImage, input.reconcile_only)
+    const tool = ports.similarImageSearch
+    if (!tool) return input.reconcile_only ? { kind: 'unknown' as const }
+      : { kind: 'completed', successful: false, mutated: false, value: { error: '相似图片搜索暂不可用，请检查服务器搜索配置' } }
+    const toolInput = {
+      ...('image_url' in input ? { image_url: input.image_url } : { attach_id: 'image_digest' in input ? input.image_digest : uploadedImage!.id }),
+      ...(input.max_results === undefined ? {} : { max_results: input.max_results }),
     }
-    for (let attempt = 0; ; attempt++) {
-      try {
-        const result = await egress.withTransport(signal, async transport => {
-          const response = await transport.request({
-            url: input.url, method: 'GET', timeoutMs: 15_000,
-            headers: { 'user-agent': 'curl/8', ...(input.headers ?? {}) },
-          }, signal)
-          const chunks: Uint8Array[] = []
-          let size = 0
-          try {
-            const declared = Number(response.headers['content-length'])
-            if (Number.isFinite(declared) && declared > HTTP_GET_MAX_BYTES) {
-              await response.cancel()
-              return { status: response.status, headers: response.headers, body: new Uint8Array(HTTP_GET_MAX_BYTES + 1) }
-            }
-            for await (const chunk of response.body) {
-              signal.throwIfAborted()
-              const accepted = chunk.subarray(0, HTTP_GET_MAX_BYTES + 1 - size)
-              chunks.push(accepted)
-              size += accepted.byteLength
-              if (size > HTTP_GET_MAX_BYTES) { await response.cancel(); break }
-            }
-            return { status: response.status, headers: response.headers, body: Buffer.concat(chunks, size) }
-          } finally { await Promise.resolve(response.cancel()).catch(() => undefined) }
-        })
-        checkDeadline()
-        return result
-      } catch (error) {
-        checkDeadline()
-        const retryable = error instanceof ProviderError && error.options.retryable === true
-          && (error.code === 'timeout' || error.code === 'network')
-        if (!retryable || attempt >= HTTP_GET_RETRY_DELAYS.length) throw error
-        try { await sleep(HTTP_GET_RETRY_DELAYS[attempt], undefined, { signal }) }
-        catch { checkDeadline() }
-      }
-    }
-  } }
+    const scope = desktopSearchScope({ ownerId, sessionId: '1', runId: input.operation_id }, signal)
+    const call = { id: input.operation_id, name: 'similar_image_search', input: toolInput }
+    signal.throwIfAborted()
+    if (input.reconcile_only) return tool.reconcile?.(toolInput, { ...scope.identity, roundId: scope.roundId }, call) ?? { kind: 'unknown' }
+    return tool.execute(toolInput, scope, call)
+  }
+}
+
+interface PaidSearchSettings {
+  pool: Pick<Pool, 'query'>
+  schemaApplied: boolean
+  readConfig(): unknown
+  environment: Readonly<Record<string, string | undefined>>
+  keyForVersion(version: number): string
+  timezone: string
+  imageStorageRoot?: string
+  uploadedImage?: DesktopSearchImage
+  durable?: {
+    core: SqlDataRuntime
+    authorize(tx: Transaction<Database>, identity: RunIdentity, signal: AbortSignal): Promise<boolean>
+  }
 }
 
 /** 按可信的模型绑定公开厂商 Schema，出站策略在每次执行时读取。 */
@@ -77,19 +136,7 @@ export async function createWebAgentSearchPorts(options: {
   secretKey: string
   digest(value: unknown): string
   egress?: Pick<ReturnType<typeof createPublicAgentEgress>, 'assertConfigured' | 'withTransport'>
-  research?: {
-    pool: Pick<Pool, 'query'>
-    schemaApplied: boolean
-    readConfig(): unknown
-    environment: Readonly<Record<string, string | undefined>>
-    keyForVersion(version: number): string
-    timezone: string
-    imageStorageRoot?: string
-    durable?: {
-      core: SqlDataRuntime
-      authorize(tx: Transaction<Database>, identity: RunIdentity, signal: AbortSignal): Promise<boolean>
-    }
-  }
+  research?: PaidSearchSettings
 }): Promise<{ httpGet?: HttpGetPort; webSearch?: ToolDefinition; deepResearch?: ToolDefinition; similarImageSearch?: ToolDefinition }> {
   const identity = Object.freeze({ ...options.identity })
   const modelIdentity = options.binding.selection.modelIdentity
@@ -98,7 +145,7 @@ export async function createWebAgentSearchPorts(options: {
   let httpGet: HttpGetPort | undefined
   try {
     egress.assertConfigured()
-    httpGet = createWebAgentHttpGetPort(egress)
+    httpGet = createAgentHttpGetPort(egress)
   } catch { return {} /* 安全出站配置不可用时关闭所有公网工具。 */ }
   let selected
   try {
@@ -109,11 +156,23 @@ export async function createWebAgentSearchPorts(options: {
   const { withTransport } = egress
 
   const webSearch = createWebSearchTool(selected.config, { digest: options.digest, withTransport })
-  const ports: { httpGet?: HttpGetPort; webSearch?: ToolDefinition; deepResearch?: ToolDefinition; similarImageSearch?: ToolDefinition } = {
-    ...(httpGet ? { httpGet } : {}), ...(webSearch ? { webSearch } : {}),
-  }
+  const paid = options.research ? await createPaidSearchPorts({
+    identity, digest: options.digest, withTransport, research: options.research,
+  }) : {}
+  return { httpGet, ...(webSearch ? { webSearch } : {}), ...paid }
+}
+
+async function createPaidSearchPorts(options: {
+  identity: RunIdentity
+  digest(value: unknown): string
+  withTransport: ReturnType<typeof createPublicAgentEgress>['withTransport']
+  research: PaidSearchSettings
+  reconcileOnly?: boolean
+}): Promise<{ deepResearch?: ToolDefinition; similarImageSearch?: ToolDefinition }> {
+  const { identity, withTransport } = options
+  const ports: { deepResearch?: ToolDefinition; similarImageSearch?: ToolDefinition } = {}
   const bound = options.research
-  if (!bound?.schemaApplied) return ports
+  if (!bound.schemaApplied) return ports
   try {
     const ready = await bound.pool.query<{ ready: boolean }>("SELECT to_regclass('search_usage') IS NOT NULL AS ready")
     if (ready.rows[0]?.ready !== true) return ports
@@ -150,7 +209,7 @@ export async function createWebAgentSearchPorts(options: {
     }
   }
 
-  function dayStart(now: Date) { return startOfDateKeyInTimeZone(dateKeyInTimeZone(now, bound!.timezone), bound!.timezone) }
+  function dayStart(now: Date) { return startOfDateKeyInTimeZone(dateKeyInTimeZone(now, bound.timezone), bound.timezone) }
   const usage = async (tx: Transaction<Database>, image: boolean, start: Date) => {
     type Status = { search_limit_daily: number | null; used: string }
     const statement = `SELECT u.search_limit_daily,
@@ -192,7 +251,7 @@ export async function createWebAgentSearchPorts(options: {
       },
     }
   }
-  if (await available('deep_research')) ports.deepResearch = createDeepResearchTool(createDurableAgentPaidSearch(core, {
+  if (options.reconcileOnly || await available('deep_research')) ports.deepResearch = createDeepResearchTool(createDurableAgentPaidSearch(core, {
     name: 'deep_research', matches,
     async prepare(input, scope) {
       const { signal } = scope
@@ -218,11 +277,11 @@ export async function createWebAgentSearchPorts(options: {
   const storageRoot = bound.imageStorageRoot
   async function imageAttachmentsReady() {
     try {
-      const target = await bound!.pool.query<{ ready: boolean }>("SELECT to_regclass('chat_attachments') IS NOT NULL AS ready")
+      const target = await bound.pool.query<{ ready: boolean }>("SELECT to_regclass('chat_attachments') IS NOT NULL AS ready")
       return target.rows[0]?.ready === true
     } catch { return false }
   }
-  if (storageRoot && await available('similar_image_search') && await imageAttachmentsReady()) ports.similarImageSearch = createSimilarImageSearchTool(createDurableAgentPaidSearch(core, {
+  if (options.reconcileOnly || (storageRoot && await available('similar_image_search') && await imageAttachmentsReady())) ports.similarImageSearch = createSimilarImageSearchTool(createDurableAgentPaidSearch(core, {
     name: 'similar_image_search', matches,
     async prepare(input, scope) {
       const { signal } = scope
@@ -235,9 +294,12 @@ export async function createWebAgentSearchPorts(options: {
           async request(requestSignal) {
             let image: SearchImage
             try {
-              image = input.attachmentId
-                ? await readOwnedSearchImage(bound.pool, storageRoot, identity.ownerId, input.attachmentId, requestSignal)
-                : await withTransport(requestSignal, transport => readPublicSearchImage(transport, input.url, requestSignal))
+              const uploaded = bound.uploadedImage
+              if (uploaded && uploaded.id === input.attachmentId) image = { bytes: uploaded.bytes }
+              else if (input.attachmentId && storageRoot)
+                image = await readOwnedSearchImage(bound.pool, storageRoot, identity.ownerId, input.attachmentId, requestSignal)
+              else if (input.attachmentId) return { error: '找不到这个图片附件，可能已过期' }
+              else image = await withTransport(requestSignal, transport => readPublicSearchImage(transport, input.url, requestSignal))
               if ('error' in image) return image
               const error = await verifySearchImage(image.bytes, requestSignal)
               if (error) return { error }
@@ -265,7 +327,6 @@ export async function createWebAgentSearchPorts(options: {
   return ports
 }
 
-const MAX_SEARCH_IMAGE_BYTES = 4 * 1024 * 1024
 const MAX_SEARCH_IMAGE_PIXELS = 16_000_000
 type SearchImage = { bytes: Buffer } | { error: string }
 const tooLarge = { error: '图片超过百度接口的 4MB 限制' }

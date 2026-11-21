@@ -1,6 +1,5 @@
-import { createHash, randomUUID } from 'node:crypto'
 import type { PoolClient } from 'pg'
-import { MessageArea, canonicalToolsUsed, stableJson, isCompactedSummaryMessage, unwrapCompactedSummary, validateCompactSummary, updateBaselineSnapshot } from '@gugu/core/agent'
+import { canonicalToolsUsed, projectCanonicalRunHistory, projectDurableHistoryCompaction } from '@gugu/core/agent'
 import type { CanonicalRunContext, RunCheckpoint, RunIdentity } from '@gugu/core/agent'
 import { sanitizeMediaPayload } from '@gugu/core/agent/context/messages'
 import { recordAgentUsage, type AgentUsageConfig, type AgentUsageLabels } from '../run/usage.js'
@@ -8,72 +7,39 @@ import { lockCanonicalHistoryBaseline } from './baseline.js'
 import type { AgentRunHistoryWrite } from '../run/store.js'
 import { enqueuePostgresAgentRagRebuild } from '../rag/jobs.js'
 
-const digest = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')
-const shortDigest = (value: unknown) => digest(value).slice(0, 16)
+export { canonicalBaselineHash } from '@gugu/core/agent'
 
-/** 与 Python session_snapshot.baseline_hash 的完整 SHA-256 格式互通。 */
-export function canonicalBaselineHash(rows: readonly { id: string; role: string; content: string; content_json: unknown }[]): string {
-  return digest(rows.map(row => ({ id: Number(row.id), role: row.role, content: row.content_json ?? row.content ?? '' })))
+async function prepareDurableCompaction(client: PoolClient, identity: RunIdentity, context: CanonicalRunContext, anchorSeq: string | undefined) {
+  if (!await lockCanonicalHistoryBaseline(client, identity, context)) return null
+  const rows = await client.query<{ id: string; role: string; content: string; content_json: unknown; effective: string }>(
+    `SELECT id::text, role, content, content_json, coalesce(history_anchor_seq,conversation_seq)::text AS effective
+     FROM conversation_messages WHERE session_id = $1 AND role <> 'summary'
+       AND (run_id IS NULL OR run_id NOT LIKE 'im-pending:%')
+       AND NOT (role = 'assistant' AND canonical_batch_id IS NULL AND display_timeline IS NOT NULL
+         AND btrim(coalesce(content, '')) = '' AND content_json IS NULL
+         AND (files IS NULL OR files = '[]'::jsonb) AND coalesce(quoted_text, '') = '')
+       AND coalesce(history_anchor_seq,conversation_seq) > $2
+     ORDER BY coalesce(history_anchor_seq,conversation_seq), (history_anchor_seq IS NULL), conversation_seq`,
+    [identity.sessionId, context.historyBaseline!.baselineSeq])
+  return projectDurableHistoryCompaction(context, rows.rows, anchorSeq)
 }
 
 /** 由可信模型选择服务注入账本配置；与 RunStore 的终态提交共用事务。 */
 export function createCanonicalHistoryWriter(resolveConfig: (identity: RunIdentity, modelIdentity: string, client: PoolClient) => Promise<AgentUsageConfig>, options?: {
+  postCommitCompaction?: boolean
   usageSource?: AgentUsageLabels['source'] | ((identity: RunIdentity, client: PoolClient) => Promise<AgentUsageLabels['source']>)
   commitContinuation?(client: PoolClient, identity: RunIdentity, context: CanonicalRunContext): Promise<void>
   afterSuccess?(client: PoolClient, identity: RunIdentity, history: AgentRunHistoryWrite<CanonicalRunContext>, checkpoint: RunCheckpoint<CanonicalRunContext>): Promise<void>
 }) {
   return async (client: PoolClient, identity: RunIdentity, history: AgentRunHistoryWrite<CanonicalRunContext>, checkpoint: RunCheckpoint<CanonicalRunContext>): Promise<void> => {
     const context = history.context
-    if (context.identity.ownerId !== identity.ownerId || context.identity.sessionId !== identity.sessionId || context.identity.runId !== identity.runId
-      || checkpoint.identity.ownerId !== identity.ownerId || checkpoint.identity.sessionId !== identity.sessionId || checkpoint.identity.runId !== identity.runId)
-      throw new Error('Agent 历史身份不匹配')
+    const { delta, failed, anchorEntry, batches, display, outcome, receipt: receiptDigest } = projectCanonicalRunHistory(identity, history, checkpoint)
     // 原生续接引用属于本次运行，由 Provider 管理，聊天历史仅提交可持久化的消息。
     const config = await resolveConfig(identity, context.modelIdentity, client)
     if (context.continuationRef && history.outcome === 'success') await options?.commitContinuation?.(client, identity, context)
     const session = await client.query<{ last_message_seq: string }>(
       `SELECT last_message_seq::text FROM conversation_sessions WHERE id = $1 AND user_id = $2 FOR UPDATE`, [identity.sessionId, identity.ownerId])
     if (!session.rows[0]) throw new Error('Agent 会话不存在')
-    let compacted: { summary: string; baseline: number; hash: string; snapshot: NonNullable<CanonicalRunContext['sourceEffects']>['sessionSnapshot']['state'] } | null = null
-    // 与旧版请求内压缩一致：覆盖未落库内容的摘要只用于本次请求。
-    // 后续摘要会继承前一份摘要的内容，因此整条压缩链都必须具备覆盖证明。
-    const requestOnlyCompaction = context.compactions.some(item => item.result.coversUnpersisted !== false)
-    if (history.outcome === 'success' && context.compactions.length && !requestOnlyCompaction) {
-      await lockCanonicalHistoryBaseline(client, identity, context)
-      const result = context.compactions.at(-1)!.result
-      const ids = context.compactions.flatMap(item => item.result.coversUntilMessageIds)
-      if (context.compactions.some(item => !item.result.changed)
-        || !ids.length || new Set(ids).size !== ids.length || !context.sourceEffects
-        || ids.some(id => !/^[1-9]\d*$/.test(id) || !Number.isSafeInteger(Number(id))))
-        throw new Error('Agent 压缩覆盖边界无效')
-      const rows = await client.query<{ id: string; role: string; content: string; content_json: unknown; effective: string }>(
-        `SELECT id::text, role, content, content_json, coalesce(history_anchor_seq,conversation_seq)::text AS effective
-         FROM conversation_messages WHERE session_id = $1 AND role <> 'summary'
-           AND (run_id IS NULL OR run_id NOT LIKE 'im-pending:%')
-           AND coalesce(history_anchor_seq,conversation_seq) > $2
-         ORDER BY coalesce(history_anchor_seq,conversation_seq), (history_anchor_seq IS NULL), conversation_seq`,
-        [identity.sessionId, context.historyBaseline!.baselineSeq])
-      const covered = rows.rows.slice(0, ids.length)
-      if (covered.length !== ids.length || covered.some((row, index) => row.id !== ids[index]))
-        throw new Error('Agent 压缩覆盖范围已变化')
-      const baseline = Number(covered.at(-1)!.effective)
-      if (rows.rows[ids.length] && Number(rows.rows[ids.length]!.effective) <= baseline)
-        throw new Error('Agent 压缩切断了同一历史锚点')
-      if (!Number.isSafeInteger(baseline) || baseline <= context.historyBaseline!.baselineSeq)
-        throw new Error('Agent 压缩水位无效')
-      const candidates = result.messages.filter(isCompactedSummaryMessage)
-      if (candidates.length !== 1 || typeof candidates[0]!.content !== 'string') throw new Error('Agent 压缩摘要无效')
-      const summary = unwrapCompactedSummary(candidates[0]!.content)
-      if (!validateCompactSummary(summary)) throw new Error('Agent 压缩摘要无效')
-      const hash = canonicalBaselineHash(covered)
-      const snapshot = updateBaselineSnapshot(context.sourceEffects.sessionSnapshot.state, [{ role: 'summary', content: summary }],
-        { digest, nextId: randomUUID, now: Date.now }, { baselineMessageSeq: baseline })
-      compacted = { summary, baseline, hash, snapshot }
-    }
-    const area = MessageArea.restore({ digest, nextId: randomUUID }, context.prepared.area)
-    const failed = checkpoint.status === 'failed' || checkpoint.status === 'unknown'
-    // 展示历史保留未完成的调用，但不能把缺少工具结果的批次放入后续模型上下文。
-    const delta = area.persistenceDelta(failed ? 'failure' : history.outcome === 'interruption' ? 'interruption' : 'success')
-    const anchorEntry = [...area.entries].reverse().find(entry => entry.persistedMessageId != null && ['user', 'reference', 'attachment'].includes(entry.source))
     let anchor: { conversation_seq: string; created_at: Date; sent_at: Date | null; im_platform_sent_ms: string | null; im_event_received_ms: string | null } | undefined
     if (anchorEntry) {
       const result = await client.query<typeof anchor extends infer T ? NonNullable<T> : never>(
@@ -83,19 +49,18 @@ export function createCanonicalHistoryWriter(resolveConfig: (identity: RunIdenti
       if (!anchor) throw new Error('Agent 历史锚点不存在')
     }
     if (delta.userAnchorSequence !== null && !anchor) throw new Error('Agent 历史锚点无效')
+    // 只持久化覆盖证明完整且当前仍适用的压缩链。
+    const compacted = !options?.postCommitCompaction && history.outcome === 'success' && context.compactions.length
+      && context.compactions.every(item => item.result.coversUnpersisted === false)
+      ? await prepareDurableCompaction(client, identity, context, anchor?.conversation_seq) : null
     const receipt = await client.query(`INSERT INTO conversation_batches (session_id, version, run_id, round_id, digest, created_at)
       VALUES ($1,'finalize-v1',$2,'round-1',$3,clock_timestamp()) ON CONFLICT (session_id,digest) DO NOTHING RETURNING id`,
-    [identity.sessionId, identity.runId, shortDigest({ finalized_run: identity.runId })])
+    [identity.sessionId, identity.runId, receiptDigest])
     if (receipt.rowCount !== 1) throw new Error('Agent 终态已提交')
     if (anchorEntry && history.outcome !== 'silent') await client.query(
       `UPDATE conversation_messages SET run_id = $3, round_id = 'round-1', run_outcome = $4::jsonb WHERE id = $1 AND session_id = $2`,
-      [anchorEntry.persistedMessageId, identity.sessionId, identity.runId, failed
-        ? JSON.stringify({ status: 'failed', runId: identity.runId, errorCode: checkpoint.errorCode }) : null])
-    const groups = delta.batches.map(batch => ({ entries: batch.entries, metadata: batch.metadata }))
-    groups.push(...delta.entries.filter(entry => !entry.batchId).map(entry => ({ entries: [entry], metadata: { kind: entry.source } })))
-    groups.sort((a, b) => a.entries[0]!.sequence - b.entries[0]!.sequence)
-    const hasDisplay = history.outcome !== 'silent' && Boolean(history.text || checkpoint.files.length || checkpoint.displayTimeline.length)
-    const total = (history.outcome === 'silent' ? 0 : delta.entries.length) + Number(hasDisplay) + Number(compacted !== null)
+      [anchorEntry.persistedMessageId, identity.sessionId, identity.runId, outcome])
+    const total = (history.outcome === 'silent' ? 0 : delta.entries.length) + Number(display !== null) + Number(compacted !== null)
     let sequence = Number(session.rows[0].last_message_seq)
     if (!Number.isSafeInteger(sequence) || sequence < 0 || !Number.isSafeInteger(sequence + total)) throw new Error('Agent 会话序号无效')
     if (total) await client.query('UPDATE conversation_sessions SET last_message_seq = last_message_seq + $3 WHERE id = $1 AND user_id = $2', [identity.sessionId, identity.ownerId, total])
@@ -109,12 +74,10 @@ export function createCanonicalHistoryWriter(resolveConfig: (identity: RunIdenti
         JSON.stringify(compacted.snapshot.context), compacted.snapshot.contextEpoch, compacted.snapshot.snapshotHash,
         compacted.snapshot.sessionInfoHash, compacted.snapshot.snapshotExpiresAt === null ? null : new Date(compacted.snapshot.snapshotExpiresAt)])
     }
-    if (history.outcome !== 'silent') for (const group of groups) {
-      const first = group.entries[0]!, metadata = { ...group.metadata, source: first.source, sequence_start: first.sequence,
-        sequence_end: group.entries.at(-1)!.sequence, outcome: history.outcome === 'interruption' ? 'interruption' : 'success' }
+    if (history.outcome !== 'silent') for (const group of batches) {
       const batch = await client.query<{ id: string }>(`INSERT INTO conversation_batches (session_id,version,run_id,round_id,digest,created_at)
         VALUES ($1,'v1',$2,$3,$4,clock_timestamp()) ON CONFLICT (session_id,digest) DO NOTHING RETURNING id::text`,
-      [identity.sessionId, identity.runId, first.roundId || 'round-1', shortDigest({ messages: group.entries.map(entry => entry.message), metadata, run_id: identity.runId })])
+      [identity.sessionId, identity.runId, group.round, group.digest])
       if (!batch.rows[0]) throw new Error('Agent 历史批次已存在')
       for (const entry of group.entries) {
         const value = sanitizeMediaPayload(entry.message.content)
@@ -132,16 +95,12 @@ export function createCanonicalHistoryWriter(resolveConfig: (identity: RunIdenti
           anchor?.im_platform_sent_ms ?? null, anchor?.im_event_received_ms ?? null])
       }
     }
-    if (hasDisplay) {
-      const timeline = checkpoint.displayTimeline.map(item => item.kind === 'tool' && (item.toolStatus === 'queued' || item.toolStatus === 'running')
-        ? { ...item, toolStatus: 'stopped', updatedAt: new Date().toISOString() } : item)
-      const text = checkpoint.status === 'cancelled' && history.text ? `${history.text}\n\n[本轮已中止，以上内容未完成]` : history.text
+    if (display) {
       await client.query(`INSERT INTO conversation_messages (session_id,conversation_seq,role,content,files,display_timeline,run_id,round_id,created_at,sent_at)
         VALUES ($1,$2,'assistant',$3,$4::jsonb,$5::jsonb,$6,'round-1',clock_timestamp(),clock_timestamp())`,
-      [identity.sessionId, ++sequence, text, checkpoint.files.length ? JSON.stringify(sanitizeMediaPayload(checkpoint.files)) : null,
-        timeline.length ? JSON.stringify(sanitizeMediaPayload(timeline)) : null, identity.runId])
+      [identity.sessionId, ++sequence, display.text, display.files, display.timeline, identity.runId])
     }
-    if (!failed && !requestOnlyCompaction && context.providerCacheAnchor) await client.query(`UPDATE conversation_sessions SET session_context = jsonb_set(coalesce(session_context::jsonb,'{}'::jsonb), '{provider_cache_anchor}', $3::jsonb)
+    if (!failed && ((context.compactions.length === 0 && !context.overflowTrimmed) || compacted) && context.providerCacheAnchor) await client.query(`UPDATE conversation_sessions SET session_context = jsonb_set(coalesce(session_context::jsonb,'{}'::jsonb), '{provider_cache_anchor}', $3::jsonb)
       WHERE id = $1 AND user_id = $2`, [identity.sessionId, identity.ownerId, JSON.stringify(context.providerCacheAnchor.anchor)])
     if (total > 0) await enqueuePostgresAgentRagRebuild(client, identity.ownerId, 'conversation')
     const source = typeof options?.usageSource === 'function' ? await options.usageSource(identity, client) : options?.usageSource ?? 'web'

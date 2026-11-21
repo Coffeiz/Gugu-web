@@ -39,19 +39,20 @@ import { createImQuotedVoiceProof } from '../attention/quote.js'
 import { createPersistentFeishuProjection } from '../platforms/feishu/persistent.js'
 import { createPersistentQqProjection } from '../platforms/qq/persistent.js'
 import { readTrustedQqReplySettings } from '../platforms/qq/format.js'
-import { QqMediaUploadError } from '@gugu/gateway/qq'
+import { sendQqChart } from '@gugu/gateway/qq'
 import { createPersistentTelegramProjection } from '../platforms/telegram/persistent.js'
 import { createPostgresImAttentionPolicyGuard } from '../attention/policy.js'
 import { imActorInputForDispatch, type ImAgentReconstructionResources, type ImAgentReconstructorOptions } from './reconstruct.js'
 import type { createConfiguredImAgentProviderBinding } from './provider.js'
-import type { GatewayPlatformSender } from '../platform-connections.js'
+import type { GatewayPlatformSender } from '../connections.js'
 import type { NodeImBotBinding } from '../inbound/inbox.js'
 import type { createPostgresImControls } from '../attention/controls.js'
 import type { createPostgresImAccess } from '../inbound/access.js'
 import type { ImReflectionService } from '../memory/contracts.js'
 import type { ImAttachmentScope } from '../inbound/attachments.js'
-import { createSaveImAttachmentTool } from './downloads.js'
+import { createImSaveAttachmentTool } from './downloads.js'
 import { createImHarnessExecutorPorts } from './execute.js'
+import { persistRunCompaction } from '../../../agent/chat/compact.js'
 import { createCanonicalHistoryWriter } from '../../../agent/chat/write.js'
 import { createProviderReasoningPersistence } from '../../../agent/run/reasoning/active.js'
 import type { PoolClient } from 'pg'
@@ -158,6 +159,8 @@ export async function createImProductionDelivery(options: DeliveryOptions, input
     }catch{options.diagnose?.('im_preferences_unavailable')} // Python展示偏好读取失败同样采用all/false，不影响身份权限。
   }
   const display=imDisplayPolicy(actor.platform,scope.chatType,preferences)
+  if (display.toolDisplay !== 'off')
+    sender.compactionNotice = async value => (await get()).compactionNotice!(value)
   if (display.toolDisplay === 'all' && (wire.platform === 'qq' || wire.platform === 'wechat')) {
     sender.toolNotice = async value => (await get()).toolNotice!(value)
   }
@@ -198,14 +201,8 @@ export async function createImProductionDelivery(options: DeliveryOptions, input
         return createPersistentQqProjection({identity,receipts,sender:wire.sender,target,
           ...(typeof legacyMessageId==='string'&&legacyMessageId!==original?{legacyMessageId}:{}),
           policyVersion:digest([input.input.accessVersion,settings]),authorize:permitted,
-          async sendChart(png){
-            if(png.byteLength>3*1024*1024||!Buffer.from(png).subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))||!await permitted())return{outcome:'rejected',platformMessageIds:[]}
-            try{
-              const uploaded=await wire.mediaUpload.upload({target:'users',openid:scope.platformUserId,fileType:1,data:png,fileName:'chart.png',authorize:permitted})
-              if(typeof uploaded.file_info!=='string'||!uploaded.file_info)return{outcome:'unknown',platformMessageIds:[]}
-              return wire.sender.media(target,{fileInfo:uploaded.file_info,image:true},undefined,permitted)
-            }catch(error){return{outcome:error instanceof QqMediaUploadError&&error.outcome==='FAILED_CONFIRMED'?'rejected':'unknown',platformMessageIds:[]}}
-          },acceptedEvidence:{scope,recipient:scope.platformUserId,source:()=>createImRunScope(common).read()}})
+          sendChart: png => sendQqChart({ png, target, uploader: wire.mediaUpload, sender: wire.sender, authorize: permitted }),
+          acceptedEvidence:{scope,recipient:scope.platformUserId,source:()=>createImRunScope(common).read()}})
       }
     }
   }
@@ -246,11 +243,13 @@ export function createImProductionResources(options: ImProductionResourcesOption
     const memory = createLocalImMemorySource({ root: options.storageRoot, identity, actor, isTombstoned: tombstoned,
       async authorize() {
         if (!await options.access.authorizeDelivery(actor, bot)) return null
-        const rows = await options.pool.query(`SELECT group_memory_enabled,member_memory_enabled FROM user_bots
+        const rows = await options.pool.query(`SELECT group_memory_enabled,member_memory_enabled,group_owner_memory_enabled FROM user_bots
           WHERE user_id=$1 AND id=$2 AND platform=$3 AND enabled IS TRUE`, [actor.ownerId, actor.botId, actor.platform])
         const row = rows.rows[0]
-        if (!row || typeof row.group_memory_enabled !== 'boolean' || typeof row.member_memory_enabled !== 'boolean') throw unavailable()
-        return { ...scope, groupMemoryEnabled: row.group_memory_enabled, memberMemoryEnabled: row.member_memory_enabled }
+        if (!row || typeof row.group_memory_enabled !== 'boolean' || typeof row.member_memory_enabled !== 'boolean'
+          || typeof row.group_owner_memory_enabled !== 'boolean') throw unavailable()
+        return { ...scope, groupMemoryEnabled: row.group_memory_enabled, memberMemoryEnabled: row.member_memory_enabled,
+          groupOwnerMemoryEnabled: row.group_owner_memory_enabled }
       } })
     const skills = await createImProductionSkills({ pool: options.pool, identity, actor, loadOwnerContext: selection.contextPolicy.loadOwnerContext,
       authorize: () => options.access.authorizeDelivery(actor, bot) })
@@ -339,8 +338,8 @@ export function createImProductionResources(options: ImProductionResourcesOption
       canvases: createSqlMindCanvasReader(options.core.db, 'postgres'),
       ...ownerTools?.tools,
       ...(process.platform === 'linux' && actor.role === 'owner' && actor.chatType === 'c2c' ? {
-        saveImAttachment: createSaveImAttachmentTool({ ...options, identity, actor, scope, messageIds, payload: route.payload,
-          authorize: () => authorizeTool(identity, 'save_im_attachment') }),
+        saveAttachment: createImSaveAttachmentTool({ ...options, identity, actor, scope, messageIds, payload: route.payload,
+          authorize: () => authorizeTool(identity, 'save_attachment') }),
       } : {}),
       ...(actor.role === 'owner' && actor.chatType === 'c2c' ? { imOwnerSession: options.ownerSessions.tool({ lease,actor,payload:route.payload,messageIds,authorize:()=>authorizeTool(identity,'bind_web_session') }) } : {}),
       time: { now: () => new Date(), timezone: () => services.source.data.loadTimezone(identity) },
@@ -400,7 +399,7 @@ export function createImProductionResources(options: ImProductionResourcesOption
     const writeHistory = createCanonicalHistoryWriter(async (candidate, modelIdentity) => {
       if (!same(candidate, identity) || modelIdentity !== selection.modelIdentity) throw unavailable()
       return binding.usageConfig
-    }, { async afterSuccess(client,id,history,checkpoint) {
+    }, { postCommitCompaction: selection.contextPolicy.loadOwnerContext, async afterSuccess(client,id,history,checkpoint) {
       await options.reflection.historyHook(client,id,history,checkpoint)
       await options.retention.touchLocked(client,id)
       await options.ownerSessions.touchLocked(client,{ownerId:actor.ownerId,botId:actor.botId,platform:actor.platform},route.payload,identity.sessionId)
@@ -436,13 +435,20 @@ export function createImProductionResources(options: ImProductionResourcesOption
           authorize: async signal => { signal?.throwIfAborted(); return authorizeCurrent() } })
         commitContinuation = (client, context) => reasoning!.commitSuccess(client, context)
         const projection = await provider.summaryProjection(identity, selection.modelIdentity)
+        const compaction = createCompactionSummarizer<ProviderWire>({ ...identity, stableSystem, tools: [], contextTokens: selection.contextWindow,
+            maxOutputTokens: 2000, instruction: services.compactionInstruction }, { digest, nextId: randomUUID, ...projection,
+            provider: provider.branchProvider(selection.modelIdentity), pauseBeforeRetry: async (_attempt, signal) => { await delay(250, undefined, { signal }) },
+            diagnostic: () => options.diagnose('im_compaction_failed') })
         return { digest, nextId: randomUUID, references, prepareRequest: services.prepareRequest,
           ...(reasoning ? { initializeContinuation: reasoning.initialize } : {}),
           preparation: { buildRag: ragContext, formatMessageTime },
-          compaction: createCompactionSummarizer<ProviderWire>({ ...identity, stableSystem, tools: [], contextTokens: selection.contextWindow,
-            maxOutputTokens: 2000, instruction: services.compactionInstruction }, { digest, nextId: randomUUID, ...projection,
-            provider: provider.branchProvider(selection.modelIdentity), pauseBeforeRetry: async (_attempt, signal) => { await delay(250, undefined, { signal }) },
-            diagnostic: () => options.diagnose('im_compaction_failed') }),
+          compaction,
+          async persistCompaction(state) {
+            if (!selection.contextPolicy.loadOwnerContext) return
+            const anchorId = lease.input.im.batch?.messageIds[0] ?? lease.input.userMessageId
+            await persistRunCompaction(options.pool, state, compaction, anchorId, authorizeCurrent,
+              options.reflection.stageCompaction, options.reflection.prepareCompaction)
+          },
           finalization: await options.reflection.createFinalizer({ identity, modelIdentity: selection.modelIdentity, provider }),
           diagnoseCompactionFailure: () => options.diagnose('im_compaction_failed'),
         }

@@ -1,8 +1,11 @@
 // 将已固定的当前平台 Node 和生产依赖装配为自包含制品；不在用户启动时下载。
-import { build } from 'esbuild'
+import { createRequire } from 'node:module'
 import { createHash } from 'node:crypto'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
+import { buildCore } from '../../../packages/core/scripts/build.mjs'
+import { buildDesktopAgentRuntime } from './build-agent-runtime.mjs'
 import {
+  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -24,18 +27,23 @@ const pnpm = process.env.npm_execpath
 if (!pnpm || !existsSync(pnpm)) throw new Error('请通过 pnpm run prepare:sidecar 装配制品')
 if (!/^v26\./.test(process.version) || Number(process.versions.node.split('.')[1]) < 13)
   throw new Error('桌面制品需要固定的 Node 26.13 或更新的 26 LTS')
-execFileSync(process.execPath, [join(core, 'scripts/build.mjs')], {
-  cwd: root,
-  stdio: 'inherit',
-})
-execFileSync(process.execPath, [pnpm, '--filter', '@gugu/gateway', 'build'], { cwd: root, stdio: 'inherit' })
-const { CORE_SCHEMA_VERSION } = await import(pathToFileURL(join(core, 'dist/contracts/desktop.js')).href)
 const resourceParent = join(desktop, 'resources'),
   target = join(resourceParent, 'core-sidecar')
 const executable = process.platform === 'win32' ? 'node.exe' : 'node'
 const digest = (path) => createHash('sha256').update(readFileSync(path)).digest('hex')
 const isolatedEnv = Object.fromEntries(Object.entries(process.env)
   .filter(([key]) => !/^(NODE_OPTIONS|NODE_PATH|ELECTRON_RUN_AS_NODE|LD_.*|DYLD_.*)$/i.test(key)))
+
+function runPnpm(args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [pnpm, ...args], { cwd: root, stdio: 'inherit' })
+    child.once('error', reject)
+    child.once('exit', (code, signal) => {
+      if (code === 0) resolve()
+      else reject(new Error(`pnpm ${args[2]} 失败（${code ?? signal}）`))
+    })
+  })
+}
 
 function canRunStandalone(path) {
   try {
@@ -72,37 +80,36 @@ function owned(path) {
     throw new Error('制品清理路径超出预期范围')
   return absolute
 }
-try {
+async function prepareSidecar() {
+  await buildDesktopAgentRuntime()
+  const { CORE_SCHEMA_VERSION } = await import(pathToFileURL(join(core, 'dist/contracts/desktop.js')).href)
   const host = join(stage, 'host')
-  execFileSync(
-    process.execPath,
-    [
-      pnpm,
-      '--filter',
-      '@gugu/core',
-      'deploy',
-      '--prod',
-      '--legacy',
-      '--config.node-linker=hoisted',
-      host,
-    ],
-    { cwd: root, stdio: 'inherit' },
-  )
+  await runPnpm(['--filter', '@gugu/gateway', 'build'])
+  await runPnpm(['--filter', '@gugu/core', 'deploy', '--prod', '--legacy', '--config.node-linker=hoisted', host])
   // deploy 的模块结构必须自包含，禁止把工作区链接带进安装包。
   const expanded = join(stage, 'runtime')
   cpSync(host, expanded, { recursive: true, dereference: true })
   rmSync(owned(host), { recursive: true, force: true })
   renameSync(expanded, host)
-  await build({
-    entryPoints: [join(desktop, 'src/gateway/telegram.ts')],
-    outfile: join(host, 'gateway', 'telegram.mjs'),
-    bundle: true,
-    platform: 'node',
-    target: 'node26',
-    format: 'esm',
-    external: ['@gugu/core/*'],
-  })
+  // 独立 Node 运行 SILK 解码，保留共享模块的 ESM 文件布局和锁定解码依赖。
+  const gateway = join(root, 'packages/gateway')
+  const media = join(host, 'node_modules/@gugu/gateway')
+  mkdirSync(join(media, 'dist/runtime'), { recursive: true })
+  cpSync(join(gateway, 'package.json'), join(media, 'package.json'))
+  cpSync(join(gateway, 'dist/runtime/media'), join(media, 'dist/runtime/media'), { recursive: true })
+  const decoder = 'node_modules/@zpowertech/audio-player'
+  mkdirSync(dirname(join(host, decoder)), { recursive: true })
+  cpSync(join(gateway, decoder), join(host, decoder), { recursive: true, dereference: true })
+  if (process.platform === 'darwin') {
+    const require = createRequire(join(host, 'package.json'))
+    const pty = dirname(require.resolve('node-pty/package.json'))
+    const helper = join(pty, 'prebuilds', `darwin-${process.arch}`, 'spawn-helper')
+    if (existsSync(helper)) chmodSync(helper, 0o755)
+  }
   cpSync(join(root, 'LICENSE'), join(host, 'LICENSE'))
+  mkdirSync(join(host, 'agent'), { recursive: true })
+  cpSync(join(desktop, '.tools/agent/runtime.mjs'), join(host, 'agent/runtime.mjs'))
+  cpSync(join(core, 'resources/prompts'), join(host, 'agent-prompts'), { recursive: true })
   const installed = installedRuntime()
   const embeddedNode = join(stage, executable)
   cpSync(installed?.node ?? process.execPath, embeddedNode)
@@ -147,6 +154,8 @@ try {
     schema: CORE_SCHEMA_VERSION,
     executable,
     entry: 'host/dist/runtime/transport/stdio.js',
+    workerEntry: 'host/dist/runtime/worker.js',
+    agentRuntimeModule: 'host/agent/runtime.mjs',
     dependencies: [...dependencies.values()],
     files,
   }
@@ -170,6 +179,10 @@ try {
       files: Object.keys(files).length,
     }),
   )
+}
+
+try {
+  await buildCore(prepareSidecar)
 } finally {
   if (existsSync(stage)) rmSync(owned(stage), { recursive: true, force: true })
 }

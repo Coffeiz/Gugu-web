@@ -1,0 +1,330 @@
+import assert from 'node:assert/strict'
+import { appendFile, mkdtemp, readFile, readdir, rm, symlink, writeFile, utimes } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import test from 'node:test'
+import Fastify from 'fastify'
+import { configureDiagnosticLog, createLogWriter, createWebRuntimeLog, diagLog } from '../../../src/shared/log-files.js'
+import { registerAdminDebugLogRoutes, resolveAdminDebugLogFiles } from '../../../src/modules/admin/logs.js'
+
+async function setup(resolveFiles?: (root: string) => ReturnType<typeof resolveAdminDebugLogFiles>) {
+  const root = await mkdtemp(join(tmpdir(), 'gugu-admin-debug-'))
+  const defaultPaths = { web: join(root, 'web.log'), worker: join(root, 'worker.log'), gateway: join(root, 'gateway.log') }
+  const { paths, webCandidates } = resolveFiles?.(root) ?? { paths: defaultPaths, webCandidates: [join(root, 'web-dev.log'), defaultPaths.web] }
+  let resolveCount = 0
+  const guardedPaths = new Proxy(paths, { get(target, key: string) { resolveCount += 1; return target[key as keyof typeof target] } })
+  const app = Fastify()
+  registerAdminDebugLogRoutes(app, {
+    requireAdmin: async (request, reply) => {
+      if (request.headers.authorization !== 'admin') return reply.code(401).send({ error: 'unauthorized' })
+    },
+    verifyAdmin: async () => true,
+    paths: guardedPaths,
+    webCandidates,
+  })
+  return {
+    app, root, paths,
+    get resolveCount() { return resolveCount },
+    cleanup: async () => { await app.close(); await rm(root, { recursive: true, force: true }) },
+  }
+}
+
+test('默认日志归 Web Host，显式日志文件由管理员端按配置读取', async () => {
+  const defaultDirectory = fileURLToPath(new URL('../../../logs/', import.meta.url))
+  assert.equal(resolveAdminDebugLogFiles(null).paths.web, join(defaultDirectory, 'gugu.log'))
+  const ctx = await setup(root => resolveAdminDebugLogFiles(join(root, 'explicit.log')))
+  try {
+    await writeFile(ctx.paths.web, '11-12 10:00:00 configured Node log\n')
+    await writeFile(join(ctx.root, 'gugu-web-dev.log'), '11-12 10:01:00 unrelated candidate\n')
+    const response = await ctx.app.inject({ url: '/api/v1/admin/debug/logs/tail?source=web', headers: { authorization: 'admin' } })
+    assert.equal(response.statusCode, 200)
+    assert.deepEqual(response.json().lines.map((row: { line: string }) => row.line), ['11-12 10:00:00 configured Node log'])
+  } finally { await ctx.cleanup() }
+})
+
+test('未授权请求在任何日志路径解析前被拒绝', async () => {
+  const ctx = await setup()
+  try {
+    await writeFile(ctx.paths.web, 'sensitive synthetic log\n')
+    const response = await ctx.app.inject({ url: '/api/v1/admin/debug/logs/tail' })
+    assert.equal(response.statusCode, 401)
+    assert.equal(ctx.resolveCount, 0)
+    assert.equal((await readFile(ctx.paths.web, 'utf8')).includes('sensitive synthetic log'), true)
+  } finally { await ctx.cleanup() }
+})
+
+test('无效source回退所有日志并按事件时间稳定归并', async () => {
+  const ctx = await setup()
+  try {
+    await writeFile(ctx.paths.web, '11-12 10:00:00 web earlier\n11-12 10:02:00 web later\n')
+    await writeFile(ctx.paths.worker, '11-12 10:01:00 worker middle\n')
+    const response = await ctx.app.inject({ url: '/api/v1/admin/debug/logs/tail?source=invalid&lines=10', headers: { authorization: 'admin' } })
+    assert.equal(response.statusCode, 200)
+    assert.deepEqual(response.json().lines.map((row: { source: string; line: string }) => `${row.source}:${row.line}`), [
+      'web:11-12 10:00:00 web earlier', 'worker:11-12 10:01:00 worker middle', 'web:11-12 10:02:00 web later',
+    ])
+    assert.deepEqual(response.json().lines.map((row: { time: string }) => row.time), ['11-12 10:00:00', '11-12 10:01:00', '11-12 10:02:00'])
+  } finally { await ctx.cleanup() }
+})
+
+test('cursor按UTF-8字节分页、可重放且日志轮转后仍容错', async () => {
+  const ctx = await setup()
+  try {
+    await writeFile(ctx.paths.worker, '最旧\n旧页一\n旧页二\n最新一\n最新二\n')
+    const latest = await ctx.app.inject({ url: '/api/v1/admin/debug/logs/tail?source=worker&lines=2', headers: { authorization: 'admin' } })
+    const cursor = latest.json().next_cursor as string
+    assert.equal(latest.statusCode, 200)
+    assert.match(cursor, /^[A-Za-z0-9_-]+$/)
+    assert.deepEqual(latest.json().lines.map((row: { line: string }) => row.line), ['最新一', '最新二'])
+    const older = await ctx.app.inject({ url: `/api/v1/admin/debug/logs/tail?source=worker&lines=2&cursor=${cursor}`, headers: { authorization: 'admin' } })
+    const replay = await ctx.app.inject({ url: `/api/v1/admin/debug/logs/tail?source=worker&lines=2&cursor=${cursor}`, headers: { authorization: 'admin' } })
+    assert.deepEqual(older.json().lines.map((row: { line: string }) => row.line), ['旧页一', '旧页二'])
+    assert.deepEqual(replay.json(), older.json())
+    await writeFile(ctx.paths.worker, 'rotated single line\n')
+    const afterRotation = await ctx.app.inject({ url: `/api/v1/admin/debug/logs/tail?source=worker&lines=2&cursor=${cursor}`, headers: { authorization: 'admin' } })
+    assert.equal(afterRotation.statusCode, 200)
+    assert.ok(Array.isArray(afterRotation.json().lines))
+  } finally { await ctx.cleanup() }
+})
+
+test('过滤结果不足一页时继续向前读取，traceback跨页继承父行时间', async () => {
+  const ctx = await setup()
+  try {
+    await writeFile(ctx.paths.web, [
+      '11-12 09:00:00 ERROR needle older',
+      'Traceback (most recent call last):',
+      '  File "合成.py", line 2',
+      '11-12 09:01:00 INFO unrelated one',
+      '11-12 09:02:00 INFO unrelated two',
+      '11-12 09:03:00 INFO needle newest',
+      '',
+    ].join('\n'))
+    const response = await ctx.app.inject({ url: '/api/v1/admin/debug/logs/tail?source=web&lines=2&query=needle', headers: { authorization: 'admin' } })
+    assert.equal(response.statusCode, 200)
+    assert.deepEqual(response.json().lines.map((row: { line: string }) => row.line), [
+      '11-12 09:00:00 ERROR needle older', '11-12 09:03:00 INFO needle newest',
+    ])
+    const continuation = await ctx.app.inject({ url: '/api/v1/admin/debug/logs/tail?source=web&lines=2&cursor=' + response.json().next_cursor, headers: { authorization: 'admin' } })
+    assert.equal(continuation.statusCode, 200)
+  } finally { await ctx.cleanup() }
+})
+
+test('游标页从traceback续行开始时仍继承上一页的异常时间', async () => {
+  const ctx = await setup()
+  try {
+    await writeFile(ctx.paths.worker, [
+      '11-12 08:00:00 ERROR request failed',
+      'Traceback (most recent call last):',
+      '  File "worker.py", line 1',
+      '11-12 08:01:00 INFO recovered',
+      '',
+    ].join('\n'))
+    const page = await ctx.app.inject({ url: '/api/v1/admin/debug/logs/tail?source=worker&lines=2', headers: { authorization: 'admin' } })
+    assert.deepEqual(page.json().lines.map((row: { line: string; time: string }) => [row.line, row.time]), [
+      ['  File "worker.py", line 1', '11-12 08:00:00'],
+      ['11-12 08:01:00 INFO recovered', '11-12 08:01:00'],
+    ])
+  } finally { await ctx.cleanup() }
+})
+
+test('web候选按mtime选择；非法cursor回到最新页，lines遵守范围', async () => {
+  const ctx = await setup()
+  try {
+    const dev = join(ctx.root, 'web-dev.log')
+    await writeFile(dev, 'dev candidate\n')
+    await writeFile(ctx.paths.web, 'configured candidate\n')
+    const old = new Date('2026-01-01T00:00:00Z'), fresh = new Date('2026-01-02T00:00:00Z')
+    await utimes(dev, old, old)
+    await utimes(ctx.paths.web, fresh, fresh)
+    const selected = await ctx.app.inject({ url: '/api/v1/admin/debug/logs/tail?source=web&lines=1', headers: { authorization: 'admin' } })
+    assert.equal(selected.json().lines[0].line, 'configured candidate')
+    const malformed = await ctx.app.inject({ url: '/api/v1/admin/debug/logs/tail?source=web&cursor=%%%&lines=1', headers: { authorization: 'admin' } })
+    assert.equal(malformed.statusCode, 200)
+    for (const lines of [0, 501]) {
+      const invalid = await ctx.app.inject({ url: `/api/v1/admin/debug/logs/tail?lines=${lines}`, headers: { authorization: 'admin' } })
+      assert.equal(invalid.statusCode, 400)
+    }
+    await writeFile(ctx.paths.gateway, Array.from({ length: 205 }, (_, index) => `line ${index}`).join('\n'))
+    const defaultPage = await ctx.app.inject({ url: '/api/v1/admin/debug/logs/tail?source=gateway', headers: { authorization: 'admin' } })
+    assert.equal(defaultPage.statusCode, 200)
+    assert.equal(defaultPage.json().lines.length, 200)
+  } finally { await ctx.cleanup() }
+})
+
+
+test('SSE从连接时的日志末尾开始读取，持续发出新增行并只解析白名单source', async () => {
+  const ctx = await setup()
+  const controller = new AbortController()
+  let verifyCalls = 0
+  // 重新注册单独的SSE路由以验证每轮都会重新核验管理员身份。
+  await ctx.app.close()
+  const app = Fastify()
+  registerAdminDebugLogRoutes(app, {
+    requireAdmin: async (request, reply) => {
+      if (request.headers.authorization !== 'admin') return reply.code(401).send({ error: 'unauthorized' })
+    },
+    paths: ctx.paths,
+    webCandidates: [join(ctx.root, 'web-dev.log'), ctx.paths.web],
+    verifyAdmin: async () => { verifyCalls++; return true },
+    pollIntervalMs: 100,
+  })
+  try {
+    await writeFile(ctx.paths.worker, '11-12 09:00:00 existing\n')
+    const address = await app.listen({ host: '127.0.0.1', port: 0 })
+    const response = await fetch(`${address}/api/v1/admin/debug/logs/stream?source=worker`, {
+      headers: { authorization: 'admin' }, signal: controller.signal,
+    })
+    assert.equal(response.status, 200)
+    assert.match(response.headers.get('content-type') ?? '', /text\/event-stream/)
+    const reader = response.body!.getReader()
+    const first = await reader.read()
+    assert.match(new TextDecoder().decode(first.value), /keepalive/)
+    await appendFile(ctx.paths.worker, '\u001b[31m11-12 09:01:00 added\u001b[0m\n')
+    let event = ''
+    for (let attempt = 0; attempt < 10 && !event.includes('added'); attempt++) {
+      const part = await reader.read()
+      event += new TextDecoder().decode(part.value)
+    }
+    assert.match(event, /"source":"worker"/)
+    assert.match(event, /11-12 09:01:00 added/)
+    assert.ok(verifyCalls >= 2)
+    controller.abort()
+    const callsAtDisconnect = verifyCalls
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    assert.equal(verifyCalls, callsAtDisconnect)
+  } finally {
+    controller.abort()
+    await app.close()
+    await rm(ctx.root, { recursive: true, force: true })
+  }
+})
+
+test('SSE在管理员身份失效后停止轮询并结束流', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'gugu-admin-debug-stream-'))
+  const paths = { web: join(root, 'web.log'), worker: join(root, 'worker.log'), gateway: join(root, 'gateway.log') }
+  let verifyCalls = 0
+  const app = Fastify()
+  registerAdminDebugLogRoutes(app, {
+    requireAdmin: async (_request, _reply) => {}, paths, webCandidates: [paths.web],
+    verifyAdmin: async () => ++verifyCalls < 2,
+    pollIntervalMs: 10,
+  })
+  try {
+    const address = await app.listen({ host: '127.0.0.1', port: 0 })
+    const response = await fetch(`${address}/api/v1/admin/debug/logs/stream?source=worker`, { headers: { authorization: 'admin' } })
+    const reader = response.body!.getReader()
+    let body = ''
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const part = await reader.read()
+      if (part.done) break
+      body += new TextDecoder().decode(part.value)
+    }
+    assert.match(body, /keepalive/)
+    assert.equal(verifyCalls, 2)
+    assert.equal((await reader.read()).done, true)
+  } finally { await app.close(); await rm(root, { recursive: true, force: true }) }
+})
+
+test('轮转后游标继续读取旧文件，重启追加并保留导入历史，诊断日志不会出现在 Debug 页', async () => {
+  const ctx = await setup(root => resolveAdminDebugLogFiles(join(root, 'gugu.log')))
+  try {
+    const path = ctx.paths.web
+    const imported = `${path}.history-1000000000000-${'a'.repeat(64)}`
+    await writeFile(imported, 'imported\n')
+    const write = createLogWriter(path, 17, 1)
+    write('first\n')
+    write('second\n')
+    const query = (cursor?: string, lines = 1, keyword?: string) => ctx.app.inject({
+      url: `/api/v1/admin/debug/logs/tail?source=web&lines=${lines}${cursor ? `&cursor=${cursor}` : ''}${keyword ? `&query=${keyword}` : ''}`,
+      headers: { authorization: 'admin' },
+    })
+    const latest = (await query()).json()
+    assert.deepEqual(latest.lines.map((row: { line: string }) => row.line), ['second'])
+    write('rotated\n')
+    assert.deepEqual((await query(latest.next_cursor)).json().lines.map((row: { line: string }) => row.line), ['first'])
+    createLogWriter(path, 17, 1)('after\n')
+    configureDiagnosticLog(path)
+    diagLog('test', new Error('synthetic-diagnostic-only'))
+    const diagnostic = join(ctx.root, 'gugu-diag.log')
+    assert.match(await readFile(diagnostic, 'utf8'), /synthetic-diagnostic-only/)
+    await symlink(diagnostic, `${path}.history-1000000000001-${'b'.repeat(64)}`)
+    const all = (await query(undefined, 10)).json()
+    assert.deepEqual(all.lines.map((row: { line: string }) => row.line), ['imported', 'first', 'second', 'rotated', 'after'])
+    assert.equal(all.has_more, false)
+    const searched = (await query(undefined, 10, 'IMPORTED')).json()
+    assert.deepEqual(searched.lines.map((row: { line: string }) => row.line), ['imported'])
+    assert.equal(searched.has_more, false)
+    write('next-rotation\n')
+    assert.equal((await readdir(ctx.root)).filter(name => name.startsWith('gugu.log.rotate-')).length, 1)
+    assert.equal(await readFile(imported, 'utf8'), 'imported\n')
+  } finally { await ctx.cleanup() }
+})
+
+test('Admin Gateway 日志按来源读取脱敏摘要，堆栈通过事件编号留在诊断文件', async () => {
+  const ctx = await setup(root => resolveAdminDebugLogFiles(join(root, 'gugu.log')))
+  try {
+    createWebRuntimeLog(ctx.paths.web, 'gateway')('gateway.degraded', {
+      code: 'dispatch_unavailable', error: new Error('合成凭据和消息正文'),
+    })
+    const response = await ctx.app.inject({
+      url: '/api/v1/admin/debug/logs/tail?source=gateway',
+      headers: { authorization: 'admin' },
+    })
+    assert.equal(response.statusCode, 200)
+    const [row] = response.json().lines
+    assert.equal(row.message, '消息网关运行异常 · 消息调度不可用')
+    assert.equal(row.source, 'gateway')
+    const record = JSON.parse(row.line)
+    assert.equal(record.event, 'gateway.degraded')
+    assert.equal(record.message, row.message)
+    assert.equal(record.attributes.code, 'dispatch_unavailable')
+    assert.equal(record.frames, undefined)
+    assert.doesNotMatch(response.body, /合成凭据和消息正文/)
+    const diagnostic = JSON.parse(await readFile(join(ctx.root, 'gugu-diag.log'), 'utf8'))
+    assert.equal(diagnostic.incident, record.incident)
+    assert.ok(diagnostic.frames.length > 0)
+  } finally { await ctx.cleanup() }
+})
+
+test('启动迁移警告保留可辨认的固定状态，并过滤未知输入', async () => {
+  const ctx = await setup(root => resolveAdminDebugLogFiles(join(root, 'gugu.log')))
+  try {
+    const log = createWebRuntimeLog(ctx.paths.web)
+    log('host.rag_unavailable', { code: 'migration_incompatible', error: new Error('合成连接信息') })
+    log('host.trash_purge_unavailable', { code: 'platform_unsupported' })
+    log('host.search_usage_unavailable', { code: 'migration_pending' })
+    log('host.rag_unavailable', { code: '合成未知状态' })
+    const response = await ctx.app.inject({
+      url: '/api/v1/admin/debug/logs/tail?source=web',
+      headers: { authorization: 'admin' },
+    })
+    assert.equal(response.statusCode, 200)
+    const records = response.json().lines.map((row: { line: string }) => JSON.parse(row.line))
+    assert.deepEqual(records.map((record: { attributes: { code: string } }) => record.attributes.code), [
+      'migration_incompatible', 'platform_unsupported', 'migration_pending', 'unknown',
+    ])
+    assert.doesNotMatch(response.body, /合成连接信息|合成未知状态/)
+  } finally { await ctx.cleanup() }
+})
+
+test('历史日志可用中文摘要和原始事件码查找', async () => {
+  const ctx = await setup(root => resolveAdminDebugLogFiles(join(root, 'gugu.log')))
+  try {
+    const line = JSON.stringify({
+      time: '2026-11-19T22:52:54.775Z', event: 'host.shutdown_phase_slow',
+      attributes: { phase: 'agent_runs', elapsedMs: 5000 },
+    })
+    await writeFile(ctx.paths.web, line + '\n')
+    for (const query of ['运行中的任务', 'host.shutdown_phase_slow']) {
+      const response = await ctx.app.inject({
+        url: `/api/v1/admin/debug/logs/tail?source=web&query=${encodeURIComponent(query)}`,
+        headers: { authorization: 'admin' },
+      })
+      assert.equal(response.statusCode, 200)
+      const [row] = response.json().lines
+      assert.equal(row.message, '关闭耗时较长 · 运行中的任务 · 耗时 5000 毫秒')
+      assert.equal(row.line, line)
+    }
+  } finally { await ctx.cleanup() }
+})

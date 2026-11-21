@@ -1,6 +1,6 @@
 import type {Pool,PoolClient} from 'pg'
 import type {NodeImBotBinding} from './inbox.js'
-import {imConversationDigest,imConversationScopeHash} from '../agent/identity.js'
+import {imConversationEventId,imConversationDigest,imConversationScopeHash} from '../agent/identity.js'
 
 export class ImRetiredInboundError extends Error{constructor(){super('IM 历史消费证明暂不可用');this.name='ImRetiredInboundError'}}
 export interface ImRetiredInboundKey{ownerId:string;platform:string;botId:string;chatType:string;scopeHash:string;eventHash:string}
@@ -23,7 +23,7 @@ export function createImRetiredInbound(options:{pool:Pick<Pool,'query'>;secretKe
   async seen(binding:NodeImBotBinding,payload:Readonly<Record<string,unknown>>,signal?:AbortSignal):Promise<boolean>{
    signal?.throwIfAborted()
    const scopeHash=imConversationScopeHash(options.secretKey,binding,payload),sender=payload.platform_user_id
-   const event=payload._pending_ask_resume_id||payload.platform_message_id||payload.message_id
+   const event=imConversationEventId(payload)
    if(typeof sender!=='string'||!sender||typeof event!=='string'||!event)throw new ImRetiredInboundError()
    const result=await seenLocked(options.pool,{ownerId:binding.ownerId,platform:binding.platform,botId:binding.botId,
     chatType:String(payload.chat_type),scopeHash,eventHash:imConversationDigest(options.secretKey,[scopeHash,sender,event])})

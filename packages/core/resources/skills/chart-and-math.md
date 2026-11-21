@@ -1,8 +1,6 @@
 ---
-id: S7
 name: 图表与数学表达
-description_short: 按问题选择 Mermaid 图表或数学公式表达，并检查语法与呈现格式。
-description_long: 用户需要生成、解释或修复 Mermaid 图表，或需要书写、整理较复杂的数学公式时使用；按 Mermaid 12.1 语法表达图表，按 Markdown 数学分隔符表达公式，并遵循各自的检查与呈现规则。
+description: 根据语意把流程、关系、排期和趋势写成 Mermaid 图表，把计算和变量关系写成 TeX 公式。
 category: writing
 related_tools: []
 emoji: 📊

@@ -5,10 +5,10 @@ import {
   registerUserBotUpdateRoute,
   registerUserBotsListRoute,
 } from '../modules/im/routes.js'
-import { registerQqConnectRoutes } from '../modules/im/connect/qq.js'
-import { registerFeishuConnectRoutes } from '../modules/im/connect/feishu.js'
-import { registerWechatConnectRoutes } from '../modules/im/connect/wechat.js'
-import { registerTelegramConnectRoutes } from '../modules/im/connect/telegram.js'
+import { registerQqConnectRoutes } from '../modules/im/connect/platforms/qq/index.js'
+import { registerFeishuConnectRoutes } from '../modules/im/connect/platforms/feishu/index.js'
+import { registerWechatConnectRoutes } from '../modules/im/connect/platforms/wechat/index.js'
+import { registerTelegramConnectRoutes } from '../modules/im/connect/platforms/telegram/index.js'
 import { registerDataExportDownloadRoutes } from '../modules/data-portability/download.js'
 import { registerTaskFilesystemAuthorizationRoutes, registerTaskFilesystemRevokeRoute } from '../modules/scheduled-tasks/access.js'
 import { registerAccountDeleteRoute } from '../modules/auth/account/delete.js'
@@ -56,7 +56,9 @@ import { registerPortabilityRoutes } from '../modules/data-portability/routes.js
 import { registerMcpRoutes } from '../modules/mcp/routes.js'
 import { registerAttachmentRoutes } from '../modules/agent/attachments/routes.js'
 import { registerTerminalRoutes } from '../modules/terminals/routes.js'
+import { registerMailRoutes } from '../modules/mail/routes.js'
 import { registerByokRoutes } from '../modules/byok/routes.js'
+import { registerDesktopAgentDeepResearchRoute, registerDesktopAgentSimilarImageRoute } from '../modules/agent/tools/desktop-search-route.js'
 import { registerAgentRoutes } from '../modules/agent/routes.js'
 import { registerFileRoutes } from '../modules/files/routes.js'
 
@@ -112,7 +114,9 @@ export function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) 
       })
     })
   }
-  registerSessionLogout(app, auth)
+  registerSessionLogout(app, auth, options.webPush?.remove)
+  if (options.webPush)
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => options.webPush!.register(routes, userFromRequest))
   if (options.profile) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => {
       registerProfileRoute(routes, {
@@ -245,6 +249,11 @@ export function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) 
       ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId }))
   }
   registerByokRoutes(app, auth, options)
+  if (options.desktopAgentDeepResearch)
+    registerDesktopAgentDeepResearchRoute(app, auth, options.desktopAgentDeepResearch)
+  if (options.desktopAgentSimilarImageSearch)
+    registerDesktopAgentSimilarImageRoute(app, auth, options.desktopAgentSimilarImageSearch)
+  registerMailRoutes(app, auth)
   if (options.userSkillDelete) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => {
       registerUserSkillDeleteRoute(routes, { ...options.userSkillDelete!,

@@ -66,6 +66,7 @@ import { registerAdminSecurityEventRoutes } from './audit.js'
 import { registerAdminUserSecurityEventRoute } from './users.js'
 import { registerAdminAgentUsageRoute } from './usage.js'
 import { registerAdminConfigRoutes } from './config.js'
+import { registerSandboxNetworkRoutes } from './sandbox-network.js'
 import { registerAdminLlmPresetRoutes } from './llm.js'
 import type { WebUiOptions } from '../../http/options.js'
 
@@ -76,6 +77,7 @@ export function registerAdminRoutes(app: FastifyInstance, options: WebUiOptions)
       ...options.adminConfig,
       requireAdmin: options.adminAuth.requireAdmin,
     })
+    registerSandboxNetworkRoutes(app, { ...options.adminConfig, requireAdmin: options.adminAuth.requireAdmin })
   }
   if (options.adminAuth && options.adminVoiceTest) {
     registerAdminVoiceTestRoute(app, { ...options.adminVoiceTest, requireAdmin: options.adminAuth.requireAdmin })

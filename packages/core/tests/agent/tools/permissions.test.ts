@@ -17,13 +17,18 @@ describe('Python 工具发现与派发权限规则', () => {
   it('空白名单、固定工具和技能管理角色遵循派发规则', () => {
     expect(canUseTool('files', web)).toBe(true)
     expect(canUseTool('files', member)).toBe(false)
-    for (const name of ['get_current_time', 'call_tool', 'get_tool_schema', 'use_skill', 'ask_user']) expect(canUseTool(name, member)).toBe(true)
+    for (const name of ['get_current_time', 'call_tool', 'search_tools', 'use_skill', 'ask_user']) expect(canUseTool(name, member)).toBe(true)
     for (const name of ['list_skills', 'create_skill', 'update_skill', 'delete_skill']) {
       expect(canUseTool(name, web)).toBe(true)
       expect(canUseTool(name, { ...member, imRole: 'owner' })).toBe(true)
       expect(canUseTool(name, member)).toBe(false)
       expect(canUseTool(name, { ...member, imRole: 'unknown', allowedToolNames: [name] })).toBe(false)
     }
+  })
+  it('present_file 仅开放 Web 与桌面端，不开放 IM 平台', () => {
+    expect(canUseTool('present_file', { ...web, allowedToolNames: ['present_file'] })).toBe(true)
+    expect(canUseTool('present_file', { ...web, allowedToolNames: ['present_file'], platform: 'desktop' })).toBe(true)
+    expect(canUseTool('present_file', { ...member, allowedToolNames: ['present_file'] })).toBe(false)
   })
   it('平台和群自动回复特例优先于普通白名单', () => {
     expect(canUseTool('present_file', { ...member, allowedToolNames: ['present_file'] })).toBe(false)

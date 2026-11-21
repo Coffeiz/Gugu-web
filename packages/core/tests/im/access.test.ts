@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
-import { classifyImGroupInbound, defaultImTools, imActorInputFromPayload, imCanUseTool, imContextPolicy, imDisplayPolicy, imVisibleToolNames, resolveImAccess, resolveImActor } from '../../src/im/access.js'
+import { classifyImGroupInbound, defaultImTools, imActorInputFromPayload, imCanUseGroupOwnerMemory, imCanUseTool, imContextPolicy, imDisplayPolicy, imVisibleToolNames, resolveImAccess, resolveImActor } from '../../src/im/access.js'
 import type { ImActorInput, ImBotAccess, ImPlatform } from '../../src/im/access.js'
 
 const bot: ImBotAccess = { id: '7', ownerId: 'owner-a', platform: 'qq', ownerPlatformUserId: 'sender-owner', groupAllowedTools: ['web_search'], groupOwnerMemoryEnabled: true }
@@ -60,6 +60,16 @@ test('平台身份与Bot所有者、平台和内部ID共同验证，显示身份
   assert.equal(resolveImAccess(input, { ...bot, ownerPlatformUserId: null }).role, 'unknown')
 })
 
+test('旧群权限保留搜图和发送文件，过滤已退役的文件读取权限', () => {
+  const scope = { ...input, platformUserId: 'sender-member' }
+  assert.deepEqual(resolveImAccess(scope, {
+    ...bot, groupAllowedTools: ['similar_image_search', 'read_file', 'send_file'],
+  }).allowedToolNames, ['similar_image_search', 'send_file'])
+  assert.deepEqual(resolveImAccess(scope, {
+    ...bot, groupAllowedTools: ['similar_image_search'],
+  }).allowedToolNames, ['similar_image_search'])
+})
+
 test('QQ和Telegram私聊必须核对绑定，飞书和微信保留旧版可信私聊owner语义', () => {
   for (const platform of ['qq', 'telegram', 'feishu', 'wechat'] as const) {
     const ownBot = { ...bot, platform }
@@ -98,6 +108,15 @@ test('混合批次按最弱权限执行且与发言顺序无关，不借owner加
   assert.equal(imCanUseTool(a, 'list_skills'), false)
   assert.equal(imCanUseTool(a, 'get_current_time'), true)
   assert.equal(imCanUseTool(a, 'ask_user'), true)
+})
+
+test('群主个人记忆要求主人角色、可信身份验证和启用开关', () => {
+  const verifiedOwner = { ...resolveImActor(input, resolve), verifiedOwner: true }
+  assert.equal(imCanUseGroupOwnerMemory(verifiedOwner, true), true)
+  assert.equal(imCanUseGroupOwnerMemory(verifiedOwner, false), false)
+  assert.equal(imCanUseGroupOwnerMemory({ ...verifiedOwner, role: 'member' }, true), false)
+  assert.equal(imCanUseGroupOwnerMemory({ ...verifiedOwner, verifiedOwner: false }, true), false)
+  assert.equal(imCanUseGroupOwnerMemory({ ...verifiedOwner, chatType: 'c2c', chatId: null }, true), false)
 })
 
 test('缺失发言身份使整批降到unknown，权限解析异常不转换成owner', () => {

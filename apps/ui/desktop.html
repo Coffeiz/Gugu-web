@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light" data-family="mono" data-palette="neutral" data-desktop-shell="true">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' blob: gugu-desktop://app; img-src 'self' data: blob: gugu-desktop://app; media-src 'self' blob: gugu-desktop://app; font-src 'self' data:; worker-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'" /><title>咕咕 · 本地工作台</title>  <style>
+    html[data-desktop-shell] {
+      --desktop-l0-surface: rgb(from var(--surface-card-solid, light-dark(#fafafa, #242424)) r g b / 50%);
+      --desktop-project-sidebar-width: min(300px, 65%);
+      color-scheme: light dark;
+    }
+    html[data-desktop-shell], html[data-desktop-shell] body {
+      margin: 0;
+      background: transparent;
+    }
+    .desktop-boot-shell {
+      display: grid;
+      place-items: center;
+      min-height: 100dvh;
+      background: var(--desktop-l0-surface);
+      color: var(--text-secondary, light-dark(#595b65, #bdc0cb));
+      font: 13px system-ui, sans-serif;
+    }
+    .desktop-project-boot { display: none; }
+    .desktop-project-boot:target {
+      display: grid;
+      grid-template-columns: var(--desktop-project-sidebar-width) minmax(0, 1fr);
+      grid-template-rows: 52px 1fr;
+      min-height: 100dvh;
+      background: var(--desktop-l0-surface);
+      --boot-placeholder: var(--surface-soft-hover, light-dark(#dcdde275, #ffffff23));
+      --boot-divider: var(--content-divider, var(--boot-placeholder));
+    }
+    .desktop-project-boot:target + .desktop-boot-shell { display: none; }
+    .desktop-project-boot-toolbar {
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      border-bottom: 1px solid var(--boot-divider);
+    }
+    .desktop-project-boot-sidebar { padding: 16px; }
+    .desktop-project-boot-left { border-right: 1px solid var(--boot-divider); }
+    .desktop-project-boot-bar {
+      display: block;
+      width: 44%;
+      height: 16px;
+      border-radius: 8px;
+      background: var(--boot-placeholder);
+    }
+    .desktop-project-boot-label { width: 48px; height: 8px; margin-bottom: 6px; }
+    .desktop-project-boot-field { width: 100%; height: 32px; margin-bottom: 14px; }
+    .desktop-project-boot-stages { display: grid; gap: 14px; margin-top: 18px; }
+    .desktop-project-boot-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="project-boot" class="desktop-project-boot">
+        <span class="desktop-project-boot-status" role="status">正在加载项目…</span>
+        <div class="desktop-project-boot-toolbar desktop-project-boot-left" aria-hidden="true"><span class="desktop-project-boot-bar"></span></div>
+        <div class="desktop-project-boot-toolbar" aria-hidden="true"><span class="desktop-project-boot-bar"></span></div>
+        <div class="desktop-project-boot-sidebar desktop-project-boot-left" aria-hidden="true">
+          <span class="desktop-project-boot-bar desktop-project-boot-label"></span>
+          <span class="desktop-project-boot-bar desktop-project-boot-field"></span>
+          <span class="desktop-project-boot-bar desktop-project-boot-label"></span>
+          <span class="desktop-project-boot-bar desktop-project-boot-field"></span>
+          <div class="desktop-project-boot-stages">
+            <span class="desktop-project-boot-bar"></span>
+            <span class="desktop-project-boot-bar"></span>
+            <span class="desktop-project-boot-bar"></span>
+          </div>
+        </div>
+      </div>
+      <div class="desktop-boot-shell" role="status">正在加载咕咕…</div>
+    </div>
+    <script type="module" src="/src/desktop/main.ts"></script>
+  </body>
+</html>

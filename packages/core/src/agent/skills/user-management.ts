@@ -29,6 +29,7 @@ function view(row: Row) {
 export function createUserSkillManager<DB>(db: Kysely<DB>, backend: 'postgres' | 'sqlite', options: {
   knownTools(owner: string, related: readonly string[]): Promise<ReadonlySet<string>>
   digest(text: string): string
+  allocateSequence?(tx: Kysely<DB>): Promise<number>
   publish(owner: string): Promise<unknown>
 }) {
   const ownerKey = (raw: string) => {
@@ -45,10 +46,10 @@ export function createUserSkillManager<DB>(db: Kysely<DB>, backend: 'postgres' |
     const known = new Set([...await options.knownTools(owner, input.related_tools || []), ...runTools])
     const value = normalizeUserSkill(input, known, options.digest)
     return async (tx: Kysely<DB>) => {
-      const sequence = (await sql<{ next_skill_sequence: number }>`UPDATE users SET next_skill_sequence=next_skill_sequence+1
-        WHERE id=${key} RETURNING next_skill_sequence`.execute(tx)).rows[0]
-      if (!sequence) throw new CoreError('invalid_request', '当前用户不存在，无法分配 Skill ID')
-      const id = `U${sequence.next_skill_sequence - 1}`
+      const sequence = options.allocateSequence ? await options.allocateSequence(tx) : (await sql<{ next_skill_sequence: number }>`UPDATE users SET next_skill_sequence=next_skill_sequence+1
+        WHERE id=${key} RETURNING next_skill_sequence`.execute(tx)).rows[0]?.next_skill_sequence
+      if (!Number.isSafeInteger(sequence)) throw new CoreError('invalid_request', '当前用户不存在，无法分配 Skill ID')
+      const id = `U${sequence! - 1}`
       const row = (await sql<Row>`INSERT INTO user_skills(owner_id,skill_id,name,description_short,description_long,category,body,
         related_tools,source,managed_by,enabled,content_digest,created_at,updated_at) VALUES(${key},${id},${value.name},
         ${value.description_short},${value.description_long},${value.category},${value.body},${JSON.stringify(value.related_tools)},'user',
@@ -60,7 +61,8 @@ export function createUserSkillManager<DB>(db: Kysely<DB>, backend: 'postgres' |
 
   async function prepareUpdate(raw: string, id: string, patch: Patch, runTools: readonly string[] = []) {
     const { owner, key } = ownerKey(raw)
-    const known = new Set([...await options.knownTools(owner, patch.related_tools || []), ...runTools])
+    const known = patch.related_tools === undefined ? null
+      : new Set([...await options.knownTools(owner, patch.related_tools || []), ...runTools])
     return async (tx: Kysely<DB>) => {
       const old = (await sql<Row>`SELECT ${columns} FROM user_skills WHERE owner_id=${key} AND skill_id=${id}
         ${backend === 'postgres' ? sql`FOR UPDATE` : sql``}`.execute(tx)).rows[0]
@@ -73,7 +75,7 @@ export function createUserSkillManager<DB>(db: Kysely<DB>, backend: 'postgres' |
         category: patch.category === undefined ? original.category : (patch.category ?? 'personal'),
         body: patch.body === undefined ? original.body : patch.body || '',
         related_tools: patch.related_tools === undefined ? original.related_tools : patch.related_tools || [],
-      }, known, options.digest)
+      }, known ?? new Set(original.related_tools), options.digest)
       const row = (await sql<Row>`UPDATE user_skills SET name=${value.name},description_short=${value.description_short},
         description_long=${value.description_long},category=${value.category},body=${value.body},related_tools=${JSON.stringify(value.related_tools)},
         managed_by=${patch.managed_by ?? original.managed_by},enabled=${storedEnabled(patch.enabled ?? original.enabled)},
@@ -84,9 +86,9 @@ export function createUserSkillManager<DB>(db: Kysely<DB>, backend: 'postgres' |
   }
 
   return {
-    async list(raw: string) {
+    async list(raw: string, page?: { limit: number; offset: number }) {
       const { key } = ownerKey(raw)
-      const rows = await sql<Row>`SELECT ${columns} FROM user_skills WHERE owner_id=${key} ORDER BY updated_at DESC,id DESC`.execute(db)
+      const rows = await sql<Row>`SELECT ${columns} FROM user_skills WHERE owner_id=${key} ORDER BY updated_at DESC,id DESC ${page ? sql`LIMIT ${page.limit} OFFSET ${page.offset}` : sql``}`.execute(db)
       return rows.rows.map(view)
     },
     async create(raw: string, input: Input, runTools: readonly string[] = []) {

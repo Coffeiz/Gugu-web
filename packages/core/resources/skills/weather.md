@@ -1,8 +1,6 @@
 ---
-id: S12
 name: 天气
-description_short: 用户询问天气、温度、降雨、风力或出行建议时使用。
-description_long: "使用 Open-Meteo 查询全球城市当前天气和未来预报。"
+description: 用于查询指定地点的当前天气、逐日预报、降雨和风力，并据此给出出行建议。
 category: weather
 related_tools: http_get
 emoji: 🌤️
@@ -30,7 +28,7 @@ emoji: 🌤️
 - 优先选择名称精确且行政区、国家符合语境的结果。
 - 同名地点无法判断时，给出简短候选并询问；不要猜坐标。
 - 用户已提供经纬度时，跳过地理编码。
-- `http_get` 参数使用 `{"url": "完整 URL"}`，不要发送 `curl` 命令。
+- 使用当前开放的 `http_get`，按其 Schema 提交完整 URL。工具不可用时说明当前无法查证天气。
 
 ### 2. 获取预报
 

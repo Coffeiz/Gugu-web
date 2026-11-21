@@ -1,3 +1,4 @@
+import { createSerialWorker, type SerialWorker } from '../../../../workers/admission.js'
 import { randomUUID } from 'node:crypto'
 import type { Pool } from 'pg'
 import type { CanonicalRunContext, InteractionResolution, RunIdentity } from '@gugu/core/agent'
@@ -16,10 +17,13 @@ export function createImInteractionRecovery(options: { pool: Pick<Pool, 'query' 
   dispatch: ReturnType<typeof createPostgresAgentDispatch>
   store: Pick<ReturnType<typeof createPostgresAgentRunStore<CanonicalRunContext>>, 'read' | 'readForUpdate'>
   reconstruct: ReturnType<typeof createImAgentReconstructor>
+  runAgent?: SerialWorker
   invalidateCredential(ownerId: string, serverId: string): Promise<void>
 }) {
   const queue = createPostgresInteractionResumeQueue(options.pool)
+  const runAgent = options.runAgent ?? createSerialWorker()
   let closing = false
+  const activeWorkers = new Set<{ close(): Promise<void> }>()
   async function acquire(identity: RunIdentity, cancelledOnly: boolean, receipt?: { promptId: number; interactionId: string; receipt: string }) {
     return withPostgresTransaction(options.pool, async client => {
       if (!await lockAgentRunSession(client, identity)) return null
@@ -78,7 +82,12 @@ export function createImInteractionRecovery(options: { pool: Pick<Pool, 'query' 
           resume: identity => runtime.harness.resume(identity, resolution) } }
       },
     })
-    return worker.runOnce(lease.identity.ownerId, lease.identity.sessionId)
+    activeWorkers.add(worker)
+    try {
+      const work = worker.runOnce(lease.identity.ownerId, lease.identity.sessionId)
+      if (closing) await worker.close()
+      return await work
+    } finally { activeWorkers.delete(worker) }
   }
   return {
     async pump(signal: AbortSignal) {
@@ -90,8 +99,11 @@ export function createImInteractionRecovery(options: { pool: Pick<Pool, 'query' 
           AND EXISTS(SELECT 1 FROM gugu_im_inbound_receipts r WHERE r.user_id=d.user_id AND r.session_id=d.session_id AND r.run_id=d.run_id AND r.state='dispatched') ORDER BY d.sequence LIMIT 8`)
       for (const row of cancelled.rows) {
         signal.throwIfAborted(); if (closing) return
-        const claimed = await acquire({ ownerId: row.user_id, sessionId: String(row.session_id), runId: row.run_id }, true)
-        if (claimed) await execute(claimed.lease)
+        await runAgent(async () => {
+          signal.throwIfAborted(); if (closing) return
+          const claimed = await acquire({ ownerId: row.user_id, sessionId: String(row.session_id), runId: row.run_id }, true)
+          if (claimed) await execute(claimed.lease)
+        })
       }
       const rows = await options.pool.query<{ user_id: string; session_id: number; run_id: string; prompt_id: number; interaction_id: string; receipt: string; nonce: Buffer; payload: Buffer }>(`SELECT r.user_id::text,r.session_id,r.run_id,r.prompt_id,r.interaction_id,r.receipt,d.nonce,d.payload
         FROM agent_interaction_resumes r JOIN agent_run_dispatch d USING(user_id,session_id,run_id) WHERE r.completed_at IS NULL AND (r.claim_expires_at IS NULL OR r.claim_expires_at<=clock_timestamp())
@@ -110,18 +122,24 @@ export function createImInteractionRecovery(options: { pool: Pick<Pool, 'query' 
           [identity.ownerId, identity.sessionId, identity.runId, row.prompt_id, row.receipt]); continue
         }
         if (await queue.isConsumed(identity, row.receipt)) { await queue.completeIfConsumed(identity, row.receipt); continue }
-        const claimed = await acquire(identity, false, { promptId: row.prompt_id, interactionId: row.interaction_id, receipt: row.receipt })
-        if (!claimed?.item) continue
-        const item = claimed.item
-        try {
-          if (item.secretServerId) await options.invalidateCredential(identity.ownerId, item.secretServerId)
-          await execute(claimed.lease, item.resolution)
-          const after = await options.store.read(identity)
-          if (after && (terminal.has(after.status) || after.status === 'waiting' && await queue.isConsumed(identity, row.receipt)))
-            await queue.finishClaim(identity, item.promptId, item.claimToken)
-        } finally { await queue.releaseClaim(identity, item.promptId, item.claimToken) }
+        await runAgent(async () => {
+          signal.throwIfAborted(); if (closing) return
+          const claimed = await acquire(identity, false, { promptId: row.prompt_id, interactionId: row.interaction_id, receipt: row.receipt })
+          if (!claimed?.item) return
+          const item = claimed.item
+          try {
+            if (item.secretServerId) await options.invalidateCredential(identity.ownerId, item.secretServerId)
+            await execute(claimed.lease, item.resolution)
+            const after = await options.store.read(identity)
+            if (after && (terminal.has(after.status) || after.status === 'waiting' && await queue.isConsumed(identity, row.receipt)))
+              await queue.finishClaim(identity, item.promptId, item.claimToken)
+          } finally { await queue.releaseClaim(identity, item.promptId, item.claimToken) }
+        })
       }
     },
-    close() { closing = true },
+    async close() {
+      closing = true
+      await Promise.all([...activeWorkers].map(worker => worker.close()))
+    },
   }
 }

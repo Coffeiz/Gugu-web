@@ -15,7 +15,7 @@ function metadata(value:unknown):Metadata|null{
 export function createAttachmentDownloader<DB,Handle>(db:Kysely<DB>,ports:AttachmentDownloadPorts<Handle>){
  return async(ownerId:string,attachId:string)=>{
   const owner=dataContext(ownerId).ownerId
-  const row=(await sql<Metadata>`SELECT attach_id,name,ext,mime,size,storage_key,extra FROM chat_attachments WHERE user_id=${owner} AND attach_id=${attachId}`.execute(db)).rows[0]
+  const row=(await sql<Metadata>`SELECT attach_id,name,ext,mime,kind,size,storage_key,extra FROM chat_attachments WHERE user_id=${owner} AND attach_id=${attachId}`.execute(db)).rows[0]
   let meta:Metadata|null=row?{...row,...metadata(row.extra)}:null
   if(!row){
    const raw=await ports.readLegacy(owner,attachId)

@@ -1,4 +1,5 @@
-import { tablesSql } from '@gugu/core/data'
+import { createPostgresRuntime, tablesSql } from '@gugu/core/data'
+import { createMindRefNodeCreator, createSqlMindRefNodeCreateRuntime } from '@gugu/core/mind'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { randomUUID } from 'node:crypto'
@@ -40,6 +41,32 @@ test('借用 PG 连接保留外层事务及错误类型', { skip: !url }, async 
   } finally {
     await client.query('ROLLBACK').catch(() => undefined)
     client.release()
+    await pool.end()
+    await admin.query(`DROP SCHEMA "${schema}" CASCADE`)
+    await admin.end()
+  }
+})
+
+test('PG 画布文件节点按路径引用去重并拒绝数字文件 ID', { skip: !url }, async () => {
+  const schema = `gugu_mind_path_${randomUUID().replaceAll('-', '')}`
+  const admin = new Pool({ connectionString: url })
+  await admin.query(`CREATE SCHEMA "${schema}"`)
+  const pool = new Pool({ connectionString: url, options: `-c search_path=${schema}` })
+  const runtime = await createPostgresRuntime({ url: url!, schema, maxConnections: 3 })
+  try {
+    await pool.query(tablesSql('postgres').mindNodes)
+    const creator = createMindRefNodeCreator(createSqlMindRefNodeCreateRuntime(runtime.db, 'postgres',
+      async () => {}, undefined, undefined, async (candidate, id) =>
+        candidate === owner && id === 'path-owned' ? { label: '资料.md' } : null))
+    const metadata = { undoContextId: null, clientId: null, mutationId: null }
+    const input = { refType: 'file', refId: 'path-owned' }
+    const [first, second] = await Promise.all([creator.create(owner, input, metadata), creator.create(owner, input, metadata)])
+    assert.equal(first.id, second.id)
+    assert.deepEqual(first.refSnapshot, { fileReferenceId: 'path-owned' })
+    await assert.rejects(creator.create(owner, { refType: 'file', refId: 42 }, metadata), /请使用文件路径引用/u)
+    await assert.rejects(creator.create(randomUUID(), input, metadata), /引用文件已移动或不可访问/u)
+  } finally {
+    await runtime.close()
     await pool.end()
     await admin.query(`DROP SCHEMA "${schema}" CASCADE`)
     await admin.end()

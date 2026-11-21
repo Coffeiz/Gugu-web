@@ -7,7 +7,7 @@
 | 历史文档 | 保留用途 | 阅读限制 |
 | --- | --- | --- |
 | [多端统一架构重构方案](Gugu-Core多端统一架构重构方案.md) | 早期依赖边界、垂直切片与运行归属推理 | 路线未定、PGlite/Python 候选和未实施状态属于旧快照 |
-| [Core 与桌面端职责划分](Gugu-Core与桌面端职责划分方案.md) | 产品拓扑、平台 Port、FS/授权、同步与任务转交的详细推理 | Python 技术路线及部分推断已由主清单收敛，不单独作为当前决策 |
+| [Core 与桌面端职责划分](../../../architecture/desktop/archive/Gugu-Core与桌面端职责划分方案.md) | 产品拓扑、平台 Port、FS/授权、同步与任务转交的详细推理 | Python 技术路线及部分推断已由主清单收敛，不单独作为当前决策 |
 | [Node/TypeScript 迁移方案](Gugu-Core迁移Node与TypeScript方案.md) | 迁移接缝、事务、安全和兼容验收依据 | “Node 尚未实施”、IPC v1 和原阶段完成状态已过期 |
 | [项目数据切片实现说明](Gugu-Core项目数据切片实现说明.md) | 第一批 Python 项目切片与行为基线 | 不是当前 Node 目录与运行入口 |
 | [顶层包与数据统一层](Gugu-Core顶层包与数据统一层.md) | Python 项目/联系人 UoW、Web Session 接缝与对照来源 | Python 包现位于 `compat/`；不能解读为全量 DB 已统一 |

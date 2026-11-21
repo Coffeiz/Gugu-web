@@ -1,0 +1,231 @@
+import { defineStore } from 'pinia'
+import { ref, reactive } from 'vue'
+import { useAdminStore } from './admin'
+
+// 后端对密码类字段返回 "****"，前端拿到后清空，存回时跳过空值（视为"未修改"）
+const PASSWORD_FIELDS = new Set(['password', 'api_key', 'oss_access_key_id', 'oss_access_key_secret', 'tavily_api_key', 'baidu_qianfan_api_key', 'deep_research_baidu_api_key', 'deep_research_you_api_key'])
+
+function sanitizeForEdit(obj: Record<string, unknown>) {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(obj)) {
+    out[k] = (PASSWORD_FIELDS.has(k) && v === '****') ? '' : v
+  }
+  return out
+}
+
+function stripUnchangedPasswords(obj: Record<string, unknown>) {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(obj)) {
+    if (PASSWORD_FIELDS.has(k) && (!v || v === '****')) continue
+    out[k] = v
+  }
+  return out
+}
+
+export const useConfigStore = defineStore('config', () => {
+  const loading   = ref(false)
+  const saving    = ref(false)
+  const saved     = ref(false)
+  const saveError = ref('')
+  // 后端把已存的密钥脱敏成 ****、前端又清空显示，导致「已存」无任何痕迹 → 看着像没保存。
+  // 这里记录各保密字段后端当前是否已有值，供 UI 显示「已配置」指示。
+  const secretSet = reactive({ embeddingApiKey: false, smtpPassword: false })
+  // 能力未知时先隐藏 DDL 操作；Python 旧 Host 成功读取后按缺少标记恢复兼容按钮。
+  const databaseInitializationSupported = ref(false)
+
+  const cfg = reactive({
+    db: {
+      host: 'localhost',
+      port: 5432,
+      name: 'gugu_web',
+      user: 'gugu',
+      password: '',
+    },
+    redis: {
+      host: 'localhost',
+      port: 6379,
+      password: '',
+    },
+    storage: {
+      backend: 'local',
+      local_path: '../Gugu-data/users',
+      oss_access_key_id: '',
+      oss_access_key_secret: '',
+      oss_bucket: 'gugu-web',
+      oss_endpoint: 'oss-cn-hangzhou.aliyuncs.com',
+      oss_prefix: '',
+    },
+    ai: {
+      provider: 'qwen',
+      api_key: '',
+      base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      model: 'qwen-max',
+    },
+    embedding: {
+      enabled: true,
+      multimodal: false,
+      provider: '',
+      api_key: '',
+      base_url: '',
+      model: '',
+      dimensions: 0,
+    },
+    sandbox: {
+      enabled: false,
+      image: 'debian:bookworm-slim',
+      image_digest: '',
+      full_user_sandbox_authorization_enabled: true,
+      terminal_mode: 'auto' as 'auto' | 'pty_disabled' | 'entry_disabled',
+      rootless_required: false,
+      cpu_limit: 1,
+      memory_limit_bytes: 536870912,
+      pids_limit: 64,
+      timeout_seconds: 30,
+      output_limit_bytes: 12288,
+      persistent_quota_bytes: 536870912,
+      ephemeral_quota_bytes: 1073741824,
+      network_profile: 'egress',
+      egress_proxy_url: '',
+      egress_network_name: 'gugu-sandbox-egress',
+      egress_ttl_seconds: 600,
+      egress_isolation_enabled: false,
+    },
+    filesync: {
+      enabled: false,
+    },
+    im: {
+      feishu: true,
+      qq: true,
+      wechat: true,
+      telegram: true,
+    },
+    agent: {
+      parallel_tool_execution_enabled: true,
+      parallel_tool_max_concurrency: 5,
+      shell_enabled: true,
+      shell_system_enabled: false,
+      shell_dangerous_enabled: true,
+      automatic_mode_enabled: true,
+      memory_enabled: true,
+      greeting_enabled: true,
+      worker_concurrency: 16,
+      conv_compress_enabled: true,
+    },
+    quota: {
+      default_token_limit_6h: null,
+      default_token_limit_weekly: null,
+      default_storage_limit_bytes: null,
+      default_search_limit_daily: null,
+    },
+    search: {
+      rag_enabled: true,
+      rag_auto_sources: ['memory', 'knowledge', 'project', 'canvas', 'note', 'calendar', 'scheduled_task', 'conversation'],
+      capability_rag_enabled: false,
+      capability_rag_shadow: true,
+      capability_rag_limit: 5,
+      deep_research_provider: 'tavily',
+      tavily_api_key: '',
+      deep_research_baidu_api_key: '',
+      deep_research_you_api_key: '',
+      max_results: 5,
+      rag_index_ttl_seconds: 30 * 24 * 3600,
+      similar_image_provider: 'baidu_qianfan',
+      similar_image_enabled: false,
+      baidu_qianfan_api_key: '',
+      similar_image_default_count: 15,
+      similar_image_timeout_seconds: 20,
+      similar_image_limit_daily: 10,
+    },
+    smtp: {
+      enabled: true,
+      host: '',
+      port: 465,
+      user: '',
+      password: '',
+      from_addr: '',
+      to_addr: '',
+      test_to_addr: '',
+      feedback_email_enabled: true,
+      registration_verification_enabled: true,
+      use_ssl: true,
+    },
+    security: {
+      alert_email_enabled: false,
+      alert_email_recipients: [] as string[],
+    },
+    byok: {
+      enabled: true,
+    },
+    mcp: {
+      enabled: true,
+    },
+  })
+
+  async function fetchConfig() {
+    loading.value = true
+    const adminStore = useAdminStore()
+    try {
+      const res = await adminStore.authFetch('/api/v1/admin/config')
+      const { data, capabilities } = await res.json()
+      databaseInitializationSupported.value = capabilities?.database_schema_managed_externally !== true
+      if (data.db)      Object.assign(cfg.db,      sanitizeForEdit(data.db))
+      if (data.redis)   Object.assign(cfg.redis,   sanitizeForEdit(data.redis))
+      if (data.storage) Object.assign(cfg.storage, sanitizeForEdit(data.storage))
+      if (data.ai)      Object.assign(cfg.ai,      sanitizeForEdit(data.ai))
+      if (data.embedding) { secretSet.embeddingApiKey = data.embedding.api_key === '****'; Object.assign(cfg.embedding, sanitizeForEdit(data.embedding)) }
+      if (data.sandbox) Object.assign(cfg.sandbox, data.sandbox)
+      if (data.filesync) Object.assign(cfg.filesync, data.filesync)
+      if (data.im) Object.assign(cfg.im, data.im)
+      if (data.agent)   Object.assign(cfg.agent,   data.agent)
+      if (data.quota)   Object.assign(cfg.quota,   data.quota)
+      if (data.search)  Object.assign(cfg.search,  sanitizeForEdit(data.search))
+      if (data.smtp) {
+        secretSet.smtpPassword = data.smtp.password === '****'
+        Object.assign(cfg.smtp, sanitizeForEdit(data.smtp))
+      }
+      if (data.security) Object.assign(cfg.security, data.security)
+      if (data.byok)    Object.assign(cfg.byok,    data.byok)
+      if (data.mcp)     Object.assign(cfg.mcp,     data.mcp)
+    } catch {
+      // 后端未启动时静默，使用默认值
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function saveConfig(patch: Record<string, Record<string, unknown>>) {
+    saving.value = true
+    saved.value  = false
+    saveError.value = ''
+    const adminStore = useAdminStore()
+    const cleanPatch: Record<string, any> = {}
+    for (const [section, vals] of Object.entries(patch)) {
+      cleanPatch[section] = stripUnchangedPasswords(vals)
+    }
+    try {
+      const res = await adminStore.authFetch('/api/v1/admin/config', {
+        method: 'PATCH',
+        body: JSON.stringify({ patch: cleanPatch }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.detail || `保存失败（${res.status}）`)
+      }
+      for (const [section, vals] of Object.entries(cleanPatch)) {
+        const target = (cfg as Record<string, Record<string, unknown>>)[section]
+        if (target) Object.assign(target, vals)
+      }
+      if (cleanPatch.embedding?.api_key) secretSet.embeddingApiKey = true
+      if (cleanPatch.smtp?.password) secretSet.smtpPassword = true
+      saved.value = true
+      setTimeout(() => { saved.value = false }, 3000)
+    } catch (e) {
+      saveError.value = e instanceof Error ? e.message : String(e)
+      setTimeout(() => { saveError.value = '' }, 5000)
+    } finally {
+      saving.value = false
+    }
+  }
+
+  return { cfg, loading, saving, saved, saveError, secretSet, databaseInitializationSupported, fetchConfig, saveConfig }
+})

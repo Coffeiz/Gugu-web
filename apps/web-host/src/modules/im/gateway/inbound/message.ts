@@ -109,7 +109,13 @@ export function createImMessageMaterializer(options: {
     if(options.fitImage){
       await authorize(signal)
       const original=await readBytes(row,64*1024*1024,signal)
-      const fitted=await options.fitImage({bytes:original,ext:row.ext,...(row.mime?{mime:row.mime}:{})},signal??new AbortController().signal)
+      let ext = row.ext
+      // 旧 QQ 附件可能保留了转换前的文件后缀，核对实际格式和已记录的 MIME。
+      if (scope.platform === 'qq' && imageMimes[ext.toLowerCase()] !== row.mime) {
+        const detected = imageSize(original).type
+        if (detected && imageMimes[detected] && imageMimes[detected] === row.mime) ext = detected
+      }
+      const fitted=await options.fitImage({bytes:original,ext,...(row.mime?{mime:row.mime}:{})},signal??new AbortController().signal)
       await authorize(signal)
       if(!fitted||!['image/jpeg','image/png','image/gif','image/webp','image/bmp','image/tiff'].includes(fitted.mime)
         ||!fitted.bytes.length||fitted.bytes.length>64*1024*1024||!Number.isSafeInteger(fitted.width)||!Number.isSafeInteger(fitted.height)

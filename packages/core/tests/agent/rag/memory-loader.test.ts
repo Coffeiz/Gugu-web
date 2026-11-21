@@ -29,8 +29,8 @@ it('只读取 owner 索引，过滤异主文档并补入 daily；向量只接收
       { document_id: parent, parent_document_id: parent, chunk_index: 0, chunk_count: 1, source_type: 'memory', source_id: 'profile', title: '用户画像', summary: '偏好咖啡', content: '偏好咖啡', version: 'profile-v1', scope: { owner_user_id: owner, scope_type: 'owner', scope_id: '' }, metadata: {} },
       { document_id: 'leak', parent_document_id: 'leak', chunk_index: 0, chunk_count: 1, source_type: 'memory', source_id: 'profile', title: '不应读取', content: '他人正文', version: 'v1', scope: { owner_user_id: '08a80873-5266-43b9-a27c-d288b602a9cb', scope_type: 'owner', scope_id: '' }, metadata: {} },
     ] }),
-    [`${owner}/.agent/daily.md`]: '## 2026-09-12\n- 今天完成测试\n',
-    [`${owner}/.agent/memory_vec.json`]: JSON.stringify({
+    [`${owner}/.agent/memories/daily.md`]: '## 2026-09-12\n- 今天完成测试\n',
+    [`${owner}/.agent/memories/memory_vec.json`]: JSON.stringify({
       [`rag:${parent}:profile-v1:0`]: { t: 'provider:model:2', v: [0.25, 0.75] },
       stale: { t: 'old-model', v: [1] },
     }),
@@ -44,9 +44,9 @@ it('空 pattern.json 不会从旧 facts 文件复活已删除的行为记忆', a
   const result = await prepareMemory({
     ownerId: owner, scopes: ownerScopes, sourceFilter: 'pattern', snapshotRevision: '', snapshotText: '', vectorVersion: '',
   }, noScopeState, memoryFileStore({
-    [`${owner}/.agent/pattern.json`]: '',
-    [`${owner}/.agent/facts.json`]: JSON.stringify([{ id: 'legacy', text: '过期行为模式' }]),
-    [`${owner}/.agent/facts.md`]: '- 更旧的行为模式',
+    [`${owner}/.agent/memories/pattern.json`]: '',
+    [`${owner}/.agent/memories/facts.json`]: JSON.stringify([{ id: 'legacy', text: '过期行为模式' }]),
+    [`${owner}/.agent/memories/facts.md`]: '- 更旧的行为模式',
   }))
   expect(result.documents).toEqual([])
 })
@@ -66,7 +66,7 @@ it('scope owner 不匹配时拒绝读取；已 tombstone 的群 scope 不产生�
     ownerId: owner, scopes: [{ type: 'group', id: 'group-7', ownerId: owner, platform: 'qq', botId: 'bot-1', groupId: 'group-7' }],
     sourceFilter: 'all', snapshotRevision: '', snapshotText: '', vectorVersion: '',
   }, scopeState, memoryFileStore({
-    [`${owner}/.agent/im/qq/bot-1/groups/group-7/profile.json`]: JSON.stringify({ text: '群内项目' }),
+    [`${owner}/.agent/memories/im/qq/bot-1/groups/group-7/profile.json`]: JSON.stringify({ text: '群内项目' }),
   }))
   expect(requested).toBe(1)
   expect(result.documents).toEqual([])
@@ -76,10 +76,10 @@ it('scope owner 不匹配时拒绝读取；已 tombstone 的群 scope 不产生�
 it('群 scope 使用已授权 owner 下的资料文件投影，并按 snapshot 去重', async () => {
   const scope = { type: 'group' as const, id: 'group-7', ownerId: owner, platform: 'qq', botId: 'bot-1', groupId: 'group-7' }
   const files = memoryFileStore({
-    [`${owner}/.agent/im/qq/bot-1/groups/group-7/profile.json`]: JSON.stringify({ text: '每周讨论项目进度' }),
-    [`${owner}/.agent/im/qq/bot-1/groups/group-7/summary.json`]: JSON.stringify({ summary: '群摘要不属于可召回来源' }),
-    [`${owner}/.agent/im/qq/bot-1/groups/group-7/daily.md`]: '## 2026-09-12\n- 讨论了发布计划\n',
-    [`${owner}/.agent/im/qq/bot-1/groups/group-7/memory.md`]: '# 项目\n群内项目细节',
+    [`${owner}/.agent/memories/im/qq/bot-1/groups/group-7/profile.json`]: JSON.stringify({ text: '每周讨论项目进度' }),
+    [`${owner}/.agent/memories/im/qq/bot-1/groups/group-7/summary.json`]: JSON.stringify({ summary: '群摘要不属于可召回来源' }),
+    [`${owner}/.agent/memories/im/qq/bot-1/groups/group-7/daily.md`]: '## 2026-09-12\n- 讨论了发布计划\n',
+    [`${owner}/.agent/memories/im/qq/bot-1/groups/group-7/memory.md`]: '# 项目\n群内项目细节',
   })
   const result = await prepareMemory({
     ownerId: owner, scopes: [scope], sourceFilter: 'all', snapshotRevision: '', snapshotText: '', vectorVersion: '',
@@ -161,10 +161,10 @@ it('正式 memory 来源按可信 owner scope 重建 1.7.7 owner 与群文档并
           source_type: 'memory', source_id: 'profile', title: '异主内容', summary: '', content: 'foreign secret', version: 'v1',
           scope: { owner_user_id: '08a80873-5266-43b9-a27c-d288b602a9cb', scope_type: 'owner', scope_id: '' }, metadata: {} },
       ] }),
-      [`${owner}/.agent/im/qq/bot-a/groups/group-live/profile.json`]: JSON.stringify({ text: 'owner only fact' }),
-      [`${owner}/.agent/im/qq/bot-a/groups/group-peer/profile.json`]: JSON.stringify({ text: 'owner only fact' }),
-      [`${owner}/.agent/im/qq/bot-a/platform-users/group-live%3Amember-a/profile.json`]: JSON.stringify({ text: 'owner only fact' }),
-      [`${owner}/.agent/im/qq/bot-a/groups/group-old/profile.json`]: JSON.stringify({ text: 'deleted group fact' }),
+      [`${owner}/.agent/memories/im/qq/bot-a/groups/group-live/profile.json`]: JSON.stringify({ text: 'owner only fact' }),
+      [`${owner}/.agent/memories/im/qq/bot-a/groups/group-peer/profile.json`]: JSON.stringify({ text: 'owner only fact' }),
+      [`${owner}/.agent/memories/im/qq/bot-a/platform-users/group-live%3Amember-a/profile.json`]: JSON.stringify({ text: 'owner only fact' }),
+      [`${owner}/.agent/memories/im/qq/bot-a/groups/group-old/profile.json`]: JSON.stringify({ text: 'deleted group fact' }),
     }),
   })
   const documents = await source(owner, null)

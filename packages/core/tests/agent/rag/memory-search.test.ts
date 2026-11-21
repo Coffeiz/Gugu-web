@@ -21,7 +21,7 @@ const store: MemoryRagStorageReader = {
         source_type: 'memory', source_id: 'profile', title: '不应读取', content: 'foreign coffee', version: 'v1',
         scope: { owner_user_id: other, scope_type: 'owner', scope_id: '' }, metadata: {} },
     ] })
-    if (key === `${owner}/.agent/memory_vec.json`) return JSON.stringify({
+    if (key === `${owner}/.agent/memories/memory_vec.json`) return JSON.stringify({
       'rag:memory:profile:profile:0:v1:0': { v: [1, 0], t: 'test-embedding-v1' },
     })
     return null
@@ -202,8 +202,8 @@ describe('search_memory 经 Core RAG 和实际工具 dispatch', () => {
             source_type: 'memory', source_id: 'profile', title: '用户画像', content: 'coffee after lunch',
             version: 'v1', scope: { owner_user_id: owner, scope_type: 'owner', scope_id: '' }, metadata: {} },
         ] })
-        if (key === `${owner}/.agent/daily.md`) return null
-        if (key === `${owner}/.agent/memory_vec.json`) {
+        if (key === `${owner}/.agent/memories/daily.md`) return null
+        if (key === `${owner}/.agent/memories/memory_vec.json`) {
           markVectorRead()
           expect(signal).toBeDefined()
           return new Promise((_resolve, reject) => {
@@ -239,5 +239,30 @@ describe('search_memory 经 Core RAG 和实际工具 dispatch', () => {
     const fixture = createFixture()
     expect(await fixture.dispatch({ query: '   ' })).toMatchObject({ successful: true, value: { query: '', results: [], has_more: false } })
     expect(await fixture.dispatch({ query: 'coffee', limit: 26 })).toMatchObject({ successful: false, executed: false })
+  })
+})
+
+
+it('正文未缓存向量时只补算已授权的词法候选，并使用混合排序', async () => {
+  const readMissing = vi.fn(async (documents: readonly { id: string }[]) =>
+    new Map(documents.map(document => [document.id, [1, 0]])))
+  const search = createMemorySearch({
+    async resolveScopes() { return [{ ownerId: owner, type: 'owner', id: owner }] },
+    async authorize() { return true },
+    async snapshot() { return { revision: 'missing-memory-vectors', text: '' } },
+    storage: () => ({
+      async readText({ key }) {
+        return key.endsWith('/memory.md') ? '## 记录长期记忆：咖啡\ncoffee after lunch' : null
+      },
+    }),
+    scopeState: { async getMemoryScopeState() { throw new Error('无需群聊状态') } },
+    async vectors() { return { version: 'synthetic', embed: async () => [1, 0], readMissing } },
+  })
+  const result = await search(identity, { query: 'coffee', source: 'memory' }, new AbortController().signal)
+  expect(readMissing).toHaveBeenCalledOnce()
+  expect(readMissing.mock.calls[0]?.[0]).toEqual([expect.objectContaining({ source_id: 'memory' })])
+  expect(result).toMatchObject({
+    strategy: 'hybrid',
+    results: [expect.objectContaining({ source_id: 'memory', text: expect.stringContaining('coffee after lunch') })],
   })
 })

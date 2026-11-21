@@ -1,9 +1,11 @@
+import { renderAgentCharts } from '../../../../agent/charts.js'
 import { randomUUID } from 'node:crypto'
 import { FeishuApiError, type createFeishuClient } from '@gugu/gateway/feishu'
-import { buildFeishuCardElements, createFeishuSender, type FeishuDeliveryReceipt } from '@gugu/gateway/feishu'
+import { buildFeishuStreamingCard, createFeishuSender, type FeishuDeliveryReceipt } from '@gugu/gateway/feishu'
 import type { RunEvent } from '@gugu/core/agent'
-import { FeishuPresentation, type FeishuToolEvent, type FeishuToolSummaryPolicy } from '@gugu/gateway/feishu'
-import { createFeishuRunEventProjector, validFeishuChartPng, type FeishuChartRenderer } from './run-events.js'
+import { FeishuPresentation, type FeishuToolSummaryPolicy } from '@gugu/gateway/feishu'
+import { createFeishuRunEventProjector, type FeishuStreamFinal, type FeishuStreamEvent } from '@gugu/gateway/feishu'
+import { validImChartPng as validFeishuChartPng, type ImChartRenderer as FeishuChartRenderer } from '@gugu/gateway'
 import type { ChartRequest } from '@gugu/charts/render'
 
 type ObjectValue = Record<string, unknown>
@@ -11,9 +13,6 @@ const object = (value: unknown): value is ObjectValue => value !== null && typeo
 const chars = (value: string): number => [...value].length
 const segment = /^[A-Za-z0-9_-]{1,256}$/
 
-export interface FeishuStreamFinal { type: 'final'; text: string; cancelled?: boolean; hasFiles?: boolean }
-export type FeishuStreamEvent = { type: 'token'; text: string } | FeishuStreamFinal | FeishuToolEvent
-  | { type: 'round_end' } | { type: 'chart_image'; source: string; png: Uint8Array }
 export interface FeishuStreamOptions {
   placeholder?: string; showIntermediateReplies?: boolean; signal?: AbortSignal
   toolSummary?: FeishuToolSummaryPolicy
@@ -25,16 +24,6 @@ export interface FeishuStreamReceipt extends FeishuDeliveryReceipt {
   final: FeishuStreamFinal | null
 }
 
-export function buildFeishuStreamingCard(text: string, title = '咕咕思考中', streamingMode = true): ObjectValue {
-  return { schema: '2.0', update_multi: true,
-    config: { streaming_mode: streamingMode, streaming_config: {
-      print_frequency_ms: { default: 70, android: 70, ios: 70, pc: 70 },
-      print_step: { default: 1, android: 1, ios: 1, pc: 1 }, print_strategy: 'fast',
-    }, summary: { content: '' } },
-    header: { title: { tag: 'plain_text', content: title }, template: 'blue' },
-    body: { elements: buildFeishuCardElements(text) },
-  }
-}
 function definitelyRejected(error: unknown): boolean {
   return error instanceof FeishuApiError && (error.operation === 'auth' || error.errorCode !== undefined && error.errorCode !== 0 ||
     error.statusCode !== undefined && error.statusCode >= 300 && error.statusCode < 500)
@@ -161,7 +150,7 @@ export function createFeishuStreamingSender(options: {
     send,
     /** 平台组件入口；只能由单一授权/持久收据投递器调用，禁止observeRun旁路重复发送。 */
     sendRun(receiveId: string, events: AsyncIterable<RunEvent>, args: FeishuStreamOptions & { renderCharts?: FeishuChartRenderer; theme?: ChartRequest['theme'] } = {}) {
-      const projector = createFeishuRunEventProjector(args)
+      const projector = createFeishuRunEventProjector({ ...args, renderCharts: args?.renderCharts ?? renderAgentCharts })
       async function* project(): AsyncIterable<FeishuStreamEvent> { for await (const event of events) yield* await projector.push(event) }
       return send(receiveId, project(), args)
     },

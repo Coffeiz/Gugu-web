@@ -6,7 +6,7 @@ const identity = { ownerId: 'owner-fixture', sessionId: 'session-fixture', runId
 const tick = (() => { let at = 1_800_000_000_000; return () => at += 10 })()
 const response = () => ({ status: 200, cancel() {} })
 
-test('trace gate accepts Python-compatible values and rejects disabled values', () => {
+test('trace gate accepts enabled values and rejects disabled values', () => {
   for (const value of ['1', 'true', 'yes', 'on', ' TRUE ']) assert.equal(loopScopeTraceEnabled(value), true)
   for (const value of [undefined, '', '0', 'false', 'enabled']) assert.equal(loopScopeTraceEnabled(value), false)
 })
@@ -21,6 +21,9 @@ test('Core observations replay as Collector snapshots with request context, usag
     model: 'fixture-model', system: 'system fixture', messages: [{ role: 'user', content: 'synthetic user text' }],
     tools: [{ name: 'lookup', parameters: { type: 'object' } }], headers: { authorization: 'never persist' },
   }, attributes: { provider: 'fixture', protocol: 'openai' } })
+  emit({ kind: 'provider', name: 'timing', round: 1, attributes: { attempt: 1, outcome: 'retry', streamEndMs: 50 } })
+  emit({ kind: 'provider', name: 'request', round: 1, input: { model: 'fixture-model', messages: [{ role: 'user', content: 'synthetic user text' }] } })
+  emit({ kind: 'provider', name: 'timing', round: 1, attributes: { attempt: 2, outcome: 'completed', reusedSocket: true, streamEndMs: 100 } })
   emit({ kind: 'provider', name: 'usage', round: 1, usage: { input: 7, output: 3, cacheRead: 2, cacheWrite: 1 } })
   emit({ kind: 'provider', name: 'complete', round: 1, spanId: `${identity.runId}:round:1:provider`, status: 'success', output: 'synthetic model output' })
   emit({ kind: 'tool', name: 'lookup', round: 1, spanId: `${identity.runId}:round:1:tool:call-1`, parentSpanId: `${identity.runId}:round:1`, status: 'success', input: { query: 'synthetic query' }, output: { result: 'synthetic result' } })
@@ -33,9 +36,13 @@ test('Core observations replay as Collector snapshots with request context, usag
   assert.ok(snapshot)
   assert.equal(snapshot.status, 'success')
   assert.equal(snapshot.input.user_message, 'synthetic user text')
-  assert.equal(snapshot.spans.find(span => span.kind === 'provider')?.input.model, 'fixture-model')
-  assert.equal(snapshot.spans.find(span => span.kind === 'provider')?.output, 'synthetic model output')
+  assert.equal(snapshot.spans.find(span => span.kind === 'llm')?.input.provider_options.model, 'fixture-model')
+  assert.equal(snapshot.spans.find(span => span.kind === 'llm')?.output, 'synthetic assistant output')
   assert.deepEqual(snapshot.spans.find(span => span.kind === 'tool')?.output, { result: 'synthetic result' })
+  assert.deepEqual(snapshot.spans.find(span => span.kind === 'llm')?.attributes.request_timings, [
+    { attempt: 1, outcome: 'retry', streamEndMs: 50 },
+    { attempt: 2, outcome: 'completed', reusedSocket: true, streamEndMs: 100 },
+  ])
   assert.equal(snapshot.usage.cache_read, 2)
   assert.equal(JSON.stringify(snapshot).includes('never persist'), false)
   assert.ok(sent.some(item => item.url.endsWith(`/api/collector/runs/${snapshot.id}/finish`)))

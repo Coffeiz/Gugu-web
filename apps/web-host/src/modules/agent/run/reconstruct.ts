@@ -7,6 +7,7 @@ import { createPersistentAgentRuntime, type PersistentAgentRuntimeOptions } from
 import { createPostgresAgentRunStore } from './store.js'
 import { acceptsWebAgentDispatchInput, type AgentDispatchLease } from './dispatch.js'
 import type { AgentUsageConfig } from './usage.js'
+import { persistRunCompaction, type PrepareCompactedReflection, type StageCompactedReflection } from '../chat/compact.js'
 import { createCanonicalHistoryWriter } from '../chat/write.js'
 import type { AgentToolRegistryOptions, createAgentToolRegistry } from '../tools/registry.js'
 import { createMcpAgentToolPorts, type AgentMcpToolPortsOptions } from '../tools/mcp/ports.js'
@@ -15,7 +16,7 @@ import { createAuthorizedWebAgentProductionRagRunPorts } from '../rag/production
 import { createWebAgentMcpRunPreparation } from '../tools/mcp/prepare.js'
 import { createWebAgentMcpRunAuthorization } from '../tools/mcp/authorize.js'
 import { createAgentMemoryVectorSearchFactory } from '../memory/vectors.js'
-import { createRedisAgentReflectionQueue, createWebAgentReflectionFinalizer } from '../memory/reflection/queue.js'
+import { createWebAgentReflectionFinalizer, type AgentReflectionTurn } from '../memory/reflection/queue.js'
 import { formatAgentHistoryMessageTime } from '../context/time.js'
 
 /** 不含密钥、配置版本或底层异常的可公开错误类型。 */
@@ -27,7 +28,7 @@ export interface WebAgentBinding extends AgentRunBinding {
 /** 从与 Provider 相同的原子绑定中取非密钥用量配置，禁止按模型身份字符串推断。 */
 export function createWebAgentBindingHistory(lease: AgentDispatchLease, binding: WebAgentBinding): PersistentAgentRuntimeOptions['history'] {
   const identity = Object.freeze({ ...lease.identity })
-  const writer = createCanonicalHistoryWriter(async () => binding.usageConfig)
+  const writer = createCanonicalHistoryWriter(async () => binding.usageConfig, { postCommitCompaction: true })
   return { writeHistory: async (client, candidate, history, checkpoint) => {
     if (candidate.ownerId !== identity.ownerId || candidate.sessionId !== identity.sessionId || candidate.runId !== identity.runId
       || history.context.identity.ownerId !== identity.ownerId || history.context.identity.sessionId !== identity.sessionId
@@ -104,16 +105,18 @@ export interface WebAgentReconstructorOptions {
 
 /** 将已配置的 Host 资源与当前租约的上下文、RAG 授权及注册器组合。 */
 export function createWebAgentRagResources(options: {
+  compactionPool?: PersistentAgentRuntimeOptions['pool']
   observation?: AgentObservationPort
   source: Omit<AgentContextAssemblyOptions, 'digest' | 'nextId' | 'select' | 'currentTurn'>
   rag: Omit<Parameters<typeof createAuthorizedWebAgentProductionRagRunPorts>[0], 'lease' | 'selection'> & {
     /** 每个可信 lease 单独创建写端口；只有实际提供的端口才进入授权配置。 */
     toolPorts?(lease: AgentDispatchLease, binding: WebAgentBinding, context: Pick<ContextDataPorts, 'loadTimezone'>): Promise<Partial<Pick<AgentToolRegistryOptions,
-      'conversations' | 'time' | 'knowledge' | 'remember' | 'knowledgeWrites' | 'knowledgeDelete' | 'search' | 'events' | 'calendar' | 'dashboard' | 'fileOverview' | 'workspaces' | 'workspaceMutations' | 'workspaceCreation' | 'scheduledTasks' | 'scheduledTaskWrites' | 'scheduledTaskDelete' | 'diskTrashTools' | 'trash' | 'trashRestore' | 'trashPurge' | 'canvases' | 'canvasPlaceableSearch' | 'canvasCreation' | 'canvasEdits' | 'canvasPlacements' | 'canvasRelations' | 'noteLifecycle' | 'noteWrites' | 'notes' | 'projects' | 'projectMutations' | 'projectDelete' | 'calendarCreate' | 'calendarUpdate' | 'calendarDelete' | 'canvasBatch' | 'canvasDeleteNote' | 'canvasDisconnect' | 'canvasDelete' | 'clientDelete' | 'skills' | 'skillMetadata' | 'skillManagement' | 'skillDelete' | 'callTool' | 'mcpManagement' | 'httpGet' | 'webSearch' | 'webDownload' | 'similarImageSearch' | 'deepResearch' | 'askUser' | 'shell' | 'readFile' | 'viewImage' | 'presentFile' | 'fileFolderDelete' | 'fileDelete' | 'saveUploadedFile' | 'recentAttachments' | 'sendFile' | 'linkButtons' | 'sendEmail'>>>
+      'conversations' | 'time' | 'knowledge' | 'remember' | 'knowledgeWrites' | 'knowledgeDelete' | 'search' | 'events' | 'calendar' | 'dashboard' | 'fileOverview' | 'workspaces' | 'workspaceMutations' | 'workspaceCreation' | 'scheduledTasks' | 'scheduledTaskWrites' | 'scheduledTaskDelete' | 'diskTrashTools' | 'trash' | 'trashRestore' | 'trashPurge' | 'canvases' | 'canvasPlaceableSearch' | 'canvasCreation' | 'canvasEdits' | 'canvasPlacements' | 'canvasRelations' | 'noteLifecycle' | 'noteWrites' | 'notes' | 'projects' | 'projectMutations' | 'projectDelete' | 'calendarCreate' | 'calendarUpdate' | 'calendarDelete' | 'canvasBatch' | 'canvasDeleteNote' | 'canvasDisconnect' | 'canvasDelete' | 'clientDelete' | 'skills' | 'skillMetadata' | 'skillManagement' | 'skillDelete' | 'callTool' | 'mcpManagement' | 'httpGet' | 'webSearch' | 'webDownload' | 'similarImageSearch' | 'deepResearch' | 'askUser' | 'shell' | 'readFile' | 'viewImage' | 'presentFile' | 'fileFolderDelete' | 'fileDelete' | 'saveAttachment' | 'recentAttachments' | 'sendFile' | 'linkButtons' | 'sendEmail'>>>
   }
   compactionInstruction?: string
   /** Web 私聊反思与 Host Node 消费者共享签名模型范围。 */
-  reflection?: Parameters<typeof createRedisAgentReflectionQueue>[0] & { enabled?(): boolean; threshold(): number; diagnose(): void }
+  writeSessionTitle?: (lease: AgentDispatchLease, reply: string, complete: (prompt: string) => Promise<string>) => Promise<void>
+  reflection?: { enqueue(input: AgentReflectionTurn): Promise<boolean>; enabled?(): boolean; diagnose(): void; stageCompaction?: StageCompactedReflection; prepareCompaction?: PrepareCompactedReflection }
   remaining: Omit<WebAgentReconstructionResources, 'source' | 'ragContext' | 'toolRegistry' | 'preparation'> & {
     preparation: Omit<WebAgentReconstructionResources['preparation'], 'configuration'>
   }
@@ -124,8 +127,7 @@ export function createWebAgentRagResources(options: {
   const source = createAgentContextSources({ ...options.source, ...(memoryVectorSearch ? { memoryVectorSearch } : {}) })
   const reflectionFinalizer = options.reflection ? createWebAgentReflectionFinalizer({
     pool: options.rag.pool,
-    enqueue: createRedisAgentReflectionQueue(options.reflection),
-    threshold: options.reflection.threshold,
+    enqueue: options.reflection.enqueue,
     diagnose: options.reflection.diagnose,
   }) : null
   return async (lease: AgentDispatchLease, binding: WebAgentBinding): Promise<WebAgentReconstructionResources> => {
@@ -175,7 +177,7 @@ export function createWebAgentRagResources(options: {
 
       enabledFileDelete: Boolean(toolPorts.diskTrashTools),
 
-      enabledSaveUploadedFile: Boolean(toolPorts.saveUploadedFile),
+      enabledSaveAttachment: Boolean(toolPorts.saveAttachment),
       enabledRecentAttachments: Boolean(toolPorts.recentAttachments),
 
       enabledSendFile: Boolean(toolPorts.sendFile),
@@ -215,14 +217,22 @@ export function createWebAgentRagResources(options: {
         // 将异常交回 Core compactContext，由它按本次上下文预算调用脱敏诊断并执行旧版确定性回退。
         diagnostic: error => { throw error } })
     })
+    const reflectionEnabled = () => (options.reflection?.enabled?.() ?? true)
+      && binding.selection.contextPolicy.loadOwnerContext && binding.selection.contextPolicy.memoryEnabled
+    const writeSessionTitle = options.writeSessionTitle
     const context: WebAgentReconstructionResources['context'] = {
       ...options.remaining.context,
+      ...(writeSessionTitle ? { writeSessionTitle: (input, complete) => writeSessionTitle(lease, input.text, complete) } : {}),
       finalization: { async complete(input) {
         await options.remaining.context.finalization.complete(input)
-        await reflectionFinalizer?.(input, (options.reflection?.enabled?.() ?? true)
-          && binding.selection.contextPolicy.loadOwnerContext && binding.selection.contextPolicy.memoryEnabled)
+        await reflectionFinalizer?.(input, reflectionEnabled())
       } },
       compaction: compactionPort,
+      async persistCompaction(state) {
+        if (options.compactionPool) await persistRunCompaction(options.compactionPool, state, compactionPort, lease.input.userMessageId, undefined,
+          reflectionEnabled() ? options.reflection?.stageCompaction : undefined,
+          reflectionEnabled() ? options.reflection?.prepareCompaction : undefined)
+      },
     }
     return { ...options.remaining, ...(mcp ? { mcp } : {}), context, source, ragContext: rag.ragContext, toolRegistry: rag.toolRegistry,
       preparation: { ...options.remaining.preparation, configuration },

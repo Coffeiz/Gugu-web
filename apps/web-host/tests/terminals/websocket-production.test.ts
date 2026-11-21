@@ -126,7 +126,7 @@ test('Vite 将终端 Cookie WebSocket 转发到 Node，并保留同源检查', a
     userAuth: { secret, async lookupUser() { return { id: owner, isActive: true, securityVersion: 1 } } },
     terminalWebsocket: options,
   })
-  const webRoot = new URL('../../../web/', import.meta.url)
+  const webRoot = new URL('../../../ui/', import.meta.url)
   const { createServer } = createRequire(new URL('package.json', webRoot))('vite') as {
     createServer(options: Record<string, unknown>): Promise<{
       listen(): Promise<void>

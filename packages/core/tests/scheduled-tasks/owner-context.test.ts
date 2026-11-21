@@ -31,7 +31,7 @@ function fixture(memoryEnabled = true) {
   const builder = createWebAgentContextBuilder({
     now,
     staticPrompt(_selection, _identity, style) {
-      return { base: '基础提示词', persona: '', skills: '', policy: '', retrieval: '', skillIndex: '',
+      return { base: '基础提示词', persona: '', skills: '', policy: '', skillIndex: '',
         timezone: 'Asia/Shanghai', now: new Date(now()), afterBasePrompt: JSON.stringify(style) }
     },
     sessionInfo: () => ({}),

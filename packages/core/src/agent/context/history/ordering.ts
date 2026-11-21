@@ -205,11 +205,11 @@ export function restoreHistoryForRequest(row: PersistedHistoryRow, options: Hist
   return { ...message, content }
 }
 
-export function protectedMessageIds(rows: readonly PersistedHistoryRow[], keepRounds = 10): Set<string> {
+export function protectedMessageIds(rows: readonly Pick<PersistedHistoryRow, 'id' | 'runId' | 'roundId' | 'canonicalBatchId'>[], keepRounds = 10): Set<string> {
   const keep = Math.max(1, Math.trunc(keepRounds))
   const latestRun = [...rows].reverse().find(row => row.runId)?.runId
   if (!latestRun || !rows.at(-1)?.runId) {
-    const units: PersistedHistoryRow[][] = []
+    const units: (typeof rows[number])[][] = []
     for (const row of rows) {
       const previous = units.at(-1)
       if (row.canonicalBatchId != null && previous?.[0]?.canonicalBatchId === row.canonicalBatchId)
@@ -294,11 +294,11 @@ export function formatAttachmentReferences(attachments: readonly Block[]): strin
   }
   const parts: string[] = []
   if (images.length)
-    parts.push(`[历史图片附件，仅在用户要求回看/分析时调用 read_file(items=[{attach_id: ...}]) 读取：${images.join('；')}]`)
+    parts.push(`[历史图片附件：${images.join('；')}]`)
   if (videos.length)
-    parts.push(`[历史视频附件，仅在用户要求理解/总结视频时直接调用 read_file(attach_id=...) 原生读取；不要先 save_uploaded_file 或用 Shell/ffmpeg 抽帧，除非用户明确要求抽帧/逐帧分析：${videos.join('；')}]`)
+    parts.push(`[历史视频附件：${videos.join('；')}]`)
   if (files.length)
-    parts.push(`[历史文件附件，仅在用户要求回看/读取内容时，先调用 save_uploaded_file(attach_id) 把附件转存进文件库再读：${files.join('；')}]`)
+    parts.push(`[历史文件附件，用户要求保存时可用 save_attachment(attach_id) 转存到文件库：${files.join('；')}]`)
   return parts.length ? '\n' + parts.join('\n') : ''
 }
 

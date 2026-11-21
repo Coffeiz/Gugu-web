@@ -62,3 +62,20 @@ export function createAgentInteractionDescription<Client>(
     }
   } }
 }
+
+/** 只用可信服务配置生成表单，不投影凭据值。 */
+export function describeMcpCredentialPrompt(server: {
+  id: string; name: string; credentialSlots: unknown; configurationVersion?: string
+}): AgentPromptSpec {
+  const slots: unknown[] = Array.isArray(server.credentialSlots) ? server.credentialSlots : []
+  const fields = slots.map(value => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('凭据槽位无效')
+    const slot = value as Record<string, unknown>, name = slot.id, label = slot.label
+    if (typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(name) || typeof label !== 'string' || !label.trim() || label.length > 120) throw new Error('凭据槽位无效')
+    return { name, label: label.trim(), type: 'secret' as const }
+  })
+  if (!fields.length || fields.length > 16 || new Set(fields.map(field => field.name)).size !== fields.length) throw new Error('凭据槽位无效')
+  return { kind: 'form', title: '补全 MCP 凭据', body: `MCP 服务 [${String(server.name).slice(0, 64)}] 需要凭据，值只会加密保存。`, options: [],
+    secretFields: fields, context: { secret_target: { kind: 'mcp_credentials', server_id: server.id,
+      ...(server.configurationVersion ? { configuration_version: server.configurationVersion } : {}) } } }
+}

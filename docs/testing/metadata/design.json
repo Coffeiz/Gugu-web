@@ -1,9 +1,9 @@
 {
-  "apps/web/tests/design/consoleBanner.test.ts": {
+  "apps/ui/tests/design/consoleBanner.test.ts": {
     "domain": "frontend-ui",
     "layer": "L0",
-    "owner": "apps/web/utils",
-    "productionEntry": "apps/web/src/utils/consoleBanner.ts",
+    "owner": "apps/ui/utils",
+    "productionEntry": "apps/ui/src/shared/utils/consoleBanner.ts",
     "keyBehavior": "主题切换不重复追加控制台横幅",
     "ci": "frontend-test"
   }

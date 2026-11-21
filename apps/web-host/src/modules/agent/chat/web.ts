@@ -15,7 +15,7 @@ import { registerAgentRunStartupLocked } from '../run/start.js'
  */
 export function createPostgresWebAgentChatPreparation(
   pool: Pick<Pool, 'connect'>,
-  options: { dispatchSecret: string; dispatchTtlSeconds: number; observation?: AgentObservationPort },
+  options: { dispatchSecret: string; dispatchTtlSeconds: number; observation?: AgentObservationPort; storageRoot?: string },
 ) {
   if (!options.dispatchSecret) throw new TypeError('Agent dispatch 密钥未配置')
   if (!Number.isSafeInteger(options.dispatchTtlSeconds) || options.dispatchTtlSeconds < 1 || options.dispatchTtlSeconds > 604800)
@@ -48,7 +48,7 @@ export function createPostgresWebAgentChatPreparation(
         attachIds: rows.map(row => row.attach_id),
       }
     },
-    resolveReferences: resolveAgentChatReferences,
+    resolveReferences: (client, owner, input) => resolveAgentChatReferences(client, owner, input, options.storageRoot),
     claimAttachments: claimOwnedChatAttachments,
     bindQueue: bindAgentChatPendingQueue,
     enqueueDispatch(client, identity, input, ttlSeconds) {

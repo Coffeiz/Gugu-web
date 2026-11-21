@@ -113,8 +113,19 @@ export interface ProviderHttpRequest {
   readonly headers: Readonly<Record<string, string>>
   readonly body?: JsonObject | Uint8Array | AsyncIterable<Uint8Array>
   readonly timeoutMs?: number
+  readonly onTiming?: (timing: ProviderConnectionTiming) => void
   /** 只允许显式 local/ollama 的受信配置；普通 BYOK 不因此获得内网权限。 */
   readonly allowLocal?: boolean
+}
+export interface ProviderConnectionTiming {
+  dnsMs?: number
+  poolWaitMs?: number
+  proxyTunnelMs?: number
+  tcpConnectMs?: number
+  tlsHandshakeMs?: number
+  responseHeadersMs?: number
+  proxied?: boolean
+  reusedSocket?: boolean
 }
 export interface ProviderHttpResponse {
   readonly status: number
@@ -141,6 +152,7 @@ export interface ProviderDriverDependencies {
   readonly diagnose?: (code: string, error: unknown) => void
   readonly digest: (value: unknown) => string
   /** HTTP JSON原始usage只交受控Provider探针，不作为SDK对象传入Harness事件。 */
+  readonly onStreamEvent?: () => void
   readonly onUsage?: (rawUsage: unknown, normalizedUsage: Usage) => void
 }
 export interface HistorySanitization {

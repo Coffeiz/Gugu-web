@@ -1,3 +1,5 @@
+import { DEFAULT_LLM_CONTEXT_TOKENS, DEFAULT_LLM_OUTPUT_TOKENS } from '@gugu/core/contracts'
+import { createSerialWorker } from '../workers/admission.js'
 import { shutdownStep } from '../shared/shutdown.js'
 import { createWebRuntimeLog } from '../shared/log-files.js'
 import { createGatewayConfigChangePublisher } from '../modules/im/gateway/bot-config.js'
@@ -78,6 +80,7 @@ import {
 import { createVoicePresetsFileReader } from '../modules/admin/voice.js'
 import { createAdminLlmPresetReader } from '../modules/admin/llm.js'
 import { createPostgresVoiceAvailabilityReader } from '../modules/agent/voice.js'
+import { clearWebReflectionIntervals } from '../modules/agent/memory/reflection/intervals.js'
 import { createMemoryClearer } from '@gugu/core/agent/memory-clear'
 import { embedRagQuery, enqueueAgentRagRebuild, invalidateAgentMemoryRag, readAgentRagRebuildProgress, createSqlRagPersistentIndexReader } from '@gugu/core/agent/rag'
 import { createUserMemoryVectorRebuilder } from '@gugu/core/byok/vector-rebuild'
@@ -141,14 +144,10 @@ import { createPostgresUserBotUnbinder } from '../modules/im/connect/unbind.js'
 import { createQqBotCreator, invalidateOwnerImSnapshots } from '@gugu/core/im/user-bot-create'
 import { createUserBotDeleter } from '@gugu/core/im/user-bot-delete'
 import { createUserBotUpdater } from '@gugu/core/im/user-bot-update'
-import { createQqConnector } from '@gugu/core/im/qq-connect'
-import { createQqConnectHostOptions } from '../modules/im/connect/qq.js'
-import { createFeishuConnector } from '@gugu/core/im/feishu-connect'
-import { createFeishuConnectHostOptions } from '../modules/im/connect/feishu.js'
-import { createWechatConnector } from '@gugu/core/im/wechat-connect'
-import { createWechatConnectHostOptions } from '../modules/im/connect/wechat.js'
-import { createTelegramConnector } from '@gugu/core/im/telegram-connect'
-import { createTelegramConnectHostOptions } from '../modules/im/connect/telegram.js'
+import { createQqConnector, createQqConnectHostOptions } from '../modules/im/connect/platforms/qq/index.js'
+import { createFeishuConnector, createFeishuConnectHostOptions } from '../modules/im/connect/platforms/feishu/index.js'
+import { createWechatConnector, createWechatConnectHostOptions } from '../modules/im/connect/platforms/wechat/index.js'
+import { createTelegramConnector, createTelegramConnectHostOptions } from '../modules/im/connect/platforms/telegram/index.js'
 import { createRedisUserBotReachCleaner } from '../adapters/cache/redis-events.js'
 import { createRedisAccountAttachmentCleaner } from '../adapters/cache/redis-events.js'
 import { createPostgresAccountDeleter, createPostgresAccountPasswordVerifier, createPostgresAdminAccountDeleter } from '../modules/auth/account/delete-store.js'
@@ -158,7 +157,9 @@ import { createPortabilityJobReader } from '@gugu/core/data-portability/read-job
 import { createPostgresUserBotsReader } from '../modules/im/bots.js'
 import { createImPlatformSettingsReader } from '../modules/im/settings.js'
 import { createConfiguredByokEnvelope } from '../modules/byok/crypto.js'
+import { readConfiguredByokMasterKeys } from '../modules/byok/crypto.js'
 import { createByokService } from '../modules/byok/service.js'
+import { createDesktopRemoteDeepResearchExecutor, createDesktopRemoteSearchAvailability, createDesktopRemoteSimilarImageExecutor } from '../modules/agent/tools/search.js'
 import { createByokGateReader } from '../modules/byok/policy.js'
 import { createPostgresAgentEmbeddingSettingsResolver } from '../modules/byok/store.js'
 import { createAgentRagEmbeddingTransportFactory } from '../modules/agent/rag/transport.js'
@@ -176,7 +177,7 @@ import { createUserSkillLister } from '@gugu/core/agent/skills/user-list'
 import { createUserSkillManager } from '@gugu/core/agent/skills/user-management'
 import { createAgentToolRegistry, filterConfiguredWebAgentTools } from '../modules/agent/tools/registry.js'
 import { createCapabilityCatalog } from '@gugu/core/agent/capabilities'
-import { createBuiltinSkillDefinitions } from '@gugu/core/skills'
+import { createBuiltinSkillDefinitions, mergeSkillToolCatalog } from '@gugu/core/skills'
 import { createBundledSkillDocuments } from '@gugu/core/skills/bundled'
 import { createSkillToolCatalog, createRegisteredUserSkillToolNameReader } from '../modules/skills/tools.js'
 import { createSafeEgressSettingsReader } from '../modules/admin/network.js'
@@ -222,6 +223,7 @@ import { createAuthEmailSender, createSmtpTransport } from '../adapters/email/sm
 import { createProjectFileCountListing, createProjectGetter, createProjectListing } from '../modules/projects/store.js'
 import { projectResponse } from '@gugu/core'
 import { createClientOperations } from '../modules/clients/service.js'
+import { createMindFileReferenceResolver, createMindFileReferences } from '../modules/mind/file-references.js'
 import { createPostgresMindReferenceSuggestionPorts } from '../modules/mind/references.js'
 import { createMindReferenceSuggester } from '@gugu/core/mind'
 import { createSqlMindCanvasReader, createSqlMindNoteReader } from '@gugu/core/mind'
@@ -248,13 +250,14 @@ import { createKyselySmtpStore, createUserSmtpSettings } from '@gugu/core/smtp'
 import { encryptEncryptedString as encryptSmtpPassword } from '../adapters/security/encrypted-string.js'
 import { createPostgresProjectDeleteJournal, createLocalProjectUndoJournalStorage } from '../modules/undo/journal.js'
 import { createWebLoopScopeTrace } from '../modules/loopscope/trace.js'
-import { readWebAgentImPrompt } from '../modules/agent/context/prompts.js'
+import { readWebAgentImPrompt, webAgentPromptRoot } from '../modules/agent/context/prompts.js'
 import { createAgentShellSnapshotReader } from '../modules/agent/sandbox/snapshot.js'
 import { createPostgresAgentRunStore } from '../modules/agent/run/store.js'
 import { createPostgresAgentActiveStatusReader, createPostgresAgentDispatch } from '../modules/agent/run/dispatch.js'
 import { createTrackOperations } from '../modules/site/track.js'
 import { createFeedbackNotifier, createFeedbackService, createFeedbackSubmission, createKyselyFeedbackOperations } from '@gugu/core/feedback'
 import { runBestEffort } from '../shared/best-effort.js'
+import { createWebPush } from '../modules/notifications/push.js'
 import { revokeUserSessions } from '../modules/auth/session/revoke.js'
 import { createKyselyProjectCreateRuntime } from '@gugu/core/project-create-data'
 import { createProjectCreator } from '@gugu/core/project-create'
@@ -432,6 +435,7 @@ function imMaintenanceProviderConfig(environment: NodeJS.ProcessEnv, path: strin
     if (!Number.isSafeInteger(parsed) || parsed <= 0) throw new Error('IM 记忆维护模型配置无效')
     return parsed
   }
+
   return {
     provider: text('provider', 'AI__PROVIDER', 'qwen'),
     api_key: text('api_key', 'AI__API_KEY', ''),
@@ -442,8 +446,8 @@ function imMaintenanceProviderConfig(environment: NodeJS.ProcessEnv, path: strin
     reasoning_effort: text('reasoning_effort', 'AI__REASONING_EFFORT', ''),
     ollama_mode: text('ollama_mode', 'AI__OLLAMA_MODE', 'local'),
     ollama_api_mode: text('ollama_api_mode', 'AI__OLLAMA_API_MODE', 'native'),
-    max_tokens: integer('max_tokens', 'AI__MAX_TOKENS', 25_600),
-    context_tokens: integer('context_tokens', 'AI__CONTEXT_TOKENS', 128_000),
+    max_tokens: integer('max_tokens', 'AI__MAX_TOKENS', DEFAULT_LLM_OUTPUT_TOKENS),
+    context_tokens: integer('context_tokens', 'AI__CONTEXT_TOKENS', DEFAULT_LLM_CONTEXT_TOKENS),
     timeout_ms: 300_000,
     ...(objectSetting(values.capability_overrides) ? { capability_overrides: values.capability_overrides as Record<string, boolean> } : {}),
   }
@@ -476,8 +480,9 @@ export async function createWebUiApp(
     removeSession(ownerId: string, sessionId: number, ports: AgentSessionDeletePorts, legacy: () => Promise<boolean>): Promise<boolean>
   },
 ): Promise<{ app: ReturnType<typeof createApp>; startWorkers(): Promise<void>
-  loopScopeTrace: ReturnType<typeof createWebLoopScopeTrace>; agentRunLog: import('@gugu/core/agent').AgentRunLogPort; imOwnerTools: Awaited<ReturnType<typeof createAgentServices>>['imOwnerTools']; imMcpDirectory: ReturnType<typeof createMcpSkillToolDirectory> }> {
+  runAgent: ReturnType<typeof createSerialWorker>; loopScopeTrace: ReturnType<typeof createWebLoopScopeTrace>; agentRunLog: import('@gugu/core/agent').AgentRunLogPort; imOwnerTools: Awaited<ReturnType<typeof createAgentServices>>['imOwnerTools']; imMcpDirectory: ReturnType<typeof createMcpSkillToolDirectory> }> {
   const publisher = redisEvents ?? noRedisEvents
+  const byokMasterKeys: Readonly<Record<string, string>> = await readConfiguredByokMasterKeys(env).catch(() => Object.freeze({}))
   const fileUploads = createPostgresFileUploadOperations(pool, {
     storageRoot: config.storageLocalPath,
     defaultLimitBytes: config.storageDefaultLimitBytes,
@@ -508,7 +513,7 @@ export async function createWebUiApp(
   const imMemoryGroupDailyCompactor = createImMemoryGroupDailyCompactor({
     storage: imMemoryStorage,
     isTombstoned: imMemoryMaintenanceSource.isTombstoned,
-    readPrompt: () => readWebAgentImPrompt('group_compress'),
+    readPrompt: () => readWebAgentImPrompt('group_compress', webAgentPromptRoot(config.storageLocalPath)),
     readModelSettings: () => imMaintenanceProviderConfig(env, resolveConfigOverridePath(env)),
     complete: createStandaloneImMemoryModelCaller({ environment: env }),
   })
@@ -516,7 +521,7 @@ export async function createWebUiApp(
     messages: imMemoryMaintenanceSource.messages,
     storage: imMemoryStorage,
     readModelSettings: () => imMaintenanceProviderConfig(env, resolveConfigOverridePath(env)),
-    readPrompt: scopeType => readWebAgentImPrompt(scopeType === 'group' ? 'group_reflection' : 'member_reflection'),
+    readPrompt: scopeType => readWebAgentImPrompt(scopeType === 'group' ? 'group_reflection' : 'member_reflection', webAgentPromptRoot(config.storageLocalPath)),
     complete: createStandaloneImMemoryModelCaller({ environment: env }),
     diagnose() { console.error('管理员 IM 记忆模型预览 scope 处理失败') },
   })
@@ -585,10 +590,7 @@ export async function createWebUiApp(
     ownerId => publisher.publishResourceChanged({ ownerId, resource: 'im_channels', operation: 'refresh' }))
   const userSkillTools = async (owner: string) => {
     const [builtins, dynamic] = await Promise.all([builtinSkillTools(owner), mcpSkillTools(owner)])
-    const known = new Set(builtins.map(item => item.name))
-    return [...builtins, ...dynamic.filter(item => !known.has(item.name)).map(item => ({
-      name: item.name, description_short: item.description_short, category: 'mcp', enabled: true,
-    }))]
+    return mergeSkillToolCatalog(builtins, dynamic)
   }
   const userSkillManager = createUserSkillManager(core.db, 'postgres', {
     knownTools: createRegisteredUserSkillToolNameReader({
@@ -614,17 +616,26 @@ export async function createWebUiApp(
     createMindNote, mindNoteMutations, mindCanvasCreate, mindCanvasUpdate, mindCanvasDelete,
     mindCanvasNoteMutations, mindCanvasItemUpdate, mindCanvasItemRemove, mindCanvasItemAdd,
     mindGlobalRelationDelete, mindCanvasRelationCreate, mindCanvasRelationDelete, mindRefNodeCreator, publishCanvasChanged,
-  } = createMindServices(core, publisher)
+  } = createMindServices(core, publisher, createMindFileReferenceResolver(pool, config.storageLocalPath))
   const postgresSearchSources = createPostgresGlobalSearchSources(pool)
   const globalSearch = createGlobalSearchOperations(postgresSearchSources)
   const webSearch = process.platform === 'linux' ? createGlobalSearchOperations([
     ...postgresSearchSources,
     ...createDiskFileSearchSources(pool, config.storageLocalPath),
   ]) : globalSearch
-  const mindRefSuggest = createMindReferenceSuggester({
-    ...createPostgresMindReferenceSuggestionPorts(pool),
-    globalSearch,
-  })
+  const mindReferencePorts = createPostgresMindReferenceSuggestionPorts(pool)
+  const diskFileReferences = process.platform === 'linux' ? createMindFileReferences(pool, config.storageLocalPath) : undefined
+  const diskReferenceSuggester = diskFileReferences
+    ? createMindReferenceSuggester({ ...mindReferencePorts, globalSearch, matchingFileReferences: diskFileReferences })
+    : undefined
+  const mindRefSuggest = {
+    ...createMindReferenceSuggester({ ...mindReferencePorts, globalSearch }),
+    ...(diskFileReferences && diskReferenceSuggester ? {
+      suggestWithDiskFiles: (owner: string, query: string, limit: number) =>
+        query.trim().startsWith('/') ? diskFileReferences(owner, query.trim(), limit)
+          : diskReferenceSuggester.suggest(owner, query, limit),
+    } : {}),
+  }
   const publishProjectMutation = createProjectPostCommitPublisher(pool, {
     bumpContextRevision: (ownerId, resource) => publisher.bumpContextRevision(ownerId, resource),
     async publishResourceChanged(event) {
@@ -1013,7 +1024,9 @@ export async function createWebUiApp(
   })
   const ragIndexReader = createSqlRagPersistentIndexReader(core.db, core.backend)
   const readStateLabelOverrides = createAgentStateLabelOverrides(() => readConfigOverride(runtimeConfigPath))
-  const readAgentShellSnapshot = createAgentShellSnapshotReader(pool, core.db, readTerminalSettings)
+  const readAgentShellSnapshot = createAgentShellSnapshotReader(
+    pool, core.db, readTerminalSettings, config.workspaceRuntimeSettings.automaticModeEnabled,
+  )
   const shellMounts = createTerminalWorkspaceMounts(pool, core.db, config.storageLocalPath)
   const updateSandboxRuntime = createSandboxRuntimeUpdater(runtimeConfigPath)
   const readTerminalDetail = createPostgresTerminalDetailReader(pool, core.db, readTerminalAccess)
@@ -1036,6 +1049,14 @@ export async function createWebUiApp(
   })
   terminalPtyManager.startReaper()
   const runtimeLog = createWebRuntimeLog(config.logFile)
+  const configureWebPush = createWebPush(pool, env, error => runtimeLog('web_push.failed', { error }))
+  const webPush = configureWebPush && await pool.query(
+    'SELECT subscription_id, notification_id FROM web_push_outbox LIMIT 0',
+  ).then(() => configureWebPush, async error => {
+    runtimeLog('web_push.failed', { error })
+    await configureWebPush.close()
+    return undefined
+  })
   const terminalPtyRuntime = createTerminalPtyRuntime({
     diagnose: error => runtimeLog('sandbox.command_failed', { error }),
     read: async (owner, terminalId) => {
@@ -1086,8 +1107,9 @@ export async function createWebUiApp(
     wait: waitForMemoryIndexRebuild,
     now: Date.now,
   })
+  const runAgent = createSerialWorker()
   const { scheduledAttempt, agentRunLifecycle, ownerReflectionWork, agentInteractionRespond, agentSecretInteraction, agentRunLog, imOwnerTools } = await createAgentServices({
-    config, pool, core, env,
+    config, pool, core, env, runAgent,
     publisher, capabilitySkills, filesystemAuthorizationConfirmations, readMcpSettings,
     mcpSkillTools, mcpRuntime, projectTrashStorage, projectDirectoryRenamer,
     canRebuildAgentMemoryIndex, bubblewrapRootfs, shellMounts, readAgentShellSnapshot,
@@ -1119,6 +1141,7 @@ export async function createWebUiApp(
   })
   const publishScheduledNotification = config.redisUrl ? createRedisNotificationPublisher(config.redisUrl) : async () => false
   const scheduledDeliveryOptions = {
+    webPushKey: webPush?.publicKey,
     recordImPush: config.redisUrl ? createScheduledImPushHistory(core, {
       get: createRedisValueReader(config.redisUrl),
       eval: createRedisScheduledTaskCommands(config.redisUrl).eval,
@@ -1185,11 +1208,11 @@ export async function createWebUiApp(
     }),
   }
   const scheduledResultDelivery = createPostgresScheduledTaskResultDelivery(pool, publishScheduledNotification, scheduledDeliveryOptions)
-  const scheduledRunNow = config.redisUrl && scheduledAttempt ? createScheduledTaskRunNowRuntime({
+  const scheduledRunNow = config.redisUrl ? createScheduledTaskRunNowRuntime({
     db: core.db, backend: 'postgres', storageRoot: config.storageLocalPath,
     redis: createRedisScheduledTaskCommands(config.redisUrl),
     filesystemAuthorizationEnabled: () => config.workspaceRuntimeSettings.fullUserSandboxAuthorizationEnabled,
-    execution: { attempt: scheduledAttempt,
+    execution: { attempt: scheduledAttempt ?? undefined,
       deliver: scheduledResultDelivery,
       timeZone: userQuotaSettings(config, env).serverTimezone,
     },
@@ -1199,6 +1222,8 @@ export async function createWebUiApp(
       fingerprint: createSecurityEventFingerprint(config.secretKey),
     },
     unavailable(plan) {
+      if (plan.executionMode === 'reminder') return
+      if (!scheduledAttempt) return '定时任务的模型执行能力暂不可用'
       if (plan.workspaceId !== null || plan.filesystemGrantId !== null) return '定时任务的工作区执行能力暂不可用'
       if (!core.receipts && plan.authorizedTools.includes('send_email')) return '定时任务的自动发送邮件工具暂不可用'
     },
@@ -1250,6 +1275,16 @@ export async function createWebUiApp(
         }),
       ])
     },
+  }
+  const desktopRemoteSearch = {
+    core, pool, schemaApplied: searchUsageSchemaApplied,
+    readConfig: () => readConfigOverride(resolveConfigOverridePath(env)), environment: env,
+    keyForVersion: (version: number) => byokMasterKeys[String(version)] ?? '',
+    timezone: userQuotaSettings(config, env).serverTimezone,
+    readSafeEgress: createSafeEgressSettingsReader(env, resolveConfigOverridePath(env)),
+    secretKey: config.secretKey,
+    digest: (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex'),
+    imageStorageRoot: config.storageLocalPath,
   }
   const app = createApp({
     appName: config.appName,
@@ -1667,7 +1702,7 @@ export async function createWebUiApp(
       toolLabels: Object.fromEntries(filterConfiguredWebAgentTools(Object.keys(BUILTIN_AGENT_TOOL_STATE_LABELS))
         .map(name => [name, BUILTIN_AGENT_TOOL_STATE_LABELS[name]!])),
     }),
-    adminPrompts: createAdminPromptOptions(pool),
+    adminPrompts: createAdminPromptOptions(pool, config.storageLocalPath),
     adminConfig: config.configOverridePath ? { path: config.configOverridePath, env } : undefined,
     adminLlmPresetList: config.configOverridePath ? { read: createAdminLlmPresetReader(config.configOverridePath) } : undefined,
     adminVoiceTest: { test: createAdminVoiceTestOperations(config.configOverridePath, env) },
@@ -2021,7 +2056,16 @@ export async function createWebUiApp(
     clearAgentMemory: { clear: createMemoryClearer({
       invalidateMemoryIndex: ownerId => invalidateAgentMemoryRag(core.db, core.backend, ownerId),
       clearOwner: ownerId => {
-        const remove = () => withOwnerMemoryLock(ownerId, () => removeLocalTree(config.storageLocalPath, `${ownerId}/.agent`))
+        const remove = () => withOwnerMemoryLock(ownerId, async () => {
+          await clearWebReflectionIntervals(pool, ownerId)
+          if (config.redisUrl) {
+            const clearSession = createRedisAgentSessionReflectionCleaner(config.redisUrl)
+            const { rows } = await pool.query<{ id: number }>(
+              "SELECT id FROM conversation_sessions WHERE user_id=$1 AND source='web' ORDER BY id", [ownerId])
+            for (const row of rows) await clearSession(ownerId, row.id)
+          }
+          await removeLocalTree(config.storageLocalPath, `${ownerId}/.agent`)
+        })
         return im ? im.clearOwner(ownerId, remove) : remove()
       },
       enqueueMemoryRebuild: ownerId => enqueueAgentRagRebuild(core.db, core.backend, ownerId, 'memory'),
@@ -2030,6 +2074,14 @@ export async function createWebUiApp(
     taskFilesystemAuthorization: createTaskFilesystemAuthorization(core.db, { confirmations: filesystemAuthorizationConfirmations, enabled: createTaskAuthorizationEnabledReader(resolveConfigOverridePath(env), env), fingerprint: createSecurityEventFingerprint(config.secretKey), ...(config.redisUrl ? { recordMetric: createRedisFilesystemAuthorizationMetric(config.redisUrl) } : {}) }),
     taskFilesystemRevoke: { revoke: createTaskFilesystemRevoker(core.db, { revokeConfirmation: (owner, summary, identity) => filesystemAuthorizationConfirmations.revoke(owner, summary, identity), fingerprint: createSecurityEventFingerprint(config.secretKey), ...(config.redisUrl ? { recordMetric: createRedisFilesystemRevokeMetric(config.redisUrl) } : {}) }) },
     ...createByokService(core.db, pool, env),
+    desktopAgentDeepResearch: {
+      run: createDesktopRemoteDeepResearchExecutor(desktopRemoteSearch),
+      available: createDesktopRemoteSearchAvailability(desktopRemoteSearch, 'deepResearch'),
+    },
+    desktopAgentSimilarImageSearch: {
+      run: createDesktopRemoteSimilarImageExecutor(desktopRemoteSearch),
+      available: createDesktopRemoteSearchAvailability(desktopRemoteSearch, 'similarImageSearch'),
+    },
     userSkillDelete: { remove: createUserSkillDeletion(core.db, 'postgres', async ownerId => { await publisher.publishResourceChanged({ ownerId, resource: 'skills', operation: 'refresh' }) }) },
     userSkillList: { list: createUserSkillLister(core.db, 'postgres'), tools: userSkillTools },
     userSkillWrite: { manager: userSkillManager },
@@ -2037,16 +2089,19 @@ export async function createWebUiApp(
       verifyPassword: createPostgresAccountPasswordVerifier(pool),
       remove: accountDeleter,
     },
+    webPush,
     notifications: createKyselyNotificationOperations(core.db, 'postgres'),
     track: createTrackOperations(pool),
   })
+  if (agentRunLifecycle)
+    app.addHook('preClose', async () => { await shutdownStep(runtimeLog, 'agent_runs', () => agentRunLifecycle.close()) })
   app.addHook('onClose', async () => {
+    if (webPush) await shutdownStep(runtimeLog, 'web_push', () => webPush.close())
     if (accountMemoryCleanup) await shutdownStep(runtimeLog, 'account_memory', () => accountMemoryCleanup.close())
     try {
       await shutdownStep(runtimeLog, 'workers', () => backgroundWorkers.stop())
     } finally {
       if (scheduledRunNow) await shutdownStep(runtimeLog, 'scheduled_runs', () => scheduledRunNow.drain())
-      if (agentRunLifecycle) await shutdownStep(runtimeLog, 'agent_runs', () => agentRunLifecycle.close())
       await shutdownStep(runtimeLog, 'mcp', () => mcpRuntime.close())
       await shutdownStep(runtimeLog, 'embedding_rebuild', () => embeddingRebuildRuntime.close())
       await shutdownStep(runtimeLog, 'embedding_transport', () => embeddingTransport.close?.())
@@ -2059,8 +2114,9 @@ export async function createWebUiApp(
       ]))
     }
   })
-  return { app, loopScopeTrace, agentRunLog, imOwnerTools, imMcpDirectory: mcpSkillTools, async startWorkers() {
+  return { app, runAgent, loopScopeTrace, agentRunLog, imOwnerTools, imMcpDirectory: mcpSkillTools, async startWorkers() {
     await agentRunLifecycle?.start()
     await backgroundWorkers.start()
+    webPush?.start()
   } }
 }

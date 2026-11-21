@@ -7,29 +7,11 @@ export interface GuguBootstrap {
 
 const KEY = 'loopscope:gugu-bootstrap'
 
-function normalizeBase(base: string) {
-  return base.replace(/\/+$/, '')
-}
-
-function apiBase(cfg: GuguBootstrap) {
-  const configured = normalizeBase(cfg.apiBase)
-  if (typeof window === 'undefined') return configured
-
-  // 旧版 bootstrap 会把 Gugu 的 /api/v1 地址写入 sessionStorage；
-  // 独立窗口应通过自身的同源代理访问，避免跨端口 CORS 失败。
-  try {
-    const parsed = new URL(configured, window.location.origin)
-    if (parsed.pathname.endsWith('/api/v1') && parsed.origin !== window.location.origin) {
-      return `${window.location.origin}/gugu-api`
-    }
-  } catch {
-    return configured
-  }
-  return configured
-}
+const apiBase = '/gugu-api'
 
 export function saveBootstrap(value: GuguBootstrap) {
-  sessionStorage.setItem(KEY, JSON.stringify({ apiBase: normalizeBase(value.apiBase), accountName: value.accountName }))
+  const accountName = value.accountName?.slice(0, 80)
+  sessionStorage.setItem(KEY, JSON.stringify({ apiBase, accountName }))
   window.dispatchEvent(new CustomEvent('loopscope:bootstrap'))
 }
 
@@ -39,13 +21,12 @@ export function loadBootstrap(): GuguBootstrap | null {
     if (!raw) return null
     const parsed = JSON.parse(raw) as { apiBase?: unknown; accountName?: unknown }
     if (typeof parsed.apiBase !== 'string') return null
-    const safeConfig = {
-      apiBase: normalizeBase(parsed.apiBase),
+    const config = {
+      apiBase,
       ...(typeof parsed.accountName === 'string' ? { accountName: parsed.accountName.slice(0, 80) } : {}),
     }
-    // 清理旧版曾在当前标签 sessionStorage 保存的 Gugu Bearer JWT。
-    sessionStorage.setItem(KEY, JSON.stringify(safeConfig))
-    return safeConfig
+    sessionStorage.setItem(KEY, JSON.stringify(config))
+    return config
   } catch {
     return null
   }
@@ -62,7 +43,7 @@ function guguCsrfHeaders(): Record<string, string> {
 export async function listGuguSessions(): Promise<GuguSession[]> {
   const cfg = loadBootstrap()
   if (!cfg) return []
-  const r = await fetch(`${apiBase(cfg)}/agent/sessions`, { credentials: 'include' })
+  const r = await fetch(`${apiBase}/agent/sessions`, { credentials: 'include' })
   if (!r.ok) throw new Error(`Gugu sessions ${r.status}`)
   return r.json()
 }
@@ -90,7 +71,7 @@ export async function loadMessagePage(
   if (options.beforeId !== undefined) query.set('before_id', String(options.beforeId))
   if (options.afterId !== undefined) query.set('after_id', String(options.afterId))
   const suffix = query.toString() ? `?${query.toString()}` : ''
-  const r = await fetch(`${apiBase(cfg)}/agent/sessions/${sessionId}/messages${suffix}`, { credentials: 'include' })
+  const r = await fetch(`${apiBase}/agent/sessions/${sessionId}/messages${suffix}`, { credentials: 'include' })
   if (!r.ok) throw new Error(`Gugu messages ${r.status}`)
   const data = await r.json()
   const page = data.pagination ?? {}
@@ -173,7 +154,7 @@ export async function sendMessage(
 ): Promise<number | null> {
   const cfg = loadBootstrap()
   if (!cfg) throw new Error('尚未连接 Gugu。请从 Gugu /dev 打开 LoopScope，或在 Settings 配置。')
-  const r = await fetch(`${apiBase(cfg)}/agent/chat`, {
+  const r = await fetch(`${apiBase}/agent/chat`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

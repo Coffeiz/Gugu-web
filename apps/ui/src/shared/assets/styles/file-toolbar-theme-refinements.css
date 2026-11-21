@@ -1,0 +1,264 @@
+/* FileBrowserToolbar contains slot content and several shared child components, so its visual
+ * contract lives here once instead of being repeated in Files/Project pages and each child.
+ * Both light and dark consume the same semantic tokens; theme files only change token values. */
+html[data-theme][data-family] .file-browser-toolbar {
+  --file-toolbar-control-height: var(--control-sm);
+  --file-toolbar-icon-size: 13px;
+  --file-toolbar-fg: var(--control-fg);
+  --file-toolbar-fg-hover: var(--control-fg-strong);
+  --file-toolbar-radius: var(--control-radius);
+  --file-toolbar-font-size: var(--font-size-sm);
+  --file-toolbar-font-weight: var(--font-weight-semibold);
+
+  /* v0.20.4 view toggle geometry: 28px items inside a 2px inset track, with a real moving pill. */
+  --file-view-toggle-item-size: 28px;
+  --file-view-toggle-inset: 2px;
+  --file-view-toggle-gap: 2px;
+  --file-view-toggle-track-radius: 8px;
+  --file-view-toggle-pill-radius: 6px;
+  --pill-bg: var(--segmented-pill-bg);
+  --pill-radius: var(--file-view-toggle-pill-radius);
+  --pill-shadow: var(--segmented-pill-shadow);
+  color: var(--file-toolbar-fg);
+}
+
+/* Slot 里的 ActionButton（如 Files 页「新建 Workspace」）跟随工具栏紧凑规格；
+ * 只收尺寸不动配色，主色实底样式仍由 ActionButton 自身契约负责。 */
+html[data-theme][data-family] .file-browser-toolbar .app-action-button {
+  box-sizing: border-box;
+  min-height: var(--file-toolbar-control-height);
+  height: var(--file-toolbar-control-height);
+  border-radius: var(--file-toolbar-radius);
+  font-size: var(--file-toolbar-font-size);
+  font-weight: var(--file-toolbar-font-weight);
+  line-height: 1;
+}
+
+html[data-theme][data-family] .file-browser-toolbar .file-toolbar-icon-button {
+  width: var(--file-toolbar-control-height);
+  min-width: var(--file-toolbar-control-height);
+  padding: 0;
+}
+html[data-theme][data-family] .file-browser-toolbar .app-action-button[aria-pressed='true'] {
+  background: var(--selection-bg);
+  border-color: var(--action-outline);
+  box-shadow: var(--elevation-card);
+}
+
+/* v0.20.4 history navigation is icon-first: no persistent control surface. Only hover reveals a
+   soft background; disabled arrows simply fade. Keep it out of the generic toolbar button rule so
+   a later token adoption cannot turn it back into an always-visible pill. */
+html[data-theme][data-family] .file-browser-toolbar :is(.nav-hist-btn, .pm-nav-hist-btn) {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--file-toolbar-fg);
+  box-shadow: none;
+  cursor: pointer;
+  transition:
+    color var(--motion-hover-control) var(--motion-ease-standard),
+    background-color var(--motion-hover-control) var(--motion-ease-standard),
+    opacity var(--motion-hover-control) var(--motion-ease-standard);
+}
+html[data-theme][data-family] .file-browser-toolbar :is(.nav-hist-btn, .pm-nav-hist-btn):hover:not(:disabled) {
+  color: var(--file-toolbar-fg-hover);
+  background: var(--action-soft);
+}
+html[data-theme][data-family] .file-browser-toolbar :is(.nav-hist-btn, .pm-nav-hist-btn):disabled {
+  color: var(--file-toolbar-fg);
+  background: transparent;
+  border-color: transparent;
+  cursor: default;
+  opacity: .28;
+}
+
+/* Files used 14px arrows in v0.20.4; the project file breadcrumb used 13px. */
+html[data-theme][data-family] .file-browser-toolbar .nav-hist-btn > svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+html[data-theme][data-family] .file-browser-toolbar .pm-nav-hist-btn > svg {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+html[data-theme][data-family] .file-browser-toolbar .sort-dir-icon {
+  color: inherit;
+  flex-shrink: 0;
+}
+
+html[data-theme][data-family] .file-browser-toolbar .view-toggle {
+  box-sizing: border-box;
+  height: calc(var(--file-view-toggle-item-size) + var(--file-view-toggle-inset) * 2);
+  padding: var(--file-view-toggle-inset);
+  gap: var(--file-view-toggle-gap);
+  flex-shrink: 0;
+  border-radius: var(--file-view-toggle-track-radius);
+  background: var(--segmented-track-bg);
+}
+html[data-theme][data-family] .file-browser-toolbar .view-toggle button {
+  box-sizing: border-box;
+  width: var(--file-view-toggle-item-size);
+  height: var(--file-view-toggle-item-size);
+  padding: 0;
+  border: none;
+  border-radius: var(--file-view-toggle-pill-radius);
+  background: transparent;
+  color: var(--file-toolbar-fg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    color var(--motion-hover-control) var(--motion-ease-standard),
+    background-color var(--motion-hover-control) var(--motion-ease-standard);
+}
+html[data-theme][data-family] .file-browser-toolbar .view-toggle button:hover,
+html[data-theme][data-family] .file-browser-toolbar .view-toggle button.on {
+  color: var(--file-toolbar-fg);
+}
+html[data-theme][data-family] .file-browser-toolbar .view-toggle button:not(.on):hover {
+  background: var(--action-soft);
+}
+html[data-theme][data-family] .file-browser-toolbar .view-toggle button > svg {
+  width: var(--file-toolbar-icon-size);
+  height: var(--file-toolbar-icon-size);
+  flex-shrink: 0;
+}
+
+/* Breadcrumb/navigation follows the same foreground and control height. */
+html[data-theme][data-family] .file-browser-toolbar :is(.breadcrumb, .file-breadcrumb) {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+html[data-theme][data-family] .file-browser-toolbar .breadcrumb-nav {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 4px;
+}
+/* The shared breadcrumb layout hides overflow by default; the toolbar wrapper owns the
+   actual horizontal viewport so narrow paths can scroll instead of being clipped. */
+html[data-theme][data-family] .file-browser-toolbar .breadcrumb-viewport :is(.breadcrumb, .file-breadcrumb) {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+html[data-theme][data-family] .file-browser-toolbar .breadcrumb-viewport :is(.breadcrumb, .file-breadcrumb)::-webkit-scrollbar {
+  display: none;
+}
+html[data-theme][data-family] .file-browser-toolbar :is(.bc-item, .bc-seg) {
+  box-sizing: border-box;
+  min-height: var(--file-toolbar-control-height);
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--file-toolbar-radius);
+  background: transparent;
+  color: var(--file-toolbar-fg);
+  font-size: var(--file-toolbar-font-size);
+  font-weight: var(--file-toolbar-font-weight);
+  line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition:
+    color var(--motion-hover-control) var(--motion-ease-standard),
+    background-color var(--motion-hover-control) var(--motion-ease-standard);
+}
+html[data-theme][data-family] .file-browser-toolbar :is(.bc-item, .bc-seg) .bc-label {
+  display: block;
+  flex: 0 0 auto;
+  min-width: max-content;
+  white-space: nowrap;
+}
+html[data-theme][data-family] .file-browser-toolbar :is(.bc-item, .bc-seg).is-breadcrumb-compressed .bc-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+html[data-theme][data-family] .file-browser-toolbar :is(.bc-item, .bc-seg):hover:not(.active):not(.bc-cur) {
+  color: var(--file-toolbar-fg-hover);
+  background: var(--action-soft);
+}
+html[data-theme][data-family] .file-browser-toolbar :is(.bc-item.active, .bc-cur) {
+  flex: 0 0 auto;
+  min-width: 0;
+  color: var(--file-toolbar-fg);
+  background: transparent;
+}
+html[data-theme][data-family] .file-browser-toolbar :is(.bc-item.bc-drop-target, .bc-seg.bc-drop-target) {
+  color: var(--file-toolbar-fg);
+  background: var(--selection-bg);
+}
+html[data-theme][data-family] .file-browser-toolbar :is(.bc-arrow, .bc-sep) {
+  color: var(--file-toolbar-fg);
+  opacity: 1;
+  flex-shrink: 0;
+}
+
+/* Inline new-folder editor uses the same shared control geometry and input tokens. */
+html[data-theme][data-family] .file-browser-toolbar .new-folder-inline {
+  height: var(--file-toolbar-control-height);
+}
+html[data-theme][data-family] .file-browser-toolbar .new-folder-input {
+  box-sizing: border-box;
+  width: 120px;
+  height: var(--file-toolbar-control-height);
+  padding: 0 9px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--file-toolbar-radius);
+  background: var(--input-bg);
+  color: var(--input-fg);
+  outline: none;
+  font-family: var(--font-sans);
+  font-size: var(--file-toolbar-font-size);
+  line-height: calc(var(--file-toolbar-control-height) - 2px);
+}
+html[data-theme][data-family] .file-browser-toolbar .new-folder-input:hover {
+  border-color: var(--input-border-hover);
+  background: var(--input-bg-hover);
+}
+html[data-theme][data-family] .file-browser-toolbar .new-folder-input:focus {
+  border-color: var(--input-border-focus);
+  background: var(--input-bg-focus);
+}
+html[data-theme][data-family] .file-browser-toolbar .new-folder-input::placeholder {
+  color: var(--input-placeholder);
+}
+
+/* Storage is information, but its text still uses the toolbar foreground instead of a third grey. */
+html[data-theme][data-family] .file-browser-toolbar .storage-pill {
+  height: var(--file-toolbar-control-height);
+  color: var(--file-toolbar-fg);
+}
+html[data-theme][data-family] .file-browser-toolbar .storage-bar-bg { background: var(--surface-soft); }
+html[data-theme][data-family] .file-browser-toolbar .storage-text {
+  color: var(--file-toolbar-fg);
+  font-size: var(--file-toolbar-font-size);
+  font-weight: var(--font-weight-medium);
+}

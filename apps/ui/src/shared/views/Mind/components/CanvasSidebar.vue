@@ -1,0 +1,408 @@
+<template>
+  <DrawerShell
+    ref="drawerShellRef"
+    :open="expanded"
+    :inert="loading"
+    :width="panel === 'projects' ? '284px' : '190px'"
+    :panel-class="panel === 'projects' ? 'project-panel' : ''"
+    :data-project-drawer-dropzone="expanded && panel === 'projects' ? '' : undefined"
+    @pointerdown.stop
+  >
+    <template #header><div class="cd-head">
+      <Transition name="cd-expanded">
+        <div v-if="headerVisible" class="cd-expanded-nav">
+          <span class="cd-title">{{ panel === 'canvases' ? t('mindUi.canvas') : t('mindUi.projects') }}</span>
+          <button class="cd-toggle cd-return" :title="t('mindUi.collapse')" :disabled="drawerAnimating" @click="togglePanel(panel)"><Icon name="action.next" :size="18" /></button>
+        </div>
+      </Transition>
+      <Transition name="cd-compact">
+        <div v-if="!expanded" class="cd-compact-nav" :class="{ 'is-loading': showSkeleton }">
+        <button class="cd-toggle" :title="t('mindUi.canvasList')" :disabled="drawerAnimating" @click="togglePanel('canvases')"><Icon name="navigation.list" :size="18" /></button>
+        <button class="cd-toggle" :title="t('mindUi.projectMaterials')" :disabled="drawerAnimating" @click="togglePanel('projects')"><Icon name="navigation.projects" :size="18" /></button>
+        </div>
+      </Transition>
+    </div></template>
+
+    <!-- 两个面板始终挂载、各自在固定宽度下量高度。开关时只换目标尺寸与可见内容，
+         不会再出现旧面板尺寸被新面板借用一帧的横向/纵向两段动画。 -->
+    <DrawerViewport
+      ref="canvasViewportRef"
+      class="canvas-viewport"
+      data-layout-surface="mind:canvas-drawer"
+      :class="{ 'is-visible': visiblePanel === 'canvases' && contentVisible }"
+    >
+        <section class="cd-content-panel canvas-panel" :class="contentPanelClass('canvases')" :aria-hidden="visiblePanel !== 'canvases'">
+          <CanvasDrawerContent :canvases="canvases" :active-id="activeId" :rename="props.renameCanvas" @create="emit('create')" @open="onOpen" @delete="onDelete" @delete-many="onDeleteMany" />
+        </section>
+    </DrawerViewport>
+
+    <DrawerViewport
+      ref="projectViewportRef"
+      class="project-viewport"
+      data-layout-surface="mind:project-drawer"
+      :class="{ 'is-visible': visiblePanel === 'projects' && contentVisible }"
+    >
+       <section class="cd-content-panel projects-panel" :class="contentPanelClass('projects')" :aria-hidden="visiblePanel !== 'projects'">
+         <div ref="projectListRef" class="cd-list project-list">
+           <DrawerTrack class="project-list-scroll" data-drawer-scroll="projects">
+           <SearchInput v-model="projectQuery" class="project-search" data-scrollbar-inset-header :placeholder="t('mindUi.filterProjects')" @pointerdown.stop />
+           <div v-if="projectsLoading && !projects.length" class="project-skeletons" aria-hidden="true">
+              <span v-for="index in showProjectSkeleton ? 3 : 0" :key="index" class="project-skeleton"></span>
+            </div>
+            <template v-else-if="canvasProjectIdsReady">
+              <!-- 三个状态分组的 key 恒定；几何位移统一由 Runtime 编排。 -->
+              <div class="project-groups" data-layout-collection="mind:drawer:projects">
+                <section v-for="group in visibleProjectGroups" :key="group.status" class="project-group" data-layout-role="group" data-layout-group="mind:drawer:projects" :data-layout-key="group.status">
+                  <button class="project-group-title" :aria-expanded="group.items.length > 0 && openProjectStatuses.has(group.status)" @click="group.items.length && toggleProjectStatus(group.status)">
+                    <span class="project-status-dot" :class="`is-${group.status}`"></span>{{ group.label }}<span>{{ group.items.length }}</span>
+                    <FlipChevron
+                      :open="group.items.length > 0 && openProjectStatuses.has(group.status)"
+                      :size="9"
+                      class="project-group-chevron"
+                    />
+                  </button>
+                  <div
+                    v-if="group.items.length > 0"
+                    class="project-group-content"
+                    data-layout-content="mind:drawer:projects"
+                    :data-layout-open="openProjectStatuses.has(group.status) ? 'true' : 'false'"
+                  >
+                    <div class="project-group-cards">
+                      <ProjectDrawerCard
+                        v-for="project in group.items"
+                        :key="project.id"
+                        :project="project"
+                        :canvas-scale="canvasScale"
+                        :add-to-canvas="addProjectToCanvas"
+                        @add="emit('addProject', project.id)"
+                      />
+                    </div>
+                  </div>
+                </section>
+              </div>
+              <div v-if="!projectsLoading && projectQuery.trim() && !filteredProjects.length" class="project-empty">{{ t('mindUi.noMatchingProjects') }}</div>
+           </template>
+            </DrawerTrack>
+         </div>
+       </section>
+    </DrawerViewport>
+  </DrawerShell>
+</template>
+
+<script setup lang="ts">
+import { useDelayedSkeleton } from '@/composables/core/useDelayedSkeleton'
+import { computed, nextTick, onMounted, ref, watch, type PropType } from 'vue'
+import { useI18n } from 'vue-i18n'
+import Icon from '@/components/common/icons/Icon.vue'
+import FlipChevron from '@/components/common/controls/FlipChevron.vue'
+import type { MindCanvas } from '@/services/api'
+import type { Project } from '@/types/project'
+import ProjectDrawerCard from './ProjectDrawerCard.vue'
+import SearchInput from '@/components/common/controls/SearchInput.vue'
+import DrawerShell from './drawer/DrawerShell.vue'
+import DrawerTrack from './drawer/DrawerTrack.vue'
+import DrawerViewport from './drawer/DrawerViewport.vue'
+import CanvasDrawerContent from './CanvasDrawerContent.vue'
+import { runtime } from '@/interaction/runtime'
+import { MIND_CANVAS_DRAWER_SURFACE_ID, MIND_PROJECT_DRAWER_SURFACE_ID, MIND_PROJECT_OBJECT_TYPE } from '@/interaction/runtime/canvas'
+import { useMindFloatingSurface } from '@/composables/mind/useMindFloatingSurface'
+
+const props = defineProps({
+  loading: Boolean,
+  canvases: { type: Array as PropType<MindCanvas[]>, required: true },
+  activeId: { type: Number as PropType<number | null>, default: null },
+  projects: { type: Array as PropType<Project[]>, required: true },
+  canvasProjectIds: { type: Object as PropType<Set<number>>, required: true },
+  canvasProjectIdsReady: { type: Boolean, default: false },
+  projectsLoading: { type: Boolean, default: false },
+  // 抽屉是 grid Surface，但它的卡片会飞入带相机缩放的 free 画布；把当前画布比例
+  // 暴露给 Runtime Surface，由 Runtime 统一处理代理从抽屉尺寸到画布尺寸的衔接。
+  canvasScale: { type: Number, default: 1 },
+  addProjectToCanvas: {
+    type: Function as PropType<(projectId: number, center: { x: number; y: number }, size: { w: number; h: number }) => Promise<HTMLElement | null>>,
+    required: true,
+  },
+  renameCanvas: {
+    type: Function as PropType<(id: number, title: string) => Promise<unknown>>,
+    required: true,
+  },
+})
+const showSkeleton = useDelayedSkeleton(() => !!props.loading)
+const showProjectSkeleton = useDelayedSkeleton(() => props.projectsLoading && !props.projects.length)
+const { t } = useI18n()
+const emit = defineEmits<{
+  (e: 'create'): void
+  (e: 'open', id: number): void
+  (e: 'delete', id: number): void
+  (e: 'deleteMany', ids: number[]): void
+  (e: 'addProject', id: number): void
+}>()
+
+type Panel = 'canvases' | 'projects'
+const expanded = ref(false)
+const panel = ref<Panel>('canvases')
+const visiblePanel = ref<Panel>('canvases')
+const contentVisible = ref(false)
+const headerVisible = ref(false)
+const projectListRef = ref<HTMLElement | null>(null)
+const drawerShellRef = ref<InstanceType<typeof DrawerShell> | null>(null)
+const canvasViewportRef = ref<InstanceType<typeof DrawerViewport> | null>(null)
+const projectViewportRef = ref<InstanceType<typeof DrawerViewport> | null>(null)
+let projectGroupTogglePending = false
+const projectQuery = ref('')
+const filteredProjects = computed(() => {
+  const query = projectQuery.value.trim().toLowerCase()
+  const available = props.projects.filter(project => !props.canvasProjectIds.has(project.id))
+  return query ? available.filter(project => `${project.name} ${project.client || ''}`.toLowerCase().includes(query)) : available
+})
+const projectGroups = computed(() => [
+  { status: 'active', label: t('mindUi.stages.active'), items: filteredProjects.value.filter(project => project.status === 'active') },
+  { status: 'pending', label: t('mindUi.stages.pending'), items: filteredProjects.value.filter(project => project.status === 'pending') },
+  { status: 'done', label: t('mindUi.stages.done'), items: filteredProjects.value.filter(project => project.status === 'done') },
+])
+// 三个状态分组标题常驻显示，不因为某个状态一时没有项目就整块消失/出现——这块 UI 结构本身
+// 稳定下来后，也顺带绕开了"分组从无到有/从有到无"这种结构性增删的过渡时机问题（比如卡片
+// 挂载和分组自己的入场动画谁先谁后，会露出一帧还没被物理模块接管的本体，见 devlog）。
+const visibleProjectGroups = computed(() => projectGroups.value)
+const openProjectStatuses = ref(new Set<string>(['active', 'pending']))
+const { elementRef: canvasSurfaceRef, isAnimating: canvasAnimating } = useMindFloatingSurface({
+  id: MIND_CANVAS_DRAWER_SURFACE_ID,
+  type: 'mind-drawer',
+  accepts: ['mind-drawer-inactive'],
+  layout: 'grid',
+  motion: { resize: { duration: 350, easing: 'cubic-bezier(.22,1,.36,1)' } },
+  camera: { scale: () => props.canvasScale, pickupDuration: 160 },
+  floating: {
+    open: () => expanded.value && panel.value === 'canvases',
+    scrollKey: 'canvases',
+    maxHeight: () => window.innerHeight * 0.55,
+  },
+})
+const { elementRef: projectSurfaceRef, isAnimating: projectAnimating } = useMindFloatingSurface({
+  id: MIND_PROJECT_DRAWER_SURFACE_ID,
+  type: 'mind-drawer',
+  accepts: () => expanded.value && panel.value === 'projects'
+    ? [MIND_PROJECT_OBJECT_TYPE]
+    : ['mind-drawer-inactive'],
+  layout: 'grid',
+  motion: { resize: { duration: 350, easing: 'cubic-bezier(.22,1,.36,1)' } },
+  camera: { scale: () => props.canvasScale, pickupDuration: 160 },
+  floating: {
+    open: () => expanded.value && panel.value === 'projects',
+    scrollKey: 'projects',
+    maxHeight: () => window.innerHeight * 0.55,
+  },
+})
+const drawerAnimating = computed(() => canvasAnimating.value || projectAnimating.value)
+function contentPanelClass(panelName: Panel) {
+  return { visible: panelName === visiblePanel.value && contentVisible.value }
+}
+function syncDrawerSurfaceElements() {
+  canvasSurfaceRef.value = canvasViewportRef.value?.viewportRef ?? null
+  projectSurfaceRef.value = projectViewportRef.value?.viewportRef ?? null
+}
+
+watch([expanded, panel], () => {
+  void nextTick(() => {
+    syncDrawerSurfaceElements()
+    flushPendingProjectStatus()
+  })
+})
+let pendingProjectStatus: string | null = null
+watch(filteredProjects, () => {
+  void nextTick(() => {
+    flushPendingProjectStatus()
+  })
+}, { immediate: true, flush: 'post' })
+async function runProjectGroupToggle(status: string, opening = !openProjectStatuses.value.has(status)): Promise<void> {
+  const root = projectViewportRef.value?.viewportRef ?? projectListRef.value
+  const group = root?.querySelector<HTMLElement>(`.project-group[data-layout-key="${CSS.escape(status)}"]`)
+  const content = group?.querySelector<HTMLElement>('.project-group-content')
+  if (!root || !content || projectGroupTogglePending) return
+
+  projectGroupTogglePending = true
+  const profile = runtime.getMotionProfile()?.group
+  try {
+    await runtime.runGroupToggle({
+      root,
+      content,
+      opening,
+      mutate: () => {
+        const next = new Set(openProjectStatuses.value)
+        if (opening) next.add(status)
+        else next.delete(status)
+        openProjectStatuses.value = next
+      },
+      waitForLayout: async () => {
+        await nextTick()
+      },
+    duration: profile?.duration,
+    easing: profile?.easing,
+    })
+  } finally {
+    projectGroupTogglePending = false
+    flushPendingProjectStatus()
+  }
+}
+function toggleProjectStatus(status: string) {
+  void runProjectGroupToggle(status)
+}
+function flushPendingProjectStatus() {
+  const status = pendingProjectStatus
+  if (!status || !expanded.value || panel.value !== 'projects' || projectGroupTogglePending) return
+  if (!projectGroups.value.some(group => group.status === status && group.items.length > 0)) return
+  pendingProjectStatus = null
+  void runProjectGroupToggle(status, true)
+}
+function openProjectStatus(status: string) {
+  if (openProjectStatuses.value.has(status)) return
+  if (projectGroupTogglePending) {
+    pendingProjectStatus = status
+    return
+  }
+  const group = projectGroups.value.find(item => item.status === status)
+  if (!expanded.value || panel.value !== 'projects' || !group?.items.length) {
+    pendingProjectStatus = status
+    return
+  }
+  void runProjectGroupToggle(status, true)
+}
+defineExpose({ openProjectStatus })
+async function togglePanel(nextPanel: Panel) {
+  if (drawerAnimating.value) return
+  if (expanded.value && panel.value === nextPanel) {
+    contentVisible.value = false
+    headerVisible.value = false
+    expanded.value = false
+    return
+  }
+  if (expanded.value && panel.value !== nextPanel) {
+    contentVisible.value = false
+    panel.value = nextPanel
+    visiblePanel.value = nextPanel
+    contentVisible.value = true
+    return
+  }
+  panel.value = nextPanel
+  visiblePanel.value = nextPanel
+  contentVisible.value = true
+  await nextTick()
+  headerVisible.value = true
+  expanded.value = true
+  // 内容已经在测量阶段挂载，宽度和高度事务现在可以与内容一起并行展开。
+}
+
+function onOpen(id: number) {
+  emit('open', id)
+}
+function onDelete(canvas: MindCanvas) {
+  emit('delete', canvas.id)
+}
+function onDeleteMany(ids: number[]) {
+  emit('deleteMany', ids)
+}
+
+onMounted(() => {
+  syncDrawerSurfaceElements()
+})
+</script>
+
+<style scoped>
+.cd-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: var(--canvas-toolbar-height);
+  flex-shrink: 0;
+  /* 收起时内容区从一行列表缩到 0、目录头从单枚入口变两枚入口；高度必须同样
+     插值，不能让头部先瞬跳再等内容区收合。 */
+  transition: height .35s cubic-bezier(.22,1,.36,1);
+}
+/* 抽屉标题和返回按钮中心距左右边缘各 25px，与 50px 顶栏的垂直中心对齐。 */
+.cd-expanded-nav { position: absolute; inset: 0; display: flex; align-items: center; width: 100%; box-sizing: border-box; padding: 0 7px 0 25px; }
+.cd-compact-nav { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: space-evenly; width: 100%; height: calc(var(--canvas-toolbar-height) * 2); pointer-events: auto; }
+.cd-toggle { flex-shrink: 0; width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 50%; background: none; color: var(--text-secondary); cursor: pointer; transition: background .18s ease, color .18s ease; }
+/* 收起态仍占用两个控件的位置。 */
+.cd-compact-nav.is-loading .cd-toggle { position: relative; }
+.cd-compact-nav.is-loading .cd-toggle :deep(svg) { visibility: hidden; }
+.cd-compact-nav.is-loading .cd-toggle::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft-hover);
+}
+.cd-toggle:hover, .cd-toggle.active { background: color-mix(in srgb, var(--action-primary) 11%, transparent); color: var(--color-primary); }
+.canvas-drawer:not(.open) .cd-head { height: calc(var(--canvas-toolbar-height) * 2); flex-direction: column; }
+.canvas-drawer:not(.open) .cd-title { opacity: 0; }
+.cd-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; color: var(--text-secondary); font-size: 13px; font-weight: 700; opacity: 0; transition: opacity .15s ease; }
+.canvas-drawer.open .cd-title { opacity: 1; transition-delay: .08s; }
+.cd-return { margin-left: auto; }
+.cd-expanded-enter-active, .cd-expanded-leave-active {
+  transition: opacity .35s cubic-bezier(.22,1,.36,1), filter .35s cubic-bezier(.22,1,.36,1);
+}
+.cd-expanded-enter-from, .cd-expanded-leave-to { opacity: 0; filter: blur(3px); }
+.cd-compact-enter-active, .cd-compact-leave-active { transition: opacity .35s cubic-bezier(.22,1,.36,1), filter .35s cubic-bezier(.22,1,.36,1); }
+.cd-compact-enter-from { opacity: 0; filter: blur(3px); }
+.cd-compact-leave-to { opacity: 0; filter: blur(3px); }
+
+.cd-content-panel { position: relative; width: 100%; opacity: 0; filter: blur(6px); pointer-events: none; transition: opacity .35s cubic-bezier(.22,1,.36,1), filter .35s cubic-bezier(.22,1,.36,1); }
+.cd-content-panel:not(.visible) { overflow: hidden; }
+.cd-content-panel.visible { opacity: 1; filter: blur(0); pointer-events: auto; }
+.canvas-panel { display: flex; flex-direction: column; width: 190px; }
+.projects-panel { width: 284px; }
+.cd-list { box-sizing: border-box; max-height: none; overflow: visible; padding: 0 9px 9px; }
+.project-list { display: flex; flex-direction: column; width: 284px; height: 100%; min-height: 0; gap: 0; }
+.project-list-scroll { flex: 1 1 auto; max-height: none; overflow-y: auto; min-height: 0; padding-bottom: 9px; scrollbar-gutter: auto; }
+
+.project-search {
+  position: sticky;
+  top: 1px;
+  z-index: 2;
+  --input-bg: var(--surface-canvas-card);
+  --input-bg-focus: var(--surface-canvas-card);
+}
+/* 给 sticky 顶边补一个同色像素，卡片滚过筛选框时不会从边缘露出。 */
+.project-search::before {
+  content: '';
+  position: absolute;
+  inset: -2px -1px auto;
+  height: 1px;
+  background: var(--surface-canvas-card);
+  pointer-events: none;
+}
+.project-groups, .project-group-cards { display: flex; flex-direction: column; gap: 6px; }
+.project-groups { gap: 9px; }
+.project-group { display: flex; flex-direction: column; gap: 0; }
+/* 组内容常驻 DOM，开合高度和卡片出现状态由 Runtime 事务控制。 */
+.project-group-content { min-height: 0; overflow: hidden; }
+.project-group-content[data-layout-open="false"]:not([data-runtime-group-animating="true"]) {
+  height: 0 !important;
+  overflow: hidden;
+}
+.project-group-content[data-layout-open="true"]:not([data-runtime-group-animating="true"]) {
+  overflow: visible;
+}
+.project-group-content[data-layout-open="true"]:has(.drawer-project-card:not([data-runtime-active="true"])) { margin-top: 6px; }
+.project-group-content > .project-group-cards { min-height: 0; }
+.project-group-cards { position: relative; min-height: 0; align-self: stretch; }
+.project-group-cards > .drawer-project-card { flex: 0 0 auto; }
+.project-group-title {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; padding: 4px 6px; border: none; border-radius: 6px;
+  background: none; cursor: pointer;
+  font: 700 12px var(--font-sans); color: rgba(0,0,0,.62); letter-spacing: .03em;
+  text-align: left; transition: background .12s;
+}
+.project-group-title:hover { background: rgba(0,0,0,.04); }
+.project-group-title > span:nth-last-child(2) { margin-left: auto; font-size: 10px; font-weight: 400; color: rgba(0,0,0,.38); font-variant-numeric: tabular-nums; }
+.project-group-chevron { margin-left: 3px !important; }
+.project-status-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.project-status-dot.is-pending { background: #d46b6b; }
+.project-status-dot.is-active { background: #c9943a; }
+.project-status-dot.is-done { background: #5a9e88; }
+.project-empty { padding: 18px 8px; color: var(--text-secondary); font-size: 11px; text-align: center; }
+.project-skeletons { display: flex; flex-direction: column; gap: 9px; }
+.project-skeleton { display: block; height: 104px; border-radius: var(--radius-sm); background: rgba(255,255,255,.38); box-shadow: inset 0 1px 0 rgba(255,255,255,.55); }
+</style>

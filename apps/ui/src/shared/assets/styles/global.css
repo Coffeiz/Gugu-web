@@ -1,0 +1,269 @@
+@import './fonts.css';
+@import './variables.css';
+@import './components/card-collections.css';
+/* 文件列表行/表头/checkbox 的唯一 paint owner：文件库、项目编辑卡、回收站共用。
+   全局引入而不是靠 Runtime 行组件挂载才加载——回收站是纯 div 列表，不渲染任何
+   Runtime 组件，若只挂在组件上回收站页会拿到一份没加载的样式表。 */
+@import './filesListRows.css';
+@import './search-highlight.css';
+
+/* 透明窗口的 Shell tint 为 50%。补足模糊取样的 alpha，避免原始图标边缘透出。 */
+html[data-desktop-shell='true'] { --desktop-backdrop-alpha: url(#desktop-backdrop-alpha); }
+
+/* Electron 的拖窗命中区域独立于网页层级，覆盖标题栏的浮层需明确接收鼠标事件。 */
+html[data-desktop-shell='true'] :is(.chat-window, .bm-overlay, .bm-card, .popup-menu-host, .fp-root, .fpw-root:not(.fpw-native)) {
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+svg { shape-rendering: geometricPrecision; }
+
+/* Admin 后台：滚动条不挤压内容宽度——内容变长/变短、滚动条出现/消失时，面板宽度不跳动。
+   所有 Admin 页共用同一个滚动容器 .admin-main（管一次=覆盖所有面板），侧栏导航 .sidebar-nav
+   与内部几处独立滚动的子面板一并列上，同一条规则、别各自散着写。 */
+.admin-main,
+.sidebar-nav,
+.log-table-wrap {
+  scrollbar-gutter: auto;
+}
+
+/* 原生 checkbox 共用公共 Checkbox 组件的 paint token；排除由其他视觉系统绘制的控件。 */
+input[type="checkbox"]:not(.arco-checkbox-icon):not(.app-checkbox__input) {
+  appearance: none; -webkit-appearance: none;
+  width: var(--control-checkbox-size); height: var(--control-checkbox-size); flex-shrink: 0;
+  border: var(--control-checkbox-border-width) solid var(--control-checkbox-border);
+  border-radius: var(--control-checkbox-radius);
+  background: var(--control-checkbox-bg);
+  position: relative;
+  cursor: pointer;
+  box-shadow: var(--control-checkbox-shadow);
+  transition: border-color var(--motion-hover-control) var(--motion-ease-standard);
+}
+input[type="checkbox"]:not(.arco-checkbox-icon):not(.app-checkbox__input):hover {
+  border-color: var(--control-checkbox-border-hover);
+}
+input[type="checkbox"]:not(.arco-checkbox-icon):not(.app-checkbox__input):checked {
+  border-color: var(--control-checkbox-border-checked);
+  box-shadow: var(--control-checkbox-shadow);
+}
+input[type="checkbox"]:not(.arco-checkbox-icon):not(.app-checkbox__input)::before {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  inset: calc(-1 * var(--control-checkbox-fill-inset));
+  border-radius: var(--control-checkbox-radius);
+  background: var(--control-checkbox-bg-checked);
+  opacity: 0;
+  transition: opacity var(--motion-hover-control) var(--motion-ease-standard);
+  pointer-events: none;
+}
+input[type="checkbox"]:not(.arco-checkbox-icon):not(.app-checkbox__input):checked::before {
+  opacity: 1;
+}
+input[type="checkbox"]:not(.arco-checkbox-icon):not(.app-checkbox__input)::after {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  left: 50%; top: 50%; right: auto; bottom: auto;
+  width: var(--control-checkbox-mark-width); height: var(--control-checkbox-mark-height);
+  border-left: var(--control-checkbox-mark-stroke) solid var(--control-checkbox-mark);
+  border-bottom: var(--control-checkbox-mark-stroke) solid var(--control-checkbox-mark);
+  opacity: 0;
+  transform: translate(-50%, -50%) rotate(-45deg) scale(.4);
+  transform-origin: center;
+  transition: opacity var(--motion-hover-control) var(--motion-ease-standard), transform var(--motion-hover-control) var(--motion-ease-standard);
+  pointer-events: none;
+}
+input[type="checkbox"]:not(.arco-checkbox-icon):not(.app-checkbox__input):checked::after {
+  opacity: 1;
+  transform: translate(-50%, -50%) rotate(-45deg) scale(1);
+}
+input[type="checkbox"]:not(.arco-checkbox-icon):not(.app-checkbox__input):focus-visible {
+  outline: 2px solid var(--control-checkbox-border-hover);
+  outline-offset: 2px;
+}
+input[type="checkbox"]:not(.arco-checkbox-icon):not(.app-checkbox__input):disabled {
+  cursor: default;
+  opacity: .55;
+}
+
+/* 悬停抬起 + 按下下沉的通用反馈：文件卡/项目卡统一用这一套手感（真正的“卡片”才抬起）。
+   各自静止态的背景/边框/圆角/圆角阴影不用动，加这个类就有抬起+按下的动效；
+   数值抄项目卡（原来只有项目卡自己有这套效果）。 */
+/* 0.25s 跟 .fc-card（文件卡）的悬停过渡时长对齐——.hover-card-fx 原来是 0.3s，两套手感
+   在同一块画布上并排出现（贴纸 vs 文件/项目引用卡）时，0.05s 的差距肉眼可辨，抬起速度
+   看着不一致。 */
+.hover-card-fx {
+  /* 不在静止态常驻 will-change：页面上的卡片数量较多时会制造大量合成层；阴影也不做
+     连续插值，避免快速掠过卡片时同时触发多张卡片的持续 paint。 */
+  transition: transform var(--motion-hover-card) cubic-bezier(0.34,1.2,0.64,1);
+}
+.hover-card-fx:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(80,90,110,0.13);
+}
+.hover-card-fx:active:not(:has(:active)) {
+  transform: translateY(1px);
+  opacity: 0.93;
+}
+/* :active 会同时命中被点的子元素和所有祖先卡片。只在卡片内部没有任何 active 子元素时
+   才下沉：编辑、阶段、颜色、待办、删除和之后新增的所有控件都会自然保持 hover 状态，
+   不再靠一份会漏项的子元素白名单逐个撤销。画布贴纸的连接提示移至 canvas-card-effects.css。 */
+/* 只要按下反馈、不要悬停抬起：顶栏「上传文件/新建项目」、定时任务「新建任务」按钮、
+   咕咕聊天里的文件条由自己的主题化规则负责阴影——按钮/挤在气泡堆里的文件条，抬起要么跟布局
+   不搭要么显得跟旁边气泡割裂，只保留点击下沉这一半效果。 */
+.press-fx {
+  transition: transform var(--motion-hover-control) ease, opacity var(--motion-hover-control) ease, box-shadow var(--motion-hover-card) ease-out;
+}
+.press-fx.press-fx:hover:not(.msg-file) {
+  --topbar-btn-shadow: 0 4px 14px rgba(80,90,110,0.3);
+  box-shadow: 0 4px 14px rgba(80,90,110,0.3) !important;   /* 按钮面积更小，阴影提到 30% 才看得见；仍不做上浮 */
+}
+.press-fx:active {
+  transform: translateY(1px);
+  opacity: 0.93;
+}
+
+/* date/time input 弹窗跟随系统深色 */
+input[type="date"],
+input[type="datetime-local"],
+input[type="time"],
+input[type="month"] {
+  color-scheme: dark;
+  font-family: var(--font-sans);
+}
+
+html, body, #app {
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-sans);
+  color: var(--content-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  background: var(--surface-page);
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+
+/* 玻璃面板工具类 */
+.glass-card {
+  background: var(--glass-card-background);
+  border: 1px solid var(--glass-card-border);
+  border-radius: var(--card-radius);
+  corner-shape: round;
+  box-shadow: var(--glass-card-shadow);
+  backdrop-filter: var(--glass-card-blur);
+  -webkit-backdrop-filter: var(--glass-card-blur);
+  transition:
+    background var(--glass-card-transition),
+    border-color var(--glass-card-transition),
+    box-shadow var(--glass-card-transition);
+}
+
+/* 段落间距 */
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.section-title { font-size: 15px; font-weight: 700; }
+.section-link { font-size: 13px; color: var(--color-primary); cursor: pointer; }
+
+/* ── 面板左侧栏静态 tint ── */
+.panel-left {
+  background: rgba(255,255,255,0.6);
+  border-right: 1px solid rgba(255,255,255,0.62);
+  box-shadow: inset -1px 0 0 rgba(255,255,255,0.65);
+}
+
+/* 弹窗进场「玻璃 ramp」（机制注释见 BaseModal.vue 的过渡段）：遮罩、玻璃面和卡片位移
+   必须使用同一节奏。模糊半径本身从 0 过渡到各自满值，全程不碰 opacity——否则半透明
+   祖先形成隔离组，backdrop-filter 采不到弹窗后面的页面/窗口。规则放全局是因为
+   BaseModal 的 scoped 样式够不到 slot 里的玻璃面板（slot 内容带的是调用方组件的 scope id）。
+   !important 用于压过 BaseModal 通过 blur prop 写到 .bm-card 上的 inline 样式。 */
+.bm-enter-from .bm-card {
+  background-color: transparent !important;
+  backdrop-filter: blur(0px) !important;
+  -webkit-backdrop-filter: blur(0px) !important;
+}
+.bm-enter-active .bm-card {
+  transition: background-color var(--modal-enter-duration) var(--modal-enter-easing),
+              backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing),
+              -webkit-backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing);
+}
+
+::placeholder { color: var(--text-secondary); opacity: 0.75; }
+
+/* Admin 大窗口与前台弹窗保持同一套原地淡入淡出节奏。 */
+.admin-modal-enter-active,
+.admin-modal-leave-active {
+  transition: opacity var(--modal-enter-duration) var(--modal-enter-easing);
+}
+.admin-modal-enter-active .modal-box {
+  transition: opacity var(--modal-enter-duration) var(--modal-enter-easing);
+}
+.admin-modal-leave-active {
+  transition-duration: var(--modal-leave-duration);
+  transition-timing-function: var(--modal-leave-easing);
+}
+.admin-modal-leave-active .modal-box {
+  transition: opacity var(--modal-leave-duration) var(--modal-leave-easing);
+}
+.admin-modal-enter-from,
+.admin-modal-leave-to { opacity: 0; }
+.admin-modal-enter-from .modal-box,
+.admin-modal-leave-to .modal-box { opacity: 0; }
+
+/* 旧版拖拽物理样式已移除，卡片视觉由 interaction runtime 与组件样式负责。 */
+/* 克隆体：跟着指针弹簧跟随的卡片，抬起阴影 + 毛玻璃强化「拎起来」的感觉。
+   全站唯一定义（文件库/项目编辑卡/看板项目卡的拖拽克隆共用）——别在组件里各自定义。
+   background 带 !important：盖过 cloneNode 保留的源卡 scoped 白底与历史内联底色。 */
+/* box-shadow 也要 !important：便签/文件卡/项目卡各自的静止态阴影都是 scoped 样式（编译后带
+   data-v 属性选择器），特异度比这里的纯类选择器高，不加 !important 会被各自的静止阴影盖掉——
+   活动贴纸（EntitySticker.vue）走的是全局 .glass-card（同特异度、按源码顺序竞争，这里刚好
+   排在后面赢了）侥幸吃到这份"拎起来"的阴影，其它类型全部被自己的静止阴影盖掉、拖起来跟不
+   拖时几乎一样重，看着"各种卡片的拖动悬浮阴影不一样"。全站拖拽克隆的抬起阴影只应该有一份、
+   不该被谁的静止态阴影个别覆盖，这里强制赢。 */
+/* 文件卡 / 文件夹卡 / 项目卡拖拽：Runtime 克隆体可在抓取期间短暂使用背景模糊，不影响
+   常驻源卡片的无 blur 材质。卡片容器自己背景+模糊，不加外圈装饰层（试过用负
+   z-index 子元素做「本体不透明+外圈单独模糊」的分层方案，box-shadow 柔光/backdrop-filter
+   都试过，效果要么是装饰光晕、要么在拖拽自带的 3D 后仰变换下失真变成硬边白框——都不是
+   「卡片本身透出背后模糊内容」，撤回，改回最简单的单层容器）。
+   透明度对照过站内其余玻璃面板量级（--glass-bg 0.56、--glass-bg-hover 0.70），选比二者
+   都更透的 0.5：更高时 20% 见光量对肉眼来说模糊基本不可感知（实测截图确认），0.5 是能看出
+   背后模糊内容、同时不至于完全「只剩玻璃感」的折中点。ProjectModal 内的文件/文件夹卡同时
+   带 .pm-clone-expanded，仍会命中 .fc-card/.folder-card，不用单独再写一条。 */
+/* 文件名和元信息比玻璃层次更需要清晰度：透明祖先会把整张卡降进灰阶抗锯齿合成，细字发虚。
+   文件克隆保留 backdrop-filter 与阴影，但不再用 opacity 叠一层。 */
+/* 图片文件卡：缩略图（.fc-thumb-area）是完全不透明的真实图片，铺在 .fc-card 上层，挡住了
+   卡片自己 backdrop-filter 模糊到的「背后内容」（拖过其他卡片时应该透出模糊的其他卡片，
+   不是把缩略图自己的画面弄模糊）。给 .fc-thumb-area 单独挂一份跟卡片同参数的
+   backdrop-filter（模糊它背后——也就是正被拖过的其他文件卡），图片本身不加 filter，只降
+   透明度让这份模糊透出来，跟卡片主体「半透明白底 + backdrop-filter 模糊背景」的双层观感
+   对齐。 */
+/* 源卡 / 落点卡：隐藏但保留布局占位，让飞动的克隆体看起来就是卡片本体 */
+
+
+/* 顶栏与常驻侧栏本身不再使用 backdrop-filter，因此无需根据拖拽状态切换底层导航材质。
+   Runtime 克隆体的短暂拖拽材质仍由 adoption/runtime.css 单独管理。 */
+/* pointer 驱动拖拽没有原生 drag 光标，整页给个抓取态补回手感 */
+
+/* Runtime 绑定对象的统一 Safari 拖拽契约。selectstart 由唯一绑定入口拦截，编辑控件显式恢复文本选择。 */
+[data-runtime-draggable] {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+}
+[data-runtime-draggable] :is(input, textarea, [contenteditable='true'], [contenteditable='plaintext-only']) {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-user-drag: auto;
+}
+
+/* 多文件拖拽数量徽章（右上角圆形数字） */

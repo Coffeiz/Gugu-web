@@ -32,15 +32,16 @@ export async function insertCalendarEventReminder<DB>(
   const targets = backend === 'postgres' ? sql`${targetJson}::json` : sql`${targetJson}`
   const result = await sql<Record<string, unknown>>`INSERT INTO scheduled_tasks(
     user_id,event_id,reminder_lead_minutes,workspace_id,filesystem_authorization_grant_id,name,payload,cron,schedule_kind,
-    interval_minutes,start_at,end_at,channels,enabled,delivery_targets,authorized_tools,email_attachment_file_ids,last_run_at,last_run_failed,created_at,updated_at
-  ) VALUES(${ownerId},${eventId},${reminder.leadMinutes},NULL,NULL,${reminder.name},${reminder.payload},${reminder.cron},'once',NULL,${start},NULL,${reminder.channels},${enabled},${targets},'[]','[]',NULL,NULL,${timestamp},${timestamp})
-    RETURNING id,enabled,name,payload,cron,schedule_kind,start_at,reminder_lead_minutes,channels,delivery_targets`.execute(tx)
+    interval_minutes,start_at,end_at,channels,enabled,delivery_targets,authorized_tools,email_attachment_file_ids,last_run_at,last_run_failed,created_at,updated_at,execution_mode
+  ) VALUES(${ownerId},${eventId},${reminder.leadMinutes},NULL,NULL,${reminder.name},${reminder.payload},${reminder.cron},'once',NULL,${start},NULL,${reminder.channels},${enabled},${targets},'[]','[]',NULL,NULL,${timestamp},${timestamp},'reminder')
+    RETURNING id,enabled,name,payload,cron,execution_mode,schedule_kind,start_at,reminder_lead_minutes,channels,delivery_targets`.execute(tx)
   const row = result.rows[0]
   if (!row) throw new Error('活动提醒创建失败')
   const id = Number(row.id)
   await enqueueScheduledTaskRagIndex(tx, backend, ownerId, id, timestamp)
   return {
     ...reminder, id, enabled: Boolean(row.enabled), name: String(row.name), payload: String(row.payload ?? ''),
+    executionMode: row.execution_mode === 'instruction' ? 'instruction' : 'reminder',
     cron: String(row.cron), scheduleKind: 'once', startAt: reminderDate(row.start_at, backend),
     leadMinutes: Number(row.reminder_lead_minutes), channels: String(row.channels),
     deliveryTargets: backend === 'sqlite' && typeof row.delivery_targets === 'string' ? JSON.parse(row.delivery_targets) : row.delivery_targets,
@@ -79,10 +80,11 @@ function calendarCreateStore<DB>(db: Kysely<DB>, backend: 'sqlite' | 'postgres',
             return insertCalendarEventReminder(tx, backend, ownerId, event.id, reminder, timestamp)
           },
           async listEventReminders(eventId) {
-            const rows = await sql<Record<string, unknown>>`SELECT id,enabled,name,payload,cron,schedule_kind,start_at,reminder_lead_minutes,channels,delivery_targets
+            const rows = await sql<Record<string, unknown>>`SELECT id,enabled,name,payload,cron,execution_mode,schedule_kind,start_at,reminder_lead_minutes,channels,delivery_targets
               FROM scheduled_tasks WHERE user_id=${ownerId} AND event_id=${eventId} ORDER BY id`.execute(tx)
             return rows.rows.map(row => ({
               id: Number(row.id), enabled: Boolean(row.enabled), name: String(row.name), payload: String(row.payload ?? ''),
+              executionMode: row.execution_mode === 'instruction' ? 'instruction' : 'reminder',
               cron: String(row.cron), scheduleKind: 'once', startAt: reminderDate(row.start_at, backend),
               leadMinutes: Number(row.reminder_lead_minutes), channels: String(row.channels),
               deliveryTargets: backend === 'sqlite' && typeof row.delivery_targets === 'string' ? JSON.parse(row.delivery_targets) : row.delivery_targets,

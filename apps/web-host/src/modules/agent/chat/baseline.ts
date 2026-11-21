@@ -6,7 +6,7 @@ export async function lockCanonicalHistoryBaseline(
   client: PoolClient,
   identity: RunIdentity,
   context: CanonicalRunContext,
-): Promise<void> {
+): Promise<boolean> {
   const baseline = context.historyBaseline
   if (!baseline || context.identity.ownerId !== identity.ownerId || context.identity.sessionId !== identity.sessionId
     || context.identity.runId !== identity.runId)
@@ -19,7 +19,7 @@ export async function lockCanonicalHistoryBaseline(
     [identity.ownerId, identity.sessionId],
   )
   const current = result.rows[0]
-  if (!current || Number(current.baseline) !== baseline.baselineSeq || current.baseline_hash !== baseline.baselineHash
-    || current.snapshot_hash !== expectedSnapshot || (expectedEpoch != null && current.context_epoch !== expectedEpoch))
-    throw new Error('历史基线已变化，拒绝提交压缩结果')
+  if (!current) throw new Error('Agent 会话不存在')
+  return Number(current.baseline) === baseline.baselineSeq && current.baseline_hash === baseline.baselineHash
+    && current.snapshot_hash === expectedSnapshot && (expectedEpoch == null || current.context_epoch === expectedEpoch)
 }

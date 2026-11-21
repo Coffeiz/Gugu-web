@@ -7,6 +7,13 @@ import type { InteractionResolution, RunIdentity } from '@gugu/core/agent'
 import { withPostgresTransaction } from '../../../adapters/database/postgres-transaction.js'
 import { lockAgentRunSession } from './start.js'
 import { claimInteractionResumeLocked } from '../interactions/resume.js'
+import { sealUnrecoverableInteraction } from './store.js'
+
+const expiredInteractionResume = `EXISTS (SELECT 1 FROM agent_interaction_resumes r
+  JOIN interaction_prompts p ON p.id=r.prompt_id AND p.user_id=r.user_id AND p.session_id=r.session_id
+  WHERE r.user_id=d.user_id AND r.session_id=d.session_id AND r.run_id=d.run_id
+    AND p.status='resolved' AND r.completed_at IS NULL AND r.created_at<=clock_timestamp()-interval '2 minutes'
+    AND (r.claim_expires_at IS NULL OR r.claim_expires_at<=clock_timestamp()))`
 
 /** 只保存重建必要的非凭据元数据；正文、附件及引用以用户消息为真源。 */
 interface AgentDispatchBase { userMessageId: number; locale: 'zh-CN' | 'ja-JP' | 'en-US' | null; origin: string | null; accessVersion: string }
@@ -208,6 +215,7 @@ export function createPostgresAgentDispatch(pool: Pick<Pool, 'connect' | 'query'
                   WHERE r.user_id=d.user_id AND r.session_id=d.session_id AND r.run_id=d.run_id AND r.completed_at IS NULL AND p.status='resolved'
                     AND (r.claim_expires_at IS NULL OR r.claim_expires_at<=clock_timestamp())
                     AND NOT EXISTS (SELECT 1 FROM agent_run_interaction_receipts x WHERE x.user_id=r.user_id AND x.session_id=r.session_id AND x.run_id=r.run_id AND x.receipt=r.receipt))))
+            OR (d.state='selected' AND (d.lease_expires_at IS NULL OR d.lease_expires_at<=clock_timestamp()) AND ${expiredInteractionResume})
             OR (d.state='queued' AND NOT EXISTS (SELECT 1 FROM agent_run_dispatch selected WHERE selected.user_id=d.user_id AND selected.session_id=d.session_id AND selected.state='selected'))
             OR (d.state='done' AND d.request_expires_at<=clock_timestamp() AND octet_length(d.payload)>0
               AND (EXISTS (SELECT 1 FROM agent_run_checkpoints c WHERE c.user_id=d.user_id AND c.session_id=d.session_id AND c.run_id=d.run_id AND c.status IN ('completed','cancelled','failed'))
@@ -424,6 +432,24 @@ export function createPostgresAgentDispatch(pool: Pick<Pool, 'connect' | 'query'
         if (active.rowCount) return false
         const session = await client.query<{ execution_state: string }>('SELECT execution_state FROM conversation_sessions WHERE user_id=$1 AND id=$2', [ownerId, sessionId])
         if (session.rows[0]?.execution_state === 'baseline_updating') return false
+        const { rows: [stalled] } = await client.query<{ run_id: string; message_id: number; nonce: Buffer; payload: Buffer }>(`SELECT d.run_id,d.message_id,d.nonce,d.payload FROM agent_run_dispatch d
+          WHERE d.user_id=$1 AND d.session_id=$2 AND d.state='selected'
+            AND (d.lease_expires_at IS NULL OR d.lease_expires_at<=clock_timestamp()) AND ${expiredInteractionResume}
+          FOR UPDATE`, [ownerId, sessionId])
+        if (stalled) {
+          const identity = { ownerId, sessionId, runId: stalled.run_id }
+          const input = decrypt(secret, identity, stalled.nonce, stalled.payload)
+          if (supports(input) && agentDispatchSource(input) !== 'im' && input.userMessageId === stalled.message_id
+            && await sealUnrecoverableInteraction(client, secret, identity, stalled.message_id)) {
+            const args = [ownerId, sessionId, stalled.run_id]
+            await client.query(`UPDATE agent_interaction_resumes SET completed_at=clock_timestamp(),claim_token=NULL,claim_expires_at=NULL
+              WHERE user_id=$1 AND session_id=$2 AND run_id=$3 AND completed_at IS NULL`, args)
+            await client.query(`UPDATE agent_run_dispatch SET state='done',token=NULL,lease_expires_at=NULL,blocked_reason=NULL
+              WHERE user_id=$1 AND session_id=$2 AND run_id=$3`, args)
+            await promoteNext(client, identity)
+            return true
+          }
+        }
         const selected = await client.query('SELECT 1 FROM agent_run_dispatch WHERE user_id=$1 AND session_id=$2 AND state=\'selected\'', [ownerId, sessionId])
         if (!selected.rowCount) await promoteNext(client, scope)
         const expired = await client.query<{ run_id: string; message_id: number; nonce: Buffer; payload: Buffer }>(`SELECT d.run_id,d.message_id,d.nonce,d.payload FROM agent_run_dispatch d

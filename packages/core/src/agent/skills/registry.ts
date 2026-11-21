@@ -1,3 +1,4 @@
+import { builtinSkillKeyPattern, legacyBuiltinSkillKey } from './builtin.js'
 import type { RunIdentity } from '../models.js'
 import type { LoadedSkill, SkillConfiguration, SkillDefinition, SkillMetadata, SkillRegistry, SkillRegistryOptions } from './contracts.js'
 
@@ -15,7 +16,7 @@ function plainRecord(value: unknown): value is Record<string, unknown> {
 
 function metadata(definition: SkillMetadata): SkillMetadata {
   const result: Record<string, unknown> = { id: definition.id, name: definition.name, description: definition.description }
-  for (const key of ['description_short', 'description_long', 'category', 'emoji'] as const) {
+  for (const key of ['key', 'description_short', 'description_long', 'category', 'emoji'] as const) {
     if (definition[key] !== undefined) {
       if (typeof definition[key] !== 'string') throw new Error('技能元数据无效')
       result[key] = definition[key]
@@ -36,6 +37,7 @@ function metadata(definition: SkillMetadata): SkillMetadata {
 export function createSkillRegistry(options: SkillRegistryOptions): SkillRegistry {
   if (typeof options.authorize !== 'function') throw new Error('技能授权配置无效')
   const entries = new Map<string, SkillDefinition>()
+  const builtinKeys = new Set<string>()
   let enabled = new Map<string, boolean>()
 
   function register(definition: SkillDefinition): void {
@@ -44,7 +46,11 @@ export function createSkillRegistry(options: SkillRegistryOptions): SkillRegistr
       || typeof definition.name !== 'string' || !definition.name.trim()
       || typeof definition.description !== 'string' || typeof definition.load !== 'function')
       throw new Error('技能定义无效或重复')
-    entries.set(definition.id, Object.freeze({ ...metadata(definition), load: definition.load }))
+    if (definition.key !== undefined && (definition.source !== 'builtin'
+      || !builtinSkillKeyPattern.test(definition.key) || builtinKeys.has(definition.key))) throw new Error('内置技能键无效或重复')
+    const registered = Object.freeze({ ...metadata(definition), load: definition.load })
+    if (registered.key) builtinKeys.add(registered.key)
+    entries.set(definition.id, registered)
   }
 
   function configure(configuration: SkillConfiguration): void {
@@ -52,17 +58,28 @@ export function createSkillRegistry(options: SkillRegistryOptions): SkillRegistr
       || (configuration.skills !== undefined && !plainRecord(configuration.skills))) throw new Error('技能配置无效')
     const next = new Map<string, boolean>()
     for (const [id, active] of Object.entries(configuration.skills ?? {})) {
-      if (!entries.has(id) || typeof active !== 'boolean') throw new Error('技能配置无效')
+      if (typeof active !== 'boolean') throw new Error('技能配置无效')
+      const legacyKey = builtinKeys.size ? legacyBuiltinSkillKey(id) : undefined
+      if (legacyKey) {
+        if (builtinKeys.has(legacyKey) && !Object.hasOwn(configuration.skills!, legacyKey)) next.set(legacyKey, active)
+        continue
+      }
+      // 已移除技能的稳定键可以保留在配置中。
+      if (!(builtinKeys.size && builtinSkillKeyPattern.test(id)) && (!entries.has(id) || entries.get(id)?.key))
+        throw new Error('技能配置无效')
       next.set(id, active)
     }
     enabled = next
   }
 
   async function allowed(identity: RunIdentity, id: string): Promise<boolean> {
-    if (!entries.has(id) || enabled.get(id) === false) return false
+    const definition = entries.get(id)
+    if (!definition) return false
+    const key = definition.key ?? id
+    if (enabled.get(key) === false) return false
     try {
       const authorized = await options.authorize(Object.freeze({ ...identity }), id)
-      return authorized === true && enabled.get(id) !== false
+      return authorized === true && enabled.get(key) !== false
     } catch { return false }
   }
 
@@ -78,7 +95,7 @@ export function createSkillRegistry(options: SkillRegistryOptions): SkillRegistr
         if (await allowed(trustedIdentity, id)) result.push(metadata(definition))
       }
       // 逐项异步授权期间可能撤销先前条目的配置。
-      return result.filter(item => enabled.get(item.id) !== false)
+      return result.filter(item => enabled.get(item.key ?? item.id) !== false)
     },
     async load(id, identity, signal): Promise<LoadedSkill> {
       signal.throwIfAborted()

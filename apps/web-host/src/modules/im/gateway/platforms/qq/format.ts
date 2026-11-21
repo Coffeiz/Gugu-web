@@ -11,7 +11,7 @@ export async function readTrustedQqReplySettings(pool: Pick<Pool, 'query'>, bind
     if (value !== null && value !== undefined && value !== 'compat' && value !== 'markdown') throw new Error()
     const enabled=row.private_streaming_enabled
     if(enabled!==null&&enabled!==undefined&&typeof enabled!=='boolean')throw new Error()
-    return {messageFormat:value ?? (chatType === 'group' ? 'compat' : 'markdown'),privateStreaming:enabled===true}
+    return {messageFormat:value ?? (chatType === 'group' ? 'compat' : 'markdown'),privateStreaming:enabled!==false}
   } catch { throw new Error('IM 运行回复装配不可用') }
 }
 

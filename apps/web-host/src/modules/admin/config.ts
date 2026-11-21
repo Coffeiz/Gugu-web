@@ -1,6 +1,9 @@
+import { z } from 'zod'
+import { sandboxNetworkPolicy } from './sandbox-network.js'
 import type { FastifyInstance,preHandlerHookHandler } from 'fastify'
 
 import { Client } from 'pg'
+import { readSystemShellEnabled } from '../terminals/settings.js'
 
 import { pingRedis } from '../../adapters/cache/redis-events.js'
 
@@ -17,6 +20,13 @@ export interface AdminConfigOptions {
 type Section = Record<string, unknown>
 const object = (value: unknown): Section => value && typeof value === 'object' && !Array.isArray(value)
   ? value as Section : {}
+
+const quotaBytes = z.number().int().min(64 * 1024 * 1024).max(Number.MAX_SAFE_INTEGER)
+const runtimeSandboxPatch = z.strictObject({
+  ephemeral_quota_bytes: quotaBytes.optional(),
+  persistent_quota_bytes: quotaBytes.optional(),
+  direct_network_policy: sandboxNetworkPolicy.optional(),
+})
 
 function currentData(options: AdminConfigOptions): ConfigDocument {
   const saved = readConfigOverride(options.path)
@@ -38,7 +48,13 @@ function currentData(options: AdminConfigOptions): ConfigDocument {
       redis = { host: url.hostname, port: Number(url.port || (url.protocol === 'rediss:' ? 6380 : 6379)), password: decodeURIComponent(url.password) }
     } catch { /* Node startup validates this value before mounting the routes. */ }
   }
+  const sandbox = object(saved.sandbox)
   const merged: ConfigDocument = {
+    sandbox: {
+      ephemeral_quota_bytes: Number(options.env.SANDBOX__EPHEMERAL_QUOTA_BYTES ?? sandbox.ephemeral_quota_bytes ?? 1024 * 1024 * 1024),
+      ...(typeof sandbox.persistent_quota_bytes === 'number' ? { persistent_quota_bytes: sandbox.persistent_quota_bytes } : {}),
+    },
+    agent: { shell_system_enabled: readSystemShellEnabled(object(saved.agent), options.env) },
     db: { ...db, ...dbSaved },
     redis: { ...redis, ...object(saved.redis) },
     storage: { backend: 'local', local_path: options.env.STORAGE__LOCAL_PATH || '../Gugu-data/users', ...object(saved.storage) },
@@ -99,15 +115,24 @@ export function registerAdminConfigRoutes(app: FastifyInstance, options: AdminCo
     const payload = object(request.body)
     const patch = object(payload.patch)
     if (!Object.keys(patch).length) return reply.code(400).send({ detail: '配置内容无效' })
-    const allowed = new Set(['db', 'redis', 'storage', 'smtp', 'security', 'im'])
+    const allowed = new Set(['db', 'redis', 'storage', 'smtp', 'security', 'im', 'agent', 'sandbox'])
     if (Object.keys(patch).some((key) => !allowed.has(key))) return reply.code(400).send({ detail: '配置段不受支持' })
+    if (Object.hasOwn(patch, 'agent')) {
+      const agent = object(patch.agent)
+      if (Object.keys(agent).length !== 1 || typeof agent.shell_system_enabled !== 'boolean')
+        return reply.code(400).send({ detail: 'Agent 配置仅支持布尔类型的系统范围 Shell 开关' })
+    }
+    if (Object.hasOwn(patch, 'sandbox') && !runtimeSandboxPatch.safeParse(patch.sandbox).success)
+      return reply.code(422).send({ detail: '沙盒运行配置无效，请检查配额和网络规则' })
     const clean = stripUnchangedSecrets(patch)
     const storage = object(clean.storage)
     if (storage.backend !== undefined && storage.backend !== 'local')
       return reply.code(400).send({ detail: 'Gugu 2.0 自托管版只支持本地文件系统' })
     try {
       await updateConfigOverride(options.path, clean, createPosixConfigFileLock())
-      return { ok: true, restart_required: true, detail: '配置已保存，重启 Node Host 后生效' }
+      const restartRequired = Object.keys(clean).some(key => key !== 'agent')
+      return { ok: true, restart_required: restartRequired,
+        detail: restartRequired ? '配置已保存，重启 Node Host 后生效' : '配置已保存' }
     } catch {
       return reply.code(500).send({ detail: '用户运行配置保存失败' })
     }

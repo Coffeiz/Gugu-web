@@ -1,3 +1,4 @@
+import { createSerialWorker, type SerialWorker } from '../../../workers/admission.js'
 import { createMcpManagementTool } from '@gugu/core/tools'
 import { createMcpServerConfigLister } from '@gugu/core/mcp/server-list'
 import { createMcpSettingsReader } from '../../mcp/status.js'
@@ -30,7 +31,7 @@ import { createImHostScans } from './host-scans.js'
 import { createImInteractionRecovery } from './interactions/recover.js'
 import { createGatewayBotConfig, createGatewayConfigChangePublisher, type TrustedGatewayBot } from './bot-config.js'
 import { createGatewaySupervisor } from '@gugu/gateway'
-import { createPlatformConnections } from './platform-connections.js'
+import { createPlatformConnections } from './connections.js'
 import { createQqSocketFactory } from '@gugu/gateway/qq'
 import { createQqMessagePreparer } from './platforms/qq/prepare.js'
 import { readTrustedQqMessageFormat } from './platforms/qq/format.js'
@@ -79,6 +80,7 @@ export interface NodeImHostOptions {
   onReflection?(service: ImReflectionService): void
   observation?: AgentObservationPort
   log?: AgentRunLogPort
+  runAgent?: SerialWorker
   diagnose(code: string, error?: unknown): void
   /** 隔离整链路测试只替换平台/Provider网络，不替换业务resources、权限或持久化。 */
   testing?: { platform?: Pick<Parameters<typeof createPlatformConnections>[0], 'transport' | 'resolve' | 'qqSocket' | 'feishuNetwork' | 'createFeishuSdk'>
@@ -87,6 +89,7 @@ export interface NodeImHostOptions {
 
 /** 默认Python归属不构造任何下方服务；Node显式交接后才进入实际生产组件装配。 */
 export function createNodeImHostRuntime(options: NodeImHostOptions) {
+  const runAgent = options.runAgent ?? createSerialWorker()
   let reflection: ImReflectionService | undefined, lastIssue: string | null = null
   let sessionDelete:ReturnType<typeof createImSessionDelete>|undefined
   const report = (code: string, error?: unknown) => { lastIssue = code; try { options.diagnose(code, error) } catch { /* 诊断不能改变持久消息语义。 */ } }
@@ -315,8 +318,8 @@ export function createNodeImHostRuntime(options: NodeImHostOptions) {
             pin ? { identity: lease.identity, modelIdentity: pin.modelIdentity, accessScopeHash: pin.accessScopeHash } : undefined)
         }, diagnose: report,
       })
-      const dispatchWorker = createAgentDispatchWorker({ dispatch, reconstruct, failStart: dispatch.failStart })
-      const scans = createImHostScans({ pool: options.pool, secretKey: options.secretKey, kick: dispatchWorker.kick, concurrency: 2, diagnose: report,
+      const dispatchWorker = createAgentDispatchWorker({ dispatch, reconstruct, failStart: dispatch.failStart, runExclusive: runAgent })
+      const scans = createImHostScans({ pool: options.pool, secretKey: options.secretKey, kick: dispatchWorker.kick, concurrency: 1, diagnose: report,
         async recover(identity, input, signal) {
           const route = await readRoute(identity), actorInput = imActorInputForDispatch({ identity, input }, route), snapshot = await access.snapshot(actorInput), actor = snapshot.actor(actorInput)
           const resources = await createImProductionDelivery(production, { identity, input, route, actor })
@@ -333,18 +336,19 @@ export function createNodeImHostRuntime(options: NodeImHostOptions) {
             sourceAttentionKind: input.im.attention?.sourceAttentionKind ?? null, proactive: input.im.attention?.proactive ?? false } })
         },
       })
-      const interaction = createImInteractionRecovery({ pool: options.pool, secretKey: options.secretKey, dispatch, store, reconstruct,
+      const interaction = createImInteractionRecovery({ pool: options.pool, secretKey: options.secretKey, dispatch, store, reconstruct, runAgent,
         invalidateCredential: (ownerId, serverId) => options.mcpRuntime!.invalidate(ownerId, serverId) })
       sessionDelete=createImSessionDelete({pool:options.pool,secretKey:options.secretKey,pendingAsks,cancellation,
         wakeDispatch:()=>runtime.wake('dispatch'),wakeInteractions:()=>runtime.wake('interaction'),wakeMaintenance:()=>runtime.wake('maintenance'),diagnose:report})
-      const worker = createNodeImWorker({ secretKey: options.secretKey, commands: workerRedis, ingress: workerIngress, concurrency: 2,
+      const worker = createNodeImWorker({ secretKey: options.secretKey, commands: workerRedis, ingress: workerIngress, concurrency: 1,
         ownership: { runtime: 'node', pythonGatewayStopped: true, pythonImConsumerStopped: true }, diagnose: report })
       supervisor = createGatewaySupervisor({ read: config.read, subscribe: config.subscribe, connect: connections.connect, report })
-      return { supervisor, worker, reflection, pauseIngress: connections.pauseIngress, drainRuns: scans.close, scanDispatch: scans.scanDispatch, recoverDeliveries: scans.recoverDeliveries,
+      return { supervisor, worker, reflection, pauseIngress: connections.pauseIngress,
+        async drainRuns() { await Promise.all([dispatchWorker.close(), scans.close(), interaction.close()]) },
+        scanDispatch: scans.scanDispatch, recoverDeliveries: scans.recoverDeliveries,
         async maintain(signal:AbortSignal){await historyRetention.scan(signal)},
         pumpPending: signal => ingress.pumpPendingAsks(signal).then(() => undefined), pumpInteractions: interaction.pump,
         async close() {
-          interaction.close()
           const results = await Promise.allSettled([...cleanup].reverse().map(close => Promise.resolve().then(close)))
           if (results.some(result => result.status === 'rejected')) throw new Error('IM 生产资源清理未完成')
         },

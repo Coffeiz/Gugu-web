@@ -4,6 +4,10 @@ import { CoreError, dataContext } from '../../contracts/index.js'
 import type { AgentSessionRepository } from './application.js'
 import { asciiDecimalDigits, decimalDigitPattern } from '../../shared/unicode-decimal.js'
 
+// 桌面历史、跳转和引用正文使用同一条展示消息条件，查询统一使用 m 作为消息别名。
+export const desktopDisplayMessage = sql`m.role IN ('user','assistant')
+  AND (m.content_json IS NULL OR m.role='user') AND m.canonical_batch_id IS NULL`
+
 /** SQL 只访问指定 owner；SQLite 的 owner 存储采用 Core 既有的无连字符格式。 */
 export function createSqlAgentSessionRepository(db: Kysely<any>, backend: 'postgres' | 'sqlite'): AgentSessionRepository {
   const ownerKey = (owner: string) => backend === 'sqlite' ? owner.replaceAll('-', '') : owner
@@ -24,7 +28,12 @@ export function createSqlAgentSessionRepository(db: Kysely<any>, backend: 'postg
     }),
     locate: (ownerId, messageId) => guarded(async () => {
       const owner = ownerKey(ownerId)
-      const result = await sql<{ id: number; session_id: number }>`SELECT message.id, message.session_id FROM conversation_messages AS message JOIN conversation_sessions AS session ON session.id=message.session_id WHERE message.id=${messageId} AND session.user_id=${owner} AND message.content_json IS NULL AND message.role <> 'summary'`.execute(db)
+      const visible = backend === 'sqlite'
+        ? sql`(s.source IS NULL OR s.source='web') AND ${desktopDisplayMessage}`
+        : sql`m.content_json IS NULL AND m.role <> 'summary'`
+      const result = await sql<{ id: number; session_id: number }>`SELECT m.id, m.session_id
+        FROM conversation_messages m JOIN conversation_sessions s ON s.id=m.session_id
+        WHERE m.id=${messageId} AND s.user_id=${owner} AND ${visible}`.execute(db)
       const row = result.rows[0]
       return row ? { id: Number(row.id), sessionId: Number(row.session_id) } : null
     }),

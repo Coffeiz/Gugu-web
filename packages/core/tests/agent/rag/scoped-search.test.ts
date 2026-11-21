@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest'
 import type { RagDocument } from '../../../src/agent/rag/contracts.js'
 import { createMemoryRagSource } from '../../../src/agent/rag/memory-source.js'
 import { createScopedRagSearch } from '../../../src/agent/rag/scoped-search.js'
+import { readRagDocumentVectors } from '../../../src/agent/rag/vector-reader.js'
 import { configureRagJieba } from '../../../src/agent/rag/tokenizer.js'
 
 beforeAll(() => configureRagJieba({ cut: text => [text] }))
@@ -13,7 +14,8 @@ const document: RagDocument = {
   document_version: 'v1', parent_id: 'fact', chunk_index: 0, chunk_count: 1,
 }
 
-function setup(embed: (owner: string, query: string, signal?: AbortSignal) => Promise<readonly number[]>, documents = [document], memoryVectors?: string | (() => string)) {
+function setup(embed: (owner: string, query: string, signal?: AbortSignal) => Promise<readonly number[]>, documents = [document], memoryVectors?: string | (() => string),
+  readDocuments?: NonNullable<Parameters<typeof createScopedRagSearch>[0]['vectors']>['readDocuments']) {
   const authorize = vi.fn(async () => true)
   const source = vi.fn(async (kind: string) => kind === 'memory' ? typeof memoryVectors === 'function' ? memoryVectors() : memoryVectors ?? null : null)
   const snapshotForScope = vi.fn(async () => ({ revision: 'rev-1', documents, watermark: null }))
@@ -21,7 +23,7 @@ function setup(embed: (owner: string, query: string, signal?: AbortSignal) => Pr
   const search = createScopedRagSearch({
     index,
     authorize,
-    vectors: { version: 'embed-v1', source: async () => source, embed },
+    vectors: { version: 'embed-v1', source: async () => source, embed, readDocuments },
   })
   return { search, authorize, source, snapshotForScope }
 }
@@ -103,6 +105,17 @@ describe('scoped RAG embedding fallback', () => {
     expect(ports.source).toHaveBeenCalledWith('memory', undefined)
   })
 
+  it('自动 RAG 使用宿主为授权文档提供的正文向量', async () => {
+    const readDocuments = vi.fn(async () => ({ [document.id]: [1, 0] }))
+    const { search } = setup(async () => [1, 0], [document], undefined, readDocuments)
+    const result = await search('owner-a', { scope_type: 'owner', scope_id: '' }, '项目进度', {
+      sourceTypes: ['memory'], limit: 5,
+    })
+    expect(readDocuments).toHaveBeenCalledWith('owner-a', [expect.objectContaining({ id: document.id })], undefined)
+    expect(result.fusion).toBe('hybrid-rrf')
+    expect(result.vectorDocCount).toBe(1)
+  })
+
   it('invalidates the owner vector parse cache when the authorized file content changes', async () => {
     const lexical = { ...document, id: 'memory:lexical:0', source_id: 'lexical', parent_id: 'lexical',
       title: '项目进度', content: '项目进度 已经更新多次', text: '项目进度\n项目进度 已经更新多次' }
@@ -157,4 +170,15 @@ describe('scoped RAG embedding fallback', () => {
     expect(result.results[0]?.document.id).toBe(namespaced[0]?.id)
     expect(ports.source).toHaveBeenCalledWith('memory', undefined)
   })
+})
+
+
+it('持久索引中的行为模式按原始来源匹配向量', async () => {
+  const pattern: RagDocument = {
+    ...document, id: 'namespaced-pattern', source_id: 'scope:synthetic:pattern',
+    metadata: { memory_source_id: 'pattern', vector_key: 'pattern-1' },
+  }
+  const vectors = await readRagDocumentVectors([pattern], 'embed-v1', async kind =>
+    kind === 'pattern' ? JSON.stringify({ 'pattern-1': { v: [1, 0], t: 'embed-v1' } }) : null)
+  expect(vectors).toEqual({ 'namespaced-pattern': [1, 0] })
 })

@@ -24,7 +24,7 @@ export type AgentChatScheduling = { mode: 'direct' } | {
    * 解析范围版本，使队列材料绑定本次真实模型/凭据/权限快照。
    */
   accessVersion: string | ((identity: RunIdentity) => Promise<string>)
-  pin?(identity: RunIdentity, credentialId?: number): Promise<RunModelPin & { accessVersion: string }>
+  pin?(identity: RunIdentity, credentialId?: number | null): Promise<RunModelPin & { accessVersion: string }>
   ttlSeconds: number
 }
 

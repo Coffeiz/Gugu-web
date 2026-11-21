@@ -46,11 +46,11 @@ if (!changed.length) {
 const inventoryPath = path.join(root, 'docs/reports/2026-08-31-TEST-INVENTORY.json')
 const inventory = JSON.parse(fs.readFileSync(inventoryPath, 'utf8'))
 const backendChanged = changed.some(file => file.startsWith('backend/'))
-const frontendChanged = changed.some(file => file.startsWith('apps/web/'))
+const frontendChanged = changed.some(file => file.startsWith('apps/ui/'))
 const runtimeChanged = changed.some(file => file.startsWith('loopscope/') || file.startsWith('backend/ts/'))
 const fsChanged = changed.some(file => file.startsWith('packages/fs/'))
 const coreChanged = changed.some(file => /^(packages\/(?:core|database|sandbox)\/|compat\/core-python\/|scripts\/tests\/|pnpm-lock\.yaml|pnpm-workspace\.yaml)/.test(file))
-const desktopChanged = changed.some(file => /^(apps\/desktop\/|apps\/web\/src\/desktop\/)/.test(file))
+const desktopChanged = changed.some(file => /^(apps\/desktop\/|apps\/ui\/src\/desktop\/)/.test(file))
 
 if (fsChanged) run('共享 FS 回归', 'pnpm', ['--filter', '@gugu/fs', 'test'], root)
 if (coreChanged || desktopChanged) {

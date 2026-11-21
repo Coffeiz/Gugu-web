@@ -18,8 +18,8 @@ devserver Node 26.13.1 原生执行以下 8 个测试文件：
 - `gugu-webui/tests/auth/registration-email-flow.test.ts`
 - `gugu-webui/tests/onboarding/registration-seed-postgres.test.ts`
 - `gugu-webui/tests/onboarding/registration-seed.test.ts`
-- `gugu-webui/tests/files/file-upload-postgres.test.ts`
-- `gugu-webui/tests/host/auth-registration-vite.integration.test.ts`
+- `gugu-webui/tests/files/upload/store.postgres.test.ts`
+- `gugu-webui/tests/host/vite/auth/register.integration.test.ts`
 
 结果为 **26/26 通过、0 失败、0 跳过**。注册 PostgreSQL adapter 的 4 项事务集成均在随机隔离 schema 中执行，覆盖初始用户/偏好/工作区写入、Local 根目录准备失败回滚、验证码被替换和提交失败后验证码 TTL 恢复。上传 PostgreSQL 用例也实际通过隔离 schema 验证 Local 写入与配额更新。`gugu-webui` TypeScript 检查通过。
 

@@ -304,7 +304,7 @@ Node Core 首批采用专用 Node 26 job/运行时层，不仅修改根 `engines
 
 ## 12. 与已有文档的关系
 
-- [职责划分方案](Gugu-Core与桌面端职责划分方案.md)：产品边界和 Core/Broker/入口关系继续适用；其中 Python + SQLAlchemy 的技术路线由本方案提议替换，待实施验收后更新完成状态。
+- [职责划分方案](../../../architecture/desktop/archive/Gugu-Core与桌面端职责划分方案.md)：产品边界和 Core/Broker/入口关系继续适用；其中 Python + SQLAlchemy 的技术路线由本方案提议替换，待实施验收后更新完成状态。
 - [顶层包与数据统一层](Gugu-Core顶层包与数据统一层.md)：描述当前 Python 实现事实，作为行为和数据基线保留。
 - [桌面与 MXC 验证](Gugu-Desktop与MXC验证.md)：保留已有实测证据和平台缺口，Node 迁移后需要重新验证相关路径。
 - [项目数据切片实现说明](Gugu-Core项目数据切片实现说明.md)：保留历史实现说明，不把尚未完成的 Node 方案反写成已实现。

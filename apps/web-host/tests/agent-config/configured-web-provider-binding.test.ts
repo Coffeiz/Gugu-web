@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import type { Pool } from 'pg'
 import { createConfiguredWebAgentProviderBinding } from '../../src/modules/agent/llm/configured.js'
-import { DEFAULT_AGENT_COMPACTION_INSTRUCTION } from '@gugu/core/agent'
+import { readAgentPrompt } from '@gugu/core/agent/context/prompts'
 
 function pool(): Pick<Pool, 'connect'> {
   const client = { async query() { return { rows: [], rowCount: 0 } }, release() {} }
@@ -19,7 +19,7 @@ test('configured Web provider derives an opaque scope from synthetic Host config
   const identity = { ownerId: 'synthetic-owner', sessionId: '23', runId: 'synthetic-run' }
   try {
     await mkdir(promptRoot)
-    for (const name of ['default.md', 'persona.md', 'skills.md', 'policy.md', 'retrieval.md', 'compress_conv.md']) await writeFile(join(promptRoot, name), `synthetic ${name}`)
+    for (const name of ['default.md', 'persona.md', 'skills.md', 'policy.md', 'compress_conv.md']) await writeFile(join(promptRoot, name), `synthetic ${name}`)
     const common = {
       pool: pool(), configPath, versionSecret: 'synthetic-version-secret', promptRoot,
       permissionIdentity: 'web-agent-rag-read-v1:search_conversations,search_memory',
@@ -51,7 +51,7 @@ test('configured Web provider derives an opaque scope from synthetic Host config
     })
     assert.notEqual(await changed.accessVersion(identity), versionA)
     const fallbackBinding = await changed.bindRun(identity, 'en-US')
-  assert.equal(fallbackBinding.compactionInstruction, DEFAULT_AGENT_COMPACTION_INSTRUCTION)
+    assert.equal(fallbackBinding.compactionInstruction, readAgentPrompt('compress_conv.md').trim())
     fallbackBinding.release()
   } finally {
     await rm(directory, { recursive: true, force: true })
@@ -64,7 +64,7 @@ test('configured Web provider runs the platform model when BYOK is enabled but n
   const identity = { ownerId: 'synthetic-owner', sessionId: '24', runId: 'synthetic-no-master-run' }
   try {
     await mkdir(promptRoot)
-    for (const name of ['default.md', 'persona.md', 'skills.md', 'policy.md', 'retrieval.md']) await writeFile(join(promptRoot, name), `synthetic ${name}`)
+    for (const name of ['default.md', 'persona.md', 'skills.md', 'policy.md']) await writeFile(join(promptRoot, name), `synthetic ${name}`)
     const provider = await createConfiguredWebAgentProviderBinding({
       pool: pool(), configPath: join(directory, 'missing-config.override.json'), versionSecret: 'synthetic-version-secret', promptRoot,
       environment: { AI__MODEL: 'synthetic-platform-model' },

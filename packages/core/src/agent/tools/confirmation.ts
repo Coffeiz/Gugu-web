@@ -2,6 +2,14 @@ import { z } from 'zod'
 import type { InteractionResolution, PendingInteraction, ToolCall } from '../models.js'
 import type { ToolScope } from './contracts.js'
 
+export type ActionApprovalPolicy = 'ask' | 'never'
+
+/** 执行范围由宿主解析。已签发的交互始终核验回执。 */
+export function actionApprovalMode(policy: ActionApprovalPolicy, required: boolean, hasResolution: boolean) {
+  if (hasResolution) return required ? 'verify' : 'stale'
+  return required && policy === 'ask' ? 'request' : 'execute'
+}
+
 const text = z.string().min(1)
 const bindingSchema = z.object({ ownerId: text, sessionId: text, runId: text, roundId: text, toolCallId: text, toolName: text, normalizedInputDigest: text }).strict()
 export type ConfirmationBinding = z.infer<typeof bindingSchema>

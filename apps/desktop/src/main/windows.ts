@@ -2,9 +2,36 @@ import type {
   BrowserWindowConstructorOptions,
   BrowserWindow,
   IpcMainInvokeEvent,
+  Size,
 } from 'electron'
+import { randomUUID } from 'node:crypto'
+import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { realpath, stat } from 'node:fs/promises'
-import { resolve, sep } from 'node:path'
+import { join, resolve, sep } from 'node:path'
+
+export function createMainWindowSizeStore(directory: string) {
+  const path = join(directory, 'main-window-size.json')
+  return {
+    read(): Size | undefined {
+      try {
+        const { width, height } = JSON.parse(readFileSync(path, 'utf8'))
+        if (Number.isSafeInteger(width) && width > 0 && Number.isSafeInteger(height) && height > 0)
+          return { width, height }
+      } catch {
+        // 尺寸文件缺失或损坏时使用默认尺寸。
+      }
+    },
+    save({ width, height }: Size): void {
+      const temporary = `${path}.${randomUUID()}.tmp`
+      try {
+        writeFileSync(temporary, JSON.stringify({ width, height }), { flag: 'wx', mode: 0o600 })
+        renameSync(temporary, path)
+      } finally {
+        rmSync(temporary, { force: true })
+      }
+    },
+  }
+}
 
 export const DESKTOP_UI_URL = 'gugu-desktop://app/desktop.html'
 export async function uiResourcePath(address: string, directory: string): Promise<string> {
@@ -27,34 +54,32 @@ export async function uiResourcePath(address: string, directory: string): Promis
   return file
 }
 
+export function desktopWindowMaterial(): BrowserWindowConstructorOptions {
+  if (process.platform === 'darwin')
+    return { vibrancy: 'under-window', visualEffectState: 'followWindow', transparent: true, backgroundColor: '#00000000' }
+  if (process.platform === 'win32')
+    return { backgroundMaterial: 'acrylic', transparent: true, backgroundColor: '#00000000' }
+  return {}
+}
+
 export function windowOptions(
   preload: string,
   hidden = false,
+  restored?: { size: Size; workArea: Size },
 ): BrowserWindowConstructorOptions {
+  const minWidth = 960, minHeight = 600
   return {
     title: '咕咕 · 本地工作台',
     titleBarStyle: 'hidden',
     trafficLightPosition: { x: 16, y: 16 },
-    ...(process.platform === 'darwin'
-      ? {
-          vibrancy: 'under-window',
-          visualEffectState: 'followWindow',
-          transparent: true,
-          backgroundColor: '#00000000',
-        }
-      : process.platform === 'win32'
-        ? {
-            frame: false,
-            titleBarOverlay: { color: '#00000000', symbolColor: '#343741', height: 64 },
-            backgroundMaterial: 'acrylic',
-            transparent: true,
-            backgroundColor: '#00000000',
-          }
-        : {}),
-    width: 1024,
-    height: 740,
-    minWidth: 680,
-    minHeight: 480,
+    ...desktopWindowMaterial(),
+    ...(process.platform === 'win32'
+      ? { frame: false, titleBarOverlay: { color: '#00000000', symbolColor: '#343741', height: 64 } }
+      : {}),
+    width: restored ? Math.max(minWidth, Math.min(restored.size.width, restored.workArea.width)) : 1440,
+    height: restored ? Math.max(minHeight, Math.min(restored.size.height, restored.workArea.height)) : 800,
+    minWidth,
+    minHeight,
     show: !hidden,
     webPreferences: {
       preload,
@@ -66,8 +91,15 @@ export function windowOptions(
     },
   }
 }
-export function secureWindow(window: BrowserWindow) {
-  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+export function secureWindow(window: BrowserWindow, openExternal?: (url: string) => void) {
+  window.webContents.setWindowOpenHandler(({ url, postBody }) => {
+    if (openExternal && !postBody) {
+      const target = URL.parse(url)
+      if (target && ['https:', 'http:'].includes(target.protocol) && !target.username && !target.password)
+        openExternal(target.href)
+    }
+    return { action: 'deny' }
+  })
   window.webContents.on('will-navigate', (event) => event.preventDefault())
   window.webContents.on('will-frame-navigate', (event) => event.preventDefault())
   window.webContents.session.setPermissionRequestHandler(

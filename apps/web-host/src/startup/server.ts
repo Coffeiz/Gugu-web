@@ -19,7 +19,7 @@ import { PostgresMigrationError } from '@gugu/database/postgres'
 import { checkRagIndexMigration } from '@gugu/database/postgres/migrations/0011_rag_index'
 import { checkTrashPurgeMigration } from '@gugu/database/postgres/migrations/0009_trash_purge'
 import { checkSearchUsageMigration } from '@gugu/database/postgres/migrations/0010_search_usage'
-import { webAgentPromptRoot } from '../modules/agent/context/prompts.js'
+import { migrateWebAgentPrompts, webAgentPromptRoot } from '../modules/agent/context/prompts.js'
 import { hasProjectExpiryJournalSchema } from '../modules/projects/lifecycle/expiry.js'
 import { createRedisEventPublisher } from '../adapters/cache/redis-events.js'
 import { createAdminAuth, createAdminPromptOptions } from './admin.js'
@@ -40,6 +40,8 @@ async function listen(app: ReturnType<typeof createApp>, host: string, port: num
 export async function startServer(env: NodeJS.ProcessEnv = process.env) {
   const configOverridePath = resolveConfigOverridePath(env)
   const config = loadConfig(env, configOverridePath)
+  const promptRoot = webAgentPromptRoot(config.storageLocalPath)
+  await migrateWebAgentPrompts(promptRoot)
   const report = createWebRuntimeLog(config.logFile)
   const gatewayLog = createWebRuntimeLog(config.logFile, 'gateway')
   const ownership = readImRuntimeOwnership(env)
@@ -56,7 +58,7 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
       isReady: async () => false,
       adminAuth: createAdminAuth(pool, config),
       adminUpdateMode: resolveAdminUpdateMode(env.GUGU_UPDATE_DEPLOYMENT_MODE),
-      adminPrompts: createAdminPromptOptions(pool),
+      adminPrompts: createAdminPromptOptions(pool, config.storageLocalPath),
       adminConfig: config.configOverridePath ? { path: config.configOverridePath, env } : undefined,
       adminLlmPresetList: config.configOverridePath ? { read: createAdminLlmPresetReader(config.configOverridePath) } : undefined,
       adminEmailTranslate: config.configOverridePath ? { translate: createAdminEmailTranslator(env, config.configOverridePath) } : undefined,
@@ -145,8 +147,8 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
     if (ownership.runtime === 'node') imDeliveryPool = createPool(config, 4)
     const gateway = createNodeImHostRuntime({ pool, deliveryPool: imDeliveryPool ?? pool, core, redisUrl: config.redisUrl,
       secretKey: config.secretKey, storageRoot: config.storageLocalPath, configOverridePath, environment: env,
-      promptRoot: webAgentPromptRoot, publicAppUrl: config.publicAppUrl, ownership, mcpRuntime: sharedMcp, imOwnerTools: web.imOwnerTools, mcpDirectory: web.imMcpDirectory,
-      observation: web.loopScopeTrace?.forSource('im'), log: web.agentRunLog,
+      promptRoot, publicAppUrl: config.publicAppUrl, ownership, mcpRuntime: sharedMcp, imOwnerTools: web.imOwnerTools, mcpDirectory: web.imMcpDirectory,
+      runAgent: web.runAgent, observation: web.loopScopeTrace?.forSource('im'), log: web.agentRunLog,
       diagnose(code, error) {
         if (code === 'im_rag_timeout') gatewayLog('gateway.rag_timeout', { error })
         else if (code === 'im_rag_late_completion') gatewayLog('gateway.rag_late_completion', { error })

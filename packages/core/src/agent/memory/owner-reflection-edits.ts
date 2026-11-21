@@ -12,6 +12,16 @@ const edits = z.object({
   perception: z.object({ intent: z.enum(['执行', '推进', '记录', '查询', '决策', '反思', '情绪', '陪伴', '闲聊']) }).optional(),
 })
 
+// 压缩候选来自旧回合，只能追加记忆；摘要和姿态属于当前会话状态。
+const compactionEdits = edits.pick({ profile_add: true, pattern_add: true, daily: true }).partial().strict()
+export type CompactionReflectionEdits = z.infer<typeof compactionEdits>
+
+export function parseCompactionReflectionEdits(value: unknown): CompactionReflectionEdits | null {
+  const result = compactionEdits.safeParse(value)
+  if (!result.success || Buffer.byteLength(JSON.stringify(result.data)) > 16_384) return null
+  return result.data
+}
+
 export const ownerReflectionFiles = ['pattern_vec.json', 'profile.json', 'pattern.json', 'summary.json', 'daily.md', 'stance.json'] as const
 export type OwnerReflectionFile = typeof ownerReflectionFiles[number]
 export type OwnerReflectionFiles = Record<OwnerReflectionFile, string | null>

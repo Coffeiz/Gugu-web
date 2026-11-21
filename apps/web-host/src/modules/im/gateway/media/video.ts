@@ -2,7 +2,7 @@ import {mkdtemp,chmod,open,stat,readFile,rm} from 'node:fs/promises'
 import {join} from 'node:path'
 import {tmpdir} from 'node:os'
 import type {VendorMediaSource} from '@gugu/core/providers'
-import {runImMediaProcess} from './process.js'
+import {runImMediaProcess} from '@gugu/gateway/media'
 
 export interface ImVideoProbe {width:number;height:number;bitRate:number;duration:number|null;codec:string|null;fps:number|null}
 export interface ImProcessedVideo {bytes:Uint8Array;mime:'video/mp4';probe:ImVideoProbe}

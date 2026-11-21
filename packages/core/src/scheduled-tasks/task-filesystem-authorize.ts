@@ -13,7 +13,7 @@ export interface TaskAuthorizationEffects{
  fingerprint(subjectId:string):string
  recordMetric?(outcome:'requested'|'granted'):Promise<unknown>
 }
-type Task={id:number;name:string;enabled:boolean;event_id:number|null;filesystem_authorization_grant_id:number|null}
+type Task={execution_mode:'reminder'|'instruction';id:number;name:string;enabled:boolean;event_id:number|null;filesystem_authorization_grant_id:number|null}
 function failure(statusCode:number,message:string){return Object.assign(new Error(message),{statusCode})}
 const instruction='确认后，该定时任务每次运行都可读写用户沙箱；不包含宿主机目录。'
 
@@ -23,10 +23,11 @@ export function createTaskFilesystemAuthorization<DB>(db:Kysely<DB>,effects:Task
  const identity=(id:number)=>`scheduled-task:filesystem:${id}`
  const ensureEnabled=()=>{if(!effects.enabled())throw failure(409,'完整用户沙箱授权功能当前未开启')}
  async function task(tx:Transaction<DB>,owner:string,id:number){
-  const row=(await sql<Task>`SELECT id,name,enabled,event_id,filesystem_authorization_grant_id FROM scheduled_tasks WHERE id=${id} AND user_id=${owner} FOR UPDATE`.execute(tx)).rows[0]
+  const row=(await sql<Task>`SELECT id,name,enabled,event_id,filesystem_authorization_grant_id,execution_mode FROM scheduled_tasks WHERE id=${id} AND user_id=${owner} FOR UPDATE`.execute(tx)).rows[0]
   if(!row)throw new CoreError('not_found','任务不存在')
   ensureEnabled()
   if(!row.enabled)throw failure(400,'停用任务不能授予完整用户沙箱权限')
+  if(row.execution_mode==='reminder')throw failure(409,'提醒模式不使用工作区授权')
   return row
  }
  async function audit(tx:Transaction<DB>,owner:string,id:number,outcome:'requested'|'granted',grantId?:number){

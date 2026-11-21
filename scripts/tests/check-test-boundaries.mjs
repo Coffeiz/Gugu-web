@@ -11,12 +11,14 @@ const files = execFileSync('git', ['ls-files', '-co', '--exclude-standard'], {
 }).split('\n').filter(file => file && fs.existsSync(path.join(root, file)))
 
 const testLike = files.filter(file =>
+  /^packages\/gateway\/tests\/.+\.test\.mjs$/.test(file) ||
   /(^|\/)(test_[^/]+|[^/]+_test)\.py$|\.(test|spec)\.(ts|js)$|\/check-[^/]+\.mjs$/.test(file),
 )
 
 const known = file => (
   /^backend\/tests\/.+\.py$/.test(file)
   || /^packages\/(?:core|fs|sandbox)\/tests\/.+\.test\.ts$/.test(file)
+  || /^packages\/gateway\/tests\/.+\.test\.(ts|mjs)$/.test(file)
   || /^apps\/desktop\/tests\/.+\.test\.ts$/.test(file)
   || /^apps\/web-host\/tests\/.+\.test\.ts$/.test(file)
   || /^backend\/test_[^/]+\.py$/.test(file)
@@ -26,15 +28,15 @@ const known = file => (
   || /^backend\/ts\/.+\.test\.ts$/.test(file)
   || /^loopscope\/backend\/tests\/test_[^/]+\.py$/.test(file)
   || /^loopscope\/.+\.test\.ts$/.test(file)
-  || /^apps\/web\/tests\/.+\.(test|spec)\.ts$/.test(file)
-  || /^apps\/web\/e2e\/[^/]+\.spec\.ts$/.test(file)
-  || /^apps\/web\/scripts\/check-[^/]+\.mjs$/.test(file)
+  || /^apps\/ui\/tests\/.+\.(test|spec)\.ts$/.test(file)
+  || /^apps\/ui\/e2e\/[^/]+\.spec\.ts$/.test(file)
+  || /^apps\/ui\/scripts\/check-[^/]+\.mjs$/.test(file)
   || /^scripts\/licenses\/check-[^/]+\.mjs$/.test(file)
   || /^scripts\/tests\/.+\.mjs$/.test(file)
 )
 
 const misplacedFrontendTests = testLike.filter(file =>
-  /^apps\/web\/(src|test)\/.+\.(test|spec)\.ts$/.test(file),
+  /^apps\/ui\/(src|test)\/.+\.(test|spec)\.ts$/.test(file),
 )
 const misplacedActiveScripts = testLike.filter(file =>
   /^backend\/scripts\/(diagnostics|benchmarks|smoke|checks)\/(test_[^/]+\.py|[^/]+_test\.py|[^/]+\.(test|spec)\.(ts|js))$/.test(file),
@@ -51,7 +53,7 @@ const skipFiles = testLike.filter(file => {
 })
 
 if (misplacedFrontendTests.length) {
-  console.error('[测试边界] 前端 Vitest 测试必须位于 apps/web/tests/：')
+  console.error('[测试边界] 前端 Vitest 测试必须位于 apps/ui/tests/：')
   for (const file of misplacedFrontendTests) console.error(`- ${file}`)
   process.exitCode = 1
 }

@@ -379,3 +379,25 @@ test('发送成功后游标保存失败，重启通过已受理收据跳过重�
   assert.equal(f.sent.length, 1)
   assert.equal(f.cursor, 1)
 })
+
+test('上下文压缩提示按状态单独投递，关闭展示后无提示，恢复时不重复发送', async () => {
+  const events = [
+    event(1, 'compaction', { phase: 'started' }),
+    event(2, 'compaction', { phase: 'completed', applied: false }),
+    event(3, 'compaction', { phase: 'started' }),
+    event(4, 'compaction', { phase: 'completed', applied: true }),
+    event(5, 'final', { status: 'completed', text: '合成结果' }),
+  ]
+  const enabled = deliveryFixture(events)
+  const notices: string[] = []
+  enabled.ports.sender.compactionNotice = async ({ text }) => { notices.push(text); return 'accepted' }
+  const delivery = createImRunDelivery(enabled.ports)
+  await delivery.consume(identity, (async function* () { yield* events })())
+  await delivery.consume(identity, (async function* () { yield* events })())
+  assert.deepEqual(notices, ['上下文较长，正在整理后继续处理。', '本次未能整理上下文，继续处理。',
+    '上下文较长，正在整理后继续处理。', '上下文整理完成。'])
+  assert.deepEqual(enabled.sent.map(item => item.value), ['合成结果'])
+  const disabled = deliveryFixture(events)
+  await createImRunDelivery(disabled.ports).consume(identity, (async function* () { yield* events })())
+  assert.deepEqual(disabled.sent.map(item => item.value), ['合成结果'])
+})

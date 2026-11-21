@@ -8,9 +8,9 @@ import { createPostgresAgentEmbeddingSettingsResolver, type EmbeddingCredentialE
 export { createPostgresAgentEmbeddingSettingsResolver } from '../../byok/store.js'
 
 const vectorFiles = {
- memory: '.agent/memory_vec.json',
+ memory: '.agent/memories/memory_vec.json',
  knowledge: '.agent/knowledge/vectors.json',
- pattern: '.agent/pattern_vec.json',
+ pattern: '.agent/memories/pattern_vec.json',
 } as const
 const maxCharacters = 50_000_000
 

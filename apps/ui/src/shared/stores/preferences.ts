@@ -1,0 +1,366 @@
+import { acceptsPreferenceTextFilename, decodePreferenceTextUpload, MAX_PREFERENCE_TEXT_UPLOAD_BYTES } from '@gugu/core/preferences/text-upload'
+import { defineStore } from 'pinia'
+import { ref, type Ref } from 'vue'
+import { preferencesApi } from '@/services/api'
+import { getLocale, isSupportedLocale, setLocale, type SupportedLocale } from '@/i18n'
+import { applyThemePalette, applyServerTheme } from '@/composables/core/useTheme'
+import { InteractionSync } from '@/interaction/sync/InteractionSync'
+import { useLocalPreferencesAccess } from '@/services/localPreferencesAccess'
+import type { DesktopAppearancePreferences } from '@gugu/core/desktop'
+
+const AUTOMATIC_MODE_SYNC_KEY = 'gugu-automatic-mode-sync'
+const DESKTOP_PROJECT_PREFS = 'gugu.desktop.project.'
+const desktopPreferenceKeys = new Set(['decisionGuardEnabled', 'toolInjectionMode', 'locale', 'defaultView', 'calendarWeekStart', 'calendarDoneMode', 'projectSort'])
+
+function readDesktopProjectArray(key: 'lastStages' | 'stageTemplates'): unknown[] {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(DESKTOP_PROJECT_PREFS + key) ?? 'null')
+    return Array.isArray(value) ? value : []
+  } catch {
+    return []
+  }
+}
+
+export const usePreferencesStore = defineStore('preferences', () => {
+  const desktop = useLocalPreferencesAccess()
+  // 偏好里的松结构数组（阶段/模板元素类型待后端入 OpenAPI 后 gen:types 收紧），暂 any[]
+  const lastStages       = ref<any[]>(desktop ? readDesktopProjectArray('lastStages') : [])
+  const stageTemplates   = ref<any[]>(desktop ? readDesktopProjectArray('stageTemplates') : [])
+  const pmStagesExpanded  = ref(Boolean(desktop) && localStorage.getItem(DESKTOP_PROJECT_PREFS + 'pmStagesExpanded') === 'true')
+  const calendarWeekStart = ref('monday') // 'monday' 或 'sunday'
+  const calendarDoneMode  = ref('done') // 'done' = 已完成项目显示到完成日；'deadline' = 显示到截止日
+  const defaultView       = ref(localStorage.getItem('gugu-default-view') ?? 'projects')
+  const projectSort       = ref<NonNullable<DesktopAppearancePreferences['projectSort']>>('default')
+  const shellEnabled      = ref(true)
+  const shellSystemEnabled = ref(false)
+  const shellDangerousEnabled = ref(true)
+  const automaticModeEnabled = ref(false)
+  const decisionGuardEnabled = ref(false)
+  const imToolDisplayMode = ref<'off' | 'all' | 'slow_only'>('all')
+  const showIntermediateReplies = ref(false)
+  const toolInjectionMode = ref<'description' | 'full'>('description')
+  const customReplyStyle = ref('')
+  const customReplyStyleEnabled = ref(false)
+  const personalityPreference = ref('')
+  const personalityPreferenceEnabled = ref(false)
+  const groupPersonalityPreference = ref('')
+  const groupPersonalityPreferenceEnabled = ref(false)
+  const personalityPreferenceAvailable = ref(true)
+  const emailChangeEnabled = ref(false)
+  const personalityPreferenceRevision = ref(0)
+  const locale = ref<SupportedLocale | null>(null)
+  const loaded            = ref(Boolean(desktop))
+  const automaticModeChannel = typeof BroadcastChannel === 'undefined'
+    ? null
+    : new BroadcastChannel('gugu_preferences')
+
+  automaticModeChannel?.addEventListener('message', event => {
+    if (event.data?.type !== 'automatic-mode-changed') return
+    void refreshAutomaticModeEnabled()
+  })
+  if (typeof window !== 'undefined') {
+    window.addEventListener('storage', event => {
+      if (event.key === AUTOMATIC_MODE_SYNC_KEY) void refreshAutomaticModeEnabled()
+    })
+  }
+
+  async function saveOptimistically(key: string, payload: Record<string, unknown>, apply: () => void, rollback: () => void): Promise<boolean> {
+    try {
+      await InteractionSync.execute<unknown>({
+        scope: 'profile.preference.update',
+        entityKey: `profile:preference:${key}`,
+        apply,
+        rollback,
+        request: () => desktop && desktopPreferenceKeys.has(key)
+          ? desktop.updateAppearance(payload)
+          : preferencesApi.update(payload as any),
+      })
+      return true
+    } catch {
+      // 本地状态已经由统一层回滚。
+      return false
+    }
+  }
+
+  async function savePreferenceValue<T>(key: string, target: Ref<T>, value: T) {
+    const previous = target.value
+    await saveOptimistically(key, { [key]: value }, () => { target.value = value }, () => { target.value = previous })
+  }
+
+  function applyDesktopPreferences(data: DesktopAppearancePreferences) {
+    decisionGuardEnabled.value = data.decisionGuardEnabled === true
+    toolInjectionMode.value = data.toolInjectionMode === 'full' ? 'full' : 'description'
+    customReplyStyle.value = data.customReplyStyle ?? ''
+    customReplyStyleEnabled.value = data.customReplyStyleEnabled === true
+    defaultView.value = data.defaultView ?? 'projects'
+    calendarWeekStart.value = data.calendarWeekStart ?? 'monday'
+    calendarDoneMode.value = data.calendarDoneMode ?? 'done'
+    projectSort.value = data.projectSort ?? 'default'
+    locale.value = isSupportedLocale(data.locale) ? data.locale : null
+    if (locale.value) setLocale(locale.value, true)
+    applyThemePalette(data.palette)
+  }
+
+  async function fetch(desktopAppearance?: DesktopAppearancePreferences) {
+    if (desktop) {
+      try {
+        applyDesktopPreferences(desktopAppearance ?? await desktop.appearance())
+      }
+      catch { /* 保留上次读到的本机偏好。 */ }
+      return
+    }
+    try {
+      const data = await preferencesApi.get()
+      lastStages.value       = data.lastStages     ?? []
+      stageTemplates.value   = data.stageTemplates ?? []
+      pmStagesExpanded.value = data.pmStagesExpanded ?? false
+      calendarWeekStart.value = (data as any).calendarWeekStart ?? 'monday'
+      calendarDoneMode.value = (data as any).calendarDoneMode ?? 'done'   // 类型待后端 calendarDoneMode 入 OpenAPI 后 gen:types 收回
+      defaultView.value      = (data as any).defaultView ?? 'projects'
+      shellEnabled.value     = (data as any).shellEnabled ?? true
+      shellSystemEnabled.value = (data as any).shellSystemEnabled ?? false
+      shellDangerousEnabled.value = (data as any).shellDangerousEnabled ?? true
+      automaticModeEnabled.value = (data as any).automaticModeEnabled === true
+      decisionGuardEnabled.value = (data as any).decisionGuardEnabled === true
+      const displayMode = (data as any).imToolDisplayMode
+      imToolDisplayMode.value = ['off', 'all', 'slow_only'].includes(displayMode) ? displayMode : 'all'
+      showIntermediateReplies.value = (data as any).showIntermediateReplies ?? false
+      toolInjectionMode.value = (data as any).toolInjectionMode === 'full' ? 'full' : 'description'
+      customReplyStyle.value = data.customReplyStyle ?? ''
+      customReplyStyleEnabled.value = data.customReplyStyleEnabled ?? false
+      personalityPreference.value = data.personalityPreference ?? ''
+      personalityPreferenceEnabled.value = data.personalityPreferenceEnabled ?? false
+      groupPersonalityPreference.value = data.groupPersonalityPreference ?? ''
+      groupPersonalityPreferenceEnabled.value = data.groupPersonalityPreferenceEnabled ?? false
+      personalityPreferenceAvailable.value = data.personalityPreferenceAvailable ?? true
+      emailChangeEnabled.value = (data as any).emailChangeEnabled ?? false
+      personalityPreferenceRevision.value = data.personalityPreferenceRevision ?? 0
+      applyServerTheme((data as any).theme, (data as any).themeFamily, (data as any).palette)
+      locale.value = isSupportedLocale(data.locale) ? data.locale : null
+      if (locale.value) setLocale(locale.value, true)
+      localStorage.setItem('gugu-default-view', defaultView.value)
+      loaded.value = true
+    } catch {}
+  }
+
+  async function refreshEmailChangeEnabled() {
+    try {
+      const data = await preferencesApi.get()
+      emailChangeEnabled.value = data.emailChangeEnabled ?? false
+    } catch {
+      // 无法确认系统邮件能力时按不可用处理，避免展示无法提交的邮箱变更入口。
+      emailChangeEnabled.value = false
+    }
+  }
+
+  async function saveLocale(value: SupportedLocale) {
+    const previous = locale.value
+    const previousLocale = getLocale()
+    const rollback = () => {
+      locale.value = previous
+      setLocale(previousLocale, true)
+    }
+    await saveOptimistically('locale', { locale: value }, () => {
+      setLocale(value, true)
+      locale.value = value
+    }, rollback)
+  }
+
+  async function savePmStagesExpanded(v: boolean) {
+    if (desktop) {
+      localStorage.setItem(DESKTOP_PROJECT_PREFS + 'pmStagesExpanded', String(v))
+      pmStagesExpanded.value = v
+      return
+    }
+    await savePreferenceValue('pmStagesExpanded', pmStagesExpanded, v)
+  }
+
+  async function saveCalendarDoneMode(v: string) {
+    await savePreferenceValue('calendarDoneMode', calendarDoneMode, v)
+  }
+
+  async function saveProjectSort(value: NonNullable<DesktopAppearancePreferences['projectSort']>) {
+    await savePreferenceValue('projectSort', projectSort, value)
+  }
+
+  async function saveCalendarWeekStart(v: string) {
+    const next = v === 'sunday' ? 'sunday' : 'monday'
+    const previous = calendarWeekStart.value
+    await saveOptimistically('calendarWeekStart', { calendarWeekStart: next }, () => { calendarWeekStart.value = next }, () => { calendarWeekStart.value = previous })
+  }
+
+  async function saveDefaultView(v: string) {
+    const previous = defaultView.value
+    await saveOptimistically('defaultView', { defaultView: v }, () => {
+      defaultView.value = v
+      localStorage.setItem('gugu-default-view', v)
+    }, () => {
+      defaultView.value = previous
+      localStorage.setItem('gugu-default-view', previous)
+    })
+  }
+
+  async function saveShellEnabled(v: boolean) {
+    await savePreferenceValue('shellEnabled', shellEnabled, v)
+  }
+
+  async function saveShellSystemEnabled(v: boolean) {
+    await savePreferenceValue('shellSystemEnabled', shellSystemEnabled, v)
+  }
+
+  async function saveShellDangerousEnabled(v: boolean) {
+    await savePreferenceValue('shellDangerousEnabled', shellDangerousEnabled, v)
+  }
+
+  async function saveAutomaticModeEnabled(v: boolean) {
+    const previous = automaticModeEnabled.value
+    const saved = await saveOptimistically('automaticModeEnabled', { automaticModeEnabled: v }, () => {
+      automaticModeEnabled.value = v
+    }, () => {
+      automaticModeEnabled.value = previous
+    })
+    if (saved) {
+      notifyAutomaticModeChanged()
+    }
+  }
+
+  function notifyAutomaticModeChanged() {
+    automaticModeChannel?.postMessage({ type: 'automatic-mode-changed' })
+    try {
+      localStorage.setItem(AUTOMATIC_MODE_SYNC_KEY, String(Date.now()))
+    } catch {
+      // BroadcastChannel 仍可用；隐私模式禁用 storage 时不影响服务端状态。
+    }
+  }
+
+  async function refreshAutomaticModeEnabled(): Promise<boolean> {
+    try {
+      const data = await preferencesApi.get()
+      automaticModeEnabled.value = data.automaticModeEnabled === true
+      return true
+    } catch {
+      // 跨窗口刷新失败时保留上次已知状态，下一次变更会再次触发同步。
+      return false
+    }
+  }
+
+  async function saveDecisionGuardEnabled(v: boolean) {
+    await savePreferenceValue('decisionGuardEnabled', decisionGuardEnabled, v)
+  }
+
+  async function saveShowIntermediateReplies(v: boolean) {
+    await savePreferenceValue('showIntermediateReplies', showIntermediateReplies, v)
+  }
+
+  async function saveImToolDisplayMode(value: 'off' | 'all' | 'slow_only') {
+    const previous = imToolDisplayMode.value
+    await saveOptimistically('imToolDisplayMode', { imToolDisplayMode: value }, () => {
+      imToolDisplayMode.value = value
+    }, () => {
+      imToolDisplayMode.value = previous
+    })
+  }
+
+  async function saveToolInjectionMode(v: 'description' | 'full') {
+    const next = v === 'full' ? 'full' : 'description'
+    const previous = toolInjectionMode.value
+    await saveOptimistically('toolInjectionMode', { toolInjectionMode: next }, () => { toolInjectionMode.value = next }, () => { toolInjectionMode.value = previous })
+  }
+
+  async function saveCustomReplyStyle(text: string) {
+    const customReplyStyleText = text.trim() || null
+    const data = desktop ? await desktop.updateAppearance({ customReplyStyle: customReplyStyleText })
+      : await preferencesApi.updateReplyStyle(customReplyStyleText)
+    customReplyStyle.value = data.customReplyStyle ?? ''
+    return data
+  }
+
+  async function saveCustomReplyStyleEnabled(enabled: boolean) {
+    const patch = { customReplyStyleEnabled: enabled }
+    const data = desktop ? await desktop.updateAppearance(patch) : await preferencesApi.update(patch)
+    customReplyStyle.value = data.customReplyStyle ?? ''
+    customReplyStyleEnabled.value = data.customReplyStyleEnabled ?? false
+    return data
+  }
+
+  async function uploadCustomReplyStyle(file: File) {
+    if (desktop) {
+      if (!acceptsPreferenceTextFilename('reply-style', file.name)) throw new Error('回复风格文件必须是 Markdown 或 TXT 文件')
+      if (file.size > MAX_PREFERENCE_TEXT_UPLOAD_BYTES) throw new Error('偏好文件过大')
+      const bytes = await file.arrayBuffer()
+      let text: string
+      try { text = decodePreferenceTextUpload(new Uint8Array(bytes)) }
+      catch { throw new Error('偏好文件必须使用 UTF-8 编码') }
+      return saveCustomReplyStyle(text)
+    }
+    const data = await preferencesApi.uploadReplyStyle(file)
+    customReplyStyle.value = data.customReplyStyle ?? ''
+    customReplyStyleEnabled.value = data.customReplyStyleEnabled ?? false
+    return data
+  }
+
+  async function savePersonalityPreference(text: string, enabled: boolean) {
+    const data = await preferencesApi.update({
+      personalityPreference: text.trim() || null,
+      personalityPreferenceEnabled: enabled,
+    })
+    personalityPreference.value = data.personalityPreference ?? ''
+    personalityPreferenceEnabled.value = data.personalityPreferenceEnabled ?? false
+    personalityPreferenceAvailable.value = data.personalityPreferenceAvailable ?? true
+    personalityPreferenceRevision.value = data.personalityPreferenceRevision ?? 0
+    return data
+  }
+
+  async function uploadPersonalityFile(file: File) {
+    const data = await preferencesApi.uploadPersonality(file)
+    personalityPreference.value = data.personalityPreference ?? ''
+    personalityPreferenceEnabled.value = data.personalityPreferenceEnabled ?? false
+    personalityPreferenceAvailable.value = data.personalityPreferenceAvailable ?? true
+    personalityPreferenceRevision.value = data.personalityPreferenceRevision ?? 0
+    return data
+  }
+
+  async function saveGroupPersonalityPreference(text: string, enabled: boolean) {
+    const data = await preferencesApi.update({
+      groupPersonalityPreference: text.trim() || null,
+      groupPersonalityPreferenceEnabled: enabled,
+    })
+    groupPersonalityPreference.value = data.groupPersonalityPreference ?? ''
+    groupPersonalityPreferenceEnabled.value = data.groupPersonalityPreferenceEnabled ?? false
+    personalityPreferenceAvailable.value = data.personalityPreferenceAvailable ?? true
+    personalityPreferenceRevision.value = data.personalityPreferenceRevision ?? 0
+    return data
+  }
+
+  async function uploadGroupPersonalityFile(file: File) {
+    const data = await preferencesApi.uploadGroupPersonality(file)
+    groupPersonalityPreference.value = data.groupPersonalityPreference ?? ''
+    groupPersonalityPreferenceEnabled.value = data.groupPersonalityPreferenceEnabled ?? false
+    personalityPreferenceAvailable.value = data.personalityPreferenceAvailable ?? true
+    personalityPreferenceRevision.value = data.personalityPreferenceRevision ?? 0
+    return data
+  }
+
+  async function saveLastStages(stages: any[]) {
+    lastStages.value = stages
+    if (desktop) {
+      localStorage.setItem(DESKTOP_PROJECT_PREFS + 'lastStages', JSON.stringify(stages))
+      return
+    }
+    try { await preferencesApi.update({ lastStages: stages }) } catch {}
+  }
+
+  async function saveTemplates(templates: any[]) {
+    stageTemplates.value = templates
+    if (desktop) {
+      localStorage.setItem(DESKTOP_PROJECT_PREFS + 'stageTemplates', JSON.stringify(templates))
+      return
+    }
+    try { await preferencesApi.update({ stageTemplates: templates }) } catch {}
+  }
+
+  return {
+    lastStages, stageTemplates, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, projectSort, shellEnabled, shellSystemEnabled, shellDangerousEnabled, automaticModeEnabled, decisionGuardEnabled, imToolDisplayMode, showIntermediateReplies, toolInjectionMode, customReplyStyle, customReplyStyleEnabled, personalityPreference, personalityPreferenceEnabled, groupPersonalityPreference, groupPersonalityPreferenceEnabled, personalityPreferenceAvailable, personalityPreferenceRevision, emailChangeEnabled, locale,
+    loaded, fetch, applyDesktopPreferences, refreshAutomaticModeEnabled, notifyAutomaticModeChanged, refreshEmailChangeEnabled, saveLocale, saveLastStages, saveTemplates, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveProjectSort, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveAutomaticModeEnabled, saveDecisionGuardEnabled, saveImToolDisplayMode, saveShowIntermediateReplies, saveToolInjectionMode, saveCustomReplyStyle, saveCustomReplyStyleEnabled, uploadCustomReplyStyle, savePersonalityPreference, uploadPersonalityFile, saveGroupPersonalityPreference, uploadGroupPersonalityFile,
+  }
+})

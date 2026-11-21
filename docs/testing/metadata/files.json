@@ -1,5 +1,5 @@
 {
-  "apps/web-host/tests/files/file-upload-postgres.test.ts": {
+  "apps/web-host/tests/files/upload/store.postgres.test.ts": {
     "domain": "file-upload",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/files",
@@ -7,7 +7,7 @@
     "keyBehavior": "隔离 PostgreSQL 与 Local 文件验证覆盖、配额、工作区落点与变更拒绝；下载提交断连后保留已提交或已替换文件、清理可证实的回滚残留，恢复读取失败时保留证据",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/files/local-file-read.test.ts": {
+  "apps/web-host/tests/files/content/local.test.ts": {
     "domain": "files",
     "layer": "L1",
     "owner": "packages/core/src/files/read.ts",
@@ -15,7 +15,7 @@
     "keyBehavior": "受控根相对路径读取、越界与符号链接拒绝及系统错误传播",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/files/file-thumbnail-host.test.ts": {
+  "apps/web-host/tests/files/content/thumbnail.test.ts": {
     "domain": "files",
     "layer": "L1",
     "owner": "packages/core/src/files/read.ts:planFileThumbnail",
@@ -23,7 +23,7 @@
     "keyBehavior": "鉴权、owner 隔离、缺失物理文件、MIME 错误、完整图与 WebP 缩略图响应",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/files/file-reads-postgres-integration.test.ts": {
+  "apps/web-host/tests/files/browse/reads.postgres.integration.test.ts": {
     "domain": "files",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/files/file-reads-postgres.ts",
@@ -31,79 +31,79 @@
     "keyBehavior": "owner-scoped PostgreSQL 文件元数据与 Local 图片读取的隔离集成用例",
     "ci": "node-webui"
   },
-  "apps/web/tests/files/fileActionsVersion.test.ts": {
+  "apps/ui/tests/files/fileActionsVersion.test.ts": {
     "domain": "files",
     "layer": "L1",
-    "owner": "apps/web/composables/files",
-    "productionEntry": "apps/web/src/composables/files/useFileActions.ts",
+    "owner": "apps/ui/composables/files",
+    "productionEntry": "apps/ui/src/shared/composables/files/useFileActions.ts",
     "keyBehavior": "改名与移动提交缓存中的文件版本，成功后回填服务端新版本，避免后续操作继续使用旧版本",
     "ci": "frontend-test"
   },
-  "apps/web/tests/files/composables/useFilePasteCore.test.ts": {
+  "apps/ui/tests/files/composables/useFilePasteCore.test.ts": {
     "domain": "file-copy",
     "layer": "L0",
-    "owner": "apps/web/composables/files",
-    "productionEntry": "apps/web/src/composables/files/useFilePasteCore.ts:findFileCopyConflicts",
+    "owner": "apps/ui/composables/files",
+    "productionEntry": "apps/ui/src/shared/composables/files/useFilePasteCore.ts:findFileCopyConflicts",
     "keyBehavior": "文件库和项目目录复制按同名同后缀严格判定冲突，保留选择顺序与目标 ID，跳过缺失源和非目标目录文件",
     "ci": "frontend-test"
   },
-  "apps/web/tests/files/runtimeFileObjects.test.ts": {
+  "apps/ui/tests/files/runtimeFileObjects.test.ts": {
     "domain": "file-runtime",
     "layer": "L1",
-    "owner": "apps/web/composables/files",
-    "productionEntry": "apps/web/src/components/common/file-browser/RuntimeFileCard.vue 与 RuntimeFolderCard.vue、RuntimeListRow.vue、文件库 Runtime 列表行",
+    "owner": "apps/ui/composables/files",
+    "productionEntry": "apps/ui/src/shared/components/common/file-browser/RuntimeFileCard.vue 与 RuntimeFolderCard.vue、RuntimeListRow.vue、文件库 Runtime 列表行",
     "keyBehavior": "五种文件包装器挂载绑定 DOM、同步选择和能力、卸载释放当前对象；旧 generation 不得更新或注销新对象与 surface",
     "ci": "frontend-test"
   },
-  "apps/web/tests/files/thumbCache.test.ts": {
+  "apps/ui/tests/files/thumbCache.test.ts": {
     "domain": "files",
     "layer": "L0",
-    "owner": "apps/web/composables/shared",
-    "productionEntry": "apps/web/src/composables/shared/useThumbCache.ts",
+    "owner": "apps/ui/composables/shared",
+    "productionEntry": "apps/ui/src/shared/composables/shared/useThumbCache.ts",
     "keyBehavior": "文件和附件缩略图保持缓存与并发去重、Cookie 鉴权、失败重试、超时释放以及按文件回收 URL 和加载标记",
     "ci": "frontend-test"
   },
-  "apps/web/tests/files/composables/useFileBrowserWindow.test.ts": {
+  "apps/ui/tests/files/composables/useFileBrowserWindow.test.ts": {
     "domain": "file-library",
     "layer": "L0",
-    "owner": "apps/web/composables/files",
-    "productionEntry": "apps/web/src/composables/files/useFileBrowserWindow.ts",
+    "owner": "apps/ui/composables/files",
+    "productionEntry": "apps/ui/src/shared/composables/files/useFileBrowserWindow.ts",
     "keyBehavior": "大目录只渲染可见窗口且框选继续命中未挂载文件",
     "ci": "frontend-test"
   },
-  "apps/web/tests/files/composables/useFileLibraryNavigation.test.ts": {
+  "apps/ui/tests/files/composables/useFileLibraryNavigation.test.ts": {
     "domain": "file-library",
     "layer": "L1",
-    "owner": "apps/web/composables/files",
-    "productionEntry": "apps/web/src/composables/files/useFileLibraryNavigation.ts",
+    "owner": "apps/ui/composables/files",
+    "productionEntry": "apps/ui/src/shared/composables/files/useFileLibraryNavigation.ts",
     "keyBehavior": "搜索跳转优先恢复目标工作区与文件夹路径，并处理目标目录加载失败和历史导航",
     "ci": "frontend-test"
   },
-  "apps/web/tests/files/useProjectFileProjectSync.test.ts": {
+  "apps/ui/tests/files/useProjectFileProjectSync.test.ts": {
     "domain": "projects",
     "layer": "L1",
-    "owner": "apps/web/composables/files",
-    "productionEntry": "apps/web/src/composables/files/useProjectFileProjectSync.ts",
+    "owner": "apps/ui/composables/files",
+    "productionEntry": "apps/ui/src/shared/composables/files/useProjectFileProjectSync.ts",
     "keyBehavior": "项目文件首开仅加载根目录，进入子目录按需请求并复用已加载目录缓存",
     "ci": "frontend-test"
   },
-  "apps/web/tests/files/composables/useFileLibraryDirectory.test.ts": {
+  "apps/ui/tests/files/composables/useFileLibraryDirectory.test.ts": {
     "domain": "file-library",
     "layer": "L1",
-    "owner": "apps/web/composables/files",
-    "productionEntry": "apps/web/src/composables/files/useFileLibraryDirectory.ts",
+    "owner": "apps/ui/composables/files",
+    "productionEntry": "apps/ui/src/shared/composables/files/useFileLibraryDirectory.ts",
     "keyBehavior": "目录按需请求并复用已缓存快照，切换目标时先清除旧目录内容以免短暂显示错目录文件",
     "ci": "frontend-test"
   },
-  "apps/web/tests/files/composables/useFileLibraryFileActions.test.ts": {
+  "apps/ui/tests/files/composables/useFileLibraryFileActions.test.ts": {
     "domain": "file-library",
     "layer": "L1",
-    "owner": "apps/web/composables/files",
-    "productionEntry": "apps/web/src/composables/files/useFileLibraryFileActions.ts",
+    "owner": "apps/ui/composables/files",
+    "productionEntry": "apps/ui/src/shared/composables/files/useFileLibraryFileActions.ts",
     "keyBehavior": "删除请求确认成功前保留文件卡片和选择状态，成功后才同步缓存与目录视图",
     "ci": "frontend-test"
   },
-  "apps/web-host/tests/files/trash-purge-worker-postgres.test.ts": {
+  "apps/web-host/tests/files/trash/worker.postgres.test.ts": {
     "domain": "trash",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/files",
@@ -111,7 +111,7 @@
     "keyBehavior": "隔离 PG 回收站清理任务租约竞争、接管和 owner 条件进度",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/files/file-update-commit-unknown.test.ts": {
+  "apps/web-host/tests/files/mutations/commit.test.ts": {
     "domain": "files",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/files/file-update-postgres.ts",
@@ -127,7 +127,7 @@
     "keyBehavior": "SheetJS工作表读取与Python字段投影、行列边界、合并区域及尺寸保持一致；XML拒绝非法字符和未声明实体，归档拒绝重复条目和异常压缩比",
     "ci": "core-node"
   },
-  "apps/web-host/tests/files/xlsx-preview-host.test.ts": {
+  "apps/web-host/tests/files/content/xlsx.test.ts": {
     "domain": "files",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/files/xlsx-preview-postgres.ts",
@@ -135,7 +135,7 @@
     "keyBehavior": "认证 owner 隔离、真实临时 XLSX 文件与图片解析、私有缓存头、非 XLSX 及物理文件丢失错误语义",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/files/file-undo.test.ts": {
+  "apps/web-host/tests/files/undo/routes.test.ts": {
     "domain": "files",
     "layer": "L2",
     "owner": "packages/core/src/undo/file-adapter.ts + apps/web-host/src/modules/files/undo-storage.ts",
@@ -143,7 +143,7 @@
     "keyBehavior": "合成用户正文 Undo/redo 恢复正文和版本、隔离异主、数据库失败时回滚本地文件替换",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/files/undo-retention-postgres.test.ts": {
+  "apps/web-host/tests/files/undo/retention.postgres.test.ts": {
     "domain": "files",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/undo/retention.ts + packages/core/src/undo/state-machine.ts",
@@ -151,7 +151,7 @@
     "keyBehavior": "清理到期和 redo 分支正文，回收历史错位操作目录；存储失败保留引用并允许重试",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/files/undo-retention-storage.test.ts": {
+  "apps/web-host/tests/files/undo/storage.test.ts": {
     "domain": "files",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/files/undo-retention-storage.ts",

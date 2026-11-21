@@ -1,4 +1,12 @@
 {
+  "apps/desktop/tests/files.test.ts": {
+    "domain": "desktop-files",
+    "layer": "L2",
+    "owner": "apps/desktop/src/main/files",
+    "productionEntry": "apps/desktop/src/main/files/ipc.ts",
+    "keyBehavior": "本地工作区文件可上传、引用、回收与恢复，禁止路径越界、链接访问和隐式覆盖",
+    "ci": "desktop-vitest"
+  },
   "apps/desktop/tests/remote-account.test.ts": {
     "domain": "desktop-auth",
     "layer": "L2",
@@ -7,12 +15,20 @@
     "keyBehavior": "跨重启恢复加密会话，断网保留，失效和退出清除，令牌按服务器来源隔离",
     "ci": "desktop-vitest"
   },
-  "apps/web/tests/desktop/DesktopWorkbench.test.ts": {
+  "apps/ui/tests/desktop/DesktopShell.test.ts": {
     "domain": "desktop-core-ipc",
     "layer": "L1",
-    "owner": "apps/web/src/desktop/DesktopWorkbench.vue",
-    "productionEntry": "apps/web/desktop.html",
-    "keyBehavior": "通过原生业务桥创建后补读本地列表，不依赖 HTTP；缺少桥时显示错误并恢复交互",
+    "owner": "apps/ui/src/desktop/shell/index.vue",
+    "productionEntry": "apps/ui/src/desktop/main.ts",
+    "keyBehavior": "本机项目创建、独立窗口按版本重命名和收据恢复、联系人和日历删除确认、日历版本和撤销重读、本机配色持久化及无桥提示",
+    "ci": "frontend-vitest"
+  },
+  "apps/ui/tests/desktop/DesktopWorkbench.test.ts": {
+    "domain": "desktop-core-ipc",
+    "layer": "L1",
+    "owner": "apps/ui/src/desktop/DesktopWorkbench.vue",
+    "productionEntry": "apps/ui/desktop.html",
+    "keyBehavior": "旧工作台的笔记与画布契约，待迁到对应现行页面",
     "ci": "frontend-vitest"
   }
 }

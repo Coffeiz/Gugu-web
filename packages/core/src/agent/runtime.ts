@@ -70,7 +70,10 @@ export function createAgentDispatchRuntime<C, L extends AgentDispatchRuntimeLeas
     service,
     async start() {
       if (closing) await closing
-      running ??= supervisor.start()
+      if (!running) {
+        worker.reopen()
+        running = supervisor.start()
+      }
       const current = running
       try { await current } catch (error) {
         if (running === current) running = undefined
@@ -80,9 +83,9 @@ export function createAgentDispatchRuntime<C, L extends AgentDispatchRuntimeLeas
     close() {
       if (closing) return closing
       if (!running) return Promise.resolve()
-      closing = running.then(async current => {
-        try { await current.stop() } finally { await current.drain() }
-      }).finally(() => { running = undefined; closing = undefined })
+      const drain = worker.close()
+      closing = running.then(current => current.stop())
+        .finally(() => drain).finally(() => { running = undefined; closing = undefined })
       return closing
     },
   }

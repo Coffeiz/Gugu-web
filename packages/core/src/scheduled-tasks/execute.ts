@@ -24,7 +24,7 @@ export interface RecurringStopExecution<Artifact> {
 }
 
 export interface ScheduledTaskExecutionPorts<Artifact> {
-  attempt(input: { task: ScheduledTaskExecutionPlan; prompt: string; isTrial: boolean
+  attempt?(input: { task: ScheduledTaskExecutionPlan; prompt: string; isTrial: boolean
     assertLease?: AssertScheduledTaskLease
     toolsForRun?(identity: RunIdentity): readonly ToolDefinition[]
   }): Promise<Attempt<Artifact>>
@@ -35,7 +35,7 @@ export interface ScheduledTaskExecutionPorts<Artifact> {
   timeZone?: string
 }
 
-type AttemptInput = Parameters<ScheduledTaskExecutionPorts<unknown>['attempt']>[0]
+type AttemptInput = Parameters<NonNullable<ScheduledTaskExecutionPorts<unknown>['attempt']>>[0]
 
 /** 从共享 Harness 的最终 checkpoint 读取正文、附件和实际副作用回执。 */
 export function createScheduledTaskAgentAttempt<Context>(
@@ -46,7 +46,7 @@ export function createScheduledTaskAgentAttempt<Context>(
     recordUsage?(checkpoint: RunCheckpoint<Context>): Promise<void>
     close(): Promise<void>
   }>,
-): ScheduledTaskExecutionPorts<unknown>['attempt'] {
+): NonNullable<ScheduledTaskExecutionPorts<unknown>['attempt']> {
   return async input => {
     const { identity, harness, recordUsage, hasUnresolvedToolErrors, close } = await prepare(input)
     try {
@@ -136,15 +136,22 @@ export function createScheduledTaskExecution<Artifact>(ports: ScheduledTaskExecu
   return async (task: ScheduledTaskExecutionPlan, isTrial: boolean, assertLease?: AssertScheduledTaskLease,
     recurringStop?: RecurringStopExecution<Artifact>): Promise<Record<string, string>> => {
     const stop = isTrial ? undefined : recurringStop
+    if (task.executionMode === 'reminder') {
+      await assertLease?.()
+      const outcome: Outcome<Artifact> = { text: task.payload, status: 'success', files: [] }
+      return stop ? stop.deliver(outcome, assertLease) : ports.deliver(task, outcome, assertLease)
+    }
+    const runAgent = ports.attempt
+    if (!runAgent) throw new Error('定时任务的模型执行能力暂不可用')
     const instruction = buildPrompt(task, clock.format(ports.now?.() ?? new Date()))
-    async function attempt() {
+    const attempt = async () => {
       const memory = task.groupScope ? await ports.loadGroupMemory?.(task) : ''
       const prompt = memory ? `${memory}\n\n${instruction}` : instruction
       let requested = false
       const stopTool = stop ? recurringStopTool(() => { requested = true }) : undefined
       const groupTools = task.groupScope ? ports.toolsForRun : undefined
       await assertLease?.()
-      const result = await ports.attempt({ task, prompt, isTrial, ...(assertLease ? { assertLease } : {}),
+      const result = await runAgent({ task, prompt, isTrial, ...(assertLease ? { assertLease } : {}),
         ...(groupTools || stopTool ? {
           toolsForRun: (identity: RunIdentity) => [
             ...(groupTools?.(task, identity) ?? []), ...(stopTool ? [stopTool] : []),

@@ -441,7 +441,7 @@ pytest -q
 
 - 数据库仍采用启动时幂等迁移，没有 Alembic 版本历史；复杂结构变更需要单独设计可回滚脚本。
 - `snapshot_hash` 当前主要用于 checkpoint/trace 标识，尚未完全覆盖所有 snapshot 输入的内容哈希；正确性依靠 snapshot payload、TTL 和 context revision。
-- 工具能力通过固定 Adapter 暴露；模型需要业务工具定义时调用 `get_tool_schema`，OpenAI/Anthropic 的历史 wire format 仍由 history adapter 兼容转换。
+- 工具简介模式通过固定 Adapter 暴露能力。模型用 `search_tools` 按用途发现当前授权的工具，或按精确名称读取完整 Schema，再通过 `call_tool` 执行。详见[工具搜索与 Schema 边界](../testing/node-agent-tool-schema-port.md)。
 - canonical history 已覆盖工具调用、工具结果、Tool/Skill schema 事件，并使用 `ToolCall`/`ToolResult` 领域对象统一归一；LoopScope 展示 canonical event、Schema digest 和 Adapter 统计。
 - RAG 的统一索引、切片和召回以 `PRD-RAG-1-统一知识召回与索引.md` 和 `PRD-RAG-11-Cython等效模块与TS-RAG迁移.md` 为准；当前索引投影、词法检索、排序和生命周期由 Python/Cython 承担，TypeScript RAG worker 已移除；历史 Rust 实现不进入运行时回退。
 - 配额模型字段和 onboarding 路由已经存在，但计费窗口、运营规则和完整协议仍应维护在专题文档，不在本总览中重复展开。

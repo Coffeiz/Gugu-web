@@ -1,3 +1,4 @@
+import { DEFAULT_LLM_CONTEXT_TOKENS, DEFAULT_LLM_OUTPUT_TOKENS } from '../../contracts/index.js'
 import {maskSecret} from '../../shared/secret-mask.js'
 import {strip} from '../../shared/values.js'
 import {ensureLlmPresets,LlmStrategyConfigurationError,type LlmStrategyMutator} from './llm-strategy.js'
@@ -47,7 +48,7 @@ export function createLlmPresetMutations(mutate:LlmStrategyMutator,invalidate:()
    const item=presets.items.find(value=>value&&typeof value==='object'&&(value as Input).id===id) as Input|undefined
    if(!item)throw new LlmPresetMutationError(404,'预设不存在')
    if(input.web_search_enabled===true&&!supportsSearch(input.provider??item.provider,input.api_format??item.api_format))throw new LlmPresetMutationError(422,'当前 Provider 或 API 格式不支持联网搜索')
-   tokens(input.max_tokens??item.max_tokens??25600,input.context_tokens??item.context_tokens??128000)
+   tokens(input.max_tokens??item.max_tokens??DEFAULT_LLM_OUTPUT_TOKENS,input.context_tokens??item.context_tokens??DEFAULT_LLM_CONTEXT_TOKENS)
    for(const key of fields)if(input[key]!=null)item[key]=key==='image_detail'?imageDetail(input[key]):input[key]
    if(!supportsSearch(item.provider,item.api_format))item.web_search_enabled=false
    if(input.api_key)item.api_key=input.api_key

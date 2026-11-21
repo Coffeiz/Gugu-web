@@ -10,9 +10,27 @@ export class QueueConflict extends Error { constructor() { super('队列标识�
 type Item = Record<string, unknown>
 type Row = { sessionId: number | null; items: unknown }
 type Db = Kysely<any>
-export const pendingQueueAttachmentSchema = z.object({ file_id: z.number().int().optional(), attach_id: z.string().max(128).optional(), name: z.string().max(512).optional(), ext: z.string().max(32).optional(), size: z.number().int().nonnegative().optional(), size_bytes: z.number().int().nonnegative().optional(), kind: z.string().max(32).optional(), mime: z.string().max(128).optional(), qq_face: z.boolean().optional(), quoted: z.boolean().optional(), duration: z.number().nonnegative().optional(), upload: z.boolean().optional(), img_width: z.number().int().nonnegative().optional(), img_height: z.number().int().nonnegative().optional() })
-export const pendingQueueReferenceSchema = z.object({ type: z.enum(['project', 'file', 'event', 'conversation', 'canvas_note', 'skill', 'mcp', 'scheduled_task']), id: z.union([z.number().int().positive(), z.string().uuid()]), label: z.string().max(512) }).strict()
+export const pendingQueueAttachmentSchema = z.object({
+  file_id: z.number().int().optional(), attach_id: z.string().max(128).optional(),
+  name: z.string().max(512).optional(), ext: z.string().max(32).optional(),
+  size: z.number().int().nonnegative().optional(), size_bytes: z.number().int().nonnegative().optional(),
+  kind: z.string().max(32).optional(), mime: z.string().max(128).nullish(),
+  qq_face: z.boolean().optional(), quoted: z.boolean().optional(), upload: z.boolean().optional(),
+  duration: z.number().nonnegative().nullish(),
+  img_width: z.number().int().nonnegative().nullish(), img_height: z.number().int().nonnegative().nullish(),
+  transcript: z.string().max(8000).optional(),
+})
+export const pendingQueueReferenceSchema = z.object({ type: z.enum(['project', 'file', 'folder', 'event', 'conversation', 'canvas_note', 'skill', 'mcp', 'scheduled_task']), id: z.union([z.number().int().positive(), z.string().uuid()]), label: z.string().max(512) }).strict()
 export const pendingQueueItemSchema = z.object({ key: z.number().int().positive(), text: z.string().max(200_000), attachments: z.array(pendingQueueAttachmentSchema).max(32).default([]), references: z.array(pendingQueueReferenceSchema).max(50).default([]) }).strict()
+const desktopPendingQueueItemSchema = pendingQueueItemSchema.extend({
+  modelId: z.string().regex(/^[A-Za-z0-9_-]{1,80}$/u).optional(),
+  references: z.array(z.union([
+    pendingQueueReferenceSchema,
+    z.object({ type: z.literal('file'), id: z.string().regex(/^path-[A-Za-z0-9_-]{1,23995}$/u),
+      label: z.string().max(512) }).strict(),
+  ])).max(50).default([]),
+})
+
 
 export function mergePendingQueueItems(existing: unknown, incoming: Item[], removed: number[]): Item[] {
   const byKey = new Map<unknown, Item>()
@@ -36,13 +54,13 @@ function matches(stored: unknown, token: string) {
 
 /** 调用方必须使用受控 SQLite 单写入连接；事务在任何读取之前获取写锁。 */
 export function createSqlAgentPendingQueue(db: Db, dialect: 'postgres' | 'sqlite', options: {
-  isSessionActive?(sessionId: number): Promise<boolean>; nowSeconds?: () => number; createToken?: () => string; clock?: () => string
+  isSessionActive?(sessionId: number, tx: Transaction<any>): Promise<boolean>; nowSeconds?: () => number; createToken?: () => string; clock?: () => string
 }) {
   const now = options.nowSeconds ?? (() => Date.now() / 1000), token = options.createToken ?? (() => randomBytes(32).toString('base64url'))
   const ownerKey = (owner: string) => { const id = dataContext(owner).ownerId; return dialect === 'sqlite' ? id.replaceAll('-', '') : id }
   const validQueue = (id: string) => { if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) throw new TypeError('队列标识无效') }
   const validSession = (id: number) => { if (!Number.isSafeInteger(id) || id < 1) throw new TypeError('会话身份无效') }
-  const validItems = (items: Item[]): Item[] => { const result = z.array(pendingQueueItemSchema).max(200).safeParse(items); if (!result.success) throw new TypeError('队列项目无效'); return result.data }
+  const validItems = (items: Item[]): Item[] => { const result = z.array(dialect === 'sqlite' ? desktopPendingQueueItemSchema : pendingQueueItemSchema).max(200).safeParse(items); if (!result.success) throw new TypeError('队列项目无效'); return result.data }
   const decode = (value: unknown): unknown => {
     if (dialect !== 'sqlite' || typeof value !== 'string') return value
     try { return JSON.parse(value) }
@@ -81,6 +99,15 @@ export function createSqlAgentPendingQueue(db: Db, dialect: 'postgres' | 'sqlite
       ON CONFLICT(user_id,queue_id) DO UPDATE SET session_id=excluded.session_id,items=excluded.items,updated_at=excluded.updated_at`.execute(tx)
   }
   return {
+    async consumeClaim(tx: Transaction<any>, ownerId: string, session: number, key: number, claimToken: string) {
+      const owner = ownerKey(ownerId), queueId = `session-${session}`
+      await owned(tx, owner, session, queueId)
+      const current = await read(tx, owner, queueId, true)
+      const items = current?.sessionId === session && Array.isArray(current.items) ? current.items as Item[] : []
+      const index = items.findIndex(item => item?.key === key && matches(item._claim_token, claimToken))
+      if (index < 0) throw new CoreError('conflict', '待发送队列认领冲突')
+      await write(tx, owner, queueId, session, items.filter((_, position) => position !== index))
+    },
     readQueue: async (owner: string, queueId: string) => {
       validQueue(queueId)
       const current = await read(db, ownerKey(owner), queueId)
@@ -105,7 +132,7 @@ export function createSqlAgentPendingQueue(db: Db, dialect: 'postgres' | 'sqlite
     claim: async (owner: string, session: number, queueId: string, key: number) => { owner = ownerKey(owner); if (!Number.isSafeInteger(key) || key < 1) throw new TypeError('队列项目无效'); return transaction(owner, queueId, async tx => {
       await owned(tx, owner, session, queueId)
       if (!options.isSessionActive) throw new Error('会话运行状态服务不可用')
-      if (await options.isSessionActive(session)) return { claimToken: null, reason: 'session_active' as const }
+      if (await options.isSessionActive(session, tx)) return { claimToken: null, reason: 'session_active' as const }
       const current = await read(tx, owner, queueId, true), items = current?.sessionId === session && Array.isArray(current.items) ? current.items as Item[] : []
       const item = items.find(value => value && typeof value === 'object' && value.key === key)
       const time = now()

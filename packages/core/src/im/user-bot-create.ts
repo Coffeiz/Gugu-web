@@ -1,7 +1,7 @@
 import {sql,CompiledQuery,type Kysely,type Transaction} from 'kysely'
 import {dataContext} from '../contracts/index.js'
 import {strip} from '../shared/values.js'
-import {createUserBotsReader} from './user-bots.js'
+import {allowedUserBotTools,createUserBotsReader} from './user-bots.js'
 
 export interface QqBotInput {name?:string;app_id?:string;app_secret?:string;sandbox?:boolean;enabled?:boolean}
 export class QqBotCreationError extends Error {
@@ -18,7 +18,7 @@ export interface QqBotCreationOptions {
 export async function insertUserBot<DB>(tx:Kysely<DB>|Transaction<DB>,owner:string,input:QqBotInput&{platform?:'qq'|'feishu'|'wechat'},encrypted:string):Promise<number>{
  const platform=input.platform??'qq'
    const row=(await sql<{id:number}>`INSERT INTO user_bots(user_id,platform,name,app_id,app_secret,sandbox,enabled,group_chat_enabled,feishu_group_chat_enabled,group_requires_at,group_read_enabled,group_attention_mode,group_attention_config_version,group_memory_enabled,member_memory_enabled,group_owner_memory_enabled,group_allowed_tools,group_message_format,private_message_format,private_streaming_enabled,owner_platform_user_id,owner_bound_at,bot_platform_user_id,created_at)
-    VALUES(${owner},${platform},${input.name||(platform==='feishu'?'我的飞书机器人':'我的 QQ 机器人')},${input.app_id!},${encrypted},${input.sandbox??false},${input.enabled??true},false,${platform==='feishu'?true:null},true,false,'autonomous',0,true,true,false,${JSON.stringify(['web_search','http_get','similar_image_search','read_file','send_file','group_context_search'])}::json,'compat','markdown',false,NULL,NULL,NULL,clock_timestamp()) RETURNING id`.execute(tx)).rows[0]!
+    VALUES(${owner},${platform},${input.name||(platform==='feishu'?'我的飞书机器人':'我的 QQ 机器人')},${input.app_id!},${encrypted},${input.sandbox??false},${input.enabled??true},false,${platform==='feishu'?true:null},true,false,'autonomous',0,true,true,false,${JSON.stringify(allowedUserBotTools)}::json,'compat','markdown',${platform==='qq'},NULL,NULL,NULL,clock_timestamp()) RETURNING id`.execute(tx)).rows[0]!
    return row.id
 }
 export function insertQqBot<DB>(tx:Kysely<DB>|Transaction<DB>,owner:string,input:QqBotInput,encrypted:string):Promise<number>{

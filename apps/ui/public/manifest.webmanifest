@@ -1,0 +1,11 @@
+{
+  "id": "/",
+  "name": "咕咕",
+  "short_name": "咕咕",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "icons": [
+    { "src": "/apple-touch-icon.png", "type": "image/png", "sizes": "180x180" }
+  ]
+}

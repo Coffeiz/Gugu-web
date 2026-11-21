@@ -21,53 +21,36 @@ const FORBIDDEN_SVG_ELEMENTS = new Set([
   'iframe', 'image', 'script', 'set', 'video',
 ])
 
-const input = await new Promise((resolve, reject) => {
-  const chunks = []
-  let size = 0
-  process.stdin.on('data', (chunk) => {
-    size += chunk.length
-    if (size > MAX_SOURCE_CHARS * MAX_CHARTS * 4 + 1024) {
-      reject(new Error('input_too_large'))
-      process.stdin.destroy()
-      return
-    }
-    chunks.push(chunk)
-  })
-  process.stdin.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
-  process.stdin.on('error', reject)
-})
-
-const request = JSON.parse(input)
-const charts = Array.isArray(request) ? request.map((source) => ({ type: 'mermaid', source })) : request?.charts
-const colors = resolveMermaidThemeColors(Array.isArray(request) ? {} : request?.theme)
-if (
-  !Array.isArray(charts) || charts.length > MAX_CHARTS ||
-  charts.some((chart) => !chart || !['mermaid', 'math'].includes(chart.type)
-    || typeof chart.source !== 'string' || !chart.source || chart.source.length > MAX_SOURCE_CHARS)
-) throw new Error('input_too_large')
-
 let mathJaxPromise
-if (charts.some((chart) => chart.type === 'math')) {
+async function initializeMath() {
+  if (mathJaxPromise) return mathJaxPromise
   const mathJaxRequire = createRequire(import.meta.resolve('mathjax'))
-  // 初始化时还没有安装 Mermaid 所需的 svgdom 全局 window/document。MathJax
-  // 在 Node 环境应使用自己的 lite adaptor，避免误选浏览器启动路径。
   mathJaxPromise = (async () => {
-    const { default: MathJax } = await import('mathjax')
-    await MathJax.init({
-      loader: {
-        load: ['input/tex', 'output/svg'],
-        // Windows盘符不是ESM URL；转换本地绝对路径，保留包名/file:的正常解析。
-        require: (file) => import(file.startsWith('file:') ? file : pathToFileURL(mathJaxRequire.resolve(file)).href),
-        // stdout仅允许长度前缀PNG帧，不能让MathJax默认日志泄露路径或污染协议。
-        failed: () => { throw new Error('mathjax_initialization_failed') },
-      },
-      startup: { typeset: false },
-      tex: { packages: ['base', 'ams'], maxBuffer: MAX_SOURCE_CHARS, maxMacros: 500 },
-      svg: { fontCache: 'none' },
-    })
-    return MathJax
+    // MathJax 的 Node 启动阶段必须选择 lite adaptor。
+    const globals = ['window', 'document'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)])
+    for (const [key] of globals) Reflect.deleteProperty(globalThis, key)
+    try {
+      const { default: MathJax } = await import('mathjax')
+      await MathJax.init({
+        loader: {
+          load: ['input/tex', 'output/svg'],
+          // Windows盘符不是ESM URL；转换本地绝对路径，保留包名/file:的正常解析。
+          require: (file) => import(file.startsWith('file:') ? file : pathToFileURL(mathJaxRequire.resolve(file)).href),
+          // stdout仅允许长度前缀PNG帧，不能让MathJax默认日志泄露路径或污染协议。
+          failed: () => { throw new Error('mathjax_initialization_failed') },
+        },
+        startup: { typeset: false },
+        tex: { packages: ['base', 'ams'], maxBuffer: MAX_SOURCE_CHARS, maxMacros: 500 },
+        svg: { fontCache: 'none' },
+      })
+      return MathJax
+    } finally {
+      for (const [key, descriptor] of globals) {
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor)
+      }
+    }
   })()
-  await mathJaxPromise
+  return mathJaxPromise
 }
 
 const window = createHTMLWindow()
@@ -255,40 +238,42 @@ globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {
 // 单公式请求不应加载整套Mermaid/布局引擎；单图表请求也不初始化MathJax。
 // 仍使用同一个受限进程、原时限与逐图安全校验，不缓存跨用户的源码或渲染状态。
 let mermaid
-if (charts.some(chart => chart.type === 'mermaid')) {
-mermaid = (await import('mermaid')).default
-if (charts.some(chart => chart.type === 'mermaid' && /^\s*zenuml\b/im.test(chart.source))) {
-  const { default: zenuml } = await import('@mermaid-js/mermaid-zenuml')
-  await mermaid.registerExternalDiagrams([zenuml])
-}
-mermaid.initialize({
-  startOnLoad: false,
-  // 输出只会进入 Resvg，不会作为 SVG 回传浏览器；对 Mermaid loose 模式产生的
-  // SVG 做严格元素/属性校验，拒绝链接、脚本、动画、HTML 与外部资源。
-  securityLevel: 'loose',
-  htmlLabels: false,
-  // Mermaid 的 Journey 默认使用 foreignObject 包裹标签；IM 图片渲染拒绝 HTML 节点，
-  // 改用 SVG 文字，避免整张图被安全校验拒绝。
-  journey: { textPlacement: 'svg' },
-  // 时序图的 actor/message/note 有独立字体配置，themeVariables.fontFamily 和 themeCSS
-  // 不会覆盖其默认的 Trebuchet + 400；显式指定可变字体和栅格化需要的字重。
-  sequence: {
-    actorFontFamily: '"Noto Sans SC", sans-serif',
-    actorFontWeight: 600,
-    messageFontFamily: '"Noto Sans SC", sans-serif',
-    messageFontWeight: 600,
-    noteFontFamily: '"Noto Sans SC", sans-serif',
-    noteFontWeight: 600,
-  },
-  suppressErrorRendering: true,
-  maxTextSize: MAX_SOURCE_CHARS,
-  maxEdges: 1_000,
-  secure: [
-    'secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'suppressErrorRendering',
-    'maxEdges', 'htmlLabels', 'theme', 'themeVariables', 'themeCSS', 'flowchart', 'journey', 'sequence', 'look', 'layout',
-  ],
-  ...createMermaidThemeConfig(colors, '"Noto Sans SC", sans-serif'),
-})
+let zenumlRegistered = false
+async function initializeMermaid(charts, colors) {
+  mermaid ??= (await import('mermaid')).default
+  if (!zenumlRegistered && charts.some(chart => chart.type === 'mermaid' && /^\s*zenuml\b/im.test(chart.source))) {
+    const { default: zenuml } = await import('@mermaid-js/mermaid-zenuml')
+    await mermaid.registerExternalDiagrams([zenuml])
+    zenumlRegistered = true
+  }
+  mermaid.initialize({
+    startOnLoad: false,
+    // 输出只会进入 Resvg，不会作为 SVG 回传浏览器；对 Mermaid loose 模式产生的
+    // SVG 做严格元素/属性校验，拒绝链接、脚本、动画、HTML 与外部资源。
+    securityLevel: 'loose',
+    htmlLabels: false,
+    // Mermaid 的 Journey 默认使用 foreignObject 包裹标签；IM 图片渲染拒绝 HTML 节点，
+    // 改用 SVG 文字，避免整张图被安全校验拒绝。
+    journey: { textPlacement: 'svg' },
+    // 时序图的 actor/message/note 有独立字体配置，themeVariables.fontFamily 和 themeCSS
+    // 不会覆盖其默认的 Trebuchet + 400；显式指定可变字体和栅格化需要的字重。
+    sequence: {
+      actorFontFamily: '"Noto Sans SC", sans-serif',
+      actorFontWeight: 600,
+      messageFontFamily: '"Noto Sans SC", sans-serif',
+      messageFontWeight: 600,
+      noteFontFamily: '"Noto Sans SC", sans-serif',
+      noteFontWeight: 600,
+    },
+    suppressErrorRendering: true,
+    maxTextSize: MAX_SOURCE_CHARS,
+    maxEdges: 1_000,
+    secure: [
+      'secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'suppressErrorRendering',
+      'maxEdges', 'htmlLabels', 'theme', 'themeVariables', 'themeCSS', 'flowchart', 'journey', 'sequence', 'look', 'layout',
+    ],
+    ...createMermaidThemeConfig(colors, '"Noto Sans SC", sans-serif'),
+  })
 }
 
 function diagramType(source) {
@@ -300,6 +285,7 @@ function diagramType(source) {
 
 async function renderMathSvg(source) {
   const mathJax = await mathJaxPromise
+  mathJax.texReset()
   const container = await mathJax.tex2svgPromise(source, { display: true })
   const svg = mathJax.startup.adaptor.firstChild(container)
   if (!svg || mathJax.startup.adaptor.kind(svg) !== 'svg') throw new Error('svg_dimensions_missing')
@@ -325,9 +311,51 @@ function addMathImagePadding(root, padding) {
   return { width: width + padding * 2, height: height + padding * 2 }
 }
 
-for (let index = 0; index < charts.length; index += 1) {
+let bundledFont
+async function needsSystemFonts(document) {
+  for (const label of document.getElementsByTagName('text')) {
+    const value = label.textContent || ''
+    // Emoji 组合依赖字形序列，不能只按单个码点判断覆盖。
+    if (/[\p{Extended_Pictographic}\u200D\uFE0E\uFE0F\u20E3]/u.test(value)) return true
+    for (const character of value) {
+      if (/\s/u.test(character)) continue
+      bundledFont ??= (await import('fontkit')).openSync(CJK_FONT_FILE)
+      if (!bundledFont.hasGlyphForCodePoint(character.codePointAt(0))) return true
+    }
+  }
+  return false
+}
+
+function clearDocument() {
+  for (const container of [document.head, document.body]) {
+    while (container?.firstChild) container.removeChild(container.firstChild)
+  }
+}
+
+async function renderRequest(request) {
+  const charts = Array.isArray(request) ? request.map((source) => ({ type: 'mermaid', source })) : request?.charts
+  const colors = resolveMermaidThemeColors(Array.isArray(request) ? {} : request?.theme)
+  if (
+    !Array.isArray(charts) || charts.length > MAX_CHARTS ||
+    charts.some((chart) => !chart || !['mermaid', 'math'].includes(chart.type)
+      || typeof chart.source !== 'string' || !chart.source || chart.source.length > MAX_SOURCE_CHARS)
+  ) throw new Error('input_too_large')
+
+  if (charts.some(chart => chart.type === 'math')) await initializeMath()
+  if (charts.some(chart => chart.type === 'mermaid')) await initializeMermaid(charts, colors)
+  const frames = []
+  try {
+    for (let index = 0; index < charts.length; index += 1) {
+      frames.push(await renderDiagram(charts[index], colors, index))
+    }
+    return frames
+  } finally {
+    clearDocument()
+  }
+}
+
+async function renderDiagram(chart, colors, index) {
   let png = Buffer.alloc(0)
-  const chart = charts[index]
   const chartType = chart.type
   const prepared = chartType === 'mermaid'
     ? prepareMermaidDiagramSource(chart.source, { forRasterizer: true })
@@ -434,6 +462,7 @@ for (let index = 0; index < charts.length; index += 1) {
       png = new Resvg(validatedSvg, {
         background: colors.background,
         font: {
+          loadSystemFonts: await needsSystemFonts(document),
           fontFiles: [CJK_FONT_FILE],
           defaultFontFamily: 'Noto Sans SC',
           sansSerifFamily: 'Noto Sans SC',
@@ -457,8 +486,50 @@ for (let index = 0; index < charts.length; index += 1) {
     )
     png = Buffer.alloc(0)
   }
-  const header = Buffer.alloc(4)
+  return png
+}
+
+async function writeFrame(png, persistent) {
+  const header = Buffer.alloc(persistent ? 8 : 4)
   header.writeUInt32BE(png.byteLength)
-  process.stdout.write(header)
-  if (png.byteLength) process.stdout.write(png)
+  if (persistent) header.writeUInt32BE(Math.min(process.memoryUsage.rss(), 0xffffffff), 4)
+  await new Promise((resolve, reject) => {
+    process.stdout.write(Buffer.concat([header, png]), error => error ? reject(error) : resolve())
+  })
+}
+
+const maxInputBytes = MAX_SOURCE_CHARS * MAX_CHARTS * 4 + 1024
+if (process.argv.includes('--persistent')) {
+  let buffered = Buffer.alloc(0)
+  for await (const chunk of process.stdin) {
+    buffered = Buffer.concat([buffered, chunk])
+    let end
+    while ((end = buffered.indexOf(10)) >= 0) {
+      if (end > maxInputBytes) throw new Error('input_too_large')
+      const request = JSON.parse(buffered.subarray(0, end).toString('utf8'))
+      buffered = end + 1 === buffered.length ? Buffer.alloc(0) : buffered.subarray(end + 1)
+      if (request?.charts?.length !== 1) throw new Error('invalid_persistent_request')
+      const [png] = await renderRequest(request)
+      await writeFrame(png, true)
+    }
+    if (buffered.length > maxInputBytes) throw new Error('input_too_large')
+  }
+  if (buffered.length) throw new Error('incomplete_persistent_request')
+} else {
+  const input = await new Promise((resolve, reject) => {
+    const chunks = []
+    let size = 0
+    process.stdin.on('data', (chunk) => {
+      size += chunk.length
+      if (size > MAX_SOURCE_CHARS * MAX_CHARTS * 4 + 1024) {
+        reject(new Error('input_too_large'))
+        process.stdin.destroy()
+        return
+      }
+      chunks.push(chunk)
+    })
+    process.stdin.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    process.stdin.on('error', reject)
+  })
+  for (const png of await renderRequest(JSON.parse(input))) await writeFrame(png, false)
 }

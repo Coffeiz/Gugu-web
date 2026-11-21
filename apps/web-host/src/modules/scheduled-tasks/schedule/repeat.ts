@@ -1,24 +1,14 @@
-import { nextCronFire } from './cron.js'
-import { nextIntervalFire } from './interval.js'
+import { nextRepeatingFire, type RepeatingSchedule } from '@gugu/core/scheduled-task-next-fire'
+export { nextRepeatingFire } from '@gugu/core/scheduled-task-next-fire'
 import { type RepeatingTask, type ScheduledFire, createKyselyRepeatingTaskRepository, createKyselyScheduledFireReceipts, dispatchRepeatingFire } from '@gugu/core/scheduled-task-run-now'
 import { randomUUID } from 'node:crypto'
 import type { Kysely } from 'kysely'
 import type { AssertScheduledTaskLease, ScheduledTaskExecutionCallback, ScheduledTaskLease } from '@gugu/core/scheduled-task-runner'
 import type { TaskFilesystemRevokeEffects } from '@gugu/core/scheduled-task-filesystem-revoke'
 
-type RepeatingSchedule = Omit<RepeatingTask, 'userId' | 'version'>
-
 type TimerSchedule = RepeatingSchedule | { id: string; kind: 'once'; startAt: number }
 
 const maxTimerDelay = 2 ** 31 - 1
-
-/** 计算严格晚于指定时刻的触发；无匹配时等待下一次 reconcile。 */
-export function nextRepeatingFire(task: RepeatingSchedule, after: number): number | null {
-  const lower = Math.max(after + 1, task.startAt ?? -Infinity)
-  if (task.kind === 'interval') return nextIntervalFire({ intervalMinutes: task.intervalMinutes ?? 0,
-    startAt: task.startAt ?? task.createdAt, endAt: task.endAt, after: lower })
-  return nextCronFire(task.cron, lower, task.endAt)
-}
 
 /** 定时器只负责触发。调用方持任务租约复核当前计划。 */
 export function createScheduledTaskTimer<Task extends TimerSchedule>(options: {

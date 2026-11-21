@@ -31,7 +31,7 @@
 
 ## 2026-11-14 当前树真实 PostgreSQL/Vite 复验
 
-- Node 26.13.1 在 devserver 对 `tests/projects/*.test.ts`、`tests/calendar/*.test.ts`、`tests/host/project-calendar-main-vite.integration.test.ts` 与 `tests/host/project-calendar-vite.integration.test.ts` 执行定向回归：`105/105` 通过、0 失败、0 跳过。测试进程临时把只读运行配置中的 DB 地址传给 `GUGU_WEBUI_TEST_DATABASE_URL`，每项 PostgreSQL 集成使用随机隔离 schema；没有改写运行配置。
+- Node 26.13.1 在 devserver 对 `tests/projects/*.test.ts`、`tests/calendar/*.test.ts`、`tests/host/vite/projects/calendar-main.integration.test.ts` 与 `tests/host/vite/projects/calendar.integration.test.ts` 执行定向回归：`105/105` 通过、0 失败、0 跳过。测试进程临时把只读运行配置中的 DB 地址传给 `GUGU_WEBUI_TEST_DATABASE_URL`，每项 PostgreSQL 集成使用随机隔离 schema；没有改写运行配置。
 - 两条 Vite 集成均成功：一条启动生产 `startServer` 组合根并验证项目 PATCH、Local 目录改名、DELETE/restore 和日历创建；另一条验证项目、日历和正文保存主链路。测试通过后各自执行 schema/临时目录清理。
 - Python 兼容基线在 devserver 串行运行 10 个文件：`tests/projects/test_projects_core.py`、`tests/projects/test_projects_live_events.py`、`tests/projects/test_project_trash.py`、`tests/projects/test_undo_phase4.py`、`tests/api/test_create_idempotency.py`、`tests/agent/test_live_write_origins.py`、`tests/scheduling/events/test_event_atomic_update.py`、`tests/scheduling/events/test_event_update_reminders.py`、`tests/scheduling/events/test_event_bus.py`、`tests/scheduling/calendar/test_calendar_reminders.py`，共 `66 passed`。
 - `corepack pnpm run typecheck` 通过。集成输出仍有 `fatal: not a git repository` stderr 和 Node `module.register()` 弃用提示；它们未使测试失败，stderr 来源尚未定位。

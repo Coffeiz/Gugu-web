@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 const MAX_SOURCE_CHARS = 20_000
 const MAX_CHARTS = 4
 const MAX_PNG_BYTES = 3 * 1024 * 1024
-const MAX_STDOUT_BYTES = MAX_CHARTS * (MAX_PNG_BYTES + 4)
+const WORKER_HEADER_BYTES = 8
 const RENDER_TIMEOUT_MS = 30_000
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
 const workerPath = fileURLToPath(new URL('./worker.mjs', import.meta.url))
@@ -28,93 +28,163 @@ function validateRequest(request) {
   }
 }
 
-function parseFrames(buffer, count) {
-  const rendered = []
-  let offset = 0
-  for (let index = 0; index < count; index += 1) {
-    if (buffer.length - offset < 4) throw new ChartRenderError('invalid_worker_frame')
-    const size = buffer.readUInt32BE(offset)
-    offset += 4
-    if (size > MAX_PNG_BYTES || buffer.length - offset < size) {
-      throw new ChartRenderError('invalid_worker_png_size')
-    }
-    if (size === 0) {
-      rendered.push(null)
-      continue
-    }
-    const png = buffer.subarray(offset, offset + size)
-    offset += size
-    if (!png.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
-      throw new ChartRenderError('invalid_worker_png')
-    }
-    rendered.push(Buffer.from(png))
-  }
-  if (offset !== buffer.length) throw new ChartRenderError('invalid_worker_trailing_data')
-  return rendered
-}
 
-/** 经独立 Node worker 栅格化；子进程隔离、大小上限、超时和取消与旧调用链一致。 */
-export async function renderCharts(request, { signal } = {}) {
-  validateRequest(request)
-  if (request.charts.length === 0) return []
-  signal?.throwIfAborted()
-  const input = Buffer.from(JSON.stringify(request), 'utf8')
-  if (input.byteLength > MAX_SOURCE_CHARS * MAX_CHARTS * 4 + 1024) {
-    throw new RangeError('图表请求超过输入限制')
+/** 每次仅向隔离子进程交付一张图，回收后仍接着处理同一批的下一张。 */
+export function createChartRenderer({
+  path = workerPath,
+  idleMs = 60_000,
+  maxCharts = 64,
+  maxRssBytes = 350 * 1024 ** 2,
+  timeoutMs = RENDER_TIMEOUT_MS,
+} = {}) {
+  let worker
+  let tail = Promise.resolve()
+  let idleTimer
+
+  function setReferenced(child, referenced) {
+    const method = referenced ? 'ref' : 'unref'
+    child[method]()
+    child.stdin[method]?.()
+    child.stdout[method]?.()
+    child.stderr[method]?.()
   }
 
-  return await new Promise((resolve, reject) => {
-    let settled = false
-    let outputBytes = 0
-    const output = []
-    const child = spawn(process.execPath, [workerPath], { stdio: ['pipe', 'pipe', 'pipe'] })
-    const finish = (error, value) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      signal?.removeEventListener('abort', abort)
-      if (error) reject(error)
-      else resolve(value)
+  function retire(instance) {
+    if (!instance.stopping) {
+      instance.stopping = true
+      instance.child.kill('SIGKILL')
     }
-    const abort = () => {
-      child.kill('SIGKILL')
-      finish(signal?.reason instanceof Error ? signal.reason : new DOMException('Aborted', 'AbortError'))
-    }
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL')
-      finish(new ChartRenderError('render_timeout'))
-    }, RENDER_TIMEOUT_MS)
-    timer.unref?.()
+  }
 
+  function start() {
+    const child = spawn(process.execPath, [path, '--persistent'], { stdio: ['pipe', 'pipe', 'pipe'] })
+    const instance = { child, charts: 0, stopping: false, pending: null, closed: null }
+    instance.closed = new Promise(resolve => {
+      child.once('close', () => {
+        instance.stopping = true
+        instance.pending?.finish(new ChartRenderError('worker_failed'))
+        resolve()
+      })
+    })
+    child.on('error', () => {
+      retire(instance)
+      instance.pending?.finish(new ChartRenderError('worker_unavailable'))
+    })
+    child.stdin.on('error', () => {
+      retire(instance)
+      instance.pending?.finish(new ChartRenderError('worker_input_failed'))
+    })
     child.stdout.on('data', chunk => {
-      outputBytes += chunk.byteLength
-      if (outputBytes > MAX_STDOUT_BYTES) {
-        child.kill('SIGKILL')
-        finish(new ChartRenderError('worker_output_too_large'))
-        return
-      }
-      output.push(chunk)
+      const pending = instance.pending
+      if (pending && !instance.stopping) pending.read(chunk)
+      else retire(instance)
     })
-    child.stderr.on('data', () => {})
-    child.once('error', () => finish(new ChartRenderError('worker_unavailable')))
-    child.once('close', code => {
-      if (settled) return
-      if (code !== 0) {
-        finish(new ChartRenderError('worker_failed'))
-        return
+    child.stderr.resume()
+    return instance
+  }
+
+  async function current(signal) {
+    if (worker?.stopping) {
+      setReferenced(worker.child, true)
+      await worker.closed
+      worker = undefined
+    }
+    signal.throwIfAborted()
+    worker ??= start()
+    setReferenced(worker.child, true)
+    return worker
+  }
+
+  function renderOne(instance, input, signal) {
+    return new Promise((resolve, reject) => {
+      let bytes = 0
+      const chunks = []
+      let expected
+      const finish = (error, png) => {
+        if (!instance.pending) return
+        instance.pending = null
+        signal.removeEventListener('abort', abort)
+        if (error) reject(error)
+        else resolve(png)
       }
-      try {
-        finish(null, parseFrames(Buffer.concat(output), request.charts.length))
-      } catch (error) {
-        finish(error instanceof Error ? error : new ChartRenderError('invalid_worker_output'))
+      const fail = code => {
+        retire(instance)
+        finish(new ChartRenderError(code))
       }
+      const abort = () => {
+        retire(instance)
+        finish(signal.reason)
+      }
+      instance.pending = {
+        finish,
+        read(chunk) {
+          bytes += chunk.byteLength
+          if (bytes > MAX_PNG_BYTES + WORKER_HEADER_BYTES) return fail('worker_output_too_large')
+          chunks.push(chunk)
+          if (bytes < WORKER_HEADER_BYTES) return
+          if (expected === undefined) {
+            const header = Buffer.concat(chunks, bytes)
+            expected = header.readUInt32BE() + WORKER_HEADER_BYTES
+            if (expected > MAX_PNG_BYTES + WORKER_HEADER_BYTES) return fail('invalid_worker_png_size')
+          }
+          if (bytes < expected) return
+          if (bytes > expected) return fail('invalid_worker_trailing_data')
+          const frame = Buffer.concat(chunks, bytes)
+          const rss = frame.readUInt32BE(4)
+          const png = frame.subarray(WORKER_HEADER_BYTES)
+          if (!rss || (png.length && !png.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)))
+            return fail('invalid_worker_frame')
+          if (++instance.charts >= maxCharts || rss >= maxRssBytes) retire(instance)
+          finish(null, png.length ? png : null)
+        },
+      }
+      signal.addEventListener('abort', abort, { once: true })
+      if (signal.aborted) abort()
+      else instance.child.stdin.write(input)
     })
-    child.stdin.once('error', () => {
-      child.kill('SIGKILL')
-      finish(new ChartRenderError('worker_input_failed'))
+  }
+
+  async function run(inputs, signal) {
+    signal?.throwIfAborted()
+    clearTimeout(idleTimer)
+    const deadline = new AbortController()
+    const timer = setTimeout(() => deadline.abort(new ChartRenderError('render_timeout')), timeoutMs)
+    const combined = AbortSignal.any([deadline.signal, ...(signal ? [signal] : [])])
+    try {
+      const result = []
+      for (const input of inputs) result.push(await renderOne(await current(combined), input, combined))
+      return result
+    } finally {
+      clearTimeout(timer)
+      if (worker) {
+        const instance = worker
+        idleTimer = setTimeout(() => retire(instance), idleMs)
+        idleTimer.unref()
+        setReferenced(instance.child, false)
+      }
+    }
+  }
+
+  return async function renderCharts(request, { signal } = {}) {
+    validateRequest(request)
+    if (!request.charts.length) return []
+    signal?.throwIfAborted()
+    const encoded = JSON.stringify(request)
+    if (Buffer.byteLength(encoded) > MAX_SOURCE_CHARS * MAX_CHARTS * 4 + 1024)
+      throw new RangeError('图表请求超过输入限制')
+    const { charts, theme } = JSON.parse(encoded)
+    const inputs = charts.map(chart => JSON.stringify({ charts: [chart], theme }) + '\n')
+    const result = tail.then(() => run(inputs, signal))
+    tail = result.then(() => undefined, () => undefined)
+    if (!signal) return result
+    // 排队取消立即返回，已取消的请求在到队首后也不会启动 worker。
+    return new Promise((resolve, reject) => {
+      const abort = () => reject(signal.reason)
+      signal.addEventListener('abort', abort, { once: true })
+      if (signal.aborted) abort()
+      result.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
     })
-    signal?.addEventListener('abort', abort, { once: true })
-    child.stdin.end(input)
-    if (signal?.aborted) abort()
-  })
+  }
 }
+
+export const renderCharts = createChartRenderer()

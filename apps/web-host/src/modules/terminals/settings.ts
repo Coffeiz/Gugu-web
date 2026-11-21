@@ -7,6 +7,24 @@ import { randomUUID } from 'node:crypto'
 import { runBubblewrapCommand } from '@gugu/sandbox/linux/command'
 import { createBubblewrapPtyBridge } from '@gugu/sandbox/linux/pty'
 
+const bool = (value: unknown, fallback: boolean): boolean => {
+  if (value === undefined) return fallback
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'string' && /^(true|1|yes|on)$/i.test(value.trim())) return true
+  if (typeof value === 'string' && /^(false|0|no|off)$/i.test(value.trim())) return false
+  throw new Error('终端配置无效')
+}
+
+export function readSystemShellEnabled(agent: Record<string, unknown>, environment: NodeJS.ProcessEnv): boolean {
+  const configured = agent.shell_system_enabled ?? environment.AGENT__SHELL_SYSTEM_ENABLED
+  if (configured !== undefined && configured !== null) return bool(configured, false)
+  if (environment.AGENT === undefined) return false
+  const raw: unknown = JSON.parse(environment.AGENT)
+  if (raw === null) return false
+  if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error('终端配置无效')
+  return bool((raw as Record<string, unknown>).shell_system_enabled, false)
+}
+
 /** 读取服务端沙盒配置；配置错误时拒绝执行，不能静默启用网络或沙盒。 */
 export function createTerminalRuntimeSettingsReader(path: string, environment: NodeJS.ProcessEnv, readiness: () => Promise<{ supported: boolean; reason?: string; proxyEnforcement?: boolean; proxyEnforcementReason?: string }>, defaultNetworkProfile: 'none' | 'egress' = 'egress') {
   return async () => {
@@ -19,13 +37,6 @@ export function createTerminalRuntimeSettingsReader(path: string, environment: N
     const sandbox = section(override.sandbox), agent = section(override.agent)
     const envSection = (value: string | undefined) => value === undefined ? {} : section(JSON.parse(value))
     const sandboxEnv = envSection(environment.SANDBOX), agentEnv = envSection(environment.AGENT)
-    const bool = (value: unknown, fallback: boolean): boolean => {
-      if (value === undefined) return fallback
-      if (typeof value === 'boolean') return value
-      if (typeof value === 'string' && /^(true|1|yes|on)$/i.test(value.trim())) return true
-      if (typeof value === 'string' && /^(false|0|no|off)$/i.test(value.trim())) return false
-      throw new Error('终端配置无效')
-    }
     const rawProfile = String(sandbox.network_profile ?? environment.SANDBOX__NETWORK_PROFILE ?? sandboxEnv.network_profile ?? defaultNetworkProfile).trim().toLowerCase()
     let profile: 'none' | 'egress'
     if (rawProfile === 'none') profile = 'none'
@@ -44,7 +55,7 @@ export function createTerminalRuntimeSettingsReader(path: string, environment: N
     const proxyReady = profile !== 'egress' || (Boolean(egressProxyUrl) && !egressProxyError && status.proxyEnforcement === true)
     const sandboxReady = status.supported && proxyReady
     return { shellEnabled: bool(agent.shell_enabled ?? environment.AGENT__SHELL_ENABLED ?? agentEnv.shell_enabled, true),
-      shellSystemEnabled: bool(agent.shell_system_enabled ?? environment.AGENT__SHELL_SYSTEM_ENABLED ?? agentEnv.shell_system_enabled, false),
+      shellSystemEnabled: readSystemShellEnabled(agent, environment),
       shellDangerousEnabled: bool(agent.shell_dangerous_enabled ?? environment.AGENT__SHELL_DANGEROUS_ENABLED ?? agentEnv.shell_dangerous_enabled, true),
       sandboxEnabled: bool(sandbox.enabled ?? environment.SANDBOX__ENABLED ?? sandboxEnv.enabled, true), sandboxReady,
       ...(!proxyReady ? { sandboxReason: egressProxyError || status.proxyEnforcementReason || '沙盒代理专用出站未就绪或未配置' } : status.reason ? { sandboxReason: status.reason } : {}),

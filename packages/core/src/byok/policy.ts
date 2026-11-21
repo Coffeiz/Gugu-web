@@ -1,3 +1,4 @@
+import { isMiniMaxAnthropicEndpointMigration } from './contracts.js'
 import {adapterFor} from '../agent/providers/registry.js'
 
 export interface CredentialDestination {
@@ -27,6 +28,10 @@ function defaultOrigin(provider:string,apiFormat:string,model:string):string|nul
 /** BYOK 密钥只能复用于同 Provider、同 origin 的目的地。 */
 export function canReuseByokKeyForDestination(stored:CredentialDestination,target:CredentialDestination):boolean{
  if(stored.provider!==target.provider)return false
+ if(stored.capability==='llm'&&target.capability==='llm'&&isMiniMaxAnthropicEndpointMigration(
+  {provider:stored.provider,apiFormat:stored.api_format,baseUrl:stored.base_url},
+  {provider:target.provider,apiFormat:target.api_format,baseUrl:target.base_url},
+ ))return true
  const storedOrigin=effectiveOrigin(stored),targetOrigin=effectiveOrigin(target)
  if(storedOrigin&&targetOrigin&&storedOrigin===targetOrigin)return true
  if(stored.capability!=='llm'||(stored.model||'')!==(target.model||''))return false

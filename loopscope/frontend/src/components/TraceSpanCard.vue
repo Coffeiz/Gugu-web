@@ -10,7 +10,7 @@
           <span v-if="mcpDetails" class="mcp-label">MCP · {{ mcpDetails.server }} / {{ mcpDetails.tool }}</span>
           <span class="status" :data-status="span.status">{{ span.status }}</span>
         </div>
-        <div v-if="codeLabel" class="code-line" title="Python source">
+        <div v-if="codeLabel" class="code-line" title="Source location">
           <span>⌁</span><code>{{ codeLabel }}</code>
         </div>
       </div>
@@ -34,6 +34,17 @@
       <button v-if="hasAttributes" :class="{ active: open.attributes }" @click="toggle('attributes')">Attributes</button>
     </div>
 
+    <section v-if="requestTimings.length" class="panel">
+      <div v-for="timing in requestTimings" :key="timing.attempt" class="assembly-grid">
+        <div><span>模型请求</span><strong>第 {{ timing.attempt }} 次 · {{ timingOutcome[timing.outcome] }}</strong></div>
+        <div v-if="typeof timing.proxied === 'boolean'">
+          <span>连接</span><strong>{{ timing.proxied ? '代理' : '直连' }}{{ timing.reusedSocket === true ? ' · 复用' : timing.reusedSocket === false ? ' · 新建' : '' }}</strong>
+        </div>
+        <template v-for="[key, label] in timingFields" :key="key">
+          <div v-if="typeof timing[key] === 'number'"><span>{{ label }}</span><strong>{{ fmtMs(timing[key]) }}</strong></div>
+        </template>
+      </div>
+    </section>
     <section v-if="open.content && sourceContent" class="panel content-panel">
       <div class="panel-label">Included content</div>
       <pre>{{ sourceContent }}</pre>
@@ -184,6 +195,18 @@ const legacyChatProvider = computed(() => props.span.kind === 'provider'
 const displayKind = computed(() => legacyChatProvider.value ? 'llm' : props.span.kind)
 const displayName = computed(() => legacyChatProvider.value
   ? `LLM round ${props.span.attributes?.round ?? props.span.id.match(/:round:(\d+)(?::provider)?$/)?.[1] ?? 1}` : props.span.name)
+
+const requestTimings = computed(() => Array.isArray(props.span.attributes?.request_timings)
+  ? props.span.attributes.request_timings : [])
+const timingOutcome: Record<string, string> = {
+  completed: '完成', retry: '将重试', error: '失败', cancelled: '取消',
+}
+const timingFields = [
+  ['dnsMs', 'DNS 解析与校验'], ['poolWaitMs', '连接池等待'],
+  ['proxyTunnelMs', '代理隧道建立（含握手）'], ['tcpConnectMs', 'TCP 建连'], ['tlsHandshakeMs', 'TLS 握手'],
+  ['responseHeadersMs', '请求至响应头'], ['firstStreamEventMs', '请求至首个流事件'],
+  ['firstVisibleTokenMs', '请求至首个可见文本'], ['streamEndMs', '请求至流处理结束'],
+] as const
 
 function toggle(key: string) {
   open[key] = !open[key]
@@ -348,7 +371,6 @@ function messageRepresentation(message: any): string {
   if (typeof content === 'string') {
     const value = content.trimStart()
     if (value.startsWith('<compacted-summary>')) return 'compacted-summary'
-    if (value.startsWith(t('trace.legacySummary'))) return 'legacy-summary-header'
     if (value.startsWith('[system-reminder]')) return 'system-reminder-text'
     return 'text'
   }

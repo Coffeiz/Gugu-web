@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { CoreError } from '../../../contracts/index.js'
 import type { Fields, Stage } from '../../../contracts/index.js'
 import { createDeferredProjectCreator, ProjectCreateIdempotencyConflictError, ProjectCreateValidationError, validateProjectCreateFields } from '../../../projects/project-create.js'
@@ -105,4 +106,22 @@ export function createProjectCreationPort(options: ProjectCreationPortOptions): 
       return create(request.identity.ownerId, request.args, { idempotencyKey: key, signal: request.signal, includeModelFailure: true })
     },
   }
+}
+
+export interface AgentProjectDispatch {
+  sessionId: number | null
+  toolCallId: string | null
+  runId?: string
+  roundId?: string
+}
+
+export function agentProjectDispatchKey(dispatch: AgentProjectDispatch): string | null {
+  if (dispatch.runId !== undefined || dispatch.roundId !== undefined) {
+    if (!dispatch.sessionId || !dispatch.toolCallId || !dispatch.runId || !dispatch.roundId)
+      throw new CoreError('invalid_request', '工具运行身份无效')
+    const tuple = JSON.stringify([dispatch.sessionId, dispatch.runId, dispatch.roundId, dispatch.toolCallId])
+    return `agent:v2:${createHash('sha256').update(tuple).digest('hex')}`
+  }
+  if (dispatch.sessionId === null || !dispatch.toolCallId) return null
+  return `agent:${dispatch.sessionId}:create_project:${dispatch.toolCallId}`
 }

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { expect, it } from 'vitest'
 import { createSmallAgentMemory } from '../../../src/agent/memory/small-memory.js'
-const owner = randomUUID(), base = `${owner}/.agent/`, encoder = new TextEncoder()
+const owner = randomUUID(), base = `${owner}/.agent/memories/`, encoder = new TextEncoder()
 const make = (input: Record<string, string>) => createSmallAgentMemory({ async read(key) { if (!key.startsWith(base)) throw new Error('越域'); const v = input[key.slice(base.length)]; return v === undefined ? null : encoder.encode(v) } }, () => 86400 * 60)
 it('规范小记忆按 Python 衰减、排序和格式返回真实内容', async () => {
   const read = make({

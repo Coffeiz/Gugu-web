@@ -2,6 +2,7 @@ import type { RunIdentity } from '../models.js'
 
 export interface SkillMetadata {
   readonly id: string
+  readonly key?: string
   readonly name: string
   readonly description: string
   readonly description_short?: string

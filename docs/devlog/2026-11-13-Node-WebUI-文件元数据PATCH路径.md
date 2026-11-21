@@ -17,8 +17,8 @@ devserver 串行运行：
 ## Node Host 验证
 
 - Node 26 `@gugu/webui` typecheck：通过。
-- `tests/files/file-update-route.test.ts`：1/1 通过，验证 PATCH 字段存在性与撤销上下文透传。
-- 隔离 PostgreSQL `tests/files/file-update-postgres.test.ts`：1/1 通过，验证物理搬迁、版本推进、撤销状态、陈旧版本和 owner 隔离。
+- `tests/files/mutations/update.test.ts`：1/1 通过，验证 PATCH 字段存在性与撤销上下文透传。
+- 隔离 PostgreSQL `tests/files/mutations/update.postgres.test.ts`：1/1 通过，验证物理搬迁、版本推进、撤销状态、陈旧版本和 owner 隔离。
 - Node 文件域全套 `tests/files/*.test.ts`：**56/56 通过，0 跳过**。
 - PG 测试使用临时 schema 与合成文件目录，结束后删除 schema 和临时目录。
 

@@ -71,15 +71,19 @@ export interface OriginalStorageKeyParts {
   folderPath: string
 }
 
+export function projectFileDirectory(name: string, id: number, date: string): string {
+  const year = date.slice(0, 4)
+  const month = date.slice(5, 7)
+  const datePath = year && month ? `${year}/${month}/` : ''
+  return `项目文件/${datePath}${safeName(name)} #${id}`
+}
+
 export function buildOriginalKey(ownerId: string, file: Pick<ProjectTrashFile, 'space' | 'display_name' | 'ext'>, parts: OriginalStorageKeyParts): string {
   const filename = safeFilename(file.display_name, file.ext)
   const folder = parts.folderPath.split('/').filter(Boolean).map(safeName).join('/')
   if (file.space === 'project') {
-    const year = parts.projectDate.slice(0, 4)
-    const month = parts.projectDate.slice(5, 7)
-    const datePath = year && month ? `${year}/${month}/` : ''
-    const projectPath = `${safeName(parts.projectName)} #${parts.projectId}`
-    return `${ownerId}/项目文件/${datePath}${projectPath}${folder ? `/${folder}` : ''}/${filename}`
+    const directory = projectFileDirectory(parts.projectName, parts.projectId, parts.projectDate)
+    return `${ownerId}/${directory}${folder ? `/${folder}` : ''}/${filename}`
   }
   if (file.space === 'mind') {
     return `${ownerId}/思维/${safeName(parts.mindMapTitle)} #${parts.mindMapId}/${filename}`

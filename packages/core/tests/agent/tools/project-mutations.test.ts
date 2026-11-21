@@ -33,7 +33,7 @@ describe('项目写工具通过 registry 映射到共享领域端口（端口为
       .toEqual({ kind: 'completed', successful: true, mutated: true,
         value: { success: true, project_id: 3, name: '小北项目', priority: 'low',
           ignored_fields:['current_stage','ownerId','stages','version'],
-          hint:'以下字段不在 update_project 的当前 schema 中，已被忽略：current_stage, ownerId, stages, version。参数形状与预期不符时，先调用 get_tool_schema 确认最新参数再重试。' } })
+          hint:'以下字段不在 update_project 的当前 schema 中，已被忽略：current_stage, ownerId, stages, version。参数形状与预期不符时，需要时用 search_tools 的 names 读取最新参数定义再重试。' } })
     expect(f.apply).toHaveBeenCalledExactlyOnceWith({ identity, roundId: 'round', toolCallId: 'call', signal: f.controller.signal,
       intent: { action: 'update', selector: { project_id: 3 }, changes: { name: '新名', status: 'done', priority: null, summary: null } } })
     // 完成状态的阶段/todo/CAS/Undo/目录副作用均属于共享领域端口；此测试只证明意图映射。

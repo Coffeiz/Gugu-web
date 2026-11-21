@@ -82,6 +82,10 @@ function normalizeToolInjectionMode(value: unknown): string {
   return typeof value === 'string' ? (legacyToolInjectionModes[value] ?? 'full') : 'full'
 }
 
+export function readDecisionGuardPreference(data: Record<string, unknown>): boolean {
+  return pythonTruthy(readField(data, 'decisionGuardEnabled', 'decision_guard_enabled') ?? false)
+}
+
 function normalizePreferences(
   data: Record<string, unknown>,
   text: { replyStyle: string | null; personality: string | null; groupPersonality: string | null },
@@ -112,7 +116,7 @@ function normalizePreferences(
     shellSystemEnabled: pythonTruthy(readField(data, 'shellSystemEnabled', 'shell_system_enabled') ?? false),
     shellDangerousEnabled: pythonTruthy(readField(data, 'shellDangerousEnabled', 'shell_dangerous_enabled') ?? true),
     automaticModeEnabled: pythonTruthy(readField(data, 'automaticModeEnabled', 'automatic_mode_enabled') ?? false),
-    decisionGuardEnabled: pythonTruthy(readField(data, 'decisionGuardEnabled', 'decision_guard_enabled') ?? false),
+    decisionGuardEnabled: readDecisionGuardPreference(data),
     imToolDisplayMode: oneOf(imToolMode, ['off', 'all', 'slow_only']) ? imToolMode : 'all',
     showIntermediateReplies: pythonTruthy(readField(data, 'showIntermediateReplies', 'show_intermediate_replies') ?? false),
     toolInjectionMode: normalizeToolInjectionMode(readField(data, 'toolInjectionMode', 'tool_injection_mode')),

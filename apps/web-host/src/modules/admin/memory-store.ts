@@ -88,7 +88,7 @@ export function createAccountMemoryCleanupStorage(options: { core: SqlDataRuntim
       return core.db.transaction().execute(async tx => {
         await lockOwner(tx, owner)
         const files = Object.fromEntries(await Promise.all(accountMemoryCleanupFiles.map(async name =>
-          [name, await readFile(root, `${owner}/.agent/${name}`)] as const)))
+          [name, await readFile(root, `${owner}/.agent/memories/${name}`)] as const)))
         return readAccountMemoryCleanupSource(files, now())
       })
     },
@@ -98,8 +98,8 @@ export function createAccountMemoryCleanupStorage(options: { core: SqlDataRuntim
       const owner = context.ownerId
       const journal = `.account-memory-cleanup/${owner}/${operationId}.json`
       const ports: AccountMemoryCleanupFilesPort = {
-        read: name => readFile(root, `${owner}/.agent/${name}`),
-        write: (name, content) => writeLocalFile(root, `${owner}/.agent/${name}`, content),
+        read: name => readFile(root, `${owner}/.agent/memories/${name}`),
+        write: (name, content) => writeLocalFile(root, `${owner}/.agent/memories/${name}`, content),
         async loadPublication() {
           const raw = await readFile(root, journal, maxPublicationBytes)
           if (!raw) return null

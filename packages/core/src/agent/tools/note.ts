@@ -3,7 +3,7 @@ import type { SqlDataRuntime } from '../../data/runtime.js'
 import { prepareMindNoteCreate, MindNoteCreateError, type MindNoteReadResponse } from '../../mind/note-create.js'
 import { createBorrowedSqlMindNoteInserter } from '../../mind/note-postgres-sqlite.js'
 import { createSqlMindNoteMutator } from '../../mind/note-mutations-sql.js'
-import { mindBlocksSchema, serializeMindBlocks, applyMindLineEdits, replaceUniqueMindText, MindNoteContentError } from '../../mind/note-content.js'
+import { convertMindMarkdownLinks, applyMindLineEdits, replaceUniqueMindText, MindNoteContentError } from '../../mind/note-content.js'
 import { strip } from '../../shared/values.js'
 import { utc } from '../../shared/timestamps.js'
 import { normalizeDateInput } from './date-input.js'
@@ -20,12 +20,13 @@ import type { Json, RunIdentity, ToolResult } from '../models.js'
 export function createNoteReadTools(reader:ReturnType<typeof createAgentMindReader>):ToolDefinition[]{
   const schemas={
     note_search:z.object({query:z.string().optional(),q:z.string().optional(),queries:z.array(z.string()).optional(),
+      kind:z.enum(['note','canvas_note']).optional().describe('普通时间流笔记用 note，画布便签用 canvas_note，省略时搜索两类'),
       mode:z.enum(['OR','AND']).optional(),limit:z.number().int().safe().optional(),include_content:z.boolean().optional()}).passthrough(),
     note_get:z.object({node_id:z.number().int().safe()}).passthrough(),
   }
   return (Object.keys(schemas) as (keyof typeof schemas)[]).map(name=>({
     definition:{name,schema:{type:'function',function:{name,
-      description:name==='note_search'?'搜索笔记和画布便签；related为一跳关系，references为正文中可访问的项目、文件和活动引用；include_content可返回完整正文。':'读取已知思维节点正文、原始物理行号、一跳关系和正文引用；代码示例不计入references。',
+      description:name==='note_search'?'按关键词搜索普通时间流笔记或画布便签。用户只说「笔记」时传 kind=note；限定某张画布时用 canvas_search。返回标题、摘要和 node_id；include_content 可返回完整正文。':'按 node_id 读取普通笔记或画布便签的正文、原始物理行号、一跳关系和正文引用。',
       parameters:(()=>{const value=z.toJSONSchema(schemas[name]) as Record<string,Json>;delete value.additionalProperties;return value})()}}},
     effect:'read',validate:input=>schemas[name].safeParse(input),
     async execute(input,scope){
@@ -94,14 +95,14 @@ const noteFields = {
   color: z.enum(['amber', 'coral', 'blue', 'teal']).nullable().optional(),
   captured_at: z.string().optional(),
 }
-const noteBodyModes = ['append_markdown', 'append_blocks', 'line_edits', 'find_replace'] as const
+const noteBodyModes = ['append_markdown', 'line_edits', 'find_replace'] as const
 const mixedNoteBodyModes = noteBodyModes.flatMap((first, index) =>
   noteBodyModes.slice(index + 1).map(second => ({ required: [first, second] })),
 )
 const noteWriteSchemas = {
-  note_create: z.object({ ...noteFields, title: z.string().optional(), markdown: z.string().optional(), blocks: mindBlocksSchema.optional() }).strict(),
+  note_create: z.object({ ...noteFields, title: z.string().optional(), markdown: z.string().min(1) }).strict(),
   note_update: z.object({
-    ...noteFields, node_id: z.number().int().safe(), append_markdown: z.string().optional(), append_blocks: mindBlocksSchema.optional(),
+    ...noteFields, node_id: z.number().int().safe(), append_markdown: z.string().optional(),
     find_replace: z.object({
       find: z.string().min(1).describe('从 note_get.content_md 逐字复制的非空原文，必须唯一匹配'),
       replace: z.string().describe('替换文字，空字符串删除该处原文'),
@@ -152,6 +153,7 @@ function capturedAt(raw: string | undefined, now: Date, timezone: string): strin
 /** 普通笔记写入共用 Mind 事务、版本、Undo、RAG 与调用收据。 */
 export function createNoteWritePort(core: SqlDataRuntime, options: {
   timezone: string
+  validateFileReference?(ownerId: string, id: string, signal: AbortSignal): Promise<boolean>
   publish(event: { ownerId: string; operation: 'create' | 'update'; note: MindNoteReadResponse; mutationId: string }): Promise<void>
   now?: () => Date
 }): NoteWritePort {
@@ -178,11 +180,7 @@ export function createNoteWritePort(core: SqlDataRuntime, options: {
     signal.throwIfAborted()
     const create = request.name === 'note_create'
     const args = request.args
-    if (request.name === 'note_create' && (request.args.markdown === undefined) === (request.args.blocks === undefined)) {
-      return failure('请提供 markdown 或 blocks 中的一种。普通笔记优先用 markdown 字符串；需要可点击引用或结构化待办时用 blocks。',
-        '普通笔记格式：{"markdown":"# 标题\\n\\n正文"}。不要把数组或对象包装成 item。')
-    }
-    const mixedBodyUpdate = new MindNoteContentError('正文更新方式只能选一种：append_markdown、append_blocks、line_edits 或 find_replace。普通文字追加优先用 append_markdown。')
+    const mixedBodyUpdate = new MindNoteContentError('正文更新方式只能选一种：append_markdown、line_edits 或 find_replace。')
     let saved: MindNoteReadResponse | undefined
     let callbackError: unknown
     try {
@@ -195,27 +193,26 @@ export function createNoteWritePort(core: SqlDataRuntime, options: {
           const undo = `agent:${request.identity.sessionId}:${request.identity.runId}`
           const note = (id: number) => tx.selectFrom('mind_nodes').selectAll().where('id', '=', id)
             .where('user_id', '=', dbOwner).where('kind', '=', 'note').where('deleted_at', 'is', null)
-          const readBlocks = async (blocks: z.infer<typeof mindBlocksSchema>) => {
-            const { markdown, references } = serializeMindBlocks(blocks)
-            const tables = { project: 'projects', file: 'files', event: 'calendar_events' } as const
-            for (const reference of references) {
-              signal.throwIfAborted()
-              if (reference.type === 'file' && core.backend === 'sqlite') {
-                throw new MindNoteContentError('当前平台未提供笔记文件引用能力')
-              }
-              // 表名来自固定领域映射，Web 文件元数据表尚未纳入 SQLite Core schema。
-              const lock = core.backend === 'postgres' ? sql`FOR SHARE` : sql``
-              const { rows: [row] } = await sql`SELECT id FROM ${sql.table(tables[reference.type])}
-                WHERE id=${reference.id} AND user_id=${dbOwner} ${lock}`.execute(tx)
-              if (!row) throw new MindNoteContentError('引用对象不存在')
+          const convertMarkdown = (text: string, previous?: string) => convertMindMarkdownLinks(text, async (type, id) => {
+            signal.throwIfAborted()
+            if (type === 'file') {
+              if (!/^(path|drop)-[A-Za-z0-9_-]{1,24000}$/u.test(id)
+                || !await options.validateFileReference?.(owner, id, signal))
+                throw new MindNoteContentError('文件引用无效，请使用工具返回的路径链接')
+              return
             }
-            return markdown
-          }
+            if (!/^[1-9]\d*$/u.test(id) || !Number.isSafeInteger(Number(id)))
+              throw new MindNoteContentError('引用对象无效')
+            const table = type === 'project' ? 'projects' : 'calendar_events'
+            const { rows: [row] } = await sql`SELECT id FROM ${sql.table(table)}
+              WHERE id=${Number(id)} AND user_id=${dbOwner} AND deleted_at IS NULL`.execute(tx)
+            if (!row) throw new MindNoteContentError('引用对象不存在')
+          }, previous)
           if (request.name === 'note_create') {
             const input = request.args
             if (input.markdown !== undefined && !strip(input.markdown))
               throw new MindNoteContentError('markdown 必须是非空字符串；普通笔记直接传 Markdown 正文。')
-            const contentMd = input.markdown ?? await readBlocks(input.blocks!)
+            const contentMd = await convertMarkdown(input.markdown)
             const when = capturedAt(input.captured_at, now, options.timezone)
             const prepared = prepareMindNoteCreate({ title: input.title, color: input.color, contentMd, capturedAt: when }, now)
             if (when && /\.\d{6}/u.test(when)) prepared.preciseCapturedAt = when
@@ -225,7 +222,7 @@ export function createNoteWritePort(core: SqlDataRuntime, options: {
             const input = request.args
             const before = await note(input.node_id).executeTakeFirst()
             if (!before) throw new MindNoteContentError('找不到这条便签')
-            const { title, color, captured_at, append_markdown, append_blocks, line_edits, find_replace } = input
+            const { title, color, captured_at, append_markdown, line_edits, find_replace } = input
             const bodyModeCount = noteBodyModes.filter(mode => input[mode] !== undefined).length
             if (bodyModeCount > 1) throw mixedBodyUpdate
             if (bodyModeCount === 0 && title === undefined && color === undefined && captured_at === undefined)
@@ -237,11 +234,15 @@ export function createNoteWritePort(core: SqlDataRuntime, options: {
             if (when !== undefined) patch.capturedAt = when
             if (append_markdown !== undefined && !strip(append_markdown))
               throw new MindNoteContentError('append_markdown 必须是非空字符串。')
-            const appended = append_markdown ?? (append_blocks !== undefined ? await readBlocks(append_blocks) : undefined)
-            if (appended === '') throw new MindNoteContentError('append_blocks 不能为空')
-            if (appended !== undefined) patch.contentMd = before.content_md ? `${before.content_md}\n\n${appended}` : appended
-            if (line_edits !== undefined) patch.contentMd = applyMindLineEdits(before.content_md, line_edits)
-            if (find_replace !== undefined) patch.contentMd = replaceUniqueMindText(before.content_md, find_replace.find, find_replace.replace)
+            if (append_markdown !== undefined) {
+              const appended = await convertMarkdown(append_markdown)
+              patch.contentMd = before.content_md ? `${before.content_md}\n\n${appended}` : appended
+            }
+            if (line_edits !== undefined) {
+              patch.contentMd = await convertMarkdown(applyMindLineEdits(before.content_md, line_edits), before.content_md)
+            }
+            if (find_replace !== undefined)
+              patch.contentMd = await convertMarkdown(replaceUniqueMindText(before.content_md, find_replace.find, find_replace.replace), before.content_md)
             signal.throwIfAborted()
             const prepared = prepareMindNoteUpdate(patch, now)
             if (when && /\.\d{6}/u.test(when)) prepared.preciseCapturedAt = when
@@ -274,8 +275,8 @@ export function createNoteWritePort(core: SqlDataRuntime, options: {
 
 export function createNoteWriteTools(port: NoteWritePort): ToolDefinition[] {
   const descriptions = {
-    note_create: '创建普通时间流笔记。使用 markdown 或 blocks，标题用于索引。captured_at 可指定归属日期。',
-    note_update: '更新普通笔记。正文更新方式互斥，一次最多传一个：append_markdown（普通追加）、append_blocks（结构化追加）、line_edits（按行编辑）或 find_replace（原文唯一匹配时替换）。数字行编辑以 note_get.numbered_content 的物理行号为准，标题和空行均计入；expected 只传原文，不含行号前缀。局部替换优先从 note_get.content_md 复制原文到 find_replace.find。',
+    note_create: '创建普通时间流笔记。使用 Markdown 字符串。文件引用使用文件工具返回的 gugu://open-object/file/ 路径链接，标题用于索引。captured_at 可指定归属日期。',
+    note_update: '更新普通笔记。正文更新方式互斥，一次最多传一个：append_markdown（Markdown 追加）、line_edits（按行编辑）或 find_replace（原文唯一匹配时替换）。数字行编辑以 note_get.numbered_content 的物理行号为准，标题和空行均计入；expected 只传原文，不含行号前缀。局部替换优先从 note_get.content_md 复制原文到 find_replace.find。',
   }
   const names = ['note_create', 'note_update'] as const
   return names.map(name => {
@@ -287,7 +288,7 @@ export function createNoteWriteTools(port: NoteWritePort): ToolDefinition[] {
         name, description: descriptions[name], parameters,
       } } },
       effect: 'write',
-      strictArrayFields: ['blocks', 'append_blocks', 'content', 'items', 'paragraphs'],
+      strictArrayFields: ['line_edits'],
       validate: input => schema.safeParse(input),
       execute: (args, scope, call) => port.apply({ name, args, identity: scope.identity, roundId: scope.roundId, toolCallId: call.id } as NoteWriteRequest, scope.signal),
       reconcile: (args, identity, call) => port.reconcile({ name, args, identity, roundId: identity.roundId, toolCallId: call.id } as NoteWriteRequest),

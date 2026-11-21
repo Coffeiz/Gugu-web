@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
 import test from 'node:test'
 import {NodeProviderTransport} from '../../../../packages/core/src/agent/providers/transport/node.js'
-import {createMcpHttpClient} from '../../src/modules/mcp/sdk-client.js'
-import {createMcpSafeFetch} from '../../src/modules/mcp/safe-fetch.js'
+import {createMcpHttpClient} from '@gugu/core/mcp/sdk-client'
+import {createMcpSafeFetch} from '@gugu/core/mcp/safe-fetch'
 
 test('官方 MCP SDK 经注入的受控 fetch 完成握手、工具发现和调用',async()=>{
  const requests:string[]=[],server=createServer(async(req,res)=>{

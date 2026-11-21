@@ -514,6 +514,37 @@ describe('Harness Run生命周期与持久化边界', () => {
     expect(result.state.context?.some((item) => item.startsWith('tool:'))).toBe(false)
   })
 
+  it('用量压缩在等摘要之前发布开始事件，失败时也结束压缩状态', async () => {
+    const f = fixture()
+    const summary = deferred<void>()
+    const started = deferred<RunEvent>()
+    f.ports.context.afterUsage = vi.fn(async (context, _usage, _signal, onStart) => {
+      await onStart?.()
+      await summary.promise
+      return { context, applied: false }
+    })
+    const events: RunEvent[] = []
+    const consuming = (async () => {
+      for await (const event of f.harness.start(identity)) {
+        events.push(event)
+        if (event.type === 'compaction') started.resolve(event)
+      }
+    })()
+    try {
+      const first = await Promise.race([started.promise, consuming.then(() => null)])
+      expect(first?.payload).toMatchObject({ phase: 'started', reason: 'usage_threshold' })
+      expect(events.some(event => event.type === 'final')).toBe(false)
+    } finally {
+      summary.resolve()
+      await consuming
+    }
+    expect(events.filter(event => event.type === 'compaction').map(event => event.payload)).toEqual([
+      { phase: 'started', reason: 'usage_threshold' },
+      { phase: 'completed', reason: 'not_applied', applied: false },
+    ])
+    expect(events.at(-1)?.type).toBe('final')
+  })
+
   it('压缩未应用也保存无进展策略元数据，不发布虚假压缩成功事件', async () => {
     const f = fixture()
     f.ports.context.afterUsage = vi.fn(async (context) => ({ context: [...context, 'failed-pressure:9'], applied: false }))
@@ -575,6 +606,23 @@ describe('Harness Run生命周期与持久化边界', () => {
     expect(final.state.status).toBe('completed')
     expect(f.ports.tools.dispatch).toHaveBeenCalledTimes(4)
     expect(f.ports.interactions.activate).toHaveBeenCalledTimes(2)
+    expect(f.ports.provider.stream).toHaveBeenCalledTimes(2)
+  })
+
+  it('本轮未开放的工具返回失败回执，同轮有效工具与后续模型轮仍执行', async () => {
+    const unavailable = { ...toolCall, id: 'unavailable', name: 'call_tool' }
+    const f = fixture([[{ type: 'complete', text: '', calls: [unavailable, toolCall] }],
+      [{ type: 'complete', text: '完成', calls: [] }]])
+    f.ports.context.isRoundToolAvailable = (_context, name) => name !== 'call_tool'
+    const resolveCall = vi.fn(async () => ({ call: toolCall }))
+    f.ports.tools.resolveCall = resolveCall
+    const { state, events } = await collect(f.harness.start(identity))
+    expect(state.status).toBe('completed')
+    expect(resolveCall).not.toHaveBeenCalled()
+    expect(f.ports.tools.dispatch).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(f.ports.tools.dispatch).mock.calls[0]?.[0].id).toBe(toolCall.id)
+    expect(events.find(event => event.type === 'tool_done' && event.payload.toolCallId === 'unavailable')?.payload)
+      .toMatchObject({ status: 'error', result: { error: '工具不存在或未开放' } })
     expect(f.ports.provider.stream).toHaveBeenCalledTimes(2)
   })
 
@@ -774,7 +822,7 @@ describe('Harness Run生命周期与持久化边界', () => {
     f.ports.tools.dispatch = vi.fn<ToolPort['dispatch']>(async () => ({ kind: 'completed', value: { ok: true, privateReceipt: 'opaque-synthetic-receipt' }, successful: true, mutated: false }))
     f.ports.presentToolResult = vi.fn(async (value) => ({ ok: (value as { ok: boolean }).ok, nested: [{ type: 'video', source: { data: 'synthetic-private-media' } }, { error: '/home/synthetic/private.txt' }] }))
     const { state, events } = await collect(f.harness.start(identity))
-    const expected = { ok: true, nested: [{ type: 'text', text: '[视频已查看]' }, { error: '‹路径已隐藏›' }] }
+    const expected = { ok: true, nested: [{ type: 'text', text: '[视频已查看]' }, { error: '/home/synthetic/private.txt' }] }
     expect(events.find((event) => event.type === 'tool_done')?.payload.result).toEqual(expected)
     expect(state.displayTimeline.find((item) => item.kind === 'tool')?.toolResult).toEqual(expected)
     const committed = vi.mocked(f.ports.store.commit).mock.calls.map(([change]) => change).find((change) => change.events[0]?.type === 'tool_done')!
@@ -785,6 +833,28 @@ describe('Harness Run生命周期与持久化边界', () => {
     expect(committed.checkpoint.displayTimeline.find(item => item.kind === 'tool')?.toolInput).toEqual(expectedInput)
     expect(JSON.stringify(events)).not.toMatch(/opaque-synthetic-receipt|synthetic-header-secret|synthetic-input-secret/)
     expect(JSON.stringify(events)).not.toContain('synthetic-private-media')
+  })
+
+  it.each(['shell', 'view_image', 'read_file'])('%s 工具卡片保留各层路径并清除凭据', async (name) => {
+    const cwd = '/Users/synthetic/00000000-0000-4000-8000-000000000000'
+    const call = { ...toolCall, name, input: {
+      command: 'ls "/Users/synthetic/合成目录"; TOKEN=synthetic-secret-123456789',
+      cwd,
+      path: '/tmp/synthetic-image.png',
+      token: 'synthetic-field-secret',
+      nested: { cwd: '/tmp/synthetic-private' },
+    } }
+    const f = fixture([[{ type: 'complete', text: '', calls: [call] }], [{ type: 'complete', text: '完成', calls: [] }]])
+    const { state, events } = await collect(f.harness.start(identity))
+    const expected = {
+      command: 'ls "/Users/synthetic/合成目录"; ‹密钥已隐藏›',
+      cwd,
+      path: '/tmp/synthetic-image.png',
+      token: '[已隐藏]',
+      nested: { cwd: '/tmp/synthetic-private' },
+    }
+    expect(events.find(event => event.type === 'tool_call')?.payload.display).toMatchObject({ toolInput: expected })
+    expect(state.displayTimeline.find(item => item.kind === 'tool')?.toolInput).toEqual(expected)
   })
 
   it('并发结果cache先固化安全引用，重启/当前模型和展示前hydrate，durable副本不另存媒体正文', async () => {

@@ -3,7 +3,7 @@ import type { createMindReferenceSuggester, MindReferenceMessage, MindReferenceS
 import { parsePythonInteger } from '../../http/request.js'
 import type { Pool } from 'pg'
 
-export type MindReferenceSuggestOperations = ReturnType<typeof createMindReferenceSuggester>
+export type MindReferenceSuggestOperations = ReturnType<typeof createMindReferenceSuggester> & { suggestWithDiskFiles?: ReturnType<typeof createMindReferenceSuggester>['suggest'] }
 
 export function registerMindReferenceSuggestRoute(app: FastifyInstance, options: {
   ownerId(request: FastifyRequest): string
@@ -19,7 +19,8 @@ export function registerMindReferenceSuggestRoute(app: FastifyInstance, options:
     const limit = parsePythonInteger(rawLimit)
     if (typeof limit !== 'number' || limit < 1 || limit > 20)
       return reply.code(422).send({ detail: 'limit 必须是 1 到 20 之间的整数' })
-    return options.operations.suggest(options.ownerId(request), typeof raw.q === 'string' ? raw.q : '', limit)
+    const suggest = raw.disk === '1' ? options.operations.suggestWithDiskFiles ?? options.operations.suggest : options.operations.suggest
+    return suggest(options.ownerId(request), typeof raw.q === 'string' ? raw.q : '', limit)
   })
 }
 

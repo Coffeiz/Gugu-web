@@ -40,7 +40,7 @@ devserver 串行运行：上述三个 Python 测试文件 **11/11 通过**。dev
 
 ## Vite 认证读写与隔离 PG 补验（2026-11-13）
 
-- 新增 `gugu-webui/tests/host/preferences-vite.integration.test.ts`：通过 Vite 代理，以合成 cookie/CSRF 会话请求 Node Host，再写入随机隔离 PostgreSQL schema。
+- 新增 `gugu-webui/tests/host/vite/preferences.integration.test.ts`：通过 Vite 代理，以合成 cookie/CSRF 会话请求 Node Host，再写入随机隔离 PostgreSQL schema。
 - 覆盖已认证 GET 的历史值读取、PATCH 局部合并、未知 JSON 键保留、废弃字段移除及最终持久化内容；不使用真实账号或业务 schema。
 - devserver Node 偏好定向套件 **8/8 通过、0 跳过**，TypeScript 检查通过；Python `test_preferences_route.py` **1/1 通过**。
 - 这是跨层 HTTP/PG 行为验收，不是浏览器表单点击验收；当前偏好支持范围和未迁移能力仍按上文边界处理。未使用 Docker、未触发 CI、未提交。

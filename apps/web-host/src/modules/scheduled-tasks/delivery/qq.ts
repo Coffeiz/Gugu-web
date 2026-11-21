@@ -1,3 +1,4 @@
+import { proactiveImText } from '../../im/gateway/delivery/proactive.js'
 import type { Pool } from 'pg'
 import type { ProviderTransport } from '@gugu/core/providers'
 import { createQqBotApi, qqAttachmentLimit } from '@gugu/core/im/qq-bot-api'
@@ -92,7 +93,7 @@ export function createScheduledTaskQqDelivery(pool: Pick<Pool, 'query'>, options
         const signal = AbortSignal.timeout(15_000)
         const token = await api.token(current.app_id, await options.decrypt(current.app_secret), signal)
         if (!token || !options.enabled()) return failed
-        return await api.sendText(target, `⏰ ${plan.title}\n\n${plan.text}`, token, signal) ? '已发送' : failed
+        return await api.sendText(target, proactiveImText(plan), token, signal) ? '已发送' : failed
       } catch {
         return failed
       }

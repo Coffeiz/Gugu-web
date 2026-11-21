@@ -1,3 +1,4 @@
+import { proactiveImText } from '../../im/gateway/delivery/proactive.js'
 import type { Pool } from 'pg'
 import { createFeishuBotApi, feishuAttachmentLimit } from '@gugu/core/im/feishu-bot-api'
 import type { ProviderTransport } from '@gugu/core/providers'
@@ -88,7 +89,7 @@ export function createScheduledTaskFeishuDelivery(pool: Pick<Pool, 'query'>, opt
         const signal = AbortSignal.timeout(10_000)
         const token = await api.tenantToken(current.app_id, await options.decrypt(current.app_secret), signal)
         if (!options.enabled()) return failed
-        await api.sendText(recipientType, recipient, `⏰ ${plan.title}\n\n${plan.text}`, token, signal)
+        await api.sendText(recipientType, recipient, proactiveImText(plan), token, signal)
         return '已发送'
       } catch {
         return failed

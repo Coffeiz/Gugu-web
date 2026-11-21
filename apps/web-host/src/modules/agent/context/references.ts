@@ -1,3 +1,8 @@
+import { formatFileReference } from '@gugu/core/files/relative-references'
+import { CoreError } from '@gugu/core'
+import { isOwnedFileStorageKey, normalizeFileOwnerId } from '../../files/store.js'
+import { sandboxTarget } from '../../workspaces/roots.js'
+import { createWorkspaceFileReads, type FileDirectory } from '../../workspaces/files.js'
 import type { PoolClient } from 'pg'
 import type { AgentChatInput } from '../chat/routes.js'
 
@@ -24,11 +29,32 @@ async function folderPath(client: Pick<PoolClient, 'query'>, owner: string, id: 
 }
 
 /** 返回写入 content_json 的 Canonical 内容；references_json 由调用方保留原始展示数据。 */
-export async function resolveAgentChatReferences(client: Pick<PoolClient, 'query'>, owner: string, input: AgentChatInput): Promise<readonly unknown[] | null> {
+export async function resolveAgentChatReferences(client: Pick<PoolClient, 'query'>, owner: string, input: AgentChatInput, storageRoot?: string): Promise<readonly unknown[] | null> {
   if (!owner) throw new TypeError('用户身份无效')
   const blocks: string[] = []
   for (const ref of (input.references ?? []).slice(0, 6)) {
     const kind = ref.type, raw = ref.id
+    if (kind === 'file' && typeof raw === 'string' && /^path-[A-Za-z0-9_-]{1,24000}$/.test(raw) && storageRoot) {
+      let value: unknown
+      try { value = JSON.parse(Buffer.from(raw.slice(5), 'base64url').toString('utf8')) }
+      catch { continue }
+      if (!value || typeof value !== 'object') continue
+      const { directoryId, relativePath, identity } = value as Record<string, unknown>
+      if (typeof relativePath !== 'string' || typeof identity !== 'string' || !/^\d{1,32}\.\d{1,32}\.\d{1,32}$/.test(identity)) continue
+      let directory: FileDirectory
+      if (directoryId === 'personal') directory = directoryId
+      else if (typeof directoryId === 'number' && Number.isSafeInteger(directoryId) && directoryId > 0) directory = directoryId
+      else if (typeof directoryId === 'string' && /^project:[1-9]\d{0,9}$/.test(directoryId)) directory = { projectId: Number(directoryId.slice(8)) }
+      else continue
+      try {
+        const file = await createWorkspaceFileReads(client, storageRoot).reference(owner, directory, relativePath, identity)
+        blocks.push(formatFileReference({ 名称: file.label, 沙盒绝对路径: file.subtitle, 相对路径: relativePath }))
+      } catch (error) {
+        if (!(error instanceof CoreError) || error.code !== 'not_found') throw error
+        blocks.push(formatFileReference({ 名称: typeof ref.label === 'string' ? ref.label : undefined, 状态: '引用已失效或当前环境无法读取' }))
+      }
+      continue
+    }
     if (kind === 'mcp') {
       const id = mcpReferenceId(raw)
       if (!id) continue
@@ -43,28 +69,37 @@ export async function resolveAgentChatReferences(client: Pick<PoolClient, 'query
       continue
     }
     if (typeof kind !== 'string' || !['project','file','folder','event','canvas_note','conversation','skill','scheduled_task'].includes(kind)) continue
-    if (!(typeof raw === 'number' && Number.isInteger(raw) || typeof raw === 'string' && /^\s*\+?\d+\s*$/.test(raw))) continue
+    const skillId = kind === 'skill' && typeof raw === 'string' && /^U[1-9]\d{0,15}$/.test(raw) ? raw : null
+    if (!skillId && !(typeof raw === 'number' && Number.isInteger(raw) || typeof raw === 'string' && /^\s*\+?\d+\s*$/.test(raw))) continue
     const id = Number(raw)
-    if (!Number.isSafeInteger(id) || id < 1) continue
+    if (!skillId && (!Number.isSafeInteger(id) || id < 1)) continue
     let row: Record<string, any> | undefined
     if (kind === 'conversation') row = (await client.query('SELECT m.id,m.content,s.id AS session_id,s.title FROM conversation_messages m JOIN conversation_sessions s ON s.id=m.session_id WHERE m.id=$1 AND s.user_id=$2', [id, owner])).rows[0]
     else {
       const queries: Record<string, string> = {
         project: 'SELECT id,name,status,contact_name,progress,current_stage FROM projects WHERE id=$1 AND user_id=$2',
-        file: 'SELECT id,display_name,ext,space,folder_id,stage_name,mime_type FROM files WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL',
+        file: 'SELECT id,display_name,ext,space,folder_id,stage_name,mime_type,storage_key FROM files WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL',
         folder: 'SELECT id,name,parent_id FROM folders WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL',
         event: 'SELECT id,title,date,time,description FROM calendar_events WHERE id=$1 AND user_id=$2',
         canvas_note: "SELECT id,title,content_plain FROM mind_nodes WHERE id=$1 AND user_id=$2 AND kind='canvas_note' AND deleted_at IS NULL",
-        skill: 'SELECT skill_id,name,enabled,description_short FROM user_skills WHERE id=$1 AND owner_id=$2',
+        skill: `SELECT skill_id,name,enabled,description_short FROM user_skills WHERE ${skillId ? 'skill_id' : 'id'}=$1 AND owner_id=$2`,
         scheduled_task: 'SELECT id,name,enabled,cron,payload FROM scheduled_tasks WHERE id=$1 AND user_id=$2',
       }
-      row = (await client.query(queries[kind]!, [id, owner])).rows[0]
+      row = (await client.query(queries[kind]!, [skillId ?? id, owner])).rows[0]
     }
     if (!row) continue
     if (kind === 'project') blocks.push(`[项目]\n项目 id：${row.id}\n名称：${row.name}\n状态：${row.status}\n联系人：${fallback(row.contact_name, '未设置')}\n进度：${row.progress}%\n当前阶段：${fallback(row.current_stage, '未设置')}`)
     else if (kind === 'file') {
       const path = await folderPath(client, owner, row.folder_id), directory = path ? `${path}（folder_id=${row.folder_id}）` : `${row.space} 空间根目录`
-      blocks.push(`[文件]\n文件 id：${row.id}\n名称：${fileName(row)}\n空间：${row.space}\n目录：${directory}\n阶段：${fallback(row.stage_name, '未设置')}\n类型：${fallback(row.mime_type, '未知')}`)
+      const key: unknown = row.storage_key
+      const parts = typeof key === 'string' ? key.split('/') : []
+      const mapped = typeof key === 'string' && isOwnedFileStorageKey(normalizeFileOwnerId(owner), key)
+        && ['个人文件', '项目文件', 'workspace'].includes(parts[1] ?? '') && parts.length > 2
+        && parts.every(part => part && part !== '.' && part !== '..' && !/[\\\x00-\x1f]/u.test(part))
+      blocks.push(formatFileReference({ 文件ID: row.id, 名称: fileName(row), 空间: row.space, 目录: directory,
+        沙盒绝对路径: mapped ? sandboxTarget(key) : undefined,
+        相对路径: mapped ? parts.slice(2).join('/') : undefined,
+        阶段: fallback(row.stage_name, '未设置'), 类型: fallback(row.mime_type, '未知') }))
     } else if (kind === 'folder') {
       const parent = await folderPath(client, owner, row.parent_id), path = parent ? `${parent}/${row.name}` : row.name
       const list = (await client.query('SELECT display_name,ext FROM files WHERE user_id=$1 AND folder_id=$2 AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT 8', [owner, id])).rows

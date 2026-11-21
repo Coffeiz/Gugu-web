@@ -4,7 +4,7 @@ import { configureRagJieba, createScopedRagSearch, createSqlMemoryScopeStateRead
   type AuthorizedMemoryScope, type RagDocument, type RagSearchScope } from '@gugu/core/agent/rag'
 import type { ContextSourceSelection, HistoryIdentity, PersistedHistoryRow, RagContext } from '@gugu/core/agent'
 import type { SqlDataRuntime } from '@gugu/core/data'
-import { imContextPolicy, type ImActor, type ImBotAccess } from '@gugu/core/im/access'
+import { imCanUseGroupOwnerMemory, imContextPolicy, type ImActor, type ImBotAccess } from '@gugu/core/im/access'
 import { agentDispatchSource, type AgentDispatchLease } from '../../../agent/run/dispatch.js'
 import { createLocalAgentMemoryRagStore } from '../../../agent/rag/memory.js'
 import { getAgentRagJieba } from '../../../agent/rag/jieba.js'
@@ -68,7 +68,7 @@ export function createPostgresImRagContextBuilder(options: {
       if (actor.role === 'member' && (actor.speakerRoles?.length ?? 1) <= 1 && first.member_memory_enabled) scopes.push({ label: 'group-member-rag',
         scope: { scope_type: 'member', scope_id: `${groupId}:${actor.platformUserId}`, platform: actor.platform, bot_id: actor.botId, group_id: groupId },
         memory: { ...base, type: 'member', id: `${groupId}:${actor.platformUserId}`, groupId } })
-      if (actor.verifiedOwner && actor.role === 'owner' && currentBot.groupOwnerMemoryEnabled && policy.loadOwnerContext) scopes.push({ label: 'owner-rag', scope: { scope_type: 'owner', scope_id: '' }, memory: { ownerId: identity.ownerId, type: 'owner', id: identity.ownerId } })
+      if (imCanUseGroupOwnerMemory(actor, currentBot.groupOwnerMemoryEnabled) && policy.loadOwnerContext) scopes.push({ label: 'owner-rag', scope: { scope_type: 'owner', scope_id: '' }, memory: { ownerId: identity.ownerId, type: 'owner', id: identity.ownerId } })
     } else if (actor.role === 'owner' && policy.loadOwnerContext) scopes.push({ label: 'owner-rag', scope: { scope_type: 'owner', scope_id: '' }, memory: { ownerId: identity.ownerId, type: 'owner', id: identity.ownerId } })
     const active: Scope[] = []
     for (const item of scopes) {

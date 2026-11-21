@@ -1,25 +1,25 @@
 {
-  "apps/web/tests/markdown/mermaidInteraction.test.ts": {
+  "apps/ui/tests/markdown/mermaidInteraction.test.ts": {
     "domain": "markdown-mermaid",
     "layer": "L0",
-    "owner": "apps/web/utils",
-    "productionEntry": "apps/web/src/utils/chart/mermaidInteraction.ts",
+    "owner": "apps/ui/utils",
+    "productionEntry": "apps/ui/src/shared/utils/chart/mermaidInteraction.ts",
     "keyBehavior": "Mermaid 图表交互可绑定、更新和清理，避免重复监听与过期状态残留",
     "ci": "frontend-test"
   },
-  "apps/web/tests/markdown/mermaidPng.test.ts": {
+  "apps/ui/tests/markdown/mermaidPng.test.ts": {
     "domain": "markdown-mermaid",
     "layer": "L0",
-    "owner": "apps/web/utils",
-    "productionEntry": "apps/web/src/utils/chart/mermaidPng.ts",
+    "owner": "apps/ui/utils",
+    "productionEntry": "apps/ui/src/shared/utils/chart/mermaidPng.ts",
     "keyBehavior": "Mermaid PNG 导出生成有效图像并在结束后释放临时资源",
     "ci": "frontend-test"
   },
-  "apps/web/tests/markdown/mermaidRenderer.test.ts": {
+  "apps/ui/tests/markdown/mermaidRenderer.test.ts": {
     "domain": "markdown-mermaid",
     "layer": "L0",
-    "owner": "apps/web/utils",
-    "productionEntry": "apps/web/src/utils/chart/mermaidRenderer.ts",
+    "owner": "apps/ui/utils",
+    "productionEntry": "apps/ui/src/shared/utils/chart/mermaidRenderer.ts",
     "keyBehavior": "共享 Markdown Mermaid 渲染器更新图表且在卸载后清理 DOM 与交互资源",
     "ci": "frontend-test"
   }

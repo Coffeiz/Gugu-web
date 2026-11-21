@@ -310,6 +310,12 @@ CREATE INDEX gugu_audit_log_created ON audit_logs(created_at DESC);
 
 export const webDomain = definePostgresMigration({
   revision: '0002_web_domain',
+  // PostgreSQL 18 会额外把列的 NOT NULL 记录为独立约束。
+  downstreamFields: [
+    'scheduled_tasks.execution_mode',
+    'scheduled_tasks.scheduled_tasks_execution_mode_check',
+    'scheduled_tasks.scheduled_tasks_execution_mode_not_null',
+  ],
   sql: webDomainSql,
   tables: webDomainTables,
   functions: webDomainFunctions,

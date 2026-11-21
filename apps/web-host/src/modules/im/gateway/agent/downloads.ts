@@ -3,16 +3,20 @@ import type { ToolDefinition } from '@gugu/core/tools'
 import { z } from 'zod'
 import { saveAgentDownload, agentDownloadsLimit } from '../../../agent/tools/files/downloads.js'
 import { isOwnedFileStorageKey } from '../../../files/store.js'
+import { imAttachmentScopeKey } from '../inbound/attachments.js'
+import { imConversationScopeHash } from './identity.js'
 import { createImRunScope } from './scope.js'
 
 const schema = z.object({ attach_id: z.string().min(1).max(128) }).strict()
-const unavailable = () => ({ kind: 'completed', successful: false, mutated: false, value: { error: '当前消息中的附件不可保存' } } as const)
+const unavailable = () => ({ kind: 'completed', successful: false, mutated: false, value: { error: '此附件不在当前私聊的可保存范围内或已失效' } } as const)
 
-export function createSaveImAttachmentTool(options: Parameters<typeof createImRunScope>[0] & { storageRoot: string }): ToolDefinition {
+export function createImSaveAttachmentTool(options: Parameters<typeof createImRunScope>[0] & { storageRoot: string }): ToolDefinition {
   const proof = createImRunScope(options)
+  const scopeHash = imConversationScopeHash(options.secretKey, proof.binding, proof.payload)
+  const attachmentScope = imAttachmentScopeKey(proof.scope)
   return {
-    definition: { name: 'save_im_attachment', schema: { type: 'function', function: {
-      name: 'save_im_attachment', description: '把当前 IM 私聊消息中的指定附件主动保存到个人文件的下载目录。',
+    definition: { name: 'save_attachment', schema: { type: 'function', function: {
+      name: 'save_attachment', description: '按 attach_id 把当前 IM 私聊里仍有效的附件保存到个人文件的下载目录，支持当前消息和同一私聊的历史消息。',
       parameters: { type: 'object', additionalProperties: false, required: ['attach_id'], properties: {
         attach_id: { type: 'string', minLength: 1, maxLength: 128 },
       } },
@@ -29,12 +33,21 @@ export function createSaveImAttachmentTool(options: Parameters<typeof createImRu
         await proof.read()
         return true
       }
-      await authorize()
+      signal.throwIfAborted()
+      const { watermark } = await proof.read()
       const { rows: [row] } = await options.pool.query<{ storage_key: string; name: string; ext: string }>(
-        `SELECT storage_key,name,ext FROM chat_attachments WHERE user_id=$1 AND attach_id=$2
-         AND state='attached' AND message_id=ANY($3::integer[]) AND platform=$4`,
-        [identity.ownerId, (input as z.infer<typeof schema>).attach_id, proof.ids, options.actor.platform],
+        `SELECT a.storage_key,a.name,a.ext FROM chat_attachments a
+         JOIN conversation_messages m ON m.id=a.message_id AND m.session_id=$3
+         JOIN gugu_im_inbound_receipts r ON r.message_id=m.id AND r.session_id=m.session_id
+           AND r.user_id=a.user_id AND r.run_id=m.run_id AND r.platform=a.platform
+         WHERE a.user_id=$1 AND a.attach_id=$2 AND a.platform=$4 AND a.state='attached'
+           AND a.extra->>'im_ingress_scope'=$5 AND r.scope_hash=$6
+           AND r.state='dispatched' AND r.chat_type='c2c' AND r.bot_id=$7
+           AND m.role='user' AND m.chat_type='c2c' AND m.conversation_seq<=$8`,
+        [identity.ownerId, (input as z.infer<typeof schema>).attach_id, identity.sessionId, proof.scope.platform,
+          attachmentScope, scopeHash, proof.scope.botId, watermark],
       )
+      signal.throwIfAborted()
       if (!row || !isOwnedFileStorageKey(identity.ownerId, row.storage_key)) return unavailable()
       const source = await openAnchoredLocalFile(options.storageRoot, row.storage_key)
       if (!source) return unavailable()

@@ -42,6 +42,7 @@ export interface ScheduledTaskExecutionPlan {
   ownerId: string
   name: string
   payload: string
+  executionMode?: 'reminder' | 'instruction'
   channels: readonly string[]
   deliveryTargets: Readonly<Record<string, unknown>>
   /** 由 Host 确认归属的 IM 群范围。原始投递目标不能用于读取群上下文。 */
@@ -98,10 +99,15 @@ export function createKyselyScheduledTaskExecutionReader<DB>(
     const ownerId = dataContext(rawOwner).ownerId
     const id = taskId(rawTaskId)
     const user = backend === 'sqlite' ? ownerId.replaceAll('-', '') : ownerId
-    const { rows: [row] } = await sql<Record<string, unknown>>`SELECT name,payload,channels,delivery_targets,authorized_tools,
+    const { rows: [row] } = await sql<Record<string, unknown>>`SELECT name,CASE WHEN event_id IS NULL THEN payload ELSE (
+        SELECT '提醒：' || event.title || '（' || event.date || COALESCE(' ' || NULLIF(event.time, ''), '') || '）'
+        FROM calendar_events AS event WHERE event.id=scheduled_tasks.event_id
+          AND event.user_id=scheduled_tasks.user_id AND event.deleted_at IS NULL
+      ) END AS payload,event_id,channels,delivery_targets,authorized_tools,
+      ${backend === 'postgres' ? sql`execution_mode` : sql`'instruction' AS execution_mode`},
       email_attachment_file_ids,workspace_id,filesystem_authorization_grant_id,schedule_kind,end_at
       FROM scheduled_tasks WHERE id=${id} AND user_id=${user} AND enabled=TRUE`.execute(db)
-    if (!row) return { error: '任务不存在或已停用' }
+    if (!row || (row.event_id != null && row.payload == null)) return { error: '任务不存在或已停用' }
     const endsAt = timestamp(row.end_at)
     if (row.schedule_kind !== 'once' && endsAt !== null && endsAt <= now) return { error: '任务已结束' }
     const channels = [...new Set(String(row.channels ?? '').split(',').filter(Boolean))]
@@ -112,10 +118,10 @@ export function createKyselyScheduledTaskExecutionReader<DB>(
       return value.chat_type === 'group' && Boolean(value.chat_id)
     }).length
     if (groupCount > 1) return { error: '一个定时任务目前只能设置一个群聊投递目标' }
-    const workspaceId = row.workspace_id == null ? null : integer(row.workspace_id)
+    const workspaceId = row.event_id != null || row.workspace_id == null ? null : integer(row.workspace_id)
     if (workspaceId !== null && !await readWorkspace(ownerId, workspaceId))
       return { error: '任务工作区不可用，已跳过执行' }
-    const grantId = row.filesystem_authorization_grant_id
+    const grantId = row.event_id == null ? row.filesystem_authorization_grant_id : null
     const grant = grantId != null && filesystemAuthorizationEnabled()
       ? (await sql<{ id: number }>`SELECT g.id FROM filesystem_authorization_grants g
           JOIN scheduled_tasks t ON t.filesystem_authorization_grant_id=g.id AND t.user_id=g.user_id
@@ -128,6 +134,7 @@ export function createKyselyScheduledTaskExecutionReader<DB>(
     const emailAttachmentFileIds = decoded(row.email_attachment_file_ids)
     return { plan: {
       ownerId, id, name: String(row.name), payload: String(row.payload ?? ''), channels, deliveryTargets,
+      ...(row.event_id != null || row.execution_mode === 'reminder' ? { executionMode: 'reminder' as const } : {}),
       authorizedTools: Array.isArray(authorizedTools) ? authorizedTools.filter((name): name is string => typeof name === 'string') : [],
       emailAttachmentFileIds: Array.isArray(emailAttachmentFileIds) ? emailAttachmentFileIds.map(integer) : [],
       workspaceId,

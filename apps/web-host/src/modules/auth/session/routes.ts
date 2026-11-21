@@ -76,6 +76,7 @@ export interface LogoutRouteOptions {
   revokeUserSessions: (userId: string) => Promise<void>
   /** The notifier owns diagnostic logging; notification failure is non-fatal. */
   publishAuthStateChanged: (userId: string) => Promise<unknown>
+  removePush?: (userId: string, subscriptionId: unknown) => Promise<void>
 }
 
 export function registerLogoutRoute(app: FastifyInstance, options: LogoutRouteOptions): void {
@@ -83,6 +84,7 @@ export function registerLogoutRoute(app: FastifyInstance, options: LogoutRouteOp
     const user = await options.authenticate(request, reply)
     if (!user) return
 
+    await options.removePush?.(user.id, request.headers['x-gugu-push-subscription'])
     await options.revokeUserSessions(user.id)
     try {
       await options.publishAuthStateChanged(user.id)
@@ -105,7 +107,7 @@ export function registerSessionRoutes(app: FastifyInstance, auth: UserAuthOption
   })
 }
 
-export function registerSessionLogout(app: FastifyInstance, auth: UserAuthOptions): void {
+export function registerSessionLogout(app: FastifyInstance, auth: UserAuthOptions, removePush?: LogoutRouteOptions['removePush']): void {
   if (auth.revokeUserSessions && auth.publishAuthStateChanged) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => {
       registerLogoutRoute(routes, {
@@ -113,6 +115,7 @@ export function registerSessionLogout(app: FastifyInstance, auth: UserAuthOption
           return { id: userFromRequest(request).id }
         },
         revokeUserSessions: auth.revokeUserSessions!,
+        removePush,
         publishAuthStateChanged: auth.publishAuthStateChanged!,
       })
     })

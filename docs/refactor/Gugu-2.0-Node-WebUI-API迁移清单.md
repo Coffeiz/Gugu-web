@@ -445,7 +445,7 @@
 
 ## 更新规则
 
-- **2026-11-13 原生回归复核**：Python `backend/tests/platform/security/test_ownership_security_events.py` 在 devserver 串行 3/3；Node 26.13.1 原生运行 `tests/admin/admin-audit-log.test.ts tests/admin/admin-user-security-events.test.ts` 8/8。Python 基线只覆盖安全事件记录/HMAC，不覆盖两个 GET handler；Node 测试使用 query adapter 替身。Vite 上 `/api/v1/admin/audit-log/security-events` 与 `/api/v1/admin/users/{user_id}/security-events` 均为 404，Host 未注册；隔离 PG 环境变量未设置，SQL/列/排序真实行为未验收。模块不计入已接入路由数。
+- **2026-11-13 原生回归复核**：Python `backend/tests/platform/security/test_ownership_security_events.py` 在 devserver 串行 3/3；Node 26.13.1 原生运行 `tests/admin/audit/write.test.ts tests/admin/users/events.test.ts` 8/8。Python 基线只覆盖安全事件记录/HMAC，不覆盖两个 GET handler；Node 测试使用 query adapter 替身。Vite 上 `/api/v1/admin/audit-log/security-events` 与 `/api/v1/admin/users/{user_id}/security-events` 均为 404，Host 未注册；隔离 PG 环境变量未设置，SQL/列/排序真实行为未验收。模块不计入已接入路由数。
 - 迁移接口时先补 route contract 与隔离 PostgreSQL 回归，并在 devserver 验收后再更新状态。
 - 单独列出仍由 Python 完成的完整副作用（幂等、Undo、事件、存储、Worker）；不能把仅路由可访问标成行为等价。
 - `/api/v1/auth/login` 的 Node 固定窗口限流已接 Redis command adapter，配置 `GUGU_WEBUI_REDIS_URL` 时可跨进程共享；未配置或 Redis 故障时兼容地 fail-open。登录限流与 Python 的共享能力仍需真实 Redis 环境验收。

@@ -7,27 +7,27 @@
     "keyBehavior": "SQLite 与 PostgreSQL 日历创建保持用户隔离、幂等、Undo 和索引事务回滚",
     "ci": "core-node"
   },
-  "apps/web/tests/calendar/DashboardCalendarPanel.test.ts": {
+  "apps/ui/tests/calendar/DashboardCalendarPanel.test.ts": {
     "domain": "calendar",
     "layer": "L1",
-    "owner": "apps/web/views/Dashboard",
-    "productionEntry": "apps/web/src/views/Dashboard/components/CalendarPanel.vue",
+    "owner": "apps/ui/views/Dashboard",
+    "productionEntry": "apps/ui/src/shared/views/Dashboard/components/CalendarPanel.vue",
     "keyBehavior": "快捷编辑提交打开时捕获的事件版本；服务端拒绝并发旧草稿后恢复乐观状态、展示冲突提示并刷新缓存",
     "ci": "frontend-test"
   },
-  "apps/web/tests/calendar/useCalendarNav.test.ts": {
+  "apps/ui/tests/calendar/useCalendarNav.test.ts": {
     "domain": "calendar",
     "layer": "L0",
-    "owner": "apps/web/composables/calendar",
-    "productionEntry": "apps/web/src/composables/calendar/useCalendarNav.ts",
+    "owner": "apps/ui/composables/calendar",
+    "productionEntry": "apps/ui/src/shared/composables/calendar/useCalendarNav.ts",
     "keyBehavior": "月/周视图选择可跨页面实例持久化恢复，非法存储值回退到月视图",
     "ci": "frontend-test"
   },
-  "apps/web/tests/calendar/utils/calendarMoreItems.test.ts": {
+  "apps/ui/tests/calendar/utils/calendarMoreItems.test.ts": {
     "domain": "calendar",
     "layer": "L0",
-    "owner": "apps/web/views/Calendar",
-    "productionEntry": "apps/web/src/views/Calendar/utils/calendarMoreItems.ts",
+    "owner": "apps/ui/views/Calendar",
+    "productionEntry": "apps/ui/src/shared/views/Calendar/utils/calendarMoreItems.ts",
     "keyBehavior": "日历更多列表使用更新后的活动数据并移除已删除活动，同时保留项目项",
     "ci": "frontend-test"
   },

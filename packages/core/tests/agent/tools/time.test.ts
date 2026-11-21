@@ -38,7 +38,7 @@ describe('时间工具真实注册和派发', () => {
       .toEqual({ kind: 'completed', successful: true, mutated: false, value: {
         date: '2026-09-25', weekday: '星期五', time: '00:00:00', datetime: '2026-09-25 00:00:00', timezone: 'Asia/Shanghai',
         ignored_fields:['timezone'],
-        hint:'以下字段不在 get_current_time 的当前 schema 中，已被忽略：timezone。参数形状与预期不符时，先调用 get_tool_schema 确认最新参数再重试。',
+        hint:'以下字段不在 get_current_time 的当前 schema 中，已被忽略：timezone。参数形状与预期不符时，需要时用 search_tools 的 names 读取最新参数定义再重试。',
       } })
   })
   it('夏令时跳转使用同一实时瞬间，不缓存旧时钟', async () => {

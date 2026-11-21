@@ -1,7 +1,7 @@
 import { createHmac, randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import { stableJson, type CancellationPort, type RunIdentity } from '@gugu/core/agent'
-import type { ImPreflightScope } from '@gugu/core/im/inbound-preflight'
+import type { ImPreflightScope } from '@gugu/gateway'
 import { resolveImAccess } from '@gugu/core/im/access'
 import { normalizeOwnerId } from '../../../../shared/owner-context.js'
 import { withPostgresTransaction } from '../../../../adapters/database/postgres-transaction.js'

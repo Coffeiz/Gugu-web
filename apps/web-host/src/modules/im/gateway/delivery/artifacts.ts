@@ -1,3 +1,4 @@
+import { sendImMedia, validateImOutboundFile } from '@gugu/gateway'
 import type { FileHandle } from 'node:fs/promises'
 import type { Pool } from 'pg'
 import { openLocalFile } from '@gugu/fs/node'
@@ -7,7 +8,7 @@ import type { ImRunDeliveryPorts } from '@gugu/core/im/run-delivery'
 import type { FileReadOperations } from '../../../files/browse.js'
 import { isOwnedFileStorageKey } from '../../../files/store.js'
 import { imAttachmentScopeKey, type ImAttachmentScope } from '../inbound/attachments.js'
-import type { GatewayPlatformSender } from '../platform-connections.js'
+import type { GatewayPlatformSender } from '../connections.js'
 import type { NodeImBotBinding } from '../inbound/inbox.js'
 import { createImRunScope } from '../agent/scope.js'
 import { imAcceptedEvidence, type ImAcceptedSource } from '../agent/evidence.js'
@@ -30,17 +31,15 @@ export function createImRunArtifactSender(options: {
 }): (input: Parameters<ImRunDeliveryPorts<unknown>['sender']['artifact']>[0], signal?: AbortSignal) => ReturnType<ImRunDeliveryPorts<unknown>['sender']['artifact']> {
   const proof = createImRunScope(options), { identity, actor, scope, payload, binding } = proof
   const scopeKey = imAttachmentScopeKey(scope)
-  const limit = scope.platform === 'qq' ? 30 * 1024 * 1024 : scope.platform === 'wechat' ? 20 * 1024 * 1024 : scope.platform === 'telegram' ? 50_000_000 : 100 * 1024 * 1024
   let source: ImAcceptedSource | undefined
   async function authorized() {
     if (!imCanUseTool(actor, 'send_file')) throw new Rejected()
     try { const read = await proof.read(); source = read; return read.watermark } catch { throw new Rejected() }
   }
   function metadata(name: unknown, ext: unknown, mime: unknown, size: unknown): Metadata {
-    if (typeof name !== 'string' || !name || /[\x00-\x1f\x7f"\\/]/u.test(name) || [...name].length > 180
-      || typeof ext !== 'string' || !/^[A-Za-z0-9]{0,16}$/.test(ext) || typeof mime !== 'string' || !mime
-      || !Number.isSafeInteger(Number(size)) || Number(size) < 1 || Number(size) > limit) throw new Rejected()
-    return { name, ext: ext.toLowerCase(), mime, size: Number(size) }
+    const file = { name, ext, mime, size: Number(size) }
+    if (!validateImOutboundFile(scope.platform, file)) throw new Rejected()
+    return { ...file, ext: file.ext.toLowerCase() }
   }
   async function attached(attachId: string, watermark: number): Promise<Metadata> {
     const rows = (await options.pool.query<Record<string, unknown>>(`SELECT a.name,a.ext,a.mime,a.size,a.storage_key,a.extra,m.conversation_seq
@@ -105,33 +104,15 @@ export function createImRunArtifactSender(options: {
           return object(current) && Number(current.id) === Number(fileId) && Number(current.version) === resolved.version }
       }
       const guard = async () => { try { return !signal?.aborted && await readAllowed() && await options.authorize() === true } catch { return false } }
-      if (!await guard()) throw new Rejected()
       const sender = options.sender(binding)
       if (!sender || sender.platform !== scope.platform) throw new Rejected()
-      const name = resolved.ext ? `${resolved.name}.${resolved.ext}` : resolved.name
-      const image = /^image\/(png|jpeg|gif|webp|bmp)$/.test(resolved.mime)
+      // 私聊批次的飞书会话取自已按消息锚点验证的末条事实。
+      const last = Array.isArray(payload._batch_messages) ? payload._batch_messages.at(-1) : payload
       started = true
-      let receipt: Parameters<typeof imAcceptedEvidence>[0]['receipt'], recipient = scope.chatId ?? scope.platformUserId
-      if (sender.platform === 'telegram') receipt = await sender.sender.file({ chatId: recipient, chatType: scope.chatType }, data, name, signal, guard)
-      else if (sender.platform === 'feishu') {
-        // 私聊聚合最外chat_id固定为null；原平台目标只取已被proof.read逐锚验证的末条事实。
-        const last = Array.isArray(payload._batch_messages) ? payload._batch_messages.at(-1) : payload
-        const target = scope.chatType === 'group' ? scope.chatId : object(last) ? last.chat_id : null
-        if (typeof target !== 'string' || !/^oc_[A-Za-z0-9_-]+$/.test(target)) throw new Rejected()
-        recipient = target
-        receipt = await sender.sender.file(recipient, data, resolved.name, resolved.ext, signal, guard)
-      } else if (sender.platform === 'wechat') {
-        if (scope.chatType !== 'c2c' || typeof payload.context_token !== 'string' || !payload.context_token) throw new Rejected()
-        const target = { userId: scope.platformUserId, contextToken: payload.context_token }
-        receipt = image ? await sender.sender.image(target, data, signal, guard) : await sender.sender.file(target, data, name, signal, guard)
-      } else {
-        const target = { id: scope.chatId ?? scope.platformUserId, chatType: scope.chatType }
-        const media = await sender.mediaUpload.upload({ target: scope.chatType === 'group' ? 'groups' : 'users', openid: target.id,
-          fileType: image ? 1 : 4, data, fileName: name, signal, authorize: guard })
-        if (typeof media.file_info !== 'string' || !await guard()) throw new Rejected()
-        receipt = await sender.sender.media(target, { fileInfo: media.file_info, image, filename: name }, signal, guard)
-      }
-      return imAcceptedEvidence({ scope, source: source!, recipient, kind: 'artifact', bytes: data, receipt })
+      const result = await sendImMedia({ platform: sender, scope, file: resolved, bytes: data,
+        feishuChatId: object(last) ? last.chat_id : null, wechatContextToken: payload.context_token, signal, authorize: guard })
+      if (!result) throw new Rejected()
+      return imAcceptedEvidence({ scope, source: source!, ...result, kind: 'artifact', bytes: data })
     } catch (error) { return error instanceof Rejected ? 'rejected' : started ? 'unknown' : 'rejected' }
   }
 }

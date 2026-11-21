@@ -1,4 +1,5 @@
 import { Readable } from 'node:stream'
+import { encodeAgentChatSse } from '@gugu/core/agent/chat-sse'
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
 import type { AgentChatService as CoreAgentChatService } from '@gugu/core/agent'
 import { z } from 'zod'
@@ -7,7 +8,7 @@ import { parsePythonInteger } from '../../../http/request.js'
 const chatBody = z.object({
   message: z.string(),
   client_message_id: z.string().max(64).regex(/^[A-Za-z0-9:_-]+$/).nullish(),
-  credential_id: z.number().int().positive().max(2147483647).optional(),
+  credential_id: z.number().int().positive().max(2147483647).nullable().optional(),
   locale: z.enum(['zh-CN', 'ja-JP', 'en-US']).nullish(),
   session_id: z.number().int().safe().nullish(),
   pending_queue_id: z.string().max(64).regex(/^[A-Za-z0-9_-]+$/).nullish(),
@@ -53,10 +54,10 @@ function requestStreamSignal(request: FastifyRequest, reply: import('fastify').F
 
 async function* encodeEvents(events: AsyncIterable<AgentChatEvent>): AsyncGenerator<string> {
   try {
-    for await (const event of events) yield `data: ${JSON.stringify(event)}\n\n`
+    for await (const event of events) yield encodeAgentChatSse(event)
   } catch {
-    yield `data: ${JSON.stringify({ type: 'error', message: '生成失败，请稍后重试' })}\n\n`
-    yield `data: ${JSON.stringify({ type: 'done' })}\n\n`
+    yield encodeAgentChatSse({ type: 'error', message: '生成失败，请稍后重试' })
+    yield encodeAgentChatSse({ type: 'done' })
   }
 }
 

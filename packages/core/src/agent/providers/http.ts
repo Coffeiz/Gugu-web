@@ -96,7 +96,11 @@ export async function* requestEvents(deps: ProviderDriverDependencies, request: 
   const emit = () => {
     const raw = data.join('\n')
     if (raw === '[DONE]') return { event: 'done', data: null }
-    try { return { event: event || 'message', data: JSON.parse(raw) as unknown } }
+    try {
+      const parsed = { event: event || 'message', data: JSON.parse(raw) as unknown }
+      if (parsed.event !== 'ping' && record(parsed.data).type !== 'ping') observe(() => deps.onStreamEvent?.())
+      return parsed
+    }
     catch { throw new ProviderError('protocol', { requestStarted: true, protocolDetail: 'sse_invalid_json' }) }
   }
   try {
@@ -133,6 +137,7 @@ export async function* requestNdjson(deps: ProviderDriverDependencies, request: 
       let value: unknown
       try { value = JSON.parse(line) } catch { throw new ProviderError('protocol', { requestStarted: true, protocolDetail: 'ndjson_invalid_json' }) }
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ProviderError('protocol', { protocolDetail: 'ndjson_invalid_record' })
+      observe(() => deps.onStreamEvent?.())
       yield record(value)
     }
   } catch (error) {

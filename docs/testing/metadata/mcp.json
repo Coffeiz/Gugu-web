@@ -26,7 +26,7 @@
   "apps/web-host/tests/mcp/safe-fetch.test.ts": {
     "domain": "mcp",
     "layer": "L1",
-    "owner": "apps/web-host/src/modules/mcp/safe-fetch.ts",
+    "owner": "packages/core/src/mcp/safe-fetch.ts",
     "productionEntry": "MCP 连接测试 startServer 固定 DNS 出站适配",
     "keyBehavior": "拒绝跳转、传播 SSE 取消、限制响应体大小",
     "ci": "node-webui"

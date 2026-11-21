@@ -28,7 +28,7 @@ Node 行为还覆盖：未认证拒绝、按已验证 owner 查询、隐藏其�
 所有测试均在 devserver 原生运行，未使用 Docker：
 
 - Mind Node 定向套件：**14/14 通过，0 跳过**。
-- 其中 `tests/host/mind-canvas-mutations-vite.integration.test.ts` 通过 Vite 代理、Node Host 和随机 PostgreSQL schema，覆盖创建、更新、列表重读、owner 隔离和 Undo 落库。
+- 其中 `tests/host/vite/mind/canvas.integration.test.ts` 通过 Vite 代理、Node Host 和随机 PostgreSQL schema，覆盖创建、更新、列表重读、owner 隔离和 Undo 落库。
 - Mind PostgreSQL 读取集成在随机 schema 中执行；测试后清理由各集成测试执行。
 - `corepack pnpm run typecheck`：通过。
 - `backend/tests/mind/test_mind_api.py`：**36/36 通过**。

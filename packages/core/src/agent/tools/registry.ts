@@ -30,7 +30,7 @@ function withInputAdaptations(result: ToolResult, adaptations: readonly string[]
   if (!adaptations.length && !ignored.length) return result
   return { ...result, value: { ...result.value,
     ...(adaptations.length ? {input_adaptations:[...adaptations]} : {}),
-    ...(ignored.length ? {ignored_fields:ignored,hint:`以下字段不在 ${definition.name} 的当前 schema 中，已被忽略：${ignored.join(', ')}。参数形状与预期不符时，先调用 get_tool_schema 确认最新参数再重试。`} : {}),
+    ...(ignored.length ? {ignored_fields:ignored,hint:`以下字段不在 ${definition.name} 的当前 schema 中，已被忽略：${ignored.join(', ')}。参数形状与预期不符时，需要时用 search_tools 的 names 读取最新参数定义再重试。`} : {}),
   } }
 }
 

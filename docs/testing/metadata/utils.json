@@ -1,41 +1,41 @@
 {
-  "apps/web/tests/utils/imDelivery.test.ts": {
+  "apps/ui/tests/utils/imDelivery.test.ts": {
     "domain": "im-delivery",
     "layer": "L0",
-    "owner": "apps/web/utils",
-    "productionEntry": "apps/web/src/utils/imDelivery.ts",
+    "owner": "apps/ui/utils",
+    "productionEntry": "apps/ui/src/shared/utils/imDelivery.ts",
     "keyBehavior": "即时通讯投递目标选项符合平台能力，未修改的既有目标不被重新序列化覆盖",
     "ci": "frontend-test"
   },
-  "apps/web/tests/utils/clientVersionGate.test.ts": {
+  "apps/ui/tests/utils/clientVersionGate.test.ts": {
     "domain": "frontend-preferences",
     "layer": "L0",
-    "owner": "apps/web/utils",
-    "productionEntry": "apps/web/src/utils/clientVersionGate.ts",
+    "owner": "apps/ui/utils",
+    "productionEntry": "apps/ui/src/shared/utils/clientVersionGate.ts",
     "keyBehavior": "前端构建版本变化时保留用户界面偏好并清理旧认证与临时状态",
     "ci": "frontend-test"
   },
-  "apps/web/tests/utils/chartKit.test.ts": {
+  "apps/ui/tests/utils/chartKit.test.ts": {
     "domain": "admin-usage",
     "layer": "L0",
-    "owner": "apps/web/utils",
-    "productionEntry": "apps/web/src/utils/chartKit.ts:lineChartOptions",
+    "owner": "apps/ui/utils",
+    "productionEntry": "apps/ui/src/shared/utils/chartKit.ts:lineChartOptions",
     "keyBehavior": "百分比折线图固定数值轴上限且无界指标仍使用自动刻度留白",
     "ci": "frontend-test"
   },
-  "apps/web/tests/utils/providerWebSearch.test.ts": {
+  "apps/ui/tests/utils/providerWebSearch.test.ts": {
     "domain": "provider-web-search",
     "layer": "L0",
-    "owner": "apps/web/utils",
-    "productionEntry": "apps/web/src/utils/providerWebSearch.ts",
+    "owner": "apps/ui/utils",
+    "productionEntry": "apps/ui/src/shared/utils/providerWebSearch.ts",
     "keyBehavior": "根据 Provider、协议、模型和凭据来源决定是否展示原生联网搜索能力",
     "ci": "frontend-test"
   },
-  "apps/web/tests/utils/spreadsheetZoomPreference.test.ts": {
+  "apps/ui/tests/utils/spreadsheetZoomPreference.test.ts": {
     "domain": "file-preview",
     "layer": "L0",
-    "owner": "apps/web/utils",
-    "productionEntry": "apps/web/src/utils/spreadsheetZoomPreference.ts",
+    "owner": "apps/ui/utils",
+    "productionEntry": "apps/ui/src/shared/utils/spreadsheetZoomPreference.ts",
     "keyBehavior": "表格预览缩放值可持久化恢复、限制在支持范围内，并在浏览器存储不可用时继续使用",
     "ci": "frontend-test"
   }

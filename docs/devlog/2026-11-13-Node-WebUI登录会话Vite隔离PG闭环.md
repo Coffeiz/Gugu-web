@@ -4,7 +4,7 @@
 
 前端 `useAuthStore.login()` 以 `X-Auth-Transport: cookie` 调用 `/api/v1/auth/login`，随后读取 `/api/v1/auth/me` 恢复会话。Node Host 根据账户凭据签发 HttpOnly access cookie 与可读 CSRF cookie；用户记录、最近活跃状态和登录事件由 PostgreSQL repository 提供。
 
-新增 `gugu-webui/tests/host/auth-session-vite.integration.test.ts`，以随机 schema 和合成用户启动真实 Node Host，再启动 Vite 并通过实际代理完成登录、会话读取和退出。测试验证响应不泄漏 bearer token、cookie 属性符合浏览器契约、`web_login` 事件持久化、CSRF 保护的退出清除两枚 cookie、security version 增加且旧会话立即失效；测试结束后关闭服务、删除隔离 schema。
+新增 `gugu-webui/tests/host/vite/auth/session.integration.test.ts`，以随机 schema 和合成用户启动真实 Node Host，再启动 Vite 并通过实际代理完成登录、会话读取和退出。测试验证响应不泄漏 bearer token、cookie 属性符合浏览器契约、`web_login` 事件持久化、CSRF 保护的退出清除两枚 cookie、security version 增加且旧会话立即失效；测试结束后关闭服务、删除隔离 schema。
 
 ## Python 行为基准
 

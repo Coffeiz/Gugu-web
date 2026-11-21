@@ -2,7 +2,7 @@ import type { Pool } from 'pg'
 import type { Kysely } from 'kysely'
 import { createDefaultWorkspaceShellTargetReader, createWorkspaceShellDirectoryReader, createWorkspaceShellTargetReader } from '@gugu/core/workspaces/shell-target'
 import { readPostgresFolderPathMirrorKey, readPostgresProjectPathMirrorKey } from '../../files/folders/paths.js'
-import { personalFileStorageKey, workspaceDirectoryStorageKey } from '../../workspaces/roots.js'
+import { personalFileStorageKey, sandboxTarget, workspaceDirectoryStorageKey } from '../../workspaces/roots.js'
 import { CoreError } from '@gugu/core'
 import { posix } from 'node:path'
 import { createLocalFileTree, localEntryKind } from '@gugu/fs/node'
@@ -11,12 +11,7 @@ import type { ShellTrashCommand } from '../shell/trash.js'
 import { constants } from 'node:fs'
 import { mkdir, open, type FileHandle } from 'node:fs/promises'
 
-export function sandboxTarget(key: string): string {
-  const [, space, ...tail] = key.split('/')
-  const target = space === '项目文件' ? 'project' : space === '个人文件' ? 'personal' : space === 'workspace' ? 'workspace' : null
-  if (!target) throw new Error('工作区来源不属于可挂载的文件空间')
-  return '/' + [target, ...tail].join('/')
-}
+export { sandboxTarget } from '../../workspaces/roots.js'
 
 /** 输入 key 必须由 owner 限定的数据库查询产生；不接收客户端提供的挂载列表。 */
 export async function prepareTerminalMounts(root: string, owner: string, primaryKey: string, readonlyKeys: readonly string[], writableKeys: readonly string[], cwd: string, initializeKeys: ReadonlySet<string> = new Set()) {

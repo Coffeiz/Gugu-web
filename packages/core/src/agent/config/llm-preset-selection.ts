@@ -1,3 +1,4 @@
+import { DEFAULT_LLM_CONTEXT_TOKENS, DEFAULT_LLM_OUTPUT_TOKENS } from '../../contracts/index.js'
 import {ensureLlmPresets,LlmStrategyConfigurationError,type LlmStrategyMutator} from './llm-strategy.js'
 type Document=Record<string,unknown>
 export class LlmPresetSelectionError extends Error {
@@ -5,7 +6,7 @@ export class LlmPresetSelectionError extends Error {
  constructor(readonly code:'not_found'|'last_preset'|'active_preset',message:string){super(message)}
 }
 const keys=['provider','api_key','base_url','model','max_tokens','context_tokens','thinking','reasoning_effort','reasoning_persistence','image','video','image_detail','audio','web_search_enabled','api_format','ollama_mode','ollama_api_mode','ollama_keep_alive','deployment_mode','local_runtime','capability_overrides','capability_checked_at','capability_fingerprint'] as const
-const defaults:Document={max_tokens:25600,context_tokens:128000,thinking:'',reasoning_effort:'',reasoning_persistence:'off',image:false,image_detail:'auto',video:false,audio:false,web_search_enabled:false,api_format:'',ollama_mode:'local',ollama_api_mode:'native',ollama_keep_alive:'5m',deployment_mode:'cloud',local_runtime:'other',capability_overrides:{},capability_checked_at:'',capability_fingerprint:''}
+const defaults:Document={max_tokens:DEFAULT_LLM_OUTPUT_TOKENS,context_tokens:DEFAULT_LLM_CONTEXT_TOKENS,thinking:'',reasoning_effort:'',reasoning_persistence:'off',image:false,image_detail:'auto',video:false,audio:false,web_search_enabled:false,api_format:'',ollama_mode:'local',ollama_api_mode:'native',ollama_keep_alive:'5m',deployment_mode:'cloud',local_runtime:'other',capability_overrides:{},capability_checked_at:'',capability_fingerprint:''}
 export function llmAiSegment(item:Document):Document{
  return Object.fromEntries(keys.map(key=>[key,Object.hasOwn(item,key)?item[key]:Object.hasOwn(defaults,key)?structuredClone(defaults[key]):null]))
 }

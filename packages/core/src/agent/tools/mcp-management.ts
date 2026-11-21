@@ -3,7 +3,7 @@ import { CoreError, dataContext } from '../../contracts/index.js'
 import type { SqlDataRuntime } from '../../data/runtime.js'
 import type { Database } from '../../data/schema.js'
 import type { Transaction } from 'kysely'
-import type { PendingInteraction, RunIdentity, ToolCall, ToolResult } from '../models.js'
+import type { Json, PendingInteraction, RunIdentity, ToolCall, ToolResult } from '../models.js'
 import { stableJson } from '../context/history/canonical-history.js'
 import { cancellable } from '../run/cancellation.js'
 import type { ClientDeleteConfirmationPort } from './clients.js'
@@ -13,17 +13,20 @@ import { createMcpServerMutations, setMcpServerEnabled, type McpEnvelopeCrypto, 
 import { normalizeMcpServerName, normalizeMcpSlots, validateMcpCommon } from '../../mcp/server-config.js'
 import { createMcpServerCreator, type McpServerCreateInput } from '../../mcp/server-create.js'
 import type { ToolDefinition, ToolScope } from './contracts.js'
+import { normalizeToolInput } from './normalize-input.js'
+
+interface McpManagementServerState {
+  state: string
+  loaded_tool_count: number
+  loaded_tool_names?: string[]
+}
 
 export interface AgentMcpManagementListPorts {
   list(ownerId: string): Promise<readonly McpStoredServer[]>
   decrypt: McpEnvelopeCrypto['decrypt']
   enabled(): boolean
   testConnection?(ownerId: string, id: string, signal: AbortSignal): Promise<AgentMcpConnectionResult>
-  state(ownerId: string, id: string): {
-    state: string
-    loaded_tool_count: number
-    loaded_tool_names?: string[]
-  }
+  state?(ownerId: string, id: string): McpManagementServerState | Promise<McpManagementServerState>
 }
 
 type ConnectionErrorKind = 'configuration' | 'auth' | 'timeout' | 'network' | 'protocol'
@@ -186,7 +189,10 @@ export function createMcpManagementTool(
       for (const row of rows) {
         scope.signal.throwIfAborted()
         const server = await safeServerView(row, ports.decrypt, scope.signal)
-        const state = ports.state(ownerId, row.id)
+        const state = await ports.state?.(ownerId, row.id) ?? {
+          state: row.enabled ? 'unloaded' : 'disabled', loaded_tool_count: 0, loaded_tool_names: [],
+        }
+        scope.signal.throwIfAborted()
         items.push({ ...server, state: state.state, loaded_tool_count: state.loaded_tool_count, loaded_tool_names: state.loaded_tool_names ?? [] })
       }
       return { kind: 'completed', successful: true, mutated: false, value: { enabled: ports.enabled(), items } }
@@ -230,6 +236,10 @@ type RemovalInput = z.infer<typeof removalSchema>
 type EditInput = z.infer<typeof toggleSchema> | z.infer<typeof updateSchema>
 type AddInput = z.infer<typeof addSchema>
 
+// 交互保留模型的原始工具调用，重建确认卡时需要与执行入口做相同的参数规范化。
+const mcpAddInput = { name: 'manage_mcp_servers', schema: { input_schema: z.toJSONSchema(addSchema) as Json } }
+const mcpUpdateInput = { name: 'manage_mcp_servers', schema: { input_schema: z.toJSONSchema(updateSchema) as Json } }
+
 function queryFailure(error: string): ToolResult {
   return { kind: 'completed', successful: false, mutated: false, value: { error } }
 }
@@ -248,7 +258,9 @@ function operationKey(identity: RunIdentity, roundId: string, toolCallId: string
 function agentEndpoint(raw: string, validate: (endpoint: string) => string) {
   let endpoint: string, url: URL
   try {
-    endpoint = validate(raw)
+    const value = raw.trim()
+    const link = /^\[([^\]\r\n]+)\]\((https?:\/\/[^\s()]+)\)$/iu.exec(value)
+    endpoint = validate(link && link[1] === link[2] ? link[2]! : value)
     url = new URL(endpoint)
     if (!['http:', 'https:'].includes(url.protocol)) throw new Error()
   } catch {
@@ -275,6 +287,10 @@ function configurationResult(receipt: { credentialRequestId?: string }, call: To
   return receipt.credentialRequestId
     ? { kind: 'waiting', interaction: { id: receipt.credentialRequestId, kind: 'credential', toolCall: call } }
     : { kind: 'completed', successful: true, mutated, value: receipt }
+}
+
+function describeMcpAdd(name: string, endpoint: string, enabled: boolean, mode: string, hasCredentialSlots: boolean) {
+  return `将添加 MCP 服务「${name}」（${new URL(endpoint).origin}），${enabled ? '启用' : '停用'}，${mode === 'auto' ? '允许自动确认' : '每次调用均需确认'}${hasCredentialSlots ? '。确认后通过私密表单填写 Header 凭据' : ''}`
 }
 
 /** 新建提交借用与确认认领和持久收据相同的事务。 */
@@ -304,7 +320,17 @@ export function createMcpManagementCreateOperations(runtime: SqlDataRuntime, por
       return { kind: 'unknown' }
     }
   }
-  return { credentials: Boolean(ports.stageCredential), reconcile, async execute(input: AddInput, scope: ToolScope, call: ToolCall): Promise<ToolResult> {
+  return { credentials: Boolean(ports.stageCredential), reconcile, describe(identity: RunIdentity, input: unknown,
+    snapshot: { targetsDigest: string }) {
+    const parsed = addSchema.safeParse(normalizeToolInput(mcpAddInput, input))
+    if (!parsed.success) throw new CoreError('invalid_request', 'MCP 创建参数无效')
+    const args = parsed.data
+    const name = normalizeMcpServerName(args.server_name)
+    const owner = dataContext(identity.ownerId).ownerId
+    if (digest([owner, name]) !== snapshot.targetsDigest) throw new CoreError('conflict', stale.message)
+    const endpoint = agentEndpoint(args.endpoint, ports.validateEndpoint)
+    return describeMcpAdd(name, endpoint, args.enabled ?? true, args.confirm_mode ?? 'confirm_all', Boolean(args.credential_slots?.length))
+  }, async execute(input: AddInput, scope: ToolScope, call: ToolCall): Promise<ToolResult> {
     const { identity, signal, roundId } = scope
     signal.throwIfAborted()
     if (scope.resolution) {
@@ -339,7 +365,7 @@ export function createMcpManagementCreateOperations(runtime: SqlDataRuntime, por
       const snapshot = {
         targetRefs: { mcp_server_name: [digest(name)] }, targetsDigest: digest([owner, name]),
         versionsDigest: digest(configuration),
-        displaySummary: `将添加 MCP 服务「${name}」（${origin}），${configuration.enabled ? '启用' : '停用'}，${configuration.confirm_mode === 'auto' ? '允许自动确认' : '每次调用均需确认'}${credentialSlots.length ? '。确认后通过私密表单填写 Header 凭据' : ''}`,
+        displaySummary: describeMcpAdd(name, endpoint, configuration.enabled, configuration.confirm_mode, credentialSlots.length > 0),
       }
       const inputDigest = digest(configuration)
       if (!scope.resolution) {
@@ -385,6 +411,36 @@ function editParams(input: EditInput) {
 function endpointChangeAllowed(row: McpStoredServer) {
   return row.transport === 'http' && !row.encrypted_credentials && !row.encrypted_headers && !row.encrypted_query_params
     && (!Array.isArray(row.credential_slots) || row.credential_slots.length === 0)
+}
+
+function describeMcpUpdate(row: McpStoredServer, patch?: McpServerPatch) {
+  const changes = [
+    ...(patch?.endpoint ? [`连接地址（${new URL(patch.endpoint).origin}）`] : []),
+    ...(patch?.confirm_mode === 'auto' ? ['允许自动确认'] : []),
+    ...(patch?.tool_allowlist ? ['调整工具白名单'] : []),
+    ...(patch?.credential_slots ? [patch.credential_slots.length
+      ? '更换 Header 凭据槽位并清除旧凭据，确认后请通过私密表单填写新凭据'
+      : '移除全部凭据槽位并清除旧凭据'] : []),
+  ].join('、')
+  const name = row.name.replace(/[\p{Cc}\p{Cf}]/gu, ' ')
+  return `将更新 MCP 服务「${name}」的${changes}`
+}
+
+export async function describeMcpManagementUpdate(tx: Transaction<Database>, identity: RunIdentity, input: unknown,
+  snapshot: { targetsDigest: string; versionsDigest: string }, backend: SqlDataRuntime['backend'], validateEndpoint: (endpoint: string) => string) {
+  const parsed = updateSchema.safeParse(normalizeToolInput(mcpUpdateInput, input))
+  if (!parsed.success) throw new CoreError('invalid_request', 'MCP 更新参数无效')
+  const params = normalizedSelector(parsed.data)
+  const row = (await createMcpServerConfigLister<Database>(tx, backend)(identity.ownerId, tx)).find(item =>
+    params.server_id ? item.id === params.server_id : item.name === params.server_name)
+  if (!row || digest([row.id]) !== snapshot.targetsDigest || versionOf(row) !== snapshot.versionsDigest)
+    throw new CoreError('conflict', 'MCP 更新目标已变化')
+  return describeMcpUpdate(row, {
+    endpoint: parsed.data.endpoint === undefined ? undefined : agentEndpoint(parsed.data.endpoint, validateEndpoint),
+    confirm_mode: parsed.data.confirm_mode,
+    tool_allowlist: parsed.data.tool_allowlist,
+    credential_slots: parsed.data.credential_slots?.map(slot => ({ ...slot })),
+  })
 }
 
 /** 配置、持久目录失效和收据原子提交，连接刷新在提交后执行。 */
@@ -470,17 +526,8 @@ export function createMcpManagementEditOperations(runtime: SqlDataRuntime, ports
       if (!target) return queryFailure(missing)
       if (patch?.endpoint && !endpointChangeAllowed(target)) return queryFailure('含凭据或非 HTTP 服务的连接地址须在设置中更新')
       if (patch?.credential_slots && target.transport !== 'http') return queryFailure('仅 HTTP 服务支持 Header 凭据槽位')
-      const changes = [
-        ...(patch?.endpoint ? [`连接地址（${new URL(patch.endpoint).origin}）`] : []),
-        ...(patch?.confirm_mode === 'auto' ? ['允许自动确认'] : []),
-        ...(patch?.tool_allowlist ? ['调整工具白名单'] : []),
-        ...(patch?.credential_slots ? [patch.credential_slots.length
-          ? '更换 Header 凭据槽位并清除旧凭据，确认后请通过私密表单填写新凭据'
-          : '移除全部凭据槽位并清除旧凭据'] : []),
-      ].join('、')
-      const name = target.name.replace(/[\p{Cc}\p{Cf}]/gu, ' ')
       snapshot = { targetRefs: { mcp_server: [target.id] }, targetsDigest: digest([target.id]), versionsDigest: versionOf(target),
-        displaySummary: `将更新 MCP 服务「${name}」的${changes}` }
+        displaySummary: describeMcpUpdate(target, patch) }
       const inputDigest = digest(params)
       if (!scope.resolution) {
         const prepared = await confirmation.gate.prepare(call, scope, inputDigest, snapshot)
@@ -561,7 +608,17 @@ export function createMcpManagementRemoveOperations(runtime: SqlDataRuntime, set
       return { kind: 'unknown' }
     }
   }
-  return { reconcile, async execute(input: RemovalInput, scope: ToolScope, call: ToolCall): Promise<ToolResult> {
+  return { reconcile, async describe(tx: Transaction<Database>, identity: RunIdentity, input: unknown,
+    snapshot: { targetsDigest: string; versionsDigest: string }) {
+    const parsed = removalSchema.safeParse(input)
+    if (!parsed.success) throw new CoreError('invalid_request', 'MCP 删除参数无效')
+    const params = normalizedSelector(parsed.data)
+    const row = (await list(identity.ownerId, tx)).find(item =>
+      params.server_id ? item.id === params.server_id : item.name === params.server_name)
+    if (!row || digest([row.id]) !== snapshot.targetsDigest || versionOf(row) !== snapshot.versionsDigest)
+      throw new CoreError('conflict', stale.message)
+    return `删除 MCP server [${row.name}]`
+  }, async execute(input: RemovalInput, scope: ToolScope, call: ToolCall): Promise<ToolResult> {
     scope.signal.throwIfAborted()
     const params = normalizedSelector(input)
     if (params.server_id && !mcpUuid.test(params.server_id)) return rejected('server_id 无效')

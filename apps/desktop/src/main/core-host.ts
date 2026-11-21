@@ -7,6 +7,8 @@ import {
   DESKTOP_METHODS,
   DESKTOP_MUTATIONS,
   MAX_FRAME,
+  MAX_AGENT_RESPONSE,
+  CHUNKED_AGENT_METHODS,
   CORE_SCHEMA_VERSION,
 } from '@gugu/core/desktop'
 import type { DesktopReply } from '@gugu/core/desktop'
@@ -25,12 +27,14 @@ interface Manifest {
   nodeVersion: string
   nodeAbi: string
   entry: string
+  workerEntry?: string
+  agentRuntimeModule?: string
   executable: string
   files: Record<string, string>
 }
 export async function verifyArtifact(
   directory: string,
-): Promise<{ node: string; entry: string; manifest: Manifest }> {
+): Promise<{ node: string; entry: string; workerEntry: string; agentRuntimeModule: string; manifest: Manifest }> {
   const root = await realpath(directory)
   const bytes = await readFile(join(root, 'manifest.json'))
   if (bytes.length > 4 * 1024 * 1024)
@@ -52,7 +56,13 @@ export async function verifyArtifact(
     Array.isArray(manifest.files)
   )
     throw new DesktopError('artifact_invalid', 'Node 制品与宿主、协议或数据版本不匹配')
-  for (const required of [executable, manifest.entry, 'host/dist/runtime/worker.js'])
+  const workerEntry = manifest.workerEntry ?? 'host/dist/runtime/worker.js'
+  const agentRuntimeModule = manifest.agentRuntimeModule
+  if (workerEntry !== 'host/dist/runtime/worker.js' && workerEntry !== 'host/desktop-agent-worker.mjs')
+    throw new DesktopError('artifact_invalid', 'Node 制品的桌面 Worker 入口无效')
+  if (agentRuntimeModule !== 'host/agent/runtime.mjs')
+    throw new DesktopError('artifact_invalid', 'Node 制品的桌面 Agent 运行模块无效')
+  for (const required of [executable, manifest.entry, workerEntry, agentRuntimeModule])
     if (!Object.hasOwn(manifest.files, required))
       throw new DesktopError('artifact_invalid', 'Node 制品缺少必要文件')
   const actual = new Set<string>()
@@ -91,22 +101,38 @@ export async function verifyArtifact(
   return {
     node: join(root, executable),
     entry: join(root, manifest.entry),
+    workerEntry: join(root, workerEntry),
+    agentRuntimeModule: join(root, agentRuntimeModule),
     manifest,
   }
 }
 
 interface Waiting {
+  chunkId?: number
+  chunks: Buffer[]
+  size: number
   resolve(value: Record<string, unknown>): void
   reject(error: DesktopError): void
   timer: ReturnType<typeof setTimeout>
 }
+export type DesktopCoreHostRequest = {
+  readonly id: number
+  readonly signal: AbortSignal
+  readonly method: string
+  readonly params: Record<string, unknown>
+}
+type DesktopCoreHostRequestHandler = (request: DesktopCoreHostRequest) => Promise<unknown>
 export class CoreHost {
+  private agentRunListeners = new Set<(sessionId: number, runId: string) => void>()
+  private hostControllers = new Map<number, AbortController>()
+  private hostRequestHandler?: DesktopCoreHostRequestHandler
   private waiting?: Waiting
   private buffered = Buffer.alloc(0)
   private tail: Promise<unknown> = Promise.resolve()
   private count = 0
   private sequence = 0
   private healthy = true
+  private agentChunksAvailable = false
   private undoAvailable = false
   private calendarAvailable = false
   private notesAvailable = false
@@ -132,6 +158,9 @@ export class CoreHost {
     database: string,
     manifest?: Pick<Manifest, 'nodeVersion' | 'nodeAbi'>,
     timeoutMs = 15_000,
+    memoryRoot?: string,
+    workerEntry?: string,
+    agentRuntimeModule?: string,
   ): Promise<CoreHost> {
     const env = Object.fromEntries(
       Object.entries(process.env).filter(
@@ -141,7 +170,11 @@ export class CoreHost {
           ),
       ),
     )
-    const child = spawn(node, [entry, '--database', database, '--protocol', '2'], {
+    delete env.GUGU_DESKTOP_MEMORY_ROOT
+    if (memoryRoot) env.GUGU_DESKTOP_MEMORY_ROOT = memoryRoot
+    const child = spawn(node, [entry, '--database', database, '--protocol', '2',
+      ...(workerEntry ? ['--worker-entry', workerEntry] : []),
+      ...(agentRuntimeModule ? ['--agent-runtime-module', agentRuntimeModule] : [])], {
       cwd: dirname(database),
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: false,
@@ -175,6 +208,7 @@ export class CoreHost {
             ready.nodeAbi !== manifest.nodeAbi))
       )
         throw new DesktopError('startup_failed', 'Core 数据库或运行时无法通过启动校验')
+      host.agentChunksAvailable = ready.capabilities.includes('agent_response_chunks_v1')
       host.undoAvailable = ready.capabilities.includes('undo_mind_v1')
       host.calendarAvailable = ready.capabilities.includes('calendar_v1')
       host.notesAvailable = ready.capabilities.includes('mind_notes_v1')
@@ -186,6 +220,8 @@ export class CoreHost {
     }
   }
   private fail() {
+    for (const controller of this.hostControllers.values()) controller.abort()
+    this.hostControllers.clear()
     this.healthy = false
     if (!this.stopped) this.child.kill()
     if (this.waiting) {
@@ -200,38 +236,111 @@ export class CoreHost {
     this.buffered = Buffer.concat([this.buffered, chunk])
     let end: number
     while ((end = this.buffered.indexOf(10)) !== -1) {
-      if (end + 1 > MAX_FRAME || !this.waiting) {
+      if (end + 1 > MAX_FRAME) {
         this.fail()
         return
       }
-      const waiting = this.waiting
-      this.waiting = undefined
-      clearTimeout(waiting.timer)
       const bytes = this.buffered.subarray(0, end)
       this.buffered = this.buffered.subarray(end + 1)
       try {
-        const frame: unknown = JSON.parse(
-          new TextDecoder('utf-8', { fatal: true }).decode(bytes),
-        )
+        const frame: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
         if (!frame || typeof frame !== 'object' || Array.isArray(frame)) throw new Error()
-        waiting.resolve(frame as Record<string, unknown>)
+        const message = frame as Record<string, unknown>
+        if (message.v === 2 && message.event === 'agent_run_changed'
+          && typeof message.sessionId === 'number' && Number.isSafeInteger(message.sessionId) && message.sessionId > 0
+          && typeof message.runId === 'string' && /^[A-Za-z0-9:_-]{1,128}$/.test(message.runId)) {
+          for (const listener of this.agentRunListeners) listener(message.sessionId, message.runId)
+          continue
+        }
+        if (message.v === 2 && message.event === 'host_cancel' && typeof message.requestId === 'number') {
+          this.hostControllers.get(message.requestId)?.abort()
+          continue
+        }
+        if (message.v === 2 && message.event === 'host_request'
+          && Number.isSafeInteger(message.requestId) && (message.requestId as number) > 0
+          && typeof message.method === 'string' && /^[a-z][A-Za-z0-9_.-]{1,79}$/.test(message.method)
+          && message.params !== null && typeof message.params === 'object' && !Array.isArray(message.params)) {
+          void this.answerHostRequest(message.requestId as number, message.method,
+            message.params as Record<string, unknown>)
+          continue
+        }
+        const waiting = this.waiting
+        if (!waiting) throw new Error()
+        if (message.event === 'response_chunk') {
+          if (message.v !== 2 || waiting.chunkId === undefined || message.id !== waiting.chunkId
+            || message.index !== waiting.chunks.length || typeof message.last !== 'boolean' || typeof message.data !== 'string'
+            || !/^[A-Za-z0-9+/]+={0,2}$/.test(message.data)) throw new Error()
+          const chunk = Buffer.from(message.data, 'base64')
+          if (!chunk.length || chunk.toString('base64') !== message.data) throw new Error()
+          waiting.size += chunk.length
+          if (waiting.size > MAX_AGENT_RESPONSE) throw new Error()
+          waiting.chunks.push(chunk)
+          if (!message.last) continue
+          const complete = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(waiting.chunks, waiting.size)))
+          if (!complete || typeof complete !== 'object' || Array.isArray(complete) || complete.v !== 2
+            || complete.id !== waiting.chunkId || !Object.hasOwn(complete, 'result') || Object.hasOwn(complete, 'error')) throw new Error()
+          this.waiting = undefined
+          clearTimeout(waiting.timer)
+          waiting.resolve(complete)
+          continue
+        }
+        if (waiting.chunks.length) throw new Error()
+        this.waiting = undefined
+        clearTimeout(waiting.timer)
+        waiting.resolve(message)
       } catch {
-        waiting.reject(new DesktopError('invalid_frame', 'Core 响应结构无效，请重启应用'))
         this.fail()
+        return
       }
     }
     if (this.buffered.length >= MAX_FRAME) this.fail()
   }
-  private frame(): Promise<Record<string, unknown>> {
+  private frame(chunkId?: number): Promise<Record<string, unknown>> {
     if (!this.healthy || this.waiting)
       return Promise.reject(new DesktopError('closed', 'Core 已停止，请重新启动应用'))
     return new Promise((resolveFrame, reject) => {
       this.waiting = {
+        chunkId, chunks: [], size: 0,
         resolve: resolveFrame,
         reject,
         timer: setTimeout(() => this.fail(), this.timeoutMs),
       }
     })
+  }
+  onAgentRunChanged(listener: (sessionId: number, runId: string) => void): () => void {
+    this.agentRunListeners.add(listener)
+    return () => { this.agentRunListeners.delete(listener) }
+  }
+  setHostRequestHandler(handler: DesktopCoreHostRequestHandler): void {
+    if (this.hostRequestHandler) throw new DesktopError('conflict', 'Core 宿主能力处理器已配置')
+    this.hostRequestHandler = handler
+  }
+  private async answerHostRequest(id: number, method: string, params: Record<string, unknown>): Promise<void> {
+    const controller = new AbortController()
+    this.hostControllers.set(id, controller)
+    let response: Record<string, unknown>
+    try {
+      if (!this.hostRequestHandler) throw new DesktopError('unsupported', '当前桌面未配置此 Agent 宿主能力')
+      const result = await this.hostRequestHandler({ id, method, params, signal: controller.signal })
+      response = { v: 2, event: 'host_response', requestId: id, result }
+    } catch (error) {
+      const code = error instanceof DesktopError && ['invalid_request', 'not_found', 'conflict', 'storage_error', 'closed', 'cancelled', 'busy'].includes(error.code)
+        ? error.code : 'storage_error'
+      const message = error instanceof DesktopError && code !== 'storage_error'
+        ? error.message : '桌面 Agent 宿主能力执行失败'
+      response = { v: 2, event: 'host_response', requestId: id, error: { code, message } }
+    }
+    this.hostControllers.delete(id)
+    if (controller.signal.aborted) return
+    let line: string
+    try {
+      line = JSON.stringify(response) + '\n'
+      if (Buffer.byteLength(line) > MAX_FRAME) throw new Error()
+    } catch {
+      line = JSON.stringify({ v: 2, event: 'host_response', requestId: id,
+        error: { code: 'invalid_request', message: '桌面 Agent 宿主响应超出长度限制' } }) + '\n'
+    }
+    if (!this.healthy || !this.child.stdin.write(line)) return
   }
   request<T = unknown>(method: string, params: Record<string, unknown> = {}, callerOperationId?: string): Promise<T> {
     if (this.closing || !this.healthy)
@@ -251,7 +360,7 @@ export class CoreHost {
       return Promise.reject(new DesktopError('invalid_request', '当前 Core 未提供撤销能力'))
     if (!(DESKTOP_METHODS as readonly string[]).includes(method) && !undoMethod && !calendarMethod && !notesMethod && !canvasesMethod)
       return Promise.reject(new DesktopError('invalid_request', '此桌面能力不可用'))
-    const acceptsOperationId = undoWrite || method === 'projects.board.create'
+    const acceptsOperationId = undoWrite || ['projects.board.create', 'agent.sessions.create', 'agent.sessions.append', 'agent.sessions.rename', 'agent.sessions.delete', 'agent.sessions.queue'].includes(method)
     if ((undoWrite || callerOperationId !== undefined) &&
         (!acceptsOperationId || !operationSchema.safeParse(callerOperationId).success))
       return Promise.reject(new DesktopError('invalid_request', '操作标识无效'))
@@ -262,10 +371,11 @@ export class CoreHost {
       ['owner_id', 'user_id', 'ownerId'].some((key) => key in params)
     )
       return Promise.reject(new DesktopError('invalid_request', '桌面请求无效'))
+    const requestLimit = method === 'preferences.desktop.update' ? MAX_FRAME : MAX_FRAME / 2
     let snapshot: Record<string, unknown>
     try {
       const encoded = JSON.stringify(params)
-      if (Buffer.byteLength(encoded) > MAX_FRAME / 2 - 256) throw new Error()
+      if (Buffer.byteLength(encoded) > requestLimit - 256) throw new Error()
       snapshot = JSON.parse(encoded)
     } catch {
       return Promise.reject(
@@ -280,19 +390,21 @@ export class CoreHost {
         if (!this.healthy) throw new DesktopError('closed', 'Core 已停止，请重新启动应用')
         const id = ++this.sequence,
           operationId = callerOperationId ?? (DESKTOP_MUTATIONS.includes(method) || undoWrite ? randomUUID() : undefined)
+        const acceptChunks = this.agentChunksAvailable && (CHUNKED_AGENT_METHODS as readonly string[]).includes(method)
         const request =
           JSON.stringify({
             v: 2,
             id,
             method,
             params: snapshot,
+            ...(acceptChunks ? { accept_chunks: true } : {}),
             ...(operationId ? { operation_id: operationId } : {}),
           }) + '\n'
-        if (Buffer.byteLength(request) > MAX_FRAME / 2)
+        if (Buffer.byteLength(request) > requestLimit)
           throw new DesktopError('invalid_request', '桌面请求超出长度限制')
         let response: Record<string, unknown>
         try {
-          const pending = this.frame()
+          const pending = this.frame(acceptChunks ? id : undefined)
           this.child.stdin.write(request)
           response = await pending
         } catch {

@@ -8,6 +8,7 @@ import { dataContext, CoreError } from '../../../src/contracts/index.js'
 import type { SqlDataRuntime } from '../../../src/data/runtime.js'
 import { initializeSqlite, openSqliteRuntime } from '../../../src/data/sqlite.js'
 import { createDurableProjectMutationPort } from '../../../src/agent/tools/projects/mutation-port.js'
+import { createKyselyProjectUpdateTransaction } from '../../../src/projects/update-store.js'
 import { createProjectMutationTools, createProjectStageTools } from '../../../src/agent/tools/projects.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import { collect, fixture } from '../run/fixtures.js'
@@ -41,6 +42,16 @@ beforeEach(async()=>{
  mount()
 })
 afterEach(async()=>{await core?.close();if(folder)await rm(folder,{recursive:true,force:true})})
+
+it('桌面 SQLite 项目更新不依赖 Web 文件表',async()=>{
+ await sql`DROP TABLE files`.execute(core.db)
+ await core.db.transaction().execute(async tx=>{
+  await createKyselyProjectUpdateTransaction(tx,'sqlite',owner).updateFileStoragePrefixes(owner,id,oldPrefix,`${owner}/项目文件/2026/11/新名 #${id}`)
+ })
+ const tables=await sql<{name:string}>`SELECT name FROM sqlite_master WHERE type='table' AND name='files'`.execute(core.db)
+ expect(tables.rows).toHaveLength(0)
+ expect((await core.transaction(dataContext(owner),data=>data.projects.get(id)))?.name).toBe('计划😀')
+})
 
 it('真实注册器同事务解析、更新阶段/Undo/文件前缀与收据，重建后重放不再次改名或发布',async()=>{
  const request=call('update_project',{project:'计划😀',project_name:'新名😀',status:'done',summary:'摘要'})

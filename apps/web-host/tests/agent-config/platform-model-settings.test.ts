@@ -28,6 +28,8 @@ test('缺少预设时以有效模型配置创建默认预设', () => {
   const settings = resolvePlatformModelSettings({}, { AI__PROVIDER: 'openai', AI__MODEL: 'env-model' })
   assert.equal(settings.ai.provider, 'openai')
   assert.equal(settings.ai.model, 'env-model')
+  assert.equal(settings.ai.context_tokens, 256_000)
+  assert.equal(settings.ai.max_tokens, 51_200)
   assert.deepEqual(settings.ai_presets.items?.map(item => ({ id: item.id, provider: item.provider, model: item.model })), [
     { id: 'default', provider: 'openai', model: 'env-model' },
   ])

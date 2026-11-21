@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fas
 import { CoreError, normalizeWorkspaceDirectoryName } from '@gugu/core'
 import type { UserFromRequest, WebUiOptions } from '../../app.js'
 import type { WorkspaceBindingOperations } from './bindings.js'
+import { renderPathFileThumbnail } from '../files/content.js'
 import { sendContent } from '../files/browse.js'
 import type { createWorkspaceFileReads, FileDirectory } from './files.js'
 
@@ -151,7 +152,7 @@ export function registerWorkspaceDirectoryRoutes(
   const files = options.operations.files
   if (files) {
     const registerFileRoutes = (prefix: string, directory: (params: { directory_id: string }) => FileDirectory) => {
-      type FileRequest = { Params: { directory_id: string }; Querystring: { path?: string; download?: string; overwrite?: string } }
+      type FileRequest = { Params: { directory_id: string }; Querystring: { path?: string; download?: string; overwrite?: string; identity?: string } }
       const scope = (request: FastifyRequest<FileRequest>) => {
         const path = request.query.path ?? ''
         if (typeof path !== 'string' || path.length > 4096)
@@ -159,8 +160,19 @@ export function registerWorkspaceDirectoryRoutes(
         return [options.ownerIdFromRequest(request), directory(request.params), path] as const
       }
       app.get<FileRequest>(`${prefix}/entries`, { preHandler: options.requireUser }, request => files.list(...scope(request)))
+      app.get<FileRequest>(`${prefix}/reference`, { preHandler: options.requireUser }, request => files.reference(...scope(request)))
+      app.get<FileRequest>(`${prefix}/thumb`, { preHandler: options.requireUser }, async (request, reply) => {
+        const rendered = await renderPathFileThumbnail(await files.open(...scope(request)))
+        return reply.type(rendered.mimeType)
+          .header('X-Content-Type-Options', 'nosniff')
+          .header('Cache-Control', 'private, no-store')
+          .send(rendered.bytes)
+      })
       app.get<FileRequest>(`${prefix}/content`, { preHandler: options.requireUser }, async (request, reply) => {
-        const source = await files.open(...scope(request))
+        const { identity } = request.query
+        if (identity !== undefined && (typeof identity !== 'string' || !/^\d{1,32}\.\d{1,32}\.\d{1,32}$/.test(identity)))
+          throw new CoreError('invalid_request', '文件引用无效')
+        const source = await files.open(...scope(request), identity)
         reply.header('X-Content-Type-Options', 'nosniff').header('Content-Security-Policy', "sandbox; default-src 'none'")
         return sendContent(reply, request, source, request.query.download === '1' ? 'attachment' : 'inline', 'private, no-store')
       })

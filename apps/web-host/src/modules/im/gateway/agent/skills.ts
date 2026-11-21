@@ -5,7 +5,7 @@ import { createBuiltinSkillDefinitions, createSkillRegistry, type SkillDefinitio
 import { createBundledSkillDocuments } from '@gugu/core/skills/bundled'
 import type { ImActor } from '@gugu/core/im/access'
 import { imCanUseTool } from '@gugu/core/im/access'
-import { createAgentToolBrief } from '../../../agent/tools/brief.js'
+import { createAgentToolBrief } from '@gugu/core/agent/tool-brief'
 
 const same = (a: RunIdentity, b: RunIdentity) => a.ownerId === b.ownerId && a.sessionId === b.sessionId && a.runId === b.runId
 const failure = () => new Error('IM 技能资源不可用')

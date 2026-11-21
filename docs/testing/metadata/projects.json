@@ -47,27 +47,27 @@
     "keyBehavior": "保护Python16项目编号及日期拒绝新版Unicode数字，isdigit非十进制值必须失败而非静默忽略",
     "ci": "backend-pytest"
   },
-  "apps/web/tests/projects/composables/useProjectCollectionModals.test.ts": {
+  "apps/ui/tests/projects/composables/useProjectCollectionModals.test.ts": {
     "domain": "projects",
     "layer": "L1",
-    "owner": "apps/web/composables/projects",
-    "productionEntry": "apps/web/src/composables/projects/useProjectCollectionModals.ts",
+    "owner": "apps/ui/composables/projects",
+    "productionEntry": "apps/ui/src/shared/composables/projects/useProjectCollectionModals.ts",
     "keyBehavior": "项目看板初次进入不请求归档与回收站列表，只有用户打开对应弹窗才加载",
     "ci": "frontend-test"
   },
-  "apps/web/tests/projects/composables/useProjectFileCounts.test.ts": {
+  "apps/ui/tests/projects/composables/useProjectFileCounts.test.ts": {
     "domain": "projects",
     "layer": "L1",
-    "owner": "apps/web/composables/projects",
-    "productionEntry": "apps/web/src/composables/projects/useProjectFileCounts.ts",
+    "owner": "apps/ui/composables/projects",
+    "productionEntry": "apps/ui/src/shared/composables/projects/useProjectFileCounts.ts",
     "keyBehavior": "项目文件徽标使用聚合计数接口，并把连续文件变更合并为一次刷新而不加载全量清单",
     "ci": "frontend-test"
   },
-  "apps/web/tests/projects/done/DoneGroup.test.ts": {
+  "apps/ui/tests/projects/done/DoneGroup.test.ts": {
     "domain": "projects",
     "layer": "L1",
-    "owner": "apps/web/views/Projects/components/done",
-    "productionEntry": "apps/web/src/views/Projects/components/done/DoneGroup.vue",
+    "owner": "apps/ui/views/Projects/components/done",
+    "productionEntry": "apps/ui/src/shared/views/Projects/components/done/DoneGroup.vue",
     "keyBehavior": "折叠的完成项目年月组不挂载内部卡片，展开后才创建卡片组件",
     "ci": "frontend-test"
   },

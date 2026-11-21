@@ -1,3 +1,4 @@
+import { createSerialWorker, type SerialWorker } from '../../../workers/admission.js'
 import { randomUUID } from 'node:crypto'
 import { createAgentDispatchRuntime, createAgentRunStateReader } from '@gugu/core/agent'
 import type { AgentObservationPort, CanonicalRunContext, RunIdentity } from '@gugu/core/agent'
@@ -20,10 +21,12 @@ export function createWebAgentRunLifecycle(options: {
   pool: Pick<Pool, 'query' | 'connect'>
   secretKey: string
   observation?: AgentObservationPort
+  runAgent?: SerialWorker
+  storageRoot?: string
   redisUrl: string
   dispatchTtlSeconds: number
   accessVersion(identity: RunIdentity): Promise<string>
-  pin?(identity: RunIdentity, credentialId?: number): Promise<RunModelPin & { accessVersion: string }>
+  pin?(identity: RunIdentity, credentialId?: number | null): Promise<RunModelPin & { accessVersion: string }>
   reconstruct: ReturnType<typeof import('./reconstruct.js').createWebAgentReconstructor>
   project(event: import('@gugu/core/agent').RunEvent): Promise<readonly import('../chat/routes.js').AgentChatEvent[]>
   diagnose(code: 'scan_failed' | 'worker_failed' | 'subscription_failed'): void
@@ -44,14 +47,15 @@ export function createWebAgentRunLifecycle(options: {
     readState: createAgentRunStateReader({ read: dispatch.readStreamCheckpoint }, startup, dispatch),
   }, redis, subscribe)
   const preparation = createPostgresWebAgentChatPreparation(options.pool, {
+    storageRoot: options.storageRoot,
     dispatchSecret: options.secretKey,
     dispatchTtlSeconds: options.dispatchTtlSeconds,
     observation: options.observation,
   })
   return createAgentDispatchRuntime<CanonicalRunContext, AgentDispatchLease, AgentChatInput>({
     dispatch,
-    worker: { reconstruct: options.reconstruct },
-    supervisor: { publish: redis.publish, subscribe, diagnose: options.diagnose },
+    worker: { reconstruct: options.reconstruct, runExclusive: options.runAgent ?? createSerialWorker() },
+    supervisor: { concurrency: 1, publish: redis.publish, subscribe, diagnose: options.diagnose },
     chat: {
       cancellation: createRedisAgentRunCancellationPort(redis, subscribe),
       async prepare(ownerId, input, origin) {

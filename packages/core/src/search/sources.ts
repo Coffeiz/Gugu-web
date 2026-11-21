@@ -1,7 +1,17 @@
+import { CANVAS_NOTE_TITLE_LIMIT, canvasNoteDisplayTitle } from '../mind/note-create.js'
 import type { GlobalSearchType } from './query.js'
 import { searchSnippet } from './global-search.js'
 
 export type SearchRow = Record<string, unknown>
+
+function noteSearchSubtitle(content: string, title: string, queries: readonly string[], titleLimit?: number): string {
+  const text = content.trim()
+  const firstLine = text.split(/\r?\n/u, 1)[0] ?? ''
+  const displayedFirstLine = titleLimit ? [...firstLine].slice(0, titleLimit).join('') : firstLine
+  const body = displayedFirstLine === title ? text.slice(firstLine.length).trimStart() : text
+  const subtitle = searchSnippet(body, queries)
+  return subtitle === title ? '' : subtitle
+}
 
 export interface SearchSource {
   type: GlobalSearchType
@@ -65,11 +75,11 @@ export const SEARCH_SOURCES: readonly SearchSource[] = [
     extraWhere: "AND n.kind = 'note' AND n.deleted_at IS NULL",
     primaryRank: "CASE WHEN lower(COALESCE(n.title,''))=lower($3) THEN 0 WHEN lower(COALESCE(n.title,'')) LIKE lower($3)||'%' THEN 1 WHEN n.title ILIKE ('%'||$3||'%') THEN 2 ELSE 3 END",
     orderBy: `n.captured_at DESC`,
-    map: (row, queries) => ({
-      id: row.id,
-      title: row.title || searchSnippet(String(row.content_plain ?? ''), queries) || '无标题便签',
-      subtitle: searchSnippet(String(row.content_plain ?? ''), queries), version: row.version,
-    }),
+    map: (row, queries) => {
+      const content = String(row.content_plain ?? '')
+      const title = String(row.title || searchSnippet(content, queries) || '无标题便签')
+      return { id: row.id, title, subtitle: noteSearchSubtitle(content, title, queries), version: row.version }
+    },
   },
   {
     type: 'canvas_note', label: '画布便签',
@@ -79,9 +89,10 @@ export const SEARCH_SOURCES: readonly SearchSource[] = [
     extraWhere: "AND n.kind = 'canvas_note' AND n.deleted_at IS NULL AND ci.user_id=$1 AND ci.deleted_at IS NULL AND mm.user_id=$1 AND mm.deleted_at IS NULL",
     primaryRank: "CASE WHEN lower(COALESCE(n.title,''))=lower($3) THEN 0 WHEN lower(COALESCE(n.title,'')) LIKE lower($3)||'%' THEN 1 WHEN n.title ILIKE ('%'||$3||'%') THEN 2 ELSE 3 END",
     orderBy: 'n.updated_at DESC, n.id DESC',
-    map: (row, queries) => ({
-      id: row.id, title: row.title || searchSnippet(String(row.content_plain ?? ''), queries) || '无标题便签',
-      subtitle: searchSnippet(String(row.content_plain ?? ''), queries), canvas_id: row.canvas_id,
-    }),
+    map: (row, queries) => {
+      const title = canvasNoteDisplayTitle(row)
+      return { id: row.id, title, subtitle: noteSearchSubtitle(String(row.content_plain ?? ''), title, queries, CANVAS_NOTE_TITLE_LIMIT),
+        canvas_id: row.canvas_id }
+    },
   },
 ]

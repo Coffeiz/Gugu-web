@@ -74,7 +74,7 @@ export function createReflectionModelScope(secret: string) {
 }
 
 /** recovery 必须来自已解密且验证 owner/run 的 checkpoint，不接受 HTTP 请求数据。 */
-export async function bindRecoverableProvider(identity: RunIdentity, services: RecoverableProviderServices, secret: string, signal: AbortSignal, recovery?: { identity: RunIdentity; modelIdentity: string; accessScopeHash: string }, requestedCredentialId?: number): Promise<{ modelIdentity: string; contextScopeKey: string; accessScopeHash: string; contextWindow: number; usageConfig: AgentUsageConfig; resolve: ProviderRuntimeOptions['resolve']; release(): void }> {
+export async function bindRecoverableProvider(identity: RunIdentity, services: RecoverableProviderServices, secret: string, signal: AbortSignal, recovery?: { identity: RunIdentity; modelIdentity: string; accessScopeHash: string }, requestedCredentialId?: number | null): Promise<{ modelIdentity: string; contextScopeKey: string; accessScopeHash: string; contextWindow: number; usageConfig: AgentUsageConfig; resolve: ProviderRuntimeOptions['resolve']; release(): void }> {
   identity = { ...identity }
   if (!secret || !identity.ownerId || !identity.sessionId || !identity.runId) throw new Error('模型身份无效')
   signal.throwIfAborted()

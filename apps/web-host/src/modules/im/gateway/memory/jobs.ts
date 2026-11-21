@@ -1,9 +1,13 @@
+import { freezePrivateReflectionWindow, hasPrivateReflectionLedger, observePrivateReflectionTurn, recordPrivateReflectionCompletion, settlePrivateReflectionWindow } from '../../../agent/memory/reflection/intervals.js'
+import { coveredReflectionPrefix, PRIVATE_REFLECTION_IDLE_SECONDS } from '@gugu/core/agent/memory/reflection/window'
+import { parseCompactionReflectionEdits, type CompactionReflectionEdits } from '@gugu/core/agent/memory/owner-reflection-edits'
 import { createHash,randomUUID } from 'node:crypto'
 import type { PoolClient } from 'pg'
 import { MessageArea,ReflectionSnapshots,buildOwnerReflectionInput,createReflectionFinalizer,runContextBranch,stableJson,
   reflectionEligibility,type CanonicalRunContext,type ReflectionProjectionPort,type ReflectionSnapshot,type RunIdentity } from '@gugu/core/agent'
 import type { ProviderWire } from '@gugu/core/providers'
 import { imContextPolicy } from '@gugu/core/im/access'
+import { ownerMemoryLockKey } from '../../../../shared/owner-memory-lock.js'
 import { normalizeOwnerId } from '../../../../shared/owner-context.js'
 import { decryptAgentDispatchInput } from '../../../agent/run/dispatch.js'
 import { createPostgresAgentRunStore } from '../../../agent/run/store.js'
@@ -24,8 +28,8 @@ import {prepareImOwnerDailyPlan,ImOwnerDailyCompactionError} from './owner.js'
 import {ownerPeriodicDue} from '@gugu/core/owner-periodic'
 import {prepareImOwnerPeriodicPlan,ImOwnerPeriodicError} from './periodic.js'
 
-interface Job extends ImReflectionJob {ownerRevision:number;throughMessageId:number;throughMessageSeq:number;triggerReason?:'threshold'|'idle';dailyDrain?:{count:number;digest:string};periodic?:{field:'profile'|'pattern';attemptAt?:number;requestStarted?:true}}
-interface Row {id:string;user_id:string;session_id:number;run_id:string;scope_hash:string;scope_version:number;attempts:number;token:string;nonce:Buffer;payload:Buffer;plan_nonce:Buffer|null;plan_payload:Buffer|null}
+interface Job extends ImReflectionJob {compaction?:{output:CompactionReflectionEdits;evidence:string};ownerRevision:number;throughMessageId:number;throughMessageSeq:number;triggerReason?:'threshold'|'idle';dailyDrain?:{count:number;digest:string};periodic?:{field:'profile'|'pattern';attemptAt?:number;requestStarted?:true}}
+interface Row {state:string;lease_until:Date|null;id:string;user_id:string;session_id:number;run_id:string;scope_hash:string;scope_version:number;attempts:number;token:string;nonce:Buffer;payload:Buffer;plan_nonce:Buffer|null;plan_payload:Buffer|null}
 const digest=(v:unknown)=>createHash('sha256').update(stableJson(v)).digest('hex')
 const services={digest,nextId:randomUUID},invalid=()=>new Error('反思任务暂不可用')
 const same=(a:RunIdentity,b:RunIdentity)=>a.ownerId===b.ownerId&&a.sessionId===b.sessionId&&a.runId===b.runId
@@ -40,21 +44,28 @@ class Stale extends Error{constructor(){super('反思任务来源或权限已变
 const retryMinutes=[1,5,30,120,360]
 
 /** 与正式clearOwner共用的owner互斥；其他本地记忆写入也应复用此边界。 */
-export async function withImReflectionOwnerLock<T>(pool:ImReflectionServiceOptions['pool'],ownerId:string,work:(client:PoolClient,assert:()=>Promise<void>)=>Promise<T>):Promise<T>{
+export async function withImReflectionOwnerLock<T>(pool:ImReflectionServiceOptions['pool'],ownerId:string,work:(client:PoolClient,assert:()=>Promise<void>)=>Promise<T>,lockSharedMemory=false):Promise<T>{
   ownerId=normalizeOwnerId(ownerId)
   const hash=createHash('sha256').update(`gugu-im-reflection-owner-v1:${ownerId}`).digest(),keys=[hash.readInt32BE(0),hash.readInt32BE(4)]
-  const client=await pool.connect();let lost=false,locked=false
+  const client=await pool.connect();let lost=false,locked=false,memoryLocked=false
   const fail=()=>{lost=true};client.on('error',fail);client.on('end',fail)
   try{
     const acquired=await client.query('SELECT pg_try_advisory_lock($1,$2) AS held',keys)
     if(acquired.rows[0]?.held!==true)throw new Deferred();locked=true
+    // Web 与 IM 都写入同一份 owner 记忆。连接级锁覆盖 IM 的文件计划与游标提交。
+    if (lockSharedMemory) {
+      const shared = await client.query('SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS held',[ownerMemoryLockKey(ownerId)])
+      if(shared.rows[0]?.held!==true)throw new Deferred();memoryLocked=true
+    }
     const assert=async()=>{if(lost)throw invalid()
       const held=await client.query(`SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid=pg_backend_pid() AND locktype='advisory' AND granted
         AND classid::bigint=$1 AND objid::bigint=$2 AND objsubid=2) AS held`,keys.map(k=>k>>>0))
       if(held.rows[0]?.held!==true)throw invalid()}
     return await work(client,assert)
   }catch(error){if(!(error instanceof Deferred)&&!(error instanceof Stale)&&!(error instanceof ImOwnerDailyCompactionError)&&!(error instanceof ImOwnerPeriodicError))throw invalid();throw error}
-  finally{if(locked&&!lost)try{await client.query('SELECT pg_advisory_unlock($1,$2)',keys)}catch{lost=true}
+  finally{
+    if(memoryLocked&&!lost)try{await client.query('SELECT pg_advisory_unlock(hashtextextended($1,0))',[ownerMemoryLockKey(ownerId)])}catch{lost=true}
+    if(locked&&!lost)try{await client.query('SELECT pg_advisory_unlock($1,$2)',keys)}catch{lost=true}
     client.removeListener('error',fail);client.removeListener('end',fail);client.release(lost)}
 }
 
@@ -169,6 +180,49 @@ export function createImReflectionService(options:ImReflectionServiceOptions):Im
       result.push({id:String(row.id),text:typeof payload.text==='string'?payload.text:'',sender})
     }
     return result
+  }
+  async function privateCompactionPrefix(client: Pick<PoolClient, 'query'>, identity: RunIdentity, coveredUserIds: readonly string[], lock: boolean) {
+    if (!coveredUserIds.length) return []
+    const { rows } = await client.query<Row>(`
+      SELECT j.* FROM gugu_im_reflection_jobs j
+      JOIN users u ON u.id=j.user_id
+      JOIN conversation_sessions s ON s.id=j.session_id AND s.user_id=j.user_id
+      WHERE j.user_id=$1 AND j.session_id=$2 AND j.window_key='run'
+        AND j.state NOT IN ('completed','cancelled','dead') AND u.is_active IS TRUE
+        AND s.chat_type='c2c'
+      ORDER BY j.created_at,j.id ${lock ? 'FOR UPDATE OF j' : ''}
+    `, [identity.ownerId, identity.sessionId])
+    const pending: Array<{ row: Row; job: Job }> = []
+    for (const row of rows) {
+      let job: Job
+      try { job = codec.open(row, row.nonce, row.payload, 'job') as Job }
+      catch { options.diagnose('reflection_job_invalid'); break }
+      if (job.actor?.chatType !== 'c2c' || job.scope?.type !== 'owner') continue
+      if (!['pending', 'ready'].includes(row.state) || row.attempts || row.lease_until || row.plan_payload) break
+      pending.push({ row, job })
+    }
+    return coveredReflectionPrefix(pending, coveredUserIds, item => item.job.messageIds)
+  }
+  async function compactionOutput(client: PoolClient, job: Job, after: number) {
+    if (!job.compaction || job.actor.chatType !== 'c2c' || job.scope.type !== 'owner') return null
+    const targets = await targetMessages(job, after)
+    if (stableJson(targets.map(target => target.id)) !== stableJson(job.messageIds)) return null
+    const { rows } = await client.query<{ input: string; reply: string }>(`
+      SELECT m.content AS input,a.content AS reply
+      FROM unnest($3::integer[]) WITH ORDINALITY AS ids(id,ord)
+      JOIN conversation_messages m ON m.id=ids.id AND m.session_id=$2 AND m.role='user'
+      JOIN conversation_sessions s ON s.id=m.session_id AND s.user_id=$1
+      CROSS JOIN LATERAL (
+        SELECT content FROM conversation_messages
+        WHERE session_id=m.session_id AND run_id=m.run_id AND role='assistant'
+          AND canonical_batch_id IS NULL AND conversation_seq>m.conversation_seq
+        ORDER BY conversation_seq DESC LIMIT 1
+      ) a
+      ORDER BY ids.ord
+    `, [job.identity.ownerId, job.identity.sessionId, job.messageIds])
+    const evidence = createHash('sha256').update(JSON.stringify(rows.map(row => [row.input, row.reply]))).digest('hex')
+    return rows.length === job.messageIds.length && evidence === job.compaction.evidence
+      ? parseCompactionReflectionEdits(job.compaction.output) : null
   }
   async function recordReports(client:PoolClient,job:Job,runtime:ImReflectionRuntime,reports:readonly unknown[]){
     for(const report of reports){
@@ -313,6 +367,31 @@ export function createImReflectionService(options:ImReflectionServiceOptions):Im
           ON CONFLICT(user_id,session_id) DO UPDATE SET observe_after=EXCLUDED.observe_after`,[ownerId,sessionId])
         options.diagnose('reflection_retry')}
     },
+    async prepareCompaction(identity, coveredUserIds) {
+      const [head] = await privateCompactionPrefix(options.pool, identity, coveredUserIds, false)
+      if (!head || head.job.compaction) return null
+      const { row, job } = head
+      return {
+        userIds: job.messageIds,
+        async stage(client, candidate, evidence) {
+          const output = parseCompactionReflectionEdits(candidate)
+          if (!output) return
+          const sealed = codec.seal(job, { ...job, compaction: { output, evidence } }, 'job')
+          await client.query(`
+            UPDATE gugu_im_reflection_jobs SET nonce=$2,payload=$3
+            WHERE id=$1 AND nonce=$4 AND payload=$5 AND state IN ('pending','ready')
+              AND attempts=0 AND lease_until IS NULL AND plan_payload IS NULL
+          `, [row.id, sealed.nonce, sealed.payload, row.nonce, row.payload])
+        },
+      }
+    },
+    async stageCompaction(client, identity, coveredUserIds) {
+      const due = (await privateCompactionPrefix(client, identity, coveredUserIds, true)).map(item => item.row.id)
+      if (due.length) await client.query(`
+        UPDATE gugu_im_reflection_jobs SET state='ready',next_attempt_at=LEAST(next_attempt_at,statement_timestamp())
+        WHERE id=ANY($1::uuid[])
+      `, [due])
+    },
     async historyHook(client,identity,history,checkpoint){
       if(history.outcome!=='success'||!history.text.trim()||await options.memoryEnabled(identity)!==true)return
       const src=await source(identity,client);if(!src)return
@@ -360,8 +439,13 @@ export function createImReflectionService(options:ImReflectionServiceOptions):Im
           [job.id,identity.ownerId,identity.sessionId,identity.runId,scopeHash,current.scope_version,sealed.nonce,sealed.payload])
         // Python闲置窗口为180秒；与无法取得快照/会话忙时的240秒重试分开。
         // 连续成功对话重置同scope窗口，不修改已准备的正向文件计划。
-        await client.query(`UPDATE gugu_im_reflection_jobs SET next_attempt_at=clock_timestamp()+interval '3 minutes'
-          WHERE user_id=$1 AND scope_hash=$2 AND window_key='run' AND state IN ('pending','ready','deferred')`,[identity.ownerId,scopeHash])
+        const privateOwner = src.actor.chatType === 'c2c' && scope.type === 'owner'
+        const idleDue = privateOwner ? await observePrivateReflectionTurn(client, identity, throughMessageSeq) : null
+        await client.query(`UPDATE gugu_im_reflection_jobs SET next_attempt_at=coalesce($5::timestamptz,clock_timestamp()+$4*interval '1 second')
+          WHERE user_id=$1 AND scope_hash=$2 AND window_key='run'
+            AND (state='pending' OR (state='ready' AND (NOT $3 OR next_attempt_at>statement_timestamp()))
+              OR (state='deferred' AND NOT $3))`,
+          [identity.ownerId,scopeHash,privateOwner,PRIVATE_REFLECTION_IDLE_SECONDS,idleDue])
       }
     },
     async createFinalizer(input){
@@ -397,19 +481,40 @@ export function createImReflectionService(options:ImReflectionServiceOptions):Im
       await stageWindows(signal)
       await options.pool.query(`UPDATE gugu_im_reflection_jobs SET state='dead',token=NULL,lease_until=NULL
         WHERE attempts>=5 AND plan_payload IS NULL AND state IN ('running','retry') AND lease_until<=clock_timestamp()`)
+      const sharedLedger = await hasPrivateReflectionLedger(options.pool)
       const token=randomUUID(),claimed=await options.pool.query<Row>(`WITH candidate AS (
-        SELECT id FROM gugu_im_reflection_jobs WHERE state IN ('pending','ready','running','prepared','retry','deferred')
+        SELECT q.id FROM gugu_im_reflection_jobs q WHERE state IN ('pending','ready','running','prepared','retry','deferred')
           AND next_attempt_at<=clock_timestamp() AND (lease_until IS NULL OR lease_until<=clock_timestamp()) AND (attempts<5 OR plan_payload IS NOT NULL)
-        ORDER BY next_attempt_at,created_at LIMIT 1 FOR UPDATE SKIP LOCKED)
+          ${sharedLedger ? `AND NOT EXISTS (
+            SELECT 1 FROM web_reflection_intervals i
+            JOIN gugu_im_reflection_jobs head ON head.id::text=i.frozen->0->>'jobId'
+              AND head.session_id=i.session_id AND head.user_id=i.user_id
+            WHERE i.session_id=q.session_id AND i.user_id=q.user_id AND head.scope_hash=q.scope_hash
+              AND q.window_key='run' AND head.state NOT IN ('completed','cancelled','dead')
+              AND (head.id<>q.id OR i.retry_at>clock_timestamp() OR i.lease_until>clock_timestamp())
+          )` : ''}
+        ORDER BY next_attempt_at,created_at LIMIT 1 FOR UPDATE OF q SKIP LOCKED)
         UPDATE gugu_im_reflection_jobs j SET token=$1,lease_until=clock_timestamp()+($2*interval '1 millisecond'),state=CASE WHEN plan_payload IS NOT NULL THEN 'prepared' ELSE 'running' END,attempts=LEAST(5,attempts+1)
           FROM candidate WHERE j.id=candidate.id RETURNING j.*`,[token,leaseMs])
       const row=claimed.rows[0];if(!row)return false
       let job:Job|null=null,runtime:ImReflectionRuntime|null=null,heartbeatTask:Promise<void>|null=null,hasPlan=row.plan_payload!==null,periodicStarted=false
+      let privateWindow = false
       const execution=new AbortController(),runSignal=AbortSignal.any([signal,execution.signal])
+      const renew = (client: Pick<PoolClient, 'query'>) => client.query(`
+        WITH renewed AS (
+          UPDATE gugu_im_reflection_jobs SET lease_until=clock_timestamp()+($3*interval '1 millisecond')
+          WHERE id=$1 AND token=$2 AND state IN ('running','prepared') AND lease_until>clock_timestamp()
+          RETURNING id,user_id,session_id,lease_until
+        ) ${sharedLedger ? `, interval_renewed AS (
+          UPDATE web_reflection_intervals i SET lease_until=r.lease_until
+          FROM renewed r WHERE i.session_id=r.session_id AND i.user_id=r.user_id
+            AND i.lease_token=$2 AND i.frozen->0->>'jobId'=r.id::text
+        )` : ''}
+        SELECT id FROM renewed
+      `, [row.id, token, leaseMs])
       const heartbeat=setInterval(()=>{
         if(heartbeatTask)return
-        heartbeatTask=options.pool.query(`UPDATE gugu_im_reflection_jobs SET lease_until=clock_timestamp()+($3*interval '1 millisecond')
-          WHERE id=$1 AND token=$2 AND state IN ('running','prepared') AND lease_until>clock_timestamp() RETURNING id`,[row.id,token,leaseMs])
+        heartbeatTask=renew(options.pool)
           .then(result=>{if(result.rowCount!==1)execution.abort()}).catch(()=>execution.abort()).finally(()=>{heartbeatTask=null})
       },Math.max(100,Math.floor(leaseMs/3)))
       try{
@@ -424,8 +529,7 @@ export function createImReflectionService(options:ImReflectionServiceOptions):Im
           ||job.periodic.requestStarted!==undefined&&job.periodic.requestStarted!==true))throw invalid()
         const currentJob=job
         await withImReflectionOwnerLock(options.pool,row.user_id,async(client,assertLock)=>{
-          const assert=async()=>{runSignal.throwIfAborted();await assertLock();const lease=await client.query(`UPDATE gugu_im_reflection_jobs SET lease_until=clock_timestamp()+($3*interval '1 millisecond')
-            WHERE id=$1 AND token=$2 AND state IN ('running','prepared') AND lease_until>clock_timestamp() RETURNING id`,[row.id,token,leaseMs]);if(lease.rowCount!==1)throw invalid();return authorized(currentJob,row,client)}
+          const assert=async()=>{runSignal.throwIfAborted();await assertLock();const lease=await renew(client);if(lease.rowCount!==1)throw invalid();return authorized(currentJob,row,client)}
           const cur=await assert()
           if(!Number.isSafeInteger(currentJob.throughMessageSeq)||currentJob.throughMessageSeq<1)throw invalid()
           if(currentJob.periodic?.requestStarted&&!row.plan_payload){
@@ -434,6 +538,9 @@ export function createImReflectionService(options:ImReflectionServiceOptions):Im
               WHERE id=$1 AND token=$2`,[row.id,token]);options.diagnose('reflection_dead');return
           }
           if(!currentJob.dailyDrain&&!currentJob.periodic&&Number(cur.node_last_sequence)>=currentJob.throughMessageSeq){await client.query("UPDATE gugu_im_reflection_jobs SET state='completed',token=NULL,lease_until=NULL WHERE id=$1 AND token=$2",[row.id,token]);return}
+          privateWindow = currentJob.actor.chatType === 'c2c' && currentJob.scope.type === 'owner' && !currentJob.dailyDrain && !currentJob.periodic
+          if (privateWindow && !await freezePrivateReflectionWindow(client, currentJob.identity, row.id, token,
+            Number(cur.node_last_sequence), currentJob.throughMessageSeq)) throw new Deferred()
           let plan:ImReflectionFilePlan
           if(row.plan_nonce&&row.plan_payload)plan=codec.open(row,row.plan_nonce,row.plan_payload,'plan') as ImReflectionFilePlan
           else{
@@ -482,6 +589,11 @@ export function createImReflectionService(options:ImReflectionServiceOptions):Im
                 plan=prepared.plan;usageReports=[prepared.usage]
               }
             }else{
+            const candidate = await compactionOutput(client, currentJob, Number(cur.node_last_sequence))
+            if (candidate) {
+              plan = await files.plan(currentJob, candidate, Date.now()/1000, () => randomUUID().replaceAll('-','').slice(0,6))
+              usageReports = []
+            } else {
             let snapshot=snapshots.peek(currentJob.identity,currentJob.modelIdentity,currentJob.accessScopeHash) as ReflectionSnapshot<ProviderWire>|null
             if(snapshot?.runId!==currentJob.identity.runId)snapshot=null
             if(!snapshot&&currentJob.scope.type==='owner'&&currentJob.triggerReason!=='threshold')snapshot=await options.rebuildOwnerSnapshot(currentJob,runtime,runSignal)
@@ -528,6 +640,7 @@ export function createImReflectionService(options:ImReflectionServiceOptions):Im
             plan=await files.plan(currentJob,result.output,Date.now()/1000,()=>randomUUID().replaceAll('-','').slice(0,6))
             usageReports=[result.usage]
             }
+            }
             const sealed=codec.seal(currentJob,{...plan,responseUsages:usageReports},'plan')
             await client.query('BEGIN')
             try{
@@ -566,6 +679,10 @@ export function createImReflectionService(options:ImReflectionServiceOptions):Im
               SET last_sequence=EXCLUDED.last_sequence,last_message_id=EXCLUDED.last_message_id WHERE gugu_im_reflection_cursor_positions.last_sequence<EXCLUDED.last_sequence`,
               [row.user_id,row.session_id,row.scope_hash,advanced.rows[0].scope_version,currentJob.throughMessageSeq,currentJob.throughMessageId])
             await client.query(`UPDATE gugu_im_reflection_jobs SET scope_version=$3 WHERE user_id=$1 AND scope_hash=$2 AND scope_version=$4 AND session_id=$5 AND state IN ('pending','ready','retry','deferred')`,[row.user_id,row.scope_hash,advanced.rows[0].scope_version,row.scope_version,row.session_id])
+            if (currentJob.actor.chatType === 'c2c' && currentJob.scope.type === 'owner') {
+              await recordPrivateReflectionCompletion(client, currentJob.identity, currentJob.throughMessageSeq)
+              await settlePrivateReflectionWindow(client, currentJob.identity, row.id, token, null)
+            }
             scopeVersion=advanced.rows[0].scope_version
             }
             await client.query(`INSERT INTO rag_index_jobs(user_id,source_type,source_id,version,operation,status,generation,completed_generation,attempts,next_attempt_at,lease_until,last_started_at,last_succeeded_at,last_error_code,pending_source_ids,created_at,updated_at)
@@ -582,7 +699,7 @@ export function createImReflectionService(options:ImReflectionServiceOptions):Im
             if(finished.rowCount!==1)throw invalid();await client.query('COMMIT')
             if(plan.files.length&&options.memoryChanged)try{await options.memoryChanged(row.user_id)}catch{options.diagnose('reflection_notification_pending')}
           }catch(error){await client.query('ROLLBACK');throw error}
-        })
+        }, job.scope.type === 'owner')
       }catch(error){
         const deferred=error instanceof Deferred||signal.aborted,stale=error instanceof Stale||error instanceof ImOwnerPeriodicError&&error.cancelled,
           state=stale?'cancelled':deferred?'deferred':!hasPlan&&(periodicStarted||row.attempts>=5)?'dead':'retry'
@@ -595,8 +712,13 @@ export function createImReflectionService(options:ImReflectionServiceOptions):Im
           // COMMIT回包丢失时，数据库中的已准备计划优先于本进程的hasPlan推断。
           const changed=await retryClient.query(`UPDATE gugu_im_reflection_jobs SET state=CASE WHEN $3::text='dead' AND plan_payload IS NOT NULL THEN 'retry' ELSE $3::text END,
             next_attempt_at=clock_timestamp()+($4*interval '1 minute'),token=NULL,lease_until=NULL,
-            attempts=CASE WHEN $3::text='deferred' THEN GREATEST(attempts-1,0) ELSE attempts END WHERE id=$1 AND token=$2 RETURNING id,state`,[row.id,token,state,delay])
+            attempts=CASE WHEN $3::text='deferred' THEN GREATEST(attempts-1,0) ELSE attempts END WHERE id=$1 AND token=$2 RETURNING id,state,next_attempt_at`,[row.id,token,state,delay])
           if(changed.rows[0]?.state==='retry')resolvedState='retry'
+          const updated = changed.rows[0]
+          if (updated && privateWindow && job) {
+            const retryAt = updated.state === 'retry' || updated.state === 'deferred' ? updated.next_attempt_at : null
+            await settlePrivateReflectionWindow(retryClient, job.identity, row.id, token, retryAt)
+          }
           // 失败响应仍有实际成本；与本attempt退回队列同事务，旧token不能重复记账。
           if(changed.rowCount===1&&failedUsage.length&&job&&runtime)await recordReports(retryClient,job,runtime,failedUsage)
           await retryClient.query('COMMIT')

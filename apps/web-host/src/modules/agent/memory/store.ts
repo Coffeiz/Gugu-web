@@ -6,8 +6,8 @@ import { openLocalFile, UnsafeLocalPathError, writeLocalFile } from '@gugu/fs/no
 const maxBytes = 50_000_000
 
 const vectorPath: Record<UserMemoryVectorKind, string> = {
-  pattern: '.agent/pattern_vec.json',
-  memory: '.agent/memory_vec.json',
+  pattern: '.agent/memories/pattern_vec.json',
+  memory: '.agent/memories/memory_vec.json',
 }
 
 async function readText(root: string, ownerId: string, relativePath: string): Promise<string | null> {
@@ -35,31 +35,31 @@ export function createLocalUserMemoryVectorStore(root: string) {
   return {
     async readPatterns(rawOwnerId: string): Promise<unknown> {
       const ownerId = dataContext(rawOwnerId).ownerId
-      const current = await readText(root, ownerId, '.agent/pattern.json')
+      const current = await readText(root, ownerId, '.agent/memories/pattern.json')
       if (current !== null) {
         const parsed = parseJson(current)
         return Array.isArray(parsed) ? parsed.filter(value => object(value) && typeof value.text === 'string' && value.text.trim()) : []
       }
 
-      const legacyJson = await readText(root, ownerId, '.agent/facts.json')
+      const legacyJson = await readText(root, ownerId, '.agent/memories/facts.json')
       const legacy = parseJson(legacyJson)
       if (Array.isArray(legacy)) {
         const patterns = legacy.filter(value => object(value) && typeof value.text === 'string' && value.text.trim())
-        if (patterns.length) await writeLocalFile(root, `${ownerId}/.agent/pattern.json`, JSON.stringify(patterns, null, 2))
+        if (patterns.length) await writeLocalFile(root, `${ownerId}/.agent/memories/pattern.json`, JSON.stringify(patterns, null, 2))
         return patterns
       }
-      const legacyMarkdown = (await readText(root, ownerId, '.agent/facts.md') || '').trim()
+      const legacyMarkdown = (await readText(root, ownerId, '.agent/memories/facts.md') || '').trim()
       if (!legacyMarkdown) return []
       const timestamp = Date.now() / 1000
       const patterns = legacyMarkdown.split(/\r?\n/u).flatMap(line => {
         const text = line.trim().replace(/^-+/u, '').trim()
         return text ? [{ id: randomBytes(3).toString('hex'), text, kind: 'observed', conf: 0.75, imp: 3, ts: timestamp }] : []
       })
-      if (patterns.length) await writeLocalFile(root, `${ownerId}/.agent/pattern.json`, JSON.stringify(patterns, null, 2))
+      if (patterns.length) await writeLocalFile(root, `${ownerId}/.agent/memories/pattern.json`, JSON.stringify(patterns, null, 2))
       return patterns
     },
     async readMemory(rawOwnerId: string): Promise<string | null> {
-      return readText(root, dataContext(rawOwnerId).ownerId, '.agent/memory.md')
+      return readText(root, dataContext(rawOwnerId).ownerId, '.agent/memories/memory.md')
     },
     async readVectors(rawOwnerId: string, kind: UserMemoryVectorKind): Promise<unknown> {
       const raw = await readText(root, dataContext(rawOwnerId).ownerId, vectorPath[kind])

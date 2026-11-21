@@ -16,13 +16,11 @@ const scope=()=>({identity:identity(),roundId:'round',signal:new AbortController
 const call=(name:string,input:unknown,id=name)=>({id,name,input})
 const send=(name:string,input:unknown,id=name)=>registry.tools.dispatch(call(name,input,id),scope())
 const rows=async(table:string)=>(await sql.raw<Record<string,unknown>>('SELECT * FROM '+table+' ORDER BY id').execute(core.db)).rows
-function mount(runtime=core){const port=createCanvasEditPort(runtime,publish);registry=createToolRegistry({groups:[{id:'canvas',name:'画布',tools:[...createCanvasPlacementTools(port),...createCanvasRelationTools(port)]}],authorize:async()=>allowed})}
+function mount(runtime=core){const port=createCanvasEditPort(runtime,publish,async (candidate,id)=>candidate===owner&&['path-owned','drop-rollback'].includes(id)?{label:'资料.md'}:null);registry=createToolRegistry({groups:[{id:'canvas',name:'画布',tools:[...createCanvasPlacementTools(port),...createCanvasRelationTools(port)]}],authorize:async()=>allowed})}
 beforeEach(async()=>{
  folder=await mkdtemp(join(tmpdir(),'gugu-canvas-placement-'));await initializeSqlite(join(folder,'core.db'));const opened=await openSqliteRuntime(join(folder,'core.db'));core=opened.runtime;owner=opened.ownerId;other=randomUUID();allowed=true;publish=vi.fn(async()=>{})
  const key=owner.replaceAll('-',''),foreign=other.replaceAll('-',''),stamp='2026-11-15 00:00:00.000001'
  await sql`INSERT INTO mind_maps(id,user_id,title,data_json,created_at,updated_at) VALUES(1,${key},'画布','{"x":100,"y":50,"scale":2,"viewport":{"width":1000,"height":800},"preserve":"保留"}',${stamp},${stamp}),(2,${foreign},'其他画布','{}',${stamp},${stamp})`.execute(core.db)
- await sql`CREATE TABLE files(id INTEGER PRIMARY KEY,user_id TEXT,display_name TEXT,ext TEXT,deleted_at TEXT)`.execute(core.db)
- await sql`INSERT INTO files VALUES(1,${key},'资料','md',NULL),(2,${foreign},'隐私','md',NULL),(3,${key},'已删','md',${stamp}),(4,${key},'原子回滚','txt',NULL)`.execute(core.db)
  mount()
 })
 afterEach(async()=>{await core?.close();await rm(folder,{recursive:true,force:true})})
@@ -41,13 +39,14 @@ it('非法坐标不回落自动布局；后项失败、越权与Undo失败不留
  expect(await rows('mind_nodes')).toEqual([])
 })
 it('真实资源引用复用/恢复，已放置时不改位置，批量后项失败连引用一起回滚',async()=>{
- const input={canvas_id:1,ref_type:'file',ref_id:1,position:{x:12,y:34}}
- expect(await send('canvas_add_node',input)).toMatchObject({successful:true,mutated:true,value:{created:true,node:{ref_type:'file',ref_id:1,position:{x:12,y:34}}}})
+ const input={canvas_id:1,ref_type:'file',ref_id:'path-owned',position:{x:12,y:34}}
+ expect(await send('canvas_add_node',input)).toMatchObject({successful:true,mutated:true,value:{created:true,node:{ref_type:'file',ref_id:'path-owned',position:{x:12,y:34}}}})
  expect(await send('canvas_add_node',{...input,position:{anchor:'near_node',near_node_id:999}},'existing')).toMatchObject({successful:true,mutated:false,value:{created:false,node:{position:{x:12,y:34}}}})
  expect((await rows('mind_nodes'))).toHaveLength(1)
- for(const ref_id of [2,3,999])expect(await send('canvas_add_node',{canvas_id:1,ref_type:'file',ref_id},randomUUID())).toMatchObject({successful:false,value:{error:'引用对象不存在'}})
+ expect(await send('canvas_add_node',{canvas_id:1,ref_type:'file',ref_id:1},'retired-id')).toMatchObject({successful:false})
+ for(const ref_id of ['path-other','path-deleted','drop-missing'])expect(await send('canvas_add_node',{canvas_id:1,ref_type:'file',ref_id},randomUUID())).toMatchObject({successful:false,value:{error:'引用文件已移动或不可访问'}})
  const before=await rows('mind_canvas_items')
- expect(await send('canvas_add_node',{canvas_id:1,nodes:[{ref_type:'file',ref_id:4},{ref_type:'file',ref_id:999}]},'bad-batch')).toMatchObject({successful:false})
+ expect(await send('canvas_add_node',{canvas_id:1,nodes:[{ref_type:'file',ref_id:'drop-rollback'},{ref_type:'file',ref_id:'path-missing'}]},'bad-batch')).toMatchObject({successful:false})
  expect(await rows('mind_canvas_items')).toEqual(before)
  expect(await rows('mind_nodes')).toHaveLength(1)
  await sql`UPDATE mind_canvas_items SET deleted_at='2026-11-15' WHERE id=1`.execute(core.db)

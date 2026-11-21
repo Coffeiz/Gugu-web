@@ -1,0 +1,539 @@
+<template>
+  <BaseModal :show="props.show" width="800px" background="var(--panel-bg)" @close="emit('close')">
+    <div class="sched-modal">
+      <div class="sched-form-grid">
+        <div class="sched-column sched-prompt-column">
+          <input v-model="form.name" ref="nameRef" class="title-input" :placeholder="t('schedules.taskName')" :aria-label="t('schedules.taskName')" maxlength="100" />
+          <div class="divider divider-full"></div>
+
+          <TaskModeSwitch v-model="executionMode" class="sched-mode" />
+          <p v-if="props.desktop && executionMode === 'instruction'" class="field-hint">{{ t('scheduleUi.desktopInstructionPending') }}</p>
+          <div v-if="!props.desktop" class="divider"></div>
+
+          <div class="field reminder-field">
+            <span>{{ t(executionMode === 'reminder' ? 'schedules.reminder' : 'scheduleUi.instructionBody') }}</span>
+            <textarea v-model="form.payload" ref="payloadRef" rows="3" :placeholder="t(executionMode === 'reminder' ? 'scheduleUi.reminderExample' : 'scheduleUi.instructionBody')" :aria-label="t(executionMode === 'reminder' ? 'schedules.reminder' : 'scheduleUi.instructionBody')" @input="resizePayload"></textarea>
+          </div>
+
+        </div>
+
+        <div class="sched-column sched-settings-column">
+          <div v-if="props.workspaceSupported && executionMode === 'instruction'" class="field workspace-field">
+            <div class="field-heading">
+              <span>{{ t('schedules.workspace') }}</span>
+              <small>{{ t('schedules.workspaceHint') }}</small>
+            </div>
+            <AdminSelect
+              v-model="workspaceSelectValue"
+              class="workspace-select"
+              :options="workspaceOptions"
+              :placeholder="t('schedules.workspaceRoot')"
+            />
+          </div>
+          <div v-if="executionMode === 'instruction' && props.workspaceSupported && props.filesystemAuthorizationEnabled" class="field authorization-field">
+            <Checkbox v-model="form.filesystemAuthorized">
+              {{ t('schedules.fullSandboxAccess') }}
+            </Checkbox>
+            <small>{{ t('schedules.fullSandboxAccessHint') }}</small>
+          </div>
+          <div v-if="props.workspaceSupported && executionMode === 'instruction'" class="divider"></div>
+          <div class="field">
+            <span>{{ t('schedules.repeat') }}</span>
+            <div class="repeat-tabs">
+              <button v-for="opt in REPEAT_OPTS" :key="opt.v" type="button" class="repeat-tab"
+                :class="{ on: repeatMode === opt.v }" @click="setRepeatMode(opt.v)">{{ opt.label }}</button>
+            </div>
+            <div v-if="repeatMode === 'weekly'" class="weekly-days" data-testid="schedule-weekly-days">
+              <button v-for="weekday in weekdayOptions" :key="weekday.day" type="button" class="repeat-tab"
+                :class="{ on: weeklyDays.includes(weekday.day) }" @click="toggleWeeklyDay(weekday.day)">{{ weekday.name }}</button>
+            </div>
+            <div v-if="repeatMode === 'interval'" class="interval-presets">
+                <button v-for="minutes in INTERVAL_PRESETS" :key="minutes" type="button" class="interval-preset"
+                :class="{ on: intervalPreset === String(minutes) }" @click="selectIntervalPreset(minutes)">{{ minutes }}{{ t('schedules.intervalUnit') }}</button>
+              <button type="button" class="interval-preset" :class="{ on: intervalPreset === 'custom' }"
+                @click="selectIntervalPreset('custom')">{{ t('schedules.custom') }}</button>
+              </div>
+          </div>
+          <div class="divider"></div>
+
+          <div v-if="repeatMode !== 'once' && (repeatMode !== 'interval' || intervalPreset === 'custom')" class="field time-field">
+            <span>{{ repeatMode === 'interval' ? t('schedules.minutes') : t('schedules.time') }}</span>
+            <input v-if="repeatMode === 'interval' && intervalPreset === 'custom'" v-model.number="intervalMinutes" type="number" min="1" max="60" step="1" :placeholder="t('scheduleUi.intervalPlaceholder')" :aria-label="t('schedules.minutes')" />
+            <TimeInput v-else v-model="form.time" />
+          </div>
+          <div v-if="repeatMode !== 'once' && (repeatMode !== 'interval' || intervalPreset === 'custom')" class="divider"></div>
+
+          <div v-if="repeatMode === 'once'" class="field once-field" data-testid="schedule-once-boundary">
+            <div class="field-heading">
+              <span>{{ t('schedules.onceAt') }}</span>
+              <small>{{ t('schedules.onceHint') }}</small>
+            </div>
+            <div class="once-controls">
+              <DatePicker :model-value="startDate" :placeholder="t('schedules.selectDate')" :show-clear="false"
+                @update:model-value="setStartDate" />
+              <TimeInput :model-value="startTime" @update:model-value="setStartTime" />
+              <button v-if="startDate || startTime" type="button" class="boundary-clear"
+                :aria-label="t('schedules.clearBoundary')" @click="clearStart">
+                <Icon name="action.close" :size="20" />
+              </button>
+            </div>
+          </div>
+
+          <div v-if="repeatMode !== 'once'" class="field schedule-window-field">
+            <div class="field-heading">
+              <span>{{ t('schedules.scheduleWindow') }}</span>
+              <small>{{ t('schedules.scheduleWindowHint') }}</small>
+            </div>
+            <div class="boundary-row" data-testid="schedule-start-boundary">
+              <span class="boundary-label">{{ t('schedules.startAt') }}</span>
+              <div class="boundary-controls">
+                <DatePicker :model-value="startDate" :placeholder="t('schedules.selectDate')" :show-clear="false"
+                  @update:model-value="setStartDate" />
+                <TimeInput :model-value="startTime" @update:model-value="setStartTime" />
+                <button v-if="startDate || startTime" type="button" class="boundary-clear"
+                  :aria-label="t('schedules.clearBoundary')" @click="clearStart">
+                  <Icon name="action.close" :size="20" />
+                </button>
+              </div>
+            </div>
+            <div class="boundary-row" data-testid="schedule-end-boundary">
+              <span class="boundary-label">{{ t('schedules.endAt') }}</span>
+              <div class="boundary-controls">
+                <DatePicker :model-value="endDate" :placeholder="t('schedules.selectDate')" :show-clear="false"
+                  @update:model-value="setEndDate" />
+                <TimeInput :model-value="endTime" @update:model-value="setEndTime" />
+                <button v-if="endDate || endTime" type="button" class="boundary-clear"
+                  :aria-label="t('schedules.clearBoundary')" @click="clearEnd">
+                  <Icon name="action.close" :size="20" />
+                </button>
+              </div>
+            </div>
+          </div>
+          <div v-if="repeatMode !== 'once'" class="divider"></div>
+
+          <div class="field">
+            <span>{{ t('schedules.sendTo') }}</span>
+            <div class="chans">
+              <template v-for="channel in CHANNELS" :key="channel.value">
+                <Checkbox v-if="desktop || channel.value === 'web' || channel.value === 'email' || props.imChannels.includes(channel.value) || form.channels.includes(channel.value)"
+                  :model-value="form.channels.includes(channel.value)"
+                  @update:model-value="toggleChannel(channel.value, $event)">
+                  <span>{{ channel.label }}</span>
+                  <span v-if="form.channels.includes(channel.value) && channel.value !== 'web' && channel.value !== 'email' && !props.imChannels.includes(channel.value)" class="channel-unavailable-note">
+                    {{ t('scheduleUi.channelUnavailablePreserved') }}
+                  </span>
+                </Checkbox>
+              </template>
+            </div>
+            <div v-for="platform in IM_DELIVERY_PLATFORMS" :key="platform"
+              v-show="form.channels.includes(platform)" class="qq-delivery-field"
+              :data-testid="`schedule-${platform}-delivery`">
+              <span>{{ deliveryPlatformLabel(platform) }}</span>
+              <SelectPopup :model-value="deliveryTargets[platform]" :options="deliveryTargetOptions(platform)" popup-class="qq-target-popup"
+                auto-flip @update:model-value="setDeliveryTarget(platform, $event)" />
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div v-if="formErr || props.externalError" class="form-err">{{ formErr || props.externalError }}</div>
+      <div class="modal-actions">
+        <ActionButton variant="secondary" @click="emit('close')">{{ t('schedules.cancel') }}</ActionButton>
+        <ActionButton :disabled="props.busy" @click="submit">{{ props.task ? t('schedules.save') : t('schedules.createAction') }}</ActionButton>
+      </div>
+    </div>
+  </BaseModal>
+</template>
+
+<script setup lang="ts">
+import TaskModeSwitch from '@/components/common/controls/TaskModeSwitch.vue'
+import { computed, nextTick, reactive, ref, watch, type PropType } from 'vue'
+import { useI18n } from 'vue-i18n'
+import BaseModal from '@/components/common/overlays/BaseModal.vue'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
+import Checkbox from '@/components/common/controls/Checkbox.vue'
+import DatePicker from '@/components/common/controls/DatePicker.vue'
+import TimeInput from '@/components/common/controls/TimeInput.vue'
+import Icon from '@/components/common/icons/Icon.vue'
+import AdminSelect from '@/components/AdminSelect.vue'
+import SelectPopup from '@/components/common/controls/SelectPopup.vue'
+import { scheduledTasksApi } from '@/services/api'
+import { usePreferencesStore } from '@/stores/preferences'
+import {
+  buildCron,
+  combineScheduleDateTime,
+  parseCron,
+  scheduleDateTimeValue,
+  splitScheduleDateTime,
+  type RepeatMode,
+} from '../utils/scheduleCron'
+import { buildImDeliveryFields, buildImTargetOptions, IM_DELIVERY_PLATFORMS, type ImDeliveryPlatform, type ImDeliveryGroup } from '@/utils/imDelivery'
+
+const props = defineProps({
+  desktop: Boolean,
+  show: { type: Boolean, default: false },
+  task: { type: Object as PropType<Record<string, any> | null>, default: null },
+  imChannels: { type: Array as PropType<string[]>, default: () => [] },
+  workspaces: { type: Array as PropType<Array<{ id: number; name: string }>>, default: () => [] },
+  busy: { type: Boolean, default: false },
+  externalError: { type: String, default: '' },
+  filesystemAuthorizationEnabled: { type: Boolean, default: false },
+  workspaceSupported: { type: Boolean, default: false },
+})
+const emit = defineEmits<{
+  (event: 'close'): void
+  (event: 'save', data: Record<string, any>): void
+}>()
+const { t, tm } = useI18n()
+const prefsStore = usePreferencesStore()
+
+const REPEAT_OPTS = computed<{ v: RepeatMode; label: string }[]>(() => [
+  { v: 'once', label: t('schedules.once') }, { v: 'interval', label: t('schedules.minutes') }, { v: 'daily', label: t('schedules.daily') },
+  { v: 'weekly', label: t('schedules.weekly') },
+])
+const INTERVAL_PRESETS = [1, 5, 10, 30, 60]
+const CHANNELS = computed(() => props.desktop ? [
+  { value: 'web', label: t('schedules.desktopNotice') },
+] : [
+  { value: 'web', label: t('schedules.webNotice') },
+  { value: 'email', label: t('schedules.email') },
+  { value: 'feishu', label: t('schedules.feishu') },
+  { value: 'qq', label: t('schedules.qq') },
+  { value: 'wechat', label: t('schedules.wechat') },
+  { value: 'telegram', label: t('schedules.telegram') },
+])
+const workspaceOptions = computed(() => [
+  { value: '', label: t('schedules.workspaceRoot') },
+  ...props.workspaces.map(workspace => ({ value: String(workspace.id), label: workspace.name })),
+])
+const repeatMode = ref<RepeatMode>('daily')
+const weeklyDays = ref<number[]>([1])
+const deliveryTargets = reactive<Record<ImDeliveryPlatform, string>>({ qq: 'private', feishu: 'private', telegram: 'private' })
+const initialDeliveryTargets = reactive<Record<ImDeliveryPlatform, string>>({ qq: 'private', feishu: 'private', telegram: 'private' })
+const deliveryGroups = reactive<Record<ImDeliveryPlatform, ImDeliveryGroup[]>>({ qq: [], feishu: [], telegram: [] })
+const privateAvailable = reactive<Record<ImDeliveryPlatform, boolean>>({ qq: true, feishu: false, telegram: false })
+const deliveryLoadFailed = reactive<Partial<Record<ImDeliveryPlatform, boolean>>>({})
+const intervalMinutes = ref(5)
+const intervalPreset = ref('5')
+const startDate = ref('')
+const startTime = ref('')
+const endDate = ref('')
+const endTime = ref('')
+const formErr = ref('')
+const nameRef = ref<HTMLInputElement | null>(null)
+const executionMode = ref<'reminder' | 'instruction'>('reminder')
+const payloadRef = ref<HTMLTextAreaElement | null>(null)
+const form = reactive({
+  name: '', payload: '', time: '09:00', channels: ['web'] as string[],
+  workspaceId: null as number | null, filesystemAuthorized: false,
+})
+const workspaceSelectValue = computed({
+  get: () => form.workspaceId === null ? '' : String(form.workspaceId),
+  set: (value: string) => { form.workspaceId = value ? Number(value) : null },
+})
+
+function pad(value: number) { return String(value).padStart(2, '0') }
+function todayIso() {
+  const date = new Date()
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+function onceDefault() {
+  const date = new Date()
+  date.setSeconds(0, 0)
+  date.setMinutes(date.getMinutes() + 5)
+  return {
+    date: `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
+    time: `${pad(date.getHours())}:${pad(date.getMinutes())}`,
+  }
+}
+function blankForm() {
+  return {
+    name: '', payload: '', time: '09:00', channels: ['web'] as string[],
+    workspaceId: null as number | null, filesystemAuthorized: false,
+  }
+}
+function resetForm() {
+  const parsed = props.task ? parseCron(props.task.cron) : { mode: 'daily' as RepeatMode, time: '09:00' }
+  const taskKind = props.task?.schedule_kind
+  const channels: string[] = props.task
+    ? [...new Set<string>((props.task.channels || []).flatMap((channel: string) =>
+      channel === 'chat' ? ['web'] : channel === 'im' ? ['feishu', 'qq', 'wechat', 'telegram'] : [channel]))]
+    : ['web']
+  Object.assign(form, props.task
+    ? { name: props.task.name, payload: props.task.payload, time: parsed.time, channels }
+    : blankForm())
+  weeklyDays.value = parsed.weeklyDays?.length ? [...parsed.weeklyDays] : [new Date().getDay()]
+  const targets = props.task?.delivery_targets as Record<string, any> | undefined
+  for (const platform of IM_DELIVERY_PLATFORMS) {
+    const target = targets?.[platform]
+    deliveryTargets[platform] = target?.chat_type === 'group' && target.chat_id ? String(target.chat_id) : 'private'
+    initialDeliveryTargets[platform] = deliveryTargets[platform]
+    deliveryGroups[platform] = []
+    privateAvailable[platform] = platform === 'qq'
+    deliveryLoadFailed[platform] = false
+  }
+  repeatMode.value = taskKind === 'once' ? 'once' : (taskKind === 'interval' ? 'interval' : parsed.mode)
+  intervalMinutes.value = parsed.intervalMinutes ?? 5
+  intervalPreset.value = INTERVAL_PRESETS.includes(intervalMinutes.value) ? String(intervalMinutes.value) : 'custom'
+  const start = splitScheduleDateTime(props.task?.start_at)
+  const end = splitScheduleDateTime(props.task?.end_at)
+  startDate.value = start.date
+  startTime.value = start.time
+  endDate.value = end.date
+  endTime.value = end.time
+  executionMode.value = props.task ? props.task.execution_mode ?? 'instruction' : 'reminder'
+  form.workspaceId = props.workspaceSupported ? (props.task?.workspace_id ?? null) : null
+  form.filesystemAuthorized = Boolean(props.task?.filesystem_authorized)
+  formErr.value = ''
+  nextTick(() => { nameRef.value?.focus(); resizePayload() })
+}
+watch(() => props.show, (show, _previous, onCleanup) => {
+  if (!show) return
+  resetForm()
+  if (props.desktop) return
+  const controller = new AbortController()
+  onCleanup(() => controller.abort())
+  void loadDeliveryTargets(controller.signal)
+})
+async function loadDeliveryTargets(signal: AbortSignal) {
+  const platforms = IM_DELIVERY_PLATFORMS.filter(platform => props.imChannels.includes(platform))
+  await Promise.all(platforms.map(async platform => {
+    try {
+      const res = await scheduledTasksApi.listDeliveryTargets(platform)
+      if (signal.aborted) return
+      deliveryGroups[platform] = res.groups
+      privateAvailable[platform] = res.private_available
+    } catch {
+      if (!signal.aborted) deliveryLoadFailed[platform] = true
+    }
+  }))
+}
+function deliveryPlatformLabel(platform: ImDeliveryPlatform) {
+  return t(`schedules.${platform}`)
+}
+function deliveryTargetOptions(platform: ImDeliveryPlatform) {
+  const privateLabel = deliveryLoadFailed[platform] ? t('scheduleUi.targetLoadFailed')
+    : privateAvailable[platform] ? t('schedules.qqPrivate') : t('schedules.privateUnavailable')
+  return buildImTargetOptions(deliveryGroups[platform], deliveryTargets[platform], privateLabel,
+    chatId => t('scheduleUi.groupUnavailable', { chatId }))
+}
+function setDeliveryTarget(platform: ImDeliveryPlatform, value: string) {
+  deliveryTargets[platform] = value
+}
+function resizePayload() {
+  const element = payloadRef.value
+  if (!element) return
+  element.style.height = 'auto'
+  const min = 96
+  const max = 160
+  element.style.height = `${Math.min(max, Math.max(min, element.scrollHeight))}px`
+  element.style.overflowY = element.scrollHeight > max ? 'auto' : 'hidden'
+}
+function selectIntervalPreset(value: number | 'custom') {
+  intervalPreset.value = String(value)
+  if (value !== 'custom') intervalMinutes.value = value
+}
+function setRepeatMode(mode: RepeatMode) {
+  if (mode === 'once') {
+    const fallback = onceDefault()
+    if (!startDate.value) startDate.value = fallback.date
+    if (!startTime.value) startTime.value = fallback.time
+    endDate.value = ''
+    endTime.value = ''
+  } else if (repeatMode.value === 'once') {
+    startDate.value = ''
+    startTime.value = ''
+  }
+  repeatMode.value = mode
+}
+const weekdayOptions = computed(() => {
+  const names = tm('sharedUi.weekdays') as string[]
+  const firstDay = prefsStore.calendarWeekStart === 'sunday' ? 0 : 1
+  return Array.from({ length: 7 }, (_, offset) => {
+    const day = (firstDay + offset) % 7
+    return { day, name: names[day] }
+  })
+})
+function toggleWeeklyDay(day: number) {
+  const days = new Set(weeklyDays.value)
+  if (days.has(day)) days.delete(day)
+  else days.add(day)
+  weeklyDays.value = [...days]
+}
+function setStartDate(value: string) {
+  startDate.value = value
+  if (value && !startTime.value) startTime.value = repeatMode.value === 'interval' ? '09:00' : form.time
+}
+function setStartTime(value: string) {
+  startTime.value = value
+  if (value && !startDate.value) startDate.value = todayIso()
+}
+function setEndDate(value: string) {
+  endDate.value = value
+  if (value && !endTime.value) endTime.value = '23:59'
+}
+function setEndTime(value: string) {
+  endTime.value = value
+  if (value && !endDate.value) endDate.value = todayIso()
+}
+function clearStart() {
+  startDate.value = ''
+  startTime.value = ''
+}
+function clearEnd() {
+  endDate.value = ''
+  endTime.value = ''
+}
+function toggleChannel(channel: string, checked: boolean) {
+  const channels = new Set(form.channels)
+  if (checked) channels.add(channel)
+  else channels.delete(channel)
+  form.channels = [...channels]
+}
+function imDeliveryFields() {
+  return buildImDeliveryFields(
+    Boolean(props.task), initialDeliveryTargets, deliveryTargets, form.channels,
+  )
+}
+function submit() {
+  if (!form.name.trim()) { formErr.value = t('schedules.nameRequired'); return }
+  if (executionMode.value === 'reminder' && !form.payload.trim()) { formErr.value = t('scheduleUi.reminderRequired'); return }
+  if (!props.desktop && !form.channels.length) { formErr.value = t('schedules.channelRequired'); return }
+  if (repeatMode.value === 'once') {
+    const startAt = combineScheduleDateTime(startDate.value, startTime.value)
+    if (!startAt) { formErr.value = t('schedules.boundaryIncomplete'); return }
+    const startValue = scheduleDateTimeValue(startDate.value, startTime.value)
+    if (startValue !== null && startValue <= Date.now()) { formErr.value = t('scheduleUi.onceInPast'); return }
+    formErr.value = ''
+    emit('save', {
+      name: form.name.trim(), payload: form.payload,
+      schedule_kind: 'once', cron: null, interval_minutes: null,
+      start_at: startAt, end_at: null,
+      channels: [...form.channels], enabled: props.task ? props.task.enabled : true,
+      ...imDeliveryFields(),
+      execution_mode: executionMode.value,
+      workspace_id: executionMode.value === 'instruction' ? form.workspaceId : null,
+      filesystem_authorized: executionMode.value === 'instruction' && form.filesystemAuthorized,
+    })
+    return
+  }
+  {
+    const startAt = combineScheduleDateTime(startDate.value, startTime.value)
+    const endAt = combineScheduleDateTime(endDate.value, endTime.value)
+    if ((startDate.value || startTime.value) && !startAt) { formErr.value = t('schedules.boundaryIncomplete'); return }
+    if ((endDate.value || endTime.value) && !endAt) { formErr.value = t('schedules.boundaryIncomplete'); return }
+    const startValue = scheduleDateTimeValue(startDate.value, startTime.value)
+    const endValue = scheduleDateTimeValue(endDate.value, endTime.value)
+    if (startValue !== null && endValue !== null && endValue < startValue) {
+      formErr.value = t('schedules.endBeforeStart')
+      return
+    }
+    formErr.value = ''
+    if (repeatMode.value === 'weekly' && !weeklyDays.value.length) {
+      formErr.value = t('schedules.weeklyDayRequired')
+      return
+    }
+    const scheduleKind = repeatMode.value === 'interval' ? 'interval' : 'cron'
+    emit('save', {
+      name: form.name.trim(), payload: form.payload,
+      schedule_kind: scheduleKind,
+      cron: scheduleKind === 'cron' ? buildCron({ mode: repeatMode.value, time: form.time, weeklyDays: weeklyDays.value }) : null,
+      interval_minutes: scheduleKind === 'interval' ? intervalMinutes.value : null,
+      start_at: startAt,
+      end_at: endAt,
+      channels: [...form.channels], enabled: props.task ? props.task.enabled : true,
+      ...imDeliveryFields(),
+      execution_mode: executionMode.value,
+      workspace_id: executionMode.value === 'instruction' ? form.workspaceId : null,
+      filesystem_authorized: executionMode.value === 'instruction' && form.filesystemAuthorized,
+    })
+  }
+}
+</script>
+
+<style scoped>
+/* 全套表面/边框/选中态消费语义 token（--input-* / --option-* / --action-*），与
+   TimeInput.boxed、活动弹窗输入框同一契约，亮暗主题自动适配；
+   亮色下这些 token 的原始值与旧硬编码（黑 10% 描边、白 72% 底、品牌紫渐变）几乎一致。 */
+.sched-modal { max-height: min(88vh, 820px); min-height: 0; box-sizing: border-box; display: flex; flex-direction: column; padding: 16px 18px; }
+.sched-form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 22px; flex: 1 1 auto; min-height: 0; }
+.sched-column { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 6px 10px 12px 6px; }
+.sched-mode { margin-bottom: 11px; }
+.sched-prompt-column { display: flex; flex-direction: column; }
+.divider { height: 1px; background: var(--divider-line); margin: 2px 0 10px; }
+.divider-full { margin-left: 0; margin-right: 0; }
+.title-input { width: 100%; box-sizing: border-box; outline: none; font-size: 16px; font-weight: 700; color: var(--text-primary); font-family: var(--font-sans); padding: 6px 11px; margin-bottom: 10px; border: 1px solid var(--input-border); border-radius: var(--radius-xs); background: var(--input-bg); transition: border-color 0.15s, box-shadow 0.15s; }
+.title-input::placeholder { color: var(--input-placeholder); font-weight: 700; }
+.title-input:focus { border-color: var(--input-border-focus); }
+.field { display: block; margin-bottom: 11px; }
+.field > span { display: block; font-size: 12px; font-weight: 700; color: var(--text-secondary); margin-bottom: 6px; }
+.field-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 7px; }
+.field-heading > span { font-size: 12px; font-weight: 700; color: var(--text-secondary); }
+  .field-heading small { color: var(--content-tertiary); font-size: 11px; text-align: right; }
+.workspace-select { display: block; width: 100%; margin-bottom: 7px; }
+.workspace-select :deep(.asel-trigger) { width: 100%; box-sizing: border-box; }
+.authorization-field > small { display: block; margin-top: 5px; color: var(--content-tertiary); font-size: 11px; line-height: 1.45; }
+.authorization-field { padding: 9px 10px; border: 1px solid var(--option-border); border-radius: var(--radius-xs); background: var(--option-bg); }
+.authorization-field :deep(.app-checkbox) { margin: 0; }
+.once-controls { display: grid; grid-template-columns: minmax(0, 1fr) 82px 24px; align-items: center; gap: 6px; }
+.once-controls :deep(.dp-wrap), .once-controls :deep(.time-input) { min-width: 0; }
+.once-controls :deep(.dp-input) { min-width: 0; min-height: 34px; padding-left: 7px; padding-right: 7px; }
+.once-controls :deep(.dp-input span) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.boundary-row { display: grid; grid-template-columns: 58px minmax(0, 1fr); align-items: center; gap: 8px; margin-top: 7px; }
+.boundary-label { color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
+.boundary-controls { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) 82px 24px; align-items: center; gap: 6px; }
+.boundary-controls :deep(.dp-wrap) { min-width: 0; }
+.boundary-controls :deep(.dp-input) { min-width: 0; min-height: 34px; padding-left: 7px; padding-right: 7px; }
+.boundary-controls :deep(.dp-input span) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.boundary-controls :deep(.time-input) { min-width: 0; }
+/* 面与前景跟 DateSpanPicker 的清除键（adoption/date-picker.css 的 .drp-clear）同源
+   （--option-bg / --option-bg-hover + --content-*），过渡也要走 hover 时长令牌，否则
+   这一颗会瞬跳。清除符必须是居中盒里的 <Icon>：× 字形在当前字体的
+   ascent/descent 20/5 下，墨迹中心比 24px 盒中心高 2.4px，改 font-size/line-height
+   都对不齐。 */
+.boundary-clear { width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: var(--option-bg); color: var(--content-secondary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: color var(--hover-motion-control), background-color var(--hover-motion-control); }
+.boundary-clear:hover { background: var(--option-bg-hover); color: var(--content-primary); }
+.field input[type=text], .field input:not([type]), .field textarea, .field select, .field input[type=number] { width: 100%; box-sizing: border-box; padding: 8px 11px; border: 1px solid var(--input-border); border-radius: var(--radius-xs); background: var(--input-bg); font-size: 13px; font-family: var(--font-sans); color: var(--text-primary); outline: none; transition: border-color 0.15s, box-shadow 0.15s; }
+.field input:focus, .field textarea:focus, .field select:focus { border-color: var(--input-border-focus); }
+.reminder-field { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
+.reminder-field textarea { flex: 1 1 auto; min-height: 96px; max-height: none; resize: none; line-height: 1.6; overflow-y: hidden; }
+.repeat-tabs { display: flex; gap: 6px; }
+.repeat-tab { flex: 1; height: 34px; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-xs); border: 1px solid var(--option-border); background: var(--option-bg); font-size: 13px; font-family: var(--font-sans); color: var(--option-fg); cursor: pointer; transition: all 0.15s; text-align: center; }
+.repeat-tab:hover { border-color: var(--option-border-hover); }
+.repeat-tab.on { background: var(--action-primary-bg); color: var(--content-on-accent); border-color: transparent; }
+.weekly-days { display: flex; gap: 6px; margin-top: 8px; }
+.weekly-days .repeat-tab { height: 30px; font-size: 12px; }
+.time-field input { height: 34px; padding-top: 8px; padding-bottom: 8px; text-align: center; line-height: normal; font-size: 13px; }
+.interval-presets { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
+.interval-preset { width: 100%; min-width: 0; height: 34px; padding: 0; border-radius: var(--radius-xs); border: 1px solid var(--option-border); background: var(--option-bg); color: var(--option-fg); font-size: 12px; font-family: var(--font-sans); cursor: pointer; transition: all 0.15s; }
+.interval-preset:hover { border-color: var(--option-border-hover); }
+.interval-preset.on { color: var(--content-on-accent); border-color: transparent; background: var(--action-primary-bg); }
+.chans { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }
+.chans :deep(.app-checkbox) { min-width: 0; }
+.chans :deep(.app-checkbox__label) { min-width: 0; white-space: normal; flex-wrap: wrap; }
+.channel-unavailable-note { flex: 1 1 100%; min-width: 0; color: var(--content-tertiary); font-size: 10px; line-height: 1.3; }
+.qq-delivery-field {
+  display: flex; flex-direction: column; gap: 4px; min-width: 0; margin-top: 8px;
+  color: var(--content-secondary); font-size: 12px; line-height: 1.45;
+}
+.qq-delivery-field > span { display: block; min-width: 0; line-height: 1.45; }
+.qq-delivery-field :deep(.select-popup) { display: block; }
+.qq-delivery-field :deep(.select-popup-trigger) { width: 100%; box-sizing: border-box; }
+:global(.qq-target-popup) { max-height: 260px; overflow-y: auto; }
+.form-err { color: var(--status-danger); font-size: 12px; margin-bottom: 10px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 12px; align-items: center; margin-top: 6px; }
+.modal-actions > button { width: 64px; min-height: 34px; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; }
+@media (max-width: 760px) {
+  .sched-form-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; overflow-y: auto; overscroll-behavior: contain; }
+  .sched-column { min-height: auto; overflow: visible; padding: 0; }
+  .sched-prompt-column { display: block; }
+}
+@media (max-width: 460px) {
+  .sched-modal { padding: 12px; }
+  .boundary-row { grid-template-columns: 1fr; gap: 4px; }
+  .boundary-controls { grid-template-columns: minmax(0, 1fr) 78px 24px; }
+  .field-heading { display: block; }
+  .field-heading small { display: block; margin-top: 3px; text-align: left; }
+}
+</style>

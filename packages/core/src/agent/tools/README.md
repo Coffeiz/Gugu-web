@@ -34,7 +34,7 @@
 
 `contracts.ts` 定义 `ToolDefinition`、`ToolGroupDefinition` 和可信调用范围；`registry.ts` 提供 `registerGroup`、`register`、`configure`，并实现现有运行循环的 `ToolPort.plan/dispatch/reconcile`。Host 工厂按 `clients`、`projects`、`overview` 等领域调用组注册，调用方可用 `configure({ groups: { overview: false } })` 禁用整组，也可单独禁用工具。
 
-`permissions.ts`、`confirmation.ts` 处理权限投影与确认绑定；`definition-schema.ts`、`normalize-input.ts`、`input-errors.ts`、`schema-selection.ts` 以及日期辅助处理共用输入契约。这些是基础设施，不包含领域查询。公共出口为 `index.ts`，不保留旧文件路径的转发层。
+`permissions.ts`、`confirmation.ts` 处理权限投影与确认绑定；`definition-schema.ts`、`normalize-input.ts`、`input-errors.ts`、`search-tools.ts` 以及日期辅助处理共用输入契约。这些是基础设施，不包含领域查询。公共出口为 `index.ts`，不保留旧文件路径的转发层。
 
 工具组对应 Python `BaseSkill` 的领域注册概念，和 `agent/skills/` 中按需加载 Markdown 正文的 Prompt Skill 相互独立。正文、description、前端参数不能建立权限。
 

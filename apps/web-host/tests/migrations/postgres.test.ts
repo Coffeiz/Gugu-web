@@ -42,6 +42,11 @@ test('空库统一迁移只读检查、整体回滚、串行落库并拒绝结�
     await assert.rejects(migratePostgres(pool, 'check'), { code: 'incompatible', revision })
     await pool.query('UPDATE gugu_schema_migrations SET checksum=$1 WHERE revision=$2', [entry.checksum, revision])
 
+    await pool.query('ALTER TABLE scheduled_tasks DROP CONSTRAINT scheduled_tasks_execution_mode_check')
+    await assert.rejects(migratePostgres(pool, 'check'), { code: 'incompatible', revision: '0022_scheduled_task_mode' })
+    await pool.query("ALTER TABLE scheduled_tasks ADD CONSTRAINT scheduled_tasks_execution_mode_check CHECK (execution_mode IN ('reminder', 'instruction'))")
+    assert.equal(await migratePostgres(pool, 'check'), 'applied')
+
     await pool.query('ALTER TABLE files DISABLE TRIGGER gugu_project_file_count_insert')
     await assert.rejects(migratePostgres(pool, 'check'), { code: 'incompatible', revision: '0002_web_domain' })
     await assert.rejects(migratePostgres(pool, 'apply'), { code: 'incompatible', revision: '0002_web_domain' })

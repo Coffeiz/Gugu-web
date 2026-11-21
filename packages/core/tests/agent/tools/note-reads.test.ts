@@ -9,7 +9,7 @@ import { initializeSqlite, openSqliteRuntime } from '../../../src/data/sqlite.js
 import type { SqlDataRuntime } from '../../../src/data/runtime.js'
 import { createAgentMindReader, extractMindReferences } from '../../../src/mind/note-read.js'
 import { createNoteReadTools } from '../../../src/agent/tools/note.js'
-import { createGetToolSchemaTool } from '../../../src/agent/tools/meta.js'
+import { createSearchToolsTool } from '../../../src/agent/tools/meta.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import { collect, fixture } from '../run/fixtures.js'
 
@@ -35,7 +35,7 @@ beforeEach(async()=>{
  await sql.raw('INSERT INTO files VALUES(1,\''+key(owner)+'\',\'当前文件名\',NULL),(2,\''+key(other)+'\',\'他人私有文件\',NULL)').execute(core.db)
  await sql`INSERT INTO calendar_events(id,user_id,title,date,time,end_time,type,contact_name,project_id,description,version,created_at,deleted_at)
   VALUES(1,${key(owner)},'当前活动名','2026-11-15',NULL,NULL,'event',NULL,NULL,NULL,1,'2026-11-01 00:00:00',NULL)`.execute(core.db)
- const md='# 重构😀\r\n正文 [[project:'+projectId+'|旧名称]] [[file:1|旧文件]] [[event:1|旧活动]]\n'
+ const md='# 重构😀\r\n正文 [[project:'+projectId+'|旧名称]] [[file:drop-owned|旧文件]] [[event:1|旧活动]]\n'
   +tick+'[[project:'+foreignId+'|代码示例]]'+tick+'\n~~~txt\n[[file:2|围栏]]\n~~~\n'
   +'\\[[file:2|转义]] [[project:'+foreignId+'|不可读]] [[file:2|不可读]] [[file:99|缺失]]'
  await seed(1,owner,'note','重构😀','  '+'😀'.repeat(245)+'  ',md)
@@ -51,9 +51,9 @@ beforeEach(async()=>{
    rel_type:'related',edge_key:'',origin:'user',status:'active',note:'关系说明',created_at:'2026-11-15 00:00:0'+id,
    updated_at:'2026-11-15 00:00:00',deleted_at:id===2?'2026-11-15 00:00:00':null}).execute()
  }
- reader=createAgentMindReader(core.db,'sqlite')
+ reader=createAgentMindReader(core.db,'sqlite',async (candidate,id)=>candidate===owner&&id==='drop-owned'?{label:'当前文件名',path:'/synthetic/当前文件名.md'}:null)
  registry=createToolRegistry({authorize:async()=>allowed,groups:[{id:'mind',name:'笔记',tools:createNoteReadTools(reader)}]})
- registry.registerGroup({id:'meta',name:'元工具',tools:[createGetToolSchemaTool(user=>registry.capabilities(user))]})
+ registry.registerGroup({id:'meta',name:'元工具',tools:[createSearchToolsTool(user=>registry.capabilities(user))]})
 })
 afterEach(async()=>{await core?.close();if(folder)await rm(folder,{recursive:true,force:true})})
 
@@ -61,10 +61,10 @@ it('真实搜索/详情分别返回摘要与正文，关系及正文引用按own
  const searched=await dispatch('note_search',{query:'重构',limit:1})
  expect(searched).toMatchObject({successful:true,value:{count:1,matches:[{node_id:1,kind:'note',preview:'😀'.repeat(240),captured_at:'2026-11-15T00:00:00.000001+00:00'}],
   related:[{from_node_id:1,node:{node_id:5}},{from_node_id:1,node:{node_id:6}},{from_node_id:1,node:{node_id:2}}],
-  references:[{from_node_id:1,ref_type:'project',ref_id:projectId,label:'当前项目名'},{from_node_id:1,ref_type:'file',ref_id:1,label:'当前文件名'},{from_node_id:1,ref_type:'event',ref_id:1,label:'当前活动名'}]}})
+  references:[{from_node_id:1,ref_type:'project',ref_id:projectId,label:'当前项目名'},{from_node_id:1,ref_type:'file',ref_id:'drop-owned',label:'当前文件名',path:'/synthetic/当前文件名.md'},{from_node_id:1,ref_type:'event',ref_id:1,label:'当前活动名'}]}})
  if(searched.kind==='completed')expect((searched.value as {matches:object[]}).matches[0]).not.toHaveProperty('content_md')
  const full=await dispatch('note_get',{node_id:'#1',owner_id:other})
- expect(full).toMatchObject({successful:true,value:{node:{node_id:1,origin:'gugu',numbered_content:'1: # 重构😀\n2: 正文 [[project:'+projectId+'|旧名称]] [[file:1|旧文件]] [[event:1|旧活动]]\n3: '+tick+'[[project:'+foreignId+'|代码示例]]'+tick+'\n4: ~~~txt\n5: [[file:2|围栏]]\n6: ~~~\n7: \\[[file:2|转义]] [[project:'+foreignId+'|不可读]] [[file:2|不可读]] [[file:99|缺失]]'}}})
+ expect(full).toMatchObject({successful:true,value:{node:{node_id:1,origin:'gugu',numbered_content:'1: # 重构😀\n2: 正文 [[project:'+projectId+'|旧名称]] [[file:drop-owned|旧文件]] [[event:1|旧活动]]\n3: '+tick+'[[project:'+foreignId+'|代码示例]]'+tick+'\n4: ~~~txt\n5: [[file:2|围栏]]\n6: ~~~\n7: \\[[file:2|转义]] [[project:'+foreignId+'|不可读]] [[file:2|不可读]] [[file:99|缺失]]'}}})
  if(full.kind==='completed'){
   const value=full.value as {node:{numbered_content:string};related:object[]}
   expect(value.node.numbered_content).toContain('3: '+tick+'[[project:'+foreignId+'|代码示例]]'+tick)
@@ -79,6 +79,8 @@ it('多词AND/OR、历史q、limit夹取和全角参数，搜索不包含来源�
  expect(await dispatch('note_search',{queries:['重构','条件乙'],mode:'AND',include_content:true})).toMatchObject({value:{count:1,matches:[{node_id:2,content_md:'画布正文'}]}})
  expect(await dispatch('note_search',{q:'重构',limit:'０'})).toMatchObject({value:{count:1,matches:[{node_id:1}]}})
  expect(await dispatch('note_search',{queries:['重构','重构'],mode:'OR',limit:999})).toMatchObject({value:{count:2,matches:[{node_id:1},{node_id:2}]}})
+ expect(await dispatch('note_search',{query:'重构',kind:'note'})).toMatchObject({value:{count:1,matches:[{node_id:1,kind:'note'}]}})
+ expect(await dispatch('note_search',{query:'重构',kind:'canvas_note'})).toMatchObject({value:{count:1,matches:[{node_id:2,kind:'canvas_note'}]}})
  expect(await dispatch('note_search')).toMatchObject({successful:false,value:{error:'需要提供搜索关键词 query 或 queries'}})
  expect(await dispatch('note_search',{mode:'X',query:'重构'})).toMatchObject({successful:false,executed:false})
  expect((await sql.raw<{n:number}>('SELECT count(*) n FROM core_operation_receipts').execute(core.db)).rows[0]!.n).toBe(0)
@@ -100,16 +102,18 @@ it('权限和组开关先于SQL；查询后取消不发布正文，缺表报安�
  vi.spyOn(reader,'get').mockImplementationOnce(async(...args)=>{const value=await get(...args);after.abort();return value})
  await expect(registry.tools.dispatch({id:'post',name:'note_get',input:{node_id:1}},{...scope(),signal:after.signal})).rejects.toThrow()
  await sql.raw('DROP TABLE files').execute(core.db)
+ expect(await dispatch('note_get',{node_id:1})).toMatchObject({successful:true,value:{references:expect.arrayContaining([{ref_type:'file',ref_id:'drop-owned',label:'当前文件名',path:'/synthetic/当前文件名.md'}])}})
+ await sql.raw('DROP TABLE projects').execute(core.db)
  expect(await dispatch('note_get',{node_id:1})).toMatchObject({successful:false,value:{error:'工具执行失败'}})
 })
-it('Schema工具只发现当前授权工具；通配、重复、未知与组关闭不执行目标',async()=>{
- expect(await dispatch('get_tool_schema',{tools:['note_*','note_get','missing']})).toMatchObject({value:{tool_schemas:['note_search','note_get'],rejected:['note_get','missing']}})
+it('按名称查询 Schema 只发现当前授权工具，重复、未知及停用的名称进入拒绝列表',async()=>{
+ expect(await dispatch('search_tools',{names:['note_search','note_get','note_get','missing']})).toMatchObject({value:{results:[{name:'note_search'},{name:'note_get'}],rejected:['note_get','missing']}})
  registry.configure({groups:{mind:false}})
- expect(await dispatch('get_tool_schema',{tools:['note_*']})).toMatchObject({successful:false,value:{error:'没有可获取 Schema 的已授权工具'}})
- expect(await dispatch('get_tool_schema',{tools:[]})).toMatchObject({successful:false,executed:false})
+ expect(await dispatch('search_tools',{names:['note_get']})).toMatchObject({successful:true,value:{results:[],rejected:['note_get']}})
+ expect(await dispatch('search_tools',{names:[]})).toMatchObject({successful:false,executed:false})
 })
 it('实际Agent续轮接收笔记读取结果和Schema发现，Provider与RunStore为明确替身',async()=>{
- const f=fixture([[{type:'complete',text:'',calls:[{id:'schema',name:'get_tool_schema',input:{tools:['note_get']}},{id:'get',name:'note_get',input:{node_id:1}}]}],
+ const f=fixture([[{type:'complete',text:'',calls:[{id:'schema',name:'search_tools',input:{names:['note_get']}},{id:'get',name:'note_get',input:{node_id:1}}]}],
   [{type:'complete',text:'已读取',calls:[]}]])
  f.ports.tools=registry.tools
  f.ports.context.afterTool=async(context,_call,result)=>[...context,result.kind==='completed'?JSON.stringify(result.value):'unknown']

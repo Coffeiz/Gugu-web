@@ -54,6 +54,7 @@ export function createKyselyAgentWorkspaceReader(db: Kysely<any>, backend: 'sqli
   return { async read(rawOwner, workspaceId, signal) {
     signal?.throwIfAborted()
     const normalized = dataContext(rawOwner).ownerId, owner = backend === 'sqlite' ? normalized.replaceAll('-', '') : normalized
+    if (workspaceId !== undefined && typeof workspaceId !== 'number') return []
     const filter = workspaceId === undefined ? sql`` : sql` AND w.id=${workspaceId}`
     try {
       const result = await sql<Record<string, unknown>>`SELECT w.id,w.name,w.kind,w.enabled,w.is_default,w.project_id,w.folder_id,w.directory_id,

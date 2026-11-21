@@ -59,3 +59,15 @@ function validateConcurrency(value: number): number {
     throw new RangeError('worker 并发数必须为正整数')
   return value
 }
+
+/** 先取得执行名额，再认领持久租约。任务失败后仍释放后续队列。 */
+export function createSerialWorker() {
+  let tail = Promise.resolve()
+  return function run<T>(task: () => Promise<T>): Promise<T> {
+    const current = tail.then(task)
+    tail = current.then(() => undefined, () => undefined)
+    return current
+  }
+}
+
+export type SerialWorker = ReturnType<typeof createSerialWorker>

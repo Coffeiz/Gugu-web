@@ -7,6 +7,19 @@ export interface AgentRunEventReader {
   readState(identity: RunIdentity): Promise<{ sequence: number; status: string } | null>
 }
 
+/** 重建状态属于当前订阅，不占用持久事件序号。 */
+export function reconstructionStatusEvent(identity: RunIdentity, sequence: number, status: string | undefined): RunEvent | undefined {
+  if (status !== 'reconstruction_unavailable' && status !== 'reconstruction_version_conflict') return
+  return { identity, id: `${identity.runId}:reconstruction-status`, sequence, round: 0,
+    type: 'provider_diagnostic', payload: { reconstructionStatus: status } }
+}
+
+/** 准入失败可能发生在持久运行事件写入前。 */
+export function startupFailureEvent(identity: RunIdentity, sequence: number): RunEvent {
+  return { identity, id: `${identity.runId}:startup-failed`, sequence: sequence + 1,
+    round: 0, type: 'final', payload: { status: 'failed' } }
+}
+
 interface AgentRunEventWakeup {
   notify(identity: RunIdentity): Promise<void>
   subscribe(identity: RunIdentity): Promise<{
@@ -46,9 +59,10 @@ export function createAgentRunEventStream(reader: AgentRunEventReader, wakeup: A
     async open(identity: RunIdentity, afterSequence = 0, signal?: AbortSignal): Promise<AsyncIterable<RunEvent>> {
       if (!Number.isSafeInteger(afterSequence) || afterSequence < 0) throw new RangeError('Agent 事件序号无效')
       const bound = { ...identity }
-      // 先订阅再读取，避免读取与监听之间漏掉通知；通知丢失后定时重读。
-      const live = await wakeup.subscribe(bound)
       return (async function* () {
+        if (signal?.aborted) return
+        // 首次消费时先订阅再读持久事件，避免未被消费的响应留下订阅。
+        const live = await wakeup.subscribe(bound)
         let sequence = afterSequence
         try {
           for (;;) {
@@ -63,13 +77,13 @@ export function createAgentRunEventStream(reader: AgentRunEventReader, wakeup: A
             }
             const state = await reader.readState(bound)
             if (state && state.sequence > sequence) continue
-            if (state?.status === 'reconstruction_unavailable' || state?.status === 'reconstruction_version_conflict') {
-              // 这是读取时的暂态提示，不是 outbox 事件，也不是运行终态。
-              yield { identity: bound, id: `${bound.runId}:reconstruction-status`, sequence, round: 0, type: 'provider_diagnostic', payload: { reconstructionStatus: state.status } }
+            const reconstruction = reconstructionStatusEvent(bound, sequence, state?.status)
+            if (reconstruction) {
+              yield reconstruction
               return
             }
             if (state?.status === 'startup_failed') {
-              yield { identity: bound, id: `${bound.runId}:startup-failed`, sequence: sequence + 1, round: 0, type: 'final', payload: { status: 'failed' } }
+              yield startupFailureEvent(bound, sequence)
               return
             }
             if (state && ['completed', 'cancelled', 'failed', 'unknown', 'waiting'].includes(state.status)) return

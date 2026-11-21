@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, join, resolve, sep } from 'node:path'
+import { readAgentPrompt } from '@gugu/core/agent/context/prompts'
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
 
 export interface AdminPromptOptions {
@@ -37,13 +38,12 @@ function fileFor(root: string, profile: string): string {
 /** Admin 提示词只允许读写固定的运行时文件；正文不进入审计记录。 */
 export function registerAdminPromptRoutes(app: FastifyInstance, options: AdminPromptOptions): void {
   app.get('/api/v1/admin/agent/prompts', { preHandler: options.requireAdmin }, async () => {
-    await mkdir(options.root, { recursive: true })
     const orderedProfiles = [...specialProfiles, 'default'] as const
     const profiles = await Promise.all(orderedProfiles.map(async profile => {
       const path = fileFor(options.root, profile)
       try {
-        const info = await stat(path)
-        return { profile, exists: true, size: info.size, ...(profile !== 'default' ? { is_persona: true } : {}) }
+        const content = readAgentPrompt(basename(path), options.root)
+        return { profile, exists: true, size: Buffer.byteLength(content), ...(profile !== 'default' ? { is_persona: true } : {}) }
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('提示词状态读取失败')
         return { profile, exists: false, size: 0, ...(profile !== 'default' ? { is_persona: true } : {}) }
@@ -54,7 +54,7 @@ export function registerAdminPromptRoutes(app: FastifyInstance, options: AdminPr
 
   app.get<{ Params: { profile: string } }>('/api/v1/admin/agent/prompts/:profile', { preHandler: options.requireAdmin }, async request => {
     const path = fileFor(options.root, request.params.profile)
-    try { return { profile: request.params.profile, content: await readFile(path, 'utf8') } }
+    try { return { profile: request.params.profile, content: readAgentPrompt(basename(path), options.root) } }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { profile: request.params.profile, content: '' }
       throw new Error('提示词读取失败')
@@ -64,10 +64,10 @@ export function registerAdminPromptRoutes(app: FastifyInstance, options: AdminPr
   app.put<{ Params: { profile: string }; Body: { content?: unknown } }>('/api/v1/admin/agent/prompts/:profile', { preHandler: options.requireAdmin }, async (request, reply) => {
     const path = fileFor(options.root, request.params.profile)
     if (typeof request.body?.content !== 'string') return reply.code(422).send({ detail: '提示词正文必须是文本' })
-    await mkdir(options.root, { recursive: true })
+    await mkdir(options.root, { recursive: true, mode: 0o700 })
     const temporary = join(options.root, `.${basename(path)}.${randomUUID()}.tmp`)
     try {
-      await writeFile(temporary, request.body.content, { encoding: 'utf8', flag: 'wx' })
+      await writeFile(temporary, request.body.content, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
       await rename(temporary, path)
     } catch {
       await rm(temporary, { force: true }).catch(() => undefined)

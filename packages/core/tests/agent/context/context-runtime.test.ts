@@ -77,6 +77,21 @@ describe('Canonical上下文与Run运行时组合', () => {
     const resumed = createCanonicalContextPort(ports)
     expect(await resumed.loadedSkills!(structuredClone(state))).toEqual({ U1: { digest: 'v1', source: 'user', ownerFingerprint: 'owner-a' } })
   })
+  it('历史编号与重排后的相同编号恢复到不同的内置技能键', async () => {
+    const { context, ports } = fixture()
+    let state = await context.prepare(identity, signal())
+    for (const [round, marker] of [[1, { content_digest: 'old-chart' }],
+      [2, { skill_key: 'knowledge-writing', content_digest: 'new-knowledge' }]] as const) {
+      const skill = { id: `skill-${round}`, name: 'use_skill', input: { id: 'S7' } }
+      state = await context.afterRound(state, { text: '', calls: [skill] }, round)
+      state = await context.afterTool(state, skill, { kind: 'completed', successful: true, mutated: false,
+        value: { _capability_usage: { kind: 'skill', id: 'S7', loaded: true, ...marker } } }, round)
+    }
+    expect(await createCanonicalContextPort(ports).loadedSkills!(structuredClone(state))).toEqual({
+      'chart-and-math': { digest: 'old-chart', source: 'builtin' },
+      'knowledge-writing': { digest: 'new-knowledge', source: 'builtin' },
+    })
+  })
   it('普通工具返回中的同名字段不会提升为可信模型值', async () => {
     const { context } = fixture()
     let state = await context.prepare(identity, signal())
@@ -392,7 +407,7 @@ describe('Canonical上下文与Run运行时组合', () => {
   it('实际工具回执追加独立同批Schema事件并去重，原始参数字节和Responses身份贯穿主链', async () => {
     const { context, ports, services } = fixture()
     const rawArguments = '{ "z": 1, "a": 2 }'
-    const schemaCall = { ...call, name: 'get_tool_schema', input: { z: 1, a: 2 }, rawArguments, responsesItemId: 'item-1' }
+    const schemaCall = { ...call, name: 'search_tools', input: { z: 1, a: 2 }, rawArguments, responsesItemId: 'item-1' }
     const event = {
       type: 'tool-schema', tool_name: 'synthetic_tool', schema_digest: 'schema-1',
       implementation_digest: 'implementation-1', schema: { type: 'object', properties: { signature: { type: 'string' } } }
@@ -447,6 +462,45 @@ describe('Canonical上下文与Run运行时组合', () => {
     expect(text).not.toContain('内部控制说明')
     expect(text).not.toContain('守卫续轮草稿')
     expect(text).not.toContain('最终回复由history.text')
+  })
+
+  it('上游明确超限时优先摘要，摘要未生效时才裁剪历史', async () => {
+    const { ports, context } = fixture()
+    const initial = await context.prepare(identity, signal())
+    const summarized = await context.recoverOverflow(initial, 1, signal())
+    expect(summarized.applied).toBe(true)
+    expect(summarized.context.compactions).toHaveLength(1)
+    expect(stableJson(summarized.context.prepared.area)).toContain('合成摘要')
+    expect(await context.recoverOverflow(summarized.context, 2, signal())).toEqual({
+      context: summarized.context, applied: false,
+    })
+
+    vi.mocked(ports.compaction.summarize).mockRejectedValueOnce(new Error('合成摘要失败'))
+    const trimmed = await context.recoverOverflow(initial, 1, signal())
+    expect(trimmed.applied).toBe(true)
+    expect(trimmed.context.compactions).toHaveLength(0)
+    expect(trimmed.context.overflowTrimmed).toBe(true)
+    expect(trimmed.context.prepared.area.entries).toHaveLength(1)
+    expect(trimmed.context.prepared.area.entries[0]?.message.content).toContain('本轮问题')
+  })
+
+  it('最终正文不会挤掉上一完整工具轮的压缩保护窗口', async () => {
+    const { context } = fixture()
+    const abort = signal()
+    let state = await context.prepare(identity, abort)
+    state = await context.afterRound(state, { text: '', calls: [call] }, 1)
+    state = await context.afterTool(state, call, {
+      kind: 'completed', value: { answer: '合成工具回执' }, successful: true, mutated: false,
+    }, 1)
+    state = await context.afterRound(state, { text: '合成最终正文', calls: [] }, 2)
+    const result = await context.afterUsage(state, {
+      input: 85, output: 1, cacheRead: 0, cacheWrite: 0, contextInput: 85,
+    }, abort)
+    expect(result.applied).toBe(true)
+    expect(result.context.compactions.at(-1)?.result.coversUnpersisted).toBe(false)
+    const entries = result.context.prepared.area.entries
+    expect(entries.filter(entry => entry.roundId === 'round-1')).toHaveLength(2)
+    expect(entries.at(-1)?.message.content).toBe('合成最终正文')
   })
 
   it('未压缩的85%阈值只记录失败输入，增长不足8000不重复尝试，也不裁保护窗口', async () => {

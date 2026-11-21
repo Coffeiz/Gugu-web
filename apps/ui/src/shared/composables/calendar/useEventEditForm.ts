@@ -1,0 +1,250 @@
+/**
+ * 日历活动的编辑态业务逻辑（全天切换/提醒 CRUD/保存删除），从
+ * Calendar/index.vue 抽出来，好让日历新建表单与跨页面活动引用弹窗复用同一套字段和提醒逻辑。
+ */
+import { ref, computed } from 'vue'
+import { requireScheduleAccess } from '@/services/scheduleAccess'
+import { eventsApi } from '@/api/calendar'
+import { scheduledTasksApi } from '@/services/api'
+import { errorMessage, showAppError } from '@/composables/core/useAppToast'
+import { useAuthStore } from '@/stores/auth'
+import { useLiveStore } from '@/stores/live'
+import { InteractionSync } from '@/interaction/sync/InteractionSync'
+import { buildImDeliveryFields, IM_DELIVERY_PLATFORMS, type ImDeliveryPlatform, type ImDeliveryGroup } from '@/utils/imDelivery'
+
+export interface EventDraft {
+  name: string
+  date: string
+  time: string
+  endTime: string
+  description: string
+  allDay: boolean
+}
+
+export interface EditingEvent extends EventDraft {
+  _uid?: string
+  id: string | number
+  version: number
+}
+
+export interface Reminder { id?: number | null; leadMin: number }
+
+export const LEAD_OPTIONS = [
+  { label: '活动开始时',  min: 0 },
+  { label: '提前 5 分钟', min: 5 },
+  { label: '提前 15 分钟', min: 15 },
+  { label: '提前 30 分钟', min: 30 },
+  { label: '提前 1 小时', min: 60 },
+  { label: '提前 2 小时', min: 120 },
+  { label: '提前 1 天',   min: 1440 },
+  { label: '提前 2 天',   min: 2880 },
+]
+export const CHAN_LABEL: Record<string, string> = { web: 'web', feishu: '飞书', qq: 'QQ', wechat: '微信', telegram: 'Telegram' }
+
+// 结束时间早于开始时间 → 视为次日（跨午夜）。HH:MM 已零填充，直接字符串比较即可
+export function isNextDay(start: string | null | undefined, end: string | null | undefined) {
+  return !!start && !!end && end < start
+}
+// 默认时间段：下一个整点 → 再过一小时。如现在 22:50 → 23:00–00:00（次日）
+export function defaultTimeRange() {
+  const now = new Date()
+  const p = (n: number) => String(n).padStart(2, '0')
+  const sh = (now.getHours() + 1) % 24
+  return { time: `${p(sh)}:00`, endTime: `${p((sh + 1) % 24)}:00` }
+}
+// 取消勾选「全天」时，若时间还是空的，补一个默认时间段
+export function onToggleAllDay(obj: { allDay: boolean; time: string; endTime: string }) {
+  if (!obj.allDay && !obj.time) Object.assign(obj, defaultTimeRange())
+}
+
+function _pad2(n: number) { return String(n).padStart(2, '0') }
+function _reminderAtIso(date: string, time: string | undefined, leadMin: number) {
+  const [h, mm] = (time || '09:00').split(':').map(Number)
+  const d = new Date(`${date}T00:00:00`)
+  d.setHours(h, mm - leadMin, 0, 0)   // 负分钟/跨天由 Date 自动回退
+  return `${d.getFullYear()}-${_pad2(d.getMonth() + 1)}-${_pad2(d.getDate())}T${_pad2(d.getHours())}:${_pad2(d.getMinutes())}`
+}
+
+  /** 每次调用都是一份独立状态：页面新建表单与全局编辑弹窗各自持有实例，互不干扰。 */
+export function useEventEditForm() {
+  const authStore = useAuthStore()
+  const liveStore = useLiveStore()
+  const schedules = requireScheduleAccess()
+  const desktop = schedules.storesSchedulesLocally
+  const imChannels = computed(() => desktop ? [] : authStore.user?.imChannels ?? [])   // 用户已绑的 IM 平台
+
+  const reminders          = ref<Reminder[]>([])       // [{ id?, leadMin }]，可多个
+  const reminderChannels   = ref<string[]>(['web'])    // 渠道（web + 已绑 IM），该活动的提醒共用
+  const deliveryTargets = ref<Record<ImDeliveryPlatform, string>>({ qq: 'private', feishu: 'private', telegram: 'private' })
+  const initialDeliveryTargets = ref<Record<ImDeliveryPlatform, string>>({ qq: 'private', feishu: 'private', telegram: 'private' })
+  const deliveryGroups = ref<Record<ImDeliveryPlatform, ImDeliveryGroup[]>>({ qq: [], feishu: [], telegram: [] })
+  const privateAvailable = ref<Record<ImDeliveryPlatform, boolean>>({ qq: true, feishu: false, telegram: false })
+  const removedReminderIds = ref<number[]>([])         // 编辑里删掉的已存在提醒 id，保存时真删
+  const saving             = ref(false)
+
+  let reminderGeneration = 0
+  const loadingReminders = ref(false)
+  function resetReminder() {
+    reminderGeneration++
+    loadingReminders.value = false
+    reminders.value = []
+    reminderChannels.value = ['web']
+    deliveryTargets.value = { qq: 'private', feishu: 'private', telegram: 'private' }
+    initialDeliveryTargets.value = { ...deliveryTargets.value }
+    removedReminderIds.value = []
+  }
+  function leadLabelOf(min: number) { return LEAD_OPTIONS.find(o => o.min === min)?.label || `提前 ${min} 分钟` }
+  function toggleReminderChannel(ch: string) {
+    const set = new Set(reminderChannels.value)
+    set.has(ch) ? set.delete(ch) : set.add(ch)
+    if (set.size === 0) set.add(ch)   // 至少留一个
+    reminderChannels.value = [...set]
+  }
+  const canAddReminder = computed(() => LEAD_OPTIONS.some(option => !reminders.value.some(reminder => reminder.leadMin === option.min)))
+  function addReminder() {
+    const used = new Set(reminders.value.map(reminder => reminder.leadMin))
+    const leadMin = [30, ...LEAD_OPTIONS.map(option => option.min)].find(value => !used.has(value))
+    if (leadMin !== undefined) reminders.value.push({ leadMin })
+  }
+  function removeReminderAt(i: number) {
+    const r = reminders.value[i]
+    if (r?.id) removedReminderIds.value.push(r.id)
+    reminders.value.splice(i, 1)
+  }
+
+  async function loadReminders(ev: { id: string | number; date?: string; time?: string }) {
+    resetReminder()
+    if (typeof ev.id !== 'number') return   // 临时事件（还没存）：保持 reset 态
+    const generation = reminderGeneration
+    loadingReminders.value = true
+    try {
+      const tasks = (await schedules.list(ev.id))?.tasks || []
+      if (generation !== reminderGeneration) return
+      if (!tasks.length) return
+      reminderChannels.value = (tasks[0].channels && tasks[0].channels.length) ? tasks[0].channels : ['web']
+      const targets = tasks[0].delivery_targets as Record<string, any> | undefined
+      for (const platform of IM_DELIVERY_PLATFORMS) {
+        const target = targets?.[platform]
+        deliveryTargets.value[platform] = target?.chat_type === 'group' && target.chat_id ? String(target.chat_id) : 'private'
+      }
+      initialDeliveryTargets.value = { ...deliveryTargets.value }
+      reminders.value = tasks.map(t => {
+        let leadMin = 0
+        if (t.schedule_kind === 'once' && t.start_at) {
+          const raw = Math.round((+new Date(`${ev.date}T${ev.time || '09:00'}`) - +new Date(t.start_at)) / 60000)
+          leadMin = LEAD_OPTIONS.reduce((b, o) => Math.abs(o.min - raw) < Math.abs(b - raw) ? o.min : b, 0)
+        }
+        return { id: t.id, leadMin }
+      })
+    } catch (error) { if (desktop) throw error }
+    finally { if (generation === reminderGeneration) loadingReminders.value = false }
+  }
+
+  async function loadImTargets() {
+    const platforms = IM_DELIVERY_PLATFORMS.filter(platform => imChannels.value.includes(platform))
+    await Promise.all(platforms.map(async platform => {
+      try {
+        const result = await scheduledTasksApi.listDeliveryTargets(platform)
+        deliveryGroups.value[platform] = result.groups
+        privateAvailable.value[platform] = result.private_available
+      } catch {
+        deliveryGroups.value[platform] = []
+        privateAvailable.value[platform] = false
+      }
+    }))
+  }
+
+  function setDeliveryTarget(platform: ImDeliveryPlatform, value: string) {
+    deliveryTargets.value[platform] = value
+  }
+
+  function imDeliveryFields(isEditing: boolean) {
+    return buildImDeliveryFields(isEditing, initialDeliveryTargets.value, deliveryTargets.value, reminderChannels.value)
+  }
+
+  // 保存活动后调用：对账该活动的提醒——删掉移除的、改已存在的渠道/时刻、建新增的
+  async function applyReminders(eventId: number, name: string, date: string, time: string | undefined) {
+    try {
+      while (removedReminderIds.value.length) {
+        const id = removedReminderIds.value[0]!
+        await schedules.delete(id, eventId)
+        removedReminderIds.value.shift()
+      }
+      for (const r of reminders.value) {
+        const data = {
+          name: `${name} 提醒`,
+          execution_mode: 'reminder' as const,
+          ...(desktop ? { reminder_lead_minutes: r.leadMin } : {}),
+          payload: `提醒：${name}（${date}${time ? ' ' + time : ''}）`,
+          schedule_kind: 'once' as const,
+          start_at: desktop ? new Date(_reminderAtIso(date, time, r.leadMin)).toISOString() : _reminderAtIso(date, time, r.leadMin),
+          channels: reminderChannels.value,
+          ...imDeliveryFields(Boolean(r.id)),
+        }
+        if (r.id) await schedules.update(r.id, data, { eventId })
+        else r.id = (await schedules.create(data, eventId))?.id ?? null
+      }
+      liveStore.bump('scheduled_tasks')
+    } catch (error) { if (desktop) throw error; showAppError(errorMessage(error)) }
+  }
+
+  // 测试提醒渠道：往当前选的渠道发一条测试消息（不建任务，新建/编辑活动都能测）
+  async function testReminderChannels(name: string) {
+    return scheduledTasksApi.testNotify({
+      channels: reminderChannels.value,
+      name: name || '活动提醒',
+      ...imDeliveryFields(false),
+    })
+  }
+
+  /** 保存编辑中的活动：更新活动本身 + 对账提醒 + 广播日历有变（Calendar 页面自己的
+   *  watch(liveStore.rev.calendar) 会据此刷新，不用这里手动去碰它的本地数组）。 */
+  async function saveEvent(ev: EditingEvent) {
+    if (saving.value) return
+    saving.value = true
+    const previous = { ...ev }
+    const nextTime = ev.allDay ? '' : ev.time
+    const nextEndTime = ev.allDay ? '' : ev.endTime
+    try {
+      return await InteractionSync.execute({
+        scope: 'calendar.event.update',
+        entityKey: `calendar-event:${ev.id}`,
+        apply: () => { ev.time = nextTime; ev.endTime = nextEndTime },
+        rollback: () => Object.assign(ev, previous),
+        request: async mutation => {
+          const updated = await eventsApi.update(ev.id as unknown as number, {
+            title: ev.name, date: ev.date, time: nextTime || null, endTime: nextEndTime || null,
+            description: ev.description || undefined, version: ev.version,
+          }, { mutationId: mutation.mutationId })
+          await applyReminders(ev.id as unknown as number, ev.name, ev.date, nextTime)
+          return updated
+        },
+        onCommit: () => liveStore.bump('calendar'),
+      })
+    } finally {
+      saving.value = false
+    }
+  }
+
+  async function deleteEvent(id: string | number, version: number): Promise<boolean> {
+    try {
+      await InteractionSync.execute({
+        scope: 'calendar.event.delete', entityKey: `calendar-event:${id}`,
+        apply: () => {}, rollback: () => {},
+        request: mutation => eventsApi.delete(id as unknown as number, version, { mutationId: mutation.mutationId }),
+        onCommit: () => liveStore.bump('calendar'),
+      })
+      return true
+    } catch (error) {
+      if ((error as { status?: number })?.status !== 409) throw error
+      return false
+    }
+  }
+
+  return { desktop, loadingReminders,
+    imChannels, reminders, reminderChannels, deliveryTargets, deliveryGroups, privateAvailable, removedReminderIds,
+    resetReminder, leadLabelOf, toggleReminderChannel, addReminder, removeReminderAt, canAddReminder,
+    loadReminders, loadImTargets, setDeliveryTarget, imDeliveryFields, applyReminders, testReminderChannels, saving,
+    saveEvent, deleteEvent,
+  }
+}

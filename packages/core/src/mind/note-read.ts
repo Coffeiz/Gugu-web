@@ -6,6 +6,7 @@ import { utc } from '../data/codec.js'
 import { asciiDecimalDigits, decimalDigitPattern } from '../shared/unicode-decimal.js'
 import { normalizeGlobalSearchQueries } from '../search/query.js'
 import type { Database, MindNodeTable, MindRelationTable } from '../data/schema.js'
+import { canvasNoteDisplayTitle } from './note-create.js'
 import { mindNodeReadResponse } from './canvas-read.js'
 
 /** 仅返回可信 owner 的活动时间流便签。分页校验由入口负责。 */
@@ -35,10 +36,10 @@ export function createSqlMindNoteReader(db: Kysely<Database>, backend: Backend) 
 }
 
 /** Agent读取保留正文、来源和精确时间；与Web的note-only列表使用不同投影。 */
-export interface AgentMindSearch { query?:string; q?:string; queries?:string[]; mode?:'OR'|'AND'; limit?:number; include_content?:boolean }
+export interface AgentMindSearch { query?:string; q?:string; queries?:string[]; mode?:'OR'|'AND'; kind?:'note'|'canvas_note'; limit?:number; include_content?:boolean }
 type NodeRow = Selectable<MindNodeTable>
 type RelationRow = Selectable<MindRelationTable>
-type Reference = {ref_type:string;ref_id:number;label:string|null}
+type Reference = {ref_type:string;ref_id:number|string;label:string|null;path?:string}
 
 /** Python物理行规则（含CRLF和Unicode分隔符），供引用解析与原始行号共用。 */
 export function physicalLines(text:string):string[]{
@@ -46,7 +47,7 @@ export function physicalLines(text:string):string[]{
 }
 function lineText(line:string){return line.replace(/(?:\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029])$/u,'')}
 /** 与Python提取器同样忽略围栏、任意长度行内代码、奇数反斜线转义；顺序去重。 */
-export function extractMindReferences(markdown:string):Array<{type:string;id:number}>{
+export function extractMindReferences(markdown:string):Array<{type:string;id:number|string}>{
   const lines:string[]=[];let fence:string|undefined
   for(const line of physicalLines(markdown)){
     const marker=/^ {0,3}(`{3,}|~{3,})/.exec(line)
@@ -59,32 +60,36 @@ export function extractMindReferences(markdown:string):Array<{type:string;id:num
     lines.push(line)
   }
   const text=lines.join('').replace(/(?<!`)(?<ticks>`+)(?!`)[\s\S]*?(?<!`)\k<ticks>(?!`)/gu,' ')
-  const pattern=new RegExp('\\[\\[(?<type>[a-z_]+):(?<id>'+decimalDigitPattern+'+)\\|(?<label>[^\\]]*)\\]\\]','gu')
-  const refs:Array<{type:string;id:number}>=[],seen=new Set<string>()
+  const pattern=new RegExp('\\[\\[(?<type>[a-z_]+):(?<id>'+decimalDigitPattern+'+|(?:path|drop)-[A-Za-z0-9_-]{1,24000})\\|(?<label>[^\\]]*)\\]\\]','gu')
+  const refs:Array<{type:string;id:number|string}>=[],seen=new Set<string>()
   for(const match of text.matchAll(pattern)){
     let before=match.index!-1
     while(before>=0&&text[before]==='\\')before--
     if((match.index!-1-before)%2)continue
-    const id=Number(asciiDecimalDigits(match.groups!.id!)),type=match.groups!.type!,key=type+':'+id
-    if(id>0&&Number.isSafeInteger(id)&&!seen.has(key)){seen.add(key);refs.push({type,id})}
+    const rawId=match.groups!.id!,type=match.groups!.type!
+    const id=type==='file'&&/^(path|drop)-/u.test(rawId)?rawId:Number(asciiDecimalDigits(rawId))
+    const key=type+':'+id
+    if((typeof id==='string'||(id>0&&Number.isSafeInteger(id)))&&!seen.has(key)){seen.add(key);refs.push({type,id})}
   }
   return refs
 }
 function summary(node:NodeRow){
-  return {node_id:Number(node.id),kind:node.kind,title:node.title,color:node.color,preview:[...strip(node.content_plain)].slice(0,240).join(''),
+  return {node_id:Number(node.id),kind:node.kind,title:node.kind==='canvas_note'?canvasNoteDisplayTitle(node):node.title,color:node.color,preview:[...strip(node.content_plain)].slice(0,240).join(''),
     captured_at:utc(node.captured_at).replace(' ','T'),source:node.ref_type?{type:node.ref_type,id:node.ref_id}:null}
 }
 export function agentMindNodeDetail(node:NodeRow){return {...summary(node),content_md:node.content_md,content_plain:node.content_plain,origin:node.origin}}
 
 /** 共享Mind读取：匹配排序不采用全局搜索相关性排名；关系边与正文引用是独立机制。 */
-export function createAgentMindReader(db:Kysely<Database>,backend:Backend){
+export function createAgentMindReader(db:Kysely<Database>,backend:Backend,
+  resolveFile?: (owner: string, id: string, signal?: AbortSignal) => Promise<{ label: string; path?: string } | null>,
+){
   const ownerId=(raw:string)=>{const normalized=dataContext(raw).ownerId;return backend==='sqlite'?normalized.replaceAll('-',''):normalized}
   function nodes(tx:Transaction<Database>){
     // pg默认Date parser会损失微秒；让SQL返回UTC文本，之后复用严格时间codec。
     const stamp=backend==='postgres'?sql<string>`to_char(captured_at AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI:SS.US') || '+00:00'`:sql<string>`captured_at`
     return tx.selectFrom('mind_nodes').selectAll().select(stamp.as('captured_at'))
   }
-  async function aggregate(tx:Transaction<Database>,owner:string,matches:NodeRow[],signal?:AbortSignal){
+  async function aggregate(tx:Transaction<Database>,owner:string,rawOwner:string,matches:NodeRow[],signal?:AbortSignal){
     signal?.throwIfAborted()
     const ids=matches.map(row=>Number(row.id)),empty={related:[] as Record<string,unknown>[],references:new Map<number,Reference[]>()}
     if(!ids.length)return empty
@@ -103,14 +108,24 @@ export function createAgentMindReader(db:Kysely<Database>,backend:Backend){
     }
     signal?.throwIfAborted()
     const parsed=new Map(matches.map(row=>[Number(row.id),extractMindReferences(row.content_md)])),cache=new Map<string,Reference>()
-    // 固定领域来源，SQL标识符不来自模型；三种来源均先校验owner与墓碑。
-    for(const [type,table,label] of [['project','projects','name'],['file','files','display_name'],['event','calendar_events','title']] as const){
+    // 固定领域来源，SQL标识符不来自模型；读取前校验 owner 与墓碑。
+    for(const [type,table,label] of [['project','projects','name'],['event','calendar_events','title']] as const){
       const refIds=[...new Set([...parsed.values()].flatMap(refs=>refs.filter(ref=>ref.type===type).map(ref=>ref.id)))]
       if(!refIds.length)continue
       const rows=(await sql<{id:number;label:string|null}>`SELECT id,${sql.ref(label)} AS label FROM ${sql.table(table)}
         WHERE user_id=${owner} AND deleted_at IS NULL AND id IN (${sql.join(refIds)})`.execute(tx)).rows
       signal?.throwIfAborted()
       for(const row of rows)cache.set(type+':'+row.id,{ref_type:type,ref_id:Number(row.id),label:row.label})
+    }
+    if (resolveFile) {
+      const ids = new Set([...parsed.values()].flatMap(refs =>
+        refs.flatMap(ref => ref.type === 'file' && typeof ref.id === 'string' ? [ref.id] : [])))
+      for (const id of ids) {
+        signal?.throwIfAborted()
+        const file = await resolveFile(rawOwner, id, signal)
+        if (file) cache.set(`file:${id}`, { ref_type: 'file', ref_id: id, label: file.label,
+          ...(file.path === undefined ? {} : { path: file.path }) })
+      }
     }
     const references=new Map<number,Reference[]>()
     for(const [id,refs] of parsed)references.set(id,refs.flatMap(ref=>{const value=cache.get(ref.type+':'+ref.id);return value?[value]:[]}))
@@ -130,9 +145,9 @@ export function createAgentMindReader(db:Kysely<Database>,backend:Backend){
         const op=backend==='postgres'?sql`ILIKE`:sql`LIKE`
         const terms=queries.map(term=>sql`(lower(title) ${op} lower(${'%'+term+'%'}) OR lower(content_plain) ${op} lower(${'%'+term+'%'}))`)
         const condition=sql<boolean>`(${sql.join(terms,args.mode==='AND'?sql` AND `:sql` OR `)})`
-        const matches=await nodes(tx).where('user_id','=',owner).where('kind','in',['note','canvas_note']).where('deleted_at','is',null)
+        const matches=await nodes(tx).where('user_id','=',owner).where('kind','in',args.kind?[args.kind]:['note','canvas_note']).where('deleted_at','is',null)
           .where(condition).orderBy('mind_nodes.captured_at','desc').limit(limit).execute()
-        const {related,references}=await aggregate(tx,owner,matches,signal)
+        const {related,references}=await aggregate(tx,owner,raw,matches,signal)
         return {query:q,count:matches.length,matches:matches.map(row=>args.include_content===true?agentMindNodeDetail(row):summary(row)),related,
           references:matches.flatMap(row=>(references.get(Number(row.id))??[]).map(reference=>({from_node_id:Number(row.id),...reference})))}
       })
@@ -141,7 +156,7 @@ export function createAgentMindReader(db:Kysely<Database>,backend:Backend){
       return read(raw,signal,async(tx,owner)=>{
         const node=await nodes(tx).where('user_id','=',owner).where('id','=',id).where('deleted_at','is',null).executeTakeFirst()
         if(!node)return {error:'找不到这条思维节点'}
-        const {related,references}=await aggregate(tx,owner,[node],signal)
+        const {related,references}=await aggregate(tx,owner,raw,[node],signal)
         return {node:{...agentMindNodeDetail(node),numbered_content:physicalLines(node.content_md).map((line,index)=>`${index+1}: ${lineText(line)}`).join('\n')},
           related:related.map(({from_node_id:_from,...relation})=>relation),references:references.get(Number(node.id))??[]}
       })

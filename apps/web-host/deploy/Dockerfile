@@ -28,6 +28,7 @@ COPY --from=build --chown=node:node /workspace/apps/web-host/dist ./apps/web-hos
 COPY --from=build --chown=node:node /workspace/apps/web-host/assets ./apps/web-host/assets
 COPY --from=build --chown=node:node /workspace/packages/core/package.json ./packages/core/package.json
 COPY --from=build --chown=node:node /workspace/packages/core/dist ./packages/core/dist
+COPY --from=build --chown=node:node /workspace/packages/core/resources/prompts ./packages/core/resources/prompts
 COPY --from=build --chown=node:node /workspace/packages/database/node_modules ./packages/database/node_modules
 COPY --from=build --chown=node:node /workspace/packages/database/package.json ./packages/database/package.json
 COPY --from=build --chown=node:node /workspace/packages/database/dist ./packages/database/dist
@@ -40,7 +41,7 @@ COPY --from=build --chown=node:node /workspace/packages/fs/package.json ./packag
 COPY --from=build --chown=node:node /workspace/packages/fs/dist ./packages/fs/dist
 COPY --from=build --chown=node:node /workspace/packages/log/ ./packages/log/
 COPY --from=build --chown=node:node /workspace/packages/loopscope/ ./packages/loopscope/
-COPY --from=build --chown=node:node /workspace/apps/web/dist ./apps/web/dist
+COPY --from=build --chown=node:node /workspace/apps/ui/dist ./apps/ui/dist
 RUN mkdir -p /data && chown node:node /data
 
 USER node

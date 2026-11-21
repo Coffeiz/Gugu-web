@@ -7,6 +7,7 @@ export function createAgentShellSnapshotReader<DB>(
   pool: Pick<Pool, 'query'>,
   db: Kysely<DB>,
   settings: () => Promise<Omit<Awaited<ReturnType<ReturnType<typeof createTerminalRuntimeSettingsReader>>>, 'shellSystemEnabled'> & { shellSystemEnabled?: boolean }>,
+  automaticModeGlobalEnabled = false,
 ) {
   const readWorkspace = createSessionWorkspaceTargetReader(db, 'postgres')
   return async (owner: string, session: string,
@@ -35,6 +36,7 @@ export function createAgentShellSnapshotReader<DB>(
     const prefs = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {}
     return { workspaceId: target.workspaceId, workspaceTarget: JSON.stringify(target), securityVersion: row.security_version,
       isolatedWorkspace: target.kind === 'directory' ? `/workspace/${target.directoryName}` : undefined,
+      automaticModeEnabled: automaticModeGlobalEnabled && prefs.automatic_mode_enabled === true,
       systemEnabled: runtime.shellSystemEnabled === true && (prefs.shell_system_enabled ?? false) === true, facts: {
       adminEnabled: runtime.shellEnabled, userEnabled: (prefs.shell_enabled ?? true) === true,
       sandboxEnabled: runtime.sandboxEnabled, sandboxReady: runtime.sandboxReady,

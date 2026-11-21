@@ -32,7 +32,7 @@
 - `gateway/access-postgres.ts` 实际查询当前 Bot、账户与工具/记忆权限；工具派发和出站重新读取，Bot/群停用、解绑、权限缩水不能沿用旧快照。飞书群的 nullable 开关保留 Python `is not False` 默认；QQ/Telegram 群必须显式启用，微信旧版未开放群。群只读开关只在需 at 模式生效，不能把旧配置组合错误地当成永久不回复。
 - `gateway/conversation-postgres.ts` 与 `ingress.ts` 将既有会话/消息、密封入站收据、附件 claim、启动登记及加密 IM v3 派发接入正式事务。多消息按平台时间排序、mention 独立切段，每条保留锚点，每段共享唯一 Run；先提交 started，再逐段完成派发/completed。重领部分成员仍恢复原段，较晚批次不能越过较早 started 段。被动消息落库并 claim 附件，不创建 Run；群 attention 已进入生产 bootstrap 的 Ingress 资源装配。
 - Core 上下文组装替换全部当前批次锚点，避免 early 历史与当前输入重复；RAG 截止点取历史中最早当前锚点，业务顺序不按数据库 ID 重排。IM v3 批次证明与密封路由的标识、数量和消息顺序必须一致；权限从逐条发言事实重新解析，不能信任汇总角色或只按末条 owner 绑定。
-- `platform-connections.ts` 已将实际连接、解析、控制预检、媒体和密封入队组合；协议组件回归使用明确的网络/控制事务/存储替身，正式 bootstrap 另用真实 PG/Redis/FS。`attachment-ingress.ts` 复用真实本地上传及 PG draft/claim，`message-materializer.ts` 将已 claim 的有权锚点恢复为正式文本/图片/音频/视频与稳定媒体引用；音频已接独立 ASR/原生音频与稳定引用；未配置时正式 early exit，真实空识别与故障分离。
+- `connections.ts` 已将实际连接、解析、控制预检、媒体和密封入队组合；协议组件回归使用明确的网络/控制事务/存储替身，正式 bootstrap 另用真实 PG/Redis/FS。`attachment-ingress.ts` 复用真实本地上传及 PG draft/claim，`message-materializer.ts` 将已 claim 的有权锚点恢复为正式文本/图片/音频/视频与稳定媒体引用；音频已接独立 ASR/原生音频与稳定引用；未配置时正式 early exit，真实空识别与故障分离。
 - `agent-run-dispatch-postgres.ts` 与 `agent-dispatch-worker.ts` 显式支持严格 IM v3 契约，默认仍只处理 Web v2。已知其他来源不领取、不清理；IM 启用必须配置来源及独立重建器。`gateway/agent-reconstructor.ts` 复用既有 `createPersistentAgentRuntime`、Provider、工具注册器与确认机制，核对加密路由、锚点、当前权限、模型及访问范围；投递锁暂不可用保留排队，不误标启动失败。
 - 持久 Run 与投递锁必须使用访问同一数据库的独立连接池。投递连接在整个发送期间持有 advisory lock，不能把 Runner checkpoint 所需的全部池连接占满；重建器拒绝直接复用同一池对象。
 - `gateway/provider-binding.ts` 使用正式文件配置锁、PG 凭据快照与可恢复模型绑定，群/私聊和参与者权限进入范围版本；Web/IM 只共用稳定配置解析。`gateway/memory-source.ts` 从授权本地文件实际读取精确 IM scope，复核当前开关/墓碑/权限，不以空 IM 记忆代替生产源。
@@ -83,7 +83,7 @@
 
 ## 真实调用链与替身范围
 
-以下为早期Telegram组件集成的边界快照；当前四平台生产入口已接main/bootstrap，真实PG/Redis与生产resources的验收另列于后文。`apps/web-host/tests/im/gateway/telegram-agent.integration.test.ts` 的组件链为：
+以下为早期Telegram组件集成的边界快照；当前四平台生产入口已接main/bootstrap，真实PG/Redis与生产resources的验收另列于后文。`apps/web-host/tests/im/gateway/telegram/agent.integration.test.ts` 的组件链为：
 
 ```text
 实际 Telegram 消息解析
@@ -174,20 +174,20 @@ export GUGU_IM_FIXTURE_PYTHON='<隔离venv>/bin/python'
 export GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG连接>'
 export GUGU_WEBUI_TEST_DATABASE_URL="$GUGU_IM_GATEWAY_TEST_DATABASE_URL"
 export GUGU_WEBUI_TEST_REDIS_URL='<独占隔离Redis库连接>'
-node --import tsx --test --test-concurrency=1 tests/im/gateway/production-resources.test.ts tests/im/gateway/production-bindings-store.test.ts tests/im/gateway/reflection-postgres.test.ts
+node --import tsx --test --test-concurrency=1 tests/im/gateway/agent/resources.test.ts tests/im/gateway/agent/bindings.test.ts tests/im/gateway/memory/reflection.postgres.test.ts
 # 完整入口另用专属Redis库，不能与同命名空间消费者并跑；网络替身仍经过真实平台解析与sender。
 export GUGU_IM_BOOTSTRAP_TEST_REDIS_URL='<另一独占隔离Redis库连接>'
 node --import tsx --test --test-concurrency=1 tests/im/gateway/bootstrap.test.ts
 # 图片/视频需要本地Canvas原生包及ffmpeg/ffprobe；同库串行，Provider与平台仅替换网络。
-node --import tsx --test --test-concurrency=1 tests/im/gateway/image-bootstrap.test.ts tests/im/gateway/video-bootstrap.test.ts tests/im/gateway/reasoning-bootstrap.test.ts
-node --import tsx --test --test-concurrency=1 tests/im/gateway/bootstrap.test.ts tests/im/gateway/retention-bootstrap.test.ts tests/im/gateway/retired-inbound.test.ts tests/im/gateway/history-retention.test.ts tests/im/gateway/session-retention.test.ts tests/im/gateway/pending-ask.test.ts tests/im/gateway/host-runtime.test.ts tests/im/gateway/attachment-ingress.test.ts
-node --import tsx --test --test-concurrency=1 tests/im/gateway/audio.test.ts tests/im/gateway/image.test.ts tests/im/gateway/video.test.ts tests/im/gateway/video-runtime.test.ts
-node --import tsx --test --test-concurrency=1 tests/agent/agent-reasoning-persistence.test.ts tests/agent/agent-reasoning-bridge.test.ts tests/agent/agent-run-store-postgres.test.ts tests/agent/agent-canonical-write-postgres.test.ts
+node --import tsx --test --test-concurrency=1 tests/im/gateway/media/image.integration.test.ts tests/im/gateway/media/video.integration.test.ts tests/im/gateway/agent/reasoning.test.ts
+node --import tsx --test --test-concurrency=1 tests/im/gateway/bootstrap.test.ts tests/im/gateway/memory/retention.integration.test.ts tests/im/gateway/inbound/retired.test.ts tests/im/gateway/memory/history.test.ts tests/im/gateway/agent/retention.test.ts tests/im/gateway/interactions/pending.test.ts tests/im/gateway/host-runtime.test.ts tests/im/gateway/inbound/attachments.test.ts
+node --import tsx --test --test-concurrency=1 tests/im/gateway/media/audio.test.ts tests/im/gateway/media/image.test.ts tests/im/gateway/media/clip.test.ts tests/im/gateway/media/video.test.ts
+node --import tsx --test --test-concurrency=1 tests/agent/run/reasoning/persistence.test.ts tests/agent/run/reasoning/bridge.test.ts tests/agent/run/store.postgres.test.ts tests/agent/sessions/canonical-write.postgres.test.ts
 # 同一独占Redis库中串行运行语音生产验收；需要本地ffmpeg/ffprobe及OGG编码器。
-node --import tsx --test --test-concurrency=1 tests/im/gateway/voice-bootstrap.test.ts tests/im/gateway/message-materializer.test.ts tests/agent/agent-context-source-postgres.test.ts
-node --import tsx --test --test-concurrency=1 tests/im/gateway/voice-config.test.ts tests/im/gateway/voice-transcripts.test.ts tests/im/gateway/voice-runtime.test.ts tests/im/gateway/audio.test.ts
-node --import tsx --test --test-concurrency=1 tests/im/gateway/voice-cache.test.ts tests/im/gateway/voice-attention-source.test.ts tests/im/gateway/voice-runtime.test.ts tests/im/gateway/attention-runtime.test.ts tests/im/gateway/conversation-postgres.test.ts tests/im/gateway/pending-ask-dispatch.test.ts
-node --import tsx --test --test-concurrency=1 tests/im/gateway/bootstrap.test.ts tests/im/gateway/voice-bootstrap.test.ts tests/im/gateway/owner-session-bootstrap.test.ts tests/im/gateway/im-dispatch-order.test.ts tests/im/gateway/compact-postgres.test.ts tests/im/gateway/production-compaction.test.ts tests/im/gateway/shortcut-controls.test.ts tests/im/gateway/voice-attention-source.test.ts tests/im/gateway/voice-cache.test.ts tests/im/gateway/message-materializer.test.ts tests/im/gateway/audio.test.ts tests/im/gateway/voice-runtime.test.ts
+node --import tsx --test --test-concurrency=1 tests/im/gateway/media/voice/bootstrap.test.ts tests/im/gateway/inbound/materialize.test.ts tests/agent/context/source.postgres.test.ts
+node --import tsx --test --test-concurrency=1 tests/im/gateway/media/voice/config.test.ts tests/im/gateway/media/voice/transcripts.test.ts tests/im/gateway/media/voice/runtime.test.ts tests/im/gateway/media/audio.test.ts
+node --import tsx --test --test-concurrency=1 tests/im/gateway/media/voice/cache.test.ts tests/im/gateway/media/voice/attention.test.ts tests/im/gateway/media/voice/runtime.test.ts tests/im/gateway/attention/runtime.test.ts tests/im/gateway/agent/conversations.postgres.test.ts tests/im/gateway/interactions/dispatch.test.ts
+node --import tsx --test --test-concurrency=1 tests/im/gateway/bootstrap.test.ts tests/im/gateway/media/voice/bootstrap.test.ts tests/im/gateway/agent/owner.test.ts tests/im/gateway/inbound/order.test.ts tests/im/gateway/agent/compact.postgres.test.ts tests/im/gateway/agent/compact.test.ts tests/im/gateway/attention/shortcuts.test.ts tests/im/gateway/media/voice/attention.test.ts tests/im/gateway/media/voice/cache.test.ts tests/im/gateway/inbound/materialize.test.ts tests/im/gateway/media/audio.test.ts tests/im/gateway/media/voice/runtime.test.ts
 # Core前轮433项统一范围；本轮新增绑定/权限/快捷回归另列，不调用平台或付费Provider。
 cd ../../packages/core
 node node_modules/vitest/vitest.mjs run tests/im tests/agent/tools/group-context.test.ts tests/agent/tools/send-file.test.ts tests/agent/owner-reflection.test.ts tests/agent/providers/runtime.test.ts tests/agent/run/engine.test.ts tests/agent/context/history-preparation.test.ts tests/agent/providers/openai-responses.test.ts
@@ -289,13 +289,13 @@ HEIC基线核对：仓库Python实现没有 `pillow_heif` 导入或 `register_he
 可复跑命令（仓库根；`<Node26>`、`<隔离PG>`、`<专用Redis>`、`<离线ORM Python>` 由临时环境注入，不使用用户运行配置）：
 
 ```sh
-GUGU_IM_GATEWAY_TEST_DATABASE_URL=<隔离PG> GUGU_IM_BOOTSTRAP_TEST_REDIS_URL=<专用Redis> GUGU_IM_FIXTURE_PYTHON=<离线ORM Python> <Node26> --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test --test-concurrency=1 apps/web-host/tests/im/gateway/session-delete.test.ts apps/web-host/tests/im/gateway/session-delete-bootstrap.test.ts apps/web-host/tests/im/gateway/voice-bootstrap.test.ts
-GUGU_IM_GATEWAY_TEST_DATABASE_URL=<隔离PG> GUGU_IM_BOOTSTRAP_TEST_REDIS_URL=<专用Redis> GUGU_IM_FIXTURE_PYTHON=<离线ORM Python> <Node26> --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test --test-concurrency=1 apps/web-host/tests/im/gateway/message-materializer.test.ts apps/web-host/tests/im/gateway/image-bootstrap.test.ts apps/web-host/tests/im/gateway/voice-bootstrap.test.ts
-GUGU_IM_GATEWAY_TEST_DATABASE_URL=<隔离PG> GUGU_IM_BOOTSTRAP_TEST_REDIS_URL=<专用Redis> GUGU_WEBUI_TEST_REDIS_URL=<另一个专用Redis库> GUGU_IM_FIXTURE_PYTHON=<离线ORM Python> <Node26> --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test --test-concurrency=1 apps/web-host/tests/im/gateway/session-delete-bootstrap.test.ts apps/web-host/tests/im/gateway/session-delete.test.ts apps/web-host/tests/im/gateway/reflection-postgres.test.ts apps/web-host/tests/im/gateway/run-sender.test.ts apps/web-host/tests/im/gateway/run-artifact-sender.test.ts apps/web-host/tests/im/gateway/reaction-postgres.test.ts
-GUGU_IM_GATEWAY_TEST_DATABASE_URL=<隔离PG> GUGU_IM_BOOTSTRAP_TEST_REDIS_URL=<专用Redis> GUGU_WEBUI_TEST_REDIS_URL=<另一个专用Redis库> GUGU_IM_FIXTURE_PYTHON=<离线ORM Python> <Node26> --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test --test-concurrency=1 apps/web-host/tests/im/gateway/reflection-postgres.test.ts apps/web-host/tests/im/gateway/reflection-passive-bootstrap.test.ts apps/web-host/tests/im/gateway/reflection-mixed-bootstrap.test.ts apps/web-host/tests/im/gateway/reflection-triggers.test.ts apps/web-host/tests/im/gateway/reflection-tail.test.ts apps/web-host/tests/im/gateway/reflection-trigger-upgrade.test.ts
+GUGU_IM_GATEWAY_TEST_DATABASE_URL=<隔离PG> GUGU_IM_BOOTSTRAP_TEST_REDIS_URL=<专用Redis> GUGU_IM_FIXTURE_PYTHON=<离线ORM Python> <Node26> --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test --test-concurrency=1 apps/web-host/tests/im/gateway/agent/delete.test.ts apps/web-host/tests/im/gateway/agent/delete.integration.test.ts apps/web-host/tests/im/gateway/media/voice/bootstrap.test.ts
+GUGU_IM_GATEWAY_TEST_DATABASE_URL=<隔离PG> GUGU_IM_BOOTSTRAP_TEST_REDIS_URL=<专用Redis> GUGU_IM_FIXTURE_PYTHON=<离线ORM Python> <Node26> --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test --test-concurrency=1 apps/web-host/tests/im/gateway/inbound/materialize.test.ts apps/web-host/tests/im/gateway/media/image.integration.test.ts apps/web-host/tests/im/gateway/media/voice/bootstrap.test.ts
+GUGU_IM_GATEWAY_TEST_DATABASE_URL=<隔离PG> GUGU_IM_BOOTSTRAP_TEST_REDIS_URL=<专用Redis> GUGU_WEBUI_TEST_REDIS_URL=<另一个专用Redis库> GUGU_IM_FIXTURE_PYTHON=<离线ORM Python> <Node26> --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test --test-concurrency=1 apps/web-host/tests/im/gateway/agent/delete.integration.test.ts apps/web-host/tests/im/gateway/agent/delete.test.ts apps/web-host/tests/im/gateway/memory/reflection.postgres.test.ts apps/web-host/tests/im/gateway/delivery/sender.test.ts apps/web-host/tests/im/gateway/delivery/artifacts.test.ts apps/web-host/tests/im/gateway/attention/reactions.postgres.test.ts
+GUGU_IM_GATEWAY_TEST_DATABASE_URL=<隔离PG> GUGU_IM_BOOTSTRAP_TEST_REDIS_URL=<专用Redis> GUGU_WEBUI_TEST_REDIS_URL=<另一个专用Redis库> GUGU_IM_FIXTURE_PYTHON=<离线ORM Python> <Node26> --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test --test-concurrency=1 apps/web-host/tests/im/gateway/memory/reflection.postgres.test.ts apps/web-host/tests/im/gateway/memory/passive.integration.test.ts apps/web-host/tests/im/gateway/memory/mixed.integration.test.ts apps/web-host/tests/im/gateway/memory/triggers.test.ts apps/web-host/tests/im/gateway/memory/tail.test.ts apps/web-host/tests/im/gateway/reflection-trigger-upgrade.test.ts
 GUGU_IM_GATEWAY_TEST_DATABASE_URL=<隔离PG> GUGU_IM_BOOTSTRAP_TEST_REDIS_URL=<专用Redis> GUGU_IM_FIXTURE_PYTHON=<离线ORM Python> <Node26> --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test --test-concurrency=1 apps/web-host/tests/im/gateway/bootstrap.test.ts apps/web-host/tests/im/gateway/host-runtime.test.ts
-GUGU_IM_GATEWAY_TEST_DATABASE_URL=<隔离PG> GUGU_IM_BOOTSTRAP_TEST_REDIS_URL=<专用Redis> GUGU_WEBUI_TEST_REDIS_URL=<另一个专用Redis库> GUGU_IM_FIXTURE_PYTHON=<离线ORM Python> <Node26> --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test --test-concurrency=1 apps/web-host/tests/im/gateway/reflection-daily-bootstrap.test.ts apps/web-host/tests/im/gateway/reflection-daily.test.ts apps/web-host/tests/im/gateway/reflection-passive-bootstrap.test.ts apps/web-host/tests/im/gateway/reflection-mixed-bootstrap.test.ts
-GUGU_IM_GATEWAY_TEST_DATABASE_URL=<隔离PG> GUGU_IM_BOOTSTRAP_TEST_REDIS_URL=<专用Redis> GUGU_WEBUI_TEST_REDIS_URL=<另一个专用Redis库> GUGU_IM_FIXTURE_PYTHON=<离线ORM Python> <Node26> --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test --test-concurrency=1 apps/web-host/tests/im/gateway/reflection-owner-daily-bootstrap.test.ts apps/web-host/tests/im/gateway/reflection-owner-daily.test.ts apps/web-host/tests/im/gateway/reflection-daily-bootstrap.test.ts apps/web-host/tests/im/gateway/reflection-daily.test.ts apps/web-host/tests/im/gateway/reflection-postgres.test.ts
+GUGU_IM_GATEWAY_TEST_DATABASE_URL=<隔离PG> GUGU_IM_BOOTSTRAP_TEST_REDIS_URL=<专用Redis> GUGU_WEBUI_TEST_REDIS_URL=<另一个专用Redis库> GUGU_IM_FIXTURE_PYTHON=<离线ORM Python> <Node26> --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test --test-concurrency=1 apps/web-host/tests/im/gateway/memory/daily.integration.test.ts apps/web-host/tests/im/gateway/memory/daily.test.ts apps/web-host/tests/im/gateway/memory/passive.integration.test.ts apps/web-host/tests/im/gateway/memory/mixed.integration.test.ts
+GUGU_IM_GATEWAY_TEST_DATABASE_URL=<隔离PG> GUGU_IM_BOOTSTRAP_TEST_REDIS_URL=<专用Redis> GUGU_WEBUI_TEST_REDIS_URL=<另一个专用Redis库> GUGU_IM_FIXTURE_PYTHON=<离线ORM Python> <Node26> --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test --test-concurrency=1 apps/web-host/tests/im/gateway/memory/owner.integration.test.ts apps/web-host/tests/im/gateway/memory/owner.test.ts apps/web-host/tests/im/gateway/memory/daily.integration.test.ts apps/web-host/tests/im/gateway/memory/daily.test.ts apps/web-host/tests/im/gateway/memory/reflection.postgres.test.ts
 python -m pytest tests/agent/memory/test_memory_compaction_retrieval.py tests/agent/context/test_daily_compaction.py tests/im/test_im_memory_scopes.py -q -p no:cacheprovider
 python -m pytest tests/agent/context/test_daily_compaction.py tests/im/test_im_memory_scopes.py -q -p no:cacheprovider
 python -m pytest tests/agent/chat/test_chat_attachments_ownership.py tests/agent/context/test_reflection_failure_lifecycle.py tests/agent/test_reasoning_state.py -k 'delete_session or failed_database_delete_keeps_reflection_buffer' -q -p no:cacheprovider
@@ -313,18 +313,17 @@ Python 命令在 `backend/` 执行，使用只读参考代码、内存 SQLite、
 ```sh
 cd packages/core
 node node_modules/vitest/vitest.mjs run tests/im/access.test.ts tests/im/inbound-batch.test.ts tests/im/memory-context.test.ts tests/im/reaction-tool.test.ts tests/im/run-delivery.test.ts tests/im/feishu-message.test.ts tests/im/qq-message.test.ts tests/im/qq-text.test.ts tests/im/wechat-message.test.ts tests/im/telegram-message.test.ts tests/im/telegram-format.test.ts
-node node_modules/vitest/vitest.mjs run tests/im/inbound-preflight.test.ts
 node node_modules/vitest/vitest.mjs run tests/im/shortcut.test.ts tests/im/memory-search-scopes.test.ts
 node node_modules/vitest/vitest.mjs run tests/im tests/agent/tools/group-context.test.ts tests/agent/providers/runtime.test.ts
 node node_modules/vitest/vitest.mjs run tests/im tests/agent/tools/group-context.test.ts tests/agent/providers/runtime.test.ts tests/agent/run/engine.test.ts
 node node_modules/vitest/vitest.mjs run tests/agent/providers/openai-responses.test.ts
 node node_modules/vitest/vitest.mjs run tests/agent/providers/transport.test.ts
 cd ../../apps/web-host
-node --import tsx --test --test-concurrency=1 tests/im/gateway/*.test.ts
+node --import tsx --test --test-concurrency=1 'tests/im/gateway/**/*.test.ts'
 node --import tsx --test --test-concurrency=1 tests/adapters/redis-stream-commands.test.ts tests/live/redis-live-subscription.test.ts tests/workers/worker-consumer.test.ts
 node --import tsx --test --test-concurrency=1 tests/workers/worker-consumer-batch.test.ts
-node --import tsx --test --test-concurrency=1 tests/agent/agent-dispatch-worker.test.ts tests/agent/agent-run-dispatch-postgres.test.ts tests/agent-config/configured-web-provider-binding.test.ts
-node --import tsx --test --test-concurrency=1 tests/agent/agent-context-builder.test.ts tests/agent/agent-context-assembly.test.ts
+node --import tsx --test --test-concurrency=1 tests/agent/agent-dispatch-worker.test.ts tests/agent/run/dispatch.postgres.test.ts tests/agent-config/configured-web-provider-binding.test.ts
+node --import tsx --test --test-concurrency=1 tests/agent/agent-context-builder.test.ts tests/agent/context/assembly.test.ts
 cd ../../backend
 PYTHONPATH=.:../compat/core-python/src <隔离venv>/bin/python -m pytest -q -p no:cacheprovider tests/im/
 PYTHONPATH=.:../compat/core-python/src <隔离venv>/bin/python -m pytest -q -p no:cacheprovider tests/im/qq/test_qq_raw_ws.py tests/agent/providers/test_qface.py
@@ -336,26 +335,26 @@ Python 设置 `GUGU_ENV_FILE`、`GUGU_CONFIG_OVERRIDE_FILE` 为专用临时目�
 真实存储复现须提供**专用隔离**连接，再从 `apps/web-host` 执行；不要复用用户服务配置：
 
 ```sh
-GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG连接>' node --import tsx --test tests/im/gateway/delivery-store.test.ts
-GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG连接>' node --import tsx --test --test-concurrency=1 tests/im/gateway/conversation-postgres.test.ts tests/im/gateway/attachment-ingress.test.ts tests/im/gateway/message-materializer.test.ts tests/im/gateway/bot-config.test.ts tests/im/gateway/admission-postgres.test.ts
-GUGU_IM_GATEWAY_TEST_REDIS_URL='<独占隔离Redis库连接>' node --import tsx --test tests/im/gateway/inbox.test.ts
-GUGU_WEBUI_TEST_DATABASE_URL='<隔离PG连接>' node --import tsx --test tests/im/gateway/secret-input.test.ts tests/im/gateway/interaction-lookup.test.ts
-GUGU_WEBUI_TEST_DATABASE_URL='<隔离PG连接>' node --import tsx --test --test-concurrency=1 tests/im/gateway/interaction-lookup.test.ts tests/agent/agent-interaction-consume.test.ts
-GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG连接>' node --import tsx --test --test-concurrency=1 tests/im/gateway/access-postgres.test.ts tests/im/gateway/conversation-postgres.test.ts tests/im/gateway/agent-reconstructor.test.ts
-GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG连接>' node --import tsx --test tests/im/gateway/shortcut-postgres.test.ts tests/im/gateway/shortcut-controls.test.ts
-GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG连接>' node --import tsx --test tests/im/gateway/memory-search.test.ts tests/agent/agent-rag-tool-ports.test.ts
-GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG连接>' node --import tsx --test tests/im/gateway/group-context.test.ts tests/im/gateway/context-reference-codec.test.ts
-GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG连接>' GUGU_IM_GATEWAY_TEST_REDIS_URL='<独占隔离Redis连接>' node --import tsx --test tests/im/gateway/controls-postgres.test.ts
-GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG连接>' node --import tsx --test tests/im/gateway/feishu-persistent.test.ts tests/im/gateway/delivery-store.test.ts tests/im/gateway/feishu-client.test.ts tests/im/gateway/feishu-streaming.test.ts
-GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG连接>' node --import tsx --test tests/im/gateway/reaction-postgres.test.ts tests/im/gateway/run-artifact-sender.test.ts
-GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG连接>' node --import tsx --test tests/im/gateway/rag-context.test.ts tests/im/gateway/memory-search.test.ts tests/agent/agent-rag-tool-ports.test.ts
-GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG连接>' GUGU_WEBUI_TEST_REDIS_URL='<独占隔离Redis连接>' node --import tsx --test --test-concurrency=1 tests/im/gateway/conversation-postgres.test.ts tests/im/gateway/attention-runtime.test.ts tests/im/gateway/pending-ask.test.ts tests/im/gateway/pending-ask-dispatch.test.ts tests/im/gateway/attention-ledger.test.ts tests/im/gateway/attention-policy-postgres.test.ts tests/im/gateway/delivery-store.test.ts
+GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG连接>' node --import tsx --test tests/im/gateway/delivery/store.test.ts
+GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG连接>' node --import tsx --test --test-concurrency=1 tests/im/gateway/agent/conversations.postgres.test.ts tests/im/gateway/inbound/attachments.test.ts tests/im/gateway/inbound/materialize.test.ts tests/im/gateway/bot-config.test.ts tests/im/gateway/inbound/admission.postgres.test.ts
+GUGU_IM_GATEWAY_TEST_REDIS_URL='<独占隔离Redis库连接>' node --import tsx --test tests/im/gateway/inbound/inbox.test.ts
+GUGU_WEBUI_TEST_DATABASE_URL='<隔离PG连接>' node --import tsx --test tests/im/gateway/interactions/secret.test.ts tests/im/gateway/interactions/lookup.test.ts
+GUGU_WEBUI_TEST_DATABASE_URL='<隔离PG连接>' node --import tsx --test --test-concurrency=1 tests/im/gateway/interactions/lookup.test.ts tests/agent/agent-interaction-consume.test.ts
+GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG连接>' node --import tsx --test --test-concurrency=1 tests/im/gateway/attention/access.postgres.test.ts tests/im/gateway/agent/conversations.postgres.test.ts tests/im/gateway/agent/reconstruct.test.ts
+GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG连接>' node --import tsx --test tests/im/gateway/attention/shortcuts.postgres.test.ts tests/im/gateway/attention/shortcuts.test.ts
+GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG连接>' node --import tsx --test tests/im/gateway/memory/search.test.ts tests/agent/rag/tools.test.ts
+GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG连接>' node --import tsx --test tests/im/gateway/agent/group.test.ts tests/im/gateway/agent/references.test.ts
+GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG连接>' GUGU_IM_GATEWAY_TEST_REDIS_URL='<独占隔离Redis连接>' node --import tsx --test tests/im/gateway/interactions/controls.postgres.test.ts
+GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG连接>' node --import tsx --test tests/im/gateway/feishu/persistent.test.ts tests/im/gateway/delivery/store.test.ts tests/im/gateway/feishu/client.test.ts tests/im/gateway/feishu/stream.test.ts
+GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG连接>' node --import tsx --test tests/im/gateway/attention/reactions.postgres.test.ts tests/im/gateway/delivery/artifacts.test.ts
+GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG连接>' node --import tsx --test tests/im/gateway/agent/rag.test.ts tests/im/gateway/memory/search.test.ts tests/agent/rag/tools.test.ts
+GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG连接>' GUGU_WEBUI_TEST_REDIS_URL='<独占隔离Redis连接>' node --import tsx --test --test-concurrency=1 tests/im/gateway/agent/conversations.postgres.test.ts tests/im/gateway/attention/runtime.test.ts tests/im/gateway/interactions/pending.test.ts tests/im/gateway/interactions/dispatch.test.ts tests/im/gateway/attention/ledger.test.ts tests/im/gateway/attention/policy.postgres.test.ts tests/im/gateway/delivery/store.test.ts
 ```
 
 最后 144 项统一命令（先按下段设置全部隔离连接变量，从 `apps/web-host` 执行）：
 
 ```sh
-node --import tsx --test --test-concurrency=1 tests/im/gateway/attention-runtime.test.ts tests/im/gateway/pending-ask.test.ts tests/im/gateway/pending-ask-dispatch.test.ts tests/im/gateway/attention-ledger.test.ts tests/im/gateway/attention-policy-postgres.test.ts tests/im/gateway/delivery-store.test.ts tests/im/gateway/conversation-postgres.test.ts tests/im/gateway/agent-reconstructor.test.ts tests/im/gateway/run-sender.test.ts tests/im/gateway/run-artifact-sender.test.ts tests/im/gateway/controls-postgres.test.ts tests/im/gateway/feishu-persistent.test.ts tests/im/gateway/feishu-client.test.ts tests/im/gateway/feishu-streaming.test.ts tests/agent/agent-dispatch-worker.test.ts tests/agent/agent-persistent-runtime.integration.test.ts
+node --import tsx --test --test-concurrency=1 tests/im/gateway/attention/runtime.test.ts tests/im/gateway/interactions/pending.test.ts tests/im/gateway/interactions/dispatch.test.ts tests/im/gateway/attention/ledger.test.ts tests/im/gateway/attention/policy.postgres.test.ts tests/im/gateway/delivery/store.test.ts tests/im/gateway/agent/conversations.postgres.test.ts tests/im/gateway/agent/reconstruct.test.ts tests/im/gateway/delivery/sender.test.ts tests/im/gateway/delivery/artifacts.test.ts tests/im/gateway/interactions/controls.postgres.test.ts tests/im/gateway/feishu/persistent.test.ts tests/im/gateway/feishu/client.test.ts tests/im/gateway/feishu/stream.test.ts tests/agent/agent-dispatch-worker.test.ts tests/agent/run/persistent-runtime.integration.test.ts
 ```
 
 PG 用随机 schema 和合成前置表测试锁互斥、重启恢复、attempt/scope 隔离，结束清理自身 schema；不测试现有用户表。Redis 要求 Node 入站 stream 不存在的空独占测试库，仅清理本轮记录的键，不清空数据库。缺参数时明确跳过，不运行 Docker，不触发 CI，不调用付费模型。
@@ -380,8 +379,8 @@ PG 用随机 schema 和合成前置表测试锁互斥、重启恢复、attempt/s
 复现从仓库根目录执行；Node26与Linux原生依赖沿此前约定，PG/Redis只用任务专用服务，以下统一回归命令包含新行为及旧共享链：
 
 ```sh
-GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG>' GUGU_WEBUI_TEST_DATABASE_URL='<隔离PG>' GUGU_IM_BOOTSTRAP_TEST_REDIS_URL='<专用Redis库>' GUGU_WEBUI_TEST_REDIS_URL='<另一个专用Redis库>' GUGU_IM_GATEWAY_TEST_REDIS_URL='<另一个专用Redis库>' GUGU_IM_FIXTURE_PYTHON='<离线ORM Python>' GUGU_IM_ORM_PYTHON='<离线ORM Python>' node --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test --test-concurrency=1 apps/web-host/tests/im/gateway/bootstrap.test.ts apps/web-host/tests/im/gateway/host-runtime.test.ts apps/web-host/tests/im/gateway/agent-reconstructor.test.ts apps/web-host/tests/im/gateway/feishu-persistent.test.ts apps/web-host/tests/im/gateway/qq-persistent.test.ts apps/web-host/tests/im/gateway/telegram-persistent.test.ts apps/web-host/tests/im/gateway/delivery-store.test.ts apps/web-host/tests/im/gateway/member-reflection.test.ts apps/web-host/tests/im/gateway/reflection-postgres.test.ts apps/web-host/tests/im/gateway/production-fixtures.test.ts
-node --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test apps/web-host/tests/im/gateway/platform-connections.test.ts
+GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG>' GUGU_WEBUI_TEST_DATABASE_URL='<隔离PG>' GUGU_IM_BOOTSTRAP_TEST_REDIS_URL='<专用Redis库>' GUGU_WEBUI_TEST_REDIS_URL='<另一个专用Redis库>' GUGU_IM_GATEWAY_TEST_REDIS_URL='<另一个专用Redis库>' GUGU_IM_FIXTURE_PYTHON='<离线ORM Python>' GUGU_IM_ORM_PYTHON='<离线ORM Python>' node --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test --test-concurrency=1 apps/web-host/tests/im/gateway/bootstrap.test.ts apps/web-host/tests/im/gateway/host-runtime.test.ts apps/web-host/tests/im/gateway/agent/reconstruct.test.ts apps/web-host/tests/im/gateway/feishu/persistent.test.ts apps/web-host/tests/im/gateway/qq/stream.test.ts apps/web-host/tests/im/gateway/telegram/stream.test.ts apps/web-host/tests/im/gateway/delivery/store.test.ts apps/web-host/tests/im/gateway/memory/member.test.ts apps/web-host/tests/im/gateway/memory/reflection.postgres.test.ts apps/web-host/tests/im/gateway/fixtures.test.ts
+node --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test apps/web-host/tests/im/gateway/connections.test.ts
 cd packages/core
 node node_modules/vitest/vitest.mjs run tests/im/shortcut.test.ts tests/im/access.test.ts
 cd ../../backend
@@ -398,7 +397,7 @@ PYTHONPATH=.:../compat/core-python/src PYTHONDONTWRITEBYTECODE=1 GUGU_TEST_REAL_
 
 ```sh
 node --test packages/charts/test/render.test.mjs
-node --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test --test-name-pattern=默认正式renderer apps/web-host/tests/im/gateway/feishu-streaming.test.ts
+node --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test --test-name-pattern=默认正式renderer apps/web-host/tests/im/gateway/feishu/stream.test.ts
 ```
 
 后续Telegram真实图表回归暴露冷启动/负载下Mermaid仍可能回退源码。已按请求只加载所需MathJax或Mermaid，且仅ZenUML源码加载对应外部插件，保留全部安全校验、PNG协议和原30秒时限。最新TG双真实PNG用例通过（约31秒为两个独立子进程总耗时）；Windows renderer/worker13项及随后renderer3项通过，QQ正式Run真实PNG链通过。没有延长生产时限或用渲染替身替换PNG；本地合成测试不证明任意负载下的生产性能保证。
@@ -416,8 +415,8 @@ node --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs 
 Python `tests/agent/test_phase2_reasoning_drivers.py tests/agent/test_reasoning_state.py` 原样 **63/63通过**；其Anthropic载荷/历史位置、Chat不支持跨Run、off/绑定/TTL/CAS为本轮基线。生产及目标测试严格类型检查通过。复现从仓库根目录执行（均使用专用隔离服务，Python临时配置同下节）：
 
 ```sh
-GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG>' GUGU_WEBUI_TEST_DATABASE_URL='<隔离PG>' node --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test --test-concurrency=1 apps/web-host/tests/agent/agent-reasoning-persistence.test.ts apps/web-host/tests/agent/agent-reasoning-bridge.test.ts
-GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG>' GUGU_IM_BOOTSTRAP_TEST_REDIS_URL='<专用Redis>' GUGU_IM_FIXTURE_PYTHON='<离线ORM Python>' node --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test --test-concurrency=1 apps/web-host/tests/im/gateway/anthropic-reasoning-bootstrap.test.ts apps/web-host/tests/im/gateway/reasoning-bootstrap.test.ts
+GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG>' GUGU_WEBUI_TEST_DATABASE_URL='<隔离PG>' node --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test --test-concurrency=1 apps/web-host/tests/agent/run/reasoning/persistence.test.ts apps/web-host/tests/agent/run/reasoning/bridge.test.ts
+GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG>' GUGU_IM_BOOTSTRAP_TEST_REDIS_URL='<专用Redis>' GUGU_IM_FIXTURE_PYTHON='<离线ORM Python>' node --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test --test-concurrency=1 apps/web-host/tests/im/gateway/agent/anthropic.test.ts apps/web-host/tests/im/gateway/agent/reasoning.test.ts
 cd backend
 PYTHONPATH=.:../compat/core-python/src PYTHONDONTWRITEBYTECODE=1 GUGU_ENV_FILE='<临时目录>/missing.env' GUGU_CONFIG_OVERRIDE_FILE='<临时目录>/missing.json' <隔离venv>/bin/python -m pytest tests/agent/test_phase2_reasoning_drivers.py tests/agent/test_reasoning_state.py -q -p no:cacheprovider
 ```
@@ -433,7 +432,7 @@ Node两组回归共 **22/22通过，零失败/跳过**：真实PG会话保留及
 从仓库根目录执行，配置只用专用隔离变量；Python沿上一节临时配置约束：
 
 ```sh
-GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG>' GUGU_WEBUI_TEST_DATABASE_URL='<隔离PG>' GUGU_IM_FIXTURE_PYTHON='<离线ORM Python>' node --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test --test-concurrency=1 apps/web-host/tests/im/gateway/session-retention.test.ts apps/web-host/tests/agent/agent-chat-preparation.test.ts apps/web-host/tests/agent/agent-chat-preparation-postgres.test.ts apps/web-host/tests/agent/agent-web-chat-preparation.test.ts
+GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG>' GUGU_WEBUI_TEST_DATABASE_URL='<隔离PG>' GUGU_IM_FIXTURE_PYTHON='<离线ORM Python>' node --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test --test-concurrency=1 apps/web-host/tests/im/gateway/agent/retention.test.ts apps/web-host/tests/agent/chat/preparation.test.ts apps/web-host/tests/agent/chat/preparation.postgres.test.ts apps/web-host/tests/agent/chat/web.test.ts
 cd backend
 PYTHONPATH=.:../compat/core-python/src PYTHONDONTWRITEBYTECODE=1 GUGU_ENV_FILE='<临时目录>/missing.env' GUGU_CONFIG_OVERRIDE_FILE='<临时目录>/missing.json' <隔离venv>/bin/python -m pytest tests/im/test_im_session_reuse.py -q -p no:cacheprovider
 ```
@@ -458,7 +457,7 @@ Python行为回归：`tests/agent/memory/test_memory_periodic.py`、`tests/agent
 cd packages/core
 node node_modules/vitest/vitest.mjs run tests/agent/memory/owner-periodic.test.ts
 cd ../..
-GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG>' GUGU_IM_BOOTSTRAP_TEST_REDIS_URL='<专用Redis>' GUGU_WEBUI_TEST_REDIS_URL='<另一专用Redis库>' GUGU_IM_FIXTURE_PYTHON='<离线ORM Python>' node --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test --test-concurrency=1 apps/web-host/tests/im/gateway/bootstrap.test.ts apps/web-host/tests/im/gateway/host-runtime.test.ts apps/web-host/tests/im/gateway/reflection-daily-bootstrap.test.ts apps/web-host/tests/im/gateway/reflection-daily.test.ts apps/web-host/tests/im/gateway/reflection-owner-daily-bootstrap.test.ts apps/web-host/tests/im/gateway/reflection-owner-daily.test.ts apps/web-host/tests/im/gateway/reflection-owner-periodic.test.ts apps/web-host/tests/im/gateway/reflection-periodic-bootstrap.test.ts apps/web-host/tests/im/gateway/reflection-postgres.test.ts
+GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG>' GUGU_IM_BOOTSTRAP_TEST_REDIS_URL='<专用Redis>' GUGU_WEBUI_TEST_REDIS_URL='<另一专用Redis库>' GUGU_IM_FIXTURE_PYTHON='<离线ORM Python>' node --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test --test-concurrency=1 apps/web-host/tests/im/gateway/bootstrap.test.ts apps/web-host/tests/im/gateway/host-runtime.test.ts apps/web-host/tests/im/gateway/memory/daily.integration.test.ts apps/web-host/tests/im/gateway/memory/daily.test.ts apps/web-host/tests/im/gateway/memory/owner.integration.test.ts apps/web-host/tests/im/gateway/memory/owner.test.ts apps/web-host/tests/im/gateway/memory/periodic.test.ts apps/web-host/tests/im/gateway/memory/periodic.integration.test.ts apps/web-host/tests/im/gateway/memory/reflection.postgres.test.ts
 cd backend
 PYTHONPATH=.:../compat/core-python/src PYTHONDONTWRITEBYTECODE=1 GUGU_ENV_FILE='<临时目录>/missing.env' GUGU_CONFIG_OVERRIDE_FILE='<临时目录>/missing.json' <隔离venv>/bin/python -m pytest tests/agent/memory/test_memory_periodic.py tests/agent/context/test_longterm_compaction.py -q -p no:cacheprovider
 ```
@@ -475,7 +474,16 @@ PYTHONPATH=.:../compat/core-python/src PYTHONDONTWRITEBYTECODE=1 GUGU_ENV_FILE='
 复现使用任务专用隔离 PG，从仓库根目录执行；解释器与隔离原生依赖沿前述约定：
 
 ```sh
-GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG>' node --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test --test-concurrency=1 apps/web-host/tests/im/gateway/host-runtime.test.ts apps/web-host/tests/im/gateway/supervisor.test.ts apps/web-host/tests/im/gateway/feishu-connection.test.ts apps/web-host/tests/im/gateway/qq-connection.test.ts apps/web-host/tests/im/gateway/platform-connections.test.ts apps/web-host/tests/im/gateway/platform-feedback-authorization.test.ts apps/web-host/tests/im/gateway/telegram-polling.test.ts apps/web-host/tests/im/gateway/wechat-polling.test.ts
+GUGU_IM_GATEWAY_TEST_DATABASE_URL='<隔离PG>' node --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs --test --test-concurrency=1 apps/web-host/tests/im/gateway/host-runtime.test.ts apps/web-host/tests/im/gateway/supervisor.test.ts apps/web-host/tests/im/gateway/feishu/connection.test.ts apps/web-host/tests/im/gateway/qq/connection.test.ts apps/web-host/tests/im/gateway/connections.test.ts apps/web-host/tests/im/gateway/attention/feedback.test.ts apps/web-host/tests/im/gateway/telegram/polling.test.ts apps/web-host/tests/im/gateway/wechat/polling.test.ts
+```
+
+## 共享入站预检
+
+Gateway 持有入站预检和 QQ、Telegram 绑定指令处理。Web Host 继续注入可信授权、持久绑定和交互端口，Desktop 复用平台绑定指令处理。Core 提供通用身份及 Unicode 规则。预检行为测试随 Web Host 的同一入口运行。
+
+```sh
+cd apps/web-host
+node --import tsx --test tests/im/gateway/inbound/preflight.test.ts
 ```
 
 ## 切换与后续最小任务

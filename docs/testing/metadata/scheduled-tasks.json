@@ -15,7 +15,7 @@
     "keyBehavior": "仅可接收结果附件的渠道开放 send_file；Telegram 单独选择时仍可生成并投递附件",
     "ci": "core-node"
   },
-  "apps/web-host/tests/host/scheduled-run-now-main.integration.test.ts": {
+  "apps/web-host/tests/host/main/schedules.integration.test.ts": {
     "domain": "scheduled-tasks",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/scheduled-tasks/run-now-runtime.ts",
@@ -23,7 +23,7 @@
     "keyBehavior": "生产 HTTP 认证、试运行和重试、触发收据与过期清理，以及真实租约下群搜索续轮、异群隔离和模型首轮后撤权",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/scheduled-tasks/task-writes-postgres.test.ts": {
+  "apps/web-host/tests/scheduled-tasks/store.postgres.test.ts": {
     "domain": "scheduled-tasks",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/agent/tools/schedule.ts",
@@ -31,7 +31,7 @@
     "keyBehavior": "按已启用消费者开放写入；事务内核对账号、渠道和归属；单项、批量及停用时撤销文件授权；邮件预授权按目标和参数绑定确认及收据；真实 Worker 执行新增及改期任务并投递站内通知",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/scheduled-tasks/agent-attempt.test.ts": {
+  "apps/web-host/tests/scheduled-tasks/run/attempt.test.ts": {
     "domain": "scheduled-tasks",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/scheduled-tasks/agent-attempt.ts",
@@ -39,7 +39,7 @@
     "keyBehavior": "任务 owner 的 SQL 与 Local 上下文进入模型首轮和工具续轮，拒绝异主和失租工具调用，记入任务用量",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/scheduled-tasks/mcp-runtime.test.ts": {
+  "apps/web-host/tests/scheduled-tasks/run/mcp.test.ts": {
     "domain": "scheduled-tasks",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/scheduled-tasks/mcp-tools.ts",
@@ -47,7 +47,7 @@
     "keyBehavior": "隔离 PostgreSQL 和合成 MCP HTTP 上验证 owner 路由、服务器确认升级、显式撤权、握手失租和未知执行结果",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/scheduled-tasks/run-now-runtime.test.ts": {
+  "apps/web-host/tests/scheduled-tasks/run/now.test.ts": {
     "domain": "scheduled-tasks",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/scheduled-tasks/run-now-runtime.ts",
@@ -55,7 +55,7 @@
     "keyBehavior": "任务与群聊归属复核，撤权后隐藏群搜索 schema 并拒绝执行，真实 Redis 接管后拒绝旧任务投递",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/scheduled-tasks/repeating-timer.test.ts": {
+  "apps/web-host/tests/scheduled-tasks/schedule/repeat.test.ts": {
     "domain": "scheduled-tasks",
     "layer": "L1",
     "owner": "apps/web-host/src/modules/scheduled-tasks/repeating-timer.ts",
@@ -63,7 +63,7 @@
     "keyBehavior": "提交后主动刷新使近时任务提前发现，旧回调不能跨停启或改期执行，关闭排空在途投递，验证误点边界及稀疏 Cron",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/scheduled-tasks/repeating-dispatch.test.ts": {
+  "apps/web-host/tests/scheduled-tasks/run/dispatch.test.ts": {
     "domain": "scheduled-tasks",
     "layer": "L1",
     "owner": "packages/core/src/scheduled-tasks/repeating-dispatch.ts",
@@ -71,7 +71,7 @@
     "keyBehavior": "重复触发不重放，Redis 失租后阻断后续投递并保留未知收据",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/scheduled-tasks/repeating-real-dependencies.test.ts": {
+  "apps/web-host/tests/scheduled-tasks/run/repeating.integration.test.ts": {
     "domain": "scheduled-tasks",
     "layer": "L2",
     "owner": "packages/core/src/scheduled-tasks/repeating-repository.ts",
@@ -79,7 +79,7 @@
     "keyBehavior": "停用和旧计划版本不执行，竞争只能完成一个触发，已完成收据禁止重放",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/scheduled-tasks/fire-receipts-postgres.test.ts": {
+  "apps/web-host/tests/scheduled-tasks/run/receipts.postgres.test.ts": {
     "domain": "scheduled-tasks",
     "layer": "L2",
     "owner": "packages/core/src/scheduled-tasks/fire-receipts.ts",
@@ -87,7 +87,7 @@
     "keyBehavior": "同一触发只允许一个执行者认领，异主无法结算，未知收据禁止重领",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/scheduled-tasks/task-filesystem-authorize.test.ts": {
+  "apps/web-host/tests/scheduled-tasks/access/authorize.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/scheduled-tasks/task-filesystem-authorize.ts",
@@ -95,7 +95,7 @@
     "keyBehavior": "任务文件授权确认、事务和并发",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/scheduled-tasks/task-filesystem-revoke.test.ts": {
+  "apps/web-host/tests/scheduled-tasks/access/revoke.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/scheduled-tasks/task-filesystem-revoke.ts",
@@ -143,7 +143,7 @@
     "keyBehavior": "活动提醒幂等与只通知一次、调度类型切换、owner 事务校验失败不写入及提交后发布",
     "ci": "core-node"
   },
-  "apps/web-host/tests/scheduled-tasks/telegram-delivery.test.ts": {
+  "apps/web-host/tests/scheduled-tasks/delivery/telegram.test.ts": {
     "domain": "scheduled-tasks",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/scheduled-tasks/telegram-delivery.ts",

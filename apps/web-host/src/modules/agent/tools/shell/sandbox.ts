@@ -1,6 +1,6 @@
 import type { RuntimeLog } from '@gugu/log/runtime'
 import { createHash } from 'node:crypto'
-import { evaluateSandboxShell, stableJson, type RunIdentity, type ToolResult } from '@gugu/core/agent'
+import { actionApprovalMode, createHostShellGrants, evaluateSandboxShell, shellConfirmationMode, stableJson, type RunIdentity, type ToolResult } from '@gugu/core/agent'
 import { createAgentShellTool } from '@gugu/core/tools'
 import { executeBubblewrapShell, type ShellMountPlan } from '../../../terminals/sandbox/bubblewrap.js'
 import { parseShellTrash } from '../../../terminals/shell/trash.js'
@@ -15,12 +15,14 @@ type Snapshot = {
   isolatedWorkspace?: string
   securityVersion?: number
   systemEnabled?: boolean
+  automaticModeEnabled?: boolean
   facts: Parameters<typeof evaluateSandboxShell>[1]
 }
 
 const rejected = (error: string): ToolResult => ({
   kind: 'completed', successful: false, mutated: false, executed: false, value: { error },
 })
+const hostGrants = createHostShellGrants(30 * 60 * 1000)
 
 /** 每次准备、确认及执行都使用绑定当前 Run 的可信授权。 */
 export function createWebAgentShell(options: {
@@ -43,32 +45,42 @@ export function createWebAgentShell(options: {
     const decision = evaluateSandboxShell(input.command, initial.facts, { isolatedWorkspaceWrite: isolatedWorkspace !== null })
     if (!decision.allowed) return rejected(decision.reason)
     // 独立目录由 workspaceTarget 派生，保留部署前已签发确认的摘要格式。
-    const confirmationSnapshot = ({ isolatedWorkspace: _isolatedWorkspace, ...snapshot }: Snapshot) => stableJson(snapshot)
+    const confirmationSnapshot = ({ isolatedWorkspace: _isolatedWorkspace, automaticModeEnabled: _automaticModeEnabled, ...snapshot }: Snapshot) => stableJson(snapshot)
     const snapshotKey = confirmationSnapshot(initial)
     const authorizationKey = stableJson(initial)
     const stillAuthorized = async () => {
       const current = await options.read(identity, signal)
       return current !== null && stableJson(current) === authorizationKey
     }
-    const needsConfirmation = !isolatedWorkspace && (system || decision.needsConfirmation || decision.risk === 'write')
-    if (needsConfirmation) {
+    const needsConfirmation = !isolatedWorkspace && (decision.needsConfirmation || (!system && decision.risk === 'write'))
+    const systemMode = () => actionApprovalMode(
+      initial.automaticModeEnabled || hostGrants.permits(identity, snapshotKey) ? 'never' : 'ask',
+      true, scope.resolution !== null,
+    )
+    const mode = system ? systemMode() : shellConfirmationMode(decision, {
+      system, isolatedWorkspace: isolatedWorkspace !== null, approvalPolicy: initial.automaticModeEnabled ? 'never' : 'ask',
+      hasResolution: scope.resolution !== null,
+    })
+    if (mode === 'request' || mode === 'verify') {
       const digest = (value: string) => createHash('sha256').update(value).digest('hex')
       const argsDigest = digest(stableJson(input))
       const snapshot = {
         targetIds: { workspace_id: [initial.workspaceId] },
         targetsDigest: digest(initial.workspaceTarget), versionsDigest: digest(snapshotKey),
-        displaySummary: `${system ? '在 Web Host 系统环境执行命令（使用服务账号权限，删除可能无法恢复）' : parseShellTrash(input.command) ? '将授权路径移入回收站（可恢复）' : '在沙箱内执行命令'}：${Array.from(input.command).slice(0, 240).join('')}`,
+        displaySummary: `${system ? '允许此会话在未来 30 分钟以 Web Host 服务账号执行宿主机命令' : parseShellTrash(input.command) ? '将授权路径移入回收站（可恢复）' : '在沙箱内执行命令'}：${Array.from(input.command).slice(0, 240).join('')}`,
       }
-      if (scope.resolution === null) {
+      if (mode === 'request') {
         const prepared = await options.confirmation.gate.prepare(call, scope, argsDigest, snapshot)
         return prepared.ok ? { kind: 'waiting', interaction: prepared.value } : rejected('无法申请 Shell 执行确认')
       }
       const approved = await options.confirmation.gate.verify(call, scope, argsDigest, snapshot)
       if (!approved.ok || !await options.claim(approved.value, signal)) return rejected('Shell 执行确认无效或已过期')
-    } else if (scope.resolution !== null) {
+    } else if (mode === 'stale') {
       return rejected('命令确认对应的权限已变化')
     }
     if (!await stillAuthorized()) return rejected('Shell 执行权限已变化')
+    if (system && mode === 'verify') hostGrants.approve(identity, snapshotKey)
+    if (system && mode === 'execute' && systemMode() !== 'execute') return rejected('宿主机 Shell 授权已过期')
     const controller = new AbortController()
     const cancel = () => controller.abort()
     signal.addEventListener('abort', cancel, { once: true })

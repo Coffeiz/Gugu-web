@@ -2,7 +2,6 @@ import { constants } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { link, lstat, mkdir, open, readdir, realpath, rename, rmdir, unlink } from 'node:fs/promises'
 import path from 'node:path'
-import { createRequire } from 'node:module'
 import { getSystemErrorName } from 'node:util'
 
 /** 不可信路径不能用于访问授权根之外的内容。 */
@@ -297,8 +296,6 @@ export async function createLocalDirectory(root: string, relativePath: string): 
   }
 }
 
-const require = createRequire(import.meta.url)
-type LinuxFfi = typeof import('node:ffi')
 let renameFunctions: { renameat2: (from: number, source: Buffer, to: number, destination: Buffer, flags: number) => number; __errno_location: () => bigint } | undefined
 
 /** 源和目标都相对于打开的目录句柄；内核保证移动与拒绝覆盖在同一步完成。 */
@@ -315,7 +312,7 @@ export async function moveLocalEntry(root: string, fromPath: string, toPath: str
       })
       if (!info) return false
       if (!info.isFile() && !info.isDirectory()) throw new UnsafeLocalPathError()
-      const ffi = require('node:ffi') as LinuxFfi
+      const ffi = await import('node:ffi')
       renameFunctions ??= ffi.dlopen(null, {
         renameat2: { arguments: ['i32', 'pointer', 'i32', 'pointer', 'u32'], return: 'i32' },
         __errno_location: { arguments: [], return: 'pointer' },
@@ -358,6 +355,13 @@ export async function openAnchoredLocalFile(root: string | number, relativePath:
   } finally {
     await parent.close()
   }
+}
+
+/** 在已固定的文件句柄上取得可跨同卷重命名比较的身份。 */
+export async function localFileIdentity(handle: Awaited<ReturnType<typeof open>>): Promise<string | null> {
+  const info = await handle.stat({ bigint: true })
+  if (info.birthtimeNs <= 0n || info.ino <= 0n) return null
+  return `${info.dev}.${info.ino}.${info.birthtimeNs}`
 }
 
 export async function listLocalDirectory(root: string, relativePath: string) {

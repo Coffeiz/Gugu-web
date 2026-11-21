@@ -13,7 +13,7 @@ import { deleteScheduledTaskInTransaction } from '../../scheduled-tasks/task-del
 import { stableJson } from '../context/history/canonical-history.js'
 import type { Json, RunIdentity, ToolCall, ToolResult } from '../models.js'
 import type { ToolDefinition, ToolScope } from './contracts.js'
-import type { ConfirmationClaimReference, createConfirmationGate } from './confirmation.js'
+import type { ConfirmationClaimReference, ConfirmationTargetSnapshot, createConfirmationGate } from './confirmation.js'
 
 
 /** 可信 Host 绑定共享只读查询及平台能力；身份来自当前运行，不由模型指定。 */
@@ -106,6 +106,26 @@ function snapshot(rows: readonly TaskTarget[]) {
     versionsDigest: digest(rows.map(row => [Number(row.id), row.name, row.version])) }
 }
 
+export async function describeScheduledTaskDeleteTargets(
+  db: Kysely<Database>, owner: string, input: unknown,
+  expected: Pick<ConfirmationTargetSnapshot, 'targetsDigest' | 'versionsDigest'>,
+): Promise<string> {
+  const args = deleteSchema.parse(input)
+  const { rows } = await resolveTaskTargets(db, owner, args, false)
+  if (!rows) throw new CoreError('conflict', '定时任务删除确认目标已变化')
+  const checked = snapshot(rows)
+  if (checked.targetsDigest !== expected.targetsDigest || checked.versionsDigest !== expected.versionsDigest)
+    throw new CoreError('conflict', '定时任务删除确认目标已变化')
+  return formatScheduledTaskDeleteSummary(rows)
+}
+
+export function formatScheduledTaskDeleteSummary(rows: readonly { name: string }[]): string {
+  const names = rows.slice(0, 10).map(row => row.name).join('、')
+  const more = rows.length > 10 ? `等 ${rows.length} 个` : ''
+  const visible = names.length > 900 ? `${Array.from(names).slice(0, 450).join('')}…` : names
+  return `将删除定时任务：${visible}${more}，共 ${rows.length} 个`
+}
+
 export function createScheduledTaskDeleteTool(core: SqlDataRuntime, confirmation: ScheduledTaskConfirmation,
   publish: (ownerId: string, taskId: number) => Promise<void>): ToolDefinition {
   if (!core.receipts) throw new Error('定时任务删除收据未装配')
@@ -194,7 +214,9 @@ const scheduleKind = z.enum(['cron', 'interval', 'once'])
 const deliveryMode = z.enum(['owner_private', 'current_group'])
 function unique<T>(values: readonly T[]) { return new Set(values).size === values.length }
 const taskInput = {
-  schedule_name: z.string(), instruction: z.string(), schedule_kind: scheduleKind,
+  schedule_name: z.string(),
+  execution_mode: z.enum(['reminder', 'instruction']).describe('reminder 到点原样发送，不调用模型；instruction 到点由咕咕执行').optional(),
+  instruction: z.string().describe('提醒模式填写要原样发送的正文，指令模式填写要执行的任务指令'), schedule_kind: scheduleKind,
   cron: z.string().nullable().optional(),
   interval_minutes: z.number().int().min(1).max(60).nullable().optional(),
   start_at: z.string().nullable().optional(), end_at: z.string().nullable().optional(),
@@ -220,6 +242,7 @@ type TaskWriteRequest = WriteCoordinates & ({ name: 'create_scheduled_task'; arg
 /** 只有具备真实调度消费和投递能力的 Host 才能装配此端口。 */
 export interface ScheduledTaskWriteRuntime {
   capabilities: ScheduledTaskCapabilities
+  reminderOnly?: boolean
   filesystemRevocation?: TaskFilesystemRevokeEffects
   emailAuthorization?: Partial<Record<TaskWriteName, ScheduledTaskConfirmation>>
   canPreauthorizeEmail?(identity: RunIdentity, signal: AbortSignal): Promise<boolean>
@@ -240,11 +263,11 @@ class ScheduledTaskWriteRejected extends Error {
 function taskWriteFields(input: TaskInput): ScheduledTaskPatch {
   const fields: ScheduledTaskPatch = {}
   for (const key of ['schedule_kind', 'cron', 'interval_minutes', 'start_at', 'end_at', 'channels', 'enabled',
-    'authorized_tools', 'email_attachment_file_ids', 'workspace_id'] as const) {
+    'authorized_tools', 'email_attachment_file_ids', 'workspace_id', 'execution_mode'] as const) {
     if (input[key] !== undefined) Object.assign(fields, { [key]: input[key] })
   }
   if (input.schedule_name !== undefined) fields.name = strip(input.schedule_name)
-  if (input.instruction !== undefined) fields.payload = strip(input.instruction)
+  if (input.instruction !== undefined) fields.payload = input.execution_mode === 'reminder' ? input.instruction : strip(input.instruction)
   if (input.authorized_tools === undefined && input.delivery_mode !== undefined) fields.authorized_tools = []
   return fields
 }
@@ -270,8 +293,12 @@ export function createScheduledTaskWriteTools(core: SqlDataRuntime, runtime: Sch
     const { signal } = scope
     signal.throwIfAborted()
     const { args, identity } = request
+    if (runtime.reminderOnly && args.execution_mode === 'instruction')
+      return fail({ error: '此端仅支持提醒模式' })
     if (args.filesystem_authorized === true)
       return fail({ error: '本平台尚未提供定时任务沙箱的持久授权交互' })
+    if (args.execution_mode === 'reminder' && (args.authorized_tools?.length || args.workspace_id != null))
+      return fail({ error: '提醒模式只投递正文，不使用工具授权或工作区' })
     const grantsEmail = Boolean(args.authorized_tools?.length)
     const confirmation = grantsEmail ? runtime.emailAuthorization?.[request.name] : undefined
     if (grantsEmail && !confirmation) return fail({ error: '本平台尚未提供定时任务邮件工具的持久授权交互' })
@@ -330,13 +357,16 @@ export function createScheduledTaskWriteTools(core: SqlDataRuntime, runtime: Sch
         if (confirmation && (!claim || !await confirmation.claim(tx, claim, signal)))
           throw new ScheduledTaskWriteRejected({ error: '定时任务邮件授权确认已失效' })
         let targets: number[] = []
+        let reminder = args.execution_mode === 'reminder' || (create && runtime.reminderOnly === true)
         if (request.name === 'update_scheduled_task') {
           const found = await resolveTaskTargets(tx, ownerKey, request.args, postgres)
           if (!found.rows) throw new ScheduledTaskWriteRejected(found)
           targets = found.rows.map(row => Number(row.id))
           let current = taskQuery(tx, ownerKey, postgres).where('id', 'in', targets).orderBy('id')
           if (postgres) current = current.forUpdate()
-          const locked = snapshot(await current.execute())
+          const currentRows = await current.select('execution_mode').execute()
+          const locked = snapshot(currentRows)
+          reminder = (args.execution_mode ?? currentRows[0]?.execution_mode) === 'reminder'
           const expected = confirmedTargets ?? snapshot(found.rows)
           if (locked.targetsDigest !== expected.targetsDigest || locked.versionsDigest !== expected.versionsDigest)
             throw new ScheduledTaskWriteRejected({ error: '定时任务刚被修改，请重试' })
@@ -361,11 +391,12 @@ export function createScheduledTaskWriteTools(core: SqlDataRuntime, runtime: Sch
           ? await runtime.delivery(tx, identity, {
             channels: args.channels ?? (create ? ['web'] : undefined), mode: args.delivery_mode, taskId: target,
           }, signal) : {}
-        const write = { ...fields, ...delivery }
+        const write = { ...fields, ...delivery, ...(reminder && args.instruction !== undefined ? { payload: args.instruction } : {}) }
         signal.throwIfAborted()
         let id: number
         if (request.name === 'create_scheduled_task') {
-          id = await runtime.create(tx, owner, { ...write, schedule_kind: request.args.schedule_kind, name: fields.name })
+          id = await runtime.create(tx, owner, { ...write, schedule_kind: request.args.schedule_kind, name: fields.name,
+            ...(runtime.reminderOnly ? { execution_mode: 'reminder' } : {}) })
         } else {
           id = target!
           if (Object.keys(write).length) await runtime.update(tx, owner, id, write)
@@ -397,9 +428,12 @@ export function createScheduledTaskWriteTools(core: SqlDataRuntime, runtime: Sch
     }
   }
 
-  const descriptions = {
-    create_scheduled_task: '创建独立定时任务，按可信渠道投递。提供 schedule_name、instruction 和 schedule_kind。',
-    update_scheduled_task: '更新独立定时任务。通过 task_id 或 task 定位，省略的字段保持原值。批量撤销文件授权时传 task_ids 和 filesystem_authorized=false。',
+  const descriptions = runtime.reminderOnly ? {
+    create_scheduled_task: '创建独立提醒。提供 schedule_name、instruction 和 schedule_kind。到点通过本机通知原样投递正文，execution_mode 可省略或填写 reminder。',
+    update_scheduled_task: '按 task_id 或 task 更新独立提醒。更新正文时填写 instruction，execution_mode 可省略或填写 reminder。',
+  } : {
+    create_scheduled_task: '创建独立定时任务，按可信渠道投递。提供 schedule_name、instruction 和 schedule_kind。提醒模式传 execution_mode=reminder，到点原样发送 instruction，不调用模型；指令模式传 instruction，到点由咕咕执行，可使用已授权工具。省略模式时按指令模式创建。',
+    update_scheduled_task: '更新独立定时任务。通过 task_id 或 task 定位，execution_mode=reminder 到点原样投递正文，不调用模型；execution_mode=instruction 到点由咕咕执行指令。省略模式保持原值。批量撤销文件授权时传 task_ids 和 filesystem_authorized=false。',
   }
   return (Object.keys(taskWriteSchemas) as TaskWriteName[]).map(name => {
     const schema = taskWriteSchemas[name]

@@ -1,5 +1,6 @@
+import { proactiveImText } from '../../im/gateway/delivery/proactive.js'
 import type { Pool } from 'pg'
-import { telegramDocumentLimit } from '@gugu/core/im/telegram-connect'
+import { telegramDocumentLimit } from '@gugu/gateway/telegram'
 import { bindScheduledImRecipient, fixedDeliveryTarget, type PreparedScheduledImDelivery, type ScheduledTaskDeliveryPlan } from './targets.js'
 import { InvalidScheduledTaskDeliveryTarget } from '@gugu/core/scheduled-task-test-notify'
 import type { createWebScheduledAttachmentResources } from './files.js'
@@ -15,7 +16,7 @@ export function createScheduledTaskTelegramDelivery(pool: Pick<Pool, 'query'>, o
   enabled(): boolean
   decrypt(value: string): Promise<string> | string
   readReach?(ownerId: string): Promise<unknown>
-  sendMessage(token: string, chatId: string, text: string): Promise<boolean>
+  sendMessage(token: string, chatId: string, text: string, plainText?: boolean): Promise<boolean>
   sendAttachment?(token: string, chatId: string, file: { bytes: Uint8Array; filename: string; mime: string }): Promise<boolean>
   readAttachment?: ReturnType<typeof createWebScheduledAttachmentResources>['read']
 }) {
@@ -79,7 +80,7 @@ export function createScheduledTaskTelegramDelivery(pool: Pick<Pool, 'query'>, o
         const current = await currentBot()
         if (!current) return failed
         const token = await options.decrypt(current.app_secret)
-        return await options.sendMessage(token, target.recipient, `⏰ ${plan.title}\n\n${plan.text}`) ? '已发送' : failed
+        return await options.sendMessage(token, target.recipient, proactiveImText(plan), plan.plainText) ? '已发送' : failed
       } catch { return failed }
     }
     const prepared = bindScheduledImRecipient(send, bot.id, group, recipient)

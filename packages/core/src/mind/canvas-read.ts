@@ -1,3 +1,4 @@
+import { canvasNoteDisplayTitle } from './note-create.js'
 import { recommendedCanvasSides } from './canvas-layout.js'
 import { strip } from '../shared/values.js'
 import { normalizeGlobalSearchQueries } from '../search/query.js'
@@ -106,7 +107,7 @@ export function canvasViewSummary(raw: unknown) {
 export interface AgentCanvasOptions {canvas_id:number;include_nodes?:boolean;include_relations?:boolean;include_content?:boolean;limit?:number;offset?:number;query?:string;q?:string;queries?:string[];types?:string[];mode?:'OR'|'AND'}
 type CanvasRow=Record<string,unknown>
 export function agentCanvasNodeFields(row: CanvasRow) {
- return {node_id:Number(row.id),kind:row.kind,title:row.title,ref_type:row.ref_type,ref_id:row.ref_id,
+ return {node_id:Number(row.id),kind:row.kind,title:row.kind==='canvas_note'?canvasNoteDisplayTitle(row):row.title,ref_type:row.ref_type,ref_id:row.ref_type==='file'?object(row.ref_snapshot).fileReferenceId??null:row.ref_id,
   preview:[...strip(String(row.content_plain??''))].slice(0,240).join('')}
 }
 export function agentCanvasNodeSummary(row:CanvasRow,content=false){
@@ -157,9 +158,9 @@ export function createAgentCanvasQueries(db:Kysely<Database>,backend:Backend){
   async getAgentCanvasFocus(raw:string,args:{canvas_id:number;item_id:number},signal?:AbortSignal){
    return read(signal,async()=>{
     const user=owner(raw);if(!await canvas(user,args.canvas_id))return {error:'画布不存在'};signal?.throwIfAborted()
-    const item=await rows(user,args.canvas_id,true).clearSelect().select(['n.id','n.title','i.id as item_id'])
+    const item=await rows(user,args.canvas_id,true).clearSelect().select(['n.id','n.kind','n.title','n.content_md','n.content_plain','i.id as item_id'])
      .where('i.id','=',args.item_id).where(eb=>eb.or([eb('n.kind','=','canvas_note'),eb.and([eb('n.kind','=','ref'),eb('n.ref_type','in',['project','file','event'])])])).executeTakeFirst()
-    return item?{canvas_id:args.canvas_id,item_id:Number(item.item_id),node_id:Number(item.id),title:item.title,
+    return item?{canvas_id:args.canvas_id,item_id:Number(item.item_id),node_id:Number(item.id),title:item.kind==='canvas_note'?canvasNoteDisplayTitle(item):item.title,
      focus_link:'gugu://focus-canvas/'+args.canvas_id+'/'+item.id}:{error:'画布节点不存在'}
    })
   },
@@ -228,8 +229,9 @@ export interface AgentPlaceableSearchOptions {
   query?: string; q?: string; queries?: string[]; types?: Array<'project' | 'file' | 'event'>
   canvas_id?: number; mode?: 'OR' | 'AND'; limit?: number; offset?: number
 }
-/** 独立能力：必须具备项目、文件和日历领域表，不借用全局搜索的相关度/分页语义。 */
-export function createAgentPlaceableSearch(db: Kysely<Database>, backend: Backend) {
+/** 项目和活动从领域表读取，文件列表由宿主从授权文件树读取。 */
+export function createAgentPlaceableSearch(db: Kysely<Database>, backend: Backend,
+  searchFiles?: (owner: string, query: string, limit: number, signal: AbortSignal) => Promise<readonly { id: string; label: string }[]>) {
   return async (raw: string, args: AgentPlaceableSearchOptions, signal: AbortSignal) => {
     signal.throwIfAborted()
     const canonical = dataContext(raw).ownerId, owner = backend === 'sqlite' ? canonical.replaceAll('-', '') : canonical
@@ -242,23 +244,37 @@ export function createAgentPlaceableSearch(db: Kysely<Database>, backend: Backen
       signal.throwIfAborted()
       if (!canvas) return { error: '画布不存在' }
     }
-    const refs = await db.selectFrom('mind_nodes').select(['id', 'ref_type', 'ref_id']).where('user_id', '=', owner).where('kind', '=', 'ref').where('deleted_at', 'is', null).where('ref_type', 'in', selected).execute()
+    const refs = await db.selectFrom('mind_nodes').select(['id', 'ref_type', 'ref_id', 'ref_snapshot']).where('user_id', '=', owner).where('kind', '=', 'ref').where('deleted_at', 'is', null).where('ref_type', 'in', selected).execute()
     signal.throwIfAborted()
     // Python 的已放置标记包含项/引用的墓碑，但始终保持双方 owner 一致。
     const items = args.canvas_id === undefined ? [] : await db.selectFrom('mind_canvas_items as i').innerJoin('mind_nodes as n', 'n.id', 'i.node_id')
-      .select(['i.id', 'n.ref_type', 'n.ref_id']).where('i.canvas_id', '=', args.canvas_id).where('i.user_id', '=', owner).where('n.user_id', '=', owner).where('n.kind', '=', 'ref').execute()
+      .select(['i.id', 'n.ref_type', 'n.ref_id', 'n.ref_snapshot']).where('i.canvas_id', '=', args.canvas_id).where('i.user_id', '=', owner).where('n.user_id', '=', owner).where('n.kind', '=', 'ref').execute()
     signal.throwIfAborted()
-    const key = (row: { ref_type: string | null; ref_id: number | null }) => `${row.ref_type}:${row.ref_id}`
+    const key = (row: { ref_type: string | null; ref_id: number | null; ref_snapshot: unknown }) =>
+      `${row.ref_type}:${row.ref_type === 'file' ? object(row.ref_snapshot).fileReferenceId : row.ref_id}`
     const byRef = new Map(refs.map(row => [key(row), Number(row.id)])), byItem = new Map(items.map(row => [key(row), Number(row.id)]))
     const matches: Record<string, unknown>[] = []
     const sources = [
       { type: 'project', table: 'projects', title: 'name', fields: ['name', 'contact_name'], order: 'updated_at' },
-      { type: 'file', table: 'files', title: 'display_name', fields: ['display_name', 'ext', 'stage_name'], order: 'updated_at' },
+      { type: 'file' },
       { type: 'event', table: 'calendar_events', title: 'title', fields: ['title', 'description', 'contact_name'], order: 'created_at' },
     ] as const
     try {
       for (const source of sources) {
         if (!selected.includes(source.type) || matches.length >= probe) continue
+        if (source.type === 'file') {
+          if (!searchFiles) continue
+          const lists = await Promise.all(terms.map(term => searchFiles(canonical, term, probe, signal)))
+          const files = new Map(lists.flat().map(file => [file.id, file]))
+          for (const file of files.values()) {
+            if (matches.length >= probe) break
+            if (args.mode === 'AND' && !lists.every(list => list.some(entry => entry.id === file.id))) continue
+            const entryKey = `file:${file.id}`
+            matches.push({ kind: 'ref', ref_type: 'file', ref_id: file.id, title: file.label,
+              node_id: byRef.get(entryKey) ?? null, already_placed: byItem.has(entryKey), canvas_item_id: byItem.get(entryKey) ?? null })
+          }
+          continue
+        }
         const conditions = terms.map(term => sql`(${sql.join(source.fields.map(column => backend === 'postgres'
           ? sql`${sql.ref(column)} ILIKE ${'%' + term + '%'}`
           : sql`lower(${sql.ref(column)}) LIKE lower(${'%' + term + '%'})`), sql` OR `)})`)

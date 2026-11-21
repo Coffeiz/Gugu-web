@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from 'pg'
 import { RunStoreRejected } from '@gugu/core/agent'
-import { createAgentRunCodec, assertRunIdentity as validateIdentity, sameRunIdentity as sameIdentity, assertRunCheckpoint as assertCheckpointIdentity } from '@gugu/core/agent/run/codec'
+import { createAgentRunCodec, assertRunEventTransition, assertRunIdentity as validateIdentity, sameRunIdentity as sameIdentity, assertRunCheckpoint as assertCheckpointIdentity } from '@gugu/core/agent/run/codec'
 import { withBorrowedPostgresQuery } from '@gugu/core/data'
 import type { Lease, RunCheckpoint, RunEvent, RunIdentity, RunStore } from '@gugu/core/agent'
 import { agentRunStartupFailed, lockAgentRunSession } from './start.js'
@@ -86,22 +86,37 @@ async function insertEvents(
   }
 }
 
-function assertEventTransition(
-  identity: RunIdentity,
-  previousSequence: number,
-  nextSequence: number,
-  events: readonly RunEvent[],
-): void {
-  if (!Number.isSafeInteger(previousSequence) || !Number.isSafeInteger(nextSequence)
-    || nextSequence < previousSequence)
-    throw new TypeError('Agent run 事件序号不能回退')
-  if (events.length === 0) {
-    if (nextSequence !== previousSequence) throw new TypeError('Agent run checkpoint 序号与事件不一致')
-    return
-  }
-  if (events.length !== 1 || nextSequence !== previousSequence + 1
-    || events[0]!.sequence !== nextSequence || !sameIdentity(identity, events[0]!.identity))
-    throw new TypeError('Agent run checkpoint 序号与事件不一致')
+/** 调度层持有会话锁，且已确认没有生效的执行租约。 */
+export async function sealUnrecoverableInteraction(
+  client: PoolClient, secret: string, identity: RunIdentity, messageId: number,
+): Promise<boolean> {
+  const scope = [identity.ownerId, sessionNumber(identity.sessionId), identity.runId]
+  const { rows: [row] } = await client.query<StoredCheckpoint>(`${checkpointReadSql}
+    AND status IN ('waiting','running','preparing') FOR UPDATE`, scope)
+  if (!row) return false
+  const codec = createAgentRunCodec(secret)
+  const previous = codec.decryptCheckpoint<unknown>(identity, Number(row.version), row.nonce, row.payload)
+  const updatedAt = new Date().toISOString()
+  const displayTimeline = previous.displayTimeline.map(item => item.kind === 'tool'
+    && ['queued', 'running', 'waiting'].includes(item.toolStatus ?? '') ? { ...item, toolStatus: 'unknown' as const, updatedAt } : item)
+  const sealedTools = displayTimeline.filter((item, index) => item !== previous.displayTimeline[index])
+  const errorCode = 'interaction_resume_timeout'
+  const checkpoint = { ...previous, version: previous.version + 1, sequence: previous.sequence + 1,
+    status: 'unknown' as const, phase: 'idle' as const, errorCode, remoteStatusUnknown: true,
+    displayTimeline, pending: null, queuedInteractions: [], resolution: null, resolutionClosure: null }
+  const encrypted = codec.encryptCheckpoint(checkpoint)
+  await client.query(`UPDATE agent_run_checkpoints SET version=$4,sequence=$5,status='unknown',phase='idle',nonce=$6,payload=$7,updated_at=clock_timestamp()
+    WHERE user_id=$1 AND session_id=$2 AND run_id=$3`, [...scope, checkpoint.version, checkpoint.sequence, encrypted.nonce, encrypted.payload])
+  await insertEvents(client, codec, identity, [{ id: `resume-timeout:${checkpoint.sequence}`, identity,
+    sequence: checkpoint.sequence, round: checkpoint.round, type: 'final',
+    payload: { status: 'unknown', errorCode, remoteStatusUnknown: true, sealedTools,
+      text: '确认后任务未能恢复，操作结果无法确认。请核对后再试。' } }])
+  await client.query(`UPDATE conversation_messages SET run_outcome=$4::jsonb WHERE session_id=$2 AND id=$3 AND role='user' AND run_outcome IS NULL
+    AND EXISTS (SELECT 1 FROM conversation_sessions WHERE user_id=$1 AND id=$2)`,
+  [scope[0], scope[1], messageId, JSON.stringify({ status: 'unknown', runId: identity.runId, errorCode, completedAt: updatedAt })])
+  await client.query(`UPDATE conversation_sessions SET active_run_id=NULL,execution_state='idle'
+    WHERE user_id=$1 AND id=$2 AND active_run_id=$3`, scope)
+  return true
 }
 
 /** PostgreSQL RunStore：加密保存完整 checkpoint/outbox，并以租约 fencing + version CAS 原子写入。 */
@@ -148,7 +163,7 @@ export function createPostgresAgentRunStore<C>(
       assertCheckpointIdentity(checkpoint.identity, checkpoint)
       if (checkpoint.version !== 0) throw new TypeError('Agent run 初始 checkpoint 版本必须为 0')
       const identity = checkpoint.identity
-      assertEventTransition(identity, 0, checkpoint.sequence, events)
+      assertRunEventTransition(identity, 0, checkpoint.sequence, events)
       const encrypted = codec.encryptCheckpoint(checkpoint)
       await withPostgresTransaction(pool, async (client) => {
         if (!await lockAgentRunSession(client, identity) || await agentRunStartupFailed(client, identity)) throw new RunStoreRejected('conflict')
@@ -188,7 +203,7 @@ export function createPostgresAgentRunStore<C>(
         if (!current.rows[0]) throw new RunStoreRejected('not_found')
         if (Number(current.rows[0].version) !== change.expectedVersion)
           throw new RunStoreRejected('conflict')
-        assertEventTransition(
+        assertRunEventTransition(
           identity,
           Number(current.rows[0].sequence),
           change.checkpoint.sequence,

@@ -1,5 +1,5 @@
 import type { PoolClient } from 'pg'
-import type { ImPreflightScope } from '@gugu/core/im/inbound-preflight'
+import type { ImPreflightScope } from '@gugu/gateway'
 
 /** receipt+真实user锚点绑定平台/Bot/聊天与发起speaker；不能用owner或群session末次speaker代替。 */
 export const imInteractionScopeSql = `FROM interaction_prompts p JOIN agent_interaction_bindings b

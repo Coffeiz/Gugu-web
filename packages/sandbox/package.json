@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     "./contracts": "./dist/contracts.js",
+    "./desktop": "./dist/desktop.js",
     "./executor": "./dist/executor.js",
     "./mxc": "./dist/mxc/executor.js",
     "./linux/bubblewrap": "./dist/linux/bubblewrap/bubblewrap.js",
@@ -19,7 +20,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "optionalDependencies": {
-    "@microsoft/mxc-sdk": "1.0.1"
+    "@microsoft/mxc-sdk": "1.1.0"
   },
   "devDependencies": {
     "@types/node": "26.6.6",

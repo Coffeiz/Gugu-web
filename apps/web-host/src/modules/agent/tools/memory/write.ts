@@ -135,7 +135,7 @@ export function createLocalAgentRememberPort(options: {
 
   async function finish(identity: Identity, input: RememberInput, plan: Plan, stagedKey: string, signal = new AbortController().signal): Promise<ToolResult> {
     const { context, method, id } = coordinates(identity, 'finish')
-    const owner = context.ownerId, base = `${owner}/.agent/`
+    const owner = context.ownerId, base = `${owner}/.agent/memories/`
     const receipt = await core.operationWithTransaction<Final>(context, id, method, { ...input }, async tx => {
       await lockOwnerMemory(tx, owner)
       const archive = await lockArchive(tx, owner)
@@ -172,7 +172,7 @@ export function createLocalAgentRememberPort(options: {
   return {
     async mutate(identity, input, signal, edit) {
       const { context, method, id } = coordinates(identity, 'plan')
-      const owner = context.ownerId, base = `${owner}/.agent/`, stagedKey = `${base}.remember/${id}.json`
+      const owner = context.ownerId, base = `${owner}/.agent/memories/`, stagedKey = `${base}.remember/${id}.json`
       try {
         const receipt = await core.operationWithTransaction<Plan>(context, id, method, { ...input }, async tx => {
           await lockOwnerMemory(tx, owner)
@@ -182,7 +182,9 @@ export function createLocalAgentRememberPort(options: {
           if (archive.busy) throw new InvalidMemorySnapshot('档案迁移期间不能更新记忆')
           const raw = await read(`${base}${input.target}.json`)
           const before = await readExisting(base, raw, input.target)
-          const next = edit(before)
+          let next: ReturnType<typeof edit>
+          try { next = edit(before) }
+          catch { throw new InvalidMemorySnapshot('记忆修改未完成，当前内容未更改') }
           const after = JSON.stringify(next.rows, null, 2)
           const retained = new Map(next.rows.map(row => [row.id, row.text]))
           const staleVectorIds = input.target === 'pattern' ? before.flatMap(row =>
@@ -205,7 +207,7 @@ export function createLocalAgentRememberPort(options: {
       const { context, method, id } = coordinates(identity, 'plan')
       try {
         const plan = await core.operationWithTransaction<Plan>(context, id, method, { ...input }, async () => { throw missingReceipt })
-        return await finish(identity, input, plan.result, `${context.ownerId}/.agent/.remember/${id}.json`)
+        return await finish(identity, input, plan.result, `${context.ownerId}/.agent/memories/.remember/${id}.json`)
       } catch (error) {
         if (error instanceof CoreError && error.code === 'conflict') return failure(error.message)
         return { kind: 'unknown' }

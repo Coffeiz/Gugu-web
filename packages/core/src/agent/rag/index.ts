@@ -1,3 +1,4 @@
+export { getAgentRagJieba } from './node-jieba.js'
 export { createSqlRagConversationSearch, createSqlRagConversationSource } from './conversation-source.js'
 export { createConversationRagSource } from './conversation-index-source.js'
 export { createProjectRagSource } from './project-source.js'
@@ -16,6 +17,7 @@ export { enqueueAgentRagRebuildInTransaction, invalidateAgentKnowledgeRagInTrans
 export type { RagRebuildSource } from './rebuild-worker.js'
 export { createSqlRagPersistentIndexReader } from './persistent-index.js'
 export { createScopedRagSearch } from './scoped-search.js'
+export { createAgentRagContextBuilder } from './context-builder.js'
 export { readRagDocumentVectors } from './vector-reader.js'
 export type { RagVectorSource } from './vector-reader.js'
 export { embedRagQuery } from './query-embedding.js'

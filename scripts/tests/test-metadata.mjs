@@ -9,7 +9,7 @@ export function groupFor(file) {
   if (file.startsWith('packages/core/tests/')) return parts[3] || 'core'
   if (file.startsWith('apps/web-host/tests/')) return parts[3] || 'web-host'
   if (file.startsWith('backend/tests/')) return parts[2] || 'backend'
-  if (file.startsWith('apps/web/tests/')) return parts[3] || 'web'
+  if (file.startsWith('apps/ui/tests/')) return parts[3] || 'web'
   return 'other'
 }
 export function loadMetadata() {

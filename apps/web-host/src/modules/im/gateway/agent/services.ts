@@ -1,5 +1,4 @@
-import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { readAgentPrompt, readAgentPromptSet } from '@gugu/core/agent/context/prompts'
 import type { Pool } from 'pg'
 import { agentContextPolicy, agentCurrentTimeReminder, asAgentContextRecord, type AgentStaticPromptInput, type CanonicalContextPorts,
   type ContextDataPorts, type ContextSourcePorts, type ContextSourceSelection, type HistoryIdentity, type Json, type RunIdentity } from '@gugu/core/agent'
@@ -104,13 +103,13 @@ export async function createImAgentContextServices(options: {
   const memory = createAgentMemoryContextLoader(options.storageRoot, options.now, options.memoryVectorSearch)
   const knowledge = createAgentKnowledgeOverviewLoader(createLocalAgentKnowledgeReadStore(options.storageRoot))
   let timezone = await read(identity, options.signal, false, () => preference.loadTimezone(identity, options.signal))
-  let prompts: Record<'default' | 'persona' | 'skills' | 'policy' | 'retrieval' | 'group' | 'compact', string>
+  let prompts: ReturnType<typeof readAgentPromptSet> & { group: string; compact: string }
   try {
-    const names = ['default.md', 'persona.md', 'skills.md', 'policy.md', 'retrieval.md', 'compress_conv.md'] as const
-    const texts = await Promise.all(names.map(name => readFile(join(options.promptRoot, name), 'utf8')))
-    const group = selection.groupChat ? await readFile(join(options.promptRoot, 'im', 'group_chat.md'), 'utf8') : ''
-    if (!texts[0]?.trim() || !texts[5]?.trim()) throw new Error()
-    prompts = { default: texts[0]!, persona: texts[1]!, skills: texts[2]!, policy: texts[3]!, retrieval: texts[4]!, compact: texts[5]!, group }
+    const defaults = readAgentPromptSet(options.promptRoot)
+    const compact = readAgentPrompt('compress_conv.md', options.promptRoot)
+    const group = selection.groupChat ? readAgentPrompt('im/group_chat.md', options.promptRoot) : ''
+    if (!defaults.base.trim() || !compact.trim()) throw new Error()
+    prompts = { ...defaults, compact, group }
   } catch { throw new ImContextServicesError('unavailable') }
   const catalog = imCanUseTool(actor, 'use_skill')
     ? await read(identity, options.signal, false, () => options.skillCatalog(identity, options.signal)) : []
@@ -172,7 +171,7 @@ export async function createImAgentContextServices(options: {
     staticPrompt(candidate, target, styles): AgentStaticPromptInput {
       assertSelection(candidate, target)
       const preferences = asAgentContextRecord(restrictedGroupStyle ?? (selection.contextPolicy.loadOwnerContext ? styles ?? {} : {}), 'IM 样式偏好')
-      return { base: prompts.default, persona: prompts.persona, skills: prompts.skills, policy: prompts.policy, retrieval: prompts.retrieval,
+      return { base: prompts.base, persona: prompts.persona, skills: prompts.skills, policy: prompts.policy,
         afterBasePrompt: prompts.group, skillIndex, timezone, now: new Date(options.now()), groupChat: selection.groupChat,
         locale: typeof preferences.locale === 'string' ? preferences.locale : selection.locale,
         personalityPreferenceEnabled: truthy(preferences.personality_preference_enabled),

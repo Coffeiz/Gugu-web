@@ -1,9 +1,9 @@
 {
-  "apps/web/tests/forms/field-label-focus.test.ts": {
+  "apps/ui/tests/forms/field-label-focus.test.ts": {
     "domain": "frontend-accessibility",
     "layer": "L0",
-    "owner": "apps/web/forms",
-    "productionEntry": "apps/web/src 全站 Vue 模板",
+    "owner": "apps/ui/forms",
+    "productionEntry": "apps/ui/src 全站 Vue 模板",
     "keyBehavior": "字段标题不得通过 label 语义意外聚焦文本输入控件",
     "ci": "test:fast"
   }

@@ -277,7 +277,7 @@ describe('Anthropic真实HTTP协议边界', () => {
     const f = fixture([{ events: [{ type: 'error', error: { type: 'api_error', message: `私有上游正文 (${code})` } }] }])
     const input = invocation({ config: { provider: 'minimax', model: 'MiniMax-M3', api_key: 'synthetic-key' }, policy: minimaxPolicy })
     await expect(collect(input, f.dependencies)).rejects.toMatchObject({ code: expected, options: { retryable } })
-    expect(f.requests[0]!.url).toBe('https://api.minimaxi.com/anthropic/v1/messages')
+    expect(f.requests[0]!.url).toBe('https://api.minimax.cn/anthropic/v1/messages')
   })
 
   it('非流式分支原样使用带签名wire，既有history的JSON分支不改变主请求参数或工具', async () => {

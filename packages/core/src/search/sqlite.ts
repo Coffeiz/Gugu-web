@@ -3,6 +3,8 @@ import { dataContext } from '../contracts/index.js'
 import type { GlobalSearchSource } from './global-search.js'
 import { SEARCH_SOURCES } from './sources.js'
 
+const contains = (term: string) => '%' + term.replace(/[\\%_]/gu, '\\$&') + '%'
+
 /** 复用正式 SQLite 共享表；文件与用户 Skill 搜索仍需 Host/正式数据层能力。 */
 export function createKyselySqliteGlobalSearchSources<DB>(db: Kysely<DB>): GlobalSearchSource[] {
   return SEARCH_SOURCES.filter(source => ['project', 'client', 'event', 'mcp', 'scheduled_task', 'note', 'canvas_note'].includes(source.type)).map(source => ({
@@ -14,7 +16,7 @@ export function createKyselySqliteGlobalSearchSources<DB>(db: Kysely<DB>): Globa
       const terms = Object.freeze([...query.queries])
       if (!terms.length) return []
       if (source.type === 'mcp') {
-        const hits = sql`(${sql.join(terms.map(term => sql`CASE WHEN (${sql.join(source.searchable.map(column => sql`lower(COALESCE(${sql.raw(column)}, '')) LIKE lower(${'%' + term + '%'})`), sql` OR `)}) THEN 1 ELSE 0 END`), sql` + `)})`
+        const hits = sql`(${sql.join(terms.map(term => sql`CASE WHEN (${sql.join(source.searchable.map(column => sql`lower(COALESCE(${sql.raw(column)}, '')) LIKE lower(${contains(term)}) ESCAPE ${'\\'}`), sql` OR `)}) THEN 1 ELSE 0 END`), sql` + `)})`
         const match = query.mode === 'AND' ? sql`${hits} = ${terms.length}` : sql`${hits} > 0`
         const rank = sql`CASE WHEN lower(${sql.raw(source.title)}) = lower(${terms[0]}) THEN 0
           WHEN lower(${sql.raw(source.title)}) LIKE lower(${terms[0]}) || '%' THEN 1 ELSE 2 END`
@@ -37,7 +39,7 @@ export function createKyselySqliteGlobalSearchSources<DB>(db: Kysely<DB>): Globa
             : sql.raw(source.extraWhere ?? '')
       // SQL结构只来自可信内置metadata；owner、关键词和limit始终绑定参数。
       const hits = sql`(${sql.join(terms.map(term => {
-        const fields = source.searchable.map(column => sql`lower(COALESCE(${sql.raw(column)}, '')) LIKE lower(${'%' + term + '%'})`)
+        const fields = source.searchable.map(column => sql`lower(COALESCE(${sql.raw(column)}, '')) LIKE lower(${contains(term)}) ESCAPE ${'\\'}`)
         return sql`CASE WHEN (${sql.join(fields, sql` OR `)}) THEN 1 ELSE 0 END`
       }), sql` + `)})`
       const match = query.mode === 'AND' ? sql`${hits} = ${terms.length}` : sql`${hits} > 0`

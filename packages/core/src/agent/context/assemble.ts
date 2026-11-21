@@ -276,6 +276,66 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
     }
     return save({ ...state, pendingRound: { ...pending, dispatched: results, assistantEntryId, resultEntryId } }, prepared)
   }
+  function pressureWindow(area: MessageArea) {
+    const anchor = area.entries.findLastIndex(entry => ['user', 'reference', 'attachment'].includes(entry.source))
+    if (anchor < 0) return {}
+    // 压力压缩保留最近一次完整工具往返及其后的消息。
+    const round = area.entries.findLast(entry => entry.source === 'tool_round' && entry.batchId !== null)?.roundId
+    const rolling = round == null ? -1 : area.entries.findIndex(entry => entry.roundId === round)
+    return {
+      anchorIndex: area.fixedPrefixSize + anchor,
+      from: area.fixedPrefixSize + Math.max(anchor + 1, rolling),
+    }
+  }
+
+  async function summarizeContext(state: CanonicalRunContext, contextInput: number | null, signal: AbortSignal, onStart?: () => Promise<void>) {
+    const prepared = await restore(state, signal)
+    let result: CompactionResult
+    try {
+      const frozen = frozenRequest(state, prepared)
+      if (!frozen && ports.observation) {
+        const at = Date.now()
+        recordAgentObservation(ports.observation, {
+          identity: state.identity, kind: 'context', name: 'Canonical history fallback for compaction',
+          spanId: `${state.identity.runId}:canonical-history-fallback:${prepared.area.revision}`,
+          at, startedAt: at, endedAt: at, durationMs: 0, status: 'success',
+          input: { reason: 'provider_projection_unavailable' },
+          output: { entry_count: prepared.area.entries.length },
+          attributes: { context_source: 'canonical_history_fallback' },
+        })
+      }
+      result = await compactContext(prepared.area, ports.compaction, {
+        modelIdentity: state.modelIdentity, signal, onStart,
+        projection: frozen?.request.projection,
+        window: pressureWindow(prepared.area),
+      })
+    }
+    catch (error) {
+      if (signal.aborted)
+        throw error
+      try {
+        ports.diagnoseCompactionFailure({
+          identity: state.identity, revision: prepared.area.revision,
+          contextInput
+        }, error)
+      }
+      catch { /* 诊断故障不改变原始压缩失败状态。 */ }
+      return { context: { ...state, failedCompactionInput: contextInput }, applied: false, reason: 'failed' as const }
+    }
+    if (!result.changed)
+      return { context: { ...state, failedCompactionInput: contextInput }, applied: false, reason: 'no_change' as const }
+    applyCompaction(prepared.area, result)
+    const context = await save(state, prepared, signal)
+    return {
+      context: {
+        ...context, failedCompactionInput: null, compactions: [...state.compactions, {
+          id: `${state.identity.runId}:${context.prepared.area.revision}`,
+          result: { ...result, messages: context.prepared.area.entries.map((entry) => copy(entry.message)) },
+        }]
+      }, applied: true, reason: 'applied' as const
+    }
+  }
+
   return {
     ...createToolResultCheckpoint(ports.references, { digest: ports.digest }),
     async loadedSkills(state) { return loadedSkills((await restore(state)).area.entries) },
@@ -329,6 +389,11 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
       const current = loaded.input.currentUsers?.length ? loaded.input.currentUsers : loaded.input.currentUser ? [loaded.input.currentUser] : []
       const last = lastUserIndex(current.map((item) => item.message))
       const userRequest = loaded.replyContext?.userRequest ?? (last === null ? '' : current[last]!.rawText ?? userTextFromMessage(current[last]!.message))
+      const sessionInfo = loaded.sourceEffects?.sessionSnapshot.state.context?.session_info
+      const style = sessionInfo && typeof sessionInfo === 'object' && !Array.isArray(sessionInfo)
+        ? sessionInfo.stylePreferences : null
+      const snapshotGuardEnabled = Boolean(!loaded.input.groupChat && style && typeof style === 'object'
+        && !Array.isArray(style) && style.decision_guard_enabled === true)
       const locale = loaded.replyContext?.locale ?? loaded.sourceEffects?.sessionSnapshot.state.context?.locale ?? 'zh-CN'
       if (typeof userRequest !== 'string' || typeof locale !== 'string')
         throw new Error('回复策略来源必须是明确的当前用户正文与语言')
@@ -346,7 +411,7 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
         identity: copy(identity), modelIdentity: loaded.modelIdentity, accessScopeHash, contextWindow: loaded.contextWindow,
         ...(loaded.input.systemPrompt === undefined ? {} : { providerSystemPrompt: loaded.input.systemPrompt }),
         capabilities: loaded.capabilities ? copy(loaded.capabilities) : null,
-        replyContext: { userRequest, locale, decisionGuardEnabled: loaded.replyContext?.decisionGuardEnabled === true },
+        replyContext: { userRequest, locale, decisionGuardEnabled: loaded.replyContext?.decisionGuardEnabled ?? snapshotGuardEnabled },
         prepared: saved, compactions: [], continuationRef: null,
         ...(loaded.input.historyBaseline ? { historyBaseline: copy(loaded.input.historyBaseline) } : {}),
         pendingRound: null, failedCompactionInput: null, sourceEffects: loaded.sourceEffects ? copy(loaded.sourceEffects) : null,
@@ -363,9 +428,10 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
       observe()
       return context
     },
+    isRoundToolAvailable(state, name) {
+      return state.capabilities?.toolNames.includes(name) ?? true
+    },
     async afterRound(state, result, round) {
-      if (state.capabilities && result.calls.some(call => !state.capabilities!.toolNames.includes(call.name)))
-        throw new AgentRunError('invalid_state', '模型调用了本轮未开放的工具')
       const prepared = await restore(state)
       // 捕获的是模型实际读取的前缀，不能在追加回复后再把回复重复附加一次。
       const frozen = frozenRequest(state, prepared)
@@ -470,83 +536,22 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
     async recoverOverflow(state, attempt, signal) {
       if (attempt !== 1)
         return { context: state, applied: false }
+      const summarized = await summarizeContext(state, state.currentProviderInput, signal)
+      if (summarized.applied)
+        return summarized
       const prepared = await restore(state, signal)
-      const entries = prepared.area.entries
-      const anchor = entries.findLastIndex((entry) => ['user', 'reference', 'attachment'].includes(entry.source))
-      const rounds = [...new Set(entries.filter((entry) => entry.source === 'tool_round').map((entry) => entry.roundId))]
-      const keptRounds = new Set(rounds.slice(-10))
-      const rolling = entries.findIndex((entry) => entry.roundId != null && keptRounds.has(entry.roundId))
-      const result = enforceProviderOverflow(prepared.area, anchor < 0 ? {} : {
-        anchorIndex: prepared.area.fixedPrefixSize + anchor,
-        from: prepared.area.fixedPrefixSize + Math.max(anchor + 1, rolling),
-        previousFrom: prepared.area.protectedHistoryStart,
-      })
+      const window = pressureWindow(prepared.area)
+      const result = enforceProviderOverflow(prepared.area, window)
       if (result.changed)
         prepared.area.protectedHistoryStart = result.previousProtectedStartIndex ?? null
-      return { context: result.changed ? await save(state, prepared, signal) : state, applied: result.changed }
+      return { context: result.changed ? await save({ ...state, overflowTrimmed: true }, prepared, signal) : state, applied: result.changed }
     },
-    async afterUsage(state, usage, signal) {
+    async afterUsage(state, usage, signal, onStart) {
       if (!shouldCompact(usage.contextInput, state.contextWindow))
         return { context: state, applied: false, reason: 'below_threshold' }
       if (state.failedCompactionInput !== null && usage.contextInput! < state.failedCompactionInput + 8000)
         return { context: state, applied: false, reason: 'retry_deferred' }
-      const prepared = await restore(state, signal)
-      const entries = prepared.area.entries
-      const anchor = entries.findLastIndex((entry) => ['user', 'reference', 'attachment'].includes(entry.source))
-      const rounds = [...new Set(entries.filter((entry) => entry.source === 'tool_round').map((entry) => entry.roundId))]
-      // 压力压缩只保留最新完整轮；普通跨Run历史恢复的十轮窗口是另一条规则。
-      const keptRounds = new Set(rounds.slice(-1))
-      const rolling = entries.findIndex((entry) => entry.roundId != null && keptRounds.has(entry.roundId))
-      let result: CompactionResult
-      try {
-        const frozen = frozenRequest(state, prepared)
-        if (!frozen && ports.observation) {
-          const at = Date.now()
-          recordAgentObservation(ports.observation, {
-            identity: state.identity, kind: 'context', name: 'Canonical history fallback for compaction',
-            spanId: `${state.identity.runId}:canonical-history-fallback:${prepared.area.revision}`,
-            at, startedAt: at, endedAt: at, durationMs: 0, status: 'success',
-            input: { reason: 'provider_projection_unavailable' },
-            output: { entry_count: prepared.area.entries.length },
-            attributes: { context_source: 'canonical_history_fallback' },
-          })
-        }
-        result = await compactContext(prepared.area, ports.compaction, {
-          modelIdentity: state.modelIdentity, signal,
-          projection: frozen?.request.projection,
-          ...(anchor < 0 ? {} : {
-            window: {
-              anchorIndex: prepared.area.fixedPrefixSize + anchor,
-              from: prepared.area.fixedPrefixSize + Math.max(anchor + 1, rolling),
-              previousFrom: null,
-            }
-          }),
-        })
-      }
-      catch (error) {
-        if (signal.aborted)
-          throw error
-        try {
-          ports.diagnoseCompactionFailure({
-            identity: state.identity, revision: prepared.area.revision,
-            contextInput: usage.contextInput!
-          }, error)
-        }
-        catch { /* 诊断故障不改变原始压缩失败状态。 */ }
-        return { context: { ...state, failedCompactionInput: usage.contextInput }, applied: false, reason: 'failed' }
-      }
-      if (!result.changed)
-        return { context: { ...state, failedCompactionInput: usage.contextInput }, applied: false, reason: 'no_change' }
-      applyCompaction(prepared.area, result)
-      const context = await save(state, prepared, signal)
-      return {
-        context: {
-          ...context, failedCompactionInput: null, compactions: [...state.compactions, {
-            id: `${state.identity.runId}:${context.prepared.area.revision}`,
-            result: { ...result, messages: context.prepared.area.entries.map((entry) => copy(entry.message)) },
-          }]
-        }, applied: true, reason: 'applied'
-      }
+      return summarizeContext(state, usage.contextInput!, signal, onStart)
     },
     async afterFinal(identity, state, outcome) {
       const main = mainRequests.get(key(identity))
@@ -556,8 +561,9 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
         request: main?.prepared ?? null, projection: main?.request?.projection ?? null,
         requestSystemPrompt: main?.request?.systemPrompt ?? '', requestTools: main?.request?.tools ?? [],
         text: outcome.text, providerContextInput: state.currentProviderInput,
-        providerCompacted: state.compactions.length > 0, hadTools: outcome.hadTools,
+        providerCompacted: state.compactions.length > 0 || state.overflowTrimmed === true, hadTools: outcome.hadTools,
       })
+      if (state.compactions.length || state.overflowTrimmed) await ports.persistCompaction?.(state)
     },
     async release(identity) {
       requests.delete(key(identity))

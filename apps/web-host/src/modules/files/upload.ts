@@ -793,7 +793,14 @@ export function createPostgresFileUploadOperations(
           : await storeNewFile(client, options, state, userId, upload, metadata, target, displayName, ext,
             operation && (operation.receipt.method ?? downloadMethod) === downloadMethod ? 'web_download' : 'file_upload')
         await options.afterStore?.()
-        const response = fileResponse(row, target)
+        const file = fileResponse(row, target)
+        const response = operation?.receipt.method === 'agent.file.save_uploaded_file'
+          ? { ...file, logicalPath: `/${[
+              ...(file.space === 'project' ? ['project', target.project!.name]
+                : file.space === 'workspace' ? ['workspace', target.workspaceName!] : ['personal']),
+              ...target.folderPath, `${file.displayName}${file.ext ? `.${file.ext}` : ''}`,
+            ].map(part => part.replace(/[\\/]/gu, '_').trim()).join('/')}` }
+          : file
         if (operation) {
           const { receipt } = operation
           await operation.authorize(client)

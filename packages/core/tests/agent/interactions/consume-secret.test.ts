@@ -90,3 +90,12 @@ test('Web 取消凭据交互结束 prompt、清理暂存并恢复原 Run，不�
   assert.equal(state.committed, true)
   assert.deepEqual(state.writes.map(write => (write as unknown[])[0]), ['prompt', 'staging', 'resume'])
 })
+
+test('凭据请求不能通过另一会话的提示编号写入', async () => {
+  const { state, store } = storeFixture()
+  const consume = createSecretInteractionConsumer({
+    store, now: () => new Date('2026-11-18T00:00:00Z'), encrypt() { throw new Error('不得加密') },
+  })
+  await assert.rejects(consume({ ownerId, sessionId: 10, promptId: 17, values: { key: 'synthetic-secret' } }), { code: 'not_found' })
+  assert.deepEqual(state.writes, [])
+})

@@ -14,7 +14,7 @@ function minimaxReasoning(config: ProviderConfig, format: ProviderProtocol): Rea
 export const minimaxPolicy = createPolicy('minimax', {
   capabilities: config => shared.cap({ api_format: 'anthropic', cache_mode: /^(minimax-m2|minimax-m3)/.test(shared.model(config)) ? 'active' : 'none', thinking: /^(minimax-m2|minimax-m3)/.test(shared.model(config)), tools: true, image: shared.model(config).startsWith('minimax-m3'), video: shared.model(config).includes('m3') }),
   supportedApiFormats: () => ['anthropic', 'openai', 'responses'], protocol: config => shared.protocol(config, 'anthropic'),
-  baseUrl: config => shared.baseUrl(config, shared.protocol(config, 'anthropic') === 'anthropic' ? 'https://api.minimaxi.com/anthropic' : 'https://api.minimax.cn/v1'),
+  baseUrl: config => shared.baseUrl(config, shared.protocol(config, 'anthropic') === 'anthropic' ? 'https://api.minimax.cn/anthropic' : 'https://api.minimax.cn/v1'),
   responsesPromptCacheKey: config => shared.protocol(config, 'anthropic') === 'responses', reasoningCapabilities: minimaxReasoning,
   sanitizerMarkers: () => [']<]minimax', '[e~['], mediaLimits: config => minimaxMediaLimits(config.model),
   responsesInputCapabilities: config => configuredResponsesInput(config),

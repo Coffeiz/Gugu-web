@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { deriveInteractionActionToken } from '@gugu/core/agent-sessions'
 import type { Pool, PoolClient } from 'pg'
 import type { RunEvent, RunIdentity } from '@gugu/core/agent'
+import { projectAgentInteraction } from '@gugu/core/agent'
 import { withPostgresTransaction } from '../../../adapters/database/postgres-transaction.js'
 function object(value: unknown): Record<string, unknown> { return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {} }
 /** 仅按已验证的 run 绑定读取并投影该 prompt 动作令牌，outbox 永不包含令牌。 */
@@ -33,11 +34,5 @@ export async function projectInteractionPromptLocked(client: PoolClient, identit
     const updated = await client.query("UPDATE interaction_actions SET token_hash=$1 WHERE id=$2 AND prompt_id=$3 AND status='pending' AND expires_at > clock_timestamp()", [hash, action.id, prompt.id])
     if (updated.rowCount) options.push({ id: action.option_id, label: String(declared.find(option => option.id === action.option_id)?.label || action.option_id), token })
   }
-  const resolved = object(schema.resolved_result)
-  return { type: 'interaction_required', prompt_id: prompt.id, session_id: prompt.session_id, core_run_id: identity.runId,
-    kind: prompt.kind, title: prompt.title, body: prompt.body,
-    tool_call_id: typeof context.tool_call_id === 'string' ? context.tool_call_id : null, task_paused: prompt.kind === 'confirm', options,
-    secret_fields: Array.isArray(schema.secret_fields) ? schema.secret_fields : [], allow_text_input: schema.source === 'agent' && !!schema.allow_text_input,
-    custom_input_active: !!schema.custom_input_active, resolved: !active, selected_option_id: selected,
-    response_text: typeof resolved.text === 'string' ? resolved.text : null, expires_at: new Date(prompt.expires_at).toISOString(), created_at: new Date(prompt.created_at).toISOString() }
+  return projectAgentInteraction({ runId: identity.runId, prompt, schema, active, options, selected })
 }

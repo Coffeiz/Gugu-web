@@ -1,0 +1,701 @@
+// @vitest-environment node
+import { readdirSync, readFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { describe, expect, it } from 'vitest'
+
+function load(relativePath: string) {
+  return readFileSync(resolve(process.cwd(), 'src/shared/assets/styles', relativePath), 'utf8').replace(/\r\n/g, '\n')
+}
+
+function cssBlock(css: string, selectorNeedle: string) {
+  const selectorStart = css.indexOf(selectorNeedle)
+  if (selectorStart < 0) throw new Error(`Missing selector: ${selectorNeedle}`)
+  const open = css.indexOf('{', selectorStart)
+  const close = css.indexOf('}', open)
+  if (open < 0 || close < 0) throw new Error(`Malformed CSS block: ${selectorNeedle}`)
+  return css.slice(open + 1, close)
+}
+
+function occurrences(source: string, needle: string) {
+  return source.split(needle).length - 1
+}
+
+function cssSelectors(css: string) {
+  const source = css.replace(/\/\*[\s\S]*?\*\//g, '')
+  return [...source.matchAll(/([^{}]+)\{/g)]
+    .map(match => match[1].trim())
+    .filter(Boolean)
+}
+
+function frontendStyleFiles(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) return frontendStyleFiles(path)
+    return /\.(?:vue|css)$/.test(entry.name) ? [path] : []
+  })
+}
+
+const mindCss = load('./adoption/mind.css')
+const surfacesCss = load('./adoption/surfaces.css')
+const datePickerCss = load('./adoption/date-picker.css')
+const publicPagesCss = load('./adoption/public-pages.css')
+const adoptionIndexCss = load('./adoption/index.css')
+const fileToolbarCss = load('./file-toolbar-theme-refinements.css')
+const globalCss = load('./global.css')
+const themeAdoptionCss = load('./theme-adoption.css')
+const productCss = load('./tokens/product.css')
+const runtimeCss = load('./adoption/runtime.css')
+const componentCss = load('./tokens/components.css')
+const componentSurfacesCss = load('./tokens/components/surfaces.css')
+const fileCardVue = load('../../components/common/file-browser/FileCard.vue')
+const folderCardVue = load('../../components/common/file-browser/FolderCard.vue')
+const fileSelectionToolbarVue = load('../../components/common/file-browser/FileSelectionToolbar.vue')
+const filesViewVue = load('../../views/Files/index.vue')
+const projectFilesPanelVue = load('../../views/Projects/components/ProjectFilesPanel.vue')
+const projectCardVue = load('../../views/Projects/components/ProjectCard.vue')
+const eventFormPanelVue = load('../../components/events/EventFormPanel.vue')
+const imageViewerVue = load('../../components/common/viewers/ImageViewer.vue')
+const viewerToolbarVue = load('../../components/common/viewers/ViewerToolbar.vue')
+const primitivesCss = load('./tokens/primitives.css')
+const fontsCss = load('./fonts.css')
+const brandPalettesCss = load('./tokens/palettes/brand-palettes.css')
+const paletteFiles = ['cafe', 'neutral', 'red', 'blue', 'green'].map(name => ({
+  name,
+  css: brandPalettesCss,
+}))
+const paletteColorBaseCss = load('./tokens/palettes/color-base.css')
+const materialCompositionCss = load('./tokens/themes/material-composition.css')
+const componentThemeRefinementsCss = load('./component-theme-refinements.css')
+const semanticCss = load('./tokens/semantic.css')
+const brandComponent = readFileSync(resolve(process.cwd(), 'src/shared/components/common/layout/Brand.vue'), 'utf8')
+const themeCss = [
+  load('./tokens/themes/glass-light.css'),
+  load('./tokens/themes/glass-dark.css'),
+  load('./tokens/themes/mono-light.css'),
+  load('./tokens/themes/mono-dark.css'),
+].join('\n')
+
+const paletteTokens = [
+  '--theme-action-primary',
+  '--theme-action-hover',
+  '--theme-action-pressed',
+  '--theme-selection',
+  '--theme-focus',
+  '--theme-sidebar-active-fg',
+  '--theme-success',
+  '--theme-warning',
+  '--theme-danger',
+  '--theme-info',
+  '--theme-brand-gradient',
+  '--theme-fab-gradient',
+  '--theme-brand-logo-color',
+  '--theme-divider',
+  '--theme-divider-color',
+  '--theme-scrollbar-thumb',
+  '--theme-scrollbar-thumb-hover',
+]
+const notificationBubbleVue = load('../../components/common/feedback/NotificationBubble.vue')
+const guguChatToolBubbleVue = load('../../components/common/gugu-chat/GuguChatToolBubble.vue')
+const defaultLayoutVue = load('../../../web/layouts/DefaultLayout.vue')
+const newProjectModalVue = load('../../views/Projects/components/NewProjectModal.vue')
+const appSidebarVue = load('../../components/common/layout/AppSidebar.vue')
+const themeRefinementsCss = load('./theme-refinements.css')
+const designOverridesCss = load('./design-overrides.css')
+const lightPaletteCss = [brandPalettesCss]
+const guguChatVue = load('../../components/common/gugu-chat/GuguChat.vue')
+const guguFabVue = load('../../components/common/gugu-chat/GuguChatFab.vue')
+const checkboxVue = load('../../components/common/controls/Checkbox.vue')
+const fileSelectionCheckbox = load('./fileSelectionCheckbox.css')
+const markdownViewVue = load('../../components/common/content/MarkdownView.vue')
+const usagePanelVue = load('../../../web/views/Admin/Agent/observability/components/UsagePanel.vue')
+const promptPanelVue = load('../../../web/views/Admin/Agent/prompting/components/PromptPanel.vue')
+const stateLabelsPanelVue = load('../../../web/views/Admin/Agent/prompting/components/StateLabelsPanel.vue')
+const adminConfigVue = load('../../../web/views/Admin/Config/index.vue')
+
+describe('主题 CSS 回归契约', () => {
+  it('字体资源层与字体族 token 保持单一契约', () => {
+    expect((fontsCss.match(/@font-face\s*\{/g) ?? [])).toHaveLength(1)
+    expect(fontsCss).toContain("font-family: 'Gugu Noto Sans SC';")
+    expect(fontsCss).toContain('Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf')
+    expect(fontsCss).toContain('font-weight: 100 900;')
+    expect(primitivesCss).toContain('--font-family-body: "Gugu Noto Sans SC", var(--font-system-sans);')
+    expect(primitivesCss).toContain('--font-family-ui: var(--font-family-body);')
+    expect(primitivesCss).toContain('--font-family-heading: var(--font-family-body);')
+    expect(primitivesCss).toContain('--font-family-mono: var(--font-system-mono);')
+    expect(primitivesCss).toContain('--font-sans: var(--font-family-ui);')
+    expect(primitivesCss).toContain('--font-mono: var(--font-family-mono);')
+  })
+
+  it('每套配色提供完整的明暗语义色，family 不再重复持有配色变量', () => {
+    for (const { name, css } of paletteFiles) {
+      expect(css, `${name} palette`).toContain(`data-palette='${name}'`)
+      expect(css, `${name} palette`).toContain("data-theme='light'")
+      expect(css, `${name} palette`).toContain("data-theme='dark'")
+      for (const mode of ['light', 'dark']) {
+        const themeBlock = cssBlock(css, `:root[data-palette='${name}'][data-theme='${mode}']`)
+        const navDividerColor = themeBlock.match(/--theme-divider-color:\s*([^;]+)/)?.[1]
+        const navGradientColor = themeBlock.match(/--theme-divider:\s*linear-gradient\(90deg,\s*transparent,\s*(.+?)\s+20%/)?.[1]
+        expect(navDividerColor, `${name} ${mode} solid divider color`).toBe(navGradientColor)
+      }
+      for (const token of paletteTokens) {
+        expect(css, `${name} palette missing ${token}`).toContain(`${token}:`)
+      }
+    }
+    for (const token of paletteTokens) {
+      expect(themeCss, `family owns ${token}`).not.toContain(`${token}:`)
+    }
+    expect(semanticCss).toContain('--brand-logo-color: var(--theme-brand-logo-color);')
+    expect(brandComponent).toContain('background: var(--brand-logo-color);')
+    expect(brandComponent).toContain('mask-image: url(\'/logo-text.png\');')
+  })
+
+  it('面板颜色与视觉材质分层，palette 改色不吞掉 family 效果', () => {
+    for (const token of [
+      '--palette-page-start', '--palette-page-mid', '--palette-page-end', '--palette-surface',
+      '--palette-surface-strong', '--palette-surface-raised', '--palette-text-primary',
+      '--palette-text-secondary', '--palette-text-tertiary', '--palette-border',
+      '--palette-border-strong', '--palette-highlight', '--palette-scrim',
+    ]) {
+      expect(paletteColorBaseCss, `palette color base missing ${token}`).toContain(`${token}:`)
+    }
+    expect(materialCompositionCss).toContain("[data-family='glass'][data-theme='light']")
+    expect(materialCompositionCss).toContain('var(--palette-surface)')
+    expect(materialCompositionCss).toContain('var(--palette-page-start)')
+    expect(materialCompositionCss).toContain('--theme-sidebar: var(--theme-glass);')
+    expect(materialCompositionCss).toContain(":root[data-family='glass'][data-theme='dark']")
+    expect(materialCompositionCss).toContain('--theme-glass: color-mix(in srgb,var(--theme-action-primary) 2%,color-mix(in srgb,var(--palette-surface) 60%,transparent));')
+    expect(materialCompositionCss).toContain('--theme-glass-hover: color-mix(in srgb,var(--palette-surface) 75%,transparent);')
+    expect(themeCss).toContain('--theme-sidebar: var(--theme-glass);')
+    expect(themeCss).toContain('--theme-glass: color-mix(in srgb,var(--theme-action-primary) 2%,rgba(255,255,255,.60));')
+    expect(themeCss).toContain('--theme-glass-hover: rgba(255,255,255,.75);')
+    expect(semanticCss).toContain('--surface-sidebar: var(--surface-glass);')
+    expect(materialCompositionCss).toContain(":root[data-family='mono'][data-theme='light']")
+    expect(materialCompositionCss).toContain(":root[data-family='mono'][data-theme='dark']")
+    expect(materialCompositionCss).not.toContain(":not([data-palette='cafe'])")
+    expect(componentThemeRefinementsCss).toContain("html[data-theme='light'][data-family='glass'] .bm-card .pm-layout > .pm-nav.panel-left")
+    expect(componentThemeRefinementsCss).not.toMatch(/html\[data-theme='light'\]\[data-family\]\[data-palette\][^{]*\.bm-card \.pm-layout > \.pm-nav\.panel-left/)
+    expect(materialCompositionCss).not.toMatch(/--theme-(shadow|blur|radius)\s*:/)
+    expect(load('./tokens/themes/mono-light.css')).toContain("--theme-border-strong: rgba(42,35,49,.15)")
+    expect(load('./tokens/themes/mono-dark.css')).toContain("--theme-border-strong: rgba(255,255,255,.145)")
+  })
+
+  it('Mono 亮暗主题的侧栏选中描边沿用清晰的主色轮廓令牌', () => {
+    const activeBorder = '--theme-sidebar-active-border: var(--action-outline);'
+    expect(load('./tokens/themes/mono-light.css')).toContain(activeBorder)
+    expect(load('./tokens/themes/mono-dark.css')).toContain(activeBorder)
+  })
+
+  it('品牌色板只定义语义颜色，材质配方由主题家族负责', () => {
+    expect(brandPalettesCss).toContain('--theme-action-primary: #715653;')
+    expect(brandPalettesCss).toContain('--theme-action-primary: #be9d98;')
+    expect(materialCompositionCss).toContain(":root[data-family='glass'][data-theme='light']")
+    expect(materialCompositionCss).toContain(":root[data-family='mono'][data-theme='light']")
+    expect(brandPalettesCss).not.toContain('--theme-page:')
+    expect(brandPalettesCss).not.toContain('--theme-base:')
+  })
+
+  it('暗色玻璃页面渐变从较亮端向较暗端收束', () => {
+    expect(materialCompositionCss).toContain(
+      '--theme-page: linear-gradient(145deg,var(--palette-page-end) 0%,var(--palette-page-mid) 60%,var(--palette-page-start) 100%)',
+    )
+    expect(materialCompositionCss).toContain(
+      '--theme-auth-page: linear-gradient(145deg,var(--palette-page-end) 0%,var(--palette-page-mid) 60%,var(--palette-page-start) 100%)',
+    )
+    expect(themeCss).toContain('--theme-page: linear-gradient(145deg,#13152a 0%,#11131f 60%,#0e101a 100%)')
+    expect(themeCss).toContain('--theme-auth-page: linear-gradient(145deg,#13152a 0%,#11131f 60%,#0e101a 100%)')
+  })
+
+  it('通知气泡使用统一浮层材质，暗色不继承亮色纯白高光', () => {
+    expect(notificationBubbleVue).toContain('background: var(--popup-surface-bg);')
+    expect(notificationBubbleVue).toContain('box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight);')
+    expect(notificationBubbleVue).not.toContain('background: var(--panel-bg);')
+    const darkEdge = cssBlock(notificationBubbleVue, ":global(html[data-theme='dark'][data-family] .nb-item)")
+    expect(darkEdge).toContain('--nb-border: var(--border-default)')
+    expect(darkEdge).toContain('--nb-highlight-top: var(--highlight-soft)')
+    expect(darkEdge).toContain('--nb-highlight-side: var(--highlight-muted)')
+    expect(notificationBubbleVue).toContain('--nb-highlight-top: rgba(255,255,255,0.9)')
+    expect(notificationBubbleVue).not.toMatch(/:global\(html\[data-theme='dark'\]\[data-family\][^)]*\)[^{]*\{[^}]*rgba\(255,255,255/i)
+  })
+
+  it('通知中心直接消费共享浮层 token，暗色不会漏出亮色实心背景', () => {
+    const notificationStyles = appSidebarVue.slice(appSidebarVue.indexOf('.notif-popup {'))
+    expect(appSidebarVue).toContain('background:var(--popup-surface-bg);')
+    expect(appSidebarVue).toContain('border:1px solid var(--popup-surface-border);')
+    expect(appSidebarVue).toContain('box-shadow:var(--popup-surface-shadow);')
+    expect(appSidebarVue).toContain('color:var(--content-primary);')
+    expect(appSidebarVue).toContain('.notif-item.unread { background:var(--color-accent-faint); }')
+    expect(notificationStyles).not.toContain('background:rgba(255,255,255,.6)')
+    expect(notificationStyles).not.toContain('color:#1e2028')
+    expect(themeRefinementsCss).not.toContain("html[data-theme='dark'][data-family] .notif-popup")
+  })
+
+  it('新建项目的添加阶段入口使用主题控件 token，暗色不继承亮色黑白硬编码', () => {
+    const addStageBlock = cssBlock(newProjectModalVue, '.add-stage-btn')
+    expect(addStageBlock).toContain('border: 1.5px dashed var(--inline-action-border);')
+    expect(addStageBlock).toContain('background: var(--inline-action-bg);')
+    expect(addStageBlock).toContain('color: var(--inline-action-fg);')
+    expect(newProjectModalVue).toContain('.add-stage-btn:hover {')
+    expect(newProjectModalVue).toContain('background: var(--inline-action-bg-hover);')
+    expect(newProjectModalVue).toContain('color: var(--inline-action-fg-hover);')
+    expect(newProjectModalVue).toContain('border-color: var(--inline-action-border-hover);')
+    expect(addStageBlock).not.toContain('rgba(0,0,0,0.12)')
+  })
+
+  it('项目卡 sheen 伪元素只由组件负责，且走共享令牌', () => {
+    // 契约变更（2026-09-08）：用户要求恢复 hover 亮色渐变，sheen 层回到组件内，
+    // 但必须消费 --project-card-sheen-rest/-hover 令牌（与设计页示例卡/画布抽屉卡
+    // 同一份契约；暗色由令牌置 transparent，不得再写硬编码 rgba 白纱）。
+    // 主题/全局层仍不得重复接管 .proj-card 伪元素 paint。
+    const projectCardVue = load('../../views/Projects/components/ProjectCard.vue')
+    expect(projectCardVue).toContain('.proj-card::after')
+    expect(projectCardVue).toContain('.proj-card::before')
+    expect(projectCardVue).toContain('var(--project-card-sheen-rest)')
+    expect(projectCardVue).toContain('var(--project-card-sheen-hover)')
+    expect(projectCardVue).not.toContain('rgba(255,255,255')
+    expect(themeAdoptionCss).not.toContain('.proj-card::after')
+    expect(themeAdoptionCss).not.toContain('.proj-card::before')
+    expect(productCss).not.toContain('.proj-card::after')
+    expect(productCss).not.toContain('.proj-card::before')
+    expect(runtimeCss).not.toContain('.proj-card::after')
+    expect(runtimeCss).not.toContain('.proj-card::before')
+  })
+
+  it('项目卡最终 paint 只由组件负责，主题层不重复接管根卡片', () => {
+    const projectCardVue = load('../../views/Projects/components/ProjectCard.vue')
+    expect(projectCardVue).toContain('border: 1px solid var(--project-card-border)')
+    expect(projectCardVue).toContain('box-shadow: var(--project-card-shadow)')
+    expect(componentCss).toContain('--project-card-motion: var(--card-motion), box-shadow var(--motion-hover-card) ease;')
+    expect(projectCardVue).toContain('transition: var(--project-card-motion);')
+    expect(componentThemeRefinementsCss).toContain('.hover-card-fx:not(.fc-card):not(.folder-card):not(.note-card):not(.proj-card) {')
+    expect(componentThemeRefinementsCss).toContain('html[data-theme][data-family] .sample-project-card {\n  transition: var(--project-card-motion);')
+    expect(productCss).toContain('.hover-card-fx:not(.fc-card):not(.folder-card):not(.proj-card):hover { box-shadow: var(--elevation-card-hover); }')
+    expect(themeAdoptionCss).not.toMatch(/html\[data-theme\]\[data-family\] \.proj-card\s*\{/)
+    expect(productCss).not.toMatch(/html\[data-theme\]\[data-family\] \.proj-card\s*\{/)
+  })
+
+  it('todo popup 由通用容器负责 surface，业务组件负责内容主题', () => {
+    expect(load('../../components/common/overlays/PopupMenu.vue')).toContain('background: var(--popup-surface-bg)')
+    expect(load('../../components/common/overlays/PopupMenu.vue')).toContain('border: 1px solid var(--popup-surface-border)')
+    expect(themeAdoptionCss).not.toContain('.todo-pop-popup')
+    expect(projectCardVue).toContain('html[data-theme][data-family] .todo-pop-popup')
+  })
+
+  it('亮色调色板将导航选中面统一为实体亮面', () => {
+    for (const paletteCss of lightPaletteCss) {
+      const lightBlock = paletteCss.match(/:root\[data-palette='[^']+'\]\[data-theme='light'\]\s*\{([\s\S]*?)(?:\n| )\}/)?.[1] ?? ''
+      expect(lightBlock).toContain('--theme-sidebar-active-bg: var(--theme-card-solid)')
+    }
+  })
+
+  it('导航选中项直接复用调色板 surface，通知 active paint 不重复', () => {
+    expect(load('../../components/common/layout/AppSidebar.vue')).not.toContain('.notif-btn.notif-active {')
+    expect(load('../../components/common/layout/NavItem.vue')).not.toContain('.nav-item.active {')
+    expect(componentCss).toContain('--sidebar-item-active: var(--theme-sidebar-active-bg, var(--surface-raised))')
+    expect(componentSurfacesCss).not.toContain('--sidebar-item-active-light-bg')
+    expect(componentSurfacesCss).not.toContain('--sidebar-item-active: var(--sidebar-item-active-light-bg)')
+  })
+
+  it('Mono 导航不再被旧 chrome 边框覆盖，Admin 与前台复用同一组选中 token', () => {
+    expect(surfacesCss).not.toMatch(/html\[data-family='mono'\] \.sidebar\s*\{/)
+
+    const adminLayoutVue = load('../../../web/layouts/AdminLayout.vue')
+    expect(adminLayoutVue).toContain('background: var(--sidebar-bg);')
+    expect(adminLayoutVue).toContain('border-right: 1px solid var(--sidebar-border);')
+    expect(adminLayoutVue).not.toContain('.nav-item.active {')
+    expect(productCss).toContain(':is(.sidebar, .admin-sidebar) .nav-item.active')
+    expect(productCss).toContain('background: var(--sidebar-item-active);')
+    expect(productCss).toContain('border-color: var(--sidebar-item-active-border);')
+    expect(productCss).toContain('box-shadow: var(--sidebar-item-active-shadow);')
+  })
+
+  it('组件主题颜色只通过语义 token 注入，Admin 面板不保留重复 scoped 样式块', () => {
+    expect(guguChatVue).toContain('background: var(--gugu-chat-user-bg)')
+    expect(guguChatVue).toContain('border-bottom-right-radius: 4px; box-shadow: var(--gugu-chat-user-shadow)')
+    expect(guguChatVue).toContain('background: var(--gugu-chat-voice-bg)')
+    expect(guguChatVue).not.toMatch(/background:\s*(?:linear-gradient|rgba?\(|#[0-9a-f]{3,8})/i)
+
+    for (const source of [usagePanelVue, promptPanelVue, stateLabelsPanelVue]) {
+      expect((source.match(/<style scoped>/g) ?? [])).toHaveLength(1)
+    }
+    expect(componentCss).not.toMatch(/--gugu-chat-(?:assistant-bg|user-highlight|user-shadow):/)
+    expect(componentSurfacesCss).toContain('--gugu-chat-assistant-bg:')
+  })
+
+  it('暗色咕咕悬浮球以深色表面为主，避免亮色强调色过曝', () => {
+    const darkRefinements = load('./tokens/interaction-refinements.css')
+    expect(darkRefinements).toContain('--gugu-fab-bg: color-mix(in srgb,var(--surface-raised) 64%,var(--action-primary) 36%)')
+  })
+
+  it('暗色危险确认按钮使用低亮度危险表面，避免浅色实心背景过曝', () => {
+    const darkConfirm = cssBlock(componentSurfacesCss, "html[data-theme='dark']")
+    expect(darkConfirm).toContain('--confirm-dialog-danger-confirm-fg: var(--status-danger)')
+    expect(darkConfirm).toContain('--confirm-dialog-danger-confirm-bg: color-mix(in srgb,var(--status-danger) 24%,var(--surface-floating))')
+    expect(darkConfirm).toContain('--confirm-dialog-danger-confirm-bg-hover: color-mix(in srgb,var(--status-danger) 34%,var(--surface-floating))')
+    expect(darkConfirm).toContain('--confirm-dialog-danger-confirm-border: color-mix(in srgb,var(--status-danger) 52%,transparent)')
+    expect(darkConfirm).toContain('--confirm-dialog-danger-confirm-border-hover: color-mix(in srgb,var(--status-danger) 70%,transparent)')
+  })
+
+  it('咕咕播放波纹挂在球壳下层，不覆盖悬浮球本体', () => {
+    expect(guguFabVue).toContain('class="ai-fab-shell"')
+    expect(guguFabVue).toContain("'ai-fab--playing': rippleActive")
+    expect(guguFabVue).toContain('.ai-fab-shell--playing::before')
+    expect(guguFabVue).toContain('.ai-fab-shell--playing::after')
+    expect(guguFabVue).toContain('z-index: 0;')
+    expect(guguFabVue).toContain('z-index: 1;')
+    expect(guguFabVue).not.toContain('.ai-fab--playing::')
+  })
+
+  it('复选框的原生、公共组件和文件选择外观共享无阴影令牌', () => {
+    expect(componentCss).toContain('--control-checkbox-bg-checked: var(--action-primary-bg);')
+    expect(componentCss).toContain('--control-checkbox-fill-inset: 1px;')
+    expect(componentCss).toContain('--control-checkbox-border-checked: var(--action-primary);')
+    expect(componentCss).toContain('--control-checkbox-shadow: none;')
+    expect(globalCss).toContain('box-shadow: var(--control-checkbox-shadow);')
+    expect(checkboxVue).toContain('background:var(--control-checkbox-bg-checked);')
+    expect(checkboxVue).toContain('.app-checkbox__box::before')
+    expect(checkboxVue).toContain('transition:opacity var(--motion-hover-control) var(--motion-ease-standard);')
+    expect(checkboxVue).toContain('.app-checkbox > input:checked + .app-checkbox__box::before { opacity:1; }')
+    expect(checkboxVue).toContain('box-shadow:var(--control-checkbox-shadow);')
+    expect(fileSelectionCheckbox).toContain('background: var(--control-checkbox-bg-checked);')
+    expect(fileSelectionCheckbox).toContain('box-shadow: var(--control-checkbox-shadow);')
+    expect(productCss).not.toContain("input[type='checkbox']")
+  })
+
+  it('原生复选框的勾形在未选中态仍保留，以便勾选和取消都能淡入淡出', () => {
+    const fill = cssBlock(globalCss, 'input[type="checkbox"]:not(.arco-checkbox-icon):not(.app-checkbox__input)::before')
+    const checkedFill = cssBlock(globalCss, 'input[type="checkbox"]:not(.arco-checkbox-icon):not(.app-checkbox__input):checked::before')
+    const mark = cssBlock(globalCss, 'input[type="checkbox"]:not(.arco-checkbox-icon):not(.app-checkbox__input)::after')
+    const checkedMark = cssBlock(globalCss, 'input[type="checkbox"]:not(.arco-checkbox-icon):not(.app-checkbox__input):checked::after')
+
+    expect(fill).toContain('background: var(--control-checkbox-bg-checked);')
+    expect(fill).toContain('opacity: 0;')
+    expect(fill).toContain('transition: opacity var(--motion-hover-control) var(--motion-ease-standard);')
+    expect(checkedFill).toContain('opacity: 1;')
+    expect(mark).toContain('opacity: 0;')
+    expect(mark).toContain('transform: translate(-50%, -50%) rotate(-45deg) scale(.4);')
+    expect(mark).toContain('transition: opacity var(--motion-hover-control) var(--motion-ease-standard), transform var(--motion-hover-control) var(--motion-ease-standard);')
+    expect(checkedMark).toContain('opacity: 1;')
+    expect(checkedMark).toContain('transform: translate(-50%, -50%) rotate(-45deg) scale(1);')
+  })
+
+  it('公共复选框保留盒子与勾选图标 DOM，取消勾选时只淡出图标', () => {
+    expect(checkboxVue).toContain('class="app-checkbox__input"')
+    expect(checkboxVue).toContain('class="app-checkbox__mark"')
+    expect(checkboxVue).not.toContain('svg v-if="modelValue"')
+    expect(checkboxVue).toContain('opacity:0; transform:scale(.4)')
+    expect(checkboxVue).toContain('opacity:1; transform:scale(1)')
+    expect(checkboxVue).toContain('flex:0 0 var(--control-checkbox-size); width:var(--control-checkbox-size); height:var(--control-checkbox-size);')
+    expect(checkboxVue).toContain('border:var(--control-checkbox-border-width) solid var(--control-checkbox-border);')
+    expect(checkboxVue).toContain('.app-checkbox > input:checked + .app-checkbox__box')
+  })
+
+  it('Markdown 表格分割线和隔行底色使用明暗主题语义 token', () => {
+    expect(markdownViewVue).toContain('border: 1px solid var(--border-document-table);')
+    expect(markdownViewVue).toContain('background: var(--surface-soft);')
+    expect(markdownViewVue).toContain('background: var(--surface-soft-hover);')
+    expect(markdownViewVue).not.toContain('border: 1px solid rgba(0,0,0,0.12);')
+    expect(markdownViewVue).not.toContain('background: rgba(0,0,0,0.02);')
+  })
+
+  it('暗色 surface hover 只由主题 refinement 负责', () => {
+    const interactionCss = load('./tokens/interaction-refinements.css')
+    const themeRefinementCss = load('./theme-refinements.css')
+    for (const token of [
+      '--surface-hover-tint', '--card-hover-overlay', '--calendar-cell-hover-bg',
+      '--calendar-weekend-hover-bg', '--calendar-chip-hover-overlay',
+      '--calendar-capsule-hover-overlay', '--gugu-chat-session-hover',
+    ]) {
+      expect(interactionCss, `interaction duplicate ${token}`).not.toContain(`${token}:`)
+    }
+    // 暗色 hover 屏蔽已清理：不允许再用 transparent / 同值自映射把
+    // surface/card/glass 的 hover 压平，暗色与亮色共用 :root 语义 hover token。
+    expect(themeRefinementCss).not.toContain('--surface-hover-tint: transparent')
+    expect(themeRefinementCss).not.toContain('--card-hover-overlay: transparent')
+    expect(themeRefinementCss).not.toContain('--surface-glass-hover: var(--surface-glass)')
+    expect(themeRefinementCss).not.toContain('--glass-card-background-hover: var(--glass-card-background)')
+    expect(themeRefinementCss).not.toContain('--gugu-chat-session-hover: transparent')
+  })
+
+  it('DateSpan 区间内部不叠加普通 hover 背景', () => {
+    expect(datePickerCss).toContain(
+      '.drp-day:hover:not(.sel-start):not(.sel-end):not(.in-range)',
+    )
+    const rangeBlock = cssBlock(datePickerCss, 'html[data-theme][data-family] .drp-day.in-range')
+    expect(rangeBlock).toContain('background: var(--calendar-range-cell-bg)')
+  })
+
+  it('日历月份选择器复用浮层 token，暗色选中月份使用反色前景', () => {
+    expect(themeAdoptionCss).toContain(':is(.cal-month-picker, .month-picker)')
+    expect(themeAdoptionCss).toContain("html[data-theme='dark'][data-family] :is(.cal-month-picker, .month-picker) .picker-month.active")
+    expect(themeAdoptionCss).toContain('color: var(--content-inverse);')
+  })
+
+  it('ViewerToolbar 暗色只重映射 toolbar 局部 token，不复制实体 paint', () => {
+    const darkBlock = cssBlock(viewerToolbarVue, "html[data-theme='dark'][data-family] .iv-toolbar")
+    expect(darkBlock).toContain('--iv-toolbar-bg:')
+    expect(darkBlock).toContain('--iv-toolbar-border: var(--border-strong)')
+    expect(darkBlock).toContain('--iv-toolbar-filter: var(--popup-surface-blur)')
+    expect(darkBlock).not.toMatch(/--iv-toolbar-(?:bg|border|shadow|filter):[^;{}]*(?:#fff\b|white\b|rgba?\(\s*255)/i)
+    expect(viewerToolbarVue).toContain('background: var(--popup-divider)')
+    expect(viewerToolbarVue).not.toContain('--iv-toolbar-separator:')
+    expect(imageViewerVue).not.toContain('iv-toolbar {')
+    expect(eventFormPanelVue).toContain('html[data-theme][data-family] .event-form-body')
+  })
+
+  it('文件工具栏只有一套尺寸和前景契约', () => {
+    expect(occurrences(fileToolbarCss, '--file-toolbar-control-height:')).toBe(1)
+    expect(occurrences(fileToolbarCss, '--file-toolbar-icon-size:')).toBe(1)
+    expect(occurrences(fileToolbarCss, '--file-toolbar-fg:')).toBe(1)
+    expect(fileToolbarCss).toContain('height: var(--file-toolbar-control-height)')
+    expect(fileToolbarCss).toContain('width: var(--file-toolbar-icon-size)')
+    expect(fileToolbarCss).not.toMatch(/border(?:-color)?\s*:[^;]*(?:#fff\b|white\b|rgba?\(\s*255\s*,\s*255\s*,\s*255)/i)
+  })
+
+  it('文件多选工具栏只由共享组件负责 paint，并锚定项目卡非滚动容器', () => {
+    const toolbarBlock = cssBlock(fileSelectionToolbarVue, '\n.file-selection-toolbar {')
+    expect(toolbarBlock).toContain('background: var(--popup-surface-bg)')
+    expect(toolbarBlock).toContain('border: 1px solid var(--popup-surface-border)')
+    expect(toolbarBlock).toContain('backdrop-filter: var(--popup-surface-blur)')
+    expect(toolbarBlock).toContain('color: var(--content-primary)')
+    expect(toolbarBlock).toContain('z-index: var(--layer-popup)')
+    expect(fileSelectionToolbarVue).toContain('background: var(--control-bg)')
+    expect(fileSelectionToolbarVue).toContain('background: var(--danger-button-bg)')
+    expect(fileSelectionToolbarVue).toContain('background: var(--popup-divider)')
+    expect(semanticCss).toContain('--content-divider: var(--theme-divider-color)')
+    expect(componentSurfacesCss).toContain('--popup-divider: var(--content-divider)')
+    expect(componentSurfacesCss).toContain('--panel-divider: var(--content-divider)')
+    expect(fileSelectionToolbarVue).not.toMatch(/(?:#(?:[0-9a-f]{3,8})\b|rgba?\()/i)
+    expect(fileSelectionToolbarVue).not.toContain('!important')
+    expect(fileSelectionToolbarVue).not.toContain('file-action-bar')
+
+    // 页面/项目面板不再保留历史批量栏 paint，避免共享组件之外出现第二个 owner。
+    expect(filesViewVue).not.toMatch(/\.selection-bar\b/)
+    expect(filesViewVue).not.toMatch(/\.sel-(?:count|download-btn|delete-btn|cancel-btn|action-btn|divider)\b/)
+    expect(projectFilesPanelVue).not.toMatch(/\.pm-selection-bar\b/)
+    expect(projectFilesPanelVue).not.toMatch(/\.pm-sel-/)
+
+    // 项目批量栏必须在滚动 file-content 闭合后挂载；absolute bottom 才以动态 modal-right 为基准。
+    expect(projectFilesPanelVue).toContain('</div>\n\n          <!-- 批量栏挂在 modal-right')
+    const modalRightBlock = cssBlock(projectFilesPanelVue, '.modal-right')
+    expect(modalRightBlock).toContain('position: relative')
+  })
+
+  it('文件与文件夹选择态保持原底色并淡出主题遮罩，暗色不产生重复 paint', () => {
+    // 选择态不能切换成另一套近白底色，否则取消选择时会先闪亮再淡出。
+    expect(componentSurfacesCss).toContain('--file-card-bg: rgba(255,255,255,.75);')
+    expect(componentSurfacesCss).toContain('--file-card-bg-hover: rgba(255,255,255,.86);')
+    expect(componentSurfacesCss).not.toContain('--file-card-bg-selected:')
+    expect(componentSurfacesCss).not.toContain('--folder-card-bg-selected:')
+    expect(componentSurfacesCss).toContain('--file-card-border-selected: color-mix(in srgb,var(--action-primary) 55%,transparent);')
+    expect(componentSurfacesCss).toContain('--file-card-selection-overlay: color-mix(in srgb,var(--action-primary) 14%,transparent);')
+    expect(componentSurfacesCss).toContain('--file-card-selection-thumb-overlay: color-mix(in srgb,var(--action-primary) 28%,transparent);')
+    expect(componentSurfacesCss).toContain('--file-card-preselection-thumb-overlay: color-mix(in srgb,var(--action-primary) 16%,transparent);')
+
+    // 两种卡片的选择状态由透明遮罩表达，取消 selected 时可复用同一层淡出。
+    expect(fileCardVue).toContain('background: var(--file-card-bg);')
+    expect(fileCardVue).not.toContain('background: var(--file-card-bg-selected);')
+    expect(fileCardVue).toContain('background: var(--file-card-selection-overlay);')
+    expect(fileCardVue).toContain('background: var(--file-card-selection-thumb-overlay);')
+    expect(cssBlock(fileCardVue, '.fc-card::before')).toContain('opacity: 0;')
+    expect(cssBlock(fileCardVue, '.fc-card.selected::before')).toContain('opacity: 1;')
+    expect(cssBlock(fileCardVue, '.fc-thumb-area::after')).toContain('opacity: 0;')
+    expect(cssBlock(fileCardVue, '.fc-card.selected .fc-thumb-area::after')).toContain('opacity: 1;')
+    expect(fileCardVue).not.toMatch(/background:\s*rgba\(123,127,178/i)
+    expect(fileCardVue).not.toContain('!important')
+    expect(folderCardVue).toContain('background: var(--folder-card-bg);')
+    expect(folderCardVue).toContain('background: var(--folder-card-selection-overlay);')
+    expect(cssBlock(folderCardVue, '.folder-card::before')).toContain('opacity: 0;')
+    expect(cssBlock(folderCardVue, '.folder-card.selected::before')).toContain('opacity: 1;')
+
+    // 暗色沿用同一状态结构，只映射 surface / edge / overlay 令牌。
+    const darkTokens = cssBlock(componentSurfacesCss, "html[data-theme='dark'][data-family]")
+    expect(darkTokens).toContain('--folder-card-bg-base: var(--file-card-bg);')
+    expect(darkTokens).toContain('--file-card-border-selected: var(--action-outline);')
+    expect(darkTokens).toContain('--file-card-selection-overlay: color-mix(in srgb,var(--action-primary) 8%,transparent);')
+    expect(darkTokens).toContain('--file-card-selection-thumb-overlay: color-mix(in srgb,var(--action-primary) 28%,transparent);')
+    expect(darkTokens).toContain('--folder-card-selection-overlay: color-mix(in srgb,var(--action-primary) 8%,transparent);')
+
+    // Legacy bridge / Mono adoption 不得重新获得 fc-card paint 或 border ownership。
+    expect(themeAdoptionCss).not.toMatch(/html\[data-theme[^\n]*\.fc-card/)
+    expect(surfacesCss).not.toMatch(/html\[data-family='mono'\][^{]*\.fc-card/)
+  })
+
+  it('Glass 亮色品牌配色的文件与文件夹选择层使用当前主题主色', () => {
+    const paletteSelection = cssBlock(componentSurfacesCss, "html[data-theme='light'][data-family='glass'][data-palette]")
+    expect(paletteSelection).toContain('--file-card-border-selected: var(--action-outline);')
+    expect(paletteSelection).toContain('--file-card-selection-overlay: color-mix(in srgb,var(--action-primary) 14%,transparent);')
+    expect(paletteSelection).toContain('--file-card-selection-thumb-overlay: color-mix(in srgb,var(--action-primary) 28%,transparent);')
+    expect(paletteSelection).toContain('--file-card-preselection-bg: color-mix(in srgb,var(--action-primary) 6%,var(--file-card-bg));')
+    expect(paletteSelection).toContain('--folder-card-selection-overlay: color-mix(in srgb,var(--action-primary) 14%,transparent);')
+    expect(paletteSelection).not.toMatch(/rgba\(123,\s*127,\s*178/)
+  })
+
+  it('笔记主面板复用常驻 Glass，导航栏和画布控件保留各自的模糊契约', () => {
+    expect(componentCss).toContain('--glass-card-blur: none;')
+    expect(globalCss).toContain('backdrop-filter: var(--glass-card-blur)')
+    expect(productCss).not.toContain('.glass-card:not(.topbar)')
+
+    expect(productCss).not.toContain('--glass-card-blur:')
+
+    expect(appSidebarVue).toContain('backdrop-filter:var(--popup-blur)')
+    const adminLayoutVue = load('../../../web/layouts/AdminLayout.vue')
+    expect(adminLayoutVue).toContain('backdrop-filter: var(--popup-blur);')
+
+    const notes = load('../../views/Mind/NotesThreePaneView.vue')
+    for (const pane of ['ntp-list-surface', 'ntp-detail']) {
+      expect(notes).toContain(`class="${pane} glass-card"`)
+      expect(cssBlock(notes, `.${pane} {`)).not.toContain('backdrop-filter')
+    }
+
+    const noteTimelineVue = load('../../views/Mind/components/NoteTimeline.vue')
+    expect(cssBlock(noteTimelineVue, '.tl-col {')).toContain('--glass-card-blur: var(--glass-blur)')
+    const entityStickerVue = load('../../views/Mind/components/EntitySticker.vue')
+    expect(entityStickerVue).toContain('backdrop-filter: var(--glass-blur)')
+
+    const mindGlass = cssBlock(mindCss, 'html[data-theme][data-family] :is(.canvas-drawer, .canvas-toolbar, .note-picker)')
+    expect(mindGlass).toContain('--glass-card-blur: var(--glass-blur)')
+
+    const chromeBlock = cssBlock(
+      mindCss,
+      "html[data-family='mono'] :is(.canvas-drawer, .canvas-toolbar, .note-picker)",
+    )
+    expect(chromeBlock).toContain('--glass-card-background: var(--chrome-glass-bg)')
+    expect(chromeBlock).toContain('--glass-card-background-hover: var(--chrome-glass-bg)')
+    expect(chromeBlock).toContain('background: var(--glass-card-background)')
+    expect(chromeBlock).toContain('border-color: var(--glass-card-border)')
+    expect(chromeBlock).toContain('box-shadow: var(--glass-card-shadow)')
+    expect(chromeBlock).not.toContain('backdrop-filter:')
+    expect(chromeBlock).not.toMatch(/(?:background|border(?:-color)?)\s*:[^;]*(?:#fff\b|white\b|rgba?\(\s*255\s*,\s*255\s*,\s*255)/i)
+
+    const adminStaticSurfaces = cssBlock(surfacesCss, 'html[data-theme][data-family] .admin-layout :is(')
+    expect(adminStaticSurfaces).toContain('backdrop-filter: none;')
+    expect(adminStaticSurfaces).not.toContain('.save-bar')
+    expect(adminConfigVue).toContain('backdrop-filter: var(--glass-blur);')
+    expect(adminConfigVue).toContain('-webkit-backdrop-filter: var(--glass-blur);')
+    expect(adminStaticSurfaces).toContain('-webkit-backdrop-filter: none;')
+  })
+
+  it('Mono 音乐播放器和暗色播放按钮复用主题 token，不回退到旧亮色渐变', () => {
+    const monoPlayer = cssBlock(surfacesCss, "html[data-family='mono'] .mini-player")
+    expect(monoPlayer).toContain('background: var(--chrome-glass-bg)')
+    expect(monoPlayer).toContain('border-color: var(--chrome-glass-border)')
+    expect(monoPlayer).toContain('backdrop-filter: var(--chrome-glass-blur)')
+
+    const playButton = cssBlock(surfacesCss, "html[data-family='mono'] .mini-player .mp-btn--play,")
+    expect(surfacesCss).toContain("html[data-theme='dark'][data-family] .mini-player .mp-btn--play")
+    expect(playButton).toContain('background: var(--action-primary-bg)')
+    expect(playButton).toContain('color: var(--content-on-accent)')
+    expect(playButton).not.toMatch(/linear-gradient|rgba?\(/i)
+  })
+
+  it('登录、注册、隐私页面只通过主题层接管 paint，亮色 scoped 样式不被覆盖', () => {
+    expect(adoptionIndexCss).toContain("@import './public-pages.css';")
+    expect(publicPagesCss).toContain("html[data-theme='dark'][data-family] :is(.auth-page, .privacy-page)")
+    expect(publicPagesCss).toContain("html[data-theme='dark'][data-family] .auth-page .field input")
+    expect(publicPagesCss).toContain("html[data-theme='dark'][data-family] .privacy-page .privacy-header")
+
+    const selectors = cssSelectors(publicPagesCss)
+    expect(selectors.length).toBeGreaterThan(0)
+    expect(selectors.every(selector =>
+      selector.startsWith("html[data-theme='dark'][data-family]") || selector.startsWith('.admin-login')
+    )).toBe(true)
+    expect(publicPagesCss).not.toMatch(/(?:background|border(?:-color)?)\s*:[^;]*(?:#fff\b|white\b|rgba?\(\s*255\s*,\s*255\s*,\s*255)/i)
+  })
+
+  it('页面 Cafe 配色与便签 Amber 色卡保持独立', () => {
+    expect(brandPalettesCss).toContain("[data-palette='cafe'][data-theme='light']")
+    expect(brandPalettesCss).toContain("[data-palette='cafe'][data-theme='dark']")
+    expect(brandPalettesCss).not.toContain('#ffc05f')
+    expect(load('../../views/Design/components/DesignSystemPage.vue')).toContain("label: 'Amber', token: '--note-paper-amber'")
+  })
+
+  it('真实项目页样板按主题族选择材质层', () => {
+    const designPageVue = load('../../views/Design/components/DesignSystemPage.vue')
+    expect(designPageVue).not.toContain('<GlassBg />')
+    expect(designPageVue).toContain('class="sample-topbar topbar glass-card"')
+    expect(designPageVue).toContain(":global(html[data-family='mono']) .sample-sidebar{background:var(--chrome-glass-bg);border-right-color:var(--chrome-glass-border);box-shadow:var(--chrome-glass-shadow)}")
+    expect(designPageVue).toContain('background:var(--design-card-bg);border:1px solid var(--design-card-border)')
+    expect(designPageVue).not.toContain('--gb-tint:')
+    expect(designPageVue).not.toContain('.sample-main > .sample-topbar:hover')
+    expect(designPageVue).not.toContain('--glass-card-background: var(--column-bg)')
+    expect(designPageVue).not.toContain('border: 1px solid transparent;border-radius:var(--radius-sm)')
+    expect(designPageVue).not.toContain('border:1px solid var(--border-hairline);border-radius:var(--radius-sm);background:var(--column-bg)')
+    expect(designOverridesCss).not.toContain('.design-page .sample-topbar')
+    expect(designOverridesCss).not.toContain("html[data-family='mono'] .design-page .product-frame")
+    expect(designOverridesCss).not.toContain("html[data-family='mono'] .design-page .sample-main > .sample-topbar")
+  })
+
+  it('日历工具栏和终端顶部不重复绘制玻璃边界', () => {
+    expect(globalCss).not.toContain('.glass-card:hover')
+    const pageToolbarVue = load('../../components/common/layout/PageToolbar.vue')
+    expect(pageToolbarVue).toContain('class="page-toolbar glass-card"')
+    expect(pageToolbarVue).not.toContain('<GlassBg')
+
+    const productCss = load('./tokens/product.css')
+    const topbarBlock = cssBlock(productCss, 'html[data-theme][data-family] .topbar')
+    expect(topbarBlock).toContain('box-shadow: var(--glass-card-shadow)')
+    expect(topbarBlock).not.toContain('backdrop-filter:')
+    expect(defaultLayoutVue).toContain('<header v-if="!fullBleed" class="topbar glass-card"')
+    expect(defaultLayoutVue).not.toContain('<GlassBg />')
+    expect(defaultLayoutVue).not.toContain("import GlassBg from")
+    expect(defaultLayoutVue).toContain('background: var(--glass-card-background)')
+    // 玻璃宿主保持静态，hover 只由内部控件提供
+    expect(productCss).not.toContain('.topbar:hover')
+    // terminal-main-head 的 glass token 特例已清理：终端页与其他面板共用标准契约
+    expect(productCss).not.toContain('.terminal-main-head.glass-card')
+    // 终端面板与其他页面共用标准 glass-card 材质。
+    const terminalsVue = load('../../views/Terminals/index.vue')
+    expect(terminalsVue).not.toContain('design-section')
+    expect(terminalsVue).not.toContain('--column-bg')
+  })
+
+  it('咕咕聊天窗口不重复绘制外壳和输入区高光', () => {
+    const productCss = load('./tokens/product.css')
+    const chatBlock = cssBlock(productCss, 'html[data-theme][data-family] .chat-window::after')
+    expect(chatBlock).toContain('box-shadow: none')
+
+    const composerBlock = cssBlock(productCss, 'html[data-theme][data-family] .chat-window .chat-input-row')
+    expect(composerBlock).toContain('box-shadow: none')
+
+    const adoptionCss = load('./theme-adoption.css')
+    const darkChatBlock = cssBlock(adoptionCss, "html[data-theme='dark'][data-family] .chat-window::after")
+    expect(darkChatBlock).toContain('box-shadow: none')
+  })
+
+  it('工具气泡内部内容分割线使用内容分隔色，避免亮色主题变成纯白', () => {
+    expect(guguChatToolBubbleVue).toContain('border-top: 1px solid var(--panel-divider)')
+    expect(guguChatToolBubbleVue).not.toContain('border-top: 1px solid var(--border-default)')
+  })
+
+  it('内容分隔线和虚线边界统一使用随前景色变化的语义 token', () => {
+    expect(semanticCss).toContain('--content-divider: var(--theme-divider-color)')
+    expect(semanticCss).toMatch(/--content-outline:\s*color-mix\(in srgb,\s*var\(--theme-content-primary\) 10%, transparent\)/)
+    expect(componentCss).toContain('--inline-action-border: var(--content-outline);')
+
+    const glassBorderToken = /var\(--border-(?:hairline|subtle|default|strong|hover)\)/
+    const separatorProperty = /^border-(?:top|bottom|left|right)(?:-color)?$/
+    const dottedOutlineProperty = /^border(?:-(?:top|bottom|left|right))?$/
+    const violations: string[] = []
+
+    for (const file of frontendStyleFiles(resolve(process.cwd(), 'src'))) {
+      const source = readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+      for (const match of source.matchAll(/(?:^|[;{}])\s*(border(?:-(?:top|bottom|left|right)(?:-color)?|))\s*:\s*([^;{}]+)/g)) {
+        const [, property, value] = match
+        const isSeparator = separatorProperty.test(property)
+        const isDottedOutline = dottedOutlineProperty.test(property) && /\b(?:dashed|dotted)\b/.test(value)
+        if ((isSeparator || isDottedOutline) && glassBorderToken.test(value)) {
+          violations.push(`${file}: ${property}: ${value.trim()}`)
+        }
+      }
+    }
+
+    expect(violations).toEqual([])
+  })
+
+  it('咕咕聊天窗口离场时保留玻璃材质，避免 blur 先于淡出消失', () => {
+    const leaveBlock = guguChatVue.match(/\.chat-open-leave-active\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
+    expect(leaveBlock).not.toContain('backdrop-filter: var(--glass-blur)')
+    expect(leaveBlock).not.toContain('-webkit-backdrop-filter: var(--glass-blur)')
+    expect(leaveBlock).toContain('transition: opacity')
+  })
+})

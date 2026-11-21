@@ -241,7 +241,7 @@ export function loadConfig(env: NodeJS.ProcessEnv, configOverridePath: string | 
     }),
     staticRoot: env.GUGU_WEBUI_STATIC_DIR?.trim()
       ? resolve(env.GUGU_WEBUI_STATIC_DIR.trim())
-      : resolve(dirname(fileURLToPath(import.meta.url)), '../../web/dist'),
+      : resolve(dirname(fileURLToPath(import.meta.url)), '../../ui/dist'),
   }
   Object.defineProperty(config, 'databaseUrl', {
     value: databaseUrl,

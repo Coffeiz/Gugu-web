@@ -1,10 +1,12 @@
-import { createReadFileTool, createPresentFileTool, createSaveUploadedFileTool, createListRecentAttachmentsTool, createDeleteFileTool, createDeleteFolderTool, createListTrashTool, createTrashRestoreTools } from './index.js'
+import { CoreError } from '../../contracts/index.js'
+import { agentProjectDispatchKey } from './projects/creation-port.js'
+import { createPresentFileTool, createListRecentAttachmentsTool, createDeleteFileTool, createDeleteFolderTool, createListTrashTool, createTrashRestoreTools } from './index.js'
 import { createGroupContextSearchTool, createImOwnerSessionBindTool, type GroupContextSearchPort, type ImOwnerSessionBindPort } from './index.js'
 import { createImReactionTools, type ImReactionPort } from '../../im/reaction-tool.js'
 import { createNoteLifecycleTools, createNoteWriteTools, type NoteLifecyclePort, type createNoteWritePort, type ToolDefinition } from './index.js'
 import { createLinkButtonsTools, type LinkButtonDeliveryPort } from './index.js'
 import { createAskUserTool, createCallToolAdapter, type AskUserAuthorizationPort } from './index.js'
-import type { FileFolderDeletePort, FileDeletePort, ReadFilePorts, SaveUploadedFilePort, RecentAttachmentsPort, FilePresentationPort } from './index.js'
+import type { FileFolderDeletePort, FileDeletePort, ReadFilePorts, RecentAttachmentsPort, FilePresentationPort } from './index.js'
 import type { TrashRestorePort } from './index.js'
 import { createConversationReadTool, createConversationSearchTool, type ConversationReadPort, type ConversationSearchPort } from './index.js'
 import { createMemorySearchTool, createRememberTool, type MemorySearchPort, type RememberMemoryPort } from './index.js'
@@ -18,11 +20,11 @@ import type { createAgentCalendarReader, CalendarEventReadPort } from '../../cal
 import type { createAgentMindReader } from '../../mind/index.js'
 import type { SqlDataRuntime } from '../../data/index.js'
 import { type GlobalSearchOperations, type DashboardCountPort, type createAgentWorkspaceQueries } from '../../index.js'
-import { createClientTools, createClientDeleteTool, createCanvasReadTools, createWorkspaceUpdateTool, createWorkspaceTool, createWorkspaceUnlinkTool, createNoteReadTools, createGetToolSchemaTool, createProjectStageTools, createListEventsTool, createCalendarEventCreateTool, createCalendarEventUpdateTool, createCalendarDeleteTool, createWorkspaceReadTools, createDashboardStatsTool, createProjectMutationTools, createGlobalSearchTool, createUpcomingTool, createGetProjectTool, createListProjectsTool, createListScheduledTasksTool, createProjectCreationPort, createProjectTool, createTimeTool, createToolRegistry, createUseSkillTool, createHttpGetTool } from './index.js'
+import { createClientTools, createClientDeleteTool, createCanvasReadTools, createWorkspaceUpdateTool, createWorkspaceTool, createWorkspaceUnlinkTool, createNoteReadTools, createSearchToolsTool, createProjectStageTools, createListEventsTool, createCalendarEventCreateTool, createCalendarEventUpdateTool, createCalendarDeleteTool, createWorkspaceReadTools, createDashboardStatsTool, createProjectMutationTools, createGlobalSearchTool, createUpcomingTool, createGetProjectTool, createListProjectsTool, createListScheduledTasksTool, createProjectCreationPort, createProjectTool, createTimeTool, createToolRegistry, createUseSkillTool, createHttpGetTool } from './index.js'
 import type { ClientDeletePort, CalendarDeletePort, CalendarEventCreateToolPort, CalendarEventUpdateToolPort, WorkspaceMutationPort, WorkspaceCreatePort, ProjectMutationPort, TrashListPort, ProjectFileOverview, ScheduledTaskListPort, UseSkillPorts } from './index.js'
 import type { ProjectCreateRuntime } from '../../projects/project-create.js'
 
-type AuthorizedToolName = 'shell' | 'create_project' | 'list_clients' | 'create_client' | 'update_client' | 'delete_client' | 'list_projects' | 'get_project' | 'get_current_time' | 'use_skill' | 'list_scheduled_tasks' | 'create_scheduled_task' | 'update_scheduled_task' | 'delete_scheduled_task' | 'global_search' | 'get_upcoming' | 'list_trash' | 'restore_file' | 'restore_folder' | 'permanent_delete' | 'list_events' | 'create_event' | 'update_event' | 'delete_event' | 'list_workspaces' | 'create_workspace' | 'unlink_workspace' | 'delete_workspace_directory' | 'undo_last_action' | 'get_dashboard_stats' | 'update_project' | 'set_color' | 'archive_project' | 'add_stage' | 'remove_stage' | 'rename_stage' | 'set_stages' | 'update_stage' | 'note_search' | 'note_get' | 'get_tool_schema' | 'canvas_list' | 'canvas_get' | 'canvas_search' | 'canvas_focus_node' | 'update_workspace' | 'canvas_search_placeable' | 'canvas_create' | 'canvas_batch' | 'canvas_delete_note' | 'canvas_disconnect' | 'canvas_delete' | 'list_skills' | 'create_skill' | 'update_skill' | 'call_tool' | 'manage_mcp_servers' | 'http_get' | 'web_search' | 'similar_image_search' | 'deep_research' | 'delete_skill' | 'note_create' | 'note_update' | 'canvas_update_node' | 'canvas_remove_node' | 'canvas_update_note' | 'canvas_create_note' | 'canvas_add_node' | 'canvas_update_anchor' | 'canvas_connect' | 'note_delete' | 'note_restore' | 'note_undo' | 'read_file' | 'view_image' | 'delete_folder' | 'delete_file' | 'send_file' | 'present_file' | 'save_uploaded_file' | 'list_recent_attachments' | 'send_email' | 'delete_knowledge' | 'delete_project' | 'web_download' | 'remember'
+type AuthorizedToolName = 'shell' | 'create_project' | 'list_clients' | 'create_client' | 'update_client' | 'delete_client' | 'list_projects' | 'get_project' | 'get_current_time' | 'use_skill' | 'list_scheduled_tasks' | 'create_scheduled_task' | 'update_scheduled_task' | 'delete_scheduled_task' | 'global_search' | 'get_upcoming' | 'list_trash' | 'restore_file' | 'restore_folder' | 'permanent_delete' | 'list_events' | 'create_event' | 'update_event' | 'delete_event' | 'list_workspaces' | 'create_workspace' | 'unlink_workspace' | 'delete_workspace_directory' | 'undo_last_action' | 'get_dashboard_stats' | 'update_project' | 'set_color' | 'archive_project' | 'add_stage' | 'remove_stage' | 'rename_stage' | 'set_stages' | 'update_stage' | 'note_search' | 'note_get' | 'search_tools' | 'canvas_list' | 'canvas_get' | 'canvas_search' | 'canvas_focus_node' | 'update_workspace' | 'canvas_search_placeable' | 'canvas_create' | 'canvas_batch' | 'canvas_delete_note' | 'canvas_disconnect' | 'canvas_delete' | 'list_skills' | 'create_skill' | 'update_skill' | 'call_tool' | 'manage_mcp_servers' | 'http_get' | 'web_search' | 'similar_image_search' | 'deep_research' | 'delete_skill' | 'note_create' | 'note_update' | 'canvas_update_node' | 'canvas_remove_node' | 'canvas_update_note' | 'canvas_create_note' | 'canvas_add_node' | 'canvas_update_anchor' | 'canvas_connect' | 'note_delete' | 'note_restore' | 'note_undo' | 'read_file' | 'view_image' | 'delete_folder' | 'delete_file' | 'send_file' | 'present_file' | 'save_attachment' | 'list_recent_attachments' | 'send_email' | 'delete_knowledge' | 'delete_project' | 'web_download' | 'remember'
 
 import type { RunIdentity } from '../models.js'
 
@@ -33,7 +35,6 @@ export interface OwnerToolOptions {
   core: SqlDataRuntime
   /** 没有可信项目创建后端时，不开放创建工具。 */
   projects?: ProjectCreateRuntime
-  projectDispatchKey?: NonNullable<Parameters<typeof createProjectCreationPort>[0]['keyForCall']>
   /** 可信权限服务；模型输出不得决定此权限。 */
   authorize(identity: RunIdentity, name: AuthorizedToolName | 'send_link_buttons' | 'ask_user' | 'restore_file' | 'restore_folder' | 'read_conversation' | 'search_conversations' | 'search_memory' | 'read_knowledge' | 'save_knowledge' | 'update_knowledge'): Promise<boolean>
   /** 历史正文读取必须限定可信 owner；缺少共享读取服务时不开放。 */
@@ -53,7 +54,6 @@ export interface OwnerToolOptions {
   callTool?: boolean
   webSearch?: ToolDefinition
   webDownload?: ToolDefinition
-  saveImAttachment?: ToolDefinition
   deepResearch?: ToolDefinition
   similarImageSearch?: ToolDefinition
   mcpManagement?: ToolDefinition
@@ -64,7 +64,7 @@ export interface OwnerToolOptions {
   shell?: import('./index.js').ToolDefinition
   fileFolderDelete?: FileFolderDeletePort
   fileDelete?: FileDeletePort
-  saveUploadedFile?: SaveUploadedFilePort
+  saveAttachment?: ToolDefinition
   recentAttachments?: RecentAttachmentsPort
   /** 文件库、附件与安全公网图片的产物准备能力；没有能力时不注册。 */
   sendFile?: ToolDefinition
@@ -74,6 +74,7 @@ export interface OwnerToolOptions {
   sendEmail?: ToolDefinition
   /** 未提供可信用户时区时，不能开放时间工具。 */
   time?: { now(): Date; timezone(identity: RunIdentity): Promise<string> }
+  currentTime?: NonNullable<OwnerToolOptions['time']>
   /** 仅在可按用户和项目安全读取文件概览时开放项目详情。 */
   fileOverview?: (identity: RunIdentity, projectId: number, signal: AbortSignal) => Promise<ProjectFileOverview>
   /** 技能来源和用户权限由可信 Host 提供；缺少能力时不开放。 */
@@ -86,6 +87,7 @@ export interface OwnerToolOptions {
   clientDelete?: ClientDeletePort
   /** 复用共享搜索服务，来源能力由可信 Host 明确装配。 */
   search?: GlobalSearchOperations
+  searchAvailableSources?: boolean
   /** 可信日历读取能力；近期待办同时依赖用户时区。 */
   events?: CalendarEventReadPort
   /** 日历事件删除需同时提供目标确认和事务内 claim，缺少时不注册。 */
@@ -138,18 +140,35 @@ export interface OwnerToolOptions {
 
 /** 复用 Core 注册器和 Host 项目事务；危险工具未接确认门前不注册。 */
 export function createOwnerToolRegistry(options: OwnerToolOptions) {
-  const createProject = options.projects && options.projectDispatchKey
-    ? createProjectCreationPort({ runtime: options.projects, keyForCall: options.projectDispatchKey })
+  const currentTime = options.currentTime ?? options.time
+  const createProject = options.projects
+    ? createProjectCreationPort({
+      runtime: options.projects,
+      keyForCall({ identity, roundId, toolCallId }) {
+        const sessionId = Number(identity.sessionId)
+        if (!/^[1-9]\d*$/.test(identity.sessionId) || !Number.isSafeInteger(sessionId))
+          throw new CoreError('invalid_request', '工具运行身份无效')
+        const key = agentProjectDispatchKey({ sessionId, runId: identity.runId, roundId, toolCallId })
+        if (!key) throw new CoreError('invalid_request', '工具运行身份无效')
+        return key
+      },
+    })
     : null
+  const clientDelete = options.clientDelete?.confirmation ? createClientDeleteTool(options.clientDelete) : undefined
   const registry: ReturnType<typeof createToolRegistry> = createToolRegistry({
     confirmationGatedDestructiveTool: options.shell,
-    confirmationGatedDestructiveTools: options.diskTrashTools?.filter(tool => tool.destructive),
+    confirmationGatedDestructiveTools: [
+      ...(options.diskTrashTools?.filter(tool => tool.destructive) ?? []),
+      ...(options.knowledgeDelete?.destructive ? [options.knowledgeDelete] : []),
+      ...(options.skillDelete?.destructive ? [options.skillDelete] : []),
+      ...(clientDelete?.destructive ? [clientDelete] : []),
+      ...(options.sendEmail?.destructive ? [options.sendEmail] : []),
+    ],
     groups: [
       { id: 'files', name: '文件和附件', tools: [
         ...(options.viewImage ? [options.viewImage] : []),
-        ...(options.readFile ? [createReadFileTool(options.readFile)] : []),
         ...(options.presentFile ? [createPresentFileTool(options.presentFile)] : []),
-        ...(options.saveUploadedFile ? [createSaveUploadedFileTool(options.saveUploadedFile)] : []),
+        ...(options.saveAttachment ? [options.saveAttachment] : []),
         ...(options.recentAttachments ? [createListRecentAttachmentsTool(options.recentAttachments)] : []),
         ...(options.fileDelete && !options.diskTrashTools?.some(tool => tool.definition.name === 'delete_file') ? [createDeleteFileTool(options.fileDelete)] : []),
         ...(options.fileFolderDelete ? [createDeleteFolderTool(options.fileFolderDelete)] : []),
@@ -163,13 +182,13 @@ export function createOwnerToolRegistry(options: OwnerToolOptions) {
           ...(options.trashPurge?.requiresInteraction && options.trashPurge.confirmationReplay ? [options.trashPurge] : []),
         ],
       }] : []),
-      { id: 'clients', name: '联系人', tools: [...createClientTools(options.core), ...(options.clientDelete?.confirmation ? [createClientDeleteTool(options.clientDelete)] : [])] },
+      { id: 'clients', name: '联系人', tools: [...createClientTools(options.core), ...(clientDelete && !clientDelete.destructive ? [clientDelete] : [])] },
       ...(options.conversations || options.conversationSearch ? [{ id:'conversations', name:'历史对话', tools:[...(options.conversations?[createConversationReadTool(options.conversations)]:[]),...(options.conversationSearch?[createConversationSearchTool(options.conversationSearch)]:[])] }] : []),
       ...(options.memorySearch || options.remember ? [{ id: 'memory', name: '记忆', tools: [
         ...(options.memorySearch ? [createMemorySearchTool(options.memorySearch)] : []),
         ...(options.remember ? [createRememberTool(options.remember, () => (options.time?.now() ?? new Date()).getTime() / 1000)] : []),
       ] }] : []),
-      ...(options.knowledge || options.knowledgeWrites || options.knowledgeDelete ? [{ id:'knowledge', name:'知识', tools:[...(options.knowledge?[createKnowledgeReadTool(options.knowledge)]:[]),...(options.knowledgeWrites?createKnowledgeWriteTools(options.knowledgeWrites):[]),...(options.knowledgeDelete?[options.knowledgeDelete]:[])] }] : []),
+      ...(options.knowledge || options.knowledgeWrites || options.knowledgeDelete ? [{ id:'knowledge', name:'知识', tools:[...(options.knowledge?[createKnowledgeReadTool(options.knowledge)]:[]),...(options.knowledgeWrites?createKnowledgeWriteTools(options.knowledgeWrites):[]),...(options.knowledgeDelete && !options.knowledgeDelete.destructive ? [options.knowledgeDelete] : [])] }] : []),
       ...(options.webSearch || options.deepResearch || options.similarImageSearch ? [{
         id: 'web_search', name: '联网搜索', tools: [
           ...(options.webSearch ? [options.webSearch] : []),
@@ -220,16 +239,15 @@ export function createOwnerToolRegistry(options: OwnerToolOptions) {
         ...(options.canvasPlaceableSearch ? [createCanvasPlaceableSearchTool(options.canvasPlaceableSearch)] : []),
         ...(options.canvasCreation ? [createCanvasCreateTool(options.canvasCreation)] : []),
       ]}] : []),
-      ...(options.skillMetadata || options.skillManagement || options.skillDelete ? [{id:'skill_management',name:'技能管理',tools:[...(options.skillMetadata?createSkillManagementReadTools(options.skillMetadata):[]),...(options.skillManagement??[]),...(options.skillDelete?[options.skillDelete]:[])]}] : []),
-      ...(options.search ? [{ id: 'global_search', name: '站内搜索', tools: [createGlobalSearchTool(options.search)] }] : []),
-      ...(options.time ? [{ id: 'time', name: '时间', tools: [createTimeTool(options.time)] }] : []),
+      ...(options.skillMetadata || options.skillManagement || options.skillDelete ? [{id:'skill_management',name:'技能管理',tools:[...(options.skillMetadata?createSkillManagementReadTools(options.skillMetadata):[]),...(options.skillManagement??[]),...(options.skillDelete && !options.skillDelete.destructive ? [options.skillDelete] : [])]}] : []),
+      ...(options.search ? [{ id: 'global_search', name: '站内搜索', tools: [createGlobalSearchTool(options.search, options.searchAvailableSources)] }] : []),
+      ...(currentTime ? [{ id: 'time', name: '时间', tools: [createTimeTool(currentTime)] }] : []),
       ...(options.imOwnerSession ? [{ id: 'im_owner_session', name: '私聊会话绑定', tools: [createImOwnerSessionBindTool(options.imOwnerSession)] }] : []),
       ...(options.imReaction ? [{ id: 'im_reaction', name: '表情回应', tools: createImReactionTools('feishu', options.imReaction.port) }] : []),
       ...(options.groupContext ? [{ id: 'group_context', name: '当前群上下文', tools: [createGroupContextSearchTool(options.groupContext)] }] : []),
-      { id: 'meta', name: '元工具', tools: [createGetToolSchemaTool(identity=>registry.capabilities(identity)),...(options.skills?[createUseSkillTool(options.skills)]:[]),...(options.askUser?[createAskUserTool(options.askUser)]:[]),...(options.callTool?[createCallToolAdapter()]:[])] },
+      { id: 'meta', name: '元工具', tools: [createSearchToolsTool(identity=>registry.capabilities(identity)),...(options.skills?[createUseSkillTool(options.skills)]:[]),...(options.askUser?[createAskUserTool(options.askUser)]:[]),...(options.callTool?[createCallToolAdapter()]:[])] },
       ...(options.notes || options.noteLifecycle || options.noteWrites ? [{id:'mind',name:'思维笔记',tools:[...(options.notes?createNoteReadTools(options.notes):[]),...(options.noteLifecycle?createNoteLifecycleTools(options.noteLifecycle):[]),...(options.noteWrites?createNoteWriteTools(options.noteWrites):[])]}] : []),
-      ...(options.saveImAttachment ? [{ id: 'downloads', name: '下载', tools: [options.saveImAttachment] }] : []),
-      ...(options.sendEmail ? [{ id: 'email', name: '邮件', tools: [options.sendEmail] }] : []),
+      ...(options.sendEmail && !options.sendEmail.destructive ? [{ id: 'email', name: '邮件', tools: [options.sendEmail] }] : []),
       ...(options.scheduledTasks || options.scheduledTaskWrites?.length || options.scheduledTaskDelete ? [{
         id: 'scheduled_tasks', name: '定时任务', tools: [
           ...(options.scheduledTasks ? [createListScheduledTasksTool(options.scheduledTasks)] : []),

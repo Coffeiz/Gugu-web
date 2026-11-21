@@ -5,7 +5,7 @@ import { normalizeFileOwnerId } from '../../../files/store.js'
 import type { ImAttachmentScope } from '../inbound/attachments.js'
 import { imAttachmentScopeKey } from '../inbound/attachments.js'
 import { createImInboundEnvelope } from '../inbound/envelope.js'
-import { imConversationDigest, imConversationFingerprint, imConversationScopeHash } from './identity.js'
+import { imConversationEventId, imConversationDigest, imConversationFingerprint, imConversationScopeHash } from './identity.js'
 
 export class ImRunScopeError extends Error { constructor() { super('IM 运行投递范围不可用'); this.name = 'ImRunScopeError' } }
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
@@ -53,7 +53,7 @@ function createImRunSourceProofUnchecked(options: { pool: Pick<Pool, 'query'>; s
         const scopeHash = imConversationScopeHash(options.secretKey, binding, stored)
         const attachments = Array.isArray(stored.attachments) ? stored.attachments.map(item => typeof item === 'string' ? item : object(item) ? item.attach_id : null) : []
         if (attachments.some(id => typeof id !== 'string') || row.scope_hash !== scopeHash
-          || row.event_hash !== imConversationDigest(options.secretKey, [scopeHash, stored.platform_user_id, stored._pending_ask_resume_id || stored.platform_message_id || stored.message_id])
+          || row.event_hash !== imConversationDigest(options.secretKey, [scopeHash, stored.platform_user_id, imConversationEventId(stored)])
           || row.fingerprint !== imConversationFingerprint(options.secretKey, scopeHash, stored, attachments as string[])
           || stored.platform_user_id !== row.platform_user_id || fact.platform_user_id !== row.platform_user_id
           || native(stored) !== native(fact) || stored.context_token !== fact.context_token || stored.chat_id !== fact.chat_id

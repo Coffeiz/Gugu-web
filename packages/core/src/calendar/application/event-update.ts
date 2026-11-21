@@ -33,6 +33,7 @@ export interface EventUpdateReminderRecord {
   enabled: boolean
   name: string
   payload: string
+  execution_mode?: PreparedEventReminder['executionMode']
   cron: string
   schedule_kind: string
   start_at: Date | string | null

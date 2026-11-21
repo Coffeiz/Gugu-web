@@ -3,6 +3,8 @@ import { normalizeSchedule, type ScheduleInput, type ScheduleSpec } from './norm
 /** 共享写入服务可安全返回的引用校验错误。 */
 export class ScheduledTaskReferenceError extends TypeError {}
 
+export type ScheduledTaskMode = 'reminder' | 'instruction'
+
 export interface ScheduledTaskCreateInput extends ScheduleInput {
   name: unknown
   event_id?: unknown
@@ -42,6 +44,10 @@ export function validateScheduledTaskWriteFields(input: Record<string, unknown>,
     if (typeof input.name !== 'string' || (create && (!input.name.length || [...input.name].length > 100)))
       throw new TypeError('任务名称无效')
   }
+  if (owns(input, 'execution_mode') && input.execution_mode !== 'reminder' && input.execution_mode !== 'instruction')
+    throw new TypeError('任务模式无效')
+  if (input.execution_mode === 'reminder' && (create || owns(input, 'payload')) && (typeof input.payload !== 'string' || !input.payload.trim()))
+    throw new TypeError('请输入提醒内容')
   if (input.payload != null && typeof input.payload !== 'string') throw new TypeError('任务内容无效')
   if (input.enabled != null && typeof input.enabled !== 'boolean') throw new TypeError('enabled 必须是布尔值')
   if (input.channels != null && (!Array.isArray(input.channels) || input.channels.some(item => typeof item !== 'string')))

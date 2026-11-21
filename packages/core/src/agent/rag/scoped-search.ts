@@ -4,13 +4,20 @@ import { createRagLexicalIndex } from './lexical-index.js'
 import { rankCandidates } from './ranking/rank-candidates.js'
 import { readRagDocumentVectors, type RagVectorSource } from './vector-reader.js'
 
+export interface ScopedRagVectors {
+  version: string
+  source(owner: string, signal?: AbortSignal): Promise<RagVectorSource>
+  embed(owner: string, query: string, signal?: AbortSignal): Promise<readonly number[]>
+  readDocuments?(owner: string, documents: readonly RagDocument[], signal?: AbortSignal): Promise<Record<string, number[]>>
+}
+
 /** 身份、scope、授权快照、向量文件和 embedding 均由可信 Host 提供。 */
 export function createScopedRagSearch(ports:{
  index:ReturnType<typeof createSqlRagPersistentIndexReader>
  authorize(owner:string,scope:RagSearchScope,signal?:AbortSignal):Promise<boolean>
  /** 可选可信事实复核：在排序/向量/结果投影前裁剪过期索引与邻文；不能自行授予scope。 */
  filterDocuments?(documents:readonly RagDocument[],signal?:AbortSignal):Promise<readonly RagDocument[]>
- vectors?:{version:string;source(owner:string,signal?:AbortSignal):Promise<RagVectorSource>;embed(owner:string,query:string,signal?:AbortSignal):Promise<readonly number[]>}
+ vectors?:ScopedRagVectors
 }) {
  return async(owner:string,scope:RagSearchScope|readonly RagSearchScope[],query:string,options:{sourceTypes:readonly string[];limit:number;beforeMessageId?:number;selectionMode?:'confidence'|'top_k';excludeContentHashes?:readonly string[]},signal?:AbortSignal)=>{
   signal?.throwIfAborted()
@@ -59,8 +66,9 @@ export function createScopedRagSearch(ports:{
    if(queryVector.length){
     const source=await ports.vectors.source(owner,signal)
     const vectorMap=await readRagDocumentVectors(documents,ports.vectors.version,source,signal,owner)
+    const cached=await ports.vectors.readDocuments?.(owner,documents,signal)
     signal?.throwIfAborted()
-    fused=index.searchHybrid(owner,query,50,options.sourceTypes,trustedScope,{vectors:new Map(Object.entries(vectorMap)),queryVector,vectorVersion:ports.vectors.version,expectedVersion:ports.vectors.version})
+    fused=index.searchHybrid(owner,query,50,options.sourceTypes,trustedScope,{vectors:new Map(Object.entries({...cached,...vectorMap})),queryVector,vectorVersion:ports.vectors.version,expectedVersion:ports.vectors.version})
    }else{
     // Python 在 embedding 未配置/请求失败时退回同一 owner scope 下的词法召回。
     if(!fallbackReason)fallbackReason='embedding_empty'

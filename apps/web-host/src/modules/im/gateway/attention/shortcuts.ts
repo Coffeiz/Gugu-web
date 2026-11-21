@@ -1,5 +1,5 @@
 import { decideImShortcut } from '@gugu/core/im/shortcut'
-import type { ImPreflightPorts } from '@gugu/core/im/inbound-preflight'
+import type { ImPreflightPorts } from '@gugu/gateway'
 import { ImShortcutUnavailable, type createPostgresImShortcut } from './receipts.js'
 
 /** 将纯意图与正式PG目标收据相连；不以当前会话ID重新寻找取消目标。 */

@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { dirname,relative,resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
@@ -59,4 +59,29 @@ it('Agent、Provider和共用Executor可移植入口的运行依赖闭包不装�
   for (const entry of entries.slice(1, 7))
     expect(visited.has(resolve(source, entry)), `${entry} must remain inside the Core Agent runtime`).toBe(true)
   expect(visited.size).toBeGreaterThan(2)
+})
+
+it('IM Gateway 依赖 Core，Core 不反向依赖 Gateway', () => {
+  const core = fileURLToPath(new URL('../../../', import.meta.url))
+  const gateway = resolve(core, '../gateway')
+  const coreManifest = JSON.parse(readFileSync(resolve(core, 'package.json'), 'utf8'))
+  const gatewayManifest = JSON.parse(readFileSync(resolve(gateway, 'package.json'), 'utf8'))
+  expect(gatewayManifest.dependencies['@gugu/core']).toBeDefined()
+  for (const field of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
+    expect(coreManifest[field]?.['@gugu/gateway']).toBeUndefined()
+  }
+
+  const source = resolve(core, 'src')
+  for (const path of readdirSync(source, { recursive: true, encoding: 'utf8' })) {
+    if (!/\.[cm]?ts$/.test(path)) continue
+    const file = resolve(source, path)
+    const { importedFiles } = ts.preProcessFile(readFileSync(file, 'utf8'), true, true)
+    for (const { fileName } of importedFiles) {
+      expect(fileName, path).not.toMatch(/^@gugu\/gateway(?:\/|$)/)
+      if (fileName.startsWith('.')) {
+        const fromGateway = relative(gateway, resolve(dirname(file), fileName))
+        expect(fromGateway.startsWith('..'), path).toBe(true)
+      }
+    }
+  }
 })

@@ -36,7 +36,7 @@ export const BUILTIN_AGENT_TOOL_STATE_LABELS: Readonly<Record<string, string>> =
   get_current_time: '获取当前时间',
   get_dashboard_stats: '总览统计',
   get_project: '项目详情',
-  get_tool_schema: '获取工具 Schema',
+  search_tools: '搜索工具',
   get_upcoming: '近期待办',
   get_workspace: '查看工作区',
   global_search: '站内全局搜索',

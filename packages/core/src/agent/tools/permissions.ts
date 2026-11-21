@@ -8,7 +8,7 @@ export interface ToolPermissionContext {
 }
 
 const safe = new Set(['get_current_time'])
-const fixed = new Set(['call_tool', 'get_tool_schema', 'use_skill', 'ask_user'])
+const fixed = new Set(['call_tool', 'search_tools', 'use_skill', 'ask_user'])
 const skillManagement = new Set(['list_skills', 'create_skill', 'update_skill', 'delete_skill'])
 const publicPlatforms = new Set(['qq', 'telegram', 'feishu', 'wechat'])
 
@@ -29,7 +29,7 @@ export function canUseTool(name: string, context: ToolPermissionContext): boolea
       && (context.currentIm.chatType === null || typeof context.currentIm.chatType === 'string')
       && typeof context.currentIm.groupAutoReply === 'boolean'))) throw new TypeError('工具权限上下文无效')
   if (name === 'choose_no_reply') return context.currentIm?.chatType === 'group' && context.currentIm.groupAutoReply === true
-  if (name === 'present_file' && context.platform) return false
+  if (name === 'present_file' && context.platform !== null && context.platform !== 'desktop') return false
   if (name === 'bind_web_session' && (context.imRole !== 'owner' || context.chatType !== 'c2c' || context.platform === null || !publicPlatforms.has(context.platform))) return false
   if (name === 'send_link_buttons' && context.chatType === 'group' && context.platform !== null && publicPlatforms.has(context.platform)) return true
   if (skillManagement.has(name)) return context.imRole === null || context.imRole === 'owner'

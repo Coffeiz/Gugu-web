@@ -1,12 +1,12 @@
 {
-  "apps/web-host/tests/admin/debug-log-time.test.ts": {"domain": "api", "layer": "L1", "owner": "apps/web-host/src/shared/logging.ts", "productionEntry": "apps/web-host/src/main.ts", "keyBehavior": "Node 控制台日志记录发生时间并保留参数格式", "ci": "node-webui"},
-  "apps/web-host/tests/admin/admin-user-status-postgres.test.ts": {"domain": "api", "layer": "L2", "owner": "apps/web-host/src/modules/admin/user-status.ts", "productionEntry": "apps/web-host/src/main.ts", "keyBehavior": "冻结解冻 PostgreSQL 事务、失败回滚及其他用户隔离", "ci": "node-webui"},
-  "apps/web-host/tests/admin/account-memory-cleanup-runtime.test.ts": {"domain": "api", "layer": "L1", "owner": "apps/web-host/src/modules/admin/memory-cleanup.ts", "productionEntry": "apps/web-host/src/main.ts", "keyBehavior": "注入 Redis 与存储端口后空预览、应用与租约释放", "ci": "node-webui"},
-  "apps/web-host/tests/admin/email-recipients.test.ts": {"domain": "api", "layer": "L1", "owner": "apps/web-host/src/modules/admin/email.ts", "productionEntry": "apps/web-host/src/main.ts", "keyBehavior": "活跃订阅收件人与语言分类", "ci": "node-webui"},
-  "apps/web-host/tests/admin/core-storage-reconcile.test.ts": {"domain": "api", "layer": "L1", "owner": "apps/web-host/src/modules/admin/storage.ts", "productionEntry": "apps/web-host/src/main.ts", "keyBehavior": "配额对账与并发控制", "ci": "node-webui"},
-  "apps/web-host/tests/admin/core-security-events.test.ts": {"domain": "api", "layer": "L1", "owner": "apps/web-host/src/modules/admin/audit.ts", "productionEntry": "apps/web-host/src/main.ts", "keyBehavior": "安全事件过滤与脱敏", "ci": "node-webui"},
-  "apps/web-host/tests/admin/core-user-readers.test.ts": {"domain": "api", "layer": "L1", "owner": "apps/web-host/src/modules/admin/user-management.ts", "productionEntry": "apps/web-host/src/main.ts", "keyBehavior": "管理员用户列表和风险汇总", "ci": "node-webui"},
-  "apps/web-host/tests/admin/safe-egress-probe.test.ts": {
+  "apps/web-host/tests/admin/logs/time.test.ts": {"domain": "api", "layer": "L1", "owner": "apps/web-host/src/shared/logging.ts", "productionEntry": "apps/web-host/src/main.ts", "keyBehavior": "Node 控制台日志记录发生时间并保留参数格式", "ci": "node-webui"},
+  "apps/web-host/tests/admin/users/status.postgres.test.ts": {"domain": "api", "layer": "L2", "owner": "apps/web-host/src/modules/admin/user-status.ts", "productionEntry": "apps/web-host/src/main.ts", "keyBehavior": "冻结解冻 PostgreSQL 事务、失败回滚及其他用户隔离", "ci": "node-webui"},
+  "apps/web-host/tests/admin/memory/cleanup.test.ts": {"domain": "api", "layer": "L1", "owner": "apps/web-host/src/modules/admin/memory-cleanup.ts", "productionEntry": "apps/web-host/src/main.ts", "keyBehavior": "注入 Redis 与存储端口后空预览、应用与租约释放", "ci": "node-webui"},
+  "apps/web-host/tests/admin/email/recipients.test.ts": {"domain": "api", "layer": "L1", "owner": "apps/web-host/src/modules/admin/email.ts", "productionEntry": "apps/web-host/src/main.ts", "keyBehavior": "活跃订阅收件人与语言分类", "ci": "node-webui"},
+  "apps/web-host/tests/admin/storage/reconcile.test.ts": {"domain": "api", "layer": "L1", "owner": "apps/web-host/src/modules/admin/storage.ts", "productionEntry": "apps/web-host/src/main.ts", "keyBehavior": "配额对账与并发控制", "ci": "node-webui"},
+  "apps/web-host/tests/admin/users/security.test.ts": {"domain": "api", "layer": "L1", "owner": "apps/web-host/src/modules/admin/audit.ts", "productionEntry": "apps/web-host/src/main.ts", "keyBehavior": "安全事件过滤与脱敏", "ci": "node-webui"},
+  "apps/web-host/tests/admin/users/readers.test.ts": {"domain": "api", "layer": "L1", "owner": "apps/web-host/src/modules/admin/user-management.ts", "productionEntry": "apps/web-host/src/main.ts", "keyBehavior": "管理员用户列表和风险汇总", "ci": "node-webui"},
+  "apps/web-host/tests/admin/sandbox/probe.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/preferences/safe-egress-probe.ts",
@@ -14,7 +14,7 @@
     "keyBehavior": "安全出站DoH与错误阶段",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/safe-egress-probe-route.test.ts": {
+  "apps/web-host/tests/admin/sandbox/probe-route.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/preferences/safe-egress-probe.ts",
@@ -22,7 +22,7 @@
     "keyBehavior": "安全出站管理员认证与DTO",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/safe-egress-proxy.integration.test.ts": {
+  "apps/web-host/tests/admin/sandbox/proxy.integration.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/preferences/safe-egress-probe.ts",
@@ -30,7 +30,7 @@
     "keyBehavior": "隔离代理DoH和TLS安全边界",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/llm-model-directory.test.ts": {
+  "apps/web-host/tests/admin/config/llm/models.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/agent/config/llm-model-directory.ts",
@@ -38,7 +38,7 @@
     "keyBehavior": "模型目录请求与Python适配器对照",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/llm-model-directory-routes.test.ts": {
+  "apps/web-host/tests/admin/config/llm/model-routes.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/agent/config/admin-model-directory.ts",
@@ -46,7 +46,7 @@
     "keyBehavior": "模型目录管理员HTTP语义",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/admin-email-test.test.ts": {
+  "apps/web-host/tests/admin/email/message.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/email/test-delivery.ts",
@@ -54,7 +54,7 @@
     "keyBehavior": "测试邮件MIME与Python对照",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/admin-email-test-route.test.ts": {
+  "apps/web-host/tests/admin/email/test-route.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/email/test-delivery.ts",
@@ -62,7 +62,7 @@
     "keyBehavior": "测试邮件管理员授权与校验",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/llm-preset-mutations.test.ts": {
+  "apps/web-host/tests/admin/config/llm/write.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/agent/config/llm-preset-mutations.ts",
@@ -70,7 +70,7 @@
     "keyBehavior": "LLM预设创建更新配置与Python对照",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/llm-preset-mutations-route.test.ts": {
+  "apps/web-host/tests/admin/config/llm/write-routes.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/agent/config/llm-preset-mutations.ts",
@@ -78,7 +78,7 @@
     "keyBehavior": "LLM预设创建更新HTTP协议",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/llm-capability-overrides.test.ts": {
+  "apps/web-host/tests/admin/config/llm/overrides.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/agent/config/llm-capability-overrides.ts",
@@ -86,7 +86,7 @@
     "keyBehavior": "能力覆盖配置和Python消费者对照",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/llm-capability-overrides-route.test.ts": {
+  "apps/web-host/tests/admin/config/llm/override-routes.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/agent/config/llm-capability-overrides.ts",
@@ -94,7 +94,7 @@
     "keyBehavior": "能力覆盖HTTP参数与管理员权限",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/llm-capabilities-preview.test.ts": {
+  "apps/web-host/tests/admin/config/llm/preview.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/agent/providers/registry.ts",
@@ -102,7 +102,7 @@
     "keyBehavior": "管理员认证、Python Ollama native能力预览、DTO限制与额外密钥不回显",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/llm-preset-selection.test.ts": {
+  "apps/web-host/tests/admin/config/llm/selection.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/agent/config/llm-preset-selection.ts",
@@ -110,7 +110,7 @@
     "keyBehavior": "LLM预设激活删除规则和Python消费者",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/llm-preset-selection-route.test.ts": {
+  "apps/web-host/tests/admin/config/llm/selection-routes.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/agent/config/llm-preset-selection.ts",
@@ -118,7 +118,7 @@
     "keyBehavior": "LLM预设激活删除管理员权限",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/smtp-probe.test.ts": {
+  "apps/web-host/tests/admin/email/smtp.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/email/smtp-test.ts",
@@ -126,7 +126,7 @@
     "keyBehavior": "SMTP测试TLS及动态配置",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/smtp-test-message.test.ts": {
+  "apps/web-host/tests/admin/email/smtp-message.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/email/smtp-test.ts",
@@ -134,7 +134,7 @@
     "keyBehavior": "测试邮件MIME与Python对照",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/llm-strategy.test.ts": {
+  "apps/web-host/tests/admin/config/llm/strategy.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/agent/config/llm-strategy.ts",
@@ -142,7 +142,7 @@
     "keyBehavior": "模型分流配置与Python消费及失效",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/llm-strategy-route.test.ts": {
+  "apps/web-host/tests/admin/config/llm/strategy-routes.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/agent/config/llm-strategy.ts",
@@ -150,7 +150,7 @@
     "keyBehavior": "模型分流参数及管理员授权",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/perception-misread-export.test.ts": {
+  "apps/web-host/tests/admin/analytics/perception/misread-export.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/perception/export-misread.ts",
@@ -158,7 +158,7 @@
     "keyBehavior": "错读Markdown导出和安全只读路径",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/perception-stats.test.ts": {
+  "apps/web-host/tests/admin/analytics/perception/stats.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/perception/stats.ts",
@@ -166,7 +166,7 @@
     "keyBehavior": "感知汇总统计与Python全字段对照",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/perception-export.test.ts": {
+  "apps/web-host/tests/admin/analytics/perception/export.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/perception/export-events.ts",
@@ -174,7 +174,7 @@
     "keyBehavior": "感知事件导出排序、时间和Python协议对照",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/perception-misread.test.ts": {
+  "apps/web-host/tests/admin/analytics/perception/misread.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/perception/recent-misread.ts",
@@ -182,7 +182,7 @@
     "keyBehavior": "错读记录过滤和Python协议对照",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/ops-summary.test.ts": {
+  "apps/web-host/tests/admin/ops/summary.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/admin/runtime.ts",
@@ -190,7 +190,7 @@
     "keyBehavior": "运维计数聚合与请求边界",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/email-preview.test.ts": {
+  "apps/web-host/tests/admin/email/preview.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/email/preview.ts",
@@ -198,7 +198,7 @@
     "keyBehavior": "模板和主题资产与Python逐字节对照",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/user-ban.test.ts": {
+  "apps/web-host/tests/admin/users/ban.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/admin/user-management.ts",
@@ -206,7 +206,7 @@
     "keyBehavior": "封禁状态事务、审计与Python对照",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/embedding-rebuild-status.test.ts": {
+  "apps/web-host/tests/admin/search/status.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/admin/embedding.ts",
@@ -214,7 +214,7 @@
     "keyBehavior": "平台重建状态读取与错误脱敏",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/embedding-probe.test.ts": {
+  "apps/web-host/tests/admin/search/probe.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/preferences/embedding-probe.ts",
@@ -222,7 +222,7 @@
     "keyBehavior": "Embedding诊断规则与Python响应对照",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/im-memory-summary.test.ts": {
+  "apps/web-host/tests/admin/memory/summary.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/memory/im-scope-summary.ts",
@@ -230,7 +230,7 @@
     "keyBehavior": "IM汇总真实PG与Python排序截断及隐私对照",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/im-memory-summary-route.test.ts": {
+  "apps/web-host/tests/admin/memory/routes.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/memory/im-scope-summary.ts",
@@ -238,7 +238,7 @@
     "keyBehavior": "IM汇总与预览管理员授权",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/safe-egress-update.test.ts": {
+  "apps/web-host/tests/admin/sandbox/update.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/preferences/safe-egress-update.ts",
@@ -246,7 +246,7 @@
     "keyBehavior": "安全出口写入校验、凭据保留与临时配置持久化",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/voice-presets-mutate.test.ts": {
+  "apps/web-host/tests/admin/config/voice/write.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/agent/config/voice-presets-mutate.ts",
@@ -254,7 +254,7 @@
     "keyBehavior": "语音配置写入锁与密钥保留",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/voice-presets-read.test.ts": {
+  "apps/web-host/tests/admin/config/voice/read.test.ts": {
     "domain": "admin",
     "layer": "L2",
     "owner": "packages/core/src/agent/config/voice-presets-read.ts",
@@ -270,7 +270,7 @@
     "keyBehavior": "Python语音预设读取对照",
     "ci": "manual"
   },
-  "apps/web-host/tests/admin/maintenance-status.test.ts": {
+  "apps/web-host/tests/admin/ops/maintenance.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "packages/core/src/maintenance/admin-status.ts",
@@ -278,7 +278,7 @@
     "keyBehavior": "维护状态读取与并发标记",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/account-memory-cleanup-publication.test.ts": {
+  "apps/web-host/tests/admin/memory/publication.test.ts": {
     "domain": "admin",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/admin/memory-cleanup.ts",
@@ -286,7 +286,7 @@
     "keyBehavior": "只读预览、单次确认、并发编辑保护、Local 中断恢复、实际 RAG 消费及 Embedding 增量补算和故障隔离",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/service-status.test.ts": {
+  "apps/web-host/tests/admin/ops/services.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/admin/runtime.ts",
@@ -294,7 +294,7 @@
     "keyBehavior": "服务状态及Redis故障",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/service-restart.test.ts": {
+  "apps/web-host/tests/admin/ops/restart.test.ts": {
     "domain": "api",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/admin/runtime.ts",
@@ -302,7 +302,7 @@
     "keyBehavior": "白名单、主机和PID命令行校验、systemd/手动拉起分支及管理员守卫",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/notification-broadcast.test.ts": {
+  "apps/web-host/tests/admin/notifications/broadcast.test.ts": {
     "domain": "admin",
     "layer": "L2",
     "owner": "packages/core/src/notifications/broadcast.ts",
@@ -310,7 +310,7 @@
     "keyBehavior": "广播参数与持久化副作用",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/storage-quota-status.test.ts": {
+  "apps/web-host/tests/admin/storage/quota.test.ts": {
     "domain": "admin",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/admin/storage.ts",
@@ -318,7 +318,7 @@
     "keyBehavior": "失锁状态及并发终态保护",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/admin-analytics-summary-current.test.ts": {
+  "apps/web-host/tests/admin/analytics/summary.test.ts": {
     "domain": "admin",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/admin/analytics.ts",
@@ -326,7 +326,7 @@
     "keyBehavior": "鉴权、时区、筛选和错误脱敏",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/email-recipient-count.test.ts": {
+  "apps/web-host/tests/admin/email/count.test.ts": {
     "domain": "admin",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/admin/email.ts",
@@ -334,7 +334,7 @@
     "keyBehavior": "有效订阅者数量与语言分类",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/storage-live-totals.test.ts": {
+  "apps/web-host/tests/admin/storage/totals.test.ts": {
     "domain": "admin",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/admin/storage.ts",
@@ -342,7 +342,7 @@
     "keyBehavior": "隔离PG验证附件状态与文件总量聚合",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/safe-egress-read-module.test.ts": {
+  "apps/web-host/tests/admin/sandbox/proxy.test.ts": {
     "domain": "admin",
     "layer": "L2",
     "owner": "packages/core/src/preferences/safe-egress.ts",
@@ -358,7 +358,7 @@
     "keyBehavior": "隔离PG验证Python汇总与趋势handler统计行为",
     "ci": "manual"
   },
-  "apps/web-host/tests/admin/system-logs.test.ts": {
+  "apps/web-host/tests/admin/logs/system.test.ts": {
     "domain": "admin",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/admin/logs.ts",
@@ -366,7 +366,7 @@
     "keyBehavior": "隔离PG系统日志筛选排序条数与微秒",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/admin-analytics-slices.test.ts": {
+  "apps/web-host/tests/admin/analytics/slices.test.ts": {
     "domain": "admin",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/admin/analytics.ts",
@@ -390,7 +390,7 @@
     "keyBehavior": "Python真实handler配额转换与开发者标记对照",
     "ci": "manual"
   },
-  "apps/web-host/tests/admin/admin-audit-list.test.ts": {
+  "apps/web-host/tests/admin/audit/list.test.ts": {
     "domain": "admin",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/admin/audit.ts",
@@ -398,7 +398,7 @@
     "keyBehavior": "审计列表字段白名单、排序与参数边界",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/admin-audit-list-postgres.test.ts": {
+  "apps/web-host/tests/admin/audit/list.postgres.test.ts": {
     "domain": "admin",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/admin/audit.ts",
@@ -406,7 +406,7 @@
     "keyBehavior": "隔离PG审计列表排序、微秒与错误脱敏",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/admin-user-settings.test.ts": {
+  "apps/web-host/tests/admin/users/settings.test.ts": {
     "domain": "admin",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/admin/user-management.ts",
@@ -414,39 +414,39 @@
     "keyBehavior": "配额转换、事务回滚、开发者标记与鉴权",
     "ci": "node-webui"
   },
-  "apps/web/tests/admin/agent/useAgentRuntimeConfig.test.ts": {
+  "apps/ui/tests/admin/agent/useAgentRuntimeConfig.test.ts": {
     "domain": "agent-runtime-config",
     "layer": "L1",
-    "owner": "apps/web/views/Admin/Agent/runtime-config",
-    "productionEntry": "apps/web/src/views/Admin/Agent/runtime-config/useAgentRuntimeConfig.ts",
+    "owner": "apps/ui/views/Admin/Agent/runtime-config",
+    "productionEntry": "apps/ui/src/web/views/Admin/Agent/runtime-config/useAgentRuntimeConfig.ts",
     "keyBehavior": "五个配置分区只提交各自草案，保留在途状态、三秒成功提示、失败反馈与草案以及服务端归一化回填",
     "ci": "frontend-test"
   },
-  "apps/web/tests/admin/agent/UsageScenarioTable.test.ts": {
+  "apps/ui/tests/admin/agent/UsageScenarioTable.test.ts": {
     "domain": "admin-usage",
     "layer": "L1",
-    "owner": "apps/web/views/Admin/Agent",
-    "productionEntry": "apps/web/src/views/Admin/Agent/observability/components/UsageScenarioTable.vue",
+    "owner": "apps/ui/views/Admin/Agent",
+    "productionEntry": "apps/ui/src/web/views/Admin/Agent/observability/components/UsageScenarioTable.vue",
     "keyBehavior": "场景表展示冷请求和服务端加权非冷缓存率，周期数据变化后更新，无非冷样本显示横线而非零",
     "ci": "frontend-test"
   },
-  "apps/web/tests/admin/ImPlatformSettings.test.ts": {
+  "apps/ui/tests/admin/ImPlatformSettings.test.ts": {
     "domain": "im-platform-settings",
     "layer": "L1",
-    "owner": "apps/web/views/Admin/Config",
-    "productionEntry": "apps/web/src/views/Admin/Config/components/ImPlatformSettings.vue",
+    "owner": "apps/ui/views/Admin/Config",
+    "productionEntry": "apps/ui/src/web/views/Admin/Config/components/ImPlatformSettings.vue",
     "keyBehavior": "管理员切换单个平台开关只更新被切换的平台并呈现当前配置状态",
     "ci": "frontend-test"
   },
-  "apps/web/tests/admin/agent/LlmPresetEditor.test.ts": {
+  "apps/ui/tests/admin/agent/LlmPresetEditor.test.ts": {
     "domain": "agent-configuration",
     "layer": "L1",
-    "owner": "apps/web/views/Admin/Agent",
-    "productionEntry": "apps/web/src/views/Admin/Agent/llm/components/LlmPresetEditor.vue",
+    "owner": "apps/ui/views/Admin/Agent",
+    "productionEntry": "apps/ui/src/web/views/Admin/Agent/llm/components/LlmPresetEditor.vue",
     "keyBehavior": "模型预设编辑、保存及多模态能力配置保持表单状态和提交数据一致",
     "ci": "frontend-test"
   },
-  "apps/web-host/tests/admin/user-delete.test.ts": {
+  "apps/web-host/tests/admin/users/delete.test.ts": {
     "domain": "admin-users",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/admin/users.ts",
@@ -454,7 +454,7 @@
     "keyBehavior": "管理员删除完成后写入审计并返回存储清理数；目标不存在时返回 404 且不写审计",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/admin/email-translate.test.ts": {
+  "apps/web-host/tests/admin/email/translate.test.ts": {
     "domain": "email",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/admin/email.ts + packages/core/src/email/translate.ts",
@@ -462,7 +462,7 @@
     "keyBehavior": "认证先于模型调用、兼容双语结果和 Python 502 通用错误且不泄露上游异常",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/admin/email-publish.test.ts": {
+  "apps/web-host/tests/admin/email/publish.test.ts": {
     "domain": "email",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/admin/email.ts + packages/core/src/email/publish.ts",
@@ -470,7 +470,7 @@
     "keyBehavior": "未认证、未确认、无收件人和无效 DTO 不启动任务；成功响应只含汇总且关闭 Host 等待已启动任务",
     "ci": "web-host-node"
   },
-  "apps/web-host/tests/admin/agent-capabilities.test.ts": {
+  "apps/web-host/tests/admin/config/capabilities.test.ts": {
     "domain": "agent-capabilities",
     "layer": "L2",
     "owner": "apps/web-host/src/modules/admin/llm.ts + apps/web-host/src/main.ts",

@@ -44,9 +44,9 @@ export function createAdminAuth(pool: Pool, config: WebUiConfig) {
   })
 }
 
-export function createAdminPromptOptions(pool: Pool) {
+export function createAdminPromptOptions(pool: Pool, storageRoot: string) {
   return {
-    root: webAgentPromptRoot,
+    root: webAgentPromptRoot(storageRoot),
     adminUsername: (request: FastifyRequest) => request.adminIdentity?.username ?? 'admin',
     async writeAuditLog(username: string, action: 'prompt', description: string, request: FastifyRequest) {
       const forwarded = request.headers['x-forwarded-for']

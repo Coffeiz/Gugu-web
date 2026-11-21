@@ -9,7 +9,7 @@ packages:
   - "packages/sandbox"
   - "apps/desktop"
   - "apps/web-host"
-  - "apps/web"
+  - "apps/ui"
   - "loopscope/frontend"
   - "loopscope/apps/*"
   - "loopscope/packages/*"

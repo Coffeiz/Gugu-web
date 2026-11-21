@@ -25,7 +25,7 @@ export interface AgentChatServicePorts<C, I> {
   /** 直接模式复用进程 Harness；调度模式由每个 lease 的 Worker 重建。 */
   harness?: Pick<AgentRunner<C>, 'start' | 'cancel'>
   cancellation: Pick<CancellationPort, 'request' | 'notify'>
-  prepare(ownerId: string, input: I, origin: string | undefined): Promise<{ identity: RunIdentity; userMessageId: number }>
+  prepare(ownerId: string, input: I, origin: string | undefined): Promise<{ identity: RunIdentity; userMessageId: number; replay?: boolean; goalMode?: boolean }>
   active(ownerId: string, sessionId: number, runId?: string): Promise<{ identity: RunIdentity | null } | null>
   events: AgentChatEventBus
   project(event: RunEvent): Promise<readonly AgentChatEvent[]>
@@ -48,11 +48,11 @@ function assertIdentity(identity: RunIdentity, owner: string, session?: number):
 /** 跨端 Agent Chat 用例；身份仍由认证 Host 传入，事件与执行能力通过端口提供。 */
 export function createAgentChatService<C, I>(ports: AgentChatServicePorts<C, I>): AgentChatService<I> {
   if (!ports.dispatch && !ports.harness) throw new TypeError('Agent Chat 执行器未配置')
-  async function drive(identity: RunIdentity): Promise<void> {
+  async function drive(identity: RunIdentity, userMessageId: number, goalMode?: boolean): Promise<void> {
     try {
       const harness = ports.harness
       if (!harness) throw new Error('Agent Chat 直接执行器不可用')
-      for await (const event of harness.start(identity)) {
+      for await (const event of harness.start(identity, { anchorMessageId: String(userMessageId), ...(goalMode ? { goalMode } : {}) })) {
         assertIdentity(event.identity, identity.ownerId, Number(identity.sessionId))
         if (event.identity.runId !== identity.runId) throw new Error('运行身份不匹配')
         // 权威事件由 Harness 在 yield 前提交，通知只用于缩短订阅等待。
@@ -75,12 +75,12 @@ export function createAgentChatService<C, I>(ports: AgentChatServicePorts<C, I>)
         if (event.type === 'final') finalized = true
         yield* await ports.project(event)
       }
-      if (waiting && !finalized) yield { type: 'done' }
+      if (waiting && !finalized) yield { type: 'done', waiting_for_interaction: true }
     })()
   }
   return {
     async start(owner: string, input: I, origin: string | undefined, signal?: AbortSignal): Promise<AsyncIterable<AgentChatEvent>> {
-      const { identity, userMessageId } = await ports.prepare(owner, input, origin)
+      const { identity, userMessageId, replay, goalMode } = await ports.prepare(owner, input, origin)
       assertIdentity(identity, owner)
       if (!Number.isSafeInteger(userMessageId) || userMessageId < 1) throw new Error('用户消息身份无效')
       const subscription = await project(identity, signal)
@@ -88,9 +88,9 @@ export function createAgentChatService<C, I>(ports: AgentChatServicePorts<C, I>)
         try { await ports.dispatch.notify() } catch { ports.dispatch.diagnose() }
         void ports.dispatch.kick(owner, identity.sessionId).catch(() => { ports.dispatch?.diagnose() })
       }
-      else void drive(identity).catch(() => {})
+      else if (!replay) void drive(identity, userMessageId, goalMode).catch(() => {})
       return (async function* () {
-        yield { type: 'session_id', session_id: Number(identity.sessionId), user_message_id: userMessageId,
+        yield { type: 'session_id', session_id: Number(identity.sessionId), user_message_id: userMessageId, run_id: identity.runId,
           ...(typeof input === 'object' && input !== null && 'client_message_id' in input && typeof input.client_message_id === 'string'
             ? { client_message_id: input.client_message_id } : {}) }
         yield* subscription

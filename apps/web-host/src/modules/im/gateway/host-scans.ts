@@ -7,7 +7,7 @@ export function createImHostScans(options: { pool: Pick<Pool, 'query'>; secretKe
   diagnose?(code: 'dispatch_unavailable', error: unknown): void
   kick(ownerId: string, sessionId: string): Promise<void>
   recover(identity: RunIdentity, input: ImAgentDispatchInput, signal: AbortSignal): Promise<void> }) {
-  const capacity = options.concurrency ?? 4
+  const capacity = options.concurrency ?? 1
   if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > 32) throw new Error('IM 调度并发配置无效')
   const running = new Map<string, Promise<void>>()
   let closing = false, failed = false

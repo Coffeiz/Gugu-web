@@ -77,10 +77,14 @@ test('SQLite Skill 更新保留 MCP 关联、允许用户接管并隔离 owner',
     assert.equal(agentRow?.enabled, false)
     assert.equal(agentRow?.managed_by, 'user')
     assert.equal(agentRow?.body, '按主题找图')
+    const edited = await manager.update(owner, 'U2', { body: '更新查图说明' })
+    assert.equal(edited.body, '更新查图说明')
+    assert.deepEqual(edited.related_tools, ['similar_image_search'])
+    await assert.rejects(manager.update(owner, 'U2', { related_tools: ['unregistered_tool'] }), /未知工具/)
     const bad = await registry.tools.dispatch({ id: 'bad', name: 'create_skill', input: { skill_name: 'x' } }, scope)
     assert.equal(bad.kind === 'completed' && bad.executed, false)
     assert.deepEqual((await manager.list(owner)).find(item => item.id === 'U2')?.related_tools, ['similar_image_search'])
-    assert.deepEqual(events, [owner, owner, owner, owner])
+    assert.deepEqual(events, [owner, owner, owner, owner, owner])
   } finally {
     await db.destroy()
   }

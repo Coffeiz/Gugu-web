@@ -1,7 +1,7 @@
 import { createHash,randomBytes } from 'node:crypto'
 import type { PoolClient } from 'pg'
 import type { RunIdentity } from '@gugu/core/agent'
-import type { ImPreflightScope } from '@gugu/core/im/inbound-preflight'
+import type { ImPreflightScope } from '@gugu/gateway'
 import { lockAgentRunSession } from '../../../agent/run/start.js'
 import { projectInteractionPromptLocked } from '../../../agent/interactions/projection.js'
 const fail=()=>new Error('IM 凭据交互暂不可用')

@@ -3,7 +3,7 @@ import type {Pool} from 'pg'
 import type {ImAttachmentScope} from '../inbound/attachments.js'
 import {imAttachmentScopeKey} from '../inbound/attachments.js'
 import {createImInboundEnvelope} from '../inbound/envelope.js'
-import {imConversationDigest,imConversationFingerprint,imConversationScopeHash} from '../agent/identity.js'
+import {imConversationEventId,imConversationDigest,imConversationFingerprint,imConversationScopeHash} from '../agent/identity.js'
 import {createImRunScope} from '../agent/scope.js'
 import type {ImVoiceRunProof} from './voice.js'
 
@@ -58,7 +58,7 @@ export async function assertImQuotedVoiceSource(options:{pool:Pick<Pool,'query'>
    ||(stored.quoted_text??null)!==(original.quoted_text??null)||stored.chat_type!==scope.chatType
    ||scope.chatType==='group'&&stored.chat_id!==scope.chatId
    ||scope.chatType==='c2c'&&(stored.platform_user_id!==scope.platformUserId||stored.chat_id!==payload.chat_id)
-   ||!ids.includes(String(original.attach_id))||original.event_hash!==imConversationDigest(options.secretKey,[scopeHash,stored.platform_user_id,stored._pending_ask_resume_id||originNative])
+   ||!ids.includes(String(original.attach_id))||original.event_hash!==imConversationDigest(options.secretKey,[scopeHash,stored.platform_user_id,imConversationEventId(stored)])
    ||original.fingerprint!==imConversationFingerprint(options.secretKey,scopeHash,stored,ids)
    ||!(original.state==='passive'&&original.run_id===null&&original.message_run_id===null
      ||original.state==='dispatched'&&typeof original.run_id==='string'&&original.run_id&&original.message_run_id===original.run_id))throw invalid()

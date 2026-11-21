@@ -1,3 +1,5 @@
+import { projectAgentSessionGoal } from '@gugu/core/agent'
+import { replacePlatformMentionIds } from '@gugu/core/agent/context/messages'
 import type { Pool } from 'pg'
 import type { RunCheckpoint } from '@gugu/core/agent'
 import { projectAgentMessageBodiesWithMentions, projectAgentTimelineEvents, type AgentInteractionHistoryWindow, type AgentMessageProjectionRow } from '@gugu/core/agent-sessions'
@@ -43,6 +45,7 @@ interface SessionRow {
   id: number
   source: string | null
   title: string | null
+  title_locked: boolean
   chat_type: string | null
   workspace_name: string | null
   session_context: unknown
@@ -87,7 +90,7 @@ export function createAgentMessageHistory(pool: Pool, runtime: AgentMessageHisto
   return {
     async list(ownerId: string, sessionId: number, options: AgentMessagePageOptions) {
       const owned = await pool.query<SessionRow>(
-        `SELECT session.id, session.source, session.title, session.chat_type,
+        `SELECT session.id, session.source, session.title, session.title_locked, session.chat_type,
                 session.workspace_id, workspace.name AS workspace_name, session.session_context,
                 session.execution_state, session.pending_message_count, session.bot_id
          FROM conversation_sessions AS session
@@ -285,37 +288,39 @@ export function createAgentMessageHistory(pool: Pool, runtime: AgentMessageHisto
       const interactions = emptyCursorPage || (options.runId !== undefined && interactionWindow.toolCallIds?.length === 0)
         ? []
         : await (runtime.listInteractions?.(ownerId, sessionId, interactionWindow) ?? Promise.resolve([]))
+      const mentionNames = await loadGroupMentionNames({
+        pool,
+        ownerId,
+        sessionId,
+        session: { chatType: session.chat_type, source: session.source },
+        messages: [
+          ...messages.map((message) => ({
+            content: message.content,
+            quotedText: message.quoted_text ?? null,
+            platformBotUserId: message.platform_bot_user_id ?? null,
+          })),
+          ...(session.source === 'qq' && !session.title_locked
+            ? [{ content: session.title, quotedText: null, platformBotUserId: null }] : []),
+        ],
+        currentBotPlatformUserId: bot.rows[0]?.bot_platform_user_id ?? null,
+      })
       return {
         session: {
           id: session.id,
-          title: session.title,
+          title: session.source === 'qq' && !session.title_locked && session.title ? replacePlatformMentionIds(session.title, mentionNames) : session.title,
           chatType: session.chat_type,
           ownerPlatformUserId: bot.rows[0]?.owner_platform_user_id ?? null,
           workspaceName: runtime.workspaceShellSupported?.() ? session.workspace_name : null,
           filesystemAuthorized: grant !== null,
           filesystemAuthorizationEnabled,
-          goalActive: Boolean(sessionContext.goal_mode && sessionContext.goal_text),
-          goalStatus: sessionContext.goal_text
-            ? sessionContext.goal_status === 'paused' ? 'paused' : 'active'
-            : null,
+          ...projectAgentSessionGoal(sessionContext),
         },
         active: Boolean(activeStatuses.get(sessionId)),
         executionState: session.execution_state,
         pendingMessageCount: Number(session.pending_message_count ?? 0),
         pendingQueue: queueItems,
         interactions,
-        messages: projectAgentMessageBodiesWithMentions(messages, session.source ?? undefined, await loadGroupMentionNames({
-          pool,
-          ownerId,
-          sessionId,
-          session: { chatType: session.chat_type, source: session.source },
-          messages: messages.map((message) => ({
-            content: message.content,
-            quotedText: message.quoted_text ?? null,
-            platformBotUserId: message.platform_bot_user_id ?? null,
-          })),
-          currentBotPlatformUserId: bot.rows[0]?.bot_platform_user_id ?? null,
-        })),
+        messages: projectAgentMessageBodiesWithMentions(messages, session.source ?? undefined, mentionNames),
         timelineEvents,
         pagination: {
           limit,

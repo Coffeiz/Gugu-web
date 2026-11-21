@@ -20,7 +20,22 @@ interface Startup {
   schemaVersion: string
   error?: { code: ErrorCode; message: string }
 }
+export interface LocalRuntimeOptions {
+  exclusive?: boolean
+  workerEntry?: URL | string
+  agentRuntimeModule?: string
+}
+export interface LocalHostRequest {
+  readonly signal: AbortSignal
+  readonly requestId: number
+  readonly method: string
+  readonly params: Fields
+}
+type LocalHostRequestHandler = (request: LocalHostRequest) => Promise<unknown>
 export class LocalRuntime {
+  private agentRunListeners = new Set<(sessionId: number, runId: string) => void>()
+  private hostControllers = new Map<number, AbortController>()
+  private hostRequestListeners = new Set<LocalHostRequestHandler>()
   private pending = new Map<number, Pending>()
   private sequence = 0
   private closed = false
@@ -38,9 +53,45 @@ export class LocalRuntime {
       'message',
       (frame: {
         id: number
+        event?: string
+        sessionId?: number
+        runId?: string
+        requestId?: number
+        method?: string
+        params?: Fields
         result?: unknown
         error?: { code: ErrorCode; message: string }
       }) => {
+        if (frame.event === 'agent_run_changed' && typeof frame.sessionId === 'number' && typeof frame.runId === 'string') {
+          for (const listener of this.agentRunListeners) listener(frame.sessionId, frame.runId)
+          return
+        }
+        if (frame.event === 'host_cancel' && frame.requestId !== undefined) {
+          this.hostControllers.get(frame.requestId)?.abort()
+          return
+        }
+        if (frame.event === 'host_request' && Number.isSafeInteger(frame.requestId) && frame.requestId! > 0
+          && typeof frame.method === 'string' && frame.params && typeof frame.params === 'object' && !Array.isArray(frame.params)) {
+          const requestId = frame.requestId!
+          const handler = [...this.hostRequestListeners].at(-1)
+          if (!handler) {
+            this.worker.postMessage({ event: 'host_response', requestId,
+              error: { code: 'unsupported', message: '桌面 Agent 宿主能力未连接' } })
+            return
+          }
+          const controller = new AbortController()
+          this.hostControllers.set(requestId, controller)
+          const { method, params } = frame
+          void Promise.resolve().then(() => handler({ requestId, method, params, signal: controller.signal }))
+            .then(result => {
+              if (!controller.signal.aborted) this.worker.postMessage({ event: 'host_response', requestId, result })
+            })
+            .catch(() => {
+              if (!controller.signal.aborted) this.worker.postMessage({ event: 'host_response', requestId,
+                error: { code: 'storage_error', message: '桌面 Agent 宿主能力执行失败' } })
+            }).finally(() => { this.hostControllers.delete(requestId) })
+          return
+        }
         const pending = this.pending.get(frame.id)
         if (!pending) return
         this.pending.delete(frame.id)
@@ -52,6 +103,8 @@ export class LocalRuntime {
     )
     const failed = (): void => {
       this.healthy = false
+      for (const controller of this.hostControllers.values()) controller.abort()
+      this.hostControllers.clear()
       for (const pending of this.pending.values()) {
         pending.dispose()
         pending.reject(
@@ -66,13 +119,14 @@ export class LocalRuntime {
   private static async start(
     database: string,
     initialize: boolean,
-    exclusive = false,
+    options: LocalRuntimeOptions = {},
   ): Promise<LocalRuntime> {
-    const worker = new Worker(new URL('./worker.js', import.meta.url), {
+    const worker = new Worker(options.workerEntry ?? new URL('./worker.js', import.meta.url), {
       workerData: {
         database: resolve(database),
         initialize,
-        exclusive,
+        exclusive: options.exclusive ?? false,
+        ...(options.agentRuntimeModule ? { agentRuntimeModule: resolve(options.agentRuntimeModule) } : {}),
       },
     })
     return new Promise((resolve, reject) => {
@@ -113,19 +167,23 @@ export class LocalRuntime {
   }
   static initialize(
     database: string,
-    options: { exclusive?: boolean } = {},
+    options: LocalRuntimeOptions = {},
   ): Promise<LocalRuntime> {
-    return this.start(database, true, options.exclusive ?? false)
+    return this.start(database, true, options)
   }
   static open(
     database: string,
-    options: { exclusive?: boolean } = {},
+    options: LocalRuntimeOptions = {},
   ): Promise<LocalRuntime> {
-    return this.start(
-      database,
-      false,
-      options.exclusive ?? false,
-    )
+    return this.start(database, false, options)
+  }
+  onAgentRunChanged(listener: (sessionId: number, runId: string) => void): () => void {
+    this.agentRunListeners.add(listener)
+    return () => { this.agentRunListeners.delete(listener) }
+  }
+  onHostRequest(listener: LocalHostRequestHandler): () => void {
+    this.hostRequestListeners.add(listener)
+    return () => { this.hostRequestListeners.delete(listener) }
   }
   call<T = unknown>(
     method: string,

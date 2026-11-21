@@ -77,8 +77,10 @@ export async function compactContext<Wire>(area: MessageArea, port: CompactionPo
   projection?: OpaqueProviderProjection<Wire> | null
   window?: ProtectedWindow
   signal?: AbortSignal
+  onStart?: () => Promise<void>
 }): Promise<CompactionResult> {
-  const expectedRevision = area.revision, original = area.messages
+  const expectedRevision = area.revision, entries = area.entries
+  const original = entries.map(entry => entry.message)
   const empty = (reason: CompactionResult['reason']): CompactionResult => ({
     changed: false, reason,
     messages: original, expectedRevision, protectedStartIndex: null, anchorIndex: null,
@@ -94,7 +96,13 @@ export async function compactContext<Wire>(area: MessageArea, port: CompactionPo
   const indexes = cleaned.sourceIndexes.filter((_, index) => !isCompactedSummaryMessage(cleaned.messages[index]!))
   const normal = cleaned.messages.filter(message => !isCompactedSummaryMessage(message))
   const injectionIndex = normal.findIndex(isInjection)
+  // 当前动态上下文随用户消息保留。已落库的同类历史仍按正常历史参与压缩。
+  const dynamicSources = new Set(['rag', 'stance', 'runtime', 'message_time', 'agent_followup'])
   const keep = new Set<number>()
+  for (const [index, sourceIndex] of indexes.entries()) {
+    const entry = entries[sourceIndex]!
+    if (entry.persistencePolicy !== 'already_persisted' && dynamicSources.has(entry.source)) keep.add(index)
+  }
   let anchor: number | null = null, protectedStart = normal.length, previousStart: number | null = null
   if (window.anchorIndex != null) {
     anchor = indexes.indexOf(window.anchorIndex - prefixSize)
@@ -133,6 +141,8 @@ export async function compactContext<Wire>(area: MessageArea, port: CompactionPo
     return empty('no_compressible_history')
   const projection = options.projection && area.matchesProjection(options.projection, options.modelIdentity) ? copy(options.projection) : null
   const previousSummary = previous ? contentText(previous.content).replace(/^\s*【消息时间】[^\n]*\n【消息正文】\n|^\s*【消息正文】\n/, '') : null
+  await options.onStart?.()
+  options.signal?.throwIfAborted()
   let text = await port.summarize({
     history: copy(original), compressible: copy(compressible),
     requestPrefix: area.requestPrefix,
@@ -153,18 +163,17 @@ export async function compactContext<Wire>(area: MessageArea, port: CompactionPo
   messages.push({ role: 'user', content: formatCompactedSummary(text) })
   let previousResult: number | null = null, anchorResult: number | null = null, protectedResult: number | null = null
   if (anchor != null) {
-    if (previousStart != null) {
-      previousResult = prefixSize + messages.length
-      for (let index = previousStart;index < anchor;index++)
-        if (index !== injectionIndex)
-          messages.push(normal[index]!)
+    for (let index = 0; index < anchor; index++) {
+      if (!keep.has(index)) continue
+      if (previousStart != null && index >= previousStart && previousResult == null)
+        previousResult = prefixSize + messages.length
+      messages.push(normal[index]!)
     }
     anchorResult = prefixSize + messages.length
     messages.push(normal[anchor]!)
     protectedResult = prefixSize + messages.length
-    for (let index = protectedStart;index < normal.length;index++)
-      if (index !== injectionIndex)
-        messages.push(normal[index]!)
+    for (let index = anchor + 1; index < normal.length; index++)
+      if (keep.has(index)) messages.push(normal[index]!)
   }
   else
     for (const index of [...keep].sort((a, b) => a - b))
@@ -283,17 +292,32 @@ export function createCompactionSummarizer<Wire>(config: SummaryGenerationConfig
       let history = [...copy(input.requestPrefix ?? []), ...copy(input.history)]
       let delta = config.instruction
       if (input.preserveLatestUser)
-        delta += '\n\n当前run的最新用户消息会在摘要后原文保留；摘要不要重复复述该条请求。'
+        delta += '\n\n当前run的最新用户消息会在摘要后原文保留；本轮的检索资料、姿态和运行提醒也会原样保留。摘要只整理更早的对话历史，勿将这些本轮内容写入摘要。'
       delta += '\n\n最近的完整对话轮次会在摘要后继续原文保留；摘要重点整理更早的历史。'
       if (input.previousSummary)
         delta += `\n\n【已有摘要（更早的对话，需与上面历史合并、保留全部关键信息）】\n${input.previousSummary}`
-      delta += '\n\n只输出摘要正文，不要添加前缀或解释，也不要调用任何工具。'
+      const reflection = input.reflection
+      delta += reflection
+        ? `\n\n【独立反思任务】\n${reflection.task}\n\n上面的摘要输出格式以本条为准。输出两个独立区块：<summary>摘要正文</summary>，以及 <reflection>JSON 对象</reflection>。只从反思任务明确指定的新区间提取记忆，旧摘要仅用于理解指代。没有增量时输出 {}。不要调用工具。`
+        : '\n\n只输出摘要正文，不要添加前缀或解释，也不要调用任何工具。'
       const request = async (): Promise<BranchResult> => runContextBranch({
         ownerId: config.ownerId, sessionId: config.sessionId,
         runId: config.runId, stableSystem: config.stableSystem, delta, tools: copy(config.tools), scope: config.scope,
         scopeRevision: config.scopeRevision, projection, ...(projection ? {} : { canonicalHistory: copy(history) })
       }, { name: 'compaction', outputMode: 'text', maxRetries: 1, maxOutputTokens: limits.outputTokens }, ports, signal)
-      const resultText = (result: BranchResult): string => result.ok && !summaryOutputExhausted(result.usage, limits.outputTokens) ? String(result.output ?? '').trim() : ''
+      const resultText = (result: BranchResult): string => {
+        if (!result.ok) return ''
+        const text = String(result.output ?? '').trim()
+        if (!reflection) return summaryOutputExhausted(result.usage, limits.outputTokens) ? '' : text
+        const memory = text.match(/<reflection>(.*?)<\/reflection>/s)?.[1]
+        if (memory !== undefined) {
+          let candidate: Json | undefined
+          try { candidate = JSON.parse(memory) as Json } catch { /* 保留独立摘要结果。 */ }
+          if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) reflection.receive(candidate)
+        }
+        const summary = text.match(/<summary>(.*?)<\/summary>/s)?.[1]?.trim()
+        return validateCompactSummary(summary) ? summary : ''
+      }
       let result = await request()
       if (result.ok || !result.contextOverflow)
         return resultText(result)

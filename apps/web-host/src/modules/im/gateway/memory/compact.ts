@@ -31,9 +31,9 @@ export function createImProductionCompact(options:Options){
       if(!await current())throw unavailable()
       const memory=createLocalImMemorySource({root:options.storageRoot,identity,actor,
         async isTombstoned(value){return (await options.pool.query('SELECT 1 FROM memory_scope_tombstones WHERE owner_user_id=$1 AND platform=$2 AND bot_id=$3 AND scope_type=$4 AND scope_id=$5',[value.owner_user_id,value.platform,value.bot_id,value.scope_type,value.scope_id])).rows.length>0},
-        async authorize(){if(!await current())return null;const row=(await options.pool.query('SELECT group_memory_enabled,member_memory_enabled FROM user_bots WHERE user_id=$1 AND id=$2 AND enabled IS TRUE',[actor.ownerId,actor.botId])).rows[0]
-          if(!row||typeof row.group_memory_enabled!=='boolean'||typeof row.member_memory_enabled!=='boolean')throw unavailable()
-          return {...scope,groupMemoryEnabled:row.group_memory_enabled,memberMemoryEnabled:row.member_memory_enabled}}
+        async authorize(){if(!await current())return null;const row=(await options.pool.query('SELECT group_memory_enabled,member_memory_enabled,group_owner_memory_enabled FROM user_bots WHERE user_id=$1 AND id=$2 AND enabled IS TRUE',[actor.ownerId,actor.botId])).rows[0]
+          if(!row||typeof row.group_memory_enabled!=='boolean'||typeof row.member_memory_enabled!=='boolean'||typeof row.group_owner_memory_enabled!=='boolean')throw unavailable()
+          return {...scope,groupMemoryEnabled:row.group_memory_enabled,memberMemoryEnabled:row.member_memory_enabled,groupOwnerMemoryEnabled:row.group_owner_memory_enabled}}
       })
       const skills=await createImProductionSkills({pool:options.pool,identity,actor,loadOwnerContext:selection.contextPolicy.loadOwnerContext,authorize:current})
       const services=await createImAgentContextServices({pool:options.pool,storageRoot:options.storageRoot,promptRoot:options.promptRoot,

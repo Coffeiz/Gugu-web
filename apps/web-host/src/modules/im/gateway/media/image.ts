@@ -4,7 +4,7 @@ import {join} from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {imageSize} from 'image-size'
 import type {MediaLimits} from '@gugu/core/providers'
-import {runImMediaProcess} from './process.js'
+import {runImMediaProcess} from '@gugu/gateway/media'
 
 export interface ImImageInput {bytes:Uint8Array;ext:string;mime?:string}
 export interface ImProcessedImage {bytes:Uint8Array;mime:string;width:number;height:number}

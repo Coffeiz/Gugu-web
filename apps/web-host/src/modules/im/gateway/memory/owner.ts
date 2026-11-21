@@ -60,7 +60,9 @@ export async function prepareImOwnerDailyPlan(input:{
   if(latest.memory!==initial.memory)throw new ImOwnerDailyCompactionError(usages)
   const remaining=prepareOwnerDailyCompactionBatch(latest.daily??'',entries)
   if(!remaining||stableJson(remaining.batch)!==stableJson(prepared.batch))throw new ImOwnerDailyCompactionError(usages)
-  const old=strip(latest.memory??''),memory=`${old?`${old}\n\n`:''}${additions}\n`
+  const old=latest.memory??''
+  const separator=!old||old.endsWith('\n\n')?'':old.endsWith('\n')?'\n':'\n\n'
+  const memory=`${old}${separator}${additions}\n`
   await current()
   const plan=await files.planOwnerDaily(job,memory,remaining.dailyAfter,latest)
   await current()

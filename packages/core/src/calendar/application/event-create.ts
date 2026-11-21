@@ -94,6 +94,7 @@ export interface CreateCalendarEventResult {
 }
 
 export interface PreparedEventReminder {
+  executionMode?: 'reminder' | 'instruction'
   leadMinutes: number
   channels: string
   deliveryTargets: unknown

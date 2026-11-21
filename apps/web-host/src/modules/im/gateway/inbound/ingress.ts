@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import { classifyImGroupInbound, imActorInputFromPayload, type ImActor, type ImBotAccess } from '@gugu/core/im/access'
-import type { createImInboundPreflight } from '@gugu/core/im/inbound-preflight'
+import type { createImInboundPreflight } from '@gugu/gateway'
 import type { RunIdentity } from '@gugu/core/agent'
 import { enqueueAgentRunLocked } from '../../../agent/run/dispatch.js'
 import { registerAgentRunStartupLocked } from '../../../agent/run/start.js'

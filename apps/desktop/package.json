@@ -13,13 +13,13 @@
   "scripts": {
     "prepare:sidecar": "node scripts/prepare-sidecar.mjs",
     "smoke:sidecar": "node scripts/smoke-sidecar.mjs",
-    "dev": "corepack pnpm run dev:prepare && node scripts/dev.mjs",
+    "dev": "node scripts/dev.mjs",
     "dev:prepare": "node scripts/prepare-sidecar.mjs && node scripts/build.mjs",
-    "dev:web": "corepack pnpm run prepare:sidecar && corepack pnpm --dir ../web exec vite --config vite.desktop.config.js --host 127.0.0.1 --port 5174 --open '/desktop.html?desktopPreview=1'",
+    "dev:web": "node scripts/dev.mjs --open",
     "build": "node scripts/package.ts",
-    "build:host": "pnpm --filter @gugu/core build && pnpm --filter @gugu/gateway build && node scripts/build.mjs",
+    "build:host": "pnpm --filter @gugu/core build && pnpm --filter @gugu/gateway build && pnpm --filter @gugu/fs build && node scripts/build.mjs",
     "typecheck": "tsc -p tsconfig.json",
-    "pretest": "pnpm --filter @gugu/core build && pnpm --filter @gugu/gateway build",
+    "pretest": "pnpm --filter @gugu/core build && pnpm --filter @gugu/gateway build && pnpm --filter @gugu/fs build && node scripts/build-agent-runtime.mjs",
     "test": "vitest run",
     "smoke": "node scripts/smoke.ts",
     "probe:mxc": "node scripts/probe-mxc.mjs",
@@ -34,15 +34,19 @@
   },
   "devDependencies": {
     "@gugu/core": "workspace:*",
+    "@gugu/fs": "workspace:*",
     "@gugu/gateway": "workspace:*",
     "@gugu/log": "workspace:*",
-    "@microsoft/mxc-sdk": "1.0.1",
+    "@microsoft/mxc-sdk": "1.1.0",
     "@types/node": "26.6.6",
-    "playwright": "1.62.1",
     "electron": "45.3.1",
     "electron-builder": "26.18.0",
     "esbuild": "0.28.2",
+    "kysely": "0.29.8",
+    "playwright": "1.62.1",
     "typescript": "6.0.3",
-    "vitest": "4.1.12"
+    "vitest": "4.1.12",
+    "vue-i18n": "^11.4.10",
+    "vue-router": "^4.3.0"
   }
 }

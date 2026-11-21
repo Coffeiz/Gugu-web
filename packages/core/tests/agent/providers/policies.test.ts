@@ -123,6 +123,12 @@ describe('厂商模型和协议能力不互相冒用', () => {
     expect(qwenPolicy.supportedApiFormats(ai)).toEqual(['openai', 'responses'])
     expect(qwenPolicy.supportedApiFormats({ ...ai, model: 'qwen3.8-max-preview' })).toContain('anthropic')
   })
+  it('Qwen4-Max 支持 Anthropic，并保留官方 high 思考档位', () => {
+    const ai = config('qwen', 'qwen4-max', { thinking: 'adaptive', reasoning_effort: 'high' })
+    expect(qwenPolicy.supportedApiFormats(ai)).toContain('anthropic')
+    expect(qwenPolicy.capabilities(ai).thinking).toBe(true)
+    expect(qwenPolicy.parameters(ai, 'openai', 'chat')).toEqual({ preserve_thinking: true, reasoning_effort: 'high' })
+  })
   it.each([['high', 'xhigh'], ['max', 'xhigh'], ['minimal', 'low']])('Qwen3.8的%s档位按协议映射%s，旧Qwen3无同名档位', (selected, expected) => {
     const ai = config('qwen', 'qwen3.8-max', { thinking: 'adaptive', reasoning_effort: selected })
     expect(qwenPolicy.parameters(ai, 'openai', 'chat')).toEqual({ preserve_thinking: true, reasoning_effort: expected })
@@ -267,7 +273,7 @@ describe('公开选择、诊断与兼容协议的旧行为组合', () => {
   })
   it('公开推理DTO与最终参数按模型和官方端点隔离，MiniMax跨协议不虚报adaptive', () => {
     const minimax = { provider: 'minimax', model: 'MiniMax-M3.1-Flash-Preview', api_format: 'anthropic', thinking: 'adaptive', reasoning_effort: 'xhigh' }
-    expect(capabilitySnapshot(minimax)).toMatchObject({ selected_api_format: 'anthropic', default_api_format: 'anthropic', default_base_url: 'https://api.minimaxi.com/anthropic', supported_api_formats: ['anthropic', 'openai', 'responses'], reasoning_modes: ['adaptive'], reasoning_efforts: ['low', 'medium', 'high', 'xhigh', 'max'], supports_adaptive_thinking: false })
+    expect(capabilitySnapshot(minimax)).toMatchObject({ selected_api_format: 'anthropic', default_api_format: 'anthropic', default_base_url: 'https://api.minimax.cn/anthropic', supported_api_formats: ['anthropic', 'openai', 'responses'], reasoning_modes: ['adaptive'], reasoning_efforts: ['low', 'medium', 'high', 'xhigh', 'max'], supports_adaptive_thinking: false })
     expect(minimaxPolicy.parameters({ ...minimax, reasoning_effort: 'minimal' }, 'anthropic', 'chat')).toEqual({})
     expect(capabilitySnapshot({ provider: 'minimax', model: 'MiniMax-M3', api_format: 'openai' }).supports_adaptive_thinking).toBe(true)
     expect(capabilitySnapshot({ provider: 'minimax', model: 'MiniMax-M3', api_format: 'responses' }).supports_adaptive_thinking).toBe(false)

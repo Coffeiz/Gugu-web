@@ -15,16 +15,25 @@
         <span class="session-title">{{ s.title }}</span>
         <span class="sid">#{{ s.id }}</span>
       </button>
+      <button
+        v-for="session in desktopSessions" :key="session.session_key"
+        class="session-row" :class="{ active: session.session_key === desktopSession?.session_key }"
+        :disabled="sending" @click="selectDesktopSession(session)"
+      >
+        <span class="source">{{ t('playground.desktopSource') }}</span>
+        <span class="session-title">{{ session.title }}</span>
+        <span class="sid">#{{ session.external_session_id }}</span>
+      </button>
     </section>
 
     <section class="session-stage">
       <header class="session-head">
         <div>
-          <span class="eyebrow">{{ activeId ? `SESSION #${activeId}` : 'NEW SESSION' }}</span>
-          <h1>{{ activeSession?.title || 'New conversation' }}</h1>
+          <span class="eyebrow">{{ activeSessionId ? `SESSION #${activeSessionId}` : 'NEW SESSION' }}</span>
+          <h1>{{ desktopSession?.title || activeSession?.title || 'New conversation' }}</h1>
         </div>
         <div class="head-actions">
-          <button v-if="activeId" class="refresh" :title="t('playground.refreshSession')" :aria-label="t('playground.refreshSession')" @click="refreshAll">↻</button>
+          <button v-if="activeSessionId" class="refresh" :title="refreshLabel" :aria-label="refreshLabel" @click="refreshAll">↻</button>
           <div v-if="activeId" class="view-switch">
             <button :class="{ active: sessionView === 'conversation' }" @click="showConversation">{{ t('playground.conversation') }}</button>
             <button :class="{ active: sessionView === 'monitor' }" @click="openMonitor">Monitor</button>
@@ -91,6 +100,7 @@
 
       <SessionMonitor
         v-else
+        :key="activeSessionKey ?? undefined"
         ref="monitorRef"
         :runs="runs"
         :details="runDetails"
@@ -110,9 +120,9 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
-import type { ChatMessage, GuguSession, TraceRun, TraceRunSummary } from '../types'
+import type { ChatMessage, GuguSession, TraceRun, TraceRunSummary, TraceSession } from '../types'
 import { listGuguSessions, loadBootstrap, loadMessagePage, sendMessage } from '../services/gugu'
-import { getRun, getRunSpans, listRuns, subscribeTraceEvents } from '../services/api'
+import { getRun, getRunSpans, listRuns, listTraceSessions, subscribeTraceEvents } from '../services/api'
 import { useLoopScopeI18n } from '../i18n/index'
 const { t } = useLoopScopeI18n()
 import SessionMonitor from '../components/SessionMonitor.vue'
@@ -122,6 +132,11 @@ import { formatCompactNumber } from '../utils/formatNumber'
 
 const sessions = ref<GuguSession[]>([])
 const activeId = ref<number | null>(null)
+const desktopSessions = ref<TraceSession[]>([])
+const desktopSession = ref<TraceSession | null>(null)
+const activeSessionId = computed(() => desktopSession.value?.external_session_id ?? activeId.value)
+const activeSessionKey = computed(() => desktopSession.value?.session_key ?? (activeId.value == null ? null : `web:${activeId.value}`))
+const refreshLabel = computed(() => t(desktopSession.value ? 'playground.refreshRuns' : 'playground.refreshSession'))
 const messages = ref<ChatMessage[]>([])
 const activeChatType = ref<string | null>(null)
 const ownerPlatformUserId = ref<string | null>(null)
@@ -154,58 +169,68 @@ const activeSession = computed(() => sessions.value.find(s => s.id === activeId.
 let stopTraceEvents: (() => void) | null = null
 let traceRefreshTimer: number | undefined
 let pendingTraceEvent: { run_id: string; session_key: string; status: string } | undefined
-const runRefreshes = new Map<number, Promise<TraceRunSummary[]>>()
+const runRefreshes = new Map<string, Promise<TraceRunSummary[]>>()
+let desktopSessionRefresh: Promise<void> | undefined
 
 async function refreshSessions() {
   if (!connected.value) return
   sessions.value = await listGuguSessions()
 }
-function runSources() {
+function refreshDesktopSessions() {
+  if (!connected.value) return Promise.resolve()
+  desktopSessionRefresh ??= listTraceSessions()
+    .then(entries => { desktopSessions.value = entries.filter(session => session.source === 'desktop') })
+    .catch(() => { /* Collector 暂不可用时保留已有会话。 */ })
+    .finally(() => { desktopSessionRefresh = undefined })
+  return desktopSessionRefresh
+}
+function traceSessionKeys() {
+  if (desktopSession.value) return [desktopSession.value.session_key]
+  if (activeId.value == null) return []
   const source = activeSession.value?.source || 'web'
   const collectorSource = ['im', 'feishu', 'qq', 'wechat', 'telegram'].includes(source) ? 'im' : source
-  // 新版 Node 将所有 IM 统一写到 `im`；旧 Python 使用平台名作为 source。
-  // 两种键都查，避免旧会话在迁移后显示为空。
-  return [...new Set([collectorSource, source, 'web'])]
+  // IM 可以绑定 Web 会话，因此也保留同一会话的 Web Run。
+  return [...new Set([collectorSource, 'web'])].map(origin => `gugu:${origin}:${activeId.value}`)
 }
 async function loadSessionRuns(options: { limit?: number; before?: number } = {}) {
-  const sessionId = activeId.value
-  if (sessionId == null) return []
+  const sessionKey = activeSessionKey.value
+  if (!sessionKey) return []
   const results = await Promise.allSettled(
-    runSources().map(source => listRuns(sessionId, source, options)),
+    traceSessionKeys().map(key => listRuns(key, options)),
   )
   const batches = results.map(result => result.status === 'fulfilled' ? result.value : [])
   if (results.every(result => result.status === 'rejected')) {
     throw results.find(result => result.status === 'rejected')?.reason ?? new Error('Runs 请求失败')
   }
-  if (activeId.value === sessionId && results.some(result => result.status === 'rejected')) {
+  if (activeSessionKey.value === sessionKey && results.some(result => result.status === 'rejected')) {
     runsError.value = t('playground.runLoadFailed', { message: '部分会话来源暂不可用' })
   }
   const unique = new Map(batches.flat().map(run => [run.id, run]))
   return [...unique.values()].sort((a, b) => (b.started_at - a.started_at) || b.id.localeCompare(a.id))
 }
 async function refreshRuns() {
-  const sessionId = activeId.value
-  if (!sessionId) { runs.value = []; runsError.value = ''; return }
-  let request = runRefreshes.get(sessionId)
+  const sessionKey = activeSessionKey.value
+  if (!sessionKey) { runs.value = []; runsError.value = ''; return }
+  let request = runRefreshes.get(sessionKey)
   runsLoading.value = Boolean(request)
   if (!request) {
     runsLoading.value = true
     runsError.value = ''
     request = loadSessionRuns({ limit: 20 }).then(result => result.slice(0, 20))
-    runRefreshes.set(sessionId, request)
+    runRefreshes.set(sessionKey, request)
     void request.finally(() => {
-      if (runRefreshes.get(sessionId) === request) runRefreshes.delete(sessionId)
-      if (activeId.value === sessionId) runsLoading.value = false
+      if (runRefreshes.get(sessionKey) === request) runRefreshes.delete(sessionKey)
+      if (activeSessionKey.value === sessionKey) runsLoading.value = false
     }).catch(() => {})
   }
   try {
     const nextRuns = await request
     // 切换会话后，迟到的旧结果不能覆盖当前 Monitor。
-    if (activeId.value !== sessionId) return
+    if (activeSessionKey.value !== sessionKey) return
     runs.value = nextRuns
     hasOlderRuns.value = runs.value.length >= 20
   } catch (cause) {
-    if (activeId.value === sessionId) {
+    if (activeSessionKey.value === sessionKey) {
       runs.value = []
       runsError.value = t('playground.runLoadFailed', { message: errorMessage(cause) })
     }
@@ -221,7 +246,9 @@ async function refreshLiveRun(runId: string) {
   spanHasMore.value = { ...spanHasMore.value, [runId]: Boolean(page.hasMore) }
 }
 function onTraceEvent(event: { run_id: string; session_key: string; status: string }) {
-  if (!activeId.value || !runSources().some(source => event.session_key === `gugu:${source}:${activeId.value}`)) return
+  if (event.session_key.startsWith('gugu:desktop:')
+    && !desktopSessions.value.some(session => session.session_key === event.session_key)) void refreshDesktopSessions()
+  if (!traceSessionKeys().includes(event.session_key)) return
   if (sessionView.value !== 'monitor' && mode.value !== 'detail') return
   pendingTraceEvent = event
   if (traceRefreshTimer !== undefined) return
@@ -232,18 +259,20 @@ function onTraceEvent(event: { run_id: string; session_key: string; status: stri
     if (!latestEvent) return
     void (async () => {
       await refreshRuns()
-      if (sessionView.value !== 'monitor') return
+      if (sessionView.value !== 'monitor' || !traceSessionKeys().includes(latestEvent.session_key)) return
       if (!monitorFocusRunId.value) monitorFocusRunId.value = latestEvent.run_id
       if (monitorFocusRunId.value === latestEvent.run_id) await refreshLiveRun(latestEvent.run_id)
     })().catch(() => {})
   }, 120)
 }
 async function loadOlderRuns() {
-  if (!activeId.value || !hasOlderRuns.value || loadingOlderRuns.value || !runs.value.length) return
+  const sessionKey = activeSessionKey.value
+  if (!sessionKey || !hasOlderRuns.value || loadingOlderRuns.value || !runs.value.length) return
   const oldest = runs.value[runs.value.length - 1]
   loadingOlderRuns.value = true
   try {
     const older = await loadSessionRuns({ limit: 20, before: oldest.started_at })
+    if (activeSessionKey.value !== sessionKey) return
     const existing = new Set(runs.value.map(run => run.id))
     const unique = older.filter(run => !existing.has(run.id))
     runs.value = [...runs.value, ...unique]
@@ -376,6 +405,19 @@ function messageRoleLabel(message: ChatMessage): string {
       : t('playground.groupMember'))
 }
 async function refreshAll() {
+  const desktop = desktopSession.value
+  if (desktop) {
+    error.value = ''
+    await Promise.all([refreshDesktopSessions(), refreshRuns()])
+    if (desktopSession.value?.session_key === desktop.session_key && monitorFocusRunId.value) {
+      try { await refreshLiveRun(monitorFocusRunId.value) }
+      catch (cause) {
+        if (desktopSession.value?.session_key === desktop.session_key)
+          error.value = t('playground.runLoadFailed', { message: errorMessage(cause) })
+      }
+    }
+    return
+  }
   if (!activeId.value) return
   const newestCanonicalId = messages.value.reduce((max, message) => Math.max(max, message.canonicalId ?? 0), 0)
   if (messages.value.length && newestCanonicalId) {
@@ -391,6 +433,7 @@ async function refreshAll() {
   scrollEl.value?.scrollTo({ top: scrollEl.value.scrollHeight })
 }
 async function selectSession(id: number) {
+  desktopSession.value = null
   activeId.value = id
   runs.value = []
   runsError.value = ''
@@ -410,7 +453,13 @@ async function selectSession(id: number) {
     scrollEl.value?.scrollTo({ top: scrollEl.value.scrollHeight })
   }
 }
+async function selectDesktopSession(session: TraceSession) {
+  newSession()
+  desktopSession.value = session
+  await openMonitor()
+}
 function newSession() {
+  desktopSession.value = null
   activeId.value = null
   activeChatType.value = null
   ownerPlatformUserId.value = null
@@ -433,7 +482,8 @@ async function showConversation() {
   if (scrollEl.value) scrollEl.value.scrollTop = conversationScrollTop.value
 }
 async function openMonitor() {
-  if (!activeId.value) return
+  const sessionKey = activeSessionKey.value
+  if (!sessionKey) return
   conversationScrollTop.value = scrollEl.value?.scrollTop ?? conversationScrollTop.value
   sessionView.value = 'monitor'
   if (!runs.value.some(run => run.id === monitorFocusRunId.value)) {
@@ -442,6 +492,7 @@ async function openMonitor() {
   await nextTick()
   monitorRef.value?.setScrollTop(monitorScrollTop.value)
   void refreshRuns().then(() => {
+    if (activeSessionKey.value !== sessionKey) return
     if (!runs.value.some(run => run.id === monitorFocusRunId.value)) {
       monitorFocusRunId.value = runs.value[0]?.id ?? ''
     }
@@ -563,8 +614,8 @@ function preview(v: unknown) {
 }
 async function onBootstrap() {
   connected.value = !!loadBootstrap()
-  await refreshSessions()
-  if (!activeId.value && sessions.value[0]) await selectSession(sessions.value[0].id)
+  await Promise.all([refreshSessions(), refreshDesktopSessions()])
+  if (!activeSessionKey.value && sessions.value[0]) await selectSession(sessions.value[0].id)
 }
 onMounted(async () => {
   window.addEventListener('loopscope:bootstrap', onBootstrap)

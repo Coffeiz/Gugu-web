@@ -1,3 +1,4 @@
+import { builtinSkillKeyPattern, legacyBuiltinSkillKey } from '../skills/builtin.js'
 import type { Block, MessageEntry } from '../models.js'
 import { blocks } from './history/canonical-history.js'
 import { resolveCallTool } from '../tools/call-adapter.js'
@@ -32,7 +33,11 @@ export function loadedSkills(entries: readonly MessageEntry[]): Record<string, {
       if (id.startsWith('U')) {
         if (m.source !== 'user' || typeof m.owner_fingerprint !== 'string' || !m.owner_fingerprint.trim()) continue
         loaded[id] = { digest: m.content_digest, source: 'user', ownerFingerprint: m.owner_fingerprint }
-      } else if (m.source === undefined || m.source === 'builtin') loaded[id] = { digest: m.content_digest, source: 'builtin' }
+      } else if (m.source === undefined || m.source === 'builtin') {
+        const key = typeof m.skill_key === 'string' && builtinSkillKeyPattern.test(m.skill_key)
+          ? m.skill_key : m.skill_key === undefined ? legacyBuiltinSkillKey(id) : undefined
+        if (key) loaded[key] = { digest: m.content_digest, source: 'builtin' }
+      }
     }
   }
   return loaded

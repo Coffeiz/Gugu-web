@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from 'pg'
 import type { RunIdentity } from '@gugu/core/agent'
-import { selectImTextChoice, type ImPreflightScope } from '@gugu/core/im/inbound-preflight'
+import { selectImTextChoice, type ImPreflightScope } from '@gugu/gateway'
 import type { AgentInteractionRespondService } from '../../../agent/interactions/respond.js'
 import { projectInteractionPromptLocked } from '../../../agent/interactions/projection.js'
 import { imInteractionScopeSql as scopeSql, imInteractionScopeParameters as params, imOrdinaryInteractionReplayed } from '../../../agent/interactions/replay.js'

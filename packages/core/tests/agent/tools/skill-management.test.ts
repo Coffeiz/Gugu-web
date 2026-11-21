@@ -24,7 +24,7 @@ it('Markdown head和真实用户目录共同列出元数据，包含停用项但
  insert.run(other,'U2','其他账号','隐私','personal','[]','user',1,'user')
  insert.run(owner.replaceAll('-',''),'U3','非用户源','不返回','personal','[]','user',1,'builtin')
  let reads=0,allowed=true
- const defs=await createBuiltinSkillDefinitions([{name:'synthetic.md',read:async()=>{reads++;return '---\nid: S1\nname: Straße\ndescription_short: 内置摘要\ncategory: writing\nrelated_tools: [note_get]\n---\n绝不能返回的正文'}}],new AbortController().signal)
+ const defs=await createBuiltinSkillDefinitions([{name:'synthetic.md',read:async()=>{reads++;return '---\nname: Straße\ndescription: 内置摘要\ncategory: writing\nrelated_tools: [note_get]\n---\n绝不能返回的正文'}}],new AbortController().signal)
  const list=createSkillMetadataReader(db,'sqlite',defs)
  const registry=createToolRegistry({groups:[{id:'skill_management',name:'技能管理',tools:createSkillManagementReadTools(list)}],authorize:async()=>allowed})
  const scope={identity:{ownerId:owner,sessionId:'1',runId:'skills'},roundId:'1',signal:new AbortController().signal,resolution:null,execute:async()=>{throw new Error('不执行进程')}}
@@ -70,13 +70,10 @@ it('技能删除绑定目标版本，确认后与收据提交，重放不重复�
   const resolution = { interactionId: 'interaction', receiptId: 'receipt', status: 'confirmed' as const, value: null }
   const read = async () => (await sql`SELECT id FROM user_skills ORDER BY id`.execute(runtime.db)).rows
   try {
-    // Core Agent 仍使用 Host 迁移的 Skill 表；SQLite 夹具覆盖领域操作与真实 Core 收据。
-    await sql`CREATE TABLE user_skills (id INTEGER PRIMARY KEY,owner_id TEXT,skill_id TEXT,name TEXT,
-      description_short TEXT,description_long TEXT,category TEXT,body TEXT,related_tools TEXT,
-      source TEXT,managed_by TEXT,enabled INTEGER,content_digest TEXT,updated_at TEXT)`.execute(runtime.db)
-    await sql`INSERT INTO user_skills VALUES
-      (1,${ownerId.replaceAll('-', '')},'U1','小北的技能','简述',NULL,'personal','正文','[]','user','assistant',1,'v1','2026-01-01'),
-      (2,'other','U1','他人技能','简述',NULL,'personal','正文','[]','user','user',1,'v1','2026-01-01')`.execute(runtime.db)
+    await sql`INSERT INTO user_skills(id,owner_id,skill_id,name,description_short,category,body,related_tools,
+      source,managed_by,enabled,content_digest,created_at,updated_at) VALUES
+      (1,${ownerId.replaceAll('-', '')},'U1','小北的技能','简述','personal','正文','[]','user','assistant',1,'v1','2026-01-01','2026-01-01'),
+      (2,'other','U1','他人技能','简述','personal','正文','[]','user','user',1,'v1','2026-01-01','2026-01-01')`.execute(runtime.db)
     expect(await registry.tools.dispatch(call, scope)).toMatchObject({ kind: 'waiting' })
     expect(await read()).toEqual([{ id: 1 }, { id: 2 }])
     await sql`UPDATE user_skills SET body='修改正文' WHERE id=1`.execute(runtime.db)

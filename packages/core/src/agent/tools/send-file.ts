@@ -87,10 +87,11 @@ export function createPostgresSendFileLookup<DB>(db: Kysely<DB>) {
   }
 }
 
-export interface ImSendFileInput { identity: RunIdentity; roundId: string; toolCallId: string; fileId?: number; attachId?: string }
+export interface ImSendFileInput { identity: RunIdentity; roundId: string; toolCallId: string; fileId?: number; attachId?: string; filePath?: string }
 export interface ImSendFilePort {
   /** 只对已授权owner私聊开放文件库ID；附件仍需Host逐次核对完整IM scope。 */
   readonly allowFileId: boolean
+  readonly allowFilePath?: boolean
   send(input: ImSendFileInput & {signal:AbortSignal}): Promise<'sent'|'failed'|'unknown'>
   recover(input: ImSendFileInput): Promise<'sent'|'failed'|'unknown'>
 }
@@ -99,12 +100,30 @@ const output=(status:'sent'|'failed'|'unknown'):ToolResult=>status==='unknown'?{
 
 /** 最小已接线来源；URL、文件名和Shell逻辑路径尚无正式授权端口，不向模型宣称支持。 */
 export function createImSendFileTool(port:ImSendFilePort):ToolDefinition {
-  const attach=z.string().min(1).max(256).refine(v=>!/[\x00-\x1f\x7f]/u.test(v))
-  const schema=port.allowFileId?z.union([z.object({file_id:z.number().int().positive().safe()}).strict(),z.object({attach_id:attach}).strict()]):z.object({attach_id:attach}).strict()
-  const args=(raw:unknown)=>{const v=schema.parse(raw);return 'file_id' in v?{fileId:v.file_id}:{attachId:v.attach_id}}
-  return {definition:{name:'send_file',schema:{type:'function',function:{name:'send_file',description:'仅在用户明确要求时发送已授权文件或本会话附件；平台结果不明确时不会重发。',parameters:{type:'object',
-    properties:{...(port.allowFileId?{file_id:{type:'integer',minimum:1}}:{}),attach_id:{type:'string',minLength:1,maxLength:256}},additionalProperties:false,
-    ...(port.allowFileId?{oneOf:[{required:['file_id']},{required:['attach_id']}]}:{required:['attach_id']})}}}},effect:'write',
+  const attach = z.string().min(1).max(256).refine(value => !/[\x00-\x1f\x7f]/u.test(value))
+  const path = z.string().max(2048).regex(/^\/(personal|project|workspace)\/[^\x00-\x1f\x7f\\]+$/u)
+  const schema = z.strictObject({
+    attach_id: attach.optional(),
+    ...(port.allowFileId ? { file_id: z.number().int().positive().safe().optional() } : {}),
+    ...(port.allowFilePath ? { file: path.optional() } : {}),
+  }).refine(value => Object.values(value).filter(item => item !== undefined).length === 1)
+  const args = (raw: unknown) => {
+    const value = schema.parse(raw)
+    if (typeof value.file_id === 'number') return { fileId: value.file_id }
+    if (typeof value.file === 'string') return { filePath: value.file }
+    return { attachId: value.attach_id }
+  }
+  const properties = {
+    ...(port.allowFileId ? { file_id: { type: 'integer', minimum: 1 } } : {}),
+    ...(port.allowFilePath ? { file: { type: 'string', description: '文件库逻辑路径，例如 /personal/示例.pdf' } } : {}),
+    attach_id: { type: 'string', minLength: 1, maxLength: 256 },
+  }
+  const keys = Object.keys(properties)
+  return { definition: { name: 'send_file', schema: { type: 'function', function: {
+    name: 'send_file', description: '仅在用户明确要求时发送已授权文件或本会话附件；平台结果不明确时不会重发。',
+    parameters: { type: 'object', properties, additionalProperties: false,
+      ...(keys.length > 1 ? { oneOf: keys.map(key => ({ required: [key] })) } : { required: keys }) },
+  } } }, effect: 'write',
     validate:input=>schema.safeParse(input),
     async execute(input,scope,call){scope.signal.throwIfAborted();return output(await port.send({identity:scope.identity,roundId:scope.roundId,toolCallId:call.id,...args(input),signal:scope.signal}))},
     async reconcile(input,identity,call){return output(await port.recover({identity,roundId:identity.roundId,toolCallId:call.id,...args(input)}))},

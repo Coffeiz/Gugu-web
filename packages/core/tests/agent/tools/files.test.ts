@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import * as XLSX from 'xlsx'
 const { openLocalFile } = await import(new URL('../../../../fs/src/node.ts', import.meta.url).href)
 import type { FileArchivePort, FileDeletePort, FileEditPort, ReadFilePorts } from '../../../src/agent/tools/files.js'
-import { createDeleteFileTool, createListRecentAttachmentsTool, createReadFileTool, createSaveUploadedFileTool } from '../../../src/agent/tools/files.js'
+import { createDeleteFileTool, createListRecentAttachmentsTool, createPresentFileTool, createReadFileTool, createSaveAttachmentTool } from '../../../src/agent/tools/files.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 
 const identity = { ownerId: '小北', sessionId: '1', runId: 'run' }
@@ -113,7 +113,7 @@ describe('文件工具通过注册器读取真实临时文件', () => {
     })
     expect(result).toMatchObject({ kind: 'completed', successful: true, mutated: false,
       value: { count: 1, items: [{ attach_id: 'attachment-synthetic', size_bytes: 12, state: 'attached' }],
-        note: expect.stringContaining('save_uploaded_file') } })
+        note: expect.stringContaining('save_attachment') } })
     expect(received).toEqual([identity])
   })
   it('近期附件工具拒绝额外参数并脱敏 Host 读取错误', async () => {
@@ -335,12 +335,12 @@ describe('聊天附件保存工具注册器行为', () => {
   it('只转发精确附件来源和可信 owner，支持批量/最近来源并拒绝歧义参数', async () => {
     const calls: Array<{ owner: string; input: unknown }> = []
     let authorized = true
-    const registry = createToolRegistry({ authorize: async (current, name) => authorized && current.ownerId === identity.ownerId && name === 'save_uploaded_file',
-      tools: [createSaveUploadedFileTool({ async save(current, input) {
+    const registry = createToolRegistry({ authorize: async (current, name) => authorized && current.ownerId === identity.ownerId && name === 'save_attachment',
+      tools: [createSaveAttachmentTool({ async save(current, input) {
         calls.push({ owner: current.ownerId, input })
         return { kind: 'saved', mutated: true, value: { file_id: calls.length, name: 'saved.txt', size: 4 } }
       } })] })
-    const dispatch = (input: unknown, owner = identity.ownerId) => registry.tools.dispatch({ id: 'save', name: 'save_uploaded_file', input }, {
+    const dispatch = (input: unknown, owner = identity.ownerId) => registry.tools.dispatch({ id: 'save', name: 'save_attachment', input }, {
       identity: { ...identity, ownerId: owner }, roundId: 'round', signal: new AbortController().signal,
       resolution: null, execute: async () => { throw new Error('不允许执行 Shell') },
     })
@@ -349,15 +349,19 @@ describe('聊天附件保存工具注册器行为', () => {
     expect(await dispatch({ source: 'attach_ids', attach_ids: ['attachment-2', 'attachment-3'], space: 'project', project_id: 7, folder_id: 8 }))
       .toMatchObject({ successful: true, value: { file_id: 2 } })
     expect(await dispatch({ source: 'latest' })).toMatchObject({ successful: true, value: { file_id: 3 } })
-    expect(await dispatch({ attach_id: 'attachment-workspace', space: 'workspace' })).toMatchObject({ successful: true, value: { file_id: 4 } })
-    expect(calls[3]).toEqual({ owner: identity.ownerId,
+    expect(await dispatch({ attach_id: 'folder-path', folder_path: '资料/项目' })).toMatchObject({ successful: true })
+    expect(calls[3]?.input).toMatchObject({ source: 'attach_id', attach_id: 'folder-path', folder_path: '资料/项目' })
+    expect(await dispatch({ attach_id: 'attachment-workspace', space: 'workspace' })).toMatchObject({ successful: true, value: { file_id: 5 } })
+    expect(calls[4]).toEqual({ owner: identity.ownerId,
       input: { source: 'attach_id', attach_id: 'attachment-workspace', space: 'workspace' } })
     expect(await dispatch({ source: 'latest', attach_id: 'must-not-fallback' })).toMatchObject({ successful: false, executed: false })
     expect(await dispatch({ attach_ids: ['same', 'same'] })).toMatchObject({ successful: false, executed: false })
+    expect(await dispatch({ attach_id: 'bad-folder', folder_path: '../越界' })).toMatchObject({ successful: false, executed: false })
+    expect(await dispatch({ attach_id: 'ambiguous-folder', folder_id: 1, folder_path: '资料' })).toMatchObject({ successful: false, executed: false })
     expect(await dispatch({ attach_id: 'wrong-scope', space: 'workspace', project_id: 7 })).toMatchObject({ successful: false, executed: false })
     authorized = false
     expect(await dispatch({ attach_id: 'attachment-4' })).toMatchObject({ successful: false, executed: false })
-    expect(calls).toHaveLength(4)
+    expect(calls).toHaveLength(5)
   })
 })
 
@@ -397,4 +401,20 @@ describe('文件软删除工具注册器行为', () => {
     expect(calls[3]).toEqual([identity, 75])
     expect(calls[4]).toEqual(['resolve', identity, '/personal/absent.txt'])
   })
+})
+
+it('桌面引用回执同时提供文件的真实路径和可点击链接', async () => {
+  const absolute = '/synthetic/工作区/文件.md'
+  const registry = createToolRegistry({ authorize: async () => true, tools: [createPresentFileTool({
+    async resolve(_identity, selector) {
+      expect(selector).toEqual({ file: absolute, reference_only: true })
+      return { file: { referenceId: 'drop-synthetic', name: '文件', ext: 'md', path: absolute, surface: 'desktop' } }
+    },
+  })] })
+  const result = await registry.tools.dispatch({ id: 'present-path', name: 'present_file',
+    input: { file: absolute, reference_only: true } }, {
+    identity, roundId: '1', signal: new AbortController().signal, resolution: null,
+    async execute() { throw new Error('不执行宿主机命令') },
+  })
+  expect(result).toMatchObject({ successful: true, value: { path: absolute, link: 'gugu://open-object/file/drop-synthetic' } })
 })

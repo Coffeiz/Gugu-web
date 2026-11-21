@@ -2,6 +2,7 @@ export interface ScheduledTaskUndoSnapshotInput {
   id: number
   enabled: boolean
   name: string
+  execution_mode?: 'reminder' | 'instruction'
   payload: string
   cron: string
   schedule_kind: string
@@ -26,6 +27,7 @@ export function scheduledTaskUndoSnapshot(
     enabled: Boolean(task.enabled),
     name: task.name,
     payload: task.payload,
+    ...(task.execution_mode ? { execution_mode: task.execution_mode } : {}),
     cron: task.cron,
     schedule_kind: task.schedule_kind,
     start_at: formatStartAt(task.start_at),

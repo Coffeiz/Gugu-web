@@ -53,28 +53,29 @@ backend/path/
 .coverage
 htmlcov/
 backend/mutants/
-apps/web/.stryker-report/
-apps/web/.stryker-tmp/
+apps/ui/.stryker-report/
+apps/ui/.stryker-tmp/
 .mypy_cache/
 .ruff_cache/
 
 # ===== Node / Frontend =====
-apps/web/node_modules/
-apps/web/dist/
-apps/web/dist-desktop/
-apps/web/dist.zip
-apps/web/build/
-apps/web/.vite/
-apps/web/.env
-apps/web/.env.local
-apps/web/.env.*.local
-apps/web/npm-debug.log*
-apps/web/yarn-debug.log*
-apps/web/yarn-error.log*
-apps/web/pnpm-debug.log*
-apps/web/.pnpm-store/
+apps/ui/node_modules/
+apps/ui/dist/
+apps/ui/dist-desktop/
+apps/ui/dist-admin/
+apps/ui/dist.zip
+apps/ui/build/
+apps/ui/.vite/
+apps/ui/.env
+apps/ui/.env.local
+apps/ui/.env.*.local
+apps/ui/npm-debug.log*
+apps/ui/yarn-debug.log*
+apps/ui/yarn-error.log*
+apps/ui/pnpm-debug.log*
+apps/ui/.pnpm-store/
 # 根目录的 package-lock.json 是误操作产物（误在根目录跑 npm install 会留下空 lockfile，
-# 还会让 npm 误判项目根），前端真锁在 apps/web/package-lock.json 里
+# 还会让 npm 误判项目根），前端真锁在 apps/ui/package-lock.json 里
 /package-lock.json
 
 # ===== 通用 =====
@@ -127,7 +128,7 @@ loopscope/backend/*.egg-info/
 /logs/
 Trace-*.json
 # 前端开发日志
-apps/web/nohup.out
+apps/ui/nohup.out
 # RAG 压测生成的本地 Embedding 缓存（按当前模型可重建）
 backend/scripts/.bench_rag_embeddings.json
 # 真实用户 RAG/LoopScope 诊断输出，只允许留在本机或 devserver

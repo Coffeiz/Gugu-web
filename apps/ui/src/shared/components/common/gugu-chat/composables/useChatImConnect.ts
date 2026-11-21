@@ -1,0 +1,242 @@
+import { ref, reactive, computed, nextTick, onUnmounted, watch, type Ref, type ComponentPublicInstance } from 'vue'
+import QRCode from 'qrcode'
+import { i18n } from '@/i18n'
+import { useLiveStore } from '@/stores/live'
+import type { ImPlatformKey } from '../chatTypes'
+import type GuguChatSidebar from '../GuguChatSidebar.vue'
+import type GuguChatBindDialog from '../GuguChatBindDialog.vue'
+
+interface Bot {
+  id?: number
+  platform: string
+  enabled: boolean
+}
+
+interface ImConnectState { platform: string; id: string | number }
+
+// ImPlatformKey 从 chatTypes.ts 引入（GuguChatSidebar.vue 的函数类型 props 也要用同一个
+// 类型别名，strictFunctionTypes 下两边收窄成不同类型会报参数逆变错误）。
+interface ImPlatformApi { start: () => Promise<any>; poll: (id: any) => Promise<any> }
+export interface ChatImAccess {
+  listBots(): Promise<{ items?: Bot[]; supported_platforms?: ImPlatformKey[] }>
+  connectTelegram?(token: string): Promise<unknown>
+  qr?: Partial<Record<ImPlatformKey, ImPlatformApi>>
+}
+
+interface ImPlatform { key: ImPlatformKey; label: string; api: ImPlatformApi | null }
+
+/**
+ * IM（飞书/QQ/微信）接入的唯一状态所有权：Bot 列表、侧栏「扫码连接」抽屉、聊天内
+ * 「扫码绑定」弹窗——两处扫码流程复用同一套 IM_PLATFORMS 元数据和轮询模式，但各自
+ * 独立的连接状态（互不干扰，同时开两个不会串）。
+ *
+ * sidebarRef/bindDialogRef/expanded/enterExpanded 由 GuguChat.vue 传入：前两个是拿去操作
+ * 子组件暴露的 DOM（滚动定位 IM 抽屉 / 往对话框的 canvas 画二维码），后两个是因为
+ * 「点击离线状态」这个入口需要联动窗口展开，窗口状态本身不属于这个 composable。
+ */
+export function useChatImConnect(options: {
+  access?: ChatImAccess
+  sidebarRef: Ref<InstanceType<typeof GuguChatSidebar> | null>
+  bindDialogRef: Ref<InstanceType<typeof GuguChatBindDialog> | null>
+  expanded: Ref<boolean>
+  enterExpanded: () => Promise<void> | void
+  fetchSessions: () => Promise<void>
+}) {
+  const t = i18n.global.t
+  const liveStore = useLiveStore()
+  const platformLabel = (key: ImPlatformKey) => key === 'feishu' ? t('chatUi.feishu') : key === 'wechat' ? t('chatUi.wechat') : key === 'telegram' ? t('chatUi.telegram') : 'QQ'
+  const IM_PLATFORMS: ImPlatform[] = [
+    { key: 'feishu',  label: 'Feishu', api: options.access?.qr?.feishu ?? null },
+    { key: 'qq',   label: 'QQ',   api: options.access?.qr?.qq ?? null },
+    { key: 'wechat',  label: 'WeChat', api: options.access?.qr?.wechat ?? null },
+    { key: 'telegram', label: 'Telegram', api: null },
+  ]
+  const bots   = ref<Bot[]>([])
+  let botsLoadSeq = 0
+  const telegramTokenDialogOpen = ref(false)
+  const telegramConnecting = ref(false)
+  const telegramConnectError = ref('')
+  const supportedPlatforms = ref<ImPlatformKey[]>(IM_PLATFORMS
+    .filter(platform => platform.api || (platform.key === 'telegram' && options.access?.connectTelegram))
+    .map(platform => platform.key))
+  const imOpen = reactive<Record<ImPlatformKey, boolean>>({ feishu: false, qq: false, wechat: false, telegram: false })
+  // Sidebar 只需要 key/label 展示，api 对象（feishuConnectApi 等）留在这里，
+  // startImConnect/openChatImBind 仍按 IM_PLATFORMS.find(...) 查找。
+  const imPlatformOptions = computed(() => IM_PLATFORMS.filter(p => supportedPlatforms.value.includes(p.key)).map(p => ({ key: p.key, label: platformLabel(p.key) })))
+  const imOnline = computed(() => bots.value.some(b => b.enabled && supportedPlatforms.value.includes(b.platform as ImPlatformKey)))
+  const imHighlight = ref(false)
+  const botsOf = (platform: ImPlatformKey) => bots.value.filter(b => b.platform === platform)
+
+  async function loadBots() {
+    if (!options.access) return
+    const seq = ++botsLoadSeq
+    try {
+      const r = await options.access.listBots()
+      if (seq !== botsLoadSeq) return
+      bots.value = r.items || []
+      if (Array.isArray(r.supported_platforms)) supportedPlatforms.value = r.supported_platforms
+    } catch {}
+  }
+  watch(() => liveStore.rev.im_channels, () => { void loadBots() })
+  function toggleImPlatform(key: ImPlatformKey) { imOpen[key] = !imOpen[key] }
+
+  function openTelegramTokenDialog() {
+    if (!options.access?.connectTelegram) return
+    telegramConnectError.value = ''
+    telegramTokenDialogOpen.value = true
+  }
+  function closeTelegramTokenDialog() {
+    if (telegramConnecting.value) return
+    telegramTokenDialogOpen.value = false
+  }
+  async function submitTelegramToken(token: string) {
+    const normalized = token.trim()
+    if (!normalized || telegramConnecting.value || !options.access?.connectTelegram) return
+    telegramConnecting.value = true
+    telegramConnectError.value = ''
+    try {
+      await options.access.connectTelegram(normalized)
+      telegramTokenDialogOpen.value = false
+      await loadBots()
+      await options.fetchSessions()
+    } catch {
+      // API 错误可能携带服务端细节；不把原始异常直接显示在聊天 UI。
+      telegramConnectError.value = t('chatUi.telegramConnectFailed')
+    } finally {
+      telegramConnecting.value = false
+    }
+  }
+
+  // 离线状态被点击：展开大窗 → 摊开各 IM 抽屉露出「扫码连接」→ 高亮 IM 区一下（暗示式引导，不强推）
+  async function promptConnectIM() {
+    if (!options.access) return
+    if (!options.expanded.value) await options.enterExpanded()
+    else loadBots()
+    supportedPlatforms.value.forEach(platform => { imOpen[platform] = true })
+    await nextTick()
+    options.sidebarRef.value?.imGroupEl?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    imHighlight.value = false   // 重置以便点第二次也能重放动画
+    await nextTick()
+    imHighlight.value = true
+    setTimeout(() => { imHighlight.value = false }, 2600)
+  }
+
+  // 通用扫码连接（建任务 → 渲染二维码 → 轮询 → 自动写 user_bot，与 ProfileModal 同一套 API）
+  const connecting    = ref('')        // 正在生成二维码的平台 key
+  const connect       = ref<ImConnectState | null>(null)      // { platform, id } 连接进行中
+  const connectHint   = ref('')
+  const connectErr    = ref('')
+  const connectCanvas = ref<HTMLCanvasElement | null>(null)
+  let connectGeneration = 0
+  let   connectPoll: ReturnType<typeof setInterval> | null = null
+  function setConnectCanvas(el: Element | ComponentPublicInstance | null) { if (el) connectCanvas.value = el as HTMLCanvasElement }   // v-for 内函数 ref，避免数组 ref
+
+  async function startImConnect(platform: ImPlatformKey) {
+    const p = IM_PLATFORMS.find(x => x.key === platform)
+    if (!p?.api || !supportedPlatforms.value.includes(platform)) return
+    cancelImConnect()
+    const generation = connectGeneration
+    connecting.value = platform; connectErr.value = ''
+    try {
+      const r = await p.api.start()
+      if (generation !== connectGeneration) return
+      connect.value = { platform, id: r.poll_id || r.task_id }   // 飞书 poll_id / QQ & 微信 task_id
+      connectHint.value = platform === 'feishu'
+        ? t('chatUi.feishuQrHint')
+        : platform === 'wechat'
+          ? t('chatUi.wechatQrHint')
+          : t('chatUi.qqQrHint')
+      await nextTick()
+      await QRCode.toCanvas(connectCanvas.value, r.scan_url, { width: 160, margin: 1 })
+      if (generation === connectGeneration) _startImPoll(p, generation)
+    } catch (e: any) {
+      if (generation !== connectGeneration) return
+      connectErr.value = e?.message || t('chatUi.qrFailed')
+      connect.value = null
+    } finally { if (generation === connectGeneration) connecting.value = '' }
+  }
+  function _startImPoll(p: ImPlatform & { api: ImPlatformApi }, generation: number) {
+    _stopImPoll()
+    let tries = 0, inFlight = false
+    connectPoll = setInterval(async () => {
+      if (inFlight || generation !== connectGeneration || !connect.value) return
+      inFlight = true
+      tries++
+      try {
+        const r = await p.api.poll(connect.value.id)
+        if (generation !== connectGeneration) return
+        if (r.status === 'success') { cancelImConnect(); await loadBots(); await options.fetchSessions() }
+        else if (r.status === 'expired') { connectErr.value = t('chatUi.qrExpired'); cancelImConnect() }
+        else if (r.status === 'fail') { connectErr.value = t('chatUi.connectFailed', { reason: r.reason || t('chatUi.unknown') }); cancelImConnect() }
+      } catch {} finally { inFlight = false }
+      if (generation === connectGeneration && tries > 100) cancelImConnect()   // ~5 分钟超时
+    }, 3000)
+  }
+  function _stopImPoll() { if (connectPoll) { clearInterval(connectPoll); connectPoll = null } }
+  function cancelImConnect() { connectGeneration++; _stopImPoll(); connect.value = null; connecting.value = '' }
+
+  // ── 聊天内「扫码绑定 IM」：咕咕回复里输出 [文案](gugu://bind-im/<platform>) 当按钮，
+  //    点击 → 这里弹小窗扫码（复用 IM_PLATFORMS 的 start/poll，与侧栏同一套后端，互不干扰）──
+  const chatBind = reactive<{ open: boolean; platform: string; label: string; hint: string; err: string; id: string | number | null }>(
+    { open: false, platform: '', label: '', hint: '', err: '', id: null }
+  )
+  let chatBindGeneration = 0
+  let chatBindPoll: ReturnType<typeof setInterval> | null = null
+
+  async function openChatImBind(platform: string) {
+    const p = IM_PLATFORMS.find(x => x.key === platform)
+    if (!p?.api || !supportedPlatforms.value.includes(p.key)) return
+    closeChatBind()
+    const generation = chatBindGeneration
+    chatBind.platform = platform; chatBind.label = platformLabel(p.key)
+    chatBind.err = ''; chatBind.hint = ''; chatBind.id = null; chatBind.open = true
+    await nextTick()
+    try {
+      const r = await p.api.start()
+      if (generation !== chatBindGeneration) return
+      chatBind.id = r.poll_id || r.task_id
+      chatBind.hint = platform === 'feishu'
+        ? t('chatUi.feishuQrHint')
+        : platform === 'wechat'
+          ? t('chatUi.wechatQrHint')
+          : t('chatUi.qqQrHint')
+      await nextTick()
+      await QRCode.toCanvas(options.bindDialogRef.value?.canvasEl, r.scan_url, { width: 168, margin: 1 })
+      if (generation === chatBindGeneration) _startChatBindPoll(p, generation)
+    } catch (e: any) {
+      if (generation !== chatBindGeneration) return
+      chatBind.err = e?.message || t('chatUi.qrFailed')
+    }
+  }
+  function _startChatBindPoll(p: ImPlatform & { api: ImPlatformApi }, generation: number) {
+    _stopChatBindPoll()
+    let tries = 0, inFlight = false
+    chatBindPoll = setInterval(async () => {
+      if (inFlight || generation !== chatBindGeneration || chatBind.id === null) return
+      inFlight = true
+      tries++
+      try {
+        const r = await p.api.poll(chatBind.id)
+        if (generation !== chatBindGeneration) return
+        if (r.status === 'success') { closeChatBind(); await loadBots(); await options.fetchSessions() }
+        else if (r.status === 'expired') { chatBind.err = t('chatUi.qrExpiredRetry'); _stopChatBindPoll() }
+        else if (r.status === 'fail') { chatBind.err = t('chatUi.connectFailed', { reason: r.reason || t('chatUi.unknown') }); _stopChatBindPoll() }
+      } catch {} finally { inFlight = false }
+      if (generation === chatBindGeneration && tries > 100) closeChatBind()
+    }, 3000)
+  }
+  function _stopChatBindPoll() { if (chatBindPoll) { clearInterval(chatBindPoll); chatBindPoll = null } }
+  function closeChatBind() { chatBindGeneration++; _stopChatBindPoll(); chatBind.open = false }
+
+  onUnmounted(() => { cancelImConnect(); closeChatBind() })
+
+  return {
+    bots, imOpen, imPlatformOptions, imOnline, botsOf, imHighlight,
+    loadBots, toggleImPlatform, promptConnectIM,
+    telegramTokenDialogOpen, telegramConnecting, telegramConnectError,
+    openTelegramTokenDialog, closeTelegramTokenDialog, submitTelegramToken,
+    connecting, connect, connectHint, connectErr, setConnectCanvas,
+    startImConnect, cancelImConnect,
+    chatBind, openChatImBind, closeChatBind,
+  }
+}

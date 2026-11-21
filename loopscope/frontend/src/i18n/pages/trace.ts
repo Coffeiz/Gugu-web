@@ -28,7 +28,7 @@ export const en = {
   'trace.prefix': 'Prefix: {value}', 'trace.unchanged': 'unchanged', 'trace.disconnected': 'disconnected',
   'trace.inputMarked': 'Input marks this message; inspect the full content there.',
   'trace.messageDiff': 'Message #{index} · {reason}', 'trace.toolLabel': 'Tool:', 'trace.typeLabel': 'Type:',
-  'trace.legacySummary': '## Earlier conversation summary', 'trace.contextInjection': 'Context injection',
+  'trace.contextInjection': 'Context injection',
   'trace.spanInput': 'Input · #{index}', 'trace.earlyDiff': 'First difference',
 }
 export const zh = {
@@ -61,6 +61,6 @@ export const zh = {
   'trace.prefix': '前缀：{value}', 'trace.unchanged': '未变化', 'trace.disconnected': '已断开',
   'trace.inputMarked': 'Input 已标记这条消息，可直接查看完整正文。',
   'trace.messageDiff': '消息 #{index} · {reason}', 'trace.toolLabel': '工具：', 'trace.typeLabel': '类型：',
-  'trace.legacySummary': '## 早前对话摘要', 'trace.contextInjection': '上下文注入',
+  'trace.contextInjection': '上下文注入',
   'trace.spanInput': 'Input · #{index}', 'trace.earlyDiff': '最早变化点',
 }

@@ -18,6 +18,7 @@ function reminder(row: Row, backend: Backend) {
   const start = row.start_at
   const targets = row.delivery_targets
   return {
+    execution_mode: row.execution_mode === 'instruction' ? 'instruction' as const : row.execution_mode === 'reminder' ? 'reminder' as const : undefined,
     id: Number(row.id), enabled: Boolean(row.enabled), name: String(row.name), payload: String(row.payload ?? ''),
     cron: String(row.cron), schedule_kind: String(row.schedule_kind),
     start_at: start == null ? null : start instanceof Date ? start : backend === 'sqlite' ? utc(String(start)).replace(' ', 'T') : String(start),
@@ -47,7 +48,7 @@ function adapter<DB>(tx: Transaction<DB>, backend: Backend, rawOwner: string, cl
       return (await sql`SELECT id FROM projects WHERE id=${id} AND user_id=${owner} AND deleted_at IS NULL`.execute(tx)).rows.length > 0
     },
     async listOwnedEventReminders(id: number) {
-      const result = await sql<Row>`SELECT id,enabled,name,payload,cron,schedule_kind,start_at,reminder_lead_minutes,channels,delivery_targets FROM scheduled_tasks WHERE user_id=${owner} AND event_id=${id} ORDER BY id`.execute(tx)
+      const result = await sql<Row>`SELECT id,enabled,name,payload,cron,execution_mode,schedule_kind,start_at,reminder_lead_minutes,channels,delivery_targets FROM scheduled_tasks WHERE user_id=${owner} AND event_id=${id} ORDER BY id`.execute(tx)
       return result.rows.map(row => reminder(row, backend))
     },
     async updateEventIfVersion(id: number, version: number, fields: CalendarEventUpdateFields) {
@@ -89,7 +90,7 @@ function adapter<DB>(tx: Transaction<DB>, backend: Backend, rawOwner: string, cl
         const current = byCron.get(reminder.cron)
         if (!current) {
           const inserted = await insertCalendarEventReminder(tx, backend, owner, event.id, reminder, timestamp())
-          result.push({ id: inserted.id, enabled: inserted.enabled, name: inserted.name, payload: inserted.payload, cron: inserted.cron,
+          result.push({ execution_mode: 'reminder', id: inserted.id, enabled: inserted.enabled, name: inserted.name, payload: inserted.payload, cron: inserted.cron,
             schedule_kind: inserted.scheduleKind, start_at: inserted.startAt, reminder_lead_minutes: inserted.leadMinutes,
             channels: inserted.channels, delivery_targets: inserted.deliveryTargets })
           continue
@@ -99,10 +100,10 @@ function adapter<DB>(tx: Transaction<DB>, backend: Backend, rawOwner: string, cl
         const targetJson = JSON.stringify(reminder.deliveryTargets ?? null)
         const targets = backend === 'postgres' ? sql`${targetJson}::json` : sql`${targetJson}`
         await sql`UPDATE scheduled_tasks SET name=${reminder.name},payload=${reminder.payload},cron=${reminder.cron},schedule_kind=${reminder.scheduleKind},
-          start_at=${start},reminder_lead_minutes=${reminder.leadMinutes},channels=${reminder.channels},enabled=${enabled},delivery_targets=${targets},updated_at=${timestamp()}
+          start_at=${start},reminder_lead_minutes=${reminder.leadMinutes},channels=${reminder.channels},enabled=${enabled},delivery_targets=${targets},execution_mode='reminder',updated_at=${timestamp()}
           WHERE user_id=${owner} AND event_id=${event.id} AND id=${current.id}`.execute(tx)
         await enqueueTaskRag(current.id)
-        result.push({ id: current.id, enabled: reminder.enabled, name: reminder.name, payload: reminder.payload, cron: reminder.cron,
+        result.push({ execution_mode: 'reminder', id: current.id, enabled: reminder.enabled, name: reminder.name, payload: reminder.payload, cron: reminder.cron,
           schedule_kind: reminder.scheduleKind, start_at: reminder.startAt, reminder_lead_minutes: reminder.leadMinutes,
           channels: reminder.channels, delivery_targets: reminder.deliveryTargets })
       }

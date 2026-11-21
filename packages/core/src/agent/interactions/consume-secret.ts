@@ -68,20 +68,21 @@ function validateHeaderSlots(slots: readonly Record<string, unknown>[], values: 
   }
 }
 
-/** 消费 Web MCP 凭据 prompt；凭据、prompt 终态、工具缓存失效和 Run 恢复在同一事务内。 */
+/** 消费 MCP 凭据 prompt；凭据、prompt 终态、工具缓存失效和 Run 恢复在同一事务内。 */
 export function createSecretInteractionConsumer(options: SecretInteractionConsumerOptions) {
   if (!options.store || typeof options.store.transaction !== 'function' || typeof options.encrypt !== 'function') throw new TypeError('凭据交互服务未完整配置')
   const now = options.now ?? (() => new Date())
-  return async (input: { ownerId: string; promptId: number; values: Record<string, string> | null }) => {
+  return async (input: { ownerId: string; promptId: number; sessionId?: number; values: Record<string, string> | null }) => {
     const ownerId = dataContext(input.ownerId).ownerId
     if (!Number.isSafeInteger(input.promptId) || input.promptId <= 0) fail('invalid_request', '凭据交互请求无效')
     return options.store.transaction(async tx => {
       const prompt = await tx.getOwnedPrompt(ownerId, input.promptId)
-      if (!prompt) fail('not_found', input.values === null ? '凭据输入不存在' : '敏感信息输入不存在')
+      if (!prompt || prompt.ownerId !== ownerId || prompt.id !== input.promptId
+        || (input.sessionId !== undefined && prompt.sessionId !== input.sessionId)) fail('not_found', input.values === null ? '凭据输入不存在' : '敏感信息输入不存在')
       const schema = object(prompt.schema)
       const context = object(schema.context)
       const target = object(context.secret_target)
-      if (target.kind !== 'mcp_credentials') {
+      if (prompt.kind !== 'form' || target.kind !== 'mcp_credentials') {
         fail('invalid_request', input.values === null ? '当前交互不支持凭据取消' : '当前敏感信息交互没有可用的业务处理器')
       }
       const fields = normalizeSecretFields(schema.secret_fields)
@@ -110,7 +111,7 @@ export function createSecretInteractionConsumer(options: SecretInteractionConsum
         const serverId = mcpServerId(target.server_id)
         if (!serverId) fail('conflict', '敏感信息目标已失效')
         const server = await tx.getOwnedMcpServer(ownerId, serverId)
-        if (!server || server.scope !== 'user') fail('not_found', 'MCP server 不存在')
+        if (!server || server.id !== serverId || server.scope !== 'user') fail('not_found', 'MCP server 不存在')
         if (Object.hasOwn(target, 'configuration_version')
           && (typeof target.configuration_version !== 'string' || !/^[a-f0-9]{64}$/u.test(target.configuration_version)
             || target.configuration_version !== server.configurationVersion)) {

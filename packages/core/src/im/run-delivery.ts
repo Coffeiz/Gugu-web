@@ -29,6 +29,7 @@ export interface ImRunDeliveryPorts<C> {
   readonly stream?: { project(input: { identity: RunIdentity; deliveryId: string; event: RunEvent }): Promise<ImDeliveryAcknowledgement> }
   readonly sender: {
     text(input: { identity: RunIdentity; deliveryId: string; text: string }): Promise<ImDeliveryAcknowledgement>
+    compactionNotice?(input: { identity: RunIdentity; deliveryId: string; text: string }): Promise<ImDeliveryAcknowledgement>
     toolNotice?(input: { identity: RunIdentity; deliveryId: string; text: string }): Promise<ImDeliveryAcknowledgement>
     artifact(input: { identity: RunIdentity; deliveryId: string; artifact: PortableValue }): Promise<ImDeliveryAcknowledgement>
     /** 可信交互服务按event身份读取prompt；不转发工具参数或秘密。 */
@@ -117,6 +118,21 @@ function createDelivery<C>(ports: Omit<ImRunDeliveryPorts<C>, 'runner'>) {
       const streamed = event.type === 'interaction_required' ? { ...event, payload: { interactionId: event.payload.interactionId, kind: event.payload.kind, toolCallId: event.payload.toolCallId } }
         : event.type === 'interaction_resolved' ? { ...event, payload: { interactionId: event.payload.interactionId, status: event.payload.status } } : event
       await deliver(identity, `stream:${event.sequence}`, streamed, deliveryId => ports.stream!.project({ identity, deliveryId, event: streamed }), signal, fact)
+    }
+    if (ports.sender.compactionNotice && event.type === 'compaction') {
+      const { phase, applied } = event.payload
+      const notice = phase === 'started' ? '上下文较长，正在整理后继续处理。'
+        : phase === 'completed' && typeof applied === 'boolean'
+          ? applied ? '上下文整理完成。' : '本次未能整理上下文，继续处理。'
+          : null
+      if (notice) {
+        try {
+          await deliver(identity, `compaction-notice:${event.sequence}`, notice,
+            deliveryId => ports.sender.compactionNotice!({ identity, deliveryId, text: notice }), signal)
+        } catch (error) {
+          if (!(error instanceof ImRunDeliveryBlocked) || !['unknown', 'rejected'].includes(error.reason)) throw error
+        }
+      }
     }
     if (ports.sender.toolNotice && event.type === 'tool_done') {
       const { name, status } = event.payload

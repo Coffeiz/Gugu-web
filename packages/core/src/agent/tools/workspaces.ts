@@ -21,15 +21,16 @@ import type { ToolDefinition } from './contracts.js'
 
 /** 工作区组只读取声明，不将workspace_id当成directory_id或执行授权。 */
 export function createWorkspaceReadTools(queries: ReturnType<typeof createAgentWorkspaceQueries>): ToolDefinition[] {
-  const validators = { list_workspaces: z.object({}).strict(), get_workspace: z.object({ workspace_id: z.number().int().positive().safe() }).strict() }
+  const workspaceId = z.union([z.number().int().positive().safe(), z.string().trim().min(1).max(256)])
+  const validators = { list_workspaces: z.object({}).strict(), get_workspace: z.object({ workspace_id: workspaceId }).strict() }
   return (Object.keys(validators) as (keyof typeof validators)[]).map(name => ({
     definition: { name, schema: { type: 'function', function: { name,
-      description: name === 'list_workspaces' ? '列出当前用户的工作区，包括停用项。kind=directory 是顶层物理工作区，kind=folder/project 是对应资源的 Shell 绑定。workspace_id 与 directory_id/folder_id/project_id 属于不同 ID。' : '读取当前用户的工作区详情；workspace_id 与目录、项目、文件夹 ID 不同。',
+      description: name === 'list_workspaces' ? '列出当前用户可用的工作区。workspace_id 是工作区自身标识，不可与 project_id 或 folder_id 混用。' : '读取当前用户工作区详情；workspace_id 是工作区自身标识，不可与 project_id 或 folder_id 混用。',
       parameters: z.toJSONSchema(validators[name]) as Record<string, import('../models.js').Json> } } },
     effect: 'read', validate(input) { return validators[name].safeParse(input) },
     async execute(input, scope) {
       const value = name === 'list_workspaces' ? await queries.list(scope.identity.ownerId, scope.signal)
-        : await queries.get(scope.identity.ownerId, (input as { workspace_id: number }).workspace_id, scope.signal)
+        : await queries.get(scope.identity.ownerId, (input as { workspace_id: number | string }).workspace_id, scope.signal)
       scope.signal.throwIfAborted()
       return value === null ? { kind: 'completed', successful: false, mutated: false,
         value: { error: '工作区不存在；workspace_id 不是 directory_id、project_id 或 folder_id' } }

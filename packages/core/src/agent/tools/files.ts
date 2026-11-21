@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { RunIdentity, ToolCall, ToolResult } from '../index.js'
-import type { ToolDefinition } from './contracts.js'
+import type { ToolDefinition, ToolScope } from './contracts.js'
 import { strip } from '../../shared/values.js'
 import { asciiDecimalDigits, isDecimalDigits } from '../../shared/unicode-decimal.js'
 import { extractOfficeText, OFFICE_TEXT_EXTENSIONS, OFFICE_TEXT_MAX_BYTES } from '../../files/office-text.js'
@@ -22,7 +22,7 @@ const CHAT_ATTACHMENT_TEXT_EXTENSIONS = new Set([
 ])
 
 export interface OwnedTextFile {
-  readonly id: number
+  readonly id?: number
   readonly name: string
   readonly root: string
   readonly relativePath: string
@@ -85,7 +85,7 @@ export interface FilePathLookup {
   list(identity: RunIdentity, signal: AbortSignal): Promise<readonly FilePathCandidate[]>
 }
 
-export interface SaveUploadedFilePort {
+export interface SaveAttachmentPort {
   save(identity: RunIdentity, input: {
     source: 'latest' | 'attach_id' | 'attach_ids'
     attach_id?: string
@@ -93,32 +93,37 @@ export interface SaveUploadedFilePort {
     space: 'personal' | 'project' | 'workspace'
     project_id?: number
     folder_id?: number
+    /** 对使用相对目录路径的平台文件库提供可移植的子目录目标。 */
+    folder_path?: string
   }, roundId: string, call: ToolCall, signal: AbortSignal): Promise<
     | { kind: 'saved'; value: Record<string, unknown>; mutated: boolean }
     | { kind: 'failed'; error: string }
   >
 }
 
-const saveUploadedFileSchema = z.object({
+const saveAttachmentSchema = z.object({
   source: z.enum(['latest', 'attach_id', 'attach_ids']).optional(),
   attach_id: z.string().trim().min(1).max(128).optional(),
   attach_ids: z.array(z.string().trim().min(1).max(128)).min(1).max(20).refine(ids => new Set(ids).size === ids.length).optional(),
   space: z.enum(['personal', 'project', 'workspace']).default('personal'),
   project_id: z.number().int().positive().safe().optional(),
   folder_id: z.number().int().positive().safe().optional(),
+  folder_path: z.string().trim().min(1).max(2048).refine(path => !path.startsWith('/') && !path.includes('\\')
+    && !/[\x00-\x1f]/u.test(path) && path.split('/').every(part => part && part !== '.' && part !== '..')).optional(),
 }).strict().refine(value => {
   if (value.source === 'latest') return value.attach_id === undefined && value.attach_ids === undefined
   if (value.source === 'attach_id') return value.attach_id !== undefined && value.attach_ids === undefined
   if (value.source === 'attach_ids') return value.attach_ids !== undefined && value.attach_id === undefined
   return (value.attach_id !== undefined) !== (value.attach_ids !== undefined)
 }).refine(value => (value.space === 'project') === (value.project_id !== undefined))
+  .refine(value => !(value.folder_id !== undefined && value.folder_path !== undefined))
 
 /** 保存当前 owner 可访问的聊天附件；Workspace 目录由 Host 从可信会话绑定解析。 */
-export function createSaveUploadedFileTool(port: SaveUploadedFilePort): ToolDefinition {
+export function createSaveAttachmentTool(port: SaveAttachmentPort): ToolDefinition {
   return {
-    definition: { name: 'save_uploaded_file', schema: { type: 'function', function: {
-      name: 'save_uploaded_file',
-      description: '把当前对话中的已授权附件保存到个人、指定项目文件夹或当前会话工作区。工作区目录由会话绑定确定；可精确保存一个或一组 attach_id，也可选择最近的附件；不会覆盖已有文件。',
+    definition: { name: 'save_attachment', schema: { type: 'function', function: {
+      name: 'save_attachment',
+      description: '把当前对话中的已授权附件保存到个人、指定项目文件夹或当前会话工作区。Web 文件夹可用 folder_id；按相对目录组织的文件库可用 folder_path。工作区目录由会话绑定确定；可精确保存一个或一组 attach_id，也可选择最近的附件；不会覆盖已有文件。',
       parameters: {
         type: 'object', additionalProperties: false,
         properties: {
@@ -127,6 +132,7 @@ export function createSaveUploadedFileTool(port: SaveUploadedFilePort): ToolDefi
           attach_ids: { type: 'array', minItems: 1, maxItems: 20, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 128 } },
           space: { type: 'string', enum: ['personal', 'project', 'workspace'], default: 'personal' },
           project_id: { type: 'integer', minimum: 1 }, folder_id: { type: 'integer', minimum: 1 },
+          folder_path: { type: 'string', minLength: 1, maxLength: 2048 },
         },
         anyOf: [{ required: ['source'] }, { required: ['attach_id'] }, { required: ['attach_ids'] }],
         not: { required: ['attach_id', 'attach_ids'] },
@@ -136,6 +142,7 @@ export function createSaveUploadedFileTool(port: SaveUploadedFilePort): ToolDefi
           { required: ['space'], properties: { space: { const: 'workspace' } }, not: { required: ['project_id'] } },
         ],
         allOf: [
+          { not: { required: ['folder_id', 'folder_path'] } },
           { if: { properties: { source: { const: 'latest' } }, required: ['source'] }, then: { not: { anyOf: [{ required: ['attach_id'] }, { required: ['attach_ids'] }] } } },
           { if: { properties: { source: { const: 'attach_id' } }, required: ['source'] }, then: { required: ['attach_id'], not: { required: ['attach_ids'] } } },
           { if: { properties: { source: { const: 'attach_ids' } }, required: ['source'] }, then: { required: ['attach_ids'], not: { required: ['attach_id'] } } },
@@ -146,9 +153,9 @@ export function createSaveUploadedFileTool(port: SaveUploadedFilePort): ToolDefi
       },
     } } },
     effect: 'write',
-    validate: input => saveUploadedFileSchema.safeParse(input),
+    validate: input => saveAttachmentSchema.safeParse(input),
     async execute(input, scope, call) {
-      const args = saveUploadedFileSchema.parse(input)
+      const args = saveAttachmentSchema.parse(input)
       const source = args.source ?? (args.attach_ids ? 'attach_ids' : 'attach_id')
       scope.signal.throwIfAborted()
       try {
@@ -181,50 +188,54 @@ export interface RecentAttachmentsPort {
 }
 
 export interface PresentedFile {
-  readonly file_id: number
+  readonly referenceId?: string
+  readonly path?: string
   readonly name: string
   readonly ext: string
+  readonly surface?: 'browser' | 'desktop' | 'system'
 }
 export type FilePresentationResolution = { readonly file: PresentedFile } | {
   readonly error: string
   readonly candidates?: readonly Record<string, unknown>[]
 }
 export interface FilePresentationPort {
-  /** Host 只解析当前 owner 已登记的文件，并要求当前 Web Run lease。 */
-  resolve(identity: RunIdentity, selector: { readonly file_id?: number; readonly file?: string }, signal: AbortSignal): Promise<FilePresentationResolution>
+  readonly requiresHostConfirmation?: boolean
+  resolve(identity: RunIdentity, selector: { readonly file: string; readonly reference_only?: boolean }, signal: AbortSignal,
+    execution: { scope: ToolScope; call: ToolCall }): Promise<FilePresentationResolution | Extract<ToolResult, { kind: 'waiting' }>>
 }
 
-const presentFileSchema = z.object({
-  file_id: z.number().int().positive().safe().optional(),
-  file: z.string().max(2048).optional(),
-}).strict().refine(input => (input.file_id !== undefined) !== (input.file !== undefined))
+const presentFileSchema = z.object({ file: z.string().min(1).max(4096), reference_only: z.boolean().optional() }).strict()
 
-/** 只把 owner 文件标识交给当前网页预览器；文件读取仍由既有 owner 文件端点执行。 */
 export function createPresentFileTool(port: FilePresentationPort): ToolDefinition {
   return {
     definition: { name: 'present_file', schema: { type: 'function', function: {
       name: 'present_file',
-      description: '在发起当前对话的网页打开文件预览。可传 file_id、文件库逻辑路径或文件名；不创建聊天附件。',
+      description: '在发起当前对话的应用打开文件，遵循应用的打开方式。可传文件库逻辑路径或唯一文件名；桌面也支持本机绝对路径，按宿主机权限执行。只生成引用时设 reference_only: true，并用回执中的 link。桌面工具同时返回本机绝对路径 path，后续文件操作可复用。',
       parameters: {
-        type: 'object', properties: { file_id: { type: 'integer', minimum: 1 }, file: { type: 'string', maxLength: 2048 } },
-        oneOf: [{ required: ['file_id'], not: { required: ['file'] } }, { required: ['file'], not: { required: ['file_id'] } }],
+        type: 'object', properties: { file: { type: 'string', minLength: 1, maxLength: 4096 }, reference_only: { type: 'boolean' } }, required: ['file'],
         additionalProperties: false,
       },
     } } },
     effect: 'read',
+    ...(port.requiresHostConfirmation ? { requiresInteraction: true, confirmationReplay: true } : {}),
     validate: input => presentFileSchema.safeParse(input),
-    async execute(input, scope) {
+    async execute(input, scope, call) {
       const selector = presentFileSchema.parse(input)
       scope.signal.throwIfAborted()
       try {
-        const resolved = await port.resolve(scope.identity, selector, scope.signal)
+        const resolved = await port.resolve(scope.identity, selector, scope.signal, { scope, call })
         scope.signal.throwIfAborted()
+        if ('kind' in resolved) return resolved
         if ('error' in resolved) return { kind: 'completed', successful: false, mutated: false,
           value: { error: resolved.error, ...(resolved.candidates ? { candidates: resolved.candidates } : {}) } }
         const { file } = resolved
         const title = file.ext ? `${file.name}.${file.ext}` : file.name
+        const surface = file.surface === 'system' ? '系统默认应用' : file.surface === 'desktop' ? '桌面预览窗口' : '当前浏览器'
         return { kind: 'completed', successful: true, mutated: false, value: {
-          ok: true, message: `已在当前浏览器打开《${title}》。`, file_id: file.file_id, name: file.name, ext: file.ext,
+          ok: true, message: selector.reference_only || file.surface === 'browser' ? `点击链接打开《${title}》。` : `已在${surface}打开《${title}》。`,
+          ...(file.referenceId && /^(path|drop)-[A-Za-z0-9_-]{1,24000}$/u.test(file.referenceId)
+            ? { link: `gugu://open-object/file/${file.referenceId}` } : {}), name: file.name, ext: file.ext,
+          ...(file.path === undefined ? {} : { path: file.path }),
         } }
       } catch {
         scope.signal.throwIfAborted()
@@ -252,7 +263,7 @@ export function createListRecentAttachmentsTool(port: RecentAttachmentsPort): To
         const items = await port.list(scope.identity, scope.signal)
         scope.signal.throwIfAborted()
         return { kind: 'completed', successful: true, mutated: false, value: items.length
-          ? { count: items.length, items, note: '已挂载附件可通过 save_uploaded_file 保存到文件库；媒体读取能力由当前 Host 提供。' }
+          ? { count: items.length, items, note: '已挂载附件可通过 save_attachment 保存到文件库；媒体读取能力由当前 Host 提供。' }
           : { count: 0, items: [], note: '暂存区和当前会话中都没有近期附件' } }
       } catch {
         scope.signal.throwIfAborted()
@@ -372,7 +383,10 @@ export function createReadFileTool(ports: ReadFilePorts): ToolDefinition {
             }
             const selected = selectLines(text, targetLines)
             if ('error' in selected) return failure(selected.error!)
-            return { kind: 'completed', value: { ...(attachment ? { attach_id: attachment.attach_id } : { file_id: file!.id }), name: source.name, ...selected, _source_size_bytes: size }, successful: true, mutated: false }
+            return { kind: 'completed', value: { ...(attachment ? { attach_id: attachment.attach_id }
+              : file!.id !== undefined ? { file_id: file!.id }
+              : selector.file_id !== undefined ? { file_id: selector.file_id }
+              : { file: selector.file }), name: source.name, ...selected, _source_size_bytes: size }, successful: true, mutated: false }
           } finally { await opened.handle.close() }
         } catch {
           scope.signal.throwIfAborted()

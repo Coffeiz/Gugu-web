@@ -6,33 +6,31 @@
 
 ```markdown
 ---
-id: S1
 name: 资料搜索
-description_short: 用户需要查找或核对资料时使用。
-description_long: 说明适用的问题和触发条件。
+description: 用户需要查找或核对资料时使用。
 category: search
-related_tools: global_search, read_file
+related_tools: global_search, view_image
 source: builtin
 ---
 
 这里写需要时才加载的技能正文。
 ```
 
-沿用 Python 的扁平 `key: value` frontmatter，不扩展为完整 YAML。系统技能使用稳定且唯一的 `S#` ID；文件名只负责组织，身份由头部 ID 决定。`description_short` 作者需控制在 1–100 个 Unicode 字符，长说明使用 `description_long`，完整步骤写在正文；新文档不用旧 `description` / `when` 字段。不把完整工具 Schema 或运行时权限写入正文。
+使用扁平 `key: value` frontmatter。内置技能只写一个 `description`，完整步骤放在正文。文件名去掉 `.md` 后作为稳定键。系统按文件名字符顺序生成连续的 `S1`、`S2` 等调用编号。
 
 ## 模块职责
 
 | 模块 | 职责 | 不负责 |
 | --- | --- | --- |
-| `builtin.ts` | 读取 Core 打包的 Markdown 文档，解析头部、检查重复 ID、构造可注册定义，按需重读正文并计算摘要。 | 枚举任意宿主目录、从模型参数选择路径、伪造用户资源。 |
-| `packages/core/scripts/build-skills.mjs` | 自动发现 `packages/core/resources/skills/*.md`，验证 frontmatter 并生成 bundled 文档模块；ID 和元数据始终由 Markdown 头部决定。 | 维护手写 manifest、扫描 Python 或 Host 目录、将 Skill 正文放入工具权限判断。 |
+| `builtin.ts` | 读取 Core 打包的 Markdown 文档，解析头部、检查重复文件名、构造可注册定义，按需重读正文并计算摘要。 | 枚举任意宿主目录、从模型参数选择路径、伪造用户资源。 |
+| `packages/core/scripts/build-skills.mjs` | 自动发现 `packages/core/resources/skills/*.md`，验证 frontmatter 并生成 bundled 文档模块；文件名决定稳定键和编号顺序，头部提供描述等元数据。 | 维护手写 manifest、扫描 Python 或 Host 目录、将 Skill 正文放入工具权限判断。 |
 | `registry.ts` | `register/configure/catalog/load`，元数据快照、配置及授权；正文读取后重新检查可见性。 | 数据库写入、平台身份与授权事实、技能正文的编写。 |
 | `runtime.ts` | 组合单个 Agent Run 的内置定义与 Host 提供的 owner 用户目录/正文端口；统一校验启用项、owner、来源与指纹。 | 查询数据库、生成平台身份/指纹、枚举文件系统或授予工具权限。 |
 | `contracts.ts` | Skill 元数据、定义、加载结果、配置、可信 loader 和注册器契约。 | 工具执行或自动授予关联工具权限。 |
 | `user-read.ts` | 组合Markdown head定义与owner限定用户元数据目录，含停用项并按casefold排序。 | 读取正文、授予关联工具权限、伪造用户资源或Schema升级。 |
 | `index.ts` | 统一公共出口。 | 旧路径兼容转发。 |
 
-内置 Prompt Skill 的 Markdown 源文件归 Core，放在 `packages/core/resources/skills/`。Core 构建脚本按文件名自动发现 `.md` 并打包；运行时 `createBuiltinSkillDefinitions` 读取 frontmatter 头部生成定义，再交 `createSkillRegistry` 注册。新增或移除 Markdown 文件无需同步编辑清单。Web Host 消费 Core 导出的 bundled 文档，并按可信 owner 装配用户 Skill 读取端口，不扫描宿主目录。资源正文未读取成功时不造元数据假成功。`source` 字段不能建立身份或权限；用户 Skill 必须经可信的 owner-scoped 领域来源加载，不能只改 frontmatter 冒充内置资源。
+内置 Prompt Skill 的 Markdown 源文件归 Core，放在 `packages/core/resources/skills/`。Core 构建脚本按文件名自动发现 `.md` 并打包；运行时 `createBuiltinSkillDefinitions` 读取 frontmatter 头部生成定义，再交 `createSkillRegistry` 注册。新增或移除 Markdown 文件无需同步编辑清单。启停配置和新回执使用稳定键。读取旧配置和历史回执时按升级前的固定编号映射解析，稳定键配置优先，历史记录保留原始内容。Web Host 消费 Core 导出的 bundled 文档，并按可信 owner 装配用户 Skill 读取端口，不扫描宿主目录。资源正文未读取成功时不造元数据假成功。`source` 字段不能建立身份或权限；用户 Skill 必须经可信的 owner-scoped 领域来源加载，不能只改 frontmatter 冒充内置资源。
 
 `createAgentSkillRuntimePorts` 在 Core 按 Run owner 组合内置和用户技能；Host 只提供当前租约的 owner、用户 Skill 列表/正文读取和安全指纹端口。Core 再次检查 owner、已启用目录项、用户来源与加载时可见性，禁止模型参数或 Skill 正文选择其他 owner。
 

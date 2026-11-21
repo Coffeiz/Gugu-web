@@ -6,7 +6,7 @@ import type { BranchProviderPort, CanonicalContextPorts, ContextReferenceCodec, 
 import type { BranchInput, BranchName, CanonicalRunContext, FrozenProviderRequest, Json, ProviderEvent, ProviderRequest, RunIdentity } from '../models.js'
 import { hasInitialInlineImage,restorePreparedContext } from '../context/history/attachment-refs.js'
 import { buildRebuiltReflectionSnapshot } from '../memory/reflection.js'
-import type { HistorySanitization, JsonObject, ProviderCompletion, ProviderConfig, ProviderDriverDependencies, ProviderInvocation, ProviderProjection, ProviderTransport, ProviderTransportFactory, ProviderWire } from './contracts.js'
+import type { HistorySanitization, JsonObject, ProviderCompletion, ProviderConfig, ProviderConnectionTiming, ProviderDriverDependencies, ProviderInvocation, ProviderProjection, ProviderTransport, ProviderTransportFactory, ProviderWire } from './contracts.js'
 import { providerSelection } from './registry.js'
 import { ProviderError, classifyProviderError, providerFailureFields } from './errors.js'
 import { clone, observe, record } from './values.js'
@@ -85,6 +85,7 @@ function comparableWire(value: Json): Json {
 
 /** 可实际装配到Harness的Provider运行时；仅存协议私有材料，不接管Run状态或数据事务。 */
 export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
+  readonly #titleTasks = new Set<Promise<void>>()
   readonly #requests = new Map<string, FrozenProviderRequest>()
   readonly #continuations = new Map<string, PrivateContinuation>()
   readonly #prefixes = new Map<string, Promise<Awaited<ReturnType<CanonicalContextPorts['prepareRequest']>>>>()
@@ -304,8 +305,23 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
     const transport = this.#transport(identity, config, policy)
     const probe: { current: RequestProbe | null } = { current: null }
     let usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, contextInput: null as number | null }
+    let attemptTiming: (ProviderConnectionTiming & { firstStreamEventMs?: number; firstVisibleTokenMs?: number }) | undefined
+    let attemptStarted = 0
+    const finishTiming = (outcome: 'completed' | 'retry' | 'error' | 'cancelled') => {
+      if (!attemptTiming) return
+      const timing = attemptTiming
+      attemptTiming = undefined
+      const at = this.#now()
+      recordAgentObservation(this.options.observation, {
+        identity, kind: 'provider', name: 'timing', at, round: request.round,
+        attributes: { ...timing, attempt: retryAttempt + 1, outcome, streamEndMs: performance.now() - attemptStarted },
+      })
+    }
     const dependencies: ProviderDriverDependencies = {
       digest: this.options.digest, diagnose: this.#diagnose,
+      onStreamEvent: () => {
+        if (attemptTiming) attemptTiming.firstStreamEventMs ??= performance.now() - attemptStarted
+      },
       onUsage: (raw, normalized) => probe.current?.usage(raw, normalized),
       transport: {
         request: async (outbound, outgoingSignal) => {
@@ -385,7 +401,15 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
           })
           responseStatus = undefined
           try {
-            const response = await transport.request({ ...outgoing, allowLocal: outgoing.allowLocal === true && ['local', 'ollama'].includes((config.provider ?? '').trim().toLowerCase()) }, outgoingSignal)
+            const timing: NonNullable<typeof attemptTiming> = {}
+            attemptTiming = timing
+            attemptStarted = performance.now()
+            const response = await transport.request({
+              ...outgoing,
+              allowLocal: outgoing.allowLocal === true && ['local', 'ollama'].includes((config.provider ?? '').trim().toLowerCase()),
+              onTiming: value => Object.assign(timing, value),
+            }, outgoingSignal)
+            timing.responseHeadersMs ??= performance.now() - attemptStarted
             responseStatus = response.status
             return response
           }
@@ -396,19 +420,29 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
     const markers = policy.sanitizerMarkers(config), filter = new ProviderStreamSanitizer(markers)
     try {
       for await (const event of streamWithRetry(() => driver.stream(input, dependencies), signal, { clock: this.options.clock })) {
-        if (event.type === 'token') { const text = filter.feed(event.text); if (text) yield { ...event, text } }
+        if (event.type === 'token') {
+          const text = filter.feed(event.text)
+          if (text) {
+            if (attemptTiming) attemptTiming.firstVisibleTokenMs ??= performance.now() - attemptStarted
+            yield { ...event, text }
+          }
+        }
         else if (event.type === 'complete') {
           probe.current?.success(usage)
-          const tail = filter.flush(); if (tail) yield { type: 'token', text: tail }
+          const tail = filter.flush()
+          if (tail && attemptTiming) attemptTiming.firstVisibleTokenMs ??= performance.now() - attemptStarted
+          finishTiming('completed')
+          if (tail) yield { type: 'token', text: tail }
           yield { ...event, text: sanitizeProviderText(event.text, markers), ...(actualCacheAnchor === undefined ? {} : { cacheAnchor: actualCacheAnchor }),
             ...(initialImages.length ? { consumedInitialMedia: { expectedRevision: area.revision, entryIds: initialImages } } : {}) }
         } else {
           if (event.type === 'usage') usage = event.usage
-          if (event.type === 'retry') { retryAttempt = event.attempt; probe.current?.fail(new ProviderError('upstream')) }
+          if (event.type === 'retry') { finishTiming('retry'); retryAttempt = event.attempt; probe.current?.fail(new ProviderError('upstream')) }
           yield event
         }
       }
     } catch (raw) {
+      finishTiming(signal.aborted ? 'cancelled' : 'error')
       const classified = signal.aborted ? new ProviderError('cancelled') : classifyProviderError(raw)
       const error = new ProviderError(classified.code, {
         status: responseStatus, ...classified.options, retryAttempt,
@@ -427,7 +461,7 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
         for (const [ref, stored] of this.#continuations) if (this.#key(stored.identity) === this.#key(identity)) this.#dropContinuation(ref)
       }
       yield { type: 'error', error, contextOverflow: error.code === 'context_overflow' && !error.options.outputStarted }
-    }
+    } finally { finishTiming('cancelled') }
   }
   async completeBranch(input: BranchInput<ProviderWire> & { modelIdentity: string; scenario?: BranchName; outputMode?: 'text' | 'json'; maxOutputTokens?: number | null; cacheSingleflight?: boolean; thinking?: string | null }, signal = new AbortController().signal) {
     const identity = { ownerId: input.ownerId, sessionId: input.sessionId, runId: input.runId ?? 'branch' }
@@ -626,14 +660,33 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
     for (const [reference, stored] of this.#continuations) if (this.#key(stored.identity) === this.#key(identity)) this.#dropContinuation(reference)
     this.#requests.delete(this.#key(identity)); this.#prefixes.delete(this.#key(identity)); this.#pool.finish(this.#key(identity))
   }
-  async close(): Promise<void> { this.#requests.clear(); this.#continuations.clear(); this.#continuationBytes = 0; this.#prefixes.clear(); await this.#pool.close() }
+  scheduleSessionTitle(input: Parameters<CanonicalContextPorts['finalization']['complete']>[0], write: NonNullable<CanonicalContextPorts['writeSessionTitle']>): void {
+    if (!input.text.trim()) return
+    const signal = AbortSignal.timeout(5_000)
+    const task = Promise.resolve().then(() => write(input, prompt =>
+      this.completeText(input.identity, input.modelIdentity, prompt, 40, signal)))
+      .catch(error => { this.#diagnose('session_title_failed', error) })
+      .finally(() => { this.#titleTasks.delete(task) })
+    this.#titleTasks.add(task)
+  }
+  async close(): Promise<void> {
+    await Promise.allSettled([...this.#titleTasks])
+    this.#requests.clear(); this.#continuations.clear(); this.#continuationBytes = 0; this.#prefixes.clear()
+    await this.#pool.close()
+  }
 }
 
 /** 复用现有Canonical Context各业务端口，只替换已经真实实现的Provider接线。 */
 export type ProviderFactoryContext = Omit<CanonicalContextPorts, 'currentRequest' | 'stageContinuation' | 'releaseContinuations'>
 function connectedContext(context: ProviderFactoryContext, runtime: ProviderRuntime) {
   return { provider: runtime, context: { ...context, prepareRequest: runtime.prepareRequest, rememberPreparedRequest: runtime.rememberPreparedRequest, currentRequest: runtime.currentRequest, stageContinuation: runtime.stageContinuation, releaseContinuations: runtime.releaseContinuations,
-    finalization: { async complete(input) { await context.finalization.complete(input); runtime.finishRun(input.identity) } },
+    finalization: { async complete(input) {
+      try { await context.finalization.complete(input) }
+      finally {
+        runtime.finishRun(input.identity)
+        if (context.writeSessionTitle) runtime.scheduleSessionTitle(input, context.writeSessionTitle)
+      }
+    } },
   } satisfies CanonicalContextPorts }
 }
 

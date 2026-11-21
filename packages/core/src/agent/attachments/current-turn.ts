@@ -7,6 +7,7 @@ export interface CurrentTurnAttachment {
   readonly size: number | string
   readonly kind: string
   readonly qq_face?: boolean | null
+  readonly transcript?: string
   readonly quoted?: boolean | null
   readonly duration?: number | null
   readonly img_width?: number | null
@@ -72,10 +73,16 @@ export async function resolveCurrentTurnTextAttachments(
     }
     const size = metadataSize(attachment)
     cards.push(cardFor(attachment, size))
+    if (attachment.kind === 'voice' && typeof attachment.transcript === 'string' && attachment.transcript.trim()) {
+      const transcript = attachment.transcript.trim()
+      cards[cards.length - 1]!.transcript = transcript
+      parts.push(`${parts.length ? "\n\n" : ""}语音转写：${transcript}`)
+      continue
+    }
     if (attachment.kind !== 'text') continue
     const tag = `《${currentTurnAttachmentName(attachment)}》(attach_id=${attachment.attach_id})`
     if (size > CHAT_ATTACHMENT_TEXT_READ_MAX) {
-      parts.push(`\n\n📎 用户上传的文件${tag}（正文过大，超过 32MB，未直接读取；可保存到文件库——用户要存就 save_uploaded_file(attach_id)——后续按需处理；read_file 对 PDF/Office 的提取上限更小，不要反复尝试读取全文）。`)
+      parts.push(`\n\n📎 用户上传的文件${tag}（正文过大，超过 32MB，未直接读取；可保存到文件库——用户要存就 save_attachment(attach_id)）。`)
       continue
     }
     let content = ''

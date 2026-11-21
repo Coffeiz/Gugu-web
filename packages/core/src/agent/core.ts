@@ -56,7 +56,7 @@ function skillInjectionMetadata(value: unknown): Record<string, string | number>
   if (usage.id.startsWith('U') && (usage.source !== 'user' || typeof usage.owner_fingerprint !== 'string')) return null
   if (usage.id.startsWith('S') && usage.source !== undefined && usage.source !== 'builtin') return null
   return {
-    skill: usage.id,
+    skill: typeof usage.skill_key === 'string' ? usage.skill_key : usage.id,
     content_chars: result.content.length,
     content_digest: usage.content_digest,
     source: usage.id.startsWith('U') ? 'user' : 'builtin',
@@ -234,7 +234,7 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
         const toolName = typeof payload.name === 'string' ? payload.name : undefined
         const priorCall = state.calls.find(call => call.id === toolCallId)
         const toolInput = type === 'tool_call' && priorCall && !priorCall.parseError
-          ? projectPersistentToolInput(priorCall.input) : undefined
+          ? projectPersistentToolInput(priorCall.input, priorCall.name) : undefined
         const matches = (item: DisplayItem) => item.kind === 'tool' && item.runId === identity.runId
           && item.roundId === roundId && item.toolCallId === toolCallId
         const toolLabelOverride = toolName && !displayTimeline.some(matches) ? ports.toolLabelOverride?.(toolName) : undefined
@@ -491,7 +491,7 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
         parentSpanId: `${identity.runId}:round:${state.round}`, status: resultStatus,
         output: result.value, attributes: { toolCallId: call.id, successful: result.successful, mutated: result.mutated },
       })
-      const presented = projectPersistentToolResult(await ports.presentToolResult(result.value, { identity, round: state.round, call }))
+      const presented = projectPersistentToolResult(await ports.presentToolResult(result.value, { identity, round: state.round, call }), true)
       return (await commit({
         context,
         queuedInteractions: state.queuedInteractions.filter((item) => item.id !== consumeInteractionId),
@@ -597,6 +597,7 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
           const call = state.calls.find((item) => item.id === id)!
           const previous = state.toolResults.find((item) => item.callId === id)?.result
           if (previous) {
+            if (call.name === 'shell' && previous.kind === 'waiting' && previous.interaction.kind === 'confirmation') return
             serialWaiting ||= previous.kind === 'waiting' || previous.kind === 'unknown'
             continue
           }
@@ -627,6 +628,8 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
             if (terminalRunStates.has(state.status))
               return
           }
+          // Shell 保持串行；确认重投完成后再派发剩余调用，保留各自的确认门。
+          if (call.name === 'shell' && cached.kind === 'waiting' && cached.interaction.kind === 'confirmation') return
         }
       }
       finally {
@@ -813,8 +816,11 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
           while (state.callIndex < state.calls.length && !terminalRunStates.has(state.status)) {
             const call = state.calls[state.callIndex]!
             const stored = state.toolResults.find((item) => item.callId === call.id)?.result
-            if (!stored)
+            if (!stored) {
+              if (!state.toolsDispatched && state.queuedInteractions.some(item =>
+                item.kind === 'confirmation' && item.toolCall.name === 'shell')) break
               throw new AgentRunError('invalid_state', '工具收据缺失')
+            }
             yield await applyTool(call, await hydrateResult(call, stored))
           }
           if (terminalRunStates.has(state.status))
@@ -1075,8 +1081,17 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
                   throw new AgentRunError('invalid_state', '工具调用身份无效')
                 ids.add(call.id)
               }
+              const unavailableIds = new Set(wireCalls.filter(call =>
+                ports.context.isRoundToolAvailable?.(request.context, call.name) === false).map(call => call.id))
               const adapterResults: { callId: string; result: ToolResult }[] = []
               const calls = Object.freeze(await Promise.all(wireCalls.map(async call => {
+                if (unavailableIds.has(call.id)) {
+                  adapterResults.push({ callId: call.id, result: {
+                    kind: 'completed', successful: false, mutated: false, executed: false,
+                    value: { error: '工具不存在或未开放', next_action: '请从当前工具目录选择已开放的工具，勿重复调用此工具。' },
+                  } })
+                  return call
+                }
                 if (call.name !== 'call_tool' || !ports.tools.resolveCall) return call
                 const target = await ports.tools.resolveCall(call, identity, controller.signal)
                 if ('call' in target) return snapshotToolCall(target.call)
@@ -1097,7 +1112,7 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
               if (state.replyChoice !== 'disabled') {
                 if (!ports.replyGate)
                   throw new AgentRunError('invalid_state', '群回复门策略端口缺失')
-                gateCalls = await Promise.all(calls.map(async (call) => ({ id: call.id, kind: await ports.replyGate!.classifyCall(state!.context!, call) })))
+                gateCalls = await Promise.all(calls.map(async (call) => ({ id: call.id, kind: unavailableIds.has(call.id) ? 'invalid' as const : await ports.replyGate!.classifyCall(state!.context!, call) })))
                 if (gateCalls.some((call) => !['decline', 'business', 'invalid'].includes(call.kind)))
                   throw new AgentRunError('invalid_state', '群回复门调用分类无效')
                 gate = decideReplyGate(state.replyChoice, text, gateCalls)
@@ -1120,6 +1135,7 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
               const plannable = calls.filter(call => !adapterResults.some(item => item.callId === call.id))
               let plan: ToolPlan = plannable.length && ports.tools.plan && gate.choice !== 'silent' ? await ports.tools.plan(plannable, identity) : { mode: 'serial' }
               const gateResults = calls.flatMap<{ callId: string; result: ToolResult }>((call) => {
+                if (unavailableIds.has(call.id)) return []
                 const blocked = gate.blocked.find((item) => item.id === call.id)
                 if (blocked)
                   return [{ callId: call.id, result: { kind: 'completed', value: { error: blocked.code }, successful: false, mutated: false, executed: false } }]
@@ -1204,8 +1220,44 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
           const compactionStartedAt = observedAt()
           const before = contextSummaryMetrics(ports.observationSnapshot?.(state.context))
           let adjusted: Awaited<ReturnType<typeof ports.context.afterUsage>>
+          let announced = false
           try {
-            adjusted = await ports.context.afterUsage(state.context, state.usage, controller.signal)
+            let announce!: (event: RunEvent) => void
+            let rejectAnnouncement!: (error: unknown) => void
+            const start = new Promise<RunEvent>((resolve, reject) => {
+              announce = resolve
+              rejectAnnouncement = reject
+            })
+            let release!: (proceed: boolean) => void
+            const resume = new Promise<boolean>(resolve => { release = resolve })
+            const work = ports.context.afterUsage(state.context, state.usage, controller.signal, async () => {
+              try {
+                const event = await commit({}, 'compaction', { phase: 'started', reason: 'usage_threshold' })
+                announce(event!)
+              } catch (error) {
+                rejectAnnouncement(error)
+                throw error
+              }
+              if (!await resume)
+                throw new AgentRunError('cancelled', '当前任务已取消')
+            })
+            const first = await Promise.race([
+              start.then(event => ({ event })),
+              work.then(result => ({ result })),
+            ])
+            if ('event' in first) {
+              announced = true
+              let proceed = false
+              try {
+                yield first.event
+                proceed = true
+              } finally {
+                release(proceed)
+              }
+              adjusted = await work
+            } else {
+              adjusted = first.result
+            }
             const after = contextSummaryMetrics(ports.observationSnapshot?.(adjusted.context))
             observePhase(identity, 'Context compaction', compactionStartedAt, state.round,
               adjusted.applied ? 'success' : 'skipped', {
@@ -1228,8 +1280,10 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
               })
             throw error
           }
-          if (adjusted.applied)
-            yield (await commit({ context: adjusted.context }, 'compaction', { reason: 'usage', applied: true }))!
+          if (adjusted.applied || announced)
+            yield (await commit({ context: adjusted.context }, 'compaction', {
+              phase: 'completed', reason: adjusted.applied ? 'usage' : adjusted.reason ?? 'not_applied', applied: adjusted.applied,
+            }))!
           else if (adjusted.context !== state.context)
             await commit({ context: adjusted.context })
         }
@@ -1390,12 +1444,14 @@ export function updateDisplayItem(items: readonly DisplayItem[], incoming: Pick<
 }
 
 /** 封存只关闭仍打开的气泡，不补造身份、时间和顺序，也不改调用方原数组。 */
-export function sealDisplayTimeline(items: readonly DisplayItem[], now: string, incomplete = false): readonly DisplayItem[] {
+export function sealDisplayTimeline(items: readonly DisplayItem[], now: string,
+  incomplete: boolean | ((item: DisplayItem) => boolean) = false): readonly DisplayItem[] {
   const isOpen = (item: DisplayItem) => item.kind === 'tool' && ['queued', 'running', 'waiting'].includes(item.toolStatus ?? '')
-  const unresolvedIndex = incomplete ? items.findLastIndex(item => isOpen(item) && item.toolStatus !== 'queued') : -1
+  const unresolvedIndex = incomplete === true ? items.findLastIndex(item => isOpen(item) && item.toolStatus !== 'queued') : -1
   return items.map((item, index) => {
     if (!isOpen(item)) return item
-    const toolStatus = index === unresolvedIndex ? 'unknown' : 'stopped'
+    const unknown = typeof incomplete === 'function' ? incomplete(item) : index === unresolvedIndex
+    const toolStatus = unknown ? 'unknown' : 'stopped'
     return { ...item, ...updateToolTiming(item, toolStatus, now), toolStatus, updatedAt: now }
   })
 }
@@ -1425,22 +1481,27 @@ export function sameRecoveryBoundary(left: ProviderRecoveryBoundary, right: Prov
     && (left.sanitizer.kind !== 'reference' || right.sanitizer.kind === 'reference' && left.sanitizer.reference === right.sanitizer.reference)
 }
 
-/** 对应Python公共错误出口的处理顺序；不用于正常业务正文。 */
-export function redactToolError(text: string): string {
+function redactToolCredentials(text: string): string {
   return text
     .replace(/\b(?:postgres(?:ql)?|redis|rediss|mysql|mongodb):\/\/[^\s'"]+/gi, '‹连接串已隐藏›')
     .replace(/\b(?:sk-[A-Za-z0-9]{16,}|(?:api[_-]?key|token|secret|bearer)["'=:\s]+[A-Za-z0-9._-]{12,})/gi, '‹密钥已隐藏›')
+}
+
+/** 对应Python公共错误出口的处理顺序；不用于正常业务正文。 */
+export function redactToolError(text: string, keepPaths = false): string {
+  const clean = redactToolCredentials(text)
+  const message = keepPaths ? clean : clean
     .replace(/(?:\.{0,2}\/)?(?:uploads|\.agent|\.thumbs|\.chat_staging)\/[^\s'"]*|\/(?:home|opt|Users|var|etc|root|tmp|private)\/[^\s'"]*/g, '‹路径已隐藏›')
     .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '‹id已隐藏›')
-    .replace(/\n?\s*File "[^"]+", line \d+[^\n]*(?:\n\s+[^\n]+)?/g, '')
+  return message.replace(/\n?\s*File "[^"]+", line \d+[^\n]*(?:\n\s+[^\n]+)?/g, '')
     .trim()
 }
 
 /** 工具参数只投影到 owner 可读的展示时间线，清理凭据和过大的输入。 */
-export function projectPersistentToolInput(value: unknown): PortableValue {
+export function projectPersistentToolInput(value: unknown, _toolName?: string): PortableValue {
   function redact(input: Json): Json {
-    if (typeof input === 'string') return redactToolError(input)
-    if (Array.isArray(input)) return input.map(redact)
+    if (typeof input === 'string') return redactToolCredentials(input)
+    if (Array.isArray(input)) return input.map(child => redact(child))
     if (input && typeof input === 'object') return Object.fromEntries(Object.entries(input).map(([key, child]) => [
       key, /(?:password|passwd|secret|token|credential|api[_-]?key|authorization|cookie|private[_-]?key)/i.test(key)
         ? '[已隐藏]' : redact(child),
@@ -1455,7 +1516,7 @@ export function projectPersistentToolInput(value: unknown): PortableValue {
  * 持久化/展示通用规则：媒体留占位、error递归脱敏；正常read_file正文不做秘密字段猜测。
  * 业务凭据必须由可信呈现Adapter与credential交互边界处理，不能把任意正文当错误删改。
  */
-export function projectPersistentToolResult(value: unknown): PortableValue {
+export function projectPersistentToolResult(value: unknown, showPaths = false): PortableValue {
   function visit(input: PortableValue): PortableValue {
     const pruned = stripHistoryMedia(input as unknown as Json) as PortableValue
     if (typeof pruned === 'string') {
@@ -1478,7 +1539,7 @@ export function projectPersistentToolResult(value: unknown): PortableValue {
       return pruned.map(visit)
     if (pruned && typeof pruned === 'object') {
       return Object.fromEntries(Object.entries(pruned).map(([name, child]) => [name,
-        name === 'error' && typeof child === 'string' ? redactToolError(child) : visit(child),
+        name === 'error' && typeof child === 'string' ? redactToolError(child, showPaths) : visit(child),
       ]))
     }
     return pruned

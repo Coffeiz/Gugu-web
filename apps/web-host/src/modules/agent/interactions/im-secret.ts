@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from 'pg'
 import { createHash } from 'node:crypto'
 import { normalizeSecretFields, stableJson, validateSecretValues, type RunIdentity } from '@gugu/core/agent'
-import type { ImPreflightScope, ImSecretAction, ImSecretResult, ImSecretStage } from '@gugu/core/im/inbound-preflight'
+import type { ImPreflightScope, ImSecretAction, ImSecretResult, ImSecretStage } from '@gugu/gateway'
 import { withPostgresTransaction } from '../../../adapters/database/postgres-transaction.js'
 import { consumeSecretInteractionLocked, SecretInteractionError, type SecretEnvelope, type SecretInteractionPorts } from './secrets.js'
 import { imOrdinaryInteractionReplayed } from './replay.js'

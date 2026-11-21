@@ -37,7 +37,7 @@
 ### 前端（Vue 3）
 
 ```
-apps/web/
+apps/ui/
 ├── src/
 │   ├── assets/          # 字体、图片、全局 CSS
 │   ├── components/
@@ -98,6 +98,14 @@ packages/
 | 导航与画布控件 | `--popup-blur` / `--glass-blur` | 主题 token | 应用/Admin 侧边导航；画布工具栏、抽屉及实体贴纸 |
 | 临时浮层 | `--popup-surface-blur` / `--glass-blur` | 主题 token | `.popup-menu`、日期选择器、搜索下拉、弹窗卡片、聊天/媒体预览等浮在页面内容上的 surface |
 | 拖拽代理 | Interaction Runtime 代理视觉 | 由 runtime 与卡片组件共同管理 | 独立的短暂交互材质，不改变常驻面板默认无 blur 的契约 |
+
+### 页面骨架与加载态
+
+- **统一等待 150 ms**。Web 和桌面页面使用共享的 `SkeletonGate`，路由占位复用同一个延迟常量。加载立即开始，短于门槛时直接显示结果。路由交接沿用本次导航的剩余时间，不另起一段延迟。页面复用已有 L2 外壳，快速切页取消旧占位。
+
+- **玻璃面板优先**。切页或首载时先显示目标页的 L2 玻璃区域，包括正式页面的面板边界、底色、圆角和栏间距。面板内部再显示卡片、表格或工具栏占位。材质沿用该端的正式页面，保持主题和层级一致。
+- **占位与正式内容对齐**。按目标页保留工具栏、主栏和侧栏的相对位置。项目使用看板列，日历使用日期工具栏、日历网格和详情栏，终端使用会话列表和输出区，画布使用底部工具栏和右侧抽屉。定时任务、技能、MCP 与文件库的卡片占位按正式卡片的列数、列宽、间距和响应式断点排布，文件列表视图使用行占位。
+- **加载完成时原位替换**。玻璃面板、主要分栏和控件外壳在骨架与正式内容之间保持稳定。Web 和桌面端复用相同的布局契约，并沿用各自的工作区尺寸与定位。
 
 ### 两种静态玻璃表面：标准 glass-card vs GlassBg 仿玻璃
 
@@ -328,7 +336,7 @@ function darkenHex(hex, amount = 0.60) {
 
 **表单控件**：
 
-- **字段标题交互（全站规范）**：文本、数字、日期、邮箱、URL、密码等输入框的标题与控件分开布局；点击标题不应触发控件聚焦。不要用包裹输入框的 `<label>` 或指向输入框的 `<label for>` 实现布局，改用 `aria-label` / `aria-labelledby` 提供可访问名称。复选框和单选框保留 label 可点击语义。全局回归由 `apps/web/tests/forms/field-label-focus.test.ts` 扫描所有 Vue 页面。
+- **字段标题交互（全站规范）**：文本、数字、日期、邮箱、URL、密码等输入框的标题与控件分开布局；点击标题不应触发控件聚焦。不要用包裹输入框的 `<label>` 或指向输入框的 `<label for>` 实现布局，改用 `aria-label` / `aria-labelledby` 提供可访问名称。复选框和单选框保留 label 可点击语义。全局回归由 `apps/ui/tests/forms/field-label-focus.test.ts` 扫描所有 Vue 页面。
 - `field-input`：`padding: 9px 12px; border-radius: 8px; background: rgba(255,255,255,0.6); border: 1px solid rgba(0,0,0,0.1)`，focus 时使用 `--input-border-focus` 高亮描边
 - `section-label`：`10px / 600 / uppercase / letter-spacing: 0.07em`，小型大写标题
 - `col-divider`：`border-top: 1px solid rgba(0,0,0,0.07)`，区块间水平线

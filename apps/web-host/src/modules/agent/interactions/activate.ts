@@ -2,31 +2,15 @@ import { stageImSecretPromptLocked } from './im-secret.js'
 import { createHash, randomBytes } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import type { PendingInteraction, RunIdentity } from '@gugu/core/agent'
-import { normalizeSecretFields } from '@gugu/core/agent'
+import { prepareAgentInteractionPrompt } from '@gugu/core/agent'
 import { withPostgresTransaction } from '../../../adapters/database/postgres-transaction.js'
 import { lockAgentRunSession } from '../run/start.js'
 import { bindInteractionPrompt } from './resume.js'
-import type { AgentPromptDescriptionPorts, AgentPromptSpec } from '@gugu/core/agent'
+import type { AgentPromptDescriptionPorts } from '@gugu/core/agent'
 
 export type AgentPromptActivationPorts = AgentPromptDescriptionPorts<PoolClient> & {
   /** 可选 MCP Secret store；未启用 MCP 的 Host 不应依赖其数据库表。 */
   cancelPendingSecrets?(client: PoolClient, identity: RunIdentity): Promise<void>
-}
-function validate(spec: AgentPromptSpec, request: PendingInteraction): Array<{ name: string; label: string; type: 'secret' }> {
-  if (!['choice', 'question', 'form', 'confirm'].includes(spec.kind) || typeof spec.title !== 'string' || typeof spec.body !== 'string' || !Array.isArray(spec.options) || spec.options.length > 8) throw new Error('交互内容无效')
-  if (spec.options.some(option => !option.id || option.id.length > 64 || !option.label || option.label.length > 120 || !option.actionType)) throw new Error('交互选项无效')
-  if (new Set(spec.options.map(option => option.id)).size !== spec.options.length) throw new Error('交互选项重复')
-  const fields = spec.secretFields ?? []
-  if (request.kind === 'credential') {
-    const target = spec.context.secret_target as Record<string, unknown> | undefined
-    if (spec.kind !== 'form' || target?.kind !== 'mcp_credentials' || typeof target.server_id !== 'string') throw new Error('凭据交互目标无效')
-    const normalized = normalizeSecretFields(fields)
-    if (!normalized) throw new Error('凭据字段无效')
-    return normalized
-  } else if (fields.length) throw new Error('交互类型不匹配')
-  if (request.kind === 'confirmation' && spec.kind !== 'confirm') throw new Error('交互类型不匹配')
-  if (request.kind === 'question' && !['question', 'choice'].includes(spec.kind)) throw new Error('交互类型不匹配')
-  return []
 }
 /** Prompt、动作摘要与绑定一并提交；同一 pending 重试只读取原绑定。 */
 export function createPostgresInteractionActivator(pool: Pick<Pool, 'connect'>, ports: AgentPromptActivationPorts) {
@@ -43,16 +27,10 @@ export function createPostgresInteractionActivator(pool: Pick<Pool, 'connect'>, 
         return request
       }
       const spec = await ports.describe(client, identity, request)
-      signal.throwIfAborted(); const secretFields = validate(spec, request)
-      const minutes = Math.max(1, Math.min(spec.expiresMinutes ?? 10, 30))
-      if (!Number.isFinite(minutes)) throw new Error('交互有效期无效')
-      const expiry = new Date(Date.now() + minutes * 60000)
+      signal.throwIfAborted()
+      const { expiry, secret, options, context, schema } = prepareAgentInteractionPrompt(spec, request, Date.now())
       await client.query("UPDATE interaction_prompts SET status='cancelled', resolved_at=clock_timestamp() WHERE user_id=$1 AND session_id=$2 AND status='active'", [identity.ownerId, identity.sessionId])
       await ports.cancelPendingSecrets?.(client, identity)
-      const secret = request.kind === 'credential', allowText = request.kind === 'question' && !!spec.allowTextInput && !secret
-      const options = [...spec.options, ...(allowText ? [{ id: '__custom_reply__', label: '自定义回复', actionType: 'custom_reply' }] : [])]
-      const context = { ...spec.context, tool_call_id: request.toolCall.id, tool_name: request.toolCall.name }
-      const schema = { options: options.map(option => ({ id: option.id, label: option.label, action_type: option.actionType })), secret_fields: secretFields, allow_text_input: allowText, source: 'agent', custom_input_active: false, context }
       const inserted = await client.query<{ id: number }>(`INSERT INTO interaction_prompts (user_id,session_id,kind,title,body,schema_json,status,expires_at,created_at)
         VALUES ($1,$2,$3,$4,$5,$6,'active',$7,clock_timestamp()) RETURNING id`, [identity.ownerId, identity.sessionId, spec.kind, spec.title.slice(0, 120), spec.body.slice(0, 1000), JSON.stringify(schema), expiry])
       const promptId = inserted.rows[0]!.id

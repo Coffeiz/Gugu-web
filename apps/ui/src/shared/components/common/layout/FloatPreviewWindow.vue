@@ -1,0 +1,1116 @@
+<template>
+  <div
+    class="fpw-root"
+    :class="{ 'fpw-native': nativeWindow, 'fpw-native-fullscreen': nativeState?.fullscreen, 'fpw-ready': ready && (!isImg || imageReady || placeholderReady || imageWasPresented) }"
+    :style="nativeWindow ? { zIndex: win.zIndex } : maximized
+      ? { left: 0, top: 0, width: '100vw', height: '100vh', zIndex: win.zIndex, borderRadius: 0, transition: animating ? 'left .18s ease, top .18s ease, width .18s ease, height .18s ease, border-radius .18s ease' : 'none' }
+      : { left: x+'px', top: y+'px', width: w+'px', height: h+'px', zIndex: win.zIndex, transition: animating ? 'left .18s ease, top .18s ease, width .18s ease, height .18s ease, border-radius .18s ease' : 'none' }"
+    @mousedown.capture="previewStore.bringToFront(win.id)"
+  >
+    <!-- 标题栏（拖拽区） -->
+    <div
+      class="fpw-title"
+      :class="{ 'fpw-maximized-bar': maximized }"
+      @mousedown="onTitleMouseDown"
+      @dblclick="onTitleDoubleClick"
+    >
+      <span class="fpw-ext" :style="{ color: extColor, background: extColor + '22' }">{{ win.file.ext }}</span>
+      <span class="fpw-name" :title="win.file.displayName">{{ win.file.displayName }}</span>
+      <div class="fpw-actions" @dblclick.stop>
+        <button
+          v-if="isCsv"
+          class="fpw-btn fpw-csv-toggle"
+          :title="csvTextMode ? t('viewerUi.csvShowTable') : t('viewerUi.csvShowText')"
+          @click.stop="toggleCsvView"
+        >{{ csvTextMode ? t('viewerUi.csvShowTable') : t('viewerUi.csvShowText') }}</button>
+        <template v-if="isText && (!isCsv || csvTextMode)">
+          <button class="fpw-btn" :title="t('sharedUi.decreaseFontSize')" @click.stop="changeTextFontSize(-1)"><Icon name="action.subtract" :size="12" /></button>
+          <span class="fpw-font-size">{{ textFontSize }}</span>
+          <button class="fpw-btn" :title="t('sharedUi.increaseFontSize')" @click.stop="changeTextFontSize(1)"><Icon name="action.add" :size="12" /></button>
+        </template>
+        <button ref="infoBtnRef" class="fpw-btn" :class="{ active: showInfo }" :title="t('files.info')" @click.stop="openInfo">
+          <Icon name="status.info" :size="13" />
+        </button>
+        <button v-if="nativeWindow" type="button" class="fpw-btn"
+          :title="t('filesUi.revealPreviewFolder')" :aria-label="t('filesUi.revealPreviewFolder')" @click.stop="emit('reveal')">
+          <Icon name="file.folder-open" :size="13" />
+        </button>
+        <button v-if="!desktopFile" class="fpw-btn" :title="t('sharedUi.download')" @click.stop="handleDownload">
+          <Icon name="action.download" :size="13" />
+        </button>
+        <template v-if="nativeWindow && nativeState">
+          <button type="button" class="fpw-btn" :class="{ active: nativeState.pinned }" :aria-pressed="nativeState.pinned"
+            :title="t(nativeState.pinned ? 'viewerUi.unpinWindow' : 'viewerUi.pinWindow')"
+            :aria-label="t(nativeState.pinned ? 'viewerUi.unpinWindow' : 'viewerUi.pinWindow')" @click.stop="emit('togglePin')">
+            <Icon :name="nativeState.pinned ? 'canvas.pin' : 'canvas.pin-off'" :size="13" />
+          </button>
+          <button type="button" class="fpw-btn" :aria-pressed="nativeState.fullscreen"
+            :title="t(nativeState.fullscreen ? 'viewerUi.exitFullscreen' : 'viewerUi.enterFullscreen')"
+            :aria-label="t(nativeState.fullscreen ? 'viewerUi.exitFullscreen' : 'viewerUi.enterFullscreen')" @click.stop="emit('toggleFullscreen')">
+            <Icon :name="nativeState.fullscreen ? 'action.collapse' : 'action.expand'" :size="13" />
+          </button>
+        </template>
+        <button v-else-if="!nativeWindow" class="fpw-btn" :title="maximized ? t('sharedUi.restore') : t('sharedUi.maximize')" @click.stop="toggleMaximize">
+          <Icon name="action.expand" v-if="!maximized" :size="13" />
+          <Icon name="action.collapse" v-else :size="13" />
+        </button>
+        <button class="fpw-btn fpw-close" :title="t('sharedUi.close')" :aria-label="t('sharedUi.close')" @click.stop="closePreview">
+          <Icon name="action.close" :size="13" />
+        </button>
+      </div>
+    </div>
+
+    <!-- 内容区 -->
+    <div class="fpw-body">
+      <!-- 真实内容（在下层） -->
+      <ImageViewer v-if="isImg" :blobUrl="blobUrl ?? undefined" :upscale="isVector" @loaded="onImageLoaded" />
+      <VideoViewer v-else-if="isVid && videoSrc" :src="videoSrc ?? undefined" :refresh-src="!win.file.attach_id ? refreshVideoSource : undefined" />
+      <OfficeViewer v-else-if="isOffice && (!isCsv || !csvTextMode) && (blobUrl || (isXlsx && typeof win.file.id === 'number'))" :blobUrl="blobUrl ?? undefined" :ext="win.file.ext ?? ''" :file-id="typeof win.file.id === 'number' ? win.file.id : undefined" :file-version="win.file.version" @content-size="onOfficeContentSize" @csv-render-failed="onCsvRenderFailed" />
+      <TextViewer  v-else-if="isText && (!isCsv || csvTextMode) && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :read-only="!!win.textFallback || !!win.file.workspaceFile?.identity || !!win.file.contentUrl" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.workspaceFile ? JSON.stringify(win.file.workspaceFile) : win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" @content-saved="onTextContentSaved" @refresh="refreshHtmlPreview" />
+      <div v-if="loading && !placeholderReady" class="fpw-status fpw-loading">
+        <div class="fpw-spinner"></div>
+        <span>{{ t('viewerUi.loading') }}</span>
+      </div>
+      <div v-if="!loading && error" class="fpw-status fpw-error">
+        <Icon name="status.warning" :size="28" style="opacity:.5" />
+        <span>{{ error }}</span>
+      </div>
+      <!-- 占位图覆盖在真实内容上方，imageReady 后淡出，遮住大图解码过程 -->
+      <Transition name="ph-fade">
+        <div
+          v-if="isImg && !imageReady && placeholderSrc"
+          class="fpw-placeholder-wrap"
+          :class="{ 'fpw-ph-ready': placeholderReady }"
+        >
+          <img
+            class="fpw-placeholder-img"
+            :src="placeholderSrc ?? undefined"
+            @load="onPlaceholderLoad"
+            alt=""
+          />
+        </div>
+      </Transition>
+      <!-- 同目录图片左右切换 -->
+      <template v-if="canNav">
+        <button class="fpw-nav fpw-nav-prev" :title="t('sharedUi.previous')" @click.stop="goPrev">
+          <Icon name="action.back" :size="18" />
+        </button>
+        <button class="fpw-nav fpw-nav-next" :title="t('sharedUi.next')" @click.stop="goNext">
+          <Icon name="action.next" :size="18" />
+        </button>
+      </template>
+    </div>
+
+    <!-- resize：右下角带图标手柄，其余三角只留可拖拽热区（无图标） -->
+    <template v-if="!nativeWindow && !maximized">
+      <div class="fpw-resize" @mousedown.stop.prevent="startResize('se', $event)"></div>
+      <div class="fpw-resize-edge fpw-resize-n" @mousedown.stop.prevent="startResize('n', $event)"></div>
+      <div class="fpw-resize-edge fpw-resize-e" @mousedown.stop.prevent="startResize('e', $event)"></div>
+      <div class="fpw-resize-edge fpw-resize-s" @mousedown.stop.prevent="startResize('s', $event)"></div>
+      <div class="fpw-resize-edge fpw-resize-w" @mousedown.stop.prevent="startResize('w', $event)"></div>
+      <div class="fpw-resize-edge fpw-resize-nw" @mousedown.stop.prevent="startResize('nw', $event)"></div>
+      <div class="fpw-resize-edge fpw-resize-ne" @mousedown.stop.prevent="startResize('ne', $event)"></div>
+      <div class="fpw-resize-edge fpw-resize-sw" @mousedown.stop.prevent="startResize('sw', $event)"></div>
+    </template>
+  </div>
+
+  <FileInfoPopup
+    :show="showInfo" :file="win.file" :x="infoX" :y="infoY" :z-index="win.zIndex + 1"
+    :resolution="contentSize"
+    @close="showInfo = false" @navigate="navigateToFileDirectory"
+    @update:x="infoOffsetX = $event - x" @update:y="infoOffsetY = $event - y"
+  />
+</template>
+
+<script setup lang="ts">
+import { ref, computed, watch, onUnmounted , type PropType} from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useFileOpenAccess } from '@/services/fileOpenAccess'
+import { useRouter } from 'vue-router'
+import Icon from '@/components/common/icons/Icon.vue'
+import FileInfoPopup from '@/components/common/file-browser/FileInfoPopup.vue'
+import type { PreviewFile, PreviewWindow } from '@/stores/preview'
+import { useFilesCacheStore, type FileMeta } from '@/stores/filesCache'
+import ImageViewer from '@/components/common/viewers/ImageViewer.vue'
+import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
+import TextViewer  from '@/components/common/viewers/TextViewer.vue'
+import OfficeViewer from '@/components/common/viewers/OfficeViewer.vue'
+import { CLIENT_ID, filesApi } from '@/services/api'
+import { usePathFileAccess } from '@/services/pathFileAccess'
+import { isUnauthorizedResponse } from '@/services/authSession'
+import { isImageExt, isVideoExt, isTextExt, isOfficeExt, isCsvExt, isPreviewReloadRequested, isPreviewAffectedByFileEvent, isTextFallbackCandidate, normalizeTextBlob, usePreviewStore } from '@/stores/preview'
+import { getCachedThumb, getThumb } from '@/composables/shared/useThumbCache'
+import { usePreviewBlobCache, withPreviewCacheBust as withCacheBust } from '@/composables/shared/usePreviewBlobCache'
+import { useWindowDrag } from '@/composables/core/useWindowDrag'
+import { useLiveStore } from '@/stores/live'
+import { useUiStore } from '@/stores/ui'
+import { registerEsc, registerArrowNav } from '@/composables/core/windowz'
+import { accountBoundaryEpoch, getAccountBoundaryEpoch } from '@/utils/accountBoundary'
+import { readDocumentFontSize, saveDocumentFontSize } from '@/utils/documentFontSizePreference'
+
+const pathFilesApi = usePathFileAccess()
+
+// 类型见下
+const props = defineProps({
+  win: { type: Object as PropType<PreviewWindow>, required: true },
+  nativeWindow: Boolean,
+  nativeState: Object as PropType<{ fullscreen: boolean; pinned: boolean }>,
+})
+const emit = defineEmits<{ close: []; reveal: []; toggleFullscreen: []; togglePin: [] }>()
+const fileOpenAccess = useFileOpenAccess()
+const desktopFile = computed(() => !!fileOpenAccess && !!props.win.file.workspaceFile)
+
+function closePreview() {
+  if (props.nativeWindow) emit('close')
+  else previewStore.closeWindow(props.win.id)
+}
+const { t } = useI18n()
+const router = useRouter()
+const previewStore = usePreviewStore()
+const filesCache = useFilesCacheStore()
+const uiStore = useUiStore()
+const previewBlobCache = usePreviewBlobCache()
+const mountAccountEpoch = getAccountBoundaryEpoch()
+let recentlySavedText: { fileId: string; content: string; savedAt: number } | null = null
+let checkingLocalDirectoryEcho = false
+watch(accountBoundaryEpoch, () => {
+  loadSequence += 1
+  previewBlobCache.release(currentCacheKey.value, blobUrl.value)
+  currentCacheKey.value = ''
+  blobUrl.value = null
+  videoSrc.value = null
+  placeholderSrc.value = null
+  loading.value = false
+  error.value = null
+}, { flush: 'sync' })
+
+// ESC 只关最顶层窗口（统一走 windowz：谁 z 最大关谁）
+const _unregEsc = registerEsc({
+  getZ: () => props.win.zIndex,
+  close: () => {
+    if (props.nativeState?.fullscreen) emit('toggleFullscreen')
+    else closePreview()
+  },
+})
+
+const isPptx = computed(() => props.win.file.ext?.toUpperCase() === 'PPTX')
+const isDocx = computed(() => props.win.file.ext?.toUpperCase() === 'DOCX')
+
+// ── 位置 / 尺寸（本地 reactive，同步回 store） ──────────────────────────────
+const x = ref(props.win.x)
+// 历史位置可能来自旧版的顶部越界范围，初始化时一并拉回视口内。
+const y = ref(Math.max(0, props.win.y))
+// PPTX 由渲染器按容器宽度自适应；首次隐藏渲染也要给它一个接近最终尺寸的
+// 布局盒，避免先按默认小窗口渲染再放大。
+const w = ref(isPptx.value ? Math.round(window.innerWidth * 0.72) : props.win.w)
+const h = ref(isPptx.value ? Math.round(window.innerHeight * 0.64) : props.win.h)
+
+// ── 文件类型 ──────────────────────────────────────────────────────────────────
+const isImg  = computed(() => isImageExt(props.win.file.ext))
+const isVid  = computed(() => isVideoExt(props.win.file.ext))
+const isText = computed(() => !!props.win.textFallback || isTextExt(props.win.file.ext, props.win.file.mimeType))
+const isHtml = computed(() => /^(html|htm)$/i.test(props.win.file.ext ?? ''))
+const isCsv = computed(() => isCsvExt(props.win.file.ext))
+const isOffice = computed(() => isOfficeExt(props.win.file.ext) || isCsv.value)
+const isXlsx = computed(() => (props.win.file.ext ?? '').toLowerCase() === 'xlsx')
+const isSpreadsheet = computed(() => isXlsx.value || isCsv.value)
+const csvTextMode = ref(false)
+watch(() => [props.win.file.id, props.win.file.ext, props.win.reloadToken], () => { csvTextMode.value = false })
+const isVirtual = computed(() => props.win.sourceText !== undefined && !!props.win.saveSource)
+const _SVG_EXTS = new Set(['SVG'])
+// 矢量图放大无损：开窗尺寸与内部适配都允许超过折算 natural 尺寸
+const isVector = computed(() => _SVG_EXTS.has((props.win.file.ext ?? '').toUpperCase()))
+
+// ── 图片左右切换（同目录，来自打开时传入的 win.siblings） ─────────────────────
+const navImages = computed(() => (props.win.siblings || []).filter(f => isImageExt(f.ext)))
+const canNav    = computed(() => isImg.value && navImages.value.length > 1)
+function goPrev() { previewStore.navigate(props.win.id, -1) }
+function goNext() { previewStore.navigate(props.win.id, 1) }
+
+// 方向键只切最顶层窗口（同 ESC：多个预览窗同时开着，谁 z 最大谁响应）
+const _unregArrowNav = registerArrowNav({
+  getZ: () => props.win.zIndex,
+  prev: () => { if (canNav.value) goPrev() },
+  next: () => { if (canNav.value) goNext() },
+})
+
+const textFontSize = ref(readDocumentFontSize())
+function changeTextFontSize(delta: number) {
+  textFontSize.value = saveDocumentFontSize(textFontSize.value + delta)
+}
+
+const EXT_COLORS: Record<string, string> = {
+  JPG: '#4caf7d', JPEG: '#4caf7d', PNG: '#4caf7d', WEBP: '#4caf7d',
+  GIF: '#9c6fdb', SVG: '#f0a500', BMP: '#8888a8',
+  MP4: '#5a8cd8', WEBM: '#5a8cd8', MOV: '#5a8cd8', M4V: '#5a8cd8',
+  MD: '#6b9e78', TXT: '#8a8a9a', JSON: '#d4820a', CSV: '#3a8fbf',
+  JS: '#f0c000', TS: '#3178c6', PY: '#4b8bbe', CSS: '#a855f7',
+  HTML: '#e34c26', YAML: '#cb171e', XML: '#f16529', SH: '#3d9970',
+}
+const extColor = computed(() => EXT_COLORS[(props.win.file.ext ?? '').toUpperCase()] ?? '#7b7fb2')
+
+// ── 内容加载 ─────────────────────────────────────────────────────────────────
+const blobUrl         = ref<string | null>(null)
+const videoSrc        = ref<string | null>(null)
+const loading         = ref(false)
+const error           = ref<string | null>(null)
+const placeholderReady = ref(false)
+const imageReady       = ref(false)
+// 首张图片显示后，切换同目录图片时保持预览窗可见；新图加载期间由加载态/占位图覆盖内容。
+const imageWasPresented = ref(false)
+
+const placeholderSrc = ref<string | null>(null)   // 从 blob Map 取，避免与全图下载竞速
+const currentCacheKey = ref('')
+let loadSequence = 0
+
+const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
+async function refreshVideoSource(): Promise<string> {
+  if (props.win.file.contentUrl) return props.win.file.contentUrl
+  const workspaceFile = props.win.file.workspaceFile
+  if (workspaceFile) return pathFilesApi.contentUrl(workspaceFile)
+  const fileId = props.win.file.id
+  if (typeof fileId !== 'number') throw new Error('无法刷新视频地址')
+  const { url } = await filesApi.getStreamUrl(fileId)
+  if (props.win.file.id !== fileId || getAccountBoundaryEpoch() !== mountAccountEpoch) {
+    throw new DOMException('预览已切换', 'AbortError')
+  }
+  return url
+}
+
+const TITLE_H  = 40
+const PAD      = 48
+// 「card」缩略图上限（须与后端 files.py 的 _THUMB_SIZE_MAP["card"] 保持一致）：
+// Pillow 的 thumbnail() 只缩小不放大，缩略图长边小于这个值就说明原图从没被缩过，
+// 即缩略图尺寸 = 原图真实尺寸，可直接当真实尺寸用，不用再套 4K 估算。
+const CARD_THUMB_CAP = 192
+
+const ready        = ref(false)
+const maximized    = ref(false)
+const animating    = ref(false)
+let   savedPos: { x: number; y: number; w: number; h: number } | null = null
+
+function toggleMaximize() {
+  if (!maximized.value) {
+    savedPos = { x: x.value, y: y.value, w: w.value, h: h.value }
+    animating.value = true
+    maximized.value = true
+  } else {
+    if (savedPos) { x.value = savedPos.x; y.value = savedPos.y; w.value = savedPos.w; h.value = savedPos.h }
+    animating.value = true
+    maximized.value = false
+  }
+  setTimeout(() => { animating.value = false }, 200)
+}
+
+const showInfo     = ref(false)
+const contentSize  = ref('')
+const infoBtnRef   = ref<HTMLElement | null>(null)
+// 弹窗相对于预览窗口左上角的偏移，随窗口拖拽自动跟随
+const infoOffsetX  = ref(0)
+const infoOffsetY  = ref(0)
+const infoX = computed(() => x.value + infoOffsetX.value)
+const infoY = computed(() => y.value + infoOffsetY.value)
+
+function openInfo() {
+  const opening = !showInfo.value
+  if (opening && infoBtnRef.value) {
+    const r   = infoBtnRef.value.getBoundingClientRect()
+    const absX = Math.max(8, r.right - 220)  // 与抽屉预览一致，信息弹层右边缘对齐按钮
+    const absY = r.bottom + 6
+    infoOffsetX.value = absX - x.value
+    infoOffsetY.value = absY - y.value
+  }
+  showInfo.value = opening
+}
+
+function navigateToFileDirectory(file?: Partial<FileMeta>) {
+  const fileId = Number(file?.id)
+  if (!Number.isSafeInteger(fileId) || fileId <= 0 || file?.attach_id) return
+  uiStore.pendingFileTarget = {
+    kind: 'file',
+    id: fileId,
+    ...(file.workspaceDirectoryId != null ? { workspaceDirectoryId: file.workspaceDirectoryId } : {}),
+  }
+  void router.push('/files')
+}
+
+
+// 矢量图（无尺寸 SVG 的 natural 只是浏览器折算的默认对象尺寸，如 300×150）开窗时
+// 按比例放大到「恰好 contain 进视口舒适区」，只放大不缩小（大尺寸 SVG 仍按原逻辑
+// 由 fitWindow 缩到视口内），避免矢量文件以缩略图大小开窗。矢量放大无损，
+// 舒适区直接贴近视口（90% 宽 × 78% 高），默认打开即适配浏览器。
+const COMFORT_W_RATIO = 0.9
+const COMFORT_H_RATIO = 0.78
+function vectorWindowScale(nw: number, nh: number) {
+  const comfortW = window.innerWidth * COMFORT_W_RATIO
+  const comfortH = window.innerHeight * COMFORT_H_RATIO
+  return Math.max(1, Math.min(comfortW / nw, comfortH / nh))
+}
+
+async function svgIntrinsicAspect(url: string): Promise<number | null> {
+  let text = ''
+  try { text = await (await fetch(url)).text() } catch { return null }
+  const vb = text.match(/viewBox\s*=\s*["']\s*[-\d.eE+]+[\s,]+[-\d.eE+]+[\s,]+([\d.eE+]+)[\s,]+([\d.eE+]+)/i)
+  const vw = vb ? Number(vb[1]) : NaN
+  const vh = vb ? Number(vb[2]) : NaN
+  if (vw > 0 && vh > 0) return vw / vh
+  const wh = text.match(/<svg[^>]*\swidth\s*=\s*["']?([\d.]+)(?:px)?["']?[^>]*\sheight\s*=\s*["']?([\d.]+)(?:px)?["']?/i)
+  const sw = wh ? Number(wh[1]) : NaN
+  const sh = wh ? Number(wh[2]) : NaN
+  if (sw > 0 && sh > 0) return sw / sh
+  return null
+}
+
+function fitVectorWindow(nw: number, nh: number, url: string, sequence: number, accountEpoch: number) {
+  const apply = (w: number, h: number) => {
+    if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
+    const vs = vectorWindowScale(w, h)
+    fitWindow(Math.round(w * vs), Math.round(h * vs))
+  }
+  // 浏览器对无尺寸 SVG 折算的 natural 是 300×150 默认对象尺寸，与真实 viewBox
+  // 纵横比不符（方形图标会开成 2:1 宽窗、内容大范围留白）：从 SVG 源码解析真实
+  // 纵横比，按面积等效折算回真实形状；解析失败保持折算值。
+  if (nw !== 300 || nh !== 150) { apply(nw, nh); return }
+  void svgIntrinsicAspect(url).then(aspect => {
+    if (aspect && aspect > 0) {
+      const area = nw * nh
+      const w = Math.round(Math.sqrt(area * aspect))
+      apply(w, Math.max(1, Math.round(w / aspect)))
+    } else apply(nw, nh)
+  })
+}
+
+// 按内容自然尺寸适配窗口，居中+错位
+function fitWindow(contentW: number, contentH: number) {
+  const maxW = window.innerWidth  - PAD * 2
+  const maxH = window.innerHeight - PAD * 2 - TITLE_H
+  let fw = contentW, fh = contentH
+  if (fw > maxW || fh > maxH) {
+    const scale = Math.min(maxW / fw, maxH / fh)
+    fw = Math.round(fw * scale)
+    fh = Math.round(fh * scale)
+  }
+  fw = Math.max(320, fw)
+  fh = Math.max(180, fh)
+  w.value = fw
+  h.value = fh + TITLE_H
+  // 居中，按 _idx 错开
+  const stagger = (props.win._idx ?? 0) * 30
+  x.value = Math.max(0, Math.round((window.innerWidth  - fw) / 2) + stagger)
+  y.value = Math.max(0, Math.round((window.innerHeight - fh - TITLE_H) / 2) + stagger)
+  ready.value = true
+}
+
+// 表格宽高不应按图片那样保持整体比例缩放：长表只需要在窗口内纵向滚动，
+// 否则几万像素的总高度会把宽度一起压缩成窄窗。
+function fitSpreadsheetWindow(contentW: number, contentH: number) {
+  const maxW = window.innerWidth - PAD * 2
+  const maxH = window.innerHeight - PAD * 2 - TITLE_H
+  const fw = Math.max(320, Math.min(Math.round(contentW), maxW))
+  const fh = Math.max(180, Math.min(Math.round(contentH), maxH))
+  w.value = fw
+  h.value = fh + TITLE_H
+  const stagger = (props.win._idx ?? 0) * 30
+  x.value = Math.max(0, Math.round((window.innerWidth - fw) / 2) + stagger)
+  y.value = Math.max(0, Math.round((window.innerHeight - fh - TITLE_H) / 2) + stagger)
+  ready.value = true
+}
+
+function onOfficeContentSize(width: number, height: number) {
+  if (isSpreadsheet.value) {
+    fitSpreadsheetWindow(width, height)
+    contentSize.value = `${width} × ${height}`
+    return
+  }
+  // pptx：按真实幻灯片宽高比适配窗口（首屏高度，多页靠滚动）。
+  fitWindow(width, height)
+  contentSize.value = `${width} × ${height}`
+}
+
+function toggleCsvView() {
+  csvTextMode.value = !csvTextMode.value
+  if (csvTextMode.value) fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.86))
+  else ready.value = false
+}
+
+function refreshHtmlPreview() {
+  if (!isHtml.value || isVirtual.value || loading.value) return
+  void load(props.win.file, true)
+}
+
+function onCsvRenderFailed() {
+  csvTextMode.value = true
+  fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.86))
+}
+
+function onImageLoaded() {
+  // 等两帧确保浏览器已将真实图片合成到屏幕，再淡出占位图
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    imageReady.value = true
+    imageWasPresented.value = true
+  }))
+}
+
+function onPlaceholderLoad(e: Event) {
+  if (blobUrl.value) return  // 快速下载：全图已到，不显示占位图
+  const { naturalWidth: nw, naturalHeight: nh } = e.target as HTMLImageElement
+  // 缩略图长边没到 card 上限 → 没被 Pillow 缩过，就是原图真实尺寸，直接按它定窗口。
+  // 顶到上限则原图真实尺寸未知（可能是刚好 192 附近的低分辨率图，也可能是被压缩过的大图，
+  // 无法区分）——不再瞎猜（之前套 4K 估算，遇到实际是低分辨率图时会把窗口猜得比真实大得多，
+  // 真图加载完再缩回真实尺寸，观感是「先变超大再骤缩」）；宁可窗口暂不出现，等真图加载完
+  // 直接定到正确尺寸（同「快速下载」路径），不做中间的错误猜测。
+  if (nw && nh && !ready.value && Math.max(nw, nh) < CARD_THUMB_CAP) {
+    fitWindow(nw, nh)
+  }
+  placeholderReady.value = true
+}
+
+async function load(f: PreviewFile, refresh = false) {
+  const sequence = ++loadSequence
+  const accountEpoch = getAccountBoundaryEpoch()
+  if (accountEpoch !== mountAccountEpoch) return
+  previewBlobCache.release(currentCacheKey.value, blobUrl.value)
+  blobUrl.value = null
+  currentCacheKey.value = ''
+  videoSrc.value       = null
+  loading.value        = true
+  error.value          = null
+  // XLSX 的窗口尺寸要等后端表格结构渲染完成后才能确定，先隐藏窗口，
+  // 避免先按默认尺寸显示再突然跳到自然尺寸。
+  if (isSpreadsheet.value && f.id != null && !f.attach_id) ready.value = false
+  placeholderReady.value = false
+  imageReady.value       = false
+  placeholderSrc.value   = null
+
+  if (isVirtual.value) {
+    fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.78))
+    loading.value = false
+    return
+  }
+
+  // 已知真实尺寸：直接定好窗口，无需等缩略图或下载完成。窗口尺寸只由打开时的第一张图
+  // 决定，跟内容解耦——切换到其它图片不再重新定窗口尺寸，图片靠 object-fit:contain
+  // 在固定窗口里自适应显示，不然窗口宽高跟着每张图变化，观感很跳。
+  if (isImg.value && f.imgWidth && f.imgHeight && !ready.value) {
+    const vs = isVector.value ? vectorWindowScale(f.imgWidth, f.imgHeight) : 1
+    fitWindow(Math.round(f.imgWidth * vs), Math.round(f.imgHeight * vs))
+  }
+  const headers: Record<string, string> = {}
+  let initialStreamUrl = props.win.streamUrl
+  props.win.streamUrl = undefined
+  const getStreamUrl = async (id: number) => {
+    if (f.contentUrl) return { url: f.contentUrl }
+    if (f.workspaceFile) return { url: pathFilesApi.contentUrl(f.workspaceFile) }
+    if (initialStreamUrl) {
+      const url = initialStreamUrl
+      initialStreamUrl = undefined
+      return { url }
+    }
+    return filesApi.getStreamUrl(id)
+  }
+
+  try {
+    // 聊天消息里的文件通常只有 file_id 和展示信息，没有版本号。文本文件必须先
+    // 从同一份权威文件记录拿到版本，再计算预览缓存键并允许编辑，保存时才能正确做乐观锁。
+    if (typeof f.id === 'number' && f.version == null
+      && (isTextExt(f.ext, f.mimeType) || isTextFallbackCandidate(f.ext, f.mimeType))) {
+      const stream = await filesApi.getStreamUrl(f.id)
+      if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
+      f.version = stream.file.version
+      filesCache.addFile(stream.file as FileMeta)
+      initialStreamUrl = stream.url
+    }
+    previewBlobCache.rememberFile(f, undefined, accountEpoch)
+
+    if (isVideoExt(f.ext)) {
+      let url
+      if (f.attach_id) {
+        const res = f.readContent ? new Response(await f.readContent())
+          : await fetch(withCacheBust(`${BASE_URL}/agent/attachment/${f.attach_id}/download`, refresh), { headers, credentials: 'include', cache: 'no-cache' })
+        if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
+        if (isUnauthorizedResponse(res)) return
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const blob = await res.blob()
+        if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
+        url = URL.createObjectURL(blob)
+        videoSrc.value = url
+      } else {
+        const stream = await getStreamUrl(f.id!)
+        if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
+        url = withCacheBust(stream.url, refresh)
+        videoSrc.value = url
+      }
+      // 探视频尺寸
+      await new Promise<void>(resolve => {
+        const vid = document.createElement('video')
+        vid.preload = 'metadata'
+        const finish = () => {
+          // 清空资源地址也会触发 error；先解绑，避免成功定尺后被错误回调再次缩小。
+          vid.onloadedmetadata = null
+          vid.onerror = null
+          vid.removeAttribute('src')
+          vid.load()
+          resolve()
+        }
+        vid.onloadedmetadata = () => {
+          if (sequence === loadSequence && accountEpoch === getAccountBoundaryEpoch()) {
+            const vw = vid.videoWidth || 720, vh = vid.videoHeight || 404
+            contentSize.value = `${vw} × ${vh}`
+            fitWindow(vw, vh)
+          }
+          finish()
+        }
+        vid.onerror = () => {
+          if (sequence === loadSequence && accountEpoch === getAccountBoundaryEpoch()) fitWindow(720, 404)
+          finish()
+        }
+        vid.src = url
+      })
+      if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
+    } else if (isTextExt(f.ext, f.mimeType) || isTextFallbackCandidate(f.ext, f.mimeType) || isOfficeExt(f.ext)) {
+      const expectsText = !isOfficeExt(f.ext) && (isTextExt(f.ext, f.mimeType) || !!props.win.textFallback)
+      const bust = refresh ? `?_t=${Date.now()}` : ''   // 刷新时绕开浏览器缓存，确保拿到改后的新内容
+      const key = previewBlobCache.keyOf(f)
+      currentCacheKey.value = bust ? '' : key
+      if (!bust) {
+        const cached = previewBlobCache.get(key)
+        if (cached) {
+          // 缓存只返回仍由缓存持有的 object URL，直接复用即可。
+          // 再 fetch/blob/解码会让命中缓存后仍完整读取一次正文。
+          if (expectsText) f.mimeType = 'text/plain'
+          blobUrl.value = cached
+          if (isDocx.value) ready.value = true
+          else if (!ready.value && !isPptx.value && !isOffice.value) {
+            fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.86))
+          }
+          return
+        }
+      }
+      if (isXlsx.value && f.id != null && !f.attach_id) {
+        // XLSX 表格正文和图片都由后端按需提供，不再先下载整个压缩包。
+        blobUrl.value = null
+        currentCacheKey.value = ''
+        return
+      }
+      let dlUrl: string
+      if (f.attach_id) {
+        dlUrl = `${BASE_URL}/agent/attachment/${f.attach_id}/download${bust}`
+      } else {
+        let stream: { url: string }
+        try {
+          stream = await getStreamUrl(f.id!)
+        } catch (error) {
+          throw new Error(`获取流地址失败：${error instanceof Error ? error.message : error}`)
+        }
+        dlUrl = withCacheBust(stream.url, refresh)
+      }
+      const res = f.readContent ? new Response(await f.readContent())
+        : await fetch(dlUrl, { headers, credentials: 'include', cache: 'no-cache' })
+      if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
+      if (isUnauthorizedResponse(res)) return
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const downloadedBlob = await res.blob()
+      const textBlob = expectsText ? await normalizeTextBlob(downloadedBlob) : downloadedBlob
+      if (!textBlob) throw new Error(t('viewerUi.notTextFile'))
+      if (expectsText) f.mimeType = 'text/plain'
+      const url = URL.createObjectURL(textBlob)
+      if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) {
+        URL.revokeObjectURL(url)
+        return
+      }
+      blobUrl.value = url
+      // 强制刷新也要替换同一 key 的旧 blob，避免关闭后再次打开回到旧内容。
+      if (key) previewBlobCache.put(key, url, accountEpoch)
+      currentCacheKey.value = key
+      if (isDocx.value) {
+        ready.value = true
+      } else if ((!refresh || !ready.value) && !isPptx.value && !isOffice.value) {
+        fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.86))
+      }
+    } else {
+      const key = previewBlobCache.keyOf(f)
+      const bust = refresh ? `?_t=${Date.now()}` : ''
+      currentCacheKey.value = bust ? '' : key
+      const cached = bust ? null : previewBlobCache.get(key)
+      if (cached) {
+        blobUrl.value = cached
+        const img = new Image()
+        img.onload = () => {
+          if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
+          contentSize.value = `${img.naturalWidth} × ${img.naturalHeight}`
+          if (!ready.value) {
+            if (isVector.value) fitVectorWindow(img.naturalWidth, img.naturalHeight, blobUrl.value ?? '', sequence, accountEpoch)
+            else fitWindow(img.naturalWidth, img.naturalHeight)
+          }
+        }
+        img.src = cached
+        return
+      }
+
+      // 原图已在会话缓存中时直接复用，不能再发起缩略图请求；缩略图只服务于原图首次加载期间的占位。
+      if (!f.contentUrl && !f.readContent && isImg.value && !_SVG_EXTS.has((f.ext ?? '').toUpperCase())) {
+        if (f.attach_id) {
+          // 聊天附件：占位图走附件缩略图端点
+          const h: Record<string, string> = {}
+          fetch(`${BASE_URL}/agent/attachment/${f.attach_id}/thumb?size=card`, { headers: h })
+            .then(r => {
+              if (isUnauthorizedResponse(r)) return null
+              return r.ok ? r.blob() : null
+            }).then(b => {
+              if (sequence === loadSequence && accountEpoch === getAccountBoundaryEpoch() && b && !imageReady.value) placeholderSrc.value = URL.createObjectURL(b)
+            }).catch(() => {})
+        } else {
+          const cachedThumb = refresh ? null : getCachedThumb(f.id!, 'card', f.version)
+          if (cachedThumb) {
+            placeholderSrc.value = cachedThumb
+          } else {
+            getThumb(f.id!, 'card', f.version).then((url: string | null | undefined) => {
+              if (sequence === loadSequence && accountEpoch === getAccountBoundaryEpoch() && url && !imageReady.value) placeholderSrc.value = url
+            })
+          }
+        }
+      }
+      let dlUrl: string
+      if (f.attach_id) {
+        dlUrl = `${BASE_URL}/agent/attachment/${f.attach_id}/download${bust}`
+      } else {
+        const stream = await getStreamUrl(f.id!)
+        dlUrl = withCacheBust(stream.url, refresh)
+      }
+      const res = f.readContent ? new Response(await f.readContent())
+        : await fetch(dlUrl, { headers, credentials: 'include', cache: 'no-cache' })
+      if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
+      if (isUnauthorizedResponse(res)) return
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const blob = await res.blob()
+      if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
+      const url  = URL.createObjectURL(blob)
+      if (accountEpoch !== getAccountBoundaryEpoch()) {
+        URL.revokeObjectURL(url)
+        return
+      }
+      blobUrl.value = url
+      if (key) previewBlobCache.put(key, url, accountEpoch)
+      const img = new Image()
+      img.onload = () => {
+        if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
+        contentSize.value = `${img.naturalWidth} × ${img.naturalHeight}`
+        // 窗口尺寸只由打开时的第一张图决定（同上），这里只在窗口还没显示过时才定尺。
+        if (!ready.value) {
+          if (isVector.value) fitVectorWindow(img.naturalWidth, img.naturalHeight, url, sequence, accountEpoch)
+          else fitWindow(img.naturalWidth, img.naturalHeight)
+        }
+      }
+      img.src = url
+    }
+  } catch (e) {
+    if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
+    error.value = '加载失败：' + (e instanceof Error ? e.message : e)
+    if (!refresh || !ready.value) fitWindow(480, 300)
+  } finally {
+    if (sequence === loadSequence && accountEpoch === getAccountBoundaryEpoch()) loading.value = false
+  }
+}
+
+watch(
+  () => [props.win.file, props.win.reloadToken] as const,
+  ([file, reloadToken], previous) => load(
+    file,
+    isPreviewReloadRequested(reloadToken, previous?.[1]),
+  ),
+  { immediate: true },
+)
+
+function onTextContentSaved(content: string, fileKey: string | number | null, version?: number) {
+  // 保存成功后当前 TextViewer 已经持有最新文本；这里只替换会话 cache，避免把新的
+  // blobUrl 回传给编辑器，导致每次自动保存都重新加载并打断光标/撤销栈。
+  if (getAccountBoundaryEpoch() !== mountAccountEpoch) return
+  const currentFileKey = props.win.file.id ?? props.win.file.attach_id ?? null
+  if (fileKey == null || currentFileKey == null || String(fileKey) !== String(currentFileKey)) return
+  const staleKey = previewBlobCache.keyOf(props.win.file)
+  if (staleKey) previewBlobCache.discard(staleKey)
+  if (version != null && typeof props.win.file.id === 'number') {
+    props.win.file.version = version
+    filesCache.updateFile(props.win.file.id, { version })
+  }
+  const key = previewBlobCache.keyOf(props.win.file)
+  if (!key || props.win.file.attach_id) return
+  recentlySavedText = { fileId: String(currentFileKey), content, savedAt: Date.now() }
+  const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }))
+  previewBlobCache.put(key, url)
+}
+
+async function matchesRecentlySavedText(fileId: string, content: string): Promise<boolean> {
+  const id = Number(fileId)
+  if (!Number.isSafeInteger(id) || id <= 0) return false
+  try {
+    const stream = await filesApi.getStreamUrl(id)
+    const headers: Record<string, string> = {}
+    const response = await fetch(stream.url, { headers, credentials: 'include', cache: 'no-store' })
+    if (!response.ok || isUnauthorizedResponse(response)) return false
+    const normalized = await normalizeTextBlob(await response.blob())
+    return normalized !== null && await normalized.text() === content
+  } catch {
+    return false
+  }
+}
+
+const liveStore = useLiveStore()
+watch(() => liveStore.resourceEvent, async (event) => {
+  if (event?.origin === CLIENT_ID || !isPreviewAffectedByFileEvent(props.win.file.id, event)) return
+  const currentFileId = props.win.file.id == null ? '' : String(props.win.file.id)
+  const savedText = recentlySavedText
+  if (event?.source === 'local_directory' && savedText?.fileId === currentFileId
+    && Date.now() - savedText.savedAt < 5_000) {
+    if (checkingLocalDirectoryEcho) return
+    checkingLocalDirectoryEcho = true
+    const unchanged = await matchesRecentlySavedText(savedText.fileId, savedText.content)
+    checkingLocalDirectoryEcho = false
+    if (savedText !== recentlySavedText) return
+    if (unchanged) return
+  }
+  recentlySavedText = null
+  if (!props.win.file.attach_id) load(props.win.file, true)
+})
+
+async function handleDownload() {
+  try {
+    const file = props.win.file
+    const filename = `${file.displayName}.${file.ext?.toLowerCase()}`
+    if (file.workspaceFile) {
+      await pathFilesApi.download(file.workspaceFile)
+    } else if (file.attach_id || file.contentUrl) {
+      const res = file.readContent ? new Response(await file.readContent())
+        : await fetch(file.contentUrl ?? `${BASE_URL}/agent/attachment/${file.attach_id}/download`, { credentials: 'include' })
+      if (isUnauthorizedResponse(res)) return
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const url = URL.createObjectURL(await res.blob())
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = filename
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } else if (file.id != null) {
+      await filesApi.download(file.id, filename)
+    }
+  } catch (e) { console.error('[FloatPreview] 下载失败:', e) }
+}
+
+// ── 拖拽标题栏移动 ───────────────────────────────────────────────────────────
+const DRAG_OVERSCAN_RATIO = .25
+
+function onTitleMouseDown(event: MouseEvent) {
+  if (props.nativeWindow) return
+  event.preventDefault()
+  if (!maximized.value) startDrag(event)
+}
+
+function onTitleDoubleClick(event: MouseEvent) {
+  if (props.nativeWindow) return
+  event.preventDefault()
+  toggleMaximize()
+}
+
+function previewDragBounds() {
+  const overscanX = window.innerWidth * DRAG_OVERSCAN_RATIO
+  const overscanY = window.innerHeight * DRAG_OVERSCAN_RATIO
+  const minX = -overscanX
+  const minY = 0
+  return {
+    minX,
+    maxX: Math.max(minX, window.innerWidth + overscanX - w.value),
+    minY,
+    maxY: Math.max(minY, window.innerHeight + overscanY - h.value),
+  }
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value))
+}
+
+const { startDrag } = useWindowDrag(x, y, (nextX, nextY) => {
+  const { minX, maxX, minY, maxY } = previewDragBounds()
+  return { x: clamp(nextX, minX, maxX), y: clamp(nextY, minY, maxY) }
+})
+
+// ── 四角 resize（可见手柄只留右下角，其余三角只是能拖、没有图标）────────────────
+let resizeOrig: { mx: number; my: number; w: number; h: number; x: number; y: number; dir: string } | null = null
+const MIN_W = 320, MIN_H = 240
+
+function startResize(dir: string, e: MouseEvent) {
+  if (e.button !== 0) return
+  resizeOrig = { mx: e.clientX, my: e.clientY, w: w.value, h: h.value, x: x.value, y: y.value, dir }
+  window.addEventListener('mousemove', onResizeMove)
+  window.addEventListener('mouseup',   onResizeUp)
+}
+
+function onResizeMove(e: MouseEvent) {
+  if (!resizeOrig) return
+  const { mx, my, w: ow, h: oh, x: ox, y: oy, dir } = resizeOrig
+  const dx = e.clientX - mx
+  const dy = e.clientY - my
+  // 左侧的角：一边收缩宽度一边把 x 往右挪，钳到 MIN_W 后用实际收缩量算 x，避免碰到下限后窗口和鼠标脱节
+  // 单边手柄（n/s/e/w）只含一个方向字母，只能动对应那根轴；四角手柄（se/sw/ne/nw）两根轴都动，不受影响。
+  if (dir.includes('e') || dir.includes('w')) {
+    if (dir.includes('e')) {
+      w.value = Math.max(MIN_W, ow + dx)
+    } else {
+      const newW = Math.max(MIN_W, ow - dx)
+      x.value = Math.max(0, ox + (ow - newW))
+      w.value = newW
+    }
+  }
+  if (dir.includes('s') || dir.includes('n')) {
+    if (dir.includes('s')) {
+      h.value = Math.max(MIN_H, oh + dy)
+    } else {
+      const newH = Math.max(MIN_H, oh - dy)
+      y.value = Math.max(0, oy + (oh - newH))
+      h.value = newH
+    }
+  }
+}
+
+function onResizeUp() {
+  resizeOrig = null
+  window.removeEventListener('mousemove', onResizeMove)
+  window.removeEventListener('mouseup',   onResizeUp)
+}
+
+onUnmounted(() => {
+  loadSequence += 1
+  _unregEsc()
+  _unregArrowNav()
+  previewBlobCache.release(currentCacheKey.value, blobUrl.value)
+  window.removeEventListener('mousemove', onResizeMove)
+  window.removeEventListener('mouseup',   onResizeUp)
+})
+</script>
+
+<style scoped>
+.fpw-root {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--card-radius);
+  overflow: visible;
+  background: rgba(242, 243, 248, 0.96);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow: 0 12px 48px rgba(20, 25, 60, 0.22), 0 2px 8px rgba(0,0,0,0.08);
+  min-width: 320px;
+  min-height: 240px;
+  user-select: none;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  will-change: transform;
+}
+.fpw-root.fpw-native {
+  inset: 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  box-shadow: none;
+  will-change: auto;
+}
+.fpw-native .fpw-title {
+  app-region: drag;
+  -webkit-app-region: drag;
+}
+.fpw-native .fpw-actions {
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+.fpw-native.fpw-native-fullscreen,
+.fpw-native-fullscreen .fpw-title {
+  border-radius: 0;
+}
+.fpw-root.fpw-ready {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+/* ── 标题栏 ── */
+.fpw-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 10px 9px 12px;
+  background: rgba(255, 255, 255, 0.55);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.07);
+  border-radius: var(--card-radius) var(--card-radius) 0 0;
+  cursor: grab;
+  flex-shrink: 0;
+  min-width: 0;
+}
+.fpw-title:active { cursor: grabbing; }
+.fpw-maximized-bar { cursor: default; }
+.fpw-maximized-bar:active { cursor: default; }
+
+.fpw-ext {
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-radius: 4px;
+  padding: 2px 5px;
+  flex-shrink: 0;
+}
+.fpw-name {
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+  pointer-events: none;
+}
+
+.fpw-actions {
+  display: flex;
+  gap: 0;
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+.fpw-btn {
+  width: 26px; height: 26px;
+  border-radius: 6px; border: none;
+  background: none;
+  color: var(--text-secondary);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.fpw-csv-toggle {
+  width: auto;
+  min-width: 26px;
+  padding: 0 6px;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.fpw-btn:hover { background: rgba(0,0,0,0.1); color: var(--text-primary); }
+.fpw-btn[aria-pressed='true'].active { color: var(--text-primary); background: var(--status-info-bg); }
+.fpw-close:hover { background: rgba(200,90,90,0.12); color: rgba(200,90,90,0.9); }
+.fpw-font-size {
+  font-size: 10px; font-weight: 600; color: var(--text-secondary);
+  min-width: 18px; text-align: center; line-height: 26px; user-select: none;
+}
+
+/* ── 内容区 ── */
+.fpw-body {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background: rgba(220, 222, 232, 0.5);
+  border-radius: 0 0 var(--card-radius) var(--card-radius);
+}
+.fpw-body:has(.tv-wrap) {
+  background: #fff;
+}
+
+/* ── 状态 ── */
+.fpw-status {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 10px; color: var(--text-secondary); font-size: 12px;
+}
+.fpw-error { color: rgba(180, 80, 80, 0.8); }
+.fpw-loading {
+  display: grid;
+  place-items: center;
+}
+.fpw-loading > span {
+  position: absolute;
+  top: calc(50% + 24px);
+  left: 0;
+  right: 0;
+  text-align: center;
+}
+.fpw-spinner {
+  width: 24px; height: 24px; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--action-primary) 20%, transparent);
+  border-top-color: color-mix(in srgb, var(--action-primary) 70%, transparent);
+  animation: fpw-spin 0.7s linear infinite;
+}
+@keyframes fpw-spin { to { transform: rotate(360deg); } }
+
+.fpw-placeholder-wrap {
+  position: absolute; inset: 0; z-index: 1;
+  display: flex; align-items: center; justify-content: center;
+  padding: 32px;
+  pointer-events: none;
+  opacity: 0; transition: opacity 0.15s ease;
+}
+.fpw-placeholder-wrap.fpw-ph-ready { opacity: 1; }
+.ph-fade-leave-active { transition: opacity 0.25s ease !important; }
+.ph-fade-leave-to { opacity: 0 !important; }
+.fpw-placeholder-img {
+  width: 100%; height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+  display: block;
+}
+
+/* ── info 按钮激活态 ── */
+.fpw-btn.active { background: color-mix(in srgb, var(--action-primary) 15%, transparent); color: var(--color-primary, var(--action-primary)); }
+
+/* ── 图片左右切换按钮：平时隐藏，鼠标移进内容区才淡入；跟 ImageViewer 缩放胶囊
+   （.iv-toolbar）同一套毛玻璃参数，视觉上是一家人 ── */
+.fpw-nav {
+  position: absolute; top: 50%; z-index: 2;
+  width: 34px; height: 34px;
+  margin-top: -17px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.68);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(255, 255, 255, 0.82);
+  box-shadow:
+    0 4px 16px rgba(80, 90, 110, 0.10),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    inset 1px 0 0 rgba(255, 255, 255, 0.55);
+  color: var(--text-secondary);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;   /* 隐藏时别挡住底下图片的点击/拖拽 */
+  transition: opacity 0.15s, background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+.fpw-body:hover .fpw-nav { opacity: 1; pointer-events: auto; }
+.fpw-nav:hover {
+  box-shadow:
+    0 2px 14px rgba(80, 90, 110, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    inset 1px 0 0 rgba(255, 255, 255, 0.55);
+}
+.fpw-nav-prev { left: 10px; }
+.fpw-nav-next { right: 10px; }
+
+/* ── resize 边缘与角标 ── */
+.fpw-resize {
+  position: absolute;
+  bottom: -5px; right: -5px;
+  width: 10px; height: 10px;
+  cursor: se-resize;
+}
+/* 只保留透明的可拖拽热区，缩放提示由鼠标指针提供。 */
+.fpw-resize-edge { position: absolute; width: 5px; height: 5px; }
+.fpw-resize-n, .fpw-resize-s { left: 10px; right: 10px; width: auto; height: 5px; cursor: ns-resize; }
+.fpw-resize-n { top: -5px; }
+.fpw-resize-s { bottom: -5px; }
+.fpw-resize-e, .fpw-resize-w { top: 10px; bottom: 10px; width: 5px; height: auto; cursor: ew-resize; }
+.fpw-resize-e { right: -5px; }
+.fpw-resize-w { left: -5px; }
+.fpw-resize-nw { top: -5px; left: -5px; width: 10px; height: 10px; cursor: nwse-resize; }
+.fpw-resize-ne { top: -5px; right: -5px; width: 10px; height: 10px; cursor: nesw-resize; }
+.fpw-resize-sw { bottom: -5px; left: -5px; width: 10px; height: 10px; cursor: nesw-resize; }
+</style>

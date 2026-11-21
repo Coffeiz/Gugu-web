@@ -1,0 +1,7 @@
+/* Final surface-level exceptions: dark containers stay quiet while their controls keep feedback. */
+
+/* Inline light-mode pill overrides must not leak into dark mode. */
+html[data-theme='dark'][data-family] .seg-control {
+  --pill-bg: var(--selected-pill-bg) !important;
+  --pill-shadow: var(--selected-pill-shadow) !important;
+}

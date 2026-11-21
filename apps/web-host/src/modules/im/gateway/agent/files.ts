@@ -10,7 +10,7 @@ import type {FileReadOperations} from '../../../files/browse.js'
 import {isOwnedFileStorageKey} from '../../../files/store.js'
 import type {ImAttachmentScope} from '../inbound/attachments.js'
 import type {NodeImBotBinding} from '../inbound/inbox.js'
-import type {GatewayPlatformSender} from '../platform-connections.js'
+import type {GatewayPlatformSender} from '../connections.js'
 import {createImRunScope} from './scope.js'
 import {createImRunArtifactSender} from '../delivery/artifacts.js'
 

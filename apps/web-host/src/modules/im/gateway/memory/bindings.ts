@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { readAgentPrompt } from '@gugu/core/agent/context/prompts'
 import { ProviderRuntime, adapterFor } from '@gugu/core/providers'
 import { createAgentRunCodec } from '@gugu/core/agent/run/codec'
 import { stableJson, type CanonicalRunContext, type RunIdentity } from '@gugu/core/agent'
@@ -69,18 +68,18 @@ export function createImProductionReflectionBindings(options: Options): Pick<ImR
   const owned = new WeakMap<ImReflectionRuntime, Awaited<ReturnType<typeof bindOriginal>>>()
   return {
     async readGroupCompactionPrompt(){
-      const prompt=await readFile(join(options.promptRoot,'im','group_compress.md'),'utf8')
+      const prompt=readAgentPrompt('im/group_compress.md', options.promptRoot)
       if(!prompt.trim()||Buffer.byteLength(prompt)>1048576)throw failed()
       return prompt
     },
     async readOwnerCompactionPrompt(){
-      const prompt=await readFile(join(options.promptRoot,'memory_compress.md'),'utf8')
+      const prompt=readAgentPrompt('memory_compress.md', options.promptRoot)
       if(!prompt.trim()||Buffer.byteLength(prompt)>1048576)throw failed()
       return prompt
     },
     async readOwnerPeriodicPrompt(field){
       if(field!=='profile'&&field!=='pattern')throw failed()
-      const prompt=await readFile(join(options.promptRoot,`${field}_compact.md`),'utf8')
+      const prompt=readAgentPrompt(`${field}_compact.md`, options.promptRoot)
       if(!prompt.trim()||Buffer.byteLength(prompt)>1048576)throw failed()
       return prompt
     },

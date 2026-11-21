@@ -1,3 +1,4 @@
+import { agentPromptDefaults } from '@gugu/core/agent/context/prompts'
 import { byokBindings } from '@gugu/database/postgres/migrations/0021_byok_bindings'
 import { agentReasoningSql } from '@gugu/database/postgres/migrations/0012_agent_reasoning'
 import { imGatewaySql } from '@gugu/database/postgres/migrations/0013_im_gateway'
@@ -55,9 +56,9 @@ export async function createImProductionFixture(options:{python:string;databaseU
  const close=async()=>{if(closed)return;closed=true;await core?.close();await pool.end();await deliveryPool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();await rm(root,{recursive:true,force:true})}
  try{
   await Promise.all([mkdir(storageRoot,{recursive:true}),mkdir(promptRoot,{recursive:true})])
-  for(const name of ['default.md','persona.md','skills.md','policy.md','retrieval.md'])await writeFile(join(promptRoot,name),`# 合成测试规范\n你是合成测试助手。仅处理当前授权用户与当前会话的任务。\n`)
+  for(const name of ['default.md','persona.md','skills.md','policy.md'])await writeFile(join(promptRoot,name),`# 合成测试规范\n你是合成测试助手。仅处理当前授权用户与当前会话的任务。\n`)
   await mkdir(join(promptRoot,'im'),{recursive:true})
-  const packagedPrompts=fileURLToPath(new URL('../../../assets/agent-prompts/',import.meta.url))
+  const packagedPrompts=agentPromptDefaults
   for(const name of ['compress_conv.md','im/group_chat.md','im/group_compress.md','memory_compress.md'])await writeFile(join(promptRoot,name),await readFile(join(packagedPrompts,name)))
   for(const name of ['profile_compact.md','pattern_compact.md'])await writeFile(join(promptRoot,name),await readFile(join(backend,'agent','prompts',name)))
   const compiled=await run(options.python,['-c',pythonSchema],{cwd:backend,env:{PATH:process.env.PATH,TZ:'UTC',PYTHONIOENCODING:'utf-8',PYTHONPATH:[backend,compat].join(delimiter),PYTHONDONTWRITEBYTECODE:'1',GUGU_ENV_FILE:join(root,'missing.env'),GUGU_CONFIG_OVERRIDE_FILE:join(root,'missing.json')},maxBuffer:8*1024*1024})

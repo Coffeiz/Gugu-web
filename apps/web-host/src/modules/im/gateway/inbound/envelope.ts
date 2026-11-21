@@ -1,3 +1,4 @@
+import { wechatEventId } from '@gugu/gateway'
 import { createCipheriv, createDecipheriv, createHmac, hkdfSync, randomBytes } from 'node:crypto'
 import type { NodeImBotBinding } from './inbox.js'
 
@@ -30,7 +31,7 @@ export function createImInboundEnvelope(secretKey: string) {
   }
   function plainHeader(binding: NodeImBotBinding, payload: Payload) {
     const route = bindingFields(binding, payload)
-    const eventId = identifier(payload._pending_ask_resume_id || payload.message_id)
+    const eventId = identifier(payload._pending_ask_resume_id || wechatEventId(payload) || payload.message_id)
     return { ...route, message_id: createHmac('sha256', identityKey).update(JSON.stringify([route, eventId])).digest('hex') }
   }
   function aad(header: Payload): Buffer { return Buffer.from(JSON.stringify(fields.map(field => header[field]))) }

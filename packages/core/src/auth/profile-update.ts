@@ -1,3 +1,4 @@
+import { isValidTimezone } from '../shared/date-time.js'
 import { dataContext } from '../contracts/index.js'
 
 export interface ProfileUpdateInput {
@@ -53,15 +54,6 @@ export class ProfileUpdateError extends Error {
     }
     super(messages[code])
     this.name = 'ProfileUpdateError'
-  }
-}
-
-function isValidTimezone(timezone: string): boolean {
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format(0)
-    return true
-  } catch {
-    return false
   }
 }
 

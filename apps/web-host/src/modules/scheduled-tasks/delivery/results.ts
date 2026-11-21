@@ -1,3 +1,4 @@
+import { sendProactiveIm } from '../../im/gateway/delivery/proactive.js'
 import type { Pool } from 'pg'
 import type { ScheduledTaskTestNotificationPlan } from '@gugu/core/scheduled-task-test-notify'
 import type { ScheduledTaskExecutionPorts } from '@gugu/core/scheduled-task-run-now'
@@ -20,7 +21,7 @@ type NotificationRow = {
   persist: boolean
 }
 
-type PublishNotification = (target: string, notification: NotificationRow) => Promise<boolean>
+type PublishNotification = (target: string, notification: NotificationRow & { source?: 'scheduled_task' }) => Promise<boolean>
 type ImPushHistory = ReturnType<typeof createScheduledImPushHistory>
 type DeliveryOptions = {
   email(plan: ScheduledTaskTestNotificationPlan, attachments?: EmailAttachmentReferences, recipient?: string | null): Promise<Record<string, string>>
@@ -29,6 +30,7 @@ type DeliveryOptions = {
   qq?: ReturnType<typeof createScheduledTaskQqDelivery>
   telegram?: ReturnType<typeof createScheduledTaskTelegramDelivery>
   recordImPush?: ImPushHistory
+  webPushKey?: string
 }
 
 async function deliverEmail(
@@ -64,18 +66,24 @@ export function createPostgresScheduledTaskTestDelivery(
       await assertLease?.()
       let notification: NotificationRow | undefined
       try {
-        const inserted = await pool.query<NotificationRow>(
-          `INSERT INTO site_notifications(title,content,color,target,bubble,persist,bubble_expire_at,created_by,created_at)
+        const insertNotification = `INSERT INTO site_notifications(title,content,color,target,bubble,persist,bubble_expire_at,created_by,created_at)
            VALUES($1,$2,$3,$4,TRUE,TRUE,NULL,'scheduled_task',NOW())
-           RETURNING id,title,content,color,bubble,persist`,
-          [plan.title, plan.text, '#7b7fb2', plan.ownerId],
-        )
+           RETURNING id,title,content,color,bubble,persist`
+        const values = [plan.title, plan.text, '#7b7fb2', plan.ownerId]
+        const inserted = options.webPushKey
+          ? await pool.query<NotificationRow>(`WITH notice AS (${insertNotification}), queued AS (
+              INSERT INTO web_push_outbox(subscription_id, notification_id)
+              SELECT s.id, notice.id FROM notice CROSS JOIN web_push_subscriptions s
+              WHERE s.owner_id=$4::uuid AND s.vapid_key=$5
+            )
+            SELECT * FROM notice`, [...values, options.webPushKey])
+          : await pool.query<NotificationRow>(insertNotification, values)
         notification = inserted.rows[0]
       } catch { /* 数据库不可用时仍尝试投递到其他已配置渠道。 */ }
       if (notification) {
         await assertLease?.()
         let published = false
-        try { published = await publish(plan.ownerId, notification) } catch { /* 持久通知仍可在通知中心读取。 */ }
+        try { published = await publish(plan.ownerId, { ...notification, source: 'scheduled_task' }) } catch { /* 持久通知仍可在通知中心读取。 */ }
         result['web 通知'] = published ? '已发送' : '已保存（实时提示失败）'
         if (plan.artifacts?.length) result['web 通知'] += '（网页通知不支持附件，图片未随通知显示）'
       } else {
@@ -83,9 +91,8 @@ export function createPostgresScheduledTaskTestDelivery(
       }
     }
     const send = async (platform: 'qq' | 'feishu' | 'wechat' | 'telegram', deliver?: PreparedScheduledImDelivery) => {
-      if (!deliver) return 'Node 服务暂未接入该投递渠道'
-      await assertLease?.()
-      const status = await deliver()
+      const status = await sendProactiveIm(deliver, assertLease)
+      if (!deliver) return status
       if (status === '已发送' && deliver.recipient && options.recordImPush) {
         try {
           await assertLease?.()
@@ -123,6 +130,7 @@ export function createPostgresScheduledTaskResultDelivery(
       channels: [...task.channels],
       title: outcome.status === 'failed' ? `${task.name}（执行失败）` : task.name,
       text: outcome.text,
+      plainText: task.executionMode === 'reminder',
       fixedTargets: task.deliveryTargets,
       artifacts: outcome.files,
       emailAttachments: outcome.files.length || task.emailAttachmentFileIds.length

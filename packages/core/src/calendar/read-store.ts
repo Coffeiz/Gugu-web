@@ -53,10 +53,10 @@ export function createKyselyCalendarAgentReadPort<DB>(db: Kysely<DB>, backend: '
         signal?.throwIfAborted()
         const stamp = backend === 'postgres' ? sql`to_char(start_at AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI:SS.US') || '+00:00'` : sql`start_at`
         const tasks = (await sql<Record<string, unknown>>`SELECT id,event_id,enabled,name,payload,cron,schedule_kind,${stamp} AS start_at,
-          reminder_lead_minutes,channels,delivery_targets FROM scheduled_tasks WHERE user_id=${owner} AND event_id IN (${sql.join(events.map(event => event.id))}) ORDER BY id`.execute(tx)).rows
+          reminder_lead_minutes,channels,delivery_targets,execution_mode FROM scheduled_tasks WHERE user_id=${owner} AND event_id IN (${sql.join(events.map(event => event.id))}) ORDER BY id`.execute(tx)).rows
         for (const task of tasks) {
           const id = Number(task.event_id), group = reminders.get(id) ?? []
-          group.push({ id: Number(task.id), enabled: Boolean(task.enabled), name: String(task.name), payload: String(task.payload ?? ''),
+          group.push({ ...(task.execution_mode === 'instruction' || task.execution_mode === 'reminder' ? { execution_mode: task.execution_mode } : {}), id: Number(task.id), enabled: Boolean(task.enabled), name: String(task.name), payload: String(task.payload ?? ''),
             cron: String(task.cron), schedule_kind: String(task.schedule_kind), start_at: task.start_at == null ? null : String(task.start_at),
             reminder_lead_minutes: task.reminder_lead_minutes == null ? null : Number(task.reminder_lead_minutes), channels: task.channels == null ? null : String(task.channels),
             delivery_targets: backend === 'sqlite' && typeof task.delivery_targets === 'string' ? JSON.parse(task.delivery_targets) : task.delivery_targets })

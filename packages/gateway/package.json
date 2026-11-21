@@ -8,10 +8,11 @@
   },
   "exports": {
     ".": "./dist/index.js",
-    "./telegram": "./dist/telegram/index.js",
-    "./qq": "./dist/qq/index.js",
-    "./feishu": "./dist/feishu/index.js",
-    "./wechat": "./dist/wechat/index.js"
+    "./telegram": "./dist/platforms/telegram/index.js",
+    "./media": "./dist/runtime/media/index.js",
+    "./qq": "./dist/platforms/qq/index.js",
+    "./feishu": "./dist/platforms/feishu/index.js",
+    "./wechat": "./dist/platforms/wechat/index.js"
   },
   "files": [
     "dist"
@@ -22,7 +23,9 @@
   },
   "dependencies": {
     "@gugu/core": "workspace:*",
+    "@zpowertech/audio-player": "0.1.1",
     "@larksuiteoapi/node-sdk": "1.76.0",
+    "mime-types": "2.1.35",
     "ws": "8.22.0",
     "zod": "4.6.7"
   },

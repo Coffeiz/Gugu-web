@@ -9,7 +9,7 @@ description: Node.js/Fastify Web Host 与共享后端开发约定，涵盖 Core�
 
 ## 开发监听
 
-日常开发使用 `corepack pnpm --filter @gugu/webui dev`，监听 Web Host、Core、Database、FS 和 Sandbox；不要在每次编辑后执行全量构建。首次缺少共享包制品时按提示初始化；生产构建验证或内置技能资源变更时仍需执行相应构建。监听编译出错时先修复，不以旧制品当作新代码运行。
+日常开发使用 `corepack pnpm --filter @gugu/webui dev`。开发监听首次启动和依赖声明变更时按锁文件安装，按依赖顺序增量编译共享包，随后检查 Web Host 类型及模块导入。检查通过后才正常停止旧 Host 并启动新进程。检查失败时保留已运行的 Host，等待下一次源码变更。不要另启 Node 或 TypeScript 的独立监听绕开上述顺序。
 
 
 数据库结构变更集中在 `packages/database/`。Web Host 用 `pnpm --filter @gugu/webui migrate check|apply`，Desktop SQLite 用 `pnpm --filter @gugu/core migrate check|apply --database "<数据库文件>"`。编号和数据库要求见该目录 README。
@@ -56,7 +56,7 @@ description: Node.js/Fastify Web Host 与共享后端开发约定，涵盖 Core�
 | IM 上下文、引用与检索 | `apps/web-host/src/modules/im/gateway/context-services.ts`、`context-reference-codec.ts`、`memory-search.ts`、`group-context.ts`：真实业务来源、附件归属、当前Run租约及群/记忆scope；检索Schema与执行复用同一ToolRegistry，成员白名单不能因端口可用而扩大 |
 | IM 注意力与成功送达 | `packages/core/src/im/attention/directive.ts`、`im/run-delivery.ts`：冻结决策/回复门与可携带证据的投递契约；Host `attention-runtime.ts`、`pending-ask-dispatch.ts`、`attention-ledger.ts` 提供真实覆盖/当前策略/内部唤醒/原子accepted事实，不能用assistant历史、入站布尔或缺失Redis证明补齐 |
 | IM 持久流式 | `gateway/platforms/feishu/persistent.ts`、`platforms/qq/persistent.ts`、`platforms/telegram/persistent.ts` 共用Run投递器及 `delivery/store.ts` 平台独立加密/CAS；QQ只用可信Markdown＋开关，不能在旧正文/流收据未决时切换发送器。TG draft不等同最终送达，保活与外层收据SQL共用FIFO，Host在释放投递租约前close排空。未知副作用不重发；投递表由统一数据库迁移显式创建，启动仅检查 |
-| IM 即时反馈与成员恢复 | Core `im/shortcut.ts` 即时表情及 `im/access.ts` 展示策略；Host `platform-connections.ts` 只在新鲜永久准入后反馈，QQ附件按可信群策略/格式与Bot目标冷却，失败不吞消息。`production-reflection-bindings.ts:rebuildMemberSnapshot` 仅从真实owned checkpoint按原member scope恢复，公开group无快照仍defer，不能借owner权限 |
+| IM 即时反馈与成员恢复 | Core `im/shortcut.ts` 即时表情及 `im/access.ts` 展示策略；Host `connections.ts` 只在新鲜永久准入后反馈，QQ附件按可信群策略/格式与Bot目标冷却，失败不吞消息。`production-reflection-bindings.ts:rebuildMemberSnapshot` 仅从真实owned checkpoint按原member scope恢复，公开group无快照仍defer，不能借owner权限 |
 | Web / IM Provider 配置 | `apps/web-host/src/modules/agent/llm/settings.ts`：固定提示词、版本密钥和有效模型解析；来源各自绑定访问范围，IM 不复用 Web 的 owner/私聊特例 |
 | IM Provider私有续接 | `modules/agent/run/reasoning/active.ts:createProviderReasoningPersistence` 与 `modules/agent/run/reasoning/bridge.ts`：四协议活动值与checkpoint同事务加密，原ref精确恢复；Responses/Anthropic 发布协议原生的跨 Run 成功状态。Anthropic完整响应块仅存活动侧表，off仍允许当前Run工具私有恢复；绑定实际adapter身份，不把配置原字符串当协议身份，不把私有wire写进Canonical或回复 |
 | IM 独立语音识别与音频处理 | `apps/web-host/src/modules/im/gateway/media/config.ts`、`media/voice.ts`、`audio.ts`：活动 voice preset/当前 speech_to_text BYOK、每次HTTP与转码的版本/授权复核、Core三种ASR协议和有界ffmpeg；不借聊天模型凭据，不信平台duration，不让清理或预检失败伪装空识别 |
@@ -67,6 +67,12 @@ description: Node.js/Fastify Web Host 与共享后端开发约定，涵盖 Core�
 | 凭据交互提交事务 | `apps/web-host/src/modules/agent/interactions/secrets.ts`：`consumeSecretInteractionLocked` 借用同一事务；Web 全字段和 IM 私聊逐字段输入均复用校验/加密/恢复门 |
 
 新增稳定复用入口时，在本节补充契约与路径；删除或迁移入口时同步更新，避免清单过期。
+
+## Desktop 出站网络
+
+- Desktop 内由应用发起的外部工具请求和链接读取统一使用 `@gugu/core/providers/node` 的 `desktopTransportOptions`。代理关闭时由该入口禁用环境代理，正常使用系统 DNS。macOS 的默认解析全为 Fake IP 时，改用活动物理网卡的 DHCP DNS。没有真实结果时返回网络错误。
+- Desktop 主进程自托管服务的直连 HTTP 使用 `apps/desktop/src/main/network.ts`，与工具共用 DNS 策略。自托管入口可使用用户指定的局域网地址。公网工具仍须走固定目标校验和逐跳重定向校验。
+- 新增应用内的 HTTP 入口时复用上述入口。由外部浏览器打开的链接遵循浏览器的网络设置。
 
 ## 后端目标与历史参考
 

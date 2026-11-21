@@ -164,7 +164,7 @@ function updateRun(run, event) {
     const rows = providerRows(body)
     const system = body.system ?? body.instructions ?? rows.find(row => isRecord(row) && row.role === 'system')?.content
     const snapshotMessage = rows.find(row => isRecord(row) && contentText(row.content).startsWith('[system-reminder]'))
-    // 与旧 Python trace 一样，每轮只保存一份 Provider 正文。完整 body 同时放在
+    // 每轮只保存一份 Provider 正文。完整 body 同时放在
     // LLM span 和 Provider context span 会让长历史按轮数成倍膨胀，触发整条 trace 丢弃。
     const messages = rows.filter(row => !(isRecord(row) && row.role === 'system'))
     const providerOptions = Object.fromEntries(Object.entries(body)
@@ -238,6 +238,14 @@ function updateRun(run, event) {
       const format = String(event.attributes?.protocol ?? 'unknown')
       calls.by_provider[provider] = (calls.by_provider[provider] ?? 0) + 1
       calls.by_api_format[format] = (calls.by_api_format[format] ?? 0) + 1
+    }
+    return
+  }
+  if (event.kind === 'provider' && event.name === 'timing') {
+    const span = run._spans.get(`${run.id}:round:${event.round ?? 0}`)
+    if (span) {
+      const timings = span.attributes.request_timings ??= []
+      timings.push(cloneSafe(event.attributes ?? {}))
     }
     return
   }
@@ -461,7 +469,7 @@ export function createLoopScopeTrace({ endpoint, transport, source = 'web', maxQ
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), requestTimeoutMs)
     timer.unref?.()
     try {
-      // Collector 与 Host 可独立部署，沿用旧 bridge 的普通 JSON 上报协议。
+      // Collector 与 Host 可独立部署，使用普通 JSON 上报协议。
       const response = await transport.request({
         url: `${base}/api/collector/${path}`, method: 'POST', allowLocal: true,
         headers: { 'content-type': 'application/json' }, body,

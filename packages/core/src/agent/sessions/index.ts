@@ -16,3 +16,5 @@ export * from './state-labels.js'
 export { agentOwnerSessionKey, createSqlAgentGroupHistory, createSqlAgentOwnerSessionBindings } from './im-tools.js'
 export { createSqlImPushWriter, type ImPushPeer } from './im-push.js'
 export { createSqlConversationHistoryTrimmer } from './retention.js'
+
+export { createAgentConversationSearchPort, createCoreAgentConversationSearchPort } from './tool-search.js'

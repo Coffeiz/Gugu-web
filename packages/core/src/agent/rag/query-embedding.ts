@@ -29,7 +29,7 @@ function cacheKey(ownerId:string,settings:RagQueryEmbeddingSettings,url:string,f
 function requestFor(settings:RagQueryEmbeddingSettings,text:string):{url:string;body:JsonObject;format:'openai'|'bailian'}|null {
  try{
   const base=new URL(settings.baseUrl.trim())
-  if(!['http:','https:'].includes(base.protocol)||!base.hostname||base.username||base.password||base.search||base.hash||!settings.model.trim()||!Number.isSafeInteger(settings.dimensions)||/[^\x20-\x7e]/u.test(settings.apiKey))return null
+  if(!['http:','https:'].includes(base.protocol)||!base.hostname||base.username||base.password||base.search||base.hash||!settings.model.trim()||(!Number.isSafeInteger(settings.dimensions)||settings.dimensions<0)||/[^\x20-\x7e]/u.test(settings.apiKey))return null
   const bailian=['bailian','dashscope','aliyun'].includes(settings.provider.trim().toLowerCase())||base.toString().toLowerCase().includes('aliyuncs.com')
   if(settings.multimodal&&bailian){
    const prefix=base.pathname.split('/compatible-mode/v1',1)[0]!.replace(/\/+$/u,'')
@@ -78,7 +78,7 @@ export async function embedRagQuery(settings:RagQueryEmbeddingSettings,text:stri
   let parsed:unknown
   try{parsed=JSON.parse(Buffer.concat(chunks).toString('utf8'))}catch{return {vector:[],outcome:'invalid_response',httpStatus:response.status}}
   const vector=vectorFrom(parsed,request.format)
-  if(!vector)return {vector:[],outcome:'invalid_response',httpStatus:response.status}
+  if(!vector||(settings.dimensions>0&&vector.length!==settings.dimensions))return {vector:[],outcome:'invalid_response',httpStatus:response.status}
   if(key){
    if(queryCache.size>=QUERY_CACHE_LIMIT){
     let oldestKey:string|undefined,oldestAt=Infinity

@@ -1,8 +1,9 @@
+import { canvasConfirmationLabels, createSaveAttachmentTool } from '@gugu/core/tools'
+import { type SerialWorker } from '../workers/admission.js'
 import { createOwnerFileTools } from '../modules/agent/tools/owner.js'
-import { createAgentToolBrief } from '../modules/agent/tools/brief.js'
+import { createAgentToolBrief } from '@gugu/core/agent/tool-brief'
 import type { SharedOwnerToolOptions, ImOwnerToolFactory } from '../modules/agent/tools/registry.js'
 import { createWebRuntimeLog } from '../shared/log-files.js'
-import { readFile } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { createNodeProviderTransportFactory, isPublicAddress } from '@gugu/core/providers/node'
 import { validateMcpEndpoint } from '@gugu/core/mcp/server-config'
@@ -10,7 +11,7 @@ import { createSessionWorkspaceTargetReader } from '@gugu/core/workspaces/shell-
 import { resolveFileDirectoryRoot } from '../modules/workspaces/files.js'
 import { readPostgresFolderPathMirrorKey } from '../modules/files/folders/paths.js'
 import { createTerminalWorkspaceMounts, sandboxTarget } from '../modules/terminals/sandbox/mounts.js'
-import { AgentRunError, stableJson } from '@gugu/core/agent'
+import { AgentRunError, createFirstTurnTitleWriter, stableJson } from '@gugu/core/agent'
 import { ProviderStreamSanitizer, stripThinking } from '@gugu/core/providers'
 import { createPostgresTaskExternal } from '../modules/scheduled-tasks/store.js'
 import { createMcpServerConfigLister } from '@gugu/core/mcp/server-list'
@@ -26,7 +27,7 @@ import { createUserSkillManager } from '@gugu/core/agent/skills/user-management'
 import { createUserSkillReader } from '@gugu/core/agent/skills/user-body'
 import { createLocalAgentRememberPort } from '../modules/agent/tools/memory/write.js'
 import { filterConfiguredWebAgentTools } from '../modules/agent/tools/registry.js'
-import { createAgentSkillRuntimePorts, createBuiltinSkillDefinitions } from '@gugu/core/skills'
+import { createAgentSkillRuntimePorts, createBuiltinSkillDefinitions, formatBuiltinSkillIndex } from '@gugu/core/skills'
 import { createSkillMetadataReader } from '@gugu/core/skills'
 import { createSafeEgressSettingsReader } from '../modules/admin/network.js'
 import { resolve } from 'node:path'
@@ -39,7 +40,7 @@ import { readConfigOverride, resolveConfigOverridePath } from '../adapters/confi
 import { createRedisLiveSubscription } from '../adapters/cache/redis-live-subscription.js'
 import { createPostgresUserQuotaReader } from '../modules/auth/quota/read.js'
 import { createAgentMindReader, createAgentPlaceableSearch, createSqlMindCanvasReader } from '@gugu/core/mind'
-import { createKnowledgeDeleteTool, createProjectDeleteTool, createCanvasCreationPort, createClientDeletePort, createNoteWritePort, createSkillDeleteTool, createSkillManagementWriteTools, createMcpManagementTool, createMcpManagementCreateOperations, createMcpManagementRemoveOperations, createMcpManagementEditOperations, createScheduledTaskDeleteTool, createDurableProjectMutationPort, createWebLinkButtonDeliveryPort, createWorkspaceMutationPort, createWorkspaceDirectoryDeleteTool, createUndoLastActionTool } from '@gugu/core/tools'
+import { createKnowledgeDeleteTool, createProjectDeleteTool, createCanvasCreationPort, createClientDeletePort, createNoteWritePort, createSkillDeleteTool, createSkillManagementWriteTools, createMcpManagementTool, createMcpManagementCreateOperations, createMcpManagementRemoveOperations, createMcpManagementEditOperations, createScheduledTaskDeleteTool, formatScheduledTaskDeleteSummary, createDurableProjectMutationPort, createWebLinkButtonDeliveryPort, createWorkspaceMutationPort, createWorkspaceDirectoryDeleteTool, createUndoLastActionTool } from '@gugu/core/tools'
 import { createHostCoreUndoOperations } from '../modules/undo/service.js'
 import { createLocalFileUndoStorage } from '../modules/files/storage/undo.js'
 import { createRuntimeUndoTransactionPort } from '@gugu/core/undo'
@@ -58,7 +59,8 @@ import { createReflectionModelScope } from '../modules/agent/llm/recovery.js'
 import { authorizeOwnerReflectionWrite, createPostgresOwnerReflectionSource } from '../modules/agent/memory/reflection/source.js'
 import { createOwnerReflectionWork } from '../modules/agent/memory/reflection/work.js'
 import { createLocalOwnerReflectionWriter } from '../modules/agent/memory/reflection/write.js'
-import { createRedisAgentReflectionInbox } from '../modules/agent/memory/reflection/queue.js'
+import { createPostgresWebReflectionIntervals } from '../modules/agent/memory/reflection/intervals.js'
+import { createRedisAgentReflectionInbox, createRedisAgentReflectionQueue } from '../modules/agent/memory/reflection/queue.js'
 import { createLocalAgentKnowledgeReadStore } from '../modules/agent/rag/knowledge.js'
 import { createWebOwnerAgentKnowledgeReadPort } from '../modules/agent/tools/knowledge/list.js'
 import { createAgentKnowledgeOverviewLoader } from '../modules/agent/tools/knowledge/list.js'
@@ -69,6 +71,7 @@ import { createWebCurrentMessageMaterializer } from '../modules/agent/context/me
 import { formatAgentHistoryMessageTime } from '../modules/agent/context/time.js'
 import { createWebAgentReconstructor, createWebAgentRagResources } from '../modules/agent/run/reconstruct.js'
 import { createWebLoopScopeTrace } from '../modules/loopscope/trace.js'
+import { readAgentPrompt } from '@gugu/core/agent/context/prompts'
 import { createWebAgentPromptReader, webAgentPromptRoot } from '../modules/agent/context/prompts.js'
 import { createWebAgentMcpProductionPorts } from '../modules/agent/tools/mcp/production.js'
 import { createWebAgentRunLifecycle } from '../modules/agent/run/lifecycle.js'
@@ -95,9 +98,9 @@ import { createPostgresAgentDispatch, type AgentDispatchLease } from '../modules
 import { createAgentConversationReadPort } from '../modules/agent/tools/conversations.js'
 import { createViewImageTool, withViewImageReferences } from '../modules/agent/tools/files/image.js'
 import { adapterFor, type ProviderRuntimeOptions } from '@gugu/core/providers'
+import { createMindFileReferenceResolver, createMindFileReferences } from '../modules/mind/file-references.js'
 import { createWebAgentFilePresentPort } from '../modules/agent/tools/files/present.js'
-import { createWebAgentFilePathLookup } from '../modules/agent/tools/files/paths.js'
-import { createWebAgentSaveUploadedFilePort } from '../modules/agent/tools/files/save.js'
+import { createWebAgentSaveAttachmentPort } from '../modules/agent/tools/files/save.js'
 import { createWebAgentRecentAttachmentsPort } from '../modules/agent/tools/files/recent.js'
 import { createWebAgentFileFolderDeletePort } from '../modules/agent/tools/files/delete.js'
 import { createProjectFileOverviewPort } from '../modules/agent/tools/overview.js'
@@ -128,7 +131,7 @@ import { createRedisAgentCancellationCommands, createRedisScheduledTaskCommands,
 import { createWebAgentLog, writeTimestampedAgentDiagnostic } from '../modules/agent/run/diagnostics.js'
 import { createSecurityEventFingerprint } from '../modules/admin/audit.js'
 import type { createMindServices } from './mind.js'
-import { booleanSetting, objectSetting, optionalIntegerSetting, userQuotaSettings } from './settings.js'
+import { booleanSetting, objectSetting, userQuotaSettings } from './settings.js'
 import type { FilesystemAuthorizationConfirmationPort } from '../modules/agent/sandbox/authorization.js'
 import type { TaskWriteOptions } from '../modules/scheduled-tasks/store.js'
 import type { createWebScheduledAttachmentResources } from '../modules/scheduled-tasks/delivery/files.js'
@@ -169,8 +172,9 @@ interface AgentDependencies {
   publishCalendarMutation: ReturnType<typeof createCalendarMutationPostCommitPublisher>
   loopScopeTrace: ReturnType<typeof createWebLoopScopeTrace>
   scheduledAttachments: ReturnType<typeof createWebScheduledAttachmentResources>
-  downloadAttachment: Parameters<typeof createWebAgentSaveUploadedFilePort>[0]["downloadAttachment"]
+  downloadAttachment: Parameters<typeof createWebAgentSaveAttachmentPort>[0]["downloadAttachment"]
   scheduledTaskWriteOptions: TaskWriteOptions
+  runAgent: SerialWorker
   scheduledWorkers(): { once: boolean; repeating: boolean }
   refreshScheduledWorkers(): Promise<void>
   readStateLabelOverrides: ReturnType<typeof createAgentStateLabelOverrides>
@@ -213,6 +217,8 @@ export async function createAgentServices(options: AgentDependencies) {
     },
   })
   const agentWorkspaces = createAgentWorkspaceQueries(createKyselyAgentWorkspaceReader(core.db, 'postgres'))
+  const searchMindFiles = createMindFileReferences(pool, config.storageLocalPath)
+  const resolveMindFile = createMindFileReferenceResolver(pool, config.storageLocalPath)
   const knowledgeStore = createLocalAgentKnowledgeReadStore(config.storageLocalPath)
   const skillMetadataReady = config.redisUrl ? capabilitySkills.then(definitions => createSkillMetadataReader(core.db, 'postgres', definitions)) : null
   async function commonTools(lease: AgentDispatchLease, timezone: string,
@@ -222,6 +228,7 @@ export async function createAgentServices(options: AgentDependencies) {
     accessVersion = async () => await authorize?.() ? lease.input.accessVersion : ''): Promise<SharedOwnerToolOptions> {
     const mind = createWebAgentCanvasMutationPorts({
     core,
+    resolveFileReference: resolveMindFile,
     publish: async event => {
       if ('entityKind' in event) {
         await publisher.publishResourceChanged({
@@ -287,13 +294,14 @@ export async function createAgentServices(options: AgentDependencies) {
         metadata: identity => ({ undoContextId: `agent:${identity.sessionId}:${identity.runId}`.slice(0, 128) }),
       }),
       canvases: createSqlMindCanvasReader(core.db, 'postgres'),
-      canvasPlaceableSearch: createAgentPlaceableSearch(core.db, 'postgres'),
+      canvasPlaceableSearch: createAgentPlaceableSearch(core.db, 'postgres', searchMindFiles),
       canvasCreation: createCanvasCreationPort(core, publishCanvasChanged),
       ...mind,
       ...(lease.input.source === 'im' ? { noteLifecycle: undefined } : {}),
-      notes: createAgentMindReader(core.db, 'postgres'),
+      notes: createAgentMindReader(core.db, 'postgres', resolveMindFile),
       noteWrites: createNoteWritePort(core, {
         timezone,
+        async validateFileReference(owner, id) { return Boolean(await resolveMindFile(owner, id)) },
         async publish(event) {
           await publisher.publishResourceChanged({
             ownerId: event.ownerId, resource: 'mind', operation: event.operation,
@@ -352,27 +360,20 @@ export async function createAgentServices(options: AgentDependencies) {
     const searchSettings = objectSetting(override.search)
     const memoryEnabled = booleanSetting(undefined, agentSettings.memory_enabled, true)
     const ragEnabled = booleanSetting(undefined, searchSettings.rag_enabled, true)
-    const reflectionThreshold = optionalIntegerSetting(undefined, agentSettings.web_private_reflection_threshold, 'agent.web_private_reflection_threshold') ?? 10
-    if (reflectionThreshold < 1 || reflectionThreshold > 100) throw new Error('agent.web_private_reflection_threshold 配置无效')
     const serverTimezone = userQuotaSettings(config, env).serverTimezone
-    const readPrompts = createWebAgentPromptReader()
+    const promptRoot = webAgentPromptRoot(config.storageLocalPath)
+    const readPrompts = createWebAgentPromptReader(promptRoot)
     if (Object.values(readPrompts()).some(value => !value.trim())) throw new Error('Web Agent 提示词不可用')
     const builtinSkillDefinitions = await capabilitySkills
     const skillMetadata = await skillMetadataReady!
-    const skillIndex = builtinSkillDefinitions.length ? [
-      '## 可用技能',
-      '下列技能是带触发条件的做法剧本。命中场景时，第一工具调用必须是 `use_skill` 拉取对应正文；正文加载前禁止直接调用该技能负责的业务工具。',
-      'Skill ID（S/U 编号）仅用于内部调用；对用户提及技能时使用技能名称，不展示内部 ID，除非用户明确询问。',
-      '列出当前账号的完整技能目录时调用 `list_skills`；目录包含停用项但不包含正文。',
-      ...builtinSkillDefinitions.map(skill => `- ${skill.emoji ? `${skill.emoji} ` : ''}**${skill.name}**（Skill ID：\`${skill.id}\`）${skill.description_short ? ` — ${skill.description_short}` : ''}`),
-    ].join('\n') : ''
+    const skillIndex = formatBuiltinSkillIndex(builtinSkillDefinitions)
     const redisValues = createRedisValueReader(config.redisUrl)
     const imPlatforms = createImPlatformSettingsReader(env, overridePath)
     const providerBinding = await createConfiguredWebAgentProviderBinding({
       pool,
       configPath: overridePath,
       versionSecret: config.secretKey,
-      promptRoot: webAgentPromptRoot,
+      promptRoot,
       environment: env,
       permissionIdentity: 'web-agent-owner-context-v1',
       contextPolicy: () => ({ loadOwnerContext: true, memoryEnabled }),
@@ -413,10 +414,7 @@ export async function createAgentServices(options: AgentDependencies) {
         delete_workspace_directory: '永久删除顶层物理工作区目录及其中内容',
         delete_event: '软删除日历事件及其提醒，可在当前会话撤销',
         delete_client: '删除联系人，此操作不可恢复',
-        canvas_delete: '删除画布及其内容',
-        canvas_delete_note: '删除画布专属便签及对应视图',
-        canvas_disconnect: '删除画布中的关系',
-        canvas_batch: '执行包含便签删除的画布批量操作',
+        ...canvasConfirmationLabels,
       }
       return createWebAgentToolConfirmation({
         pool, intents: trustedIntents, lease, action, imOwnerAuthorized: Boolean(imAuthorize),
@@ -484,10 +482,7 @@ export async function createAgentServices(options: AgentDependencies) {
               [_binding.ownerId, [...ids]],
             )
             if (result.rows.length !== ids.length) throw new Error('定时任务删除确认目标已变化')
-            const names = result.rows.slice(0, 10).map(row => row.name).join('、')
-            const more = ids.length > 10 ? `等 ${ids.length} 个` : ''
-            const visible = names.length > 900 ? `${Array.from(names).slice(0, 450).join('')}…` : names
-            return { summary: `将删除定时任务：${visible}${more}，共 ${ids.length} 个` }
+            return { summary: formatScheduledTaskDeleteSummary(result.rows) }
           }
           const targets = Object.entries({ ...snapshot.targetIds, ...snapshot.targetRefs }).map(([kind, ids]) =>
             `${kind}：${ids.length ? ids.join('、') : '级联内容'}`).join('；')
@@ -555,6 +550,7 @@ export async function createAgentServices(options: AgentDependencies) {
       return {
         ...(trustedIntents ? createWebAgentCanvasWritePorts({
           core,
+          resolveFileReference: resolveMindFile,
           batchConfirmation: canvasBatchConfirmation,
           deleteNoteConfirmation: canvasDeleteNoteConfirmation,
           disconnectConfirmation: canvasDisconnectConfirmation,
@@ -756,18 +752,26 @@ export async function createAgentServices(options: AgentDependencies) {
       currentRequest() { return null },
       async stageContinuation() { throw new Error('Web Agent Provider 续接服务未绑定') },
       async releaseContinuations() {},
-      diagnoseCompactionFailure(input: { identity: import('@gugu/core/agent').RunIdentity; revision: number; contextInput: number }) {
+      diagnoseCompactionFailure(input: { identity: import('@gugu/core/agent').RunIdentity; revision: number; contextInput: number | null }) {
         agentLog.log.write({ identity: input.identity, at: Date.now(), level: 'warn', event: 'agent.context.compaction_failed',
           attributes: { reason: 'summary_failed', revision: input.revision, contextInput: input.contextInput } })
       },
     }
     const reflectionCommands = createRedisScheduledTaskCommands(agentRedisUrl)
     const reflectionModelScope = createReflectionModelScope(config.secretKey)
+    const legacyReflectionClaim = createRedisAgentReflectionInbox({ commands: reflectionCommands })
+    const legacyReflectionEnqueue = createRedisAgentReflectionQueue({ commands: reflectionCommands, modelScope: reflectionModelScope })
+    let reflectionIntervals: ReturnType<typeof createPostgresWebReflectionIntervals> | undefined
     if (memoryEnabled && process.platform === 'linux' && core.receipts) {
+      const { rows: [schema] } = await pool.query<{ available: boolean; compaction: boolean }>(`
+        SELECT to_regclass('web_reflection_intervals') IS NOT NULL AS available,
+          EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('web_reflection_intervals')
+            AND attname='compaction_through' AND NOT attisdropped) AS compaction`)
+      if (schema?.available) reflectionIntervals = createPostgresWebReflectionIntervals({ pool, modelScope: reflectionModelScope, compactionEnabled: schema.compaction, secretKey: config.secretKey })
       const source = createPostgresOwnerReflectionSource(pool)
       const quota = createPostgresUserQuotaReader(pool, userQuotaSettings(config, env))
       ownerReflectionWork = createOwnerReflectionWork({
-        claim: createRedisAgentReflectionInbox({ commands: reflectionCommands }),
+        async claim() { return await legacyReflectionClaim() ?? await reflectionIntervals?.claim() ?? null },
         writer: createLocalOwnerReflectionWriter({
           core, storageRoot: config.storageLocalPath, authorize: authorizeOwnerReflectionWrite,
         }),
@@ -776,7 +780,7 @@ export async function createAgentServices(options: AgentDependencies) {
           pool, source, bind: providerBinding.bind, modelScope: reflectionModelScope,
           context: { ...baseContext, observation: loopScopeTrace?.forSource('reflection') },
           transport: model => createNodeProviderTransportFactory({ allowLocal: !model.isByok, environment: () => env }),
-          readPrompt: () => readFile(resolve(webAgentPromptRoot, 'reflection.md'), 'utf8'),
+          readPrompt: async () => readAgentPrompt('reflection.md', promptRoot),
           timezone: serverTimezone,
           async canSpend(ownerId) {
             const state = await quota(ownerId)
@@ -890,14 +894,20 @@ export async function createAgentServices(options: AgentDependencies) {
         origin: String(event.origin), entityIds: event.entity_ids as number[],
       })
     }, { trash: projectTrashStorage, renameDirectory: projectDirectoryRenamer }, createLocalFileUndoStorage(config.storageLocalPath))
+    const writeTitle = createFirstTurnTitleWriter(core.db, 'postgres')
     const resourceFactory = createWebAgentRagResources({
+      async writeSessionTitle(lease, reply, complete) {
+        const { identity, input } = lease
+        if (await writeTitle({ identity, anchorMessageId: String(input.userMessageId), reply, locale: input.locale, complete }))
+          await publisher.publishResourceChanged({ ownerId: identity.ownerId, resource: 'sessions', operation: 'update', entityId: Number(identity.sessionId), origin: null })
+      },
+      compactionPool: pool,
       observation: loopScopeTrace?.observation,
       source,
       rag: {
         core, pool, storageRoot: config.storageLocalPath,
         enabled: () => ragEnabled && canRebuildAgentMemoryIndex(),
         async toolPorts(lease, _binding, context) {
-          const filePaths = createWebAgentFilePathLookup(pool, lease)
           const mcpAuthorization = createWebAgentConfirmationAuthorization({
             pool, lease, accessVersion: identity => providerBinding.accessVersion(identity, lease.input.source === 'web' ? lease.input.model : undefined),
           })
@@ -940,10 +950,10 @@ export async function createAgentServices(options: AgentDependencies) {
             ...await ownerFileTools(lease, _binding, true),
             fileFolderDelete: createWebAgentFileFolderDeletePort(pool, folderDelete, lease),
             sendFile: options.scheduledAttachments.toolForRun(() => dispatch.isCurrent(lease)),
-            saveUploadedFile: createWebAgentSaveUploadedFilePort({ pool, db: core.db, upload: fileUploads, downloadAttachment: options.downloadAttachment, lease }),
+            saveAttachment: createSaveAttachmentTool(createWebAgentSaveAttachmentPort({ pool, db: core.db, upload: fileUploads, downloadAttachment: options.downloadAttachment, lease })),
             recentAttachments: createWebAgentRecentAttachmentsPort(pool, lease),
             presentFile: createWebAgentFilePresentPort({ pool, ownerId: lease.identity.ownerId, lease,
-              files: filePaths }),
+              storageRoot: config.storageLocalPath }),
             ...(webDownload ? { webDownload } : {}),
             ...confirmedOwnerTools(lease),
             ...await commonTools(lease, await context.loadTimezone(lease.identity), makeConfirmation(lease, 'delete_event'), undefined,
@@ -1003,10 +1013,10 @@ export async function createAgentServices(options: AgentDependencies) {
         },
       },
       reflection: {
-        commands: reflectionCommands,
-        modelScope: reflectionModelScope,
+        enqueue: reflectionIntervals?.enqueue ?? legacyReflectionEnqueue,
+        stageCompaction: reflectionIntervals?.stageCompaction,
+        prepareCompaction: reflectionIntervals?.prepareCompaction,
         enabled: () => !!ownerReflectionWork && canRebuildAgentMemoryIndex(),
-        threshold: () => reflectionThreshold,
         diagnose: () => writeTimestampedAgentDiagnostic('Web Agent 反思队列不可用'),
       },
       remaining: {
@@ -1075,8 +1085,8 @@ export async function createAgentServices(options: AgentDependencies) {
     })
     const interactionProjection = createPostgresInteractionProjection(pool, config.secretKey)
     agentRunLifecycle = createWebAgentRunLifecycle({
-      pool, secretKey: config.secretKey, redisUrl: agentRedisUrl, dispatchTtlSeconds: 7 * 24 * 60 * 60,
-      observation: loopScopeTrace?.observation,
+      pool, secretKey: config.secretKey, storageRoot: config.storageLocalPath, redisUrl: agentRedisUrl, dispatchTtlSeconds: 7 * 24 * 60 * 60,
+      observation: loopScopeTrace?.observation, runAgent: options.runAgent,
       accessVersion: providerBinding.accessVersion,
       pin: providerBinding.pin,
       reconstruct,
