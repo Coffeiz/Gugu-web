@@ -38,14 +38,6 @@ export interface DesktopQqImPairingApi extends DesktopImPairingApi {
   updateGroupSettings(patch: DesktopImGroupSettingsPatch): Promise<DesktopImPairingStatus>
   setMessageFormat(scope: 'group' | 'private', format: 'compat' | 'markdown'): Promise<DesktopImPairingStatus>
   setPrivateStreaming(enabled: boolean): Promise<DesktopImPairingStatus>
-  setGroupReplyMode(mode: ImGroupReplyMode): Promise<DesktopImPairingStatus>
-  setGroupWebTools(enabled: boolean): Promise<DesktopImPairingStatus>
-  setGroupProviderSearch(enabled: boolean): Promise<DesktopImPairingStatus>
-  setGroupHistorySearch(enabled: boolean): Promise<DesktopImPairingStatus>
-  setGroupOwnerMemory(enabled: boolean): Promise<DesktopImPairingStatus>
-  setGroupMemory(enabled: boolean): Promise<DesktopImPairingStatus>
-  setMemberMemory(enabled: boolean): Promise<DesktopImPairingStatus>
-  setGroupChat(enabled: boolean): Promise<DesktopImPairingStatus>
   unbind(): Promise<DesktopImPairingStatus>
   bindingCode(): Promise<{ code: string; expires_in: number }>
 }

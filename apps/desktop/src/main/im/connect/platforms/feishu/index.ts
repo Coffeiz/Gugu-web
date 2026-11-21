@@ -97,7 +97,6 @@ export function createDesktopFeishuPairing(directory: string, encryption: Encryp
       }
       return status()
     }),
-    setGroupChat: (enabled: boolean) => state.serialize(() => update({ groupChatEnabled: enabled })),
     setPrivateStreaming: (enabled: boolean) => state.serialize(async () => {
       const current = await credentials.read()
       if (!current) throw invalid()
@@ -107,27 +106,6 @@ export function createDesktopFeishuPairing(directory: string, encryption: Encryp
       }
       return status()
     }),
-    setGroupReplyMode: (groupReplyMode: GroupReplyMode) => state.serialize(() => update({ groupReplyMode })),
-    setGroupAttentionMode: (groupAttentionMode: GroupAttentionMode) => state.serialize(() => update({ groupAttentionMode })),
-    setGroupWebTools: (enabled: boolean) => state.serialize(async () => {
-      const current = await credentials.read(); if (!current) throw invalid()
-      const tools = new Set(current.groupAllowedTools)
-      for (const tool of ['http_get', 'similar_image_search', 'send_file']) enabled ? tools.add(tool) : tools.delete(tool)
-      return update({ groupAllowedTools: [...tools] })
-    }),
-    setGroupProviderSearch: (enabled: boolean) => state.serialize(async () => {
-      const current = await credentials.read(); if (!current) throw invalid()
-      const tools = new Set(current.groupAllowedTools); enabled ? tools.add('web_search') : tools.delete('web_search')
-      return update({ groupAllowedTools: [...tools] })
-    }),
-    setGroupHistorySearch: (enabled: boolean) => state.serialize(async () => {
-      const current = await credentials.read(); if (!current) throw invalid()
-      const tools = new Set(current.groupAllowedTools); enabled ? tools.add('group_context_search') : tools.delete('group_context_search')
-      return update({ groupAllowedTools: [...tools] })
-    }),
-    setGroupOwnerMemory: (groupOwnerMemoryEnabled: boolean) => state.serialize(() => update({ groupOwnerMemoryEnabled })),
-    setGroupMemory: (groupMemoryEnabled: boolean) => state.serialize(() => update({ groupMemoryEnabled })),
-    setMemberMemory: (memberMemoryEnabled: boolean) => state.serialize(() => update({ memberMemoryEnabled })),
     updateGroupSettings: (patch: GroupSettingsPatch) => state.serialize(async () => {
       const current = await credentials.read()
       if (!current) throw invalid()

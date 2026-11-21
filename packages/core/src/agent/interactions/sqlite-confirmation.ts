@@ -18,7 +18,7 @@ import type { AgentPromptSpec } from './prompt-description.js'
 export function createSqliteToolConfirmation(
   db: Kysely<Database>,
   authorize: (db: Kysely<Database>, identity: RunIdentity, signal: AbortSignal) => Promise<boolean>,
-  action: 'delete_scheduled_task' | 'delete_event' | 'delete_client' | 'delete_skill' | 'delete_knowledge' | 'remove_mcp_server' | 'update_mcp_server' | 'add_mcp_server' | 'shell' | 'present_file' | 'send_email' | keyof typeof canvasConfirmationLabels,
+  action: 'delete_scheduled_task' | 'delete_event' | 'delete_client' | 'delete_skill' | 'delete_knowledge' | 'remove_mcp_server' | 'update_mcp_server' | 'add_mcp_server' | 'shell' | 'present_file' | 'view_image' | 'send_email' | keyof typeof canvasConfirmationLabels,
   describeTarget?: (tx: Transaction<Database>, identity: RunIdentity, input: unknown,
     snapshot: { targetsDigest: string; versionsDigest: string }) => Promise<string>,
 ) {
@@ -107,6 +107,10 @@ export function createSqliteToolConfirmation(
         summary = 'cwd' in input && typeof input.cwd === 'string' && isAbsolute(input.cwd)
           ? `允许此会话在未来 30 分钟执行宿主机命令。\n工作目录：${input.cwd}\n命令：${input.command.trim()}`
           : `在桌面隔离目录内执行命令：${input.command.trim()}`
+      } else if (action === 'view_image') {
+        if (!input || typeof input !== 'object' || !('path' in input) || typeof input.path !== 'string' || !isAbsolute(input.path))
+          throw new CoreError('invalid_request', '本机图片路径无效')
+        summary = `查看本机图片并将图片传给当前模型：${input.path}\n允许此会话在未来 30 分钟访问宿主机文件及执行宿主机 Shell 命令。`
       } else if (action === 'present_file') {
         if (!input || typeof input !== 'object' || !('file' in input) || typeof input.file !== 'string' || !isAbsolute(input.file))
           throw new CoreError('invalid_request', '本机文件路径无效')

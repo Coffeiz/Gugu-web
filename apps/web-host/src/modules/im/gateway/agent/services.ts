@@ -172,7 +172,7 @@ export async function createImAgentContextServices(options: {
       assertSelection(candidate, target)
       const preferences = asAgentContextRecord(restrictedGroupStyle ?? (selection.contextPolicy.loadOwnerContext ? styles ?? {} : {}), 'IM 样式偏好')
       return { base: prompts.base, persona: prompts.persona, skills: prompts.skills, policy: prompts.policy,
-        afterBasePrompt: prompts.group, skillIndex, timezone, now: new Date(options.now()), groupChat: selection.groupChat,
+        afterBasePrompt: prompts.group, skillIndex, timezone, now: new Date(options.now()), groupChat: selection.groupChat, imChat: true,
         locale: typeof preferences.locale === 'string' ? preferences.locale : selection.locale,
         personalityPreferenceEnabled: truthy(preferences.personality_preference_enabled),
         personalityPreference: typeof preferences.personality_preference === 'string' ? preferences.personality_preference : undefined,

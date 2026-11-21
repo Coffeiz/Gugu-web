@@ -1,3 +1,4 @@
+import { appendWorkspaceAgentInstructions } from '@gugu/core/agent'
 import { canonicalAgentToolName } from '@gugu/core/agent'
 import { AgentRunReconstructionVersionError as AgentReconstructionVersionError, createAgentCompactionPort, createAgentRunReconstructor, createAgentRunToolPorts, createLazyAgentCompactionPort, restoreAgentRequestPrefix } from '@gugu/core/agent'
 import type { AgentObservationPort, AgentProviderAuxiliaryPorts, AgentRunBinding, AgentRuntimeOptions, CanonicalContextPorts, CanonicalRunContext, CanonicalRunPreparationPorts, ContextDataPorts, ContextSourcePorts, CurrentTurnSources, RunIdentity, HistoryIdentity } from '@gugu/core/agent'
@@ -92,6 +93,7 @@ export function createWebAgentToolPorts(
   })
 }
 export interface WebAgentReconstructorOptions {
+  readWorkspaceInstructions?(lease: AgentDispatchLease, signal?: AbortSignal): Promise<string | undefined>
   pool: PersistentAgentRuntimeOptions['pool']
   secretKey: string
   redis: PersistentAgentRuntimeOptions['redis']
@@ -283,7 +285,13 @@ export function createWebAgentReconstructor(options: WebAgentReconstructorOption
             digest: resources.context.digest,
             builder: resources.source.builder,
           }) } : {}),
-          preparation: { ...resources.context.preparation, buildRag: resources.ragContext }, load: source.load }, runPreparation: toolPorts.preparation,
+          preparation: { ...resources.context.preparation, buildRag: resources.ragContext }, async load(identity, signal) {
+            const loaded = await source.load(identity, signal)
+            const instructions = await options.readWorkspaceInstructions?.(lease, signal)
+            signal?.throwIfAborted()
+            if (instructions) loaded.input.systemPrompt = appendWorkspaceAgentInstructions(loaded.input.systemPrompt ?? '', instructions)
+            return loaded
+          } }, runPreparation: toolPorts.preparation,
         runtime: { ...resources.runtime, tools: toolPorts.tools }, executor: resources.executor,
         provider: { ...resources.provider, resolve: binding.resolve }, interactionActivation: resources.interactionActivation,
         scheduling: { mode: 'dispatch', readReconstructionStatus: options.readReconstructionStatus, leaseFor: target => target.ownerId === id.ownerId && target.sessionId === id.sessionId && target.runId === id.runId ? lease : null } })

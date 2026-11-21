@@ -1,3 +1,4 @@
+import { readWorkspaceAgentInstructions } from '@gugu/fs/node'
 import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import { cp, link, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, rmdir, writeFile } from 'node:fs/promises'
@@ -939,6 +940,15 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
         if (!info.isFile() && !info.isDirectory()) throw new DesktopError('invalid_request', '请选择文件或文件夹')
         return entry
       })
+    },
+    async agentWorkspaceInstructions(directoryId: string) {
+      try {
+        const binding = await workspaces.get(directoryId)
+        return (await readWorkspaceAgentInstructions(await workspaces.resolveRoot(binding))) ?? null
+      } catch (error) {
+        if (['ENOENT', 'ENOTDIR', 'conflict', 'forbidden', 'not_found'].includes((error as NodeJS.ErrnoException).code ?? '')) return null
+        throw error
+      }
     },
     async personalRoot() { return workspaces.resolveRoot(await workspaces.get('personal')) },
     async content(url: URL, range: string | null) {

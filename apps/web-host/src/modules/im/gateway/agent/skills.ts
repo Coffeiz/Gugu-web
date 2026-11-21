@@ -15,7 +15,8 @@ export async function createImProductionSkills(options: {
   authorize(): Promise<boolean>
 }) {
   const identity = { ...options.identity }, actor = structuredClone(options.actor)
-  const builtins = await createBuiltinSkillDefinitions(createBundledSkillDocuments(), new AbortController().signal)
+  const builtins = (await createBuiltinSkillDefinitions(createBundledSkillDocuments(), new AbortController().signal))
+    .filter(skill => skill.key !== 'smart-view')
   const canRead = async (candidate: RunIdentity) => same(candidate, identity) && imCanUseTool(actor, 'use_skill') && await options.authorize()
   async function userMetadata(): Promise<SkillMetadata[]> {
     if (!options.loadOwnerContext || actor.role !== 'owner') return []

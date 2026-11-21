@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
+import { createBuiltinSkillDefinitions } from '@gugu/core/skills'
+import { createBundledSkillDocuments } from '@gugu/core/skills/bundled'
 import { createPostgresImAccess } from '../../../../src/modules/im/gateway/inbound/access.js'
 import { createImProductionSkills } from '../../../../src/modules/im/gateway/agent/skills.js'
 import { createImProductionFixture } from '../production.fixtures.js'
@@ -19,7 +21,11 @@ test('IM 简介模式仅列出当前群聊已开放的工具，全量模式省�
   } as unknown as Parameters<typeof createImProductionSkills>[0]['pool']
   const resources = await createImProductionSkills({ pool, identity, actor, loadOwnerContext: false, authorize: async () => true })
   const skills = await resources.registry.catalog(identity)
-  assert.deepEqual(skills.map(skill => skill.id), skills.map((_, index) => `S${index + 1}`))
+  const builtins = await createBuiltinSkillDefinitions(createBundledSkillDocuments(), new AbortController().signal)
+  const smartView = builtins.find(skill => skill.key === 'smart-view')
+  assert.ok(smartView)
+  assert.deepEqual(skills.map(skill => skill.id), builtins.filter(skill => skill.id !== smartView.id).map(skill => skill.id))
+  await assert.rejects(resources.registry.load(smartView.id, identity, new AbortController().signal), { code: 'unavailable' })
   const chart = skills.find(skill => skill.key === 'chart-and-math')
   assert.ok(chart)
   assert.match((await resources.registry.load(chart.id, identity, new AbortController().signal)).content, /Mermaid/u)

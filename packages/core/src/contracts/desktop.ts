@@ -525,7 +525,7 @@ export interface DesktopSearchResult {
 export interface DesktopBridge {
   search(queries: string[]): Promise<DesktopReply<DesktopSearchResult>>
   readLogs(kind: DesktopLogKind): Promise<DesktopReply<{ lines: string[]; truncated: boolean }>>
-  qqPairing(command: DesktopQrPairingCommand | { action: 'bindingCode' | 'unbind' } | { action: 'setPrivateMessageFormat' | 'setGroupMessageFormat'; format: 'compat' | 'markdown' } | { action: 'setPrivateStreaming' | 'setGroupChat' | 'setGroupWebTools' | 'setGroupProviderSearch' | 'setGroupHistorySearch' | 'setGroupOwnerMemory' | 'setGroupMemory' | 'setMemberMemory'; enabled: boolean } | { action: 'setGroupReplyMode'; mode: ImGroupReplyMode }): Promise<DesktopReply<DesktopQrPairingResult | { code: string; expires_in: number }>>
+  qqPairing(command: DesktopQrPairingCommand | { action: 'bindingCode' | 'unbind' } | { action: 'setPrivateMessageFormat' | 'setGroupMessageFormat'; format: 'compat' | 'markdown' }): Promise<DesktopReply<DesktopQrPairingResult | { code: string; expires_in: number }>>
   feishuPairing(command: DesktopQrPairingCommand): Promise<DesktopReply<DesktopQrPairingResult>>
   wechatPairing(command: DesktopQrPairingCommand): Promise<DesktopReply<DesktopQrPairingResult>>
   telegramGateway(command: DesktopTelegramCommand): Promise<DesktopReply<DesktopTelegramSnapshot>>

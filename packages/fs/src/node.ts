@@ -541,3 +541,32 @@ export async function finishStagedLocalFile(root: string, relativePath: string, 
     await unlink(staged)
   } finally { await parent.close() }
 }
+
+/** 从已授权的工作区根读取固定名称的规则文件。 */
+export async function readWorkspaceAgentInstructions(root: string): Promise<string | undefined> {
+  const maxBytes = 32 * 1024
+  for (const name of ['AGENTS.md', 'agents.md']) {
+    let handle
+    try {
+      handle = await open(path.join(root, name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+      const info = await handle.stat()
+      if (!info.isFile() || info.size > maxBytes) return undefined
+      const buffer = Buffer.alloc(maxBytes + 1)
+      let length = 0
+      while (length < buffer.length) {
+        const { bytesRead } = await handle.read(buffer, length, buffer.length - length, length)
+        if (!bytesRead) break
+        length += bytesRead
+      }
+      if (length > maxBytes) return undefined
+      return new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, length)).trim() || undefined
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+      if (error instanceof TypeError || ['ENOTDIR', 'ELOOP', 'EACCES', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? ''))
+        return undefined
+      throw error
+    } finally {
+      await handle?.close()
+    }
+  }
+}

@@ -12,6 +12,7 @@ test('Bot PUT HTTP协议保持Python bool/null/整数路径，拒绝数组和错
  try{
   assert.equal((await call({},'7','')).statusCode,401);assert.equal(calls.length,0)
   assert.equal((await call({enabled:'YES',group_read_enabled:0,name:null,user_id:'forged-owner'},'7.0')).statusCode,200);assert.deepEqual(calls[0],{owner:'verified-owner',id:7,input:{enabled:true,group_read_enabled:false,name:null}})
+  assert.equal((await call({private_streaming_enabled:false})).statusCode,200);assert.deepEqual(calls.at(-1),{owner:'verified-owner',id:7,input:{private_streaming_enabled:false}})
   const before=calls.length;for(const payload of [{enabled:['true']},{name:12},{group_allowed_tools:['web_search',12]},null,[]])assert.equal((await call(payload)).statusCode,422);assert.equal(calls.length,before)
   assert.equal((await call({},'7e0')).statusCode,422);assert.equal((await call({group_response_mode:'invalid'})).statusCode,400)
  }finally{await app.close()}

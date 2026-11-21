@@ -30,7 +30,7 @@ export function renderSmartView(source: string) {
   let view: Fields
   try { view = object(JSON.parse(source)) } catch { return unavailable }
   if (view.version === 1 && view.layout !== undefined) {
-    try { return renderSmartLayout(view.layout, t) } catch { return unavailable }
+    try { return renderSmartLayout(view.layout, t, view.state) } catch { return unavailable }
   }
   const project = view.template === 'project-overview'
   if (!project && view.template !== 'today-agenda') return unavailable

@@ -3,7 +3,7 @@ import type { ContextData, ContextLoadPolicy, Json } from '../models.js'
 /** 提示词字段由可信 Host 提供，不从用户正文推导工具权限。 */
 export interface AgentStaticPromptInput {
   base: string; persona: string; skills: string; policy: string; skillIndex: string
-  afterBasePrompt?: string; locale?: string; groupChat?: boolean
+  afterBasePrompt?: string; locale?: string; groupChat?: boolean; imChat?: boolean
   personalityPreferenceEnabled?: boolean; personalityPreference?: string
   groupPersonalityPreferenceEnabled?: boolean; groupPersonalityPreference?: string
   customReplyStyleEnabled?: boolean; customReplyStyle?: string; timezone: string; now: Date
@@ -40,7 +40,8 @@ export function buildAgentStaticPrompt(input: AgentStaticPromptInput): string {
   const preference = input.groupChat ? (input.groupPersonalityPreferenceEnabled ? input.groupPersonalityPreference : '') : (input.personalityPreferenceEnabled ? input.personalityPreference : '')
   const persona = preference?.trim() || input.persona.trim()
   const custom = input.customReplyStyleEnabled && input.customReplyStyle?.trim() ? `## 用户自定义回复风格\n\n只调整表达方式，不改变人格设定、事实、安全规则或权限。当前用户的明确表达要求优先。\n\n${input.customReplyStyle.trim()}` : ''
-  const prompt = [base, input.afterBasePrompt?.trim(), lang, persona, input.skills.trim(), input.policy.trim(), custom, input.skillIndex.trim()].filter(Boolean).join('\n\n---\n\n')
+  const channel = input.imChat ? '## 当前渠道\n当前会话是即时通讯。只用文字摘要和普通列表呈现信息，不调用「智能界面展示」技能，不输出 gugu-ui 围栏或 gugu-ui-stream 围栏。' : ''
+  const prompt = [base, input.afterBasePrompt?.trim(), channel, lang, persona, input.skills.trim(), input.policy.trim(), custom, input.skillIndex.trim()].filter(Boolean).join('\n\n---\n\n')
   // 限制单条大小，避免用户偏好或技能内容长期占用过多内存。
   if (key.length <= 128 * 1024) {
     staticPrompts.set(key, prompt)
@@ -220,4 +221,12 @@ export function formatAgentDynamicSnapshotInput(data: ContextData, policy: Conte
     knowledge: visibility ? contextRows(data.knowledge, '知识概览') : [],
     includeProjects: visibility, includeCalendar: visibility, includeFiles: visibility, includeKnowledge: visibility,
   }
+}
+
+/** 工作区规则只补充该工作区内的协作约定。 */
+export function appendWorkspaceAgentInstructions(system: string, instructions?: string): string {
+  if (!instructions) return system
+  return [system, '## 当前工作区规则（AGENTS.md）',
+    '以下是工作区文件提供的协作约定。仅在当前工作区相关任务中使用，仍须遵守系统规则和现有权限。',
+    instructions].filter(Boolean).join('\n\n')
 }

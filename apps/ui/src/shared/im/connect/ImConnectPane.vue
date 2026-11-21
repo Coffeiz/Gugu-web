@@ -428,9 +428,6 @@ async function setDesktopQqMessageFormat(scope: 'group' | 'private', mode: strin
   if (!desktopQqApi || (mode !== 'compat' && mode !== 'markdown')) return
   await updateDesktopQqReplySettings(() => desktopQqApi.setMessageFormat(scope, mode))
 }
-function runDesktopQqSetting(update: (api: NonNullable<typeof desktopQqApi>) => Promise<DesktopImPairingStatus>) {
-  if (desktopQqApi) void updateDesktopQqReplySettings(() => update(desktopQqApi))
-}
 async function setDesktopPrivateStreaming(platform: string, enabled: boolean) {
   const api = desktopPairingApis[platform]
   if (!api?.setPrivateStreaming || desktopPairingBusy.value[platform]) return
@@ -504,17 +501,6 @@ function qqEnabledTools(bot: Bot): QqToolKey[] {
 function toggleQqTool(bot: Bot, key: QqToolKey) {
   const option = groupToolOptions.find(item => item.key === key)
   if (option) toggleGroupTool(bot, option)
-}
-function toggleDesktopQqTool(key: QqToolKey) {
-  const status = desktopPairingStatus.value.qq
-  if (!desktopQqApi) return
-  if (!status) return
-  const update = key === 'web_tools'
-    ? () => desktopQqApi.setGroupWebTools(status.groupWebToolsEnabled !== true)
-    : key === 'web_search'
-      ? () => desktopQqApi.setGroupProviderSearch(status.groupProviderSearchEnabled !== true)
-      : () => desktopQqApi.setGroupHistorySearch(status.groupHistorySearchEnabled !== true)
-  void updateDesktopQqReplySettings(update)
 }
 async function saveDesktopGroupSettings(platform: string, patch: DesktopImGroupSettingsPatch) {
   const api = desktopPairingApis[platform]

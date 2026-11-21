@@ -19,46 +19,6 @@ export const desktopQqConnectApi = {
     if (!('configured' in result)) throw new Error()
     return result
   },
-  async setGroupReplyMode(mode: 'reply_mentions' | 'reply_all' | 'record_only') {
-    const result = await requestDesktopQqPairing({ action: 'setGroupReplyMode', mode })
-    if (!('configured' in result)) throw new Error()
-    return result
-  },
-  async setGroupWebTools(enabled: boolean) {
-    const result = await requestDesktopQqPairing({ action: 'setGroupWebTools', enabled })
-    if (!('configured' in result)) throw new Error()
-    return result
-  },
-  async setGroupProviderSearch(enabled: boolean) {
-    const result = await requestDesktopQqPairing({ action: 'setGroupProviderSearch', enabled })
-    if (!('configured' in result)) throw new Error()
-    return result
-  },
-  async setGroupHistorySearch(enabled: boolean) {
-    const result = await requestDesktopQqPairing({ action: 'setGroupHistorySearch', enabled })
-    if (!('configured' in result)) throw new Error()
-    return result
-  },
-  async setGroupOwnerMemory(enabled: boolean) {
-    const result = await requestDesktopQqPairing({ action: 'setGroupOwnerMemory', enabled })
-    if (!('configured' in result)) throw new Error()
-    return result
-  },
-  async setGroupMemory(enabled: boolean) {
-    const result = await requestDesktopQqPairing({ action: 'setGroupMemory', enabled })
-    if (!('configured' in result)) throw new Error()
-    return result
-  },
-  async setMemberMemory(enabled: boolean) {
-    const result = await requestDesktopQqPairing({ action: 'setMemberMemory', enabled })
-    if (!('configured' in result)) throw new Error()
-    return result
-  },
-  async setGroupChat(enabled: boolean) {
-    const result = await requestDesktopQqPairing({ action: 'setGroupChat', enabled })
-    if (!('configured' in result)) throw new Error()
-    return result
-  },
   async updateGroupSettings(patch: DesktopImGroupSettingsPatch) {
     const result = await requestDesktopQqPairing({ action: 'updateGroupSettings', patch })
     if (!('configured' in result)) throw new Error()

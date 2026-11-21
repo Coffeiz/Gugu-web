@@ -12,7 +12,7 @@ export { createAgentCompactionPort, createLazyAgentCompactionPort, DEFAULT_AGENT
 export { DEFAULT_IDLE_TTL_MS,SNAPSHOT_CONTEXT_VERSION,assertRunCapabilities,contextAccessScopeHash,createCanonicalRunLoader,createCanonicalSourceLoader,discoverToolsAndRecall,ensureSessionSnapshot,invalidateSessionSnapshot,loadContextData,prepareRunCapabilities,prepareRunContextSources,readSessionSnapshot,sessionSnapshotHash,snapshotHistoryBaseline,snapshotIsUsable,snapshotMessageHash,updateBaselineSnapshot,validateSessionSnapshotState,workspaceBindingKey } from './context/prepare.js'
 export { agentContextPolicy } from './context/source-policy.js'
 export type { AgentContextPolicy, AgentContextPolicyInput } from './context/source-policy.js'
-export { agentCurrentDate, agentCurrentTimeReminder, asAgentContextRecord, buildAgentDynamicSnapshot, buildAgentStaticPrompt, formatAgentDynamicSnapshotInput, formatAgentMemory, formatAgentProjects, formatAgentSource } from './context/prompt-format.js'
+export { appendWorkspaceAgentInstructions, agentCurrentDate, agentCurrentTimeReminder, asAgentContextRecord, buildAgentDynamicSnapshot, buildAgentStaticPrompt, formatAgentDynamicSnapshotInput, formatAgentMemory, formatAgentProjects, formatAgentSource } from './context/prompt-format.js'
 export type { AgentDynamicSnapshotInput, AgentMemorySnapshot, AgentStaticPromptInput } from './context/prompt-format.js'
 export { agentContextSnapshotPrefix, agentCurrentTimeReminderBody, createAgentContextBuilder, createWebAgentContextBuilder, type AgentContextBuilderPorts } from './context/builder.js'
 export { classifyShellCommandRisk } from './security/shell-command-risk.js'

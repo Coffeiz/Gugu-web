@@ -1057,6 +1057,16 @@ export async function createAgentServices(options: AgentDependencies) {
     })
     const dispatch = createPostgresAgentDispatch(pool, config.secretKey)
     const reconstruct = createWebAgentReconstructor({
+      async readWorkspaceInstructions(lease, signal) {
+        if (lease.input.source !== 'web') return undefined
+        signal?.throwIfAborted()
+        const { ownerId, sessionId } = lease.identity
+        const target = await readFileWorkspace(ownerId, Number(sessionId))
+        if (!target) return undefined
+        const instructions = await shellMounts.readAgentInstructions(ownerId, target.workspaceId)
+        signal?.throwIfAborted()
+        return instructions
+      },
       pool, secretKey: config.secretKey,
       observation: loopScopeTrace?.observation,
       redis: createRedisAgentCancellationCommands(agentRedisUrl),

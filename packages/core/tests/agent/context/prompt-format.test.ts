@@ -11,6 +11,14 @@ describe('共享 Agent 提示词和上下文格式', () => {
     expect(value).not.toContain('默认人格'); expect(value).not.toContain('旧段落'); expect(value).not.toContain('00:30')
   })
 
+  it('仅在当前渠道为 IM 时注入智能界面限制，私聊和群聊都适用', () => {
+    const base = { base: '基础提示', persona: '', skills: '', policy: '', skillIndex: '', timezone: 'UTC', now: new Date('2026-01-01T00:00:00Z') }
+    expect(buildAgentStaticPrompt(base)).not.toContain('当前会话是即时通讯')
+    for (const groupChat of [false, true]) {
+      expect(buildAgentStaticPrompt({ ...base, imChat: true, groupChat })).toContain('不输出 gugu-ui 围栏')
+    }
+  })
+
   it('共享快照保持格式顺序和截断说明，分钟时间只进入动态提醒', () => {
     const snapshot = buildAgentDynamicSnapshot({ memoryBlock: '记忆快照', projectBlock: '项目资料', sourceBlock: '对话来源', events: [{ date: '2026-01-02', title: '会议' }], notes: [], files: { total: 2, folders: [{ name: '资料', file_count: 2 }], files: [{ name: '示例.md' }] }, knowledge: Array.from({ length: 41 }, (_, i) => ({ title: `标题${i}` })), includeProjects: true, includeCalendar: true, includeFiles: true, includeKnowledge: true })
     expect(snapshot.indexOf('记忆快照')).toBeLessThan(snapshot.indexOf('## 项目'))

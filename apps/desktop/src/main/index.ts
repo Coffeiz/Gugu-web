@@ -371,6 +371,9 @@ else {
         if (method === 'agent.files.commitDownload') return files.agentCommitDownload(dataDirectory, params, signal)
         if (method === 'agent.files.saveAttachment')
           return files.agentSaveAttachment(params, signal ?? AbortSignal.timeout(30_000))
+        if (method === 'agent.files.workspaceInstructions' && Object.keys(params).length === 1
+          && typeof params.directoryId === 'string' && /^[a-f0-9-]{36}$/iu.test(params.directoryId))
+          return files.agentWorkspaceInstructions(params.directoryId)
         if (method === 'agent.files.workspaceList' && Object.keys(params).length === 0)
           return files.handlers[DESKTOP_CHANNELS.files]!({ action: 'workspace-list' })
         if (method === 'agent.files.overview' && Object.keys(params).length === 0)

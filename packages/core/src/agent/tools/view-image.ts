@@ -2,10 +2,10 @@ import { createHash, randomUUID } from 'node:crypto'
 import { imageSize } from 'image-size'
 import type { FileHandle } from 'node:fs/promises'
 import { z } from 'zod'
-import type { HistoryIdentity, Json, MessageEntry, RunIdentity } from '../models.js'
+import type { HistoryIdentity, Json, MessageEntry, RunIdentity, ToolCall, ToolResult } from '../models.js'
 import type { ContextReferenceCodec } from '../ports.js'
 import type { ProviderHttpResponse } from '../providers/contracts.js'
-import type { ToolDefinition } from './contracts.js'
+import type { ToolDefinition, ToolScope } from './contracts.js'
 
 const maxBytes = 4 * 1024 * 1024
 const maxPixels = 16_000_000
@@ -109,7 +109,9 @@ async function readUrl(open: (url: string, signal: AbortSignal) => Promise<Provi
 export function createViewImageTool(options: {
   authorize(identity: RunIdentity, signal: AbortSignal): Promise<boolean>
   supportsImage(identity: RunIdentity, signal: AbortSignal): Promise<boolean>
-  openPath(identity: RunIdentity, path: string, signal: AbortSignal): Promise<OpenedImageFile | null>
+  requiresHostConfirmation?: boolean
+  openPath(identity: RunIdentity, path: string, signal: AbortSignal, scope: ToolScope, call: ToolCall):
+    Promise<OpenedImageFile | Extract<ToolResult, { kind: 'waiting' }> | { error: string } | null>
   openAttachment?(identity: RunIdentity, attachId: string, signal: AbortSignal): Promise<OpenedImageFile | null>
   open(url: string, signal: AbortSignal): Promise<ProviderHttpResponse>
 }): ToolDefinition {
@@ -121,6 +123,7 @@ export function createViewImageTool(options: {
   return {
     definition: { name: 'view_image', schema: { type: 'function', function: {
       name: 'view_image', description: '让当前模型查看一张图片。path 使用会话沙箱路径，url 使用公网 HTTP(S) 图片直链。支持 PNG、JPEG、WebP 和 GIF。GIF 按原始文件传给模型。'
+        + (options.requiresHostConfirmation ? ' 桌面宿主机绝对路径需要会话文件访问授权，已添加的文件引用可直接读取。' : '')
         + (supportsAttachments ? ' 也可使用 attach_id 查看当前消息的图片附件。' : ''),
       parameters: { type: 'object', properties: {
         path: { type: 'string', minLength: 1, maxLength: 2048, description: '会话沙箱中的图片路径' },
@@ -129,22 +132,28 @@ export function createViewImageTool(options: {
       }, oneOf: (supportsAttachments ? ['path', 'url', 'attach_id'] : ['path', 'url'])
         .map(field => ({ required: [field], maxProperties: 1 })), additionalProperties: false },
     } } },
-    effect: 'read', validate: input => schema.safeParse(input),
-    async execute(value, { identity, signal }) {
+    effect: 'read',
+    ...(options.requiresHostConfirmation ? { requiresInteraction: true, confirmationReplay: true } : {}),
+    validate: input => schema.safeParse(input),
+    async execute(value, scope, call) {
+      const { identity, signal } = scope
       if (!await options.authorize(identity, signal)) return error('当前会话无权查看图片')
       if (!await options.supportsImage(identity, signal)) return error('当前模型不支持图片输入')
       try {
         const input = value as z.infer<typeof schema>
+        if (scope.resolution && !('path' in input)) return error('图片目标或授权已变化，请重新发起操作')
         let bytes: Buffer
         if ('attach_id' in input) {
           const file = await options.openAttachment?.(identity, input.attach_id, signal)
           if (!file) return error('当前消息没有可用的图片附件')
           bytes = await readImageFile(file, signal)
         } else if ('path' in input) {
-          const file = await options.openPath(identity, input.path, signal)
+          const file = await options.openPath(identity, input.path, signal, scope, call)
           if (!file) return error(input.path.startsWith('/references/')
             ? '找不到这张引用图片，请重新拖入原文件后再试'
             : '无法从会话工作区读取这张图片，请检查路径，或重新添加图片引用')
+          if ('kind' in file) return file
+          if ('error' in file) return error(file.error)
           bytes = await readImageFile(file, signal)
         } else bytes = await readUrl(options.open, input.url, signal)
         const { type, width, height } = imageSize(bytes)

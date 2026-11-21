@@ -5,7 +5,7 @@ import { readPostgresFolderPathMirrorKey, readPostgresProjectPathMirrorKey } fro
 import { personalFileStorageKey, sandboxTarget, workspaceDirectoryStorageKey } from '../../workspaces/roots.js'
 import { CoreError } from '@gugu/core'
 import { posix } from 'node:path'
-import { createLocalFileTree, localEntryKind } from '@gugu/fs/node'
+import { createLocalFileTree, localEntryKind, readWorkspaceAgentInstructions } from '@gugu/fs/node'
 import { createWorkspaceFileReads, resolveFileDirectoryRoot, type FileDirectory } from '../../workspaces/files.js'
 import type { ShellTrashCommand } from '../shell/trash.js'
 import { constants } from 'node:fs'
@@ -60,9 +60,9 @@ export function createTerminalWorkspaceMounts<DB>(pool: Pick<Pool, 'connect' | '
   const target = createWorkspaceShellTargetReader(db, 'postgres')
   const defaultTarget = createDefaultWorkspaceShellTargetReader(db, 'postgres')
   const directories = createWorkspaceShellDirectoryReader(db, 'postgres')
-  return async (owner: string, workspaceId: number | null, fullUserSandboxWrite: boolean, cwd: string) => {
+  async function resolvePrimary(owner: string, workspaceId: number | null) {
     const selected = workspaceId === null ? await defaultTarget(owner) : await target(owner, workspaceId)
-    if (!selected) throw new Error('当前工作区挂载无法安全解析')
+    if (!selected) return null
     const client = await pool.connect()
     let primary: string
     try {
@@ -71,6 +71,12 @@ export function createTerminalWorkspaceMounts<DB>(pool: Pick<Pool, 'connect' | '
       } else if (selected.kind === 'folder') primary = await readPostgresFolderPathMirrorKey(client, owner, selected.folderId)
       else primary = await readPostgresProjectPathMirrorKey(client, owner, selected.projectId)
     } finally { client.release() }
+    return { selected, primary }
+  }
+  async function mounts(owner: string, workspaceId: number | null, fullUserSandboxWrite: boolean, cwd: string) {
+    const resolved = await resolvePrimary(owner, workspaceId)
+    if (!resolved) throw new Error('当前工作区挂载无法安全解析')
+    const { selected, primary } = resolved
     const writable = [primary]
     const libraryRoots = [personalFileStorageKey(owner), `${owner}/项目文件`]
     // 老账号尚未使用文件库时，声明可能早于实际目录。只补固定根，不重建已丢失的普通目录。
@@ -137,6 +143,21 @@ export function createTerminalWorkspaceMounts<DB>(pool: Pick<Pool, 'connect' | '
       },
     }
   }
+  return Object.assign(mounts, {
+    async readAgentInstructions(owner: string, workspaceId: number | null) {
+      if (process.platform !== 'linux') return undefined
+      const resolved = await resolvePrimary(owner, workspaceId)
+      if (!resolved) return undefined
+      let directory
+      try { directory = await pinTerminalDirectory(storageRoot, owner, resolved.primary) }
+      catch (error) {
+        if (['ENOENT', 'ENOTDIR', 'ELOOP', 'EACCES', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) return undefined
+        throw error
+      }
+      try { return await readWorkspaceAgentInstructions(directory.path) }
+      finally { await directory.close() }
+    },
+  })
 }
 
 /** Linux 目录逐层以 NOFOLLOW 打开，返回的句柄必须保持到子进程退出。 */

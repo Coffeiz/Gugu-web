@@ -58,38 +58,6 @@ export function pairingHandlers(platform: 'wechat' | 'feishu' | 'qq',
           case 'unbind':
             if ('unbind' in pairing) return statusWithHealth(await pairing.unbind())
             break
-          case 'setGroupReplyMode':
-            if ('setGroupReplyMode' in pairing && 'mode' in command && (command.mode === 'reply_mentions' || command.mode === 'reply_all' || command.mode === 'record_only'))
-              return statusWithHealth(await pairing.setGroupReplyMode(command.mode))
-            break
-          case 'setGroupWebTools':
-            if ('setGroupWebTools' in pairing && 'enabled' in command && typeof command.enabled === 'boolean')
-              return statusWithHealth(await pairing.setGroupWebTools(command.enabled))
-            break
-          case 'setGroupProviderSearch':
-            if ('setGroupProviderSearch' in pairing && 'enabled' in command && typeof command.enabled === 'boolean')
-              return statusWithHealth(await pairing.setGroupProviderSearch(command.enabled))
-            break
-          case 'setGroupHistorySearch':
-            if ('setGroupHistorySearch' in pairing && 'enabled' in command && typeof command.enabled === 'boolean')
-              return statusWithHealth(await pairing.setGroupHistorySearch(command.enabled))
-            break
-          case 'setGroupOwnerMemory':
-            if ('setGroupOwnerMemory' in pairing && 'enabled' in command && typeof command.enabled === 'boolean')
-              return statusWithHealth(await pairing.setGroupOwnerMemory(command.enabled))
-            break
-          case 'setGroupMemory':
-            if ('setGroupMemory' in pairing && 'enabled' in command && typeof command.enabled === 'boolean')
-              return statusWithHealth(await pairing.setGroupMemory(command.enabled))
-            break
-          case 'setMemberMemory':
-            if ('setMemberMemory' in pairing && 'enabled' in command && typeof command.enabled === 'boolean')
-              return statusWithHealth(await pairing.setMemberMemory(command.enabled))
-            break
-          case 'setGroupChat':
-            if ('setGroupChat' in pairing && 'enabled' in command && typeof command.enabled === 'boolean')
-              return statusWithHealth(await pairing.setGroupChat(command.enabled))
-            break
           case 'updateGroupSettings':
             if ('updateGroupSettings' in pairing && 'patch' in command && command.patch && typeof command.patch === 'object' && !Array.isArray(command.patch))
               return statusWithHealth(await pairing.updateGroupSettings(command.patch as never))

@@ -1,3 +1,4 @@
+import { appendWorkspaceAgentInstructions } from '../../../../../packages/core/src/agent/context/prompt-format.js'
 import { mcpServiceReminder, type McpToolLookup } from '../../../../../packages/core/src/mcp/tool-directory.js'
 import { createImSendFileTool } from '../../../../../packages/core/src/agent/tools/send-file.js'
 import { cleanupDesktopDownloadStaging, createDesktopWebDownload } from '../../../../../packages/core/src/runtime/desktop-web-download.js'
@@ -452,13 +453,14 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       contextScopeKey: groupChat ? 'desktop-im-group' : 'desktop-overview',
     }
     if (config && !groupChat) await memoryFiles?.flush()
-    const builtins = await (builtinSkills ??= createBuiltinSkillDefinitions(createBundledSkillDocuments(), new AbortController().signal))
+    const allBuiltins = await (builtinSkills ??= createBuiltinSkillDefinitions(createBundledSkillDocuments(), new AbortController().signal))
+    const builtins = imSession ? allBuiltins.filter(skill => skill.key !== 'smart-view') : allBuiltins
     const preferences = await createDesktopAppearanceService(createKyselyPreferenceDocumentStore(db, 'sqlite')).get(ownerId)
     let timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
     const agentClock = { now: () => new Date(), timezone: async () => timezone }
     const prompts = readAgentPromptSet(promptDirectory)
     const buildSystemPrompt = (preferences: Record<string, Json>) => buildAgentStaticPrompt({
-      ...prompts, skillIndex: formatBuiltinSkillIndex(builtins),
+      ...prompts, skillIndex: formatBuiltinSkillIndex(builtins), imChat: Boolean(imSession),
       locale: selection.locale, timezone, now: new Date(),
       customReplyStyleEnabled: preferences.custom_reply_style_enabled === true,
       customReplyStyle: typeof preferences.custom_reply_style === 'string' ? preferences.custom_reply_style : undefined,
@@ -590,6 +592,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         relativePath: 'relativePath' in result && typeof result.relativePath === 'string' ? result.relativePath : undefined }
     }
     const viewImage = createViewImageTool({
+      requiresHostConfirmation: true,
       authorize: async (identity, signal) => { signal.throwIfAborted(); return authorize(identity) },
       supportsImage: async (_identity, signal) => {
         signal.throwIfAborted()
@@ -603,7 +606,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         await opened.handle.close()
         return null
       },
-      async openPath(identity, path, signal) {
+      async openPath(identity, path, signal, scope, call) {
         if (isAbsolute(path)) {
           if (!await authorize(identity)) return null
           const slot = /^\/references\/([1-6])$/u.exec(path)
@@ -613,10 +616,16 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
           for (const ref of candidates) {
             if (ref?.type !== 'file' || typeof ref.id !== 'string' || (!droppedFileReferenceId.test(ref.id) && !workspaceFileReferenceId.test(ref.id))) continue
             const file = await resolveReferencedFile(ref.id, signal)
-            if (file && (slot || file.path === path)) return openDroppedFile(file.path, file.fileIdentity, signal)
+            if (!scope.resolution && file && (slot || file.path === path)) return openDroppedFile(file.path, file.fileIdentity, signal)
           }
           if (path.startsWith('/references/')) return null
+          if (isHostFilePath(path)) {
+            const result = await authorizeHostFile(path, { path }, scope, call, viewImageConfirmation)
+            if (!('target' in result)) return result
+            return openDroppedFile(result.target.path, result.target.identity, signal)
+          }
         }
+        if (scope.resolution) return { error: '图片目标或授权已变化，请重新发起操作' }
         const file = await fileSources.resolveFilePath(identity, path, signal)
         return file ? openLocalFile(file.root, file.relativePath) : null
       },
@@ -673,7 +682,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       diagnostic: line => { void hostRequest('agent.log.append', { line, diagnostic: true }).catch(() => {}) },
       fingerprint: value => createHmac('sha256', secret).update(value).digest('hex'),
     })
-    const skillMetadata = createSkillMetadataReader(db, 'sqlite', builtins)
+    const skillMetadata = createSkillMetadataReader(db, 'sqlite', allBuiltins)
     const skills = await createAgentSkillRuntimePorts({
       ownerId, builtins, listUser: skillMetadata,
       readUser: createUserSkillReader(db, 'sqlite'),
@@ -734,6 +743,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       : undefined
     const shellConfirmation = createSqliteToolConfirmation(db, authorizeWrite, 'shell')
     const presentConfirmation = createSqliteToolConfirmation(db, authorizeWrite, 'present_file')
+    const viewImageConfirmation = createSqliteToolConfirmation(db, authorizeWrite, 'view_image')
     const listMailAccounts = async (signal?: AbortSignal) => desktopMailAccounts(
       await hostRequest('agent.email.accounts', {}, signal))
     const resolveMailReferences = async (identity: RunIdentity, keys: readonly string[], signal?: AbortSignal) => {
@@ -876,6 +886,40 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         shellEnabled: (local.shell_enabled ?? true) === true,
         dangerousEnabled: (local.shell_dangerous_enabled ?? true) === true,
       }
+    }
+    function isHostFilePath(path: string) {
+      return isAbsolute(path) && !/^\/(personal|project|workspace)\//u.test(path)
+    }
+    async function authorizeHostFile(path: string, selector: unknown,
+      scope: import('../../../../../packages/core/src/agent/tools/contracts.js').ToolScope,
+      call: import('../../../../../packages/core/src/agent/models.js').ToolCall,
+      confirmation: typeof presentConfirmation): Promise<
+      { target: { path: string; identity: string } } | { error: string }
+      | Extract<import('../../../../../packages/core/src/agent/models.js').ToolResult, { kind: 'waiting' }>
+    > {
+      const { identity, signal } = scope
+      const access = await readHostAccess(scope)
+      const grant = access && desktopHostAuthorization(access, identity, digest)
+      if (!grant) return { error: '当前会话未启用宿主机文件访问' } as const
+      if (/[\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069]/u.test(path)) return { error: '本机文件路径无效' } as const
+      const actual = await realpath(path).catch(() => null)
+      const info = actual && await stat(actual, { bigint: true }).catch(() => null)
+      if (!actual || !info || !info.isFile()) return { error: '本机文件不存在或不可访问' } as const
+      const target = { path: actual, identity: [info.dev, info.ino, info.birthtimeNs].join('.') }
+      const snapshot = { targetsDigest: digest(target), versionsDigest: grant.version, targetIds: {} }
+      const argsDigest = digest(selector)
+      if (!scope.resolution && !grant.permits()) {
+        const prepared = await confirmation.gate.prepare(call, scope, argsDigest, snapshot)
+        return prepared.ok ? { kind: 'waiting', interaction: prepared.value } as const : { error: '无法申请宿主机文件访问授权' } as const
+      }
+      if (digest(access) !== digest(await readHostAccess(scope))) return { error: '宿主机文件权限已变化' } as const
+      if (scope.resolution) {
+        const confirmed = await confirmation.gate.verify(call, scope, argsDigest, snapshot)
+        if (!confirmed.ok || !await db.transaction().execute(tx => confirmation.claim(tx, confirmed.value, signal)))
+          return { error: '宿主机文件确认无效或已过期' } as const
+        grant.approve()
+      } else if (!grant.permits()) return { error: '宿主机文件授权已过期' } as const
+      return { target } as const
     }
     const shell = interactive ? await createDesktopShellTool(db, shellConfirmation, digest, readHostAccess) : undefined
     const mcpCrypto = createDesktopMcpCrypto(databasePath)
@@ -1061,7 +1105,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
           if (!await authorize(identity)) return { error: '当前文件预览授权已失效' }
           const path = selector.file
           let referenceId: string | undefined
-          const hostPath = isAbsolute(path) && !/^\/(personal|project|workspace)\//u.test(path)
+          const hostPath = isHostFilePath(path)
           if (hostPath) {
             const { references } = await readDesktopTurnReferences(db, identity)
             for (const ref of references.slice(0, 6)) {
@@ -1073,27 +1117,9 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
           }
           let external: { path: string; identity: string } | undefined
           if (hostPath && !referenceId) {
-            const access = await readHostAccess(scope)
-            const grant = access && desktopHostAuthorization(access, identity, digest)
-            if (!grant) return { error: '当前会话未启用宿主机文件访问' }
-            if (/[\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069]/u.test(path)) return { error: '本机文件路径无效' }
-            const actual = await realpath(path).catch(() => null)
-            const info = actual && await stat(actual, { bigint: true }).catch(() => null)
-            if (!actual || !info || !info.isFile()) return { error: '本机文件不存在或不可访问' }
-            external = { path: actual, identity: [info.dev, info.ino, info.birthtimeNs].join('.') }
-            const snapshot = { targetsDigest: digest(external), versionsDigest: grant.version, targetIds: {} }
-            const argsDigest = digest(selector)
-            if (!scope.resolution && !grant.permits()) {
-              const prepared = await presentConfirmation.gate.prepare(call, scope, argsDigest, snapshot)
-              return prepared.ok ? { kind: 'waiting' as const, interaction: prepared.value } : { error: '无法申请宿主机文件打开授权' }
-            }
-            if (digest(access) !== digest(await readHostAccess(scope))) return { error: '宿主机文件权限已变化' }
-            if (scope.resolution) {
-              const confirmed = await presentConfirmation.gate.verify(call, scope, argsDigest, snapshot)
-              if (!confirmed.ok || !await db.transaction().execute(tx => presentConfirmation.claim(tx, confirmed.value, signal)))
-                return { error: '宿主机文件打开确认无效或已过期' }
-              grant.approve()
-            } else if (!grant.permits()) return { error: '宿主机文件打开授权已过期' }
+            const result = await authorizeHostFile(path, selector, scope, call, presentConfirmation)
+            if (!('target' in result)) return result
+            external = result.target
           } else if (scope.resolution) return { error: '文件目标或授权已变化，请重新发起操作' }
           const target = external ? { path: external.path, hostIdentity: external.identity }
             : { path, ...(referenceId ? { referenceId } : {}) }
@@ -1723,6 +1749,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
           return canvasConfirmations[name as keyof typeof canvasConfirmations].describe(tx, identity, request)
         const handler = request.toolCall.name === 'shell' ? shellConfirmation
           : request.toolCall.name === 'present_file' ? presentConfirmation
+          : request.toolCall.name === 'view_image' ? viewImageConfirmation
           : request.toolCall.name === 'delete_event' ? calendarConfirmation
           : request.toolCall.name === 'manage_mcp_servers'
             ? mcpAction === 'add' ? mcpAddConfirmation : mcpAction === 'update' ? mcpUpdateConfirmation : mcpRemoveConfirmation
@@ -1795,6 +1822,13 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
           contextRevision = Number.parseInt(digest([revision, overviewData, filesOverview, stylePreferences, imChannels, timezone]).slice(0, 12), 16)
           selection.contextScopeKey = `desktop-overview:${contextRevision}`
           const loaded = await source.load(identity, signal)
+          const directoryId = selection.workspaceBinding?.directory_id
+          if (typeof directoryId === 'string') {
+            const instructions = await hostRequest('agent.files.workspaceInstructions', { directoryId }, signal)
+            signal?.throwIfAborted()
+            if (typeof instructions === 'string')
+              loaded.input.systemPrompt = appendWorkspaceAgentInstructions(loaded.input.systemPrompt ?? '', instructions)
+          }
           const tools = await configuredTools(identity)
           const toolNames = tools.map(tool => tool.name)
           const catalog = createAgentToolBrief(preferences, tools)

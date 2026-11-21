@@ -123,15 +123,6 @@ export function createDesktopQqPairing(directory: string, encryption: Encryption
       await credentials.write({ ...current, privateStreamingEnabled: enabled })
       return status()
     }),
-    setGroupChat: (enabled: boolean) => state.serialize(async () => {
-      const current = await credentials.read()
-      if (!current || (enabled && !current.userId)) throw invalid()
-      if (current.groupChatEnabled !== enabled) {
-        await credentials.write({ ...current, groupChatEnabled: enabled, revision: randomUUID() })
-        notifyChanged?.()
-      }
-      return status()
-    }),
     updateGroupSettings: (patch: {
       groupChatEnabled?: boolean; groupReplyMode?: ImGroupReplyMode; groupOwnerMemoryEnabled?: boolean
       groupMemoryEnabled?: boolean; memberMemoryEnabled?: boolean; groupWebToolsEnabled?: boolean
@@ -162,48 +153,6 @@ export function createDesktopQqPairing(directory: string, encryption: Encryption
       }
       await credentials.write(parseCredential(next))
       if (patch.groupChatEnabled !== undefined) notifyChanged?.()
-      return status()
-    }),
-    setGroupReplyMode: (mode: ImGroupReplyMode) => state.serialize(async () => {
-      const current = await credentials.read()
-      if (!current?.userId || (mode !== 'reply_mentions' && mode !== 'reply_all' && mode !== 'record_only')) throw invalid()
-      await credentials.write({ ...current, groupReplyMode: mode })
-      return status()
-    }),
-    setGroupHistorySearch: (enabled: boolean) => state.serialize(async () => {
-      const current = await credentials.read()
-      if (!current?.userId) throw invalid()
-      await credentials.write({ ...current, groupHistorySearchEnabled: enabled })
-      return status()
-    }),
-    setGroupWebTools: (enabled: boolean) => state.serialize(async () => {
-      const current = await credentials.read()
-      if (!current?.userId) throw invalid()
-      await credentials.write({ ...current, groupWebToolsEnabled: enabled })
-      return status()
-    }),
-    setGroupProviderSearch: (enabled: boolean) => state.serialize(async () => {
-      const current = await credentials.read()
-      if (!current?.userId) throw invalid()
-      await credentials.write({ ...current, groupProviderSearchEnabled: enabled })
-      return status()
-    }),
-    setGroupOwnerMemory: (enabled: boolean) => state.serialize(async () => {
-      const current = await credentials.read()
-      if (!current?.userId) throw invalid()
-      await credentials.write({ ...current, groupOwnerMemoryEnabled: enabled })
-      return status()
-    }),
-    setGroupMemory: (enabled: boolean) => state.serialize(async () => {
-      const current = await credentials.read()
-      if (!current?.userId) throw invalid()
-      await credentials.write({ ...current, groupMemoryEnabled: enabled })
-      return status()
-    }),
-    setMemberMemory: (enabled: boolean) => state.serialize(async () => {
-      const current = await credentials.read()
-      if (!current?.userId) throw invalid()
-      await credentials.write({ ...current, memberMemoryEnabled: enabled })
       return status()
     }),
     unbind: () => state.serialize(async () => {

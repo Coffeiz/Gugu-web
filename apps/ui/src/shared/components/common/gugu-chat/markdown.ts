@@ -6,6 +6,7 @@ import { MIND_REF_TYPE_ICON_PATH } from '@/composables/mind/useMindEditor'
 import type { ChatReference } from './chatTypes'
 import { renderObjectCardParagraph } from './chatObjectCards'
 import { renderSmartView } from './chatSmartViews'
+import { renderSmartStream } from './chatSmartStream'
 import { sanitizeChatHtml } from '@/utils/markdown'
 import { normalizeMarkdownMathSource, prepareLatexCodeForMath } from '@/utils/chart/math'
 
@@ -23,6 +24,7 @@ marked.use({
     r.del = (t: Tokens.Del) => (t && t.text) || ''
     r.code = ({ text, lang }: Tokens.Code) => {
       if (String(lang || '').trim() === 'gugu-ui') return renderSmartView(text)
+      if (String(lang || '').trim() === 'gugu-ui-stream') return renderSmartStream(text)
       if (String(lang || '').trim().toLowerCase() === 'mermaid') {
         return `<pre class="md-mermaid-source"><code>${escapeHtml(text)}</code></pre>`
       }
@@ -240,13 +242,13 @@ export function scanChatMarkdownFences(lines: string[]) {
     const marker = match[1]
     if (!openFence) {
       openFence = { char: marker[0], size: marker.length, line: index, info: match[2].trim() }
-      if (openFence.info === 'gugu-ui') smartStart = offset
+      if (openFence.info === 'gugu-ui' || openFence.info === 'gugu-ui-stream') smartStart = offset
     } else if (marker[0] === openFence.char && marker.length >= openFence.size && !match[2].trim()) {
-      if (openFence.info === 'gugu-ui') smartRanges.push({ start: smartStart, end: offset + lines[index].length })
+      if (openFence.info === 'gugu-ui' || openFence.info === 'gugu-ui-stream') smartRanges.push({ start: smartStart, end: offset + lines[index].length })
       openFence = null
     }
   }
-  if (openFence?.info === 'gugu-ui') smartRanges.push({ start: smartStart, end: offset - 1 })
+  if (openFence?.info === 'gugu-ui' || openFence?.info === 'gugu-ui-stream') smartRanges.push({ start: smartStart, end: offset - 1 })
   return { openFence, smartRanges }
 }
 
@@ -258,7 +260,11 @@ export function renderMdStream(text: string) {
   if (_mdStreamCache?.text === text && _mdStreamCache.locale === locale) return _mdStreamCache.html
   const lines = text.split('\n')
   const { openFence } = scanChatMarkdownFences(lines)
-  if (openFence?.info === 'gugu-ui') {
+  let staged = ''
+  if (openFence?.info === 'gugu-ui-stream') {
+    const [, ...records] = lines.splice(openFence.line)
+    staged = renderSmartStream(records.join('\n'), true)
+  } else if (openFence?.info === 'gugu-ui') {
     lines.splice(openFence.line)
   } else if (openFence) {
     if (openFence.info.split(/\s+/)[0]?.toLowerCase() === 'mermaid') {
@@ -270,7 +276,7 @@ export function renderMdStream(text: string) {
   const prose = marked.parse(prepareMarkdown(lines.join('\n'))) as string
   const html = openFence?.info === 'gugu-ui'
     ? prose + `<section class="chat-smart-view chat-smart-view-generating"><span role="status">${escapeHtml(i18n.global.t('smartView.generating'))}</span></section>`
-    : prose
+    : prose + staged
   _mdStreamCache = { text, locale, html }
   return html
 }

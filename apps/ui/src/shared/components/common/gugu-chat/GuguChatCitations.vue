@@ -3,7 +3,14 @@
     @pointerover="onHover" @pointerout="onPointerOut" @focusin="onFocus" @focusout="scheduleClose" @click="onMessageClick"
     @input="onSmartInput" @load.capture="showLoadedImage" @error.capture="markImageFailed">
     <div v-for="(block, index) in blocks" :key="index" :class="block.smart ? 'chat-assistant-smart-card' : 'msg-bubble md-body'">
-      <MarkdownView :html="block.html" :text="text" chat :stream-motion="presenting && !block.smart" :render-math="!presenting && !block.smart" />
+      <div v-if="block.stream" class="chat-smart-stream">
+        <div class="chat-smart-stream-grid" :data-smart-ratio="block.stream.ratio">
+          <div v-for="region in block.stream.regions" :key="region.name" class="chat-smart-stream-region" :data-region="region.name" :data-status="region.status">
+            <MarkdownView :html="region.html" chat />
+          </div>
+        </div>
+      </div>
+      <MarkdownView v-else :html="block.html" :text="text" chat :stream-motion="presenting && !block.smart" :render-math="!presenting && !block.smart" />
     </div>
   </div>
   <Teleport to="body">
@@ -49,12 +56,14 @@ import { chatCalendarEventsKey } from './chatPresentationAccess'
 import { applyChatCardSnapshots, stripChatCardSnapshotMarkers } from './chatCardSnapshots'
 import { useCitationSiteNames } from './useCitationSiteNames'
 import Icon from '@/components/common/icons/Icon.vue'
-import { selectSmartViewOption, smartViewIcons, updateSmartViewSlider } from './chatSmartLayout'
+import { smartViewIcons, updateSmartViewControl } from './chatSmartLayout'
+import { readSmartStream, type SmartStreamLayout } from './chatSmartStream'
+import { handleSmartInteractiveClick, selectSmartViewOption } from './chatSmartInteractive'
 
 const props = defineProps<{ html: string; text: string; presenting: boolean; sources?: readonly ChatSource[]; snapshotMessage?: string }>()
 const emit = defineEmits<{ 'body-click': [event: MouseEvent] }>()
 function onMessageClick(event: MouseEvent) {
-  if (selectSmartViewOption(event.target)) return
+  if (selectSmartViewOption(event.target) || handleSmartInteractiveClick(event.target)) return
   onClick(event)
   emit('body-click', event)
 }
@@ -97,7 +106,7 @@ const decorated = computed(() => {
 
 const blocks = computed(() => {
   const { html } = decorated.value
-  const original = [{ html, smart: false }]
+  const original: { html: string; smart: boolean; stream?: SmartStreamLayout }[] = [{ html, smart: false }]
   if (!html.includes('chat-smart-view')) return original
   const content = document.createElement('template')
   content.innerHTML = html
@@ -111,7 +120,7 @@ const blocks = computed(() => {
   for (const node of [...content.content.childNodes]) {
     if (node instanceof HTMLElement && node.matches('section.chat-smart-view')) {
       flushProse()
-      result.push({ html: node.outerHTML, smart: true })
+      result.push({ html: node.outerHTML, smart: true, stream: readSmartStream(node) })
     } else {
       prose.content.appendChild(node)
     }
@@ -121,9 +130,29 @@ const blocks = computed(() => {
 })
 
 const messageContent = ref<HTMLElement>()
+const chartSlots = new Map<HTMLElement, () => void>()
+watch([messageContent, blocks], async (_, __, onCleanup) => {
+  const slots = new Set(messageContent.value?.querySelectorAll<HTMLElement>('.chat-smart-layout-view figure[data-smart-chart]'))
+  for (const [slot, dispose] of chartSlots) {
+    if (slots.has(slot)) continue
+    dispose()
+    chartSlots.delete(slot)
+  }
+  if ([...slots].every(slot => chartSlots.has(slot))) return
+  let cancelled = false
+  onCleanup(() => { cancelled = true })
+  const { mountSmartChart } = await import('./chatSmartChart')
+  if (cancelled) return
+  for (const slot of slots) {
+    if (!chartSlots.has(slot)) chartSlots.set(slot, mountSmartChart(slot))
+  }
+}, { flush: 'post' })
+onBeforeUnmount(() => chartSlots.forEach(dispose => dispose()))
+
 watch([messageContent, blocks], (_, __, onCleanup) => {
   const root = messageContent.value
-  root?.querySelectorAll<HTMLInputElement>('input[data-smart-slider]').forEach(updateSmartViewSlider)
+  root?.querySelectorAll<HTMLInputElement>('input:is([data-smart-slider], [data-smart-input], [data-smart-checklist])')
+    .forEach(updateSmartViewControl)
   const slots = root?.querySelectorAll<HTMLElement>('.chat-smart-layout-view [data-smart-icon]')
   for (const slot of slots ?? []) {
     const icon = smartViewIcons.get(slot.dataset.smartIcon ?? '')
@@ -133,8 +162,7 @@ watch([messageContent, blocks], (_, __, onCleanup) => {
 }, { flush: 'post' })
 
 function onSmartInput(event: Event) {
-  if (event.target instanceof HTMLInputElement && event.target.dataset.smartSlider)
-    updateSmartViewSlider(event.target)
+  if (event.target instanceof HTMLInputElement) updateSmartViewControl(event.target)
 }
 
 const active = shallowRef<{ anchor: HTMLAnchorElement; sources: ChatSource[] }>()
