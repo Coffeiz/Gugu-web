@@ -71,7 +71,9 @@ description: Node.js/Fastify Web Host 与共享后端开发约定，涵盖 Core�
 ## Desktop 出站网络
 
 - Desktop 内由应用发起的外部工具请求和链接读取统一使用 `@gugu/core/providers/node` 的 `desktopTransportOptions`。代理关闭时由该入口禁用环境代理，正常使用系统 DNS。macOS 的默认解析全为 Fake IP 时，改用活动物理网卡的 DHCP DNS。没有真实结果时返回网络错误。
-- Desktop 主进程自托管服务的直连 HTTP 使用 `apps/desktop/src/main/network.ts`，与工具共用 DNS 策略。自托管入口可使用用户指定的局域网地址。公网工具仍须走固定目标校验和逐跳重定向校验。
+- 目标校验分两层：字面地址在任何模式下都必须判定为公网地址；域名目标在本机主机名或本地解析出私网地址时拒绝。走代理时目标域名交由代理端解析——本地 DNS 在代理或 TUN 环境下可能是假 IP 或被污染的地址，固定它们会连到错误的服务端。直连时解析并固定公网地址。重定向一律不跟随。
+- Desktop 主进程自托管服务的直连 HTTP 使用 `apps/desktop/src/main/network.ts`，与工具共用 DNS 策略。自托管入口可使用用户指定的局域网地址。
+- Web Host 的公网 Agent 出站不使用上述入口，改用 `apps/web-host/src/adapters/network/safe-egress-proxy.ts`：目标域名经代理侧 DoH 解析并固定为公网 IP，与桌面端不可混用。
 - 新增应用内的 HTTP 入口时复用上述入口。由外部浏览器打开的链接遵循浏览器的网络设置。
 
 ## 后端目标与历史参考
