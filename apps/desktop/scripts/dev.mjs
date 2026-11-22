@@ -121,7 +121,34 @@ vite.on('exit', (code) => {
   if (!stopping) stop(code || 1)
 })
 
+const LOOPSCOPE_ENDPOINT_DEFAULT = 'http://127.0.0.1:4320'
+const LOOPSCOPE_ENABLED_PATTERN = /^(1|true|yes|on)$/i
+
+/**
+ * 采集器在线时默认接入 LoopScope，开发时不必每次带环境变量。
+ * 显式设置 LOOPSCOPE_ENABLED 时以用户为准；未设置时按采集器是否在线自动决定。
+ */
+async function resolveLoopScopeEnv() {
+  const endpoint = process.env.LOOPSCOPE_ENDPOINT?.trim() || LOOPSCOPE_ENDPOINT_DEFAULT
+  const explicit = process.env.LOOPSCOPE_ENABLED?.trim()
+  if (explicit !== undefined) return LOOPSCOPE_ENABLED_PATTERN.test(explicit) ? { endpoint } : undefined
+  const { hostname, port } = new URL(endpoint)
+  const online = await new Promise(resolve => {
+    const socket = createConnection({ host: hostname, port: Number(port) })
+    const finish = value => { socket.destroy(); resolve(value) }
+    socket.setTimeout(1000, () => finish(false))
+    socket.once('connect', () => finish(true))
+    socket.once('error', () => finish(false))
+  })
+  return online ? { endpoint } : undefined
+}
+
+const loopScope = await resolveLoopScopeEnv()
 const electronEnv = { ...process.env, ...bridge, GUGU_DESKTOP_DEV_URL: devUrl, GUGU_DESKTOP_DEV_NODE: process.execPath }
+if (loopScope) {
+  electronEnv.LOOPSCOPE_ENABLED = 'true'
+  electronEnv.LOOPSCOPE_ENDPOINT = loopScope.endpoint
+}
 // Node 的代理 CA 参数只用于包管理器下载。
 electronEnv.NODE_OPTIONS = electronEnv.NODE_OPTIONS?.replace(/(?:^|\s)--use-bundled-ca(?=\s|$)/g, '').trim()
 
@@ -271,6 +298,7 @@ try {
     // 提前打印：Electron 启动横幅和 Vite 输出会淹没这行，浏览器预览地址要一眼可见。
     if (port !== preferredPort) console.log(`端口 ${preferredPort} 已被占用，改用 ${port}`)
     console.log(`\n  桌面共享预览地址（与 Electron 共用模型、IM 和会话）\n  → ${devUrl}\n`)
+    if (loopScope) console.log(`  LoopScope trace 已开启 → ${loopScope.endpoint}\n`)
     launchElectron()
   }
   await waitForDesktopPreview()

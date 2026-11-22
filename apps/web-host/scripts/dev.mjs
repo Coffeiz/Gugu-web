@@ -2,6 +2,7 @@ import { existsSync, watch } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createConnection } from 'node:net'
 
 const host = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const root = resolve(host, '../..')
@@ -9,6 +10,28 @@ const tsc = resolve(host, 'node_modules/typescript/bin/tsc')
 const packages = ['sandbox', 'database', 'fs', 'core', 'gateway']
 const manifests = ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc']
 const hostArgs = ['--import', 'tsx', 'src/main.ts']
+const LOOPSCOPE_ENDPOINT_DEFAULT = 'http://127.0.0.1:4320'
+const LOOPSCOPE_ENABLED_PATTERN = /^(1|true|yes|on)$/i
+
+/** 采集器在线时默认接入 LoopScope；显式设置 LOOPSCOPE_ENABLED 时以用户为准。 */
+async function resolveLoopScopeEnv() {
+  const endpoint = process.env.LOOPSCOPE_ENDPOINT?.trim() || LOOPSCOPE_ENDPOINT_DEFAULT
+  const explicit = process.env.LOOPSCOPE_ENABLED?.trim()
+  if (explicit !== undefined) return LOOPSCOPE_ENABLED_PATTERN.test(explicit) ? { endpoint } : undefined
+  const { hostname, port } = new URL(endpoint)
+  const online = await new Promise(resolve => {
+    const socket = createConnection({ host: hostname, port: Number(port) })
+    const finish = value => { socket.destroy(); resolve(value) }
+    socket.setTimeout(1000, () => finish(false))
+    socket.once('connect', () => finish(true))
+    socket.once('error', () => finish(false))
+  })
+  return online ? { endpoint } : undefined
+}
+
+const loopScope = await resolveLoopScopeEnv()
+const hostEnv = { ...process.env, ...(loopScope ? { LOOPSCOPE_ENABLED: 'true', LOOPSCOPE_ENDPOINT: loopScope.endpoint } : {}) }
+if (loopScope) console.log(`LoopScope trace 已开启 → ${loopScope.endpoint}`)
 const watchers = []
 let runningHost
 let build
@@ -20,8 +43,8 @@ let installNeeded = true
 let sharedBuildNeeded = true
 let skillsBuildNeeded = true
 
-function launch(command, args, cwd) {
-  const child = spawn(command, args, { cwd, stdio: 'inherit' })
+function launch(command, args, cwd, env) {
+  const child = spawn(command, args, { cwd, stdio: 'inherit', ...(env ? { env } : {}) })
   const exited = new Promise((finish, reject) => {
     child.once('error', reject)
     child.once('exit', (code, signal) => finish({ code, signal }))
@@ -73,7 +96,7 @@ async function rebuild() {
     }
     if (stopping || revision !== target) return
     installNeeded = sharedBuildNeeded = skillsBuildNeeded = false
-    const next = launch(process.execPath, hostArgs, host)
+    const next = launch(process.execPath, hostArgs, host, hostEnv)
     runningHost = next
     void next.exited.then(({ code, signal }) => {
       if (!stopping && runningHost === next && !rebuilding)
