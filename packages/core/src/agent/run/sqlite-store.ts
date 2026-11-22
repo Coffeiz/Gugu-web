@@ -10,6 +10,14 @@ import { createSubagentDeliveryStore } from '../subagent/delivery-store.js'
 import { assertRunCheckpoint, assertRunEventTransition, assertRunIdentity, createAgentRunCodec } from './codec.js'
 
 type RunCommit<C> = Parameters<RunStore<C>['commit']>[0]
+
+/** 会话已被另一个未结束的运行占用：本次租约接管必须整体回滚。 */
+class AgentSessionOccupiedError extends Error {
+  constructor() {
+    super('Agent run 会话已被占用')
+    this.name = 'AgentSessionOccupiedError'
+  }
+}
 interface CheckpointRow { version: number; sequence: number; nonce: Buffer; payload: Buffer }
 interface EventRow { event_id: string; sequence: number; nonce: Buffer; payload: Buffer }
 
@@ -233,17 +241,32 @@ export function createSqliteAgentRunLeasePort(
       const { owner, session, run } = sqliteAgentRunScope(identity)
       const token = randomUUID()
       const at = now()
-      const { rows } = await sql<{ fence: number }>`
-        INSERT INTO agent_run_leases(user_id,session_id,run_id,token,fence,expires_at_ms)
-        SELECT user_id,id,${run},${token},1,${at + ttlMs}
-        FROM conversation_sessions WHERE id=${session} AND user_id=${owner} AND execution_state<>'baseline_updating'
-          AND NOT EXISTS(SELECT 1 FROM agent_run_controls WHERE user_id=${owner} AND session_id=${session}
-            AND run_id=${run} AND startup_failed=1)
-        ON CONFLICT(user_id,session_id) DO UPDATE SET run_id=excluded.run_id,token=excluded.token,
-          fence=agent_run_leases.fence+1,expires_at_ms=excluded.expires_at_ms
-        WHERE agent_run_leases.expires_at_ms <= ${at}
-        RETURNING fence`.execute(db)
-      const row = rows[0]
+      const row = await db.transaction().execute(async tx => {
+        const { rows } = await sql<{ fence: number }>`
+          INSERT INTO agent_run_leases(user_id,session_id,run_id,token,fence,expires_at_ms)
+          SELECT user_id,id,${run},${token},1,${at + ttlMs}
+          FROM conversation_sessions WHERE id=${session} AND user_id=${owner} AND execution_state<>'baseline_updating'
+            AND NOT EXISTS(SELECT 1 FROM agent_run_controls WHERE user_id=${owner} AND session_id=${session}
+              AND run_id=${run} AND startup_failed=1)
+          ON CONFLICT(user_id,session_id) DO UPDATE SET run_id=excluded.run_id,token=excluded.token,
+            fence=agent_run_leases.fence+1,expires_at_ms=excluded.expires_at_ms
+          WHERE agent_run_leases.expires_at_ms <= ${at}
+            OR EXISTS(SELECT 1 FROM agent_run_checkpoints c WHERE c.user_id=${owner} AND c.session_id=${session}
+              AND c.run_id=agent_run_leases.run_id AND c.status IN (${sql.join([...terminalRunStates].map(status => sql`${status}`))}))
+          RETURNING fence`.execute(tx)
+        if (!rows.length) return null
+        // 会话归属跟随正在执行的运行：等待子代理的运行已经归还会话。
+        // 只有严格空闲或已经属于本运行的会话可以被接管，
+        // 否则会抢走刚被准入但还没开始执行的新运行。
+        const occupied = await sql`UPDATE conversation_sessions SET execution_state='running',active_run_id=${run}
+          WHERE id=${session} AND user_id=${owner} AND (active_run_id IS NULL OR active_run_id=${run})
+          RETURNING id`.execute(tx)
+        if (!occupied.rows.length) throw new AgentSessionOccupiedError()
+        return rows[0]!
+      }).catch(error => {
+        if (error instanceof AgentSessionOccupiedError) return null
+        throw error
+      })
       if (!row) return null
       if (!Number.isSafeInteger(row.fence)) throw new RangeError('Agent run fencing 序号超出安全范围')
       const lease = { token, fence: row.fence }
@@ -255,7 +278,21 @@ export function createSqliteAgentRunLeasePort(
       const timer = timers.get(lease.token)
       if (timer) clearTimeout(timer)
       timers.delete(lease.token)
-      await update(identity, lease, 0, false)
+      const { owner, session, run } = sqliteAgentRunScope(identity)
+      // 租约与会话归属同事务归还：等待子代理的运行不占着会话，用户可以继续对话。
+      // 仍在执行中的运行保留会话归属：恢复流程要靠它找到这轮孤儿运行并结算。
+      await db.transaction().execute(async tx => {
+        await sql`UPDATE agent_run_leases SET expires_at_ms=0
+          WHERE user_id=${owner} AND session_id=${session} AND run_id=${run}
+            AND token=${lease.token} AND fence=${lease.fence}`.execute(tx)
+        await sql`UPDATE conversation_sessions SET
+          execution_state=CASE WHEN execution_state='baseline_updating' THEN execution_state ELSE 'idle' END,
+          active_run_id=NULL
+          WHERE id=${session} AND user_id=${owner} AND active_run_id=${run}
+            AND NOT EXISTS(SELECT 1 FROM agent_run_checkpoints c
+              WHERE c.user_id=${owner} AND c.session_id=${session} AND c.run_id=${run}
+                AND c.status IN ('preparing','running'))`.execute(tx)
+      })
     },
   }
 }

@@ -608,6 +608,11 @@
     "layer": "L1",
     "purpose": "contract"
   },
+  "tests/agent/run/sqlite-session-ownership.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
   "tests/agent/tools/parallel-plan.test.ts": {
     "markers": [],
     "layer": "L1",

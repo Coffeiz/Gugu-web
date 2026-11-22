@@ -13,17 +13,30 @@ import { projectAgentTimelineEvents } from './message-projection.js'
 import type { DesktopAgentChatReference } from '../../contracts/desktop.js'
 export { resolveDesktopChatReferences } from './desktop-references.js'
 
-const isRunning = sql<boolean>`s.active_run_id IS NOT NULL AND (s.execution_state='baseline_updating' OR EXISTS (
+/**
+ * 会话当前运行：对齐 PG 侧 currentRunId。
+ * 未终态的 active_run_id 优先；否则取最新的等待态运行——等待子代理的父运行
+ * 已经归还会话执行位，但它仍是这个会话对外可见的当前运行。
+ */
+const currentRun = sql`COALESCE(
+  CASE WHEN s.active_run_id IS NOT NULL AND NOT EXISTS(
+    SELECT 1 FROM agent_run_checkpoints t WHERE t.user_id=s.user_id AND t.session_id=s.id
+      AND t.run_id=s.active_run_id AND t.status IN ('completed','cancelled','failed','unknown'))
+  THEN s.active_run_id END,
+  (SELECT c.run_id FROM agent_run_checkpoints c WHERE c.user_id=s.user_id AND c.session_id=s.id
+    AND c.status='waiting' ORDER BY c.updated_at_ms DESC, c.run_id DESC LIMIT 1))`
+
+const isRunning = sql<boolean>`((s.execution_state='baseline_updating' AND s.active_run_id IS NOT NULL) OR EXISTS (
   SELECT 1 FROM agent_run_admissions admission
   LEFT JOIN agent_run_checkpoints checkpoint USING (user_id,session_id,run_id)
   LEFT JOIN agent_run_controls control USING (user_id,session_id,run_id)
-  WHERE admission.user_id=s.user_id AND admission.session_id=s.id AND admission.run_id=s.active_run_id
+  WHERE admission.user_id=s.user_id AND admission.session_id=s.id AND admission.run_id=${currentRun}
     AND COALESCE(control.startup_failed,0)=0 AND (checkpoint.status IS NULL OR checkpoint.status IN ('preparing','running')
       OR (checkpoint.status='waiting' AND (
         EXISTS (SELECT 1 FROM agent_subagent_waits w WHERE replace(w.owner_id,'-','')=s.user_id
-          AND w.parent_session_id=CAST(s.id AS TEXT) AND w.parent_run_id=s.active_run_id)
+          AND w.parent_session_id=CAST(s.id AS TEXT) AND w.parent_run_id=${currentRun})
         OR EXISTS (SELECT 1 FROM agent_inbox_waits w WHERE replace(w.owner_id,'-','')=s.user_id
-          AND w.session_id=CAST(s.id AS TEXT) AND w.run_id=s.active_run_id)
+          AND w.session_id=CAST(s.id AS TEXT) AND w.run_id=${currentRun})
       )))
 ))`
 

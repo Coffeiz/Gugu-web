@@ -180,6 +180,13 @@ const unavailable = async (): Promise<never> => { throw new CoreError('conflict'
 const AGENT_RUN_RETENTION_FIRST_DELAY_MS = 30_000
 const AGENT_RUN_RETENTION_INTERVAL_MS = 6 * 60 * 60 * 1000
 
+/** 子代理交付后唤醒父运行：会话被用户的新一轮消息占用时退避重试，等待中的父运行不能就此搁置。 */
+const SUBAGENT_WAKE_RETRY_MS = 1_500
+const SUBAGENT_WAKE_MAX_RETRY_DELAY_MS = 5_000
+const SUBAGENT_WAKE_MAX_ATTEMPTS = 40
+/** 唤醒预算只覆盖运行时重建，真正的模型往返由运行自身控制。 */
+const SUBAGENT_WAKE_RESUME_TIMEOUT_MS = 30_000
+
 function desktopGroupMemoryContext(value: unknown, ownerId: string): (ImMemoryReadAuthorization & { actor: ImActor; ownerPlatformUserId: string | null }) | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const row = value as Record<string, unknown>, actorValue = row.actor
@@ -2622,34 +2629,68 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     return true
   }
 
+  /**
+   * 等待子代理的父运行已经归还会话执行位，唤醒必须按父运行自身定位：
+   * 会话当前持有者可能已经是用户的新一轮消息，不能拿来当父运行。
+   */
+  async function attemptSubagentWake(parent: RunIdentity): Promise<void> {
+    const sessionId = Number(parent.sessionId)
+    const active = running.get(sessionId)
+    if (active) await Promise.allSettled([active.done])
+    if (subagentWakeAbort.signal.aborted) return
+    const { rows: [admission] } = await sql<{ run_id: string }>`SELECT a.run_id FROM agent_run_admissions a
+      WHERE a.user_id=${dataContext(ownerId).ownerId.replaceAll('-', '')} AND a.session_id=${sessionId} AND a.run_id=${parent.runId}`.execute(db)
+    if (!admission) return
+    const recipient = { ...parent, runId: admission.run_id }
+    const secret = await loadSqliteAgentRunSecret(db, databasePath)
+    const store = createSqliteAgentRunStore<CanonicalRunContext>(db, secret, {
+      async writeHistory() { throw new Error('只读子运行唤醒不接受历史写入') },
+    })
+    const checkpoint = await store.read(recipient)
+    if (checkpoint?.status !== 'waiting') return
+    const { rows: [control] } = await sql<{ cancel_requested: number }>`SELECT cancel_requested FROM agent_run_controls
+      WHERE user_id=${dataContext(ownerId).ownerId.replaceAll('-', '')} AND session_id=${sessionId} AND run_id=${parent.runId}`.execute(db)
+    if (control?.cancel_requested === 1) {
+      // 用户已取消等待中的父运行：直接结算，不再续跑。
+      if (await settleCancelledSqliteSubagentWait(db, databasePath, recipient)) {
+        notify(sessionId, parent.runId)
+        return
+      }
+      // 会话被用户的新一轮消息占用：退避重试，等会话收尾后再结算。
+      throw new AgentRunError('conflict', '会话正在执行')
+    }
+    if (checkpoint.agentInboxWaiting && checkpoint.phase === 'decision' && await store.hasPendingSubagents?.(recipient)) return
+    const ready = checkpoint.subagentWaitChildId
+      ? !await store.isSubagentPending(recipient, checkpoint.subagentWaitChildId)
+      : checkpoint.agentInboxWaiting && Boolean((await store.readAgentInbox?.(recipient))?.length
+        || (await store.readSubagentFinals?.(recipient))?.length)
+    if (!ready) return
+    await resumeCheckpoint(checkpoint, AbortSignal.any([subagentWakeAbort.signal, AbortSignal.timeout(SUBAGENT_WAKE_RESUME_TIMEOUT_MS)]))
+  }
+
   function scheduleSubagentWake(parent: RunIdentity) {
     if (parent.ownerId !== ownerId || subagentWakeAbort.signal.aborted) return
     const key = parent.sessionId
     const previous = subagentWakes.get(key)
     const wake = Promise.resolve(previous).then(async () => {
-      const sessionId = Number(parent.sessionId)
-      const active = running.get(sessionId)
-      if (active) await Promise.allSettled([active.done])
-      if (running.has(sessionId) || subagentWakeAbort.signal.aborted) return
-      const { rows: [admission] } = await sql<{ run_id: string }>`SELECT a.run_id FROM agent_run_admissions a
-        JOIN conversation_sessions s ON s.id=a.session_id AND s.user_id=a.user_id AND s.active_run_id=a.run_id
-        LEFT JOIN agent_run_controls c ON c.user_id=a.user_id AND c.session_id=a.session_id AND c.run_id=a.run_id
-        WHERE a.user_id=${dataContext(ownerId).ownerId.replaceAll('-', '')} AND a.session_id=${sessionId}
-          AND COALESCE(c.cancel_requested,0)=0`.execute(db)
-      if (!admission) return
-      const recipient = { ...parent, runId: admission.run_id }
-      const secret = await loadSqliteAgentRunSecret(db, databasePath)
-      const store = createSqliteAgentRunStore<CanonicalRunContext>(db, secret, {
-        async writeHistory() { throw new Error('只读子运行唤醒不接受历史写入') },
-      })
-      const checkpoint = await store.read(recipient)
-      if (checkpoint?.status !== 'waiting') return
-      if (checkpoint.agentInboxWaiting && checkpoint.phase === 'decision' && await store.hasPendingSubagents?.(recipient)) return
-      const ready = checkpoint.subagentWaitChildId
-        ? !await store.isSubagentPending(recipient, checkpoint.subagentWaitChildId)
-        : checkpoint.agentInboxWaiting && Boolean((await store.readAgentInbox?.(recipient))?.length
-          || (await store.readSubagentFinals?.(recipient))?.length)
-      if (ready) await resumeCheckpoint(checkpoint, AbortSignal.any([subagentWakeAbort.signal, AbortSignal.timeout(5_000)]))
+      for (let attempt = 0; attempt < SUBAGENT_WAKE_MAX_ATTEMPTS; attempt++) {
+        if (subagentWakeAbort.signal.aborted) return
+        try {
+          await attemptSubagentWake(parent)
+          return
+        }
+        catch (error) {
+          // 会话被用户的新一轮消息占用：退避后重试，等待中的父运行不能就此搁置。
+          if (!(error instanceof AgentRunError) || error.code !== 'conflict') throw error
+          const delay = Math.min(SUBAGENT_WAKE_RETRY_MS * (attempt + 1), SUBAGENT_WAKE_MAX_RETRY_DELAY_MS)
+          await new Promise<void>(resolve => {
+            const timer = setTimeout(resolve, delay)
+            subagentWakeAbort.signal.addEventListener('abort', () => { clearTimeout(timer); resolve() }, { once: true })
+          })
+        }
+      }
+      // 重试预算用尽：父运行保留等待状态，交由下一次交付唤醒或独占启动恢复兜底。
+      notify(Number(parent.sessionId), parent.runId)
     }).catch(() => {
       // 已提交的等待和终态继续保留，供独占启动恢复。
       notify(Number(parent.sessionId), parent.runId)
@@ -2986,6 +3027,8 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       if (await settleCancelledSqliteSubagentWait(db, databasePath, identity)
         || await settleClosedSqliteInteraction(db, databasePath, identity))
         notify(sessionId, runId)
+      // 等待中的父运行不占执行位，会话被占用时改由唤醒路径退避后结算。
+      else scheduleSubagentWake(identity)
     },
     async close() {
       subagentWakeAbort.abort()

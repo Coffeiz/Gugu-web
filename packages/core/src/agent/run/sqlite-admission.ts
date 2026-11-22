@@ -43,6 +43,20 @@ async function readSession(db: Kysely<Database>, owner: string, session: number)
       AND (s.source IS NULL OR s.source='web')`.execute(db)).rows[0]
 }
 
+/**
+ * 会话最新的等待态运行。
+ * 对齐 PG 侧 currentRunId 的第三段回退：等待子代理的运行已经归还会话执行位，
+ * 但它仍是这个会话对外可见的当前运行。
+ */
+async function readWaitingSqliteAgentRun(db: Kysely<Database>, owner: string, session: number) {
+  const { rows } = await sql<{ run_id: string }>`SELECT c.run_id FROM agent_run_checkpoints c
+    WHERE c.user_id=${owner} AND c.session_id=${session} AND c.status='waiting'
+      AND NOT EXISTS(SELECT 1 FROM agent_run_controls t WHERE t.user_id=c.user_id AND t.session_id=c.session_id
+        AND t.run_id=c.run_id AND t.startup_failed=1)
+    ORDER BY c.updated_at_ms DESC, c.run_id DESC LIMIT 1`.execute(db)
+  return rows[0]?.run_id ?? null
+}
+
 async function isFinished(db: Kysely<Database>, owner: string, session: number, run: string) {
   const result = await sql<{ status: RunStatus | null; startup_failed: number | null }>`
     SELECT c.status, d.startup_failed FROM agent_run_admissions a
@@ -53,13 +67,22 @@ async function isFinished(db: Kysely<Database>, owner: string, session: number, 
   return state?.startup_failed === 1 || (state?.status != null && terminalRunStates.has(state.status))
 }
 
-/** 普通调度和重启恢复共用准入索引，只读取仍绑定会话的运行。 */
+/**
+ * 普通调度和重启恢复共用准入索引。
+ * 等待子代理的运行已经归还会话执行位，这里按 checkpoint 状态一并读出，
+ * 否则重启后这类运行既不占用会话也找不到恢复入口。
+ */
 export async function listActiveSqliteAgentRuns(db: Kysely<Database>, ownerId: string, source?: string) {
   const owner = dataContext(ownerId).ownerId.replaceAll('-', '')
+  const filter = source === undefined ? sql`` : sql`AND s.source=${source}`
   const { rows } = await sql<{ session_id: number; run_id: string; source: string | null }>`
     SELECT a.session_id,a.run_id,s.source FROM agent_run_admissions a
     JOIN conversation_sessions s ON s.id=a.session_id AND s.user_id=a.user_id AND s.active_run_id=a.run_id
-    WHERE a.user_id=${owner} ${source === undefined ? sql`` : sql`AND s.source=${source}`}`.execute(db)
+    WHERE a.user_id=${owner} ${filter}
+    UNION
+    SELECT c.session_id,c.run_id,s.source FROM agent_run_checkpoints c
+    JOIN conversation_sessions s ON s.id=c.session_id AND s.user_id=c.user_id
+    WHERE c.user_id=${owner} AND c.status='waiting' ${filter}`.execute(db)
   return rows.map(row => ({ identity: { ownerId, sessionId: String(row.session_id), runId: row.run_id }, source: row.source }))
 }
 
@@ -172,9 +195,13 @@ export function createSqliteAgentAdmission(
         const admitted = await sql`SELECT 1 FROM agent_run_admissions WHERE user_id=${owner}
           AND session_id=${session} AND run_id=${runId}`.execute(tx)
         if (!admitted.rows.length) throw new CoreError('not_found', '会话或运行不存在')
+        // 等待子代理的运行已经归还会话执行位，取消必须仍能命中它；
+        // 只有已终态的运行才视为结束。
         const { rows } = await sql`INSERT INTO agent_run_controls(user_id,session_id,run_id,cancel_requested)
           SELECT user_id,id,${runId},1 FROM conversation_sessions
-          WHERE user_id=${owner} AND id=${session} AND active_run_id=${runId}
+          WHERE user_id=${owner} AND id=${session} AND (active_run_id=${runId}
+            OR NOT EXISTS(SELECT 1 FROM agent_run_checkpoints c WHERE c.user_id=${owner} AND c.session_id=${session}
+              AND c.run_id=${runId} AND c.status IN (${sql.join([...terminalRunStates].map(status => sql`${status}`))})))
           ON CONFLICT(user_id,session_id,run_id) DO UPDATE SET cancel_requested=1 RETURNING run_id`.execute(tx)
         return { ok: true, outcome: rows.length ? 'requested' : 'already_completed' } as const
       }
@@ -187,10 +214,15 @@ export function createSqliteAgentAdmission(
       if (runId !== undefined) {
         const existing = await sql`SELECT 1 FROM agent_run_admissions WHERE user_id=${owner} AND session_id=${session} AND run_id=${runId}`.execute(db)
         if (!existing.rows.length) return { identity: null, executionState: current.execution_state }
-      } else if (!current.active_run_id || await isFinished(db, owner, session, current.active_run_id)) {
-        return { identity: null, executionState: current.execution_state }
+        return { identity: { ownerId, sessionId: String(session), runId }, executionState: current.execution_state }
       }
-      return { identity: { ownerId, sessionId: String(session), runId: runId ?? current.active_run_id! }, executionState: current.execution_state }
+      // 正在执行的运行优先；它结束或归还会话后，回退到最新的等待态运行，
+      // 界面才能继续读到等待子代理的那一轮输出。
+      if (current.active_run_id && !await isFinished(db, owner, session, current.active_run_id))
+        return { identity: { ownerId, sessionId: String(session), runId: current.active_run_id }, executionState: current.execution_state }
+      const waiting = await readWaitingSqliteAgentRun(db, owner, session)
+      if (!waiting) return { identity: null, executionState: current.execution_state }
+      return { identity: { ownerId, sessionId: String(session), runId: waiting }, executionState: current.execution_state }
     },
   }
 }

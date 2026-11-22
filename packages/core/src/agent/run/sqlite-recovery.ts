@@ -182,7 +182,11 @@ export async function settleExclusiveSqliteAgentRuns(db: Kysely<Database>, path:
           ? !await store.isSubagentPending(identity, previous.subagentWaitChildId)
           : Boolean((await store.readAgentInbox?.(identity))?.length || (await store.readSubagentFinals?.(identity))?.length)
         if (ready && !(previous.agentInboxWaiting && previous.phase === 'decision'
-          && await store.hasPendingSubagents?.(identity))) await resume?.(previous)
+          && await store.hasPendingSubagents?.(identity))) {
+          // 会话被同会话的其他运行占用时保持等待，由子代理交付后的唤醒继续，不中断整体恢复。
+          try { await resume?.(previous) }
+          catch { /* 恢复失败时保留等待状态，等待下一次唤醒。 */ }
+        }
       }
       continue
     }
@@ -203,7 +207,8 @@ export async function settleExclusiveSqliteAgentRuns(db: Kysely<Database>, path:
       catch { /* 模型重建失败时由原检查点完成中断结算。 */ }
     }
     const lease = await leases.acquire(identity)
-    if (!lease) throw new Error('无法结算上次运行')
+    // 会话正在被同会话的其他运行占用时跳过结算，不中断其余会话的恢复。
+    if (!lease) continue
     try {
       const sequence = previous.sequence + 1
       const text = previous.displayTimeline.filter(item => item.kind === 'assistant' && item.text).map(item => item.text).join('\n\n')

@@ -45,8 +45,8 @@ it('SQLite Agent Run 加密重读，阻止跨用户、过期租约与重复确�
       const leases = createSqliteAgentRunLeasePort(runtime.db, { ...clock, ttlMs: 100_000 })
       const writeHistory = async () => { throw new Error('合成历史写入失败') }
       const store = createSqliteAgentRunStore(runtime.db, '合成密钥', { ...clock, writeHistory })
-      const deliveries = createSubagentDeliveryStore(runtime.db, '合成密钥')
-      const child = await deliveries.admit(identity, '合成派单', '合成任务输入')
+      const deliveries = createSubagentDeliveryStore(runtime.db, '合成密钥', undefined, 'sqlite')
+      const child = await deliveries.admit(identity, '合成派单', '合成任务输入', { input: { task: '合成任务输入' }, modelIdentity: '合成模型' })
       await deliveries.complete(identity, child.runId, { status: 'completed', finalMessage: '合成子任务结论' })
       const checkpoint = {
         identity, version: 0, sequence: 1, status: 'running', phase: 'prepare', context: null, text: '合成受限正文',
@@ -567,13 +567,13 @@ it('Desktop 独占恢复只续跑结果就绪的等待，先结算取消且清�
       const db = runtime.db
       const secret = await loadSqliteAgentRunSecret(db, path)
       const store = createSqliteAgentRunStore(db, secret, { async writeHistory() {} })
-      const deliveries = createSubagentDeliveryStore(db, secret)
+      const deliveries = createSubagentDeliveryStore(db, secret, undefined, 'sqlite')
       const leases = createSqliteAgentRunLeasePort(db)
       const admission = createSqliteAgentAdmission(db)
       async function createWaiting() {
         const session = await db.transaction().execute(tx => createDesktopAgentSession(tx, ownerId, '合成等待会话'))
         const { identity } = await admission.prepare(ownerId, { session_id: session.id, message: '合成任务' })
-        const child = await deliveries.admit(identity, '派单', '合成输入')
+        const child = await deliveries.admit(identity, '派单', '合成输入', { input: { task: '合成输入' }, modelIdentity: '合成模型' })
         const lease = (await leases.acquire(identity))!
         const checkpoint = { identity, version: 0, sequence: 0, status: 'running', phase: 'tools', round: 1,
           context: null, text: '', displayTimeline: [] } as RunCheckpoint<unknown>
