@@ -1205,6 +1205,11 @@ process.stdin.resume()
       .toMatchObject({ isRunning: true })
     expect(parentTools).toContain('agent_message')
     expect(parentRequests).toBe(2)
+    if (privateIm) {
+      const page = await read(session.id, runId, 0, false, true, true)
+      expect(page.events).toContainEqual(expect.objectContaining({ type: 'im_stream',
+        runEvent: expect.objectContaining({ type: 'tool_call', payload: {} }) }))
+    }
     await expect.poll(() => childRequests).toBe(1)
     if (mode === '父取消') {
       const cancelled = await createSqliteAgentAdmission(runtime.db).requestCancel(ownerId, session.id, runId)

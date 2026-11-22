@@ -1,3 +1,4 @@
+import { subagentSessionInbox } from './migrations/0036_subagent_session_inbox.js'
 import { subagentExecutions } from './migrations/0035_subagent_executions.js'
 import { subagentContinuations } from './migrations/0034_subagent_continuations.js'
 import type { Pool } from 'pg'
@@ -40,7 +41,7 @@ import { runPostgresMigrations } from './runner.js'
 const catalog = [
   initialize, webDomain, agentRun, agentSnapshots, filesystemAuthorization, securityEvents,
   terminalSessions, interactionActions, trashPurge, searchUsage, ragIndex,
-  agentReasoning, imGateway, imReflection, dataPortability, providerCredentials, mcp, fileSync, accountRecords, memory, byokBindings, scheduledTaskMode, calendarReminderMode, webPush, webReflection, reflectionCompaction, imPrivateStreaming, subagentDeliveries, subagentSessions, subagentLaunches, subagentWaits, agentInbox, subagentConversations, subagentContinuations, subagentExecutions,
+  agentReasoning, imGateway, imReflection, dataPortability, providerCredentials, mcp, fileSync, accountRecords, memory, byokBindings, scheduledTaskMode, calendarReminderMode, webPush, webReflection, reflectionCompaction, imPrivateStreaming, subagentDeliveries, subagentSessions, subagentLaunches, subagentWaits, agentInbox, subagentConversations, subagentContinuations, subagentExecutions, subagentSessionInbox,
 ]
 
 export function migratePostgres(pool: Pick<Pool, 'connect'>, action: MigrationAction) {

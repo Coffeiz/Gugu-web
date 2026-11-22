@@ -167,6 +167,29 @@ it('SQLite 重开后 wait 返回同一 final，父回执提交前保持可领取
       expect(await details(parent.ownerId, session.id, 100, 1)).toEqual({ toolInput: { childId } })
       expect(await reopened.runtime.db.transaction().execute(tx => restored.pruneConsumed(tx, parent, 2))).toBe(0)
       expect(await reopened.runtime.db.transaction().execute(tx => restored.pruneConsumed(tx, parent, 3))).toBe(1)
+      const background = await restarted.start(parent, '后台派单', 'builtin:searcher',
+        { task: '后台任务', allowBackgroundReport: true }, signal)
+      const backgroundId = background.run.childId
+      const backgroundRun = await restored.read(parent, backgroundId)
+      await expect(restarted.wait({ ...parent, runId: '其他父运行' }, backgroundId, signal))
+        .rejects.toMatchObject({ code: 'AGENT_UNAVAILABLE' })
+      expect(await restored.complete(parent, backgroundRun!.runId, { status: 'completed', finalMessage })).toBe(true)
+      expect(await restarted.wait({ ...parent, runId: '其他父运行' }, backgroundId, signal))
+        .toEqual({ childId: backgroundId, status: 'completed', finalMessage, deliveryRunId: backgroundRun!.runId })
+      await expect(restarted.wait({ ...parent, sessionId: String(session.id + 1) }, backgroundId, signal))
+        .rejects.toMatchObject({ code: 'RUN_NOT_FOUND' })
+      const nextParent = { ...parent, runId: '其他父运行' }
+      expect(await restarted.waitInbox(nextParent, signal)).toEqual({
+        messages: [], finals: [{ childId: backgroundId, status: 'completed' }],
+      })
+      expect(await restored.pending({ ...nextParent, sessionId: String(session.id + 1) })).toEqual([])
+      const [delivery] = await restored.pending(nextParent)
+      expect(delivery?.deliveryRunId).toBe(backgroundRun!.runId)
+      await reopened.runtime.db.transaction().execute(tx =>
+        restored.markConsumed(tx, nextParent, `run:${delivery!.deliveryRunId}`, 5))
+      expect(await restarted.waitInbox(nextParent, signal)).toEqual({ messages: [], finals: [] })
+      expect(await restored.readOutcomeByExecution(nextParent, backgroundRun!.runId, backgroundId))
+        .toMatchObject({ finalMessage })
     } finally { await reopened.runtime.close() }
   } finally { await rm(directory, { force: true, recursive: true }) }
 })
@@ -227,9 +250,9 @@ it('子 checkpoint 已提交而交付未提交时，SQLite 重开后并发 wait 
     try {
       const expected = { childId, status: 'completed', finalMessage }
       await deliveries.repairTerminalDeliveries(store, ownerId)
-      expect(await deliveries.pending(parent)).toEqual([expected])
+      expect(await deliveries.pending(parent)).toEqual([{ ...expected, deliveryRunId: (await deliveries.read(parent, childId))!.runId }])
       expect(await Promise.all(readers.map(service => service.wait(parent, childId, signal)))).toEqual([expected, expected])
-      expect(await deliveries.pending(parent)).toEqual([expected])
+      expect(await deliveries.pending(parent)).toEqual([{ ...expected, deliveryRunId: (await deliveries.read(parent, childId))!.runId }])
       await db.transaction().execute(tx => deliveries.markConsumed(tx, parent, childId, 2))
       expect(await readers[0]!.wait(parent, childId, signal)).toEqual({ childId, status: 'completed', alreadyDelivered: true })
       expect(await deliveries.pending(parent)).toEqual([])
@@ -318,6 +341,8 @@ it('双向收件箱重启后按 Run 恢复，消费失败回滚且发送重放�
       const inbox = createAgentInbox(db, secret)
       expect(await inbox.send(parent, { childId: ids.childId }, '补充', '合成补充指令')).toEqual({ messageId: ids.messageId })
       expect(await inbox.pending(parent)).toMatchObject([{ message: '合成进度' }])
+      expect(await inbox.pending({ ...parent, runId: '后续父运行' })).toMatchObject([{ message: '合成进度' }])
+      expect(await inbox.pending({ ...child, runId: '后续子运行' })).toEqual([])
       expect(await inbox.pending(child)).toMatchObject([{ id: ids.messageId, message: '合成补充指令' }])
       const leases = createSqliteAgentRunLeasePort(db)
       const lease = (await leases.acquire(child))!

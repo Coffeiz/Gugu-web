@@ -209,8 +209,8 @@ test('调度租约并发仅一人选中，过期只接管原 run，密文绑定 
     await pool.query("INSERT INTO agent_run_checkpoints VALUES($1,5,'im-waiting','waiting')", [owner])
     await pool.query(`INSERT INTO agent_subagent_deliveries
       (owner_id,parent_session_id,parent_run_id,call_id,child_id,child_run_id,request_digest,status,updated_at)
-      VALUES($1,'5','im-waiting','im-start','abcdef03','im-child','digest','queued','now')`, [owner])
-    await pool.query("INSERT INTO agent_subagent_waits VALUES($1,'5','im-waiting','abcdef03')", [owner])
+      VALUES($1,'5','im-previous','im-start','abcdef03','im-child','digest','queued','now')`, [owner])
+    await pool.query("INSERT INTO agent_inbox_waits VALUES($1,'5','im-waiting')", [owner])
     const imLeases: Awaited<ReturnType<typeof imDispatch.claim>>[] = []
     const imScan = createImHostScans({ pool, secretKey: 'synthetic-key',
       async kick(ownerId, sessionId) { imLeases.push(await imDispatch.claim(ownerId, sessionId)) }, async recover() {} })

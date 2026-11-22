@@ -97,10 +97,22 @@ export function createSubagentService(ports: {
     },
     async wait(parent: RunIdentity, childId: string, signal: AbortSignal) {
       await binding(parent)
-      const saved = await ports.deliveries.read(parent, childId)
+      let deliveryRunId: string | undefined
+      let saved = await ports.deliveries.read(parent, childId)
+      if (!saved) {
+        const conversation = await ports.deliveries.resolveConversation(parent, childId)
+        if (conversation) {
+          const launch = await ports.deliveries.readLaunch(conversation.parent, conversation.delivery.runId, true)
+          if (launch?.input.allowBackgroundReport) {
+            saved = conversation.delivery
+            deliveryRunId = saved.runId
+          }
+        }
+      }
       signal.throwIfAborted()
       if (!saved?.outcome) throw new SubagentServiceError(saved ? 'AGENT_UNAVAILABLE' : 'RUN_NOT_FOUND')
-      return saved.consumed ? { childId, status: saved.outcome.status, alreadyDelivered: true as const } : saved.outcome
+      return saved.consumed ? { childId, status: saved.outcome.status, alreadyDelivered: true as const }
+        : { ...saved.outcome, ...(deliveryRunId ? { deliveryRunId } : {}) }
     },
     async cancel(parent: RunIdentity, childId: string) {
       await binding(parent)

@@ -29,11 +29,16 @@ export function createAgentInbox(db: Kysely<Database>, secret: string, options: 
   return {
     async pending(recipient: RunIdentity) {
       assertRunIdentity(recipient)
-      const { rows } = await sql<AgentInboxRow>`SELECT message_id,sender_session_id,sender_run_id,nonce,payload
-        FROM agent_inbox_messages WHERE owner_id=${recipient.ownerId} AND recipient_session_id=${recipient.sessionId}
-          AND recipient_run_id=${recipient.runId} AND consumed_checkpoint_version IS NULL
+      const { rows } = await sql<AgentInboxRow & { recipient_run_id: string }>`
+        SELECT message_id,sender_session_id,sender_run_id,recipient_run_id,nonce,payload
+        FROM agent_inbox_messages m WHERE owner_id=${recipient.ownerId} AND recipient_session_id=${recipient.sessionId}
+          AND consumed_checkpoint_version IS NULL AND (recipient_run_id=${recipient.runId} OR EXISTS (
+            SELECT 1 FROM agent_subagent_deliveries d WHERE d.owner_id=m.owner_id
+              AND d.parent_session_id=m.recipient_session_id AND d.parent_run_id=m.recipient_run_id
+              AND d.child_run_id=m.sender_run_id
+          ))
         ORDER BY sequence LIMIT 16`.execute(db)
-      return rows.map(row => decode(recipient, row))
+      return rows.map(row => decode({ ...recipient, runId: row.recipient_run_id }, row))
     },
     async send(sender: RunIdentity, target: AgentInboxTarget, callId: string, message: string, replayOnly = false) {
       assertRunIdentity(sender)

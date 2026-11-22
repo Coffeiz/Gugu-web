@@ -100,3 +100,37 @@ it('桌面 /workspace 命令通过 Core 绑定当前会话并投影完成消息'
     { type: 'projected', operationId, event: { type: 'done' } },
   ])
 })
+
+
+it('桌面内部等待期间保留原运行的连接并继续接收回复', async () => {
+  const runId = 'synthetic-run'
+  const request = vi.fn(async <T,>(method: string, params?: Record<string, unknown>): Promise<T> => {
+    if (method === 'agent.sessions.messages') return [] as T
+    if (method !== 'agent.sessions.events') throw new Error('非预期的桌面请求')
+    const waiting = params?.after === 0
+    return {
+      runId, cursor: waiting ? 1 : 2, status: waiting ? 'waiting' : 'completed', hasMore: false,
+      events: waiting ? [] : [{ type: 'done', run_id: runId }],
+    } as DesktopAgentEventPage as T
+  })
+  let notify: ((id: number, runId: string) => void) | undefined
+  const handlers = agentSessionHandlers({ request, onAgentRunChanged(listener) {
+    notify = listener
+    return () => {}
+  } }, {} as ReturnType<typeof createDesktopAgentModelService>)
+  const connection = new AbortController()
+  const events = vi.fn()
+  const operation = handlers[DESKTOP_CHANNELS.agentSessions]({
+    action: 'resume', id: 1, runId, operationId: crypto.randomUUID(),
+  }, events, connection.signal)
+  try {
+    await vi.waitFor(() => expect(request).toHaveBeenCalledWith('agent.sessions.events', { id: 1, runId, after: 0 }))
+    expect(request).not.toHaveBeenCalledWith('agent.sessions.messages', { id: 1 })
+    notify?.(1, runId)
+    await expect(operation).resolves.toEqual([])
+    expect(events).toHaveBeenCalledWith(expect.objectContaining({ event: { type: 'done', run_id: runId } }))
+  } finally {
+    connection.abort()
+    await operation.catch(() => {})
+  }
+})

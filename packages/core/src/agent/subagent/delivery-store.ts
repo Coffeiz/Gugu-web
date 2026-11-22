@@ -158,6 +158,14 @@ export function createSubagentDeliveryStore(db: Kysely<Database>, secret: string
     findWaitingInteraction,
     interactionPrompt,
     read,
+    async readOutcomeByExecution(recipient: RunIdentity, childRunId: string, childId: string) {
+      assertRunIdentity(recipient)
+      const { rows: [row] } = await sql<SubagentDeliveryRow & { parent_run_id: string }>`
+        SELECT parent_run_id,child_id,child_run_id,status,nonce,payload
+        FROM agent_subagent_deliveries WHERE owner_id=${recipient.ownerId}
+          AND parent_session_id=${recipient.sessionId} AND child_run_id=${childRunId} AND child_id=${childId}`.execute(db)
+      return row ? decode({ ...recipient, runId: row.parent_run_id }, row) : null
+    },
     async resolveConversation(caller: RunIdentity, childId: string) {
       assertRunIdentity(caller)
       if (!sessionBackend) return null
@@ -218,12 +226,15 @@ export function createSubagentDeliveryStore(db: Kysely<Database>, secret: string
       return row ? { ownerId: parent.ownerId, sessionId: String(row.id), runId } : null
     },
     async pending(parent: RunIdentity) {
-      const { rows } = await sql<SubagentDeliveryRow>`SELECT child_id,child_run_id,status,nonce,payload
-        FROM agent_subagent_deliveries WHERE ${scope(parent)} AND payload IS NOT NULL AND consumed_checkpoint_version IS NULL
-        ORDER BY updated_at,child_id LIMIT 16`.execute(db)
+      assertRunIdentity(parent)
+      const { rows } = await sql<SubagentDeliveryRow & { parent_run_id: string }>`
+        SELECT parent_run_id,child_id,child_run_id,status,nonce,payload
+        FROM agent_subagent_deliveries WHERE owner_id=${parent.ownerId} AND parent_session_id=${parent.sessionId}
+          AND payload IS NOT NULL AND consumed_checkpoint_version IS NULL
+        ORDER BY updated_at,child_run_id LIMIT 16`.execute(db)
       return rows.flatMap(row => {
-        const outcome = decode(parent, row)
-        return outcome ? [outcome] : []
+        const outcome = decode({ ...parent, runId: row.parent_run_id }, row)
+        return outcome ? [{ ...outcome, deliveryRunId: row.child_run_id }] : []
       })
     },
     async readLaunch(parent: RunIdentity, runId: string, includeTerminal = false): Promise<SavedLaunch | null> {
@@ -351,9 +362,13 @@ export function createSubagentDeliveryStore(db: Kysely<Database>, secret: string
     /** 只能由持久化父工具结果的同一事务调用。 */
     async markConsumed(tx: Transaction<Database>, parent: RunIdentity, childId: string, checkpointVersion: number) {
       if (!Number.isSafeInteger(checkpointVersion) || checkpointVersion < 1) throw new TypeError('父运行保存版本无效')
+      const selected = childId.startsWith('run:')
+        ? sql`owner_id=${parent.ownerId} AND parent_session_id=${parent.sessionId}
+            AND child_run_id=${childId.slice(4)} AND consumed_checkpoint_version IS NULL`
+        : sql`${scope(parent)} AND child_id=${childId}`
       const result = await sql`UPDATE agent_subagent_deliveries
         SET consumed_checkpoint_version=coalesce(consumed_checkpoint_version,${checkpointVersion})
-        WHERE ${scope(parent)} AND child_id=${childId} AND payload IS NOT NULL RETURNING child_id`.execute(tx)
+        WHERE ${selected} AND payload IS NOT NULL RETURNING child_id`.execute(tx)
       return result.rows.length === 1
     },
   }

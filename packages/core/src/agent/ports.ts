@@ -264,7 +264,7 @@ export interface StreamSanitizer {
  * Data/Tools必须加密受限保存或使用安全意图引用，状态DTO/日志不得原样公开。
  * 不可用redact修改实际dispatch参数假装完成该存储边界；内存测试Adapter不构成生产验收。
  */
-export type SubagentFinal = { childId: string } & import('./subagent/contracts.js').DelegatedAgentOutcome
+export type SubagentFinal = { childId: string; deliveryRunId?: string } & import('./subagent/contracts.js').DelegatedAgentOutcome
 
 export interface RunStore<C> {
   readAgentInbox?(identity: RunIdentity): Promise<readonly { id: string; message: string }[]>

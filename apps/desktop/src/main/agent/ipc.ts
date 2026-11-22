@@ -49,6 +49,7 @@ export function agentSessionHandlers(host: IpcHost, model: ReturnType<typeof cre
     const assistantText = new Map<string, string>()
     let cursor = 0
     let error: string | undefined
+    let awaitingUserInteraction = false
     let changed = new AbortController()
     const unsubscribe = host.onAgentRunChanged?.((sessionId, changedRunId) => {
       if (sessionId === id && changedRunId === runId) changed.abort()
@@ -59,6 +60,8 @@ export function agentSessionHandlers(host: IpcHost, model: ReturnType<typeof cre
         const page = await host.request<DesktopAgentEventPage>('agent.sessions.events', { id, runId, after: cursor })
         cursor = page.cursor
         for (const event of page.events) {
+          if (event.type === 'interaction_required') awaitingUserInteraction = event.resolved !== true
+          if (event.type === 'interaction_resolved') awaitingUserInteraction = false
           if (event.type === 'error' && typeof event.message === 'string') error = event.message
           if (streaming && !signal.aborted) {
             if (event.type === 'session_id' && event.session_id === id && typeof event.user_message_id === 'number')
@@ -82,7 +85,7 @@ export function agentSessionHandlers(host: IpcHost, model: ReturnType<typeof cre
         if (page.status === 'cancelled') throw new DesktopError('cancelled', '操作已取消')
         if (['failed', 'startup_failed', 'unknown'].includes(page.status))
           throw new DesktopError('model_unavailable', error ?? '生成失败，请稍后重试')
-        if (page.status === 'completed' || page.status === 'waiting'
+        if (page.status === 'completed' || (page.status === 'waiting' && awaitingUserInteraction)
           || page.events.some(event => event.type === 'done' && event.interrupted === true))
           return host.request('agent.sessions.messages', { id })
         const wakeSignal = AbortSignal.any([signal, changed.signal])

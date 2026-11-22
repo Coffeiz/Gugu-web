@@ -24,10 +24,12 @@ export const hasReadySubagentWait = (owner: string, session: string, run: string
 export const hasReadyAgentInbox = (owner: string, session: string, run: string) => `EXISTS (
   SELECT 1 FROM agent_inbox_waits w WHERE w.owner_id=${owner} AND w.session_id=${session} AND w.run_id=${run}
     AND (EXISTS (SELECT 1 FROM agent_inbox_messages m
-      WHERE m.owner_id=w.owner_id AND m.recipient_session_id=w.session_id AND m.recipient_run_id=w.run_id
-        AND m.consumed_checkpoint_version IS NULL)
+      WHERE m.owner_id=w.owner_id AND m.recipient_session_id=w.session_id AND m.consumed_checkpoint_version IS NULL
+        AND (m.recipient_run_id=w.run_id OR EXISTS (SELECT 1 FROM agent_subagent_deliveries d
+          WHERE d.owner_id=m.owner_id AND d.parent_session_id=m.recipient_session_id
+            AND d.parent_run_id=m.recipient_run_id AND d.child_run_id=m.sender_run_id)))
       OR EXISTS (SELECT 1 FROM agent_subagent_deliveries f
-        WHERE f.owner_id=w.owner_id AND f.parent_session_id=w.session_id AND f.parent_run_id=w.run_id
+        WHERE f.owner_id=w.owner_id AND f.parent_session_id=w.session_id
           AND f.payload IS NOT NULL AND f.consumed_checkpoint_version IS NULL)))`
 
 /** 只保存重建必要的非凭据元数据；正文、附件及引用以用户消息为真源。 */

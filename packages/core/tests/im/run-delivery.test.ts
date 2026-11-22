@@ -195,6 +195,23 @@ test('平台流投影独占正文且与交互/附件共用串行收据，recover
   assert.equal(projected.length, 7)
 })
 
+test('子 Agent 派单保留 QQ 正文收尾信号，工具正文和状态提示不外发', async () => {
+  const f = deliveryFixture([event(1, 'round_end', { text: '我重新派一个任务。' }),
+    event(2, 'tool_call', { name: 'agent_message', toolCallId: 'private-call' }),
+    event(3, 'tool_done', { name: 'agent_message', status: 'success', result: '内部结果' })])
+  const projected: RunEvent[] = []
+  await createImRunDelivery({ ...f.ports, stream: { async project({ event }) {
+    projected.push(event)
+    return 'accepted'
+  } }, sender: { ...f.ports.sender, async toolNotice() {
+    assert.fail('内部工具状态不应外发')
+  } } }).start(identity)
+  assert.deepEqual(projected.map(({ type, payload }) => ({ type, payload })), [
+    { type: 'round_end', payload: { text: '我重新派一个任务。' } },
+    { type: 'tool_call', payload: {} },
+  ])
+})
+
 test('流式操作unknown仍排空业务事件，pending恢复不重复调用流端口', async () => {
   const f = deliveryFixture([event(1, 'token', { text: '正文' }), event(2, 'final', { text: '正文', status: 'completed' })])
   let calls = 0

@@ -149,7 +149,7 @@ export function createSqliteAgentRunStore<C>(
         const messages = [...new Set(change.inboxMessageIds ?? [])]
         if (messages.length) {
           const consumed = await sql`UPDATE agent_inbox_messages SET consumed_checkpoint_version=${checkpoint.version}
-            WHERE owner_id=${identity.ownerId} AND recipient_session_id=${identity.sessionId} AND recipient_run_id=${run}
+            WHERE owner_id=${identity.ownerId} AND recipient_session_id=${identity.sessionId}
               AND message_id IN (${sql.join(messages)}) AND consumed_checkpoint_version IS NULL RETURNING message_id`.execute(tx)
           if (consumed.rows.length !== messages.length) throw new RunStoreRejected('conflict')
         }

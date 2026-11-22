@@ -39,11 +39,15 @@ export function createSqlAgentToolEventDetails(db: Kysely<any>, backend: 'postgr
         if (typeof childId === 'string' && /^[a-f0-9]{8}$/.test(childId)) {
           const deliveries = createSubagentDeliveryStore(db, await getRunSecret(), undefined, backend)
           const parent = { ownerId: normalized, sessionId: String(sessionId), runId: event.runId }
-          const delivery = await deliveries.read(parent, childId)
-          if (delivery?.outcome && 'finalMessage' in delivery.outcome) {
+          const executionId = event.toolName === 'subagent_result' && typeof event.toolCallId === 'string'
+            ? /^subagent-result:([a-f0-9-]{36})$/u.exec(event.toolCallId)?.[1]
+            : typeof result.deliveryRunId === 'string' ? result.deliveryRunId : undefined
+          const outcome = executionId ? await deliveries.readOutcomeByExecution(parent, executionId, childId)
+            : (await deliveries.read(parent, childId))?.outcome
+          if (outcome && 'finalMessage' in outcome) {
             details.toolResult = {
               ...result,
-              childId, finalMessage: delivery.outcome.finalMessage,
+              childId, finalMessage: outcome.finalMessage,
             }
           }
         }

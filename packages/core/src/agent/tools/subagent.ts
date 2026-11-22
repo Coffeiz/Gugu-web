@@ -50,7 +50,7 @@ export function createSubagentServiceTools(service: ReturnType<typeof createSuba
       (input, scope, id) => input.action === 'start'
         ? service.start(scope.identity, id, input.agentId, { task: input.task, resourceRefs: input.resourceRefs, allowBackgroundReport: input.allowBackgroundReport }, scope.signal)
         : service.send(scope.identity, id, input.childId, input.message, scope.signal)),
-    tool('agent_wait', '等待指定子运行的最终回复，或留空等待当前运行的收件箱更新。', waitInput, 'read',
+    tool('agent_wait', '先推进独立工作。当前工作确实需要子 Agent 的结果或收件箱消息才能继续时，传 childId 等待该子 Run 的最终回复，或留空等待当前 Run 的收件箱更新。', waitInput, 'read',
       (input, scope) => 'childId' in input ? service.wait(scope.identity, input.childId, scope.signal) : service.waitInbox(scope.identity, scope.signal)),
     tool('agent_cancel', '请求取消指定子运行。', childInput, 'write',
       (input, scope) => service.cancel(scope.identity, input.childId)),

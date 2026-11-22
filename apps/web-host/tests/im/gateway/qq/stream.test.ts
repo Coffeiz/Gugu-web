@@ -1,8 +1,9 @@
 import { imGatewaySql } from '@gugu/database/postgres/migrations/0013_im_gateway'
 import assert from 'node:assert/strict'
-import {randomUUID} from 'node:crypto'
+import {createHash,randomUUID} from 'node:crypto'
 import {test} from 'node:test'
 import type {Pool} from 'pg'
+import {createImRunDeliveryRecovery} from '@gugu/core/im/run-delivery'
 import type {RunEvent} from '@gugu/core/agent'
 import {createQqClient} from '@gugu/gateway/qq'
 import {createQqSender} from '@gugu/gateway/qq'
@@ -85,6 +86,31 @@ test('上一段结束后下一段立即发送完整首行，段内继续节流',
   await push(6,'token',{text:'第三行\n'},2)
   assert.deepEqual(p.requests.map(f=>[f.input_state,f.index]),[[1,0],[10,1],[1,0],[1,1]])
  }finally{await p.client.close()}
+})
+
+test('QQ 在等待子 Agent 期间就收到第二轮正文的完成帧', async () => {
+ const p = platform(), m = memory()
+ const stream = createPersistentQqProjection({identity,target,policyVersion:'v1',receipts:m.receipts,sender:p.sender,authorize:p.authorize})
+ const first = '子 Agent 已经派出去了。'
+ const second = '我重新派一个范围更窄的任务。'
+ const saved = [
+  event(1,'round_end',{text:first}), event(2,'tool_call',{name:'web_search'}),
+  event(3,'round_end',{text:second},2), event(4,'tool_call',{name:'agent_message',toolCallId:'private-call'},2),
+  event(5,'tool_call',{name:'agent_wait',toolCallId:'private-wait'},2),
+ ]
+ try {
+  const delivery = createImRunDeliveryRecovery({
+   events:{async readAfter(_identity,sequence){return saved.filter(item=>item.sequence>sequence)}},
+   receipts:m.receipts, stream, authorize:p.authorize,
+   digest:value=>createHash('sha256').update(JSON.stringify(value)).digest('hex'),
+   sender:{async text(){return 'rejected'},async artifact(){return 'rejected'},async interaction(){return 'rejected'}},
+  })
+  await delivery.recover(identity)
+  assert.deepEqual(p.requests.filter(frame=>frame.input_state===10).map(frame=>frame.content_raw),[first+'\n',second+'\n'])
+ } finally {
+  await stream.close?.()
+  await p.client.close()
+ }
 })
 
 test('QQ 节流期间缓冲的完整行无需下一条事件即可刷新', { timeout: 3000 }, async () => {

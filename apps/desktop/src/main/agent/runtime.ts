@@ -2596,29 +2596,30 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
 
   function scheduleSubagentWake(parent: RunIdentity) {
     if (parent.ownerId !== ownerId || subagentWakeAbort.signal.aborted) return
-    const key = JSON.stringify([parent.sessionId, parent.runId])
+    const key = parent.sessionId
     const previous = subagentWakes.get(key)
     const wake = Promise.resolve(previous).then(async () => {
       const sessionId = Number(parent.sessionId)
       const active = running.get(sessionId)
-      if (active?.runId === parent.runId) await Promise.allSettled([active.done])
+      if (active) await Promise.allSettled([active.done])
       if (running.has(sessionId) || subagentWakeAbort.signal.aborted) return
-      const { rows } = await sql`SELECT 1 FROM agent_run_admissions a
+      const { rows: [admission] } = await sql<{ run_id: string }>`SELECT a.run_id FROM agent_run_admissions a
         JOIN conversation_sessions s ON s.id=a.session_id AND s.user_id=a.user_id AND s.active_run_id=a.run_id
         LEFT JOIN agent_run_controls c ON c.user_id=a.user_id AND c.session_id=a.session_id AND c.run_id=a.run_id
         WHERE a.user_id=${dataContext(ownerId).ownerId.replaceAll('-', '')} AND a.session_id=${sessionId}
-          AND a.run_id=${parent.runId} AND COALESCE(c.cancel_requested,0)=0`.execute(db)
-      if (!rows.length) return
+          AND COALESCE(c.cancel_requested,0)=0`.execute(db)
+      if (!admission) return
+      const recipient = { ...parent, runId: admission.run_id }
       const secret = await loadSqliteAgentRunSecret(db, databasePath)
       const store = createSqliteAgentRunStore<CanonicalRunContext>(db, secret, {
         async writeHistory() { throw new Error('只读子运行唤醒不接受历史写入') },
       })
-      const checkpoint = await store.read(parent)
+      const checkpoint = await store.read(recipient)
       if (checkpoint?.status !== 'waiting') return
       const ready = checkpoint.subagentWaitChildId
-        ? !await store.isSubagentPending(parent, checkpoint.subagentWaitChildId)
-        : checkpoint.agentInboxWaiting && Boolean((await store.readAgentInbox?.(parent))?.length
-          || (await store.readSubagentFinals?.(parent))?.length)
+        ? !await store.isSubagentPending(recipient, checkpoint.subagentWaitChildId)
+        : checkpoint.agentInboxWaiting && Boolean((await store.readAgentInbox?.(recipient))?.length
+          || (await store.readSubagentFinals?.(recipient))?.length)
       if (ready) await resumeCheckpoint(checkpoint, AbortSignal.any([subagentWakeAbort.signal, AbortSignal.timeout(5_000)]))
     }).catch(() => {
       // 已提交的等待和终态继续保留，供独占启动恢复。

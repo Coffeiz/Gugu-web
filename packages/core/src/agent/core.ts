@@ -509,6 +509,9 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
         && typeof result.value === 'object' && 'childId' in result.value && typeof result.value.childId === 'string'
         && 'status' in result.value && ['completed', 'partial', 'failed', 'cancelled'].includes(String(result.value.status))
         && !('alreadyDelivered' in result.value) ? result.value.childId : undefined
+      const crossRunDelivery = childId && result.value && typeof result.value === 'object'
+        && 'deliveryRunId' in result.value && typeof result.value.deliveryRunId === 'string' ? result.value.deliveryRunId : undefined
+      const consumedSubagent = crossRunDelivery ? `run:${crossRunDelivery}` : state.acceptsSubagentFinals ? childId : undefined
       const presented = projectPersistentToolResult(await ports.presentToolResult(result.value, { identity, round: state.round, call }), true)
       return (await commit({
         context,
@@ -523,7 +526,7 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
         files: artifact === undefined || isButtons ? state.files : [...state.files, artifact],
         emptyRetries: result.successful ? 0 : state.emptyRetries,
         replyState: toolReplyProgress(state.replyState, result.successful),
-      }, 'tool_done', { toolCallId: call.id, name: call.name, status: resultStatus, result: presented, ...(artifact === undefined ? {} : { artifact }) }, null, null, childId && state.acceptsSubagentFinals ? [childId] : undefined))!
+      }, 'tool_done', { toolCallId: call.id, name: call.name, status: resultStatus, result: presented, ...(artifact === undefined ? {} : { artifact }) }, null, null, consumedSubagent ? [consumedSubagent] : undefined))!
     }
     async function agentInboxReady() {
       return Boolean((await ports.store.readAgentInbox?.(identity))?.length
@@ -821,7 +824,10 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
             yield await finish(context.response.errored ? 'failed' : 'completed', code, ports.sanitizeText(context.response.text))
             return state
           }
-          await commit({ context, status: 'running', phase: 'idle' })
+          const capabilities = (context as { capabilities?: { toolNames?: readonly string[] } | null } | null)?.capabilities
+          await commit({ context, status: 'running', phase: 'idle',
+            ...(ports.store.readSubagentFinals && capabilities?.toolNames?.includes('agent_wait') ? { acceptsSubagentFinals: true } : {}),
+          })
           continue
         }
         if (state.context === null)
@@ -1000,20 +1006,20 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
             throw new AgentRunError('invalid_state', '运行不支持追加消息')
           for (const { message } of messages)
             nextContext = await ports.context.appendReminder!(nextContext, `【Agent 消息】\n${message}`)
-          for (const result of finals)
+          for (const { deliveryRunId: _deliveryRunId, ...result } of finals)
             nextContext = await ports.context.appendReminder!(nextContext, `【子任务结果】\n${JSON.stringify(result)}`)
           let displayTimeline = state.displayTimeline
-          for (const result of finals) {
+          for (const { deliveryRunId, ...result } of finals) {
             displayTimeline = updateDisplayItem(displayTimeline, {
               kind: 'tool', runId: identity.runId, roundId: `${identity.runId}:${state.round + 1}`,
-              toolCallId: `subagent-result:${result.childId}`, toolName: 'subagent_result',
+              toolCallId: `subagent-result:${deliveryRunId ?? result.childId}`, toolName: 'subagent_result',
               toolStatus: result.status === 'failed' ? 'error' : result.status === 'cancelled' ? 'cancelled' : 'success',
               toolResult: projectPersistentToolResult(result, true),
             }, { anchorMessageId: state.anchorMessageId, now: ports.clock.now() })
           }
           yield (await commit({ context: nextContext, displayTimeline, phase: 'provider', round: state.round + 1, text: '', usage: emptyRunUsage, providerCursor: null, sanitizerCheckpoint: { kind: 'clean' } }, 'round_start', {
             ...(finals.length ? { subagentDisplays: displayTimeline.slice(state.displayTimeline.length) } : {}),
-          }, null, null, finals.map(result => result.childId), messages.map(item => item.id)))!
+          }, null, null, finals.map(result => result.deliveryRunId ? `run:${result.deliveryRunId}` : result.childId), messages.map(item => item.id)))!
           providerRecovery = false
         }
         const providerLifetime = providerStreamLifetime(controller.signal)

@@ -20,3 +20,13 @@ CREATE TABLE IF NOT EXISTS agent_subagent_deliveries (
 );
 `
 }
+
+/** 已读记录保留作报告归档和防重凭据，仅未读记录进入会话收件箱索引。 */
+export const subagentSessionInboxIndexes = `
+CREATE INDEX IF NOT EXISTS agent_subagent_session_unread
+  ON agent_subagent_deliveries(owner_id,parent_session_id,updated_at,child_run_id)
+  WHERE consumed_checkpoint_version IS NULL AND payload IS NOT NULL;
+CREATE INDEX IF NOT EXISTS agent_inbox_session_unread
+  ON agent_inbox_messages(owner_id,recipient_session_id,sequence)
+  WHERE consumed_checkpoint_version IS NULL;
+`

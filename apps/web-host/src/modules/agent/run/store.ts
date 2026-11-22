@@ -157,20 +157,24 @@ export function createPostgresAgentRunStore<C>(
     },
     async readAgentInbox(identity) {
       validateIdentity(identity)
-      const { rows } = await pool.query<AgentInboxRow>(`SELECT message_id,sender_session_id,sender_run_id,nonce,payload
-        FROM agent_inbox_messages WHERE owner_id=$1 AND recipient_session_id=$2 AND recipient_run_id=$3
-          AND consumed_checkpoint_version IS NULL ORDER BY sequence LIMIT 16`, [identity.ownerId, identity.sessionId, identity.runId])
-      return rows.map(row => decodeInbox(identity, row))
+      const { rows } = await pool.query<AgentInboxRow & { recipient_run_id: string }>(`
+        SELECT message_id,sender_session_id,sender_run_id,recipient_run_id,nonce,payload
+        FROM agent_inbox_messages m WHERE owner_id=$1 AND recipient_session_id=$2 AND consumed_checkpoint_version IS NULL
+          AND (recipient_run_id=$3 OR EXISTS (SELECT 1 FROM agent_subagent_deliveries d
+            WHERE d.owner_id=m.owner_id AND d.parent_session_id=m.recipient_session_id
+              AND d.parent_run_id=m.recipient_run_id AND d.child_run_id=m.sender_run_id))
+        ORDER BY sequence LIMIT 16`, [identity.ownerId, identity.sessionId, identity.runId])
+      return rows.map(row => decodeInbox({ ...identity, runId: row.recipient_run_id }, row))
     },
     async readSubagentFinals(identity) {
       validateIdentity(identity)
-      const { rows } = await pool.query<SubagentDeliveryRow>(`SELECT child_id,child_run_id,status,nonce,payload
-        FROM agent_subagent_deliveries WHERE owner_id=$1 AND parent_session_id=$2 AND parent_run_id=$3
-          AND payload IS NOT NULL AND consumed_checkpoint_version IS NULL
-        ORDER BY updated_at,child_id LIMIT 16`, [identity.ownerId, identity.sessionId, identity.runId])
+      const { rows } = await pool.query<SubagentDeliveryRow & { parent_run_id: string }>(`
+        SELECT parent_run_id,child_id,child_run_id,status,nonce,payload FROM agent_subagent_deliveries
+        WHERE owner_id=$1 AND parent_session_id=$2 AND payload IS NOT NULL AND consumed_checkpoint_version IS NULL
+        ORDER BY updated_at,child_run_id LIMIT 16`, [identity.ownerId, identity.sessionId])
       return rows.flatMap(row => {
-        const outcome = decodeSubagentOutcome(identity, row)
-        return outcome ? [outcome] : []
+        const outcome = decodeSubagentOutcome({ ...identity, runId: row.parent_run_id }, row)
+        return outcome ? [{ ...outcome, deliveryRunId: row.child_run_id }] : []
       })
     },
     async readForUpdate(client, identity) {
@@ -274,17 +278,18 @@ export function createPostgresAgentRunStore<C>(
         if (delivered.length) {
           const consumed = await client.query(`UPDATE agent_subagent_deliveries
             SET consumed_checkpoint_version=coalesce(consumed_checkpoint_version,$5)
-            WHERE owner_id=$1 AND parent_session_id=$2 AND parent_run_id=$3
-              AND child_id=ANY($4::text[]) AND payload IS NOT NULL`,
+            WHERE owner_id=$1 AND parent_session_id=$2 AND payload IS NOT NULL
+              AND ((parent_run_id=$3 AND child_id=ANY($4::text[]))
+                OR (consumed_checkpoint_version IS NULL AND ('run:' || child_run_id)=ANY($4::text[])))`,
           [identity.ownerId, identity.sessionId, identity.runId, delivered, change.checkpoint.version])
           if (consumed.rowCount !== delivered.length) throw new RunStoreRejected('conflict')
         }
         const messages = [...new Set(change.inboxMessageIds ?? [])]
         if (messages.length) {
-          const consumed = await client.query(`UPDATE agent_inbox_messages SET consumed_checkpoint_version=$5
-            WHERE owner_id=$1 AND recipient_session_id=$2 AND recipient_run_id=$3
-              AND message_id=ANY($4::text[]) AND consumed_checkpoint_version IS NULL`,
-          [identity.ownerId, identity.sessionId, identity.runId, messages, change.checkpoint.version])
+          const consumed = await client.query(`UPDATE agent_inbox_messages SET consumed_checkpoint_version=$4
+            WHERE owner_id=$1 AND recipient_session_id=$2
+              AND message_id=ANY($3::text[]) AND consumed_checkpoint_version IS NULL`,
+          [identity.ownerId, identity.sessionId, messages, change.checkpoint.version])
           if (consumed.rowCount !== messages.length) throw new RunStoreRejected('conflict')
         }
         const terminal = change.subagentTerminalDelivery
