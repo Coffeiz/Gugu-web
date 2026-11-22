@@ -36,6 +36,8 @@ try {
     recursive: true,
   })
   cpSync(join(root, 'LICENSE'), join(stage, 'LICENSE'))
+  // 打包前重新生成 macOS 图标，保证 icns 与主图标一致且结构规范。
+  run(join(desktop, 'scripts/build-icons.mjs'))
   run(require.resolve('electron-builder/cli.js'), [
     '--config',
     join(desktop, 'electron-builder.yml'),
