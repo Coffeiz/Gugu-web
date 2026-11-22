@@ -39,12 +39,20 @@ export function proxyOptionsFromEnvironment(env: Readonly<Record<string, string 
   return { http: endpoint(env.http_proxy ?? env.HTTP_PROXY), https: endpoint(env.https_proxy ?? env.HTTPS_PROXY), all: endpoint(env.all_proxy ?? env.ALL_PROXY), noProxy: env.no_proxy ?? env.NO_PROXY }
 }
 
-/** CONNECT目标使用已校验IP，代理不能自行重新解析用户控制的目标域名。 */
-export async function openProxyTunnel(proxy: ProxyEndpoint, target: ResolvedAddress, destination: URL, signal: AbortSignal, options: { resolve?: AddressResolver; timeoutMs?: number; ca?: string }): Promise<Socket> {
+/**
+ * CONNECT 目标默认使用已校验 IP；useHostname 时透传原始域名，由代理端解析。
+ * 本地 DNS 在代理或 TUN 环境下可能返回假 IP 或被污染的地址，代理端才是可信的解析方，
+ * 目标地址的公网校验由传输层在发起连接前完成。
+ */
+export async function openProxyTunnel(proxy: ProxyEndpoint, target: ResolvedAddress, destination: URL, signal: AbortSignal, options: { resolve?: AddressResolver; timeoutMs?: number; ca?: string; useHostname?: boolean }): Promise<Socket> {
   const { url, target: proxyTarget } = await resolvePinnedTarget(proxy.url, { resolve: options.resolve, allowLocal: true, signal, timeoutMs: options.timeoutMs })
   if (proxy.authorization && /[\r\n]/.test(proxy.authorization)) throw new ProviderError('input_rejected')
   const host = target.family === 6 ? `[${target.address}]` : target.address
-  const address = `${host}:${destination.port || (destination.protocol === 'https:' ? 443 : 80)}`
+  // 代理端解析模式：透传原始域名，避免把假 IP 或被污染的地址写进 CONNECT 目标。
+  const destinationHost = options.useHostname
+    ? destination.hostname.replace(/^\[|\]$/g, '')
+    : host
+  const address = `${destinationHost}:${destination.port || (destination.protocol === 'https:' ? 443 : 80)}`
   const socket = await new Promise<Socket>((resolve, reject) => {
     const request = (url.protocol === 'https:' ? httpsRequest : httpRequest)(url, {
       method: 'CONNECT', path: address, agent: false, signal,

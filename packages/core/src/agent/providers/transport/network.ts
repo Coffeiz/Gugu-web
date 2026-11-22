@@ -13,6 +13,24 @@ for (const [network, prefix] of [['::', 96], ['::ffff:0:0', 96], ['64:ff9b:1::',
 const globalV6 = new BlockList()
 globalV6.addSubnet('2000::', 3, 'ipv6')
 
+/**
+ * 假 IP 段：本地 DNS 被 TUN 或代理接管后返回的合成地址（Clash/mihomo 默认 198.18.0.0/16）。
+ * 这类地址不代表真实目标，既不能作为连接目标，也不能用来判断目标是否公网。
+ */
+const syntheticAddresses = new BlockList()
+syntheticAddresses.addSubnet('198.18.0.0', 15, 'ipv4')
+syntheticAddresses.addSubnet('2001:2::', 48, 'ipv6')
+
+export function isSyntheticAddress(address: string): boolean {
+  const family = isIP(address)
+  if (family === 4) return syntheticAddresses.check(address, 'ipv4')
+  if (family === 6) return syntheticAddresses.check(address, 'ipv6')
+  return false
+}
+
+/** 明确指向本机或内网的主机名：代理端解析时也不能靠这些名字触达本地服务。 */
+const localHostname = /^(localhost|.*\.(localhost|local|internal|home\.arpa))$/i
+
 export function isPublicAddress(address: string): boolean {
   const family = isIP(address)
   if (family === 4) return ['192.0.0.9', '192.0.0.10'].includes(address) || !blockedV4.check(address, 'ipv4')
@@ -29,7 +47,7 @@ export const resolveAddresses: AddressResolver = async hostname => (await lookup
   .filter((item): item is ResolvedAddress => item.family === 4 || item.family === 6)
 
 /** 校验与真实连接共用同一次DNS结果；混合公私地址整体拒绝。 */
-export async function resolvePinnedTarget(raw: string, options: { allowLocal?: boolean; resolve?: AddressResolver; signal?: AbortSignal; timeoutMs?: number } = {}): Promise<{ url: URL; target: ResolvedAddress }> {
+export async function resolvePinnedTarget(raw: string, options: { allowLocal?: boolean; resolve?: AddressResolver; signal?: AbortSignal; timeoutMs?: number; proxyResolved?: boolean } = {}): Promise<{ url: URL; target: ResolvedAddress }> {
   let url: URL
   try { url = new URL(raw) } catch { throw new ProviderError('input_rejected') }
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash || !url.hostname)
@@ -39,9 +57,16 @@ export async function resolvePinnedTarget(raw: string, options: { allowLocal?: b
   throwIfCancelled(options.signal)
   const hostname = url.hostname.replace(/^\[|\]$/g, '')
   const family = isIP(hostname)
+  if (family) {
+    // 字面地址不经过域名解析：代理最终也要连它，必须先判定是否公网地址。
+    if (!options.allowLocal && !isPublicAddress(hostname)) throw new ProviderError('input_rejected')
+    return { url, target: { address: hostname, family: family as 4 | 6 } }
+  }
+  // 代理模式下代理端会重新解析域名，本地无法确认目标时只放行明显不指向本机的名字。
+  if (options.proxyResolved && !options.allowLocal && localHostname.test(hostname)) throw new ProviderError('input_rejected')
   let targets: readonly ResolvedAddress[]
   try {
-    targets = family ? [{ address: hostname, family: family as 4 | 6 }] : await new Promise<readonly ResolvedAddress[]>((resolve, reject) => {
+    targets = await new Promise<readonly ResolvedAddress[]>((resolve, reject) => {
       const cancel = () => { cleanup(); reject(new ProviderError('cancelled')) }
       const timer = setTimeout(() => { cleanup(); reject(new ProviderError('timeout', { retryable: true, requestStarted: false, timeoutPhase: 'connect' })) }, options.timeoutMs ?? 10_000)
       timer.unref()
@@ -54,7 +79,13 @@ export async function resolvePinnedTarget(raw: string, options: { allowLocal?: b
     throw new ProviderError('network', { retryable: true, requestStarted: false, transportHop: 'dns' })
   }
   throwIfCancelled(options.signal)
-  if (!targets.length || targets.some(item => !isIP(item.address) || (!options.allowLocal && !isPublicAddress(item.address))))
-    throw new ProviderError('input_rejected')
+  if (!targets.length || targets.some(item => !isIP(item.address))) throw new ProviderError('input_rejected')
+  if (options.proxyResolved) {
+    // 代理端解析域名：本地结果全是假 IP 时没有信息量，出现真实非公网地址仍然拒绝。
+    const meaningful = targets.filter(item => !isSyntheticAddress(item.address))
+    if (!options.allowLocal && meaningful.some(item => !isPublicAddress(item.address))) throw new ProviderError('input_rejected')
+    return { url, target: meaningful[0] ?? { address: hostname, family: 4 } }
+  }
+  if (!options.allowLocal && targets.some(item => !isPublicAddress(item.address))) throw new ProviderError('input_rejected')
   return { url, target: targets[0]! }
 }

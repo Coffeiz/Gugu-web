@@ -6,6 +6,7 @@ import { createBrotliDecompress, createGunzip, createInflate } from 'node:zlib'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
 import { createHash, X509Certificate } from 'node:crypto'
+import { rootCertificates } from 'node:tls'
 import type { ProviderConnectionTiming, ProviderHttpRequest, ProviderHttpResponse, ProviderTransport, ProviderTransportFactory } from '../contracts.js'
 import { classifyProviderError, ProviderError } from '../errors.js'
 import { resolvePinnedTarget } from './network.js'
@@ -36,11 +37,19 @@ export interface NodeProviderTransportOptions {
   readonly environment?: () => Readonly<Record<string, string | undefined>>
 }
 
+/**
+ * Node 内置根证书集合，与 Node 自身的默认信任集合内容一致。
+ * 默认信任存储在部分环境不可用（校验任何站点都报 UNABLE_TO_GET_ISSUER_CERT_LOCALLY），
+ * 显式传入内置集合可以保持同样的信任边界，同时不引入系统里已被现代浏览器放弃的旧根证书。
+ */
+const bundledCa = rootCertificates.join('\n')
+
 export function environmentCa(environment: Readonly<Record<string, string | undefined>>): string | undefined {
   const files: string[] = []
   if (environment.SSL_CERT_FILE) files.push(environment.SSL_CERT_FILE)
   for (const directory of (environment.SSL_CERT_DIR ?? '').split(delimiter).filter(Boolean))
     for (const name of readdirSync(directory).sort()) if (/\.(pem|crt)$/i.test(name) || /^[a-f0-9]{8}\.\d+$/i.test(name)) files.push(join(directory, name))
+  if (!files.length) return bundledCa
   if (files.length > 4096) throw new ProviderError('input_rejected')
   const certificates = new Set<string>()
   let bytes = 0
@@ -52,8 +61,8 @@ export function environmentCa(environment: Readonly<Record<string, string | unde
     if (!blocks?.length) throw new ProviderError('input_rejected')
     for (const block of blocks) { new X509Certificate(block); certificates.add(block) }
   }
-  if (!certificates.size && (environment.SSL_CERT_FILE || environment.SSL_CERT_DIR)) throw new ProviderError('input_rejected')
-  return certificates.size ? [...certificates].join('\n') : undefined
+  if (!certificates.size) throw new ProviderError('input_rejected')
+  return [...certificates].join('\n')
 }
 
 /** CA和代理从同一环境快照解析；错误不回显路径或代理凭据。 */
@@ -132,8 +141,20 @@ export class NodeProviderTransport implements ProviderTransport {
     const report = (timing: ProviderConnectionTiming) => {
       try { input.onTiming?.(timing) } catch { /* 诊断不影响请求。 */ }
     }
+    // 先决定是否走代理：代理承担连接与域名解析，本地只保留尽力校验。
+    // 否则 Fake IP 模式（Clash/TUN）返回的保留网段会在校验阶段被误判为非法目标。
+    const requestedUrl = new URL(input.url)
+    const proxy = this.options.resolveProxy
+      ? await this.options.resolveProxy(requestedUrl, signal)
+      : proxyFor(requestedUrl, this.options.proxy)
+    report({ proxied: !!proxy })
     const { url, target } = await resolvePinnedTarget(input.url, {
-      resolve: this.options.resolve, allowLocal: this.options.allowLocal === true && input.allowLocal === true, signal, timeoutMs: this.options.connectTimeoutMs,
+      resolve: this.options.resolve,
+      allowLocal: this.options.allowLocal === true && input.allowLocal === true,
+      signal,
+      timeoutMs: this.options.connectTimeoutMs,
+      // 代理模式下目标域名交由代理端解析；字面地址与本地解析出的私网地址仍然拒绝。
+      proxyResolved: proxy !== undefined,
     })
     report({ dnsMs: performance.now() - started })
     const headers: Record<string, string> = {}
@@ -154,12 +175,8 @@ export class NodeProviderTransport implements ProviderTransport {
     const release = await this.#acquire(url.origin, signal)
     report({ poolWaitMs: performance.now() - poolStarted })
     try {
-    const proxy = this.options.resolveProxy
-      ? await this.options.resolveProxy(url, signal)
-      : proxyFor(url, this.options.proxy)
-    report({ proxied: !!proxy })
     const tunnelStarted = performance.now()
-    const tunnel = proxy ? await openProxyTunnel(proxy, target, url, signal, { resolve: this.options.resolveProxy ? undefined : this.options.resolve, timeoutMs: this.options.connectTimeoutMs, ca: this.options.ca }) : null
+    const tunnel = proxy ? await openProxyTunnel(proxy, target, url, signal, { resolve: this.options.resolveProxy ? undefined : this.options.resolve, timeoutMs: this.options.connectTimeoutMs, ca: this.options.ca, useHostname: true }) : null
     if (tunnel) report({ proxyTunnelMs: performance.now() - tunnelStarted })
     const proxyAgent = tunnel ? secure ? new HttpsAgent({ keepAlive: false }) : new HttpAgent({ keepAlive: false }) : null
     // 代理隧道按请求关闭；不把不同目标/身份的隧道放入同一个keepalive origin池。
@@ -174,7 +191,11 @@ export class NodeProviderTransport implements ProviderTransport {
         pinnedAddress: target.address,
         agent: proxyAgent ?? (secure ? this.#https : this.#http),
         // hostname、Host与TLS SNI仍取原域名，lookup只返回已经校验的固定地址。
-        lookup: (_hostname, options, callback) => options.all ? callback(null, [{ address: target.address, family: target.family }]) : callback(null, target.address, target.family),
+        // 代理模式下隧道已接管连接，地址解析交由代理端完成，这里不做固定。
+        ...(proxy ? {} : {
+          lookup: (_hostname: string, lookupOptions: import('node:dns').LookupOptions, callback: (err: NodeJS.ErrnoException | null, address: string | import('node:dns').LookupAddress[], family?: number) => void) =>
+            lookupOptions.all ? callback(null, [{ address: target.address, family: target.family }]) : callback(null, target.address, target.family),
+        }),
       } satisfies import('node:http').RequestOptions & { pinnedAddress: string }
       const request = (secure ? httpsRequest : httpRequest)(url, requestOptions)
       let connectTimer: ReturnType<typeof setTimeout> | undefined

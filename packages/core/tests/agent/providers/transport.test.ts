@@ -268,7 +268,7 @@ describe('真实Node HTTP与分片、取消和响应体', () => {
       await expect(requestJson(deps(transport), { url: base.replace('provider.example', 'mismatch.example'), method: 'GET', headers: {}, allowLocal: true }, new AbortController().signal)).rejects.toMatchObject({ code: 'network', options: { retryable: false } })
     } finally { await transport.close(); for (const socket of sockets) socket.destroy(); await close(proxy.value); await close(target.value) }
   })
-  it('真实代理CONNECT使用固定目标IP，代理认证不转发目标，NO_PROXY按域及端口绕过', async () => {
+  it('真实代理CONNECT把目标域名交给代理端解析，代理认证不转发目标，NO_PROXY按域及端口绕过', async () => {
     let path = '', authorization = '', targetProxyHeader: string | undefined
     const target = await server((request, response) => { targetProxyHeader = request.headers['proxy-authorization'] as string | undefined; response.end('{"proxied":true}') })
     const sockets = new Set<Duplex>(), proxy = await server((_request, response) => { response.writeHead(500); response.end() })
@@ -284,7 +284,8 @@ describe('真实Node HTTP与分片、取消和响应体', () => {
     const transport = createNodeProviderTransport({ trustEnvironment: false, allowLocal: true, resolve: async () => [{ address: '127.0.0.1', family: 4 }], proxy: { http: { url: proxyUrl, authorization: 'synthetic-proxy-authorization' } } })
     try {
       await expect(requestJson(deps(transport), { url: target.base, method: 'GET', headers: {}, allowLocal: true }, new AbortController().signal)).resolves.toEqual({ proxied: true })
-      expect(path).toBe(`127.0.0.1:${new URL(target.base).port}`)
+      // 代理端负责解析目标域名：本地 DNS 可能只返回假 IP 或被污染的地址。
+      expect(path).toBe(`provider.example:${new URL(target.base).port}`)
       expect(authorization).toBe('synthetic-proxy-authorization'); expect(targetProxyHeader).toBeUndefined()
       const environmentUrl = new URL(proxyUrl); environmentUrl.username = 'synthetic'; environmentUrl.password = 'proxy'
       const baseOptions = { allowLocal: true, resolve: async () => [{ address: '127.0.0.1', family: 4 as const }], environment: () => ({ HTTP_PROXY: environmentUrl.toString() }) }
@@ -306,13 +307,59 @@ describe('真实Node HTTP与分片、取消和响应体', () => {
           useSystemProxy = enabled
           path = ''
           await requestJson(deps(desktop), { url: target.base, method: 'GET', headers: {}, allowLocal: true }, new AbortController().signal)
-          expect(path).toBe(enabled ? `127.0.0.1:${new URL(target.base).port}` : '')
+          expect(path).toBe(enabled ? `provider.example:${new URL(target.base).port}` : '')
         }
       } finally { await desktop.close() }
       expect(proxyFor(new URL('https://api.provider.example'), { https: { url: 'https://proxy.example' }, noProxy: '.provider.example:443' })).toBeUndefined()
       const environment = proxyOptionsFromEnvironment({ HTTPS_PROXY: 'http://synthetic:proxy@proxy.example:8080', NO_PROXY: 'localhost' })
       expect(environment.https?.url).not.toContain('synthetic'); expect(environment.https?.authorization).toMatch(/^Basic /)
     } finally { await transport.close(); for (const socket of sockets) socket.destroy(); await close(proxy.value); await close(target.value) }
+  })
+  it('代理模式下本地解析只得到假IP时仍把目标交给代理端解析，请求能到达代理', async () => {
+    let path = ''
+    const target = await server((_request, response) => response.end('{"proxied":true}'))
+    const sockets = new Set<Duplex>(), proxy = await server((_request, response) => { response.writeHead(500); response.end() })
+    proxy.value.on('connect', (request, socket, head) => {
+      path = request.url ?? ''
+      const upstream = connect({ host: '127.0.0.1', port: Number(new URL(target.base).port) })
+      sockets.add(socket); sockets.add(upstream)
+      socket.on('error', () => upstream.destroy()); upstream.on('error', () => socket.destroy())
+      upstream.once('connect', () => { socket.write('HTTP/1.1 200 Connection Established\r\n\r\n'); if (head.length) upstream.write(head); socket.pipe(upstream); upstream.pipe(socket) })
+      socket.once('close', () => upstream.destroy())
+    })
+    const proxyUrl = proxy.base.replace('provider.example', 'proxy.example')
+    // 本地 DNS 被代理接管后只返回假IP段地址，不能据此把目标判成非法；代理自身仍在本地。
+    const transport = createNodeProviderTransport({ trustEnvironment: false, resolve: async (hostname: string) => hostname === 'proxy.example' ? [{ address: '127.0.0.1', family: 4 }] : [{ address: '198.18.3.4', family: 4 }], proxy: { http: { url: proxyUrl } } })
+    try {
+      await expect(requestJson(deps(transport), { url: target.base, method: 'GET', headers: {} }, new AbortController().signal)).resolves.toEqual({ proxied: true })
+      expect(path).toBe(`provider.example:${new URL(target.base).port}`)
+    } finally { await transport.close(); for (const socket of sockets) socket.destroy(); await close(proxy.value); await close(target.value) }
+  })
+  it('代理模式下字面私网与回环地址仍被拒绝，不会转交给代理', async () => {
+    let path = ''
+    const proxy = await server((_request, response) => { response.writeHead(500); response.end() })
+    proxy.value.on('connect', (request, socket) => { path = request.url ?? ''; socket.write('HTTP/1.1 200 Connection Established\r\n\r\n'); socket.destroy() })
+    const transport = createNodeProviderTransport({ trustEnvironment: false, proxy: { http: { url: proxy.base.replace('provider.example', 'proxy.example') } } })
+    try {
+      for (const url of ['http://169.254.169.254/latest/meta-data/', 'http://127.0.0.1:22/', 'http://192.168.110.1/', 'http://[::1]/'])
+        await expect(transport.request({ url, method: 'GET', headers: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'input_rejected' })
+      expect(path).toBe('')
+    } finally { await transport.close(); await close(proxy.value) }
+  })
+  it('代理模式下解析到私网地址的域名与本机主机名仍被拒绝', async () => {
+    const privateTarget = createNodeProviderTransport({ trustEnvironment: false, resolve: async () => [{ address: '10.0.0.5', family: 4 }], proxy: { http: { url: 'http://proxy.example:8080' } } })
+    const synthetic = createNodeProviderTransport({ trustEnvironment: false, resolve: async () => [{ address: '198.18.3.4', family: 4 }], proxy: { http: { url: 'http://proxy.example:8080' } } })
+    try {
+      await expect(privateTarget.request({ url: 'https://internal.example/v1', method: 'GET', headers: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'input_rejected' })
+      for (const url of ['http://localhost:8080/', 'http://service.internal/', 'http://printer.local/'])
+        await expect(synthetic.request({ url, method: 'GET', headers: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'input_rejected' })
+    } finally { await privateTarget.close(); await synthetic.close() }
+  })
+  it('直连模式下假IP目标仍然拒绝，代理语义不放宽直连边界', async () => {
+    const transport = createNodeProviderTransport({ trustEnvironment: false, resolve: async () => [{ address: '198.18.3.4', family: 4 }] })
+    try {
+      await expect(transport.request({ url: 'https://provider.example/v1', method: 'GET', headers: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'input_rejected' })
+    } finally { await transport.close() }
   })
   it('对端停读的大请求由write超时终止，end入队不能误判已经发完', async () => {
     const test = await server((request, _response) => request.pause())

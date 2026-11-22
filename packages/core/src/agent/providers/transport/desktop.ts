@@ -1,17 +1,13 @@
 import { execFile } from 'node:child_process'
 import { Resolver } from 'node:dns/promises'
-import { BlockList, isIPv4 } from 'node:net'
+import { isIPv4 } from 'node:net'
 import { networkInterfaces } from 'node:os'
 import { promisify } from 'node:util'
 import { rootCertificates } from 'node:tls'
 import type { ProviderConfig } from '../contracts.js'
 import { ProviderError } from '../errors.js'
 import type { NodeProviderTransportOptions } from './node.js'
-import { resolveAddresses, type AddressResolver, type ResolvedAddress } from './network.js'
-
-const syntheticAddresses = new BlockList()
-syntheticAddresses.addSubnet('198.18.0.0', 15, 'ipv4')
-syntheticAddresses.addSubnet('2001:2::', 48, 'ipv6')
+import { isSyntheticAddress, resolveAddresses, type AddressResolver, type ResolvedAddress } from './network.js'
 
 // Electron 与独立 Node 使用自带根证书，避免开发终端的 NODE_OPTIONS 改变证书来源。
 const bundledCa = rootCertificates.join('\n')
@@ -47,11 +43,11 @@ async function queryLocalDns(host: string): Promise<ResolvedAddress[]> {
   }))).flat()
 }
 
-function isSynthetic({ address, family }: ResolvedAddress): boolean {
-  return syntheticAddresses.check(address, family === 4 ? 'ipv4' : 'ipv6')
+function isSynthetic({ address }: ResolvedAddress): boolean {
+  return isSyntheticAddress(address)
 }
 
-// 仅重新解析全为 Fake IP 的结果。公网工具仍由传输层校验所有地址并固定连接目标。
+// 仅重新解析全为 Fake IP 的结果。公网工具仍由传输层校验所有地址；走代理时由代理端解析目标域名。
 export function createDesktopAddressResolver(system: AddressResolver, local: AddressResolver): AddressResolver {
   return async host => {
     const resolved = await system(host)
