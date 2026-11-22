@@ -267,11 +267,14 @@ try {
   await buildWorkspace()
   await runBuild([resolve(desktop, 'scripts/build.mjs')])
   await waitForVite()
-  if (!stopping) launchElectron()
+  if (!stopping) {
+    // 提前打印：Electron 启动横幅和 Vite 输出会淹没这行，浏览器预览地址要一眼可见。
+    if (port !== preferredPort) console.log(`端口 ${preferredPort} 已被占用，改用 ${port}`)
+    console.log(`\n  桌面共享预览地址（与 Electron 共用模型、IM 和会话）\n  → ${devUrl}\n`)
+    launchElectron()
+  }
   await waitForDesktopPreview()
   if (!stopping) {
-    if (port !== preferredPort) console.log(`端口 ${preferredPort} 已被占用，改用 ${port}`)
-    console.log(`桌面共享预览地址（与 Electron 共用模型、IM 和会话）：${devUrl}`)
     for (const source of ['main', 'preload'])
       watchSource(resolve(desktop, 'src', source), 1)
     watchSource(resolve(root, 'packages/desktop-contracts/src'), 1)
