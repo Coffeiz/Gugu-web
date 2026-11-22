@@ -55,6 +55,7 @@ description: Node.js 后端、Vitest 与 Playwright 测试约定，涵盖测试�
 - Web Host 测试位于 `apps/web-host/tests/`，由 `@gugu/webui` 的 Node test runner 执行：`corepack pnpm --filter @gugu/webui test`。变更涉及 Core、Gateway 等工作区依赖时按需构建依赖包；Host 测试脚本会执行自身的前置构建。
 - Core 测试位于 `packages/core/tests/`，使用 Vitest 与 `tests/suites.json` 分类。常用入口为 `corepack pnpm --filter @gugu/core test:unit`；集成、IPC、PostgreSQL 和 parity 套件按任务所需显式选择。完整分类见 [Node Core 回归对照清单](../../docs/testing/node-core-parity.md)。
 - Desktop Host 回归位于 `apps/desktop/tests/`；前端逻辑回归见下节；跨系统关键路径才使用少量 E2E。
+- Desktop Host 用例从 `apps/desktop/.tools/agent/runtime.mjs` 取运行时装配，该产物由 `apps/desktop/scripts/build-agent-runtime.mjs` 从 `src/` 打包生成。改动 `apps/desktop/src/main/` 或 `packages/core/src/` 后必须先重建该产物再跑用例；否则测的是上一版代码，会出现与源码无关的假回归或假通过。
 - 测试不得读取或写入用户 `.env`、`config.override.json`、真实数据库、真实存储或运行中用户数据。文件与沙盒测试使用临时目录和合成身份；PostgreSQL 集成测试使用专用测试连接、随机 schema，并只清理本次创建的 schema。
 - 诊断、基准和冒烟脚本默认拒绝真实数据库、模型或存储副作用；仅在明确授权并提供专用危险开关后运行。只读脚本也应使用合成身份或临时数据。
 - Python 后端历史测试不是 Node 后端的常规验收门。只有明确核对旧行为或数据迁移时才可作为只读参考；新行为必须由 Node 测试验证，不以旧 Python 测试通过作为交付条件。
