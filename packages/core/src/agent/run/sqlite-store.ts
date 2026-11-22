@@ -69,8 +69,8 @@ export function createSqliteAgentRunStore<C>(
     const { owner, session, run } = sqliteAgentRunScope(identity)
     for (const event of events) {
       const { nonce, payload } = codec.encryptEvent(identity, event)
-      await sql`INSERT INTO agent_run_events(user_id,session_id,run_id,event_id,sequence,nonce,payload)
-        VALUES(${owner},${session},${run},${event.id},${event.sequence},${nonce},${payload})`.execute(tx)
+      await sql`INSERT INTO agent_run_events(user_id,session_id,run_id,event_id,sequence,nonce,payload,created_at_ms)
+        VALUES(${owner},${session},${run},${event.id},${event.sequence},${nonce},${payload},${now()})`.execute(tx)
     }
   }
 
@@ -105,8 +105,8 @@ export function createSqliteAgentRunStore<C>(
         const failed = await sql`SELECT 1 FROM agent_run_controls WHERE user_id=${owner} AND session_id=${session}
           AND run_id=${run} AND startup_failed=1`.execute(tx)
         if (failed.rows.length) throw new RunStoreRejected('conflict')
-        await sql`INSERT INTO agent_run_checkpoints(user_id,session_id,run_id,version,sequence,status,phase,nonce,payload)
-          VALUES(${owner},${session},${run},${checkpoint.version},${checkpoint.sequence},${checkpoint.status},${checkpoint.phase},${nonce},${payload})`.execute(tx)
+        await sql`INSERT INTO agent_run_checkpoints(user_id,session_id,run_id,version,sequence,status,phase,nonce,payload,updated_at_ms)
+          VALUES(${owner},${session},${run},${checkpoint.version},${checkpoint.sequence},${checkpoint.status},${checkpoint.phase},${nonce},${payload},${now()})`.execute(tx)
         await appendEvents(tx, identity, events)
         if (checkpoint.context !== null) await options.applyPreparedContext?.(tx, identity, checkpoint.context)
         await options.persistPrivateContext?.(tx, identity, checkpoint, null)
@@ -129,7 +129,7 @@ export function createSqliteAgentRunStore<C>(
           await sql`INSERT INTO agent_run_interaction_receipts(user_id,session_id,run_id,receipt)
             VALUES(${owner},${session},${run},${change.interactionReceipt})`.execute(tx)
         const updated = await sql`UPDATE agent_run_checkpoints SET version=${checkpoint.version},sequence=${checkpoint.sequence},
-          status=${checkpoint.status},phase=${checkpoint.phase},nonce=${nonce},payload=${payload}
+          status=${checkpoint.status},phase=${checkpoint.phase},nonce=${nonce},payload=${payload},updated_at_ms=${now()}
           WHERE user_id=${owner} AND session_id=${session} AND run_id=${run} AND version=${expectedVersion}
           RETURNING version`.execute(tx)
         if (!updated.rows.length) throw new RunStoreRejected('conflict')

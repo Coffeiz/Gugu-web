@@ -17,6 +17,10 @@ import { assertRunCheckpoint,assertRunIdentity,assertRunTransition,decideReply,d
 import { parallelBatchForRun,providerStreamLifetime,publishRunEvent,replayRunEvents } from './run/streaming.js'
 import { rejectAdapterCall } from './tools/call-adapter.js'
 
+/** 模型增量的分块提交阈值：达到任一条件即落一次事件与 checkpoint。 */
+const TOKEN_FLUSH_CHARS = 256
+const TOKEN_FLUSH_MS = 60
+
 
 
 function contextSummaryMetrics(snapshot: unknown) {
@@ -1034,6 +1038,26 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
         let sanitizerTouched = false
         let sanitizerFlushed = false
         const captureSanitizer = (): SanitizerCheckpoint => sanitizerFlushed || !sanitizerTouched ? { kind: 'clean' } : sanitizerCheckpoint(sanitizer)
+        // 模型增量按块提交：逐 token 落库会把累积全文与整份 checkpoint 反复重写，
+        // 单轮产生 O(n²) 的事件存储和百 MB 级写入。这里按字节与时间双阈值合并，
+        // 游标与正文同步推进；未提交的增量在崩溃后由 Provider 按游标重放，不丢内容。
+        let pendingToken = ''
+        let pendingTokenSince = observedAt()
+        // 分块提交下 checkpoint 里的游标会滞后，连续性判定改用本轮已见游标。
+        let streamCursorSequence = state.providerCursor?.sequence ?? 0
+        let streamCursorReference = state.providerCursor?.reference ?? null
+        const streamPatchAt = (at: ProviderCursor | null) => ({ providerCursor: at ?? state!.providerCursor, sanitizerCheckpoint: captureSanitizer() })
+        async function* flushPendingToken(cursor: ProviderCursor | null) {
+          if (!pendingToken) return
+          const chunk = pendingToken
+          pendingToken = ''
+          pendingTokenSince = observedAt()
+          const patch = { ...streamPatchAt(cursor), text: state!.text + chunk }
+          if (state!.goalMode || state!.replyState.guardPending || state!.replyChoice === 'pending')
+            await commit(patch)
+          else
+            yield (await commit(patch, 'token', { text: chunk }))!
+        }
         let stream
         let recovering = false
         if (providerRecovery) {
@@ -1085,29 +1109,30 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
               break
             const item = next.value
             const cursor = item.cursor ? snapshotCursor(item.cursor) : null
-            if (cursor && state.providerCursor) {
-              if (cursor.sequence < state.providerCursor.sequence || cursor.sequence === state.providerCursor.sequence && cursor.reference === state.providerCursor.reference)
+            if (cursor && streamCursorSequence > 0) {
+              if (cursor.sequence < streamCursorSequence || cursor.sequence === streamCursorSequence && cursor.reference === streamCursorReference)
                 continue
             }
-            if ((cursor && cursor.sequence !== (state.providerCursor?.sequence ?? 0) + 1) || (recovering && !cursor)) {
+            if ((cursor && cursor.sequence !== streamCursorSequence + 1) || (recovering && !cursor)) {
               const rejected = await rejectPendingOverflow()
               if (rejected)
                 yield rejected
               yield await finish('unknown', 'provider_resume_gap', '模型续接事件不完整，未继续执行工具，请重新查询运行状态。')
               return state
             }
-            const streamPatch = () => ({ providerCursor: cursor ?? state!.providerCursor, sanitizerCheckpoint: captureSanitizer() })
+            if (cursor) { streamCursorSequence = cursor.sequence; streamCursorReference = cursor.reference }
+            const streamPatch = (at: ProviderCursor | null = cursor) => streamPatchAt(at)
             if (item.type === 'token') {
               sanitizerTouched = true
               const text = sanitizer.feed(item.text)
               if (text) {
-                if (state.goalMode || state.replyState.guardPending || state.replyChoice === 'pending')
-                  await commit({ ...streamPatch(), text: state.text + text })
-                else
-                  yield (await commit({ ...streamPatch(), text: state.text + text }, 'token', { text }))!
+                pendingToken += text
+                const now = observedAt()
+                if (pendingToken.length >= TOKEN_FLUSH_CHARS || now - pendingTokenSince >= TOKEN_FLUSH_MS)
+                  yield* flushPendingToken(cursor)
               }
-              else
-                await commit(streamPatch())
+              else if (!pendingToken)
+                await commit(streamPatch(cursor))
             }
             else if (item.type === 'usage') {
               if (![item.usage.input, item.usage.output, item.usage.cacheRead, item.usage.cacheWrite, ...(item.usage.contextInput === null ? [] : [item.usage.contextInput])].every((value) => Number.isSafeInteger(value) && value >= 0)) {
@@ -1118,10 +1143,13 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
                 spanId: `${identity.runId}:round:${state.round}:provider`,
                 parentSpanId: `${identity.runId}:round:${state.round}`, status: 'success', usage: item.usage,
               })
+              // 用量事件会推进已提交游标；先提交待写增量，避免游标越过未落库的正文。
+              yield* flushPendingToken(cursor)
               await commit({ ...streamPatch(), usage: item.usage })
             }
             else if (item.type === 'diagnostic') {
               const diagnostic = projectProviderDiagnostic(item.data)
+              yield* flushPendingToken(cursor)
               yield (await commit({ ...streamPatch(), providerRounds: [...state.providerRounds, diagnostic] }, 'provider_diagnostic', diagnostic))!
             }
             else if (item.type === 'retry') {
@@ -1129,10 +1157,13 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
                 throw new AgentRunError('invalid_state', '模型重试事件无效')
               const errorCode = ['rate_limited', 'timeout', 'transport', 'upstream_busy'].includes(item.errorCode) ? item.errorCode : 'unknown'
               logRun(identity, 'info', 'agent.provider.retry', state.round, { attempt: item.attempt, maxRetries: item.maxRetries, nextRetryMs: item.nextRetryMs, errorCode })
+              yield* flushPendingToken(cursor)
               yield (await commit(streamPatch(), 'retry', { attempt: item.attempt, maxRetries: item.maxRetries, nextRetryMs: item.nextRetryMs, errorCode }))!
             }
             else if (item.type === 'error') {
               reportProviderFailure(item.error, item.contextOverflow === true)
+              // 出错与上下文溢出前先提交待写增量，否则已收到的正文尾部会随运行失败一起丢失。
+              yield* flushPendingToken(cursor)
               if (item.contextOverflow && state.overflowRetries < 1) {
                 overflow = true
                 break
@@ -1200,6 +1231,7 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
                 adapterResults.push({ callId: call.id, result: rejectAdapterCall(target.error) })
                 return call
               })))
+              yield* flushPendingToken(cursor)
               const tail = sanitizer.flush()
               sanitizerFlushed = true
               if (tail) {

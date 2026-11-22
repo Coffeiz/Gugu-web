@@ -4,6 +4,7 @@ import { type SqlDataRuntime } from '@gugu/core/data'
 import { type WebUiConfig } from '../config.js'
 import { createRedisLiveSubscription } from '../adapters/cache/redis-live-subscription.js'
 import { startSecurityRetentionWorker } from '../modules/security-events/cleanup.js'
+import { startAgentRunRetentionWorker } from '../modules/agent/run/retention.js'
 import { startProjectDeleteRecoveryWorker } from '../modules/projects/lifecycle/recovery.js'
 import { startAgentRagIndexWorker } from '../modules/agent/rag/rebuild.js'
 import { startRagIndexWorker } from '../modules/agent/rag/worker.js'
@@ -39,6 +40,7 @@ export function createWebWorkers(options: {
     projectExpiryWorkerEnabled, projectPurgeAvailable, canRebuildAgentMemoryIndex, ownerReflectionWork, scheduledRepeatingWorker, scheduledOnceWorker } = options
   return createBackgroundWorkerLifecycle([
     () => startSecurityRetentionWorker({ pool, onError: () => { console.error('安全事件过期清理失败') } }),
+    () => startAgentRunRetentionWorker({ pool, onError: () => { console.error('Agent 运行记录过期清理失败') } }),
     () => process.platform === 'linux' ? startDiskTrashRetentionWorker(pool, config.storageLocalPath,
       () => { console.error('磁盘回收站过期清理失败') }) : null,
     () => trashPurgeSchemaApplied && process.platform === 'linux' ? startTrashPurgeWorker({

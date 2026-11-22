@@ -1,3 +1,4 @@
+export { initializeDesktopAgentRunRetention } from './migrations/0025_desktop_agent_run_retention.js'
 export { initializeDesktopSubagentSessionInbox } from './migrations/0024_desktop_subagent_session_inbox.js'
 export { initializeDesktopSubagentAdmissions } from './migrations/0023_desktop_subagent_admissions.js'
 export { initializeDesktopSubagentExecutions } from './migrations/0022_desktop_subagent_executions.js'

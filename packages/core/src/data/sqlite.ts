@@ -2,7 +2,7 @@ import { CompiledQuery, Kysely, SqliteDialect } from 'kysely'
 import type { Driver } from 'kysely'
 import { resolve } from 'node:path'
 import { DatabaseError } from '@gugu/database/error'
-import { initializeSqlite as initialize, migrateSqlite as migrate, initializeDesktopSkills, initializeDesktopScheduleMode, initializeDesktopAgentRuns, initializeDesktopAgentMemory, initializeDesktopAgentInteractions, initializeDesktopAgentConfirmations, initializeDesktopChatAttachments, initializeDesktopImInbox, initializeDesktopAgentContinuations, initializeDesktopImProjection, initializeDesktopAgentCredentials, initializeDesktopImReflection, initializeDesktopImAcceptedFacts, initializeDesktopSubagentDeliveries, initializeDesktopSubagentSessions, initializeDesktopSubagentLaunches, initializeDesktopSubagentWaits, initializeDesktopAgentInbox, initializeDesktopSubagentConversations, initializeDesktopSubagentContinuations, initializeDesktopSubagentExecutions, initializeDesktopSubagentAdmissions, initializeDesktopSubagentSessionInbox } from '@gugu/database/sqlite'
+import { initializeSqlite as initialize, migrateSqlite as migrate, initializeDesktopSkills, initializeDesktopScheduleMode, initializeDesktopAgentRuns, initializeDesktopAgentRunRetention, initializeDesktopAgentMemory, initializeDesktopAgentInteractions, initializeDesktopAgentConfirmations, initializeDesktopChatAttachments, initializeDesktopImInbox, initializeDesktopAgentContinuations, initializeDesktopImProjection, initializeDesktopAgentCredentials, initializeDesktopImReflection, initializeDesktopImAcceptedFacts, initializeDesktopSubagentDeliveries, initializeDesktopSubagentSessions, initializeDesktopSubagentLaunches, initializeDesktopSubagentWaits, initializeDesktopAgentInbox, initializeDesktopSubagentConversations, initializeDesktopSubagentContinuations, initializeDesktopSubagentExecutions, initializeDesktopSubagentAdmissions, initializeDesktopSubagentSessionInbox } from '@gugu/database/sqlite'
 import { configureSqlite, loadSqliteDriver } from '@gugu/database/sqlite/driver'
 import { validateSqliteBaseline } from '@gugu/database/sqlite/validate'
 import { CoreError } from '../contracts/index.js'
@@ -63,6 +63,7 @@ export async function openSqliteRuntime(
       WHERE task.event_id=event.id AND task.user_id=event.user_id AND task.execution_mode='instruction'`)
     initializeDesktopSkills(db)
     initializeDesktopAgentRuns(db)
+    initializeDesktopAgentRunRetention(db)
     initializeDesktopAgentMemory(db)
     initializeDesktopAgentInteractions(db)
     initializeDesktopAgentConfirmations(db)

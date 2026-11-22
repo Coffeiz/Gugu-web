@@ -593,6 +593,16 @@
     "layer": "L1",
     "purpose": "contract"
   },
+  "tests/agent/run/sqlite-retention.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/run/stream-commit.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
   "tests/agent/run/sqlite-run-store.test.ts": {
     "markers": [],
     "layer": "L1",
