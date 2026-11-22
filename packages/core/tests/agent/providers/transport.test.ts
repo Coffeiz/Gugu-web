@@ -350,10 +350,43 @@ describe('真实Node HTTP与分片、取消和响应体', () => {
     const privateTarget = createNodeProviderTransport({ trustEnvironment: false, resolve: async () => [{ address: '10.0.0.5', family: 4 }], proxy: { http: { url: 'http://proxy.example:8080' } } })
     const synthetic = createNodeProviderTransport({ trustEnvironment: false, resolve: async () => [{ address: '198.18.3.4', family: 4 }], proxy: { http: { url: 'http://proxy.example:8080' } } })
     try {
-      await expect(privateTarget.request({ url: 'https://internal.example/v1', method: 'GET', headers: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'input_rejected' })
+      // 正常公网形态的域名解析到私网地址：靠地址判定拒绝，不能只靠主机名后缀。
+      await expect(privateTarget.request({ url: 'https://service.corp.example.org/v1', method: 'GET', headers: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'input_rejected' })
       for (const url of ['http://localhost:8080/', 'http://service.internal/', 'http://printer.local/'])
         await expect(synthetic.request({ url, method: 'GET', headers: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'input_rejected' })
     } finally { await privateTarget.close(); await synthetic.close() }
+  })
+  it('代理模式下本机主机名与单标签主机名被拒绝，真实公网域名不受影响', async () => {
+    const transport = createNodeProviderTransport({ trustEnvironment: false, resolve: async () => [{ address: '198.18.3.4', family: 4 }], proxy: { http: { url: 'http://proxy.example:8080' } } })
+    try {
+      for (const url of ['http://intranet/', 'http://router/', 'http://foo.localhost/', 'http://service.internal/', 'http://printer.local/', 'http://box.home.arpa/'])
+        await expect(transport.request({ url, method: 'GET', headers: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'input_rejected' })
+      // 测试基础设施用的假域名与真实公网域名都不能被主机名守卫误伤（走 http 代理，目标是 http）。
+      const publicError = await transport.request({ url: 'http://provider.example/v1', method: 'GET', headers: {} }, new AbortController().signal).then(() => undefined, (error: any) => error)
+      expect(publicError?.code).not.toBe('input_rejected')
+    } finally { await transport.close() }
+  })
+  it('代理模式下本地解析返回被污染的地址时不再误杀真实公网目标', async () => {
+    let path = ''
+    const target = await server((_request, response) => response.end('{"proxied":true}'))
+    const sockets = new Set<Duplex>(), proxy = await server((_request, response) => { response.writeHead(500); response.end() })
+    proxy.value.on('connect', (request, socket, head) => {
+      path = request.url ?? ''
+      const upstream = connect({ host: '127.0.0.1', port: Number(new URL(target.base).port) })
+      sockets.add(socket); sockets.add(upstream)
+      socket.on('error', () => upstream.destroy()); upstream.on('error', () => socket.destroy())
+      upstream.once('connect', () => { socket.write('HTTP/1.1 200 Connection Established\r\n\r\n'); if (head.length) upstream.write(head); socket.pipe(upstream); upstream.pipe(socket) })
+      socket.once('close', () => upstream.destroy())
+    })
+    const proxyUrl = proxy.base.replace('provider.example', 'proxy.example')
+    // 本地 DNS 被污染时返回的既不是合成地址也不是私网地址，不能据此把真实公网域名判成非法。
+    const transport = createNodeProviderTransport({ trustEnvironment: false,
+      resolve: async (hostname: string) => hostname === 'proxy.example' ? [{ address: '127.0.0.1', family: 4 }] : [{ address: '157.240.17.36', family: 4 }, { address: '2001::9df0:1412', family: 6 }],
+      proxy: { http: { url: proxyUrl } } })
+    try {
+      await expect(requestJson(deps(transport), { url: target.base, method: 'GET', headers: {} }, new AbortController().signal)).resolves.toEqual({ proxied: true })
+      expect(path).toBe(`provider.example:${new URL(target.base).port}`)
+    } finally { await transport.close(); for (const socket of sockets) socket.destroy(); await close(proxy.value); await close(target.value) }
   })
   it('直连模式下假IP目标仍然拒绝，代理语义不放宽直连边界', async () => {
     const transport = createNodeProviderTransport({ trustEnvironment: false, resolve: async () => [{ address: '198.18.3.4', family: 4 }] })

@@ -28,8 +28,17 @@ export function isSyntheticAddress(address: string): boolean {
   return false
 }
 
-/** 明确指向本机或内网的主机名：代理端解析时也不能靠这些名字触达本地服务。 */
-const localHostname = /^(localhost|.*\.(localhost|local|internal|home\.arpa))$/i
+/**
+ * 明确指向本机或内网的主机名：代理端解析时也不能靠这些名字触达本地服务。
+ * 无点单标签主机名只可能由本机或局域网 DNS 解析；
+ * 后缀只取真正指向内网的保留名（mDNS、云内网、家庭网段、localhost），
+ * RFC 2606 的 .test/.example/.invalid 不在内——它们解析不到内网，拦它们没有防护价值。
+ */
+function isLocalHostname(hostname: string): boolean {
+  const name = hostname.toLowerCase()
+  if (!name.includes('.')) return true
+  return /(^|\.)(localhost|local|internal|home\.arpa)$/.test(name)
+}
 
 export function isPublicAddress(address: string): boolean {
   const family = isIP(address)
@@ -39,6 +48,31 @@ export function isPublicAddress(address: string): boolean {
   const normalized = new URL(`http://[${address}]/`).hostname.slice(1, -1)
   if (normalized.startsWith('::ffff:')) return false
   return globalV6.check(address, 'ipv6') && !blockedV6.check(address, 'ipv6')
+}
+
+/**
+ * 明确的私网/回环/链路本地地址。
+ * 代理模式用它判断「目标是否指向内网」：合成地址与特殊用途段（如 Teredo）
+ * 不是私网，不能据此把真实公网域名判成非法目标。
+ */
+const privateV4 = new BlockList()
+const privateV6 = new BlockList()
+for (const [network, prefix] of [['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.168.0.0', 16], ['224.0.0.0', 3]] as const)
+  privateV4.addSubnet(network, prefix, 'ipv4')
+for (const [network, prefix] of [['::1', 128], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8]] as const)
+  privateV6.addSubnet(network, prefix, 'ipv6')
+
+export function isPrivateAddress(address: string): boolean {
+  const family = isIP(address)
+  if (family === 4) return privateV4.check(address, 'ipv4')
+  if (family !== 6) return false
+  if (address.includes('%')) return true
+  const normalized = address.toLowerCase()
+  if (normalized.startsWith('::ffff:')) {
+    const mapped = normalized.slice('::ffff:'.length)
+    return /^[0-9.]+$/.test(mapped) ? isPrivateAddress(mapped) : true
+  }
+  return normalized === '::' || privateV6.check(address, 'ipv6')
 }
 
 export interface ResolvedAddress { readonly address: string; readonly family: 4 | 6 }
@@ -63,7 +97,7 @@ export async function resolvePinnedTarget(raw: string, options: { allowLocal?: b
     return { url, target: { address: hostname, family: family as 4 | 6 } }
   }
   // 代理模式下代理端会重新解析域名，本地无法确认目标时只放行明显不指向本机的名字。
-  if (options.proxyResolved && !options.allowLocal && localHostname.test(hostname)) throw new ProviderError('input_rejected')
+  if (options.proxyResolved && !options.allowLocal && isLocalHostname(hostname)) throw new ProviderError('input_rejected')
   let targets: readonly ResolvedAddress[]
   try {
     targets = await new Promise<readonly ResolvedAddress[]>((resolve, reject) => {
@@ -75,16 +109,18 @@ export async function resolvePinnedTarget(raw: string, options: { allowLocal?: b
       void Promise.resolve().then(() => (options.resolve ?? resolveAddresses)(hostname)).then(value => { cleanup(); resolve(value) }, error => { cleanup(); reject(error) })
     })
   } catch (error) {
+    // 解析失败保持 fail-closed：Web Host 侧以代理侧 DoH 作为唯一判定来源，
+    // 这里放行会让那条唯一边界失效。桌面端在合成地址环境下解析本就成功。
     if (error instanceof ProviderError) throw new ProviderError(error.code, { ...error.options, transportHop: 'dns' })
     throw new ProviderError('network', { retryable: true, requestStarted: false, transportHop: 'dns' })
   }
   throwIfCancelled(options.signal)
   if (!targets.length || targets.some(item => !isIP(item.address))) throw new ProviderError('input_rejected')
   if (options.proxyResolved) {
-    // 代理端解析域名：本地结果全是假 IP 时没有信息量，出现真实非公网地址仍然拒绝。
-    const meaningful = targets.filter(item => !isSyntheticAddress(item.address))
-    if (!options.allowLocal && meaningful.some(item => !isPublicAddress(item.address))) throw new ProviderError('input_rejected')
-    return { url, target: meaningful[0] ?? { address: hostname, family: 4 } }
+    // 代理端才是权威解析方：本地结果可能是合成地址，也可能被污染成看起来像私网的地址，
+    // 用「非公网」当拒绝依据会误杀真实公网域名；只在结果明确指向内网时拒绝。
+    if (!options.allowLocal && targets.some(item => isPrivateAddress(item.address))) throw new ProviderError('input_rejected')
+    return { url, target: { address: hostname, family: 4 } }
   }
   if (!options.allowLocal && targets.some(item => !isPublicAddress(item.address))) throw new ProviderError('input_rejected')
   return { url, target: targets[0]! }

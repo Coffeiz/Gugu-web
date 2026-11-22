@@ -152,7 +152,8 @@ export class NodeProviderTransport implements ProviderTransport {
       resolve: this.options.resolve,
       allowLocal: this.options.allowLocal === true && input.allowLocal === true,
       signal,
-      timeoutMs: this.options.connectTimeoutMs,
+      // 代理模式下本地解析只是尽力而为的私网提示，不占用连接级超时预算。
+      timeoutMs: proxy !== undefined ? Math.min(this.options.connectTimeoutMs ?? 10_000, 2_000) : this.options.connectTimeoutMs,
       // 代理模式下目标域名交由代理端解析；字面地址与本地解析出的私网地址仍然拒绝。
       proxyResolved: proxy !== undefined,
     })
