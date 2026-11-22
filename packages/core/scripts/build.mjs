@@ -27,6 +27,12 @@ function publishDirectory(staged, output) {
   if (existsSync(output) && !lstatSync(output).isDirectory())
     throw new Error('Core 构建产物路径不是普通目录')
   mkdirSync(output, { recursive: true })
+  // 清理本次产物里已不存在的陈旧条目：源码删除后旧产物会永久残留，
+  // 既撑大安装包，也会把已下线的代码重新带进制品。
+  const stagedNames = new Set(readdirSync(staged))
+  for (const entry of readdirSync(output, { withFileTypes: true })) {
+    if (!stagedNames.has(entry.name)) rmSync(join(output, entry.name), { recursive: true, force: true })
+  }
   for (const entry of readdirSync(staged, { withFileTypes: true })) {
     const destination = join(output, entry.name)
     const source = join(staged, entry.name)
