@@ -12,17 +12,15 @@ import { createAgentCalendarReader } from '../../../src/calendar/application/eve
 import { createKyselyCalendarAgentReadPort } from '../../../src/calendar/read-store.js'
 import { createAgentWorkspaceQueries } from '../../../src/workspaces/workspace-list.js'
 import { createKyselyAgentWorkspaceReader } from '../../../src/workspaces/workspace-list-store.js'
-import { createKyselyDashboardCounter } from '../../../src/overview.js'
 import { createListEventsTool } from '../../../src/agent/tools/calendar.js'
 import { createWorkspaceReadTools } from '../../../src/agent/tools/workspaces.js'
-import { createDashboardStatsTool } from '../../../src/agent/tools/overview.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import { collect, fixture } from '../run/fixtures.js'
 
 let folder: string, core: SqlDataRuntime, owner: string, other: string, allowed: boolean
 let registry: ReturnType<typeof createToolRegistry>
 let workspaceDb: Kysely<any>
-let counts: ReturnType<typeof createKyselyDashboardCounter>
+let calendar: ReturnType<typeof createKyselyCalendarAgentReadPort>
 const identity = () => ({ ownerId: owner, sessionId: '1', runId: 'reads' })
 const scope = () => ({ identity: identity(), roundId: '1', signal: new AbortController().signal, resolution: null, execute: async () => { throw new Error('不执行宿主进程') } })
 const dispatch = (name: string, input: unknown = {}) => registry.tools.dispatch({ id: name, name, input }, scope())
@@ -30,8 +28,7 @@ beforeEach(async () => {
   folder = await mkdtemp(join(tmpdir(), 'gugu-agent-domain-'))
   const filename = join(folder, 'core.db'); await initializeSqlite(filename)
   const opened = await openSqliteRuntime(filename); core = opened.runtime; owner = opened.ownerId; other = randomUUID(); allowed = true
-  // 工作区/文件库暂未纳入正式SQLite schema；用显式合同表验证真实查询，不假称已安装升级器。
-  await sql`CREATE TABLE files(id INTEGER PRIMARY KEY,user_id TEXT,deleted_at TEXT)`.execute(core.db)
+  // 工作区暂未纳入正式SQLite schema；用显式合同表验证真实查询，不假称已安装升级器。
   workspaceDb = new Kysely({ dialect: new SqliteDialect({ database: new Database(':memory:') }) })
   await sql`CREATE TABLE projects(id INTEGER PRIMARY KEY,user_id TEXT,name TEXT)`.execute(workspaceDb)
   await sql`CREATE TABLE folders(id INTEGER PRIMARY KEY,user_id TEXT,name TEXT)`.execute(workspaceDb)
@@ -44,7 +41,6 @@ beforeEach(async () => {
     await data.projects.create({ name: '归档项目', archived: true }); await data.clients.create({ name: '联系人', notes: '' })
   })
   await core.transaction(dataContext(other), data => data.projects.create({ name: '他人项目' }))
-  await sql`INSERT INTO files VALUES(1,${own},NULL),(2,${own},NULL),(3,${own},'2026-01-01'),(4,${foreign},NULL)`.execute(core.db)
   await sql`INSERT INTO projects VALUES(1,${own},'项目甲'),(4,${foreign},'他人项目')`.execute(workspaceDb)
   await sql`INSERT INTO folders VALUES(1,${own},'自有文件夹'),(2,${foreign},'他人文件夹')`.execute(workspaceDb)
   await sql`INSERT INTO workspace_directories VALUES(7,${own},'自有顶层目录')`.execute(workspaceDb)
@@ -62,11 +58,10 @@ beforeEach(async () => {
     [4,own,null,'2026-11-15 00:59:29.999999','web',null],[5,foreign,99,null,'web',null]] as const)
     await sql`INSERT INTO scheduled_tasks(id,user_id,event_id,reminder_lead_minutes,name,payload,cron,schedule_kind,start_at,channels,enabled,delivery_targets,created_at,updated_at)
       VALUES(${id},${user},1,${lead},'提醒','正文',${'@once:synthetic-'+id},'once',${start},${channels},0,${targets},'2026-11-01','2026-11-01')`.execute(core.db)
-  counts = createKyselyDashboardCounter(core.db, 'sqlite')
+  calendar = createKyselyCalendarAgentReadPort(core.db, 'sqlite')
   registry = createToolRegistry({ groups: [
-    { id: 'calendar', name: '日历', tools: [createListEventsTool(createAgentCalendarReader(createKyselyCalendarAgentReadPort(core.db, 'sqlite')))] },
+    { id: 'calendar', name: '日历', tools: [createListEventsTool(createAgentCalendarReader(calendar))] },
     { id: 'workspaces', name: '工作区', tools: createWorkspaceReadTools(createAgentWorkspaceQueries(createKyselyAgentWorkspaceReader(workspaceDb, 'sqlite'))) },
-    { id: 'overview', name: '总览', tools: [createDashboardStatsTool({ counts, time: { now: () => new Date('2026-11-14T16:30:00Z'), timezone: async () => 'Asia/Shanghai' } })] },
   ], authorize: async () => allowed })
 })
 afterEach(async () => { await workspaceDb?.destroy(); await core?.close(); if (folder) await rm(folder, { recursive: true, force: true }) })
@@ -102,38 +97,31 @@ it('工作区含停用项、同时间按ID倒序，关联名称与会话计数�
   expect(await dispatch('list_workspaces', { owner_id: other })).toMatchObject({ successful: false })
 })
 
-it('总览统计所有存活文件与无限上界未来事件，排除归档项目，不采用上下文限额', async () => {
-  expect(await dispatch('get_dashboard_stats', { owner_id: other, timezone: 'UTC' })).toMatchObject({ value: {
-    projects: { pending: 0, active: 1, done: 1, total: 2 }, upcoming_events: 3, files: 2, clients: 1,
-    ignored_fields:['owner_id','timezone'],
-  } })
-})
-
 it('撤权/组禁用/前后取消拒绝发布，缺表错误脱敏；只读工具不产生收据', async () => {
   await registry.capabilities(identity()); allowed = false
   expect(await dispatch('list_events')).toMatchObject({ successful: false, executed: false }); allowed = true
   registry.configure({ groups: { workspaces: false } })
   expect(await dispatch('list_workspaces')).toMatchObject({ successful: false, executed: false })
   const controller = new AbortController(); controller.abort()
-  await expect(registry.tools.dispatch({ id:'pre',name:'get_dashboard_stats',input:{} }, { ...scope(), signal: controller.signal })).rejects.toThrow()
-  const after = new AbortController(), read = counts.count.bind(counts)
-  vi.spyOn(counts,'count').mockImplementationOnce(async (...args) => { const result = await read(...args); after.abort(); return result })
-  await expect(registry.tools.dispatch({ id:'during',name:'get_dashboard_stats',input:{} }, { ...scope(), signal: after.signal })).rejects.toThrow()
+  await expect(registry.tools.dispatch({ id:'pre',name:'list_events',input:{} }, { ...scope(), signal: controller.signal })).rejects.toThrow()
+  const after = new AbortController(), read = calendar.list.bind(calendar)
+  vi.spyOn(calendar,'list').mockImplementationOnce(async (...args) => { const result = await read(...args); after.abort(); return result })
+  await expect(registry.tools.dispatch({ id:'during',name:'list_events',input:{} }, { ...scope(), signal: after.signal })).rejects.toThrow()
   expect((await sql<{ n:number }>`SELECT count(*) AS n FROM core_operation_receipts`.execute(core.db)).rows[0]!.n).toBe(0)
-  await sql`DROP TABLE files`.execute(core.db)
-  const failed = await dispatch('get_dashboard_stats')
+  await sql`DROP TABLE calendar_events`.execute(core.db)
+  const failed = await dispatch('list_events')
   expect(failed).toMatchObject({ successful:false,value:{error:'工具执行失败'} })
   expect(JSON.stringify(failed)).not.toMatch(/SELECT|no such table/)
 })
 
-it('四个工具经过实际Agent循环和SQLite，结果进入Provider续轮而不泄露外部资源', async () => {
+it('三个工具经过实际Agent循环和SQLite，结果进入Provider续轮而不泄露外部资源', async () => {
   const calls = [{id:'events',name:'list_events',input:{type:'deadline'}},{id:'workspace',name:'get_workspace',input:{workspace_id:2}},
-    {id:'all',name:'list_workspaces',input:{}},{id:'counts',name:'get_dashboard_stats',input:{}}]
+    {id:'all',name:'list_workspaces',input:{}}]
   const f = fixture([[{type:'complete',text:'',calls}],[{type:'complete',text:'已读取',calls:[]}]])
   f.ports.tools=registry.tools
   f.ports.context.afterTool=async(context,_call,result)=>[...context,result.kind==='completed'?JSON.stringify(result.value):'unknown']
   expect((await collect(f.harness.start(identity()))).state.status).toBe('completed')
   const wire=vi.mocked(f.ports.provider.stream).mock.calls[1]![0].context.join('\n')
-  expect(wire).toContain('自有顶层目录'); expect(wire).toContain('活动2'); expect(wire).toContain('upcoming_events')
+  expect(wire).toContain('自有顶层目录'); expect(wire).toContain('活动2')
   expect(wire).not.toContain('他人声明');expect(wire).not.toContain('他人文件夹')
 })

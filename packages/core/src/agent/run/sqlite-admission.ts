@@ -53,6 +53,26 @@ async function isFinished(db: Kysely<Database>, owner: string, session: number, 
   return state?.startup_failed === 1 || (state?.status != null && terminalRunStates.has(state.status))
 }
 
+/** 普通调度和重启恢复共用准入索引，只读取仍绑定会话的运行。 */
+export async function listActiveSqliteAgentRuns(db: Kysely<Database>, ownerId: string, source?: string) {
+  const owner = dataContext(ownerId).ownerId.replaceAll('-', '')
+  const { rows } = await sql<{ session_id: number; run_id: string; source: string | null }>`
+    SELECT a.session_id,a.run_id,s.source FROM agent_run_admissions a
+    JOIN conversation_sessions s ON s.id=a.session_id AND s.user_id=a.user_id AND s.active_run_id=a.run_id
+    WHERE a.user_id=${owner} ${source === undefined ? sql`` : sql`AND s.source=${source}`}`.execute(db)
+  return rows.map(row => ({ identity: { ownerId, sessionId: String(row.session_id), runId: row.run_id }, source: row.source }))
+}
+
+/** 调用方已在同一事务验证会话归属并写入本次输入消息。 */
+export async function registerSqliteAgentRun(tx: Transaction<Database>, identity: RunIdentity,
+  userMessageId: number, sequence: number, timestamp: string) {
+  const { owner, session } = sessionScope(identity.ownerId, Number(identity.sessionId))
+  await sql`INSERT INTO agent_run_admissions(user_id,session_id,run_id,user_message_id)
+    VALUES(${owner},${session},${identity.runId},${userMessageId})`.execute(tx)
+  await sql`UPDATE conversation_sessions SET active_run_id=${identity.runId},execution_state='running',
+    last_message_seq=${sequence},updated_at=${timestamp} WHERE id=${session} AND user_id=${owner}`.execute(tx)
+}
+
 /** SQLite 会话与用户消息同事务登记。执行器只接收已经提交的可信运行身份。 */
 export function createSqliteAgentAdmission(
   db: Kysely<Database>,
@@ -129,10 +149,7 @@ export function createSqliteAgentAdmission(
           || (file.kind === 'voice' && typeof file.transcript === 'string' && file.transcript.trim())))
           throw new CoreError('invalid_request', '此附件暂不能单独发送，请补充文字说明')
         if (files.length) await sql`UPDATE conversation_messages SET files=${JSON.stringify(files)} WHERE id=${userMessageId} AND session_id=${session}`.execute(tx)
-        await sql`INSERT INTO agent_run_admissions(user_id,session_id,run_id,user_message_id)
-          VALUES(${owner},${session},${identity.runId},${userMessageId})`.execute(tx)
-        await sql`UPDATE conversation_sessions SET active_run_id=${identity.runId},execution_state='running',
-          last_message_seq=${sequence},updated_at=${at} WHERE id=${session} AND user_id=${owner}`.execute(tx)
+        await registerSqliteAgentRun(tx, identity, userMessageId, sequence, at)
         const context = readAgentSessionContext(current.session_context, 'sqlite')
         const command = parseAgentCommand(message)
         if (command?.recognized && command.name === 'goal' && !isAgentCommandHelpArgument(command.argument)

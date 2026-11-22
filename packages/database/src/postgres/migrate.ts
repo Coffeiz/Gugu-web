@@ -1,3 +1,5 @@
+import { subagentExecutions } from './migrations/0035_subagent_executions.js'
+import { subagentContinuations } from './migrations/0034_subagent_continuations.js'
 import type { Pool } from 'pg'
 import type { MigrationAction } from '../shared/command.js'
 import { initialize } from './migrations/0001_initialize.js'
@@ -27,12 +29,18 @@ import { webPush } from './migrations/0024_web_push.js'
 import { webReflection } from './migrations/0025_web_reflection.js'
 import { reflectionCompaction } from './migrations/0026_reflection_compaction.js'
 import { imPrivateStreaming } from './migrations/0027_im_private_streaming.js'
+import { subagentDeliveries } from './migrations/0028_subagent_deliveries.js'
+import { subagentSessions } from './migrations/0029_subagent_sessions.js'
+import { subagentLaunches } from './migrations/0030_subagent_launches.js'
+import { subagentWaits } from './migrations/0031_subagent_waits.js'
+import { subagentConversations } from './migrations/0033_subagent_conversations.js'
+import { agentInbox } from './migrations/0032_agent_inbox.js'
 import { runPostgresMigrations } from './runner.js'
 
 const catalog = [
   initialize, webDomain, agentRun, agentSnapshots, filesystemAuthorization, securityEvents,
   terminalSessions, interactionActions, trashPurge, searchUsage, ragIndex,
-  agentReasoning, imGateway, imReflection, dataPortability, providerCredentials, mcp, fileSync, accountRecords, memory, byokBindings, scheduledTaskMode, calendarReminderMode, webPush, webReflection, reflectionCompaction, imPrivateStreaming,
+  agentReasoning, imGateway, imReflection, dataPortability, providerCredentials, mcp, fileSync, accountRecords, memory, byokBindings, scheduledTaskMode, calendarReminderMode, webPush, webReflection, reflectionCompaction, imPrivateStreaming, subagentDeliveries, subagentSessions, subagentLaunches, subagentWaits, agentInbox, subagentConversations, subagentContinuations, subagentExecutions,
 ]
 
 export function migratePostgres(pool: Pick<Pool, 'connect'>, action: MigrationAction) {

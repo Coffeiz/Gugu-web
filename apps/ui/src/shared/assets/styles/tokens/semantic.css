@@ -60,6 +60,11 @@
      （设计给毛玻璃表面），落在实心表面的画布上会不可见，因此从内容色派生、随主题明暗反转。 */
   --chart-grid-line: color-mix(in srgb, var(--theme-content-secondary) 16%, transparent);
   --chart-tick: var(--theme-content-tertiary);
+  --mermaid-node-bg: light-dark(#ffffff, #343434);
+  --mermaid-cluster-bg: light-dark(#f2f2f2, #262626);
+  --mermaid-border: light-dark(#c2c2c2, #5b5b5b);
+  --mermaid-text: light-dark(#292929, #f2f2f2);
+  --mermaid-line: light-dark(#626262, #bdbdbd);
 
   /* Actions / selection */
   --action-primary: var(--theme-action-primary);

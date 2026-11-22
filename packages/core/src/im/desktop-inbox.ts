@@ -1,4 +1,5 @@
 import { claimDesktopChatAttachments, stageDesktopChatAttachment, type DesktopChatAttachmentInput } from '../agent/attachments/desktop-store.js'
+import { IM_REFLECTION_IDLE_SECONDS, IM_REFLECTION_PASSIVE_THRESHOLD } from '../agent/memory/reflection/window.js'
 import { isAttentionSourceKind } from './attention/directive.js'
 import type { RunIdentity } from '../agent/models.js'
 import { createHash } from 'node:crypto'
@@ -56,18 +57,21 @@ export async function admitDesktopImEvent(db: Kysely<Database>, ownerId: string,
   })
 }
 
-export async function desktopImGroupRunEvent(db: Kysely<Database>, identity: RunIdentity) {
+export async function desktopImGroupRunEvent(db: Kysely<Database>, identity: RunIdentity, phase: 'active' | 'completed' = 'active') {
   const owner = identity.ownerId.toLowerCase().replaceAll('-', '')
   const session = Number(identity.sessionId)
   const { rows } = await sql<{ platform: string; connection_id: string; client_message_id: string; event_key: string; sealed_event: Buffer }>`
     SELECT im.platform,im.connection_id,m.client_message_id,i.event_key,i.sealed_event
     FROM agent_run_admissions a
     JOIN conversation_sessions s ON s.id=a.session_id AND s.user_id=a.user_id
-      AND s.active_run_id=a.run_id AND s.chat_type='group'
+      AND s.chat_type='group'
     JOIN conversation_messages m ON m.id=a.user_message_id AND m.session_id=s.id
     JOIN desktop_im_sessions im ON im.session_id=s.id AND im.owner_id=s.user_id AND im.platform IN ('feishu','qq','telegram')
     JOIN desktop_im_inbox i ON i.owner_id=im.owner_id AND i.platform=im.platform AND i.connection_id=im.connection_id
     WHERE a.user_id=${owner} AND a.session_id=${session} AND a.run_id=${identity.runId}
+      AND (${phase}='active' AND s.active_run_id=a.run_id OR ${phase}='completed' AND EXISTS (
+        SELECT 1 FROM agent_run_checkpoints c WHERE c.user_id=a.user_id AND c.session_id=a.session_id
+          AND c.run_id=a.run_id AND c.status='completed'))
       AND (i.run_id=a.run_id OR i.run_id IS NULL AND i.state='pending')
     ORDER BY (i.run_id IS NULL),i.received_at,i.rowid LIMIT 1`.execute(db)
   // 尚未回填 run_id 时，调度器只能从同一连接的队首启动运行。
@@ -120,7 +124,7 @@ async function ensureDesktopImSession(tx: Transaction<Database>, ownerId: string
 }
 
 /** 只写群会话历史，不启动 Agent，也不创建出站投递任务。 */
-export function recordDesktopImGroupMessage(db: Kysely<Database>, ownerId: string, fields: Fields) {
+export async function recordDesktopImGroupMessage(db: Kysely<Database>, ownerId: string, fields: Fields, onReflectionDue?: () => void) {
   const owner = ownerId.toLowerCase().replaceAll('-', '')
   const { platform, connectionId } = connectionScope(fields)
   const { eventKey, text, attachments = [], platformUserId, platformUserName } = fields
@@ -132,15 +136,15 @@ export function recordDesktopImGroupMessage(db: Kysely<Database>, ownerId: strin
     || (platformUserId !== undefined && (typeof platformUserId !== 'string' || !platformUserId.trim() || platformUserId.length > 256))
     || (platformUserName !== undefined && (typeof platformUserName !== 'string' || platformUserName.length > 256)))
     throw new CoreError('invalid_request', '本机 IM 群记录无效')
-  return db.transaction().execute(async tx => {
+  const result = await db.transaction().execute(async tx => {
     const queued = await sql`SELECT 1 FROM desktop_im_inbox
       WHERE owner_id=${owner} AND platform=${platform} AND connection_id=${connectionId} AND event_key=${eventKey}`.execute(tx)
-    if (queued.rows.length) return false
+    if (queued.rows.length) return null
     const sessionId = await ensureDesktopImSession(tx, ownerId, owner, platform, connectionId, 'group', fields.ownerPlatformUserId)
     const clientId = imClientId(platform, connectionId, eventKey)
     const existing = await sql`SELECT 1 FROM conversation_messages
       WHERE session_id=${sessionId} AND client_message_id=${clientId}`.execute(tx)
-    if (existing.rows.length) return false
+    if (existing.rows.length) return null
     const at = databaseTime(nowUtc(), 'sqlite')
     const updated = await sql<{ last_message_seq: number }>`UPDATE conversation_sessions
       SET last_message_seq=last_message_seq+1,updated_at=${at} WHERE id=${sessionId} AND user_id=${owner}
@@ -157,8 +161,17 @@ export function recordDesktopImGroupMessage(db: Kysely<Database>, ownerId: strin
       const files = await claimDesktopChatAttachments(tx, ownerId, messageId, ids, sessionId, clientId)
       await sql`UPDATE conversation_messages SET files=${JSON.stringify(files)} WHERE id=${messageId} AND session_id=${sessionId}`.execute(tx)
     }
-    return true
+    const { rows: [state] } = await sql<{ passive_count: number }>`INSERT INTO desktop_im_reflection_triggers(owner_id,session_id,passive_count)
+      VALUES(${owner},${sessionId},1) ON CONFLICT(owner_id,session_id) DO UPDATE SET
+        passive_count=(desktop_im_reflection_triggers.passive_count+1)%${IM_REFLECTION_PASSIVE_THRESHOLD}
+      RETURNING passive_count`.execute(tx)
+    if (state?.passive_count === 0) await sql`INSERT INTO desktop_im_reflection_thresholds
+      (owner_id,session_id,through_sequence,due_at_ms) VALUES(${owner},${sessionId},
+        ${updated.rows[0]!.last_message_seq},${Date.now() + IM_REFLECTION_IDLE_SECONDS * 1000})`.execute(tx)
+    return state!.passive_count === 0
   })
+  if (result === true) onReflectionDue?.()
+  return result !== null
 }
 
 /** 仅将已写入群历史的原消息提升为待运行收件，供 Gateway 的可信延迟唤醒使用。 */

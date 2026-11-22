@@ -5,14 +5,14 @@ import test from 'node:test'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createPostgresGreetingContextReader, createRedisGreetingCache, createStandaloneGreetingCompleter } from '../../../src/modules/agent/chat/greeting.js'
+import { createPostgresGreetingContextReader, createProductionGreeting, createRedisGreetingCache, createStandaloneGreetingCompleter } from '../../../src/modules/agent/chat/greeting.js'
 
 const owner = '11111111-1111-4111-8111-111111111111'
 
 test('问候上下文只读取当前 owner 的项目、消息和安全记忆文件', async () => {
   const root = await mkdtemp(join(tmpdir(), 'gugu-greeting-'))
   try {
-    const directory = join(root, owner, '.agent')
+    const directory = join(root, owner, '.agent', 'memories')
     await mkdir(directory, { recursive: true })
     await writeFile(join(directory, 'summary.json'), JSON.stringify({ text: '最近在学做面包', ts: 1_795_200_000 }))
     await writeFile(join(directory, 'profile.json'), JSON.stringify([{ text: '喜欢慢慢散步' }]))
@@ -38,6 +38,45 @@ test('问候上下文只读取当前 owner 的项目、消息和安全记忆文�
     assert.ok(queries.every(query => query.values[0] === owner))
     assert.ok(queries[1]!.sql.includes('s.user_id = $1'))
     assert.ok(queries[2]!.sql.includes('user_id = $1'))
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('只选摘要时跳过 SQL 及未选记忆文件，指令场景不读取业务来源', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'gugu-greeting-sources-'))
+  try {
+    const directory = join(root, owner, '.agent', 'memories')
+    await mkdir(directory, { recursive: true })
+    await writeFile(join(directory, 'summary.md'), '保留旧摘要')
+    await writeFile(join(directory, 'summary.ts'), '1795200000')
+    await writeFile(join(directory, 'profile.json'), '无效的画像 JSON')
+    let queries = 0
+    const pool = { async query() { queries++; throw new Error('未选 SQL 来源') } }
+    const signal = new AbortController().signal
+    const read = createPostgresGreetingContextReader(pool as never, root, 'UTC', ['memory.summary'])
+    assert.deepEqual(await read(owner, signal), {
+      timeZone: 'UTC', memory: { summary: '保留旧摘要', summaryAt: new Date(1_795_200_000_000) },
+    })
+    const readNone = createPostgresGreetingContextReader(pool as never, root, 'UTC', [])
+    assert.deepEqual(await readNone(owner, signal), { timeZone: 'UTC', memory: null })
+    assert.equal(queries, 0)
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('Web 生产问候命中缓存时跳过组装和模型选择', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'gugu-greeting-hit-'))
+  try {
+    let reads = 0
+    const generate = createProductionGreeting({
+      pool: { async query() { reads++; throw new Error('不应读取数据库') } } as never,
+      storageRoot: root, serverTimezone: 'UTC', overridePath: join(root, 'missing-config.json'), env: {}, enabled: () => true,
+      redis: {
+        async get(key) { assert.equal(key, `agent:greeting:v2:${owner}:ja-JP`); return 'おかえり' },
+        async acquire() { assert.fail('缓存命中不应加锁') },
+        async set() { assert.fail('缓存命中不应写入') },
+      },
+    })
+    assert.deepEqual(await generate(owner, 'ja-JP'), { text: 'おかえり', enabled: true })
+    assert.equal(reads, 0)
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
@@ -72,10 +111,11 @@ test('问候 standalone Provider 使用池选模型并将 BYOK 凭据绑定到�
       image: false, video: false, audio: false, image_detail: 'auto', web_search_enabled: false }
     const queries: unknown[][] = []
     const pool = { async query(_sql: string, values: unknown[]) { queries.push(values); return { rows: [credential] } } }
-    let captured: { url: string; headers: Record<string, string>; body: unknown } | null = null, closed = false
+    const requests: Array<{ url: string; headers: Record<string, string>; body: unknown }> = []
+    let closed = false
     const complete = createStandaloneGreetingCompleter(pool as never, configPath, { CREDENTIALS_MASTER_KEY: masterKey }, () => ({
       async request(request) {
-        captured = { url: request.url, headers: request.headers as Record<string, string>, body: request.body }
+        requests.push({ url: request.url, headers: request.headers as Record<string, string>, body: request.body })
         const body = new TextEncoder().encode(JSON.stringify({ choices: [{ message: { content: '你好，今天想聊什么？' }, finish_reason: 'stop' }] }))
         return { status: 200, headers: { 'content-type': 'application/json' }, body: (async function* () { yield body })(), cancel() {} }
       }, async close() { closed = true },
@@ -83,9 +123,12 @@ test('问候 standalone Provider 使用池选模型并将 BYOK 凭据绑定到�
     const result = await complete(owner, '合成问候提示词', 180, new AbortController().signal)
     assert.equal(result, '你好，今天想聊什么？')
     assert.deepEqual(queries, [[owner, 'llm']])
-    assert.equal(captured?.url, 'https://api.deepseek.com/chat/completions')
-    assert.equal(captured?.headers.Authorization, 'Bearer synthetic-user-key')
-    const body = captured?.body as { model?: string; max_tokens?: number; messages?: Array<{ content?: unknown }> }
+    assert.equal(requests.length, 1)
+    const captured = requests[0]
+    assert.ok(captured)
+    assert.equal(captured.url, 'https://api.deepseek.com/chat/completions')
+    assert.equal(captured.headers.Authorization, 'Bearer synthetic-user-key')
+    const body = captured.body as { model?: string; max_tokens?: number; messages?: Array<{ content?: unknown }> }
     assert.equal(body.model, 'user-model')
     assert.equal(body.max_tokens, 180)
     assert.ok(JSON.stringify(body.messages).includes('合成问候提示词'))

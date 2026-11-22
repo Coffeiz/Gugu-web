@@ -8,7 +8,7 @@ import { normalizeAgentSessionTitle } from './application.js'
 import { createSqliteAgentAdmission } from '../run/sqlite-admission.js'
 import { enqueueAgentRagRebuildInTransaction } from '../rag/rebuild-worker.js'
 import { createSqlAgentSessionLister, projectAgentSessionGoal, readAgentSessionContext } from './list.js'
-import { createSqlAgentInteractionHistory } from './interaction-history.js'
+import { createSqlAgentInteractionHistory, readDelegatedPromptBindings } from './interaction-history.js'
 import { projectAgentTimelineEvents } from './message-projection.js'
 import type { DesktopAgentChatReference } from '../../contracts/desktop.js'
 export { resolveDesktopChatReferences } from './desktop-references.js'
@@ -18,7 +18,13 @@ const isRunning = sql<boolean>`s.active_run_id IS NOT NULL AND (s.execution_stat
   LEFT JOIN agent_run_checkpoints checkpoint USING (user_id,session_id,run_id)
   LEFT JOIN agent_run_controls control USING (user_id,session_id,run_id)
   WHERE admission.user_id=s.user_id AND admission.session_id=s.id AND admission.run_id=s.active_run_id
-    AND COALESCE(control.startup_failed,0)=0 AND (checkpoint.status IS NULL OR checkpoint.status IN ('preparing','running'))
+    AND COALESCE(control.startup_failed,0)=0 AND (checkpoint.status IS NULL OR checkpoint.status IN ('preparing','running')
+      OR (checkpoint.status='waiting' AND (
+        EXISTS (SELECT 1 FROM agent_subagent_waits w WHERE replace(w.owner_id,'-','')=s.user_id
+          AND w.parent_session_id=CAST(s.id AS TEXT) AND w.parent_run_id=s.active_run_id)
+        OR EXISTS (SELECT 1 FROM agent_inbox_waits w WHERE replace(w.owner_id,'-','')=s.user_id
+          AND w.session_id=CAST(s.id AS TEXT) AND w.run_id=s.active_run_id)
+      )))
 ))`
 
 export async function listDesktopAgentSessions(db: Kysely<Database>, owner: string): Promise<DesktopAgentSession[]> {
@@ -216,8 +222,13 @@ export async function readDesktopAgentHistoryPage(
   const bindings = runIds.length ? (await sql<{ prompt_id: number; run_id: string }>`
     SELECT prompt_id,run_id FROM agent_interaction_bindings
     WHERE user_id=${user} AND session_id=${id} AND run_id IN (${sql.join(runIds)})`.execute(db)).rows : []
+  if (loadInteractionSecret && runIds.length) {
+    const pageRuns = new Set(runIds)
+    bindings.push(...(await readDelegatedPromptBindings(db, 'sqlite', dataContext(owner).ownerId, id))
+      .filter(route => pageRuns.has(route.run_id)))
+  }
   const secret = bindings.length && before === undefined ? await loadInteractionSecret?.() : undefined
-  const prompts = await createSqlAgentInteractionHistory(db, 'sqlite', undefined, secret)(owner, id, {
+  const prompts = await createSqlAgentInteractionHistory(db, 'sqlite', undefined, secret, Boolean(loadInteractionSecret))(owner, id, {
     restoreActive: secret !== undefined, promptIds: bindings.map(binding => binding.prompt_id),
   })
   const runByPrompt = new Map(bindings.map(binding => [binding.prompt_id, binding.run_id]))

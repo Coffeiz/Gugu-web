@@ -1,6 +1,6 @@
 import type { Pool } from 'pg'
 import type { RunIdentity } from '@gugu/core/agent'
-import { agentDispatchSource, decryptAgentDispatchInput, type ImAgentDispatchInput } from '../../agent/run/dispatch.js'
+import { agentDispatchSource, decryptAgentDispatchInput, hasReadySubagentWait, hasReadyAgentInbox, type ImAgentDispatchInput } from '../../agent/run/dispatch.js'
 
 /** IM收据仅作为候选索引；真正执行前仍解密验证v3来源，Web任务没有消费资格。 */
 export function createImHostScans(options: { pool: Pick<Pool, 'query'>; secretKey: string; concurrency?: number;
@@ -28,7 +28,9 @@ export function createImHostScans(options: { pool: Pick<Pool, 'query'>; secretKe
         SELECT DISTINCT ON (d.user_id,d.session_id) d.user_id::text,d.session_id,d.run_id,d.nonce,d.payload,d.sequence::text AS scan_sequence,d.sequence
         FROM agent_run_dispatch d LEFT JOIN agent_run_checkpoints c ON c.user_id=d.user_id AND c.session_id=d.session_id AND c.run_id=d.run_id
         WHERE d.sequence>$1::bigint AND d.state IN ('selected','queued') AND d.blocked_reason IS DISTINCT FROM 'version_conflict'
-          AND (c.status IS NULL OR c.status IN ('preparing','running') OR c.status='waiting' AND d.cancel_requested IS TRUE)
+          AND (c.status IS NULL OR c.status IN ('preparing','running') OR c.status='waiting' AND (
+            d.cancel_requested IS TRUE OR ${hasReadySubagentWait('d.user_id::text', 'd.session_id::text', 'd.run_id')}
+            OR ${hasReadyAgentInbox('d.user_id::text', 'd.session_id::text', 'd.run_id')}))
           AND EXISTS(SELECT 1 FROM gugu_im_inbound_receipts r WHERE r.user_id=d.user_id AND r.session_id=d.session_id AND r.run_id=d.run_id AND r.state='dispatched')
         ORDER BY d.user_id,d.session_id,d.sequence) candidates ORDER BY sequence LIMIT 128`, [dispatchAfter])
       if (!rows.rows.length) dispatchAfter = '0'

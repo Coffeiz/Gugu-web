@@ -26,7 +26,7 @@ import type {ImReflectionService,ImReflectionServiceOptions} from '../../../../s
 
 const databaseUrl=process.env.GUGU_IM_GATEWAY_TEST_DATABASE_URL,redisUrl=process.env.GUGU_WEBUI_TEST_REDIS_URL,python=process.env.GUGU_IM_FIXTURE_PYTHON
 const digest=(value:unknown)=>createHash('sha256').update(stableJson(value)).digest('hex')
-test('正式配置/Access/PG/Harness/checkpoint→新生产Provider绑定恢复私聊及群成员，隔离原scope且公开群不重建',{
+test('正式配置/Access/PG/Harness/checkpoint→独立反思在重启后按权限处理群和成员记忆',{
  skip:!(databaseUrl&&redisUrl&&python)&&'需显式隔离PG/Redis及Linux真实FS配置锁环境',timeout:120000,
 },async()=>{
  const f=await createImProductionFixture({databaseUrl,python:python!,platform:'qq'})
@@ -102,22 +102,11 @@ test('正式配置/Access/PG/Harness/checkpoint→新生产Provider绑定恢复�
    const before=calls
    for(let i=0;i<(group?2:1);i++)assert.equal(await service.runOnce(),true)
    const jobs=(await f.pool.query('SELECT * FROM gugu_im_reflection_jobs WHERE session_id=$1',[session.id])).rows
-   assert.equal(jobs.filter(row=>row.state==='completed').length,1);assert.equal(calls,before+1)
-   if(group)assert.equal(jobs.filter(row=>row.state==='deferred').length,1)
-   const completed=jobs.find(row=>row.state==='completed')!,job=createImReflectionCodec(f.secretKey).open(completed,completed.nonce,completed.payload,'job') as unknown as ImReflectionJob
-   assert.equal(job.scope.type,'platform-user');assert.equal(job.scope.id,group?`${groupId}:${sender}`:sender)
+   assert.equal(jobs.filter(row=>row.state==='completed').length,group?2:1);assert.equal(calls,before+(group?2:1))
+   const codec=createImReflectionCodec(f.secretKey)
+   const job=jobs.map(row=>codec.open(row,row.nonce,row.payload,'job') as ImReflectionJob).find(job=>job.scope.type==='platform-user')
+   assert.ok(job);assert.equal(job.scope.id,group?`${groupId}:${sender}`:sender)
    assert.match(await readFile(join(f.storageRoot,reflectionFileKey(job,'summary')),'utf8'),/合成成员范围总结/)
-   const signal=new AbortController().signal,guarded=await bindings.resolveRuntime(job,signal,async()=>await authorize()
-    &&await model.accessVersion(identity,actor,snapshot.bot,true)===bound.selection.contextScopeKey)
-   try{
-    const prior=calls
-    assert.equal(await bindings.rebuildMemberSnapshot!({...job,scope:{type:'platform-user',id:group?'other-group:synthetic-member':'other-member'}},guarded,signal),null)
-    assert.equal(await bindings.rebuildMemberSnapshot!({...job,scope:{type:'group',id:groupId??'other-group'}},guarded,signal),null)
-    await assert.rejects(bindings.rebuildMemberSnapshot!({...job,identity:{...identity,ownerId:f.otherOwnerId}},guarded,signal))
-    await f.pool.query('UPDATE user_bots SET enabled=false WHERE id=$1',[f.botId])
-    await assert.rejects(bindings.rebuildMemberSnapshot!(job,guarded,signal))
-    assert.equal(calls,prior,'拒绝/快照重建本身均不能发Provider HTTP')
-   }finally{await guarded.release();await f.pool.query('UPDATE user_bots SET enabled=true WHERE id=$1',[f.botId])}
   }
  }finally{await service?.stop();await f.close()}
 })

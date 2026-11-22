@@ -8,7 +8,7 @@ import {createImFileTools} from '../../../../src/modules/im/gateway/agent/files.
 import {createImSaveAttachmentTool} from '../../../../src/modules/im/gateway/agent/downloads.js'
 import {personalFileStorageKey} from '../../../../src/modules/workspaces/roots.js'
 import {createPostgresFileReadOperations} from '../../../../src/modules/files/browse.js'
-import {createReadFileTool,createImSendFileTool,createToolRegistry} from '@gugu/core/tools'
+import {createImSendFileTool,createToolRegistry} from '@gugu/core/tools'
 import {imAttachmentScopeKey} from '../../../../src/modules/im/gateway/inbound/attachments.js'
 import {context,receipt,platform,temporary,owner,other,data,stored} from '../run-sender.fixtures.js'
 
@@ -70,10 +70,8 @@ test('实际registry→文件ports→真实PG/本地FS→真实TG multipart，�
  const p=platform('telegram',async()=>{entered();await blocked});let allowed=true
  try{
   const ports=createImFileTools({...f.c,pool:f.pool,storageRoot:f.root,messageIds:['11'],files:createPostgresFileReadOperations(f.pool,null,f.root),sender:()=>p.sender,authorizeTool:async()=>allowed})
-  const registry=createToolRegistry({authorize:async()=>allowed,tools:[createReadFileTool(ports.readFile!),createImSendFileTool(ports.sendFile)]})
+  const registry=createToolRegistry({authorize:async()=>allowed,tools:[createImSendFileTool(ports.sendFile)]})
   const scope={identity:f.c.identity,roundId:'round',signal:new AbortController().signal,resolution:null,execute:async()=>{throw Error('不能执行Shell')}}
-  const read=await registry.tools.dispatch({id:'read',name:'read_file',input:{file_id:1}},scope)
-  assert.equal(read.kind,'completed');if(read.kind==='completed')assert.equal((read.value as {content:string}).content,data.toString())
   const first=registry.tools.dispatch({id:'first',name:'send_file',input:{attach_id:'attachment'}},scope)
   await started
   const second=await registry.tools.dispatch({id:'second',name:'send_file',input:{attach_id:'attachment'}},scope)
@@ -85,13 +83,12 @@ test('实际registry→文件ports→真实PG/本地FS→真实TG multipart，�
   assert.equal(await ports.sendFile.recover({identity:f.c.identity,roundId:'later',toolCallId:'different',attachId:'attachment'}),'sent')
   assert.equal(p.requests.length,1)
   await f.pool.query('UPDATE files SET user_id=$1',[other])
-  assert.equal(await ports.readFile!.resolveOwnedFile(f.c.identity,1,scope.signal),null)
   allowed=false
   assert.equal(await ports.sendFile.send({identity:f.c.identity,roundId:'r',toolCallId:'revoked',attachId:'attachment',signal:scope.signal}),'failed')
   assert.equal(p.requests.length,1)
  }finally{release();await p.close()}
 }))
-test('成员/群不注册文件库读取；未知平台结果保持持久unknown并且不重发', {skip:!url&&'需要显式隔离PG'},async()=>fixture(async f=>{
+test('成员/群不能按文件库 ID 发送；未知平台结果保持持久unknown并且不重发', {skip:!url&&'需要显式隔离PG'},async()=>fixture(async f=>{
  const p=platform('telegram',()=>{throw Error('synthetic-private-failure')})
  try{
   const ports=createImFileTools({...f.c,pool:f.pool,storageRoot:f.root,messageIds:['11'],files:createPostgresFileReadOperations(f.pool,null,f.root),sender:()=>p.sender,authorizeTool:async()=>true})
@@ -102,7 +99,7 @@ test('成员/群不注册文件库读取；未知平台结果保持持久unknown
   assert.equal(await ports.sendFile.recover(input),'unknown');assert.equal(p.requests.length,count)
   const member=context('telegram',true)
   const limited=createImFileTools({...member,pool:f.pool,storageRoot:f.root,messageIds:['11'],files:createPostgresFileReadOperations(f.pool,null,f.root),sender:()=>p.sender,authorizeTool:async()=>true})
-  assert.equal(limited.readFile,undefined);assert.equal(limited.sendFile.allowFileId,false)
+  assert.equal(limited.sendFile.allowFileId,false)
   assert.equal(createImSendFileTool(limited.sendFile).validate({file_id:1}).success,false)
  }finally{await p.close()}
 }))

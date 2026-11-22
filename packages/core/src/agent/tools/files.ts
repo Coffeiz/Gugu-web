@@ -292,133 +292,112 @@ function selectLines(text: string, target: string) {
 }
 
 /** 只开放 owner 解析后的文件库与聊天附件文本，以及受限 PDF/Office 提取；不接收任意宿主路径、媒体或 URL。 */
-export function createReadFileTool(ports: ReadFilePorts): ToolDefinition {
-  return {
-    definition: { name: 'read_file', schema: { type: 'function', function: {
-      name: 'read_file', description: '读取文件库或聊天附件中的 UTF-8 文本，或提取 PDF/Office 正文。文件库可按 file_id、逻辑路径定位；聊天附件使用 attach_id。可按正文行号选择内容并按顺序批量读取最多 20 项。历史图片、音频和视频须由对应媒体能力读取。', parameters: {
-        type: 'object', properties: {
-          file_id: { type: 'integer', minimum: 1 },
-          file: { type: 'string', maxLength: 2048 },
-          attach_id: { type: 'string', minLength: 1, maxLength: 256 },
-          target_lines: { type: 'string', default: 'all' },
-          items: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'object', properties: {
-            file_id: { type: 'integer', minimum: 1 }, file: { type: 'string', maxLength: 2048 }, attach_id: { type: 'string', minLength: 1, maxLength: 256 }, target_lines: { type: 'string', default: 'all' },
-            title: { type: 'string', maxLength: 120 }, result_id: { type: 'string', maxLength: 80 },
-          }, oneOf: [{ required: ['file_id'], not: { anyOf: [{ required: ['file'] }, { required: ['attach_id'] }] } }, { required: ['file'], not: { anyOf: [{ required: ['file_id'] }, { required: ['attach_id'] }] } }, { required: ['attach_id'], not: { anyOf: [{ required: ['file_id'] }, { required: ['file'] }] } }], additionalProperties: false } },
-        }, oneOf: [
-          { required: ['file_id'], not: { anyOf: [{ required: ['file'] }, { required: ['attach_id'] }, { required: ['items'] }] } },
-          { required: ['file'], not: { anyOf: [{ required: ['file_id'] }, { required: ['attach_id'] }, { required: ['items'] }] } },
-          { required: ['attach_id'], not: { anyOf: [{ required: ['file_id'] }, { required: ['file'] }, { required: ['items'] }] } },
-          { required: ['items'], not: { anyOf: [{ required: ['file_id'] }, { required: ['file'] }, { required: ['attach_id'] }] } },
-        ], additionalProperties: false,
-      },
-    } } },
-    effect: 'read',
-    validate(input) { return inputSchema.safeParse(input) },
-    async execute(input, scope) {
-      const args = inputSchema.parse(input)
-      scope.signal.throwIfAborted()
-      const readOne = async (selector: { file_id?: number; file?: string; attach_id?: string }, targetLines: string, byteLimit = MAX_BYTES, batch = false): Promise<ToolResult> => {
-        try {
-          const attachment = selector.attach_id !== undefined
-            ? ports.resolveOwnedAttachment
-              ? await ports.resolveOwnedAttachment(scope.identity, selector.attach_id, scope.signal)
-              : null
+export function createOwnedTextReader(ports: ReadFilePorts) {
+  return async (input: unknown, scope: { identity: RunIdentity; signal: AbortSignal }): Promise<ToolResult> => {
+    const parsed = inputSchema.safeParse(input)
+    if (!parsed.success) return { kind: 'completed', successful: false, mutated: false, executed: false, value: { error: '文件读取参数无效' } }
+    const args = parsed.data
+    scope.signal.throwIfAborted()
+    const readOne = async (selector: { file_id?: number; file?: string; attach_id?: string }, targetLines: string, byteLimit = MAX_BYTES, batch = false): Promise<ToolResult> => {
+      try {
+        const attachment = selector.attach_id !== undefined
+          ? ports.resolveOwnedAttachment
+            ? await ports.resolveOwnedAttachment(scope.identity, selector.attach_id, scope.signal)
             : null
-          const file = selector.attach_id !== undefined ? null : selector.file_id !== undefined
-            ? await ports.resolveOwnedFile(scope.identity, selector.file_id, scope.signal)
-            : selector.file !== undefined && ports.resolveFilePath
-              ? await ports.resolveFilePath(scope.identity, selector.file, scope.signal) : null
-          scope.signal.throwIfAborted()
-          if (selector.attach_id !== undefined && !attachment) return failure('附件不存在或无权访问')
-          if (attachment && (attachment.kind !== 'text'
-            || (!CHAT_ATTACHMENT_TEXT_EXTENSIONS.has(attachment.extension.toLowerCase())
-              && !OFFICE_TEXT_EXTENSIONS.has(attachment.extension.toLowerCase()))))
-            return failure('历史附件目前只支持文本和 PDF/Office 正文读取')
-          if (!file && !attachment) return failure('文件不存在或无权访问')
-          const extension = attachment?.extension ?? file?.extension
-          const office = Boolean(extension && OFFICE_TEXT_EXTENSIONS.has(extension.toLowerCase()))
-          if (file && !file.text && !file.extensionless && !office) return failure('该文件类型尚不支持读取')
-          if (attachment && (!Number.isSafeInteger(attachment.size_bytes) || attachment.size_bytes < 0)) return failure('附件元数据无效')
-          if (attachment && office && attachment.size_bytes > Math.min(byteLimit, OFFICE_TEXT_MAX_BYTES)) return failure(batch && byteLimit < OFFICE_TEXT_MAX_BYTES
-            ? '本批次剩余容量不足，未读取该附件' : 'Office 文档超过 30MB 提取上限')
-          if (attachment && attachment.size_bytes > byteLimit) return failure(batch && byteLimit < MAX_BYTES
-            ? '本批次剩余容量不足，未读取该附件' : '附件过大，超出可读上限')
-          const source = attachment ?? file!
-          const opened = await ports.openFile(source.root, source.relativePath)
-          if (!opened) return failure(attachment ? '历史附件不存在，无法读取' : '文件不存在，无法读取')
-          try {
-            scope.signal.throwIfAborted()
-            if (office && opened.size > Math.min(byteLimit, OFFICE_TEXT_MAX_BYTES)) return failure(batch && byteLimit < OFFICE_TEXT_MAX_BYTES
-              ? '本批次剩余容量不足，未读取该文件' : 'Office 文档超过 30MB 提取上限')
-            if (opened.size > byteLimit) return failure(batch && byteLimit < MAX_BYTES
-              ? '本批次剩余容量不足，未读取该文件' : '文件过大，超出可读上限')
-            // 多读一字节，防止 stat 后文件增长绕过大小限制。
-            const bytes = new Uint8Array(byteLimit + 1)
-            let size = 0
-            while (size < bytes.length) {
-              scope.signal.throwIfAborted()
-              const read = await opened.handle.read(bytes, size, Math.min(65536, bytes.length - size), size)
-              if (!read.bytesRead) break
-              size += read.bytesRead
-            }
-            scope.signal.throwIfAborted()
-            if (size > byteLimit) return failure(batch && byteLimit < MAX_BYTES
-              ? '本批次剩余容量不足，未读取该文件' : '文件过大，超出可读上限')
-            let text: string
-            if (office) {
-              try { text = await extractOfficeText(bytes.subarray(0, size), extension!) }
-              catch { return failure('Office 文档无法提取文本') }
-              scope.signal.throwIfAborted()
-            } else {
-              const extensionless = file?.extensionless === true
-              try { text = new TextDecoder('utf-8', { fatal: extensionless, ignoreBOM: !extensionless }).decode(bytes.subarray(0, size)) }
-              catch { return failure('内容不是 UTF-8 文本') }
-            }
-            if (file?.extensionless && /[\x00-\x08\x0b\x0e-\x1f\x7f-\x9f]/u.test(text)) return failure('内容不是 UTF-8 文本')
-            if (!file?.extensionless) {
-              let end = 0
-              for (let count = 0; count < 200_000 && end < text.length; count++) end += text.codePointAt(end)! > 0xffff ? 2 : 1
-              text = text.slice(0, end)
-            }
-            const selected = selectLines(text, targetLines)
-            if ('error' in selected) return failure(selected.error!)
-            return { kind: 'completed', value: { ...(attachment ? { attach_id: attachment.attach_id }
-              : file!.id !== undefined ? { file_id: file!.id }
-              : selector.file_id !== undefined ? { file_id: selector.file_id }
-              : { file: selector.file }), name: source.name, ...selected, _source_size_bytes: size }, successful: true, mutated: false }
-          } finally { await opened.handle.close() }
-        } catch {
-          scope.signal.throwIfAborted()
-          return failure('读取失败')
-        }
-      }
-      if (args.file_id !== undefined || args.file !== undefined || args.attach_id !== undefined)
-        return readOne({ file_id: args.file_id, file: args.file, attach_id: args.attach_id }, args.target_lines)
-      const results: Array<{ index: number; label: string; successful: boolean; value: unknown }> = []
-      let totalBytes = 0, successfulCount = 0
-      for (const [offset, item] of args.items!.entries()) {
+          : null
+        const file = selector.attach_id !== undefined ? null : selector.file_id !== undefined
+          ? await ports.resolveOwnedFile(scope.identity, selector.file_id, scope.signal)
+          : selector.file !== undefined && ports.resolveFilePath
+            ? await ports.resolveFilePath(scope.identity, selector.file, scope.signal) : null
         scope.signal.throwIfAborted()
-        const label = item.title?.trim() || item.result_id?.trim() || (item.file_id !== undefined ? `文件 ${item.file_id}`
-          : item.attach_id !== undefined ? `附件 ${item.attach_id}` : item.file!)
-        if (totalBytes >= MAX_BATCH_BYTES) {
-          results.push({ index: offset + 1, label, successful: false, value: { error: '已达到批次源文件总量上限，后续项目未读取' } })
-          continue
-        }
-        const remaining = MAX_BATCH_BYTES - totalBytes
-        const byteLimit = Math.min(MAX_BYTES, remaining)
-        const outcome = await readOne({ file_id: item.file_id, file: item.file, attach_id: item.attach_id }, item.target_lines, byteLimit, true)
-        if (outcome.kind !== 'completed') continue
-        const value: Record<string, unknown> = outcome.value && typeof outcome.value === 'object' && !Array.isArray(outcome.value)
-          ? { ...outcome.value as Record<string, unknown> } : { error: '读取失败' }
-        const size = typeof value._source_size_bytes === 'number' ? value._source_size_bytes : 0
-        delete value._source_size_bytes
-        if (outcome.successful) { totalBytes += size; successfulCount++ }
-        results.push({ index: offset + 1, label, successful: outcome.successful, value })
+        if (selector.attach_id !== undefined && !attachment) return failure('附件不存在或无权访问')
+        if (attachment && (attachment.kind !== 'text'
+          || (!CHAT_ATTACHMENT_TEXT_EXTENSIONS.has(attachment.extension.toLowerCase())
+            && !OFFICE_TEXT_EXTENSIONS.has(attachment.extension.toLowerCase()))))
+          return failure('历史附件目前只支持文本和 PDF/Office 正文读取')
+        if (!file && !attachment) return failure('文件不存在或无权访问')
+        const extension = attachment?.extension ?? file?.extension
+        const office = Boolean(extension && OFFICE_TEXT_EXTENSIONS.has(extension.toLowerCase()))
+        if (file && !file.text && !file.extensionless && !office) return failure('该文件类型尚不支持读取')
+        if (attachment && (!Number.isSafeInteger(attachment.size_bytes) || attachment.size_bytes < 0)) return failure('附件元数据无效')
+        if (attachment && office && attachment.size_bytes > Math.min(byteLimit, OFFICE_TEXT_MAX_BYTES)) return failure(batch && byteLimit < OFFICE_TEXT_MAX_BYTES
+          ? '本批次剩余容量不足，未读取该附件' : 'Office 文档超过 30MB 提取上限')
+        if (attachment && attachment.size_bytes > byteLimit) return failure(batch && byteLimit < MAX_BYTES
+          ? '本批次剩余容量不足，未读取该附件' : '附件过大，超出可读上限')
+        const source = attachment ?? file!
+        const opened = await ports.openFile(source.root, source.relativePath)
+        if (!opened) return failure(attachment ? '历史附件不存在，无法读取' : '文件不存在，无法读取')
+        try {
+          scope.signal.throwIfAborted()
+          if (office && opened.size > Math.min(byteLimit, OFFICE_TEXT_MAX_BYTES)) return failure(batch && byteLimit < OFFICE_TEXT_MAX_BYTES
+            ? '本批次剩余容量不足，未读取该文件' : 'Office 文档超过 30MB 提取上限')
+          if (opened.size > byteLimit) return failure(batch && byteLimit < MAX_BYTES
+            ? '本批次剩余容量不足，未读取该文件' : '文件过大，超出可读上限')
+          // 多读一字节，防止 stat 后文件增长绕过大小限制。
+          const bytes = new Uint8Array(byteLimit + 1)
+          let size = 0
+          while (size < bytes.length) {
+            scope.signal.throwIfAborted()
+            const read = await opened.handle.read(bytes, size, Math.min(65536, bytes.length - size), size)
+            if (!read.bytesRead) break
+            size += read.bytesRead
+          }
+          scope.signal.throwIfAborted()
+          if (size > byteLimit) return failure(batch && byteLimit < MAX_BYTES
+            ? '本批次剩余容量不足，未读取该文件' : '文件过大，超出可读上限')
+          let text: string
+          if (office) {
+            try { text = await extractOfficeText(bytes.subarray(0, size), extension!) }
+            catch { return failure('Office 文档无法提取文本') }
+            scope.signal.throwIfAborted()
+          } else {
+            const extensionless = file?.extensionless === true
+            try { text = new TextDecoder('utf-8', { fatal: extensionless, ignoreBOM: !extensionless }).decode(bytes.subarray(0, size)) }
+            catch { return failure('内容不是 UTF-8 文本') }
+          }
+          if (file?.extensionless && /[\x00-\x08\x0b\x0e-\x1f\x7f-\x9f]/u.test(text)) return failure('内容不是 UTF-8 文本')
+          if (!file?.extensionless) {
+            let end = 0
+            for (let count = 0; count < 200_000 && end < text.length; count++) end += text.codePointAt(end)! > 0xffff ? 2 : 1
+            text = text.slice(0, end)
+          }
+          const selected = selectLines(text, targetLines)
+          if ('error' in selected) return failure(selected.error!)
+          return { kind: 'completed', value: { ...(attachment ? { attach_id: attachment.attach_id }
+            : file!.id !== undefined ? { file_id: file!.id }
+            : selector.file_id !== undefined ? { file_id: selector.file_id }
+            : { file: selector.file }), name: source.name, ...selected, _source_size_bytes: size }, successful: true, mutated: false }
+        } finally { await opened.handle.close() }
+      } catch {
+        scope.signal.throwIfAborted()
+        return failure('读取失败')
       }
-      return { kind: 'completed', successful: successfulCount > 0, mutated: false,
-        value: { results, successful_count: successfulCount, failed_count: results.length - successfulCount, total_source_size_bytes: totalBytes } }
-    },
+    }
+    if (args.file_id !== undefined || args.file !== undefined || args.attach_id !== undefined)
+      return readOne({ file_id: args.file_id, file: args.file, attach_id: args.attach_id }, args.target_lines)
+    const results: Array<{ index: number; label: string; successful: boolean; value: unknown }> = []
+    let totalBytes = 0, successfulCount = 0
+    for (const [offset, item] of args.items!.entries()) {
+      scope.signal.throwIfAborted()
+      const label = item.title?.trim() || item.result_id?.trim() || (item.file_id !== undefined ? `文件 ${item.file_id}`
+        : item.attach_id !== undefined ? `附件 ${item.attach_id}` : item.file!)
+      if (totalBytes >= MAX_BATCH_BYTES) {
+        results.push({ index: offset + 1, label, successful: false, value: { error: '已达到批次源文件总量上限，后续项目未读取' } })
+        continue
+      }
+      const remaining = MAX_BATCH_BYTES - totalBytes
+      const byteLimit = Math.min(MAX_BYTES, remaining)
+      const outcome = await readOne({ file_id: item.file_id, file: item.file, attach_id: item.attach_id }, item.target_lines, byteLimit, true)
+      if (outcome.kind !== 'completed') continue
+      const value: Record<string, unknown> = outcome.value && typeof outcome.value === 'object' && !Array.isArray(outcome.value)
+        ? { ...outcome.value as Record<string, unknown> } : { error: '读取失败' }
+      const size = typeof value._source_size_bytes === 'number' ? value._source_size_bytes : 0
+      delete value._source_size_bytes
+      if (outcome.successful) { totalBytes += size; successfulCount++ }
+      results.push({ index: offset + 1, label, successful: outcome.successful, value })
+    }
+    return { kind: 'completed', successful: successfulCount > 0, mutated: false,
+      value: { results, successful_count: successfulCount, failed_count: results.length - successfulCount, total_source_size_bytes: totalBytes } }
   }
 }
 

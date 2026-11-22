@@ -4,9 +4,14 @@
     @text-submit="(selectedMsg, text) => $emit('interactionTextSubmit', selectedMsg, text)"
     @secret-submit="(selectedMsg, values) => $emit('secretSubmit', selectedMsg, values)"
     @secret-cancel="selectedMsg => $emit('secretCancel', selectedMsg)" />
-  <!-- 群聊左侧消息标发言人：ai 标"咕咕"，群成员标 platformUserName。只在
-       群聊会话里显示，1:1 对话左侧默认就是咕咕，不额外占地方。 -->
-  <div v-if="isGroupSession && msg.role !== 'user'" class="msg-speaker">{{ msg.role === 'ai' ? t('chatUi.gugu') : msg.speakerLabel }}</div>
+  <div v-if="isGroupSession && msg.role === 'ai'" class="msg-speaker">{{ t('chatUi.gugu') }}</div>
+  <button v-if="msg.subagentOutput" type="button" class="msg-speaker msg-speaker-subagent"
+    :aria-expanded="subagentExpanded === true" @click="$emit('toggleSubagent')">
+    <span class="msg-speaker-bird" aria-hidden="true"></span>
+    <span>{{ memberSpeaker }}</span>
+    <FlipChevron :open="subagentExpanded" aria-hidden="true" />
+  </button>
+  <div v-else-if="memberSpeaker" class="msg-speaker">{{ memberSpeaker }}</div>
   <!-- IM 引用/回复：单独一条浅色预览条，跟真正打的话分开显示，别把引用原文
        （可能带 markdown 表格等）直接摊平混进正文气泡（devlog 2026-07-10）。 -->
   <div v-if="msg.role !== 'ai' && (msg.quotedText || msg.files?.some(f => f.quoted))" class="msg-quoted" :title="msg.quotedText || t('chat.quotedMessage')">
@@ -26,7 +31,9 @@
     @body-click="onBodyClick" />
   <!-- 用户消息也走 MD 渲染（sanitize 后），和 AI 气泡同一条链路；样式差异由
        .user-md 在 GuguChat.vue 里按紫底气泡重映射。输入框侧保持纯文本不渲染。 -->
-  <div v-else-if="msg.text || msg.references?.length" class="msg-bubble user-md" @click="onBodyClick"><MarkdownView :html="msg.html ?? renderChatMd(displayQQFaces(msg.text), msg.references)" :text="msg.text" chat render-math /></div>
+  <div v-else-if="(!msg.subagentOutput || subagentExpanded) && (msg.text || msg.references?.length)" class="msg-bubble" :class="msg.role === 'member' ? 'md-body' : 'user-md'" @click="onBodyClick">
+    <MarkdownView :html="msg.html ?? renderChatMd(displayQQFaces(msg.text), msg.references)" :text="msg.text" chat render-math />
+  </div>
   <div v-if="msg.role === 'user' && msg.runOutcome" class="msg-run-outcome" role="status">
     <span class="msg-run-outcome-label">
       {{ t(msg.runOutcome.status === 'interrupted' ? 'chatUi.runInterrupted' : 'chatUi.runFailed') }}
@@ -100,6 +107,7 @@
 </template>
 
 <script setup lang="ts">
+import FlipChevron from '@/components/common/controls/FlipChevron.vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import { useI18n } from 'vue-i18n'
@@ -129,6 +137,7 @@ const props = defineProps<{
   timestamp?: string
   sources?: readonly ChatSource[]
   sessionId: number | null
+  subagentExpanded?: boolean
   hasFollowingMessage?: boolean
   isGroupSession: boolean
   interactionAnswerMode: InteractionAnswerMode
@@ -165,6 +174,8 @@ const visibleTimestamp = computed(() => {
     ? undefined : timestamp
 })
 const { t } = useI18n()
+const memberSpeaker = computed(() => props.msg.subagentOutput ? props.msg.speakerLabel || t('chatUi.subagent')
+  : props.isGroupSession && props.msg.role === 'member' ? props.msg.speakerLabel : undefined)
 const openTranscripts = ref(new Set<string>())
 const dismissedTranscripts = ref(new Set<string>())
 function transcriptKey(file: ChatFile) {
@@ -196,6 +207,7 @@ const runOutcomeDetail = computed(() => {
 })
 
 const emit = defineEmits<{
+  toggleSubagent: []
   copy: [msg: ChatMessage]
   toggleVoice: [file: ChatFile]
   openFile: [file: ChatFile]

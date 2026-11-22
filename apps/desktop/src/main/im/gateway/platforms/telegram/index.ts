@@ -532,7 +532,7 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
         botMentioned: message.botMentioned, mentionsOtherBot: false,
         speakers: [{ platformUserId: message.scope.platformUserId }],
       }, scope => ({ role: scope.platformUserId === current.chatId ? 'owner' : 'member', allowedToolNames: [] }))
-      return { actor, groupMemoryEnabled: current.groupMemoryEnabled,
+      return { actor, ownerPlatformUserId: current.chatId, groupMemoryEnabled: current.groupMemoryEnabled,
         groupOwnerMemoryEnabled: current.groupOwnerMemoryEnabled, memberMemoryEnabled: current.memberMemoryEnabled }
     },
     updateGroupSettings: (patch: import('@gugu/core/desktop').DesktopImGroupSettingsPatch) => serialize(async () => {

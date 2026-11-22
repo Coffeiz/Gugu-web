@@ -107,7 +107,7 @@ export function mapSessionMessageDelta(
   const toolRuns = new Map(timeline.filter(item => item.toolCallId).map(item => [item.toolCallId, item.runId]))
   const interactions: ChatMessage[] = []
   for (const item of data.interactions || []) {
-    const card = mapSessionInteraction({ ...item, run_id: toolRuns.get(item.tool_call_id) ?? item.run_id }, mkid)
+    const card = mapSessionInteraction({ ...item, run_id: item.delegated ? item.run_id : toolRuns.get(item.tool_call_id) ?? item.run_id }, mkid)
     if (card) interactions.push(card)
   }
   return [...messages, ...timeline, ...interactions]
@@ -135,6 +135,7 @@ export function mapSessionInteraction(item: any, mkid: () => number, existing?: 
       allowTextInput: Boolean(item.allow_text_input ?? previous?.allowTextInput),
       customInputActive: Boolean(item.custom_input_active ?? previous?.customInputActive),
       taskPaused: Boolean(item.task_paused ?? previous?.taskPaused),
+      ...(item.delegated === true || previous?.delegated ? { delegated: true } : {}),
       secretFields: Array.isArray(item.secret_fields) ? item.secret_fields : previous?.secretFields,
       resolved: Boolean(item.resolved ?? previous?.resolved),
       expired: Boolean(item.expired ?? previous?.expired),

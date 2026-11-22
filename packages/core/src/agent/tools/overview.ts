@@ -38,21 +38,3 @@ export function createUpcomingTool(options: { core: SqlDataRuntime; events: Cale
     },
   }
 }
-
-/** 总览组使用共享完整计数；today来自与时间工具相同的可信Host时区。 */
-export function createDashboardStatsTool(options: { counts: import('../../overview.js').DashboardCountPort; time: ToolClock }): ToolDefinition {
-  return {
-    definition: { name: 'get_dashboard_stats', schema: { type: 'function', function: { name: 'get_dashboard_stats',
-      description: '返回项目（按状态）、近期事件、文件、联系人的数量统计。用于回答「我手头有多少项目」这类总览问题。',
-      parameters: { type: 'object', properties: {} } } } },
-    effect: 'read', validate(input) { return z.object({}).safeParse(input) },
-    async execute(_input, scope) {
-      const { date } = await readToolClock(options.time, scope.identity, scope.signal)
-      const counts = await options.counts.count(scope.identity.ownerId, date, scope.signal)
-      scope.signal.throwIfAborted()
-      const { pending, active, done, upcoming_events, files, clients } = counts
-      return { kind: 'completed', successful: true, mutated: false,
-        value: { projects: { pending, active, done, total: pending + active + done }, upcoming_events, files, clients } }
-    },
-  }
-}

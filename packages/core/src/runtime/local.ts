@@ -33,7 +33,7 @@ export interface LocalHostRequest {
 }
 type LocalHostRequestHandler = (request: LocalHostRequest) => Promise<unknown>
 export class LocalRuntime {
-  private agentRunListeners = new Set<(sessionId: number, runId: string) => void>()
+  private agentRunListeners = new Set<(sessionId: number, runId: string, interactionChanged?: true) => void>()
   private hostControllers = new Map<number, AbortController>()
   private hostRequestListeners = new Set<LocalHostRequestHandler>()
   private pending = new Map<number, Pending>()
@@ -56,6 +56,7 @@ export class LocalRuntime {
         event?: string
         sessionId?: number
         runId?: string
+        interactionChanged?: boolean
         requestId?: number
         method?: string
         params?: Fields
@@ -63,7 +64,7 @@ export class LocalRuntime {
         error?: { code: ErrorCode; message: string }
       }) => {
         if (frame.event === 'agent_run_changed' && typeof frame.sessionId === 'number' && typeof frame.runId === 'string') {
-          for (const listener of this.agentRunListeners) listener(frame.sessionId, frame.runId)
+          for (const listener of this.agentRunListeners) listener(frame.sessionId, frame.runId, frame.interactionChanged === true ? true : undefined)
           return
         }
         if (frame.event === 'host_cancel' && frame.requestId !== undefined) {
@@ -177,7 +178,7 @@ export class LocalRuntime {
   ): Promise<LocalRuntime> {
     return this.start(database, false, options)
   }
-  onAgentRunChanged(listener: (sessionId: number, runId: string) => void): () => void {
+  onAgentRunChanged(listener: (sessionId: number, runId: string, interactionChanged?: true) => void): () => void {
     this.agentRunListeners.add(listener)
     return () => { this.agentRunListeners.delete(listener) }
   }

@@ -1,3 +1,4 @@
+import { createDiskTrash } from '../../../../src/modules/files/trash/disk.js'
 import assert from 'node:assert/strict'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -15,14 +16,26 @@ import { parseAgentKnowledgeEntry, serializeAgentKnowledgeEntry, type AgentKnowl
 import { startServer } from '../../../../src/main.js'
 import { applyAgentBaseMigration, checkAgentBaseMigration } from '@gugu/database/postgres/migrations/0001_initialize'
 import { applyAgentRunMigration, checkAgentRunMigration } from '@gugu/database/postgres/migrations/0003_agent_run'
+import { providerCredentials } from '@gugu/database/postgres/migrations/0016_provider_credentials'
+import { byokBindings } from '@gugu/database/postgres/migrations/0021_byok_bindings'
+import { webReflection } from '@gugu/database/postgres/migrations/0025_web_reflection'
+import { scheduledTaskMode } from '@gugu/database/postgres/migrations/0022_scheduled_task_mode'
 import { applyWebDomainMigration } from '@gugu/database/postgres/migrations/0002_web_domain'
 import { applyRagIndexMigration } from '@gugu/database/postgres/migrations/0011_rag_index'
 import { applyTrashPurgeMigration } from '@gugu/database/postgres/migrations/0009_trash_purge'
 import { applyInteractionActionsMigration } from '@gugu/database/postgres/migrations/0008_interaction_actions'
-import { createRedisScheduledTaskCommands, createRedisValueReader } from '../../../../src/adapters/cache/redis-events.js'
-import { clearRedisAgentReflectionSession } from '../../../../src/modules/agent/memory/reflection/queue.js'
+import { createRedisValueReader } from '../../../../src/adapters/cache/redis-events.js'
 import { signedUserToken } from '../../../helpers/auth.js'
 import { applyFilesystemAuthorizationMigration, checkFilesystemAuthorizationMigration } from '@gugu/database/postgres/migrations/0005_filesystem_authorization'
+
+import { subagentDeliveries } from '@gugu/database/postgres/migrations/0028_subagent_deliveries'
+import { subagentSessions } from '@gugu/database/postgres/migrations/0029_subagent_sessions'
+import { subagentLaunches } from '@gugu/database/postgres/migrations/0030_subagent_launches'
+import { subagentWaits } from '@gugu/database/postgres/migrations/0031_subagent_waits'
+import { subagentContinuations } from '@gugu/database/postgres/migrations/0034_subagent_continuations'
+import { subagentExecutions } from '@gugu/database/postgres/migrations/0035_subagent_executions'
+import { subagentConversations } from '@gugu/database/postgres/migrations/0033_subagent_conversations'
+import { agentInbox } from '@gugu/database/postgres/migrations/0032_agent_inbox'
 
 const pgUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const redisUrl = process.env.GUGU_WEBUI_TEST_REDIS_URL
@@ -91,7 +104,6 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
   const url = new URL(pgUrl!)
   url.searchParams.set('options', `-c search_path=${schema}`)
   const pool = new Pool({ connectionString: url.toString() })
-  const reflectionCommands = createRedisScheduledTaskCommands(redisUrl!)
   const root = await mkdtemp(join(tmpdir(), 'gugu-agent-chat-main-'))
   const requests: string[] = []
   let ordinaryNoteId: number | undefined
@@ -110,11 +122,17 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
   let resumeAfterReconnect!: () => void
   const continueAfterReconnect = new Promise<void>(resolve => { resumeAfterReconnect = resolve })
   let cancelledProviderClosed = false
+  const crashPrompt = '强制退出用例，查找我之前的合成报告。'
   const provider = createServer(async (request, response) => {
     const chunks: Buffer[] = []
     for await (const chunk of request) chunks.push(Buffer.from(chunk))
-    const input = Buffer.concat(chunks).toString('utf8')
-    requests.push(input)
+    const body = Buffer.concat(chunks).toString('utf8')
+    const { messages = [], stream } = JSON.parse(body) as { messages?: Array<{ role: string; content: unknown }>; stream?: boolean }
+    if (stream) requests.push(body)
+    // 合成模型只执行当前用户回合的指令，历史消息仍保留在 requests 供断言。
+    const turnStart = messages.findLastIndex(message => message.role === 'user'
+      && !JSON.stringify(message.content).includes('[system-reminder]'))
+    const input = JSON.stringify(messages.slice(Math.max(0, turnStart)))
     const afterCancellation = input.includes('取消后继续的合成输入')
     if (input.includes('等待取消的合成输入') && !afterCancellation) {
       response.once('close', () => { cancelledProviderClosed = true })
@@ -140,7 +158,6 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     const needsListEvents = !afterCancellation && input.includes('列出合成日历事件') && !input.includes('synthetic-list-events')
     const needsListClients = !afterCancellation && input.includes('列出合成联系人') && !input.includes('synthetic-list-clients')
     const needsListProjects = !afterCancellation && input.includes('列出合成项目') && !input.includes('synthetic-list-projects')
-    const needsDashboard = !afterCancellation && input.includes('读取合成总览') && !input.includes('synthetic-dashboard')
     const needsListWorkspaces = !afterCancellation && input.includes('列出合成工作区') && !input.includes('synthetic-list-workspaces')
     const needsGetWorkspace = !afterCancellation && input.includes('读取合成工作区详情') && !input.includes('synthetic-get-workspace')
     const needsUpdateWorkspace = !afterCancellation && input.includes('更新合成工作区显示名称') && !input.includes('synthetic-update-workspace')
@@ -195,7 +212,9 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     const needsSetStages = !afterCancellation && input.includes('重设合成阶段') && !input.includes('synthetic-set-stages')
     const needsRemoveStage = !afterCancellation && input.includes('删除合成阶段') && !input.includes('synthetic-remove-stage')
     if (needsSearch && input.includes('强制退出用例'))
-      await pool.query('INSERT INTO synthetic_crash_gate VALUES (5) ON CONFLICT DO NOTHING')
+      await pool.query(`INSERT INTO synthetic_crash_gate(session_id)
+        SELECT session_id FROM conversation_messages WHERE role='user' AND content=$1
+        ON CONFLICT DO NOTHING`, [crashPrompt])
     if (!needsSearch && input.includes('强制退出用例')) await continueAfterReconnect
     const choice = needsCanvasList
       ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-canvas-list', type: 'function', function: {
@@ -435,20 +454,16 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
       } }] }, finish_reason: 'tool_calls' }
       : needsCreateClient
       ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-create-client', type: 'function', function: {
-        name: 'call_tool', arguments: '{"tool_name":"create_client","arguments":{"client_name":"工具创建联系人","contact":"合成联系人","email":"tool-created@example.test"}}',
+        name: 'call_tool', arguments: '{"tool_name":"create_contact","arguments":{"name":"工具创建联系人","contact":"合成联系人","email":"tool-created@example.test"}}',
       } }] }, finish_reason: 'tool_calls' }
       : needsUpdateClient
         ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-update-client', type: 'function', function: {
-          name: 'call_tool', arguments: '{"tool_name":"update_client","arguments":{"client":"工具创建联系人","notes":"已更新合成备注"}}',
+          name: 'call_tool', arguments: '{"tool_name":"update_contact","arguments":{"contact_query":"工具创建联系人","notes":"已更新合成备注"}}',
         } }] }, finish_reason: 'tool_calls' }
         : needsDeleteClient
           ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-delete-client', type: 'function', function: {
-            name: 'call_tool', arguments: JSON.stringify({ tool_name: 'delete_client', arguments: { client_id: agentCreatedClientId } }),
+            name: 'call_tool', arguments: JSON.stringify({ tool_name: 'delete_contact', arguments: { contact_id: agentCreatedClientId } }),
           } }] }, finish_reason: 'tool_calls' }
-        : needsDashboard
-      ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-dashboard', type: 'function', function: {
-        name: 'call_tool', arguments: '{"tool_name":"get_dashboard_stats","arguments":{}}',
-      } }] }, finish_reason: 'tool_calls' }
       : needsListWorkspaces
         ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-list-workspaces', type: 'function', function: {
           name: 'call_tool', arguments: '{"tool_name":"list_workspaces","arguments":{}}',
@@ -490,15 +505,15 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
                 } }] }, finish_reason: 'tool_calls' }
                 : needsRestoreFile
                   ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-restore-file', type: 'function', function: {
-                    name: 'call_tool', arguments: JSON.stringify({ tool_name: 'restore_file', arguments: { file_id: restoreFileId } }),
+                    name: 'call_tool', arguments: JSON.stringify({ tool_name: 'restore_file', arguments: { path: restoreFilePath } }),
                   } }] }, finish_reason: 'tool_calls' }
                   : needsRestoreFolder
                     ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-restore-folder', type: 'function', function: {
-                      name: 'call_tool', arguments: JSON.stringify({ tool_name: 'restore_folder', arguments: { folder_id: restoreFolderId } }),
+                      name: 'call_tool', arguments: JSON.stringify({ tool_name: 'restore_folder', arguments: { path: restoreFolderPath } }),
                     } }] }, finish_reason: 'tool_calls' }
           : needsListClients
       ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-list-clients', type: 'function', function: {
-        name: 'call_tool', arguments: '{"tool_name":"list_clients","arguments":{}}',
+        name: 'call_tool', arguments: '{"tool_name":"list_contacts","arguments":{}}',
       } }] }, finish_reason: 'tool_calls' }
       : needsListProjects
         ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-list-projects', type: 'function', function: {
@@ -531,11 +546,10 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
   let host: Awaited<ReturnType<typeof startServer>> | undefined
   let child: ChildProcess | undefined
   let gate: PoolClient | undefined
-  let ownerId: string | undefined
   let defaultWorkspaceId: number | undefined
   let mutableWorkspaceId: number | undefined
-  let restoreFileId: number | undefined
-  let restoreFolderId: number | undefined
+  let restoreFilePath: string | undefined
+  let restoreFolderPath: string | undefined
   let ownerProjectId: number | undefined
   let foreignProjectId: number | undefined
   let ownerNoteId: number | undefined
@@ -560,8 +574,14 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
       ['applied', 'unchanged'])
     assert.equal(await checkFilesystemAuthorizationMigration(pool), 'applied')
     assert.equal(await applyWebDomainMigration(pool), 'applied')
+    assert.equal(await scheduledTaskMode.apply(pool), 'applied')
+    assert.equal(await providerCredentials.apply(pool), 'applied')
+    assert.equal(await byokBindings.apply(pool), 'applied')
     assert.equal(await checkAgentRunMigration(pool), 'pending')
     assert.equal(await applyAgentRunMigration(pool), 'applied')
+    for (const migration of [subagentDeliveries, subagentSessions, subagentLaunches, subagentWaits, agentInbox, subagentConversations, subagentContinuations, subagentExecutions])
+      assert.equal(await migration.apply(pool), 'applied')
+    assert.equal(await webReflection.apply(pool), 'applied')
     assert.equal(await applyTrashPurgeMigration(pool), 'applied')
     assert.equal(await checkAgentBaseMigration(pool), 'applied')
     // 认证写门复用数据替换任务表；此集成只验证 Agent/RAG，不运行数据替换迁移。
@@ -589,7 +609,7 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     const base = `http://127.0.0.1:${listen.port}`
     host = await startServer(env)
     const readiness = await fetch(base + '/health/ready', { signal: AbortSignal.timeout(4000) })
-    assert.equal(readiness.status, 200)
+    assert.equal(readiness.status, 200, await readiness.clone().text())
     assert.deepEqual(await readiness.json(), { status: 'ok' })
     const registration = await fetch(base + '/api/v1/auth/register', {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-device-id': 'synthetic-agent-first-account' },
@@ -601,7 +621,6 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     const registered = JSON.parse(responseText) as { access_token: string; user: { id: string } }
     assert.ok(registered.access_token)
     const owner = registered.user.id
-    ownerId = owner
     await pool.query("UPDATE users SET timezone='Asia/Tokyo' WHERE id=$1", [owner])
     const auth = { authorization: `Bearer ${registered.access_token}` }
     const workspace = await pool.query(`SELECT d.directory_name,d.is_default,d.is_system
@@ -654,26 +673,29 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     const foreignProject = await pool.query<{ id: number }>(`INSERT INTO projects(user_id,name,status,color,progress,stages_json,version,archived,created_at,updated_at)
       VALUES ($1,'异主合成项目','active','blue',0,'[]',1,false,now(),now()) RETURNING id`, [foreign])
     foreignProjectId = foreignProject.rows[0]!.id
-    await pool.query(`INSERT INTO files(user_id,display_name,ext,space,storage_key,deleted_at,created_at,updated_at)
-      VALUES ($1,'回收站合成文件','txt','personal','trash/synthetic-owner.txt','2026-11-17 10:00:00+00',now(),now()),
-        ($2,'异主回收站文件','txt','personal','trash/synthetic-foreign.txt','2026-11-17 11:00:00+00',now(),now())`, [owner, foreign])
-    const restoreFolder = await pool.query<{ id: number }>(`INSERT INTO folders(user_id,name,deleted_at)
-      VALUES($1,'合成资料目录','2026-11-17 09:00:00+00') RETURNING id`, [owner])
-    restoreFolderId = restoreFolder.rows[0]!.id
-    await pool.query(`INSERT INTO files(user_id,display_name,ext,space,folder_id,
-      storage_key,deleted_at,created_at,updated_at)
-      VALUES($1,'合成子文件','txt','personal',$2,$3,'2026-11-17 09:00:00+00',now(),now()) RETURNING id`,
-    [owner, restoreFolderId, `${owner}/trash/合成资料目录/合成子文件.txt`])
-    const restoreSource = join(root, 'storage', owner, 'trash', '合成资料目录', '合成子文件.txt')
-    await mkdir(join(root, 'storage', owner, 'trash', '合成资料目录'), { recursive: true })
-    await writeFile(restoreSource, '合成文件恢复正文')
-    const standaloneRestoreFile = await pool.query<{ id: number }>(`INSERT INTO files(user_id,display_name,ext,space,
-      storage_key,deleted_at,created_at,updated_at)
-      VALUES($1,'单文件恢复样本','txt','personal',$2,'2026-11-17 09:30:00+00',now(),now()) RETURNING id`,
-    [owner, `${owner}/trash/单文件恢复样本.txt`])
-    restoreFileId = standaloneRestoreFile.rows[0]!.id
-    await mkdir(join(root, 'storage', owner, 'trash'), { recursive: true })
-    await writeFile(join(root, 'storage', owner, 'trash', '单文件恢复样本.txt'), '单文件恢复正文')
+    const storageRoot = join(root, 'storage')
+    const personalRoot = (user: string) => `${user}/个人文件`
+    const diskTrash = createDiskTrash(storageRoot, async user => personalRoot(user))
+    const fixtureTime = Date.now()
+    const deletedAt = (minutesAgo: number) => new Date(fixtureTime - minutesAgo * 60_000).toISOString()
+    for (const [user, name, minutesAgo] of [
+      [owner, '回收站合成文件.txt', 60],
+      [foreign, '异主回收站文件.txt', 30],
+      [owner, '单文件恢复样本.txt', 90],
+    ] as const) {
+      const key = `${personalRoot(user)}/${name}`
+      await mkdir(join(storageRoot, personalRoot(user)), { recursive: true })
+      await writeFile(join(storageRoot, key), '单文件恢复正文')
+      const entry = await diskTrash.store(user, 'personal', name, key, deletedAt(minutesAgo))
+      assert.ok(entry)
+      if (name === '单文件恢复样本.txt') restoreFilePath = `/trash/${entry.id}`
+    }
+    const folderKey = `${personalRoot(owner)}/合成资料目录`
+    await mkdir(join(storageRoot, folderKey), { recursive: true })
+    await writeFile(join(storageRoot, folderKey, '合成子文件.txt'), '合成文件恢复正文')
+    const directoryEntry = await diskTrash.store(owner, 'personal', '合成资料目录', folderKey, deletedAt(120))
+    assert.ok(directoryEntry)
+    restoreFolderPath = `/trash/${directoryEntry.id}`
     const notes = await pool.query<{ id: number; user_id: string }>(`INSERT INTO mind_nodes(
         user_id,kind,title,content_md,content_plain,color,origin,version,captured_at,created_at,updated_at,deleted_at)
       VALUES ($1,'note','合成笔记','月球笔记：己方合成内容。\n第二行','月球笔记：己方合成内容。\n第二行',NULL,'user',1,now(),now(),now(),NULL),
@@ -918,7 +940,7 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     assert.equal(clientsResponse.status, 200, clientsSse)
     assert.match(clientsSse, /"type":"done"/u)
     const clientsToolEvents = clientsSse.split('\n').filter(line => line.startsWith('data: ')).map(line => JSON.parse(line.slice(6)))
-      .filter(event => event.type === 'display_event' && event.item.toolName === 'list_clients')
+      .filter(event => event.type === 'display_event' && event.item.toolName === 'list_contacts')
     assert.ok(clientsToolEvents.length >= 2, '联系人列表必须经过生产注册器及 Core owner-scoped client service')
     const clientsRequest = requests.slice(clientsRequestStart).map(body => JSON.parse(body) as {
       messages: Array<{ role: string; tool_call_id?: string; content: unknown }>
@@ -948,21 +970,6 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     assert.equal(typeof projectsText, 'string')
     assert.match(projectsText as string, new RegExp(ownerProject.rows[0]!.name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'))
     assert.doesNotMatch(projectsText as string, /异主合成项目/u)
-    const dashboardResponse = await chat('读取合成总览。', 4)
-    const dashboardSse = await dashboardResponse.text()
-    assert.equal(dashboardResponse.status, 200, dashboardSse)
-    assert.match(dashboardSse, /"type":"done"/u)
-    assert.ok(dashboardSse.includes('get_dashboard_stats'))
-    const dashboardRequest = JSON.parse(requests.at(-1)!) as { messages: Array<{ role: string; content: unknown }> }
-    const dashboardContent = dashboardRequest.messages.filter(row => row.role === 'tool').at(-1)?.content
-    assert.ok(Array.isArray(dashboardContent))
-    const dashboardText = (dashboardContent as Array<{ text?: unknown }>).find(block => typeof block.text === 'string')?.text
-    assert.equal(typeof dashboardText, 'string')
-    const dashboard = JSON.parse(dashboardText as string) as { projects: { total: number }; upcoming_events: number; files: number; clients: number }
-    assert.ok(dashboard.projects.total > 0)
-    assert.ok(dashboard.upcoming_events >= 1)
-    assert.ok(dashboard.files >= 1)
-    assert.equal(dashboard.clients, 1, '统计只包含 owner 的联系人')
     const workspacesResponse = await chat('列出合成工作区。', 4)
     const workspacesSse = await workspacesResponse.text()
     assert.equal(workspacesResponse.status, 200, workspacesSse)
@@ -1088,38 +1095,41 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     assert.ok(Array.isArray(trashContent))
     const trashText = (trashContent as Array<{ text?: unknown }>).find(block => typeof block.text === 'string')?.text
     assert.equal(typeof trashText, 'string')
-    const trash = JSON.parse(trashText as string) as Array<{ name: string; kind: string; deleted_at: string }>
+    const { items: trash } = JSON.parse(trashText as string) as { items: Array<{ name: string; kind: string; deleted_at: string }> }
     assert.deepEqual(trash.map(({ name, kind }) => ({ name, kind })), [
       { name: '回收站合成文件.txt', kind: 'file' }, { name: '单文件恢复样本.txt', kind: 'file' },
-      { name: '合成资料目录', kind: 'folder' },
+      { name: '合成资料目录', kind: 'directory' },
     ])
-    assert.match(trash[0]!.deleted_at, /2026-11-17T10:00:00(?:\.000000)?\+00:00/u)
-    const restoreFileResponse = await chat('恢复合成回收站文件。', 4)
-    const restoreFileSse = await restoreFileResponse.text()
-    assert.equal(restoreFileResponse.status, 200, restoreFileSse)
-    assert.match(restoreFileSse, /"type":"done"/u)
-    assert.ok(restoreFileSse.includes('restore_file'))
-    assert.deepEqual((await pool.query<{ deleted_at: Date | null; storage_key: string }>(
-      'SELECT deleted_at,storage_key FROM files WHERE id=$1 AND user_id=$2', [restoreFileId, owner],
-    )).rows, [{ deleted_at: null, storage_key: `${owner}/个人文件/单文件恢复样本.txt` }])
-    assert.equal(await readFile(join(root, 'storage', owner, '个人文件', '单文件恢复样本.txt'), 'utf8'), '单文件恢复正文')
-    const restoreFolderResponse = await chat('恢复合成回收站目录。', 4)
-    const restoreFolderSse = await restoreFolderResponse.text()
-    assert.equal(restoreFolderResponse.status, 200, restoreFolderSse)
-    assert.match(restoreFolderSse, /"type":"done"/u)
-    assert.ok(restoreFolderSse.includes('restore_folder'))
-    assert.deepEqual((await pool.query<{ deleted_at: Date | null; name: string }>(
-      'SELECT deleted_at,name FROM folders WHERE id=$1 AND user_id=$2', [restoreFolderId, owner],
-    )).rows, [{ deleted_at: null, name: '合成资料目录' }])
-    assert.deepEqual((await pool.query<{ deleted_at: Date | null; storage_key: string }>(
-      'SELECT deleted_at,storage_key FROM files WHERE folder_id=$1 AND user_id=$2', [restoreFolderId, owner],
-    )).rows, [{ deleted_at: null, storage_key: `${owner}/个人文件/合成资料目录/合成子文件.txt` }])
-    assert.equal(await readFile(join(root, 'storage', owner, '个人文件', '合成资料目录', '合成子文件.txt'), 'utf8'), '合成文件恢复正文')
+    assert.equal(trash[0]!.deleted_at, deletedAt(60))
+    for (const [tool, prompt, path, contents] of [
+      ['restore_file', '恢复合成回收站文件。', '单文件恢复样本.txt', '单文件恢复正文'],
+      ['restore_folder', '恢复合成回收站目录。', '合成资料目录/合成子文件.txt', '合成文件恢复正文'],
+    ] as const) {
+      const restoredFile = join(storageRoot, personalRoot(owner), path)
+      const response = await chat(prompt, 4)
+      const sse = await response.text()
+      assert.equal(response.status, 200, sse)
+      assert.match(sse, /"type":"done"/u)
+      assert.ok(sse.includes(tool))
+      const line = sse.split('\n').find(line => line.startsWith('data: ') && line.includes('"type":"interaction_required"'))
+      assert.ok(line, sse)
+      const { prompt_id, options } = JSON.parse(line.slice(6)) as { prompt_id: number; options: Array<{ id: string; token: string }> }
+      const token = options.find(option => option.id === 'confirm')?.token
+      assert.ok(token)
+      await assert.rejects(readFile(restoredFile), { code: 'ENOENT' })
+      const confirmation = await fetch(base + `/api/v1/agent/interactions/${prompt_id}/resume`, {
+        method: 'POST', headers: { ...auth, 'content-type': 'application/json' },
+        body: JSON.stringify({ token }), signal: AbortSignal.timeout(4000),
+      })
+      assert.equal(confirmation.status, 200, await confirmation.clone().text())
+      await waitFor(async () => await readFile(restoredFile, 'utf8').catch(() => null) === contents,
+        AbortSignal.timeout(8000), () => `${tool} 尚未恢复文件`)
+    }
     const createClientResponse = await chat('创建合成联系人。', 4)
     const createClientSse = await createClientResponse.text()
     assert.equal(createClientResponse.status, 200, createClientSse)
     assert.match(createClientSse, /"type":"done"/u)
-    assert.ok(createClientSse.includes('create_client'))
+    assert.ok(createClientSse.includes('create_contact'))
     const createdClient = await pool.query<{ id: number; user_id: string; contact: string; email: string }>(
       "SELECT id,user_id,contact,email FROM clients WHERE name='工具创建联系人'",
     )
@@ -1133,7 +1143,7 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     const updateClientSse = await updateClientResponse.text()
     assert.equal(updateClientResponse.status, 200, updateClientSse)
     assert.match(updateClientSse, /"type":"done"/u)
-    assert.ok(updateClientSse.includes('update_client'))
+    assert.ok(updateClientSse.includes('update_contact'))
     assert.deepEqual((await pool.query<{ user_id: string; notes: string }>(
       "SELECT user_id,notes FROM clients WHERE name='工具创建联系人'",
     )).rows, [{ user_id: owner, notes: '已更新合成备注' }])
@@ -1235,9 +1245,8 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     assert.ok(Array.isArray(projectDetailContent))
     const projectDetailText = (projectDetailContent as Array<{ text?: unknown }>).find(block => typeof block.text === 'string')?.text
     assert.equal(typeof projectDetailText, 'string')
-    const projectDetail = JSON.parse(projectDetailText as string) as { name: string; files: { total_file_count: number } }
-    assert.equal(projectDetail.name, ownerProject.rows[0]!.name)
-    assert.ok(projectDetail.files.total_file_count >= 1)
+    assert.ok((projectDetailText as string).includes(ownerProject.rows[0]!.name))
+    assert.match(projectDetailText as string, /【文件总数】[1-9]\d*/u)
     assert.doesNotMatch(projectDetailText as string, /异主合成项目/u)
     const foreignProjectResponse = await chat('读取异主合成项目详情。', 4)
     const foreignProjectSse = await foreignProjectResponse.text()
@@ -1317,12 +1326,9 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     assert.ok(Array.isArray(globalSearchContent))
     const globalSearchText = (globalSearchContent as Array<{ text?: unknown }>).find(block => typeof block.text === 'string')?.text
     assert.equal(typeof globalSearchText, 'string')
-    const globalSearch = JSON.parse(globalSearchText as string) as {
-      total: number; groups: Array<{ type: string; items: Array<{ title: string }> }>
-    }
-    assert.equal(globalSearch.total, 1)
-    assert.deepEqual(globalSearch.groups.map(group => group.type), ['event'])
-    assert.deepEqual(globalSearch.groups[0]?.items.map(item => item.title), [eventUpdatedTitle])
+    assert.match(globalSearchText as string, /【摘要】命中 1 项/u)
+    assert.match(globalSearchText as string, /【来源类型】event/u)
+    assert.ok((globalSearchText as string).includes(eventUpdatedTitle))
     assert.doesNotMatch(globalSearchText as string, /异主近期安排|异主提醒|异主机密标记/u,
       'global_search 必须以可信 lease owner 查询，忽略 Provider 传入的 owner_id')
     const calendarRevisionKey = `live-revision:${owner}:calendar`
@@ -1854,25 +1860,34 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
       "SELECT user_id,archived FROM projects WHERE user_id=$1 AND name='工具创建项目' AND deleted_at IS NULL", [owner],
     )).rows, [{ user_id: owner, archived: true }])
     if (process.platform === 'linux') {
-      const reflectionKey = `agent:reflection:owner:turns:${owner}:4`
-      await waitFor(async () => (await reflectionCommands.eval(
-        'return redis.call(\'LLEN\',KEYS[1])', 1, reflectionKey,
-      )) === '1', AbortSignal.timeout(3000), () => '生产 Web Agent Run 未将成功会话写入 Node 反思队列')
-      const reflectionPayload = await reflectionCommands.eval('return redis.call(\'LINDEX\',KEYS[1],0)', 1, reflectionKey)
-      assert.ok(reflectionPayload)
-      const reflection = JSON.parse(reflectionPayload) as Record<string, unknown>
+      const archiveEvents = archiveSse.split('\n').filter(line => line.startsWith('data: '))
+        .map(line => JSON.parse(line.slice(6)))
+      const archiveRunId = archiveEvents.find(event => event.type === 'done')?.run_id
+      const archiveUserMessageId = archiveEvents.find(event => event.type === 'session_id')?.user_message_id
+      assert.ok(archiveRunId && archiveUserMessageId)
+      let reflection: Record<string, unknown> | undefined
+      await waitFor(async () => {
+        const { rows: [row] } = await pool.query<{ item: Record<string, unknown> }>(`
+          SELECT item FROM web_reflection_intervals CROSS JOIN LATERAL jsonb_array_elements(pending) AS item
+          WHERE user_id=$1 AND session_id=4 AND item->>'runId'=$2
+        `, [owner, archiveRunId])
+        reflection = row?.item
+        return Boolean(reflection)
+      }, AbortSignal.timeout(5000), () => '生产 Web Agent Run 未将已提交回合写入反思区间')
+      assert.ok(reflection)
       assert.equal(typeof reflection.modelIdentity, 'string')
       assert.ok((reflection.modelIdentity as string).length > 0)
       assert.equal(typeof reflection.userMessageId, 'string')
       assert.equal(typeof reflection.runId, 'string')
       assert.equal(typeof reflection.modelScope, 'string')
       assert.equal('threshold' in reflection, false)
-      const anchor = await pool.query<{ id: string }>(
-        `SELECT m.id FROM conversation_messages m
+      const anchor = await pool.query<{ content: string }>(
+        `SELECT m.content FROM conversation_messages m
          JOIN conversation_sessions s ON s.id=m.session_id AND s.user_id=$1
-         WHERE s.id=4 AND m.role='user' AND m.run_id=$2`, [owner, reflection.runId],
+         WHERE s.id=4 AND m.role='user' AND m.run_id=$2 AND m.id=$3`, [owner, reflection.runId, archiveUserMessageId],
       )
-      assert.equal(reflection.userMessageId, anchor.rows[0]?.id, '队列锚点必须指向本 Run 已提交的 owner 消息')
+      assert.equal(anchor.rows[0]?.content, '归档合成项目。')
+      assert.equal(reflection.userMessageId, String(archiveUserMessageId), '队列锚点必须指向本 Run 已提交的 owner 消息')
       assert.equal('userMessage' in reflection, false, '队列只保存已提交消息锚点，不复制聊天正文')
       assert.equal(JSON.stringify(reflection).includes('查找我之前的合成报告'), false)
     }
@@ -1923,24 +1938,29 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     }
     const firstApplication = `${schema}_first`
     await startChild(firstApplication)
-    const interrupted = await chat('强制退出用例，查找我之前的合成报告。')
+    const interrupted = await chat(crashPrompt)
     assert.equal(interrupted.status, 200)
     assert.ok(interrupted.body)
     const reader = interrupted.body.getReader()
     const decoder = new TextDecoder()
     let initial = ''
     let crashedRun: string
+    let crashSessionId: number
     try {
       while (!initial.includes('"type":"tool_done"')) {
         const piece = await reader.read()
         if (piece.done) assert.fail(initial)
         initial += decoder.decode(piece.value, { stream: true })
       }
+      const accepted = initial.split('\n').filter(line => line.startsWith('data: '))
+        .map(line => JSON.parse(line.slice(6))).find(event => event.type === 'session_id')
+      assert.ok(Number.isSafeInteger(accepted?.session_id), initial)
+      crashSessionId = accepted.session_id
       await waitFor(async () => (await pool.query(
         "SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event='advisory'", [firstApplication],
       )).rowCount === 1, AbortSignal.timeout(5000), () => '第一进程未进入模型续轮的事务锁等待')
       const checkpoint = (await pool.query<{ run_id: string; phase: string }>(
-        'SELECT run_id,phase FROM agent_run_checkpoints WHERE user_id=$1 AND session_id=5', [owner],
+        'SELECT run_id,phase FROM agent_run_checkpoints WHERE user_id=$1 AND session_id=$2', [owner, crashSessionId],
       )).rows[0]
       assert.equal(checkpoint?.phase, 'idle')
       crashedRun = checkpoint!.run_id
@@ -1955,12 +1975,12 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     }
     await pool.query('DROP TRIGGER synthetic_pause ON agent_run_checkpoints')
     // 快进到失效时间，仅操作已经退出的合成 Run。
-    await pool.query('UPDATE agent_run_leases SET expires_at=now() WHERE user_id=$1 AND session_id=5 AND run_id=$2', [owner, crashedRun])
-    await pool.query('UPDATE agent_run_dispatch SET lease_expires_at=now() WHERE user_id=$1 AND session_id=5 AND run_id=$2', [owner, crashedRun])
+    await pool.query('UPDATE agent_run_leases SET expires_at=now() WHERE user_id=$1 AND session_id=$2 AND run_id=$3', [owner, crashSessionId, crashedRun])
+    await pool.query('UPDATE agent_run_dispatch SET lease_expires_at=now() WHERE user_id=$1 AND session_id=$2 AND run_id=$3', [owner, crashSessionId, crashedRun])
     await pool.query(`UPDATE conversation_sessions
-      SET session_context=jsonb_set(session_context,'{snapshot_context}','"重启后不同的快照"') WHERE id=5 AND user_id=$1`, [owner])
+      SET session_context=jsonb_set(session_context,'{snapshot_context}','"重启后不同的快照"') WHERE id=$2 AND user_id=$1`, [owner, crashSessionId])
     await startChild(`${schema}_second`)
-    const resumed = await fetch(base + '/api/v1/agent/sessions/5/stream', { headers: auth, signal: AbortSignal.timeout(12_000) })
+    const resumed = await fetch(base + `/api/v1/agent/sessions/${crashSessionId}/stream`, { headers: auth, signal: AbortSignal.timeout(12_000) })
     resumeAfterReconnect()
     const resumedSse = await resumed.text()
     assert.equal(resumed.status, 200, resumedSse)
@@ -1975,10 +1995,10 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     assert.ok(systemMessages(requests[0]!).length > 0)
     assert.deepEqual(systemMessages(requests[1]!), systemMessages(requests[0]!))
     assert.deepEqual((await pool.query(
-      'SELECT run_id,status FROM agent_run_checkpoints WHERE user_id=$1 AND session_id=5', [owner],
+      'SELECT run_id,status FROM agent_run_checkpoints WHERE user_id=$1 AND session_id=$2', [owner, crashSessionId],
     )).rows, [{ run_id: crashedRun, status: 'completed' }])
 
-    const cancelling = await chat('等待取消的合成输入', 5)
+    const cancelling = await chat('等待取消的合成输入', crashSessionId)
     assert.equal(cancelling.status, 200)
     assert.ok(cancelling.body)
     const cancelReader = cancelling.body.getReader()
@@ -1990,7 +2010,7 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
         if (chunk.done) assert.fail(cancellingSse)
         cancellingSse += cancelDecoder.decode(chunk.value, { stream: true })
       }
-      const cancel = (headers: Record<string, string>) => fetch(base + '/api/v1/agent/sessions/5/cancel', {
+      const cancel = (headers: Record<string, string>) => fetch(base + `/api/v1/agent/sessions/${crashSessionId}/cancel`, {
         method: 'POST', headers, signal: AbortSignal.timeout(4000),
       })
       const foreignCancel = await cancel({ authorization: `Bearer ${signedUserToken(secret, foreign)}` })
@@ -2012,15 +2032,15 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
       await cancelReader.cancel().catch(() => undefined)
     }
     const cancelled = await pool.query<{ run_id: string; status: string }>(
-      "SELECT run_id,status FROM agent_run_checkpoints WHERE user_id=$1 AND session_id=5 AND status='cancelled'", [owner],
+      "SELECT run_id,status FROM agent_run_checkpoints WHERE user_id=$1 AND session_id=$2 AND status='cancelled'", [owner, crashSessionId],
     )
     assert.equal(cancelled.rowCount, 1)
     assert.notEqual(cancelled.rows[0]!.run_id, crashedRun)
     assert.match((await pool.query(
-      "SELECT content FROM conversation_messages WHERE session_id=5 AND role='assistant' AND run_id=$1 AND canonical_batch_id IS NULL",
-      [cancelled.rows[0]!.run_id],
+      "SELECT content FROM conversation_messages WHERE session_id=$2 AND role='assistant' AND run_id=$1 AND canonical_batch_id IS NULL",
+      [cancelled.rows[0]!.run_id, crashSessionId],
     )).rows[0]?.content ?? '', /取消前的合成片段[\s\S]*本轮已中止/u)
-    const next = await chat('取消后继续的合成输入', 5)
+    const next = await chat('取消后继续的合成输入', crashSessionId)
     const nextSse = await next.text()
     assert.equal(next.status, 200, nextSse)
     assert.match(nextSse, /"type":"done","run_id":"[^"]+","cancelled":false/u)
@@ -2056,7 +2076,8 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
       body: JSON.stringify({ token: chosen.token }), signal: AbortSignal.timeout(4000),
     })
     assert.equal(resumeResponse.status, 200)
-    assert.deepEqual(await resumeResponse.json(), { ok: true, session_id: interaction.session_id, status: 'selected', option_id: 'left' })
+    assert.deepEqual(await resumeResponse.json(), { ok: true, session_id: interaction.session_id, status: 'selected', option_id: 'left',
+      run_id: resumeRun.rows[0]!.run_id })
     await waitFor(async () => {
       const checkpoint = await pool.query<{ status: string }>(
         'SELECT status FROM agent_run_checkpoints WHERE user_id=$1 AND session_id=$2 AND run_id=$3',
@@ -2078,11 +2099,6 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     gate?.release(true)
     await stopChild(child, 'SIGKILL')
     await host?.close()
-    if (ownerId) {
-      const sessions = await pool.query<{ id: number }>('SELECT id FROM conversation_sessions WHERE user_id=$1', [ownerId])
-      for (const session of sessions.rows)
-        await clearRedisAgentReflectionSession(reflectionCommands, ownerId, String(session.id))
-    }
     provider.closeAllConnections()
     await new Promise<void>(resolve => provider.close(() => resolve()))
     await pool.end()

@@ -1,5 +1,5 @@
 import type { Pool } from 'pg'
-import { createWebAgentContextBuilder, type AgentContextBuilderPorts, type ContextDataPorts, type ContextSourcePorts } from '@gugu/core/agent'
+import { createMainContextBuilder, createWebAgentContextBuilder, type AgentContextBuilderPorts, type ContextDataPorts, type ContextSourcePorts } from '@gugu/core/agent'
 import type { PreferenceTextFiles } from '@gugu/core'
 import { createAgentPreferenceContextSources } from './preferences.js'
 import { createAgentOverviewSources } from './overview.js'
@@ -34,7 +34,7 @@ export function createAgentContextSources(options: Omit<AgentContextAssemblyOpti
     now: options.now, currentRevision: preference.currentRevision,
     data: { ...overview, loadTimezone: preference.loadTimezone, loadStylePreferences: preference.loadStylePreferences,
       ...options.external, loadMemory: createAgentMemoryContextLoader(options.memoryStorageRoot, options.now, options.memoryVectorSearch) },
-      builder: createWebAgentContextBuilder(options.builder),
+    builder: createMainContextBuilder(createWebAgentContextBuilder(options.builder)),
   }
 }
 

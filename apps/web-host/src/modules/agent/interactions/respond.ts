@@ -20,9 +20,11 @@ export interface AgentInteractionRespondService {
 export function createAgentInteractionRespondService(options: {
   pool: Pick<Pool, 'connect' | 'query'>
   effects: Pick<InteractionSideEffects, 'applyCommandAction' | 'redeemConfirmation'>
-  enqueue(client: PoolClient, prompt: InteractionPromptRecord, action: InteractionActionRecord, onEnqueued?: (runId: string) => void): Promise<void>
+  enqueue(client: PoolClient, prompt: InteractionPromptRecord, action: InteractionActionRecord,
+    onEnqueued?: (runId: string, displaySessionId?: number) => void): Promise<void>
   wake(ownerId: string, sessionId: number): Promise<unknown>
   diagnose(): void
+  routeDelegated?: boolean
 }): AgentInteractionRespondService {
   if (!options.effects || typeof options.effects.applyCommandAction !== 'function' || typeof options.effects.redeemConfirmation !== 'function' || typeof options.enqueue !== 'function' || typeof options.wake !== 'function' || typeof options.diagnose !== 'function') throw new TypeError('交互服务未完整配置')
   const textStore = createPostgresInteractionTextStore(options.pool, async (client, prompt, eventId) => {
@@ -37,11 +39,17 @@ export function createAgentInteractionRespondService(options: {
   return {
     async findResolvedRun(ownerId, promptId, token) {
       const tokenHash = createHash('sha256').update(token, 'utf8').digest('hex')
+      const display = options.routeDelegated
+        ? 'COALESCE(d.parent_session_id::integer,b.session_id) AS session_id,COALESCE(d.parent_run_id,b.run_id) AS run_id'
+        : 'b.session_id,b.run_id'
+      const delegated = options.routeDelegated ? `LEFT JOIN agent_subagent_executions s ON s.child_session_id=b.session_id AND s.child_run_id=b.run_id
+         LEFT JOIN agent_subagent_deliveries d ON d.child_run_id=s.child_run_id AND d.owner_id=b.user_id::text` : ''
       const { rows } = await options.pool.query<{ session_id: number; run_id: string; status: string; option_id: string }>(
-        `SELECT b.session_id,b.run_id,p.schema_json::jsonb->'resolved_result'->>'status' AS status,a.option_id
+        `SELECT ${display},p.schema_json::jsonb->'resolved_result'->>'status' AS status,a.option_id
          FROM agent_interaction_bindings b
          JOIN interaction_prompts p ON p.id=b.prompt_id AND p.user_id=b.user_id AND p.session_id=b.session_id
          JOIN interaction_actions a ON a.prompt_id=p.id AND a.token_hash=$3
+         ${delegated}
          WHERE b.user_id=$1 AND b.prompt_id=$2 AND p.status='resolved' AND a.status='consumed'
            AND p.schema_json::jsonb->'resolved_result'->>'status' IN ('confirmed','cancelled','selected','answered')
            AND p.schema_json::jsonb->'resolved_result'->>'option_id'=a.option_id`, [ownerId, promptId, tokenHash],
@@ -50,11 +58,15 @@ export function createAgentInteractionRespondService(options: {
     },
     async respond(ownerId, promptId, token, eventId, selectedOptionIds, customAnswer) {
       let runId: string | undefined
+      let displaySessionId: number | undefined
       const store = createPostgresInteractionConsumeStore(options.pool, {
         ...options.effects,
         async beforeCommit(client, prompt, action) {
           if (typeof action.context.tool_call_id === 'string' && action.context.tool_call_id)
-            await options.enqueue(client, prompt, action, id => { runId = id })
+            await options.enqueue(client, prompt, action, (id, display) => {
+              runId = id
+              displaySessionId = display
+            })
         },
       })
       const result = await consumeInteractionAction(store, { ownerId, promptId, token, selectedOptionIds, customAnswer, ...(eventId != null ? { eventId } : {}) })
@@ -62,7 +74,8 @@ export function createAgentInteractionRespondService(options: {
       if (typeof result.context.tool_call_id === 'string' && result.context.tool_call_id && resolved.status !== 'awaiting_text' && resolved.status !== 'error') {
         try { await options.wake(ownerId, result.session_id) } catch { try { options.diagnose() } catch { /* 诊断不得影响已提交结果。 */ } }
       }
-      return { ...result, ...(typeof runId === 'string' ? { run_id: runId } : {}) }
+      return { ...result, ...(typeof runId === 'string' ? { run_id: runId } : {}),
+        ...(displaySessionId === undefined ? {} : { session_id: displaySessionId }) }
     },
     async resumeText(ownerId, promptId, text, eventId) {
       const result = await consumeInteractionText(textStore, { ownerId, promptId, text, ...(eventId != null ? { eventId } : {}) })

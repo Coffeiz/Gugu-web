@@ -42,6 +42,7 @@ export async function buildDesktopAgentRuntime() {
     if (lstatSync(target, { throwIfNoEntry: false })) rmSync(target, { recursive: true, force: true })
     symlinkSync(directory, target, 'junction')
   }
+  cpSync(resolve(core, 'src/agent/subagent/searcher/prompt.md'), resolve(dirname(outfile), 'prompt.md'))
   cpSync(resolve(core, 'resources/prompts'), resolve(desktop, '.tools/agent-prompts'), { recursive: true })
 }
 

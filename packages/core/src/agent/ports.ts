@@ -2,9 +2,8 @@
 import type { ExecutionRequest,ExecutionResult } from './executor/contracts.js'
 import type { AgentObservationPort } from './observation.js'
 import type { AgentRunLogPort } from './logging.js'
-import type { ReflectionSnapshots } from './memory/reflection.js'
 import type { CanonicalRunContext } from './models.js'
-import type { Block,BranchInput,BranchName,CanonicalAreaSnapshot,CanonicalCompletionInput,CanonicalMessage,CanonicalSourceEffects,CapabilityCatalog,CompactionSummaryInput,ContextData,ContextSourceSelection,CurrentTurnSources,DispatchOutcome,DisplayItem,EarlyExit,FrozenProviderRequest,HistoryIdentity,InteractionResolution,Json,Lease,MessageEntry,NormalizedProviderRecovery,OpaqueProviderProjection,PendingInteraction,PersistedHistoryRow,PreparationIdentity,PrepareContextInput,PreparedContext,PreparedToolDefinition,ProviderEvent,ProviderRecoveryBoundary,ProviderRequest,RagContext,ReflectionSnapshot,ReplyFacts,ReplyGateCall,RunCapabilities,RunCheckpoint,RunEvent,RunIdentity,SanitizerCheckpoint,SessionSnapshotState,SnapshotPayload,ToolCall,ToolPlan,ToolResult,Usage } from './models.js'
+import type { Block,BranchInput,BranchName,CanonicalAreaSnapshot,CanonicalCompletionInput,CanonicalMessage,CanonicalSourceEffects,CapabilityCatalog,CompactionSummaryInput,ContextData,ContextSourceSelection,CurrentTurnSources,DispatchOutcome,DisplayItem,EarlyExit,FrozenProviderRequest,HistoryIdentity,InteractionResolution,Json,Lease,MessageEntry,NormalizedProviderRecovery,OpaqueProviderProjection,PendingInteraction,PersistedHistoryRow,PreparationIdentity,PrepareContextInput,PreparedContext,PreparedToolDefinition,ProviderEvent,ProviderRecoveryBoundary,ProviderRequest,RagContext,ReplyFacts,ReplyGateCall,RunCapabilities,RunCheckpoint,RunEvent,RunIdentity,SanitizerCheckpoint,SessionSnapshotState,SnapshotPayload,ToolCall,ToolPlan,ToolResult,Usage } from './models.js'
 
 export interface ProviderProjectionPort<Wire> {
   project(input: {
@@ -60,6 +59,8 @@ export interface PreparationPorts extends ContextServices {
 export interface CanonicalContextPorts extends ContextServices {
   /** Optional LoopScope-only observations; never participates in context preparation or authorization. */
   readonly observation?: AgentObservationPort
+  /** 独立子 Run 只保留最新压缩候选，旧版本消息由自身 checkpoint 替换。 */
+  readonly compactionHistory?: 'latest'
   persistCompaction?(context: CanonicalRunContext): Promise<void>
   readonly finalization: CanonicalFinalizationPort
   writeSessionTitle?(input: CanonicalCompletionInput, complete: (prompt: string) => Promise<string>): Promise<void>
@@ -215,32 +216,6 @@ export interface SummaryGenerationPorts<Wire> extends BranchPorts<Wire> {
   }
 }
 
-export interface ReflectionProjectionPort<Wire> {
-  /** 只在同协议 wire 上追加尾部消息并移除 dynamic tail，不能重新渲染原始前缀。 */
-  append(projection: OpaqueProviderProjection<Wire>, tail: readonly CanonicalMessage[]): OpaqueProviderProjection<Wire>
-}
-
-export interface PassiveGroupTailPorts<Wire> extends ReflectionProjectionPort<Wire> {
-  /** Adapter在同一scope内校验owner/platform/bot/chat/group会话绑定，不能只按裸sessionId查询。 */
-  ownsGroupSession(identity: HistoryIdentity, signal?: AbortSignal): Promise<boolean>
-  readTail(identity: HistoryIdentity, afterMessageId: string | null, throughMessageId: string | null, signal?: AbortSignal): Promise<PersistedHistoryRow[]>
-  renderTail(rows: readonly PersistedHistoryRow[], modelIdentity: string, signal?: AbortSignal): Promise<CanonicalMessage[]>
-}
-
-export interface ReflectionRecoveryPorts<Wire> {
-  /** Adapter在owner/scope内读取，未知/越权必须返回null。 */
-  readSession(identity: HistoryIdentity, signal?: AbortSignal): Promise<(HistoryIdentity & {
-    executionState: string
-    pendingMessageCount: number
-    accessScopeHash: string
-  }) | null>
-  acquire(identity: HistoryIdentity, signal?: AbortSignal): Promise<string | null>
-  release(identity: HistoryIdentity, lease: string): Promise<void>
-  rebuild(identity: HistoryIdentity, modelIdentity: string, lease: string, accessScopeHash: string, signal?: AbortSignal): Promise<ReflectionSnapshot<Wire> | null>
-  /** Data模块同事务维护正式summary/watermark，不由Harness直写数据库。 */
-  compactBaseline(identity: HistoryIdentity, snapshot: ReflectionSnapshot<Wire>, lease: string, signal?: AbortSignal): Promise<'not_needed' | 'compacted' | 'blocked'>
-}
-
 export interface BranchProviderPort<Wire> {
   /** Provider Adapter 负责wire追加和SDK协议；branch使用独立continuation，绝不提交主Run续接。 */
   complete(input: BranchInput<Wire> & {
@@ -270,25 +245,6 @@ export interface CanonicalFinalizationPort {
   complete(input: CanonicalCompletionInput): Promise<void>
 }
 
-export interface ReflectionFinalizationPorts {
-  snapshots: ReflectionSnapshots<unknown>
-  projection: ReflectionProjectionPort<unknown>
-  /** 只能读取可信Host/会话策略；群成员受限状态不能由模型字段扩大。 */
-  policy(identity: RunIdentity): Promise<{
-    enabled: boolean
-    scope: 'owner' | 'group' | 'member'
-  }>
-  /** 只唤醒已在成功history事务登记的独立Job，不在此创建不可靠的第二份任务。 */
-  notifyReady(input: {
-    identity: RunIdentity
-    accessScopeHash: string
-    scope: 'owner' | 'group' | 'member'
-    snapshotDigest: string | null
-    recovery: 'reuse' | 'rebuild' | 'defer'
-    hadTools: boolean
-  }): Promise<void>
-}
-
 export interface StreamSanitizer {
   feed(text: string): string
   flush(): string
@@ -308,7 +264,13 @@ export interface StreamSanitizer {
  * Data/Tools必须加密受限保存或使用安全意图引用，状态DTO/日志不得原样公开。
  * 不可用redact修改实际dispatch参数假装完成该存储边界；内存测试Adapter不构成生产验收。
  */
+export type SubagentFinal = { childId: string } & import('./subagent/contracts.js').DelegatedAgentOutcome
+
 export interface RunStore<C> {
+  readAgentInbox?(identity: RunIdentity): Promise<readonly { id: string; message: string }[]>
+  isSubagentPending?(identity: RunIdentity, childId: string): Promise<boolean>
+  readSubagentFinals?(identity: RunIdentity): Promise<readonly SubagentFinal[]>
+
   read(identity: RunIdentity): Promise<RunCheckpoint<C> | null>
   create(checkpoint: RunCheckpoint<C>, lease: Lease, events: readonly RunEvent[]): Promise<void>
   commit(change: {
@@ -329,6 +291,12 @@ export interface RunStore<C> {
     } | null
     /** 与新 checkpoint 同事务消费，禁止同一回答重放。 */
     readonly interactionReceipt: string | null
+    /** 与父 checkpoint 同一事务消费的子 Run 交付。 */
+    readonly subagentFinalIds?: readonly string[]
+    readonly inboxMessageIds?: readonly string[]
+    readonly agentInboxWaiting?: boolean
+    readonly subagentTerminalDelivery?: { parent: RunIdentity; outcome: import('./subagent/contracts.js').DelegatedAgentOutcome }
+    readonly subagentWaitChildId?: string | null
   }): Promise<void>
   /** 查询已提交 outbox；发布失败后下次恢复可补送，不重新执行业务。 */
   pendingEvents(identity: RunIdentity): Promise<readonly RunEvent[]>
@@ -453,6 +421,11 @@ export interface ReplyPolicy<C> {
 }
 
 export interface AgentRunnerPorts<C> {
+  acceptsAgentInbox?: boolean
+  subagentTerminalDelivery?(checkpoint: RunCheckpoint<C>): { parent: RunIdentity; outcome: import('./subagent/contracts.js').DelegatedAgentOutcome } | undefined
+  /** 独立执行场景的轮次上限和可信收件箱。 */
+  readonly maxRounds?: number
+
   /** 可选的跨 Host 尽力观测，不参与业务状态或授权。 */
   readonly observation?: AgentObservationPort
   /** 可选普通结构日志；禁止写入正文、工具参数和异常原文。 */
@@ -510,7 +483,7 @@ export interface RunCoordination<C> {
     readonly outcome: 'success' | 'interruption' | 'silent'
     readonly context: C
     readonly text: string
-  } | null, interactionReceipt?: string | null): Promise<RunEvent | null>
+  } | null, interactionReceipt?: string | null, subagentFinalIds?: readonly string[], inboxMessageIds?: readonly string[]): Promise<RunEvent | null>
   checkCancellation(): Promise<void>
   finish(status: 'completed' | 'cancelled' | 'failed' | 'unknown', code: string | null, text: string, silent?: boolean): Promise<RunEvent>
   executeTool(call: ToolCall, resolving: InteractionResolution | null, signal?: AbortSignal, waitForCleanup?: boolean): Promise<ToolResult>

@@ -6,7 +6,42 @@ import type { Posting } from './ranking/types.js'
 import { hybridFuseScores } from './ranking/hybrid.js'
 type Document = RagDocument
 type State = { revision:string; documents:Document[]; documentsById:Map<string,Document>; postings:Map<string,Posting>; lengths:Map<string,number>; docFreq:Map<string,number>; avgLength:number; totalLength:number; fingerprints:Map<string,string> }
-function replaceInMemory(state: State, revision: string, documents: Document[]): void {
+type DocumentTermFrequency = (document: Document) => ReadonlyMap<string, number>
+
+function tokenizeDocument(document: Document): ReadonlyMap<string, number> {
+  return termFrequency(tokens(rankingText(document)))
+}
+
+/** 只复用词频。文档、授权范围和语料统计仍由本轮快照决定。 */
+export function createRagDocumentTermCache() {
+  const entries = new Map<string, ReadonlyMap<string, number>>()
+  const maxEntries = 2_048
+  const maxTerms = 250_000
+  let termCount = 0
+  return (owner: string, document: Document): ReadonlyMap<string, number> => {
+    const text = rankingText(document)
+    const key = createHash('sha256').update(owner).update('\0').update(text).digest('hex')
+    const previous = entries.get(key)
+    if (previous) {
+      entries.delete(key)
+      entries.set(key, previous)
+      return previous
+    }
+    const frequency = termFrequency(tokens(text))
+    if (frequency.size > maxTerms) return frequency
+    while (entries.size >= maxEntries || termCount + frequency.size > maxTerms) {
+      const oldest = entries.entries().next().value
+      if (!oldest) break
+      entries.delete(oldest[0])
+      termCount -= oldest[1].size
+    }
+    entries.set(key, frequency)
+    termCount += frequency.size
+    return frequency
+  }
+}
+
+function replaceInMemory(state: State, revision: string, documents: Document[], frequencyFor: DocumentTermFrequency): void {
   state.revision = revision;
   state.documents = [];
   state.documentsById = new Map();
@@ -15,14 +50,14 @@ function replaceInMemory(state: State, revision: string, documents: Document[]):
   state.lengths = new Map();
   state.docFreq = new Map();
   state.totalLength = 0;
-  for (const document of documents) addDocument(state, document);
+  for (const document of documents) addDocument(state, document, frequencyFor);
   state.avgLength = state.documents.length ? state.totalLength / state.documents.length : 0;
 }
 
-function addDocument(state: State, document: Document): void {
+function addDocument(state: State, document: Document, frequencyFor: DocumentTermFrequency): void {
   state.documents.push(document);
   state.documentsById.set(document.id, document);
-  const frequency = termFrequency(tokens(rankingText(document)));
+  const frequency = frequencyFor(document);
   const length = [...frequency.values()].reduce((sum, value) => sum + value, 0);
   state.lengths.set(document.id, length);
   state.totalLength += length;
@@ -261,12 +296,12 @@ function search(
 
 
 /** 每个实例仅绑定一个可信 owner；来源装载和 ACL 仍由 Host 承担。 */
-export function createRagLexicalIndex(ownerId:string) {
+export function createRagLexicalIndex(ownerId:string, frequencyFor: DocumentTermFrequency = tokenizeDocument) {
  if (!ownerId.trim()) throw new Error('RAG owner 未指定')
  let state:State={revision:'',documents:[],documentsById:new Map(),postings:new Map(),lengths:new Map(),docFreq:new Map(),avgLength:0,totalLength:0,fingerprints:new Map()}
  function authorize(owner:string){if(owner!==ownerId)throw new Error('RAG owner 不匹配')}
  return {
-  replace(owner:string,revision:string,documents:Document[]){authorize(owner);const next:State={revision:'',documents:[],documentsById:new Map(),postings:new Map(),lengths:new Map(),docFreq:new Map(),avgLength:0,totalLength:0,fingerprints:new Map()};replaceInMemory(next,revision,structuredClone(documents));state=next},
+  replace(owner:string,revision:string,documents:Document[]){authorize(owner);const next:State={revision:'',documents:[],documentsById:new Map(),postings:new Map(),lengths:new Map(),docFreq:new Map(),avgLength:0,totalLength:0,fingerprints:new Map()};replaceInMemory(next,revision,structuredClone(documents),frequencyFor);state=next},
   patch(owner:string,baseRevision:string,revision:string,upserts:Document[],deletes:string[]){authorize(owner);if(state.revision!==baseRevision)throw new Error('RAG 索引版本不匹配');const next=structuredClone(state);const unique=[...new Map(upserts.map(item=>[item.id,item])).values()];patchInMemory(next,revision,structuredClone(unique),[...deletes]);state=next},
   search(owner:string,query:string,limit:number,allowedSources:ReadonlyArray<string>,scope?:RagSearchScope){authorize(owner);if(scope)validateScope(scope);return structuredClone(search(state,query,limit,new Set(allowedSources),scope))},
   searchHybrid(owner:string,query:string,limit:number,allowedSources:ReadonlyArray<string>,scope: RagSearchScope | undefined,options:{queryVector:readonly number[];vectorVersion:string;expectedVersion:string;vectors:ReadonlyMap<string,readonly number[]>}){

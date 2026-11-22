@@ -92,3 +92,43 @@ it('Shell 普通和自动模式共用风险规则，已发放的确认仍须复�
   expect(shellConfirmationMode(dangerous, { ...normal, hasResolution: true, approvalPolicy: 'never' })).toBe('verify')
   expect(shellConfirmationMode(safe, { ...normal, hasResolution: true })).toBe('stale')
 })
+
+it('共享父工作区按相同自动模式和操作风险决定挂载权限', async () => {
+  const db = {} as Kysely<Database>
+  const prepare = vi.fn(async () => ({ ok: true, value: { id: '合成确认' } }))
+  const confirmation = { gate: { prepare } } as unknown as ReturnType<typeof createSqliteToolConfirmation>
+  const execute = vi.fn(async () => ({ exitCode: 0, timedOut: false, stdout: '合成结果', stderr: '' }))
+  platform.diagnostics.mockResolvedValue({ supported: true, methods: ['seatbelt'], checkAvailable: true })
+  platform.createExecutor.mockResolvedValue({ id: 'seatbelt', capabilities: {
+    filesystem: true, networkDeny: true, uiDeny: true, timeout: true, cancellation: true,
+  }, execute })
+  platform.command.mockImplementation((text: string) => text)
+  let automaticMode = false
+  let shellEnabled = true
+  const workspace = tmpdir()
+  const tool = await createDesktopShellTool(db, confirmation, JSON.stringify,
+    async () => ({ automaticMode, shellEnabled, dangerousEnabled: true }), async () => ({ path: workspace, identity: '合成目录身份' }))
+  const scope: ToolScope = {
+    identity: { ownerId: 'owner', sessionId: '2', runId: 'child' },
+    roundId: 'round', signal: AbortSignal.timeout(5000), resolution: null,
+    async execute() { throw new Error('不应执行宿主命令') },
+  }
+  const input = { command: 'echo sample > sample.txt' }
+  const call = { id: 'call', name: 'shell', input }
+  expect(await tool!.execute(input, scope, call)).toMatchObject({ kind: 'waiting' })
+  expect(execute).not.toHaveBeenCalled()
+  expect(prepare.mock.calls).toHaveLength(1)
+  automaticMode = true
+  expect(await tool!.execute(input, scope, call)).toMatchObject({ successful: true, mutated: true })
+  expect(execute).toHaveBeenCalledWith(expect.objectContaining({ cwd: workspace, readonlyPaths: [], readwritePaths: [workspace] }),
+    expect.any(AbortSignal), undefined)
+  expect(await tool!.execute({ ...input, cwd: workspace }, scope, call)).toMatchObject({ executed: false })
+  shellEnabled = false
+  expect(await tool!.execute(input, scope, call)).toMatchObject({ executed: false })
+  expect(execute).toHaveBeenCalledOnce()
+  shellEnabled = true
+  const read = { command: 'pwd' }
+  expect(await tool!.execute(read, scope, { ...call, input: read })).toMatchObject({ successful: true, mutated: false })
+  expect(execute).toHaveBeenLastCalledWith(expect.objectContaining({ cwd: workspace, readonlyPaths: [workspace], readwritePaths: [] }),
+    expect.any(AbortSignal), undefined)
+})

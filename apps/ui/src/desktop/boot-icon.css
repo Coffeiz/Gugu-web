@@ -1,0 +1,31 @@
+.desktop-boot-icon {
+  display: grid;
+  place-items: center;
+  inline-size: 68px;
+  block-size: 68px;
+  border: 1px solid var(--border-document-table, light-dark(#171e2929, #ffffff26));
+  border-radius: 20px;
+  background: var(--surface-card-solid, light-dark(#fafafa, #2a2a2c));
+  box-shadow: 0 6px 22px light-dark(#20243015, #0005);
+  --boot-bird-color: var(--text-primary, light-dark(#45454a, #cccdd1));
+  --boot-bird-highlight: light-dark(#9499a2, #fff);
+}
+
+.desktop-boot-icon::before {
+  content: '';
+  inline-size: 42px;
+  block-size: 42px;
+  background: linear-gradient(115deg,
+    var(--boot-bird-color) 35%, var(--boot-bird-highlight) 50%, var(--boot-bird-color) 65%) 100% center / 260% 100%;
+  mask: url('../shared/assets/brand/gugu-bird-mask.png') center / contain no-repeat;
+  animation: desktop-boot-highlight 1.65s ease-in-out infinite;
+}
+
+@keyframes desktop-boot-highlight {
+  0%, 14% { background-position-x: 100%; }
+  76%, 100% { background-position-x: 0%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .desktop-boot-icon::before { animation: none; }
+}

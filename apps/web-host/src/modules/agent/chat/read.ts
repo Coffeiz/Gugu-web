@@ -95,7 +95,7 @@ export function createAgentMessageHistory(pool: Pool, runtime: AgentMessageHisto
                 session.execution_state, session.pending_message_count, session.bot_id
          FROM conversation_sessions AS session
          LEFT JOIN workspaces AS workspace ON workspace.id = session.workspace_id AND workspace.user_id = session.user_id
-         WHERE session.id = $1 AND session.user_id = $2`,
+         WHERE session.id = $1 AND session.user_id = $2 AND session.source IS DISTINCT FROM 'subagent'`,
         [sessionId, ownerId],
       )
       if (!owned.rowCount) throw new AgentSessionNotFoundError()

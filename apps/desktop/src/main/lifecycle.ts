@@ -5,7 +5,7 @@ type Host = Pick<CoreHost, 'request' | 'close'> & Partial<Pick<CoreHost, 'onAgen
 export class DesktopLifecycle {
   private hostRequestHandler?: Parameters<NonNullable<Host['setHostRequestHandler']>>[0]
   private current?: Host
-  private readonly runListeners = new Set<(sessionId: number, runId: string) => void>()
+  private readonly runListeners = new Set<(sessionId: number, runId: string, interactionChanged?: true) => void>()
   private detachRunListener?: () => void
   private starting?: Promise<void>
   private stopping?: Promise<void>
@@ -23,8 +23,8 @@ export class DesktopLifecycle {
       .then((host) => {
         if (this.hostRequestHandler) host.setHostRequestHandler?.(this.hostRequestHandler)
         this.current = host
-        this.detachRunListener = host.onAgentRunChanged?.((sessionId, runId) => {
-          for (const listener of this.runListeners) listener(sessionId, runId)
+        this.detachRunListener = host.onAgentRunChanged?.((sessionId, runId, interactionChanged) => {
+          for (const listener of this.runListeners) listener(sessionId, runId, interactionChanged)
         })
         if (this.phase !== 'stopping') this.phase = 'running'
       })
@@ -41,7 +41,7 @@ export class DesktopLifecycle {
       })
     return this.starting
   }
-  onAgentRunChanged(listener: (sessionId: number, runId: string) => void): () => void {
+  onAgentRunChanged(listener: (sessionId: number, runId: string, interactionChanged?: true) => void): () => void {
     this.runListeners.add(listener)
     return () => { this.runListeners.delete(listener) }
   }

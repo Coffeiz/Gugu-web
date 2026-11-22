@@ -50,7 +50,7 @@ defineExpose({ svgEl: computed(() => svgRef.value), dropTargetEl: computed(() =>
   width: var(--gugu-fab-size);
   height: var(--gugu-fab-size);
   border-radius: 50%;
-  background: var(--gugu-fab-bg);
+  background: var(--surface-card-solid);
   border: 1px solid var(--gugu-fab-border);
   cursor: pointer;
   display: flex;
@@ -89,7 +89,15 @@ defineExpose({ svgEl: computed(() => svgRef.value), dropTargetEl: computed(() =>
   box-shadow: var(--gugu-fab-hover-shadow);
 }
 .ai-fab:focus-visible { outline: none; box-shadow: var(--gugu-fab-hover-shadow), var(--control-focus-shadow); }
-.ai-fab-logo { position:relative; left:1px; z-index:1; width:var(--gugu-fab-logo-size); height:var(--gugu-fab-logo-size); display:block; background:linear-gradient(135deg,rgba(255,255,255,.98),rgba(255,255,255,.78)); -webkit-mask-image:url('/logo-small.png'); -webkit-mask-mode:alpha; -webkit-mask-position:center; -webkit-mask-repeat:no-repeat; -webkit-mask-size:contain; mask-image:url('/logo-small.png'); mask-mode:alpha; mask-position:center; mask-repeat:no-repeat; mask-size:contain; }
+.ai-fab-logo {
+  position: relative;
+  z-index: 1;
+  width: var(--gugu-fab-logo-size);
+  height: var(--gugu-fab-logo-size);
+  display: block;
+  background-color: var(--text-primary);
+  mask: url('../../../assets/brand/gugu-bird-mask.png') center / contain no-repeat;
+}
 .ai-fab-spin { animation: fab-spin 8s linear infinite; transform-origin: center; }
 @keyframes fab-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 @keyframes fab-ripple { 0% { transform: scale(.4); opacity: .8; } 100% { transform: scale(1.55); opacity: 0; } }

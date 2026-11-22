@@ -5,7 +5,7 @@ import { i18n } from '@/i18n'
 import { localizedToolStatusLabel } from '@/components/common/gugu-chat/messageDisplay'
 import GuguChatToolActivity from '@/components/common/gugu-chat/GuguChatToolActivity.vue'
 import { chatToolDetailsKey } from '@/components/common/gugu-chat/chatPresentationAccess'
-import { projectChatRows, toolGroupElapsedMs, toolActivityLabel, toolHasNoMatches } from '@/components/common/gugu-chat/toolActivity'
+import { formatToolDuration, projectChatRows, toolGroupElapsedMs, toolActivityLabel, toolHasNoMatches } from '@/components/common/gugu-chat/toolActivity'
 import type { ChatMessage } from '@/components/common/gugu-chat/chatTypes'
 
 function message(id: number, role: string, extra: Partial<ChatMessage> = {}): ChatMessage {
@@ -164,4 +164,38 @@ it('折叠的单条 Shell 工具在完成后仍显示具体动作', () => {
   } finally {
     app.unmount()
   }
+})
+
+it('子 Agent 操作留在普通工具组，输出用群成员消息展示一次', () => {
+  const childId = 'a1b2c3d4'
+  const result = { childId, status: 'completed', finalMessage: '子任务原文' }
+  const { rows, subagentNames } = projectChatRows([
+    message(1, 'tool', { runId: 'earlier-parent', toolName: 'agent_message', toolResult: {
+      action: 'start', run: { childId, agentId: 'builtin:searcher' },
+    } }),
+    message(2, 'tool', { runId: 'parent', toolName: 'agent_wait', toolResult: result }),
+    message(3, 'tool', { runId: 'parent', toolName: 'subagent_result', toolResult: result }),
+    message(4, 'ai', { runId: 'parent', text: '主 Agent 回复' }),
+  ])
+  expect(rows.map(row => row.tools?.map(tool => tool.toolName) ?? row.msg.text))
+    .toEqual([['agent_message'], ['agent_wait'], '子任务原文', '主 Agent 回复'])
+  for (const tool of [rows[0]!.tools![0]!, rows[1]!.tools![0]!])
+    expect(toolActivityLabel(tool, i18n.global.t, i18n.global.te, subagentNames)).toBe(i18n.global.t(`toolNames.${tool.toolName}_target`, { target: 'Searcher' }))
+  expect(rows[2]?.msg).toMatchObject({ role: 'member', subagentOutput: true, speakerLabel: 'Searcher' })
+})
+
+it('查看活动列表使用唯一的 Agent 名称，混合列表保留通用标题', () => {
+  const label = (...agentIds: string[]) => toolActivityLabel(message(1, 'tool', {
+    toolName: 'agent_inspect', toolResult: { view: 'list', runs: agentIds.map(agentId => ({ agentId })) },
+  }), i18n.global.t, i18n.global.te)
+  expect(label('builtin:searcher', 'builtin:searcher'))
+    .toBe(i18n.global.t('toolNames.agent_inspect_target', { target: 'Searcher' }))
+  expect(label('builtin:searcher', 'builtin:reporter')).toBe(i18n.global.t('toolNames.agent_inspect'))
+})
+
+it.each([
+  [262, '262ms'], [7000, '7.0s'], [60_000, '1m00s'], [213_700, '3m34s'],
+  [3_599_700, '1h00m00s'], [3_725_000, '1h02m05s'],
+])('工具耗时 %i 毫秒显示为 %s', (elapsed, expected) => {
+  expect(formatToolDuration(elapsed)).toBe(expected)
 })

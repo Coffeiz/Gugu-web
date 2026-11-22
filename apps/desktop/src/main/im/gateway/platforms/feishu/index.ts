@@ -337,7 +337,7 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
         botMentioned: message.botMentioned, mentionsOtherBot: false,
         speakers: [{ platformUserId: message.scope.platformUserId }],
       }, scope => ({ role: scope.platformUserId === current.userId ? 'owner' : 'member', allowedToolNames: [] }))
-      return { actor, groupMemoryEnabled: current.groupMemoryEnabled,
+      return { actor, ownerPlatformUserId: current.userId, groupMemoryEnabled: current.groupMemoryEnabled,
         groupOwnerMemoryEnabled: current.groupOwnerMemoryEnabled, memberMemoryEnabled: current.memberMemoryEnabled }
     },
   }

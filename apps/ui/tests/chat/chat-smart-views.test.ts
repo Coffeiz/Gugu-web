@@ -91,11 +91,13 @@ it('滑块同步更新绑定指标和进度，并在混入异常项时继续筛�
   app.mount(host)
   try {
     await nextTick()
-    const blocks = host.querySelector('.chat-assistant-content')?.children
-    expect(blocks?.length).toBe(3)
-    expect(blocks?.[0]?.textContent?.trim()).toBe('摘要')
-    expect(blocks?.[1]?.querySelector('.chat-smart-view')?.closest('.msg-bubble')).toBeNull()
-    expect(blocks?.[2]?.textContent?.trim()).toBe('后续说明')
+    const bubbles = host.querySelectorAll('.chat-assistant-content > .msg-bubble')
+    expect(bubbles).toHaveLength(1)
+    const blocks = bubbles[0]!.children
+    expect(blocks).toHaveLength(3)
+    expect(blocks[0]?.textContent?.trim()).toBe('摘要')
+    expect(blocks[1]?.querySelector('.chat-smart-view')?.closest('.msg-bubble')).toBe(bubbles[0])
+    expect(blocks[2]?.textContent?.trim()).toBe('后续说明')
     const choice = host.querySelector<HTMLButtonElement>('button[data-smart-choice="effort"]')
     const effortPanel = host.querySelector<HTMLElement>('[data-smart-panel="effort"]')
     const deadlinePanel = host.querySelector<HTMLElement>('[data-smart-panel="deadline"]')

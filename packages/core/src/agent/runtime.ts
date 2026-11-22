@@ -14,7 +14,7 @@ import type { AgentObservationPort } from './observation.js'
  * 不包含密钥读取或模型选择；每个调用仍须传入原 Run 的模型身份。
  */
 export type AgentProviderAuxiliaryPorts = Pick<ReturnType<typeof connectProviderHarness>['provider'],
-  'branchProvider' | 'reflectionProjection' | 'summaryProjection' | 'completeText'>
+  'branchProvider' | 'reflectionProvider' | 'summaryProjection' | 'completeText'>
 
 /** Agent Harness 的可移植组合入口；可信身份、存储、授权和执行能力由 Host 注入。 */
 export interface AgentRuntimeOptions {

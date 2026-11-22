@@ -1,3 +1,4 @@
+import type { Pool } from 'pg'
 import type { CancellationPort, RunIdentity } from '@gugu/core/agent'
 import type { RedisAgentCancellationCommands } from '../../../adapters/cache/redis-events.js'
 import type { LiveSubscriptionFactory } from '../../../adapters/cache/redis-live-subscription.js'
@@ -95,4 +96,13 @@ export function createRedisAgentRunCancellationPort(
       }
     },
   }
+}
+
+/** 子执行复用父 Run 的持久取消状态。 */
+export async function isWebSubagentParentCancelled(pool: Pick<Pool, 'query'>, parent: RunIdentity): Promise<boolean> {
+  validateIdentity(parent)
+  const { rows } = await pool.query(`SELECT 1 FROM agent_run_dispatch
+    WHERE user_id=$1 AND session_id=$2 AND run_id=$3 AND cancel_requested=true`,
+  [parent.ownerId, parent.sessionId, parent.runId])
+  return rows.length > 0
 }

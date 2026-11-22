@@ -5,6 +5,8 @@ import type { Database } from '../../data/schema.js'
 import { RunStoreRejected, type Lease, type RunCheckpoint, type RunEvent, type RunIdentity } from '../models.js'
 import { terminalRunStates } from './lifecycle.js'
 import type { LeasePort, RunStore } from '../ports.js'
+import { createAgentInbox } from '../subagent/inbox.js'
+import { createSubagentDeliveryStore } from '../subagent/delivery-store.js'
 import { assertRunCheckpoint, assertRunEventTransition, assertRunIdentity, createAgentRunCodec } from './codec.js'
 
 type RunCommit<C> = Parameters<RunStore<C>['commit']>[0]
@@ -32,12 +34,15 @@ export function createSqliteAgentRunStore<C>(
   secret: string,
   options: {
     now?: () => number
+    onSubagentDeliveryCommitted?(parent: RunIdentity): void | Promise<void>
     applyPreparedContext?: (tx: Transaction<Database>, identity: RunIdentity, context: C) => Promise<void>
     persistPrivateContext?: (tx: Transaction<Database>, identity: RunIdentity, next: RunCheckpoint<C>, previous: RunCheckpoint<C> | null) => Promise<void>
     writeHistory: (tx: Transaction<Database>, identity: RunIdentity, history: NonNullable<RunCommit<C>['history']>, checkpoint: RunCheckpoint<C>) => Promise<void>
   },
-): RunStore<C> & { readEventsAfter(identity: RunIdentity, sequence: number): Promise<readonly RunEvent[]> } {
+): RunStore<C> & Required<Pick<RunStore<C>, 'isSubagentPending'>> & { readEventsAfter(identity: RunIdentity, sequence: number): Promise<readonly RunEvent[]> } {
   const codec = createAgentRunCodec(secret)
+  const deliveries = createSubagentDeliveryStore(db, secret)
+  const inbox = createAgentInbox(db, secret)
   const now = options.now ?? Date.now
 
   async function transaction(work: (tx: Transaction<Database>) => Promise<void>) {
@@ -80,6 +85,9 @@ export function createSqliteAgentRunStore<C>(
   }
 
   return {
+    readSubagentFinals: deliveries.pending,
+    readAgentInbox: inbox.pending,
+    isSubagentPending: deliveries.isPending,
     async read(identity) {
       const row = await readRow(db, identity)
       return row ? decode(identity, row) : null
@@ -124,6 +132,30 @@ export function createSqliteAgentRunStore<C>(
           WHERE user_id=${owner} AND session_id=${session} AND run_id=${run} AND version=${expectedVersion}
           RETURNING version`.execute(tx)
         if (!updated.rows.length) throw new RunStoreRejected('conflict')
+        if (change.agentInboxWaiting === true) await sql`
+          INSERT INTO agent_inbox_waits(owner_id,session_id,run_id) VALUES(${identity.ownerId},${identity.sessionId},${run})
+          ON CONFLICT(owner_id,session_id,run_id) DO NOTHING`.execute(tx)
+        else if (change.agentInboxWaiting === false) await sql`DELETE FROM agent_inbox_waits
+          WHERE owner_id=${identity.ownerId} AND session_id=${identity.sessionId} AND run_id=${run}`.execute(tx)
+        if (change.subagentWaitChildId === null) await sql`DELETE FROM agent_subagent_waits
+          WHERE owner_id=${identity.ownerId} AND parent_session_id=${identity.sessionId} AND parent_run_id=${run}`.execute(tx)
+        else if (change.subagentWaitChildId !== undefined) await sql`
+          INSERT INTO agent_subagent_waits(owner_id,parent_session_id,parent_run_id,child_id)
+          VALUES(${identity.ownerId},${identity.sessionId},${run},${change.subagentWaitChildId})
+          ON CONFLICT(owner_id,parent_session_id,parent_run_id) DO UPDATE SET child_id=excluded.child_id`.execute(tx)
+        for (const childId of new Set(change.subagentFinalIds ?? []))
+          if (!await deliveries.markConsumed(tx, identity, childId, checkpoint.version))
+            throw new RunStoreRejected('conflict')
+        const messages = [...new Set(change.inboxMessageIds ?? [])]
+        if (messages.length) {
+          const consumed = await sql`UPDATE agent_inbox_messages SET consumed_checkpoint_version=${checkpoint.version}
+            WHERE owner_id=${identity.ownerId} AND recipient_session_id=${identity.sessionId} AND recipient_run_id=${run}
+              AND message_id IN (${sql.join(messages)}) AND consumed_checkpoint_version IS NULL RETURNING message_id`.execute(tx)
+          if (consumed.rows.length !== messages.length) throw new RunStoreRejected('conflict')
+        }
+        const terminal = change.subagentTerminalDelivery
+        if (terminal && !await deliveries.commitTerminal(tx, identity, terminal.parent, terminal.outcome))
+          throw new RunStoreRejected('conflict')
         await appendEvents(tx, identity, change.events)
         if (options.applyPreparedContext || options.persistPrivateContext) {
           const previous = decode(identity, current)
@@ -139,6 +171,10 @@ export function createSqliteAgentRunStore<C>(
             WHERE id=${session} AND user_id=${owner} AND active_run_id=${run}`.execute(tx)
         }
       })
+      if (change.subagentTerminalDelivery && options.onSubagentDeliveryCommitted) {
+        try { await options.onSubagentDeliveryCommitted(change.subagentTerminalDelivery.parent) }
+        catch { /* 持久等待由本机恢复流程补查。 */ }
+      }
     },
     pendingEvents: identity => loadEvents(identity, null),
     readEventsAfter(identity, sequence) {

@@ -10,7 +10,7 @@ export function createAgentShellSnapshotReader<DB>(
   automaticModeGlobalEnabled = false,
 ) {
   const readWorkspace = createSessionWorkspaceTargetReader(db, 'postgres')
-  return async (owner: string, session: string,
+  const read = async (owner: string, session: string,
     diagnose?: (reason: 'invalid_session' | 'shell_disabled' | 'sandbox_unavailable' | 'workspace_unavailable' | 'account_unavailable') => void) => {
     const sessionId = Number(session)
     if (!Number.isSafeInteger(sessionId) || sessionId < 1) { diagnose?.('invalid_session'); return null }
@@ -45,4 +45,15 @@ export function createAgentShellSnapshotReader<DB>(
       userDangerousEnabled: (prefs.shell_dangerous_enabled ?? true) === true,
     } }
   }
+  return Object.assign(read, {
+    async allowsReferenceRead(owner: string) {
+      if (!(await settings()).shellEnabled) return false
+      const { rows: [row] } = await pool.query<{ enabled: boolean }>(`
+        SELECT COALESCE(NULLIF(p.data_json::jsonb -> 'shell_enabled', 'null'::jsonb), 'true'::jsonb) = 'true'::jsonb AS enabled
+        FROM users u LEFT JOIN user_preferences p ON p.user_id=u.id
+        WHERE u.id=$1 AND u.is_active=TRUE AND COALESCE(u.account_status,'active')='active'
+      `, [owner])
+      return row?.enabled === true
+    },
+  })
 }

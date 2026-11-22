@@ -16,7 +16,7 @@ import { createWebAgentShell } from '../../../src/modules/agent/tools/shell/sand
 const identity = { ownerId: '00000000-0000-4000-8000-000000000001', sessionId: '1', runId: 'run' }
 function fixture(includeTime = false, includeOverview = false, includeProjects = true, skills?: UseSkillPorts, scheduledTasks?: ScheduledTaskListPort, search?: GlobalSearchOperations, extra: Pick<AgentToolRegistryOptions, 'events' | 'calendarCreate' | 'calendarUpdate' | 'calendarDelete' | 'trash' | 'httpGet'> = {}) {
   const records: Array<{ id: number; userId: string; name: string; contact: null; email: null; phone: null; notes: string }> = []
-  let enabled = new Set(['list_clients', 'create_client', 'create_project'])
+  let enabled = new Set(['list_contacts', 'create_contact', 'create_project'])
   let failed = false, readFailed = false
   const core = { async transaction(ctx: { ownerId: string }, work: (data: unknown) => Promise<unknown>) {
     return work({ clients: { async list() { if (readFailed) throw new Error('合成私有异常'); return records.filter(row => row.userId === ctx.ownerId) },
@@ -41,14 +41,14 @@ function fixture(includeTime = false, includeOverview = false, includeProjects =
 
 test('Main 工具白名单保留已接入的业务工具组名称，并过滤未知工具', () => {
   const configured = [
-    'create_client', 'update_client', 'delete_client', 'create_project', 'update_project', 'set_color', 'archive_project', 'add_stage',
+    'create_contact', 'update_contact', 'delete_contact', 'create_project', 'update_project', 'set_color', 'archive_project', 'add_stage',
     'remove_stage', 'rename_stage', 'set_stages', 'update_stage', 'create_workspace', 'update_workspace', 'unlink_workspace', 'delete_workspace_directory', 'undo_last_action', 'delete_folder', 'delete_file', 'compress_files', 'extract_files', 'global_search',
     'canvas_list', 'canvas_focus_node', 'canvas_search_placeable', 'canvas_create_note', 'canvas_delete', 'note_undo', 'call_tool', 'create_skill', 'update_skill', 'delete_skill',
     'note_create', 'note_update', 'delete_scheduled_task', 'web_search', 'similar_image_search', 'deep_research',
     'grep', 'read_file', 'save_uploaded_file', 'save_im_attachment', 'view_image', 'delete_folder', 'save_attachment', 'mcp_demo_lookup', 'untrusted_tool', 'mcp_demo_../lookup',
   ]
   const retired = new Set(['compress_files', 'extract_files', 'grep', 'read_file', 'save_uploaded_file', 'save_im_attachment'])
-  assert.deepEqual(filterConfiguredWebAgentTools(configured), configured.slice(0, -2).filter(name => !retired.has(name)))
+  assert.deepEqual(filterConfiguredWebAgentTools(configured), [...new Set(configured.slice(0, -2).filter(name => !retired.has(name)))])
 })
 
 test('Agent Shell 按风险和自动模式判定操作确认', async () => {
@@ -136,28 +136,28 @@ test('undo_last_action 仅在 Node Undo 端口已装配且当前授权有效时�
 test('缺少项目创建后端时不开放写工具，已授权只读工具仍可用', async () => {
   const f = fixture(true, false, false)
   const names = (await f.capabilities(identity)).map(item => item.name)
-  assert.ok(names.includes('list_clients'))
+  assert.ok(names.includes('list_contacts'))
   assert.ok(names.includes('get_current_time'))
   assert.equal(names.includes('create_project'), false)
   const denied = await f.tools.dispatch({ id: 'create', name: 'create_project', input: { project_name: '不可创建', start_date: '2026-01-01', deadline: '2026-02-01' } }, scope())
   assert.equal(denied.kind, 'completed')
   if (denied.kind === 'completed') { assert.equal(denied.successful, false); assert.equal(denied.executed, false) }
-  const listed = await f.tools.dispatch({ id: 'list', name: 'list_clients', input: {} }, scope())
+  const listed = await f.tools.dispatch({ id: 'list', name: 'list_contacts', input: {} }, scope())
   assert.equal(listed.kind, 'completed')
   if (listed.kind === 'completed') { assert.equal(listed.successful, true); assert.deepEqual(listed.value, []) }
 })
 
-test('delete_client 只有可信确认及一次性事务 claim 端口存在时才进入工具 schema', async () => {
-  const options = { core: {} as SqlDataRuntime, authorize: async (_identity: typeof identity, name: string) => name === 'delete_client' }
+test('delete_contact 只有可信确认及一次性事务 claim 端口存在时才进入工具 schema', async () => {
+  const options = { core: {} as SqlDataRuntime, authorize: async (_identity: typeof identity, name: string) => name === 'delete_contact' }
   const absent = createAgentToolRegistry(options)
-  assert.equal((await absent.capabilities(identity)).some(item => item.name === 'delete_client'), false)
+  assert.equal((await absent.capabilities(identity)).some(item => item.name === 'delete_contact'), false)
   const clientDelete: ClientDeletePort = {
     confirmation: { gate: {} as ClientDeleteConfirmationPort['gate'], async claim() { return false } },
     async apply() { return { kind: 'completed', successful: false, mutated: false, value: { error: '未执行' } } },
     async reconcile() { return { kind: 'unknown' } },
   }
   const ready = createAgentToolRegistry({ ...options, clientDelete })
-  assert.equal((await ready.capabilities(identity)).some(item => item.name === 'delete_client'), true)
+  assert.equal((await ready.capabilities(identity)).some(item => item.name === 'delete_contact'), true)
 })
 
 test('知识写工具由 Host 注册器显式启用并继续使用可信 owner 身份', async () => {
@@ -473,16 +473,16 @@ test('技能通过可信 Markdown 注册，缺少能力或撤销授权时不能�
 
 test('注册表按权限暴露并执行真实联系人适配器，跨 owner 数据隔离', async () => {
   const f = fixture()
-  assert.deepEqual((await f.capabilities(identity)).map(x => x.name), ['list_clients', 'create_client', 'create_project'])
-  const made = await f.tools.dispatch({ id: '1', name: 'create_client', input: { client_name: '合成联系人' } }, scope())
-  assert.deepEqual(made, { kind: 'completed', value: { success: true, client_id: 1, name: '合成联系人' }, successful: true, mutated: true })
-  const own = await f.tools.dispatch({ id: '2', name: 'list_clients', input: {} }, scope())
-  const other = await f.tools.dispatch({ id: '3', name: 'list_clients', input: {} }, scope('00000000-0000-4000-8000-000000000002'))
+  assert.deepEqual((await f.capabilities(identity)).map(x => x.name), ['list_contacts', 'create_contact', 'create_project'])
+  const made = await f.tools.dispatch({ id: '1', name: 'create_contact', input: { name: '合成联系人' } }, scope())
+  assert.deepEqual(made, { kind: 'completed', value: { success: true, contact_id: 1, name: '合成联系人' }, successful: true, mutated: true })
+  const own = await f.tools.dispatch({ id: '2', name: 'list_contacts', input: {} }, scope())
+  const other = await f.tools.dispatch({ id: '3', name: 'list_contacts', input: {} }, scope('00000000-0000-4000-8000-000000000002'))
   assert.equal(own.kind, 'completed'); assert.equal(other.kind, 'completed')
   if (own.kind === 'completed' && other.kind === 'completed') { assert.equal((own.value as unknown[]).length, 1); assert.deepEqual(other.value, []) }
-  f.revoke('create_client')
-  assert.equal((await f.capabilities(identity)).some(x => x.name === 'create_client'), false)
-  const denied = await f.tools.dispatch({ id: '4', name: 'create_client', input: { client_name: '不可写入' } }, scope())
+  f.revoke('create_contact')
+  assert.equal((await f.capabilities(identity)).some(x => x.name === 'create_contact'), false)
+  const denied = await f.tools.dispatch({ id: '4', name: 'create_contact', input: { name: '不可写入' } }, scope())
   assert.equal(denied.kind, 'completed'); if (denied.kind === 'completed') { assert.equal(denied.successful, false); assert.equal(denied.executed, false) }
   assert.equal(f.records.length, 1)
 })
@@ -491,15 +491,15 @@ test('未知工具与无效参数不能执行；未知提交结果不暴露异�
   const f = fixture()
   const unknown = await f.tools.dispatch({ id: '1', name: 'shell', input: {} }, scope())
   assert.equal(unknown.kind, 'completed'); if (unknown.kind === 'completed') assert.equal(unknown.executed, false)
-  const invalid = await f.tools.dispatch({ id: '2', name: 'create_client', input: {}, parseError: 'invalid_json' }, scope())
+  const invalid = await f.tools.dispatch({ id: '2', name: 'create_contact', input: {}, parseError: 'invalid_json' }, scope())
   assert.equal(invalid.kind, 'completed'); if (invalid.kind === 'completed') assert.equal(invalid.executed, false)
   f.failRead()
-  const readError = await f.tools.dispatch({ id: 'read', name: 'list_clients', input: {} }, scope())
+  const readError = await f.tools.dispatch({ id: 'read', name: 'list_contacts', input: {} }, scope())
   assert.equal(readError.kind, 'completed'); if (readError.kind === 'completed') { assert.equal(readError.executed, true); assert.equal(JSON.stringify(readError).includes('合成私有异常'), false) }
   f.fail()
-  const result = await f.tools.dispatch({ id: '3', name: 'create_client', input: { client_name: '合成' } }, scope())
+  const result = await f.tools.dispatch({ id: '3', name: 'create_contact', input: { name: '合成' } }, scope())
   assert.deepEqual(result, { kind: 'unknown' })
-  assert.deepEqual(await f.tools.reconcile({ id: '3', name: 'create_client', input: {} }, { ...identity, roundId: 'round-1' }), { kind: 'unknown' })
+  assert.deepEqual(await f.tools.reconcile({ id: '3', name: 'create_contact', input: {} }, { ...identity, roundId: 'round-1' }), { kind: 'unknown' })
   assert.deepEqual(await f.tools.plan!([], identity), { mode: 'serial' })
 })
 
@@ -525,13 +525,13 @@ test('时间工具仅在可信时区端口和授权均存在时开放，并在�
 
 test('Core 联系人更新和项目列表只向获授权的用户开放', async () => {
   const f = fixture()
-  assert.equal((await f.capabilities(identity)).some(item => item.name === 'update_client' || item.name === 'list_projects'), false)
-  f.grant('update_client'); f.grant('list_projects')
+  assert.equal((await f.capabilities(identity)).some(item => item.name === 'update_contact' || item.name === 'list_projects'), false)
+  f.grant('update_contact'); f.grant('list_projects')
   const names = (await f.capabilities(identity)).map(item => item.name)
-  assert.ok(names.includes('update_client'))
+  assert.ok(names.includes('update_contact'))
   assert.ok(names.includes('list_projects'))
-  f.revoke('update_client')
-  const denied = await f.tools.dispatch({ id: 'update', name: 'update_client', input: { client_id: 1, notes: '不可写入' } }, scope())
+  f.revoke('update_contact')
+  const denied = await f.tools.dispatch({ id: 'update', name: 'update_contact', input: { contact_id: 1, notes: '不可写入' } }, scope())
   assert.equal(denied.kind, 'completed')
   if (denied.kind === 'completed') assert.equal(denied.executed, false)
 })
@@ -607,11 +607,11 @@ test('缺共享读取能力或仅apply原型时不开放新增工具', async () 
   const available=await registry.capabilities(identity)
   assert.equal(available.some(tool=>names.includes(tool.name)),false)
   assert.equal(available.some(tool=>tool.name==='search_tools'),true)
-  const result=await registry.tools.dispatch({id:'inspect',name:'search_tools',input:{names:['note_get','add_stage']}},
+  const result=await registry.tools.dispatch({id:'inspect',name:'search_tools',input:{names:['note_get','add_stage','get_dashboard_stats']}},
     {identity,roundId:'1',signal:new AbortController().signal,resolution:null,execute:async()=>{throw new Error('不执行宿主进程')}})
   assert.equal(result.kind,'completed')
   if(result.kind==='completed'){
     assert.equal(result.successful,true)
-    assert.deepEqual(result.value,{results:[],rejected:['note_get','add_stage']})
+    assert.deepEqual(result.value,{results:[],rejected:['note_get','add_stage','get_dashboard_stats']})
   }
 })

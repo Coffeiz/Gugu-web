@@ -1,3 +1,4 @@
+import { isImInternalDelegationTool } from './access.js'
 import { describeShellActivity, type ShellActivity } from '../agent/shell-activity.js'
 import { BUILTIN_AGENT_TOOL_STATE_LABELS } from '../agent/sessions/state-labels.js'
 import type { AgentRunner, PortableValue, RunEvent, RunIdentity } from '../agent/models.js'
@@ -23,6 +24,8 @@ export function resolveImToolLabel(name: string | undefined, display?: unknown, 
     if (action && Object.hasOwn(shellLabels, action)) return shellLabels[action]
   }
   const override = typeof item?.toolLabelOverride === 'string' ? item.toolLabelOverride.trim() : ''
+  // IM 展示名称独立于旧回执指纹，重放时仍按原动作标识去重。
+  if (name === 'http_get') return label?.trim() || override || '抓取网页'
   return label?.trim() || override || (name === 'shell' ? '执行 Shell 命令' : name?.trim() ? defaultToolLabel(name.trim()) : '工具')
 }
 
@@ -150,7 +153,9 @@ function createDelivery<C>(ports: Omit<ImRunDeliveryPorts<C>, 'runner'>) {
       || !['question', 'confirmation', 'credential'].includes(String(event.payload.kind)) || typeof event.payload.toolCallId !== 'string' || !event.payload.toolCallId)) throw new Error('IM 交互身份无效')
     if (event.type === 'interaction_resolved' && (typeof event.payload.interactionId !== 'string' || !event.payload.interactionId
       || !['answered', 'confirmed', 'cancelled', 'aborted', 'expired'].includes(String(event.payload.status)))) throw new Error('IM 交互结果身份无效')
-    if (ports.stream && ['token', 'tool_call', 'tool_done', 'round_end', 'final', 'interaction_required', 'interaction_resolved', 'run_resumed'].includes(event.type)) {
+    const internalTool = (event.type === 'tool_call' || event.type === 'tool_done')
+      && isImInternalDelegationTool(event.payload.name)
+    if (ports.stream && !internalTool && ['token', 'tool_call', 'tool_done', 'round_end', 'final', 'interaction_required', 'interaction_resolved', 'run_resumed'].includes(event.type)) {
       const streamed = event.type === 'interaction_required' ? { ...event, payload: { interactionId: event.payload.interactionId, kind: event.payload.kind, toolCallId: event.payload.toolCallId } }
         : event.type === 'interaction_resolved' ? { ...event, payload: { interactionId: event.payload.interactionId, status: event.payload.status } } : event
       await deliver(identity, `stream:${event.sequence}`, streamed, deliveryId => ports.stream!.project({ identity, deliveryId, event: streamed }), signal, fact)
@@ -170,7 +175,7 @@ function createDelivery<C>(ports: Omit<ImRunDeliveryPorts<C>, 'runner'>) {
         }
       }
     }
-    if (ports.sender.toolNotice && event.type === 'tool_done') {
+    if (ports.sender.toolNotice && event.type === 'tool_done' && !internalTool) {
       const { name, status } = event.payload
       if (typeof name === 'string' && /^[\w.:-]{1,120}$/u.test(name) && name !== 'choose_no_reply') {
         const notice = formatImToolStatus(resolveImToolLabel(name, event.payload.display), status)

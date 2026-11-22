@@ -7,6 +7,7 @@ import { sql } from 'kysely'
 import { expect, it } from 'vitest'
 import { initializeSqlite, openSqliteRuntime } from '../../../src/data/sqlite.js'
 import { createDesktopAgentSession, readDesktopAgentMessages } from '../../../src/agent/sessions/desktop.js'
+import { createSubagentDeliveryStore } from '../../../src/agent/subagent/delivery-store.js'
 import { createSqliteAgentRunLeasePort, createSqliteAgentRunStore } from '../../../src/agent/run/sqlite-store.js'
 import { createDesktopAgentEventReader } from '../../../src/runtime/desktop-agent-events.js'
 import { createSqliteRememberMemory } from '../../../src/agent/memory/sqlite.js'
@@ -44,6 +45,9 @@ it('SQLite Agent Run 加密重读，阻止跨用户、过期租约与重复确�
       const leases = createSqliteAgentRunLeasePort(runtime.db, { ...clock, ttlMs: 100_000 })
       const writeHistory = async () => { throw new Error('合成历史写入失败') }
       const store = createSqliteAgentRunStore(runtime.db, '合成密钥', { ...clock, writeHistory })
+      const deliveries = createSubagentDeliveryStore(runtime.db, '合成密钥')
+      const child = await deliveries.admit(identity, '合成派单', '合成任务输入')
+      await deliveries.complete(identity, child.runId, { status: 'completed', finalMessage: '合成子任务结论' })
       const checkpoint = {
         identity, version: 0, sequence: 1, status: 'running', phase: 'prepare', context: null, text: '合成受限正文',
       } as RunCheckpoint<unknown>
@@ -68,12 +72,15 @@ it('SQLite Agent Run 加密重读，阻止跨用户、过期租约与重复确�
         await leases.assert(identity, next)
         const token: RunEvent = { identity, id: 'e2', sequence: 2, round: 1, type: 'token', payload: { text: '合成增量' } }
         await expect(store.commit({
-          ...change, lease: next, checkpoint: { ...change.checkpoint, sequence: 2 }, events: [token],
+          ...change, lease: next, checkpoint: { ...change.checkpoint, sequence: 2 }, events: [token], subagentFinalIds: [child.childId],
           history: { outcome: 'success', text: '', context: {} },
         })).rejects.toThrow('合成历史写入失败')
         expect((await store.read(identity))?.version).toBe(0)
         expect(await store.readEventsAfter(identity, 1)).toEqual([])
-        await store.commit({ ...change, lease: next })
+        expect(await store.readSubagentFinals!(identity)).toMatchObject([{ childId: child.childId, finalMessage: '合成子任务结论' }])
+        await store.commit({ ...change, lease: next, subagentFinalIds: [child.childId] })
+        expect(await store.readSubagentFinals!(identity)).toEqual([])
+        expect((await deliveries.read(identity, child.childId))?.consumed).toBe(true)
         await expect(store.commit({ ...change, checkpoint: { ...checkpoint, version: 2 }, expectedVersion: 1, lease: next }))
           .rejects.toMatchObject({ code: 'conflict' })
         await store.acknowledgeEvents(identity, ['e1'])
@@ -546,6 +553,54 @@ it('独占重启结算遗留运行，保留事件并允许会话再次发送', a
         const next = await admission.prepare(ownerId, { ...input, message: '合成新消息' })
         expect(next.identity.runId).not.toBe(identity.runId)
       } finally { await leases.release(identity, lease) }
+    } finally { await runtime.close() }
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
+it('Desktop 独占恢复只续跑结果就绪的等待，先结算取消且清理等待关系', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gugu-sqlite-subagent-wait-'))
+  const path = join(directory, 'core.db')
+  try {
+    await initializeSqlite(path)
+    const { runtime, ownerId } = await openSqliteRuntime(path, { exclusive: true })
+    try {
+      const db = runtime.db
+      const secret = await loadSqliteAgentRunSecret(db, path)
+      const store = createSqliteAgentRunStore(db, secret, { async writeHistory() {} })
+      const deliveries = createSubagentDeliveryStore(db, secret)
+      const leases = createSqliteAgentRunLeasePort(db)
+      const admission = createSqliteAgentAdmission(db)
+      async function createWaiting() {
+        const session = await db.transaction().execute(tx => createDesktopAgentSession(tx, ownerId, '合成等待会话'))
+        const { identity } = await admission.prepare(ownerId, { session_id: session.id, message: '合成任务' })
+        const child = await deliveries.admit(identity, '派单', '合成输入')
+        const lease = (await leases.acquire(identity))!
+        const checkpoint = { identity, version: 0, sequence: 0, status: 'running', phase: 'tools', round: 1,
+          context: null, text: '', displayTimeline: [] } as RunCheckpoint<unknown>
+        try {
+          await store.create(checkpoint, lease, [])
+          await store.commit({ identity, lease, expectedVersion: 0, events: [], history: null, interactionReceipt: null,
+            subagentWaitChildId: child.childId, checkpoint: { ...checkpoint, version: 1, status: 'waiting', subagentWaitChildId: child.childId } })
+        } finally { await leases.release(identity, lease) }
+        return { identity, child }
+      }
+      const pending = await createWaiting()
+      const cancelled = await createWaiting()
+      await createSqliteAgentRunCoordination(db, store).cancellation.request(cancelled.identity)
+      const resumed: string[] = []
+      const recover = () => settleExclusiveSqliteAgentRuns(db, path, ownerId, undefined, async checkpoint => {
+        resumed.push(checkpoint.identity.runId)
+        return true
+      })
+      await recover()
+      expect(resumed).toEqual([])
+      expect((await store.read(pending.identity))?.status).toBe('waiting')
+      expect(await store.read(cancelled.identity)).toMatchObject({ status: 'cancelled', subagentWaitChildId: null })
+      for (const task of [pending, cancelled])
+        await deliveries.complete(task.identity, task.child.runId, { status: 'completed', finalMessage: '合成结果' })
+      await recover()
+      expect(resumed).toEqual([pending.identity.runId])
+      expect((await sql`SELECT 1 FROM agent_subagent_waits WHERE parent_run_id=${cancelled.identity.runId}`.execute(db)).rows).toEqual([])
     } finally { await runtime.close() }
   } finally { await rm(directory, { recursive: true, force: true }) }
 })

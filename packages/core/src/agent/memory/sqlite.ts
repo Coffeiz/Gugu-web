@@ -70,6 +70,20 @@ export async function readSqliteAgentMemorySnapshot(db: Kysely<Database>, ownerI
   return { files, revision: createHash('sha256').update(stableJson(files)).digest('hex') }
 }
 
+/** 单一问候来源沿用 SQLite 覆盖旧记忆文件的优先级。 */
+export async function readSqliteGreetingMemoryTarget(db: Kysely<Database>, ownerId: string,
+  target: 'profile' | 'summary' | 'daily' | 'stance', signal: AbortSignal, disk?: DesktopMemoryFiles) {
+  signal.throwIfAborted()
+  const owner = dataContext(ownerId).ownerId.replaceAll('-', '')
+  const table = target === 'profile' ? 'desktop_agent_memory' : 'desktop_agent_memory_documents'
+  const { rows } = await sql<{ body: string }>`SELECT body FROM ${sql.table(table)}
+    WHERE user_id=${owner} AND target=${target}`.execute(db)
+  const legacy = disk?.ownerId === ownerId ? await disk.readTarget(target) : undefined
+  signal.throwIfAborted()
+  const body = rows[0]?.body ?? legacy
+  return target === 'profile' && body !== undefined ? JSON.stringify(parseRows(body)) : body
+}
+
 function embeddingTransport(settings: RagQueryEmbeddingSettings, resolveProxy?: NodeProviderTransportOptions['resolveProxy']) {
   const allowLocal = settings.allowLocal === true && ['local', 'ollama'].includes(settings.provider.trim().toLowerCase())
   return createNodeProviderTransport(desktopTransportOptions(allowLocal, resolveProxy))

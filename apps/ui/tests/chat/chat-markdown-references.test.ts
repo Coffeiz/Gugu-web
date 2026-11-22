@@ -204,6 +204,83 @@ it('联网引用仅合并紧邻的匹配链接，普通链接和应用内引用�
   expect(decorated.groups.map(group => group.map(item => item.summary))).toEqual([['甲摘要', '乙摘要'], ['']])
 })
 
+it('主要来源独占一段时，下一段逐行排列的链接都显示为胶囊', () => {
+  const html = renderChatMd('**主要来源：**\n\n[匹配文章](https://example.test/known)  \n[额外来源](https://example.test/additional)\n\n正文 [普通链接](https://example.test/other)')
+  const { html: decorated } = decorateChatSources(html, readChatSources([{ url: 'https://example.test/known', title: '匹配文章' }]))
+  const host = document.createElement('div')
+  host.innerHTML = decorated
+  expect([...host.querySelectorAll('.chat-source-pill')].map(link => link.textContent)).toEqual(['匹配文章', '额外来源'])
+  expect(host.querySelector('a:not(.chat-source-pill)')?.textContent).toBe('普通链接')
+})
+
+it.each(['**来源：**', '## 主要来源'])('没有搜索元数据时识别来源标题 %s，保留普通列表链接', heading => {
+  const html = renderChatMd([
+    heading, '', '- [报告一](https://example.test/one)', '- [报告二](https://example.test/two)',
+    '', '其他阅读：', '', '- [普通链接](https://example.test/other)',
+  ].join('\n'))
+  const result = decorateChatSources(html, [])
+  const host = document.createElement('div')
+  host.innerHTML = result.html
+  expect([...host.querySelectorAll('.chat-source-pill')].map(link => link.textContent)).toEqual(['报告一', '报告二'])
+  expect(host.querySelector('a:not(.chat-source-pill)')?.textContent).toBe('普通链接')
+})
+
+it('带说明的数据来源标题将分类列表中的链接统一显示为胶囊', () => {
+  const html = renderChatMd([
+    '- 正文 [普通链接](https://example.test/body)', '',
+    '以下是数据来源与不确定性说明：', '',
+    '- 行情与历史价格：[行情页](https://example.test/price)、[历史价格](https://example.test/history)',
+    '- 评级：[机构甲](https://example.test/rating-a)、[机构乙](https://example.test/rating-b)', '',
+    '其他阅读：', '', '- [延伸阅读](https://example.test/related)',
+  ].join('\n'))
+  const { html: decorated } = decorateChatSources(html, [{
+    url: 'https://example.test/history', site: '历史站点', title: '历史价格', summary: '', date: '',
+  }])
+  const host = document.createElement('div')
+  host.innerHTML = decorated
+  expect([...host.querySelectorAll('.chat-source-pill')].map(anchor => anchor.textContent))
+    .toEqual(['行情页', '历史价格', '机构甲', '机构乙'])
+  expect([...host.querySelectorAll('a:not(.chat-source-pill)')].map(anchor => anchor.textContent))
+    .toEqual(['普通链接', '延伸阅读'])
+})
+
+it('来源段的未匹配网页链接使用简版胶囊，保留正文链接和凭据地址原样', () => {
+  const html = renderChatMd([
+    '正文 [普通链接](https://example.test/body)。',
+    '',
+    '**来源**： [已匹配](https://example.test/matched) · [补充报道](https://example.test/report?q=1) · [带用户名](https://app@example.test/user) · [带密码](https://user:pass@example.test/password)',
+  ].join('\n'))
+  const sources = readChatSources([{ url: 'https://example.test/matched', title: '搜索标题', snippet: '搜索摘要' }])
+  const decorated = decorateChatSources(html, sources)
+  const host = document.createElement('div')
+  host.innerHTML = decorated.html
+  expect([...host.querySelectorAll('.chat-source-pill')].map(link => link.textContent)).toEqual(['已匹配', '补充报道'])
+  expect([...host.querySelectorAll('a:not(.chat-source-pill)')].map(link => link.textContent))
+    .toEqual(['普通链接', '带用户名', '带密码'])
+  expect(decorated.groups.map(([source]) => [source?.title, source?.site, source?.summary]))
+    .toEqual([['搜索标题', 'example.test', '搜索摘要'], ['补充报道', 'example.test', '']])
+})
+
+it('没有搜索结果时，来源段在回复收尾后也会显示简版胶囊', async () => {
+  const text = '来源：[示例报道](https://example.test/article)'
+  const presenting = shallowRef(true)
+  const host = document.createElement('div')
+  const app = createApp({ render: () => h(GuguChatCitations, {
+    html: renderChatMd(text), text, presenting: presenting.value,
+  }) }).use(i18n).use(createPinia())
+  vi.stubGlobal('matchMedia', () => ({ matches: true }))
+  try {
+    app.mount(host)
+    expect(host.querySelector('.chat-source-pill')).toBeNull()
+    presenting.value = false
+    await nextTick()
+    expect(host.querySelector('.chat-source-pill')?.textContent).toBe('示例报道')
+  } finally {
+    app.unmount()
+    vi.unstubAllGlobals()
+  }
+})
+
 it('来源站点优先使用发布者名称，缺失时显示域名并标记待查询', () => {
   const sources = readChatSources({ results: [
     { url: 'https://news.163.com/article', title: '文章一' },

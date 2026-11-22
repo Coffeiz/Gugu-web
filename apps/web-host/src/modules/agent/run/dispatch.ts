@@ -15,6 +15,21 @@ const expiredInteractionResume = `EXISTS (SELECT 1 FROM agent_interaction_resume
     AND p.status='resolved' AND r.completed_at IS NULL AND r.created_at<=clock_timestamp()-interval '2 minutes'
     AND (r.claim_expires_at IS NULL OR r.claim_expires_at<=clock_timestamp()))`
 
+export const hasReadySubagentWait = (owner: string, session: string, run: string) => `EXISTS (
+  SELECT 1 FROM agent_subagent_waits w
+  JOIN agent_subagent_deliveries f USING (owner_id,parent_session_id,parent_run_id,child_id)
+  WHERE w.owner_id=${owner} AND w.parent_session_id=${session} AND w.parent_run_id=${run}
+    AND f.payload IS NOT NULL)`
+
+export const hasReadyAgentInbox = (owner: string, session: string, run: string) => `EXISTS (
+  SELECT 1 FROM agent_inbox_waits w WHERE w.owner_id=${owner} AND w.session_id=${session} AND w.run_id=${run}
+    AND (EXISTS (SELECT 1 FROM agent_inbox_messages m
+      WHERE m.owner_id=w.owner_id AND m.recipient_session_id=w.session_id AND m.recipient_run_id=w.run_id
+        AND m.consumed_checkpoint_version IS NULL)
+      OR EXISTS (SELECT 1 FROM agent_subagent_deliveries f
+        WHERE f.owner_id=w.owner_id AND f.parent_session_id=w.session_id AND f.parent_run_id=w.run_id
+          AND f.payload IS NOT NULL AND f.consumed_checkpoint_version IS NULL)))`
+
 /** 只保存重建必要的非凭据元数据；正文、附件及引用以用户消息为真源。 */
 interface AgentDispatchBase { userMessageId: number; locale: 'zh-CN' | 'ja-JP' | 'en-US' | null; origin: string | null; accessVersion: string }
 export interface ImAgentDispatchInput extends AgentDispatchBase {
@@ -96,7 +111,12 @@ function decrypt(secret: string, identity: RunIdentity, nonce: Buffer, payload: 
     validateInput(input); return input
   } catch { throw new Error('调度输入无法安全解密') }
 }
-async function updatePending(client: PoolClient, identity: RunIdentity) {
+interface AgentDispatchQuery {
+  query<T extends Record<string, unknown> = Record<string, unknown>>(statement: string, parameters: unknown[]):
+    Promise<{ rowCount: number | null; rows: T[] }>
+}
+
+async function updatePending(client: AgentDispatchQuery, identity: RunIdentity) {
   await client.query(`UPDATE conversation_sessions SET pending_message_count=(SELECT count(*) FROM agent_run_dispatch d WHERE d.user_id=$1 AND d.session_id=$2 AND d.state='queued') WHERE user_id=$1 AND id=$2`, [identity.ownerId, identity.sessionId])
 }
 async function promoteNext(client: PoolClient, identity: RunIdentity) {
@@ -107,7 +127,7 @@ async function promoteNext(client: PoolClient, identity: RunIdentity) {
 /** 入队应由消息创建事务调用；必须已经持有同一 owner/session 行锁。 */
 export { decrypt as decryptAgentDispatchInput }
 
-export async function enqueueAgentRunLocked(client: PoolClient, secret: string, identity: RunIdentity, input: AgentDispatchInput, ttlSeconds: number): Promise<void> {
+export async function enqueueAgentRunLocked(client: AgentDispatchQuery, secret: string, identity: RunIdentity, input: AgentDispatchInput, ttlSeconds: number): Promise<void> {
   if (!identity.ownerId || !identity.runId || identity.runId.length > 128 || !/^[1-9]\d*$/.test(identity.sessionId)) throw new TypeError('运行身份无效')
   if (!Number.isSafeInteger(ttlSeconds) || ttlSeconds < 1 || ttlSeconds > 604800) throw new RangeError('调度保存期限无效')
   const owned = await client.query("SELECT 1 FROM conversation_messages m JOIN conversation_sessions s ON s.id=m.session_id WHERE s.user_id=$1 AND s.id=$2 AND m.id=$3 AND m.role='user'", [identity.ownerId, identity.sessionId, input.userMessageId])
@@ -157,8 +177,17 @@ export function createPostgresAgentActiveStatusReader(pool: Pick<Pool, 'query'>,
 /** 选中项只可在自身租约过期后被接管；无法重建时调用方不得完成或丢弃。 */
 export function createPostgresAgentDispatch(pool: Pick<Pool, 'connect' | 'query'>, secret: string, leaseMs = 30000,
   sources: readonly AgentDispatchSource[] = ['web'],
-  options: { beforeClaim?(client: PoolClient, identity: RunIdentity, input: AgentDispatchInput): Promise<boolean> } = {},
+  options: { subagentWaits?: boolean; beforeClaim?(client: PoolClient, identity: RunIdentity, input: AgentDispatchInput): Promise<boolean> } = {},
 ) {
+  const readySubagentWait = (owner: string, session: string, run: string) => options.subagentWaits
+    ? `(${hasReadySubagentWait(owner, session, run)} OR ${hasReadyAgentInbox(owner, session, run)})`
+    : 'FALSE'
+  const internalWait = options.subagentWaits ? `(
+    EXISTS (SELECT 1 FROM agent_subagent_waits w
+      WHERE w.owner_id=c.user_id::text AND w.parent_session_id=c.session_id::text AND w.parent_run_id=c.run_id)
+    OR EXISTS (SELECT 1 FROM agent_inbox_waits w
+      WHERE w.owner_id=c.user_id::text AND w.session_id=c.session_id::text AND w.run_id=c.run_id)
+  )` : 'FALSE'
   const supports = (input: AgentDispatchInput) => {
     const source = agentDispatchSource(input)
     return source !== null && sources.includes(source)
@@ -167,14 +196,14 @@ export function createPostgresAgentDispatch(pool: Pick<Pool, 'connect' | 'query'
   if (!Number.isSafeInteger(leaseMs) || leaseMs < 1000) throw new RangeError('调度租约无效')
   return {
     acceptsInput: supports,
-    /** 确认事务已提交、Worker 尚未续跑时，流需要继续等同一 Run 的事件。 */
+    /** 等待其他 Agent 或已提交的确认回执时，保持原 Run 的事件流。 */
     async readStreamCheckpoint(identity: RunIdentity): Promise<{ status: string; sequence: number } | null> {
       const result = await pool.query<{ status: string; sequence: string }>(`
         SELECT c.sequence::text,
-          CASE WHEN c.status='waiting' AND EXISTS (
+          CASE WHEN c.status='waiting' AND (EXISTS (
             SELECT 1 FROM agent_interaction_resumes r
             WHERE r.user_id=c.user_id AND r.session_id=c.session_id AND r.run_id=c.run_id AND r.completed_at IS NULL
-          ) THEN 'running' ELSE c.status END AS status
+          ) OR ${internalWait}) THEN 'running' ELSE c.status END AS status
         FROM agent_run_checkpoints c WHERE c.user_id=$1 AND c.session_id=$2 AND c.run_id=$3`,
       [identity.ownerId, Number(identity.sessionId), identity.runId])
       const row = result.rows[0]
@@ -206,6 +235,7 @@ export function createPostgresAgentDispatch(pool: Pick<Pool, 'connect' | 'query'
           AND NOT EXISTS (SELECT 1 FROM agent_run_leases l WHERE l.user_id=d.user_id AND l.session_id=d.session_id AND l.expires_at>clock_timestamp())
           AND ((d.state='selected' AND d.blocked_reason IS DISTINCT FROM 'version_conflict' AND (d.lease_expires_at IS NULL OR d.lease_expires_at<=clock_timestamp())
               AND (d.cancel_requested
+                OR ${readySubagentWait('d.user_id::text', 'd.session_id::text', 'd.run_id')}
                 OR EXISTS (SELECT 1 FROM agent_interaction_bindings b JOIN interaction_prompts p
                   ON p.id=b.prompt_id AND p.user_id=b.user_id AND p.session_id=b.session_id
                   WHERE b.user_id=d.user_id AND b.session_id=d.session_id AND b.run_id=d.run_id
@@ -249,8 +279,12 @@ export function createPostgresAgentDispatch(pool: Pick<Pool, 'connect' | 'query'
         const input = decrypt(secret, identity, row.nonce, row.payload)
         const source = agentDispatchSource(input)
         if (source && !supports(input)) return null
-        // IM 等待态由带入站收据的专用恢复器认领。
-        if (source === 'im' && status === 'waiting') return null
+        // 原生交互继续由 IM 恢复器认领，派单交付只唤醒内部等待。
+        if (source === 'im' && status === 'waiting') {
+          const { rows: [ready] } = await client.query<{ ready: boolean }>(
+            `SELECT ${readySubagentWait('$1', '$2', '$3')} AS ready`, [ownerId, sessionId, row.run_id])
+          if (!ready?.ready) return null
+        }
         if (!supports(input)) {
           await client.query("UPDATE agent_run_dispatch SET state='selected',blocked_reason='version_conflict',token=NULL,lease_expires_at=NULL WHERE user_id=$1 AND session_id=$2 AND run_id=$3", [ownerId, sessionId, row.run_id])
           await updatePending(client, identity)
@@ -272,7 +306,12 @@ export function createPostgresAgentDispatch(pool: Pick<Pool, 'connect' | 'query'
         }
         const interactionResume = status === 'waiting' && !row.cancel_requested
           ? await claimInteractionResumeLocked(client, identity) : null
-        if (status === 'waiting' && !row.cancel_requested && !interactionResume) return null
+        if (status === 'waiting' && !row.cancel_requested && !interactionResume) {
+          if (!options.subagentWaits) return null
+          const { rows: [ready] } = await client.query<{ ready: boolean }>(
+            `SELECT ${readySubagentWait('$1', '$2', '$3')} AS ready`, [ownerId, sessionId, row.run_id])
+          if (!ready?.ready) return null
+        }
         const token = randomUUID()
         const result = await client.query<{ fence: string | number }>(`UPDATE agent_run_dispatch SET state='selected',token=$4,fence=fence+1,lease_expires_at=clock_timestamp()+($5*interval '1 millisecond')
           WHERE user_id=$1 AND session_id=$2 AND run_id=$3 RETURNING fence`, [ownerId, sessionId, row.run_id, token, leaseMs])
@@ -367,11 +406,11 @@ export function createPostgresAgentDispatch(pool: Pick<Pool, 'connect' | 'query'
       })
     },
     /** 精确记录当前 selected 的取消，不触碰后续 queued。 */
-    async requestCancel(ownerId: string, sessionId: string): Promise<RunIdentity | null> {
+    async requestCancel(ownerId: string, sessionId: string, runId?: string): Promise<RunIdentity | null> {
       const scope = { ownerId, sessionId, runId: 'scope' }
       return withPostgresTransaction(pool, async client => {
         if (!await lockAgentRunSession(client, scope)) return null
-        const result = await client.query<{ run_id: string }>("UPDATE agent_run_dispatch SET cancel_requested=true WHERE user_id=$1 AND session_id=$2 AND state='selected' RETURNING run_id", [ownerId, sessionId])
+        const result = await client.query<{ run_id: string }>("UPDATE agent_run_dispatch SET cancel_requested=true WHERE user_id=$1 AND session_id=$2 AND state='selected' AND ($3::text IS NULL OR run_id=$3) RETURNING run_id", [ownerId, sessionId, runId ?? null])
         return result.rows[0] ? { ownerId, sessionId, runId: result.rows[0].run_id } : null
       })
     },

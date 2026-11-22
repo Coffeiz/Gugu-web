@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto'
 import type { Pool,PoolClient } from 'pg'
 import type { SqlDataRuntime } from '@gugu/core/data'
 import { stripThinking } from '@gugu/core/providers'
-import { stableJson, type CanonicalRunContext } from '@gugu/core/agent'
+import { stableJson, type CanonicalRunContext, type RunIdentity } from '@gugu/core/agent'
 import type {AgentSessionDeletePorts} from '@gugu/core/agent-sessions'
 import { imActorInputFromPayload } from '@gugu/core/im/access'
 import { createImRunDeliveryRecovery } from '@gugu/core/im/run-delivery'
@@ -20,7 +20,7 @@ import { createByokEnvelope, readConfiguredByokMasterKeys } from '../../byok/cry
 import { normalizeOwnerId } from '../../../shared/owner-context.js'
 import { createRedisAgentRunCancellationPort } from '../../agent/run/cancel.js'
 import { createPostgresAgentRunStore } from '../../agent/run/store.js'
-import { createPostgresAgentDispatch } from '../../agent/run/dispatch.js'
+import { createPostgresAgentDispatch, type ImAgentDispatchInput, type RunModelPin } from '../../agent/run/dispatch.js'
 import { createAgentDispatchWorker } from '@gugu/core/agent'
 import { createFilesystemAuthorizationConfirmationStore } from '../../agent/sandbox/confirmations.js'
 import { createImPlatformSettingsReader } from '../settings.js'
@@ -68,6 +68,11 @@ import type { ImReflectionService } from './memory/contracts.js'
 import { createImProductionResources, createImProductionDelivery, createImProductionHistory, createImProductionReflectionBindings, imProductionProvider, type ImProductionResourcesOptions } from './agent/resources.js'
 import type { AgentObservationPort, AgentRunLogPort } from '@gugu/core/agent'
 
+type ImParentBinding = Awaited<ReturnType<Awaited<ReturnType<typeof createConfiguredImAgentProviderBinding>>['bindRun']>>
+export type ImSubagentParentBinder = (identity: RunIdentity, input: ImAgentDispatchInput,
+  recovery: RunModelPin & { identity: RunIdentity }, signal: AbortSignal) =>
+  Promise<(ImParentBinding & { authorize(): Promise<boolean> }) | null>
+
 export interface NodeImHostOptions {
   pool: Pool; deliveryPool: Pool; core: SqlDataRuntime; secretKey: string; redisUrl: string | null
   configOverridePath: string | null; storageRoot: string; promptRoot: string; publicAppUrl: string | null
@@ -76,6 +81,7 @@ export interface NodeImHostOptions {
   mcpRuntime?: Pick<ReturnType<typeof createMcpRuntime>, 'invalidate'>
     & Partial<Pick<ReturnType<typeof createMcpRuntime>, 'state' | 'testConnection' | 'dispatchForAgent'>>
   mcpDirectory?: NonNullable<ImProductionResourcesOptions['mcpTools']>['directory']
+  registerImSubagentParentBinder?(binder: ImSubagentParentBinder | undefined, wake?: () => void): void
   imOwnerTools?: ImProductionResourcesOptions['imOwnerTools']
   onReflection?(service: ImReflectionService): void
   observation?: AgentObservationPort
@@ -305,7 +311,21 @@ export function createNodeImHostRuntime(options: NodeImHostOptions) {
         prepareAdmitted: (...args: Parameters<typeof ingress.prepareAdmitted>) => scoped(args[0], args[1]).prepareAdmitted(...args),
         handleBatch: (...args: Parameters<typeof ingress.handleBatch>) => { if (!args[1].length) throw new Error('IM 批次为空'); return scoped(args[0], args[1][0]!.payload).handleBatch(...args) } }
       const dispatch = createPostgresAgentDispatch(options.pool, options.secretKey, 30000, ['im'],
-        {beforeClaim:createImDispatchOrder({secretKey:options.secretKey,diagnose:report}).beforeClaim})
+        {subagentWaits:true,beforeClaim:createImDispatchOrder({secretKey:options.secretKey,diagnose:report}).beforeClaim})
+      options.registerImSubagentParentBinder?.(async (identity, input, recovery, signal) => {
+        const route = await readRoute(identity)
+        const actorInput = imActorInputForDispatch({ identity, input }, route)
+        const snapshot = await access.snapshot(actorInput)
+        const actor = snapshot.actor(actorInput)
+        if (actor.role !== 'owner' || actor.chatType !== 'c2c') return null
+        const bot = await access.readBot(actor)
+        if (!bot) return null
+        const authorize = () => access.authorizeDelivery(actor, bot)
+        if (!await authorize()) return null
+        const binding = await model.bindRun(identity, actor, bot, await memoryEnabled(), input.locale, recovery, signal)
+        return { ...binding, authorize }
+      }, () => runtime.wake('dispatch'))
+      cleanup.push(async () => { options.registerImSubagentParentBinder?.(undefined) })
       const bindingStore = createImRuntimeBindingStore(options.pool, options.secretKey)
       const reconstruct = createImAgentReconstructor({ pool: options.pool, deliveryPool: options.deliveryPool, secretKey: options.secretKey, redis, subscribe,
         access, readRoute, readReconstructionStatus: dispatch.readReconstructionStatus, history, resources: createImProductionResources({ ...production, reflection }),

@@ -20,7 +20,7 @@
         <div class="activity-details">
           <GuguChatToolBubble
             v-for="tool in tools" :key="tool.id" :msg="tool" :session-id="sessionId"
-            :expanded="expandedTools.has(String(tool.id))"
+            :subagent-names="subagentNames" :expanded="expandedTools.has(String(tool.id))"
             @update:expanded="value => $emit('detail', tool.id, value)"
           />
         </div>
@@ -40,6 +40,7 @@ import { formatToolDuration, shellActivityForMessage, toolActivityLabel, toolGro
 
 const props = defineProps<{
   tools: ChatMessage[]
+  subagentNames?: ReadonlyMap<string, string>
   sessionId: number | null
   expanded: boolean
   expandedTools: ReadonlySet<string>
@@ -67,15 +68,15 @@ const label = computed(() => {
   if (phase.value === 'processing') return t('chatUi.toolActivityPreparing')
   if (phase.value === 'waiting') return t('chatUi.toolWaiting')
   if (phase.value === 'running') {
-    const tool = toolActivityLabel(running.value[0]!, t, te)
+    const tool = toolActivityLabel(running.value[0]!, t, te, props.subagentNames)
     const current = t('chatUi.toolActivityRunning', { tool })
     return running.value.length > 1
       ? `${current} · ${t('chatUi.toolActivityParallel', { count: running.value.length - 1 })}`
       : current
   }
-  if (phase.value === 'queued') return `${toolActivityLabel(queued.value!, t, te)} · ${t('chatUi.toolQueued')}`
+  if (phase.value === 'queued') return `${toolActivityLabel(queued.value!, t, te, props.subagentNames)} · ${t('chatUi.toolQueued')}`
   const onlyTool = props.tools.length === 1 ? props.tools[0] : undefined
-  if (onlyTool && shellActivityForMessage(onlyTool)) return toolActivityLabel(onlyTool, t, te)
+  if (onlyTool && shellActivityForMessage(onlyTool)) return toolActivityLabel(onlyTool, t, te, props.subagentNames)
   return t('chatUi.toolActivityTotal', { count: props.tools.length })
 })
 const duration = computed(() => formatToolDuration(props.elapsedMs ?? toolGroupElapsedMs(props.tools)))

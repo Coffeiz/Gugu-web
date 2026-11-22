@@ -1,3 +1,14 @@
+import { registerWebSubagentStartup } from '../modules/agent/run/start.js'
+import { createWebAgentShell } from '../modules/agent/tools/shell/sandbox.js'
+import { createWebSearcherFileAccess } from '../modules/agent/tools/files/searcher.js'
+import { createPostgresInteractionActivator } from '../modules/agent/interactions/activate.js'
+import { agentDispatchReadyChannel, createAgentInbox, createDelegatedAgentHarness, searcherPreset, createSubagentDeliveryStore, createSubagentService, createSubagentServiceTools } from '@gugu/core/agent'
+import type { CanonicalRunContext, RunIdentity } from '@gugu/core/agent'
+import { connectProviderHarness } from '@gugu/core/providers'
+import { createToolRegistry, createHttpGetTool, createAgentShellTool } from '@gugu/core/tools'
+import { createRedisAgentRunCancellationPort, isWebSubagentParentCancelled } from '../modules/agent/run/cancel.js'
+import { createPostgresAgentRunLeasePort } from '../modules/agent/run/lease.js'
+import { recordAgentUsage } from '../modules/agent/run/usage.js'
 import { mcpServiceReminder } from '@gugu/core/mcp/tool-directory'
 import { canvasConfirmationLabels, createSaveAttachmentTool } from '@gugu/core/tools'
 import { type SerialWorker } from '../workers/admission.js'
@@ -35,7 +46,7 @@ import { resolve } from 'node:path'
 import { Pool, type PoolClient } from 'pg'
 import { type Database, type SqlDataRuntime } from '@gugu/core/data'
 import { createAgentWorkspaceQueries, createKyselyAgentWorkspaceReader } from '@gugu/core/workspaces'
-import { createGlobalSearchOperations, createKyselyDashboardCounter } from '@gugu/core'
+import { createGlobalSearchOperations } from '@gugu/core'
 import { type WebUiConfig } from '../config.js'
 import { readConfigOverride, resolveConfigOverridePath } from '../adapters/config/config-override-file.js'
 import { createRedisLiveSubscription } from '../adapters/cache/redis-live-subscription.js'
@@ -81,7 +92,7 @@ import { createConfiguredWebAgentProviderBinding } from '../modules/agent/llm/co
 import { createWebAgentSearchPorts } from '../modules/agent/tools/search.js'
 import { createWebAgentCalendarWritePorts } from '../modules/agent/tools/calendar.js'
 import { createWebAgentCanvasMutationPorts, createWebAgentCanvasWritePorts } from '../modules/agent/tools/canvas.js'
-import { createWebAgentConfirmationAuthorization, createWebAgentToolConfirmation } from '../modules/agent/tools/confirm.js'
+import { createWebAgentConfirmationAuthorization, createWebAgentToolConfirmation, createWebDelegatedConfirmationAuthorization } from '../modules/agent/tools/confirm.js'
 import type { AgentRunBinding } from '@gugu/core/agent'
 import { createAgentShellSnapshotReader } from '../modules/agent/sandbox/snapshot.js'
 import { createWebAgentScheduledTaskWrites } from '../modules/agent/tools/schedule.js'
@@ -96,7 +107,7 @@ import { createAgentSecretInteractionService } from '../modules/agent/interactio
 import { createInteractionResumeEnqueuer } from '../modules/agent/interactions/resume.js'
 import { createPostgresSecretInteraction } from '../modules/agent/interactions/secrets.js'
 import { createPostgresAgentRunStore } from '../modules/agent/run/store.js'
-import { createPostgresAgentDispatch, type AgentDispatchLease } from '../modules/agent/run/dispatch.js'
+import { createPostgresAgentDispatch, decryptAgentDispatchInput, type AgentDispatchLease } from '../modules/agent/run/dispatch.js'
 import { createAgentConversationReadPort } from '../modules/agent/tools/conversations.js'
 import { createViewImageTool, withViewImageReferences } from '../modules/agent/tools/files/image.js'
 import { adapterFor, type ProviderRuntimeOptions } from '@gugu/core/providers'
@@ -195,6 +206,12 @@ export async function createAgentServices(options: AgentDependencies) {
     userSkillManager, globalSearch, resolveEmbeddingSettings, createEmbeddingTransport,
     publishCalendarCreate, publishCalendarMutation, loopScopeTrace, readStateLabelOverrides,
   } = options
+  let bindImSubagentParent: import('../modules/im/gateway/bootstrap.js').ImSubagentParentBinder | undefined
+  let wakeImSubagentParent: (() => void) | undefined
+  const registerImSubagentParentBinder = (binder: typeof bindImSubagentParent, wake?: () => void) => {
+    bindImSubagentParent = binder
+    wakeImSubagentParent = wake
+  }
   let imOwnerTools: ImOwnerToolFactory | undefined
   let scheduledAttempt: ReturnType<typeof createWebScheduledTaskAgentAttempt> | null = null
   let agentRunLifecycle: ReturnType<typeof createWebAgentRunLifecycle> | null = null
@@ -727,7 +744,7 @@ export async function createAgentServices(options: AgentDependencies) {
       const canConfirm = lease.input.v === 3 && lease.input.im.chatType === 'c2c' && lease.input.im.platform !== 'wechat'
       const calendarConfirmation = canConfirm ? makeConfirmation(lease, 'delete_event', authorize) : undefined
       return {
-        tools: { ...await commonTools(lease, timezone, calendarConfirmation, authorize), ...await ownerFileTools(lease, binding, canConfirm, authorize),
+        tools: { subagentTools: createSubagentServiceTools(subagents), ...await commonTools(lease, timezone, calendarConfirmation, authorize), ...await ownerFileTools(lease, binding, canConfirm, authorize),
           ...(canConfirm ? { ...confirmedOwnerTools(lease, authorize), mcpManagement: ownerMcpManagement(lease, authorize) } : {}) },
         describe: canConfirm ? interactionActivation.describe : undefined,
       }
@@ -962,7 +979,6 @@ export async function createAgentServices(options: AgentDependencies) {
             ...await commonTools(lease, await context.loadTimezone(lease.identity), makeConfirmation(lease, 'delete_event'), undefined,
               scheduledEmailAuthorization, () => providerBinding.accessVersion(lease.identity, lease.input.source === 'web' ? lease.input.model : undefined)),
             time: { now: () => new Date(), timezone: (identity: import('@gugu/core/agent').RunIdentity) => context.loadTimezone(identity) },
-            dashboard: createKyselyDashboardCounter(core.db, 'postgres'),
             workspaceCreation: createWebAgentWorkspaceCreatePort({
               core,
               pool,
@@ -1058,7 +1074,168 @@ export async function createAgentServices(options: AgentDependencies) {
       },
     })
     const dispatch = createPostgresAgentDispatch(pool, config.secretKey)
+    const subagentNotifications = createRedisAgentCancellationCommands(agentRedisUrl)
+    const childCancellation = createRedisAgentRunCancellationPort(subagentNotifications, createRedisLiveSubscription(agentRedisUrl))
+    const notifySubagent = async () => {
+      wakeImSubagentParent?.()
+      await subagentNotifications.publish(agentDispatchReadyChannel, '1')
+    }
+    const childStore = createPostgresAgentRunStore<CanonicalRunContext>(pool, config.secretKey, {
+      async writeHistory() { throw new Error('子运行用量需在当前绑定的事务中写入') },
+    })
+    const deliveries = createSubagentDeliveryStore(core.db, config.secretKey, undefined, 'postgres', (tx, identity) => registerWebSubagentStartup(tx, identity, config.secretKey))
+    const inbox = createAgentInbox(core.db, config.secretKey, { onMessageCommitted: notifySubagent })
+    async function readSubagentParent(identity: RunIdentity, includeCancelled = false) {
+      const { rows: [row] } = await pool.query<{ nonce: Buffer; payload: Buffer; source: string }>(`SELECT d.nonce,d.payload,s.source FROM agent_run_dispatch d
+        JOIN conversation_sessions s ON s.id=d.session_id AND s.user_id=d.user_id
+        WHERE d.user_id=$1 AND d.session_id=$2 AND d.run_id=$3 AND ($4 OR NOT d.cancel_requested)`,
+      [identity.ownerId, identity.sessionId, identity.runId, includeCancelled])
+      if (!row) return null
+      const input = decryptAgentDispatchInput(config.secretKey, identity, row.nonce, row.payload)
+      if (input.source === 'im' ? input.im.chatType !== 'c2c' || !bindImSubagentParent : row.source !== 'web') return null
+      const context = (await childStore.read(identity))?.context
+      return context ? { context, input } : null
+    }
+    const searcherWorkspace = async (parent: RunIdentity) => digest(await readFileWorkspace(parent.ownerId, Number(parent.sessionId)))
+    const searcherFiles = createWebSearcherFileAccess(pool, config.storageLocalPath)
+    const subagents = createSubagentService({
+      deliveries, childCheckpoints: childStore, inbox, schedule: notifySubagent,
+      async requestCancellation(identity) {
+        await dispatch.requestCancel(identity.ownerId, identity.sessionId, identity.runId)
+        await childCancellation.request(identity)
+        await childCancellation.notify(identity)
+        await notifySubagent()
+      },
+      async parentBinding(identity) {
+        const parent = await readSubagentParent(identity)
+        return parent ? { agentId: 'builtin:main', modelIdentity: parent.context.modelIdentity, workspaceFingerprint: await searcherWorkspace(identity) } : null
+      },
+      authorizeResources: searcherFiles.authorize,
+    })
+    async function reconstructChild(lease: AgentDispatchLease) {
+      const { identity } = lease
+      const { rows: [origin] } = await pool.query<{ parent_session_id: string; parent_run_id: string }>(`
+        SELECT d.parent_session_id,d.parent_run_id FROM agent_subagent_deliveries d
+        JOIN agent_subagent_executions e USING(child_run_id)
+        WHERE d.owner_id=$1 AND e.child_session_id=$2 AND e.child_run_id=$3`,
+      [identity.ownerId, identity.sessionId, identity.runId])
+      if (!origin) return null
+      const parent = { ownerId: identity.ownerId, sessionId: origin.parent_session_id, runId: origin.parent_run_id }
+      const saved = await deliveries.readLaunch(parent, identity.runId, true)
+      const parentRun = await readSubagentParent(parent, true)
+      if (!saved || !parentRun || parentRun.context.modelIdentity !== saved.modelIdentity) return null
+      const { input: parentInput, context: parentContext } = parentRun
+      const launch = { ...saved, parent, identity }
+      const { modelIdentity } = launch
+      const signal = AbortSignal.timeout(20_000)
+      const workspaceCurrent = async () => launch.workspaceFingerprint === undefined || launch.workspaceFingerprint === await searcherWorkspace(parent)
+      if (!await workspaceCurrent()) throw new Error('父工作区绑定已变化')
+      const recovery = { identity: parent, modelIdentity, accessScopeHash: parentContext.accessScopeHash }
+      const imBinding = parentInput.source === 'im'
+        ? await bindImSubagentParent?.(parent, parentInput, recovery, signal) : undefined
+      if (parentInput.source === 'im' && !imBinding) throw new Error('私聊子运行授权已失效')
+      const binding = imBinding ? { ...imBinding, contextWindow: imBinding.selection.contextWindow }
+        : await providerBinding.bind(parent, signal, recovery)
+      try {
+        const selected = await binding.resolve(parent, modelIdentity, signal)
+        const matches = (candidate: RunIdentity) => candidate.ownerId === identity.ownerId
+          && candidate.sessionId === identity.sessionId && candidate.runId === identity.runId
+        const accessScopeHash = digest([identity, selected.accessScopeHash, ...(launch.workspaceFingerprint === undefined ? [] : [launch.workspaceFingerprint])])
+        const resolve = async (candidate: RunIdentity) => {
+          if (!matches(candidate) || imBinding && !await imBinding.authorize()) throw new Error('子运行身份不匹配')
+          return { ...selected, accessScopeHash, systemPrompt: '' }
+        }
+        const search = await createWebAgentSearchPorts({
+          identity, binding: { resolve, selection: {
+            modelIdentity, contextWindow: binding.contextWindow, locale: 'zh-CN', groupChat: false,
+            workspaceBinding: null, contextPolicy: { loadOwnerContext: false, memoryEnabled: false },
+          } },
+          readSafeEgress: createSafeEgressSettingsReader(env, overridePath), secretKey: config.secretKey, digest,
+        })
+        const shellAuthorization = createWebDelegatedConfirmationAuthorization(core.db, parent, identity, accessScopeHash)
+        const confirmation = trustedIntents && bubblewrapRootfs && launch.workspaceFingerprint
+          && !launch.input.resourceRefs?.length ? createWebAgentToolConfirmation({
+            pool, intents: trustedIntents, delegated: { identity, accessVersion: accessScopeHash }, action: 'shell',
+            ...shellAuthorization,
+            async describe(_candidate, snapshot) {
+              if (!snapshot.displaySummary) throw new Error('操作确认摘要不可用')
+              return { summary: snapshot.displaySummary }
+            },
+          }) : undefined
+        const [referenceSearch, referenceShell] = searcherFiles.tools(parent, identity, launch.input.resourceRefs ?? [],
+          async signal => Boolean(await shellAuthorization.authorize(identity, signal)) && await workspaceCurrent()
+            && await readAgentShellSnapshot.allowsReferenceRead(parent.ownerId))
+        const shell = confirmation && bubblewrapRootfs ? createWebAgentShell({
+          rootfs: bubblewrapRootfs, confirmation, log: runtimeLog,
+          async read(candidate, signal) {
+            if (!await shellAuthorization.authorize(candidate, signal)) return null
+            const snapshot = await readAgentShellSnapshot(parent.ownerId, parent.sessionId)
+            return snapshot && digest(JSON.parse(snapshot.workspaceTarget)) === launch.workspaceFingerprint
+              ? { ...snapshot, systemEnabled: false, isolatedWorkspace: undefined } : null
+          },
+          mounts: shellMounts,
+          claim: (reference, signal) => core.db.transaction().execute(tx => confirmation.claim(tx, reference, signal)),
+        }) : createAgentShellTool(async () => ({
+          kind: "completed", successful: false, executed: false, mutated: false,
+          value: { error: "当前子任务没有可用的 Shell 执行范围" },
+        }), "按父会话权限执行 Shell。", false)
+        const tools = createToolRegistry({
+          tools: [...createSubagentServiceTools(subagents, 'child'), ...(referenceSearch ? [referenceSearch] : []), ...(search.httpGet ? [createHttpGetTool(search.httpGet)] : []),
+            ...(search.webSearch ? [search.webSearch] : [])],
+          confirmationGatedDestructiveTools: [referenceShell ?? shell],
+          authorize: async (candidate, name) => matches(candidate) && filterConfiguredWebAgentTools([name]).length === 1
+            && Boolean(await readSubagentParent(parent)) && (!imBinding || await imBinding.authorize()) && await workspaceCurrent(),
+        })
+        const store = createPostgresAgentRunStore<CanonicalRunContext>(pool, config.secretKey, {
+          onSubagentDeliveryCommitted: notifySubagent,
+          async writeHistory(client, candidate, _history, checkpoint) {
+            await recordAgentUsage(client, candidate, checkpoint.totalUsage, binding.usageConfig, [], [])
+          },
+        })
+        const connected = connectProviderHarness({
+          ...baseContext,
+          async load(candidate) {
+            if (!matches(candidate)) throw new Error('子运行身份不匹配')
+            const available = await tools.capabilities(candidate)
+            return { input: { ...candidate, fixedPrefix: [], history: [] }, modelIdentity, accessScopeHash,
+              contextWindow: binding.contextWindow, capabilities: { tools: available, toolNames: available.map(tool => tool.name) } }
+          },
+          async prepareRequest() { return { prefix: [], dynamicTail: [] } },
+        }, { resolve, continuationStore: providerContinuationStore, continuationTtlMs: 35 * 60_000, transportFactory: createNodeProviderTransportFactory({
+          allowLocal: !binding.usageConfig.isByok, environment: () => env,
+        }) })
+        const cancellation = {
+          ...childCancellation,
+          async isRequested(candidate: RunIdentity) {
+            return await isWebSubagentParentCancelled(pool, parent) || await childCancellation.isRequested(candidate)
+          },
+        }
+        const harness = createDelegatedAgentHarness(searcherPreset, launch, {
+          context: connected.context, executor: noUnisolatedExecution,
+          runtime: { ...runtime, tools: tools.tools, provider: connected.provider, store,
+            interactions: createPostgresInteractionActivator(pool, interactionActivation),
+            async publish(event) {
+              if (event.type === 'interaction_required' || event.type === 'interaction_resolved')
+                await publisher.publishAgentRunChanged({ ownerId: parent.ownerId, sessionId: Number(parent.sessionId),
+                  runId: parent.runId, status: 'waiting' })
+            },
+            leases: createPostgresAgentRunLeasePort(pool, { dispatchLease: candidate => matches(candidate) ? lease : null }),
+            cancellation,
+          },
+        })
+        return { harness, cancellation, async close() {
+          try { await connected.provider.close() }
+          finally { binding.release() }
+        } }
+      } catch (error) { binding.release(); throw error }
+    }
     const reconstruct = createWebAgentReconstructor({
+      subagentTools: lease => createToolRegistry({
+        tools: createSubagentServiceTools(subagents),
+        authorize: async (candidate) => candidate.ownerId === lease.identity.ownerId
+          && candidate.sessionId === lease.identity.sessionId && candidate.runId === lease.identity.runId
+          && lease.input.source === 'web' && dispatch.isCurrent(lease),
+      }),
       async readWorkspaceInstructions(lease, signal) {
         if (lease.input.source !== 'web') return undefined
         signal?.throwIfAborted()
@@ -1100,20 +1277,20 @@ export async function createAgentServices(options: AgentDependencies) {
     })
     const interactionProjection = createPostgresInteractionProjection(pool, config.secretKey)
     agentRunLifecycle = createWebAgentRunLifecycle({
-      pool, secretKey: config.secretKey, storageRoot: config.storageLocalPath, redisUrl: agentRedisUrl, dispatchTtlSeconds: 7 * 24 * 60 * 60,
+      pool, db: core.db, subagents, secretKey: config.secretKey, storageRoot: config.storageLocalPath, redisUrl: agentRedisUrl, dispatchTtlSeconds: 7 * 24 * 60 * 60,
       observation: loopScopeTrace?.observation, runAgent: options.runAgent,
       accessVersion: providerBinding.accessVersion,
       pin: providerBinding.pin,
-      reconstruct,
+      reconstruct, reconstructChild,
       project: event => projectAgentRunEvent(event, { interaction: event => interactionProjection.interaction(event) }),
       diagnose: code => writeTimestampedAgentDiagnostic('Web Agent 运行生命周期失败', code),
     })
     const interactionRunStore = createPostgresAgentRunStore<import('@gugu/core/agent').CanonicalRunContext>(pool, config.secretKey, {
       async writeHistory() { throw new Error('只读交互恢复 store 不接受历史写入') },
     })
-    const enqueueInteractionResume = createInteractionResumeEnqueuer(interactionRunStore)
+    const enqueueInteractionResume = createInteractionResumeEnqueuer(interactionRunStore, true)
     agentInteractionRespond = createAgentInteractionRespondService({
-      pool,
+      pool, routeDelegated: true,
       effects: {
         ...createPostgresAgentInteractionCommandEffects({
           filesystemAuthorizationEnabled: () => config.workspaceRuntimeSettings.fullUserSandboxAuthorizationEnabled,
@@ -1152,5 +1329,5 @@ export async function createAgentServices(options: AgentDependencies) {
     })
   }
   return { scheduledAttempt, agentRunLifecycle, ownerReflectionWork, agentInteractionRespond, agentSecretInteraction,
-    agentRunLog: agentLog.log, imOwnerTools }
+    agentRunLog: agentLog.log, imOwnerTools, registerImSubagentParentBinder }
 }

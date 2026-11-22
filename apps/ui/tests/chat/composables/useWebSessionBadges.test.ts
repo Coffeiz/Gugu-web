@@ -7,9 +7,9 @@ const scopes: ReturnType<typeof effectScope>[] = []
 beforeEach(() => localStorage.clear())
 afterEach(() => { scopes.splice(0).forEach(scope => scope.stop()); vi.restoreAllMocks() })
 
-function create(sessions: ChatSession[] = [{ id: 1, title: '合成对话', lastAssistantId: 10 }], persist = true) {
+function create(sessions: ChatSession[] = [{ id: 1, title: '合成对话', lastAssistantId: 10 }], persist = true, accountId = 'synthetic-a') {
   const options = { sessions: ref(sessions), sessionId: ref<number | null>(null),
-    visible: ref(true), accountId: ref<string | null>('synthetic-a'), persist }
+    visible: ref(true), accountId: ref<string | null>(accountId), persist }
   const scope = effectScope()
   scopes.push(scope)
   const badges = scope.run(() => useWebSessionBadges(options))!
@@ -17,8 +17,10 @@ function create(sessions: ChatSession[] = [{ id: 1, title: '合成对话', lastA
 }
 
 describe('站内会话运行和未读状态', () => {
-  it('本机未读按回复版本更新，不写到 Web 账号缓存', async () => {
-    const state = create([{ id: 1, title: '合成对话', lastAssistantId: 10 }], false)
+  it('桌面本地身份显示运行和未读标记，不写 Web 账号缓存', async () => {
+    const state = create([{ id: 1, title: '合成对话', lastAssistantId: 10 }], false, 'desktop-local')
+    state.sessions.value[0]!.isRunning = true
+    expect(state.badges.value[1]).toBe('running')
     state.sessions.value = [{ id: 1, title: '合成对话', lastAssistantId: 20 }]
     await nextTick()
     expect(state.badges.value[1]).toBe('unread')

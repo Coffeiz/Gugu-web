@@ -1,3 +1,5 @@
+const historyTimeFormatters = new Map<string, Intl.DateTimeFormat>()
+
 /** 与 Python fmt_local 一致：数据库时间按 UTC 解释，再用可信用户时区输出分钟精度。 */
 export function formatAgentHistoryMessageTime(timestamp: string | number, timezone: string): string {
   const dateInput = typeof timestamp === 'string' && /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/u.test(timestamp)
@@ -5,10 +7,16 @@ export function formatAgentHistoryMessageTime(timestamp: string | number, timezo
     ? `${timestamp.replace(' ', 'T')}Z` : timestamp
   const date = new Date(dateInput)
   if (!Number.isFinite(date.getTime())) throw new RangeError('历史消息时间无效')
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-  }).formatToParts(date)
+  let formatter = historyTimeFormatters.get(timezone)
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    })
+    if (historyTimeFormatters.size >= 64) historyTimeFormatters.delete(historyTimeFormatters.keys().next().value!)
+    historyTimeFormatters.set(timezone, formatter)
+  }
+  const parts = formatter.formatToParts(date)
   const value = Object.fromEntries(parts.map(part => [part.type, part.value]))
   return `${value.year}-${value.month}-${value.day} ${value.hour}:${value.minute}`
 }

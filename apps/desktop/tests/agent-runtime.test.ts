@@ -1,14 +1,18 @@
+import { loadSqliteAgentRunSecret } from '../../../packages/core/src/agent/run/sqlite-secret.js'
+import { desktopFileReferenceKey } from '../../../packages/core/src/agent/sessions/desktop-references.js'
+import { spawn, type ChildProcess } from 'node:child_process'
+import { once } from 'node:events'
 import { createDesktopContinuationStore } from '../../../packages/core/src/runtime/desktop-continuation.js'
 import { createServer, type Server } from 'node:http'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sql } from '../../../packages/core/node_modules/kysely/dist/index.js'
 import { initializeSqlite, openSqliteRuntime } from '../../../packages/core/src/data/sqlite.js'
 import { createDesktopAgentRuns } from '../.tools/agent/runtime.mjs'
-import { admitDesktopImEvent, prepareDesktopImEvent } from '../../../packages/core/src/im/desktop-inbox.js'
+import { admitDesktopImEvent, prepareDesktopImEvent, recordDesktopImGroupMessage } from '../../../packages/core/src/im/desktop-inbox.js'
 import { resolveImActor } from '../../../packages/core/src/im/access.js'
 import { createDesktopLoopScope } from '../../../packages/core/dist/runtime/desktop-loopscope.js'
 import { createDesktopProjectUndoAdapter } from '../../../packages/core/src/runtime/desktop-project-undo.js'
@@ -20,7 +24,7 @@ import { createSqlAgentPendingQueue } from '../../../packages/core/src/agent/ses
 import { createSqliteAgentAdmission } from '../../../packages/core/src/agent/run/sqlite-admission.js'
 import { createSqliteAgentRunLeasePort, createSqliteAgentRunStore } from '../../../packages/core/src/agent/run/sqlite-store.js'
 import type { CanonicalRunContext, RunCheckpoint } from '../../../packages/core/src/agent/models.js'
-import { createDesktopAgentSession } from '../../../packages/core/src/agent/sessions/desktop.js'
+import { createDesktopAgentSession, listDesktopAgentSessions, readDesktopAgentHistoryPage } from '../../../packages/core/src/agent/sessions/desktop.js'
 import { createFirstTurnTitleWriter } from '../../../packages/core/src/agent/sessions/title.js'
 import { createDesktopAgentEventReader } from '../../../packages/core/src/runtime/desktop-agent-events.js'
 import { stableJson } from '../../../packages/core/dist/agent/context/history/canonical-history.js'
@@ -32,6 +36,90 @@ import { createKyselyPreferenceDocumentStore } from '../../../packages/core/src/
 describe('Desktop Agent Run 真实本机 Provider 接线', () => {
   const cleanups: Array<() => Promise<void>> = []
   afterEach(async () => { await Promise.all(cleanups.splice(0).map(cleanup => cleanup())) })
+
+  it('remember 写入后下一个 Run 保持固定前缀，快照过期后加载新记忆', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'gugu-desktop-memory-prefix-'))
+    const path = join(directory, 'core.db')
+    await initializeSqlite(path)
+    const { runtime, ownerId } = await openSqliteRuntime(path)
+    const rememberText = '合成偏好：使用晨间阅读记录'
+    const requests: Array<{ system: unknown; tools: unknown; messages: Array<{ role: string; content: unknown }> }> = []
+    const provider = createServer(async (request, response) => {
+      const chunks: Buffer[] = []
+      for await (const chunk of request) chunks.push(Buffer.from(chunk))
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      if (!body.stream) {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ content: [{ type: 'text', text: '合成前缀回归' }], stop_reason: 'end_turn' }))
+        return
+      }
+      requests.push(body)
+      const call = requests.length === 1
+      const block = call
+        ? { type: 'tool_use', id: 'synthetic-remember', name: 'remember', input: { target: 'pattern', text: rememberText } }
+        : { type: 'text', text: '合成回复' }
+      const events = [
+        { type: 'message_start', message: { role: 'assistant', content: [] } },
+        { type: 'content_block_start', index: 0, content_block: block },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'message_delta', delta: { stop_reason: call ? 'tool_use' : 'end_turn' } },
+        { type: 'message_stop' },
+      ]
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.end(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''))
+    })
+    await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve))
+    const address = provider.address()
+    if (!address || typeof address === 'string') throw new Error('合成 Provider 未监听')
+    const loopScope = createDesktopLoopScope(process.env, runtime.db, ownerId)
+    const runs = createDesktopAgentRuns(runtime, path, ownerId, () => {}, async method => {
+      if (method === 'agent.tools.policy') return { disabledTools: [] }
+      if (method === 'agent.log.append') return null
+      if (method === 'agent.im.snapshot') return { feishu: false, qq: false, wechat: false, telegram: false }
+      if (method === 'agent.files.overview') return { total: 0, folders: [], files: [], partial: false }
+      if (method.endsWith('.available')) return false
+      throw new Error('未预期的宿主请求')
+    }, undefined, loopScope?.observation)
+    cleanups.push(async () => {
+      await runs.close()
+      await loopScope?.close()
+      await runtime.close()
+      await new Promise<void>(resolve => provider.close(() => resolve()))
+      await rm(directory, { recursive: true, force: true })
+    })
+    const preferences = createDesktopAppearanceService(createKyselyPreferenceDocumentStore(runtime.db, 'sqlite'))
+    await preferences.update(ownerId, { toolInjectionMode: 'full' })
+    const session = await runtime.db.transaction().execute(tx => createDesktopAgentSession(tx, ownerId, '合成前缀回归'))
+    const read = createDesktopAgentEventReader(runtime.db, path, ownerId)
+    async function send(text: string, clientId: string) {
+      const { run_id: runId } = await runs.start(session.id, text, clientId, {
+        provider: 'local', api_format: 'anthropic', base_url: `http://127.0.0.1:${address.port}/v1`,
+        api_key: '', model: 'synthetic', context_tokens: 256_000, max_tokens: 512, web_search_enabled: false,
+      })
+      await expect.poll(async () => (await read(session.id, runId, 0)).status).toBe('completed')
+    }
+    function prefix(requestIndex: number) {
+      const message = requests[requestIndex]?.messages.find(message => JSON.stringify(message.content).includes('[system-reminder]'))
+      expect(message).toBeDefined()
+      return message
+    }
+    await send('合成记忆写入', 'synthetic-remember-run')
+    expect(requests).toHaveLength(2)
+    const memory = await readSqliteAgentMemory(runtime.db, ownerId, '', new AbortController().signal)
+    expect(memory.memory.pattern).toContain(rememberText)
+
+    await send('合成记忆续聊', 'synthetic-next-run')
+    const previous = requests[1]!
+    const next = requests[2]!
+    expect(next.system).toEqual(previous.system)
+    expect(next.tools).toEqual(previous.tools)
+    expect(JSON.stringify(next.messages.slice(0, previous.messages.length))).toBe(JSON.stringify(previous.messages))
+    expect(JSON.stringify(prefix(2))).not.toContain(rememberText)
+
+    await sql`UPDATE conversation_sessions SET snapshot_expires_at='1970-01-01T00:00:00.000Z' WHERE id=${session.id}`.execute(runtime.db)
+    await send('合成记忆快照重建', 'synthetic-rebuild-run')
+    expect(JSON.stringify(prefix(3))).toContain(rememberText)
+  })
 
   it('桌面简介模式搜索并调用工具，关闭运行时正常提交最终回复', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'gugu-desktop-run-shutdown-'))
@@ -385,6 +473,18 @@ data: [DONE]
       output: { text: '测试群回复' },
     })
     const spans = trace.spans as Array<{ kind: string; input: unknown; attributes: { request_timings?: Array<{ firstVisibleTokenMs?: number }> } }>
+    expect(spans).toEqual(expect.arrayContaining([expect.objectContaining({
+      kind: 'context',
+      output: expect.objectContaining({
+        assembly: expect.objectContaining({
+          rag_source: expect.stringMatching(/^(lookup|prepared)$/),
+          history_rows: expect.any(Number),
+          history_time_calls: expect.any(Number),
+          stages_ms: expect.objectContaining({ rag: expect.any(Number), restore_history: expect.any(Number),
+            history_time_format: expect.any(Number), assemble_messages: expect.any(Number) }),
+        }),
+      }),
+    })]))
     expect(spans.map(span => span.kind)).toEqual(expect.arrayContaining(['context', 'tool', 'output']))
     expect(spans.some(span => ['llm', 'provider'].includes(span.kind) && JSON.stringify(span.input).includes('测试群消息'))).toBe(true)
     expect(spans.flatMap(span => span.attributes.request_timings ?? [])
@@ -411,6 +511,99 @@ data: [DONE]
     expect((await sql`SELECT 1 FROM desktop_agent_reflection_jobs`.execute(runtime.db)).rows).toEqual([])
   })
 
+  it('被动成员过阈值后使用独立水位，文件失败重试不重发模型或重复落盘', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'gugu-desktop-passive-reflection-'))
+    const path = join(directory, 'core.db')
+    await initializeSqlite(path)
+    const { runtime, ownerId } = await openSqliteRuntime(path)
+    const disk = createDesktopMemoryFiles(runtime.db, join(directory, 'data'), ownerId)
+    await disk.initialize()
+    const connection = { platform: 'qq', connectionId: 'a'.repeat(64) }
+    await admitDesktopImEvent(runtime.db, ownerId, { ...connection, eventKey: 'active', sealedEvent: 'AQ==' })
+    const turn = await prepareDesktopImEvent(runtime.db, ownerId, { ...connection, chatType: 'group', ownerPlatformUserId: 'synthetic-owner' })
+    if (!turn) throw new Error('合成群收件未准备')
+    const actor = resolveImActor({ ownerId, botId: 'synthetic-bot', platform: 'qq', chatType: 'group', chatId: 'synthetic-group',
+      platformUserId: 'synthetic-owner', botMentioned: true, mentionsOtherBot: false }, () => ({ role: 'owner', allowedToolNames: [] }))
+    const requests: string[] = []
+    let failDaily = true, memberSummaryWrites = 0, modelResolutions = 0
+    const server = createServer(async (request, response) => {
+      const chunks = []
+      for await (const chunk of request) chunks.push(chunk)
+      const body = Buffer.concat(chunks).toString()
+      if (JSON.parse(body).stream) {
+        response.writeHead(200, { 'content-type': 'text/event-stream' })
+        response.end('data: {"choices":[{"delta":{"content":"测试主动回复"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n')
+      } else {
+        if (body.includes('合成被动证据')) requests.push(body)
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ choices: [{ message: { content: '{"summary":"合成范围摘要","daily":"合成记忆"}' }, finish_reason: 'stop' }] }))
+      }
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('合成 Provider 未监听')
+    const config = { provider: 'local', api_format: 'openai', base_url: `http://127.0.0.1:${address.port}/v1`,
+      api_key: '', model: 'synthetic', context_tokens: 256_000, max_tokens: 512, web_search_enabled: false } as const
+    const runs = createDesktopAgentRuns(runtime, path, ownerId, () => {}, async method => {
+      if (method === 'agent.tools.policy') return { disabledTools: [] }
+      if (method.endsWith('.available') || method === 'agent.im.authorizeGroupTool') return false
+      if (method === 'agent.log.append') return null
+      if (method === 'agent.memory.resolveReflectionModel') {
+        modelResolutions++
+        return config
+      }
+      if (method === 'agent.im.readGroupMemoryContext') return {
+        actor, ownerPlatformUserId: 'synthetic-owner', groupMemoryEnabled: true, groupOwnerMemoryEnabled: false, memberMemoryEnabled: true,
+      }
+      throw new Error('未预期的宿主请求')
+    }, { ...disk, async writeImScope(scope, filename, body) {
+      if (scope.scope_type === 'platform-user') {
+        if (filename === 'summary.json') memberSummaryWrites++
+        if (filename === 'daily.md' && failDaily) throw new Error('模拟日记落盘失败')
+      }
+      return disk.writeImScope(scope, filename, body)
+    } })
+    cleanups.push(async () => {
+      await runs.close()
+      await runtime.close()
+      await new Promise<void>(resolve => server.close(() => resolve()))
+      await rm(directory, { recursive: true, force: true })
+    })
+    const started = await runs.start(turn.sessionId, '合成主动消息', turn.clientId, config, undefined, true,
+      undefined, [], [], undefined, undefined, { id: 'synthetic-owner', name: '小北' })
+    const read = createDesktopAgentEventReader(runtime.db, path, ownerId)
+    await expect.poll(async () => (await read(turn.sessionId, started.run_id, 0)).status).toBe('completed')
+    await expect.poll(async () => (await sql`SELECT 1 FROM desktop_im_reflection_jobs WHERE scope_type='group'`.execute(runtime.db)).rows.length).toBe(1)
+    await prepareDesktopImEvent(runtime.db, ownerId, { ...connection, chatType: 'group', ownerPlatformUserId: 'synthetic-owner' })
+    await sql`UPDATE desktop_im_inbox SET state='completed' WHERE event_key='active'`.execute(runtime.db)
+    for (let n = 1; n <= 50; n++)
+      await recordDesktopImGroupMessage(runtime.db, ownerId, { ...connection, eventKey: n.toString(16).padStart(64, '0'),
+        platformUserId: 'passive-member', text: `合成被动证据-${n}:结束` })
+    const threshold = await sql`SELECT 1 FROM desktop_im_reflection_thresholds WHERE due_at_ms>${Date.now()}`.execute(runtime.db)
+    expect(threshold.rows).toHaveLength(1)
+    runs.resumeReflections()
+    await expect.poll(() => modelResolutions).toBeGreaterThan(0)
+    expect(requests).toHaveLength(0)
+    await sql`UPDATE desktop_im_reflection_thresholds SET due_at_ms=0`.execute(runtime.db)
+    runs.resumeReflections()
+    await expect.poll(async () => (await sql`SELECT 1 FROM desktop_im_reflection_plans WHERE scope_type='platform-user'
+      AND payload IS NOT NULL`.execute(runtime.db)).rows.length).toBe(1)
+    const memberPosition = sql`SELECT last_sequence FROM desktop_im_reflection_positions WHERE scope_type='platform-user'`
+    expect((await memberPosition.execute(runtime.db)).rows).toEqual([])
+    expect(memberSummaryWrites).toBe(1)
+    const memberRequests = () => requests.filter(body => body.includes('synthetic-group:passive-member'))
+    expect(memberRequests()).toHaveLength(1)
+    for (let n = 1; n <= 50; n++)
+      expect(memberRequests()[0]!.split(`合成被动证据-${n}:结束`)).toHaveLength(2)
+    failDaily = false
+    runs.resumeReflections()
+    const last = (await sql`SELECT MAX(conversation_seq) AS last_sequence FROM conversation_messages
+      WHERE platform_user_id='passive-member'`.execute(runtime.db)).rows
+    await expect.poll(async () => (await memberPosition.execute(runtime.db)).rows).toEqual(last)
+    expect(memberRequests()).toHaveLength(1)
+    expect(memberSummaryWrites).toBe(1)
+  })
+
   it('桌面流式回复与反思将记忆写入本机 .agent/memories 文件', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'gugu-desktop-agent-run-'))
     const path = join(directory, 'core.db')
@@ -434,6 +627,7 @@ data: [DONE]
     expect(await readFile(join(agentDirectory, 'memory.md'), 'utf8')).toBe('用户使用文件维护长期记忆')
     const requests: string[] = []
     let hangReflection = false
+    let conflictOnReflection = false
     let reflectionStarted!: () => void
     let reflectionClosed!: () => void
     const startedReflection = new Promise<void>(resolve => { reflectionStarted = resolve })
@@ -453,6 +647,14 @@ data: [DONE]
         if (hangReflection && !requestBody.stream) {
           response.once('close', reflectionClosed)
           reflectionStarted()
+          return
+        }
+        if (conflictOnReflection && !requestBody.stream) {
+          conflictOnReflection = false
+          void writeFile(join(agentDirectory, 'summary.json'), '{"text":"生成期间写入的新摘要"}').then(() => {
+            response.writeHead(200, { 'content-type': 'application/json' })
+            response.end(JSON.stringify({ choices: [{ message: { content: '{"summary":"不应覆盖的新模型结果"}' }, finish_reason: 'stop' }] }))
+          }, error => response.destroy(error))
           return
         }
         const content = !requestBody.stream && requests.length > 1
@@ -644,6 +846,17 @@ data: [DONE]
     expect(resolved).toBe(1)
     expect(requests).toHaveLength(4)
     expect(JSON.parse(requests[3]!).stream).not.toBe(true)
+    const conflictSession = await runtime.db.transaction().execute(tx => createDesktopAgentSession(tx, ownerId, '并发记忆测试'))
+    const { run_id: conflictRun } = await runs.start(conflictSession.id, '我长期偏好每周整理资料', 'desktop-reflection-conflict', config)
+    conflictOnReflection = true
+    await ageReflection(conflictSession.id, conflictRun)
+    await expect.poll(async () => (await sql<{ status: string; last_error: string | null }>`
+      SELECT status,last_error FROM desktop_agent_reflection_jobs WHERE session_id=${conflictSession.id}
+        AND run_id=${conflictRun}`.execute(runtime.db)).rows[0], { timeout: 5_000 })
+      .toEqual({ status: 'queued', last_error: 'stale_memory_snapshot' })
+    expect(await disk.readTarget('summary')).toContain('生成期间写入的新摘要')
+    await sql`UPDATE desktop_agent_reflection_jobs SET status='failed' WHERE run_id=${conflictRun}`.execute(runtime.db)
+
     hangReflection = true
     const thirdSession = await runtime.db.transaction().execute(tx => createDesktopAgentSession(tx, ownerId, '退出反思测试'))
     const { run_id: interruptedRun } = await runs.start(thirdSession.id, '测试退出', 'desktop-reflection-close', config)
@@ -764,3 +977,330 @@ it('桌面 Agent 项目字段撤销与重做沿用 SQLite Undo 版本校验', as
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+it.each(['正常交付', '主人 IM 私聊交付', '跨父运行续聊', '收件箱等待', '父取消', '进程重启', '授权文件', ...(process.platform === 'darwin' ? ['父会话确认'] as const : [])] as const)('Desktop 生产 Run 派单 Searcher 后处理%s', async mode => {
+  const directory = await mkdtemp(join(tmpdir(), 'gugu-desktop-searcher-'))
+  const path = join(directory, 'core.db')
+  const privateIm = mode === '主人 IM 私聊交付'
+  const confirmation = mode === '父会话确认'
+  const hostShell = (mode === '正常交付' || confirmation) && process.platform === 'darwin'
+  const fileMode = mode === '授权文件'
+  const fileId = 'path-synthetic-reference'
+  const fileKey = desktopFileReferenceKey(fileId)
+  const filePath = join(directory, '合成证据.txt')
+  await writeFile(filePath, '合成本机证据正文')
+  const info = await stat(filePath, { bigint: true })
+  await initializeSqlite(path)
+  const initial = await openSqliteRuntime(path)
+  const { ownerId } = initial
+  let runtime = initial.runtime
+  let workerProcess: ChildProcess | undefined
+  let finishSearcher!: () => void
+  const allowFinal = new Promise<void>(resolve => { finishSearcher = resolve })
+  let parentRequests = 0
+  let childRequests = 0
+  let followupRequests = 0
+  let followupReplies = 0
+  let parentTools: string[] = []
+  const provider = createServer(async (request, response) => {
+    try {
+      const chunks: Buffer[] = []
+      for await (const chunk of request) chunks.push(Buffer.from(chunk))
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      if (!body.stream) {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ content: [{ type: 'text', text: '合成任务' }], stop_reason: 'end_turn' }))
+        return
+      }
+      const child = JSON.stringify(body.system).includes('你是 Searcher')
+      let block: Record<string, unknown>
+      const messages = JSON.stringify(body.messages)
+      if (child && messages.includes('继续核对合成结论')) {
+        followupRequests++
+        expect(messages).toContain('核对合成资料')
+        expect(messages).toContain('合成子任务已经完成')
+        expect(messages).not.toContain('父会话专属追问')
+        block = { type: 'text', text: '子 Agent 沿用自己的历史完成了续聊' }
+      } else if (child) {
+        childRequests++
+        const toolNames = body.tools.map((tool: { name: string }) => tool.name)
+        expect(toolNames).toContain("shell")
+        expect(toolNames).not.toContain("read_file")
+        await allowFinal
+        if (hostShell && childRequests === 1) {
+          block = { type: "tool_use", id: "local-read", name: "shell", input: { cwd: directory, command: "cat 合成证据.txt" } }
+        } else if (fileMode && childRequests <= 3) {
+          const messages = JSON.stringify(body.messages)
+          if (messages.includes('合成本机证据正文')) throw new Error('读取前不应加载文件正文')
+          if (childRequests > 1 && !messages.includes('合成证据.txt')) throw new Error('搜索未返回授权文件')
+          block = childRequests === 1
+            ? { type: 'tool_use', id: 'search', name: 'global_search', input: { query: '证据' } }
+            : { type: 'tool_use', id: `read-${childRequests}`, name: 'shell', input: { command: 'cat -- ' + (childRequests === 2 ? 'f'.repeat(24) : fileKey) } }
+        } else {
+          if (hostShell) expect(JSON.stringify(body.messages)).toContain("合成本机证据正文")
+          if (fileMode) {
+            const messages = JSON.stringify(body.messages)
+            if (!messages.includes('文件引用不存在或无权访问') || !messages.includes('合成本机证据正文'))
+              throw new Error('文件读取结果与授权不一致')
+          }
+          block = { type: 'text', text: '合成子任务已经完成' }
+        }
+      } else if (messages.includes('父会话专属追问')) {
+        const { rows: [row] } = await sql<{ child_id: string }>`SELECT child_id FROM agent_subagent_conversations`.execute(runtime.db)
+        if (messages.includes('子 Agent 沿用自己的历史完成了续聊')) {
+          followupReplies++
+          block = { type: 'text', text: '父 Agent 收到续聊结果' }
+        } else if (messages.includes('followup-message'))
+          block = { type: 'tool_use', id: 'followup-wait', name: 'agent_wait', input: { childId: row!.child_id } }
+        else
+          block = { type: 'tool_use', id: 'followup-message', name: 'agent_message',
+            input: { action: 'send', childId: row!.child_id, message: '继续核对合成结论' } }
+      } else if (JSON.stringify(body.messages.at(-1)).includes('合成后续提问')) {
+        block = { type: 'text', text: '合成后续回复已完成' }
+      } else if (++parentRequests === 1) {
+        parentTools = body.tools.map((tool: { name: string }) => tool.name)
+        block = { type: 'tool_use', id: 'delegate', name: 'agent_message',
+          input: { action: 'start', agentId: 'builtin:searcher', task: '核对合成资料', ...(fileMode ? { resourceRefs: [fileKey] } : {}) } }
+      } else if (parentRequests === 2) {
+        const { rows: [row] } = await sql<{ child_id: string }>`SELECT child_id FROM agent_subagent_deliveries`.execute(runtime.db)
+        if (!row) throw new Error('派单未持久化')
+        block = { type: 'tool_use', id: 'wait-child', name: 'agent_wait', input: mode === '收件箱等待' ? {} : { childId: row.child_id } }
+      } else {
+        if (!JSON.stringify(body.messages).includes('合成子任务已经完成')) throw new Error('父请求缺少 final')
+        block = { type: 'text', text: '合成主回复已汇总子任务' }
+      }
+      const events = [
+        { type: 'message_start', message: { role: 'assistant', content: [] } },
+        { type: 'content_block_start', index: 0, content_block: block },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'message_delta', delta: { stop_reason: block.type === 'tool_use' ? 'tool_use' : 'end_turn' } },
+        { type: 'message_stop' },
+      ]
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.end(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''))
+    } catch {
+      response.writeHead(500)
+      response.end()
+    }
+  })
+  await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve))
+  const address = provider.address()
+  if (!address || typeof address === 'string') throw new Error('合成 Provider 未监听')
+  const config = { provider: 'local', api_format: 'anthropic', base_url: `http://127.0.0.1:${address.port}/v1`,
+    api_key: '', model: 'synthetic', context_tokens: 256_000, max_tokens: 512, web_search_enabled: false }
+  const hostRequest = async (method: string, params: Record<string, unknown>) => {
+    if (method === 'agent.tools.policy') return { disabledTools: [] }
+    if (method === 'agent.log.append') return null
+    if (method === 'agent.im.snapshot') return { feishu: false, qq: false, wechat: false, telegram: false }
+    if (method === 'agent.files.overview') return { total: 0, folders: [], files: [], partial: false }
+    if (method === 'agent.files.resolveWorkspaceReference') {
+      expect(params.id).toBe(fileId)
+      return { path: filePath, fileIdentity: [info.dev, info.ino, info.birthtimeNs].join('.') }
+    }
+    if (method === 'agent.memory.resolveReflectionModel') return config
+    if (method === 'agent.memory.resolveEmbedding') return null
+    if (method.endsWith('.available')) return false
+    throw new Error('未预期的宿主请求')
+  }
+  const openRuns = () => createDesktopAgentRuns(runtime, path, ownerId, () => {}, hostRequest)
+  let runs: ReturnType<typeof openRuns> | undefined
+  async function stopWorker() {
+    const worker = workerProcess
+    if (!worker || worker.exitCode !== null || worker.signalCode !== null) return
+    const exited = once(worker, 'exit')
+    worker.kill('SIGKILL')
+    await exited
+  }
+  async function startPausedWorker(sessionId: number, task: string) {
+    await sql.raw(`CREATE TRIGGER pause_searcher_before_provider BEFORE UPDATE ON agent_run_checkpoints
+      WHEN OLD.phase='idle' AND NEW.phase='provider'
+        AND EXISTS(SELECT 1 FROM agent_subagent_executions s WHERE s.child_run_id=NEW.run_id)
+      BEGIN SELECT RAISE(IGNORE); END`).execute(runtime.db)
+    const script = join(directory, 'searcher-worker.mjs')
+    const bundledRuntime = new URL('../.tools/agent/runtime.mjs', import.meta.url).href
+    const sqlite = new URL('../../../packages/core/dist/data/sqlite.js', import.meta.url).href
+    await writeFile(script, `import { openSqliteRuntime } from ${JSON.stringify(sqlite)}
+import { createDesktopAgentRuns } from ${JSON.stringify(bundledRuntime)}
+const [path, session, configuration, task] = process.argv.slice(2)
+const config = JSON.parse(configuration)
+const { runtime, ownerId } = await openSqliteRuntime(path)
+const runs = createDesktopAgentRuns(runtime, path, ownerId, () => {}, ${hostRequest.toString()})
+await runs.start(Number(session), task, 'synthetic-restarted-subagent', config, undefined, true)
+process.stdin.resume()
+`)
+    workerProcess = spawn(process.execPath, [script, path, String(sessionId), JSON.stringify(config), task], {
+      stdio: ['pipe', 'ignore', 'ignore'],
+    })
+    await once(workerProcess, 'spawn')
+  }
+  try {
+    const session = await runtime.db.transaction().execute(async tx => {
+      const session = await createDesktopAgentSession(tx, ownerId, '合成委派会话')
+      if (privateIm) {
+        const owner = ownerId.replaceAll('-', '')
+        await sql`UPDATE conversation_sessions SET chat_type='c2c' WHERE id=${session.id} AND user_id=${owner}`.execute(tx)
+        await sql`INSERT INTO desktop_im_sessions (owner_id,platform,connection_id,session_id)
+          VALUES (${owner},'qq',${'a'.repeat(64)},${session.id})`.execute(tx)
+      }
+      return session
+    })
+    if (hostShell && !confirmation) await createKyselyPreferenceDocumentStore(runtime.db, 'sqlite').write(ownerId, { automatic_mode_enabled: true })
+    let runId: string
+    if (mode === '进程重启') {
+      await startPausedWorker(session.id, '合成研究')
+      await expect.poll(async () => {
+        const { rows } = await sql`SELECT 1 FROM agent_subagent_waits w
+          JOIN agent_subagent_deliveries d ON d.owner_id=w.owner_id AND d.parent_run_id=w.parent_run_id AND d.child_id=w.child_id
+          JOIN agent_run_checkpoints c ON c.run_id=d.child_run_id WHERE c.phase='idle' AND c.status='running'`.execute(runtime.db)
+        return rows.length
+      }, { timeout: 8000 }).toBe(1)
+      const { rows: [before] } = await sql<{ child_run_id: string; parent_run_id: string }>`
+        SELECT child_run_id,parent_run_id FROM agent_subagent_deliveries`.execute(runtime.db)
+      if (!before) throw new Error('派单未保存')
+      runId = before.parent_run_id
+      await stopWorker()
+      expect(childRequests).toBe(0)
+      await sql.raw('DROP TRIGGER pause_searcher_before_provider').execute(runtime.db)
+      await sql`UPDATE agent_run_leases SET expires_at_ms=${Date.now() + 60_000}
+        WHERE run_id=${before.child_run_id}`.execute(runtime.db)
+      // 模拟升级前的未完成派单，只保留原执行身份、租约和 checkpoint。
+      await runtime.db.transaction().execute(async tx => {
+        await sql`DELETE FROM conversation_messages WHERE id IN (
+          SELECT user_message_id FROM agent_run_admissions WHERE run_id=${before.child_run_id}
+        )`.execute(tx)
+        await sql`UPDATE conversation_sessions SET active_run_id=NULL,execution_state='idle'
+          WHERE active_run_id=${before.child_run_id} AND source='subagent'`.execute(tx)
+      })
+      await runtime.close()
+      runtime = (await openSqliteRuntime(path, { exclusive: true })).runtime
+      const restored = await sql`SELECT a.run_id FROM agent_run_admissions a
+        JOIN conversation_sessions s ON s.id=a.session_id AND s.user_id=a.user_id AND s.active_run_id=a.run_id
+        WHERE a.run_id=${before.child_run_id} AND s.source='subagent'`.execute(runtime.db)
+      expect(restored.rows).toEqual([{ run_id: before.child_run_id }])
+      runs = openRuns()
+      await runs.reconcileInterruptedRuns()
+      finishSearcher()
+      const read = createDesktopAgentEventReader(runtime.db, path, ownerId)
+      await expect.poll(async () => (await read(session.id, runId, 0)).status, { timeout: 8000 }).toBe('completed')
+      const { rows } = await sql<{ child_run_id: string; consumed_checkpoint_version: number }>`
+        SELECT child_run_id,consumed_checkpoint_version FROM agent_subagent_deliveries`.execute(runtime.db)
+      expect(rows).toHaveLength(1)
+      expect(rows[0]?.child_run_id).toBe(before.child_run_id)
+      expect(rows[0]?.consumed_checkpoint_version).toBeGreaterThan(0)
+      expect(childRequests).toBe(1)
+      expect(parentRequests).toBe(3)
+      return
+    }
+    runs = openRuns()
+    const read = createDesktopAgentEventReader(runtime.db, path, ownerId)
+    const start = await runs.start(session.id, '合成研究', 'synthetic-subagent', config, undefined, !privateIm, undefined, [],
+      fileMode ? [{ type: 'file', id: fileId, label: '合成证据.txt' }] : [])
+    runId = start.run_id
+    await expect.poll(async () => (await (mode === '收件箱等待'
+      ? sql`SELECT 1 FROM agent_inbox_waits WHERE run_id=${runId}`
+      : sql`SELECT 1 FROM agent_subagent_waits WHERE parent_run_id=${runId}`).execute(runtime.db)).rows.length).toBe(1)
+    expect(await read(session.id, runId, 0)).toMatchObject({ runId, status: 'running' })
+    expect(await read(session.id, undefined, 0, true)).toMatchObject({ runId, status: 'running' })
+    expect((await listDesktopAgentSessions(runtime.db, ownerId)).find(row => row.id === session.id))
+      .toMatchObject({ isRunning: true })
+    expect(parentTools).toContain('agent_message')
+    expect(parentRequests).toBe(2)
+    await expect.poll(() => childRequests).toBe(1)
+    if (mode === '父取消') {
+      const cancelled = await createSqliteAgentAdmission(runtime.db).requestCancel(ownerId, session.id, runId)
+      expect(cancelled.outcome).toBe('requested')
+      await runs.notifyCancel(session.id, runId)
+      finishSearcher()
+      await expect.poll(async () => (await read(session.id, runId, 0)).status).toBe('cancelled')
+      expect(parentRequests).toBe(2)
+      return
+    }
+    finishSearcher()
+    if (confirmation) {
+      const history = () => readDesktopAgentHistoryPage(runtime.db, ownerId, session.id, undefined,
+        () => loadSqliteAgentRunSecret(runtime.db, path))
+      await expect.poll(async () => (await history()).messages.flatMap(message => message.interactions ?? []).length).toBe(1)
+      const prompt = (await history()).messages.flatMap(message => message.interactions ?? [])[0]
+      const token = prompt?.options?.find(option => option.id === 'confirm')?.token
+      if (!prompt || !token) throw new Error('父会话未收到子 Shell 确认')
+      expect(childRequests).toBe(1)
+      await expect(runs.respond(session.id, runId, prompt.id, randomUUID(), { token }, config))
+        .resolves.toEqual({ runId, awaitingText: false })
+    }
+    await expect.poll(async () => (await read(session.id, runId, 0)).status, { timeout: 8000 }).toBe('completed')
+    if (privateIm) {
+      const page = await read(session.id, runId, 0, false, true)
+      expect(page.events).toContainEqual({ type: 'im_final_text', text: '合成主回复已汇总子任务' })
+      expect(JSON.stringify(page.events)).not.toContain('合成子任务已经完成')
+    }
+    expect(childRequests).toBe(fileMode ? 4 : hostShell ? 2 : 1)
+    expect(parentRequests).toBe(3)
+    const consumed = await sql<{ consumed_checkpoint_version: number }>`SELECT consumed_checkpoint_version FROM agent_subagent_deliveries`.execute(runtime.db)
+    expect(consumed.rows[0]?.consumed_checkpoint_version).toBeGreaterThan(0)
+    if (mode === '跨父运行续聊') {
+      await runs.close()
+      runs = undefined
+      await startPausedWorker(session.id, '父会话专属追问')
+      const followupDelivery = sql<{ parent_run_id: string; child_run_id: string; child_id: string }>`
+        SELECT d.parent_run_id,d.child_run_id,d.child_id FROM agent_subagent_deliveries d
+        JOIN agent_subagent_waits w ON w.owner_id=d.owner_id AND w.parent_run_id=d.parent_run_id AND w.child_id=d.child_id
+        JOIN agent_run_checkpoints c ON c.run_id=d.child_run_id
+        WHERE d.parent_run_id<>${runId} AND c.phase='idle' AND c.status='running'`
+      await expect.poll(async () => (await followupDelivery.execute(runtime.db)).rows.length, { timeout: 8000 }).toBe(1)
+      const [followup] = (await followupDelivery.execute(runtime.db)).rows
+      if (!followup) throw new Error('续聊派单未保存')
+      expect(followupRequests).toBe(0)
+      const admission = await sql`
+        SELECT a.run_id FROM agent_run_admissions a
+        JOIN conversation_sessions s ON s.user_id=a.user_id AND s.id=a.session_id
+        JOIN conversation_messages m ON m.session_id=s.id AND m.id=a.user_message_id
+        WHERE a.run_id=${followup.child_run_id} AND s.active_run_id=a.run_id AND m.role='user'`.execute(runtime.db)
+      expect(admission.rows).toEqual([{ run_id: followup.child_run_id }])
+      const [beforeRestart] = (await sql<{ fence: number }>`
+        SELECT fence FROM agent_run_leases WHERE run_id=${followup.child_run_id}`.execute(runtime.db)).rows
+      await stopWorker()
+      await sql`UPDATE agent_run_leases SET expires_at_ms=${Date.now() + 60_000}
+        WHERE run_id=${followup.child_run_id}`.execute(runtime.db)
+      await sql.raw('DROP TRIGGER pause_searcher_before_provider').execute(runtime.db)
+      await runtime.close()
+      runtime = (await openSqliteRuntime(path, { exclusive: true })).runtime
+      runs = openRuns()
+      await runs.reconcileInterruptedRuns()
+      const readRecovered = createDesktopAgentEventReader(runtime.db, path, ownerId)
+      await expect.poll(async () => (await readRecovered(session.id, followup.parent_run_id, 0)).status, { timeout: 8000 }).toBe('completed')
+      expect(JSON.stringify((await readRecovered(session.id, followup.parent_run_id, 0)).events)).toContain('父 Agent 收到续聊结果')
+      const [afterRestart] = (await sql<{ fence: number }>`
+        SELECT fence FROM agent_run_leases WHERE run_id=${followup.child_run_id}`.execute(runtime.db)).rows
+      expect(beforeRestart?.fence).toBeGreaterThan(0)
+      expect(afterRestart?.fence).toBeGreaterThan(beforeRestart!.fence)
+      await runs.reconcileInterruptedRuns()
+      const deliveries = await sql<{ child_id: string; child_run_id: string; consumed_checkpoint_version: number }>`
+        SELECT child_id,child_run_id,consumed_checkpoint_version FROM agent_subagent_deliveries`.execute(runtime.db)
+      expect(deliveries.rows).toHaveLength(2)
+      expect(deliveries.rows.filter(row => row.child_run_id === followup.child_run_id)).toEqual([
+        expect.objectContaining({ child_id: followup.child_id, consumed_checkpoint_version: expect.any(Number) }),
+      ])
+      expect(new Set(deliveries.rows.map(row => row.child_id))).toEqual(new Set([followup.child_id]))
+      expect(deliveries.rows.find(row => row.child_run_id === followup.child_run_id)?.consumed_checkpoint_version).toBeGreaterThan(0)
+      expect(followupRequests).toBe(1)
+      expect(followupReplies).toBe(1)
+      const executions = await sql<{ child_session_id: number }>`SELECT child_session_id FROM agent_subagent_executions`.execute(runtime.db)
+      expect(executions.rows).toHaveLength(2)
+      expect(new Set(executions.rows.map(row => row.child_session_id)).size).toBe(1)
+    }
+    if (mode === '正常交付') {
+      const followup = await runs.start(session.id, '合成后续提问', 'synthetic-followup', config)
+      expect(followup.run_id).not.toBe(runId)
+      await expect.poll(async () => (await read(session.id, followup.run_id, 0)).status).toBe('completed')
+      expect(JSON.stringify((await read(session.id, followup.run_id, 0)).events)).toContain('合成后续回复已完成')
+    }
+  } finally {
+    finishSearcher()
+    await stopWorker()
+    await runs?.close()
+    await runtime.close()
+    provider.closeAllConnections()
+    await new Promise<void>(resolve => provider.close(() => resolve()))
+    await rm(directory, { recursive: true, force: true })
+  }
+}, 25_000)

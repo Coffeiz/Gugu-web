@@ -47,13 +47,20 @@ export function mountSmartChart(root: HTMLElement) {
   }
   const options = () => {
     const tooltipLabel = ({ raw }: { raw: unknown }) => raw == null ? '—' : `${raw}${unit}`
-    if (kind === 'line') return lineChartOptions({ tooltipLabel })
+    const horizontalAxis = <T extends { ticks: object }>(axis: T) => ({
+      ...axis, ticks: { ...axis.ticks, maxRotation: 0, autoSkip: true },
+    })
+    if (kind === 'line') {
+      const line = lineChartOptions({ tooltipLabel })
+      return { ...line, scales: { ...line.scales, x: horizontalAxis(line.scales.x) } }
+    }
     const bar = barChartOptions({ tooltipLabel })
     return {
       ...bar,
       layout: { padding: { top: 8, right: 6 } },
       scales: {
         ...bar.scales,
+        x: horizontalAxis(bar.scales.x),
         y: {
           ...bar.scales.y, grace: '15%',
           border: { ...bar.scales.y.border, dash: [3, 4] },

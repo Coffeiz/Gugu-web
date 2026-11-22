@@ -103,6 +103,7 @@ async function prepareSidecar() {
   cpSync(join(root, 'LICENSE'), join(host, 'LICENSE'))
   mkdirSync(join(host, 'agent'), { recursive: true })
   cpSync(join(desktop, '.tools/agent/runtime.mjs'), join(host, 'agent/runtime.mjs'))
+  cpSync(join(desktop, '.tools/agent/prompt.md'), join(host, 'agent/prompt.md'))
   cpSync(join(core, 'resources/prompts'), join(host, 'agent-prompts'), { recursive: true })
   const installed = installedRuntime()
   const embeddedNode = join(stage, executable)

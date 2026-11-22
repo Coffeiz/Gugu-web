@@ -74,6 +74,8 @@ export function readChatSources(result: unknown): ChatSource[] {
   return [...sources.values()]
 }
 
+const chatSourceLabel = /^\s*(?:(?:以下(?:是|为)|下列(?:是|为))\s*)?(?:(?:主要|参考|数据|信息|引用)?来源(?:\s*(?:与|及|和)\s*(?:不确定性|口径)(?:说明)?)?|(?:Data\s+)?Sources?)\s*[:：]/iu
+
 export function decorateChatSources(html: string, sources: readonly ChatSource[]) {
   const groups: ChatSource[][] = []
   const root = document.createElement('div')
@@ -81,6 +83,16 @@ export function decorateChatSources(html: string, sources: readonly ChatSource[]
   for (const element of root.querySelectorAll('[data-chat-source], .chat-source-pill')) {
     element.removeAttribute('data-chat-source')
     element.classList.remove('chat-source-pill')
+  }
+  const sourceBlocks = new Set<Element>()
+  for (const label of root.querySelectorAll('p, h1, h2, h3, h4, h5, h6')) {
+    const text = label.textContent ?? ''
+    const standaloneHeading = label.tagName !== 'P' && !`${text}：`.replace(chatSourceLabel, '').trim()
+    if (!standaloneHeading && !chatSourceLabel.test(text)) continue
+    const next = label.nextElementSibling
+    if (next?.matches('ul, ol') || (next?.matches('p') && (standaloneHeading || !text.replace(chatSourceLabel, '').trim())
+      && next.firstElementChild?.matches('a[href]') && (next.firstChild === next.firstElementChild || !next.firstChild?.textContent?.trim())))
+      sourceBlocks.add(next)
   }
   const byUrl = new Map(sources.map(source => [source.url, source]))
   // 同路径的查询参数可能指向不同内容。仅复用胶囊外观，摘要和标题仍以精确匹配为准。
@@ -102,7 +114,13 @@ export function decorateChatSources(html: string, sources: readonly ChatSource[]
     const url = sourceUrl(anchor.getAttribute('href'))
     if (!url) return
     const exact = byUrl.get(url.href)
-    if (exact || url.search || url.hash || !pathsWithQuery.has(url.origin + url.pathname)) return exact
+    if (exact) return exact
+    const paragraph = anchor.closest('p, li')
+    const inSourceParagraph = paragraph && chatSourceLabel.test(paragraph.textContent ?? '')
+    const matchesKnownPath = !url.search && !url.hash && pathsWithQuery.has(url.origin + url.pathname)
+    const list = anchor.closest('ul, ol')
+    const inSourceBlock = (paragraph && sourceBlocks.has(paragraph)) || (list && sourceBlocks.has(list))
+    if (!inSourceParagraph && !inSourceBlock && !matchesKnownPath) return
     return { url: url.href, site: url.hostname, title: '', summary: '', date: '', icon: sourceIcon(url) }
   }
   for (const anchor of root.querySelectorAll<HTMLAnchorElement>('a[href]')) {

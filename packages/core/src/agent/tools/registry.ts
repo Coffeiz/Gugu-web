@@ -56,6 +56,7 @@ export function createToolRegistry(options: ToolRegistryOptions): {
   function checked(tool: ToolDefinition, names = new Set(entries.keys())) {
     const name = tool.definition.name
     if (!name?.trim() || name !== name.trim() || names.has(name)) throw new Error('工具名称为空或重复')
+    if (name === 'read_file') throw new Error('工具已退役')
     return snapshotToolDefinition(tool)
   }
   function register(tool: ToolDefinition) {

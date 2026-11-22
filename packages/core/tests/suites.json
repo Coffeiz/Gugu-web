@@ -1,4 +1,6 @@
 {
+  "tests/agent/subagent/delivery-store.test.ts": {"markers": [], "layer": "L2", "purpose": "contract"},
+  "tests/agent/subagent/searcher.test.ts": {"markers": [], "layer": "L2", "purpose": "contract"},
   "tests/agent/shell-activity.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/im/desktop-inbox.test.ts": {"markers": [], "layer": "L2", "purpose": "contract"},
   "tests/agent/attachments/desktop-store.test.ts": {"markers": [], "layer": "L2", "purpose": "contract"},
@@ -7,6 +9,7 @@
   "tests/mail/service.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/runtime/desktop-data-export.test.ts": {"markers": [], "layer": "L2", "purpose": "contract"},
   "tests/runtime/desktop-data-inventory.test.ts": {"markers": [], "layer": "L2", "purpose": "contract"},
+  "tests/runtime/desktop-greeting.test.ts": {"markers": [], "layer": "L2", "purpose": "contract"},
   "tests/runtime/desktop-resources.test.ts": {"markers": [], "layer": "L2", "purpose": "contract"},
   "tests/runtime/local-worker-entry.test.ts": {"markers": [], "layer": "L2", "purpose": "contract"},
   "tests/runtime/desktop-host-method-policy.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
@@ -156,11 +159,6 @@
   "tests/agent/core/portable-boundary.test.ts": {
     "markers": [],
     "layer": "L0",
-    "purpose": "contract"
-  },
-  "tests/agent/context/finalization.test.ts": {
-    "markers": [],
-    "layer": "L1",
     "purpose": "contract"
   },
   "tests/agent/context/loading-reflection.test.ts": {
@@ -947,6 +945,7 @@
   "tests/agent/config/llm-presets-read.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/email/translate.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/agent/providers/standalone.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+  "tests/agent/context/fragment-plan.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/agent/context/greeting.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/email/publish.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/agent/sessions/state.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},

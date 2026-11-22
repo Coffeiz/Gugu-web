@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import * as XLSX from 'xlsx'
 const { openLocalFile } = await import(new URL('../../../../fs/src/node.ts', import.meta.url).href)
 import type { FileArchivePort, FileDeletePort, FileEditPort, ReadFilePorts } from '../../../src/agent/tools/files.js'
-import { createDeleteFileTool, createListRecentAttachmentsTool, createPresentFileTool, createReadFileTool, createSaveAttachmentTool } from '../../../src/agent/tools/files.js'
+import { createDeleteFileTool, createListRecentAttachmentsTool, createPresentFileTool, createOwnedTextReader, createSaveAttachmentTool } from '../../../src/agent/tools/files.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 
 const identity = { ownerId: '小北', sessionId: '1', runId: 'run' }
@@ -15,7 +15,7 @@ async function fixture(content: string | Uint8Array = '甲\r\n乙\n丙', options
   const root = await mkdtemp(path.join(tmpdir(), 'gugu-read-'))
   temporary.push(root)
   await writeFile(path.join(root, options.writePath ?? 'note'), content)
-  const registry = createToolRegistry({ authorize: async () => true, tools: [createReadFileTool({
+  const read = createOwnedTextReader({
     openFile: options.openFile ?? openLocalFile,
     async resolveOwnedFile(scope, id) {
       return scope.ownerId === identity.ownerId && id === 1 ? { id, name: options.extension ? `便签.${options.extension}` : '便签', root,
@@ -23,15 +23,15 @@ async function fixture(content: string | Uint8Array = '甲\r\n乙\n丙', options
         extensionless: options.extensionless ?? !options.extension } : null
     },
     ...(options.resolveFilePath ? { resolveFilePath: options.resolveFilePath } : {}),
-  })] })
-  const dispatch = (input: unknown, ownerId = identity.ownerId, signal = new AbortController().signal) => registry.tools.dispatch({ id: 'call', name: 'read_file', input }, {
-    identity: { ...identity, ownerId }, roundId: 'round', signal, resolution: null, execute: async () => { throw new Error('不应执行命令') },
+  })
+  const dispatch = (input: unknown, ownerId = identity.ownerId, signal = new AbortController().signal) => read(input, {
+    identity: { ...identity, ownerId }, signal,
   })
   return { root, dispatch }
 }
 
-describe('文件工具通过注册器读取真实临时文件', () => {
-  it('read_file 只通过 Host 解析逻辑路径，不接受宿主路径或混合定位参数', async () => {
+describe('受控正文读取使用真实临时文件', () => {
+  it('正文读取 只通过 Host 解析逻辑路径，不接受宿主路径或混合定位参数', async () => {
     const { dispatch } = await fixture('路径内容', { resolveFilePath: async (current, file) =>
       current.ownerId === identity.ownerId && file === '/personal/便签.txt'
         ? { id: 1, name: '便签.txt', root: temporary[0]!, relativePath: 'note', text: true, extensionless: false }
@@ -43,7 +43,7 @@ describe('文件工具通过注册器读取真实临时文件', () => {
     expect(await dispatch({ file: '/personal/便签.txt', file_id: 1 })).toMatchObject({ successful: false })
   })
 
-  it('read_file 经真实 ToolRegistry 提取受限 Office 文档正文并保留行号结果', async () => {
+  it('正文读取服务 提取受限 Office 文档正文并保留行号结果', async () => {
     const workbook = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['事项', '详情'], ['合成计划', 'owner 内容']]), '计划')
     const bytes = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Uint8Array
@@ -55,13 +55,13 @@ describe('文件工具通过注册器读取真实临时文件', () => {
     } })
   })
 
-  it('read_file 通过 attach_id 读取 owner 聊天文本附件，支持批量和类型拒绝', async () => {
+  it('正文读取 通过 attach_id 读取 owner 聊天文本附件，支持批量和类型拒绝', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'gugu-read-attachment-'))
     temporary.push(root)
     const content = '附件第一行\n附件第二行'
     await writeFile(path.join(root, 'attachment.txt'), content, 'utf8')
     let opens = 0
-    const registry = createToolRegistry({ authorize: async () => true, tools: [createReadFileTool({
+    const read = createOwnedTextReader({
       async resolveOwnedFile() { return null },
       async resolveOwnedAttachment(current, attachId) {
         if (current.ownerId !== identity.ownerId) return null
@@ -76,10 +76,9 @@ describe('文件工具通过注册器读取真实临时文件', () => {
         return null
       },
       async openFile(fileRoot, relativePath) { opens++; return openLocalFile(fileRoot, relativePath) },
-    })] })
-    const dispatch = (input: unknown, ownerId = identity.ownerId) => registry.tools.dispatch({ id: 'attachment', name: 'read_file', input }, {
-      identity: { ...identity, ownerId }, roundId: 'round', signal: new AbortController().signal, resolution: null,
-      execute: async () => { throw new Error('read_file 不得执行宿主命令') },
+    })
+    const dispatch = (input: unknown, ownerId = identity.ownerId) => read(input, {
+      identity: { ...identity, ownerId }, signal: new AbortController().signal,
     })
     expect(await dispatch({ attach_id: 'owner-text', target_lines: '2' })).toMatchObject({
       kind: 'completed', successful: true, mutated: false,
@@ -165,16 +164,16 @@ describe('文件工具通过注册器读取真实临时文件', () => {
   })
   it('批量读取逐项隔离失败、保留顺序并隐藏各项源文件大小', async () => {
     const f = await fixture('甲\n乙\n丙')
-    const registry = createToolRegistry({ authorize: async () => true, tools: [createReadFileTool({
+    const read = createOwnedTextReader({
       openFile: openLocalFile,
       async resolveOwnedFile(scope, id) {
         if (scope.ownerId !== identity.ownerId || id === 99) return null
         return { id, name: `文件${id}`, root: f.root, relativePath: 'note', text: true, extensionless: true }
       },
-    })] })
-    const result = await registry.tools.dispatch({ id: 'batch', name: 'read_file', input: { items: [
+    })
+    const result = await read({ items: [
       { file_id: 1, target_lines: '2', title: '第二项' }, { file_id: 99 }, { file_id: 2, target_lines: '1', result_id: 'third' },
-    ] } }, { identity, roundId: 'round', signal: new AbortController().signal, resolution: null, execute: async () => { throw new Error('不应执行命令') } })
+    ] }, { identity, signal: new AbortController().signal })
     expect(result).toMatchObject({ kind: 'completed', successful: true, mutated: false, value: {
       successful_count: 2, failed_count: 1, results: [
         { index: 1, label: '第二项', successful: true, value: { file_id: 1, content: '乙\n', numbered_content: '2: 乙', line_range: { start: 2, end: 2 } } },
@@ -186,13 +185,12 @@ describe('文件工具通过注册器读取真实临时文件', () => {
   })
   it('批量超出 20 项或混用单项来源时在访问文件前拒绝', async () => {
     let resolutions = 0
-    const tool = createReadFileTool({
+    const read = createOwnedTextReader({
       async resolveOwnedFile() { resolutions++; return null },
       async openFile() { throw new Error('不可打开') },
     })
-    const registry = createToolRegistry({ authorize: async () => true, tools: [tool] })
-    const dispatch = (input: unknown) => registry.tools.dispatch({ id: 'invalid', name: 'read_file', input }, {
-      identity, roundId: 'round', signal: new AbortController().signal, resolution: null, execute: async () => { throw new Error('不应执行命令') },
+    const dispatch = (input: unknown) => read(input, {
+      identity, signal: new AbortController().signal,
     })
     expect(await dispatch({ items: Array.from({ length: 21 }, (_, index) => ({ file_id: index + 1 })) })).toMatchObject({ successful: false })
     expect(await dispatch({ file_id: 1, items: [{ file_id: 2 }] })).toMatchObject({ successful: false })
@@ -202,7 +200,7 @@ describe('文件工具通过注册器读取真实临时文件', () => {
     const root = await mkdtemp(path.join(tmpdir(), 'gugu-read-batch-cap-'))
     temporary.push(root)
     let resolved = 0
-    const registry = createToolRegistry({ authorize: async () => true, tools: [createReadFileTool({
+    const read = createOwnedTextReader({
       async resolveOwnedFile(_scope, id) {
         resolved++
         return { id, name: `文件${id}`, root, relativePath: 'synthetic', text: true, extensionless: false }
@@ -220,10 +218,10 @@ describe('文件工具通过注册器读取真实临时文件', () => {
           async close() {},
         } }
       },
-    })] })
-    const result = await registry.tools.dispatch({ id: 'batch-cap', name: 'read_file', input: { items: [
+    })
+    const result = await read({ items: [
       { file_id: 1 }, { file_id: 2 }, { file_id: 3 },
-    ] } }, { identity, roundId: 'round', signal: new AbortController().signal, resolution: null, execute: async () => { throw new Error('不应执行命令') } })
+    ] }, { identity, signal: new AbortController().signal })
     expect(result).toMatchObject({ successful: true, value: { successful_count: 2, failed_count: 1,
       total_source_size_bytes: 64 * 1024 * 1024,
       results: [{ successful: true }, { successful: true }, { successful: false, value: { error: '已达到批次源文件总量上限，后续项目未读取' } }],

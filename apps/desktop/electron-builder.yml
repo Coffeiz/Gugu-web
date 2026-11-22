@@ -9,6 +9,7 @@ directories:
 files:
   - dist/**
   - assets/icon.png
+  - assets/trayTemplate*.png
   - ui/**
   - node_modules/**
   - package.json

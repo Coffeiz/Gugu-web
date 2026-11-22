@@ -18,7 +18,7 @@ const response=(value:unknown)=>({status:200,headers:{},body:(async function*(){
 function blocked(signal:AbortSignal):Promise<never>{return new Promise((_resolve,reject)=>{if(signal.aborted)reject(Error('合成轮询停止'));else signal.addEventListener('abort',()=>reject(Error('合成轮询停止')),{once:true})})}
 async function until(check:()=>Promise<boolean>,detail:()=>Promise<unknown>){for(let i=0;i<1200;i++){if(await check())return;await delay(25)}assert.fail(JSON.stringify(await detail()))}
 
-test('正式被动群反思：连续50条窗口/owner与member隔离/idle收束/重启等待新真实Run恢复',{
+test('正式被动群反思：连续50条窗口/owner与member隔离/idle收束/重启后继续处理持久化窗口',{
  skip:!(databaseUrl&&redisUrl&&python)&&'需专用隔离PG/Redis和离线ORM解释器',timeout:180000,
 },async()=>{
  const f=await createImProductionFixture({databaseUrl,python:python!}),redis=createRedisStreamCommands(redisUrl!)
@@ -68,8 +68,18 @@ test('正式被动群反思：连续50条窗口/owner与member隔离/idle收束/
   await f.pool.query("UPDATE gugu_im_reflection_jobs SET next_attempt_at=clock_timestamp() WHERE state IN('pending','ready')")
   await until(async()=>requests.length===3&&(await f.pool.query("SELECT 1 FROM gugu_im_reflection_jobs WHERE state='completed'")).rowCount===3,detail)
   assert.equal(mainCalls,1);assert.equal(sent,1,'被动反思不能额外回复群聊')
-  function assertTail(wires:string[],last:number){for(const wire of wires)for(let n=1;n<=last;n++)assert.equal((wire.match(new RegExp(`合成被动群消息-${n}(?![0-9])`,'gu'))??[]).length,1,'每条真实被动正文只在追加历史出现一次')}
-  assertTail(requests,50)
+  function assertWindow(wires:string[],first:number,last:number){
+   for(const wire of wires){
+    const ids=Array.from(wire.matchAll(/合成被动群消息-(\d+)/gu),match=>Number(match[1]))
+    assert.ok(ids.every(id=>id>=first&&id<=last),'请求只包含本轮水位之间的证据')
+    assert.equal(new Set(ids).size,ids.length,'单次请求不能重复提供同一条消息')
+   }
+   for(let n=first;n<=last;n++){
+    const count=wires.filter(wire=>new RegExp(`合成被动群消息-${n}(?![0-9])`,'gu').test(wire)).length
+    assert.equal(count,2,'每条消息只进入群范围及发送人自己的范围')
+   }
+  }
+  assertWindow(requests,1,50)
   assert.deepEqual((await f.pool.query('SELECT scope_type FROM memory_reflection_cursors ORDER BY scope_type')).rows.map(row=>row.scope_type),['group','owner','platform-user'])
   assert.equal((await f.pool.query('SELECT count(*)::integer AS n FROM gugu_im_reflection_cursor_positions')).rows[0].n,3)
   const forceDue=()=>f.pool.query("UPDATE gugu_im_reflection_jobs SET next_attempt_at=clock_timestamp() WHERE state IN('pending','ready','retry','deferred')")
@@ -77,7 +87,7 @@ test('正式被动群反思：连续50条窗口/owner与member隔离/idle收束/
   await until(async()=>(await f.pool.query("SELECT 1 FROM gugu_im_reflection_trigger_windows WHERE reason='threshold' AND status='completed'")).rowCount===2,detail)
   await forceDue()
   await until(async()=>requests.length===5&&(await f.pool.query("SELECT 1 FROM gugu_im_reflection_jobs WHERE state='completed'")).rowCount===5,detail)
-  assertTail(requests.slice(3),100)
+  assertWindow(requests.slice(3),51,100)
   assert.equal((await f.pool.query('SELECT count(DISTINCT window_key)::integer AS n FROM gugu_im_reflection_jobs')).rows[0].n,3,'原Run及两个阈值窗口保留独立幂等键，第二个窗口不能被吞掉')
   packets=[packet(101),packet(102)];wake?.()
   await until(async()=>(await f.pool.query('SELECT passive_count FROM gugu_im_reflection_trigger_states')).rows[0]?.passive_count===2,detail)
@@ -86,49 +96,41 @@ test('正式被动群反思：连续50条窗口/owner与member隔离/idle收束/
   await until(async()=>(await f.pool.query("SELECT 1 FROM gugu_im_reflection_trigger_windows WHERE reason='idle' AND status='completed'")).rowCount===1,detail)
   await forceDue()
   await until(async()=>requests.length===8&&(await f.pool.query("SELECT 1 FROM gugu_im_reflection_jobs WHERE state='completed'")).rowCount===8,detail)
-  assertTail(requests.slice(5),102)
+  assertWindow(requests.slice(5),101,102)
   const settled=(await f.pool.query('SELECT passive_count,idle_due_at FROM gugu_im_reflection_trigger_states')).rows[0]
   assert.deepEqual(settled,{passive_count:0,idle_due_at:null})
-  // 重启丢失本地群快照后，持久窗口等待真实新Run，不冷造前缀。
+  // 重启后的反思只读取持久化窗口，已有授权来源可以继续使用。
   await runtime.stop();runtime=undefined
   packets=Array.from({length:50},(_,i)=>packet(i+103));runtime=make();await runtime.start()
   await until(async()=>(await f.pool.query("SELECT 1 FROM gugu_im_reflection_trigger_windows WHERE reason='threshold' AND status='completed'")).rowCount===3,detail)
   await forceDue()
-  await until(async()=>(await f.pool.query("SELECT 1 FROM gugu_im_reflection_jobs WHERE state='deferred'")).rowCount===2,detail)
-  assert.equal(requests.length,8);assert.equal(mainCalls,1)
-  packets=[packet(153,true)];wake?.()
-  await until(async()=>mainCalls===2&&(await f.pool.query("SELECT 1 FROM agent_run_checkpoints WHERE status='completed'")).rowCount===2,detail)
-  await until(async()=>(await f.pool.query("SELECT 1 FROM gugu_im_reflection_trigger_windows WHERE status='pending'")).rowCount===0,detail)
-  await forceDue()
-  await until(async()=>requests.length===11,detail)
-  await forceDue()
-  await until(async()=>(await f.pool.query("SELECT 1 FROM gugu_im_reflection_jobs WHERE state IN('pending','ready','retry','deferred','running','prepared')")).rowCount===0,detail)
-  assert.equal(sent,2);assert.equal(requests.length,11,'旧窗口由新真实Run覆盖后不重复请求反思Provider')
+  await until(async()=>requests.length===10&&(await f.pool.query("SELECT 1 FROM gugu_im_reflection_jobs WHERE state='completed'")).rowCount===10,detail)
+  assertWindow(requests.slice(8),103,152)
+  assert.equal(sent,1);assert.equal(mainCalls,1)
   const codec=createImReflectionCodec(f.secretKey)
   for(const row of(await f.pool.query("SELECT * FROM gugu_im_reflection_jobs WHERE state='completed'")).rows){const job=codec.open(row,row.nonce,row.payload,'job') as ImReflectionJob
    assert.match(await readFile(join(f.storageRoot,reflectionFileKey(job,'summary')),'utf8'),/合成反思结果/)}
-  assert.equal(await reflection!.runOnce(),false);assert.equal(requests.length,11)
+  assert.equal(await reflection!.runOnce(),false);assert.equal(requests.length,10)
  }finally{try{await runtime?.stop()}finally{
   if(baseline)for(const key of(await redis.sendCommand(['EVAL','return redis.call("KEYS","*")','1','synthetic-reflection-cleanup']) as string[]).filter(key=>!baseline!.has(key)))await redis.sendCommand(['EVAL','return redis.call("DEL",KEYS[1])','1',key])
   await redis.close();await f.close()
  }}
 })
 
-test('纯被动50条仅保留持久窗口，重启后真实主动Run提供完整前缀才反思；idle补齐主动回合',{
+test('纯被动50条仅保留持久窗口，重启后等待首次真实主动 Run 提供授权来源；idle补齐主动回合',{
  skip:!(databaseUrl&&redisUrl&&python)&&'需专用隔离PG/Redis及离线ORM解释器',timeout:120000,
 },async()=>{
  const f=await createImProductionFixture({databaseUrl,python:python!}),redis=createRedisStreamCommands(redisUrl!)
  let runtime:ReturnType<typeof createNodeImHostRuntime>|undefined,baseline:Set<string>|undefined,served=false,mainCalls=0,sent=0,reflectionCalls=0
- const diagnostics:string[]=[]
+ const diagnostics:string[]=[],reflectionWires:string[]=[]
  const message=(n:number,active=false)=>({update_id:55000+n,message:{message_id:56000+n,date:Math.floor(Date.now()/1000),from:{id:active||n===50?202:404,first_name:'合成人物'},
   chat:{id:-505,type:'group'},text:active?'@synthetic_bot 合成冷启动主动消息':`合成冷启动被动消息-${n}`,...(active?{entities:[{type:'mention',offset:0,length:14}]}:{})}})
  let wave:unknown[]=Array.from({length:50},(_,i)=>message(i+1))
  const provider:ProviderTransport={async request(request){const body=request.body as Record<string,unknown>
   if(body.stream){mainCalls++;return response(`data: ${JSON.stringify({choices:[{delta:{content:'合成冷启动群回复'},finish_reason:'stop'}]})}\n\ndata: [DONE]\n\n`)}
   reflectionCalls++
-  const wire=JSON.stringify(body)
-  for(let n=1;n<=50;n++)assert.equal((wire.match(new RegExp(`合成冷启动被动消息-${n}(?![0-9])`,'gu'))??[]).length,1,'反思必须复用包含真实被动历史的主Run前缀')
-  return response({choices:[{message:{content:JSON.stringify({summary:'合成冷启动反思结果'})},finish_reason:'stop'}]})
+  reflectionWires.push(JSON.stringify(body))
+  return response({choices:[{message:{content:JSON.stringify({summary:'合成冷启动反思结果'})},finish_reason:'stop'}],usage:{prompt_tokens:7,completion_tokens:3}})
  }}
  const platform:ProviderTransport={async request(request,signal){const path=new URL(request.url).pathname
   if(path.includes("/bot111111111:synthetic-disabled-group/")&&path.endsWith("/getUpdates"))return blocked(signal)
@@ -177,8 +179,14 @@ test('纯被动50条仅保留持久窗口，重启后真实主动Run提供完整
   await until(async()=>sent===1&&(await f.pool.query("SELECT 1 FROM gugu_im_reflection_trigger_windows WHERE reason='threshold' AND status='completed'")).rowCount===1,detail)
   await f.pool.query("UPDATE gugu_im_reflection_jobs SET next_attempt_at=clock_timestamp() WHERE state IN('pending','ready')")
   await until(async()=>reflectionCalls===3&&(await f.pool.query("SELECT 1 FROM gugu_im_reflection_jobs WHERE state='completed'")).rowCount===3,detail)
+  for(let n=1;n<=50;n++){
+    const marker=new RegExp(`合成冷启动被动消息-${n}(?![0-9])`,'gu')
+    const counts=reflectionWires.map(wire=>(wire.match(marker)??[]).length).sort()
+    assert.deepEqual(counts,[0,1,1],'群与发言者自己的范围各消费一次')
+  }
   await f.pool.query("UPDATE gugu_im_reflection_trigger_states SET idle_due_at=clock_timestamp()-interval '1 second'")
   await until(async()=>reflectionCalls===5&&(await f.pool.query("SELECT 1 FROM gugu_im_reflection_trigger_windows WHERE reason='idle' AND status='completed'")).rowCount===1,detail)
+  assert.ok(reflectionWires.slice(3).every(wire=>!wire.includes('合成冷启动被动消息-')))
   assert.equal(mainCalls,1);assert.equal(sent,1)
  }finally{try{await runtime?.stop()}finally{
   if(baseline)for(const key of(await redis.sendCommand(['EVAL','return redis.call("KEYS","*")','1','synthetic-cold-reflection-cleanup']) as string[]).filter(key=>!baseline!.has(key)))await redis.sendCommand(['EVAL','return redis.call("DEL",KEYS[1])','1',key])

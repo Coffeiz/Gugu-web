@@ -6,7 +6,7 @@ import { createImReactionTools, type ImReactionPort } from '../../im/reaction-to
 import { createNoteLifecycleTools, createNoteWriteTools, type NoteLifecyclePort, type createNoteWritePort, type ToolDefinition } from './index.js'
 import { createLinkButtonsTools, type LinkButtonDeliveryPort } from './index.js'
 import { createAskUserTool, createCallToolAdapter, type AskUserAuthorizationPort } from './index.js'
-import type { FileFolderDeletePort, FileDeletePort, ReadFilePorts, RecentAttachmentsPort, FilePresentationPort } from './index.js'
+import type { FileFolderDeletePort, FileDeletePort, RecentAttachmentsPort, FilePresentationPort } from './index.js'
 import type { TrashRestorePort } from './index.js'
 import { createConversationReadTool, createConversationSearchTool, type ConversationReadPort, type ConversationSearchPort } from './index.js'
 import { createMemorySearchTool, createRememberTool, type MemorySearchPort, type RememberMemoryPort } from './index.js'
@@ -19,16 +19,17 @@ import type { AgentCanvasReader } from './index.js'
 import type { createAgentCalendarReader, CalendarEventReadPort } from '../../calendar/index.js'
 import type { createAgentMindReader } from '../../mind/index.js'
 import type { SqlDataRuntime } from '../../data/index.js'
-import { type GlobalSearchOperations, type DashboardCountPort, type createAgentWorkspaceQueries } from '../../index.js'
-import { createClientTools, createClientDeleteTool, createCanvasReadTools, createWorkspaceUpdateTool, createWorkspaceTool, createWorkspaceUnlinkTool, createNoteReadTools, createSearchToolsTool, createProjectStageTools, createListEventsTool, createCalendarEventCreateTool, createCalendarEventUpdateTool, createCalendarDeleteTool, createWorkspaceReadTools, createDashboardStatsTool, createProjectMutationTools, createGlobalSearchTool, createUpcomingTool, createGetProjectTool, createListProjectsTool, createListScheduledTasksTool, createProjectCreationPort, createProjectTool, createTimeTool, createToolRegistry, createUseSkillTool, createHttpGetTool } from './index.js'
+import { type GlobalSearchOperations, type createAgentWorkspaceQueries } from '../../index.js'
+import { createClientTools, createClientDeleteTool, createCanvasReadTools, createWorkspaceUpdateTool, createWorkspaceTool, createWorkspaceUnlinkTool, createNoteReadTools, createSearchToolsTool, createProjectStageTools, createListEventsTool, createCalendarEventCreateTool, createCalendarEventUpdateTool, createCalendarDeleteTool, createWorkspaceReadTools, createProjectMutationTools, createGlobalSearchTool, createUpcomingTool, createGetProjectTool, createListProjectsTool, createListScheduledTasksTool, createProjectCreationPort, createProjectTool, createTimeTool, createToolRegistry, createUseSkillTool, createHttpGetTool } from './index.js'
 import type { ClientDeletePort, CalendarDeletePort, CalendarEventCreateToolPort, CalendarEventUpdateToolPort, WorkspaceMutationPort, WorkspaceCreatePort, ProjectMutationPort, TrashListPort, ProjectFileOverview, ScheduledTaskListPort, UseSkillPorts } from './index.js'
 import type { ProjectCreateRuntime } from '../../projects/project-create.js'
 
-type AuthorizedToolName = 'shell' | 'create_project' | 'list_contacts' | 'create_contact' | 'update_contact' | 'delete_contact' | 'list_projects' | 'get_project' | 'get_current_time' | 'use_skill' | 'list_scheduled_tasks' | 'create_scheduled_task' | 'update_scheduled_task' | 'delete_scheduled_task' | 'global_search' | 'get_upcoming' | 'list_trash' | 'restore_file' | 'restore_folder' | 'permanent_delete' | 'list_events' | 'create_event' | 'update_event' | 'delete_event' | 'list_workspaces' | 'create_workspace' | 'unlink_workspace' | 'delete_workspace_directory' | 'undo_last_action' | 'get_dashboard_stats' | 'update_project' | 'set_color' | 'archive_project' | 'add_stage' | 'remove_stage' | 'rename_stage' | 'set_stages' | 'update_stage' | 'note_search' | 'note_get' | 'search_tools' | 'canvas_list' | 'canvas_get' | 'canvas_search' | 'canvas_focus_node' | 'update_workspace' | 'canvas_search_placeable' | 'canvas_create' | 'canvas_batch' | 'canvas_delete_note' | 'canvas_disconnect' | 'canvas_delete' | 'list_skills' | 'create_skill' | 'update_skill' | 'call_tool' | 'manage_mcp_servers' | 'http_get' | 'web_search' | 'similar_image_search' | 'deep_research' | 'delete_skill' | 'note_create' | 'note_update' | 'canvas_update_node' | 'canvas_remove_node' | 'canvas_update_note' | 'canvas_create_note' | 'canvas_add_node' | 'canvas_update_anchor' | 'canvas_connect' | 'note_delete' | 'note_restore' | 'note_undo' | 'read_file' | 'view_image' | 'delete_folder' | 'delete_file' | 'send_file' | 'present_file' | 'save_attachment' | 'list_recent_attachments' | 'send_email' | 'delete_knowledge' | 'delete_project' | 'web_download' | 'remember'
+type AuthorizedToolName = 'shell' | 'create_project' | 'list_contacts' | 'create_contact' | 'update_contact' | 'delete_contact' | 'list_projects' | 'get_project' | 'get_current_time' | 'use_skill' | 'list_scheduled_tasks' | 'create_scheduled_task' | 'update_scheduled_task' | 'delete_scheduled_task' | 'global_search' | 'get_upcoming' | 'list_trash' | 'restore_file' | 'restore_folder' | 'permanent_delete' | 'list_events' | 'create_event' | 'update_event' | 'delete_event' | 'list_workspaces' | 'create_workspace' | 'unlink_workspace' | 'delete_workspace_directory' | 'undo_last_action' | 'update_project' | 'set_color' | 'archive_project' | 'add_stage' | 'remove_stage' | 'rename_stage' | 'set_stages' | 'update_stage' | 'note_search' | 'note_get' | 'search_tools' | 'canvas_list' | 'canvas_get' | 'canvas_search' | 'canvas_focus_node' | 'update_workspace' | 'canvas_search_placeable' | 'canvas_create' | 'canvas_batch' | 'canvas_delete_note' | 'canvas_disconnect' | 'canvas_delete' | 'list_skills' | 'create_skill' | 'update_skill' | 'call_tool' | 'manage_mcp_servers' | 'http_get' | 'web_search' | 'similar_image_search' | 'deep_research' | 'delete_skill' | 'note_create' | 'note_update' | 'canvas_update_node' | 'canvas_remove_node' | 'canvas_update_note' | 'canvas_create_note' | 'canvas_add_node' | 'canvas_update_anchor' | 'canvas_connect' | 'note_delete' | 'note_restore' | 'note_undo' | 'view_image' | 'delete_folder' | 'delete_file' | 'send_file' | 'present_file' | 'save_attachment' | 'list_recent_attachments' | 'send_email' | 'delete_knowledge' | 'delete_project' | 'web_download' | 'remember'
 
 import type { RunIdentity } from '../models.js'
 
 export interface OwnerToolOptions {
+  subagentTools?: ReturnType<typeof import('./subagent.js').createSubagentServiceTools>
   groupContext?: GroupContextSearchPort
   imOwnerSession?: ImOwnerSessionBindPort
   imReaction?: { platform: 'feishu'; port: ImReactionPort }
@@ -58,7 +59,6 @@ export interface OwnerToolOptions {
   similarImageSearch?: ToolDefinition
   mcpManagement?: ToolDefinition
   /** 只读 owner 文件必须由 Host 解析文件记录并使用 packages/fs 授权根打开。 */
-  readFile?: ReadFilePorts
   viewImage?: ToolDefinition
   presentFile?: FilePresentationPort
   shell?: import('./index.js').ToolDefinition
@@ -132,7 +132,6 @@ export interface OwnerToolOptions {
   notes?: ReturnType<typeof createAgentMindReader>
   calendar?: ReturnType<typeof createAgentCalendarReader>
   workspaces?: ReturnType<typeof createAgentWorkspaceQueries>
-  dashboard?: DashboardCountPort
   /** 必须提供收据恢复能力；旧的仅apply桥接不会被Host开放。 */
   projectMutations?: ProjectMutationPort
   projectDelete?: ToolDefinition
@@ -165,6 +164,7 @@ export function createOwnerToolRegistry(options: OwnerToolOptions) {
       ...(options.sendEmail?.destructive ? [options.sendEmail] : []),
     ],
     groups: [
+      ...(options.subagentTools ? [{ id: 'subagents', name: '子 Agent', tools: options.subagentTools }] : []),
       { id: 'files', name: '文件和附件', tools: [
         ...(options.viewImage ? [options.viewImage] : []),
         ...(options.presentFile ? [createPresentFileTool(options.presentFile)] : []),
@@ -205,9 +205,8 @@ export function createOwnerToolRegistry(options: OwnerToolOptions) {
         ...(options.projectDelete ? [options.projectDelete] : []),
         ...(options.projectMutations?.reconcile ? [...createProjectMutationTools(options.projectMutations),...createProjectStageTools(options.projectMutations)] : []),
       ] },
-      ...(options.time && (options.events || options.dashboard) ? [{ id: 'overview', name: '总览', tools: [
-        ...(options.events ? [createUpcomingTool({ core: options.core, events: options.events, time: options.time })] : []),
-        ...(options.dashboard ? [createDashboardStatsTool({ counts: options.dashboard, time: options.time })] : []),
+      ...(options.time && options.events ? [{ id: 'overview', name: '总览', tools: [
+        createUpcomingTool({ core: options.core, events: options.events, time: options.time }),
       ] }] : []),
       ...(options.calendar || options.calendarCreate || options.calendarUpdate || options.calendarDelete?.confirmation ? [{ id: 'calendar', name: '日历', tools: [
         ...(options.calendar ? [createListEventsTool(options.calendar)] : []),

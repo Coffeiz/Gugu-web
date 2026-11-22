@@ -37,22 +37,15 @@ export function resolveMermaidThemeColors(dark: boolean): MermaidThemeColors {
   }
 
   const primaryColor = resolve(
-    'color-mix(in srgb, var(--color-primary) 15%, var(--surface-canvas-card))',
-    dark ? '#382f31' : '#eee9e8',
+    'color-mix(in srgb, var(--action-primary) 15%, var(--mermaid-node-bg))',
+    dark ? '#343434' : '#ffffff',
   )
-  const clusterBkg = resolve(
-    'color-mix(in srgb, var(--status-info) 5%, var(--surface-canvas-card))',
-    dark ? '#232a31' : '#f2f5f6',
-  )
-  const lineColor = resolve('var(--text-secondary)', dark ? '#c9c3d5' : '#67647a')
-  const primaryBorderColor = resolve(
-    'var(--action-outline)',
-    dark ? 'rgba(190, 157, 152, 0.34)' : 'rgba(113, 86, 83, 0.34)',
-  )
+  const clusterBkg = resolve('var(--mermaid-cluster-bg)', dark ? '#262626' : '#f2f2f2')
+  const lineColor = resolve('var(--mermaid-line)', dark ? '#bdbdbd' : '#626262')
+  const primaryBorderColor = resolve('var(--mermaid-border)', dark ? '#5b5b5b' : '#c2c2c2')
   const colors = {
     primaryColor,
-    primaryTextColor: resolve('var(--text-primary)', dark ? '#f2eff7' : '#272532'),
-    // 默认节点跟随主色；分组使用不同色相的辅色，避免与节点填充混淆。
+    primaryTextColor: resolve('var(--mermaid-text)', dark ? '#f2f2f2' : '#292929'),
     primaryBorderColor,
     lineColor,
     arrowheadColor: lineColor,

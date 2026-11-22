@@ -2,7 +2,7 @@
   <!-- 单一消息列表：真虚拟列表（@tanstack/vue-virtual），任何时刻只挂载视口 ± overscan
        内的消息 DOM，其余用下面这段按测量/估算高度撑出来的占位空间代替，滚动条始终代表
        整个会话的真实长度。messagesEl 是真实可滚动容器，虚拟列表只管它内部挂多少 DOM。 -->
-  <div class="chat-message-viewport">
+  <div class="chat-message-viewport" data-markdown-table-overlay-host>
   <div class="chat-messages" :class="{ 'is-session-settling': sessionSettling }" ref="messagesEl" @scroll.passive="updateScrollPosition" @pointerdown.capture="onSelectionPointerDown">
     <div v-if="historyState?.hasMore && nearHistoryTop && !sessionSettling" class="chat-history-status">
       <button type="button" :disabled="historyState.loading" @click="onLoadHistory?.()">
@@ -19,15 +19,16 @@
            :style="{ transform: `translateY(${row.start}px)` }">
         <div v-if="tools">
           <GuguChatToolActivity
-            class="msg tool" :data-db-id="msg.dbId || ''" :tools="tools" :session-id="sessionId"
+            class="msg tool" :data-db-id="msg.dbId || ''" :tools="tools" :session-id="sessionId" :subagent-names="projection.subagentNames"
             :expanded="expandedActivityIds.has(msg.id)" :expanded-tools="expandedToolMessageIds"
             :awaiting-reply="streaming && row.index === projection.openGroupIndex" :elapsed-ms="elapsedMs"
             @toggle="toggleActivity(msg.id)" @detail="setToolExpanded"
           />
         </div>
         <div v-else :class="['msg', msg.role]" :data-db-id="msg.dbId || ''"
-           v-memo="[timestamp, msg.role, msg.speakerLabel, msg.text, msg.html, msg.streaming, messageIndex < messages.length - 1, msg.references, msg.roundId, msg.runOutcome, msg.linkButtons, sourceByMessage.get(msg.id), msg.interaction?.resolved, msg.interaction?.expired, msg.interaction?.selectedOptionId, msg.interaction?.selectedOptionIds, msg.interaction?.customAnswer, msg.interaction?.selectionMode, msg.interaction?.allowTextInput, msg.interaction?.customInputActive, msg.interaction?.taskPaused, msg.interaction?.submitting, msg.interaction?.responseText, msg.interaction?.secretFields, interactionAnswerMode, msg.files?.length, msg.files?.map(f => `${f.file_id ?? ''}:${f.attach_id ?? ''}:${f.ext ?? ''}:${f.transcript ?? ''}:${f.transcript_status ?? ''}:${f.transcript_origin ?? ''}`).join(','), msg.quotedText, copiedId === msg.id, voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId), voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId) ? voiceBars.join(',') : '']">
+           v-memo="[timestamp, msg.role, msg.subagentOutput, msg.subagentOutput && expandedActivityIds.has(msg.id), msg.speakerLabel, msg.text, msg.html, msg.streaming, messageIndex < messages.length - 1, msg.references, msg.roundId, msg.runOutcome, msg.linkButtons, sourceByMessage.get(msg.id), msg.interaction?.resolved, msg.interaction?.expired, msg.interaction?.selectedOptionId, msg.interaction?.selectedOptionIds, msg.interaction?.customAnswer, msg.interaction?.selectionMode, msg.interaction?.allowTextInput, msg.interaction?.customInputActive, msg.interaction?.taskPaused, msg.interaction?.submitting, msg.interaction?.responseText, msg.interaction?.secretFields, interactionAnswerMode, msg.files?.length, msg.files?.map(f => `${f.file_id ?? ''}:${f.attach_id ?? ''}:${f.ext ?? ''}:${f.transcript ?? ''}:${f.transcript_status ?? ''}:${f.transcript_origin ?? ''}`).join(','), msg.quotedText, copiedId === msg.id, voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId), voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId) ? voiceBars.join(',') : '']">
           <GuguChatMessageRow
+            :subagent-expanded="msg.subagentOutput && expandedActivityIds.has(msg.id)" @toggle-subagent="toggleActivity(msg.id)"
             :msg="msg" :timestamp="timestamp" :sources="sourceByMessage.get(msg.id)" :has-following-message="messageIndex < messages.length - 1" :session-id="sessionId" :is-group-session="isGroupSession" :interaction-answer-mode="interactionAnswerMode"
             :copied-id="copiedId" :voice-playing-id="voicePlayingId" :voice-bars="voiceBars"
             @copy="$emit('copy', $event)" @toggle-voice="$emit('toggleVoice', $event)"
@@ -74,14 +75,16 @@
  */
 import type { ChatHistoryState } from './composables/useChatHistoryPagination'
 import type { SessionScrollAnchor } from './composables/sessionScrollLayout'
-import { ref, computed, watch, watchEffect, nextTick, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
+import { ref, computed, inject, watch, watchEffect, nextTick, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { defaultRangeExtractor, useVirtualizer } from '@tanstack/vue-virtual'
 import GuguChatActivityLine from './GuguChatActivityLine.vue'
 import GuguChatToolActivity from './GuguChatToolActivity.vue'
 import { useChatSources } from './useChatSources'
 import type { ChatSource } from './chatSources'
-import { projectChatRows } from './toolActivity'
+import { agentApi } from '@/services/api'
+import { chatToolDetailsKey } from './chatPresentationAccess'
+import { needsSubagentDetails, projectChatRows } from './toolActivity'
 import GuguChatMessageRow from './GuguChatMessageRow.vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import type { ChatMessage, ChatFile, ChatReference, InteractionAnswerMode } from './chatTypes'
@@ -128,10 +131,33 @@ function toggleActivity(id: number) {
   if (expandedActivityIds.value.has(id)) expandedActivityIds.value.delete(id)
   else expandedActivityIds.value.add(id)
 }
+const readToolDetails = inject(chatToolDetailsKey, agentApi.getToolEventDetails)
+const requestedSubagentDetails = new WeakSet<ChatMessage>()
+watchEffect(() => {
+  const sessionId = props.sessionId
+  if (sessionId == null) return
+  for (const msg of props.messages) {
+    const source = msg._toolDetailsSource
+    if (!source || !msg.toolDetailsAvailable || !needsSubagentDetails(msg) || requestedSubagentDetails.has(msg)) continue
+    requestedSubagentDetails.add(msg)
+    void readToolDetails(sessionId, source).then(details => {
+      if (props.sessionId !== sessionId) return
+      if (needsSubagentDetails(msg) && Object.hasOwn(details, 'toolResult')) msg.toolResult = details.toolResult
+      if (msg.toolInput === undefined && Object.hasOwn(details, 'toolInput')) msg.toolInput = details.toolInput
+    }).catch(() => {
+      // 历史工具详情仍可通过普通工具入口重试。
+    })
+  }
+})
 const projection = computed(() => projectChatRows(props.messages))
 const selectionActive = ref(false)
 const pinnedSelectionIds = ref<{ anchorId: string; focusId: string } | null>(null)
-const messageIndexById = computed(() => new Map(props.messages.map((message, index) => [String(message.id), projection.value.rowIndexByMessageIndex[index]!])))
+const messageIndexById = computed(() => {
+  const { rows, rowIndexByMessageIndex } = projection.value
+  const indices = new Map(props.messages.map((message, index) => [String(message.id), rowIndexByMessageIndex[index]!]))
+  for (const [index, row] of rows.entries()) if (row.msg.subagentOutput) indices.set(String(row.msg.id), index)
+  return indices
+})
 
 function setToolExpanded(messageId: number, expanded: boolean) {
   const id = String(messageId)
@@ -152,7 +178,7 @@ function onSelectionPointerDown(event: PointerEvent) {
   if (!event.isPrimary || event.button !== 0) return
   const target = event.target instanceof Element ? event.target : null
   if (!target || target.closest('button, a, input, textarea, select, [contenteditable="true"]')) return
-  if (!target.closest('.msg-bubble, .chat-assistant-smart-card, .tool-detail-shell')) return
+  if (!target.closest('.msg-bubble, .tool-detail-shell')) return
   const messageId = rowMessageId(target)
   if (!messageId) return
   selectionActive.value = true

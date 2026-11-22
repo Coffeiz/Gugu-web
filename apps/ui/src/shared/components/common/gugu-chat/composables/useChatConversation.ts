@@ -44,7 +44,7 @@ export interface ChatConversationAccess extends ChatSessionHistoryAccess {
   queue: ChatQueueAccess
   listSessions: () => Promise<ChatSession[]>
   readPendingQueue: (queueId: string) => Promise<{ items: QueuedMessagePayload[] }>
-  subscribeRunChanges?: (listener: (sessionId?: number) => void) => () => void
+  subscribeRunChanges?: (listener: (sessionId?: number, interactionChanged?: true) => void) => () => void
   readRunState: (id: number) => Promise<{ active: boolean; runId?: string }>
 }
 
@@ -649,6 +649,10 @@ export function useChatConversation(options: {
   let deferredRunSession: number | null = null
   watch(() => liveStore.agentRunEvent, (event) => {
     if (platformAccess || !event) return
+    if (event.status === 'waiting') {
+      if (sessionId.value === event.session_id) void refreshSessionMessages(event.session_id, true)
+      return
+    }
     updateSidebarRun(event.session_id, event.run_id, event.status === 'running', true)
     void fetchSessions()
     if (event.status === 'completed' || event.status === 'failed') {
@@ -721,7 +725,8 @@ export function useChatConversation(options: {
       }
     }, 160)
   }
-  const unsubscribePlatform = platformAccess?.subscribeRunChanges?.(id => {
+  const unsubscribePlatform = platformAccess?.subscribeRunChanges?.((id, interactionChanged) => {
+    if (interactionChanged && id != null && id === sessionId.value) void refreshSessionMessages(id, true)
     const current = id ?? sessionId.value
     if (current != null) platformChanges.add(current)
     if (id === undefined) void refreshSessionPendingQueue()

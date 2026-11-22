@@ -398,7 +398,7 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
         botMentioned: message.botMentioned, mentionsOtherBot: false,
         speakers: [{ platformUserId: message.scope.platformUserId }],
       }, scope => ({ role: scope.platformUserId === ownerPlatformUserId ? 'owner' : 'member', allowedToolNames: [] }))
-      return { actor, groupMemoryEnabled: current.groupMemoryEnabled !== false,
+      return { actor, ownerPlatformUserId: current.userId, groupMemoryEnabled: current.groupMemoryEnabled !== false,
         groupOwnerMemoryEnabled: current.groupOwnerMemoryEnabled === true,
         memberMemoryEnabled: current.memberMemoryEnabled !== false }
     },

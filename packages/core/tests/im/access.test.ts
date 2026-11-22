@@ -183,3 +183,17 @@ test('快照冻结后后续白名单修改不改变本轮权限，下一次解�
   const revoked = resolveImActor(input, () => ({ role: 'member', allowedToolNames: [] }))
   assert.equal(imCanUseTool(revoked, 'web_search'), false)
 })
+
+test('子 Agent 工具只对主人的 IM 私聊开放，即使群聊显式授权也不可用', () => {
+  const delegation = ['agent_message', 'agent_wait', 'agent_cancel', 'agent_inspect']
+  const privateInput = { ...input, chatType: 'c2c' as const, chatId: null }
+  const ownerPrivate = resolveImActor(privateInput, resolve)
+  const memberPrivate = resolveImActor({ ...privateInput, platformUserId: 'sender-member' }, () => ({
+    role: 'member', allowedToolNames: delegation,
+  }))
+  const ownerGroup = resolveImActor(input, resolve)
+  assert.deepEqual(imVisibleToolNames(ownerPrivate, delegation), delegation)
+  for (const actor of [memberPrivate, ownerGroup]) {
+    for (const tool of delegation) assert.equal(imCanUseTool(actor, tool), false)
+  }
+})

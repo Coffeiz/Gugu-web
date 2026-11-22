@@ -599,7 +599,8 @@ it('模型列表支持旧版迁移、并发新增、密钥隔离、默认切换�
     await runtime.close()
     runtime = await launchCoreHost(process.execPath, entry, join(directory, 'chat.db'))
     send = sessionHandler(runtime)
-    await send({ action: 'send', id: session.id, text: '合成记忆读取', operationId: randomUUID() })
+    const freshMemorySession = await send({ action: 'create', title: '合成新快照会话', operationId: randomUUID() }) as { id: number }
+    await send({ action: 'send', id: freshMemorySession.id, text: '合成记忆读取', operationId: randomUUID() })
     expect(JSON.stringify(initialMemoryRequest)).toContain('合成用户偏好晨间阅读')
     const searchContent = memorySearchResult!.content
     expect(JSON.parse(typeof searchContent === 'string' ? searchContent : searchContent[0]!.text)).toMatchObject({

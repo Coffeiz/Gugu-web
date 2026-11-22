@@ -28,6 +28,8 @@
   "files": [
     "dist",
     "assets/icon.png",
+    "assets/trayTemplate.png",
+    "assets/trayTemplate@2x.png",
     "README.md"
   ],
   "dependencies": {

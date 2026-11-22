@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { runPrivateReflectionBranch, type AgentObservation, type AgentObservationPort, type BranchResult, type RunIdentity, type Usage } from '@gugu/core/agent'
+import { formatOwnerReflectionEvidence, runPrivateReflection, type AgentObservation, type AgentObservationPort, type BranchResult, type RunIdentity, type Usage } from '@gugu/core/agent'
 import { ProviderRuntime, outputBudget as providerOutputBudget, providerSelection, type ProviderRuntimeOptions } from '@gugu/core/providers'
 import type { Pool } from 'pg'
 import { RecoverableProviderVersionError, type createReflectionModelScope } from '../../llm/recovery.js'
@@ -89,7 +89,7 @@ export function createOwnerReflectionExtractor(options: {
       const outputBudget = 1024
       const { config, policy } = providerSelection((await model.resolve(identity, model.modelIdentity, signal)).config)
       const outputReserve = providerOutputBudget(config, policy, outputBudget) ?? outputBudget
-      const delta = JSON.stringify({ ...base, turns: source.turns })
+      const delta = formatOwnerReflectionEvidence(base, source.turns)
       const fits = reflectionWireBytes(system, delta) + outputReserve <= model.contextWindow
       if (!fits && source.turns.length > 1) return { kind: 'split' }
       const provider = new ProviderRuntime({ ...options.context, resolve: model.resolve,
@@ -101,10 +101,10 @@ export function createOwnerReflectionExtractor(options: {
         if (!await options.canSpend(batch.ownerId) || !await batch.isCurrent()) return null
         const observationIdentity: RunIdentity = { ...identity, runId: `reflection-${options.context.nextId()}` }
         const startedAt = Date.now()
-        const result = await runPrivateReflectionBranch({ ...identity, stableSystem: prompt, delta: evidence, scope: model.accessScopeHash }, {
+        const result = await runPrivateReflection({ ...identity, stableSystem: prompt, delta: evidence, scope: model.accessScopeHash }, {
           outputMode, maxOutputTokens,
         }, {
-          provider: provider.branchProvider(model.modelIdentity),
+          provider: provider.reflectionProvider(model.modelIdentity),
           digest: options.context.digest, nextId: options.context.nextId,
           async pauseBeforeRetry() {}, diagnostic: options.diagnose,
         }, deadline, options.context.observation, { identity: observationIdentity })
@@ -151,7 +151,7 @@ export function createOwnerReflectionExtractor(options: {
           if (!turn) return { kind: 'defer' }
           const framing = { ...base, condensedEvidence: true, allowMemoryRemoval: false }
           const remaining = model.contextWindow - outputReserve - reflectionWireBytes(system,
-            JSON.stringify({ ...framing, turns: [{ timestamp: turn.timestamp, userMessage: '', assistantReply: '' }] }))
+            formatOwnerReflectionEvidence(framing, [{ timestamp: turn.timestamp, userMessage: '', assistantReply: '' }]))
           const fragmentReserve = providerOutputBudget(config, policy, 192) ?? 192
           const evidence = planReflectionEvidence(turn,
             result?.contextOverflow ? Math.floor(model.contextWindow / 2) : model.contextWindow, remaining, fragmentReserve)
@@ -171,8 +171,8 @@ export function createOwnerReflectionExtractor(options: {
             if (!compressed?.ok || typeof compressed.output !== 'string') return { kind: 'defer' }
             summaries[fragment.role].push(compressed.output)
           }
-          const condensed = JSON.stringify({ ...framing, turns: [{ timestamp: turn.timestamp,
-            userMessage: summaries.user.join('\n'), assistantReply: summaries.assistant.join('\n') }] })
+          const condensed = formatOwnerReflectionEvidence(framing, [{ timestamp: turn.timestamp,
+            userMessage: summaries.user.join('\n'), assistantReply: summaries.assistant.join('\n') }])
           if (reflectionWireBytes(system, condensed) + outputReserve > model.contextWindow) return { kind: 'defer' }
           // 摘要只在内存中暂存；原证据已删除、编辑或会话已忙时暂停本次发布。
           const status = await checkEvidence()

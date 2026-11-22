@@ -1,15 +1,41 @@
 import { createHash } from 'node:crypto'
 import { describe,expect,it } from 'vitest'
-import type { CanonicalMessage,ContextServices,Json,OpaqueProviderProjection,ReflectionProjectionPort,SummaryGenerationPorts } from "../../../src/agent/index.js"
+import type { CanonicalMessage,ContextServices,Json,OpaqueProviderProjection,SummaryGenerationPorts } from "../../../src/agent/index.js"
 import {
-MessageArea,ReflectionSnapshots,appendReflectionHistory,applyCompaction,compactContext,createAgentCompactionPort,createLazyAgentCompactionPort,createCompactionSummarizer,deterministicSummary,enforceProviderOverflow,formatCompactedSummary,isContextOverflowError,
-matchedAtomicUnits,providerInputTokens,reflectionRecoveryPolicy,resolveCompactionLimits,shouldCompact,stableJson,stripToolCallInputs,summaryOutputExhausted,toolCallIds,toolResultIds,trimOldestHistory,validateCompactSummary
+MessageArea,applyCompaction,compactContext,createAgentCompactionPort,createLazyAgentCompactionPort,createCompactionSummarizer,deterministicSummary,enforceProviderOverflow,formatCompactedSummary,isContextOverflowError,
+matchedAtomicUnits,providerInputTokens,runReflection,resolveCompactionLimits,shouldCompact,stableJson,stripToolCallInputs,summaryOutputExhausted,toolCallIds,toolResultIds,trimOldestHistory,validateCompactSummary
 } from "../../../src/agent/index.js"
 import type { AgentProviderAuxiliaryPorts } from "../../../src/agent/index.js"
 function services(): ContextServices {
   let id = 0
   return { nextId: () => `id-${++id}`, digest: value => createHash('sha256').update(stableJson(value)).digest('hex').slice(0, 16) }
 }
+
+it('独立反思使用同一份证据重试，且不向 Provider 发送主会话投影或工具', async () => {
+  const requests: unknown[] = []
+  const result = await runReflection({
+    ownerId: 'owner', sessionId: 'session', runId: 'run',
+    stableSystem: '反思当前批次', delta: '本批证据',
+  }, { maxRetries: 1 }, {
+    ...services(),
+    provider: {
+      async complete(request) {
+        requests.push(request)
+        if (requests.length === 1) throw new Error('临时失败')
+        return { output: '{"summary":"测试"}', usage: null }
+      },
+      isInputRejected: () => false,
+    },
+    async pauseBeforeRetry() {},
+    diagnostic() {},
+  })
+  expect(result).toMatchObject({ ok: true, attempts: 2, output: { summary: '测试' }, metadata: { mode: 'standalone' } })
+  expect(requests).toHaveLength(2)
+  expect(requests[0]).toEqual(requests[1])
+  expect(requests[1]).toMatchObject({ scenario: 'reflection', delta: '本批证据', tools: [], cacheSingleflight: false })
+  expect(requests[1]).not.toHaveProperty('projection')
+  expect(requests[1]).not.toHaveProperty('canonicalHistory')
+})
 
 describe('Agent compaction runtime', () => {
   it('延迟绑定并发共享初始化，绑定失败后可重试，摘要失败不重复绑定', async () => {
@@ -335,81 +361,6 @@ describe('压缩候选、并发和完整轮边界', () => {
     area.configureRequest([user('新前缀')])
     const result = await compactContext(area, { summarize: async input => { expect(input.projection).toBeNull(); return '摘要' } }, { modelIdentity: 'model', projection: wire })
     expect(result.changed).toBe(true)
-  })
-})
-describe('进程内反思快照与恢复策略', () => {
-  const projectionPort: ReflectionProjectionPort<CanonicalMessage[]> = {
-    append: (projection, tail) => ({
-      ...projection,
-      wire: [...projection.wire.slice(0, projection.dynamicTailSize ? -projection.dynamicTailSize : undefined), ...structuredClone(tail)], dynamicTailSize: 0
-    })
-  }
-  it('冻结原始wire和工具声明，移除dynamic tail，owner/session/model/TTL逐项校验', () => {
-    const service = services(), area = new MessageArea(service, [{ ...user('历史'), _history_id: '1' }])
-    area.setDynamicTail([user('动态')]); let now = 0
-    const snapshots = new ReflectionSnapshots<CanonicalMessage[]>(service, () => now)
-    const wire = [{ role: 'assistant', content: [{ type: 'thinking', signature: 'native-signature' }] }, user('动态')]
-    const snapshot = snapshots.capture({
-      ownerId: 'owner', sessionId: 'session', runId: 'run', modelIdentity: 'model', accessScopeHash, area,
-      projection: { ...area.identity('model'), wire, dynamicTailSize: 1 }, replyText: '回复', systemPrompt: '人格', tools: [{ name: 'search' }]
-    }, projectionPort)!
-    expect(snapshot.projection.wire).toEqual([wire[0], { role: 'assistant', content: '回复' }])
-    snapshot.projection.wire[0]!.content = '外部修改'
-    expect(stableJson(snapshots.peek({ ownerId: 'owner', sessionId: 'session' }, 'model', accessScopeHash))).toContain('native-signature')
-    expect(snapshots.peek({ ownerId: 'other', sessionId: 'session' }, 'model', accessScopeHash)).toBeNull()
-    expect(snapshots.peek({ ownerId: 'owner', sessionId: 'other' }, 'model', accessScopeHash)).toBeNull()
-    expect(snapshots.peek({ ownerId: 'owner', sessionId: 'session' }, 'other', accessScopeHash)).toBeNull()
-    now = 900_001
-    expect(snapshots.peek({ ownerId: 'owner', sessionId: 'session' }, 'model', accessScopeHash)).toBeNull()
-  })
-  it('持久化前缀边界不精确匹配拒绝追加，sibling读取不消费原快照', () => {
-    const service = services(), area = new MessageArea(service, [{ ...user('历史'), _history_id: '1' }])
-    const snapshots = new ReflectionSnapshots<CanonicalMessage[]>(service, () => 0)
-    const snapshot = snapshots.capture({
-      ownerId: 'owner', sessionId: 'session', runId: 'run', modelIdentity: 'model', accessScopeHash, area,
-      projection: { ...area.identity('model'), wire: area.messages, dynamicTailSize: 0 }, replyText: '回复', systemPrompt: '', tools: []
-    }, projectionPort)!
-    const persistedPrefix = [{ id: '1', sequence: 0, message: user('历史') }]
-    expect(() => appendReflectionHistory(snapshot, { ownerId: 'owner', sessionId: 'session', modelIdentity: 'model', accessScopeHash, persistedPrefixIds: ['wrong'], persistedPrefix, messages: [] }, projectionPort, service)).toThrow('持久化边界')
-    expect(() => appendReflectionHistory(snapshot, { ownerId: 'owner', sessionId: 'session', modelIdentity: 'model', accessScopeHash, persistedPrefixIds: ['1'], persistedPrefix: [{ ...persistedPrefix[0]!, message: user('同id不同正文') }], messages: [] }, projectionPort, service)).toThrow('持久化边界')
-    const appended = appendReflectionHistory(snapshot, { ownerId: 'owner', sessionId: 'session', modelIdentity: 'model', accessScopeHash, persistedPrefixIds: ['1'], persistedPrefix, messages: [user('后续被动消息')] }, projectionPort, service)
-    expect(appended.wire.at(-1)).toEqual(user('后续被动消息'))
-    expect(snapshots.peek({ ownerId: 'owner', sessionId: 'session' }, 'model', accessScopeHash)!.projection.wire).toHaveLength(2)
-  })
-  it('内存快照容量LRU与显式丢弃有效，保存最后主请求usage与压缩标记', () => {
-    const service = services(), area = new MessageArea(service, [user('历史')])
-    const snapshots = new ReflectionSnapshots<CanonicalMessage[]>(service, () => 0, 900_000, 2)
-    const capture = (sessionId: string): void => {
-      snapshots.capture({
-        ownerId: 'owner', sessionId, runId: 'run', modelIdentity: 'model', accessScopeHash, area,
-        projection: { ...area.identity('model'), wire: area.messages, dynamicTailSize: 0 }, replyText: '回复', systemPrompt: '', tools: [], providerContextInput: 85, providerCompacted: true
-      }, projectionPort)
-    }
-    capture('a'); capture('b'); snapshots.peek({ ownerId: 'owner', sessionId: 'a' }, 'model', accessScopeHash); capture('c')
-    expect(snapshots.peek({ ownerId: 'owner', sessionId: 'b' }, 'model', accessScopeHash)).toBeNull()
-    const found = snapshots.peek({ ownerId: 'owner', sessionId: 'a' }, 'model', accessScopeHash)!
-    expect(found.providerContextInput).toBe(85); expect(found.providerCompacted).toBe(true)
-    snapshots.discard({ ownerId: 'owner', sessionId: 'a' })
-    expect(snapshots.peek({ ownerId: 'owner', sessionId: 'a' }, 'model', accessScopeHash)).toBeNull()
-  })
-  it('同owner/session/model按访问作用域隔离，缺binding不返回旧owner前缀，同主Run sibling仍可共享', () => {
-    const service = services(), ownerArea = new MessageArea(service, [user('owner私有项目资料')]), cache = new ReflectionSnapshots<CanonicalMessage[]>(service, () => 0)
-    const input = { ownerId: 'owner', sessionId: 'session', runId: 'run', modelIdentity: 'model', systemPrompt: '人格', tools: [], replyText: '回复' }
-    expect(cache.capture({ ...input, area: ownerArea, projection: { ...ownerArea.identity('model'), wire: ownerArea.messages, dynamicTailSize: 0 } }, projectionPort)).toBeNull()
-    cache.capture({ ...input, accessScopeHash, area: ownerArea, projection: { ...ownerArea.identity('model'), wire: ownerArea.messages, dynamicTailSize: 0 } }, projectionPort)
-    expect(cache.peek(input, 'model')).toBeNull()
-    expect(cache.peek(input, 'model', 'scope-member')).toBeNull()
-    const memberArea = new MessageArea(service, [user('当前群成员资料')])
-    cache.capture({ ...input, accessScopeHash: 'scope-member', area: memberArea, projection: { ...memberArea.identity('model'), wire: memberArea.messages, dynamicTailSize: 0 } }, projectionPort)
-    expect(stableJson(cache.peek(input, 'model', 'scope-member'))).not.toContain('owner私有项目资料')
-    expect(stableJson(cache.peek(input, 'model', accessScopeHash))).toContain('owner私有项目资料')
-    cache.discard(input)
-    expect(cache.peek(input, 'model', 'scope-member')).toBeNull(); expect(cache.peek(input, 'model', accessScopeHash)).toBeNull()
-  })
-  it.each(['group', 'member'] as const)('普通%s反思跨进程缺快照等待，显式压力压缩才重建', scope => {
-    expect(reflectionRecoveryPolicy(scope, false, 'idle')).toBe('defer')
-    expect(reflectionRecoveryPolicy(scope, false, 'context-pressure')).toBe('rebuild')
-    expect(reflectionRecoveryPolicy(scope, true, 'idle')).toBe('reuse')
   })
 })
 describe('摘要请求的实际超窗恢复', () => {

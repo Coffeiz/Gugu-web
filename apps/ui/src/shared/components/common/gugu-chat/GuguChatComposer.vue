@@ -783,7 +783,7 @@ defineExpose({
   content: attr(data-placeholder);
   float: left;
   height: 0;
-  color: var(--content-tertiary);
+  color: var(--theme-content-tertiary);
   pointer-events: none;
 }
 .chat-input-editor :deep(.ProseMirror .mind-ref) {

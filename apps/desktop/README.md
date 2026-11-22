@@ -41,7 +41,7 @@ Main 的入口、窗口、Core 通信、生命周期与更新分别位于 `index
 
 桌面 Agent 的当前时间、日期上下文和 `get_current_time` 使用运行机器的系统时区；桌面端保存的用户时区偏好及旧会话快照不覆盖机器时区。Web Host 按用户设置的时区运行，两端的时区来源有意不同。
 
-桌面 Agent 的会话、持久 Run、恢复、记忆、联网搜索和工具注册由共享 Core 规则及 Desktop SQLite/Main 适配组成；聊天事件经具名 IPC 投影给共享 UI。普通 `ask_user` 澄清及回答恢复复用共享 UI 和 Desktop IPC。桌面不注册独立 `read_file` 或回收站/清理工具：拖入的本机文件以引用方式交给 Agent，需要清理时使用桌面 Shell，并遵循桌面独立权限策略。`user_sandbox` 授权请求不通过普通澄清工具开放，继续由 Desktop 权限策略负责。共享 `save_attachment` 支持个人、项目和当前会话绑定的本机工作区，可使用相对 `folder_path`，保留同名文件并写入本机持久回执。工作区可通过聊天命令 `/workspace list`、`/workspace <工作区ID>`、`/workspace show` 和 `/workspace unlink` 管理；绑定保存在会话上下文，不授予 Shell 权限。Web 的数字 `folder_id` 在桌面需使用相对路径。该能力不改变本机拖入文件保持引用的语义。完整能力与回归缺口见[迁移任务清单](../../docs/refactor/Gugu-2.0-迁移任务清单.md)。
+桌面 Agent 的会话、持久 Run、恢复、记忆、联网搜索和工具注册由共享 Core 规则及 Desktop SQLite/Main 适配组成；聊天事件经具名 IPC 投影给共享 UI。普通 `ask_user` 澄清及回答恢复复用共享 UI 和 Desktop IPC。桌面不注册回收站或独立清理工具：拖入的本机文件以引用方式交给 Agent，需要清理时使用桌面 Shell，并遵循桌面独立权限策略。`user_sandbox` 授权请求不通过普通澄清工具开放，继续由 Desktop 权限策略负责。共享 `save_attachment` 支持个人、项目和当前会话绑定的本机工作区，可使用相对 `folder_path`，保留同名文件并写入本机持久回执。工作区可通过聊天命令 `/workspace list`、`/workspace <工作区ID>`、`/workspace show` 和 `/workspace unlink` 管理；绑定保存在会话上下文，不授予 Shell 权限。Web 的数字 `folder_id` 在桌面需使用相对路径。该能力不改变本机拖入文件保持引用的语义。完整能力与回归缺口见[迁移任务清单](../../docs/refactor/Gugu-2.0-迁移任务清单.md)。
 
 桌面 Agent 可使用共享 Core 的 `send_email` 工具。使用前需在桌面邮件页连接发件邮箱；私聊 Agent 可发送纯文本、咕咕模板或经净化的 HTML 邮件，并可附加当前消息中已授权的本机文件引用（最多 5 个，每个不超过 10 MiB、合计不超过 25 MiB）。确认绑定发件账户版本、收件人、邮件内容及附件摘要；发送尝试及结果写入持久回执，结果未知时不会自动重复投递。群聊不注册该工具。邮箱凭据留在 Electron 主进程的系统安全存储中。
 

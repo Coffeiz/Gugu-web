@@ -1,19 +1,16 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { readAgentPrompt } from '@gugu/core/agent/context/prompts'
-import { ProviderRuntime, adapterFor } from '@gugu/core/providers'
+import { ProviderRuntime } from '@gugu/core/providers'
 import { createAgentRunCodec } from '@gugu/core/agent/run/codec'
 import { stableJson, type CanonicalRunContext, type RunIdentity } from '@gugu/core/agent'
 import { decryptAgentDispatchInput } from '../../../agent/run/dispatch.js'
 import { createCanonicalHistoryWriter } from '../../../agent/chat/write.js'
 import { imActorInputForDispatch } from '../agent/reconstruct.js'
-import { createImMessageMaterializer } from '../inbound/message.js'
 import { createImContextReferenceCodec } from '../agent/references.js'
 import type { ImProductionResourcesOptions } from '../agent/resources.js'
 import type { ImReflectionRuntime, ImReflectionService, ImReflectionServiceOptions } from './contracts.js'
-import { readImFrozenRequestPrefix } from '../agent/services.js'
 import { imProductionProvider } from '../agent/resources.js'
 import { createImRuntimeBindingStore } from '../agent/store.js'
-import { createImImageProcessor } from '../media/image.js'
 import { createWebOwnerMemorySearchPort } from '../../../agent/tools/memory/search.js'
 
 type Options = Omit<ImProductionResourcesOptions, 'reflection'>
@@ -39,7 +36,7 @@ async function bindOriginal(options: Options, identity: RunIdentity, modelIdenti
   const binding = await options.model.bindRun(identity, actor, access.bot, await options.memoryEnabled(identity.ownerId),
     input.locale, scopeHash ? { identity, modelIdentity, accessScopeHash: scopeHash } : context ? { identity, modelIdentity, accessScopeHash: context.accessScopeHash } : undefined, signal)
   if (binding.selection.modelIdentity !== modelIdentity || binding.selection.contextScopeKey !== input.accessVersion) { binding.release(); throw failed() }
-  return { binding, actor, input, route, context, checkpoint, bot: access.bot }
+  return { binding, actor, input, bot: access.bot }
 }
 
 /** 控制/过期收尾复用初次实际绑定的密封用量配置，不在会话持锁事务里重新选模。 */
@@ -64,8 +61,7 @@ export function createImProductionHistory(options: Options, reflection?: ImRefle
 }
 
 /** 反思独立取得Provider生命周期；主Run关闭后不会再复用它的已关闭客户端。 */
-export function createImProductionReflectionBindings(options: Options): Pick<ImReflectionServiceOptions, 'resolveRuntime' | 'rebuildOwnerSnapshot' | 'rebuildMemberSnapshot' | 'readGroupCompactionPrompt' | 'readOwnerCompactionPrompt' | 'readOwnerPeriodicPrompt'> {
-  const owned = new WeakMap<ImReflectionRuntime, Awaited<ReturnType<typeof bindOriginal>>>()
+export function createImProductionReflectionBindings(options: Options): Pick<ImReflectionServiceOptions, 'resolveRuntime' | 'readGroupCompactionPrompt' | 'readOwnerCompactionPrompt' | 'readOwnerPeriodicPrompt'> {
   return {
     async readGroupCompactionPrompt(){
       const prompt=readAgentPrompt('im/group_compress.md', options.promptRoot)
@@ -93,21 +89,9 @@ export function createImProductionReflectionBindings(options: Options): Pick<ImR
           && await authorizeCurrent()
         const scope = { ownerId: actor.ownerId, botId: actor.botId, platform: actor.platform, chatType: actor.chatType,
           chatId: actor.chatId, platformUserId: actor.platformUserId }
-        const selected=await original.binding.resolve(identity,job.modelIdentity,signal),images=createImImageProcessor()
-        const imageLimits=adapterFor(selected.config).mediaLimits(selected.config)
-        const materializer = createImMessageMaterializer({ pool: options.pool, storageRoot: options.storageRoot, identity, scope,
-          messageIds: (input.im.batch?.messageIds ?? [input.userMessageId]).map(String), timezone: 'UTC',
-          formatMessageTime: (value, timezone) => new Intl.DateTimeFormat('zh-CN', { timeZone: timezone, dateStyle: 'short', timeStyle: 'short' }).format(value), authorize,
-          fitImage:(input,currentSignal)=>images.fit(input,imageLimits,currentSignal) })
-        const references = materializer.references(createImContextReferenceCodec({ pool: options.pool, identity, scope, authorize }))
+        const references = createImContextReferenceCodec({ pool: options.pool, identity, scope, authorize })
         const provider = new ProviderRuntime({ ...imProductionProvider(options, authorize), resolve: original.binding.resolve, digest, nextId: randomUUID, references,
-          // 该实例只做原wire分支及显式恢复；动态请求尾部不属于反思前缀。
-          prepareRequest: async (candidate, _signal, context) => {
-            if (candidate.ownerId !== identity.ownerId || candidate.sessionId !== identity.sessionId || candidate.runId !== identity.runId
-              || !await authorize()) throw failed()
-            if (!context) throw failed()
-            return { prefix: await readImFrozenRequestPrefix(options.pool, identity, context), dynamicTail: [] }
-          },
+          async prepareRequest() { throw failed() },
           diagnose: () => options.diagnose('im_provider_failed') })
         const result: ImReflectionRuntime = { provider, usageConfig: original.binding.usageConfig,
           selection: { modelIdentity: original.binding.selection.modelIdentity, accessScopeHash: job.accessScopeHash,
@@ -130,37 +114,8 @@ export function createImProductionReflectionBindings(options: Options): Pick<ImR
           currentSignal.throwIfAborted();if(!await authorize())throw failed()
           return found&&typeof found==='object'&&!Array.isArray(found)&&Array.isArray(found.results)?found.results:[]
         }
-        owned.set(result, original)
         return result
       } catch { original.binding.release(); throw failed() }
-    },
-    async rebuildOwnerSnapshot(job, runtime, signal) {
-      const original = owned.get(runtime)
-      if (!original || job.scope.type !== 'owner' || original.actor.role !== 'owner' || original.actor.chatType !== 'c2c'
-        || original.checkpoint?.status !== 'completed' || !original.context || !await options.access.authorizeDelivery(original.actor, original.bot)) return null
-      const snapshot = await runtime.provider.rebuildReflectionSnapshot(job.identity, original.context, signal)
-      if (!await options.access.authorizeDelivery(original.actor, original.bot)) throw failed()
-      return snapshot
-    },
-    async rebuildMemberSnapshot(job,runtime,signal){
-      const original=owned.get(runtime)
-      if(!original||job.scope.type!=='platform-user'||original.checkpoint?.status!=='completed'||!original.context)return null
-      const input=imActorInputForDispatch({identity:job.identity,input:original.input},original.route)
-      const prefix=original.actor.chatType==='group'?`${original.actor.chatId}:`:''
-      if(prefix&&!job.scope.id.startsWith(prefix))return null
-      const speaker=prefix?job.scope.id.slice(prefix.length):job.scope.id
-      if(!speaker||!prefix&&speaker!==original.actor.platformUserId)return null
-      async function current(){
-        signal.throwIfAborted()
-        const snapshot=await options.access.snapshot(input)
-        if(snapshot.resolve({...input,platformUserId:speaker}).role!=='member'
-          ||!await options.access.authorizeDelivery(original!.actor,original!.bot)
-          ||await options.model.accessVersion(job.identity,original!.actor,original!.bot,await options.memoryEnabled(job.identity.ownerId))!==original!.input.accessVersion)throw failed()
-      }
-      await current()
-      const snapshot=await runtime.provider.rebuildReflectionSnapshot(job.identity,original.context,signal)
-      await current()
-      return snapshot
     },
   }
 }

@@ -1,5 +1,6 @@
 import { createAgentRunToolPorts, contextAccessScopeHash, stableJson, type CanonicalContextPorts, type CanonicalRunContext, type ContextSourcePorts, type RunEvent, type RunIdentity } from '@gugu/core/agent'
 import type { ProviderContextFactoryInput, ProviderFactoryContext } from '@gugu/core/providers'
+import { assembleSubagentCatalog, builtinSubagentCatalog } from '@gugu/core/agent'
 import { imActorInputFromPayload, imCanUseTool, imContextPolicy, type ImActor, type ImActorInput } from '@gugu/core/im/access'
 import { createImRunDelivery, ImRunDeliveryBlocked, type ImRunDeliveryPorts } from '@gugu/core/im/run-delivery'
 import type { AgentDispatchLease, ImAgentDispatchInput } from '../../../agent/run/dispatch.js'
@@ -162,7 +163,14 @@ export function createImAgentReconstructor(options: ImAgentReconstructorOptions)
       })
       const configured = resources.preparation.configuration
       const load: CanonicalContextPorts['load'] = async (identity, signal) => {
-        try { return await source.load(identity, signal) }
+        try {
+          const loaded = await source.load(identity, signal)
+          if (actor.role === 'owner' && actor.chatType === 'c2c' && 'input' in loaded
+            && (await resources.toolRegistry.capabilities(identity)).some(tool => tool.name === 'agent_message')) {
+            loaded.input.systemPrompt = assembleSubagentCatalog(loaded.input.systemPrompt, builtinSubagentCatalog)
+          }
+          return loaded
+        }
         catch (error) {
           if (!(error instanceof ImVoiceUnavailableError)) throw error
           signal?.throwIfAborted()

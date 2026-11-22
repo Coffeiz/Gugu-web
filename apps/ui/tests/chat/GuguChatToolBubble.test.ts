@@ -93,6 +93,12 @@ it('管理员覆盖优先显示，只有历史默认标签时沿用当前语言'
   expect(localized.host.querySelector('.tool-event-label')?.textContent).toBe('toolNames.list_projects')
 })
 
+it('历史退役工具卡片使用通用标签', () => {
+  const { host } = mountBubble({ toolName: 'read_file', toolLabel: '读取文件' })
+  expect(host.querySelector('.tool-event-label')?.textContent).toBe('chatUi.toolCall')
+  expect(host.textContent).not.toContain('read_file')
+})
+
 it('详情返回前保持折叠，完整输入和结果就绪后只展开一次', async () => {
   vi.useFakeTimers()
   const request = pendingDetails()

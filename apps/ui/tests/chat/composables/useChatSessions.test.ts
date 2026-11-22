@@ -2,12 +2,16 @@ import { effectScope, ref } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useChatSessions, type ChatSessionHistoryAccess } from '@/components/common/gugu-chat/composables/useChatSessions'
 import { agentApi } from '@/services/api'
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import type { SessionScrollAnchor } from '@/components/common/gugu-chat/composables/sessionScrollLayout'
 import type { ChatMessage, ChatSession } from '@/components/common/gugu-chat/chatTypes'
+
+vi.mock('@/composables/core/useConfirmDialog', () => ({ confirmDialog: vi.fn() }))
 
 vi.mock('@/services/api', () => ({
   agentApi: {
     getMessages: vi.fn(),
+    deleteSession: vi.fn(),
   },
 }))
 
@@ -67,6 +71,61 @@ function createSessionManager(historyAccess?: ChatSessionHistoryAccess) {
 
 describe('会话加载代次', () => {
   afterEach(() => vi.resetAllMocks())
+
+  it.each(['Web', '桌面'] as const)('%s 父会话流式输出时合并子确认卡', async (platform) => {
+    const data = { messages: [], active: true, interactions: [{
+      id: 21, kind: 'confirm', title: '合成子确认', body: '合成操作',
+      delegated: true, run_id: 'parent-run', tool_call_id: 'child-call',
+      options: [{ id: 'confirm', label: '确认', token: 'synthetic-token' }],
+    }] }
+    const readHistory = vi.fn(async () => data)
+    const { scope, sessions, sessionId, messages, streaming, resumeStream } = createSessionManager(platform === '桌面'
+      ? { readHistory, deleteSession: vi.fn(), renameSession: vi.fn() } : undefined)
+    vi.mocked(agentApi.getMessages).mockResolvedValue(data as never)
+    sessionId.value = 7
+    streaming.value = true
+    messages.value = [{ id: 10, role: 'ai', text: '父任务仍在输出', time: '00:00', streaming: true }]
+    try {
+      await sessions.refreshSessionMessages(7, true)
+      expect(messages.value).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 10, text: '父任务仍在输出', streaming: true }),
+        expect.objectContaining({ runId: 'parent-run', interaction: expect.objectContaining({ promptId: 21, delegated: true }) }),
+      ]))
+      expect(resumeStream).not.toHaveBeenCalled()
+      if (platform === 'Web') expect(agentApi.getMessages).toHaveBeenCalledWith(7, { restoreInteractions: true })
+    } finally { scope.stop() }
+  })
+
+  it.each(['Web', '桌面'] as const)('%s 会话取消时保留，确认后只删除一次', async (platform) => {
+    const deleteDesktop = vi.fn(async () => undefined)
+    const manager = createSessionManager(platform === '桌面'
+      ? { readHistory: vi.fn(), deleteSession: deleteDesktop, renameSession: vi.fn() }
+      : undefined)
+    const { sessions, sessionList, scope } = manager
+    const confirm = vi.mocked(confirmDialog)
+    const remove = platform === '桌面' ? deleteDesktop : vi.mocked(agentApi.deleteSession)
+    sessionList.value = [{ id: 42, title: '合成会话', source: 'web' } satisfies ChatSession]
+    try {
+      const choice = deferred<boolean>()
+      confirm.mockReturnValueOnce(choice.promise)
+      const cancelled = sessions.deleteSession(42)
+      await sessions.deleteSession(42)
+      expect(confirm).toHaveBeenCalledOnce()
+      expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ tone: 'danger', message: expect.stringContaining('合成会话') }))
+      expect(remove).not.toHaveBeenCalled()
+      choice.resolve(false)
+      await cancelled
+      expect(remove).not.toHaveBeenCalled()
+      expect(sessionList.value).toHaveLength(1)
+
+      confirm.mockResolvedValueOnce(true)
+      await sessions.deleteSession(42)
+      expect(remove).toHaveBeenCalledExactlyOnceWith(platform === '桌面' ? 42 : '42')
+      expect(sessionList.value).toEqual([])
+    } finally {
+      scope.stop()
+    }
+  })
 
   it('桌面上下文整理结束后通过本机状态收起提示', async () => {
     vi.useFakeTimers()

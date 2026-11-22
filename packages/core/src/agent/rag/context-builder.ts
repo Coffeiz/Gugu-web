@@ -4,6 +4,7 @@ import type { CanonicalMessage, HistoryIdentity, PersistedHistoryRow, RagContext
 import { configureRagJieba } from './tokenizer.js'
 import { getAgentRagJieba } from './node-jieba.js'
 import { createSqlRagPersistentIndexReader } from './persistent-index.js'
+import { createRagDocumentTermCache } from './lexical-index.js'
 import { createScopedRagSearch, type ScopedRagVectors } from './scoped-search.js'
 import type { RagSearchScope } from './contracts.js'
 
@@ -30,6 +31,8 @@ function historyRagHashes(history: readonly PersistedHistoryRow[]): string[] {
   }
   return [...hashes]
 }
+
+const documentTermsByDatabase = new WeakMap<SqlDataRuntime['db'], ReturnType<typeof createRagDocumentTermCache>>()
 
 /**
  * Shared automatic owner RAG for Web Host and Desktop. Hosts bind authorization,
@@ -67,10 +70,16 @@ export function createAgentRagContextBuilder(options: {
       if (!await options.authorize(bound, ownerScope, signal)) return empty('no_eligible_scope')
       signal?.throwIfAborted()
 
+      let documentTerms = documentTermsByDatabase.get(options.core.db)
+      if (!documentTerms) {
+        documentTerms = createRagDocumentTermCache()
+        documentTermsByDatabase.set(options.core.db, documentTerms)
+      }
+
       const vectors = await options.vectors?.(bound.ownerId, signal) ?? null
       signal?.throwIfAborted()
       const search = createScopedRagSearch({
-        index,
+        index, documentTerms,
         authorize: async (owner, scope, authSignal) => owner.toLowerCase() === bound.ownerId.toLowerCase()
           && scope.scope_type === 'owner' && (scope.scope_id ?? '') === ''
           && await options.authorize(bound, scope, authSignal),

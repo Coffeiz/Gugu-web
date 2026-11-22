@@ -164,8 +164,8 @@ try {
   const memoryRoot = config.exclusive ? process.env.GUGU_DESKTOP_MEMORY_ROOT : undefined
   const memoryFiles = memoryRoot ? createDesktopMemoryFiles(runtime.db, memoryRoot, ownerId) : undefined
   await memoryFiles?.initialize()
-  const notifyAgentRunChanged = (sessionId: number, runId: string) => {
-    port.postMessage({ event: 'agent_run_changed', sessionId, runId })
+  const notifyAgentRunChanged = (sessionId: number, runId: string, interactionChanged?: true) => {
+    port.postMessage({ event: 'agent_run_changed', sessionId, runId, interactionChanged })
   }
   const loopScope = config.exclusive ? createDesktopLoopScope(process.env, runtime.db, ownerId) : undefined
   const agentModule: unknown = config.agentRuntimeModule
@@ -213,7 +213,8 @@ try {
   })
   const agentSessions = createAgentSessionApplication(createSqlAgentSessionRepository(runtime.db, 'sqlite'))
   const readAgentEvents = createDesktopAgentEventReader(runtime.db, config.database, ownerId)
-  const readToolDetails = createSqlAgentToolEventDetails(runtime.db, 'sqlite')
+  const readToolDetails = createSqlAgentToolEventDetails(runtime.db, 'sqlite',
+    () => loadSqliteAgentRunSecret(runtime.db, config.database))
   const mcpCrypto = createDesktopMcpCrypto(config.database)
   port.postMessage({ event: 'ready', ownerId, schemaVersion })
   const compactions = new Map<string, {
@@ -304,7 +305,7 @@ try {
           result = await readDesktopImAttachmentReference(runtime.db, ownerId, job.params)
         } else if (job.method === 'im.inbox.recordGroup') {
           validateCommandParams(job.method, job.params)
-          result = await recordDesktopImGroupMessage(runtime.db, ownerId, job.params)
+          result = await recordDesktopImGroupMessage(runtime.db, ownerId, job.params, () => agentRuns?.resumeReflections())
         } else if (job.method === 'im.inbox.groupAttentionHistory') {
           validateCommandParams(job.method, job.params)
           result = await readDesktopImGroupAttentionHistory(runtime.db, ownerId, job.params)

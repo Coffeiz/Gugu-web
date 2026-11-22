@@ -332,7 +332,7 @@ export function renderSmartLayout(layout: unknown, t: Translate, initialState?: 
         return `<figure class="chat-smart-chart" data-smart-chart="${kind}" data-smart-chart-unit="${unit}"${colorAttribute(component.color)}${source ? ` data-smart-filter="${source}" data-smart-operator="${filter?.operator}"` : ''}>
           <figcaption class="chat-smart-label">${iconSlot(component.icon)}${title}</figcaption>
           <div class="chat-smart-chart-canvas"><canvas aria-hidden="true"></canvas></div>
-          <details><summary>${t('chartData')}</summary><ul>${rows}</ul></details>
+          <details><summary><span data-smart-chart-chevron aria-hidden="true"></span>${t('chartData')}</summary><ul>${rows}</ul></details>
           <p class="chat-smart-view-notice" data-smart-empty hidden>${t('empty')}</p>
         </figure>`
       }

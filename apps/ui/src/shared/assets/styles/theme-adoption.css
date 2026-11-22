@@ -281,22 +281,19 @@ html[data-theme='dark'][data-family] .chat-window .msg-file-ext {
      且色相跟周边窗体撞色。 */
   background: var(--gugu-chat-send-bg);
 }
-html[data-theme='dark'][data-family] .chat-window .msg.ai .msg-bubble,
-html[data-theme='dark'][data-family] .chat-window .chat-assistant-smart-card > .md-view .chat-smart-view,
+html[data-theme='dark'][data-family] .chat-window .msg:is(.ai, .member) .msg-bubble,
 html[data-theme='dark'][data-family] .chat-window .msg-voice {
   color: var(--content-primary);
   background: var(--gugu-chat-assistant-bg);
   border-color: var(--border-subtle);
   box-shadow: var(--elevation-card);
 }
-html[data-theme='dark'][data-family] .chat-window .msg.ai .msg-bubble.md-body,
-html[data-theme='dark'][data-family] .chat-window .chat-assistant-smart-card > .md-view .chat-smart-view {
+html[data-theme='dark'][data-family] .chat-window .msg:is(.ai, .member) .msg-bubble.md-body {
   background: color-mix(in srgb, var(--surface-panel) 50%, var(--surface-raised));
   border-color: var(--border-default);
 }
 /* 用户气泡暗色由 tokens/components.css 的 --gugu-chat-user-bg 暗色覆盖统一提供，
    product.css 的双主题规则已消费该 token，这里不再重复声明。 */
-html[data-theme='dark'][data-family] .chat-window .msg.member .msg-bubble,
 html[data-theme='dark'][data-family] .chat-window .msg-quoted {
   color: var(--content-secondary);
   background: var(--surface-soft);

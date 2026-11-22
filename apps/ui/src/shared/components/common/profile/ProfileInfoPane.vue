@@ -5,7 +5,7 @@
       <label>{{ t('sharedUi.nickname') }}</label>
       <input v-model="displayName" class="form-input" :class="{ modified: displayName !== (authStore.user?.displayName ?? '') }" :placeholder="t('sharedUi.nickname')" />
     </div>
-    <div class="pm-field"><label>{{ t('sharedUi.username') }}</label><div class="pm-static">{{ desktop ? '本地用户' : (authStore.user?.username ?? '—') }}</div></div>
+    <div class="pm-field"><label>{{ t('sharedUi.username') }}</label><div class="pm-static">{{ desktop ? t('navigation.localUser') : (authStore.user?.username ?? '—') }}</div></div>
     <div class="pm-field"><label>{{ t('sharedUi.email') }}</label><div class="pm-static">{{ authStore.user?.email ?? '—' }}</div></div>
     <div class="pm-field"><label>{{ t('sharedUi.uid') }}</label><div class="pm-static pm-uid">{{ authStore.user?.id ?? '—' }}</div></div>
     <div class="pm-field"><label>{{ t('sharedUi.joinedAt') }}</label><div class="pm-static">{{ authStore.user?.createdAt ?? '—' }}</div></div>
@@ -32,14 +32,14 @@ const props = defineProps({
 })
 const desktop = useDesktopProfile()
 const authStore = useAuthStore()
-const displayName = ref(desktop ? '本地用户' : (authStore.user?.displayName ?? ''))
+const displayName = ref(desktop ? t('navigation.localUser') : (authStore.user?.displayName ?? ''))
 const saving = ref(false)
 const msg = ref('')
 const msgType = ref('ok')
 const visibleMsg = computed(() => msg.value || props.externalMessage)
 const visibleMsgType = computed(() => msg.value ? msgType.value : props.externalMessageType)
 
-watch(() => authStore.user?.displayName, value => { displayName.value = value ?? '' })
+watch(() => desktop ? t('navigation.localUser') : authStore.user?.displayName, value => { displayName.value = value ?? '' })
 
 async function save() {
   saving.value = true

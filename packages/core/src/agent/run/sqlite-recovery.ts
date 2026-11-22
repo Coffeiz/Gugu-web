@@ -1,3 +1,4 @@
+import { listActiveSqliteAgentRuns } from './sqlite-admission.js'
 import { randomUUID } from 'node:crypto'
 import { sql, type Kysely } from 'kysely'
 import { dataContext } from '../../contracts/index.js'
@@ -75,6 +76,36 @@ export async function settleClosedSqliteInteraction(db: Kysely<Database>, path: 
   } finally { await leases.release(identity, lease) }
 }
 
+/** 完成已挂起的内部等待取消，无需重建模型。 */
+export async function settleCancelledSqliteSubagentWait(db: Kysely<Database>, path: string, identity: RunIdentity) {
+  const owner = dataContext(identity.ownerId).ownerId.replaceAll('-', '')
+  const { rows } = await sql`SELECT 1 FROM agent_run_controls d
+    JOIN agent_run_checkpoints c USING(user_id,session_id,run_id)
+    WHERE d.user_id=${owner} AND d.session_id=${identity.sessionId} AND d.run_id=${identity.runId}
+      AND d.cancel_requested=1 AND c.status='waiting'`.execute(db)
+  if (!rows.length) return false
+  const secret = await loadSqliteAgentRunSecret(db, path)
+  const store = createSqliteAgentRunStore<CanonicalRunContext>(db, secret, { writeHistory: writeSqliteAgentHistory })
+  const leases = createSqliteAgentRunLeasePort(db)
+  const lease = await leases.acquire(identity)
+  if (!lease) return false
+  try {
+    const previous = await store.read(identity)
+    if (previous?.status !== 'waiting' || !(previous.subagentWaitChildId || previous.agentInboxWaiting)) return false
+    const sequence = previous.sequence + 1
+    const event: RunEvent = { identity, sequence, id: randomUUID(), round: previous.round, type: 'final',
+      payload: { status: 'cancelled', errorCode: null, text: '' } }
+    await store.commit({
+      identity, lease, expectedVersion: previous.version, events: [event], interactionReceipt: null,
+      subagentWaitChildId: null, agentInboxWaiting: false,
+      checkpoint: { ...previous, version: previous.version + 1, sequence, status: 'cancelled', phase: 'idle',
+        subagentWaitChildId: null, agentInboxWaiting: false, errorCode: null },
+      history: previous.context ? { outcome: 'interruption', context: previous.context, text: '' } : null,
+    })
+    return true
+  } finally { await leases.release(identity, lease) }
+}
+
 function canResumeCheckpoint(checkpoint: RunCheckpoint<CanonicalRunContext>) {
   if (checkpoint.status !== 'running' || !checkpoint.context || checkpoint.remoteStatusUnknown
     || checkpoint.unpersistedToolResult || checkpoint.pending || checkpoint.queuedInteractions?.length
@@ -106,6 +137,7 @@ function canResumeCheckpoint(checkpoint: RunCheckpoint<CanonicalRunContext>) {
 export async function settleExclusiveSqliteAgentRuns(db: Kysely<Database>, path: string, ownerId: string,
   reconcile?: (call: ToolCall, identity: RunIdentity & { roundId: string }) => Promise<ToolResult>,
   resume?: (checkpoint: RunCheckpoint<CanonicalRunContext>) => Promise<boolean>,
+  restoreBoundRun?: (identity: RunIdentity, source: string | null) => boolean | Promise<boolean>,
 ): Promise<void> {
   const owner = dataContext(ownerId).ownerId.replaceAll('-', '')
   await sql`UPDATE desktop_agent_reflection_jobs
@@ -117,20 +149,19 @@ export async function settleExclusiveSqliteAgentRuns(db: Kysely<Database>, path:
     WHERE s.user_id=${owner} AND (s.source IS NULL OR s.source='web') AND s.execution_state='baseline_updating'
       AND NOT EXISTS (SELECT 1 FROM agent_run_admissions a
         WHERE a.user_id=s.user_id AND a.session_id=s.id AND a.run_id=s.active_run_id)`.execute(db)
-  const { rows } = await sql<{ session_id: number; run_id: string }>`
-    SELECT a.session_id,a.run_id FROM agent_run_admissions a
-    JOIN conversation_sessions s ON s.id=a.session_id AND s.user_id=a.user_id AND s.active_run_id=a.run_id
-    WHERE a.user_id=${owner}`.execute(db)
-  if (!rows.length) return
+  const active = await listActiveSqliteAgentRuns(db, ownerId)
+  if (!active.length) return
+  // 独占接管先释放全部旧租约，再开始重建运行，避免父子重启顺序影响恢复。
+  for (const { identity } of active) await sql`UPDATE agent_run_leases SET expires_at_ms=0
+    WHERE user_id=${owner} AND session_id=${identity.sessionId} AND run_id=${identity.runId}`.execute(db)
   const secret = await loadSqliteAgentRunSecret(db, path)
   const store = createSqliteAgentRunStore<CanonicalRunContext>(db, secret, { writeHistory: writeSqliteAgentHistory })
   const leases = createSqliteAgentRunLeasePort(db)
   const { failStart } = createSqliteAgentRunCoordination(db, store)
-  for (const row of rows) {
-    const identity = { ownerId, sessionId: String(row.session_id), runId: row.run_id }
+  for (const { identity, source } of active) {
+    if (await restoreBoundRun?.(identity, source)) continue
+    const row = { session_id: Number(identity.sessionId), run_id: identity.runId }
     const previous = await store.read(identity)
-    await sql`UPDATE agent_run_leases SET expires_at_ms=0
-      WHERE user_id=${owner} AND session_id=${row.session_id} AND run_id=${row.run_id}`.execute(db)
     if (!previous) {
       await failStart(identity)
       continue
@@ -138,6 +169,20 @@ export async function settleExclusiveSqliteAgentRuns(db: Kysely<Database>, path:
     if (terminalRunStates.has(previous.status)) {
       await sql`UPDATE conversation_sessions SET active_run_id=NULL,execution_state='idle'
         WHERE user_id=${owner} AND id=${row.session_id} AND active_run_id=${row.run_id}`.execute(db)
+      continue
+    }
+    if (previous.status === 'waiting' && (previous.subagentWaitChildId || previous.agentInboxWaiting)) {
+      const { rows: [control] } = await sql<{ cancel_requested: number }>`
+        SELECT cancel_requested FROM agent_run_controls
+        WHERE user_id=${owner} AND session_id=${row.session_id} AND run_id=${row.run_id}`.execute(db)
+      if (control?.cancel_requested) {
+        await settleCancelledSqliteSubagentWait(db, path, identity)
+      } else {
+        const ready = previous.subagentWaitChildId
+          ? !await store.isSubagentPending(identity, previous.subagentWaitChildId)
+          : Boolean((await store.readAgentInbox?.(identity))?.length || (await store.readSubagentFinals?.(identity))?.length)
+        if (ready) await resume?.(previous)
+      }
       continue
     }
     if (previous.status === 'waiting' && previous.pending) {

@@ -6,12 +6,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import type { Pool,PoolClient } from 'pg'
-import { stableJson,type CanonicalContextPorts,type CanonicalRunContext,type RunIdentity } from '@gugu/core/agent'
+import { stableJson,type CanonicalContextPorts,type RunIdentity } from '@gugu/core/agent'
 import { ProviderRuntime,ProviderStreamSanitizer,stripThinking,type ProviderRuntimeOptions } from '@gugu/core/providers'
 import { removeLocalTree } from '@gugu/fs/node'
 import { createPersistentAgentRuntimeWithContextFactory } from '../../../../src/modules/agent/run/runtime.js'
 import { createCanonicalHistoryWriter } from '../../../../src/modules/agent/chat/write.js'
-import { createPostgresAgentRunStore } from '../../../../src/modules/agent/run/store.js'
 import { enqueueAgentRunLocked } from '../../../../src/modules/agent/run/dispatch.js'
 import { createRedisAgentCancellationCommands } from '../../../../src/adapters/cache/redis-events.js'
 import { createRedisLiveSubscription } from '../../../../src/adapters/cache/redis-live-subscription.js'
@@ -70,7 +69,6 @@ test('真实PG/Redis/Linux FS：Canonical成功事务登记→独立Provider反�
     await pool.query("INSERT INTO users(id,is_active,account_status) VALUES($1,true,'active');",[owner])
     await pool.query("INSERT INTO user_bots VALUES(91,$1,'telegram',true,'202','[]',false,true,NULL,true,true)",[owner])
     const db=pool,envelope=createImInboundEnvelope(secret),diagnostics:string[]=[]
-    const readStore=createPostgresAgentRunStore<CanonicalRunContext>(db,secret,{async writeHistory(){throw Error('只读store不得写历史')}})
     let mainCalls=0,reflectionCalls=0,releases=0,reflectionFail=false,historyFail=false,clearBeforeHistory=false
     const references:CanonicalContextPorts['references']={dehydrate:async entry=>entry.message,hydrate:async entry=>entry.message}
     const prepareRequest:CanonicalContextPorts['prepareRequest']=async()=>({prefix:[],dynamicTail:[]})
@@ -96,13 +94,7 @@ test('真实PG/Redis/Linux FS：Canonical成功事务登记→独立Provider反�
       async memoryEnabled(){return true},
       async resolveRuntime(job,_signal,authorizeCurrent){const provider=new ProviderRuntime({...providerOptions,transport:{async request(request,signal){assert.equal(await authorizeCurrent(),true);return providerOptions.transport!.request(request,signal)}}});return{provider,selection:{modelIdentity:job.modelIdentity,accessScopeHash:job.accessScopeHash,contextWindow:8000},
         usageConfig:{defaultLimit6h:null,byokEnabled:false,localDeployment:false,model:'synthetic',provider:'openai',isByok:false},async release(){releases++;await provider.close()}}},
-      async rebuildOwnerSnapshot(job,runtime,signal){const checkpoint=await readStore.read(job.identity);assert.ok(checkpoint?.context)
-        return runtime.provider.rebuildReflectionSnapshot(job.identity,checkpoint.context,signal)},diagnose:code=>diagnostics.push(code),leaseMs:1000,pollMs:10}
-    options.rebuildMemberSnapshot=async(job,runtime,signal)=>{
-      assert.equal(job.scope.type,'platform-user')
-      const checkpoint=await readStore.read(job.identity);assert.equal(checkpoint?.status,'completed');assert.ok(checkpoint.context)
-      return runtime.provider.rebuildReflectionSnapshot(job.identity,checkpoint.context,signal)
-    }
+      diagnose:code=>diagnostics.push(code),leaseMs:1000,pollMs:10}
     service=createImReflectionService(options)
     async function run(session:number,group=false,sender='202',platform:'telegram'|'qq'='telegram'){
       const identity:RunIdentity={ownerId:owner,sessionId:String(session),runId:randomUUID()},base=sourceContext(platform)
@@ -144,7 +136,7 @@ test('真实PG/Redis/Linux FS：Canonical成功事务登记→独立Provider反�
       await db.query("UPDATE web_reflection_intervals SET retry_at=clock_timestamp() WHERE retry_at IS NOT NULL AND ($1::integer IS NULL OR session_id=$1)", [session])
       await db.query("UPDATE gugu_im_reflection_jobs SET next_attempt_at=clock_timestamp() WHERE state IN ('pending','ready','retry','deferred') AND ($1::integer IS NULL OR session_id=$1)", [session])
     }
-    await t.test('真实成功history登记且主runtime关闭后独立Provider仍用真实快照写授权本地文件',async()=>{
+    await t.test('成功历史登记后独立 Provider 能写入授权范围',async()=>{
       const before=(await db.query('SELECT clock_timestamp() AS at')).rows[0].at as Date
       const first=await run(1);assert.equal(first.checkpoint?.status,'completed')
       const pending=(await db.query('SELECT state,next_attempt_at,clock_timestamp() AS at FROM gugu_im_reflection_jobs WHERE session_id=1')).rows[0]
@@ -227,7 +219,7 @@ test('真实PG/Redis/Linux FS：Canonical成功事务登记→独立Provider反�
       await due(16);await service!.runOnce();assert.equal(reflectionCalls,calls+1)
       assert.equal((await db.query('SELECT state FROM gugu_im_reflection_jobs WHERE session_id=16')).rows[0].state,'completed')
     })
-    await t.test('清除围栏和当前owner解绑阻止旧Job重新生成记忆，群快照丢失必须defer',async()=>{
+    await t.test('清除围栏和当前owner解绑阻止旧Job重新生成记忆，群任务重启后仍能执行',async()=>{
       await run(4);await service!.clearOwner(owner,()=>removeLocalTree(root,`${owner}/.agent`))
       await db.query("UPDATE gugu_im_reflection_jobs SET state='ready',next_attempt_at=clock_timestamp() WHERE session_id=4")
       const calls=reflectionCalls;await service!.runOnce();assert.equal(reflectionCalls,calls)
@@ -235,13 +227,23 @@ test('真实PG/Redis/Linux FS：Canonical成功事务登记→独立Provider反�
       await run(5);await db.query("UPDATE user_bots SET owner_platform_user_id='other-synthetic-owner'");await due();await service!.runOnce()
       assert.equal((await db.query('SELECT state FROM gugu_im_reflection_jobs WHERE session_id=5')).rows[0].state,'cancelled')
       await db.query("UPDATE user_bots SET owner_platform_user_id='202'")
-      await run(6,true);await service!.stop();service=createImReflectionService(options);await due()
+      const {identity:groupIdentity}=await run(6,true)
+      const tx=await db.connect()
+      try{
+        await tx.query('BEGIN')
+        const {rows:[anchor]}=await tx.query("SELECT id::text,conversation_seq::text FROM conversation_messages WHERE session_id=6 AND role='user'")
+        await service!.stageCompaction!(tx,groupIdentity,[anchor.id])
+        await service!.stageCompaction!(tx,groupIdentity,[anchor.id])
+        const windows=await tx.query("SELECT through_message_seq::text FROM gugu_im_reflection_trigger_windows WHERE session_id=6 AND status='pending'")
+        assert.deepEqual(windows.rows,[{through_message_seq:anchor.conversation_seq}])
+      }finally{await tx.query('ROLLBACK');tx.release()}
+      assert.equal((await db.query('SELECT 1 FROM gugu_im_reflection_trigger_windows WHERE session_id=6')).rowCount,0)
+      await service!.stop();service=createImReflectionService(options);await due()
       const pendingGroupJobs=(await db.query('SELECT id FROM gugu_im_reflection_jobs WHERE session_id=6')).rows
-      const beforeDefer=(await db.query('SELECT clock_timestamp() AS at')).rows[0].at as Date
       for(const _job of pendingGroupJobs)await service.runOnce()
       const group=(await db.query('SELECT state,attempts,next_attempt_at,clock_timestamp() AS at FROM gugu_im_reflection_jobs WHERE session_id=6')).rows
-      assert.ok(group.every(job=>job.state==='deferred'&&job.attempts===0));assert.equal(reflectionCalls,calls)
-      assert.ok(group.every(job=>job.next_attempt_at.getTime()>=beforeDefer.getTime()+240000&&job.next_attempt_at.getTime()<=job.at.getTime()+240001),'缺真实群快照仍按240秒暂缓重试，不得缩成闲置触发时间')
+      assert.ok(group.every(job=>job.state==='completed'))
+      assert.equal(reflectionCalls,calls+group.length)
     })
     await t.test('第五次实际Provider拒绝成为dead且不写用量；失联running租约由新attempt安全接管',async()=>{
       await run(7);await db.query("UPDATE gugu_im_reflection_jobs SET attempts=4,next_attempt_at=clock_timestamp() WHERE session_id=7")
@@ -265,15 +267,13 @@ test('真实PG/Redis/Linux FS：Canonical成功事务登记→独立Provider反�
         assert.equal(waiting.state,'deferred');assert.equal(waiting.attempts,0)
       }finally{release();await first;await otherService.stop();options.resolveRuntime=original}
     })
-    await t.test('重建快照缺失本批原消息时defer，不用delta补正文伪造append_reuse',async()=>{
-      await run(11);const original=options.rebuildOwnerSnapshot
-      options.rebuildOwnerSnapshot=async(...args)=>{const snapshot=await original(...args);assert.ok(snapshot)
-        const{digest:_old,...payload}=snapshot,changed={...payload,persistedMessageIds:[],persistedPrefix:[]}
-        return{...changed,digest:digest(changed)}}
-      await service!.stop();service=createImReflectionService(options);const calls=reflectionCalls
-      try{await due(11);await service.runOnce();assert.equal(reflectionCalls,calls)
-        assert.equal((await db.query('SELECT state FROM gugu_im_reflection_jobs WHERE session_id=11')).rows[0].state,'deferred')
-      }finally{options.rebuildOwnerSnapshot=original}
+    await t.test('服务重启后只用持久化证据完成反思',async()=>{
+      await run(11)
+      await service!.stop();service=createImReflectionService(options)
+      const calls=reflectionCalls
+      await due(11);await service.runOnce()
+      assert.equal(reflectionCalls,calls+1)
+      assert.equal((await db.query('SELECT state FROM gugu_im_reflection_jobs WHERE session_id=11')).rows[0].state,'completed')
     })
     await t.test('清除revision后才完成的旧Run不以新revision重建idle窗口，下一真实新Run正常arm',async()=>{
       clearBeforeHistory=true;const old=await run(12,true)
@@ -324,7 +324,7 @@ test('真实PG/Redis/Linux FS：Canonical成功事务登记→独立Provider反�
       const oldVersion=Number(b.row.scope_version),before=reflectionCalls
       await due(17);assert.equal(await service!.runOnce(),true)
       assert.equal((await db.query('SELECT state FROM gugu_im_reflection_jobs WHERE id=$1',[a.row.id])).rows[0].state,'completed')
-      assert.equal(reflectionCalls,before+1,'A通过真实快照及独立Provider完成反思')
+      assert.equal(reflectionCalls,before+1,'A 使用持久证据独立完成反思')
       const retained=(await db.query('SELECT scope_version,state FROM gugu_im_reflection_jobs WHERE id=$1',[b.row.id])).rows[0]
       assert.equal(Number(retained.scope_version),oldVersion,'A提交不能批量推进B的scope版本，绕过B自己的Session围栏')
       assert.ok(['ready','pending'].includes(retained.state))
@@ -334,7 +334,7 @@ test('真实PG/Redis/Linux FS：Canonical成功事务登记→独立Provider反�
       assert.equal((await db.query('SELECT state FROM gugu_im_reflection_jobs WHERE id=$1',[b.row.id])).rows[0].state,'cancelled')
       assert.equal(reflectionCalls,before+1,'B不能借A的同群进度重新调用Provider或重学旧事实')
     })
-    await t.test('关闭群私人记忆召回不禁止owner学习，成员前缀仍等待真实owner快照而不吞掉idle窗口',async()=>{
+    await t.test('关闭群私人记忆召回不禁止owner学习，成员来源仍等待有效 owner 授权而不吞掉idle窗口',async()=>{
       assert.equal((await db.query('SELECT group_owner_memory_enabled FROM user_bots WHERE id=91')).rows[0].group_owner_memory_enabled,false)
       const actual=await run(19,true);assert.equal(actual.checkpoint?.status,'completed')
       const armed=(await db.query('SELECT last_active_run_id,idle_due_at FROM gugu_im_reflection_trigger_states WHERE session_id=19')).rows[0]
@@ -344,7 +344,7 @@ test('真实PG/Redis/Linux FS：Canonical成功事务登记→独立Provider反�
       const scanner=createImReflectionService({...options,passiveMemoryEnabled:async()=>true})
       try{await scanner.runOnce()}finally{await scanner.stop()}
       const windows=(await db.query('SELECT reason,status FROM gugu_im_reflection_trigger_windows WHERE user_id=$1 AND session_id=19',[owner])).rows
-      assert.deepEqual(windows,[{reason:'idle',status:'pending'}],'私人召回开关不等同禁止学习；缺合格owner前缀必须保留窗口')
+      assert.deepEqual(windows,[{reason:'idle',status:'pending'}],'私人召回开关不等同禁止学习；缺少有效 owner 授权来源时保留窗口')
       const codec=createImReflectionCodec(secret),rows=(await db.query('SELECT * FROM gugu_im_reflection_jobs WHERE session_id=19')).rows
       assert.ok(rows.length>0)
       assert.ok(rows.every(row=>(codec.open(row,row.nonce,row.payload,'job') as ImReflectionJob).actor.role==='member'),'本合成Run没有结构化owner mention，保持成员权限')
@@ -397,7 +397,7 @@ test('真实PG/Redis/Linux FS：Canonical成功事务登记→独立Provider反�
       assert.equal((await db.query('SELECT state FROM gugu_im_reflection_jobs WHERE id=$1',[target])).rows[0].state,'completed')
       assert.equal(reflectionCalls,calls+1);assert.equal((await db.query("SELECT 1 FROM agent_usage WHERE session_id=21 AND scenario='reflection'")).rowCount,billed)
     })
-    await t.test('重启后成员私聊及群成员从真实成功checkpoint恢复，无新Run也能完成；群公开反思仍等原快照',async()=>{
+    await t.test('重启后私聊成员、群成员和公开群记忆均能独立反思',async()=>{
       await db.query("UPDATE gugu_im_reflection_jobs SET next_attempt_at=clock_timestamp()+interval '1 day' WHERE state IN('pending','ready','retry','deferred')")
       for(const group of[false,true]){
         const session=group?23:22
@@ -410,9 +410,9 @@ test('真实PG/Redis/Linux FS：Canonical成功事务登记→独立Provider反�
         for(let i=0;i<(group?2:1);i++)assert.equal(await service.runOnce(),true)
         const rows=(await db.query('SELECT * FROM gugu_im_reflection_jobs WHERE session_id=$1',[session])).rows,codec=createImReflectionCodec(secret)
         const member=rows.find(row=>(codec.open(row,row.nonce,row.payload,'job') as ImReflectionJob).scope.type==='platform-user')
-        assert.ok(member);assert.equal(member.state,'completed');assert.equal(reflectionCalls,before+1)
+        assert.ok(member);assert.equal(member.state,'completed');assert.equal(reflectionCalls,before+(group?2:1))
         if(group){const publicJob=rows.find(row=>(codec.open(row,row.nonce,row.payload,'job') as ImReflectionJob).scope.type==='group')
-          assert.ok(publicJob);assert.equal(publicJob.state,'deferred','公开群scope仍禁止持久历史重建')}
+          assert.ok(publicJob);assert.equal(publicJob.state,'completed')}
       }
     })
     await t.test('成员恢复先复核当前身份与pending会话：角色变化拒绝，待入站未清空只延期且不发Provider',async()=>{

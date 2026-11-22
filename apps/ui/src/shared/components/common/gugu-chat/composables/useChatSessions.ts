@@ -1,5 +1,6 @@
 import { nextTick, computed, onScopeDispose, watch, type Ref } from 'vue'
 import { i18n } from '@/i18n'
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { agentApi } from '@/services/api'
 import { accountBoundaryEpoch, getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 import type { ChatMessage, ChatSession, QueuedMessagePayload } from '../chatTypes'
@@ -164,7 +165,20 @@ export function useChatSessions(options: {
     return { first, pages, overlaps, pagination: page.pagination }
   }
 
-  async function refreshSessionMessages(id: number) {
+  async function refreshSessionMessages(id: number, restoreInteractions = false) {
+    if (restoreInteractions) {
+      const generation = options.getViewGeneration()
+      const account = getAccountBoundaryEpoch()
+      try {
+        const data = await (options.historyAccess?.readFirstPage?.(id)
+          ?? options.historyAccess?.readHistory(id)
+          ?? agentApi.getMessages(id, { restoreInteractions: true }))
+        if (sessionId.value !== id || generation !== options.getViewGeneration() || account !== getAccountBoundaryEpoch()) return
+        messages.value = mergeSessionMessageDelta(messages.value,
+          mapSessionMessageDelta(data, mkid, options.resolveSpeaker).filter(message => message.role === 'interaction'))
+      } catch { /* 普通会话恢复时仍可重读确认。 */ }
+      return
+    }
     if (!options.historyAccess || options.historyAccess.readChanges) return messageSync.refresh(id)
     if (sessionId.value !== id) return
     const generation = options.getViewGeneration()
@@ -386,17 +400,34 @@ export function useChatSessions(options: {
     options.composerRef.value?.focus()
   }
 
+  const pendingDeletes = new Set<number>()
   async function deleteSession(id: number) {
+    const target = sessions.value.find(session => session.id === id)
+    if (!target || pendingDeletes.has(id)) return
+    const epoch = getAccountBoundaryEpoch()
+    const { t } = i18n.global
+    pendingDeletes.add(id)
     try {
+      if (!await confirmDialog({
+        title: t('chatUi.desktopDeleteTitle'),
+        message: t('chatUi.desktopDeleteMessage', { title: target.title || t('chatUi.conversation') }),
+        confirmText: t('common.actions.delete'),
+        tone: 'danger',
+      })) return
+      if (epoch !== getAccountBoundaryEpoch() || !sessions.value.some(session => session.id === id)) return
       if (options.historyAccess) await options.historyAccess.deleteSession(id)
       else await agentApi.deleteSession(String(id))
+      if (epoch !== getAccountBoundaryEpoch()) return
       sessionSnapshots.delete(id)
       sessions.value = sessions.value.filter(s => s.id !== id)
       if (sessionId.value === id) {
         await newSession()
         sessionSnapshots.delete(id)
       }
-    } catch {}
+    } catch {
+    } finally {
+      pendingDeletes.delete(id)
+    }
   }
 
   async function renameSession(id: number, title: string) {

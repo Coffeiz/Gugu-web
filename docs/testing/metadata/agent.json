@@ -1486,8 +1486,8 @@
     "domain": "agent-tools",
     "layer": "L1",
     "owner": "packages/core/src/agent/tools",
-    "productionEntry": "calendar/workspaces/overview tool groups",
-    "keyBehavior": "真实Agent与SQLite验证日历提醒、工作区关联名称、总览计数、owner、取消、错误和只读副作用",
+    "productionEntry": "calendar/workspaces tool groups",
+    "keyBehavior": "真实Agent与SQLite验证日历提醒、工作区关联名称、owner、取消、错误和只读副作用",
     "ci": "core-node"
   },
   "packages/core/tests/agent/tools/project-durable.test.ts": {
@@ -1687,7 +1687,7 @@
     "layer": "L2",
     "owner": "apps/web-host/src/modules/agent/rag/production.ts + agent-rag-run-authorization.ts + apps/web-host/src/modules/agent/rag/context.ts",
     "productionEntry": "Web dispatch lease → Core Run preparation → RAG registry 与 owner 历史正文端口",
-    "keyBehavior": "真实 registry dispatch 验证 owner RAG 召回、会话快照去重、租约绑定、Run 替换拒绝和 search_memory 撤权；自动 RAG 经 Core buildRunRagContext 调用正式 SQLite 持久索引，按 lease owner 授权并排除历史已注入正文；read_conversation 仅在 Host 提供正文端口并显式启用时发现，get_current_time 使用 Host 注入时钟/owner 时区且忽略模型时区参数；list_events/get_upcoming 按 Host per-lease 日历端口显式发现并复验 dispatch lease；get_dashboard_stats 复用 Core Kysely 聚合且需 Host 时钟；list_workspaces/get_workspace 复用 Core owner-scoped 查询且需 Host workspace 端口；list_clients/list_projects 只读工具按 owner 数据服务及 Web lease 授权发现；list_trash 仅在 Host 提供可信回收站端口时发现，忽略模型 owner、规范化 limit 并验证混合资源排序/限额/微秒/满额提示；关闭开关不访问索引、授权期间取消向上传播；使用临时 SQLite/FS 与合成 PG/auth/config 端口",
+    "keyBehavior": "真实 registry dispatch 验证 owner RAG 召回、会话快照去重、租约绑定、Run 替换拒绝和 search_memory 撤权；自动 RAG 经 Core buildRunRagContext 调用正式 SQLite 持久索引，按 lease owner 授权并排除历史已注入正文；read_conversation 仅在 Host 提供正文端口并显式启用时发现，get_current_time 使用 Host 注入时钟/owner 时区且忽略模型时区参数；list_events/get_upcoming 按 Host per-lease 日历端口显式发现并复验 dispatch lease；已退役的 get_dashboard_stats 不进入工具配置和定义；list_workspaces/get_workspace 复用 Core owner-scoped 查询且需 Host workspace 端口；list_clients/list_projects 只读工具按 owner 数据服务及 Web lease 授权发现；list_trash 仅在 Host 提供可信回收站端口时发现，忽略模型 owner、规范化 limit 并验证混合资源排序/限额/微秒/满额提示；关闭开关不访问索引、授权期间取消向上传播；使用临时 SQLite/FS 与合成 PG/auth/config 端口",
     "ci": "node-webui"
   },
   "apps/web-host/tests/agent/tools/mcp/authorization.test.ts": {

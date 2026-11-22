@@ -79,7 +79,7 @@ export function visitDurableCanonical(value: Json, decodeToolContent: boolean): 
     if (type === 'tool_result' && key === 'content') {
       if (typeof item === 'string' && isTemporaryMediaUrl(item))
         throw new Error('临时媒体URL必须先固化为授权稳定引用')
-      // 只在明确的工具结果边界解一次JSON对象/数组。read_file正文等普通字符串不做递归猜测。
+      // 只在明确的工具结果边界解一次JSON对象/数组。普通文本正文不做递归猜测。
       if (decodeToolContent && typeof item === 'string' && /^[\s]*[\[{]/u.test(item)) {
         let parsed: unknown
         try {

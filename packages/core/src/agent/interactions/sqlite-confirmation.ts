@@ -140,3 +140,16 @@ export function createSqliteToolConfirmation(
     },
   }
 }
+
+/** 子运行的描述从同一条已准备的确认意图解析，工具入参无法选择确认策略。 */
+export async function describeSqliteDelegatedConfirmation(tx: Transaction<Database>, identity: RunIdentity, request: PendingInteraction) {
+  const { rows: [intent] } = await sql<{ action: Parameters<typeof createSqliteToolConfirmation>[2] }>`
+    SELECT action FROM desktop_agent_confirmation_intents
+    WHERE user_id=${dataContext(identity.ownerId).ownerId.replaceAll('-', '')}
+      AND session_id=${identity.sessionId} AND run_id=${identity.runId}
+      AND interaction_id=${request.id} AND tool_call_id=${request.toolCall.id}
+      AND tool_name=${request.toolCall.name} AND receipt_id IS NULL AND expires_at>${Date.now()}
+  `.execute(tx)
+  if (!intent) throw new CoreError('conflict', '子运行确认意图已失效')
+  return createSqliteToolConfirmation(tx, async () => false, intent.action).describe(tx, identity, request)
+}

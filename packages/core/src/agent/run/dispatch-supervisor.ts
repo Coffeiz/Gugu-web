@@ -4,6 +4,7 @@ export interface AgentDispatchSubscription {
 }
 
 export interface AgentDispatchSupervisorPorts {
+  scanReady?(signal: AbortSignal): Promise<void>
   listReady(limit?: number): Promise<Array<{ ownerId: string; sessionId: string }>>
   kick(ownerId: string, sessionId: string): Promise<void>
   publish(channel: string, value: string): Promise<number>
@@ -13,21 +14,22 @@ export interface AgentDispatchSupervisorPorts {
   concurrency?: number
 }
 
-const channel = 'agent-dispatch-ready:v1'
+export const agentDispatchReadyChannel = 'agent-dispatch-ready:v1'
 
 /** Agent dispatch 恢复编排；队列读取、唤醒传输和进程启停由 Host 注入/管理。 */
 export function createAgentDispatchSupervisor(ports: AgentDispatchSupervisorPorts) {
   const interval = ports.recoveryIntervalMs ?? 30000, concurrency = ports.concurrency ?? 8
   if (!Number.isSafeInteger(interval) || interval < 1000 || !Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 100) throw new RangeError('调度扫描配置无效')
   return {
-    async notify(): Promise<void> { await ports.publish(channel, '1') },
+    async notify(): Promise<void> { await ports.publish(agentDispatchReadyChannel, '1') },
     async start() {
       let live: AgentDispatchSubscription | null = null
-      try { live = await ports.subscribe([channel]) } catch { ports.diagnose('subscription_failed') }
+      try { live = await ports.subscribe([agentDispatchReadyChannel]) } catch { ports.diagnose('subscription_failed') }
       const controller = new AbortController()
       const active = new Map<string, Promise<void>>()
       async function scan() {
         let ready: Array<{ ownerId: string; sessionId: string }>
+        try { await ports.scanReady?.(controller.signal) } catch { ports.diagnose('scan_failed') }
         try { ready = await ports.listReady(100) } catch { ports.diagnose('scan_failed'); return }
         for (const item of ready) {
           if (controller.signal.aborted || active.size >= concurrency) break
@@ -42,7 +44,7 @@ export function createAgentDispatchSupervisor(ports: AgentDispatchSupervisorPort
           while (!controller.signal.aborted) {
             await scan()
             if (!live) {
-              try { live = await ports.subscribe([channel]) } catch { ports.diagnose('subscription_failed') }
+              try { live = await ports.subscribe([agentDispatchReadyChannel]) } catch { ports.diagnose('subscription_failed') }
             }
             const wait = new AbortController(), abort = () => wait.abort()
             controller.signal.addEventListener('abort', abort, { once: true })

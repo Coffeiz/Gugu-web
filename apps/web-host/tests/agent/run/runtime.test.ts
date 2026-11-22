@@ -82,7 +82,7 @@ test('Core Agent Runtime 使用 Host 注入端口请求 Provider 并持久化终
   })
   const events: RunEvent[] = []
   assert.equal(typeof instance.provider.branchProvider, 'function')
-  assert.equal(typeof instance.provider.reflectionProjection, 'function')
+  assert.equal(typeof instance.provider.reflectionProvider, 'function')
   assert.equal(typeof instance.provider.summaryProjection, 'function')
   const branch = await instance.provider.branchProvider(bound.modelIdentity).complete({
     ownerId: identity.ownerId,

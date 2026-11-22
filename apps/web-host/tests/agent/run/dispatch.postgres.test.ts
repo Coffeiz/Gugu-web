@@ -5,7 +5,11 @@ import { Pool } from 'pg'
 import { withPostgresTransaction } from '../../../src/adapters/database/postgres-transaction.js'
 import { lockAgentRunSession } from '../../../src/modules/agent/run/start.js'
 import { createPostgresAgentActiveStatusReader, createPostgresAgentDispatch, enqueueAgentRunLocked } from '../../../src/modules/agent/run/dispatch.js'
+import { createImHostScans } from '../../../src/modules/im/gateway/host-scans.js'
 import { createPostgresAgentRunLeasePort } from '../../../src/modules/agent/run/lease.js'
+import { subagentDeliverySchema } from '../../../../../packages/database/src/shared/subagent-deliveries.js'
+import { agentInboxSchema } from '../../../../../packages/database/src/shared/agent-inbox.js'
+import { subagentWaitSchema } from '../../../../../packages/database/src/shared/subagent-waits.js'
 import { createAgentRunCodec } from '@gugu/core/agent/run/codec'
 import type { RunCheckpoint } from '@gugu/core/agent'
 
@@ -117,7 +121,10 @@ test('调度租约并发仅一人选中，过期只接管原 run，密文绑定 
     assert.deepEqual(stored.rows.map(row => row.state), ['selected', 'queued'])
     assert.equal(stored.rows[0].payload.includes(Buffer.from('client-opaque')), false)
     assert.equal((await pool.query('SELECT pending_message_count FROM conversation_sessions WHERE id=1')).rows[0].pending_message_count, 1)
-    const service = createPostgresAgentDispatch(pool, 'synthetic-key', 1000)
+    await pool.query(subagentDeliverySchema('bytea'))
+    await pool.query(subagentWaitSchema)
+    await pool.query(agentInboxSchema('bytea'))
+    const service = createPostgresAgentDispatch(pool, 'synthetic-key', 1000, ['web'], { subagentWaits: true })
     assert.deepEqual(await service.listReady(), [{ ownerId: owner, sessionId: '1' }])
     const foreign = { ownerId: other, sessionId: '2', runId: 'foreign-run' }
     await withPostgresTransaction(pool, async client => {
@@ -159,7 +166,68 @@ test('调度租约并发仅一人选中，过期只接管原 run，密文绑定 
     await pool.query("INSERT INTO agent_run_checkpoints VALUES ($1,1,'run-one','waiting')", [owner])
     await pool.query("UPDATE agent_run_dispatch SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE run_id='run-one'")
     assert.equal(await service.claim(owner, '1'), null)
+    await pool.query(`INSERT INTO agent_subagent_deliveries
+      (owner_id,parent_session_id,parent_run_id,call_id,child_id,child_run_id,request_digest,status,updated_at)
+      VALUES($1,'1','run-one','first','abcdef01','child-first','digest','queued','now'),
+            ($1,'1','run-one','other','abcdef02','child-other','digest','queued','now')`, [owner])
+    await pool.query(`INSERT INTO agent_subagent_waits VALUES($1,'1','run-one','abcdef01')`, [owner])
+    const complete = (childId: string) => pool.query(`UPDATE agent_subagent_deliveries
+      SET status='completed',nonce=decode('00','hex'),payload=decode('00','hex') WHERE owner_id=$1 AND child_id=$2`, [owner, childId])
+    await complete('abcdef02')
+    assert.equal(await service.claim(owner, '1'), null)
+    assert.equal((await service.listReady()).some(item => item.ownerId === owner), false)
+    await complete('abcdef01')
+    assert.equal((await service.listReady()).some(item => item.ownerId === owner), true)
+    const awakened = await service.claim(owner, '1')
+    assert.equal(awakened?.identity.runId, 'run-one')
+    assert.equal(awakened?.mode, 'resume')
+    assert.equal(awakened?.resolution, undefined)
+    await pool.query(`DELETE FROM agent_subagent_waits WHERE owner_id=$1`, [owner])
+    await pool.query(`UPDATE agent_run_dispatch SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE run_id='run-one'`)
+    await pool.query(`UPDATE agent_subagent_deliveries SET consumed_checkpoint_version=3 WHERE owner_id=$1`, [owner])
+    await pool.query(`INSERT INTO agent_inbox_waits VALUES($1,'1','run-one')`, [owner])
+    assert.equal(await service.claim(owner, '1'), null)
+    await pool.query(`INSERT INTO agent_inbox_messages
+      (owner_id,sender_session_id,sender_run_id,recipient_session_id,recipient_run_id,call_id,message_id,nonce,payload)
+      VALUES($1,'2','child-first','1','run-one','progress','message-id',decode('00','hex'),decode('00','hex'))`, [owner])
+    assert.equal((await service.claim(owner, '1'))?.mode, 'resume')
+    await pool.query(`DELETE FROM agent_inbox_waits WHERE owner_id=$1`, [owner])
+    await pool.query(`UPDATE agent_run_dispatch SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE run_id='run-one'`)
     await pool.query("UPDATE agent_run_checkpoints SET status='running' WHERE run_id='run-one'")
+    const im = { ownerId: owner, sessionId: '5', runId: 'im-waiting' }
+    const imDispatch = createPostgresAgentDispatch(pool, 'synthetic-key', 1000, ['im'], { subagentWaits: true })
+    await pool.query('CREATE TABLE gugu_im_inbound_receipts(user_id uuid,session_id integer,run_id text,state text)')
+    await pool.query('INSERT INTO conversation_sessions(id,user_id) VALUES (5,$1)', [owner])
+    await pool.query("INSERT INTO conversation_messages(id,session_id,role) VALUES (15,5,'user')")
+    await withPostgresTransaction(pool, async client => {
+      assert.equal(await lockAgentRunSession(client, im), true)
+      await enqueueAgentRunLocked(client, 'synthetic-key', im, { v: 3, source: 'im', userMessageId: 15,
+        locale: null, origin: null, accessVersion: 'a'.repeat(64), im: { platform: 'telegram', botId: '1',
+          chatType: 'c2c', chatId: null, platformUserId: '202' } }, 60)
+    })
+    await pool.query("INSERT INTO gugu_im_inbound_receipts VALUES($1,5,'im-waiting','dispatched')", [owner])
+    await pool.query("INSERT INTO agent_run_checkpoints VALUES($1,5,'im-waiting','waiting')", [owner])
+    await pool.query(`INSERT INTO agent_subagent_deliveries
+      (owner_id,parent_session_id,parent_run_id,call_id,child_id,child_run_id,request_digest,status,updated_at)
+      VALUES($1,'5','im-waiting','im-start','abcdef03','im-child','digest','queued','now')`, [owner])
+    await pool.query("INSERT INTO agent_subagent_waits VALUES($1,'5','im-waiting','abcdef03')", [owner])
+    const imLeases: Awaited<ReturnType<typeof imDispatch.claim>>[] = []
+    const imScan = createImHostScans({ pool, secretKey: 'synthetic-key',
+      async kick(ownerId, sessionId) { imLeases.push(await imDispatch.claim(ownerId, sessionId)) }, async recover() {} })
+    try {
+      const signal = new AbortController().signal
+      await imScan.scanDispatch(signal)
+      assert.equal(imLeases.length, 0)
+      assert.equal(await imDispatch.claim(owner, '5'), null)
+      await complete('abcdef03')
+      assert.equal(await service.claim(owner, '5'), null)
+      await imScan.scanDispatch(signal)
+      await imScan.close()
+      assert.equal(imLeases.length, 1)
+      assert.deepEqual(imLeases[0]?.identity, im)
+      assert.equal(imLeases[0]?.mode, 'resume')
+      assert.equal(imLeases[0]?.resolution, undefined)
+    } finally { await imScan.close() }
     const resumed = await service.claim(owner, '1')
     assert.equal(resumed?.mode, 'resume')
     await pool.query("UPDATE agent_run_dispatch SET lease_expires_at=clock_timestamp()-interval '1 second',request_expires_at=clock_timestamp()-interval '1 second' WHERE run_id='run-one'")

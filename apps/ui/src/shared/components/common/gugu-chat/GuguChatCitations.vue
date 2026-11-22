@@ -2,15 +2,17 @@
   <div ref="messageContent" class="chat-assistant-content"
     @pointerover="onHover" @pointerout="onPointerOut" @focusin="onFocus" @focusout="scheduleClose" @click="onMessageClick"
     @input="onSmartInput" @load.capture="showLoadedImage" @error.capture="markImageFailed">
-    <div v-for="(block, index) in blocks" :key="index" :class="block.smart ? 'chat-assistant-smart-card' : 'msg-bubble md-body'">
-      <div v-if="block.stream" class="chat-smart-stream">
-        <div class="chat-smart-stream-grid" :data-smart-ratio="block.stream.ratio">
-          <div v-for="region in block.stream.regions" :key="region.name" class="chat-smart-stream-region" :data-region="region.name" :data-status="region.status">
-            <MarkdownView :html="region.html" chat />
+    <div class="msg-bubble md-body">
+      <div v-for="(block, index) in blocks" :key="index" class="chat-assistant-block">
+        <div v-if="block.stream" class="chat-smart-stream">
+          <div class="chat-smart-stream-grid" :data-smart-ratio="block.stream.ratio">
+            <div v-for="region in block.stream.regions" :key="region.name" class="chat-smart-stream-region" :data-region="region.name" :data-status="region.status">
+              <MarkdownView :html="region.html" chat />
+            </div>
           </div>
         </div>
+        <MarkdownView v-else :html="block.html" :text="text" chat :stream-motion="presenting && !block.smart" :render-math="!presenting && !block.smart" />
       </div>
-      <MarkdownView v-else :html="block.html" :text="text" chat :stream-motion="presenting && !block.smart" :render-math="!presenting && !block.smart" />
     </div>
   </div>
   <Teleport to="body">
@@ -56,6 +58,7 @@ import { chatCalendarEventsKey } from './chatPresentationAccess'
 import { applyChatCardSnapshots, stripChatCardSnapshotMarkers } from './chatCardSnapshots'
 import { useCitationSiteNames } from './useCitationSiteNames'
 import Icon from '@/components/common/icons/Icon.vue'
+import FlipChevron from '@/components/common/controls/FlipChevron.vue'
 import { smartViewIcons, updateSmartViewControl } from './chatSmartLayout'
 import { readSmartStream, type SmartStreamLayout } from './chatSmartStream'
 import { handleSmartInteractiveClick, selectSmartViewOption } from './chatSmartInteractive'
@@ -99,7 +102,7 @@ const decorated = computed(() => {
   const html = !props.presenting && props.snapshotMessage && account
     ? applyChatCardSnapshots(objectHtml.value, JSON.stringify([account, props.snapshotMessage]), t('chatUi.cardSnapshot'))
     : objectHtml.value
-  return namedSources.value.length
+  return !props.presenting && (namedSources.value.length || /(?:来源|Sources?)/iu.test(html))
     ? decorateChatSources(html, namedSources.value)
     : { html, groups: [] }
 })
@@ -159,6 +162,25 @@ watch([messageContent, blocks], (_, __, onCleanup) => {
     if (icon) render(h(Icon, { name: icon, size: 15 }), slot)
   }
   onCleanup(() => slots?.forEach(slot => render(null, slot)))
+}, { flush: 'post' })
+
+watch([messageContent, blocks], (_, __, onCleanup) => {
+  const slots = messageContent.value?.querySelectorAll<HTMLElement>(
+    '.chat-smart-layout-view figure[data-smart-chart] > details > summary > [data-smart-chart-chevron]',
+  )
+  const disposers: (() => void)[] = []
+  for (const slot of slots ?? []) {
+    const details = slot.closest('details')
+    if (!details) continue
+    const update = () => render(h(FlipChevron, { open: details.open }), slot)
+    update()
+    details.addEventListener('toggle', update)
+    disposers.push(() => {
+      details.removeEventListener('toggle', update)
+      render(null, slot)
+    })
+  }
+  onCleanup(() => disposers.forEach(dispose => dispose()))
 }, { flush: 'post' })
 
 function onSmartInput(event: Event) {
@@ -281,7 +303,7 @@ onBeforeUnmount(close)
 </script>
 
 <style scoped>
-.md-view :deep(a.chat-source-pill) {
+.chat-assistant-content :deep(.md-view a.chat-source-pill) {
   display: inline-flex; align-items: center; gap: 0.35em;
   max-width: min(100%, 12em); box-sizing: border-box; padding: 0.08em 0.62em; margin-inline-start: 0.25em;
   border: 1px solid var(--action-outline); border-radius: var(--radius-pill);
@@ -289,24 +311,24 @@ onBeforeUnmount(close)
   font-size: 0.85em; font-weight: 500; line-height: 1.55; vertical-align: middle; text-decoration: none;
   transition: background-color var(--motion-hover-control), border-color var(--motion-hover-control);
 }
-.md-view :deep(a.chat-source-pill:is(:hover, :focus-visible)) {
+.chat-assistant-content :deep(.md-view a.chat-source-pill:is(:hover, :focus-visible)) {
   background: var(--action-soft-hover); border-color: var(--action-primary); opacity: 1;
 }
-.md-view :deep(.chat-source-icon), .chat-source-icon {
+.chat-assistant-content :deep(.md-view .chat-source-icon), .chat-source-icon {
   display: inline-grid; place-items: center; flex: none; inline-size: 1em; block-size: 1em;
 }
-.md-view :deep(.chat-source-icon::before), .chat-source-icon::before {
+.chat-assistant-content :deep(.md-view .chat-source-icon::before), .chat-source-icon::before {
   content: ''; grid-area: 1 / 1; inline-size: 100%; block-size: 100%; background: currentColor;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M10 13.5l4-4m-6 6l-1 1a3 3 0 0 1-4-4l4-4a3 3 0 0 1 4 0m5 0l1-1a3 3 0 0 1 4 4l-4 4a3 3 0 0 1-4 0'/%3E%3C/svg%3E") center / contain no-repeat;
 }
-.md-view :deep(.chat-source-icon:has(img.is-loaded)::before), .chat-source-icon:has(img.is-loaded)::before { visibility: hidden; }
-.md-view :deep(.chat-source-icon img), .chat-source-icon img {
+.chat-assistant-content :deep(.md-view .chat-source-icon:has(img.is-loaded)::before), .chat-source-icon:has(img.is-loaded)::before { visibility: hidden; }
+.chat-assistant-content :deep(.md-view .chat-source-icon img), .chat-source-icon img {
   grid-area: 1 / 1; inline-size: 100%; block-size: 100%; margin: 0; border-radius: 0;
   object-fit: contain; visibility: hidden;
 }
-.md-view :deep(.chat-source-icon img.is-loaded), .chat-source-icon img.is-loaded { visibility: visible; }
-.md-view :deep(.chat-source-title) { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.md-view :deep(.chat-source-count) { flex: none; color: var(--content-secondary); }
+.chat-assistant-content :deep(.md-view .chat-source-icon img.is-loaded), .chat-source-icon img.is-loaded { visibility: visible; }
+.chat-assistant-content :deep(.md-view .chat-source-title) { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.chat-assistant-content :deep(.md-view .chat-source-count) { flex: none; color: var(--content-secondary); }
 .chat-citation-preview {
   position: fixed;
   box-sizing: border-box; width: min(320px, calc(100vw - 16px)); max-height: calc(100dvh - 16px); overflow: auto;

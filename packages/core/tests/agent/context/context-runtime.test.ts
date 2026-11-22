@@ -1,8 +1,10 @@
+import { setTimeout as delay } from 'node:timers/promises'
+import { formatAgentHistoryMessageTime } from '../../../src/agent/context/history/time.js'
 import { createHash } from 'node:crypto'
 import { describe,expect,it,vi } from 'vitest'
 import { Executor } from "../../../src/agent/executor/executor.js"
 import type { CanonicalContextPorts,CanonicalRunContext,CanonicalMessage,CurrentUser,AgentRunnerPorts,RunCheckpoint,RunEvent,RunStore } from "../../../src/agent/index.js"
-import { createCanonicalContextPort,createCanonicalRunner,createCanonicalSourceLoader,createReflectionFinalizer,isEarlyExit,ReflectionSnapshots,restorePreparedContext,stableJson } from "../../../src/agent/index.js"
+import { createCanonicalContextPort,createCanonicalRunner,createCanonicalSourceLoader,isEarlyExit,restorePreparedContext,stableJson } from "../../../src/agent/index.js"
 import { loadedSkills } from '../../../src/agent/context/loaded-skills.js'
 
 const identity = { ownerId: '小北', sessionId: 'session-1', runId: 'run-1' }
@@ -55,6 +57,35 @@ function fixture() {
 const call = { id: 'tool-1', name: 'synthetic_tool', input: { text: '合成参数' } }
 
 describe('Canonical上下文与Run运行时组合', () => {
+  it.each([false, true])('上下文准备拆分召回和历史恢复，已有召回结果=%s', async prepared => {
+    const { context, ports } = fixture()
+    const record = vi.fn()
+    ports.observation = { record }
+    const load = ports.load
+    const tail: CanonicalMessage[] = [{ role: 'user', content: '合成召回证据' }]
+    ports.load = async (...args) => {
+      const loaded = await load(...args)
+      if (isEarlyExit(loaded)) return loaded
+      return { ...loaded, input: { ...loaded.input, userTimezone: 'Asia/Shanghai',
+        history: loaded.input.history.map(row => ({ ...row, createdAt: '2026-01-01T00:00:00Z' })),
+        ...(prepared ? { preparedRag: { tail } } : {}),
+      } }
+    }
+    const buildRag = vi.fn(async () => { await delay(35); return { tail } })
+    ports.preparation = { ...ports.preparation, buildRag, formatMessageTime: formatAgentHistoryMessageTime }
+    const state = await context.prepare(identity, signal())
+    expect(buildRag).toHaveBeenCalledTimes(prepared ? 0 : 1)
+    expect(state.prepared.area.entries.map(entry => entry.source)).toEqual(['restored_history', 'restored_history', 'rag', 'user'])
+    expect(stableJson(state.prepared.area)).toContain('2026-01-01 08:00')
+    const event = record.mock.calls.map(([value]) => value).find(value => value.name === 'Agent context preparation breakdown')
+    expect(event.output.assembly).toMatchObject({
+      rag_source: prepared ? 'prepared' : 'lookup', history_rows: 2, history_time_calls: 1,
+      stages_ms: { rag: expect.any(Number), restore_history: expect.any(Number),
+        history_time_format: expect.any(Number), assemble_messages: expect.any(Number) },
+    })
+    if (!prepared) expect(event.output.assembly.stages_ms.rag).toBeGreaterThanOrEqual(25)
+    expect(event.output.assembly.stages_ms.restore_history).toBeGreaterThanOrEqual(event.output.assembly.stages_ms.history_time_format)
+  })
   it('只接受配对工具回执，丢弃正文或伪造用户标记不会保留技能摘要', async () => {
     const { context } = fixture()
     let state = await context.prepare(identity, signal())
@@ -131,6 +162,32 @@ describe('Canonical上下文与Run运行时组合', () => {
     expect(second.context.prepared).toEqual(first.context.prepared)
     expect(second.context.compactions).toHaveLength(1)
     expect(ports.compaction.summarize).toHaveBeenCalledTimes(1)
+  })
+  it('子 Run 压缩失败保留原 checkpoint，成功后只携带新压缩候选和恢复消息', async () => {
+    const { ports } = fixture()
+    const context = createCanonicalContextPort({ ...ports, compactionHistory: 'latest' })
+    let state = await context.prepare(identity, signal())
+    for (let round = 1; round <= 2; round++) {
+      const current = { ...call, id: `child-${round}` }
+      state = await context.afterRound(state, { text: `工具轮${round}`, calls: [current] }, round)
+      state = await context.afterTool(state, current, { kind: 'completed', value: '完成', successful: true, mutated: false }, round)
+    }
+    const usage = { input: 85, output: 1, cacheRead: 0, cacheWrite: 0, contextInput: 85 }
+    const normal = await context.afterUsage(state, usage, signal())
+    expect(normal.applied).toBe(true)
+    const previous = { ...state, compactions: [{ ...normal.context.compactions[0]!, id: '旧候选' }] }
+    vi.mocked(ports.compaction.summarize).mockRejectedValueOnce(new Error('合成失败'))
+    const failed = await context.afterUsage(previous, usage, signal())
+    expect(failed.applied).toBe(false)
+    expect(failed.context.prepared).toEqual(previous.prepared)
+    expect(failed.context.compactions).toEqual(previous.compactions)
+    const compacted = await context.afterUsage(previous, usage, signal())
+    expect(compacted.applied).toBe(true)
+    expect(compacted.context.prepared.area.entries.length).toBeLessThan(previous.prepared.area.entries.length)
+    expect(compacted.context.compactions.map(item => item.id)).not.toContain('旧候选')
+    const recovered = await restorePreparedContext(compacted.context.prepared, identity, ports, ports.references, signal())
+    expect(recovered.area.messages).toContainEqual(expect.objectContaining({ content: expect.stringContaining('合成摘要') }))
+    expect(recovered.area.messages).not.toContainEqual(expect.objectContaining({ content: expect.stringContaining('以前的问题') }))
   })
   it('标准Core来源loader实际连接快照和历史再准备上下文，RAG只一次且snapshot仅交事务候选', async () => {
     const { context, ports, services } = fixture()
@@ -570,14 +627,8 @@ describe('Canonical上下文与Run运行时组合', () => {
 
   it.each([['普通工具', false, false, false, false], ['凭据交互', true, false, false, false], ['工具后模型失败', false, true, false, false],
   ['原生执行结果未知', false, false, true, false], ['未开放工具', false, false, false, true]] as const)('Runtime的%s经过真实Canonical转换，所有checkpoint与历史安全且先提交再final', async (_label, credential, fail, nativeUnknown, unavailable) => {
-    const { context, ports: contextPorts, services, accessScopeHash } = fixture()
-    const snapshots = new ReflectionSnapshots<unknown>(services, () => 1000)
-    contextPorts.finalization.complete = vi.fn(createReflectionFinalizer({
-      snapshots,
-      policy: async () => ({ enabled: true, scope: 'owner' }),
-      projection: { append: (projection, tail) => ({ ...projection, wire: { prefix: projection.wire, tail }, dynamicTailSize: 0 }) },
-      notifyReady: async () => undefined,
-    }).complete)
+    const { context, ports: contextPorts, services } = fixture()
+    contextPorts.finalization.complete = vi.fn(async () => undefined)
     type C = CanonicalRunContext
     let stored: RunCheckpoint<C> | null = null
     const history: string[] = []
@@ -750,16 +801,15 @@ describe('Canonical上下文与Run运行时组合', () => {
       expect(mutations).toBe(unavailable ? 0 : 1)
       expect(appliedCompactions).toHaveLength(0)
       expect(contextPorts.finalization.complete).not.toHaveBeenCalled()
-      expect(snapshots.peek(identity, 'synthetic-model', accessScopeHash)).toBeNull()
       if (nativeUnknown) { expect(providerCalls).toBe(1); expect(toolCalls).toBe(1) }
       if (unavailable) { expect(providerCalls).toBe(1); expect(toolCalls).toBe(0) }
     } else {
       expect(history[0]).toContain('tool_result')
       expect(history[0]).toContain('已完成')
       expect(appliedCompactions).toHaveLength(1)
-      expect(contextPorts.finalization.complete).toHaveBeenCalledOnce()
-      expect(snapshots.peek(identity, 'synthetic-model', accessScopeHash)?.systemPrompt).toContain('合成实时Shell状态')
-      expect(snapshots.peek(identity, 'synthetic-model', accessScopeHash)?.providerContextInput).toBeNull()
+      expect(contextPorts.finalization.complete).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        requestSystemPrompt: expect.stringContaining('合成实时Shell状态'), providerContextInput: null,
+      }))
     }
     expect(published.at(-1)).toBe('final')
     expect(contextPorts.preparation.buildRag).toHaveBeenCalledOnce()

@@ -83,6 +83,14 @@ function profileText(value: unknown): string {
   }).slice(0, PROFILE_INJECT_MAX).map(text => `- ${text}`).join('\n')
 }
 
+export async function readAgentMemoryProfile(storage: AgentMemoryContextStorage, ownerId: string, signal?: AbortSignal) {
+  return profileText(parse(await read(storage, ownerId, 'profile.json', 1_000_000, signal)))
+}
+
+export async function readAgentMemoryDaily(storage: AgentMemoryContextStorage, ownerId: string, signal?: AbortSignal) {
+  return ((await read(storage, ownerId, 'daily.md', 500_000, signal)) ?? '').trim().slice(0, DAILY_INJECT_CHARS)
+}
+
 function readPatterns(patternRaw: string | null, factsRaw: string | null, factsMarkdown: string | null): Pattern[] {
   if (patternRaw !== null) {
     if (!patternRaw.trim()) return []
@@ -234,7 +242,7 @@ function renderLens(raw: unknown, now: number): string {
   return '## 怎么读懂 TA（解读镜片 · 偏置不独裁）\n下面是相处里摸出的、读懂这个人的经验先验。用它**偏置**你的理解，但别当铁律——和当下语境冲突时以当下为准。\n' + lines.join('\n')
 }
 
-async function readSummary(storage: AgentMemoryContextStorage, ownerId: string, signal?: AbortSignal) {
+export async function readAgentMemorySummary(storage: AgentMemoryContextStorage, ownerId: string, signal?: AbortSignal) {
   const raw = await read(storage, ownerId, 'summary.json', 1_000_000, signal)
   const value = parse(raw)
   const summary = object(value) ? value : null
@@ -245,7 +253,7 @@ async function readSummary(storage: AgentMemoryContextStorage, ownerId: string, 
   return { text: (legacyText ?? '').trim(), ts: finite((legacyTs ?? '').trim()) }
 }
 
-async function readStance(storage: AgentMemoryContextStorage, ownerId: string, signal?: AbortSignal) {
+export async function readAgentMemoryStance(storage: AgentMemoryContextStorage, ownerId: string, signal?: AbortSignal) {
   const value = parse(await read(storage, ownerId, 'stance.json', 100_000, signal))
   const row = object(value) ? value : null
   return { stance: String(row?.stance ?? '').trim() || null, ts: finite(row?.ts) }
@@ -256,11 +264,11 @@ export async function loadAgentMemoryContext(input: AgentMemoryContextInput): Pr
   input.signal?.throwIfAborted()
   if (!OWNER.test(input.ownerId)) throw new TypeError('记忆上下文 owner 无效')
   if (!input.storage || typeof input.storage.readText !== 'function' || !Number.isFinite(input.now)) throw new TypeError('记忆上下文读取参数无效')
-  const [profileRaw, patternRaw, factsRaw, factsMarkdown, memoryRaw, dailyRaw, summary, stance, lensRaw] = await Promise.all([
-    read(input.storage, input.ownerId, 'profile.json', 1_000_000, input.signal), read(input.storage, input.ownerId, 'pattern.json', 2_000_000, input.signal),
+  const [profile, patternRaw, factsRaw, factsMarkdown, memoryRaw, daily, summary, stance, lensRaw] = await Promise.all([
+    readAgentMemoryProfile(input.storage, input.ownerId, input.signal), read(input.storage, input.ownerId, 'pattern.json', 2_000_000, input.signal),
     read(input.storage, input.ownerId, 'facts.json', 2_000_000, input.signal), read(input.storage, input.ownerId, 'facts.md', 2_000_000, input.signal),
-    read(input.storage, input.ownerId, 'memory.md', FILE_LIMIT, input.signal), read(input.storage, input.ownerId, 'daily.md', 500_000, input.signal),
-    readSummary(input.storage, input.ownerId, input.signal), readStance(input.storage, input.ownerId, input.signal), read(input.storage, input.ownerId, 'lens.json', 1_000_000, input.signal),
+    read(input.storage, input.ownerId, 'memory.md', FILE_LIMIT, input.signal), readAgentMemoryDaily(input.storage, input.ownerId, input.signal),
+    readAgentMemorySummary(input.storage, input.ownerId, input.signal), readAgentMemoryStance(input.storage, input.ownerId, input.signal), read(input.storage, input.ownerId, 'lens.json', 1_000_000, input.signal),
   ])
   input.signal?.throwIfAborted()
   const patterns = readPatterns(patternRaw, factsRaw, factsMarkdown)
@@ -288,9 +296,9 @@ export async function loadAgentMemoryContext(input: AgentMemoryContextInput): Pr
   const lensValue = parse(lensRaw)
   const lens = object(lensValue) ? lensValue : null
   const result: AgentMemoryContext = {
-    profile: profileText(parse(profileRaw)), pattern: renderPatterns(patterns, input.query, input.now, queryVector, patternVectors),
+    profile, pattern: renderPatterns(patterns, input.query, input.now, queryVector, patternVectors),
     memory: retrieveMemory(memory, memoryVectors, queryVector),
-    daily: (dailyRaw ?? '').trim().slice(0, DAILY_INJECT_CHARS), summary: summary.text, summary_ts: summary.ts,
+    daily, summary: summary.text, summary_ts: summary.ts,
     first_ts: firstTs, stance: stance.stance, stance_ts: stance.ts, lens: renderLens(lens, input.now),
   }
   return result

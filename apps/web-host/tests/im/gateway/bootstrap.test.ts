@@ -42,7 +42,7 @@ for (const {platform,privateStreaming=false,chart=false,flip=false,plainFlip=fal
   const redis = createRedisStreamCommands(redisUrl!), diagnostics: string[] = [], requests: Record<string, unknown>[] = []
   const ownerPlatformId = platform === 'telegram' ? '202' : platform === 'feishu' ? 'ou_synthetic' : 'synthetic-owner'
   await f.pool.query('UPDATE user_bots SET owner_platform_user_id=$1,app_id=$2,private_streaming_enabled=$4 WHERE id=$3',
-    [ownerPlatformId, platform === 'wechat' ? 'https://ilinkai.weixin.qq.com' : platform === 'feishu' ? 'cli_0123456789abcdef' : 'synthetic-app', f.botId,privateStreaming])
+    [ownerPlatformId, platform === 'wechat' ? 'https://ilinkai.weixin.qq.com' : platform === 'feishu' ? 'cli_0123456789abcdef' : 'synthetic-app', f.botId,privateStreaming || platform === 'telegram'])
   const question = '请回答合成生产入口问题', answer = chart?'图前\n```mermaid\nflowchart LR; A --> B\n```\n图后':'已完成合成生产入口回答'+(privateStreaming?'\n':'')
   const streamFrames:Record<string,unknown>[]=[],drafts:Record<string,unknown>[]=[]
   const chartBytes:Buffer[]=[],mediaMessages:Record<string,unknown>[]=[],plainMessages:Record<string,unknown>[]=[]
@@ -58,6 +58,8 @@ for (const {platform,privateStreaming=false,chart=false,flip=false,plainFlip=fal
   let sent = 0, starts = 0, runtime: ReturnType<typeof createNodeImHostRuntime> | undefined
   let rejectDelivery = platform === 'telegram'
   const probeMcpSchema = (platform === 'qq' && !privateStreaming && !plainFlip) || group
+  const ownerReadTools = ['get_project', 'list_events', 'get_upcoming', 'note_search', 'canvas_list']
+  const schemaProbeNames = ['manage_mcp_servers', ...(group ? ownerReadTools : [])]
   let requestedMcpSchema = false
   let forwardedTime = false
   // 仅平台HTTP/WS和Provider网络为替身；业务source、模型绑定、授权、Redis、PG、Harness均实际运行。
@@ -68,7 +70,7 @@ for (const {platform,privateStreaming=false,chart=false,flip=false,plainFlip=fal
     if (probeMcpSchema && body.stream && !requestedMcpSchema) {
       requestedMcpSchema = true
       const call = { index: 0, id: 'mcp_schema_probe', type: 'function', function: {
-        name: 'search_tools', arguments: JSON.stringify({ names: ['manage_mcp_servers'] }),
+        name: 'search_tools', arguments: JSON.stringify({ names: schemaProbeNames }),
       } }
       return response(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [call] }, finish_reason: 'tool_calls' }] })}\n\ndata: [DONE]\n\n`)
     }
@@ -157,7 +159,7 @@ for (const {platform,privateStreaming=false,chart=false,flip=false,plainFlip=fal
           feishuNetwork: () => { const agent = new Agent(); return { agent, validateEndpoint: async () => {}, close: async () => agent.destroy() } },
           createFeishuSdk: config => ({ async start({ eventDispatcher }) { config.onReady!(); starts++;
             await eventDispatcher.invoke({ schema: '2.0', header: { event_type: 'im.message.receive_v1', app_id: 'cli_0123456789abcdef', create_time: String(Date.now()), event_id: 'fs_event_101' },
-              event: { sender: { sender_type: 'user', sender_id: { open_id: ownerPlatformId } }, message: { message_id: 'om_input', chat_id: group ? 'oc_group' : 'oc_private', chat_type: group ? 'group' : 'p2p', message_type: 'text', content: JSON.stringify({ text: group ? `@_user_1 ${question}` : question }), mentions: group ? [{ key: '@_user_1', id: { open_id: 'ou_bot' }, name: '合成机器人' }] : [] } } }, { needCheck: false })
+              event: { sender: { sender_type: 'user', sender_id: { open_id: group ? 'ou_synthetic_member' : ownerPlatformId } }, message: { message_id: 'om_input', chat_id: group ? 'oc_group' : 'oc_private', chat_type: group ? 'group' : 'p2p', message_type: 'text', content: JSON.stringify({ text: group ? `@_user_1 ${question}` : question }), mentions: group ? [{ key: '@_user_1', id: { open_id: 'ou_bot' }, name: '合成机器人' }] : [] } } }, { needCheck: false })
           }, close() {} }),
         } },
     })
@@ -177,19 +179,30 @@ for (const {platform,privateStreaming=false,chart=false,flip=false,plainFlip=fal
     const primary = requests.find(body => JSON.stringify(body).includes(question))
     assert.ok(primary, 'Provider必须看到实际原始入站正文')
     if (probeMcpSchema) {
+      function resultText(content: unknown) {
+        if (typeof content === 'string') return content
+        assert.ok(Array.isArray(content))
+        const text = content.find(block => typeof block.text === 'string')?.text
+        assert.equal(typeof text, 'string')
+        return text
+      }
       const result = requests.filter(body => body.stream).flatMap(body =>
-        body.messages as { role: string; tool_call_id?: string; content?: string }[]).find(message =>
+        body.messages as { role: string; tool_call_id?: string; content?: unknown }[]).find(message =>
         message.role === 'tool' && message.tool_call_id === 'mcp_schema_probe')
       assert.ok(result?.content)
-      const schema = JSON.parse(result.content)
-      if (group) assert.deepEqual(schema.rejected, ['manage_mcp_servers'])
+      const schema = JSON.parse(resultText(result.content))
+      if (group) {
+        assert.deepEqual(schema.results, [])
+        assert.deepEqual(schema.rejected, schemaProbeNames)
+      }
       else {
-        assert.deepEqual(schema.tool_schemas, ['manage_mcp_servers'])
+        assert.deepEqual(schema.results.map((tool: { name: string }) => tool.name), ['manage_mcp_servers'])
+        assert.equal(schema.schema_in_context, true)
         const forwarded = requests.filter(body => body.stream).flatMap(body =>
-          body.messages as { role: string; tool_call_id?: string; content?: string }[]).find(message =>
+          body.messages as { role: string; tool_call_id?: string; content?: unknown }[]).find(message =>
           message.role === 'tool' && message.tool_call_id === 'forwarded_time')
         assert.ok(forwarded?.content)
-        assert.equal(JSON.parse(forwarded.content).timezone, 'UTC')
+        assert.equal(JSON.parse(resultText(forwarded.content)).timezone, 'UTC')
       }
     }
     const sessionId = (await f.pool.query('SELECT id FROM conversation_sessions')).rows[0]?.id
@@ -211,11 +224,8 @@ for (const {platform,privateStreaming=false,chart=false,flip=false,plainFlip=fal
     assert.deepEqual(tools.filter(name => name !== 'choose_no_reply'), ['call_tool', 'search_tools', 'use_skill', 'ask_user'])
     const catalog = JSON.stringify(primary!.messages)
     if (!group) assert.equal(catalog.includes('`react`'), platform === 'feishu')
-    if (probeMcpSchema) {
-      for (const name of ['get_project', 'list_events', 'get_upcoming', 'get_dashboard_stats', 'note_search', 'canvas_list']) {
-        assert.equal(catalog.includes(`\`${name}\``), !group, `IM 工具授权：${name}`)
-      }
-    }
+    if (probeMcpSchema && !group) for (const name of ownerReadTools)
+      assert.ok(catalog.includes(`\`${name}\``), `IM 工具授权：${name}`)
     if(group){
       assert.equal(cardKitCreates,0)
       assert.equal(sent,1)
@@ -228,7 +238,7 @@ for (const {platform,privateStreaming=false,chart=false,flip=false,plainFlip=fal
       assert.ok(streamFrames.every(frame=>frame.msg_seq===streamFrames[0]!.msg_seq))
       assert.equal(streamFrames.at(-1)!.stream_msg_id,'qq_stream_out')
     }
-    if(platform==='qq'&&!privateStreaming)assert.equal(plainMessages[0]?.msg_id,'qq_101')
+    if(platform==='qq'&&!privateStreaming)assert.equal(plainMessages.find(message=>JSON.stringify(message).includes(answer))?.msg_id,'qq_101')
     if(platform==='telegram')assert.ok(drafts.length>0,'真实Run token须经生产draft入口')
     if(streamRejected){
       assert.equal(streamAttempts,1);assert.equal(streamFrames.length,1)

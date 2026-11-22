@@ -1,8 +1,9 @@
+import { applyReflectionFileWrite } from '../../src/agent/memory/reflection/window.js'
 import { createDesktopGroupContextSearch } from '../../src/im/desktop-group-context.js'
 import { createDesktopChatAttachmentStore } from '../../src/agent/attachments/desktop-store.js'
 import { createDesktopImProjectionTransfer } from '../../src/runtime/desktop-im-projection-transfer.js'
 import { createSqliteAgentAdmission } from '../../src/agent/run/sqlite-admission.js'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sql } from 'kysely'
@@ -345,4 +346,66 @@ it('飞书和 Telegram 的延迟 ASK 复用被动历史消息，不重复追加�
       }
     } finally { await runtime.close() }
   } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
+it('第 50 条去重后的被动消息持久化触发上界，重启不丢进度', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gugu-im-reflection-'))
+  const path = join(directory, 'test.db')
+  let opened: Awaited<ReturnType<typeof openSqliteRuntime>> | undefined
+  try {
+    await initializeSqlite(path)
+    opened = await openSqliteRuntime(path)
+    const event = (n: number) => ({
+      platform: 'telegram', connectionId: 'a'.repeat(64), eventKey: n.toString(16).padStart(64, '0'),
+      platformUserId: 'synthetic-member', text: '合成被动消息',
+    })
+    for (let n = 1; n < 50; n++)
+      expect(await recordDesktopImGroupMessage(opened.runtime.db, opened.ownerId, event(n))).toBe(true)
+    expect(await recordDesktopImGroupMessage(opened.runtime.db, opened.ownerId, event(49))).toBe(false)
+    const state = sql`SELECT passive_count,requested_sequence FROM desktop_im_reflection_triggers`
+    expect((await state.execute(opened.runtime.db)).rows).toEqual([{ passive_count: 49, requested_sequence: 0 }])
+    await opened.runtime.close()
+    opened = await openSqliteRuntime(path)
+    let wakes = 0
+    const wake = () => { wakes++ }
+    expect(await recordDesktopImGroupMessage(opened.runtime.db, opened.ownerId, event(50), wake)).toBe(true)
+    expect(await recordDesktopImGroupMessage(opened.runtime.db, opened.ownerId, event(50), wake)).toBe(false)
+    expect(await recordDesktopImGroupMessage(opened.runtime.db, opened.ownerId, event(51), wake)).toBe(true)
+    expect(wakes).toBe(1)
+    expect((await state.execute(opened.runtime.db)).rows).toEqual([{ passive_count: 1, requested_sequence: 0 }])
+    const threshold = await sql<{ through_sequence: number; due_at_ms: number }>`SELECT through_sequence,due_at_ms
+      FROM desktop_im_reflection_thresholds`.execute(opened.runtime.db)
+    expect(threshold.rows).toEqual([{ through_sequence: 50, due_at_ms: expect.any(Number) }])
+    expect(threshold.rows[0]!.due_at_ms).toBeGreaterThan(Date.now() + 175_000)
+  } finally {
+    await opened?.runtime.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+it('恢复已准备的文件计划时跳过已落盘文件，继续写入失败文件', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gugu-im-reflection-write-'))
+  try {
+    const profile = join(directory, 'profile.json')
+    const daily = join(directory, 'daily.md')
+    await writeFile(profile, '原画像')
+    await writeFile(daily, '原日记')
+    let profileWrites = 0
+    const writeProfile = () => applyReflectionFileWrite('原画像', '新画像',
+      () => readFile(profile, 'utf8'), async value => { profileWrites++; await writeFile(profile, value) })
+    expect(await writeProfile()).toBe(true)
+    await expect(applyReflectionFileWrite('原日记', '新日记', () => readFile(daily, 'utf8'),
+      async () => { throw new Error('模拟第二个文件写入失败') })).rejects.toThrow()
+    expect(await writeProfile()).toBe(true)
+    expect(await applyReflectionFileWrite('原日记', '新日记',
+      () => readFile(daily, 'utf8'), value => writeFile(daily, value))).toBe(true)
+    expect(profileWrites).toBe(1)
+    expect(await readFile(daily, 'utf8')).toBe('新日记')
+    await writeFile(daily, '外部编辑')
+    expect(await applyReflectionFileWrite('原日记', '新日记',
+      () => readFile(daily, 'utf8'), value => writeFile(daily, value))).toBe(false)
+    expect(await readFile(daily, 'utf8')).toBe('外部编辑')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
 })

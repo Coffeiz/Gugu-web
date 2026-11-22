@@ -941,6 +941,12 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
         return entry
       })
     },
+    async agentWorkspaceRoot(directoryId: string) {
+      const path = await workspaces.resolveRoot(await workspaces.get(directoryId))
+      const info = await lstat(path, { bigint: true })
+      if (!info.isDirectory() || info.isSymbolicLink()) throw new DesktopError('forbidden', '工作区目录已变化')
+      return { path, identity: `${info.dev}.${info.ino}` }
+    },
     async agentWorkspaceInstructions(directoryId: string) {
       try {
         const binding = await workspaces.get(directoryId)

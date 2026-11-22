@@ -61,7 +61,7 @@ function openPreviewSession(
   })
 }
 
-export function subscribeDesktopAgentRunChanges(listener: (sessionId?: number) => void): () => void {
+export function subscribeDesktopAgentRunChanges(listener: (sessionId?: number, interactionChanged?: true) => void): () => void {
   const native = (window as DesktopWindow).guguDesktop
   if (native) return native.onAgentRunChanged?.(listener) ?? (() => {})
   if (!isDesktopSessionPreview()) return () => {}

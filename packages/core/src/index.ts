@@ -17,5 +17,4 @@ export * from './preferences/service.js'
 export { createLocalPreferenceTextFiles } from './preferences/text-files.js'
 export * from './preferences/document-store.js'
 
-export * from './overview.js'
 export * from './projects/stages.js'

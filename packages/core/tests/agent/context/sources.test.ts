@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { describe,expect,it } from 'vitest'
 import type { CanonicalRunPreparationPorts,ContextSourcePorts,Json,PreparationPorts,SessionSnapshotState } from "../../../src/agent/index.js"
-import { contextAccessScopeHash,createCanonicalRunLoader,createCanonicalSourceLoader,prepareContext,prepareRunContextSources,stableJson } from "../../../src/agent/index.js"
+import { DEFAULT_IDLE_TTL_MS,contextAccessScopeHash,createMainContextBuilder,updateBaselineSnapshot,createCanonicalRunLoader,createCanonicalSourceLoader,prepareContext,prepareRunContextSources,stableJson } from "../../../src/agent/index.js"
 const identity = { ownerId: 'owner', sessionId: 'session', runId: 'run' }
 function fixture() {
   let id = 0, now = 0, builds = 0, ragCalls = 0
@@ -148,6 +148,43 @@ describe('Core标准上下文来源组合', () => {
     expect(value.builds()).toBe(1); expect(value.events).not.toContain('projects')
     expect(second.sourceEffects.sessionSnapshot.phase).toBe('hit')
     expect(second.sourceEffects.sessionSnapshot.state.snapshotExpiresAt).toBe(1_801_000)
+  })
+  it('主场景从迁移前快照续期，到期重建时仍沿压缩基线读取历史', async () => {
+    const value = fixture()
+    const before = await prepareRunContextSources(identity, value.ports)
+    const compacted = updateBaselineSnapshot(before.sourceEffects.sessionSnapshot.state,
+      [{ role: 'summary', content: '合成历史摘要' }], value.ports, { baselineMessageSeq: 2 })
+    const frozen = compacted.context!
+    frozen.dynamic_context = frozen.snapshot_context!
+    delete frozen.snapshot_context
+    value.store({ ...compacted, baselineMessageSeq: 2 })
+    const scopedHistory = value.ports.historyReader.read
+    value.ports.historyReader.read = async (...args) => {
+      const history = await scopedHistory(...args)
+      return { ...history, baselineSeq: 2, baselineIdentity: {
+        baselineSeq: 2, baselineHash: '合成已持久基线哈希', snapshotHash: value.stored().snapshotHash,
+      } }
+    }
+    const migrated = { ...value.ports, builder: createMainContextBuilder(value.ports.builder) }
+    value.advance(DEFAULT_IDLE_TTL_MS - 1)
+    value.events.length = 0
+    const oldHit = await prepareRunContextSources(identity, value.ports)
+    const hit = await prepareRunContextSources(identity, migrated)
+    expect(hit).toEqual(oldHit)
+    expect(hit.sourceEffects.sessionSnapshot.phase).toBe('hit')
+    expect(hit.sourceEffects.sessionSnapshot.state.snapshotExpiresAt).toBe(2 * DEFAULT_IDLE_TTL_MS - 1)
+    expect(hit.input.snapshotText).toBe('项目概览1')
+    expect(value.events).not.toContain('projects')
+
+    value.store(hit.sourceEffects.sessionSnapshot.state)
+    value.advance(DEFAULT_IDLE_TTL_MS)
+    const rebuilt = await prepareRunContextSources(identity, migrated)
+    expect(rebuilt.sourceEffects.sessionSnapshot).toMatchObject({
+      phase: 'rebuild', state: { baselineMessageSeq: 2, context: { history_baseline_message_seq: 2 } },
+    })
+    expect(rebuilt.input.historyBaseline).toMatchObject({ baselineSeq: 2, baselineHash: '合成已持久基线哈希' })
+    expect(rebuilt.input.history.map(row => row.id)).toEqual(['3'])
+    expect(rebuilt.input.snapshotText).toBe('项目概览2')
   })
   it('会话所有权先于model/current/任何owner数据读取，不能用空会话掩盖越权', async () => {
     const value = fixture(); value.ports.readSnapshot = async () => ({ ...value.stored(), ownerId: 'foreign' })

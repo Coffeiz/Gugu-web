@@ -48,6 +48,7 @@ export interface ChatMessage {
     messageParams?: Record<string, string | number | boolean>
     completedAt?: string
   }
+  subagentOutput?: boolean
   toolCallId?: string
   toolName?: string
   toolLabel?: string
@@ -74,6 +75,7 @@ export interface ChatMessage {
     allowTextInput?: boolean
     customInputActive?: boolean
     taskPaused?: boolean
+    delegated?: boolean
     submitting?: boolean
     resolved?: boolean
     selectionMode?: 'multiple'

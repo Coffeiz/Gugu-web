@@ -65,7 +65,7 @@ export interface ProviderRequestProbe {
 }
 export type ProviderProbeSink = (probe: ProviderRequestProbe) => void
 
-function credentialFree<T>(value: T, secrets: readonly string[]): T {
+export function credentialFree<T>(value: T, secrets: readonly string[]): T {
   if (typeof value === 'string') return secrets.reduce((text, secret) => secret ? text.split(secret).join('[凭据]') : text, value) as T
   if (Array.isArray(value)) return value.map(item => credentialFree(item, secrets)) as T
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, credentialFree(item, secrets)])) as T

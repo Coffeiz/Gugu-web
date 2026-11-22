@@ -59,7 +59,6 @@ export const BUILTIN_AGENT_TOOL_STATE_LABELS: Readonly<Record<string, string>> =
   note_undo: '撤销刚才的咕咕记录',
   note_update: '更新思维笔记',
   read_conversation: '读历史对话',
-  read_file: '读取文件',
   read_knowledge: '读取知识',
   remember: '记住',
   remove_stage: '删除阶段',

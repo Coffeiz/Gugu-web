@@ -2,10 +2,9 @@ import { formatToolResults } from './tool-result-format.js'
 import { placeToolReminder } from '../context/assemble.js'
 import { canonicalEventStats, stableJson } from '../context/history/canonical-history.js'
 import { throwIfCancelled } from './errors.js'
-import type { BranchProviderPort, CanonicalContextPorts, ContextReferenceCodec, ContextServices, ProviderPort, ReflectionProjectionPort, SummaryGenerationPorts } from '../ports.js'
+import type { BranchProviderPort, CanonicalContextPorts, ContextReferenceCodec, ContextServices, ProviderPort, SummaryGenerationPorts } from '../ports.js'
 import type { BranchInput, BranchName, CanonicalRunContext, FrozenProviderRequest, Json, ProviderEvent, ProviderRequest, RunIdentity } from '../models.js'
 import { hasInitialInlineImage,restorePreparedContext } from '../context/history/attachment-refs.js'
-import { buildRebuiltReflectionSnapshot } from '../memory/reflection.js'
 import type { HistorySanitization, JsonObject, ProviderCompletion, ProviderConfig, ProviderConnectionTiming, ProviderDriverDependencies, ProviderInvocation, ProviderProjection, ProviderTransport, ProviderTransportFactory, ProviderWire } from './contracts.js'
 import { providerSelection } from './registry.js'
 import { ProviderError, classifyProviderError, providerFailureFields } from './errors.js'
@@ -17,7 +16,7 @@ import type { RetryClock } from './retry.js'
 import { ProviderClientPool, providerConfigKey } from './client-pool.js'
 import { stripThinking, ProviderStreamSanitizer, sanitizeProviderText } from './sanitize.js'
 import { normalizedApiKey } from './diagnostics.js'
-import { RequestProbe, providerCacheDiagnostics } from './cache-probe.js'
+import { RequestProbe, credentialFree, providerCacheDiagnostics } from './cache-probe.js'
 import type { ProviderProbeSink } from './cache-probe.js'
 import { anthropicRequestStructure, recordProviderBoundaryObservations } from './observation.js'
 import { outputBudget, parseStructuredJson } from './standalone.js'
@@ -463,6 +462,9 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
     } finally { finishTiming('cancelled') }
   }
   async completeBranch(input: BranchInput<ProviderWire> & { modelIdentity: string; scenario?: BranchName; outputMode?: 'text' | 'json'; maxOutputTokens?: number | null; cacheSingleflight?: boolean; thinking?: string | null }, signal = new AbortController().signal) {
+    return this.#completeModelTask(input, signal)
+  }
+  async #completeModelTask(input: BranchInput<ProviderWire> & { modelIdentity: string; scenario?: BranchName; outputMode?: 'text' | 'json'; maxOutputTokens?: number | null; cacheSingleflight?: boolean; thinking?: string | null }, signal = new AbortController().signal) {
     const identity = { ownerId: input.ownerId, sessionId: input.sessionId, runId: input.runId ?? 'branch' }
     const observationIdentity = input.observationIdentity ?? identity
     const selected = await this.#selection(identity, input.modelIdentity, signal)
@@ -504,7 +506,9 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
           identity: observationIdentity,
           kind: 'provider', name: 'request', at: this.#now(), round: 0,
           spanId: `${observationIdentity.runId}:round:0:provider`, parentSpanId: `${observationIdentity.runId}:round:0`, status: 'sent',
-          input: input.observationIdentity ? {
+          input: input.scenario === 'reflection' && input.observationIdentity
+            ? credentialFree(body, config.api_key ? [config.api_key] : [])
+            : input.observationIdentity ? {
             request_fields: Object.keys(body), history_field: rowsKey, message_count: rows.length,
             body_bytes: new TextEncoder().encode(JSON.stringify(body)).byteLength, body_digest: this.options.digest(body),
           } : clone(body),
@@ -549,6 +553,18 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
     }, delta.length)
     return { output: stripThinking(result.text).trim(), usage: { ...clone(result.usage), finish_reason: result.finishReason, incomplete_reason: result.incompleteReason ?? null } as Json }
   }
+  /** 独立反思只向模型提交已授权的本批证据。 */
+  reflectionProvider(modelIdentity: string): BranchProviderPort<ProviderWire> {
+    return {
+      isInputRejected: error => error instanceof ProviderError && error.code === 'input_rejected',
+      complete: async (input, signal) => {
+        if (input.projection || input.canonicalHistory?.length || input.tools.length || input.cacheSingleflight)
+          throw new ProviderError('input_rejected')
+        const result = await this.#completeModelTask({ ...input, modelIdentity, scenario: 'reflection' }, signal)
+        return { ...result, output: input.outputMode === 'json' ? parseStructuredJson(result.output) : result.output }
+      },
+    }
+  }
   branchProvider(modelIdentity: string): BranchProviderPort<ProviderWire> {
     return {
       isInputRejected: error => error instanceof ProviderError && error.code === 'input_rejected',
@@ -557,76 +573,6 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
         return { ...result, output: input.outputMode === 'json' ? parseStructuredJson(result.output) : result.output }
       },
     }
-  }
-  /** 仅供Host已验证owner/idle/租约的显式恢复；从正式checkpoint与相同协议重建，不发模型请求。 */
-  async rebuildReflectionSnapshot(identity: RunIdentity, context: CanonicalRunContext, signal = new AbortController().signal) {
-    if (this.#key(identity) !== this.#key(context.identity)) throw new ProviderError('input_rejected')
-    const { config, policy, driver, systemPrompt: boundSystem, accessScopeHash } = await this.#selection(identity, context.modelIdentity, signal)
-    const systemPrompt = context.providerSystemPrompt ?? boundSystem
-    if (accessScopeHash !== context.accessScopeHash) throw new ProviderError('input_rejected')
-    const prepared = await restorePreparedContext(context.prepared, identity,
-      { digest: this.options.digest, nextId: this.options.nextId,
-        prepareRequest: (target, currentSignal) => this.prepareRequest({ ...identity, ...target }, currentSignal, context) }, this.options.references, signal)
-    const area = prepared.area
-    const project = (messages: readonly import('../models.js').CanonicalMessage[]) => driver.project(formatToolResults(messages), config, policy,
-      { digest: this.options.digest, preserveNativeThinking: true, dynamicTailSize: 0 })
-    const history = project([...area.requestPrefix, ...area.messages])
-    const dependencies: ProviderDriverDependencies = { digest: this.options.digest, diagnose: this.#diagnose, transport: this.#transport(identity, config, policy) }
-    const input: ProviderInvocation = { config, policy, history, system: systemPrompt,
-      tools: providerToolSchemas(context.capabilities), signal,
-      scope: { ...identity, modelIdentity: context.modelIdentity, accessScopeHash, round: 0 }, purpose: 'chat', stableHistoryCount: history.length }
-    const body = record(driver.buildRequest(input, dependencies, true).body), rows = body.messages ?? body.input
-    if (!Array.isArray(rows)) throw new ProviderError('input_rejected')
-    const prefix = project(area.requestPrefix)
-    const prefixRows = driver.protocol === 'responses' ? prefix.filter(row => row.role !== 'system')
-      : record(driver.buildRequest({ ...input, history: prefix, stableHistoryCount: prefix.length }, dependencies, true).body).messages
-    const protectedPrefixRowCount = Array.isArray(prefixRows)
-      && this.options.digest(comparableWire(rows.slice(0, prefixRows.length) as Json)) === this.options.digest(comparableWire(prefixRows as Json)) ? prefixRows.length : undefined
-    const system = body.system ?? body.instructions
-    const projection: ProviderProjection = { ...area.identity(context.modelIdentity), dynamicTailSize: 0,
-      wire: { protocol: driver.protocol, provider: policy.name, identity: { ownerId: identity.ownerId, sessionId: identity.sessionId },
-        accessScopeHash, messages: clone(rows) as JsonObject[], stableRowCount: rows.length,
-        ...(protectedPrefixRowCount === undefined ? {} : { protectedPrefixRowCount }), ...(system === undefined ? {} : { system: clone(system) as Json }) } }
-    return buildRebuiltReflectionSnapshot({ ...identity, modelIdentity: context.modelIdentity, accessScopeHash,
-      systemPrompt, area, projection, tools: clone(Array.isArray(body.tools) ? body.tools : input.tools) as Json[] },
-    await this.reflectionProjection(identity, context.modelIdentity, signal), this.options, Date.now())
-  }
-  async reflectionProjection(identity: RunIdentity, modelIdentity: string, signal = new AbortController().signal): Promise<ReflectionProjectionPort<ProviderWire>> {
-    const { config, policy, driver, accessScopeHash } = await this.#selection(identity, modelIdentity, signal)
-    return { append: (projection, tail) => {
-      const wire = projection.wire
-      if (projection.modelIdentity !== modelIdentity || wire.protocol !== driver.protocol || wire.provider !== policy.name
-        || wire.identity.ownerId !== identity.ownerId || wire.identity.sessionId !== identity.sessionId || wire.accessScopeHash !== accessScopeHash)
-        throw new ProviderError('input_rejected')
-      const count = wire.stableRowCount ?? (projection.dynamicTailSize === 0 ? wire.messages.length : -1)
-      if (!Number.isSafeInteger(count) || count < 0 || count > wire.messages.length) throw new ProviderError('input_rejected')
-      const messages = [...clone(wire.messages.slice(0, count)), ...driver.project(formatToolResults(tail), config, policy, { digest: this.options.digest, preserveNativeThinking: true })]
-      return { ...clone(projection), dynamicTailSize: 0, wire: { ...clone(wire), messages, stableRowCount: messages.length } }
-    } }
-  }
-  /** IM反思沿用原wire结构，但不再次发送主会话媒体；不修改进程内原快照。 */
-  async reflectionMediaProjection(identity: RunIdentity, modelIdentity: string, signal = new AbortController().signal): Promise<ReflectionProjectionPort<ProviderWire>> {
-    const original = await this.reflectionProjection(identity, modelIdentity, signal)
-    return { append(projection, tail) {
-      const result = original.append(projection, tail), responses = result.wire.protocol === 'responses'
-      const media: Record<string, string> = { image: '[图片已省略]', image_url: '[图片已省略]', input_image: '[图片已省略]',
-        audio: '[音频已省略]', input_audio: '[音频已省略]', video: '[视频已省略]', video_url: '[视频已省略]', input_video: '[视频已省略]' }
-      const content = (value: Json): Json => {
-        if (Array.isArray(value)) return value.map(content)
-        if (!value || typeof value !== 'object') return value
-        if (typeof value.type === 'string' && media[value.type]) return { type: responses ? 'input_text' : 'text', text: media[value.type]! }
-        // 工具结构和native reasoning保持原样，只处理其实际content容器中的媒体。
-        return Object.hasOwn(value, 'content') ? { ...value, content: content(value.content!) } : value
-      }
-      return { ...result, wire: { ...result.wire, messages: result.wire.messages.map(row => {
-        const clean = content(row) as JsonObject
-        if (Array.isArray(clean.images) && clean.images.length) {
-          const { images: _images, ...rest } = clean
-          return { ...rest, content: typeof clean.content === 'string' ? `${clean.content}\n[图片已省略]` : content(clean.content ?? []) }
-        }
-        return clean
-      }) } }
-    } }
   }
   async summaryProjection(identity: RunIdentity, modelIdentity: string, signal = new AbortController().signal): Promise<Pick<SummaryGenerationPorts<ProviderWire>, 'transformProjection'>> {
     const { policy, driver, accessScopeHash } = await this.#selection(identity, modelIdentity, signal)

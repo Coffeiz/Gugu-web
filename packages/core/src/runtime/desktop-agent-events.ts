@@ -1,3 +1,4 @@
+import { isImInternalDelegationTool } from '../im/access.js'
 import type { Kysely } from 'kysely'
 import type { Database } from '../data/schema.js'
 import { CoreError } from '../contracts/index.js'
@@ -20,7 +21,17 @@ export function createDesktopAgentEventReader(db: Kysely<Database>, databasePath
     const store = createSqliteAgentRunStore(db, secret, {
       async writeHistory() { throw new Error('事件读取端口不能写入历史') },
     })
-    return { store, readState: createSqliteAgentRunCoordination(db, store).readState,
+    const { readState } = createSqliteAgentRunCoordination(db, {
+      readEventsAfter: store.readEventsAfter,
+      async read(identity) {
+        const checkpoint = await store.read(identity)
+        // 界面继续观察原 Run，内部执行器仍按持久等待状态释放执行槽。
+        if (checkpoint?.status === 'waiting' && (checkpoint.subagentWaitChildId || checkpoint.agentInboxWaiting))
+          return { sequence: checkpoint.sequence, status: 'running' }
+        return checkpoint
+      },
+    })
+    return { store, readState,
       projection: createSqliteInteractionProjection(db, secret) }
   }
   return async (sessionId: number, runId: string | undefined, after: number, stateOnly = false, imDelivery = false, imStream = false): Promise<DesktopAgentEventPage> => {
@@ -42,7 +53,12 @@ export function createDesktopAgentEventReader(db: Kysely<Database>, databasePath
     let size = 0
     const saved = await store.readEventsAfter(identity, after)
     for (const event of saved) {
-      const projected: DesktopAgentEventPage['events'] = await projectAgentRunEvent(event, projection)
+      // 子任务报告属于应用内会话，IM 投递只读取主 Agent 的回复与工具状态。
+      const displayEvent = imDelivery && event.type === 'round_start' && Array.isArray(event.payload.subagentDisplays)
+        ? { ...event, payload: { ...event.payload, subagentDisplays: [] } } : event
+      const internalTool = imDelivery && (event.type === 'tool_call' || event.type === 'tool_done')
+        && isImInternalDelegationTool(event.payload.name)
+      const projected: DesktopAgentEventPage['events'] = internalTool ? [] : await projectAgentRunEvent(displayEvent, projection)
       if (imDelivery) {
         if (event.type === 'round_end' && typeof event.payload.text === 'string')
           projected.push({ type: 'im_round_end', sequence: event.sequence, text: event.payload.text })
@@ -50,7 +66,7 @@ export function createDesktopAgentEventReader(db: Kysely<Database>, databasePath
         else if (event.type === 'final' && event.payload.status === 'completed' && typeof event.payload.text === 'string')
           projected.push({ type: 'im_final_text', text: event.payload.text })
       }
-      if (imStream && ['token', 'tool_call', 'tool_done', 'round_end', 'final', 'interaction_required', 'interaction_resolved', 'run_resumed'].includes(event.type)) {
+      if (imStream && !internalTool && ['token', 'tool_call', 'tool_done', 'round_end', 'final', 'interaction_required', 'interaction_resolved', 'run_resumed'].includes(event.type)) {
         const { text, status } = event.payload
         projected.push({ type: 'im_stream', runEvent: {
           id: event.id, identity: event.identity, sequence: event.sequence, round: event.round, type: event.type,

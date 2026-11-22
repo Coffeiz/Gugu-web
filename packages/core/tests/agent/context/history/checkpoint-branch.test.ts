@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { describe,expect,it } from 'vitest'
 import type { BranchInput,BranchPorts,CanonicalMessage,ContextReferenceCodec,ContextServices,Json,PreparedContext } from "../../../../src/agent/index.js"
-import { MessageArea,assertDurableCanonical,restorePreparedContext,runContextBranch,savePreparedContext,stableJson } from "../../../../src/agent/index.js"
+import { MessageArea,assertDurableCanonical,formatOwnerReflectionEvidence,restorePreparedContext,runContextBranch,runPrivateReflection,savePreparedContext,stableJson } from "../../../../src/agent/index.js"
 const identity = { ownerId: 'owner', sessionId: 'session' }
 const user = (content: Json): CanonicalMessage => ({ role: 'user', content })
 function services(): ContextServices {
@@ -108,21 +108,26 @@ describe('压缩/反思共用分支编排', () => {
       expect(port.diagnostics.join('')).not.toContain('run-1')
     }
   })
-  it('cache singleflight仅反思追加复用开启，Provider wire保持opaque', async () => {
-    const area = new MessageArea(services())
-    for (const name of ['reflection', 'compaction'] as const) {
-      const port = ports([{ summary: 'ok' }]); let singleflight = false
-      port.provider.complete = async request => { singleflight = request.cacheSingleflight; expect(request.projection!.wire).toBe('opaque signature'); return { output: { summary: 'ok' }, usage: null } }
-      const result = await runContextBranch({ ...input, projection: { ...area.identity('model'), wire: 'opaque signature', dynamicTailSize: 0 } }, { name }, port)
-      expect(result.ok).toBe(true); expect(singleflight).toBe(name === 'reflection')
-    }
+  it('Owner 反思按原字段顺序发送已核验的证据和记忆，使用独立观测身份', async () => {
+    const state = { date: '2026-01-01', userName: '', profile: ['原有画像'], pattern: [], summary: null }
+    const turns = [{ timestamp: '2026-01-01T00:00:00Z', userMessage: '本批证据', assistantReply: '对应回复' }]
+    const delta = formatOwnerReflectionEvidence(state, turns)
+    expect(delta).toBe(JSON.stringify({ ...state, turns }))
+    const port = ports([{ summary: '新摘要' }])
+    const origin = { ...identity, runId: '原运行' }
+    const trace = { ...identity, runId: '反思运行' }
+    await runPrivateReflection({ ...origin, stableSystem: '反思规则', delta, scope: 'owner' },
+      { outputMode: 'json' }, port, new AbortController().signal, undefined, { identity: trace })
+    expect(port.calls).toEqual([expect.objectContaining({
+      ...origin, observationIdentity: trace, stableSystem: '反思规则', delta, tools: [], cacheSingleflight: false,
+    })])
   })
   it('只读分支Provider篡改请求不影响原始投影/工具或主continuation', async () => {
     const port = ports([{ summary: 'ok' }]), area = new MessageArea(services())
     const original: BranchInput<string> = { ...input, projection: { ...area.identity('model'), wire: 'opaque-native-prefix', dynamicTailSize: 0 }, tools: [{ name: 'search' }] }
     const before = structuredClone(original)
     port.provider.complete = async request => { request.projection!.wire = 'mutated'; request.tools[0] = { name: 'mutated' }; return { output: { summary: 'ok' }, usage: null } }
-    await runContextBranch(original, { name: 'reflection' }, port)
+    await runContextBranch(original, { name: 'compaction' }, port)
     expect(original).toEqual(before)
   })
   it('取消不产生provider_error终态也不重试', async () => {

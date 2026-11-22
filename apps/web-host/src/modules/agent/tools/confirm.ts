@@ -4,7 +4,7 @@ import type { Pool, PoolClient } from 'pg'
 import { createConfirmationGate, type ConfirmationBinding, type ConfirmationTargetSnapshot } from '@gugu/core/tools'
 import type { RunIdentity } from '@gugu/core/agent'
 import type { Database } from '@gugu/core/data'
-import { sql, type Transaction } from 'kysely'
+import { sql, type Kysely, type Transaction } from 'kysely'
 import { withPostgresTransaction } from '../../../adapters/database/postgres-transaction.js'
 import type { AgentDispatchLease } from '../run/dispatch.js'
 import type { createPostgresTrustedIntentStore } from '../interactions/intents.js'
@@ -21,7 +21,6 @@ export interface WebAgentConfirmationDescription {
 export interface WebAgentToolConfirmationOptions {
   pool: Pick<Pool, 'connect'>
   intents: TrustedIntentStore
-  lease: AgentDispatchLease
   action: string
   imOwnerAuthorized?: boolean
   ttlMinutes?: number
@@ -33,6 +32,10 @@ export interface WebAgentToolConfirmationOptions {
   /** 摘要只使用 Host 读取的业务信息；目标 ID 与版本始终来自 Core 快照。 */
   describe(binding: ConfirmationBinding, snapshot: ConfirmationTargetSnapshot, signal: AbortSignal): Promise<WebAgentConfirmationDescription>
 }
+
+type ConfirmationExecution =
+  | { lease: AgentDispatchLease; delegated?: never }
+  | { lease?: never; delegated: { identity: RunIdentity; accessVersion: string } }
 
 function sameRun(left: RunIdentity, right: RunIdentity): boolean {
   return left.ownerId === right.ownerId && left.sessionId === right.sessionId && left.runId === right.runId
@@ -94,6 +97,32 @@ export function createWebAgentConfirmationAuthorization(options: {
   }
 }
 
+/** 父 Run 提供授权范围，执行和确认使用真实子运行的持久租约。 */
+export function createWebDelegatedConfirmationAuthorization(db: Kysely<Database>, parent: RunIdentity,
+  child: RunIdentity, accessVersion: string) {
+  const read = async (reader: Kysely<Database>, candidate: RunIdentity, signal: AbortSignal) => {
+    signal.throwIfAborted()
+    if (parent.ownerId !== child.ownerId || !sameRun(candidate, child)) return null
+    const { rows: [row] } = await sql<{ security_version: number }>`
+      SELECT u.security_version FROM users u
+      JOIN agent_run_leases l ON l.user_id=u.id AND l.session_id=${child.sessionId}
+        AND l.run_id=${child.runId} AND l.expires_at>clock_timestamp()
+      JOIN agent_subagent_executions s ON s.child_session_id=l.session_id AND s.child_run_id=l.run_id
+      JOIN agent_subagent_deliveries x ON x.child_run_id=s.child_run_id AND x.owner_id=u.id::text
+        AND x.parent_session_id=${parent.sessionId} AND x.parent_run_id=${parent.runId}
+        AND x.status IN ('queued','running')
+      JOIN agent_run_dispatch d ON d.user_id=u.id AND d.session_id=${parent.sessionId}
+        AND d.run_id=${parent.runId} AND NOT d.cancel_requested
+      JOIN agent_run_checkpoints p ON p.user_id=d.user_id AND p.session_id=d.session_id AND p.run_id=d.run_id
+      WHERE u.id=${child.ownerId} AND u.is_active AND COALESCE(u.account_status,'active')='active'
+        AND p.status IN ('running','waiting')`.execute(reader)
+    signal.throwIfAborted()
+    return row ? `${row.security_version}:${accessVersion}` : null
+  }
+  return { authorize: (candidate: RunIdentity, signal: AbortSignal) => read(db, candidate, signal),
+    authorizeInTransaction: read }
+}
+
 function checkedTargets(snapshot: ConfirmationTargetSnapshot): Record<string, readonly (number | string)[]> {
   if (!/^[a-f0-9]{64}$/u.test(snapshot.targetsDigest) || !/^[a-f0-9]{64}$/u.test(snapshot.versionsDigest))
     throw new TypeError('可信确认目标快照无效')
@@ -117,13 +146,13 @@ function checkedTargets(snapshot: ConfirmationTargetSnapshot): Record<string, re
  * 把 Core 确认 gate 接到 Web 的加密意图仓储和 PostgreSQL 一次性 claim。
  * 生产调用方必须提供会话权限复核和基于同一事务的再授权，不能传恒真回调。
  */
-export function createWebAgentToolConfirmation(options: WebAgentToolConfirmationOptions) {
-  const leaseIdentity = Object.freeze({ ...options.lease.identity })
+export function createWebAgentToolConfirmation(options: WebAgentToolConfirmationOptions & ConfirmationExecution) {
+  const leaseIdentity = Object.freeze({ ...(options.delegated?.identity ?? options.lease!.identity) })
   const ttlMinutes = options.ttlMinutes ?? 5
   const now = options.now ?? Date.now
-  const source = options.lease.input
-  const sourceAllowed = source.v === 2 && source.source === 'web'
-    || source.v === 3 && source.source === 'im' && source.im.chatType === 'c2c'
+  const source = options.lease?.input
+  const sourceAllowed = options.delegated !== undefined || source?.v === 2 && source.source === 'web'
+    || source?.v === 3 && source.source === 'im' && source.im.chatType === 'c2c'
       && source.im.platform !== 'wechat' && options.imOwnerAuthorized === true
   if (!sourceAllowed || !options.action.trim() || options.action.length > 128
     || !Number.isSafeInteger(ttlMinutes) || ttlMinutes < 1 || ttlMinutes > 30
@@ -219,7 +248,7 @@ export function createWebAgentToolConfirmation(options: WebAgentToolConfirmation
       if (!allowed(binding) || canonicalAgentToolName(binding.toolName) !== canonicalAgentToolName(options.action)) return false
       const epoch = await options.authorizeInTransaction(tx, binding, signal)
       signal.throwIfAborted()
-      return epoch !== null && epoch.endsWith(`:${options.lease.input.accessVersion}`)
+      return epoch !== null && epoch.endsWith(`:${(options.delegated?.accessVersion ?? options.lease!.input.accessVersion)}`)
     },
     claim(tx: Transaction<Database>, reference: Parameters<TrustedIntentStore['claimApprovedOperation']>[1], signal: AbortSignal) {
       if (!allowed(reference.binding)) return Promise.resolve(false)

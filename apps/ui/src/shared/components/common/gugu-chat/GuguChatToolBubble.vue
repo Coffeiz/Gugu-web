@@ -53,7 +53,7 @@ import { formatToolDuration, toolHasNoMatches, toolActivityLabel } from './toolA
 
 const readToolDetails = inject(chatToolDetailsKey, agentApi.getToolEventDetails)
 
-const props = defineProps<{ msg: ChatMessage; sessionId: number | null; expanded: boolean }>()
+const props = defineProps<{ msg: ChatMessage; sessionId: number | null; expanded: boolean; subagentNames?: ReadonlyMap<string, string> }>()
 const emit = defineEmits<{ 'update:expanded': [expanded: boolean] }>()
 const detailsLoading = ref(false)
 const detailsError = ref(false)
@@ -73,7 +73,7 @@ watch(() => [props.msg, props.sessionId, props.expanded], () => {
 }, { immediate: true })
 onBeforeUnmount(resetDetailsRequest)
 const OUTPUT_DISPLAY_LIMIT = 32_000
-const toolLabel = computed(() => toolActivityLabel(props.msg, t, te))
+const toolLabel = computed(() => toolActivityLabel(props.msg, t, te, props.subagentNames))
 const noMatches = computed(() => toolHasNoMatches(props.msg))
 const statusText = computed(() => ({
   queued: t('chatUi.toolQueued'), running: t('chatUi.toolRunning'), waiting: t('chatUi.toolWaiting'), success: t('chatUi.toolDone'), error: t('chatUi.toolFailed'), skipped: t('chatUi.toolSkipped'),

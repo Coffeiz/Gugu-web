@@ -14,7 +14,7 @@
     <div class="tc-foot">
       <span class="tc-last">{{ props.task.last_run_at ? t('schedules.previousRun', { time: fmtTime(props.task.last_run_at) }) : t('schedules.neverRun') }}</span>
       <span class="tc-acts">
-        <button class="card-link-btn" :disabled="props.busy || isEnded() || (desktop && (props.task.execution_mode !== 'instruction' && !props.task.channels?.includes('web')))" @click="$emit('run', props.task)">{{ t('schedules.testRun') }}</button>
+        <button class="card-link-btn" :disabled="props.busy || isEnded() || (desktop && props.task.execution_mode !== 'instruction' && !props.task.channels?.length)" @click="$emit('run', props.task)">{{ t('schedules.testRun') }}</button>
         <button class="card-link-btn" @click="$emit('edit', props.task)">{{ t('schedules.edit') }}</button>
         <button class="card-link-btn danger" @click="$emit('remove', props.task)">{{ t('schedules.delete') }}</button>
       </span>

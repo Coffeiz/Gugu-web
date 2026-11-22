@@ -1,4 +1,4 @@
-import { lstatSync, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync } from 'node:fs'
+import { copyFileSync, lstatSync, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync } from 'node:fs'
 import { resolve, relative, join } from 'node:path'
 import { execFile } from 'node:child_process'
 import { createRequire } from 'node:module'
@@ -57,6 +57,7 @@ export async function buildCore(consume) {
     const staged = mkdtempSync(join(coreRoot, '.dist-build-'))
     try {
       await compile([tsc, '-p', join(coreRoot, 'tsconfig.json'), '--outDir', staged])
+      copyFileSync(join(coreRoot, 'src/agent/subagent/searcher/prompt.md'), join(staged, 'agent/subagent/searcher/prompt.md'))
       const skills = join(staged, 'agent/skills')
       await buildAgentSkills({ outputDirectory: skills, builtinModule: join(skills, 'builtin.js') })
       publishDirectory(staged, output)

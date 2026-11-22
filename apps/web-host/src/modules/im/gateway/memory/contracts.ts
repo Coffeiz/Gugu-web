@@ -1,7 +1,7 @@
 import type { PrepareCompactedReflection } from '../../../agent/chat/compact.js'
 import type { Pool, PoolClient } from 'pg'
-import type { CanonicalCompletionInput, CanonicalFinalizationPort, CanonicalRunContext, ReflectionSnapshot, RunCheckpoint, RunIdentity } from '@gugu/core/agent'
-import type { ProviderRuntime, ProviderWire } from '@gugu/core/providers'
+import type { CanonicalCompletionInput, CanonicalFinalizationPort, CanonicalRunContext, RunCheckpoint, RunIdentity } from '@gugu/core/agent'
+import type { ProviderRuntime } from '@gugu/core/providers'
 import type { ImActor } from '@gugu/core/im/access'
 import type { AgentRunHistoryWrite } from '../../../agent/run/store.js'
 import type { ImAgentReconstructorOptions } from '../agent/reconstruct.js'
@@ -51,10 +51,6 @@ export interface ImReflectionServiceOptions {
   /** 文件与任务提交后沿既有业务revision通知；失败不能回滚已成功的数据。 */
   memoryChanged?(ownerId:string):Promise<void>
   resolveRuntime(job:Readonly<ImReflectionJob>,signal:AbortSignal,authorizeCurrent:()=>Promise<boolean>):Promise<ImReflectionRuntime>
-  /** Core只允许owner idle已授权重建；群无活快照始终defer。须返回同model/access的真实完整Provider前缀。 */
-  rebuildOwnerSnapshot(job:Readonly<ImReflectionJob>,runtime:ImReflectionRuntime,signal:AbortSignal):Promise<ReflectionSnapshot<ProviderWire>|null>
-  /** 成员scope缺少内存快照时，从原成功checkpoint真实重建；群公开scope禁止使用。 */
-  rebuildMemberSnapshot?(job:Readonly<ImReflectionJob>,runtime:ImReflectionRuntime,signal:AbortSignal):Promise<ReflectionSnapshot<ProviderWire>|null>
   /** 固定码，禁止异常/正文/路径。 */
   diagnose(code:'reflection_retry'|'reflection_dead'|'reflection_deferred'|'reflection_notification_pending'|'reflection_usage_unknown'|'reflection_job_invalid'):void
   leaseMs?:number
@@ -66,7 +62,7 @@ export interface ImReflectionService {
   prepareCompaction?: PrepareCompactedReflection
   stageCompaction?(client:PoolClient,identity:RunIdentity,coveredUserIds:readonly string[]):Promise<void>
   observePassiveLocked(client:PoolClient,ownerId:string,sessionId:number,messageIds:readonly string[]):Promise<void>
-  /** 应在同Provider工厂createContext期间构建；快照只留内存，通知只唤醒事务已提交任务。 */
+  /** 在 Run 开始时冻结权限版本，完成通知只唤醒已提交任务。 */
   createFinalizer(input:{identity:RunIdentity;modelIdentity:string;provider:ProviderRuntime}):Promise<CanonicalFinalizationPort>
   runOnce(signal?:AbortSignal):Promise<boolean>
   start():void

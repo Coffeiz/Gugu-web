@@ -34,7 +34,7 @@ export interface AgentDispatchWorkerPorts<C, L extends AgentDispatchRuntimeLease
   } | null>
   /** 仅当没有 checkpoint 且租约仍有效时记录安全启动失败。 */
   failStart(lease: L): Promise<boolean>
-  runExclusive?<T>(task: () => Promise<T>): Promise<T>
+  runExclusive?<T>(task: () => Promise<T>, ownerId: string, sessionId: string): Promise<T>
   renewIntervalMs?: number
 }
 
@@ -122,7 +122,7 @@ export function createAgentDispatchWorker<C, L extends AgentDispatchRuntimeLease
         tasks.add(work)
         return work
       }
-      return ports.runExclusive ? ports.runExclusive(task) : task()
+      return ports.runExclusive ? ports.runExclusive(task, owner, session) : task()
     },
     close(): Promise<void> {
       if (closing) return closing

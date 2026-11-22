@@ -207,7 +207,7 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
     const uncertainExecutions = new Set<string>()
     const dispatchKey = (call: ToolCall) => `${state?.round ?? 0}:${call.id}`
     async function commit(...args: Parameters<RunCoordination<C>['commit']>): Promise<RunEvent | null> {
-      const [patch, type, payload = {}, history = null, interactionReceipt = null] = args
+      const [patch, type, payload = {}, history = null, interactionReceipt = null, subagentFinalIds, inboxMessageIds] = args
       if (!state || !lease)
         throw new AgentRunError('invalid_state', '运行尚未建立')
       try {
@@ -287,7 +287,12 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
           ...(sealedTools.length ? { sealedTools } : {}) }),
       }) : null
       try {
-        await ports.store.commit({ identity, expectedVersion: state.version, lease, checkpoint: next, events: event ? [event] : [], history, interactionReceipt })
+        const subagentTerminalDelivery = terminalRunStates.has(next.status) ? ports.subagentTerminalDelivery?.(next) : undefined
+        await ports.store.commit({ identity, expectedVersion: state.version, lease, checkpoint: next, events: event ? [event] : [], history, interactionReceipt, ...(subagentFinalIds?.length ? { subagentFinalIds } : {}),
+          ...(inboxMessageIds?.length ? { inboxMessageIds } : {}),
+          ...(subagentTerminalDelivery ? { subagentTerminalDelivery } : {}),
+          ...(patch.agentInboxWaiting !== undefined ? { agentInboxWaiting: patch.agentInboxWaiting } : {}),
+          ...(patch.subagentWaitChildId !== undefined ? { subagentWaitChildId: patch.subagentWaitChildId } : {}) })
       }
       catch (error) {
         if (error instanceof RunStoreRejected) {
@@ -496,9 +501,18 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
         parentSpanId: `${identity.runId}:round:${state.round}`, status: resultStatus,
         output: result.value, attributes: { toolCallId: call.id, successful: result.successful, mutated: result.mutated },
       })
+      const startedSubagent = result.successful && call.name === 'agent_message' && call.input
+        && typeof call.input === 'object' && 'action' in call.input
+        && (call.input.action === 'start' || Boolean(result.value && typeof result.value === 'object'
+          && 'started' in result.value && result.value.started === true))
+      const childId = result.successful && call.name === 'agent_wait' && result.value
+        && typeof result.value === 'object' && 'childId' in result.value && typeof result.value.childId === 'string'
+        && 'status' in result.value && ['completed', 'partial', 'failed', 'cancelled'].includes(String(result.value.status))
+        && !('alreadyDelivered' in result.value) ? result.value.childId : undefined
       const presented = projectPersistentToolResult(await ports.presentToolResult(result.value, { identity, round: state.round, call }), true)
       return (await commit({
         context,
+        ...(startedSubagent && ports.store.readSubagentFinals ? { acceptsSubagentFinals: true } : {}),
         queuedInteractions: state.queuedInteractions.filter((item) => item.id !== consumeInteractionId),
         inflightCall: null,
         inflightCalls: state.inflightCalls.filter((item) => item.id !== call.id),
@@ -509,8 +523,13 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
         files: artifact === undefined || isButtons ? state.files : [...state.files, artifact],
         emptyRetries: result.successful ? 0 : state.emptyRetries,
         replyState: toolReplyProgress(state.replyState, result.successful),
-      }, 'tool_done', { toolCallId: call.id, name: call.name, status: resultStatus, result: presented, ...(artifact === undefined ? {} : { artifact }) }))!
+      }, 'tool_done', { toolCallId: call.id, name: call.name, status: resultStatus, result: presented, ...(artifact === undefined ? {} : { artifact }) }, null, null, childId && state.acceptsSubagentFinals ? [childId] : undefined))!
     }
+    async function agentInboxReady() {
+      return Boolean((await ports.store.readAgentInbox?.(identity))?.length
+        || (await ports.store.readSubagentFinals?.(identity))?.length)
+    }
+
     async function* dispatchRoundTools() {
       if (!state)
         throw new AgentRunError('invalid_state', '运行尚未建立')
@@ -605,6 +624,25 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
             if (call.name === 'shell' && previous.kind === 'waiting' && previous.interaction.kind === 'confirmation') return
             serialWaiting ||= previous.kind === 'waiting' || previous.kind === 'unknown'
             continue
+          }
+          const input = call.input
+          const childId = state.acceptsSubagentFinals && call.name === 'agent_wait' && !call.parseError
+            && input && typeof input === 'object' && !Array.isArray(input) && Object.keys(input).length === 1
+            && 'childId' in input && typeof input.childId === 'string' && /^[a-f0-9]{8}$/.test(input.childId)
+            ? input.childId : null
+          if (childId && !serialWaiting && !controller.signal.aborted && !state.inflightCall
+            && await ports.store.isSubagentPending?.(identity, childId)) {
+            await checkCancellation()
+            await commit({ status: 'waiting', subagentWaitChildId: childId })
+            return
+          }
+          if ((state.acceptsSubagentFinals || ports.acceptsAgentInbox) && call.name === 'agent_wait' && !call.parseError
+            && input && typeof input === 'object' && !Array.isArray(input) && Object.keys(input).length === 0
+            && !serialWaiting && !controller.signal.aborted && !state.inflightCall
+            && ports.store.readAgentInbox && !await agentInboxReady()) {
+            await checkCancellation()
+            await commit({ status: 'waiting', agentInboxWaiting: true })
+            return
           }
           let result: ToolResult
           if (serialWaiting || controller.signal.aborted)
@@ -702,7 +740,7 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
           identity, version: 0, sequence: 1, status: 'preparing', phase: 'prepare', round: 0,
           context: null, text: '', roundTexts: [], displayTimeline: [], anchorMessageId, usage: emptyRunUsage, totalUsage: emptyRunUsage, usageAppliedRound: -1, providerCursor: null, sanitizerCheckpoint: { kind: 'clean' }, mutated: false, unpersistedToolResult: null, files: [], providerRounds: [], calls: [], callIndex: 0,
           inflightCall: null, inflightCalls: [], parallelLimit: null, pending: null, queuedInteractions: [], replayCall: null, replayResultReady: false, toolResults: [], toolsDispatched: false, parallelCallIds: [], serialCallIds: [], isolatedCallIds: [], resolution: null, resolutionClosure: null, emptyRetries: 0, replyState: initialReplyState, overflowRetries: 0, overflowRecoveryPending: false,
-          maxRounds: scheduled ? 100 : null, goalMode, replyChoice: initialReplyChoice, roundRequiresTools: false, completedToolCount: 0, remoteStatusUnknown: false, errorCode: null, earlyExitReason: null,
+          maxRounds: ports.maxRounds ?? (scheduled ? 100 : null), goalMode, replyChoice: initialReplyChoice, roundRequiresTools: false, completedToolCount: 0, remoteStatusUnknown: false, errorCode: null, earlyExitReason: null,
         }
         const event: RunEvent = { id: `${identity.runId}:1`, identity, sequence: 1, round: 0, type: 'run_started', payload: {} }
         try {
@@ -732,9 +770,25 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
           yield* completeResolutionClosure()
           return state
         }
-        if (state.status === 'waiting') { const stopped = yield* resumeWaitingRun(scope, resolution); if (stopped) return state }
-        yield (await commit({}, 'run_resumed'))!
+        if (state.status === 'waiting' && state.agentInboxWaiting) {
+          await checkCancellation()
+          if (resolution || !ports.store.readAgentInbox)
+            throw new AgentRunError('conflict', '收件箱等待状态不匹配')
+          if (!await agentInboxReady()) return state
+          yield (await commit({ status: 'running', agentInboxWaiting: false }, 'run_resumed'))!
+        } else if (state.status === 'waiting' && state.subagentWaitChildId) {
+          await checkCancellation()
+          if (resolution || !ports.store.isSubagentPending)
+            throw new AgentRunError('conflict', '子任务等待状态不匹配')
+          if (await ports.store.isSubagentPending(identity, state.subagentWaitChildId)) return state
+          yield (await commit({ status: 'running', subagentWaitChildId: null }, 'run_resumed'))!
+        } else {
+          if (state.status === 'waiting') { const stopped = yield* resumeWaitingRun(scope, resolution); if (stopped) return state }
+          yield (await commit({}, 'run_resumed'))!
+        }
       }
+      let queuedInbox: Awaited<ReturnType<NonNullable<typeof ports.store.readAgentInbox>>> | undefined
+      let queuedFinals: Awaited<ReturnType<NonNullable<typeof ports.store.readSubagentFinals>>> | undefined
       while (!terminalRunStates.has(state.status) && state.status !== 'waiting') {
         if (state.phase === 'tools') {
           try {
@@ -818,6 +872,7 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
           }
           if (!state.toolsDispatched)
             yield* dispatchRoundTools()
+          if (state.subagentWaitChildId || state.agentInboxWaiting) return state
           while (state.callIndex < state.calls.length && !terminalRunStates.has(state.status)) {
             const call = state.calls[state.callIndex]!
             const stored = state.toolResults.find((item) => item.callId === call.id)?.result
@@ -866,6 +921,14 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
           continue
         }
         if (state.phase === 'decision') {
+          if ((state.acceptsSubagentFinals || ports.acceptsAgentInbox) && (state.maxRounds === null || state.round < state.maxRounds)) {
+            if (state.acceptsSubagentFinals) queuedFinals = await ports.store.readSubagentFinals?.(identity)
+            queuedInbox = await ports.store.readAgentInbox?.(identity)
+            if (queuedFinals?.length || queuedInbox?.length) {
+              await commit({ phase: 'idle' })
+              continue
+            }
+          }
           const rawText = ports.sanitizeText(state.text).trim()
           const text = stripGoalMarker(rawText).trim()
           if (state.goalMode) {
@@ -925,10 +988,32 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
         if (state.phase === 'idle') {
           if (state.maxRounds !== null && state.round >= state.maxRounds) {
             logRun(identity, 'warn', 'agent.run.round_limit', state.round, { used: state.round, limit: state.maxRounds })
-            yield await finish('failed', 'round_limit', '定时任务已达到执行轮次上限。')
+            yield await finish('failed', 'round_limit', '运行已达到执行轮次上限。')
             return state
           }
-          yield (await commit({ phase: 'provider', round: state.round + 1, text: '', usage: emptyRunUsage, providerCursor: null, sanitizerCheckpoint: { kind: 'clean' } }, 'round_start'))!
+          let nextContext: C = state.context
+          const finals = queuedFinals ?? (state.acceptsSubagentFinals ? await ports.store.readSubagentFinals?.(identity) : undefined) ?? []
+          queuedFinals = undefined
+          const messages = queuedInbox ?? ((state.acceptsSubagentFinals || ports.acceptsAgentInbox ? await ports.store.readAgentInbox?.(identity) : undefined) ?? [])
+          queuedInbox = undefined
+          if ((finals.length || messages.length) && !ports.context.appendReminder)
+            throw new AgentRunError('invalid_state', '运行不支持追加消息')
+          for (const { message } of messages)
+            nextContext = await ports.context.appendReminder!(nextContext, `【Agent 消息】\n${message}`)
+          for (const result of finals)
+            nextContext = await ports.context.appendReminder!(nextContext, `【子任务结果】\n${JSON.stringify(result)}`)
+          let displayTimeline = state.displayTimeline
+          for (const result of finals) {
+            displayTimeline = updateDisplayItem(displayTimeline, {
+              kind: 'tool', runId: identity.runId, roundId: `${identity.runId}:${state.round + 1}`,
+              toolCallId: `subagent-result:${result.childId}`, toolName: 'subagent_result',
+              toolStatus: result.status === 'failed' ? 'error' : result.status === 'cancelled' ? 'cancelled' : 'success',
+              toolResult: projectPersistentToolResult(result, true),
+            }, { anchorMessageId: state.anchorMessageId, now: ports.clock.now() })
+          }
+          yield (await commit({ context: nextContext, displayTimeline, phase: 'provider', round: state.round + 1, text: '', usage: emptyRunUsage, providerCursor: null, sanitizerCheckpoint: { kind: 'clean' } }, 'round_start', {
+            ...(finals.length ? { subagentDisplays: displayTimeline.slice(state.displayTimeline.length) } : {}),
+          }, null, null, finals.map(result => result.childId), messages.map(item => item.id)))!
           providerRecovery = false
         }
         const providerLifetime = providerStreamLifetime(controller.signal)
@@ -1518,7 +1603,7 @@ export function projectPersistentToolInput(value: unknown, _toolName?: string): 
 }
 
 /**
- * 持久化/展示通用规则：媒体留占位、error递归脱敏；正常read_file正文不做秘密字段猜测。
+ * 持久化/展示通用规则：媒体留占位、error递归脱敏；普通文本正文不做秘密字段猜测。
  * 业务凭据必须由可信呈现Adapter与credential交互边界处理，不能把任意正文当错误删改。
  */
 export function projectPersistentToolResult(value: unknown, showPaths = false): PortableValue {

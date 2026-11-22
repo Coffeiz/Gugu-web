@@ -82,8 +82,8 @@ async function main(): Promise<number> {
         }
       : {}),
   })
-  const unsubscribe = protocol === 2 ? runtime.onAgentRunChanged((sessionId, runId) => {
-    void send({ v: protocol, event: 'agent_run_changed', sessionId, runId }).catch(() => {})
+  const unsubscribe = protocol === 2 ? runtime.onAgentRunChanged((sessionId, runId, interactionChanged) => {
+    void send({ v: protocol, event: 'agent_run_changed', sessionId, runId, interactionChanged }).catch(() => {})
   }) : undefined
   const pendingHostRequests = new Map<number, { resolve(value: unknown): void; reject(error: unknown): void; dispose(): void }>()
   const unsubscribeHost = protocol === 2 ? runtime.onHostRequest(request => new Promise((resolve, reject) => {

@@ -1,3 +1,5 @@
+import { applyAgentBaseMigration } from '@gugu/database/postgres/migrations/0001_initialize'
+import { scheduledTaskMode } from '@gugu/database/postgres/migrations/0022_scheduled_task_mode'
 import { createNoteLifecyclePort } from '@gugu/core/tools'
 import { createCanvasCreationPort, createCanvasEditPort } from '@gugu/core/tools'
 import { createAgentPlaceableSearch } from '@gugu/core/mind'
@@ -6,7 +8,7 @@ import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { Pool } from 'pg'
-import { createKyselyDashboardCounter, createAgentWorkspaceQueries, dataContext } from '@gugu/core'
+import { createAgentWorkspaceQueries, dataContext } from '@gugu/core'
 import { createKyselyAgentWorkspaceReader } from '@gugu/core/workspaces'
 import { createPostgresRuntime } from '@gugu/core/data'
 import type { SqlDataRuntime } from '@gugu/core/data'
@@ -26,6 +28,12 @@ import { createAgentToolRegistry } from '../../../src/modules/agent/tools/regist
 import { agentContextAccessScope } from '../../../src/modules/agent/llm/access.js'
 import { bindProviderSelection } from '../../../src/modules/agent/llm/bind.js'
 
+async function prepareAgentIndexJobs(pool: Pool, owner: string) {
+  await applyAgentBaseMigration(pool)
+  await pool.query('INSERT INTO users(id, username, email, hashed_password) VALUES ($1,$2,$3,$4)',
+    [owner, 'synthetic-owner', 'owner@example.test', 'synthetic-hash'])
+}
+
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const digest = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')
 type RuntimePorts = Omit<AgentRunnerPorts<CanonicalRunContext>, 'context' | 'execution' | 'reply' | 'provider'>
@@ -37,7 +45,7 @@ async function runReadRound(core: SqlDataRuntime, ownerId: string, timezone: str
   calls: Array<{ id: string; name: string; input: unknown }>
 }) {
   const identity = { ownerId, sessionId: '1', runId: randomUUID() }
-  const allowed = new Set(['list_clients', 'list_projects', 'get_current_time', 'create_project'])
+  const allowed = new Set(['list_contacts', 'list_projects', 'get_current_time', 'create_project'])
   const registry = custom?.registry ?? createAgentToolRegistry({ core,
     authorize: async (scope, name) => scope.ownerId === ownerId && allowed.has(name),
     time: { now: () => new Date('2026-01-01T20:00:00Z'), timezone: async scope => { assert.equal(scope.ownerId, ownerId); return timezone } },
@@ -67,7 +75,7 @@ async function runReadRound(core: SqlDataRuntime, ownerId: string, timezone: str
     stageContinuation: async () => { throw new Error('不应启动续接') }, releaseContinuations: async () => {}, diagnoseCompactionFailure: () => {},
   }
   let checkpoint: RunCheckpoint<CanonicalRunContext> | null = null
-  const outbox: RunEvent[] = [], committedToolResults: unknown[] = []
+  const outbox: RunEvent[] = [], committedToolResults: RunCheckpoint<CanonicalRunContext>['toolResults'][number][] = []
   const runtime: RuntimePorts = {
     clock: { now: () => '2026-01-01T20:00:00Z' },
     store: {
@@ -86,50 +94,64 @@ async function runReadRound(core: SqlDataRuntime, ownerId: string, timezone: str
   const wireResults = new Map<string, unknown>()
   let continuationMessages: unknown
   let requests = 0
+  let providerAssertion: unknown
   const instance = createAgentRuntime({ context, runtime,
     executor: { authorize: async () => { throw new Error('只读工具不得授权执行器') }, executor: { execute: async () => { throw new Error('只读工具不得执行进程') } } },
     provider: { resolve: bound.resolve, transport: { request: async request => {
-      requests++
-      const body = request.body as Record<string, unknown>
-      if (requests === 1) {
-        const definitions = body.tools as Array<{ function: { name: string } }>
-        assert.deepEqual(definitions.map(tool => tool.function.name).sort(), custom ? [...custom.names].sort() : ['get_current_time', 'list_clients', 'list_projects'])
-        // 目录已发现后撤权，dispatch必须重新授权；模型参数不得覆盖可信时区。
-        if (reject) allowed.delete('list_clients')
-        const calls = custom ? custom.calls.map((call, index) => ({ index, id: call.id, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.input) } })) : [
-          { index: 0, id: 'clients', type: 'function', function: { name: 'list_clients', arguments: '{}' } },
-          { index: 1, id: 'projects', type: 'function', function: { name: 'list_projects', arguments: JSON.stringify(reject ? { status: '非法状态' } : {}) } },
-          { index: 2, id: 'time', type: 'function', function: { name: 'get_current_time', arguments: JSON.stringify({ timezone: 'America/New_York' }) } },
-        ]
-        return response({ tool_calls: calls }, 'tool_calls')
-      }
-      assert.equal(requests, 2)
-      const messages = body.messages as Array<{ role: string; tool_call_id?: string; content?: unknown }>
-      continuationMessages = messages
-      const actual = messages.filter(message => message.role === 'tool')
-      assert.deepEqual(actual.map(message => message.tool_call_id), custom ? custom.calls.map(call => call.id) : ['clients', 'projects', 'time'])
-      for (const message of actual) {
-        // 真实Provider缓存投影可把JSON文本包为单个ephemeral text块；仍读取实际wire正文。
-        let content = message.content
-        if (typeof content !== 'string') {
-          assert.ok(Array.isArray(content))
-          assert.equal(content.length, 1)
-          assert.deepEqual(Object.keys(content[0]).sort(), ['cache_control', 'text', 'type'])
-          assert.equal(content[0].type, 'text')
-          assert.deepEqual(content[0].cache_control, { type: 'ephemeral' })
-          content = content[0].text
+      try {
+        requests++
+        const body = request.body as Record<string, unknown>
+        if (requests === 1) {
+          const definitions = body.tools as Array<{ function: { name: string } }>
+          assert.deepEqual(definitions.map(tool => tool.function.name).sort(), (custom ? [...custom.names] : ['get_current_time', 'list_contacts', 'list_projects']).sort())
+          // 目录已发现后撤权，dispatch必须重新授权；模型参数不得覆盖可信时区。
+          if (reject) allowed.delete('list_contacts')
+          const calls = custom ? custom.calls.map((call, index) => ({ index, id: call.id, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.input) } })) : [
+            { index: 0, id: 'clients', type: 'function', function: { name: 'list_contacts', arguments: '{}' } },
+            { index: 1, id: 'projects', type: 'function', function: { name: 'list_projects', arguments: JSON.stringify(reject ? { status: '非法状态' } : {}) } },
+            { index: 2, id: 'time', type: 'function', function: { name: 'get_current_time', arguments: JSON.stringify({ timezone: 'America/New_York' }) } },
+          ]
+          return response({ tool_calls: calls }, 'tool_calls')
         }
-        assert.equal(typeof content, 'string')
-        wireResults.set(message.tool_call_id!, JSON.parse(content as string))
-      }
-      return response({ content: reject ? '部分查询未完成。' : '查询结果已读取。' }, 'stop')
+        assert.equal(requests, 2)
+        const messages = body.messages as Array<{ role: string; tool_call_id?: string; content?: unknown }>
+        continuationMessages = messages
+        const actual = messages.filter(message => message.role === 'tool')
+        assert.deepEqual(actual.map(message => message.tool_call_id), custom ? custom.calls.map(call => call.id) : ['clients', 'projects', 'time'])
+        for (const message of actual) {
+          // 真实Provider缓存投影可把JSON文本包为单个ephemeral text块；仍读取实际wire正文。
+          let content = message.content
+          if (typeof content !== 'string') {
+            assert.ok(Array.isArray(content))
+            assert.equal(content.length, 1)
+            assert.deepEqual(Object.keys(content[0]).sort(), ['cache_control', 'text', 'type'])
+            assert.equal(content[0].type, 'text')
+            assert.deepEqual(content[0].cache_control, { type: 'ephemeral' })
+            content = content[0].text
+          }
+          assert.equal(typeof content, 'string')
+          if (content.startsWith('【工具结果】')) {
+            const committed = committedToolResults.findLast(entry => entry.callId === message.tool_call_id)?.result
+            assert.ok(committed?.kind === 'completed')
+            const envelope = typeof committed.value === 'string' ? JSON.parse(committed.value) : committed.value
+            assert.equal(envelope.type, 'harness-tool-result-checkpoint')
+            assert.equal(envelope.scope.callId, message.tool_call_id)
+            const value = envelope.payload
+            assert.match(content, committed.successful ? /【执行状态】成功/u : /【执行状态】失败/u)
+            if (Array.isArray(value)) for (const row of value) assert.ok(content.includes(row.name))
+            wireResults.set(message.tool_call_id!, value)
+          } else wireResults.set(message.tool_call_id!, JSON.parse(content))
+        }
+        return response({ content: reject ? '部分查询未完成。' : '查询结果已读取。' }, 'stop')
+      } catch (error) { providerAssertion = error; throw error }
     } } },
   })
   const events: RunEvent[] = []
   try {
     for await (const event of instance.harness.start(identity)) events.push(event)
-    assert.equal(requests, 2)
-    assert.equal(events.at(-1)?.payload.status, 'completed')
+    if (providerAssertion) throw providerAssertion
+    assert.equal(requests, 2, JSON.stringify(events.at(-1)?.payload))
+    assert.equal(events.at(-1)?.payload.status, 'completed', JSON.stringify(events.at(-1)?.payload))
     assert.ok(committedToolResults.length >= (custom?.calls.length ?? 3))
     return { wireResults, continuationMessages, events, identity }
   } finally { await instance.close(); bound.release() }
@@ -159,6 +181,7 @@ test('独立Host runtime→真实registry→隔离PG只读工具→Provider续�
     const before = { clients: (await pool.query('SELECT * FROM clients ORDER BY id')).rows, projects: (await pool.query('SELECT * FROM projects ORDER BY id')).rows }
     for (const [id, suffix, timezone, date, time] of [[owner, '甲', 'Asia/Shanghai', '2026-01-02', '04:00:00'], [other, '乙', 'UTC', '2026-01-01', '20:00:00']]) {
       const result = await runReadRound(core, id!, timezone!)
+      assert.ok(Array.isArray(result.wireResults.get('clients')), JSON.stringify(result.wireResults.get('clients')))
       assert.deepEqual((result.wireResults.get('clients') as Array<{ name: string }>).map(item => item.name), [`合成联系人${suffix}`])
       assert.deepEqual((result.wireResults.get('projects') as Array<{ name: string }>).map(item => item.name), [`合成项目${suffix}`])
       assert.deepEqual(result.wireResults.get('time'), { date, weekday: date === '2026-01-02' ? '星期五' : '星期四', time, datetime: `${date} ${time}`, timezone, ignored_fields:['timezone'], hint:'以下字段不在 get_current_time 的当前 schema 中，已被忽略：timezone。参数形状与预期不符时，需要时用 search_tools 的 names 读取最新参数定义再重试。' })
@@ -180,13 +203,13 @@ test('独立Host runtime→真实registry→隔离PG只读工具→Provider续�
 })
 
 
-test('七个工具经Host runtime、真实共享服务和隔离PG续轮，项目收据恢复不重做业务', { skip: !databaseUrl && '需要隔离PG', timeout: 30000 }, async () => {
+test('六个工具经Host runtime、真实共享服务和隔离PG续轮，项目收据恢复不重做业务', { skip: !databaseUrl && '需要隔离PG', timeout: 30000 }, async () => {
   const schema = `gugu_tool_groups_${randomUUID().replaceAll('-', '')}`
   const admin = new Pool({ connectionString: databaseUrl, max: 1 }); await admin.query(`CREATE SCHEMA "${schema}"`)
   const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema}`, max: 3 })
   const core = await createPostgresRuntime({ url: databaseUrl!, schema, maxConnections: 4 })
   const root = await mkdtemp(join(tmpdir(), 'gugu-tool-group-files-'))
-  const owner = randomUUID(), other = randomUUID(), names = ['list_events','list_workspaces','get_workspace','get_dashboard_stats','update_project','set_color','archive_project']
+  const owner = randomUUID(), other = randomUUID(), names = ['list_events','list_workspaces','get_workspace','update_project','set_color','archive_project']
   let moves = 0, published = 0, allowed = true
   try {
     const ddl = tablesSql('postgres')
@@ -197,6 +220,7 @@ test('七个工具经Host runtime、真实共享服务和隔离PG续轮，项目
       CREATE TABLE workspace_directories(id integer PRIMARY KEY,user_id uuid,name text);
       CREATE TABLE workspaces(id integer PRIMARY KEY,user_id uuid,name text,kind text,enabled boolean,is_default boolean,project_id integer,folder_id integer,directory_id integer,updated_at timestamptz);
       CREATE TABLE conversation_sessions(id integer PRIMARY KEY,user_id uuid,workspace_id integer)`)
+    await scheduledTaskMode.apply(pool)
     const projects = await core.transaction(dataContext(owner), async data => [await data.projects.create({name:'待改名😀',start_date:'2026-11-01'}),await data.projects.create({name:'待换色'}),await data.projects.create({name:'待归档'})])
     const foreign = await core.transaction(dataContext(other), data=>data.projects.create({name:'他人私有项目'}))
     const old = `${owner}/项目文件/2026/11/待改名😀 #${projects[0]!.id}`
@@ -216,19 +240,16 @@ test('七个工具经Host runtime、真实共享服务和隔离PG续轮，项目
       time:{now:()=>new Date('2026-11-15T00:00:00Z'),timezone:async()=> 'Asia/Shanghai'},
       calendar:createAgentCalendarReader(createKyselyCalendarAgentReadPort(core.db,'postgres')),
       workspaces:createAgentWorkspaceQueries(createKyselyAgentWorkspaceReader(core.db,'postgres')),
-      dashboard:createKyselyDashboardCounter(core.db,'postgres'),projectMutations:mutations}
+      projectMutations:mutations}
     const registry = createAgentToolRegistry(options)
     const reads = await runReadRound(core,owner,'Asia/Shanghai',false,{registry,names,calls:[
       {id:'events',name:'list_events',input:{from:'2026-11-15',to:'2026-11-15'}},
       {id:'workspaces',name:'list_workspaces',input:{}},{id:'workspace',name:'get_workspace',input:{workspace_id:2}},
-      {id:'stats',name:'get_dashboard_stats',input:{owner_id:other}},
     ]})
     assert.deepEqual((reads.wireResults.get('events') as Array<{title:string;reminders:unknown[]}>).map(row=>row.title),['自有活动'])
     assert.deepEqual((reads.wireResults.get('events') as Array<{reminders:unknown[]}>)[0]!.reminders,[{lead_minutes:1,channels:['qq'],enabled:false,delivery_mode:'current_group'}])
     assert.deepEqual((reads.wireResults.get('workspaces') as Array<{workspace_id:number}>).map(row=>row.workspace_id),[2,1])
     assert.equal((reads.wireResults.get('workspace') as {bound_session_count:number}).bound_session_count,2)
-    assert.deepEqual(reads.wireResults.get('stats'),{projects:{pending:3,active:0,done:0,total:3},upcoming_events:1,files:1,clients:0,
-      ignored_fields:['owner_id'],hint:'以下字段不在 get_dashboard_stats 的当前 schema 中，已被忽略：owner_id。参数形状与预期不符时，需要时用 search_tools 的 names 读取最新参数定义再重试。'})
     assert.doesNotMatch(JSON.stringify([...reads.wireResults]),/他人|不应进入模型/)
     const calls = [{id:'update',name:'update_project',input:{project_id:projects[0]!.id,project_name:'已改名😀',status:'done'}},
       {id:'color',name:'set_color',input:{project_id:projects[1]!.id,color:'teal'}},
@@ -264,6 +285,7 @@ test('新增八工具经Host runtime和隔离PG续轮：阶段顺序修改、笔
  const owner=randomUUID(),other=randomUUID(),names=['add_stage','rename_stage','update_stage','set_stages','remove_stage','note_search','note_get','search_tools']
  let allowed=true,published=0
  try{
+  await prepareAgentIndexJobs(pool,owner)
   const ddl=tablesSql('postgres')
   for(const table of [ddl.projects,ddl.clients,ddl.calendarEvents,ddl.receipts,ddl.undo,ddl.mindNodes,ddl.mindMaps,ddl.mindRelations])await pool.query(table)
   await pool.query('CREATE TABLE files(id integer PRIMARY KEY,user_id uuid,project_id integer,display_name text,storage_key text,deleted_at timestamptz)')
@@ -271,7 +293,7 @@ test('新增八工具经Host runtime和隔离PG续轮：阶段顺序修改、笔
   const project=await core.transaction(dataContext(owner),data=>data.projects.create({name:'阶段测试',current_stage:'s0',stages:[
     {key:'s0',label:'计划',todos:[{id:'t0',text:'原待办',done:false}]},{key:'s1',label:'执行',todos:[]}]}))
   const foreign=await core.transaction(dataContext(other),data=>data.projects.create({name:'他人私有项目'}))
-  const markdown='# 重构\n正文 [[project:'+project.id+'|旧项目名]] [[project:'+foreign.id+'|不可读]] [[file:1|旧文件名]]'
+  const markdown='# 重构\n正文 [[project:'+project.id+'|旧项目名]] [[project:'+foreign.id+'|不可读]] [[file:path-owned|旧文件名]]'
   await pool.query("INSERT INTO files VALUES(1,$1,$2,'当前文件名','synthetic',NULL)",[owner,project.id])
   await pool.query("INSERT INTO mind_nodes(id,user_id,kind,title,content_md,content_plain,origin,version,captured_at,created_at,updated_at) VALUES "+
     "(1,$1,'note','重构笔记',$3,'重构 条件甲','gugu',1,'2026-11-15 00:00:00.000001+00',now(),now()),"+
@@ -281,7 +303,7 @@ test('新增八工具经Host runtime和隔离PG续轮：阶段顺序修改、笔
     "VALUES($1,1,2,'related','','user','confirmed',now(),now()),($1,1,3,'related','','user','confirmed',now(),now())",[owner])
   const runtime=createPostgresProjectUpdateRuntime(pool,async()=>{throw new Error('阶段工具不应移动物理目录')},async()=>{published++})
   const mutationOptions={core,runtime,metadata:()=>({undoContextId:'stage-session'})}
-  const options={core,notes:createAgentMindReader(core.db,'postgres'),projectMutations:createDurableProjectMutationPort(mutationOptions),
+  const options={core,notes:createAgentMindReader(core.db,'postgres',async (candidate,id)=>candidate===owner&&id==='path-owned'?{label:'当前文件名'}:null),projectMutations:createDurableProjectMutationPort(mutationOptions),
     authorize:async(identity:{ownerId:string},name:string)=>allowed&&identity.ownerId===owner&&names.includes(name)}
   const registry=createAgentToolRegistry(options)
   const reads=await runReadRound(core,owner,'UTC',false,{registry,names,calls:[
@@ -297,7 +319,7 @@ test('新增八工具经Host runtime和隔离PG续轮：阶段顺序修改、笔
   const note=reads.wireResults.get('note') as {node:{numbered_content:string};related:Array<{node:{node_id:number}}>;references:unknown[]}
   assert.match(note.node.numbered_content,/1: # 重构\n2: 正文/)
   assert.deepEqual(note.related.map(row=>row.node.node_id),[2])
-  assert.deepEqual(note.references,[{ref_type:'project',ref_id:project.id,label:'阶段测试'},{ref_type:'file',ref_id:1,label:'当前文件名'}])
+  assert.deepEqual(note.references,[{ref_type:'project',ref_id:project.id,label:'阶段测试'},{ref_type:'file',ref_id:'path-owned',label:'当前文件名'}])
   assert.doesNotMatch(JSON.stringify(reads.wireResults.get('search')),/他人私有|不应泄漏/)
   const calls=[
     {id:'add',name:'add_stage',input:{project_id:project.id,label:'验收'}},
@@ -403,6 +425,7 @@ test('画布候选/创建和技能目录经真实Host工具续轮及PG共享服�
  const core=await createPostgresRuntime({url:databaseUrl!,schema,maxConnections:3})
  const owner=randomUUID(),other=randomUUID(),names=['canvas_create','canvas_search_placeable','list_skills'];let allowed=true,publications=0
  try{
+  await prepareAgentIndexJobs(pool,owner)
   const ddl=tablesSql('postgres')
   for(const table of [ddl.projects,ddl.receipts,ddl.undo,ddl.mindNodes,ddl.mindMaps,ddl.mindItems])await pool.query(table)
   await pool.query('CREATE TABLE files(id integer PRIMARY KEY,user_id uuid,display_name text,ext text,stage_name text,updated_at timestamptz,deleted_at timestamptz)')
@@ -444,6 +467,7 @@ test('画布三种编辑经真实Host续轮与PG：布局、正文和移除视�
  const core=await createPostgresRuntime({url:databaseUrl!,schema,maxConnections:3})
  const owner=randomUUID(),other=randomUUID(),names=['canvas_update_node','canvas_remove_node','canvas_update_note'];let allowed=true,events=0
  try{
+  await prepareAgentIndexJobs(pool,owner)
   const ddl=tablesSql('postgres')
   for(const table of [ddl.projects,ddl.receipts,ddl.undo,ddl.mindNodes,ddl.mindMaps,ddl.mindItems,ddl.mindRelations])await pool.query(table)
   await pool.query("INSERT INTO mind_maps(id,user_id,title,data_json,created_at,updated_at) VALUES(1,$1,'画布','{}',now(),now()),(2,$2,'他人画布','{}',now(),now())",[owner,other])
@@ -486,6 +510,7 @@ test('画布创建便签/放置引用/端点更新经真实Host与PG续轮，不
  const core=await createPostgresRuntime({url:databaseUrl!,schema,maxConnections:3})
  const owner=randomUUID(),other=randomUUID(),names=['canvas_create_note','canvas_add_node','canvas_update_anchor','canvas_connect'];let allowed=true,events=0
  try{
+  await prepareAgentIndexJobs(pool,owner)
   const ddl=tablesSql('postgres')
   for(const table of [ddl.projects,ddl.receipts,ddl.undo,ddl.mindNodes,ddl.mindMaps,ddl.mindItems,ddl.mindRelations,ddl.calendarEvents])await pool.query(table)
   await pool.query("INSERT INTO mind_maps(id,user_id,title,data_json,created_at,updated_at) VALUES(1,$1,'画布','{\"x\":100,\"y\":50,\"scale\":2,\"viewport\":{\"width\":1000,\"height\":800},\"preserve\":\"保留\"}',now(),now())",[owner])
@@ -530,6 +555,7 @@ test('笔记删除/恢复/撤销经真实Host与PG续轮，owner/类型边界及
  const core=await createPostgresRuntime({url:databaseUrl!,schema,maxConnections:3})
  const owner=randomUUID(),other=randomUUID(),names=['note_delete','note_restore','note_undo'];let allowed=true,events=0
  try{
+  await prepareAgentIndexJobs(pool,owner)
   const ddl=tablesSql('postgres');for(const table of [ddl.receipts,ddl.undo,ddl.mindNodes])await pool.query(table)
   const stamp='2026-11-15 00:00:00.123456+00'
   for(const [id,user,kind,origin,created] of [[1,owner,'note','user','2026-11-15 20:00:00+00'],[2,owner,'note','gugu','2026-11-15 01:00:00+00'],[3,owner,'note','gugu','2026-11-15 02:00:00+00'],[4,other,'note','gugu','2026-11-15 21:00:00+00'],[5,owner,'canvas_note','gugu','2026-11-15 22:00:00+00']] as const)

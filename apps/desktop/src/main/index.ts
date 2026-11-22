@@ -374,6 +374,8 @@ else {
         if (method === 'agent.files.searchReferences' && Object.keys(params).length === 1
           && typeof params.query === 'string' && params.query.length <= 4096)
           return files.handlers[DESKTOP_CHANNELS.files]!({ action: 'search', query: params.query })
+        if (method === 'agent.files.workspaceRoot' && Object.keys(params).length === 1 && typeof params.directoryId === 'string')
+          return files.agentWorkspaceRoot(params.directoryId)
         if (method === 'agent.files.resolveWorkspaceReference' && Object.keys(params).length === 1 && typeof params.id === 'string')
           return files.resolveWorkspaceReference(params.id)
         if (method === 'agent.files.resolveDroppedReference' && Object.keys(params).length === 1 && typeof params.id === 'string')
@@ -498,9 +500,9 @@ else {
       const mainWindowSize = createMainWindowSizeStore(dataDirectory)
       let mainWindow: BrowserWindow | undefined
       let mainWindowLoad: Promise<void> | undefined
-      host.onAgentRunChanged(sessionId => {
+      host.onAgentRunChanged((sessionId, _runId, interactionChanged) => {
         if (mainWindow && !mainWindow.isDestroyed())
-          mainWindow.webContents.send(DESKTOP_CHANNELS.agentRunChanged, sessionId)
+          mainWindow.webContents.send(DESKTOP_CHANNELS.agentRunChanged, sessionId, interactionChanged)
       })
       const createWindow = async () => {
         const size = smoke ? undefined : mainWindowSize.read()
@@ -797,8 +799,16 @@ else {
       })
       app.on('activate', () => openMainWindow())
       if (process.platform === 'darwin' || process.platform === 'win32') {
-        const icon = nativeImage.createFromPath(join(app.getAppPath(), 'assets', 'icon.png'))
-        tray = new Tray(icon.resize({ width: process.platform === 'darwin' ? 18 : 16 }))
+        const assets = join(app.getAppPath(), 'assets')
+        const icon = nativeImage.createFromPath(join(assets, 'icon.png'))
+        const trayIcon = process.platform === 'darwin'
+          ? nativeImage.createFromPath(join(assets, 'trayTemplate.png'))
+          : icon.resize({ width: 16 })
+        if (process.platform === 'darwin') {
+          trayIcon.setTemplateImage(true)
+          if (!app.isPackaged) app.dock?.setIcon(icon)
+        }
+        tray = new Tray(trayIcon)
         tray.setToolTip('咕咕')
         tray.setContextMenu(Menu.buildFromTemplate(buildStatusMenu(
           process.platform === 'darwin', openMainWindow, () => runMenuCommand('new-note'),

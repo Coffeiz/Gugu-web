@@ -318,7 +318,7 @@ test('Web 重建器分别校验队列 contextScopeKey 与 Core checkpoint access
         provider: { transport: { request: async () => { throw new Error('不应请求 Provider') } } },
         bindProvider(provider) {
           assert.equal(typeof provider.branchProvider, 'function')
-          assert.equal(typeof provider.reflectionProjection, 'function')
+          assert.equal(typeof provider.reflectionProvider, 'function')
           assert.equal(typeof provider.summaryProjection, 'function')
           providerBindingCalls++
           if (failProviderBinding) throw new Error('合成 Provider 资源绑定失败')

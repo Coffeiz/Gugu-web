@@ -1,3 +1,4 @@
+import {IM_REFLECTION_IDLE_SECONDS,IM_REFLECTION_PASSIVE_THRESHOLD} from '@gugu/core/agent/memory/reflection/window'
 import {randomUUID} from 'node:crypto'
 import type {Pool,PoolClient} from 'pg'
 import type {RunIdentity} from '@gugu/core/agent'
@@ -134,7 +135,7 @@ export function createImReflectionTriggers(options:{pool:Pick<Pool,'query'|'conn
      if(!observed.rowCount||!countable)continue
      if(revision(row.conversation_seq)>revision(s.through_message_seq)){s.through_message_id=row.id;s.through_message_seq=row.conversation_seq}
      s.passive_count++
-     if(s.passive_count===50){result.push(await window(client,ownerId,sessionId,s,s.through_message_id,'threshold'));s.passive_count-=50}
+     if(s.passive_count===IM_REFLECTION_PASSIVE_THRESHOLD){result.push(await window(client,ownerId,sessionId,s,s.through_message_id,'threshold'));s.passive_count-=IM_REFLECTION_PASSIVE_THRESHOLD}
     }
     await client.query('UPDATE gugu_im_reflection_trigger_states SET passive_count=$3,through_message_id=$4,through_message_seq=$5 WHERE user_id=$1 AND session_id=$2',[ownerId,sessionId,s.passive_count,s.through_message_id,s.through_message_seq])
     return result
@@ -166,10 +167,30 @@ export function createImReflectionTriggers(options:{pool:Pick<Pool,'query'|'conn
     const throughSeq=revision(dispatch.through_seq);if(!throughSeq)throw fail()
     await client.query(`UPDATE gugu_im_reflection_trigger_states SET last_active_run_id=$3,
      through_message_id=CASE WHEN $5::bigint>through_message_seq THEN $4 ELSE through_message_id END,through_message_seq=greatest(through_message_seq,$5::bigint),
-     active_at=clock_timestamp(),idle_due_at=clock_timestamp()+interval '180 seconds',active_generation=active_generation+1 WHERE user_id=$1 AND session_id=$2`,[ownerId,sessionId,identity.runId,through,throughSeq])
+     active_at=clock_timestamp(),idle_due_at=clock_timestamp()+($6*interval '1 second'),active_generation=active_generation+1 WHERE user_id=$1 AND session_id=$2`,[ownerId,sessionId,identity.runId,through,throughSeq,IM_REFLECTION_IDLE_SECONDS])
     await client.query(`UPDATE gugu_im_reflection_trigger_windows SET next_attempt_at=clock_timestamp()
      WHERE user_id=$1 AND session_id=$2 AND owner_revision=$3 AND status='pending'`,[ownerId,sessionId,s.owner_revision])
    }catch{throw fail()}
+  },
+  async stageCompactionLocked(client:PoolClient,identity:RunIdentity,coveredUserIds:readonly string[]){
+   if(!coveredUserIds.length)return
+   const ownerId=normalizeOwnerId(identity.ownerId),sessionId=integer(identity.sessionId)
+   const scope=await session(client,ownerId,sessionId)
+   if(!scope.group_memory_enabled||scope.tombstoned)return
+   const s=await state(client,ownerId,sessionId)
+   const through=(await client.query(`SELECT m.id,m.conversation_seq::text FROM conversation_messages m
+    JOIN gugu_im_inbound_receipts r ON r.user_id=$1 AND r.session_id=m.session_id AND r.message_id=m.id
+    WHERE m.session_id=$2 AND m.id=ANY($3::integer[]) AND m.role='user' AND m.conversation_seq>0
+      AND r.bot_id=$4 AND r.platform=$5 AND r.chat_type='group'
+    ORDER BY m.conversation_seq DESC LIMIT 1`,[ownerId,sessionId,coveredUserIds,scope.bot_id,scope.source])).rows[0]
+   if(!through)return
+   const existing=await client.query(`SELECT 1 FROM gugu_im_reflection_trigger_windows
+    WHERE user_id=$1 AND session_id=$2 AND owner_revision=$3 AND through_message_seq=$4
+      AND reason='idle' AND status='pending'`,[ownerId,sessionId,s.owner_revision,through.conversation_seq])
+   if(!existing.rowCount){
+    // 压缩与闲置使用同一个可立即处理的窗口，保留各范围自己的已完成水位。
+    await window(client,ownerId,sessionId,{...s,through_message_seq:through.conversation_seq},integer(through.id),'idle')
+   }
   },
   async settleIdle(limit=100):Promise<ImReflectionWindow[]>{
    try{

@@ -1,3 +1,4 @@
+import { createOwnedTextReader } from '@gugu/core/tools'
 import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -30,7 +31,7 @@ function pdfFixture(text: string): Uint8Array {
   return Uint8Array.from(Buffer.from(pdf, 'ascii'))
 }
 
-test('文件读取只访问同 owner 内容并在 lease 撤销后拒绝', async () => {
+test('Web 拒绝退役工具并保留受控正文读取', async () => {
   const root = await mkdtemp(join(tmpdir(), 'gugu-agent-file-read-'))
   let core: SqlDataRuntime | undefined
   try {
@@ -71,51 +72,50 @@ test('文件读取只访问同 owner 内容并在 lease 撤销后拒绝', async 
     const ports = createAuthorizedWebAgentProductionRagRunPorts({
       core: core!, pool: pool as never, storageRoot: root, lease,
       selection: { contextPolicy: { loadOwnerContext: true, memoryEnabled: true }, contextScopeKey: lease.input.accessVersion, modelIdentity: 'synthetic-model' },
-      enabled: async () => true, enabledFileRead: true,
-      readFile: createWebAgentFileReadPort(pool as never, root, lease, {
-        async list(current, signal) {
-          signal.throwIfAborted()
-          assert.deepEqual(current, identity)
-          return [{ file_id: 7, name: 'notes.txt', path: '/personal/notes.txt' }]
-        },
-      }),
+      enabled: async () => true,
     })
-    const retired = ['list_dir', 'grep', 'edit_file', 'rename_file', 'copy_file', 'create_file',
+    const read = createOwnedTextReader(createWebAgentFileReadPort(pool as never, root, lease, {
+      async list(current, signal) {
+        signal.throwIfAborted()
+        assert.deepEqual(current, identity)
+        return [{ file_id: 7, name: 'notes.txt', path: '/personal/notes.txt' }]
+      },
+    }))
+    const retired = ['read_file', 'list_dir', 'grep', 'edit_file', 'rename_file', 'copy_file', 'create_file',
       'create_folder', 'rename_folder', 'move_items', 'compress_files', 'extract_files']
     const available = (await ports.configuration(identity, new AbortController().signal)).toolNames
-    assert.ok(available.includes('read_file'))
     for (const name of retired) assert.ok(!available.includes(name), name)
     const scope = { identity, roundId: '1', signal: new AbortController().signal, resolution: null,
-      execute: async () => { throw new Error('read_file 不得执行宿主命令') } }
+      execute: async () => { throw new Error('退役工具不得执行宿主命令') } }
     for (const name of retired) {
       const result = await ports.toolRegistry.tools.dispatch({ id: `retired-${name}`, name, input: {} }, scope)
       assert.equal(result.kind === 'completed' && !result.successful && result.executed === false, true, name)
     }
-    const result = await ports.toolRegistry.tools.dispatch({ id: 'read-lines', name: 'read_file', input: { file_id: 7, target_lines: '2-3' } }, scope)
+    const result = await read({ file_id: 7, target_lines: '2-3' }, scope)
     assert.deepEqual(result.kind === 'completed' ? result.value : null, {
       file_id: 7, name: 'notes.txt', content: '第二行\n第三行', numbered_content: '2: 第二行\n3: 第三行',
       line_range: { start: 2, end: 3 }, _source_size_bytes: Buffer.byteLength('第一行\r\n第二行\n第三行'),
     })
-    const pathRead = await ports.toolRegistry.tools.dispatch({ id: 'read-path', name: 'read_file', input: { file: '/personal/notes.txt', target_lines: '1' } }, scope)
+    const pathRead = await read({ file: '/personal/notes.txt', target_lines: '1' }, scope)
     assert.deepEqual(pathRead.kind === 'completed' ? pathRead.value : null, {
       file_id: 7, name: 'notes.txt', content: '第一行\r\n', numbered_content: '1: 第一行',
       line_range: { start: 1, end: 1 }, _source_size_bytes: Buffer.byteLength('第一行\r\n第二行\n第三行'),
     })
-    const officeRead = await ports.toolRegistry.tools.dispatch({ id: 'read-office', name: 'read_file', input: { file_id: 8 } }, scope)
+    const officeRead = await read({ file_id: 8 }, scope)
     assert.equal(officeRead.successful, true)
     assert.match(JSON.stringify(officeRead.value), /Synthetic report text/u)
     assert.equal(officeRead.value && typeof officeRead.value === 'object' && 'name' in officeRead.value ? officeRead.value.name : null, 'report.pdf')
-    const attachmentRead = await ports.toolRegistry.tools.dispatch({ id: 'read-history-attachment', name: 'read_file', input: {
+    const attachmentRead = await read({
       attach_id: 'historical-text', target_lines: '2',
-    } }, scope)
+    }, scope)
     assert.deepEqual(attachmentRead.kind === 'completed' ? attachmentRead.value : null, {
       attach_id: 'historical-text', name: '历史备注.txt', content: '历史附件第二行',
       numbered_content: '2: 历史附件第二行', line_range: { start: 2, end: 2 },
       _source_size_bytes: Buffer.byteLength('历史附件第一行\n历史附件第二行'),
     })
-    const attachmentBatch = await ports.toolRegistry.tools.dispatch({ id: 'read-attachment-batch', name: 'read_file', input: {
+    const attachmentBatch = await read({
       items: [{ attach_id: 'historical-text', title: '旧附件' }],
-    } }, scope)
+    }, scope)
     assert.deepEqual(attachmentBatch.kind === 'completed' ? attachmentBatch.value : null, {
       results: [{ index: 1, label: '旧附件', successful: true, value: {
         attach_id: 'historical-text', name: '历史备注.txt', content: '历史附件第一行\n历史附件第二行',
@@ -127,11 +127,11 @@ test('文件读取只访问同 owner 内容并在 lease 撤销后拒绝', async 
     const attachmentPort = createWebAgentFileReadPort(pool as never, root, lease)
     assert.equal(await attachmentPort.resolveOwnedAttachment?.({ ...identity, ownerId: randomUUID() }, 'historical-text', new AbortController().signal), null)
     assert.equal(attachmentQueries, attachmentQueriesBeforeForeignOwner, '不同 owner 不得查询附件行')
-    assert.equal((await ports.toolRegistry.tools.dispatch({ id: 'read-traversal', name: 'read_file', input: { file: '/personal/../private.txt' } }, scope)).successful, false)
-    assert.equal((await ports.toolRegistry.tools.dispatch({ id: 'read-host-uri', name: 'read_file', input: { file: 'file:///private/private.txt' } }, scope)).successful, false)
-    const batch = await ports.toolRegistry.tools.dispatch({ id: 'read-batch', name: 'read_file', input: { items: [
+    assert.equal((await read({ file: '/personal/../private.txt' }, scope)).successful, false)
+    assert.equal((await read({ file: 'file:///private/private.txt' }, scope)).successful, false)
+    const batch = await read({ items: [
       { file_id: 7, target_lines: '1', title: '已有文件' }, { file_id: 9, result_id: '异主或不存在' },
-    ] } }, scope)
+    ] }, scope)
     assert.deepEqual(batch.kind === 'completed' ? batch.value : null, {
       results: [
         { index: 1, label: '已有文件', successful: true, value: {
@@ -142,7 +142,7 @@ test('文件读取只访问同 owner 内容并在 lease 撤销后拒绝', async 
       ],
       successful_count: 1, failed_count: 1, total_source_size_bytes: Buffer.byteLength('第一行\r\n第二行\n第三行'),
     })
-    const missing = await ports.toolRegistry.tools.dispatch({ id: 'missing', name: 'read_file', input: { file_id: 9 } }, scope)
+    const missing = await read({ file_id: 9 }, scope)
     assert.equal(missing.kind === 'completed' && JSON.stringify(missing.value).includes('文件不存在或无权访问'), true)
     const beforeRevocation = fileQueries
     active = false

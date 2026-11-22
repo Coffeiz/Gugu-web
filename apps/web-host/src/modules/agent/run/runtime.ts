@@ -1,5 +1,5 @@
 import type { Pool } from 'pg'
-import { createAgentRunStateReader, createAgentRuntime, createAgentRuntimeWithContextFactory, type AgentRuntimeOptions, type AgentRuntimeContextFactoryOptions, type CanonicalRunContext, type RunIdentity } from '@gugu/core/agent'
+import { agentDispatchReadyChannel, createAgentRunStateReader, createAgentRuntime, createAgentRuntimeWithContextFactory, type AgentRuntimeOptions, type AgentRuntimeContextFactoryOptions, type CanonicalRunContext, type RunIdentity } from '@gugu/core/agent'
 import { createNodeProviderTransportFactory } from '@gugu/core/providers/node'
 import type { RedisAgentCancellationCommands } from '../../../adapters/cache/redis-events.js'
 import type { LiveSubscriptionFactory } from '../../../adapters/cache/redis-live-subscription.js'
@@ -33,6 +33,11 @@ function persistentResources(options: Omit<PersistentAgentRuntimeOptions, 'conte
   const store = createPostgresAgentRunStore(options.pool, options.secretKey, {
     ...options.history,
     applyPreparedContext: applyCanonicalSnapshotEffects,
+    async onSubagentDeliveryCommitted(parent) {
+      try { await options.redis.publish(agentDispatchReadyChannel, '1') }
+      catch { options.runtime.diagnose('publish_failed') }
+      await options.history.onSubagentDeliveryCommitted?.(parent)
+    },
   })
   const startup = createPostgresAgentRunStartupStore(options.pool)
   const events = createAgentRunEventStream({

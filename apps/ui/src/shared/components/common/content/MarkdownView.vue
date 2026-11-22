@@ -1,5 +1,7 @@
 <template>
-  <div ref="root" class="md-view" :data-mermaid-ready="mermaidReady ? 'true' : 'false'" v-html="rendered" />
+  <div ref="tableHost" class="md-table-host">
+    <div ref="root" class="md-view" :data-mermaid-ready="mermaidReady ? 'true' : 'false'" v-html="rendered" />
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -8,6 +10,7 @@ import { useI18n } from 'vue-i18n'
 import { renderMarkdown, sanitizeHtml, sanitizeChatHtml } from '@/utils/markdown'
 import { renderMarkdownMath } from '@/utils/chart/math'
 import { cleanupMarkdownMermaid, createMermaidRenderLabels, renderMarkdownMermaid } from '@/utils/chart/mermaidRenderer'
+import { createMarkdownTableViewport } from './markdownTableViewport'
 import { createMarkdownStreamMotion } from './markdownStreamMotion'
 import type { MarkdownMathLabels } from '@/utils/chart/math'
 
@@ -25,6 +28,7 @@ const props = defineProps({
   streamMotion: { type: Boolean, default: false },
 })
 const root = ref<HTMLElement | null>(null)
+const tableHost = ref<HTMLElement | null>(null)
 const mermaidReady = ref(false)
 const { t, locale } = useI18n()
 function createMathLabels(): MarkdownMathLabels {
@@ -36,15 +40,23 @@ function createMathLabels(): MarkdownMathLabels {
 }
 let themeObserver: MutationObserver | null = null
 let renderGeneration = 0
+let tableControls: ReturnType<typeof createMarkdownTableViewport> | undefined
 
 function wrapMarkdownTables(): void {
-  if (!root.value) return
+  if (!root.value || !tableHost.value) return
   for (const table of root.value.querySelectorAll<HTMLTableElement>('table')) {
     if (table.parentElement?.classList.contains('md-table-scroll')) continue
     const wrapper = document.createElement('div')
     wrapper.className = 'md-table-scroll'
     table.replaceWith(wrapper)
     wrapper.appendChild(table)
+  }
+  if (root.value.querySelector('.md-table-scroll > table')) {
+    tableControls ??= createMarkdownTableViewport(tableHost.value, root.value)
+    tableControls.refresh()
+  } else {
+    tableControls?.dispose()
+    tableControls = undefined
   }
 }
 
@@ -67,6 +79,7 @@ const rendered = computed(() =>
 
 const updateStreamMotion = createMarkdownStreamMotion()
 watch(rendered, () => {
+  wrapMarkdownTables()
   if (props.streamMotion && root.value) updateStreamMotion(root.value, true)
 }, { flush: 'post' })
 watch(() => props.streamMotion, (active) => {
@@ -80,6 +93,7 @@ watch([rendered, locale, () => props.renderMath, () => props.streamMotion], asyn
 }, { flush: 'post' })
 
 onMounted(() => {
+  wrapMarkdownTables()
   if (props.streamMotion && root.value) updateStreamMotion(root.value, true)
   if (props.renderMath) renderMarkdownMath(root.value, createMathLabels())
   renderMermaidBlocks()
@@ -89,6 +103,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   renderGeneration++
+  tableControls?.dispose()
   themeObserver?.disconnect()
   themeObserver = null
   cleanupMarkdownMermaid(root.value)
@@ -96,6 +111,7 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.md-table-host { position: relative; min-width: 0; }
 .md-view { font-size: inherit; line-height: 1.6; word-break: break-word; overflow-wrap: break-word; }
 .md-view :deep(> :first-child) { margin-top: 0; }
 .md-view :deep(> :last-child)  { margin-bottom: 0; }

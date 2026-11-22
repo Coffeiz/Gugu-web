@@ -4,7 +4,6 @@ import { createWebAgentSearchPorts } from '../../../agent/tools/search.js'
 import { createHash, randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { Pool } from 'pg'
-import { createKyselyDashboardCounter } from '@gugu/core'
 import { createAgentCalendarReader, createKyselyCalendarAgentReadPort, createKyselyCalendarReadPort } from '@gugu/core/calendar'
 import { createAgentMindReader, createSqlMindCanvasReader } from '@gugu/core/mind'
 import type { SqlDataRuntime } from '@gugu/core/data'
@@ -335,7 +334,6 @@ export function createImProductionResources(options: ImProductionResourcesOption
       fileOverview: createProjectFileOverviewPort(options.pool),
       calendar: createAgentCalendarReader(createKyselyCalendarAgentReadPort(options.core.db, 'postgres')),
       events: createKyselyCalendarReadPort(options.core.db, 'postgres'),
-      dashboard: createKyselyDashboardCounter(options.core.db, 'postgres'),
       notes: createAgentMindReader(options.core.db, 'postgres'),
       canvases: createSqlMindCanvasReader(options.core.db, 'postgres'),
       ...ownerTools?.tools,

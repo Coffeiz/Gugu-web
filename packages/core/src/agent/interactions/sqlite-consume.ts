@@ -83,10 +83,15 @@ export async function consumeSqliteInteractionChoice(
 export async function consumeSqliteInteraction(
   db: Kysely<Database>, identity: RunIdentity, promptId: number, reply: Reply | null, eventId: string,
   pending?: { id: string; version: number }, encryptSecret?: McpEnvelopeCrypto['encrypt'],
+  authorize?: (tx: Transaction<Database>) => Promise<boolean>,
 ): Promise<{ resolution: InteractionResolution | null; awaitingText: boolean }> {
   const owner = dataContext(identity.ownerId).ownerId.replaceAll('-', '')
   const unavailable = async (): Promise<never> => { throw new CoreError('conflict', '桌面交互命令尚未接入') }
   return db.transaction().execute(async tx => {
+    if (authorize) {
+      await sql`UPDATE interaction_prompts SET id=id WHERE 0`.execute(tx)
+      if (!await authorize(tx)) throw new CoreError('conflict', '子运行确认授权已失效')
+    }
     const { rows: [row] } = await sql<{
       interaction_id: string; tool_call_id: string; kind: string; status: string; schema_json: string; expires_at: string; resolved_at: string | null
     }>`SELECT b.interaction_id,b.tool_call_id,p.kind,p.status,p.schema_json,p.expires_at,p.resolved_at

@@ -1,6 +1,7 @@
 import { Kysely, PostgresDialect, sql } from 'kysely'
 import type { Pool } from 'pg'
 import { CoreError, dataContext } from '../../contracts/index.js'
+import { createSubagentDeliveryStore } from '../subagent/delivery-store.js'
 import { sanitizeMediaPayload } from '../context/messages/index.js'
 
 export class AgentToolEventSessionNotFoundError extends Error {
@@ -13,7 +14,7 @@ export class AgentToolEventDetailsNotFoundError extends Error {
 }
 
 /** 读取前校验 owner；数据库侧限制旧的大型时间线，避免加载到进程。 */
-export function createSqlAgentToolEventDetails(db: Kysely<any>, backend: 'postgres' | 'sqlite') {
+export function createSqlAgentToolEventDetails(db: Kysely<any>, backend: 'postgres' | 'sqlite', getRunSecret?: () => string | Promise<string>) {
   return async (ownerId: string, sessionId: number, messageId: number, timelineIndex: number): Promise<Record<string, unknown>> => {
     const normalized = dataContext(ownerId).ownerId
     const owner = backend === 'sqlite' ? normalized.replaceAll('-', '') : normalized
@@ -31,6 +32,22 @@ export function createSqlAgentToolEventDetails(db: Kysely<any>, backend: 'postgr
       if (!event || typeof event !== 'object' || Array.isArray(event) || event.kind !== 'tool') throw new AgentToolEventDetailsNotFoundError()
       const details: Record<string, unknown> = {}
       for (const key of ['toolInput', 'toolResult']) if (key in event) details[key] = event[key]
+      if (getRunSecret && typeof event.runId === 'string'
+        && (event.toolName === 'agent_wait' || event.toolName === 'subagent_result')) {
+        const result = detailRecord(event.toolResult)
+        const childId = detailRecord(result.run).childId ?? result.childId ?? detailRecord(event.toolInput).childId
+        if (typeof childId === 'string' && /^[a-f0-9]{8}$/.test(childId)) {
+          const deliveries = createSubagentDeliveryStore(db, await getRunSecret(), undefined, backend)
+          const parent = { ownerId: normalized, sessionId: String(sessionId), runId: event.runId }
+          const delivery = await deliveries.read(parent, childId)
+          if (delivery?.outcome && 'finalMessage' in delivery.outcome) {
+            details.toolResult = {
+              ...result,
+              childId, finalMessage: delivery.outcome.finalMessage,
+            }
+          }
+        }
+      }
       return sanitizeMediaPayload(details) as Record<string, unknown>
     } catch (error) {
       const e = error as { code?: string; message?: string }
@@ -40,7 +57,14 @@ export function createSqlAgentToolEventDetails(db: Kysely<any>, backend: 'postgr
   }
 }
 
+function detailRecord(value: unknown): Record<string, unknown> {
+  if (typeof value === 'string') {
+    try { value = JSON.parse(value) } catch { return {} }
+  }
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+
 /** 借用 Host 连接池，生命周期由 Host 管理。 */
-export function createPostgresAgentToolEventDetails(pool: Pick<Pool, 'query' | 'connect'>) {
-  return createSqlAgentToolEventDetails(new Kysely<any>({ dialect: new PostgresDialect({ pool: pool as Pool }) }), 'postgres')
+export function createPostgresAgentToolEventDetails(pool: Pick<Pool, 'query' | 'connect'>, runSecret?: string) {
+  return createSqlAgentToolEventDetails(new Kysely<any>({ dialect: new PostgresDialect({ pool: pool as Pool }) }), 'postgres', runSecret === undefined ? undefined : () => runSecret)
 }

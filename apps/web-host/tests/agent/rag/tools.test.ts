@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { sql } from 'kysely'
-import { createKyselyDashboardCounter, dataContext } from '@gugu/core'
+import { dataContext } from '@gugu/core'
 import { createKyselyProjectCreateRuntime } from '@gugu/core/project-create-data'
 import { databaseTime, initializeSqlite, openSqliteRuntime, projectRecord } from '@gugu/core/data'
 import { createConfirmationGate, createProjectDeleteTool, createPermanentDeleteTool, type ConfirmationIntent, type ProjectDeleteRuntime } from '@gugu/core/tools'
@@ -91,6 +91,7 @@ test('Web RAG 组合端口经真实注册器同时接通 conversation 与 owner 
     assert.match(JSON.stringify(memory), /发布前先检查回归测试/u)
     assert.doesNotMatch(JSON.stringify(memory), /不应泄漏的发布安排/u)
 
+    await mkdir(join(storageRoot, ownerId, '.agent', 'memories'), { recursive: true })
     await writeFile(join(storageRoot, ownerId, '.agent', 'memories', 'memory_vec.json'), JSON.stringify({
       'rag:memory:profile:profile-v1:0': { t: 'synthetic:embedding-v1:2', v: [1, 0] },
     }), 'utf8')
@@ -309,7 +310,7 @@ test('Web RAG Run 配置只公开只读工具并在每次授权时复验 Postgre
   const configuration = await authorization.configuration(identity, signal)
   assert.deepEqual(configuration.identity, { ownerId: identity.ownerId, workspaceId: null,
     subject: { kind: 'session', id: identity.sessionId } })
-  assert.deepEqual(configuration.toolNames, ['search_conversations', 'search_memory', 'use_skill', 'list_skills', 'list_clients', 'list_projects', 'search_tools'])
+  assert.deepEqual(configuration.toolNames, ['search_conversations', 'search_memory', 'use_skill', 'list_skills', 'list_contacts', 'list_projects', 'search_tools'])
   assert.equal(configuration.toolNames.includes('ask_user'), false, '没有交互激活装配时不得暴露 ask_user')
   assert.equal(await authorization.authorize(identity, 'get_project', signal), false)
   assert.equal(await authorization.authorize(identity, 'create_project', signal), false)
@@ -452,23 +453,23 @@ test('生产 Web Run 复用 Core 客户端工具，按可信 owner 创建、列�
       enabled: async () => true, enabledClientTools: true,
     })
     const configuration = await run.configuration(identity, new AbortController().signal)
-    for (const name of ['list_clients', 'create_client', 'update_client']) assert.ok(configuration.toolNames.includes(name))
+    for (const name of ['list_contacts', 'create_contact', 'update_contact']) assert.ok(configuration.toolNames.includes(name))
     const scope = { identity, roundId: '1', signal: new AbortController().signal, resolution: null,
       execute: async () => { throw new Error('联系人工具不得调用执行后端') } }
-    const created = await run.toolRegistry.tools.dispatch({ id: 'create-client', name: 'create_client', input: {
-      client_name: '合成联系人', email: 'synthetic@example.test', owner_id: otherOwner,
+    const created = await run.toolRegistry.tools.dispatch({ id: 'create-client', name: 'create_contact', input: {
+      name: '合成联系人', email: 'synthetic@example.test', owner_id: otherOwner,
     } }, scope)
     assert.equal(created.kind === 'completed' && created.successful, true, JSON.stringify(created))
-    const createdValue = created.kind === 'completed' ? created.value as { client_id: number; name: string } : null
+    const createdValue = created.kind === 'completed' ? created.value as { contact_id: number; name: string } : null
     assert.equal(createdValue?.name, '合成联系人')
 
-    const updated = await run.toolRegistry.tools.dispatch({ id: 'update-client', name: 'update_client', input: {
-      client_id: createdValue!.client_id, phone: '000-0000',
+    const updated = await run.toolRegistry.tools.dispatch({ id: 'update-client', name: 'update_contact', input: {
+      contact_id: createdValue!.contact_id, phone: '000-0000',
     } }, scope)
     assert.equal(updated.kind === 'completed' && updated.successful, true, JSON.stringify(updated))
-    const listed = await run.toolRegistry.tools.dispatch({ id: 'list-clients', name: 'list_clients', input: {} }, scope)
+    const listed = await run.toolRegistry.tools.dispatch({ id: 'list-clients', name: 'list_contacts', input: {} }, scope)
     assert.equal(listed.kind === 'completed' && listed.successful, true, JSON.stringify(listed))
-    assert.deepEqual(listed.kind === 'completed' ? listed.value : null, [{ id: createdValue!.client_id,
+    assert.deepEqual(listed.kind === 'completed' ? listed.value : null, [{ id: createdValue!.contact_id,
       name: '合成联系人', contact: null, email: 'synthetic@example.test', phone: '000-0000', notes: '' }])
   } finally {
     await runtime?.close()
@@ -499,12 +500,12 @@ test('Web Agent 按 Host 显式启用知识/日历/画布工具，并对其每�
   assert.equal((await withoutMindReads.configuration(identity, signal)).toolNames.includes('update_workspace'), false)
   assert.equal(await withoutMindReads.authorize(identity, 'note_get', signal), false)
   assert.deepEqual((await authorization.configuration(identity, signal)).toolNames,
-    ['search_conversations', 'search_memory', 'use_skill', 'list_skills', 'list_clients', 'list_projects', 'search_tools', 'read_knowledge', 'save_knowledge', 'update_knowledge', 'list_events', 'get_upcoming', 'get_project', 'create_project', 'update_project', 'set_color', 'archive_project', 'add_stage', 'remove_stage', 'rename_stage', 'set_stages', 'update_stage', 'list_scheduled_tasks', 'list_workspaces', 'get_workspace', 'update_workspace', 'create_workspace', 'unlink_workspace', 'delete_workspace_directory', 'undo_last_action', 'restore_file', 'restore_folder', 'canvas_list', 'canvas_get', 'canvas_search', 'canvas_focus_node', 'canvas_search_placeable', 'canvas_create', 'canvas_create_note', 'canvas_add_node', 'canvas_update_node', 'canvas_remove_node', 'canvas_update_note', 'canvas_update_anchor', 'canvas_connect', 'note_search', 'note_get', 'note_delete', 'note_restore', 'note_undo', 'create_event', 'canvas_batch'])
+    ['search_conversations', 'search_memory', 'use_skill', 'list_skills', 'list_contacts', 'list_projects', 'search_tools', 'read_knowledge', 'save_knowledge', 'update_knowledge', 'list_events', 'get_upcoming', 'get_project', 'create_project', 'update_project', 'set_color', 'archive_project', 'add_stage', 'remove_stage', 'rename_stage', 'set_stages', 'update_stage', 'list_scheduled_tasks', 'list_workspaces', 'get_workspace', 'update_workspace', 'create_workspace', 'unlink_workspace', 'delete_workspace_directory', 'undo_last_action', 'restore_file', 'restore_folder', 'canvas_list', 'canvas_get', 'canvas_search', 'canvas_focus_node', 'canvas_search_placeable', 'canvas_create', 'canvas_create_note', 'canvas_add_node', 'canvas_update_node', 'canvas_remove_node', 'canvas_update_note', 'canvas_update_anchor', 'canvas_connect', 'note_search', 'note_get', 'note_delete', 'note_restore', 'note_undo', 'create_event', 'canvas_batch'])
   assert.equal(await authorization.authorize(identity, 'read_knowledge', signal), true)
   assert.equal(await authorization.authorize(identity, 'save_knowledge', signal), true)
   assert.equal(await authorization.authorize(identity, 'update_knowledge', signal), true)
   assert.equal(await authorization.authorize(identity, 'use_skill', signal), true)
-  assert.equal(await authorization.authorize(identity, 'list_clients', signal), true)
+  assert.equal(await authorization.authorize(identity, 'list_contacts', signal), true)
   assert.equal(await authorization.authorize(identity, 'list_projects', signal), true)
   assert.equal(await authorization.authorize(identity, 'get_project', signal), true)
   assert.equal(await authorization.authorize(identity, 'unlink_workspace', signal), true)
@@ -544,7 +545,7 @@ test('Web Agent 按 Host 显式启用知识/日历/画布工具，并对其每�
   assert.equal(await authorization.authorize(identity, 'canvas_update_node', signal), false)
   assert.equal(await authorization.authorize(identity, 'note_delete', signal), false)
   assert.equal(await authorization.authorize(identity, 'save_knowledge', signal), false)
-  assert.equal(await authorization.authorize(identity, 'list_clients', signal), false)
+  assert.equal(await authorization.authorize(identity, 'list_contacts', signal), false)
   assert.equal(await authorization.authorize(identity, 'list_projects', signal), false)
   assert.equal(await authorization.authorize(identity, 'get_project', signal), false)
   assert.equal(await authorization.authorize(identity, 'list_scheduled_tasks', signal), false)
@@ -686,7 +687,6 @@ test('生产 RAG 组合仅在 Host 提供可信端口时发现并分派历史、
       enabledTime: true,
       enabledCalendarRead: true,
       enabledUpcoming: true,
-      enabledDashboard: true,
       enabledProjectOverview: true,
       enabledScheduledTasks: true,
       enabledLinkButtons: true,
@@ -711,7 +711,6 @@ test('生产 RAG 组合仅在 Host 提供可信端口时发现并分派历史、
       } },
       calendar: createAgentCalendarReader(createKyselyCalendarAgentReadPort(runtime.db, 'sqlite')),
       events: createKyselyCalendarReadPort(runtime.db, 'sqlite'),
-      dashboard: createKyselyDashboardCounter(runtime.db, 'sqlite'),
       workspaces: createAgentWorkspaceQueries(createKyselyAgentWorkspaceReader(runtime.db, 'sqlite')),
       workspaceMutations: createWorkspaceMutationPort(runtime),
       trash: { async list(candidate, limit, signal) {
@@ -750,11 +749,11 @@ test('生产 RAG 组合仅在 Host 提供可信端口时发现并分派历史、
     const configuration = await withHistory.configuration(identity, new AbortController().signal)
     assert.ok(configuration.toolNames.includes('read_conversation'))
     assert.ok(configuration.toolNames.includes('get_current_time'))
-    assert.ok(configuration.toolNames.includes('list_clients'))
+    assert.ok(configuration.toolNames.includes('list_contacts'))
     assert.ok(configuration.toolNames.includes('list_projects'))
     assert.ok(configuration.toolNames.includes('list_events'))
     assert.ok(configuration.toolNames.includes('get_upcoming'))
-    assert.ok(configuration.toolNames.includes('get_dashboard_stats'))
+    assert.ok(!configuration.toolNames.includes('get_dashboard_stats'))
     assert.ok(configuration.toolNames.includes('list_workspaces'))
     assert.ok(configuration.toolNames.includes('get_workspace'))
     assert.ok(configuration.toolNames.includes('list_trash'))
@@ -767,11 +766,11 @@ test('生产 RAG 组合仅在 Host 提供可信端口时发现并分派历史、
     const definitions = await withHistory.toolRegistry.capabilities(identity)
     assert.ok(definitions.some(tool => tool.name === 'read_conversation'))
     assert.ok(definitions.some(tool => tool.name === 'get_current_time'))
-    assert.ok(definitions.some(tool => tool.name === 'list_clients'))
+    assert.ok(definitions.some(tool => tool.name === 'list_contacts'))
     assert.ok(definitions.some(tool => tool.name === 'list_projects'))
     assert.ok(definitions.some(tool => tool.name === 'list_events'))
     assert.ok(definitions.some(tool => tool.name === 'get_upcoming'))
-    assert.ok(definitions.some(tool => tool.name === 'get_dashboard_stats'))
+    assert.ok(!definitions.some(tool => tool.name === 'get_dashboard_stats'))
     assert.ok(definitions.some(tool => tool.name === 'list_workspaces'))
     assert.ok(definitions.some(tool => tool.name === 'get_workspace'))
     assert.ok(definitions.some(tool => tool.name === 'list_trash'))
@@ -848,13 +847,6 @@ test('生产 RAG 组合仅在 Host 提供可信端口时发现并分派历史、
     })
     assert.deepEqual(restoredFolder, { kind: 'completed', successful: true, mutated: true,
       value: { success: true, folder_id: 42, name: '合成目录' } })
-    const dashboard = await withHistory.toolRegistry.tools.dispatch({ id: 'dashboard', name: 'get_dashboard_stats', input: { owner_id: otherOwner } }, {
-      identity, roundId: '1', signal: new AbortController().signal, resolution: null,
-      execute: async () => { throw new Error('总览只读工具不能调用执行后端') },
-    })
-    assert.deepEqual(dashboard, { kind: 'completed', successful: true, mutated: false,
-      value: { projects: { pending: 0, active: 1, done: 0, total: 1 }, upcoming_events: 1, files: 1, clients: 1,
-        ignored_fields: ['owner_id'], hint: '以下字段不在 get_dashboard_stats 的当前 schema 中，已被忽略：owner_id。参数形状与预期不符时，需要时用 search_tools 的 names 读取最新参数定义再重试。' } })
     const project = await withHistory.toolRegistry.tools.dispatch({ id: 'project', name: 'get_project', input: { project_id: ownProject.id } }, {
       identity, roundId: '1', signal: new AbortController().signal, resolution: null,
       execute: async () => { throw new Error('项目详情只读工具不能调用执行后端') },
@@ -869,7 +861,7 @@ test('生产 RAG 组合仅在 Host 提供可信端口时发现并分派历史、
     assert.equal(tasks.kind === 'completed' && tasks.successful, true, JSON.stringify(tasks))
     assert.deepEqual((tasks.value as { id: number; name: string }[]).map(task => task.id), [9001])
     assert.equal((tasks.value as { instruction: string }[])[0]?.instruction, '私有指令')
-    const clients = await withHistory.toolRegistry.tools.dispatch({ id: 'clients', name: 'list_clients', input: {} }, {
+    const clients = await withHistory.toolRegistry.tools.dispatch({ id: 'clients', name: 'list_contacts', input: {} }, {
       identity, roundId: '1', signal: new AbortController().signal, resolution: null,
       execute: async () => { throw new Error('联系人只读工具不能调用执行后端') },
     })
@@ -972,7 +964,9 @@ test('Web Run 将 owner-scoped 画布、可放置节点和笔记读取经 lease 
       canvases: createSqlMindCanvasReader(runtime.db, 'sqlite'), canvasPlaceableSearch: createAgentPlaceableSearch(runtime.db, 'sqlite', async owner =>
         owner === identity.ownerId ? [{ id: 'path-safe', label: '安全报告' }] : []),
       canvasCreation: createCanvasCreationPort(runtime, async () => { publications++ }),
-      ...createWebAgentCanvasMutationPorts({ core: runtime, publish: async () => { publications++ }, publishNote: async () => { publications++ } }),
+      ...createWebAgentCanvasMutationPorts({ core: runtime, publish: async () => { publications++ }, publishNote: async () => { publications++ },
+        resolveFileReference: async (owner, id) => owner === ownerId && id === 'path-safe' ? { label: '安全报告' } : null,
+      }),
       notes: createAgentMindReader(runtime.db, 'sqlite'),
     })
     const configuration = await ports.configuration(identity, new AbortController().signal)
@@ -1027,9 +1021,9 @@ test('Web Run 将 owner-scoped 画布、可放置节点和笔记读取经 lease 
     const noteUpdated = await ports.toolRegistry.tools.dispatch({ id: 'canvas-note-update', name: 'canvas_update_note', input: { node_id: newNodeId, title: '代理已更新便签', content: '更新后的正文' } }, scope)
     assert.equal(noteUpdated.kind === 'completed' && noteUpdated.successful && noteUpdated.mutated, true, JSON.stringify(noteUpdated))
     assert.equal(await runtime.db.selectFrom('mind_nodes').select('title').where('id', '=', newNodeId).executeTakeFirstOrThrow().then(row => row.title), '代理已更新便签')
-    const refAdded = await ports.toolRegistry.tools.dispatch({ id: 'canvas-ref-add', name: 'canvas_add_node', input: { canvas_id: 1, ref_type: 'file', ref_id: 998 } }, scope)
+    const refAdded = await ports.toolRegistry.tools.dispatch({ id: 'canvas-ref-add', name: 'canvas_add_node', input: { canvas_id: 1, ref_type: 'file', ref_id: 'path-safe' } }, scope)
     assert.equal(refAdded.kind === 'completed' && refAdded.successful && refAdded.mutated, true, JSON.stringify(refAdded))
-    const refNodeId = Number(await runtime.db.selectFrom('mind_nodes').select('id').where('user_id', '=', ownerKey).where('kind', '=', 'ref').where('ref_type', '=', 'file').where('ref_id', '=', 998).executeTakeFirstOrThrow().then(row => row.id))
+    const refNodeId = Number(await runtime.db.selectFrom('mind_nodes').select('id').where('user_id', '=', ownerKey).where('kind', '=', 'ref').where('ref_type', '=', 'file').where('title', '=', '安全报告').executeTakeFirstOrThrow().then(row => row.id))
     const connected = await ports.toolRegistry.tools.dispatch({ id: 'canvas-connect', name: 'canvas_connect', input: { canvas_id: 1, source_node_id: 11, target_node_id: 12 } }, scope)
     assert.equal(connected.kind === 'completed' && connected.successful, true, JSON.stringify(connected))
     const anchored = await ports.toolRegistry.tools.dispatch({ id: 'canvas-anchor', name: 'canvas_update_anchor', input: { canvas_id: 1, relation_id: 31, source_side: 'left', target_side: 'right' } }, scope)
@@ -1250,14 +1244,19 @@ test('Web 自动 RAG 从正式索引召回 owner 内容并排除历史已注入�
       metadata: {},
     }])
     let authorized = 0
+    const storageRoot = join(directory, 'rag-storage')
+    const selection = { modelIdentity: 'synthetic-model', contextScopeKey: lease.input.accessVersion,
+      contextPolicy: { loadOwnerContext: true, memoryEnabled: true } }
     const build = createWebAgentRagContextBuilder({
       core: runtime,
       lease,
+      selection, storageRoot,
       enabled: async () => true,
-      async authorize(bound, scope) {
+      pool: { async query(_sql: string, values?: unknown[]) {
         authorized++
-        return bound.identity.ownerId === ownerId && scope.scope_type === 'owner' && scope.scope_id === ''
-      },
+        assert.deepEqual(values, [ownerId, identity.sessionId, identity.runId, lease.token, lease.fence])
+        return { rowCount: 1 }
+      } } as never,
     })
     const input = {
       ownerId, sessionId: identity.sessionId, history: [], fixedPrefix: [], snapshotText: '',
@@ -1332,10 +1331,10 @@ test('Web 自动 RAG 从正式索引召回 owner 内容并排除历史已注入�
     assert.equal(second.injected, false)
     assert.deepEqual(second.tail, [])
 
-    const denied = createWebAgentRagContextBuilder({ core: runtime, lease, enabled: () => true, async authorize() { return false } })
+    const denied = createWebAgentRagContextBuilder({ core: runtime, lease, selection, storageRoot, enabled: () => true, pool: { async query() { return { rowCount: 0 } } } as never })
     assert.equal((await buildRunRagContext(input, { ...preparation, buildRag: denied }, new AbortController().signal)).reason, 'no_eligible_scope')
 
-    const disabled = createWebAgentRagContextBuilder({ core: runtime, lease, enabled: () => false, async authorize() { assert.fail('关闭 RAG 后不得检查索引授权') } })
+    const disabled = createWebAgentRagContextBuilder({ core: runtime, lease, selection, storageRoot, enabled: () => false, pool: { async query() { assert.fail('关闭 RAG 后不得检查索引授权') } } as never })
     assert.equal((await buildRunRagContext(input, { ...preparation, buildRag: disabled }, new AbortController().signal)).reason, 'disabled')
 
     let authorizeStarted!: () => void
@@ -1343,12 +1342,12 @@ test('Web 自动 RAG 从正式索引召回 owner 内容并排除历史已注入�
     const authorizationStarted = new Promise<void>(resolve => { authorizeStarted = resolve })
     const authorizationGate = new Promise<void>(resolve => { resumeAuthorization = resolve })
     const cancellable = createWebAgentRagContextBuilder({
-      core: runtime, lease, enabled: () => true,
-      async authorize() {
+      core: runtime, lease, selection, storageRoot, enabled: () => true,
+      pool: { async query() {
         authorizeStarted()
         await authorizationGate
-        return true
-      },
+        return { rowCount: 1 }
+      } } as never,
     })
     const controller = new AbortController()
     const pending = buildRunRagContext(input, { ...preparation, buildRag: cancellable }, controller.signal)
@@ -1452,7 +1451,7 @@ test('生产 Run RAG 组合让自动注入与检索工具共享 lease 和可信�
   }
 })
 
-test('delete_client 经生产 Web lease registry 确认后删除，撤权后拒绝', async () => {
+test('delete_contact 经生产 Web lease registry 确认后删除，撤权后拒绝', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gugu-agent-client-delete-'))
   let runtime: Awaited<ReturnType<typeof openSqliteRuntime>>['runtime'] | undefined
   try {
@@ -1490,14 +1489,14 @@ test('delete_client 经生产 Web lease registry 确认后删除，撤权后拒�
       enabledClientDelete: true,
       clientDelete: createClientDeletePort(runtime, { gate, async claim() { claims++; return true } }),
     })
-    const create = await ports.toolRegistry.tools.dispatch({ id: 'seed-client', name: 'create_client', input: { client_name: '要删除的联系人' } }, {
+    const create = await ports.toolRegistry.tools.dispatch({ id: 'seed-client', name: 'create_contact', input: { name: '要删除的联系人' } }, {
       identity, roundId: '1', signal: new AbortController().signal, resolution: null,
       execute: async () => { throw new Error('联系人工具不得调用进程执行器') },
     })
     assert.equal(create.kind === 'completed' && create.successful, true, JSON.stringify(create))
     const capabilities = await ports.toolRegistry.capabilities(identity)
-    assert.ok(capabilities.some(item => item.name === 'delete_client'))
-    const call = { id: 'delete-client', name: 'delete_client', input: { client: '要删除的联系人' } }
+    assert.ok(capabilities.some(item => item.name === 'delete_contact'))
+    const call = { id: 'delete-client', name: 'delete_contact', input: { contact_query: '要删除的联系人' } }
     const waiting = await ports.toolRegistry.tools.dispatch(call, {
       identity, roundId: '1', signal: new AbortController().signal, resolution: null,
       execute: async () => { throw new Error('联系人删除必须经过确认') },
@@ -1513,13 +1512,13 @@ test('delete_client 经生产 Web lease registry 确认后删除，撤权后拒�
     assert.equal(claims, 1)
     assert.deepEqual(await runtime.transaction({ ownerId: identity.ownerId } as never, data => data.clients.list()), [])
 
-    const second = await ports.toolRegistry.tools.dispatch({ id: 'seed-again', name: 'create_client', input: { client_name: 'lease撤销后保留' } }, {
+    const second = await ports.toolRegistry.tools.dispatch({ id: 'seed-again', name: 'create_contact', input: { name: 'lease撤销后保留' } }, {
       identity, roundId: '2', signal: new AbortController().signal, resolution: null,
       execute: async () => { throw new Error('联系人工具不得调用进程执行器') },
     })
     assert.equal(second.kind === 'completed' && second.successful, true)
     active = false
-    const revoked = await ports.toolRegistry.tools.dispatch({ id: 'revoked-delete-client', name: 'delete_client', input: { client_id: 2 } }, {
+    const revoked = await ports.toolRegistry.tools.dispatch({ id: 'revoked-delete-client', name: 'delete_contact', input: { contact_id: 2 } }, {
       identity, roundId: '2', signal: new AbortController().signal, resolution: null,
       execute: async () => { throw new Error('撤销的租约不得删除联系人') },
     })

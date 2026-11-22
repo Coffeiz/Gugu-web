@@ -22,6 +22,6 @@ export type SharedOwnerToolOptions = Pick<AgentToolRegistryOptions,
 export type ImOwnerToolFactory = (lease: AgentDispatchLease, timezone: string, authorize: () => Promise<boolean>, binding: Pick<AgentRunBinding, 'selection' | 'resolve'>) => Promise<{
   tools: SharedOwnerToolOptions & Pick<AgentToolRegistryOptions,
     'clientDelete' | 'projectDelete' | 'scheduledTaskDelete' | 'skillDelete' | 'knowledgeDelete' | 'mcpManagement' | 'sendEmail'
-    | 'canvasBatch' | 'canvasDeleteNote' | 'canvasDisconnect' | 'canvasDelete' | 'shell' | 'diskTrashTools'>
+    | 'subagentTools' | 'canvasBatch' | 'canvasDeleteNote' | 'canvasDisconnect' | 'canvasDelete' | 'shell' | 'diskTrashTools'>
   describe?: AgentPromptDescriptionPorts<PoolClient>['describe']
 }>

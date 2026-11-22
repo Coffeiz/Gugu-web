@@ -36,17 +36,11 @@ async function setup(wrap?: (runtime: ProjectCreateRuntime) => ProjectCreateRunt
   }
 }
 
-it('宿主提供文件读取端口时仍不开放已退役的 read_file', async () => {
-  const { core, scope } = await setup()
-  const resolveOwnedFile = vi.fn(async () => null)
-  const registry = createOwnerToolRegistry({
-    core, authorize: async () => true,
-    readFile: { resolveOwnedFile, openFile: async () => null },
-  })
+it('owner 注册表拒绝已退役的文件工具调用', async () => {
+  const { registry, scope } = await setup()
   expect(registry.catalog().map(tool => tool.name)).not.toContain('read_file')
   await expect(registry.tools.dispatch({ id: 'read', name: 'read_file', input: { file_id: 1 } }, scope))
     .resolves.toMatchObject({ successful: false, executed: false })
-  expect(resolveOwnedFile).not.toHaveBeenCalled()
 })
 
 describe('真实SQLite项目创建经ToolRegistry与Core应用/数据适配器', () => {

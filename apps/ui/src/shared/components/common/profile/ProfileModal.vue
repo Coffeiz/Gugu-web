@@ -4,7 +4,7 @@
       <div class="pm-nav panel-left">
         <div v-if="desktop" class="pm-user-block">
           <div class="pm-avatar avatar--fallback" aria-hidden="true"><Icon name="user.default" size="sm" /></div>
-          <div class="pm-user-info"><div class="pm-name">本地用户</div></div>
+          <div class="pm-user-info"><div class="pm-name">{{ t('navigation.localUser') }}</div></div>
         </div>
         <div v-else class="pm-user-block">
           <div class="pm-avatar" :class="{ uploading: avatarUploading, 'avatar--fallback': !authStore.user?.avatarUrl }" @click="triggerAvatarUpload" :title="t('sharedUi.changeAvatar')">
@@ -48,7 +48,7 @@
           <slot v-else-if="desktop && activeNav === 'workspaces' && $slots['desktop-workspaces']" name="desktop-workspaces" />
           <slot v-else-if="desktop && activeNav === 'logs'" name="desktop-logs" />
           <template v-else>
-            <p v-if="desktop && activeNav !== 'info' && activeNav !== 'prefs' && activeNav !== 'im' && activeNav !== 'gugu' && activeNav !== 'tools' && activeNav !== 'data'" class="pm-desktop-notice" role="status">此页的设置等待桌面 IPC 接入。</p>
+            <p v-if="desktop && activeNav !== 'info' && activeNav !== 'prefs' && activeNav !== 'im' && activeNav !== 'gugu' && activeNav !== 'tools' && activeNav !== 'data'" class="pm-desktop-notice" role="status">{{ t('desktopSettings.unavailable') }}</p>
             <div :inert="desktop && activeNav !== 'prefs' && activeNav !== 'im' && activeNav !== 'gugu' && activeNav !== 'tools' && activeNav !== 'data'">
               <KeepAlive>
                 <ProfileInfoPane v-if="activeNav === 'info'" :external-message="infoMsg" :external-message-type="infoMsgType" />
@@ -124,7 +124,7 @@ const { t } = useI18n()
 const displayLabel = computed(() => authStore.user?.displayName || authStore.user?.username || '—')
 const initial = computed<string>(() => (displayLabel.value.charAt(0) || '?').toUpperCase())
 
-type ProfileNavItem = { key?: string; label?: string; icon?: string; divider?: boolean; text?: string }
+type ProfileNavItem = { key?: string; label?: string; icon?: string; divider?: boolean }
 const webNavItems: ProfileNavItem[] = [
   { key: 'info', label: 'sharedUi.personalInfo', icon: 'user.default' },
   { key: 'account', label: 'sharedUi.accountSecurity', icon: 'user.security' },
@@ -138,11 +138,11 @@ const webNavItems: ProfileNavItem[] = [
   { key: 'workspaces', label: 'filesUi.workEnvironment', icon: 'admin.folder' },
 ]
 const navItems = computed(() => props.desktop
-  ? [...webNavItems.slice(0, 2), { key: 'remote', text: '远程账号', icon: 'user.security' }, ...webNavItems.slice(2), { key: 'logs', text: '日志与调试', icon: 'admin.wrench' }]
+  ? [...webNavItems.slice(0, 2), { key: 'remote', label: 'desktopSettings.remoteAccount', icon: 'user.security' }, ...webNavItems.slice(2), { key: 'logs', label: 'desktopSettings.logs', icon: 'admin.wrench' }]
   : webNavItems)
 const activeNav = ref(props.initialNav || 'info')
 function navLabel(item?: ProfileNavItem) {
-  return item?.text ?? (item?.label ? t(item.label) : '')
+  return item?.label ? t(item.label) : ''
 }
 const currentNavLabel = computed(() => navLabel(navItems.value.find(n => !n.divider && n.key === activeNav.value)))
 const infoMsg = ref('')

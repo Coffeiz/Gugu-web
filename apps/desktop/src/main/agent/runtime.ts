@@ -1,3 +1,6 @@
+import { AgentRunError } from '../../../../../packages/core/src/agent/models.js'
+import type { DelegatedAgentLaunch } from '../../../../../packages/core/src/agent/subagent/contracts.js'
+import { createAgentShellTool } from '../../../../../packages/core/src/agent/tools/shell.js'
 import { desktopScheduleImDeliveryTargets, desktopScheduleImPlatforms, desktopScheduleImTarget, ownsDesktopScheduleImTarget, readDesktopScheduleImTargets, type DesktopScheduleImPlatform, type DesktopScheduleImTarget } from '../../../../../packages/core/src/scheduled-tasks/desktop-im.js'
 import { createListScheduledTasksTool } from '../../../../../packages/core/src/agent/tools/scheduled-tasks.js'
 import { appendWorkspaceAgentInstructions } from '../../../../../packages/core/src/agent/context/prompt-format.js'
@@ -46,7 +49,7 @@ import { sql, type Kysely } from 'kysely'
 import type { Database } from '../../../../../packages/core/src/data/schema.js'
 import { desktopScheduledTasks } from '../../../../../packages/core/src/scheduled-tasks/desktop.js'
 import { ScheduledTaskReferenceError } from '../../../../../packages/core/src/scheduled-tasks/task-write.js'
-import { createSqliteToolConfirmation } from '../../../../../packages/core/src/agent/interactions/sqlite-confirmation.js'
+import { createSqliteToolConfirmation, describeSqliteDelegatedConfirmation } from '../../../../../packages/core/src/agent/interactions/sqlite-confirmation.js'
 import { createScheduledTaskDeleteTool, createScheduledTaskWriteTools } from '../../../../../packages/core/src/agent/tools/scheduled-tasks.js'
 import type { SqlDataRuntime } from '../../../../../packages/core/src/data/runtime.js'
 import { createAgentCalendarReader } from '../../../../../packages/core/src/calendar/application/event-read.js'
@@ -57,16 +60,17 @@ import { createDesktopWorkspaceReadPort } from './workspace-queries.js'
 import { readAgentSessionContext } from '../../../../../packages/core/src/agent/sessions/list.js'
 import { createAgentMindReader } from '../../../../../packages/core/src/mind/note-read.js'
 import { createKyselyScheduledTaskReader, createScheduledTaskQueries } from '../../../../../packages/core/src/scheduled-tasks/task-list.js'
-import { createKyselyDashboardCounter } from '../../../../../packages/core/src/overview.js'
 import { createGlobalSearchOperations } from '../../../../../packages/core/src/search/global-search.js'
 import { createKyselySqliteGlobalSearchSources } from '../../../../../packages/core/src/search/sqlite.js'
 import { CoreError, dataContext, DEFAULT_LLM_CONTEXT_TOKENS, DEFAULT_LLM_OUTPUT_TOKENS } from '../../../../../packages/core/src/contracts/index.js'
 import { stableJson } from '../../../../../packages/core/src/agent/context/history/canonical-history.js'
 import { applyOwnerReflectionOutput } from '../../../../../packages/core/src/agent/memory/owner-reflection.js'
 import { applyImMaintenanceOutput } from '../../../../../packages/core/src/memory/im-maintenance-apply.js'
-import { PRIVATE_REFLECTION_IDLE_SECONDS, qualifiesReflectionTurn } from '../../../../../packages/core/src/agent/memory/reflection/window.js'
-import { runContextBranch, runPrivateReflectionBranch } from '../../../../../packages/core/src/agent/memory/reflection.js'
+import { applyReflectionFileWrite, IM_REFLECTION_IDLE_SECONDS, PRIVATE_REFLECTION_IDLE_SECONDS, qualifiesReflectionTurn } from '../../../../../packages/core/src/agent/memory/reflection/window.js'
+import { runReflection, runPrivateReflection } from '../../../../../packages/core/src/agent/memory/reflection.js'
 import { dateKeyInTimeZone } from '../../../../../packages/core/src/shared/date-time.js'
+import { formatOwnerReflectionEvidence } from '../../../../../packages/core/src/agent/scenes/reflection/owner.js'
+import { createMainContextBuilder } from '../../../../../packages/core/src/agent/scenes/main/definition.js'
 import { contextAccessScopeHash, createCanonicalSourceLoader, readSessionSnapshot } from '../../../../../packages/core/src/agent/context/prepare.js'
 import type { AgentObservationPort } from '../../../../../packages/core/src/agent/observation.js'
 import { agentContextSnapshotPrefix } from '../../../../../packages/core/src/agent/context/builder.js'
@@ -77,7 +81,7 @@ import { buildFixedRequestPrefix } from '../../../../../packages/core/src/agent/
 import { formatSqliteAgentOverview, readSqliteAgentOverviewData, readSqliteOwnerStylePreferences, readSqliteAgentStylePreferences, type SqliteAgentOverviewData } from '../../../../../packages/core/src/agent/context/sqlite-overview.js'
 import { createSqliteAgentSessionSource } from '../../../../../packages/core/src/agent/context/sqlite-source.js'
 import type { RagQueryEmbeddingSettings } from '../../../../../packages/core/src/agent/rag/query-embedding.js'
-import type { CanonicalRunContext, Json, RunCheckpoint, RunIdentity, PreparedToolDefinition } from '../../../../../packages/core/src/agent/models.js'
+import type { CanonicalRunContext, Json, RunCheckpoint, RunIdentity, InteractionResolution, PreparedToolDefinition } from '../../../../../packages/core/src/agent/models.js'
 import type { DesktopAgentChatReference } from '../../../../../packages/core/src/contracts/desktop.js'
 import type { ProviderConfig, ProviderTransport } from '../../../../../packages/core/src/agent/providers/contracts.js'
 import { ProviderError, providerErrorMessage } from '../../../../../packages/core/src/agent/providers/errors.js'
@@ -127,7 +131,7 @@ import { createToolRegistry } from '../../../../../packages/core/src/agent/tools
 import { projectRecentAttachments, type RecentAttachmentRow } from '../../../../../packages/core/src/agent/attachments/recent.js'
 import { createDeepResearchTool, createSimilarImageSearchTool, createWebSearchTool } from '../../../../../packages/core/src/agent/tools/search.js'
 import { desktopDeepResearchResult, MAX_DESKTOP_SEARCH_IMAGE_BYTES } from '../../../../../packages/core/src/agent/search-contracts.js'
-import { createSqliteAgentAdmission } from '../../../../../packages/core/src/agent/run/sqlite-admission.js'
+import { createSqliteAgentAdmission, listActiveSqliteAgentRuns } from '../../../../../packages/core/src/agent/run/sqlite-admission.js'
 import { createSqlAgentPendingQueue } from '../../../../../packages/core/src/agent/sessions/pending-queue.js'
 import { createSqliteAgentRuntime } from '../../../../../packages/core/src/agent/run/sqlite-runtime.js'
 import { createSqliteInteractionProjection } from '../../../../../packages/core/src/agent/interactions/sqlite-projection.js'
@@ -137,6 +141,18 @@ import { InteractionConsumeError } from '../../../../../packages/core/src/agent/
 import { InteractionTextError } from '../../../../../packages/core/src/agent/interactions/consume-text.js'
 import { createSqliteInteractionActivator } from '../../../../../packages/core/src/agent/interactions/sqlite-activate.js'
 import { createAgentInteractionDescription } from '../../../../../packages/core/src/agent/interactions/prompt-description.js'
+import { createAgentInbox } from '../../../../../packages/core/src/agent/subagent/inbox.js'
+import { createSubagentService } from '../../../../../packages/core/src/agent/subagent/service.js'
+import { assembleSubagentCatalog, builtinSubagentCatalog } from '../../../../../packages/core/src/agent/context/modules/subagent-catalog.js'
+import { createSearcherReferenceSearch, createSearcherReferenceShell } from '../../../../../packages/core/src/agent/subagent/searcher/references.js'
+import { createDelegatedAgentHarness, delegatedTerminalOutcome } from '../../../../../packages/core/src/agent/subagent/runner.js'
+import { searcherPreset } from '../../../../../packages/core/src/agent/subagent/searcher/context.js'
+import { createSubagentServiceTools } from '../../../../../packages/core/src/agent/tools/subagent.js'
+import { connectProviderHarness } from '../../../../../packages/core/src/agent/providers/runtime.js'
+import { createSqliteAgentRunLeasePort } from '../../../../../packages/core/src/agent/run/sqlite-store.js'
+import { createSqliteAgentRunCoordination } from '../../../../../packages/core/src/agent/run/sqlite-coordination.js'
+import type { CanonicalContextPorts } from '../../../../../packages/core/src/agent/ports.js'
+import { createSubagentDeliveryStore } from '../../../../../packages/core/src/agent/subagent/delivery-store.js'
 import { createSqliteAgentRunStore } from '../../../../../packages/core/src/agent/run/sqlite-store.js'
 import { createAgentRagContextBuilder } from '../../../../../packages/core/src/agent/rag/context-builder.js'
 import {
@@ -147,7 +163,7 @@ import {
 } from '../../../../../packages/core/src/agent/rag/index.js'
 import { createSqlMindNoteReader } from '../../../../../packages/core/src/mind/note-read.js'
 import { createKyselyScheduledTaskRagReader } from '../../../../../packages/core/src/scheduled-tasks/task-list.js'
-import { settleClosedSqliteInteraction, settleExclusiveSqliteAgentRuns } from '../../../../../packages/core/src/agent/run/sqlite-recovery.js'
+import { settleCancelledSqliteSubagentWait, settleClosedSqliteInteraction, settleExclusiveSqliteAgentRuns } from '../../../../../packages/core/src/agent/run/sqlite-recovery.js'
 import { loadSqliteAgentRunSecret } from '../../../../../packages/core/src/agent/run/sqlite-secret.js'
 import { openLocalFile } from '@gugu/fs/node'
 import { canonicalAgentToolName, filterConfiguredAgentTools } from '../../../../../packages/core/src/agent/index.js'
@@ -159,7 +175,7 @@ const reflectionModelIdentity = (config: ProviderConfig) =>
   digest([config.provider, config.api_format, config.base_url, config.model])
 const unavailable = async (): Promise<never> => { throw new CoreError('conflict', '当前运行未配置该能力') }
 
-function desktopGroupMemoryContext(value: unknown, ownerId: string): (ImMemoryReadAuthorization & { actor: ImActor }) | null {
+function desktopGroupMemoryContext(value: unknown, ownerId: string): (ImMemoryReadAuthorization & { actor: ImActor; ownerPlatformUserId: string | null }) | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const row = value as Record<string, unknown>, actorValue = row.actor
   if (!actorValue || typeof actorValue !== 'object' || Array.isArray(actorValue)) return null
@@ -179,6 +195,7 @@ function desktopGroupMemoryContext(value: unknown, ownerId: string): (ImMemoryRe
   return { ownerId, botId: actor.botId, platform: actor.platform as ImActor['platform'], chatType: 'group', chatId: actor.chatId,
     platformUserId: actor.platformUserId, groupMemoryEnabled: row.groupMemoryEnabled, memberMemoryEnabled: row.memberMemoryEnabled,
     groupOwnerMemoryEnabled: row.groupOwnerMemoryEnabled,
+    ownerPlatformUserId: typeof row.ownerPlatformUserId === 'string' && row.ownerPlatformUserId ? row.ownerPlatformUserId : null,
     actor: actor as unknown as ImActor }
 }
 
@@ -202,7 +219,7 @@ import { createDesktopScheduledAgent } from '../schedules/agent.js'
 import { createDesktopScheduledImContext } from '../schedules/context.js'
 
 export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: string, ownerId: string,
-  notify: (sessionId: number, runId: string) => void,
+  notify: (sessionId: number, runId: string, interactionChanged?: true) => void,
   hostRequest: (method: string, params: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>,
   memoryFiles?: DesktopMemoryFiles, observation?: AgentObservationPort,
   promptDirectory = fileURLToPath(new URL('../agent-prompts/', import.meta.url))) {
@@ -330,10 +347,38 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
   const readKnowledgeOverview = createAgentKnowledgeOverview(knowledgeStore)
   const running = new Map<number, { runId: string; cancel(): Promise<unknown>; done: Promise<void> }>()
   const runTasks = new Set<Promise<void>>()
+  const subagentWakes = new Map<string, Promise<void>>()
+  const subagentWakeAbort = new AbortController()
+  let childScan: Promise<void> | undefined
+  let childScanRequested = false
+  const interactionExpirations = new Map<string, ReturnType<typeof setTimeout>>()
+
+  function scheduleAdmittedRuns(secret: string) {
+    const signal = subagentWakeAbort.signal
+    if (signal.aborted) return
+    childScanRequested = true
+    if (childScan) return
+    childScan = Promise.resolve().then(async () => {
+      while (childScanRequested && !signal.aborted) {
+        childScanRequested = false
+        for (const { identity } of await listActiveSqliteAgentRuns(db, ownerId, 'subagent'))
+          await dispatchAdmittedChild(secret, identity)
+      }
+    }).finally(() => {
+      if (childScan) runTasks.delete(childScan)
+      childScan = undefined
+      if (childScanRequested) scheduleAdmittedRuns(secret)
+    })
+    runTasks.add(childScan)
+    void childScan.catch(() => {})
+  }
+
   const responding = new Set<number>()
   const reflectionAbort = new AbortController()
   let reflectionRecovery: Promise<void> | undefined
   let reflectionTimer: ReturnType<typeof setTimeout> | undefined
+  let reflectionTimerDue = Infinity
+  let reflectionRecoveryRequested = false
   let builtinSkills: Promise<BuiltinSkillDefinition[]> | undefined
   let embeddingGeneration = 0
   let memoryEmbedding: {
@@ -375,6 +420,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
   let ragWorkerStopped = false
   let ragBaselineEnqueued = false
   let lastMemoryRevision: string | number | undefined
+  let pendingMemoryRebuild: { revision: string | number; generation: number } | undefined
   let ragWorkerTimer: ReturnType<typeof setTimeout> | undefined
   let ragWorkerResolveWait: (() => void) | undefined
   let ragWorkerTask: Promise<void> | undefined
@@ -385,6 +431,15 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         if (!ragBaselineEnqueued) {
           await enqueueMissingAgentRagBaselines(db, 'sqlite', Object.keys(ragSources))
           ragBaselineEnqueued = true
+        }
+        const pending = pendingMemoryRebuild
+        if (pending) {
+          await db.transaction().execute(async tx => {
+            if (pending.generation === embeddingGeneration)
+              await enqueueAgentRagRebuildInTransaction(tx, 'sqlite', ownerId, 'memory')
+          })
+          if (pending.generation === embeddingGeneration) lastMemoryRevision = pending.revision
+          if (pendingMemoryRebuild === pending) pendingMemoryRebuild = undefined
         }
         const result = await rebuildRag(signal)
         if (result === 'ready' || result === 'superseded') continue
@@ -410,6 +465,322 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
 
   const scheduledImContext = createDesktopScheduledImContext({ db, ownerId, memoryFiles, hostRequest })
   const currentScheduledIm = scheduledImContext.authorizeIm
+
+  let subagents: ReturnType<typeof createSubagentService> | undefined
+
+  async function resolveReferencedFile(id: string, signal?: AbortSignal) {
+    const method = workspaceFileReferenceId.test(id) ? 'agent.files.resolveWorkspaceReference' : 'agent.files.resolveDroppedReference'
+    const result = await hostRequest(method, { id }, signal)
+    if (result === null) return null
+    if (!result || typeof result !== 'object' || !('path' in result) || typeof result.path !== 'string'
+      || !('fileIdentity' in result) || typeof result.fileIdentity !== 'string')
+      throw new CoreError('storage_error', '本机文件引用结果无效')
+    return { path: result.path, fileIdentity: result.fileIdentity,
+      relativePath: 'relativePath' in result && typeof result.relativePath === 'string' ? result.relativePath : undefined }
+  }
+
+  async function searcherFileReferences(parent: RunIdentity, selected: readonly string[]) {
+    if (parent.ownerId !== ownerId || !selected.length) return []
+    const { references, inherited } = await readDesktopTurnReferences(db, parent)
+    if (inherited) return []
+    const allowed = new Set(selected)
+    return references.flatMap(reference => {
+      if (!reference || reference.type !== 'file' || typeof reference.id !== 'string' || typeof reference.label !== 'string'
+        || (!workspaceFileReferenceId.test(reference.id) && !droppedFileReferenceId.test(reference.id))) return []
+      const ref = desktopFileReferenceKey(reference.id)
+      return allowed.has(ref) ? [{ id: reference.id, ref, label: reference.label }] : []
+    })
+  }
+
+  async function readDesktopShellPreferences() {
+    const local = readPreferenceDocument(await createKyselyPreferenceDocumentStore(db, 'sqlite').read(ownerId))
+    return {
+      automaticMode: local.automatic_mode_enabled === true,
+      shellEnabled: (local.shell_enabled ?? true) === true,
+      dangerousEnabled: (local.shell_dangerous_enabled ?? true) === true,
+    }
+  }
+
+  async function parentWorkspace(parent: RunIdentity, reader = db) {
+    const owner = dataContext(parent.ownerId).ownerId.replaceAll('-', '')
+    const { rows: [session] } = await sql<{ session_context: string | null }>`SELECT session_context FROM conversation_sessions
+      WHERE user_id=${owner} AND id=${Number(parent.sessionId)} AND (source IS NULL OR source='web')`.execute(reader)
+    if (!session) throw new CoreError('not_found', '父会话不存在')
+    const binding = readAgentSessionContext(session.session_context, 'sqlite').workspace_binding
+    const directoryId = binding && typeof binding === 'object' && 'directory_id' in binding ? binding.directory_id : undefined
+    const workspace = typeof directoryId === 'string' ? await agentWorkspaces.get(parent.ownerId, directoryId) : null
+    return { directoryId: typeof directoryId === 'string' ? directoryId : null, available: Boolean(workspace),
+      fingerprint: digest([directoryId ?? null, workspace?.workspace_id ?? null, workspace?.directory_name ?? null]) }
+  }
+
+  function desktopSubagents(secret: string) {
+    if (subagents) return subagents
+    const { store, cancellation } = desktopChildRunPorts(secret)
+    const deliveries = createSubagentDeliveryStore(db, secret, undefined, 'sqlite')
+    const inbox = createAgentInbox(db, secret, { onMessageCommitted: scheduleSubagentWake })
+    subagents = createSubagentService({
+      deliveries, childCheckpoints: store, inbox,
+      async schedule() { scheduleAdmittedRuns(secret) },
+      async requestCancellation(identity) {
+        await cancellation.request(identity)
+        const active = running.get(Number(identity.sessionId))
+        if (active?.runId === identity.runId) await active.cancel()
+        scheduleAdmittedRuns(secret)
+      },
+      async parentBinding(identity) {
+        if (identity.ownerId !== ownerId) return null
+        const { rows } = await sql`SELECT 1 FROM agent_run_admissions a
+          JOIN conversation_sessions s ON s.id=a.session_id AND s.user_id=a.user_id
+          WHERE a.user_id=${dataContext(ownerId).ownerId.replaceAll('-', '')} AND a.session_id=${Number(identity.sessionId)}
+            AND a.run_id=${identity.runId} AND (s.source IS NULL OR s.source='web')
+            AND (COALESCE(s.chat_type,'c2c')='c2c' OR NOT EXISTS(
+              SELECT 1 FROM desktop_im_sessions im WHERE im.session_id=s.id AND im.owner_id=s.user_id
+            ))`.execute(db)
+        const checkpoint = rows.length ? await store.read(identity) : null
+        return checkpoint?.context ? { agentId: 'builtin:main', modelIdentity: checkpoint.context.modelIdentity, workspaceFingerprint: (await parentWorkspace(identity)).fingerprint } : null
+      },
+      async authorizeResources(identity, refs) {
+        if (identity.ownerId !== ownerId) return false
+        const authorized = new Set((await searcherFileReferences(identity, refs)).map(item => item.ref))
+        return refs.every(ref => authorized.has(ref))
+      },
+    })
+    return subagents
+  }
+
+  let childRunPorts: ReturnType<typeof createDesktopChildRunPorts> | undefined
+  function desktopChildRunPorts(secret: string) {
+    return childRunPorts ??= createDesktopChildRunPorts(secret)
+  }
+
+  function createDesktopChildRunPorts(secret: string) {
+    const store = createDesktopChildRunStore(secret)
+    const leases = createSqliteAgentRunLeasePort(db)
+    const { cancellation } = createSqliteAgentRunCoordination(db, store)
+    return { store, leases, cancellation }
+  }
+
+  function createDesktopChildRunStore(secret: string, persistPrivateContext?: ReturnType<typeof createDesktopContinuationStore>['persist']) {
+    return createSqliteAgentRunStore<CanonicalRunContext>(db, secret, {
+      persistPrivateContext,
+      onSubagentDeliveryCommitted(parent) {
+        scheduleSubagentWake(parent)
+        scheduleAdmittedRuns(secret)
+      },
+      // 子运行只在自己的加密 checkpoint 中保留对话，不写主聊天历史。
+      async writeHistory() {},
+    })
+  }
+
+  async function prepareAdmittedChild(secret: string, launch: DelegatedAgentLaunch, signal: AbortSignal) {
+    const { leases, cancellation } = desktopChildRunPorts(secret)
+    const continuation = createDesktopContinuationStore(db, secret)
+    const store = createDesktopChildRunStore(secret, continuation.persist)
+    const { identity, parent, modelIdentity } = launch
+    if (!parent || identity.ownerId !== ownerId) throw new CoreError('conflict', '子运行身份无效')
+    if ((await store.read(parent))?.context?.modelIdentity !== modelIdentity)
+      throw new CoreError('conflict', '父会话模型绑定已失效')
+    const workspaceCurrent = async (reader = db) => launch.workspaceFingerprint === undefined || launch.workspaceFingerprint === (await parentWorkspace(parent, reader)).fingerprint
+    if (!await workspaceCurrent()) throw new CoreError('conflict', '父工作区绑定已变化')
+    const modelId = await runModel(Number(parent.sessionId), parent.runId)
+    const config = await hostRequest('agent.memory.resolveReflectionModel', { modelIdentity, modelId }, signal) as ProviderConfig | null
+    if (!config || reflectionModelIdentity(config) !== modelIdentity)
+      throw new CoreError('conflict', 'Searcher 模型绑定已失效')
+    const preferences = await createDesktopAppearanceService(createKyselyPreferenceDocumentStore(db, 'sqlite')).get(ownerId)
+    const resolveProxy = preferences.useSystemProxy ? scheduledAgentProxy : undefined
+    const egress = {
+      async withTransport<T>(signal: AbortSignal, execute: (transport: ProviderTransport) => Promise<T>): Promise<T> {
+        signal.throwIfAborted()
+        const transport = createNodeProviderTransport(desktopTransportOptions(false, resolveProxy))
+        try { return await execute(transport) }
+        finally { await transport.close() }
+      },
+    }
+    const webSearch = createWebSearchTool(config, { ...egress, digest })
+    const resourceRefs = launch.input.resourceRefs ?? []
+    const fileTools = resourceRefs.length ? [createSearcherReferenceSearch(async signal => {
+      signal.throwIfAborted()
+      return (await searcherFileReferences(parent, resourceRefs)).map(({ ref, label }) => ({ ref, label }))
+    })] : []
+    const definitions = [createHttpGetTool(createAgentHttpGetPort(egress)), ...(webSearch ? [webSearch] : []), ...fileTools,
+      ...createSubagentServiceTools(desktopSubagents(secret), "child")]
+    const matches = (candidate: RunIdentity) => candidate.ownerId === identity.ownerId
+      && candidate.sessionId === identity.sessionId && candidate.runId === identity.runId
+    const authorizedChildShell = async (tx: Kysely<Database>, candidate: RunIdentity, signal: AbortSignal) => {
+      signal.throwIfAborted()
+      if (!matches(candidate) || !await workspaceCurrent(tx) || !(await configuredAgentTools(['shell'], signal)).length) return false
+      const owner = dataContext(ownerId).ownerId.replaceAll('-', '')
+      const result = await sql`SELECT 1 FROM agent_run_leases l JOIN agent_run_checkpoints p ON p.user_id=l.user_id
+        AND p.session_id=${parent.sessionId} AND p.run_id=${parent.runId}
+        WHERE l.user_id=${owner} AND l.session_id=${identity.sessionId} AND l.run_id=${identity.runId}
+          AND l.expires_at_ms>${Date.now()} AND p.status IN ('running','waiting')
+          AND NOT EXISTS (SELECT 1 FROM agent_run_controls c WHERE c.user_id=l.user_id AND c.cancel_requested=1
+            AND ((c.session_id=p.session_id AND c.run_id=p.run_id) OR (c.session_id=l.session_id AND c.run_id=l.run_id)))`.execute(tx)
+      signal.throwIfAborted()
+      return result.rows.length === 1
+    }
+    const { directoryId: directory, available } = await parentWorkspace(parent)
+    const readRoot = async () => {
+      if (!directory || !available || !await workspaceCurrent()) return null
+      const root = await hostRequest('agent.files.workspaceRoot', { directoryId: directory }, signal)
+      return root && typeof root === 'object' && 'path' in root && typeof root.path === 'string' && isAbsolute(root.path)
+        && 'identity' in root && typeof root.identity === 'string' ? { path: root.path, identity: root.identity } : null
+    }
+    const sharedRoot = launch.workspaceFingerprint && !resourceRefs.length ? await readRoot() : null
+    const enabledShell = !resourceRefs.length && (!directory || sharedRoot)
+      ? await createDesktopShellTool(db, createSqliteToolConfirmation(db, authorizedChildShell, "shell"), digest,
+        async scope => await authorizedChildShell(db, scope.identity, scope.signal) ? await readDesktopShellPreferences() : null,
+        sharedRoot ? async () => {
+          const current = await readRoot()
+          return current?.identity === sharedRoot.identity && current.path === sharedRoot.path ? current : null
+        } : undefined, parent) : undefined
+    const referenceShell = resourceRefs.length ? createSearcherReferenceShell(async (ref, scope, maxOutputChars) => {
+      if (!await authorizedChildShell(db, scope.identity, scope.signal) || !(await readDesktopShellPreferences()).shellEnabled)
+        return { kind: "completed", successful: false, executed: false, mutated: false, value: { error: "Shell 权限已失效" } }
+      const reference = (await searcherFileReferences(parent, resourceRefs)).find(item => item.ref === ref)
+      const selected = reference ? await resolveReferencedFile(reference.id, scope.signal) : null
+      const file = selected ? await readDroppedFileExcerpt(selected.path, selected.fileIdentity, scope.signal) : null
+      if (!file) return { kind: "completed", successful: false, executed: false, mutated: false,
+        value: { error: "文件引用不存在或无权访问" } }
+      if (file.text === null) return { kind: "completed", successful: false, executed: false, mutated: false,
+        value: { error: "该文件没有可读取的正文" } }
+      return { kind: "completed", successful: true, executed: true, mutated: false,
+        value: { stdout: file.text.slice(0, maxOutputChars), name: file.name, truncated: file.text.length > maxOutputChars } }
+    }) : undefined
+    const shell = referenceShell ?? enabledShell ?? createAgentShellTool(async () => ({
+      kind: "completed", successful: false, executed: false, mutated: false,
+      value: { error: "当前工作区或 Shell 隔离环境不可用" },
+    }), "按父会话权限执行 Shell。", false)
+    const tools = createToolRegistry({
+      tools: definitions, confirmationGatedDestructiveTools: [shell],
+      authorize: async (candidate, name) => matches(candidate) && await workspaceCurrent() && (await configuredAgentTools([name])).length === 1,
+    })
+    const accessScopeHash = digest([identity, modelIdentity, ...(launch.workspaceFingerprint === undefined ? [] : [launch.workspaceFingerprint])])
+    const context: CanonicalContextPorts = {
+      digest, nextId: randomUUID,
+      async load(candidate) {
+        if (!matches(candidate)) throw new CoreError('conflict', '子运行身份无效')
+        const available = await tools.capabilities(candidate)
+        return { modelIdentity, accessScopeHash, contextWindow: typeof config.context_tokens === 'number' ? config.context_tokens : DEFAULT_LLM_CONTEXT_TOKENS,
+          input: { ...candidate, fixedPrefix: [], history: [] },
+          capabilities: { tools: available, toolNames: available.map(tool => tool.name) } }
+      },
+      preparation: { async buildRag() { return { tail: [] } } },
+      references: { async hydrate(entry) { return entry.message }, async dehydrate(entry) { return entry.message } },
+      async prepareRequest() { return { prefix: [], dynamicTail: [] } },
+      currentRequest: () => null, stageContinuation: unavailable, async releaseContinuations() {},
+      compaction: { summarize: unavailable },
+      finalization: { async complete() {} }, diagnoseCompactionFailure() {},
+    }
+    const connected = connectProviderHarness(context, {
+      continuationStore: continuation.store,
+      async resolve(candidate) {
+        if (!matches(candidate)) throw new CoreError('conflict', '子运行身份无效')
+        return { config, modelIdentity, accessScopeHash, systemPrompt: '' }
+      },
+      transportFactory: createNodeProviderTransportFactory(desktopModelTransportOptions(config, resolveProxy)),
+    })
+    const harness = createDelegatedAgentHarness(searcherPreset, launch, {
+      context: connected.context,
+      executor: { authorize: unavailable, executor: { execute: unavailable } },
+      runtime: { store, leases, cancellation: {
+          ...cancellation,
+          async isRequested(candidate) {
+            return await cancellation.isRequested(parent) || await cancellation.isRequested(candidate)
+          },
+        }, provider: connected.provider, tools: tools.tools,
+        interactions: createSqliteInteractionActivator(db, createAgentInteractionDescription({
+          confirmation: describeSqliteDelegatedConfirmation, credential: describeSqliteMcpCredential, authorization: unavailable,
+        })), clock: { now: () => new Date().toISOString() },
+        sanitizeText: stripThinking, createStreamSanitizer: () => new ProviderStreamSanitizer(),
+        presentError: error => error instanceof ProviderError ? { code: error.code, text: providerErrorMessage(error) }
+          : { code: 'agent_failed', text: '子任务生成失败' },
+        presentToolResult: async value => value, async publish(event) {
+          if (event.type === 'interaction_required' || event.type === 'interaction_resolved')
+            notify(Number(parent.sessionId), parent.runId, true)
+        }, diagnose() {} },
+    })
+    return { harness, async close() { await connected.provider.close() } }
+  }
+
+  async function dispatchAdmittedChild(secret: string, identity: RunIdentity) {
+    const sessionId = Number(identity.sessionId)
+    if (subagentWakeAbort.signal.aborted || running.has(sessionId)) return
+    const { rows: [origin] } = await sql<{ parent_session_id: string; parent_run_id: string }>`
+      SELECT d.parent_session_id,d.parent_run_id FROM agent_subagent_deliveries d
+      JOIN agent_subagent_executions e USING(child_run_id)
+      WHERE d.owner_id=${identity.ownerId} AND e.child_session_id=${sessionId} AND e.child_run_id=${identity.runId}
+        AND d.status IN ('queued','running')`.execute(db)
+    if (!origin || running.has(sessionId)) return
+    const parent = { ownerId: identity.ownerId, sessionId: origin.parent_session_id, runId: origin.parent_run_id }
+    const deliveries = createSubagentDeliveryStore(db, secret, undefined, 'sqlite')
+    const { store, cancellation } = desktopChildRunPorts(secret)
+    const checkpoint = await store.read(identity)
+    let resolution: InteractionResolution | undefined
+    if (checkpoint?.status === 'waiting' && checkpoint.pending && !await cancellation.isRequested(identity)) {
+      const pending = checkpoint.pending
+      const prompt = await deliveries.interactionPrompt(identity, pending.id)
+      if (prompt?.status === 'resolved') {
+        resolution = (await consumeSqliteInteraction(db, identity, prompt.id, null, '')).resolution ?? undefined
+        if (!resolution) return
+      } else if (prompt?.status === 'active' && Date.parse(String(prompt.expires_at)) > Date.now()) {
+        if (!interactionExpirations.has(identity.runId)) {
+          const timer = setTimeout(() => {
+            interactionExpirations.delete(identity.runId)
+            scheduleAdmittedRuns(secret)
+          }, Math.max(1, Date.parse(String(prompt.expires_at)) - Date.now()))
+          timer.unref()
+          interactionExpirations.set(identity.runId, timer)
+        }
+        return
+      } else {
+        resolution = { status: prompt ? 'expired' : 'aborted', interactionId: pending.id,
+          receiptId: `desktop-interaction-closed:${pending.id}`, value: null }
+      }
+    }
+    clearTimeout(interactionExpirations.get(identity.runId))
+    interactionExpirations.delete(identity.runId)
+    if (running.has(sessionId)) return
+    let waiting = false
+    const done = Promise.resolve().then(async () => {
+      const launch = await deliveries.readLaunch(parent, identity.runId)
+      if (!launch) return
+      try {
+        const stored = checkpoint && delegatedTerminalOutcome(checkpoint)
+        if (stored) {
+          if (await deliveries.complete(parent, identity.runId, stored)) scheduleSubagentWake(parent)
+          return
+        }
+        const runtime = await prepareAdmittedChild(secret, { ...launch, identity, parent }, AbortSignal.timeout(20_000))
+        try {
+          const stream = checkpoint ? runtime.harness.resume(identity, resolution) : runtime.harness.start(identity)
+          for (;;) {
+            const next = await stream.next()
+            if (next.done) {
+              waiting = next.value.status === 'waiting'
+              break
+            }
+          }
+        } finally { await runtime.close() }
+      } catch (error) {
+        if (error instanceof AgentRunError && ['conflict', 'lease_lost', 'persistence_unknown'].includes(error.code)) return
+        const result = await cancellation.isRequested(identity) ? { status: 'cancelled', reasonCode: 'cancelled' } as const
+          : { status: 'failed', reasonCode: 'subagent_execution_failed' } as const
+        if (await deliveries.complete(parent, identity.runId, result)) scheduleSubagentWake(parent)
+      }
+    }).finally(() => {
+      if (running.get(sessionId)?.runId === identity.runId) running.delete(sessionId)
+      runTasks.delete(done)
+      if (waiting) scheduleAdmittedRuns(secret)
+    })
+    running.set(sessionId, { runId: identity.runId, done, async cancel() {
+      if (subagentWakeAbort.signal.aborted && (await store.read(identity))?.status === 'waiting') return
+      await cancellation.request(identity)
+      await cancellation.notify(identity)
+    } })
+    runTasks.add(done)
+    void done.catch(() => {})
+  }
 
   async function prepareRunRuntime(sessionId: number | null, config: ProviderConfig | null, embedding?: RagQueryEmbeddingSettings, interactive = false, resumeIdentity?: RunIdentity, modelId?: string, locale = 'zh-CN') {
     const imSession = sessionId === null ? null : (await sql<{ chat_type: string | null; platform: string }>`
@@ -462,6 +833,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       contextWindow: typeof config?.context_tokens === 'number' ? config.context_tokens : DEFAULT_LLM_CONTEXT_TOKENS,
       locale, groupChat, workspaceBinding,
       contextPolicy: { loadOwnerContext: !groupChat, memoryEnabled: !groupChat },
+      // 业务内容版本由 currentRevision 返回，访问范围只绑定可信身份和上下文策略。
       contextScopeKey: groupChat ? 'desktop-im-group' : 'desktop-overview',
     }
     if (config && !groupChat) await memoryFiles?.flush()
@@ -590,16 +962,6 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         }
       },
     }
-    async function resolveReferencedFile(id: string, signal?: AbortSignal) {
-      const method = workspaceFileReferenceId.test(id) ? 'agent.files.resolveWorkspaceReference' : 'agent.files.resolveDroppedReference'
-      const result = await hostRequest(method, { id }, signal)
-      if (result === null) return null
-      if (!result || typeof result !== 'object' || !('path' in result) || typeof result.path !== 'string'
-        || !('fileIdentity' in result) || typeof result.fileIdentity !== 'string')
-        throw new CoreError('storage_error', '本机文件引用结果无效')
-      return { path: result.path, fileIdentity: result.fileIdentity,
-        relativePath: 'relativePath' in result && typeof result.relativePath === 'string' ? result.relativePath : undefined }
-    }
     const viewImage = createViewImageTool({
       requiresHostConfirmation: true,
       authorize: async (identity, signal) => { signal.throwIfAborted(); return authorize(identity) },
@@ -640,6 +1002,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       },
       open: (url, signal) => egress.withTransport(signal, transport => transport.request({ url, method: 'GET', headers: {} }, signal)),
     })
+    let runMemoryRebuild: typeof pendingMemoryRebuild
     let ragBinding: { runId: string; build: ReturnType<typeof createAgentRagContextBuilder> } | undefined
     const buildRag = async (input: Parameters<ReturnType<typeof createAgentRagContextBuilder>>[0], signal?: AbortSignal) => {
       const identity = boundIdentity
@@ -673,7 +1036,13 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
           }),
         }
       }
-      return ragBinding.build(input, signal)
+      try {
+        return await ragBinding.build(input, signal)
+      } finally {
+        // 当前轮召回结束后再让后台登记持久化任务，避免与首轮读取争用 SQLite。
+        if (runMemoryRebuild?.generation === embeddingGeneration) pendingMemoryRebuild = runMemoryRebuild
+        runMemoryRebuild = undefined
+      }
     }
     const scheduledTasks = createScheduledTaskQueries(createKyselyScheduledTaskReader(db, 'sqlite'),
       () => ({ workspaceSupported: false, filesystemAuthorizationEnabled: false }))
@@ -889,12 +1258,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     }) : undefined
     const readHostAccess = async (scope: import('../../../../../packages/core/src/agent/tools/contracts.js').ToolScope) => {
       if (!interactive || !await authorizeWrite(db, scope.identity, scope.signal)) return null
-      const local = readPreferenceDocument(await createKyselyPreferenceDocumentStore(db, 'sqlite').read(ownerId))
-      return {
-        automaticMode: local.automatic_mode_enabled === true,
-        shellEnabled: (local.shell_enabled ?? true) === true,
-        dangerousEnabled: (local.shell_dangerous_enabled ?? true) === true,
-      }
+      return readDesktopShellPreferences()
     }
     function isHostFilePath(path: string) {
       return isAbsolute(path) && !/^\/(personal|project|workspace)\//u.test(path)
@@ -1297,7 +1661,6 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         ...(interactive ? { calendarDelete: createCalendarDeletePort(core, async () => {}, calendarConfirmation,
           identity => `agent:${identity.sessionId}:${identity.runId}`.slice(0, 128)) } : {}),
       } : {}),
-      dashboard: createKyselyDashboardCounter(db, 'sqlite'),
       scheduledTasks: { list: (identity, signal) => scheduledTasks.agent(identity.ownerId, signal) },
       ...(core.receipts && interactive ? {
         scheduledTaskDelete: createScheduledTaskDeleteTool(core, confirmation, async () => {}),
@@ -1374,9 +1737,14 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         return authorizeGroupTool(identity, name)
       },
     }) : undefined
+    const delegation = (imSession ? (imChatType ?? 'c2c') === 'c2c' : interactive) ? createToolRegistry({
+      tools: createSubagentServiceTools(desktopSubagents(secret)), authorize,
+    }) : undefined
+    const delegationNames = new Set(delegation?.catalog().map(tool => tool.name))
     const configuredTools = async (identity: RunIdentity, lookup?: McpToolLookup): Promise<PreparedToolDefinition[]> => {
       if (groupTools) return groupTools.capabilities(identity)
-      const definitions = await mcpTools.capabilities(identity, lookup)
+      const definitions = [...await mcpTools.capabilities(identity, lookup),
+        ...(lookup || !delegation ? [] : await delegation.capabilities(identity))]
       const allowed = new Set(await configuredAgentTools(definitions.map(tool => tool.name)))
       return definitions.filter(tool => allowed.has(tool.name))
     }
@@ -1410,8 +1778,8 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       signal?.throwIfAborted()
       return allowed.has('call_tool') && allowed.has(canonicalAgentToolName(name))
     }
-    const contextBuilder = {
-      buildSnapshot: (data: Parameters<NonNullable<Parameters<typeof createCanonicalSourceLoader>[0]['builder']['buildSnapshot']>>[0]) => {
+    const contextBuilder = createMainContextBuilder({
+      buildSnapshot: data => {
         const preferences = data.stylePreferences && typeof data.stylePreferences === 'object' && !Array.isArray(data.stylePreferences)
           ? data.stylePreferences as Record<string, Json> : {}
         if (groupChat) {
@@ -1427,14 +1795,14 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         systemPrompt = buildSystemPrompt(preferences)
         return { systemPrompt, snapshotContext, sessionInfo: { stylePreferences: preferences }, userTimezone: data.userTimezone, locale: selection.locale }
       },
-      buildRequest: (snapshot: Parameters<NonNullable<Parameters<typeof createCanonicalSourceLoader>[0]['builder']['buildRequest']>>[0]) => {
+      buildRequest: snapshot => {
         const info = snapshot.sessionInfo && typeof snapshot.sessionInfo === 'object' && !Array.isArray(snapshot.sessionInfo)
           ? snapshot.sessionInfo as Record<string, Json> : {}
         const preferences = info.stylePreferences && typeof info.stylePreferences === 'object' && !Array.isArray(info.stylePreferences)
           ? info.stylePreferences as Record<string, Json> : {}
         return request(snapshot.snapshotContext, buildSystemPrompt(preferences))
       },
-    }
+    })
     const source = createCanonicalSourceLoader({
       ...sessionSource, digest, nextId: randomUUID, now: Date.now,
       select: async () => selection,
@@ -1508,7 +1876,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     }
     async function enqueueImReflection(identity: RunIdentity, text: string, modelIdentity: string) {
       if (!groupChat || !memoryFiles || !text.trim() || text.length > 1_000_000) return
-      const receipt = await desktopImGroupRunEvent(db, identity)
+      const receipt = await desktopImGroupRunEvent(db, identity, 'completed')
       if (!receipt) return
       const authorization = desktopGroupMemoryContext(await hostRequest('agent.im.readGroupMemoryContext',
         { ...receipt, ownerId }, reflectionAbort.signal), ownerId)
@@ -1527,20 +1895,71 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         scopes.push({ type: 'platform-user', id: `${actor.chatId}:${actor.platformUserId}` })
       if (actor.role === 'owner' && actor.verifiedOwner && authorization.groupOwnerMemoryEnabled)
         scopes.push({ type: 'owner', id: owner })
-      for (const scope of scopes) await sql`INSERT INTO desktop_im_reflection_jobs
-        (owner_id,session_id,run_id,user_message_id,platform,connection_id,event_key,scope_type,scope_id,model_identity,status,attempts,created_at_ms)
-        VALUES(${owner},${Number(identity.sessionId)},${identity.runId},${source.id},${receipt.platform},${receipt.connectionId},${receipt.eventKey},
-          ${scope.type},${scope.id},${modelIdentity},'queued',0,${Date.now()})
-        ON CONFLICT(owner_id,session_id,run_id,scope_type,scope_id) DO NOTHING`.execute(db)
+      const observedAt = Date.now()
+      if (!scopes.length) return
+      const idleDue = observedAt + IM_REFLECTION_IDLE_SECONDS * 1000
+      await db.transaction().execute(async tx => {
+        for (const scope of scopes) await sql`INSERT INTO desktop_im_reflection_jobs
+          (owner_id,session_id,run_id,user_message_id,platform,connection_id,event_key,scope_type,scope_id,model_identity,status,attempts,created_at_ms)
+          VALUES(${owner},${Number(identity.sessionId)},${identity.runId},${source.id},${receipt.platform},${receipt.connectionId},${receipt.eventKey},
+            ${scope.type},${scope.id},${modelIdentity},'queued',0,${observedAt})
+          ON CONFLICT(owner_id,session_id,run_id,scope_type,scope_id) DO NOTHING`.execute(tx)
+        await sql`INSERT INTO desktop_im_reflection_triggers(owner_id,session_id,idle_due_at_ms)
+          VALUES(${owner},${Number(identity.sessionId)},${idleDue})
+          ON CONFLICT(owner_id,session_id) DO UPDATE SET idle_due_at_ms=excluded.idle_due_at_ms`.execute(tx)
+      })
+      scheduleReflectionRecovery(IM_REFLECTION_IDLE_SECONDS * 1000)
     }
     async function drainImReflections(signal = reflectionAbort.signal) {
       if (!provider || !memoryFiles || !groupChat) return
       const owner = dataContext(ownerId).ownerId.replaceAll('-', '')
+      const { rows: [request] } = await sql<{ requested_sequence: number }>`SELECT requested_sequence FROM desktop_im_reflection_triggers
+        WHERE owner_id=${owner} AND session_id=${Number(sessionId)}`.execute(db)
+      const requested = request?.requested_sequence ?? 0
+      const { rows: [threshold] } = await sql<{ sequence: number | null }>`SELECT MAX(through_sequence) AS sequence
+        FROM desktop_im_reflection_thresholds WHERE owner_id=${owner} AND session_id=${Number(sessionId)}`.execute(db)
+      const ownerRequested = Math.max(requested, threshold?.sequence ?? 0)
+      const requestedAfter = (table: 'j' | 'desktop_im_reflection_jobs') => sql`CASE WHEN ${sql.ref(table + '.scope_type')}='owner' THEN ${ownerRequested} ELSE ${requested} END > COALESCE((
+        SELECT last_sequence FROM desktop_im_reflection_positions p
+        WHERE p.owner_id=${sql.ref(table + '.owner_id')} AND p.session_id=${sql.ref(table + '.session_id')}
+          AND p.scope_type=${sql.ref(table + '.scope_type')} AND p.scope_id=${sql.ref(table + '.scope_id')}),0)`
+      const dueBefore = Date.now() - IM_REFLECTION_IDLE_SECONDS * 1000
+      if (requested > 0) {
+        const { rows: [anchor] } = await sql<{ run_id: string; connection_id: string; event_key: string; sealed_event: Buffer }>`
+          SELECT j.run_id,j.connection_id,j.event_key,e.sealed_event FROM desktop_im_reflection_jobs j
+          JOIN desktop_im_inbox e ON e.owner_id=j.owner_id AND e.platform=j.platform AND e.connection_id=j.connection_id AND e.event_key=j.event_key
+          WHERE j.owner_id=${owner} AND j.session_id=${Number(sessionId)} AND j.model_identity=${selection.modelIdentity}
+            AND j.scope_type='group' AND e.run_id=j.run_id AND e.state='completed'
+          ORDER BY j.created_at_ms DESC,j.run_id DESC LIMIT 1`.execute(db)
+        if (anchor) {
+          const context = desktopGroupMemoryContext(await hostRequest('agent.im.readGroupMemoryContext', {
+            ownerId, connectionId: anchor.connection_id, eventKey: anchor.event_key,
+            sealedEvent: anchor.sealed_event.toString('base64'),
+          }, signal), ownerId)
+          if (context?.groupMemoryEnabled && context.memberMemoryEnabled && context.ownerPlatformUserId) {
+            await sql`INSERT INTO desktop_im_reflection_jobs
+              (owner_id,session_id,run_id,user_message_id,platform,connection_id,event_key,scope_type,scope_id,model_identity,status,attempts,created_at_ms)
+              SELECT DISTINCT j.owner_id,j.session_id,j.run_id,j.user_message_id,j.platform,j.connection_id,j.event_key,
+                'platform-user',${context.chatId} || ':' || m.platform_user_id,j.model_identity,'queued',0,j.created_at_ms
+              FROM desktop_im_reflection_jobs j JOIN conversation_messages m ON m.session_id=j.session_id
+              WHERE j.owner_id=${owner} AND j.session_id=${Number(sessionId)} AND j.run_id=${anchor.run_id} AND j.scope_type='group'
+                AND m.role='user' AND m.canonical_batch_id IS NULL AND m.conversation_seq<=${requested}
+                AND m.platform_user_id IS NOT NULL AND m.platform_user_id<>${context.ownerPlatformUserId}
+                AND m.conversation_seq>COALESCE((SELECT p.last_sequence FROM desktop_im_reflection_positions p
+                  WHERE p.owner_id=j.owner_id AND p.session_id=j.session_id AND p.scope_type='platform-user'
+                    AND p.scope_id=${context.chatId} || ':' || m.platform_user_id),0)
+              ON CONFLICT(owner_id,session_id,run_id,scope_type,scope_id) DO NOTHING`.execute(db)
+          }
+        }
+      }
       const { rows: pending } = await sql<{ run_id: string; session_id: number; scope_type: 'owner' | 'group' | 'platform-user'; scope_id: string }>`
         SELECT j.run_id,j.session_id,j.scope_type,j.scope_id FROM desktop_im_reflection_jobs j
         LEFT JOIN desktop_agent_run_models m ON m.user_id=j.owner_id AND m.session_id=j.session_id AND m.run_id=j.run_id
         WHERE j.owner_id=${owner} AND j.session_id=${Number(sessionId)} AND j.model_identity=${selection.modelIdentity}
           AND m.model_id IS ${modelId ?? null}
+          AND EXISTS(SELECT 1 FROM conversation_sessions s WHERE s.user_id=j.owner_id AND s.id=j.session_id AND s.active_run_id IS NULL)
+          AND (${requestedAfter('j')} OR NOT EXISTS (SELECT 1 FROM desktop_im_reflection_jobs recent
+            WHERE recent.owner_id=j.owner_id AND recent.session_id=j.session_id AND recent.created_at_ms > ${dueBefore}))
           AND (j.status='queued' OR (j.status='processing' AND j.claimed_at_ms < ${Date.now() - 300_000}))
         ORDER BY j.created_at_ms,j.run_id,j.scope_type,j.scope_id`.execute(db)
       for (const candidate of pending) {
@@ -1552,6 +1971,18 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
           UPDATE desktop_im_reflection_jobs SET status='processing',claimed_at_ms=${claimTime},attempts=attempts+1
           WHERE owner_id=${owner} AND session_id=${candidate.session_id} AND run_id=${candidate.run_id}
             AND scope_type=${candidate.scope_type} AND scope_id=${candidate.scope_id}
+            AND (${requestedAfter('desktop_im_reflection_jobs')} OR NOT EXISTS (SELECT 1 FROM desktop_im_reflection_jobs recent
+              WHERE recent.owner_id=${owner} AND recent.session_id=${candidate.session_id}
+                AND recent.created_at_ms > ${Date.now() - IM_REFLECTION_IDLE_SECONDS * 1000}))
+            AND EXISTS(SELECT 1 FROM conversation_sessions s WHERE s.user_id=${owner} AND s.id=${candidate.session_id} AND s.active_run_id IS NULL)
+            AND NOT EXISTS (SELECT 1 FROM desktop_im_reflection_jobs active
+              WHERE active.owner_id=${owner} AND active.session_id=${candidate.session_id}
+                AND active.scope_type=${candidate.scope_type} AND active.scope_id=${candidate.scope_id}
+                AND active.run_id<>${candidate.run_id} AND (active.status='processing' OR EXISTS (
+                  SELECT 1 FROM desktop_im_reflection_plans prepared WHERE prepared.owner_id=active.owner_id
+                    AND prepared.session_id=active.session_id AND prepared.run_id=active.run_id
+                    AND prepared.scope_type=active.scope_type AND prepared.scope_id=active.scope_id
+                    AND active.status='queued')))
             AND (status='queued' OR (status='processing' AND claimed_at_ms < ${claimTime - 300_000}))
           RETURNING run_id,session_id,user_message_id,platform,connection_id,event_key,scope_type,scope_id,model_identity,attempts`.execute(db)
         if (!job) continue
@@ -1569,24 +2000,74 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
           if (!context || context.actor.platform !== job.platform || context.actor.chatType !== 'group')
             throw new Error('reflection_authorization_changed')
           const actor = context.actor
-          const memberScopeId = `${actor.chatId}:${actor.platformUserId}`
+          const prefix = `${actor.chatId}:`
+          const member = job.scope_id.startsWith(prefix) ? job.scope_id.slice(prefix.length) : ''
+          const canReflectMember = (current: NonNullable<typeof context>) => current.memberMemoryEnabled && !!member
+            && (member === current.actor.platformUserId ? current.actor.role === 'member'
+              : current.groupMemoryEnabled && current.ownerPlatformUserId !== null && member !== current.ownerPlatformUserId)
           if (job.scope_type === 'group' && (!context.groupMemoryEnabled || job.scope_id !== actor.chatId)
-            || job.scope_type === 'platform-user' && (!context.memberMemoryEnabled || actor.role !== 'member' || job.scope_id !== memberScopeId)
+            || job.scope_type === 'platform-user' && !canReflectMember(context)
             || job.scope_type === 'owner' && (!context.groupOwnerMemoryEnabled || actor.role !== 'owner' || !actor.verifiedOwner))
             throw new Error('reflection_authorization_changed')
-          const { rows: [source] } = await sql<{ id: number; content: string; platform_user_id: string | null; platform_user_name: string | null }>`
-            SELECT m.id,m.content,m.platform_user_id,m.platform_user_name FROM agent_run_admissions a
+          const { rows: [source] } = await sql<{ id: number; conversation_seq: number; content: string; platform_user_id: string | null; platform_user_name: string | null }>`
+            SELECT m.id,m.conversation_seq,m.content,m.platform_user_id,m.platform_user_name FROM agent_run_admissions a
             JOIN conversation_messages m ON m.id=a.user_message_id AND m.session_id=a.session_id AND m.role='user'
             WHERE a.user_id=${owner} AND a.session_id=${job.session_id} AND a.run_id=${job.run_id}`.execute(db)
           if (!source || source.id !== job.user_message_id || source.platform_user_id !== actor.platformUserId
             || !source.content.trim() || source.content.length > 32_000)
             throw new Error('reflection_source_unavailable')
 
+          const position = sql<{ last_sequence: number }>`SELECT last_sequence FROM desktop_im_reflection_positions
+            WHERE owner_id=${owner} AND session_id=${job.session_id} AND scope_type=${job.scope_type} AND scope_id=${job.scope_id}`
+          const saved = (await sql<{ through_sequence: number; payload: string | null }>`SELECT through_sequence,payload FROM desktop_im_reflection_plans
+            WHERE owner_id=${owner} AND session_id=${job.session_id} AND run_id=${job.run_id}
+              AND scope_type=${job.scope_type} AND scope_id=${job.scope_id}`.execute(db)).rows[0]
+          const after = Number((await position.execute(db)).rows[0]?.last_sequence ?? 0)
+          const dueSequence = job.scope_type === 'owner' ? ownerRequested : requested
+          const through = saved?.through_sequence ?? (dueSequence > after ? dueSequence : source.conversation_seq)
+          if (!saved) {
+            const freeze = await sql`INSERT INTO desktop_im_reflection_plans
+              (owner_id,session_id,run_id,scope_type,scope_id,through_sequence)
+              SELECT owner_id,session_id,run_id,scope_type,scope_id,${through} FROM desktop_im_reflection_jobs
+              WHERE owner_id=${owner} AND session_id=${job.session_id} AND run_id=${job.run_id}
+                AND scope_type=${job.scope_type} AND scope_id=${job.scope_id} AND status='processing' AND claimed_at_ms=${claimTime}
+              RETURNING through_sequence`.execute(db)
+            if (!freeze.rows.length) throw new Error('reflection_memory_changed')
+          }
+          const sender = job.scope_type === 'group' ? null : job.scope_type === 'platform-user' ? member : actor.platformUserId
+          const { rows: evidence } = await sql<{ content: string; platform_user_id: string; platform_user_name: string | null }>`
+            SELECT m.content,m.platform_user_id,m.platform_user_name FROM conversation_messages m
+            JOIN conversation_sessions s ON s.id=m.session_id AND s.user_id=${owner}
+            WHERE m.session_id=${job.session_id} AND m.role='user' AND m.conversation_seq>${after}
+              AND m.conversation_seq<=${through} AND m.platform_user_id IS NOT NULL AND m.canonical_batch_id IS NULL
+              AND (${sender} IS NULL OR m.platform_user_id=${sender})
+              AND NOT EXISTS (SELECT 1 FROM desktop_im_reflection_jobs legacy
+                WHERE legacy.owner_id=${owner} AND legacy.session_id=m.session_id AND legacy.user_message_id=m.id
+                  AND legacy.scope_type=${job.scope_type} AND legacy.scope_id=${job.scope_id} AND legacy.status='completed')
+            ORDER BY m.conversation_seq LIMIT 1001`.execute(db)
+          if (evidence.length > 1000) throw new Error('reflection_source_unavailable')
+          const finish = async (tx: typeof db) => {
+            const done = await sql`UPDATE desktop_im_reflection_jobs SET status='completed',claimed_at_ms=NULL,last_error=NULL
+              WHERE owner_id=${owner} AND session_id=${job.session_id} AND run_id=${job.run_id}
+                AND scope_type=${job.scope_type} AND scope_id=${job.scope_id} AND status='processing' AND claimed_at_ms=${claimTime}
+              RETURNING status`.execute(tx)
+            if (!done.rows.length) throw new Error('reflection_memory_changed')
+            await sql`INSERT INTO desktop_im_reflection_positions(owner_id,session_id,scope_type,scope_id,last_sequence)
+              VALUES(${owner},${job.session_id},${job.scope_type},${job.scope_id},${through})
+              ON CONFLICT(owner_id,session_id,scope_type,scope_id) DO UPDATE SET last_sequence=excluded.last_sequence
+              WHERE desktop_im_reflection_positions.last_sequence < excluded.last_sequence`.execute(tx)
+            await sql`DELETE FROM desktop_im_reflection_plans WHERE owner_id=${owner} AND session_id=${job.session_id}
+              AND run_id=${job.run_id} AND scope_type=${job.scope_type} AND scope_id=${job.scope_id}`.execute(tx)
+          }
+          if (!saved?.payload && !evidence.length) {
+            await db.transaction().execute(finish)
+            continue
+          }
           const now = Date.now(), nowSeconds = Math.floor(now / 1000), date = dateKeyInTimeZone(new Date(now), timezone)
           const signalWithTimeout = AbortSignal.any([signal, AbortSignal.timeout(90_000)])
           const scope = job.scope_type === 'owner' ? { type: 'owner' as const, id: owner }
             : job.scope_type === 'group' ? { type: 'group' as const, id: actor.chatId! }
-              : { type: 'platform-user' as const, id: memberScopeId }
+              : { type: 'platform-user' as const, id: job.scope_id }
           let current: Record<string, Json>, snapshot: Awaited<ReturnType<typeof readSqliteAgentMemorySnapshot>> | undefined
           let rawFiles: Record<string, string | null> = {}
           if (scope.type === 'owner') {
@@ -1626,30 +2107,37 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
             : scope.type === 'platform-user' ? readAgentPrompt('im/member_reflection.md', promptDirectory)
               : readAgentPrompt('reflection.md', promptDirectory)
           const delta = scope.type === 'owner'
-            ? JSON.stringify({ date, userName: '', profile: current.profile, pattern: current.pattern, summary: current.summary,
-              turns: [[source.content, '']] })
+            ? formatOwnerReflectionEvidence({ date, userName: '', profile: current.profile, pattern: current.pattern, summary: current.summary },
+              evidence.map(message => [message.content, '']))
             : JSON.stringify({ date, current, target_scope: scope,
-              messages: [{ platform_user_id: actor.platformUserId, platform_user_name: source.platform_user_name ?? '', text: source.content }] })
-          const reflection = await runContextBranch({ ownerId, sessionId: identity.sessionId, runId: identity.runId,
-            stableSystem: prompt.trim(), delta, tools: [], scope: runAccessScope(identity) },
-          { name: 'reflection', outputMode: 'json', maxRetries: 1, maxOutputTokens: 1600 }, {
-            provider: provider.branchProvider(job.model_identity), digest, nextId: randomUUID,
-            async pauseBeforeRetry() {}, diagnostic: () => {},
-          }, signalWithTimeout)
-          signal.throwIfAborted()
-          if (!reflection.ok || reflection.output === null) throw new Error(`reflection_${reflection.reason}`)
+              messages: evidence.map(message => ({ platform_user_id: message.platform_user_id, platform_user_name: message.platform_user_name ?? '', text: message.content })) })
           let changes: Record<string, Json>
-          if (scope.type === 'owner') changes = applyOwnerReflectionOutput({ current, output: reflection.output,
-            now, date, nextId: randomUUID })
-          else changes = applyImMaintenanceOutput({ scopeType: scope.type, current, output: reflection.output,
-            now: nowSeconds, date }) as Record<string, Json>
+          if (saved?.payload) {
+            const plan = JSON.parse(saved.payload) as { changes: Record<string, Json>; rawFiles: Record<string, string | null> }
+            changes = plan.changes
+            rawFiles = plan.rawFiles
+          } else {
+            if (Buffer.byteLength(delta) > 1_048_576) throw new Error('reflection_source_unavailable')
+            const reflection = await runReflection({ ...identity, stableSystem: prompt.trim(), delta, scope: runAccessScope(identity) },
+            { outputMode: 'json', maxRetries: 1, maxOutputTokens: 1600 }, {
+              provider: provider.reflectionProvider(job.model_identity), digest, nextId: randomUUID,
+              async pauseBeforeRetry() {}, diagnostic: () => {},
+            }, signalWithTimeout)
+            signal.throwIfAborted()
+            if (!reflection.ok || reflection.output === null) throw new Error(`reflection_${reflection.reason}`)
+            if (scope.type === 'owner') changes = applyOwnerReflectionOutput({ current, output: reflection.output,
+              now, date, nextId: randomUUID })
+            else changes = applyImMaintenanceOutput({ scopeType: scope.type, current, output: reflection.output,
+              now: nowSeconds, date }) as Record<string, Json>
+
+          }
 
           const freshAuthorization = await authorize()
           if (!freshAuthorization || freshAuthorization.actor.botId !== actor.botId
             || freshAuthorization.actor.chatId !== actor.chatId || freshAuthorization.actor.platformUserId !== actor.platformUserId
             || freshAuthorization.actor.role !== actor.role || freshAuthorization.actor.verifiedOwner !== actor.verifiedOwner
             || scope.type === 'group' && !freshAuthorization.groupMemoryEnabled
-            || scope.type === 'platform-user' && !freshAuthorization.memberMemoryEnabled
+            || scope.type === 'platform-user' && !canReflectMember(freshAuthorization)
             || scope.type === 'owner' && !freshAuthorization.groupOwnerMemoryEnabled)
             throw new Error('reflection_authorization_changed')
           if (scope.type === 'owner') {
@@ -1670,41 +2158,55 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
                     ON CONFLICT(user_id,target) DO UPDATE SET body=excluded.body`.execute(tx)
               }
               if (Object.keys(changes).length) await enqueueAgentRagRebuildInTransaction(tx, 'sqlite', ownerId, 'memory')
-              await sql`UPDATE desktop_im_reflection_jobs SET status='completed',claimed_at_ms=NULL,last_error=NULL
-                WHERE owner_id=${owner} AND session_id=${job.session_id} AND run_id=${job.run_id}
-                  AND scope_type='owner' AND scope_id=${job.scope_id} AND status='processing' AND claimed_at_ms=${claimTime}`.execute(tx)
+              await finish(tx)
             })
           } else {
             const fileScope = { owner_user_id: owner, platform: actor.platform, bot_id: actor.botId,
               scope_type: scope.type, scope_id: scope.id }
+            if (!saved?.payload) {
+              const planned = await sql`UPDATE desktop_im_reflection_plans SET payload=${JSON.stringify({ changes, rawFiles })}
+                WHERE owner_id=${owner} AND session_id=${job.session_id} AND run_id=${job.run_id}
+                  AND scope_type=${job.scope_type} AND scope_id=${job.scope_id} AND payload IS NULL
+                  AND EXISTS(SELECT 1 FROM desktop_im_reflection_jobs j WHERE j.owner_id=${owner}
+                    AND j.session_id=${job.session_id} AND j.run_id=${job.run_id} AND j.scope_type=${job.scope_type}
+                    AND j.scope_id=${job.scope_id} AND j.status='processing' AND j.claimed_at_ms=${claimTime})
+                RETURNING through_sequence`.execute(db)
+              if (!planned.rows.length) throw new Error('reflection_memory_changed')
+            }
             for (const [field, value] of Object.entries(changes)) {
               if (!['profile', 'pattern', 'summary', 'daily', 'memory', 'members'].includes(field)) continue
               const latestAuthorization = await authorize()
               if (!latestAuthorization || scope.type === 'group' && !latestAuthorization.groupMemoryEnabled
-                || scope.type === 'platform-user' && !latestAuthorization.memberMemoryEnabled)
+                || scope.type === 'platform-user' && !canReflectMember(latestAuthorization))
                 throw new Error('reflection_authorization_changed')
               const filename = field === 'daily' || field === 'memory' ? `${field}.md` : `${field}.json`
-              if (await memoryFiles.readImScope(fileScope, filename) !== rawFiles[field]) throw new Error('reflection_memory_changed')
+              const body = field === 'daily' || field === 'memory' ? String(value) : `${JSON.stringify(value, null, 2)}\n`
+              signal.throwIfAborted()
+              const { rows: [claim] } = await sql`SELECT 1 FROM desktop_im_reflection_jobs
+                WHERE owner_id=${owner} AND session_id=${job.session_id} AND run_id=${job.run_id}
+                  AND scope_type=${job.scope_type} AND scope_id=${job.scope_id} AND status='processing' AND claimed_at_ms=${claimTime}`.execute(db)
+              if (!claim) throw new Error('reflection_memory_changed')
               const { rows: tombstone } = await sql`SELECT 1 FROM desktop_im_memory_tombstones
                 WHERE owner_id=${owner} AND platform=${actor.platform} AND bot_id=${actor.botId}
                   AND scope_type=${scope.type} AND scope_id=${scope.id}`.execute(db)
               if (tombstone.length) throw new Error('reflection_authorization_changed')
-              await memoryFiles.writeImScope(fileScope, filename,
-                field === 'daily' || field === 'memory' ? String(value) : `${JSON.stringify(value, null, 2)}\n`)
+              if (!await applyReflectionFileWrite(rawFiles[field] ?? null, body,
+                () => memoryFiles.readImScope(fileScope, filename),
+                value => memoryFiles.writeImScope(fileScope, filename, value))) throw new Error('reflection_memory_changed')
             }
             const finalAuthorization = await authorize()
             if (!finalAuthorization || scope.type === 'group' && !finalAuthorization.groupMemoryEnabled
-              || scope.type === 'platform-user' && !finalAuthorization.memberMemoryEnabled)
+              || scope.type === 'platform-user' && !canReflectMember(finalAuthorization))
               throw new Error('reflection_authorization_changed')
-            await sql`UPDATE desktop_im_reflection_jobs SET status='completed',claimed_at_ms=NULL,last_error=NULL
-              WHERE owner_id=${owner} AND session_id=${job.session_id} AND run_id=${job.run_id}
-                AND scope_type=${job.scope_type} AND scope_id=${job.scope_id} AND status='processing' AND claimed_at_ms=${claimTime}`.execute(db)
+            await db.transaction().execute(finish)
           }
           if (scope.type === 'owner') await memoryFiles.flush()
         } catch (error) {
           const reason = error instanceof Error && /^reflection_(?:provider_error|output_empty|schema_invalid|source_unavailable|memory_changed|authorization_changed)$/u.test(error.message)
             ? error.message : signal.aborted ? 'reflection_interrupted' : 'reflection_unavailable'
-          const failed = reason === 'reflection_authorization_changed' || job.attempts >= 3
+          const prepared = await sql`SELECT 1 FROM desktop_im_reflection_plans WHERE owner_id=${owner} AND session_id=${job.session_id}
+            AND run_id=${job.run_id} AND scope_type=${job.scope_type} AND scope_id=${job.scope_id} AND payload IS NOT NULL`.execute(db)
+          const failed = reason === 'reflection_authorization_changed' || (!prepared.rows.length && job.attempts >= 3)
           await sql`UPDATE desktop_im_reflection_jobs SET status=${failed ? 'failed' : 'queued'},claimed_at_ms=NULL,last_error=${reason}
             WHERE owner_id=${owner} AND session_id=${job.session_id} AND run_id=${job.run_id}
               AND scope_type=${job.scope_type} AND scope_id=${job.scope_id}
@@ -1760,13 +2262,13 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
           }
           const now = new Date()
           const timeout = AbortSignal.timeout(90_000)
-          const reflection = await runPrivateReflectionBranch({
+          const reflection = await runPrivateReflection({
             ...identity, stableSystem: readAgentPrompt('reflection.md', promptDirectory).trim(),
-            delta: JSON.stringify({ date: dateKeyInTimeZone(now, timezone), userName: '',
-              profile: current.profile, pattern: current.pattern, summary: current.summary, turns }),
+            delta: formatOwnerReflectionEvidence({ date: dateKeyInTimeZone(now, timezone), userName: '',
+              profile: current.profile, pattern: current.pattern, summary: current.summary }, turns),
             scope: runAccessScope(identity),
           }, { outputMode: 'json', maxOutputTokens: 1024 }, {
-            provider: provider.branchProvider(job.model_identity), digest, nextId: randomUUID,
+            provider: provider.reflectionProvider(job.model_identity), digest, nextId: randomUUID,
             async pauseBeforeRetry() {}, diagnostic: () => {},
           }, AbortSignal.any([signal, timeout]), observation, { trigger: 'idle' })
           signal.throwIfAborted()
@@ -1856,7 +2358,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     }, { singleChoiceOnly }))
     const agent = createSqliteAgentRuntime({
       observation,
-      db, secret, history: { persistPrivateContext: continuation.persist }, admission: {
+      db, secret, history: { persistPrivateContext: continuation.persist, onSubagentDeliveryCommitted: scheduleSubagentWake }, admission: {
         onCommitted: identity => notify(Number(identity.sessionId), identity.runId),
         async bindRun(tx, identity, input) {
           if (input.queueClaim) await createSqlAgentPendingQueue(db, 'sqlite', {}).consumeClaim(
@@ -1889,18 +2391,13 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
           if (memoryFiles && embeddingGenerationAtStart === embeddingGeneration) {
             const embeddingChanged = stableJson(memoryEmbedding?.settings ?? null) !== stableJson(embedding ?? null)
               || Boolean(memoryEmbedding?.resolveProxy) !== Boolean(embedding && resolveProxy)
+            if (embeddingChanged) {
+              memoryEmbedding?.controller.abort()
+              memoryEmbedding = embedding ? { settings: embedding, resolveProxy, controller: new AbortController() } : undefined
+            }
             if (lastMemoryRevision !== revision || embeddingChanged) {
-              await db.transaction().execute(async tx => {
-                if (embeddingGenerationAtStart === embeddingGeneration)
-                  await enqueueAgentRagRebuildInTransaction(tx, 'sqlite', ownerId, 'memory')
-              })
-              if (embeddingGenerationAtStart === embeddingGeneration) {
-                if (embeddingChanged) {
-                  memoryEmbedding?.controller.abort()
-                  memoryEmbedding = embedding ? { settings: embedding, resolveProxy, controller: new AbortController() } : undefined
-                }
-                lastMemoryRevision = revision
-              }
+              // 这里只登记运行时发现的刷新需求，显式记忆写入仍在原事务更新持久队列。
+              runMemoryRebuild = { revision, generation: embeddingGenerationAtStart }
             }
           }
           ownerMemory = memory
@@ -1912,7 +2409,6 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
             imChannels = await readImChannels(signal)
           }
           contextRevision = Number.parseInt(digest([revision, overviewData, filesOverview, stylePreferences, imChannels, timezone]).slice(0, 12), 16)
-          selection.contextScopeKey = `desktop-overview:${contextRevision}`
           const loaded = await source.load(identity, signal)
           const directoryId = selection.workspaceBinding?.directory_id
           if (typeof directoryId === 'string') {
@@ -1923,6 +2419,9 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
           }
           const tools = await configuredTools(identity)
           const toolNames = tools.map(tool => tool.name)
+          if (delegation && toolNames.includes('agent_message')) {
+            loaded.input.systemPrompt = assembleSubagentCatalog(loaded.input.systemPrompt, builtinSubagentCatalog)
+          }
           const catalog = createAgentToolBrief(preferences, tools)
           const mcpReminder = ['search_tools', 'call_tool'].every(name => toolNames.includes(name))
             ? mcpServiceReminder(await mcpRuntime.services(identity.ownerId)) : ''
@@ -1940,7 +2439,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         prepareRequest: async (_identity, _signal, context) => {
           const snapshot = context?.sourceEffects?.sessionSnapshot.state
           if (!snapshot) throw new Error('运行缺少会话快照')
-          const prepared = contextBuilder.buildRequest(readSessionSnapshot(snapshot))
+          const prepared = contextBuilder.buildRequest(readSessionSnapshot(snapshot), selection, _identity)
           const prefix = buildFixedRequestPrefix(prepared)
           const memberReminder = groupChat ? await readMemberReminder(_identity, _signal) : []
           const legacy = { prefix, dynamicTail: memberReminder }
@@ -1957,6 +2456,21 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
           if (admission && await createFirstTurnTitleWriter(db, 'sqlite')({
             identity: input.identity, anchorMessageId: String(admission.user_message_id), reply: input.text, locale: selection.locale, complete,
           })) notify(sessionId, input.identity.runId)
+        },
+        async persistCompaction(state) {
+          if (!groupChat || !memoryFiles) return
+          const ids = state.compactions.flatMap(item => item.result.changed ? item.result.coversUntilMessageIds : [])
+          if (!ids.length) return
+          const owner = dataContext(state.identity.ownerId).ownerId.replaceAll('-', '')
+          await sql`INSERT INTO desktop_im_reflection_triggers(owner_id,session_id,requested_sequence)
+            SELECT ${owner},s.id,MAX(m.conversation_seq) FROM conversation_sessions s
+            JOIN conversation_messages m ON m.session_id=s.id AND m.role='user' AND m.canonical_batch_id IS NULL
+            WHERE s.user_id=${owner} AND s.id=${Number(state.identity.sessionId)}
+              AND m.id IN (SELECT value FROM json_each(${JSON.stringify(ids)}))
+            GROUP BY s.id
+            ON CONFLICT(owner_id,session_id) DO UPDATE SET
+              requested_sequence=MAX(desktop_im_reflection_triggers.requested_sequence,excluded.requested_sequence)`.execute(db)
+          scheduleReflectionRecovery(0)
         },
         compaction, finalization: { complete: async input => {
           if (groupChat) await enqueueImReflection(input.identity, input.text, input.modelIdentity)
@@ -1978,6 +2492,10 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
           },
           async dispatch(call, scope) {
             if (groupTools) return groupTools.tools.dispatch(call, scope)
+            if (delegation && delegationNames.has(call.name)) {
+              if (!(await configuredAgentTools([call.name], scope.signal)).length) return rejectAdapterCall('工具不存在或未开放')
+              return delegation.tools.dispatch(call, scope)
+            }
             if (call.adapter === 'call_tool' && !await mayForward(call.name, scope.identity, scope.signal))
               return rejectAdapterCall('工具不存在或未开放')
             return mcpTools.tools.dispatch(call, {
@@ -1986,6 +2504,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
           },
           async reconcile(call, identity) {
             if (groupTools) return groupTools.tools.reconcile(call, identity)
+            if (delegation && delegationNames.has(call.name)) return delegation.tools.reconcile(call, identity)
             if (unavailableSearch.has(call.name)) {
               if (call.adapter === 'call_tool' && !await mayForward('call_tool', identity)) return { kind: 'unknown' }
               return searchRecovery.reconcile(call, identity)
@@ -2075,6 +2594,41 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     return true
   }
 
+  function scheduleSubagentWake(parent: RunIdentity) {
+    if (parent.ownerId !== ownerId || subagentWakeAbort.signal.aborted) return
+    const key = JSON.stringify([parent.sessionId, parent.runId])
+    const previous = subagentWakes.get(key)
+    const wake = Promise.resolve(previous).then(async () => {
+      const sessionId = Number(parent.sessionId)
+      const active = running.get(sessionId)
+      if (active?.runId === parent.runId) await Promise.allSettled([active.done])
+      if (running.has(sessionId) || subagentWakeAbort.signal.aborted) return
+      const { rows } = await sql`SELECT 1 FROM agent_run_admissions a
+        JOIN conversation_sessions s ON s.id=a.session_id AND s.user_id=a.user_id AND s.active_run_id=a.run_id
+        LEFT JOIN agent_run_controls c ON c.user_id=a.user_id AND c.session_id=a.session_id AND c.run_id=a.run_id
+        WHERE a.user_id=${dataContext(ownerId).ownerId.replaceAll('-', '')} AND a.session_id=${sessionId}
+          AND a.run_id=${parent.runId} AND COALESCE(c.cancel_requested,0)=0`.execute(db)
+      if (!rows.length) return
+      const secret = await loadSqliteAgentRunSecret(db, databasePath)
+      const store = createSqliteAgentRunStore<CanonicalRunContext>(db, secret, {
+        async writeHistory() { throw new Error('只读子运行唤醒不接受历史写入') },
+      })
+      const checkpoint = await store.read(parent)
+      if (checkpoint?.status !== 'waiting') return
+      const ready = checkpoint.subagentWaitChildId
+        ? !await store.isSubagentPending(parent, checkpoint.subagentWaitChildId)
+        : checkpoint.agentInboxWaiting && Boolean((await store.readAgentInbox?.(parent))?.length
+          || (await store.readSubagentFinals?.(parent))?.length)
+      if (ready) await resumeCheckpoint(checkpoint, AbortSignal.any([subagentWakeAbort.signal, AbortSignal.timeout(5_000)]))
+    }).catch(() => {
+      // 已提交的等待和终态继续保留，供独占启动恢复。
+      notify(Number(parent.sessionId), parent.runId)
+    }).finally(() => {
+      if (subagentWakes.get(key) === wake) subagentWakes.delete(key)
+    })
+    subagentWakes.set(key, wake)
+  }
+
   async function readImChannels(signal?: AbortSignal) {
     const snapshot: unknown = await hostRequest('agent.im.snapshot', {}, signal)
     if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot))
@@ -2114,19 +2668,54 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
   }
   // 新回合唤醒闲置调度。认领时仍从持久化记录核对整段会话的闲置时间。
   function scheduleReflectionRecovery(delay: number) {
-    if (reflectionTimer || reflectionAbort.signal.aborted) return
+    if (reflectionAbort.signal.aborted) return
+    const due = Date.now() + delay
+    if (reflectionTimer && reflectionTimerDue <= due) return
+    if (reflectionTimer) clearTimeout(reflectionTimer)
+    reflectionTimerDue = due
     reflectionTimer = setTimeout(() => {
       reflectionTimer = undefined
+      reflectionTimerDue = Infinity
       resumeReflections()
     }, delay)
     reflectionTimer.unref()
   }
 
   function resumeReflections() {
-    if (reflectionRecovery || reflectionAbort.signal.aborted) return
+    if (reflectionAbort.signal.aborted) return
+    if (reflectionRecovery) {
+      reflectionRecoveryRequested = true
+      return
+    }
     const signal = reflectionAbort.signal
     reflectionRecovery = (async () => {
       const owner = dataContext(ownerId).ownerId.replaceAll('-', '')
+      // 每次闲置窗口只冻结一次，所有 scope 共用同一个上界。
+      await sql`UPDATE desktop_im_reflection_triggers AS t SET idle_due_at_ms=NULL,passive_count=0,
+        requested_sequence=MAX(t.requested_sequence,COALESCE((
+          SELECT MAX(m.conversation_seq) FROM conversation_messages m
+          WHERE m.session_id=t.session_id AND m.role='user' AND m.canonical_batch_id IS NULL),0))
+        WHERE t.owner_id=${owner} AND t.idle_due_at_ms<=${Date.now()}
+          AND EXISTS(SELECT 1 FROM conversation_sessions s WHERE s.user_id=t.owner_id AND s.id=t.session_id
+            AND s.active_run_id IS NULL)`.execute(db)
+      const now = Date.now()
+      await db.transaction().execute(async tx => {
+        await sql`UPDATE desktop_im_reflection_triggers AS t
+          SET requested_sequence=MAX(t.requested_sequence,COALESCE((SELECT MAX(w.through_sequence)
+            FROM desktop_im_reflection_thresholds w WHERE w.owner_id=t.owner_id AND w.session_id=t.session_id AND w.due_at_ms<=${now}),0))
+          WHERE t.owner_id=${owner}`.execute(tx)
+        await sql`DELETE FROM desktop_im_reflection_thresholds WHERE owner_id=${owner} AND due_at_ms<=${now}`.execute(tx)
+      })
+      await sql`UPDATE desktop_im_reflection_jobs AS j SET status='queued',attempts=0,last_error=NULL
+        WHERE j.owner_id=${owner} AND j.status='completed'
+          AND EXISTS(SELECT 1 FROM desktop_im_reflection_triggers t WHERE t.owner_id=j.owner_id AND t.session_id=j.session_id
+            AND MAX(t.requested_sequence,CASE WHEN j.scope_type='owner' THEN COALESCE((SELECT MAX(w.through_sequence)
+              FROM desktop_im_reflection_thresholds w WHERE w.owner_id=j.owner_id AND w.session_id=j.session_id),0) ELSE 0 END)
+            >COALESCE((SELECT p.last_sequence FROM desktop_im_reflection_positions p
+              WHERE p.owner_id=j.owner_id AND p.session_id=j.session_id AND p.scope_id=j.scope_id AND p.scope_type=j.scope_type),0))
+          AND NOT EXISTS(SELECT 1 FROM desktop_im_reflection_jobs newer
+            WHERE newer.owner_id=j.owner_id AND newer.session_id=j.session_id AND newer.scope_type=j.scope_type AND newer.scope_id=j.scope_id
+              AND (newer.created_at_ms,newer.run_id)>(j.created_at_ms,j.run_id))`.execute(db)
       const { rows } = await sql<{ session_id: number; model_identity: string; model_id: string | null }>`
         SELECT DISTINCT jobs.session_id,jobs.model_identity,m.model_id FROM (
           SELECT user_id,session_id,run_id,model_identity FROM desktop_agent_reflection_jobs WHERE user_id=${owner} AND status='queued'
@@ -2150,14 +2739,44 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     })().catch(() => {}).finally(async () => {
       reflectionRecovery = undefined
       if (reflectionAbort.signal.aborted) return
-      const { rows: [pending] } = await sql<{ latest: number | null }>`
-        SELECT MIN(latest) AS latest FROM (
-          SELECT MAX(created_at_ms) AS latest FROM desktop_agent_reflection_jobs
-          WHERE user_id=${dataContext(ownerId).ownerId.replaceAll('-', '')}
+      if (reflectionRecoveryRequested) {
+        reflectionRecoveryRequested = false
+        scheduleReflectionRecovery(0)
+        return
+      }
+      const owner = dataContext(ownerId).ownerId.replaceAll('-', '')
+      const { rows: [pending] } = await sql<{ due: number | null }>`
+        SELECT MIN(due) AS due FROM (
+          SELECT MAX(created_at_ms) + ${PRIVATE_REFLECTION_IDLE_SECONDS * 1000} AS due
+          FROM desktop_agent_reflection_jobs WHERE user_id=${owner}
           GROUP BY session_id HAVING SUM(status='queued') > 0
+          UNION ALL
+          SELECT MAX(created_at_ms) + ${IM_REFLECTION_IDLE_SECONDS * 1000} AS due
+          FROM desktop_im_reflection_jobs WHERE owner_id=${owner}
+          GROUP BY session_id HAVING SUM(status='queued') > 0
+          UNION ALL
+          SELECT idle_due_at_ms AS due FROM desktop_im_reflection_triggers WHERE owner_id=${owner}
+            AND idle_due_at_ms IS NOT NULL
+          UNION ALL
+          SELECT due_at_ms AS due FROM desktop_im_reflection_thresholds WHERE owner_id=${owner}
         )`.execute(db).catch(() => ({ rows: [] }))
-      if (pending?.latest != null) {
-        const remaining = pending.latest + PRIVATE_REFLECTION_IDLE_SECONDS * 1000 - Date.now()
+      const unstaged = await sql`SELECT 1 FROM desktop_im_reflection_jobs j
+        JOIN desktop_im_reflection_triggers t ON t.owner_id=j.owner_id AND t.session_id=j.session_id
+        WHERE j.owner_id=${owner} AND j.status='completed'
+          AND MAX(t.requested_sequence,CASE WHEN j.scope_type='owner' THEN COALESCE((SELECT MAX(w.through_sequence)
+              FROM desktop_im_reflection_thresholds w WHERE w.owner_id=j.owner_id AND w.session_id=j.session_id),0) ELSE 0 END)
+            >COALESCE((SELECT p.last_sequence FROM desktop_im_reflection_positions p
+            WHERE p.owner_id=j.owner_id AND p.session_id=j.session_id AND p.scope_id=j.scope_id AND p.scope_type=j.scope_type),0)
+          AND NOT EXISTS(SELECT 1 FROM desktop_im_reflection_jobs newer WHERE newer.owner_id=j.owner_id
+            AND newer.session_id=j.session_id AND newer.scope_type=j.scope_type AND newer.scope_id=j.scope_id
+            AND (newer.created_at_ms,newer.run_id)>(j.created_at_ms,j.run_id))
+        LIMIT 1`.execute(db).catch(() => ({ rows: [] }))
+      if (unstaged.rows.length) {
+        scheduleReflectionRecovery(0)
+        return
+      }
+      if (pending?.due != null) {
+        const remaining = pending.due - Date.now()
         scheduleReflectionRecovery(remaining > 0 ? remaining : 30_000)
       }
     })
@@ -2186,15 +2805,24 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
           claimed_at_ms=NULL,last_error='reflection_interrupted'
         WHERE user_id=${owner} AND status='processing'`.execute(db)
       await sql`UPDATE desktop_im_reflection_jobs
-        SET status=CASE WHEN attempts>=3 THEN 'failed' ELSE 'queued' END,
+        SET status=CASE WHEN attempts>=3 AND NOT EXISTS(SELECT 1 FROM desktop_im_reflection_plans p
+          WHERE p.owner_id=desktop_im_reflection_jobs.owner_id AND p.session_id=desktop_im_reflection_jobs.session_id
+            AND p.run_id=desktop_im_reflection_jobs.run_id AND p.scope_type=desktop_im_reflection_jobs.scope_type
+            AND p.scope_id=desktop_im_reflection_jobs.scope_id AND p.payload IS NOT NULL) THEN 'failed' ELSE 'queued' END,
           claimed_at_ms=NULL,last_error='reflection_interrupted'
         WHERE owner_id=${owner} AND status='processing'`.execute(db)
       const signal = AbortSignal.timeout(5_000)
       const { deepResearch, similarImageSearch } = paidSearchTools(signal)
       const recovery = createToolRegistry({ tools: [deepResearch, similarImageSearch], authorize: authorizeSearchRecovery })
+      let childSecret: string | undefined
       await settleExclusiveSqliteAgentRuns(db, databasePath, ownerId, (call, identity) =>
         signal.aborted ? Promise.resolve({ kind: 'unknown' }) : recovery.tools.reconcile(call, identity),
-      checkpoint => resumeCheckpoint(checkpoint, signal))
+      checkpoint => resumeCheckpoint(checkpoint, signal), async (identity, source) => {
+        if (source !== 'subagent') return false
+        childSecret ??= await loadSqliteAgentRunSecret(db, databasePath)
+        await dispatchAdmittedChild(childSecret, identity)
+        return true
+      })
     },
     resumeReflections,
     invalidateEmbedding() {
@@ -2252,6 +2880,22 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       responding.add(sessionId)
       try {
         const identity = { ownerId, sessionId: String(sessionId), runId }
+        const secret = await loadSqliteAgentRunSecret(db, databasePath)
+        const deliveries = createSubagentDeliveryStore(db, secret, undefined, 'sqlite')
+        const delegated = await deliveries.findWaitingInteraction(identity, promptId)
+        if (delegated) {
+          const store = createSqliteAgentRunStore<CanonicalRunContext>(db, secret, { async writeHistory() {} })
+          const child = await store.read(delegated.identity)
+          if (child?.status !== 'waiting' || child.pending?.id !== delegated.interactionId)
+            throw new CoreError('conflict', '子运行交互已失效')
+          const result = await consumeSqliteInteraction(db, delegated.identity, promptId, reply, eventId,
+            { id: delegated.interactionId, version: child.version },
+            reply && 'secrets' in reply ? createDesktopMcpCrypto(databasePath).encrypt : undefined,
+            async tx => (await deliveries.findWaitingInteraction(identity, promptId, tx))?.interactionId === delegated.interactionId)
+          notify(sessionId, runId, true)
+          if (result.resolution) scheduleAdmittedRuns(secret)
+          return { runId, awaitingText: result.awaitingText }
+        }
         const active = running.get(sessionId)
         if (active && active.runId !== runId) throw new CoreError('conflict', '会话运行已变更')
         const { agent, checkpoint, drainReflections } = await createRunRuntime(sessionId, config, embedding, true, identity,
@@ -2307,10 +2951,16 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     async notifyCancel(sessionId: number, runId: string) {
       const run = running.get(sessionId)
       if (run?.runId === runId) await run.cancel()
-      if (await settleClosedSqliteInteraction(db, databasePath, { ownerId, sessionId: String(sessionId), runId }))
+      const identity = { ownerId, sessionId: String(sessionId), runId }
+      await subagents?.cancelChildren(identity)
+      if (await settleCancelledSqliteSubagentWait(db, databasePath, identity)
+        || await settleClosedSqliteInteraction(db, databasePath, identity))
         notify(sessionId, runId)
     },
     async close() {
+      subagentWakeAbort.abort()
+      for (const timer of interactionExpirations.values()) clearTimeout(timer)
+      interactionExpirations.clear()
       reflectionAbort.abort()
       if (reflectionTimer) clearTimeout(reflectionTimer)
       await reflectionRecovery
@@ -2321,6 +2971,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       await ragWorkerTask
       await memoryWarmup
       await drainAgentRuns([...runTasks], () => Promise.allSettled([...running.values()].map(run => run.cancel())))
+      await Promise.allSettled([...subagentWakes.values()])
     },
   }
 }

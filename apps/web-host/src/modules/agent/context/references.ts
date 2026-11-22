@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { formatFileReference } from '@gugu/core/files/relative-references'
 import { CoreError } from '@gugu/core'
 import { isOwnedFileStorageKey, normalizeFileOwnerId } from '../../files/store.js'
@@ -28,6 +29,22 @@ async function folderPath(client: Pick<PoolClient, 'query'>, owner: string, id: 
   return names.reverse().join('/')
 }
 
+export function parseWorkspaceFileReference(raw: unknown) {
+  if (typeof raw !== 'string' || !/^path-[A-Za-z0-9_-]{1,24000}$/u.test(raw)) return null
+  let value: unknown
+  try { value = JSON.parse(Buffer.from(raw.slice(5), 'base64url').toString('utf8')) }
+  catch { return null }
+  if (!value || typeof value !== 'object') return null
+  const { directoryId, relativePath, identity } = value as Record<string, unknown>
+  if (typeof relativePath !== 'string' || typeof identity !== 'string' || !/^\d{1,32}\.\d{1,32}\.\d{1,32}$/u.test(identity)) return null
+  let directory: FileDirectory
+  if (directoryId === 'personal') directory = directoryId
+  else if (typeof directoryId === 'number' && Number.isSafeInteger(directoryId) && directoryId > 0) directory = directoryId
+  else if (typeof directoryId === 'string' && /^project:[1-9]\d{0,9}$/u.test(directoryId)) directory = { projectId: Number(directoryId.slice(8)) }
+  else return null
+  return { directory, relativePath, identity, key: createHash('sha256').update(raw).digest('hex').slice(0, 24) }
+}
+
 /** 返回写入 content_json 的 Canonical 内容；references_json 由调用方保留原始展示数据。 */
 export async function resolveAgentChatReferences(client: Pick<PoolClient, 'query'>, owner: string, input: AgentChatInput, storageRoot?: string): Promise<readonly unknown[] | null> {
   if (!owner) throw new TypeError('用户身份无效')
@@ -35,20 +52,12 @@ export async function resolveAgentChatReferences(client: Pick<PoolClient, 'query
   for (const ref of (input.references ?? []).slice(0, 6)) {
     const kind = ref.type, raw = ref.id
     if (kind === 'file' && typeof raw === 'string' && /^path-[A-Za-z0-9_-]{1,24000}$/.test(raw) && storageRoot) {
-      let value: unknown
-      try { value = JSON.parse(Buffer.from(raw.slice(5), 'base64url').toString('utf8')) }
-      catch { continue }
-      if (!value || typeof value !== 'object') continue
-      const { directoryId, relativePath, identity } = value as Record<string, unknown>
-      if (typeof relativePath !== 'string' || typeof identity !== 'string' || !/^\d{1,32}\.\d{1,32}\.\d{1,32}$/.test(identity)) continue
-      let directory: FileDirectory
-      if (directoryId === 'personal') directory = directoryId
-      else if (typeof directoryId === 'number' && Number.isSafeInteger(directoryId) && directoryId > 0) directory = directoryId
-      else if (typeof directoryId === 'string' && /^project:[1-9]\d{0,9}$/.test(directoryId)) directory = { projectId: Number(directoryId.slice(8)) }
-      else continue
+      const reference = parseWorkspaceFileReference(raw)
+      if (!reference) continue
+      const { directory, relativePath, identity, key } = reference
       try {
         const file = await createWorkspaceFileReads(client, storageRoot).reference(owner, directory, relativePath, identity)
-        blocks.push(formatFileReference({ 名称: file.label, 沙盒绝对路径: file.subtitle, 相对路径: relativePath }))
+        blocks.push(formatFileReference({ 名称: file.label, 引用键: key, 沙盒绝对路径: file.subtitle, 相对路径: relativePath }))
       } catch (error) {
         if (!(error instanceof CoreError) || error.code !== 'not_found') throw error
         blocks.push(formatFileReference({ 名称: typeof ref.label === 'string' ? ref.label : undefined, 状态: '引用已失效或当前环境无法读取' }))

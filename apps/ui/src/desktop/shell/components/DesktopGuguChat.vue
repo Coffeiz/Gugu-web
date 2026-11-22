@@ -180,6 +180,7 @@ async function uploadAttachment(file: File, voice = false) {
     :greeting-access="greetingAccess"
     :read-ui-labels="readUiLabels"
     :session-access="sessionAccess"
+    local-session-badges
     :automatic-mode-access="automaticModeAccess"
     :resolve-chat-command="resolveChatCommand"
     :read-history-through-message="getDesktopChatHistoryThroughMessage"

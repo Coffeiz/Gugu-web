@@ -2,9 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import type { CanonicalRunContext, CanonicalMessage } from '../../../src/agent/models.js'
 import type { CanonicalContextPorts, AgentRunnerPorts } from '../../../src/agent/ports.js'
 import { createCanonicalRunner } from '../../../src/agent/index.js'
-import { createReflectionFinalizer, ReflectionSnapshots } from '../../../src/agent/memory/reflection.js'
 import { connectProviderHarness } from '../../../src/agent/providers/runtime.js'
-import type { JsonObject, ProviderConfig, ProviderHttpRequest, ProviderWire } from '../../../src/agent/providers/contracts.js'
+import type { JsonObject, ProviderConfig, ProviderHttpRequest } from '../../../src/agent/providers/contracts.js'
 import { ProviderError } from '../../../src/agent/providers/errors.js'
 import { streamWithRetry } from '../../../src/agent/providers/retry.js'
 import { providerSelection } from '../../../src/agent/providers/registry.js'
@@ -259,48 +258,6 @@ describe('Responses真实请求与流终态', () => {
     expect(body).toMatchObject({ instructions: 'stable system', input: [{ role: 'user', content: '【消息正文】\n历史' }, { role: 'user', content: '压缩指令' }], tools, max_output_tokens: 100, store: false, reasoning: { effort: 'low' } })
     expect(body.previous_response_id).toBeUndefined(); expect(body.response_format).toBeUndefined(); expect(body.text).toBeUndefined()
     expect(f.requests).toHaveLength(1)
-  })
-  it.each([true, false])('实际Harness工具轮冻结请求经ReflectionSnapshots再追加分支保留Responses前缀，continuation=%s', async enabled => {
-    const reasoning: JsonObject = { type: 'reasoning', id: 'rs-main', status: 'completed', encrypted_content: 'synthetic-encrypted-prefix' }
-    const value = responsesHarness([
-      sse({ type: 'response.completed', response: { status: 'completed', output: [reasoning, { type: 'function_call', id: 'fc-main', call_id: 'call-main', name: 'lookup', arguments: '{ "q": "合成" }' }], usage: { input_tokens: 5, output_tokens: 2 } } }),
-      sse({ type: 'response.output_text.delta', delta: '已整理合成结果。' }, { type: 'response.completed', response: { status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: '已整理合成结果。' }] }], usage: { input_tokens: 12, output_tokens: 3 } } }),
-      JSON.stringify({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: '{"summary":"合成摘要"}' }] }], usage: { input_tokens: 13, output_tokens: 4 } }),
-    ], enabled)
-    let serial = 0
-    const snapshots = new ReflectionSnapshots<ProviderWire>({ digest, nextId: () => `reflection-${++serial}` }, () => 0)
-    try {
-      const projection = await value.provider.reflectionProjection(identity, 'model-a')
-      const ready = vi.fn(async () => undefined)
-      const finalizer = createReflectionFinalizer({ snapshots, projection, policy: async () => ({ enabled: true, scope: 'owner' }), notifyReady: ready })
-      value.complete.mockImplementation(input => finalizer.complete(input))
-      const result = await collect(value.harness.start(identity))
-      expect(result.state.status).toBe('completed'); expect(value.external.ports.tools.dispatch).toHaveBeenCalledTimes(1)
-      expect(value.sent).toHaveLength(2)
-      const main = value.sent[1]!.body as JsonObject, mainRows = main.input as JsonObject[]
-      const completion = value.complete.mock.calls[0]![0]
-      expect(completion.projection).toMatchObject({ wire: { messages: mainRows, system: main.instructions } })
-      expect(mainRows.some(row => row.type === 'reasoning')).toBe(enabled)
-      expect(main.include).toEqual(enabled ? ['reasoning.encrypted_content'] : undefined)
-      expect(mainRows.find(row => row.type === 'function_call')).toMatchObject({ id: 'fc-main', call_id: 'call-main', arguments: '{ "q": "合成" }' })
-      const snapshot = snapshots.peek(identity, 'model-a', digest(identity))
-      expect(snapshot).not.toBeNull()
-      if (!snapshot) throw new Error('正式成功收尾必须捕获可复用反思快照')
-      const before = structuredClone(snapshot)
-      expect(ready).toHaveBeenCalledWith(expect.objectContaining({ recovery: 'reuse', snapshotDigest: snapshot.digest, hadTools: true }))
-      expect(snapshot.projection.wire.messages).toEqual([...mainRows, { role: 'assistant', content: '已整理合成结果。' }])
-      const branch = await value.provider.completeBranch({ ...identity, modelIdentity: 'model-a', stableSystem: snapshot.systemPrompt, delta: '请输出反思摘要', tools: snapshot.tools, projection: snapshot.projection, outputMode: 'json' })
-      expect(JSON.parse(String(branch.output))).toEqual({ summary: '合成摘要' })
-      const body = value.sent[2]!.body as JsonObject
-      expect(body.instructions).toBe(main.instructions); expect(body.tools).toEqual(main.tools)
-      expect(body.prompt_cache_key).toBe(main.prompt_cache_key)
-      expect(body.reasoning).toEqual(main.reasoning); expect(body.store).toBe(false); expect(main.store).toBe(false)
-      expect(body.input).toEqual([...snapshot.projection.wire.messages, { role: 'user', content: '请输出反思摘要' }])
-      expect((body.input as JsonObject[]).slice(0, mainRows.length)).toEqual(mainRows)
-      expect(body.previous_response_id).toBeUndefined(); expect(body.text).toBeUndefined(); expect(body.include).toBeUndefined()
-      expect(snapshots.peek(identity, 'model-a', digest(identity))).toEqual(before)
-      expect(JSON.stringify(result.state)).not.toContain('synthetic-encrypted-prefix')
-    } finally { await value.provider.close() }
   })
   it('request使用input/instructions，官方store=false及cache key不含当前query，工具变更使key变化', async () => {
     const keys: unknown[] = []

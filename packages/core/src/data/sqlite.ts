@@ -2,7 +2,7 @@ import { CompiledQuery, Kysely, SqliteDialect } from 'kysely'
 import type { Driver } from 'kysely'
 import { resolve } from 'node:path'
 import { DatabaseError } from '@gugu/database/error'
-import { initializeSqlite as initialize, migrateSqlite as migrate, initializeDesktopSkills, initializeDesktopScheduleMode, initializeDesktopAgentRuns, initializeDesktopAgentMemory, initializeDesktopAgentInteractions, initializeDesktopAgentConfirmations, initializeDesktopChatAttachments, initializeDesktopImInbox, initializeDesktopAgentContinuations, initializeDesktopImProjection, initializeDesktopAgentCredentials, initializeDesktopImReflection, initializeDesktopImAcceptedFacts } from '@gugu/database/sqlite'
+import { initializeSqlite as initialize, migrateSqlite as migrate, initializeDesktopSkills, initializeDesktopScheduleMode, initializeDesktopAgentRuns, initializeDesktopAgentMemory, initializeDesktopAgentInteractions, initializeDesktopAgentConfirmations, initializeDesktopChatAttachments, initializeDesktopImInbox, initializeDesktopAgentContinuations, initializeDesktopImProjection, initializeDesktopAgentCredentials, initializeDesktopImReflection, initializeDesktopImAcceptedFacts, initializeDesktopSubagentDeliveries, initializeDesktopSubagentSessions, initializeDesktopSubagentLaunches, initializeDesktopSubagentWaits, initializeDesktopAgentInbox, initializeDesktopSubagentConversations, initializeDesktopSubagentContinuations, initializeDesktopSubagentExecutions, initializeDesktopSubagentAdmissions } from '@gugu/database/sqlite'
 import { configureSqlite, loadSqliteDriver } from '@gugu/database/sqlite/driver'
 import { validateSqliteBaseline } from '@gugu/database/sqlite/validate'
 import { CoreError } from '../contracts/index.js'
@@ -72,6 +72,15 @@ export async function openSqliteRuntime(
     initializeDesktopAgentCredentials(db)
     initializeDesktopImReflection(db)
     initializeDesktopImAcceptedFacts(db)
+    initializeDesktopSubagentDeliveries(db)
+    initializeDesktopSubagentSessions(db)
+    initializeDesktopSubagentConversations(db)
+    initializeDesktopSubagentLaunches(db)
+    initializeDesktopSubagentContinuations(db)
+    initializeDesktopSubagentExecutions(db)
+    initializeDesktopSubagentAdmissions(db)
+    initializeDesktopSubagentWaits(db)
+    initializeDesktopAgentInbox(db)
     initializeDesktopAgentContinuations(db)
     // Kysely 驱动延迟初始化；从未查询也要关闭预先打开的原生句柄。
     const runtime = new SqlDataRuntime(

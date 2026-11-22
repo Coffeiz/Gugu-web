@@ -1,6 +1,6 @@
 import type { RagDocument, RagRankCandidate, RagSearchScope } from './contracts.js'
 import type { createSqlRagPersistentIndexReader } from './persistent-index.js'
-import { createRagLexicalIndex } from './lexical-index.js'
+import { createRagLexicalIndex, type createRagDocumentTermCache } from './lexical-index.js'
 import { rankCandidates } from './ranking/rank-candidates.js'
 import { readRagDocumentVectors, type RagVectorSource } from './vector-reader.js'
 
@@ -17,6 +17,7 @@ export function createScopedRagSearch(ports:{
  authorize(owner:string,scope:RagSearchScope,signal?:AbortSignal):Promise<boolean>
  /** 可选可信事实复核：在排序/向量/结果投影前裁剪过期索引与邻文；不能自行授予scope。 */
  filterDocuments?(documents:readonly RagDocument[],signal?:AbortSignal):Promise<readonly RagDocument[]>
+ documentTerms?:ReturnType<typeof createRagDocumentTermCache>
  vectors?:ScopedRagVectors
 }) {
  return async(owner:string,scope:RagSearchScope|readonly RagSearchScope[],query:string,options:{sourceTypes:readonly string[];limit:number;beforeMessageId?:number;selectionMode?:'confidence'|'top_k';excludeContentHashes?:readonly string[]},signal?:AbortSignal)=>{
@@ -51,7 +52,8 @@ export function createScopedRagSearch(ports:{
    return doc.scope_type===current.scope_type&&doc.scope_id===current.scope_id||current.scope_type==='member'&&doc.scope_type==='group'
   }))
   stageMs.document_filter_ms=Math.max(0,Math.round(performance.now()-stageStarted))
-  const index=createRagLexicalIndex(owner)
+  const documentTerms=ports.documentTerms
+  const index=createRagLexicalIndex(owner,documentTerms ? document => documentTerms(owner,document) : undefined)
   index.replace(owner,snapshot.revision||'empty',documents)
   stageStarted=performance.now()
   let fused

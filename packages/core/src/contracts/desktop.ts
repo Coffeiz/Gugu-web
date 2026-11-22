@@ -559,7 +559,7 @@ export interface DesktopBridge {
   agentModel(command: DesktopAgentModelCommand): Promise<DesktopReply<DesktopAgentModel | DesktopAgentModelList | DesktopAgentMediaResult | DesktopAgentModelCapabilities | string[] | null>>
   agentSessions(command: DesktopAgentSessionCommand): Promise<DesktopReply<DesktopAgentSession[] | DesktopAgentSession | DesktopAgentMessage[] | DesktopAgentHistoryPage | DesktopAgentEventPage | DesktopAgentRunCancellation | DesktopAgentInteractionReply | DesktopAgentQueueSnapshot | DesktopAgentImportedQueue[] | Record<string, unknown> | boolean | null>>
   agentAttachment?(command: DesktopAgentAttachmentCommand): Promise<DesktopReply<DesktopAgentAttachment | DesktopAgentAttachmentDownload | null>>
-  onAgentRunChanged?(callback: (sessionId: number) => void): () => void
+  onAgentRunChanged?(callback: (sessionId: number, interactionChanged?: true) => void): () => void
   onAgentChatEvent?(callback: (event: DesktopAgentChatEvent) => void): () => void
   terminal(command: DesktopTerminalCommand): Promise<DesktopReply<DesktopTerminalResult>>
   remoteByok(target: ByokTarget, command: ByokCommand): Promise<DesktopReply<ByokResult>>

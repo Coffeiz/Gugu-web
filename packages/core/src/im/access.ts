@@ -159,8 +159,16 @@ export function imCanUseGroupOwnerMemory(actor: ImActor, enabled: boolean): bool
   return actor.chatType === 'group' && actor.role === 'owner' && actor.verifiedOwner && enabled
 }
 
+const delegationTools = new Set(['agent_message', 'agent_wait', 'agent_cancel', 'agent_inspect', 'subagent_result'])
+
+export function isImInternalDelegationTool(name: unknown): boolean {
+  return typeof name === 'string' && delegationTools.has(name)
+}
+
 /** 复用现有发现/派发规则；平台不支持的工具在两个入口均不可见和不可执行。 */
 export function imCanUseTool(actor: ImActor, name: string, groupAutoReply = false): boolean {
+  if (isImInternalDelegationTool(name)
+    && (actor.role !== 'owner' || actor.chatType !== 'c2c')) return false
   if (name === 'save_attachment' && (actor.role !== 'owner' || actor.chatType !== 'c2c')) return false
   if (name === 'react' && actor.platform !== 'feishu') return false
   return canUseTool(name, { allowedToolNames: actor.allowedToolNames, imRole: actor.role, platform: actor.platform,

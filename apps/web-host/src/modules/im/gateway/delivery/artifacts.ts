@@ -90,7 +90,7 @@ export function createImRunArtifactSender(options: {
         data = await bytes(opened.handle, resolved, signal)
         readAllowed = async () => { const current = await attached(attachId, await authorized()); return current.storageKey === resolved.storageKey && current.size === resolved.size }
       } else {
-        if (actor.role !== 'owner' || !imCanUseTool(actor, 'read_file')) throw new Rejected()
+        if (actor.role !== 'owner' || scope.chatType !== 'c2c') throw new Rejected()
         const opened = await options.files.openContent(identity.ownerId, Number(fileId))
         if (!opened) throw new Rejected()
         try {

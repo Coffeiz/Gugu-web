@@ -9,7 +9,6 @@ import { createClientTools } from '../../../src/agent/tools/clients.js'
 import { createListProjectsTool, createGetProjectTool } from '../../../src/agent/tools/projects.js'
 import { createProjectTool } from '../../../src/agent/tools/projects.js'
 import { createProjectMutationTools } from '../../../src/agent/tools/projects.js'
-import { createReadFileTool } from '../../../src/agent/tools/files.js'
 
 const identity = { ownerId: 'owner-a', sessionId: 'session-a', runId: 'run-a' }
 function tool(name = 'example'): ToolDefinition {
@@ -57,6 +56,13 @@ describe('工具注册期公开契约与原子性', () => {
     const registry = createToolRegistry({ tools: [changedSchema({ name: 'example', input_schema: { type: 'object', properties: {} } })], authorize: async () => true })
     expect((await registry.capabilities(identity)).map(item => item.name)).toEqual(['example'])
   })
+  it('拒绝重新注册已退役的文件工具', async () => {
+    const registry = createToolRegistry({ authorize: async () => true })
+    expect(() => registry.register(tool('read_file'))).toThrow('工具已退役')
+    expect(() => registry.registerGroup({ id: 'files', name: '文件', tools: [tool('example'), tool('read_file')] }))
+      .toThrow('工具已退役')
+    expect(await registry.capabilities(identity)).toEqual([])
+  })
   it('当前全部真实工具工厂的公开定义都可注册，不调用领域后端', async () => {
     // 仅验证真实工厂产物能注册：这些显式失败端口不提供业务成功、数据库或平台执行验收。
     const unused = vi.fn(async (): Promise<never> => { throw new Error('注册不得调用领域后端') })
@@ -67,7 +73,6 @@ describe('工具注册期公开契约与原子性', () => {
       createUseSkillTool({ skills, origin: unused }),
       ...createClientTools(core), createListProjectsTool(core), createGetProjectTool({ core, fileOverview: unused }),
       createProjectTool({ create: unused }), ...createProjectMutationTools({ apply: unused }),
-      createReadFileTool({ resolveOwnedFile: unused, openFile: unused }),
     ]
     const registry = createToolRegistry({ tools: definitions, authorize: async () => true })
     expect((await registry.capabilities(identity)).map(item => item.name)).toEqual(definitions.map(item => item.definition.name))

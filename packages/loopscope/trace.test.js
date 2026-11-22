@@ -78,7 +78,8 @@ test('branch Provider observations keep their own Round output and do not replac
   const emit = event => trace.record({ identity, at: tick(), ...event })
   emit({ kind: 'run', name: 'started', status: 'running' })
   emit({ kind: 'provider', name: 'request', round: 0, spanId: `${identity.runId}:round:0:provider`, parentSpanId: `${identity.runId}:round:0`,
-    input: { model: 'fixture-model', messages: [{ role: 'user', content: 'synthetic branch input' }] }, attributes: { purpose: 'branch' } })
+    input: { model: 'fixture-model', system: '合成反思规则', messages: [{ role: 'user', content: '合成反思证据' }] },
+    attributes: { purpose: 'branch', branch_name: 'reflection' } })
   emit({ kind: 'provider', name: 'usage', round: 0, usage: { input: 11, output: 2 }, attributes: { purpose: 'branch' } })
   emit({ kind: 'provider', name: 'complete', round: 0, spanId: `${identity.runId}:round:0:provider`, status: 'success', output: 'synthetic branch output', attributes: { purpose: 'branch' } })
   emit({ kind: 'run', name: 'finished', status: 'completed' })
@@ -91,6 +92,9 @@ test('branch Provider observations keep their own Round output and do not replac
   const provider = snapshot.spans.find(span => span.kind === 'provider')
   assert.equal(round.output, 'synthetic branch output')
   assert.equal(provider.output, 'synthetic branch output')
+  assert.equal(provider.input.system_prompt, '合成反思规则')
+  assert.deepEqual(provider.input.messages, [{ role: 'user', content: '合成反思证据' }])
+  assert.equal(provider.input.provider_request.message_count, 1)
   assert.equal(provider.usage.input, 11)
   assert.equal(provider.status, 'success')
   assert.deepEqual(snapshot.usage, {})

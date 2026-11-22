@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from 'pg'
 import { randomUUID } from 'node:crypto'
 import type { InteractionActionRecord, InteractionPromptRecord } from '@gugu/core/agent/interactions/consume-action'
+import { InteractionConsumeError } from '@gugu/core/agent/interactions/consume-action'
 import type { InteractionResolution, RunCheckpoint, RunEvent, RunIdentity } from '@gugu/core/agent'
 
 interface CheckpointReader<C> { readForUpdate(client: PoolClient, identity: RunIdentity): Promise<RunCheckpoint<C> | null> }
@@ -69,8 +70,9 @@ export async function bindInteractionPrompt(client: PoolClient, identity: RunIde
 }
 
 /** 必须作为消费事务 beforeCommit；只存恢复引用，回答及凭据不复制进队列。 */
-export function createInteractionResumeEnqueuer<C>(store: CheckpointReader<C>) {
-  return async (client: PoolClient, prompt: InteractionPromptRecord, action: InteractionActionRecord, onEnqueued?: (runId: string) => void): Promise<void> => {
+export function createInteractionResumeEnqueuer<C>(store: CheckpointReader<C>, routeDelegated = false) {
+  return async (client: PoolClient, prompt: InteractionPromptRecord, action: InteractionActionRecord,
+    onEnqueued?: (runId: string, displaySessionId?: number) => void): Promise<void> => {
     const resolved = record(prompt.schema.resolved_result), toolId = action.context.tool_call_id
     if (resolved.status === 'error') return
     if (typeof toolId !== 'string' || !toolId) throw new Error('该交互不支持恢复原任务')
@@ -79,13 +81,30 @@ export function createInteractionResumeEnqueuer<C>(store: CheckpointReader<C>) {
     const found = binding.rows[0]
     if (!found || found.tool_call_id !== toolId) throw new Error('交互绑定不存在或已失效')
     const identity = { ownerId: prompt.ownerId, sessionId: String(prompt.sessionId), runId: found.run_id }
+    const delegated = routeDelegated ? (await client.query<{
+      parent_session_id: string; parent_run_id: string; status: string
+    }>(`SELECT d.parent_session_id,d.parent_run_id,d.status
+      FROM agent_subagent_executions s
+      JOIN agent_subagent_deliveries d USING(child_run_id)
+      WHERE d.owner_id=$1 AND s.child_session_id=$2 AND s.child_run_id=$3`,
+    [identity.ownerId, identity.sessionId, identity.runId])).rows[0] : undefined
+    if (delegated) {
+      const parent = await client.query(`SELECT 1 FROM agent_run_dispatch j
+        JOIN agent_run_checkpoints p ON p.user_id=j.user_id AND p.session_id=j.session_id AND p.run_id=j.run_id
+        WHERE j.user_id=$1 AND j.session_id=$2 AND j.run_id=$3 AND NOT j.cancel_requested
+          AND p.status IN ('running','waiting') FOR SHARE OF j`,
+      [identity.ownerId, delegated.parent_session_id, delegated.parent_run_id])
+      if (!parent.rowCount || !['queued', 'running'].includes(delegated.status))
+        throw new InteractionConsumeError('interaction_ended', '交互已结束')
+    }
     const checkpoint = await store.readForUpdate(client, identity), pending = checkpoint?.pending
     const secret = Array.isArray(prompt.schema.secret_fields) && prompt.schema.secret_fields.length > 0
     if (checkpoint?.status !== 'waiting' || !pending || pending.id !== found.interaction_id || pending.toolCall.id !== toolId || (pending.kind === 'credential') !== secret) throw new Error('交互状态已失效')
     const interactionId = pending.id
     await client.query(`INSERT INTO agent_interaction_resumes (user_id, session_id, run_id, prompt_id, interaction_id, receipt, created_at)
       VALUES ($1,$2,$3,$4,$5,$6,clock_timestamp())`, [prompt.ownerId, prompt.sessionId, identity.runId, prompt.id, interactionId, `web-prompt:${prompt.id}`])
-    onEnqueued?.(identity.runId)
+    if (delegated) onEnqueued?.(delegated.parent_run_id, Number(delegated.parent_session_id))
+    else onEnqueued?.(identity.runId)
   }
 }
 

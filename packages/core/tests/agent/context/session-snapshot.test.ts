@@ -63,6 +63,7 @@ describe('会话快照事务候选与生命周期', () => {
     expect((await ensureSessionSnapshot(identity, first.state, port, { workspaceBinding: { ...binding, runtime_secret: 'changed' }, locale: 'zh-CN' })).phase).toBe('hit')
     expect((await ensureSessionSnapshot(identity, first.state, port, { workspaceBinding: { ...binding, folder_id: 3 } })).phase).toBe('rebuild')
     expect((await ensureSessionSnapshot(identity, first.state, port, { workspaceBinding: { ...binding, directory_id: 'desktop:22222222-2222-4222-8222-222222222222' } })).phase).toBe('rebuild')
+    expect((await ensureSessionSnapshot(identity, first.state, port, { workspaceBinding: null, locale: 'zh-CN' })).phase).toBe('rebuild')
     expect((await ensureSessionSnapshot(identity, first.state, port, { locale: 'en-US' })).phase).toBe('rebuild')
     expect(workspaceBindingKey(binding)).not.toHaveProperty('runtime_secret')
   })

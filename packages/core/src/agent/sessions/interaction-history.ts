@@ -91,8 +91,38 @@ function label(schema: Record<string, unknown>, id: string): string {
 }
 class PromptLockBusy extends Error {}
 
+/** 通过真实派单、父子 checkpoint 与交互绑定查询父会话的确认卡。 */
+export async function readDelegatedPromptBindings(db: Kysely<any>, backend: 'postgres' | 'sqlite',
+  ownerId: string, sessionId: number, route?: { parentRunId: string; promptId: number }) {
+  const owner = backend === 'sqlite' ? ownerId.replaceAll('-', '') : ownerId
+  const dispatch = backend === 'postgres' ? sql`AND EXISTS (SELECT 1 FROM agent_run_dispatch j
+    WHERE j.user_id=p.user_id AND j.session_id=p.session_id AND j.run_id=p.run_id AND NOT j.cancel_requested)` : sql``
+  const controls = backend === 'sqlite' ? sql`AND NOT EXISTS (
+    SELECT 1 FROM agent_run_controls x WHERE x.user_id=b.user_id AND x.cancel_requested=1
+      AND ((x.session_id=b.session_id AND x.run_id=b.run_id) OR (x.session_id=p.session_id AND x.run_id=p.run_id)))` : sql``
+  const match = route ? sql`AND p.run_id=${route.parentRunId} AND i.id=${route.promptId}` : sql``
+  const { rows } = await sql<{ prompt_id: number; run_id: string; child_id: string; authorized: boolean | number;
+    child_session_id: number; child_run_id: string; interaction_id: string }>`
+    SELECT i.id AS prompt_id,p.run_id,d.child_id,b.session_id AS child_session_id,b.run_id AS child_run_id,b.interaction_id,
+      (p.status IN ('running','waiting') AND c.status='waiting' AND d.status IN ('queued','running')
+        ${controls}
+        ${dispatch}) AS authorized
+    FROM agent_subagent_deliveries d
+    JOIN agent_subagent_executions s USING(child_run_id)
+    JOIN agent_interaction_bindings b ON b.session_id=s.child_session_id AND b.run_id=s.child_run_id
+    JOIN interaction_prompts i ON i.id=b.prompt_id AND i.user_id=b.user_id AND i.session_id=b.session_id
+    JOIN agent_run_checkpoints c ON c.user_id=b.user_id AND c.session_id=b.session_id AND c.run_id=b.run_id
+    JOIN agent_run_checkpoints p ON p.user_id=b.user_id AND CAST(p.session_id AS TEXT)=d.parent_session_id AND p.run_id=d.parent_run_id
+    WHERE d.owner_id=${ownerId} AND d.parent_session_id=${String(sessionId)} AND b.user_id=${owner}
+      AND (i.status<>'active' OR c.status IN ('waiting','failed','completed','cancelled','unknown'))
+      ${match}
+  `.execute(db)
+  return rows
+}
+
 /** Kysely 事务提交后才返回可用 token；不管理 Host 的事件通知。 */
-export function createSqlAgentInteractionHistory(db: Kysely<any>, backend: 'postgres' | 'sqlite', clock: () => Date = () => new Date(), secretKey?: string) {
+export function createSqlAgentInteractionHistory(db: Kysely<any>, backend: 'postgres' | 'sqlite', clock: () => Date = () => new Date(),
+  secretKey?: string, includeDelegated = false) {
   return async (ownerId: string, sessionId: number, window: AgentInteractionHistoryWindow) => {
     const canonical = dataContext(ownerId).ownerId
     if (!Number.isSafeInteger(sessionId) || sessionId < 1) throw new TypeError('会话身份无效')
@@ -103,6 +133,10 @@ export function createSqlAgentInteractionHistory(db: Kysely<any>, backend: 'post
     const attempt = () => db.transaction().execute(async tx => {
       // SQLite 即使使用普通 deferred dialect，也必须在任何读取前取得写锁。
       if (backend === 'sqlite') await sql`UPDATE interaction_prompts SET id=id WHERE 0`.execute(tx)
+      const delegated = new Map((includeDelegated ? await readDelegatedPromptBindings(tx, backend, canonical, sessionId) : [])
+        .map(route => [route.prompt_id, route]))
+      const scope = delegated.size
+        ? sql`(p.session_id=${sessionId} OR p.id IN (${sql.join([...delegated.keys()])}))` : sql`p.session_id=${sessionId}`
       // 候选上界不依赖时钟：窗口内的记录可能在等锁时过期；活动状态也可能需要恢复。
       const candidateStart = start === null ? sql`` : sql` AND p.created_at>=${start}`
       const candidateEnd = end === null ? sql`` : sql` AND p.created_at<${end}`
@@ -112,7 +146,7 @@ export function createSqlAgentInteractionHistory(db: Kysely<any>, backend: 'post
         : sql`(1=1${candidateStart}${candidateEnd}${candidateTool})`
       const promptFilter = window.promptId !== undefined ? sql` AND p.id=${window.promptId}`
         : window.promptIds ? sql` AND p.id IN (${sql.join(window.promptIds)})` : sql``
-      const candidates = await sql<{ id: number }>`SELECT p.id FROM interaction_prompts p WHERE p.user_id=${owner} AND p.session_id=${sessionId}${promptFilter} AND ${candidateCondition} ORDER BY p.id`.execute(tx)
+      const candidates = await sql<{ id: number }>`SELECT p.id FROM interaction_prompts p WHERE p.user_id=${owner} AND ${scope}${promptFilter} AND ${candidateCondition} ORDER BY p.id`.execute(tx)
       if (!candidates.rows.length) return []
       const ids = candidates.rows.map(row => row.id)
       const actionLock = backend === 'postgres' ? sql` FOR UPDATE` : sql``
@@ -121,7 +155,7 @@ export function createSqlAgentInteractionHistory(db: Kysely<any>, backend: 'post
         WHERE prompt_id IN (${sql.join(ids)}) ORDER BY id${actionLock}`.execute(tx)
       const promptLock = backend === 'postgres' ? sql` FOR UPDATE NOWAIT` : sql``
       try {
-        await sql`SELECT p.id FROM interaction_prompts p WHERE p.user_id=${owner} AND p.session_id=${sessionId} AND p.id IN (${sql.join(ids)}) ORDER BY p.id${promptLock}`.execute(tx)
+        await sql`SELECT p.id FROM interaction_prompts p WHERE p.user_id=${owner} AND ${scope} AND p.id IN (${sql.join(ids)}) ORDER BY p.id${promptLock}`.execute(tx)
       } catch (error) {
         if (backend === 'postgres' && (error as { code?: string }).code === '55P03') throw new PromptLockBusy()
         throw error
@@ -134,7 +168,7 @@ export function createSqlAgentInteractionHistory(db: Kysely<any>, backend: 'post
       const condition = backend === 'sqlite' ? sql`1=1` : window.restoreActive ? sql`(NOT ${active}${startFilter}${endFilter}${toolFilter} OR ${active})` : sql`(NOT ${active}${startFilter}${endFilter}${toolFilter})`
       const schemaColumn = backend === 'postgres' ? sql`p.schema_json::text` : sql`p.schema_json`
       const result = await sql<Row>`SELECT p.id,p.session_id,p.kind,p.title,p.body,p.status,${schemaColumn} AS schema_json,${active} AS active,p.expires_at,p.created_at
-        FROM interaction_prompts p WHERE p.user_id=${owner} AND p.session_id=${sessionId} AND p.id IN (${sql.join(ids)}) AND ${condition} ORDER BY p.created_at,p.id`.execute(tx)
+        FROM interaction_prompts p WHERE p.user_id=${owner} AND ${scope} AND p.id IN (${sql.join(ids)}) AND ${condition} ORDER BY p.created_at,p.id`.execute(tx)
       const sorted = backend === 'sqlite' ? result.rows.map(row => {
         const expires = sqliteTime(row.expires_at), normalizedCreated = sqliteTime(row.created_at)
         return { ...row, active: row.status === 'active' && expires > now, normalizedCreated }
@@ -153,6 +187,8 @@ export function createSqlAgentInteractionHistory(db: Kysely<any>, backend: 'post
       if (!prompts.length) return []
       const output = []
       for (const { row, schema } of prompts) {
+        const route = delegated.get(row.id)
+        const active = row.active && (!route || Boolean(route.authorized))
         const context = object(schema.context), target = object(context.secret_target), secret = truthy(schema.secret_fields) && target.kind === 'mcp_credentials'
         const actions = secret ? [] : actionRows.rows.filter(item => item.prompt_id === row.id)
         const options: Array<{ id: string; label: string; token: string }> = []
@@ -160,23 +196,25 @@ export function createSqlAgentInteractionHistory(db: Kysely<any>, backend: 'post
         for (const action of actions) {
           if (action.status === 'consumed') { selected = action.option_id; continue }
           const usable = backend === 'sqlite' ? sqliteTime(action.expires_at) > now : true
-          if (!row.active || action.status !== 'pending' || !usable) continue
+          if (!active || action.status !== 'pending' || !usable) continue
           const token = deriveInteractionActionToken(canonical, row.id, action.id, secretKey), hash = createHash('sha256').update(token).digest('hex')
           const expiryGuard = backend === 'sqlite' ? sql`expires_at=${action.expires_at}` : sql`expires_at>${now}`
           const updated = await sql`UPDATE interaction_actions SET token_hash=${hash} WHERE id=${action.id} AND prompt_id=${row.id} AND status='pending' AND ${expiryGuard} RETURNING id`.execute(tx)
           if (updated.rows.length) options.push({ id: action.option_id, label: label(schema, action.option_id), token })
         }
         const resolved = object(schema.resolved_result)
-        if (!row.active) {
+        if (!active) {
           options.push(...readResolvedChoiceOptions(row.kind, schema))
           if (options.length && typeof resolved.option_id === 'string') selected = resolved.option_id
         }
         const call = truthy(context.tool_call_id) ? pythonString(context.tool_call_id) : null
         const fields = schema.secret_fields, secretFields = Array.isArray(fields) ? fields : typeof fields === 'string' ? Array.from(fields) : fields && typeof fields === 'object' ? Object.keys(fields) : []
-        output.push({ id: row.id, session_id: row.session_id, kind: row.kind, title: row.title, body: row.body, tool_call_id: call,
-          task_paused: row.kind === 'confirm' && !!call, options, secret_fields: secretFields,
+        output.push({ id: row.id, session_id: sessionId, kind: row.kind,
+          title: route ? `Searcher (${route.child_id}) · ${row.title}` : row.title, body: row.body, tool_call_id: call,
+          ...(route ? { run_id: route.run_id, delegated: true as const } : {}),
+          task_paused: !route && row.kind === 'confirm' && !!call, options, secret_fields: secretFields,
           allow_text_input: schema.source === 'agent' && truthy(schema.allow_text_input), custom_input_active: truthy(schema.custom_input_active),
-          resolved: !row.active, ...(row.status === 'expired' ? { expired: true } : {}),
+          resolved: !active, ...(row.status === 'expired' || route && row.status === 'active' && !active ? { expired: true } : {}),
           selected_option_id: selected, response_text: resolved.text ?? null,
           ...(typeof resolved.custom_answer === 'string' ? { custom_answer: resolved.custom_answer } : {}),
           ...(schema.selection_mode === 'multiple' ? { selection_mode: 'multiple', selected_option_ids: resolved.selected_option_ids } : {}),
@@ -196,6 +234,6 @@ export function createSqlAgentInteractionHistory(db: Kysely<any>, backend: 'post
 }
 
 /** 连接池由调用方持有和关闭。 */
-export function createPostgresAgentInteractionHistory(pool: Pool, clock?: () => Date, secretKey?: string) {
-  return createSqlAgentInteractionHistory(new Kysely<any>({ dialect: new PostgresDialect({ pool }) }), 'postgres', clock, secretKey)
+export function createPostgresAgentInteractionHistory(pool: Pool, clock?: () => Date, secretKey?: string, includeDelegated = false) {
+  return createSqlAgentInteractionHistory(new Kysely<any>({ dialect: new PostgresDialect({ pool }) }), 'postgres', clock, secretKey, includeDelegated)
 }

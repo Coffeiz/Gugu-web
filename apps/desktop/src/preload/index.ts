@@ -82,7 +82,7 @@ const bridge: DesktopBridge = Object.freeze({
   auxiliaryModel: (command: Parameters<DesktopBridge['auxiliaryModel']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.auxiliaryModel, command),
   agentModel: (command: Parameters<DesktopBridge['agentModel']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.agentModel, command),
   onAgentRunChanged: (callback: Parameters<NonNullable<DesktopBridge['onAgentRunChanged']>>[0]) => {
-    const listener = (_event: Electron.IpcRendererEvent, sessionId: number) => callback(sessionId)
+    const listener = (_event: Electron.IpcRendererEvent, sessionId: number, interactionChanged?: true) => callback(sessionId, interactionChanged)
     ipcRenderer.on(DESKTOP_CHANNELS.agentRunChanged, listener)
     return () => ipcRenderer.removeListener(DESKTOP_CHANNELS.agentRunChanged, listener)
   },

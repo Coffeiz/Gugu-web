@@ -2,12 +2,12 @@ import { readActiveLlmCredential } from '../../byok/store.js'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Pool } from 'pg'
 import { openLocalFile, UnsafeLocalPathError } from '@gugu/fs/node'
-import { createGreetingGenerator } from '@gugu/core/agent'
+import { createGreetingScene, createGreetingGenerator } from '@gugu/core/agent'
 import { stableJson } from '@gugu/core/agent'
 import { capabilitySnapshot, completeStandaloneText } from '@gugu/core/providers'
 import { createNodeProviderTransport } from '@gugu/core/providers/node'
 import type { ProviderConfig, ProviderTransport } from '@gugu/core/providers'
-import type { GreetingCache, GreetingGeneratorPorts, GreetingMemory, GreetingProject, GreetingPromptInput } from '@gugu/core/agent'
+import type { GreetingCache, GreetingGeneratorPorts, GreetingProject, GreetingSourceId } from '@gugu/core/agent'
 import { createModelStrategy } from '../llm/selection.js'
 import { resolveByokLlmAsync } from '../llm/byok.js'
 import { resolvePlatformModelSettings } from '../llm/platform.js'
@@ -55,25 +55,27 @@ async function readMemoryFile(root: string, ownerId: string, name: string): Prom
   }
 }
 
-async function readGreetingMemory(root: string, ownerId: string): Promise<GreetingMemory | null> {
+async function readGreetingSummary(root: string, ownerId: string) {
   try {
-    const [summaryRaw, summaryLegacy, summaryTimestamp, profileRaw, dailyRaw] = await Promise.all([
+    const [raw, legacy, timestamp] = await Promise.all([
       readMemoryFile(root, ownerId, 'summary.json'), readMemoryFile(root, ownerId, 'summary.md'),
-      readMemoryFile(root, ownerId, 'summary.ts'), readMemoryFile(root, ownerId, 'profile.json'),
-      readMemoryFile(root, ownerId, 'daily.md'),
+      readMemoryFile(root, ownerId, 'summary.ts'),
     ])
-    // Python 兼容旧 summary.md + summary.ts；问候读取不触发迁移写入。
-    const summary = summaryRaw ? JSON.parse(summaryRaw) as Record<string, unknown>
-      : summaryLegacy ? { text: summaryLegacy, ts: Number(summaryTimestamp) || null } : null
-    const profile = profileRaw ? JSON.parse(profileRaw) as unknown : null
+    const summary = raw ? JSON.parse(raw) as Record<string, unknown>
+      : legacy ? { text: legacy, ts: Number(timestamp) || null } : null
     if (summary && (typeof summary !== 'object' || Array.isArray(summary))) return null
+    return { summary: summary && typeof summary.text === 'string' ? summary.text : '',
+      summaryAt: summary && typeof summary.ts === 'number' ? new Date(summary.ts * 1000) : null }
+  } catch { return null }
+}
+
+async function readGreetingProfile(root: string, ownerId: string) {
+  try {
+    const raw = await readMemoryFile(root, ownerId, 'profile.json')
+    const profile: unknown = raw ? JSON.parse(raw) : []
     if (profile !== null && !Array.isArray(profile)) return null
-    return {
-      summary: summary && typeof summary.text === 'string' ? summary.text : '',
-      summaryAt: summary && typeof summary.ts === 'number' ? new Date(summary.ts * 1000) : null,
-      profile: Array.isArray(profile) ? profile.flatMap(item => item && typeof item === 'object' && typeof (item as Record<string, unknown>).text === 'string' ? [`- ${(item as Record<string, string>).text}`] : []).join('\n') : '',
-      daily: parseDaily(dailyRaw ?? ''),
-    }
+    return { profile: Array.isArray(profile) ? profile.flatMap(item => item && typeof item === 'object'
+      && typeof item.text === 'string' ? [`- ${item.text}`] : []).join('\n') : '' }
   } catch { return null }
 }
 
@@ -88,36 +90,57 @@ function readStance(root: string, ownerId: string): Promise<{ value: string; upd
 }
 
 /** PostgreSQL 与 owner 本地记忆的可信读取；每类上下文分别容错，保持 Python 问候的降级边界。 */
-export function createPostgresGreetingContextReader(pool: Pick<Pool, 'query'>, storageRoot: string, serverTimezone: string) {
+function assertGreetingOwner(ownerId: string) {
+  if (!ownerPattern.test(ownerId)) throw new TypeError('问候身份无效')
+}
+
+function createPostgresGreetingScene(pool: Pick<Pool, 'query'>, storageRoot: string, serverTimezone: string,
+  selected?: readonly GreetingSourceId[]) {
   if (!storageRoot.trim()) throw new TypeError('问候记忆存储未配置')
-  return async (ownerId: string, signal: AbortSignal) => {
-    if (!ownerPattern.test(ownerId)) throw new TypeError('问候身份无效')
-    signal.throwIfAborted()
-    const [timezoneResult, lastMessageResult, projectResult, memory, stance] = await Promise.all([
-      pool.query<{ timezone: string | null }>('SELECT timezone FROM users WHERE id = $1 LIMIT 1', [ownerId]).catch(() => ({ rows: [] as { timezone: string | null }[] })),
-      pool.query<{ created_at: Date | string }>(`SELECT m.created_at FROM conversation_messages m
+  const fallbackTimezone = serverTimezone || 'UTC'
+  return createGreetingScene({
+    async 'clock.now'(ownerId) {
+      const result = await pool.query<{ timezone: string | null }>('SELECT timezone FROM users WHERE id = $1 LIMIT 1', [ownerId])
+        .catch(() => ({ rows: [] }))
+      const timeZone = result.rows[0]?.timezone
+      if (!timeZone) return undefined
+      try { new Intl.DateTimeFormat('en-US', { timeZone }); return { timeZone } }
+      catch { return undefined }
+    },
+    async 'greeting.last-seen'(ownerId) {
+      const result = await pool.query<{ created_at: Date | string }>(`SELECT m.created_at FROM conversation_messages m
         JOIN conversation_sessions s ON s.id = m.session_id WHERE s.user_id = $1
-        ORDER BY m.created_at DESC LIMIT 1`, [ownerId]).catch(() => ({ rows: [] as { created_at: Date | string }[], queryFailed: true as const })),
-      pool.query<GreetingProject & { start_date: string | null; deadline: string | null }>(`SELECT id, name, status, progress, priority,
+        ORDER BY m.created_at DESC LIMIT 1`, [ownerId]).catch(() => ({ rows: [], queryFailed: true as const }))
+      return { lastMessageAt: date(result.rows[0]?.created_at),
+        ...('queryFailed' in result ? { lastMessageQueryFailed: true } : {}) }
+    },
+    async 'greeting.recent-stance'(ownerId) {
+      const stance = await readStance(storageRoot, ownerId)
+      return { stance: stance?.updatedAt ? stance : null }
+    },
+    async 'overview.projects'(ownerId) {
+      const result = await pool.query<GreetingProject & { start_date: string | null }>(`SELECT id, name, status, progress, priority,
         start_date::text AS start_date, deadline::text AS deadline FROM projects
-        WHERE user_id = $1 AND deleted_at IS NULL AND archived IS FALSE AND status IN ('pending','active')`, [ownerId]).catch(() => ({ rows: [] as Array<GreetingProject & { start_date: string | null; deadline: string | null }> })),
-      readGreetingMemory(storageRoot, ownerId), readStance(storageRoot, ownerId),
-    ])
-    signal.throwIfAborted()
-    const timezoneValue = timezoneResult.rows[0]?.timezone
-    let timeZone = serverTimezone || 'UTC'
-    if (timezoneValue) {
-      try { new Intl.DateTimeFormat('en-US', { timeZone: timezoneValue }); timeZone = timezoneValue } catch { /* Python user_tz falls back to the server timezone. */ }
-    }
-    const stanceValue = stance
-    const result: Omit<import('@gugu/core/agent').GreetingPromptInput, 'locale' | 'now'> = {
-      timeZone, lastMessageAt: date(lastMessageResult.rows[0]?.created_at),
-      ...('queryFailed' in lastMessageResult ? { lastMessageQueryFailed: true } : {}),
-      projects: projectResult.rows.map(row => ({ id: Number(row.id), name: String(row.name), status: row.status, progress: Number(row.progress), priority: row.priority, startDate: row.start_date, deadline: row.deadline })),
-      memory: memory ? { summary: memory.summary, summaryAt: memory.summaryAt, profile: memory.profile, daily: memory.daily } : null,
-      stance: stanceValue && stanceValue.updatedAt ? { value: stanceValue.value, updatedAt: stanceValue.updatedAt } : null,
-    }
-    return result
+        WHERE user_id = $1 AND deleted_at IS NULL AND archived IS FALSE AND status IN ('pending','active')`, [ownerId])
+        .catch(() => ({ rows: [] }))
+      return { projects: result.rows.map(row => ({ id: Number(row.id), name: String(row.name), status: row.status,
+        progress: Number(row.progress), priority: row.priority, startDate: row.start_date, deadline: row.deadline })) }
+    },
+    async 'memory.summary'(ownerId) { return { memory: await readGreetingSummary(storageRoot, ownerId) } },
+    async 'memory.daily'(ownerId) {
+      try { return { memory: { daily: parseDaily(await readMemoryFile(storageRoot, ownerId, 'daily.md') ?? '') } } }
+      catch { return { memory: null } }
+    },
+    async 'user.profile'(ownerId) { return { memory: await readGreetingProfile(storageRoot, ownerId) } },
+  }, fallbackTimezone, selected)
+}
+
+export function createPostgresGreetingContextReader(pool: Pick<Pool, 'query'>, storageRoot: string, serverTimezone: string,
+  selected?: readonly GreetingSourceId[]) {
+  const scene = createPostgresGreetingScene(pool, storageRoot, serverTimezone, selected)
+  return async (ownerId: string, signal: AbortSignal) => {
+    assertGreetingOwner(ownerId)
+    return scene.readContext(ownerId, signal)
   }
 }
 
@@ -208,9 +231,13 @@ export function createProductionGreeting(options: {
   redis?: GreetingCache; enabled?: () => boolean
   onFailure?: GreetingGeneratorPorts['onFailure']
 }) {
-  const readContext = createPostgresGreetingContextReader(options.pool, options.storageRoot, options.serverTimezone)
+  const scene = createPostgresGreetingScene(options.pool, options.storageRoot, options.serverTimezone)
   const complete = createStandaloneGreetingCompleter(options.pool, options.overridePath, options.env)
   const enabled = options.enabled ?? (() => greetingEnabled(options.overridePath, options.env))
-  return createGreetingGenerator({ enabled, readContext: readContext as (ownerId: string, signal: AbortSignal) => Promise<Omit<GreetingPromptInput, 'locale' | 'now'>>,
+  return createGreetingGenerator({ enabled,
+    preparePrompt(ownerId, locale, now, signal) {
+      assertGreetingOwner(ownerId)
+      return scene.preparePrompt(ownerId, locale, now, signal)
+    },
     complete, ...(options.redis ? { cache: options.redis } : {}), onFailure: options.onFailure })
 }

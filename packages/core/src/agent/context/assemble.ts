@@ -139,19 +139,42 @@ export async function buildRunRagContext(input: PrepareContextInput, ports: Prep
   return rag
 }
 
-export async function prepareContext(input: PrepareContextInput, ports: PreparationPorts, signal?: AbortSignal): Promise<PreparedContext> {
+type AssemblyTiming = {
+  stages_ms: { rag: number; restore_history: number; history_time_format: number; assemble_messages: number }
+  rag_source: 'prepared' | 'lookup' | 'skipped'
+  history_rows: number
+  history_time_calls: number
+}
+
+export async function prepareContext(input: PrepareContextInput, ports: PreparationPorts, signal?: AbortSignal,
+  observeAssembly?: (timing: AssemblyTiming) => void): Promise<PreparedContext> {
   signal?.throwIfAborted()
   const { history } = effectiveRunHistory(input)
+  const ragStarted = observeAssembly ? performance.now() : 0
   const rag = await buildRunRagContext(input, ports, signal)
+  const historyStarted = observeAssembly ? performance.now() : 0
+  let historyTimeMs = 0
+  let historyTimeCalls = 0
+  const format = ports.formatMessageTime
+  const formatHistoryTime: typeof format = observeAssembly && format
+    ? (timestamp, timezone) => {
+      const start = performance.now()
+      const result = format(timestamp, timezone)
+      historyTimeMs += performance.now() - start
+      historyTimeCalls++
+      return result
+    }
+    : format
   const restored = history.map(row => ({
     row, message: restoreHistoryForRequest(row, {
       groupChat: input.groupChat, userTimezone: input.userTimezone,
-      formatMessageTime: ports.formatMessageTime, allowHistoricalImages: input.allowHistoricalImages
+      formatMessageTime: formatHistoryTime, allowHistoricalImages: input.allowHistoricalImages
     })
   })).filter((entry): entry is {
     row: PersistedHistoryRow
     message: CanonicalMessage
   } => entry.message != null)
+  const messageAssemblyStarted = observeAssembly ? performance.now() : 0
   const area = new MessageArea(ports, restored.map(entry => entry.message))
   const prefix = withToolReminder(buildFixedRequestPrefix(input), input.toolReminder)
   area.configureRequest(prefix)
@@ -197,10 +220,25 @@ export async function prepareContext(input: PrepareContextInput, ports: Preparat
   const dynamicTail: CanonicalMessage[] = input.extraReminder
     ? [{ role: 'user', content: `[system-reminder]\n${input.extraReminder}\n[/system-reminder]` }] : []
   area.setDynamicTail(dynamicTail)
-  return {
+  const result = {
     area, rag: copy(rag), stanceToPersist: stanceDigest !== previous ? input.stance ?? null : null,
     protectedHistoryStart: area.protectedHistoryStart
   }
+  if (observeAssembly) {
+    const ms = (duration: number) => Math.round(duration * 100) / 100
+    observeAssembly({
+      stages_ms: {
+        rag: ms(historyStarted - ragStarted),
+        restore_history: ms(messageAssemblyStarted - historyStarted),
+        history_time_format: ms(historyTimeMs),
+        assemble_messages: ms(performance.now() - messageAssemblyStarted),
+      },
+      rag_source: input.entryKind === 'scheduled_task' ? 'skipped' : input.preparedRag ? 'prepared' : 'lookup',
+      history_rows: history.length,
+      history_time_calls: historyTimeCalls
+    })
+  }
+  return result
 }
 
 export function json(value: unknown): Json {
@@ -351,7 +389,7 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
     const context = await save(state, prepared, signal)
     return {
       context: {
-        ...context, failedCompactionInput: null, compactions: [...state.compactions, {
+        ...context, failedCompactionInput: null, compactions: [...(ports.compactionHistory === 'latest' ? [] : state.compactions), {
           id: `${state.identity.runId}:${context.prepared.area.revision}`,
           result: { ...result, messages: context.prepared.area.entries.map((entry) => copy(entry.message)) },
         }]
@@ -380,6 +418,7 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
       const startedAt = Date.now()
       let stageStartedAt = startedAt
       const stages: Record<string, number> = {}, checkpointStages: Record<string, number> = {}
+      let assembly: AssemblyTiming | undefined
       const mark = (stage: string) => {
         const now = Date.now()
         stages[stage] = Math.max(0, now - stageStartedAt)
@@ -391,7 +430,7 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
           identity, kind: 'context', name: 'Agent context preparation breakdown',
           spanId: `${identity.runId}:context:prepare-breakdown`, parentSpanId: identity.runId,
           at: endedAt, startedAt, endedAt, durationMs: Math.max(0, endedAt - startedAt),
-          status: 'success', output: { stages_ms: stages, checkpoint_stages_ms: checkpointStages },
+          status: 'success', output: { stages_ms: stages, checkpoint_stages_ms: checkpointStages, ...(assembly ? { assembly } : {}) },
           attributes: { context_source: 'agent_context_preparation' },
         })
       }
@@ -421,7 +460,8 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
       if (typeof userRequest !== 'string' || typeof locale !== 'string')
         throw new Error('回复策略来源必须是明确的当前用户正文与语言')
       mark('copy_and_validate')
-      const prepared = await prepareContext(loaded.input, { ...ports.preparation, digest: ports.digest, nextId: ports.nextId }, signal)
+      const prepared = await prepareContext(loaded.input, { ...ports.preparation, digest: ports.digest, nextId: ports.nextId }, signal,
+        ports.observation ? timing => { assembly = timing } : undefined)
       mark('assemble_canonical_context')
       const request = { prefix: prepared.area.requestPrefix, dynamicTail: prepared.area.dynamicTail }
       requests.set(key(identity), Promise.resolve(request))

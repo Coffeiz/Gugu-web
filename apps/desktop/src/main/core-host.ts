@@ -125,7 +125,7 @@ export type DesktopCoreHostRequest = {
 }
 type DesktopCoreHostRequestHandler = (request: DesktopCoreHostRequest) => Promise<unknown>
 export class CoreHost {
-  private agentRunListeners = new Set<(sessionId: number, runId: string) => void>()
+  private agentRunListeners = new Set<(sessionId: number, runId: string, interactionChanged?: true) => void>()
   private hostControllers = new Map<number, AbortController>()
   private hostRequestHandler?: DesktopCoreHostRequestHandler
   private waiting?: Waiting
@@ -251,7 +251,7 @@ export class CoreHost {
         if (message.v === 2 && message.event === 'agent_run_changed'
           && typeof message.sessionId === 'number' && Number.isSafeInteger(message.sessionId) && message.sessionId > 0
           && typeof message.runId === 'string' && /^[A-Za-z0-9:_-]{1,128}$/.test(message.runId)) {
-          for (const listener of this.agentRunListeners) listener(message.sessionId, message.runId)
+          for (const listener of this.agentRunListeners) listener(message.sessionId, message.runId, message.interactionChanged === true ? true : undefined)
           continue
         }
         if (message.v === 2 && message.event === 'host_cancel' && typeof message.requestId === 'number') {
@@ -309,7 +309,7 @@ export class CoreHost {
       }
     })
   }
-  onAgentRunChanged(listener: (sessionId: number, runId: string) => void): () => void {
+  onAgentRunChanged(listener: (sessionId: number, runId: string, interactionChanged?: true) => void): () => void {
     this.agentRunListeners.add(listener)
     return () => { this.agentRunListeners.delete(listener) }
   }
@@ -440,10 +440,12 @@ export class CoreHost {
             )
           }
           const messages: Record<string, string> = {
-            conflict: '项目已变化，请刷新后重试',
+            conflict: method === 'agent.sessions.startRun'
+              ? '会话状态已变化，请查看当前任务后重试' : '项目已变化，请刷新后重试',
             not_found: '数据不存在',
             invalid_request: '请求无效，请检查输入',
-            busy: '本地数据队列已满，请稍后重试',
+            busy: method === 'agent.sessions.startRun'
+              ? '会话已有运行中的任务，请等待当前回复' : '本地数据队列已满，请稍后重试',
             cancelled: '操作已取消',
             result_too_large: '返回结果超出桌面协议限制',
             schema_upgrade_required: '本地数据库与当前版本不兼容，请使用新数据库文件',

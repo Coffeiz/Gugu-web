@@ -10,6 +10,11 @@ const TEXT_EXTENSIONS = new Set([
   'java', 'go', 'rs', 'c', 'cpp', 'h', 'hpp', 'sh', 'sql', 'xml', 'toml', 'ini', 'conf', 'env', 'tex', 'svg',
 ])
 
+export function webAgentFileTextType(ext: string) {
+  const extension = ext.toLowerCase()
+  return { text: TEXT_EXTENSIONS.has(extension), extensionless: !extension || extension === 'file', extension }
+}
+
 type FileRow = QueryResultRow & {
   id: number | string
   user_id: string
@@ -31,7 +36,7 @@ type ChatAttachmentRow = QueryResultRow & {
 export function createWebAgentFileReadPort(
   pool: Pick<Pool, 'query'>,
   storageRoot: string,
-  lease: AgentDispatchLease,
+  lease: Pick<AgentDispatchLease, 'identity'>,
   files?: FilePathLookup,
 ): ReadFilePorts {
   const expected = Object.freeze({ ...lease.identity })
@@ -47,14 +52,10 @@ export function createWebAgentFileReadPort(
       const row = result.rows[0]
       if (!row || String(row.user_id).toLowerCase() !== expected.ownerId.toLowerCase()
         || !isOwnedFileStorageKey(expected.ownerId, row.storage_key)) return null
-      const ext = String(row.ext ?? '').toLowerCase()
-      const extensionless = !ext || ext === 'file'
+      const type = webAgentFileTextType(String(row.ext ?? ''))
       const base = String(row.display_name ?? '')
-      const name = extensionless ? base : `${base}.${ext}`
-      return {
-        id: Number(row.id), name, root: storageRoot, relativePath: row.storage_key,
-        text: TEXT_EXTENSIONS.has(ext), extensionless, extension: ext,
-      }
+      const name = type.extensionless ? base : `${base}.${type.extension}`
+      return { id: Number(row.id), name, root: storageRoot, relativePath: row.storage_key, ...type }
   }
 
   return {

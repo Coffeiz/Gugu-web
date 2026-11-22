@@ -308,3 +308,34 @@ test('反思批次发布和恢复复用 PostgreSQL 收据，Redis 回执保留�
     finally { await admin.end(); await rm(root, { recursive: true, force: true }) }
   }
 })
+
+test('Owner 反思证据查询按会话与 Run 锚点筛选，缺一条证据时请求拆批', { skip: !url }, async () => {
+  const schema = `reflection_scope_${randomUUID().replaceAll('-', '')}`
+  const admin = new Pool({ connectionString: url })
+  await admin.query(`CREATE SCHEMA "${schema}"`)
+  const pool = new Pool({ connectionString: url, options: `-c search_path=${schema}` })
+  try {
+    const owner = randomUUID(), other = randomUUID()
+    await pool.query(`CREATE TABLE users (id uuid PRIMARY KEY, username text, display_name text, timezone text, is_active boolean, account_status text);
+      CREATE TABLE conversation_sessions (id integer PRIMARY KEY, user_id uuid, execution_state text, pending_message_count integer, active_run_id text, source text, chat_type text);
+      CREATE TABLE conversation_messages (id integer PRIMARY KEY, session_id integer, role text, run_id text,
+        content text, created_at timestamptz, canonical_batch_id integer, conversation_seq integer)`)
+    await pool.query("INSERT INTO users VALUES ($1,'小北',NULL,'UTC',TRUE,'active'), ($2,'小南',NULL,'UTC',TRUE,'active')", [owner, other])
+    await pool.query("INSERT INTO conversation_sessions VALUES (1,$1,'idle',0,NULL,'web',NULL),(2,$2,'idle',0,NULL,'web',NULL),(3,$1,'idle',0,NULL,'web','group')", [owner, other])
+    await pool.query(`INSERT INTO conversation_messages VALUES
+      (1,1,'user','run-a','本次问题','2026-01-01T00:00:00Z',NULL,1),
+      (2,1,'assistant','run-a','中间过程','2026-01-01T00:00:01Z',22,2),
+      (3,1,'assistant','run-a','本次终态回复','2026-01-01T00:00:02Z',NULL,3),
+      (4,2,'user','run-b','其他账户问题','2026-01-01T00:00:00Z',NULL,1)`)
+    const read = createPostgresOwnerReflectionSource(pool)
+    const signal = new AbortController().signal
+    const batch = { ownerId: owner, sessionId: '1', turns: [{ userMessageId: '1', runId: 'run-a' }] }
+    assert.deepEqual(await read(batch, signal), { kind: 'ready', userName: '小北', timezone: 'UTC',
+      turns: [{ userMessage: '本次问题', assistantReply: '本次终态回复', timestamp: '2026-01-01T00:00:00.000Z' }] })
+    assert.deepEqual(await read({ ...batch, ownerId: other }, signal), { kind: 'discard' })
+    assert.deepEqual(await read({ ...batch, sessionId: '3' }, signal), { kind: 'discard' })
+    assert.deepEqual(await read({ ...batch, turns: [...batch.turns, { userMessageId: '4', runId: 'run-b' }] }, signal), { kind: 'split' })
+    await pool.query("UPDATE conversation_sessions SET execution_state='running' WHERE id=1")
+    assert.deepEqual(await read(batch, signal), { kind: 'defer' })
+  } finally { await pool.end(); await admin.query(`DROP SCHEMA "${schema}" CASCADE`); await admin.end() }
+})

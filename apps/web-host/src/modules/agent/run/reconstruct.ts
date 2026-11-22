@@ -1,4 +1,4 @@
-import { appendWorkspaceAgentInstructions } from '@gugu/core/agent'
+import { appendWorkspaceAgentInstructions, assembleSubagentCatalog, builtinSubagentCatalog } from '@gugu/core/agent'
 import { canonicalAgentToolName } from '@gugu/core/agent'
 import { AgentRunReconstructionVersionError as AgentReconstructionVersionError, createAgentCompactionPort, createAgentRunReconstructor, createAgentRunToolPorts, createLazyAgentCompactionPort, restoreAgentRequestPrefix } from '@gugu/core/agent'
 import type { AgentObservationPort, AgentProviderAuxiliaryPorts, AgentRunBinding, AgentRuntimeOptions, CanonicalContextPorts, CanonicalRunContext, CanonicalRunPreparationPorts, ContextDataPorts, ContextSourcePorts, CurrentTurnSources, RunIdentity, HistoryIdentity } from '@gugu/core/agent'
@@ -93,6 +93,7 @@ export function createWebAgentToolPorts(
   })
 }
 export interface WebAgentReconstructorOptions {
+  subagentTools?(lease: AgentDispatchLease): Pick<ReturnType<typeof createAgentToolRegistry>, 'tools' | 'capabilities' | 'catalog'>
   readWorkspaceInstructions?(lease: AgentDispatchLease, signal?: AbortSignal): Promise<string | undefined>
   pool: PersistentAgentRuntimeOptions['pool']
   secretKey: string
@@ -115,7 +116,7 @@ export function createWebAgentRagResources(options: {
   rag: Omit<Parameters<typeof createAuthorizedWebAgentProductionRagRunPorts>[0], 'lease' | 'selection'> & {
     /** 每个可信 lease 单独创建写端口；只有实际提供的端口才进入授权配置。 */
     toolPorts?(lease: AgentDispatchLease, binding: WebAgentBinding, context: Pick<ContextDataPorts, 'loadTimezone'>): Promise<Partial<Pick<AgentToolRegistryOptions,
-      'conversations' | 'time' | 'knowledge' | 'remember' | 'knowledgeWrites' | 'knowledgeDelete' | 'search' | 'events' | 'calendar' | 'dashboard' | 'fileOverview' | 'workspaces' | 'workspaceMutations' | 'workspaceCreation' | 'scheduledTasks' | 'scheduledTaskWrites' | 'scheduledTaskDelete' | 'diskTrashTools' | 'trash' | 'trashRestore' | 'trashPurge' | 'canvases' | 'canvasPlaceableSearch' | 'canvasCreation' | 'canvasEdits' | 'canvasPlacements' | 'canvasRelations' | 'noteLifecycle' | 'noteWrites' | 'notes' | 'projects' | 'projectMutations' | 'projectDelete' | 'calendarCreate' | 'calendarUpdate' | 'calendarDelete' | 'canvasBatch' | 'canvasDeleteNote' | 'canvasDisconnect' | 'canvasDelete' | 'clientDelete' | 'skills' | 'skillMetadata' | 'skillManagement' | 'skillDelete' | 'callTool' | 'mcpManagement' | 'httpGet' | 'webSearch' | 'webDownload' | 'similarImageSearch' | 'deepResearch' | 'askUser' | 'shell' | 'readFile' | 'viewImage' | 'presentFile' | 'fileFolderDelete' | 'fileDelete' | 'saveAttachment' | 'recentAttachments' | 'sendFile' | 'linkButtons' | 'sendEmail'>>>
+      'conversations' | 'time' | 'knowledge' | 'remember' | 'knowledgeWrites' | 'knowledgeDelete' | 'search' | 'events' | 'calendar' | 'fileOverview' | 'workspaces' | 'workspaceMutations' | 'workspaceCreation' | 'scheduledTasks' | 'scheduledTaskWrites' | 'scheduledTaskDelete' | 'diskTrashTools' | 'trash' | 'trashRestore' | 'trashPurge' | 'canvases' | 'canvasPlaceableSearch' | 'canvasCreation' | 'canvasEdits' | 'canvasPlacements' | 'canvasRelations' | 'noteLifecycle' | 'noteWrites' | 'notes' | 'projects' | 'projectMutations' | 'projectDelete' | 'calendarCreate' | 'calendarUpdate' | 'calendarDelete' | 'canvasBatch' | 'canvasDeleteNote' | 'canvasDisconnect' | 'canvasDelete' | 'clientDelete' | 'skills' | 'skillMetadata' | 'skillManagement' | 'skillDelete' | 'callTool' | 'mcpManagement' | 'httpGet' | 'webSearch' | 'webDownload' | 'similarImageSearch' | 'deepResearch' | 'askUser' | 'shell' | 'viewImage' | 'presentFile' | 'fileFolderDelete' | 'fileDelete' | 'saveAttachment' | 'recentAttachments' | 'sendFile' | 'linkButtons' | 'sendEmail'>>>
   }
   compactionInstruction?: string
   /** Web 私聊反思与 Host Node 消费者共享签名模型范围。 */
@@ -151,7 +152,7 @@ export function createWebAgentRagResources(options: {
         formatAgentHistoryMessageTime(timestamp, await source.data.loadTimezone(identity, signal))),
       enabledConversationRead: Boolean(toolPorts.conversations), enabledTime: Boolean(toolPorts.time),
       enabledCalendarRead: Boolean(toolPorts.calendar), enabledUpcoming: Boolean(toolPorts.events && toolPorts.time),
-      enabledDashboard: Boolean(toolPorts.dashboard && toolPorts.time), enabledCalendarCanvasTools,
+      enabledCalendarCanvasTools,
       enabledWorkspaces: Boolean(toolPorts.workspaces),
       enabledWorkspaceMutations: Boolean(toolPorts.workspaceMutations),
       enabledWorkspaceCreation: Boolean(toolPorts.workspaceCreation),
@@ -173,7 +174,6 @@ export function createWebAgentRagResources(options: {
       enabledAskUser: Boolean(toolPorts.askUser),
       enabledHttpGet: Boolean(toolPorts.httpGet),
       enabledLinkButtons: Boolean(toolPorts.linkButtons),
-      enabledFileRead: Boolean(toolPorts.readFile),
       enabledFilePresent: Boolean(toolPorts.presentFile),
 
 
@@ -277,6 +277,26 @@ export function createWebAgentReconstructor(options: WebAgentReconstructorOption
       const source = createWebAgentSourceLoader(options.pool, { ...resources.source, data: { ...resources.source.data, loadImMemory: createWebImMemoryLoader(lease) }, digest: resources.context.digest, nextId: resources.context.nextId,
         select: async () => selection, currentTurn: createPostgresCurrentTurnReader(options.pool, String(lease.input.userMessageId), resources.materialize) }, options.observation)
       const toolPorts = createWebAgentToolPorts(lease, resources.toolRegistry, resources.preparation, resources.mcp)
+      const delegation = options.subagentTools?.(lease)
+      const names = new Set(delegation?.catalog().map(tool => tool.name))
+      const preparation: CanonicalRunPreparationPorts = delegation ? {
+        ...toolPorts.preparation,
+        async configuration(identity, signal) {
+          const current = await toolPorts.preparation.configuration(identity, signal)
+          return { ...current, toolNames: [...new Set([...current.toolNames, ...names])] }
+        },
+        async discover(input, signal, configuration) {
+          return [...await toolPorts.preparation.discover(input, signal, configuration),
+            ...(await delegation.capabilities(id)).filter(tool => input.toolNames.includes(tool.name))]
+        },
+      } : toolPorts.preparation
+      const tools = delegation ? {
+        ...toolPorts.tools,
+        dispatch: (call: Parameters<typeof toolPorts.tools.dispatch>[0], scope: Parameters<typeof toolPorts.tools.dispatch>[1]) =>
+          (names.has(call.name) ? delegation.tools : toolPorts.tools).dispatch(call, scope),
+        reconcile: (call: Parameters<typeof toolPorts.tools.reconcile>[0], identity: Parameters<typeof toolPorts.tools.reconcile>[1]) =>
+          (names.has(call.name) ? delegation.tools : toolPorts.tools).reconcile(call, identity),
+      } : toolPorts.tools
       const history = options.historyForBinding?.(lease, binding) ?? createWebAgentBindingHistory(lease, binding)
       return createPersistentAgentRuntime({ pool: options.pool, secretKey: options.secretKey, redis: options.redis, subscribe: options.subscribe, history,
         observation: options.observation,
@@ -287,12 +307,15 @@ export function createWebAgentReconstructor(options: WebAgentReconstructorOption
           }) } : {}),
           preparation: { ...resources.context.preparation, buildRag: resources.ragContext }, async load(identity, signal) {
             const loaded = await source.load(identity, signal)
+            if (delegation && (await delegation.capabilities(identity)).some(tool => tool.name === 'agent_message')) {
+              loaded.input.systemPrompt = assembleSubagentCatalog(loaded.input.systemPrompt, builtinSubagentCatalog)
+            }
             const instructions = await options.readWorkspaceInstructions?.(lease, signal)
             signal?.throwIfAborted()
             if (instructions) loaded.input.systemPrompt = appendWorkspaceAgentInstructions(loaded.input.systemPrompt ?? '', instructions)
             return loaded
-          } }, runPreparation: toolPorts.preparation,
-        runtime: { ...resources.runtime, tools: toolPorts.tools }, executor: resources.executor,
+          } }, runPreparation: preparation,
+        runtime: { ...resources.runtime, tools }, executor: resources.executor,
         provider: { ...resources.provider, resolve: binding.resolve }, interactionActivation: resources.interactionActivation,
         scheduling: { mode: 'dispatch', readReconstructionStatus: options.readReconstructionStatus, leaseFor: target => target.ownerId === id.ownerId && target.sessionId === id.sessionId && target.runId === id.runId ? lease : null } })
     },

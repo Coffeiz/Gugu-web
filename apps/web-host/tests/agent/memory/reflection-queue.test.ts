@@ -202,6 +202,47 @@ test('反思停止时释放 Redis 租约并立即重新领取原批次', { skip:
   } finally { await clearRedisAgentReflectionSession(commands, ownerId, sessionId) }
 })
 
+test('Owner 反思拆批后保持证据顺序，版本冲突时保留原证据供重试', { skip: !redis }, async () => {
+  const commands = createRedisScheduledTaskCommands(redis!)
+  const ownerId = randomUUID(), sessionId = '43'
+  const enqueue = createRedisAgentReflectionQueue({ commands, modelScope })
+  let clock = Date.now() + 181_000
+  const claim = createRedisAgentReflectionInbox({ commands, now: () => clock })
+  try {
+    for (const id of ['1', '2']) await enqueue({ ...scope, identity: { ownerId, sessionId, runId: `run-${id}` },
+      userMessageId: id, userMessage: '整理合成资料', usedTools: true })
+    const extracted: string[][] = []
+    const work = createOwnerReflectionWork({
+      claim,
+      writer: {
+        async reconcile() { return null },
+        async snapshot() { return { version: '原版本', files: { 'pattern_vec.json': null, 'profile.json': null, 'pattern.json': null,
+          'summary.json': null, 'daily.md': null, 'stance.json': null } } },
+        async publish(_batch, version) { assert.equal(version, '原版本'); return 'stale' },
+      },
+      async extract(batch) {
+        extracted.push(batch.turns.map(turn => turn.userMessageId))
+        return batch.turns.length > 1 ? { kind: 'split' }
+          : { kind: 'ready', output: { summary: '不应覆盖并发修改' }, time: { now: 0, date: '2026-01-01' } }
+      },
+      diagnose: () => assert.fail('拆批和版本冲突是正常结算'),
+    })
+    assert.equal(await work(), 'ready')
+    assert.equal(await work(), 'retrying')
+    assert.deepEqual(extracted, [['1', '2'], ['1']])
+    assert.equal(await claim(), null)
+    clock += 30_000
+    const retried = await claim()
+    assert.ok(retried)
+    assert.deepEqual(retried.turns.map(turn => turn.userMessageId), ['1'])
+    assert.equal(await retried.complete(), true)
+    const remainder = await claim()
+    assert.ok(remainder)
+    assert.deepEqual(remainder.turns.map(turn => turn.userMessageId), ['2'])
+    assert.equal(await remainder.complete(), true)
+  } finally { await clearRedisAgentReflectionSession(commands, ownerId, sessionId) }
+})
+
 test('Web reflection finalizer queues only the persisted anchor for the current Run', async () => {
   const input = {
     identity, modelIdentity: 'synthetic-model', accessScopeHash: 'synthetic-scope', requestSystemPrompt: '', requestTools: [],

@@ -1,6 +1,10 @@
 <!doctype html>
 <html lang="zh-CN" data-theme="light" data-family="mono" data-palette="neutral" data-desktop-shell="true">
-  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' blob: gugu-desktop://app; img-src 'self' data: blob: gugu-desktop://app https://icons.duckduckgo.com/ip3/; media-src 'self' blob: gugu-desktop://app; font-src 'self' data:; worker-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'" /><title>咕咕 · 本地工作台</title>  <style>
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' blob: gugu-desktop://app; img-src 'self' data: blob: gugu-desktop://app https://icons.duckduckgo.com/ip3/; media-src 'self' blob: gugu-desktop://app; font-src 'self' data:; worker-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'" /><title>咕咕 · 本地工作台</title>
+  <link rel="icon" href="/favicon.ico" sizes="any" />
+  <link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32" />
+  <link rel="stylesheet" href="/src/desktop/boot-icon.css" />
+  <style>
     html[data-desktop-shell] {
       --desktop-l0-surface: rgb(from var(--surface-card-solid, light-dark(#fafafa, #242424)) r g b / 50%);
       --desktop-project-sidebar-width: min(300px, 65%);
@@ -68,7 +72,9 @@
           </div>
         </div>
       </div>
-      <div class="desktop-boot-shell" role="status">正在加载咕咕…</div>
+      <div class="desktop-boot-shell" role="status" aria-label="正在加载咕咕">
+        <span class="desktop-boot-icon" aria-hidden="true"></span>
+      </div>
     </div>
     <script type="module" src="/src/desktop/bootstrap.ts"></script>
   </body>

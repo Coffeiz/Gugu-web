@@ -114,15 +114,21 @@ function projectPart(projects: readonly GreetingProject[] | undefined): string {
 }
 
 /** 与 Python greeting._recent_context 对齐的纯上下文投影；数据库和文件读取留给 Host 可信端口。 */
-export function buildGreetingPrompt(input: GreetingPromptInput): string {
+export function buildGreetingPrompt(input: GreetingPromptInput, display: {
+  includeTime?: boolean
+  includeLastSeen?: boolean
+} = {}): string {
   const locale = normalizeGreetingLocale(input.locale)
   const time = zonedParts(input.now, input.timeZone || 'UTC')
   const weekday = new Intl.DateTimeFormat('en-US', { timeZone: input.timeZone || 'UTC', weekday: 'short' }).format(input.now)
   const weekdayIndex = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].indexOf(weekday)
   const weekdayZh = '一二三四五六日'[Math.max(0, weekdayIndex)]
-  const parts = [`【当前日期和时间】${time.year}-${time.month}-${time.day} 星期${weekdayZh} ${time.hour}:${time.minute}（按用户时区）`]
-  const seen = lastSeenPart(input.lastMessageAt, input.now, input.lastMessageQueryFailed)
-  if (seen) parts.push(seen)
+  const parts: string[] = []
+  if (display.includeTime !== false) parts.push(`【当前日期和时间】${time.year}-${time.month}-${time.day} 星期${weekdayZh} ${time.hour}:${time.minute}（按用户时区）`)
+  if (display.includeLastSeen !== false) {
+    const seen = lastSeenPart(input.lastMessageAt, input.now, input.lastMessageQueryFailed)
+    if (seen) parts.push(seen)
+  }
 
   const stance = input.stance
   if (stance?.value && stance.updatedAt && input.now.getTime() - stance.updatedAt.getTime() < 64_800_000) {
@@ -148,20 +154,29 @@ export function buildGreetingPrompt(input: GreetingPromptInput): string {
   const profile = memory?.profile?.trim().slice(0, 500) ?? ''
   if (profile) parts.push(`【长期画像（仅帮你把握 TA 是谁，别当成最近在忙的事）】\n${profile}`)
 
-  const context = `\n近期上下文（仅供你自然带一句，别照念）：\n${parts.join('\n\n')}\n\n`
+  const context = parts.length ? `\n近期上下文（仅供你自然带一句，别照念）：\n${parts.join('\n\n')}\n\n` : ''
   return `${promptTemplate.replace('{ctx}', context)}\n${localeInstructions[locale]}`
 }
 
 export function cleanGreeting(value: string): string { return value.trim().replace(/^["「」]+|["「」]+$/gu, '') }
 
 /** Python generate() 的 10 分钟缓存和跨进程互斥；模型/文件/Redis transport 留给 Host 注入。 */
-export function createGreetingGenerator(ports: GreetingGeneratorPorts) {
+export function createGreetingGenerator(ports: GreetingGeneratorPorts | (Omit<GreetingGeneratorPorts, 'readContext'> & {
+  preparePrompt(ownerId: string, locale: GreetingLocale, now: () => Date, signal: AbortSignal): Promise<string>
+})) {
   const now = ports.now ?? (() => new Date())
   const generateUncached = async (ownerId: string, locale: GreetingLocale, signal: AbortSignal): Promise<string> => {
     try {
-      const context = await ports.readContext(ownerId, signal)
+      let prompt: string
+      if ('preparePrompt' in ports) {
+        prompt = await ports.preparePrompt(ownerId, locale, now, signal)
+      } else {
+        const context = await ports.readContext(ownerId, signal)
+        signal.throwIfAborted()
+        prompt = buildGreetingPrompt({ ...context, locale, now: now() })
+      }
       signal.throwIfAborted()
-      const text = await ports.complete(ownerId, buildGreetingPrompt({ ...context, locale, now: now(), timeZone: context.timeZone }), 180, signal)
+      const text = await ports.complete(ownerId, prompt, 180, signal)
       signal.throwIfAborted()
       return cleanGreeting(text)
     } catch (error) {

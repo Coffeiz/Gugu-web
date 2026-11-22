@@ -95,7 +95,7 @@ async function loadQuota() {
       if (quota.value.is_byok) await loadTrends()
     }
   } catch (error) {
-    if (desktop) showAppError(error instanceof Error ? error.message : t('common.errors.generic'))
+    if (desktop) showAppError(error instanceof Error ? error.message : t('desktopSettings.loadUsageFailed'))
   } finally {
     quotaLoading.value = false
   }

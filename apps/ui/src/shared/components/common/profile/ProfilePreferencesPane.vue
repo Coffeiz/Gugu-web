@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div v-if="desktop" class="pm-section"><p class="pm-field-hint">配色和时区保存在当前设备。</p></div>
+    <div v-if="desktop" class="pm-section"><p class="pm-field-hint">{{ t('desktopSettings.deviceStorage') }}</p></div>
     <div class="pm-section">
       <div class="pm-section-label">{{ t('common.language') }}</div>
       <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('common.language') }}</span><span class="pm-field-hint">{{ t('common.languageHint') }}</span></div><div class="pm-style-group"><button v-for="item in languages" :key="item.value" class="pm-style-chip" :class="{ active: currentLocale === item.value }" @click="prefsStore.saveLocale(item.value)">{{ item.label }}</button></div></div>
@@ -39,13 +39,13 @@
     <div class="pm-sep"></div>
     <template v-if="desktop">
       <div class="pm-section">
-        <div class="pm-section-label">网络</div>
+        <div class="pm-section-label">{{ t('desktopSettings.network') }}</div>
         <div class="pm-field-row">
           <div class="pm-field-desc">
-            <span class="pm-field-name">使用系统代理</span>
-            <span class="pm-field-hint">开启后，模型连接和联网工具按系统代理规则连接。</span>
+            <span class="pm-field-name">{{ t('desktopSettings.systemProxy') }}</span>
+            <span class="pm-field-hint">{{ t('desktopSettings.systemProxyHint') }}</span>
           </div>
-          <ToggleSwitch :model-value="useSystemProxy" :disabled="proxySaving" aria-label="使用系统代理"
+          <ToggleSwitch :model-value="useSystemProxy" :disabled="proxySaving" :aria-label="t('desktopSettings.systemProxy')"
             @update:model-value="saveSystemProxy" />
         </div>
       </div>
@@ -109,12 +109,13 @@ import { setUserTimezone, userTimezone } from '@/utils/userTimezone'
 import AdminSelect from '@/components/AdminSelect.vue'
 import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 
+const { t, locale: currentLocale } = useI18n()
 const prefsStore = usePreferencesStore()
 const authStore = useAuthStore()
 const desktop = useLocalPreferencesAccess()
 const { preference, family, palette, setTheme, setFamily, setPalette } = useTheme(desktop ? async patch => {
   try { await desktop.updateAppearance(patch) }
-  catch { showAppError('保存桌面偏好设置失败，请重试') }
+  catch { showAppError(t('desktopSettings.saveAppearanceFailed')) }
 } : undefined)
 const useSystemProxy = ref(false)
 const proxySaving = ref(false)
@@ -126,17 +127,16 @@ if (desktop) onMounted(async () => {
     useSystemProxy.value = preferences.useSystemProxy === true
     setUserTimezone(preferences.timezone)
   }
-  catch { showAppError('读取系统代理设置失败') }
+  catch { showAppError(t('desktopSettings.loadProxyFailed')) }
   finally { proxySaving.value = false; timezoneSaving.value = false }
 })
 async function saveSystemProxy(value: boolean) {
   if (!desktop) return
   proxySaving.value = true
   try { useSystemProxy.value = (await desktop.updateAppearance({ useSystemProxy: value })).useSystemProxy === true }
-  catch { showAppError('保存系统代理设置失败') }
+  catch { showAppError(t('desktopSettings.saveProxyFailed')) }
   finally { proxySaving.value = false }
 }
-const { t, locale: currentLocale } = useI18n()
 const families: Array<{ value: ThemeFamily; label: string }> = [
   { value: 'glass', label: 'Aero' },
   { value: 'mono', label: 'Mono' },
@@ -178,7 +178,7 @@ async function onTimezoneChange(value: string) {
   }
   timezoneSaving.value = true
   try { setUserTimezone((await desktop.updateAppearance({ timezone: value || null })).timezone) }
-  catch { showAppError('保存时区设置失败，请重试') }
+  catch { showAppError(t('desktopSettings.saveTimezoneFailed')) }
   finally { timezoneSaving.value = false }
 }
 

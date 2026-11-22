@@ -72,7 +72,7 @@ export function createSqlAgentSessionLister(db: Kysely<any>, backend: 'postgres'
     const sessionSource = desktopIm ? sql`COALESCE(im.platform,s.source)` : sql`s.source`
     const chatType = desktopIm ? sql`CASE WHEN im.platform IS NOT NULL THEN COALESCE(s.chat_type, 'c2c') ELSE s.chat_type END` : sql`s.chat_type`
     const imJoin = desktopIm ? sql`LEFT JOIN desktop_im_sessions im ON im.session_id=s.id AND im.owner_id=s.user_id` : sql``
-    const desktopAccessible = desktopIm ? sql`AND (s.source IS NULL OR s.source='web')` : sql``
+    const desktopAccessible = desktopIm ? sql`AND (s.source IS NULL OR s.source='web')` : sql`AND s.source IS DISTINCT FROM 'subagent'`
     const load = async (connection: Kysely<any> | Transaction<any>, web: boolean) => {
       const source = web ? sql`(${sessionSource} IS NULL OR ${sessionSource}='web')` : sql`(${sessionSource} IS NOT NULL AND ${sessionSource}<>'web')`
       return (await sql<Row>`SELECT s.id,s.title,${titleBot} AS title_bot_id,${sessionSource} AS source,${chatType} AS chat_type,${workspaceName} AS workspace_name,s.session_context,${updated} AS updated_at_iso,${created} AS created_at_iso,${bound} AS unavailable_workspace_bound FROM conversation_sessions s ${workspaceJoin} ${imJoin} WHERE s.user_id=${owner} ${desktopAccessible} AND ${source} ORDER BY s.updated_at DESC LIMIT 50`.execute(connection)).rows

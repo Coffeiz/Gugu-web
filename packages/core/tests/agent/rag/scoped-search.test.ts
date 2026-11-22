@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import type { RagDocument } from '../../../src/agent/rag/contracts.js'
+import { createRagDocumentTermCache } from '../../../src/agent/rag/lexical-index.js'
 import { createMemoryRagSource } from '../../../src/agent/rag/memory-source.js'
 import { createScopedRagSearch } from '../../../src/agent/rag/scoped-search.js'
 import { readRagDocumentVectors } from '../../../src/agent/rag/vector-reader.js'
@@ -27,6 +28,25 @@ function setup(embed: (owner: string, query: string, signal?: AbortSignal) => Pr
   })
   return { search, authorize, source, snapshotForScope }
 }
+
+it('复用词频时仍使用本轮授权、消息水位和当前索引正文', async () => {
+  const first = { ...document, source_type: 'conversation', metadata: { kind: 'message', message_id: 12 } }
+  let documents = [first]
+  let authorized = true
+  const index = { snapshotForScope: async () => ({ revision: 'same-revision', documents, watermark: null }) } as unknown as Parameters<typeof createScopedRagSearch>[0]['index']
+  const search = createScopedRagSearch({ index, authorize: async () => authorized, documentTerms: createRagDocumentTermCache() })
+  const find = (query: string, beforeMessageId = 13) => search('owner-a', { scope_type: 'owner' }, query, { sourceTypes: ['conversation'], limit: 5, beforeMessageId })
+
+  expect((await find('项目进度')).results.map(result => result.id)).toEqual([first.id])
+  expect((await find('项目进度', 12)).results).toEqual([])
+  documents = [{ ...first, content: '验收完成', text: '验收完成', title: '验收完成' }]
+  expect((await find('项目进度')).results).toEqual([])
+  expect((await find('验收完成')).results.map(result => result.id)).toEqual([first.id])
+  documents = []
+  expect((await find('验收完成')).results).toEqual([])
+  authorized = false
+  await expect(find('验收完成')).rejects.toThrow('未授权')
+})
 
 describe('scoped RAG embedding fallback', () => {
   it('多个可信scope在同一语料排名与预算，逐scope前后授权且事实过滤先于候选投影', async () => {

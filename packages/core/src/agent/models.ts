@@ -479,36 +479,6 @@ export interface SummaryGenerationConfig extends Omit<BranchInput<never>, 'proje
   instruction: string
 }
 
-export interface ReflectionSnapshot<Wire> extends HistoryIdentity {
-  runId: string
-  modelIdentity: string
-  accessScopeHash: string
-  systemPrompt: string
-  tools: Json[]
-  projection: OpaqueProviderProjection<Wire>
-  persistedMessageIds: string[]
-  persistedPrefix: {
-    id: string
-    sequence: number
-    messageDigest: string
-  }[]
-  providerContextInput: number | null
-  providerCompacted: boolean
-  createdAt: number
-  digest: string
-  source: 'in_memory' | 'in_memory_extended' | 'persisted_history'
-}
-
-export interface ReflectionPreparationInput extends HistoryIdentity {
-  modelIdentity: string
-  bufferedSessionIds: readonly (string | null)[]
-  scope: 'owner' | 'group' | 'member'
-  contextWindow: number
-  reason: 'idle' | 'context-pressure' | 'compacted'
-  allowOwnerIdleRebuild?: boolean
-  accessScopeHash?: string | null
-}
-
 export type BranchName = 'compaction' | 'reflection' | 'reflection-preview' | 'knowledge'
 
 export interface BranchInput<Wire> extends HistoryIdentity {
@@ -544,7 +514,7 @@ export interface BranchResult {
   usage: Json
   metadata: {
     branch: BranchName
-    mode: 'append_reuse'
+    mode: 'append_reuse' | 'standalone'
     scope: string
     scopeRevision: string | null
     sessionId: string
@@ -840,6 +810,10 @@ export interface RunEvent {
 }
 
 export interface RunCheckpoint<C> {
+  /** 只有成功创建子 Run 的父 Run 才读取交付队列。 */
+  readonly acceptsSubagentFinals?: boolean
+  readonly subagentWaitChildId?: string | null
+  readonly agentInboxWaiting?: boolean
   readonly identity: RunIdentity
   readonly version: number
   readonly sequence: number

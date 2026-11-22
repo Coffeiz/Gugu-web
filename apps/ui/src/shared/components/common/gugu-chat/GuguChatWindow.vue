@@ -490,7 +490,7 @@ defineExpose({
 }
 :deep(.chat-messages.is-session-settling) { visibility: hidden; }
 .chat-main.is-expanded { --chat-assistant-bubble-max-width: 90%; }
-.chat-main.is-expanded :deep(.chat-messages .msg.ai .msg-bubble) { font-size: 14px; }
+.chat-main.is-expanded :deep(.chat-messages .msg:is(.ai, .member) .msg-bubble) { font-size: 14px; }
 .chat-main.is-expanded :deep(.chat-messages .msg-quoted) { max-width: 72%; font-size: 13.5px; }
 :deep(.msg-virtual-spacer) { position: relative; width: 100%; }
 :deep(.msg-virtual-row) { position: absolute; top: 0; left: 0; width: 100%; box-sizing: border-box; padding: 0 13px var(--space-xs); }
@@ -808,8 +808,9 @@ defineExpose({
 :deep(.msg-bubble.md-body .md-view li) {
   line-height: 1.65;
 }
-:deep(.msg-bubble.md-body .md-view li + li) {
-  margin-top: 5px;
+:deep(.msg-bubble.md-body .md-view li + li),
+:deep(.msg-bubble.md-body .md-view li > p + p) {
+  margin-block-start: var(--space-sm);
 }
 :deep(.msg-bubble.md-body .md-view :is(h1, h2, h3, h4, h5, h6)) {
   margin-bottom: 7px;
@@ -820,24 +821,21 @@ defineExpose({
   padding-block: 6px;
   white-space: nowrap; word-break: normal; overflow-wrap: normal;
 }
-:deep(.msg.ai .msg-bubble) {
+:deep(.msg:is(.ai, .member) .msg-bubble) {
   box-sizing: border-box; inline-size: var(--chat-assistant-bubble-max-width);
   max-inline-size: 100%; min-inline-size: 0;
 }
-:deep(.msg.ai .msg-bubble),
+:deep(.msg:is(.ai, .member) .msg-bubble),
 :deep(.md-view .chat-smart-view) {
   background: var(--gugu-chat-assistant-bg); border: 1px solid var(--gugu-chat-assistant-border);
   box-shadow: inset 0 1px 0 var(--gugu-chat-file-highlight);
 }
-:deep(.msg.ai .msg-bubble) { border-bottom-left-radius: 4px; }
+:deep(.msg:is(.ai, .member) .msg-bubble) { border-bottom-left-radius: 4px; }
 :deep(.chat-assistant-content) {
   display: flex; flex-direction: column; align-items: flex-start;
-  gap: 8px; width: 100%; min-width: 0;
+  width: 100%; min-width: 0;
 }
-:deep(.chat-assistant-smart-card) {
-  inline-size: var(--chat-assistant-bubble-max-width); min-width: 0;
-  font-size: var(--gugu-body-size); line-height: var(--gugu-body-line);
-}
+:deep(.chat-assistant-block + .chat-assistant-block) { margin-block-start: 8px; }
 /* 智能界面按自己的可用宽度排列字段，紧凑窗不依赖页面断点。 */
 :deep(.md-view .chat-smart-view) {
   --progress-track-height: 6px;
@@ -1060,10 +1058,13 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
 :deep(.chat-smart-chart-canvas canvas) { color: var(--smart-view-color, var(--action-primary)); }
 :deep(.chat-smart-chart details) { border-block-start: 1px solid var(--content-divider); padding-block-start: 7px; }
 :deep(.chat-smart-chart summary) {
+  display: flex; align-items: center; gap: var(--space-1); list-style: none;
   width: fit-content; max-width: 100%; padding: 3px 6px; border-radius: var(--radius-xs);
   cursor: pointer; color: var(--content-secondary); font-size: var(--font-size-xs);
   transition: background-color var(--motion-hover-control), color var(--motion-hover-control);
 }
+:deep(.chat-smart-chart summary::-webkit-details-marker) { display: none; }
+:deep(.chat-smart-chart summary > [data-smart-chart-chevron]) { display: inline-flex; flex-shrink: 0; }
 :deep(.chat-smart-chart summary:hover) { background: var(--sidebar-item-hover); color: var(--content-primary); }
 :deep(.chat-smart-chart summary:focus-visible) { outline: 2px solid var(--border-focus); }
 :deep(.chat-smart-chart details ul) { list-style: none; padding: 0; margin-block: 4px 0; }
@@ -1142,12 +1143,12 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
   :deep(.chat-smart-fields) { justify-content: flex-end; }
 }
 
-:deep(.chat-assistant-smart-card .md-view > .chat-smart-view) { margin-block: 0; }
+:deep(.chat-assistant-block .md-view > .chat-smart-view) {
+  margin-block: 0; padding: 0; border: 0; background: none; box-shadow: none;
+}
 :deep(.chat-smart-stream) {
   container: chat-smart-stream / inline-size;
-  box-sizing: border-box; padding: 12px;
-  border: 1px solid var(--gugu-chat-assistant-border); border-radius: var(--card-radius);
-  background: var(--gugu-chat-assistant-bg);
+  box-sizing: border-box;
 }
 :deep(.chat-smart-stream-grid) { display: grid; gap: 10px; }
 :deep(.chat-smart-stream-region) {
@@ -1189,10 +1190,6 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
 @keyframes chat-smart-view-loading { to { transform: rotate(1turn); } }
 @media (prefers-reduced-motion: reduce) {
   :deep(.chat-smart-view-generating > [role="status"]::before) { animation: none; }
-}
-:deep(.msg.member .msg-bubble) {
-  background: var(--gugu-chat-member-bg); border: 1px solid var(--gugu-chat-member-border);
-  border-bottom-left-radius: 4px;
 }
 :deep(.msg.user .msg-bubble) {
   background: var(--gugu-chat-user-bg); color: var(--gugu-chat-user-fg);
@@ -1237,12 +1234,28 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
   font-size: 11px; color: var(--text-secondary); margin: 0 2px 3px;
   font-weight: 600;
 }
+:deep(.msg-speaker-subagent) {
+  display: flex; align-items: center; gap: var(--space-1);
+  margin-block-end: var(--space-1);
+  font-size: var(--font-size-sm);
+}
+:deep(button.msg-speaker-subagent) {
+  border: 0; background: transparent; padding: 0; cursor: pointer;
+  border-radius: var(--radius-xs);
+}
+:deep(button.msg-speaker-subagent:hover) { color: var(--content-primary); }
+:deep(button.msg-speaker-subagent:focus-visible) { outline: 2px solid var(--border-focus); }
+:deep(.msg-speaker-bird) {
+  flex: none; inline-size: 16px; block-size: 16px;
+  background: currentColor;
+  mask: url('../../../assets/brand/gugu-bird-mask.png') center / contain no-repeat;
+}
 /* 引用/回复预览条：浅色小字，跟正文气泡区分开——只是提示"引用了什么"，不是正文。
    截到 8 行，超出部分靠 hover 的原生 title 提示看全文，避免长引用只剩一小段看不出内容。 */
 :deep(.msg-quoted) {
   max-width: 88%; margin-bottom: 4px; padding: 6px 10px;
   font-size: 12.5px; line-height: 1.5; color: var(--text-secondary);
-  background: var(--gugu-chat-member-bg); border-left: 2.5px solid var(--gugu-chat-member-border);
+  background: var(--action-soft); border-left: 2.5px solid var(--action-outline);
   border-radius: 4px; white-space: pre-wrap; word-break: break-word;
   display: -webkit-box; -webkit-line-clamp: 8; -webkit-box-orient: vertical; overflow: hidden;
 }

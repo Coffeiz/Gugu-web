@@ -482,7 +482,7 @@ export async function createWebUiApp(
     removeSession(ownerId: string, sessionId: number, ports: AgentSessionDeletePorts, legacy: () => Promise<boolean>): Promise<boolean>
   },
 ): Promise<{ app: ReturnType<typeof createApp>; startWorkers(): Promise<void>
-  runAgent: ReturnType<typeof createSerialWorker>; loopScopeTrace: ReturnType<typeof createWebLoopScopeTrace>; agentRunLog: import('@gugu/core/agent').AgentRunLogPort; imOwnerTools: Awaited<ReturnType<typeof createAgentServices>>['imOwnerTools']; imMcpDirectory: ReturnType<typeof createMcpSkillToolDirectory> }> {
+  runAgent: ReturnType<typeof createSerialWorker>; loopScopeTrace: ReturnType<typeof createWebLoopScopeTrace>; agentRunLog: import('@gugu/core/agent').AgentRunLogPort; imOwnerTools: Awaited<ReturnType<typeof createAgentServices>>['imOwnerTools']; registerImSubagentParentBinder: Awaited<ReturnType<typeof createAgentServices>>['registerImSubagentParentBinder']; imMcpDirectory: ReturnType<typeof createMcpSkillToolDirectory> }> {
   const publisher = redisEvents ?? noRedisEvents
   const byokMasterKeys: Readonly<Record<string, string>> = await readConfiguredByokMasterKeys(env).catch(() => Object.freeze({}))
   const fileUploads = createPostgresFileUploadOperations(pool, {
@@ -823,7 +823,7 @@ export async function createWebUiApp(
     ...(recoverAgentOrphanedSession ? {
       recoverOrphanedSession: recoverAgentOrphanedSession,
     } : {}),
-    listInteractions: createPostgresAgentInteractionHistory(pool, undefined, config.secretKey),
+    listInteractions: createPostgresAgentInteractionHistory(pool, undefined, config.secretKey, true),
   }).list
   const agentQueueStatuses = config.redisUrl
     ? createRedisAgentActiveStatusReader(config.redisUrl)
@@ -1110,7 +1110,7 @@ export async function createWebUiApp(
     now: Date.now,
   })
   const runAgent = createSerialWorker()
-  const { scheduledAttempt, agentRunLifecycle, ownerReflectionWork, agentInteractionRespond, agentSecretInteraction, agentRunLog, imOwnerTools } = await createAgentServices({
+  const { scheduledAttempt, agentRunLifecycle, ownerReflectionWork, agentInteractionRespond, agentSecretInteraction, agentRunLog, imOwnerTools, registerImSubagentParentBinder } = await createAgentServices({
     config, pool, core, env, runAgent,
     publisher, capabilitySkills, filesystemAuthorizationConfirmations, readMcpSettings,
     mcpSkillTools, mcpRuntime, projectTrashStorage, projectDirectoryRenamer,
@@ -1611,7 +1611,7 @@ export async function createWebUiApp(
       }),
       publishChanged: publishPendingQueueChanged,
     },
-    readAgentToolEventDetails: createPostgresAgentToolEventDetails(pool),
+    readAgentToolEventDetails: createPostgresAgentToolEventDetails(pool, config.secretKey),
     agentMisc: {
       commandMenu: agentCommandMenu,
       defaultStateLabels: DEFAULT_AGENT_STATE_LABELS,
@@ -2128,7 +2128,7 @@ export async function createWebUiApp(
       ]))
     }
   })
-  return { app, runAgent, loopScopeTrace, agentRunLog, imOwnerTools, imMcpDirectory: mcpSkillTools, async startWorkers() {
+  return { app, runAgent, loopScopeTrace, agentRunLog, imOwnerTools, registerImSubagentParentBinder, imMcpDirectory: mcpSkillTools, async startWorkers() {
     await agentRunLifecycle?.start()
     await backgroundWorkers.start()
     webPush?.start()

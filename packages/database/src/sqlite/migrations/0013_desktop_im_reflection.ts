@@ -24,6 +24,33 @@ export function initializeDesktopImReflection(db: SQLite.Database): void {
       FOREIGN KEY(owner_id,platform,connection_id,event_key)
         REFERENCES desktop_im_inbox(owner_id,platform,connection_id,event_key) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS desktop_im_reflection_positions (
+      owner_id TEXT NOT NULL, session_id INTEGER NOT NULL, scope_type TEXT NOT NULL, scope_id TEXT NOT NULL,
+      last_sequence INTEGER NOT NULL CHECK(last_sequence >= 0),
+      PRIMARY KEY(owner_id,session_id,scope_type,scope_id),
+      FOREIGN KEY(session_id) REFERENCES conversation_sessions(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS desktop_im_reflection_plans (
+      owner_id TEXT NOT NULL, session_id INTEGER NOT NULL, run_id TEXT NOT NULL, scope_type TEXT NOT NULL, scope_id TEXT NOT NULL,
+      through_sequence INTEGER NOT NULL CHECK(through_sequence > 0), payload TEXT,
+      PRIMARY KEY(owner_id,session_id,run_id,scope_type,scope_id),
+      FOREIGN KEY(owner_id,session_id,run_id,scope_type,scope_id)
+        REFERENCES desktop_im_reflection_jobs(owner_id,session_id,run_id,scope_type,scope_id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS desktop_im_reflection_triggers (
+      owner_id TEXT NOT NULL, session_id INTEGER NOT NULL,
+      passive_count INTEGER NOT NULL DEFAULT 0 CHECK(passive_count >= 0 AND passive_count < 50),
+      requested_sequence INTEGER NOT NULL DEFAULT 0 CHECK(requested_sequence >= 0),
+      idle_due_at_ms INTEGER,
+      PRIMARY KEY(owner_id,session_id),
+      FOREIGN KEY(session_id) REFERENCES conversation_sessions(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS desktop_im_reflection_thresholds (
+      owner_id TEXT NOT NULL, session_id INTEGER NOT NULL,
+      through_sequence INTEGER NOT NULL CHECK(through_sequence > 0), due_at_ms INTEGER NOT NULL,
+      PRIMARY KEY(owner_id,session_id,through_sequence),
+      FOREIGN KEY(session_id) REFERENCES conversation_sessions(id) ON DELETE CASCADE
+    );
     CREATE INDEX IF NOT EXISTS desktop_im_reflection_jobs_pending
       ON desktop_im_reflection_jobs(owner_id,session_id,status,created_at_ms);
   `)).immediate()

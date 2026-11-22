@@ -58,7 +58,7 @@
             <span class="pv-dot" />
             <div class="pv-title">{{ form.title || t('adminNotifications.defaultTitle') }}</div>
           </div>
-          <div v-if="form.content" class="pv-content md-nb" v-html="renderMarkdown(form.content)" />
+          <MarkdownView v-if="form.content" class="pv-content md-nb" :text="form.content" />
         </div>
 
         <div v-if="err" class="err-msg">{{ err }}</div>
@@ -104,7 +104,7 @@ import { ref, reactive, onMounted, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAdminStore } from '@/stores/admin'
 import { showAppNotice } from '@/composables/core/useAppToast'
-import { renderMarkdown } from '@/utils/markdown'
+import MarkdownView from '@/components/common/content/MarkdownView.vue'
 import { fmtLocalDateTime } from '@/utils/dateAttribution'
 import RefreshButton from '@/components/common/controls/RefreshButton.vue'
 

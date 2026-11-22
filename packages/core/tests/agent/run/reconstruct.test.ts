@@ -10,7 +10,7 @@ const lease = {
 }
 
 function fixture() {
-  const provider = { branchProvider: vi.fn(), reflectionProjection: vi.fn(), summaryProjection: vi.fn(), completeText: vi.fn() }
+  const provider = { branchProvider: vi.fn(), reflectionProvider: vi.fn(), summaryProjection: vi.fn(), completeText: vi.fn() }
   const runtime = {
     provider,
     harness: {

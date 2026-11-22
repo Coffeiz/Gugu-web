@@ -1,9 +1,11 @@
 import { formatToolResults } from '../../../src/agent/providers/tool-result-format.js'
 import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
-import type { CanonicalContextPorts, AgentRunnerPorts } from '../../../src/agent/ports.js'
+import { buildFixedRequestPrefix } from '../../../src/agent/context/assemble.js'
+import { formatSqliteAgentOverview } from '../../../src/agent/context/sqlite-overview.js'
+import type { ContextSourcePorts, CanonicalContextPorts, AgentRunnerPorts } from '../../../src/agent/ports.js'
 import type { CanonicalRunContext, CanonicalMessage, Json, ProviderEvent } from '../../../src/agent/models.js'
-import { contextAccessScopeHash, createCanonicalContextPort, createCanonicalRunner, createCanonicalSourceLoader, createCompactionSummarizer, isEarlyExit, stableJson } from '../../../src/agent/index.js'
+import { agentContextSnapshotPrefix, createMainContextBuilder, createWebAgentContextBuilder, contextAccessScopeHash, createCanonicalContextPort, createCanonicalRunner, createCanonicalSourceLoader, createCompactionSummarizer, isEarlyExit, stableJson } from '../../../src/agent/index.js'
 import { connectProviderHarness } from '../../../src/agent/providers/runtime.js'
 import { ProviderError, classifyProviderError } from '../../../src/agent/providers/errors.js'
 import { openaiPolicy } from '../../../src/agent/providers/openai/driver.js'
@@ -204,6 +206,70 @@ describe('真实Provider到Canonical Harness组合', () => {
     expect(value.sent).toHaveLength(1)
     await value.provider.close()
   })
+  it.each([
+    ['web', 'openai'], ['web', 'anthropic'], ['desktop', 'openai'], ['desktop', 'anthropic'],
+  ] as const)('%s 主场景迁移前后的 %s 首轮与工具轮 Provider 请求一致', async (host, protocol) => {
+    const selection = { modelIdentity: 'model-a', contextWindow: 10000, locale: 'zh-CN', groupChat: false, workspaceBinding: null,
+      contextPolicy: { loadOwnerContext: true, memoryEnabled: true } }
+    const accessScopeHash = contextAccessScopeHash(identity, selection, digest)
+    const signal = new AbortController().signal
+    const legacyBuilder: ContextSourcePorts['builder'] = host === 'web'
+      ? createWebAgentContextBuilder({
+        now: () => 0, staticPrompt: () => ({
+          base: '固定人格', persona: '', skills: '', policy: '', skillIndex: '', locale: 'zh-CN', timezone: 'UTC', now: new Date(0),
+        }),
+        sessionInfo: () => ({ stylePreferences: {} }), systemInMessages: () => true,
+      })
+      : {
+        buildSnapshot: data => ({
+          systemPrompt: '固定人格', sessionInfo: { stylePreferences: data.stylePreferences }, userTimezone: data.userTimezone,
+          snapshotContext: formatSqliteAgentOverview({ projects: [], events: [], notes: [] }, '桌面合成记忆'),
+        }),
+        buildRequest: snapshot => ({ systemPrompt: '固定人格', systemInMessages: false,
+          fixedPrefix: snapshot.snapshotContext ? agentContextSnapshotPrefix(snapshot.snapshotContext) : [] }),
+      }
+    const ports: ContextSourcePorts = {
+      digest, nextId: () => 'entry-source', now: () => 0, currentRevision: async () => 0,
+      readSnapshot: async () => ({ ...identity, contextEpoch: 0, context: null, snapshotHash: null, sessionInfoHash: null, snapshotExpiresAt: null, baselineMessageSeq: 0 }),
+      select: async () => selection,
+      historyReader: { read: async () => ({ baselineSeq: 0, rows: [
+        { ...identity, id: '1', conversationSeq: 1, role: 'user', content: '上一轮合成问题' },
+        { ...identity, id: '2', conversationSeq: 2, role: 'assistant', content: '上一轮合成回答' },
+      ] }) },
+      currentTurn: async () => ({ currentUser: { persistedMessageId: '3', message: { role: 'user', content: '当前合成问题' } } }),
+      data: { loadTimezone: async () => 'UTC', loadProjects: async () => [], loadEvents: async () => [], loadNotes: async () => [],
+        loadFilesOverview: async () => ({}), loadStylePreferences: async () => ({}), loadImChannels: async () => ({}),
+        loadMemory: async () => ({}), loadImMemory: async () => ({}), loadKnowledge: async () => [] },
+      builder: legacyBuilder,
+    }
+    const { config, streamTool, streamFinal } = protocolFixture(protocol)
+    async function capture(builder: ContextSourcePorts['builder'], run = identity) {
+      const loaded = await createCanonicalSourceLoader({ ...ports, builder }).load(run, signal)
+      const requestPrefix = buildFixedRequestPrefix(loaded.input)
+      const value = setup([streamTool, streamFinal], { config, scopeHash: accessScopeHash, requestPrefix,
+        sourceLoad: async () => ({ ...loaded, capabilities: { toolNames: ['lookup'],
+          tools: [{ name: 'lookup', schema: { type: 'function', function: { name: 'lookup', parameters: { type: 'object' } } } }] } }),
+      })
+      try {
+        expect((await collect(value.harness.start(run))).state.status).toBe('completed')
+        expect(value.sent).toHaveLength(2)
+        const first = stableJson(value.sent[0]!.body)
+        expect(first).toContain('固定人格')
+        expect(first).toContain('上一轮合成问题')
+        expect(first).toContain('lookup')
+        return { bodies: value.sent.map(request => JSON.stringify(request.body)), effect: loaded.sourceEffects }
+      } finally { await value.provider.close() }
+    }
+    const migrated = createMainContextBuilder(legacyBuilder)
+    const cold = await capture(legacyBuilder)
+    expect(await capture(migrated)).toEqual(cold)
+    // 下一 Run 两条路径都从迁移前的持久快照起步。
+    ports.readSnapshot = async () => structuredClone(cold.effect.sessionSnapshot.state)
+    const nextRun = { ...identity, runId: 'run-next' }
+    const warm = await capture(legacyBuilder, nextRun)
+    expect(warm.effect.sessionSnapshot.phase).toBe('hit')
+    expect(await capture(migrated, nextRun)).toEqual(warm)
+  })
   it('实际OpenAI请求先清孤儿历史再放缓存断点，诊断报告真实删除位置且Canonical原文不变', async () => {
     const probes: ProviderRequestProbe[] = []
     const value = setup([final], { systemPrompt: '', requestPrefix: [{ role: 'system', content: '稳定系统提示' }], history: [{ role: 'user', content: '上一轮用户消息' }, { role: 'tool', tool_call_id: 'stale', content: '合成孤儿结果' }], probeSink: probe => probes.push(probe) })
@@ -216,33 +282,6 @@ describe('真实Provider到Canonical Harness组合', () => {
     expect(stableJson(result.state.context!.prepared.area.entries)).toContain('合成孤儿结果')
     const completion = vi.mocked(value.context.finalization.complete).mock.calls[0]![0]
     expect((completion.projection as import('../../../src/agent/providers/contracts.js').ProviderProjection).wire.protectedPrefixRowCount).toBe(1)
-    await value.provider.close()
-  })
-  it.each(['anthropic', 'minimax'])('%s实际反思分支清孤儿并保留两工具及分行结果，删除动态尾、继承原断点并只追加一次增量', async provider => {
-    const f = protocolFixture('anthropic')
-    const history: CanonicalMessage[] = [{ role: 'user', content: '合成历史前文' },
-      { role: 'assistant', content: [{ type: 'thinking', thinking: '不可回放的持久私有块', signature: '不可回放的旧签名' }, { type: 'text', text: '读取合成信息' }, { type: 'tool_call', id: 'a', name: 'lookup', arguments: { q: '甲' } }, { type: 'tool_call', id: 'b', name: 'lookup', arguments: { q: '乙' } }] },
-      { role: 'user', content: [{ type: 'tool_result', tool_call_id: 'a', content: '完整甲回执' }] },
-      { role: 'user', content: [{ type: 'tool_result', tool_call_id: 'b', content: '完整乙回执' }] },
-      { role: 'tool', tool_call_id: 'orphan', content: '必须剔除的孤儿' }]
-    const value = setup([f.streamFinal, JSON.stringify(f.completed('反思完成'))], { config: { ...f.config, provider, model: provider === 'minimax' ? 'MiniMax-M3' : 'claude-sonnet-4-6', reasoning_persistence: 'off' }, history, extraReminder: '主Run动态尾' })
-    expect((await collect(value.harness.start(identity))).state.status).toBe('completed')
-    const completion = vi.mocked(value.context.finalization.complete).mock.calls[0]![0]
-    const original = completion.projection as import('../../../src/agent/providers/contracts.js').ProviderProjection
-    const before = structuredClone(original), stable = original.wire.messages.slice(0, original.wire.stableRowCount)
-    const projection = (await value.provider.reflectionProjection(identity, 'model-a')).append(original, [{ role: 'assistant', content: completion.text }])
-    expect(await value.provider.completeBranch({ ...identity, modelIdentity: 'model-a', projection, stableSystem: completion.requestSystemPrompt, tools: completion.requestTools, delta: '仅追加一次的反思增量', outputMode: 'text' })).toMatchObject({ output: '反思完成' })
-    const main = value.sent[0]!.body as JsonObject, branch = value.sent[1]!.body as JsonObject, rows = branch.messages as JsonObject[]
-    expect(rows.slice(0, stable.length)).toEqual(stable)
-    expect(branch.system).toEqual(main.system); expect(branch.tools).toEqual(main.tools)
-    expect(rows.at(-1)).toEqual({ role: 'user', content: [{ type: 'text', text: '仅追加一次的反思增量' }] })
-    expect(rows.at(-2)).toEqual({ role: 'assistant', content: [{ type: 'text', text: completion.text, cache_control: { type: 'ephemeral' } }] })
-    const blocks = rows.flatMap(row => Array.isArray(row.content) ? row.content as JsonObject[] : [])
-    expect(blocks.filter(block => block.type === 'tool_use')).toEqual([{ type: 'tool_use', id: 'a', name: 'lookup', input: { q: '甲' } }, { type: 'tool_use', id: 'b', name: 'lookup', input: { q: '乙' } }])
-    expect(blocks.filter(block => block.type === 'tool_result')).toMatchObject([{ tool_use_id: 'a', content: '完整甲回执' }, { tool_use_id: 'b', content: '完整乙回执' }])
-    for (const excluded of ['主Run动态尾', '必须剔除的孤儿', '不可回放的持久私有块', '不可回放的旧签名']) expect(stableJson(branch)).not.toContain(excluded)
-    expect(stableJson(rows.at(-1))).not.toContain('cache_control')
-    expect(original).toEqual(before); expect(value.sent).toHaveLength(2)
     await value.provider.close()
   })
   it.each(['openai', 'responses', 'anthropic', 'ollama'])('%s从实际Harness快照经生产转换器执行三次摘要HTTP，清参裁旧不丢原生wire或固定前缀', async protocol => {
@@ -306,24 +345,17 @@ describe('真实Provider到Canonical Harness组合', () => {
     expect(probes.at(-1)!.cacheDiagnostics).toMatchObject({ conversation_messages: 3, cache_anchor_count: 2, cache_anchor_indices: [0, 2], cache_anchor_last_index: 2, turn_batch_count: 0 })
     await value.provider.close()
   })
-  it.each(['openai', 'responses', 'anthropic', 'ollama'])('%s实际wire记录独立稳定行边界，反思移除动态尾且不重渲染原前缀，非法边界拒绝', async protocol => {
+  it.each(['openai', 'responses', 'anthropic', 'ollama'])('%s正常对话的实际请求记录稳定历史与动态尾部边界', async protocol => {
     const config = { provider: protocol === 'ollama' ? 'ollama' : protocol === 'anthropic' ? 'anthropic' : 'openai', api_format: protocol, model: 'synthetic-model' }
     const script = protocol === 'openai' ? final : protocol === 'responses' ? `data: ${JSON.stringify({ type: 'response.completed', response: { status: 'completed', output_text: '完成', output: [{ type: 'message', content: [{ type: 'output_text', text: '完成' }] }] } })}\n\n`
       : protocol === 'ollama' ? '{"message":{"content":"完成"},"done":true}\n'
       : [{ type: 'message_start', message: { content: [] } }, { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '完成' } }, { type: 'content_block_stop', index: 0 }, { type: 'message_stop' }].map(event => `data: ${JSON.stringify(event)}\n\n`).join('')
     const value = setup([script], { config, extraReminder: '本Run动态合成提醒' })
-    const port = await value.provider.reflectionProjection(identity, 'model-a')
     const result = await collect(value.harness.start(identity)); expect(result.state.status).toBe('completed')
     const projection = vi.mocked(value.context.finalization.complete).mock.calls[0]![0].projection as import('../../../src/agent/providers/contracts.js').ProviderProjection
-    const before = structuredClone(projection), rows = projection.wire.messages
+    const rows = projection.wire.messages
     expect(projection.dynamicTailSize).toBe(1); expect(projection.wire.stableRowCount).toBe(rows.length - 1)
     expect(stableJson(rows.at(-1))).toContain('本Run动态合成提醒')
-    const appended = port.append(projection, [{ role: 'assistant', content: result.state.text }])
-    expect(appended.dynamicTailSize).toBe(0); expect(appended.wire.messages.slice(0, -1)).toEqual(rows.slice(0, -1))
-    expect(stableJson(appended.wire.messages)).not.toContain('本Run动态合成提醒'); expect(projection).toEqual(before)
-    expect(() => port.append({ ...projection, wire: { ...projection.wire, stableRowCount: rows.length + 1 } }, [])).toThrow(ProviderError)
-    expect(() => port.append({ ...projection, wire: { ...projection.wire, stableRowCount: undefined } }, [])).toThrow(ProviderError)
-    expect(() => port.append({ ...projection, wire: { ...projection.wire, identity: { ownerId: 'foreign', sessionId: identity.sessionId } } }, [])).toThrow(ProviderError)
     await value.provider.close()
   })
   it.each(['过期', '跨Run', '成功收尾'])('私有续接%s后明确拒绝引用，不能静默丢签名继续模型请求', async kind => {
@@ -543,6 +575,33 @@ describe('共享重试、池与前缀协调契约', () => {
     expect(observations[0]).toMatchObject({ input: { messages: expect.arrayContaining([{ role: 'user', content: '合成分支输入' }]) }, attributes: { purpose: 'branch' } })
     expect(observations[1]).toMatchObject({ usage: { input: 5, output: 2 }, attributes: { purpose: 'branch' } })
     expect(observations[2]).toMatchObject({ output: '合成分支输出', status: 'success', attributes: { purpose: 'branch' } })
+    await value.provider.close()
+  })
+  it('独立反思追踪记录实际系统提示词和消息，并移除配置中的模型密钥', async () => {
+    const observations: AgentObservation[] = []
+    const apiKey = 'synthetic-reflection-key'
+    const value = setup([JSON.stringify({ choices: [{ message: { content: '{}' }, finish_reason: 'stop' }] })], {
+      config: { ...protocolFixture('openai').config, api_key: apiKey },
+      observation: { record: event => observations.push(event) },
+    })
+    const observationIdentity = { ...identity, runId: 'reflection-fixture' }
+    const delta = `合成反思证据 ${apiKey}`
+    await value.provider.completeBranch({
+      ...identity, observationIdentity, modelIdentity: 'model-a', scenario: 'reflection',
+      stableSystem: '合成反思规则', delta, tools: [],
+    })
+    const request = value.sent[0]!.body as JsonObject
+    const messages = request.messages as JsonObject[]
+    expect(messages[0]).toMatchObject({ role: 'system' })
+    expect(JSON.stringify(messages[0])).toContain('合成反思规则')
+    expect(messages[1]).toEqual({ role: 'user', content: delta })
+    expect(observations[0]).toMatchObject({
+      identity: observationIdentity, attributes: { branch_name: 'reflection' },
+    })
+    expect(observations[0]?.input).toEqual({
+      ...request, messages: [messages[0], { ...messages[1], content: '合成反思证据 [凭据]' }],
+    })
+    expect(JSON.stringify(observations)).not.toContain(apiKey)
     await value.provider.close()
   })
   it('Core观测端口记录分支Provider失败类别但不泄漏上游错误正文', async () => {

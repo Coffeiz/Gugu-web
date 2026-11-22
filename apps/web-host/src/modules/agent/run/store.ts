@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg'
-import { RunStoreRejected } from '@gugu/core/agent'
+import { createAgentInboxDecoder, type AgentInboxRow, createSubagentOutcomeDecoder, createSubagentOutcomeEncoder, type SubagentDeliveryRow, RunStoreRejected } from '@gugu/core/agent'
 import { createAgentRunCodec, assertRunEventTransition, assertRunIdentity as validateIdentity, sameRunIdentity as sameIdentity, assertRunCheckpoint as assertCheckpointIdentity } from '@gugu/core/agent/run/codec'
 import { withBorrowedPostgresQuery } from '@gugu/core/data'
 import type { Lease, RunCheckpoint, RunEvent, RunIdentity, RunStore } from '@gugu/core/agent'
@@ -14,6 +14,8 @@ export interface AgentRunHistoryWrite<C> {
 }
 
 export interface AgentRunStoreOptions<C> {
+  /** 仅在子交付成功提交后提示调度器检查持久等待。 */
+  onSubagentDeliveryCommitted?(parent: RunIdentity): void | Promise<void>
   /** 私有Provider状态与每次checkpoint CAS同事务；只允许当前client与内存，不得执行网络或另借连接。 */
   persistPrivateContext?(client:PoolClient,identity:RunIdentity,next:RunCheckpoint<C>,previous:RunCheckpoint<C>|null):Promise<void>
   /** 首次 prepared checkpoint 与快照 CAS 同事务提交。 */
@@ -126,6 +128,9 @@ export function createPostgresAgentRunStore<C>(
   options: AgentRunStoreOptions<C>,
 ): RunStore<C> & { readEventsAfter(identity: RunIdentity, sequence: number): Promise<readonly RunEvent[]>; readForUpdate(client: PoolClient, identity: RunIdentity): Promise<RunCheckpoint<C> | null> } {
   const codec = createAgentRunCodec(secretKey)
+  const decodeInbox = createAgentInboxDecoder(secretKey)
+  const encodeSubagentOutcome = createSubagentOutcomeEncoder(secretKey)
+  const decodeSubagentOutcome = createSubagentOutcomeDecoder(secretKey)
   const decodeCheckpoint = (identity: RunIdentity, row: StoredCheckpoint | undefined): RunCheckpoint<C> | null =>
     row ? codec.decryptCheckpoint<C>(identity, Number(row.version), row.nonce, row.payload) : null
 
@@ -143,6 +148,31 @@ export function createPostgresAgentRunStore<C>(
   }
 
   return {
+    async isSubagentPending(identity, childId) {
+      validateIdentity(identity)
+      const result = await pool.query(`SELECT 1 FROM agent_subagent_deliveries
+        WHERE owner_id=$1 AND parent_session_id=$2 AND parent_run_id=$3 AND child_id=$4 AND status IN ('queued','running')`,
+      [identity.ownerId, identity.sessionId, identity.runId, childId])
+      return result.rowCount === 1
+    },
+    async readAgentInbox(identity) {
+      validateIdentity(identity)
+      const { rows } = await pool.query<AgentInboxRow>(`SELECT message_id,sender_session_id,sender_run_id,nonce,payload
+        FROM agent_inbox_messages WHERE owner_id=$1 AND recipient_session_id=$2 AND recipient_run_id=$3
+          AND consumed_checkpoint_version IS NULL ORDER BY sequence LIMIT 16`, [identity.ownerId, identity.sessionId, identity.runId])
+      return rows.map(row => decodeInbox(identity, row))
+    },
+    async readSubagentFinals(identity) {
+      validateIdentity(identity)
+      const { rows } = await pool.query<SubagentDeliveryRow>(`SELECT child_id,child_run_id,status,nonce,payload
+        FROM agent_subagent_deliveries WHERE owner_id=$1 AND parent_session_id=$2 AND parent_run_id=$3
+          AND payload IS NOT NULL AND consumed_checkpoint_version IS NULL
+        ORDER BY updated_at,child_id LIMIT 16`, [identity.ownerId, identity.sessionId, identity.runId])
+      return rows.flatMap(row => {
+        const outcome = decodeSubagentOutcome(identity, row)
+        return outcome ? [outcome] : []
+      })
+    },
     async readForUpdate(client, identity) {
       validateIdentity(identity)
       return withBorrowedPostgresQuery(client, async query => {
@@ -229,6 +259,47 @@ export function createPostgresAgentRunStore<C>(
             encrypted.nonce, encrypted.payload, change.expectedVersion],
         )
         if (updated.rowCount !== 1) throw new RunStoreRejected('conflict')
+        if (change.agentInboxWaiting === true) await client.query(`
+          INSERT INTO agent_inbox_waits(owner_id,session_id,run_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,
+        [identity.ownerId, identity.sessionId, identity.runId])
+        else if (change.agentInboxWaiting === false) await client.query(`DELETE FROM agent_inbox_waits
+          WHERE owner_id=$1 AND session_id=$2 AND run_id=$3`, [identity.ownerId, identity.sessionId, identity.runId])
+        if (change.subagentWaitChildId === null) await client.query(`DELETE FROM agent_subagent_waits
+          WHERE owner_id=$1 AND parent_session_id=$2 AND parent_run_id=$3`, [identity.ownerId, identity.sessionId, identity.runId])
+        else if (change.subagentWaitChildId !== undefined) await client.query(`
+          INSERT INTO agent_subagent_waits(owner_id,parent_session_id,parent_run_id,child_id) VALUES($1,$2,$3,$4)
+          ON CONFLICT(owner_id,parent_session_id,parent_run_id) DO UPDATE SET child_id=excluded.child_id`,
+        [identity.ownerId, identity.sessionId, identity.runId, change.subagentWaitChildId])
+        const delivered = [...new Set(change.subagentFinalIds ?? [])]
+        if (delivered.length) {
+          const consumed = await client.query(`UPDATE agent_subagent_deliveries
+            SET consumed_checkpoint_version=coalesce(consumed_checkpoint_version,$5)
+            WHERE owner_id=$1 AND parent_session_id=$2 AND parent_run_id=$3
+              AND child_id=ANY($4::text[]) AND payload IS NOT NULL`,
+          [identity.ownerId, identity.sessionId, identity.runId, delivered, change.checkpoint.version])
+          if (consumed.rowCount !== delivered.length) throw new RunStoreRejected('conflict')
+        }
+        const messages = [...new Set(change.inboxMessageIds ?? [])]
+        if (messages.length) {
+          const consumed = await client.query(`UPDATE agent_inbox_messages SET consumed_checkpoint_version=$5
+            WHERE owner_id=$1 AND recipient_session_id=$2 AND recipient_run_id=$3
+              AND message_id=ANY($4::text[]) AND consumed_checkpoint_version IS NULL`,
+          [identity.ownerId, identity.sessionId, identity.runId, messages, change.checkpoint.version])
+          if (consumed.rowCount !== messages.length) throw new RunStoreRejected('conflict')
+        }
+        const terminal = change.subagentTerminalDelivery
+        if (terminal) {
+          const { parent, outcome } = terminal
+          if (parent.ownerId !== identity.ownerId) throw new RunStoreRejected('conflict')
+          const { nonce, payload } = encodeSubagentOutcome(parent, identity.runId, outcome)
+          const delivery = await client.query(`UPDATE agent_subagent_deliveries
+            SET status=$5,updated_at=$9,nonce=$6,payload=$7
+            WHERE owner_id=$1 AND parent_session_id=$2 AND parent_run_id=$3 AND child_run_id=$4
+              AND status IN ('queued','running') AND EXISTS(SELECT 1 FROM agent_subagent_executions
+                WHERE child_run_id=$4 AND child_session_id=$8)`,
+          [parent.ownerId, parent.sessionId, parent.runId, identity.runId, outcome.status, nonce, payload, sessionNumber(identity.sessionId), new Date().toISOString()])
+          if (delivery.rowCount !== 1) throw new RunStoreRejected('conflict')
+        }
         await insertEvents(client, codec, identity, change.events)
         if (change.checkpoint.context !== null && options.applyPreparedContext) {
           const previous = codec.decryptCheckpoint<C>(identity, Number(current.rows[0].version), current.rows[0].nonce, current.rows[0].payload)
@@ -239,6 +310,10 @@ export function createPostgresAgentRunStore<C>(
         if (change.history !== null)
           await options.writeHistory(client, identity, change.history, change.checkpoint)
       }, (error) => isPostgresUniqueViolation(error) ? new RunStoreRejected('conflict') : error)
+      if (change.subagentTerminalDelivery && options.onSubagentDeliveryCommitted) {
+        try { await options.onSubagentDeliveryCommitted(change.subagentTerminalDelivery.parent) }
+        catch { /* 通知丢失由调度扫描补偿，事务已提交。 */ }
+      }
     },
 
     async pendingEvents(identity) {

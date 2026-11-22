@@ -289,6 +289,7 @@ const props = defineProps<{
   trackMessageSent?: (turn: number) => void
   trackChatEvent?: (event: 'chat_open' | 'chat_expanded') => void
   sessionAccess?: ChatConversationAccess
+  localSessionBadges?: boolean
   httpStream?: ChatHttpStreamAccess
   resolveChatCommand?: ResolveChatCommand
   automaticModeAccess?: { read(): Promise<boolean>; write(value: boolean): Promise<boolean> }
@@ -560,7 +561,8 @@ watch(streaming, active => {
 const badgeAuth = useAuthStore()
 const webSessionBadges = useWebSessionBadges({
   sessions, sessionId, visible: open,
-  accountId: computed(() => badgeAuth.user?.id ?? null),
+  accountId: computed(() => props.localSessionBadges ? 'desktop-local' : badgeAuth.user?.id ?? null),
+  persist: !props.localSessionBadges,
 })
 
 // 业务空状态可以请求打开聊天并预填一条配置指令；只消费一次，绝不自动发送。
@@ -710,7 +712,7 @@ async function onInteractionSelect(message: ChatMessage, option: { id: string; l
     interaction.customAnswer = option.customAnswer
     interaction.selectedOptionId = option.id
     interaction.responseText = option.label
-    if (resumesTool && sessionId.value === currentSessionId)
+    if (resumesTool && !interaction.delegated && sessionId.value === currentSessionId)
       void resumeStream(currentSessionId, result.runId ?? message.runId)
   } catch {
     _chatTip(t('chatUi.interactionSubmitFailed'))
@@ -753,7 +755,7 @@ async function resolveSecretInteraction(
     interaction.resolved = true
     if (cancel) interaction.selectedOptionId = 'cancel'
     interaction.responseText = t(cancel ? 'chatUi.confirmationCancelled' : 'chatUi.secretSubmitted')
-    if (result.runId && sessionId.value === currentSessionId) void resumeStream(currentSessionId, result.runId)
+    if (result.runId && !interaction.delegated && sessionId.value === currentSessionId) void resumeStream(currentSessionId, result.runId)
   } catch {
     _chatTip(t(failure))
   } finally {
@@ -782,7 +784,7 @@ async function onInteractionTextSubmit(message: ChatMessage, text: string) {
     interaction.selectedOptionId = CUSTOM_REPLY_OPTION_ID
     interaction.responseText = answer
     interaction.customInputActive = false
-    if (result.runId && sessionId.value === currentSessionId) {
+    if (result.runId && !interaction.delegated && sessionId.value === currentSessionId) {
       void resumeStream(currentSessionId, result.runId)
       return
     }

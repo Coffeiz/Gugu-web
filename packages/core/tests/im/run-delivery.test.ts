@@ -81,6 +81,22 @@ test('Shell 提示按动作显示并兼容已提交的旧回执', async () => {
   assert.equal(f.cursor, 3)
 })
 
+test('抓取网页提示使用中文名称，并跳过已投递的旧回执', async () => {
+  const f = deliveryFixture([
+    event(1, 'tool_done', { name: 'http_get', status: 'success' }),
+    event(2, 'tool_done', { name: 'http_get', status: 'success' }),
+  ])
+  f.receipts.set('tool-notice:1', { fingerprint: digest('✅ http_get完成'), state: 'accepted' })
+  const notices: string[] = []
+  const recovery = createImRunDeliveryRecovery({
+    ...f.ports,
+    sender: { ...f.ports.sender, async toolNotice({ text }) { notices.push(text); return 'accepted' } },
+  })
+  await recovery.recover(identity)
+  assert.deepEqual(notices, ['✅ 抓取网页完成'])
+  assert.equal(f.cursor, 2)
+})
+
 test('工具完成提示在文本流边界后发送，失败或恢复不影响最终正文', async () => {
   const events = [
     event(1, 'tool_call', { name: 'get_current_time', input: '私有参数' }),

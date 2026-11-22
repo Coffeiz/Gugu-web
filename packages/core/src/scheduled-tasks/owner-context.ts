@@ -1,10 +1,9 @@
-import { agentCurrentTimeReminderBody } from '../agent/context/builder.js'
 import { loadContextData } from '../agent/context/prepare.js'
-import type { ContextSourceSelection, PrepareContextInput, RunIdentity } from '../agent/models.js'
+import { assembleScheduledTaskContext } from '../agent/scenes/task/definition.js'
+import type { ContextSourceSelection, RunIdentity } from '../agent/models.js'
 import type { ContextDataPorts, ContextSourcePorts } from '../agent/ports.js'
 import type { ScheduledTaskExecutionPlan } from './run-now-read.js'
 
-const deliveryInstruction = '## 输出方式\n\n这轮对话不会流式展示给用户，所有工具都用完之后再一次性给出完整回复。工具调用之间不要输出过程性旁白。任务包含多个部分时，在最后一条回复中提供全部结果。'
 
 export function createScheduledTaskContextLoader(options: {
   data: Pick<ContextDataPorts, 'loadTimezone' | 'loadStylePreferences' | 'loadMemory' | 'loadImChannels'>
@@ -52,16 +51,8 @@ export function createScheduledTaskContextLoader(options: {
     const style = data.stylePreferences
     const locale = style && typeof style === 'object' && !Array.isArray(style) ? style.locale : undefined
     const selected = typeof locale === 'string' ? { ...selection, locale } : selection
-    const snapshot = builder.buildSnapshot(data, selected, identity)
-    snapshot.snapshotContext = [snapshot.snapshotContext, deliveryInstruction].filter(Boolean).join('\n\n')
-    const request = builder.buildRequest(snapshot, selected, identity)
-    const input: PrepareContextInput = {
-      ownerId: identity.ownerId, sessionId: identity.sessionId, entryKind: 'scheduled_task',
-      history: [], fixedPrefix: request.fixedPrefix, systemPrompt: request.systemPrompt, systemInMessages: request.systemInMessages,
-      userTimezone: snapshot.userTimezone, snapshotText: snapshot.snapshotContext,
-      currentUser: { message: { role: 'user', content: prompt }, rawText: prompt },
-      ...(options.currentTimeReminder === false ? {} : { extraReminder: agentCurrentTimeReminderBody(new Date(now()), snapshot.userTimezone) }),
-    }
+    const input = assembleScheduledTaskContext({ builder, data, selection: selected, identity, prompt,
+      ...(options.currentTimeReminder === false ? {} : { now }) })
     return { modelIdentity, contextWindow, accessScopeHash, input }
   }
 }

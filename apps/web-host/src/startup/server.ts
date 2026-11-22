@@ -147,7 +147,7 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
     if (ownership.runtime === 'node') imDeliveryPool = createPool(config, 4)
     const gateway = createNodeImHostRuntime({ pool, deliveryPool: imDeliveryPool ?? pool, core, redisUrl: config.redisUrl,
       secretKey: config.secretKey, storageRoot: config.storageLocalPath, configOverridePath, environment: env,
-      promptRoot, publicAppUrl: config.publicAppUrl, ownership, mcpRuntime: sharedMcp, imOwnerTools: web.imOwnerTools, mcpDirectory: web.imMcpDirectory,
+      promptRoot, publicAppUrl: config.publicAppUrl, ownership, mcpRuntime: sharedMcp, imOwnerTools: web.imOwnerTools, registerImSubagentParentBinder: web.registerImSubagentParentBinder, mcpDirectory: web.imMcpDirectory,
       runAgent: web.runAgent, observation: web.loopScopeTrace?.forSource('im'), log: web.agentRunLog,
       diagnose(code, error) {
         if (code === 'im_rag_timeout') gatewayLog('gateway.rag_timeout', { error })
