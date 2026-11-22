@@ -4,6 +4,7 @@ import { execFileSync, spawn } from 'node:child_process'
 import { buildCore } from '../../../packages/core/scripts/build.mjs'
 import { buildDesktopAgentRuntime } from './build-agent-runtime.mjs'
 import { prepareDesktopPty } from './prepare-pty.mjs'
+import { pruneSidecarHost } from './prune-sidecar.mjs'
 import {
   cpSync,
   existsSync,
@@ -118,6 +119,17 @@ async function prepareSidecar() {
   // 确认复制后的 Node 不依赖安装目录的动态库，再替换已有制品。
   if (!canRunStandalone(embeddedNode))
     throw new Error('复制后的 Node 不能独立运行，请使用官方 Node 发行版准备桌面制品')
+  // 裁剪开发期文件与异平台二进制，裁剪后再生成清单，保证摘要与实际内容一致。
+  const pruned = pruneSidecarHost(host)
+  console.log(
+    JSON.stringify({
+      status: 'pruned',
+      removed: pruned.removed,
+      savedBytes: pruned.saved,
+      beforeBytes: pruned.before,
+      afterBytes: pruned.after,
+    }),
+  )
   const files = {}
   const dependencies = new Map()
   function inventory(directory) {

@@ -8,6 +8,7 @@ directories:
   buildResources: assets
 files:
   - dist/**
+  - '!dist/**/*.map'
   - assets/icon.png
   - assets/trayTemplate*.png
   - ui/**
