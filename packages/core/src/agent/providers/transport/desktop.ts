@@ -53,8 +53,11 @@ export function createDesktopAddressResolver(system: AddressResolver, local: Add
     const resolved = await system(host)
     if (!resolved.some(isSynthetic)) return resolved
     if (!resolved.every(isSynthetic)) throw new ProviderError('input_rejected')
-    const localAddresses = await local(host)
-    if (!localAddresses.length || localAddresses.some(isSynthetic)) throw new ProviderError('network')
+    // 二次解析失败或仍返回合成地址时没有额外信息量：回落到系统结果，
+    // 由上层按当前模式判断（代理模式交由代理解析，直连模式按非公网拒绝）。
+    // 一次本地 DNS 抖动不应该把整条请求打掉。
+    const localAddresses = await local(host).catch(() => [])
+    if (!localAddresses.length || localAddresses.some(isSynthetic)) return resolved
     return localAddresses
   }
 }

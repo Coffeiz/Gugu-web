@@ -34,6 +34,11 @@ export interface NodeProviderTransportOptions {
   readonly ca?: string
   /** 搜索等受控出口可显式禁用环境代理/CA；普通模型客户端默认遵循环境。 */
   readonly trustEnvironment?: boolean
+  /**
+   * 本地解析结果是否权威：advisory 时本地解析失败不阻断请求（代理端才是权威解析方）。
+   * 默认按是否走代理推断；服务端 DoH 之类的唯一判定来源必须显式传 authoritative。
+   */
+  readonly localResolution?: 'advisory' | 'authoritative'
   readonly environment?: () => Readonly<Record<string, string | undefined>>
 }
 
@@ -156,6 +161,7 @@ export class NodeProviderTransport implements ProviderTransport {
       timeoutMs: proxy !== undefined ? Math.min(this.options.connectTimeoutMs ?? 10_000, 2_000) : this.options.connectTimeoutMs,
       // 代理模式下目标域名交由代理端解析；字面地址与本地解析出的私网地址仍然拒绝。
       proxyResolved: proxy !== undefined,
+      localResolution: this.options.localResolution,
     })
     report({ dnsMs: performance.now() - started })
     const headers: Record<string, string> = {}

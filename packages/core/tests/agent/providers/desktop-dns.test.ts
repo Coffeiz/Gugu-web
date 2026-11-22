@@ -27,9 +27,14 @@ describe('桌面 DNS', () => {
     expect(local).not.toHaveBeenCalled()
   })
 
-  it('本地 DNS 仍返回 Fake IP 时拒绝该结果', async () => {
+  it('本地 DNS 仍返回 Fake IP 时回落到系统结果，不把整条请求打掉', async () => {
     const resolve = createDesktopAddressResolver(async () => fake, async () => fake)
-    await expect(resolve('example.test')).rejects.toMatchObject({ code: 'network' })
+    await expect(resolve('example.test')).resolves.toEqual(fake)
+  })
+
+  it('二次解析抛错时回落到系统结果，由上层按模式判断', async () => {
+    const resolve = createDesktopAddressResolver(async () => fake, async () => { throw new Error('ETIMEOUT') })
+    await expect(resolve('example.test')).resolves.toEqual(fake)
   })
 
   it('公网访问仍拒绝本地 DNS 返回的私网地址', async () => {

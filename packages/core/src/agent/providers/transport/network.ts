@@ -81,7 +81,7 @@ export const resolveAddresses: AddressResolver = async hostname => (await lookup
   .filter((item): item is ResolvedAddress => item.family === 4 || item.family === 6)
 
 /** 校验与真实连接共用同一次DNS结果；混合公私地址整体拒绝。 */
-export async function resolvePinnedTarget(raw: string, options: { allowLocal?: boolean; resolve?: AddressResolver; signal?: AbortSignal; timeoutMs?: number; proxyResolved?: boolean } = {}): Promise<{ url: URL; target: ResolvedAddress }> {
+export async function resolvePinnedTarget(raw: string, options: { allowLocal?: boolean; resolve?: AddressResolver; signal?: AbortSignal; timeoutMs?: number; proxyResolved?: boolean; localResolution?: 'advisory' | 'authoritative' } = {}): Promise<{ url: URL; target: ResolvedAddress }> {
   let url: URL
   try { url = new URL(raw) } catch { throw new ProviderError('input_rejected') }
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash || !url.hostname)
@@ -98,6 +98,9 @@ export async function resolvePinnedTarget(raw: string, options: { allowLocal?: b
   }
   // 代理模式下代理端会重新解析域名，本地无法确认目标时只放行明显不指向本机的名字。
   if (options.proxyResolved && !options.allowLocal && isLocalHostname(hostname)) throw new ProviderError('input_rejected')
+  // 本地解析是否权威：走代理时代理解析才是权威解析方，本地解析只是尽力而为的私网提示，
+  // 失败不应打掉整条请求；直连时本地解析是唯一来源，必须成功。
+  const localResolution = options.localResolution ?? (options.proxyResolved ? 'advisory' : 'authoritative')
   let targets: readonly ResolvedAddress[]
   try {
     targets = await new Promise<readonly ResolvedAddress[]>((resolve, reject) => {
@@ -109,8 +112,10 @@ export async function resolvePinnedTarget(raw: string, options: { allowLocal?: b
       void Promise.resolve().then(() => (options.resolve ?? resolveAddresses)(hostname)).then(value => { cleanup(); resolve(value) }, error => { cleanup(); reject(error) })
     })
   } catch (error) {
-    // 解析失败保持 fail-closed：Web Host 侧以代理侧 DoH 作为唯一判定来源，
-    // 这里放行会让那条唯一边界失效。桌面端在合成地址环境下解析本就成功。
+    const cancelled = error instanceof ProviderError && error.code === 'cancelled'
+    // 尽力而为的本地解析失败没有信息量：不能让一次本地 DNS 抖动把整条请求打掉。
+    // 权威模式（服务端 DoH 之类的唯一判定来源）保持 fail-closed。
+    if (localResolution === 'advisory' && !cancelled) return { url, target: { address: hostname, family: 4 } }
     if (error instanceof ProviderError) throw new ProviderError(error.code, { ...error.options, transportHop: 'dns' })
     throw new ProviderError('network', { retryable: true, requestStarted: false, transportHop: 'dns' })
   }

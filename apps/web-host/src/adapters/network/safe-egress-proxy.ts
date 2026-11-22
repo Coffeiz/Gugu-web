@@ -102,6 +102,8 @@ export function createPublicAgentEgress(readSettings: () => SafeEgressReadSettin
     const proxyHostname = proxy ? new URL(proxy.url).hostname : null
     return createNodeProviderTransport({
       allowLocal: false, trustEnvironment: false, connectTimeoutMs: 10_000, writeTimeoutMs: 10_000,
+      // 代理侧 DoH 是这条链路唯一的私网判定来源：解析失败必须拒绝，不能放行。
+      localResolution: 'authoritative',
       ...(proxy ? {
         proxy: { all: proxy },
         async resolve(hostname) {

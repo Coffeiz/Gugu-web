@@ -388,6 +388,36 @@ describe('真实Node HTTP与分片、取消和响应体', () => {
       expect(path).toBe(`provider.example:${new URL(target.base).port}`)
     } finally { await transport.close(); for (const socket of sockets) socket.destroy(); await close(proxy.value); await close(target.value) }
   })
+  it('代理模式下本地解析失败不阻断请求，权威模式与直连模式仍然拒绝', async () => {
+    let path = ''
+    const target = await server((_request, response) => response.end('{"proxied":true}'))
+    const sockets = new Set<Duplex>(), proxy = await server((_request, response) => { response.writeHead(500); response.end() })
+    proxy.value.on('connect', (request, socket, head) => {
+      path = request.url ?? ''
+      const upstream = connect({ host: '127.0.0.1', port: Number(new URL(target.base).port) })
+      sockets.add(socket); sockets.add(upstream)
+      socket.on('error', () => upstream.destroy()); upstream.on('error', () => socket.destroy())
+      upstream.once('connect', () => { socket.write('HTTP/1.1 200 Connection Established\r\n\r\n'); if (head.length) upstream.write(head); socket.pipe(upstream); upstream.pipe(socket) })
+      socket.once('close', () => upstream.destroy())
+    })
+    const proxyUrl = proxy.base.replace('provider.example', 'proxy.example')
+    // 目标域名只能由代理端解析时，本地解析失败只是没有信息量。
+    const failing = async (hostname: string) => {
+      if (hostname === 'proxy.example') return [{ address: '127.0.0.1', family: 4 }]
+      throw new Error('ENOTFOUND')
+    }
+    const transport = createNodeProviderTransport({ trustEnvironment: false, resolve: failing, proxy: { http: { url: proxyUrl } } })
+    const authoritative = createNodeProviderTransport({ trustEnvironment: false, resolve: failing, localResolution: 'authoritative', proxy: { http: { url: proxyUrl } } })
+    const direct = createNodeProviderTransport({ trustEnvironment: false, resolve: failing })
+    try {
+      await expect(requestJson(deps(transport), { url: target.base, method: 'GET', headers: {} }, new AbortController().signal)).resolves.toEqual({ proxied: true })
+      expect(path).toBe(`provider.example:${new URL(target.base).port}`)
+      // 显式权威模式（服务端 DoH 之类的唯一判定来源）必须 fail-closed。
+      await expect(authoritative.request({ url: target.base, method: 'GET', headers: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'network', options: { transportHop: 'dns' } })
+      // 直连时本地解析是唯一来源，失败必须拒绝。
+      await expect(direct.request({ url: 'http://provider.example/v1', method: 'GET', headers: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'network', options: { transportHop: 'dns' } })
+    } finally { await transport.close(); await authoritative.close(); await direct.close(); for (const socket of sockets) socket.destroy(); await close(proxy.value); await close(target.value) }
+  })
   it('直连模式下假IP目标仍然拒绝，代理语义不放宽直连边界', async () => {
     const transport = createNodeProviderTransport({ trustEnvironment: false, resolve: async () => [{ address: '198.18.3.4', family: 4 }] })
     try {
