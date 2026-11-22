@@ -777,6 +777,7 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
           await checkCancellation()
           if (resolution || !ports.store.readAgentInbox)
             throw new AgentRunError('conflict', '收件箱等待状态不匹配')
+          if (state.phase === 'decision' && await ports.store.hasPendingSubagents?.(identity)) return state
           if (!await agentInboxReady()) return state
           yield (await commit({ status: 'running', agentInboxWaiting: false }, 'run_resumed'))!
         } else if (state.status === 'waiting' && state.subagentWaitChildId) {
@@ -826,7 +827,7 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
           }
           const capabilities = (context as { capabilities?: { toolNames?: readonly string[] } | null } | null)?.capabilities
           await commit({ context, status: 'running', phase: 'idle',
-            ...(ports.store.readSubagentFinals && capabilities?.toolNames?.includes('agent_wait') ? { acceptsSubagentFinals: true } : {}),
+            ...(ports.store.readSubagentFinals && capabilities?.toolNames?.some(name => name === 'agent_inbox' || name === 'agent_wait') ? { acceptsSubagentFinals: true } : {}),
           })
           continue
         }
@@ -928,6 +929,11 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
         }
         if (state.phase === 'decision') {
           if ((state.acceptsSubagentFinals || ports.acceptsAgentInbox) && (state.maxRounds === null || state.round < state.maxRounds)) {
+            if (state.acceptsSubagentFinals && await ports.store.hasPendingSubagents?.(identity)) {
+              await checkCancellation()
+              yield (await commit({ status: 'waiting', agentInboxWaiting: true }, 'run_waiting'))!
+              return state
+            }
             if (state.acceptsSubagentFinals) queuedFinals = await ports.store.readSubagentFinals?.(identity)
             queuedInbox = await ports.store.readAgentInbox?.(identity)
             if (queuedFinals?.length || queuedInbox?.length) {

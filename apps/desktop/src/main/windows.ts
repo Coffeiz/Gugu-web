@@ -4,6 +4,7 @@ import type {
   BrowserWindowConstructorOptions,
   BrowserWindow,
   IpcMainInvokeEvent,
+  Rectangle,
   Size,
 } from 'electron'
 import { randomUUID } from 'node:crypto'
@@ -24,14 +25,46 @@ export function createMainWindowSizeStore(directory: string) {
       }
     },
     save({ width, height }: Size): void {
-      const temporary = `${path}.${randomUUID()}.tmp`
+      writeWindowGeometry(path, { width, height })
+    },
+  }
+}
+
+function writeWindowGeometry(path: string, geometry: Size | Rectangle) {
+  const temporary = `${path}.${randomUUID()}.tmp`
+  try {
+    writeFileSync(temporary, JSON.stringify(geometry), { flag: 'wx', mode: 0o600 })
+    renameSync(temporary, path)
+  } finally {
+    rmSync(temporary, { force: true })
+  }
+}
+
+export function createProjectWindowBoundsStore(directory: string) {
+  const path = join(directory, 'project-window-bounds.json')
+  return {
+    read(): Rectangle | undefined {
       try {
-        writeFileSync(temporary, JSON.stringify({ width, height }), { flag: 'wx', mode: 0o600 })
-        renameSync(temporary, path)
-      } finally {
-        rmSync(temporary, { force: true })
+        const { x, y, width, height } = JSON.parse(readFileSync(path, 'utf8'))
+        if ([x, y, width, height].every(Number.isSafeInteger) && width > 0 && height > 0)
+          return { x, y, width, height }
+      } catch {
+        // 首次打开或记录损坏时沿用默认布局。
       }
     },
+    save({ x, y, width, height }: Rectangle): void {
+      writeWindowGeometry(path, { x, y, width, height })
+    },
+  }
+}
+
+export function fitProjectWindowBounds(bounds: Rectangle, area: Rectangle, minimum: Size): Rectangle {
+  const width = Math.max(minimum.width, Math.min(bounds.width, area.width))
+  const height = Math.max(minimum.height, Math.min(bounds.height, area.height))
+  return {
+    x: Math.min(Math.max(area.x, bounds.x), area.x + Math.max(0, area.width - width)),
+    y: Math.min(Math.max(area.y, bounds.y), area.y + Math.max(0, area.height - height)),
+    width, height,
   }
 }
 

@@ -1,7 +1,10 @@
+export function errorFrames(error: unknown): string[]
+
 export type RuntimeEvent =
   | 'host.shutdown_requested' | 'host.shutdown_phase_started' | 'host.shutdown_phase_finished'
   | 'host.shutdown_phase_slow' | 'host.shutdown_phase_failed'
   | 'host.started' | 'host.stopped' | 'host.start_failed' | 'host.stop_failed'
+  | 'host.core_worker_exit'
   | 'host.database_unavailable' | 'host.rag_unavailable'
   | 'scheduled_tasks.check_failed'
   | 'web_push.failed'
@@ -21,6 +24,9 @@ export type RuntimeLog = (event: RuntimeEvent, details?: {
   pid?: number
   error?: unknown
   code?: string
+  exitCode?: number
+  frames?: readonly string[]
+  rpcMethod?: string
   ok?: boolean
   timedOut?: boolean
 }) => void

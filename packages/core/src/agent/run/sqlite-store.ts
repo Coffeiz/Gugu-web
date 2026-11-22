@@ -88,6 +88,7 @@ export function createSqliteAgentRunStore<C>(
     readSubagentFinals: deliveries.pending,
     readAgentInbox: inbox.pending,
     isSubagentPending: deliveries.isPending,
+    hasPendingSubagents: deliveries.hasPending,
     async read(identity) {
       const row = await readRow(db, identity)
       return row ? decode(identity, row) : null

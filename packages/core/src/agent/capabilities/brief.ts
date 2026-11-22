@@ -75,7 +75,7 @@ export function createAgentToolBrief(preferences: unknown, tools: readonly Prepa
 /** 简介模式保留固定入口，原始 Schema 仍可由运行时查询。 */
 export function projectAgentToolBrief(catalog: CapabilityCatalog | null, names: readonly string[], shellReminder?: string): Pick<RunCapabilities, 'providerToolNames' | 'toolReminder'> {
   if (!catalog?.fixedAdapter) return catalog?.mcpReminder ? { toolReminder: catalog.mcpReminder } : {}
-  const providerToolNames = ['call_tool', 'search_tools', 'use_skill', 'ask_user', 'stop_recurring', 'choose_no_reply', 'shell', 'agent_message', 'agent_wait', 'agent_cancel', 'agent_inspect']
+  const providerToolNames = ['call_tool', 'search_tools', 'use_skill', 'ask_user', 'stop_recurring', 'choose_no_reply', 'shell', 'agent_message', 'agent_inbox', 'agent_cancel', 'agent_inspect']
     .filter(name => names.includes(name))
   const toolReminder = [catalog.toolCatalog, shellReminder, catalog.mcpReminder].filter(Boolean).join('\n\n')
   return { providerToolNames, ...(toolReminder ? { toolReminder } : {}) }

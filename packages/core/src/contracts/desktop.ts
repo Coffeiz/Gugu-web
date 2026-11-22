@@ -448,6 +448,7 @@ export interface DesktopAgentModelOptions {
   contextTokens?: number
   maxTokens?: number
   thinkingMode?: string
+  reasoningPersistence?: 'off' | 'continuation'
   webSearchEnabled?: boolean
   image?: boolean
   audio?: boolean

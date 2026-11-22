@@ -23,6 +23,10 @@ export const hasReadySubagentWait = (owner: string, session: string, run: string
 
 export const hasReadyAgentInbox = (owner: string, session: string, run: string) => `EXISTS (
   SELECT 1 FROM agent_inbox_waits w WHERE w.owner_id=${owner} AND w.session_id=${session} AND w.run_id=${run}
+    AND NOT EXISTS (SELECT 1 FROM agent_run_checkpoints c JOIN agent_subagent_deliveries d
+      ON d.owner_id=c.user_id::text AND d.parent_session_id=c.session_id::text AND d.parent_run_id=c.run_id
+      WHERE c.user_id::text=w.owner_id AND c.session_id::text=w.session_id AND c.run_id=w.run_id
+        AND c.phase='decision' AND d.status IN ('queued','running'))
     AND (EXISTS (SELECT 1 FROM agent_inbox_messages m
       WHERE m.owner_id=w.owner_id AND m.recipient_session_id=w.session_id AND m.consumed_checkpoint_version IS NULL
         AND (m.recipient_run_id=w.run_id OR EXISTS (SELECT 1 FROM agent_subagent_deliveries d

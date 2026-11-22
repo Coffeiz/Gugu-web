@@ -374,7 +374,7 @@ export function createPersistentQqProjection(options) {
                 }
                 state.pendingRoundText = typeof event.payload.text === 'string' ? event.payload.text : state.mode === 'plain' ? state.plainBuffer : state.current === null ? '' : parseQqStreamSnapshot(state.current).fullText;
             }
-            else if (event.type === 'tool_call' || event.type === 'interaction_required') {
+            else if (event.type === 'tool_call' || event.type === 'run_waiting' || event.type === 'interaction_required') {
                 await finishSource();
                 await close(state.pendingRoundText ?? undefined);
                 state.pendingRoundText = null;

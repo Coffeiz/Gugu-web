@@ -57,7 +57,15 @@ export function agentSessionHandlers(host: IpcHost, model: ReturnType<typeof cre
     try {
       while (!signal.aborted) {
         changed = new AbortController()
-        const page = await host.request<DesktopAgentEventPage>('agent.sessions.events', { id, runId, after: cursor })
+        let page: DesktopAgentEventPage
+        try {
+          page = await host.request<DesktopAgentEventPage>('agent.sessions.events', { id, runId, after: cursor })
+        } catch (error) {
+          if (!(error instanceof DesktopError) || error.code !== 'busy') throw error
+          // 读取超时可从同一游标重试，原 Run 继续由 Core 驱动。
+          await delay(250, undefined, { signal }).catch(() => {})
+          continue
+        }
         cursor = page.cursor
         for (const event of page.events) {
           if (event.type === 'interaction_required') awaitingUserInteraction = event.resolved !== true

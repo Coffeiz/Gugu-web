@@ -268,6 +268,7 @@ export type SubagentFinal = { childId: string; deliveryRunId?: string } & import
 
 export interface RunStore<C> {
   readAgentInbox?(identity: RunIdentity): Promise<readonly { id: string; message: string }[]>
+  hasPendingSubagents?(identity: RunIdentity): Promise<boolean>
   isSubagentPending?(identity: RunIdentity, childId: string): Promise<boolean>
   readSubagentFinals?(identity: RunIdentity): Promise<readonly SubagentFinal[]>
 

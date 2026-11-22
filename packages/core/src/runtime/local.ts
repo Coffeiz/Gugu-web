@@ -1,7 +1,12 @@
+import { errorFrames } from '@gugu/log/runtime'
 import { Worker } from 'node:worker_threads'
 import { resolve } from 'node:path'
 import { CoreError } from '../contracts/index.js'
 import type { ErrorCode, Fields } from '../contracts/index.js'
+
+const retryableChatReads = new Set(['agent.sessions.events', 'agent.sessions.history', 'agent.sessions.messages'])
+
+type WorkerExitReason = 'out_of_memory' | 'uncaught_exception' | 'unexpected_exit' | 'watchdog_timeout'
 
 interface Pending {
   resolve(value: unknown): void
@@ -24,6 +29,7 @@ export interface LocalRuntimeOptions {
   exclusive?: boolean
   workerEntry?: URL | string
   agentRuntimeModule?: string
+  onWorkerExit?: (exitCode: number, reason: WorkerExitReason, frames: readonly string[]) => void
 }
 export interface LocalHostRequest {
   readonly signal: AbortSignal
@@ -40,12 +46,14 @@ export class LocalRuntime {
   private sequence = 0
   private closed = false
   private healthy = true
+  private workerExitReason: WorkerExitReason = 'unexpected_exit'
   private closing?: Promise<void>
   readonly ownerId: string
   readonly schemaVersion: string
   private constructor(
     private worker: Worker,
     info: { ownerId: string; schemaVersion: string },
+    onWorkerExit?: LocalRuntimeOptions['onWorkerExit'],
   ) {
     this.ownerId = info.ownerId
     this.schemaVersion = info.schemaVersion
@@ -109,13 +117,21 @@ export class LocalRuntime {
       for (const pending of this.pending.values()) {
         pending.dispose()
         pending.reject(
-          new CoreError('storage_error', '数据进程已停止，请重读已保存数据确认操作状态'),
+          new CoreError('closed', '数据进程已停止，请重读已保存数据确认操作状态'),
         )
       }
       this.pending.clear()
     }
-    worker.on('error', failed)
-    worker.on('exit', failed)
+    let frames: string[] = []
+    worker.on('error', (error: Error & { code?: string }) => {
+      this.workerExitReason = error.code === 'ERR_WORKER_OUT_OF_MEMORY' ? 'out_of_memory' : 'uncaught_exception'
+      frames = errorFrames(error).slice(0, 8)
+      failed()
+    })
+    worker.on('exit', exitCode => {
+      if (!this.closed) onWorkerExit?.(exitCode, this.workerExitReason, frames)
+      failed()
+    })
   }
   private static async start(
     database: string,
@@ -154,7 +170,7 @@ export class LocalRuntime {
           )
           return
         }
-        resolve(new LocalRuntime(worker, info))
+        resolve(new LocalRuntime(worker, info, options.onWorkerExit))
       }
       const timer = setTimeout(() => {
         cleanup()
@@ -217,7 +233,15 @@ export class LocalRuntime {
       }
       const timer = setTimeout(() => {
         cancel()
+        if (retryableChatReads.has(method)) {
+          const request = this.pending.get(id)
+          this.pending.delete(id)
+          request?.dispose()
+          reject(new CoreError('busy', '聊天读取暂时超时，请重试'))
+          return
+        }
         this.healthy = false
+        this.workerExitReason = 'watchdog_timeout'
         // 不把未知提交状态报告为已回滚；终止后可凭持久操作 ID 查询。
         void this.worker.terminate()
       }, timeoutMs + 1000)

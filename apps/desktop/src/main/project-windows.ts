@@ -2,7 +2,7 @@ import { DESKTOP_CHANNELS, type DesktopProjectDetails } from '@gugu/core/desktop
 import { BrowserWindow, ipcMain, screen, type IpcMainInvokeEvent } from 'electron'
 import { projectWindowChannels as channels } from '@gugu/desktop-contracts'
 import { DesktopError, desktopReply } from './core-host.js'
-import { desktopWindowMaterial, secureWindow, trustedCaller, windowOptions } from './windows.js'
+import { createProjectWindowBoundsStore, desktopWindowMaterial, fitProjectWindowBounds, secureWindow, trustedCaller, windowOptions } from './windows.js'
 
 const projectFileActions = new Set(['list', 'reference', 'mkdir', 'upload', 'copy', 'move', 'trash', 'download', 'reveal', 'open', 'search'])
 
@@ -16,9 +16,19 @@ export function registerProjectWindows(options: {
   mainWindow: () => BrowserWindow | undefined
   uiUrl: string
   preload: string
+  dataDirectory: string
   quitting: () => boolean
   readProject: (id: number) => Promise<unknown>
 }) {
+  const boundsStore = createProjectWindowBoundsStore(options.dataDirectory)
+  function saveBounds(window: BrowserWindow) {
+    try {
+      boundsStore.save(window.getNormalBounds())
+    } catch {
+      console.warn('无法保存项目窗口位置和尺寸')
+    }
+  }
+
   const windows = new Map<number, { window: BrowserWindow; url: string }>()
   const mainIsTrusted = (event: IpcMainInvokeEvent) => {
     const main = options.mainWindow()
@@ -49,21 +59,20 @@ export function registerProjectWindows(options: {
     url.hash = 'project-boot'
     const mainBounds = options.mainWindow()?.getBounds()
     const point = mainBounds ? { x: mainBounds.x + 150, y: mainBounds.y + 80 } : screen.getCursorScreenPoint()
-    const area = screen.getDisplayNearestPoint(point).workArea
+    const saved = boundsStore.read()
+    const area = (saved ? screen.getDisplayMatching(saved) : screen.getDisplayNearestPoint(point)).workArea
     const minWidth = 800, minHeight = 600
     // 默认 960 × 720，空间不足时按 4:3 收到最小尺寸。
     const sizeUnit = Math.max(minWidth / 4, Math.floor(Math.min(240, area.width / 4, area.height / 3)))
-    const width = sizeUnit * 4, height = sizeUnit * 3
-    const position = {
-      x: Math.min(Math.max(area.x, point.x - 80), area.x + Math.max(0, area.width - width)),
-      y: Math.min(Math.max(area.y, point.y - 16), area.y + Math.max(0, area.height - height)),
-    }
+    const bounds = fitProjectWindowBounds(saved ?? {
+      x: point.x - 80, y: point.y - 16, width: sizeUnit * 4, height: sizeUnit * 3,
+    }, area, { width: minWidth, height: minHeight })
     const window = new BrowserWindow({
       ...desktopWindowMaterial(),
-      ...position,
+      ...bounds,
       title: '咕咕 · 项目',
       frame: false,
-      width, height, minWidth, minHeight,
+      minWidth, minHeight,
       show: false,
       webPreferences: windowOptions(options.preload).webPreferences,
     })
@@ -71,7 +80,11 @@ export function registerProjectWindows(options: {
     windows.set(id, { window, url: url.href })
     let ready = false
     window.on('close', event => {
-      if (!ready || options.quitting() || window.webContents.isCrashed()) return
+      if (!ready) return
+      if (options.quitting() || window.webContents.isCrashed()) {
+        saveBounds(window)
+        return
+      }
       event.preventDefault()
       window.webContents.send(channels.prepareClose)
     })
@@ -93,7 +106,10 @@ export function registerProjectWindows(options: {
   ipcMain.handle(channels.close, event => {
     const match = [...windows.values()].find(({ window, url }) => trustedCaller(event, [window], url))
     return desktopReply(!!match, async () => {
-      if (match) setImmediate(() => { if (!match.window.isDestroyed()) match.window.destroy() })
+      if (match) {
+        saveBounds(match.window)
+        setImmediate(() => { if (!match.window.isDestroyed()) match.window.destroy() })
+      }
       return null
     })
   })

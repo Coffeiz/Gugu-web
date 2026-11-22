@@ -197,7 +197,7 @@ else {
           runtime.entry,
           join(dataDirectory, 'core.db'),
           runtime.manifest,
-          undefined, filesRoot, runtime.workerEntry, runtime.agentRuntimeModule,
+          undefined, filesRoot, runtime.workerEntry, runtime.agentRuntimeModule, report,
         ),
       )
       await lifecycle.start()
@@ -223,7 +223,7 @@ else {
       const admitIm = createDesktopImInbox(host, safeStorage, dataDirectory)
       const pendingImAsks = createDesktopImPendingAskStore(dataDirectory, safeStorage)
       const imAttachments = createDesktopImAttachmentSender(dataDirectory, safeStorage)
-      const dispatchIm = createDesktopImDispatch(host, safeStorage, agentModel, () => host.request<DesktopAppearancePreferences>('preferences.desktop.get'), (code, error) => report('gateway.degraded', { code, error }), imAttachments.register)
+      const dispatchIm = createDesktopImDispatch(host, safeStorage, agentModel, () => host.request<DesktopAppearancePreferences>('preferences.desktop.get'), (code, error, rpcMethod) => report('gateway.degraded', { code, error, rpcMethod }), imAttachments.register)
       const callbackIm = createDesktopImCallback(host, agentModel)
       let imTranscriber: Promise<ReturnType<typeof createDesktopImVoiceTranscriber>> | undefined
       const transcribeImVoice = async (input: { bytes: Uint8Array; mime: string; ext: string }, signal: AbortSignal,
@@ -673,7 +673,7 @@ else {
       }
       const projectWindows = registerProjectWindows({
         mainWindow: () => mainWindow, uiUrl: trustedUiUrl, preload, quitting: () => quitting,
-        readProject,
+        readProject, dataDirectory,
       })
       const previewWindowManager = registerPreviewWindows({
         mainWindow: () => mainWindow, uiUrl: trustedUiUrl, preload,

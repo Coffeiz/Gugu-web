@@ -181,7 +181,8 @@ export async function settleExclusiveSqliteAgentRuns(db: Kysely<Database>, path:
         const ready = previous.subagentWaitChildId
           ? !await store.isSubagentPending(identity, previous.subagentWaitChildId)
           : Boolean((await store.readAgentInbox?.(identity))?.length || (await store.readSubagentFinals?.(identity))?.length)
-        if (ready) await resume?.(previous)
+        if (ready && !(previous.agentInboxWaiting && previous.phase === 'decision'
+          && await store.hasPendingSubagents?.(identity))) await resume?.(previous)
       }
       continue
     }

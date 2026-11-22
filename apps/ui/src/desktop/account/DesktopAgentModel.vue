@@ -16,6 +16,7 @@ function toRow(item: DesktopAgentModelEntry, list: DesktopAgentModelList, id: nu
     id, localId: item.id, capability: 'llm', provider: item.provider, model: item.model,
     api_format: item.apiFormat, base_url: item.baseUrl, has_value: true, enabled: item.id === list.defaultId,
     thinking: mode === 'default' ? null : mode === 'disabled' ? 'disabled' : 'adaptive',
+    reasoning_persistence: item.reasoningPersistence ?? 'off',
     reasoning_effort: ['default', 'disabled', 'adaptive'].includes(mode) ? null : mode,
     max_tokens: item.maxTokens ?? null, context_tokens: item.contextTokens ?? null,
     local_runtime: item.localRuntime, ollama_mode: item.ollamaMode,
@@ -49,6 +50,7 @@ interface Draft {
   api_key?: string
   max_tokens?: number | null
   context_tokens?: number | null
+  reasoning_persistence?: DesktopAgentModel['reasoningPersistence']
   reasoning_effort?: string | null
   thinking?: string | null
   web_search_enabled?: boolean
@@ -75,6 +77,7 @@ function preset(input: Draft): DesktopAgentModel & { apiKey: string } {
     apiKey: input.value ?? input.api_key ?? '',
     maxTokens: input.max_tokens ?? undefined,
     contextTokens: input.context_tokens ?? undefined,
+    reasoningPersistence: input.reasoning_persistence,
     thinkingMode: input.reasoning_effort ?? input.thinking ?? 'default',
     webSearchEnabled: input.web_search_enabled,
     image: input.image, video: input.video, audio: input.audio,

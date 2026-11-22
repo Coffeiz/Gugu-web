@@ -1,11 +1,13 @@
 import { writeLogRecord } from './jsonl.js'
 import { randomUUID } from 'node:crypto'
 import { errorFrames, failureCode } from './redact.js'
+export { errorFrames } from './redact.js'
 
 const levels = new Map(Object.entries({
   'host.started': 'info', 'host.stopped': 'info', 'host.start_failed': 'error',
   'host.shutdown_requested': 'info', 'host.shutdown_phase_started': 'info', 'host.shutdown_phase_finished': 'info',
   'host.shutdown_phase_slow': 'warn', 'host.shutdown_phase_failed': 'error',
+  'host.core_worker_exit': 'error',
   'host.stop_failed': 'error', 'host.database_unavailable': 'warn', 'host.rag_unavailable': 'warn',
   'scheduled_tasks.check_failed': 'warn',
   'web_push.failed': 'warn',
@@ -32,6 +34,12 @@ const conditions = new Set((
   'qq-connection-failed qq-event-failed qq-heartbeat-failed qq-heartbeat-timeout qq-cleanup-failed ' +
   'feishu-sdk-error feishu-sdk-warning feishu-misrouted-event feishu-event-failed feishu-cleanup-failed feishu-connection-failed'
 ).split(' '))
+
+const dispatchRpcMethods = new Set([
+  'im.inbox.prepare', 'im.inbox.reject', 'im.inbox.delivery', 'im.inbox.prompt',
+  'agent.sessions.startRun', 'agent.sessions.events',
+])
+const dispatchErrorCodes = new Set(['invalid_request', 'storage_error', 'busy', 'result_too_large', 'unknown_result'])
 
 const migrationConditions = new Set(['migration_incompatible', 'migration_pending', 'migration_unavailable', 'platform_unsupported'])
 const migrationEvents = new Set(['host.rag_unavailable', 'host.trash_purge_unavailable', 'host.search_usage_unavailable'])
@@ -67,21 +75,26 @@ function safeILinkDetails(error) {
 export function createRuntimeLog({ regular, diagnostic }) {
   return (event, details = {}) => {
     if (!levels.has(event)) return
-    const { error, code, ok, timedOut, phase, signal, elapsedMs, pid } = details
+    const { error, code, exitCode, frames, ok, timedOut, phase, signal, elapsedMs, pid, rpcMethod } = details
     const incident = error === undefined ? undefined : randomUUID()
     const allowedCodes = event === 'gateway.degraded' ? conditions : migrationEvents.has(event) ? migrationConditions : null
     const lifecycle = event.startsWith('host.shutdown_') || event === 'host.started' || event === 'host.stopped' || event === 'host.stop_failed'
-    const errorCode = incident ? failureCode(error) : undefined
+    const dispatchFailure = event === 'gateway.degraded' && code === 'dispatch_unavailable'
+    const errorCode = incident ? dispatchFailure && error instanceof Error && dispatchErrorCodes.has(error.code)
+      ? error.code : failureCode(error) : undefined
     const mediaStatus = (code === 'qq-event-failed' && ['qq_media_address', 'qq_media_download'].includes(errorCode)
       || code === 'feishu-event-failed' && errorCode === 'feishu_media_download') ? error?.httpStatus : undefined
     const iLinkDetails = typeof code === 'string' && code.startsWith('wechat-') ? safeILinkDetails(error) : {}
     const attributes = {
+      ...(event === 'host.core_worker_exit' && ['out_of_memory', 'uncaught_exception', 'unexpected_exit', 'watchdog_timeout'].includes(code)
+        && Number.isSafeInteger(exitCode) ? { code, exitCode } : {}),
       ...(event.startsWith('host.shutdown_phase_') && shutdownPhases.has(phase) ? { phase } : {}),
       ...(lifecycle && signals.has(signal) ? { signal } : {}),
       ...(lifecycle && Number.isSafeInteger(elapsedMs) && elapsedMs >= 0 ? { elapsedMs } : {}),
       ...(lifecycle && Number.isSafeInteger(pid) && pid > 0 ? { pid } : {}),
       ...(allowedCodes && code !== undefined ? { code: allowedCodes.has(code) ? code : 'unknown' } : {}),
       ...(errorCode ? { errorCode } : {}),
+      ...(dispatchFailure && dispatchRpcMethods.has(rpcMethod) ? { rpcMethod } : {}),
       ...iLinkDetails,
       ...(Number.isInteger(mediaStatus) && mediaStatus >= 100 && mediaStatus <= 599 ? { httpStatus: mediaStatus } : {}),
       ...(event === 'sandbox.system_completed' && typeof ok === 'boolean' ? { ok } : {}),
@@ -90,6 +103,11 @@ export function createRuntimeLog({ regular, diagnostic }) {
     const record = { time: new Date().toISOString(), level: levels.get(event), event,
       ...(incident ? { incident } : {}), ...(Object.keys(attributes).length ? { attributes } : {}) }
     writeLogRecord(regular, record)
+    if (event === 'host.core_worker_exit' && attributes.code) {
+      const locations = Array.isArray(frames) ? frames.slice(0, 8)
+        .filter(frame => typeof frame === 'string' && /^[\w.-]{1,80}\.(?:[cm]?js|ts):\d{1,9}:\d{1,9}$/.test(frame)) : []
+      writeLogRecord(diagnostic, { ...record, frames: locations })
+    }
     if (incident) {
       const cause = error instanceof Error && error.cause instanceof Error ? error.cause : undefined
       writeLogRecord(diagnostic, { ...record, frames: errorFrames(error),

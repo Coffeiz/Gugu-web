@@ -101,7 +101,7 @@ test('调度租约并发仅一人选中，过期只接管原 run，密文绑定 
     await pool.query(`CREATE TABLE conversation_sessions(id integer PRIMARY KEY,user_id uuid NOT NULL,execution_state text NOT NULL DEFAULT 'idle',active_run_id text,pending_message_count integer NOT NULL DEFAULT 0);
       CREATE TABLE conversation_messages(id integer PRIMARY KEY,session_id integer,role text,run_outcome jsonb);
       CREATE TABLE agent_run_leases(user_id uuid,session_id integer,run_id text,token text,fence bigint,expires_at timestamptz,created_at timestamptz,updated_at timestamptz,PRIMARY KEY(user_id,session_id));
-      CREATE TABLE agent_run_checkpoints(user_id uuid,session_id integer,run_id text,status text);
+      CREATE TABLE agent_run_checkpoints(user_id uuid,session_id integer,run_id text,status text,phase text DEFAULT 'idle');
       CREATE TABLE agent_run_startups(user_id uuid,session_id integer,run_id text,status text,updated_at timestamptz);
       ${interactionTables}
       CREATE TABLE agent_run_dispatch(sequence bigserial PRIMARY KEY,user_id uuid,session_id integer,run_id text,state text,message_id integer,nonce bytea,payload bytea,request_expires_at timestamptz,token text,fence bigint NOT NULL DEFAULT 0,lease_expires_at timestamptz,cancel_requested boolean NOT NULL DEFAULT false,blocked_reason text,UNIQUE(user_id,session_id,run_id));
@@ -163,7 +163,7 @@ test('调度租约并发仅一人选中，过期只接管原 run，密文绑定 
     await goodCore.release(identity, coreLease)
     // 后半段检查尚未回答的交互；取消请求本身会唤醒等待中的 Run。
     await pool.query("UPDATE agent_run_dispatch SET cancel_requested=false WHERE run_id='run-one'")
-    await pool.query("INSERT INTO agent_run_checkpoints VALUES ($1,1,'run-one','waiting')", [owner])
+    await pool.query("INSERT INTO agent_run_checkpoints(user_id,session_id,run_id,status) VALUES ($1,1,'run-one','waiting')", [owner])
     await pool.query("UPDATE agent_run_dispatch SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE run_id='run-one'")
     assert.equal(await service.claim(owner, '1'), null)
     await pool.query(`INSERT INTO agent_subagent_deliveries
@@ -206,10 +206,11 @@ test('调度租约并发仅一人选中，过期只接管原 run，密文绑定 
           chatType: 'c2c', chatId: null, platformUserId: '202' } }, 60)
     })
     await pool.query("INSERT INTO gugu_im_inbound_receipts VALUES($1,5,'im-waiting','dispatched')", [owner])
-    await pool.query("INSERT INTO agent_run_checkpoints VALUES($1,5,'im-waiting','waiting')", [owner])
+    await pool.query("INSERT INTO agent_run_checkpoints(user_id,session_id,run_id,status,phase) VALUES($1,5,'im-waiting','waiting','decision')", [owner])
     await pool.query(`INSERT INTO agent_subagent_deliveries
       (owner_id,parent_session_id,parent_run_id,call_id,child_id,child_run_id,request_digest,status,updated_at)
-      VALUES($1,'5','im-previous','im-start','abcdef03','im-child','digest','queued','now')`, [owner])
+      VALUES($1,'5','im-previous','im-start','abcdef03','im-child','digest','queued','now'),
+        ($1,'5','im-waiting','im-start-2','abcdef04','im-child-2','digest','queued','now')`, [owner])
     await pool.query("INSERT INTO agent_inbox_waits VALUES($1,'5','im-waiting')", [owner])
     const imLeases: Awaited<ReturnType<typeof imDispatch.claim>>[] = []
     const imScan = createImHostScans({ pool, secretKey: 'synthetic-key',
@@ -220,6 +221,10 @@ test('调度租约并发仅一人选中，过期只接管原 run，密文绑定 
       assert.equal(imLeases.length, 0)
       assert.equal(await imDispatch.claim(owner, '5'), null)
       await complete('abcdef03')
+      await imScan.scanDispatch(signal)
+      assert.equal(imLeases.length, 0)
+      assert.equal(await imDispatch.claim(owner, '5'), null)
+      await complete('abcdef04')
       assert.equal(await service.claim(owner, '5'), null)
       await imScan.scanDispatch(signal)
       await imScan.close()
@@ -246,7 +251,7 @@ test('调度租约并发仅一人选中，过期只接管原 run，密文绑定 
     assert.equal((await pool.query('SELECT pending_message_count FROM conversation_sessions WHERE id=1')).rows[0].pending_message_count, 0)
     const second = await service.claim(owner, '1')
     assert.equal(second?.identity.runId, 'run-two')
-    await pool.query("INSERT INTO agent_run_checkpoints VALUES ($1,1,'run-two','waiting')", [owner])
+    await pool.query("INSERT INTO agent_run_checkpoints(user_id,session_id,run_id,status) VALUES ($1,1,'run-two','waiting')", [owner])
     assert.equal(await service.settleExpired(owner, '1'), false)
     await pool.query("UPDATE agent_run_dispatch SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE run_id='run-two'")
     assert.equal(await service.settleExpired(other, '1'), false)
@@ -280,7 +285,7 @@ test('调度租约并发仅一人选中，过期只接管原 run，密文绑定 
     await pool.query("INSERT INTO conversation_messages(id,session_id,role) VALUES (14,4,'user')")
     const blockedId = { ownerId: owner, sessionId: '4', runId: 'blocked' }
     await withPostgresTransaction(pool, async client => { assert.equal(await lockAgentRunSession(client, blockedId), true); await enqueueAgentRunLocked(client, 'synthetic-key', blockedId, { userMessageId: 14, locale: null, origin: null, accessVersion: 'a'.repeat(64), v: 2, source: 'web' }, 60) })
-    await pool.query("INSERT INTO agent_run_checkpoints VALUES ($1,4,'blocked','running')", [owner])
+    await pool.query("INSERT INTO agent_run_checkpoints(user_id,session_id,run_id,status) VALUES ($1,4,'blocked','running')", [owner])
     const original = await service.claim(owner, '4'); assert.ok(original)
     assert.equal(await service.setReconstructionStatus(original, 'version_conflict'), true)
     assert.equal(await service.setReconstructionStatus(original, null), false)

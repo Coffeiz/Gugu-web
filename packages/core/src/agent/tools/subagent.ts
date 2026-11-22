@@ -5,7 +5,6 @@ import type { ToolDefinition, ToolScope } from './contracts.js'
 
 const childId = z.string().regex(/^[0-9a-f]{8}$/u)
 const childInput = z.strictObject({ childId })
-const waitInput = z.union([childInput, z.strictObject({})])
 const inspectInput = z.union([z.strictObject({}), z.strictObject({ childId, round: z.number().int().min(1).optional() })])
 const text = (limit: number) => z.string().trim().min(1).max(limit)
 const sendToParentInput = z.strictObject({ action: z.literal('send'), target: z.literal('parent'), message: text(12_000) })
@@ -25,7 +24,6 @@ export function createSubagentServiceTools(service: ReturnType<typeof createSuba
         name, description, parameters: JSON.parse(JSON.stringify({ type: 'object', ...inputSchema })) as Json,
       } } },
       effect,
-      ...(name === 'agent_wait' ? { requiresInteraction: true } : {}),
       validate: input => schema.safeParse(input),
       async execute(input, scope, call): Promise<ToolResult> {
         scope.signal.throwIfAborted()
@@ -50,8 +48,8 @@ export function createSubagentServiceTools(service: ReturnType<typeof createSuba
       (input, scope, id) => input.action === 'start'
         ? service.start(scope.identity, id, input.agentId, { task: input.task, resourceRefs: input.resourceRefs, allowBackgroundReport: input.allowBackgroundReport }, scope.signal)
         : service.send(scope.identity, id, input.childId, input.message, scope.signal)),
-    tool('agent_wait', '先推进独立工作。当前工作确实需要子 Agent 的结果或收件箱消息才能继续时，传 childId 等待该子 Run 的最终回复，或留空等待当前 Run 的收件箱更新。', waitInput, 'read',
-      (input, scope) => 'childId' in input ? service.wait(scope.identity, input.childId, scope.signal) : service.waitInbox(scope.identity, scope.signal)),
+    tool('agent_inbox', '检查当前会话的未读子 Agent 消息和报告。立即返回，收件箱为空时也不会等待。', z.strictObject({}), 'read',
+      (_input, scope) => service.waitInbox(scope.identity, scope.signal)),
     tool('agent_cancel', '请求取消指定子运行。', childInput, 'write',
       (input, scope) => service.cancel(scope.identity, input.childId)),
     tool('agent_inspect', '列出子运行，或查看指定子运行的当前活动或轮次。', inspectInput, 'read',

@@ -33,6 +33,7 @@ function providerConfig(preset: Preset): ProviderConfig {
       thinking: preset.thinkingMode === 'disabled' ? 'disabled' : 'adaptive',
       ...(!['adaptive', 'disabled'].includes(preset.thinkingMode) && { reasoning_effort: preset.thinkingMode }),
     }),
+    reasoning_persistence: preset.reasoningPersistence ?? 'off',
     image: preset.image, audio: preset.audio, video: preset.video,
     base_url: preset.baseUrl, api_key: preset.apiKey, model: preset.model, timeout_ms: 10_000,
   }
@@ -54,7 +55,7 @@ function modelOptions(value: Record<string, unknown>): DesktopAgentModelOptions 
     if (typeof value[key] !== 'boolean') throw new Error()
     options[key] = value[key]
   }
-  const { localRuntime, ollamaMode, thinkingMode } = value
+  const { localRuntime, ollamaMode, thinkingMode, reasoningPersistence } = value
   if (localRuntime !== undefined) {
     if (localRuntime !== 'llama.cpp' && localRuntime !== 'vllm' && localRuntime !== 'other') throw new Error()
     options.localRuntime = localRuntime
@@ -66,6 +67,10 @@ function modelOptions(value: Record<string, unknown>): DesktopAgentModelOptions 
   if (thinkingMode !== undefined) {
     if (typeof thinkingMode !== 'string' || !['default', 'disabled', 'adaptive', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(thinkingMode)) throw new Error()
     options.thinkingMode = thinkingMode
+  }
+  if (reasoningPersistence !== undefined) {
+    if (reasoningPersistence !== 'off' && reasoningPersistence !== 'continuation') throw new Error()
+    options.reasoningPersistence = reasoningPersistence
   }
   return options
 }

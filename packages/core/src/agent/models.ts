@@ -805,7 +805,7 @@ export interface RunEvent {
   readonly identity: RunIdentity
   readonly sequence: number
   readonly round: number
-  readonly type: 'run_started' | 'round_start' | 'token' | 'round_end' | 'tool_call' | 'tool_done' | 'interaction_required' | 'interaction_resolved' | 'compaction' | 'provider_diagnostic' | 'retry' | 'run_resumed' | 'final'
+  readonly type: 'run_started' | 'round_start' | 'token' | 'round_end' | 'tool_call' | 'tool_done' | 'interaction_required' | 'interaction_resolved' | 'compaction' | 'provider_diagnostic' | 'retry' | 'run_waiting' | 'run_resumed' | 'final'
   readonly payload: Readonly<Record<string, unknown>>
 }
 

@@ -76,6 +76,52 @@ function requestPreviewAttachment(socketPath: string, secret: string, payload: B
 }
 
 describe('Electron 与独立 Node Core 的真实边界', () => {
+  it('聊天事件读取超时后保留同一个 Worker，并忽略迟到的结果', async () => {
+    const root = directory()
+    const worker = join(root, 'slow-worker.mjs')
+    writeFileSync(worker, `
+      import { parentPort } from 'node:worker_threads'
+      let calls = 0
+      parentPort.on('message', ({ id, method }) => {
+        if (method === 'runtime.close') {
+          parentPort.postMessage({ id, result: null })
+          parentPort.close()
+          return
+        }
+        const result = ++calls
+        setTimeout(() => parentPort.postMessage({ id, result }), result === 1 ? 1100 : 150)
+      })
+      parentPort.postMessage({ event: 'ready', ownerId: 'fixture', schemaVersion: ${JSON.stringify(String(CORE_SCHEMA_VERSION))} })
+    `)
+    const exited = vi.fn()
+    const runtime = await LocalRuntime.open(join(root, 'core.db'), { workerEntry: worker, onWorkerExit: exited })
+    try {
+      await expect(runtime.call('agent.sessions.events', {}, { timeoutMs: 10 })).rejects.toMatchObject({ code: 'busy' })
+      await expect(runtime.call('agent.sessions.events')).resolves.toBe(2)
+      expect(exited).not.toHaveBeenCalled()
+    } finally { await runtime.close() }
+  })
+  it('数据 Worker 异常退出时报告安全分类，并结束正在等待的聊天事件读取', async () => {
+    const root = directory()
+    const entry = resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js')
+    const worker = join(root, 'worker.mjs')
+    writeFileSync(worker, `
+      import { parentPort } from 'node:worker_threads'
+      parentPort.once('message', () => { throw new Error('合成私有异常') })
+      parentPort.postMessage({ event: 'ready', ownerId: 'fixture', schemaVersion: ${JSON.stringify(String(CORE_SCHEMA_VERSION))} })
+    `)
+    const report = vi.fn()
+    const host = await CoreHost.launch(process.execPath, entry, join(root, 'core.db'),
+      undefined, undefined, undefined, worker, undefined, report)
+    try {
+      await expect(host.request('agent.sessions.events', { id: 1, after: 0 })).rejects.toMatchObject({ code: 'closed' })
+      await expect.poll(() => report.mock.calls).toEqual([
+        ['host.core_worker_exit', { exitCode: 1, code: 'uncaught_exception',
+          frames: expect.arrayContaining([expect.stringMatching(/^worker\.mjs:\d+:\d+$/)]) }],
+      ])
+      await expect(host.request('agent.sessions.events', { id: 1, after: 0 })).rejects.toMatchObject({ code: 'closed' })
+    } finally { await host.close() }
+  })
   it('本机和工作区文件引用作为画布文件卡持久化，拒绝失效引用', async () => {
     const root = directory()
     const entry = resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js')

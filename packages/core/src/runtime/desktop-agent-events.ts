@@ -62,11 +62,11 @@ export function createDesktopAgentEventReader(db: Kysely<Database>, databasePath
       if (imDelivery) {
         if (event.type === 'round_end' && typeof event.payload.text === 'string')
           projected.push({ type: 'im_round_end', sequence: event.sequence, text: event.payload.text })
-        else if (event.type === 'tool_call') projected.push({ type: 'im_round_continues' })
+        else if (event.type === 'tool_call' || event.type === 'run_waiting') projected.push({ type: 'im_round_continues' })
         else if (event.type === 'final' && event.payload.status === 'completed' && typeof event.payload.text === 'string')
           projected.push({ type: 'im_final_text', text: event.payload.text })
       }
-      if (imStream && (!internalTool || event.type === 'tool_call') && ['token', 'tool_call', 'tool_done', 'round_end', 'final', 'interaction_required', 'interaction_resolved', 'run_resumed'].includes(event.type)) {
+      if (imStream && (!internalTool || event.type === 'tool_call') && ['token', 'tool_call', 'tool_done', 'round_end', 'final', 'interaction_required', 'interaction_resolved', 'run_waiting', 'run_resumed'].includes(event.type)) {
         const { text, status } = event.payload
         projected.push({ type: 'im_stream', runEvent: {
           id: event.id, identity: event.identity, sequence: event.sequence, round: event.round, type: event.type,

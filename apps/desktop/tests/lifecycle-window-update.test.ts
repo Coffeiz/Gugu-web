@@ -6,6 +6,8 @@ import { DesktopLifecycle } from '../src/main/lifecycle.js'
 import { DesktopUpdater } from '../src/main/updater.js'
 import {
   createMainWindowSizeStore,
+  createProjectWindowBoundsStore,
+  fitProjectWindowBounds,
   dispatchWindowEdit,
   windowOptions,
   trustedCaller,
@@ -18,6 +20,25 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 describe('桌面生命周期、窗口与更新边界', () => {
+  it('项目窗口重开保留普通尺寸和负坐标，断开外接屏后移回可见区域', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'gugu-project-bounds-'))
+    try {
+      const bounds = { x: -1050, y: 130, width: 1000, height: 700 }
+      const minimum = { width: 800, height: 600 }
+      createProjectWindowBoundsStore(directory).save(bounds)
+      const restored = createProjectWindowBoundsStore(directory).read()!
+      expect(restored).toEqual(bounds)
+      expect(fitProjectWindowBounds(restored, { x: -1440, y: 24, width: 1440, height: 876 }, minimum))
+        .toEqual(bounds)
+      expect(fitProjectWindowBounds(restored, { x: 0, y: 24, width: 900, height: 650 }, minimum))
+        .toEqual({ x: 0, y: 24, width: 900, height: 650 })
+      writeFileSync(join(directory, 'project-window-bounds.json'), '{"x":0,"width":900,"height":650}')
+      expect(createProjectWindowBoundsStore(directory).read()).toBeUndefined()
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   it('重新打开主窗口时恢复最近保存的普通尺寸，并适应较小屏幕', () => {
     const directory = mkdtempSync(join(tmpdir(), 'gugu-window-size-'))
     try {

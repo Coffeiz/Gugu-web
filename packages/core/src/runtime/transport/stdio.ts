@@ -53,16 +53,19 @@ async function main(): Promise<number> {
     })
     return 2
   }
+  const onWorkerExit = (exitCode: number, reason: string, frames: readonly string[]) => {
+    if (protocol === 2) void send({ v: protocol, event: 'core_worker_exit', exitCode, reason, frames }).catch(() => {})
+  }
   let runtime: LocalRuntime
   try {
     runtime = await (existsSync(database)
       ? LocalRuntime.open(database, {
-          exclusive: true,
+          exclusive: true, onWorkerExit,
           ...(workerEntry ? { workerEntry: resolve(workerEntry) } : {}),
         ...(agentRuntimeModule ? { agentRuntimeModule: resolve(agentRuntimeModule) } : {}),
         })
       : LocalRuntime.initialize(database, {
-          exclusive: true,
+          exclusive: true, onWorkerExit,
           ...(workerEntry ? { workerEntry: resolve(workerEntry) } : {}),
         ...(agentRuntimeModule ? { agentRuntimeModule: resolve(agentRuntimeModule) } : {}),
         }))

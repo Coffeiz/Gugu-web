@@ -95,8 +95,7 @@ test('QQ 在等待子 Agent 期间就收到第二轮正文的完成帧', async (
  const second = '我重新派一个范围更窄的任务。'
  const saved = [
   event(1,'round_end',{text:first}), event(2,'tool_call',{name:'web_search'}),
-  event(3,'round_end',{text:second},2), event(4,'tool_call',{name:'agent_message',toolCallId:'private-call'},2),
-  event(5,'tool_call',{name:'agent_wait',toolCallId:'private-wait'},2),
+  event(3,'round_end',{text:second},2), event(4,'run_waiting',{},2),
  ]
  try {
   const delivery = createImRunDeliveryRecovery({

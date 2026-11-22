@@ -209,6 +209,11 @@ export function createSubagentDeliveryStore(db: Kysely<Database>, secret: string
           AND child.user_id=${sessionOwner(parent)} AND child.source='subagent'`.execute(db)
       return rows.map(row => ({ ownerId: parent.ownerId, sessionId: String(row.child_session_id), runId: row.child_run_id }))
     },
+    async hasPending(parent: RunIdentity) {
+      const { rows } = await sql`SELECT 1 FROM agent_subagent_deliveries
+        WHERE ${scope(parent)} AND status IN ('queued','running') LIMIT 1`.execute(db)
+      return rows.length > 0
+    },
     async isPending(parent: RunIdentity, childId: string) {
       const { rows } = await sql`SELECT 1 FROM agent_subagent_deliveries
         WHERE ${scope(parent)} AND child_id=${childId} AND status IN ('queued','running')`.execute(db)

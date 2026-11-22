@@ -124,10 +124,13 @@ test('OpenAI-compatible video probe sends a generated MP4 data URL through the p
   }
 })
 
-test('provider media rejection preserves unknown/unsupported distinction and redacts echoed credentials', async () => {
+for (const [message, supported] of [
+  ['You have uploaded an invalid image. The image data is corrupted or truncated and could not be decoded.', null],
+  ['This model does not support image input', false],
+] as const) test(`provider media rejection classifies ${message} and redacts echoed credentials`, async () => {
   const secret = 'synthetic-media-secret-123456'
   const server = createServer((_request, response) => {
-    response.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: `invalid image api_key=${secret}` } }))
+    response.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: `${message} api_key=${secret}` } }))
   })
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   try {
@@ -136,9 +139,9 @@ test('provider media rejection preserves unknown/unsupported distinction and red
     const result = await createByokMediaCapabilityProbeRunner({})({
       provider: 'local', apiFormat: 'openai', baseUrl: `http://127.0.0.1:${address.port}/v1`, model: 'synthetic-vision', apiKey: secret,
     }, 'image')
-    assert.equal(result.supported, false)
+    assert.equal(result.supported, supported)
     assert.equal(result.status, 400)
-    assert.match(result.detail, /模型拒绝了图片输入/)
+    assert.match(result.detail, supported === false ? /模型拒绝了图片输入/ : /未能判定/)
     assert.match(result.detail, /密钥已隐藏/)
     assert.doesNotMatch(JSON.stringify(result), /synthetic-media-secret/)
   } finally {

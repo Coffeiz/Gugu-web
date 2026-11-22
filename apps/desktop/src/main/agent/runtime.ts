@@ -2616,6 +2616,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       })
       const checkpoint = await store.read(recipient)
       if (checkpoint?.status !== 'waiting') return
+      if (checkpoint.agentInboxWaiting && checkpoint.phase === 'decision' && await store.hasPendingSubagents?.(recipient)) return
       const ready = checkpoint.subagentWaitChildId
         ? !await store.isSubagentPending(recipient, checkpoint.subagentWaitChildId)
         : checkpoint.agentInboxWaiting && Boolean((await store.readAgentInbox?.(recipient))?.length

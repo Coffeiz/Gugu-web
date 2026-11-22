@@ -20,7 +20,7 @@ const CONFIGURED_AGENT_TOOL_NAMES = new Set([
   'note_search', 'note_get', 'note_delete', 'note_restore', 'note_undo', 'use_skill', 'list_skills', 'create_skill', 'update_skill', 'delete_skill', 'note_create', 'note_update', 'ask_user',
   'search_tools', 'call_tool', 'manage_mcp_servers', 'web_search', 'web_download', 'http_get', 'similar_image_search', 'deep_research', 'send_link_buttons', 'send_email',
   'read_knowledge', 'save_knowledge', 'update_knowledge', 'delete_knowledge', 'global_search', 'create_workspace', 'update_workspace', 'unlink_workspace', 'delete_workspace_directory',
-  'agent_message', 'agent_wait', 'agent_cancel', 'agent_inspect',
+  'agent_message', 'agent_inbox', 'agent_cancel', 'agent_inspect',
   'undo_last_action', 'create_event', 'update_event', 'delete_event',
 ])
 

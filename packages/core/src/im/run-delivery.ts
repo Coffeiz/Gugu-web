@@ -155,7 +155,7 @@ function createDelivery<C>(ports: Omit<ImRunDeliveryPorts<C>, 'runner'>) {
       || !['answered', 'confirmed', 'cancelled', 'aborted', 'expired'].includes(String(event.payload.status)))) throw new Error('IM 交互结果身份无效')
     const internalTool = (event.type === 'tool_call' || event.type === 'tool_done')
       && isImInternalDelegationTool(event.payload.name)
-    if (ports.stream && (!internalTool || event.type === 'tool_call') && ['token', 'tool_call', 'tool_done', 'round_end', 'final', 'interaction_required', 'interaction_resolved', 'run_resumed'].includes(event.type)) {
+    if (ports.stream && (!internalTool || event.type === 'tool_call') && ['token', 'tool_call', 'tool_done', 'round_end', 'final', 'interaction_required', 'interaction_resolved', 'run_waiting', 'run_resumed'].includes(event.type)) {
       const streamed = internalTool ? { ...event, payload: {} }
         : event.type === 'interaction_required' ? { ...event, payload: { interactionId: event.payload.interactionId, kind: event.payload.kind, toolCallId: event.payload.toolCallId } }
         : event.type === 'interaction_resolved' ? { ...event, payload: { interactionId: event.payload.interactionId, status: event.payload.status } } : event

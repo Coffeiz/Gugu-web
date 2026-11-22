@@ -4,7 +4,8 @@ import { providerSelection } from './registry.js'
 import type { JsonObject, ProviderConfig, ProviderHttpResponse } from './contracts.js'
 import { createNodeProviderTransport, type NodeProviderTransportOptions } from './transport/node.js'
 
-const imagePng = 'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAlklEQVR4nO3QMQ0AMAzAsPLHWC4rDB/L4T/K7O772egArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0A6OSM1jeqEVYAAAAAElFTkSuQmCC'
+// 预生成的 64 × 64 纯蓝 RGB PNG。
+const imagePng = 'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAb0lEQVR4nO3PAQkAAAyEwO9feoshgnABdNvJ8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ2oPcf88OIhvJ6vAAAAAElFTkSuQmCC'
 
 // 预生成的 3 秒纯蓝 H.264 MP4。探测时只发送合成样本。
 const videoSample =
@@ -171,12 +172,11 @@ export function createByokMediaCapabilityProbeRunner(environment: NodeJS.Process
       if (response.status >= 200 && response.status < 300)
         return { supported: true, status: 200, detail: `模型接受了${label(dim)}输入` }
       const message = errorMessage(raw, key)
-      const lower = raw.toLowerCase()
       if (response.status === 400 || response.status === 422) {
-        const hints = ['not support', 'unsupported', 'does not support', "don't support", 'invalid image', 'invalid video', 'invalid audio',
-          'image not', 'video not', 'audio not', 'media type', 'content type', 'unrecognized', 'unknown field', 'image_url', 'video_url', 'input_audio', 'image_urls']
-        if (hints.some(hint => lower.includes(hint)))
-          return { supported: false, status: response.status, detail: `模型拒绝了${label(dim)}输入，应为纯文本模型：${message}` }
+        const media = dim === 'image' ? 'image|vision|image_url' : dim === 'video' ? 'video|video_url' : 'audio|input_audio'
+        const unsupported = new RegExp(`(?:does not support|do not support|doesn't support|don't support|unsupported)\\s+(?:any\\s+)?(?:${media})\\b|\\b(?:${media})(?:\\s+inputs?)? (?:is |are )?not supported|(?:only supports|supports only) text`, 'i')
+        if (unsupported.test(message))
+          return { supported: false, status: response.status, detail: `模型拒绝了${label(dim)}输入：${message}` }
         return { supported: null, status: response.status, detail: `未能判定（${response.status}）：${message}` }
       }
       if (response.status === 401 || response.status === 403)

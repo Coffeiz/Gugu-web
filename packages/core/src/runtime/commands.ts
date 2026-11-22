@@ -188,7 +188,8 @@ export function visibleError(error: unknown): {
       database_in_use: '数据库正由其他运行时使用，请先关闭其他实例',
     }
     if (messages[error.code]) return { code: error.code, message: messages[error.code]! }
-    if (error.code === 'storage_error' || error.code === 'closed')
+    if (error.code === 'closed') return { code: 'closed', message: '本地数据进程已停止' }
+    if (error.code === 'storage_error')
       return {
         code: 'storage_error',
         message: '本地数据操作失败，请重读数据确认状态',

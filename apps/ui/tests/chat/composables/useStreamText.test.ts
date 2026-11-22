@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { effectScope, nextTick, reactive } from 'vue'
+import { createMarkdownStreamMotion } from '@/components/common/content/markdownStreamMotion'
 import { useStreamText } from '@/components/common/gugu-chat/composables/useStreamText'
 
 const scopes: ReturnType<typeof effectScope>[] = []
@@ -26,12 +27,12 @@ describe('流式正文展示', () => {
     vi.advanceTimersByTime(24)
     expect(displayed.value).toBe('👩‍💻')
     vi.advanceTimersByTime(1)
-    expect(displayed.value).toBe('👩‍💻批量文本批')
+    expect(displayed.value).toBe('👩‍💻' + message.text.slice('👩‍💻'.length, '👩‍💻'.length + 20))
     vi.advanceTimersByTime(2000)
     expect(displayed.value).toBe(message.text)
   })
 
-  it('连续收到大批增量时仍按原文顺序每 25 毫秒显示 5 个字', async () => {
+  it('大批增量时按原文顺序加速追赶', async () => {
     const { message, displayed } = mount()
     message.text = '甲'.repeat(20)
     await nextTick()
@@ -44,9 +45,11 @@ describe('流式正文展示', () => {
       vi.advanceTimersByTime(24)
       expect(displayed.value).toBe(before)
       vi.advanceTimersByTime(1)
-      expect(displayed.value).toBe(message.text.slice(0, before.length + 5))
+      expect(displayed.value.startsWith(before)).toBe(true)
+      expect(message.text.startsWith(displayed.value)).toBe(true)
+      expect(displayed.value.length).toBeGreaterThan(before.length)
     }
-    expect(displayed.value).toHaveLength(201)
+    expect(displayed.value.length).toBeGreaterThan(201)
   })
 
   it('队列排空后等待新文字，新批次仍按固定间隔显示', async () => {
@@ -61,7 +64,7 @@ describe('流式正文展示', () => {
     vi.advanceTimersByTime(24)
     expect(displayed.value).toBe('少量文字')
     vi.advanceTimersByTime(1)
-    expect(displayed.value).toBe('少量文字长回复长回')
+    expect(displayed.value).toBe(message.text.slice(0, '少量文字'.length + 25))
   })
 
   it('跳过智能界面数据的逐字播放，闭合后继续逐字显示正文', async () => {
@@ -80,21 +83,19 @@ describe('流式正文展示', () => {
     expect(displayed.value).toBe(closed + '\n\n后续正')
   })
 
-  it('结束时平稳排空，后续工具卡出现时同步结算前文', async () => {
+  it('结束后继续分批播放并快速显示全文，后续工具卡出现时同步结算前文', async () => {
     const { message, displayed, presenting } = mount()
     message.text = '快照'.repeat(300)
     await nextTick()
     message.streaming = false
     await nextTick()
     expect(presenting.value).toBe(true)
+    vi.advanceTimersByTime(25)
+    expect(displayed.value.length).toBeGreaterThan(1)
     expect(displayed.value).not.toBe(message.text)
-    vi.advanceTimersByTime(2999)
-    expect(displayed.value).toHaveLength(596)
-    vi.advanceTimersByTime(1)
+    vi.advanceTimersByTime(275)
     expect(displayed.value).toBe(message.text)
-    vi.advanceTimersByTime(149)
-    expect(presenting.value).toBe(true)
-    vi.advanceTimersByTime(1)
+    vi.advanceTimersByTime(150)
     expect(presenting.value).toBe(false)
 
     message.streaming = true
@@ -104,6 +105,24 @@ describe('流式正文展示', () => {
     message.hasFollowingMessage = true
     await nextTick()
     expect(displayed.value).toBe(message.text)
+  })
+
+  it('前一批仍在淡入时，在其末尾独立启动下一批', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false }))
+    const now = vi.spyOn(performance, 'now').mockReturnValue(100)
+    try {
+      const root = document.createElement('div')
+      const animate = createMarkdownStreamMotion()
+      root.innerHTML = '<p>第一批</p>'
+      animate(root, true)
+      now.mockReturnValue(125)
+      root.innerHTML = '<p>第一批<strong>第二批</strong></p>'
+      animate(root, true)
+      expect([...root.querySelectorAll('span')].map(node => node.textContent)).toEqual(['第一批', '第二批'])
+    } finally {
+      now.mockRestore()
+      vi.unstubAllGlobals()
+    }
   })
 
   it('服务端文本更正、切换会话和销毁时取消旧缓冲', async () => {

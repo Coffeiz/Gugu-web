@@ -1,6 +1,8 @@
 import { desktopImEventKey } from '../src/main/im/gateway/inbound/inbox.js'
 import { expect, it, vi } from 'vitest'
 import { createDesktopImDispatch } from '../src/main/im/gateway/delivery/dispatch.js'
+import { DesktopError } from '../src/main/core-host.js'
+import { createRuntimeLog } from '@gugu/log/runtime'
 import type { IpcHost } from '../src/main/ipc/types.js'
 
 it.each([true, false])('本机投递先登记并防止发送状态恢复时重复回复（首次登记 %s）', async firstAttempt => {
@@ -374,3 +376,38 @@ it('桌面群调度只向已授权的原群发送最终正文', async () => {
   expect(send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ recipient: 'group', text: '最终正文' }), undefined)
   expect(authorizeMessage).toHaveBeenCalledOnce()
 })
+
+it('重复 RPC 故障退避，只记录一次安全诊断，恢复后继续补读', async () => {
+  const controller = new AbortController()
+  const regular = vi.fn()
+  const diagnostic = vi.fn()
+  const log = createRuntimeLog({ regular, diagnostic })
+  const failure = new DesktopError('storage_error', '合成内部详情')
+  const timestamps: number[] = []
+  const request = vi.fn(async () => {
+    timestamps.push(performance.now())
+    if (timestamps.length < 3) throw failure
+    controller.abort()
+    return null
+  })
+  const dispatch = createDesktopImDispatch({ request: request as IpcHost['request'] }, {
+    decryptStringAsync: vi.fn(),
+  }, { resolveRunModelSelection: vi.fn() }, undefined,
+  (code, error, rpcMethod) => log('gateway.degraded', { code, error, rpcMethod }))
+  const send = vi.fn()
+  await dispatch({
+    connection: { platform: 'telegram', botId: 'bot', ownerId: 'desktop' },
+    connectionId: 'a'.repeat(64), userId: 'user', signal: controller.signal,
+    authorize: async () => true, send,
+  })
+  expect(request).toHaveBeenCalledTimes(3)
+  expect(timestamps[1]! - timestamps[0]!).toBeGreaterThanOrEqual(950)
+  expect(timestamps[2]! - timestamps[1]!).toBeGreaterThanOrEqual(1950)
+  expect(send).not.toHaveBeenCalled()
+  expect(regular).toHaveBeenCalledOnce()
+  expect(diagnostic).toHaveBeenCalledOnce()
+  expect(JSON.parse(regular.mock.calls[0]![0])).toMatchObject({
+    attributes: { code: 'dispatch_unavailable', errorCode: 'storage_error', rpcMethod: 'im.inbox.prepare' },
+  })
+  expect(diagnostic.mock.calls[0]![0]).not.toContain('合成内部详情')
+}, 10_000)

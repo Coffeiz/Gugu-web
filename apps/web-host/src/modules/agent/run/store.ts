@@ -148,6 +148,13 @@ export function createPostgresAgentRunStore<C>(
   }
 
   return {
+    async hasPendingSubagents(identity) {
+      validateIdentity(identity)
+      const result = await pool.query(`SELECT 1 FROM agent_subagent_deliveries
+        WHERE owner_id=$1 AND parent_session_id=$2 AND parent_run_id=$3 AND status IN ('queued','running') LIMIT 1`,
+      [identity.ownerId, identity.sessionId, identity.runId])
+      return result.rowCount === 1
+    },
     async isSubagentPending(identity, childId) {
       validateIdentity(identity)
       const result = await pool.query(`SELECT 1 FROM agent_subagent_deliveries

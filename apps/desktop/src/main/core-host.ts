@@ -1,3 +1,4 @@
+import type { RuntimeLog } from '@gugu/log/runtime'
 import { createHash, randomUUID } from 'node:crypto'
 import { readFile, realpath, readdir } from 'node:fs/promises'
 import { resolve, join, relative, sep, dirname } from 'node:path'
@@ -144,6 +145,7 @@ export class CoreHost {
   private constructor(
     private child: ChildProcessWithoutNullStreams,
     private timeoutMs = 15_000,
+    private report?: RuntimeLog,
   ) {
     child.stdout.on('data', (chunk) => this.receive(chunk as Buffer))
     child.stderr.resume()
@@ -163,6 +165,7 @@ export class CoreHost {
     memoryRoot?: string,
     workerEntry?: string,
     agentRuntimeModule?: string,
+    report?: RuntimeLog,
   ): Promise<CoreHost> {
     const env = Object.fromEntries(
       Object.entries(process.env).filter(
@@ -183,7 +186,7 @@ export class CoreHost {
       windowsHide: true,
       env,
     })
-    const host = new CoreHost(child, timeoutMs)
+    const host = new CoreHost(child, timeoutMs, report)
     try {
       const ready = await host.frame()
       if (ready.error && (ready.error as { code: string }).code === 'database_in_use')
@@ -248,6 +251,13 @@ export class CoreHost {
         const frame: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
         if (!frame || typeof frame !== 'object' || Array.isArray(frame)) throw new Error()
         const message = frame as Record<string, unknown>
+        if (message.v === 2 && message.event === 'core_worker_exit'
+          && typeof message.exitCode === 'number' && Number.isSafeInteger(message.exitCode)
+          && typeof message.reason === 'string' && ['out_of_memory', 'uncaught_exception', 'unexpected_exit', 'watchdog_timeout'].includes(message.reason)) {
+          this.report?.('host.core_worker_exit', { code: message.reason, exitCode: message.exitCode,
+            frames: Array.isArray(message.frames) ? message.frames : [] })
+          continue
+        }
         if (message.v === 2 && message.event === 'agent_run_changed'
           && typeof message.sessionId === 'number' && Number.isSafeInteger(message.sessionId) && message.sessionId > 0
           && typeof message.runId === 'string' && /^[A-Za-z0-9:_-]{1,128}$/.test(message.runId)) {
@@ -451,9 +461,9 @@ export class CoreHost {
             schema_upgrade_required: '本地数据库与当前版本不兼容，请使用新数据库文件',
             database_in_use: '数据库正由其他运行时使用，请先关闭其他实例',
             storage_error: '本地数据操作失败，请刷新数据确认状态',
-            closed: 'Core 已停止，请重新启动应用',
+            closed: '本地数据进程已停止，请重新启动应用后查看已保存的回复',
           }
-          if (undoWrite && error.code === 'storage_error')
+          if (undoWrite && (error.code === 'storage_error' || error.code === 'closed'))
             throw new DesktopError('unknown_result', '撤销结果未确认，请查询操作收据或重新读取数据，勿重复提交', operationId)
           if (Object.hasOwn(messages, error.code))
             throw new DesktopError(error.code, messages[error.code]!, undefined)

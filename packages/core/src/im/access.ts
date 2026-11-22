@@ -159,7 +159,7 @@ export function imCanUseGroupOwnerMemory(actor: ImActor, enabled: boolean): bool
   return actor.chatType === 'group' && actor.role === 'owner' && actor.verifiedOwner && enabled
 }
 
-const delegationTools = new Set(['agent_message', 'agent_wait', 'agent_cancel', 'agent_inspect', 'subagent_result'])
+const delegationTools = new Set(['agent_message', 'agent_wait', 'agent_inbox', 'agent_cancel', 'agent_inspect', 'subagent_result'])
 
 export function isImInternalDelegationTool(name: unknown): boolean {
   return typeof name === 'string' && delegationTools.has(name)

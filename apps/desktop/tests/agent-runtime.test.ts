@@ -1051,7 +1051,7 @@ it.each(['正常交付', '主人 IM 私聊交付', '跨父运行续聊', '收件
           followupReplies++
           block = { type: 'text', text: '父 Agent 收到续聊结果' }
         } else if (messages.includes('followup-message'))
-          block = { type: 'tool_use', id: 'followup-wait', name: 'agent_wait', input: { childId: row!.child_id } }
+          block = { type: 'text', text: '已追加核对任务。' }
         else
           block = { type: 'tool_use', id: 'followup-message', name: 'agent_message',
             input: { action: 'send', childId: row!.child_id, message: '继续核对合成结论' } }
@@ -1061,10 +1061,12 @@ it.each(['正常交付', '主人 IM 私聊交付', '跨父运行续聊', '收件
         parentTools = body.tools.map((tool: { name: string }) => tool.name)
         block = { type: 'tool_use', id: 'delegate', name: 'agent_message',
           input: { action: 'start', agentId: 'builtin:searcher', task: '核对合成资料', ...(fileMode ? { resourceRefs: [fileKey] } : {}) } }
-      } else if (parentRequests === 2) {
+      } else if (parentRequests === 2 || mode === '收件箱等待' && parentRequests === 3) {
         const { rows: [row] } = await sql<{ child_id: string }>`SELECT child_id FROM agent_subagent_deliveries`.execute(runtime.db)
         if (!row) throw new Error('派单未持久化')
-        block = { type: 'tool_use', id: 'wait-child', name: 'agent_wait', input: mode === '收件箱等待' ? {} : { childId: row.child_id } }
+        block = mode === '收件箱等待' && parentRequests === 2
+          ? { type: 'tool_use', id: 'check-inbox', name: 'agent_inbox', input: {} }
+          : { type: 'text', text: '已派单，助手正在处理。' }
       } else {
         if (!JSON.stringify(body.messages).includes('合成子任务已经完成')) throw new Error('父请求缺少 final')
         block = { type: 'text', text: '合成主回复已汇总子任务' }
@@ -1149,8 +1151,8 @@ process.stdin.resume()
     if (mode === '进程重启') {
       await startPausedWorker(session.id, '合成研究')
       await expect.poll(async () => {
-        const { rows } = await sql`SELECT 1 FROM agent_subagent_waits w
-          JOIN agent_subagent_deliveries d ON d.owner_id=w.owner_id AND d.parent_run_id=w.parent_run_id AND d.child_id=w.child_id
+        const { rows } = await sql`SELECT 1 FROM agent_inbox_waits w
+          JOIN agent_subagent_deliveries d ON d.owner_id=w.owner_id AND d.parent_run_id=w.run_id AND d.parent_session_id=w.session_id
           JOIN agent_run_checkpoints c ON c.run_id=d.child_run_id WHERE c.phase='idle' AND c.status='running'`.execute(runtime.db)
         return rows.length
       }, { timeout: 8000 }).toBe(1)
@@ -1196,15 +1198,15 @@ process.stdin.resume()
     const start = await runs.start(session.id, '合成研究', 'synthetic-subagent', config, undefined, !privateIm, undefined, [],
       fileMode ? [{ type: 'file', id: fileId, label: '合成证据.txt' }] : [])
     runId = start.run_id
-    await expect.poll(async () => (await (mode === '收件箱等待'
-      ? sql`SELECT 1 FROM agent_inbox_waits WHERE run_id=${runId}`
-      : sql`SELECT 1 FROM agent_subagent_waits WHERE parent_run_id=${runId}`).execute(runtime.db)).rows.length).toBe(1)
+    await expect.poll(async () => (await sql`SELECT 1 FROM agent_inbox_waits WHERE run_id=${runId}`.execute(runtime.db)).rows.length).toBe(1)
     expect(await read(session.id, runId, 0)).toMatchObject({ runId, status: 'running' })
     expect(await read(session.id, undefined, 0, true)).toMatchObject({ runId, status: 'running' })
     expect((await listDesktopAgentSessions(runtime.db, ownerId)).find(row => row.id === session.id))
       .toMatchObject({ isRunning: true })
     expect(parentTools).toContain('agent_message')
-    expect(parentRequests).toBe(2)
+    expect(parentTools).toContain('agent_inbox')
+    expect(parentTools).not.toContain('agent_wait')
+    expect(parentRequests).toBe(mode === '收件箱等待' ? 3 : 2)
     if (privateIm) {
       const page = await read(session.id, runId, 0, false, true, true)
       expect(page.events).toContainEqual(expect.objectContaining({ type: 'im_stream',
@@ -1239,7 +1241,7 @@ process.stdin.resume()
       expect(JSON.stringify(page.events)).not.toContain('合成子任务已经完成')
     }
     expect(childRequests).toBe(fileMode ? 4 : hostShell ? 2 : 1)
-    expect(parentRequests).toBe(3)
+    expect(parentRequests).toBe(mode === '收件箱等待' ? 4 : 3)
     const consumed = await sql<{ consumed_checkpoint_version: number }>`SELECT consumed_checkpoint_version FROM agent_subagent_deliveries`.execute(runtime.db)
     expect(consumed.rows[0]?.consumed_checkpoint_version).toBeGreaterThan(0)
     if (mode === '跨父运行续聊') {
@@ -1248,7 +1250,7 @@ process.stdin.resume()
       await startPausedWorker(session.id, '父会话专属追问')
       const followupDelivery = sql<{ parent_run_id: string; child_run_id: string; child_id: string }>`
         SELECT d.parent_run_id,d.child_run_id,d.child_id FROM agent_subagent_deliveries d
-        JOIN agent_subagent_waits w ON w.owner_id=d.owner_id AND w.parent_run_id=d.parent_run_id AND w.child_id=d.child_id
+        JOIN agent_inbox_waits w ON w.owner_id=d.owner_id AND w.run_id=d.parent_run_id AND w.session_id=d.parent_session_id
         JOIN agent_run_checkpoints c ON c.run_id=d.child_run_id
         WHERE d.parent_run_id<>${runId} AND c.phase='idle' AND c.status='running'`
       await expect.poll(async () => (await followupDelivery.execute(runtime.db)).rows.length, { timeout: 8000 }).toBe(1)

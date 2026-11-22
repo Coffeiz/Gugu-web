@@ -24,7 +24,7 @@ type Prepared = { sessionId: number; runId: string | null; eventKey: string; sea
 export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof safeStorage, 'decryptStringAsync'>,
   model: Pick<ReturnType<typeof createDesktopAgentModelService>, 'resolveRunModelSelection'>,
   readPreferences?: () => Promise<DesktopAppearancePreferences>,
-  report?: (code: string, error: unknown) => void, registerMedia?: (route: DesktopImMediaRoute) => () => void) {
+  report?: (code: string, error: unknown, method?: string) => void, registerMedia?: (route: DesktopImMediaRoute) => () => void) {
   return async (options: {
     connection: ImConnectionIdentity; connectionId: string; signal: AbortSignal
     createStream?(target: { eventKey: string; runId: string; sessionId: number; messageId: string; referenceMessageId?: string; preferences?: DesktopAppearancePreferences }): Promise<DesktopImStream | undefined>
@@ -52,7 +52,17 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
       change++
       pendingWake?.abort()
     })
-    let reportedMissingModel = false
+    let lastFailure: string | undefined
+    let retryDelay = 1_000
+    let rpcMethod: string | undefined
+    const callRpc: IpcHost['request'] = async (method, params) => {
+      try {
+        return await host.request(method, params)
+      } catch (error) {
+        rpcMethod = method
+        throw error
+      }
+    }
     let typing: { runId: string; stop: () => Promise<void> } | undefined
     async function stopTyping() {
       const previous = typing
@@ -65,8 +75,9 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
         let keepTyping = false
         let retryRequired = false
         try {
+          rpcMethod = undefined
           if (!await options.authorize()) return
-          const item = await host.request<Prepared | null>('im.inbox.prepare', options.group ? { ...scope, chatType: 'group', ownerPlatformUserId: options.group.ownerPlatformUserId } : scope)
+          const item = await callRpc<Prepared | null>('im.inbox.prepare', options.group ? { ...scope, chatType: 'group', ownerPlatformUserId: options.group.ownerPlatformUserId } : scope)
           if (item) {
             const { result } = await encryption.decryptStringAsync(Buffer.from(item.sealedEvent, 'base64'))
             let envelope: DesktopImEnvelope | undefined
@@ -91,21 +102,20 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
               : event.scope.chatType === 'c2c' && event.scope.platformUserId === options.userId)
             if (!event || !matches || (!event.text.trim() && !event.quotedText && !envelope?.attachments?.length)) {
               if (!await options.authorize()) return
-              if (!item.runId && await host.request('im.inbox.reject', { ...scope, eventKey: item.eventKey })) continue
+              if (!item.runId && await callRpc('im.inbox.reject', { ...scope, eventKey: item.eventKey })) continue
               throw new Error('本机 IM 收件与连接不匹配')
             }
             const replyContext = envelope?.replyContext
             if (!await options.authorize()) return
             if (!item.runId && options.group && !await options.group.authorizeMessage(event)) {
-              if (await host.request('im.inbox.reject', { ...scope, eventKey: item.eventKey })) continue
+              if (await callRpc('im.inbox.reject', { ...scope, eventKey: item.eventKey })) continue
               return
             }
             if (!item.runId) {
               const selection = await model.resolveRunModelSelection()
-              reportedMissingModel = false
               if (!await options.authorize()) return
               if (options.group && !await options.group.authorizeMessage(event)) continue
-              await host.request('agent.sessions.startRun', {
+              await callRpc('agent.sessions.startRun', {
                 id: item.sessionId, text: event.quotedText ? `引用消息：${JSON.stringify(event.quotedText)}\n\n${event.text}` : event.text, clientId: item.clientId, model: selection.config, modelId: selection.id, interactive: !options.group && Boolean(options.sendPrompt),
                 ...(options.group ? { groupSender: { id: event.scope.platformUserId, name: event.platformUserName } } : {}),
                 ...(envelope?.pendingAskResume ? { resumePassiveMessage: true } : {}),
@@ -116,7 +126,7 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
             const clientId = item.clientId
             const target = { ...scope, eventKey: item.eventKey, runId: item.runId }
             const update = (action: 'begin' | Outcome, noticeKey?: string, replyFact?: AcceptedReplyFact) =>
-              host.request<boolean>('im.inbox.delivery', { ...target, action, ...(noticeKey ? { noticeKey } : {}), ...(replyFact ? { replyFact } : {}) })
+              callRpc<boolean>('im.inbox.delivery', { ...target, action, ...(noticeKey ? { noticeKey } : {}), ...(replyFact ? { replyFact } : {}) })
             const preferences = options.group ? undefined : await readPreferences?.()
             const makeReply = (text: string, deliveryId: string) =>
               createImRequestedReply(event.scope, { ownerId: connection.ownerId, deliveryId, text }, event.platformMessageId)
@@ -148,7 +158,7 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
             const current = projection
             let status: string
             do {
-              const page = await host.request<DesktopAgentEventPage>('agent.sessions.events', { id: item.sessionId, runId: item.runId, after: current.cursor, ...(preferences || current.stream || options.group ? { imDelivery: true } : {}), ...(current.stream ? { imStream: true } : {}) })
+              const page = await callRpc<DesktopAgentEventPage>('agent.sessions.events', { id: item.sessionId, runId: item.runId, after: current.cursor, ...(preferences || current.stream || options.group ? { imDelivery: true } : {}), ...(current.stream ? { imStream: true } : {}) })
               for (const entry of page.events) {
                 if (entry.type === 'im_stream' && current.stream && current.streamOutcome !== 'unknown' && current.streamOutcome !== 'rejected') {
                   const runEvent = entry.runEvent as RunEvent
@@ -193,10 +203,10 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
             const prompt = current.prompt
             if (status === 'waiting' && prompt && options.sendPrompt && options.userId) {
               const request = { ...target, promptId: prompt.prompt_id }
-              if (await host.request<boolean>('im.inbox.prompt', { ...request, action: 'begin' })) {
+              if (await callRpc<boolean>('im.inbox.prompt', { ...request, action: 'begin' })) {
                 let messageId: string | null = null
                 try { if (await options.authorize()) messageId = await options.sendPrompt(prompt, options.userId) }
-                finally { await host.request('im.inbox.prompt', { ...request, action: 'settle', messageId }) }
+                finally { await callRpc('im.inbox.prompt', { ...request, action: 'settle', messageId }) }
               }
               current.prompt = undefined
             }
@@ -223,13 +233,19 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
         } catch (error) {
           retryRequired = true
           if (!signal.aborted) {
-            if (error instanceof DesktopError && error.code === 'model_unavailable') {
-              if (!reportedMissingModel) report?.('im_model_unavailable', error)
-              reportedMissingModel = true
-            } else report?.('dispatch_unavailable', error)
+            const errorCode = error instanceof DesktopError ? error.code : 'internal_error'
+            const signature = JSON.stringify([rpcMethod, errorCode])
+            if (signature !== lastFailure) {
+              report?.(errorCode === 'model_unavailable' ? 'im_model_unavailable' : 'dispatch_unavailable', error, rpcMethod)
+              lastFailure = signature
+            }
           }
           // 收件已持久化，下次迭代从原状态恢复。
         } finally {
+          if (!retryRequired) {
+            lastFailure = undefined
+            retryDelay = 1_000
+          }
           if (!keepTyping || signal.aborted) await stopTyping()
         }
         if (!retryRequired && change !== observed) continue
@@ -237,7 +253,8 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
         if (!retryRequired) pendingWake = wake
         try {
           // 通知只唤醒读取。定时补读覆盖漏通知和未关联运行的入站消息。
-          await delay(1_000, undefined, { signal: AbortSignal.any([signal, wake.signal]) }).catch(() => {})
+          await delay(retryDelay, undefined, { signal: AbortSignal.any([signal, wake.signal]) }).catch(() => {})
+          if (retryRequired) retryDelay = Math.min(30_000, retryDelay * 2)
         } finally {
           pendingWake = undefined
         }

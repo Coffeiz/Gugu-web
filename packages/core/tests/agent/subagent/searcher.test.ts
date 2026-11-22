@@ -215,7 +215,12 @@ it.each(['指定子终态', '空参数收件箱'] as const)('父 Run 等待 %s �
   let ready = false
   let waitCalls = 0
   const consumed: string[] = []
-  const definitions = createSubagentServiceTools(toolContracts).filter(item => ['agent_message', 'agent_wait'].includes(item.definition.name))
+  // 旧 checkpoint 仍可能包含 agent_wait，使用合成旧工具验证恢复兼容。
+  const definitions = createSubagentServiceTools(toolContracts).filter(item => ['agent_message', 'agent_inbox'].includes(item.definition.name))
+    .map(item => item.definition.name === 'agent_inbox' ? { ...item, requiresInteraction: true,
+      definition: { name: 'agent_wait', schema: { type: 'function', function: {
+        name: 'agent_wait', parameters: { type: 'object', properties: { childId: { type: 'string' } } },
+      } } }, validate: (input: unknown) => ({ success: true as const, data: input }) } : item)
   const registry = createToolRegistry({ tools: definitions.map(tool => ({
     ...tool,
     async execute() {

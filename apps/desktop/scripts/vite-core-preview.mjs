@@ -177,7 +177,7 @@ export function desktopCorePreview(desktopRoot) {
         return lifecycle.request(method, params)
       } }
       const admit = createDesktopImInbox(host, encryption)
-      const dispatch = createDesktopImDispatch(host, encryption, model, () => host.request('preferences.desktop.get'), (code, error) => report('gateway.degraded', { code, error }))
+      const dispatch = createDesktopImDispatch(host, encryption, model, () => host.request('preferences.desktop.get'), (code, error, rpcMethod) => report('gateway.degraded', { code, error, rpcMethod }))
       const callback = createDesktopImCallback(host, model)
       const telegram = createDesktopTelegramGateway(credentialDirectory, encryption, undefined, resolveModelProxy, admit, dispatch, callback)
       const newTransport = () => createNodeProviderTransport(desktopTransportOptions(false, resolveModelProxy))

@@ -185,7 +185,7 @@ test('快照冻结后后续白名单修改不改变本轮权限，下一次解�
 })
 
 test('子 Agent 工具只对主人的 IM 私聊开放，即使群聊显式授权也不可用', () => {
-  const delegation = ['agent_message', 'agent_wait', 'agent_cancel', 'agent_inspect']
+  const delegation = ['agent_message', 'agent_wait', 'agent_inbox', 'agent_cancel', 'agent_inspect']
   const privateInput = { ...input, chatType: 'c2c' as const, chatId: null }
   const ownerPrivate = resolveImActor(privateInput, resolve)
   const memberPrivate = resolveImActor({ ...privateInput, platformUserId: 'sender-member' }, () => ({

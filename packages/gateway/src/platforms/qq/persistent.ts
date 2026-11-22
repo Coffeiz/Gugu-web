@@ -231,7 +231,7 @@ export function createPersistentQqProjection(options:QqProjectionOptions):NonNul
     // 每段首帧独立发送。空刷和上一段的 DONE 不占用新段的节流窗口。
     if(frame&&(frame.index===0||now()-state.lastFlushAt>=frame.flushInterval))await send(false)
    }else if(event.type==='round_end'){if(state.round!==event.round){await close();state.round=event.round}state.pendingRoundText=typeof event.payload.text==='string'?event.payload.text:state.mode==='plain'?state.plainBuffer:state.current===null?'':parseQqStreamSnapshot(state.current).fullText}
-   else if(event.type==='tool_call'||event.type==='interaction_required'){
+   else if(event.type==='tool_call'||event.type==='run_waiting'||event.type==='interaction_required'){
     await finishSource();await close(state.pendingRoundText??undefined);state.pendingRoundText=null;if(event.type==='interaction_required')state.stage='paused'
    }else if(event.type==='final'){
     if(state.round!==event.round){await finishSource();await close();state.round=event.round;state.rawRound=''}
